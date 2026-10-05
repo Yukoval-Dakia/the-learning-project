@@ -21,27 +21,30 @@
 import { and, asc, desc, eq, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Db, Tx } from '@/db/client';
-import { event } from '@/db/schema';
+import { event, tool_operation } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
-import { findReusableCopilotConversation } from '@/server/session/conversation';
+import {
+  findReusableCopilotConversation,
+  getCopilotConversation,
+} from '@/server/session/conversation';
+import { type CopilotPrimaryView, parseCopilotPrimaryView } from '../primary-view-contract';
+import { type CopilotSkillTurn, readCopilotSkillTurn as replySkillTurn } from './chat-contracts';
+import {
+  COPILOT_RUN_EVENTS,
+  COPILOT_RUN_TABLE,
+  type CopilotRunStatus,
+  deriveCopilotRunStatus,
+} from './copilot-run-status';
+import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
 import { selectAsksWithMaterializingToolCall } from './materializing-tools';
 
 export type CopilotTurnRole = 'user' | 'ai' | 'tombstone';
 
 // AF S4 / YUK-203 U6 (PR #305 review comment #2) — skill_turn is persisted in
 // the copilot_reply event payload so replay can surface the structured question
-// card without re-running the LLM. Shape mirrors CopilotSkillTurn in chat.ts;
-// kept here as a plain interface to avoid circular imports.
-export interface CopilotTurnSkillTurn {
-  kind: 'explain' | 'ask_check' | 'end';
-  structured_question?: {
-    id: string;
-    kind: string;
-    prompt_md: string;
-    choices_md: string[] | null;
-  };
-  suggested_next?: 'continue' | 'end';
-}
+// card without re-running the LLM. The canonical type lives in chat-contracts,
+// which is dependency-light and shared with the emission side.
+export type CopilotTurnSkillTurn = CopilotSkillTurn;
 
 // PR round-2 — skill_context persisted in copilot_reply payload so replay can
 // restore the skill card even after page refresh (without re-running the LLM).
@@ -50,31 +53,15 @@ export interface CopilotTurnSkillContext {
   ref: { kind: string; id: string };
 }
 
-// YUK-307 (presentation layer §2.3, RULED) — the agent-nominated hero deliverable
-// for one reply turn: `primary_view?: { source: 'tool_result' | 'artifact' |
-// 'ephemeral_html', ref }`. Persisted as an ADDITIVE field on the copilot_reply
-// payload so Dock replay can restore the hero nomination (ADR-0033 D5:
-// primary_view:{source:'artifact', ref} opens the reference card). Plain types
-// live here (the zod parse schema lives at the extraction point in chat.ts —
-// same import direction as CopilotTurnSkillTurn: chat.ts → turns.ts, never back).
-export const PRIMARY_VIEW_SOURCES = ['tool_result', 'artifact', 'ephemeral_html'] as const;
-export type PrimaryViewSource = (typeof PRIMARY_VIEW_SOURCES)[number];
-// Bound for the ephemeral_html inline carrier so the jsonb payload stays bounded.
-export const EPHEMERAL_HTML_REF_MAX_CHARS = 32_000;
-export type CopilotPrimaryView =
-  | { source: 'tool_result' | 'artifact'; ref: { kind: string; id: string } }
-  // PHASE-DEFERRED (UI slice): for ephemeral_html the ref string IS the inline
-  // HTML body (the carrier is the content — there is no persisted row to point
-  // at). If the UI slice rules a different carrier (e.g. a reply_md html-block
-  // reference), this is the single place to re-anchor; see the presentation
-  // design doc §2.5 (docs/design/2026-06-09-copilot-presentation-layer.md).
-  | { source: 'ephemeral_html'; ref: string };
+export { type CopilotPrimaryView, EPHEMERAL_HTML_REF_MAX_CHARS } from '../primary-view-contract';
 
 export interface CopilotTurn {
   role: CopilotTurnRole;
   text: string;
   at: string; // ISO timestamp
   event_id: string;
+  /** Accepted ask/chip owner of an AI reply; independent of revert eligibility. */
+  run_id?: string;
   // PR round-2 (CR 3360614432): session_id + reply_event_id let the Dock
   // chip-renderer anchor a corrective chip on the correct event/session after
   // page refresh. session_id = the Copilot conversation envelope id; both are
@@ -83,14 +70,16 @@ export interface CopilotTurn {
   reply_event_id?: string;
   /** Typed user_ask root that owns this reversible turn. */
   checkpoint_event_id?: string;
-  /** Present for AI turns that carried a skill turn (teaching ask_check / explain / end). */
+  /** Present for AI turns that carried a teaching turn or completed quiz end. */
   skill_turn?: CopilotTurnSkillTurn;
-  /** Present for AI turns produced by a skill (teaching / solve) — lets replay restore the skill card. */
+  /** Originating skill selector; paired with skill_turn for deterministic replay state. */
   skill_context?: CopilotTurnSkillContext;
   /** YUK-307 — present for AI turns whose reply nominated a hero deliverable (§2.3). */
   primary_view?: CopilotPrimaryView;
   /** YUK-457 — per-call tool-use mirrors chained to this turn's ask/chip parent. */
   tool_calls?: CopilotTurnToolCall[];
+  tool_operations?: CopilotTurnToolOperation[];
+  subagent_runs?: CopilotTurnSubagentRun[];
 }
 
 /** YUK-457 — replay projection of a persisted tool_use mirror event. */
@@ -100,6 +89,17 @@ export interface CopilotTurnToolCall {
   summary?: string;
   errorReason?: string;
   status: 'done' | 'failed';
+}
+
+export interface CopilotTurnToolOperation {
+  id: string;
+  tool_name: string;
+  status: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'lost';
+}
+
+export interface CopilotTurnSubagentRun {
+  id: string;
+  status: 'running' | 'succeeded' | 'failed' | 'cancelled' | 'lost';
 }
 
 // The ONLY revert root the endpoint accepts (owner-locked). A copilot_chip_trigger is a
@@ -135,71 +135,8 @@ function replyText(payload: Record<string, unknown>): string | null {
   return typeof v === 'string' && v.length > 0 ? v : null;
 }
 
-function replySkillTurn(payload: Record<string, unknown>): CopilotTurnSkillTurn | undefined {
-  const st = payload.skill_turn;
-  if (!st || typeof st !== 'object') return undefined;
-  const s = st as Record<string, unknown>;
-  const kind = s.kind;
-  if (kind !== 'explain' && kind !== 'ask_check' && kind !== 'end') return undefined;
-  // Narrow the shape to what the UI needs; extra fields pass through.
-  const result: CopilotTurnSkillTurn = { kind };
-  if (s.suggested_next === 'continue' || s.suggested_next === 'end') {
-    result.suggested_next = s.suggested_next;
-  }
-  if (s.structured_question && typeof s.structured_question === 'object') {
-    const sq = s.structured_question as Record<string, unknown>;
-    if (
-      typeof sq.id === 'string' &&
-      typeof sq.kind === 'string' &&
-      typeof sq.prompt_md === 'string'
-    ) {
-      // PR round-2 (CR 3360606340): validate every element is a string before
-      // passing through; a corrupt array (e.g. [{text:'...'}]) becomes null.
-      const rawChoices = sq.choices_md;
-      const choices_md =
-        Array.isArray(rawChoices) && rawChoices.every((el) => typeof el === 'string')
-          ? (rawChoices as string[])
-          : null;
-      result.structured_question = {
-        id: sq.id,
-        kind: sq.kind,
-        prompt_md: sq.prompt_md,
-        choices_md,
-      };
-    }
-  }
-  return result;
-}
-
-// YUK-307 — hand-rolled narrower mirroring replySkillContext (turns.ts stays
-// zod-free; the strict parse lives at the emission point in chat.ts). Any shape
-// that does not match one of the three ruled source variants → undefined (the
-// turn is still returned — replay is best-effort prefill, never the SoT).
 function replyPrimaryView(payload: Record<string, unknown>): CopilotPrimaryView | undefined {
-  const pv = payload.primary_view;
-  if (!pv || typeof pv !== 'object') return undefined;
-  const p = pv as Record<string, unknown>;
-  const source = p.source;
-  if (source === 'tool_result' || source === 'artifact') {
-    const ref = p.ref;
-    if (!ref || typeof ref !== 'object') return undefined;
-    const r = ref as Record<string, unknown>;
-    if (typeof r.kind !== 'string' || typeof r.id !== 'string') return undefined;
-    // Mirror the emission-side PrimaryViewRefSchema bounds (chat.ts) so the
-    // replay narrower can't drift looser than what chat.ts will ever write
-    // (PR #375 review LOW-1).
-    if (r.kind.length === 0 || r.kind.length > 40) return undefined;
-    if (r.id.length === 0 || r.id.length > 120) return undefined;
-    return { source, ref: { kind: r.kind, id: r.id } };
-  }
-  if (source === 'ephemeral_html') {
-    const ref = p.ref;
-    if (typeof ref !== 'string' || ref.length === 0 || ref.length > EPHEMERAL_HTML_REF_MAX_CHARS) {
-      return undefined;
-    }
-    return { source, ref };
-  }
-  return undefined;
+  return parseCopilotPrimaryView(payload.primary_view);
 }
 
 function replySkillContext(payload: Record<string, unknown>): CopilotTurnSkillContext | undefined {
@@ -275,9 +212,155 @@ async function selectToolCallsForReplay(
   return byParent;
 }
 
+function operationStatus(
+  payload: Record<string, unknown>,
+): CopilotTurnToolOperation['status'] | null {
+  const status = payload.state;
+  return status === 'succeeded' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'lost'
+    ? status
+    : null;
+}
+
+function subagentRunStatus(
+  payload: Record<string, unknown>,
+): CopilotTurnSubagentRun['status'] | null {
+  const status = payload.status;
+  return status === 'succeeded' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'lost'
+    ? status
+    : null;
+}
+
+async function selectToolOperationsForReplay(
+  dbArg: DbLike,
+  sessionId: string,
+  taskRunIds: readonly string[],
+): Promise<Map<string, CopilotTurnToolOperation[]>> {
+  if (taskRunIds.length === 0) return new Map();
+  const [rows, operationRows] = await Promise.all([
+    dbArg
+      .select({
+        action: event.action,
+        subject_id: event.subject_id,
+        payload: event.payload,
+        task_run_id: event.task_run_id,
+        created_at: event.created_at,
+        id: event.id,
+      })
+      .from(event)
+      .where(
+        and(
+          eq(event.session_id, sessionId),
+          inArray(event.task_run_id, [...taskRunIds]),
+          inArray(event.action, ['tool_operation_yielded', 'tool_operation_settled']),
+        ),
+      )
+      .orderBy(asc(event.created_at), asc(event.id)),
+    dbArg
+      .select({ id: tool_operation.id, tool_name: tool_operation.tool_name })
+      .from(tool_operation)
+      .where(
+        and(
+          eq(tool_operation.session_id, sessionId),
+          inArray(tool_operation.task_run_id, [...taskRunIds]),
+        ),
+      ),
+  ]);
+
+  const byTaskRun = new Map<string, Map<string, CopilotTurnToolOperation>>();
+  const toolNameByOperationId = new Map(operationRows.map((row) => [row.id, row.tool_name]));
+  for (const row of rows) {
+    if (!row.task_run_id) continue;
+    const payload = (row.payload ?? {}) as Record<string, unknown>;
+    const current = byTaskRun.get(row.task_run_id) ?? new Map<string, CopilotTurnToolOperation>();
+    if (row.action === 'tool_operation_yielded') {
+      const toolName = typeof payload.tool_name === 'string' ? payload.tool_name : null;
+      if (toolName)
+        current.set(row.subject_id, { id: row.subject_id, tool_name: toolName, status: 'running' });
+    } else {
+      const status = operationStatus(payload);
+      const prior = current.get(row.subject_id);
+      const toolName = prior?.tool_name ?? toolNameByOperationId.get(row.subject_id);
+      if (status && toolName) {
+        current.set(row.subject_id, { id: row.subject_id, tool_name: toolName, status });
+      }
+    }
+    byTaskRun.set(row.task_run_id, current);
+  }
+
+  return new Map(
+    [...byTaskRun.entries()].map(([taskRunId, operations]) => [
+      taskRunId,
+      [...operations.values()],
+    ]),
+  );
+}
+
+async function selectSubagentRunsForReplay(
+  dbArg: DbLike,
+  sessionId: string,
+  parentEventIds: readonly string[],
+): Promise<Map<string, CopilotTurnSubagentRun[]>> {
+  if (parentEventIds.length === 0) return new Map();
+  const starts = await dbArg
+    .select({ id: event.id, subject_id: event.subject_id, caused_by: event.caused_by_event_id })
+    .from(event)
+    .where(
+      and(
+        eq(event.session_id, sessionId),
+        eq(event.action, 'experimental:subagent_run_started'),
+        inArray(event.caused_by_event_id, [...parentEventIds]),
+      ),
+    );
+  if (starts.length === 0) return new Map();
+
+  const runsByParent = new Map<string, Map<string, CopilotTurnSubagentRun>>();
+  const startedParent = new Map<string, string>();
+  for (const start of starts) {
+    if (!start.caused_by) continue;
+    startedParent.set(start.id, start.caused_by);
+    const runs = runsByParent.get(start.caused_by) ?? new Map<string, CopilotTurnSubagentRun>();
+    runs.set(start.subject_id, { id: start.subject_id, status: 'running' });
+    runsByParent.set(start.caused_by, runs);
+  }
+  if (startedParent.size === 0) return new Map();
+
+  const settled = await dbArg
+    .select({
+      subject_id: event.subject_id,
+      caused_by: event.caused_by_event_id,
+      payload: event.payload,
+    })
+    .from(event)
+    .where(
+      and(
+        eq(event.session_id, sessionId),
+        eq(event.action, 'experimental:subagent_run_settled'),
+        inArray(event.caused_by_event_id, [...startedParent.keys()]),
+      ),
+    );
+  for (const row of settled) {
+    if (!row.caused_by) continue;
+    const parentId = startedParent.get(row.caused_by);
+    const runs = parentId ? runsByParent.get(parentId) : undefined;
+    const status = subagentRunStatus((row.payload ?? {}) as Record<string, unknown>);
+    const prior = runs?.get(row.subject_id);
+    if (runs && prior && status) runs.set(row.subject_id, { ...prior, status });
+  }
+
+  return new Map(
+    [...runsByParent.entries()].map(([parentId, runs]) => [parentId, [...runs.values()]]),
+  );
+}
+
 type CopilotTurnRow = Pick<
   typeof event.$inferSelect,
-  'id' | 'action' | 'payload' | 'created_at' | 'caused_by_event_id'
+  'id' | 'action' | 'payload' | 'created_at' | 'caused_by_event_id' | 'task_run_id'
 >;
 
 /**
@@ -304,15 +387,45 @@ async function projectCopilotTurnRows(
   // user_ask OR a chip_trigger; only the former (and in-window) may surface a checkpoint_event_id.
   const askIds = new Set(rows.filter((row) => row.action === USER_ASK_ACTION).map((row) => row.id));
   const toolCallParentIds = [...new Set([...askIds, ...replyParentIds])];
+  const taskRunIds = [
+    ...new Set(
+      rows
+        .filter((row) => row.action === REPLY_ACTION)
+        .map((row) => row.task_run_id)
+        .filter((taskRunId): taskRunId is string => taskRunId !== null),
+    ),
+  ];
   // TchmW — these reads are independent (correction statuses over the window vs the materializing
   // tool_use scan over the ask ids vs replay tool-call mirrors); run them concurrently.
-  const [statuses, asksWithMaterializingTool, toolCallsByParent] = await Promise.all([
+  const [
+    statuses,
+    asksWithMaterializingTool,
+    toolCallsByParent,
+    toolOperationsByTaskRun,
+    subagentRunsByParent,
+    replyRoots,
+  ] = await Promise.all([
     getCorrectionStatuses(dbArg, [...new Set([...rows.map((row) => row.id), ...replyParentIds])]),
     // YUK-497 wave-4 — asks whose turn called a MATERIALIZING tool (author_question / author_artifact
     // / update_artifact / write_quiz) wrote a domain row cascade-revert can't compensate.
     selectAsksWithMaterializingToolCall(dbArg, [...askIds]),
     selectToolCallsForReplay(dbArg, toolCallParentIds),
+    selectToolOperationsForReplay(dbArg, sessionId, taskRunIds),
+    selectSubagentRunsForReplay(dbArg, sessionId, toolCallParentIds),
+    replyParentIds.length
+      ? dbArg
+          .select({ id: event.id })
+          .from(event)
+          .where(
+            and(
+              inArray(event.id, replyParentIds),
+              eq(event.session_id, sessionId),
+              inArray(event.action, [...USER_ACTIONS]),
+            ),
+          )
+      : Promise.resolve([]),
   ]);
+  const replyRunIds = new Set(replyRoots.map((root) => root.id));
   // Retracted roots include out-of-window parents: a reply under such a parent is skipped (its parent
   // row isn't loaded, so it renders as a hidden skip, not a tombstone) rather than shown stale.
   const retractedParentIds = new Set(
@@ -387,6 +500,9 @@ async function projectCopilotTurnRows(
         text,
         at: row.created_at.toISOString(),
         event_id: row.id,
+        ...(row.caused_by_event_id && replyRunIds.has(row.caused_by_event_id)
+          ? { run_id: row.caused_by_event_id }
+          : {}),
         // PR round-2 (CR 3360614432): Dock chip renderer needs session_id to
         // resolve the conversation and reply_event_id to anchor the chip.
         session_id: sessionId,
@@ -408,7 +524,13 @@ async function projectCopilotTurnRows(
       if (parentId) {
         const toolCalls = toolCallsByParent.get(parentId);
         if (toolCalls && toolCalls.length > 0) turn.tool_calls = toolCalls;
+        const subagentRuns = subagentRunsByParent.get(parentId);
+        if (subagentRuns && subagentRuns.length > 0) turn.subagent_runs = subagentRuns;
       }
+      const toolOperations = row.task_run_id
+        ? toolOperationsByTaskRun.get(row.task_run_id)
+        : undefined;
+      if (toolOperations && toolOperations.length > 0) turn.tool_operations = toolOperations;
       turns.push(turn);
     } else {
       const text = userText(payload);
@@ -442,7 +564,7 @@ async function projectCopilotTurnRows(
  */
 export async function getRecentCopilotTurns(
   dbArg: DbLike,
-  opts: { limit?: number; now?: Date } = {},
+  opts: { limit?: number; now?: Date; sessionId?: string } = {},
 ): Promise<CopilotTurn[]> {
   const limit = clampLimit(opts.limit);
 
@@ -451,7 +573,9 @@ export async function getRecentCopilotTurns(
   // stale prior conversation (ended/abandoned, or last active >24h ago) is never
   // replayed into what the server will treat as a fresh session. No reusable
   // session → this is a brand-new conversation; return nothing to prefill.
-  const session = await findReusableCopilotConversation(dbArg as Db, { now: opts.now });
+  const session = opts.sessionId
+    ? await getCopilotConversation(dbArg, opts.sessionId)
+    : await findReusableCopilotConversation(dbArg, { now: opts.now });
   if (session === null) return [];
 
   // One query over all three actions for THIS session, newest first, bounded by
@@ -466,6 +590,7 @@ export async function getRecentCopilotTurns(
       payload: event.payload,
       created_at: event.created_at,
       caused_by_event_id: event.caused_by_event_id,
+      task_run_id: event.task_run_id,
     })
     .from(event)
     .where(
@@ -478,6 +603,61 @@ export async function getRecentCopilotTurns(
     .limit(limit * 2);
 
   return projectCopilotTurnRows(dbArg, session.id, rows, limit);
+}
+
+export interface CopilotActiveRun {
+  run_id: string;
+  session_id: string;
+  status: CopilotRunStatus;
+  events_url: string;
+}
+
+/** One database snapshot; a new browser needs no local cache to discover accepted work. */
+export async function getCopilotConversationSnapshot(
+  dbArg: Db,
+  opts: { limit?: number; now?: Date; sessionId?: string } = {},
+): Promise<{ session_id: string | null; turns: CopilotTurn[]; active_runs: CopilotActiveRun[] }> {
+  return dbArg.transaction(
+    async (tx) => {
+      const session = opts.sessionId
+        ? await getCopilotConversation(tx, opts.sessionId)
+        : await findReusableCopilotConversation(tx, { now: opts.now });
+      if (!session) return { session_id: null, turns: [], active_runs: [] };
+      const turns = await getRecentCopilotTurns(tx, { ...opts, sessionId: session.id });
+      const terminal = copilotRunTerminalSql(
+        sql.raw('terminal.event_type'),
+        sql.raw('terminal.payload'),
+      );
+      const runs = (await tx.execute(sql`
+      SELECT queued.business_id AS run_id,
+        ARRAY(SELECT DISTINCT progress.event_type FROM job_events progress
+          WHERE progress.business_table = queued.business_table AND progress.business_id = queued.business_id
+            AND progress.event_type IN (${COPILOT_RUN_EVENTS.STARTED}, ${COPILOT_RUN_EVENTS.EXECUTION_STARTED}, ${COPILOT_RUN_EVENTS.STEP}, ${COPILOT_RUN_EVENTS.CANCEL_REQUESTED})) AS event_types
+      FROM job_events queued
+      JOIN event ask ON ask.id = queued.business_id
+      WHERE queued.business_table = ${COPILOT_RUN_TABLE}
+        AND queued.event_type = ${COPILOT_RUN_EVENTS.QUEUED}
+        AND ask.session_id = ${session.id}
+        AND queued.payload->>'session_id' = ${session.id}
+        AND queued.id = (SELECT min(first_queued.id) FROM job_events first_queued
+          WHERE first_queued.business_table = queued.business_table AND first_queued.business_id = queued.business_id AND first_queued.event_type = ${COPILOT_RUN_EVENTS.QUEUED})
+        AND NOT EXISTS (SELECT 1 FROM job_events terminal
+          WHERE terminal.business_table = queued.business_table AND terminal.business_id = queued.business_id AND ${terminal})
+      ORDER BY ask.dispatch_seq ASC, ask.id ASC
+    `)) as Array<{ run_id: string; event_types: string[] }>;
+      return {
+        session_id: session.id,
+        turns,
+        active_runs: runs.map((run) => ({
+          run_id: run.run_id,
+          session_id: session.id,
+          status: deriveCopilotRunStatus(run.event_types.map((event_type) => ({ event_type }))),
+          events_url: `/api/jobs/copilot_run/${encodeURIComponent(run.run_id)}/events`,
+        })),
+      };
+    },
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
+  );
 }
 
 export type CopilotHistoryAnchorErrorReason =
@@ -529,7 +709,7 @@ export async function getCopilotTurnsBeforeAnchor(
   if (!anchor) {
     throw new CopilotHistoryAnchorError('missing_anchor', opts.anchorEventId);
   }
-  if (anchor.action !== USER_ASK_ACTION) {
+  if (!USER_ACTIONS.includes(anchor.action as (typeof USER_ACTIONS)[number])) {
     throw new CopilotHistoryAnchorError('invalid_anchor_action', opts.anchorEventId);
   }
   if (anchor.session_id !== opts.sessionId) {
@@ -561,6 +741,7 @@ export async function getCopilotTurnsBeforeAnchor(
       payload: event.payload,
       created_at: event.created_at,
       caused_by_event_id: event.caused_by_event_id,
+      task_run_id: event.task_run_id,
     })
     .from(event)
     .innerJoin(historyAnchor, eq(historyAnchor.id, opts.anchorEventId))

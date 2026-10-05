@@ -80,7 +80,11 @@ function renderFrontierBody({
           </div>
           <div className="frontier-reason">{f.reason}</div>
           <div className="frontier-note">
-            <BandChip input={f} />
+            {f.propose ? (
+              <span className="badge tone-info">待确认建议</span>
+            ) : (
+              <BandChip input={f} />
+            )}
           </div>
         </button>
       ))}

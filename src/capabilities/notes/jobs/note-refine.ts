@@ -44,7 +44,7 @@ import { artifact, knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { TaskTextRunFn } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { resolveNoteSkill } from '@/subjects/note-skills';
+import { resolveNoteSkillDoc } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 export { type ParsedNoteRefineOutput, parseNoteRefineOutput };
@@ -207,7 +207,7 @@ export async function runNoteRefine(params: RunNoteRefineParams): Promise<RunNot
   const subjectProfile = resolveSubjectProfile(kNode?.domain);
   const taskResult = await runTaskFn('NoteRefineTask', input, {
     subjectProfile,
-    skills: await resolveNoteSkill(subjectProfile.id),
+    piSkillDocs: await resolveNoteSkillDoc(subjectProfile.id),
   });
   const { patch: modelPatch } = parseNoteRefineOutput(taskResult.text);
 

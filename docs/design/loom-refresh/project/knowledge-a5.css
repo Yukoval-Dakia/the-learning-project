@@ -61,7 +61,7 @@
 .mesh-misc { cursor: pointer; }
 .mesh-misc-shape { fill: var(--hard-soft); stroke: var(--hard-ink); stroke-width: 1.6; stroke-dasharray: 4 3; }
 .mesh-misc.fading .mesh-misc-shape { opacity: 0.55; }
-.mesh-misc-label { font: 600 10px/1 var(--font-sans); fill: var(--hard-ink); }
+.mesh-misc-label { font: 600 var(--fs-caption)/1 var(--font-sans); fill: var(--hard-ink); }
 .mesh-frontier-halo { fill: none; stroke: var(--coral); stroke-width: 2; opacity: 0.9; }
 .mesh-frontier-halo.propose { stroke-dasharray: 3 3; }
 .mesh-edge-misc { stroke: var(--hard-ink); stroke-width: 1.4; stroke-dasharray: 3 3; opacity: 0.7; }

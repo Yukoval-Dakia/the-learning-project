@@ -375,6 +375,14 @@ describe('author_question — knowledge|material seed (ADR-0031 lane B)', () => 
           answers: ['代词。'],
           analysis: '承前指代。',
         },
+        // YUK-308 — the judge-executability contract now gates this path:
+        // a prose kind needs a semantic route + non-empty required_points
+        // (what the prompt instructs the model to emit) or persist is refused.
+        judge_kind_override: 'semantic',
+        rubric_json: {
+          criteria: [{ name: 'correctness', weight: 1, descriptor: '答出指代作用' }],
+          required_points: ['代词', '指代'],
+        },
       }),
       cost_usd: 0,
     });

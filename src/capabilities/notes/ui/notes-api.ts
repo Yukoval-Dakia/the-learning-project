@@ -11,20 +11,45 @@ import {
   apiOperationJson,
 } from '@/ui/lib/api';
 
+export type NoteListRow = {
+  id: string;
+  type: string;
+  title: string;
+  knowledge_ids: string[];
+  generation_status: string;
+  verification_status: string;
+  version: number;
+  updated_at: string;
+};
+
+// YUK-919 — query：标题/正文文本搜索（服务端 listNotes 与科目过滤 AND 组合）；
+// 空串/空白不发送，保持既有列表行为。
+export const listNotes = (subject?: string, query?: string): Promise<{ rows: NoteListRow[] }> => {
+  const params = new URLSearchParams();
+  if (subject) params.set('subject', subject);
+  if (query?.trim()) params.set('query', query.trim());
+  const qs = params.toString();
+  return apiOperationJson('listNotes', {
+    url: qs ? `/api/notes?${qs}` : '/api/notes',
+    method: 'GET',
+  });
+};
+
 // ── body_blocks 块模型（ArtifactBodyBlocks passthrough doc） ────────
 // 已知块型：semanticBlock（文本块，kind ∈ definition/mechanism/example/
-// pitfall —— check 为 D6 墓碑，只读渲染占位不可插入）、crossLinkBlock
+// pitfall/check —— check 为不判分的自解释正文）、crossLinkBlock
 //（atom，ADR-0022 flat attrs { id, artifact_id, block_id?, title? }——服务端
 // block-refs 索引器按 attrs.artifact_id 写 backlink，勿嵌套 target）、
 // questionRefBlock（atom，M3 新增：note 引用题库题，纯引用无作答交互
 // ——D6 裁的是内嵌自测全链路）。
 export type SemanticKind = 'definition' | 'mechanism' | 'example' | 'pitfall' | 'check';
 
-export const SEMANTIC_KIND_LABEL: Record<Exclude<SemanticKind, 'check'>, string> = {
+export const SEMANTIC_KIND_LABEL: Record<SemanticKind, string> = {
   definition: '定义',
   mechanism: '机制',
   example: '例子',
   pitfall: '易错点',
+  check: '自解释',
 };
 
 type NotePageWire = ApiOperationJsonResponse<'getNote'>;

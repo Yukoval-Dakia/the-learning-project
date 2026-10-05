@@ -22,6 +22,7 @@
 
 import { and, count, desc, eq, gte, lt, sql } from 'drizzle-orm';
 import { listNoteRefineChanges } from '@/capabilities/notes/public';
+import type { ProviderCostWindow } from '@/core/schema/cost-observation';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, event } from '@/db/schema';
 import { countProposalsInWindow } from '@/kernel/proposals/inbox';
@@ -133,22 +134,24 @@ async function loadErrorRunRows(db: DbLike, from: Date, to: Date): Promise<RunEr
  * 昨夜 digest 读模型。聚五个夜间事实源到一个 payload，纯读零写（红线①③）。
  * has_overnight_activity 由五源 count 显式组合（红线②）；内部校准概率永不进 payload（红线④）。
  *
- * `now` 可注入（默认 new Date()）——仅为让 db 测确定性地相对窗口播种，路由仍以 `loadOvernightDigest(db)`
- * 调用（窗口口径不变）。同 research_meeting_nightly 的 deps.now 先例。
+ * Shared Today composition supplies the clock and cost reader through public ports.
+ * The shell owns the window; observability owns accounting authority and deduplication.
  */
 export async function loadOvernightDigest(
   db: DbLike,
-  now: Date = new Date(),
+  now: Date,
+  readCosts: (db: DbLike, from: Date, to: Date) => Promise<ProviderCostWindow>,
 ): Promise<OvernightDigest> {
   const { from, to } = overnightWindow(now);
 
-  const [runRows, noteChangesCount, agentNotesCount, proposalCounts, errorRunRows] =
+  const [runRows, noteChangesCount, agentNotesCount, proposalCounts, errorRunRows, cost] =
     await Promise.all([
       loadRunRows(db, from, to),
       countNoteChangesInWindow(db, from, to),
       countAgentNotesInWindow(db, from, to),
       countProposalsInWindow(db, { from, to }),
       loadErrorRunRows(db, from, to),
+      readCosts(db, from, to),
     ]);
 
   const runs = groupRunsByKind(runRows);
@@ -173,5 +176,6 @@ export async function loadOvernightDigest(
     new_conjectures_count: newConjecturesCount,
     agent_notes_count: agentNotesCount,
     degraded_kinds: degradedKinds,
+    cost,
   };
 }

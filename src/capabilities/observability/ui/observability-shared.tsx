@@ -100,7 +100,10 @@ function AdminLink({
 
 export function AdminLinks({ navigate }: AdminSurfaceProps) {
   return (
-    <div style={linkRowStyle}>
+    <div style={{ ...linkRowStyle, flexWrap: 'wrap' }}>
+      <AdminLink to="/admin/config" navigate={navigate}>
+        配置
+      </AdminLink>
       <AdminLink to="/admin/runs" navigate={navigate}>
         runs
       </AdminLink>

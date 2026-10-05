@@ -13,12 +13,12 @@
 // opening/closing line：M2 为模板（M4 夜链 AI 化后由 composer_nightly 写入）。
 
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, sql } from 'drizzle-orm';
+import { getConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';
-import { LearningItemOpenStatus, QuestionKind } from '@/core/schema/business';
+import { LearningItemOpenStatus } from '@/core/schema/business';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
-import type { QuestionKindT } from '@/core/schema/judge-routing';
 import type { Db, Tx } from '@/db/client';
-import { notDraftPredicate } from '@/db/predicates';
+import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import {
   artifact,
   event,
@@ -31,6 +31,7 @@ import {
   question,
 } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
+import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
 import { Review } from '@/server/session';
 import {
   type CandidateInput,
@@ -70,7 +71,7 @@ import {
   normalizeDailyPracticePace,
 } from './stream-budget';
 import { type ComposerInputs, type StreamPlan, composeDailyStream } from './stream-composer';
-import { streamLocalDate } from './stream-date';
+import { rotationClassForKind } from './variant-rotation';
 
 export { streamLocalDate } from './stream-date';
 
@@ -282,6 +283,8 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
             and(
               sql`${question.knowledge_ids} @> ${JSON.stringify([kid])}::jsonb`,
               notDraftPredicate(question.draft_status),
+              // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不作新检选第题。
+              questionSuspendedPredicate(question),
             ),
           )
           .limit(1);
@@ -320,6 +323,8 @@ export async function collectComposerInputs(db: DbLike, date: string): Promise<C
         and(
           sql`${question.knowledge_ids} @> ${JSON.stringify([kc])}::jsonb`,
           notDraftPredicate(question.draft_status),
+          // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进 frontier 选题。
+          questionSuspendedPredicate(question),
         ),
       )
       // Deterministic pick (reproducible composition) — the new_check sibling omits this;
@@ -515,7 +520,9 @@ export async function materializeStream(
  * 选题不能因配置 typo 挂）。
  */
 export function resolveSelectionPolicy(): SelectionPolicyConfig {
-  const raw = process.env.SELECTION_POLICY;
+  // YUK-1007：DB > env > code-default('softmax_mfi')；未识别 env 值落默认（不
+  // fail-fast——选题不能因配置 typo 挂）。
+  const raw = getConfig('SELECTION_POLICY');
   if (raw === 'legacy') return { policy: 'legacy' };
   if (raw === 'softmax_mfi') return { policy: 'softmax_mfi' };
   return { policy: DEFAULT_SELECTION_POLICY };
@@ -613,7 +620,7 @@ async function materializePreparedCollect(
         policy: 'softmax_mfi',
         selected: true,
         inclusionProbability: pi,
-        signals: (signal as unknown as Record<string, unknown>) ?? {},
+        signals: toSignalsJson(signal),
       });
     }
   }
@@ -773,7 +780,20 @@ export interface StreamView {
     estimated_minutes: number;
     knowledge_name: string | null;
     paper_title: string | null;
+    /**
+     * YUK-1054 — 原始 FSRS rating（immutable 用户自评 rating，写入时即固定，不为
+     * 改判/track 变化）。§9 要求的「原始判轨」对本 surface 就是 review 事件的
+     * 原始 rating；effective judge 判单独经 `verdict_effective` 透出。
+     */
     verdict: 'again' | 'hard' | 'good' | null;
+    /**
+     * YUK-1054 — 双轨裁决（§9）effective 侧。matched review 的 judge 链解析后
+     * 仍 live 的最新 judge 的 coarse_outcome（'correct'|'partial'|'incorrect'|
+     * 'unsupported'）。无 judge 判或无匹配 review → null。
+     */
+    verdict_effective: string | null;
+    /** effective 判的 chain truth（'active'|'superseded'|…）；与 verdict_effective 同生。 */
+    verdict_effective_state: string | null;
     completed_at: string | null;
     total_slots: number | null;
   }>;
@@ -792,6 +812,10 @@ interface StreamItemMetadata {
   knowledgeName: string | null;
   paperTitle: string | null;
   verdict: StreamViewItem['verdict'];
+  verdictEffective: string | null;
+  verdictEffectiveState: string | null;
+  /** Internal: matched review event id (for judge-verdict batch resolution). */
+  matchedReviewId: string | null;
   completedAt: string | null;
   totalSlots: number | null;
 }
@@ -800,6 +824,9 @@ const EMPTY_STREAM_ITEM_METADATA: StreamItemMetadata = {
   knowledgeName: null,
   paperTitle: null,
   verdict: null,
+  verdictEffective: null,
+  verdictEffectiveState: null,
+  matchedReviewId: null,
   completedAt: null,
   totalSlots: null,
 };
@@ -920,7 +947,27 @@ async function resolveStreamItemMetadata(
       const current = metadata.get(row.id) ?? { ...EMPTY_STREAM_ITEM_METADATA };
       current.verdict = eventRating(matched.payload);
       current.completedAt = matched.created_at.toISOString();
+      current.matchedReviewId = matched.id;
       metadata.set(row.id, current);
+    }
+    // YUK-1054 (§9 dual-track) — matched review 的 judge 链解析（effective 判）。
+    // judge 事件锚 subject_id=<review_event_id>；把 matched review ids 收集成
+    // batch 统一解析，再把每条行的 effective 判写回 metadata。
+    const matchedReviewIds = [
+      ...new Set(
+        [...metadata.values()]
+          .map((m) => m.matchedReviewId)
+          .filter((id): id is string => id !== null),
+      ),
+    ];
+    if (matchedReviewIds.length > 0) {
+      const verdicts = await resolveVerdictsForAttempts(db, matchedReviewIds);
+      for (const current of metadata.values()) {
+        if (current.matchedReviewId === null) continue;
+        const effective = verdicts.get(current.matchedReviewId)?.effective ?? null;
+        current.verdictEffective = effective?.verdict.coarse_outcome ?? null;
+        current.verdictEffectiveState = effective?.correction_state.state ?? null;
+      }
     }
   }
 
@@ -940,6 +987,8 @@ function toStreamViewItem(row: StreamItemRow, metadata: StreamItemMetadata): Str
     knowledge_name: metadata.knowledgeName,
     paper_title: metadata.paperTitle,
     verdict: metadata.verdict,
+    verdict_effective: metadata.verdictEffective,
+    verdict_effective_state: metadata.verdictEffectiveState,
     completed_at: metadata.completedAt,
     total_slots: metadata.totalSlots,
   };
@@ -1065,6 +1114,8 @@ async function materializeKnowledgeScopedSession(
           and(
             sql`${question.knowledge_ids} @> ${JSON.stringify([knowledgeId])}::jsonb`,
             notDraftPredicate(question.draft_status),
+            // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不作 scoped 填空。
+            questionSuspendedPredicate(question),
           ),
         )
         .orderBy(asc(question.difficulty), desc(question.updated_at), asc(question.id))
@@ -1564,7 +1615,7 @@ export async function recomposeStream(
 //      故其 presence + L1 相对序原样保全（本函数从不碰到期行；它们也被排出候选池）。
 //   ③ recall 同题重背：snapshot recall-locked 待做行（signals.recallLocked===true）**冻结**；
 //      且**EDGE 2**——某行 snapshot 不是 recall 但**新鲜 compute** 重判为 recall（question.kind
-//      变脏 → resolveEnumKind undefined → fail-closed recallLocked=true）时，该行**冻结保留**
+//      词表外标签 → resolveRotatableKind undefined → fail-closed recallLocked=true）时，该行**冻结保留**
 //      （不删进空位、不重抽样），presence 守住（never drop-into-a-gap）。
 //   ④ 容量 + draft 排除 + dedup：targetCount = 可替换待做非到期 slot 数（不胀容量）；broad pool
 //      抽样经 in-memory seen（排除冻结 ref）+ date+ref 唯一索引兜重复。
@@ -1614,10 +1665,11 @@ function rowIsRecallLocked(signals: unknown): boolean {
   return (signals as { recallLocked?: unknown } | null)?.recallLocked === true;
 }
 
-/** 把 DB question.kind（text，可能脏）收敛成枚举内 QuestionKindT 或 undefined（同 softmax 侧 FINDING 4）。 */
-function resolveEnumKind(kind: string | null | undefined): QuestionKindT | undefined {
-  const parsed = QuestionKind.safeParse(kind);
-  return parsed.success ? (parsed.data as QuestionKindT) : undefined;
+/** 把 DB question.kind（自由文本标签，可能不在 KNOWN 词表内）收敛成可旋转分类的标签或
+ * undefined（同 softmax 侧 FINDING 4）。YUK-386：边界从「enum 成员」改为
+ * 「rotationClassForKind 可分类」——同一张 KNOWN 标签表，行为不变。 */
+function resolveRotatableKind(kind: string | null | undefined): string | undefined {
+  return kind != null && rotationClassForKind(kind) !== undefined ? kind : undefined;
 }
 
 /**
@@ -1767,7 +1819,7 @@ export async function reRankAfterAnswer(
         refKind: 'question' as const,
         refId: r.questionId,
         role: r.source === 'new_check' ? ('new_check' as const) : ('diagnostic' as const),
-        kind: resolveEnumKind(q?.kind),
+        kind: resolveRotatableKind(q?.kind),
         knowledgeIds: q?.knowledge_ids,
         difficulty: q?.difficulty,
         // YUK-372 L3 — question.source (not the slot source) for family_key resolution.
@@ -1778,7 +1830,7 @@ export async function reRankAfterAnswer(
     const signalByRef = new Map(signals.map((s) => [s.refId, s]));
 
     // ── EDGE 2（铁律③ + presence）：某 pendingNonDue 行 snapshot 不是 recall，但**新鲜 compute**
-    //    重判为 recall（question.kind 变脏 → resolveEnumKind undefined → fail-closed
+    //    重判为 recall（question.kind 不在 KNOWN 词表 → resolveRotatableKind undefined → fail-closed
     //    recallLocked=true）。这种行**不删进空位、不重抽样**——freeze 保留（position/status 不动），
     //    presence 守住（never drop-into-a-gap）。
     const freshRecallRefs = new Set(
@@ -1898,7 +1950,7 @@ export async function reRankAfterAnswer(
               ? newCheckReasoning(labelByRef.get(s.refId))
               : variantReasoning(labelByRef.get(s.refId)),
           added_by: 'composer_live' as const,
-          signals: (signal as unknown as Record<string, unknown>) ?? {},
+          signals: toSignalsJson(signal),
           created_at: now,
           updated_at: now,
         })
@@ -1919,7 +1971,7 @@ export async function reRankAfterAnswer(
         policy: 'softmax_mfi',
         selected: true,
         inclusionProbability: s.inclusionProbability,
-        signals: (signal as unknown as Record<string, unknown>) ?? {},
+        signals: toSignalsJson(signal),
       });
     }
 
@@ -1929,4 +1981,8 @@ export async function reRankAfterAnswer(
   // 事务已提交——锁外 best-effort 写 π_i 观测（FINDING B：遥测失败不回滚重排）。
   await writeObservationsBestEffort(db, observations);
   return added;
+}
+
+function toSignalsJson(signal: CollectedSignal | undefined): Record<string, unknown> {
+  return { ...signal };
 }

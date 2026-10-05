@@ -11,13 +11,14 @@
 
 | Queue | 上游边 | 注册点 | 说明 |
 |-------|--------|--------|------|
-| `item_prior_backfill` | 根 | practice/manifest | 无硬轨行新题 → ItemPriorTask 写 b 锚（cap 25/夜）；`item_calibration.b` 锚**种子**写者 |
+| `item_prior_backfill` | 根 | practice/manifest | 无硬轨行新题 → ItemPriorTask 写 b 锚（cap 25/夜）；`item_calibration.b` 锚**种子**写者。YUK-1034 feature 路径同题 N 次采样 median 聚合——**默认 reps=3 已上生产**（owner 2026-09-24 拍板，median SD 0.361→0.173）；job data `{reps:N}` 覆盖、`{reps:1}` opt-out 回单次；llasa 路径不挂|
 | `recalibration_nightly` | ← `item_prior_backfill` **硬** | practice/manifest | 攒够 label → `b_calib` firm-up。真读后写（同表 b 锚：种子先、firm 后）|
 | `practice_stream_compose_nightly` | ← `recalibration_nightly` **硬** | practice/manifest | 预产今日练习流；选题实读 `item_calibration.b_calib`（单飞锁幂等；lazy 首读即恢复路径）|
 | `question_supply_nightly` | ← `recalibration_nightly` **硬** | practice/manifest | 缺口扫描 → sourcing/quiz_gen；R3 近-θ̂ 判定实读 `b_calib`→`effectiveB`（7d 指纹 cooldown 是唯一成本闸）|
 | `embed_backfill` | 根 | practice/manifest | `embedding IS NULL` 扫描（question+knowledge，limit 100）|
 | `kc_dedup_nightly` | ← `embed_backfill` **硬**（跨包）| knowledge/manifest | pgvector 近重 KC → merge 提议。硬 gate `embedding IS NOT NULL`——**旧 02:00 恒滞后一天**的时钟 bug 现由边根治（YUK-377 复审 §3.3）|
 | `answer_class_backfill` | 根（**无下游**）| practice/manifest | 纯派生 NULL 尾兜底（on-write `withAnswerClass` 已全量上线）。曾被当作 supply 上游，YUK-758 考据证伪 |
+| ~~`kind_cleanup_backfill`~~ | — | — | **YUK-386 已删**：question.kind 改为自由文本展示标签，canonical 收敛不变量退役 |
 | `knowledge_edge_propose_nightly` | 根 | knowledge/manifest | 24h 失败窗提边（空窗早退；watermark 续扫 = YUK-377 轻量档待做）|
 | `knowledge_maintenance_nightly` | ← `knowledge_edge_propose_nightly` **软** | knowledge/manifest | KnowledgeReviewTask 维护流。软边：读 proposal inbox 当去重基线，上游挂了照样正确产出 |
 | `dreaming_nightly` | ← `edge_propose` **软** + `knowledge_maintenance_nightly` **软** | agency/manifest | Dreaming producer（DomainTool MCP bridge）|

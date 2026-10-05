@@ -3,8 +3,6 @@ import { LlmFallbackOutput, type LlmFallbackOutputT } from './types';
 
 export interface UnitDimensionRunTaskCtx {
   subjectProfile?: SubjectProfile;
-  /** Structural copy of the Agent SDK JSON-schema envelope; core must not import server/ai. */
-  outputFormat?: { type: 'json_schema'; schema: Record<string, unknown> };
 }
 
 export type RunTaskFn = (

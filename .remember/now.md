@@ -1,35 +1,21 @@
-# 当前 handoff — 2026-08-16 ticket 归零 + 可用性打磨 启动
+# Current handoff — 2026-10-04
+1120/#1557 merged2026-10-04T17:46:45Z main d8e57a805e69e21ffb3fe26bad2bec42acce12e0. 76unit50DB/localgates/independent61unit50DB/exactCI37220574124/17minwindow done. CI82migration34browser actually ran.1120Done,61open after original1047reopened. GitHub CLI401 this turn; connector works, used expected-head squash. git fetch works.
+1047/#1558 merged2026-10-04 18:12UTC main6de5323959f36c2e0a752787d0684b46a9ea269f. 30unit/localgates/independent30unit+2CLI/exactCI37222377773/17minwindow done. CI82migration34browser actually ran. Bounded source evidence still8legacycalls1executor;1047InProgress.
+1047/#1559 merged2026-10-04 18:36UTC main093c0c2418a3dea48a04f409d2af40af0cb76e52.72unit51DB/localgates/independent65unit30DB+2finalfixtureDB/exactCI37224007026/17minwindow done.82migration34browser actuallyran. Frozenpublicbody/private rubric boundary delivered; eightcaller migrationstillpending1047InProgress.
+1045/#1560 merged2026-10-04 19:08UTC main d815df4befc48862fd7357fd1b9836c89e130071.116unit77DB/alllocalgates/initialreview+soleP1verification63unit16DB/exactCI37226077585/17minwindow done.82migration34browseractuallyran.1045Done61open. No prod/paid/dependencychanges.
+Active1091 /workspace/tlp-assessment-joint fix/yuk-1091-joint-input. Formalvalidjoint4assertionsRED thenGREEN. Fixedanchor/fullmemberproof/corejointview/DBfirstcandidate seal/settlev3/read/feedback implemented.138unit136DB(includingmigrationapply/backup)/alllocalgates PASS;82migrationPASS;initialreviewrunning. Rootignored designnotes/RED+lockprobes in .remember/2026-10-04-assessment-group-design-notes.md.1047formal8caller migrationstillpending.
+181/#1556 alreadyDone main0ab54920.766LIGHT/FULL and588UI async questions remain unanswered.1091multihead unresolved. All HOLD/prod/paid bounds unchanged. No dependency chasing. One active implementation line; preserve branches/worktrees.
 
-## NOW
+1091/#1561 initial review completed:96unit64DB, one proven P1 anchor-vs-last-member occurrence. Two formal DB regressions first RED (9 assertions), fixed all current occurrence consumers from validated plan;50DB green. Sole verification passed original2probes+39DB inclv1/v2. Final formal20DB/typecheck/lint/build passed after explicit null guard+Date normalization of JSON FSRS last_review;runtime unchanged. Final-head CI pending. PR-Agent reader chunk suspicion disproved (chunks group IDs, fetches all members); digest hypothetical nonblocking.
 
-- main 在 `f51c206b`（YUK-892 tool failure visibility；架构深化经 F4.1 `62e34a72` 收官，
-  F3.2 组合根 #1202 与 YUK-863 #1183 均已合并）。PLAN.md 已按 8-16 现实重写。
-- owner 指令（2026-08-16）：功能定义 OK；推进 Linear ticket 归零（口径：可操作票归零，
-  战略票出砍/留清单拍板）+ 可用性实际打磨。范围：Track 0 清场 + A1 工程票 + Track B 走查。
-- 本 session 已完成：
-  - 主工作树从陈旧 YUK-812 分支（错位：HEAD 在 main 上）恢复到 main@`f51c206b` 干净态；
-    PLAN.md / .remember/now.md 的冲突标记垃圾块已用 HEAD 干净版覆盖。
-  - dependabot 6 清零：#1184 / #1179 / #1091 合并；#1180 / #1096 / #1094 关闭。
-  - #1182（YUK-457）与 #1137（YUK-813）各起 review-work 五 lane 闸（10 个后台 lane），
-    verdict 待收。
-- 陈旧 worktree 注册（4 detached + yuk-825-closeout）本 session 已不在 `git worktree list`
-  中；仅剩 yuk-822（14 个未合并 YUK-792 提交 + 脏文件，保留待 owner 处置）。
+1091/#1561 merged2026-10-04 19:51UTC maincd61afabdff84cda6b8260ec3cc9107137e863e4. exactCI37228786465 actual82migration34browser +17minwindow done. Initial96unit64DB found1P1; soleverification original2probes+39DB passed, authorfinal20DB/typecheck/lint/build passed. LinearDone60open.
+1047 model-context inworktree/workspace/tlp-assessment-model-context branchfix/yuk-1047-model-context.4contexttestsRED+7materialtestsRED then84unit72distinctDB/localgatespassed. Frozenpatch/tmp/review-yuk1047-context-frozen.patch ed0c645f initialreviewrunning. Existing8caller216DBbaselinegreen, fullmigrationstillopen. No production/paid/dependency. Groundingignoredroot/.remember/2026-10-04-assessment-entry-grounding.md.
 
-## NEXT
+1047/#1562 initial review84unit21DB found1P1 inline original images in prompts/materials/options. Formal3location tests firstRED45soft failures, parser-based fix94unitPASS/alllocalgatesPASS. CommonMark existingreact-markdown nofetch/noadditionaldependencies. Soleverificationrunning. Lastnewhead pendingpush.
 
-1. 收 #1182 / #1137 五 lane verdict → 全 PASS 则合并并关票；任一 FAIL 则修复后重审。
-2. A1-批1：YUK-845 收尾（先查 08-15 为何从 In Review 退回 Todo）+ Copilot P1
-   YUK-833/834/835/836 各起隔离 lane。
-3. Track B 本地走查（做题/Copilot/笔记/录入/图谱）+ friction 当场立案；A3 战略票清单。
-4. review worktree /tmp/review-pr1182 与 /tmp/review-pr1137 用毕清理。
+1047/#1562 merged2026-10-04 20:18UTC mainad8dad7598eb75e278c77a0f9f5c208e42e9842c.94unit72DB/localgates/initialreview1P1+soleverification3old5new94unit/exactCI37230475644actual82migration34browser/17minwindow PASS.1047stillInProgress60open.
+Active1047native worktree/workspace/tlp-assessment-native-model branchfix/yuk-1047-native-model basedb7239b81 pendingrebase. Explicitnative task+descriptor, frozenassetguard, standalone(noautomaticJevfallback/admission). RealrunnerDB missingMiMousagecost firstRED1failed5passed thenfixusagepresence;unknownvsactualzero preserved. Finalgatesrunning. No paid/prod/dependency.
 
-## PARKED
+Nativecost proof extended to realpi normalization: /tmp/yuk1047-native-adapter-red.log 2failed1passed41skipped then44adapterPASS. usage_observed false onfailedplaceholderzero/noassistant; collector+price resolver distinguishmissing fromactualzero.374distinctunit48DB; finalgatesrunning, initialreviewnotstartedyet.
 
-- YUK-832 HOLD / YUK-842 observe / 生产未部署：不变。
-- yuk-822 worktree 处置待 owner。
-
-## BLOCKED-ON
-
-- YUK-846 凭据轮换（Urgent，只能 owner 在控制台人工）+ YUK-571/856/887/859/414/320/838
-  人工闸（清单见 PLAN.md）。
-- Production 部署授权（不变）。
+1047/#1563 initialreview2P1 fixed: failedknowncost via AgentRunError; missing successfulusage via native onProviderStreamEvent observation.3formalDBfirstRED then10DBGREEN. Postfix281unit30DB/typecheck/lint299/build/11auditsPASS. InitialCI37232144534failed exactjudgeinventory four→five; assertion fixed. Soleverification+newheadCI pending.60open, eightformalentriesstilllegacy.

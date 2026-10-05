@@ -30,10 +30,10 @@ import {
 
 const db = testDb();
 
-// 验证轮 C — the orchestrator degrades the web-grounded lines when Tavily is unconfigured
-// (TAVILY_API_KEY unset, as in the test env). Tests that assert the FULL web route inject
+// 验证轮 C — the orchestrator degrades the web-grounded lines when Exa is unconfigured
+// (EXA_API_KEY unset, as in the test env). Tests that assert the FULL web route inject
 // an "available" predicate; the degradation path has its own dedicated tests below.
-const TAVILY_UP = () => true;
+const WEB_SEARCH_UP = () => true;
 
 async function seedKnowledge(id: string, domain = 'yuwen') {
   const now = new Date();
@@ -229,7 +229,7 @@ describe('runSourcingSequence', () => {
       knowledgeId: 'k1',
       count: 3,
       enqueueSequenceJob: fn,
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: WEB_SEARCH_UP,
     });
 
     expect(res.satisfiedFromPool).toBe(true);
@@ -252,7 +252,7 @@ describe('runSourcingSequence', () => {
       knowledgeId: 'k1',
       count: 5, // force "insufficient" so we still get all hits back
       enqueueSequenceJob: fn,
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: WEB_SEARCH_UP,
     });
 
     expect(res.existing[0]).toMatchObject({ question_id: 'auth', tier: 1 });
@@ -271,7 +271,7 @@ describe('runSourcingSequence', () => {
       knowledgeId: 'k1',
       count: 1,
       enqueueSequenceJob: fn,
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: WEB_SEARCH_UP,
     });
 
     expect(res.existing).toHaveLength(0);
@@ -290,7 +290,7 @@ describe('runSourcingSequence', () => {
       knowledgeId: 'k1',
       count: 3,
       enqueueSequenceJob: fn,
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: WEB_SEARCH_UP,
     });
 
     expect(res.satisfiedFromPool).toBe(false);
@@ -333,7 +333,7 @@ describe('runSourcingSequence', () => {
       trigger: 'learning_item',
       count: 2,
       enqueueSequenceJob: fn,
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: WEB_SEARCH_UP,
     });
 
     for (const c of calls) {
@@ -354,7 +354,7 @@ describe('runSourcingSequence', () => {
       knowledgeId: 'k1',
       count: 3,
       enqueueSequenceJob: fn,
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: WEB_SEARCH_UP,
     });
 
     const byStep = new Map(calls.map((c) => [c.step, c]));
@@ -379,7 +379,7 @@ describe('runSourcingSequence', () => {
       trigger: 'manual',
       count: 3,
       enqueueSequenceJob: fn,
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: WEB_SEARCH_UP,
     });
 
     expect(calls.length).toBeGreaterThan(0);
@@ -403,7 +403,7 @@ describe('runSourcingSequence', () => {
       count: 3,
       kind: 'reading',
       enqueueSequenceJob: fn,
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: WEB_SEARCH_UP,
     });
 
     expect(calls.length).toBeGreaterThan(0);
@@ -422,7 +422,7 @@ describe('runSourcingSequence', () => {
       knowledgeId: 'k1',
       count: 3,
       enqueueSequenceJob: fn,
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: WEB_SEARCH_UP,
     });
 
     expect(calls.length).toBeGreaterThan(0);
@@ -456,7 +456,7 @@ describe('runSourcingSequence', () => {
       knowledgeId: 'k1',
       count: limit,
       enqueueSequenceJob: fn,
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: WEB_SEARCH_UP,
     });
 
     // The new high-tier authentic row must be the FIRST hit despite being created last.
@@ -489,7 +489,7 @@ describe('runSourcingSequence', () => {
       knowledgeId: 'k1',
       count: 5, // force insufficient so both hits come back
       enqueueSequenceJob: fn,
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: WEB_SEARCH_UP,
     });
 
     const ids = res.existing.map((h) => h.question_id);
@@ -515,7 +515,7 @@ describe('runSourcingSequence', () => {
         count: 3, // force insufficient (empty pool) so the profile path runs
         // NO domain passed → must derive from the node.
         enqueueSequenceJob: fn,
-        tavilyAvailable: TAVILY_UP,
+        webSearchAvailable: WEB_SEARCH_UP,
       });
       // The orchestrator resolved the profile off the node's domain ('math'), NOT the
       // default-subject fallback (null).
@@ -536,7 +536,7 @@ describe('runSourcingSequence', () => {
       knowledgeId: 'ghost',
       count: 3,
       enqueueSequenceJob: fn,
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: WEB_SEARCH_UP,
     });
 
     expect(res.knowledgeNodeMissing).toBe(true);
@@ -557,17 +557,19 @@ describe('runSourcingSequence', () => {
       knowledgeId: 'k_arch',
       count: 3,
       enqueueSequenceJob: fn,
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: WEB_SEARCH_UP,
     });
 
     expect(res.knowledgeNodeMissing).toBe(true);
     expect(calls).toHaveLength(0);
   });
 
-  // 验证轮 A2 — step 1 pool is kind-filtered in canonical space. A node full of `reading`
-  // questions does NOT satisfy a `computation` request; and a `reading_comprehension`
-  // request matches `reading` rows.
-  it('filters the existing pool by canonical kind (reading rows do not satisfy a computation request)', async () => {
+  // 验证轮 A2 — step 1 pool is kind-filtered in ANSWER-CLASS space (YUK-386:
+  // a kind label's only behavioural content is its implied answer class). A
+  // `choice` (exact) request does NOT match `reading` (semantic) rows; a
+  // `computation` (semantic) request DOES — label identity no longer separates
+  // same-class kinds. Cross-vocabulary fold still applies.
+  it('filters the existing pool by implied answer class (exact request misses semantic rows)', async () => {
     await resetDb();
     await seedKnowledge('k1');
     await seedQuestion({ id: 'r1', knowledgeId: 'k1', kind: 'reading' });
@@ -579,14 +581,37 @@ describe('runSourcingSequence', () => {
       db,
       knowledgeId: 'k1',
       count: 3,
-      kind: 'computation',
+      kind: 'choice',
       enqueueSequenceJob: fn,
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: WEB_SEARCH_UP,
     });
 
-    // none of the reading rows count toward a computation request → not satisfied.
+    // none of the semantic-class reading rows count toward an exact request.
     expect(res.satisfiedFromPool).toBe(false);
     expect(res.existing).toHaveLength(0);
+  });
+
+  it('satisfies a computation request from same-class (semantic) rows — kind label is display-only', async () => {
+    await resetDb();
+    await seedKnowledge('k1');
+    await seedQuestion({ id: 'r1', knowledgeId: 'k1', kind: 'reading' });
+    await seedQuestion({ id: 'r2', knowledgeId: 'k1', kind: 'reading' });
+    await seedQuestion({ id: 'r3', knowledgeId: 'k1', kind: 'reading' });
+
+    const { fn, calls } = collectingEnqueue();
+    const res = await runSourcingSequence({
+      db,
+      knowledgeId: 'k1',
+      count: 3,
+      kind: 'computation',
+      enqueueSequenceJob: fn,
+      webSearchAvailable: WEB_SEARCH_UP,
+    });
+
+    // 'computation' implies the semantic answer class; 'reading' rows share it.
+    expect(res.satisfiedFromPool).toBe(true);
+    expect(res.existing).toHaveLength(3);
+    expect(calls).toHaveLength(0);
   });
 
   it('matches reading rows for a reading_comprehension request (cross-vocabulary)', async () => {
@@ -604,7 +629,7 @@ describe('runSourcingSequence', () => {
       // profile vocabulary on the request; rows are persisted as canonical 'reading'.
       kind: 'reading_comprehension',
       enqueueSequenceJob: fn,
-      tavilyAvailable: TAVILY_UP,
+      webSearchAvailable: WEB_SEARCH_UP,
     });
 
     expect(res.satisfiedFromPool).toBe(true);
@@ -612,9 +637,9 @@ describe('runSourcingSequence', () => {
     expect(calls).toHaveLength(0);
   });
 
-  // 验证轮 C — Tavily down: skip external_sourcing + material_grounded, degrade to a single
+  // 验证轮 C — 检索后端 down: skip external_sourcing + material_grounded, degrade to a single
   // closed_book line; the need[] records the degradation reason.
-  it('degrades the web-grounded lines to closed_book when Tavily is unavailable', async () => {
+  it('degrades the web-grounded lines to closed_book when Exa is unavailable', async () => {
     await resetDb();
     await seedKnowledge('k1');
 
@@ -624,17 +649,17 @@ describe('runSourcingSequence', () => {
       knowledgeId: 'k1',
       count: 3,
       enqueueSequenceJob: fn,
-      tavilyAvailable: () => false,
+      webSearchAvailable: () => false,
     });
 
     expect(res.enqueued).toEqual(['closed_book']);
     expect(calls.map((c) => c.step)).toEqual(['closed_book']);
     expect(res.needs).toHaveLength(1);
     expect(res.needs[0].source).toBe('closed_book');
-    expect(res.needs[0].reason).toContain('Tavily unavailable');
+    expect(res.needs[0].reason).toContain('web search unavailable');
   });
 
-  it('keeps the full route when Tavily is available', async () => {
+  it('keeps the full route when Exa is available', async () => {
     await resetDb();
     await seedKnowledge('k1');
 
@@ -644,12 +669,12 @@ describe('runSourcingSequence', () => {
       knowledgeId: 'k1',
       count: 3,
       enqueueSequenceJob: fn,
-      tavilyAvailable: () => true,
+      webSearchAvailable: () => true,
     });
 
     expect(res.enqueued).toEqual(['external_sourcing', 'material_grounded', 'closed_book']);
     for (const n of res.needs) {
-      expect(n.reason).not.toContain('Tavily unavailable');
+      expect(n.reason).not.toContain('web search unavailable');
     }
   });
 
@@ -671,7 +696,7 @@ describe('runSourcingSequence', () => {
         count: 5, // force "insufficient" so all matching hits come back
         difficultyMin: 4,
         enqueueSequenceJob: fn,
-        tavilyAvailable: TAVILY_UP,
+        webSearchAvailable: WEB_SEARCH_UP,
       });
 
       // Only the d5 row clears the difficulty>=4 floor; the d3 row is excluded.
@@ -704,9 +729,9 @@ describe('runSourcingSequence', () => {
         count: 5, // force insufficient so all matching hits come back
         unit: '篇',
         // kind=null: the parent's own kind ('reading') must NOT be filtered out by the
-        // in-memory kindsMatch step (CRITIC FIX P1 — 篇 + null kind no-op interaction).
+        // in-memory answerClassCompatible step (CRITIC FIX P1 — 篇 + null kind no-op interaction).
         enqueueSequenceJob: fn,
-        tavilyAvailable: TAVILY_UP,
+        webSearchAvailable: WEB_SEARCH_UP,
       });
 
       // Only the composite parent counts: the child parts (they ARE parts, not parents)
@@ -728,7 +753,7 @@ describe('runSourcingSequence', () => {
         count: 3,
         unit: '篇',
         enqueueSequenceJob: fn,
-        tavilyAvailable: TAVILY_UP,
+        webSearchAvailable: WEB_SEARCH_UP,
       });
 
       expect(res.existing).toEqual([]);
@@ -749,7 +774,7 @@ describe('runSourcingSequence', () => {
         count: 3,
         // difficultyMin / unit omitted → both null.
         enqueueSequenceJob: fn,
-        tavilyAvailable: TAVILY_UP,
+        webSearchAvailable: WEB_SEARCH_UP,
       });
 
       // All three atomic questions count (no floor, no 篇 filter) → satisfied from pool.

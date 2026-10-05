@@ -17,8 +17,9 @@ import type { R2Client } from '@/server/r2';
 //     handle a session pins, and two sessions may legitimately reference the
 //     identical page bytes via distinct rows.
 //   - r2.put(storageKey, bytes, mime);
-//   - INSERT source_asset (kind='image', no width/height/provenance — those stay
-//     defaulted/null exactly as the photo path does today).
+//   - INSERT source_asset with dimensions from the stored bytes when recognizable.
+//     Unknown formats/malformed legacy inputs keep nullable dimensions; this
+//     metadata read neither transforms the object nor changes upload acceptance.
 //
 // The return shape is the inserted row, so /api/assets can keep returning
 // `{ asset: row }` byte-for-byte while /api/ingestion/pdf maps over many rows.
@@ -46,6 +47,17 @@ export async function sha256Hex(bytes: Uint8Array): Promise<string> {
     .join('');
 }
 
+async function imageDimensions(bytes: Uint8Array) {
+  try {
+    // Public ingestion ports are also imported by migration/CLI bundles. Load
+    // the native image package only when an asset actually needs inspection.
+    const { default: sharp } = await import('sharp');
+    return await sharp(Buffer.from(bytes)).metadata();
+  } catch {
+    return null;
+  }
+}
+
 export async function persistImageAsset(
   db: Db,
   r2: R2Client,
@@ -57,6 +69,12 @@ export async function persistImageAsset(
   },
 ): Promise<SourceAssetRow> {
   const { bytes, mime } = input;
+  // Read the exact byte view (including pooled-buffer offsets), without decoding
+  // pixels or holding the DB/storage-key lock. Existing unsupported input paths
+  // remain accepted with unknown dimensions; never synthesize a size.
+  const dimensions = await imageDimensions(bytes);
+  const width = dimensions?.width;
+  const height = dimensions?.height;
   const sha = await sha256Hex(bytes);
   const storageKey = `assets/${sha}`;
 
@@ -86,6 +104,9 @@ export async function persistImageAsset(
           mime_type: mime,
           byte_size: bytes.byteLength,
           sha256: sha,
+          width: width !== undefined && Number.isSafeInteger(width) && width > 0 ? width : null,
+          height:
+            height !== undefined && Number.isSafeInteger(height) && height > 0 ? height : null,
           provenance: input.provenance,
           created_at: now,
         })

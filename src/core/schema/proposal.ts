@@ -85,6 +85,13 @@ export const aiProposalKinds = [
   // proposalWhere); no writer/inbox change. See
   // docs/design/2026-06-27-a13-ts-half-design.md.
   'conjecture',
+  // YUK-1016 / 454-B — 错因 catalog 扩张：`other` 归因复发 → LLM 提议新类目
+  // （或 owner 手动提议）→ owner accept → `cause_category_overlay` INSERT。
+  // 词表从此不只靠发版扩张（DB overlay 与 profile.causeCategories 合并读取）。
+  // accept applier 真身在 practice 包（acceptCauseCategoryProposal）；retract
+  // 置 overlay 行 archived_at。Flow 走既有 experimental:proposal 路径
+  // （writeAiProposal default + proposalWhere）；无 writer/inbox 改动。
+  'cause_category',
 ] as const;
 
 export const AiProposalKind = z.enum(aiProposalKinds);
@@ -197,6 +204,9 @@ export const acceptSupportedProposalKinds = [
   // (acceptConjectureProposal). accept = calibration anchor (NOT confirmed);
   // edit → mem0 CORE; reject → digest. Never writes FSRS (ND-5).
   'conjecture',
+  // YUK-1016 / 454-B — cause_category_overlay 写路径 = accept applier
+  // （audit:schema 要求的唯一 INSERT 边界）。
+  'cause_category',
 ] as const satisfies readonly AiProposalKindT[];
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -240,6 +250,8 @@ export const aiProposalKindStrength = {
   question_draft: 'B',
   question_edit: 'B',
   conjecture: 'B',
+  // YUK-1016 — catalog 扩张永远过人审（词表是归因合同的一部分）。
+  cause_category: 'B',
 } as const satisfies Record<AiProposalKindT, AiProposalStrength>;
 
 export function kindStrength(kind: AiProposalKindT): AiProposalStrength {
@@ -249,6 +261,9 @@ export function kindStrength(kind: AiProposalKindT): AiProposalStrength {
 export const ProposalEvidenceRef = z.object({
   kind: z.enum(['event', 'question', 'knowledge', 'artifact', 'record']),
   id: z.string().min(1),
+  // YUK-1019 — kind='event' 的可选 action 角色细分：tally 证据里 user_cause
+  // 与 judge event 混排，不带 role 时 reviewer 得回查 event 行才能分辨。
+  event_role: z.enum(['judge', 'user_cause']).optional(),
 });
 export type ProposalEvidenceRefT = z.infer<typeof ProposalEvidenceRef>;
 
@@ -410,7 +425,7 @@ export const ImageCandidateProposalChange = z.object({
   // an empty attribution exactly as before — no behaviour regression.
   knowledge_ids: z.array(z.string().min(1)).default([]),
   // YUK-227 S3 Slice C (FIX-R2-5) — the 题型约束 the sourcing run was pinned to (if
-  // any). The text path enforces kindsMatch per question; image candidates carry no
+  // any). The text path enforces answerClassCompatible per question; image candidates carry no
   // per-question kind at propose time (the stem is unread until accept's VLM), so the
   // run-level requested kind is stamped here and the accept handler normalizes it
   // through the single-authority question-kind vocabulary (src/subjects/question-kind.ts)
@@ -647,6 +662,17 @@ export const ConjectureProposalChange = z
   });
 export type ConjectureProposalChangeT = z.infer<typeof ConjectureProposalChange>;
 
+// YUK-1016 / 454-B — 新错因类目的收编载荷。`category_id` 必须走
+// `ov_<slug>` 命名空间（生产者负责生成，applier 只做 Zod 校验 + 防撞检查）；
+// `source` 区分 LLM 复发提议与 owner 手动提议，两条路径共用同一 accept 落点。
+export const CauseCategoryProposalChange = z.object({
+  category_id: CauseCategory,
+  label: z.string().trim().min(1).max(60),
+  description: z.string().trim().min(1).max(500).optional(),
+  source: z.enum(['owner', 'llm_propose']),
+});
+export type CauseCategoryProposalChangeT = z.infer<typeof CauseCategoryProposalChange>;
+
 export const AiProposalPayload = z.discriminatedUnion('kind', [
   BaseProposal.extend({
     kind: z.literal('knowledge_node'),
@@ -752,6 +778,14 @@ export const AiProposalPayload = z.discriminatedUnion('kind', [
     kind: z.literal('conjecture'),
     target: ProposalTarget.extend({ subject_kind: z.literal('mind_model') }),
     proposed_change: ConjectureProposalChange,
+  }),
+  // YUK-1016 / 454-B — 错因 catalog 扩张提议。target.subject_kind =
+  // 'subject_profile'、subject_id = 目标科目 profile.id（被扩张的是该 profile
+  // 的词表视图）；category_id 本体在 proposed_change（收编后 = overlay 行 id）。
+  BaseProposal.extend({
+    kind: z.literal('cause_category'),
+    target: ProposalTarget.extend({ subject_kind: z.literal('subject_profile') }),
+    proposed_change: CauseCategoryProposalChange,
   }),
 ]);
 export type AiProposalPayloadT = z.infer<typeof AiProposalPayload>;

@@ -254,6 +254,7 @@ describe('scanQuestionInserts (classification)', () => {
 
 // No-false-positive regression — run the REAL scanner over the real source sites.
 const REAL_SETTERS = [
+  'src/capabilities/ingestion/server/import-completion.ts',
   'src/capabilities/ingestion/server/image-candidate-accept.ts',
   'src/capabilities/practice/server/proposal-appliers.ts',
   // YUK-697 — the tier-2 web_sourced draft INSERT moved OUT of sourcing.ts into the shared
@@ -272,12 +273,14 @@ const REAL_SETTERS = [
   // (NULL≡active remains the legal default), so this is the same allowlisted-AND-explicit
   // "harmless-redundant" case as materialize-ask-check.ts — the gate silently passes it.
   'src/capabilities/ingestion/server/auto-enroll.ts',
-];
-const REAL_NULL_OWNERS = [
-  'src/capabilities/ingestion/api/import.ts',
-  'src/capabilities/ingestion/api/mistakes.ts',
+  // YUK-1011 — createQuestionPart now writes `draft_status: input.draftStatus`
+  // ('draft' for quiz_gen composite children; undefined≡NULL for the legacy
+  // paper/import callers). The key is present in the values object, so the site
+  // classifies as an explicit setter; the file keeps its allowlist entry
+  // (harmless-redundant) since the DEFAULT remains NULL≡active.
   'src/server/questions/parts.ts',
 ];
+const REAL_NULL_OWNERS = ['src/capabilities/ingestion/api/mistakes.ts'];
 
 describe('no-false-positive regression (real sites)', () => {
   it('every explicit-setter site is detected as carrying draft_status', () => {

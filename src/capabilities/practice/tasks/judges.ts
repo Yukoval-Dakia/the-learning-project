@@ -146,11 +146,11 @@ const judgeTaskDefinitions = {
   },
   StepsJudgeTask: {
     kind: 'StepsJudgeTask',
-    // YUK-591 — migrated to the SDK-native outputFormat seam (YUK-299): the judge
-    // declares StepsLlmOutput here, builds outputFormat from it, and does the
+    // YUK-591 — the judge declares StepsLlmOutput here; the call site does the
     // three-state dispatch (structured_output present → safeParse; endpoint
-    // ignores it → char-scan text parse). The prior YUK-576 note ("structured
-    // output = the JSON product, SDK-native migration deferred") is now resolved.
+    // ignores it → char-scan text parse). Post-YUK-1025 the wire-level
+    // outputFormat option is gone with the SDK; the schema remains the declared
+    // contract enforced by audit:structured-judge.
     description:
       'Math derivation vision-aware step judging — single vision LLM call with structured output (StepsLlmOutput)',
     structuredOutputSchema: StepsLlmOutput,
@@ -164,10 +164,10 @@ const judgeTaskDefinitions = {
     // sees a throw. A REAL cross-provider fallback (anthropic-sub Opus vision
     // lane) is an owner decision — env-lever family (VISION_JUDGE_*), not a
     // registry chain (design doc 2026-07-07 §1.2.1).
-    // YUK-792 deployed canary found that mimo's SDK-native outputFormat protocol
-    // can consume one envelope turn before its terminal result. StepsJudgeTask
-    // shares the same provider/model/outputFormat seam as its direct sibling,
-    // so both need the same two-turn protocol ceiling.
+    // YUK-792 deployed canary found that mimo's structured-output protocol can
+    // consume one envelope turn before its terminal result. StepsJudgeTask
+    // shares the same provider/model seam as its direct sibling, so both need
+    // the same two-turn protocol ceiling.
     // Vision call latency: M0 preflight 7.6s for trivial; derivation prompts will run longer.
     budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 90_000, transientRetries: 1 },
     needsToolCall: false,
@@ -182,10 +182,9 @@ const judgeTaskDefinitions = {
   },
   MultimodalDirectJudgeTask: {
     kind: 'MultimodalDirectJudgeTask',
-    // YUK-591 — migrated to the SDK-native outputFormat seam (YUK-299), same shape
-    // as StepsJudgeTask above: declares MultimodalDirectLlmOutput, builds
-    // outputFormat from it, three-state dispatch on the result. Prior YUK-576
-    // "SDK-native migration deferred" note resolved.
+    // YUK-591 — same shape as StepsJudgeTask above: declares
+    // MultimodalDirectLlmOutput, three-state dispatch on the result at the call
+    // site. Prior YUK-576 "structured-output migration deferred" note resolved.
     description:
       'YUK-201 — Holistic vision-aware answer judging (no step-rubric). Single vision LLM call with structured output (MultimodalDirectLlmOutput) for image-bearing prompts/answers that lack a reference_solution (physics calc with a diagram; short-answer with a figure). steps@1 owns step/rubric-weighted derivation judging; this owns the holistic, no-step path.',
     structuredOutputSchema: MultimodalDirectLlmOutput,
@@ -196,11 +195,11 @@ const judgeTaskDefinitions = {
     // YUK-576 — transientRetries: 1, same rationale + boundaries as
     // StepsJudgeTask above (synchronous-route sensor, no durable backstop;
     // cross-provider fallback = owner decision via env lever).
-    // YUK-792 deployed canary: mimo can use the first SDK turn to satisfy the
-    // native outputFormat envelope, then needs one terminal turn. A ceiling of
+    // YUK-792 deployed canary: mimo can use the first turn to satisfy the
+    // structured-output envelope, then needs one terminal turn. A ceiling of
     // one returned error_max_turns before any judge result, leaving every
     // response-aware probe unanswerable. This is still one paid judge request;
-    // maxIterations only bounds the Agent SDK turn protocol.
+    // maxIterations only bounds the adapter's turn protocol.
     budget: { ...DEFAULT_BUDGET, maxIterations: 2, timeout: 90_000, transientRetries: 1 },
     needsToolCall: false,
     isMultimodal: true,

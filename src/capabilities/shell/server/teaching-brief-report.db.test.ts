@@ -7,7 +7,7 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { serveProbeOnce } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
+import { serveProbeOnce } from '@/capabilities/agency/public';
 import { newId } from '@/core/ids';
 import { learnerLocalDay } from '@/core/learner-day';
 import { BRIEF_SEEN_ACTION, PROBE_RESULT_ACTION } from '@/core/schema/conjecture';

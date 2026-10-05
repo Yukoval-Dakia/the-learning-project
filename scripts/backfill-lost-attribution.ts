@@ -27,7 +27,9 @@
 // `parseLimit` — stays importable in the unit test without a DATABASE_URL.
 import './load-env';
 
-import type { FailureLearningBossSend } from '@/capabilities/practice/jobs/failure-learning-jobs';
+import type { FailureLearningBossSend } from '@/capabilities/practice/public';
+// YUK-1064 CLI exception: this one-off backfill keeps its pure limit parser
+// importable without a DB URL. A value import from practice/public pulls app runtime.
 import {
   type EnqueueAttributionFollowupFn,
   runLostAttributionBackfill,
@@ -87,6 +89,8 @@ async function main(): Promise<number> {
 
   let send: EnqueueAttributionFollowupFn | undefined;
   if (!dryRun) {
+    // YUK-1064 CLI exception: load the concrete queue sender only after explicit
+    // non-dry-run selection, preserving the backfill's lazy DB/boss startup.
     const { enqueueAttributionFollowup } = await import(
       '@/capabilities/practice/jobs/failure-learning-jobs'
     );

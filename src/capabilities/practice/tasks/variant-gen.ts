@@ -40,22 +40,18 @@ export function parseVariantOutput(text: string): VariantGenOutput {
   return VariantOutputSchema.parse(json);
 }
 
-const VARIANT_CAUSE_STRATEGIES: Record<string, string> = {
-  concept: '同概念不同语境 / 反向考查（验证概念边界）',
-  knowledge_gap: '补充该知识点的典型变体',
-  calculation: '改数据 + 留同样陷阱（验证计算稳定性）',
-  reading: '改提问方式 + 加干扰信息',
-  memory: '不同表述测同一记忆点',
-  expression: '同题重写答案要求（重点检查表达）',
-  method: '提示备选方法 + 同类型题',
-  unit_error: '改变单位、量纲或换算条件，检查单位一致性',
-};
+// YUK-739 — targeted-variant authoring strategy copy now lives on each
+// subject's own cause category declaration (`variant_strategy`, see
+// profile-decl.ts). The cross-subject VARIANT_CAUSE_STRATEGIES mirror is gone:
+// math's `unit_error` and yuwen's `grammar` describe themselves; a category
+// without a declared strategy renders the generic fallback line below — the
+// exact behavior the legacy table's miss branch produced for physics etc.
 
 function variantCauseStrategyList(profile: SubjectProfile): string {
   return profile.causeCategories
     .map((category) => {
       const strategy =
-        VARIANT_CAUSE_STRATEGIES[category.id] ??
+        category.variant_strategy ??
         `围绕「${category.label}」设计同知识点、同能力目标的针对性变式`;
       return `- ${category.id}（${category.label}）：${strategy}`;
     })

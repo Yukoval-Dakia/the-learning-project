@@ -9,6 +9,7 @@
 | `generated.ts` | drizzle-zod 生成的 `*InsertGenerated` / `*SelectGenerated` 基底（勿手改）|
 | `business.ts` | 领域 enum + 子对象（QuestionKind / Rubric / ArtifactType / AgentRef...）|
 | `event/` | **event discriminated union**（事件驱动核）——`actor_kind × action × subject_kind`，payload 按 Zod 守 |
+| `assessment/` | **统一评估契约基座**（YUK-1046）：五层模型、ResponseSpec、scoring unit、身份/CAS、未决态、公私 DTO、发布 policy |
 | `structured_question.ts` | StructuredQuestion（OCR/rescue/manual/agent 共享唯一真相）|
 | `learning_session.ts` | session envelope（type: ingestion/review/conversation/tutor/explore/create）|
 | `cause.ts` | 归因 10 类 |

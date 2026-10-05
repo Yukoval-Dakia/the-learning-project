@@ -8,12 +8,15 @@ import { db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError, collectionPayload, errorResponse, resourceResponse } from '@/kernel/http';
+import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-overlay';
+import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
 import {
   assertCauseAllowedForSubjectProfile,
   resolveSubjectProfileForKnowledgeIds,
 } from '@/kernel/read-models/subject-profile';
 import { createLearningRecord } from '@/kernel/records/queries';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { listMistakeProjectionPage } from '@/server/records/mistakes';
 import { CreateMistakeBodySchema, MistakeListQuerySchema } from './contracts';
 
@@ -66,7 +69,12 @@ export async function POST(req: Request): Promise<Response> {
       );
     }
     const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, body.knowledge_ids);
-    assertCauseAllowedForSubjectProfile(body.cause, subjectProfile);
+    // YUK-1016 — 校验词表 = 声明 ∪ overlay.active：owner accept 的 ov_ 类目
+    // 必须能在手工错题入口被选用（否则收编类目 owner 自己用不了）。
+    assertCauseAllowedForSubjectProfile(
+      body.cause,
+      await withActiveCauseCategoryOverlays(db, subjectProfile),
+    );
 
     // Validate asset refs
     await assertAssetsExist(body.prompt_image_refs, 'prompt_image_refs');
@@ -108,6 +116,15 @@ export async function POST(req: Request): Promise<Response> {
           version: 0,
         }),
       );
+      // YUK-1043（复审裁决：可行写口即刻收敛）—— 人工错题 INSERT 同事务铸首版
+      // revision。错题原答不能成为答案键：reference 缺失 ⇒ normalizer 记
+      // conversion_issue ⇒ withheld/unverified_rules（P1-2 分离语义的先行落位：
+      // 题目契约与作答证据分别保留，作答证据在 attempt 事件，不在契约）。
+      await publishQuestionGroupFromRow(tx, {
+        rootId: questionId,
+        actorRef: 'mistakes:manual',
+        now,
+      });
       const questionSnapshot = await loadAttemptQuestionSnapshot(tx, questionId);
       await writeEvent(tx, {
         id: attemptEventId,
@@ -237,11 +254,15 @@ export async function GET(req: Request): Promise<Response> {
     );
     const since = parsed.data.since ? new Date(parsed.data.since) : undefined;
     const questionIds = parsed.data.question_id ? [parsed.data.question_id] : undefined;
+    const subjectKnowledgeIds = parsed.data.subject
+      ? await resolveSubjectKnowledgeIds(db, parsed.data.subject)
+      : undefined;
 
     const page = await listMistakeProjectionPage(db, {
       limit,
       since,
       questionIds,
+      subjectKnowledgeIds,
       cursor: parsed.data.cursor,
     });
 

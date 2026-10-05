@@ -30,19 +30,14 @@ import {
 } from '@/capabilities/notes/server/note-verification-claim';
 import { emitNoteVerificationLifecycleEvent } from '@/capabilities/notes/server/note-verification-lifecycle';
 import { parseNoteVerificationOutput } from '@/capabilities/notes/tasks/note-tasks';
-import { NoteVerificationResult, type NoteVerificationResultT } from '@/core/schema/business';
+import type { NoteVerificationResultT } from '@/core/schema/business';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, artifact, knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import {
-  type TaskTextResult,
-  type TaskTextRunFn,
-  aiAgentRef,
-  costUsdToMicroUsd,
-} from '@/server/ai/provenance';
+import { type TaskTextRunFn, aiAgentRef, costUsdToMicroUsd } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import { resolveNoteSkill } from '@/subjects/note-skills';
+import { resolveNoteSkillDoc } from '@/subjects/note-skills';
 import { resolveSubjectProfile } from '@/subjects/profile';
 
 const ATOMIC_REQUIRED_SEMANTIC_KINDS = [
@@ -335,7 +330,7 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
     const runtime = await (async () => {
       try {
         const subjectProfile = resolveSubjectProfile(input.knowledge_node?.domain);
-        return { subjectProfile, skills: await resolveNoteSkill(subjectProfile.id) };
+        return { subjectProfile, piSkillDocs: await resolveNoteSkillDoc(subjectProfile.id) };
       } catch (error) {
         await releaseReservedNoteVerificationForRetry(db, lease, error);
         throw error;
@@ -348,7 +343,7 @@ export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNot
     try {
       const taskResult = await runTaskFn('NoteVerifyTask', input, {
         subjectProfile: runtime.subjectProfile,
-        skills: runtime.skills,
+        piSkillDocs: runtime.piSkillDocs,
         taskRunId: lease.taskRunId,
         beforeProviderQuery: async () => {
           const providerStart = await markNoteVerificationProviderStarted(db, lease);

@@ -19,9 +19,8 @@
 // replace ONLY this selection step — see ADR-0030 §5.
 
 import { and, inArray, sql } from 'drizzle-orm';
-import type { QuestionKindT } from '@/core/schema/judge-routing';
 import type { Db, Tx } from '@/db/client';
-import { isPoolVisible, notDraftPredicate } from '@/db/predicates';
+import { isPoolVisible, notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { event, question } from '@/db/schema';
 
 // ADR-0030 §1 — by-kind routing class.
@@ -33,25 +32,39 @@ export type RotationClass = 'recall' | 'application';
 // Unadjudicated kinds (essay / computation / derivation / true_false) fall through
 // to the CONSERVATIVE application default: they are all open/solve-type where
 // "memorise the answer" is harmful, and a family of one degrades naturally to an
-// original-repeat (see pickProbeForKnowledge). The `satisfies` map over the full
-// QuestionKind enum forces every NEW kind through an explicit classification at
-// compile time — adding a kind to the enum without listing it here is a type error.
-const ROTATION_CLASS_BY_KIND = {
+// original-repeat (see pickProbeForKnowledge).
+//
+// YUK-386 — question.kind is a free-form label, so this is now a lookup over the
+// KNOWN label ids (the nine below), not an exhaustive enum map. A label outside
+// the table → undefined: the signal collectors (softmax/placement/stream-store)
+// fail CLOSED into the recall lock (never sampled as a normal application item),
+// while selectProbeFromPrefetch treats it as the application default — identical
+// to the pre-YUK-386 runtime path where a dirty value's map lookup returned
+// undefined → `=== 'recall'` false → application.
+const ROTATION_CLASS_BY_KIND: Record<string, RotationClass> = {
   fill_blank: 'recall',
   translation: 'recall',
   short_answer: 'application',
   reading: 'application',
   choice: 'application',
   // Conservative default for kinds owner did not name (ADR-0030 §决定·1). If a
-  // future kind is genuinely a recall type, it MUST be reclassified here — the
-  // exhaustive `satisfies` below is the guard that surfaces the new kind.
+  // future label is genuinely a recall type, it MUST be classified here — the
+  // fail-closed default is recall-lock (undefined), not application.
   essay: 'application',
   computation: 'application',
   derivation: 'application',
   true_false: 'application',
-} satisfies Record<QuestionKindT, RotationClass>;
+};
 
-export function rotationClassForKind(kind: QuestionKindT): RotationClass {
+/**
+ * Rotation class for a persisted kind label; `undefined` when the label is
+ * missing or not a KNOWN kind id — signal collectors treat that as the
+ * fail-closed recall lock (FINDING 4), exactly like the retired enum
+ * membership check; the probe selector falls through to application (the
+ * pre-existing dirty-value path).
+ */
+export function rotationClassForKind(kind: string | null | undefined): RotationClass | undefined {
+  if (kind == null || !Object.hasOwn(ROTATION_CLASS_BY_KIND, kind)) return undefined;
   return ROTATION_CLASS_BY_KIND[kind];
 }
 
@@ -179,7 +192,12 @@ export async function prefetchProbeSelection(
     const rows = (await dbHandle
       .select(QUESTION_PROJECTION)
       .from(question)
-      .where(inArray(question.id, lastQuestionIds))) as QuestionRow[];
+      // YUK-1045 — §3.3 契约准入门：recall 回放也要过 suspended/withdrawn 门 ——
+      // 挂起的上一题不返 recall，回落到 K 内首个可用题（复审 P1：此前无门，
+      // 挂起题仍被 recall 路径直送）。
+      .where(
+        and(inArray(question.id, lastQuestionIds), questionSuspendedPredicate(question)),
+      )) as QuestionRow[];
     for (const r of rows) questionRowById.set(r.id, r);
   }
 
@@ -196,7 +214,14 @@ export async function prefetchProbeSelection(
     const rows = (await dbHandle
       .select(QUESTION_PROJECTION)
       .from(question)
-      .where(and(notDraftPredicate(question.draft_status), containment))
+      .where(
+        and(
+          notDraftPredicate(question.draft_status),
+          containment,
+          // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进变式轮换池。
+          questionSuspendedPredicate(question),
+        ),
+      )
       .orderBy(question.created_at, question.id)) as QuestionRow[];
     const dueKcSet = new Set(knowledgeIds);
     for (const r of rows) {
@@ -288,7 +313,10 @@ export function selectProbeFromPrefetch(
     return firstForKnowledgePure(kcQuestions, knowledgeId, usedQuestionIds);
   }
 
-  const cls = rotationClassForKind(lastQuestion.kind as QuestionKindT);
+  // Unknown/unclassifiable labels → undefined → the application branch below
+  // (family rotation) — identical to the pre-YUK-386 dirty-value runtime path
+  // (the enum map lookup returned undefined → `=== 'recall'` false).
+  const cls = rotationClassForKind(lastQuestion.kind);
 
   if (cls === 'recall') {
     // Original-question repeat: re-present the same question iff it is still

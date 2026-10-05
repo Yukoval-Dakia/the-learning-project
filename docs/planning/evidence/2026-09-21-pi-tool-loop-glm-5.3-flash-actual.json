@@ -1,0 +1,48 @@
+{
+  "captured_at": "2026-09-19T16:35:25.655Z",
+  "code_revision": "bc921cf87979e980f32754bf76648ca119aa573b",
+  "ticket": "YUK-1021",
+  "lane": {
+    "adapter": "pi",
+    "provider": "opencode-go",
+    "model": "glm-5.3-flash",
+    "task_kind": "SourcingTask",
+    "needsToolCall": true,
+    "session_header": "x-opencode-session=<ai_task_run.id>",
+    "tool_ctx_run_id": "p2_evidence_tool_oirqh5hj05gko0xlda4x04dc",
+    "pin": "env rollout (AI_ADAPTER_PI_PROVIDER/MODEL), caller passes no modelBinding"
+  },
+  "task_run_id": "rp9ula4vwk29gds4ca2b8wrd",
+  "status": "failure",
+  "finish_reason": "error",
+  "usage": {
+    "inputTokens": 40340,
+    "outputTokens": 725,
+    "thinkingBlocks": 5,
+    "thinkingCharacters": 4097
+  },
+  "cost": {
+    "basis": "estimated",
+    "amount_usd": 0.00099491,
+    "ref": "pi-catalog:opencode-go/glm-5.3-flash"
+  },
+  "tool_call_log": [
+    {
+      "tool_name": "query_knowledge",
+      "task_kind": "SourcingTask",
+      "effect": "read",
+      "latency_ms": 7,
+      "input_digest": "sha256:6d64df055b1686e749c724c94cd986629664729ce6ef0e3a895f57f3d60a642a",
+      "mirrored_event_id": null
+    }
+  ],
+  "mirrored_tool_use_events": [],
+  "error": {
+    "name": "AgentRunError",
+    "subtype": "error_max_turns",
+    "taskRunId": "rp9ula4vwk29gds4ca2b8wrd",
+    "message": "[SourcingTask] Agent SDK errored: subtype=error_max_turns errors=pi agent_loop stopped at the configured turn ceiling (8)"
+  },
+  "input_digest": "sha256:bc734ad2d3f1799e3e4b697706fe9d8d50f04573f69d1e619cc119ff3f0d5b0a",
+  "provenance": "PiRunnerMessage frames carry source=pi; AgentTool names keep the mcp__<server>__<tool> wire so allowedTools/tool_call_log/tool_use semantics are byte-identical to the SDK lane. DomainTools execute via the shared executeDomainToolCall pipeline; the Exa remote tool is bridged over the official MCP SDK StreamableHTTP client. Cost stays catalog-estimated."
+}

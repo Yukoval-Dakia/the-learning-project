@@ -96,6 +96,20 @@ export interface ProposalRetractInput {
   affected_refs?: ActivityRefT[];
 }
 
+/** Internal retry signal: the whole uncommitted correction must be discarded, never retimed. */
+export class StaleProposalCorrectionClock extends Error {
+  constructor(readonly requiredAt: Date) {
+    super('Proposal correction must follow the locked target state');
+    this.name = 'StaleProposalCorrectionClock';
+  }
+}
+
+export function requireLaterProposalCorrection(correctionAt: Date, updatedAt: Date): void {
+  if (correctionAt.getTime() <= updatedAt.getTime()) {
+    throw new StaleProposalCorrectionClock(new Date(updatedAt.getTime() + 1));
+  }
+}
+
 export type ProposalRetractApplier = (db: unknown, input: ProposalRetractInput) => Promise<void>;
 
 export interface ProposalRetractDecl {

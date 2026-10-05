@@ -98,13 +98,12 @@ export interface ListQuestionsParams {
   // set means the subject labels no questions → empty result (not unfiltered).
   subjectKnowledgeIds?: string[];
   source?: string;
-  // YUK-288 题型 filter: the UI sends a CANONICAL QuestionKind (choice / reading /
-  // computation …, from KIND_OPTIONS). Persisted `question.kind` is NOT always
-  // canonical — seed/fixture write paths (subjects/{math,physics,yuwen}/fixtures)
-  // store profile vocabulary (single_choice / reading_comprehension / calculation),
-  // violating the business.ts canonical-is-truth invariant. So an exact
+  // YUK-288 题型 filter: the UI sends a known kind label (choice / reading /
+  // computation …, from KIND_OPTIONS). Persisted `question.kind` is a free-form
+  // label (YUK-386) — historical seed/fixture rows store profile vocabulary
+  // (single_choice / reading_comprehension / calculation), so an exact
   // eq(kind, 'choice') matched ZERO seeded single_choice rows (the empty-list bug).
-  // We expand the requested canonical to ALL persisted forms that normalise to it
+  // We expand the requested label to ALL persisted forms that normalise to it
   // (canonicalKindToPersistedForms) and SQL `IN (...)` over the set — still a pure
   // SQL axis (no in-memory degradation), symmetric with meta.ts's display-side fold.
   kind?: string;
@@ -281,6 +280,15 @@ function buildSqlFilters(params: ListQuestionsParams): SQL[] {
   // Fixed-window diagnostics are learner-facing only through /api/review/due.
   // Never expose future probes or reference answers through the question bank.
   filters.push(ne(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE));
+  // YUK-308 — proposal-dismissed draft tombstones (metadata.dismissed_at,
+  // written by the question_draft dismiss applier) are dead rows, not live
+  // drafts: exclude them on EVERY path, including include_drafts=true (the
+  // copilot query_questions default — otherwise a rejected draft keeps
+  // re-surfacing as "reusable" to the orchestrator) and draftStatus='draft'
+  // /'all' queries. Same marker family as metadata.archived_at (soft-delete);
+  // kept off draft_status because the fail-open pool predicate treats any
+  // non-'draft' literal as pool-visible (write.ts header decision).
+  filters.push(sql`(${question.metadata} -> 'dismissed_at') IS NULL`);
   if (params.source !== undefined) filters.push(eq(question.source, params.source));
   if (params.kind !== undefined) {
     // Match every persisted form normalising to the requested canonical (see the

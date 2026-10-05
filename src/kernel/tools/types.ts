@@ -13,7 +13,7 @@
 import type { z } from 'zod';
 import type { Db } from '@/db/client';
 
-export type ToolEffect = 'read' | 'propose' | 'write';
+export type ToolEffect = 'read' | 'propose' | 'write' | 'control';
 
 export interface ProposalEffectContract {
   readonly owner_gate: 'FULL';
@@ -33,6 +33,7 @@ export interface ToolExecutionGateInput {
 }
 
 export interface ToolExecutionResultObservation extends ToolExecutionGateInput {
+  readonly tool_use_id?: string;
   readonly input: unknown;
   readonly output: unknown;
   readonly error_reason: string | null;
@@ -84,6 +85,7 @@ export type ValidateLearningContentFn = (
 
 export interface ToolContext {
   db: Db;
+  sessionId?: string;
   validateLearningContent?: ValidateLearningContentFn;
   /** Caller-owned cancellation propagated into any nested AI work. */
   signal?: AbortSignal;
@@ -110,6 +112,10 @@ export interface DomainTool<Input = unknown, Output = unknown> {
   inputSchema: z.ZodType<Input>;
   outputSchema: z.ZodType<Output>;
   costClass: ToolCostClass;
+  safeHandoff?: {
+    readonly transport: 'remote';
+    readonly idempotent: true;
+  };
   /** Run the tool. Soft-fail (empty result) returns a valid Output; hard-fail throws. */
   execute(ctx: ToolContext, input: Input): Promise<Output>;
   /** Folded UI summary; e.g. `"mistakes · 8 rows · 3 due"`. Must not exceed ~120 chars. */

@@ -33,7 +33,7 @@ import { type ActivityRefT, questionRef } from '@/core/schema/activity';
 import type { CauseCategoryT } from '@/core/schema/event/blocks';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { type Db, type Tx, db } from '@/db/client';
-import { notDraftPredicate } from '@/db/predicates';
+import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { material_fsrs_state, question } from '@/db/schema';
 import type { EffectiveTruth } from '@/kernel/events';
 import { errorResponse } from '@/kernel/http';
@@ -47,6 +47,7 @@ import { effectiveCauseCategoryForFailureAttempt } from '@/kernel/read-models/ca
 // so the brief-refresh layer shares the SAME canonical bridge.
 import { batchResolveSubjectIds } from '@/kernel/read-models/subject-resolution';
 import { type FailureAttempt, getFailureAttempts } from './attempt-events';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from './placement-scope';
 
 // YUK-167 / ADR-0025 — swappable active-goals reader so DB tests inject goal
 // fixtures (mirrors coach_daily.ts / dreaming_nightly.ts CoachRunDeps pattern).
@@ -96,7 +97,7 @@ async function loadLatestFailureQuestionIds(
   activeDb: DbLike,
   candidateLimit: number,
 ): Promise<string[]> {
-  const rows = (await activeDb.execute(sql<{ question_id: string }>`
+  const rows = await activeDb.execute<{ question_id: string }>(sql`
     SELECT subject_id AS question_id
     FROM (
       SELECT
@@ -112,7 +113,7 @@ async function loadLatestFailureQuestionIds(
     WHERE rn = 1
     ORDER BY created_at DESC, id DESC
     LIMIT ${candidateLimit}
-  `)) as unknown as Array<{ question_id: string }>;
+  `);
   return rows.map((row) => row.question_id);
 }
 
@@ -249,22 +250,31 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
 
     const candidateWindow = Math.min(Math.max(limit * 4, 100), 400);
     const usedDueQuestionIds = new Set<string>();
-    const knowledgeStateRows = await activeDb
-      .select({
-        knowledge_id: material_fsrs_state.subject_id,
-        state: material_fsrs_state.state,
-        due_at: material_fsrs_state.due_at,
-        last_review_event_id: material_fsrs_state.last_review_event_id,
-      })
-      .from(material_fsrs_state)
-      .where(
-        and(
-          eq(material_fsrs_state.subject_kind, 'knowledge'),
-          lte(material_fsrs_state.due_at, now),
-        ),
-      )
-      .orderBy(material_fsrs_state.due_at, material_fsrs_state.subject_id)
-      .limit(candidateWindow);
+    const knowledgeStateRows = (
+      await activeDb
+        .select({
+          knowledge_id: material_fsrs_state.subject_id,
+          state: material_fsrs_state.state,
+          due_at: material_fsrs_state.due_at,
+          last_review_event_id: material_fsrs_state.last_review_event_id,
+        })
+        .from(material_fsrs_state)
+        .where(
+          and(
+            eq(material_fsrs_state.subject_kind, 'knowledge'),
+            lte(material_fsrs_state.due_at, now),
+          ),
+        )
+        .orderBy(material_fsrs_state.due_at, material_fsrs_state.subject_id)
+        .limit(candidateWindow)
+    ).filter(
+      // YUK-1037 — defense in depth: a 'seed:<subj>:root' FSRS subject is a
+      // structural anchor, never probeable content. Enroll sites no longer mint
+      // it, but a pre-fix row may still exist until ops remediation retires it —
+      // skipping it here keeps a stale anchor card from serving as a due probe
+      // (its questions stay reachable via other paths, never via this KC axis).
+      (stateRow) => !SYNTHETIC_SUBJECT_ROOT_RE.test(stateRow.knowledge_id),
+    );
 
     // YUK-716 — bulk-prefetch every probe-selection DB input for the whole due page in THREE
     // reads (was up to ~3 serial round-trips PER due KC — the /api/review/due N+1). The per-KC
@@ -318,6 +328,9 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
           eq(material_fsrs_state.subject_kind, 'question'),
           lte(material_fsrs_state.due_at, now),
           notDraftPredicate(question.draft_status),
+          // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不出 due 页
+          // （挂起=暂停交付；复核通过翻转维度后自然恢复，学习状态不重建）。
+          questionSuspendedPredicate(question),
         ),
       )
       .orderBy(material_fsrs_state.due_at, question.created_at)
@@ -458,7 +471,14 @@ export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): P
           .from(question)
           // Gate-B invariant: never surface an unverified quiz draft, even if it
           // somehow carries a failure attempt (notDraftPredicate — see the Gate-B note above).
-          .where(and(inArray(question.id, trulyNew), notDraftPredicate(question.draft_status)));
+          .where(
+            and(
+              inArray(question.id, trulyNew),
+              notDraftPredicate(question.draft_status),
+              // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不回炉选入。
+              questionSuspendedPredicate(question),
+            ),
+          );
         const qById = new Map(qRows.map((q) => [q.id, q]));
         // Preserve attempt order (newest-first from getFailureAttempts).
         for (const qid of trulyNew) {

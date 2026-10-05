@@ -39,7 +39,7 @@ import {
   runResearchMeetingDirector,
   shanghaiDateKey,
 } from '@/capabilities/agency/server/meeting/director';
-import { parseFlag } from '@/core/env-flags';
+import { getConfigFlag } from '@/core/config/store';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
@@ -332,7 +332,8 @@ export function buildResearchMeetingAgentNightlyHandler(
   return async () => {
     // Dark-ship gate: default OFF. cron stays registered (the job exists); the handler
     // early-returns. Zero spend / zero events / zero proposals.
-    if (!parseFlag(process.env[RESEARCH_MEETING_AGENT_ENABLED_ENV])) {
+    // YUK-1007：DB > env > code-default(false)。
+    if (!getConfigFlag(RESEARCH_MEETING_AGENT_ENABLED_ENV)) {
       console.log(
         `[research_meeting_agent_nightly] disabled (${RESEARCH_MEETING_AGENT_ENABLED_ENV})`,
       );

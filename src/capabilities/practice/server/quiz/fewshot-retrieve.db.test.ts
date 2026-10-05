@@ -102,6 +102,27 @@ describe('retrieveFewShotExamples', () => {
     expect(out[1].id).toBe(lowOverlap);
   });
 
+  it('uses decoded PostgreSQL recency after malformed provenance collapses tiers', async () => {
+    const db = testDb();
+    const oldMalformed = await seed({
+      source: 'web_sourced',
+      metadata: { source_ref_kind: 'url' },
+      createdAt: new Date('2025-01-01T00:00:00Z'),
+    });
+    const recentGenerated = await seed({
+      metadata: generatedMeta,
+      createdAt: new Date('2026-01-01T00:00:00Z'),
+    });
+
+    // SQL optimistically ranks the old URL metadata first; full provenance validation
+    // downgrades it to tier 4, where equal overlap must be resolved by real recency.
+    const out = await retrieveFewShotExamples({ db, kind: 'translation', knowledgeIds: ['k1'] });
+    expect(out.map(({ id, tier }) => ({ id, tier }))).toEqual([
+      { id: recentGenerated, tier: 4 },
+      { id: oldMalformed, tier: 4 },
+    ]);
+  });
+
   it('respects the limit', async () => {
     const db = testDb();
     for (let i = 0; i < 5; i++) await seed({ knowledgeIds: ['k1'] });

@@ -1,8 +1,14 @@
 import type { Job, QueueStats } from 'pg-boss';
+import {
+  COPILOT_SESSION_QUEUE_PROTOCOL_VERSION,
+  type CopilotDispatchBoss,
+  dispatchSessionHead,
+  hasCopilotRunDispatched,
+} from '@/capabilities/copilot/server/durable-dispatch';
 import { findOutstandingCopilotDurableRuns } from '@/capabilities/copilot/server/durable-run-observation';
 import type { Db } from '@/db/client';
-import { getStartedBoss } from '@/server/boss/client';
-import type { BossJobObserver } from '@/server/boss/job-observation';
+import { fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
+import { reconcileNativeSubagentsForParent } from '../server/subagent-mailbox';
 
 import {
   COPILOT_RUN_QUEUE,
@@ -20,7 +26,7 @@ export interface CopilotRunReconcileReport {
   failed: number;
 }
 
-export interface CopilotRunReconcileBoss extends BossJobObserver {
+export interface CopilotRunReconcileBoss extends CopilotDispatchBoss {
   getQueueStats(queue: string, options?: { force?: boolean }): Promise<QueueStats[]>;
 }
 
@@ -75,6 +81,22 @@ export async function reconcileOutstandingCopilotRuns(
       continue;
     }
     try {
+      if (
+        candidate.protocolVersion === COPILOT_SESSION_QUEUE_PROTOCOL_VERSION &&
+        !candidate.dispatched
+      ) {
+        const dispatchedRunId = await dispatchSessionHead(db, candidate.sessionId, {
+          boss,
+          transactionDb: fromPgBossDrizzleTx,
+          nowMs: () => now.getTime(),
+        });
+        const dispatched =
+          dispatchedRunId === candidate.runId ||
+          (await hasCopilotRunDispatched(db, candidate.runId));
+        observations[dispatched ? 'queued' : 'waiting_on_active_run'] += 1;
+        continue;
+      }
+
       const observation = await reconcileCopilotDurableRun({
         db,
         runId: candidate.runId,
@@ -88,7 +110,22 @@ export async function reconcileOutstandingCopilotRuns(
         now,
         boss,
       });
+      // Child repair is separately committed: failure cannot roll back an
+      // already-paid parent outcome. The candidate remains eligible for retry.
+      await reconcileNativeSubagentsForParent(db, candidate.sessionId, candidate.runId);
       observations[observation] += 1;
+      if (
+        observation === 'settled' ||
+        observation === 'projection_repaired' ||
+        observation === 'pre_execution_lost' ||
+        observation === 'ambiguous_execution'
+      ) {
+        await dispatchSessionHead(db, candidate.sessionId, {
+          boss,
+          transactionDb: fromPgBossDrizzleTx,
+          nowMs: () => now.getTime(),
+        });
+      }
     } catch (error) {
       failed += 1;
       console.error('[copilot_run_reconcile] run convergence failed', {

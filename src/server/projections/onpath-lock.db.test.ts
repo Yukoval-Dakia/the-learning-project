@@ -1,23 +1,18 @@
-// YUK-499 — DB tests proving each event-sourcing entity's ON-path mutation acquires a FOR UPDATE
+// YUK-499 — DB tests proving each event-sourcing entity's canonical mutation acquires a FOR UPDATE
 // row lock on the entity row BEFORE its project step.
 //
 // Construction (the "second session blocks" pattern the lane asked for): a SECOND, independent DB
-// session opens a tx and holds `SELECT … FOR UPDATE` on the entity row. The ON-path call is then
+// session opens a tx and holds `SELECT … FOR UPDATE` on the entity row. The canonical call is then
 // fired and MUST block (its promise stays unresolved) for at least LOCK_PROBE_MS — proving the call
 // contends for the SAME row lock before it can finish. The holder then releases and the call must
 // complete successfully. Were the FOR-UPDATE guard absent, the call would resolve immediately and
 // `expect(stillPending).toBe(true)` would fail — so this test is a real regression gate for the lock.
 //
-// The per-entity SoT-flip flag (PROJECTION_IS_WRITER_*) is intentionally left OFF (default): the
-// YUK-499 lock is the FIRST statement of the write tx, taken BEFORE the flag/anchor gate, so it is
-// exercised on the OFF path too (and the OFF imperative write still lands the expected final row).
-//
-// Hermetic: resetDb() + materialized_id_index cleanup in beforeEach (the completion path writes a
-// genesis anchor into that no-FK table, so it is not reached by resetDb's CASCADE truncation).
+// Migration prepares the legacy fixture before acquiring the independent row lock.
 
 import { eq } from 'drizzle-orm';
 import postgres from 'postgres';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { updateGoalStatus } from '@/capabilities/agency/server/goals/queries';
 import { acceptCompletionProposal } from '@/capabilities/agency/server/proposal-appliers';
@@ -26,22 +21,14 @@ import { goal, learning_item, materialized_id_index, mistake_variant } from '@/d
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import { writeVariantQuestionProposal } from '@/kernel/proposals/producers';
 import { dismissAiProposal } from '@/server/proposals/actions';
+import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 const T0 = new Date('2026-06-01T00:00:00.000Z');
-// The contended call must stay blocked at least this long. The ON-path mutations here complete in
+// The contended call must stay blocked at least this long. The canonical mutations here complete in
 // well under 100ms when unobstructed, so 600ms is a comfortable margin against CI jitter while still
 // failing fast if the FOR-UPDATE guard is missing.
 const LOCK_PROBE_MS = 600;
-
-// Per-entity SoT-flip flags — cleared around each test (computed-member delete matches the repo
-// idiom in goal/learning_item/mistake_variant .db.test.ts and avoids lint/performance/noDelete,
-// which only flags static dot-access deletes).
-const FLAGS = [
-  'PROJECTION_IS_WRITER_GOAL',
-  'PROJECTION_IS_WRITER_LEARNING_ITEM',
-  'PROJECTION_IS_WRITER_MISTAKE_VARIANT',
-] as const;
 
 type LockableTable = 'goal' | 'learning_item' | 'mistake_variant';
 
@@ -56,6 +43,7 @@ async function assertContendedCallBlocksOnRowLock(
   rowId: string,
   contended: () => Promise<unknown>,
 ): Promise<void> {
+  await migrateCanonicalProjections(testDb());
   const url = process.env.TEST_DATABASE_URL;
   if (!url) throw new Error('TEST_DATABASE_URL not set — globalSetup did not run');
   const holder = postgres(url, { max: 1 });
@@ -91,7 +79,7 @@ async function assertContendedCallBlocksOnRowLock(
     );
 
     await new Promise((r) => setTimeout(r, LOCK_PROBE_MS));
-    // The contended ON-path call must STILL be blocked on the FOR UPDATE the holder owns. If this is
+    // The contended canonical call must STILL be blocked on the FOR UPDATE the holder owns. If this is
     // false, the call did not contend for the row lock before its project step (the YUK-499 guard is
     // missing / mis-placed).
     expect(done).toBe(false);
@@ -107,14 +95,10 @@ async function assertContendedCallBlocksOnRowLock(
   }
 }
 
-describe('YUK-499 — ON-path mutations hold a FOR UPDATE row lock before the project step', () => {
+describe('YUK-499 — canonical mutations hold a FOR UPDATE row lock before the project step', () => {
   beforeEach(async () => {
     await resetDb();
     await testDb().delete(materialized_id_index); // no FK → not reached by resetDb CASCADE
-    for (const f of FLAGS) delete process.env[f];
-  });
-  afterEach(() => {
-    for (const f of FLAGS) delete process.env[f];
   });
 
   it('goal: updateGoalStatus blocks while the goal row is FOR-UPDATE-locked, then commits', async () => {

@@ -1,6 +1,6 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
-import type { TaskKind } from '@/ai/registry';
+import type { TaskKind } from '@/capabilities/task-registry';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, cost_ledger, tool_call_log } from '@/db/schema';
 import type { AttemptCostBasis, AttemptCostTruth } from './attempt-cost';
@@ -23,8 +23,8 @@ export interface ToolCallLogEntry {
   iteration: number;
   latency_ms: number;
   cost: number;
-  /** YUK-79: 'read' | 'propose' | 'write' for tools dispatched via DomainTool registry. Omit for legacy SDK auto-mirror. */
-  effect?: 'read' | 'propose' | 'write';
+  /** DomainTool registry effect, including local control tools. Omit for legacy SDK auto-mirror. */
+  effect?: 'read' | 'propose' | 'write' | 'control';
   /** YUK-79: set when tool execution hard-fails (timeout / parse / unsupported). */
   error_reason?: string;
   /** YUK-79: set by Lane D when mirrorEvent policy writes an event mirror; FK to event.id. */
@@ -51,13 +51,13 @@ export async function writeToolCallLog(db: DbLike, entry: ToolCallLogEntry): Pro
   return id;
 }
 
-/** Warn when a tool-calling task has no MCP servers configured in its context. */
-export function logMissingMcpServersWarning(entry: {
+/** Warn when a tool-calling task has no pi tool mounts configured in its context. */
+export function logMissingToolMountsWarning(entry: {
   task_run_id: string;
   task_kind: string;
 }): void {
-  console.warn('[runTask] missing_mcp_servers', {
-    event: 'missing_mcp_servers',
+  console.warn('[runTask] missing_tool_mounts', {
+    event: 'missing_tool_mounts',
     task_run_id: entry.task_run_id,
     kind: entry.task_kind,
   });
@@ -136,6 +136,10 @@ export interface AiTaskRunStartEntry {
   provider: string;
   model: string;
   input_hash: string;
+  compiledPromptHash?: string;
+  promptCodecVersion?: string;
+  promptCodecMode?: 'cold' | 'resume';
+  promptContextDigest?: string;
   started_at?: Date;
 }
 
@@ -146,6 +150,10 @@ export async function writeAiTaskRunStarted(db: Db, entry: AiTaskRunStartEntry):
     provider: entry.provider,
     model: entry.model,
     input_hash: entry.input_hash,
+    compiled_prompt_hash: entry.compiledPromptHash ?? null,
+    prompt_codec_version: entry.promptCodecVersion ?? null,
+    prompt_codec_mode: entry.promptCodecMode ?? null,
+    prompt_context_digest: entry.promptContextDigest ?? null,
     status: 'running',
     finish_reason: null,
     usage_json: { inputTokens: 0, outputTokens: 0 },
@@ -164,6 +172,11 @@ export interface AiTaskUsage {
   /** Metadata-only proof that the SDK returned reasoning blocks; raw CoT is never persisted. */
   thinkingBlocks?: number;
   thinkingCharacters?: number;
+  /** Bounded native context metadata, separate from billable token usage; no transcript or summary. */
+  compaction?: {
+    count: number;
+    last: { trigger: 'manual' | 'auto'; preTokens: number; postTokens?: number };
+  };
 }
 
 export interface AiTaskRunFinishEntry {

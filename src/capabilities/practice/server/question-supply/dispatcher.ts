@@ -7,9 +7,12 @@
 // **不建新的整体获取任务、不建新 AI task**（Task 13 红线：deterministic-first，确定性缺口扫描
 // 够用就不加 AI task）。本 dispatcher 是薄 IO 层：把一个 target 选定的路由 → 既有 job/task 调用。
 //
-// 路由 → 既有面映射（架构 doc §Route Planner「Mapping to current code」）：
-//   - sourcing_web    → boss.send('sourcing', { trigger:'knowledge', ref_id, count, knowledge_id, kind })
-//                       （SourcingTask web 既存题，链 source_verify，src/capabilities/practice/jobs/sourcing.ts）
+// 路由 → 既有面映射（架构 doc §Route Planner「Mapping to current code」；YUK-988 E3 起
+// sourcing_web 重指向供给执行 job）：
+//   - sourcing_web    → boss.send('supply_execute', { plan_event_id: null, items: [{ demand_id, knowledge_id,
+//                       count, kind, route_preference: ['sourcing_web'], … }], supply_trace })
+//                       （确定性 plan executor：web SourcingTask 候选产线在工具内部，链
+//                       store_sourced_question commit seam + source_verify，question-supply/plan-executor.ts）
 //   - quiz_gen        → boss.send('quiz_gen', { trigger:'knowledge', ref_id, count, generation_method,
 //                       knowledge_id, kind })（仅当显式要 material/closed_book 生成卷题时；archive doc
 //                       Open Decision：只在 bundled quiz/paper 显式需要时走）
@@ -28,14 +31,13 @@ import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
 import { enqueueSupplyDispatchJob } from '@/kernel/supply-dispatch';
-import { supplyDispatchTavilyAvailable } from '@/kernel/supply-dispatch-tavily';
+import { supplyDispatchWebSearchAvailable } from '@/kernel/supply-dispatch-web-search';
 import { SupplyTraceV1, type SupplyTraceV1T, buildSupplyTrace } from './evidence-demand';
-import { jyeooFetchEnabled } from './jyeoo-supply-config';
 import { planSupplyRoutes } from './route-planner';
 import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
 
 /** pg-boss queues the dispatcher can auto-enqueue into. */
-type DispatchQueue = 'sourcing' | 'quiz_gen' | 'jyeoo_fetch';
+type DispatchQueue = 'supply_execute' | 'quiz_gen';
 
 /**
  * Auto-dispatchable SupplyRoute → pg-boss queue. THE single source of the auto-dispatch
@@ -44,8 +46,7 @@ type DispatchQueue = 'sourcing' | 'quiz_gen' | 'jyeoo_fetch';
  * key/value types checked while preserving the literal keys for the derived Set.
  */
 const AUTO_ROUTE_TO_QUEUE: Partial<Record<SupplyRoute, DispatchQueue>> = {
-  sourcing_web: 'sourcing',
-  jyeoo_fetch: 'jyeoo_fetch',
+  sourcing_web: 'supply_execute',
   quiz_gen: 'quiz_gen',
 };
 
@@ -66,25 +67,17 @@ function resolveDispatchQueue(route: SupplyRoute): DispatchQueue {
   return queue;
 }
 
-// ── review FINDING #5：sourcing_web 派发前的 Tavily 可用性闸 ─────────────────────
+// ── review FINDING #5：sourcing_web 派发前的 web 检索后端可用性闸 ────────────────
 //
-// 问题：无 TAVILY_API_KEY 的安装里，SourcingTask 的 web 找题线退化（sourcing.ts 的
-// supplyDispatchTavilyAvailable() false → 不挂 Tavily MCP → 找题 agent 无 web 搜索/抽取工具）。
-// 把 sourcing_web 直接派出去 = 一个注定退化/失败的付费 job。
+// 问题：无检索后端 key（Tavily→Exa 换装后为 EXA_API_KEY）的安装里，SourcingTask 的 web
+// 找题线退化（supplyDispatchWebSearchAvailable() false → 不挂 Exa MCP → 找题 agent 无 web
+// 搜索/抽取工具）。把 sourcing_web 直接派出去 = 一个注定退化/失败的付费 job。
 //
-// 修复：auto-派 sourcing_web 前查 TAVILY_API_KEY 可用性（复用 worker 同一判据
-// supplyDispatchTavilyAvailable()——单一真相，不复制 env 读取）。不可用 → 跳过 sourcing_web，
-// 落到 route plan 的下一条可派路由（quiz_gen 仍可，不依赖 Tavily 的闭卷生成）；plan 里再无可派
-// 路由 → manual（emit + 留给 UI/copilot），不入队注定失败的 job。
-const defaultTavilyAvailable = supplyDispatchTavilyAvailable;
-
-// ── YUK-697：jyeoo_fetch 可派性闸（kill switch）─────────────────────────────────
-//
-// jyeoo_fetch 是一等确定性路由，route-planner 在 jyeoo-supported subject 上把它排到
-// sourcing_web 之前。但它 dark-ship 在 JYEOO_FETCH_ENABLED 之后（默认 OFF）。闸关时
-// chooseAutoRoute 跳过它、落回 route plan 下一条（= sourcing_web）——这正是票面 P4
-// 「kill switch 回退 sourcing_web」的语义。与 Tavily 闸同构（可行性降级，不越硬偏好）。
-const defaultJyeooFetchAvailable = (): boolean => jyeooFetchEnabled();
+// 修复：auto-派 sourcing_web 前查检索后端可用性（复用 worker 同一判据
+// supplyDispatchWebSearchAvailable()——单一真相，不复制 env 读取）。不可用 → 跳过
+// sourcing_web，落到 route plan 的下一条可派路由（quiz_gen 仍可，不依赖检索后端的闭卷生成）；
+// plan 里再无可派路由 → manual（emit + 留给 UI/copilot），不入队注定失败的 job。
+const defaultWebSearchAvailable = supplyDispatchWebSearchAvailable;
 
 // ── review FINDING #1 + #2：跨扫描指纹 cooldown（防 job-spam / 无界 re-dispatch）─────
 //
@@ -183,16 +176,11 @@ export interface DispatchDeps {
    */
   cooldownDays?: number;
   /**
-   * Tavily 可用性判据注入（review FINDING #5）。默认 supplyDispatchTavilyAvailable()（= TAVILY_API_KEY
-   * 已配，worker 同一判据，单一真相）。测试注入 false 验证 sourcing_web 不被 auto-派、落下一条路由。
+   * Web 检索后端可用性判据注入（review FINDING #5）。默认 supplyDispatchWebSearchAvailable()
+   * （= EXA_API_KEY 已配，worker 同一判据，单一真相）。测试注入 false 验证 sourcing_web 不被
+   * auto-派、落下一条路由。
    */
-  tavilyAvailable?: () => boolean;
-  /**
-   * YUK-697 — jyeoo_fetch 可派性（kill switch）注入。默认 jyeooFetchEnabled()（读
-   * JYEOO_FETCH_ENABLED，dark-ship 默认 OFF）。OFF → chooseAutoRoute 跳过 jyeoo_fetch，
-   * 落回 sourcing_web。测试注入 true 验证 jyeoo-supported 目标派到 jyeoo_fetch 队列。
-   */
-  jyeooFetchAvailable?: () => boolean;
+  webSearchAvailable?: () => boolean;
   /** Typed quiz_gen seam for claim-owned transactional sends. */
   enqueueQuizGen?: EnqueueQuizGenFn;
   /** Test seam for validating the fully augmented trace immediately before parsing. */
@@ -218,11 +206,11 @@ function generationMethodFor(target: QuestionSupplyTarget): 'material_grounded' 
 }
 
 /**
- * 一条已选定的 quiz_gen 路由是否依赖 Tavily：material_grounded 必须 tavily_extract 拉真原文
- * （sourcing-sequence.ts 验证轮 C），closed_book 闭卷生成不依赖。sourcing_web 恒依赖 Tavily
- * （web 找题线无 Tavily MCP 即退化，sourcing.ts）。
+ * 一条已选定的 quiz_gen 路由是否依赖 web 检索后端：material_grounded 必须 web_fetch_exa 拉真
+ * 原文（sourcing-sequence.ts 验证轮 C），closed_book 闭卷生成不依赖。sourcing_web 恒依赖检索
+ * 后端（web 找题线无 Exa MCP 即退化）。
  */
-function routeNeedsTavily(route: SupplyRoute, target: QuestionSupplyTarget): boolean {
+function routeNeedsWebSearch(route: SupplyRoute, target: QuestionSupplyTarget): boolean {
   if (route === 'sourcing_web') return true;
   if (route === 'quiz_gen') return generationMethodFor(target) === 'material_grounded';
   return false;
@@ -243,16 +231,11 @@ function routeNeedsTavily(route: SupplyRoute, target: QuestionSupplyTarget): boo
 function chooseAutoRoute(
   routePlan: SupplyRoute[],
   target: QuestionSupplyTarget,
-  tavilyAvailable: boolean,
-  jyeooFetchAvailable: boolean,
+  webSearchAvailable: boolean,
 ): SupplyRoute | null {
   for (const route of routePlan) {
     if (!AUTO_DISPATCHABLE.has(route)) return null; // 硬偏好边界：不可派路由 → manual。
-    // YUK-697 kill switch：jyeoo_fetch 关闭时跳过它，落回 plan 下一条（sourcing_web）。
-    // 可行性降级（同 Tavily 跳过），不是越过硬偏好——jyeoo_fetch 与 sourcing_web 同为
-    // tier-2 web 既存题线，只是前者确定性、后者 agent，回退是同层替代。
-    if (route === 'jyeoo_fetch' && !jyeooFetchAvailable) continue;
-    if (!tavilyAvailable && routeNeedsTavily(route, target)) continue; // FINDING #5：跳过注定失败的 Tavily 依赖路由。
+    if (!webSearchAvailable && routeNeedsWebSearch(route, target)) continue; // FINDING #5：跳过注定失败的检索依赖路由。
     return route;
   }
   return null;
@@ -271,8 +254,7 @@ export async function dispatchSupplyTarget(
   const enqueue = deps.enqueue ?? defaultEnqueue;
   const actorRef = deps.actorRef ?? 'question_supply';
   const cooldownDays = deps.cooldownDays ?? SUPPLY_DISPATCH_COOLDOWN_DAYS;
-  const tavilyAvailable = (deps.tavilyAvailable ?? defaultTavilyAvailable)();
-  const jyeooFetchAvailable = (deps.jyeooFetchAvailable ?? defaultJyeooFetchAvailable)();
+  const webSearchAvailable = (deps.webSearchAvailable ?? defaultWebSearchAvailable)();
   const routePlan = planSupplyRoutes(target);
   const anchorKid = target.knowledgeIds[0] ?? null;
 
@@ -306,12 +288,12 @@ export async function dispatchSupplyTarget(
       reason: target.reason,
     };
   } else {
-    const autoRoute = chooseAutoRoute(routePlan, target, tavilyAvailable, jyeooFetchAvailable);
+    const autoRoute = chooseAutoRoute(routePlan, target, webSearchAvailable);
     if (autoRoute === null) {
-      // 选定路由（image/ingest/author）无法自动派，**或** 所有可派路由都依赖 Tavily 而 Tavily 缺失
+      // 选定路由（image/ingest/author）无法自动派，**或** 所有可派路由都依赖检索后端而其缺失
       // （review FINDING #5）→ manual（emit + 留给 UI/copilot），不入队注定退化/失败的 job。
-      const headNeedsTavily =
-        !tavilyAvailable && routePlan[0] != null && routeNeedsTavily(routePlan[0], target);
+      const headNeedsWebSearch =
+        !webSearchAvailable && routePlan[0] != null && routeNeedsWebSearch(routePlan[0], target);
       result = {
         targetId: target.id,
         fingerprint: target.fingerprint,
@@ -319,8 +301,8 @@ export async function dispatchSupplyTarget(
         chosenRoute: routePlan[0] ?? null,
         status: 'manual',
         jobId: null,
-        stopCondition: headNeedsTavily
-          ? `route '${routePlan[0]}' needs Tavily but TAVILY_API_KEY is unset; no Tavily-free auto route in plan → manual (review FINDING #5)`
+        stopCondition: headNeedsWebSearch
+          ? `route '${routePlan[0]}' needs web search but EXA_API_KEY is unset; no search-free auto route in plan → manual (review FINDING #5)`
           : `route '${routePlan[0] ?? 'none'}' has no background queue; awaits user/UI (Open Decision #1/#4)`,
         reason: target.reason,
       };
@@ -344,7 +326,7 @@ export async function dispatchSupplyTarget(
         reason: target.reason,
       };
     } else {
-      // 自动派：AUTO_ROUTE_TO_QUEUE 单源映射（sourcing_web→'sourcing'，jyeoo_fetch→'jyeoo_fetch'，quiz_gen→'quiz_gen'）。
+      // 自动派：AUTO_ROUTE_TO_QUEUE 单源映射（sourcing_web→'supply_execute'，quiz_gen→'quiz_gen'）。
       const queue: DispatchQueue = resolveDispatchQueue(autoRoute);
       const dispatchTrace = traceFor(autoRoute);
       const commonData = {
@@ -382,13 +364,44 @@ export async function dispatchSupplyTarget(
                     semantic_goal_revision_id: target.placementStarter.semanticGoalRevisionId,
                   }
                 : {}),
+              // YUK-287 — forward the target's difficulty band so generated questions
+              // aim at the band-gap the matcher detected (requested_difficulty_band
+              // reaches plan/generate inputs as a soft hint).
+              difficulty_band: target.difficultyBand,
+              // YUK-287 forwarded the 篇 (composite parent) requirement
+              // phase-deferred; YUK-1011 makes quiz_gen consume it — the run
+              // persists a composite parent + question_part children.
+              ...(target.constraints.compositeParentOnly ? { composite_parent_only: true } : {}),
               ...(placementTrace ? { supply_trace: placementTrace } : {}),
             }
           : null;
-      const nonQuizData = {
-        ...commonData,
-        ...(queue === 'jyeoo_fetch' ? { difficulty_band: target.difficultyBand } : {}),
-        ...(dispatchTrace ? { supply_trace: dispatchTrace } : {}),
+      // YUK-988 E3 — sourcing_web 分支重指向确定性 executor：单路由需求项（chosen
+      // route 派发时定死，与旧 sourcing job 行为等价——web 失败不落 quiz_gen，缺口由
+      // 下次扫描复现再派）。supply_trace 顶层携带，executor 透传进每个 store commit。
+      const executorData = {
+        plan_event_id: null,
+        items: [
+          {
+            demand_id: `dispatch_${target.id}_${newId()}`,
+            knowledge_id: anchorKid,
+            kind: target.kind && target.kind !== 'any' ? target.kind : 'any',
+            // YUK-287 — forward the target's difficulty band (was hardcoded null).
+            // executorData only runs on the supply_execute queue (autoRoute ===
+            // 'sourcing_web'), where plan-executor validates the band against
+            // DIFFICULTY_BANDS and feeds it to runJyeooFetchCandidates' band filter.
+            difficulty_band: target.difficultyBand,
+            count: target.desiredCount,
+            route_preference: [autoRoute],
+            ...(target.placementStarter
+              ? { placement_claim_id: target.placementStarter.claimId }
+              : {}),
+            ...(target.constraints.objectiveOnly ? { objective_only: true } : {}),
+            ...(target.constraints.kindRequired ? { kind_required: true } : {}),
+          },
+        ],
+        ...((placementTrace ?? dispatchTrace)
+          ? { supply_trace: placementTrace ?? dispatchTrace }
+          : {}),
       };
       try {
         let jobId: string | null;
@@ -399,7 +412,8 @@ export async function dispatchSupplyTarget(
           const { trigger, ref_id, ...rest } = quizGenData;
           jobId = await enqueue(queue, { trigger, ref_id, ...rest });
         } else {
-          jobId = await enqueue(queue, nonQuizData);
+          // sourcing_web（supply_execute 队列）——executor 单路由需求项。
+          jobId = await enqueue(queue, executorData);
         }
         result = {
           targetId: target.id,

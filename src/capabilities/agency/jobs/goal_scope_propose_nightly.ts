@@ -43,7 +43,7 @@ import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree'
 import { type JobYieldOutput, reportJobYield } from '@/server/boss/job-yield';
 import { getDefaultSubjectRegistry, resolveSubjectProfile } from '@/subjects/profile';
 import { type TaskTextRunFn, makeRunTaskFn } from '../server/ai-runtime';
-import { loadPendingGoalScopeSubjects } from './goal_scope_dedup';
+import { loadDismissedGoalScopeSubjects, loadPendingGoalScopeSubjects } from './goal_scope_dedup';
 
 type DepsOverride = {
   runTaskFn?: TaskTextRunFn;
@@ -169,6 +169,14 @@ export async function runGoalScopeProposeNightly(
   // permanently lock out re-propose (FIX-1 / FIX-3).
   const pendingSubjects = await loadPendingGoalScopeSubjects(db);
   if (pendingSubjects.has(subjectId)) {
+    return { ...empty, considered: 1, skipped_pending: 1 };
+  }
+
+  // Gate 3.5 (YUK-187): dismiss-churn 冷却——冷却窗内被 dismiss 的 subject 不重提
+  // （dismiss 只让提案离开 pending 集，此前下一夜即可重提同一 subject）。
+  // skipped_pending 计数复用：同「今晚不提」语义桶，不新增 result 字段。
+  const dismissedSubjects = await loadDismissedGoalScopeSubjects(db);
+  if (dismissedSubjects.has(subjectId)) {
     return { ...empty, considered: 1, skipped_pending: 1 };
   }
 

@@ -6,7 +6,8 @@
 //
 // 与 demo 的真数据取舍：
 //   • DR_SOURCE 用真 question.source enum（13 值，非 demo 的 web/gen/manual 三值）。
-//   • QKIND 用真 QuestionKind enum（choice/fill_blank/... 非 demo 的 mcq/cloze/...）。
+//   • QKIND 覆盖 KNOWN 题面标签（choice/fill_blank/... 非 demo 的 mcq/cloze/...；
+//     kind 是自由文本——词表外标签走 fallback 展示，YUK-386）。
 //   • options 后端给 string[]（markdown 串，非 demo 的 {key,text}）——按 A/B/C/D
 //     行号渲染，正确项无从得知（后端 detail 不含 answer key 对照），故不高亮 correct。
 //   • 省略 AI origin/置信度/成本（后端无此投影，且 demo 本就 Tweak-gated）——不渲 DrOrigin。
@@ -17,6 +18,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { deriveOptionIds, optionLabel } from '@/ui/components/response/response-types';
 import { makeLookup } from '@/ui/lib/makeLookup';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { Btn } from '@/ui/primitives/Btn';
@@ -66,7 +68,7 @@ const DR_SOURCE_FALLBACK = {
 };
 const srcMeta = makeLookup(DR_SOURCE, DR_SOURCE_FALLBACK);
 
-// question.kind（QuestionKind enum + QUESTION_KIND_OPTIONS 标签）→ label/icon。
+// question.kind（自由文本展示标签，YUK-386；KNOWN 标签 + QUESTION_KIND_OPTIONS 中文名）→ label/icon。
 const QKIND: Record<string, { label: string; icon: LoomIconName }> = {
   choice: { label: '选择', icon: 'list' },
   true_false: { label: '判断', icon: 'check' },
@@ -209,17 +211,20 @@ function DrPreviewBody({ d }: { d: DraftReviewDetail }) {
         </MathMarkdown>
         {d.options && d.options.length > 0 && (
           <div className="dr-opts">
-            {d.options.map((opt, i) => (
-              // 后端 detail 投影只给 choices_md 文本串、不给正确项 key（answer 是
-              // reference_md 自由文本，无 enum 对照）——故不渲染 .correct 高亮。
-              // biome-ignore lint/suspicious/noArrayIndexKey: choices 是定序文本串、无稳定 id，A/B/C/D 行号即语义
-              <div key={i} className="dr-opt">
-                <span className="dr-opt-key">{String.fromCharCode(65 + i)}</span>
-                <span className="dr-opt-txt">
-                  <MathMarkdown notation={notation}>{opt}</MathMarkdown>
-                </span>
-              </div>
-            ))}
+            {/* YUK-1051 — 选项 key 换成内容派生 stable id（response-types），不再用数组下标；
+                行号字母仍是展示序号。后端 detail 投影只给 choices_md 文本串、不给正确项
+                key（answer 是 reference_md 自由文本，无 enum 对照）——故不渲染 .correct 高亮。 */}
+            {(() => {
+              const opts = d.options ?? [];
+              return deriveOptionIds(opts, d.id).map((oid, i) => (
+                <div key={oid} className="dr-opt">
+                  <span className="dr-opt-key">{optionLabel(i)}</span>
+                  <span className="dr-opt-txt">
+                    <MathMarkdown notation={notation}>{opts[i]}</MathMarkdown>
+                  </span>
+                </div>
+              ));
+            })()}
           </div>
         )}
       </div>

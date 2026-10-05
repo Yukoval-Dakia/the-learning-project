@@ -596,11 +596,11 @@ const sessionChipStyle = (active: boolean): React.CSSProperties => ({
 });
 
 const pickerCountStyle: React.CSSProperties = {
-  // Count badge intentionally smaller than --fs-meta (13px): there is no <13px
-  // type token (app/globals.css smallest is --fs-meta), and the badge must read as
-  // subordinate to the chip label. 10px font + 6px inline padding are raw px by
-  // design — no matching token exists (ocr-4/5).
-  fontSize: '10px',
+  // YUK-1000 — the previous 10px subordinate size predates the <13px readability
+  // red line (YUK-340 owner ruling: every sub-13px declaration writes back to
+  // --fs-caption = 14px). The pill background still differentiates the count
+  // from the 13px chip label. 6px inline padding stays raw px — no token (ocr-5).
+  fontSize: 'var(--fs-caption)',
   padding: '0 6px',
   borderRadius: 'var(--r-pill)',
   background: 'var(--info-soft)',

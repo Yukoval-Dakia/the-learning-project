@@ -32,10 +32,10 @@ import { and, eq, isNull } from 'drizzle-orm';
 import { compareBySourceTierThenWhitelist, deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
-import { buildTavilyMcpServer } from '@/server/ai/mcp/tavily';
+import { buildExaMcpServer } from '@/server/ai/mcp/exa';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import type { SubjectProfile, SubjectQuestionKind } from '@/subjects/profile-schema';
-import { kindsMatch, questionKindToSkillKind } from '@/subjects/question-kind';
+import type { SubjectProfile } from '@/subjects/profile-schema';
+import { answerClassCompatible, questionKindToSkillKind } from '@/subjects/question-kind';
 import { poolFetch } from './pool-fetch';
 
 // The downstream production steps, in default order. Step 1 (existing pool) is the
@@ -86,11 +86,14 @@ async function queryExistingPool(
   knowledgeId: string,
   limit: number,
   // YUK-226 S2-5b (验证轮 A2) — when the sequence targets a specific 题型, the
-  // existing pool must be filtered by that kind so a node full of `reading`
-  // questions does NOT short-circuit a `computation` request. The compare runs in
-  // canonical space (kindsMatch), so a `reading_comprehension` request matches
-  // `reading` rows and `calculation` matches `computation` — no vocabulary
-  // mismatch silently dropping hits. null kind → no filter (whole active pool).
+  // existing pool must be filtered so a node full of off-class questions does
+  // NOT short-circuit the request (e.g. `reading` rows cannot satisfy a
+  // `choice`/exact request). YUK-386: the compare runs in answer-class space
+  // (answerClassCompatible) — a `computation` request and `reading` rows share
+  // the semantic class so they DO satisfy it; `reading_comprehension` matches
+  // `reading` and `calculation` matches `computation` via the profile-vocab
+  // fold; any free-form label conforms via its implied answer class. null kind
+  // → no filter (whole active pool).
   kind: string | null,
   // YUK-275 — free-text 求卷扩两个维度过滤:
   //   difficultyMin: only count questions whose difficulty >= n (null → no filter).
@@ -127,10 +130,11 @@ async function queryExistingPool(
   });
 
   const hits = rows
-    // A2 — kind filter in canonical space (no-op when kind is null). A row whose
-    // persisted kind doesn't normalize-match the requested kind is excluded so the
-    // pool count reflects only on-target questions.
-    .filter((r) => kind === null || kindsMatch(r.kind, kind))
+    // A2 — kind filter in answer-class space (no-op when kind is null). A row
+    // whose persisted kind label implies a different answer class than the
+    // requested label is excluded so the pool count reflects only on-target
+    // questions.
+    .filter((r) => kind === null || answerClassCompatible(r.kind, kind))
     .map((r) => ({
       question_id: r.id,
       source: r.source,
@@ -212,7 +216,7 @@ export function resolveRoutePreference(
   // resolves the profile's per-题型 route. Fall back to a '*' default entry, then the
   // hard-coded default.
   const byKind = raw as Record<string, unknown>;
-  const profileKey: SubjectQuestionKind | null = kind ? questionKindToSkillKind(kind) : null;
+  const profileKey: string | null = kind ? questionKindToSkillKind(kind) : null;
   const candidate = (profileKey && byKind[profileKey]) || byKind['*'];
   if (!Array.isArray(candidate)) return DEFAULT_SOURCING_ROUTE;
   const steps: SourcingSequenceStep[] = [];
@@ -312,34 +316,34 @@ async function defaultEnqueueSequenceJob(
   });
 }
 
-// ── 验证轮 C: Tavily availability + route degradation ─────────────────────────
+// ── 验证轮 C: web 检索后端 availability + route degradation ─────────────────────
 
 // The web-grounded steps: external_sourcing (tier 2, SourcingTask web search) and
-// material_grounded (tier 3, must拉真原文 via tavily_extract). Both no-op without Tavily.
-const TAVILY_DEPENDENT_STEPS: ReadonlySet<SourcingSequenceStep> = new Set([
+// material_grounded (tier 3, must拉真原文 via web_fetch_exa). Both no-op without Exa.
+const WEB_SEARCH_DEPENDENT_STEPS: ReadonlySet<SourcingSequenceStep> = new Set([
   'external_sourcing',
   'material_grounded',
 ]);
 
-// Reuse the worker's availability判定 verbatim: buildTavilyMcpServer() returns a config
-// iff TAVILY_API_KEY is set (graceful no-op otherwise). Same single source the quiz_gen /
+// Reuse the worker's availability判定 verbatim: buildExaMcpServer() returns a config
+// iff EXA_API_KEY is set (graceful no-op otherwise). Same single source the quiz_gen /
 // sourcing handlers gate on — no second copy of the env logic here.
-function defaultTavilyAvailable(): boolean {
-  return buildTavilyMcpServer() !== null;
+function defaultWebSearchAvailable(): boolean {
+  return buildExaMcpServer() !== null;
 }
 
-// Does the base route include any Tavily-dependent line? (drives the need[] annotation).
-function routeUsesTavily(route: readonly SourcingSequenceStep[]): boolean {
-  return route.some((step) => TAVILY_DEPENDENT_STEPS.has(step));
+// Does the base route include any 检索后端-dependent line? (drives the need[] annotation).
+function routeUsesWebSearch(route: readonly SourcingSequenceStep[]): boolean {
+  return route.some((step) => WEB_SEARCH_DEPENDENT_STEPS.has(step));
 }
 
-// Drop the Tavily-dependent steps; if that leaves the route empty (it wanted ONLY web
+// Drop the 检索后端-dependent steps; if that leaves the route empty (it wanted ONLY web
 // lines), degrade to the tier-4 closed_book fallback (which needs no web fetch). Preserves
 // any closed_book the base route already had, deduped.
-function degradeRouteWithoutTavily(
+function degradeRouteWithoutWebSearch(
   route: readonly SourcingSequenceStep[],
 ): readonly SourcingSequenceStep[] {
-  const kept = route.filter((step) => !TAVILY_DEPENDENT_STEPS.has(step));
+  const kept = route.filter((step) => !WEB_SEARCH_DEPENDENT_STEPS.has(step));
   return kept.length > 0 ? kept : ['closed_book'];
 }
 
@@ -386,9 +390,9 @@ export interface SourcingSequenceParams {
   domain?: string | null;
   // DB-test seam.
   enqueueSequenceJob?: EnqueueSequenceJobFn;
-  // 验证轮 C — test seam for the Tavily availability判定. Defaults to the SAME
-  // buildTavilyMcpServer()-backed predicate the workers use (single judgment, no copy).
-  tavilyAvailable?: () => boolean;
+  // 验证轮 C — test seam for the web 检索后端 availability判定. Defaults to the SAME
+  // buildExaMcpServer()-backed predicate the workers use (single judgment, no copy).
+  webSearchAvailable?: () => boolean;
 }
 
 export interface SourcingSequenceResult {
@@ -428,7 +432,7 @@ export async function runSourcingSequence(
   const difficultyMin = params.difficultyMin ?? null;
   const unit = params.unit ?? null;
   const enqueue = params.enqueueSequenceJob ?? defaultEnqueueSequenceJob;
-  const isTavilyAvailable = params.tavilyAvailable ?? defaultTavilyAvailable;
+  const isWebSearchAvailable = params.webSearchAvailable ?? defaultWebSearchAvailable;
 
   // 验证轮 B — pre-enqueue guard: resolve the node ONCE (existence + archive + domain).
   // A missing/archived node must not enqueue (the produced need would never resolve —
@@ -463,16 +467,16 @@ export async function runSourcingSequence(
   const profile = resolveSubjectProfile(resolvedDomain);
   const baseRoute = resolveRoutePreference(profile, kind);
 
-  // 验证轮 C — Tavily awareness: external_sourcing (tier 2) AND material_grounded (tier 3)
+  // 验证轮 C — 检索后端 awareness: external_sourcing (tier 2) AND material_grounded (tier 3)
   // both lean on web fetch (SourcingTask searches the web; material_grounded must拉真原文).
-  // When Tavily is unconfigured the worker-side buildTavilyMcpServer() returns null and
+  // When Exa is unconfigured the worker-side buildExaMcpServer() returns null and
   // those steps degrade to closed_book ANYWAY — but enqueuing them first wastes a job and
   // produces a misleading need[]. Reuse the SAME availability判定 the worker uses (no
   // second copy) to skip them up front and degrade to a single closed_book line, recording
   // the degradation reason in the need[] for evidence留痕.
-  const tavilyDown = !isTavilyAvailable();
-  const route: readonly SourcingSequenceStep[] = tavilyDown
-    ? degradeRouteWithoutTavily(baseRoute)
+  const webSearchDown = !isWebSearchAvailable();
+  const route: readonly SourcingSequenceStep[] = webSearchDown
+    ? degradeRouteWithoutWebSearch(baseRoute)
     : baseRoute;
 
   const enqueued: SourcingSequenceStep[] = [];
@@ -499,11 +503,11 @@ export async function runSourcingSequence(
       knowledge_id: knowledgeId,
       source: step,
       // 验证轮 C — the degradation suffix records WHY external/material lines were skipped
-      // (evidence留痕). Only present when the route was actually degraded (Tavily down AND
+      // (evidence留痕). Only present when the route was actually degraded (检索后端 down AND
       // the base route wanted a web line).
       reason: `existing pool had ${existing.length}/${count} active questions; enqueued ${step}${
-        tavilyDown && routeUsesTavily(baseRoute)
-          ? ' (Tavily unavailable: external_sourcing/material_grounded degraded to closed_book)'
+        webSearchDown && routeUsesWebSearch(baseRoute)
+          ? ' (web search unavailable: external_sourcing/material_grounded degraded to closed_book)'
           : ''
       }`,
     });

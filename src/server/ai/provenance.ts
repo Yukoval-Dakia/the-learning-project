@@ -1,4 +1,4 @@
-import { type AiTaskKind, getTaskSystemPrompt } from '@/ai/task-prompts';
+import { type AiTaskKind, getTaskSystemPrompt } from '@/capabilities/task-registry';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 
 export { costUsdToMicroUsd, sumAllKnownCostUsd } from '@/kernel/cost';
@@ -35,10 +35,14 @@ export type TaskTextRunFn = (
  * Fingerprint the exact profile-rendered system prompt separately from the
  * user-input hash persisted by runTask. Together they bind both task inputs.
  */
-export function taskPromptFingerprint(task: AiTaskKind, profile?: SubjectProfile): string {
+export function taskPromptFingerprint(
+  task: AiTaskKind,
+  profile?: SubjectProfile,
+  learnerLocale?: 'zh-CN' | 'en',
+): string {
   return sha256CanonicalJson({
     task_kind: task,
-    system_prompt: getTaskSystemPrompt(task, profile),
+    system_prompt: getTaskSystemPrompt(task, profile, learnerLocale),
   });
 }
 

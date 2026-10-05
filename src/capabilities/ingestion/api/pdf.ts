@@ -54,8 +54,10 @@ export async function POST(req: Request): Promise<Response> {
 
     const pdfBytes = new Uint8Array(await file.arrayBuffer());
     // Throws ApiError('validation_error', <中文>, 400) for corrupt / encrypted /
-    // zero-page / over-cap / timeout / oversized-page.
-    const pages = await renderPdfToPngPages(pdfBytes);
+    // zero-page / over-cap / timeout / oversized-page. req.signal (YUK-522) is
+    // threaded so a client disconnect aborts cooperatively between page renders
+    // (ApiError('request_aborted', ..., 499)) instead of finishing the document.
+    const pages = await renderPdfToPngPages(pdfBytes, req.signal);
 
     const r2 = getR2();
     const assetIds: string[] = [];

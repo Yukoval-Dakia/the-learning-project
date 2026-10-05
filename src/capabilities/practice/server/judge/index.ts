@@ -2,6 +2,11 @@ import { getDefaultRegistry } from '@/core/capability/judges';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { AnswerInput, JudgeResult } from './exact';
 
+// YUK-374 — 'rubric' / 'ai_flexible' are union members with NO runner: they
+// exist so a persisted judge_kind_override parses and fails loudly as
+// `unsupported` (judgeRouterV2 below + the invoker dispatch both fail closed)
+// instead of silently re-routing to a different judge. Runnable set =
+// RUNNABLE_ROUTES; see UNIMPLEMENTED_JUDGE_ROUTES in question-contract.ts.
 export type JudgeKind =
   | 'exact'
   | 'keyword'
@@ -49,6 +54,28 @@ export async function judgeRouter(input: JudgeRouterInput): Promise<JudgeResult>
   return downgradeToV1(await judgeRouterV2(input));
 }
 
+export {
+  EvaluateSubmissionError,
+  type EvaluateSubmissionRequest,
+  type EvaluateSubmissionResult,
+  type JevModelExecutorSpec,
+  evaluateSubmission,
+  resolveModelExecutor,
+} from './evaluate-submission';
+export {
+  type ContractAttemptInput,
+  type ContractAttemptOutcome,
+  type ContractGradingRef,
+  EVALUATION_ENTRY_POINTS,
+  type EntryPointDisposition,
+  type EvaluateAttemptInput,
+  type EvaluateAttemptOutcome,
+  type GradingEntryPoint,
+  type LegacyAttemptInput,
+  type LegacyAttemptOutcome,
+  evaluateAttempt,
+  projectEvaluationToJudgeResult,
+} from './evaluation-authority';
 export { judgeExact } from './exact';
 export {
   type JudgeExecutionIdentity,

@@ -20,10 +20,11 @@
 //   - ⑥ governance: reasons + bands are QUALITATIVE (prereq COUNTS / proposed-prereq
 //     NAMES + the discrete BandChip), never bare mastery probabilities.
 
-import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, notLike, sql } from 'drizzle-orm';
 import { isMasteredForFrontier, learnableFrontierResolved } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
+import { isLearnerVisibleKnowledgeId } from '@/kernel/read-models/learner-knowledge-visibility';
 import { getMasteryProjection } from '@/server/mastery/state';
 
 const RELATION_PREREQUISITE = 'prerequisite' as const;
@@ -80,7 +81,7 @@ interface PendingPrereqProposal {
 // 后者措辞。详见 docs/design/2026-07-03-frontier-gate-spec.md §Q6。
 /** Dense-half reason: every prereq is mastered by the gate, so it is a deterministic count. */
 function denseReason(prereqCount: number): string {
-  return prereqCount > 0 ? `已掌握全部 ${prereqCount} 个前置` : '前置已满足';
+  return prereqCount > 0 ? `已掌握全部 ${prereqCount} 个前置` : '前置条件为空';
 }
 
 /** Propose-half reason: the proposed (unconfirmed) prerequisite NAMES that suggest this KC. */
@@ -201,8 +202,17 @@ async function loadKcNames(db: Db, ids: string[]): Promise<Map<string, string>> 
   const rows = await db
     .select({ id: knowledge.id, name: knowledge.name })
     .from(knowledge)
-    .where(and(inArray(knowledge.id, ids), isNull(knowledge.archived_at)));
-  return new Map(rows.map((r) => [r.id, r.name]));
+    .where(
+      and(
+        inArray(knowledge.id, ids),
+        isNull(knowledge.archived_at),
+        notLike(knowledge.id, 'synthetic:%'),
+        notLike(knowledge.id, 'seed:%:root'),
+      ),
+    );
+  return new Map(
+    rows.filter((row) => isLearnerVisibleKnowledgeId(row.id)).map((r) => [r.id, r.name]),
+  );
 }
 
 /**

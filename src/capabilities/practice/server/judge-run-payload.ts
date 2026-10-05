@@ -9,10 +9,11 @@
 // 依赖轻：db schema 行类型 + zod + drizzle 算子；`Db` 只作参数类型传入，不 import db client
 // 单例（保持本模块可被 api/ 与 jobs/ 双向复用而不牵入运行时连接）。
 
-import { and, desc, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Db } from '@/db/client';
 import { event, type question } from '@/db/schema';
+import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
 
 type QuestionRow = typeof question.$inferSelect;
 
@@ -27,7 +28,7 @@ type QuestionRow = typeof question.$inferSelect;
 export interface JudgeRunJobData {
   /**
    * run handle + job_events business_id。**W2 submit 面**：= 该次作答 attempt/outcome
-   * event id（persistSubmit 以它做 eventId，见 opts.attemptEventId）。此「= attempt
+   * event id（deferred settlement 以它做 attemptEventId）。此「= attempt
    * event id」契约是 submit 面特化，不对全部面通用（advice 面无 event，W3 另定）。
    */
   run_id: string;
@@ -179,9 +180,11 @@ export function applyFrozenQuestion(
  * Returns null when no attempt event exists for `runId` — i.e. this run genuinely never
  * persisted anything, which is a real "unknown run", not a recoverable one.
  *
- * `judge` events are ordered newest-first: an appeal-driven rejudge writes a NEW judge event
- * against the same review event and wins by newest (D6), so an unordered read could resurrect
- * a superseded verdict.
+ * YUK-1054 — 裁决轨切分（§9/§10）：顶层字段由【effective】轨驱动（链解析后的生效判），
+ * `original_judge` / `effective_judge` 两个块把双轨原样透给消费侧（DONE payload 契约是
+ * passthrough，加性字段安全）。改判后本函数不再把被 supersede 的旧判当生效判回填 ——
+ * 旧实现是 raw newest-wins，对「新判 + supersede」恰好同向，但对 retract/mark_wrong 或
+ * 乱序 created_at 会把死判当活判。
  */
 export async function reconstructDoneFromDomainEvents(
   db: Db,
@@ -189,15 +192,50 @@ export async function reconstructDoneFromDomainEvents(
 ): Promise<Record<string, unknown> | null> {
   const [attempt] = await db.select().from(event).where(eq(event.id, runId)).limit(1);
   if (!attempt) return null;
-  const [judgeEvent] = await db
-    .select()
-    .from(event)
-    .where(and(eq(event.action, 'judge'), eq(event.subject_id, runId)))
-    .orderBy(desc(event.created_at), desc(event.id))
-    .limit(1);
+  const verdicts = await resolveVerdictForAttempt(db, runId);
+  const judgeEvent = verdicts.effective?.row ?? null;
   const judgePayload = (judgeEvent?.payload ?? {}) as Record<string, unknown>;
+  const originalBlock =
+    verdicts.original === null
+      ? null
+      : {
+          judge_event_id: verdicts.original.judge_event_id,
+          coarse_outcome: verdicts.original.verdict.coarse_outcome,
+          score: verdicts.original.verdict.score,
+          feedback_md: verdicts.original.verdict.feedback_md,
+          correction_state: verdicts.original.correction_state.state,
+        };
+  const effectiveBlock =
+    verdicts.effective === null
+      ? null
+      : {
+          judge_event_id: verdicts.effective.judge_event_id,
+          coarse_outcome: verdicts.effective.verdict.coarse_outcome,
+          score: verdicts.effective.verdict.score,
+          feedback_md: verdicts.effective.verdict.feedback_md,
+          correction_state: verdicts.effective.correction_state.state,
+        };
   const attemptPayload = (attempt.payload ?? {}) as Record<string, unknown>;
-  // W5 #TuxJL — read from where `persistSubmit` ACTUALLY writes each field, not from a
+  // YUK-1054 — original 轨 = 执行收据。优先最早 judge event；无 judge event
+  // （solve-session 等 embedded-grade 分歧面）回退到 resolver embedded 轨
+  // （attempt.payload.judge，judge_event_id=null，correction_state='embedded'）。
+  // 下方 `embedded` 块独立再解析一次同一份 payload 做字段回填（既有 merge 语义）。
+  const attemptEmbedded = verdicts.embedded;
+  const embeddedHasVerdict = typeof attemptEmbedded?.coarse_outcome === 'string';
+  const embeddedOriginalBlock =
+    originalBlock === null && embeddedHasVerdict && attemptEmbedded !== null
+      ? {
+          judge_event_id: null as string | null,
+          coarse_outcome: attemptEmbedded.coarse_outcome,
+          score: attemptEmbedded.score,
+          feedback_md: attemptEmbedded.feedback_md,
+          correction_state: 'embedded' as const,
+        }
+      : null;
+  const originalReceipt = originalBlock ?? embeddedOriginalBlock;
+  const verdictOverturned =
+    originalReceipt !== null && originalReceipt.judge_event_id !== effectiveBlock?.judge_event_id;
+  // W5 #TuxJL — read from where deferred settlement ACTUALLY writes each field, not from a
   // shape that looked plausible. The judge event's payload carries `coarse_outcome` /
   // `score` / `feedback_md` / `capability_ref` / `judge_route`, but NOT `evidence_json`
   // — that lives on the REVIEW event's embedded `payload.judge` block. Reading it off the
@@ -224,7 +262,7 @@ export async function reconstructDoneFromDomainEvents(
     judgePayload.capability_ref,
   );
   const route = pick<string>(isStr, embedded.route, judgePayload.judge_route);
-  // YUK-777 D3 (#TuxJL) — `score_meaning` IS reconstructable now: `persistSubmit` writes it
+  // YUK-777 D3 (#TuxJL) — `score_meaning` IS reconstructable now: settlement writes it
   // into the review event's embedded `payload.judge` block, next to the `score` it qualifies.
   // Still `pick`ed rather than assumed: an attempt persisted before that write landed has no
   // such key, and omitting the field for those rows is the honest answer (the terminal schema
@@ -235,6 +273,10 @@ export async function reconstructDoneFromDomainEvents(
     attempt_event_id: runId,
     judge_event_id: judgeEvent?.id ?? null,
     already_persisted: true,
+    // YUK-1054 — 双轨裁决透传块（passthrough 契约，加性安全）。
+    original_judge: originalReceipt,
+    effective_judge: effectiveBlock,
+    verdict_overturned: verdictOverturned,
     ...(attempt.outcome ? { outcome: attempt.outcome } : {}),
     ...(typeof attemptPayload.fsrs_rating === 'string'
       ? { final_rating: attemptPayload.fsrs_rating }

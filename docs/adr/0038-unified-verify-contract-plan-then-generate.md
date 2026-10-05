@@ -27,7 +27,7 @@
 
 2. **出题改 plan-then-generate + 客观题确定性校验 + item-model 变式**：
    - **plan-then-generate**：出题分两段——先产出题计划（要考哪个知识点、什么题型、客观题的标准答案锚点），再据计划生成题面，而非一次性自由生成后再补验。计划段把「可机检的约束」前置，让后续校验有确定性靶子。
-   - **客观题确定性校验（接 B1 客观题 anchor）**：客观题（`fill_blank`/`choice`/`true_false` 等答案能确定性比对语料的题型；**`translation` 不在此列——`src/core/schema/judge-routing.ts` 把它归 `PROSE_KINDS` 走 semantic judge，是主观题，不走确定性校验**）的 verdict **不烧 LLM**——答案能确定性比对语料即放行（`overall='pass'`）。这条直接接 B1 地基 §5.1 的「硬轨 = 客观题闭环可 n=1 自校验」（`docs/design/2026-06-14-b1-diagnostic-engines-foundation.md`）：客观题的确定判分既是 verify 闸的零成本通道，也是 B1 fixed-anchor 自校准的干净 ground-truth 锚——同一个 owner 客观题作答，verify 侧用它当「机检放行依据」，标定侧用它当「miscalibration 残差信号」，两侧共用一个确定性事实源。
+   - **客观题校验（2026-08-26 修订，owner 拍板 YUK-605②：零-LLM 全量放行不现实，采纳 LLM 实现）**：客观题（`fill_blank`/`choice`/`true_false` 等答案能确定性比对语料的题型；**`translation` 不在此列——`src/core/schema/judge-routing.ts` 把它归 `PROSE_KINDS` 走 semantic judge，是主观题，不走确定性校验**）的原设计为「verdict 不烧 LLM——答案能确定性比对语料即放行」。实际落地形态（YUK-350 #478/#481 + YUK-554）：结构性 reject 过滤器只拒不放（choice/true_false 的结构性缺陷直接否决），pass 判定由 **solve_check 承担——第二次独立 LLM 调用（SolutionGenerateTask 先生成参考解再比对）**。确定性语料比对保留为两处辅助角色：「只拒不放」的结构性预过滤层 + B1 fixed-anchor 标定信号源；不再作为客观题 pass 的充分条件。（B1 §5.1 原始动机——verify 零成本通道与标定干净锚共用事实源——在 reject 层与标定侧仍然成立。）
    - **item-model 变式（杜绝所见≠入库）**：变式生成走「人 accept 一个模板 → 代码确定性实例化」——LLM 产模板（题干骨架 + 参数槽 + 答案生成规则），人审 accept 模板后由确定性代码实例化具体题目，而非 LLM 每次自由生成一道「看起来对、入库却变形」的题。实例化是确定性的，所见即所得即入库。
 
 3. **Variant 信任方向翻转为 verify-then-promote**：`variant_verify.ts` 现状 accept-first（先写 `active` 再异步标 `broken`，`variant_verify.ts:9-11`）翻转为——VariantGen 产出先落 `draft`/pending，过统一 verify 契约 `overall='pass'` 后才 promote。**promote 去向遵循出手强度表（ADR-0039），非一律直接 `active`**：客观题 + 确定性校验通过 + authentic 源走 A 档灰度自动入库（决定④）；其余进 **B 档人审 accept 才 `active` 入 FSRS**（与 ADR-0039 把 `variant_question` 归 B 档对齐——后台 verify pass 只是「够格进出手强度表」，不是绕过人审直接 active）。与 ADR-0030 的关系明确：**本 ADR 只动 Variant 的写入侧信任闸，不动 ADR-0030 的 by-kind 轮换选题算法**（轮换消费的是已 `active` 的家族成员，翻转后这些成员都是 verify 通过的，轮换逻辑零改动）。
@@ -44,7 +44,7 @@
 
 **正面**
 - 三套信任闸（OCR 单信号 / QuizGen 五轴 / Variant accept-first）收敛到一个 verify result 形状 + 一个 verify-then-promote 方向，「内容能不能进库」的判断从此一处定义、可统一单测、可统一观测。
-- 客观题走确定性校验零烧 LLM，且与 B1 fixed-anchor 共用同一个 owner 客观题事实源——verify 侧省成本、标定侧得干净锚，一份作答两处复用（总账「收敛 + 接通」的精确落点）。
+- 客观题校验为「结构性 reject 预过滤 + LLM solve_check 判定」双层（2026-08-26 修订后形态），与 B1 fixed-anchor 共用 owner 客观题事实源——reject 层零成本拦废品，标定侧得干净锚（原「零烧 LLM」承诺按 YUK-605② 裁决修订为 LLM 实现）。
 - item-model 变式（人 accept 模板 + 代码实例化）根除「所见 ≠ 入库」的变形风险，实例化确定性可回放。
 - 'error' 通道独立无依赖先做，立即解决「瞬态故障被当 fail、或 fail 被当瞬态故障重试」的两类误判，且不阻塞 pg-boss redelivery 语义。
 - auto-enroll 从「生产从未跑过的二态开关」推进为可观测的 source-tier 灰度——authentic + 客观题 + 确定校验这一最保守切片先吃到自动入库收益，符合 A/B/C 出手强度表的静态可逆性兜底。

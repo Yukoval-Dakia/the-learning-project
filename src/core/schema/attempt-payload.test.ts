@@ -8,10 +8,8 @@ import {
   parseAttemptPayloadForKind,
   safeParseAttemptPayloadForKind,
 } from './attempt-payload';
-import { QuestionKind } from './business';
+import { KNOWN_QUESTION_KIND_IDS } from './business';
 import { AttemptOnQuestion } from './event/known';
-
-type QuestionKindT = (typeof QuestionKind.options)[number];
 
 describe('AttemptPayload discriminated union', () => {
   it('accepts each objective + free_text archetype', () => {
@@ -61,7 +59,7 @@ describe('AttemptPayload discriminated union', () => {
   });
 });
 
-describe('QuestionKind → archetype mapping', () => {
+describe('kind label → archetype mapping', () => {
   it('structures the clean objective kinds and falls back to free_text otherwise', () => {
     expect(expectedAttemptPayloadKind('choice')).toBe('choice');
     expect(expectedAttemptPayloadKind('true_false')).toBe('true_false');
@@ -75,7 +73,7 @@ describe('QuestionKind → archetype mapping', () => {
     }
   });
 
-  it('maps every QuestionKind (exhaustive — no kind silently unrouted)', () => {
+  it('resolves a valid archetype for every KNOWN kind label (YUK-386)', () => {
     const valid: ReadonlySet<AttemptPayloadKindT> = new Set([
       'choice',
       'true_false',
@@ -83,11 +81,18 @@ describe('QuestionKind → archetype mapping', () => {
       'numeric',
       'free_text',
     ]);
-    for (const kind of QuestionKind.options as readonly QuestionKindT[]) {
-      const archetype = ATTEMPT_PAYLOAD_KIND_BY_QUESTION_KIND[kind];
-      expect(archetype).toBeDefined();
+    for (const kind of KNOWN_QUESTION_KIND_IDS) {
+      const archetype = expectedAttemptPayloadKind(kind);
       expect(valid.has(archetype)).toBe(true);
     }
+  });
+
+  it('falls back to free_text for arbitrary free-form / profile-vocab labels', () => {
+    // YUK-386: kind is a free-form display label — unknown labels must never
+    // crash the archetype lookup; they take the permissive free_text contract.
+    expect(expectedAttemptPayloadKind('open_response')).toBe('free_text');
+    expect(expectedAttemptPayloadKind('single_choice')).toBe('free_text');
+    expect(ATTEMPT_PAYLOAD_KIND_BY_QUESTION_KIND.custom_label).toBeUndefined();
   });
 });
 

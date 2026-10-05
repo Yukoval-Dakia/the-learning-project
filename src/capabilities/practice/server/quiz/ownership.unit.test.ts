@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
@@ -16,15 +16,15 @@ const RETIRED_QUIZ_MODULES = [
 ] as const;
 
 const RETIRED_JOB_MODULES = [
-  'sourcing',
-  'jyeoo-fetch',
+  // YUK-988 — 'sourcing' 已从本名单移除：job 模块本体退役删除（找题核下沉
+  // web_fetch_candidates 工具，存由 store_sourced_question seam 承载，执行面
+  // 换 supply_execute 确定性 job）。
+  // YUK-986 — 'jyeoo-fetch' 已从本名单移除：job 模块本体退役删除（agent tool 链接替）。
   'quiz_gen',
   'quiz_verify',
   'source_verify',
   'variant_verify',
 ] as const;
-const OWNERSHIP_TEST = 'src/capabilities/practice/server/quiz/ownership.unit.test.ts' as const;
-
 function sourceFiles(directory: string): string[] {
   return readdirSync(directory).flatMap((name) => {
     const path = resolve(directory, name);
@@ -37,29 +37,6 @@ function sourceFiles(directory: string): string[] {
 }
 
 describe('Practice quiz sourcing, generation, and verification ownership', () => {
-  it('keeps predecessor modules deleted and rejects their legacy import paths', () => {
-    const root = process.cwd();
-    const retiredFiles = [
-      ...RETIRED_QUIZ_MODULES.map((name) => `src/server/quiz/${name}.ts`),
-      ...RETIRED_JOB_MODULES.map((name) => `src/server/boss/handlers/${name}.ts`),
-    ];
-    expect(retiredFiles.filter((path) => existsSync(resolve(root, path)))).toEqual([]);
-
-    const forbiddenPrefixes = [
-      ...RETIRED_QUIZ_MODULES.map((name) => `@/server/quiz/${name}`),
-      ...RETIRED_JOB_MODULES.map((name) => `@/server/boss/handlers/${name}`),
-    ];
-    const forbiddenImports = sourceFiles(resolve(root, 'src')).flatMap((path) => {
-      const projectPath = relative(root, path);
-      if (projectPath === OWNERSHIP_TEST) return [];
-      const source = readFileSync(path, 'utf8');
-      return forbiddenPrefixes
-        .filter((prefix) => source.includes(prefix))
-        .map((prefix) => `${projectPath}:${prefix}`);
-    });
-    expect(forbiddenImports).toEqual([]);
-  });
-
   it('requires non-Practice consumers to use the public seam instead of deep imports', () => {
     const root = process.cwd();
     const practiceRoot = resolve(root, 'src/capabilities/practice');

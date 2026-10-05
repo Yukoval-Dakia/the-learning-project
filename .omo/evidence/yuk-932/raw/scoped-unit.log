@@ -1,0 +1,55 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.shared" without a file extension (vitest.unit.config.ts:2:74). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.10 /Volumes/YukovalSBak/yukoval-projects/the-learning-project-worktrees/f5-20260827/yuk-932
+
+ ❯ src/ai/task-catalog.unit.test.ts (52 tests | 2 failed) 14ms
+     × eagerly composes the exact six owner allocations 3ms
+     × retains 53 full owned TaskSpecs with the quarry deleted (YUK-870/YUK-885) 1ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 2 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/ai/task-catalog.unit.test.ts > taskCatalog > eagerly composes the exact six owner allocations
+AssertionError: copilot: expected [ 'CopilotCorrectionIntentTask', …(5) ] to have a length of 5 but got 6
+
+- Expected
++ Received
+
+- 5
++ 6
+
+ ❯ src/ai/task-catalog.unit.test.ts:268:53
+    266|   it('eagerly composes the exact six owner allocations', () => {
+    267|     for (const owner of Object.keys(OWNER_MAPS) as TaskOwner[]) {
+    268|       expect(Object.keys(OWNER_MAPS[owner]), owner).toHaveLength(EXPEC…
+       |                                                     ^
+    269|     }
+    270|     expect(ingestionTaskSpecs.ProfileCriticTask.definition).toBe(taskC…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/2]⎯
+
+ FAIL  src/ai/task-catalog.unit.test.ts > taskCatalog > retains 53 full owned TaskSpecs with the quarry deleted (YUK-870/YUK-885)
+AssertionError: CopilotResearchTask: expected false to be true // Object.is equality
+
+- Expected
++ Received
+
+- true
++ false
+
+ ❯ src/ai/task-catalog.unit.test.ts:570:46
+    568|       for (const [kind, entry] of Object.entries(specs)) {
+    569|         expect(entry.ownership, kind).toBe('owned');
+    570|         expect(OWNED_SPECS.has(entry), kind).toBe(true);
+       |                                              ^
+    571|         expect(entry.parseText, kind).toBeTypeOf('function');
+    572|         expect(entry.outputSchema.safeParse, kind).toBeTypeOf('functio…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/2]⎯
+
+
+ Test Files  1 failed | 3 passed (4)
+      Tests  2 failed | 83 passed (85)
+   Start at  13:17:58
+   Duration  1.18s (transform 1.01s, setup 0ms, import 2.75s, tests 166ms, environment 0ms)

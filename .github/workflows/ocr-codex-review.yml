@@ -147,7 +147,7 @@ jobs:
 
       - name: Checkout pull request merge
         if: steps.pr_context.outputs.should_review == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: refs/pull/${{ steps.pr_context.outputs.pr_number }}/merge
           fetch-depth: 0
@@ -959,7 +959,7 @@ jobs:
         if: ${{ !cancelled() && steps.run_ocr_review.outcome == 'success' }}
         continue-on-error: true
         timeout-minutes: 5
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ocr-codex-review-${{ steps.pr_context.outputs.pr_number }}
           path: ocr-review.json
@@ -970,7 +970,7 @@ jobs:
         if: ${{ !cancelled() && steps.upload_review_json.outcome == 'failure' }}
         continue-on-error: true
         timeout-minutes: 5
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ocr-codex-review-${{ steps.pr_context.outputs.pr_number }}
           path: ocr-review.json
@@ -1002,7 +1002,7 @@ jobs:
       OCR_BIN: ${{ vars.OCR_BIN }}
     steps:
       - name: Checkout base (for repo identity / store key)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           ref: ${{ github.event.pull_request.base.ref }}
           fetch-depth: 1

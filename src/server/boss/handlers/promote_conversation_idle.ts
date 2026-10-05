@@ -28,7 +28,7 @@ export const IDLE_MS = 5 * 60 * 1000;
  */
 async function selectIdleCandidates(db: Db, cutoff: Date): Promise<string[]> {
   const cutoffIso = cutoff.toISOString();
-  const rows = await db.execute(
+  const rows = await db.execute<{ id: string }>(
     sql`
       SELECT ls.id AS id
       FROM learning_session ls
@@ -43,7 +43,7 @@ async function selectIdleCandidates(db: Db, cutoff: Date): Promise<string[]> {
         AND COALESCE(last_user.at, ls.started_at) < ${cutoffIso}::timestamptz
     `,
   );
-  return (rows as unknown as Array<{ id: string }>).map((r) => r.id);
+  return rows.map((r) => r.id);
 }
 
 export async function runPromoteConversationIdle(

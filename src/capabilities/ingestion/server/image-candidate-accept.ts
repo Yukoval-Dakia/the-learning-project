@@ -76,6 +76,7 @@ import { writeCostLedger } from '@/server/ai/log';
 import { aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type R2Client, getR2 } from '@/server/r2';
 import { getKnownSubjects } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
@@ -920,6 +921,17 @@ export async function acceptImageCandidateProposal(
           updated_at: now,
         }),
       );
+
+      // YUK-1043（复审裁决：可行写口即刻收敛）—— image_candidate 接受 INSERT
+      // 同事务铸首版 revision。withheld admission 正是为这类「结构可判分但
+      // 深度 grounding 未过」的题准备的：source_verify（含 YUK-230 独立多模态
+      // grounding 复查）通过后由 promote 翻 admitted；pre-promote 的 active 只
+      // 是池可见性投影，不是判分准入。
+      await publishQuestionGroupFromRow(tx, {
+        rootId: questionId,
+        actorRef: 'image-candidate-accept:question',
+        now,
+      });
 
       // ── 5. cost ledger — one CORRELATION row per accept. ───────────────────────
       // FIX-R2-2 — this row's cost/tokens are intentionally ZERO. The underlying

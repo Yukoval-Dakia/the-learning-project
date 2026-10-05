@@ -35,8 +35,18 @@ export const READ_TOOLS = [
   // reach the active question face — the MAINTENANCE_READ_TOOLS chokepoint below
   // filters it back out (same containment as query_questions).
   'get_question_block_structure',
-  // YUK-756 — generation-only dispatcher for explicitly invocable registry tasks.
-  'run_task',
+  // YUK-939 — capability-owned generation-only tools. Neither retains a draft
+  // nor writes a proposal; author_question remains the distinct retained path.
+  'generate_goal_outline',
+  'generate_question_candidate',
+  // YUK-986 (Supply-Agent/1) — jyeoo grade-route candidate fetch. E1: registry
+  // only, NO surface grant (E3/YUK-988 grants the supply-executor surface).
+  // Filtered out of Maintenance below (same containment as generate_* tools).
+  'jyeoo_fetch_candidates',
+  // YUK-988 (Supply-Agent/3) — web-route candidate fetch (Tavily search +
+  // SourcingTask extraction). E3: registry only, NO surface grant. Filtered out
+  // of Maintenance below (same containment as jyeoo_fetch_candidates).
+  'web_fetch_candidates',
   // YUK-293 — expiring AI-to-AI hints. Granted only to copilot / dreaming /
   // coach below; evaluator and operator surfaces filter it out.
   'read_agent_notes',
@@ -88,11 +98,23 @@ export const PROPOSE_WRITE_TOOLS = [
   // YUK-293 — direct write to the expiring AI hint channel (not learner data,
   // not an inbox proposal). Surface grants remain narrow below.
   'write_agent_note',
+  // YUK-986 (Supply-Agent/1) — unified sourced-question commit seam (dedup/verify
+  // authoritative server-side). E1: NO surface grant — server-side executors
+  // (jyeoo:backfill CLI now; supply-executor agent in E3) invoke it directly.
+  'store_sourced_question',
 ] as const;
+
+// YUK-949 — model-authored presentation intent. This is neither a data read nor
+// a proposal/write; the server validates it against the completed root trace.
+export const CONTROL_TOOLS = ['present_primary_view'] as const;
 
 export type ReadDomainToolName = (typeof READ_TOOLS)[number];
 export type ProposeWriteDomainToolName = (typeof PROPOSE_WRITE_TOOLS)[number];
-export type DomainToolName = ReadDomainToolName | ProposeWriteDomainToolName;
+export type ControlDomainToolName = (typeof CONTROL_TOOLS)[number];
+export type DomainToolName =
+  | ReadDomainToolName
+  | ProposeWriteDomainToolName
+  | ControlDomainToolName;
 
 export type DomainToolSurface =
   | 'knowledge_review'
@@ -122,8 +144,10 @@ const KNOWLEDGE_REVIEW_TOOLS = [
 // @/capabilities 拉进 web bundle（plan 裁决 h）。完整 inventory 与 Copilot 子集的
 // 集合对账均由 src/capabilities/copilot/server/copilot-tools.unit.test.ts 强制。
 export const COPILOT_TOOLS = [
+  'present_primary_view',
   'query_memory_brief',
-  'run_task',
+  'generate_goal_outline',
+  'generate_question_candidate',
   'get_subject_graph_overview',
   'query_knowledge',
   'query_events',
@@ -263,13 +287,19 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     | 'search_memory_facts'
     | 'query_questions'
     | 'get_question_block_structure'
-    | 'run_task'
+    | 'generate_goal_outline'
+    | 'generate_question_candidate'
+    | 'jyeoo_fetch_candidates'
+    | 'web_fetch_candidates'
     | 'read_agent_notes'
   > =>
     name !== 'search_memory_facts' &&
     name !== 'query_questions' &&
     name !== 'get_question_block_structure' &&
-    name !== 'run_task' &&
+    name !== 'generate_goal_outline' &&
+    name !== 'generate_question_candidate' &&
+    name !== 'jyeoo_fetch_candidates' &&
+    name !== 'web_fetch_candidates' &&
     name !== 'read_agent_notes',
 );
 

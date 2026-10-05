@@ -14,7 +14,12 @@ export type AttemptTimelineEvent =
       created_at_sec: number;
       outcome: 'success' | 'failure' | 'partial';
       duration_ms: number | null;
-      cause: { primary: string; confidence: number | null } | null;
+      cause: {
+        primary: string;
+        confidence: number | null;
+        // YUK-1018 — misc_ id 的显示回填（misconception title）；计数仍按裸 id。
+        primary_label: string | null;
+      } | null;
     }
   | {
       kind: 'review';
@@ -125,7 +130,7 @@ export function AttemptTimeline({ events, now_sec }: AttemptTimelineProps) {
                 {entry.cause && (
                   <Badge tone={isRepeatedCause ? 'again' : 'info'}>
                     {isRepeatedCause ? '×' : ''}
-                    {entry.cause.primary}
+                    {entry.cause.primary_label ?? entry.cause.primary}
                   </Badge>
                 )}
                 {dur && <span className="attempt-timeline-dur label-mono">{dur}</span>}

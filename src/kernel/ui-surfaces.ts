@@ -193,6 +193,16 @@ export const UI_SURFACES = [
     activeId: 'knowledge',
   },
   {
+    id: 'notes',
+    route: '/notes',
+    owner: 'notes',
+    kind: 'page',
+    title: '笔记',
+    activeId: 'notes',
+    nav: { section: '整理', order: 45 },
+    search: { label: '笔记', keywords: '笔记 notes 文档' },
+  },
+  {
     id: 'note-detail',
     route: '/notes/$id',
     owner: 'notes',
@@ -209,6 +219,15 @@ export const UI_SURFACES = [
     activeId: 'coach',
     nav: { section: '整理', order: 60 },
     search: { label: 'Coach', keywords: '周报 教练' },
+  },
+  {
+    id: 'admin-config',
+    route: '/admin/config',
+    owner: 'observability',
+    kind: 'page',
+    title: '配置',
+    activeId: 'admin',
+    search: { label: 'Admin · 配置', keywords: 'settings config provider model 语言 模型' },
   },
   {
     id: 'admin-runs',

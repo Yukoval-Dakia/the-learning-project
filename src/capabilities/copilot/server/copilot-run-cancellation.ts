@@ -1,10 +1,11 @@
-import type { HookCallback, HookJSONOutput, Options } from '@anthropic-ai/claude-agent-sdk';
 import { and, eq } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
 import { job_events } from '@/db/schema';
-import { writeCopilotReply } from './chat';
+import type { PiBeforeToolCall } from '@/server/ai/pi-hooks';
+import { writeCopilotReply } from './conversation-writes';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { MATERIALIZING_TOOL_NAMES } from './materializing-tools';
+import type { CopilotReplyFinalizationReceipt, PreparedCopilotReply } from './reply-finalization';
 
 export const COPILOT_CANCEL_POLL_INTERVAL_MS = 500;
 export const COPILOT_CANCEL_DRAIN_GRACE_MS = 30_000;
@@ -18,6 +19,8 @@ export interface PersistCopilotRunCancellationArgs {
   partialText?: string;
   /** Actual provider run when stream collection reached a terminal result. */
   taskRunId?: string;
+  preparedReply?: PreparedCopilotReply;
+  replyFinalization?: CopilotReplyFinalizationReceipt;
   checkpointSafe: boolean;
   writeCopilotReplyFn?: typeof writeCopilotReply;
 }
@@ -49,8 +52,12 @@ export async function persistCopilotRunCancellationMarker(
     sessionId: args.sessionId,
     userAskEventId: args.runId,
     replyText,
+    ...(args.preparedReply?.text === replyText
+      ? { preparedReply: { text: args.preparedReply.text } }
+      : {}),
     actorRef: args.actorRef,
     taskRunId,
+    ...(args.replyFinalization ? { replyFinalization: args.replyFinalization } : {}),
     outcome: 'failure',
     durableFailure: {
       reason: 'cancelled',
@@ -77,34 +84,18 @@ export interface CopilotRunCancellationControl {
   dispose(): void;
   probe(): Promise<CopilotCancellationProbeResult>;
   beforeTool(): Promise<string | undefined>;
+  /**
+   * The pi `beforeToolCall` gate: abort signal short-circuit → probe → deny
+   * reason. `beforeTool()` remains the DomainTool-side gate.
+   */
+  piBeforeToolCall: PiBeforeToolCall;
   onToolExecutionStarted(tool: { name: string }): void;
   onToolExecutionSettled(): void;
   waitForInFlight(graceMs?: number): Promise<boolean>;
-  prependSdkHook(existing?: Options['hooks']): NonNullable<Options['hooks']>;
 }
 
 const CANCELLED_TOOL_REASON = 'cancel requested; do not start another tool';
 const UNKNOWN_TOOL_REASON = 'cancel state is temporarily unavailable; tool execution paused';
-
-function denyPreToolUse(reason: string): HookJSONOutput {
-  return {
-    hookSpecificOutput: {
-      hookEventName: 'PreToolUse',
-      permissionDecision: 'deny',
-      permissionDecisionReason: reason,
-    },
-  };
-}
-
-export function prependCopilotCancellationHook(
-  hook: HookCallback,
-  existing?: Options['hooks'],
-): NonNullable<Options['hooks']> {
-  return {
-    ...(existing ?? {}),
-    PreToolUse: [{ hooks: [hook] }, ...(existing?.PreToolUse ?? [])],
-  };
-}
 
 async function readCancelRequest(db: Db, runId: string): Promise<boolean> {
   const rows = await db
@@ -123,8 +114,8 @@ async function readCancelRequest(db: Db, runId: string): Promise<boolean> {
 
 /**
  * Bridge the cross-process job-event truth into one caller-owned AbortSignal.
- * Polling, SDK hooks and local DomainTool gates share a single non-overlapping
- * probe and a monotonic cancellation latch.
+ * Polling, the pi beforeToolCall gate and local DomainTool gates share a
+ * single non-overlapping probe and a monotonic cancellation latch.
  */
 export function createCopilotRunCancellationControl(options: {
   db: Db;
@@ -188,18 +179,6 @@ export function createCopilotRunCancellationControl(options: {
     }, pollIntervalMs);
   }
 
-  const preToolUseHook: HookCallback = async (input, _toolUseId, hookOptions) => {
-    if (input.hook_event_name !== 'PreToolUse') return { continue: true };
-    if (hookOptions.signal.aborted || controller.signal.aborted) {
-      return denyPreToolUse('run is stopping; tool execution denied');
-    }
-    const state = await probe();
-    if (state === 'clear') return { continue: true };
-    return denyPreToolUse(
-      state === 'cancel_requested' ? CANCELLED_TOOL_REASON : UNKNOWN_TOOL_REASON,
-    );
-  };
-
   return {
     signal: controller.signal,
     get hasConfirmedCancellation() {
@@ -228,6 +207,17 @@ export function createCopilotRunCancellationControl(options: {
       if (state === 'clear') return undefined;
       return state === 'cancel_requested' ? CANCELLED_TOOL_REASON : UNKNOWN_TOOL_REASON;
     },
+    piBeforeToolCall: async (_call, _args, signal) => {
+      if (signal?.aborted || controller.signal.aborted) {
+        return { block: true as const, reason: 'run is stopping; tool execution denied' };
+      }
+      const state = await probe();
+      if (state === 'clear') return undefined;
+      return {
+        block: true as const,
+        reason: state === 'cancel_requested' ? CANCELLED_TOOL_REASON : UNKNOWN_TOOL_REASON,
+      };
+    },
     onToolExecutionStarted(tool) {
       inFlightTools += 1;
       if (MATERIALIZING_TOOL_NAMES.has(tool.name)) materializingToolStarted = true;
@@ -254,9 +244,6 @@ export function createCopilotRunCancellationControl(options: {
         const timer = setTimeout(() => finish(false), graceMs);
         drainWaiters.add(onDrained);
       });
-    },
-    prependSdkHook(existing) {
-      return prependCopilotCancellationHook(preToolUseHook, existing);
     },
   };
 }

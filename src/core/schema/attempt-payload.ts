@@ -31,9 +31,6 @@
 // event/blocks.ts MaterialRef) and the JudgeResultV2 discriminated-union precedent
 // (capability.ts).
 import { z } from 'zod';
-import type { QuestionKind } from './business';
-
-type QuestionKindT = z.infer<typeof QuestionKind>;
 
 // ── Objective archetypes (first-class structured carriers) ──────────────────
 
@@ -112,34 +109,32 @@ export const AttemptPayloadKind = z.enum([
 ]);
 export type AttemptPayloadKindT = z.infer<typeof AttemptPayloadKind>;
 
-// ── QuestionKind → payload archetype mapping ────────────────────────────────
+// ── question kind label → payload archetype mapping ─────────────────────────
 //
-// The gating policy: which archetype an attempt on a given QuestionKind must use.
-// Exhaustive `Record<QuestionKindT, …>` — adding a new QuestionKind breaks the
-// typecheck here until its archetype is declared (intentional forcing function).
+// The gating policy: which archetype an attempt on a given kind label must use.
+// YUK-386: `question.kind` is a free-form display label (z.string().min(1)), so
+// this map is keyed by the KNOWN canonical labels only — `Record<string, …>`,
+// no exhaustiveness forcing function. Any label outside the map (custom labels,
+// profile-vocab leftovers like 'single_choice') falls back to `free_text`, the
+// permissive archetype. Callers that need vocab folding should normalize via
+// `normalizeToCanonicalKind` (subjects/question-kind.ts) before calling.
 //
-// Per the grounded plan, only the CLEAN objective kinds are structured first
+// Per the grounded plan, only the CLEAN objective labels are structured first
 // (choice / true_false / fill_blank — all route exact|keyword, both in
 // OBJECTIVE_JUDGE_ROUTES). Everything else falls back to free_text:
 //   - computation: routes keyword|semantic by rubric (not a clean objective
 //     archetype) → free_text for now. OWNER OPEN QUESTION #2: should computation
 //     answers carry the `numeric` archetype ({value, unit})? Deferred to A5.
 //   - derivation / short_answer / essay / reading / translation: prose / semantic.
-export const ATTEMPT_PAYLOAD_KIND_BY_QUESTION_KIND: Record<QuestionKindT, AttemptPayloadKindT> = {
+export const ATTEMPT_PAYLOAD_KIND_BY_QUESTION_KIND: Record<string, AttemptPayloadKindT> = {
   choice: 'choice',
   true_false: 'true_false',
   fill_blank: 'fill_blank',
-  computation: 'free_text',
-  short_answer: 'free_text',
-  essay: 'free_text',
-  reading: 'free_text',
-  translation: 'free_text',
-  derivation: 'free_text',
 };
 
 /** The attempt-payload archetype an attempt on `kind` must use. */
-export function expectedAttemptPayloadKind(kind: QuestionKindT): AttemptPayloadKindT {
-  return ATTEMPT_PAYLOAD_KIND_BY_QUESTION_KIND[kind];
+export function expectedAttemptPayloadKind(kind: string): AttemptPayloadKindT {
+  return ATTEMPT_PAYLOAD_KIND_BY_QUESTION_KIND[kind.trim()] ?? 'free_text';
 }
 
 const SCHEMA_BY_PAYLOAD_KIND = {
@@ -151,7 +146,7 @@ const SCHEMA_BY_PAYLOAD_KIND = {
 } as const satisfies Record<AttemptPayloadKindT, z.ZodTypeAny>;
 
 /** The single discriminated-union member schema for `kind`'s archetype. */
-export function attemptPayloadSchemaForKind(kind: QuestionKindT) {
+export function attemptPayloadSchemaForKind(kind: string) {
   return SCHEMA_BY_PAYLOAD_KIND[expectedAttemptPayloadKind(kind)];
 }
 
@@ -160,11 +155,11 @@ export function attemptPayloadSchemaForKind(kind: QuestionKindT) {
  * (e.g. a `true_false` payload on a `choice` question, or a missing/foreign
  * discriminant) THROWS — this is the structured "错型 reject" acceptance gate.
  */
-export function parseAttemptPayloadForKind(kind: QuestionKindT, payload: unknown): AttemptPayloadT {
+export function parseAttemptPayloadForKind(kind: string, payload: unknown): AttemptPayloadT {
   return attemptPayloadSchemaForKind(kind).parse(payload) as AttemptPayloadT;
 }
 
 /** Non-throwing variant — returns Zod's SafeParseReturn for the kind's archetype. */
-export function safeParseAttemptPayloadForKind(kind: QuestionKindT, payload: unknown) {
+export function safeParseAttemptPayloadForKind(kind: string, payload: unknown) {
   return attemptPayloadSchemaForKind(kind).safeParse(payload);
 }

@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { and, asc, eq, sql } from 'drizzle-orm';
+import { getConfig } from '@/core/config/store';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
 import {
@@ -15,6 +16,7 @@ import {
   memoryIntentDigest,
   normalizeReconcileInputs,
   persistDispatchCompleted,
+  persistObserveDispatchSkipped,
   readIngestCompleted,
 } from './memory-reconcile-handoff-store';
 
@@ -29,7 +31,7 @@ const RECOVERY_SCAN = 200;
 const RECOVERY_PAGE = 25;
 
 export function memoryReconcileHandoffMode(
-  raw = process.env.MEMORY_RECONCILE_HANDOFF_MODE,
+  raw = rawConfigValue('MEMORY_RECONCILE_HANDOFF_MODE'),
 ): MemoryReconcileHandoffMode {
   const value = raw?.trim() || 'observe';
   switch (value) {
@@ -43,6 +45,12 @@ export function memoryReconcileHandoffMode(
         `invalid MEMORY_RECONCILE_HANDOFF_MODE ${JSON.stringify(raw)}`,
       );
   }
+}
+
+/** YUK-1007：resolved config → raw string seam（保原 string-arg 测试注入点）。 */
+function rawConfigValue(key: string): string | undefined {
+  const v = getConfig(key);
+  return typeof v === 'string' ? v : undefined;
 }
 export function modePersistsNewIntents(mode: MemoryReconcileHandoffMode): boolean {
   return mode === 'write' || mode === 'recover';
@@ -77,6 +85,7 @@ export async function dispatchMemoryReconcile(
     readonly sourceEventId: string;
     readonly memories: readonly ReconcileMemInput[];
     readonly completion?: IngestCompleted;
+    readonly mode: MemoryReconcileHandoffMode;
   },
 ): Promise<string | null> {
   const memories = normalizeReconcileInputs(input.memories);
@@ -96,8 +105,10 @@ export async function dispatchMemoryReconcile(
     return jobId;
   }
   let confirmed = false;
+  let sendReturnedNull = false;
   try {
     const sentId = await boss.send(MEMORY_RECONCILE_QUEUE, { memories, user_id: 'self' }, options);
+    sendReturnedNull = sentId === null;
     confirmed = sentId === jobId || (await readback(boss, jobId));
   } catch (error) {
     try {
@@ -106,6 +117,14 @@ export async function dispatchMemoryReconcile(
       throw error;
     }
     if (!confirmed) throw error;
+  }
+  if (!confirmed && sendReturnedNull && input.mode === 'observe') {
+    await persistObserveDispatchSkipped(db, input.sourceEventId, memories, jobId);
+    console.warn('[memory_reconcile] observe dispatch skipped: singleton send returned null', {
+      sourceEventId: input.sourceEventId,
+      jobId,
+    });
+    return null;
   }
   if (!confirmed)
     throw new MemoryReconcileHandoffError(`enqueue unconfirmed ${input.sourceEventId}`);
@@ -229,6 +248,7 @@ export async function recoverMemoryReconcileHandoffs(
           sourceEventId: candidate.sourceId,
           memories,
           completion,
+          mode,
         });
         count += 1;
       } catch (error) {

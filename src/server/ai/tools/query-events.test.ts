@@ -623,11 +623,8 @@ describe('queryEventsTool', () => {
     expect(queryEventsTool.effect).toBe('read');
     expect(queryEventsTool.costClass).toBe('local');
     expect(queryEventsTool.mirrorEvent).toBe('when_user_visible');
-    expect(queryEventsTool.description).toContain('event log, not an entity inventory');
-    expect(queryEventsTool.description).toContain('filter.subjectId is exact');
-    expect(queryEventsTool.description).toContain('never includes causal children');
-    expect(queryEventsTool.description).toContain('cannot prove');
-    expect(queryEventsTool.description).toContain('entity_status_coverage=not_observed');
-    expect(queryEventsTool.description).toContain('Omitting subjectKind');
+    expect(queryEventsTool.description.length).toBeLessThan(800);
+    expect(queryEventsTool.description).toContain('claim_boundaries');
+    expect(queryEventsTool.description).toContain('subject_scope.required_followup');
   });
 });

@@ -1,9 +1,9 @@
 // YUK-81 / Foundation D M1 Lane C; YUK-832 evidence-reader hardening.
 //
-// `get_attempt_context` is the exact-id activity reader for answer events. It
-// preserves the historical tool/input name, but now distinguishes lookup
-// failure modes and supports both attempt and review events. Same-question
-// history is explicitly non-causal; causal evidence comes from getEventChain.
+// Exact-id event evidence reader, preserving the historical tool/input name.
+// Reader v2 separates event availability from optional answer enrichment.
+// Same-question history is non-causal; the causal neighborhood covers only the
+// focal event's parent and direct children, never the children's subtrees.
 
 import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
@@ -31,6 +31,7 @@ import { event, question } from '@/db/schema';
 import { type EnvelopedEvent, getEventById, getEventChain } from '@/kernel/events';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
+import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { getQuestionTimeline } from '@/kernel/read-models/question-activity';
 import { listLearningRecords } from '@/kernel/records/queries';
 import { TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
@@ -95,10 +96,26 @@ const CauseSchema = z.object({
   source: z.enum(['user', 'agent']),
   event_id: z.string(),
   primary_category: z.string(),
+  // YUK-1018 — misc_ id 的显示回填（active misconception title）；非 misc /
+  // unresolvable → null。
+  primary_label: z.string().nullable(),
   secondary_categories: z.array(z.string()),
+  // YUK-1020 — secondary 里 misc_ id 的显示回填（id→title map；缺席→裸 id）。
+  secondary_labels: z.record(z.string(), z.string()),
   analysis_md: z.string().nullable(),
   user_notes: z.string().nullable(),
   confidence: z.number().nullable(),
+});
+
+// YUK-1054 — 双轨裁决（§9）。attempt 的原始执行收据判轨 + 当前 effective 判轨
+// 在 evidence surface 上显式拆开，供 caller 区分「首判因」与「当前判因」。
+const VerdictTrackSchema = z.object({
+  judge_event_id: z.string().nullable(),
+  primary_category: z.string().nullable(),
+});
+const AttemptVerdictsSchema = z.object({
+  effective: VerdictTrackSchema.nullable(),
+  original: VerdictTrackSchema.nullable(),
 });
 
 const TimelineEntrySchema = z.discriminatedUnion('kind', [
@@ -113,6 +130,11 @@ const TimelineEntrySchema = z.discriminatedUnion('kind', [
       .object({
         primary: z.string(),
         confidence: z.number().nullable(),
+        // YUK-1018 — misc_ id 显示回填（与 read-model 字段同名直通）。
+        primary_label: z.string().nullable(),
+        // YUK-1020 — 副归因 id + misc_ 显示回填（与 read-model 字段同名直通）。
+        secondary: z.array(z.string()),
+        secondary_labels: z.record(z.string(), z.string()),
       })
       .nullable(),
   }),
@@ -256,6 +278,9 @@ const EventEvidenceSchema = z.discriminatedUnion('kind', [
     theta_snapshots: z.array(
       z.object({
         knowledge_id: z.string(),
+        // YUK-1093 — mastery_state partition: 'ability_global' entries carry a
+        // domain id in knowledge_id (snapshot subject_kind passthrough).
+        subject_kind: z.enum(['knowledge', 'ability_global']),
         before_present: z.boolean(),
         before_theta_hat: z.number().nullable(),
         after_theta_hat: z.number(),
@@ -309,13 +334,17 @@ const CausalEventRefSchema = z.object({
 });
 
 const ExactEventIdentitySchema = CausalEventRefSchema;
+const COMPARISON_GUIDANCE =
+  '比较两条链时，只能称“已观测的直接分叉”；存在 redacted 或未投影字段时，不得称唯一差异、上游完全相同或精确根因。';
 
 const OutputSchema = z.object({
+  reader_version: z.literal(2),
   lookup: z.object({
     requested_event_id: z.string(),
-    status: z.enum(['found', 'not_found', 'unsupported_event', 'inactive']),
+    status: z.enum(['found', 'not_found', 'inactive']),
     observed: ExactEventIdentitySchema.nullable(),
   }),
+  answer_activity_status: z.enum(['available', 'not_applicable', 'unavailable']),
   // Compatibility: successful lookups retain the historical `attempt` key.
   // It is nullable instead of fabricating an epoch sentinel when lookup fails.
   attempt: AnswerActivitySchema.nullable(),
@@ -327,6 +356,8 @@ const OutputSchema = z.object({
     'not_resolved',
   ]),
   cause: CauseSchema.nullable(),
+  // YUK-1054 — 原始/effective 判轨指针（attempt 证据拆分）。
+  verdicts: AttemptVerdictsSchema.nullable().optional(),
   timeline: z.array(TimelineEntrySchema),
   timeline_scope: z.literal('same_question_context_noncausal'),
   timeline_coverage: z.object({
@@ -341,12 +372,30 @@ const OutputSchema = z.object({
     activation_policy: z.literal('not_observed'),
     necessary_conditions: z.literal('not_supported'),
     sufficient_conditions: z.literal('not_supported'),
+    comparison_scope: z.literal('observed_fields_only'),
+    comparison_guidance: z.literal(COMPARISON_GUIDANCE),
+    whole_chain_equivalence: z.literal('not_supported'),
+    unique_difference: z.literal('not_supported'),
+    chain_termination: z.literal('not_supported'),
+    focal_event_siblings: z.literal('not_observed'),
+    payload_omissions: z.literal('not_absence'),
+    outcome_namespaces: z.literal('event_outcome_distinct_from_evidence_outcome'),
   }),
   causal_neighborhood: z.object({
     parent: CausalEventRefSchema.nullable(),
     direct_children: z.array(CausalEventRefSchema),
+    observed_edges: z.array(
+      z.object({
+        cause_event_id: z.string(),
+        effect_event_id: z.string(),
+        different_subject_ids: z.boolean().nullable(),
+      }),
+    ),
     relation_semantics: z.literal('direct_children_only'),
     coverage: z.object({
+      focal_event_id: z.string(),
+      scope: z.literal('focal_event_direct_children_only'),
+      descendant_subtrees: z.literal('not_observed'),
       returned_count: z.number().int().nonnegative(),
       limit: z.number().int().positive(),
       total_direct_children: z.number().int().nonnegative().nullable(),
@@ -361,14 +410,16 @@ type Input = z.infer<typeof InputSchema>;
 type Output = z.infer<typeof OutputSchema>;
 
 const DESCRIPTION = [
-  'Fetch exact evidence for one answer event id. Supports action=attempt and action=review,',
-  'including successful reviews; never infers an action from id text and never fabricates a row.',
+  'Fetch exact event evidence. Answer activity is enriched for attempt/review, including successful reviews.',
+  'Event lookup and answer_activity_status are independent; found non-answer events still carry usable typed evidence.',
   '',
-  '- lookup.status distinguishes found, not_found, unsupported_event, and inactive.',
+  '- lookup.status distinguishes found, not_found, and inactive; payload_projection_status describes payload support.',
   '- attempt is the compatible answer-activity field and includes exact action/outcome/dispatch_seq.',
   '- causal_neighborhood contains the exact parent and direct children only. It does not call',
   '  same-question history causal. Check coverage and each event correction_state before treating',
   '  any parent/child evidence as current.',
+  '- observed_edges pairs returned causes/effects. different_subject_ids compares event target ids,',
+  '  not school subjects or causal roots; null means a target id is unknown.',
   '- payload_present reports whether persisted JSON exists. evidence is only a typed safe projection:',
   '  evidence=null never means the stored payload was null. payload_projection_exhaustive=false is',
   '  explicit for every event. Inspect payload_projection_status and redacted_payload_groups;',
@@ -783,6 +834,7 @@ function projectEventPayload(value: EnvelopedEvent, rawPayload: unknown): Payloa
         attempt_event_id: payload.attempt_event_id,
         theta_snapshots: payload.theta_snapshots.map((snapshot) => ({
           knowledge_id: snapshot.kc_id,
+          subject_kind: snapshot.subject_kind ?? 'knowledge',
           before_present: snapshot.before !== null,
           before_theta_hat:
             typeof snapshot.before === 'number'
@@ -916,17 +968,21 @@ function answerActivity(value: EnvelopedEvent): z.infer<typeof AnswerActivitySch
 
 function emptyOutput(
   input: Input,
-  status: 'not_found' | 'unsupported_event' | 'inactive',
+  status: 'found' | 'not_found' | 'inactive',
   observed: z.infer<typeof ExactEventIdentitySchema> | null,
   causal: Output['causal_neighborhood'],
+  answerActivityStatus: 'not_applicable' | 'unavailable' = 'unavailable',
 ): Output {
   const timelineLimit = input.timelineLimit ?? TOOL_COURTESY_DEFAULTS.get_attempt_context;
   return OutputSchema.parse({
+    reader_version: 2,
     lookup: { requested_event_id: input.attemptEventId, status, observed },
+    answer_activity_status: answerActivityStatus,
     attempt: null,
     question: null,
     question_availability: 'not_resolved',
     cause: null,
+    verdicts: null,
     timeline: [],
     timeline_scope: 'same_question_context_noncausal',
     timeline_coverage: {
@@ -943,6 +999,14 @@ function emptyOutput(
       activation_policy: 'not_observed',
       necessary_conditions: 'not_supported',
       sufficient_conditions: 'not_supported',
+      comparison_scope: 'observed_fields_only',
+      comparison_guidance: COMPARISON_GUIDANCE,
+      whole_chain_equivalence: 'not_supported',
+      unique_difference: 'not_supported',
+      chain_termination: 'not_supported',
+      focal_event_siblings: 'not_observed',
+      payload_omissions: 'not_absence',
+      outcome_namespaces: 'event_outcome_distinct_from_evidence_outcome',
     },
     causal_neighborhood: causal,
     linked_records: [],
@@ -958,8 +1022,12 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const noCausal: Output['causal_neighborhood'] = {
     parent: null,
     direct_children: [],
+    observed_edges: [],
     relation_semantics: 'direct_children_only',
     coverage: {
+      focal_event_id: input.attemptEventId,
+      scope: 'focal_event_direct_children_only',
+      descendant_subtrees: 'not_observed',
       returned_count: 0,
       limit: causalLimit,
       // caused_by_event_id is intentionally not a foreign key. A missing focal
@@ -983,13 +1051,35 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
     .where(inArray(event.id, [...new Set(chainEvents.map((entry) => entry.id))]));
   const rawPayloadById = new Map(rawPayloadRows.map((row) => [row.id, row.payload]));
   const directChildren = chain.caused_events.slice(0, causalLimit);
+  const observed = eventRef(focal, rawPayloadById.get(focal.id));
+  const parent = chain.caused_by
+    ? eventRef(chain.caused_by, rawPayloadById.get(chain.caused_by.id))
+    : null;
+  const children = directChildren.map((entry) => eventRef(entry, rawPayloadById.get(entry.id)));
+  const pairs = [
+    ...(parent && observed.caused_by_event_id === parent.event_id
+      ? [[parent, observed] as const]
+      : []),
+    ...children
+      .filter((child) => child.caused_by_event_id === observed.event_id)
+      .map((child) => [observed, child] as const),
+  ];
   const causal: Output['causal_neighborhood'] = {
-    parent: chain.caused_by
-      ? eventRef(chain.caused_by, rawPayloadById.get(chain.caused_by.id))
-      : null,
-    direct_children: directChildren.map((entry) => eventRef(entry, rawPayloadById.get(entry.id))),
+    parent,
+    direct_children: children,
+    observed_edges: pairs.map(([cause, effect]) => ({
+      cause_event_id: cause.event_id,
+      effect_event_id: effect.event_id,
+      different_subject_ids:
+        cause.subject_id === null || effect.subject_id === null
+          ? null
+          : cause.subject_id !== effect.subject_id,
+    })),
     relation_semantics: 'direct_children_only',
     coverage: {
+      focal_event_id: focal.id,
+      scope: 'focal_event_direct_children_only',
+      descendant_subtrees: 'not_observed',
       returned_count: directChildren.length,
       limit: causalLimit,
       total_direct_children: chain.caused_events.length,
@@ -997,14 +1087,21 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       complete: chain.caused_events.length <= directChildren.length,
     },
   };
-  const observed: z.infer<typeof ExactEventIdentitySchema> = eventRef(
-    focal,
-    rawPayloadById.get(focal.id),
-  );
-  const activity = answerActivity(focal);
-  if (!activity) return emptyOutput(input, 'unsupported_event', observed, causal);
   if (focal.correction_status.state !== 'active') {
     return emptyOutput(input, 'inactive', observed, causal);
+  }
+  const activity = answerActivity(focal);
+  if (!activity) {
+    const isAnswerEvent =
+      (focal.action === 'attempt' || focal.action === 'review') &&
+      focal.subject_kind === 'question';
+    return emptyOutput(
+      input,
+      'found',
+      observed,
+      causal,
+      isAnswerEvent ? 'unavailable' : 'not_applicable',
+    );
   }
 
   const questionRows = await ctx.db
@@ -1041,12 +1138,22 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   const failure =
     activity.outcome === 'failure' ? await getFailureAttemptById(ctx.db, activity.event_id) : null;
   const cause = failure ? effectiveCauseForFailureAttempt(failure) : null;
-  const records = await listLearningRecords(ctx.db, {
-    attempt_event_id: activity.event_id,
-    limit: 25,
-  });
+  // YUK-1018/1020 — misc_ primary + secondary id 的 title 回填（同一批查询）；
+  // 与 records 读并行。
+  const [miscLabels, records] = await Promise.all([
+    cause
+      ? resolveMiscCauseLabels(ctx.db, [cause.primary_category, ...cause.secondary_categories])
+      : Promise.resolve(null),
+    listLearningRecords(ctx.db, {
+      attempt_event_id: activity.event_id,
+      limit: 25,
+    }),
+  ]);
+  const causeLabel = cause ? (miscLabels?.get(cause.primary_category) ?? null) : null;
 
   return OutputSchema.parse({
+    reader_version: 2,
+    answer_activity_status: 'available',
     lookup: {
       requested_event_id: input.attemptEventId,
       status: 'found',
@@ -1069,10 +1176,34 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
           source: cause.source,
           event_id: cause.event_id,
           primary_category: cause.primary_category,
+          primary_label: causeLabel,
           secondary_categories: cause.secondary_categories,
+          secondary_labels: miscCauseLabelMap(
+            miscLabels ?? new Map<string, string>(),
+            cause.secondary_categories,
+          ),
           analysis_md: cause.analysis_md,
           user_notes: cause.user_notes,
           confidence: cause.confidence,
+        }
+      : null,
+    // YUK-1054 — 原始/effective 判轨。effective=当前判因（user_cause 优先于
+    // judge），original=首判（earliest judge，未链解析）。无 failure 判 → null。
+    verdicts: failure
+      ? {
+          effective:
+            failure.judge || failure.user_cause
+              ? {
+                  judge_event_id: failure.judge?.judge_event_id ?? null,
+                  primary_category: cause?.primary_category ?? null,
+                }
+              : null,
+          original: failure.original_judge
+            ? {
+                judge_event_id: failure.original_judge.judge_event_id,
+                primary_category: failure.original_judge.cause.primary_category,
+              }
+            : null,
         }
       : null,
     timeline: timeline.map((entry) =>
@@ -1085,7 +1216,13 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
             outcome: entry.outcome,
             duration_ms: entry.duration_ms,
             cause: entry.cause
-              ? { primary: entry.cause.primary, confidence: entry.cause.confidence }
+              ? {
+                  primary: entry.cause.primary,
+                  confidence: entry.cause.confidence,
+                  primary_label: entry.cause.primary_label,
+                  secondary: entry.cause.secondary,
+                  secondary_labels: entry.cause.secondary_labels,
+                }
               : null,
           }
         : {
@@ -1111,6 +1248,14 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
       activation_policy: 'not_observed',
       necessary_conditions: 'not_supported',
       sufficient_conditions: 'not_supported',
+      comparison_scope: 'observed_fields_only',
+      comparison_guidance: COMPARISON_GUIDANCE,
+      whole_chain_equivalence: 'not_supported',
+      unique_difference: 'not_supported',
+      chain_termination: 'not_supported',
+      focal_event_siblings: 'not_observed',
+      payload_omissions: 'not_absence',
+      outcome_namespaces: 'event_outcome_distinct_from_evidence_outcome',
     },
     causal_neighborhood: causal,
     linked_records: records.map((record) => ({
@@ -1125,7 +1270,7 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
 
 function summarize(input: Input, output: Output): string {
   const qid = output.attempt?.question_id ?? '(missing)';
-  const action = output.attempt?.action ?? output.lookup.status;
+  const action = output.attempt?.action ?? output.lookup.observed?.action ?? output.lookup.status;
   const cause = output.cause?.primary_category ?? 'no-cause';
   const more = output.causal_neighborhood.coverage.has_more ? ' · causal-more' : '';
   return `${action} ${input.attemptEventId.slice(0, 8)} · q=${qid.slice(0, 8)} · cause=${cause} · timeline=${output.timeline.length} · records=${output.linked_records.length}${more}`;

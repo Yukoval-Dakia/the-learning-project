@@ -124,7 +124,7 @@ export function TopNav({
           <span
             style={{
               fontFamily: 'var(--font-mono)',
-              fontSize: '11.5px',
+              fontSize: 'var(--fs-caption)',
               color: 'var(--ink-4)',
               letterSpacing: 'var(--ls-wide)',
               whiteSpace: 'nowrap',

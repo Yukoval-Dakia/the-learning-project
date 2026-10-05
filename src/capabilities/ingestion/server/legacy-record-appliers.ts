@@ -6,6 +6,12 @@
 
 import { and, eq, isNull } from 'drizzle-orm';
 import { newId } from '@/core/ids';
+import {
+  LEGACY_DRAFT_STATUS,
+  MARKING_RULE_PROVENANCE,
+  QUESTION_AVAILABILITY,
+  SCORING_ADMISSION_STATE,
+} from '@/core/schema/assessment/lifecycle';
 import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db } from '@/db/client';
 import { artifact, knowledge, learning_item, learning_record, question } from '@/db/schema';
@@ -19,16 +25,10 @@ import {
   recordProposalDecisionSignal,
 } from '@/kernel/proposals/signals';
 import { updateLearningRecord } from '@/kernel/records/queries';
-// YUK-471 W2 — learning_item projection seam (ai_dream record_promotion). The INSERT writes a per-id
-// genesis BASE event + index anchor regardless of the flag; projectionIsWriter('learning_item') gates
-// ONLY who writes the ROW (projection write-through when ON, imperative INSERT when OFF + parity assert).
+// Even legacy record promotion creates an event-native item: genesis, index,
+// then the single structural projection writer.
 import { projectLearningItem } from '@/server/projections/learning_item';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
-import {
-  assertLearningItemParity,
-  learningItemLiveRowToSnapshot,
-} from '@/server/projections/parity';
-import { projectionIsWriter } from '@/server/projections/sot-flag';
 import {
   asPlainRecord,
   ensureAcceptOnly,
@@ -36,6 +36,7 @@ import {
   requiredString,
 } from '@/server/proposals/applier-helpers';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
 // 结构最小化（与 practice / agency / ingestion 包同模式）：只声明本文件 applier
 // 实际读取的字段；壳层 AcceptAiProposalOpts 结构可赋值，调用点无需收窄。
@@ -376,7 +377,7 @@ export async function acceptRecordPromotionProposal(
           difficulty: typeof draft.difficulty === 'number' ? draft.difficulty : 3,
           source: 'dreaming',
           source_ref: proposalId,
-          draft_status: 'active',
+          draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
           created_by: {
             by: 'ai',
             task_kind: 'record_promotion',
@@ -386,6 +387,31 @@ export async function acceptRecordPromotionProposal(
           updated_at: now,
         }),
       );
+
+      // YUK-1043 — 统一发布链（§2 矩阵 legacy dreaming 行）：可达接受路径必须
+      // 生成新契约，不能成为漏网写口。dreaming 内容为 AI 提案、用户接受 ⇒ D9
+      // 手动带 provenance（manual ≠ official，D1）；接受人即人工核验门。
+      await publishQuestionGroupFromRow(tx, {
+        rootId: materializedId,
+        admission: {
+          state: SCORING_ADMISSION_STATE.ADMITTED,
+          evidence: {
+            marking_provenance: MARKING_RULE_PROVENANCE.MANUAL,
+            verification: {
+              structural_check_passed: true,
+              independent_verification: {
+                passed: true,
+                verifier: 'human',
+                verified_at: now.toISOString(),
+              },
+            },
+            model_slice: null,
+          },
+        },
+        availability: QUESTION_AVAILABILITY.GENERAL_POOL,
+        actorRef: 'legacy-record-accept:question',
+        now,
+      });
     } else if (target === 'learning_item') {
       // YUK-471 W2 — the full initial row snapshot is the genesis BASE state (learning_item has no
       // fold-blind field; per-id genesis fully seeds the row — design §3②/§3⑥). version defaults to
@@ -430,45 +456,8 @@ export async function acceptRecordPromotionProposal(
         anchor_event_id: genesisEventId,
         subject_kind: 'learning_item',
       });
-      // 3. ROW writer — gated on the per-entity flag (critic A1, defer-flip-not-build):
-      //    ON → projectLearningItem folds the genesis + writes the row; OFF → the imperative INSERT
-      //    stays the writer (current behavior) + a write-time fold==row parity assert.
-      if (projectionIsWriter('learning_item')) {
-        await projectLearningItem(tx, materializedId);
-      } else {
-        // A4 — set ALL snapshot fields explicitly from the genesis `liRow` (not by DB-default
-        // coincidence) so the imperative OFF-path row matches the genesis payload by construction;
-        // a default change can no longer silently diverge the two from the seeded snapshot.
-        await tx.insert(learning_item).values({
-          id: liRow.id,
-          source: liRow.source,
-          source_ref: liRow.source_ref,
-          title: liRow.title,
-          content: liRow.content,
-          knowledge_ids: liRow.knowledge_ids,
-          primary_artifact_id: liRow.primary_artifact_id,
-          parent_learning_item_id: liRow.parent_learning_item_id,
-          status: liRow.status,
-          user_pinned: liRow.user_pinned,
-          completed_at: liRow.completed_at,
-          dismissed_at: liRow.dismissed_at,
-          archived_at: liRow.archived_at,
-          archived_reason: liRow.archived_reason,
-          created_at: liRow.created_at,
-          updated_at: liRow.updated_at,
-          version: liRow.version,
-        });
-        const [written] = await tx
-          .select()
-          .from(learning_item)
-          .where(eq(learning_item.id, materializedId))
-          .limit(1);
-        await assertLearningItemParity(
-          tx,
-          materializedId,
-          written ? learningItemLiveRowToSnapshot(written) : null,
-        );
-      }
+      // Materialize canonical structural state from the events in this transaction.
+      await projectLearningItem(tx, materializedId);
     } else {
       // YUK-471 W3-C1β — INSERT … RETURNING the FULL row (this site relies on table defaults for
       // parent_artifact_id / attrs / tool_* / verification_* / generated_by / verified_by / history /

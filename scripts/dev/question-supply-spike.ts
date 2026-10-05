@@ -79,6 +79,8 @@ async function main() {
   const { db } = await import('@/db/client');
   const { knowledge, question, event } = await import('@/db/schema');
   const { and, asc, eq, inArray } = await import('drizzle-orm');
+  // YUK-1064 dev-only exception: this explicit spike exercises concrete job runners;
+  // keep them outside practice/public rather than making a general application API.
   const { runQuizGen } = await import('@/capabilities/practice/jobs/quiz_gen');
   const { runQuizVerify } = await import('@/capabilities/practice/jobs/quiz_verify');
   const { makeRunTaskFn } = await import('@/server/ai/runner-fn');

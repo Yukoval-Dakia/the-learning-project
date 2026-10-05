@@ -115,7 +115,7 @@ export interface EmitArtifactLifecycleParams {
   attrs?: Record<string, unknown>;
   /** Full after-history — carry ONLY when the UPDATE pushed a history entry. */
   historyAfter?: ArtifactHistoryEntryT[];
-  /** The version the row carries AFTER the UPDATE (verbatim; archive/status ops do not bump). */
+  /** Exact version AFTER the UPDATE; proposal archive bumps it to invalidate stale editors. */
   nextVersion: number;
   actorKind: 'user' | 'agent' | 'system';
   actorRef: string;

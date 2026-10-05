@@ -13,7 +13,7 @@ import { parseTaskOutput } from './parse-output';
 //     restructures them, recording each origin URL into per-question provenance.
 //   - OF-1 回填 (YUK-223 / YUK-227 S3 Slice C): HTML/TEXT sources are extracted
 //     inline as `questions`. Image-type sources — pages whose stem lives in an
-//     image that tavily_extract cannot lift as text — are reported as
+//     image that web_fetch_exa cannot lift as text — are reported as
 //     `image_candidates` (NOT auto-extracted: 守 ADR-0002, VLM 抽图是用户授权的
 //     付费动作). The handler turns each into an `image_candidate` proposal, and a
 //     VLM extraction runs ONLY on explicit user accept. The prompt MUST teach the
@@ -25,7 +25,7 @@ import { parseTaskOutput } from './parse-output';
 //     in slice 4 — this builder stays thin per the owner's code-as-task-description
 //     philosophy.
 //
-// The handler mounts the Tavily remote MCP (tavily_search / tavily_extract) + an
+// The handler mounts the Exa remote MCP (web_search_exa / web_fetch_exa) + an
 // in-process domain-tool MCP at run time, so this prompt refers to tools by
 // capability, not by exact mcp__* identifier.
 function buildSourcingPrompt(profile: SubjectProfile): string {
@@ -35,21 +35,21 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
 不确定性策略：${profile.grounding.uncertaintyPolicy}${rubricGuidanceSection(profile)}
 
 你有工具：
-- 联网检索（tavily_search / tavily_extract）：搜**现成的练习题 / 习题 / 真题**；需要题面与答案细节时用 tavily_extract 拉网页正文。
+- 联网检索（web_search_exa / web_fetch_exa）：搜**现成的练习题 / 习题 / 真题**；需要题面与答案细节时用 web_fetch_exa 拉网页正文。web_search_exa 除 query 外还需填 objective（本次检索想拿到什么）。
 - 领域读工具：可读用户的知识图谱，确认题目考查的 knowledge_ids 真实存在。
 
 工作流程：
-1. 检索：用 tavily_search 找与考点/题型相关的现成练习题页面。
-2. 抽取：用 tavily_extract 拉网页正文，从中**逐题**抽出题面、参考答案、选项（若有）。忠实抽取，不要自己改写题意或编造答案。
+1. 检索：用 web_search_exa 找与考点/题型相关的现成练习题页面。
+2. 抽取：用 web_fetch_exa 拉网页正文，从中**逐题**抽出题面、参考答案、选项（若有）。忠实抽取，不要自己改写题意或编造答案。
 3. 结构化：把每道题映射成 SourcedQuestion，标注 kind / 难度 / 它考查的 knowledge_ids（用 knowledge_context 里真实存在的 id）。
 4. 记录来源（**强制**）：每道题写它来自的 source_url（具体网页 URL）+ source_title（页面标题）。运行时无法从日志恢复你访问了哪些页面——只有写进 source_url 的来源才被记录。漏报 = 该题不可追溯、会被拒收。
-5. 图片型题源（**不要自己抽图**）：当 tavily_extract **拿不到题干文本**（返回空/近空正文），但 tavily_search 的搜索结果表明该 URL 确实含真题（标题/摘要指向练习题/真题/试卷）——说明题干在**图片**里（扫描卷 PNG、图表题等）。这种源**不要**编造文本题、**不要**塞进 questions，改为报进 image_candidates。抽图是用户授权的付费动作，由用户在收件箱里 accept 后才发生，不是你的职责。
+5. 图片型题源（**不要自己抽图**）：当 web_fetch_exa **拿不到题干文本**（返回空/近空正文），但 web_search_exa 的搜索结果表明该 URL 确实含真题（标题/摘要指向练习题/真题/试卷）——说明题干在**图片**里（扫描卷 PNG、图表题等）。这种源**不要**编造文本题、**不要**塞进 questions，改为报进 image_candidates。抽图是用户授权的付费动作，由用户在收件箱里 accept 后才发生，不是你的职责。
 
 每题输出形状（SourcedQuestion）：
 {
-  "kind": "${CANONICAL_QUESTION_KINDS} 之一（按答案类型与题面结构选择）",
+  "kind": "题面展示标签，优先取惯用标签 ${CANONICAL_QUESTION_KINDS}（按答案类型与题面结构选择）",
   "prompt_md": "题面 markdown（忠实抽取，可含 LaTeX）",
-  "reference_md": "参考答案 + 简短解析",
+  "reference_md": "参考答案（选择题第一行必须是正确选项原文）+ 解析另起段落（空行分隔，以「解析：」开头）",
   "choices_md": ["选项 A", "选项 B", ...] | null,
   "judge_kind_override": "exact"|"keyword"|"semantic" | null,
   "rubric_json": { "criteria": [{"name":"correctness","weight":1,"descriptor":"..."}], "keywords": [...], "required_points": [...] } | null,
@@ -65,19 +65,19 @@ function buildSourcingPrompt(profile: SubjectProfile): string {
 {
   "source_url": "题干为图片的具体网页 URL（accept 时会从这里下载图片）",
   "source_title": "该网页标题",
-  "summary_md": "为什么判定为图片型源（如 tavily_extract 返回空文本但搜索结果指向真题）+ 该页大致含什么内容（给用户在收件箱里决定要不要花一次抽图）"
+  "summary_md": "为什么判定为图片型源（如 web_fetch_exa 返回空文本但搜索结果指向真题）+ 该页大致含什么内容（给用户在收件箱里决定要不要花一次抽图）"
 }
 
 整体严格 JSON 输出（不带 markdown 代码块包裹），shape 名 SourcingTaskOutput：
-{"questions":[SourcedQuestion, ...],"image_candidates":[SourcingImageCandidate, ...](可省略),"query_plan":["你执行的检索查询", ...],"fetched_at":"ISO8601 时间戳","tool":"tavily"}
+{"questions":[SourcedQuestion, ...],"image_candidates":[SourcingImageCandidate, ...](可省略),"query_plan":["你执行的检索查询", ...],"fetched_at":"ISO8601 时间戳","tool":"exa"}
 
 题目要求：
-- kind 要忠实描述题面结构；先判断答案类型（受限 exact / 关键词 keyword / 开放 semantic / 分步 steps），再从 ${CANONICAL_QUESTION_KINDS} 中选择与该结构一致的值；客观选择结构统一用 "choice"。无论是否偏离上游 kinds 提示，都必须遵循输出的 kind 对应的格式规则。
-- choice / true_false：judge_kind_override="exact"，给选项，reference_md 第一行是正确选项原文。
+- kind 是忠实描述题面结构的展示标签；先判断答案类型（受限 exact / 关键词 keyword / 开放 semantic / 分步 steps），再从惯用标签 ${CANONICAL_QUESTION_KINDS} 中选择与该结构一致的值（确有更贴切的表述也可用自定义标签）；客观选择结构统一用 "choice"。无论是否偏离上游 kinds 提示，都必须遵循输出的 kind 对应的格式规则。
+- choice / true_false：judge_kind_override="exact"，给选项，reference_md 第一行是正确选项原文（可写成「（C）选项原文」或「C. 选项原文」，解析另起段落）。
 - fill_blank：可 exact；多个合理表述时用 "keyword" 并在 rubric_json.keywords 写 1–5 个必中关键词。
 - short_answer / reading / translation / essay：judge_kind_override="semantic"，rubric_json.required_points 必填 1–5 个可核查要点。
 - derivation：judge_kind_override="semantic"，rubric_json.required_points 必填 1–5 个可核查推导步骤，避免缺少 steps 判分契约。
-- computation：只验最终答案可 exact；验方法要点用 semantic + required_points。
+- computation：reference_md 是裸最终答案（如「42」「x=3」）才可 judge_kind_override="exact"；reference 含解题过程/解析/方法要点时必须用 "semantic" + required_points（exact 是逐字比较，拿解题过程当 reference 的结构上不可能判对，入库时会被降级到派生路由并留痕）。
 - knowledge_ids 用 knowledge_context 里真实存在的知识点 id，不要发明。
 - whitelist 非空时**优先**抽取命中白名单域名的来源；白名单外的来源仍可抽（会在入库时被降权标记，不影响质检），但不要为了凑数抽明显低质的来源。
 约束（强约束）：

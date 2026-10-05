@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Sweep-6 决策包 — 3 个待裁决 + 1 个已演进 + 1 个授权项</title>
+<style>
+:root {
+  --paper: #f5f2ea;
+  --card: #fffdf8;
+  --ink: #211e16;
+  --body: #3c372b;
+  --muted: #7e7666;
+  --line: #e1dbc9;
+  --line-soft: #ece6d5;
+  --seal: #a63b25;
+  --seal-ink: #8c311f;
+  --seal-soft: #f6e8e2;
+  --pine: #2f5346;
+  --pine-soft: #e9f1ec;
+  --pine-line: #d3e0d7;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  --serif: "Songti SC", "STSong", "Noto Serif CJK SC", "Source Han Serif SC", "SimSun", serif;
+  --sans: "PingFang SC", "Hiragino Sans GB", "Source Han Sans SC", "Noto Sans CJK SC", "Microsoft YaHei", sans-serif;
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body {
+  margin: 0;
+  background: linear-gradient(180deg, #f7f4ed 0%, var(--paper) 320px);
+  color: var(--body);
+  font-family: var(--sans);
+  font-size: 16px;
+  line-height: 1.85;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+.page { max-width: 920px; margin: 0 auto; padding: 54px 28px 72px; }
+
+/* ---------- 页眉 ---------- */
+.masthead { border-top: 3px solid var(--ink); padding-top: 26px; }
+.kicker { font-family: var(--mono); font-size: 12.5px; letter-spacing: .14em; color: var(--seal); margin: 0 0 14px; }
+h1 {
+  font-family: var(--serif);
+  font-size: clamp(27px, 4.6vw, 38px);
+  line-height: 1.32;
+  color: var(--ink);
+  margin: 0 0 16px;
+  font-weight: 700;
+}
+.lede { font-size: 16.5px; line-height: 1.9; margin: 0 0 6px; }
+.howto { font-size: 13.5px; color: var(--muted); margin: 0 0 28px; }
+.howto b { color: var(--body); font-weight: 600; }
+
+/* ---------- 决策清单导航 ---------- */
+.toc { display: grid; grid-template-columns: repeat(auto-fit, minmax(255px, 1fr)); gap: 12px; margin: 0 0 8px; }
+.toc-item {
+  display: flex; gap: 12px; align-items: flex-start;
+  text-decoration: none; color: var(--ink);
+  background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+  padding: 13px 16px;
+  transition: border-color .15s ease, box-shadow .15s ease, transform .15s ease;
+}
+.toc-item:hover { border-color: var(--seal); transform: translateY(-1px); box-shadow: 0 4px 14px rgba(60, 50, 30, .08); }
+.toc-no {
+  flex: none; width: 25px; height: 25px; border-radius: 50%;
+  background: var(--ink); color: #f5f2ea;
+  font-family: var(--mono); font-size: 12.5px;
+  display: flex; align-items: center; justify-content: center;
+  margin-top: 3px;
+}
+.toc-item strong { display: block; font-size: 14.5px; line-height: 1.55; font-weight: 600; }
+.toc-item em { display: block; font-style: normal; font-family: var(--mono); font-size: 11.5px; color: var(--muted); margin-top: 3px; letter-spacing: .02em; }
+
+/* ---------- 决策卡片 ---------- */
+.decision {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 34px 40px 26px;
+  margin: 36px 0;
+  scroll-margin-top: 20px;
+  box-shadow: 0 1px 3px rgba(60, 50, 30, .04);
+}
+.d-head { margin-bottom: 20px; padding-bottom: 18px; border-bottom: 1px solid var(--line-soft); }
+.d-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+.d-index { font-family: var(--serif); font-size: 14px; font-weight: 700; letter-spacing: .12em; color: var(--seal); }
+.ticket {
+  font-family: var(--mono); font-size: 12px;
+  padding: 2px 9px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--paper); color: var(--body);
+}
+.status { font-size: 12px; padding: 2px 11px; border-radius: 999px; letter-spacing: .08em; font-weight: 600; }
+.status-pending { color: var(--seal-ink); background: var(--seal-soft); }
+.status-auth { color: #7c5f13; background: #f4edd6; }
+.status-info { color: var(--muted); background: #efeada; }
+h2 { font-family: var(--serif); font-size: 23px; line-height: 1.45; color: var(--ink); margin: 0; font-weight: 700; }
+
+/* ---------- 卡片内结构 ---------- */
+.block { margin: 20px 0; }
+.label {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 12.5px; font-weight: 600; letter-spacing: .22em;
+  color: var(--muted); margin: 0 0 12px;
+}
+.label::before { content: ""; flex: none; width: 8px; height: 8px; background: var(--seal); }
+.block p { margin: 0 0 12px; }
+.block ul, .block ol { margin: 0 0 8px; padding-left: 1.45em; }
+.block li { margin-bottom: 8px; }
+.block li::marker { color: var(--seal); }
+.block-note { font-size: 14px; font-weight: 700; color: var(--ink); margin: 20px 0 10px; }
+code {
+  font-family: var(--mono); font-size: .84em;
+  background: #f1ecdf; border: 1px solid #e7e0cd;
+  padding: .06em .38em; border-radius: 4px; color: #57492d;
+  word-break: break-all;
+}
+
+/* ---------- 选项卡片 ---------- */
+.options { display: grid; grid-template-columns: repeat(auto-fit, minmax(265px, 1fr)); gap: 14px; margin: 2px 0 6px; }
+.option { border: 1px solid var(--line); border-radius: 10px; padding: 15px 18px 13px; background: #fffefa; }
+.option.recommended { border-color: var(--pine); box-shadow: inset 0 0 0 1px var(--pine); }
+.o-head { display: flex; align-items: center; gap: 8px; margin-bottom: 9px; }
+.o-tag {
+  font-family: var(--mono); font-size: 12.5px; font-weight: 700; letter-spacing: .04em;
+  padding: 2px 9px; border-radius: 6px; background: var(--ink); color: #f5f2ea;
+}
+.option.recommended .o-tag { background: var(--pine); }
+.o-rec { margin-left: auto; font-size: 12px; font-weight: 600; letter-spacing: .08em; color: var(--pine); background: var(--pine-soft); border-radius: 999px; padding: 2px 10px; }
+.option h4 { font-size: 15.5px; color: var(--ink); margin: 0 0 8px; font-weight: 700; }
+.option p { margin: 0 0 8px; font-size: 14.5px; line-height: 1.8; }
+.o-impact { font-size: 13.5px; color: var(--muted); border-top: 1px dashed var(--line); padding-top: 9px; margin-bottom: 0; }
+.o-impact span { font-size: 11.5px; font-weight: 700; letter-spacing: .14em; color: var(--seal); margin-right: 8px; }
+
+/* ---------- 对比表 ---------- */
+.table-wrap { overflow-x: auto; margin: 2px 0 6px; }
+.cmp { width: 100%; border-collapse: collapse; font-size: 14px; }
+.cmp th, .cmp td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line-soft); }
+.cmp thead th {
+  background: var(--paper); font-size: 12px; font-weight: 600; letter-spacing: .12em;
+  color: var(--muted); border-bottom: 1px solid var(--line);
+}
+.cmp td:first-child { width: 29%; }
+.cmp td[rowspan] { border-right: 1px solid var(--line-soft); background: #fffdf6; }
+.cmp code { font-size: .82em; }
+
+/* ---------- 建议 ---------- */
+.verdict {
+  background: var(--pine-soft);
+  border: 1px solid var(--pine-line);
+  border-left: 3px solid var(--pine);
+  border-radius: 8px;
+  padding: 15px 20px 10px;
+  margin-top: 24px;
+}
+.label-verdict { color: var(--pine); }
+.label-verdict::before { background: var(--pine); }
+.verdict ul { margin: 0; padding-left: 1.45em; }
+.verdict li { margin-bottom: 7px; font-size: 14.5px; }
+.verdict li::marker { color: var(--pine); }
+.verdict p { margin: 0 0 8px; font-size: 14.5px; }
+
+/* ---------- owner 已裁决 · 终态设计 ---------- */
+.decision.locked { border-color: var(--pine-line); }
+.owner-turn {
+  margin-top: 26px;
+  border: 1.5px solid var(--pine);
+  border-radius: 10px;
+  background: #f4f8f5;
+  padding: 20px 22px 14px;
+}
+.owner-head { margin-bottom: 14px; }
+.owner-badge {
+  display: inline-flex; align-items: baseline; gap: 8px;
+  background: var(--pine); color: #f3f8f5;
+  font-size: 12.5px; font-weight: 700; letter-spacing: .14em;
+  padding: 3px 12px; border-radius: 999px;
+}
+.owner-badge-date { font-family: var(--mono); font-size: 11px; font-weight: 400; letter-spacing: .03em; opacity: .88; }
+.owner-title { font-family: var(--serif); font-size: 18px; font-weight: 700; color: var(--ink); margin: 10px 0 0; line-height: 1.5; }
+.owner-turn .block { margin: 16px 0; }
+.owner-turn .label::before { background: var(--pine); }
+.status-locked { color: #f3f8f5; background: var(--pine); }
+.toc-item.locked-item { border-color: var(--pine); }
+.toc-item.locked-item em { color: var(--pine); font-weight: 600; }
+.toc-item.locked-item em::before { content: "✓ "; }
+
+/* 三层架构 */
+.layers { display: flex; flex-direction: column; gap: 12px; margin: 2px 0 6px; }
+.layer { display: flex; gap: 14px; align-items: flex-start; border: 1px solid var(--pine-line); border-radius: 10px; background: #fffefa; padding: 14px 16px; }
+.layer-no {
+  flex: none; width: 26px; height: 26px; border-radius: 50%;
+  background: var(--pine); color: #f3f8f5;
+  font-family: var(--mono); font-size: 13px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; margin-top: 2px;
+}
+.layer-body h4 { font-size: 15px; color: var(--ink); margin: 0 0 6px; font-weight: 700; line-height: 1.6; }
+.layer-body p { margin: 0 0 6px; font-size: 14.5px; }
+.layer-body p:last-child { margin-bottom: 0; }
+.tier-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 10px; margin-top: 10px; }
+.tier { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px 8px; background: #fff; }
+.tier-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.tier-tag { font-family: var(--mono); font-size: 12.5px; font-weight: 700; letter-spacing: .04em; padding: 2px 9px; border-radius: 6px; background: var(--ink); color: #f5f2ea; }
+.tier-jev .tier-tag { background: var(--pine); }
+.tier-cost { font-family: var(--mono); font-size: 11.5px; color: var(--muted); }
+.tier p { font-size: 13.5px; margin: 0 0 4px; }
+.tier p:last-child { margin-bottom: 0; }
+.tier-fit { color: var(--muted); }
+
+/* 降级链 */
+.fallback { border: 1px dashed var(--pine); border-radius: 10px; padding: 12px 16px 10px; background: #fffefa; margin: 2px 0 6px; }
+.fb-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; padding: 5px 0; font-size: 14.5px; }
+.fb-cond { font-weight: 600; color: var(--ink); }
+.fb-arrow { color: var(--pine); font-weight: 700; }
+.fb-note { margin: 8px 0 0; padding-top: 10px; border-top: 1px solid var(--pine-line); font-size: 14px; color: var(--pine); font-weight: 600; }
+
+/* ---------- 冻结区 ---------- */
+.frozen { background: #faf8f0; border-style: dashed; }
+.freeze-list { list-style: none; margin: 0; padding: 0; }
+.freeze-list li { display: flex; gap: 12px; align-items: baseline; padding: 11px 0; border-bottom: 1px solid var(--line-soft); margin: 0; }
+.freeze-list li:last-child { border-bottom: none; }
+.freeze-list .ticket { flex: none; }
+
+/* ---------- 收尾 ---------- */
+.backtop { text-align: right; margin: 14px 0 0; font-size: 12.5px; }
+.backtop a { color: var(--muted); text-decoration: none; border-bottom: 1px dotted var(--muted); }
+.backtop a:hover { color: var(--seal); border-color: var(--seal); }
+.foot {
+  margin-top: 42px; padding-top: 16px; border-top: 1px solid var(--line);
+  font-size: 12.5px; color: var(--muted);
+  display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
+}
+.foot a { color: var(--muted); text-decoration: none; border-bottom: 1px dotted var(--muted); }
+
+@media (max-width: 640px) {
+  .page { padding: 34px 16px 56px; }
+  .decision { padding: 24px 20px 18px; margin: 26px 0; }
+  h2 { font-size: 19.5px; }
+  .cmp td:first-child { width: auto; }
+}
+</style>
+</head>
+<body id="top">
+<div class="page">
+
+  <!-- ============ 页眉 ============ -->
+  <header class="masthead">
+    <p class="kicker">SWEEP-6 · 决策包 · 2026-09-24</p>
+    <h1>3 个待裁决 + 1 个已演进 + 1 个授权项</h1>
+    <p class="lede">Sweep-6 收尾后的决策包:3 个岔路口待您拍板(YUK-1040 / YUK-774 / YUK-1033),1 个已演进(YUK-1038:原三层架构已被五层模型 + 全量迁移裁决取代),外加 1 个生产部署授权项。本页把每一项写清楚:它是什么、有哪些选项、各有什么影响与代价、以及建议怎么选 —— 不逐行读代码,也能裁决。</p>
+    <p class="howto">每张卡片结构固定:<b>这是什么 → 选项对比 → 影响与代价 → 建议</b>。「建议」仅供参照,最终口径以您的裁决为准。</p>
+    <nav class="toc" aria-label="决策清单">
+      <a class="toc-item" href="#d1"><span class="toc-no">1</span><span><strong>seed 根节点的 θ̂/mastery 污染怎么堵</strong><em>YUK-1040 · 待裁决</em></span></a>
+      <a class="toc-item locked-item" href="#d2"><span class="toc-no">2</span><span><strong>unit_dimension 判分契约的生产链缺口</strong><em>YUK-1038 · 已演进:五层模型全量迁移</em></span></a>
+      <a class="toc-item" href="#d3"><span class="toc-no">3</span><span><strong>夜间任务编排「今晚图」</strong><em>YUK-774 · 待批准</em></span></a>
+      <a class="toc-item" href="#d4"><span class="toc-no">4</span><span><strong>学段纠正的用户入口</strong><em>YUK-1033 · 待裁决</em></span></a>
+      <a class="toc-item" href="#auth"><span class="toc-no">5</span><span><strong>生产部署批(main 领先 45 个 commit)</strong><em>授权项 · 待授权</em></span></a>
+      <a class="toc-item" href="#frozen"><span class="toc-no">6</span><span><strong>冻结区(仅告知,不需决策)</strong><em>YUK-1028/1029 · 999 · 856/838 · 310</em></span></a>
+    </nav>
+  </header>
+
+  <main>
+
+    <!-- ============ 决策 1 ============ -->
+    <section class="decision" id="d1">
+      <header class="d-head">
+        <div class="d-meta">
+          <span class="d-index">决策 1</span>
+          <span class="ticket">YUK-1040</span>
+          <span class="status status-pending">待裁决</span>
+        </div>
+        <h2>seed 根节点的 θ̂/mastery 污染怎么堵</h2>
+      </header>
+
+      <div class="block">
+        <h3 class="label">这是什么</h3>
+        <p>系统里有一类「合成科目根节点」(如 <code>seed:math:root</code>):它是知识结构的锚点,不是真实知识点。上一轮已经修好 FSRS 复习卡这一侧 —— 不再给锚点建卡(YUK-1037)—— 但还留了两处尾巴:</p>
+        <ul>
+          <li><strong>θ̂ 能力值轴:</strong>答题结算时,<code>settleSoloReview</code> / <code>settlePaperSlotReview</code> 会把 <code>referencedKnowledgeIds</code> 直接喂给 θ̂ 更新,没有过滤 <code>seed:*:root</code>。生产目前还没有产生污染行,但 4 道绑在 <code>seed:math:root</code> 上的题一旦被作答,θ̂ 就会写到锚点上。</li>
+          <li><strong>存量数据:</strong>库里已有一行锚点的 FSRS 状态,另有 4 道只绑了锚点的 active 题。这些怎么处置需要您定,底线是<strong>不直接改 SQL</strong>。</li>
+        </ul>
+      </div>
+
+      <div class="block">
+        <h3 class="label">选项对比</h3>
+        <p class="block-note">A 部分 · θ̂ 能力值轴怎么堵</p>
+        <div class="options">
+          <div class="option recommended">
+            <div class="o-head"><span class="o-tag">A1</span><span class="o-rec">建议</span></div>
+            <h4>套用同款过滤 regex</h4>
+            <p>在 θ̂ 更新入口直接滤掉 <code>seed:*:root</code>,与 FSRS 侧同一手法。</p>
+            <p class="o-impact"><span>特点</span>简单直接;锚点彻底不进 mastery。</p>
+          </div>
+          <div class="option">
+            <div class="o-head"><span class="o-tag">A2</span></div>
+            <h4>沿用 FSRS 侧口径</h4>
+            <p>混合绑定只写真实 KC;纯 root 绑定不写 KC 行。</p>
+            <p class="o-impact"><span>特点</span>语义更一致;但行为更复杂。</p>
+          </div>
+        </div>
+
+        <p class="block-note">B 部分 · 存量数据处置(禁直接改 SQL)</p>
+        <div class="table-wrap">
+          <table class="cmp">
+            <thead>
+              <tr><th>对象</th><th>可选动作</th><th>说明与代价</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td rowspan="3">存量 FSRS 行<br /><code>material_fsrs_state('knowledge','seed:math:root')</code></td>
+                <td>a) 保持惰性行 + 守卫兜底</td>
+                <td>零动作、零风险;行留在库里,由守卫兜底。</td>
+              </tr>
+              <tr>
+                <td>b) knowledge-merge 提案并入真实 KC</td>
+                <td>需您批准;会把锚点 archive,并入目标(into)要慎选。</td>
+              </tr>
+              <tr>
+                <td>c) 一次性 ops 脚本删行</td>
+                <td>需您执行;直接删掉该行。</td>
+              </tr>
+              <tr>
+                <td rowspan="2">4 道 <code>knowledge_ids=["seed:math:root"]</code> 的 active 题</td>
+                <td>补绑到真实 KC</td>
+                <td>走 propose→accept 正道。</td>
+              </tr>
+              <tr>
+                <td>维持 coarse 绑定不动</td>
+                <td>题目保持现状,绑定粒度维持 coarse(粗)。</td>
+              </tr>
+              <tr>
+                <td rowspan="2">plan-executor 的 coarse fallback<br />(可选裁决项)</td>
+                <td>改语义,不再写 seed 根绑定</td>
+                <td>改变现有行为。</td>
+              </tr>
+              <tr>
+                <td>保持现状,继续写 seed 根绑定</td>
+                <td>不裁决时的默认结果。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="block">
+        <h3 class="label">影响与代价</h3>
+        <ul>
+          <li>现状不处理:4 道题一旦被作答,θ̂ 就会写到锚点上 —— 能力值轴开始积累污染,而锚点本不该有能力值。</li>
+          <li>A1 只加一个过滤点,口径一句话能说清;A2 与 FSRS 侧语义完全一致,但判断逻辑更绕、行为更难解释。</li>
+          <li>B 部分:a) 零动作零风险;b) 最彻底,但会 archive 锚点,且并入(into)目标必须选对;c) 需要您亲手跑一次性脚本。</li>
+          <li>无论选哪条,都不直接改 SQL:要么走提案(propose→accept / knowledge-merge),要么走您执行的 ops 脚本。</li>
+        </ul>
+      </div>
+
+      <div class="verdict">
+        <h3 class="label label-verdict">建议</h3>
+        <ul>
+          <li>θ̂ 轴选 <strong>A1</strong>:改动最小,口径也最清楚 —— 锚点不是知识点,本就不该进 mastery。</li>
+          <li>存量 FSRS 行先选 <strong>a)</strong>(惰性行 + 守卫兜底,零动作);若想彻底清理,再批准 b),into 目标由您确认。</li>
+          <li>4 道 active 题走 <strong>propose→accept 正道</strong>补绑真实 KC。</li>
+          <li>coarse fallback 不急;若本次不裁决,默认保持现状。</li>
+        </ul>
+      </div>
+      <p class="backtop"><a href="#top">↑ 回到决策清单</a></p>
+    </section>
+
+    <!-- ============ 决策 2 ============ -->
+    <section class="decision locked" id="d2">
+      <header class="d-head">
+        <div class="d-meta">
+          <span class="d-index">决策 2</span>
+          <span class="ticket">YUK-1038</span>
+          <span class="status status-locked">已演进</span>
+        </div>
+        <h2>unit_dimension 判分契约的生产链缺口</h2>
+      </header>
+
+      <div class="block">
+        <h3 class="label">这是什么</h3>
+        <p>物理题的「数值 + 单位」判分路由(<code>unit_dimension</code>)要求题目 metadata 携带一组契约对:<code>reference_value:number</code> + <code>reference_unit:string</code>。</p>
+        <p>上一轮已把路由触发改成「认这个契约」(YUK-1036)。但 Codex review 发现:<strong>生成链路根本产不出这个契约</strong> —— <code>QuestionAuthorDraft</code> 和 <code>QuizGenQuestion</code> 的输出 schema 里没有这些字段,insert 时也不写。</p>
+        <p>后果:<code>unit_dimension</code> 在生成链路上实际不可达。注意,这不是误路由,而是<strong>死判分被正确避开</strong> —— 系统没有出错,只是这个功能等于不存在。</p>
+      </div>
+
+      <div class="owner-turn">
+        <div class="owner-head">
+          <span class="owner-badge">OWNER 后续已演进 · 终态见新规划文档<span class="owner-badge-date">2026-09-24 演进</span></span>
+          <p class="owner-title">判分三层架构:Jev 廉价首选层 + LLM 保底层(已被取代)</p>
+          <p style="margin-top:.6rem"><strong>取代说明:</strong>owner 随后裁定「不分批了,要上就全量迁移,支持任意题目」——本卡片的三层架构升级为五层问题/评估模型 + 全量迁移 + 一次统一切换。终态以 <code>docs/planning/2026-09-24-question-assessment-redesign.md</code>、<code>2026-09-24-question-assessment-implementation-grounding.md</code>、<code>2026-09-24-question-assessment-decisions.md</code>(D1–D19)为准;本节保留为决策历史。</p>
+        </div>
+
+        <div class="block">
+          <h3 class="label">三层架构</h3>
+          <div class="layers">
+            <div class="layer">
+              <span class="layer-no">1</span>
+              <div class="layer-body">
+                <h4>选择题(有 <code>choices_md</code>)→ <code>exact</code> 不变</h4>
+                <p>字母 / 文本解析成 choice index,按集合相等判;单选多选都支持,多选必须全对(无部分分)。</p>
+              </div>
+            </div>
+            <div class="layer">
+              <span class="layer-no">2</span>
+              <div class="layer-body">
+                <h4>非选择题 → 录入时由 LLM 声明判分层(二选一)</h4>
+                <div class="tier-grid">
+                  <div class="tier tier-jev">
+                    <div class="tier-head"><span class="tier-tag">jev</span><span class="tier-cost">~$0.0004/次 · ~0.3s</span></div>
+                    <p><strong>Jev 决策模型快速判分</strong>,返回校准置信度。</p>
+                    <p class="tier-fit">适合答案理解难度低的题:数学填空、短答案、事实性问答。</p>
+                  </div>
+                  <div class="tier">
+                    <div class="tier-head"><span class="tier-tag">llm</span><span class="tier-cost">现有 semantic judge</span></div>
+                    <p><strong>高级判分</strong>。</p>
+                    <p class="tier-fit">适合答案理解难度高的题:语文阅读理解、论述、需要推理链的题。</p>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="layer">
+              <span class="layer-no">3</span>
+              <div class="layer-body">
+                <h4>分类依据 = 答案的理解难度(录入 LLM 判断)</h4>
+                <p>例:「语文阅读理解 → <code>llm</code>」「数学填空题 → <code>jev</code>」。</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="block">
+          <h3 class="label">降级链(owner 拍死)</h3>
+          <div class="fallback">
+            <div class="fb-row"><span class="fb-cond">Jev 不可用(超时 / 故障)</span><span class="fb-arrow">→</span><span>自动降级 LLM 判分</span></div>
+            <div class="fb-row"><span class="fb-cond">Jev 返回低置信</span><span class="fb-arrow">→</span><span>自动升级 LLM 判分</span></div>
+            <p class="fb-note">Jev 是廉价首选层,LLM 是保底层 —— 不存在「Jev 挂了就没法判」的路径。</p>
+          </div>
+        </div>
+
+        <div class="block">
+          <h3 class="label">连带影响</h3>
+          <ul>
+            <li><code>unit_dimension</code> / <code>steps</code> / <code>keyword</code> 三条路由的角色待定:可整体退役(Jev Choice 可覆盖六档信号),或降级为 Jev 内部实现细节 —— 实施时再定,不阻塞本设计。</li>
+            <li>现有 <code>judge_kind_override</code> 枚举(exact / keyword / semantic)需扩为 <code>jev</code> / <code>llm</code>,或新增 <code>judge_tier</code> 字段;存量题的旧值映射(keyword→jev?semantic→llm?)属实施细节。</li>
+            <li>生成 schema(<code>QuizGenQuestion</code> / <code>QuestionAuthorDraft</code>)需加判分层声明字段 —— 这是 YUK-1038 契约缺口的<strong>替代方案</strong>,原「schema 加 <code>reference_value</code> / <code>reference_unit</code>」选项被本设计取代。</li>
+          </ul>
+        </div>
+      </div>
+      <p class="backtop"><a href="#top">↑ 回到决策清单</a></p>
+    </section>
+
+    <!-- ============ 决策 3 ============ -->
+    <section class="decision" id="d3">
+      <header class="d-head">
+        <div class="d-meta">
+          <span class="d-index">决策 3</span>
+          <span class="ticket">YUK-774</span>
+          <span class="status status-pending">待批准</span>
+        </div>
+        <h2>夜间任务编排「今晚图」</h2>
+      </header>
+
+      <div class="block">
+        <h3 class="label">这是什么</h3>
+        <p>夜间 DAG orchestrator(YUK-758)已经会把每夜运行态落库:<code>dag_orchestration_run</code> + <code>dag_orchestration_node</code> 两张表,逐节点记录 <code>pending</code> / <code>enqueued</code> / <code>running</code> / <code>succeeded</code> / <code>failed</code> / <code>skipped</code> 六种状态,外加详情和 stale 标记。</p>
+        <p>但目前<strong>没有任何读面</strong> —— 数据在库里,看不见。要把数据读出来,票内规划了两条腿:</p>
+        <ol>
+          <li><strong>admin observability 读端点:</strong><code>GET /api/admin/orchestration/runs</code>(运行列表)+ <code>/runs/[id]</code>(逐节点明细)。</li>
+          <li><strong>「今晚图」可视化 UI:</strong>在 admin jobs 面展示当夜 DAG —— 节点状态 + 边 + skipped 原因。</li>
+        </ol>
+        <p>票内两条硬要求:① 端点不能裸奔,必须与 UI 或消费者同波上线;② UI 须先走 design pre-flight(引用 design doc、声明组件类型、列文件清单)。</p>
+      </div>
+
+      <div class="block">
+        <h3 class="label">选项对比</h3>
+        <div class="options">
+          <div class="option recommended">
+            <div class="o-head"><span class="o-tag">批准</span><span class="o-rec">建议</span></div>
+            <h4>启动,端点 + UI 同波</h4>
+            <p>按票内流程推进:design pre-flight → 单 PR 内读端点与「今晚图」UI 同波上线。</p>
+            <p class="o-impact"><span>影响</span>一次 design pre-flight + 一个 PR;之后每晚编排状态可视。</p>
+          </div>
+          <div class="option">
+            <div class="o-head"><span class="o-tag">暂缓</span></div>
+            <h4>不做读面,继续落库</h4>
+            <p>不做读端点也不做 UI,运行态继续只躺在两张表里。</p>
+            <p class="o-impact"><span>影响</span>零开发成本;夜间编排继续是黑盒,出问题只能手工查库。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="block">
+        <h3 class="label">影响与代价</h3>
+        <ul>
+          <li>只做端点、不做 UI 不合规:票内明确要求端点必须与 UI 或消费者同波上线。</li>
+          <li>UI 不过 design pre-flight 不能动工。</li>
+          <li>两腿同波落地后,每晚 DAG 的节点态、边、skipped 原因都能直接在 admin 面看到。</li>
+        </ul>
+      </div>
+
+      <div class="verdict">
+        <h3 class="label label-verdict">建议</h3>
+        <p><strong>批准启动</strong>;UI 形态建议 admin 页内嵌「今晚 DAG」卡片/视图(与票内建议一致)。</p>
+      </div>
+      <p class="backtop"><a href="#top">↑ 回到决策清单</a></p>
+    </section>
+
+    <!-- ============ 决策 4 ============ -->
+    <section class="decision" id="d4">
+      <header class="d-head">
+        <div class="d-meta">
+          <span class="d-index">决策 4</span>
+          <span class="ticket">YUK-1033</span>
+          <span class="status status-pending">待裁决</span>
+        </div>
+        <h2>学段纠正的用户入口</h2>
+      </header>
+
+      <div class="block">
+        <h3 class="label">这是什么</h3>
+        <p>学习者自述学段(<code>goal.declared_stage</code>)已经持久化,并接入了供题路由(高中 → grade 11 等)。</p>
+        <p>但创建之后,<strong>没有任何用户可达的修改入口</strong>:WelcomePage 只在 onboarding 跑一次,goal 没有编辑 UI,也没有 settings 面。</p>
+        <p>后果:「用户纠正课程范围后,下一次材料选择随之改变」这条验收语义,目前不可达。</p>
+      </div>
+
+      <div class="block">
+        <h3 class="label">选项对比</h3>
+        <div class="options">
+          <div class="option">
+            <div class="o-head"><span class="o-tag">A</span></div>
+            <h4>暂缓(当前状态)</h4>
+            <p>等统一配置面板 YUK-1007 一起做;届时一并裁决粗档(小学 / 初中 / 高中)vs 年级细分。</p>
+            <p class="o-impact"><span>影响</span>零实现成本,避免做两遍;但验收语义继续不可达,时长取决于 YUK-1007 排期。</p>
+          </div>
+          <div class="option">
+            <div class="o-head"><span class="o-tag">B</span></div>
+            <h4>独立小入口</h4>
+            <p>不等大面板,现在就做 goal 编辑或轻量设置项。</p>
+            <p class="o-impact"><span>影响</span>用户立刻能改;代价是多一个小入口,未来大面板落地时可能需要收口。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="block">
+        <h3 class="label">影响与代价</h3>
+        <ul>
+          <li>数据侧基础已就绪:<code>declared_stage</code> 已持久化并接入供题路由,缺的只是入口。</li>
+          <li>A 把「粗档 vs 年级细分」的裁决推迟到 YUK-1007;B 则现在就面对这个取舍。</li>
+        </ul>
+      </div>
+
+      <div class="verdict">
+        <h3 class="label label-verdict">建议</h3>
+        <p>看 YUK-1007 排期:面板近在眼前选 <strong>A</strong>,避免做两遍;面板遥遥无期选 <strong>B</strong>,先把验收语义补上。</p>
+      </div>
+      <p class="backtop"><a href="#top">↑ 回到决策清单</a></p>
+    </section>
+
+    <!-- ============ 授权项 ============ -->
+    <section class="decision" id="auth">
+      <header class="d-head">
+        <div class="d-meta">
+          <span class="d-index">授权项</span>
+          <span class="status status-auth">待授权</span>
+        </div>
+        <h2>生产部署批:main 领先生产 45 个 commit</h2>
+      </header>
+
+      <div class="block">
+        <h3 class="label">这是什么</h3>
+        <p>main 领先生产 <strong>45 个 commit</strong>:sweep-3 / 4 / 5 及 follow-up 批全部未部署,生产仍停在 <code>c89079b68</code>。</p>
+      </div>
+
+      <div class="block">
+        <h3 class="label">选项对比</h3>
+        <div class="options">
+          <div class="option recommended">
+            <div class="o-head"><span class="o-tag">授权</span><span class="o-rec">建议</span></div>
+            <h4>走标准 Mac 部署链</h4>
+            <p>build → migrate → app/worker 健康检查 → health/cron 验证。</p>
+            <p class="o-impact"><span>影响</span>需要一次部署窗口;45 个 commit 一次上线。</p>
+          </div>
+          <div class="option">
+            <div class="o-head"><span class="o-tag">不授权</span></div>
+            <h4>继续累积</h4>
+            <p>生产继续停在 <code>c89079b68</code>,未部署内容越攒越多。</p>
+            <p class="o-impact"><span>影响</span>无即时成本;下一批部署的差异继续变大。</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="block">
+        <h3 class="label">影响与代价</h3>
+        <ul>
+          <li>授权:按部署链逐步执行并验证,migrate 完成后才到 app/worker 健康检查。</li>
+          <li>不授权:sweep-3 / 4 / 5 的修复与功能继续只在 main 上,生产不可见。</li>
+        </ul>
+      </div>
+
+      <div class="verdict">
+        <h3 class="label label-verdict">建议</h3>
+        <p><strong>授权</strong> —— 趁 sweep 批次边界把这 45 个 commit 部署出去,避免差异继续累积。</p>
+      </div>
+      <p class="backtop"><a href="#top">↑ 回到决策清单</a></p>
+    </section>
+
+    <!-- ============ 冻结区 ============ -->
+    <section class="decision frozen" id="frozen">
+      <header class="d-head">
+        <div class="d-meta">
+          <span class="d-index">页尾</span>
+          <span class="status status-info">仅告知</span>
+        </div>
+        <h2>冻结区:不需决策,仅同步状态</h2>
+      </header>
+      <ul class="freeze-list">
+        <li><span class="ticket">YUK-1028 / 1029</span><span>Astra P2/P3:owner 已叫停 / needs-info,冻结。</span></li>
+        <li><span class="ticket">YUK-999</span><span>matcher 阈值复测:<code>matcher()</code> 仍无 live caller,触发条件未满足。</span></li>
+        <li><span class="ticket">YUK-856 / 838</span><span>ready-for-human,需要人工操作。</span></li>
+        <li><span class="ticket">YUK-310</span><span>后端腿(runner job_events):已在跑,无需决策。</span></li>
+      </ul>
+    </section>
+
+  </main>
+
+  <footer class="foot">
+    <span>Sweep-6 决策包 · 2026-09-24 · 自包含单文件,无外部依赖</span>
+    <a href="#top">↑ 回到顶部</a>
+  </footer>
+</div>
+</body>
+</html>

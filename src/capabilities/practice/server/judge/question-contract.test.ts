@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { Db } from '@/db/client';
-import { resolveSubjectProfile } from '@/subjects/profile';
+import { type SubjectProfile, SubjectRegistry, resolveSubjectProfile } from '@/subjects/profile';
 import {
   type JudgeQuestionRow,
+  assertGeneratedQuestionHasJudgeContract,
   judgeAnswer,
   resolveQuestionJudgeRoute,
   runSemanticJudge,
@@ -14,6 +15,202 @@ import {
 const mockDb = {} as Db;
 
 const yuwenProfile = resolveSubjectProfile('yuwen');
+
+describe('custom profile judge routing', () => {
+  function customProfile(preferUnits = true) {
+    const source = resolveSubjectProfile('physics');
+    const registry = new SubjectRegistry();
+    const id = 'subj_measurement_contract';
+    const registration = registry.register(
+      {
+        ...source,
+        id,
+        displayName: '工程计量',
+        languageStyle: '区分数值、单位和测量不确定度，解释换算依据，不把精度等同于准确度。',
+        judgePolicy: {
+          preferredRoutes: source.judgePolicy.preferredRoutes.filter(
+            (route) => preferUnits || route !== 'unit_dimension',
+          ),
+          notes: ['需要识别等价单位与有效数字。', '没有声明偏好时不自动选择量纲判分。'],
+        },
+        grounding: {
+          ...source.grounding,
+          allowedSources: ['校准记录', '题目给定的测量数据'],
+          uncertaintyPolicy: '缺少校准条件时明确未知，不推断仪器的系统误差。',
+        },
+        promptFragments: { ...source.promptFragments, roleNoun: '工程计量导师' },
+      },
+      ['计量契约'],
+    );
+    expect(registration).toEqual({ id, valid: true, errors: [] });
+    const profile = registry.resolve('计量契约');
+    expect(profile.id).toBe(id);
+    return profile;
+  }
+
+  const measurementQuestion: JudgeQuestionRow = {
+    id: 'custom-measurement',
+    kind: 'calculation',
+    prompt_md: '同一管路流速为 0.025 km/s，请转换为 m/s，并说明数量级、单位约去及有效数字。'.repeat(
+      5,
+    ),
+    reference_md: '25 m/s；1 km = 1000 m，保留两位有效数字。',
+    rubric_json: { criteria: [], keywords: ['换算', '有效数字'] },
+    choices_md: null,
+    judge_kind_override: null,
+    metadata: { calibration: { uncertainty: null, conditions: ['恒定流量', '同一截面'] } },
+  };
+
+  // YUK-1036 — the unit judge's input contract: a numeric reference_value +
+  // string reference_unit in question.metadata (mirrors runUnitDimensionJudge's
+  // 'unsupported' precondition and the write-path gate). Its presence is the
+  // structural "calculation-type" signal; the free-form kind label no longer
+  // decides.
+  const unitReference = {
+    reference_value: 25,
+    reference_unit: 'm/s',
+    reference_tolerance: 0.02,
+  };
+
+  it.each(['calculation', 'computation'])(
+    '%s uses declared unit preference with or without a figure',
+    (kind) => {
+      const profile = customProfile();
+      for (const image_refs of [[], ['calibration-diagram']]) {
+        expect(
+          resolveQuestionJudgeRoute({ ...measurementQuestion, kind, image_refs }, profile),
+        ).toBe('unit_dimension');
+      }
+    },
+  );
+
+  // Backward equivalence (YUK-1036): the two legacy labels still trigger the
+  // route for rows persisted before/without the metadata contract — including
+  // rows carrying unrelated metadata or no metadata at all.
+  it.each(['calculation', 'computation'])(
+    'legacy label %s still triggers without the reference pair (byte-parity)',
+    (kind) => {
+      const profile = customProfile();
+      for (const metadata of [null, { calibration: { uncertainty: null } }]) {
+        expect(resolveQuestionJudgeRoute({ ...measurementQuestion, kind, metadata }, profile)).toBe(
+          'unit_dimension',
+        );
+      }
+    },
+  );
+
+  // The reported bug (YUK-1036): kind is a free-form display label since
+  // YUK-386, so equivalent semantic labels silently missed the literal check.
+  // Any label carrying the unit-judge contract now triggers — 中文 vocab,
+  // English vocab, and custom profile vocab alike.
+  it.each(['计算题', '应用题', 'word_problem', '计量换算'])(
+    'non-legacy label %s carrying reference_value/reference_unit → unit_dimension',
+    (kind) => {
+      const profile = customProfile();
+      expect(
+        resolveQuestionJudgeRoute(
+          {
+            ...measurementQuestion,
+            kind,
+            metadata: { ...measurementQuestion.metadata, ...unitReference },
+          },
+          profile,
+        ),
+      ).toBe('unit_dimension');
+    },
+  );
+
+  it('unit contract does not override the earlier structural priorities (override > choices)', () => {
+    const profile = customProfile();
+    const row = { ...measurementQuestion, kind: '计算题', metadata: unitReference };
+    // judge_kind_override still wins first.
+    expect(resolveQuestionJudgeRoute({ ...row, judge_kind_override: 'keyword' }, profile)).toBe(
+      'keyword',
+    );
+    // Persisted choices still short-circuit to exact before the unit branch.
+    expect(
+      resolveQuestionJudgeRoute(
+        { ...row, choices_md: ['25 m/s', '0.025 m/s', '250 m/s'] },
+        profile,
+      ),
+    ).toBe('exact');
+  });
+
+  it('unit contract does not fire without the declared profile preference', () => {
+    const profile = customProfile(false);
+    const row = { ...measurementQuestion, kind: '计算题', metadata: unitReference };
+    // No unit_dimension preference → falls through to the answer-class chain;
+    // '计算题' is an unrecognised free-form label → semantic (same as any
+    // unknown label under this profile).
+    expect(resolveQuestionJudgeRoute(row, profile)).toBe('semantic');
+    // The legacy label only wins the route when the preference is declared:
+    // without it, computation + keywords stays on the keyword ladder.
+    expect(resolveQuestionJudgeRoute({ ...row, kind: 'computation' }, profile)).toBe('keyword');
+  });
+
+  // Conservative direction: a partial/malformed pair is NOT the contract — the
+  // runner would return 'unsupported' on it, so the route must not fire. A
+  // missed trigger degrades to the answer-class chain; a false trigger would
+  // dispatch a judge that cannot produce a verdict.
+  it.each([
+    ['missing reference_unit', { reference_value: 25 }],
+    ['missing reference_value', { reference_unit: 'm/s' }],
+    ['non-number reference_value', { reference_value: '25', reference_unit: 'm/s' }],
+    ['non-string reference_unit', { reference_value: 25, reference_unit: 42 }],
+    ['null metadata', null],
+    ['metadata without the pair', { calibration: { uncertainty: null } }],
+  ])(
+    'non-legacy label with %s does NOT trigger unit_dimension (falls to answer-class)',
+    (_case, metadata) => {
+      const profile = customProfile();
+      expect(
+        resolveQuestionJudgeRoute({ ...measurementQuestion, kind: '计算题', metadata }, profile),
+      ).toBe('semantic');
+    },
+  );
+
+  it('derivation carrying the unit contract routes unit_dimension (contract wins over kind class)', () => {
+    // The reference pair is the producer's explicit declaration that the
+    // expected answer is a number+unit — it fires for ANY kind label, including
+    // one whose answer class would otherwise climb the steps/semantic ladder
+    // (customProfile derives from physics, which prefers unit_dimension and not
+    // steps). Pinned so the precedence is deliberate, not accidental.
+    const profile = customProfile();
+    expect(
+      resolveQuestionJudgeRoute(
+        { ...measurementQuestion, kind: 'derivation', metadata: unitReference },
+        profile,
+      ),
+    ).toBe('unit_dimension');
+  });
+
+  it('keeps choices deterministic and explicit override first for custom profiles', () => {
+    const profile = customProfile();
+    const choice = {
+      ...measurementQuestion,
+      choices_md: ['25 m/s', '0.025 m/s'],
+      image_refs: ['diagram'],
+    };
+    expect(resolveQuestionJudgeRoute(choice, profile)).toBe('exact');
+    expect(resolveQuestionJudgeRoute({ ...choice, judge_kind_override: 'semantic' }, profile)).toBe(
+      'semantic',
+    );
+  });
+
+  it('does not opt into units just because the capability is available', () => {
+    const profile = customProfile(false);
+    expect(resolveQuestionJudgeRoute(measurementQuestion, profile)).toBe('semantic');
+    expect(
+      resolveQuestionJudgeRoute({ ...measurementQuestion, kind: 'computation' }, profile),
+    ).toBe('keyword');
+    expect(
+      resolveQuestionJudgeRoute(
+        { ...measurementQuestion, kind: 'short_answer', image_refs: ['diagram'] },
+        profile,
+      ),
+    ).toBe('multimodal_direct');
+  });
+});
 
 describe('M-1 regression: runnable routes ignore multimodal fields', () => {
   const baseChoice: JudgeQuestionRow = {
@@ -235,14 +432,9 @@ describe('YUK-759: SemanticJudgeTask structured-output migration', () => {
       },
     });
 
-    const outputFormat = (
-      capturedCtx as { outputFormat?: { type?: string; schema?: Record<string, unknown> } }
-    ).outputFormat;
-    expect(outputFormat?.type).toBe('json_schema');
-    expect(outputFormat?.schema).toMatchObject({
-      type: 'object',
-      properties: { score: expect.any(Object), coarse_outcome: expect.any(Object) },
-    });
+    // Post-P4: no SDK outputFormat on ctx — schema enforcement is the zod parse
+    // of structured_output / text at the dispatch boundary.
+    expect((capturedCtx as { outputFormat?: unknown }).outputFormat).toBeUndefined();
     expect(result).toMatchObject({
       coarse_outcome: 'partial',
       score: 0.64,
@@ -358,8 +550,8 @@ describe('YUK-36 regression: unit_dimension LLM fallback uses registered task wi
     });
     expect(captured[0].ctx).toMatchObject({
       subjectProfile: { id: 'physics' },
-      outputFormat: { type: 'json_schema', schema: expect.any(Object) },
     });
+    expect(captured[0].ctx).not.toHaveProperty('outputFormat');
     expect(captured[0].ctx).not.toHaveProperty('db');
   });
 });
@@ -695,5 +887,207 @@ describe('YUK-260: exact route forwards choices_md so letter↔text resolve', ()
     });
     expect(r.route).toBe('exact');
     expect(r.result.coarse_outcome).toBe('correct');
+  });
+});
+
+describe('YUK-996: assertGeneratedQuestionHasJudgeContract resolves the runtime route', () => {
+  // A custom subject profile whose preferredRoutes diverge from the static
+  // default ladder (core/schema/judge-routing.ts): it declares NEITHER
+  // 'semantic' nor 'steps', so prose/derivation questions the profile-free
+  // twin routed 'semantic' fall back to 'keyword' at runtime
+  // (resolveQuestionJudgeRoute's `isPreferred(semantic) ? 'semantic' :
+  // 'keyword'` tail).
+  const keywordOnlyProfile: SubjectProfile = {
+    ...resolveSubjectProfile('general'),
+    id: 'subj_keyword_first',
+    displayName: '关键词判分科',
+    judgePolicy: {
+      preferredRoutes: ['exact', 'keyword'],
+      notes: [],
+    },
+  };
+  // Builtins with non-default ladders: math prefers 'steps' (derivation → the
+  // runnable steps@1 judge, not the static twin's 'semantic'); physics prefers
+  // 'unit_dimension' (computation → runUnitDimensionJudge, which needs
+  // metadata.reference_value/reference_unit generated rows never carry).
+  const mathProfile = resolveSubjectProfile('math');
+  const physicsProfile = resolveSubjectProfile('physics');
+
+  const proseBase = {
+    kind: 'short_answer' as const,
+    prompt_md: '简述光合作用中光反应与暗反应如何衔接，并指出能量与物质的流向。',
+    choices_md: null,
+    judge_kind_override: null,
+  };
+
+  it('(a) does not mis-reject a question runnable under the profile (keyword fallback, keywords present)', () => {
+    const q = {
+      ...proseBase,
+      rubric_json: { criteria: [], keywords: ['光反应', '暗反应', 'ATP'] },
+    };
+    // The runtime route under this profile is 'keyword'…
+    expect(resolveQuestionJudgeRoute(q, keywordOnlyProfile)).toBe('keyword');
+    // …and the question carries keywords, so it IS gradeable. The static
+    // default route ('semantic') demanded required_points — a false reject.
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(q, 'question_author', keywordOnlyProfile),
+    ).not.toThrow();
+  });
+
+  it('(b) does not mis-release a question the runtime falls back to an empty keyword judge', () => {
+    const q = {
+      ...proseBase,
+      rubric_json: { criteria: [], required_points: ['光反应产生 ATP 与 NADPH'] },
+    };
+    // required_points satisfied the static 'semantic' route — but the runtime
+    // resolves 'keyword' here and the keyword judge has nothing to match.
+    expect(resolveQuestionJudgeRoute(q, keywordOnlyProfile)).toBe('keyword');
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(q, 'question_author', keywordOnlyProfile),
+    ).toThrow(/uses keyword judge without keywords/);
+  });
+
+  it('(b) derivation under the same keyword-only profile is rejected on the runtime route too', () => {
+    const q = {
+      kind: 'derivation' as const,
+      prompt_md: '证明：对任意实数 x，x² + 1 ≥ 2x，并说明取等条件。',
+      choices_md: null,
+      judge_kind_override: null,
+      rubric_json: { criteria: [], required_points: ['移项成平方'] },
+    };
+    // 'steps' not preferred → ladder falls to 'semantic'-preferred? No —
+    // neither steps nor semantic is declared, so runtime lands on 'keyword'.
+    expect(resolveQuestionJudgeRoute(q, keywordOnlyProfile)).toBe('keyword');
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(q, 'question_author', keywordOnlyProfile),
+    ).toThrow(/uses keyword judge without keywords/);
+  });
+
+  it('(a) does not mis-reject a derivation carrying reference_solution under a steps-preferred profile', () => {
+    const q = {
+      kind: 'derivation' as const,
+      prompt_md: '由向心加速度定义推导 a = v²/r，写明极限过程。',
+      choices_md: null,
+      judge_kind_override: null,
+      rubric_json: {
+        criteria: [],
+        reference_solution: {
+          expected_signals: ['速度矢量差', '小角近似'],
+          final_answer: 'a = v²/r',
+          answer_equivalents: ['a = ω²r'],
+        },
+      },
+    };
+    // Runtime resolves 'steps' (math prefers it); runStepsJudge only needs
+    // reference_solution — the static twin forced required_points ('semantic').
+    expect(resolveQuestionJudgeRoute(q, mathProfile)).toBe('steps');
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(q, 'question_author', mathProfile),
+    ).not.toThrow();
+  });
+
+  it('(b) does not mis-release a derivation missing reference_solution under a steps-preferred profile', () => {
+    const q = {
+      kind: 'derivation' as const,
+      prompt_md: '证明三角形内角和为 180°。',
+      choices_md: null,
+      judge_kind_override: null,
+      rubric_json: { criteria: [], required_points: ['作平行辅助线'] },
+    };
+    // Runtime resolves 'steps' and runStepsJudge short-circuits to
+    // 'unsupported' without rubric_json.reference_solution — the static twin
+    // ('semantic' + required_points) would have released it.
+    expect(resolveQuestionJudgeRoute(q, mathProfile)).toBe('steps');
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(q, 'question_author', mathProfile),
+    ).toThrow(/uses steps judge without reference_solution/);
+  });
+
+  it('(b) does not mis-release a computation routed to unit_dimension without reference metadata', () => {
+    const q = {
+      kind: 'computation' as const,
+      prompt_md: '把 0.025 km/s 换算成 m/s，保留两位有效数字。',
+      choices_md: null,
+      judge_kind_override: null,
+      rubric_json: { criteria: [], keywords: ['换算', '有效数字'] },
+    };
+    // Runtime resolves 'unit_dimension'; runUnitDimensionJudge returns
+    // 'unsupported' without metadata.reference_value/reference_unit — the
+    // static twin ('keyword' + keywords present) would have released it.
+    expect(resolveQuestionJudgeRoute(q, physicsProfile)).toBe('unit_dimension');
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(q, 'question_author', physicsProfile),
+    ).toThrow(/uses unit_dimension judge without metadata\.reference_value/);
+  });
+
+  it('(a) does not mis-reject a non-legacy-label question carrying the unit contract', () => {
+    // YUK-1036 — kind is a free-form label (YUK-386), so a '计算题' draft never
+    // matched the literal 'calculation'/'computation' check. Its
+    // metadata.reference_value/reference_unit pair IS the unit judge's input
+    // contract: the gate must resolve the same 'unit_dimension' route the
+    // runtime invoker dispatches and accept the pair it requires — resolving
+    // 'semantic' here (the pre-fix behaviour) would false-reject on missing
+    // required_points.
+    const q = {
+      kind: '计算题',
+      prompt_md: '把 0.025 km/s 换算成 m/s，保留两位有效数字。',
+      choices_md: null,
+      judge_kind_override: null,
+      rubric_json: { criteria: [] },
+      metadata: { reference_value: 25, reference_unit: 'm/s', reference_tolerance: 0.02 },
+    };
+    expect(resolveQuestionJudgeRoute(q, physicsProfile)).toBe('unit_dimension');
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(q, 'question_author', physicsProfile),
+    ).not.toThrow();
+  });
+
+  it('(b) a non-legacy-label question WITHOUT the unit contract stays off the route', () => {
+    // Same label, no reference pair: the unit judge could only return
+    // 'unsupported', so the preference does not fire (conservative direction).
+    // '计算题' is an unrecognised free-form label → semantic; required_points
+    // satisfies that contract.
+    const q = {
+      kind: '计算题',
+      prompt_md: '把 0.025 km/s 换算成 m/s，保留两位有效数字。',
+      choices_md: null,
+      judge_kind_override: null,
+      rubric_json: { criteria: [], required_points: ['换算到同一单位再求比值'] },
+    };
+    expect(resolveQuestionJudgeRoute(q, physicsProfile)).toBe('semantic');
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(q, 'question_author', physicsProfile),
+    ).not.toThrow();
+  });
+
+  it('keeps the legacy ladder verdicts under the default general profile (regression)', () => {
+    const general = resolveSubjectProfile('general');
+    // prose without required_points → still the 'semantic' contract failure.
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(
+        { ...proseBase, rubric_json: { criteria: [] } },
+        'question_author',
+        general,
+      ),
+    ).toThrow(/uses semantic judge without required_points/);
+    // prose with required_points → still accepted.
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(
+        {
+          ...proseBase,
+          rubric_json: { criteria: [], required_points: ['光反应供能'] },
+        },
+        'question_author',
+        general,
+      ),
+    ).not.toThrow();
+    // LLM-graded kind pinned to exact → still rejected.
+    expect(() =>
+      assertGeneratedQuestionHasJudgeContract(
+        { ...proseBase, judge_kind_override: 'exact', rubric_json: { criteria: [] } },
+        'question_author',
+        general,
+      ),
+    ).toThrow(/cannot use exact judge/);
   });
 });

@@ -239,7 +239,6 @@ describe('ND-5 conservation — North-Star goal strand is purely additive', () =
     const coachResult = await runCoach(db, 'daily', {
       listProposalInboxRowsFn: async () => [],
       listActiveGoalsFn: async () => activeGoals,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
       runAgentTaskFn: coachWithGoalStrand(activeGoals),
       writeEventFn: async (_db, input) => input.id,
       now: () => NOW,

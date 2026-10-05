@@ -139,11 +139,11 @@ export const FRONTIER_MAX_ITEMS = 5;
  */
 const COLD_START_PL = 0.5;
 
-interface FrontierClosureRow {
+type FrontierClosureRow = {
   frontier_kc: string;
   prereq_kc: string;
   depth: number | string;
-}
+};
 
 /** The three DISTINCT closure states a bare `[]` used to collapse (YUK-514 Finding 1). */
 export type FrontierKind = 'sparse' | 'dense' | 'overflow';
@@ -213,7 +213,7 @@ export async function learnableFrontierResolved(db: DbLike): Promise<FrontierRes
   //   (`from = to`) and archived edges excluded at every level. The outer GROUP BY collapses
   //   each pair to ONE row (MAX(depth) for the overflow probe), so the depth-duplicated rows
   //   the old `SELECT DISTINCT … depth` projection emitted no longer inflate the rowcount.
-  const rows = (await db.execute(sql`
+  const rows = await db.execute<FrontierClosureRow>(sql`
     WITH RECURSIVE closure AS (
       SELECT
         e.to_knowledge_id   AS frontier_kc,
@@ -242,7 +242,7 @@ export async function learnableFrontierResolved(db: DbLike): Promise<FrontierRes
     FROM closure
     GROUP BY frontier_kc, prereq_kc
     LIMIT ${fetchLimit}
-  `)) as unknown as FrontierClosureRow[];
+  `);
 
   // ③ Fail-safe-to-empty on any overflow (mirror cascade.ts:155-164). Depth overflow:
   //    any pair whose MAX depth exceeds the cap means the chain exceeded the hard limit →

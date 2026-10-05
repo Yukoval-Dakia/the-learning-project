@@ -114,7 +114,8 @@ export const SourcingTaskOutput = z
     query_plan: z.array(z.string().min(1)),
     // ISO string (same shape as quiz_gen source_pack.searched_at — string, not Date).
     fetched_at: z.string().min(1),
-    tool: z.literal('tavily'),
+    // Tavily→Exa 换装（2026-09-13）：新报告写 'exa'；历史行保留 'tavily' 可 parse。
+    tool: z.enum(['tavily', 'exa']),
   })
   .superRefine((value, ctx) => {
     const questionCount = value.questions.length;

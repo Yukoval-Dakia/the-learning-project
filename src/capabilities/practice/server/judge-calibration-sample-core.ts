@@ -36,10 +36,12 @@ import {
   MODEL_BACKED_JUDGE_ROUTES,
 } from '@/capabilities/practice/server/judge';
 import { judgeAnswer } from '@/capabilities/practice/server/judge/question-contract';
+import { getConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import type { ResolvedProvider } from '@/server/ai/providers';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
@@ -294,25 +296,27 @@ export async function runJudgeCalibrationSample(
       ),
     );
 
-  // Newest judge per answer event (MF4② — appeal overturns supersede).
-  const newestByAnswer = new Map<string, JudgeCandidate>();
-  for (const row of judgeRows) {
-    const candidate: JudgeCandidate = {
+  // Effective judge per answer event (YUK-1054 §9 dual-track — was "newest by
+  // created_at"). A rejudge anchors caused_by=appeal.id, so newest-by-created_at
+  // alone could pick a superseded/retracted row. resolveVerdictsForAttempts walks
+  // the correct-chain and returns the chain-resolved effective judge — the standing
+  // verdict the calibration should disagree-check.
+  const attemptIds = [...new Set(judgeRows.map((row) => row.subject_id))];
+  const rowById = new Map(judgeRows.map((row) => [row.id, row]));
+  const verdicts = await resolveVerdictsForAttempts(db, attemptIds);
+  let candidates: JudgeCandidate[] = [];
+  for (const v of verdicts.values()) {
+    const effectiveId = v.effective?.judge_event_id;
+    if (!effectiveId) continue;
+    const row = rowById.get(effectiveId);
+    if (!row) continue;
+    candidates.push({
       id: row.id,
       subject_id: row.subject_id,
       created_at: row.created_at,
       payload: row.payload as Record<string, unknown>,
-    };
-    const prev = newestByAnswer.get(row.subject_id);
-    if (
-      !prev ||
-      candidate.created_at.getTime() > prev.created_at.getTime() ||
-      (candidate.created_at.getTime() === prev.created_at.getTime() && candidate.id > prev.id)
-    ) {
-      newestByAnswer.set(row.subject_id, candidate);
-    }
+    });
   }
-  let candidates = [...newestByAnswer.values()];
 
   // Already-sampled pre-filter (performance layer; MF8 index is the guarantee).
   // ACTION-FILTERED — appeal events share the caused_by key space (§3.2).
@@ -337,8 +341,18 @@ export async function runJudgeCalibrationSample(
   const batch = shuffleInPlace(candidates).slice(0, cfg.batchMax);
 
   // ── Lane snapshots (MF5) — sample-time env; original lane unrecoverable. ──
-  const visionProviderAtSample = process.env.VISION_JUDGE_PROVIDER ?? null;
-  const globalOverrideAtSample = process.env.AI_PROVIDER_OVERRIDE ?? null;
+  // YUK-1007：lane 快照记「生效值」（env+DB 合并后），不是裸 env——DB 写的
+  // lane pin 也要被审计到。
+  const visionProviderAtSample = (() => {
+    const v = getConfig('VISION_JUDGE_PROVIDER');
+    return typeof v === 'string' ? v : null;
+  })();
+  const globalOverrideAtSample = (() => {
+    // YUK-1007 review：裸 AI_PROVIDER_OVERRIDE 已从 keyspace 摘除（resolver 只消费
+    // lane.global.*）——读 lane.global.provider 才是 env pin > DB > default 的生效值。
+    const v = getConfig('lane.global.provider');
+    return typeof v === 'string' ? v : null;
+  })();
 
   // ── Per-candidate re-judge (per-item isolation; one failure never kills the batch) ──
   for (const candidate of batch) {

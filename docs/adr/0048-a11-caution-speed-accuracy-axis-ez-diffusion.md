@@ -40,7 +40,7 @@ per-KC 累计 ≥ `AXIS_MIN_OBS`(=30) 计分 RT 作答才算一组 EZ；不足 �
 
 ## 形态
 
-- **纯闭式模块** `src/server/calibration/ez-diffusion.ts`（与 auc/ece/replay 同目录，PURE + unit-test，含 Wagenmakers App 的 Pc∈{0,1} edge-correction + 退化裁决）。
+- **纯闭式模块** `src/server/calibration/ez-diffusion.ts`（与 auc/ece/replay 同目录，PURE + unit-test，含 Wagenmakers App 的 Pc∈{0,1} edge-correction + 退化裁决）。该 TS 形态已登记为 ADR-0046「豁免登记」R2 的成文豁免（owner 2026-08-27，YUK-679 LIGHT；描述符-only 红线存续期间有效，触发 port 的条件见该段）。
 - **新表 `learner_axis_state`**（5 处登记面：schema.ts / migration 0053 / audit:schema write-path / export FK_ORDER + SCHEMA_VERSION 4.10→4.11 / tests ALL_TABLES）：`(drift_v, boundary_a, ter, n_obs, provenance)` + (subject_kind, subject_id) 唯一。A10（HOLD）未来加 `calibration_curve_json` 列（additive 列，不 bump）= 本表第二 writer。
 - **batch writer** `src/server/calibration/axis-writer.ts`（advisory-lock 独立 namespace `axis_state:`）+ nightly job `axis_state_nightly`（practice manifest，cron 05:40 Asia/Shanghai）= 唯一 live writer。
 - **读出面**：`placement-profile` 每 KC 投影附 `axis` 字段（profile 投影，非新路由）。

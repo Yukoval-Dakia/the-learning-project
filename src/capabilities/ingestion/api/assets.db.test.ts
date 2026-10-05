@@ -1,4 +1,5 @@
 import { eq } from 'drizzle-orm';
+import sharp from 'sharp';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { persistImageAsset } from '@/capabilities/ingestion/server/persist-image-asset';
 import { source_asset } from '@/db/schema';
@@ -49,6 +50,8 @@ describe('POST /api/assets', () => {
     expect(body.asset.mime_type).toBe('image/png');
     expect(body.asset.sha256).toMatch(/^[0-9a-f]{64}$/);
     expect(body.asset.byte_size).toBe(4);
+    expect(body.asset.width).toBeNull();
+    expect(body.asset.height).toBeNull();
     expect(res.headers.get('Location')).toBe(`/api/assets/${body.asset.id}/content`);
     // R2 should have the object
     expect(r2._store.has(body.asset.storage_key)).toBe(true);
@@ -58,6 +61,34 @@ describe('POST /api/assets', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].sha256).toBe(body.asset.sha256);
   });
+
+  it.each(['png', 'jpeg', 'webp'] as const)(
+    'persists actual %s dimensions with the unchanged stored bytes',
+    async (format) => {
+      const image = await sharp({
+        create: { width: 37, height: 23, channels: 3, background: '#395b7d' },
+      })
+        .toFormat(format)
+        .toBuffer();
+      const response = await POST(
+        postRequest(
+          makeFormData(
+            new File([new Uint8Array(image)], `source.${format}`, { type: `image/${format}` }),
+          ),
+        ),
+      );
+      expect(response.status).toBe(201);
+      const { asset } = AssetUploadResponseSchema.parse(await response.json());
+      expect(asset).toMatchObject({ width: 37, height: 23, byte_size: image.byteLength });
+      const [stored] = await testDb()
+        .select()
+        .from(source_asset)
+        .where(eq(source_asset.id, asset.id));
+      expect(stored).toMatchObject({ width: 37, height: 23, sha256: asset.sha256 });
+      const object = await r2.get(asset.storage_key);
+      expect(object).toEqual(new Uint8Array(image));
+    },
+  );
 
   it('returns 400 when file field is missing', async () => {
     const res = await POST(postRequest(new FormData()));

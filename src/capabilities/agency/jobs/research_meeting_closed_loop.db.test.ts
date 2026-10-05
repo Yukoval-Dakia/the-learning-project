@@ -39,7 +39,8 @@ import { and, eq, or, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ── THE SINGLE REPLACED PORT ────────────────────────────────────────────────────
-// `runTask` talks to the model through startup + WarmQuery.query from the Agent SDK. Faking it (and
+// `runTask` talks to the model through the execution adapter's
+// startup + PreparedExecutionQuery.query. Faking it via `__setPiAdapterForTests` (and
 // nothing else) keeps every prompt-building, provider-resolution, parsing, persistence
 // and routing decision in production hands, while making the run deterministic + free.
 const sdk = vi.hoisted(() => ({
@@ -49,36 +50,39 @@ const sdk = vi.hoisted(() => ({
   respond: null as null | ((prompt: string) => unknown),
 }));
 
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  startup: async () => ({
-    query: (prompt: unknown) =>
-      (async function* () {
-        // `promptFromInput` hands a plain string for text tasks and an async iterable of
-        // SDKUserMessage for multimodal ones (the vision judge). Flatten both to the text
-        // the model would actually read — that is what the seam assertions inspect.
-        let text = '';
-        if (typeof prompt === 'string') {
-          text = prompt;
-        } else {
-          const iterable = prompt as AsyncIterable<{
-            message: { content: Array<{ type: string; text?: string }> };
-          }>;
-          for await (const msg of iterable) {
-            for (const block of msg.message.content) {
-              if (block.type === 'text' && typeof block.text === 'string') text += block.text;
+import { type RunnerMessage, __setPiAdapterForTests } from '@/server/ai/execution-adapter';
+
+function fakePiAdapter() {
+  return {
+    id: 'pi' as const,
+    startup: async () => ({
+      query: (prompt: unknown) =>
+        (async function* () {
+          // `promptFromInput` hands a plain string for text tasks and an async iterable of
+          // SDKUserMessage for multimodal ones (the vision judge). Flatten both to the text
+          // the model would actually read — that is what the seam assertions inspect.
+          let text = '';
+          if (typeof prompt === 'string') {
+            text = prompt;
+          } else {
+            const iterable = prompt as AsyncIterable<{
+              message: { content: Array<{ type: string; text?: string }> };
+            }>;
+            for await (const msg of iterable) {
+              for (const block of msg.message.content) {
+                if (block.type === 'text' && typeof block.text === 'string') text += block.text;
+              }
             }
           }
-        }
-        sdk.prompts.push(text);
-        const responder = sdk.respond;
-        if (!responder) throw new Error('[closed-loop] no fake model installed for this test');
-        yield responder(text);
-      })(),
-    close: () => {},
-  }),
-  createSdkMcpServer: () => ({ type: 'sdk', name: '', instance: {} }),
-  tool: (name: string, description: string) => ({ name, description }),
-}));
+          sdk.prompts.push(text);
+          const responder = sdk.respond;
+          if (!responder) throw new Error('[closed-loop] no fake model installed for this test');
+          yield responder(text) as RunnerMessage;
+        })(),
+      close: async () => {},
+    }),
+  };
+}
 
 import { capabilities } from '@/capabilities';
 import { PROBE_QUESTION_SOURCE } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
@@ -411,9 +415,11 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     vi.stubEnv('VISION_JUDGE_PROVIDER', '');
     // The composition root's /api/* middleware compares against this.
     vi.stubEnv('INTERNAL_TOKEN', INTERNAL_TOKEN);
+    __setPiAdapterForTests(fakePiAdapter());
   });
 
   afterEach(() => {
+    __setPiAdapterForTests(undefined);
     sdk.respond = null;
     vi.unstubAllEnvs();
   });

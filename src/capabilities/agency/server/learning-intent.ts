@@ -20,10 +20,15 @@ import type { CreateLearningIntentNoteFn } from '@/capabilities/notes/public';
 import { newId } from '@/core/ids';
 import type { LearningItemRowSnapshotT } from '@/core/schema/event/genesis';
 import type { Db, Tx } from '@/db/client';
-import { knowledge, learning_item } from '@/db/schema';
+import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeLearningItemProposal } from '@/kernel/proposals/producers';
-import { resolveSubjectProfile } from '@/subjects/profile';
+import {
+  getDefaultSubjectRegistry,
+  resolveSelectableSubjectId,
+  resolveSubjectProfile,
+  sanitizeProposedNodeDomain,
+} from '@/subjects/profile';
 // YUK-879 — the outline output contract (schema + strict parser + domain error)
 // is owned by the agency TaskSpec module; this orchestrator re-exports it so
 // existing consumers (api route, public surface) keep their import paths.
@@ -33,17 +38,8 @@ import { type TaskTextRunFn, costUsdToMicroUsd } from './ai-runtime';
 export type { LearningIntentOutline } from '../tasks/learning-intent';
 export { LearningIntentError, parseLearningIntentOutline };
 
-// YUK-471 W2 — learning_item projection seam. Each creation INSERT writes a per-id genesis BASE
-// event (the recommended Q1 route — learning_item has no fold-blind field, so genesis fully seeds
-// the row) + the materialized_id_index anchor regardless of the flag; projectionIsWriter('learning_item')
-// gates ONLY who writes the ROW (projection write-through when ON, imperative INSERT when OFF).
-import {
-  assertLearningItemParity,
-  learningItemLiveRowToSnapshot,
-  projectLearningItem,
-  projectionIsWriter,
-  upsertMaterializedIdIndex,
-} from './learning-item-projection-port';
+// Each new item records a per-id genesis and index before its sole structural writer.
+import { projectLearningItem, upsertMaterializedIdIndex } from './learning-item-projection-port';
 
 // ---------- Public types ----------
 
@@ -140,7 +136,12 @@ function normalizeProposedNode(
   return {
     temp_id: node.temp_id,
     name: node.name,
-    domain: node.domain ?? fallbackDomain,
+    // YUK-1004 — a proposed domain is sanitised to storage shape:
+    // selectable → canonical id, 'general' (the fallback identity, never a
+    // node domain) → null/inherit, unresolvable → verbatim (same tolerance
+    // as the write seam). A sanitised-out value degrades to the parent
+    // fallback instead of persisting into knowledge.domain.
+    domain: sanitizeProposedNodeDomain(node.domain) ?? fallbackDomain,
   };
 }
 
@@ -228,6 +229,9 @@ export async function planLearningIntent(
     knowledge_node: node ? { id: node.id, name: node.name, domain: node.domain } : null,
     child_nodes: children.map((c) => ({ id: c.id, name: c.name })),
     existing_descendants_count: children.length,
+    // YUK-1004 — the prompt contract points domain values at this list;
+    // 'general' is deliberately absent (fallback identity, never a node domain).
+    valid_domains: getDefaultSubjectRegistry().getSelectableSubjectIds(),
     output_contract:
       planCase === '3c_existing_graph'
         ? 'Return hub + atomics. Each atomic.knowledge_id must be one of child_nodes[].id.'
@@ -266,15 +270,30 @@ export async function planLearningIntent(
     }
     const root =
       planCase === '3a_topic_missing'
-        ? normalizeProposedNode(
-            knowledgeSpec.root ?? failInvalidOutline('3a outline must include knowledge.root'),
-            null,
-          )
+        ? (() => {
+            const raw =
+              knowledgeSpec.root ?? failInvalidOutline('3a outline must include knowledge.root');
+            // YUK-1004 — a NEW topic root must carry a real selectable subject:
+            // 'general' and any unresolvable string fail closed rather than
+            // materialising an invisible/orphan-domain root. (Children get the
+            // looser sanitise-then-inherit treatment via normalizeProposedNode.)
+            return {
+              temp_id: raw.temp_id,
+              name: raw.name,
+              domain: resolveSelectableSubjectId(raw.domain),
+            };
+          })()
         : undefined;
     if (planCase === '3a_topic_missing' && !root?.domain) {
-      failInvalidOutline('3a knowledge.root.domain is required to create a new root node');
+      failInvalidOutline(
+        '3a knowledge.root.domain must resolve to a selectable subject id (see input.valid_domains)',
+      );
     }
-    const rootDomain = root?.domain ?? node?.domain ?? null;
+    // root?.domain is already canonicalised by normalizeProposedNode; an
+    // existing node's stored domain goes through the same sanitiser so a
+    // corrupt 'general' can't leak into proposed children while legacy
+    // unresolvable domains keep their verbatim storage.
+    const rootDomain = root?.domain ?? sanitizeProposedNodeDomain(node?.domain) ?? null;
     const proposedChildren = (knowledgeSpec.children ?? []).map((child) =>
       normalizeProposedNode(child, rootDomain),
     );
@@ -415,25 +434,14 @@ async function assertNotAlreadyRated(db: Db, proposalId: string): Promise<void> 
   }
 }
 
-// YUK-471 W2 — materialize ONE learning_item under the projection seam (shared by the hub / atomic
-// / long INSERT loops in acceptLearningIntent so all three follow the identical genesis→index→
-// write-through path). The full initial row snapshot is the BASE state; learning_item has NO
-// fold-blind field (unlike mistake_variant), so a per-id experimental:genesis fully seeds the row
-// (design §3②/§3⑥ — NOT a dedicated create event). Steps:
-//   1. ALWAYS write the per-id genesis BASE event (subject_id=row.id) FIRST so the fold (when the
-//      flag is ON) sees it in the same tx. ingest_at=now → outbox opt-out (a creation seed is not a
-//      memory-worthy activity; mirrors the goal/variant accept seams).
-//   2. ALWAYS write the materialized_id_index anchor (id → the genesis event) regardless of the flag
-//      (the event log + anchor is the source of truth; the flag only switches the ROW writer).
-//   3. ROW writer gated on projectionIsWriter('learning_item') (critic A1, defer-flip-not-build):
-//      ON → projectLearningItem folds the genesis + writes the row; OFF → the imperative INSERT
-//      stays the writer + a write-time fold==row parity assert (the item is event-sourced this tx).
+// Hub, atomic and long items share one genesis→index→projection path.
+// The genesis carries the full initial structural state; ingest_at opts this
+// creation seed out of the memory outbox.
 async function materializeLearningItem(
   tx: Tx,
   row: LearningItemRowSnapshotT,
   now: Date,
 ): Promise<void> {
-  const flip = projectionIsWriter('learning_item');
   const genesisEventId = newId();
   await writeEvent(tx, {
     id: genesisEventId,
@@ -452,45 +460,7 @@ async function materializeLearningItem(
     anchor_event_id: genesisEventId,
     subject_kind: 'learning_item',
   });
-  if (flip) {
-    await projectLearningItem(tx, row.id);
-  } else {
-    await tx.insert(learning_item).values({
-      id: row.id,
-      source: row.source,
-      source_ref: row.source_ref,
-      title: row.title,
-      content: row.content,
-      knowledge_ids: row.knowledge_ids,
-      primary_artifact_id: row.primary_artifact_id,
-      parent_learning_item_id: row.parent_learning_item_id,
-      child_learning_item_ids: [],
-      status: row.status,
-      // A4 — set ALL snapshot fields explicitly from the genesis `row` (not by DB-default
-      // coincidence) so the imperative OFF-path row matches the genesis payload by construction; a
-      // default change can no longer silently diverge the two from the seeded genesis snapshot.
-      user_pinned: row.user_pinned,
-      completed_at: row.completed_at,
-      dismissed_at: row.dismissed_at,
-      archived_at: row.archived_at,
-      archived_reason: row.archived_reason,
-      created_at: row.created_at,
-      updated_at: row.updated_at,
-      version: row.version,
-    });
-    // write-time fold==row guard: the item is event-sourced this tx (genesis + index anchor), so
-    // the fold reproduces the seeded row. dev/test throw on mismatch, prod warn.
-    const [written] = await tx
-      .select()
-      .from(learning_item)
-      .where(eq(learning_item.id, row.id))
-      .limit(1);
-    await assertLearningItemParity(
-      tx,
-      row.id,
-      written ? learningItemLiveRowToSnapshot(written) : null,
-    );
-  }
+  await projectLearningItem(tx, row.id);
 }
 
 /**
@@ -536,19 +506,38 @@ export async function acceptLearningIntent(
       if (!root) {
         throw new LearningIntentError('llm_parse_failed', '3a proposal missing proposed root');
       }
-      if (!root.domain) {
-        throw new LearningIntentError('llm_parse_failed', '3a proposal root missing domain');
+      const rootDomain = resolveSelectableSubjectId(root.domain);
+      if (!rootDomain) {
+        throw new LearningIntentError(
+          'llm_parse_failed',
+          '3a proposal root.domain is not a registered selectable subject',
+        );
       }
       rootKnowledgeId = newId();
       tempIdToRealId.set(root.temp_id, rootKnowledgeId);
       createdKnowledgeIds.push(rootKnowledgeId);
 
+      // YUK-1008 — a domain-bearing topic root parents under its subject's seed
+      // anchor (seed:<domain>:root) so the tree backbone keeps every content node
+      // transitively inside its subject tree (same convention as placement-starter
+      // goal-kc). A domain without a seeded anchor (custom/unseeded identity) stays
+      // a standalone root — honest, not silently re-anchored.
+      const seedRootId = `seed:${rootDomain}:root`;
+      const seedRoot = (
+        await tx
+          .select({ id: knowledge.id })
+          .from(knowledge)
+          .where(and(eq(knowledge.id, seedRootId), isNull(knowledge.archived_at)))
+          .limit(1)
+      )[0];
+
       await createKnowledgeNode(tx, {
         id: rootKnowledgeId,
         name: root.name,
-        domain: root.domain,
-        parentId: null,
+        domain: rootDomain,
+        parentId: seedRoot?.id ?? null,
         createdAt: now,
+        causedByEventId: rateEventId,
       });
     }
 
@@ -567,8 +556,14 @@ export async function acceptLearningIntent(
           `${planCase} proposal missing proposed children`,
         );
       }
+      // YUK-1004 — sanitise every persisted domain so a stale pre-fix
+      // proposal carrying 'general' cannot leak into knowledge.domain at
+      // accept time either, while legitimately unresolvable domains keep the
+      // same verbatim passthrough the write seam applies.
       const fallbackDomain =
-        proposedKnowledge?.root?.domain ?? proposal.payload.knowledge_node?.domain ?? null;
+        sanitizeProposedNodeDomain(proposedKnowledge?.root?.domain) ??
+        sanitizeProposedNodeDomain(proposal.payload.knowledge_node?.domain) ??
+        null;
       for (const child of children) {
         const childId = newId();
         tempIdToRealId.set(child.temp_id, childId);
@@ -576,9 +571,10 @@ export async function acceptLearningIntent(
         await createKnowledgeNode(tx, {
           id: childId,
           name: child.name,
-          domain: child.domain ?? fallbackDomain,
+          domain: sanitizeProposedNodeDomain(child.domain) ?? fallbackDomain,
           parentId: rootKnowledgeId,
           createdAt: now,
+          causedByEventId: rateEventId,
         });
       }
     }

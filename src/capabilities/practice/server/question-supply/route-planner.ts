@@ -9,18 +9,22 @@
 // 把一个 QuestionSupplyTarget 翻成一个**有序的获取路由优先级列表**（SupplyRoute[]）。
 //
 // 纯函数：同输入同输出，无 IO、无 LLM、无写。dispatcher（同目录）才做 IO 派发。
-// 约束优先级（Task 13 Step 3 字面给定的判据，权威）：
-//   1. needsImage 约束 → 图源优先（图候选 → 既有录入 → web 兜底）。
-//   2. minSourceTier ≤ 2（要中高可信源）→ web 既存题优先（web → 录入 → 拟题兜底）。
-//   2.5. confusable_contrast 且有 routePreference → 保留显式 quiz_gen 路由；该缺口虽是
+// 约束优先级（Task 13 Step 3 字面给定的判据为权威；YUK-1011 插入的 composite
+// 判据排在 needsImage 之前——它是池侧硬谓词 EXISTS(children)，needsImage 只是
+// 路由偏好、无对应池谓词：两者同时置位时只有 quiz_gen 能产出可入池的行，先判
+// composite 才不会把组合需求静默派给永远满足不了它的生产者）：
+//   1. compositeParentOnly（篇，YUK-1011）→ 只走 quiz_gen：唯一会落
+//      parent+question_part 子题行的生产者；其它路由结构上无法满足。
+//   2. needsImage 约束 → 图源优先（图候选 → 既有录入 → web 兜底）。
+//   3. minSourceTier ≤ 2（要中高可信源）→ web 既存题优先（web → 录入 → 拟题兜底）。
+//   3.5. confusable_contrast 且有 routePreference → 保留显式 quiz_gen 路由；该缺口虽是
 //        objectiveOnly，但必须生成 A↔B 辨析题，不能被通用客观题路由改写。
-//   3. objectiveOnly 约束（要客观题，校准用）→ web 既存题或拟题（不走录入/图）。
-//   4. 否则用 target.routePreference（若非空），再兜底 [author_question, sourcing_web]。
+//   4. objectiveOnly 约束（要客观题，校准用）→ web 既存题或拟题（不走录入/图）。
+//   5. 否则用 target.routePreference（若非空），再兜底 [author_question, sourcing_web]。
 //
 // 注意 minSourceTier 分支在 objectiveOnly 之前：一个既要高可信又只要客观题的目标，
 // 高可信源约束更硬（校准级证据要 grounded），故先满足 minSourceTier ≤ 2 的 web-first 顺序。
 
-import { subjectSupportsJyeooFetch } from './jyeoo-supply-config';
 import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
 
 /**
@@ -32,30 +36,34 @@ import type { QuestionSupplyTarget, SupplyRoute } from './target-discovery';
  * `confusable_contrast`，其显式 routePreference 在通用 objectiveOnly 分支前生效，
  * 以保留 quiz_gen 辨析题生成路线。
  *
- * YUK-697 — 纯函数不变（同 target + 同静态 profile 同输出）：新增 jyeoo_fetch 只在
- * subject profile 声明 jyeooSupply 时排到 sourcing_web 之前（确定性抓取 > agent 找题，
- * design §2.2）。needsImage 分支不带 jyeoo（图题被持久化前过滤，jyeoo 对它无用）。
- * jyeoo_fetch 的 kill switch（JYEOO_FETCH_ENABLED）不在这里——它是 dispatcher 的
- * 可派性降级（chooseAutoRoute 跳过被关的 jyeoo → 落回 sourcing_web），route plan 恒记
- * 首选偏好（可观测）。flag OFF 时 plan 仍含 jyeoo_fetch 但 dispatch 落 sourcing_web。
+ * YUK-986 (Supply-Agent/1) — jyeoo_fetch 路由的机器面（queue/handler/dispatcher
+ * 分支）已退役：producer 经济学（无法按 KC 定向 + 40题/日预算）与逐目标派发根本
+ * 不兼容，供给改由 agent tool 链（jyeoo_fetch_candidates / store_sourced_question）
+ * 承载。'jyeoo_fetch' 仅保留在 SupplyRoute/SupplyProducerRoute **词表**里（trace 与
+ * provenance 的合法值），本 planner 不再产出它。
  */
 export function planSupplyRoutes(target: QuestionSupplyTarget): SupplyRoute[] {
-  const jyeoo = subjectSupportsJyeooFetch(target.subjectId);
+  // YUK-1011 — 篇 (composite parent) is a STRUCTURAL hard constraint: the pool
+  // filter requires a parent row with ≥1 question_part child, and quiz_gen is
+  // the only producer that materializes parent+part groups (sourcing_web /
+  // ingest_existing store flat rows; author_question writes a structured tree
+  // but no part rows). Checked BEFORE needsImage: that flag only biases routing
+  // (no pool predicate), so a combined needsImage+composite demand can only
+  // ever be fulfilled on the composite axis.
+  if (target.constraints.compositeParentOnly) {
+    return ['quiz_gen'];
+  }
   if (target.constraints.needsImage) {
     return ['image_candidate', 'ingest_existing', 'sourcing_web'];
   }
   if (target.minSourceTier <= 2) {
-    return jyeoo
-      ? ['jyeoo_fetch', 'sourcing_web', 'ingest_existing', 'author_question']
-      : ['sourcing_web', 'ingest_existing', 'author_question'];
+    return ['sourcing_web', 'ingest_existing', 'author_question'];
   }
   if (target.gapKind === 'confusable_contrast' && target.routePreference.length > 0) {
     return target.routePreference;
   }
   if (target.constraints.objectiveOnly) {
-    return jyeoo
-      ? ['jyeoo_fetch', 'sourcing_web', 'author_question']
-      : ['sourcing_web', 'author_question'];
+    return ['sourcing_web', 'author_question'];
   }
   return target.routePreference.length > 0
     ? target.routePreference

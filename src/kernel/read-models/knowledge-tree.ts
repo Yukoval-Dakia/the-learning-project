@@ -5,6 +5,15 @@ import { normalizeSubjectKey, resolveKnownSubjectId } from '@/subjects/profile';
 
 const MAX_DEPTH = 32; // 防 cycle
 
+export function matchesSubjectDomain(subject: string, effectiveDomain: string | null): boolean {
+  const rawKey = normalizeSubjectKey(subject);
+  if (!rawKey || effectiveDomain === null) return false;
+
+  const canonical = resolveKnownSubjectId(subject);
+  if (canonical !== null) return resolveKnownSubjectId(effectiveDomain) === canonical;
+  return normalizeSubjectKey(effectiveDomain) === rawKey;
+}
+
 /**
  * Walk up parent chain to find first non-null domain.
  * Invariant: parent_id IS NULL ↔ domain IS NOT NULL（root 必有 domain）。
@@ -87,6 +96,38 @@ export async function batchResolveEffectiveDomains(
 }
 
 /**
+ * YUK-1018 — batch ancestor-id resolver (chain-collecting twin of
+ * {@link batchResolveEffectiveDomains}). Loads the full tree ONCE (archived
+ * inclusive — the walk passes through archived intermediates exactly like the
+ * domain climb) and returns each id's ancestor chain (self excluded, nearest
+ * first), capped at MAX_DEPTH so cycles exhaust the bound instead of looping.
+ * A missing start node resolves to an empty chain; a dangling parent_id keeps
+ * the dangling id in the chain (the walk then terminates on the miss).
+ */
+export async function batchResolveAncestorIds(
+  db: Db | Tx,
+  nodeIds: string[],
+): Promise<Map<string, string[]>> {
+  const out = new Map<string, string[]>();
+  const ids = Array.from(new Set(nodeIds));
+  if (ids.length === 0) return out;
+  const rows = await db
+    .select({ id: knowledge.id, parent_id: knowledge.parent_id })
+    .from(knowledge);
+  const parentById = new Map(rows.map((r) => [r.id, r.parent_id]));
+  for (const id of ids) {
+    const chain: string[] = [];
+    let curId: string | null = parentById.get(id) ?? null;
+    for (let depth = 0; curId !== null && depth < MAX_DEPTH; depth++) {
+      chain.push(curId);
+      curId = parentById.get(curId) ?? null;
+    }
+    out.set(id, chain);
+  }
+  return out;
+}
+
+/**
  * Forward map: registered subject profile id OR an observed raw domain → the set of active
  * knowledge node ids whose effective domain matches that identity. This is the derived-axis primitive
  * behind `GET /api/questions?subject=` (YUK-288): a question's subject is a
@@ -161,11 +202,7 @@ export async function resolveSubjectKnowledgeIds(db: Db | Tx, subject: string): 
     // YUK-628 adds a separate exact-raw branch only when the requested identity itself is
     // unregistered. Thus `?subject=yuwen` cannot sweep unknown nodes, while
     // `?subject=yingyu` can honestly select nodes whose real domain is exactly yingyu.
-    if (canonical !== null) {
-      if (resolveKnownSubjectId(domain) === canonical) matched.push(row.id);
-    } else if (domain !== null && normalizeSubjectKey(domain) === rawKey) {
-      matched.push(row.id);
-    }
+    if (matchesSubjectDomain(subject, domain)) matched.push(row.id);
   }
   return matched;
 }

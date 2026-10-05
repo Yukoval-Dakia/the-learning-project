@@ -141,25 +141,15 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
       'src/capabilities/knowledge/server/proposals.ts',
       'src/capabilities/knowledge/server/review.ts',
     ],
-    symbols: ['readAgentNotes', 'updateGoalScope'],
+    symbols: ['readAgentNotes', 'rewriteGoalScopeOnMerge'],
     dto: 'goal-scope update command + agent-note reads',
     justification:
-      'knowledge proposals update goal scope on accept; knowledge review reads agent notes for grounding.',
-    reviewIssue: 'YUK-885',
+      'knowledge coordinates the atomic merge; Agency owns locked scope attribution updates. Knowledge review reads agent notes.',
+    reviewIssue: 'YUK-953',
     commandFiles: [
       'src/capabilities/knowledge/server/proposals.ts',
       'src/capabilities/knowledge/server/review.ts',
     ],
-  },
-  {
-    owner: 'ingestion',
-    consumer: 'knowledge',
-    files: ['src/capabilities/knowledge/server/tag-knowledge.ts'],
-    symbols: ['ColdStartBridgeError', 'ColdStartBridgeRunTaskFn', 'runColdStartBridge'],
-    dto: 'cold-start bridge runner + error type',
-    justification: 'knowledge tagging delegates cold-start node bridging to the ingestion owner.',
-    reviewIssue: 'YUK-885',
-    commandFiles: ['src/capabilities/knowledge/server/tag-knowledge.ts'],
   },
   {
     owner: 'notes',
@@ -187,21 +177,23 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     files: [
       'src/capabilities/knowledge/jobs/frontier_fill_nightly.ts',
       'src/capabilities/knowledge/server/frontier-read.ts',
-      'src/capabilities/knowledge/server/node-page.ts',
+      'src/capabilities/knowledge/server/proposals.ts',
     ],
     symbols: [
       'FrontierResolution',
       'isMasteredForFrontier',
       'learnableFrontierResolved',
-      'retrievabilityForKc',
+      'rewriteQuestionKnowledgeIds',
+      'rewriteLearningItemKnowledgeIds',
     ],
-    dto: 'FrontierResolution / FSRS retrievability reads',
+    dto: 'FrontierResolution / merge attribution receipts',
     justification:
-      'knowledge-owned frontier read models resolve against practice-owned FSRS state; effective-truth moved to kernel/events (YUK-892).',
-    reviewIssue: 'YUK-885',
+      'frontier reads remain bounded; the merge transaction calls Practice-owned attribution commands instead of mutating foreign rows. Retention reads now belong to the FSRS state owner.',
+    reviewIssue: 'YUK-953',
     commandFiles: [
       'src/capabilities/knowledge/jobs/frontier_fill_nightly.ts',
       'src/capabilities/knowledge/server/frontier-read.ts',
+      'src/capabilities/knowledge/server/proposals.ts',
     ],
   },
   {
@@ -234,11 +226,11 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
       'InterventionAuthoringContextT',
       'guardInterventionPreparationStage',
       'listActiveGoalsWithResolvedScope',
-      'writeAgentNote',
+      'recordQuestionPoolGap',
     ],
     dto: 'ActiveGoal / intervention authoring context reads',
     justification:
-      'review due-list + intervention authoring read agency-owned goals; quiz verify writes agent notes back.',
+      'review due-list + intervention authoring read agency-owned goals; quiz verify submits a committed pool-gap observation, and Agency owns the coach hint policy.',
     reviewIssue: 'YUK-885',
     commandFiles: ['src/capabilities/practice/jobs/quiz_verify.ts'],
   },
@@ -246,7 +238,9 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     owner: 'ingestion',
     consumer: 'practice',
     files: [
-      'src/capabilities/practice/jobs/jyeoo-fetch.ts',
+      // YUK-986 (Supply-Agent/1) — jyeoo-fetch queue job 退休后，candidates 模块接手
+      // staged 资产持久化（同一 ingestion owner seam，r2/lock 经本模块单点转发）。
+      'src/capabilities/practice/server/question-supply/jyeoo-candidates.ts',
       'src/capabilities/practice/server/tools/question-context.ts',
     ],
     symbols: [
@@ -260,9 +254,9 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     ],
     dto: 'SourceAssetRow + material body-block excerpts + asset persistence commands',
     justification:
-      'the jyeoo scraper supply route persists scraped assets through the ingestion owner; the question-context tool reads ingestion-owned material context excerpts (moved from the central context-readers, YUK-892).',
+      'the jyeoo supply lane (jyeoo_fetch_candidates DomainTool, YUK-986) persists staged assets through the ingestion owner; the question-context tool reads ingestion-owned material context excerpts (moved from the central context-readers, YUK-892).',
     reviewIssue: 'YUK-885',
-    commandFiles: ['src/capabilities/practice/jobs/jyeoo-fetch.ts'],
+    commandFiles: ['src/capabilities/practice/server/question-supply/jyeoo-candidates.ts'],
   },
   {
     owner: 'knowledge',
@@ -270,12 +264,13 @@ export const publicReadCycleCatalog: readonly PublicReadCycleEdge[] = [
     files: [
       'src/capabilities/practice/server/attempt-events.ts',
       'src/capabilities/practice/server/knowledge-runtime.ts',
+      'src/capabilities/practice/server/question-supply/placement-starter-store.ts',
     ],
-    symbols: ['loadFailureLearningKnowledgeContext'],
-    dto: 'failure-learning knowledge context reads',
+    symbols: ['loadFailureLearningKnowledgeContext', 'createKnowledgeNodeFromEvents'],
+    dto: 'failure-learning reads and placement knowledge creation command',
     justification:
-      'practice product surface consumes knowledge through the two capability-local re-publish seams; subject/profile/failure-attempt reads moved to kernel read models (YUK-892).',
-    reviewIssue: 'YUK-885',
-    commandFiles: [],
+      'Placement relinquishes its direct knowledge INSERT/event/index assembly to the Knowledge creation owner (YUK-984). This is an explicit command dependency, not a read or a kernel-hidden write. Existing failure-learning read seams remain.',
+    reviewIssue: 'YUK-984',
+    commandFiles: ['src/capabilities/practice/server/question-supply/placement-starter-store.ts'],
   },
 ];

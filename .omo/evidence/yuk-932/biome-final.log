@@ -1,0 +1,154 @@
+src/ai/task-catalog.unit.test.ts:362:16 lint/correctness/noUnusedVariables  FIXABLE  ━━━━━━━━━━━━━━━
+
+  ! This variable kind is unused.
+
+    361 │     expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+  > 362 │     for (const kind of Object.keys(expected)) {
+        │                ^^^^
+    363 │     }
+    364 │   });
+
+  i Unused variables are often the result of typos, incomplete refactors, or other sources of bugs.
+
+  i Unsafe fix: If this is intentional, prepend kind with an underscore.
+
+    360 360 │
+    361 361 │       expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+    362     │ - ····for·(const·kind·of·Object.keys(expected))·{
+        362 │ + ····for·(const·_kind·of·Object.keys(expected))·{
+    363 363 │       }
+    364 364 │     });
+
+
+src/ai/task-catalog.unit.test.ts:422:16 lint/correctness/noUnusedVariables  FIXABLE  ━━━━━━━━━━━━━━━
+
+  ! This variable kind is unused.
+
+    421 │     expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+  > 422 │     for (const kind of Object.keys(expected)) {
+        │                ^^^^
+    423 │     }
+    424 │   });
+
+  i Unused variables are often the result of typos, incomplete refactors, or other sources of bugs.
+
+  i Unsafe fix: If this is intentional, prepend kind with an underscore.
+
+    420 420 │
+    421 421 │       expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+    422     │ - ····for·(const·kind·of·Object.keys(expected))·{
+        422 │ + ····for·(const·_kind·of·Object.keys(expected))·{
+    423 423 │       }
+    424 424 │     });
+
+
+src/ai/task-catalog.unit.test.ts:480:16 lint/correctness/noUnusedVariables  FIXABLE  ━━━━━━━━━━━━━━━
+
+  ! This variable kind is unused.
+
+    479 │     expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+  > 480 │     for (const kind of Object.keys(agencyTaskSpecs)) {
+        │                ^^^^
+    481 │     }
+    482 │   });
+
+  i Unused variables are often the result of typos, incomplete refactors, or other sources of bugs.
+
+  i Unsafe fix: If this is intentional, prepend kind with an underscore.
+
+    478 478 │
+    479 479 │       expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+    480     │ - ····for·(const·kind·of·Object.keys(agencyTaskSpecs))·{
+        480 │ + ····for·(const·_kind·of·Object.keys(agencyTaskSpecs))·{
+    481 481 │       }
+    482 482 │     });
+
+
+src/ai/task-catalog.unit.test.ts:539:16 lint/correctness/noUnusedVariables  FIXABLE  ━━━━━━━━━━━━━━━
+
+  ! This variable kind is unused.
+
+    538 │     expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+  > 539 │     for (const kind of kinds) {
+        │                ^^^^
+    540 │     }
+    541 │   });
+
+  i Unused variables are often the result of typos, incomplete refactors, or other sources of bugs.
+
+  i Unsafe fix: If this is intentional, prepend kind with an underscore.
+
+    537 537 │
+    538 538 │       expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+    539     │ - ····for·(const·kind·of·kinds)·{
+        539 │ + ····for·(const·_kind·of·kinds)·{
+    540 540 │       }
+    541 541 │     });
+
+
+src/ai/task-catalog.unit.test.ts:563:16 lint/correctness/noUnusedVariables  FIXABLE  ━━━━━━━━━━━━━━━
+
+  ! This variable kind is unused.
+
+    562 │     expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+  > 563 │     for (const kind of Object.keys(expected)) {
+        │                ^^^^
+    564 │     }
+    565 │   });
+
+  i Unused variables are often the result of typos, incomplete refactors, or other sources of bugs.
+
+  i Unsafe fix: If this is intentional, prepend kind with an underscore.
+
+    561 561 │
+    562 562 │       expect(existsSync(new URL('./legacy-task-definitions.ts', import.meta.url))).toBe(false);
+    563     │ - ····for·(const·kind·of·Object.keys(expected))·{
+        563 │ + ····for·(const·_kind·of·Object.keys(expected))·{
+    564 564 │       }
+    565 565 │     });
+
+
+src/capabilities/copilot/server/chat.ts:687:9 lint/complexity/useOptionalChain  FIXABLE  ━━━━━━━━━━━
+
+  ! Change to an optional chain.
+
+    685 │       riskyRepair: 'reject',
+    686 │     });
+  > 687 │     if (!extracted || extracted.repaired !== false) return undefined;
+        │         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    688 │     return CopilotImplicitCorrectionIntentSchema.parse(extracted.json);
+    689 │   } catch (error) {
+
+  i Unsafe fix: Change to an optional chain.
+
+     685  685 │         riskyRepair: 'reject',
+     686  686 │       });
+     687      │ - ····if·(!extracted·||·extracted.repaired·!==·false)·return·undefined;
+          687 │ + ····if·(extracted?.repaired·!==·false)·return·undefined;
+     688  688 │       return CopilotImplicitCorrectionIntentSchema.parse(extracted.json);
+     689  689 │     } catch (error) {
+
+
+src/capabilities/copilot/server/turns.ts:626:7 lint/complexity/useOptionalChain  FIXABLE  ━━━━━━━━━━
+
+  ! Change to an optional chain.
+
+    624 │     .where(eq(event.id, opts.resultEventId))
+    625 │     .limit(1);
+  > 626 │   if (!result || result.action !== 'experimental:subagent_run_settled') {
+        │       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    627 │     throw new CopilotHistoryAnchorError('invalid_anchor_action', opts.resultEventId);
+    628 │   }
+
+  i Unsafe fix: Change to an optional chain.
+
+    624 624 │       .where(eq(event.id, opts.resultEventId))
+    625 625 │       .limit(1);
+    626     │ - ··if·(!result·||·result.action·!==·'experimental:subagent_run_settled')·{
+        626 │ + ··if·(result?.action·!==·'experimental:subagent_run_settled')·{
+    627 627 │       throw new CopilotHistoryAnchorError('invalid_anchor_action', opts.resultEventId);
+    628 628 │     }
+
+
+Checked 25 files in 47ms. No fixes applied.
+Found 7 warnings.

@@ -4,7 +4,7 @@
     "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-in",
-    "reader_marker": "parseFlag(process.env.CONFUSABLE_CONTRAST_ENABLED)",
+    "reader_marker": "getConfigFlag('CONFUSABLE_CONTRAST_ENABLED')",
     "file": "src/capabilities/practice/server/question-supply/confusable-contrast-discovery.ts",
     "notes": "dark-ship confusable-contrast supply. Opt-in/default OFF; parsed via shared parseFlag."
   },
@@ -13,7 +13,7 @@
     "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-in",
-    "reader_marker": "parseFlag(process.env.MISCONCEPTION_PROMOTE_ENABLED)",
+    "reader_marker": "getConfigFlag('MISCONCEPTION_PROMOTE_ENABLED')",
     "file": "src/capabilities/agency/server/misconception-promote.ts",
     "notes": "gates misconception promote. Opt-in/default OFF; parsed via shared parseFlag. Reader is LIVE (conjecture-accept.ts:167) — unlike the hard-confirm half; see ADR-0050 §(b2)."
   },
@@ -22,7 +22,7 @@
     "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-in",
-    "reader_marker": "parseFlag(process.env.MISCONCEPTION_HARD_CONFIRM_ENABLED)",
+    "reader_marker": "getConfigFlag('MISCONCEPTION_HARD_CONFIRM_ENABLED')",
     "file": "src/capabilities/agency/server/misconception-promote.ts",
     "notes": "gates misconception hard-confirm. Opt-in/default OFF; parsed via shared parseFlag. LIVE reader: YUK-795 loadPredictionAccountabilityByKey calls the Tier-1 dissociation decision and consumes INSUFFICIENT/EMERGING in nightly conjecture ranking. The background caller always passes ownerFreshlyConfirmed=false, so it is structurally unable to mutate source soft->hard. The flag remains default OFF because the current Judge has no honest target_error_match fact and a protected hard flip still requires a dedicated fresh owner confirmation command. See ADR-0050 §(b2)."
   },
@@ -31,7 +31,7 @@
     "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-in",
-    "reader_marker": "parseFlag(env[AUTO_INTERVENTION_EXPANSION_ENABLED], { defaultValue: false })",
+    "reader_marker": "getConfigFlag(AUTO_INTERVENTION_EXPANSION_ENABLED, env)",
     "file": "src/capabilities/agency/server/intervention/snapshot.ts",
     "notes": "YUK-791 dark-ship delivery gate. Default OFF: preparation still creates auditable shadow packages, but Today/B3 delivery must reject delivery_mode=shadow. Flip only after YUK-814 real-observation and canary gates."
   },
@@ -40,43 +40,34 @@
     "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-in",
-    "reader_marker": "parseFlag(process.env[RESEARCH_MEETING_AGENT_ENABLED_ENV])",
+    "reader_marker": "getConfigFlag(RESEARCH_MEETING_AGENT_ENABLED_ENV)",
     "file": "src/capabilities/agency/jobs/research_meeting_agent_nightly.ts",
     "notes": "kill switch for the research-meeting agent nightly. Opt-in/default OFF; parsed via shared parseFlag."
   },
   "PLACEMENT_PROBE_ENABLED": {
     "kind": "env",
-    "literals": ["true", "1"],
-    "case_insensitive": true,
+    "literals": ["true"],
+    "case_insensitive": false,
     "polarity": "opt-in",
-    "reader_marker": "parseFlag(process.env.PLACEMENT_PROBE_ENABLED)",
+    "reader_marker": "getConfigFlag('PLACEMENT_PROBE_ENABLED')",
     "file": "src/server/session/placement.ts",
-    "notes": "gates the placement probe. Opt-in/default OFF; module-load read via shared parseFlag."
+    "notes": "Placement probe gate, default OFF. Registry preserves only exact env 'true' (not '1', case variants or whitespace); compose-pinned and DB override ignored. Metadata correction only; reader unchanged."
   },
   "QUESTION_SUPPLY_REFILL_ENABLED": {
     "kind": "env",
     "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-in",
-    "reader_marker": "parseFlag(process.env.QUESTION_SUPPLY_REFILL_ENABLED)",
+    "reader_marker": "getConfigFlag('QUESTION_SUPPLY_REFILL_ENABLED')",
     "file": "src/capabilities/practice/server/question-supply/refill.ts",
     "notes": "dark-ship question-supply refill. Opt-in/default OFF; parsed via shared parseFlag."
-  },
-  "JYEOO_FETCH_ENABLED": {
-    "kind": "env",
-    "literals": ["true", "1"],
-    "case_insensitive": true,
-    "polarity": "opt-in",
-    "reader_marker": "parseFlag(process.env.JYEOO_FETCH_ENABLED)",
-    "file": "src/capabilities/practice/server/question-supply/jyeoo-supply-config.ts",
-    "notes": "YUK-697 kill switch for the jyeoo_fetch deterministic supply route. Dark-ship OPT-IN, default OFF; parsed via shared parseFlag (YUK-793 收敛). OFF ⇒ dispatcher chooseAutoRoute skips jyeoo_fetch and falls back to sourcing_web; handler no-ops (skipped:disabled) if a job still reaches it."
   },
   "NOTES_MASTERY_SUBSCRIPTION_ENABLED": {
     "kind": "env",
     "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-out",
-    "reader_marker": "parseFlag((deps.env ?? process.env)[SUBSCRIPTION_ENABLED_ENV], {",
+    "reader_marker": "getConfigFlag(SUBSCRIPTION_ENABLED_ENV, deps.env ?? process.env)",
     "file": "src/capabilities/notes/server/mastery-progress-subscription.ts",
     "notes": "Mastery-progress note-refine subscription kill switch. Opt-out/default ON; parsed via shared parseFlag with defaultValue=true."
   },
@@ -85,7 +76,7 @@
     "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-in",
-    "reader_marker": "parseFlag(env[AUTO_ENROLL_FLAG])",
+    "reader_marker": "getConfigFlag(AUTO_ENROLL_FLAG, env)",
     "file": "src/capabilities/ingestion/server/workflow-judge-config.ts",
     "notes": "CRITICAL-SAFETY auto-enroll gate. Opt-in/default OFF; parsed via shared parseFlag."
   },
@@ -94,7 +85,7 @@
     "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-in",
-    "reader_marker": "parseFlag(env[STUDENT_ANSWER_GRADING_FLAG])",
+    "reader_marker": "getConfigFlag(STUDENT_ANSWER_GRADING_FLAG, env)",
     "file": "src/capabilities/ingestion/server/workflow-judge-config.ts",
     "notes": "student-answer grading gate. Opt-in/default OFF; parsed via shared parseFlag."
   },
@@ -103,7 +94,7 @@
     "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-in",
-    "reader_marker": "parseFlag(env[OBSERVE_FLAG])",
+    "reader_marker": "getConfigFlag(OBSERVE_FLAG, env)",
     "file": "src/capabilities/ingestion/server/workflow-judge-config.ts",
     "notes": "paid observe-only gate. Opt-in/default OFF; parsed via shared parseFlag."
   },
@@ -112,7 +103,7 @@
     "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-out",
-    "reader_marker": "parseFlag(env[FLAG_BY_KIND[kind]]",
+    "reader_marker": "getConfig(FLAG_BY_KIND[kind], env)",
     "file": "src/capabilities/notes/server/note-refine-triggers.ts",
     "notes": "note-refine mark_wrong trigger. Opt-out/default ON; parsed via shared parseFlag with defaultValue=true."
   },
@@ -121,7 +112,7 @@
     "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-out",
-    "reader_marker": "parseFlag(env[FLAG_BY_KIND[kind]]",
+    "reader_marker": "getConfig(FLAG_BY_KIND[kind], env)",
     "file": "src/capabilities/notes/server/note-refine-triggers.ts",
     "notes": "note-refine mastery_change trigger. Opt-out/default ON; parsed via shared parseFlag with defaultValue=true."
   },
@@ -130,7 +121,7 @@
     "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-out",
-    "reader_marker": "parseFlag(env[FLAG_BY_KIND[kind]]",
+    "reader_marker": "getConfig(FLAG_BY_KIND[kind], env)",
     "file": "src/capabilities/notes/server/note-refine-triggers.ts",
     "notes": "note-refine dreaming trigger. Opt-out/default ON; parsed via shared parseFlag with defaultValue=true."
   },
@@ -139,7 +130,7 @@
     "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-in",
-    "reader_marker": "parseFlag(env[FLAG_BY_KIND[kind]]",
+    "reader_marker": "getConfig(FLAG_BY_KIND[kind], env)",
     "file": "src/capabilities/notes/server/note-refine-triggers.ts",
     "notes": "note-refine verify trigger. Opt-in/default OFF; parsed via shared parseFlag with defaultValue=false."
   },
@@ -220,7 +211,7 @@
     "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-in",
-    "reader_marker": "parseFlag(env.COPILOT_NUDGE_ENABLED)",
+    "reader_marker": "'COPILOT_NUDGE_ENABLED',",
     "file": "src/capabilities/copilot/server/nudge-config.ts",
     "notes": "gates user-facing proactive nudge surfacing. Opt-in/default OFF; parsed via shared parseFlag."
   },
@@ -229,7 +220,7 @@
     "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-out",
-    "reader_marker": "parseFlag(env[COPILOT_SUBAGENT_ENABLED_ENV], { defaultValue: true })",
+    "reader_marker": "getConfigFlag(COPILOT_SUBAGENT_ENABLED_ENV, env as NodeJS.ProcessEnv)",
     "file": "src/capabilities/copilot/server/subagents.ts",
     "notes": "YUK-757 operational kill switch for the depth-1 Copilot researcher. Opt-out/default ON; false/0 removes Task and all spawn-only runner options."
   },
@@ -238,7 +229,7 @@
     "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-in",
-    "reader_marker": "parseFlag(process.env[JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV])",
+    "reader_marker": "getConfigFlag(JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV)",
     "file": "src/capabilities/practice/jobs/judge_calibration_sample.ts",
     "notes": "kill switch for paid judge-calibration sampling. Opt-in/default OFF; parsed via shared parseFlag."
   },
@@ -247,8 +238,94 @@
     "literals": ["true", "1"],
     "case_insensitive": true,
     "polarity": "opt-in",
-    "reader_marker": "parseFlag(process.env.JUDGE_DURABLE_ENABLED)",
+    "reader_marker": "getConfigFlag('JUDGE_DURABLE_ENABLED')",
     "file": "src/capabilities/practice/server/judge-durable-config.ts",
     "notes": "YUK-594 async-main judge kill switch. Opt-in/default OFF (dark-ship); parsed via shared parseFlag. ON ⇒ practice submit's server-side judge call diverts to the durable judge_run lane (202-pending + backfill); OFF ⇒ byte-identical synchronous judging (D8 flag-gated fallback)."
+  },
+  "HUB_SYNC_MODE": {
+    "kind": "config",
+    "value_type": "enum",
+    "reader_marker": "getConfig('HUB_SYNC_MODE')",
+    "file": "src/capabilities/notes/server/hub-sync-reconciliation.ts",
+    "notes": "Default off. Exact env literals (no trim); invalid falls back to off. Off retains trigger bookkeeping. No production flip.",
+    "values": ["off", "shadow", "apply"]
+  },
+  "SELECTION_POLICY": {
+    "kind": "config",
+    "value_type": "enum",
+    "reader_marker": "getConfig('SELECTION_POLICY')",
+    "file": "src/capabilities/practice/server/stream-store.ts",
+    "notes": "Default softmax_mfi; exact env literals (no trim). Unknown values fall back to default; legacy selects deterministic composition.",
+    "values": ["legacy", "softmax_mfi"]
+  },
+  "MEMORY_RECONCILE_HANDOFF_MODE": {
+    "kind": "config",
+    "value_type": "enum",
+    "reader_marker": "rawConfigValue('MEMORY_RECONCILE_HANDOFF_MODE')",
+    "file": "src/server/memory/memory-reconcile-handoff.ts",
+    "notes": "Default observe; consumer trims then validates, invalid non-empty values throw. write/recover persist new intents; recover/drain run recovery.",
+    "values": ["observe", "write", "recover", "drain"]
+  },
+  "INTERVENTION_DISABLED_METHOD_IDS": {
+    "kind": "config",
+    "value_type": "csv",
+    "reader_marker": "getConfig(INTERVENTION_DISABLED_METHOD_IDS, env)",
+    "file": "src/capabilities/agency/server/intervention/snapshot.ts",
+    "notes": "Default empty list. Env is comma-separated, trimmed, empty members removed; DB is a method-id array. Consumer rejects unknown pedagogy method IDs."
+  },
+  "EXTRACT_OCR_ENGINE": {
+    "kind": "config",
+    "value_type": "enum",
+    "reader_marker": "getConfig('EXTRACT_OCR_ENGINE')",
+    "file": "src/capabilities/ingestion/jobs/tencent_ocr_extract.ts",
+    "notes": "Default glm; exact env literals (no trim), invalid falls back to glm. Explicit dependency injection can override the engine for a call.",
+    "values": ["glm", "tencent"]
+  },
+  "DOCX_CONVERT_ENGINE": {
+    "kind": "config",
+    "value_type": "enum",
+    "reader_marker": "getConfig('DOCX_CONVERT_ENGINE') === 'docker'",
+    "file": "src/capabilities/ingestion/server/docx/convert.ts",
+    "notes": "Only docker is an explicit configured value. Unset/other env values select the automatic path; viareader is not a configurable enum value.",
+    "values": ["docker"]
+  },
+  "AI_PROVIDER_ATTEMPT_ADMISSION_MODE": {
+    "kind": "config",
+    "value_type": "enum",
+    "reader_marker": "getConfig('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', env)",
+    "file": "src/server/ai/provider-attempt-admission-config.ts",
+    "notes": "Default off; trimmed mode, invalid throws. Off bypasses policy parsing; missing per-lane policy also resolves off.",
+    "values": ["off", "observe", "enforce"]
+  },
+  "AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON": {
+    "kind": "config",
+    "value_type": "json",
+    "reader_marker": "getConfig('AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON', env)",
+    "file": "src/server/ai/provider-attempt-admission-config.ts",
+    "notes": "Env JSON / DB object keyed by known attempt lane; strict positive maxConcurrentAttempts and maxAttemptStartsPerMinute. Invalid JSON/shape/unknown lane throws when active; absent policy bypasses lane."
+  },
+  "AI_PROVIDER_SESSION_ADMISSION_MODE": {
+    "kind": "config",
+    "value_type": "enum",
+    "reader_marker": "getConfig(MODE_KEY, env)",
+    "file": "src/server/ai/provider-session-admission.ts",
+    "notes": "Default off; trimmed mode, invalid throws. Off skips policies; an unlisted provider lane resolves off.",
+    "values": ["off", "observe", "enforce"]
+  },
+  "AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON": {
+    "kind": "config",
+    "value_type": "json",
+    "reader_marker": "getConfig(POLICIES_KEY, env)",
+    "file": "src/server/ai/provider-session-admission.ts",
+    "notes": "Required non-empty provider-keyed object in observe/enforce; env JSON or DB object. Consumer validates known providers, strict fields and integer bounds for concurrency/start rate/queue/wait. Off ignores policies; missing lane bypasses."
+  },
+  "PROJECTION_IS_WRITER_ITEM_CALIBRATION": {
+    "kind": "env",
+    "literals": ["1"],
+    "case_insensitive": false,
+    "polarity": "opt-in",
+    "reader_marker": "getConfigFlag(PER_ENTITY_FLAG_ENV[entity])",
+    "file": "src/server/projections/sot-flag.ts",
+    "notes": "Default OFF write-ownership switch. Shared config reader preserves registry's exact env literal '1'; other env strings fall back to false. DB boolean override remains supported. No production flip."
   }
 }

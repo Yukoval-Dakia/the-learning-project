@@ -1,5 +1,5 @@
 import type { Job } from 'pg-boss';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const facade = vi.hoisted(() => ({ proposeVariant: vi.fn() }));
 
@@ -7,7 +7,27 @@ vi.mock('@/capabilities/practice/server/failure-learning', () => ({
   createFailureLearning: () => ({ proposeVariant: facade.proposeVariant }),
 }));
 
+// The durable adapter resolves the effective verdict (YUK-1054) before calling the
+// facade — unit boundary, so mock the resolver to a non-overturned verdict.
+const verdicts = vi.hoisted(() => ({ resolve: vi.fn() }));
+
+vi.mock('@/kernel/read-models/assessment-verdict', () => ({
+  resolveVerdictForAttempt: verdicts.resolve,
+}));
+
 import { type VariantGenJobData, buildVariantGenHandler } from './variant_gen';
+
+const effectiveVerdict = {
+  attempt_event_id: '',
+  embedded: null,
+  original: null,
+  effective: null,
+  newest_raw: null,
+} as const;
+
+beforeEach(() => {
+  verdicts.resolve.mockResolvedValue(effectiveVerdict);
+});
 
 describe('variant_gen durable adapter', () => {
   it('ACKs a malformed truthy attempt id without calling the owner facade', async () => {

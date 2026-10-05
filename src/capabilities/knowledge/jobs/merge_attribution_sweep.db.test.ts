@@ -9,7 +9,17 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/db/client';
-import { event, knowledge, mastery_state, misconception_edge, question } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  learning_item,
+  mastery_state,
+  misconception_edge,
+  question,
+} from '@/db/schema';
+import { gatherAndFoldLearningItem } from '@/server/projections/gather';
+import { learningItemLiveRowToSnapshot } from '@/server/projections/parity';
+import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
 import { resetDb } from '../../../../tests/helpers/db';
 import { runMergeAttributionSweep } from './merge_attribution_sweep';
 
@@ -71,6 +81,27 @@ describe('merge_attribution_sweep (YUK-544 census + bounded auto-repair)', () =>
     await insertK('k_from', { archived: true });
     await insertQ('q1', ['k_from', 'k_x']);
     await db.insert(mastery_state).values({ id: 'ms1', subject_id: 'k_from' });
+    const stamp = new Date('2026-01-01T00:00:00Z');
+    const [itemBefore] = await db
+      .insert(learning_item)
+      .values({
+        id: 'li_orphan',
+        source: 'learning_intent',
+        title: '条件与反例',
+        content: '保留复杂学习上下文与复习状态。'.repeat(40),
+        knowledge_ids: ['k_from', 'k_x'],
+        status: 'done',
+        version: 7,
+        completed_at: stamp,
+        created_at: stamp,
+        updated_at: stamp,
+        due_at: stamp,
+        reviewed_at: stamp,
+        ai_score: 0.82,
+        user_pinned: true,
+      })
+      .returning();
+    await migrateCanonicalProjections(db);
 
     const first = await runMergeAttributionSweep(db, { runId: 'run_test_1' });
     expect(first.driftedFromIds).toBe(1);
@@ -88,6 +119,19 @@ describe('merge_attribution_sweep (YUK-544 census + bounded auto-repair)', () =>
       .from(mastery_state)
       .where(eq(mastery_state.subject_id, 'k_into'));
     expect(msInto).toHaveLength(1);
+    const [itemAfter] = await db
+      .select()
+      .from(learning_item)
+      .where(eq(learning_item.id, 'li_orphan'));
+    expect(itemAfter).toEqual({ ...itemBefore, knowledge_ids: ['k_into', 'k_x'] });
+    expect(await gatherAndFoldLearningItem(db, 'li_orphan')).toEqual(
+      learningItemLiveRowToSnapshot(itemAfter),
+    );
+    const rewrites = await db
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:learning_item_knowledge_ids_rewrite'));
+    expect(rewrites).toHaveLength(1);
 
     // Forensic event: from_id / terminal winner / full chain / summary / run id.
     const events = await repairEvents();
@@ -119,6 +163,12 @@ describe('merge_attribution_sweep (YUK-544 census + bounded auto-repair)', () =>
     expect(second.driftedFromIds).toBe(0);
     expect(second.repairedFromIds).toBe(0);
     expect(second.eventsWritten).toBe(0);
+    expect(
+      await db
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:learning_item_knowledge_ids_rewrite')),
+    ).toEqual(rewrites);
     expect(await repairEvents()).toHaveLength(1);
   });
 

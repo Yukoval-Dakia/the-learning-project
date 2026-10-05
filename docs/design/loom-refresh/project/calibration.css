@@ -62,7 +62,7 @@
 }
 .cal-blind-name { font-size: var(--fs-caption); color: var(--ink); font-weight: 500; }
 .cal-blind-track { font-size: var(--fs-meta); }
-.cal-blind-unknown { font-size: 11px; color: var(--ink-4); letter-spacing: var(--ls-wide); white-space: nowrap; }
+.cal-blind-unknown { font-size: var(--fs-caption); color: var(--ink-4); letter-spacing: var(--ls-wide); white-space: nowrap; }
 .cal-blind-chip .btn { margin-left: 2px; }
 
 /* ── C · θ̂ SE distribution strip ──────────────────────────── */
@@ -77,7 +77,7 @@
 }
 .cal-strip-median { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed var(--ink-4); }
 .cal-strip-median-lbl {
-  position: absolute; top: 6px; left: 6px; font-size: 10px; color: var(--ink-4);
+  position: absolute; top: 6px; left: 6px; font-size: var(--fs-caption); color: var(--ink-4);
   background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--r-1); padding: 1px 5px; white-space: nowrap;
 }
 .cal-dot {
@@ -89,13 +89,13 @@
 .cal-dot.is-blind { background: var(--ink-4); box-shadow: 0 0 0 3px var(--paper-sunk); }
 .cal-dot-lbl {
   position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
-  font-size: 10px; color: var(--ink-3); white-space: nowrap; opacity: 0;
+  font-size: var(--fs-caption); color: var(--ink-3); white-space: nowrap; opacity: 0;
   background: var(--paper-raised); border: 1px solid var(--line); border-radius: var(--r-1); padding: 1px 5px;
   pointer-events: none; transition: opacity var(--dur-fast) var(--ease-out);
 }
 .cal-dot:hover { z-index: 5; }
 .cal-dot:hover .cal-dot-lbl { opacity: 1; }
-.cal-strip-axis { display: flex; justify-content: space-between; align-items: center; margin-top: var(--s-2); font-size: 11px; color: var(--ink-4); }
+.cal-strip-axis { display: flex; justify-content: space-between; align-items: center; margin-top: var(--s-2); font-size: var(--fs-caption); color: var(--ink-4); }
 .cal-strip-axis-mid { letter-spacing: var(--ls-wide); }
 
 /* ── D · ledger table ─────────────────────────────────────── */
@@ -104,24 +104,24 @@
 .cal-table .cal-th { cursor: pointer; user-select: none; white-space: nowrap; }
 .cal-table .cal-th:hover { color: var(--coral); }
 .cal-name { color: var(--ink); font-weight: 500; }
-.cal-id { font-family: var(--font-mono); font-size: 10px; color: var(--ink-5); margin-left: 6px; }
-.cal-track { font-size: 11px; color: var(--ink-3); background: var(--paper-sunk); border-radius: var(--r-1); padding: 1px 7px; }
+.cal-id { font-family: var(--font-mono); font-size: var(--fs-caption); color: var(--ink-5); margin-left: 6px; }
+.cal-track { font-size: var(--fs-caption); color: var(--ink-3); background: var(--paper-sunk); border-radius: var(--r-1); padding: 1px 7px; }
 .cal-row.is-blind { background: color-mix(in oklab, var(--paper-sunk) 55%, transparent); }
 .cal-row.is-blind td { color: var(--ink-3); }
 .cal-ev0 { color: var(--ink-4); }
-.cal-ev0 .meta { font-size: 10px; margin-left: 2px; }
+.cal-ev0 .meta { font-size: var(--fs-caption); margin-left: 2px; }
 
 .cal-se { display: flex; align-items: center; gap: var(--s-2); min-width: 120px; }
-.cal-se-num { font-size: 12px; color: var(--ink-2); width: 38px; flex: none; }
+.cal-se-num { font-size: var(--fs-caption); color: var(--ink-2); width: 38px; flex: none; }
 .cal-se-bar { flex: 1; height: 6px; border-radius: var(--r-pill); background: var(--paper-sunk); overflow: hidden; min-width: 54px; }
 .cal-se-fill { display: block; height: 100%; border-radius: var(--r-pill); }
 .cal-se-fill.is-firm    { background: var(--good); }
 .cal-se-fill.is-warming { background: var(--hard); }
 .cal-se-fill.is-blind   { background: var(--ink-5); }
 
-.cal-blind-tag { font-size: 10px; margin-left: 6px; letter-spacing: var(--ls-wide); }
-.cal-conf { font-size: 12px; color: var(--ink-2); }
-.cal-conf-na { font-size: 11px; font-style: normal; }
+.cal-blind-tag { font-size: var(--fs-caption); margin-left: 6px; letter-spacing: var(--ls-wide); }
+.cal-conf { font-size: var(--fs-caption); color: var(--ink-2); }
+.cal-conf-na { font-size: var(--fs-caption); font-style: normal; }
 .cal-foot { max-width: var(--cap-prose); margin-top: var(--s-4); line-height: var(--lh-snug); }
 .cal-foot b { color: var(--ink-2); }
 

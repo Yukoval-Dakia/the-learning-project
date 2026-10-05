@@ -24,10 +24,14 @@ export type {
 export { induceConjecture } from './server/conjecture/induce';
 export type { EffectiveProbeResultStatus } from './server/conjecture/probe-evidence';
 export { getEffectiveProbeResultStatuses } from './server/conjecture/probe-evidence';
+// Shared probe lifecycle exercised by shell integration consumers.
+export { answerProbe, serveProbeOnce } from './server/conjecture/probe-lifecycle';
 export type { ConjectureAcceptResult } from './server/conjecture-accept';
 export type { GoalScopeAcceptResult } from './server/goals/accept';
+export { rewriteGoalScopeOnMerge } from './server/goals/merge-attribution';
 export type { ActiveGoal } from './server/goals/queries';
 export {
+  listActiveGoals,
   listActiveGoalsWithResolvedScope,
   updateGoalScope,
 } from './server/goals/queries';
@@ -51,12 +55,14 @@ export {
   planLearningIntent,
 } from './server/learning-intent';
 export { misconceptionHardConfirmEnabled } from './server/misconception-promote';
-export { readAgentNotes, writeAgentNote } from './server/notes';
+export { readAgentNotes, recordQuestionPoolGap, writeAgentNote } from './server/notes';
 export type {
   CompletionAcceptResult,
   EnqueueLearningIntentNoteFn,
   LearningItemAcceptResult,
   RelearnAcceptResult,
 } from './server/proposal-appliers';
+// YUK-1062 — task composition uses the narrow task-public entry directly.
+export { agencyTaskSpecs } from './task-public';
 export type { BriefDraftOutput } from './tasks/memory-brief';
 export { BriefDraftOutputSchema, parseBriefDraftOutput } from './tasks/memory-brief';

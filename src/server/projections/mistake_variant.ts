@@ -1,8 +1,7 @@
 // YUK-471 W2 — projectMistakeVariant: the IO shell around the PURE mistake_variant fold.
 //
-// The read→fold→write-through shell the variant_gen creation / accept / verify / dismiss / retract
-// sites flip to as the SOLE writer of a `mistake_variant` row WHEN the per-entity flag
-// projectionIsWriter('mistake_variant') is ON (critic A1). It:
+// Canonical structural writer after YUK-973; there is no per-entity mode switch.
+// It:
 //   1. GATHERS the superset of `event` rows that can affect `mvId` (the pure reducer filters
 //      internally, but the shell over-collects — a missed event silently drops a mutation),
 //   2. maps each DB row → the flat FoldEvent envelope (inside gather.ts),

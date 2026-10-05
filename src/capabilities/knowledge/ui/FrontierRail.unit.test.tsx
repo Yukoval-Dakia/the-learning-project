@@ -77,8 +77,7 @@ describe('FrontierRail', () => {
     expect(html).toContain('建议');
     expect(html).toContain('低置信');
     expect(html).toContain('AI 提议前置：基础 · 待确认');
-    // cold-start band → 未知, never a bare probability / %.
-    expect(html).toContain('未知');
+    expect(html).toContain('待确认建议');
     expect(html).not.toContain('%');
   });
 

@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import type { CapabilityRegistry } from '@/core/capability/registry';
 import { validateProfile } from '@/core/capability/validate-profile';
+import { auditEvaluationSemantics } from '@/subjects/evaluation-semantics-audit';
 import { mathProfile } from '@/subjects/math/profile';
 import { physicsProfile } from '@/subjects/physics/profile';
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
@@ -47,16 +48,20 @@ function toProfileList(profiles: ProfileAuditInput): SubjectProfile[] {
   return Array.isArray(profiles) ? [...profiles] : Object.values(profiles);
 }
 
+// YUK-739 — builtin fail-closed semantics check, shared with the --db mode via
+// src/subjects/evaluation-semantics-audit.ts.
+
 export function auditProfiles(
   profiles: ProfileAuditInput = auditSubjectProfiles,
   registry: CapabilityRegistry = getDefaultRegistry(),
 ): ProfileAuditResult {
   const entries = toProfileList(profiles).map((profile) => {
     const result = validateProfile(profile, registry);
+    const semanticErrors = auditEvaluationSemantics(profile);
     return {
       id: profileId(profile),
-      valid: result.valid,
-      errors: result.errors,
+      valid: result.valid && semanticErrors.length === 0,
+      errors: [...result.errors, ...semanticErrors],
       warnings: result.warnings,
     };
   });

@@ -4,6 +4,7 @@
 // capability-local contract re-publishes them through the sanctioned seam.
 export {
   type FailureAttempt,
+  type FailureAttemptJudge,
   getFailureAttemptById,
   getFailureAttemptWithReasoningTraceById,
   getFailureAttempts,

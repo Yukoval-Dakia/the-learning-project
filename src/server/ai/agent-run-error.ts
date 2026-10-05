@@ -23,8 +23,8 @@
 //   - abort/timeout and everything unrecognized: permanent (whitelist-only
 //     retries — never retry an uncertain failure into a double bill).
 
-import type { SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import { ProviderSessionAdmissionError } from './provider-session-admission';
+import type { SDKMessage } from './sdk-types';
 
 /** SDKResultError['subtype'] union, spelled out (sdk.d.ts:3538-3556). */
 type SdkResultErrorSubtype =
@@ -44,7 +44,14 @@ export type AgentFailureSubtype =
   /** Cross-process session lease/control-plane failure after durable start. */
   | 'provider_admission'
   /** Non-SDK exception after the attempt acquired a durable task-run id. */
-  | 'runner_error';
+  | 'runner_error'
+  /**
+   * YUK-1049 — typed-endpoint contract violation after a transport-level
+   * success: non-JSON body, response schema mismatch, or model/provider drift
+   * from the pinned canonical. PERMANENT by classification (retrying a
+   * deterministic violation only double-bills).
+   */
+  | 'typed_contract_violation';
 
 /**
  * R1 (YUK-576 review) — the sixth retry gate: a transient failure is only
@@ -67,13 +74,15 @@ export interface AgentRunErrorFields {
   apiErrorStatus?: number | null;
   /** SDKResultError.errors, or [result error text] for api_error_result. */
   errors: string[];
+  /** Known attempt cost; absent means unknown, not zero. */
+  costUsd?: number;
 }
 
 /**
- * Structured single-attempt failure. The message keeps the legacy grep-able
- * `[kind] Agent SDK errored: subtype=…` format (existing `.rejects.toThrow`
- * assertions keep matching); the structured fields carry what the string
- * used to drop (errors[], api status, the attempt's run id).
+ * Structured single-attempt failure. The message keeps a grep-able
+ * `[kind] agent run errored: subtype=…` format; the structured fields carry
+ * what the string used to drop (errors[], api status, the attempt's run id).
+ * (YUK-1025: 'Agent SDK' renamed — the SDK subprocess is retired.)
  */
 export class AgentRunError extends Error {
   readonly kind: string;
@@ -81,18 +90,20 @@ export class AgentRunError extends Error {
   readonly subtype: AgentFailureSubtype;
   readonly apiErrorStatus?: number | null;
   readonly errors: string[];
+  readonly costUsd?: number;
 
   constructor(fields: AgentRunErrorFields) {
     const http =
       fields.subtype === 'api_error_result' ? ` http=${fields.apiErrorStatus ?? 'null'}` : '';
     const detail = fields.errors.length > 0 ? ` errors=${fields.errors.join('; ')}` : '';
-    super(`[${fields.kind}] Agent SDK errored: subtype=${fields.subtype}${http}${detail}`);
+    super(`[${fields.kind}] agent run errored: subtype=${fields.subtype}${http}${detail}`);
     this.name = 'AgentRunError';
     this.kind = fields.kind;
     this.taskRunId = fields.taskRunId;
     this.subtype = fields.subtype;
     this.apiErrorStatus = fields.apiErrorStatus;
     this.errors = fields.errors;
+    this.costUsd = fields.costUsd;
   }
 }
 
@@ -131,8 +142,13 @@ export function bindAgentRunError(input: {
   kind: string;
   taskRunId: string;
   aborted: boolean;
+  costUsd?: number;
 }): AgentRunError {
-  if (input.error instanceof AgentRunError) return input.error;
+  if (input.error instanceof AgentRunError) {
+    return input.costUsd === undefined
+      ? input.error
+      : new AgentRunError({ ...input.error, costUsd: input.costUsd });
+  }
   if (input.error instanceof ProviderSessionAdmissionError) {
     return new AgentRunError({
       kind: input.kind,
@@ -144,6 +160,7 @@ export function bindAgentRunError(input: {
   return new AgentRunError({
     kind: input.kind,
     taskRunId: input.taskRunId,
+    costUsd: input.costUsd,
     subtype: input.aborted ? 'budget_timeout' : 'runner_error',
     errors: [input.error instanceof Error ? input.error.message : String(input.error)],
   });

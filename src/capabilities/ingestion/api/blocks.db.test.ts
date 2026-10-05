@@ -292,6 +292,43 @@ describe('GET /api/ingestion/[id]/blocks', () => {
     });
   });
 
+  it('hides fixture namespaces from learner record recommendations (YUK-897 E1)', async () => {
+    await seedSession('sess1');
+    await seedBlock({ id: 'b1', session_id: 'sess1' });
+    await testDb()
+      .insert(event)
+      .values({
+        id: 'evt_fixture_recommendation',
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'workflow_judge',
+        action: 'experimental:auto_enroll_observed',
+        subject_kind: 'question_block',
+        subject_id: 'b1',
+        outcome: 'success',
+        payload: {
+          suggested_knowledge_ids: [
+            'k1',
+            'kc_yuk792_canary_20260731a',
+            'kc_yuk792_canary_20260731b',
+            'kc_yuk792_canary_20260731c',
+            'synthetic:yuwen:fixture',
+          ],
+        },
+        caused_by_event_id: null,
+        affected_scopes: [],
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date('2026-05-16T12:01:00Z'),
+        ingest_at: new Date('2026-05-16T12:01:00Z'),
+      });
+
+    const body = (await (await getBlocks('sess1')).json()) as {
+      rows: Array<{ auto_enroll_observation: { suggested_knowledge_ids: string[] } }>;
+    };
+    expect(body.rows[0]?.auto_enroll_observation.suggested_knowledge_ids).toEqual(['k1']);
+  });
+
   it('mistake_draft is null when the observe payload omits it', async () => {
     await seedSession('sess1');
     await seedBlock({ id: 'b1', session_id: 'sess1' });

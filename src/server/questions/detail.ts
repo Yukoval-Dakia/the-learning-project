@@ -56,6 +56,10 @@ export interface QuestionDetailFamilyMember {
   id: string;
   variant_depth: number;
   kind: string;
+  // YUK-1035 — part-ness authority (YUK-386: `parent_question_id IS NOT NULL`;
+  // the stamped `kind='question_part'` label is display-only). Projected raw so
+  // the UI never string-matches kind to detect a part member.
+  parent_question_id: string | null;
   is_self: boolean;
 }
 
@@ -65,9 +69,10 @@ export interface QuestionDetailFamily {
   variant_count: number;
 }
 
-// YUK-288 gap A — composite小题. A part is a `question` row tagged
-// `kind='question_part'` linked via `parent_question_id` and ordered by
-// `part_index` (parts.ts write path). The detail of a composite PARENT carries
+// YUK-288 gap A — composite小题. A part is a `question` row linked to its
+// parent via `parent_question_id` and ordered by `part_index` (parts.ts write
+// path; the stamped `kind='question_part'` label is display-only — part-ness is
+// read from the FK, YUK-388/YUK-386). The detail of a composite PARENT carries
 // its ordered parts; a part's own detail carries `parent_question_id` so the UI
 // can render the 面包屑 back to the parent. phase-1 data currently has zero
 // composite questions, so `parts` is `[]` for every existing question — the field
@@ -75,6 +80,10 @@ export interface QuestionDetailFamily {
 export interface QuestionDetailPart {
   id: string;
   kind: string;
+  // YUK-1035 — part-ness authority projected raw (always === the parent's id for
+  // rows in `parts[]`; the loadParts WHERE clause is the guarantee). The UI reads
+  // this FK instead of the display-only `kind='question_part'` label.
+  parent_question_id: string | null;
   part_index: number;
   prompt_md: string;
   difficulty: number;
@@ -117,7 +126,15 @@ export interface QuestionDetailTimelineEntry {
   outcome: string;
   duration_ms: number | null;
   // attempt-only
-  cause?: { primary: string; confidence: number | null } | null;
+  cause?: {
+    primary: string;
+    confidence: number | null;
+    // YUK-1018 — misc_ id 显示回填（active misconception title）；非 misc → null。
+    primary_label: string | null;
+    // YUK-1020 — 副归因 id + misc_ 显示回填（id→title map；未解析缺席→渲染裸 id）。
+    secondary: string[];
+    secondary_labels: Record<string, string>;
+  } | null;
   // review-only
   fsrs_rating?: 'again' | 'hard' | 'good';
 }
@@ -227,6 +244,7 @@ export async function loadQuestionDetail(
       id: m.id,
       variant_depth: m.variant_depth,
       kind: m.kind,
+      parent_question_id: m.parent_question_id,
       is_self: m.id === q.id,
     })),
     variant_count: familyRows.length,
@@ -363,8 +381,9 @@ async function loadScheduling(
 }
 
 // ── YUK-288 gap A: composite小题 — ordered parts under a parent ────────────────
-// Parts are `question` rows tagged kind='question_part' (parts.ts write path),
-// linked by parent_question_id and ordered by part_index. Mirrors the
+// Parts are `question` rows linked by parent_question_id and ordered by
+// part_index (parts.ts write path stamps the display-only 'question_part'
+// label; the FK is the part-ness authority, YUK-388/YUK-386). Mirrors the
 // loadFamilyMembers / paper-detail.ts:247-263 select-and-order precedent. Drafts
 // are NOT excluded (the detail view shows drafts — same as the parent row).
 async function loadParts(db: Db, parentId: string): Promise<QuestionDetailPart[]> {
@@ -372,6 +391,7 @@ async function loadParts(db: Db, parentId: string): Promise<QuestionDetailPart[]
     .select({
       id: question.id,
       kind: question.kind,
+      parent_question_id: question.parent_question_id,
       part_index: question.part_index,
       prompt_md: question.prompt_md,
       difficulty: question.difficulty,
@@ -384,6 +404,7 @@ async function loadParts(db: Db, parentId: string): Promise<QuestionDetailPart[]
   return rows.map((r) => ({
     id: r.id,
     kind: r.kind,
+    parent_question_id: r.parent_question_id,
     // part_index is nullable in schema but always set by the parts.ts writer; fall
     // back to 0 so the projection type stays non-null for the UI.
     part_index: r.part_index ?? 0,

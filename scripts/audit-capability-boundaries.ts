@@ -497,6 +497,7 @@ export function compareDependencySnapshot(
 
 function collectSeamViolations(projectRoot: string): Violation[] {
   const capabilityRoot = resolve(projectRoot, 'src/capabilities');
+  const aiRoot = resolve(projectRoot, 'src/ai');
   const browserRoots = [resolve(projectRoot, 'web/src'), resolve(projectRoot, 'src/ui')];
   const violations: Violation[] = [];
 
@@ -516,6 +517,7 @@ function collectSeamViolations(projectRoot: string): Violation[] {
 
   const auditedFiles = [
     ...sourceFiles(capabilityRoot),
+    ...sourceFiles(aiRoot),
     ...browserRoots.flatMap(sourceFiles),
   ].sort();
   for (const file of auditedFiles) {
@@ -523,9 +525,23 @@ function collectSeamViolations(projectRoot: string): Violation[] {
     for (const reference of importedReferences(readFileSync(file, 'utf8'), file)) {
       const target = resolveImportTarget(projectRoot, file, reference.source);
       if (!target) continue;
+      if (isWithin(aiRoot, file) && isWithin(capabilityRoot, target)) {
+        violations.push({
+          file: relative(projectRoot, file),
+          source: reference.source,
+          reason: 'shared ai must receive an injected catalog, not import capabilities',
+        });
+        continue;
+      }
       const targetLocation = locateModule(projectRoot, target);
       if (targetLocation?.layer !== 'capability') continue;
       if (sourceLocation?.layer === 'capability' && sourceLocation.owner === targetLocation.owner) {
+        continue;
+      }
+      if (
+        resolve(file) === resolve(capabilityRoot, 'task-catalog.ts') &&
+        targetLocation.entrypoint === 'task-public'
+      ) {
         continue;
       }
       if (

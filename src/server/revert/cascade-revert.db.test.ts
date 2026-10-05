@@ -216,7 +216,17 @@ async function seedLiveEdgeWithGenerate(opts: {
     subject_kind: 'knowledge_edge',
     subject_id: edgeId,
     caused_by_event_id: opts.checkpointEventId,
-    payload: opts.archived ? { edge_op: 'archive' } : {},
+    actor_kind: 'user',
+    actor_ref: 'self',
+    created_at: now,
+    payload: {
+      edge_op: opts.archived ? 'archive' : 'create',
+      from_knowledge_id: from,
+      to_knowledge_id: to,
+      relation_type: 'related_to',
+      weight: 1,
+      reasoning: null,
+    },
   });
   return { edgeId, generateEventId };
 }

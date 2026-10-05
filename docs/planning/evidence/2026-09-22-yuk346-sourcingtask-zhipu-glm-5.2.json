@@ -1,0 +1,36 @@
+{
+  "captured_at": "2026-09-23T09:53:20.665Z",
+  "code_revision": "70b6ff76a6e32bb724c0441b10fae0746a917c87",
+  "ticket": "YUK-346",
+  "lane": {
+    "adapter": "pi",
+    "provider": "zhipu",
+    "model": "glm-5.2",
+    "task_kind": "SourcingTask",
+    "pin": "explicit ctx.modelBinding (post-P4 routing surface)"
+  },
+  "task_run_id": "rgr9eu89vpnkvoxig5d50bly",
+  "wall_ms": 20790,
+  "parse_ok": true,
+  "input_digest": "sha256:e39b6c0039d59198fd1280433793b1748d189a46ee84504ab6d89d28b4189ebe",
+  "output_digest": "sha256:38b8fa9d99946c032b1d8d494932471ab9731ac5d2a99fedd48ecb415afb5d8e",
+  "output_excerpt": "{\"questions\":[{\"kind\":\"choice\",\"prompt_md\":\"一元二次方程 $(x+2)(x-4)=x-4$ 的解是（ ）\\n\\nA. $-2$\\nB. $-1$\\nC. $-1$ 和 $4$\\nD. $-2$ 和 $4$\",\"reference_md\":\"（C）-1和4\\n\\n解析：移项，得 $(x+2)(x-4)-(x-4)=0$，因式分解，得 $(x-4)(x+1)=0$，所以 $x-4=0$ 或 $x+1=0$，解得 $x_1=4$，$x_2=-1$。\",\"choices_md\":[\"A. -2\",\"B. -1\",\"C. -1和4\",\"D. -2和4\"],\"judge_kind_override\":\"exact\",\"rubric_json\":{\"criteria\":[{\"name\":\"correctness\",\"weight\":1,\"descriptor\":\"选出正确选项 C（-1和4），依据移项后提公因式 (x-4) 得 (x-4)(x+1)=0\"}],\"keywords\":[\"x-4\",\"x+1\"],\"required_points\":[\"移项化为 (x+2)(x-4)-(x-4)=0\",\"提公因式得 (x-4)(x+1)=0\",\"由 x-4=0 或 x+1=0 得 x₁=4，x₂=-1\"]},\"difficulty\":2,\"knowledge_ids\":[\"k_yuk346_a\"],\"source_url\":\"https://www.51jiaoxi.com/doc-16252894.html\",\"source_title\":\"初中数学人教版（2024）九年级上册21.2.3 因式分解法达标测试\",\"extract\":\"12.()一元二次方程(x+2)(x-4)=x-4的解是( ) A.-2 B.-1 C.-1和4 D.-2和4\",\"",
+  "subject": "math",
+  "status": "success",
+  "finish_reason": "end_turn",
+  "usage": {
+    "inputTokens": 17807,
+    "outputTokens": 556,
+    "thinkingBlocks": 1,
+    "thinkingCharacters": 251
+  },
+  "cost": {
+    "basis": "unknown",
+    "amount_usd": null,
+    "ref": "unpriced:zhipu/glm-5.2"
+  },
+  "tool_ctx_run_id": "yuk346_tool_zq8q9bqlh2zzcphq838tr0vr",
+  "domain_tool_calls": [],
+  "remote_exa_evidence": true,
+  "provenance": "PiRunnerMessage frames carry source=pi; terminal evidence normalized from pi agentLoop agent_end + final assistant usage. Cost stays catalog-estimated (zhipu coding-plan catalog rates are 0 — flat subscription; mimo rates are the dated public per-token estimate)."
+}

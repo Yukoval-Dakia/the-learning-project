@@ -1,0 +1,41 @@
+{
+  "captured_at": "2026-09-23T09:51:01.109Z",
+  "code_revision": "70b6ff76a6e32bb724c0441b10fae0746a917c87",
+  "ticket": "YUK-346",
+  "lane": {
+    "adapter": "pi",
+    "provider": "xiaomi",
+    "model": "mimo-v2.5-pro",
+    "task_kind": "SourcingTask",
+    "pin": "explicit ctx.modelBinding (post-P4 routing surface)"
+  },
+  "task_run_id": "j6dcgm87rr9ls5mxutu6fqbb",
+  "wall_ms": 25070,
+  "parse_ok": true,
+  "input_digest": "sha256:e39b6c0039d59198fd1280433793b1748d189a46ee84504ab6d89d28b4189ebe",
+  "output_digest": "sha256:70b9971024d76df5664fdb471f4affda905c3c2f601370a60c2544676c3688ae",
+  "output_excerpt": "我已经获取到了完整的练习题内容。让我从中选取一道高质量的选择题来结构化输出。\n\n```json\n{\n  \"questions\": [\n    {\n      \"kind\": \"choice\",\n      \"prompt_md\": \"用因式分解法解方程 $x^2 - 5x + 6 = 0$，分解结果应为（ ）\",\n      \"reference_md\": \"（A）$(x-2)(x-3) = 0$\\n\\n解析：对 $x^2 - 5x + 6$ 进行十字相乘法分解，寻找两个数使其乘积为 $6$、和为 $-5$，即 $(-2) \\\\times (-3) = 6$，$(-2) + (-3) = -5$，因此 $x^2 - 5x + 6 = (x-2)(x-3) = 0$，解得 $x_1 = 2$，$x_2 = 3$。\",\n      \"choices_md\": [\n        \"$(x-2)(x-3) = 0$\",\n        \"$(x+2)(x+3) = 0$\",\n        \"$(x-1)(x-6) = 0$\",\n        \"$(x-2)(x+3) = 0$\"\n      ],\n      \"judge_kind_override\": \"exact\",\n      \"rubric_json\": null,\n      \"difficulty\": 1,\n      \"knowledge_ids\": [\"k_yuk346_a\"],\n      \"source_url\": \"https://www.zxxk.com/soft/58862534.html\",\n      \"source_title\": \"25.2.3 因式分解法 同步练习 2026—2027学年人教版数学九年级上册-学科网\",\n      \"extract\": \"7. 用因式分解法解方程 x² - ",
+  "subject": "math",
+  "status": "success",
+  "finish_reason": "end_turn",
+  "usage": {
+    "inputTokens": 28961,
+    "outputTokens": 583
+  },
+  "cost": {
+    "basis": "estimated",
+    "amount_usd": 0.002889693,
+    "ref": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro"
+  },
+  "tool_ctx_run_id": "yuk346_tool_m0q857xs2bmzkiupdhtvsq4p",
+  "domain_tool_calls": [
+    {
+      "tool_name": "query_knowledge",
+      "effect": "read",
+      "latency_ms": 18,
+      "input_digest": "sha256:57b6d0d68e02db6a8cf29f827e54fd7181b04fcc9693b3410e0883e6421e7b58"
+    }
+  ],
+  "remote_exa_evidence": true,
+  "provenance": "PiRunnerMessage frames carry source=pi; terminal evidence normalized from pi agentLoop agent_end + final assistant usage. Cost stays catalog-estimated (zhipu coding-plan catalog rates are 0 — flat subscription; mimo rates are the dated public per-token estimate)."
+}

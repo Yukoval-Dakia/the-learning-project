@@ -45,6 +45,34 @@ describe('loadTreeSnapshot', () => {
     expect(k1?.low_confidence).toBe(false);
   });
 
+  it('retains synthetic:* rows for internal consumers (YUK-897)', async () => {
+    const db = testDb();
+    const now = new Date();
+    const base = {
+      merged_from: [] as string[],
+      proposed_by_ai: false,
+      approval_status: 'approved' as const,
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    };
+    await db.insert(knowledge).values([
+      { id: 'k1', name: '实词', domain: 'yuwen', parent_id: null, archived_at: null, ...base },
+      {
+        id: 'synthetic:yuwen:0001',
+        name: '种子节点',
+        domain: 'yuwen',
+        parent_id: null,
+        archived_at: null,
+        ...base,
+      },
+    ]);
+    const tree = await loadTreeSnapshot(db);
+    // Goal-scope / edge-proposal jobs consume the shared snapshot; the seed
+    // scaffolding must survive here. Learner exclusion lives at the API boundary.
+    expect(tree.map((r) => r.id).sort()).toEqual(['k1', 'synthetic:yuwen:0001']);
+  });
+
   it('caps walk depth at 32 (cycle protection)', async () => {
     const db = testDb();
     const now = new Date();

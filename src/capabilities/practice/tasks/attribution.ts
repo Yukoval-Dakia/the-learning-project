@@ -8,7 +8,7 @@ import {
   MetaCause,
   type MetaCauseFieldsT,
   MetacogFlag,
-  getDefaultMetaCause,
+  getMetaCausePrior,
   validateCauseAgainstProfile,
 } from '@/core/schema/business';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
@@ -52,9 +52,11 @@ export function parseAttributionOutput(
   const parsed = validateCauseAgainstProfile(AttributionOutputSchema.parse(json), profile);
   return {
     ...parsed,
+    // YUK-739 — cold-start prior comes from the subject's own category
+    // declaration, not the deleted cross-subject mirror.
     meta_cause:
       parsed.meta_cause === undefined
-        ? (getDefaultMetaCause(parsed.primary_category) ?? null)
+        ? getMetaCausePrior(profile, parsed.primary_category)
         : parsed.meta_cause,
     meta_cause_secondary: parsed.meta_cause_secondary ?? null,
     metacog_flag: parsed.metacog_flag ?? null,
@@ -65,8 +67,11 @@ export function parseAttributionOutput(
 }
 
 function metaCausePriorList(profile: SubjectProfile): string {
+  // YUK-739 — the prior list is generated from the profile's own declarations
+  // (undefined = undeclared → rendered as null, matching the normalized
+  // runtime fallback in getMetaCausePrior).
   return profile.causeCategories
-    .map((category) => `- ${category.id} → ${getDefaultMetaCause(category.id) ?? 'null'}`)
+    .map((category) => `- ${category.id} → ${category.meta_cause_prior ?? 'null'}`)
     .join('\n');
 }
 

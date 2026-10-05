@@ -107,7 +107,7 @@ Claude Max 的 OAuth lane。前者在 OAuth token 缺失时会告警并省略 pe
 全局 override 或 registry 默认；不要把 judge kind 与 provider/auth lane 混为一谈。启用 OAuth 时：
 - token = `CLAUDE_CODE_OAUTH_TOKEN`。
 - token **绝不入 git / 绝不打印**——经 `.env.local` 透传三进程（API / Vite / worker），生产经 compose `.env` 注入 app + worker 两容器（见 CLAUDE.md「Switchable AI provider lane」）。
-- judge 子进程 env 由 `runner.buildAgentEnv(authMode:'oauth')` 构造：SET `CLAUDE_CODE_OAUTH_TOKEN`、UNSET `ANTHROPIC_BASE_URL`/`ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` + 四个 cloud-provider selector（YUK-365 Finding 1）。
+- token 由 `resolveTaskProvider` 读一次后作为 resolved credential 传给 pi adapter；pi 的 anthropic-messages driver 识别 `sk-ant-oat*` 自动切 Bearer（`src/server/ai/pi-models.ts`；原 SDK 子进程 env sanitize 已随 YUK-1025 退场）。
 
 ## judge 成本观测
 

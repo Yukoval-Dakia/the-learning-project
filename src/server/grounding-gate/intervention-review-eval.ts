@@ -1,6 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { reviewInterventionPackageCandidate } from '@/capabilities/practice/public';
+import { getLearnerLocale } from '@/capabilities/task-registry';
 import {
   CurrentInterventionPackageReviewAudit,
   InterventionAuthoringContext,
@@ -218,6 +219,7 @@ export async function runInterventionReviewActualOutputEval(input: {
   const packet = InterventionReviewRegressionPacket.parse(input.packet);
   const results: Array<Record<string, unknown>> = [];
   for (const fixture of packet.cases) {
+    const learnerLocale = getLearnerLocale();
     const packageDigest = sha256CanonicalJson(fixture.package);
     const subjectProfile = resolveSubjectProfile(fixture.subject_id);
     const observedRuns: ExpectedValidatorTaskRun[] = [];
@@ -250,8 +252,8 @@ export async function runInterventionReviewActualOutputEval(input: {
         observationIssues.push(`task_run_subject_profile_missing:${taskRunId}`);
         return;
       }
-      const actualPromptFingerprint = taskPromptFingerprint(kind, actualProfile);
-      const expectedPromptFingerprint = taskPromptFingerprint(kind, subjectProfile);
+      const actualPromptFingerprint = taskPromptFingerprint(kind, actualProfile, learnerLocale);
+      const expectedPromptFingerprint = taskPromptFingerprint(kind, subjectProfile, learnerLocale);
       if (
         actualProfile.id !== subjectProfile.id ||
         actualPromptFingerprint !== expectedPromptFingerprint
@@ -267,7 +269,7 @@ export async function runInterventionReviewActualOutputEval(input: {
     };
     const observedRunTaskFn: TaskTextRunFn = async (kind, taskInput, ctx) => {
       try {
-        const result = await input.runTaskFn(kind, taskInput, ctx);
+        const result = await input.runTaskFn(kind, taskInput, { ...ctx, learnerLocale });
         if (result.task_run_id) {
           observeTaskRun(result.task_run_id, kind, taskInput, ctx?.subjectProfile);
         }
@@ -293,6 +295,7 @@ export async function runInterventionReviewActualOutputEval(input: {
         context: fixture.context,
         packageValue: fixture.package,
         subjectProfile,
+        learnerLocale,
       });
     } catch (error) {
       const expectedRuns = observedExpectations([]);
@@ -435,11 +438,20 @@ export async function runInterventionReviewActualOutputEval(input: {
       audit.question_content_validation_audit.diagnostics.map(
         (diagnostic) => diagnostic.task_run_id,
       );
-    const solverPromptFingerprint = taskPromptFingerprint('SolutionGenerateTask', subjectProfile);
-    const contentPromptFingerprint = taskPromptFingerprint('QuizVerifyTask', subjectProfile);
+    const solverPromptFingerprint = taskPromptFingerprint(
+      'SolutionGenerateTask',
+      subjectProfile,
+      learnerLocale,
+    );
+    const contentPromptFingerprint = taskPromptFingerprint(
+      'QuizVerifyTask',
+      subjectProfile,
+      learnerLocale,
+    );
     const reviewPromptFingerprint = taskPromptFingerprint(
       'InterventionPackageReviewTask',
       subjectProfile,
+      learnerLocale,
     );
     const expectedRuns: ExpectedValidatorTaskRun[] = [
       ...audit.independent_solution_audit.diagnostics.flatMap((diagnostic) =>

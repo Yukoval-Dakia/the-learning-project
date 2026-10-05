@@ -200,7 +200,11 @@ function filePlan(file) {
   if (
     file.startsWith('scripts/audit-') ||
     file.startsWith('scripts/judge-') ||
-    file.startsWith('scripts/lib/')
+    file.startsWith('scripts/lib/') ||
+    // Top-level scripts/*.json are audit data files (baselines, allowlists,
+    // contract ledgers) consumed only by scripts/audit-* — they belong to the
+    // static+unit lanes, not an unclassified full-suite trigger.
+    /^scripts\/[^/]+\.json$/.test(file)
   ) {
     return {
       lanes: { ...emptyLanes(), static: true, unit: true },

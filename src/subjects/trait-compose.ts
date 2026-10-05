@@ -33,6 +33,8 @@ export function decomposeProfileToTraitPayloads(profile: SubjectProfile): Subjec
         notes: [...profile.judgePolicy.notes],
       },
       judgeCapabilities: [...profile.judgeCapabilities],
+      // YUK-739 — rating semantics policy rides the judge-adjacent trait.
+      ratingPolicy: structuredClone(profile.ratingPolicy),
     },
     cause_taxonomy: {
       causeCategories: profile.causeCategories.map((c) => ({ ...c })),
@@ -46,9 +48,6 @@ export function decomposeProfileToTraitPayloads(profile: SubjectProfile): Subjec
       sourceWhitelist: [...profile.sourceWhitelist],
       ...(profile.sourcingRoutePreference !== undefined
         ? { sourcingRoutePreference: structuredClone(profile.sourcingRoutePreference) }
-        : {}),
-      ...(profile.jyeooSupply !== undefined
-        ? { jyeooSupply: structuredClone(profile.jyeooSupply) }
         : {}),
       exampleSources: [...profile.exampleSources],
     },
@@ -99,15 +98,15 @@ export function assembleSubjectProfile(args: {
       rubricGuidance: charter.rubricGuidance,
     },
     causeCategories: cause_taxonomy.causeCategories.map((c) => ({ ...c })),
+    // YUK-739 — restored from the judge_policy trait (same section the rating
+    // semantics decomposed into above).
+    ratingPolicy: structuredClone(judge_policy.ratingPolicy),
     renderConfig: { ...render_theme.renderConfig },
     schedulingHints: structuredClone(scheduling.schedulingHints),
     judgeCapabilities: [...judge_policy.judgeCapabilities],
     sourceWhitelist: [...source_policy.sourceWhitelist],
     ...(source_policy.sourcingRoutePreference !== undefined
       ? { sourcingRoutePreference: structuredClone(source_policy.sourcingRoutePreference) }
-      : {}),
-    ...(source_policy.jyeooSupply !== undefined
-      ? { jyeooSupply: structuredClone(source_policy.jyeooSupply) }
       : {}),
   };
 }

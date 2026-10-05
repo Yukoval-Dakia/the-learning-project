@@ -11,7 +11,19 @@ import {
 } from './constants';
 
 describe('export constants', () => {
-  it('SCHEMA_VERSION is "4.19" when note verification claims enter backup', () => {
+  it('SCHEMA_VERSION is "4.25" when durable subscription progress enters backup', () => {
+    // 4.22 → 4.23 (YUK-1052): NEW FK_ORDER table assessment_response_draft —
+    // ResponseSet autosave 活草稿（用户可感知的学习中态，非瞬态 → 备份）。
+    // 4.21 → 4.22 (YUK-1055): NEW FK_ORDER table contract_epoch — DB 合同 epoch
+    // marker（append-only 迁移历史）。durable cutover 真相而非瞬态/运维态：
+    // restore 必须携回 epoch 状态，否则恢复出的库丢失「是否已切换」的事实。
+    // NEW FK_ORDER tables 必 bump。
+    // 4.20 → 4.21 (YUK-1044): NEW FK_ORDER tables ×9 — 统一评估契约真相源
+    // （question_revision / question_group_lifecycle / question_admission_verification /
+    // assessment_issuance / evaluation_group / assessment_submission / evaluation /
+    // evaluation_effective_head / assessment_identity_mapping）。Truth source 非瞬态/
+    // 派生（丢 = 判分/学习真相灭失，grounding §15 cutover checkpoint 必捕获）。
+    // NEW FK_ORDER tables 必 bump。
     // 4.15 → 4.16 (YUK-350): immutable question_answer_anchor,
     // question_generation_plan, and question_generation_binding authored provenance.
     // New FK_ORDER tables require a backup schema bump.
@@ -43,14 +55,19 @@ describe('export constants', () => {
     // (异构认知关系边，peer of knowledge_edge)。新表入 FK_ORDER 必 bump (per archive.ts
     // assertEveryTableIsBackedUpOrExcluded)。misconception 加 status/source/seen/evidence
     // 列是既有表的 additive 列，随整行 dump/restore，不单独 bump (表=bump，列=不 bump)。
-    expect(SCHEMA_VERSION).toBe('4.19');
+    // 4.19 → 4.20 (YUK-1016 454-B): NEW FK_ORDER table cause_category_overlay —
+    // owner-vetted 错因词表层 (authored catalog 行，retract 只置 archived_at，不可重建)。
+    // 4.23 → 4.24 (YUK-1007): NEW FK_ORDER tables system_config / system_config_journal /
+    // system_config_epoch — 热加载配置三表（owner 运行时配置行 + append-only 审计 +
+    // 失效轴），同 contract_epoch 先例紧邻 provider_attempt（provider_attempt 恒末位）。
+    expect(SCHEMA_VERSION).toBe('4.25');
   });
 
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
     expect(MAX_INLINE_ASSETS).toBe(45);
   });
 
-  it('FK_ORDER lists all 52 tables in topological order', () => {
+  it('FK_ORDER lists all 70 tables in topological order', () => {
     // 17 → 24: ②d backup-orphan fix added 7 persistent business tables that had
     // silently dropped out of the wipe-then-restore payload (artifact_block_ref,
     // ai_task_runs, mistake_variant, goal, proposal_signals, practice_stream_item,
@@ -97,12 +114,37 @@ describe('export constants', () => {
     // 46 → 49 (YUK-350): immutable question_answer_anchor → question_generation_plan →
     // question_generation_binding (authored generation provenance, all backed up).
     // 49 → 50 (YUK-791): versioned intervention snapshot/recommendation/package lineage.
-    expect(FK_ORDER.length).toBe(52);
+    // 52 → 53 (YUK-1016 454-B): added cause_category_overlay — owner-vetted 错因
+    // 词表层 (authored catalog 行，非瞬态非派生)；placed adjacent to mistake_variant
+    // (failure-learning cluster), NOT at the end (provider_attempt stays last).
+    // 53 → 62 (YUK-1044): added 统一评估契约真相源九表（question_revision →
+    // question_group_lifecycle → question_admission_verification →
+    // assessment_issuance → evaluation_group → assessment_submission → evaluation
+    // → evaluation_effective_head → assessment_identity_mapping，硬 FK 父先子后），
+    // placed right after the question cluster (question), NOT at the end.
+    // 62 → 63 (YUK-1055): added contract_epoch — durable epoch marker 历史
+    // （restore 必须携回「是否已切换」事实），placed just before provider_attempt
+    // (provider_attempt stays last)。
+    // 64 → 67 (YUK-1007): added 热加载配置三表 system_config → system_config_journal
+    // → system_config_epoch（行 + append-only journal + 失效轴；无硬 FK，key 轴
+    // 语义父子排序保持 restore 可读），placed after contract_epoch, before
+    // provider_attempt (provider_attempt stays last)。
+    // 67 → 70 (YUK-766): durable checkpoint → delivery → causal effect.
+    expect(FK_ORDER.length).toBe(70);
     expect(FK_ORDER[0]).toBe('knowledge');
     expect(FK_ORDER[FK_ORDER.length - 1]).toBe('provider_attempt');
     expect(FK_ORDER.indexOf('note_verification_claim')).toBeGreaterThan(
       FK_ORDER.indexOf('artifact'),
     );
+  });
+
+  it('FK_ORDER includes YUK-1016 cause_category_overlay (owner-vetted 词表层，承重非排除)', () => {
+    expect(FK_ORDER).toContain('cause_category_overlay');
+    expect(BACKUP_EXCLUDED_TABLES.has('cause_category_overlay')).toBe(false);
+    expect(FK_ORDER.indexOf('cause_category_overlay')).toBeGreaterThan(
+      FK_ORDER.indexOf('mistake_variant'),
+    );
+    expect(FK_ORDER.indexOf('cause_category_overlay')).toBeLessThan(FK_ORDER.indexOf('goal'));
   });
 
   it('FK_ORDER includes YUK-791 intervention lineage (authored, non-excluded)', () => {
@@ -135,6 +177,38 @@ describe('export constants', () => {
   it('FK_ORDER includes YUK-361 Phase 1 selection_observation telemetry (承重，非排除)', () => {
     expect(FK_ORDER).toContain('selection_observation');
     expect(BACKUP_EXCLUDED_TABLES.has('selection_observation')).toBe(false);
+  });
+
+  it('FK_ORDER includes YUK-1044 assessment contract truth-source nine tables (承重非排除，父先子后)', () => {
+    const nine = [
+      'question_revision',
+      'question_group_lifecycle',
+      'question_admission_verification',
+      'assessment_issuance',
+      'evaluation_group',
+      'assessment_submission',
+      'evaluation',
+      'evaluation_effective_head',
+      'assessment_identity_mapping',
+    ] as const;
+    for (const t of nine) {
+      expect(FK_ORDER).toContain(t);
+      expect(BACKUP_EXCLUDED_TABLES.has(t)).toBe(false);
+    }
+    const idx = (t: string) => FK_ORDER.indexOf(t as never);
+    // 紧随 question 题簇；九表内部严格满足 0105/0106 非 DEFERRABLE FK 拓扑
+    //（mapping 自 FK 除外 —— 0107 DEFERRABLE，restore 事务 SET CONSTRAINTS 推迟）。
+    expect(idx('question')).toBeLessThan(idx('question_revision'));
+    expect(idx('question_revision')).toBeLessThan(idx('question_group_lifecycle'));
+    expect(idx('question_revision')).toBeLessThan(idx('question_admission_verification'));
+    expect(idx('question_revision')).toBeLessThan(idx('assessment_issuance'));
+    expect(idx('question_revision')).toBeLessThan(idx('assessment_identity_mapping'));
+    expect(idx('assessment_issuance')).toBeLessThan(idx('assessment_submission'));
+    expect(idx('evaluation_group')).toBeLessThan(idx('assessment_submission'));
+    expect(idx('assessment_submission')).toBeLessThan(idx('evaluation'));
+    expect(idx('assessment_submission')).toBeLessThan(idx('evaluation_effective_head'));
+    expect(idx('evaluation')).toBeLessThan(idx('evaluation_effective_head'));
+    expect(idx('question_revision')).toBeLessThan(idx('item_calibration'));
   });
 
   it('FK_ORDER respects dependencies (parent before child)', () => {
@@ -260,25 +334,50 @@ describe('export constants', () => {
       // YUK-384: ephemeral editor presence + operational reconciliation cursor,
       // both re-established on restore (see constants.ts rationale).
       'artifact_edit_session',
+      'copilot_continuation',
+      'copilot_evidence_checkpoint',
       // YUK-758: nightly-orchestration DAG scheduling run state (transient; rebuilt each night).
       'dag_orchestration_node',
       'dag_orchestration_run',
       'echo_jobs',
       'editing_presence',
-      'event_subscription_checkpoint',
-      'event_subscription_delivery',
-      'event_subscription_effect',
       'hub_sync_reconciliation',
       'job_events',
+      // YUK-1050: migration apply 运行台账（operational state；restore 时按 wipe 顺序清
+      // phase 再 run，避免陈旧 apply 进度与恢复后的旧真相源数据并存）。
+      'migration_apply_phase',
+      'migration_apply_run',
       'provider_attempt_admission',
       'provider_session_admission',
+      'subagent_run',
+      'tool_operation',
     ]);
+  });
+
+  it('wipes ToolOperations runtime state without backing it up', () => {
+    expect(BACKUP_EXCLUDED_TABLES.has('tool_operation')).toBe(true);
+    expect(RESTORE_WIPE_ONLY_TABLES).toContain('tool_operation');
+    expect(FK_ORDER as readonly string[]).not.toContain('tool_operation');
+  });
+
+  it('wipes YUK-932 mailbox runtime state without backing it up', () => {
+    for (const table of ['subagent_run', 'copilot_continuation']) {
+      expect(BACKUP_EXCLUDED_TABLES.has(table)).toBe(true);
+      expect(RESTORE_WIPE_ONLY_TABLES).toContain(table);
+      expect(FK_ORDER as readonly string[]).not.toContain(table);
+    }
   });
 
   it('wipes YUK-842 operational admission state without backing it up', () => {
     expect(BACKUP_EXCLUDED_TABLES.has('provider_session_admission')).toBe(true);
     expect(RESTORE_WIPE_ONLY_TABLES).toContain('provider_session_admission');
     expect(FK_ORDER as readonly string[]).not.toContain('provider_session_admission');
+  });
+
+  it('wipes YUK-839 validator checkpoints without backing up stale recovery state', () => {
+    expect(BACKUP_EXCLUDED_TABLES.has('copilot_evidence_checkpoint')).toBe(true);
+    expect(RESTORE_WIPE_ONLY_TABLES).toContain('copilot_evidence_checkpoint');
+    expect(FK_ORDER as readonly string[]).not.toContain('copilot_evidence_checkpoint');
   });
 
   it('backs up provider attempts but only wipes provider-attempt admission leases', () => {

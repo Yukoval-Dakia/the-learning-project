@@ -311,6 +311,42 @@ describe('GET /api/review/due', () => {
     expect(body.rows[0].fsrs_state).not.toBeNull();
   });
 
+  // YUK-1037 — defense in depth for pre-fix data: a 'seed:<subj>:root' FSRS
+  // subject (a structural anchor, never a content KC — the subject read axis
+  // already excludes it via resolveSubjectKnowledgeIds) must never surface as a
+  // due probe, even while a legacy row like ('knowledge','seed:math:root') still
+  // exists pending ops remediation.
+  it('skips a due synthetic-subject-root FSRS row instead of probing it', async () => {
+    const now = new Date();
+    const pastIso = new Date(now.getTime() - 2 * 86400 * 1000).toISOString();
+
+    // The production-shape residue: an anchor card + questions bound only to it.
+    await seedQuestion('q_seedroot_only', { knowledge_ids: ['seed:math:root'] });
+    await seedFsrsState({
+      question_id: 'seed:math:root',
+      due_at: new Date(pastIso),
+      state: makeFsrsState({ due: pastIso }),
+      subject_kind: 'knowledge',
+    });
+    // A real due KC alongside proves the endpoint still serves normal cards.
+    await seedQuestion('q_real_due', { knowledge_ids: ['k_real_due'] });
+    await seedFsrsState({
+      question_id: 'k_real_due',
+      due_at: new Date(pastIso),
+      state: makeFsrsState({ due: pastIso }),
+      subject_kind: 'knowledge',
+    });
+
+    const res = await getReview();
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as {
+      rows: Array<{ question_id: string; fsrs_subject_id?: string }>;
+    };
+
+    expect(body.rows.map((r) => r.question_id)).toEqual(['q_real_due']);
+    expect(body.rows.map((r) => r.fsrs_subject_id)).not.toContain('seed:math:root');
+  });
+
   // YUK-282 / ADR-0030 — by-kind variant-rotation probe (end-to-end through the
   // route). An application-kind (short_answer) knowledge point whose last review
   // was the family ROOT rotates to the next member of the root_question_id family

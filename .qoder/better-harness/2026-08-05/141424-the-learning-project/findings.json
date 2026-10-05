@@ -1,0 +1,197 @@
+{
+  "summary": {
+    "projectName": "the-learning-project",
+    "locale": "zh-CN",
+    "modelId": "agent-work-loop-v4",
+    "reportContractVersion": 25,
+    "overview": "项目已具备高密度的机械 audit gate、三分区测试与文档化的 pre-PR 契约，根 AGENTS.md 路由体系整体自洽。但当前未提交的 CI gate 重写存在确定性缺陷（引用不存在的脚本、静默丢弃一项 audit），待提交文档含未解决合并冲突标记且走零检查的 docs-only 快路径；AGENTS.md 存在一处指向不存在 skill 的悬空路由；本窗口 Qoder 会话证据源不可用，Learning Capture 只能以证据缺口状态收口。",
+    "aiAgentPractice": {
+      "inspectedSurfaces": [
+        "Rules",
+        "Skills",
+        "Workflows"
+      ],
+      "coverageRows": [
+        {
+          "surface": "Rules",
+          "scopes": [
+            "Project"
+          ],
+          "count": 1,
+          "paths": [
+            "AGENTS.md"
+          ]
+        },
+        {
+          "surface": "Skills",
+          "scopes": [
+            "Project"
+          ],
+          "count": 3,
+          "paths": [
+            ".agents/skills/audit-drift/SKILL.md",
+            ".agents/skills/launch-phase/SKILL.md",
+            ".agents/skills/pr/SKILL.md"
+          ]
+        },
+        {
+          "surface": "Workflows",
+          "scopes": [
+            "Project"
+          ],
+          "count": 5,
+          "paths": [
+            ".github/workflows/ci-gate.yml",
+            ".github/workflows/claude.yml",
+            ".github/workflows/ocr-codex-review.yml",
+            ".github/workflows/pr-agent-glm.yml",
+            ".github/workflows/rust-parity.yml"
+          ]
+        },
+        {
+          "surface": "Custom Agents",
+          "scopes": [
+            "Project"
+          ],
+          "count": 0
+        }
+      ]
+    },
+    "assignmentSummaries": [],
+    "dimensions": [
+      {
+        "id": "task-understanding",
+        "label": "任务理解",
+        "score": 74,
+        "summary": "根 AGENTS.md 与嵌套文档把任务边界、命令矩阵与 pre-PR gate 讲得清楚，但一处 audit 契约路由指向不存在的 skill，属已观察到的悬空指引。",
+        "findingRefs": [
+          "agents-md-routes-missing-audits-reference-skill"
+        ]
+      },
+      {
+        "id": "controlled-execution",
+        "label": "可控执行",
+        "score": 59,
+        "summary": "启动与操作命令面齐全且有文档支撑，但 launch-phase 依赖的 git guard 兜底在 Qoder provider 面上不存在（hooks=0），破坏性 git 操作的强制边界未被观察为已接线。",
+        "findingRefs": [
+          "launch-phase-git-guard-absent-on-qoder"
+        ]
+      },
+      {
+        "id": "change-validation",
+        "label": "改动验证",
+        "score": 62,
+        "summary": "本地验证体系（三分区测试 + 22 项机械 audit）结构完整，但未提交的 CI 重写引用了三个不存在的脚本并静默丢弃一项现有 audit，使 required gate 的覆盖声明不再成立。",
+        "findingRefs": [
+          "ci-gate-references-missing-scripts",
+          "ci-gate-drops-agent-control-plane-audit"
+        ]
+      },
+      {
+        "id": "reliable-delivery",
+        "label": "可靠交付",
+        "score": 55,
+        "summary": "交付边界（CI + 多 bot review + merge 政策）已定义，但含未解决冲突标记的文档会走 docs-only 零检查快路径，且 CI 重写自定的验收协议（基线 + 10-run canary）在合入时点不可判定。",
+        "findingRefs": [
+          "ci-gate-references-missing-scripts",
+          "conflict-markers-pass-docs-only-gate",
+          "ci-rewrite-acceptance-protocol-unexecuted"
+        ]
+      },
+      {
+        "id": "learning-capture",
+        "label": "经验沉淀",
+        "score": 38,
+        "summary": "本窗口会话证据源不可用（0/5 启用的源根存在），无法区分重复工作、维护漂移或干净窗口；Learning Capture 以证据缺口状态收口，未观察到任何可复用的后续效果验证。",
+        "findingRefs": []
+      }
+    ]
+  },
+  "findings": [
+    {
+      "id": "ci-gate-references-missing-scripts",
+      "title": "未提交的 CI static lane 引用三个不存在的 pnpm 脚本",
+      "severity": "High",
+      "reason": "工作区事实：.github/workflows/ci-gate.yml 的 Audits 步骤（L104-106）调用 audit:api-client、audit:api-client-usage、audit:capability-boundaries，但 package.json scripts 中三者均不存在，scripts/ 下也无对应实现，全仓库仅该 workflow 出现这三个名字。推断后果：该变更一旦提交，任何 code-changed 的 PR 都会在 static lane 以命令未找到失败，required gate 从放行风险变为阻塞一切。workflow 注释自称与本地 pre-PR audits 等价，但该等价性没有任何机械检查，也未本地预跑。owner 为 ci-gate.yml 的 Audits 清单；若三者是计划新增 audit，则还涉及 package.json 与 scripts/。不确定性：无法排除 GitHub 侧已有未被本地观察到的配套实现，但仓库内无任何存在证据。",
+      "expectedOutput": [
+        "CI static lane 引用的每个 pnpm audit 脚本都能在 package.json 中找到并本地执行，gate 不再因命令缺失而阻塞所有代码变更 PR。"
+      ],
+      "expectedArtifact": "Workflow 修复",
+      "aiFixPrompt": "/better-harness fix this issue\n\n修复 .github/workflows/ci-gate.yml static lane 的 Audits 步骤：对 audit:api-client、audit:api-client-usage、audit:capability-boundaries 三项逐一定位——若它们应为真实 audit，则在 package.json scripts 与 scripts/ 下补上实现；若不存在对应计划，则从 workflow 清单中移除。保持与 package.json test 脚本 audit 前缀及 docs/agents/development-workflow.md pre-PR 清单的集合一致。\n\n## Validation\n\n- 对 workflow 中每个 pnpm audit:* 调用，确认 package.json scripts 中存在同名脚本\n- 本地执行新增或保留的 audit 脚本确认可以运行\n- 对照 pnpm test 的 audit 前缀做集合差检查，差集为空",
+      "dimensionRefs": [
+        "change-validation",
+        "reliable-delivery"
+      ]
+    },
+    {
+      "id": "ci-gate-drops-agent-control-plane-audit",
+      "title": "新 CI audit 清单静默丢弃仍在本地契约中的 audit:agent-control-plane",
+      "severity": "Medium",
+      "reason": "工作区事实：package.json 的 test 脚本以 audit:agent-control-plane 开头，docs/agents/development-workflow.md 的 pre-PR 清单同样包含它；旧版（HEAD）ci-gate.yml 通过 pnpm test 覆盖该 audit，而新版逐条展开的 Audits 清单不含它，且无任何步骤声明删除理由。推断后果：agent-control-plane 违规只会在本地被拦，CI 全绿不再等价于文档化 pre-PR gate 通过，而这一覆盖收窄是静默的。集合差异可直接枚举；实际漏网后果需要有真实违规样例才能证明，此处保持为推断。owner 为 ci-gate.yml Audits 清单。",
+      "expectedOutput": [
+        "CI 的 audit 覆盖与本地文档化 pre-PR gate 重新等价，agent-control-plane 违规在 CI 侧同样被拦截。"
+      ],
+      "expectedArtifact": "Workflow 修复",
+      "aiFixPrompt": "/better-harness fix this issue\n\n在 .github/workflows/ci-gate.yml 的 static lane Audits 清单中恢复 pnpm audit:agent-control-plane，与 package.json test 脚本的 audit 前缀和 docs/agents/development-workflow.md pre-PR 清单对齐；若确有理由移除，先在文档化契约中同步删除并写明理由。\n\n## Validation\n\n- 对比新 CI audit 列表与 pnpm test 前缀的集合差，确认 audit:agent-control-plane 不再缺失\n- 本地执行 pnpm audit:agent-control-plane 确认可运行",
+      "dimensionRefs": [
+        "change-validation"
+      ]
+    },
+    {
+      "id": "conflict-markers-pass-docs-only-gate",
+      "title": "含未解决合并冲突标记的 PLAN.md 与 now.md 将走零检查的 docs-only 快路径",
+      "severity": "Medium",
+      "reason": "工作区事实：PLAN.md（2 处标记）与 .remember/now.md（10 处标记）当前含未解决的冲突标记，且两者都在本次待提交变更集中。ci-gate.yml 的 docs-only 判定（*.md 与 .remember/ 路径）会让该变更跳过 install/typecheck/lint/audit/test/build 全部 lane；Biome、typecheck 与所有 audit 也都不检查 markdown 冲突标记。推断后果：双版本拼接、语义矛盾的看板与 handoff 文档可一路绿灯合入，而 AGENTS.md 明确把 PLAN.md 定义为权威工作面镜像。标记存在为已验证事实；会合入与否取决于提交流程，属近端推断。最小 owner 是当前变更集中的这两个文件；机械拦截为可选第二层。",
+      "expectedOutput": [
+        "待提交变更集中不再存在任何冲突标记，看板与 handoff 文档恢复为单一权威版本。"
+      ],
+      "expectedArtifact": "文档冲突解决",
+      "aiFixPrompt": "/better-harness fix this issue\n\n解决当前变更集中 PLAN.md 与 .remember/now.md 的合并冲突：逐段选择保留版本，删除全部冲突标记，保持 PLAN.md 四栏就地改写的约定，不保留双版本拼接。不改动其他文件。\n\n## Validation\n\n- grep -rn '^<<<<<<<' PLAN.md .remember/now.md 返回空\n- 通读修改后的四栏内容确认无自相矛盾的并置陈述",
+      "dimensionRefs": [
+        "reliable-delivery"
+      ]
+    },
+    {
+      "id": "ci-rewrite-acceptance-protocol-unexecuted",
+      "title": "CI 重写自定的验收协议（基线回填 + 10-run canary）未在合入前执行",
+      "severity": "Medium",
+      "reason": "文档事实：docs/research/2026-07-28-ci-speedup.md 定义成功标准为 median wall-clock 至少降 25%、runner minutes 不超过基线 1.5 倍、10-run canary 无新增 flake，并要求先回填 10-run 基线、feature branch 连跑 10 次再替换 branch protection；其状态行自述 Phase 1 已实现、等待 GitHub Actions 首轮实测。推断后果：合入时点不存在任何 GitHub 实测数据，验收标准在 merge 时不可判定，且本环境自述无 gh/remote/Docker，测量只能在 GitHub 侧发生。不确定性：无法排除 GitHub 侧已有未被本次本地证据包观察到的运行。owner 是本次 ci-gate.yml 变更集及其验证记录，研究文档本身是协议来源而非 owner。",
+      "expectedOutput": [
+        "CI 重写在合入前拥有可判定的实测验收证据，或明确记录未达标而暂缓替换 branch protection。"
+      ],
+      "expectedArtifact": "验证记录",
+      "aiFixPrompt": "/better-harness fix this issue\n\n按 docs/research/2026-07-28-ci-speedup.md 的验收协议补齐本次 CI 重写的证据：回填 10-run 基线，在 feature branch 连跑 10 次并记录 lane 结果与 timing，把结果写回研究文档的状态行；在协议达成前不替换 branch protection。此步骤需要 GitHub Actions 执行权限作为前置授权。\n\n## Validation\n\n- 研究文档状态行包含 10-run 基线与 canary 的实测数值\n- 实测数值可对照文档阈值（25% wall-clock、1.5 倍 runner minutes）做出可判定结论",
+      "dimensionRefs": [
+        "reliable-delivery"
+      ]
+    },
+    {
+      "id": "agents-md-routes-missing-audits-reference-skill",
+      "title": "AGENTS.md 将 audit allowlist 契约路由到不存在的 audits-reference skill",
+      "severity": "Low",
+      "reason": "工作区事实：AGENTS.md 第 70 行声明 audit allowlist 的具体契约见 audits-reference skill，但项目 Skill 面仅有 audit-drift、launch-phase、pr 三个 skill，全库 Glob 无 audits-reference 目录；lint 不覆盖此类纯文本引用，故未被机器检出。观察后果：执行 audit 类任务的 agent 沿根真相源路由会命中死链，只能自行猜契约或改道。缺失已双重核实；不确定性：该 skill 是否存在于未授权的 user/plugin 面无法核验。owner 为 AGENTS.md 该两行。",
+      "expectedOutput": [
+        "agent 沿根 AGENTS.md 路由 audit 契约时不再命中死链。"
+      ],
+      "expectedArtifact": "规则文档修复",
+      "aiFixPrompt": "/better-harness fix this issue\n\n修复 AGENTS.md 中指向 audits-reference skill 的悬空路由：若 audit allowlist 契约已有现存 owner（如 docs/agents/development-workflow.md 中的 audit 清单），改指向该 owner；若确需独立 skill，则先补建资产再保留引用。不改动其他内容。\n\n## Validation\n\n- AGENTS.md 中所有 skill/文档引用均可用 Glob/Grep 定位到实际文件\n- grep audits-reference 的每个命中都对应一个存在的目标",
+      "dimensionRefs": [
+        "task-understanding"
+      ]
+    },
+    {
+      "id": "launch-phase-git-guard-absent-on-qoder",
+      "title": "launch-phase 的 git guard 兜底在 Qoder provider 面上不存在",
+      "severity": "Low",
+      "reason": "资产事实：launch-phase SKILL.md 多处把 git guard hook 拦截 git branch -D / force push / worktree remove --force 作为 chain-merge 阶段的安全兜底，并引用 .codex/hooks.json 复用 .claude/hooks/git-guard.mjs；而 Qoder provider 的 lint 与 integrity envelope 均显示 hooks=0。推断后果：若该 skill 在 Qoder 会话中触发执行，这条兜底链不激活，破坏性 git 操作仅靠模型自律约束。不确定性：无法排除 Qoder 侧存在未入 inventory 的等价机制，且 .codex/.claude hooks 文件不在本次授权范围、未读取，不能断言其在其它 provider 上是否有效。owner 为 launch-phase skill 文本的 provider 差异声明。",
+      "expectedOutput": [
+        "launch-phase 在无 hook 的 provider 上执行时，操作者被显式要求对破坏性 git 操作做人工确认，不再默认兜底存在。"
+      ],
+      "expectedArtifact": "Skill 文档修复",
+      "aiFixPrompt": "/better-harness fix this issue\n\n在 .agents/skills/launch-phase/SKILL.md 中显式声明 git guard 的 provider 适用性：说明该兜底仅在有对应 hooks 的 provider（如 Claude/Codex）上激活，在无 hooks 的 provider（如 Qoder）会话中 chain-merge 前必须先人工确认破坏性 git 命令清单。不在本步骤内创建或激活新的 Qoder hook；补建 hook 需要单独授权。\n\n## Validation\n\n- SKILL.md 中存在明确的 provider 差异与人工确认前置说明\n- 通读 chain-merge 段落确认安全兜底不再隐含依赖不存在的 hook",
+      "dimensionRefs": [
+        "controlled-execution"
+      ]
+    }
+  ]
+}

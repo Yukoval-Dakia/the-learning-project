@@ -1,5 +1,6 @@
 import { createId } from '@paralleldrive/cuid2';
-import { type TaskKind, tasks } from '@/ai/registry';
+import type { TaskDefinition } from '@/ai/task-spec';
+import { type TaskKind, tasks } from '@/capabilities/task-registry';
 import type { Db } from '@/db/client';
 import {
   ProviderSessionWallClockBudgetError,
@@ -11,6 +12,7 @@ import {
   resolveAttemptCostTruth,
   unknownAttemptCostTruth,
 } from './attempt-cost';
+import { type ModelBinding, explicitProviderRouting } from './execution-adapter';
 import {
   type AiTaskUsage,
   writeAiTaskAttemptFinished,
@@ -18,6 +20,11 @@ import {
   writeAiTaskRunStarted,
   writeToolCallLog,
 } from './log';
+import {
+  type ModelProfile,
+  assertModelProfileCapabilityFit,
+  resolveModelProfile,
+} from './model-profiles';
 import type { TokenCounts } from './pricing';
 import {
   ProviderSessionAdmissionError,
@@ -45,12 +52,17 @@ export interface LifecycleResult {
 export interface TerminalResultEvidence {
   usage: LifecycleUsage;
   tokenCounts: TokenCounts;
+  /** Distinguishes missing usage from explicitly observed zero token counts. */
+  tokenUsageObserved?: boolean;
   costUsd?: number;
   finishReason: string;
   structuredOutput?: unknown;
 }
 
-export type ObservedRunUsage = Pick<TerminalResultEvidence, 'usage' | 'tokenCounts' | 'costUsd'>;
+export type ObservedRunUsage = Pick<
+  TerminalResultEvidence,
+  'usage' | 'tokenCounts' | 'tokenUsageObserved' | 'costUsd'
+>;
 
 interface LifecycleConfig<TResult extends LifecycleResult> {
   db: Db;
@@ -65,20 +77,34 @@ interface LifecycleConfig<TResult extends LifecycleResult> {
    */
   abortController?: AbortController;
   override?: { provider?: ResolvedProvider['provider']; model?: string };
+  /**
+   * YUK-1013 — per-run model binding, forwarded verbatim from RunTaskCtx. The
+   * constructor merges its provider/model into provider resolution (override
+   * wins per-field — explicitProviderRouting), reads `effort` for the run
+   * metadata event, and `adapter` for the recorded execution engine.
+   */
+  modelBinding?: ModelBinding;
   /** Active outer central attempt when a DomainTool starts a nested task. */
   parentTaskRunId?: string;
   /** Absolute bound for beginning a retry attempt; execution keeps its own budget. */
   providerStartDeadlineAt?: number;
-  /** Absolute wall-clock bound shared by admission, SDK startup and execution. */
+  /** Absolute wall-clock bound shared by admission, adapter startup and execution. */
   providerSessionDeadlineAt?: number;
   signal?: AbortSignal;
   logScope: string;
+  compiledPromptProvenance?: {
+    compiledPromptHash: string;
+    promptCodecVersion: string;
+    promptCodecMode: 'cold' | 'resume';
+    promptContextDigest: string;
+  };
   afterRun?: (result: TResult) => Promise<void> | void;
 }
 
 export interface LifecycleRetryContext {
   enableTransientRetry?: boolean;
   override?: { provider?: ResolvedProvider['provider']; model?: string };
+  modelBinding?: ModelBinding;
 }
 
 export interface LifecycleAttemptDecision {
@@ -139,6 +165,11 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   readonly resolved: ResolvedProvider;
   readonly taskRunId: string;
   readonly kind: TaskKind;
+  /**
+   * YUK-924 — effective ModelProfile for the resolved (provider, model) lane,
+   * including `source` ('binding' | 'catalog' | 'defaults') for run metadata.
+   */
+  readonly modelProfile: ModelProfile;
 
   private timer: ReturnType<typeof setTimeout> | undefined;
   private readonly admissionPlan: ProviderSessionAdmissionPlan;
@@ -156,7 +187,22 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     this.abortController = config.abortController ?? new AbortController();
     this.taskRunId = config.taskRunId;
     this.kind = config.kind;
-    this.resolved = resolveTaskProvider(config.kind, config.override);
+    // YUK-1013 — the binding's provider/model merge in here (escape-hatch
+    // override wins per-field) so EVERY lifecycle caller gets the same
+    // explicit > env > registry layering, not just the runner's three sites.
+    this.resolved = resolveTaskProvider(config.kind, explicitProviderRouting(config));
+    // YUK-924 P2 — fail-closed capability gate at task resolution: a task that
+    // declares needsToolCall / isMultimodal may only run on a lane whose
+    // ModelProfile CONFIRMS the capability ('unknown' rejects too; the remedy
+    // is an explicit provider-binding entry). Thrown from the constructor —
+    // before any admission row, attempt row, or paid call — exactly like a
+    // missing provider credential, so no retry layer ever sees it.
+    assertModelProfileCapabilityFit(
+      tasks[config.kind],
+      this.resolved.provider,
+      this.resolved.model,
+    );
+    this.modelProfile = resolveModelProfile(this.resolved.provider, this.resolved.model);
     this.admissionPlan = resolveProviderSessionAdmissionPlan(this.resolved.provider);
 
     if (config.signal) {
@@ -187,6 +233,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
             provider: this.resolved.provider,
             model: this.resolved.model,
             tokens: evidence.tokenCounts,
+            tokensObserved: evidence.tokenUsageObserved,
             reportedCostUsd: evidence.costUsd,
           })
         : unknownAttemptCostTruth(this.resolved.provider, this.resolved.model);
@@ -334,12 +381,12 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
 
     let outcome: { status: 'fulfilled'; value: T } | { status: 'rejected'; reason: unknown };
     try {
-      assertProviderStartAllowed('before SDK startup');
+      assertProviderStartAllowed('before adapter startup');
       await execution.prepare();
-      // SDK startup performs the task-configured CLI initialize handshake but
+      // Adapter startup performs the engine's tool-mount/connect handshake but
       // submits no prompt. Keep that uninterruptible cold-start work inside the
       // admission slot and outside model-attempt runtime/cost accounting.
-      assertProviderStartAllowed('during SDK startup');
+      assertProviderStartAllowed('during adapter startup');
       await permit?.completeStartup();
       assertProviderStartAllowed('after startup lease transition');
       await this.startWithInputHash(inputHash);
@@ -382,6 +429,10 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   }
 
   private async startWithInputHash(inputHash: string): Promise<void> {
+    // The registry map's value type is the union of every spec's inferred
+    // literal shape; read optional declared fields through this interface view
+    // (same pattern as runner.ts buildQueryOptions).
+    const declaredDef: TaskDefinition = tasks[this.kind];
     try {
       await writeAiTaskRunStarted(this.config.db, {
         id: this.taskRunId,
@@ -389,9 +440,32 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         provider: this.resolved.provider,
         model: this.resolved.model,
         input_hash: inputHash,
+        ...(this.config.compiledPromptProvenance ?? {}),
         started_at: new Date(),
       });
       this.durableStart = true;
+      // YUK-924 P2 — run lifecycle metadata: record where the effective model
+      // profile came from and which reasoning effort the run wires (the task
+      // spec's YUK-923 declaration, else the profile's operational default).
+      // Emitted as a structured event on the same channel as the lifecycle's
+      // other run events; no schema change.
+      console.info(`[${this.config.logScope}] model_profile_resolved`, {
+        event: 'model_profile_resolved',
+        task_run_id: this.taskRunId,
+        kind: this.kind,
+        provider: this.resolved.provider,
+        model: this.resolved.model,
+        profile_source: this.modelProfile.source,
+        reasoning_effort: this.config.modelBinding?.effort ?? declaredDef.reasoningEffort ?? null,
+        // YUK-921 §2.1 — adapter selection stays observable on the run record.
+        // Post-P4 (YUK-1025) 'pi' is the only legal adapter id; YUK-1049 typed
+        // tasks report 'typed' — their transport is the decisions endpoint,
+        // not a pi adapter.
+        execution_adapter:
+          this.config.modelBinding?.adapter ??
+          ((declaredDef as { execution?: string }).execution === 'typed' ? 'typed' : 'pi'),
+        profile_effort_default: this.modelProfile.reasoning.defaultEffort ?? null,
+      });
     } catch (error) {
       console.error(`[${this.config.logScope}] writeAiTaskRunStarted failed`, {
         task_run_id: this.taskRunId,
@@ -411,6 +485,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       provider: this.resolved.provider,
       model: this.resolved.model,
       tokens: terminal.tokenCounts,
+      tokensObserved: terminal.tokenUsageObserved,
       reportedCostUsd: terminal.costUsd,
     });
   }
@@ -616,12 +691,15 @@ export function createRunLifecycle<TResult extends LifecycleResult>(
 export function transientRetryEnabled(ctx: LifecycleRetryContext): boolean {
   if (ctx.enableTransientRetry !== true) return false;
   if (ctx.override?.provider || ctx.override?.model) return false;
+  // YUK-1013 — a per-run binding pins routing exactly like ctx.override does;
+  // retry stays off on pinned lanes (single-transient-layer principle).
+  if (ctx.modelBinding?.provider || ctx.modelBinding?.model) return false;
   if (hasGlobalProviderOverride()) return false;
   return true;
 }
 
-export function maxLifecycleAttempts(kind: TaskKind, ctx: LifecycleRetryContext): number {
-  return 1 + (transientRetryEnabled(ctx) ? tasks[kind].budget.transientRetries : 0);
+export function maxLifecycleAttempts(transientRetries: number, ctx: LifecycleRetryContext): number {
+  return 1 + (transientRetryEnabled(ctx) ? transientRetries : 0);
 }
 
 export function classifyLifecycleRetry(input: {

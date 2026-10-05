@@ -185,6 +185,7 @@ function cell(overrides: Partial<EnrichedEvidenceCell> = {}): EnrichedEvidenceCe
     baseline_p: 0.35,
     probe_here: true,
     has_owner_cause: true,
+    has_contested_verdict: false,
     // YUK-786 grounding packet — the induction contract now REQUIRES it.
     knowledge_name: '链式法则',
     subject_id: 'math',
@@ -661,24 +662,12 @@ describe('induceConjecture self-consistency', () => {
     expect(proposal(result).agreement_count).toBe(1);
   });
 
-  it('uses an SDK-compatible object root and unwraps its draft', async () => {
+  it('unwraps the draft envelope from structured_output', async () => {
     const generated = sample('你把复合函数各层导数相加');
     const draft = JSON.parse(generated.text.slice(generated.text.indexOf('{'))) as unknown;
     const runTaskFn = vi.fn(async (_kind: string, _input: unknown, ctx: unknown) => {
-      const schema = (
-        ctx as {
-          outputFormat: {
-            schema: {
-              type?: string;
-              anyOf?: unknown;
-              properties?: { draft?: { anyOf?: unknown } };
-            };
-          };
-        }
-      ).outputFormat.schema;
-      expect(schema.type).toBe('object');
-      expect(schema.anyOf).toBeUndefined();
-      expect(schema.properties?.draft?.anyOf).toBeDefined();
+      // P4 regression guard: no SDK outputFormat threading survives on ctx.
+      expect((ctx as { outputFormat?: unknown }).outputFormat).toBeUndefined();
       return { text: '', structured_output: { draft } };
     });
 

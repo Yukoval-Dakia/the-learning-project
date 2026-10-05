@@ -111,6 +111,8 @@ export interface AdminCostDayRow {
   reported_cost: number;
   estimated_cost: number;
   legacy_cost: number;
+  reported_attempts: number;
+  estimated_attempts: number;
   unknown_attempts: number;
   legacy_rows: number;
   tokens_in: number;
@@ -125,6 +127,8 @@ export interface AdminCostTaskRow {
   reported_cost: number;
   estimated_cost: number;
   legacy_cost: number;
+  reported_attempts: number;
+  estimated_attempts: number;
   unknown_attempts: number;
   legacy_rows: number;
   tokens_in: number;
@@ -486,6 +490,8 @@ export async function getAdminCost(
             reported_cost: row.reported_cost,
             estimated_cost: row.estimated_cost,
             legacy_cost: row.legacy_cost,
+            reported_attempts: row.reported_attempts,
+            estimated_attempts: row.estimated_attempts,
             unknown_attempts: row.unknown_attempts,
             legacy_rows: row.legacy_rows,
             tokens_in: row.tokens_in,
@@ -505,6 +511,8 @@ export async function getAdminCost(
             reported_cost: row.reported_cost,
             estimated_cost: row.estimated_cost,
             legacy_cost: row.legacy_cost,
+            reported_attempts: row.reported_attempts,
+            estimated_attempts: row.estimated_attempts,
             unknown_attempts: row.unknown_attempts,
             legacy_rows: row.legacy_rows,
             tokens_in: row.tokens_in,

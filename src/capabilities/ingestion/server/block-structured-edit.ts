@@ -20,7 +20,7 @@
 //     code; callers decide how to surface it (tool → Output; route → 4xx).
 //     Hard/unexpected conditions throw.
 
-import { eq, inArray, sql } from 'drizzle-orm';
+import { eq, inArray } from 'drizzle-orm';
 import type { z } from 'zod';
 
 import { newId } from '@/core/ids';
@@ -30,18 +30,9 @@ import type { Db, Tx } from '@/db/client';
 import { question_block } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeJobEvent } from '@/server/events/writer';
-// YUK-471 W3-C3 — the per-entity SoT-flip wiring for question_block. ON → the projection write-through
-// is the row writer; OFF (default) → the imperative UPDATE stays the SoT + the parity assert catches
-// fold↔row drift during the double-write phase. Gated on hasQuestionBlockGenesisAnchor (a pre-W3
-// un-backfilled block folds to null → stays imperative; mirrors the W2 goal queries pattern).
-import {
-  assertQuestionBlockParity,
-  hasQuestionBlockGenesisAnchor,
-  questionBlockLiveRowToSnapshot,
-} from '@/server/projections/parity';
+import { hasQuestionBlockGenesisAnchor } from '@/server/projections/parity';
 import { projectQuestionBlockGuarded } from '@/server/projections/question_block';
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
-import { projectionIsWriter } from '@/server/projections/sot-flag';
 
 // ---------------------------------------------------------------------------
 // Shared tree helpers
@@ -170,6 +161,11 @@ interface PersistStructuredParams {
 }
 
 async function persistStructured(tx: Tx, params: PersistStructuredParams): Promise<number> {
+  if (!(await hasQuestionBlockGenesisAnchor(tx, params.blockId))) {
+    throw new Error(
+      'canonical question block edit requires complete history; run deployment migration',
+    );
+  }
   // SINGLE clock — the row's updated_at MUST equal the canonical event's created_at so the fold's
   // `updated_at = event.created_at` reproduces the row byte-for-byte (design §3 single-clock model).
   const now = new Date();
@@ -215,39 +211,7 @@ async function persistStructured(tx: Tx, params: PersistStructuredParams): Promi
     ingest_at: now,
   });
 
-  // YUK-471 W3-C3 — applicability gate (the edit event is NOT a question_block anchor, so before/after
-  // is equivalent; a pre-W3 un-backfilled block folds null → must stay on the imperative path).
-  const wasEventSourced = await hasQuestionBlockGenesisAnchor(tx, params.blockId);
-  if (projectionIsWriter('question_block') && wasEventSourced) {
-    // ON (W3-D flip) — the projection write-through is the SOLE row writer; the imperative UPDATE is
-    // skipped. The canonical edit event above carries the AFTER tree + version + status, so
-    // projectQuestionBlockGuarded re-folds the create/genesis base + this edit and upserts the row.
-    await projectQuestionBlockGuarded(tx, params.blockId);
-  } else {
-    await tx
-      .update(question_block)
-      .set({
-        structured: params.structured,
-        ...(params.figures !== undefined ? { figures: params.figures } : {}),
-        updated_at: now,
-        version,
-      })
-      .where(eq(question_block.id, params.blockId));
-    // OFF — assert fold == the row the imperative UPDATE just wrote (only when event-sourced; a pre-W3
-    // block folds to null and would false-mismatch). dev/test THROW on drift, prod warn (file header).
-    if (wasEventSourced) {
-      const [written] = await tx
-        .select()
-        .from(question_block)
-        .where(eq(question_block.id, params.blockId))
-        .limit(1);
-      await assertQuestionBlockParity(
-        tx,
-        params.blockId,
-        written ? questionBlockLiveRowToSnapshot(written) : null,
-      );
-    }
-  }
+  await projectQuestionBlockGuarded(tx, params.blockId);
 
   return version;
 }
@@ -624,22 +588,14 @@ export async function mergeQuestions(db: Db, params: MergeQuestionsParams): Prom
     // canonical event, so the fold's single-clock holds (the absorbed blocks + the primary all stamp
     // updated_at = event.created_at). Historically this used TWO independent `new Date()` (~:506/:513).
     const now = new Date();
-    const [{ version: primaryVersion }] = await tx
-      .update(question_block)
-      .set({
-        structured: mergedTree,
-        figures: mergedFigures,
-        merged_from_block_ids: [...(primary.merged_from_block_ids ?? []), ...mergeIds],
-        updated_at: now,
-        version: sql`${question_block.version} + 1`,
-      })
-      .where(eq(question_block.id, params.primaryBlockId))
-      .returning({ version: question_block.version });
-
-    await tx
-      .update(question_block)
-      .set({ status: 'ignored', updated_at: now })
-      .where(inArray(question_block.id, mergeIds));
+    for (const id of [params.primaryBlockId, ...mergeIds]) {
+      if (!(await hasQuestionBlockGenesisAnchor(tx, id))) {
+        throw new Error(
+          'canonical question block merge requires complete history; run deployment migration',
+        );
+      }
+    }
+    const primaryVersion = primary.version + 1;
 
     await writeJobEvent(tx, {
       business_table: 'question_block',
@@ -702,6 +658,9 @@ export async function mergeQuestions(db: Db, params: MergeQuestionsParams): Prom
       ingest_at: now,
     });
 
+    for (const id of [params.primaryBlockId, ...mergeIds]) {
+      await projectQuestionBlockGuarded(tx, id);
+    }
     return { status: 'written', version: primaryVersion };
   });
 }
@@ -772,15 +731,12 @@ export async function reassignFigure(
         : f,
     );
 
-    const updated = await tx
-      .update(question_block)
-      .set({
-        figures: updatedFigures,
-        updated_at: now,
-        version: sql`${question_block.version} + 1`,
-      })
-      .where(eq(question_block.id, params.blockId))
-      .returning({ version: question_block.version });
+    if (!(await hasQuestionBlockGenesisAnchor(tx, params.blockId))) {
+      throw new Error(
+        'canonical question block figure edit requires complete history; run deployment migration',
+      );
+    }
+    const version = block.version + 1;
 
     await writeJobEvent(tx, {
       business_table: 'question_block',
@@ -796,12 +752,13 @@ export async function reassignFigure(
       blockId: params.blockId,
       op: 'reassign_figures',
       figures: updatedFigures,
-      nextVersion: updated[0].version,
+      nextVersion: version,
       actorKind: params.actorKind ?? 'agent',
       actorRef: params.actorRef,
       now,
     });
 
-    return { status: 'written', figures: updatedFigures, version: updated[0].version };
+    await projectQuestionBlockGuarded(tx, params.blockId);
+    return { status: 'written', figures: updatedFigures, version };
   });
 }

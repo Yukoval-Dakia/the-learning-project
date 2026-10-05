@@ -108,8 +108,9 @@ Question (统一题库，single source of truth)
 > 拥有；Notes 也已拥有 NoteGenerate/NoteVerify 的 parser + output schema；Ingestion 已拥有
 > Vision/Structure/MistakeEnroll/Tagging/ColdStart/BlockAssembly/ProfileCritic 八个 TaskSpec；Knowledge
 > 已拥有 KnowledgeEdgePropose/FrontierPrerequisite/KnowledgeReview 三个 TaskSpec。
-> owner maps 现在保存全部 51 个完整 TaskSpec（YUK-870 收编了最后一个 `SessionSummaryTask`），
-> registry 只做静态 compatibility projection；YUK-885 已删除中央 semantic quarry
+> owner maps 现在保存全部 52 个完整 TaskSpec（20 Practice + 3 Notes + 8 Ingestion + 3 Knowledge
+> + 13 Agency + 5 Copilot）。YUK-870 收编了
+> `SessionSummaryTask`；registry 只做静态 compatibility projection；YUK-885 已删除中央 semantic quarry
 > （`legacy-task-definitions.ts`）与 transitional 机制（`defineTransitionalTask`），
 > 由 `scripts/audit-architecture-ownership.ts` 守住。
 > 实现附录见 `docs/superpowers/plans/2026-08-08-practice-failure-learning-implementation.md`。
@@ -125,17 +126,18 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 
 ### 5.1 Task 注册
 
-> **Canonical source**: `src/ai/task-catalog.ts` 的 `taskCatalog`。六个 capability owner maps
-> 保存 staged semantic ownership：51 个完整 owned TaskSpec（19 Practice + 3 Notes + 8 Ingestion + 3 Knowledge
-> + 13 Agency + 5 Copilot）与 0 个 identity-backed transitional entry（YUK-870 后中央 semantic
-> quarry 为空）；composer 把每个 entry 的精确 `definition` 投影为冻结的
-> runtime map。`src/ai/registry.ts` 仅是带 Copilot dispatch overlay 的 compatibility projection。
-> 当前恰有 **51 个 registered/runnable kinds、50 个静态 production invocation kinds、1 个显式
-> compatibility kind**：`AttributionTask` 为持久历史/registry 兼容而保留，现行 Failure Learning
-> 在 deterministic retrieval 后调用 `AttributionRerankTask`，不伪造 `AttributionTask` caller。
-> `pnpm audit:task-census` 同时验证 capability manifest/job 与 legacy handler 注册可达性，以及
-> `ai_task_runs.task_kind` → catalog guard → typed lifecycle → start writer 的 run-log contract。
-> 本节为同步快照（2026-08-14）。**这是主要 task 的人读概览，不是完整清单**——精确数量、
+
+> **Canonical source**: `src/capabilities/task-catalog.ts` 的 `taskCatalog`。六个 capability owner maps
+> 经各自 `task-public.ts` 静态贡献完整 owned TaskSpec；`public.ts` 同时公开相同 map。
+> 共享 `src/ai/task-catalog.ts` 保留 composer 与类型，接收 owner maps 后将精确 `definition`
+> 投影为冻结 runtime map。`src/ai/registry.ts` 接收 catalog，`src/capabilities/task-registry.ts`
+> 提供同一 map 的 compatibility projection 及绑定的预算/prompt reader；没有 Copilot overlay、
+> 可变全局注册或动态发现。TaskKind 从组合结果推导，共享 ai/ 不反向依赖能力实现。
+> 当前为 **53 个 registered kinds、51 个静态 production invocation kinds、2 个显式分类**：
+> `AttributionTask` 保留历史兼容，`JevScoringDecisionTask` 经 typed runner 动态调用。
+> `pnpm audit:task-census` 验证 manifest/job 注册可达性及 run-log contract。
+> 具体 TaskSpec 仍含 Node helper；无 DB 初始化并不等于完整目录可直接在浏览器运行。
+> 本节为同步快照（2026-10-04）。**这是主要 task 的人读概览，不是完整清单**——精确数量、
 > ownership 与字段以 owner maps / `taskCatalog` 为准。
 
 **当前 registry**（runner + registry 都通；实际触发看 route / pg-boss handler）：
@@ -181,10 +183,7 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 | `ProfileCriticTask` | mimo-v2.5-pro | compile CLI `--critic` (YUK-203 U7) | 否 | — | draft SubjectProfile 评审 + patch 建议（proposal-only）|
 | `DreamingTask` | mimo-v2.5-pro | pg-boss nightly (Foundation D) | 是 | — | 夜间学习信号 → inbox proposals（DomainTools）|
 | `CoachTask` | mimo-v2.5-pro | pg-boss `coach_daily` / `coach_weekly` (T-D6) | 是 | — | TodayPlan JSON（propose_* 写 inbox）|
-| `CopilotDispatchTask` | mimo-v2.5 | `/api/chat` free-form pre-response dispatch（YUK-757） | 否 | — | 无工具、单轮、严格结构化地把明确的多阶段研究/多产物/大批量请求送入既有 durable `copilot_run`；澄清、owner 决策与有界回答保持 inline；失败时保守 inline，不输出 rationale/confidence |
-| `CopilotEvidenceReviewTask` | mimo-v2.5-pro | Copilot free-form turn 使用 DomainTool read 后、回复持久化/可见前（YUK-832） | 否 | — | FULL validator 的盲证据腿：不看 candidate，把 server 切好的 request units 绑定到精确 typed tool call + RFC6901 pointer，密封 facts/gaps，并产一份仍需完整认证的唯一 fallback |
-| `CopilotEvidenceVerificationTask` | mimo-v2.5-pro | 盲 evidence ledger 建成后、任何 persistence / public delta 前（YUK-832） | 否 | — | 密封 comparator：逐 reply/request unit 输出 indexed observations，不提供权威 verdict 或第三版；服务端校验 dense indices/pointers/coverage 并派生 pass，pass 必须由两次 valid comparison 确认 |
-| `CopilotTask` | mimo-v2.5-pro | `/api/chat` inline + pg-boss `copilot_run`（AF S4 / YUK-203 / YUK-757） | 是 | — | 唯一面向用户的对话式学习助手；默认可在后台派只读 `copilot-researcher`（共享 depth=1/report-only contract，显式 kill switch），只把结构化进度卡与最终结论带回同一 Copilot 声音，不暴露子任务 transcript / reasoning |
+| `CopilotTask` | mimo-v2.5-pro | `/api/chat` inline + pg-boss `copilot_run`（AF S4 / YUK-203 / YUK-757 / YUK-939） | 是 | — | 唯一面向用户的对话式学习助手；terminal Markdown 由服务端绑定精确回复字节、实际 root 工具轨迹、更正、proposal 披露与学习内容质量门；普通 chat 前台执行，显式 `durable:true` 走 `copilot_run` |
 | `QuestionAuthorTask` | mimo-v2.5-pro | `author_question` DomainTool knowledge\|material seed（ADR-0031 / YUK-304） | 否 | — | 单道原创 draft 题（StructuredQuestion 树）+ `question_draft` proposal（单次 structured output，无工具循环；取代 YUK-275 的 `QuizIntentParseTask` C 形态解析器）|
 | `ItemPriorTask` | mimo-v2.5-pro | pg-boss `item_prior_backfill`（B1-W1 / ADR-0035 慢热阶段①） | 否 | — | 给新题估冷启先验难度 b（logit 尺度，抽教学特征路线）+ confidence → `item_calibration`（source=`llm_prior`）|
 | `SelectionOrchestratorTask` | mimo-v2.5 | `composeSoftmaxStream` 选题编排（YUK-361 Phase 3 / ADR-0042 编排档2） | 否 | — | 档2 L2 选题主脑：对每个非到期候选出 weight/role/arrangement/reason（单次 structured output）→ 薄 tempered-softmax sampler 抽样落题 + 记 π_i；不碰到期项/recall 项 |
@@ -202,8 +201,9 @@ FailureAttempt 读模型已迁入 `src/capabilities/knowledge/server/`，中央
 
 需要"边看数据边决策"的 Task 走 multi-turn tool call；输入已固定的 Task 走单轮 structured output。
 
-> **2026-08-08 alignment**: 现行 runner 在 `src/server/ai/runner.ts`，Agent SDK task 走
-> `@anthropic-ai/claude-agent-sdk`。Tool transport 使用 SDK 的 `mcpServers + allowedTools + maxTurns`。
+> **2026-08-08 alignment / YUK-1025 P4 更新**: 现行 runner 在 `src/server/ai/runner.ts`，唯一
+> 执行引擎是 pi（`@earendil-works/pi-agent-core` in-process agentLoop，`pi-agent-adapter.ts`）。
+> Tool transport 使用 `piToolMounts + allowedTools + maxTurns`（wire name `mcp__<server>__<tool>`）。
 > DomainTool registry、capability manifest inventory 与 in-process MCP bridge 已运行；具体产品工具
 > 逐步迁回 owner capability，中央层只负责组合、预算与 transport。
 
@@ -228,33 +228,42 @@ interface DomainTool<Input, Output> {
   effect: ToolEffect;
   inputSchema: z.ZodType<Input>;
   outputSchema: z.ZodType<Output>;
+  safeHandoff?: { transport: 'remote'; idempotent: true };
   execute(ctx: ToolContext, input: Input): Promise<Output>;
   summarize(input: Input, output: Output): string;
   mirrorEvent: 'never' | 'when_user_visible' | 'when_causal' | 'always';
 }
 ```
 
-`src/server/ai/tools/registry.ts` 静态装配 capability manifests；MCP bridge 把选中的 DomainTool
-包成 in-process server。独立远程 MCP server 仍推后，不作为当前产品内 tool 架构核心。
+`src/server/ai/tools/registry.ts` 接收 capability manifests 在启动期注册的 DomainTools；
+pi mount 将选中的工具编译为 `AgentTool`，执行委托共享 `executeDomainToolCall` 管线。
+远程 MCP 是现役工具来源之一，不等同于向外发布产品级 MCP server。
+
+当前工具阻塞到结果或取消/期限终态，不向模型返回旧 45 秒 yield 句柄。
+Copilot 由服务端持久受理和顺序执行，浏览器只订阅；没有独立 Mission 会话入口
+（ADR-0062）。只读 depth-one pi child 在原父执行内返回结果，不生成自动付费根续接。
+旧 mailbox researcher/continuation 执行路径已退役；`subagent_run` 保留原生子任务投影，
+ToolOperations 仍拥有真实远程工具执行、租约、取消和终态审计，不能笼统视为 drain-only
+历史代码。安装排空与保留名称的边界见 ADR-0063，pi 机制见 ADR-0065。
 
 **循环控制现状**：
 
-`TaskBudget.maxIterations` 映射到 Claude Agent SDK `maxTurns`，`timeout` 由 runner 的 `AbortController` 执行（cooperative abort）。`TaskBudget.maxCost` 仅在 Anthropic direct 这条会回报 USD 的 pay-as-you-go lane 映射到 SDK `maxBudgetUsd`；mimo（不回 SDK cost）与 subscription OAuth（flat quota）明确不挂伪美元闸。`TaskBudget.transientRetries` 控制 runner 对**同一已解析目标**的进程内瞬时重试（仅两个 vision judge opt-in，六道门控：ctx opt-in / 无 override 钉死 / 无全局 env 钉死 / 白名单瞬时分类 / 次数封顶 / elapsed 墙钟门）。durable job 的 transient 层是 pg-boss 队列显式重投（`queue-config.ts` retryLimit=2 + 30s 退避），二者互斥不叠加。YUK-590 另把 Claude Code 内部 API retry 默认从 10 收窄到 2（运维可用 `CLAUDE_CODE_MAX_RETRIES` 覆盖），让 5xx 终态在任务预算内回到 loom 分类层。YUK-842 在 resolved provider 后，用 Postgres 短事务为完整 Agent SDK session 做跨 app/worker 的 active session-family/parallel-branch 与 start-reservation admission：本地 prompt/options 先物化，随后在 admission slot 内以 45s initial lease 调用 `startup()` 完成不发送 prompt 的 CLI initialize；startup 成功后先以 claim-token CAS 显式切换到 15s steady lease，才创建 `ai_task_runs`、启动剩余 model timeout 并调用一次 `WarmQuery.query()`。lease protocol v2 进入 policy fingerprint；只有 steady heartbeat 以 15s horizon 单调续租、不缩短已确认 expiry。排队和 CLI startup 不计 model timeout，也不制造未调用模型的 unknown-cost attempt；`hard_reclaim_at` 显式包含 startup budget + model timeout + abort grace。Hono 组合根为每个已鉴权 `/api/*` 请求创建同一个 90s absolute provider-session deadline，request 内所有 central runner 的串行、并行与嵌套调用都自动取该 deadline 与显式 caller deadline 的较早者；SDK initialize 与 model timer 只能消费剩余预算，SDK 返回后还会重新栅栏 lease、abort 与 absolute deadline，不能把迟到 success 记成成功。Copilot 另用同一个 kernel 常量生成显式 fallback deadline 并传给 classifier、teaching/free-form 主调用与 nested central task，以覆盖直接 handler 测试及可能脱离 handler 的工作；生产 runner 仍以更早的 request scope 为准。durable worker 没有 HTTP request scope，保留 task 的完整执行预算。同 lane tool 内嵌 task 的一条 descendant chain 借父 family 槽以避免自锁，parallel sibling 必须排队或占另一 root 槽，且每个 child 仍独立记录 start reservation；父先结束时仍运行的 child 接管该 family 槽。短 lease 丢失会 abort，外部 provider 无真实 fencing，故 active family 在 `hard_reclaim_at` 前继续隔离。
+`TaskBudget.maxIterations` 映射到 runner `maxTurns`（pi 1.0 adapter 的 `finishTurn` 计数，超限出 `error_max_turns` 终态），`timeout` 由 runner 的 `AbortController` 执行（cooperative abort）。`TaskBudget.maxCost` 当前不落任何 per-run 美元闸——pi catalog 成本是估算值，从不作 contractual USD 使用；mimo（不回 cost）与 subscription OAuth（flat quota）同样不挂伪美元闸。`TaskBudget.transientRetries` 控制 runner 对**同一已解析目标**的进程内瞬时重试（仅两个 vision judge opt-in，六道门控：ctx opt-in / 无 override 钉死 / 无全局 env 钉死 / 白名单瞬时分类 / 次数封顶 / elapsed 墙钟门）。durable job 的 transient 层是 pg-boss 队列显式重投（`queue-config.ts` retryLimit=2 + 30s 退避），二者互斥不叠加。YUK-590 另把 provider API retry 默认收窄到 2（运维可用 `CLAUDE_CODE_MAX_RETRIES` 覆盖，pi adapter 进程内 `maxRetries`），让 5xx 终态在任务预算内回到 loom 分类层。YUK-842 在 resolved provider 后，用 Postgres 短事务为完整 pi session 做跨 app/worker 的 active session-family/parallel-branch 与 start-reservation admission：本地 prompt/options 先物化，随后在 admission slot 内以 45s initial lease 调用 adapter `startup()`（不发送 prompt 的 model/auth 预检）；startup 成功后先以 claim-token CAS 显式切换到 15s steady lease，才创建 `ai_task_runs`、启动剩余 model timeout 并调用一次 `query()`。lease protocol v2 进入 policy fingerprint；只有 steady heartbeat 以 15s horizon 单调续租、不缩短已确认 expiry。排队和 startup 不计 model timeout，也不制造未调用模型的 unknown-cost attempt；`hard_reclaim_at` 显式包含 startup budget + model timeout + abort grace。Hono 组合根为每个已鉴权 `/api/*` 请求创建同一个 90s absolute provider-session deadline，request 内所有 central runner 的串行、并行与嵌套调用都自动取该 deadline 与显式 caller deadline 的较早者；adapter startup 与 model timer 只能消费剩余预算，adapter 返回后还会重新栅栏 lease、abort 与 absolute deadline，不能把迟到 success 记成成功。Copilot 另用同一个 kernel 常量生成显式 fallback deadline 并传给 teaching/free-form 主调用与 nested central task，以覆盖直接 handler 测试及可能脱离 handler 的工作；生产 runner 仍以更早的 request scope 为准。durable worker 没有 HTTP request scope，保留 task 的完整执行预算。同 lane tool 内嵌 task 的一条 descendant chain 借父 family 槽以避免自锁，parallel sibling 必须排队或占另一 root 槽，且每个 child 仍独立记录 start reservation；父先结束时仍运行的 child 接管该 family 槽。短 lease 丢失会 abort，外部 provider 无真实 fencing，故 active family 在 `hard_reclaim_at` 前继续隔离。
 
 ### 5.3 成本控制
 
 - 同步任务（用户操作时跑）：归因、学习意图、review intent、teaching turn 等。
 - 异步任务（pg-boss）：OCR、session summary、knowledge proposal、knowledge edge proposal、note generation、variant generation、review-session pruning。
-- 模型分级：registry 用 `defaultProvider/defaultModel` 指定当前模型，Provider Manager 解析到 Claude Agent SDK 所需 env/baseUrl/model。
+- 模型分级：registry 用 `defaultProvider/defaultModel` 指定当前模型，Provider Manager 解析到 `ResolvedProvider`（credential/baseUrl/model），pi adapter 解析原生 `builtinModels()` provider/model 条目（`pi-models.ts`），包括协议、compat 与原生认证/请求头规则。
 - 每次调用写 `ai_task_runs` / `ai_cost_ledger`；tool 调用写 `ai_tool_calls`。
-- **尚未实现**：mimo / flat OAuth 的 per-run 美元硬预算（两者无可用 SDK cost 信号）、跨 provider fallback（owner 决策项，落点是 VISION_JUDGE_* 式 env 杆而非 registry 字段）、结果缓存、prompt caching 策略，以及 YUK-845 所列 non-runner DashScope/Mem0/GLM/OCR/Tencent 出站 admission。已实现：Anthropic direct 的 `maxBudgetUsd`、同目标瞬时重试（vision judges）、队列显式 retryLimit、stuck-run reconcile sweeper、central Agent SDK query-session admission（默认 off，`off → observe → enforce` 运维见 `docs/runbooks/provider-session-admission.md`），以及 Hono request-scope 的 90s central-session wall-clock fence。后者是 deadline，不是逐 HTTP wire request 的 RPM/并发限流。
+- **尚未实现**：per-run 美元硬预算（pi catalog 成本为估算值，无 contractual USD 信号可闸）、跨 provider fallback（owner 决策项，落点是 VISION_JUDGE_* 式 env 杆而非 registry 字段）、结果缓存、prompt caching 策略，以及 YUK-845 所列 non-runner DashScope/Mem0/GLM/OCR/Tencent 出站 admission。已实现：同目标瞬时重试（vision judges）、队列显式 retryLimit、stuck-run reconcile sweeper、central pi query-session admission（默认 off，`off → observe → enforce` 运维见 `docs/runbooks/provider-session-admission.md`），以及 Hono request-scope 的 90s central-session wall-clock fence。后者是 deadline，不是逐 HTTP wire request 的 RPM/并发限流。
 
 ### 5.4 Skill / MCP Server / Plugin
 
 这些概念保留，但不要和产品内 runtime tool 混在一起：
 
 - **Skill**（提示词包，markdown + frontmatter）：Phase 2 在 prompt 重复多了之后再抽
-- **in-process MCP bridge**（当前可用）：领域 route 可手动创建 Claude Agent SDK `mcpServers`，不对外暴露
+- **in-process tool bridge**（当前可用）：领域 route 可注入 `piToolMounts`（pi `AgentTool`，wire name `mcp__<server>__<tool>`），不对外暴露
 - **Standalone MCP Server**（对外暴露 resources + tools）：等核心闭环稳了、且确实需要外部客户端时再 expose；未来复用 DomainTool registry，不重写工具定义
 - **Plugin**（学科 bundle）：Phase 3 真有第二学科再做；Phase 1 划好 `core/` vs `subjects/yuwen/` 的目录边界
 - **外部 MCP 消费**（Calendar / Search / FS）：Phase 2 按需接
@@ -272,7 +281,7 @@ interface DomainTool<Input, Output> {
   - ~~VisionExtract* manual-rescue task → 400 `requires_domain_route`~~ 走 ingestion rescue route
   - ~~`needsToolCall: true` 的 task → 400 `tool_task_requires_domain_route`~~ 走领域 route
 - 领域 route（例如 `/api/knowledge/review`）调用 `streamTask()` / `runAgentTask()`，并注入 MCP server + allowlist。
-- Claude Agent SDK 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`
+- pi in-process `agentLoop` 负责 multi-turn tool loop；`maxTurns` 来自 `TaskBudget.maxIterations`
 - assistant tool-use blocks 写 `tool_call_log`
 - 总 finish 写 `cost_ledger`（按 task / provider / model 聚合）
 - 浏览器侧不再有 `src/ai/client.ts` 通用 helper；UI 调用具体领域 route，避免绕开 profile / tool / ingestion context。
@@ -318,6 +327,20 @@ Dreaming 和 Maintenance lane 当前跑在 self-hosted Node worker + pg-boss 上
 
 ---
 
+### 5.7 Persistent Copilot and native research
+
+Copilot durably accepts every message into one persistent conversation; transport disconnect only
+detaches observation, while explicit Stop cancels execution. Bounded read-only research uses a depth-one
+nested pi loop and returns to the same parent. The process-owned `pi:` cursor occupies the retained
+`agent_sdk_session_id` column; resume seeds bounded durable turns into pi context. Cold execution folds
+history into its prompt once. There are no SDK session files, and retaining a cursor does not prove
+cross-process storage or authorize replay of paid work. The drained legacy mailbox researcher and
+automatic continuation are removed. Historical rows, native child projections, live remote ToolOperations
+and parent-owned recovery remain; no separate Mission conversation is created.
+See [ADR-0062](adr/0062-unified-copilot-conversation-lifecycle.md),
+[ADR-0063](adr/0063-retire-copilot-mailbox-execution.md) and
+[ADR-0065](adr/0065-pi-execution-and-conversation-replay.md).
+
 ## 六、技术栈
 
 | 层 | 选型 | 理由 |
@@ -327,8 +350,8 @@ Dreaming 和 Maintenance lane 当前跑在 self-hosted Node worker + pg-boss 上
 | Blob 存储 | R2 / S3-compatible via `@aws-sdk/client-s3` | 图片 / 来源资产 |
 | 部署 | Docker compose on NAS：`app`（`node dist/server.cjs` :8787）+ `worker`（`node dist/worker.cjs`）+ `migrate` + `postgres` + `cloudflared` | 自托管单用户，Cloudflare Tunnel 只做 ingress |
 | 后台任务 | pg-boss + `scripts/worker.ts`（独立进程，prod `dist/worker.cjs`） | schedules、queues、OCR、proposal、note generation |
-| AI 调用 | Claude Agent SDK runner + AI SDK v6 package + provider packages | 见上节任务层 |
-| Tool calling 循环 | Claude Agent SDK query loop + in-process MCP bridge | 当前由领域 route 手动注入 MCP，未来再抽 DomainTool registry |
+| AI 调用 | pi agent runtime（`@earendil-works/pi-agent-core` + `pi-ai`，in-process） | 见上节任务层 |
+| Tool calling 循环 | pi `agentLoop` + `piToolMounts`（DomainTool registry 编译为 `AgentTool`） | 领域 route / capability manifest 注入 mount 与 allowlist |
 | Note 编辑器 | TipTap / Milkdown / Lexical（基于 ProseMirror） | 详见 [`modules/notes.md`](modules/notes.md) |
 | Note 渲染 | react-markdown / markdown-it | |
 | 数学公式 | KaTeX | |
@@ -827,8 +850,8 @@ started → completed | abandoned
 
 Direct and opaque provider calls use `provider_attempt` as their durable lifecycle and cost truth.
 The closed lane set and `off -> observe -> enforce` resolver are documented in
-`docs/runbooks/provider-attempt-admission.md`. This gate is separate from the Claude Agent SDK
-session gate (`provider_session_admission`). Admission `off` bypasses limiting while provider calls
+`docs/runbooks/provider-attempt-admission.md`. This gate is separate from the pi query-session
+gate (`provider_session_admission`). Admission `off` bypasses limiting while provider calls
 remain durably traced on a best-effort basis; a persistence outage may leave an off-mode call
 untracked. When persistence is available, the admission row retains exact `mode = off` with an
 `acquired` lifecycle lease for fencing and settlement; it never emits `would_deny` and is excluded

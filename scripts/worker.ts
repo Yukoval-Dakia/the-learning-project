@@ -12,12 +12,12 @@
 //
 // M1-T5 (YUK-314)：启动配方（XIAOMI warn + YUK-259 两段 23505 防护 +
 // registerHandlers）抽到 src/server/boss/start-worker.ts，与新栈
-// server/index.ts 的 RW_WORKER=1 进程内 worker 共用。本文件只剩独立进程
-// 专属纪律：process-level last-resort handlers + shutdown 安装。
+// server/index.ts 的 RW_WORKER=1 进程内 worker 共用。YUK-980 又把启动
+// 生命周期（shutdown 安装 + 装配顺序 + 尾段协调）抽到
+// src/server/boss/worker-boot.ts 的 bootWorker()，本文件只剩独立进程专属
+// 纪律：loadEnv / process-level last-resort handlers / 顶层 catch。
 
-import { capabilities } from '@/capabilities';
-import { assertAgentSdkRuntimeUser } from '@/server/ai/runtime-preflight';
-import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
+import { bootWorker } from '@/server/boss/worker-boot';
 import { warnFlipOrder } from '@/server/projections/sot-flag';
 import { loadEnv } from '../server/env';
 
@@ -31,7 +31,6 @@ import { loadEnv } from '../server/env';
 // environment / docker-compose-injected values always win (prod container env is
 // unaffected). Dynamic-import the db client + boss modules below so this runs first.
 loadEnv();
-assertAgentSdkRuntimeUser();
 // YUK-548: boot-time SoT-flip flag vector + flip-order WARN (never throws — the worker reads the
 // SAME flag env as the API; stop-the-world flipping keeps the two vectors consistent).
 warnFlipOrder();
@@ -57,23 +56,7 @@ process.on('uncaughtException', (err) => {
 });
 
 async function main() {
-  // YUK-328：独立 worker 不经过 server/index.ts，必须在注册 handlers 前自行装配
-  // 完整 DomainTool inventory；任何 manifest/load 错误让进程 fail-fast，避免任务在
-  // 消费后才因缺工具失败并进入重投。
-  await registerCapabilityTools(capabilities);
-  console.log('[worker] capability tools registered');
-
-  // Dynamic import AFTER loadEnv(): @/db/client reads DATABASE_URL at module top
-  // (throws if unset), and start-worker pulls the client in transitively. Mirrors
-  // server/index.ts's RW_WORKER=1 branch, which dynamic-imports for the same reason.
-  const [{ db }, { startBossWorker }, { installShutdownHandler }] = await Promise.all([
-    import('@/db/client'),
-    import('@/server/boss/start-worker'),
-    import('@/server/boss/shutdown'),
-  ]);
-  const boss = await startBossWorker(db);
-  installShutdownHandler(boss);
-  console.log('[worker] running, handlers registered');
+  await bootWorker();
 }
 
 main().catch((err) => {

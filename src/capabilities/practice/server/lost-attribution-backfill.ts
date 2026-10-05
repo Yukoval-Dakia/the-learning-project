@@ -29,6 +29,7 @@ import { and, asc, eq, lt, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
+import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
 
 export interface LostAttributionCensus {
   /** attempt event ids lacking a real (non-pending) chained judge, capped at `limit`. */
@@ -86,7 +87,22 @@ export async function censusLostAttributions(
     )
     .orderBy(asc(event.created_at), asc(event.id))
     .limit(opts.limit);
-  return { attemptIds: rows.map((r) => r.id) };
+
+  // YUK-1054 (§9 paid fanout 抑制）— 已被改判（effective 判不再是 failure）的
+  // attempt 不该再补归因：原答错已被推翻，付费归因是浪费且会把「correct」当
+  // 失败学。SQL 只按 outcome='failure' 筛 attempt（immutable 执行事实），改判
+  // 后的 effective 判在此二次复核——这是一个 no-LLM 的纯读校验，过度过滤也
+  // 只是少补一条本不该要的归因（job 本身仍有自己的 skip 逻辑）。
+  const ids = rows.map((r) => r.id);
+  if (ids.length === 0) return { attemptIds: [] };
+  const verdicts = await resolveVerdictsForAttempts(db, ids);
+  const kept = ids.filter((id) => {
+    const outcome = verdicts.get(id)?.effective?.verdict.coarse_outcome ?? null;
+    // 保留：无 effective 判（尚未判过）或非 correct 的（incorrect/partial/
+    // unsupported 仍是失败侧，值得归因）；剔除 effective 判已翻转为 correct 的。
+    return outcome !== 'correct';
+  });
+  return { attemptIds: kept };
 }
 
 export type EnqueueAttributionFollowupFn = (attemptEventId: string) => Promise<void>;

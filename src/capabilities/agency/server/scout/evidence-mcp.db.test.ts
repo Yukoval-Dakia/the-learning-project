@@ -1,48 +1,21 @@
 // YUK-572 PR-1 — evidence MCP db test. Real Postgres (testcontainer); the SDK is
-// mocked so the tool() factory captures each handler and we invoke it directly against
-// seeded rows (no `claude` subprocess). Asserts: correct tool registration, per-tool
+// the builder returns pi `AgentTool`s which we invoke directly against seeded rows.
+// Asserts: correct tool registration, per-tool
 // query shape + ROW/CHAR bounds, <untrusted_learner_text> delimiting, get_agent_notes
 // self-source exclusion, toolTrace capture order, report_findings capture, and
 // persistToolTrace → tool_call_log (effect 'read', cost 0).
 
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { artifact, event, kc_typed_state, question, tool_call_log } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { writeAgentNote } from '../notes';
 
-// Capture the registered tool handlers + names via a mocked SDK.
-const mockSdk = vi.hoisted(() => ({
-  descriptions: new Map<string, string>(),
-  handlers: new Map<
-    string,
-    (args: unknown) => Promise<{ content: { type: string; text: string }[] }>
-  >(),
-  registeredNames: [] as string[],
-  serverName: undefined as string | undefined,
-}));
-
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  createSdkMcpServer: vi.fn((opts: { name: string; tools: unknown[] }) => {
-    mockSdk.serverName = opts.name;
-    return { type: 'sdk', name: opts.name, instance: {} };
-  }),
-  tool: vi.fn(
-    (
-      name: string,
-      desc: string,
-      _schema: unknown,
-      handler: (args: unknown) => Promise<{ content: { type: string; text: string }[] }>,
-    ) => {
-      mockSdk.handlers.set(name, handler);
-      mockSdk.descriptions.set(name, desc);
-      mockSdk.registeredNames.push(name);
-      return { name };
-    },
-  ),
-}));
+// Post-P4 the evidence server is a `custom` PiToolMount: `tools` are pi
+// AgentTools (`name` = wire name `mcp__research_evidence__*`, `label` = bare
+// tool name) invoked via `execute` directly.
 
 import type { EvidenceServer } from './evidence-mcp';
 import { EVIDENCE_LIMITS, buildEvidenceServer, persistToolTrace } from './evidence-mcp';
@@ -57,9 +30,11 @@ let capture: FindingsCapture;
 let evidence: EvidenceServer;
 
 async function callTool(name: string, args: unknown): Promise<Record<string, unknown>> {
-  const handler = mockSdk.handlers.get(name);
-  if (!handler) throw new Error(`no registered handler for ${name}`);
-  const res = await handler(args);
+  const tool = evidence.tools.find((t) => t.label === name);
+  if (!tool) throw new Error(`no registered tool for ${name}`);
+  const res = (await tool.execute(`call_${name}`, args)) as {
+    content: { type: string; text: string }[];
+  };
   return JSON.parse(res.content[0].text) as Record<string, unknown>;
 }
 
@@ -94,10 +69,6 @@ async function seedFailureAttempt(opts: {
 
 beforeEach(async () => {
   await resetDb();
-  mockSdk.handlers.clear();
-  mockSdk.descriptions.clear();
-  mockSdk.registeredNames = [];
-  mockSdk.serverName = undefined;
   capture = createFindingsCapture();
   evidence = buildEvidenceServer({
     db: testDb(),
@@ -109,20 +80,22 @@ beforeEach(async () => {
 
 describe('buildEvidenceServer — registration', () => {
   it('registers under research_evidence with 6 read + get_traces + report_findings', () => {
-    expect(mockSdk.serverName).toBe('research_evidence');
-    expect(mockSdk.registeredNames).toEqual([
+    expect(evidence.tools.map((t) => t.label)).toEqual([
       ...EVIDENCE_READ_TOOL_LOCAL_NAMES,
       'get_traces',
       'report_findings',
     ]);
+    expect(evidence.tools.every((t) => t.name.startsWith('mcp__research_evidence__'))).toBe(true);
   });
 
   it('advertises review ids on the actual detail-reader tool', () => {
-    expect(mockSdk.descriptions.get('get_attempt_details')).toContain('attempt / review event id');
+    expect(evidence.tools.find((t) => t.label === 'get_attempt_details')?.description).toContain(
+      'attempt / review event id',
+    );
   });
 
   it('advertises review events as valid report_findings evidence', () => {
-    expect(mockSdk.descriptions.get('report_findings')).toContain(
+    expect(evidence.tools.find((t) => t.label === 'report_findings')?.description).toContain(
       'attempt / review / probe / prediction_score',
     );
   });

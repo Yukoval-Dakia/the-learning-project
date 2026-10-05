@@ -25,12 +25,11 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, inArray, isNull } from 'drizzle-orm';
 import type { z } from 'zod';
 import type { QuestionAuthorIntentSchema } from '@/ai/task-intents';
+import { LEGACY_DRAFT_STATUS } from '@/core/schema/assessment/lifecycle';
 import {
-  QuestionAuthorDraft,
   type QuestionAuthorDraftT,
   normalizeAuthorStructured,
 } from '@/core/schema/question_author';
-
 import {
   type QuestionAnswerAnchorT,
   validateSourceLocatorBytes,
@@ -50,6 +49,8 @@ import {
 } from '@/server/questions/question-generation-grounding';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { normalizeToCanonicalKind } from '@/subjects/question-kind';
+import { parseQuestionAuthorOutput } from '../../tasks/question-author';
+import { assertGeneratedQuestionHasJudgeContract } from '../judge/question-contract';
 
 const PROMPT_PREVIEW_CHARS = 120;
 
@@ -127,14 +128,18 @@ async function buildQuestionAuthorPreparation(db: Db, seed: QuestionAuthorSeed) 
   } catch {
     effectiveDomain = null;
   }
-  // ONE canonical effective kind, computed at plan-creation time and threaded to
+  // ONE effective kind label, computed at plan-creation time and threaded to
   // BOTH the generation prompt and (on the material path) the persisted plan, so
-  // the verifier compares like-for-like (Finding 1). The material path persists
-  // a plan whose requested_kind is veto-compared, so an omitted/unrecognized kind
-  // defaults to a canonical value AND constrains the prompt to it. Knowledge
-  // seeds persist no plan, so an omitted kind stays an open prompt hint.
-  const normalizedRequestedKind = seed.requested_kind
-    ? normalizeToCanonicalKind(seed.requested_kind)
+  // the verifier compares like-for-like (Finding 1). YUK-386: kind is a
+  // free-form display label — a KNOWN/profile-vocab value folds to canonical;
+  // any other non-empty label passes through verbatim (it is the caller's
+  // declared face; the verifier compares answer classes, not label identity).
+  // The material path persists a plan whose requested_kind is veto-compared, so
+  // an omitted kind still defaults to the canonical material default.
+  // Knowledge seeds persist no plan, so an omitted kind stays an open prompt hint.
+  const requestedLabel = seed.requested_kind?.trim() ?? '';
+  const normalizedRequestedKind = requestedLabel
+    ? (normalizeToCanonicalKind(requestedLabel) ?? requestedLabel)
     : null;
   const effectiveKind =
     seed.seed_mode === 'material'
@@ -164,36 +169,12 @@ async function buildQuestionAuthorPreparation(db: Db, seed: QuestionAuthorSeed) 
 }
 
 export async function prepareQuestionAuthorTask(
-  ctx: ToolContext,
+  ctx: Pick<ToolContext, 'db'>,
   seed: z.infer<typeof QuestionAuthorIntentSchema>,
 ) {
   const prepared = await buildQuestionAuthorPreparation(ctx.db, seed);
   if (!prepared) throw new Error('QuestionAuthorTask knowledge not found');
   return { input: prepared.input, ctx: prepared.ctx };
-}
-
-// brace-slice + Zod parse for the raw text output (照 quiz_gen parseOutput).
-// Throws on no-JSON / JSON.parse failure / schema mismatch — the tool wrapper
-// (authorQuestionExecute) converts the throw to status:'failed'.
-export function parseQuestionAuthorOutput(text: string): QuestionAuthorDraftT {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start === -1 || end === -1 || end < start) {
-    throw new Error('parseQuestionAuthorOutput: no JSON object found in text');
-  }
-  let json: unknown;
-  try {
-    json = JSON.parse(text.slice(start, end + 1));
-  } catch (e) {
-    throw new Error(`parseQuestionAuthorOutput: JSON.parse failed: ${(e as Error).message}`);
-  }
-  const parsed = QuestionAuthorDraft.safeParse(json);
-  if (!parsed.success) {
-    throw new Error(
-      `parseQuestionAuthorOutput: schema invalid: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
-    );
-  }
-  return parsed.data;
 }
 
 /**
@@ -241,8 +222,9 @@ export async function runQuestionAuthor(
       anchorProvenance: { kind: 'human_curated', task_run_id: deps.taskRunId },
       demand: { kind: 'knowledge', ref_id: validIds[0] },
       knowledgeIds: validIds,
-      // Same canonical kind used for the prompt (Finding 1): the verifier
-      // compares the generated kind against this persisted value.
+      // Same kind label used for the prompt (Finding 1): the verifier compares
+      // the generated label's implied answer class against this persisted value
+      // (YUK-386 — label identity is no longer vetoed).
       requestedKind: effectiveKind ?? DEFAULT_MATERIAL_QUESTION_KIND,
       requestedAnswerClass: 'exact',
       constraints: { seed_mode: 'material' },
@@ -271,6 +253,25 @@ export async function runQuestionAuthor(
     // derive (and require non-empty) prompt_md / reference_md.
     const normalized = normalizeAuthorStructured(draft.structured);
 
+    // YUK-308 — judge-executability contract, the SAME gate quiz_gen has run
+    // since §2/§5 (shared helper in judge/question-contract.ts): shape-valid
+    // is not enough — a draft routing to keyword without keywords, semantic
+    // without required_points, or an LLM-graded kind pinned to 'exact' is
+    // ungradeable and must be rejected BEFORE the row + proposal persist.
+    // Runs after normalizeAuthorStructured so the error label carries the
+    // derived prompt_md, and inside the try so a contract failure triggers
+    // the same plan-failed cleanup as any other persist error.
+    // YUK-996 — pass runCtx.subjectProfile so the contract resolves the route
+    // the runtime invoker will dispatch for THIS subject (the row persists
+    // judge_kind_override = draft.judge_kind_override ?? null, so a null
+    // override goes through the profile-aware preferredRoutes ladder at judge
+    // time — the gate must resolve the same way).
+    assertGeneratedQuestionHasJudgeContract(
+      { ...draft, prompt_md: normalized.prompt_md },
+      'question_author',
+      runCtx.subjectProfile,
+    );
+
     const now = new Date();
     const questionId = createId();
     const promptPreview =
@@ -297,7 +298,7 @@ export async function runQuestionAuthor(
           source_ref: null,
           // Option-B gate (quiz_gen precedent): invisible to pool / review / FSRS
           // until the question_draft proposal is accepted.
-          draft_status: 'draft',
+          draft_status: LEGACY_DRAFT_STATUS.DRAFT,
           created_by: aiAgentRef('QuestionAuthorTask', result),
           metadata: {
             author_question: {

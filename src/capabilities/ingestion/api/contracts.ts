@@ -97,6 +97,7 @@ export const MistakeListQuerySchema = z.object({
       message: 'since must be an ISO-8601 timestamp',
     }),
   question_id: z.string().min(1).optional(),
+  subject: z.string().trim().min(1).optional(),
   cursor: z.string().min(1).optional(),
 });
 
@@ -135,7 +136,13 @@ export const MistakeProjectionSchema = z.object({
     .object({
       source: z.enum(['agent', 'user']),
       primary_category: CauseCategory,
+      // YUK-1018 — misc_ id 的显示回填（active misconception title）；非 misc /
+      // unresolvable → null，渲染层回退 primary_category 裸 id。
+      primary_label: z.string().nullable(),
       secondary_categories: z.array(CauseCategory),
+      // YUK-1020 — secondary_categories 里 misc_ id 的显示回填（id → active
+      // misconception title Record map）；vocab / unresolvable 缺席 → 渲染裸 id。
+      secondary_labels: z.record(z.string(), z.string()),
       user_notes: z.string().nullable(),
       confidence: z.number().min(0).max(1).nullable(),
     })

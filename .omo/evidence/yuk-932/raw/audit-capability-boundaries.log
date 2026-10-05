@@ -1,0 +1,4 @@
+Capability boundary audit failed with 3 violation(s):
+- scripts/capability-boundary-baseline.json: copilot -> ai — capability -> server architecture regression: 29 > baseline 25
+- scripts/capability-boundary-baseline.json: copilot -> boss — capability -> server architecture regression: 9 > baseline 6
+- scripts/capability-boundary-baseline.json: capability -> server — total is 473, baseline is 466

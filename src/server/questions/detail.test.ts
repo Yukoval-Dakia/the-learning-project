@@ -5,7 +5,14 @@
 
 import { beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@/core/ids';
-import { artifact, event, knowledge, material_fsrs_state, question } from '@/db/schema';
+import {
+  artifact,
+  event,
+  knowledge,
+  material_fsrs_state,
+  misconception,
+  question,
+} from '@/db/schema';
 import { upsertMasteryState } from '@/server/mastery/state';
 import { loadQuestionDetail } from '@/server/questions/detail';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -216,6 +223,30 @@ describe('loadQuestionDetail', () => {
     const self = res?.family.members.find((m) => m.is_self);
     expect(self?.id).toBe(v1);
     expect(new Set(res?.family.members.map((m) => m.id))).toEqual(new Set([root, v1, v2]));
+    // YUK-1035 — members carry the part-ness FK so the UI never string-matches
+    // kind; plain variant members are not parts (null).
+    expect(res?.family.members.map((m) => m.parent_question_id)).toEqual([null, null, null]);
+  });
+
+  it('projects parent_question_id on a family member that is itself a part', async () => {
+    const root = await seedQuestion({ variant_depth: 0, root_question_id: null });
+    const composite = await seedQuestion({ knowledge_ids: [] });
+    // A variant member that is also a composite part (root_question_id puts it
+    // in the family; parent_question_id makes it a part — the FK is the
+    // authority even when the stamped kind label is not 'question_part').
+    const partVariant = await seedQuestion({
+      variant_depth: 1,
+      root_question_id: root,
+      parent_question_id: composite,
+      part_index: 0,
+      kind: 'short',
+    });
+
+    const res = await loadQuestionDetail(testDb(), root);
+    const member = res?.family.members.find((m) => m.id === partVariant);
+    expect(member?.parent_question_id).toBe(composite);
+    expect(member?.is_self).toBe(false);
+    expect(member?.kind).toBe('short');
   });
 
   it('aggregates per-knowledge scheduling + worst-of decay bucket', async () => {
@@ -312,6 +343,227 @@ describe('loadQuestionDetail', () => {
     expect(Number.isInteger(attempt?.created_at_sec)).toBe(true);
   });
 
+  // YUK-1018 — misc_ primary id 的显示回填：timeline cause.primary_label 带出
+  // active misconception title；unresolvable → null；原始 id 保留在 primary。
+  it('timeline cause carries primary_label for misc_ ids, raw id preserved', async () => {
+    const k1 = newId();
+    await seedKnowledge(k1);
+    const qid = await seedQuestion({ knowledge_ids: [k1] });
+    const attemptId = await seedAttempt({
+      question_id: qid,
+      knowledge_id: k1,
+      outcome: 'failure',
+    });
+    const now = new Date();
+    await testDb()
+      .insert(misconception)
+      .values({
+        id: 'misc_timeline_01',
+        title: '把「之」当普通助词',
+        reasoning: null,
+        weight: 1,
+        status: 'active',
+        source: 'soft',
+        seen: 2,
+        evidence: [],
+        created_by: { by: 'system' },
+        proposed_by_ai: true,
+        created_at: now,
+        updated_at: now,
+        archived_at: null,
+      });
+    await testDb()
+      .insert(event)
+      .values({
+        id: newId(),
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'system',
+        action: 'judge',
+        subject_kind: 'event',
+        subject_id: attemptId,
+        outcome: null,
+        payload: {
+          cause: {
+            primary_category: 'misc_timeline_01',
+            secondary_categories: [],
+            confidence: 0.8,
+            analysis_md: 'misc 命中',
+          },
+        },
+        caused_by_event_id: attemptId,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date(NOW.getTime() + 1000),
+      });
+
+    const res = await loadQuestionDetail(testDb(), qid);
+    const attempt = res?.timeline.find((t) => t.kind === 'attempt');
+    expect(attempt?.cause?.primary).toBe('misc_timeline_01');
+    expect(attempt?.cause?.primary_label).toBe('把「之」当普通助词');
+  });
+
+  it('timeline cause primary_label is null for vocab ids and unresolvable misc ids', async () => {
+    const k1 = newId();
+    await seedKnowledge(k1);
+    const qid = await seedQuestion({ knowledge_ids: [k1] });
+    const attemptA = await seedAttempt({
+      question_id: qid,
+      knowledge_id: k1,
+      outcome: 'failure',
+      created_at: NOW,
+    });
+    const attemptB = await seedAttempt({
+      question_id: qid,
+      knowledge_id: k1,
+      outcome: 'failure',
+      created_at: new Date(NOW.getTime() + 2000),
+    });
+    const judgeBase = {
+      session_id: null,
+      actor_kind: 'agent' as const,
+      actor_ref: 'system',
+      action: 'judge' as const,
+      outcome: null,
+      task_run_id: null,
+      cost_micro_usd: null,
+    };
+    await testDb()
+      .insert(event)
+      .values([
+        {
+          ...judgeBase,
+          id: newId(),
+          subject_kind: 'event',
+          subject_id: attemptA,
+          payload: {
+            cause: {
+              primary_category: 'concept',
+              secondary_categories: [],
+              confidence: 0.9,
+              analysis_md: 'vocab cause',
+            },
+          },
+          caused_by_event_id: attemptA,
+          created_at: new Date(NOW.getTime() + 3000),
+        },
+        {
+          ...judgeBase,
+          id: newId(),
+          subject_kind: 'event',
+          subject_id: attemptB,
+          payload: {
+            cause: {
+              primary_category: 'misc_gone_01',
+              secondary_categories: [],
+              confidence: 0.7,
+              analysis_md: 'misc id with no live node',
+            },
+          },
+          caused_by_event_id: attemptB,
+          created_at: new Date(NOW.getTime() + 4000),
+        },
+      ]);
+
+    const res = await loadQuestionDetail(testDb(), qid);
+    const byEvent = new Map(res?.timeline.map((t) => [t.event_id, t]));
+    // vocab id → label null（profile 词表 label 不走 misc 回填）。
+    expect(byEvent.get(attemptA)?.cause?.primary).toBe('concept');
+    expect(byEvent.get(attemptA)?.cause?.primary_label).toBeNull();
+    // unresolvable misc → label null, id preserved。
+    expect(byEvent.get(attemptB)?.cause?.primary).toBe('misc_gone_01');
+    expect(byEvent.get(attemptB)?.cause?.primary_label).toBeNull();
+  });
+
+  // YUK-1020 — secondary_categories 里 misc_ id 的显示回填：与 primary 同一批
+  // 查询；secondary 保留裸 id，secondary_labels 只含可解析的 misc id。
+  it('timeline cause carries secondary + secondary_labels for misc_ ids', async () => {
+    const k1 = newId();
+    await seedKnowledge(k1);
+    const qid = await seedQuestion({ knowledge_ids: [k1] });
+    const attemptId = await seedAttempt({
+      question_id: qid,
+      knowledge_id: k1,
+      outcome: 'failure',
+    });
+    const now = new Date();
+    const misconceptionRow = {
+      reasoning: null,
+      weight: 1,
+      source: 'soft',
+      seen: 2,
+      evidence: [],
+      created_by: { by: 'system' as const },
+      proposed_by_ai: true,
+      created_at: now,
+      updated_at: now,
+    };
+    await testDb()
+      .insert(misconception)
+      .values([
+        {
+          ...misconceptionRow,
+          id: 'misc_sec_pri',
+          title: '主因误读',
+          status: 'active',
+          archived_at: null,
+        },
+        {
+          ...misconceptionRow,
+          id: 'misc_sec_live',
+          title: '虚词误判',
+          status: 'active',
+          archived_at: null,
+        },
+        {
+          ...misconceptionRow,
+          id: 'misc_sec_arch',
+          title: '已归档误区',
+          status: 'active',
+          archived_at: now,
+        },
+      ]);
+    await testDb()
+      .insert(event)
+      .values({
+        id: newId(),
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'system',
+        action: 'judge',
+        subject_kind: 'event',
+        subject_id: attemptId,
+        outcome: null,
+        payload: {
+          cause: {
+            primary_category: 'misc_sec_pri',
+            secondary_categories: ['misc_sec_live', 'grammar', 'misc_sec_arch', 'misc_sec_gone'],
+            confidence: 0.8,
+            analysis_md: 'primary + secondary misc 命中',
+          },
+        },
+        caused_by_event_id: attemptId,
+        task_run_id: null,
+        cost_micro_usd: null,
+        created_at: new Date(NOW.getTime() + 1000),
+      });
+
+    const res = await loadQuestionDetail(testDb(), qid);
+    const attempt = res?.timeline.find((t) => t.kind === 'attempt');
+    // primary 同批解析（YUK-1018 语义保持）。
+    expect(attempt?.cause?.primary).toBe('misc_sec_pri');
+    expect(attempt?.cause?.primary_label).toBe('主因误读');
+    // secondary 裸 id 是语义身份，顺序保留。
+    expect(attempt?.cause?.secondary).toEqual([
+      'misc_sec_live',
+      'grammar',
+      'misc_sec_arch',
+      'misc_sec_gone',
+    ]);
+    // 只有 active misc 进入 label map；vocab / archived / unknown 缺席。
+    expect(attempt?.cause?.secondary_labels).toEqual({ misc_sec_live: '虚词误判' });
+  });
+
   it('shows a draft question (detail does not exclude drafts)', async () => {
     const qid = await seedQuestion({ knowledge_ids: [], draft_status: 'draft' });
     const res = await loadQuestionDetail(testDb(), qid);
@@ -340,6 +592,9 @@ describe('loadQuestionDetail', () => {
     expect(res?.parts.map((p) => p.part_index)).toEqual([0, 1]);
     expect(res?.parts.map((p) => p.prompt_md)).toEqual(['part one', 'part two']);
     expect(res?.parts[0].kind).toBe('mcq');
+    // YUK-1035 — parts carry the part-ness FK (=== the parent id) so the UI
+    // never string-matches the display-only kind label.
+    expect(res?.parts.map((p) => p.parent_question_id)).toEqual([parent, parent]);
     // drafts are NOT excluded from the parts list (detail shows drafts).
     expect(res?.parts[1].draft_status).toBe('draft');
     // the parent itself is top-level (no parent linkage).

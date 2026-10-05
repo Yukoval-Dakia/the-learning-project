@@ -5,6 +5,9 @@ export {
   ColdStartBridgeError,
   runColdStartBridge,
 } from './server/cold-start-bridge';
+// YUK-1007 — ingestion 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
+// 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
+export { ingestionConfigEffectiveFacts } from './server/config-effective-facts';
 export type {
   ImageCandidateAcceptDeps,
   ImageCandidateAcceptResult,
@@ -31,3 +34,6 @@ export {
   AUTO_ENROLL_SINGLETON_SECONDS,
   autoEnrollJobEnabled,
 } from './server/workflow-judge-config';
+
+// YUK-1062 — task composition uses the narrow task-public entry directly.
+export { ingestionTaskSpecs } from './task-public';

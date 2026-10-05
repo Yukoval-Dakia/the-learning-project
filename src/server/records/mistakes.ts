@@ -1,16 +1,19 @@
-import { inArray } from 'drizzle-orm';
+import { inArray, or, sql } from 'drizzle-orm';
 
 import { getFailureAttempts } from '@/capabilities/knowledge/public';
 import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
+import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
+import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { listLearningRecords } from '@/kernel/records/queries';
 
 export interface ListMistakeProjectionFilter {
   limit: number;
   since?: Date;
   questionIds?: string[];
+  subjectKnowledgeIds?: string[];
   cursor?: string;
 }
 
@@ -76,17 +79,36 @@ async function projectMistakeRecords(
       : [];
   const questionById = new Map(questions.map((row) => [row.id, row]));
 
+  // YUK-1018/1020 — misc_ primary + secondary id 的 title 回填（同一批查询，
+  // 批量一次，不进循环）。id 保留在 primary_category / secondary_categories，
+  // 展示层用 primary_label ?? primary_category、secondary_labels[id] ?? id。
+  // effectiveCause 在此一并预算，emit 循环不再重复调用。
+  const causeByAttempt = new Map(
+    [...failureByAttempt.entries()].map(([id, failure]) => [
+      id,
+      effectiveCauseForFailureAttempt(failure),
+    ]),
+  );
+  const miscLabels = await resolveMiscCauseLabels(
+    db,
+    [...causeByAttempt.values()].flatMap((cause) =>
+      cause ? [cause.primary_category, ...cause.secondary_categories] : [],
+    ),
+  );
+
   return records.flatMap((record) => {
     if (!record.attempt_event_id || !attemptIds.has(record.attempt_event_id)) return [];
     const failure = failureByAttempt.get(record.attempt_event_id);
     if (!failure) return [];
     const questionRow = questionById.get(failure.question_id);
-    const effectiveCause = effectiveCauseForFailureAttempt(failure);
+    const effectiveCause = causeByAttempt.get(record.attempt_event_id);
     const cause = effectiveCause
       ? {
           source: effectiveCause.source,
           primary_category: effectiveCause.primary_category,
+          primary_label: miscLabels.get(effectiveCause.primary_category) ?? null,
           secondary_categories: effectiveCause.secondary_categories,
+          secondary_labels: miscCauseLabelMap(miscLabels, effectiveCause.secondary_categories),
           user_notes: effectiveCause.user_notes,
           confidence: effectiveCause.confidence,
         }
@@ -99,7 +121,7 @@ async function projectMistakeRecords(
         prompt_md: (questionRow?.prompt_md ?? '').slice(0, 200),
         reference_md: questionRow?.reference_md?.slice(0, 200) ?? null,
         wrong_answer_md: (failure.answer_md ?? '').slice(0, 200),
-        knowledge_ids: failure.referenced_knowledge_ids,
+        knowledge_ids: learnerVisibleKnowledgeIds(failure.referenced_knowledge_ids),
         cause,
         correction_state: failure.correction_state,
         created_at: Math.floor(failure.created_at.getTime() / 1000),
@@ -110,9 +132,31 @@ async function projectMistakeRecords(
 
 export async function listMistakeProjectionPage(db: Db, filter: ListMistakeProjectionFilter) {
   const cursor = filter.cursor ? decodeMistakeCursor(filter.cursor) : null;
+  const subjectQuestionIds =
+    filter.subjectKnowledgeIds === undefined
+      ? undefined
+      : filter.subjectKnowledgeIds.length === 0
+        ? []
+        : (
+            await db
+              .select({ id: question.id })
+              .from(question)
+              .where(
+                or(
+                  ...filter.subjectKnowledgeIds.map(
+                    (id) => sql`${question.knowledge_ids} @> ${JSON.stringify([id])}::jsonb`,
+                  ),
+                ),
+              )
+          ).map((row) => row.id);
+  const questionIds =
+    filter.questionIds === undefined || subjectQuestionIds === undefined
+      ? (filter.questionIds ?? subjectQuestionIds)
+      : filter.questionIds.filter((id) => subjectQuestionIds.includes(id));
   const fetchedRecords = await listLearningRecords(db, {
     kind: ['mistake'],
-    question_id: filter.questionIds?.[0],
+    question_id: questionIds?.length === 1 ? questionIds[0] : undefined,
+    question_ids: questionIds?.length !== 1 ? questionIds : undefined,
     since: filter.since,
     before_created_at: cursor?.createdAt,
     before_id: cursor?.id,

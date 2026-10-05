@@ -3,7 +3,15 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cost_ledger, event, knowledge, mistake_variant, question } from '@/db/schema';
+import {
+  cost_ledger,
+  event,
+  knowledge,
+  misconception,
+  misconception_edge,
+  mistake_variant,
+  question,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -804,5 +812,108 @@ describe('runVariantGen', () => {
       task_run_id: 'tr_variant_perm',
       pgboss_job_id: failureLearningJobId(VARIANT_GEN_QUEUE, attemptId),
     });
+  });
+});
+
+// ── YUK-1015 (454-A): `misc_` primary causes in variant-gen ──────────────────
+// A rerank may land a promoted misconception id as primary_category. The node
+// is targetable BY DEFINITION (promotion = a recurring, nameable cause), so
+// variant-gen must NOT skip it as cause_not_targetable — it resolves the node
+// and hands the TITLE (not the opaque hash) to the variant prompt. A retracted
+// (draft/archived) or nonexistent node still skips.
+
+async function seedMisc(opts: { id: string; title: string; archived?: boolean }) {
+  const db = testDb();
+  const now = new Date();
+  await db.insert(misconception).values({
+    id: opts.id,
+    title: opts.title,
+    reasoning: 'misc reasoning',
+    weight: 1,
+    status: 'active',
+    source: 'soft',
+    seen: 3,
+    evidence: [],
+    created_by: { by: 'system' },
+    proposed_by_ai: true,
+    created_at: now,
+    updated_at: now,
+    archived_at: opts.archived ? now : null,
+  });
+  await db.insert(misconception_edge).values({
+    id: createId(),
+    from_kind: 'misconception',
+    from_id: opts.id,
+    to_kind: 'knowledge',
+    to_id: 'k_xuci',
+    relation_type: 'caused_by',
+    weight: 1,
+    created_by: { by: 'system' },
+    proposed_by_ai: true,
+    created_at: now,
+    updated_at: now,
+    archived_at: null,
+  });
+}
+
+describe('runVariantGen — misc_ primary causes (YUK-1015)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('misc_ primary on a resolvable node → variant proposed, TITLE reaches the prompt', async () => {
+    const db = testDb();
+    await seedKnowledge();
+    await seedQuestion({ id: 'q1' });
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+    // Raw judge write — a stored misc_ cause as the attribution layer produced it.
+    await seedRawJudgeForAttempt(attemptId, 'misc_xuci_variant');
+    await seedMisc({ id: 'misc_xuci_variant', title: '「之」作助词的整体性误判' });
+
+    const runTaskFn = vi.fn(async (_k: string, _i: unknown, _c: unknown) => ({
+      text: VALID_VARIANT_OUTPUT,
+    }));
+    const result = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
+    expect(result.status).toBe('proposed');
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    const [, input] = runTaskFn.mock.calls[0];
+    const typed = input as { cause: { primary_category: string } };
+    // The prompt's strategy selector carries the human-meaningful misc title,
+    // not the opaque hash.
+    expect(typed.cause.primary_category).toBe('「之」作助词的整体性误判');
+    // …while the stored ledger field keeps the real misc id.
+    const variants = await db.select().from(mistake_variant);
+    expect(variants).toHaveLength(1);
+    expect(variants[0].cause_category).toBe('misc_xuci_variant');
+  });
+
+  it('misc_ primary on an ARCHIVED (retracted) node → skipped:cause_not_targetable', async () => {
+    const db = testDb();
+    await seedKnowledge();
+    await seedQuestion({ id: 'q1' });
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+    await seedRawJudgeForAttempt(attemptId, 'misc_retracted');
+    await seedMisc({ id: 'misc_retracted', title: '已否决误区', archived: true });
+
+    const runTaskFn = vi.fn();
+    const result = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
+    expect(result.status).toBe('skipped:cause_not_targetable');
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  it('misc_ primary whose node does not exist → skipped:cause_not_targetable', async () => {
+    const db = testDb();
+    await seedKnowledge();
+    await seedQuestion({ id: 'q1' });
+    const attemptId = createId();
+    await seedFailureAttempt(attemptId, 'q1');
+    await seedRawJudgeForAttempt(attemptId, 'misc_ghost');
+
+    const runTaskFn = vi.fn();
+    const result = await runVariantGen({ db, attemptEventId: attemptId, runTaskFn });
+    expect(result.status).toBe('skipped:cause_not_targetable');
+    expect(runTaskFn).not.toHaveBeenCalled();
   });
 });

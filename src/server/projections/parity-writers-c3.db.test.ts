@@ -1,25 +1,8 @@
-// YUK-471 W3-C3 — DB tests: fold==row parity through the REAL artifact + question_block writers
-// (testcontainer), with the per-entity SoT-flip flag both OFF (the imperative write stays the SoT +
-// the in-tx parity assert verifies fold==row) and ON (projectXGuarded becomes the row writer).
-//
-// The wired seams:
-//   - artifact:        editArtifactBodyBlocks (body-blocks-edit.ts) — the highest-traffic mutation.
-//   - question_block:  updatePrompt → persistStructured (block-structured-edit.ts) — the single-block
-//                      structured edit funnel (covers update_prompt / add_option / set_question_type /
-//                      split_stem).
-//
-// TEETH:
-//   - OFF + clean → no throw (the assert passed) and fold==row.
-//   - OFF + a tampered fold-truth column the edit does NOT touch → the in-tx assert THROWS (drift
-//     caught during the double-write phase — the W3-C3 "real teeth").
-//   - ON  + the same tamper → projectXGuarded re-folds EVERY column and overwrites the tamper (proving
-//     the projection is the SOLE row writer at flip), no throw, fold==row.
-//
-// Hermetic: resetDb() in beforeEach; the per-entity env flags are restored in afterEach.
+// Canonical editor, lifecycle and concurrency contracts for Artifact/QuestionBlock.
+// Public writers must preserve event/live equality and reject unprepared legacy data.
 
-import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { runAutoEnrollForSession } from '@/capabilities/ingestion/server/auto-enroll';
 import {
@@ -140,17 +123,12 @@ describe('W3-C3 — artifact parity through editArtifactBodyBlocks (real writer)
   beforeEach(async () => {
     await resetDb();
   });
-  afterEach(() => {
-    process.env.PROJECTION_IS_WRITER_ARTIFACT = '0'; // restore OFF (projectionIsWriter checks === '1')
-  });
 
-  it('OFF (default): a clean edit asserts fold==row in-tx (no throw) and the body is updated', async () => {
+  it('canonical edit updates body/version and matches its fold', async () => {
     const db = testDb();
     await insertNoteArtifact('art_1', 'Original Title');
     await backfillArtifactGenesis(db, T0); // anchor → event-sourced → the assert runs
 
-    // editArtifactBodyBlocks runs the OFF-path imperative UPDATE + assertArtifactParity IN-TX. A
-    // fold!=row mismatch would THROW here; reaching the result means the assert passed.
     const res = await editArtifactBodyBlocks({
       db,
       artifactId: 'art_1',
@@ -170,12 +148,9 @@ describe('W3-C3 — artifact parity through editArtifactBodyBlocks (real writer)
     );
   });
 
-  it('OFF: a fold-truth column tampered out-of-band (title) makes the in-tx assert THROW (drift caught)', async () => {
+  it('rejects an unprepared legacy note without publishing an edit', async () => {
     const db = testDb();
     await insertNoteArtifact('art_2', 'Original Title');
-    await backfillArtifactGenesis(db, T0);
-    // Corrupt a column the edit does NOT touch — the fold (from genesis) still says 'Original Title'.
-    await db.update(artifact).set({ title: 'TAMPERED' }).where(eq(artifact.id, 'art_2'));
 
     await expect(
       editArtifactBodyBlocks({
@@ -184,7 +159,7 @@ describe('W3-C3 — artifact parity through editArtifactBodyBlocks (real writer)
         expectedArtifactVersion: 0,
         bodyBlocks: doc('edited'),
       }),
-    ).rejects.toThrow(/projection-parity/i);
+    ).rejects.toThrow(/requires complete history/i);
   });
 
   it('ON: projectArtifactGuarded becomes the row writer — re-folds EVERY column, overwriting the tamper', async () => {
@@ -193,7 +168,6 @@ describe('W3-C3 — artifact parity through editArtifactBodyBlocks (real writer)
     await backfillArtifactGenesis(db, T0);
     await db.update(artifact).set({ title: 'TAMPERED' }).where(eq(artifact.id, 'art_3'));
 
-    process.env.PROJECTION_IS_WRITER_ARTIFACT = '1';
     const res = await editArtifactBodyBlocks({
       db,
       artifactId: 'art_3',
@@ -218,11 +192,8 @@ describe('W3-C3 — question_block parity through updatePrompt (real writer)', (
   beforeEach(async () => {
     await resetDb();
   });
-  afterEach(() => {
-    process.env.PROJECTION_IS_WRITER_QUESTION_BLOCK = '0'; // restore OFF (projectionIsWriter checks === '1')
-  });
 
-  it('OFF (default): a clean structured edit asserts fold==row in-tx (no throw) and the prompt is updated', async () => {
+  it('canonical structured edit updates prompt/version and matches its fold', async () => {
     const db = testDb();
     await insertDraftBlock('qb_1');
     await backfillQuestionBlockGenesis(db, T0); // anchor → event-sourced → the assert runs
@@ -247,14 +218,9 @@ describe('W3-C3 — question_block parity through updatePrompt (real writer)', (
     );
   });
 
-  it('OFF: a fold-truth column tampered out-of-band (reference_md) makes the in-tx assert THROW (drift caught)', async () => {
+  it('rejects an unprepared legacy question block without publishing an edit', async () => {
     const db = testDb();
     await insertDraftBlock('qb_2');
-    await backfillQuestionBlockGenesis(db, T0);
-    await db
-      .update(question_block)
-      .set({ reference_md: 'TAMPERED' })
-      .where(eq(question_block.id, 'qb_2'));
 
     await expect(
       updatePrompt(db, {
@@ -263,7 +229,7 @@ describe('W3-C3 — question_block parity through updatePrompt (real writer)', (
         promptText: 'edited prompt',
         actorRef: 'tester',
       }),
-    ).rejects.toThrow(/projection-parity/i);
+    ).rejects.toThrow(/requires complete history/i);
   });
 
   it('ON: projectQuestionBlockGuarded becomes the row writer — re-folds EVERY column, overwriting the tamper', async () => {
@@ -275,7 +241,6 @@ describe('W3-C3 — question_block parity through updatePrompt (real writer)', (
       .set({ reference_md: 'TAMPERED' })
       .where(eq(question_block.id, 'qb_3'));
 
-    process.env.PROJECTION_IS_WRITER_QUESTION_BLOCK = '1';
     const res = await updatePrompt(db, {
       blockId: 'qb_3',
       nodeId: 'qb_3',
@@ -614,15 +579,11 @@ describe('W3-D — ON-path concurrency: artifact (FOR UPDATE + optimistic CAS)',
   beforeEach(async () => {
     await resetDb();
   });
-  afterEach(() => {
-    process.env.PROJECTION_IS_WRITER_ARTIFACT = '0';
-  });
 
   it('ON: two same-base concurrent edits → exactly one wins (loser 409s), version==1, winner body persisted, fold==row', async () => {
     const db = testDb();
     await insertNoteArtifact('art_cc', 'Original Title');
     await backfillArtifactGenesis(db, T0);
-    process.env.PROJECTION_IS_WRITER_ARTIFACT = '1';
 
     // Both edits race off the SAME base version (0). FOR UPDATE serializes them; the loser then reads the
     // winner's bumped version and trips the optimistic CAS (409) BEFORE emitting any event.
@@ -673,7 +634,6 @@ describe('W3-D — ON-path concurrency: artifact (FOR UPDATE + optimistic CAS)',
     const db = testDb();
     await insertNoteArtifact('art_seq', 'Original Title');
     await backfillArtifactGenesis(db, T0);
-    process.env.PROJECTION_IS_WRITER_ARTIFACT = '1';
 
     const first = await editArtifactBodyBlocks({
       db,
@@ -707,15 +667,11 @@ describe('W3-D — ON-path concurrency: question_block (FOR UPDATE serialize, no
   beforeEach(async () => {
     await resetDb();
   });
-  afterEach(() => {
-    process.env.PROJECTION_IS_WRITER_QUESTION_BLOCK = '0';
-  });
 
   it('ON: two concurrent structured edits serialize on the row lock → both commit with distinct versions {1,2}, fold==row', async () => {
     const db = testDb();
     await insertDraftBlock('qb_cc');
     await backfillQuestionBlockGenesis(db, T0);
-    process.env.PROJECTION_IS_WRITER_QUESTION_BLOCK = '1';
 
     // updatePrompt has NO optimistic CAS: SELECT … FOR UPDATE serializes the two tx, the 2nd reads the
     // 1st's COMMITTED version and bumps again. Both commit (status stays 'draft' across both —

@@ -1,0 +1,1 @@
+No stdout or stderr; ./node_modules/.bin/tsc --noEmit exited 0.

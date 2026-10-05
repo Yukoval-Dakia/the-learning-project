@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { resolveCorrectionReply, resolveImplicitCorrectionContract } from './correction-contract';
+import {
+  resolveCorrectionReply,
+  resolveDeterministicCorrectionContract,
+} from './correction-contract';
 
 const correctionContract = {
   available_prior_turn_ids: ['copilot_reply_water_tank_d02', 'copilot_reply_battery_d04'],
@@ -55,10 +58,10 @@ describe('resolveCorrectionReply', () => {
   });
 
   it('binds an unambiguous implicit correction to its sole prior-turn candidate', () => {
-    const result = resolveImplicitCorrectionContract(correctionContract, {
-      intent: 'correction',
-      candidate_prior_turn_ids: ['copilot_reply_battery_d04'],
-    });
+    const result = resolveDeterministicCorrectionContract(
+      '上一轮请按额定容量改一下',
+      correctionContract,
+    );
 
     expect(result).toEqual({
       kind: 'bound',
@@ -70,10 +73,7 @@ describe('resolveCorrectionReply', () => {
   });
 
   it('clarifies an implicit correction with multiple prior-turn candidates', () => {
-    const result = resolveImplicitCorrectionContract(correctionContract, {
-      intent: 'correction',
-      candidate_prior_turn_ids: ['copilot_reply_water_tank_d02', 'copilot_reply_battery_d04'],
-    });
+    const result = resolveDeterministicCorrectionContract('把之前的回答改一下', correctionContract);
 
     expect(result.kind).toBe('clarify');
     if (result.kind !== 'clarify') throw new Error('expected an ambiguous correction to clarify');
@@ -81,57 +81,68 @@ describe('resolveCorrectionReply', () => {
     expect(result.reply).toContain('上上轮是「水箱 D02：h*=4/9，使用同一个 k。」');
   });
 
-  it('lists only the classifier candidates when they are a subset of history', () => {
-    const result = resolveImplicitCorrectionContract(
-      {
-        available_prior_turn_ids: [
-          'copilot_reply_water_tank_d02',
-          'copilot_reply_battery_d04',
-          'copilot_reply_circuit_d05',
-          'copilot_reply_optics_d06',
-          'copilot_reply_kinematics_d07',
-        ],
-        prior_turn_summaries: {
-          copilot_reply_water_tank_d02: '水箱 D02：h*=4/9，使用同一个 k。',
-          copilot_reply_battery_d04: '电池 D04：先按当前电量估算。',
-          copilot_reply_circuit_d05: '电路 D05：串联等效电阻。',
-          copilot_reply_optics_d06: '光学 D06：折射率计算。',
-          copilot_reply_kinematics_d07: '运动学 D07：匀加速位移。',
-        },
-        required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
+  it('binds an exact prior_turn_id without semantic classification', () => {
+    const result = resolveDeterministicCorrectionContract('请更正 copilot_reply_battery_d04', {
+      available_prior_turn_ids: [
+        'copilot_reply_water_tank_d02',
+        'copilot_reply_battery_d04',
+        'copilot_reply_circuit_d05',
+        'copilot_reply_optics_d06',
+        'copilot_reply_kinematics_d07',
+      ],
+      prior_turn_summaries: {
+        copilot_reply_water_tank_d02: '水箱 D02：h*=4/9，使用同一个 k。',
+        copilot_reply_battery_d04: '电池 D04：先按当前电量估算。',
+        copilot_reply_circuit_d05: '电路 D05：串联等效电阻。',
+        copilot_reply_optics_d06: '光学 D06：折射率计算。',
+        copilot_reply_kinematics_d07: '运动学 D07：匀加速位移。',
       },
-      {
-        intent: 'correction',
-        candidate_prior_turn_ids: ['copilot_reply_water_tank_d02', 'copilot_reply_battery_d04'],
-      },
-    );
+      required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
+    });
 
-    expect(result.kind).toBe('clarify');
-    if (result.kind !== 'clarify') throw new Error('expected an ambiguous correction to clarify');
-    expect(result.reply).toContain('往前第 4 轮是「电池 D04：先按当前电量估算。」');
-    expect(result.reply).toContain('往前第 5 轮是「水箱 D02：h*=4/9，使用同一个 k。」');
-    expect(result.reply).not.toContain('电路 D05');
-    expect(result.reply).not.toContain('光学 D06');
-    expect(result.reply).not.toContain('运动学 D07');
+    expect(result.kind).toBe('bound');
+    if (result.kind !== 'bound') throw new Error('expected exact id binding');
+    expect(result.contract.target_prior_turn_id).toBe('copilot_reply_battery_d04');
   });
 
-  it('gives deterministic copy when no classifier candidate is available', () => {
-    const result = resolveImplicitCorrectionContract(correctionContract, {
-      intent: 'correction',
-      candidate_prior_turn_ids: ['copilot_reply_optics_d06'],
-    });
+  it('clarifies when an explicit relative target is outside projected history', () => {
+    const result = resolveDeterministicCorrectionContract('往前第 9 轮请修正', correctionContract);
 
     expect(result.kind).toBe('clarify');
     if (result.kind !== 'clarify') throw new Error('expected a clarify resolution');
-    expect(result.reply).not.toContain('copilot_reply_optics_d06');
-    expect(result.reply).not.toContain('可选历史回复');
+    expect(result.reply).toContain('可选历史回复');
   });
 
   it('leaves an ordinary follow-up outside the correction contract', () => {
-    const result = resolveImplicitCorrectionContract(correctionContract, {
-      intent: 'not_correction',
-    });
+    const result = resolveDeterministicCorrectionContract(
+      '这两种方法有什么差别？',
+      correctionContract,
+    );
 
+    expect(result).toEqual({ kind: 'normal', contract: correctionContract });
+  });
+
+  it('does not mistake a generic plan edit for correction of a prior reply', () => {
+    const result = resolveDeterministicCorrectionContract(
+      '把明天的学习计划改一下',
+      correctionContract,
+    );
+    expect(result).toEqual({ kind: 'normal', contract: correctionContract });
+  });
+
+  it('does not bind a question cue without an explicit UI correction target', () => {
+    const result = resolveDeterministicCorrectionContract(
+      '把上一题改一下，难一点',
+      correctionContract,
+    );
+    expect(result).toEqual({ kind: 'normal', contract: correctionContract });
+  });
+
+  it('does not mistake changing a knowledge node for correction of a prior reply', () => {
+    const result = resolveDeterministicCorrectionContract(
+      '把函数节点改成两个子节点',
+      correctionContract,
+    );
     expect(result).toEqual({ kind: 'normal', contract: correctionContract });
   });
 });

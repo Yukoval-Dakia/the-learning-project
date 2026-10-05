@@ -43,8 +43,32 @@ describe('registerHandlers + registerCapabilityJobs', () => {
     expect(boss.work).toHaveBeenCalledWith(
       'quiz_gen',
       { pollingIntervalSeconds: 2, batchSize: 1, includeMetadata: true },
-      worker,
+      expect.any(Function), // YUK-1055: fenceAwareJobHandler wrapper, not raw worker
     );
+  });
+
+  it('registers the four quiz workers through manifests with exact legacy intervals', async () => {
+    const boss = {
+      createQueue: vi.fn(async () => undefined),
+      updateQueue: vi.fn(async () => undefined),
+      work: vi.fn(async () => undefined),
+      schedule: vi.fn(async () => undefined),
+      send: vi.fn(async () => 'job-id'),
+    } as unknown as PgBoss;
+
+    await registerAll(boss);
+
+    for (const name of ['supply_execute', 'quiz_gen', 'quiz_verify', 'source_verify']) {
+      expect(boss.work).toHaveBeenCalledWith(
+        name,
+        {
+          pollingIntervalSeconds: 2,
+          batchSize: 1,
+          ...(name === 'quiz_gen' ? { includeMetadata: true } : {}),
+        },
+        expect.any(Function),
+      );
+    }
   });
 
   it('registers Notes handoff workers and the shared recovery floor exactly once', async () => {

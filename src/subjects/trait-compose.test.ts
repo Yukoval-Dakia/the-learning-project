@@ -13,7 +13,12 @@ import {
   composeJudgeTraitVersion,
   decomposeProfileToTraitPayloads,
 } from './trait-compose';
-import { CharterTraitSchema, SUBJECT_TRAIT_KINDS, TRAIT_PAYLOAD_SCHEMAS } from './trait-schemas';
+import {
+  CharterTraitSchema,
+  SUBJECT_TRAIT_KINDS,
+  TRAIT_PAYLOAD_SCHEMAS,
+  parseTraitPayloads,
+} from './trait-schemas';
 
 describe('decompose ⇄ assemble 互逆（v3 §8-13 零行为变化基线）', () => {
   it.each(BUILTIN_SUBJECT_IDS)('%s：assemble(decompose(p)) 逐字段 deep-equal', (subjectId) => {
@@ -24,7 +29,7 @@ describe('decompose ⇄ assemble 互逆（v3 §8-13 零行为变化基线）', (
       id: profile.id,
       displayName: profile.displayName,
       version: profile.version, // passthrough 证形状等价；jt: 串格式另测
-      payloads: decomposeProfileToTraitPayloads(profile),
+      payloads: parseTraitPayloads(decomposeProfileToTraitPayloads(profile)),
     });
     expect(reassembled).toEqual(profile);
   });
@@ -40,6 +45,34 @@ describe('decompose ⇄ assemble 互逆（v3 §8-13 零行为变化基线）', (
     expect(profile.noteTemplate.definition).not.toBe('MUTATED');
     expect(profile.questionKinds.at(-1)).not.toBe('single_choice');
     expect(profile.causeCategories[0]?.id).not.toBe('MUT');
+  });
+});
+
+describe('parseTraitPayloads persisted boundary', () => {
+  it.each(SUBJECT_TRAIT_KINDS)('reports missing or malformed %s without mutating input', (kind) => {
+    const profile = subjectProfiles.general;
+    if (!profile) throw new Error('general profile missing');
+    const raw = decomposeProfileToTraitPayloads(profile);
+    const malformed = { ...raw, [kind]: null };
+    expect(() => parseTraitPayloads(malformed)).toThrow(kind);
+    expect(malformed[kind]).toBeNull();
+    const missing: Partial<typeof raw> = { ...raw };
+    delete missing[kind];
+    expect(() => parseTraitPayloads(missing)).toThrow(kind);
+  });
+
+  it('uses the existing per-kind defaults for older legal payloads', () => {
+    const profile = subjectProfiles.general;
+    if (!profile) throw new Error('general profile missing');
+    const raw = decomposeProfileToTraitPayloads(profile);
+    const { methodology: _m, rubricGuidance: _r, ...charter } = raw.charter;
+    const { ratingPolicy: _p, ...judge_policy } = raw.judge_policy;
+    const parsed = parseTraitPayloads({ ...raw, charter, judge_policy });
+    expect(parsed.charter.methodology).toBe('');
+    expect(parsed.charter.rubricGuidance).toBe('');
+    expect(parsed.judge_policy.ratingPolicy).toEqual(raw.judge_policy.ratingPolicy);
+    expect(charter).not.toHaveProperty('methodology');
+    expect(judge_policy).not.toHaveProperty('ratingPolicy');
   });
 });
 

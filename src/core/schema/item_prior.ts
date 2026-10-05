@@ -16,3 +16,40 @@ export const ItemPriorDraft = z.object({
   reasoning: z.string().min(1), // 引用教学特征，非「我觉得难」
 });
 export type ItemPriorDraftT = z.infer<typeof ItemPriorDraft>;
+
+// ─── YUK-376 — LLaSA 学生模拟变体（opt-in，不动默认 feature→b 路径）────────
+//
+// LLaSA「LLMs are Students at Various Levels」（EMNLP 2024）：让 LLM 扮演不同
+// 能力档的学习者**实际作答**，从各档答对率反推题目难度 b——间接学生模拟，
+// 而非直接问难度（direct zero-shot 已被 spike 证伪，见 ADR-0043「b_anchor 来源」节
+// 与 docs/design/2026-06-15-b-anchor-feasibility-spike.md）。
+//
+// 形状 = 单次结构化输出：每档 θ 模拟若干名学生作答（学生看不到参考答案），
+// 对照 reference_md 判对错；确定性反推（src/core/item-prior-llasa.ts）把
+// 作答分布折回 ItemPriorDraftT（b_logit/confidence/reasoning），复用同一条
+// applyItemPrior 写路径，provenance 用 source='llm_prior_llasa' 区分。
+
+/** 模拟学生能力档（logit 尺度，与 θ̂ 同度量）：θ=0 是该科典型中等学习者。 */
+export const LLASA_ABILITY_TIERS = [-2, -1, 0, 1, 2] as const;
+/** 每档模拟学生数（同一调用内独立作答；2 名/档 → 每档 p̂ ∈ {0, 0.5, 1}）。 */
+export const LLASA_STUDENTS_PER_TIER = 2;
+
+export const ItemPriorLlasaResponse = z.object({
+  // 该模拟学生的能力档 θ（logit）。范围放宽到 [-3,3]：模型偶发插值档
+  // （如 1.5）仍是合法反推点，invert 侧按实际 θ 值聚合。
+  theta_level: z.number().min(-3).max(3),
+  // 该学生的作答全文（不允许空——空作答无法判定对错，宁可整条作废）。
+  student_answer_md: z.string().min(1),
+  // 对照 reference_md（缺失时按题面本身正确性）判定的对错。
+  correct: z.boolean(),
+  // 一句话说明该生对/错在哪（漏掉的知识点/掉进的坑），供 reasoning 与审计。
+  note: z.string().min(1),
+});
+export type ItemPriorLlasaResponseT = z.infer<typeof ItemPriorLlasaResponse>;
+
+export const ItemPriorLlasaDraft = z.object({
+  // 全部模拟作答。下限 = 档数（每档至少 1 条）；覆盖度不足由 invert 侧硬拒。
+  simulated_responses: z.array(ItemPriorLlasaResponse).min(LLASA_ABILITY_TIERS.length),
+  reasoning: z.string().min(1),
+});
+export type ItemPriorLlasaDraftT = z.infer<typeof ItemPriorLlasaDraft>;

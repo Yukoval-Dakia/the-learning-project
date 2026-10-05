@@ -34,10 +34,10 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import {
-  type JudgeQuestionRow,
-  judgeAnswer,
-} from '@/capabilities/practice/server/judge/question-contract';
+import type { JudgeQuestionRow } from '@/capabilities/practice/public';
+// YUK-1064 exception: this frozen replay must start without DATABASE_URL.
+// The application public barrel initializes the DB; the injected judge stays isolated.
+import { judgeAnswer } from '@/capabilities/practice/server/judge/question-contract';
 import type { Db } from '@/db/client';
 import { subjectProfiles } from '@/subjects/profile';
 

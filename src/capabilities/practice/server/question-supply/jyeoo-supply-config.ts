@@ -1,117 +1,91 @@
-// YUK-697 — jyeoo-rs deterministic supply config + gating predicates.
+// jyeoo-rs 供给常量与环境读取（YUK-986 / Supply-Agent/1 瘦身版）。
 //
-// docs/design/2026-07-18-jyeoo-supply-selection-matching-design.md §2/§3;
-// ~/jyeoo-rs/docs/DESIGN.md (producer contract).
-//
-// This module is the SINGLE source of truth for "which loom subjects have a jyeoo
-// producer, and how do we invoke it". The subject profile DECLARES support via the
-// optional `jyeooSupply` field (src/subjects/math/profile.ts); everything else here
-// (dg mapping, CLI args, kill switch) is deterministic config. Pure — no IO, no DB.
+// YUK-697 的旧机器面（JYEOO_FETCH_ENABLED kill switch、subject-profile jyeooSupply
+// 声明、--dg 难度 token、dispatcher 可派性闸）已随 queue 形态退役——producer 经济学
+// （grade 路线无 keyword/无 --dg，无法按 KC 定向；40 题/日/账号谨慎档）与逐目标
+// dispatcher 派发根本不兼容。供给改由 agent tool 链承载：
+//   server/tools/jyeoo-fetch-candidates.ts  → grade 路线抓自包含候选（budget 租约）
+//   server/tools/store-sourced-question.ts  → 统一 commit seam（dedup/verify 权威）
+// 本文件只剩 tool 链消费的常量与 producer binary/spawn 环境读取。
 
-import { parseFlag } from '@/core/env-flags';
-import { resolveSubjectProfile } from '@/subjects/profile';
-import type { SubjectProfile } from '@/subjects/profile-schema';
-import type { DifficultyBand } from './target-discovery';
-
-// The producer route stamped on every jyeoo-sourced draft (difficulty_evidence
-// source_route + canary events). Extracted so the literal is written once (a typo in
-// an inline string would silently produce a wrong route with no compile-time check).
-export const JYEOO_FETCH_ROUTE = 'jyeoo_fetch' as const;
-
-// The ONLY host jyeoo-rs sources from — every source_url is
-// `https://www.jyeoo.com/{subject}/ques/detail/{id}` (producer DESIGN §1.2). A row whose
-// host is anything else is a producer anomaly (parse bug / stray redirect); the handler
-// filters it BEFORE INSERT so a foreign URL can't ride the deterministic route into tier-2
-// (source_verify grounds against the persisted extract, never a refetch, so a non-jyeoo URL
-// would otherwise promote unchecked).
+// 来源路由常量（与 sourcing_web / quiz_gen 同族）——difficulty_evidence.source_route、
+// provenance 与 SupplyProducerRoute 词表沿用该字面量（retirement 后仍是合法值）。
+export const JYEOO_FETCH_ROUTE = 'jyeoo_fetch';
+// jyeoo 题面里的本地/远程图在入库前必须本地化到 loom 资产；URL 不允许引用外站图床。
 export const JYEOO_SOURCE_HOST = 'www.jyeoo.com';
 
-// Kill switch (P4). Dark-ship OPT-IN, default OFF — parsed through the shared repo-wide flag
-// grammar (YUK-586): 'true'/'1' enable, 'false'/'0' disable, case-insensitive and whitespace-
-// trimmed, anything else keeps the declared default. OFF ⇒ the dispatcher skips jyeoo_fetch and
-// falls back to sourcing_web (chooseAutoRoute), and the handler no-ops if a job still reaches it.
-export function jyeooFetchEnabled(): boolean {
-  return parseFlag(process.env.JYEOO_FETCH_ENABLED);
-}
+import { homedir } from 'node:os';
+import { getConfig, resolveConfigValue } from '@/core/config/store';
 
-// Path to the jyeoo-rs binary. Configurable so prod/NAS can pin an absolute path and
-// tests can point at a fake script. Defaults to `jyeoo-rs` on PATH.
+// Binary resolution: JYEOO_RS_BINARY wins; otherwise use the repo default
+// (~/yukoval-projects/jyeoo-rs/target/release/jyeoo-rs). 本地 smoke 与生产 worker
+// 同一路径约定。
 export function jyeooBinaryPath(): string {
-  const raw = process.env.JYEOO_RS_BINARY;
-  return raw && raw.trim().length > 0 ? raw.trim() : 'jyeoo-rs';
+  // YUK-1007：DB > env > code-default(仓库默认路径)。
+  const resolved = getConfig('JYEOO_RS_BINARY');
+  if (typeof resolved === 'string' && resolved.trim().length > 0) return resolved;
+  return `${homedir()}/yukoval-projects/jyeoo-rs/target/release/jyeoo-rs`;
 }
 
-// Bounded-subprocess guardrails (jyeoo-spawn). Deterministic caps so a runaway/wedged
-// producer can never exhaust the worker: wall-clock timeout kills the process; the byte
-// caps bound memory. Tunable via env for prod, with conservative defaults. Lazy readers
-// (not module-load consts) so they mirror jyeooFetchEnabled/jyeooBinaryPath — runtime-
-// flippable and test-overridable via process.env.
+// Spawn bounds (functions, not module-load consts, so tests can set env per-case).
+//
+// 超时按 caller 语义区分（YUK-998）：grade 路线内容拉取 ~45s+/题串行（YUK-989 复验
+// 实测 `pnpm jyeoo:backfill --max 4` 在 120s 默认下被 SIGKILL、丢 2 题已烧预算；
+// JYEOO_SPAWN_TIMEOUT_MS=900000 复验 4/4 inserted）。
+//   - in-band caller（jyeoo_fetch_candidates tool / supply_execute executor 路由）
+//     走 jyeooSpawnTimeoutMs —— JYEOO_SPAWN_TIMEOUT_MS 默认 120s 是反卡死上界：
+//     拉 N 题的会话须由 operator 把该 env 抬到 ≥ N×90s 档（见下方每题配额注释）。
+//   - 手动批量 backfill（pnpm jyeoo:backfill）走 jyeooBackfillSpawnTimeoutMs ——
+//     自带按批大小适配的默认，不再默默继承 120s 在内容拉取中途 SIGKILL 丢整批。
+//
+// 所有 JYEOO_SPAWN_* / JYEOO_BACKFILL_TIMEOUT_MS 均 Number.parseInt 直通：非数字
+// 垃圾值 → NaN、非正值 → spawnJyeooFetch 边界校验拒绝（fail-closed，记 'spawn'
+// failure）——该语义经 YUK-990 裁决接受，仅文档化，不做 env 侧纠偏。
 export function jyeooSpawnTimeoutMs(): number {
-  return readPositiveIntEnv('JYEOO_RS_TIMEOUT_MS', 120_000);
+  // YUK-1007：DB > env > code-default(120s)；NaN 直通保 YUK-990 fail-closed。
+  const v = getConfig('JYEOO_SPAWN_TIMEOUT_MS');
+  return typeof v === 'number' ? v : 120_000;
 }
+
+/**
+ * backfill 默认超时的每题配额：producer 题间节奏实测 ~45s/题（含 jitter），×2 覆盖
+ * 发现侧 pages/papers 遍历开销。默认 `--max 10` ⇒ 900s，即 YUK-989 复验实证可通过
+ * 的 900000ms 档。
+ */
+export const JYEOO_BACKFILL_PER_QUESTION_MS = 90_000;
+
+/**
+ * `pnpm jyeoo:backfill`（批量 caller）的 spawn 超时解析，优先级：
+ *   1. JYEOO_BACKFILL_TIMEOUT_MS —— backfill 专属显式覆盖（最高优先）；
+ *   2. JYEOO_SPAWN_TIMEOUT_MS —— 共享 spawn 边界；operator 显式设置时对 backfill
+ *      同样生效（YUK-989 复验即用此 env=900000）；
+ *   3. sessionMax × JYEOO_BACKFILL_PER_QUESTION_MS —— 按批大小自适配默认，
+ *      覆盖默认参数下的典型运行（--max 10 ⇒ 900s；--max 40 ⇒ 3600s）。
+ * 空串视同未设置（继续下探）；非数字/非正值直通 NaN → spawn fail-closed（同上注释）。
+ * 手动给值的推荐下界：本批 session_max × 90s。
+ */
+export function jyeooBackfillSpawnTimeoutMs(sessionMax: number): number {
+  // YUK-1007：DB(BACKFILL) > env(BACKFILL) > DB(SPAWN) > env(SPAWN) > 派生默认。
+  // 「未设置」= source 非 db/env（code-default）→ 下探一层。
+  const backfill = resolveConfigValue('JYEOO_BACKFILL_TIMEOUT_MS');
+  if (backfill.source === 'db' || backfill.source === 'env') return backfill.value as number;
+  const spawn = resolveConfigValue('JYEOO_SPAWN_TIMEOUT_MS');
+  if (spawn.source === 'db') return spawn.value as number;
+  if (spawn.source === 'env') {
+    // SPAWN 键的双面语义（迁移前 `env.BACKFILL || env.SPAWN` 链）：直读 reader
+    // （jyeooSpawnTimeoutMs）对 '' 是 YUK-990 的 NaN 直通；本链把 '' 当未设置
+    // 下探推导默认。DB 层不可能是 ''（zod int positive），只有 env 层需要这支；
+    // 非数字垃圾仍 NaN 直通 fail-closed（registry envParse 语义）。
+    if (process.env.JYEOO_SPAWN_TIMEOUT_MS !== '') return spawn.value as number;
+  }
+  return sessionMax * JYEOO_BACKFILL_PER_QUESTION_MS;
+}
+
 export function jyeooSpawnMaxStdoutBytes(): number {
-  return readPositiveIntEnv('JYEOO_RS_MAX_STDOUT_BYTES', 8 * 1024 * 1024);
+  const v = getConfig('JYEOO_SPAWN_MAX_STDOUT_BYTES');
+  return typeof v === 'number' ? v : 8 * 1024 * 1024;
 }
 export function jyeooSpawnMaxStderrBytes(): number {
-  return readPositiveIntEnv('JYEOO_RS_MAX_STDERR_BYTES', 256 * 1024);
-}
-
-// Default pages to request per search (DESIGN §6 草案 uses 2). One page ~= a handful of
-// questions; 2 keeps the fetch bounded and polite (producer enforces its own ≥300ms
-// pacing + concurrency cap).
-export const JYEOO_DEFAULT_PAGES = 2;
-
-function readPositiveIntEnv(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (!raw) return fallback;
-  const n = Number.parseInt(raw, 10);
-  return Number.isFinite(n) && n > 0 ? n : fallback;
-}
-
-/**
- * The producer's per-subject config a loom subject profile declares. Single-sourced from
- * SubjectProfileSchema.jyeooSupply so the shape can never drift from the schema/write gate.
- */
-export type JyeooSupplyConfig = NonNullable<SubjectProfile['jyeooSupply']>;
-
-/**
- * The jyeoo producer subject for a loom subject id, or null when the subject has no
- * declared jyeoo support. Reads the STATIC subject profile registry (deterministic,
- * in-memory — no IO), so route-planner can consult it while staying a pure function of
- * (target, static profiles). resolveSubjectProfile handles aliases + unknown→general
- * (general has no jyeooSupply → null). `subject` is schema-guaranteed non-empty
- * (z.string().trim().min(1)), so no manual emptiness check is needed.
- */
-export function jyeooSupplySubjectFor(subjectId: string): string | null {
-  return resolveSubjectProfile(subjectId).jyeooSupply?.subject ?? null;
-}
-
-/** Does this loom subject have a declared jyeoo producer? Pure (static profile read). */
-export function subjectSupportsJyeooFetch(subjectId: string): boolean {
-  return jyeooSupplySubjectFor(subjectId) != null;
-}
-
-/**
- * Map a loom coverage DifficultyBand → jyeoo `--dg` filter token (DESIGN §1.4 vocab:
- * easy / fairly-easy / medium / hard / difficult). The band is θ̂-relative (near = at the
- * learner's ability); we request the jyeoo difficulty tier closest to that band so the
- * producer deterministically filters the right shelf (design §2.2 — jyeoo's edge over an
- * agent that can only self-report difficulty). Calibration of jyeoo's 5-tier scale onto
- * loom logit-b is a declared follow-up (design §2.2 步骤2), not this seam's job.
- */
-export function jyeooDgTokenForBand(band: DifficultyBand): string {
-  switch (band) {
-    case 'below':
-      return 'easy';
-    case 'near':
-      return 'medium';
-    case 'above':
-      return 'hard';
-    case 'stretch':
-      return 'difficult';
-  }
-  // Exhaustiveness guard: DifficultyBand is a closed union, so a new member added there
-  // fails to compile here (never assignment) rather than silently defaulting to 'medium'.
-  const _exhaustive: never = band;
-  return _exhaustive;
+  const v = getConfig('JYEOO_SPAWN_MAX_STDERR_BYTES');
+  return typeof v === 'number' ? v : 1024 * 1024;
 }

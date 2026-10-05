@@ -4,8 +4,13 @@ import {
   executeDirectProviderAttempt,
 } from '@/server/ai/direct-provider-attempt';
 import { glmChatCostCny } from '@/server/ai/pricing';
-
 import { type Env, createMem0Config } from './client';
+import type {
+  CandidatesByNew,
+  NewMemoryEntry,
+  ReconcileAction,
+  ReconcileDecision,
+} from './reconcile-decisions';
 
 // P2 (YUK-342): GLM reconciliation judgment layer.
 //
@@ -22,50 +27,13 @@ const DEFAULT_TIMEOUT_MS = 60_000;
 const VALID_ACTIONS = new Set(['KEEP_BOTH', 'SUPERSEDE', 'MERGE', 'RETRACT_NEW']);
 const CONFIDENCE_THRESHOLD = 0.6;
 
-export type ReconcileAction = 'KEEP_BOTH' | 'SUPERSEDE' | 'MERGE' | 'RETRACT_NEW';
-
-export type ReconcileDecision = {
-  new_index: number;
-  action: ReconcileAction;
-  old_index: number | null;
-  confidence: number;
-  reason: string;
-  /**
-   * Only meaningful for action=MERGE: the rewritten text that absorbs the new
-   * memory into the existing one (becomes the surviving memory's payload.data).
-   * parseReconcileResponse REQUIRES this when action=MERGE (else ReconcileParseError
-   * → batch degrades to KEEP_BOTH) — never let `reason` stand in for merged text.
-   */
-  merged_text?: string | null;
-};
-
-/** A new memory with its extracted text and metadata for the prompt. */
-export type NewMemoryEntry = {
-  index: number;
-  kind: string;
-  text: string;
-  memory_id: string;
-  /** epoch-ms of the new memory (threaded from the ingest event) for recency. */
-  created_ms: number;
-};
-
-/** An existing candidate memory for the prompt. */
-export type CandidateEntry = {
-  index: number;
-  text: string;
-  memory_id: string;
-  created_ms?: number;
-  /**
-   * YUK-557 (Q1): mem0 Memory.search() fused score (pgvector cosine ⊕ BM25 ⊕
-   * entity-boost, [0,1]) for this candidate — previously discarded. Consumed by
-   * the second structural corroboration gate (passesStructuralCorroboration).
-   * undefined = no score available (defensive) → that gate abstains (returns true).
-   */
-  score?: number;
-};
-
-/** Per-new-memory candidates: new_index → candidates found by search. */
-export type CandidatesByNew = Map<number, CandidateEntry[]>;
+export type {
+  CandidateEntry,
+  CandidatesByNew,
+  NewMemoryEntry,
+  ReconcileAction,
+  ReconcileDecision,
+} from './reconcile-decisions';
 
 export class ReconcileParseError extends Error {
   constructor(
@@ -284,63 +252,13 @@ export function parseReconcileResponse(raw: string): ReconcileDecision[] {
   return decisions;
 }
 
-// YUK-557 (Q1): 0.5 未经数据验证的保守地板值，非拟合结果（n=1 红线，spec Q1 论证 #4）。
-// 明显高于 mem0 预过滤 0.1、明显低于"高置信度重复"直觉上限（0.8+）；本闸是加固层、
-// 非主拦截层（主拦截仍是 0.6 confidence）。将来可用 llm_raw.referenced_score 真实分布回顾校准。
-export const MERGE_RETRACT_SCORE_FLOOR = 0.5;
-
-/**
- * YUK-557 (Q1) — second, non-LLM structural gate. MERGE/RETRACT_NEW must clear
- * BOTH the 0.6 confidence threshold (applyConfidenceThreshold) AND this floor on
- * the referenced candidate's mem0 fused score. SUPERSEDE/KEEP_BOTH are exempt
- * (softSupersede is reversible; the scarce structural signal is spent on the
- * irreversible destructive actions). score===undefined (no candidate to key on,
- * e.g. RETRACT_NEW noise with no neighbor) → this gate ABSTAINS (returns true);
- * the caller MUST then emit a "floor skipped (no score)" structured log (m8) so
- * that fail-open path stays visible/countable.
- */
-export function passesStructuralCorroboration(
-  action: ReconcileAction,
-  referencedCandidateScore: number | undefined,
-): boolean {
-  if (action !== 'MERGE' && action !== 'RETRACT_NEW') return true;
-  if (referencedCandidateScore === undefined) return true;
-  return referencedCandidateScore >= MERGE_RETRACT_SCORE_FLOOR;
-}
-
-/**
- * YUK-557 (Q1b) — deterministic per-kind execution gate. weakness/event MERGE is
- * always forbidden: those are mistake/error trajectories whose history has value
- * (prompt per-kind rule leans KEEP_BOTH; this hard-enforces it). High-similarity
- * wrong MERGE is exactly the hole passesStructuralCorroboration structurally
- * CANNOT plug (score is high precisely when the LLM is most overconfident), so a
- * kind-based guard is the only cheap close. Returns true = this kind forbids MERGE.
- */
-export function kindForbidsMerge(kind: string): boolean {
-  return kind === 'weakness' || kind === 'event';
-}
-
-/**
- * YUK-557 (F6) — the "hard-delete set": actions whose apply physically drops a
- * mem0 vector row (MERGE drops the absorbed new row; RETRACT_NEW drops the new
- * row). Distinct from `needsOldTarget` below (the "needs an existing old row"
- * set) — MERGE is in BOTH, RETRACT_NEW only here, SUPERSEDE only there. Used to
- * gate the score floor, the "floor skipped" log, the apply-time client
- * requirement, and the m7 client-less skip so they never drift apart.
- */
-export function isHardDelete(action: ReconcileAction): boolean {
-  return action === 'MERGE' || action === 'RETRACT_NEW';
-}
-
-/**
- * YUK-557 (F6) — the "needs an existing old row" set: actions that reference and
- * act on an existing candidate (SUPERSEDE marks it, MERGE rewrites it). Drives
- * bad-target degrade (no resolvable old row → KEEP_BOTH) and the write-ahead
- * prev_metadata capture (only these two have an old payload to snapshot).
- */
-export function needsOldTarget(action: ReconcileAction): boolean {
-  return action === 'SUPERSEDE' || action === 'MERGE';
-}
+export {
+  MERGE_RETRACT_SCORE_FLOOR,
+  isHardDelete,
+  kindForbidsMerge,
+  needsOldTarget,
+  passesStructuralCorroboration,
+} from './reconcile-decisions';
 
 /**
  * Apply confidence threshold: any decision below the threshold is downgraded

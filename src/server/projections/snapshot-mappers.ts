@@ -12,10 +12,11 @@
 
 import type {
   ArtifactRowSnapshotT,
+  ItemCalibrationRowSnapshotT,
   KnowledgeRowSnapshotT,
   QuestionBlockRowSnapshotT,
 } from '@/core/schema/event/genesis';
-import type { artifact, knowledge, question_block } from '@/db/schema';
+import type { artifact, item_calibration, knowledge, question_block } from '@/db/schema';
 
 /**
  * Map a live `knowledge` row to its structural snapshot. The embed_* columns are derived search-index
@@ -113,5 +114,37 @@ export function questionBlockRowToSnapshot(
     updated_at: row.updated_at,
     version: row.version,
     // EXCLUDED: extracted_prompt_md (legacy deprecated — stripped before the snapshot, design §5.2).
+  };
+}
+
+/**
+ * Map a live `item_calibration` DB row to ItemCalibrationRowSnapshotT — the FULL 17-column row,
+ * every column carried verbatim (YUK-496 方案 A: the anchor-only fold has no mutation events, so
+ * the whole row IS the snapshot — the goal/artifact full-row precedent). The soft jsonb columns
+ * (cdm_json / kt_json) pass through untouched as opaque records; the backfill's writeEvent
+ * parseEvent barrier validates the strict snapshot shape. Dates stay Date (z.coerce.date()
+ * accepts both Date and the jsonb ISO string).
+ */
+export function itemCalibrationRowToSnapshot(
+  row: typeof item_calibration.$inferSelect,
+): ItemCalibrationRowSnapshotT {
+  return {
+    id: row.id,
+    question_id: row.question_id,
+    b: row.b,
+    confidence: row.confidence,
+    track: row.track,
+    source: row.source,
+    b_anchor: row.b_anchor,
+    b_calib: row.b_calib,
+    calibration_n: row.calibration_n,
+    calibration_weight: row.calibration_weight,
+    last_calibrated_at: row.last_calibrated_at,
+    irt_a: row.irt_a,
+    irt_c: row.irt_c,
+    cdm_json: row.cdm_json ?? null,
+    kt_json: row.kt_json ?? null,
+    created_at: row.created_at,
+    updated_at: row.updated_at,
   };
 }

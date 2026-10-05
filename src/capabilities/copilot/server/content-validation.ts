@@ -1,37 +1,19 @@
 import { z } from 'zod';
-import type { Db } from '@/db/client';
 import { extractVisibleHtmlText, htmlContainsAssessment } from '@/kernel/learning-content';
-import { resolveSubjectProfile } from '@/subjects/profile';
+import type { LearningContentValidationRequest } from '@/kernel/tools/types';
 import {
-  runQuestionContentValidation,
-  runSolveCheck,
-  runTeachingQualityCheck,
+  LEARNING_CONTENT_MAX_QUESTIONS,
+  type LearningContentValidationDeps,
+  validateLearningContent,
 } from './practice-port';
 
-export const COPILOT_LEARNING_CONTENT_MAX_QUESTIONS = 5;
-export const COPILOT_LEARNING_CONTENT_MAX_PROMPT_CHARS = 12_000;
 export const COPILOT_LEARNING_CONTENT_MARKER_START = '<!--copilot_learning_content:';
 export const COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY =
   '这份学习内容未完成独立校验，暂不展示。请重试，我会先校验再发送。';
 
-type ValidationRunTaskFn = Parameters<typeof runQuestionContentValidation>[1]['runTaskFn'];
+export type CopilotLearningContent = LearningContentValidationRequest;
 
-export interface CopilotLearningContentQuestion {
-  id: string;
-  kind: string;
-  prompt_md: string;
-  reference_md: string | null;
-  choices_md: string[] | null;
-  rubric_json?: unknown;
-  knowledge_ids?: string[] | null;
-}
-
-export interface CopilotLearningContent {
-  subjectId: string;
-  questions: CopilotLearningContentQuestion[];
-}
-
-const CopilotLearningContentSchema = z.object({
+export const CopilotLearningContentSchema = z.object({
   subject_id: z.string().min(1),
   questions: z
     .array(
@@ -46,7 +28,7 @@ const CopilotLearningContentSchema = z.object({
       }),
     )
     .min(1)
-    .max(COPILOT_LEARNING_CONTENT_MAX_QUESTIONS),
+    .max(LEARNING_CONTENT_MAX_QUESTIONS),
 });
 
 export type CopilotLearningContentExtraction =
@@ -99,10 +81,34 @@ export function containsLearningQuestion(text: string): boolean {
     /(?:^|\n)\s*(?:#{1,6}\s*)?(?:(?:题目|练习(?:题)?|测验)(?=\s|[:：])|(?:quiz|question|exercise)\b)/im;
   const numberedQuestion =
     /(?:^|\n)\s*(?:\d+[.)、]|[（(][一二三四五六七八九十\d]+[）)])[^\n]{1,500}[？?]/m;
-  const instructionalQuestion =
-    /(?:^|\n)[^\n]{0,300}(?:求|计算|证明|选择|判断|解答|solve|calculate|prove|choose)[^\n]{0,300}[？?](?:\n|$)/im;
+  // Direct instructions remain assessments when an answer follows on the same
+  // line. Anchor the imperative, not the question's end, so rhetorical report
+  // prose such as “为什么选择这个方案？因为预算有限。” is not newly classified.
+  const directInstruction =
+    /(?:^|\n|[。？?；;])\s*(?:#{1,6}\s*)?(?:(?:请(?:问|你)?|帮我|麻烦你?|试|尝试|(?:你)?(?:能否|能|可以)|可否)\s*){0,2}(?:(?:can|could|would|will)\s+you\s+)?(?:please\s+)?(?:求|计算|证明|选择|判断|解答|solve\b|calculate\b|prove\b|choose\b)[^\n？?]{1,600}[？?]/im;
+  const instructionalQuestionCandidates =
+    /(?:^|\n)[^\n]{0,300}(?:求|计算|证明|选择|判断|解答|solve|calculate|prove|choose)[^\n]{0,300}[？?](?:\n|$)/gim;
+  const activeInstructionalQuestion = [...text.matchAll(instructionalQuestionCandidates)].some(
+    ([match]) => {
+      const candidate = match;
+      const verbs = /求|计算|证明|选择|判断|解答|solve|calculate|prove|choose/gi;
+      return [...candidate.matchAll(verbs)].some((verbMatch) => {
+        // Exempt only a completed-observation status question. Past tense alone
+        // is not enough: “欧几里得证明了什么？” is still an unlabelled learning question.
+        // Evaluate each verb independently so a later real instruction remains protected.
+        const verb = verbMatch[0];
+        const offset = verbMatch.index ?? 0;
+        const prefix = candidate.slice(Math.max(0, offset - 4), offset);
+        const clause = candidate.slice(offset + verb.length).split(/[？?。；;]/u)[0];
+        return !/是否已(?:经)?$/.test(prefix) || /什么|哪|如何|怎样|为何|为什么/u.test(clause);
+      });
+    },
+  );
   return (
-    explicitLabel.test(text) || numberedQuestion.test(text) || instructionalQuestion.test(text)
+    explicitLabel.test(text) ||
+    numberedQuestion.test(text) ||
+    directInstruction.test(text) ||
+    activeInstructionalQuestion
   );
 }
 
@@ -111,8 +117,10 @@ function containsLearningSolution(text: string): boolean {
     /(?:^|\n)\s*(?:解[:：]|答案[:：]|解答[:：]|solution\b|answer\b)|(?:所以|因此|故|therefore)[^\n]{0,300}(?:答案|=)/im;
   const arithmeticEquation =
     /(?:^|\n)\s*(?:\d+(?:\.\d+)?|\d*[a-z](?:\^\d+)?)(?:\s*[+\-×÷*/^]\s*(?:\d+(?:\.\d+)?|\d*[a-z](?:\^\d+)?))+\s*=\s*[-+]?(?:\d+(?:\.\d+)?|\d*[a-z](?:\^\d+)?)(?:\s*[。.;；]|(?=\s*(?:\n|$)))/im;
+  // A step label must be in a Markdown header (followed by the delimiter row),
+  // not a data cell such as "3-step diagnostics" in an event comparison report.
   const computationTableHeader =
-    /(?:^|\n)\s*\|[^\n]*(?:step|iteration|迭代|步数|第.?步)[^\n]*\|(?=\n|$)/im;
+    /(?:^|\n)\s*\|[^\n]*(?:\bsteps?\b|\biterations?\b|迭代|步数|第.?步)[^\n]*\|[^\S\r\n]*\r?\n[^\S\r\n]*\|(?:[^\S\r\n]*:?-+:?[^\S\r\n]*\|)+[^\S\r\n]*(?=\r?\n|$)/im;
   const numericTableRowCount = (text.match(/(?:^|\n)\s*\|[^\n]*\d[^\n]*\|(?=\n|$)/gm) ?? []).length;
   return (
     explicitSolution.test(text) ||
@@ -167,151 +175,17 @@ function contentMatchesReply(
   });
 }
 
-export interface CopilotLearningContentValidationDeps {
-  db: Db;
-  runTaskFn: ValidationRunTaskFn;
+export interface CopilotLearningContentValidationDeps extends LearningContentValidationDeps {
   additionalVisibleText?: string;
-}
-
-export type CopilotLearningContentValidationItem = {
-  question_id: string;
-  question_content:
-    | { status: 'completed'; task_run_id?: string; overall: 'pass' | 'needs_review' | 'fail' }
-    | { status: 'error'; reason: string };
-  solve_check: {
-    verdict: 'pass' | 'fail' | 'unsupported';
-    reason: string;
-    task_run_ids?: string[];
-  };
-  teaching_quality: { verdict: 'pass' | 'fail' | 'unsupported'; reason: string };
-  verdict: 'pass' | 'fail' | 'needs_repair';
-};
-
-export interface CopilotLearningContentValidationResult {
-  verdict: 'pass' | 'fail' | 'needs_repair';
-  items: CopilotLearningContentValidationItem[];
+  /** Server-derived generated question, never a model-authored reply marker. */
+  additionalQuestionContent?: CopilotLearningContent;
+  /** Actually executed remote-MCP calls of this turn, forwarded to the QuizVerify review. */
+  remoteToolEvidence?: unknown;
 }
 
 export interface CopilotLearningContentReviewResult {
   replyText: string;
   passed: boolean;
-}
-
-function errorReason(result: PromiseRejectedResult): string {
-  return result.reason instanceof Error ? result.reason.message : String(result.reason);
-}
-
-export async function validateCopilotLearningContent(
-  content: CopilotLearningContent,
-  deps: CopilotLearningContentValidationDeps,
-): Promise<CopilotLearningContentValidationResult> {
-  if (
-    content.questions.length === 0 ||
-    content.questions.length > COPILOT_LEARNING_CONTENT_MAX_QUESTIONS ||
-    content.questions.reduce((sum, question) => sum + question.prompt_md.length, 0) >
-      COPILOT_LEARNING_CONTENT_MAX_PROMPT_CHARS
-  ) {
-    return { verdict: 'fail', items: [] };
-  }
-  const subjectProfile = resolveSubjectProfile(content.subjectId);
-  const items = await Promise.all(
-    content.questions.map(async (question): Promise<CopilotLearningContentValidationItem> => {
-      const [questionContent, solveCheck, teachingQuality] = await Promise.allSettled([
-        runQuestionContentValidation(
-          {
-            question: {
-              id: question.id,
-              kind: question.kind,
-              prompt_md: question.prompt_md,
-              reference_md: question.reference_md,
-              choices_md: question.choices_md,
-              knowledge_ids: question.knowledge_ids ?? null,
-            },
-            knowledge_context: [],
-            source_pack: null,
-            source_refs: [],
-            self_copy_safety: null,
-            generation_method: 'copilot_learning_content',
-            validation_mode: 'release_strict',
-          },
-          { runTaskFn: deps.runTaskFn, db: deps.db, subjectProfile },
-        ),
-        runSolveCheck(
-          {
-            id: question.id,
-            kind: question.kind,
-            prompt_md: question.prompt_md,
-            choices_md: question.choices_md,
-            reference_md: question.reference_md,
-            rubric_json: question.rubric_json ?? null,
-            judge_kind_override: null,
-            knowledge_ids: question.knowledge_ids ?? null,
-          },
-          {
-            runTaskFn: deps.runTaskFn,
-            db: deps.db,
-            profile: { id: subjectProfile.id, full: subjectProfile },
-          },
-        ),
-        runTeachingQualityCheck(
-          {
-            id: question.id,
-            kind: question.kind,
-            prompt_md: question.prompt_md,
-            reference_md: question.reference_md,
-            choices_md: question.choices_md,
-            rubric_json: question.rubric_json,
-          },
-          {
-            runTaskFn: deps.runTaskFn,
-            db: deps.db,
-            profile: { id: subjectProfile.id, full: subjectProfile },
-          },
-        ),
-      ]);
-
-      const questionContentResult =
-        questionContent.status === 'fulfilled'
-          ? {
-              status: 'completed' as const,
-              task_run_id: questionContent.value.task_result.task_run_id,
-              overall: questionContent.value.output.overall,
-            }
-          : { status: 'error' as const, reason: errorReason(questionContent) };
-      const solveCheckResult =
-        solveCheck.status === 'fulfilled'
-          ? {
-              verdict: solveCheck.value.verdict,
-              reason: solveCheck.value.reason,
-              ...(solveCheck.value.task_run_ids
-                ? { task_run_ids: solveCheck.value.task_run_ids }
-                : {}),
-            }
-          : { verdict: 'unsupported' as const, reason: errorReason(solveCheck) };
-      const teachingQualityResult =
-        teachingQuality.status === 'fulfilled'
-          ? { verdict: teachingQuality.value.verdict, reason: teachingQuality.value.reason }
-          : { verdict: 'unsupported' as const, reason: errorReason(teachingQuality) };
-      const passes =
-        questionContentResult.status === 'completed' &&
-        questionContentResult.overall === 'pass' &&
-        solveCheckResult.verdict === 'pass' &&
-        teachingQualityResult.verdict === 'pass';
-
-      return {
-        question_id: question.id,
-        question_content: questionContentResult,
-        solve_check: solveCheckResult,
-        teaching_quality: teachingQualityResult,
-        verdict: passes ? 'pass' : 'fail',
-      };
-    }),
-  );
-
-  return {
-    verdict: items.every((item) => item.verdict === 'pass') ? 'pass' : 'fail',
-    items,
-  };
 }
 
 export async function reviewCopilotLearningContent(
@@ -337,7 +211,28 @@ export async function reviewCopilotLearningContent(
     });
     return { replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY, passed: false };
   }
-  if (extracted.status === 'absent') return { replyText: extracted.text, passed: true };
+  let additionalValidated = false;
+  let copyNotObserved = false;
+  if (deps.additionalQuestionContent) {
+    // A typed candidate is always a question, even JSON or prose without '?'.
+    // Validate its real normalized fields independently of terminal heuristics.
+    try {
+      const validation = await validateLearningContent(deps.additionalQuestionContent, deps);
+      if (validation.verdict !== 'pass')
+        return { replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY, passed: false };
+      additionalValidated = true;
+      copyNotObserved = validation.copy_comparison === 'not_observed';
+    } catch {
+      return { replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY, passed: false };
+    }
+  }
+  if (extracted.status === 'absent')
+    return {
+      replyText: additionalValidated
+        ? `${extracted.text}\n\n独立内容验证：通过${copyNotObserved ? '；未对外部题库进行原创性比对。' : ''}`
+        : extracted.text,
+      passed: true,
+    };
   if (!contentMatchesReply(extracted.content, validationSurface, contextText)) {
     console.error('[copilot-learning-content] manifest does not match visible content', {
       task_run_id: taskRunId,
@@ -345,7 +240,10 @@ export async function reviewCopilotLearningContent(
     return { replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY, passed: false };
   }
   try {
-    const validation = await validateCopilotLearningContent(extracted.content, deps);
+    const validation = await validateLearningContent(extracted.content, {
+      ...deps,
+      observedQuestion: undefined,
+    });
     if (validation.verdict !== 'pass') {
       console.error('[copilot-learning-content] validation rejected', {
         task_run_id: taskRunId,
@@ -353,7 +251,10 @@ export async function reviewCopilotLearningContent(
       });
       return { replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY, passed: false };
     }
-    return { replyText: `${extracted.text}\n\n独立内容验证：通过`, passed: true };
+    return {
+      replyText: `${extracted.text}\n\n独立内容验证：通过${copyNotObserved || validation.copy_comparison === 'not_observed' ? '；未对外部题库进行原创性比对。' : ''}`,
+      passed: true,
+    };
   } catch (error) {
     console.error('[copilot-learning-content] validation error', { task_run_id: taskRunId, error });
     return { replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY, passed: false };

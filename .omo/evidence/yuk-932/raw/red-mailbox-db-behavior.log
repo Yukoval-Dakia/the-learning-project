@@ -1,0 +1,109 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./tests/db-fork-constants" without a file extension (vitest.db.config.ts:2:31). Add the file extension
+  - import "./vitest.shared" without a file extension (vitest.db.config.ts:10:8). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.10 /Volumes/YukovalSBak/yukoval-projects/the-learning-project-worktrees/f5-20260827/yuk-932
+
+Scope: all 2 workspace projects
+? The modules directories will be removed and reinstalled from scratch. Proceed?
+ (Y/n)
+[ERR_PNPM_ABORTED_REMOVE_MODULES_DIR] Aborted removal of modules directory
+$ drizzle-kit migrate
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/Volumes/YukovalSBak/yukoval-projects/the-learning-project-worktrees/f5-20260827/yuk-932/drizzle.config.ts'
+◇ injected env (0) from .env.local // tip: ⌘ enable debugging { debug: true }
+Using 'pg' driver for database querying
+[⣷] applying migrations...[⣯] applying migrations...[⣟] applying migrations...[⡿] applying migrations...[⢿] applying migrations...[⣻] applying migrations...[✓] migrations applied successfully!{
+  severity_local: 'NOTICE',
+  severity: 'NOTICE',
+  code: '00000',
+  message: 'database "test_fork_1" does not exist, skipping',
+  file: 'dbcommands.c',
+  line: '1620',
+  routine: 'dropdb'
+}
+{
+  severity_local: 'NOTICE',
+  severity: 'NOTICE',
+  code: '00000',
+  message: 'database "test_fork_2" does not exist, skipping',
+  file: 'dbcommands.c',
+  line: '1620',
+  routine: 'dropdb'
+}
+{
+  severity_local: 'NOTICE',
+  severity: 'NOTICE',
+  code: '00000',
+  message: 'database "test_fork_3" does not exist, skipping',
+  file: 'dbcommands.c',
+  line: '1620',
+  routine: 'dropdb'
+}
+{
+  severity_local: 'NOTICE',
+  severity: 'NOTICE',
+  code: '00000',
+  message: 'database "test_fork_4" does not exist, skipping',
+  file: 'dbcommands.c',
+  line: '1620',
+  routine: 'dropdb'
+}
+stdout | src/capabilities/copilot/server/subagent-mailbox.db.test.ts > Copilot subagent mailbox > exposes a serialized continuation claim seam before automatic continuation is wired
+{
+  severity_local: 'NOTICE',
+  severity: 'NOTICE',
+  code: '00000',
+  message: 'truncate cascades to table "artifact_block_ref"',
+  file: 'tablecmds.c',
+  line: '1857',
+  routine: 'ExecuteTruncateGuts'
+}
+
+stdout | src/capabilities/copilot/server/subagent-mailbox.db.test.ts > Copilot subagent mailbox > exposes a serialized continuation claim seam before automatic continuation is wired
+{
+  severity_local: 'NOTICE',
+  severity: 'NOTICE',
+  code: '00000',
+  message: 'truncate cascades to table "artifact_edit_session"',
+  file: 'tablecmds.c',
+  line: '1857',
+  routine: 'ExecuteTruncateGuts'
+}
+{
+  severity_local: 'NOTICE',
+  severity: 'NOTICE',
+  code: '00000',
+  message: 'truncate cascades to table "hub_sync_reconciliation"',
+  file: 'tablecmds.c',
+  line: '1857',
+  routine: 'ExecuteTruncateGuts'
+}
+
+ ❯ src/capabilities/copilot/server/subagent-mailbox.db.test.ts (4 tests | 1 failed) 1955ms
+     × exposes a serialized continuation claim seam before automatic continuation is wired 519ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 1 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  src/capabilities/copilot/server/subagent-mailbox.db.test.ts > Copilot subagent mailbox > exposes a serialized continuation claim seam before automatic continuation is wired
+AssertionError: expected undefined to be type of 'function'
+
+Expected: "function"
+Received: "undefined"
+
+ ❯ src/capabilities/copilot/server/subagent-mailbox.db.test.ts:104:7
+    102|     expect(
+    103|       (mailbox as typeof mailbox & { claimCopilotContinuation?: unknow…
+    104|     ).toBeTypeOf('function');
+       |       ^
+    105|   });
+    106|
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  1 failed | 3 passed (4)
+   Start at  13:10:38
+   Duration  9.93s (transform 173ms, setup 9ms, import 484ms, tests 1.95s, environment 0ms)

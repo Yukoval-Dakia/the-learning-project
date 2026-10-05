@@ -57,11 +57,11 @@ describe('judgeFallbackProvider', () => {
   });
 
   // #4 (codex) — this lane hands `RunTaskCtx.override` a provider with NO model. A wired
-  // provider whose registry default model is the mimo id ('anthropic', 'zhipu') would then
+  // provider whose registry default model is the mimo id ('anthropic', 'zai-coding-cn') would then
   // be paired with that mimo model against its own endpoint and fail every time — a
   // guaranteed-dead final retry dressed up as a fallback. Reuses the single-source
   // `providerRequiresExplicitModel` predicate (YUK-608 / #1062), no second copy of the rule.
-  it.each(['anthropic', 'zhipu'])(
+  it.each(['anthropic', 'zai-coding-cn'])(
     'degrades on a wired provider that needs an explicit model (%s)',
     (provider) => {
       process.env.JUDGE_FALLBACK_PROVIDER = provider;

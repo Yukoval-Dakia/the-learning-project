@@ -10,7 +10,7 @@
 //     verification.status='needs_review' + NO FSRS enroll.
 //   - idempotency — a second run skips (no duplicate verify event, no re-promote).
 
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { readAgentNotes } from '@/capabilities/agency/public';
@@ -32,6 +32,9 @@ import {
   placement_starter_claim,
   placement_starter_cost_component,
   question,
+  question_admission_verification,
+  question_group_lifecycle,
+  question_revision,
   source_document,
 } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -133,6 +136,8 @@ const BASE_META: QuizGenMetadataT = {
 async function seedDraftQuestion(opts: {
   id: string;
   knowledgeId: string;
+  /** YUK-1037 — multi-binding override; defaults to [knowledgeId]. */
+  knowledgeIds?: string[];
   promptMd?: string;
   meta?: QuizGenMetadataT;
   source?: string;
@@ -158,7 +163,7 @@ async function seedDraftQuestion(opts: {
     }) as never,
     choices_md: opts.choicesMd === undefined ? null : opts.choicesMd,
     judge_kind_override: opts.judge === undefined ? 'semantic' : opts.judge,
-    knowledge_ids: [opts.knowledgeId],
+    knowledge_ids: opts.knowledgeIds ?? [opts.knowledgeId],
     difficulty: 3,
     source: opts.source ?? 'quiz_gen',
     source_ref: opts.knowledgeId,
@@ -435,6 +440,376 @@ describe('runQuizVerify', () => {
     // U8 / AF §4 (U3 L-note) — a promoted draft DID enter the pool, so no
     // question_pool_gap hint is left.
     expect(await poolGapNotesForKnowledge('k1')).toBe(0);
+
+    // YUK-1043 — verified promote 经统一发布链落 §3.3 admission：首版 revision +
+    // admitted（system_verified —— D1：model-proposed 规则，结构校验 + 独立模型
+    // 核验双门均过；显式非 official）+ lifecycle current pointer 指向该版。
+    const revisions1043 = await testDb()
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, 'q1'));
+    expect(revisions1043).toHaveLength(1);
+    const lifecycles1043 = await testDb()
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, 'q1'));
+    expect(lifecycles1043).toHaveLength(1);
+    expect(lifecycles1043[0].current_revision_id).toBe(revisions1043[0].revision_id);
+    expect(lifecycles1043[0].scoring_admission_state).toBe('admitted');
+    expect(lifecycles1043[0].scoring_admission_evidence).toMatchObject({
+      marking_provenance: 'system_verified',
+      verification: {
+        structural_check_passed: true,
+        independent_verification: { passed: true, verifier: 'independent_model' },
+      },
+    });
+  });
+
+  // ── YUK-1037 — synthetic subject roots are structural anchors, not content KCs ──
+  // The subject read axis already excludes 'seed:<subj>:root' (resolveSubjectKnowledgeIds);
+  // the FSRS enrollment axis must match, or an invisible-in-subject question becomes a due
+  // probe through a fake KC card (YUK-1032 audit: 'seed:math:root' acquired exactly such a
+  // row in production).
+  it('YUK-1037: a seed-root-only label set promotes but enrolls ZERO FSRS cards', async () => {
+    await seedKnowledge('seed:math:root');
+    await seedDraftQuestion({ id: 'q-seed-root-only', knowledgeId: 'seed:math:root' });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_seedroot');
+
+    const result = await runQuizVerify({
+      db: testDb(),
+      questionId: 'q-seed-root-only',
+      runTaskFn,
+    });
+
+    expect(result.status).toBe('verified');
+    const rows = await testDb().select().from(question).where(eq(question.id, 'q-seed-root-only'));
+    expect(rows[0].draft_status).toBe('active');
+    // No knowledge-level card for the anchor — and NO question-level fallback
+    // either: a roots-only label set is labeled-but-anchor-only, not unlabeled.
+    expect(await fsrsRowCount('knowledge', 'seed:math:root')).toBe(0);
+    expect(await fsrsRowCount('question', 'q-seed-root-only')).toBe(0);
+    expect(await countVerifyEvents('q-seed-root-only')).toBe(1);
+  });
+
+  it('YUK-1037: mixed bindings enroll only the real KC, never the synthetic root', async () => {
+    await seedKnowledge('seed:math:root');
+    await seedKnowledge('k_real');
+    await seedDraftQuestion({
+      id: 'q-seed-root-mixed',
+      knowledgeId: 'k_real',
+      knowledgeIds: ['seed:math:root', 'k_real'],
+    });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_seedmix');
+
+    const result = await runQuizVerify({
+      db: testDb(),
+      questionId: 'q-seed-root-mixed',
+      runTaskFn,
+    });
+
+    expect(result.status).toBe('verified');
+    expect(await fsrsRowCount('knowledge', 'seed:math:root')).toBe(0);
+    expect(await fsrsRowCount('knowledge', 'k_real')).toBe(1);
+    expect(await fsrsRowCount('question', 'q-seed-root-mixed')).toBe(0);
+  });
+
+  it('YUK-1037: the composite cascade never mints a card for an inherited seed-root binding', async () => {
+    await seedKnowledge('seed:math:root');
+    await seedDraftQuestion({
+      id: 'q-root-parent',
+      knowledgeId: 'seed:math:root',
+      kind: 'reading',
+      promptMd: '陈太丘与友期行……(1) 「去」的意思是？(2) 元方表现了怎样的品格？',
+    });
+    await seedCompositePart({
+      id: 'q-root-p0',
+      parentId: 'q-root-parent',
+      partIndex: 0,
+      promptMd: '陈太丘与友期行……(1) 「去」的意思是？',
+      knowledgeIds: ['seed:math:root'],
+    });
+    // The genuinely unlabeled sibling still takes the question-level fallback.
+    await seedCompositePart({
+      id: 'q-root-legacy',
+      parentId: 'q-root-parent',
+      partIndex: 1,
+      promptMd: '陈太丘与友期行……(2) 无标签小题',
+    });
+
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_rootcomp');
+    const result = await runQuizVerify({
+      db: testDb(),
+      questionId: 'q-root-parent',
+      runTaskFn,
+    });
+
+    expect(result.status).toBe('verified');
+    const rows = await testDb()
+      .select({ id: question.id, draftStatus: question.draft_status })
+      .from(question)
+      .where(inArray(question.id, ['q-root-parent', 'q-root-p0', 'q-root-legacy']));
+    const statusById = new Map(rows.map((r) => [r.id, r.draftStatus]));
+    expect(statusById.get('q-root-parent')).toBe('active');
+    expect(statusById.get('q-root-p0')).toBe('active');
+    expect(statusById.get('q-root-legacy')).toBe('active');
+
+    expect(await fsrsRowCount('knowledge', 'seed:math:root')).toBe(0);
+    expect(await fsrsRowCount('question', 'q-root-parent')).toBe(0);
+    expect(await fsrsRowCount('question', 'q-root-p0')).toBe(0);
+    expect(await fsrsRowCount('question', 'q-root-legacy')).toBe(1);
+  });
+
+  // YUK-1011 — composite (篇) cascade: quiz_gen composite children persist as
+  // 'draft' question_part rows with NO own verify intent; the parent's verified
+  // promotion cascades to them in the same tx (the group was judged as a unit —
+  // the parent's derived prompt/reference carries every sub). A tombstoned child
+  // is skipped; a failed parent leaves the whole group in draft. Per ADR-0028
+  // (U0 A2) a generated part inherits the parent's persisted knowledge_ids, so
+  // the fixture defaults to the parent's labels (override with knowledgeIds).
+  async function seedCompositePart(opts: {
+    id: string;
+    parentId: string;
+    partIndex: number;
+    promptMd: string;
+    knowledgeIds?: string[];
+    metadataExtra?: Record<string, unknown>;
+  }) {
+    const now = new Date();
+    await testDb()
+      .insert(question)
+      .values({
+        id: opts.id,
+        kind: 'question_part',
+        parent_question_id: opts.parentId,
+        part_index: opts.partIndex,
+        prompt_md: opts.promptMd,
+        reference_md: `小题 ${opts.partIndex + 1} 参考答案`,
+        knowledge_ids: opts.knowledgeIds ?? [],
+        difficulty: 3,
+        source: 'quiz_gen',
+        draft_status: 'draft',
+        metadata: {
+          quiz_gen: BASE_META,
+          part_of_question_id: opts.parentId,
+          part_index: opts.partIndex,
+          ...(opts.metadataExtra ?? {}),
+        } as never,
+        created_at: now,
+        updated_at: now,
+      });
+  }
+
+  it('composite cascade: a verified 篇 parent promotes its draft question_part children atomically', async () => {
+    await seedKnowledge('k-comp');
+    await seedDraftQuestion({
+      id: 'q-comp',
+      knowledgeId: 'k-comp',
+      kind: 'reading',
+      promptMd: '陈太丘与友期行……(1) 「去」的意思是？(2) 元方表现了怎样的品格？',
+      referenceMd: '(1) 离开。(2) 守信明礼、方正率真。',
+    });
+    await seedCompositePart({
+      id: 'q-comp-p0',
+      parentId: 'q-comp',
+      partIndex: 0,
+      promptMd: '陈太丘与友期行……(1) 「去」的意思是？',
+      knowledgeIds: ['k-comp'],
+    });
+    await seedCompositePart({
+      id: 'q-comp-p1',
+      parentId: 'q-comp',
+      partIndex: 1,
+      promptMd: '陈太丘与友期行……(2) 元方表现了怎样的品格？',
+      knowledgeIds: ['k-comp'],
+    });
+    // A tombstoned sibling must NOT resurrect through the cascade.
+    await seedCompositePart({
+      id: 'q-comp-archived',
+      parentId: 'q-comp',
+      partIndex: 2,
+      promptMd: '陈太丘与友期行……(3) 已归档小题',
+      knowledgeIds: ['k-comp'],
+      metadataExtra: { archived_at: '2026-06-10T00:00:00.000Z' },
+    });
+    // A genuinely UNLABELED legacy part keeps the question-level FSRS fallback.
+    await seedCompositePart({
+      id: 'q-comp-legacy',
+      parentId: 'q-comp',
+      partIndex: 3,
+      promptMd: '陈太丘与友期行……(4) 无标签遗留小题',
+    });
+
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_comp');
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q-comp', runTaskFn });
+
+    expect(result.status).toBe('verified');
+    const rows = await testDb()
+      .select({ id: question.id, draftStatus: question.draft_status })
+      .from(question)
+      .where(
+        inArray(question.id, [
+          'q-comp',
+          'q-comp-p0',
+          'q-comp-p1',
+          'q-comp-archived',
+          'q-comp-legacy',
+        ]),
+      );
+    const statusById = new Map(rows.map((r) => [r.id, r.draftStatus]));
+    expect(statusById.get('q-comp')).toBe('active');
+    expect(statusById.get('q-comp-p0')).toBe('active');
+    expect(statusById.get('q-comp-p1')).toBe('active');
+    expect(statusById.get('q-comp-archived')).toBe('draft');
+    expect(statusById.get('q-comp-legacy')).toBe('active');
+
+    // ADR-0028 (U0 A2): labeled children enroll on the SAME knowledge
+    // projection as the parent — enroll-if-absent makes that a no-op here (the
+    // parent's loop already created the k-comp row), and crucially NO
+    // question-level FSRS row exists for a labeled part. The unlabeled legacy
+    // part keeps the question-level fallback so it is never dropped.
+    expect(await fsrsRowCount('knowledge', 'k-comp')).toBe(1);
+    expect(await fsrsRowCount('question', 'q-comp-p0')).toBe(0);
+    expect(await fsrsRowCount('question', 'q-comp-p1')).toBe(0);
+    expect(await fsrsRowCount('question', 'q-comp-archived')).toBe(0);
+    expect(await fsrsRowCount('question', 'q-comp-legacy')).toBe(1);
+
+    // Children carry honest inherited-verification provenance — the part was
+    // not independently verified; it inherits the parent's unit verdict.
+    const p0Meta = await readMeta('q-comp-p0');
+    expect(p0Meta?.verification).toMatchObject({
+      status: 'verified',
+      verified_by: { by: 'ai', task_kind: 'QuizVerifyTask', task_run_id: 'tr_comp' },
+    });
+    expect((p0Meta?.verification as Record<string, unknown> | undefined)?.summary).toMatch(
+      /promoted with verified parent/,
+    );
+
+    // One verify event on the parent only — children never held their own intent.
+    expect(await countVerifyEvents('q-comp')).toBe(1);
+    expect(await countVerifyEvents('q-comp-p0')).toBe(0);
+  });
+
+  it('skips a question_part dispatch — parts verify only via the parent cascade', async () => {
+    // YUK-1011 codex P1 — a stray verify dispatch on a composite child (orphan
+    // recovery, owner-UI enable, matcher lazy-verify) must NOT spend a paid
+    // verify or promote the part standalone; an active child under a still-draft
+    // parent would break the atomic group gate.
+    await seedKnowledge('k-part');
+    await seedDraftQuestion({ id: 'q-part-parent', knowledgeId: 'k-part', kind: 'reading' });
+    await seedCompositePart({
+      id: 'q-part-child',
+      parentId: 'q-part-parent',
+      partIndex: 0,
+      promptMd: '……小题题面',
+      knowledgeIds: ['k-part'],
+    });
+
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_part');
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q-part-child', runTaskFn });
+
+    expect(result.status).toBe('skipped:question_part');
+    expect(runTaskFn).not.toHaveBeenCalled();
+    const rows = await testDb()
+      .select({ draftStatus: question.draft_status })
+      .from(question)
+      .where(eq(question.id, 'q-part-child'));
+    expect(rows[0]?.draftStatus).toBe('draft');
+    expect(await countVerifyEvents('q-part-child')).toBe(0);
+  });
+
+  it('composite cascade: a failed parent leaves the whole group in draft (no partial promotion)', async () => {
+    await seedKnowledge('k-comp2');
+    await seedDraftQuestion({ id: 'q-comp2', knowledgeId: 'k-comp2', kind: 'reading' });
+    await seedCompositePart({
+      id: 'q-comp2-p0',
+      parentId: 'q-comp2',
+      partIndex: 0,
+      promptMd: '……小题题面',
+    });
+
+    const runTaskFn = runTaskMock(
+      verifyOutput({ overall: 'fail', groundingVerdict: 'fail' }),
+      'tr_comp_fail',
+    );
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q-comp2', runTaskFn });
+
+    expect(result.status).toBe('failed');
+    const rows = await testDb()
+      .select({ id: question.id, draftStatus: question.draft_status })
+      .from(question)
+      .where(inArray(question.id, ['q-comp2', 'q-comp2-p0']));
+    const statusById = new Map(rows.map((r) => [r.id, r.draftStatus]));
+    expect(statusById.get('q-comp2')).toBe('draft');
+    expect(statusById.get('q-comp2-p0')).toBe('draft');
+    expect(await fsrsRowCount('question', 'q-comp2-p0')).toBe(0);
+  });
+
+  it('composite cascade: a child with unparseable metadata.quiz_gen throws (contract violation, never silently promoted)', async () => {
+    // YUK-1011 — the cascade promotes rows it did not itself verify, so it keeps
+    // the parent's own contract: a part written by the Q3 path always carries a
+    // parseable quiz_gen block; anything else is corrupt/foreign and must throw
+    // rather than promote with missing provenance. The promotion tx rolls back
+    // (parent included) and the failure-bottom stamps verification.status
+    // ='failed' on the parent and re-throws for pg-boss retry — loud-stranded,
+    // never half-promoted.
+    await seedKnowledge('k-comp3');
+    await seedDraftQuestion({ id: 'q-comp3', knowledgeId: 'k-comp3', kind: 'reading' });
+    await testDb()
+      .insert(question)
+      .values({
+        id: 'q-comp3-p0',
+        kind: 'question_part',
+        parent_question_id: 'q-comp3',
+        part_index: 0,
+        prompt_md: '……小题题面',
+        reference_md: '参考答案',
+        knowledge_ids: ['k-comp3'],
+        difficulty: 3,
+        source: 'quiz_gen',
+        draft_status: 'draft',
+        metadata: { quiz_gen: { bogus: true } } as never,
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
+
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass' }), 'tr_comp3');
+    await expect(runQuizVerify({ db: testDb(), questionId: 'q-comp3', runTaskFn })).rejects.toThrow(
+      /composite child q-comp3-p0.*no valid metadata\.quiz_gen/,
+    );
+
+    const rows = await testDb()
+      .select({ id: question.id, draftStatus: question.draft_status })
+      .from(question)
+      .where(inArray(question.id, ['q-comp3', 'q-comp3-p0']));
+    const statusById = new Map(rows.map((r) => [r.id, r.draftStatus]));
+    expect(statusById.get('q-comp3')).toBe('draft');
+    expect(statusById.get('q-comp3-p0')).toBe('draft');
+    expect(await fsrsRowCount('question', 'q-comp3-p0')).toBe(0);
+  });
+
+  it('blocks contradictory overall pass with copy_safety unknown without extra validators', async () => {
+    await seedKnowledge('k-copy-unknown');
+    await seedDraftQuestion({ id: 'q-copy-unknown', knowledgeId: 'k-copy-unknown' });
+    const runTaskFn = runTaskMock(verifyOutput({ overall: 'pass', copySafety: 'unknown' }));
+
+    const result = await runQuizVerify({
+      db: testDb(),
+      questionId: 'q-copy-unknown',
+      runTaskFn,
+    });
+
+    expect(result.status).toBe('needs_review');
+    expect(result.copy_safety_verdict).toBe('unknown');
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    const rows = await testDb()
+      .select({ draftStatus: question.draft_status })
+      .from(question)
+      .where(eq(question.id, 'q-copy-unknown'));
+    expect(rows[0]?.draftStatus).toBe('draft');
+    expect(await fsrsRowCount('knowledge', 'k-copy-unknown')).toBe(0);
+    const meta = await readMeta('q-copy-unknown');
+    expect((meta?.copy_safety as Record<string, unknown>)?.verdict).toBe('unknown');
+    expect((meta?.verification as Record<string, unknown>)?.status).toBe('needs_review');
   });
 
   // ---------- YUK-608 (异源 solve/verify) — env → quiz_verify → runSolveCheck → ctx.override ----------
@@ -614,6 +989,158 @@ describe('runQuizVerify', () => {
     expect(await countVerifyEvents('q2')).toBe(1);
   });
 
+  it('YUK-1045: fail suspends the contract group (verify_hold + withheld) with an append-only verification record', async () => {
+    await seedKnowledge('k1');
+    await seedDraftQuestion({ id: 'q1045', knowledgeId: 'k1' });
+    const runTaskFn = runTaskMock(
+      verifyOutput({ overall: 'fail', groundingVerdict: 'fail' }),
+      'tr_fail_1045',
+    );
+
+    const result = await runQuizVerify({ db: testDb(), questionId: 'q1045', runTaskFn });
+
+    expect(result.status).toBe('failed');
+    // 组未发布 ⇒ suspend 铸 suspended 首版（fail-closed），不动 legacy claim。
+    const [lifecycle] = await testDb()
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, 'q1045'));
+    expect(lifecycle.suspended).toBe(true);
+    expect(lifecycle.suspension_reason).toBe('verify_hold');
+    expect(lifecycle.scoring_admission_state).toBe('withheld');
+    expect(lifecycle.scoring_admission_withheld_reason).toBe('verification_failed');
+    expect(lifecycle.withdrawn).toBe(false); // 挂起 ≠ 撤回
+
+    // 新式核验记录（revision_id,digest,policy,generation）append-only 落一行。
+    const verRows = await testDb()
+      .select()
+      .from(question_admission_verification)
+      .where(
+        eq(
+          question_admission_verification.revision_id,
+          lifecycle.current_revision_id ?? 'missing-revision',
+        ),
+      );
+    expect(verRows).toHaveLength(1);
+    expect(verRows[0].policy_id).toBe('quiz_verify@1');
+    expect(verRows[0].outcome).toBe('failed');
+    expect(verRows[0].generation).toBe(1);
+
+    // 挂起维度事件（admission_updated 投影 suspended 目标值 + verification 指针）。
+    const publishEvents = await testDb()
+      .select()
+      .from(event)
+      .where(
+        and(eq(event.action, 'experimental:assessment_publish'), eq(event.subject_id, 'q1045')),
+      );
+    expect(publishEvents).toHaveLength(1);
+    const payload = publishEvents[0].payload as Record<string, unknown>;
+    expect(payload.suspended).toBe(true);
+    expect(payload.suspension_reason).toBe('verify_hold');
+    expect(payload.verification).toMatchObject({
+      policy_id: 'quiz_verify@1',
+      outcome: 'failed',
+    });
+  });
+
+  // YUK-1095 — promotedElsewhere 必须绑定【当前 admission generation】：一条历史
+  // success（旧 generation）不得把一次真正失败的重验当成“并发成功”跳过 —— 旧验证
+  // 不得冒充较新 admission 决定的并发副本。本投递已过幂等门后，在模型调用窗口内
+  // 落一条旧 generation 的 success 模拟该历史/并发副本。
+  it('YUK-1095: 旧 generation 的 success 不跳过重验失败（挂起照旧落地）', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    await seedDraftQuestion({ id: 'q_stale_succ', knowledgeId: 'k1' });
+    const staleSuccess = vi.fn(async (kind: string) => {
+      if (kind === 'QuizVerifyTask') {
+        await db.insert(event).values({
+          id: 'evt_stale_succ',
+          actor_kind: 'agent',
+          actor_ref: 'quiz_verify',
+          action: 'experimental:quiz_verify',
+          subject_kind: 'question',
+          subject_id: 'q_stale_succ',
+          outcome: 'success',
+          // 旧 generation（当前尚未发布 ⇒ 无 lifecycle，绝不应匹配）。
+          payload: { question_id: 'q_stale_succ', promoted: true, admission_generation: 7 },
+          created_at: new Date(),
+        });
+      }
+      return {
+        text: verifyOutput({ overall: 'fail', groundingVerdict: 'fail' }),
+        task_run_id: 'tr_stale_succ',
+      };
+    });
+
+    const result = await runQuizVerify({
+      db,
+      questionId: 'q_stale_succ',
+      runTaskFn: staleSuccess,
+    });
+
+    expect(result.status).toBe('failed');
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, 'q_stale_succ'));
+    expect(lifecycle.suspended).toBe(true);
+    expect(lifecycle.suspension_reason).toBe('verify_hold');
+  });
+
+  // YUK-1095 — 反向回归：generation 与当前值一致的 success（真正的并发副本）仍
+  // 必须跳过挂起写，并发保护不被收窄误伤。
+  it('YUK-1095: 当前 generation 的 success 仍跳过挂起（并发保护不误伤）', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    await seedDraftQuestion({ id: 'q_curr_succ', knowledgeId: 'k1' });
+    await db.insert(question_group_lifecycle).values({
+      group_id: 'q_curr_succ',
+      current_revision_id: null,
+      availability: 'container_only',
+      scoring_admission_state: 'withheld',
+      scoring_admission_withheld_reason: 'unverified_rules',
+      scoring_admission_generation: 5,
+      claim_policy: 'one_time',
+      suspended: false,
+      withdrawn: false,
+      created_at: new Date(),
+      updated_at: new Date(),
+    });
+    const concurrentSuccess = vi.fn(async (kind: string) => {
+      if (kind === 'QuizVerifyTask') {
+        await db.insert(event).values({
+          id: 'evt_curr_succ',
+          actor_kind: 'agent',
+          actor_ref: 'quiz_verify',
+          action: 'experimental:quiz_verify',
+          subject_kind: 'question',
+          subject_id: 'q_curr_succ',
+          outcome: 'success',
+          payload: { question_id: 'q_curr_succ', promoted: true, admission_generation: 5 },
+          created_at: new Date(),
+        });
+      }
+      return {
+        text: verifyOutput({ overall: 'fail', groundingVerdict: 'fail' }),
+        task_run_id: 'tr_curr_succ',
+      };
+    });
+
+    const result = await runQuizVerify({
+      db,
+      questionId: 'q_curr_succ',
+      runTaskFn: concurrentSuccess,
+    });
+
+    expect(result.status).toBe('failed');
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, 'q_curr_succ'));
+    expect(lifecycle.suspended).toBe(false);
+    expect(lifecycle.scoring_admission_generation).toBe(5);
+  });
+
   it('too_close (LLM verdict): leaves draft + needs_review + NO FSRS enroll', async () => {
     await seedKnowledge('k1');
     await seedDraftQuestion({ id: 'q3', knowledgeId: 'k1' });
@@ -636,6 +1163,42 @@ describe('runQuizVerify', () => {
     // U8 / AF §4 (U3 L-note) — a draft that did NOT enter the pool leaves a
     // coach-addressed question_pool_gap hint referencing its knowledge point(s).
     expect(await poolGapNotesForKnowledge('k1')).toBe(1);
+  });
+
+  it('retains committed verification when the downstream coach hint cannot be stored', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    await seedDraftQuestion({ id: 'q_hint_unavailable', knowledgeId: 'k1' });
+    await db.execute(sql`CREATE FUNCTION test_reject_pool_gap() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN
+        IF NEW.action = 'experimental:agent_note' THEN RAISE EXCEPTION 'hint store unavailable'; END IF;
+        RETURN NEW;
+      END $$`);
+    try {
+      await db.execute(sql`CREATE TRIGGER test_reject_pool_gap BEFORE INSERT ON event
+        FOR EACH ROW EXECUTE FUNCTION test_reject_pool_gap()`);
+      const result = await runQuizVerify({
+        db,
+        questionId: 'q_hint_unavailable',
+        runTaskFn: runTaskMock(
+          verifyOutput({ overall: 'pass', copySafety: 'too_close' }),
+          'tr_hint_failure',
+        ),
+      });
+      expect(result.status).toBe('needs_review');
+      expect(await countVerifyEvents('q_hint_unavailable')).toBe(1);
+      expect((await verifyEventsFor('q_hint_unavailable'))[0].payload).toMatchObject({
+        verification_status: 'needs_review',
+        promoted: false,
+      });
+      expect((await readMeta('q_hint_unavailable'))?.verification).toMatchObject({
+        status: 'needs_review',
+      });
+      expect(await poolGapNotesForKnowledge('k1')).toBe(0);
+    } finally {
+      await db.execute(sql`DROP TRIGGER IF EXISTS test_reject_pool_gap ON event`);
+      await db.execute(sql`DROP FUNCTION test_reject_pool_gap()`);
+    }
   });
 
   it('too_close (deterministic overlap): blocks promotion even when the LLM says original', async () => {
@@ -742,6 +1305,9 @@ describe('runQuizVerify', () => {
     // YUK-350 (L3, RL5) — the SAME transient-error event also carries the event-layer
     // failure_class='system_error' (merged with L1's overall='error' assertion above).
     expect(errorEv?.payload?.failure_class).toBe('system_error');
+    // QoL——首次调用在 SDK 层即抛（taskResult 为 null）：raw_output_head 留 null，
+    // 与「SDK 成功但 parse 抛」（q_syserr，raw head 有值）区开。
+    expect(errorEv?.payload?.raw_output_head).toBeNull();
     // the terminal success event carries the model verdict, NOT 'error', and (promote)
     // carries NO failure_class.
     const successEv = evs.find((e) => e.outcome === 'success');
@@ -782,6 +1348,9 @@ describe('runQuizVerify', () => {
     expect(evs[0].payload?.overall).toBe('error');
     // YUK-350 (L3, RL5) — event-layer system-error class.
     expect(evs[0].payload?.failure_class).toBe('system_error');
+    // QoL（2026-09-13）——error 事件带原始输出头：'not a json verdict at all' 全文
+    // （<500 字符原样），digest 之外可直读 refusal/空响应/散文输出类别。
+    expect(evs[0].payload?.raw_output_head).toBe('not a json verdict at all');
   });
 
   // YUK-350 (L3, RL5) — a model verdict that does NOT promote (real validation

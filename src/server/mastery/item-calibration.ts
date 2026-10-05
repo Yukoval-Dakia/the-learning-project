@@ -18,7 +18,8 @@ type DbLike = Db | Tx;
 export interface ApplyItemPriorInput {
   questionId: string;
   draft: ItemPriorDraftT;
-  /** provenance — 默认 'llm_prior'（ItemPriorTask）。fixed_anchor 慢热校准走别的 source。 */
+  /** provenance — 默认 'llm_prior'（ItemPriorTask）。'llm_prior_llasa' = YUK-376
+   *  LLaSA 学生模拟锚（ItemPriorLlasaTask opt-in）；fixed_anchor 慢热校准走别的 source。 */
   source?: string;
 }
 

@@ -24,7 +24,7 @@
  * per environment as needed. The code default stays OFF regardless.
  */
 
-import { parseFlag } from '@/core/env-flags';
+import { getConfig, getConfigFlag } from '@/core/config/store';
 
 /** Env var that gates the auto-enroll path. Default OFF (see file header). */
 export const AUTO_ENROLL_FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED';
@@ -92,7 +92,9 @@ export type FlagEnv = Record<string, string | undefined>;
  * data-writing action on the user's behalf and must be unmissably OFF by default.
  */
 export function autoEnrollEnabled(env: FlagEnv = process.env): boolean {
-  return parseFlag(env[AUTO_ENROLL_FLAG]);
+  // YUK-1007：pinned key——compose 强制 env 层 + code-default（DB 写面 409 拦下，
+  // 面板改动不会静默输给 deploy pin）。env 形参注入照旧。
+  return getConfigFlag(AUTO_ENROLL_FLAG, env);
 }
 
 /**
@@ -100,11 +102,11 @@ export function autoEnrollEnabled(env: FlagEnv = process.env): boolean {
  * `DEFAULT_AUTO_ENROLL_THRESHOLD` (0.85) when unset/invalid. Clamped to [0, 1].
  */
 export function autoEnrollThreshold(env: FlagEnv = process.env): number {
-  const raw = env[AUTO_ENROLL_THRESHOLD_FLAG];
-  if (typeof raw !== 'string' || raw.trim() === '') return DEFAULT_AUTO_ENROLL_THRESHOLD;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed)) return DEFAULT_AUTO_ENROLL_THRESHOLD;
-  return Math.min(1, Math.max(0, parsed));
+  // YUK-1007：pinned key——env 层 > code-default；DB 写面 409。registry envParse
+  // 只返有限值；非有限 → codeDefault，此处与旧 clamp 行为逐位一致。
+  const resolved = getConfig(AUTO_ENROLL_THRESHOLD_FLAG, env);
+  if (typeof resolved !== 'number') return DEFAULT_AUTO_ENROLL_THRESHOLD;
+  return Math.min(1, Math.max(0, resolved));
 }
 
 /**
@@ -114,7 +116,7 @@ export function autoEnrollThreshold(env: FlagEnv = process.env): number {
  * multiple paid calls, so an absent flag must preserve the hard no-op.
  */
 export function observeEnabled(env: FlagEnv = process.env): boolean {
-  return parseFlag(env[OBSERVE_FLAG]);
+  return getConfigFlag(OBSERVE_FLAG, env);
 }
 
 /** Whether an extraction should enqueue the paid auto-enroll/observe worker. */
@@ -130,5 +132,5 @@ export function autoEnrollJobEnabled(env: FlagEnv = process.env): boolean {
  * so absence of the var = today's text-draft behavior, byte-for-byte.
  */
 export function studentAnswerGradingEnabled(env: FlagEnv = process.env): boolean {
-  return parseFlag(env[STUDENT_ANSWER_GRADING_FLAG]);
+  return getConfigFlag(STUDENT_ANSWER_GRADING_FLAG, env);
 }

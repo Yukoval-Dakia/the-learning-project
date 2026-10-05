@@ -12,9 +12,15 @@
 //   2. LLM output shape  — `QuizGenOutput` (what the QuizGenTask agent emits;
 //      the Q3 handler maps it into questions + metadata).
 import { z } from 'zod';
+import { OBJECTIVE_ANSWER_KINDS } from './answer-class';
 import { AgentRef, QuestionKind, Rubric, RubricReferenceSolution } from './business';
 import { ProducerDifficultyEvidence } from './difficulty-evidence';
 import { defaultJudgeKindForQuestion } from './judge-routing';
+import { StructuredQuestion } from './structured_question';
+
+// Local derivation (judge-routing.ts keeps its own alias for the same reason):
+// the plan artifact below needs the kind union type without a runtime import.
+type QuestionKindT = z.infer<typeof QuestionKind>;
 
 // ---------- §2 persisted metadata.quiz_gen ----------
 
@@ -31,7 +37,7 @@ export const QuizGenSourceRef = z.object({
   title: z.string().min(1),
   snippet: z.string().optional(),
   used_for: QuizGenUsedFor,
-  // true when the agent pulled full content via tavily_extract (not just search snippet).
+  // true when the agent pulled full content via web_fetch_exa / tavily_extract (not just search snippet).
   extracted: z.boolean(),
 });
 export type QuizGenSourceRefT = z.infer<typeof QuizGenSourceRef>;
@@ -39,10 +45,11 @@ export type QuizGenSourceRefT = z.infer<typeof QuizGenSourceRef>;
 export const QuizGenSourcePack = z.object({
   query_plan: z.array(z.string().min(1)),
   searched_at: z.string().min(1),
-  // YUK-607 — closed_book 跑法根本不挂检索，'none' 是诚实自报；旧 z.literal('tavily')
+  // YUK-607 — closed_book 跑法根本不挂检索，'none' 是诚实自报；Tavily→Exa 换装后
+  // 'exa' 为新报告值，历史 'tavily' 行保留可 parse。
   // 会把整批输出打死（spike 2026-07-10 实测 RC 批阵亡第二因）。'.tool' 无生产消费方，
   // 纯 provenance 记录，放宽无下游影响。
-  tool: z.enum(['tavily', 'none']),
+  tool: z.enum(['tavily', 'exa', 'none']),
 });
 export type QuizGenSourcePackT = z.infer<typeof QuizGenSourcePack>;
 
@@ -227,6 +234,15 @@ export const QuizGenQuestion = z
     // §0 self-declared: the URLs (subset of the run's source_pack) that grounded
     // or inspired THIS question.
     source_refs: z.array(QuizGenSourceRef),
+    // YUK-1011 — composite (篇) carrier. Present ONLY on a composite_parent_only
+    // run: a role='stem' node whose sub_questions (role='sub', ≥2 enforced by the
+    // handler gate) are the independently judgeable 小题. The handler normalizes
+    // the tree via normalizeAuthorStructured (server-side id regeneration +
+    // stem/leaf validation), persists it on the parent row's `structured`
+    // column, and materializes each sub as a question_part child row
+    // (parent_question_id + part_index). Unpinned runs must NOT emit it — the
+    // handler rejects the batch fail-closed either way.
+    structured: StructuredQuestion.optional(),
   })
   .superRefine((question, ctx) => {
     const judgeKind = defaultJudgeKindForQuestion(question);
@@ -296,6 +312,71 @@ export const QuizGenOutput = z
   });
 export type QuizGenOutputT = z.infer<typeof QuizGenOutput>;
 
+// ---------- ADR-0038 决定#2 — plan-then-generate Phase-1 plan artifact ----------
+//
+// docs/adr/0038-unified-verify-contract-plan-then-generate.md 决定#2 first bullet:
+// 出题分两段——先产出题计划（要考哪个知识点、什么题型、客观题的标准答案锚点），
+// 再据计划生成题面。The plan is a MACHINE-CHECKABLE artifact (not prompt-internal
+// prose): the Q3 handler validates it deterministically (schema + real
+// knowledge-point existence read + kind/anchor sanity) between the two LLM calls,
+// regenerates it on rejection (bounded), or fails closed — a rejected plan must
+// never proceed to generation. Non-objective kinds still get plans (knowledge
+// point + kind selection); the answer anchor is REQUIRED only where applicable.
+
+// 客观题 set per ADR-0038 决定#2 second bullet: fill_blank / choice / true_false —
+// answers that can be deterministically compared against the material.
+// `translation` is NOT here (its answer-class is semantic — subjective).
+// YUK-391 (kind Step 4)：不再手维护集合——由 answer-class 单一真相派生
+// （OBJECTIVE_ANSWER_KINDS = class 在任何 keyword 形态下都落 exact|keyword 的
+// canonical kinds，core/schema/answer-class.ts；PROSE_KINDS 时代的注释语义不变）。
+// YUK-386: membership is over the KNOWN label ids only — a free-form custom
+// label is never a member (it classifies semantic by default), so the
+// answer_anchor requirement fires exactly for the recognised objective labels.
+export const QUIZ_PLAN_OBJECTIVE_KINDS: ReadonlySet<QuestionKindT> =
+  OBJECTIVE_ANSWER_KINDS as ReadonlySet<QuestionKindT>;
+
+export const QuizGenPlanItem = z
+  .object({
+    // which knowledge point the planned question tests — must be a REAL,
+    // unarchived node (the handler's gate reads the knowledge table).
+    knowledge_id: z.string().min(1),
+    // what kind of question face will be generated — free-form display label
+    // (YUK-386); the KNOWN vocabulary is the conventional suggestion set.
+    kind: QuestionKind,
+    difficulty: z.number().int().min(1).max(5),
+    // 客观题标准答案锚点 — the exact intended correct answer. REQUIRED for
+    // objective kinds (deterministic-comparable); optional elsewhere. The
+    // generation phase must realize the question so this anchor grades correct.
+    answer_anchor: z.string().trim().min(1).optional(),
+    // YUK-1011 — this item plans a COMPOSITE (篇) question: one stem + ≥2
+    // sub_questions in the generation output's `structured` field. Only legal
+    // when the run pins composite_parent_only (the plan gate rejects it
+    // otherwise). Composite items skip answer_anchor — answers live per-sub.
+    composite: z.boolean().optional(),
+  })
+  .superRefine((item, ctx) => {
+    if (
+      QUIZ_PLAN_OBJECTIVE_KINDS.has(item.kind) &&
+      item.composite !== true &&
+      !item.answer_anchor
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['answer_anchor'],
+        message: `objective kind '${item.kind}' requires an answer_anchor (ADR-0038 决定#2)`,
+      });
+    }
+  });
+export type QuizGenPlanItemT = z.infer<typeof QuizGenPlanItem>;
+
+export const QuizGenPlan = z.object({
+  items: z.array(QuizGenPlanItem).min(1).max(10),
+  // The generation method the plan targets; the generation phase realizes it
+  // (the existing pinned-method assertion still guards the produced output).
+  generation_method: QuizGenGenerationMethod,
+});
+export type QuizGenPlanT = z.infer<typeof QuizGenPlan>;
+
 // ---------- §5 Q5 QuizVerifyTask LLM output ----------
 //
 // Two-axis verification (mirrors VariantVerificationResult but adds the
@@ -331,7 +412,25 @@ export type QuizVerifyCopySafetyT = z.infer<typeof QuizVerifyCopySafety>;
 
 export const QuizVerificationResult = z.object({
   // §5 three checks.
-  grounding: QuizVerifyCheck, // fact / grounding vs the self-reported source_refs
+  grounding: QuizVerifyCheck.extend({
+    // Required by learner-visible assessment, optional for existing pool consumers.
+    // YUK-993 — 'executed_remote_evidence': the grounding rests on THIS turn's
+    // actually executed remote-MCP calls (input.remote_tool_evidence) that the
+    // judge independently re-read — execution evidence, not a self-declaration.
+    // The learner-visible gate admits it only when the forwarded packet is
+    // non-empty; the pool verify path carries no such field and stays
+    // fail-closed (its gate never reads `basis` at all).
+    basis: z
+      .enum([
+        'closed_world_givens',
+        'discipline_knowledge',
+        'source_refs',
+        'material',
+        'executed_remote_evidence',
+        'insufficient',
+      ])
+      .optional(),
+  }),
   copy_safety: QuizVerifyCopySafety, // plagiarism / originality vs source snippets
   knowledge_hit: QuizVerifyCheck, // does the question actually test its knowledge_ids
   // YUK-224 (slice 3, tier 3 'material_grounded') — material-grounding verdict axis.

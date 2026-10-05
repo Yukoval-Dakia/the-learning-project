@@ -1,14 +1,15 @@
+import { describe, expect, it } from 'vitest';
 import type {
   SDKTaskNotificationMessage,
   SDKTaskProgressMessage,
   SDKTaskStartedMessage,
   SDKTaskUpdatedMessage,
-} from '@anthropic-ai/claude-agent-sdk';
-import { describe, expect, it } from 'vitest';
+} from '@/server/ai/sdk-types';
 
 import {
   COPILOT_SUBAGENT_ENABLED_ENV,
   COPILOT_SUBAGENT_NAME,
+  buildCopilotNativeResearchConfig,
   buildCopilotSubagents,
   createCopilotSubtaskProjector,
   isCopilotSubagentEnabled,
@@ -24,16 +25,18 @@ describe('buildCopilotSubagents', () => {
       'mcp__loom__get_question_context',
       'mcp__loom__get_attempt_context',
       'mcp__loom__expand_knowledge_subgraph',
-      'mcp__loom__run_task',
+      'mcp__loom__generate_goal_outline',
+      'mcp__loom__generate_question_candidate',
       'mcp__loom__author_question',
       'mcp__loom__propose_knowledge_mutation',
       'mcp__loom__author_artifact',
-      'mcp__tavily__tavily_search',
-      'mcp__tavily__tavily_extract',
+      'mcp__exa__web_search_exa',
+      'mcp__exa__web_fetch_exa',
       'Task',
+      'Agent',
     ];
 
-    const agents = buildCopilotSubagents({ parentAllowedTools });
+    const agents = buildCopilotSubagents({ parentAllowedTools, parentMaxTurns: 6 });
     expect(Object.keys(agents)).toEqual([COPILOT_SUBAGENT_NAME]);
 
     const researcher = agents[COPILOT_SUBAGENT_NAME];
@@ -44,22 +47,31 @@ describe('buildCopilotSubagents', () => {
       'mcp__loom__get_question_context',
       'mcp__loom__get_attempt_context',
       'mcp__loom__expand_knowledge_subgraph',
-      'mcp__tavily__tavily_search',
-      'mcp__tavily__tavily_extract',
+      'mcp__exa__web_search_exa',
+      'mcp__exa__web_fetch_exa',
     ]);
     expect(researcher.tools?.every((tool) => parentAllowedTools.includes(tool))).toBe(true);
     expect(researcher.tools).not.toContain('Task');
-    expect(researcher.tools).not.toContain('mcp__loom__run_task');
+    expect(researcher.tools).not.toContain('Agent');
+    expect(researcher.tools).not.toContain('mcp__loom__generate_goal_outline');
+    expect(researcher.tools).not.toContain('mcp__loom__generate_question_candidate');
     expect(researcher.disallowedTools).toEqual(
       expect.arrayContaining([
         'Task',
-        'mcp__loom__run_task',
+        'Agent',
+        'mcp__loom__generate_goal_outline',
+        'mcp__loom__generate_question_candidate',
         'mcp__loom__author_question',
         'mcp__loom__propose_knowledge_mutation',
         'mcp__loom__author_artifact',
       ]),
     );
-    expect(researcher.mcpServers).toEqual(['loom', 'tavily']);
+    // Post-P4: no mcpServers field — wire names live in `tools`, and the
+    // declared `background:false` keeps nested spawns synchronous (depth-one
+    // reduction makes real background children structurally impossible).
+    expect(researcher.tools?.some((t) => t.startsWith('mcp__exa__'))).toBe(true);
+    expect(researcher.tools?.some((t) => t.startsWith('mcp__loom__'))).toBe(true);
+    expect(researcher.maxTurns).toBe(6);
     expect(researcher.background).toBe(false);
     expect(researcher.prompt).toContain('只把结论交还给 Copilot');
     expect(researcher.prompt).toContain('不得调用 Task');
@@ -69,11 +81,64 @@ describe('buildCopilotSubagents', () => {
   it('does not invent tools or MCP servers when the parent has only a narrow local read surface', () => {
     const agents = buildCopilotSubagents({
       parentAllowedTools: ['mcp__loom__query_events', 'mcp__loom__propose_learning_item_archive'],
+      parentMaxTurns: 4,
     });
     const researcher = agents[COPILOT_SUBAGENT_NAME];
 
     expect(researcher.tools).toEqual(['mcp__loom__query_events']);
-    expect(researcher.mcpServers).toEqual(['loom']);
+  });
+});
+
+describe('buildCopilotNativeResearchConfig', () => {
+  it('gives every new root one native Task path while keeping generation and writes root-only', () => {
+    const config = buildCopilotNativeResearchConfig({
+      baseAllowedTools: [
+        'mcp__loom__query_events',
+        'mcp__loom__search_memory_facts',
+        'mcp__loom__generate_goal_outline',
+        'mcp__loom__generate_question_candidate',
+        'mcp__loom__propose_knowledge_mutation',
+        'mcp__private__finalize_reply',
+      ],
+      enabled: true,
+      parentMaxTurns: 24,
+    });
+
+    expect(config.allowedTools).toEqual([
+      'mcp__loom__query_events',
+      'mcp__loom__search_memory_facts',
+      'mcp__loom__generate_goal_outline',
+      'mcp__loom__generate_question_candidate',
+      'mcp__loom__propose_knowledge_mutation',
+      'mcp__private__finalize_reply',
+      'Task',
+    ]);
+    const researcher = config.piSpawnContract?.piAgents[COPILOT_SUBAGENT_NAME];
+    expect(researcher?.tools).toEqual([
+      'mcp__loom__query_events',
+      'mcp__loom__search_memory_facts',
+    ]);
+    expect(researcher?.disallowedTools).toEqual(
+      expect.arrayContaining([
+        'Task',
+        'Agent',
+        'mcp__loom__generate_goal_outline',
+        'mcp__loom__generate_question_candidate',
+        'mcp__loom__propose_knowledge_mutation',
+        'mcp__private__finalize_reply',
+      ]),
+    );
+    expect(researcher?.maxTurns).toBe(24);
+  });
+
+  it('keeps the root read surface while the kill switch removes Task options', () => {
+    const config = buildCopilotNativeResearchConfig({
+      baseAllowedTools: ['mcp__loom__query_events', 'Task', 'Agent'],
+      enabled: false,
+      parentMaxTurns: 6,
+    });
+    expect(config.allowedTools).toEqual(['mcp__loom__query_events']);
+    expect(config.piSpawnContract).toBeUndefined();
   });
 });
 

@@ -222,10 +222,10 @@ describe('yuwen fixture e2e smoke', () => {
     expect(result.score).toBe(0);
   });
 
-  // AC-3: reading_comprehension → semantic via the short_answer fallback (F-2).
-  // reading_comprehension is NOT in QuestionKind enum → safeParse fails →
-  // 'short_answer' (:141) → semantic (:155-156). This proves the fallback path.
-  it('answering a reading_comprehension fixture → semantic route (proves short_answer fallback)', async () => {
+  // AC-3: reading_comprehension → semantic via the free-form label default (F-2).
+  // reading_comprehension is a profile-vocab label outside the KNOWN kind ids →
+  // route-resolve classifies the raw label → semantic (YUK-386: no enum gate).
+  it('answering a reading_comprehension fixture → semantic route (free-form label default)', async () => {
     const row = await getRow('yuwen-read-001');
     expect(row.choices_md).toBeNull();
     const { route, result } = await judgeAnswer({
@@ -283,13 +283,13 @@ describe('yuwen fixture e2e smoke', () => {
   // Route coverage: assert every fixture resolves to its expected route per kind.
   it('every fixture routes to its expected route per kind', async () => {
     const expectedRoute = (item: YuwenFixtureItem): string => {
-      if (item.kind === 'single_choice') return 'exact';
+      if (item.kind === 'choice') return 'exact';
       if (item.kind === 'fill_blank') return 'keyword';
-      return 'semantic'; // translation + reading_comprehension
+      return 'semantic'; // translation + reading
     };
     for (const item of loadYuwenFixtures()) {
       const row = await getRow(item.ref);
-      const answer = item.kind === 'single_choice' ? (item.reference_md ?? '') : '占位作答';
+      const answer = item.kind === 'choice' ? (item.reference_md ?? '') : '占位作答';
       const { route } = await judgeAnswer({
         db,
         question: toJudgeRow(row),

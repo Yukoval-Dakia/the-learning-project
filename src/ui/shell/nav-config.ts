@@ -36,6 +36,7 @@ const SURFACE_ICONS: Record<string, LoomIconName> = {
   knowledge: 'knowledge',
   'agent-notes': 'eye',
   coach: 'teach',
+  'admin-config': 'settings',
   'admin-runs': 'settings',
   'admin-cost': 'hash',
   'admin-failures': 'alert',

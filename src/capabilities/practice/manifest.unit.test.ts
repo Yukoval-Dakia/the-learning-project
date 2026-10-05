@@ -1,13 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { generateOpenApiDocument } from '@/kernel/openapi';
+import {
+  QUIZ_GEN_MANUAL_COUNT_CAP,
+  QUIZ_GEN_MANUAL_DEFAULT_COUNT,
+} from './api/quiz-gen-trigger-contracts';
 import { practiceCapability } from './manifest';
 
 describe('practice manifest jobs', () => {
   it('owns sourcing and generation with exact queue and worker metadata', () => {
     const handlers = practiceCapability.jobs?.handlers ?? [];
+    // YUK-986 (Supply-Agent/1) — jyeoo_fetch queue job 退休（→ DomainTool seam）；
+    // jyeoo_staged_asset_reap 接手孤儿资产回收（fast 层 cron，无 LLM）。
+    // YUK-988 (Supply-Agent/3) — sourcing 单体退休，supply_execute（确定性供给执行
+    // job，agent 队列同档）接替。
     const expected = {
-      sourcing: { queue: 'agent', includeMetadata: undefined },
-      jyeoo_fetch: { queue: 'agent', includeMetadata: undefined },
+      supply_execute: { queue: 'agent', includeMetadata: undefined },
+      jyeoo_staged_asset_reap: { queue: 'fast', includeMetadata: undefined },
       quiz_gen: { queue: 'agent', includeMetadata: true },
     } as const;
 
@@ -42,6 +50,29 @@ describe('practice manifest jobs', () => {
         undefined,
       );
       expect(job?.schedule, name).toBeUndefined();
+    }
+  });
+
+  // YUK-605 ③ characterization — the four quiz handlers (sourcing / quiz_gen /
+  // quiz_verify / source_verify) are registered ONLY via this manifest (the central
+  // 渐缩簿 handlers.ts carries no domain jobs anymore). The retired central lines
+  // (pre YUK-867 #1195 / YUK-868 #1200) mounted each with createJobQueue(EXPIRE_AGENT)
+  // + boss.work(name, { pollingIntervalSeconds: 2, batchSize: 1 }); these decls keep
+  // queue 'agent' and leave polling/batch undeclared, which the registrar expands to
+  // the identical 2s/1 recipe — the parity this test pins so the migration cannot
+  // silently drift.
+  it('mounts the four agent-queue handlers with the retired central boss.work recipe (YUK-605 ③; YUK-988：sourcing → supply_execute 换代不换配方)', () => {
+    const handlers = practiceCapability.jobs?.handlers ?? [];
+    for (const name of ['supply_execute', 'quiz_gen', 'quiz_verify', 'source_verify']) {
+      const job = handlers.find((candidate) => candidate.name === name);
+      expect(job, name).toBeTruthy();
+      expect(job?.queue, name).toBe('agent');
+      // Undeclared = registrar default {2s, batchSize 1} = the exact opts the central
+      // registrations passed explicitly to boss.work.
+      expect(job?.pollingIntervalSeconds, name).toBeUndefined();
+      expect(job?.batchSize, name).toBeUndefined();
+      expect(job?.schedule, name).toBeUndefined();
+      expect(typeof job?.load, name).toBe('function');
     }
   });
 
@@ -113,6 +144,20 @@ describe('practice manifest jobs', () => {
         (other.dependsOn ?? []).map((d) => (typeof d === 'string' ? d : d.job)),
         other.name,
       ).not.toContain('answer_class_backfill');
+    }
+  });
+
+  // YUK-386 — kind_cleanup_backfill was deleted with the enum collapse (kind is
+  // a free-form label; nothing left to canonicalize). Pin the absence so the
+  // job cannot silently come back.
+  it('does NOT register kind_cleanup_backfill (retired under YUK-386)', () => {
+    const handlers = practiceCapability.jobs?.handlers ?? [];
+    expect(handlers.find((j) => j.name === 'kind_cleanup_backfill')).toBeUndefined();
+    for (const other of handlers) {
+      expect(
+        (other.dependsOn ?? []).map((d) => (typeof d === 'string' ? d : d.job)),
+        other.name,
+      ).not.toContain('kind_cleanup_backfill');
     }
   });
 
@@ -366,6 +411,31 @@ describe('practice manifest API resources', () => {
     expect(document.paths['/api/practice/stream/items/{id}'].patch.parameters).toEqual(
       expect.arrayContaining([expect.objectContaining({ name: 'id', in: 'path', required: true })]),
     );
+  });
+
+  // YUK-605 ① + YUK-555 — manual quiz-gen trigger declaration: contract-ful
+  // route (operationId + 202 success + 502 enqueue-failure) whose body bounds
+  // `count` by the hard-cap constant from the contracts module.
+  it('publishes the manual quiz-gen trigger with 202 evidence and hard-capped count (YUK-605 ①)', () => {
+    const routes = practiceCapability.api?.routes ?? [];
+    const route = routes.find((r) => r.method === 'POST' && r.path === '/api/questions/quiz-gen');
+    expect(route).toBeTruthy();
+    expect(route?.operationId).toBe('triggerQuizGen');
+    expect(route?.successStatus).toBe(202);
+    expect(route?.responses && 202 in route.responses).toBe(true);
+    expect(route?.responses && 502 in route.responses).toBe(true);
+
+    const document = generateOpenApiDocument([practiceCapability]) as {
+      paths: Record<string, Record<string, Record<string, unknown>>>;
+    };
+    const operation = document.paths['/api/questions/quiz-gen'].post;
+    expect(operation.requestBody).toMatchObject({ required: true });
+    const bodySchema = (operation.requestBody as { content: Record<string, { schema: object }> })
+      .content['application/json'].schema as {
+      properties: Record<string, { maximum?: number; default?: number }>;
+    };
+    expect(bodySchema.properties.count?.maximum).toBe(QUIZ_GEN_MANUAL_COUNT_CAP);
+    expect(bodySchema.properties.count?.default).toBe(QUIZ_GEN_MANUAL_DEFAULT_COUNT);
   });
 
   it('publishes review planning, reporting and calibration contracts', () => {

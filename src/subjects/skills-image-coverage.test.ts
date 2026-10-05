@@ -1,7 +1,7 @@
 // YUK-610 — Dockerfile 运行时镜像必须携带每个 on-disk skill 包。
 //
-// populateIsolatedSkills 在运行时对 src/subjects/<dir>/skills 做 readdirSync
-// （不经 import，不进 bundle），所以 tsc/esbuild/vitest 常规车道都看不见
+// pi skill-doc resolvers 在运行时对 src/subjects/<dir>/skills 做 readdirSync/
+// readFile（不经 import，不进 bundle），所以 tsc/esbuild/vitest 常规车道都看不见
 // 「目录存在于仓库、缺席于镜像」这类漏拷；且 resolver 的降级链设计是
 // 「缺目录 → 不传 skills → 散文/promptFragments 兜底」——漏拷在生产是
 // 静默降级，零报错零日志。2026-07-10 实况：_shared/skills（copilot +

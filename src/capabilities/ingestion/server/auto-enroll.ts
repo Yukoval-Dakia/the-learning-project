@@ -10,6 +10,7 @@ import {
   runColdStartBridge,
 } from '@/capabilities/ingestion/server/cold-start-bridge';
 import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
+import { createKnowledgeNamer } from '@/capabilities/ingestion/server/knowledge-namer';
 import {
   MistakeEnrollTaskError,
   type RunMistakeEnrollTaskParams,
@@ -79,8 +80,9 @@ import type { JudgeQuestionRow } from '@/kernel/judge';
 import {
   type MultimodalDirectImageFetchFn,
   type MultimodalDirectRunTaskFn,
-  runMultimodalDirectJudge,
+  evaluateAttempt,
 } from '@/kernel/judge';
+import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-overlay';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import {
@@ -90,6 +92,7 @@ import {
 import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { getKnownSubjects, resolveSubjectProfile } from '@/subjects/profile';
 
 export type AutoEnrollSkipReason = 'flag_off' | 'session_not_found' | 'wrong_status';
@@ -171,7 +174,7 @@ export interface RunAutoEnrollParams {
    * (embedding match-or-propose). DB tests inject a stub so the embedding/naming model is not
    * called (mirrors tag-knowledge.db.test.ts's embedFn/nameKcFn stubs at one level up): the stub
    * returns the attributed ids directly, and a throw routes the block to review (tagging outage).
-   * Receives the same deps shape tagKnowledge does (db / runTaskFn / ctx / batchCache) plus the
+   * Receives the same deps shape tagKnowledge does (db / nameKcFn / batchCache) plus the
    * input, so a real-default test can still seed embeddings + stub only the naming model.
    */
   tagKnowledgeFn?: typeof tagKnowledge;
@@ -193,11 +196,9 @@ export interface RunAutoEnrollParams {
    */
   runBlockAssemblyFn?: BlockAssemblyRunTaskFn;
   /**
-   * P3 (YUK-489) — model seam for the unified `tagKnowledge` step's NAMING invoker. tagKnowledge's
-   * default `nameKcFn` (makeDefaultNameKc → runColdStartBridge) names a PROPOSE child KC via one
-   * LLM pass; this fn is threaded as tagKnowledge's `runTaskFn` so DB tests stub the model without
-   * a real call. (The name is historical — the cold-start bridge module is now tagKnowledge's
-   * naming engine, not a direct caller here.) Mirrors image-candidate-accept's `runColdStartBridgeFn`.
+   * Model seam for the ingestion-owned naming adapter supplied to `tagKnowledge`.
+   * One ColdStartBridge call names a PROPOSE child; tests can replace that call while
+   * retaining Knowledge's real match/propose behavior. Existing bridge results can be reused.
    */
   runColdStartBridgeFn?: ColdStartBridgeRunTaskFn;
   /**
@@ -513,13 +514,13 @@ export async function runAutoEnrollForSession(
           {
             db: params.db,
             providerAttempt: params.providerAttempt,
-            // Thread the bridge runTask seam through tagKnowledge's default naming invoker
-            // (makeDefaultNameKc → runColdStartBridge) so DB tests stub the model exactly as
-            // before. `ctx` defaults to { db } when the caller omits one.
-            runTaskFn: params.runColdStartBridgeFn,
-            ctx: params.ctx ?? { db: params.db },
-            // When the subject was bridge-classified (no subjectId), reuse the already-named KC.
-            ...(bridgeNameKc ? { nameKcFn: bridgeNameKc } : {}),
+            nameKcFn:
+              bridgeNameKc ??
+              createKnowledgeNamer({
+                db: params.db,
+                runTaskFn: params.runColdStartBridgeFn,
+                ctx: params.ctx ?? { db: params.db },
+              }),
             // D5 (YUK-489): ONE per-run cache shared across every block in this session, so
             // sibling questions proposing the same KC name reuse the first-minted id instead of
             // minting duplicates. The loop awaits each block sequentially (the cache's contract).
@@ -590,9 +591,12 @@ export async function runAutoEnrollForSession(
     let mistakeDraft: MistakeEnrollOutputT | undefined;
     const studentAnswer = block.wrong_answer_md?.trim() ?? '';
     if (verdict.route === 'auto' && studentAnswer.length > 0) {
-      const profile = await resolveSubjectProfileForKnowledgeIds(
+      // YUK-1016 — enroll 词表 = 声明 ∪ overlay.active：owner accept 的 ov_
+      // 类目必须出现在 allowedCauseIds 且 clamp 不掉（否则收编类目 enroll
+      // 表达不了，全被挤回 'other'）。
+      const profile = await withActiveCauseCategoryOverlays(
         params.db,
-        verdict.prefilled.knowledge_ids,
+        await resolveSubjectProfileForKnowledgeIds(params.db, verdict.prefilled.knowledge_ids),
       );
       try {
         mistakeDraft = await runMistakeEnrollFn({
@@ -861,6 +865,16 @@ export async function runAutoEnrollForSession(
         }),
       );
 
+      // YUK-1043（复审裁决：可行写口即刻收敛）—— OCR/VLM 收录 INSERT 同事务
+      // 铸首版 revision。原始提取/学生作答分离：reference 仅在 OCR 提取到答案
+      // 时存在（缺 ⇒ conversion_issue ⇒ withheld）；学生作答走 attempt 事件，
+      // 绝不进答案键。
+      await publishQuestionGroupFromRow(tx, {
+        rootId: questionId,
+        actorRef: 'auto-enroll:question',
+        now,
+      });
+
       // SAME enrollment owner as the human path — only generatedBy + the (drafted)
       // outcome/answer differ. enrollCapturedBlock routes all 4 outcomes.
       const enroll = await enrollCapturedBlock(tx, {
@@ -880,6 +894,12 @@ export async function runAutoEnrollForSession(
       });
 
       // ---- YUK-482 cut ④ — mastery (θ̂) for the student-graded attempt. ----
+      // YUK-1054 (§9 历史分歧 · 显式保留) —「auto-enroll 独立 θ̂ 写」面：本路径
+      // 直接写 mastery_state（updateThetaForAttempt / recordFamilyObservationForAttempt），
+      // 不经 contract-lane settle.ts 的 family_fold effect —— 它不产生 evaluation /
+      // settlement / priorEffectiveId 链。YUK-1054 为读侧 ticket（不改写路径），
+      // 该分歧按 §9 显式保留于此注释锚点；读侧经 attempt 事件照常 dual-track 解析
+      // （attempt.payload.judge 是 embedded-grade 轨，与 solve-session 同）。
       // enrollCapturedBlock writes the attempt + record but does NOT touch θ̂ (the
       // live paper path does it separately at paper-submit.ts:640). Add it here ONLY
       // for the student-graded path, keyed on the question's primary KC (the
@@ -1249,17 +1269,18 @@ function gradeOutcomeFromVerdict(coarse: CoarseOutcomeT): 'success' | 'partial' 
 /**
  * YUK-482 cut ④ — production student-answer grader.
  *
- * CRITICAL (independent review) — calls `runMultimodalDirectJudge` DIRECTLY,
- * bypassing the JudgeInvoker / `resolveQuestionJudgeRoute`. The resolver only
- * picks `multimodal_direct` when the question carries prompt figures AND the
- * subject profile lists `multimodal_direct` in `preferredRoutes` (today only
- * `physics`); a yuwen/math/short_answer block would resolve to `semantic`, which
- * ignores `student_image_refs` and judges an empty `answer_md` → the handwriting
- * pixels are never looked at. Cut ④ grades PER-QUESTION (no part-narrowing — that
- * is YUK-485, out of scope), so the invoker's `part_ref` narrowing is not needed
- * and the direct call is both correct and simpler. The call still honors the
- * global / per-judge provider selection via `runMultimodalDirectJudge`'s own
- * `runTask` (cut ③ model routing untouched).
+ * YUK-1047 — now routed through `evaluateAttempt` (the single authoritative-
+ * grading funnel, entry='ingestion_grading'). The grade path deliberately
+ * forces `judge_kind_override='multimodal_direct'`: the resolver only picks
+ * `multimodal_direct` when the question carries prompt figures AND the subject
+ * profile lists `multimodal_direct` in `preferredRoutes` (today only
+ * `physics`); a yuwen/math/short_answer block would resolve to `semantic`,
+ * which ignores `student_image_refs` and judges an empty `answer_md` → the
+ * handwriting pixels are never looked at. The override preserves the original
+ * direct-call dispatch verbatim (the invoker's `multimodal_direct` dispatch
+ * invokes the same `runMultimodalDirectJudge` runner) while adding the
+ * funnel's telemetry + provenance capture. Cut ④ grades PER-QUESTION (no
+ * part-narrowing — that is YUK-485, out of scope), so no `part_ref` is passed.
  *
  * `answer_md:''` + whole-page `student_image_refs` (= block.source_asset_ids) runs
  * the photo-only image path (handwriting stays pixels — never OCR-transcribed).
@@ -1281,17 +1302,22 @@ async function defaultGradeStudentAnswer(params: {
   const subjectProfile = params.subjectId
     ? resolveSubjectProfile(params.subjectId)
     : await resolveSubjectProfileForKnowledgeIds(params.db, params.question.knowledge_ids ?? []);
-  const result = await runMultimodalDirectJudge({
-    db: params.db,
-    question: params.question,
-    answer_md: '',
-    student_image_refs: params.studentImageRefs,
-    subjectProfile,
-    runTaskFn: params.runTaskFn,
-    imageFetchFn: params.imageFetchFn,
+  const invoked = await evaluateAttempt({
+    entry: 'ingestion_grading',
+    legacy: {
+      db: params.db,
+      // Forced vision route — see the doc comment above for why the resolver
+      // must not choose for this path (the pixels are the entire answer).
+      question: { ...params.question, judge_kind_override: 'multimodal_direct' },
+      answer_md: '',
+      student_image_refs: params.studentImageRefs,
+      subjectProfile,
+      runTaskFn: params.runTaskFn,
+      imageFetchFn: params.imageFetchFn,
+    },
   });
   return {
-    coarse_outcome: result.coarse_outcome,
-    confidence: result.confidence,
+    coarse_outcome: invoked.result.coarse_outcome,
+    confidence: invoked.result.confidence,
   };
 }

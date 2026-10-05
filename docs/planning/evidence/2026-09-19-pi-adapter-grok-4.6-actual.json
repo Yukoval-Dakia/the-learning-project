@@ -1,0 +1,30 @@
+{
+  "captured_at": "2026-09-19T06:27:29.212Z",
+  "code_revision": "b015f4884988433960f7f14002848186c3869de2",
+  "ticket": "YUK-1014",
+  "lane": {
+    "adapter": "pi",
+    "provider": "opencode-go",
+    "model": "grok-4.6",
+    "task_kind": "AttributionTask",
+    "session_header": "x-opencode-session=<ai_task_run.id>"
+  },
+  "task_run_id": "toumilrkxa6vfdqxy4a20toy",
+  "status": "success",
+  "finish_reason": "end_turn",
+  "usage": {
+    "inputTokens": 1146,
+    "outputTokens": 3048,
+    "thinkingBlocks": 1,
+    "thinkingCharacters": 828
+  },
+  "cost": {
+    "basis": "estimated",
+    "amount_usd": 0.020388,
+    "ref": "pi-catalog:opencode-go/grok-4.6"
+  },
+  "input_digest": "sha256:643e12da2581603cbf3d455b7c05bb41e4a526abf5234613464df315153a0f12",
+  "output_digest": "sha256:9f4b2add753c24dec92483be4dad3e5245bcc79b5fa69131c5c2b1f845036e40",
+  "output_excerpt": "{\"primary_category\": \"carelessness\", \"secondary_categories\": [\"method\"], \"analysis_md\": \"题面为解方程 x^2 - 5x + 6 = 0，参考答案为 x=2 或 x=3（因式分解 (x-2)(x-3)=0，或由求根公式 [5±1]/2 得到）。用户错答为 x=2 或 x=4，其中一个根正确、另一个写成 4。2 与 4 的和为 6、积为 8，与系数（和为 5、积为 6）不匹配，更像是找因数或套用韦达/求根公式时把 5 与 6 弄混、或漏除以 2 的局部计算失误，而不是完全不会解二次方程。材料未提供解题过程、提示后是否改正或跨题复现，故不能完全排除方法选择不当（错选因数对），但现有证据更支持非知识性的笔误/计算遗漏。\", \"confidence\": 0.62, \"meta_cause\": \"execution_slip\", \"meta_cause_secondary\": \"rule_misapplication\", \"metacog_flag\": null, \"bloom_level\": \"apply\", \"self_corrected_on_hint\": null, \"recurred_cross_item\": null}",
+  "provenance": "PiRunnerMessage frames carry source=pi; terminal evidence normalized from pi agentLoop agent_end + final assistant usage (catalog-estimated cost — never contractual per design §6 R1)."
+}

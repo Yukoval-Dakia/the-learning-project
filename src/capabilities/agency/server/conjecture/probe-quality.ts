@@ -7,17 +7,12 @@ import {
   ConjectureProbeReview,
   evaluateConjectureProbePackageStructure,
 } from '@/core/schema/business';
-import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import {
   type TaskTextResult,
   type TaskTextRunFn,
   sumAllKnownCostUsd,
 } from '@/server/ai/provenance';
 import type { SubjectProfile } from '@/subjects/profile';
-import {
-  ConjectureProbeAuthorOutputSchema,
-  ConjectureProbeReviewOutputSchema,
-} from '../../tasks/conjecture-probe';
 import type { LoadedConjectureEvidenceImage } from './evidence';
 import { parseTaskStructuredOutput } from './structured-output';
 
@@ -119,7 +114,6 @@ export async function prepareConjectureProbePair(
         ),
         {
           override: { provider: 'anthropic-sub' as const },
-          outputFormat: zodToJsonSchemaOutputFormat(ConjectureProbeAuthorOutputSchema),
           ...(input.subjectProfile ? { subjectProfile: input.subjectProfile } : {}),
         },
       );
@@ -220,7 +214,6 @@ export async function prepareConjectureProbePair(
         ),
         {
           override: { provider: 'anthropic-sub' as const },
-          outputFormat: zodToJsonSchemaOutputFormat(ConjectureProbeReviewOutputSchema),
           ...(input.subjectProfile ? { subjectProfile: input.subjectProfile } : {}),
         },
       );

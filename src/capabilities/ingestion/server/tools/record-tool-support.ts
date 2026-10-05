@@ -1,6 +1,10 @@
 import { inArray, or, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { knowledge, knowledge_edge, learning_record } from '@/db/schema';
+import {
+  isLearnerVisibleKnowledgeId,
+  learnerVisibleKnowledgeIds,
+} from '@/kernel/read-models/learner-knowledge-visibility';
 
 const EXCERPT_MAX = 220;
 
@@ -16,7 +20,7 @@ export function excerpt(value: string | null | undefined, max = EXCERPT_MAX): st
 }
 
 async function loadKnowledgeRows(db: Db, ids: string[]): Promise<Map<string, KnowledgeRow>> {
-  const unique = [...new Set(ids)].filter(Boolean);
+  const unique = learnerVisibleKnowledgeIds([...new Set(ids)].filter(Boolean));
   if (unique.length === 0) return new Map();
   const idOrParent = or(inArray(knowledge.id, unique), inArray(knowledge.parent_id, unique));
   const rows = await db
@@ -28,14 +32,16 @@ async function loadKnowledgeRows(db: Db, ids: string[]): Promise<Map<string, Kno
   for (;;) {
     const missingParents = [...byId.values()]
       .map((row) => row.parent_id)
-      .filter((id): id is string => !!id && !byId.has(id));
+      .filter((id): id is string => !!id && !byId.has(id) && isLearnerVisibleKnowledgeId(id));
     if (missingParents.length === 0) break;
     const parents = await db
       .select({ id: knowledge.id, name: knowledge.name, parent_id: knowledge.parent_id })
       .from(knowledge)
       .where(inArray(knowledge.id, [...new Set(missingParents)]));
     if (parents.length === 0) break;
-    for (const parent of parents) byId.set(parent.id, parent);
+    for (const parent of parents) {
+      if (isLearnerVisibleKnowledgeId(parent.id)) byId.set(parent.id, parent);
+    }
   }
   return byId;
 }
@@ -57,7 +63,7 @@ export async function knowledgeContext(
   ids: string[],
 ): Promise<Array<{ knowledge_id: string; path: string[]; mastery: number | null }>> {
   const byId = await loadKnowledgeRows(db, ids);
-  return [...new Set(ids)].map((id) => ({
+  return learnerVisibleKnowledgeIds([...new Set(ids)]).map((id) => ({
     knowledge_id: id,
     path: pathFor(id, byId),
     mastery: null,
@@ -65,10 +71,12 @@ export async function knowledgeContext(
 }
 
 export function knowledgeEdgeTouches(ids: string[]) {
+  const visibleIds = learnerVisibleKnowledgeIds(ids);
+  if (visibleIds.length === 0) return sql`FALSE`;
   return (
     or(
-      inArray(knowledge_edge.from_knowledge_id, ids),
-      inArray(knowledge_edge.to_knowledge_id, ids),
+      inArray(knowledge_edge.from_knowledge_id, visibleIds),
+      inArray(knowledge_edge.to_knowledge_id, visibleIds),
     ) ?? inArray(knowledge_edge.from_knowledge_id, ids)
   );
 }

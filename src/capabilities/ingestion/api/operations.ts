@@ -70,7 +70,7 @@ async function validateSessionState(
 
   const allowedStatuses: Record<IngestionOperationRequestParsed['kind'], string[]> = {
     extract: ['uploaded', 'failed'],
-    import: ['extracted', 'reviewed'],
+    import: [...Ingestion.IMPORTABLE_SESSION_STATUSES],
     make_paper: ['imported'],
     rescue: ['partial', 'extracted'],
   };

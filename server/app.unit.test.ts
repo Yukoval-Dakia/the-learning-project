@@ -39,6 +39,13 @@ const fakeCapability: CapabilityManifest = {
         responses: { 201: z.object({ ok: z.boolean() }) },
         load: async () => async () => Response.json({ ok: true }),
       },
+      {
+        method: 'GET',
+        path: '/api/fake/throws',
+        load: async () => async () => {
+          throw new Error('provider secret must stay server-side');
+        },
+      },
     ],
   },
 };
@@ -169,6 +176,18 @@ describe('buildHonoApp', () => {
     expect(await response.json()).toEqual({ error: 'route_contract_violation' });
   });
 
+  it('returns a diagnosable JSON 500 without exposing handler details', async () => {
+    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
+    const app = buildHonoApp([fakeCapability]);
+    const response = await app.request('/api/fake/throws', {
+      headers: { 'x-internal-token': 'test-token' },
+    });
+    expect(response.status).toBe(500);
+    const requestId = response.headers.get('x-request-id');
+    expect(requestId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(await response.json()).toEqual({ error: 'internal_error', request_id: requestId });
+  });
+
   it('passes path params through to the handler (M1 param route)', async () => {
     vi.stubEnv('INTERNAL_TOKEN', 'test-token');
     const app = buildHonoApp([fakeCapability]);
@@ -216,5 +235,96 @@ describe('buildHonoApp', () => {
       headers: { 'x-internal-token': '' },
     });
     expect(res.status).toBe(401);
+  });
+
+  // ── YUK-1055 — contract-epoch gate（注入 gate stub；真实 gate 走 db 分区）──
+
+  it('returns 503 contract_epoch_fenced for mounted routes when the epoch gate fences', async () => {
+    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
+    const app = buildHonoApp([fakeCapability], {
+      epochGate: async () => ({
+        runnable: false,
+        epoch: 'legacy',
+        state: 'preparing',
+        codeEpoch: 'assessment-contract-v1',
+        reason: 'maintenance',
+      }),
+    });
+    const res = await app.request('/api/fake', {
+      headers: { 'x-internal-token': 'test-token' },
+    });
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({
+      error: 'contract_epoch_fenced',
+      reason: 'maintenance',
+      epoch: 'legacy',
+      state: 'preparing',
+      code_epoch: 'assessment-contract-v1',
+    });
+  });
+
+  it('still serves /api/health and /api/ready while fenced (health ≠ readiness)', async () => {
+    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
+    const app = buildHonoApp([fakeCapability], {
+      epochGate: async () => ({
+        runnable: false,
+        epoch: 'legacy',
+        state: 'preparing',
+        codeEpoch: 'assessment-contract-v1',
+        reason: 'maintenance',
+      }),
+    });
+    const health = await app.request('/api/health');
+    expect(health.status).toBe(200);
+    const ready = await app.request('/api/ready');
+    expect(ready.status).toBe(503);
+    expect(await ready.json()).toEqual({
+      ok: false,
+      epoch: 'legacy',
+      state: 'preparing',
+      code_epoch: 'assessment-contract-v1',
+      reason: 'maintenance',
+    });
+  });
+
+  it('returns 200 on /api/ready and serves routes when runnable', async () => {
+    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
+    const app = buildHonoApp([fakeCapability], {
+      // runnable 态的 stub marker 必须与 code epoch 一致（gate 语义：active 且
+      // epoch===codeEpoch 才 runnable）。
+      epochGate: async () => ({
+        runnable: true,
+        epoch: 'assessment-contract-v1',
+        state: 'active',
+        codeEpoch: 'assessment-contract-v1',
+      }),
+    });
+    const ready = await app.request('/api/ready');
+    expect(ready.status).toBe(200);
+    expect(await ready.json()).toEqual({
+      ok: true,
+      epoch: 'assessment-contract-v1',
+      state: 'active',
+      code_epoch: 'assessment-contract-v1',
+      reason: null,
+    });
+    const res = await app.request('/api/fake', {
+      headers: { 'x-internal-token': 'test-token' },
+    });
+    expect(res.status).toBe(200);
+  });
+
+  it('checks the epoch gate only after token auth (stale-client 拒绝不先于鉴权)', async () => {
+    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
+    let gateCalls = 0;
+    const app = buildHonoApp([fakeCapability], {
+      epochGate: async () => {
+        gateCalls += 1;
+        return { runnable: false, reason: 'maintenance' };
+      },
+    });
+    const unauthenticated = await app.request('/api/fake');
+    expect(unauthenticated.status).toBe(401);
+    expect(gateCalls).toBe(0);
   });
 });

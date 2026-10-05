@@ -48,6 +48,13 @@ Choose the narrowest loop while iterating:
   `pnpm vitest run --config vitest.db.config.ts <file> -t '<name>'`.
 
 DB tests use a real Postgres testcontainer and must reset state in `beforeEach`.
+Its disposable data directory uses a 2 GiB tmpfs. PostgreSQL durability settings,
+constraints, and transactions remain enabled. This suite does not establish
+durability across a host reboot or container replacement.
+Migration smoke also uses bounded tmpfs for each of its independently owned
+containers. It runs the unchanged migration/backfill matrix and checks that
+PostgreSQL `fsync` and `synchronous_commit` remain on; it is not a host-reboot
+durability test.
 Files importing DB clients, `postgres`, Drizzle, or live `PgBoss` belong in the
 DB config, not the unit config. DB files run in isolated fork databases. The default
 remains `resetDb()` in `beforeEach`; transaction rollback is opt-in only when every
@@ -80,6 +87,7 @@ pnpm audit:draft-status
 pnpm audit:draft-status-reads
 pnpm audit:relations
 pnpm audit:calibration
+pnpm audit:threshold-calibration
 pnpm audit:mastery-provenance
 pnpm audit:fold-writes
 pnpm audit:flags
@@ -95,6 +103,14 @@ ratchet（capability→server、server→capability deep、cross-capability valu
 `pnpm audit:capability-boundaries:snapshot` 打印 canonical baseline，再在同一变更中收紧
 `scripts/capability-boundary-baseline.json`。snapshot 命令只打印，不直接覆盖文件；禁止为了让
 新增依赖通过而上调 baseline。
+
+### Lint warning ratchet（YUK-909）
+
+`pnpm lint:ratchet` 对 `biome check .` 的 warning/info 总数执行只降不升的 ratchet，
+CI static lane 用同一次 Biome 扫描检查 errors 与 warning/info 增长。基线在 `scripts/lint-baseline.json`：总数 +
+逐 rule 计数（信息诊断单独计数，不静默丢弃；决策已记录在文件内）。落地一个
+修 warning 的 batch 之后用 `pnpm lint:ratchet:update` 重新生成基线；该命令拒绝
+任何上调——基线只可能下降。
 
 Before a PR, run:
 

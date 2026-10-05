@@ -1,7 +1,15 @@
 // POST /api/mistakes writes question + attempt event + learning_record(kind='mistake').
 
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { event, knowledge, learning_record, question, source_asset } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  learning_record,
+  misconception,
+  question,
+  source_asset,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { CreateMistakeResponseSchema, MistakeListResponseSchema } from './contracts';
@@ -596,13 +604,42 @@ describe('GET /api/mistakes', () => {
     expect(body.rows[0].cause).toEqual({
       source: 'agent',
       primary_category: 'concept',
+      primary_label: null,
       secondary_categories: [],
+      secondary_labels: {},
       user_notes: null,
       confidence: 0.9,
     });
     expect(body.rows[0].correction_state.state).toBe('active');
     expect(body.rows[0].correction_state.terminal_state).toBe('active');
     expect(typeof body.rows[0].created_at).toBe('number');
+  });
+
+  it('filters failure attempts by the derived subject query', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id: 'k_math',
+      name: '函数',
+      ...KNOWLEDGE_BASE,
+      domain: 'math',
+      parent_id: null,
+      archived_at: null,
+      created_at: now,
+      updated_at: now,
+    });
+    await seedQuestion('q_yuwen', '语文题');
+    await seedQuestion('q_math', '数学题');
+    await db
+      .update(question)
+      .set({ knowledge_ids: ['k_math'] })
+      .where(eq(question.id, 'q_math'));
+    await seedAttempt({ id: 'a_yuwen', question_id: 'q_yuwen', knowledge_ids: ['k1'] });
+    await seedAttempt({ id: 'a_math', question_id: 'q_math', knowledge_ids: ['k_math'] });
+
+    const res = await getMistakes('subject=math');
+    const body = (await res.json()) as { rows: Array<{ id: string }> };
+    expect(body.rows.map((row) => row.id)).toEqual(['a_math']);
   });
 
   it('preserves a missing reference answer as null', async () => {
@@ -712,10 +749,131 @@ describe('GET /api/mistakes', () => {
     expect(body.rows[0].cause).toEqual({
       source: 'user',
       primary_category: 'memory',
+      primary_label: null,
       secondary_categories: [],
+      secondary_labels: {},
       user_notes: '记错了',
       confidence: null,
     });
+  });
+
+  // YUK-1018 — misc_ primary id 的显示回填：active misconception title 进
+  // primary_label，原始 id 保留在 primary_category。
+  it('misc_ primary_category carries primary_label resolved from the misconception title', async () => {
+    const now = new Date();
+    await testDb()
+      .insert(misconception)
+      .values({
+        id: 'misc_mistakes_01',
+        title: '把「之」当普通助词',
+        reasoning: null,
+        weight: 1,
+        status: 'active',
+        source: 'soft',
+        seen: 2,
+        evidence: [],
+        created_by: { by: 'system' },
+        proposed_by_ai: true,
+        created_at: now,
+        updated_at: now,
+        archived_at: null,
+      });
+    await seedQuestion('q1', 'p1');
+    await seedAttempt({ id: 'a1', question_id: 'q1' });
+    await seedJudge({
+      id: 'j1',
+      attempt_event_id: 'a1',
+      primary_category: 'misc_mistakes_01',
+    });
+
+    const res = await getMistakes();
+    const body = (await res.json()) as {
+      rows: Array<{
+        cause: { primary_category: string; primary_label: string | null } | null;
+      }>;
+    };
+    expect(body.rows[0].cause?.primary_category).toBe('misc_mistakes_01');
+    expect(body.rows[0].cause?.primary_label).toBe('把「之」当普通助词');
+  });
+
+  it('an unresolvable misc_ primary_category falls back to null primary_label', async () => {
+    await seedQuestion('q1', 'p1');
+    await seedAttempt({ id: 'a1', question_id: 'q1' });
+    await seedJudge({
+      id: 'j1',
+      attempt_event_id: 'a1',
+      primary_category: 'misc_no_such_node',
+    });
+
+    const res = await getMistakes();
+    const body = (await res.json()) as {
+      rows: Array<{
+        cause: { primary_category: string; primary_label: string | null } | null;
+      }>;
+    };
+    expect(body.rows[0].cause?.primary_category).toBe('misc_no_such_node');
+    expect(body.rows[0].cause?.primary_label).toBeNull();
+  });
+
+  // YUK-1020 — secondary_categories 里 misc_ id 的显示回填：与 primary 同一批
+  // 查询；secondary_categories 保留裸 id，secondary_labels 只含可解析的 misc id。
+  it('misc_ secondary_categories carry secondary_labels resolved from misconception titles', async () => {
+    const now = new Date();
+    const misconceptionRow = {
+      reasoning: null,
+      weight: 1,
+      source: 'soft',
+      seen: 2,
+      evidence: [],
+      created_by: { by: 'system' as const },
+      proposed_by_ai: true,
+      created_at: now,
+      updated_at: now,
+    };
+    await testDb()
+      .insert(misconception)
+      .values([
+        {
+          ...misconceptionRow,
+          id: 'misc_sec_m01',
+          title: '虚词误判',
+          status: 'active',
+          archived_at: null,
+        },
+        {
+          ...misconceptionRow,
+          id: 'misc_sec_m02',
+          title: '已归档误区',
+          status: 'active',
+          archived_at: now,
+        },
+      ]);
+    await seedQuestion('q1', 'p1');
+    await seedAttempt({ id: 'a1', question_id: 'q1' });
+    await seedJudge({
+      id: 'j1',
+      attempt_event_id: 'a1',
+      primary_category: 'concept',
+      secondary_categories: ['misc_sec_m01', 'grammar', 'misc_sec_m02', 'misc_gone_99'],
+    });
+
+    const res = await getMistakes();
+    const body = (await res.json()) as {
+      rows: Array<{
+        cause: {
+          secondary_categories: string[];
+          secondary_labels: Record<string, string>;
+        } | null;
+      }>;
+    };
+    // 裸 id 顺序保留；vocab / archived / unknown 缺席 label map。
+    expect(body.rows[0].cause?.secondary_categories).toEqual([
+      'misc_sec_m01',
+      'grammar',
+      'misc_sec_m02',
+      'misc_gone_99',
+    ]);
+    expect(body.rows[0].cause?.secondary_labels).toEqual({ misc_sec_m01: '虚词误判' });
   });
 
   it('filters by question_id', async () => {

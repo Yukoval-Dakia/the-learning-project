@@ -10,16 +10,18 @@ import {
   COPILOT_RUN_EVENTS,
   COPILOT_RUN_TABLE,
 } from '@/capabilities/copilot/server/copilot-run-status';
-import { event, job_events } from '@/db/schema';
+import { copilot_continuation, event, job_events, subagent_run, tool_operation } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeJobEvent } from '@/server/events/writer';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { writeCopilotUserAsk } from '../server/chat';
+import { seedLegacySubagentRun } from '../../../../tests/helpers/legacy-subagent';
+import { writeCopilotInputEvent } from '../server/conversation-writes';
 import {
   hashCopilotDurableInput,
   reserveCopilotDurableAcceptance,
 } from '../server/durable-dispatch';
+import * as mailbox from '../server/subagent-mailbox';
 import { getCopilotTurnsBeforeAnchor } from '../server/turns';
 import { POST } from './cancel-run';
 import { CopilotCancelRunResponseSchema } from './contracts';
@@ -122,7 +124,7 @@ describe('POST /api/copilot/runs/:id/cancel', () => {
       },
     });
 
-    const nextRunId = await writeCopilotUserAsk(testDb(), {
+    const nextRunId = await writeCopilotInputEvent(testDb(), {
       sessionId: accepted.sessionId,
       userMessage: '继续刚才的证据审查，但先总结上一轮状态。',
       now: new Date(Date.now() + 1_000),
@@ -179,6 +181,58 @@ describe('POST /api/copilot/runs/:id/cancel', () => {
     expect(events.some((event) => event.event_type === COPILOT_RUN_EVENTS.FAILED)).toBe(false);
   });
 
+  it('settles queued children and cooperatively cancels only this root retry lineage', async () => {
+    const accepted = await seedAcceptedRun();
+    const parentTaskRunId = `copilot_run_tool_${accepted.runId}`;
+    const queued = await seedLegacySubagentRun(testDb(), {
+      sessionId: accepted.sessionId,
+      parentTurnEventId: accepted.runId,
+      parentTaskRunId: `${parentTaskRunId}_retry_1`,
+      launchKey: 'queued-user-stop',
+      objective: 'This queued research must settle before the root cancellation returns.',
+    });
+    const running = await seedLegacySubagentRun(testDb(), {
+      status: 'running',
+      sessionId: accepted.sessionId,
+      parentTurnEventId: accepted.runId,
+      parentTaskRunId,
+      launchKey: 'running-user-stop',
+      objective: 'This provider-fenced research must drain cooperatively after user stop.',
+    });
+    const foreign = await seedLegacySubagentRun(testDb(), {
+      sessionId: accepted.sessionId,
+      parentTurnEventId: accepted.runId,
+      parentTaskRunId: `${parentTaskRunId}_retry_1_unrelated`,
+      launchKey: 'foreign-user-stop',
+      objective: 'This near-prefix child belongs to a different root task and must not stop.',
+    });
+
+    const response = await POST(request(accepted.runId), { id: accepted.runId });
+
+    expect(await response.json()).toMatchObject({ status: 'cancelled' });
+    await expect(mailbox.getSubagentRun(testDb(), queued.record.id)).resolves.toMatchObject({
+      status: 'cancelled',
+      cancelRequestedBy: 'user',
+    });
+    await expect(mailbox.getSubagentRun(testDb(), running.record.id)).resolves.toMatchObject({
+      status: 'running',
+      cancelRequestedBy: 'user',
+    });
+    await expect(mailbox.getSubagentRun(testDb(), foreign.record.id)).resolves.toMatchObject({
+      status: 'queued',
+    });
+    const continuations = await testDb()
+      .select({ subagentRunId: copilot_continuation.subagent_run_id })
+      .from(copilot_continuation)
+      .where(eq(copilot_continuation.subagent_run_id, queued.record.id));
+    expect(continuations).toHaveLength(0);
+    const runningRows = await testDb()
+      .select({ id: subagent_run.id, requestedBy: subagent_run.cancel_requested_by })
+      .from(subagent_run)
+      .where(eq(subagent_run.id, running.record.id));
+    expect(runningRows).toEqual([{ id: running.record.id, requestedBy: 'user' }]);
+  });
+
   it('treats retryable FAILED(reason=error) as active but a deliberate terminal as settled', async () => {
     const accepted = await seedAcceptedRun();
     await writeJobEvent(testDb(), {
@@ -228,6 +282,69 @@ describe('POST /api/copilot/runs/:id/cancel', () => {
         (item) => item.event_type === COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
       ),
     ).toBe(false);
+  });
+
+  it('requests cancellation for only this terminal run when its owned operation is still running', async () => {
+    const accepted = await seedAcceptedRun();
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: accepted.runId,
+      event_type: COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+      payload: { execution_fence: 'at_most_once' },
+    });
+    await writeJobEvent(testDb(), {
+      business_table: COPILOT_RUN_TABLE,
+      business_id: accepted.runId,
+      event_type: COPILOT_RUN_EVENTS.DONE,
+      payload: { task_run_id: `copilot_run_tool_${accepted.runId}` },
+    });
+    const now = new Date();
+    const operationRows = [
+      {
+        id: 'toolop_terminal_parent_owner',
+        session_id: accepted.sessionId,
+        task_run_id: `copilot_run_tool_${accepted.runId}_retry_2`,
+      },
+      {
+        id: 'toolop_terminal_parent_other_run',
+        session_id: accepted.sessionId,
+        task_run_id: `copilot_run_tool_${accepted.runId}_other`,
+      },
+      {
+        id: 'toolop_terminal_parent_other_session',
+        session_id: `${accepted.sessionId}_other`,
+        task_run_id: `copilot_run_tool_${accepted.runId}`,
+      },
+    ].map((row) => ({
+      ...row,
+      tool_name: 'search_memory_facts',
+      effect: 'read',
+      status: 'running',
+      process_id: 'cancel_endpoint_db_test',
+      input_hash: 'a'.repeat(64),
+      input_json: { args: { query: 'terminal parent cancellation' } },
+      started_at: now,
+      owner_heartbeat_at: now,
+      lease_expires_at: new Date(now.getTime() + 60_000),
+      updated_at: now,
+    }));
+    await testDb().insert(tool_operation).values(operationRows);
+
+    const first = await POST(request(accepted.runId), { id: accepted.runId });
+    expect(await first.json()).toMatchObject({ status: 'cancel_requested' });
+    const second = await POST(request(accepted.runId), { id: accepted.runId });
+    expect(await second.json()).toMatchObject({ status: 'already_requested' });
+    expect(
+      (await runEvents(accepted.runId)).filter(
+        (item) => item.event_type === COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
+      ),
+    ).toHaveLength(1);
+    const operations = await testDb()
+      .select({ id: tool_operation.id, status: tool_operation.status })
+      .from(tool_operation);
+    expect(operations).toEqual(
+      expect.arrayContaining(operationRows.map((row) => ({ id: row.id, status: 'running' }))),
+    );
   });
 
   it('rejects unknown handles and QUEUED rows that do not bind to the canonical ask session', async () => {

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '@/db/client';
+import { AgentRunError } from '@/server/ai/agent-run-error';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import type { JudgeQuestionRow } from './question-contract';
 import { parseStepsResult, runStepsJudge } from './steps-judge';
@@ -318,6 +319,7 @@ describe('runStepsJudge — error paths', () => {
     });
     expect(result.coarse_outcome).toBe('unsupported');
     expect(result.feedback_md).toContain('LLM call failed');
+    expect(result.evidence_json.error_kind).toBeUndefined();
   });
 
   it('returns unsupported when imageFetchFn throws', async () => {
@@ -379,8 +381,8 @@ describe('runStepsJudge — error paths', () => {
   });
 });
 
-// YUK-591 — SDK structured-output migration. Symmetric with multimodal-direct-judge:
-// outputFormat threaded from the registry-declared StepsLlmOutput; three-state parse.
+// YUK-591 — structured-output dispatch. Symmetric with multimodal-direct-judge:
+// post-P4 the runner carries no outputFormat; the three-state parse stays.
 describe('runStepsJudge — structured output (YUK-591)', () => {
   const validStructured = {
     extracted_steps: [],
@@ -395,7 +397,7 @@ describe('runStepsJudge — structured output (YUK-591)', () => {
     confidence: 0.9,
   };
 
-  it('threads a json_schema outputFormat into ctx', async () => {
+  it('does not thread an SDK outputFormat into ctx (P4 regression guard)', async () => {
     let ctx: unknown;
     await runStepsJudge({
       db: mockDb,
@@ -408,10 +410,7 @@ describe('runStepsJudge — structured output (YUK-591)', () => {
       },
       imageFetchFn: async () => [],
     });
-    const outputFormat = (ctx as { outputFormat?: { type?: string; schema?: unknown } })
-      .outputFormat;
-    expect(outputFormat?.type).toBe('json_schema');
-    expect(outputFormat?.schema).toBeDefined();
+    expect((ctx as { outputFormat?: unknown }).outputFormat).toBeUndefined();
   });
 
   it('parses structured_output through the schema, ignoring raw text', async () => {
@@ -511,6 +510,76 @@ describe('runStepsJudge — structured output (YUK-591)', () => {
       expect(() => parseStepsResult({ text: 'no json here' })).toThrow(
         'did not contain a JSON object',
       );
+    });
+  });
+});
+
+// YUK-893 — same provider-lane hard-failure semantics as multimodal-direct:
+// error_kind separation + configured-lane fallback with degradation evidence.
+describe('runStepsJudge — provider lane hard-failure semantics (YUK-893)', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+  });
+
+  function provider403(): AgentRunError {
+    return new AgentRunError({
+      kind: 'StepsJudgeTask',
+      taskRunId: 'tr-893',
+      subtype: 'api_error_result',
+      apiErrorStatus: 403,
+      errors: ['permission denied: OAuth lane disabled'],
+    });
+  }
+
+  function providerFromRunCtx(ctx: unknown): string | undefined {
+    if (typeof ctx !== 'object' || ctx === null || !('override' in ctx)) return undefined;
+    const override = Reflect.get(ctx, 'override');
+    if (typeof override !== 'object' || override === null || !('provider' in override)) {
+      return undefined;
+    }
+    const provider = Reflect.get(override, 'provider');
+    return typeof provider === 'string' ? provider : undefined;
+  }
+
+  const llmStepsWrong = () => ({
+    text: JSON.stringify({
+      extracted_steps: [],
+      extracted_final_answer: 'wrong',
+      signal_verdicts: [
+        { signal_idx: 0, verdict: 'wrong', comment: '' },
+        { signal_idx: 1, verdict: 'wrong', comment: '' },
+        { signal_idx: 2, verdict: 'wrong', comment: '' },
+      ],
+      final_answer_match: false,
+      final_answer_comment: 'no',
+      confidence: 0.9,
+    }),
+  });
+
+  it('(b) configured-lane hard failure falls back to the registry default and the judge completes with degradation evidence', async () => {
+    vi.stubEnv('VISION_JUDGE_PROVIDER', 'anthropic-sub');
+    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'tok-123');
+    const attemptedProviders: Array<string | undefined> = [];
+    const runTaskFn = vi.fn(async (_kind: string, _input: unknown, ctx: unknown) => {
+      const provider = providerFromRunCtx(ctx);
+      attemptedProviders.push(provider);
+      if (provider === 'anthropic-sub') throw provider403();
+      return llmStepsWrong();
+    });
+    const result = await runStepsJudge({
+      db: mockDb,
+      question: makeDerivationRow({}),
+      answer_md: 'not the answer',
+      subjectProfile: mathProfile,
+      runTaskFn,
+      imageFetchFn: async () => [],
+    });
+    expect(attemptedProviders).toEqual(['anthropic-sub', 'xiaomi']);
+    expect(result.coarse_outcome).toBe('incorrect');
+    expect(result.evidence_json.lane_degradation).toMatchObject({
+      failed_lane: 'anthropic-sub',
+      api_error_status: 403,
+      fallback_lane: 'xiaomi',
     });
   });
 });

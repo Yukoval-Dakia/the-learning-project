@@ -29,12 +29,9 @@
 // 它之外的 async 信号/LLM/sampler 路径。
 
 import { inArray } from 'drizzle-orm';
-import { QuestionKind } from '@/core/schema/business';
-import type { QuestionKindT } from '@/core/schema/judge-routing';
 import { DIFFICULTY_PROXY_WEIGHT } from '@/core/theta';
 import type { Db, Tx } from '@/db/client';
 import { question } from '@/db/schema';
-
 import {
   buildMemoryPriorAdvisoryBlock,
   buildSelectionOrchestratorTaskInputWithCandidates,
@@ -60,6 +57,7 @@ import {
   composeDailyStream,
 } from './stream-composer';
 import { type PracticeTaskRunFn, makePracticeTaskTextRunFn } from './task-runtime';
+import { rotationClassForKind } from './variant-rotation';
 
 type DbLike = Db | Tx;
 
@@ -186,14 +184,15 @@ async function enrichCandidates(db: DbLike, raws: NonDueRaw[]): Promise<Candidat
           : raw.role === 'frontier'
             ? ('frontier' as const)
             : ('diagnostic' as const),
-      // FINDING 4（fail-open→fail-closed）：DB question.kind 是 text 列，行里可能存
-      //   **不在 QuestionKind 枚举内**的脏值（历史脏数据 / enum 收缩后的遗留 / 手填）。
-      //   裸 `as QuestionKindT` 会把脏值原样传给 collectQuestionSignal → rotationClassForKind
-      //   读 `ROTATION_CLASS_BY_KIND[脏值]` 返 undefined → `=== 'recall'` 为假 → recallLocked
-      //   =false → 题被 sampler 抽样，违反铁律③（身份不明的题不得被抽样/MFI 评分）。
-      //   故在此用 enum 校验：枚举内 → 传真 kind；枚举外/缺失 → 传 undefined，落到
-      //   collectQuestionSignal 的 `cand.kind ? … : true` 保守分支 → recallLocked（不抽样）。
-      kind: resolveEnumKind(q?.kind),
+      // FINDING 4（fail-open→fail-closed）：DB question.kind 是自由文本标签
+      //   （YUK-386；历史脏数据 / 收缩遗留 / 手填都可能不在 KNOWN 词表内）。
+      //   裸透传会把无法分类的标签原样传给 collectQuestionSignal → rotationClassForKind
+      //   返 undefined → `=== 'recall'` 为假 → recallLocked=false → 题被 sampler 抽样，
+      //   违反铁律③（身份不明的题不得被抽样/MFI 评分）。
+      //   故在此按旋转分类表校验：可分入 recall/application 的 KNOWN 标签 → 传真 kind；
+      //   词表外/缺失 → 传 undefined，落到 collectQuestionSignal 的
+      //   `cand.kind ? … : true` 保守分支 → recallLocked（不抽样）。
+      kind: resolveRotatableKind(q?.kind),
       knowledgeIds: q?.knowledge_ids,
       difficulty: q?.difficulty,
       // YUK-372 L3 — source for family_key resolution (undefined → family lookup skipped).
@@ -203,13 +202,14 @@ async function enrichCandidates(db: DbLike, raws: NonDueRaw[]): Promise<Candidat
 }
 
 /**
- * 把 DB 读到的 question.kind（text，可能脏）收敛成**枚举内**的 QuestionKindT 或 undefined。
- * 枚举外的值（含 null/缺失）→ undefined，使 collectQuestionSignal 走 fail-closed recall-lock
- * 分支（FINDING 4，铁律③深防御）。
+ * 把 DB 读到的 question.kind（自由文本标签，可能不在 KNOWN 词表内）收敛成
+ * **可旋转分类**的标签或 undefined。词表外的值（含 null/缺失）→ undefined，使
+ * collectQuestionSignal 走 fail-closed recall-lock 分支（FINDING 4，铁律③深防御）。
+ * YUK-386：边界从「enum 成员」改为「rotationClassForKind 可分类」——同一张 KNOWN
+ * 标签表，行为不变。
  */
-function resolveEnumKind(kind: string | null | undefined): QuestionKindT | undefined {
-  const parsed = QuestionKind.safeParse(kind);
-  return parsed.success ? (parsed.data as QuestionKindT) : undefined;
+function resolveRotatableKind(kind: string | null | undefined): string | undefined {
+  return kind != null && rotationClassForKind(kind) !== undefined ? kind : undefined;
 }
 
 // ───────────────────────────────────────────────────────────────────────────

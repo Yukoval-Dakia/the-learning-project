@@ -4,7 +4,7 @@
 // surface (mirrors the ProbeAnswers 「部分图片上传失败」precedent).
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import ScreenPlacement from './ScreenPlacement';
@@ -98,7 +98,41 @@ describe('ScreenPlacement handwriting upload failure (YUK-713)', () => {
 
     // Re-pick the same file — the cleared input value lets the retry go through.
     await user.upload(fileInput, file);
-    expect(await screen.findByText(/已附 1 张手写稿/)).toBeTruthy();
+    // YUK-1051 replaces the placement-only attach label with the shared evidence strip;
+    // the retry is successful when the uploaded asset appears with its removable name.
+    expect(await screen.findByRole('button', { name: '移除handwriting.png' })).toBeTruthy();
     expect(mocks.uploadAsset).toHaveBeenCalledTimes(2);
+  });
+
+  // YUK-1094 — 手写稿上传在途时推进按钮必须 disable（onAnswered 带的是旧 image refs）。
+  it('disables 下一题 while a handwriting upload is in flight, then re-enables (YUK-1094)', async () => {
+    let settle!: (asset: { id: string }) => void;
+    mocks.uploadAsset.mockImplementation(
+      () =>
+        new Promise<{ id: string }>((resolve) => {
+          settle = resolve;
+        }),
+    );
+    const user = userEvent.setup();
+    const { container } = renderPlacement();
+    await screen.findByText('用一句话解释导数。');
+
+    // 先填文字，让「已作答」为真，隔离出 upload-pending 这一个 disable 因素。
+    await user.type(screen.getByRole('textbox', { name: '作答' }), '变化率');
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement;
+    await user.upload(fileInput, new File(['bytes'], 'handwriting.png', { type: 'image/png' }));
+
+    expect((screen.getByRole('button', { name: '下一题' }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+
+    await act(async () => {
+      settle({ id: 'asset_1' });
+    });
+    await waitFor(() =>
+      expect((screen.getByRole('button', { name: '下一题' }) as HTMLButtonElement).disabled).toBe(
+        false,
+      ),
+    );
   });
 });

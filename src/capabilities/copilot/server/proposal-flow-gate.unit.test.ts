@@ -87,4 +87,37 @@ describe('createCopilotProposalFlowGate', () => {
       gate.beforeExecute({ name: 'propose_knowledge_mutation', effect: 'propose' }),
     ).toBeUndefined();
   });
+
+  it('does not treat a presentation control as replanning after a failed proposal', () => {
+    const gate = createCopilotProposalFlowGate();
+    gate.observe({
+      name: 'author_question',
+      effect: 'propose',
+      input: { target_id: 'candidate_b' },
+      output: { status: 'failed' },
+      error_reason: null,
+      executed: true,
+    });
+
+    gate.observe({
+      name: 'present_primary_view',
+      effect: 'control',
+      input: {
+        source: { kind: 'query_questions', id: 'toolu_root_query' },
+      },
+      output: {
+        status: 'accepted',
+        primary_view: {
+          kind: 'tool_result',
+          ref: { kind: 'query_questions', id: 'toolu_root_query' },
+        },
+      },
+      error_reason: null,
+      executed: true,
+    });
+
+    expect(gate.beforeExecute({ name: 'propose_knowledge_mutation', effect: 'propose' })).toBe(
+      'proposal_requires_replan_after_typed_failure',
+    );
+  });
 });

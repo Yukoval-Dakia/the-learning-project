@@ -1,0 +1,33 @@
+{
+  "captured_at": "2026-09-23T09:50:08.497Z",
+  "code_revision": "70b6ff76a6e32bb724c0441b10fae0746a917c87",
+  "ticket": "YUK-346",
+  "lane": {
+    "adapter": "pi",
+    "provider": "zhipu",
+    "model": "glm-5.2",
+    "task_kind": "AttributionTask",
+    "pin": "explicit ctx.modelBinding (post-P4 routing surface)"
+  },
+  "task_run_id": "r4hl3r5ttla9vhei05710zzs",
+  "wall_ms": 6602,
+  "parse_ok": true,
+  "input_digest": "sha256:b4b923128301d177c965a1b988ea6672ffdff3b717b169c411004f00bb050ed6",
+  "output_digest": "sha256:ae93c080c25cfc31fe91080b074aa6434f10cf1b5f5dc9dc2ca3517b10c6235a",
+  "output_excerpt": "{\"primary_category\": \"calculation\", \"secondary_categories\": [\"concept\"], \"analysis_md\": \"错答为 x=2 或 x=4，参考答案为 x=2 或 x=3。用因式分解法：需要找两数 p、q 满足 p+q=-5 且 pq=+6，即 (x-2)(x-3)=0，故 x=2 或 x=3。用户得到 x=2 或 x=4，对应分解 (x-2)(x-4)=x²-6x+8，其常数项为 +8 而非 +6，说明在寻找因数对（2 与 3 vs 2 与 4）时运算/配对失误，最可能是求两数之积为 6、之和为 -5 时的粗心计算错误；同时也反映对'分解出的因数必须同时验证和与积两个条件'的理解不够扎实（x=2 恰好正确属巧合，未验算代回原方程也是失分原因）。\", \"confidence\": 0.75, \"meta_cause\": \"execution_slip\", \"meta_cause_secondary\": \"flawed_model\", \"metacog_flag\": null, \"bloom_level\": \"apply\", \"self_corrected_on_hint\": null, \"recurred_cross_item\": null}",
+  "subject": "math",
+  "status": "success",
+  "finish_reason": "end_turn",
+  "usage": {
+    "inputTokens": 963,
+    "outputTokens": 329,
+    "thinkingBlocks": 1,
+    "thinkingCharacters": 64
+  },
+  "cost": {
+    "basis": "unknown",
+    "amount_usd": null,
+    "ref": "unpriced:zhipu/glm-5.2"
+  },
+  "provenance": "PiRunnerMessage frames carry source=pi; terminal evidence normalized from pi agentLoop agent_end + final assistant usage. Cost stays catalog-estimated (zhipu coding-plan catalog rates are 0 — flat subscription; mimo rates are the dated public per-token estimate)."
+}

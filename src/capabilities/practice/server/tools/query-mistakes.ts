@@ -12,6 +12,7 @@ import type { Db } from '@/db/client';
 import { material_fsrs_state, mistake_variant, question } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { type FailureAttempt, getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 // P5.1 / YUK-143 — snippet cap + courtesy default sourced from budgets.ts.
 // Both are byte-unchanged from the prior file-local literals (160 / 20).
 import { MISTAKE_PROMPT_SNIPPET_MAX, TOOL_COURTESY_DEFAULTS } from '@/kernel/tools/budgets';
@@ -36,6 +37,13 @@ const InputSchema = z.object({
 const CauseSchema = z.object({
   source: z.enum(['user', 'agent']),
   primary_category: z.string(),
+  // YUK-1018 — misc_ id 的显示回填（active misconception title）；非 misc /
+  // unresolvable → null。
+  primary_label: z.string().nullable(),
+  // YUK-1020 — 副归因 id（CauseSchema 语义身份）+ misc_ id 显示回填
+  // （id→title map；vocab / unresolvable 缺席 → 消费侧回退裸 id）。
+  secondary_categories: z.array(z.string()),
+  secondary_labels: z.record(z.string(), z.string()),
   analysis_md: z.string().nullable(),
   user_notes: z.string().nullable(),
   confidence: z.number().nullable(),
@@ -237,10 +245,20 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
   // Apply final limit.
   const final = byDue.slice(0, limit);
   const finalQids = Array.from(new Set(final.map((x) => x.fa.question_id)));
-  const promptMap = await loadQuestionPrompts(ctx.db, finalQids);
-  const variantsMap = input.includeVariants
-    ? await loadVariants(ctx.db, finalQids)
-    : new Map<string, Array<{ id: string; status: string }>>();
+  // 三个独立读并行（YUK-1018/1020 misc_ primary + secondary id 的 title 回填含在内，
+  // 同一批查询）。
+  const [promptMap, variantsMap, miscLabels] = await Promise.all([
+    loadQuestionPrompts(ctx.db, finalQids),
+    input.includeVariants
+      ? loadVariants(ctx.db, finalQids)
+      : Promise.resolve(new Map<string, Array<{ id: string; status: string }>>()),
+    resolveMiscCauseLabels(
+      ctx.db,
+      final.flatMap((x) =>
+        x.cause ? [x.cause.primary_category, ...x.cause.secondary_categories] : [],
+      ),
+    ),
+  ]);
 
   const now = Date.now();
   const mistakes = final.map(({ fa, cause }) => {
@@ -255,6 +273,9 @@ async function execute(ctx: ToolContext, raw: Input): Promise<Output> {
         ? {
             source: cause.source,
             primary_category: cause.primary_category,
+            primary_label: miscLabels.get(cause.primary_category) ?? null,
+            secondary_categories: cause.secondary_categories,
+            secondary_labels: miscCauseLabelMap(miscLabels, cause.secondary_categories),
             analysis_md: cause.analysis_md,
             user_notes: cause.user_notes,
             confidence: cause.confidence,

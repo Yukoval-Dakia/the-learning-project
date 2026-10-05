@@ -164,7 +164,7 @@ const thStyle: CSSProperties = {
   padding: '0 10px 8px 0',
   color: 'var(--ink-4)',
   fontFamily: 'var(--font-mono)',
-  fontSize: 11.5,
+  fontSize: 'var(--fs-caption)',
   fontWeight: 500,
 };
 
@@ -181,7 +181,7 @@ const badgeGapStyle: CSSProperties = { marginLeft: 6 };
 
 const monoSmallStyle: CSSProperties = {
   fontFamily: 'var(--font-mono)',
-  fontSize: 11.5,
+  fontSize: 'var(--fs-caption)',
 };
 
 const mutedTextStyle: CSSProperties = {

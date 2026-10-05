@@ -31,7 +31,7 @@ import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { type EmbedProviderAttemptOptions, embedText } from '@/server/ai/embed';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import { kindsMatch } from '@/subjects/question-kind';
+import { answerClassCompatible } from '@/subjects/question-kind';
 import { type DispatchResult, dispatchSupplyTarget } from '../question-supply/dispatcher';
 import {
   type EvidenceDemandV1T,
@@ -66,8 +66,10 @@ import { verifyAndPromote } from './verify-and-promote';
 // pgvector `<=>` 是 cosine *距离* (0=同向、1=正交、2=反向)：越小越近。候选 cosine_distance
 // 超此值 → 丢弃 (不入保守集 → 落残余生成)。保守=偏严=阈值偏小 (§4 owner 决策 2「宁残余不塞次品」)。
 // 初值 0.35 ≈ cosine 相似度 ≥ 0.65 才收，无生产数据支撑，靠 db 测试 seed 向量经验标定。
-// TODO 实测调参 — YUK-396 关联 follow-up (生产 embedding 分布回校；可能按科目/题型分档)。
-const MATCHER_COSINE_MAX_DISTANCE = 0.35;
+// TODO 实测调参 — YUK-677 follow-up (生产 embedding 分布回校；可能按科目/题型分档)。
+// Exported (YUK-677) so the report-only `pnpm audit:threshold-calibration` replay reads the
+// SAME constant under review — a second hard-coded copy in scripts/ would silently drift.
+export const MATCHER_COSINE_MAX_DISTANCE = 0.35;
 
 // Observe-only diagnostic broad read (candidate_count) is bounded so a large KC cannot force
 // an unbounded full-pool scan on the serving miss path. candidate_count is only consumed as a
@@ -101,7 +103,8 @@ export interface Demand {
   queryEmbedding?: number[];
   /** 源档底线 (R2)，喂残余 target + 排序参考. */
   minSourceTier?: 1 | 2 | 3;
-  /** legacy 垫片 (kindsMatch)；随 YUK-386 收口删. */
+  /** YUK-386 — 请求侧的 kind 标签（自由文本）。过滤语义是 answer-class 相容
+   *  (answerClassCompatible)：kind 名不进分支，同名与否只看判分类是否一致。 */
   kind?: string;
   // ③ 信封 (不进检索)
   /** 错因：embed→召回 + 喂残余 generate prompt (经 target.reason 透传，Task 3). */
@@ -210,13 +213,15 @@ function readWhitelistMatch(metadata: Record<string, unknown> | null): boolean |
   return typeof match === 'boolean' ? match : null;
 }
 
-// codex P2-2 — a soft-archived draft carries metadata.archived_at (any non-empty value).
-// poolFetch(activeOnly:false) recalls it, but the matcher must treat it as unusable and
-// never promote it back to active. Reads the metadata the consumer already projects
-// (PoolRow.metadata) — no extra query.
+// codex P2-2 — a soft-archived draft carries metadata.archived_at (any non-empty value);
+// YUK-308 — a proposal-dismissed draft carries metadata.dismissed_at (same tombstone
+// family). poolFetch(activeOnly:false) recalls either, but the matcher must treat both as
+// unusable and never promote them back to active. Reads the metadata the consumer already
+// projects (PoolRow.metadata) — no extra query.
 function isArchivedDraft(metadata: Record<string, unknown> | null): boolean {
   if (!metadata || typeof metadata !== 'object') return false;
-  return (metadata as Record<string, unknown>).archived_at != null;
+  const meta = metadata as Record<string, unknown>;
+  return meta.archived_at != null || meta.dismissed_at != null;
 }
 
 // codex P2-4 — mirror sourcing-sequence.ts:resolveLiveKnowledgeNode (module-private there):
@@ -265,8 +270,8 @@ async function observeSelectionMissBestEffort(
 }
 
 /**
- * Pure ranking of a fetched candidate pool: ① A2 kind filter (canonical space, no-op
- * when demand.kind is undefined) ② 合约五 tier/whitelist sort (authentic-first,
+ * Pure ranking of a fetched candidate pool: ① A2 kind filter (answer-class
+ * compatible space, no-op when demand.kind is undefined) ② 合约五 tier/whitelist sort (authentic-first,
  * off-whitelist demoted) ③ slice to limit (optional). Mirrors queryExistingPool's app-layer
  * chain (sourcing-sequence.ts:121-145) verbatim so selection stays single-truth. poolFetch
  * must NOT receive limit — slicing happens here, AFTER the in-memory tier sort (F2 防线).
@@ -278,9 +283,10 @@ async function observeSelectionMissBestEffort(
  */
 export function rankPool(rows: PoolRow[], demand: Demand, sliceToLimit = true): PoolRow[] {
   const ranked = rows
-    // A2 — kind filter in canonical space (no-op when demand.kind is undefined). A row
-    // whose persisted kind doesn't normalize-match the requested kind is excluded.
-    .filter((r) => demand.kind === undefined || kindsMatch(r.kind, demand.kind))
+    // A2 — kind filter in answer-class space (no-op when demand.kind is undefined).
+    // A row whose persisted kind label implies a different answer class than the
+    // requested label is excluded (legacy/profile vocab folds first).
+    .filter((r) => demand.kind === undefined || answerClassCompatible(r.kind, demand.kind))
     .map((r) => ({
       row: r,
       tier: deriveSourceTier({ source: r.source, metadata: r.metadata ?? null }).tier,
@@ -545,7 +551,7 @@ export async function matcher(
   // B4 (YUK-386) — answer_class hard filter is forwarded ONLY when MATCHER_ANSWER_CLASS_FILTER
   // is on (dark-ship, default false) AND the demand declares answerClass. Flag off OR no
   // answerClass → undefined → poolFetch adds no answer_class predicate → WHERE byte-identical
-  // to pre-B4 (the legacy kindsMatch shim in rankPool is untouched in both directions). The
+  // to pre-B4 (the answerClassCompatible label filter in rankPool is untouched in both directions). The
   // NULL-lenient `(= $X OR IS NULL)` lives in pool-fetch so the un-backfilled tail is never
   // hard-excluded. The flag is read through the imported binding (./matcher-flags) so db tests
   // can mock it via getter (mirror candidate-signals.db.test.ts's EARLY_KLP_ENABLED getter mock).
@@ -615,6 +621,8 @@ export async function matcher(
     }
     // codex P2-2 — soft-archived draft (draft_status='draft' + metadata.archived_at) 不可用:
     // poolFetch(activeOnly:false) 会召回它，但 lazy verify 绝不能把已归档 draft promote 回 active。
+    // YUK-308 — 同款: proposal-dismissed draft (metadata.dismissed_at) 已被 owner 拒绝，
+    // lazy verify 也绝不能 promote。
     // 当作不可用跳过 (落下一候选 / 残余)，不 verify、不 promote。
     if (isArchivedDraft(r.metadata)) continue;
     // draft 行 → lazy verify-promote (转调现有 gate). promoted 则升用，否则跳下一候选.
@@ -700,7 +708,7 @@ export async function matcher(
             })
           : rows;
       const requiredKindRows = thresholded.filter(
-        (row) => demand.kind === undefined || kindsMatch(row.kind, demand.kind),
+        (row) => demand.kind === undefined || answerClassCompatible(row.kind, demand.kind),
       );
       const trustedRows = requiredKindRows.filter((row) => {
         if (demand.minSourceTier == null) return true;

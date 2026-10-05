@@ -9,6 +9,8 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { Suspense, lazy, useMemo, useState } from 'react';
+import { SubjectFilterTabs } from '@/ui/components/SubjectFilterTabs';
+import { useSubjects } from '@/ui/hooks/useSubjects';
 import { subjectContentPropsForDomain } from '@/ui/lib/subject';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
@@ -18,14 +20,16 @@ import './knowledge.css';
 
 import { BandChip } from './BandChip';
 import { FrontierRail } from './FrontierRail';
+import { deriveGhostEndpoints } from './ghost-endpoints';
 import {
   type KnowledgeTreeNode,
   getEdgeProposals,
   getEdges,
   getFrontier,
   getReviewDueSummary,
-  getTree,
+  getTreeForSubject,
 } from './knowledge-api';
+import { isKnowledgeContainer } from './knowledge-node-kind';
 import { NodeDrawer, decayCue } from './NodeDrawer';
 
 const LazyMeshGraph = lazy(async () => {
@@ -64,9 +68,23 @@ function dfsOrder(nodes: KnowledgeTreeNode[]): Array<KnowledgeTreeNode & { depth
 export default function KnowledgePage({ navigate }: KnowledgePageProps) {
   const [view, setView] = useState<'tree' | 'graph'>('tree');
   const [picked, setPicked] = useState<KnowledgeTreeNode | null>(null);
+  const [subject, setSubject] = useState('all');
+  const { subjects } = useSubjects();
+  const subjectQuery = subject === 'all' ? undefined : subject;
 
-  const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: getTree });
-  const edgesQ = useQuery({ queryKey: ['knowledge-edges'], queryFn: getEdges });
+  const treeQ = useQuery({
+    queryKey: ['knowledge-tree', subjectQuery],
+    queryFn: () => getTreeForSubject(subjectQuery),
+  });
+  const fullTreeQ = useQuery({
+    queryKey: ['knowledge-tree', undefined],
+    queryFn: () => getTreeForSubject(),
+    enabled: subjectQuery !== undefined,
+  });
+  const edgesQ = useQuery({
+    queryKey: ['knowledge-edges', subjectQuery],
+    queryFn: () => getEdges(subjectQuery),
+  });
   const edgePropsQ = useQuery({
     queryKey: ['knowledge-edge-proposals'],
     queryFn: getEdgeProposals,
@@ -79,6 +97,25 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
 
   const nodes = useMemo(() => treeQ.data?.rows ?? [], [treeQ.data]);
   const edges = useMemo(() => edgesQ.data?.rows ?? [], [edgesQ.data]);
+  const graphModel = useMemo(
+    () =>
+      subjectQuery === undefined
+        ? { nodes, ghostIds: new Set<string>(), crossEdgeIds: new Set<string>() }
+        : deriveGhostEndpoints(nodes, fullTreeQ.data?.rows ?? [], edges),
+    [edges, fullTreeQ.data, nodes, subjectQuery],
+  );
+  const graphNodeIds = useMemo(
+    () => new Set(graphModel.nodes.map((node) => node.id)),
+    [graphModel.nodes],
+  );
+  const graphEdges = useMemo(
+    () =>
+      edges.filter(
+        (edge) =>
+          graphNodeIds.has(edge.from_knowledge_id) && graphNodeIds.has(edge.to_knowledge_id),
+      ),
+    [edges, graphNodeIds],
+  );
   // M4-T5 (YUK-318)：服务端已按 kind=knowledge_edge&status=pending 过滤——
   // 已决提议不复返，旧的客户端 decided 集合 + outcome 过滤随换源删除。
   const edgeProposals = edgePropsQ.data?.rows ?? [];
@@ -120,6 +157,7 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
         <p className="page-lead">
           按层级或关系图浏览知识点；选择节点可以查看掌握状态、证据和关联内容。
         </p>
+        <SubjectFilterTabs value={subject} rows={subjects} onChange={setSubject} />
       </div>
 
       {/* A5 S2 (YUK-354)：「下一步学什么」learnable_frontier 横幅（建议非必经路）。
@@ -179,6 +217,7 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
         <div className="card">
           {ordered.map((n) => {
             const cue = decayCue(n.mastery);
+            const isContainer = isKnowledgeContainer(n);
             const meshCount = edges.filter(
               (e) => e.from_knowledge_id === n.id || e.to_knowledge_id === n.id,
             ).length;
@@ -186,7 +225,7 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
               <button
                 type="button"
                 key={n.id}
-                className={`know-node${cue.tone === 'again' ? ' hot' : ''}`}
+                className={`know-node${cue.tone === 'again' && !isContainer ? ' hot' : ''}${isContainer ? ' is-container' : ''}`}
                 style={{
                   paddingLeft: `calc(var(--s-5) + ${n.depth * 22}px)`,
                   width: '100%',
@@ -197,24 +236,33 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
                 onClick={() => setPicked(n)}
               >
                 {n.depth > 0 && <span className="know-twig">└</span>}
-                {/* ⑥治理：树行环去裸 pct（showNumber=false），档由 know-end 的 BandChip 给。 */}
-                <MasteryRing mastery={n.mastery} size={30} showNumber={false} />
+                {isContainer ? (
+                  <span className="know-container-icon">
+                    <LoomIcon name="layers" size={18} />
+                  </span>
+                ) : (
+                  <MasteryRing mastery={n.mastery} size={30} showNumber={false} />
+                )}
                 {/* subject-driven: serif-CJK only for genuine yuwen nodes */}
                 <span
                   {...subjectContentPropsForDomain(n.effective_domain, { className: 'know-title' })}
                 >
                   {n.name}
                 </span>
-                <span className={`badge tone-${cue.tone}`}>
-                  <LoomIcon name={cue.icon as never} size={11} />
-                  {cue.label}
-                </span>
+                {isContainer ? (
+                  <span className="badge tone-info">学科容器</span>
+                ) : (
+                  <span className={`badge tone-${cue.tone}`}>
+                    <LoomIcon name={cue.icon as never} size={11} />
+                    {cue.label}
+                  </span>
+                )}
                 <div className="know-end">
                   {/* A5 S1 (YUK-354) — 离散档 BandChip（设计源 screen-knowledge.jsx:357
                       在 know-end 内）：档 + 区间 + 来源 + 低置信，定性表达 p(L) 轴。前置
                       MasteryRing(tone 色环)保留——tone 颜色与 band 档正交（⑥ + 阶段4 红线）。 */}
-                  <BandChip input={n} />
-                  <span className="meta">{n.evidence_count} 条学习依据</span>
+                  {!isContainer && <BandChip input={n} />}
+                  {!isContainer && <span className="meta">{n.evidence_count} 条学习依据</span>}
                   {meshCount > 0 && (
                     <span className="badge tone-info">
                       <LoomIcon name="link" size={11} />
@@ -222,7 +270,7 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
                     </span>
                   )}
                   {/* YUK-617 mode-1 — 本 KC 到期复习卡数（overdue，含=now）。有到期才出，红色提醒。 */}
-                  {(dueSummary[n.id]?.overdue ?? 0) > 0 && (
+                  {!isContainer && (dueSummary[n.id]?.overdue ?? 0) > 0 && (
                     <span className="badge tone-again" title="到期待复习的知识卡数">
                       <LoomIcon name="review" size={11} />
                       到期 {dueSummary[n.id]?.overdue}
@@ -242,13 +290,19 @@ export default function KnowledgePage({ navigate }: KnowledgePageProps) {
             </output>
           }
         >
-          <LazyMeshGraph nodes={nodes} edges={edges} onPick={setPicked} activeId={picked?.id} />
+          <LazyMeshGraph
+            nodes={graphModel.nodes}
+            edges={graphEdges}
+            onPick={setPicked}
+            activeId={picked?.id}
+            navigate={navigate}
+          />
         </Suspense>
       )}
 
       <NodeDrawer
         node={picked}
-        nodes={nodes}
+        nodes={graphModel.nodes}
         edges={edges}
         edgeProposals={edgeProposals}
         open={!!picked}

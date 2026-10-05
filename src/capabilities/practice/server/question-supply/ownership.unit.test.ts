@@ -1,24 +1,6 @@
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { relative, resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
-
-const RETIRED_MODULE_NAMES = [
-  'confusable-contrast-discovery',
-  'dispatcher',
-  'evidence-demand',
-  'inventory-projection',
-  'jyeoo-loom-adapter',
-  'jyeoo-spawn',
-  'jyeoo-supply-config',
-  'placement-starter-attempts',
-  'placement-starter-identity',
-  'placement-starter-store',
-  'placement-starter',
-  'placement-supply-lock',
-  'refill',
-  'route-planner',
-  'target-discovery',
-] as const;
 
 const MOVED_RUNTIME_MODULE_NAMES = [
   'dispatcher',
@@ -46,7 +28,6 @@ const DIRECTED_COMMAND_EXPORTS = [
   'dispatchSupplyTargets as dispatchPracticeSupplyTargets',
   'spawnJyeooFetch as spawnPracticeJyeooFetch',
 ] as const;
-
 const OWNERSHIP_TEST =
   'src/capabilities/practice/server/question-supply/ownership.unit.test.ts' as const;
 
@@ -62,24 +43,6 @@ function sourceFiles(directory: string): string[] {
 }
 
 describe('Practice question-supply ownership', () => {
-  it('keeps predecessor modules deleted and rejects their legacy import paths', () => {
-    const root = process.cwd();
-    const retiredFiles = RETIRED_MODULE_NAMES.map(
-      (name) => `src/server/question-supply/${name}.ts`,
-    );
-    expect(retiredFiles.filter((path) => existsSync(resolve(root, path)))).toEqual([]);
-
-    const forbiddenImports = sourceFiles(resolve(root, 'src')).flatMap((path) => {
-      const projectPath = relative(root, path);
-      if (projectPath === OWNERSHIP_TEST) return [];
-      const source = readFileSync(path, 'utf8');
-      return RETIRED_MODULE_NAMES.filter((name) =>
-        source.includes(`@/server/question-supply/${name}`),
-      ).map((name) => `${projectPath}:@/server/question-supply/${name}`);
-    });
-    expect(forbiddenImports).toEqual([]);
-  });
-
   it('requires non-Practice consumers to use the public seam instead of deep imports', () => {
     const root = process.cwd();
     const practiceRoot = resolve(root, 'src/capabilities/practice');

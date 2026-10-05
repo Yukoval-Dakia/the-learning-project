@@ -11,6 +11,7 @@ import type { Db } from '@/db/client';
 import type { JobDag } from '@/kernel/job-dag';
 import type { CapabilityManifest } from '@/kernel/manifest';
 import { EXPIRE_FAST, createJobQueue } from '@/server/boss/queue-config';
+import { fenceAwareJobHandler } from '@/server/contract-epoch';
 import { ORCHESTRATOR_CRON, ORCHESTRATOR_QUEUE, ORCHESTRATOR_TZ } from './constants';
 import { buildOrchestrationDag } from './members';
 import {
@@ -252,7 +253,8 @@ async function mountOrchestrator(boss: PgBoss, db: Db, dag: JobDag): Promise<voi
     // pg-boss 原生 `Job` 类型（review ToTsdy）：与 verify-dispatch-outbox.ts 等既有 handler
     // 一致，也让 pg-boss 未来的形状变更被类型系统而不是运行期发现。payload 仍走
     // parseOrchestratorPayload 收窄——`Job` 的 data 是 unknown-ish，类型只保证信封不保证内容。
-    async (jobs: Job[]) => {
+    // YUK-1055 — per-delivery epoch fence（'drain'：编排器只 enqueue 成员，成员各自自查）。
+    fenceAwareJobHandler(db, ORCHESTRATOR_QUEUE, async (jobs: Job[]) => {
       for (const job of jobs) {
         // 包裹 try/catch（dispatch-mount.ts 惯例，YUK-758 review ToTaR）：带上下文 log 让失败
         // 可见。日志仍是第一现场——DLQ（YUK-778）只在**重试预算耗尽后**才留下残骸，中间那
@@ -290,7 +292,7 @@ async function mountOrchestrator(boss: PgBoss, db: Db, dag: JobDag): Promise<voi
           throw err;
         }
       }
-    },
+    }),
   );
 
   console.log(

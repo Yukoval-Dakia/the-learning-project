@@ -1,0 +1,1 @@
+ALTER TABLE "goal" ADD COLUMN "declared_stage" text;

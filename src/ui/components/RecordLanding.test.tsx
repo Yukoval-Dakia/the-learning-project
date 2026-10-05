@@ -72,4 +72,64 @@ describe('RecordLanding', () => {
     expect(html).toContain('通假字');
     expect(html).not.toContain('wire');
   });
+
+  // YUK-542 — persisted learning_session.warnings surface on the landing card as
+  // the ported DegradeBanner (.ing-degrade warn). The caveat used to vanish once
+  // the A8 landing mounted because the SSE timeline row only lives in the
+  // extracting/reviewing phases.
+  describe('warnings banner', () => {
+    const persisted = [
+      'StructureTask unavailable (timeout); fell back to GLM structure',
+      'GLM fallback: page-level standalone, no sub-question split',
+    ];
+
+    it('renders the degrade banner when persisted warnings are present', () => {
+      const html = renderToString(
+        <RecordLanding
+          count={4}
+          isBatch
+          knowledge={[{ id: 'k1', label: '判断句' }]}
+          warnings={persisted}
+          navigate={noop}
+          onRecordAnother={noop}
+        />,
+      );
+      expect(html).toContain('ing-degrade warn');
+      expect(html).toContain('备用识别方式');
+      expect(html).toContain('重点复核');
+      // Same convention as the SSE timeline arm (VisionTab.test.tsx): the raw
+      // internal English strings stay hidden behind the generic caveat.
+      expect(html).not.toContain('fell back to GLM');
+      expect(html).not.toContain('no sub-question split');
+      // Landing card still intact around the banner.
+      expect(html).toContain('收好了');
+      expect(html).toContain('继续传');
+    });
+
+    it('omits the banner when warnings is empty or the prop is absent', () => {
+      const emptyHtml = renderToString(
+        <RecordLanding
+          count={4}
+          isBatch
+          knowledge={[]}
+          warnings={[]}
+          navigate={noop}
+          onRecordAnother={noop}
+        />,
+      );
+      expect(emptyHtml).not.toContain('ing-degrade');
+
+      // Manual landing (RecordPage) never passes warnings — no phantom banner.
+      const absentHtml = renderToString(
+        <RecordLanding
+          count={1}
+          isBatch={false}
+          knowledge={[{ id: 'k1', label: '判断句' }]}
+          navigate={noop}
+          onRecordAnother={noop}
+        />,
+      );
+      expect(absentHtml).not.toContain('ing-degrade');
+    });
+  });
 });

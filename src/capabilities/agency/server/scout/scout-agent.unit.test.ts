@@ -52,9 +52,10 @@ describe('buildEvidenceScoutAgentDefinition', () => {
     for (const w of DIRECTOR_WRITE_TOOL_NAMES) expect(disallowed).toContain(w);
   });
 
-  it('references the research_evidence server by name and caps maxTurns at 12', () => {
+  it('references the research_evidence tools by wire name and caps maxTurns at 12', () => {
     const def = buildEvidenceScoutAgentDefinition({ prompt: PROMPT });
-    expect(def.mcpServers).toEqual(['research_evidence']);
+    // Post-P4: no mcpServers field — the evidence mount's wire names live in `tools`.
+    expect(def.tools?.every((t) => t.startsWith('mcp__research_evidence__'))).toBe(true);
     expect(def.maxTurns).toBe(12);
   });
 

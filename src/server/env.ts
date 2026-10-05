@@ -18,8 +18,16 @@ const server = {
   API_PORT: optionalString,
   API_SMOKE_BASE_URL: optionalString,
   AUTO_INTERVENTION_EXPANSION_ENABLED: optionalString,
+  // YUK-677 — optional READ-ONLY connection string for report-only audit scripts
+  // (audit:threshold-calibration). Point it at a read-only role/replica when running
+  // against a corpus-bearing DB; falls back to DATABASE_URL when unset. The script
+  // additionally pins the session `default_transaction_read_only=on` either way.
+  AUDIT_READ_DATABASE_URL: z.string().url().optional(),
   BACKUP_IMPORT_MAX_BYTES: optionalString,
   B3_GATE_CONFIRM_CLONE: optionalString,
+  // YUK-590 parity knob honoured by the pi adapter's retry cap (was the SDK
+  // subprocess env; now read in-process — see pi-agent-adapter.ts).
+  CLAUDE_CODE_MAX_RETRIES: optionalString,
   CLAUDE_CODE_OAUTH_TOKEN: optionalString,
   CONFUSABLE_CONTRAST_ENABLED: optionalString,
   COPILOT_NUDGE_DAILY_MAX: optionalString,
@@ -30,6 +38,8 @@ const server = {
   COPILOT_SUBAGENT_ENABLED: optionalString,
   DASHSCOPE_API_KEY: optionalString,
   DATABASE_URL: z.string().url(),
+  DELIVERY_API_BASE: optionalString,
+  DELIVERY_API_PORT: optionalString,
   DOCKER_HOST: optionalString,
   DOCX_CONVERT_ENGINE: optionalString.transform((value) =>
     value === 'docker' ? value : undefined,
@@ -46,14 +56,29 @@ const server = {
   JUDGE_CALIBRATION_WINDOW_DAYS: optionalString,
   JUDGE_FALLBACK_PROVIDER: optionalString,
   JUDGE_PROVENANCE_SECRET: optionalString,
-  JYEOO_FETCH_ENABLED: optionalString,
+  // YUK-998 — jyeoo-rs spawn 墙钟按 caller 语义区分：JYEOO_SPAWN_TIMEOUT_MS 是
+  // in-band caller（jyeoo_fetch_candidates tool / supply_execute executor 路由）的
+  // 反卡死上界（默认 120s；grade 路线 ~45s+/题串行，拉 N 题须显式抬到 ≥ N×90s）。
+  // JYEOO_BACKFILL_TIMEOUT_MS 只作用于 `pnpm jyeoo:backfill` 批量 caller（优先级高于
+  // JYEOO_SPAWN_TIMEOUT_MS；两者都未设时 backfill 默认 session_max×90s，--max 10 ⇒
+  // 900s）。解析与推荐值详见 jyeoo-supply-config.ts。
+  JYEOO_BACKFILL_TIMEOUT_MS: optionalString,
+  JYEOO_DAILY_FETCH_BUDGET: optionalString,
   JYEOO_RS_BINARY: optionalString,
+  JYEOO_SPAWN_MAX_STDERR_BYTES: optionalString,
+  JYEOO_SPAWN_MAX_STDOUT_BYTES: optionalString,
+  JYEOO_SPAWN_TIMEOUT_MS: optionalString,
   KC_DEDUP_DISTANCE_MAX: optionalString,
   KC_DEDUP_MAX_PAIRS: optionalString,
   KC_DEDUP_WINDOW_DAYS: optionalString,
   LOCAL_NEXT_PORT: optionalString,
   LOCAL_POSTGRES_HOST: optionalString,
   LOCAL_POSTGRES_PORT: optionalString,
+  // YUK-376 — scripts/llasa-prior-eval.ts 离线评测 knobs（script-only，不进运行时）：
+  // LIMIT=题数上限（默认 30）、REPS=每法重复次数（默认 3）、CONCURRENCY=并发（默认 4）。
+  LLASA_EVAL_CONCURRENCY: optionalString,
+  LLASA_EVAL_LIMIT: optionalString,
+  LLASA_EVAL_REPS: optionalString,
   MEMORY_RECONCILE_HANDOFF_MODE: optionalString,
   MEM0_EMBEDDING_BASE_URL: optionalString,
   MEM0_EMBEDDING_DIMS: optionalString,
@@ -71,18 +96,21 @@ const server = {
   MISCONCEPTION_PROMOTE_ENABLED: optionalString,
   NODE_ENV: optionalString,
   OPENAI_API_KEY: optionalString,
+  OPENCODE_API_KEY: optionalString,
   OPENROUTER_API_KEY: optionalString,
   PLACEMENT_PROBE_ENABLED: optionalString,
   POSTGRES_DB: optionalString,
   POSTGRES_PASSWORD: optionalString,
   POSTGRES_USER: optionalString,
+  // YUK-1034 — scripts/item-prior-reps-eval.ts 离线评测 knobs（script-only，不进
+  // 运行时）：LIMIT=题数上限（默认 30）、GROUPS=独立 median 组数（默认 3）、
+  // REPS=组内采样数（默认 3，= job 的 reps 参数）、CONCURRENCY=并发（默认 4）。
+  PRIOR_REPS_EVAL_CONCURRENCY: optionalString,
+  PRIOR_REPS_EVAL_GROUPS: optionalString,
+  PRIOR_REPS_EVAL_LIMIT: optionalString,
+  PRIOR_REPS_EVAL_REPS: optionalString,
   PROFILE_CRITIC_OK: optionalString,
-  PROJECTION_IS_WRITER: optionalString,
-  PROJECTION_IS_WRITER_ARTIFACT: optionalString,
-  PROJECTION_IS_WRITER_GOAL: optionalString,
-  PROJECTION_IS_WRITER_LEARNING_ITEM: optionalString,
-  PROJECTION_IS_WRITER_MISTAKE_VARIANT: optionalString,
-  PROJECTION_IS_WRITER_QUESTION_BLOCK: optionalString,
+  PROJECTION_IS_WRITER_ITEM_CALIBRATION: optionalString,
   QUESTION_SUPPLY_REFILL_ENABLED: optionalString,
   RESEARCH_MEETING_AGENT_ENABLED: optionalString,
   R2_ACCESS_KEY_ID: optionalString,
@@ -93,9 +121,8 @@ const server = {
   RW_WORKER: optionalString,
   SEED_SYNTHETIC_OK: optionalString,
   SELECTION_POLICY: optionalString,
-  SKIP_BOSS_INGEST: optionalString,
   TAGGING_MATCH_THRESHOLD: optionalString,
-  TAVILY_API_KEY: optionalString,
+  EXA_API_KEY: optionalString,
   TENCENT_OCR_REGION: optionalString,
   TENCENT_SECRET_ID: optionalString,
   TENCENT_SECRET_KEY: optionalString,
@@ -117,6 +144,7 @@ const server = {
   WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED: optionalString,
   XIAOMI_API_KEY: optionalString,
   ZHIPU_API_KEY: optionalString,
+  ZAI_CODING_CN_API_KEY: optionalString,
 };
 
 export const SERVER_ENV_KEYS: ReadonlySet<string> = new Set(Object.keys(server));
@@ -135,6 +163,20 @@ export function createServerEnv(
 
 export function getServerEnv(): ReturnType<typeof createServerEnv> {
   return createServerEnv();
+}
+
+/**
+ * YUK-1007 — API_PORT 的单一解析点（从 server/index.ts 内联逻辑平移，语义
+ * 逐字保留：trim → 空串→默认 8787 → 非正整数 throw）。admin config 读面的
+ * runtime 分区（facts seam）与 API 入口共用本函数，端口事实不会漂移两份。
+ */
+export function resolveApiPort(rawApiPort: string | undefined): number {
+  const trimmed = rawApiPort?.trim();
+  const parsed = trimmed ? Number(trimmed) : 8787;
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`API_PORT must be a positive integer, got: ${JSON.stringify(rawApiPort)}`);
+  }
+  return parsed;
 }
 
 export function requireApiInternalToken(

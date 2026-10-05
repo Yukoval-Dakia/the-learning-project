@@ -1,0 +1,42 @@
+{
+  "captured_at": "2026-09-23T09:49:52.540Z",
+  "code_revision": "70b6ff76a6e32bb724c0441b10fae0746a917c87",
+  "ticket": "YUK-346",
+  "lane": {
+    "adapter": "pi",
+    "provider": "zhipu",
+    "model": "glm-5.3-flash",
+    "task_kind": "SemanticJudgeTask",
+    "pin": "explicit ctx.modelBinding (post-P4 routing surface)"
+  },
+  "task_run_id": "eig5jrjc9ycqq3s965rb1ntj",
+  "wall_ms": 6565,
+  "parse_ok": true,
+  "input_digest": "sha256:1134a07f1837113ab5fd33b71de5237e976c581e53c8e10f442cabcc57cdf703",
+  "output_digest": "sha256:3cfd554d8fbb185e493d8fd233290972e7a0400580b6d56a174315919906fc76",
+  "output_excerpt": "{\"score\":0.75,\"coarse_outcome\":\"partial\",\"confidence\":0.9,\"feedback_md\":\"翻译整体通顺，正确译出了「须臾」（一会儿）以及整天苦思不如片刻学习的对比关系。但「尝」应译为「曾经」，你的「我曾经一天到晚地思考」只保留了「曾」，未完整落实这个实词的意思。注意「尝」是「曾经」的典型文言用法（如「尝趋百里外」），翻译时宜直接点出。\",\"evidence_json\":{\"matched_points\":[\"「须臾」译为「一会儿」\",\"译出「终日而思」与「须臾所学」的对比关系，语句通顺\"],\"missing_points\":[\"「尝」译为「曾经」（译文作「我曾经一天到晚地思考」，「曾」未明确落在「尝」字上，未译出「曾经」义）\"],\"notes\":\"句子结构与对比关系表达准确，仅「尝」的翻译未完全落实。\"}}",
+  "subject": "yuwen",
+  "phase": "relaxed-budget",
+  "budget_override": {
+    "maxIterations": 4
+  },
+  "as_configured": {
+    "status": "success",
+    "error_subtype": null,
+    "wall_ms": 6854
+  },
+  "status": "success",
+  "finish_reason": "end_turn",
+  "usage": {
+    "inputTokens": 699,
+    "outputTokens": 256,
+    "thinkingBlocks": 1,
+    "thinkingCharacters": 133
+  },
+  "cost": {
+    "basis": "unknown",
+    "amount_usd": null,
+    "ref": "unpriced:zhipu/glm-5.3-flash"
+  },
+  "provenance": "PiRunnerMessage frames carry source=pi; terminal evidence normalized from pi agentLoop agent_end + final assistant usage. Cost stays catalog-estimated (zhipu coding-plan catalog rates are 0 — flat subscription; mimo rates are the dated public per-token estimate)."
+}

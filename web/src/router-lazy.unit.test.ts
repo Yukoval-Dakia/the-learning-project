@@ -22,7 +22,11 @@ describe('SPA route chunk policy', () => {
       // lazyRouteComponent deliberately catches preload failures and rethrows them from its
       // render function. Invoke that boundary (without mounting the data-fetching page body)
       // so a missing module or named export cannot pass this gate.
-      expect(() => component?.({}), route.id).not.toThrow();
+      let rendered: unknown;
+      expect(() => {
+        rendered = component?.({});
+      }, route.id).not.toThrow();
+      expect(rendered, route.id).toBeDefined();
     }
   });
 

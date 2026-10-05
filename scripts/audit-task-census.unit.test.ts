@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { taskCatalog } from '../src/ai/task-catalog';
+import { copilotTaskSpecs } from '../src/capabilities/copilot/tasks';
+import { taskCatalog } from '../src/capabilities/task-catalog';
 import { auditTaskCensus } from './audit-task-census';
 import { scanForbiddenTaskCatalogPatterns } from './lib/task-census-guards';
 import {
@@ -36,6 +37,19 @@ afterEach(() => {
 });
 
 describe('auditTaskCensus source discovery', () => {
+  it('discovers the injected collecting-stream runner used by the Copilot execution owner', () => {
+    const result = auditFixture(['CopilotTask'], {
+      'src/execution.ts': `adapters.streamTaskCollectingFn('CopilotTask', input, ctx, onText);`,
+    });
+    expect(result.ok).toBe(true);
+    expect(result.callersByKind.CopilotTask).toEqual([
+      expect.objectContaining({
+        callee: 'adapters.streamTaskCollectingFn',
+        file: 'src/execution.ts',
+      }),
+    ]);
+  });
+
   it('discovers a new literal caller and de-duplicates repeated calls by kind', () => {
     const result = auditFixture(['NewTask'], {
       'src/route.ts': `
@@ -248,6 +262,19 @@ describe('task catalog executable-pattern guard', () => {
     expect(scanForbiddenTaskCatalogPatterns(root)).toEqual([]);
   });
 
+  it.each(['src/capabilities/task-catalog.ts', 'src/capabilities/task-registry.ts'])(
+    'keeps the injected composition guarded against mutable discovery: %s',
+    (file) => {
+      const root = createSourceFixture({ [file]: 'registerTask(process.env.TASK_OWNER);' });
+      expect(scanForbiddenTaskCatalogPatterns(root).map((violation) => violation.reason)).toEqual(
+        expect.arrayContaining([
+          'mutable registerTask registration',
+          'environment-selected task owner',
+        ]),
+      );
+    },
+  );
+
   it('does not inspect registry Copilot prepare imports outside the guarded composition files', () => {
     const root = createSourceFixture({
       'src/ai/task-catalog.ts': '',
@@ -360,7 +387,8 @@ describe('registered infrastructure evidence', () => {
 
 describe('live taskCatalog census', () => {
   it('derives the catalog census from the frozen live composition root', () => {
-    expect(Object.keys(taskCatalog)).toHaveLength(52);
+    // YUK-1047: 54 = 53 chat tasks (including native assessment) + Jev typed task.
+    expect(Object.keys(taskCatalog)).toHaveLength(54);
     expect(Object.isFrozen(taskCatalog)).toBe(true);
   });
 
@@ -371,11 +399,19 @@ describe('live taskCatalog census', () => {
       sourceRoot,
       nonLiveClassifications: {
         AttributionTask: 'Registered compatibility task; production invokes AttributionRerankTask.',
+        // YUK-1049 — typed lane: kind arrives per frozen scoring unit via
+        // ModelExecutorRequest.executor.task_kind (dynamic arg the caller-scan
+        // can't resolve statically); served by runTypedPrimitiveTask.
+        JevScoringDecisionTask:
+          'Typed-execution task served by runTypedPrimitiveTask (OpenRouter decisions endpoint); kind selected per frozen scoring unit via executor.task_kind.',
       },
     });
 
     expect(result.ok, result.errors.join('\n')).toBe(true);
-    expect(result.discoveredKinds).toHaveLength(51);
+    // 52 discovered (Jev's dynamic executor.task_kind arg isn't statically
+    // resolvable — that's exactly why it carries a non-live classification).
+    expect(result.discoveredKinds).toHaveLength(52);
+    expect(Object.keys(copilotTaskSpecs).sort()).toEqual(['CopilotTask', 'TeachingTurnTask']);
     expect(result.registrationEvidence.some((item) => item.registration === 'manifest-job')).toBe(
       true,
     );

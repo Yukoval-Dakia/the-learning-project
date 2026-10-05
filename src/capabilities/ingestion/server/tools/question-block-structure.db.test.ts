@@ -5,12 +5,12 @@
 
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it } from 'vitest';
-
 import { capabilities } from '@/capabilities';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import { question_block } from '@/db/schema';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { __resetRegistryForTests, getTool } from '@/server/ai/tools/registry';
+import { backfillQuestionBlockGenesis } from '../../../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
 import { getQuestionBlockStructureTool } from './question-block-structure';
 import type { ToolContext } from './types';
@@ -54,6 +54,7 @@ async function seedBlock(opts: {
     updated_at: now,
     version: 0,
   });
+  await backfillQuestionBlockGenesis(db, now);
   return blockId;
 }
 

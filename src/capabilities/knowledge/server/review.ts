@@ -12,15 +12,14 @@
 //      `mutation` arg) into:
 //        - propose_knowledge_edge → ProposeKnowledgeEdge event.
 //        - anything else → writeKnowledgeProposeEvent (tree mutation).
-//   3. Call `streamTask` which routes through the Claude Agent SDK
-//      subprocess, exposing the MCP tool as `mcp__loom__write_proposal`.
+//   3. Call `streamTask` which routes through the pi agentLoop, exposing the
+//      mounted tool as `mcp__loom__write_proposal`.
 //   4. Return the streamed Response.
 //
 // The registry's `allowedTools: ['mcp__loom__write_proposal']` matches the
-// SDK-resolved name so the agent runner doesn't strip the tool from the
-// catalog before the model sees it.
+// wire name so the adapter doesn't strip the tool from the catalog before
+// the model sees it.
 
-import { createSdkMcpServer, tool } from '@anthropic-ai/claude-agent-sdk';
 import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { readAgentNotes } from '@/capabilities/agency/public';
@@ -44,6 +43,7 @@ import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
 import { writeToolCallLog } from '@/server/ai/log';
 import { streamTask } from '@/server/ai/runner';
+import { type PiToolMount, piCustomTool } from '@/server/ai/tools/pi-tools';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { type KnowledgeMutationPayload, writeKnowledgeProposeEvent } from './proposals';
 
@@ -593,68 +593,87 @@ const WriteProposalSchema = {
   evidence_event_ids: z.array(z.string().min(1)).max(20).optional(),
 } as const;
 
-function buildKnowledgeReviewMcpServer(db: Db, taskRunId: string) {
+const WRITE_PROPOSAL_DESCRIPTION =
+  'Propose one knowledge graph mutation. Call once per mutation. payload.mutation distinguishes the kind: tree-shape (propose_new / reparent / merge / split / archive) writes a ProposeKnowledge / experimental:knowledge_<mutation> event; mesh-shape (propose_knowledge_edge) writes a ProposeKnowledgeEdge event with {from_knowledge_id, to_knowledge_id, relation_type}. For a mesh edge, pass the supporting recent_mistakes[].id values in top-level evidence_event_ids. reasoning must be concrete. If the result kind starts with skipped, do not retry the same mutation in this run.';
+
+/**
+ * Engine-neutral write_proposal executor — the pi `AgentTool` delegates here
+ * so the tool_call_log write, iteration counter and error shape stay
+ * byte-identical regardless of the tool-mount wrapper (YUK-1021).
+ */
+function buildWriteProposalExecutor(db: Db, taskRunId: string) {
   let toolIteration = 0;
-  return createSdkMcpServer({
-    name: 'loom',
+  return async (rawArgs: unknown): Promise<{ content: Array<{ type: 'text'; text: string }> }> => {
+    const input = rawArgs as WriteProposalArgs;
+    const startedAt = Date.now();
+    const iteration = ++toolIteration;
+    try {
+      const result = await runWriteProposal(db, input, { taskRunId });
+      try {
+        await writeToolCallLog(db, {
+          task_run_id: taskRunId,
+          task_kind: 'KnowledgeReviewTask',
+          tool_name: 'mcp__loom__write_proposal',
+          effect: 'propose',
+          input_json: input,
+          output_json: result,
+          iteration,
+          latency_ms: Date.now() - startedAt,
+          cost: 0,
+        });
+      } catch (logErr) {
+        console.error('[KnowledgeReviewTask] write_proposal result log failed', {
+          task_run_id: taskRunId,
+          err: logErr,
+        });
+      }
+      return {
+        content: [{ type: 'text', text: JSON.stringify(result) }],
+      };
+    } catch (err) {
+      try {
+        await writeToolCallLog(db, {
+          task_run_id: taskRunId,
+          task_kind: 'KnowledgeReviewTask',
+          tool_name: 'mcp__loom__write_proposal',
+          effect: 'propose',
+          input_json: input,
+          output_json: {},
+          error_reason: err instanceof Error ? err.message : String(err),
+          iteration,
+          latency_ms: Date.now() - startedAt,
+          cost: 0,
+        });
+      } catch (logErr) {
+        console.error('[KnowledgeReviewTask] write_proposal failure log failed', {
+          task_run_id: taskRunId,
+          err: logErr,
+        });
+      }
+      throw err;
+    }
+  };
+}
+
+/**
+ * The write_proposal mount: a `custom` PiToolMount carrying the executor.
+ * Wire name is `mcp__loom__write_proposal` so allowedTools/tool_call_log
+ * stay verbatim.
+ */
+function buildKnowledgeReviewPiMount(db: Db, taskRunId: string): PiToolMount {
+  const executor = buildWriteProposalExecutor(db, taskRunId);
+  return {
+    type: 'custom',
     tools: [
-      tool(
+      piCustomTool(
+        'loom',
         'write_proposal',
-        'Propose one knowledge graph mutation. Call once per mutation. payload.mutation distinguishes the kind: tree-shape (propose_new / reparent / merge / split / archive) writes a ProposeKnowledge / experimental:knowledge_<mutation> event; mesh-shape (propose_knowledge_edge) writes a ProposeKnowledgeEdge event with {from_knowledge_id, to_knowledge_id, relation_type}. For a mesh edge, pass the supporting recent_mistakes[].id values in top-level evidence_event_ids. reasoning must be concrete. If the result kind starts with skipped, do not retry the same mutation in this run.',
+        WRITE_PROPOSAL_DESCRIPTION,
         WriteProposalSchema,
-        async (args) => {
-          const input = args as WriteProposalArgs;
-          const startedAt = Date.now();
-          const iteration = ++toolIteration;
-          try {
-            const result = await runWriteProposal(db, input, { taskRunId });
-            try {
-              await writeToolCallLog(db, {
-                task_run_id: taskRunId,
-                task_kind: 'KnowledgeReviewTask',
-                tool_name: 'mcp__loom__write_proposal',
-                effect: 'propose',
-                input_json: input,
-                output_json: result,
-                iteration,
-                latency_ms: Date.now() - startedAt,
-                cost: 0,
-              });
-            } catch (logErr) {
-              console.error('[KnowledgeReviewTask] write_proposal result log failed', {
-                task_run_id: taskRunId,
-                err: logErr,
-              });
-            }
-            return {
-              content: [{ type: 'text', text: JSON.stringify(result) }],
-            };
-          } catch (err) {
-            try {
-              await writeToolCallLog(db, {
-                task_run_id: taskRunId,
-                task_kind: 'KnowledgeReviewTask',
-                tool_name: 'mcp__loom__write_proposal',
-                effect: 'propose',
-                input_json: input,
-                output_json: {},
-                error_reason: err instanceof Error ? err.message : String(err),
-                iteration,
-                latency_ms: Date.now() - startedAt,
-                cost: 0,
-              });
-            } catch (logErr) {
-              console.error('[KnowledgeReviewTask] write_proposal failure log failed', {
-                task_run_id: taskRunId,
-                err: logErr,
-              });
-            }
-            throw err;
-          }
-        },
+        (args) => executor(args),
       ),
     ],
-  });
+  };
 }
 
 // ---------- Public entrypoint ----------
@@ -664,20 +683,19 @@ export interface StreamReviewTaskCtx {
 }
 
 /**
- * Stream KnowledgeReviewTask. The Claude Agent SDK runs the tool-call loop
- * against an in-process MCP server; each `write_proposal` call lands as a
+ * Stream KnowledgeReviewTask. The pi agentLoop runs the tool-call loop
+ * against the mounted write_proposal AgentTool; each call lands as a
  * knowledge / knowledge_edge propose event in the DB. Returns a Response
  * with streamed assistant text deltas.
  */
 export async function streamReviewTask(ctx: StreamReviewTaskCtx): Promise<Response> {
   const { input, subjectProfile } = await buildReviewInput(ctx.db);
   const taskRunId = newId();
-  const mcpServer = buildKnowledgeReviewMcpServer(ctx.db, taskRunId);
 
   return streamTask('KnowledgeReviewTask', input, {
     db: ctx.db,
     subjectProfile,
-    mcpServers: { loom: mcpServer },
+    piToolMounts: [buildKnowledgeReviewPiMount(ctx.db, taskRunId)],
     taskRunId,
     autoLogToolCalls: false,
   });

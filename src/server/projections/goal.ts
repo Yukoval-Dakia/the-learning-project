@@ -1,8 +1,7 @@
 // YUK-471 W2 — projectGoal: the IO shell around the PURE goal fold.
 //
-// The read→fold→write-through shell the goal accept / retract / status-scope sites flip to as
-// the SOLE writer of a `goal` row WHEN the per-entity flag projectionIsWriter('goal') is ON
-// (critic A1). It:
+// Canonical structural writer after YUK-973; there is no per-entity mode switch.
+// It:
 //   1. GATHERS the superset of `event` rows that can affect `goalId` (the pure reducer filters
 //      internally, but the shell over-collects — a missed event silently drops a mutation),
 //   2. maps each DB row → the flat FoldEvent envelope (inside gather.ts),
@@ -79,6 +78,8 @@ async function upsertProjectedGoal(db: DbLike, projected: GoalRowSnapshotT): Pro
       // the ?? is a type-level belt for the optional snapshot field, never hit at runtime.
       scope_mode: projected.scope_mode ?? 'explicit',
       sequence_hint: projected.sequence_hint,
+      // YUK-1009 — legacy snapshots carry no declared_stage; fold materializes NULL.
+      declared_stage: projected.declared_stage ?? null,
       status: projected.status,
       source: projected.source,
       source_ref: projected.source_ref,
@@ -94,6 +95,7 @@ async function upsertProjectedGoal(db: DbLike, projected: GoalRowSnapshotT): Pro
         scope_knowledge_ids: projected.scope_knowledge_ids,
         scope_mode: projected.scope_mode ?? 'explicit',
         sequence_hint: projected.sequence_hint,
+        declared_stage: projected.declared_stage ?? null,
         status: projected.status,
         source: projected.source,
         source_ref: projected.source_ref,

@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, gt, inArray, isNull, sql } from 'drizzle-orm';
 import type { Db, Tx } from '@/db/client';
-import { notDraftPredicate } from '@/db/predicates';
+import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import {
   event,
   placement_starter_attempt,
@@ -1045,6 +1045,8 @@ export async function countEligiblePlacementQuestions(
         ...(attemptId ? [eq(placement_starter_attempt_question.attempt_id, attemptId)] : []),
         eq(placement_starter_attempt_question.verification_status, 'authorized'),
         notDraftPredicate(question.draft_status),
+        // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不算已验证供给。
+        questionSuspendedPredicate(question),
         isNull(sql`${question.metadata}->>'archived_at'`),
         sql`${question.knowledge_ids} @> jsonb_build_array(${placement_starter_claim.knowledge_id})`,
       ),

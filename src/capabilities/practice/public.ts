@@ -8,12 +8,31 @@ export {
   getEffectiveTruths,
 } from '@/kernel/events';
 export type { QuizGenJobData } from './jobs/quiz_gen';
-export { retrievabilityForKc } from './server/fsrs';
+// YUK-1057 — 隔离演练的 post-cutover writer seam：发题/草稿/提交统一经
+// barrel 透出（import 链为 @kernel + @db 纯链，无 SDK —— migrate bundle 安全）。
+export { issueAssessment } from './server/assessment/issue';
+export { saveResponseDraft, saveSubmission } from './server/assessment/submit';
+export type { AttemptSnapshotBracketsInput } from './server/attempt-snapshot';
+export { writeAttemptSnapshotBrackets } from './server/attempt-snapshot';
+// YUK-1007 — practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
+// 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
+export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
+export { retrievabilityForKc, scheduleReview } from './server/fsrs';
 export type { FrontierResolution } from './server/learnable-frontier';
 export {
   isMasteredForFrontier,
   learnableFrontierResolved,
 } from './server/learnable-frontier';
+export {
+  LEARNING_CONTENT_MAX_QUESTIONS,
+  type LearningContentValidationDeps,
+  validateLearningContent,
+} from './server/learning-content-validation';
+export { isLiveQuestionReference } from './server/live-question-reference';
+// YUK-1037/1053 — the seed-root anchor regex is a single pattern owned by
+// placement-scope but consumed from server/*; re-exported through the public
+// seam so server→capability stays public (not deep).
+export { SYNTHETIC_SUBJECT_ROOT_RE } from './server/placement-scope';
 export { loadAttemptQuestionSnapshot } from './server/question-evidence-snapshot';
 export { mergeExactQuestionDuplicateKnowledgeIds } from './server/quiz/content-fingerprint';
 export { resolveSolveOverrideFromEnv } from './server/quiz/solve-lane';
@@ -33,7 +52,11 @@ export const handleReviewDue: HandleReviewDue = async (...args) => {
   const dueList = await import('./server/due-list');
   return dueList.handleReviewDue(...args);
 };
+
+// YUK-1064 — explicit operations used by scripts and integration consumers.
+export type { FailureLearningBossSend } from './jobs/failure-learning-jobs';
 export type { CollectedSignal } from './server/candidate-signals';
+export { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './server/cause-overlay';
 export type {
   ProposeFailureVariantInput,
   VariantProposalResult,
@@ -52,6 +75,54 @@ export {
   materializeInterventionDiagnostics,
   retireInterventionDiagnosticQuestion,
 } from './server/intervention-diagnostics';
+// YUK-1063 — explicit judging contract consumed by the stable kernel facade.
+export type { AnswerInput, JudgeResult } from './server/judge';
+export {
+  type ContractAttemptInput,
+  type ContractAttemptOutcome,
+  type ContractGradingRef,
+  EVALUATION_ENTRY_POINTS,
+  type EntryPointDisposition,
+  type EvaluateAttemptInput,
+  type EvaluateAttemptOutcome,
+  EvaluateSubmissionError,
+  type EvaluateSubmissionRequest,
+  type EvaluateSubmissionResult,
+  type GradingEntryPoint,
+  IMAGE_CONSUMING_JUDGE_ROUTES,
+  type JevModelExecutorSpec,
+  type JudgeAnswerParams,
+  type JudgeAnswerResult,
+  type JudgeInvokerOutput,
+  type JudgeKind,
+  type JudgeQuestionRow,
+  type JudgeRoute,
+  type JudgeRouteQuestionRow,
+  type JudgeRouterInput,
+  type LegacyAttemptInput,
+  type LegacyAttemptOutcome,
+  MODEL_BACKED_JUDGE_ROUTES,
+  type MultimodalDirectImageFetchFn,
+  type MultimodalDirectRunTaskFn,
+  createDefaultJudgeInvoker,
+  defaultImageFetch,
+  evaluateAttempt,
+  evaluateSubmission,
+  isModelBackedJudgeRoute,
+  judgeAnswer,
+  judgeRouter,
+  judgeRouterV2,
+  resolveQuestionJudgeRoute,
+  runMultimodalDirectJudge,
+} from './server/judge';
+export { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './server/judge-run-status';
+export {
+  rewriteLearningItemKnowledgeIds,
+  rewriteQuestionKnowledgeIds,
+} from './server/merge-attribution';
+export { submitPaperSlot } from './server/paper-submit';
+export { selectNextPlacementItem } from './server/placement-select';
+export { getPracticeList } from './server/practice-read';
 export type {
   EnqueueVariantVerifyFn,
   QuestionDraftAcceptResult,
@@ -85,6 +156,24 @@ export {
   parseEvidenceDemand,
   withSupplyTraceDifficultyEvidence,
 } from './server/question-supply/evidence-demand';
+export {
+  JYEOO_FETCH_CANARY_ACTION,
+  jyeooBudgetRemaining,
+  jyeooDailyFetchBudget,
+} from './server/question-supply/jyeoo-budget';
+// YUK-986 (Supply-Agent/1) — jyeoo agent-tool 链公开面：候选抓取核心（tool 与 CLI 共用）、
+// 事件溯源日预算、hint 名匹配（CLI/executor 的确定性归属辅助）。两个 DomainTool 也从
+// barrel 透出（见文件尾）——agent surface 由 manifest copilotTools 授予，CLI 直接调 execute。
+export type {
+  JyeooCandidate,
+  JyeooFetchCandidatesInput,
+  JyeooFetchCandidatesResult,
+} from './server/question-supply/jyeoo-candidates';
+export { runJyeooFetchCandidates } from './server/question-supply/jyeoo-candidates';
+export {
+  findSubjectRootKnowledgeId,
+  matchJyeooKnowledgeHints,
+} from './server/question-supply/jyeoo-hint-match';
 export type {
   JyeooExitClassification,
   JyeooFailureClass,
@@ -108,12 +197,11 @@ export type {
 } from './server/question-supply/jyeoo-spawn';
 export { spawnJyeooFetch as spawnPracticeJyeooFetch } from './server/question-supply/jyeoo-spawn';
 export {
-  JYEOO_DEFAULT_PAGES,
+  JYEOO_BACKFILL_PER_QUESTION_MS,
   JYEOO_FETCH_ROUTE,
   JYEOO_SOURCE_HOST,
+  jyeooBackfillSpawnTimeoutMs,
   jyeooBinaryPath,
-  jyeooDgTokenForBand,
-  jyeooFetchEnabled,
   jyeooSpawnMaxStderrBytes,
   jyeooSpawnMaxStdoutBytes,
   jyeooSpawnTimeoutMs,
@@ -186,6 +274,11 @@ export {
   resolvePlacementStarterGoalAuthority,
 } from './server/question-supply/placement-starter-store';
 export { lockPlacementSupplyScopes } from './server/question-supply/placement-supply-lock';
+// YUK-988 (Supply-Agent/3) — executeSupplyPlan/buildSupplyExecutorDeps 不进本 barrel：
+// 该链（plan-executor → web-candidates → SourcingTask → pi agent runtime）
+// 会把 SDK 拉进 build:migrate 的 cjs bundle，SDK 顶层 createRequire(import.meta.url)
+// 在 cjs 下启动即崩（server/worker 构建标 external 所以只 migrate 中招）。
+// scripts/supply-execute.ts 走深路径直引（E1 jyeoo-backfill 先例）。
 export { planSupplyRoutes } from './server/question-supply/route-planner';
 export type {
   DifficultyBand,
@@ -213,6 +306,10 @@ export {
   MEM0_PRIOR_ITEM_CHAR_CAP,
   SELECTION_ORCHESTRATOR_CANDIDATE_CAP,
 } from './server/selection-constants';
-
+export { jyeooFetchCandidatesTool } from './server/tools/jyeoo-fetch-candidates';
 // YUK-892 — due-review queue reader for non-LLM read paths (today summary).
 export { executeGetReviewDue } from './server/tools/question-context';
+export { storeSourcedQuestionTool } from './server/tools/store-sourced-question';
+
+// YUK-1062 — task composition uses the narrow task-public entry directly.
+export { practiceTaskSpecs } from './task-public';

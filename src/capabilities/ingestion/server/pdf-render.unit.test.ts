@@ -91,4 +91,32 @@ describe('renderPdfToPngPages', () => {
     const err = await renderPdfToPngPages(fixture('corrupt.pdf')).catch((e) => e);
     expect(err).toBeInstanceOf(ApiError);
   });
+
+  // YUK-522 — cooperative abort via the threaded request signal. The mocked
+  // per-page seam (pdf-render-abort.test.ts) covers the mid-render bail; these
+  // use the REAL renderer + fixtures to pin the two client-visible outcomes.
+  describe('cooperative abort (YUK-522)', () => {
+    it('a live (never-aborted) signal leaves the render byte-identical (characterization)', async () => {
+      const withoutSignal = await renderPdfToPngPages(fixture('sample-2page.pdf'));
+      const withSignal = await renderPdfToPngPages(
+        fixture('sample-2page.pdf'),
+        new AbortController().signal,
+      );
+      expect(withSignal).toHaveLength(withoutSignal.length);
+      for (let i = 0; i < withSignal.length; i++) {
+        expect(Buffer.from(withSignal[i].png).equals(Buffer.from(withoutSignal[i].png))).toBe(true);
+      }
+    });
+
+    it('an already-aborted signal rejects with request_aborted instead of rendering', async () => {
+      const controller = new AbortController();
+      controller.abort();
+      await expect(
+        renderPdfToPngPages(fixture('sample-2page.pdf'), controller.signal),
+      ).rejects.toMatchObject({
+        code: 'request_aborted',
+        status: 499,
+      });
+    });
+  });
 });

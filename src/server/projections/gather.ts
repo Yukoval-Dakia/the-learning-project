@@ -23,6 +23,7 @@ import { alias } from 'drizzle-orm/pg-core';
 import { foldArtifact } from '@/core/projections/artifact';
 import type { FoldEvent } from '@/core/projections/fold-event';
 import { foldGoal } from '@/core/projections/goal';
+import { foldItemCalibration } from '@/core/projections/item_calibration';
 import { foldKnowledgeNode } from '@/core/projections/knowledge';
 import { foldKnowledgeEdge } from '@/core/projections/knowledge_edge';
 import { foldLearningItem } from '@/core/projections/learning_item';
@@ -31,6 +32,7 @@ import { foldQuestionBlock } from '@/core/projections/question_block';
 import type {
   ArtifactRowSnapshotT,
   GoalRowSnapshotT,
+  ItemCalibrationRowSnapshotT,
   KnowledgeEdgeRowSnapshotT,
   KnowledgeRowSnapshotT,
   LearningItemRowSnapshotT,
@@ -485,6 +487,29 @@ export async function gatherAndFoldQuestionBlock(
 
   const foldEvents = [...byId.values()].map(rowToFoldEvent);
   return foldQuestionBlock(blockId, foldEvents);
+}
+
+/**
+ * Gather the superset of events affecting `rowId` and run the PURE item_calibration fold.
+ * READ-ONLY. (YUK-496 — the simplest gather of the registry, mirror of gatherAndFoldArtifact.)
+ *
+ * Q1 ONLY (subject_kind='item_calibration' AND subject_id=rowId): the ONLY event the anchor-only
+ * fold consumes is the backfill `experimental:genesis` seed, and the row id is ALWAYS its
+ * subject_id — no minting indirection (item_calibration does NOT enter materialized_id_index,
+ * the question_block design §5.3 precedent), no caused_by chain (the anchor is a direct system
+ * write, not a propose→accept). Returns the projected row or null (row never anchored). Writes
+ * NOTHING.
+ */
+export async function gatherAndFoldItemCalibration(
+  db: DbLike,
+  rowId: string,
+): Promise<ItemCalibrationRowSnapshotT | null> {
+  const rows = await db
+    .select()
+    .from(event)
+    .where(and(eq(event.subject_kind, 'item_calibration'), eq(event.subject_id, rowId)));
+  const foldEvents = rows.map(rowToFoldEvent);
+  return foldItemCalibration(rowId, foldEvents);
 }
 
 /**

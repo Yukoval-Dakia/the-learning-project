@@ -12,7 +12,7 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
-import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
+import { seedKnowledge } from '@/capabilities/knowledge/public';
 import * as schema from '@/db/schema';
 import { reconcileBuiltinTraits } from '@/server/subjects/reconcile-builtin-traits';
 
@@ -31,6 +31,12 @@ async function main(): Promise<void> {
     console.log('[migrate] applying drizzle migrations from ./drizzle ...');
     await migrate(db, { migrationsFolder: './drizzle' });
     console.log('[migrate] done');
+
+    // YUK-951: refuse to strand an unverified installation's old mailbox work.
+    // Resolve only after the explicit DATABASE_URL is bound; this guard is read-only.
+    const { assertCopilotLegacyDrained } = await import('@/capabilities/copilot/public');
+    await assertCopilotLegacyDrained(db);
+    console.log('[migrate] Copilot legacy drain readiness: clear');
 
     // 冷启薄 seed（YUK-477）：每个已知科目一个 domain-root 节点。幂等（ON CONFLICT DO NOTHING +
     // 稳定 id，重跑/并发均安全），所以 init container 每次启动安全调用——让 fresh DB 树非空，给上传
@@ -51,6 +57,32 @@ async function main(): Promise<void> {
       `[migrate] builtin trait reconcile: +${traits.insertedSubjects} subjects, ` +
         `+${traits.insertedTraits} traits, ${traits.upgradedTraits} upgraded, ` +
         `${traits.skippedTraits} up-to-date, ${traits.preservedTraits} owner-edited preserved`,
+    );
+
+    // YUK-973: prepare legacy data before the canonical writers start. Failure is fatal;
+    // never conceal incomplete history with a fresh snapshot or rebuild live learner rows.
+    // The legacy CLI module loads .env: defer it until the explicit URL above has
+    // been required and bound to this connection, preserving the migration target gate.
+    const { migrateCanonicalProjections } = await import('./migrate-canonical-projections');
+    const projections = await migrateCanonicalProjections(db);
+    console.log('[migrate] canonical projection readiness:', JSON.stringify(projections));
+
+    // YUK-1055 — DB contract epoch observability（启动准备宽于 SQL）：0109 已在
+    // SQL 侧落首个 marker（'legacy','active'——该 migration 时代的隐式值）；这里
+    // 读回并日志化，让 migrate init container 的输出本身成为 epoch 就绪证据。
+    // 读不出 = 未迁移到位 → fatal（init container 红）。注意 seed 行名与本代码
+    // epoch 无关：fresh install 若需与 CODE_CONTRACT_EPOCH 对齐由运维 activate
+    // 完成（scripts/contract-epoch.ts）。
+    const { readContractEpoch, CODE_CONTRACT_EPOCH } = await import('@/server/contract-epoch');
+    const epochMarker = await readContractEpoch(db);
+    if (!epochMarker) {
+      throw new Error(
+        '[migrate] contract_epoch marker absent after migrations — epoch guard has no semantics',
+      );
+    }
+    console.log(
+      `[migrate] contract epoch: ${epochMarker.epoch}/${epochMarker.state} ` +
+        `(seq ${epochMarker.seq}; code epoch ${CODE_CONTRACT_EPOCH})`,
     );
   } finally {
     await sql.end({ timeout: 5 });

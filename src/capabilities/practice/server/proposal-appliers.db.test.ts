@@ -4,15 +4,27 @@
 // acceptAiProposal/dismissAiProposal/retractAiProposal —— 搬迁不改行为，
 // 测试继续从公共 API 进入以覆盖「壳路由 → 包 applier」整条链。
 
+import { readFileSync } from 'node:fs';
+
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { QuestionEditOpT } from '@/core/schema/proposal';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
-import { event, knowledge, mistake_variant, proposal_signals, question } from '@/db/schema';
+import {
+  event,
+  knowledge,
+  mistake_variant,
+  proposal_signals,
+  question,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import { writeVariantQuestionProposal } from '@/kernel/proposals/producers';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { acceptAiProposal, dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';
+import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { assertProposalLifecycleResult } from '../../../../tests/helpers/proposal-lifecycle';
 import type {
@@ -69,7 +81,7 @@ describe('variant_question proposal lifecycle', () => {
     });
   }
 
-  async function seedVariantQuestionProposal(): Promise<{
+  async function seedVariantQuestionProposal(prepare = true): Promise<{
     proposalId: string;
     mistakeVariantId: string;
   }> {
@@ -99,6 +111,8 @@ describe('variant_question proposal lifecycle', () => {
       created_at: now,
       updated_at: now,
     });
+    // This fixture models persisted legacy data entering a migrated deployment.
+    if (prepare) await migrateCanonicalProjections(db);
     return { proposalId, mistakeVariantId: mvId };
   }
 
@@ -146,6 +160,27 @@ describe('variant_question proposal lifecycle', () => {
 
     expect(enqueue).toHaveBeenCalledTimes(1);
     expect(enqueue).toHaveBeenCalledWith(mistakeVariantId);
+
+    // YUK-1043 — 接受即统一发布（§2 矩阵 mistake_variant 行：不能绕发布直接
+    // active）：首版 revision + admitted（manual + human —— D9 手动带 provenance）。
+    const revisions1043 = await testDb()
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, result.question_id));
+    expect(revisions1043).toHaveLength(1);
+    const lifecycles1043 = await testDb()
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, result.question_id));
+    expect(lifecycles1043[0].current_revision_id).toBe(revisions1043[0].revision_id);
+    expect(lifecycles1043[0].scoring_admission_state).toBe('admitted');
+    expect(lifecycles1043[0].scoring_admission_evidence).toMatchObject({
+      marking_provenance: 'manual',
+      verification: {
+        structural_check_passed: true,
+        independent_verification: { passed: true, verifier: 'human' },
+      },
+    });
   });
 
   // P5.6 / YUK-178 (AC-1 + AC-6) — variant_question is hard-corrective. Accepting
@@ -214,6 +249,29 @@ describe('variant_question proposal lifecycle', () => {
     expect(signals).toHaveLength(1);
     expect(signals[0]).toMatchObject({ dismiss_count: 0, accept_count: 0 });
     expect(signals[0].cooldown_until).toBeInstanceOf(Date);
+  });
+
+  it('unprepared history rejects dismissal without committing a rate or cooldown', async () => {
+    await seedParentQuestion('q_parent');
+    const { proposalId, mistakeVariantId } = await seedVariantQuestionProposal(false);
+    await expect(dismissAiProposal(testDb(), proposalId)).rejects.toThrow(
+      'canonical projection migration',
+    );
+    expect(
+      await testDb()
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId))),
+    ).toEqual([]);
+    expect(await testDb().select().from(proposal_signals)).toEqual([]);
+    expect(
+      (
+        await testDb()
+          .select()
+          .from(mistake_variant)
+          .where(eq(mistake_variant.id, mistakeVariantId))
+      )[0].status,
+    ).toBe('draft');
   });
 
   it('retract after accept flips mistake_variant row from active to dismissed', async () => {
@@ -360,6 +418,25 @@ describe('question_draft accept (ADR-0031 lane B)', () => {
     expect(
       (rateRows[0].payload as { materialized_question_id?: string }).materialized_question_id,
     ).toBe(questionId);
+
+    // YUK-1043 — 接受进入统一发布（§2 矩阵 question_draft 行）：首版 revision +
+    // admitted（manual + human）。拒绝路径（dismiss ⇒ tombstone）不发布。
+    const revisions1043 = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, questionId));
+    expect(revisions1043).toHaveLength(1);
+    const lifecycles1043 = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, questionId));
+    expect(lifecycles1043[0].scoring_admission_state).toBe('admitted');
+    expect(lifecycles1043[0].scoring_admission_evidence).toMatchObject({
+      marking_provenance: 'manual',
+      verification: {
+        independent_verification: { passed: true, verifier: 'human' },
+      },
+    });
   });
 
   it('does NOT reset FSRS for an already-enrolled knowledge node', async () => {
@@ -392,6 +469,44 @@ describe('question_draft accept (ADR-0031 lane B)', () => {
     await acceptAiProposal(db, 'qd_p3');
     const { getFsrsState } = await import('@/server/fsrs/state');
     expect(await getFsrsState(db, 'question', questionId)).toBeTruthy();
+  });
+
+  // YUK-1037 — a draft bound only to a synthetic subject root ('seed:<subj>:root',
+  // the structural anchor the subject read axis already excludes via
+  // resolveSubjectKnowledgeIds) is labeled-but-anchor-only: accept still promotes
+  // it, but it must NOT mint a knowledge-level FSRS card for the root, and the
+  // question-level fallback stays reserved for a truly unlabeled row (above).
+  it('accepting a seed-root-only draft promotes it but enrolls ZERO FSRS cards', async () => {
+    const db = testDb();
+    const questionId = await seedDraftQuestion({
+      knowledgeIds: ['seed:math:root'],
+      id: 'q_draft_seedroot',
+    });
+    await seedQuestionDraftProposal('qd_p_seedroot', questionId);
+
+    const result = await acceptAiProposal(db, 'qd_p_seedroot');
+    expect(result.kind).toBe('question_draft');
+    const [row] = await db.select().from(question).where(eq(question.id, questionId));
+    expect(row.draft_status).toBe('active');
+
+    const { getFsrsState } = await import('@/server/fsrs/state');
+    expect(await getFsrsState(db, 'knowledge', 'seed:math:root')).toBeNull();
+    expect(await getFsrsState(db, 'question', questionId)).toBeNull();
+  });
+
+  it('accepting a mixed-binding draft enrolls only the real KC', async () => {
+    const db = testDb();
+    const questionId = await seedDraftQuestion({
+      knowledgeIds: ['seed:math:root', 'k_draft'],
+      id: 'q_draft_mixed',
+    });
+    await seedQuestionDraftProposal('qd_p_mixed', questionId);
+
+    await acceptAiProposal(db, 'qd_p_mixed');
+    const { getFsrsState } = await import('@/server/fsrs/state');
+    expect(await getFsrsState(db, 'knowledge', 'seed:math:root')).toBeNull();
+    expect(await getFsrsState(db, 'knowledge', 'k_draft')).toBeTruthy();
+    expect(await getFsrsState(db, 'question', questionId)).toBeNull();
   });
 
   it('double-accept is idempotent (no second rate event, no FSRS churn)', async () => {
@@ -431,6 +546,106 @@ describe('question_draft accept (ADR-0031 lane B)', () => {
     expect(await getFsrsState(db, 'knowledge', 'k_draft')).toBeNull();
   });
 
+  // YUK-308 — question_draft dismiss applier: the generic write-only rate path
+  // left a rejected draft indistinguishable from a pending one, so
+  // query_questions (include_drafts=true default) and write_quiz's draft
+  // admission kept re-surfacing it. Dismiss now tombstones the still-draft row
+  // via metadata.dismissed_at (+ reason + proposal provenance) in the same tx
+  // as the rate event, and every draft-aware reader excludes the marker.
+  it('dismiss tombstones the draft row (metadata.dismissed_at) without promoting it', async () => {
+    const db = testDb();
+    const questionId = await seedDraftQuestion();
+    await seedQuestionDraftProposal('qd_d1', questionId);
+
+    const result = await dismissAiProposal(db, 'qd_d1', { user_note: '不够好' });
+    expect(result.kind).toBe('dismissed');
+
+    const [row] = await db.select().from(question).where(eq(question.id, questionId));
+    // NOT a new draft_status literal: the fail-open pool predicate treats any
+    // non-'draft' value as pool-visible, so the tombstone is a metadata marker
+    // (archived_at family) and the row stays draft_status='draft'.
+    expect(row.draft_status).toBe('draft');
+    expect(row.metadata).toMatchObject({
+      dismissed_reason: 'question_draft_dismissed',
+      dismissed_proposal_id: 'qd_d1',
+    });
+    expect(typeof (row.metadata as { dismissed_at?: unknown }).dismissed_at).toBe('number');
+
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'qd_d1')));
+    expect(rateRows).toHaveLength(1);
+    expect(rateRows[0].payload).toMatchObject({ rating: 'dismiss', user_note: '不够好' });
+  });
+
+  it('dismissed drafts disappear from listQuestions (both default and include_drafts views)', async () => {
+    const db = testDb();
+    const liveDraftId = await seedDraftQuestion({ id: 'q_draft_live' });
+    const rejectedId = await seedDraftQuestion({
+      id: 'q_draft_rejected',
+      knowledgeIds: ['k_draft_2'],
+    });
+    await seedQuestionDraftProposal('qd_d2', rejectedId);
+    const { listQuestions } = await import('@/kernel/read-models/questions');
+
+    const before = await listQuestions(db, { includeDrafts: true, limit: 50, offset: 0 });
+    expect(before.items.map((i) => i.id).sort()).toEqual([liveDraftId, rejectedId].sort());
+
+    await dismissAiProposal(db, 'qd_d2');
+
+    for (const includeDrafts of [true, false] as const) {
+      const after = await listQuestions(db, { includeDrafts, limit: 50, offset: 0 });
+      expect(after.items.map((i) => i.id)).toEqual([liveDraftId].filter(() => includeDrafts));
+    }
+    // The explicit draft view also hides it — it is dead, not pending-review.
+    const draftView = await listQuestions(db, {
+      includeDrafts: true,
+      draftStatus: 'draft',
+      limit: 50,
+      offset: 0,
+    });
+    expect(draftView.items.map((i) => i.id)).toEqual([liveDraftId]);
+  });
+
+  it('dismiss is idempotent: a replayed dismiss writes no second rate event', async () => {
+    const db = testDb();
+    const questionId = await seedDraftQuestion();
+    await seedQuestionDraftProposal('qd_d3', questionId);
+
+    const first = await dismissAiProposal(db, 'qd_d3');
+    const again = await dismissAiProposal(db, 'qd_d3');
+    expect(first.kind).toBe('dismissed');
+    expect(again.kind).toBe('dismissed');
+
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'qd_d3')));
+    expect(rateRows).toHaveLength(1);
+  });
+
+  it('dismiss on an already-accepted row still records the rate but leaves the active row alone', async () => {
+    const db = testDb();
+    const questionId = await seedDraftQuestion();
+    // Two proposals can point at the same draft (the tool dedups by cooldown,
+    // not by target) — dismiss the second AFTER the first accepted the row.
+    await seedQuestionDraftProposal('qd_d4a', questionId);
+    await seedQuestionDraftProposal('qd_d4b', questionId);
+
+    await acceptAiProposal(db, 'qd_d4a');
+    const [accepted] = await db.select().from(question).where(eq(question.id, questionId));
+    expect(accepted.draft_status).toBe('active');
+
+    const result = await dismissAiProposal(db, 'qd_d4b');
+    expect(result.kind).toBe('dismissed');
+    // The UPDATE is conditioned on draft_status='draft' — an active row is
+    // untouched (no tombstone on a live pooled question).
+    const [after] = await db.select().from(question).where(eq(question.id, questionId));
+    expect(after.draft_status).toBe('active');
+    expect((after.metadata ?? {}) as Record<string, unknown>).not.toHaveProperty('dismissed_at');
+  });
+
   it('404s on a missing question row and 409s on a non-draft row', async () => {
     const db = testDb();
     await seedKnowledge(['k_draft']);
@@ -444,6 +659,86 @@ describe('question_draft accept (ADR-0031 lane B)', () => {
       .where(eq(question.id, questionId));
     await seedQuestionDraftProposal('qd_p7', questionId);
     await expect(acceptAiProposal(db, 'qd_p7')).rejects.toMatchObject({ status: 409 });
+  });
+
+  // YUK-308 review fix (codex P1) — a SIBLING proposal's dismiss tombstones the
+  // shared draft; a later accept on the still-pending proposal must fail closed
+  // instead of promoting a user-rejected row into the pool.
+  it('accept 409s when a sibling proposal already dismissed the same draft', async () => {
+    const db = testDb();
+    const questionId = await seedDraftQuestion();
+    await seedQuestionDraftProposal('qd_s1', questionId);
+    await seedQuestionDraftProposal('qd_s2', questionId);
+
+    const dismissed = await dismissAiProposal(db, 'qd_s1');
+    expect(dismissed.kind).toBe('dismissed');
+
+    await expect(acceptAiProposal(db, 'qd_s2')).rejects.toMatchObject({ status: 409 });
+
+    const [row] = await db.select().from(question).where(eq(question.id, questionId));
+    expect(row.draft_status).toBe('draft');
+    expect(row.metadata).toMatchObject({ dismissed_reason: 'question_draft_dismissed' });
+    // The rejected accept wrote no rate event — qd_s2 stays pending.
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'qd_s2')));
+    expect(rateRows).toHaveLength(0);
+  });
+
+  // YUK-308 review fix (codex P1) — the pre-applier dismiss path wrote ONLY the
+  // rate(dismiss) event and left the draft row untombstoned. The 0101 data
+  // migration backfills the same marker so historically rejected drafts stop
+  // surfacing in query_questions / draft review / write_quiz.
+  it('the 0101 backfill tombstones legacy rate-only-dismissed drafts', async () => {
+    const db = testDb();
+    const dismissedId = await seedDraftQuestion({ id: 'q_legacy_dismissed' });
+    const liveId = await seedDraftQuestion({ id: 'q_live_draft', knowledgeIds: ['k_draft_2'] });
+    await seedQuestionDraftProposal('qd_legacy', dismissedId);
+    // Reproduce the legacy state exactly: a dismiss rate event with NO
+    // metadata.dismissed_at on the question row.
+    await writeEvent(db, {
+      id: 'rate_legacy_dismiss',
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: 'qd_legacy',
+      outcome: 'success',
+      payload: { rating: 'dismiss', user_note: 'legacy path' },
+      caused_by_event_id: 'qd_legacy',
+      created_at: new Date('2026-08-01T00:00:00.000Z'),
+    });
+
+    const migrationSql = readFileSync(
+      new URL(
+        '../../../../drizzle/0101_yuk308_question_draft_dismissed_backfill.sql',
+        import.meta.url,
+      ),
+      'utf8',
+    );
+    await db.execute(sql.raw(migrationSql));
+
+    const [backfilled] = await db.select().from(question).where(eq(question.id, dismissedId));
+    expect(backfilled.draft_status).toBe('draft');
+    expect(backfilled.metadata).toMatchObject({
+      dismissed_reason: 'question_draft_dismissed',
+      dismissed_proposal_id: 'qd_legacy',
+      dismissed_at: Math.floor(new Date('2026-08-01T00:00:00.000Z').getTime() / 1000),
+    });
+
+    // The still-pending draft is untouched, and the tombstoned row is now
+    // invisible to the draft-aware reader.
+    const [live] = await db.select().from(question).where(eq(question.id, liveId));
+    expect((live.metadata ?? {}) as Record<string, unknown>).not.toHaveProperty('dismissed_at');
+    const { listQuestions } = await import('@/kernel/read-models/questions');
+    const drafts = await listQuestions(db, { includeDrafts: true, limit: 50, offset: 0 });
+    expect(drafts.items.map((i) => i.id)).toEqual([liveId]);
+
+    // Idempotent: a second run changes nothing.
+    await db.execute(sql.raw(migrationSql));
+    const [again] = await db.select().from(question).where(eq(question.id, dismissedId));
+    expect(again.metadata).toEqual(backfilled.metadata);
   });
 });
 

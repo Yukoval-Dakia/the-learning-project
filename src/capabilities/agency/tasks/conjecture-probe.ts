@@ -1,7 +1,7 @@
 // YUK-879 — ConjectureProbeAuthorTask + ConjectureProbeReviewTask contracts,
 // owned by the agency capability (YUK-821 response-aware probe quality gate).
 // Envelope schemas are the single source the probe-quality orchestrator
-// (../server/conjecture/probe-quality) feeds to zodToJsonSchemaOutputFormat.
+// (../server/conjecture/probe-quality) parses samples against.
 // Prompt text is byte-identical to the former central quarry entries
 // (prompt-hash oracle pins them).
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
@@ -143,7 +143,7 @@ export const conjectureProbeAuthorTaskSpec = {
     description:
       'Authors one complete two-probe package from a frozen evidence-grounded DiagnosticSpec, including gold and expected target-error answers.',
     defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
+    defaultModel: 'mimo-v2.5',
     // Nightly/background path. Fixed-batch runs showed valid structured output
     // occasionally arriving after the former 120s wall-clock ceiling.
     budget: { ...DEFAULT_BUDGET, maxIterations: 3, timeout: 180_000 },
@@ -163,7 +163,7 @@ export const conjectureProbeReviewTaskSpec = {
     description:
       'Independently reviews a conjecture probe pair against evidence and a frozen DiagnosticSpec. It returns pass/failure codes and never repairs the pair.',
     defaultProvider: 'xiaomi',
-    defaultModel: 'mimo-v2.5-pro',
+    defaultModel: 'mimo-v2.5',
     budget: { ...DEFAULT_BUDGET, maxIterations: 3, timeout: 180_000 },
     needsToolCall: false,
     isMultimodal: true,

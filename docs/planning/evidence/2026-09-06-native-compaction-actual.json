@@ -1,0 +1,522 @@
+{
+  "status": "two_real_native_manual_compaction_samples_accepted",
+  "provider": "xiaomi",
+  "new_budget_authorized_usd": 10,
+  "estimated_cost_usd": 0.0130696878,
+  "request_reservations_usd": 0.90823,
+  "remaining_after_reservations_usd": 9.09177,
+  "net_cost_saving_claim": false,
+  "production_or_queue_e2e": false,
+  "records": [
+    {
+      "accepted": true,
+      "offline": false,
+      "run_id": "native_compact_acceptance_f51a76bc-5be5-4ab3-b7a2-340388d0d2da",
+      "exact_head": "8f7a438a5658764d14d666a0078d2d6f913c48d8",
+      "harness_sha256": "1efa8d1062bb77629df2e702d1f4dfb7ecc8aa640702a4e7c8d271f2defc4747",
+      "sdk_version": "0.3.220",
+      "model": "mimo-v2.5-pro",
+      "session_id": "8e50d9a1-b8dc-42ff-91d3-e2017a703754",
+      "cost_limit_usd": 2,
+      "reserved_usd": 0.264306,
+      "estimated_usd": 0.0041355228,
+      "price_basis": "official public USD rates checked2026-09-06; estimate, not account invoice",
+      "price_source": "https://mimo.mi.com/docs/en-US/price/pay-as-you-go",
+      "fixture": {
+        "alpha": {
+          "id": "K-A17",
+          "subject": "physics",
+          "mastery": 0.42,
+          "evidence_count": 7,
+          "provenance": "quiz_verify:evt-8841"
+        },
+        "beta": {
+          "id": "K-B29",
+          "subject": "history",
+          "mastery": 0,
+          "evidence_count": 0,
+          "provenance": "import:evt-1120"
+        },
+        "gamma": {
+          "id": "K-C31",
+          "mastery": null,
+          "evidence_count": null
+        },
+        "edge": {
+          "from": "K-A17",
+          "to": "K-B29",
+          "relation": "analogy",
+          "confidence": 0.73
+        },
+        "alpha_to_gamma": "unobserved",
+        "target": 73,
+        "observed": 68,
+        "delta": 5,
+        "active_ids": ["Q-19", "Q-23"],
+        "pending_count": null,
+        "snapshot": "snap-2031"
+      },
+      "expected": {
+        "alpha": {
+          "id": "K-A17",
+          "subject": "physics",
+          "mastery": 0.42,
+          "evidence_count": 7,
+          "provenance": "quiz_verify:evt-8841"
+        },
+        "beta": {
+          "id": "K-B29",
+          "subject": "history",
+          "mastery": 0,
+          "evidence_count": 0,
+          "provenance": "import:evt-1120"
+        },
+        "gamma": {
+          "id": "K-C31",
+          "mastery": null,
+          "evidence_count": null
+        },
+        "edge": {
+          "from": "K-A17",
+          "to": "K-B29",
+          "relation": "analogy",
+          "confidence": 0.73
+        },
+        "alpha_to_gamma": "unobserved",
+        "target": 73,
+        "observed": 68,
+        "delta": 5,
+        "active_ids": ["Q-19", "Q-23"],
+        "pending_count": null,
+        "snapshot": "snap-2031",
+        "approved": false,
+        "learner": "L-UPDATED-92"
+      },
+      "prompts": {
+        "initial": {
+          "sha256": "d56df82fd7adb6ee4514df36f956072713a0e91c9ad5f8aab65e819c05c6e04f"
+        },
+        "correction": {
+          "sha256": "20aec6bbb38d00f7aa20e38456f05c04b73dea4809e1359f80b33db7b3d8f219"
+        },
+        "context": {
+          "sha256": "0445a8062a7ac37293d7db32c1ce636f7db3d0385163a076d086e961b674e43a"
+        },
+        "compact": {
+          "sha256": "db09ad2938579b7ebfd7fc009e7ec3effc7d0c6b7645407f88773f2cb39e6f47"
+        },
+        "recall": {
+          "sha256": "90664865d0f96bfeb6f524f8f47b2b5915a84cd1909d4b136ef1263af18e0b42"
+        }
+      },
+      "outputs": {
+        "initial": "Record held under **L-ORIGINAL-17**.\n\nKey elements retained:\n\n- **K-A17** (physics, mastery 0.42, 7 evidence) → **K-B29** (history, mastery 0, 0 evidence): analogy edge, confidence 0.73.\n- **K-C31**: mastery and evidence both null — unknowns, not zeros.\n- **alpha\\_to\\_gamma**: unobserved. Not treated as impossible.\n- Target 73, observed 68, delta 5. Active items Q-19, Q-23. Pending count null. Snapshot snap-2031.\n\nAcknowledged only. No updates made.",
+        "correction": "Correction acknowledged: **approved=false**.\n\nStudy snapshot under **L-ORIGINAL-17** remains unchanged. Nothing acted on.",
+        "context": "Acknowledged. Holding snapshot **L-ORIGINAL-17** as-is. No facts created, no subjects merged, no missing values assumed. Ready for future comparison when instructed.",
+        "compact": "",
+        "recall": "```json\n{\n  \"alpha\": {\n    \"id\": \"K-A17\",\n    \"subject\": \"physics\",\n    \"mastery\": 0.42,\n    \"evidence_count\": 7,\n    \"provenance\": \"quiz_verify:evt-8841\"\n  },\n  \"beta\": {\n    \"id\": \"K-B29\",\n    \"subject\": \"history\",\n    \"mastery\": 0,\n    \"evidence_count\": 0,\n    \"provenance\": \"import:evt-1120\"\n  },\n  \"gamma\": {\n    \"id\": \"K-C31\",\n    \"mastery\": null,\n    \"evidence_count\": null\n  },\n  \"edge\": {\n    \"from\": \"K-A17\",\n    \"to\": \"K-B29\",\n    \"relation\": \"analogy\",\n    \"confidence\": 0.73\n  },\n  \"alpha_to_gamma\": \"unobserved\",\n  \"target\": 73,\n  \"observed\": 68,\n  \"delta\": 5,\n  \"active_ids\": [\"Q-19\", \"Q-23\"],\n  \"pending_count\": null,\n  \"snapshot\": \"snap-2031\",\n  \"approved\": false,\n  \"learner\": \"L-UPDATED-92\"\n}\n```"
+      },
+      "events": [
+        {
+          "phase": "initial",
+          "type": "result",
+          "subtype": "success",
+          "session_id": "8e50d9a1-b8dc-42ff-91d3-e2017a703754",
+          "sdk_reported_cost_usd": 0.01175
+        },
+        {
+          "phase": "correction",
+          "type": "result",
+          "subtype": "success",
+          "session_id": "8e50d9a1-b8dc-42ff-91d3-e2017a703754",
+          "sdk_reported_cost_usd": 0.003802
+        },
+        {
+          "phase": "context",
+          "type": "result",
+          "subtype": "success",
+          "session_id": "8e50d9a1-b8dc-42ff-91d3-e2017a703754",
+          "sdk_reported_cost_usd": 0.0036639999999999997
+        },
+        {
+          "phase": "compact",
+          "hook": "SessionStart",
+          "source": "compact",
+          "learner": "L-UPDATED-92"
+        },
+        {
+          "phase": "compact",
+          "type": "compact_boundary",
+          "trigger": "manual",
+          "pre_tokens": 1057,
+          "post_tokens": 1388
+        },
+        {
+          "phase": "compact",
+          "type": "result",
+          "subtype": "success",
+          "session_id": "8e50d9a1-b8dc-42ff-91d3-e2017a703754",
+          "sdk_reported_cost_usd": 0.04687299999999999
+        },
+        {
+          "phase": "recall",
+          "type": "result",
+          "subtype": "success",
+          "session_id": "8e50d9a1-b8dc-42ff-91d3-e2017a703754",
+          "sdk_reported_cost_usd": 0.022989999999999997
+        }
+      ],
+      "wires": [
+        {
+          "phase": "initial",
+          "bytes": 2173,
+          "input_sha256": "7000bfcc68196d74f09792e6fbe2239b4256bc943f12e746936415cfdd2141bb",
+          "usage": {
+            "input_tokens": 405,
+            "output_tokens": 389
+          },
+          "estimate_usd": 0.000514605,
+          "reserve_usd": 0.045306,
+          "complete": true,
+          "updated_learner": false,
+          "original_fixture_verbatim": true,
+          "message_count": 1,
+          "status": 200,
+          "output_sha256": "7024b90923b773647d824f1cc6463ac73efc78d8798934ac176d27bf4db6bc08"
+        },
+        {
+          "phase": "correction",
+          "bytes": 3741,
+          "input_sha256": "7395c685aeddd5ea7445cde61daf1852d0ee497ff7cc0ba30e54ff3a35b0e34a",
+          "usage": {
+            "input_tokens": 437,
+            "output_tokens": 57,
+            "cache_read_input_tokens": 384
+          },
+          "estimate_usd": 0.0002410674,
+          "reserve_usd": 0.048442,
+          "complete": true,
+          "updated_learner": false,
+          "original_fixture_verbatim": true,
+          "message_count": 3,
+          "status": 200,
+          "output_sha256": "7cf63e1753bdc44f9867ea533eeaa91aa46205becfd3b50d8dbdd443d680db2f"
+        },
+        {
+          "phase": "context",
+          "bytes": 4342,
+          "input_sha256": "4458f81a03545c2f23bf665e46f19c7c26742ab380e7a765dbc299a08a0fe97b",
+          "usage": {
+            "input_tokens": 146,
+            "output_tokens": 102,
+            "cache_read_input_tokens": 768
+          },
+          "estimate_usd": 0.0001550148,
+          "reserve_usd": 0.049644,
+          "complete": true,
+          "updated_learner": false,
+          "original_fixture_verbatim": true,
+          "message_count": 5,
+          "status": 200,
+          "output_sha256": "6e9c2a69319b7b3ddf91a5b49cd753c0700383a89a92612617b8432ee90767d1"
+        },
+        {
+          "phase": "compact",
+          "bytes": 11020,
+          "input_sha256": "b6295236109d3673a87f62291645ae234bd8b006de7df9d3f7138aff4e7ae718",
+          "usage": {
+            "input_tokens": 1340,
+            "output_tokens": 1589,
+            "cache_read_input_tokens": 896
+          },
+          "estimate_usd": 0.0019685556,
+          "reserve_usd": 0.063,
+          "complete": true,
+          "updated_learner": false,
+          "original_fixture_verbatim": true,
+          "message_count": 5,
+          "status": 200,
+          "output_sha256": "9cbf0b24b2d46156f19df28631066c8223ba759c64b6fcc6bf06e6675f44b395"
+        },
+        {
+          "phase": "recall",
+          "bytes": 8477,
+          "input_sha256": "f7cbcdab4a9b1b84470a0196eeb1d3ec2679c2ad958f707d1ec9a3e3fcda4a57",
+          "usage": {
+            "input_tokens": 1748,
+            "output_tokens": 570
+          },
+          "estimate_usd": 0.00125628,
+          "reserve_usd": 0.057914,
+          "complete": true,
+          "updated_learner": true,
+          "original_fixture_verbatim": false,
+          "message_count": 6,
+          "status": 200,
+          "output_sha256": "abdc5a1e34524ad4ef8f56a489eeedfc25232c8cc1ade1c986d0c48c775870b9"
+        }
+      ],
+      "limitations": [
+        "Direct SDK plus product context codec; not Hono/PG/queue E2E.",
+        "Manual compact tests summary quality, not automatic threshold or net savings.",
+        "No raw thinking archived; SDK session persists in isolated temporary config."
+      ]
+    },
+    {
+      "accepted": true,
+      "offline": false,
+      "run_id": "native_compact_acceptance_a3e50ff6-f916-44da-a40f-91820c92e51d",
+      "exact_head": "de18fcaae5b24c8d7098ea8330d255ac806ecc51",
+      "harness_sha256": "40fad6259843418cbbf68c3906088bb7ddee4a2ee863ece8f60eb98c5ad7aa5b",
+      "sdk_version": "0.3.220",
+      "model": "mimo-v2.5-pro",
+      "session_id": "8709f3db-a35e-4b87-91d3-c2a3981dbf93",
+      "cost_limit_usd": 2,
+      "reserved_usd": 0.6439239999999999,
+      "estimated_usd": 0.008934164999999999,
+      "price_basis": "official public USD rates checked2026-09-06; estimate, not account invoice",
+      "price_source": "https://mimo.mi.com/docs/en-US/price/pay-as-you-go",
+      "fixture": {
+        "alpha": {
+          "id": "K-A17",
+          "subject": "physics",
+          "mastery": 0.42,
+          "evidence_count": 7,
+          "provenance": "quiz_verify:evt-8841"
+        },
+        "beta": {
+          "id": "K-B29",
+          "subject": "history",
+          "mastery": 0,
+          "evidence_count": 0,
+          "provenance": "import:evt-1120"
+        },
+        "gamma": {
+          "id": "K-C31",
+          "mastery": null,
+          "evidence_count": null
+        },
+        "edge": {
+          "from": "K-A17",
+          "to": "K-B29",
+          "relation": "analogy",
+          "confidence": 0.73
+        },
+        "alpha_to_gamma": "unobserved",
+        "target": 73,
+        "observed": 68,
+        "delta": 5,
+        "active_ids": ["Q-19", "Q-23"],
+        "pending_count": null,
+        "snapshot": "snap-2031"
+      },
+      "archived_attempt_count": 120,
+      "archived_attempts_sha256": "44370a7dab8e7bd6d5bbebc91db6a5d573b739d62e51f93310153fcd39b1c612",
+      "expected": {
+        "alpha": {
+          "id": "K-A17",
+          "subject": "physics",
+          "mastery": 0.42,
+          "evidence_count": 7,
+          "provenance": "quiz_verify:evt-8841"
+        },
+        "beta": {
+          "id": "K-B29",
+          "subject": "history",
+          "mastery": 0,
+          "evidence_count": 0,
+          "provenance": "import:evt-1120"
+        },
+        "gamma": {
+          "id": "K-C31",
+          "mastery": null,
+          "evidence_count": null
+        },
+        "edge": {
+          "from": "K-A17",
+          "to": "K-B29",
+          "relation": "analogy",
+          "confidence": 0.73
+        },
+        "alpha_to_gamma": "unobserved",
+        "target": 73,
+        "observed": 68,
+        "delta": 5,
+        "active_ids": ["Q-19", "Q-23"],
+        "pending_count": null,
+        "snapshot": "snap-2031",
+        "approved": false,
+        "learner": "L-UPDATED-92"
+      },
+      "prompts": {
+        "initial": {
+          "sha256": "147a5b6f22786ab9461ffd4013de4f26aa9a1281aedf66674e7c4545dc840f25"
+        },
+        "correction": {
+          "sha256": "20aec6bbb38d00f7aa20e38456f05c04b73dea4809e1359f80b33db7b3d8f219"
+        },
+        "context": {
+          "sha256": "0445a8062a7ac37293d7db32c1ce636f7db3d0385163a076d086e961b674e43a"
+        },
+        "compact": {
+          "sha256": "fdf3b85c5402f5b8a9accf1fa7ba6bf68a124274bf0d70174bbf755c8ffc5191"
+        },
+        "recall": {
+          "sha256": "90664865d0f96bfeb6f524f8f47b2b5915a84cd1909d4b136ef1263af18e0b42"
+        }
+      },
+      "outputs": {
+        "initial": "Held. Learner token L-ORIGINAL-17 acknowledged as current; snapshot snap-2031 stored. Unobserved ≠ impossible; null values (γ mastery, pending_count) remain genuinely unknown, not zero. The 120 archived attempts are background-only and not authoritative for the current snapshot. Ready when needed.",
+        "correction": "Acknowledged. No plan approved; approved=false. The held snapshot (L-ORIGINAL-17, snap-2031) remains unchanged.",
+        "context": "Acknowledged. The snapshot stands as-is; no fabrication, subject merging, modification, or assumption of missing values will occur from my end.",
+        "compact": "",
+        "recall": "```json\n{\n  \"alpha\": {\"id\":\"K-A17\",\"subject\":\"physics\",\"mastery\":0.42,\"evidence_count\":7,\"provenance\":\"quiz_verify:evt-8841\"},\n  \"beta\": {\"id\":\"K-B29\",\"subject\":\"history\",\"mastery\":0,\"evidence_count\":0,\"provenance\":\"import:evt-1120\"},\n  \"gamma\": {\"id\":\"K-C31\",\"mastery\":null,\"evidence_count\":null},\n  \"edge\": {\"from\":\"K-A17\",\"to\":\"K-B29\",\"relation\":\"analogy\",\"confidence\":0.73},\n  \"alpha_to_gamma\": \"unobserved\",\n  \"target\": 73,\n  \"observed\": 68,\n  \"delta\": 5,\n  \"active_ids\": [\"Q-19\",\"Q-23\"],\n  \"pending_count\": null,\n  \"snapshot\": \"snap-2031\",\n  \"approved\": false,\n  \"learner\": \"L-UPDATED-92\"\n}\n```"
+      },
+      "events": [
+        {
+          "phase": "initial",
+          "type": "result",
+          "subtype": "success",
+          "session_id": "8709f3db-a35e-4b87-91d3-c2a3981dbf93",
+          "sdk_reported_cost_usd": 0.06129500000000001
+        },
+        {
+          "phase": "correction",
+          "type": "result",
+          "subtype": "success",
+          "session_id": "8709f3db-a35e-4b87-91d3-c2a3981dbf93",
+          "sdk_reported_cost_usd": 0.008482
+        },
+        {
+          "phase": "context",
+          "type": "result",
+          "subtype": "success",
+          "session_id": "8709f3db-a35e-4b87-91d3-c2a3981dbf93",
+          "sdk_reported_cost_usd": 0.007893
+        },
+        {
+          "phase": "compact",
+          "hook": "SessionStart",
+          "source": "compact",
+          "learner": "L-UPDATED-92"
+        },
+        {
+          "phase": "compact",
+          "type": "compact_boundary",
+          "trigger": "manual",
+          "pre_tokens": 11977,
+          "post_tokens": 1590
+        },
+        {
+          "phase": "compact",
+          "type": "result",
+          "subtype": "success",
+          "session_id": "8709f3db-a35e-4b87-91d3-c2a3981dbf93",
+          "sdk_reported_cost_usd": 0.060700000000000004
+        },
+        {
+          "phase": "recall",
+          "type": "result",
+          "subtype": "success",
+          "session_id": "8709f3db-a35e-4b87-91d3-c2a3981dbf93",
+          "sdk_reported_cost_usd": 0.017995
+        }
+      ],
+      "wires": [
+        {
+          "phase": "initial",
+          "bytes": 49843,
+          "input_sha256": "4d7d2a1ba56b9edc9b3d7e034f64ec03f93bb05bef5bdd5f2e3956e9efdfc87f",
+          "usage": {
+            "input_tokens": 11619,
+            "output_tokens": 128
+          },
+          "estimate_usd": 0.005165625,
+          "reserve_usd": 0.140646,
+          "complete": true,
+          "updated_learner": false,
+          "original_fixture_verbatim": true,
+          "message_count": 1,
+          "status": 200,
+          "output_sha256": "b32d23dc1f115f2eeea965d9898e8e37305f9f46f4451623bacf522914b97eea"
+        },
+        {
+          "phase": "correction",
+          "bytes": 50717,
+          "input_sha256": "5079448eea664b25591f7dfd6b0af27c92507b3ed7037cb6269a336ae3cb6af2",
+          "usage": {
+            "input_tokens": 193,
+            "output_tokens": 69,
+            "cache_read_input_tokens": 11584
+          },
+          "estimate_usd": 0.00018568740000000003,
+          "reserve_usd": 0.142394,
+          "complete": true,
+          "updated_learner": false,
+          "original_fixture_verbatim": true,
+          "message_count": 3,
+          "status": 200,
+          "output_sha256": "d0808cf5aec022995560e777e85353042d54e04f75f1933418e575ad391f8043"
+        },
+        {
+          "phase": "context",
+          "bytes": 51340,
+          "input_sha256": "c32e6ed32ed7596fe0428f51ef14289741a3c404b4e188dbaf3ed997ab9a4383",
+          "usage": {
+            "input_tokens": 106,
+            "output_tokens": 59,
+            "cache_read_input_tokens": 11776
+          },
+          "estimate_usd": 0.0001398336,
+          "reserve_usd": 0.14364,
+          "complete": true,
+          "updated_learner": false,
+          "original_fixture_verbatim": true,
+          "message_count": 5,
+          "status": 200,
+          "output_sha256": "ba82728da2fe4b9018c7de90eff514b24e4b1402fa27c1fba452a23534df4640"
+        },
+        {
+          "phase": "compact",
+          "bytes": 58154,
+          "input_sha256": "afe67a1e50b1b219e53ee7ba63ab17cb8ebf5c5b1276989514f6ea4f1e67fee2",
+          "usage": {
+            "input_tokens": 1391,
+            "output_tokens": 1913,
+            "cache_read_input_tokens": 11840
+          },
+          "estimate_usd": 0.002312019,
+          "reserve_usd": 0.157268,
+          "complete": true,
+          "updated_learner": false,
+          "original_fixture_verbatim": true,
+          "message_count": 5,
+          "status": 200,
+          "output_sha256": "498729c717191a5bc184f684a782b712631c2391f12756b5806afe8c407ac925"
+        },
+        {
+          "phase": "recall",
+          "bytes": 9508,
+          "input_sha256": "07271d2df131319c6a63d469d7c5e8157295385e9cbb26b3b918e4baf54d2dc8",
+          "usage": {
+            "input_tokens": 1934,
+            "output_tokens": 333
+          },
+          "estimate_usd": 0.001131,
+          "reserve_usd": 0.059976,
+          "complete": true,
+          "updated_learner": true,
+          "original_fixture_verbatim": false,
+          "message_count": 6,
+          "status": 200,
+          "output_sha256": "76adcd25f4b7826f0e6706013943ba52b29ed07f15176ae1fb7d0c60c741b1c9"
+        }
+      ],
+      "limitations": [
+        "Direct SDK plus product context codec; not Hono/PG/queue E2E.",
+        "Manual compact tests summary quality, not automatic threshold or net savings.",
+        "No raw thinking archived; SDK session persists in isolated temporary config."
+      ]
+    }
+  ]
+}

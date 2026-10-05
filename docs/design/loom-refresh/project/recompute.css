@@ -41,7 +41,7 @@
 
 /* offline chip — emphasise pure on-device */
 .rc-offline { display: inline-flex; align-items: center; gap: 3px; font-family: var(--font-mono);
-  font-size: 10px; color: var(--ink-3); background: var(--paper-sunk);
+  font-size: var(--fs-caption); color: var(--ink-3); background: var(--paper-sunk);
   border: 1px solid var(--line); border-radius: var(--r-pill); padding: 1px 7px; white-space: nowrap; }
 .rc-offline svg { color: var(--coral); }
 
@@ -55,7 +55,7 @@
 .rc-rerun:hover { color: var(--coral); border-color: var(--coral-line); background: var(--coral-soft); }
 
 /* ── per-KC 指示芯片 ─────────────────────────────────────── */
-.rc-chip { display: inline-flex; align-items: center; gap: 3px; font-size: 10px;
+.rc-chip { display: inline-flex; align-items: center; gap: 3px; font-size: var(--fs-caption);
   font-weight: 600; letter-spacing: var(--ls-wide); border-radius: var(--r-pill);
   padding: 1px 7px; white-space: nowrap; }
 .rc-chip.rc-ok { color: var(--good-ink); background: var(--good-soft); border: 1px solid var(--good-line); }
@@ -85,7 +85,7 @@
 .rc-ledger-head, .rc-ledger-row { display: grid;
   grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.2fr) 54px minmax(0, 0.9fr) 50px 64px;
   gap: var(--s-2); align-items: center; padding: 6px 4px; }
-.rc-ledger-head { font-size: 10px; letter-spacing: var(--ls-wide); color: var(--ink-4);
+.rc-ledger-head { font-size: var(--fs-caption); letter-spacing: var(--ls-wide); color: var(--ink-4);
   border-bottom: 1px solid var(--line); text-transform: none; }
 .rc-ledger-row { border-bottom: 1px solid var(--line-soft); font-size: var(--fs-caption); }
 .rc-ledger-row:last-child { border-bottom: 0; }
@@ -93,14 +93,14 @@
 .rc-num { text-align: right; color: var(--ink-2); }
 .rc-num.mono, .rc-ledger-head .rc-num { font-family: var(--font-mono); }
 .rc-eq { text-align: right; }
-.rc-eq-ok, .rc-eq-x { display: inline-flex; align-items: center; gap: 3px; font-size: 10px; font-weight: 600; }
+.rc-eq-ok, .rc-eq-x { display: inline-flex; align-items: center; gap: 3px; font-size: var(--fs-caption); font-weight: 600; }
 .rc-eq-ok { color: var(--good-ink); }
 .rc-eq-x { color: var(--hard-ink); }
 
 /* ── drift detail (D) · 显示 vs 重导 ──────────────────────── */
 .rc-drift-head { display: flex; align-items: center; gap: var(--s-2); margin-bottom: var(--s-3); }
 .rc-drift-kc { font-size: var(--fs-body); font-weight: 600; color: var(--ink); }
-.rc-drift-tag { font-size: 10px; letter-spacing: var(--ls-wide); color: var(--hard-ink);
+.rc-drift-tag { font-size: var(--fs-caption); letter-spacing: var(--ls-wide); color: var(--hard-ink);
   background: var(--hard-soft); border: 1px solid var(--hard-line); border-radius: var(--r-pill); padding: 1px 9px; }
 .rc-drift-table { display: flex; gap: 0; border: 1px solid var(--line); border-radius: var(--r-2);
   overflow: hidden; background: var(--paper-raised); }
@@ -108,7 +108,7 @@
 .rc-drift-col + .rc-drift-col { border-left: 1px solid var(--line-soft); }
 .rc-drift-col.rc-drift-labels { flex: 0 0 auto; min-width: 84px; background: var(--paper-sunk); }
 .rc-drift-col > span { padding: 6px 12px; font-size: var(--fs-caption); }
-.rc-drift-h { font-size: 10px; letter-spacing: var(--ls-wide); color: var(--ink-4);
+.rc-drift-h { font-size: var(--fs-caption); letter-spacing: var(--ls-wide); color: var(--ink-4);
   border-bottom: 1px solid var(--line-soft); min-height: 26px; display: flex; align-items: center; }
 .rc-drift-labels > span:not(.rc-drift-h) { color: var(--ink-3); border-bottom: 1px solid var(--line-soft); }
 .rc-drift-labels > span:last-child { border-bottom: 0; }

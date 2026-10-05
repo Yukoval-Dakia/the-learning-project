@@ -24,12 +24,14 @@ import {
   type DifficultyEvidenceT,
   buildProducerDifficultyEvidence,
 } from '@/core/schema/difficulty-evidence';
-import { defaultJudgeKindForQuestion } from '@/core/schema/judge-routing';
+import { defaultJudgeKindForQuestion, isExactCapableReference } from '@/core/schema/judge-routing';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
 import type { SourcedQuestionT } from '@/core/schema/sourcing';
 import type { Tx } from '@/db/client';
 import { question } from '@/db/schema';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
+import { sanitizeSourcedMarkup } from '@/server/questions/sourced-markup';
 
 // question.created_by column type (AgentRef jsonb, notNull) — single-sourced from the
 // schema so the two producers' created_by refs are typed identically.
@@ -89,8 +91,27 @@ export async function insertSourcedDraft(
   const { canonicalContentHash, mergeActorRef, taskRunId } = input;
 
   // Preserve an EXPLICIT judge_kind_override; only derive the structural default when absent
-  // (never clobber e.g. 'keyword' with the default).
-  const judgeKind = q.judge_kind_override ?? defaultJudgeKindForQuestion(q);
+  // (never clobber e.g. 'keyword' with the default). YUK-1003 exception: a producer 'exact'
+  // pin on a NON-CHOICE row whose reference has no bare-answer head is structurally
+  // unwinnable (verbatim compare can never match a worked-solution blob) — demote to the
+  // derived route and record the demotion on the row for audit.
+  let judgeKind = q.judge_kind_override ?? defaultJudgeKindForQuestion(q);
+  let judgeKindDemotion: { declared: 'exact'; applied: string; reason: string } | undefined;
+  if (
+    judgeKind === 'exact' &&
+    (q.choices_md ?? []).length === 0 &&
+    !isExactCapableReference(q.reference_md)
+  ) {
+    const derived = defaultJudgeKindForQuestion({ ...q, judge_kind_override: null });
+    if (derived !== 'exact') {
+      judgeKindDemotion = {
+        declared: 'exact',
+        applied: derived,
+        reason: 'reference_not_exact_capable',
+      };
+      judgeKind = derived;
+    }
+  }
   const declaredDifficultyEvidence =
     q.difficulty_evidence ?? buildProducerDifficultyEvidence(q.difficulty, sourceRoute, now);
   const difficultyEvidence = DifficultyEvidence.parse({
@@ -114,16 +135,28 @@ export async function insertSourcedDraft(
     extract: q.extract,
   };
 
+  // YUK-1005 — normalize source markup (jyeoo MathJye tables / sprite radicals /
+  // raw <sup>) to markdown+LaTeX at the ingest seam, so stored rows render
+  // through MathMarkdown instead of leaking HTML/image-URL soup. The transform
+  // is idempotent; flag it only when it actually changed something.
+  const promptMd = sanitizeSourcedMarkup(q.prompt_md);
+  const referenceMd = sanitizeSourcedMarkup(q.reference_md);
+  const choicesMd = q.choices_md ? q.choices_md.map(sanitizeSourcedMarkup) : null;
+  const markupSanitized =
+    promptMd !== q.prompt_md ||
+    referenceMd !== q.reference_md ||
+    (q.choices_md ?? []).some((c, i) => c !== choicesMd?.[i]);
+
   // Row WITHOUT draft_status — it is added at each .values() call site below so
   // audit:draft-status can statically prove the gate on both the original + retry INSERT.
   const questionRow = withAnswerClass({
     id,
     kind: q.kind,
     source: 'web_sourced',
-    prompt_md: q.prompt_md,
-    reference_md: q.reference_md,
+    prompt_md: promptMd,
+    reference_md: referenceMd,
     rubric_json: q.rubric_json ?? null,
-    choices_md: q.choices_md ?? null,
+    choices_md: choicesMd,
     judge_kind_override: judgeKind,
     knowledge_ids: knowledgeIds,
     difficulty: q.difficulty,
@@ -136,6 +169,8 @@ export async function insertSourcedDraft(
       web_sourced: webSourced,
       source_ref_kind: 'url',
       difficulty_evidence: difficultyEvidence,
+      ...(judgeKindDemotion ? { judge_kind_override_demoted: judgeKindDemotion } : {}),
+      ...(markupSanitized ? { sourced_markup_sanitized: true } : {}),
       ...(supplyTrace ? { supply_trace: supplyTrace } : {}),
     },
     created_at: now,
@@ -163,6 +198,16 @@ export async function insertSourcedDraft(
 
   const inserted = await insertOnce();
   if (inserted.length > 0) {
+    // YUK-1043 — 统一发布链：新 web_sourced 草稿同事务铸首版 revision。
+    // 草稿未核验 ⇒ admission withheld/unverified_rules（D1：未解决不自动准入；
+    // source_verify 通过后由 verify/promote 路径重新发布为准入态）。
+    await publishQuestionGroupFromRow(tx, {
+      rootId: id,
+      admission: { state: 'withheld', reason: 'unverified_rules' },
+      availability: 'general_pool',
+      actorRef: `sourced-draft:${sourceRoute}`,
+      now,
+    });
     return { status: 'inserted', difficultyEvidence, supplyTrace };
   }
 
@@ -183,6 +228,13 @@ export async function insertSourcedDraft(
     if (retry.length === 0) {
       throw new Error(`insertSourcedDraft: canonical hash retry still conflicted for ${id}`);
     }
+    await publishQuestionGroupFromRow(tx, {
+      rootId: id,
+      admission: { state: 'withheld', reason: 'unverified_rules' },
+      availability: 'general_pool',
+      actorRef: `sourced-draft:${sourceRoute}`,
+      now,
+    });
     return { status: 'inserted', difficultyEvidence, supplyTrace };
   }
   return {

@@ -211,6 +211,27 @@ describe('CI gate lane planner', () => {
     expect(plan.reasons).toContain('unclassified:postman/api-endpoints.json');
   });
 
+  it('keeps top-level scripts/*.json audit data on static+unit, not full', () => {
+    // Baselines/allowlists feed scripts/audit-* only — a data-file bump must
+    // not trigger the full DB suite (YUK-1023: capability-boundary-baseline
+    // did exactly that on the P3 lane).
+    for (const file of [
+      'scripts/capability-boundary-baseline.json',
+      'scripts/audit-schema-allowlist.json',
+      'scripts/lint-baseline.json',
+    ]) {
+      const plan = classifyChangedFiles([file]);
+      expect(plan.lanes.static).toBe(true);
+      expect(plan.lanes.unit).toBe(true);
+      expect(plan.lanes.db).toBe(false);
+      expect(plan.db_selection).toBe('skip');
+      expect(plan.reasons).toContain('audit-tooling');
+    }
+    // Nested paths stay out of this rule — judge-golden already maps to
+    // audit-tooling by prefix, scripts/ci JSONs keep the ci-selector trigger.
+    expect(classifyChangedFiles(['scripts/ci/data.json']).db_selection).toBe('full');
+  });
+
   it('keeps the cumulative PR plan non-docs when a docs closeout follows code', () => {
     const plan = classifyChangedFiles(['PLAN.md', 'web/src/router.tsx']);
     expect(plan.code_changed).toBe(true);

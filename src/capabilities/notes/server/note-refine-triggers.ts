@@ -1,6 +1,6 @@
 import { and, eq, gt, sql } from 'drizzle-orm';
 import type { NoteRefineTriggerKind } from '@/capabilities/notes/jobs/note-refine';
-import { parseFlag } from '@/core/env-flags';
+import { getConfig } from '@/core/config/store';
 import type { Db } from '@/db/client';
 import { job_events } from '@/db/schema';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
@@ -19,18 +19,8 @@ const FLAG_BY_KIND: Record<NoteRefineTriggerKind, string> = {
   verify: 'WAVE6_TRIGGER_VERIFY_ENABLED',
 };
 
-// YUK-358 决定7 — per-kind DEFAULT state (the value when the flag env var is
-// UNSET/empty). The real-signal kinds are default-ON (an unset flag means "run");
-// `verify` is default-OFF so removing note_verify's dead proposal does NOT
-// silently light up a new background AI-cost path. To turn verify→refine on,
-// the owner sets WAVE6_TRIGGER_VERIFY_ENABLED="true" explicitly. (Red line 2.)
-// YUK-358 决定6 — dwell removed (editing presence no longer triggers refine).
-const DEFAULT_ENABLED_BY_KIND: Record<NoteRefineTriggerKind, boolean> = {
-  mark_wrong: true,
-  mastery_change: true,
-  dreaming: true,
-  verify: false,
-};
+// DEFAULT_ENABLED_BY_KIND 的默认位已在 YUK-1007 迁入 registry codeDefault
+//（WAVE6_TRIGGER_* 键）；此处仅留触发器常量集 + boss 端口面。
 
 export type NoteRefineBossSend = (
   queue: 'note_refine',
@@ -61,9 +51,11 @@ export function noteRefineTriggerEnabled(
   kind: NoteRefineTriggerKind,
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
-  return parseFlag(env[FLAG_BY_KIND[kind]], {
-    defaultValue: DEFAULT_ENABLED_BY_KIND[kind],
-  });
+  // YUK-1007：registry 已把 codeDefault 对齐 DEFAULT_ENABLED_BY_KIND（mark_wrong /
+  // mastery_change / dreaming = true，verify = false）——getConfigFlag 的
+  // DB > env > code-default 分层涵盖原 parseFlag defaultValue 语义。
+  const resolved = getConfig(FLAG_BY_KIND[kind], env);
+  return resolved === true;
 }
 
 export async function enqueueNoteRefineTrigger(input: {
@@ -184,7 +176,7 @@ export const enqueueMarkWrongNoteRefine = (input: {
 // returns verdict=needs_review, instead of writing a dead patch-less note_update
 // proposal (deleted), it enqueues a verify-kind refine carrying the verifier
 // summary/issues as context_md. This is flag-gated OPT-IN (default-OFF, see
-// DEFAULT_ENABLED_BY_KIND) so it does NOT silently add background AI cost. The
+// CONFIG_REGISTRY WAVE6_TRIGGER_VERIFY_ENABLED codeDefault) so it does NOT silently add background AI cost. The
 // refine then flows through the NORMAL gate (decideNoteRefineMode +
 // patchTouchesVerifiedBlock) — verify gets ZERO privilege at that gate (red
 // line 1). The debounce key is `verify:${artifactId}`, isolated from the

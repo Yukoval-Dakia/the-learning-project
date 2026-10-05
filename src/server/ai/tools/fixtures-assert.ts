@@ -20,12 +20,21 @@ import { inArray } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { expect } from 'vitest';
 import type { Db } from '@/db/client';
-import { completion_evidence, event, knowledge, learning_item, question } from '@/db/schema';
+import {
+  artifact,
+  completion_evidence,
+  event,
+  knowledge,
+  learning_item,
+  learning_record,
+  memory_brief_note,
+  mistake_variant,
+  question,
+} from '@/db/schema';
 import type { DomainTool, ToolCostClass } from '@/kernel/tools/types';
 
 /**
- * The seeded tables the 4 Phase-1 scenarios cite ids into (§9 open item 1 —
- * kept minimal; Phase 2 extends). Each maps to its drizzle table so limb (b)
+ * The tables cited by the Phase-1 and Phase-2 tool-chain scenarios. Each maps to its drizzle table so limb (b)
  * can resolve an id back to a real row.
  */
 export type SeededTable =
@@ -33,7 +42,11 @@ export type SeededTable =
   | 'question'
   | 'knowledge'
   | 'learning_item'
-  | 'completion_evidence';
+  | 'completion_evidence'
+  | 'learning_record'
+  | 'memory_brief_note'
+  | 'mistake_variant'
+  | 'artifact';
 
 const SEEDED_TABLE_ID_COLUMN: Record<SeededTable, PgColumn> = {
   event: event.id,
@@ -41,6 +54,10 @@ const SEEDED_TABLE_ID_COLUMN: Record<SeededTable, PgColumn> = {
   knowledge: knowledge.id,
   learning_item: learning_item.id,
   completion_evidence: completion_evidence.id,
+  learning_record: learning_record.id,
+  memory_brief_note: memory_brief_note.id,
+  mistake_variant: mistake_variant.id,
+  artifact: artifact.id,
 };
 
 const VALID_COST_CLASSES: readonly ToolCostClass[] = ['local', 'cheap_llm', 'expensive_llm'];
@@ -287,5 +304,13 @@ function tableForColumn(table: SeededTable) {
       return learning_item;
     case 'completion_evidence':
       return completion_evidence;
+    case 'learning_record':
+      return learning_record;
+    case 'memory_brief_note':
+      return memory_brief_note;
+    case 'mistake_variant':
+      return mistake_variant;
+    case 'artifact':
+      return artifact;
   }
 }

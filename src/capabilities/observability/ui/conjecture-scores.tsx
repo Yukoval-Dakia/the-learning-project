@@ -404,7 +404,7 @@ const thStyle: CSSProperties = {
   padding: '0 10px 8px 0',
   color: 'var(--ink-4)',
   fontFamily: 'var(--font-mono)',
-  fontSize: 11.5,
+  fontSize: 'var(--fs-caption)',
   fontWeight: 500,
 };
 const tdStyle: CSSProperties = {

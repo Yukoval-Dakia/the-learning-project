@@ -54,9 +54,9 @@ async function releaseReservedAfterTryLockSettles(
 ): Promise<void> {
   try {
     await query.catch(() => undefined);
-    await reserved
-      .unsafe('SELECT pg_advisory_unlock(hashtext($1))', [lockKey])
-      .catch(() => undefined);
+    await reserved.unsafe('SELECT pg_advisory_unlock(hashtext($1))', [lockKey]).catch((err) => {
+      console.error('[compose_paid] advisory unlock failed after timeout', lockKey, err);
+    });
   } finally {
     reserved.release();
   }

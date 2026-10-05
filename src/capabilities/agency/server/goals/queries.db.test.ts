@@ -6,10 +6,16 @@
 // now default to THIS resolved read: explicit → frozen passthrough; subject_live →
 // resolveSubjectKnowledgeIds per DISTINCT subject (one resolve per subject, Map-deduped).
 
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { knowledge } from '@/db/schema';
+import { event, goal, knowledge } from '@/db/schema';
+import { gatherAndFoldGoal } from '@/server/projections/gather';
+import { goalLiveRowToSnapshot } from '@/server/projections/parity';
+import { migrateCanonicalProjections } from '../../../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import { insertGoal, listActiveGoalsWithResolvedScope } from './queries';
+import { insertLegacyGoal as insertGoal } from '../../../../../tests/helpers/legacy-goal';
+import { createManualGoal } from './commands';
+import { listActiveGoalsWithResolvedScope, updateGoalStatus } from './queries';
 
 const db = testDb();
 
@@ -154,4 +160,68 @@ describe('listActiveGoalsWithResolvedScope (YUK-603 goal-strand live read)', () 
     });
     expect(await listActiveGoalsWithResolvedScope(db)).toEqual([]);
   });
+});
+
+describe('goal mutation command concurrency (YUK-952)', () => {
+  it('orders mutations by ownership even when the later owner receives an older request timestamp', async () => {
+    const start = new Date('2026-09-01T00:00:00Z');
+    const goalId = await createManualGoal(db, {
+      title: '时序相反但两次意图都应保留',
+      scope_knowledge_ids: ['kc-a', 'kc-b'],
+      sequence_hint: 2,
+      now: start,
+    });
+    await updateGoalStatus(db, goalId, 'done', new Date(start.getTime() + 2_000));
+    await updateGoalStatus(db, goalId, 'dormant', new Date(start.getTime() + 1_000));
+    const [row] = await db.select().from(goal).where(eq(goal.id, goalId));
+    expect(row).toMatchObject({ status: 'dormant', version: 2 });
+    expect(row.updated_at.getTime()).toBeGreaterThan(start.getTime() + 2_000);
+  });
+
+  it('serializes two status writes and preserves both events, version +2, and fold parity', async () => {
+    const goalId = await createManualGoal(db, {
+      title: 'concurrent goal',
+      subject_id: null,
+      scope_knowledge_ids: ['kc-a'],
+      scope_mode: 'explicit',
+      sequence_hint: 0,
+      status: 'active',
+    });
+    const transitionAt = Date.now() + 1_000;
+    await Promise.all([
+      updateGoalStatus(db, goalId, 'dormant', new Date(transitionAt)),
+      updateGoalStatus(db, goalId, 'done', new Date(transitionAt + 1_000)),
+    ]);
+    const [row] = await db.select().from(goal).where(eq(goal.id, goalId));
+    const statusEvents = await db
+      .select({ id: event.id })
+      .from(event)
+      .where(
+        and(
+          eq(event.subject_kind, 'goal'),
+          eq(event.subject_id, goalId),
+          eq(event.action, 'experimental:goal_status_update'),
+        ),
+      );
+    expect(statusEvents).toHaveLength(2);
+    expect(row.version).toBe(2);
+    expect(row.status).toBe('done');
+  });
+});
+
+it('a delayed mutation follows the newer migrated genesis, not the old row timestamp', async () => {
+  const old = new Date('2026-01-01T00:00:00Z');
+  await insertGoal(db, {
+    id: 'legacy_goal',
+    title: '多知识点迁移与迟到更新',
+    scope_knowledge_ids: ['kc-a', 'kc-b'],
+    sequence_hint: 3,
+    source: 'manual',
+    now: old,
+  });
+  await migrateCanonicalProjections(db);
+  await updateGoalStatus(db, 'legacy_goal', 'done', old);
+  const [row] = await db.select().from(goal).where(eq(goal.id, 'legacy_goal'));
+  expect(row).toMatchObject({ status: 'done', version: 1, scope_knowledge_ids: ['kc-a', 'kc-b'] });
+  expect(await gatherAndFoldGoal(db, row.id)).toEqual(goalLiveRowToSnapshot(row));
 });

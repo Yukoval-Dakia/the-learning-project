@@ -4,6 +4,7 @@ import {
   IngestionOperationRequest,
   type IngestionOperationRequestParsed,
 } from '@/capabilities/ingestion/api/operation-schema';
+import { completeIngestionImportOperation } from '@/capabilities/ingestion/server/import-completion';
 import {
   isTerminalIngestionOperation,
   readIngestionOperation,
@@ -27,15 +28,9 @@ function jsonRequest(path: string, body: unknown): Request {
 
 async function executeLegacyOperation(
   sessionId: string,
-  request: Exclude<IngestionOperationRequestParsed, { kind: 'extract' }>,
+  request: Exclude<IngestionOperationRequestParsed, { kind: 'extract' | 'import' }>,
 ): Promise<Response> {
   switch (request.kind) {
-    case 'import': {
-      const { POST } = await import('@/capabilities/ingestion/api/import');
-      return POST(jsonRequest(`/api/ingestion/${sessionId}/import`, request.input), {
-        id: sessionId,
-      });
-    }
     case 'make_paper': {
       const { POST } = await import('@/capabilities/ingestion/api/make-paper');
       return POST(jsonRequest(`/api/ingestion/${sessionId}/make-paper`, request.input), {
@@ -61,8 +56,8 @@ async function responseBody(response: Response): Promise<Record<string, unknown>
 }
 
 /**
- * Canonical operation 的兼容执行器：复用现有 import/make-paper/rescue 业务边界，
- * 不改其事务、状态机或 Vision 选择；只把同步 HTTP 结果投影成 durable operation 事件。
+ * Import calls its transactional business owner directly. Make-paper/rescue retain
+ * their legacy adapters until their distinct lifecycle owners are migrated.
  */
 export function buildIngestionOperationHandler(
   db: Db,
@@ -88,6 +83,15 @@ export function buildIngestionOperationHandler(
             },
           });
         }
+        continue;
+      }
+
+      if (parsed.data.kind === 'import') {
+        await completeIngestionImportOperation(db, {
+          operationId,
+          sessionId,
+          body: parsed.data.input,
+        });
         continue;
       }
 

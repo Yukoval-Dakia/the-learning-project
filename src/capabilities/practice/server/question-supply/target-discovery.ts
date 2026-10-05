@@ -28,6 +28,7 @@
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import { rotationClassForKind } from '@/capabilities/practice/server/variant-rotation';
+import { OBJECTIVE_ANSWER_KINDS } from '@/core/schema/answer-class';
 import { LearningItemOpenStatus } from '@/core/schema/business';
 import {
   type DifficultyEvidenceT,
@@ -37,7 +38,7 @@ import {
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
-import { notDraftPredicate } from '@/db/predicates';
+import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { item_calibration, learning_item, question } from '@/db/schema';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 import { effectiveB } from '@/server/mastery/recalibration';
@@ -61,9 +62,10 @@ export type SupplyRoute =
   | 'ingest_existing'
   | 'image_candidate'
   | 'quiz_gen'
-  // YUK-697 — deterministic scraper route (jyeoo-rs). Ranked ABOVE sourcing_web on
-  // jyeoo-supported subjects (route-planner); auto-dispatched behind the JYEOO_FETCH_ENABLED
-  // kill switch, which falls back to sourcing_web when off (dispatcher chooseAutoRoute).
+  // YUK-697 引入的 deterministic scraper route（jyeoo-rs）。YUK-986 起机器面退役：
+  // route-planner 不再产出、dispatcher 不再派发；仅保留在词表中作为 trace /
+  // provenance 的合法值（SupplyProducerRoute 的 lock-step 双生），供给由 agent
+  // tool 链（jyeoo_fetch_candidates / store_sourced_question）承载。
   | 'jyeoo_fetch';
 
 export type DifficultyBand = 'below' | 'near' | 'above' | 'stretch';
@@ -330,7 +332,11 @@ function isRecallKind(kind: QuestionKindT): boolean {
 // 客观题（可机判，校准首选 grounded 客观题）。判分路由落 exact/keyword（OBJECTIVE_JUDGE_ROUTES，
 // src/server/mastery/personalized-difficulty.ts）的题型：choice/true_false → exact，
 // fill_blank → exact|keyword（defaultJudgeKindForQuestion）。三者皆 active-PPI 可标定。
-const OBJECTIVE_KINDS = new Set<QuestionKindT>(['choice', 'true_false', 'fill_blank']);
+// YUK-391 (kind Step 4)：不再手维护 kind 集合——由 answer-class 单一真相派生
+// （OBJECTIVE_ANSWER_KINDS = class 在任何 keyword 形态下都落 exact|keyword 的
+// canonical kinds = {choice, true_false, fill_blank}，core/schema/answer-class.ts）。
+const OBJECTIVE_KINDS: ReadonlySet<QuestionKindT> =
+  OBJECTIVE_ANSWER_KINDS as ReadonlySet<QuestionKindT>;
 
 // review FINDING #2：R3 诊断/校准目标必须请求**客观** kind。active-PPI 校准（Phase 6）只在
 // OBJECTIVE_JUDGE_ROUTES（exact/keyword）判分的题上产标签——一个请求 kind='any' 的 R3 目标可能
@@ -678,7 +684,14 @@ async function loadQuestionPool(db: Db, frontierKids: string[]): Promise<PoolQue
       knowledge_ids: question.knowledge_ids,
     })
     .from(question)
-    .where(and(sql`(${sql.join(orConds, sql` OR `)})`, notDraftPredicate(question.draft_status)));
+    .where(
+      and(
+        sql`(${sql.join(orConds, sql` OR `)})`,
+        notDraftPredicate(question.draft_status),
+        // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进供给发现池。
+        questionSuspendedPredicate(question),
+      ),
+    );
   if (rows.length === 0) return [];
 
   // item_calibration（track='hard'）批量读：b / b_anchor / b_calib → effectiveB（FINDING #4）。

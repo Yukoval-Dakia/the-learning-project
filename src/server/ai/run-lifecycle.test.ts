@@ -33,7 +33,7 @@ describe('AI run lifecycle retry policy', () => {
         override: { provider: 'anthropic' },
       }),
     ).toBe(false);
-    expect(maxLifecycleAttempts('StepsJudgeTask', {})).toBe(1);
+    expect(maxLifecycleAttempts(1, {})).toBe(1);
   });
 
   it('classifies only fast transient non-final attempts for retry', () => {

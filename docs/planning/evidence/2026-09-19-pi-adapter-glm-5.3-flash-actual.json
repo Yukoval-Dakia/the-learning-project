@@ -1,0 +1,30 @@
+{
+  "captured_at": "2026-09-19T06:26:38.260Z",
+  "code_revision": "b015f4884988433960f7f14002848186c3869de2",
+  "ticket": "YUK-1014",
+  "lane": {
+    "adapter": "pi",
+    "provider": "opencode-go",
+    "model": "glm-5.3-flash",
+    "task_kind": "AttributionTask",
+    "session_header": "x-opencode-session=<ai_task_run.id>"
+  },
+  "task_run_id": "t2r2wyrli9skqiq9sk2spedz",
+  "status": "success",
+  "finish_reason": "end_turn",
+  "usage": {
+    "inputTokens": 869,
+    "outputTokens": 693,
+    "thinkingBlocks": 1,
+    "thinkingCharacters": 971
+  },
+  "cost": {
+    "basis": "estimated",
+    "amount_usd": 0.000238425,
+    "ref": "pi-catalog:opencode-go/glm-5.3-flash"
+  },
+  "input_digest": "sha256:643e12da2581603cbf3d455b7c05bb41e4a526abf5234613464df315153a0f12",
+  "output_digest": "sha256:a23f6ae0ab1cc30fff285e19293bcb8576cbf7d00ed9606cda16ec53a7488113",
+  "output_excerpt": "{\"primary_category\": \"carelessness\", \"secondary_categories\": [], \"analysis_md\": \"错答为 x=2 或 x=4，参考答案为 x=2 或 x=3，两者仅有一个根不同。由根与系数关系验证：若根为 2 和 4，则两根之积应为 8、之和应为 6，与原方程 x^2-5x+6=0（两根之积=6、之和=5）不符；而 2 和 3 恰好满足积为 6、和为 5。可见学生并未出现系统性的概念误解（其中一个根 x=2 是正确的，说明解题方向——因式分解或求根公式——是对的），而是在求第二个根时出现了数值计算或抄写层面的失误。可能的出错路径：使用求根公式时 x=(5+1)/2 误算为 4（应为 3）；或因式分解时把 6 错拆成 2×4 后又未用两根之和检验。无论哪条路径，都符合'非知识性的笔误或算错'特征，且缺乏验算环节（代入 x=4 得 16-20+6=2≠0，可立即发现错误）。未能看到学生完整解题步骤，无法完全排除记忆混淆（如分解 6 时提取错误的因数对），故置信度适中。建议：求根后回代检验，可当场拦截此类错误。\", \"confidence\": 0.65, \"meta_cause\": \"execution_slip\", \"meta_cause_secondary\": null, \"metacog_flag\": null, \"b",
+  "provenance": "PiRunnerMessage frames carry source=pi; terminal evidence normalized from pi agentLoop agent_end + final assistant usage (catalog-estimated cost — never contractual per design §6 R1)."
+}

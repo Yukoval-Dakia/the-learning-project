@@ -64,11 +64,11 @@ export const PREREQ_DEPTH_LIMIT = 16;
  */
 export const PREREQ_NODE_CAP = 10_000;
 
-interface PrereqClosureRow {
+type PrereqClosureRow = {
   prereq_kc: string;
   source_kc: string;
   depth: number | string;
-}
+};
 
 /**
  * loadPrereqClosure — 沿 KG prerequisite 边**向上** walk 一组失败 KC 的 transitive 前置闭包。
@@ -105,7 +105,7 @@ export async function loadPrereqClosure(
     sql`, `,
   );
 
-  const rows = (await db.execute(sql`
+  const rows = await db.execute<PrereqClosureRow>(sql`
     WITH RECURSIVE closure AS (
       SELECT
         e.from_knowledge_id AS prereq_kc,
@@ -136,7 +136,7 @@ export async function loadPrereqClosure(
     SELECT DISTINCT prereq_kc, source_kc, depth
     FROM closure
     LIMIT ${fetchLimit}
-  `)) as unknown as PrereqClosureRow[];
+  `);
 
   const normalised: PrereqClosureEdge[] = rows.map((r) => ({
     prereq_kc: r.prereq_kc,

@@ -16,12 +16,12 @@
 // column (unlike knowledge); edges have no embed_* columns.
 
 import { z } from 'zod';
-import { checkEdgeTopology } from '@/capabilities/knowledge/server/topology-gate';
 import {
   GenesisExperimental,
   KnowledgeEdgeRowSnapshot,
   type KnowledgeEdgeRowSnapshotT,
 } from '@/core/schema/event/genesis';
+import { checkEdgeTopology } from '@/core/topology-gate';
 import type { FoldEvent } from './fold-event';
 
 // ---------- FoldEvent ----------
@@ -97,7 +97,7 @@ const ARCHIVE_EDGE_OP = 'archive';
 // row and break the fold(genesis)==row invariant. So topology runs on `generate`
 // creates ONLY, never on genesis seeds or archive events.
 //
-// Verdict contract (src/capabilities/knowledge/server/topology-gate.ts:45-48):
+// Verdict contract (src/core/topology-gate.ts:45-48):
 //   | { status: 'ok' } | { status: 'reject'; gate; reason } | { status: 'warn'; gate; reason }
 //   - 'reject' (cycle / direction_contradiction) → THROW (caller tx aborts).
 //   - 'warn' (transitive_redundancy) → proceed (row has no verdict column to stamp).

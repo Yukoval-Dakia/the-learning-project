@@ -278,7 +278,7 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     const db = testDb();
     const runId = newId();
     const questionId = `q_${newId()}`;
-    // The attempt (review) event — id = run_id, shaped exactly as persistSubmit writes it:
+    // The attempt (review) event — id = run_id, shaped exactly as deferred settlement writes it:
     // the verdict is EMBEDDED under `payload.judge`, which is the only place `evidence_json`
     // is ever persisted (#TuxJL).
     await db.insert(event).values({
@@ -344,7 +344,7 @@ describe('GET /api/jobs/judge_run/[id]/status', () => {
     // only place it is persisted. Reading it off the judge event (as an earlier revision did)
     // silently returned nothing, and the all-optional schema let that loss pass validation.
     expect(body.result?.evidence_json).toEqual({ spans: ['x'] });
-    // …and `score_meaning` is HONESTLY absent: JudgeResultV2 carries it, but persistSubmit
+    // …and `score_meaning` is HONESTLY absent: JudgeResultV2 carries it, but settlement
     // writes it to neither event, so there is nothing to reconstruct. Persisting it is a W3
     // item (YUK-777) — inventing a default here would be worse than the gap.
     expect(body.result?.score_meaning).toBeUndefined();

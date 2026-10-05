@@ -42,6 +42,7 @@ export const KIND_META: Record<string, KindMeta> = {
   // YUK-440 / YUK-406 (教研团 Phase 0) — 心智诊断推测（conjecture-with-probe）。
   // 现有通用 ProposalCard 渲染（非备课台）；propose-only，无 Accept CTA。
   conjecture: { label: '诊断推测', icon: 'review', tone: 'coral' },
+  cause_category: { label: '错因类目', icon: 'tag', tone: 'coral' },
 };
 
 export function kindMeta(kind: string): KindMeta {
@@ -273,7 +274,7 @@ export function evidenceReadable(ref: ProposalEvidenceRefWire): {
     case 'knowledge':
       return { text: '源自一个知识点', route: `/knowledge/${ref.id}` };
     case 'artifact':
-      return { text: '源自一篇笔记', route: `/notes/${ref.id}` };
+      return { text: '源自一篇笔记', route: `/notes/${encodeURIComponent(ref.id)}` };
     case 'record':
       return { text: '源自一条学习记录', route: null };
     default:

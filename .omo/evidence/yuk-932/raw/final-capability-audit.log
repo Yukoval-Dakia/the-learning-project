@@ -1,0 +1,1 @@
+Capability boundary audit passed: 0 deep cross-capability imports; debt ratchets exact (capability->server=466, server->capability-deep=0, cross-capability-value=48).

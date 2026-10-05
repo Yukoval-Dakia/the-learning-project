@@ -30,7 +30,7 @@ describe('YUK-358 决定3 — embedded check 孤儿链真删', () => {
   });
 
   it('AI task registry 不再声明 EmbeddedCheckGenerateTask', async () => {
-    const { tasks } = await import('@/ai/registry');
+    const { tasks } = await import('@/capabilities/task-registry');
     expect('EmbeddedCheckGenerateTask' in tasks).toBe(false);
     // 非空对照：相邻 note task 仍在。
     expect('NoteVerifyTask' in tasks).toBe(true);

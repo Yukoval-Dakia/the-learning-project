@@ -7,10 +7,12 @@
 // Generic envelope storage lives in @/kernel/events.
 
 import { and, desc, eq, gte, inArray } from 'drizzle-orm';
-import type { CauseSchemaT, FsrsStateSchemaT } from '@/core/schema/event/blocks';
+import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { filterActiveRows, newerEventRow, takeActiveRows } from '@/kernel/events';
+import { filterActiveRows, takeActiveRows } from '@/kernel/events';
+import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verdict';
+import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
@@ -113,7 +115,34 @@ export type QuestionTimelineEntry =
       created_at: Date;
       outcome: 'success' | 'failure' | 'partial';
       duration_ms: number | null;
-      cause: { primary: string; confidence: number | null } | null;
+      cause: {
+        primary: string;
+        confidence: number | null;
+        /**
+         * YUK-1018 — `misc_` cause id 的显示回填（active misconception title）。
+         * 仅 misc id 有值；非 misc 词表 id 的 label 归 profile 声明管（展示层
+         * 现状即渲染裸 id）。unresolvable misc → null，展示层回退 primary。
+         */
+        primary_label: string | null;
+        /** Phase 1c.2 副归因 id 列表（judge payload 原样透传，id 是语义身份）。 */
+        secondary: string[];
+        /**
+         * YUK-1020 — secondary 里 misc_ id 的显示回填（id → misconception
+         * title Record map）。只含可解析的 misc id；vocab / unresolvable 缺席，
+         * 展示层回退裸 id。
+         */
+        secondary_labels: Record<string, string>;
+      } | null;
+      /**
+       * YUK-1054 — 双轨裁决引用（§9）。`cause` 归因块读的是 effective 判
+       * （链解析后仍 live 的最新 judge —— 与改判前读面一致的语义，修复
+       * 原 caused_by-only 锚漏掉申诉重判的 gap）；本字段把双轨 id 原样透出，
+       * 供上游区分「原始判 id」与「当前生效判 id」。无 judge 时 null。
+       */
+      judge: {
+        original_event_id: string;
+        effective_event_id: string | null;
+      } | null;
     }
   | {
       kind: 'review';
@@ -166,28 +195,22 @@ export async function getQuestionTimeline(
 
   if (activeRows.length === 0) return [];
 
-  // Pull chained judge events for attempts in this slice (one round-trip).
+  // YUK-1054 — judge 双轨解析（subject_id ∪ caused_by 双通道锚 + 链解析）。
+  // 旧实现只查 caused_by_event_id IN attemptIds：申诉重判的 caused_by=appeal.id
+  // 会被漏掉，改判后的新判进不了 timeline。cause 归因子读 effective 判。
   const attemptIds = activeRows.filter((r) => r.action === 'attempt').map((r) => r.id);
-  const judgeByAttempt = new Map<string, EventRow>();
-  if (attemptIds.length > 0) {
-    const judgeRows = await db
-      .select()
-      .from(event)
-      .where(
-        and(
-          eq(event.subject_kind, 'event'),
-          eq(event.action, 'judge'),
-          inArray(event.caused_by_event_id, attemptIds),
-        ),
-      );
-    const activeJudgeRows = await filterActiveRows(db, judgeRows);
-    // Keep newest judge per attempt.
-    for (const row of activeJudgeRows) {
-      const key = row.caused_by_event_id as string;
-      const existing = judgeByAttempt.get(key);
-      if (!existing || newerEventRow(row, existing)) judgeByAttempt.set(key, row);
-    }
-  }
+  const verdicts =
+    attemptIds.length > 0 ? await resolveVerdictsForAttempts(db, attemptIds) : new Map();
+
+  // YUK-1018/1020 — misc_ primary + secondary id 的 title 回填（同一批查询，
+  // 一次批量解析，不进循环）。
+  const miscLabels = await resolveMiscCauseLabels(
+    db,
+    [...verdicts.values()].flatMap((v) => {
+      const cause = v.effective?.verdict.cause;
+      return cause ? [cause.primary_category, ...(cause.secondary_categories ?? [])] : [];
+    }),
+  );
 
   return activeRows.map((row): QuestionTimelineEntry => {
     if (row.action === 'attempt') {
@@ -197,13 +220,23 @@ export async function getQuestionTimeline(
         duration_ms?: number;
         referenced_knowledge_ids: string[];
       };
-      const judge = judgeByAttempt.get(row.id);
-      let cause: { primary: string; confidence: number | null } | null = null;
-      if (judge) {
-        const jPayload = judge.payload as { cause: CauseSchemaT };
+      const verdict = verdicts.get(row.id);
+      const judgeCause = verdict?.effective?.verdict.cause ?? null;
+      let cause: {
+        primary: string;
+        confidence: number | null;
+        primary_label: string | null;
+        secondary: string[];
+        secondary_labels: Record<string, string>;
+      } | null = null;
+      if (judgeCause) {
+        const secondary = judgeCause.secondary_categories ?? [];
         cause = {
-          primary: jPayload.cause.primary_category,
-          confidence: jPayload.cause.confidence ?? null,
+          primary: judgeCause.primary_category,
+          confidence: judgeCause.confidence ?? null,
+          primary_label: miscLabels.get(judgeCause.primary_category) ?? null,
+          secondary,
+          secondary_labels: miscCauseLabelMap(miscLabels, secondary),
         };
       }
       return {
@@ -214,6 +247,14 @@ export async function getQuestionTimeline(
         outcome: (row.outcome as 'success' | 'failure' | 'partial') ?? 'failure',
         duration_ms: payload.duration_ms ?? null,
         cause,
+        judge:
+          verdict?.original || verdict?.effective
+            ? {
+                original_event_id:
+                  verdict.original?.judge_event_id ?? verdict.effective?.judge_event_id ?? '',
+                effective_event_id: verdict.effective?.judge_event_id ?? null,
+              }
+            : null,
       };
     }
     // review

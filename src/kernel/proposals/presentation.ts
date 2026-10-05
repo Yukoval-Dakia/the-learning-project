@@ -194,18 +194,75 @@ function questionEditSummary(change: QuestionEditChange): ProposalSummaryItem[] 
   }
 }
 
-/** Per-kind human projection of the machine-shaped proposed_change. */
-export function proposalChangeSummary(payload: AiProposalPayloadT): ProposalSummaryItem[] {
-  const change = recordOf(payload.proposed_change);
-  switch (payload.kind) {
-    case 'knowledge_node':
+type ProposalPayloadByKind = {
+  [K in AiProposalPayloadT['kind']]: Extract<AiProposalPayloadT, { kind: K }>;
+};
+type ProposalPayload<K extends AiProposalPayloadT['kind'] = AiProposalPayloadT['kind']> = {
+  [P in K]: ProposalPayloadByKind[P];
+}[K];
+type ProposalPresenter<K extends AiProposalPayloadT['kind']> = {
+  title: (payload: ProposalPayloadByKind[K]) => string;
+  summary: (payload: ProposalPayloadByKind[K]) => ProposalSummaryItem[];
+  details: (payload: ProposalPayloadByKind[K]) => string | null;
+};
+
+function defaultTechnicalDetails(payload: AiProposalPayloadT): string {
+  const details = recordOf(payload.proposed_change);
+  if (!details) return JSON.stringify(payload.proposed_change, null, 2);
+  return JSON.stringify(details, null, 2);
+}
+
+function difficultyTechnicalDetails(payload: AiProposalPayloadT): string {
+  const details = recordOf(payload.proposed_change);
+  if (!details) return JSON.stringify(payload.proposed_change, null, 2);
+  const { difficulty, ...learnerSafe } = details;
+  return JSON.stringify(
+    { ...learnerSafe, difficulty_estimate: estimatedDifficulty(difficulty) },
+    null,
+    2,
+  );
+}
+
+function relearnTechnicalDetails(payload: AiProposalPayloadT): string {
+  const details = recordOf(payload.proposed_change);
+  if (!details) return JSON.stringify(payload.proposed_change, null, 2);
+  const { current_mastery, peak_mastery, ...learnerSafe } = details;
+  return JSON.stringify(
+    {
+      ...learnerSafe,
+      mastery_trend_estimate: estimatedMasteryTrend(current_mastery, peak_mastery),
+    },
+    null,
+    2,
+  );
+}
+
+// One exhaustive entry owns each kind's human projection and safe technical details.
+const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter<K> } = {
+  knowledge_node: {
+    title: (payload) => titled('新知识点', payload.proposed_change.name),
+    summary: (payload) => {
+      const change = recordOf(payload.proposed_change);
       return compact([summaryItem('新知识点', change?.name)]);
-    case 'knowledge_edge':
+    },
+    details: defaultTechnicalDetails,
+  },
+  knowledge_edge: {
+    title: () => '调整知识关系',
+    summary: (payload) => {
+      const change = recordOf(payload.proposed_change);
       return compact([
         summaryItem('动作', EDGE_OPERATION[textOf(change?.edge_op) ?? 'create'] ?? '调整关系'),
         summaryItem('关系', readableToken(change?.relation_type)),
       ]);
-    case 'knowledge_mutation': {
+    },
+    details: defaultTechnicalDetails,
+  },
+  knowledge_mutation: {
+    title: (payload) => MUTATION_OPERATION[payload.proposed_change.mutation] ?? '调整知识结构',
+    summary: (payload) => {
+      const change = recordOf(payload.proposed_change);
+
       const mutation = textOf(change?.mutation);
       const splitCount = Array.isArray(change?.into) ? change.into.length : null;
       const mergeCount = Array.isArray(change?.from_ids) ? change.from_ids.length : null;
@@ -223,8 +280,17 @@ export function proposalChangeSummary(payload: AiProposalPayloadT): ProposalSumm
               : null,
         ),
       ]);
-    }
-    case 'learning_item': {
+    },
+    details: defaultTechnicalDetails,
+  },
+  learning_item: {
+    title: (payload) => {
+      const change = recordOf(payload.proposed_change);
+      return titled('建立学习主线', recordOf(change?.hub)?.title ?? change?.topic);
+    },
+    summary: (payload) => {
+      const change = recordOf(payload.proposed_change);
+
       const hub = recordOf(change?.hub);
       const stepCount =
         (Array.isArray(change?.atomics) ? change.atomics.length : 0) +
@@ -233,8 +299,17 @@ export function proposalChangeSummary(payload: AiProposalPayloadT): ProposalSumm
         summaryItem('学习主线', hub?.title ?? change?.topic),
         summaryItem('计划', stepCount > 0 ? `${stepCount} 个学习步骤` : null),
       ]);
-    }
-    case 'note_update': {
+    },
+    details: defaultTechnicalDetails,
+  },
+  note_update: {
+    title: (payload) => {
+      const change = recordOf(payload.proposed_change);
+      return titled('更新学习笔记', noteUpdateSummary(change));
+    },
+    summary: (payload) => {
+      const change = recordOf(payload.proposed_change);
+
       const patch = recordOf(change?.patch);
       const summary = recordOf(change?.summary);
       const opCount = Array.isArray(patch?.ops)
@@ -255,8 +330,13 @@ export function proposalChangeSummary(payload: AiProposalPayloadT): ProposalSumm
             )
           : summaryItem('说明', noteUpdateSummary(change)),
       ]);
-    }
-    case 'variant_question':
+    },
+    details: defaultTechnicalDetails,
+  },
+  variant_question: {
+    title: (payload) => titled('生成变式练习', payload.proposed_change.prompt_md),
+    summary: (payload) => {
+      const change = recordOf(payload.proposed_change);
       return compact([
         summaryItem('新题题面', change?.prompt_md),
         summaryItem('AI 估计难度', estimatedDifficulty(change?.difficulty)),
@@ -265,13 +345,25 @@ export function proposalChangeSummary(payload: AiProposalPayloadT): ProposalSumm
           typeof change?.variant_depth === 'number' ? `第 ${change.variant_depth} 层` : null,
         ),
       ]);
-    case 'completion': {
+    },
+    details: difficultyTechnicalDetails,
+  },
+  completion: {
+    title: () => '确认学习项已完成',
+    summary: (payload) => {
+      const change = recordOf(payload.proposed_change);
+
       const signals = Array.isArray(change?.triggering_signals)
         ? change.triggering_signals.map(readableToken).filter(Boolean).join('、')
         : null;
       return compact([summaryItem('建议', '标记学习项已完成'), summaryItem('依据', signals)]);
-    }
-    case 'relearn':
+    },
+    details: defaultTechnicalDetails,
+  },
+  relearn: {
+    title: () => '重新巩固学习项',
+    summary: (payload) => {
+      const change = recordOf(payload.proposed_change);
       return compact([
         summaryItem(
           '距上次完成',
@@ -282,12 +374,25 @@ export function proposalChangeSummary(payload: AiProposalPayloadT): ProposalSumm
           estimatedMasteryTrend(change?.current_mastery, change?.peak_mastery),
         ),
       ]);
-    case 'defer':
+    },
+    details: relearnTechnicalDetails,
+  },
+  defer: {
+    title: () => '调整学习安排',
+    summary: (payload) => {
+      const change = recordOf(payload.proposed_change);
       return compact([
         summaryItem('延后到', change?.defer_until),
         summaryItem('安排说明', change?.reason),
       ]);
-    case 'record_links': {
+    },
+    details: defaultTechnicalDetails,
+  },
+  record_links: {
+    title: () => '补充记录关联',
+    summary: (payload) => {
+      const change = recordOf(payload.proposed_change);
+
       const links = Array.isArray(change?.links)
         ? change.links.length
         : Array.isArray(change?.link_refs)
@@ -296,26 +401,52 @@ export function proposalChangeSummary(payload: AiProposalPayloadT): ProposalSumm
       return compact([
         summaryItem('关联', links === null ? '补充记录之间的关联' : `${links} 条关联`),
       ]);
-    }
-    case 'record_promotion': {
+    },
+    details: defaultTechnicalDetails,
+  },
+  record_promotion: {
+    title: (payload) => {
+      const target = textOf(recordOf(payload.proposed_change)?.target);
+      return titled('整理学习记录', target ? RECORD_PROMOTION_TARGET[target] : null);
+    },
+    summary: (payload) => {
+      const change = recordOf(payload.proposed_change);
+
       const target = textOf(change?.target);
       const draft = recordOf(change?.draft);
       return compact([
         summaryItem('目标', (target && RECORD_PROMOTION_TARGET[target]) ?? '整理为长期学习对象'),
         summaryItem('草稿标题或题面', draft?.title ?? draft?.prompt_md),
       ]);
-    }
-    case 'archive':
+    },
+    details: defaultTechnicalDetails,
+  },
+  archive: {
+    title: () => '归档学习内容',
+    summary: (payload) => {
+      const change = recordOf(payload.proposed_change);
       return compact([
         summaryItem('动作', '移出当前工作区'),
         summaryItem('原因', change?.archived_reason ?? change?.reason),
       ]);
-    case 'judge_retraction':
+    },
+    details: defaultTechnicalDetails,
+  },
+  judge_retraction: {
+    title: () => '复核一次 AI 判定',
+    summary: (payload) => {
+      const change = recordOf(payload.proposed_change);
       return compact([
         summaryItem('动作', '撤回这次 AI 判定'),
         summaryItem('复核说明', change?.reason_md),
       ]);
-    case 'goal_scope':
+    },
+    details: defaultTechnicalDetails,
+  },
+  goal_scope: {
+    title: (payload) => titled('确认目标范围', payload.proposed_change.title),
+    summary: (payload) => {
+      const change = recordOf(payload.proposed_change);
       return compact([
         summaryItem('目标', change?.title),
         summaryItem(
@@ -326,7 +457,16 @@ export function proposalChangeSummary(payload: AiProposalPayloadT): ProposalSumm
         ),
         summaryItem('判断依据', change?.reasoning),
       ]);
-    case 'block_merge':
+    },
+    details: defaultTechnicalDetails,
+  },
+  block_merge: {
+    title: (payload) => {
+      const mergedCount = payload.proposed_change.merge_block_ids.length;
+      return `合并 ${mergedCount + 1} 个被切断的题块`;
+    },
+    summary: (payload) => {
+      const change = recordOf(payload.proposed_change);
       return compact([
         summaryItem(
           '动作',
@@ -335,21 +475,42 @@ export function proposalChangeSummary(payload: AiProposalPayloadT): ProposalSumm
             : null,
         ),
       ]);
-    case 'image_candidate':
+    },
+    details: defaultTechnicalDetails,
+  },
+  image_candidate: {
+    title: (payload) => titled('图题来源', payload.proposed_change.source_title),
+    summary: (payload) => {
+      const change = recordOf(payload.proposed_change);
       return compact([
         summaryItem('来源', change?.source_title),
         summaryItem('图题判断', change?.summary_md),
         summaryItem('题型', readableToken(change?.requested_kind)),
       ]);
-    case 'question_draft':
+    },
+    details: defaultTechnicalDetails,
+  },
+  question_draft: {
+    title: (payload) => titled('审核新题', payload.proposed_change.prompt_preview),
+    summary: (payload) => {
+      const change = recordOf(payload.proposed_change);
       return compact([
         summaryItem('题面', change?.prompt_preview),
         summaryItem('题型', readableToken(change?.kind)),
         summaryItem('AI 估计难度', estimatedDifficulty(change?.difficulty)),
       ]);
-    case 'question_edit':
-      return questionEditSummary(payload.proposed_change);
-    case 'conjecture':
+    },
+    details: difficultyTechnicalDetails,
+  },
+  question_edit: {
+    title: (payload) => titled('修订一道题目', payload.proposed_change.node_preview),
+    summary: (payload) => questionEditSummary(payload.proposed_change),
+    details: defaultTechnicalDetails,
+  },
+  conjecture: {
+    title: (payload) => titled('验证诊断推测', payload.proposed_change.claim_md),
+    summary: (payload) => {
+      const change = recordOf(payload.proposed_change);
       return compact([
         summaryItem('观察', change?.claim_md),
         summaryItem('验证方式', change?.probe_md),
@@ -358,92 +519,41 @@ export function proposalChangeSummary(payload: AiProposalPayloadT): ProposalSumm
           typeof change?.recurrence_count === 'number' ? `${change.recurrence_count} 次` : null,
         ),
       ]);
-    default:
-      return [];
-  }
+    },
+    details: () => null,
+  },
+  cause_category: {
+    title: (payload) => titled('收编错因类目', payload.proposed_change.label),
+    summary: (payload) => {
+      const change = recordOf(payload.proposed_change);
+      return compact([
+        summaryItem('新类目', change?.label),
+        summaryItem('类目 id', change?.category_id),
+        summaryItem('说明', change?.description),
+        summaryItem('来源', change?.source === 'owner' ? '人工提议' : 'AI 提议（other 复发）'),
+      ]);
+    },
+    details: defaultTechnicalDetails,
+  },
+};
+
+export function proposalChangeSummary<K extends AiProposalPayloadT['kind']>(
+  payload: ProposalPayload<K>,
+): ProposalSummaryItem[] {
+  return proposalPresenters[payload.kind].summary(payload);
 }
 
-function technicalDetails(payload: AiProposalPayloadT): string | null {
-  if (payload.kind === 'conjecture') return null;
-  const details = recordOf(payload.proposed_change);
-  if (!details) return JSON.stringify(payload.proposed_change, null, 2);
-  if (payload.kind === 'variant_question' || payload.kind === 'question_draft') {
-    const { difficulty, ...learnerSafe } = details;
-    return JSON.stringify(
-      { ...learnerSafe, difficulty_estimate: estimatedDifficulty(difficulty) },
-      null,
-      2,
-    );
-  }
-  if (payload.kind === 'relearn') {
-    const { current_mastery, peak_mastery, ...learnerSafe } = details;
-    return JSON.stringify(
-      {
-        ...learnerSafe,
-        mastery_trend_estimate: estimatedMasteryTrend(current_mastery, peak_mastery),
-      },
-      null,
-      2,
-    );
-  }
-  return JSON.stringify(details, null, 2);
+function technicalDetails<K extends AiProposalPayloadT['kind']>(
+  payload: ProposalPayload<K>,
+): string | null {
+  return proposalPresenters[payload.kind].details(payload);
 }
 
-/**
- * A concise learner-facing identity for every proposal kind.
- *
- * This is deliberately derived from meaningful payload fields only. Opaque ids remain in the
- * underlying payload for audit/replay, but never become the card's primary title.
- */
-export function proposalDisplayTitle(payload: AiProposalPayloadT): string {
-  switch (payload.kind) {
-    case 'knowledge_node':
-      return titled('新知识点', payload.proposed_change.name);
-    case 'knowledge_edge':
-      return '调整知识关系';
-    case 'knowledge_mutation':
-      return MUTATION_OPERATION[payload.proposed_change.mutation] ?? '调整知识结构';
-    case 'learning_item': {
-      const change = recordOf(payload.proposed_change);
-      return titled('建立学习主线', recordOf(change?.hub)?.title ?? change?.topic);
-    }
-    case 'note_update': {
-      const change = recordOf(payload.proposed_change);
-      return titled('更新学习笔记', noteUpdateSummary(change));
-    }
-    case 'variant_question':
-      return titled('生成变式练习', payload.proposed_change.prompt_md);
-    case 'record_promotion': {
-      const target = textOf(recordOf(payload.proposed_change)?.target);
-      return titled('整理学习记录', target ? RECORD_PROMOTION_TARGET[target] : null);
-    }
-    case 'record_links':
-      return '补充记录关联';
-    case 'completion':
-      return '确认学习项已完成';
-    case 'relearn':
-      return '重新巩固学习项';
-    case 'goal_scope':
-      return titled('确认目标范围', payload.proposed_change.title);
-    case 'block_merge': {
-      const mergedCount = payload.proposed_change.merge_block_ids.length;
-      return `合并 ${mergedCount + 1} 个被切断的题块`;
-    }
-    case 'defer':
-      return '调整学习安排';
-    case 'archive':
-      return '归档学习内容';
-    case 'judge_retraction':
-      return '复核一次 AI 判定';
-    case 'image_candidate':
-      return titled('图题来源', payload.proposed_change.source_title);
-    case 'question_draft':
-      return titled('审核新题', payload.proposed_change.prompt_preview);
-    case 'question_edit':
-      return titled('修订一道题目', payload.proposed_change.node_preview);
-    case 'conjecture':
-      return titled('验证诊断推测', payload.proposed_change.claim_md);
-  }
+/** A concise learner-facing identity, derived from meaningful payload fields. */
+export function proposalDisplayTitle<K extends AiProposalPayloadT['kind']>(
+  payload: ProposalPayload<K>,
+): string {
+  return proposalPresenters[payload.kind].title(payload);
 }
 
 const CONTINUITY_LABEL: Record<string, string> = {

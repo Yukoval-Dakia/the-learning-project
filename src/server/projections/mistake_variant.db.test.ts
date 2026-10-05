@@ -6,8 +6,7 @@
 //     variant, and is idempotent; cause_category is snapshotted into the genesis.
 //   - shell parity: gatherAndFoldMistakeVariant reproduces the live row for create→accept→verify
 //     (pass/fail)→dismiss/retract; cause_category SURVIVES the fold (the headline).
-//   - per-entity flag: OFF (imperative INSERT/UPDATE) vs ON (projection write-through) yield
-//     IDENTICAL rows for creation + accept.
+//   - canonical materialization preserves structural fields and null guards.
 //   - audit:projection mistake_variant section: CLEAN on a coherent fixture, DRIFT on an
 //     out-of-band write (incl. a cause_category tamper).
 //   - assertMistakeVariantParity catches a deliberate drift.
@@ -18,7 +17,7 @@
 // index) to make the index reset intent obvious at each describe; it is not load-bearing.
 
 import { eq } from 'drizzle-orm';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import { newId } from '@/core/ids';
 import type { MistakeVariantRowSnapshotT } from '@/core/schema/event/genesis';
@@ -36,7 +35,6 @@ import {
 } from './parity';
 
 const T0 = new Date('2026-06-01T00:00:00.000Z');
-const FLAG = 'PROJECTION_IS_WRITER_MISTAKE_VARIANT';
 
 async function resetIndex(): Promise<void> {
   await testDb().delete(materialized_id_index);
@@ -365,17 +363,13 @@ describe('gatherAndFoldMistakeVariant — shell parity over the event chain', ()
   });
 });
 
-describe('projectMistakeVariant write-through — per-entity flag ON', () => {
+describe('projectMistakeVariant write-through — canonical writer', () => {
   beforeEach(async () => {
     await resetDb();
     await resetIndex();
-    process.env[FLAG] = '1';
-  });
-  afterEach(() => {
-    delete process.env[FLAG];
   });
 
-  it('write-through (ON) produces the SAME row the fold derives, after a create→accept chain', async () => {
+  it('write-through produces the SAME row the fold derives, after a create→accept chain', async () => {
     const db = testDb();
     await writeCreateBase({
       mvId: 'mv_on',
@@ -407,18 +401,14 @@ describe('projectMistakeVariant write-through — per-entity flag ON', () => {
 });
 
 describe('projectMistakeVariantGuarded — anchor-gated fold-null delete (B1 data-loss-on-flip)', () => {
-  // The GUARDED write-through is what the ON-path accept/verify sites use (variant_verify.ts +
+  // The GUARDED write-through is what the canonical accept/verify sites use (variant_verify.ts +
   // proposal-appliers.ts): a fold of null must DELETE the live row ONLY when the row is
   // event-sourced (has a genesis/create/index anchor). A pre-W2 / fixture-seeded variant the fold
   // is blind to (no base event) folds to null and MUST be kept — else flipping the per-entity flag
-  // ON would silently DELETE a live variant the imperative path created. Mirrors projectGoalGuarded.
+  // A blind projection would silently DELETE a live variant the imperative path created. Mirrors projectGoalGuarded.
   beforeEach(async () => {
     await resetDb();
     await resetIndex();
-    process.env[FLAG] = '1';
-  });
-  afterEach(() => {
-    delete process.env[FLAG];
   });
 
   it('fold-null on an UN-anchored variant does NOT delete the live row', async () => {

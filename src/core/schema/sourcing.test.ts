@@ -66,9 +66,12 @@ describe('SourcedQuestion', () => {
     expect(parsed.success).toBe(false);
   });
 
-  it('rejects an unknown question kind', () => {
+  it('accepts a free-form question kind label but still rejects an empty one (YUK-386)', () => {
+    // kind is a display label, not a closed enum — an unrecognized label parses;
+    // only a blank string fails min(1).
     const parsed = SourcedQuestion.safeParse({ ...validQuestion, kind: 'mystery' });
-    expect(parsed.success).toBe(false);
+    expect(parsed.success).toBe(true);
+    expect(SourcedQuestion.safeParse({ ...validQuestion, kind: '' }).success).toBe(false);
   });
 });
 
@@ -131,9 +134,13 @@ describe('SourcingTaskOutput', () => {
     expect(parsed.success).toBe(false);
   });
 
-  it("pins tool to the literal 'tavily'", () => {
-    const parsed = SourcingTaskOutput.safeParse({ ...validOutput, tool: 'serpapi' });
-    expect(parsed.success).toBe(false);
+  it("pins tool to the search-backend enum ('tavily' 历史值 / 'exa' 新值，拒绝未知后端)", () => {
+    const bad = SourcingTaskOutput.safeParse({ ...validOutput, tool: 'serpapi' });
+    expect(bad.success).toBe(false);
+    const legacy = SourcingTaskOutput.safeParse({ ...validOutput, tool: 'tavily' });
+    expect(legacy.success).toBe(true);
+    const current = SourcingTaskOutput.safeParse({ ...validOutput, tool: 'exa' });
+    expect(current.success).toBe(true);
   });
 
   it('requires a non-empty fetched_at', () => {

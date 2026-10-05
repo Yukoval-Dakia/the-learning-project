@@ -45,6 +45,13 @@ export interface RecordLandingProps {
   isBatch: boolean;
   /** 用户为这批题挂的知识点（来自刚提交的表单快照）。 */
   knowledge: RecordLandingKnowledge[];
+  /**
+   * YUK-542 — 持久化的 `learning_session.warnings`（识别降级 / fallback 告诫）。
+   * 非空时在 hero 与网格之间渲染 `.ing-degrade warn` 横幅 —— A8 参考稿
+   * DegradeBanner 形态（screen-record-a8.jsx:16-25），owner 2026-09-15 拍板
+   * 重开 YUK-354 的 port 决策。手填录入没有 ingestion session，省略即不显示。
+   */
+  warnings?: string[];
   /** SPA 跳转（去练 /practice · 去看知识点 /knowledge/:id · 去错题本 /mistakes · 回今日 /today）。 */
   navigate: (to: string) => void;
   /** 「再录一份 / 继续传」：重置回录入表单（停留在录入面，不离页）。 */
@@ -55,6 +62,7 @@ export function RecordLanding({
   count,
   isBatch,
   knowledge,
+  warnings = [],
   navigate,
   onRecordAnother,
 }: RecordLandingProps) {
@@ -74,6 +82,21 @@ export function RecordLanding({
           <b>{count} 道题</b>已收好。下面是它的去向和你现在能做的事 —— 不会把你丢在空页面。
         </p>
       </div>
+
+      {/* YUK-542 — 降级告诫活到落地卡：SSE timeline 的 warning 行（YUK-541）只在
+          extracting/reviewing 相可见，一进着陆态就消失；这里把已持久化的
+          learning_session.warnings 露出。横幅 = DegradeBanner port（hero 与 grid
+          之间，与参考稿 screen-record-a8.jsx:100-101 同槽位）。沿用 timeline 同一
+          约定：只渲染通用告诫文案，不把内部英文 warning 原文抛给用户。 */}
+      {warnings.length > 0 && (
+        <div className="ing-degrade warn">
+          <LoomIcon name="alert" size={15} className="ing-degrade-ico" />
+          <div className="ing-degrade-txt">
+            部分内容走了<b>备用识别方式</b> ——
+            没有静默降级；题目已照常收好，建议在错题本里重点复核。
+          </div>
+        </div>
+      )}
 
       <div className="ing-exit-grid">
         <div className="ing-exit-card">

@@ -25,6 +25,8 @@ import {
   EditingHeartbeatResponseSchema,
   HubIdParamsSchema,
   NoteIdParamsSchema,
+  NoteListQuerySchema,
+  NoteListResponseSchema,
   NotePageResponseSchema,
   RecentArtifactAiChangesResponseSchema,
   UndoArtifactAiChangeResponseSchema,
@@ -58,6 +60,16 @@ export const notesCapability = defineCapability({
     // M5-T5a (YUK-321)：/api/editing-session/* 收编。
     // YUK-358 决定3：/api/embedded-check/* 孤儿链真删（曾随 M5 等价平移留 D6 墓碑）。
     routes: [
+      {
+        method: 'GET',
+        path: '/api/notes',
+        operationId: 'listNotes',
+        request: { query: NoteListQuerySchema },
+        responses: { 200: NoteListResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
+        load: () => import('./api/notes-list').then((m) => m.GET),
+      },
       {
         method: 'GET',
         path: '/api/notes/[id]',

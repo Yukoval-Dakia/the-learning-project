@@ -4,7 +4,7 @@
   "items": [
     {
       "ref": "yuwen-choice-001",
-      "kind": "single_choice",
+      "kind": "choice",
       "prompt_md": "《论语·学而》「学而时习之，不亦说乎」中「说」字的正确解释是？",
       "choices_md": ["说话", "通「悦」，高兴", "解释", "学说"],
       "reference_md": "通「悦」，高兴",
@@ -13,7 +13,7 @@
     },
     {
       "ref": "yuwen-choice-002",
-      "kind": "single_choice",
+      "kind": "choice",
       "prompt_md": "《爱莲说》「水陆草木之花，可爱者甚蕃」一句中「之」字的用法是？",
       "choices_md": [
         "结构助词，相当于「的」",
@@ -27,7 +27,7 @@
     },
     {
       "ref": "yuwen-choice-003",
-      "kind": "single_choice",
+      "kind": "choice",
       "prompt_md": "下列句子中属于宾语前置句式的是？",
       "choices_md": ["甚矣，汝之不惠", "何陋之有", "青，取之于蓝", "马之千里者"],
       "reference_md": "何陋之有",
@@ -36,7 +36,7 @@
     },
     {
       "ref": "yuwen-choice-004",
-      "kind": "single_choice",
+      "kind": "choice",
       "prompt_md": "《六国论》的作者是谁？",
       "choices_md": ["苏轼", "苏洵", "苏辙", "欧阳修"],
       "reference_md": "苏洵",
@@ -45,7 +45,7 @@
     },
     {
       "ref": "yuwen-choice-005",
-      "kind": "single_choice",
+      "kind": "choice",
       "prompt_md": "《出师表》「先帝不以臣卑鄙」中「卑鄙」一词的古义是？",
       "choices_md": ["品德恶劣", "地位低微、见识浅陋", "言行下流", "卑躬屈膝"],
       "reference_md": "地位低微、见识浅陋",
@@ -90,7 +90,7 @@
     },
     {
       "ref": "yuwen-read-001",
-      "kind": "reading_comprehension",
+      "kind": "reading",
       "prompt_md": "《爱莲说》中作者说「予独爱莲之出淤泥而不染」，请分析作者借莲花寄托了怎样的志趣。",
       "reference_md": "作者以莲喻人，借「出淤泥而不染」赞美君子身处污浊环境却不同流合污、洁身自好的品格，表达了自己追求高洁、不慕名利的志趣。",
       "rubric_json": {
@@ -102,7 +102,7 @@
     },
     {
       "ref": "yuwen-read-002",
-      "kind": "reading_comprehension",
+      "kind": "reading",
       "prompt_md": "《六国论》开篇提出「六国破灭，非兵不利，战不善，弊在赂秦」，请说明这句话在全文中的作用。",
       "reference_md": "这句话开门见山地提出全文的中心论点，指出六国灭亡的根本原因在于「赂秦」而非军事失利，统领下文的分层论证，起到提纲挈领的作用。",
       "rubric_json": {

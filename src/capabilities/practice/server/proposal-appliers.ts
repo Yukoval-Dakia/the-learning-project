@@ -5,6 +5,8 @@
 // practice 声明归属的 proposal kinds（manifest.proposals.kinds）：
 //   - variant_question  → acceptVariantQuestionProposal（本文件）
 //   - question_draft    → acceptQuestionDraftProposal（本文件）
+//                       + dismissQuestionDraftProposal（本文件，YUK-308：
+//                         dismiss tombstone 草稿行 metadata.dismissed_at）
 //   - judge_retraction  → 有 producer（producers.ts 的 judge_retraction 提议）
 //     但无 accept applier：accept 走 actions.ts 的 default throw
 //     （unsupported_proposal_kind），剩余 producer 语义归 YUK-44。归属声明
@@ -14,18 +16,23 @@
 // 共享 helper 一律走 @/server/proposals/applier-helpers。
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 
 import { lockPlacementSupplyScopes } from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
+import {
+  LEGACY_DRAFT_STATUS,
+  MARKING_RULE_PROVENANCE,
+  QUESTION_AVAILABILITY,
+} from '@/core/schema/assessment/lifecycle';
 import type { QuestionEditOpT } from '@/core/schema/proposal';
 import {
   StructuredQuestion,
   type StructuredQuestionT,
   findStructuredNode,
 } from '@/core/schema/structured_question';
-import type { Db } from '@/db/client';
-import { event, mistake_variant, question } from '@/db/schema';
+import type { Db, Tx } from '@/db/client';
+import { cause_category_overlay, event, mistake_variant, question } from '@/db/schema';
 import { getCorrectionStatus, writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
@@ -34,11 +41,8 @@ import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
 // event; the per-entity flag gates whether the projection (ON) or the imperative UPDATE (OFF)
 // writes the row. OFF still runs the write-time fold==row parity assert.
 import {
-  assertMistakeVariantParity,
   hasMistakeVariantGenesisAnchor,
-  mistakeVariantLiveRowToSnapshot,
   projectMistakeVariantGuarded,
-  projectionWritesMistakeVariant,
 } from '@/server/projections/mistake-variant-runtime';
 import {
   type ProposalInboxRow,
@@ -50,10 +54,14 @@ import {
   findExistingRateEvent,
   recordProposalDecisionSignal,
   requiredString,
+  writeProposalRateEvent,
 } from '@/server/proposals/practice-runtime';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 
+import { CAUSE_OVERLAY_ID_PREFIX } from './cause-overlay';
 import { initialFsrsState } from './fsrs';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from './placement-scope';
 
 // YUK-17 / ADR-0018 — swappable enqueue hook so DB tests can drive
 // variant_question accept without spinning up pg-boss.
@@ -166,7 +174,7 @@ export async function acceptVariantQuestionProposal(
         .where(eq(mistake_variant.proposal_event_id, proposalId))
         .limit(1)
     )[0];
-    if (!existingMv || !existingMv.variant_question_id) {
+    if (!existingMv?.variant_question_id) {
       // Rate was written but materialization did not complete — caller should
       // retract + re-run, not silently fix up. Surface explicitly.
       throw new ApiError(
@@ -234,7 +242,6 @@ export async function acceptVariantQuestionProposal(
   const rateEventId = newId();
   // YUK-471 W2 — gate who writes the mistake_variant ROW (the flag is read ONCE outside the tx so a
   // mid-tx env flip can't split the decision). ON → projection write-through; OFF → imperative.
-  const flip = projectionWritesMistakeVariant();
 
   await db.transaction(async (tx) => {
     await lockPlacementSupplyScopes(tx, proposedChange.knowledge_ids ?? []);
@@ -258,7 +265,7 @@ export async function acceptVariantQuestionProposal(
         knowledge_ids: proposedChange.knowledge_ids ?? [],
         difficulty: proposedChange.difficulty as number,
         source: 'mistake_variant',
-        draft_status: 'active',
+        draft_status: LEGACY_DRAFT_STATUS.ACTIVE,
         variant_depth: proposedChange.variant_depth ?? 1,
         root_question_id: proposedChange.root_question_id ?? null,
         parent_variant_id: proposedChange.parent_variant_id ?? null,
@@ -271,6 +278,39 @@ export async function acceptVariantQuestionProposal(
         updated_at: now,
       }),
     );
+
+    // YUK-1043 — 统一发布链（§2 矩阵 mistake_variant 行）：接受即发布 —— 不能绕
+    // 发布直接 active。variant 参考答案为 AI 提案、用户接受 ⇒ D9 手动带 provenance
+    //（manual ≠ official，D1）；接受人即人工核验门（verifier: human）。
+    await publishQuestionGroupFromRow(tx, {
+      rootId: newQuestionId,
+      admission: {
+        state: 'admitted',
+        evidence: {
+          marking_provenance: MARKING_RULE_PROVENANCE.MANUAL,
+          verification: {
+            structural_check_passed: true,
+            independent_verification: {
+              passed: true,
+              verifier: 'human',
+              verified_at: now.toISOString(),
+            },
+          },
+          model_slice: null,
+        },
+      },
+      // YUK-1045 — 人工接受 ⇒ 同版复核通过：清 verify_hold 恢复准入（§3.3）。
+      suspension: { suspended: false },
+      verification: {
+        // 人工接受即核验（verifier: human —— 与上方 admission evidence 同源）。
+        policy_id: 'proposal_accept@1',
+        outcome: 'passed',
+        evidence: { verifier: 'human', proposal_kind: 'mistake_variant' },
+      },
+      availability: QUESTION_AVAILABILITY.GENERAL_POOL,
+      actorRef: 'proposal-accept:mistake_variant',
+      now,
+    });
 
     // The accept `rate` event — written BEFORE the row write-through so the fold (when the flag is
     // ON) sees the chained accept in the same tx and projects status='active' +
@@ -292,41 +332,11 @@ export async function acceptVariantQuestionProposal(
       caused_by_event_id: proposalId,
       created_at: now,
     });
-
-    // ROW writer — gated on the per-entity flag (critic A1). ON → the GUARDED projection folds
-    // (create base + accept rate) and writes status='active' + variant_question_id; OFF → the
-    // imperative UPDATE (current behavior) + the write-time fold==row parity assert. GUARDED (not
-    // bare projectMistakeVariant): a pre-W2 / fixture-seeded variant with no create base folds to
-    // null; the guard's anchor gate keeps that live row instead of DELETing it just after a question
-    // was inserted + linked (B1 data-loss-on-flip — mirrors the dismiss/retract sites).
-    if (flip) {
-      await projectMistakeVariantGuarded(tx, mv.id);
-    } else {
-      await tx
-        .update(mistake_variant)
-        .set({
-          status: 'active',
-          variant_question_id: newQuestionId,
-          updated_at: now,
-        })
-        .where(eq(mistake_variant.id, mv.id));
-      // APPLICABILITY GATE — only assert for an EVENT-SOURCED variant (create-base/genesis/index
-      // anchor). A pre-W2 / fixture-seeded mv row (no base event) folds to null and would
-      // FALSE-mismatch; the backfill anchors those later. variant_gen-created variants always carry
-      // the create base, so the assert runs for the real accept path.
-      if (await hasMistakeVariantGenesisAnchor(tx, mv.id)) {
-        const [written] = await tx
-          .select()
-          .from(mistake_variant)
-          .where(eq(mistake_variant.id, mv.id))
-          .limit(1);
-        await assertMistakeVariantParity(
-          tx,
-          mv.id,
-          written ? mistakeVariantLiveRowToSnapshot(written) : null,
-        );
-      }
+    // Materialize canonical structural state from the events in this transaction.
+    if (!(await hasMistakeVariantGenesisAnchor(tx, mv.id))) {
+      throw new Error(`Variant ${mv.id} needs canonical projection migration`);
     }
+    await projectMistakeVariantGuarded(tx, mv.id);
   });
 
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
@@ -357,12 +367,16 @@ export async function acceptVariantQuestionProposal(
  * transaction. Idempotency keys on caused_by_event_id = proposalId
  * (existingAcceptRate), like every sibling accept handler.
  *
- * Dismiss flows through the generic dismiss path (writeGenericRateEvent): the
- * draft row stays inert (draft_status='draft', never pooled / FSRS'd).
- * phase-deferred: dismissed-draft cleanup/archival is NOT implemented — orphan
- * draft rows accumulate harmlessly (invisible everywhere drafts are excluded).
- * Revisit with the YUK-304 follow-up batch; context: ADR-0031 决定5 + this
- * handler.
+ * Dismiss flows through the dedicated questionDraftProposalDismissApplier
+ * (YUK-308, declared in manifest.proposals.kinds): the draft row stays inert
+ * (draft_status='draft', never pooled / FSRS'd) AND is tombstoned via
+ * metadata.dismissed_at so it stops reading as a live draft — query_questions /
+ * listQuestions / the draft-review pool exclude it and write_quiz's narrow
+ * draft gate refuses it. A new draft_status value was deliberately NOT
+ * introduced: the pool-visibility predicate is fail-open (`<> 'draft'`), so a
+ * 'dismissed' literal would leak the row back into every pool read
+ * (src/server/questions/write.ts header — same reason archive uses
+ * metadata.archived_at).
  */
 export async function acceptQuestionDraftProposal(
   db: Db,
@@ -374,15 +388,11 @@ export async function acceptQuestionDraftProposal(
   const change = asPlainRecord(proposal.payload.proposed_change);
   const questionId = requiredString(change.question_id, 'question_id', proposalId);
 
-  // Already-accepted idempotency: a rate event exists (409s on a non-accept
-  // decision inside existingAcceptRate).
-  const existingRate = await existingAcceptRate(db, proposalId);
-  if (existingRate) {
-    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+  const loadPromotedRowOrThrow = async (dbLike: Db | Tx) => {
     const existing = (
-      await db.select().from(question).where(eq(question.id, questionId)).limit(1)
+      await dbLike.select().from(question).where(eq(question.id, questionId)).limit(1)
     )[0];
-    if (!existing || existing.draft_status === 'draft') {
+    if (!existing || existing.draft_status === LEGACY_DRAFT_STATUS.DRAFT) {
       // Rate was written but the promotion did not complete — surface explicitly
       // rather than silently fixing up (variant_question precedent).
       throw new ApiError(
@@ -391,6 +401,16 @@ export async function acceptQuestionDraftProposal(
         500,
       );
     }
+    return existing;
+  };
+
+  // Already-accepted idempotency fast path (a rate event exists; 409s on a
+  // non-accept decision inside existingAcceptRate). The transaction below
+  // re-checks under the decision lock — this read is only a cheap short-circuit.
+  const existingRate = await existingAcceptRate(db, proposalId);
+  if (existingRate) {
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    await loadPromotedRowOrThrow(db);
     return {
       kind: 'question_draft',
       rate_event_id: existingRate.id,
@@ -399,31 +419,127 @@ export async function acceptQuestionDraftProposal(
     };
   }
 
-  const row = (await db.select().from(question).where(eq(question.id, questionId)).limit(1))[0];
-  if (!row) {
-    throw new ApiError('not_found', `question ${questionId} not found`, 404);
-  }
-  // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate (spec §2.5).
-  if (row.draft_status !== 'draft') {
-    throw new ApiError(
-      'conflict',
-      `question ${questionId} is in draft_status ${row.draft_status ?? 'null'}, expected 'draft'`,
-      409,
-    );
-  }
-
   const now = new Date();
   const rateEventId = newId();
 
-  await db.transaction(async (tx) => {
-    // YUK-497 — global learning-state write lock FIRST (shared tx-entry order with every
-    // material_fsrs_state / mastery_state writer and the cascade revert).
+  // YUK-308 review (codex P1 ×2) — the decision check AND the promotion run
+  // under the SAME lock the dismiss applier + the generic dismiss/retract
+  // paths take (acquireProposalDecisionLock). Without it a racing dismiss or
+  // retract could commit a second terminal decision alongside this accept, and
+  // a dismiss that landed first would leave this accept promoting a row still
+  // carrying metadata.dismissed_at (active-but-filtered). Mirrors the
+  // question_edit accept shape: lock → re-read the decision → correction
+  // guard → row-locked gates → mutation → rate event.
+  const concurrentDecision = await db.transaction(async (tx) => {
+    await acquireProposalDecisionLock(tx, proposalId);
+    const decision = await findExistingRateEvent(tx, proposalId);
+    if (decision) {
+      if (decision.decision !== 'accept') {
+        throw new ApiError(
+          'conflict',
+          `proposal ${proposalId} already decided as ${decision.decision}`,
+          409,
+        );
+      }
+      // A racing accept on the same proposal already committed.
+      return decision;
+    }
+    const correction = await getCorrectionStatus(tx, proposalId);
+    if (correction.state !== 'active') {
+      throw new ApiError(
+        'conflict',
+        `proposal ${proposalId} is ${correction.state} and cannot be accepted`,
+        409,
+      );
+    }
+
+    // YUK-497 — global learning-state write lock before any row access (shared
+    // tx-entry order with every material_fsrs_state / mastery_state writer and
+    // the cascade revert). Ordered BEFORE the question row lock: the other
+    // draft→active promoters (quiz_verify / verify_and_promote) hold this lock
+    // while UPDATEing question rows, so taking the row lock first could
+    // deadlock against them.
     await acquireLearningStateWriteLock(tx);
-    await lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
+    // Placement-supply scope locks are keyed on the draft's knowledge ids. The
+    // pre-read is safe: a pending draft's knowledge_ids have no concurrent
+    // writer (promotion is the only mutation path, and it is this tx).
+    const scopeKnowledgeIds = ((
+      await tx
+        .select({ knowledge_ids: question.knowledge_ids })
+        .from(question)
+        .where(eq(question.id, questionId))
+        .limit(1)
+    )[0]?.knowledge_ids ?? []) as string[];
+    await lockPlacementSupplyScopes(tx, scopeKnowledgeIds);
+
+    // Lock the draft row FOR UPDATE: serializes against a dismiss of a SIBLING
+    // question_draft proposal targeting the same draft — per-proposal decision
+    // locks do not cover that (the tombstone UPDATE takes this row lock).
+    const row = (
+      await tx.select().from(question).where(eq(question.id, questionId)).for('update').limit(1)
+    )[0];
+    if (!row) {
+      throw new ApiError('not_found', `question ${questionId} not found`, 404);
+    }
+    // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate (spec §2.5).
+    if (row.draft_status !== LEGACY_DRAFT_STATUS.DRAFT) {
+      throw new ApiError(
+        'conflict',
+        `question ${questionId} is in draft_status ${row.draft_status ?? 'null'}, expected 'draft'`,
+        409,
+      );
+    }
+    // Tombstone gate (codex P1): a sibling proposal's dismiss already retired
+    // this draft. Promoting it would produce an active, FSRS-enrolled question
+    // that the dismissed_at read filters still hide. Fail closed — there is no
+    // un-dismiss path; author a fresh draft instead of resurrecting a
+    // user-rejected one.
+    const meta = row.metadata as { dismissed_at?: unknown; archived_at?: unknown } | null;
+    if (meta?.dismissed_at != null || meta?.archived_at != null) {
+      throw new ApiError(
+        'conflict',
+        `question ${questionId} is tombstoned (${meta.dismissed_at != null ? 'dismissed' : 'archived'}); a rejected draft cannot be promoted`,
+        409,
+      );
+    }
+
     await tx
       .update(question)
-      .set({ draft_status: 'active', updated_at: now })
+      .set({ draft_status: LEGACY_DRAFT_STATUS.ACTIVE, updated_at: now })
       .where(eq(question.id, questionId));
+
+    // YUK-1043 — 统一发布链（§2 矩阵 question_draft 行）：接受进入统一发布。
+    // draft 内容为 author/quiz 链生成，用户接受 ⇒ D9 手动带 provenance（manual ≠
+    // official，D1）；接受人即人工核验门。同内容已发布过（如 sourced 草稿首版
+    // withheld）时只翻 admission 维度，不铸新 revision。
+    await publishQuestionGroupFromRow(tx, {
+      rootId: row.parent_question_id ?? questionId,
+      admission: {
+        state: 'admitted',
+        evidence: {
+          marking_provenance: MARKING_RULE_PROVENANCE.MANUAL,
+          verification: {
+            structural_check_passed: true,
+            independent_verification: {
+              passed: true,
+              verifier: 'human',
+              verified_at: now.toISOString(),
+            },
+          },
+          model_slice: null,
+        },
+      },
+      // YUK-1045 — 人工接受 ⇒ 同版复核通过：清 verify_hold 恢复准入（§3.3）。
+      suspension: { suspended: false },
+      verification: {
+        policy_id: 'proposal_accept@1',
+        outcome: 'passed',
+        evidence: { verifier: 'human', proposal_kind: 'question_draft' },
+      },
+      availability: QUESTION_AVAILABILITY.GENERAL_POOL,
+      actorRef: 'proposal-accept:question_draft',
+      now,
+    });
 
     // FSRS enroll — copied from quiz_verify.ts (YUK-203 P3): per-knowledge
     // enroll-if-absent so a node with an existing review schedule is never
@@ -432,6 +548,12 @@ export async function acceptQuestionDraftProposal(
     const fsrsSubjectIds = Array.from(new Set(row.knowledge_ids ?? []));
     if (fsrsSubjectIds.length > 0) {
       for (const knowledgeId of fsrsSubjectIds) {
+        // YUK-1037 — a synthetic subject root ('seed:<subj>:root') is a
+        // structural anchor, never a content KC: skip enrollment (the subject
+        // read axis already excludes it — resolveSubjectKnowledgeIds). A
+        // roots-only label set enrolls ZERO cards; the question-level fallback
+        // stays reserved for a genuinely unlabeled draft.
+        if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
         const existing = await getFsrsState(tx, 'knowledge', knowledgeId);
         if (existing) continue;
         await upsertFsrsState(tx, {
@@ -471,11 +593,107 @@ export async function acceptQuestionDraftProposal(
       caused_by_event_id: proposalId,
       created_at: now,
     });
+    return null;
   });
+
+  if (concurrentDecision) {
+    // A racing accept on this proposal committed first — idempotent replay.
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    await loadPromotedRowOrThrow(db);
+    return {
+      kind: 'question_draft',
+      rate_event_id: concurrentDecision.id,
+      question_id: questionId,
+      idempotent: true,
+    };
+  }
 
   await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
 
   return { kind: 'question_draft', rate_event_id: rateEventId, question_id: questionId };
+}
+
+export interface QuestionDraftDismissResult {
+  kind: 'dismissed';
+  rate_event_id: string | null;
+  idempotent?: boolean;
+}
+
+/**
+ * YUK-308 — question_draft dismiss applier (previously the phase-deferred gap:
+ * the generic dismiss path left the draft row indistinguishable from a live
+ * pending one, so query_questions's include_drafts=true default and
+ * write_quiz's draft admission kept re-surfacing a question the user already
+ * rejected).
+ *
+ * One transaction: proposal decision lock → rate(dismiss) event → tombstone
+ * the still-draft question row via `metadata.dismissed_at` (+ reason +
+ * dismissed_proposal_id provenance) → decision signal. Mirrors the agency
+ * lifecycle's all-in-tx shape (proposal-lifecycle.ts).
+ *
+ * The tombstone is a metadata marker, NOT a new draft_status literal: every
+ * pool read filters `draft_status IS NULL OR <> 'draft'` (fail-open,
+ * 红线-4/NULL≡active), so a 'dismissed' value would be treated as pool-visible
+ * and leak the rejected question into due/stream/placement reads
+ * (src/server/questions/write.ts header — the archive path made the same
+ * call with metadata.archived_at). `draft_status='draft'` +
+ * `metadata.dismissed_at` keeps the row invisible everywhere drafts are
+ * excluded, while the marker lets draft-aware surfaces (query_questions,
+ * listQuestions, listDraftReview, write_quiz, the matcher's lazy-verify) tell
+ * "rejected" apart from "awaiting review".
+ *
+ * The UPDATE is conditioned on draft_status='draft': a row already promoted
+ * (or otherwise moved on) is left untouched — the rate event still records
+ * the dismissal.
+ */
+export async function dismissQuestionDraftProposal(
+  db: Db,
+  proposalId: string,
+  proposal: ProposalInboxRow,
+  opts: { user_note?: string },
+): Promise<QuestionDraftDismissResult> {
+  const change = asPlainRecord(proposal.payload.proposed_change);
+  const questionId = requiredString(change.question_id, 'question_id', proposalId);
+
+  const rate = await db.transaction(async (tx) => {
+    // Serialize with a racing accept/dismiss on the same proposal (the accept
+    // applier takes the same lock); writeProposalRateEvent then rejects a
+    // cross-decision conflict with 409 and replays a same-decision one
+    // idempotently.
+    await acquireProposalDecisionLock(tx, proposalId);
+    const rate = await writeProposalRateEvent(tx, proposalId, 'dismiss', opts.user_note);
+    if (rate.idempotent) return rate;
+    const now = new Date();
+    await tx
+      .update(question)
+      .set({
+        // archived_at 同款秒级 epoch 惯例 (archiveQuestion, questions/write.ts).
+        metadata: sql`COALESCE(${question.metadata}, '{}'::jsonb) || ${JSON.stringify({
+          dismissed_at: Math.floor(now.getTime() / 1000),
+          dismissed_reason: 'question_draft_dismissed',
+          dismissed_proposal_id: proposalId,
+        })}::jsonb`,
+        updated_at: now,
+      })
+      .where(
+        and(eq(question.id, questionId), eq(question.draft_status, LEGACY_DRAFT_STATUS.DRAFT)),
+      );
+    return rate;
+  });
+
+  // Mirror variantQuestionProposalDismissApplier: signal bookkeeping lives
+  // OUTSIDE the tx (its own signal lock) and runs only on the non-idempotent
+  // path — the UPSERT increments dismiss_count, so an idempotent replay must
+  // not double-count.
+  if (!rate.idempotent) {
+    await recordProposalDecisionSignal(db, proposal, 'dismiss', opts.user_note);
+  }
+
+  return {
+    kind: 'dismissed',
+    rate_event_id: rate.rate_event_id,
+    ...(rate.idempotent ? { idempotent: true } : {}),
+  };
 }
 
 // ===========================================================================
@@ -679,7 +897,7 @@ export async function acceptQuestionEditProposal(
   if (!row) {
     throw new ApiError('not_found', `question ${questionId} not found`, 404);
   }
-  if (row.draft_status !== 'active') {
+  if (row.draft_status !== LEGACY_DRAFT_STATUS.ACTIVE) {
     // Editing the structured tree of a pooled question only. A draft question's
     // structure is the ingestion block-edit path (draft layer); a re-drafted /
     // archived row is not an edit target.
@@ -748,6 +966,16 @@ export async function acceptQuestionEditProposal(
       );
     }
 
+    // YUK-1043 — 统一发布链（§2 矩阵结构化编辑行）：structured 树是判分输入
+    //（part/slot/option 身份来源），接受 ⇒ 同事务铸新 revision；node id 语义
+    // 不变则身份保留（applyQuestionEdit 保留 node id），替换则新身份（§3.1）。
+    // admission 缺省 preserve —— 内容编辑不改变准入资格。
+    await publishQuestionGroupFromRow(tx, {
+      rootId: row.parent_question_id ?? questionId,
+      actorRef: `proposal-accept:question_edit:${actorRef}`,
+      now,
+    });
+
     // Reversible audit trail (before/after node snapshot) — the structured edit
     // is correctable from this event without trusting the proposal payload.
     await writeEvent(tx, {
@@ -814,5 +1042,184 @@ export async function acceptQuestionEditProposal(
     question_id: questionId,
     edit_event_id: editEventId,
     version: nextVersion,
+  };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-1016 / 454-B — cause_category accept：往 cause_category_overlay INSERT
+// status='active' 行。这是该表的唯一写边界（audit:schema 的 write path）；行
+// 落地后进入 attribution 合并词表（listActiveCauseCategoryOverlays）。
+export interface CauseCategoryAcceptResult {
+  kind: 'cause_category';
+  rate_event_id: string | null;
+  category_id: string;
+  idempotent?: boolean;
+}
+
+export async function acceptCauseCategoryProposal(
+  db: Db,
+  proposalId: string,
+  proposal: ProposalInboxRow,
+  opts: PracticeApplierOpts,
+): Promise<CauseCategoryAcceptResult> {
+  ensureAcceptOnly('cause_category', opts);
+  const change = asPlainRecord(proposal.payload.proposed_change);
+  const categoryId = requiredString(change.category_id, 'category_id', proposalId);
+  const label = requiredString(change.label, 'label', proposalId);
+  // 防绕过：生产者契约是 ov_ 命名空间；applier 也守住——非 ov_ id 会在合并词表
+  // 里与 profile 声明撞名。裸前缀（空 slug）同样显式拒绝（YUK-1019 收紧）。
+  if (!categoryId.startsWith(CAUSE_OVERLAY_ID_PREFIX)) {
+    throw new ApiError(
+      'validation_error',
+      `proposal ${proposalId} category_id ${categoryId} must use the ${CAUSE_OVERLAY_ID_PREFIX} namespace`,
+      400,
+    );
+  }
+  if (categoryId === CAUSE_OVERLAY_ID_PREFIX) {
+    throw new ApiError(
+      'validation_error',
+      `proposal ${proposalId} category_id is the bare '${CAUSE_OVERLAY_ID_PREFIX}' prefix — empty slug`,
+      400,
+    );
+  }
+  const description =
+    typeof change.description === 'string' && change.description.trim().length > 0
+      ? change.description.trim()
+      : null;
+  const source = change.source === 'owner' ? 'owner' : 'llm_propose';
+  const subjectId = proposal.payload.target.subject_id;
+  if (!subjectId) {
+    throw new ApiError(
+      'validation_error',
+      `proposal ${proposalId} is missing target.subject_id (subject profile id)`,
+      400,
+    );
+  }
+  const evidenceEventIds = (proposal.payload.evidence_refs ?? [])
+    .filter((ref) => ref.kind === 'event')
+    .map((ref) => ref.id);
+
+  const loadRowOrThrow = async (dbLike: Db | Tx) => {
+    const existing = (
+      await dbLike
+        .select()
+        .from(cause_category_overlay)
+        .where(eq(cause_category_overlay.id, categoryId))
+        .limit(1)
+    )[0];
+    if (!existing || existing.archived_at !== null || existing.status !== 'active') {
+      throw new ApiError(
+        'inconsistent_state',
+        `proposal ${proposalId} has an accept rate event but overlay row ${categoryId} is ${
+          existing ? 'not active' : 'missing'
+        }; retract + retry`,
+        500,
+      );
+    }
+    return existing;
+  };
+
+  // Already-accepted idempotency fast path（question_draft 同款形状）。
+  const existingRate = await existingAcceptRate(db, proposalId);
+  if (existingRate) {
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    await loadRowOrThrow(db);
+    return {
+      kind: 'cause_category',
+      rate_event_id: existingRate.id,
+      category_id: categoryId,
+      idempotent: true,
+    };
+  }
+
+  const now = new Date();
+  let writtenRateEventId: string | null = null;
+  const concurrentDecision = await db.transaction(async (tx) => {
+    await acquireProposalDecisionLock(tx, proposalId);
+    const decision = await findExistingRateEvent(tx, proposalId);
+    if (decision) {
+      if (decision.decision !== 'accept') {
+        throw new ApiError(
+          'conflict',
+          `proposal ${proposalId} already decided as ${decision.decision}`,
+          409,
+        );
+      }
+      return decision;
+    }
+    const correction = await getCorrectionStatus(tx, proposalId);
+    if (correction.state !== 'active') {
+      throw new ApiError(
+        'conflict',
+        `proposal ${proposalId} is ${correction.state} and cannot be accepted`,
+        409,
+      );
+    }
+
+    // id 防撞：行已存在 = 另一个 proposal/路径已占用该 id。一律 409——归档行
+    // 复活是另一个语义决定，v1 不做（owner 可换 slug 或人工恢复）。
+    const existing = (
+      await tx
+        .select({ id: cause_category_overlay.id })
+        .from(cause_category_overlay)
+        .where(eq(cause_category_overlay.id, categoryId))
+        .limit(1)
+    )[0];
+    if (existing) {
+      throw new ApiError(
+        'conflict',
+        `cause_category_overlay ${categoryId} already exists; choose a different slug`,
+        409,
+      );
+    }
+
+    // YUK-1019 — 竞态收口：decision lock 按 proposalId 取，不同 proposal 撞同一
+    // categoryId 时两个 tx 可同过上方 SELECT。onConflictDoNothing 让并发 INSERT
+    // 优雅落空（阻塞至对方提交后再判），空 returning = 撞上 → 同一个 409。
+    const inserted = await tx
+      .insert(cause_category_overlay)
+      .values({
+        id: categoryId,
+        subject_id: subjectId,
+        label,
+        description,
+        source,
+        status: 'active',
+        proposal_event_id: proposalId,
+        evidence_event_ids: evidenceEventIds,
+        created_at: now,
+        updated_at: now,
+      })
+      .onConflictDoNothing({ target: cause_category_overlay.id })
+      .returning({ id: cause_category_overlay.id });
+    if (inserted.length === 0) {
+      throw new ApiError(
+        'conflict',
+        `cause_category_overlay ${categoryId} already exists; choose a different slug`,
+        409,
+      );
+    }
+
+    const rate = await writeProposalRateEvent(tx, proposalId, 'accept', opts.user_note);
+    writtenRateEventId = rate.rate_event_id;
+    return null;
+  });
+
+  if (concurrentDecision) {
+    await ensureProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+    await loadRowOrThrow(db);
+    return {
+      kind: 'cause_category',
+      rate_event_id: concurrentDecision.id,
+      category_id: categoryId,
+      idempotent: true,
+    };
+  }
+
+  await recordProposalDecisionSignal(db, proposal, 'accept', opts.user_note);
+  return {
+    kind: 'cause_category',
+    rate_event_id: writtenRateEventId,
+    category_id: categoryId,
   };
 }

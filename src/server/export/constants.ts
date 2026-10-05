@@ -94,13 +94,22 @@
 // YUK-857: note_verification_claim is durable paid-call fencing and staged-result recovery
 // state keyed to artifact. It must survive restore after its artifact parent; adding it to
 // FK_ORDER changes the payload shape: 51 → 52 tables, 4.18 → 4.19.
-export const SCHEMA_VERSION = '4.19';
+// YUK-1016: cause_category_overlay — owner-vetted 错因词表层（accepted proposal 落地的
+// authored catalog 行，非瞬态非派生；retract 只置 archived_at，历史不可重建）→
+// FK_ORDER 非 BACKUP_EXCLUDED。NEW FK_ORDER table 必 bump：52 → 53 tables，4.19 → 4.20。
+// YUK-1007: system_config / system_config_journal / system_config_epoch — owner 可调
+// 运行时配置 + 审计 + 失效轴（authored 运营真相，非瞬态）→ FK_ORDER 非 EXCLUDED。
+// NEW FK_ORDER tables 必 bump：64 → 67 tables，4.23 → 4.24。
+// YUK-766: preserve subscription progress and causal effects; only process claims reset.
+export const SCHEMA_VERSION = '4.25';
 
-// CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
-// + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
-// users with more must use refs-only export + wrangler r2 cp sidecar.
-// Paid plan = 1000 subrequests; bump to ~950 if you upgrade.
-// (Note: D1/Workers no longer in use post sub-0b1; cap retained as a safety guardrail.)
+export const SUBSCRIPTION_PROGRESS_TABLES = [
+  'event_subscription_checkpoint',
+  'event_subscription_delivery',
+  'event_subscription_effect',
+] as const;
+
+// Bound inline asset transfers; larger exports use a refs-only ZIP plus an asset sidecar.
 export const MAX_INLINE_ASSETS = 45;
 
 // FK topological order. Insert sweeps forward; wipe sweeps reverse. Any schema
@@ -164,6 +173,32 @@ export const FK_ORDER = [
   'learning_session',
   'question_block',
   'question',
+  // YUK-1044 — 统一评估契约真相源九表（grounding §3/§11）。authoried 数据非瞬态/
+  // 派生：丢 revision/submission/mapping = 不可重建的学习/判分真相灭失（§15 cutover
+  // checkpoint 必须捕获）→ FK_ORDER 备份（非 BACKUP_EXCLUDED）。插入序严格满足
+  // 0105/0106 非 DEFERRABLE 复合 FK 拓扑（wipe 反序）：question_revision 是父表
+  // （lifecycle/verification/issuance/mapping 的复合 FK 目标），紧随 question 题簇；
+  // submission 依赖 issuance+group，evaluation 依赖 submission，head 依赖
+  // submission+evaluation。assessment_identity_mapping 的 supersedes 自 FK 在 0107
+  // 设为 DEFERRABLE INITIALLY IMMEDIATE（restore 序不保证同表父子序，archive.ts
+  // 恢复事务 SET CONSTRAINTS ALL DEFERRED）。9 张 NEW FK_ORDER table 必 bump：
+  // 53 → 62 tables，4.20 → 4.21。
+  'question_revision',
+  'question_group_lifecycle',
+  'question_admission_verification',
+  'assessment_issuance',
+  'evaluation_group',
+  'assessment_submission',
+  // YUK-1052 — assessment_response_draft: ResponseSet autosave 活草稿（服务端 ack 的
+  // in-progress 答案，evaluation_group_ref 软引）。用户可感知的学习中态而非瞬态：
+  // restore 丢它 = 用户作答中草稿静默灭失（「刷新不重交」契约反向），非派生不可重建 →
+  // FK_ORDER 备份（非 BACKUP_EXCLUDED）。FK → assessment_issuance 已保证父先插；
+  // evaluation_group_ref 无 hard FK，位置不受 PG 约束，紧跟 submission 保持作答簇相邻。
+  // NEW FK_ORDER table → bump 62 → 63，4.22 → 4.23。
+  'assessment_response_draft',
+  'evaluation',
+  'evaluation_effective_head',
+  'assessment_identity_mapping',
   'item_calibration',
   // YUK-361 Phase 5 (家族级 b_personalized): item_family_calibration — 家族级 b_delta
   // 慢热校准资产。软引用语义键 (subject:knowledge:kind:source，no enforced FK)，位置
@@ -184,6 +219,8 @@ export const FK_ORDER = [
   'artifact_block_ref',
   'answer',
   'event',
+  // Event/artifact parents precede checkpoint → delivery → effect.
+  ...SUBSCRIPTION_PROGRESS_TABLES,
   // YUK-791 — versioned intervention aggregate. Its source/conjecture refs are
   // enforced event FKs, so place it after event. Authored recommendation,
   // package, reviews, and terminal reason are not disposable worker state.
@@ -192,6 +229,13 @@ export const FK_ORDER = [
   'cost_ledger',
   'ai_task_runs',
   'mistake_variant',
+  // YUK-1016 (454-B): cause_category_overlay — owner-vetted 错因类目词表层。
+  // proposal accept applier 落地的 authored catalog 行（source='owner'|'llm_propose'），
+  // retract 只置 archived_at——行历史不可从别处重建，丢了即灭失 → FK_ORDER 备份
+  // （非 BACKUP_EXCLUDED）。无 enforced FK（proposal_event_id / evidence_event_ids
+  // 是 loose text-ref），位置不受 PG FK 约束；紧邻 mistake_variant 保持
+  // failure-learning 簇相邻可读。NEW FK_ORDER table → bump SCHEMA_VERSION (4.19 → 4.20)。
+  'cause_category_overlay',
   'goal',
   'proposal_signals',
   'practice_stream_item',
@@ -259,6 +303,22 @@ export const FK_ORDER = [
   'placement_starter_attempt',
   'placement_starter_attempt_question',
   'placement_starter_cost_component',
+  // YUK-1055 — DB contract epoch marker（append-only 迁移历史）。durable
+  // cutover 真相而非运维态：restore 必须携回 epoch 状态（否则恢复出的库丢失
+  // 「是否已切换」的事实，fence 语义靠它）。无 enforced FK，置于末尾附近；
+  // provider_attempt 保持最后（其注释承诺 remains last）。
+  // NEW FK_ORDER table → bump SCHEMA_VERSION (4.21 → 4.22)。
+  'contract_epoch',
+  // YUK-1007 — 热加载配置面三表（system_config / system_config_journal /
+  // system_config_epoch）：owner 写的运行时配置行 + append-only 审计 + 失效轴，
+  // 非瞬态非派生（丢了即灭失 owner 调过的旋钮 + journal 溯源）→ FK_ORDER 备份。
+  // 无 enforced FK（loose text-ref 惯例）；journal 紧随主表（subject_trait →
+  // subject_trait_journal 先例）。change_seq/epoch 两列随行 dump/restore；
+  // config_change_seq 序列另行 setval（archive.ts restore 尾，subject_change_seq
+  // 同先例）。NEW FK_ORDER tables 必 bump：63 → 66，4.23 → 4.24。
+  'system_config',
+  'system_config_journal',
+  'system_config_epoch',
   // YUK-851 has no enforced FK, but remains last so durable provider-attempt truth is
   // restored after the current authored/cost parents and rides whole-row schema changes.
   'provider_attempt',
@@ -307,15 +367,15 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   // Restoring operational rows would resurrect stale claims, family relationships, and rate-window
   // history, so this remains wipe-only even without FKs.
   'provider_session_admission',
-  // YUK-751 durable subscription dispatcher recovery state. All three tables are
-  // reconstructed by manifest reconciliation + event-log discovery; restoring stale
-  // checkpoints, claims, deliveries, or debounce reservations would be incorrect.
-  // They are WIPE-BUT-NOT-BACKUP (see RESTORE_WIPE_ONLY_TABLES): excluded from the
-  // archive write, but explicitly wiped on restore so their ON DELETE no action FKs to
-  // event/artifact don't block the FK_ORDER parent wipe (YUK-751 review, codex P1).
-  'event_subscription_checkpoint',
-  'event_subscription_delivery',
-  'event_subscription_effect',
+  // YUK-839: accepted validator append ledgers are short-lived recovery state bound to
+  // live task/source hashes. Restoring them without the matching live execution context
+  // would make stale paid-attempt progress reusable, so archive restore must wipe them.
+  'copilot_evidence_checkpoint',
+  // YUK-928: process-owned tool runtime; restoring it would resurrect stale handles and owners.
+  'tool_operation',
+  // YUK-932: live mailbox ownership and one-shot continuation claims are operational fences.
+  'subagent_run',
+  'copilot_continuation',
   // YUK-758 夜间任务编排 DAG 的调度运行态（run 头 + 逐节点态）。纯瞬态运维态：一夜一条
   // run，丢了下一夜锚点 cron 自然重建，restoring stale scheduling rows 是错的（会复活过
   // 期的「今晚图」）。也登记进 RESTORE_WIPE_ONLY_TABLES——不是因为 FK（本对表无 enforced
@@ -323,38 +383,35 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   // Excluded 非 FK_ORDER → 无 SCHEMA_VERSION bump。
   'dag_orchestration_run',
   'dag_orchestration_node',
+  // YUK-1050 — 迁移 apply 运行账本（run 头 + 逐阶段进度/WAL 观测）。纯运维态：
+  // 描述「某次 apply 跑到了哪」，不是 authored/慢累积数据；restore 到旧快照后
+  // 残留旧进度会假装迁移已完成/未完成 —— 必须擦除后由下一次 apply 重建。
+  // 也登记进 RESTORE_WIPE_ONLY_TABLES（phase 有 FK → run，子先于父）。Excluded
+  // 非 FK_ORDER → 无 SCHEMA_VERSION bump。
+  'migration_apply_run',
+  'migration_apply_phase',
 ]);
 
-// Operational tables that are EXCLUDED from the archive (above) but must still be DELETED during
-// restore. Two independent reasons put a table here:
-//
-//  (1) FK blocking — its ON DELETE no action FKs into FK_ORDER parents (event / artifact) would
-//      otherwise BLOCK the FK_ORDER wipe: residual delivery/effect rows keep `delete from "event"` /
-//      `delete from "artifact"` from succeeding (YUK-751 review, codex P1).
-//  (2) Harmful residue — the rows describe live operational state of the PRE-restore database, so
-//      surviving a restore actively corrupts post-restore behavior even without any FK (YUK-758
-//      review ToTeC). The DAG orchestration tables are this case: a surviving `running` run makes
-//      the next anchor ADOPT a graph whose node states describe the discarded data (already
-//      'succeeded' nodes never re-run against the restored rows), and a surviving `completed` run
-//      makes the cron redeliver-guard (`getLatestRunForDate`) skip that calendar day's chain
-//      entirely. Both are silent; the run_date partial-unique index does not help because the stale
-//      row IS the conflict.
-//
-// restoreFromArchive wipes these FIRST (child→parent order among themselves) so the parent wipe is
-// unblocked; it does NOT restore them (the dispatcher re-bootstraps from the event-log + manifest
-// reconciliation post-restore; the DAG rebuilds from the next nightly anchor). Excluded tables whose
-// FKs are ON DELETE cascade (artifact_edit_session, hub_sync_reconciliation) are cleared by the
-// parent wipe and need no entry here.
-// Order matters (child → parent): effect → delivery → checkpoint, and node → run.
+// Excluded process/queue state must not survive a restore into another data timeline.
+// Wipe child tables before their excluded parents (DAG node→run, migration phase→run).
+// Cascading children of backed-up parents need no separate entry here.
+// Subscription progress is durable and lives in FK_ORDER; restore clears only its claims.
 export const RESTORE_WIPE_ONLY_TABLES: readonly string[] = [
   // YUK-851: clear pre-restore owners before durable provider_attempt rows are replaced.
   'provider_attempt_admission',
   'provider_session_admission',
-  'event_subscription_effect',
-  'event_subscription_delivery',
-  'event_subscription_checkpoint',
+  'copilot_evidence_checkpoint',
+  'tool_operation',
+  'copilot_continuation',
+  'subagent_run',
   'dag_orchestration_node',
   'dag_orchestration_run',
+  // YUK-1050 — 迁移 apply 运行账本（run 头 + 逐阶段进度/WAL 观测）。纯运维态：
+  // 描述「某次 apply 跑到了哪」，不是 authored/慢累积数据；restore 到旧快照后
+  // 残留旧进度会假装迁移已完成/未完成 —— 必须擦除后由下一次 apply 重建。
+  // 子 phase 先于父 run（phase 有 FK → run，反序 wipe 不被阻）。
+  'migration_apply_phase',
+  'migration_apply_run',
 ];
 
 // ─── mem0 collection table (YUK-355) ─────────────────────────────────────────

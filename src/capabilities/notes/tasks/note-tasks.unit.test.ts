@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { tasks } from '@/ai/registry';
+import { tasks } from '@/capabilities/task-registry';
 import { noteRefineTaskSpec, parseNoteRefineOutput } from './note-refine';
 import { noteGenerateTaskSpec, noteVerifyTaskSpec } from './note-tasks';
 

@@ -12,7 +12,7 @@
 //     材料即 prompt_md → 母题 stem 区直接编辑 prompt_md，不单设 passage 编辑器。
 //   • difficulty ←→ difficulty（1-5）；knowledge ←→ knowledge_ids + labels（中文名）。
 //   • status（active/draft）←→ draft_status（NULL≡active / 'draft'≡草稿）。
-//   • kind ←→ kind（真 QuestionKind enum 9 值）；source ←→ source（真 13 值，只读展示）。
+//   • kind ←→ kind（自由文本展示标签，YUK-386；KNOWN 9 标签给中文名）；source ←→ source（真 13 值，只读展示）。
 //   • 变体家族 ←→ family.members（root + variants，is_self 标当前）。
 //   • composite 小题 ←→ parts（part_index 序）；parent 面包屑 ←→ parent_question_id +
 //     part_index。
@@ -29,9 +29,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { deriveOptionIds } from '@/ui/components/response/response-types';
 import { ApiError } from '@/ui/lib/api';
 import { makeLookup } from '@/ui/lib/makeLookup';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
+import { subjectContentPropsForDomain } from '@/ui/lib/subject';
 import { formatCnDateOnly } from '@/ui/lib/utils';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { Btn } from '@/ui/primitives/Btn';
@@ -402,7 +404,8 @@ function VariantFamily({
     <Card pad="default">
       {family.members.map((m, index) => {
         const variant = m.id !== family.root_question_id;
-        const km = kindMeta(m.kind === 'question_part' ? selfKind : m.kind);
+        // part-ness reads the FK (YUK-386/1035), not the display-only kind label.
+        const km = kindMeta(m.parent_question_id !== null ? selfKind : m.kind);
         return (
           <div
             key={m.id}
@@ -650,6 +653,10 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
   const isRoot = data.root_question_id === null && !isPart;
   const variantCount = Math.max(0, data.family.variant_count - 1);
   const answerKey = isMcq ? answerKeyFrom(draft.reference_md) : null;
+  // YUK-1051 — 选项的 React 身份换成内容派生 stable id（response-types），不再用数组下标；
+  // 字母（letterFor）仍只是 reference_md 前导键的展示/存储约定——结构化 answer-key 存储是
+  // 服务端契约问题（YUK-1052 lane 缝），本 lane 只移掉「首字母猜 key」之外的 UI 下标身份。
+  const choiceOptionIds = deriveOptionIds(draft.choices_md, data.id);
   const notation = data.notation;
 
   // 关联状态计数（side rail）——读 detail 聚合（timeline/backlinks/scheduling）。
@@ -757,7 +764,13 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                     <LoomIcon name="eye" size={12} />
                     预览 · 含公式 / 格式
                   </div>
-                  <QMarkdown text={draft.prompt_md} notation={notation} className="wenyan" />
+                  <div
+                    {...subjectContentPropsForDomain(data.subject, {
+                      className: 'qd-preview-content',
+                    })}
+                  >
+                    <QMarkdown text={draft.prompt_md} notation={notation} />
+                  </div>
                 </div>
               )}
             </div>
@@ -795,11 +808,7 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
                   const key = letterFor(i);
                   const correct = answerKey === key;
                   return (
-                    <div
-                      // biome-ignore lint/suspicious/noArrayIndexKey: choices 是定序文本串、无稳定 id，A/B/C/D 行号即语义（同 stub 先例）
-                      key={i}
-                      className={`qd-opt${correct ? ' correct' : ''}`}
-                    >
+                    <div key={choiceOptionIds[i]} className={`qd-opt${correct ? ' correct' : ''}`}>
                       <button
                         type="button"
                         className="qd-opt-key"
@@ -885,7 +894,8 @@ export default function QuestionDetailPage({ id, navigate }: QuestionDetailPageP
               </div>
               <div className="qd-subs">
                 {data.parts.map((c) => {
-                  const ck = kindMeta(c.kind === 'question_part' ? data.kind : c.kind);
+                  // part-ness reads the FK (YUK-386/1035), not the display-only kind label.
+                  const ck = kindMeta(c.parent_question_id !== null ? data.kind : c.kind);
                   const cs = statusMeta(c.draft_status);
                   return (
                     <button

@@ -1,11 +1,11 @@
 ---
 name: launch-phase
-description: 启动 phase 多 lane 实施，把 phase spec 拆成独立 lane，每条 lane 在隔离 worktree 里跑 superpowers 完整 loop（impl -> spec review -> fix -> quality review），pre-merge gate 通过后顺序 chain-merge 到 main 并报告 lane state 表。Use when user says "launch phase", "启动 phase", "跑 phase X", "/launch-phase", or hands a phase spec to execute.
+description: 启动 phase 多 lane 实施，把 phase spec 拆成独立 lane，每条 lane 在隔离 worktree 里跑 superpowers 完整 loop（impl -> spec review -> fix -> quality review），pre-merge gate 通过后按依赖顺序逐 lane 走 PR + exact-head CI Gate 合并并报告 lane state 表。Use when user says "launch phase", "启动 phase", "跑 phase X", "/launch-phase", or hands a phase spec to execute.
 ---
 
 # Launch Phase
 
-把一个 phase spec 拆成独立 lane，每条 lane 在隔离 worktree 里跑完整 superpowers loop，最后顺序 chain-merge 到 main。
+把一个 phase spec 拆成独立 lane，每条 lane 在隔离 worktree 里跑完整 superpowers loop，最后按依赖顺序逐 lane 走 PR + CI Gate 合并到 main。
 
 Codex 迁移约束：
 
@@ -19,7 +19,7 @@ Codex 迁移约束：
 - `superpowers:using-git-worktrees`：worktree 隔离
 - `superpowers:subagent-driven-development`：per-lane 派 impl/review/fix subagent
 - `superpowers:verification-before-completion`：pre-merge gate
-- `superpowers:finishing-a-development-branch`：ff-merge gate
+- `superpowers:finishing-a-development-branch`：PR/merge 收尾
 
 本 skill 只管 orchestration 顺序、lane state 表、worktree 污染 guard、chain-merge 安全。
 
@@ -49,6 +49,8 @@ Codex 迁移约束：
 
 Lane 切分标准：一条 lane = 一个 PR = 一个 worktree branch；文件不重叠；自带 acceptance test 集合。
 
+Lane status 取值（单向推进）：`pending` -> `implemented`（impl + review loop 完成）-> `local-verified`（pre-PR gate 通过）-> `ci-passed`（exact-head CI Gate 绿）-> `merged`；任一步失败标 `blocked` 并记原因。
+
 用 `update_plan` 建 orchestration todo。需要更细的 lane task 时，维护一张 lane state 表，字段至少包括 lane、branch、worktree、status、blocked_by、tests、notes。
 
 ### 2. Per-lane loop（按依赖拓扑顺序）
@@ -62,34 +64,35 @@ Lane 切分标准：一条 lane = 一个 PR = 一个 worktree branch；文件不
    `docs/agents/development-workflow.md` 的 **Pre-PR gate**。该文档是命令清单唯一真相源；
    不在 skill 内复制另一份易漂移的命令。任一失败，回 step 3，不进 step 5。
 
-5. 标 lane `completed`，但不删 worktree、不删 branch；chain-merge 阶段统一清理。
+5. 标 lane `local-verified`，但不删 worktree、不删 branch；merge 成功后统一清理。
 
-### 3. 顺序 chain-merge
+### 3. 顺序 chain-merge（PR + CI Gate）
 
 在主 worktree 执行，不在 lane worktree。git guard hook 会拦危险操作；触发即停下找原因，不许绕过。
 
+不本地 merge 进 main、不直接 push main、本机不跑完整 `pnpm test`。按 AGENTS.md 的 Review/merge/delivery 政策：每条 lane 开 PR，完整 gate 由 push 后 exact-head GitHub `CI Gate` 执行，全绿且无未裁决 P0/P1 review finding 才 merge。
+
 对每条 ready lane（按依赖顺序）：
 
-```bash
-git checkout main
-git pull --ff-only origin main
+1. Push lane branch：`git push -u origin <lane-branch>`（只许 push 本 lane branch；禁止 force push）。
+2. 开 PR：按 repo `pr` skill 的流程开 PR，title/body 按 Linear 政策带 `YUK-NN`。
+3. 等 CI：exact-head `CI Gate` 全绿，标 lane `ci-passed`；红则回 per-lane loop 修，不 merge。
+4. Merge：CI 绿 + 无未裁决 P0/P1 后按 owner 授权流程 merge（默认可自主 merge；owner 指定人工则等人工），标 lane `merged`。
+5. 同步本地 main：
 
-# Verify ff-merge feasibility before touching branch state.
-git log --oneline main..<lane-branch>
-git log --oneline <lane-branch>..main
+   ```bash
+   git checkout main
+   git pull --ff-only origin main
+   ```
 
-# 第二条非空表示 ff-merge 不可能，停下让用户决定 rebase 还是 merge commit。
-git merge --ff-only <lane-branch>
+6. Cleanup（只在 `merged` 后）：
 
-# Full gate after merge.
-pnpm test
+   ```bash
+   git worktree remove <path>
+   git branch -d <lane-branch>
+   ```
 
-# 测试通过才清理。
-git worktree remove <path>
-git branch -d <lane-branch>
-```
-
-如果 merge 后测试失败，立即停下。不要私自 destructive rollback；说明失败、当前 HEAD、`ORIG_HEAD`，让用户确认下一步。
+main 前进后，已推送的下一条 lane 在其自身 worktree 内 fetch 并 merge `origin/main`，按已批准范围解决冲突，再普通 push；不 rebase 已发布历史、不 force-push。更新后重跑本地 scoped gate，并等待新 head 的 CI Gate，旧 head 的绿色结果不能沿用。冲突涉及未决产品行为时交 owner 决定。
 
 ### 4. 报告
 
@@ -98,10 +101,10 @@ git branch -d <lane-branch>
 ```markdown
 # Phase <name> Execution Report
 
-| Lane | Branch | Commits | Tests | Status | Notes |
-|------|--------|---------|-------|--------|-------|
-| 1. <deliverable> | lane/<id> | N | passing | merged | - |
-| 2. <deliverable> | lane/<id> | N | failing | blocked | <reason> |
+| Lane | Branch | Commits | Local gate | CI | Status | Notes |
+|------|--------|---------|------------|----|--------|-------|
+| 1. <deliverable> | lane/<id> | N | passing | green | merged | - |
+| 2. <deliverable> | lane/<id> | N | passing | red | blocked | <reason> |
 
 ## Human-decision points
 <列 BLOCKED lane 需要人介入的点>
@@ -111,8 +114,8 @@ git branch -d <lane-branch>
 - Deleted branches: <list>
 - Remaining (manual): <list>
 
-## Push
-未自动 push 到 remote。确认后手动：`git push origin main`
+## Merge / Push
+各 lane 一律经 PR + exact-head CI Gate 绿后 merge；不本地 merge 进 main、不直接 push main。
 ```
 
 ## Worktree 污染 guard（subagent prompt 模板）
@@ -123,17 +126,19 @@ git branch -d <lane-branch>
 所有 bash 操作（git / pnpm / node 等）只能在 worktree 路径 <path> 内执行。
 不许 cd 跳出。不许操作主 repo 路径 <main_path>。
 任何 git checkout main / git checkout <other-lane> / 切到非本 lane 的 branch 都是错的。
-完成时 commit 在本 lane branch，不 push、不 merge。
+完成时 commit 在本 lane branch；push 只许本 lane branch，不 merge、不碰 main。
 git guard hook 会拦 git branch -D / git push --force / git commit on main / git worktree remove --force。这些是兜底，你不要触发。
 ```
 
 ## 不做的事
 
 - 不并行 dispatch implementation subagent
-- 不在 ff-merge 验证前删 lane branch / worktree
+- 不在 lane `merged` 前删 branch / worktree
 - 不用 `git branch -D` / `git worktree remove --force`
-- 不跳过 pre-merge typecheck / lint / audit / test gate
-- 不自动 push 到 remote main
+- 不跳过 pre-PR scoped gate（typecheck / lint / audit / build / scoped tests）
+- 不在本机跑完整 `pnpm test`（完整 gate 只由 push 后 exact-head CI Gate 执行）
+- 不本地 merge 进 main、不直接 push main（一律 PR + exact-head CI Gate）
+- 不在 CI 未绿时 merge，不在 merge 前提前清理 worktree / branch
 - 不绕过 git guard hook
 - 不重复 superpowers 已有的逻辑
 
@@ -142,5 +147,5 @@ git guard hook 会拦 git branch -D / git push --force / git commit on main / gi
 - 共享 migration：必须 sequential，按依赖顺序，不许并行。
 - 跨 lane integration test：单独拆一条 "integration lane" 放最后。
 - subagent 反复 blocked：至少 2 次同因 blocked 即 escalate 给用户，不无限 retry。
-- ff-merge 不可能：让用户决定 rebase 还是 merge commit，不私自处理。
+- PR 与 main 冲突或 CI 持续红：沿上述非重写更新路径处理；未决产品取舍或反复失败交 owner 决定，不扩大范围或重写已发布历史。
 - acceptance test 在 lane 内 flaky：标 lane `blocked` 不 merge，写进报告，让用户决定 rerun / 修测试 / 改 spec。

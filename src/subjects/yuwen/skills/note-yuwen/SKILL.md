@@ -17,8 +17,6 @@ description: 文言文学习笔记规范包 —— 合格 atomic / long / hub no
 | pitfall | 列出常见误译、词性误判或题面误读。 |
 | check | 给出一个小题检验是否真正掌握。 |
 
-每个 semanticBlock 必须设 `source_tier="llm_only"`、`user_verified=false`、`version=1`、`source_markdown`。
-
 ## 内容质量要求
 
 - **definition**：直接给出词义或句式的本质界定。古今义差异（如「走」=跑、「妻子」=妻子儿女）是核心内容，不能省略。

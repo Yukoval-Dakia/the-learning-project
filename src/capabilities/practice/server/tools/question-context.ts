@@ -19,7 +19,7 @@ import { deriveSourceTier } from '@/core/schema/provenance';
 // coordinate fix). Pure tree-clip; shared by get_question_context(include:
 // ['structure']) and the get_question_block_structure draft reader.
 import { projectAddressableStructure } from '@/core/schema/structured_question';
-import { notDraftPredicate } from '@/db/predicates';
+import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import {
   event,
   intervention,
@@ -30,6 +30,7 @@ import {
 } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
 import { getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { getQuestionTimeline, getRecentReviewEvents } from '@/kernel/read-models/question-activity';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 
@@ -326,6 +327,11 @@ const GetReviewDueOutputSchema = z.object({
         .object({
           attempt_event_id: z.string(),
           cause: z.string().nullable(),
+          // YUK-1018 — misc_ cause id 的显示回填；非 misc / unresolvable → null。
+          cause_label: z.string().nullable(),
+          // YUK-1020 — 副归因 id + misc_ 显示回填（id→title map；缺席→裸 id）。
+          secondary_categories: z.array(z.string()),
+          secondary_labels: z.record(z.string(), z.string()),
           created_at: z.string(),
         })
         .optional(),
@@ -541,6 +547,8 @@ export async function executeGetReviewDue(
         and(
           sql`${question.knowledge_ids} @> ${JSON.stringify([due.knowledge_id])}::jsonb`,
           notDraftPredicate(question.draft_status),
+          // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进候选池。
+          questionSuspendedPredicate(question),
         ),
       )
       .orderBy(asc(question.created_at), asc(question.id))
@@ -573,6 +581,8 @@ export async function executeGetReviewDue(
     // is excluded (`draft_status <> 'draft'` alone would drop NULL rows under
     // SQL three-valued logic).
     notDraftPredicate(question.draft_status),
+    // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进入复习候选。
+    questionSuspendedPredicate(question),
   ];
   if (input.knowledgeIds?.length) {
     legacyQuestionConditions.push(questionKnowledgeContainsAny(input.knowledgeIds));
@@ -656,17 +666,35 @@ export async function executeGetReviewDue(
               // exclusion the due-list.ts public path applies to its never-
               // reviewed slice. NULL handling explicit: only 'draft' excluded.
               notDraftPredicate(question.draft_status),
+              // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不进候选。
+              questionSuspendedPredicate(question),
             ),
           )
       : [];
   const qById = new Map(newQuestions.map((row) => [row.id, row]));
+
+  // YUK-1018/1020 — misc_ primary + secondary cause id 的 title 回填（同一批
+  // 查询，批量一次，不进循环）。只对 emit 集 newQuestionIds 预算 effectiveCause
+  // + 解析 label，200 帽的其余条目不查。
+  const causeByQid = new Map(
+    newQuestionIds.map((qid) => {
+      const f = latestNeverReviewed.get(qid);
+      return [qid, f ? effectiveCauseForFailureAttempt(f) : null] as const;
+    }),
+  );
+  const latestMistakeLabels = await resolveMiscCauseLabels(
+    ctx.db,
+    [...causeByQid.values()].flatMap((c) =>
+      c ? [c.primary_category, ...c.secondary_categories] : [],
+    ),
+  );
 
   const rows: GetReviewDueOutput['rows'] = [];
   for (const qid of newQuestionIds) {
     const q = qById.get(qid);
     const failure = latestNeverReviewed.get(qid);
     if (!q || !failure) continue;
-    const cause = effectiveCauseForFailureAttempt(failure);
+    const cause = causeByQid.get(qid);
     rows.push({
       question_id: q.id,
       prompt_excerpt: excerpt(q.prompt_md),
@@ -680,6 +708,9 @@ export async function executeGetReviewDue(
       latest_mistake: {
         attempt_event_id: failure.attempt_event_id,
         cause: cause?.primary_category ?? null,
+        cause_label: cause ? (latestMistakeLabels.get(cause.primary_category) ?? null) : null,
+        secondary_categories: cause?.secondary_categories ?? [],
+        secondary_labels: miscCauseLabelMap(latestMistakeLabels, cause?.secondary_categories ?? []),
         created_at: failure.created_at.toISOString(),
       },
     });

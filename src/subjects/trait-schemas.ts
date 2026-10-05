@@ -21,8 +21,10 @@
 import { z } from 'zod';
 import {
   CauseCategoryDeclaration,
+  RatingPolicySchema,
   RenderConfig,
   SchedulingHints,
+  UNIVERSAL_RATING_POLICY,
 } from '@/core/schema/profile-decl';
 import { JudgeRouteKindSchema, SubjectQuestionKindSchema } from './profile-schema';
 
@@ -83,6 +85,10 @@ export const JudgePolicyTraitSchema = z
       })
       .strict(),
     judgeCapabilities: z.array(z.string().trim().min(1)),
+    // YUK-739 — rating semantics live with the judge-adjacent trait. Defaulted so
+    // pre-YUK-739 trait rows (no section) hydrate to the universal map — the
+    // exact values those rows' subjects were rated under before the policy existed.
+    ratingPolicy: RatingPolicySchema.default(UNIVERSAL_RATING_POLICY),
   })
   .strict();
 export type JudgePolicyTrait = z.infer<typeof JudgePolicyTraitSchema>;
@@ -109,14 +115,6 @@ export const SourcePolicyTraitSchema = z
         SubjectQuestionKindSchema,
         z.array(z.enum(['sourced', 'material', 'closed_book', 'variant'])).min(1),
       )
-      .optional(),
-    // YUK-697 — jyeoo-rs 确定性题源声明（source_policy trait 承载，与 sourceWhitelist/
-    // sourcingRoutePreference 同族）。存在即本 subject 有 jyeoo producer；见 SubjectProfileSchema。
-    jyeooSupply: z
-      .object({
-        subject: z.string().trim().min(1),
-      })
-      .strict()
       .optional(),
     exampleSources: z.array(z.string().trim().min(1)),
   })
@@ -156,3 +154,12 @@ export type SubjectTraitPayloads = {
   render_theme: RenderThemeTrait;
   scheduling: SchedulingTrait;
 };
+
+const SubjectTraitPayloadsSchema = z.object(TRAIT_PAYLOAD_SCHEMAS);
+
+/** Validate the complete persisted/overridden assembly; error paths include the trait kind. */
+export function parseTraitPayloads(
+  raw: Partial<Record<SubjectTraitKind, unknown>>,
+): SubjectTraitPayloads {
+  return SubjectTraitPayloadsSchema.parse(raw);
+}

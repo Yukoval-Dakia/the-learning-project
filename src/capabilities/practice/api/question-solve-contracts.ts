@@ -135,6 +135,8 @@ export const QuestionDetailResponseSchema = z
       z.object({
         id: z.string(),
         kind: z.string(),
+        // YUK-1035 — part-ness authority (FK), never the display-only kind label.
+        parent_question_id: z.string().nullable(),
         part_index: z.number().int(),
         prompt_md: z.string(),
         difficulty: z.number().int(),
@@ -152,6 +154,9 @@ export const QuestionDetailResponseSchema = z
           id: z.string(),
           variant_depth: z.number().int().nonnegative(),
           kind: z.string(),
+          // YUK-1035 — part-ness authority (FK) for members that are themselves
+          // composite parts; the UI must not string-match kind.
+          parent_question_id: z.string().nullable(),
           is_self: z.boolean(),
         }),
       ),
@@ -205,7 +210,15 @@ export const QuestionDetailResponseSchema = z
         outcome: z.string(),
         duration_ms: z.number().nullable(),
         cause: z
-          .object({ primary: z.string(), confidence: z.number().nullable() })
+          .object({
+            primary: z.string(),
+            confidence: z.number().nullable(),
+            // YUK-1018 — misc_ id 显示回填（active misconception title）。
+            primary_label: z.string().nullable(),
+            // YUK-1020 — 副归因 id + misc_ 显示回填（id→title Record map）。
+            secondary: z.array(z.string()),
+            secondary_labels: z.record(z.string(), z.string()),
+          })
           .nullable()
           .optional(),
         fsrs_rating: z.enum(['again', 'hard', 'good']).optional(),
@@ -282,6 +295,20 @@ export const DeleteQuestionResponseSchema = z
     event_id: z.string(),
     cascaded_part_ids: z.array(z.string()),
     associations: z.record(z.string(), z.number().int().nonnegative()),
+  })
+  .passthrough();
+
+export const RestoreQuestionBodySchema = z
+  .object({
+    version: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export const RestoreQuestionResponseSchema = z
+  .object({
+    ok: z.literal(true),
+    restored: z.literal(true),
+    event_id: z.string(),
   })
   .passthrough();
 

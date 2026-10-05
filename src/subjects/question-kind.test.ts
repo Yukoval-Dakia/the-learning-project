@@ -1,13 +1,17 @@
 // YUK-226 S2-5b (验证轮 A) — 单一权威 kind 词表规范化层 unit test (no DB).
 //
-// 覆盖 normalizeToCanonicalKind / kindsMatch / questionKindToSkillKind /
+// 覆盖 normalizeToCanonicalKind / answerClassCompatible / questionKindToSkillKind /
 // skillKindToQuestionKind 的双向映射 + 校验 + cross-vocabulary 命中。
+// YUK-386：kindsMatch（归一后字符串相等）已退役为 answerClassCompatible
+// （归一后比较 answer-class）——pin/过滤的语义是「同一判分类」而非「同一标签」。
 
 import { describe, expect, it } from 'vitest';
 
+import { KNOWN_QUESTION_KIND_IDS, QuestionKind } from '@/core/schema/business';
+import { SubjectQuestionKindSchema } from './profile-schema';
 import {
+  answerClassCompatible,
   canonicalKindToPersistedForms,
-  kindsMatch,
   normalizeToCanonicalKind,
   questionKindToSkillKind,
   skillKindToQuestionKind,
@@ -38,28 +42,39 @@ describe('normalizeToCanonicalKind', () => {
   });
 });
 
-describe('kindsMatch (canonical-space compare)', () => {
-  it('matches the same canonical kind across vocabularies', () => {
+describe('answerClassCompatible (YUK-386 — folded label → shared answer class)', () => {
+  it('matches labels that fold to the same canonical kind', () => {
     // reading_comprehension request vs reading output.
-    expect(kindsMatch('reading', 'reading_comprehension')).toBe(true);
-    expect(kindsMatch('reading_comprehension', 'reading')).toBe(true);
+    expect(answerClassCompatible('reading', 'reading_comprehension')).toBe(true);
+    expect(answerClassCompatible('reading_comprehension', 'reading')).toBe(true);
     // computation vs calculation.
-    expect(kindsMatch('computation', 'calculation')).toBe(true);
+    expect(answerClassCompatible('computation', 'calculation')).toBe(true);
     // single_choice / multiple_choice both fold to choice.
-    expect(kindsMatch('choice', 'single_choice')).toBe(true);
-    expect(kindsMatch('single_choice', 'multiple_choice')).toBe(true);
-    // proof vs derivation.
-    expect(kindsMatch('derivation', 'proof')).toBe(true);
+    expect(answerClassCompatible('choice', 'single_choice')).toBe(true);
+    expect(answerClassCompatible('single_choice', 'multiple_choice')).toBe(true);
   });
 
-  it('rejects different kinds', () => {
-    expect(kindsMatch('reading', 'computation')).toBe(false);
-    expect(kindsMatch('translation', 'calculation')).toBe(false);
+  it('widens beyond label identity: same answer class is compatible', () => {
+    // The YUK-386 semantics — a pin on 'reading' accepts ANY open-answer label
+    // (semantic class), including free-form labels unknown to either vocabulary.
+    expect(answerClassCompatible('reading', 'computation')).toBe(true);
+    expect(answerClassCompatible('translation', 'calculation')).toBe(true);
+    expect(answerClassCompatible('reading', 'nonsense')).toBe(true);
+    expect(answerClassCompatible('nonsense', 'reading')).toBe(true);
+    // 'short_answer' pin ≡ 'essay' supply: both classify semantic.
+    expect(answerClassCompatible('short_answer', 'essay')).toBe(true);
   });
 
-  it('rejects when either side is unknown', () => {
-    expect(kindsMatch('reading', 'nonsense')).toBe(false);
-    expect(kindsMatch('nonsense', 'reading')).toBe(false);
+  it('still rejects across answer classes', () => {
+    // exact-class vs semantic-class.
+    expect(answerClassCompatible('choice', 'reading')).toBe(false);
+    expect(answerClassCompatible('choice', 'short_answer')).toBe(false);
+    expect(answerClassCompatible('single_choice', 'essay')).toBe(false);
+    // steps (derivation/proof) vs prose (semantic).
+    expect(answerClassCompatible('derivation', 'reading')).toBe(false);
+    expect(answerClassCompatible('proof', 'short_answer')).toBe(false);
+    // exact vs steps.
+    expect(answerClassCompatible('choice', 'derivation')).toBe(false);
   });
 });
 
@@ -80,6 +95,12 @@ describe('questionKindToSkillKind (canonical → representative skill key)', () 
     expect(questionKindToSkillKind('true_false')).toBe('true_false');
     expect(questionKindToSkillKind('fill_blank')).toBe('fill_blank');
     expect(questionKindToSkillKind('essay')).toBe('essay');
+  });
+
+  it('preserves free-form labels in both directions', () => {
+    const label = '跨材料证据比较';
+    expect(questionKindToSkillKind(label)).toBe(label);
+    expect(skillKindToQuestionKind(questionKindToSkillKind(label))).toBe(label);
   });
 });
 
@@ -142,5 +163,62 @@ describe('skillKindToQuestionKind (profile key → persisted canonical)', () => 
     expect(skillKindToQuestionKind(questionKindToSkillKind('computation'))).toBe('computation');
     expect(questionKindToSkillKind(skillKindToQuestionKind('calculation'))).toBe('calculation');
     expect(skillKindToQuestionKind(questionKindToSkillKind('reading'))).toBe('reading');
+  });
+});
+
+// YUK-390 residual groundwork — lock the single-mapper convergence state over
+// the FULL vocabularies (not just spot values): the profile→canonical mapping
+// is total + consistent, every canonical family normalizes back to itself, the
+// two vocabularies partition with no orphan values, and representative
+// selection is stable. If a future kind is added to either vocabulary without
+// updating the single mapping, these go red — the compile-time Record
+// exhaustiveness catches missing keys; these catch semantic drift.
+describe('vocabulary convergence invariants (full-vocab)', () => {
+  it('every SubjectQuestionKind maps total + consistently into canonical', () => {
+    for (const skillKind of SubjectQuestionKindSchema.options) {
+      // QuestionKind is now z.string().min(1) (free-form label) — the parse
+      // asserts the mapper emits a non-empty label, and normalize folds it back
+      // to itself (mapper output is always a KNOWN canonical id).
+      const mapped = skillKindToQuestionKind(skillKind);
+      expect(QuestionKind.safeParse(mapped).success, skillKind).toBe(true);
+      expect(KNOWN_QUESTION_KIND_IDS).toContain(mapped);
+      expect(normalizeToCanonicalKind(skillKind), skillKind).toBe(mapped);
+    }
+  });
+
+  it('every known canonical label expands to a family that normalizes back to it', () => {
+    for (const canonical of KNOWN_QUESTION_KIND_IDS) {
+      expect(new Set(canonicalKindToPersistedForms(canonical)).has(canonical), canonical).toBe(
+        true,
+      );
+      for (const form of canonicalKindToPersistedForms(canonical)) {
+        expect(normalizeToCanonicalKind(form), `${canonical} ← ${form}`).toBe(canonical);
+      }
+    }
+  });
+
+  it('no orphan values: every persisted form is a member of one of the two vocabularies', () => {
+    const known = new Set<string>([
+      ...KNOWN_QUESTION_KIND_IDS,
+      ...SubjectQuestionKindSchema.options,
+    ]);
+    for (const canonical of KNOWN_QUESTION_KIND_IDS) {
+      for (const form of canonicalKindToPersistedForms(canonical)) {
+        expect(known.has(form), form).toBe(true);
+      }
+    }
+  });
+
+  it('representative selection is stable and family-preserving for every profile kind', () => {
+    for (const skillKind of SubjectQuestionKindSchema.options) {
+      const canonical = skillKindToQuestionKind(skillKind);
+      const representative = questionKindToSkillKind(canonical);
+      // stays in the same canonical family (lossy fold picks one member)...
+      expect(skillKindToQuestionKind(representative), skillKind).toBe(canonical);
+      // ...and is stable: applying the round-trip again changes nothing.
+      expect(questionKindToSkillKind(skillKindToQuestionKind(representative)), skillKind).toBe(
+        representative,
+      );
+    }
   });
 });

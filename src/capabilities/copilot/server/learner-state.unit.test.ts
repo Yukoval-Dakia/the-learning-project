@@ -61,6 +61,7 @@ const DIGEST = (over: Partial<OvernightDigest> = {}): OvernightDigest => ({
     from: '2026-07-15T16:00:00.000Z',
     to: '2026-07-16T16:00:00.000Z',
   },
+  cost: { scope: 'all_activity', records: 0, by_currency: [], details: [] },
   has_overnight_activity: false,
   runs: [],
   note_changes_count: 0,

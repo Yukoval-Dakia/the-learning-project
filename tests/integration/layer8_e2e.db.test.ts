@@ -215,7 +215,6 @@ describe('Layer-8 flywheel end-to-end (DB, all LLM stubbed)', () => {
     }));
     await runDreamingNightly(db, {
       runAgentTaskFn: dreamingStub,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
       now: () => NOW,
     });
 
@@ -242,7 +241,6 @@ describe('Layer-8 flywheel end-to-end (DB, all LLM stubbed)', () => {
     const coachStub = vi.fn(coachWithGoalStrand(active));
     await runCoach(db, 'daily', {
       runAgentTaskFn: coachStub,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
       writeEventFn: async (_db, input) => {
         if (input.action === 'experimental:coach_scan') {
           scanPayload = input.payload as unknown as CoachScanPayload;

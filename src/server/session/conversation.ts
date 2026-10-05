@@ -40,11 +40,10 @@ async function loadConversationSessionForUpdate(
   tx: Db | Tx,
   sessionId: string,
 ): Promise<{ status: string; goal_id: string | null } | null> {
-  const rows = await tx.execute(
+  const rows = await tx.execute<{ status: string; goal_id: string | null }>(
     sql`SELECT status, goal_id FROM learning_session WHERE id = ${sessionId} AND type = 'conversation' FOR UPDATE`,
   );
-  const arr = rows as unknown as Array<{ status: string; goal_id: string | null }>;
-  const row = arr[0];
+  const row = rows[0];
   if (!row) return null;
   return { status: row.status, goal_id: row.goal_id };
 }
@@ -165,14 +164,196 @@ export async function findReusableCopilotConversation(
   return candidates[0] ?? null;
 }
 
-export async function findOrCreateCopilotConversation(
+export interface CopilotConversationSummary {
+  id: string;
+  status: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+async function insertCopilotConversation(tx: Tx, now: Date): Promise<string> {
+  const sessionId = createId();
+  await tx.insert(learning_session).values({
+    id: sessionId,
+    type: 'conversation',
+    status: 'active',
+    source_document_id: null,
+    source_asset_ids: [],
+    entrypoint: 'copilot',
+    warnings: [],
+    error_message: null,
+    summary_md: null,
+    goal_id: null,
+    started_at: now,
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+  await writeJobEvent(tx, {
+    business_table: SESSION_TABLE,
+    business_id: sessionId,
+    event_type: 'conversation.started',
+    payload: { surface: 'copilot' },
+  });
+  return sessionId;
+}
+
+export async function createCopilotConversation(
   db: Db,
   opts: { now?: Date } = {},
+): Promise<{ sessionId: string; session: CopilotConversationSummary }> {
+  const now = opts.now ?? new Date();
+  return db.transaction(async (tx) => {
+    const sessionId = await insertCopilotConversation(tx, now);
+    return {
+      sessionId,
+      session: {
+        id: sessionId,
+        status: 'active',
+        title: null,
+        created_at: now.toISOString(),
+        updated_at: now.toISOString(),
+      },
+    };
+  });
+}
+
+export async function listCopilotConversations(
+  db: Db,
+  opts: { limit?: number } = {},
+): Promise<CopilotConversationSummary[]> {
+  const limit = Math.min(Math.max(Math.trunc(opts.limit ?? 50), 1), 100);
+  const rows = await db
+    .select({
+      id: learning_session.id,
+      status: learning_session.status,
+      title: learning_session.summary_md,
+      created_at: learning_session.created_at,
+      updated_at: learning_session.updated_at,
+    })
+    .from(learning_session)
+    .where(
+      and(eq(learning_session.type, 'conversation'), eq(learning_session.entrypoint, 'copilot')),
+    )
+    .orderBy(desc(learning_session.updated_at), desc(learning_session.id))
+    .limit(limit);
+  return rows.map((row) => ({
+    ...row,
+    created_at: row.created_at.toISOString(),
+    updated_at: row.updated_at.toISOString(),
+  }));
+}
+
+export async function getCopilotConversation(
+  db: Db | Tx,
+  sessionId: string,
+): Promise<{ id: string; status: string } | null> {
+  const rows = await db
+    .select({ id: learning_session.id, status: learning_session.status })
+    .from(learning_session)
+    .where(
+      and(
+        eq(learning_session.id, sessionId),
+        eq(learning_session.type, 'conversation'),
+        eq(learning_session.entrypoint, 'copilot'),
+      ),
+    )
+    .limit(1);
+  return rows[0] ?? null;
+}
+
+/** YUK-936 — read the stored Agent SDK session id for foreground inline resume. */
+export async function getAgentSdkSessionId(db: Db | Tx, sessionId: string): Promise<string | null> {
+  const rows = await db
+    .select({ agent_sdk_session_id: learning_session.agent_sdk_session_id })
+    .from(learning_session)
+    .where(
+      and(
+        eq(learning_session.id, sessionId),
+        eq(learning_session.type, 'conversation'),
+        eq(learning_session.entrypoint, 'copilot'),
+      ),
+    )
+    .limit(1);
+  return rows[0]?.agent_sdk_session_id ?? null;
+}
+
+/** YUK-936 — persist Agent SDK session id after a successful foreground inline query. */
+export async function setAgentSdkSessionId(
+  db: Db | Tx,
+  sessionId: string,
+  agentSdkSessionId: string,
+): Promise<void> {
+  await db
+    .update(learning_session)
+    .set({ agent_sdk_session_id: agentSdkSessionId, updated_at: new Date() })
+    .where(
+      and(
+        eq(learning_session.id, sessionId),
+        eq(learning_session.type, 'conversation'),
+        eq(learning_session.entrypoint, 'copilot'),
+      ),
+    );
+}
+
+/** YUK-936 — clear stored id on resume miss/fail/restart (ADR-0054 resume-fail). */
+export async function clearAgentSdkSessionId(db: Db | Tx, sessionId: string): Promise<void> {
+  await db
+    .update(learning_session)
+    .set({ agent_sdk_session_id: null, updated_at: new Date() })
+    .where(
+      and(
+        eq(learning_session.id, sessionId),
+        eq(learning_session.type, 'conversation'),
+        eq(learning_session.entrypoint, 'copilot'),
+      ),
+    );
+}
+
+export async function findOrCreateCopilotConversation(
+  db: Db,
+  opts: { now?: Date; sessionId?: string } = {},
 ): Promise<{ sessionId: string; created: boolean }> {
   const now = opts.now ?? new Date();
 
   return db.transaction(async (tx) => {
     await lockCopilotSessionSelection(tx);
+    if (opts.sessionId) {
+      const selected = await tx
+        .select({ id: learning_session.id, status: learning_session.status })
+        .from(learning_session)
+        .where(
+          and(
+            eq(learning_session.id, opts.sessionId),
+            eq(learning_session.type, 'conversation'),
+            eq(learning_session.entrypoint, 'copilot'),
+          ),
+        )
+        .limit(1);
+      const current = selected[0];
+      if (!current) throw new ApiError('not_found', 'Copilot conversation not found', 404);
+      if (current.status !== 'active' && current.status !== 'idle') {
+        throw new ApiError('conflict', `Copilot conversation is ${current.status}`, 409);
+      }
+      await tx
+        .update(learning_session)
+        .set({
+          status: 'active',
+          updated_at: now,
+          version: sql`${learning_session.version} + 1`,
+        })
+        .where(eq(learning_session.id, current.id));
+      if (current.status === 'idle') {
+        await writeJobEvent(tx, {
+          business_table: SESSION_TABLE,
+          business_id: current.id,
+          event_type: 'conversation.resumed',
+          payload: { resumed_at: now.toISOString(), surface: 'copilot' },
+        });
+      }
+      return { sessionId: current.id, created: false };
+    }
     // Shared reuse predicate (findReusableCopilotConversation) so this and the
     // turns reader never drift on "which session is live".
     const existing = await findReusableCopilotConversation(tx, { now });
@@ -213,33 +394,7 @@ export async function findOrCreateCopilotConversation(
       return { sessionId: existing.id, created: false };
     }
 
-    const sessionId = createId();
-    await tx.insert(learning_session).values({
-      id: sessionId,
-      type: 'conversation',
-      status: 'active',
-      source_document_id: null,
-      source_asset_ids: [],
-      entrypoint: 'copilot',
-      warnings: [],
-      error_message: null,
-      summary_md: null,
-      // Copilot has no learning item — goal_id stays null (vs teaching's
-      // startConversation which parks the learning item id here).
-      goal_id: null,
-      started_at: now,
-      created_at: now,
-      updated_at: now,
-      version: 0,
-    });
-
-    await writeJobEvent(tx, {
-      business_table: SESSION_TABLE,
-      business_id: sessionId,
-      event_type: 'conversation.started',
-      payload: { surface: 'copilot' },
-    });
-
+    const sessionId = await insertCopilotConversation(tx, now);
     return { sessionId, created: true };
   });
 }

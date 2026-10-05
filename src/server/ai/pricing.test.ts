@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { localCostUsd } from './pricing';
+import { hasLocalPricing, localCostUsd } from './pricing';
 
 function knownCost(model: string, inputTokens: number, outputTokens: number): number {
   const cost = localCostUsd(model, { inputTokens, outputTokens });
@@ -8,10 +8,47 @@ function knownCost(model: string, inputTokens: number, outputTokens: number): nu
 }
 
 describe('localCostUsd', () => {
+  it.each([
+    ['mimo-v2.5', 0.0002856],
+    ['mimo-v2.5-pro', 0.0008772],
+  ])('uses the dated public per-model USD estimate for %s', (model, expected) => {
+    expect(
+      localCostUsd(model, {
+        inputTokens: 1000,
+        outputTokens: 500,
+        cacheReadTokens: 2000,
+        cacheCreationTokens: 3000,
+      }),
+    ).toBeCloseTo(expected, 12);
+  });
+
+  it('rejects each malformed bucket even if other buckets would offset it', () => {
+    for (const cacheReadTokens of [-1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(
+        localCostUsd('mimo-v2.5-pro', { inputTokens: 1000, outputTokens: 500, cacheReadTokens }),
+      ).toBeNull();
+    }
+  });
+
   it('returns null for an unknown model instead of fabricating free usage', () => {
     expect(
       localCostUsd('definitely-not-a-real-model', { inputTokens: 1000, outputTokens: 1000 }),
     ).toBeNull();
+  });
+
+  // YUK-924 site 5 — pricebook membership is now the xiaomi provider binding's
+  // execution.localPricebook flag (exactly the mimo-v2.5 pair), not a local
+  // model-id set. Characterization: the membership boundary is byte-identical.
+  it('derives pricebook membership from the model-profile registry (mimo pair only)', () => {
+    expect(hasLocalPricing('mimo-v2.5')).toBe(true);
+    expect(hasLocalPricing('mimo-v2.5-pro')).toBe(true);
+    // Other xiaomi catalog models, other providers' models, unknown ids: no
+    // local pricebook (attempt-cost classifies them as basis 'unknown').
+    expect(hasLocalPricing('mimo-v2-flash')).toBe(false);
+    expect(hasLocalPricing('glm-5.2')).toBe(false);
+    expect(hasLocalPricing('glm-5.3-flash')).toBe(false);
+    expect(hasLocalPricing('claude-opus-4-8')).toBe(false);
+    expect(hasLocalPricing('definitely-not-a-real-model')).toBe(false);
   });
 
   it('scales known mimo input and output buckets independently', () => {

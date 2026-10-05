@@ -7,15 +7,16 @@ import {
   CopilotCancelRunResponseSchema,
   CopilotChatHeadersSchema,
   CopilotChatRequest,
-  CopilotChatStreamResponseSchema,
   CopilotCheckpointParamsSchema,
   CopilotCheckpointRevertErrorSchema,
   CopilotCheckpointRevertSuccessSchema,
+  CopilotCreateSessionResponseSchema,
   CopilotDurableRunResponseSchema,
   CopilotNudgeCompanionResponseSchema,
   CopilotNudgesResponseSchema,
   CopilotRouteIdParamsSchema,
   CopilotRunParamsSchema,
+  CopilotSessionsResponseSchema,
   CopilotSummaryResponseSchema,
   CopilotTurnsQuerySchema,
   CopilotTurnsResponseSchema,
@@ -36,6 +37,8 @@ export const copilotCapability = defineCapability({
       'experimental:copilot_user_ask',
       'experimental:copilot_chip_trigger',
       'experimental:copilot_reply',
+      'experimental:subagent_run_started',
+      'experimental:subagent_run_settled',
       'accept_suggestion',
       // YUK-577 — 主动开口触发线：触发留痕（RESERVED+typed，nudge-events.ts）+ dismiss/opened
       // 处置留痕（通用 hatch）。KPI 分离：dismiss_rate = dismissed/(opened+dismissed)，不碰 accept_suggestion。
@@ -52,14 +55,12 @@ export const copilotCapability = defineCapability({
         operationId: 'runCopilotChat',
         request: { headers: CopilotChatHeadersSchema, body: CopilotChatRequest },
         responses: {
-          200: CopilotChatStreamResponseSchema,
           202: CopilotDurableRunResponseSchema,
           ...API_ERROR_RESPONSES,
           499: ApiErrorResponseSchema,
           503: ApiErrorResponseSchema,
         },
-        responseMediaTypes: { 200: 'text/event-stream' },
-        successStatus: [200, 202],
+        successStatus: [202],
         load: () => import('./api/chat').then((m) => m.POST),
       },
       {
@@ -86,7 +87,39 @@ export const copilotCapability = defineCapability({
         request: { params: CopilotRunParamsSchema },
         responses: { 200: CopilotCancelRunResponseSchema, ...API_ERROR_RESPONSES },
         successStatus: 200,
-        load: () => import('./api/cancel-run').then((m) => m.POST),
+        load: async () => {
+          const [{ buildCancelCopilotRunHandler }, { dispatchSessionHead }, { db }, bossClient] =
+            await Promise.all([
+              import('./api/cancel-run'),
+              import('./server/durable-dispatch'),
+              import('@/db/client'),
+              import('@/server/boss/client'),
+            ]);
+          return buildCancelCopilotRunHandler({
+            wakeSession: async (sessionId) =>
+              dispatchSessionHead(db, sessionId, {
+                boss: await bossClient.getStartedBoss(),
+                transactionDb: bossClient.fromPgBossDrizzleTx,
+              }),
+          });
+        },
+      },
+      {
+        method: 'GET',
+        path: '/api/copilot/sessions',
+        operationId: 'listCopilotSessions',
+        responses: { 200: CopilotSessionsResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
+        load: () => import('./api/sessions').then((m) => m.GET),
+      },
+      {
+        method: 'POST',
+        path: '/api/copilot/sessions',
+        operationId: 'createCopilotSession',
+        responses: { 201: CopilotCreateSessionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 201,
+        load: () => import('./api/sessions').then((m) => m.POST),
       },
       {
         method: 'GET',
@@ -162,7 +195,22 @@ export const copilotCapability = defineCapability({
         // crashed active delivery into retry/failed evidence promptly; the
         // Copilot reconciler still never guesses from heartbeat timestamps.
         heartbeatSeconds: 30,
-        load: () => import('./jobs/copilot_run').then((m) => m.buildCopilotRunHandler),
+        load: async () => {
+          const [{ buildCopilotRunHandler }, { dispatchSessionHead }, bossClient] =
+            await Promise.all([
+              import('./jobs/copilot_run'),
+              import('./server/durable-dispatch'),
+              import('@/server/boss/client'),
+            ]);
+          return (db) =>
+            buildCopilotRunHandler(db, {
+              wakeSession: async (sessionId) =>
+                dispatchSessionHead(db, sessionId, {
+                  boss: await bossClient.getStartedBoss(),
+                  transactionDb: bossClient.fromPgBossDrizzleTx,
+                }),
+            });
+        },
       },
       // YUK-577 — 主动开口触发评估器（按需 job，无 schedule）。producer（ingestion 完成）
       // boss.send(COPILOT_NUDGE_EVALUATE_QUEUE) → 本 handler 确定性判定 + 写触发留痕。
@@ -201,8 +249,9 @@ export const copilotCapability = defineCapability({
   copilotTools: {
     tools: [
       {
-        name: 'run_task',
-        load: () => import('./server/tools/run-task').then((m) => m.runTaskTool),
+        name: 'present_primary_view',
+        load: () =>
+          import('./server/tools/present-primary-view').then((m) => m.presentPrimaryViewTool),
       },
       {
         name: 'query_events',

@@ -28,6 +28,7 @@ import {
   suppressedArtifactIds,
 } from '@/capabilities/notes/server/hub-auto-zone';
 import { NoteRefineApplyError, applyNotePatch } from '@/core/blocks/apply-note-patch';
+import { getConfig } from '@/core/config/store';
 import { ArtifactBodyBlocks, type ArtifactBodyBlocksT } from '@/core/schema/business';
 import type { Db, Tx } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
@@ -495,13 +496,18 @@ export async function finalizeHubSync(
     }
 
     await hooks.beforeStage?.('artifact');
-    const appliedRows = await tx.execute<{ version: number }>(sql`
+    // Use one millisecond-precision database timestamp for the row and its event.
+    // A second application clock after block-ref work made replay change updated_at.
+    const appliedRows = await tx.execute<{ version: number; updated_at: Date | string }>(sql`
       update artifact
       set body_blocks = ${JSON.stringify(desired.bodyBlocks)}::jsonb,
           version = version + 1,
-          updated_at = clock_timestamp()
+          updated_at = greatest(
+            date_trunc('milliseconds', clock_timestamp()),
+            date_trunc('milliseconds', updated_at) + interval '1 millisecond'
+          )
       where id = ${claim.artifactId} and version = ${desired.observedArtifactVersion}
-      returning version
+      returning version, updated_at
     `);
     if (appliedRows.length !== 1) {
       throw new HubSyncError(
@@ -541,7 +547,7 @@ export async function finalizeHubSync(
         history_after: hub.history,
       },
       caused_by_event_id: null,
-      created_at: new Date(),
+      created_at: new Date(appliedRows[0].updated_at),
     });
 
     await hooks.beforeStage?.('ack');
@@ -675,8 +681,10 @@ async function observeShadowNoApply(
   return 'shadowed';
 }
 
-function readHubSyncMode(): HubSyncMode {
-  const raw = process.env.HUB_SYNC_MODE;
+export function readHubSyncMode(): HubSyncMode {
+  // YUK-1007：DB > env > code-default('off')；非法值 → 'off'（registry envParse
+  // 收窄到枚举，其余 → undefined → codeDefault）。
+  const raw = getConfig('HUB_SYNC_MODE');
   return raw === 'apply' || raw === 'shadow' ? raw : 'off';
 }
 

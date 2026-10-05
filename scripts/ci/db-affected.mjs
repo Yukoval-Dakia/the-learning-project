@@ -9,7 +9,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import path from 'node:path';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const SELECTOR_TIMEOUT_MS = 120_000;
 const DB_RUN_TIMEOUT_MS = 30 * 60_000;
@@ -157,6 +157,70 @@ export function shouldSkipAffectedShard(selectedFileCount, shard) {
   return selectedFileCount < shard.count && shard.index > selectedFileCount;
 }
 
+/**
+ * YUK-1023 — duration-balanced DB sharding.
+ *
+ * Vitest's native `--shard` splits by file index (count-mod), which ignores
+ * runtime: the P3 lane produced 8.8min / 23.5min shards that way. Instead we
+ * bin-pack the file list ourselves with an LPT (longest-processing-time)
+ * greedy pass over the committed duration baseline
+ * (scripts/ci/db-test-durations.json) and hand each shard an explicit file
+ * list — the same approach as CircleCI timing splits / Knapsack.
+ *
+ * Determinism is a hard requirement: every shard recomputes the identical
+ * partition, so ordering is (duration desc, path asc) and bins fill
+ * least-loaded-first with index tie-break. Files missing from the baseline
+ * take the median duration so a new heavy test can't silently stack a bin.
+ */
+export function medianDurationMs(durations) {
+  const values = Object.values(durations ?? {}).filter(
+    (value) => Number.isFinite(value) && value > 0,
+  );
+  if (values.length === 0) return 1_000;
+  values.sort((a, b) => a - b);
+  return values[Math.floor(values.length / 2)];
+}
+
+export function binPackDbShards({ files, shardCount, durations }) {
+  if (!Number.isInteger(shardCount) || shardCount < 1) {
+    throw new Error(`invalid shard count: ${shardCount}`);
+  }
+  const fallbackMs = medianDurationMs(durations);
+  const bins = Array.from({ length: shardCount }, () => ({ files: [], estimatedMs: 0 }));
+  const ordered = [...new Set(files)]
+    .map((file) => ({
+      file,
+      ms: Number.isFinite(durations?.[file]) && durations[file] > 0 ? durations[file] : fallbackMs,
+    }))
+    .sort((a, b) => b.ms - a.ms || a.file.localeCompare(b.file));
+  for (const entry of ordered) {
+    let target = 0;
+    for (let i = 1; i < bins.length; i += 1) {
+      if (bins[i].estimatedMs < bins[target].estimatedMs) target = i;
+    }
+    bins[target].files.push(entry.file);
+    bins[target].estimatedMs += entry.ms;
+  }
+  // Deterministic file order inside each bin keeps vitest output stable.
+  return bins.map((bin) => ({ files: bin.files.sort(), estimatedMs: bin.estimatedMs }));
+}
+
+/** Load the committed duration baseline; absent/invalid → {} (all files get
+ *  the median fallback, degenerating to balanced-by-count — never fails the
+ *  lane over a missing optimization input). */
+export function loadDbTestDurations(root) {
+  try {
+    const parsed = JSON.parse(
+      readFileSync(path.join(root, 'scripts', 'ci', 'db-test-durations.json'), 'utf8'),
+    );
+    return typeof parsed?.durations === 'object' && parsed.durations !== null
+      ? parsed.durations
+      : {};
+  } catch {
+    return {};
+  }
+}
+
 function readChangedFiles(base, root) {
   const output = execFileSync(
     'git',
@@ -194,6 +258,42 @@ function isSafeMergeBase(base) {
   return /^[0-9a-f]{7,64}$/i.test(base);
 }
 
+/**
+ * One `vitest list` of the whole db partition. Returns the repo-relative file
+ * list or null on failure. Execution requires this inventory: mixing duration
+ * bins with Vitest's native sharding can omit files across independent jobs.
+ */
+function tryListDbInventoryFiles({ root, directory }) {
+  const vitestEntry = path.join(root, 'node_modules', 'vitest', 'vitest.mjs');
+  const inventoryOutput = path.join(directory, `db-full-inventory-${randomUUID()}.json`);
+  try {
+    const result = spawnSync(
+      process.execPath,
+      [
+        vitestEntry,
+        'list',
+        '--config',
+        'vitest.db.config.ts',
+        '--filesOnly',
+        `--json=${inventoryOutput}`,
+        '--staticParse',
+      ],
+      { cwd: root, encoding: 'utf8', timeout: SELECTOR_TIMEOUT_MS },
+    );
+    if (result.status !== 0 || !existsSync(inventoryOutput)) return null;
+    const files = inventoryFiles(JSON.parse(readFileSync(inventoryOutput, 'utf8')), root);
+    return files.length > 0 ? files : null;
+  } catch {
+    return null;
+  } finally {
+    try {
+      unlinkSync(inventoryOutput);
+    } catch {
+      // already gone
+    }
+  }
+}
+
 export function selectAffectedDbTests({ root, base, requestedMode, output }) {
   if (requestedMode !== 'affected') {
     const selection = fullFallbackSelection({
@@ -202,6 +302,10 @@ export function selectAffectedDbTests({ root, base, requestedMode, output }) {
       changedFiles: [],
       reason: requestedMode === 'full' ? 'gate-plan-full-trigger' : 'selector-not-requested',
     });
+    // Full mode still needs the inventory list so each shard can duration-bin
+    // the suite instead of delegating a count-mod split to vitest --shard.
+    const inventory = tryListDbInventoryFiles({ root, directory: path.dirname(output) });
+    if (inventory) selection.inventory_files = inventory;
     writeFileSync(output, `${JSON.stringify(selection, null, 2)}\n`);
     return selection;
   }
@@ -371,6 +475,9 @@ export function selectAffectedDbTests({ root, base, requestedMode, output }) {
       changed_files: changedFiles,
       predicted_files: predictedFiles,
       db_inventory_files: dbFiles.length,
+      // Full inventory as a list — duration bin-packing at run time needs
+      // every candidate, not just the count.
+      inventory_files: dbFiles,
       source_scanning_db_tests: sourceScanningDbTests,
       dynamic_import_db_tests: dynamicImportDbTests,
       failure_sentinel_db_tests: failureSentinelTests,
@@ -437,6 +544,36 @@ function ensureParent(file) {
   mkdirSync(path.dirname(file), { recursive: true });
 }
 
+function sanitizeInventoryFiles(selection) {
+  const files = selection?.inventory_files;
+  if (!Array.isArray(files) || files.length === 0) return null;
+  return files.every((file) => isSafeRepoTestFile(file)) ? sortedUnique(files) : null;
+}
+
+/** Per-file worker cost, including collection/import, from the DB reporter.
+ * Old JSON reports only cover the test span. Timing failures do not decide
+ * test success, but leave no data to publish as scheduling evidence. */
+function readVitestFileDurations(reportPath, root) {
+  try {
+    const parsed = JSON.parse(readFileSync(reportPath, 'utf8'));
+    const durations = {};
+    const timings = {};
+    for (const entry of parsed.testResults ?? []) {
+      const file = typeof entry?.name === 'string' ? normalizeRepoFile(entry.name, root) : null;
+      const ms = Number.isFinite(entry?.duration)
+        ? entry.duration
+        : Number.isFinite(entry?.endTime) && Number.isFinite(entry?.startTime)
+          ? entry.endTime - entry.startTime
+          : null;
+      if (file && Number.isFinite(ms)) durations[file] = Math.round(ms);
+      if (file && entry.db_timing) timings[file] = entry.db_timing;
+    }
+    return { durations, timings };
+  } catch {
+    return { durations: {}, timings: {} };
+  }
+}
+
 function runRequiredDbTests({ root, selectionPath, executionPath, shardValue }) {
   let selection;
   let selectionReadError;
@@ -460,10 +597,30 @@ function runRequiredDbTests({ root, selectionPath, executionPath, shardValue }) 
   const requiredMode = runnableFiles ? 'affected' : 'full';
   const argvFallbackReason =
     selectedFiles !== null && !selectedFilesFitCli ? 'affected-argv-too-large' : undefined;
+
+  const durations = loadDbTestDurations(root);
+  const candidateFiles =
+    runnableFiles ??
+    sanitizeInventoryFiles(selection) ??
+    tryListDbInventoryFiles({ root, directory: path.dirname(executionPath) });
+  if (!candidateFiles) throw new Error('DB inventory unavailable; refusing mixed shard strategies');
+  const bins = binPackDbShards({ files: candidateFiles, shardCount: shard.count, durations });
+  const bin = bins[shard.index - 1];
+  if (!affectedFilesFitCli(bin.files)) {
+    throw new Error(`DB shard ${shard.value} exceeds the argument limit`);
+  }
+  const binFiles = bin.files;
+
   const startedAt = Date.now();
-  const skippedEmptyShard =
-    runnableFiles !== null && shouldSkipAffectedShard(runnableFiles.length, shard);
+  const skippedEmptyShard = bin.files.length === 0;
+  if (requiredMode === 'full' && skippedEmptyShard) {
+    throw new Error(`full DB shard ${shard.value} is empty`);
+  }
   let result = { status: 0, signal: null, error: undefined };
+  const reportPath = path.join(
+    path.dirname(executionPath),
+    `db-vitest-report-${shard.index}-of-${shard.count}.json`,
+  );
 
   if (!skippedEmptyShard) {
     const vitestEntry = path.join(root, 'node_modules', 'vitest', 'vitest.mjs');
@@ -472,14 +629,28 @@ function runRequiredDbTests({ root, selectionPath, executionPath, shardValue }) 
       'run',
       '--config',
       'vitest.db.config.ts',
-      `--shard=${shard.value}`,
-      ...(runnableFiles ? ['--passWithNoTests', ...runnableFiles] : []),
+      // Keep the console reporter AND emit the JSON report — the per-file
+      // durations in it feed the committed baseline used by bin-packing.
+      '--reporter=default',
+      `--reporter=${fileURLToPath(new URL('./db-json-reporter.mjs', import.meta.url))}`,
+      `--outputFile.json=${reportPath}`,
+      ...binFiles,
     ];
     result = spawnSync(process.execPath, args, {
       cwd: root,
       stdio: 'inherit',
       timeout: DB_RUN_TIMEOUT_MS,
     });
+  }
+
+  const { durations: fileDurations, timings: fileTimings } = readVitestFileDurations(
+    reportPath,
+    root,
+  );
+  try {
+    unlinkSync(reportPath);
+  } catch {
+    // report absent (skipped shard or reporter failure) — nothing to remove
   }
 
   const execution = {
@@ -495,6 +666,12 @@ function runRequiredDbTests({ root, selectionPath, executionPath, shardValue }) 
     selector_duration_ms: selection?.selector_duration_ms,
     selected_files: selectedFiles?.length ?? null,
     selected_cli_bytes: selectedCliBytes,
+    shard_strategy: 'duration-binpack',
+    shard_files: binFiles.length,
+    bin_estimated_ms: bin.estimatedMs,
+    file_durations: fileDurations,
+    duration_metric: 'worker-phases-v1',
+    file_timings: fileTimings,
     test_duration_ms: Date.now() - startedAt,
     exit_code: result.status ?? 1,
     signal: result.signal ?? null,
@@ -520,6 +697,8 @@ function runRequiredDbTests({ root, selectionPath, executionPath, shardValue }) 
         `- required mode: \`${requiredMode}\``,
         `- requested/effective: \`${markdownText(execution.requested_mode)}\` → \`${markdownText(execution.effective_mode)}\``,
         `- selected files before sharding: ${selectedFiles?.length ?? 'full suite'}`,
+        `- shard strategy: \`${execution.shard_strategy}\``,
+        `- shard files: ${execution.shard_files ?? 'n/a'} (est. ${execution.bin_estimated_ms ?? 'n/a'} ms)`,
         `- empty shard skipped: \`${skippedEmptyShard}\``,
         `- selector time: ${execution.selector_duration_ms ?? 'n/a'} ms`,
         `- test time: ${execution.test_duration_ms} ms`,

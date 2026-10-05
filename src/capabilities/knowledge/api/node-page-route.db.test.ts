@@ -55,6 +55,23 @@ describe('GET /api/knowledge/[id]', () => {
     expect(res.status).toBe(404);
   });
 
+  it('returns 404 for a known internal fixture node (YUK-897 E1)', async () => {
+    const db = testDb();
+    const now = new Date();
+    await db.insert(knowledge).values({
+      id: 'kc_yuk792_canary_20260731c',
+      name: 'fixture canary',
+      archived_at: null,
+      created_at: now,
+      updated_at: now,
+      ...K_BASE,
+    });
+
+    const res = await getNode('kc_yuk792_canary_20260731c');
+    expect(res.status).toBe(404);
+    expect(JSON.stringify(await res.json())).not.toContain('kc_yuk792_canary_20260731c');
+  });
+
   it('returns 200 with node page data for a valid node', async () => {
     const db = testDb();
     const now = new Date();

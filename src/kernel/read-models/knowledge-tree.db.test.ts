@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { knowledge } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
+  batchResolveAncestorIds,
   batchResolveEffectiveDomains,
   getEffectiveDomain,
   resolveSubjectKnowledgeIds,
@@ -154,6 +155,73 @@ describe('batchResolveEffectiveDomains (YUK-716 — mirrors getEffectiveDomain i
     expect(await getEffectiveDomain(db, 'c')).toBe('yuwen');
     await expect(getEffectiveDomain(db, 'bad_root')).rejects.toThrow(/root.*domain/i);
     await expect(getEffectiveDomain(db, 'missing')).rejects.toThrow(/not found/i);
+  });
+});
+
+// YUK-1018 — batchResolveAncestorIds (454-A 邻近召回的祖先链收集器): self excluded,
+// nearest-first ordering, missing/dangling → [], MAX_DEPTH-capped against cycles.
+describe('batchResolveAncestorIds', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  const now = new Date();
+  const base = {
+    merged_from: [] as string[],
+    proposed_by_ai: false,
+    approval_status: 'approved' as const,
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  };
+
+  it('returns the nearest-first ancestor chain, self excluded', async () => {
+    const db = testDb();
+    await db.insert(knowledge).values([
+      { id: 'k_root', name: 'root', domain: 'yuwen', parent_id: null, ...base },
+      { id: 'k_mid', name: 'mid', domain: null, parent_id: 'k_root', ...base },
+      { id: 'k_leaf', name: 'leaf', domain: null, parent_id: 'k_mid', ...base },
+    ]);
+    const out = await batchResolveAncestorIds(db, ['k_leaf', 'k_mid', 'k_root']);
+    expect(out.get('k_leaf')).toEqual(['k_mid', 'k_root']);
+    expect(out.get('k_mid')).toEqual(['k_root']);
+    expect(out.get('k_root')).toEqual([]);
+  });
+
+  it('missing / dangling-parent nodes resolve to []', async () => {
+    const db = testDb();
+    // 'orphan' points at a parent that does not exist → chain is just that
+    // dangling id (the walk records it, then stops at the missing row).
+    await db
+      .insert(knowledge)
+      .values([{ id: 'orphan', name: 'orphan', domain: null, parent_id: 'ghost', ...base }]);
+    const out = await batchResolveAncestorIds(db, ['orphan', 'never_existed']);
+    expect(out.get('orphan')).toEqual(['ghost']);
+    expect(out.get('never_existed')).toEqual([]);
+  });
+
+  it('dedupes repeated input ids', async () => {
+    const db = testDb();
+    await db.insert(knowledge).values([
+      { id: 'r', name: 'r', domain: 'yuwen', parent_id: null, ...base },
+      { id: 'c', name: 'c', domain: null, parent_id: 'r', ...base },
+    ]);
+    const out = await batchResolveAncestorIds(db, ['c', 'c', 'c']);
+    expect(out.size).toBe(1);
+    expect(out.get('c')).toEqual(['r']);
+  });
+
+  it('a 2-cycle cannot loop forever — the chain exhausts at MAX_DEPTH', async () => {
+    const db = testDb();
+    // Cycle: a → b → a. Neither is a real root; the walk must terminate.
+    await db.insert(knowledge).values([
+      { id: 'cy_a', name: 'a', domain: null, parent_id: 'cy_b', ...base },
+      { id: 'cy_b', name: 'b', domain: null, parent_id: 'cy_a', ...base },
+    ]);
+    const chain = (await batchResolveAncestorIds(db, ['cy_a'])).get('cy_a');
+    expect(chain).toHaveLength(32);
+    expect(chain?.[0]).toBe('cy_b');
+    expect(chain?.[1]).toBe('cy_a');
   });
 });
 

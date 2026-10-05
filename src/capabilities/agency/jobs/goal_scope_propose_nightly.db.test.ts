@@ -117,3 +117,116 @@ describe('goal_scope_propose_nightly — 前置闸命中不得计入 attempted�
     ).toBe('ok');
   });
 });
+
+// ── YUK-187 — dismiss-churn 冷却（gate 3.5）──────────────────────────────────
+// 被 dismiss 的 goal_scope 候选在冷却窗（14 天）内不重提；窗过期恢复可提。
+describe('goal_scope_propose_nightly — dismiss 冷却（YUK-187）', () => {
+  async function seedEligibleDomain2(domain: string): Promise<void> {
+    const now = new Date();
+    await db.insert(knowledge).values(
+      Array.from({ length: 6 }, (_, i) => ({
+        id: `${domain}_kc_${i}`,
+        name: `K-${domain}-${i}`,
+        domain,
+        parent_id: null,
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      })),
+    );
+  }
+
+  async function seedDismissedPropose(subjectId: string, daysAgo: number): Promise<void> {
+    const { event } = await import('@/db/schema');
+    const proposeId = `propose_${subjectId}_${daysAgo}d`;
+    const decidedAt = new Date(Date.now() - daysAgo * 86_400_000);
+    await db.insert(event).values({
+      id: proposeId,
+      actor_kind: 'agent',
+      actor_ref: 'goal_scope_propose_nightly',
+      action: 'experimental:proposal',
+      subject_kind: 'goal',
+      subject_id: subjectId,
+      outcome: 'success',
+      payload: {
+        ai_proposal: {
+          proposed_change: { subject_id: subjectId, title: `${subjectId} 目标` },
+        },
+      },
+      created_at: decidedAt,
+    });
+    await db.insert(event).values({
+      id: `rate_${proposeId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: proposeId,
+      outcome: 'success',
+      payload: { rating: 'dismiss' },
+      caused_by_event_id: proposeId,
+      created_at: decidedAt,
+    });
+  }
+
+  it('3 天前 dismiss 的 subject → 冷却命中：skipped_pending + 零 LLM 调用', async () => {
+    await seedEligibleDomain2('yuwen');
+    await seedDismissedPropose('yuwen', 3);
+    const runTaskFn = vi.fn(async () => {
+      throw new Error('dismiss-cooled subject must NOT reach the LLM');
+    });
+    const result = await runGoalScopeProposeNightly(db, { runTaskFn });
+    expect(runTaskFn).not.toHaveBeenCalled();
+    expect(result.considered).toBe(1);
+    expect(result.skipped_pending).toBe(1);
+    expect(result.llm_attempted).toBe(0);
+  });
+
+  it('20 天前 dismiss（超出 14 天冷窗）→ 冷却失效：LLM 半区放行', async () => {
+    await seedEligibleDomain2('yuwen');
+    await seedDismissedPropose('yuwen', 20);
+    const runTaskFn = vi.fn(async () => {
+      throw new Error('swallow-safe absorption keeps proposed:0');
+    });
+    const result = await runGoalScopeProposeNightly(db, { runTaskFn });
+    // 冷却不再挡——LLM 半区被到达（throw 被 swallow-safe 吸收，产出 0 但 attempted ≥ 1）。
+    expect(runTaskFn).toHaveBeenCalled();
+    expect(result.skipped_pending).toBe(0);
+  });
+
+  it('accept（非 dismiss）不进冷却集：LLM 半区放行', async () => {
+    await seedEligibleDomain2('yuwen');
+    const { event } = await import('@/db/schema');
+    const proposeId = 'propose_yuwen_accept';
+    const decidedAt = new Date(Date.now() - 3 * 86_400_000);
+    await db.insert(event).values({
+      id: proposeId,
+      actor_kind: 'agent',
+      actor_ref: 'goal_scope_propose_nightly',
+      action: 'experimental:proposal',
+      subject_kind: 'goal',
+      subject_id: 'yuwen',
+      outcome: 'success',
+      payload: { ai_proposal: { proposed_change: { subject_id: 'yuwen', title: 't' } } },
+      created_at: decidedAt,
+    });
+    await db.insert(event).values({
+      id: `rate_${proposeId}`,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'rate',
+      subject_kind: 'event',
+      subject_id: proposeId,
+      outcome: 'success',
+      payload: { rating: 'accept' },
+      caused_by_event_id: proposeId,
+      created_at: decidedAt,
+    });
+    const runTaskFn = vi.fn(async () => {
+      throw new Error('swallow-safe absorption keeps proposed:0');
+    });
+    const result = await runGoalScopeProposeNightly(db, { runTaskFn });
+    expect(runTaskFn).toHaveBeenCalled();
+    expect(result.skipped_pending).toBe(0);
+  });
+});

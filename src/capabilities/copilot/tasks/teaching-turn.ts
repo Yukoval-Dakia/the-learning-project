@@ -12,6 +12,7 @@ import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { JudgeKind, QuestionKind, Rubric } from '@/core/schema/business';
 import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import type { SubjectProfile } from '@/subjects/profile';
+import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 
 const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 
@@ -20,7 +21,9 @@ const DEFAULT_BUDGET = DEFAULT_TASK_BUDGET;
 const TurnKind = z.enum(['explain', 'ask_check', 'end']);
 export type TurnKindT = z.infer<typeof TurnKind>;
 
-// Question kinds that imply choices_md must be present.
+// Kind labels that imply choices_md must be present (checked AFTER the
+// profile-vocab fold — 'single_choice'/'multiple_choice' fold to 'choice';
+// unknown free-form labels are left untouched).
 // When the LLM sends choices_md as a string (instead of array) and we cannot
 // coerce it, we downgrade these kinds to 'short_answer' to keep the object
 // semantically self-consistent (no choices → not a choice question).
@@ -58,7 +61,10 @@ const TeachingStructuredQuestion = z
   .transform((q) => {
     // If choices_md ended up null/undefined and the kind implies choices are
     // required, downgrade to short_answer so downstream code stays consistent.
-    if ((q.choices_md === null || q.choices_md === undefined) && CHOICE_BEARING_KINDS.has(q.kind)) {
+    if (
+      (q.choices_md === null || q.choices_md === undefined) &&
+      CHOICE_BEARING_KINDS.has(normalizeToCanonicalKind(q.kind) ?? q.kind)
+    ) {
       console.warn(
         `[TeachingStructuredQuestion] choices_md missing/uncoercible for kind=${q.kind}; downgrading to short_answer`,
       );
@@ -167,7 +173,7 @@ function buildTeachingTurnPrompt(profile: SubjectProfile): string {
 仅当 kind="ask_check" 时必须带 structured_question；explain/end 不要带。
 turn 类型：
 - explain：用 1-2 段讲清楚一个概念点 / 例题解析 / 用户上轮答案的反馈，**结尾不带问号**
-- ask_check：1 个检查题（${profile.promptFragments.checkQuestionPolicy}），让用户回答验证理解，**结尾必须是问号**；structured_question = { kind, prompt_md, reference_md, choices_md?, judge_kind_override?, rubric_json? }，kind 取 choice/true_false/fill_blank/short_answer/essay/computation/reading/translation/derivation，prompt_md 通常等于 text_md，reference_md 必须给可判分参考答案${rubricGuidanceSection(profile)}
+- ask_check：1 个检查题（${profile.promptFragments.checkQuestionPolicy}），让用户回答验证理解，**结尾必须是问号**；structured_question = { kind, prompt_md, reference_md, choices_md?, judge_kind_override?, rubric_json? }，kind 是题面展示标签——优先取惯用标签 choice/true_false/fill_blank/short_answer/essay/computation/reading/translation/derivation，prompt_md 通常等于 text_md，reference_md 必须给可判分参考答案${rubricGuidanceSection(profile)}
 - end：本次会话目标已达 → 给 1-2 句总结收尾，suggested_next 设 "end"
 节奏（强约束）：
 - 用户首轮（或没有 messages）：先 explain 引入主题，suggested_next="continue"

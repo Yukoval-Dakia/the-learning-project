@@ -1,0 +1,7 @@
+Scope: all 2 workspace projects
+? The modules directories will be removed and reinstalled from scratch. Proceed?
+ (Y/n)
+[ERR_PNPM_ABORTED_REMOVE_MODULES_DIR] Aborted removal of modules directory
+Scope: all 2 workspace projects
+? The modules directories will be removed and reinstalled from scratch. Proceed?
+ (Y/n)

@@ -13,16 +13,18 @@
 // ⚠️ INCREMENT-2 MIGRATION CONTRACT — poolFetch is NOT a drop-in for
 // queryExistingPool. The WHERE clause is byte-identical, but poolFetch returns the
 // RAW scalar pool ({id, difficulty}) only. queryExistingPool additionally (a)
-// filters in-memory by `kindsMatch(r.kind, kind)` (sourcing-sequence.ts) so a node
-// full of `reading` rows can't short-circuit a `computation` request (the A2
-// regression), (b) ranks by `compareBySourceTierThenWhitelist` (authentic-first,
+// filters in-memory by `answerClassCompatible(r.kind, kind)` (sourcing-sequence.ts) so a node
+// full of off-class rows can't short-circuit the request (the A2 regression;
+// YUK-386: the filter compares implied answer class, not label identity — a
+// `reading` row DOES satisfy a `computation` request, both semantic), (b) ranks
+// by `compareBySourceTierThenWhitelist` (authentic-first,
 // off-whitelist demoted), and (c) slices to limit AFTER that sort. A consumer
 // migrating onto poolFetch MUST re-apply the kind filter + tier sort + slice on
 // top, and project source/metadata, or it will silently change selection.
 
 import { type SQL, and, asc, isNull, sql } from 'drizzle-orm';
 import type { Db } from '@/db/client';
-import { notDraftPredicate } from '@/db/predicates';
+import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { question } from '@/db/schema';
 import { toSqlVector } from '@/db/vector';
 
@@ -59,7 +61,7 @@ export interface PoolRow {
   difficulty: number;
   // INCREMENT-2 — projected unconditionally so the consumer (queryExistingPool) can run
   // its in-memory 合约五 tier sort (deriveSourceTier reads source + metadata) and kind
-  // filter (kindsMatch reads kind) WITHOUT re-querying. Additive: existing callers that
+  // filter (answerClassCompatible reads kind) WITHOUT re-querying. Additive: existing callers that
   // only read id/difficulty are unaffected. The matcher (inc-3) reuses these too.
   source: string;
   kind: string;
@@ -77,6 +79,10 @@ export interface PoolRow {
 export async function poolFetch(db: Db, c: PoolFetchCriteria): Promise<PoolRow[]> {
   const preds: SQL[] = [
     sql`${question.knowledge_ids} @> ${JSON.stringify([c.knowledgeId])}::jsonb`,
+    // YUK-1045 — contract admission gate (§3.3): suspended/withdrawn groups are
+    // never pool candidates (group-root resolved via COALESCE(parent,id)).
+    // Absent lifecycle row ⇒ legacy ⇒ passes (bridge pre-cutover).
+    questionSuspendedPredicate(question),
   ];
   if (c.activeOnly !== false) {
     preds.push(notDraftPredicate(question.draft_status));

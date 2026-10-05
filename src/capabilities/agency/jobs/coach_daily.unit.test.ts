@@ -11,7 +11,6 @@ import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
 import {
   COACH_DAILY_OBJECTIVE,
   COACH_MAX_PROPOSALS,
-  buildCoachDailyHandler,
   parseCoachOutputSafely,
   runCoach,
 } from './coach_daily';
@@ -34,7 +33,6 @@ const VALID_TODAY_PLAN = {
 describe('runCoach', () => {
   it('runs CoachTask with the coach allowlist and writes trigger + success events (daily)', async () => {
     const db = {} as never;
-    const mcpServer = { name: 'fake-loom' } as never;
     const listProposalInboxRowsFn = vi
       .fn()
       .mockResolvedValueOnce([{ id: 'p_before', status: 'pending' }])
@@ -42,7 +40,6 @@ describe('runCoach', () => {
         { id: 'p_before', status: 'pending' },
         { id: 'p_new', status: 'pending' },
       ]);
-    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_coach_1',
       text: JSON.stringify(VALID_TODAY_PLAN),
@@ -54,7 +51,6 @@ describe('runCoach', () => {
 
     const result = await runCoach(db, 'daily', {
       listProposalInboxRowsFn,
-      buildMcpServerFn,
       runAgentTaskFn,
       writeEventFn,
       // YUK-143 — North-Star: stub the active-goals reader so these no-DB unit
@@ -78,7 +74,16 @@ describe('runCoach', () => {
       pending_after: 2,
       task_run_id: 'task_coach_1',
     });
-    expect(buildMcpServerFn).toHaveBeenCalledWith(
+    const __mount = (
+      (runAgentTaskFn.mock.calls[0] as unknown as unknown[] | undefined)?.[2] as
+        | { piToolMounts?: { type: string; options?: BuildMcpServerOptions }[] }
+        | undefined
+    )?.piToolMounts?.[0];
+    if (__mount?.type !== 'domain' || !__mount.options) {
+      throw new Error('expected domain mount');
+    }
+    const buildOptions = __mount.options;
+    expect(buildOptions).toMatchObject(
       expect.objectContaining({
         serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
         toolNames: resolveDomainToolNames('coach'),
@@ -90,7 +95,6 @@ describe('runCoach', () => {
       }),
     );
 
-    const buildOptions = buildMcpServerFn.mock.calls[0]?.[0];
     if (!buildOptions?.beforeExecute) throw new Error('expected beforeExecute gate');
     if (!buildOptions.interceptInput) throw new Error('expected context-budget input interceptor');
     for (let i = 0; i < COACH_MAX_PROPOSALS; i++) {
@@ -144,7 +148,7 @@ describe('runCoach', () => {
       }),
       expect.objectContaining({
         budgetOverride: { maxIterations: COACH_CONTEXT_BUDGET.toolCalls.hard + 1 },
-        mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
+        piToolMounts: [expect.objectContaining({ type: 'domain' })],
         allowedTools: [...resolveMcpAllowedTools('coach')],
       }),
     );
@@ -184,9 +188,7 @@ describe('runCoach', () => {
 
   it('uses weekly_coach actor_ref + weekly objective when runKind=weekly', async () => {
     const db = {} as never;
-    const mcpServer = { name: 'fake-loom' } as never;
     const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
-    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_coach_weekly_1',
       text: JSON.stringify({
@@ -201,7 +203,6 @@ describe('runCoach', () => {
 
     const result = await runCoach(db, 'weekly', {
       listProposalInboxRowsFn,
-      buildMcpServerFn,
       runAgentTaskFn,
       writeEventFn,
       // YUK-143 — North-Star: stub the active-goals reader so these no-DB unit
@@ -237,9 +238,7 @@ describe('runCoach', () => {
   // INCLUDING knowledge_edge, AB-4) and the objective carries the ND-5 clause.
   it('threads a proposal_feedback digest into the CoachTask input scoped to actable kinds', async () => {
     const db = {} as never;
-    const mcpServer = { name: 'fake-loom' } as never;
     const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
-    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_coach_feedback',
       text: JSON.stringify(VALID_TODAY_PLAN),
@@ -283,7 +282,6 @@ describe('runCoach', () => {
 
     await runCoach(db, 'daily', {
       listProposalInboxRowsFn,
-      buildMcpServerFn,
       runAgentTaskFn,
       writeEventFn,
       listActiveGoalsFn: async () => [],
@@ -312,9 +310,7 @@ describe('runCoach', () => {
 
   it('emits an empty proposal_feedback on cold start (no-op back-compat)', async () => {
     const db = {} as never;
-    const mcpServer = { name: 'fake-loom' } as never;
     const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
-    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_coach_cold',
       text: JSON.stringify(VALID_TODAY_PLAN),
@@ -325,7 +321,6 @@ describe('runCoach', () => {
 
     await runCoach(db, 'daily', {
       listProposalInboxRowsFn,
-      buildMcpServerFn,
       runAgentTaskFn,
       writeEventFn,
       listActiveGoalsFn: async () => [],
@@ -344,8 +339,6 @@ describe('runCoach', () => {
 
   it('writes failure event and rethrows on CoachTask error', async () => {
     const db = {} as never;
-    const mcpServer = { name: 'fake-loom' } as never;
-    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
     const runAgentTaskFn = vi.fn(async () => {
       throw new Error('boom');
     });
@@ -355,7 +348,6 @@ describe('runCoach', () => {
     await expect(
       runCoach(db, 'daily', {
         listProposalInboxRowsFn,
-        buildMcpServerFn,
         runAgentTaskFn,
         writeEventFn,
         // YUK-143 — stub the active-goals reader (db is a {} stub here).
@@ -382,8 +374,6 @@ describe('runCoach', () => {
 
   it('falls back to plan_parse_error=true when CoachTask emits non-JSON text', async () => {
     const db = {} as never;
-    const mcpServer = { name: 'fake-loom' } as never;
-    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_coach_garbage',
       text: 'I cannot output JSON today, sorry.',
@@ -395,7 +385,6 @@ describe('runCoach', () => {
 
     await runCoach(db, 'daily', {
       listProposalInboxRowsFn,
-      buildMcpServerFn,
       runAgentTaskFn,
       writeEventFn,
       // YUK-143 — North-Star: stub the active-goals reader so these no-DB unit
@@ -442,9 +431,7 @@ describe('runCoach', () => {
   // durable but had no Coach consumer.
   it('injects agent_notes into the CoachTask input and objective', async () => {
     const db = {} as never;
-    const mcpServer = { name: 'fake-loom' } as never;
     const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
-    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_coach_notes',
       text: JSON.stringify(VALID_TODAY_PLAN),
@@ -455,7 +442,6 @@ describe('runCoach', () => {
 
     await runCoach(db, 'daily', {
       listProposalInboxRowsFn,
-      buildMcpServerFn,
       runAgentTaskFn,
       writeEventFn,
       listActiveGoalsFn: async () => [],
@@ -501,9 +487,7 @@ describe('runCoach', () => {
   // agent_notes field is empty and the run is unchanged.
   it('emits an empty agent_notes on cold start (no-op back-compat)', async () => {
     const db = {} as never;
-    const mcpServer = { name: 'fake-loom' } as never;
     const listProposalInboxRowsFn = vi.fn().mockResolvedValueOnce([]).mockResolvedValueOnce([]);
-    const buildMcpServerFn = vi.fn((_opts: BuildMcpServerOptions) => mcpServer);
     const runAgentTaskFn = vi.fn(async () => ({
       task_run_id: 'task_coach_notes_cold',
       text: JSON.stringify(VALID_TODAY_PLAN),
@@ -514,7 +498,6 @@ describe('runCoach', () => {
 
     await runCoach(db, 'daily', {
       listProposalInboxRowsFn,
-      buildMcpServerFn,
       runAgentTaskFn,
       writeEventFn,
       listActiveGoalsFn: async () => [],
@@ -571,7 +554,6 @@ describe('runCoach active_items feed', () => {
 
     await runCoach(db, 'daily', {
       listProposalInboxRowsFn: vi.fn(async () => []),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
       runAgentTaskFn,
       writeEventFn: vi.fn(async (_db, input) => input.id),
       listActiveGoalsFn: async () => [],

@@ -115,7 +115,7 @@ describe('shared question-content validator seam', () => {
       runTaskFn,
       db: sentinelDb,
       subjectProfile: resolveSubjectProfile('yuwen'),
-      skills: ['yuwen-reading-evidence'],
+      piSkillDocs: [{ name: 'yuwen-reading-evidence', body: '# 阅读证据\nbody' }],
       afterTaskRun,
     });
 
@@ -125,7 +125,7 @@ describe('shared question-content validator seam', () => {
       expect.objectContaining({
         db: sentinelDb,
         subjectProfile: expect.objectContaining({ id: 'yuwen' }),
-        skills: ['yuwen-reading-evidence'],
+        piSkillDocs: [{ name: 'yuwen-reading-evidence', body: '# 阅读证据\nbody' }],
       }),
     );
     expect(afterTaskRun).toHaveBeenCalledWith(
@@ -215,7 +215,7 @@ describe('normalizeAnswer', () => {
 const fakeProfile = {
   id: 'yuwen',
   // runSemanticJudge's builder reads displayName / languageStyle off subjectProfile.
-  full: { id: 'yuwen', displayName: '语文', languageStyle: 'classical' },
+  full: { ...resolveSubjectProfile('yuwen'), languageStyle: 'classical' },
 };
 
 const exactQuestion: SolveCheckQuestion = {
@@ -287,7 +287,7 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
           runTaskFn,
           profile: {
             id: fixture.subject_id,
-            full: { id: fixture.subject_id, displayName: fixture.subject_id },
+            full: resolveSubjectProfile(fixture.subject_id),
           },
         },
       );
@@ -310,9 +310,11 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
       });
       expect(runTaskFn).toHaveBeenCalledTimes(1);
       const blindInput = runTaskFn.mock.calls[0]?.[1] as Record<string, unknown>;
-      expect(runTaskFn.mock.calls[0]?.[2]).toMatchObject({
-        outputFormat: { type: 'json_schema' },
-      });
+      // Post-P4: no SDK outputFormat threading — the blind validator relies on
+      // prompt-level JSON instruction + schema parse of the text result.
+      expect(
+        (runTaskFn.mock.calls[0]?.[2] as { outputFormat?: unknown }).outputFormat,
+      ).toBeUndefined();
       expect(blindInput.prompt_md).toBe(diagnostic.probe_spec.prompt_md);
       expect(Object.keys(blindInput).sort()).toEqual([
         'choices_md',
@@ -372,7 +374,7 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
         choices_md: null,
       },
       {
-        profile: { id: 'math', full: { id: 'math', displayName: '数学' } },
+        profile: { id: 'math', full: resolveSubjectProfile('math') },
         runTaskFn: vi.fn(async () => ({
           text: JSON.stringify(output),
           ...(task_run_id ? { task_run_id } : {}),
@@ -407,7 +409,7 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
         choices_md: null,
       },
       {
-        profile: { id: 'general', full: { id: 'general', displayName: '通识' } },
+        profile: { id: 'general', full: resolveSubjectProfile('general') },
         runTaskFn: vi.fn(async () => ({ text: malformed, task_run_id: 'solver-repaired' })),
       },
     );
@@ -429,7 +431,7 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
         choices_md: null,
       },
       {
-        profile: { id: 'general', full: { id: 'general', displayName: '通识' } },
+        profile: { id: 'general', full: resolveSubjectProfile('general') },
         runTaskFn: vi.fn(async () => ({
           text: JSON.stringify({
             reference_solution: {
@@ -492,7 +494,7 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
         choices_md: null,
       },
       {
-        profile: { id: 'yuwen', full: { id: 'yuwen', displayName: '语文' } },
+        profile: { id: 'yuwen', full: resolveSubjectProfile('yuwen') },
         runTaskFn: vi.fn(async () => ({
           text: JSON.stringify(providerShape),
           task_run_id: 'solver-misplaced-confidence',
@@ -517,7 +519,7 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
         choices_md: null,
       },
       {
-        profile: { id: 'general', full: { id: 'general', displayName: '通识' } },
+        profile: { id: 'general', full: resolveSubjectProfile('general') },
         runTaskFn: vi.fn(async () => ({
           text: JSON.stringify({
             reference_solution: {
@@ -559,7 +561,7 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
         choices_md: null,
       },
       {
-        profile: { id: 'math', full: { id: 'math', displayName: '数学' } },
+        profile: { id: 'math', full: resolveSubjectProfile('math') },
         runTaskFn: vi.fn(async () => ({ text: singleQuoted, task_run_id: 'solver-risky' })),
       },
     );
@@ -582,7 +584,7 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
         choices_md: null,
       },
       {
-        profile: { id: 'general', full: { id: 'general', displayName: '通识' } },
+        profile: { id: 'general', full: resolveSubjectProfile('general') },
         runTaskFn: vi.fn(async () => {
           throw new AgentRunError({
             kind: 'SolutionGenerateTask',
@@ -795,8 +797,8 @@ describe('runSolveCheck — exact path (normalize compare)', () => {
   });
 
   it('routes a subject choice kind (single_choice) with choices_md through the exact path (F1 structural)', async () => {
-    // History/学科 题型 expose kinds like 'single_choice' that the canonical
-    // QuestionKind enum does not, but a persisted choices_md makes the item
+    // History/学科 题型 expose kinds like 'single_choice' that the KNOWN label
+    // vocabulary does not include, but a persisted choices_md makes the item
     // structurally exact (mirrors route-resolve.ts). No judge_kind_override here.
     const singleChoice: SolveCheckQuestion = {
       ...exactQuestion,
@@ -1046,6 +1048,77 @@ describe('runSolveCheck — A1 fallback candidates (答案+解析 reference_md)'
 // ---------- EFF-1 (YUK-554 review) — cost/provenance threading ----------
 
 describe('runSolveCheck — EFF-1 cost/provenance threading', () => {
+  it.each([
+    ['partial', 0.99],
+    ['correct', 0.2],
+    ['incorrect', 0.2],
+    ['unparseable', 0.99],
+  ] as const)(
+    'release-strict keeps semantic %s at confidence %s unresolved, without changing pool policy',
+    async (outcome, confidence) => {
+      const runTaskFn = vi.fn(async (kind: string) => ({
+        text:
+          kind === 'SolutionGenerateTask'
+            ? solverOutput('独立完整解答')
+            : outcome === 'unparseable'
+              ? 'not-json'
+              : semanticOutput(outcome, confidence),
+      }));
+      const legacy = await runSolveCheck(openQuestion, {
+        runTaskFn,
+        profile: fakeProfile,
+        db: fakeDb,
+      });
+      const strict = await runSolveCheck(openQuestion, {
+        runTaskFn,
+        profile: fakeProfile,
+        db: fakeDb,
+        validationMode: 'release_strict',
+      });
+      expect(legacy.verdict).toBe('pass');
+      expect(strict.verdict).toBe('unsupported');
+    },
+  );
+
+  it('passes the independently worked method to the semantic comparator without adding a model leg', async () => {
+    const worked = '104×5=(100+4)×5=100×5+4×5=500+20=520。';
+    const runTaskFn = vi.fn(async (kind: string, _input: unknown) => {
+      if (kind === 'SolutionGenerateTask')
+        return {
+          text: JSON.stringify({
+            reference_solution: {
+              final_answer: '520',
+              expected_signals: ['分配律展开'],
+              answer_equivalents: [],
+            },
+            worked_solution_md: worked,
+            confidence: 0.99,
+          }),
+        };
+      if (kind === 'SemanticJudgeTask') {
+        return { text: semanticOutput('correct', 0.99) };
+      }
+      throw new Error(`unexpected task ${kind}`);
+    });
+    const result = await runSolveCheck(
+      {
+        ...openQuestion,
+        kind: 'computation',
+        prompt_md: '利用分配律计算 104×5。',
+        reference_md: `520\n${worked}`,
+      },
+      { runTaskFn, profile: fakeProfile, db: fakeDb },
+    );
+    expect(result).toMatchObject({ verdict: 'pass', compared_by: 'semantic' });
+    expect(runTaskFn.mock.calls.find(([kind]) => kind === 'SemanticJudgeTask')?.[1]).toMatchObject({
+      answer: { content: `520\n\n${worked}` },
+    });
+    expect(runTaskFn.mock.calls.map(([kind]) => kind)).toEqual([
+      'SolutionGenerateTask',
+      'SemanticJudgeTask',
+    ]);
+  });
+
   it('captures the solver leg task_run_id + cost_usd on the exact path', async () => {
     const runTaskFn = vi.fn(async () => ({
       text: solverOutput('公元前202年'),

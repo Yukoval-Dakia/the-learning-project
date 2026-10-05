@@ -20,6 +20,15 @@
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { computeLatencyMs, getQuestion } from '@/capabilities/practice/ui-public';
+// YUK-1051 — 定位面换成通用 response 组件族（stable option IDs；开放作答 = 通用文字+附件）。
+// D11 autosave 缝：placement 今天没有草稿端点（saveSubmission 是 YUK-1052 的服务端 lane）——
+// 本面不接假自动保存；提交仍是整段提交（submitProbeAnswer），切换到新题不承接旧答案。
+import { ChoiceSetResponse } from '@/ui/components/response/ChoiceSetResponse';
+import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
+import {
+  type EvidenceAttachment,
+  optionsFromChoicesMd,
+} from '@/ui/components/response/response-types';
 import { usePagehideTransition } from '@/ui/hooks/usePagehideTransition';
 import { ApiError } from '@/ui/lib/api';
 import { uploadAsset } from '@/ui/lib/assets';
@@ -389,13 +398,13 @@ function PlacementQuestionCard({
   });
   const q = qQ.data ?? null;
 
-  const [sel, setSel] = useState<number | null>(null);
+  // YUK-1051 — stable option id 选择（内容派生，非下标）+ 通用证据附件（EvidenceComposer）。
+  const [selIds, setSelIds] = useState<string[] | null>(null);
   const [text, setText] = useState('');
-  const [imgRefs, setImgRefs] = useState<string[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const [uploadErr, setUploadErr] = useState<string | null>(null);
+  const [evidence, setEvidence] = useState<EvidenceAttachment[]>([]);
   const [submitting, setSubmitting] = useState(false);
-  const fileRef = useRef<HTMLInputElement>(null);
+  // YUK-1094 — 附件上传中：作答未落定前禁止推进（onAnswered 带的是旧 image refs）。
+  const [uploading, setUploading] = useState(false);
   const shownAtRef = useRef<number | null>(null);
 
   // Stamp the question-shown time once the row is loaded (per question — the card is
@@ -424,38 +433,24 @@ function PlacementQuestionCard({
 
   const choices = q.choices_md ?? [];
   const isChoice = choices.length > 0;
-  const hasImg = imgRefs.length > 0;
-  const answered = isChoice ? sel !== null : text.trim().length > 0 || hasImg;
+  const options = optionsFromChoicesMd(choices, q.id);
+  const imageRefs = evidence.map((a) => a.asset_id);
+  const answered =
+    (isChoice ? (selIds?.length ?? 0) > 0 : text.trim().length > 0) || imageRefs.length > 0;
   const last = answeredCount + 1 >= CAP;
 
-  const pickImage = async (file: File | undefined) => {
-    if (!file) return;
-    setUploading(true);
-    setUploadErr(null);
-    try {
-      const asset = await uploadAsset(file);
-      setImgRefs((refs) => [...refs, asset.id]);
-    } catch {
-      // A silent swallow let learners submit the probe without the handwriting they
-      // thought they attached — surface it so they can retry (ProbeAnswers precedent).
-      setUploadErr('图片上传失败，请重试');
-      // Clear the input so re-picking the SAME file still fires onChange (a file input
-      // emits no change event when the selection is unchanged).
-      if (fileRef.current) fileRef.current.value = '';
-    } finally {
-      setUploading(false);
-    }
-  };
-
   const commit = async () => {
-    if (!answered || submitting) return;
+    if (!answered || submitting || uploading) return;
     setSubmitting(true);
-    const responseMd = isChoice && sel !== null ? (choices[sel] ?? '') : text.trim();
+    const responseMd =
+      isChoice && selIds && selIds.length > 0
+        ? (options.find((o) => o.id === selIds[0])?.text_md ?? '')
+        : text.trim();
     try {
       await onAnswered({
         responseMd,
         referencedKnowledgeIds: q.labels.map((l) => l.id),
-        answerImageRefs: imgRefs,
+        answerImageRefs: imageRefs,
         latencyMs: computeLatencyMs(shownAtRef.current, Date.now()),
       });
     } finally {
@@ -478,66 +473,28 @@ function PlacementQuestionCard({
       <div className="ob-pl-stem">{q.prompt_md}</div>
 
       {isChoice ? (
-        <div className="ob-opts" role="radiogroup" aria-label="选项">
-          {choices.map((c, i) => (
-            <button
-              type="button"
-              key={c}
-              className={`ob-opt${sel === i ? ' is-sel' : ''}`}
-              // biome-ignore lint/a11y/useSemanticElements: 设计稿卡片式选项（ob-opt 布局）；
-              // native <input type="radio"> 无法承载该布局，真 <button> + radiogroup ARIA
-              // 模式语义完整（同 PfSolo / PracticeChoiceOptions 先例）。
-              role="radio"
-              aria-checked={sel === i}
-              onClick={() => setSel(i)}
-            >
-              <span className="ob-opt-k">{String.fromCharCode(65 + i)}</span>
-              <span className="ob-opt-t">{c}</span>
-            </button>
-          ))}
-        </div>
+        <ChoiceSetResponse
+          options={options}
+          mode="single"
+          value={selIds}
+          onChange={setSelIds}
+          disabled={submitting}
+          ariaLabel="选项"
+        />
       ) : (
         <div className="ob-pl-answer">
-          <div className="composer answer-composer">
-            <textarea
-              rows={3}
-              value={text}
-              placeholder="写下你的作答——也可以拍照上传手写。"
-              onChange={(e) => setText(e.target.value)}
-              aria-label="作答"
-            />
-          </div>
-          <input
-            ref={fileRef}
-            type="file"
-            accept="image/png,image/jpeg,image/webp"
-            style={{ display: 'none' }}
-            onChange={(e) => void pickImage(e.target.files?.[0])}
+          <EvidenceComposer
+            text={text}
+            onTextChange={setText}
+            attachments={evidence}
+            onAttachmentsChange={setEvidence}
+            disabled={submitting}
+            placeholder="写下你的作答——也可以拍照上传手写。"
+            ariaLabel="作答"
+            upload={uploadAsset}
+            uploadErrorMessage="图片上传失败，请重试"
+            onUploadingChange={setUploading}
           />
-          <div className="hero-cta" style={{ marginTop: 'var(--s-3)' }}>
-            {hasImg ? (
-              <span className="ob-pl-attach">
-                <LoomIcon name="check" size={13} />
-                已附 {imgRefs.length} 张手写稿
-              </span>
-            ) : (
-              <Btn
-                variant="ghost"
-                size="sm"
-                icon="camera"
-                disabled={uploading}
-                onClick={() => fileRef.current?.click()}
-              >
-                {uploading ? '上传中…' : '拍照上传手写'}
-              </Btn>
-            )}
-          </div>
-          {uploadErr && (
-            <div className="ob-pl-upload-err" role="alert">
-              <LoomIcon name="alert" size={13} />
-              {uploadErr}
-            </div>
-          )}
         </div>
       )}
 
@@ -545,7 +502,7 @@ function PlacementQuestionCard({
         <Btn
           variant="primary"
           iconEnd={last ? 'check' : 'arrow'}
-          disabled={!answered || submitting}
+          disabled={!answered || submitting || uploading}
           onClick={() => void commit()}
         >
           {submitting ? '记录中…' : last ? '完成定位 · 看档案' : '下一题'}

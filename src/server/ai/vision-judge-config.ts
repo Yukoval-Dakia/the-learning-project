@@ -34,8 +34,17 @@
  * YUK-365 (deferred to call time, not validated here).
  */
 
-import type { Provider } from '@/ai/registry';
-import { isOauthProvider } from '@/server/ai/providers';
+import type { Provider, TaskKind } from '@/capabilities/task-registry';
+import { getLaneOverride } from '@/core/config/store';
+import { resolveModelProfile } from '@/server/ai/model-profiles';
+import { ANTHROPIC_SUB_DEFAULT_MODEL, isOauthProvider } from '@/server/ai/providers';
+
+/** Live consumers of the vision override; keep validation and read facts aligned. */
+export const VISION_JUDGE_TASK_KINDS = [
+  'StepsJudgeTask',
+  'MultimodalDirectJudgeTask',
+  'SourceGroundingVerifyTask',
+] as const satisfies readonly TaskKind[];
 
 /** Env var that names the provider for the two vision judges. Default UNSET. */
 export const VISION_JUDGE_PROVIDER_FLAG = 'VISION_JUDGE_PROVIDER';
@@ -44,6 +53,22 @@ export const VISION_JUDGE_MODEL_FLAG = 'VISION_JUDGE_MODEL';
 
 /** Env var holding the subscription-OAuth token (mirrors providers.ts). */
 const OAUTH_TOKEN_ENV = 'CLAUDE_CODE_OAUTH_TOKEN';
+
+/**
+ * YUK-924 site 4 — vision-judge lane availability, profile half. Returns the
+ * model id the named override lane would actually run, or undefined when no
+ * model can be named locally (the judge task's registry default then decides,
+ * which this module cannot see). Only anthropic-sub has a provider-built-in
+ * default; every other lane without an explicit VISION_JUDGE_MODEL stays
+ * UNCHECKED here — byte-identical to the pre-YUK-924 pass-through — and the
+ * runTask-time capability gate (model-profiles.ts) covers the resolved lane.
+ */
+function visionJudgeOverrideModel(
+  provider: Provider,
+  model: string | undefined,
+): string | undefined {
+  return model ?? (provider === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : undefined);
+}
 
 /**
  * Providers that authenticate via the subscription-OAuth lane and therefore
@@ -69,13 +94,21 @@ export type VisionJudgeEnv = Record<string, string | undefined>;
  *   rather than naming mimo. Returning the override here would only push the
  *   failure to call time (resolveTaskProvider throws when the token env is
  *   missing).
+ * - YUK-924 site 4 — a lane whose nameable model's ModelProfile CONFIRMS
+ *   `capabilities.vision === false` cannot serve the vision judges: warn and
+ *   return `undefined` (same degrade shape as the OAuth-token case). 'unknown'
+ *   and `true` pass through unchanged; when no model can be named locally the
+ *   check is skipped and the runTask-time capability gate owns the lane.
  * - Otherwise → `{ provider, model? }` (model only when `VISION_JUDGE_MODEL`
  *   is set; the resolver supplies the lane default, e.g. claude-opus-4-8).
  */
 export function visionJudgeProviderOverride(
   env: VisionJudgeEnv = process.env,
 ): { provider: Provider; model?: string } | undefined {
-  const provider = env[VISION_JUDGE_PROVIDER_FLAG];
+  // YUK-1007：DB lane 层 > env（传入 env 只作 fallback，DB 写入优先于它——
+  // 与 resolveTaskProvider 的全局 OVERRIDE 层一致）。
+  const lane = getLaneOverride('vision_judge', env);
+  const provider = lane?.provider;
   if (!provider) return undefined;
 
   if (isOAuthLaneProvider(provider as Provider) && !env[OAUTH_TOKEN_ENV]) {
@@ -85,6 +118,17 @@ export function visionJudgeProviderOverride(
     return undefined;
   }
 
-  const model = env[VISION_JUDGE_MODEL_FLAG] || undefined;
+  const model = lane?.model || undefined;
+  const nameableModel = visionJudgeOverrideModel(provider as Provider, model);
+  if (
+    nameableModel !== undefined &&
+    resolveModelProfile(provider as Provider, nameableModel).capabilities.vision === false
+  ) {
+    console.warn(
+      `[vision-judge] ${VISION_JUDGE_PROVIDER_FLAG}=${provider}${model ? ` ${VISION_JUDGE_MODEL_FLAG}=${model}` : ''} names model '${nameableModel}' whose profile confirms NO vision input — omitting the override so resolution falls through to the standard chain (declare the capability in the provider binding or pick a vision-capable model)`,
+    );
+    return undefined;
+  }
+
   return { provider: provider as Provider, model };
 }

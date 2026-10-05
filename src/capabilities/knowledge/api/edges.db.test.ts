@@ -194,6 +194,39 @@ describe('GET /api/knowledge/edges', () => {
   it('rejects an invalid cursor', async () => {
     expect((await getEdges('cursor=not-a-cursor')).status).toBe(400);
   });
+
+  it('does not expose fixture endpoints in learner edge payloads (YUK-897 E1)', async () => {
+    const db = testDb();
+    await seedKnowledge([
+      'k_visible',
+      'kc_yuk792_canary_20260731a',
+      'kc_yuk792_canary_20260731b',
+      'kc_yuk792_canary_20260731c',
+      'synthetic:yuwen:fixture',
+    ]);
+    await createKnowledgeEdge(db, {
+      from_knowledge_id: 'k_visible',
+      to_knowledge_id: 'kc_yuk792_canary_20260731a',
+      relation_type: 'related_to',
+    });
+    await createKnowledgeEdge(db, {
+      from_knowledge_id: 'kc_yuk792_canary_20260731b',
+      to_knowledge_id: 'k_visible',
+      relation_type: 'related_to',
+    });
+    await createKnowledgeEdge(db, {
+      from_knowledge_id: 'synthetic:yuwen:fixture',
+      to_knowledge_id: 'kc_yuk792_canary_20260731c',
+      relation_type: 'related_to',
+    });
+
+    const res = await getEdges();
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.rows).toEqual([]);
+    expect(JSON.stringify(body)).not.toContain('kc_yuk792_canary_20260731');
+    expect(JSON.stringify(body)).not.toContain('synthetic:');
+  });
 });
 
 describe('POST /api/knowledge/edges', () => {
@@ -379,13 +412,11 @@ describe('POST /api/knowledge/edges', () => {
 // YUK-737 — the direct POST /edges path had NO accept-time topology gate: a direct caller could write
 // a `prerequisite` edge that closes a cycle the proposal-accept fold would reject. These pin the new
 // gate (cycle → clean 409, not a 500) + a legal regression, under the faithful prod flip (ON).
-describe('POST /api/knowledge/edges — YUK-737 topology gate', () => {
+describe.each(['0', '1'])('POST /api/knowledge/edges — topology gate (legacy flag %s)', (flag) => {
   beforeEach(async () => {
     await resetDb();
-    // PROJECTION_IS_WRITER=1 is the LIVE prod state: the create projects the edge through the fold,
-    // whose ADR-0034 topology reject THROWS and rolls the write back; runEdgeTopologyGate's
-    // translateReject then surfaces it as a clean 409 (mirrors the accept-path lock suite).
-    vi.stubEnv('PROJECTION_IS_WRITER', '1');
+    vi.stubEnv('PROJECTION_IS_WRITER', flag);
+    vi.stubEnv('NODE_ENV', 'production');
   });
 
   afterEach(() => {

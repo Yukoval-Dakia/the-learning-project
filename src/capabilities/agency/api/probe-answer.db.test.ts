@@ -951,9 +951,11 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     expect(mockInvoke).not.toHaveBeenCalled();
   });
 
-  it('422 when probe kind is corrupt (early fail-closed before judge LLM cost)', async () => {
+  it('unrecognized kind label is NOT rejected — free-form label routes normally (YUK-386)', async () => {
     const probeId = await serveProbe();
-    // Corrupt the kind to a non-QuestionKind garbage value.
+    // kind is a free-form display label since YUK-386 — 'not-a-real-kind' is a
+    // legal persisted value (never a rejection reason). The judge route is
+    // driven by answer class / structure / judge_kind_override, not the label.
     await testDb()
       .update(question)
       .set({ kind: 'not-a-real-kind' })
@@ -961,10 +963,11 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
 
     mockInvoke.mockResolvedValue(invokeResult('incorrect'));
     const res = await answer(probeId, 'whatever');
-    expect(res.status).toBe(422);
-    // Early kind guard fires BEFORE the judge call (saves LLM cost).
-    expect(mockInvoke).not.toHaveBeenCalled();
-    expect(await probeResultEvents(probeId)).toHaveLength(0);
+    expect(res.status).toBe(200);
+    // The judge DID run (the probe carries serveProbeOnce's
+    // judge_kind_override='multimodal_direct', so routing never consulted kind).
+    expect(mockInvoke).toHaveBeenCalled();
+    expect(await probeResultEvents(probeId)).toHaveLength(1);
   });
 
   it('422 when judge_kind_override is corrupt (guard checks .success not truthiness — PR #705 CodeRabbit+OCR)', async () => {

@@ -22,7 +22,7 @@ const ctx: ToolContext = {
   db: {} as ToolContext['db'],
   taskRunId: 'run_test',
   providerAttemptCaller: 'worker',
-  providerSessionDeadlineAt: new Date('2026-08-09T03:01:00.000Z').getTime(),
+  providerSessionDeadlineAt: Date.now() + 60_000,
   callerActor: { kind: 'agent', ref: 'agent:coach' },
 };
 
@@ -54,10 +54,25 @@ describe('searchMemoryFactsTool', () => {
       },
       expect.objectContaining({
         caller: 'worker',
-        deadlineAt: new Date('2026-08-09T03:01:00.000Z'),
+        deadlineAt: new Date(ctx.providerSessionDeadlineAt as number),
         operationId: expect.any(String),
       }),
     );
+  });
+
+  it('fails before provider construction when the root is cancelled or out of budget', async () => {
+    const factory = vi.fn(() => stubClient().client);
+    const tool = buildSearchMemoryFactsTool({ memoryFactory: factory });
+    const cancelled = new AbortController();
+    cancelled.abort(new Error('root cancelled'));
+
+    await expect(
+      tool.execute({ ...ctx, signal: cancelled.signal }, { query: 'must not start' }),
+    ).rejects.toThrow('root cancelled');
+    await expect(
+      tool.execute({ ...ctx, providerSessionDeadlineAt: Date.now() - 1 }, { query: 'too late' }),
+    ).rejects.toThrow('hard_deadline_exceeded');
+    expect(factory).not.toHaveBeenCalled();
   });
 
   it('threads scopeKey into the documented { scope_key } filter shape (merged with NOT-superseded)', async () => {

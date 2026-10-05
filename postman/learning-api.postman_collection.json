@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "c1d2e3f4-a5b6-47c8-9d0e-1f2a3b4c5d6e",
     "name": "learning-api",
-    "description": "The Learning Project — Hono backend (server/app.ts).\n\nAuth: every /api/* request needs header `x-internal-token` (collection-level API-key auth → `{{internalToken}}`), except `/api/health`.\n\nBase URL: `{{baseUrl}}` (default http://localhost:8787 — the Hono dev port).\n\nPath vars and request bodies use placeholder example values — replace `REPLACE_*` and example IDs with real ones before sending mutating requests.\n\nGenerated from postman/api-endpoints.json by `pnpm gen:postman` — do not hand-edit. Run headlessly: `pnpm api:smoke [folder]`.",
+    "description": "The Learning Project — Hono backend (server/app.ts).\n\nAuth: every /api/* request needs header `x-internal-token` (collection-level API-key auth → `{{internalToken}}`), except `/api/health` and `/api/ready`.\n\nBase URL: `{{baseUrl}}` (default http://localhost:8787 — the Hono dev port).\n\nPath vars and request bodies use placeholder example values — replace `REPLACE_*` and example IDs with real ones before sending mutating requests.\n\nGenerated from postman/api-endpoints.json by `pnpm gen:postman` — do not hand-edit. Run headlessly: `pnpm api:smoke [folder]`.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "auth": {
@@ -103,6 +103,20 @@
       "name": "admin",
       "item": [
         {
+          "name": "GET /api/admin/config",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/config",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "config"]
+            },
+            "description": "热加载配置读面：registry key 生效值/来源分层/默认/接线状态 + TaskSpec 默认与覆盖\n\n**Notes:** 只读。keys[] 每行：value（env pin > DB > env fallback > code-default 分层合成）、source、default、env_mode、read_only（compose 强制键）、wired/consumer（运行时 reader 是否消费）。tasks[] 每行：静态 catalog 默认 + DB 覆盖（provider/model 按执行类型接线；budget_wiring/effective_budget 逐字段报告，chat费用与typed轮数未消费为null，调用参数及重试门仍优先）+ global_pin；effective_binding由真实resolver给出provider/model基线或安全错误（无凭据字段），未注入时null。providers[] 包含 pi_provider 原生身份及 models[] 的 id/api/input，模型清单与执行预设一致。不暴露 secret，不枚举 process.env 注入运行事实时无效global pin为null；视觉lane逐消费者解析、原生目录及能力校验，失败为null与安全说明。schedules包含server-event-subscriptions条件调度声明，不代表worker实际挂载。"
+          },
+          "response": []
+        },
+        {
           "name": "GET /api/admin/conjecture-scores",
           "request": {
             "method": "GET",
@@ -134,7 +148,7 @@
                 }
               ]
             },
-            "description": "查询过去 N 天的 AI 调用成本聚合\n\n**Query:**\n- `days` (optional) e.g. `30`\n\n**Notes:** days 默认 30；按币种返回 cost，并附 reported_cost、estimated_cost、legacy_cost、unknown_attempts、legacy_rows；by_truth 按 currency/entry_kind/cost_basis/cost_ref 提供可审计聚合；unknown 不进入金额 SUM"
+            "description": "查询过去 N 天的 AI 调用成本聚合\n\n**Query:**\n- `days` (optional) e.g. `30`\n\n**Notes:** days 默认 30；按币种返回 cost，并附 reported_cost、estimated_cost、legacy_cost、reported_attempts、estimated_attempts、unknown_attempts、legacy_rows；basis-specific attempt 计数让已知零金额保留来源；by_truth 按 currency/entry_kind/cost_basis/cost_ref 提供可审计聚合；unknown 不进入金额 SUM"
           },
           "response": []
         },
@@ -318,6 +332,34 @@
           "response": []
         },
         {
+          "name": "PATCH /api/admin/config",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/config",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "config"]
+            },
+            "description": "原子写入或重置注册配置（原生 provider/model 终态校验）\n\n**Notes:** 需 x-internal-token。整批行+journal+epoch 同事务；固定 actor=panel:admin。重复/未知键400、部署固定键409、非法模型/预算422、未注入writer503。返回 committed_epoch、snapshot_epoch、snapshot_current及changes；snapshot_current只指本进程观测到提交或更新版本，不代表worker确认或值未被后续写覆盖。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"changes\": [\n    {\n      \"action\": \"set\",\n      \"key\": \"task.QuizGenTask.provider\",\n      \"value\": \"opencode-go\"\n    },\n    {\n      \"action\": \"set\",\n      \"key\": \"task.QuizGenTask.model\",\n      \"value\": \"glm-5.3-flash\"\n    }\n  ],\n  \"note\": \"Use the native Go preset\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
           "name": "PATCH /api/admin/subjects/:id",
           "request": {
             "method": "PATCH",
@@ -342,6 +384,34 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"expectedRevision\": 0,\n  \"displayName\": \"化学基础\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/admin/config/reset",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/admin/config/reset",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "admin", "config", "reset"]
+            },
+            "description": "原子恢复一组配置到 env/registry 默认\n\n**Notes:** 需 x-internal-token。按整批删除后的原生组合校验，失败全部回滚。历史journal保留；清理后重新写入revision持续递增。响应与PATCH配置相同。",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"keys\": [\n    \"task.QuizGenTask.provider\",\n    \"task.QuizGenTask.model\"\n  ],\n  \"note\": \"Restore defaults\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -817,6 +887,20 @@
           "response": []
         },
         {
+          "name": "GET /api/copilot/sessions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/copilot/sessions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "copilot", "sessions"]
+            },
+            "description": "列出 Copilot 对话 session，最近更新优先\n\n**Notes:** 响应 { sessions: [{ id, status, title, created_at, updated_at }] }。"
+          },
+          "response": []
+        },
+        {
           "name": "GET /api/copilot/turns",
           "request": {
             "method": "GET",
@@ -831,10 +915,16 @@
                   "value": "20",
                   "disabled": true,
                   "description": "optional"
+                },
+                {
+                  "key": "session_id",
+                  "value": "REPLACE_COPILOT_SESSION_ID",
+                  "disabled": true,
+                  "description": "optional"
                 }
               ]
             },
-            "description": "获取最近 N 条 Copilot 对话轮次（ask/chip + reply 对），oldest→newest\n\n**Query:**\n- `limit` (optional) e.g. `20`\n\n**Notes:** limit 正整数，省略用服务端默认；响应 { turns: [...] }"
+            "description": "获取 Copilot 会话快照：历史轮次与按接纳顺序排列的未结束运行\n\n**Query:**\n- `limit` (optional) e.g. `20`\n- `session_id` (optional) e.g. `REPLACE_COPILOT_SESSION_ID`\n\n**Notes:** limit 正整数，省略用服务端默认；session_id 指定 Copilot session，省略时读取 current reusable session。响应同一数据库快照 { session_id, turns, active_runs }；active_runs 含 run_id/session_id/status/events_url，不依赖浏览器本地任务缓存。AI turn 的可选 run_id 仅关联同会话 ask/chip 根输入，用于合并恢复消息；不代表可撤回，撤回资格仍由 checkpoint_event_id 表达。primary_view.source=tool_result 可含服务端生成的 snapshot：available 时为有界公开结果及完整性说明，unavailable 时为原因；历史 ref-only 仍可读取。恢复不重新执行工具，快照不进入后续模型历史。"
           },
           "response": []
         },
@@ -858,10 +948,10 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "copilot", "chat"]
             },
-            "description": "向 Copilot 发送一条用户消息。普通 chat 会自动分流为 200 SSE 或 202 durable JSON；durable:false/true 可显式固定模式\n\n**Notes:** triggered_by 枚举：chat|chip。可选 correction_target_turn_id 必须是 conversation_history 中一个 AI reply 的 event id；它是更正已有回复的唯一显式目标，未提供时服务端不会把“上一轮”自动绑定到任何历史回复。未提供 durable 的普通 chat 先由 bounded classifier 分流：inline 返回 200 text/event-stream（event: delta 逐块，event: reply 终止）；多步/多 artifact 工作返回 202 JSON { run_id, session_id, checkpoint_event_id } 并带 Location，进度经通用 job-events SSE replay。durable:false 强制 inline，durable:true 强制 durable；chip 与 skill_context 保持 inline。Zod 失败时返回普通 JSON 错误。客户端应为每个逻辑 turn 发送稳定 Idempotency-Key（最多 200 字符）：同 key + 同规范化输入在 backlog/rate/classifier 之前重放原 202 handle；同 key + 不同输入返回 409 idempotency_conflict。user ask + QUEUED 原子受理，pg-boss 使用稳定 job id；send 状态无法确认时返回 503 copilot_enqueue_ambiguous，须用同 key 重试，不能生成新 turn。durable 原子受理前检测到断开则返回 499 且事务回滚。需 x-internal-token",
+            "description": "向 Copilot 发送消息；统一持久接纳 202，断线不取消，同会话顺序执行\n\n**Notes:** session_id 指定当前 Copilot conversation；省略时保留 find-or-create 行为。chat、chip 和教学均持久接纳，成功统一返回 202 JSON { run_id, session_id, checkpoint_event_id? } 与 Location。durable 字段仅兼容旧请求，不改变生命周期；chip 不声明手输消息撤回锚点。同会话按接纳顺序执行，进度经 job-events SSE replay，GET /api/copilot/turns 返回当前 session 与 active_runs。必须发送稳定 Idempotency-Key（1–200 字符）；同 key + 同规范化输入重放原受理结果，不同输入返回 409 idempotency_conflict。接纳提交前发现断线则 499 并回滚；提交后断线不取消执行。接纳状态不明时 503 copilot_enqueue_ambiguous，须用原 key 重试。队列禁用返回 503，不回退到 HTTP 内执行。correction_target_turn_id 仍只能明确指向历史 AI reply，不自动绑定上一轮。需 x-internal-token。",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"user_message\": \"帮我讲解之字主谓间用法\",\n  \"triggered_by\": \"chat\",\n  \"ambient_context\": {\n    \"route\": \"/today\",\n    \"focused_entity\": {\n      \"kind\": \"knowledge_node\",\n      \"id\": \"k_abc123\"\n    }\n  }\n}",
+              "raw": "{\n  \"session_id\": \"REPLACE_COPILOT_SESSION_ID\",\n  \"user_message\": \"帮我讲解之字主谓间用法\",\n  \"triggered_by\": \"chat\",\n  \"ambient_context\": {\n    \"route\": \"/today\",\n    \"focused_entity\": {\n      \"kind\": \"knowledge_node\",\n      \"id\": \"k_abc123\"\n    }\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -950,6 +1040,20 @@
             "description": "请求停止一个已受理的 durable Copilot run\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 无 body。首次请求按 execution fence 原子返回 cancelled（尚未开始付费执行）或 cancel_requested（运行中）；重复请求返回 already_requested，已落 outcome/终态返回 already_settled。未知或与 canonical user ask/session 不匹配的 handle 返回 404。运行中 Stop 由 worker 轮询 + SDK PreToolUse + DomainTool gate 协作中止，最终终态仍从 job-events SSE 读取。需 x-internal-token。"
           },
           "response": []
+        },
+        {
+          "name": "POST /api/copilot/sessions",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/copilot/sessions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "copilot", "sessions"]
+            },
+            "description": "创建一个新的 Copilot 对话 session\n\n**Notes:** 不替换或结束旧 session；返回 201 { session }。"
+          },
+          "response": []
         }
       ]
     },
@@ -966,7 +1070,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "cost", "today"]
             },
-            "description": "返回今日（BJT 午夜起）的花费汇总，用于 /today cost ribbon\n\n**Notes:** 按 BJT（UTC+8）午夜划窗口；按币种返回 cost、reported_cost、estimated_cost、legacy_cost、unknown_attempts、legacy_rows；by_truth 按 currency/entry_kind/cost_basis/cost_ref 提供可审计聚合；unknown 不进入金额 SUM，且不跨币种求和"
+            "description": "返回今日（BJT 午夜起）的花费汇总，用于 /today cost ribbon\n\n**Notes:** 按 BJT（UTC+8）午夜划窗口；按币种返回 cost、reported_cost、estimated_cost、legacy_cost、reported_attempts、estimated_attempts、unknown_attempts、legacy_rows；basis-specific attempt 计数让已知零金额保留来源；by_truth 按 currency/entry_kind/cost_basis/cost_ref 提供可审计聚合；unknown 不进入金额 SUM，且不跨币种求和"
           },
           "response": []
         }
@@ -1090,10 +1194,10 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "goals"]
             },
-            "description": "at-entry 直写 goal（冷启 P0 YUK-472）\n\n**Notes:** 冷启入口直写 goal（source=manual），与 ADR-0025 proposal-materialize 路径并存。scope 解析：knowledgeIds 优先，否则 subjectId 经 effective-domain 轴派生；二者皆不可解析/空 scope → 400。title 必填。返回 {id,title,subjectId,scopeKnowledgeIds,status}",
+            "description": "at-entry 直写 goal（冷启 P0 YUK-472）\n\n**Notes:** 冷启入口直写 goal（source=manual），与 ADR-0025 proposal-materialize 路径并存。scope 解析：knowledgeIds 优先，否则 subjectId 经 effective-domain 轴派生；空 scope 允许（冷启 north-star）。title 必填。declaredStage 可选（middle_school|high_school|university|custom，YUK-1009 学习者自述学段，落 goal.declared_stage 供供给侧课程范围约束消费，不作能力判定）。返回 {id,title,subjectId,scopeKnowledgeIds,declaredStage,status}",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"title\": \"高中文言文\",\n  \"subjectId\": \"yuwen\",\n  \"knowledgeIds\": [\n    \"kc-1\"\n  ]\n}",
+              "raw": "{\n  \"title\": \"高中文言文\",\n  \"subjectId\": \"yuwen\",\n  \"knowledgeIds\": [\n    \"kc-1\"\n  ],\n  \"declaredStage\": \"high_school\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1155,6 +1259,93 @@
             "body": {
               "mode": "raw",
               "raw": "{\n  \"suppressed_artifact_id\": \"artifact_xyz789\",\n  \"relation\": \"subtopic\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "issuances",
+      "item": [
+        {
+          "name": "GET /api/issuances/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/issuances/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "issuances", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "pending 恢复读面：issuance + live draft + 已接收提交（draft=null 即服务端无未保存草稿）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 返回 {issuance,draft,submissions}；issuance 不存在 → 404"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/issuances",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/issuances",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "issuances"]
+            },
+            "description": "issueAssessment：发题时绑定不可变 revision/目标 part/实际材料/选项展示映射（preselected≠issued；§3.1/§7.1）\n\n**Notes:** mode:auto_score(默认,要求 admitted) | manual(D9)；container_only 组必填 container_occurrence_ref。返回 {status,issuance,practice_dto(公开面无答案键),admission_generation_observed}。错误：not_found(404)/unpublished|suspended|withdrawn|not_admitted|container_ref_required|binding_invalid(422)/claim_unavailable|issuance_id_conflict(409)；replayed→200",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"group_id\": \"REPLACE_group_root\",\n  \"part_ids\": [\n    \"p1\"\n  ],\n  \"mode\": \"auto_score\",\n  \"container_occurrence_ref\": null,\n  \"claim\": {\n    \"claimed_by_ref\": \"REPLACE_occurrence\"\n  },\n  \"revision_id\": \"REPLACE_revision_optional\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/issuances/:id/responses",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/issuances/:id/responses",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "issuances", ":id", "responses"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "saveResponseDraft：D11 服务端自动保存（全练习面 solo/paper/placement 在 pinned issuance 上自动保存；ack 只在落库后产生）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** body={evaluation_group_ref?,response_set,group_evidence?,expected_save_epoch?}；response_set 只校验发出范围内槽位。返回 {status:'saved',issuance_id,save_epoch,updated_at}。错误：not_found(404)/invalid_response(422)/stale_draft(409)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"evaluation_group_ref\": \"REPLACE_group_or_null\",\n  \"response_set\": {\n    \"entries\": [\n      {\n        \"slot_id\": \"p1::r\",\n        \"kind\": \"choice\",\n        \"option_ids\": [\n          \"opt-a\"\n        ]\n      }\n    ]\n  },\n  \"group_evidence\": [],\n  \"expected_save_epoch\": 1\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -1241,10 +1432,16 @@
                   "value": "qid_abc123",
                   "disabled": true,
                   "description": "optional"
+                },
+                {
+                  "key": "subject",
+                  "value": "math",
+                  "disabled": true,
+                  "description": "optional"
                 }
               ]
             },
-            "description": "查询错题列表（event-stream 投影），支持时间过滤和 question 过滤\n\n**Query:**\n- `limit` (optional) e.g. `50`\n- `since` (optional) e.g. `2026-01-01T00:00:00Z`\n- `question_id` (optional) e.g. `qid_abc123`\n\n**Notes:** limit 默认 50 上限 200；since 为 ISO-8601；投影 shape：id/question_id/prompt_md/wrong_answer_md/knowledge_ids/cause/created_at"
+            "description": "查询错题列表（event-stream 投影），支持时间过滤和 question 过滤\n\n**Query:**\n- `limit` (optional) e.g. `50`\n- `since` (optional) e.g. `2026-01-01T00:00:00Z`\n- `question_id` (optional) e.g. `qid_abc123`\n- `subject` (optional) e.g. `math`\n\n**Notes:** limit 默认 50 上限 200；since 为 ISO-8601；subject 按 question → knowledge → effective_domain 派生；投影 shape：id/question_id/prompt_md/wrong_answer_md/knowledge_ids/cause/created_at"
           },
           "response": []
         },
@@ -1273,6 +1470,39 @@
                 }
               }
             }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "notes",
+      "item": [
+        {
+          "name": "GET /api/notes",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/notes",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "notes"],
+              "query": [
+                {
+                  "key": "subject",
+                  "value": "math",
+                  "disabled": true,
+                  "description": "optional"
+                },
+                {
+                  "key": "query",
+                  "value": "函数",
+                  "disabled": true,
+                  "description": "optional"
+                }
+              ]
+            },
+            "description": "列出已关联知识点的笔记，支持 subject 派生轴过滤与 query 文本搜索\n\n**Query:**\n- `subject` (optional) e.g. `math`\n- `query` (optional) e.g. `函数`\n\n**Notes:** subject 经 note knowledge_ids → knowledge effective_domain 派生；query 为标题/正文大小写不敏感子串匹配（title ILIKE OR body_blocks 序列化文本 ILIKE），与 subject AND 组合；仅返回未归档 note_atomic/note_hub/note_long"
           },
           "response": []
         }
@@ -1759,6 +1989,90 @@
             }
           },
           "response": []
+        },
+        {
+          "name": "POST /api/questions/:id/restore",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/questions/:id/restore",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "questions", ":id", "restore"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "恢复软归档题目（archive 的对偶）：contract withdrawn 复位 + 原子重取 live 去重 claim（YUK-1045）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** body={version(必填, 乐观锁)}；恢复为 draft（不直接回 active，重进 owner/verify 门）；级联恢复 archived_via_parent=本题的 parts；任一成员 claim 被占 → 409 claim_conflict 全组回滚；verify 挂起不解除（同版复核通过才恢复准入）；题不存在 404、非归档题 409、intervention 诊断题 409；需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"version\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/questions/quiz-gen",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/questions/quiz-gen",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "questions", "quiz-gen"]
+            },
+            "description": "owner 手动 quiz_gen 补库触发面：给指定知识点入队 N 道题的生成（YUK-605 ① / YUK-555）\n\n**Notes:** body = {knowledge_id(必填), count(默认 3；1..15 硬顶——超顶 400；≥6 响应带 warning 但照常受理), generation_method(可选 material_grounded|closed_book；material_grounded 需 TAVILY_API_KEY，未配 → 409)}；knowledge_id 必须命中未归档 knowledge 行，空读 → 404（不入队）；复用 dispatcher 的 kernel enqueue 面入队 quiz_gen 队列（trigger=manual）；202 返回 {status:'enqueued', queue:'quiz_gen', job_id, knowledge_id, count[, generation_method][, warning]}；入队无 job id → 502；需 x-internal-token",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"knowledge_id\": \"kn_abc123\",\n  \"count\": 5,\n  \"generation_method\": \"closed_book\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "ready",
+      "item": [
+        {
+          "name": "GET /api/ready",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ready",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ready"]
+            },
+            "description": "DB contract epoch readiness（YUK-1055：health ≠ readiness）\n\n**Notes:** 无需 x-internal-token（中间件豁免）；返回 {ok, epoch, state, code_epoch, reason}；维护窗或 epoch 不匹配时 503",
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": []
         }
       ]
     },
@@ -1901,6 +2215,39 @@
       ]
     },
     {
+      "name": "submissions",
+      "item": [
+        {
+          "name": "POST /api/submissions",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/submissions",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "submissions"]
+            },
+            "description": "saveSubmission：ResponseSet 幂等保存（同 (group,idempotency_key) 一致→replayed 200 / 不同→409；绑定不可变 revision，不回取 latest）\n\n**Notes:** 单事务：evaluation_group upsert→assessment_submission 不可变行→初始 head→清对应 draft→事件。返回 {status,submission,revision_id,issuance_id}。错误：issuance_not_found(404)/invalid_response(422)/revision_not_found|group_conflict|idempotency_conflict(409)",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"issuance_id\": \"REPLACE_issuance\",\n  \"evaluation_group_id\": \"REPLACE_group\",\n  \"idempotency_key\": \"REPLACE_key\",\n  \"response_set\": {\n    \"entries\": [\n      {\n        \"slot_id\": \"p1::r\",\n        \"kind\": \"choice\",\n        \"option_ids\": [\n          \"opt-a\"\n        ]\n      }\n    ]\n  },\n  \"group_evidence\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "teaching-sessions",
       "item": [
         {
@@ -1971,7 +2318,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "workbench", "overnight-digest"]
             },
-            "description": "昨夜窗 digest 只读读模型（A1 夜窗交班，YUK-520）\n\n**Notes:** 窗口=Asia/Shanghai 日界前一日历日（昨日 00:00 BJT 含 → 今日 00:00 BJT 不含；owner 可调，默认前一日历日）。返回 { window:{from,to}, has_overnight_activity, runs:[{task_kind,count,status_breakdown}], note_changes_count, new_proposals_count, new_conjectures_count, agent_notes_count }。5 夜间事实源任一窗内有事实 → has_overnight_activity=true（空夜显式信号，与加载中/失败可区分）。new_proposals 不含 conjecture（两数不重叠）。纯读零写；prep-desk confidence/predicted_p 等内部校准数永不过 wire（只取 count）。需 x-internal-token"
+            "description": "昨夜窗 digest 只读读模型（A1 夜窗交班，YUK-520）\n\n**Notes:** 窗口=Asia/Shanghai 日界前一日历日（昨日 00:00 BJT 含 → 今日 00:00 BJT 不含；owner 可调，默认前一日历日）。返回 { window:{from,to}, has_overnight_activity, runs:[{task_kind,count,status_breakdown}], note_changes_count, new_proposals_count, new_conjectures_count, agent_notes_count }。另返回 degraded_kinds 与 cost:{scope:all_activity,records,by_currency,details}。cost覆盖该日全部前台/后台账本记录，按provider/model/lane/task与费用/用量来源分组；reported/estimated/unknown/legacy及币种分开，未知lane/用量保留；记录数不是物理请求数，目录估算不是订阅额度扣减。5 原有事实源任一窗内有事实 → has_overnight_activity=true；费用记录独立在cost中展示，不冒充任务/业务产出（空夜显式信号，与加载中/失败可区分）。new_proposals 不含 conjecture（两数不重叠）。纯读零写；prep-desk confidence/predicted_p 等内部校准数永不过 wire（只取 count）。需 x-internal-token"
           },
           "response": []
         }

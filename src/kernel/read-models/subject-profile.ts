@@ -1,5 +1,5 @@
 import { getAllowedCauseIds } from '@/core/schema/cause';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { ApiError } from '@/kernel/http';
 import {
   type SubjectProfile,
@@ -14,7 +14,7 @@ import { getEffectiveDomain } from './knowledge-tree';
  * cannot silently change the task prompt to the generic subject profile.
  */
 export async function resolveSubjectProfileForKnowledgeIdsStrict(
-  db: Db,
+  db: Db | Tx,
   knowledgeIds: string[],
 ): Promise<SubjectProfile> {
   const firstKnowledgeId = knowledgeIds[0];
@@ -32,7 +32,7 @@ export async function resolveSubjectProfileForKnowledgeIdsStrict(
 }
 
 export async function resolveSubjectProfileForKnowledgeIds(
-  db: Db,
+  db: Db | Tx,
   knowledgeIds: string[],
 ): Promise<SubjectProfile> {
   const firstKnowledgeId = knowledgeIds[0];

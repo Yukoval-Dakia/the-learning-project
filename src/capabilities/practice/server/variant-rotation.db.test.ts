@@ -13,7 +13,7 @@ import {
   selectProbeFromPrefetch,
 } from '@/capabilities/practice/server/variant-rotation';
 import type { Db } from '@/db/client';
-import { event, question } from '@/db/schema';
+import { event, question, question_group_lifecycle } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 // YUK-716 — count-instrumenting Proxy over a drizzle db: increments `counter.n` per `.select()`
@@ -167,6 +167,31 @@ describe('pickProbeForKnowledge', () => {
 
     const chosen = await pick({ knowledgeId: 'k_rd', lastReviewEventId: evt });
     expect(chosen?.question_id).toBe('q_recall_active');
+  });
+
+  // YUK-1045（复审 P1）— recall 回放同样走契约准入门：上一题被 verify 挂起
+  // （lifecycle suspended）时不得借 recall 通道送达，回落 K 内首个可用题。
+  it('recall: skips a verify-suspended last question and falls back within K', async () => {
+    const db = testDb();
+    const now = new Date();
+    await seedQuestion('q_recall_susp', { kind: 'fill_blank', knowledge_ids: ['k_susp'] });
+    await seedQuestion('q_recall_free', { kind: 'fill_blank', knowledge_ids: ['k_susp'] });
+    await db.insert(question_group_lifecycle).values({
+      group_id: 'q_recall_susp',
+      availability: 'general_pool',
+      scoring_admission_state: 'withheld',
+      scoring_admission_withheld_reason: 'verification_failed',
+      claim_policy: 'unbounded',
+      suspended: true,
+      suspension_reason: 'verify_hold',
+      withdrawn: false,
+      created_at: now,
+      updated_at: now,
+    });
+    const evt = await seedReviewEvent('q_recall_susp');
+
+    const chosen = await pick({ knowledgeId: 'k_susp', lastReviewEventId: evt });
+    expect(chosen?.question_id).toBe('q_recall_free');
   });
 
   it('recall: falls back when last question no longer tags K', async () => {

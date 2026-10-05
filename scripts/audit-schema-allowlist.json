@@ -1,4 +1,276 @@
 {
+  "copilot_continuation.subagent_run_id": {
+    "reason": "ADR-0063 retained historical continuation subagent_run_id: preserved by schema/export and legacy-drain-readiness checks. Test/rehearsal inserts are not current production writers. No new producer or worker is permitted; retirement requires the same owner-approved cross-installation retention decision as the other continuation columns.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.session_id": {
+    "reason": "ADR-0063 retained historical continuation session_id: preserved by schema/export and legacy-drain-readiness checks. Test/rehearsal inserts are not current production writers. No new producer or worker is permitted; retirement requires the same owner-approved cross-installation retention decision as the other continuation columns.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.parent_turn_event_id": {
+    "reason": "ADR-0063 retained historical continuation parent_turn_event_id: preserved by schema/export and legacy-drain-readiness checks. Test/rehearsal inserts are not current production writers. No new producer or worker is permitted; retirement requires the same owner-approved cross-installation retention decision as the other continuation columns.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.result_event_id": {
+    "reason": "ADR-0063 retained historical continuation result_event_id: preserved by schema/export and legacy-drain-readiness checks. Test/rehearsal inserts are not current production writers. No new producer or worker is permitted; retirement requires the same owner-approved cross-installation retention decision as the other continuation columns.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.status": {
+    "reason": "ADR-0063 retained historical continuation status: preserved by schema/export and legacy-drain-readiness checks. Test/rehearsal inserts are not current production writers. No new producer or worker is permitted; retirement requires the same owner-approved cross-installation retention decision as the other continuation columns.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "subagent_run.claim_token": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "subagent_run.hard_deadline_at": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "subagent_run.child_task_run_id": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "subagent_run.pg_boss_job_id": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.claim_token": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.lease_expires_at": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.task_run_id": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.reply_event_id": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.pg_boss_job_id": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.error_code": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.error_message": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.started_at": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_continuation.settled_at": {
+    "reason": "YUK-951 / ADR-0063 retires legacy mailbox execution after verified drain. Retain historical fields for migration refusal, export and prior-worker rollback; no new legacy writer is planned.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-951 B3: owner-approved historical schema retention/retirement decision after rollback horizon; native projection discriminator must remain sound",
+      "expected_by": "2026-10-08"
+    }
+  },
+  "copilot_evidence_checkpoint.task_kind": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.slot": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.protocol_version": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.prompt_fingerprint": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.base_input_sha256": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.source_catalog_sha256": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.binding_extras": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.status": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.revision": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.records_json": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.record_digests_json": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.attempts_json": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.sealed_output_json": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.sealed_digest_sha256": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.sealed_task_run_id": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
+  "copilot_evidence_checkpoint.expires_at": {
+    "reason": "YUK-939 / ADR-0058 retires the checkpoint writer. Preserve historical rows and export/restore compatibility; this is not a planned new write path.",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "Owner signs off historical Copilot evidence retention and a separately authorized schema retirement; no production data deletion in YUK-939",
+      "expected_by": "2026-10-05"
+    }
+  },
   "_comment": "Schema fields with no INSERT/UPDATE write path. Each entry MUST have reason + resolves_when. When the resolving milestone lands, remove from this allowlist.",
   "intervention.outcome": {
     "reason": "YUK-791 creates and activates the versioned preparation aggregate; YUK-792 owns delayed/transfer verification settlement and is the first writer of the terminal outcome.",
@@ -97,11 +369,11 @@
     }
   },
   "answer.vision_extracted": {
-    "reason": "U5 (YUK-203) revives `answer` as the paper draft layer with text+choice input; vision_extracted holds OCR text for the scratch-image answer path whose CAPTURE UI is explicitly DEFER in U5 (plan §1 non-goals — data model must not block image upload, but MVP ships text+choice only). Write path lands with the scratch-image answer-capture UI.",
+    "reason": "U5 (YUK-203) revives `answer` as the paper draft layer with text+choice input; vision_extracted holds OCR text for the scratch-image answer path whose CAPTURE UI is explicitly DEFER in U5 (plan §1 non-goals — data model must not block image upload, but MVP ships text+choice only). Write path lands with the scratch-image answer-capture UI. Rechecked 2026-10-03: still deferred, not implemented; bounded follow-up YUK-1113.",
     "resolves_when": {
       "kind": "manual",
-      "ref": "scratch-image answer-capture UI implemented (CO §5.7 image input)",
-      "expected_by": "2026-09-30"
+      "ref": "YUK-1113: implement the documented producer and consumer together, or retire with a compatible migration; review by 2026-10-10",
+      "expected_by": "2026-10-10"
     }
   },
   "artifact.id": {
@@ -241,132 +513,12 @@
     }
   },
   "_comment_phase1c1_lane_a": "Phase 1c.1 Lane A added 4 new tables (event, learning_session, material_fsrs_state, knowledge_edge). Their write paths land in Lane B (Zod schemas in src/core/schema/event/**) and main-lane Step 4-6 (server read-path rewrite + /api/events + edges CRUD). Lane A only declares schema; write paths must follow.",
-  "learning_session.summary_md": {
-    "reason": "type='conversation' session summary; Lane B / Step 5 LearningSession module writes | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 5 LearningSession.Conversation handler implemented",
-      "expected_by": "2026-09-30"
-    }
-  },
   "learning_session.goal_id": {
     "reason": "Phase 1d goal linkage placeholder; not written in 1c.1 | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
     "resolves_when": {
       "kind": "manual",
       "ref": "Phase 1d goal-tracking implementation",
       "expected_by": "2026-11-15"
-    }
-  },
-  "learning_session.started_at": {
-    "reason": "Session writer in Lane B / Step 5; defaults via DB but no app-level write yet | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 5 LearningSession module implemented",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "learning_session.ended_at": {
-    "reason": "Session end transition in Lane B / Step 5 | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 5 LearningSession module implemented",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event.session_id": {
-    "reason": "event-stream writer lands in Lane B / Step 4 (server read-path rewrite + events queries module) | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 4 events writer module implemented",
-      "expected_by": "2026-08-31"
-    }
-  },
-  "event.actor_kind": {
-    "reason": "Same as event.session_id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 4 events writer module implemented",
-      "expected_by": "2026-08-31"
-    }
-  },
-  "event.actor_ref": {
-    "reason": "Same as event.session_id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 4 events writer module implemented",
-      "expected_by": "2026-08-31"
-    }
-  },
-  "event.action": {
-    "reason": "Same as event.session_id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 4 events writer module implemented",
-      "expected_by": "2026-08-31"
-    }
-  },
-  "event.subject_kind": {
-    "reason": "Same as event.session_id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 4 events writer module implemented",
-      "expected_by": "2026-08-31"
-    }
-  },
-  "event.subject_id": {
-    "reason": "Same as event.session_id | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 4 events writer module implemented",
-      "expected_by": "2026-08-31"
-    }
-  },
-  "event.caused_by_event_id": {
-    "reason": "event chain — judge ← attempt link; Lane B / Step 4 attribution writer | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 4 attribution event writer implemented",
-      "expected_by": "2026-08-31"
-    }
-  },
-  "event.cost_micro_usd": {
-    "reason": "AI event cost stamping in Lane B / Step 7 AI prompt/registry updates | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 7 AI prompts emit cost on event write",
-      "expected_by": "2026-08-31"
-    }
-  },
-  "material_fsrs_state.subject_kind": {
-    "reason": "FSRS projection writer in Step 4-5 review handler | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented",
-      "expected_by": "2026-09-15"
-    }
-  },
-  "material_fsrs_state.subject_id": {
-    "reason": "Same as material_fsrs_state.subject_kind | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented",
-      "expected_by": "2026-09-15"
-    }
-  },
-  "material_fsrs_state.due_at": {
-    "reason": "Same as material_fsrs_state.subject_kind | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented",
-      "expected_by": "2026-09-15"
-    }
-  },
-  "material_fsrs_state.last_review_event_id": {
-    "reason": "Same as material_fsrs_state.subject_kind | staggered 2026-07-07 (redline-audit P6): orig expected_by 2026-07-31 — grouped by milestone-ref to break the 49-entry same-day cliff.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "Phase 1c.1 Step 4-5 review event → FSRS state projection implemented",
-      "expected_by": "2026-09-15"
     }
   },
   "knowledge_edge.from_knowledge_id": {
@@ -410,44 +562,20 @@
     }
   },
   "_comment_b1_w1_soft_track": "B1-W1 (ADR-0035) soft-track columns. n=1 (single learner) makes the cohort-structured IRT/CDM/KT parameters STRUCTURALLY non-estimable — this is a ceiling of the single-learner regime (Stocking 1990 / B1 foundation §6.3), NOT a 'write path not built yet' gap. They NEVER feed p(L)/scheduling (ADR-0035 决定 #4). kind:'manual' because the Wave 2 phase is not yet named in docs/superpowers/status.md (a kind:'phase' entry would fail the phase-match check). NOTE (YUK-348): item_calibration.kt_json is NO LONGER allowlisted — it now has an UPDATE write path via src/server/mastery/kt-calibration.ts applyKtEstimate (BKT forward sink, prior-echo at n=1), so audit:schema sees it as update-only (non-stub). It remains a PURE PERSISTENCE SINK with ZERO downstream consumer — having a write path does NOT soften 决定 #4. The other 5 columns (irt_a/irt_c/cdm_json + the 2 mastery_state columns) stay NULL + allowlisted.",
-  "item_calibration.irt_a": {
-    "reason": "软轨区分度：n=1 无 cohort 结构性不可估（Stocking 1990）。慢热 firm-up 有天花板，置信上限受 n=1 约束、非纯时间问题（B1 foundation §6.3）",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "B1 Wave2 软轨估计器接通",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "item_calibration.irt_c": {
-    "reason": "软轨猜测下限：同 irt_a，n=1 结构性不可估",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "B1 Wave2 软轨估计器接通",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "item_calibration.cdm_json": {
-    "reason": "软轨 CDM slip/guess 画像：CDM 估计器 n=1 原样回吐先验，钉软轨不进 p(L)/调度（ADR-0035）",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "B1 Wave2 软轨估计器接通",
-      "expected_by": "2026-09-30"
-    }
-  },
   "mastery_state.calibration_residual": {
-    "reason": "fixed-anchor 慢热残差：Wave2 复盘/锚校准路径才写。残差精度继承锚质量，n=1 受结构性约束（B1 foundation）",
+    "reason": "fixed-anchor 慢热残差：Wave2 复盘/锚校准路径才写。残差精度继承锚质量，n=1 受结构性约束（B1 foundation） Rechecked 2026-10-03: still deferred, not implemented; bounded follow-up YUK-1113.",
     "resolves_when": {
       "kind": "manual",
-      "ref": "B1 Wave2 fixed-anchor 残差路径",
-      "expected_by": "2026-09-30"
+      "ref": "YUK-1113: implement the documented producer and consumer together, or retire with a compatible migration; review by 2026-10-10",
+      "expected_by": "2026-10-10"
     }
   },
   "mastery_state.fluency_illusion_flag": {
-    "reason": "流畅度幻觉旗：A2 复盘判定才置位（Wave2）。本 wave 无复盘触发路径",
+    "reason": "流畅度幻觉旗：A2 复盘判定才置位（Wave2）。本 wave 无复盘触发路径 Rechecked 2026-10-03: still deferred, not implemented; bounded follow-up YUK-1113.",
     "resolves_when": {
       "kind": "manual",
-      "ref": "B1 Wave2 A2 复盘判定",
-      "expected_by": "2026-09-30"
+      "ref": "YUK-1113: implement the documented producer and consumer together, or retire with a compatible migration; review by 2026-10-10",
+      "expected_by": "2026-10-10"
     }
   },
   "mastery_state.theta_grid_json": {
@@ -474,28 +602,20 @@
       "expected_by": "2027-01-15"
     }
   },
-  "subject_trait_journal.source_trait_id": {
-    "reason": "journal 血统/回滚字段（v3 合同 §3.2/§3.3）：唯一写者 = YUK-601 的 fork/fork-and-edit 写面（journal rev-0 'fork_source' 行）。本单（YUK-599 地基）只建表 + 读侧（hydrate 降级链），写面按判词 C 排在 602 之后落。",
+  "system_config_journal.change_seq": {
+    "reason": "YUK-1007 配置审计 journal 的全序坐标由 DB 端 DEFAULT nextval('config_change_seq') 写入（drizzle .default(sql`nextval(...)`)）——与 subject_*_journal.change_seq 同款：审计只扫代码侧 INSERT/UPDATE 写点，看不见 DB default。非 stub：每次 setConfig/clearConfig 的 journal insert 都实写；restore 尾另有 setval 同步序列高水位（archive.ts，round-2 P1）。",
     "resolves_when": {
       "kind": "manual",
-      "ref": "YUK-601 fork 端点落地（source_trait_id 随 fork_source 行实写）",
-      "expected_by": "2026-09-30"
+      "ref": "audit-schema-writes 支持识别 DB-default 写路径（或配置写面落显式 nextval 取值）",
+      "expected_by": "2027-01-15"
     }
   },
-  "subject_trait_journal.source_revision": {
-    "reason": "journal 血统/回滚字段（v3 合同 §3.2/§3.3）：唯一写者 = YUK-601 的 fork/fork-and-edit 写面（journal rev-0 'fork_source' 行）。本单（YUK-599 地基）只建表 + 读侧（hydrate 降级链），写面按判词 C 排在 602 之后落。",
+  "system_config_epoch.epoch": {
+    "reason": "YUK-1007 失效轴：唯一写者 = write.ts bumpEpoch 与 archive.ts restore 尾的 RAW SQL upsert（nextval/setval/greatest，含 round-2 两轴去重修复）——审计只扫 drizzle 调用点，看不见 sql`...` 原文里的列写。非 stub：每次配置写/restore 都实写（journal/epoch 共用 config_change_seq 全序轴）。",
     "resolves_when": {
       "kind": "manual",
-      "ref": "YUK-601 fork 端点落地（source_revision 随 fork_source 行实写）",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "subject_trait_journal.rolled_back_from": {
-    "reason": "journal 血统/回滚字段（v3 合同 §3.2/§3.3）：唯一写者 = YUK-601 的 rollback-forward 写面（action='rollback' 行）。本单（YUK-599 地基）只建表 + 读侧（hydrate 降级链），写面按判词 C 排在 602 之后落。",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-601 rollback 端点落地（rolled_back_from 随 rollback 行实写）",
-      "expected_by": "2026-09-30"
+      "ref": "audit-schema-writes 支持识别 raw-SQL 写路径（或 bumpEpoch 改用 drizzle 表达式写法）",
+      "expected_by": "2027-01-15"
     }
   },
   "hub_sync_reconciliation.artifact_id": {
@@ -714,364 +834,12 @@
       "expected_by": "2027-01-31"
     }
   },
-  "event.dispatch_seq": {
-    "reason": "YUK-751 event insertion-order diagnostic is written by PostgreSQL DEFAULT nextval('event_dispatch_seq') after deterministic migration 0076 backfill; audit:schema scans TypeScript writes and cannot see database defaults.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 event_dispatch_seq database default and migration backfill",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_checkpoint.subscriber_id": {
-    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_checkpoint.subscriber_version": {
-    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_checkpoint.declaration_hash": {
-    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_checkpoint.status": {
-    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_checkpoint.next_delivery_seq": {
-    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_checkpoint.claim_owner": {
-    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_checkpoint.claim_token": {
-    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_checkpoint.claim_lease_until": {
-    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_checkpoint.bootstrapped_at": {
-    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_checkpoint.activated_at": {
-    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
   "event_subscription_checkpoint.paused_at": {
-    "reason": "YUK-751 durable subscription checkpoint state is written by the raw-SQL dispatcher/bootstrap runtime (src/server/event-subscriptions/runtime.ts insert/update over event_subscription_checkpoint), not a typed Drizzle write path; audit:schema scans TypeScript typed writes and cannot see raw-SQL statements.",
+    "reason": "Reserved dispatcher pause/resume state: runtime.ts currently has no production write to paused_at. This is NOT a raw-SQL scanner false negative. YUK-1113 tracks a real pause/resume owner service or compatible retirement.",
     "resolves_when": {
       "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_delivery.subscriber_id": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_delivery.subscriber_version": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_delivery.source_event_id": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_delivery.source_dispatch_seq": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_delivery.delivery_seq": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_delivery.status": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_delivery.attempt_count": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_delivery.redrive_count": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_delivery.next_attempt_at": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_delivery.claim_owner": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_delivery.claim_token": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_delivery.claim_lease_until": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_delivery.last_error": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_delivery.outcome": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_delivery.discovered_at": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_delivery.claimed_at": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_delivery.completed_at": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_effect.attempt_event_id": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_effect.artifact_id": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_effect.effect_kind": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_effect.subscriber_id": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_effect.subscriber_version": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_effect.source_event_id": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_effect.mastery_event_ids": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_effect.evidence_ids": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_effect.question_id": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_effect.status": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_effect.stable_job_key": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_effect.downstream_job_id": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_effect.reserved_at": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_effect.enqueued_at": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_effect.completed_at": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
-    }
-  },
-  "event_subscription_effect.outcome": {
-    "reason": "YUK-751 schema-first durable subscription state. This PR intentionally ships only schema/migration; dispatcher/bootstrap/effect workers supply the typed write paths in the immediately following YUK-751 runtime PRs.",
-    "resolves_when": {
-      "kind": "manual",
-      "ref": "YUK-751 durable dispatcher/bootstrap/effect runtime write paths",
-      "expected_by": "2026-09-30"
+      "ref": "YUK-1113: implement the documented producer and consumer together, or retire with a compatible migration; review by 2026-10-10",
+      "expected_by": "2026-10-10"
     }
   },
   "_comment_yuk850_historical_misconception_reconciliation": "YUK-850 deletes the unreachable misconception reconciliation runtime and its writer while deliberately retaining the table declaration and migrations so existing databases and any historical rows remain readable. F4.1 must make the final retain-or-drop decision; no new runtime writer may be added in the meantime.",
@@ -1169,6 +937,286 @@
       "kind": "phase",
       "ref": "F4.1 quantitative architecture audit decides historical misconception reconciliation table retention",
       "expected_by": "2026-11-30"
+    }
+  },
+  "question_revision.revision_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.group_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.revision_ordinal": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.integrity_digest": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.structure": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.response_spec": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.scoring_basis": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.execution_plan": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.supersedes_revision_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.availability": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.published_by": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_revision.published_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_revision ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_revision",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.group_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.current_revision_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.availability": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.scoring_admission_state": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.scoring_admission_evidence": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.scoring_admission_generation": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.claim_policy": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.suspended": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.suspension_reason": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.withdrawn": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.withdrawn_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.created_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.updated_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_admission_verification.id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_admission_verification ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_admission_verification",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_admission_verification.revision_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_admission_verification ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_admission_verification",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_admission_verification.revision_digest": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_admission_verification ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_admission_verification",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_admission_verification.policy_id": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_admission_verification ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_admission_verification",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_admission_verification.generation": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_admission_verification ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_admission_verification",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_admission_verification.outcome": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_admission_verification ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_admission_verification",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_admission_verification.evidence": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_admission_verification ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_admission_verification",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_admission_verification.recorded_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_admission_verification ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_admission_verification",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.scoring_admission_withheld_reason": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
+    }
+  },
+  "question_group_lifecycle.scoring_admission_decided_at": {
+    "reason": "YUK-1044 schema/snapshot lane is DDL-only by design: question_group_lifecycle ships before its writer. Write paths land with YUK-1043 (publisher lane) per the YUK-1038 work DAG; until then this column has no writer (no original-content dual-write in this ticket).",
+    "resolves_when": {
+      "kind": "manual",
+      "ref": "YUK-1043 (publisher lane) lands INSERT/UPDATE write paths for question_group_lifecycle",
+      "expected_by": "2026-12-31"
     }
   }
 }

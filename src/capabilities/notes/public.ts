@@ -20,12 +20,20 @@ export {
 // artifact's body blocks into note sections; expose the single projection
 // instead of a deep import into notes/server.
 export { bodyBlocksToNoteSections } from './server/body-blocks';
+// YUK-1007 — notes 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
+// 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
+export { notesConfigEffectiveFacts } from './server/config-effective-facts';
 export type {
   CreateLearningIntentNoteFn,
   CreateLearningIntentNoteInput,
 } from './server/learning-intent-note';
 export { createLearningIntentNote } from './server/learning-intent-note';
-export { dispatchNoteGeneration, writeNoteGenerationIntent } from './server/note-handoff';
+export { getLiveArtifactType } from './server/live-artifact-reference';
+export {
+  NOTE_HANDOFF_ACTION,
+  dispatchNoteGeneration,
+  writeNoteGenerationIntent,
+} from './server/note-handoff';
 export {
   type PersistNoteRefineApplyResult,
   listNoteRefineChanges,
@@ -35,10 +43,16 @@ export {
 export {
   enqueueDreamingNoteRefine,
   enqueueMasteryNoteRefine,
+  enqueueNoteRefineTrigger,
 } from './server/note-refine-triggers';
 export type { NoteSummary } from './server/notes-read';
 export {
   interactiveForKnowledge,
+  listNotes,
   notesForKnowledge,
 } from './server/notes-read';
 export type { NoteUpdateAcceptResult } from './server/proposal-accept-applier';
+export { archiveProposalArtifacts } from './server/proposal-artifacts';
+
+// YUK-1062 — task composition uses the narrow task-public entry directly.
+export { notesTaskSpecs } from './task-public';

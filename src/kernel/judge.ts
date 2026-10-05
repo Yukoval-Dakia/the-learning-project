@@ -3,9 +3,21 @@
 // fixture 的 judge 调用统一从这里取。不承载业务逻辑，只 re-export 下方显式清单里的判题面；
 // 清单覆盖当前全部真实消费符号——新增出口必须显式加入清单，禁止 export *。
 
-export type { AnswerInput, JudgeResult } from '@/capabilities/practice/server/judge';
+export type { AnswerInput, JudgeResult } from '@/capabilities/practice/public';
 export {
+  type ContractAttemptInput,
+  type ContractAttemptOutcome,
+  type ContractGradingRef,
+  EVALUATION_ENTRY_POINTS,
+  type EntryPointDisposition,
+  type EvaluateAttemptInput,
+  type EvaluateAttemptOutcome,
+  EvaluateSubmissionError,
+  type EvaluateSubmissionRequest,
+  type EvaluateSubmissionResult,
+  type GradingEntryPoint,
   IMAGE_CONSUMING_JUDGE_ROUTES,
+  type JevModelExecutorSpec,
   type JudgeAnswerParams,
   type JudgeAnswerResult,
   type JudgeInvokerOutput,
@@ -14,15 +26,19 @@ export {
   type JudgeRoute,
   type JudgeRouteQuestionRow,
   type JudgeRouterInput,
+  type LegacyAttemptInput,
+  type LegacyAttemptOutcome,
   MODEL_BACKED_JUDGE_ROUTES,
   type MultimodalDirectImageFetchFn,
   type MultimodalDirectRunTaskFn,
   createDefaultJudgeInvoker,
   defaultImageFetch,
+  evaluateAttempt,
+  evaluateSubmission,
   isModelBackedJudgeRoute,
   judgeAnswer,
   judgeRouter,
   judgeRouterV2,
   resolveQuestionJudgeRoute,
   runMultimodalDirectJudge,
-} from '@/capabilities/practice/server/judge';
+} from '@/capabilities/practice/public';

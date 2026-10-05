@@ -9,7 +9,6 @@ import {
   Artifact,
   CauseCategory,
   CauseSchema,
-  DEFAULT_META_CAUSE_BY_CATEGORY,
   FsrsState,
   KnowledgeInsert,
   LearningItemInsert,
@@ -23,6 +22,7 @@ import {
   QuestionInsert,
   Rubric,
   SourceAsset,
+  getMetaCausePrior,
   validateCauseAgainstProfile,
 } from './index';
 
@@ -109,14 +109,19 @@ describe('schema generated from drizzle', () => {
     expect(parsed.metacog_flag).toBe('overconfident');
   });
 
-  it('keeps a cold-start meta-cause prior for every built-in profile category', () => {
+  it('every built-in profile category declares its cold-start meta-cause prior (YUK-739)', () => {
+    // The pre-YUK-739 cross-subject DEFAULT_META_CAUSE_BY_CATEGORY mirror is
+    // gone; the prior now lives on each profile's own category declarations.
     for (const profile of Object.values(subjectProfiles)) {
       for (const category of profile.causeCategories) {
-        expect(DEFAULT_META_CAUSE_BY_CATEGORY, `${profile.id}:${category.id}`).toHaveProperty(
-          category.id,
-        );
+        expect(category.meta_cause_prior, `${profile.id}:${category.id}`).toBeDefined();
+        // Profile-scoped lookup reproduces the legacy map semantics.
+        expect(getMetaCausePrior(profile, category.id)).toBe(category.meta_cause_prior ?? null);
       }
     }
+    // Unknown category (not in this profile) → null, matching the legacy
+    // getDefaultMetaCause(unknown) ?? null normalization behavior.
+    expect(getMetaCausePrior(subjectProfiles.math, 'grammar')).toBeNull();
   });
 
   it('profile validation rejects causes outside the current SubjectProfile', () => {

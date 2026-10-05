@@ -7,10 +7,9 @@
 //
 // 与 trait-write 同一并发协议：写事务开头控制面 advisory lock；CAS = 陈旧 UI
 // 提交守卫（锁内比对，'stale' 携 currentRevision）。
-// rename/reset 的 root.name 同步写专属 fold event；row + event 同事务、同时间戳，projection
-// rebuild 不再把控制面名称洗回 genesis 旧值（YUK-728）。
+// rename/reset 锁内验证 root 历史，写专属 fold event 后由共同 projection 更新结构。
+// subject/revision/journal 与 root 事件及投影保持同事务，未知历史拒绝并整体回滚。
 
-import { isDeepStrictEqual } from 'node:util';
 import { and, eq, isNull, ne } from 'drizzle-orm';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import { validateProfile } from '@/core/capability/validate-profile';
@@ -24,6 +23,10 @@ import {
   subject_trait_binding,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import {
+  projectKnowledgeNodeGuarded,
+  requireKnowledgeHistory,
+} from '@/server/projections/knowledge';
 import { acquireControlPlaneLockSql } from '@/server/subjects/control-plane-lock';
 import { subjectRootId } from '@/server/subjects/ensure-subject-root';
 import {
@@ -32,11 +35,12 @@ import {
   seedTraitId,
 } from '@/subjects/builtin-trait-seeds';
 import { normalizeSubjectKey, subjectProfiles } from '@/subjects/profile';
+import type { SubjectProfile } from '@/subjects/profile-schema';
 import { assembleSubjectProfile } from '@/subjects/trait-compose';
 import {
   SUBJECT_TRAIT_KINDS,
   type SubjectTraitKind,
-  type SubjectTraitPayloads,
+  parseTraitPayloads,
 } from '@/subjects/trait-schemas';
 
 export type ControlWriteResult =
@@ -79,7 +83,7 @@ async function updateSubjectRootName(
 ): Promise<void> {
   const rootId = subjectRootId(args.subjectId);
   const [root] = await tx
-    .select({ name: knowledge.name, version: knowledge.version })
+    .select()
     .from(knowledge)
     .where(eq(knowledge.id, rootId))
     .limit(1)
@@ -87,6 +91,7 @@ async function updateSubjectRootName(
   // Legacy/test control rows can exist without a root. There is no knowledge row mutation in that
   // case, so no fold event is needed; a later ensureSubjectRoot writes a genesis with displayName.
   if (!root) return;
+  await requireKnowledgeHistory(tx, root);
 
   // Stamp the materialization only after the root row lock is acquired. A knowledge
   // proposal can mutate this root without taking the subject control-plane lock; reusing
@@ -94,14 +99,6 @@ async function updateSubjectRootName(
   // the mutation whose post-version we just observed.
   const materializedAt = new Date();
   const nextVersion = root.version + 1;
-  const updated = await tx
-    .update(knowledge)
-    .set({ name: args.nextName, updated_at: materializedAt, version: nextVersion })
-    .where(and(eq(knowledge.id, rootId), eq(knowledge.version, root.version)))
-    .returning({ id: knowledge.id });
-  if (updated.length === 0) {
-    throw new Error(`subject root ${rootId} changed while applying ${args.controlAction}`);
-  }
 
   await writeEvent(tx, {
     id: newId(),
@@ -123,6 +120,7 @@ async function updateSubjectRootName(
     // Control-plane structure, not learner evidence: keep it out of the Mem0/brief outbox.
     ingest_at: materializedAt,
   });
+  await projectKnowledgeNodeGuarded(tx, rootId);
 }
 
 // ---------- rename ----------
@@ -353,6 +351,12 @@ export interface ValidateSubjectResult {
   valid: boolean;
   errors: string[];
   warnings: string[];
+  /**
+   * YUK-739 — the assembled profile (present on the success path), so audits
+   * can run semantics checks the generic validateProfile cannot express
+   * (builtin fail-closed declarations; see evaluation-semantics-audit.ts).
+   */
+  profile?: SubjectProfile;
 }
 
 /** null = subject 不存在。零落库、零 CAS（只读，无需锁）。 */
@@ -380,19 +384,27 @@ export async function validateSubject(
   if (bound.length !== SUBJECT_TRAIT_KINDS.length) {
     return { valid: false, errors: ['incomplete trait bindings'], warnings: [] };
   }
-  const payloads = {} as Record<SubjectTraitKind, unknown>;
+  const payloads: Partial<Record<SubjectTraitKind, unknown>> = {};
   for (const b of bound) {
-    payloads[b.kind] = traitPayloadOverrides?.[b.kind] ?? b.payload;
+    payloads[b.kind] =
+      traitPayloadOverrides && Object.hasOwn(traitPayloadOverrides, b.kind)
+        ? traitPayloadOverrides[b.kind]
+        : b.payload;
   }
   try {
     const profile = assembleSubjectProfile({
       id: subjectId,
       displayName: row.displayName,
       version: 'preflight',
-      payloads: payloads as unknown as SubjectTraitPayloads,
+      payloads: parseTraitPayloads(payloads),
     });
     const result = validateProfile(profile, getDefaultRegistry());
-    return { valid: result.valid, errors: result.errors, warnings: result.warnings };
+    return {
+      valid: result.valid,
+      errors: result.errors,
+      warnings: result.warnings,
+      profile,
+    };
   } catch (err) {
     return {
       valid: false,

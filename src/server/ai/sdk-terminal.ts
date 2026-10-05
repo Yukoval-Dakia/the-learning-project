@@ -1,5 +1,5 @@
-import type { SDKAssistantMessage, SDKMessage } from '@anthropic-ai/claude-agent-sdk';
 import type { LifecycleUsage, ObservedRunUsage, TerminalResultEvidence } from './run-lifecycle';
+import type { SDKAssistantMessage, SDKMessage } from './sdk-types';
 
 type RawSdkUsage = {
   readonly input_tokens?: number | null;
@@ -46,15 +46,19 @@ function accumulateUsage(usage: RawSdkUsage | undefined, aggregate: SdkUsageAccu
 function usageWithThinking(
   aggregate: SdkUsageAccumulator,
   thinking: ThinkingObservation,
+  compaction: LifecycleUsage['compaction'],
+  tokenUsageObserved: boolean,
 ): ObservedRunUsage {
   const usage: LifecycleUsage = {
     inputTokens: aggregate.inputTokens + aggregate.cacheReadTokens,
     outputTokens: aggregate.outputTokens,
+    ...(compaction ? { compaction } : {}),
     ...(thinking.blocks > 0
       ? { thinkingBlocks: thinking.blocks, thinkingCharacters: thinking.characters }
       : {}),
   };
   return {
+    tokenUsageObserved,
     usage,
     tokenCounts: {
       inputTokens: aggregate.inputTokens,
@@ -66,30 +70,57 @@ function usageWithThinking(
 }
 
 export function createSdkTerminalEvidenceCollector(): Readonly<{
+  observeCompaction(
+    message: Extract<SDKMessage, { subtype: 'compact_boundary' }>,
+  ): ObservedRunUsage;
   observeAssistant(message: SDKAssistantMessage): ObservedRunUsage | undefined;
   fromResult(message: Extract<SDKMessage, { type: 'result' }>): TerminalResultEvidence;
 }> {
   const thinking: ThinkingObservation = { blocks: 0, characters: 0 };
   const observedUsage = emptyUsage();
+  let hasObservedUsage = false;
+  let compaction: LifecycleUsage['compaction'];
 
   return {
+    observeCompaction(message) {
+      const metadata = message.compact_metadata;
+      compaction = {
+        count: (compaction?.count ?? 0) + 1,
+        last: {
+          trigger: metadata.trigger,
+          preTokens: metadata.pre_tokens,
+          ...(metadata.post_tokens !== undefined ? { postTokens: metadata.post_tokens } : {}),
+        },
+      };
+      return usageWithThinking(observedUsage, thinking, compaction, hasObservedUsage);
+    },
     observeAssistant(message) {
       for (const block of message.message.content ?? []) {
         if (block.type !== 'thinking') continue;
         thinking.blocks += 1;
         thinking.characters += typeof block.thinking === 'string' ? block.thinking.length : 0;
       }
-      return accumulateUsage(message.message.usage, observedUsage)
-        ? usageWithThinking(observedUsage, thinking)
-        : undefined;
+      if (
+        message.usage_observed === false ||
+        !accumulateUsage(message.message.usage, observedUsage)
+      )
+        return undefined;
+      hasObservedUsage = true;
+      return usageWithThinking(observedUsage, thinking, compaction, true);
     },
     fromResult(message) {
       const terminalUsage = emptyUsage();
-      const hasTerminalUsage = accumulateUsage(message.usage, terminalUsage);
+      const hasTerminalUsage =
+        message.usage_observed !== false && accumulateUsage(message.usage, terminalUsage);
       const aggregate = hasTerminalUsage ? terminalUsage : observedUsage;
       return {
-        ...usageWithThinking(aggregate, thinking),
-        costUsd: typeof message.total_cost_usd === 'number' ? message.total_cost_usd : undefined,
+        ...usageWithThinking(aggregate, thinking, compaction, hasTerminalUsage || hasObservedUsage),
+        costUsd:
+          message.usage_observed === false && message.total_cost_usd === 0
+            ? undefined
+            : typeof message.total_cost_usd === 'number'
+              ? message.total_cost_usd
+              : undefined,
         finishReason:
           message.stop_reason ?? (message.subtype === 'success' ? 'stop' : message.subtype),
         structuredOutput: message.subtype === 'success' ? message.structured_output : undefined,

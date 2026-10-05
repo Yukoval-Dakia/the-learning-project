@@ -469,14 +469,16 @@ describe('softmax_mfi 选题接线（YUK-361 Phase 3 Step C2）', () => {
     expect(obs.length).toBeGreaterThan(0);
   });
 
-  it('FINDING 4（in-enum-cast-lies）：DB kind 不在 QuestionKind 枚举内 → fail-closed 视为 recall-locked，不被抽样', async () => {
-    // question.kind 是 text 列——行里可能存枚举外脏值（历史脏数据 / 手填 / enum 收缩遗留）。
+  it('FINDING 4（unclassifiable-label-cast-lies）：DB kind 不可旋转分类 → fail-closed 视为 recall-locked，不被抽样', async () => {
+    // question.kind 是自由文本标签（YUK-386）——行里可能存 KNOWN 词表外值
+    // （历史脏数据 / 手填 / 自定义标签）。
     //   旧 bug：裸 `as QuestionKindT` 把脏值原样传下游 → rotationClassForKind 返 undefined →
     //   recallLocked=false → 题被 sampler 抽样（违反铁律③：身份不明的题不得被抽样/MFI 评分）。
-    //   修复：enrichCandidates 用 QuestionKind.safeParse 校验，枚举外 → undefined → 落
-    //   collectQuestionSignal 的 fail-closed recall-lock 分支。
+    //   修复：enrichCandidates 按 rotationClassForKind 可分类性校验（YUK-386 起替代
+    //   enum safeParse），词表外 → undefined → 落 collectQuestionSignal 的
+    //   fail-closed recall-lock 分支。
     await seedDueQuestion();
-    // 'mystery_kind' 不在 QuestionKind 枚举（choice/true_false/fill_blank/...）内。
+    // 'mystery_kind' 不在旋转分类表（KNOWN 标签 choice/true_false/fill_blank/...）内。
     const badKindId = await seedVariantCandidate({ kind: 'mystery_kind' });
 
     // 即便 LLM 给它权重，编排层也不该把它喂 sampler（它该被当 recall-locked 切出 samplable）。
@@ -492,7 +494,7 @@ describe('softmax_mfi 选题接线（YUK-361 Phase 3 Step C2）', () => {
       composeDeps: { runTaskFn, rng: RNG_ALWAYS_SELECT },
     });
 
-    // 枚举外 kind 被当 recall-locked → 确定性透传纳入流（same-question），但**不被抽样**。
+    // 词表外 kind 被当 recall-locked → 确定性透传纳入流（same-question），但**不被抽样**。
     expect(view.items.map((i) => i.ref_id)).toContain(badKindId);
     // 不记 π_i（它不经 sampler）——铁律③守住（fail-closed，非 fail-open 被抽样）。
     const obs = await testDb()

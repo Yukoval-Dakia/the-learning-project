@@ -14,21 +14,30 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { event as eventTable } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
+import { batchResolveAncestorIds } from '@/kernel/read-models/knowledge-tree';
 // YUK-598 stale-const 收口（v2 §9①）：defaultSubjectProfile 冻结常量 → 活 registry
 // resolveSubjectProfile()（每次调用求值，owner 编辑 general 即跟随）。
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
-import { retrieveCauseCandidates } from '../tasks/attribute-retrieve';
 import {
+  type MisconceptionCauseSource,
+  misconceptionToCandidate,
+  retrieveCauseCandidates,
+} from '../tasks/attribute-retrieve';
+import {
+  type AttributionCandidate,
   type AttributionInput,
   type AttributionOutput,
   parseAttributionOutput,
 } from '../tasks/attribution';
-import { getJudgeForAttempt } from './attempt-events';
+import { maybeProposeCauseCategoryFromOthers } from './cause-catalog';
+import { withActiveCauseCategoryOverlays } from './cause-overlay';
 import {
   hasAttributionPermanent,
   recordAttributionPermanent,
   recordAttributionRetryable,
 } from './failure-learning-ledger';
+import { listActiveMisconceptionsForKcs } from './knowledge-runtime';
 import { type PracticeTaskRunFn, practiceCostUsdToMicroUsd } from './task-runtime';
 
 export interface RunAttributionAndWriteJudgeEventParams {
@@ -101,6 +110,15 @@ export async function runAttributionAndWriteJudgeEvent(
   // ledger row for the copilot `attribute_mistake` caller, which does NOT rethrow
   // and so has no other observability for a retryable failure.
   let result: Awaited<ReturnType<PracticeTaskRunFn>>;
+  // YUK-1015 — promoted misconception nodes fetched for the candidate pool are
+  // ALSO the extra allowed ids for the post-LLM validation below (hoisted so
+  // stage B sees them). Empty day-one (promote flag off / no KC match).
+  let miscCandidates: AttributionCandidate[] = [];
+  // YUK-1016 — effectiveProfile = 声明词表 ∪ overlay.active（同 subject）。
+  // 合成一次后同时喂 retrieve 候选、rerank 的 subjectProfile（prompt taxonomy /
+  // metaCauseContract 自动带 overlay 行，prior 为 null——诚实）与 stage-B 校验
+  // 词表。无 overlay 行时复用原 profile 引用——行为等价。
+  let effectiveProfile = profile;
   try {
     // Idempotency check — mirrors old "cause already set" behaviour. The DB-level
     // PK conflict in writeEvent gives us idempotency on event id, but here we
@@ -112,15 +130,17 @@ export async function runAttributionAndWriteJudgeEvent(
     // pending placeholder — otherwise paper mistakes never get a real cause and
     // the D4 mistake-flywheel stays silent. Skip only when a real attribution
     // judge (no attribution_pending flag, or explicitly false) is present.
-    const existing = await getJudgeForAttempt(params.db, params.attemptEventId);
-    if (existing) {
+    // YUK-1054 (§9 dual-track) — 链解析后的 effective 判（不是 caused_by 直读）。
+    // getJudgeForAttempt 只匹配 caused_by=attempt；改判 rejudge 锚 caused_by=appeal
+    // 会漏。effective 判承载 placeholder 的 attribution_pending + visibility 继承。
+    const verdicts = await resolveVerdictForAttempt(params.db, params.attemptEventId);
+    const effectiveJudgeEventId = verdicts.effective?.judge_event_id ?? null;
+    if (effectiveJudgeEventId) {
       // Peek at the raw payload to check attribution_pending.
-      // getJudgeForAttempt returns the processed shape; we need the raw flag.
-      // Re-query is acceptable here (non-hot path, attribution is async).
       const rawRows = await params.db
         .select({ payload: eventTable.payload })
         .from(eventTable)
-        .where(and(eq(eventTable.id, existing.judge_event_id)))
+        .where(and(eq(eventTable.id, effectiveJudgeEventId)))
         .limit(1);
       const rawPayload = rawRows[0]?.payload as {
         attribution_pending?: boolean;
@@ -166,11 +186,35 @@ export async function runAttributionAndWriteJudgeEvent(
     // candidate list + gives a per-candidate rationale. The candidate field is
     // added only to this internal rerank input; AttributionInput stays pure for
     // the 3 external callers. Post-LLM parse/clamp/write are unchanged below.
-    const candidates = retrieveCauseCandidates(params.input, profile);
+    //
+    // YUK-1015 — the pool also carries promoted misconception nodes edged
+    // (caused_by) to the attempt's KCs (design §L1「词表 + 已晋升误区节点」).
+    // A rerank may pick a `misc_` id as primary/secondary — that lands the
+    // fine-grained node in the stored cause, so validation below must allow it
+    // (see the extended vocab in stage B). A DB fault here classifies
+    // `retryable` like the idempotency read above — nothing reached the LLM.
+    // YUK-1016 — DB overlay 词表层的读取点：active 行映射成
+    // CauseCategoryDeclaration 追加到声明词表之后（序：profile 声明 → overlay →
+    // misc 候选）。draft / archived 行在 reader 里就被滤掉。
+    effectiveProfile = await withActiveCauseCategoryOverlays(params.db, profile);
+    // YUK-1018 (454-A 邻近召回) — misc 召回范围 = attempt 直挂 KC ∪ 祖先链
+    // （就近先序）。祖先方向语义合法：`caused_by` 父节点的误区覆盖子题；后代
+    // 方向裁掉——child misc 是窄于 attempt 主题的次粒度信号，不是本题因。单次
+    // 全树加载（同 batchResolveEffectiveDomains 模式，单用户百级节点规模）；
+    // 候选膨胀仍被 MISCONCEPTION_FEED_CAP=50 + K_MAX=15 双闸收住。
+    const directKcIds = params.input.knowledge_context.map((k) => k.id);
+    const ancestorMap = await batchResolveAncestorIds(params.db, directKcIds);
+    const miscScopeKcIds = [...new Set([...directKcIds, ...[...ancestorMap.values()].flat()])];
+    const miscSources: MisconceptionCauseSource[] = await listActiveMisconceptionsForKcs(
+      params.db,
+      miscScopeKcIds,
+    );
+    miscCandidates = miscSources.map(misconceptionToCandidate);
+    const candidates = retrieveCauseCandidates(params.input, effectiveProfile, miscCandidates);
     result = await params.runTaskFn(
       'AttributionRerankTask',
       { ...params.input, candidates },
-      { subjectProfile: profile },
+      { subjectProfile: effectiveProfile },
     );
   } catch (err) {
     console.error('runAttributionAndWriteJudgeEvent: retryable failure (attempt unaffected)', err);
@@ -186,7 +230,21 @@ export async function runAttributionAndWriteJudgeEvent(
   // result.task_run_id so it joins into run-detail observability.
   let parsed: AttributionOutput;
   try {
-    parsed = parseAttributionOutput(result.text, profile);
+    // YUK-1015 — a rerank picking a `misc_` candidate id must SURVIVE
+    // validation: validateCauseAgainstProfile clamps out-of-vocab ids to
+    // 'other', which would silently drop the misconception the LLM actually
+    // chose (analysis discusses it while the verdict reads 'other'). The
+    // validation vocab is therefore the profile ∪ the fetched misc candidates
+    // — same extension the rerank prompt offered. An id outside BOTH (a
+    // hallucination) still clamps, preserving the existing contract.
+    // YUK-1016 — 校验词表 = effectiveProfile（声明 ∪ overlay.active）∪ misc。
+    const validationProfile: SubjectProfile = miscCandidates.length
+      ? {
+          ...effectiveProfile,
+          causeCategories: [...effectiveProfile.causeCategories, ...miscCandidates],
+        }
+      : effectiveProfile;
+    parsed = parseAttributionOutput(result.text, validationProfile);
   } catch (err) {
     console.error(
       'runAttributionAndWriteJudgeEvent: permanent parse failure (attempt unaffected)',
@@ -267,6 +325,18 @@ export async function runAttributionAndWriteJudgeEvent(
     // Best-effort (swallows internally); never masks the retryable classification.
     await recordAttributionRetryable(params.db);
     return { outcome: 'retryable', error: err };
+  }
+
+  // ── Stage D: catalog 扩张旁路（YUK-1016）──────────────────────────────────
+  // 归因落 other → tally（effective cause 读侧聚合）→ ≥floor → LLM 提议新类目
+  // → propose event → owner accept 才写 overlay。全吞错旁路：提议失败绝不影响
+  // 已写完的 judge 与 outcome='written' 语义。
+  if (parsed.primary_category === 'other') {
+    await maybeProposeCauseCategoryFromOthers({
+      db: params.db,
+      profile: effectiveProfile,
+      runTaskFn: params.runTaskFn,
+    });
   }
 
   return { outcome: 'written' };

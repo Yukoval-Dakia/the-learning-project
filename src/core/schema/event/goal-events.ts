@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DeclaredStage } from '../business';
 
 // ====================================================================
 // Goal action events — YUK-471 Wave 2 (goal fold)
@@ -45,7 +46,8 @@ export type GoalStatusUpdateExperimentalT = z.infer<typeof GoalStatusUpdateExper
 
 // ── experimental:goal_scope_update ───────────────────────────────────────────
 //
-// A re-scope (title / scope_knowledge_ids / sequence_hint). Mirrors updateGoalScope: the
+// A re-scope (title / scope_knowledge_ids / sequence_hint / declared_stage). Mirrors
+// updateGoalScope: the
 // imperative path applies only the provided fields, bumps `version` (+1) and stamps
 // `updated_at`. `source` / `subject_id` are set-once provenance and intentionally NOT mutable
 // here. Each patch field is OPTIONAL (the helper applies only what's present); the reducer
@@ -64,6 +66,10 @@ export const GoalScopeUpdateExperimental = z.object({
       title: z.string().optional(),
       scope_knowledge_ids: z.array(z.string()).optional(),
       sequence_hint: z.number().int().optional(),
+      // YUK-1009 — learner-declared stage correction (「用户纠正学段」the command-level
+      // write path). Optional like every patch field; explicit NULL clears the
+      // declaration. Curriculum constraint only — never an ability/θ̂ input.
+      declared_stage: DeclaredStage.nullable().optional(),
       placement_starter_augmentation: z.literal(true).optional(),
     })
     .strict(),

@@ -31,7 +31,8 @@ import {
 import { DREAMING_CONTEXT_BUDGET, PROPOSAL_FEEDBACK_BUDGET } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import { type RunTaskResult, runAgentTask } from '@/server/ai/runner';
-import { type SdkMcpServer, buildMcpServerFromRegistry } from '@/server/ai/tools/mcp-bridge';
+import type { BuildMcpServerOptions, ToolExecutionGateInput } from '@/server/ai/tools/mcp-bridge';
+import { type PiToolMount, piDomainMount } from '@/server/ai/tools/pi-tools';
 
 // P5.1 / YUK-143 — re-exported alias kept so existing imports / tests don't
 // break (spec §4.2). Sourced from DREAMING_CONTEXT_BUDGET.maxProposals (= 5),
@@ -59,12 +60,11 @@ type RunAgentTaskFn = (
   input: unknown,
   ctx: {
     db: Db;
-    mcpServers?: Record<string, SdkMcpServer>;
+    piToolMounts?: PiToolMount[];
     allowedTools?: string[];
   },
 ) => Promise<DreamingRunResult>;
 type ListProposalInboxRowsFn = (db: Db) => Promise<ProposalSnapshotRow[]>;
-type BuildMcpServerFn = typeof buildMcpServerFromRegistry;
 type WriteEventFn = (db: Db, input: WriteEventInput) => Promise<string>;
 // YUK-143 / ADR-0025 — swappable active-goals reader (DB tests inject fixtures).
 type ListActiveGoalsFn = (db: Db) => Promise<ActiveGoal[]>;
@@ -81,7 +81,6 @@ type ReadAgentNotesFn = (db: Db, now: Date) => Promise<AgentNote[]>;
 interface DepsOverride {
   runAgentTaskFn?: RunAgentTaskFn;
   listProposalInboxRowsFn?: ListProposalInboxRowsFn;
-  buildMcpServerFn?: BuildMcpServerFn;
   writeEventFn?: WriteEventFn;
   // YUK-143 / ADR-0025 — defaults to listActiveGoals; goals bias proposals
   // toward weak scope only and never touch the review backbone (ND-5).
@@ -274,7 +273,6 @@ export async function runDreamingNightly(
   const now = deps.now?.() ?? new Date();
   const listRows = deps.listProposalInboxRowsFn ?? listProposalInboxRows;
   const run = deps.runAgentTaskFn ?? runAgentTask;
-  const buildMcpServer = deps.buildMcpServerFn ?? buildMcpServerFromRegistry;
   const write = deps.writeEventFn ?? writeEvent;
   // YUK-603 — resolved read (see coach_daily): subject_live goals live-derive their scope.
   const listGoals = deps.listActiveGoalsFn ?? listActiveGoalsWithResolvedScope;
@@ -323,7 +321,9 @@ export async function runDreamingNightly(
     const toolNames = resolveDomainToolNames('dreaming');
     let proposalWrites = 0;
     const budgetTracker = new ContextBudgetTracker(DREAMING_CONTEXT_BUDGET);
-    const mcpServer = buildMcpServer({
+    // piDomainMount compiles the DomainTools into AgentTools with the
+    // identical beforeExecute/interceptInput gates via executeDomainToolCall.
+    const domainMountOptions = {
       ctx: {
         db,
         taskRunId: toolContextTaskRunId,
@@ -335,7 +335,7 @@ export async function runDreamingNightly(
       serverName: DOMAIN_TOOL_MCP_SERVER_NAME,
       toolNames,
       taskKind: 'DreamingTask',
-      beforeExecute: (tool) => {
+      beforeExecute: (tool: ToolExecutionGateInput) => {
         const budgetReason = budgetTracker.beforeExecute(tool);
         if (budgetReason) return budgetReason;
         if (tool.effect !== 'propose') return undefined;
@@ -345,21 +345,20 @@ export async function runDreamingNightly(
         proposalWrites += 1;
         return undefined;
       },
-      interceptInput: (tool, args) => {
+      interceptInput: (tool: ToolExecutionGateInput, args: unknown) => {
         const { args: capped, contextBudget, softStop } = budgetTracker.capInput(tool.name, args);
         return { args: capped, truncationNote: contextBudget, softStop };
       },
-    });
-
+    } satisfies BuildMcpServerOptions;
     const taskResult = await run(
       'DreamingTask',
       buildDreamingInput(now, beforeRows, activeGoals, feedbackDigest, agentNotes),
       {
         db,
-        // YUK-290: SDK maxTurns must not pre-empt the runtime tool-call ceiling.
+        // YUK-290: maxTurns must not pre-empt the runtime tool-call ceiling.
         // Keep one final turn for the agent's summary after the last allowed tool call.
         budgetOverride: { maxIterations: DREAMING_CONTEXT_BUDGET.toolCalls.hard + 1 },
-        mcpServers: { [DOMAIN_TOOL_MCP_SERVER_NAME]: mcpServer },
+        piToolMounts: [piDomainMount(domainMountOptions)],
         allowedTools: [...resolveMcpAllowedTools('dreaming')],
       },
     );

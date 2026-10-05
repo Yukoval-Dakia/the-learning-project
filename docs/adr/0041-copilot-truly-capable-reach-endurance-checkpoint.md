@@ -1,5 +1,8 @@
 # ADR-0041 — Copilot 真正全能：reach（通用 task 调用）+ endurance（异步长程）+ checkpoint（per-utterance PR 写侧安全）
 
+> **2026-10-04 mechanism amendment (YUK-1119):** Reach, explicit cancellation and reversible-operation decisions retain their later amendments. ADR-0062 replaces the short/long root split; ADR-0063 retires mailbox execution. Native children and history/context handling now use pi, not the SDK mechanisms below.
+> See [ADR-0065](./0065-pi-execution-and-conversation-replay.md) for the approved migration and current source evidence.
+
 **Status**: Accepted (2026-06-15)
 **Part of**: YUK-203 · AI pipeline re-think · D14 编排轴。主 rethink 重想了 AI 的「逻辑」（B1-B5 每个引擎算什么），但 AI 的「pipeline」（怎么被调用/编排）从没当一条轴拍过；本 ADR 是其中 owner 当前主攻的 copilot-全能子轴的决策固化。
 **Decision source**: 三设计文档 —— `docs/design/2026-06-15-ai-pipeline-current-map.md`（understand 现状地图，workflow 7-agent / 942k tokens，含 file:line）、`docs/design/2026-06-15-copilot-agentic-checkpoint-draft-layer.md`（写侧 checkpoint，rev2）、`docs/design/2026-06-15-copilot-reach-endurance-design.md`（reach+endurance+durable-run §3.4）—— + owner 2026-06-15 逐问压实（「通用原语怎么实现 / 写一题多题型怎么适配 / 哪些直接写 schema / durable-run 长什么样」）后选定 ADR 化。

@@ -400,6 +400,48 @@ describe('verify dispatch outbox (YUK-700)', () => {
     ).toBe(true);
   });
 
+  // YUK-1011 codex P1 — composite children are group-internal drafts: recovery
+  // must never synthesize them a verify intent (the parent's cascade owns their
+  // promotion), and a stray pre-existing intent terminal-drains instead of
+  // enqueueing a job that can only return skipped:question_part.
+  it('never synthesizes a verify intent for a question_part draft', async () => {
+    await seedQuestion('q-parent', 'quiz_gen');
+    await seedQuestion('q-part', 'quiz_gen', {
+      kind: 'question_part',
+      parent_question_id: 'q-parent',
+      part_index: 0,
+    });
+    const enqueue = vi.fn(async () => {});
+
+    const result = await recoverOrphanVerifyDispatches(db, { enqueue });
+
+    // Only the standalone parent draft gets an intent; the part is invisible.
+    expect(result).toMatchObject({ synthesized: 1, dispatched: 1 });
+    expect(enqueue).toHaveBeenCalledWith('quiz_verify', ['q-parent'], expect.any(Object));
+  });
+
+  it('terminal-drains a stray verify intent addressed to a question_part', async () => {
+    await seedQuestion('q-parent2', 'quiz_gen');
+    await seedQuestion('q-part2', 'quiz_gen', {
+      kind: 'question_part',
+      parent_question_id: 'q-parent2',
+      part_index: 0,
+    });
+    await seedIntent('q-part2', 'quiz_verify');
+    const enqueue = vi.fn(async () => {});
+
+    const result = await dispatchPendingVerifyIntents(db, { enqueue });
+
+    expect(result).toMatchObject({ dispatched: 0, skippedTerminal: 1 });
+    expect(enqueue).not.toHaveBeenCalled();
+    const completed = await db
+      .select({ subjectId: event.subject_id, payload: event.payload })
+      .from(event)
+      .where(eq(event.action, VERIFY_DISPATCH_COMPLETE_ACTION));
+    expect(completed[0]?.subjectId).toBe('q-part2');
+    expect(completed[0]?.payload).toMatchObject({ disposition: 'terminal_skip' });
+  });
+
   it('locks intents so concurrent recovery emits one verifier job per question + kind', async () => {
     await Promise.all([seedQuestion('q-c1', 'quiz_gen'), seedQuestion('q-c2', 'quiz_gen')]);
     await Promise.all([seedIntent('q-c1', 'quiz_verify'), seedIntent('q-c2', 'quiz_verify')]);

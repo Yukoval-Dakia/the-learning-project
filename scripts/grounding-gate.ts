@@ -14,9 +14,11 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { unzipSync } from 'fflate';
 import postgres from 'postgres';
 import { z } from 'zod';
+// YUK-1064 dev-only exception: this opt-in evidence harness uses the concrete
+// meeting-job image loader; exposing the job through agency/public expands its runtime closure.
 import { defaultLoadEvidenceImages } from '@/capabilities/agency/jobs/research_meeting_nightly';
+import type { ConjectureEvidenceImageSource } from '@/capabilities/agency/public';
 import { induceConjecture } from '@/capabilities/agency/public';
-import type { ConjectureEvidenceImageSource } from '@/capabilities/agency/server/conjecture/evidence';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { source_asset } from '@/db/schema';
@@ -259,7 +261,7 @@ async function withDisposableDb<T>(run: (db: Db) => Promise<T>): Promise<T> {
       throw new Error(`migration failed in disposable database (exit ${migration.status})`);
     }
     client = postgres(databaseUrl, { max: 4, onnotice: () => {} });
-    const db = drizzle(client, { schema }) as unknown as Db;
+    const db: Db = drizzle(client, { schema });
     return await run(db);
   } finally {
     try {

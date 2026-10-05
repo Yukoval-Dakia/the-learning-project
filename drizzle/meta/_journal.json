@@ -659,6 +659,153 @@
       "when": 1786550400000,
       "tag": "0093_yuk857_note_verification_claim",
       "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1787738349226,
+      "tag": "0094_yuk839_copilot_evidence_checkpoint",
+      "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1787835128163,
+      "tag": "0095_yuk928_tool_operations",
+      "breakpoints": true
+    },
+    {
+      "idx": 96,
+      "version": "7",
+      "when": 1787836909963,
+      "tag": "0096_yuk928_tool_operation_leases",
+      "breakpoints": true
+    },
+    {
+      "idx": 97,
+      "version": "7",
+      "when": 1787837039168,
+      "tag": "0097_yuk928_tool_operation_bounds",
+      "breakpoints": true
+    },
+    {
+      "idx": 98,
+      "version": "7",
+      "when": 1787894447039,
+      "tag": "0098_yuk932_subagent_mailbox",
+      "breakpoints": true
+    },
+    {
+      "idx": 99,
+      "version": "7",
+      "when": 1787970410707,
+      "tag": "0099_yuk936_agent_sdk_session_id",
+      "breakpoints": true
+    },
+    {
+      "idx": 100,
+      "version": "7",
+      "when": 1788601066177,
+      "tag": "0100_yuk939_compiled_prompt_provenance",
+      "breakpoints": true
+    },
+    {
+      "idx": 101,
+      "version": "7",
+      "when": 1789399798008,
+      "tag": "0101_yuk308_question_draft_dismissed_backfill",
+      "breakpoints": true
+    },
+    {
+      "idx": 102,
+      "version": "7",
+      "when": 1789788792932,
+      "tag": "0102_yuk1016_cause_category_overlay",
+      "breakpoints": true
+    },
+    {
+      "idx": 103,
+      "version": "7",
+      "when": 1790165289110,
+      "tag": "0103_lush_marvel_zombies",
+      "breakpoints": true
+    },
+    {
+      "idx": 104,
+      "version": "7",
+      "when": 1790307065120,
+      "tag": "0104_yuk1044_assessment_contract_truth",
+      "breakpoints": true
+    },
+    {
+      "idx": 105,
+      "version": "7",
+      "when": 1790309435283,
+      "tag": "0105_yuk1044_contract_integrity_fks",
+      "breakpoints": true
+    },
+    {
+      "idx": 106,
+      "version": "7",
+      "when": 1790310163626,
+      "tag": "0106_yuk1044_head_ownership_fks",
+      "breakpoints": true
+    },
+    {
+      "idx": 107,
+      "version": "7",
+      "when": 1790307065121,
+      "tag": "0107_yuk1044_backup_restore_channel",
+      "breakpoints": true
+    },
+    {
+      "idx": 108,
+      "version": "7",
+      "when": 1790326863087,
+      "tag": "0108_yuk1050_migration_apply_ledger",
+      "breakpoints": true
+    },
+    {
+      "idx": 109,
+      "version": "7",
+      "when": 1790344714898,
+      "tag": "0109_yuk1055_contract_epoch",
+      "breakpoints": true
+    },
+    {
+      "idx": 110,
+      "version": "7",
+      "when": 1790394396337,
+      "tag": "0110_yuk1052_response_draft",
+      "breakpoints": true
+    },
+    {
+      "idx": 111,
+      "version": "7",
+      "when": 1790434349577,
+      "tag": "0111_yuk1097_assessment_truth_guards",
+      "breakpoints": true
+    },
+    {
+      "idx": 112,
+      "version": "7",
+      "when": 1790515885754,
+      "tag": "0112_yuk1007_system_config",
+      "breakpoints": true
+    },
+    {
+      "idx": 113,
+      "version": "7",
+      "when": 1791034887383,
+      "tag": "0113_yuk1007_native_pi_providers",
+      "breakpoints": true
+    },
+    {
+      "idx": 114,
+      "version": "7",
+      "when": 1791141263592,
+      "tag": "0114_yuk1091_evaluation_group_seal",
+      "breakpoints": true
     }
   ]
 }

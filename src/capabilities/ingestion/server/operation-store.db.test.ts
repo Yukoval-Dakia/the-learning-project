@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 
 import { eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import {
   type IngestionOperationJobData,
@@ -11,6 +11,7 @@ import {
 import { newId } from '@/core/ids';
 import { db } from '@/db/client';
 import { job_events, learning_session } from '@/db/schema';
+import { resetDb } from '../../../../tests/helpers/db';
 import {
   INGESTION_OPERATION_TABLE,
   readIngestionOperation,
@@ -37,6 +38,63 @@ afterEach(async () => {
 });
 
 describe('ingestion operation store', () => {
+  beforeEach(resetDb);
+
+  describe.each(['extract', 'make_paper'] as const)('%s persisted errors', (operationKind) => {
+    it.each([
+      null,
+      'failure text',
+      [],
+      {},
+      { code: 'broken', message: 'bad status type', status: '500' },
+      { code: 'broken', message: 123, status: 500 },
+      { message: 'missing code', status: 500 },
+    ])('falls back for malformed payload %j', async (error) => {
+      const operationId = newOperationId();
+      await reserveIngestionOperation(db, {
+        operationId,
+        sessionId: `session_${newId()}`,
+        operationKind,
+        inputHash: 'malformed-error',
+      });
+      await writeIngestionOperationEvent(db, {
+        operationId,
+        eventType: 'operation.failed',
+        payload: { error },
+      });
+      expect(await readIngestionOperation(db, operationId)).toMatchObject({
+        status: 'failed',
+        error: {
+          code: operationKind === 'extract' ? 'extraction_failed' : 'operation_failed',
+          message: operationKind === 'extract' ? 'Extraction failed' : 'Operation failed',
+          status: 500,
+        },
+      });
+    });
+
+    it('preserves a complete error and its extra diagnostic fields', async () => {
+      const operationId = newOperationId();
+      const error = {
+        code: 'source_unavailable',
+        message: '上游未返回可用结构，请保留原始材料。',
+        status: 503,
+        diagnostic: { stage: 'source', retryable: true },
+      };
+      await reserveIngestionOperation(db, {
+        operationId,
+        sessionId: `session_${newId()}`,
+        operationKind,
+        inputHash: 'complete-error',
+      });
+      await writeIngestionOperationEvent(db, {
+        operationId,
+        eventType: 'operation.failed',
+        payload: { error },
+      });
+      expect((await readIngestionOperation(db, operationId))?.error).toEqual(error);
+    });
+  });
+
   it('reuses the same idempotency key and rejects a different input hash', async () => {
     const operationId = newOperationId();
     const base = {

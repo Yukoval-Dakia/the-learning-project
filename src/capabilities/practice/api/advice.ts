@@ -16,7 +16,7 @@ import { normalizeReviewSubmitActivityRef } from '@/capabilities/practice/server
 import { resolveAdviceCauseForQuestion } from '@/capabilities/practice/server/cause-context';
 import { questionKnowledgeIdsForJudge } from '@/capabilities/practice/server/intervention-diagnostics';
 import {
-  createDefaultJudgeInvoker,
+  evaluateAttempt,
   issueJudgePreviewProvenanceToken,
   judgeProvenanceSigningSecret,
   sha256Canonical,
@@ -43,10 +43,12 @@ export async function POST(req: Request): Promise<Response> {
 
     const body = parsed.data;
     const answerMd = body.response_md.trim();
-    if (answerMd.length === 0) {
+    // YUK-1094 — 允许纯附件作答（与 createAttempt 同口径：response_md 或
+    // answer_image_refs 至少一个非空）；否则拍照/手写稿的开放题在预览阶段被 422 拒绝。
+    if (answerMd.length === 0 && body.answer_image_refs.length === 0) {
       throw new ApiError(
         'missing_answer',
-        'rating advice requires response_md to be non-empty',
+        'rating advice requires response_md or answer_image_refs to be non-empty',
         422,
       );
     }
@@ -70,11 +72,17 @@ export async function POST(req: Request): Promise<Response> {
       db,
       questionKnowledgeIdsForJudge(q),
     );
-    const invoked = await createDefaultJudgeInvoker().invoke({
-      db,
-      question: q,
-      answer_md: answerMd,
-      subjectProfile,
+    const invoked = await evaluateAttempt({
+      entry: 'advice_preview',
+      legacy: {
+        db,
+        question: q,
+        answer_md: answerMd,
+        // YUK-1094 — 手写/拍照附件交给 judge（与提交同一条 student_image_refs 缝）；
+        // 空数组等价于缺席，纯文本 advice 路径行为不变。
+        student_image_refs: body.answer_image_refs,
+        subjectProfile,
+      },
     });
     const suggestedRating = ratingFromCoarseOutcome(invoked.result.coarse_outcome);
 
@@ -86,7 +94,12 @@ export async function POST(req: Request): Promise<Response> {
     // recent failure carries any cause; the advisor then keeps the default
     // partial-credit bucket.
     const causeCategory = await resolveAdviceCauseForQuestion(db, questionId);
-    const advice = judgeResultToRatingAdvice(invoked.result, { causeCategory });
+    const advice = judgeResultToRatingAdvice(invoked.result, {
+      causeCategory,
+      // YUK-739 — lean/anchors resolve through the subject's own rating_lean /
+      // ratingPolicy declarations.
+      subjectProfile,
+    });
 
     // YUK-589 — sign with the dedicated server-only secret, never INTERNAL_TOKEN
     // (which every client holds). When the secret is unconfigured we issue no

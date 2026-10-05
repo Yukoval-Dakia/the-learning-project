@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { createKnowledgeNodeFromEvents } from '@/capabilities/knowledge/public';
 import type { Db, Tx } from '@/db/client';
 import {
   event,
@@ -11,13 +12,11 @@ import {
   placement_starter_claim,
   placement_starter_cost_component,
 } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import {
   getEffectiveDomain,
   knowledgeRowToSnapshot,
   updateGoalScope,
-  upsertMaterializedIdIndex,
 } from '@/kernel/placement-persistence';
 import { getDefaultSubjectRegistry, resolveKnownSubjectId } from '@/subjects/profile';
 import type { PlacementStarterIdentity } from './placement-starter-identity';
@@ -159,41 +158,20 @@ export async function ensurePlacementStarterKnowledgeAndClaim(
     );
   }
   const identity = placementStarterIdentity(authority.semanticGoalRevisionId, subjectId);
-  const [inserted] = await tx
-    .insert(knowledge)
-    .values({
+  const inserted = await createKnowledgeNodeFromEvents(
+    tx,
+    {
       id: identity.knowledgeId,
       name: authority.title,
       domain: subjectId,
-      parent_id: `seed:${subjectId}:root`,
-      merged_from: [],
+      parent_id: rootId,
       proposed_by_ai: false,
-      approval_status: 'approved',
       created_at: now,
-      updated_at: now,
-      version: 0,
-    })
-    .onConflictDoNothing({ target: knowledge.id })
-    .returning();
-  if (inserted) {
-    await writeEvent(tx, {
-      id: identity.genesisEventId,
-      actor_kind: 'system',
-      actor_ref: 'placement_starter',
-      action: 'experimental:genesis',
-      subject_kind: 'knowledge',
-      subject_id: inserted.id,
-      outcome: 'success',
-      payload: { row: knowledgeRowToSnapshot(inserted) },
-      created_at: now,
-      ingest_at: now,
-    });
-    await upsertMaterializedIdIndex(tx, {
-      materialized_id: inserted.id,
-      anchor_event_id: identity.genesisEventId,
-      subject_kind: 'knowledge',
-    });
-  } else {
+    },
+    { actorRef: 'placement_starter', eventId: identity.genesisEventId },
+    'skip',
+  );
+  if (!inserted) {
     const [existing] = await tx
       .select()
       .from(knowledge)

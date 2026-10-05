@@ -1,4 +1,5 @@
 import { sql } from 'drizzle-orm';
+import type { AnyPgColumn } from 'drizzle-orm/pg-core';
 import {
   bigint,
   boolean,
@@ -18,6 +19,22 @@ import {
   uuid,
 } from 'drizzle-orm/pg-core';
 import type { z } from 'zod';
+// YUK-1044 — 统一评估契约真相源表的 jsonb 列形状（type-only，运行时零依赖：
+// schema.ts 保持 zod-free）。真相源：docs/planning/2026-09-24-question-assessment-
+// implementation-grounding.md §3/§11 + src/core/schema/assessment（YUK-1046 契约基座）。
+import type {
+  AdmissionEvidenceT,
+  AggregateOutcomeT,
+  ExecutionPlanT,
+  GroupEvidenceT,
+  IssuedMaterialBindingT,
+  IssuedOptionOrderT,
+  QuestionGroupStructureT,
+  ResponseSetT,
+  ResponseSpecT,
+  ScoringBasisT,
+  ScoringUnitResultT,
+} from '../core/schema/assessment';
 import type {
   AgentRef,
   ArtifactBodyBlocks,
@@ -432,7 +449,9 @@ export const question = pgTable(
     root_question_id: text('root_question_id'),
     parent_variant_id: text('parent_variant_id'),
     // T-QP (YUK-165, ADR-0014 §1) — `question_part` composition axis. A part is a
-    // `question` row tagged `kind='question_part'` and linked to its parent here
+    // `question` row linked to its parent here; this FK is the SOLE part-ness
+    // authority (YUK-388/YUK-386) — the stamped `kind='question_part'` label is
+    // display-only and never consulted for behavior
     // (mirrors the variant parent-ref precedent above; new axis = composition, not
     // variant lineage). Nullable: NULL on a plain/root question, set only on parts.
     // `part_index` orders parts within a parent. Written by the part-creation owner
@@ -497,6 +516,605 @@ export const question = pgTable(
     uniqueIndex('question_canonical_content_hash_unique')
       .on(t.canonical_content_hash)
       .where(sql`${t.canonical_content_hash} IS NOT NULL`),
+  ],
+);
+
+// ====================================================================
+// YUK-1044 — 统一评估契约真相源（grounding §3、§11；契约类型见
+// src/core/schema/assessment（YUK-1046））。DDL-only：本票只建真相源表，
+// 不新增任何写路径（写者归 producer/evaluator lanes）；旧 question 平面列
+// 保留为只读投影与回滚资产 —— 无原始内容双写设计（§3.1）。
+//
+// Restore 通道（0105/0107，见 archive.ts）：不可变 guard（本块四表的 BEFORE
+// UPDATE/DELETE trigger）在 `SET LOCAL app.assessment_restore_mode = 'on'` 的
+// 恢复事务内放行 wipe+重插；GUC 随事务结束自动失效，普通 writer 的拒结名单
+// 逐字节不变。九表全部入 backup FK_ORDER（SCHEMA_VERSION 4.21）。
+// ====================================================================
+
+/**
+ * 不可变发布版本：属于 group root（单题 = 1-part 组）。唯一键
+ * (group_id, revision_ordinal) —— 不是全局内容 hash（§3.1）。
+ * integrity_digest 覆盖材料/资产 digest、内容、作答契约、评分依据与执行
+ * 计划引用，永不因 archive 改变（§3.2）。无 updated_at：行一旦写入不可变
+ * （DB 层由 BEFORE UPDATE/DELETE trigger 拒绝改写/删除，见 0105 迁移 ——
+ * 缺 updated_at 本身不构成不可变性）；修正 = 新 revision + supersedes 链，
+ * 历史提交仍绑定原版（§3.3 表）。
+ * availability 在发布时选定副本（scope 快照）；可变生命周期在
+ * question_group_lifecycle。
+ */
+export const question_revision = pgTable(
+  'question_revision',
+  {
+    revision_id: text('revision_id').primaryKey(),
+    group_id: text('group_id').notNull(),
+    revision_ordinal: integer('revision_ordinal').notNull(),
+    integrity_digest: text('integrity_digest').notNull(),
+    structure: jsonb('structure').$type<QuestionGroupStructureT>().notNull(),
+    response_spec: jsonb('response_spec').$type<ResponseSpecT>().notNull(),
+    scoring_basis: jsonb('scoring_basis').$type<ScoringBasisT>().notNull(),
+    execution_plan: jsonb('execution_plan').$type<ExecutionPlanT>().notNull(),
+    supersedes_revision_id: text('supersedes_revision_id'),
+    availability: text('availability', {
+      enum: ['general_pool', 'container_only'],
+    }).notNull(),
+    published_by: jsonb('published_by').$type<AgentRefT>(),
+    published_at: timestamp('published_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    uniqueIndex('question_revision_group_ordinal_uq').on(t.group_id, t.revision_ordinal),
+    index('question_revision_integrity_digest_idx').on(t.integrity_digest),
+    // 复合 FK 目标：lifecycle current pointer 必须 (group, revision) 同组一致（P1-2）。
+    uniqueIndex('question_revision_group_id_uq').on(t.group_id, t.revision_id),
+    check(
+      'question_revision_availability_ck',
+      sql`${t.availability} IN ('general_pool','container_only')`,
+    ),
+    check('question_revision_ordinal_positive_ck', sql`${t.revision_ordinal} >= 1`),
+  ],
+);
+
+/**
+ * group root 的可变生命周期权威（§3.2/§3.3）—— draft_status 语义拆分后的
+ * 独立维度落位：current pointer / pool-vs-container / 评分准入（含 generation）/
+ * claim 政策 / 挂起 / 撤回。新 revision、current pointer 与发布事件同事务
+ * 提交（§3.1）；archive 释放 live 去重 claim，不清除历史摘要/绑定。
+ */
+export const question_group_lifecycle = pgTable(
+  'question_group_lifecycle',
+  {
+    group_id: text('group_id').primaryKey(),
+    current_revision_id: text('current_revision_id'),
+    availability: text('availability', {
+      enum: ['general_pool', 'container_only'],
+    }).notNull(),
+    scoring_admission_state: text('scoring_admission_state', {
+      enum: ['admitted', 'withheld'],
+    }).notNull(),
+    scoring_admission_evidence: jsonb('scoring_admission_evidence').$type<AdmissionEvidenceT>(),
+    scoring_admission_generation: integer('scoring_admission_generation').notNull().default(0),
+    // P2-C：withheld 分支的显式原因（admitted 分支为 NULL，CHECK 强制分支完整性）。
+    scoring_admission_withheld_reason: text('scoring_admission_withheld_reason', {
+      enum: ['unverified_rules', 'verification_failed', 'no_admitted_executor', 'owner_hold'],
+    }),
+    // P2-C：admission 决定时间戳（admitted 分支必填；evidence 列同支必填）。
+    scoring_admission_decided_at: timestamp('scoring_admission_decided_at', {
+      withTimezone: true,
+    }),
+    claim_policy: text('claim_policy', {
+      enum: ['one_time', 'unbounded'],
+    }).notNull(),
+    suspended: boolean('suspended').notNull().default(false),
+    suspension_reason: text('suspension_reason', {
+      enum: ['verify_hold', 'retraction_hold'],
+    }),
+    withdrawn: boolean('withdrawn').notNull().default(false),
+    withdrawn_at: timestamp('withdrawn_at', { withTimezone: true }),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index('question_group_lifecycle_current_revision_idx').on(t.current_revision_id),
+    // P1-2：current pointer 必须 (group, revision) 同组一致 —— 复合 FK 拒绝指向他组 revision。
+    foreignKey({
+      columns: [t.group_id, t.current_revision_id],
+      foreignColumns: [question_revision.group_id, question_revision.revision_id],
+      name: 'question_group_lifecycle_current_revision_fk',
+    }),
+    check(
+      'question_group_lifecycle_availability_ck',
+      sql`${t.availability} IN ('general_pool','container_only')`,
+    ),
+    check(
+      'question_group_lifecycle_admission_state_ck',
+      sql`${t.scoring_admission_state} IN ('admitted','withheld')`,
+    ),
+    check(
+      'question_group_lifecycle_claim_policy_ck',
+      sql`${t.claim_policy} IN ('one_time','unbounded')`,
+    ),
+    check(
+      'question_group_lifecycle_suspension_reason_ck',
+      sql`${t.suspension_reason} IN ('verify_hold','retraction_hold')`,
+    ),
+    check(
+      'question_group_lifecycle_withheld_reason_ck',
+      sql`${t.scoring_admission_withheld_reason} IN ('unverified_rules','verification_failed','no_admitted_executor','owner_hold')`,
+    ),
+    check(
+      'question_group_lifecycle_admission_generation_ck',
+      sql`${t.scoring_admission_generation} >= 0`,
+    ),
+    // P2-C：分支完整性 —— admitted 必须有决定时间与证据；withheld 必须有原因。
+    check(
+      'question_group_lifecycle_admission_branch_ck',
+      sql`(${t.scoring_admission_state} = 'withheld' OR (${t.scoring_admission_decided_at} IS NOT NULL AND ${t.scoring_admission_evidence} IS NOT NULL)) AND (${t.scoring_admission_state} = 'admitted' OR ${t.scoring_admission_withheld_reason} IS NOT NULL)`,
+    ),
+  ],
+);
+
+/**
+ * 新式 verify 记录（§3.3）：保存 (revision_id, digest, policy, generation)。
+ * append-only —— DB 层由 BEFORE UPDATE/DELETE trigger 拒绝改写/删除（0105）；
+ * 旧验证可留证据，但不能改变新 revision 或较新 admission 决定；
+ * 复核/解除通过追加新记录表达，绝不 UPDATE 旧行。
+ */
+export const question_admission_verification = pgTable(
+  'question_admission_verification',
+  {
+    id: text('id').primaryKey(),
+    revision_id: text('revision_id').notNull(),
+    revision_digest: text('revision_digest').notNull(),
+    policy_id: text('policy_id').notNull(),
+    generation: integer('generation').notNull(),
+    outcome: text('outcome', {
+      enum: ['passed', 'suspended', 'failed'],
+    }).notNull(),
+    evidence: jsonb('evidence').$type<JsonObject>().notNull().default({}),
+    recorded_at: timestamp('recorded_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index('question_admission_verification_revision_idx').on(t.revision_id, t.generation),
+    foreignKey({
+      columns: [t.revision_id],
+      foreignColumns: [question_revision.revision_id],
+      name: 'question_admission_verification_revision_fk',
+    }),
+    check(
+      'question_admission_verification_outcome_ck',
+      sql`${t.outcome} IN ('passed','suspended','failed')`,
+    ),
+    check('question_admission_verification_generation_ck', sql`${t.generation} >= 0`),
+  ],
+);
+
+/**
+ * 发题（serve-time binding，§3.1）：发题时冻结 revision、目标 part、实际
+ * 材料 digest 与选项呈现映射 —— 提交时不得再取 latest。claim 状态在此行
+ * （one_time 用于诊断/probe/教学一次性占用；§3.3）。
+ * P1-1：绑定列（revision/parts/materials/order/container_ref/issued_at +
+ * claim_policy —— policy 是发题时选定的 serve 契约一部分，事后改会变更
+ * claim 语义，同样冻结）由 BEFORE UPDATE trigger 冻结 —— 只有 claim 生命周期
+ * 列（claim_status/claimed_by_ref）可变；DELETE 一律拒绝（发题事实是
+ * 永久 serve 记录，见 0105/0106 迁移）。
+ */
+export const assessment_issuance = pgTable(
+  'assessment_issuance',
+  {
+    issuance_id: text('issuance_id').primaryKey(),
+    revision_id: text('revision_id').notNull(),
+    part_ids: jsonb('part_ids').$type<string[]>().notNull(),
+    material_bindings: jsonb('material_bindings')
+      .$type<IssuedMaterialBindingT[]>()
+      .notNull()
+      .default([]),
+    option_order: jsonb('option_order').$type<IssuedOptionOrderT[]>().notNull().default([]),
+    container_occurrence_ref: text('container_occurrence_ref'),
+    claim_policy: text('claim_policy', {
+      enum: ['one_time', 'unbounded'],
+    }).notNull(),
+    claim_status: text('claim_status', {
+      enum: ['unclaimed', 'claimed', 'released'],
+    }).notNull(),
+    claimed_by_ref: text('claimed_by_ref'),
+    issued_at: timestamp('issued_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index('assessment_issuance_revision_idx').on(t.revision_id),
+    index('assessment_issuance_container_ref_idx').on(t.container_occurrence_ref),
+    foreignKey({
+      columns: [t.revision_id],
+      foreignColumns: [question_revision.revision_id],
+      name: 'assessment_issuance_revision_fk',
+    }),
+    // P1-2：作为 submission 复合 FK 目标 —— (issuance, revision) 冗余坐标必须一致。
+    uniqueIndex('assessment_issuance_id_revision_uq').on(t.issuance_id, t.revision_id),
+    check(
+      'assessment_issuance_claim_policy_ck',
+      sql`${t.claim_policy} IN ('one_time','unbounded')`,
+    ),
+    check(
+      'assessment_issuance_claim_status_ck',
+      sql`${t.claim_status} IN ('unclaimed','claimed','released')`,
+    ),
+  ],
+);
+
+/**
+ * 联合判分组：一次 settle 的单位（solo 单题 = 单 submission 组）。
+ *
+ * P1（YUK-1097）：submission_ids 是成员关系的 DB 层派生缓存 ——
+ * submission INSERT trigger 追加成员；组行 UPDATE 只允许严格前缀追加
+ * 真实成员（移除/重排/幻影/尾重复拒绝），DELETE 一律拒绝（0111
+ * trigger）。INSERT 侧 declare-first：可声明尚不存在的成员（计划模式），
+ * 兑现一致性由迁移批内容对账覆盖。
+ */
+export const evaluation_group = pgTable(
+  'evaluation_group',
+  {
+    evaluation_group_id: text('evaluation_group_id').primaryKey(),
+    submission_ids: jsonb('submission_ids').$type<string[]>().notNull(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    // 空组无意义：至少一个 submission 才能结算（DB 层兑底，app 层仍先校验）。
+    check(
+      'evaluation_group_submission_ids_nonempty_ck',
+      sql`jsonb_array_length(${t.submission_ids}) >= 1`,
+    ),
+  ],
+);
+
+/**
+ * 已接收作答（D5 守恒/零丢失）：ResponseSet + group 证据原样冻结；
+ * rejudge/appeal 只重解读原证据（D8），不改写本行。幂等键按 occurrence
+ * （evaluation_group）作用域唯一：同 key 不同载荷 ⇒ 冲突而非覆盖。
+ * P1-1：整行不可变 —— BEFORE UPDATE/DELETE trigger 拒绝改写/删除（0105）。
+ */
+export const assessment_submission = pgTable(
+  'assessment_submission',
+  {
+    submission_id: text('submission_id').primaryKey(),
+    issuance_id: text('issuance_id').notNull(),
+    revision_id: text('revision_id').notNull(),
+    evaluation_group_id: text('evaluation_group_id').notNull(),
+    response_set: jsonb('response_set').$type<ResponseSetT>().notNull(),
+    group_evidence: jsonb('group_evidence').$type<GroupEvidenceT[]>().notNull().default([]),
+    idempotency_key: text('idempotency_key').notNull(),
+    submitted_at: timestamp('submitted_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    uniqueIndex('assessment_submission_group_idem_uq').on(t.evaluation_group_id, t.idempotency_key),
+    index('assessment_submission_issuance_idx').on(t.issuance_id),
+    index('assessment_submission_revision_idx').on(t.revision_id),
+    foreignKey({
+      columns: [t.evaluation_group_id],
+      foreignColumns: [evaluation_group.evaluation_group_id],
+      name: 'assessment_submission_group_fk',
+    }),
+    // P1-2：(issuance, revision) 冗余坐标必须与 issuance 一致 —— 复合 FK。
+    foreignKey({
+      columns: [t.issuance_id, t.revision_id],
+      foreignColumns: [assessment_issuance.issuance_id, assessment_issuance.revision_id],
+      name: 'assessment_submission_issuance_revision_fk',
+    }),
+    // P1-2：作为 evaluation 复合 FK 目标 —— (submission, group) 必须一致。
+    uniqueIndex('assessment_submission_id_group_uq').on(t.submission_id, t.evaluation_group_id),
+  ],
+);
+
+/**
+ * YUK-1052 — 服务端自动保存草稿（D11）：全部正式练习面（含 solo+placement）
+ * 在 pinned issuance 上自动保存。saving/saved/error 只由服务端 ack 表达 ——
+ * 本行即 ack 真相源：落库成功才回 ack，客户端 restore 只读本行。
+ *
+ * 与 assessment_submission 的关系：草稿是【可变】作答层（upsert 覆盖），
+ * 正式提交时由 saveSubmission 冻结成不可变 submission 行并同事务清除对应
+ * 草稿 —— 冻结事实（revision/issuance/group）不变，草稿永远不代表已接收
+ * 作答（D5 守恒只发生在 submission 落库那一下 ack）。
+ *
+ * 每 issuance 一行 live draft（唯一键）；evaluation_group_ref 是草稿侧声明的
+ * 联合判分组锚点（paper 联判组内多 slot 草稿共享同一 ref；null = 未定组，提交
+ * 时按请求组判定，不做跨组清理）。
+ */
+export const assessment_response_draft = pgTable(
+  'assessment_response_draft',
+  {
+    issuance_id: text('issuance_id').primaryKey(),
+    /** 草稿声明的联合组；null = 未绑定（由提交时的 evaluation_group_id 决定）。 */
+    evaluation_group_ref: text('evaluation_group_ref'),
+    response_set: jsonb('response_set').$type<ResponseSetT>().notNull(),
+    group_evidence: jsonb('group_evidence').$type<GroupEvidenceT[]>().notNull().default([]),
+    /** 单调保存纪元：服务端 ack 序号；客户端可带 expected_save_epoch 做 stale 防线。 */
+    save_epoch: integer('save_epoch').notNull().default(0),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index('assessment_response_draft_group_ref_idx').on(t.evaluation_group_ref),
+    foreignKey({
+      columns: [t.issuance_id],
+      foreignColumns: [assessment_issuance.issuance_id],
+      name: 'assessment_response_draft_issuance_fk',
+    }),
+    check('assessment_response_draft_save_epoch_ck', sql`${t.save_epoch} >= 0`),
+  ],
+);
+
+/**
+ * 评估尝试（candidate 记录）：一份 submission 可有多个 attempt（重试身份 ≠
+ * 学习事实身份）；candidate/shadow 永不进 latest-judge 显示通道 —— 生效与
+ * 否只由 evaluation_effective_head 表达。provenance 承载 D9/D15/D16 来源
+ * （automatic/manual/self_report + assisted）。
+ *
+ * P1（YUK-1097）：终态冻结 —— 身份坐标全列冻结；status='completed' 后
+ * 整行冻结（unit_results/aggregate/plan_digest/provenance/run_refs）；
+ * pending 行的载荷只随 pending→completed 迁移写一次。DELETE 一律拒绝
+ * （0111 trigger）。
+ */
+export const evaluation = pgTable(
+  'evaluation',
+  {
+    evaluation_id: text('evaluation_id').primaryKey(),
+    evaluation_group_id: text('evaluation_group_id').notNull(),
+    submission_id: text('submission_id').notNull(),
+    attempt: integer('attempt').notNull(),
+    status: text('status', {
+      enum: ['pending', 'completed'],
+    }).notNull(),
+    unit_results: jsonb('unit_results').$type<ScoringUnitResultT[]>().notNull().default([]),
+    aggregate: jsonb('aggregate').$type<AggregateOutcomeT>(),
+    plan_digest: text('plan_digest'),
+    run_refs: jsonb('run_refs').$type<string[]>().notNull().default([]),
+    provenance: jsonb('provenance').$type<JsonObject>(),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    uniqueIndex('evaluation_submission_attempt_uq').on(t.submission_id, t.attempt),
+    index('evaluation_group_idx').on(t.evaluation_group_id),
+    // P1-2：evaluation 的 (submission, group) 必须与 submission 一致。
+    foreignKey({
+      columns: [t.submission_id, t.evaluation_group_id],
+      foreignColumns: [
+        assessment_submission.submission_id,
+        assessment_submission.evaluation_group_id,
+      ],
+      name: 'evaluation_submission_group_fk',
+    }),
+    // P1（终验）：head 复合 FK 目标 —— (evaluation, submission, group) 三坐标
+    // 全一致；取代旧 (evaluation, group) 两坐标版（唯一能力等价，不叠加冗余约束）。
+    uniqueIndex('evaluation_id_submission_group_uq').on(
+      t.evaluation_id,
+      t.submission_id,
+      t.evaluation_group_id,
+    ),
+    check('evaluation_status_ck', sql`${t.status} IN ('pending','completed')`),
+    check('evaluation_attempt_positive_ck', sql`${t.attempt} >= 1`),
+  ],
+);
+
+/**
+ * 有效判定 head（§11）：与 submission/group 同事务建立；初始
+ * effective_evaluation_id = NULL、generation = 0，每次有效 activation 原子 +1。
+ * activation 请求必带 expected_effective_id（null-or-id）与 expected_generation
+ * （请求契约见 core/schema/assessment/ids.ts —— REQUIRED，禁止省略当无条件
+ * 覆盖，防 ABA）。
+ *
+ * CAS 注（复审）：schema 只承载 head 状态列（effective id + generation）与
+ * 本表 FK 约束；【group/submission/head 同事务原子创建】、【generation 单调】
+ * 与并发 activation 串行化属事务性 writer（§11 锁序），不在 DDL 层保证 ——
+ * writer 落地时必须补同事务原子创建与并发竞争测试（本表注释为契约备忘）。
+ */
+export const evaluation_effective_head = pgTable(
+  'evaluation_effective_head',
+  {
+    evaluation_group_id: text('evaluation_group_id').primaryKey(),
+    submission_id: text('submission_id').notNull(),
+    effective_evaluation_id: text('effective_evaluation_id'),
+    generation: integer('generation').notNull().default(0),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index('evaluation_effective_head_submission_idx').on(t.submission_id),
+    // P1（终验）：head 的 (submission, group) 必须是真实同组 submission ——
+    // submission_id NOT NULL ⇒ 此 FK 恒生效，NULL-effective 初始 head 也无法
+    // 携带孤儿身份坐标。
+    foreignKey({
+      columns: [t.submission_id, t.evaluation_group_id],
+      foreignColumns: [
+        assessment_submission.submission_id,
+        assessment_submission.evaluation_group_id,
+      ],
+      name: 'evaluation_effective_head_submission_fk',
+    }),
+    // P1（终验）：effective 非 NULL 时三坐标 (evaluation, submission, group)
+    // 必须与 evaluation 行全一致 —— head 不得指向他组/他 submission 的 evaluation，
+    // 也不得把 effective 挂到同组另一 submission 上。effective 为 NULL 时
+    // MATCH SIMPLE 跳过（初始态合法）。
+    foreignKey({
+      columns: [t.effective_evaluation_id, t.submission_id, t.evaluation_group_id],
+      foreignColumns: [
+        evaluation.evaluation_id,
+        evaluation.submission_id,
+        evaluation.evaluation_group_id,
+      ],
+      name: 'evaluation_effective_head_evaluation_fk',
+    }),
+    check('evaluation_effective_head_generation_ck', sql`${t.generation} >= 0`),
+  ],
+);
+
+/**
+ * 历史身份映射（§3.2）：按【原始记录发生上下文】识别 ——
+ * 同一 (source_kind, source_id, source_locator) 只允许一条【当前】映射
+ * （部分唯一索引 WHERE is_current）；不用 (question_id, nullable part_ref)
+ * 当 PK（PK 不能含 NULL，且无法区分同题不同历史版本）。
+ *
+ * P1-3：status 只承载【裁决结果】（pending/mapped/conflicted/
+ * historical_unresolved），永不改写；当前选择由可变 is_current 表达 ——
+ * 修正 = 旧行 is_current=false（status 与证据原样保留）+ 新行 is_current=true
+ * 并链 supersedes_mapping_id（自 FK 保证链目标存在）。不得用覆盖 status 的
+ * 方式丢失历史裁决。未能恢复的旧记录进入原生 historical_unresolved 状态，
+ * 仍可查看原始证据，不得拿当前题面补造当时所见。
+ *
+ * P1（YUK-1097）：DB 层冻结（0111 trigger）—— 身份坐标/裁决字段/
+ * created_at 一旦写入即冻结；可变列只有 is_current / supersedes_mapping_id
+ * （修正链）与 pending 占位行的 evidence/algorithm_version 操作性注释刷新
+ * （P1-5 契约）。DELETE 一律拒绝 —— 历史裁决不可抹除。
+ */
+export const assessment_identity_mapping = pgTable(
+  'assessment_identity_mapping',
+  {
+    mapping_id: text('mapping_id').primaryKey(),
+    source_kind: text('source_kind').notNull(),
+    source_id: text('source_id').notNull(),
+    // locator 非空且非空白（P2-B：空串不算定位）。
+    source_locator: text('source_locator').notNull(),
+    original_question_id: text('original_question_id').notNull(),
+    legacy_part_ref: text('legacy_part_ref'),
+    snapshot_digest: text('snapshot_digest'),
+    target_revision_id: text('target_revision_id'),
+    target_part_id: text('target_part_id'),
+    target_slot_id: text('target_slot_id'),
+    evidence: jsonb('evidence').$type<JsonObject>().notNull().default({}),
+    algorithm_version: text('algorithm_version').notNull(),
+    status: text('status', {
+      enum: ['pending', 'mapped', 'conflicted', 'historical_unresolved'],
+    }).notNull(),
+    // 自 FK（修正链目标必须存在）：drizzle 自引用必须用惰性 AnyPgColumn
+    // 回调（表级 foreignColumns 自引用会形成循环类型推导）。
+    supersedes_mapping_id: text('supersedes_mapping_id').references(
+      (): AnyPgColumn => assessment_identity_mapping.mapping_id,
+    ),
+    /** 当前选择标志（可变；同一 locator 仅一条 true，部分唯一索引强制）。 */
+    is_current: boolean('is_current').notNull().default(true),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index('assessment_identity_mapping_question_idx').on(t.original_question_id),
+    index('assessment_identity_mapping_target_revision_idx').on(t.target_revision_id),
+    foreignKey({
+      columns: [t.target_revision_id],
+      foreignColumns: [question_revision.revision_id],
+      name: 'assessment_identity_mapping_target_revision_fk',
+    }),
+    // 同 locator 只允许一条当前映射 —— drizzle-kit 0.31 可 emit partial
+    // index（.where，先例 question_canonical_content_hash_unique）；0104 的
+    // 手写 WHERE status <> 'superseded' 版本已在 0105 DROP 并由本声明取代。
+    uniqueIndex('assessment_identity_mapping_current_uq')
+      .on(t.source_kind, t.source_id, t.source_locator)
+      .where(sql`${t.is_current}`),
+    check(
+      'assessment_identity_mapping_status_ck',
+      sql`${t.status} IN ('pending','mapped','conflicted','historical_unresolved')`,
+    ),
+    // P2-B：locator 非空白；status 依赖的目标坐标约束。
+    // P2（终验）：非空白判定收紧到 btrim —— 纯空格 locator 同样拒绝。
+    check('assessment_identity_mapping_locator_nonempty_ck', sql`btrim(${t.source_locator}) <> ''`),
+    check(
+      'assessment_identity_mapping_mapped_target_ck',
+      sql`(${t.status} <> 'mapped' OR ${t.target_revision_id} IS NOT NULL)`,
+    ),
+    check(
+      'assessment_identity_mapping_unresolved_no_target_ck',
+      sql`(${t.status} <> 'historical_unresolved' OR ${t.target_revision_id} IS NULL)`,
+    ),
+  ],
+);
+
+// YUK-1050 — 历史迁移 apply 执行器的运行账本（grounding §15：分阶段离线可续跑
+// + locks/WAL/duration 观测）。运维工具表，非判分/作答真相：允许 UPDATE（阶段
+// 状态迁移）；真相源表自身的不可变性由 0105/0106/0107 trigger 保证，与本表无关。
+// 备份语义（review P1-1）：运维态不进备份（BACKUP_EXCLUDED_TABLES）且 restore 时
+// 先擦除（RESTORE_WIPE_ONLY_TABLES，子 phase 先于父 run）—— 残留旧 apply 进度
+// 坐在恢复后的旧真相数据旁是错误的（会假装迁移已完成/未完成）。
+export const migration_apply_run = pgTable(
+  'migration_apply_run',
+  {
+    run_id: text('run_id').primaryKey(),
+    checkpoint_hash: text('checkpoint_hash').notNull(),
+    classification_hash: text('classification_hash').notNull(),
+    classification_version: text('classification_version').notNull(),
+    /** revision registry 工件 digest（无 registry 时 NULL）。 */
+    registry_digest: text('registry_digest'),
+    plan_digest: text('plan_digest').notNull(),
+    status: text('status', { enum: ['running', 'completed', 'failed'] }).notNull(),
+    started_at: timestamp('started_at', { withTimezone: true }).notNull(),
+    finished_at: timestamp('finished_at', { withTimezone: true }),
+    wal_lsn_start: text('wal_lsn_start'),
+    wal_lsn_end: text('wal_lsn_end'),
+    error: text('error'),
+  },
+  (t) => [
+    check('migration_apply_run_status_ck', sql`${t.status} IN ('running','completed','failed')`),
+  ],
+);
+
+export const migration_apply_phase = pgTable(
+  'migration_apply_phase',
+  {
+    id: text('id').primaryKey(),
+    run_id: text('run_id')
+      .notNull()
+      .references(() => migration_apply_run.run_id),
+    phase: text('phase', {
+      enum: ['preflight', 'plan', 'apply_mappings', 'apply_submissions', 'reconcile'],
+    }).notNull(),
+    status: text('status', {
+      enum: ['running', 'completed', 'failed', 'skipped'],
+    }).notNull(),
+    started_at: timestamp('started_at', { withTimezone: true }).notNull(),
+    finished_at: timestamp('finished_at', { withTimezone: true }),
+    duration_ms: integer('duration_ms'),
+    wal_lsn_start: text('wal_lsn_start'),
+    wal_lsn_end: text('wal_lsn_end'),
+    rows_written: integer('rows_written').notNull().default(0),
+    rows_already_present: integer('rows_already_present').notNull().default(0),
+    error: text('error'),
+  },
+  (t) => [
+    uniqueIndex('migration_apply_phase_run_phase_uq').on(t.run_id, t.phase),
+    check(
+      'migration_apply_phase_status_ck',
+      sql`${t.status} IN ('running','completed','failed','skipped')`,
+    ),
+    check(
+      'migration_apply_phase_name_ck',
+      sql`${t.phase} IN ('preflight','plan','apply_mappings','apply_submissions','reconcile')`,
+    ),
+    check(
+      'migration_apply_phase_rows_ck',
+      sql`${t.rows_written} >= 0 AND ${t.rows_already_present} >= 0`,
+    ),
+  ],
+);
+
+// YUK-1055 — DB contract epoch marker（grounding §15：DB epoch
+// `preparing/ready/active` 在 recovery/handlers/cron 之前建立，app/worker 契约
+// guard 读它决定本进程能否执行 runtime 路径）。
+//
+// 设计：append-only history —— 一行 = 一次 epoch 状态迁移（全序 seq），「当前
+// epoch」= seq 最大行。不用单行 UPDATE：迁移窗口的历史本身就是审计证据。
+// 真相语义（src/server/contract-epoch/rules.ts 是唯一裁决者，本表只是存储）：
+//   - 缺表/空表 = 隐式 (CODE_CONTRACT_EPOCH,'active') —— 无 marker 的 DB 对本代码
+//     天然 runnable（pre-cutover 时期该隐式值是 'legacy'，翻转后随代码 epoch）。
+//   - 'preparing'：维护窗口，全部 runtime 路径 fenced（含旧 epoch）。
+//   - 'ready'：迁移已验证待激活，仍 fenced（安静窗口）。
+//   - 'active'：仅当 marker.epoch 等于运行代码的 contract epoch 才 runnable。
+// 备份语义：durable（非运维态）→ FK_ORDER，见 src/server/export/constants.ts。
+export const contract_epoch = pgTable(
+  'contract_epoch',
+  {
+    seq: integer('seq').primaryKey(),
+    epoch: text('epoch').notNull(),
+    state: text('state', { enum: ['preparing', 'ready', 'active'] }).notNull(),
+    entered_at: timestamp('entered_at', { withTimezone: true }).notNull().defaultNow(),
+    /** 迁移操作者/工具标识（CLI --actor / 'migrate'）。 */
+    entered_by: text('entered_by').notNull(),
+    note: text('note'),
+  },
+  (t) => [
+    check('contract_epoch_state_ck', sql`${t.state} IN ('preparing','ready','active')`),
+    check('contract_epoch_epoch_nonempty_ck', sql`length(${t.epoch}) > 0`),
+    check('contract_epoch_entered_by_nonempty_ck', sql`length(${t.entered_by}) > 0`),
   ],
 );
 
@@ -921,6 +1539,10 @@ export const ai_task_runs = pgTable(
     // binding. Critical readers require both fields for their own task kinds.
     prompt_fingerprint: text('prompt_fingerprint'),
     result_digest: text('result_digest'),
+    compiled_prompt_hash: text('compiled_prompt_hash'),
+    prompt_codec_version: text('prompt_codec_version'),
+    prompt_codec_mode: text('prompt_codec_mode'),
+    prompt_context_digest: text('prompt_context_digest'),
     status: text('status').notNull().default('running'),
     finish_reason: text('finish_reason'),
     usage_json: jsonb('usage_json')
@@ -929,6 +1551,10 @@ export const ai_task_runs = pgTable(
         outputTokens: number;
         thinkingBlocks?: number;
         thinkingCharacters?: number;
+        /** YUK-1058 — D18 eval 镜像字段（可选；仅 task_kind='D18EvalHarness' 行）。 */
+        d18_score?: { points_awarded: number; max_points: number };
+        d18_escalated?: boolean;
+        d18_latency_ms?: number;
       }>()
       .notNull()
       .default({ inputTokens: 0, outputTokens: 0 }),
@@ -958,6 +1584,77 @@ export const ai_task_runs = pgTable(
           (${t.cost_basis} = 'unknown' AND ${t.cost_usd} IS NULL)
           OR (${t.cost_basis} IN ('reported','estimated') AND ${t.cost_usd} IS NOT NULL AND ${t.cost_usd} >= 0)
         )
+      )`,
+    ),
+    check(
+      'ai_task_runs_compiled_prompt_provenance_ck',
+      sql`(
+        ${t.compiled_prompt_hash} IS NULL
+        AND ${t.prompt_codec_version} IS NULL
+        AND ${t.prompt_codec_mode} IS NULL
+        AND ${t.prompt_context_digest} IS NULL
+      ) OR (
+        ${t.compiled_prompt_hash} IS NOT NULL
+        AND ${t.compiled_prompt_hash} ~ '^[0-9a-f]{64}$'
+        AND ${t.prompt_codec_version} IS NOT NULL
+        AND btrim(${t.prompt_codec_version}) <> ''
+        AND ${t.prompt_codec_mode} IS NOT NULL
+        AND ${t.prompt_codec_mode} IN ('cold','resume')
+        AND ${t.prompt_context_digest} IS NOT NULL
+        AND ${t.prompt_context_digest} ~ '^[0-9a-f]{64}$'
+      )`,
+    ),
+  ],
+);
+
+export const copilot_evidence_checkpoint = pgTable(
+  'copilot_evidence_checkpoint',
+  {
+    id: text('id').primaryKey(),
+    task_kind: text('task_kind').notNull(),
+    slot: text('slot').notNull(),
+    protocol_version: integer('protocol_version').notNull(),
+    prompt_fingerprint: text('prompt_fingerprint').notNull(),
+    base_input_sha256: text('base_input_sha256').notNull(),
+    source_catalog_sha256: text('source_catalog_sha256').notNull(),
+    binding_extras: jsonb('binding_extras').$type<JsonObject>().notNull().default({}),
+    status: text('status').notNull().default('open'),
+    revision: integer('revision').notNull().default(0),
+    records_json: jsonb('records_json').$type<JsonObject[]>().notNull().default([]),
+    record_digests_json: jsonb('record_digests_json').$type<string[]>().notNull().default([]),
+    attempts_json: jsonb('attempts_json').$type<JsonObject[]>().notNull().default([]),
+    sealed_output_json: jsonb('sealed_output_json').$type<unknown>(),
+    sealed_digest_sha256: text('sealed_digest_sha256'),
+    sealed_task_run_id: text('sealed_task_run_id'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+    expires_at: timestamp('expires_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [
+    index('copilot_evidence_checkpoint_expiry_idx').on(t.expires_at),
+    check(
+      'copilot_evidence_checkpoint_task_kind_ck',
+      sql`${t.task_kind} IN ('CopilotEvidenceReviewTask','CopilotEvidenceVerificationTask')`,
+    ),
+    check('copilot_evidence_checkpoint_status_ck', sql`${t.status} IN ('open','sealed','expired')`),
+    check('copilot_evidence_checkpoint_revision_ck', sql`${t.revision} >= 0`),
+    check(
+      'copilot_evidence_checkpoint_seal_ck',
+      sql`(
+        ${t.status} = 'open'
+        AND ${t.sealed_output_json} IS NULL
+        AND ${t.sealed_digest_sha256} IS NULL
+        AND ${t.sealed_task_run_id} IS NULL
+      ) OR (
+        ${t.status} = 'sealed'
+        AND ${t.sealed_output_json} IS NOT NULL
+        AND ${t.sealed_digest_sha256} IS NOT NULL
+        AND ${t.sealed_task_run_id} IS NOT NULL
+      ) OR (
+        ${t.status} = 'expired'
+        AND ${t.sealed_output_json} IS NULL
+        AND ${t.sealed_digest_sha256} IS NULL
+        AND ${t.sealed_task_run_id} IS NULL
       )`,
     ),
   ],
@@ -1335,6 +2032,210 @@ export const tool_call_log = pgTable('tool_call_log', {
   mirrored_event_id: text('mirrored_event_id'),
 });
 
+export const tool_operation = pgTable(
+  'tool_operation',
+  {
+    id: text('id').primaryKey(),
+    session_id: text('session_id'),
+    task_run_id: text('task_run_id'),
+    tool_name: text('tool_name').notNull(),
+    effect: text('effect').notNull(),
+    status: text('status').notNull().default('running'),
+    process_id: text('process_id').notNull(),
+    input_hash: text('input_hash').notNull(),
+    input_json: jsonb('input_json').$type<JsonObject>().notNull(),
+    result_json: jsonb('result_json').$type<JsonObject>(),
+    error_json: jsonb('error_json').$type<{ code: string; message: string }>(),
+    side_effect_risk: text('side_effect_risk'),
+    cancelled_by: text('cancelled_by'),
+    terminal_tool_call_log_id: text('terminal_tool_call_log_id'),
+    hard_deadline_at: timestamp('hard_deadline_at', { withTimezone: true }),
+    started_at: timestamp('started_at', { withTimezone: true }).notNull().defaultNow(),
+    owner_heartbeat_at: timestamp('owner_heartbeat_at', { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    lease_expires_at: timestamp('lease_expires_at', { withTimezone: true }).notNull(),
+    settled_at: timestamp('settled_at', { withTimezone: true }),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    index('tool_operation_running_lease_idx').on(t.status, t.lease_expires_at),
+    index('tool_operation_session_idx').on(t.session_id, t.started_at),
+    check('tool_operation_effect_ck', sql`${t.effect} IN ('read','propose','write')`),
+    check('tool_operation_input_hash_ck', sql`${t.input_hash} ~ '^[0-9a-f]{64}$'`),
+    check(
+      'tool_operation_identity_bounds_ck',
+      sql`char_length(${t.id}) BETWEEN 1 AND 256
+        AND char_length(${t.tool_name}) BETWEEN 1 AND 256
+        AND char_length(${t.process_id}) BETWEEN 1 AND 256
+        AND (${t.session_id} IS NULL OR char_length(${t.session_id}) BETWEEN 1 AND 256)
+        AND (${t.task_run_id} IS NULL OR char_length(${t.task_run_id}) BETWEEN 1 AND 256)
+        AND (${t.terminal_tool_call_log_id} IS NULL
+          OR char_length(${t.terminal_tool_call_log_id}) BETWEEN 1 AND 256)`,
+    ),
+    check(
+      'tool_operation_json_bounds_ck',
+      sql`jsonb_typeof(${t.input_json}) = 'object'
+        AND octet_length(${t.input_json}::text) <= 131072
+        AND (${t.result_json} IS NULL OR (
+          jsonb_typeof(${t.result_json}) = 'object'
+          AND octet_length(${t.result_json}::text) <= 131072
+        ))`,
+    ),
+    check(
+      'tool_operation_error_bounds_ck',
+      sql`${t.error_json} IS NULL OR (
+        jsonb_typeof(${t.error_json}) = 'object'
+        AND ${t.error_json} ? 'code'
+        AND ${t.error_json} ? 'message'
+        AND char_length(${t.error_json}->>'code') BETWEEN 1 AND 100
+        AND char_length(${t.error_json}->>'message') BETWEEN 1 AND 4000
+      )`,
+    ),
+    check(
+      'tool_operation_status_ck',
+      sql`${t.status} IN ('running','succeeded','failed','cancelled','lost')`,
+    ),
+    check(
+      'tool_operation_cancelled_by_ck',
+      sql`${t.cancelled_by} IS NULL OR ${t.cancelled_by} IN ('model','system','user')`,
+    ),
+    check(
+      'tool_operation_terminal_shape_ck',
+      sql`(
+        ${t.status} = 'running'
+        AND ${t.settled_at} IS NULL
+        AND ${t.result_json} IS NULL
+        AND ${t.error_json} IS NULL
+        AND ${t.side_effect_risk} IS NULL
+        AND ${t.cancelled_by} IS NULL
+      ) OR (
+        ${t.status} = 'succeeded'
+        AND ${t.settled_at} IS NOT NULL
+        AND ${t.error_json} IS NULL
+        AND ${t.side_effect_risk} IS NULL
+        AND ${t.cancelled_by} IS NULL
+      ) OR (
+        ${t.status} = 'failed'
+        AND ${t.settled_at} IS NOT NULL
+        AND ${t.result_json} IS NULL
+        AND ${t.error_json} IS NOT NULL
+        AND ${t.side_effect_risk} IS NULL
+        AND ${t.cancelled_by} IS NULL
+      ) OR (
+        ${t.status} = 'cancelled'
+        AND ${t.settled_at} IS NOT NULL
+        AND ${t.result_json} IS NULL
+        AND ${t.error_json} IS NOT NULL
+        AND ${t.side_effect_risk} IS NULL
+        AND ${t.cancelled_by} IS NOT NULL
+      ) OR (
+        ${t.status} = 'lost'
+        AND ${t.settled_at} IS NOT NULL
+        AND ${t.result_json} IS NULL
+        AND ${t.error_json} IS NOT NULL
+        AND ${t.side_effect_risk} IN ('none','possible')
+        AND ${t.cancelled_by} IS NULL
+      )`,
+    ),
+    check(
+      'tool_operation_timeline_ck',
+      sql`${t.settled_at} IS NULL OR ${t.settled_at} >= ${t.started_at}`,
+    ),
+    check(
+      'tool_operation_lease_timeline_ck',
+      sql`${t.owner_heartbeat_at} >= ${t.started_at}
+        AND ${t.lease_expires_at} > ${t.owner_heartbeat_at}`,
+    ),
+  ],
+);
+
+export const subagent_run = pgTable(
+  'subagent_run',
+  {
+    id: text('id').primaryKey(),
+    session_id: text('session_id').notNull(),
+    parent_turn_event_id: text('parent_turn_event_id').notNull(),
+    launch_key: text('launch_key').notNull(),
+    parent_task_run_id: text('parent_task_run_id'),
+    objective_hash: text('objective_hash').notNull(),
+    objective: text('objective').notNull(),
+    status: text('status').notNull().default('queued'),
+    cancel_requested_by: text('cancel_requested_by'),
+    cancel_requested_at: timestamp('cancel_requested_at', { withTimezone: true }),
+    claim_token: text('claim_token'),
+    lease_expires_at: timestamp('lease_expires_at', { withTimezone: true }),
+    hard_deadline_at: timestamp('hard_deadline_at', { withTimezone: true }),
+    child_task_run_id: text('child_task_run_id'),
+    started_event_id: text('started_event_id').notNull(),
+    settled_event_id: text('settled_event_id'),
+    pg_boss_job_id: text('pg_boss_job_id'),
+    result_md: text('result_md'),
+    error_code: text('error_code'),
+    error_message: text('error_message'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    started_at: timestamp('started_at', { withTimezone: true }),
+    settled_at: timestamp('settled_at', { withTimezone: true }),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('subagent_run_parent_launch_uq').on(
+      t.session_id,
+      t.parent_turn_event_id,
+      t.launch_key,
+    ),
+    index('subagent_run_recovery_idx').on(t.status, t.lease_expires_at),
+    check('subagent_run_objective_hash_ck', sql`${t.objective_hash} ~ '^[0-9a-f]{64}$'`),
+    check(
+      'subagent_run_status_ck',
+      sql`${t.status} IN ('queued','running','succeeded','failed','cancelled','lost')`,
+    ),
+    check(
+      'subagent_run_cancel_owner_ck',
+      sql`${t.cancel_requested_by} IS NULL OR ${t.cancel_requested_by} IN ('model','system','user')`,
+    ),
+    check(
+      'subagent_run_bounds_ck',
+      sql`char_length(${t.objective}) BETWEEN 1 AND 12000 AND char_length(${t.launch_key}) BETWEEN 1 AND 120`,
+    ),
+  ],
+);
+
+export const copilot_continuation = pgTable(
+  'copilot_continuation',
+  {
+    id: text('id').primaryKey(),
+    subagent_run_id: text('subagent_run_id').notNull(),
+    session_id: text('session_id').notNull(),
+    parent_turn_event_id: text('parent_turn_event_id').notNull(),
+    result_event_id: text('result_event_id').notNull(),
+    status: text('status').notNull().default('pending'),
+    claim_token: text('claim_token'),
+    lease_expires_at: timestamp('lease_expires_at', { withTimezone: true }),
+    task_run_id: text('task_run_id'),
+    reply_event_id: text('reply_event_id'),
+    pg_boss_job_id: text('pg_boss_job_id'),
+    error_code: text('error_code'),
+    error_message: text('error_message'),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    started_at: timestamp('started_at', { withTimezone: true }),
+    settled_at: timestamp('settled_at', { withTimezone: true }),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    uniqueIndex('copilot_continuation_subagent_uq').on(t.subagent_run_id),
+    uniqueIndex('copilot_continuation_result_event_uq').on(t.result_event_id),
+    uniqueIndex('copilot_continuation_one_running_per_session_uq')
+      .on(t.session_id)
+      .where(sql`${t.status} = 'running'`),
+    index('copilot_continuation_recovery_idx').on(t.status, t.lease_expires_at),
+    check(
+      'copilot_continuation_status_ck',
+      sql`${t.status} IN ('pending','running','succeeded','failed','cancelled','lost','skipped')`,
+    ),
+  ],
+);
+
 export const cost_ledger = pgTable(
   'cost_ledger',
   {
@@ -1455,6 +2356,11 @@ export const learning_session = pgTable('learning_session', {
   error_message: text('error_message'),
   // conversation-only fields
   summary_md: text('summary_md'),
+  // YUK-936 — Agent SDK session id for foreground inline Copilot resume (ADR-0054).
+  // Product session_id stays learning_session.id; this is server-owned SDK transcript
+  // continuity. NULL when cold-starting or after resume-fail clear. Write path =
+  // Conversation.setAgentSdkSessionId / clearAgentSdkSessionId only.
+  agent_sdk_session_id: text('agent_sdk_session_id'),
   // goal linkage — Phase 1d placeholder
   goal_id: text('goal_id'),
   // U5 (YUK-203) — soft reference to the paper artifact a review-attempt session
@@ -2170,7 +3076,9 @@ export const item_calibration = pgTable(
     confidence: real('confidence'),
     // 'hard' | 'soft'——硬轨进 p(L)/调度，软轨永不进（ADR-0035）。
     track: text('track').notNull().default('hard'),
-    // 'llm_prior' | 'fixed_anchor' | ... ——provenance（evidence-first 红线）。
+    // 'llm_prior' | 'llm_prior_llasa' | 'fixed_anchor' | ... ——provenance
+    // （evidence-first 红线）。'llm_prior_llasa' = YUK-376 LLaSA 学生模拟反推
+    // 的冷启锚（ItemPriorLlasaTask，opt-in），与 feature→b 的 'llm_prior' 区分。
     source: text('source').notNull(),
     // ── YUK-361 Phase 6 (Task 11, ADR-0043 §4 半数据驱动 b + §7 active-PPI)：
     //    b_anchor / b_calib 分离 + 重标定元数据 ──────────────────────────────
@@ -2188,11 +3096,12 @@ export const item_calibration = pgTable(
     //   直到批量重标定首次 firm-up——故 effectiveB 在重标定攒够标签前恒退回 b_anchor ?? b，
     //   零行为变更（read-compat NO-OP today，安全可接线）。
     b_anchor: real('b_anchor'),
-    // - b_calib：**去偏后的 b**（active-PPI/AIPW 校锚标尺后的难度）。**只由批量重标定
-    //   写**（src/server/mastery/recalibration.ts recalibrateQuestion），**绝不**由在线
-    //   attempt 路径写——不变量①（item-半边锁死 G4）：在线 θ̂ 只 READS effectiveB，从不
-    //   WRITES b_calib。nullable：重标定攒够标签（calibration_n ≥ 阈值）前恒 NULL，
-    //   effectiveB 退回 b_anchor ?? b。这是 ADR-0043 §4「b 可在 PPI 框架内随真值去偏而动，
+    // - b_calib：**去偏后的 b**（active-PPI/AIPW 校锚标尺后的难度）。**写只由批量重标定
+    //   （src/server/mastery/recalibration.ts recalibrateQuestion）+ 重建清值
+    //   （clearCalibrationBelowThreshold，YUK-1058：标签跌破阈值时清 stale，不让已撤销作答的
+    //   旧 b_calib 继续喂 effectiveB）**，**绝不**由在线 attempt 路径写——不变量①
+    //   （item-半边锁死 G4）：在线 θ̂ 只 READS effectiveB，从不 WRITES b_calib。nullable：
+    //   重标定攒够标签（calibration_n ≥ 阈值）前恒 NULL，effectiveB 退回 b_anchor ?? b。这是 ADR-0043 §4「b 可在 PPI 框架内随真值去偏而动，
     //   非数值永久冻结」的落点——但动 b 的是慢尺度批量去偏，非单次作答。
     b_calib: real('b_calib'),
     // - calibration_n：折进 b_calib 的 difficulty_calibration_label 条数（该题/家族）。
@@ -2393,6 +3302,44 @@ export const mistake_variant = pgTable(
   ],
 );
 
+// YUK-1016 / 454-B — DB-overlay 错因词表层（错因 catalog 成长路径）。
+//
+// Owner 09-18 裁决：收编落 DB overlay，与 `SubjectProfile.causeCategories` 合并
+// 读取——词表不再只靠发版扩张。行只经 `cause_category` proposal 的 accept
+// applier 写入（human-vet 边界）；`other` 归因复发 → CauseCategoryProposeTask
+// → propose event → owner accept → INSERT。
+//
+//   - `id` 用 `ov_<slug>` 命名空间防撞（NOT `ov:`——冒号过不了
+//     CauseCategoryId 的 ^[a-z][a-z0-9_]*$，同 YUK-1015 `misc:`→`misc_` 教训）。
+//   - `status` ∈ 'draft' | 'active'：`archived_at` 是唯一回退维度
+//     （misconception 惯例），retract applier 置 archived_at。
+//   - `source` ∈ 'owner' | 'llm_propose'：两条生产路径共用同一 accept 落点。
+//   - `evidence_event_ids`：支撑提议的 judge event 回链（propose event 的
+//     evidence_refs 里 kind='event' 的条目）。
+//   - created_at/updated_at 由调用方传入（identity-cluster 惯例，无 defaultNow）。
+export const cause_category_overlay = pgTable(
+  'cause_category_overlay',
+  {
+    id: text('id').primaryKey(),
+    subject_id: text('subject_id').notNull(),
+    label: text('label').notNull(),
+    description: text('description'),
+    source: text('source', { enum: ['owner', 'llm_propose'] }).notNull(),
+    status: text('status', { enum: ['draft', 'active'] })
+      .notNull()
+      .default('draft'),
+    // 归属列：行由哪张 cause_category proposal 的 accept 落地——retract applier 按
+    // 它限定行（mistake_variant.proposal_event_id 同款语义；无它则同 slug 跨
+    // proposal 可互相归档）。
+    proposal_event_id: text('proposal_event_id'),
+    evidence_event_ids: jsonb('evidence_event_ids').$type<string[]>().notNull().default([]),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+    updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+    archived_at: timestamp('archived_at', { withTimezone: true }),
+  },
+  (t) => [index('cause_category_overlay_subject_idx').on(t.subject_id, t.status)],
+);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // YUK-143 / ADR-0025 — North-Star `goal` entity (Wave-9 core).
 //
@@ -2428,6 +3375,16 @@ export const goal = pgTable(
       .default('explicit'),
     // AI-internal sequencing hint; NOT a progress metric (ND-4).
     sequence_hint: integer('sequence_hint').notNull().default(0),
+    // YUK-1009 — learner-declared curriculum stage (学段), captured at onboarding via
+    // POST /api/goals and mutable via the goal_scope_update command path (the goal is the
+    // durable home because goals already key placement/supply scoping). CURRICULUM
+    // constraint only — NEVER an ability/θ̂ input. NULL = undeclared (older goals,
+    // proposal-materialized goals, learners who skipped the question). Canonical
+    // vocabulary: DeclaredStage in src/core/schema/business.ts (literal tuple kept
+    // inline because this file only type-imports core schema).
+    declared_stage: text('declared_stage', {
+      enum: ['middle_school', 'high_school', 'university', 'custom'],
+    }),
     // 'active' | 'dormant' | 'done'
     status: text('status', { enum: ['active', 'dormant', 'done'] })
       .notNull()
@@ -3238,3 +4195,65 @@ export const dag_orchestration_node = pgTable(
     ),
   ],
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// YUK-1007 — 热加载配置面三表（grounding：
+// docs/planning/2026-09-26-yuk1007-hot-reload-config.md §1）。
+//
+//   system_config         — per-key 行（registry 登记的 canonical key → jsonb 值
+//                           + per-key revision 单调轴）。DB 是 app / worker 两进程
+//                           唯一的共享媒介（无 Redis / IPC）。
+//   system_config_journal — append-only 审计账本（subject_trait_journal 先例），
+//                           (key, revision) PK；change_seq 取独立序列
+//                           config_change_seq（不复用 subject_change_seq）。
+//   system_config_epoch   — 单行失效轴（id='global'）：每次写 bump epoch，刷新侧
+//                           先探测 epoch 相同即跳过全量 SELECT。
+//
+// 并发协议：与 subject 控制面不同，config 写面**不**取 advisory lock（§6.3：行级
+// upsert + journal + epoch 同 tx，最后一次赢；单用户 admin 面）。restore 尾须
+// setval('config_change_seq', max(change_seq)+1)（archive.ts）。
+// ─────────────────────────────────────────────────────────────────────────────
+
+export const system_config = pgTable('system_config', {
+  // registry（src/core/config/registry.ts）登记的 canonical key。
+  key: text('key').primaryKey(),
+  // boolean | number | string | string[] | {provider?, model?, budget?}。
+  value: jsonb('value').notNull(),
+  // 每次写 +1（= journal 行的 revision 轴）。
+  revision: integer('revision').notNull().default(0),
+  // 自由备注（「谁为什么设」）。
+  source_note: text('source_note'),
+  // 'panel:admin' | 'migrate' | 'cli' 等 actor 标签（枚举在写面 zod 侧，
+  // DDL 保持 loose text —— 同 subject_control_journal.actor 惯例）。
+  updated_by: text('updated_by').notNull(),
+  created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+});
+
+export const system_config_journal = pgTable(
+  'system_config_journal',
+  {
+    key: text('key').notNull(),
+    // = 该 key 主行写后 revision（clear 行 = prev.revision+1 占位）。
+    revision: integer('revision').notNull(),
+    // {prev, next, note} —— 完整快照语义同 subject_trait_journal。
+    payload: jsonb('payload').notNull(),
+    action: text('action', { enum: ['set', 'clear', 'seed'] }).notNull(),
+    actor: text('actor').notNull(),
+    // 独立序列 config_change_seq（不复用 subject_change_seq——两域独立）。
+    // 序列不随行备份：restore 尾 setval（archive.ts）。
+    change_seq: bigint('change_seq', { mode: 'number' })
+      .notNull()
+      .default(sql`nextval('config_change_seq')`),
+    created_at: timestamp('created_at', { withTimezone: true }).notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.key, t.revision] })],
+);
+
+export const system_config_epoch = pgTable('system_config_epoch', {
+  // 单行轴：恒 'global'。
+  id: text('id').primaryKey(),
+  // 每次写 +1（同 tx 内 nextval(config_change_seq) 供 journal 与 epoch 共用）。
+  epoch: bigint('epoch', { mode: 'number' }).notNull(),
+  updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
+});

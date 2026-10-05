@@ -8,8 +8,10 @@
 import { downloadZip } from 'client-zip';
 import { getTableColumns, getTableName, isTable, sql } from 'drizzle-orm';
 import { unzipSync } from 'fflate';
+import { getConfigSnapshot } from '@/core/config/store';
 import type { Db, Tx } from '@/db/client';
 import * as schema from '@/db/schema';
+import { hydrateConfigFromDb } from '@/server/config/hydrate';
 import type { R2Client } from '@/server/r2';
 import {
   BACKUP_EXCLUDED_TABLES,
@@ -18,6 +20,7 @@ import {
   MEM0_COLLECTION_COLUMNS,
   RESTORE_WIPE_ONLY_TABLES,
   SCHEMA_VERSION,
+  SUBSCRIPTION_PROGRESS_TABLES,
   type TableName,
   mem0CollectionTable,
 } from './constants';
@@ -197,31 +200,28 @@ export async function buildBackupArchive({
   const tableRows: Record<string, Array<Record<string, unknown>>> = {};
   const rowCounts: Record<string, number> = {};
 
-  for (const t of FK_ORDER) {
-    // Use raw SQL to fetch every column without needing individual table schema imports.
-    const rows = (await db.execute(sql.raw(`select * from "${t}"`))) as Array<
-      Record<string, unknown>
-    >;
-    tableRows[t] = rows;
-    rowCounts[t] = rows.length;
-  }
+  // Event, progress, effects and business parents must describe one committed point.
+  // Release the read-only snapshot before fetching external R2 objects/streaming the ZIP.
+  await db.transaction(
+    async (tx) => {
+      for (const t of FK_ORDER) {
+        const rows = await tx.execute<Record<string, unknown>>(sql.raw(`select * from "${t}"`));
+        tableRows[t] = rows;
+        rowCounts[t] = rows.length;
+      }
 
-  // YUK-355: dump the mem0 collection table (non-drizzle, runtime-created by mem0).
-  // Keyed in data.json by its resolved table name. `vector::text` keeps the pgvector
-  // column a stable string in JSON. Skipped (no key, count 0) if mem0 never created
-  // the table on this DB — a backup of a fresh DB is still valid.
-  const mem0Table = mem0CollectionTable();
-  // Identifier safety (Cursor OCR minor, PR #491): the table name is raw-interpolated
-  // into the dump SELECT, so validate it against the mem0 collection-name shape before
-  // building the query — consistent with the value-bound mem0CollectionExists().
-  assertSafeMem0CollectionName(mem0Table);
-  if (await mem0CollectionExists(db, mem0Table)) {
-    const mem0Rows = (await db.execute(
-      sql.raw(`select id, vector::text as vector, payload from "${mem0Table}"`),
-    )) as Array<Record<string, unknown>>;
-    tableRows[mem0Table] = mem0Rows;
-    rowCounts[mem0Table] = mem0Rows.length;
-  }
+      const mem0Table = mem0CollectionTable();
+      assertSafeMem0CollectionName(mem0Table);
+      if (await mem0CollectionExists(tx, mem0Table)) {
+        const rows = await tx.execute<Record<string, unknown>>(
+          sql.raw(`select id, vector::text as vector, payload from "${mem0Table}"`),
+        );
+        tableRows[mem0Table] = rows;
+        rowCounts[mem0Table] = rows.length;
+      }
+    },
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
+  );
 
   type Entry = { name: string; input: string | Uint8Array | ReadableStream; lastModified?: Date };
   const entries: Entry[] = [];
@@ -293,6 +293,18 @@ export async function buildBackupArchive({
 const INSERT_BATCH_SIZE = 50;
 const TEXT_ARRAY_COLUMNS: Partial<Record<TableName, ReadonlySet<string>>> = {
   event: new Set(['affected_scopes']),
+  event_subscription_effect: new Set(['mastery_event_ids', 'evidence_ids']),
+};
+
+/**
+ * YUK-1007 (oracle P1-6 修入时带出): jsonb 列里的标量/原始值——dump 里是
+ * `5`、`"x"`、`true` 这类原生值，restoreValue 会绑成 integer/text，PG 认
+ * "expression is of type integer" 拒绝进 jsonb 列。primitive jsonb 列必须
+ * 显式 JSON.stringify + ::jsonb cast（对象走原 JSON.stringify 路径同样安全，
+ * 一并 cast 掉）。
+ */
+const JSONB_COLUMNS: Partial<Record<TableName, ReadonlySet<string>>> = {
+  system_config: new Set(['value']),
 };
 
 export interface ImportManifest {
@@ -349,6 +361,10 @@ function restoreValue(table: TableName, column: string, value: unknown) {
       value.map((item) => sql`${item}`),
       sql`,`,
     )}]::text[]`;
+  }
+  if (JSONB_COLUMNS[table]?.has(column)) {
+    // primitive 也要 JSON.stringify（'5' 才能进 jsonb；裸 5 会撞 integer 类型错）。
+    return sql`${value === undefined ? null : JSON.stringify(value)}::jsonb`;
   }
   const bound =
     Array.isArray(value) || (value !== null && typeof value === 'object')
@@ -599,6 +615,20 @@ export async function restoreFromArchive({
     }
   }
 
+  // A 4.25 archive must carry even empty progress tables. Treating a missing key as
+  // empty would silently erase its activation history and bootstrap-skip pending work.
+  const missingProgress = SUBSCRIPTION_PROGRESS_TABLES.filter((table) => data[table] === undefined);
+  if (missingProgress.length > 0) {
+    return {
+      status: 400,
+      body: {
+        error: 'data_validation_failed',
+        message: 'Subscription progress is missing; DB was NOT wiped.',
+        issues: missingProgress.map((table) => `${table}: required progress table missing`),
+      },
+    };
+  }
+
   // Pre-flight: catch inconsistent column shapes BEFORE we wipe the DB.
   const columnValidationErrors: string[] = [];
   for (const t of FK_ORDER) {
@@ -638,6 +668,10 @@ export async function restoreFromArchive({
 
   const stats: Record<string, { deleted: number; inserted: number }> = {};
 
+  // YUK-1007 review P1-6：本进程已发布的 config epoch——restore 结尾要写的
+  // 「严格新 epoch」必须大于它，否则本进程 hydrate 的守卫会拒绝收敛。
+  const localConfigEpoch = getConfigSnapshot().epoch;
+
   try {
     // YUK-355 (atomic restore): the ENTIRE restore mutation sequence — FK_ORDER
     // wipe+insert AND the mem0 collection wipe/create/insert — runs inside a SINGLE
@@ -648,6 +682,33 @@ export async function restoreFromArchive({
     // transactional DDL, so the create-extension/create-table for an absent mem0
     // collection roll back cleanly too. All mutations use `tx`, never the outer `db`.
     await db.transaction(async (tx) => {
+      // YUK-1044（PR #1466 Failure B）—— 可信 restore 通道（窄）：
+      // `SET LOCAL app.assessment_restore_mode = 'on'` 只在本事务内生效（结束自动
+      // 失效），让上面的不可变 guard（question_revision / question_admission_
+      // verification / assessment_submission / assessment_issuance 的 BEFORE
+      // UPDATE/DELETE trigger，drizzle/0105/0107）放行 wipe+重插；普通 writer 不发
+      // SET LOCAL，生产行为不变。
+      // `SET CONSTRAINTS ALL DEFERRED` 只影响 DEFERRABLE 约束（当前仅
+      // assessment_identity_mapping 的 supersedes 自 FK，0107）：backup dump 的同表
+      // 行序不保证父行在前，推迟到 commit 检查；其余 FK 仍即时按 FK_ORDER 拓扑校验。
+      await tx.execute(sql`set local app.assessment_restore_mode = 'on'`);
+      await tx.execute(sql`set constraints all deferred`);
+
+      // YUK-1007 review P1-6 — capture the pre-restore epoch axis BEFORE the wipe:
+      // restore re-inserts the archived system_config_epoch verbatim, but the epoch
+      // only means anything relative to this DB lineage's own sequence history. A
+      // restore that lands epoch N onto a process already publishing epoch N looks
+      // "unchanged" to every hydrate probe (every process keeps its pre-restore
+      // values; the probe never fires). We need pre-wipe epoch/sequence position to
+      // write a strictly-newer epoch at the end of this tx.
+      const preMaxRows = await tx.execute<{ pre_max: number | string }>(sql`
+        select greatest(
+          coalesce((select max(epoch) from "system_config_epoch"), 0),
+          coalesce((select last_value from pg_sequences where schemaname = 'public' and sequencename = 'config_change_seq'), 0),
+          ${localConfigEpoch}
+        ) as pre_max
+      `);
+      const preRestoreConfigMax = Math.max(Number(preMaxRows[0]?.pre_max ?? 0), localConfigEpoch);
       if (archivedInterventionPreparationJobIds.length > 0) {
         if (retireInterventionPreparationJobs) {
           await retireInterventionPreparationJobs(tx, archivedInterventionPreparationJobIds);
@@ -658,11 +719,7 @@ export async function restoreFromArchive({
         }
       }
 
-      // YUK-751 (codex P1): wipe the operational subscription tables FIRST. They are excluded from
-      // the archive (not restored), but their ON DELETE no action FKs into event/artifact would
-      // otherwise block the FK_ORDER parent wipe below. Child→parent order among themselves
-      // (RESTORE_WIPE_ONLY_TABLES = effect → delivery → checkpoint). Not counted in `stats` (they are
-      // wiped-not-restored; a stats entry would misreport them as a backed-up table).
+      // Discard excluded process/queue ownership before restoring durable business rows.
       for (const t of RESTORE_WIPE_ONLY_TABLES) {
         await tx.execute(sql.raw(`delete from "${t}"`));
       }
@@ -698,6 +755,19 @@ export async function restoreFromArchive({
         }
       }
 
+      // YUK-766: archived leases belong to the source process. Preserve pause/hash,
+      // local ordering, retry budget/backoff, terminal outcomes and causal effect receipts.
+      // The temporary archived claims never become visible outside this restore tx.
+      await tx.execute(sql`
+        update event_subscription_checkpoint
+        set claim_owner = null, claim_token = null, claim_lease_until = null
+      `);
+      await tx.execute(sql`
+        update event_subscription_delivery
+        set status = case when status = 'claimed' then 'pending' else status end,
+            claim_owner = null, claim_token = null, claim_lease_until = null, claimed_at = null
+      `);
+
       // YUK-599 (v3 §6): subject_change_seq 序列不随行备份（pg dump 语义之外的手工
       // 序列），restore 只回插了两本 journal 的 change_seq 列值——不补 setval 的话，
       // 下一次控制面写会从旧序列位取号，撞已有 as-of 坐标（公共全序轴被污染）。
@@ -706,6 +776,52 @@ export async function restoreFromArchive({
       await tx.execute(
         sql.raw(
           `select setval('subject_change_seq', (select greatest(coalesce((select max(change_seq) from "subject_trait_journal"), 0), coalesce((select max(change_seq) from "subject_control_journal"), 0)) + 1), false)`,
+        ),
+      );
+
+      // YUK-1007 (§1.2): config_change_seq 序列同样不随行备份，restore 只回插了
+      // system_config_journal.change_seq——不补 setval，下一次 config 写会从旧序列位
+      // 取号撞已有 journal 坐标；system_config_epoch.epoch 也吃同一序列，必须与
+      // journal 共用推进位。同 tx 原子回滚。
+      await tx.execute(
+        sql.raw(
+          `select setval('config_change_seq', (select greatest(coalesce((select max(change_seq) from "system_config_journal"), 0), coalesce((select max(epoch) from "system_config_epoch"), 0)) + 1), false)`,
+        ),
+      );
+
+      // YUK-1007 review P1-6 — restore MUST NOT leave the archived epoch verbatim:
+      // restore 回插的 epoch 来自另一条时间线/另一份备份，可能与本进程已发布 epoch
+      // 相等甚至更小。那样的话 hydrate 的 epoch 探测永远看到 "unchanged"，所有
+      // 进程永远停在 restore 前的配置（实测：restore 到 epoch=1/val=111，运行中
+      // 的 epoch=1/val=222 进程永不收敛）。修复：在 tx 末尾把 epoch 改写成严格
+      // 大于本 DB 血统曾发过的任何 epoch（pre-wipe 行、序列位、刚回插的备份值）
+      // 且大于本进程快照 epoch 的新值——探测看到严格更大的号 → 必然重新水合。
+      await tx.execute(sql`
+        insert into system_config_epoch (id, epoch, updated_at)
+        values (
+          'global',
+          greatest(
+            coalesce((select max(epoch) from system_config_epoch), 0),
+            ${preRestoreConfigMax}
+          ) + 1,
+          now()
+        )
+        on conflict (id) do update
+          set epoch = greatest(excluded.epoch, system_config_epoch.epoch + 1),
+              updated_at = now()
+      `);
+
+      // 第二轮 review P1（两轴去重）：上面的 setval 只把序列停在「归档高水位+1」，
+      // 而 epoch 行刚被抬到恢复前高水位之上——两条轴不同步时，后续 bumpEpoch 的
+      // 裸 nextval 会拿到低于 epoch 行的号（Oracle 复现：归档 7 → 抬到 39 →
+      // setConfig 拿到 epoch 10 → stale 守卫拒绝发布，writer 却成功）。这里把
+      // 序列同步到抬高后的 epoch（is_called=true → 下一次 nextval = epoch+1）。
+      // greatest(…) 蓄住 pg_sequences.last_value，防止倒退（序列操作不随 tx 回滚，
+      // 失败路径下只可能问前跳号——安全）。write.ts 的 bumpEpoch 另有 greatest 自愈，
+      // 两层互为冗余：并发 writer 在 restore tx 中途 nextval 拿到低位号也能被修正。
+      await tx.execute(
+        sql.raw(
+          `select setval('config_change_seq', (select greatest((select epoch from "system_config_epoch" where id = 'global'), (select last_value from pg_sequences where schemaname = 'public' and sequencename = 'config_change_seq'))))`,
         ),
       );
 
@@ -835,6 +951,10 @@ export async function restoreFromArchive({
       },
     };
   }
+
+  // YUK-1007 review P1-6 — 恢复成功后让本进程立刻收敛到新快照（never-throws）：
+  // tx 末尾已写入严格新 epoch，这次 hydrate 必然重读；其它进程 ≤15s 经 refresh。
+  await hydrateConfigFromDb(db);
 
   // Re-PUT assets to R2.
   let assetsUploaded = 0;

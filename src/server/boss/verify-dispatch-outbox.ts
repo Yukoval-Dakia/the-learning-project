@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
-import { type AnyColumn, and, eq, inArray, notExists, sql } from 'drizzle-orm';
+import { type AnyColumn, and, eq, inArray, isNull, notExists, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import type { Job, PgBoss } from 'pg-boss';
 import { z } from 'zod';
@@ -348,6 +348,7 @@ export async function dispatchPendingVerifyIntents(
           id: question.id,
           draftStatus: question.draft_status,
           metadata: question.metadata,
+          parentQuestionId: question.parent_question_id,
         })
         .from(question)
         .where(inArray(question.id, questionIds));
@@ -375,6 +376,12 @@ export async function dispatchPendingVerifyIntents(
           !row ||
           row.draftStatus !== 'draft' ||
           metadataIsArchived(row.metadata) ||
+          // YUK-1011 — a question_part has no independent verify subject: the
+          // composite parent's verify cascade owns it. A stray intent for a
+          // part (synthesized before the exclusion, or written by hand) is
+          // terminal-drained here instead of enqueueing a job that can only
+          // ever return skipped:question_part.
+          row.parentQuestionId != null ||
           terminalKeys.has(`${intent.question_id}\0${intent.verifier_kind}`)
         ) {
           terminal.push(intent);
@@ -457,6 +464,11 @@ export async function recoverOrphanVerifyDispatches(
           eq(question.draft_status, 'draft'),
           inArray(question.source, ['quiz_gen', 'web_sourced']),
           sql`${question.metadata}->>'archived_at' IS NULL`,
+          // YUK-1011 — composite children (question_part drafts) never get
+          // their own verify intent: the parent's verify cascade promotes the
+          // whole group atomically. Synthesizing one here would enqueue a job
+          // that can only return skipped:question_part.
+          isNull(question.parent_question_id),
           // Filter already-owned/terminal rows before LIMIT. A persistent oldest page must not
           // prevent later legacy drafts from ever receiving an intent.
           //

@@ -1,0 +1,204 @@
+diff --git a/dist/oss/index.js b/dist/oss/index.js
+index aea2313c9df0c75d3c9c9f8564de4140964fb4c8..4426b14a1a2263371948282cb12230e08cac211e 100644
+--- a/dist/oss/index.js
++++ b/dist/oss/index.js
+@@ -4829,14 +4829,11 @@ var PGVector = class {
+       vector: `[${vector.join(",")}]`,
+       payload: payloads[i]
+     }));
+-    const query = `
+-      INSERT INTO ${this.col()} (id, vector, payload)
+-      VALUES ($1, $2::vector, $3::jsonb)
+-    `;
+-    await Promise.all(
+-      values.map(
+-        (value) => this.client.query(query, [value.id, value.vector, value.payload])
+-      )
++    if (values.length === 0) return;
++    const tuples = values.map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}::vector, $${i * 3 + 3}::jsonb)`);
++    await this.client.query(
++      `INSERT INTO ${this.col()} (id, vector, payload) VALUES ${tuples.join(",")}`,
++      values.flatMap((value) => [value.id, value.vector, value.payload])
+     );
+   }
+   async keywordSearch(query, topK = 5, filters) {
+@@ -7969,27 +7966,13 @@ var Memory = class _Memory {
+         { type: "json_object" }
+       );
+     } catch (e) {
+-      console.error("LLM extraction failed:", e);
+-      return [];
++      throw e;
+     }
+-    let extractedMemories = [];
+-    try {
+-      const cleanResponse = extractJson(response);
+-      if (cleanResponse && cleanResponse.trim()) {
+-        try {
+-          const parsed = AdditiveExtractionSchema.parse(
+-            JSON.parse(cleanResponse)
+-          );
+-          extractedMemories = parsed.memory;
+-        } catch (e) {
+-          const fallbackJson = extractJson(cleanResponse);
+-          extractedMemories = (_d = (_c = JSON.parse(fallbackJson)) == null ? void 0 : _c.memory) != null ? _d : [];
+-        }
+-      }
+-    } catch (e) {
+-      console.error("Error parsing extraction response:", e);
+-      extractedMemories = [];
++    const cleanResponse = extractJson(response);
++    if (!cleanResponse || !cleanResponse.trim()) {
++      throw new Error("Mem0 extraction returned an empty response");
+     }
++    const extractedMemories = AdditiveExtractionSchema.parse(JSON.parse(cleanResponse)).memory;
+     if (extractedMemories.length === 0) {
+       if (typeof this.db.saveMessages === "function") {
+         try {
+@@ -8009,7 +7992,7 @@ var Memory = class _Memory {
+       var _a3;
+       return (_a3 = m.text) != null ? _a3 : "";
+     }).filter((t) => t.length > 0);
+-    let embedMap = {};
++    const embedMap = {};
+     try {
+       const memEmbeddingsList = await this.embedder.embedBatch(memTexts);
+       for (let i = 0; i < memTexts.length; i++) {
+@@ -8017,11 +8000,7 @@ var Memory = class _Memory {
+       }
+     } catch (e) {
+       for (const text of memTexts) {
+-        try {
+-          embedMap[text] = await this.embedder.embed(text);
+-        } catch (e2) {
+-          console.warn(`Failed to embed memory text: ${e2}`);
+-        }
++        embedMap[text] = await this.embedder.embed(text);
+       }
+     }
+     const existingHashes = /* @__PURE__ */ new Set();
+@@ -8081,21 +8060,7 @@ var Memory = class _Memory {
+     const allVectors = records.map((r) => r.embedding);
+     const allIds = records.map((r) => r.memoryId);
+     const allPayloads = records.map((r) => r.payload);
+-    try {
+-      await this.vectorStore.insert(allVectors, allIds, allPayloads);
+-    } catch (e) {
+-      for (let i = 0; i < allIds.length; i++) {
+-        try {
+-          await this.vectorStore.insert(
+-            [allVectors[i]],
+-            [allIds[i]],
+-            [allPayloads[i]]
+-          );
+-        } catch (e2) {
+-          console.error(`Failed to insert memory ${allIds[i]}: ${e2}`);
+-        }
+-      }
+-    }
++    await this.vectorStore.insert(allVectors, allIds, allPayloads);
+     const historyRecords = records.map((r) => ({
+       memoryId: r.memoryId,
+       previousValue: null,
+diff --git a/dist/oss/index.mjs b/dist/oss/index.mjs
+index b4a81de4c7669cc29d741680e4373f513d3d9293..f086e486f60614b4b87818d6d2f613a0e35f14f9 100644
+--- a/dist/oss/index.mjs
++++ b/dist/oss/index.mjs
+@@ -4778,14 +4778,11 @@ var PGVector = class {
+       vector: `[${vector.join(",")}]`,
+       payload: payloads[i]
+     }));
+-    const query = `
+-      INSERT INTO ${this.col()} (id, vector, payload)
+-      VALUES ($1, $2::vector, $3::jsonb)
+-    `;
+-    await Promise.all(
+-      values.map(
+-        (value) => this.client.query(query, [value.id, value.vector, value.payload])
+-      )
++    if (values.length === 0) return;
++    const tuples = values.map((_, i) => `($${i * 3 + 1}, $${i * 3 + 2}::vector, $${i * 3 + 3}::jsonb)`);
++    await this.client.query(
++      `INSERT INTO ${this.col()} (id, vector, payload) VALUES ${tuples.join(",")}`,
++      values.flatMap((value) => [value.id, value.vector, value.payload])
+     );
+   }
+   async keywordSearch(query, topK = 5, filters) {
+@@ -7918,27 +7915,13 @@ var Memory = class _Memory {
+         { type: "json_object" }
+       );
+     } catch (e) {
+-      console.error("LLM extraction failed:", e);
+-      return [];
++      throw e;
+     }
+-    let extractedMemories = [];
+-    try {
+-      const cleanResponse = extractJson(response);
+-      if (cleanResponse && cleanResponse.trim()) {
+-        try {
+-          const parsed = AdditiveExtractionSchema.parse(
+-            JSON.parse(cleanResponse)
+-          );
+-          extractedMemories = parsed.memory;
+-        } catch (e) {
+-          const fallbackJson = extractJson(cleanResponse);
+-          extractedMemories = (_d = (_c = JSON.parse(fallbackJson)) == null ? void 0 : _c.memory) != null ? _d : [];
+-        }
+-      }
+-    } catch (e) {
+-      console.error("Error parsing extraction response:", e);
+-      extractedMemories = [];
++    const cleanResponse = extractJson(response);
++    if (!cleanResponse || !cleanResponse.trim()) {
++      throw new Error("Mem0 extraction returned an empty response");
+     }
++    const extractedMemories = AdditiveExtractionSchema.parse(JSON.parse(cleanResponse)).memory;
+     if (extractedMemories.length === 0) {
+       if (typeof this.db.saveMessages === "function") {
+         try {
+@@ -7958,7 +7941,7 @@ var Memory = class _Memory {
+       var _a3;
+       return (_a3 = m.text) != null ? _a3 : "";
+     }).filter((t) => t.length > 0);
+-    let embedMap = {};
++    const embedMap = {};
+     try {
+       const memEmbeddingsList = await this.embedder.embedBatch(memTexts);
+       for (let i = 0; i < memTexts.length; i++) {
+@@ -7966,11 +7949,7 @@ var Memory = class _Memory {
+       }
+     } catch (e) {
+       for (const text of memTexts) {
+-        try {
+-          embedMap[text] = await this.embedder.embed(text);
+-        } catch (e2) {
+-          console.warn(`Failed to embed memory text: ${e2}`);
+-        }
++        embedMap[text] = await this.embedder.embed(text);
+       }
+     }
+     const existingHashes = /* @__PURE__ */ new Set();
+@@ -8030,21 +8009,7 @@ var Memory = class _Memory {
+     const allVectors = records.map((r) => r.embedding);
+     const allIds = records.map((r) => r.memoryId);
+     const allPayloads = records.map((r) => r.payload);
+-    try {
+-      await this.vectorStore.insert(allVectors, allIds, allPayloads);
+-    } catch (e) {
+-      for (let i = 0; i < allIds.length; i++) {
+-        try {
+-          await this.vectorStore.insert(
+-            [allVectors[i]],
+-            [allIds[i]],
+-            [allPayloads[i]]
+-          );
+-        } catch (e2) {
+-          console.error(`Failed to insert memory ${allIds[i]}: ${e2}`);
+-        }
+-      }
+-    }
++    await this.vectorStore.insert(allVectors, allIds, allPayloads);
+     const historyRecords = records.map((r) => ({
+       memoryId: r.memoryId,
+       previousValue: null,

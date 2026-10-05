@@ -3,6 +3,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, ne, or } from 'drizzle-orm';
 
 import { initialFsrsState } from '@/capabilities/practice/server/fsrs';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from '@/capabilities/practice/server/placement-scope';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
@@ -21,6 +22,20 @@ export interface CanonicalQuestionContentInput {
   referenceMd?: string | null;
   choicesMd?: string[] | null;
   rubricJson?: unknown;
+  /**
+   * YUK-1011 — shape discriminator for composite (篇) parents. A composite
+   * parent's derived prompt_md renders stem + every sub as one blob, so it can
+   * be byte-identical to a flat question that happened to carry the same merged
+   * text. Without a discriminator the merge branch would treat that flat row as
+   * an exact duplicate, skip child materialization, and record a "duplicate
+   * success" while poolFetch(compositeParentOnly) still rejects the childless
+   * row — the supply gap stays unresolved. Setting `composite: true` puts the
+   * composite in its own identity namespace: flat↔flat and composite↔composite
+   * dedup are unchanged; flat↔composite can never collide. Callers pass the
+   * flag ONLY for composite items — absent keeps the canonical string
+   * byte-identical for every pre-existing producer (no hash migration).
+   */
+  composite?: boolean;
   // Callers may carry provenance envelopes. Identity intentionally reads only the fields above.
   [key: string]: unknown;
 }
@@ -72,6 +87,10 @@ export function canonicalQuestionContent(input: CanonicalQuestionContentInput): 
     answer: input.referenceMd == null ? null : normalizeMarkdown(input.referenceMd),
     choices: input.choicesMd?.map(normalizeMarkdown) ?? null,
     rubric: input.rubricJson == null ? null : stableJson(input.rubricJson),
+    // YUK-1011 — appended LAST so flat callers (composite absent/false) emit the
+    // byte-identical canonical string they always did; only composite:true adds
+    // the key (JSON.stringify drops undefined/absent keys).
+    ...(input.composite === true ? { composite: true } : {}),
   });
 }
 
@@ -328,6 +347,12 @@ export async function mergeExactQuestionDuplicateKnowledgeIds(
   if (row.draftStatus !== 'draft') {
     const initial = initialFsrsState(params.now);
     for (const knowledgeId of addedKnowledgeIds) {
+      // YUK-1037 — same anchor-not-content exclusion as the verify-time enroll
+      // loops: a merged-in synthetic subject root ('seed:<subj>:root') still
+      // updates the binding (addedKnowledgeIds / knowledge_ids stay faithful to
+      // the duplicate's attribution) but must never mint a knowledge-level FSRS
+      // card — the subject read axis already excludes it.
+      if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
       const enrolled = await enrollFsrsStateIfAbsent(tx, {
         subject_kind: 'knowledge',
         subject_id: knowledgeId,

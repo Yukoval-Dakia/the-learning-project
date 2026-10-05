@@ -26,7 +26,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { KnowledgeEdgeRowSnapshotT } from '@/core/schema/event/genesis';
+import { KnowledgeEdgeRowSnapshot } from '@/core/schema/event/genesis';
 import type { ProjectionKind } from '@/server/projections/entity-registry';
 // PURE reducer registry (K10/K13): its ONLY runtime imports are the seven @/core reducers — the exact
 // edges the removed per-reducer imports had — so this keeps golden-reaudit's "no DB" property (a value
@@ -71,9 +71,9 @@ export function reauditGolden(golden: GoldenSnapshot): GoldenReauditResult {
   // edge fold needs the live topology mesh — the golden's own live (archived_at IS NULL) edge rows.
   const mesh =
     golden.kind === 'knowledge_edge'
-      ? (Object.values(golden.rows).filter(
-          (r) => r.archived_at === null,
-        ) as unknown as KnowledgeEdgeRowSnapshotT[])
+      ? KnowledgeEdgeRowSnapshot.array().parse(
+          Object.values(golden.rows).filter((r) => r.archived_at === null),
+        )
       : [];
 
   // K10/K13 — the pure per-kind reducer from the registry (was a local `foldGoldenRow` switch). edge

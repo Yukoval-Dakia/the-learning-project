@@ -1,0 +1,340 @@
+import { describe, expect, it, vi } from 'vitest';
+import {
+  type ToolOperationRecord,
+  type ToolOperations,
+  controlOwnedToolOperation,
+  executeSafeToolOperation,
+} from '@/kernel/tools/tool-operations';
+
+function record(overrides: Partial<ToolOperationRecord> = {}): ToolOperationRecord {
+  const now = new Date('2026-08-27T12:00:00.000Z');
+  return {
+    id: 'toolop_safe_1',
+    sessionId: 'session_owner',
+    taskRunId: 'task_owner',
+    toolName: 'remote_reader',
+    effect: 'read',
+    status: 'running',
+    processId: 'process_test',
+    inputHash: 'a'.repeat(64),
+    input: { query: 'complex nested query', filters: { subject: 'physics' } },
+    result: null,
+    error: null,
+    sideEffectRisk: null,
+    cancelledBy: null,
+    terminalToolCallLogId: null,
+    hardDeadlineAt: new Date('2026-08-27T12:05:00.000Z'),
+    startedAt: now,
+    ownerHeartbeatAt: now,
+    leaseExpiresAt: new Date('2026-08-27T12:00:30.000Z'),
+    settledAt: null,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function operations(
+  waited: ToolOperationRecord,
+  options?: { waitUntilSettled?: () => Promise<ToolOperationRecord> },
+): ToolOperations {
+  return {
+    start: vi.fn(async (_input, execute) => {
+      void execute({ operationId: waited.id, signal: new AbortController().signal });
+      return {
+        id: waited.id,
+        wait: vi.fn(async () => waited),
+        waitUntilSettled:
+          options?.waitUntilSettled ??
+          vi.fn(
+            async (): Promise<ToolOperationRecord> =>
+              waited.status === 'running'
+                ? waited
+                : {
+                    ...waited,
+                    status: 'succeeded',
+                    result: { facts: [{ id: 'fact_1', score: 0.82 }] },
+                    settledAt: new Date('2026-08-27T12:00:52.000Z'),
+                  },
+          ),
+        cancel: vi.fn(async () => waited),
+      };
+    }),
+    get: vi.fn(async () => waited),
+    wait: vi.fn(async () => waited),
+    waitUntilSettled:
+      options?.waitUntilSettled ??
+      vi.fn(
+        async (): Promise<ToolOperationRecord> =>
+          waited.status === 'running'
+            ? waited
+            : {
+                ...waited,
+                status: 'succeeded',
+                result: { facts: [{ id: 'fact_1', score: 0.82 }] },
+                settledAt: new Date('2026-08-27T12:00:52.000Z'),
+              },
+      ),
+    cancel: vi.fn(async () => waited),
+    recoverLost: vi.fn(async () => []),
+    linkTerminalToolCallLog: vi.fn(async (_id, terminalToolCallLogId) =>
+      record({
+        ...waited,
+        terminalToolCallLogId,
+      }),
+    ),
+  };
+}
+
+describe('safe ToolOperations handoff', () => {
+  it('blocks through the exact 45 second boundary without yielding', async () => {
+    vi.useFakeTimers();
+    try {
+      const running = record();
+      let releaseWait!: () => void;
+      const waitGate = new Promise<void>((resolve) => {
+        releaseWait = resolve;
+      });
+      const toolOperations = operations(running, {
+        waitUntilSettled: vi.fn(async (): Promise<ToolOperationRecord> => {
+          await waitGate;
+          return {
+            ...running,
+            status: 'succeeded',
+            result: { facts: [], count: 0 },
+            settledAt: new Date('2026-08-27T12:00:45.000Z'),
+          };
+        }),
+      });
+      let settled = false;
+      const result = executeSafeToolOperation({
+        toolOperations,
+        sessionId: 'session_owner',
+        taskRunId: 'task_owner',
+        toolName: 'remote_reader',
+        input: { query: 'slow safe lookup' },
+        execute: vi.fn(async () => ({ facts: [], count: 0 })),
+      }).then((value) => {
+        settled = true;
+        return value;
+      });
+
+      await vi.advanceTimersByTimeAsync(44_999);
+      expect(settled).toBe(false);
+      releaseWait();
+      await expect(result).resolves.toMatchObject({
+        kind: 'settled',
+        record: expect.objectContaining({ status: 'succeeded' }),
+      });
+      expect(toolOperations.waitUntilSettled).toHaveBeenCalledWith('toolop_safe_1');
+      expect(toolOperations.wait).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('returns the settled MCP result when a safe remote read remains running for 45 seconds', async () => {
+    const settled = record({
+      status: 'succeeded',
+      result: { facts: [{ id: 'fact_1', score: 0.82 }] },
+      settledAt: new Date('2026-08-27T12:00:52.000Z'),
+    });
+    const toolOperations = operations(settled, {
+      waitUntilSettled: vi.fn(async () => settled),
+    });
+
+    const result = await executeSafeToolOperation({
+      toolOperations,
+      sessionId: 'session_owner',
+      taskRunId: 'task_owner',
+      toolName: 'remote_reader',
+      toolUseId: 'toolu_remote_42',
+      input: { query: 'complex nested query', filters: { subject: 'physics' } },
+      hardDeadlineAt: new Date('2026-08-27T12:05:00.000Z'),
+      execute: vi.fn(async () => ({ facts: [{ id: 'fact_1', score: 0.82 }] })),
+    });
+
+    expect(result).toEqual({ kind: 'settled', record: settled });
+    expect(toolOperations.start).toHaveBeenCalledTimes(1);
+    expect(toolOperations.waitUntilSettled).toHaveBeenCalledWith('toolop_safe_1');
+    expect(toolOperations.wait).not.toHaveBeenCalled();
+  });
+
+  it('returns the observed terminal result instead of yielding a second identity', async () => {
+    const settled = record({
+      status: 'succeeded',
+      result: { facts: [{ id: 'fact_2', memory: 'uses worked examples' }], count: 1 },
+      settledAt: new Date('2026-08-27T12:00:12.000Z'),
+    });
+    const toolOperations = operations(settled, {
+      waitUntilSettled: vi.fn(async () => settled),
+    });
+
+    const result = await executeSafeToolOperation({
+      toolOperations,
+      sessionId: 'session_owner',
+      taskRunId: 'task_owner',
+      toolName: 'remote_reader',
+      input: { query: 'worked examples' },
+      execute: vi.fn(async () => ({ facts: [], count: 0 })),
+    });
+
+    expect(result).toEqual({ kind: 'settled', record: settled });
+    expect(toolOperations.start).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves possible side-effect uncertainty returned by ToolOperations', async () => {
+    const lost = record({
+      effect: 'write',
+      status: 'lost',
+      sideEffectRisk: 'possible',
+      error: { code: 'execution_ambiguous', message: 'remote outcome unknown' },
+      settledAt: new Date('2026-08-27T12:00:30.000Z'),
+    });
+
+    await expect(
+      executeSafeToolOperation({
+        toolOperations: operations(lost, { waitUntilSettled: vi.fn(async () => lost) }),
+        sessionId: 'session_owner',
+        taskRunId: 'task_owner',
+        toolName: 'remote_writer',
+        input: { target: 'external' },
+        execute: vi.fn(async () => ({ ok: true })),
+      }),
+    ).resolves.toEqual({ kind: 'settled', record: lost });
+  });
+
+  it.each(['system', 'user'] as const)(
+    'routes parent %s cancellation through the owned cancel seam while blocking',
+    async (requestedBy) => {
+      const controller = new AbortController();
+      const running = record();
+      let releaseWait!: () => void;
+      const waitGate = new Promise<void>((resolve) => {
+        releaseWait = resolve;
+      });
+      const toolOperations = operations(running, {
+        waitUntilSettled: vi.fn(async (): Promise<ToolOperationRecord> => {
+          await waitGate;
+          return {
+            ...running,
+            status: 'cancelled',
+            cancelledBy: requestedBy,
+            error: { code: 'cancelled', message: 'Remote read cancelled by its owner' },
+            settledAt: new Date('2026-08-27T12:00:30.000Z'),
+          };
+        }),
+      });
+      const result = executeSafeToolOperation({
+        toolOperations,
+        sessionId: 'session_owner',
+        taskRunId: 'task_owner',
+        toolName: 'remote_reader',
+        input: { query: 'cancel this lookup' },
+        cancellationSignals: [{ signal: controller.signal, requestedBy }],
+        execute: vi.fn(async () => ({ facts: [], count: 0 })),
+      });
+
+      controller.abort();
+      await vi.waitFor(() => {
+        expect(toolOperations.cancel).toHaveBeenCalledWith('toolop_safe_1', { requestedBy });
+      });
+      releaseWait();
+      await expect(result).resolves.toMatchObject({ kind: 'settled' });
+    },
+  );
+
+  it('attributes a user-triggered parent abort to user when its lifecycle signal also aborts', async () => {
+    const systemController = new AbortController();
+    const userController = new AbortController();
+    userController.signal.addEventListener('abort', () => systemController.abort(), { once: true });
+    const running = record();
+    let releaseWait!: () => void;
+    const waitGate = new Promise<void>((resolve) => {
+      releaseWait = resolve;
+    });
+    const toolOperations = operations(running, {
+      waitUntilSettled: vi.fn(async (): Promise<ToolOperationRecord> => {
+        await waitGate;
+        return {
+          ...running,
+          status: 'cancelled',
+          cancelledBy: 'user',
+          error: { code: 'cancelled', message: 'Remote read cancelled by its owner' },
+          settledAt: new Date('2026-08-27T12:00:30.000Z'),
+        };
+      }),
+    });
+    const result = executeSafeToolOperation({
+      toolOperations,
+      sessionId: 'session_owner',
+      taskRunId: 'task_owner',
+      toolName: 'remote_reader',
+      input: { query: 'cancel from user' },
+      cancellationSignals: [
+        { signal: systemController.signal, requestedBy: 'system' },
+        { signal: userController.signal, requestedBy: 'user' },
+      ],
+      execute: vi.fn(async () => ({ facts: [], count: 0 })),
+    });
+
+    userController.abort();
+    await vi.waitFor(() => {
+      expect(toolOperations.cancel).toHaveBeenCalledTimes(1);
+      expect(toolOperations.cancel).toHaveBeenCalledWith('toolop_safe_1', {
+        requestedBy: 'user',
+      });
+    });
+    releaseWait();
+    await expect(result).resolves.toMatchObject({ kind: 'settled' });
+  });
+});
+
+describe('owned ToolOperations controls', () => {
+  it('lets model, system, and user use one ownership-enforcing get/wait/cancel seam', async () => {
+    const toolOperations = operations(record());
+
+    await controlOwnedToolOperation(toolOperations, {
+      action: 'get',
+      operationId: 'toolop_safe_1',
+      sessionId: 'session_owner',
+      taskRunId: 'task_owner',
+      requestedBy: 'model',
+    });
+    await controlOwnedToolOperation(toolOperations, {
+      action: 'wait',
+      operationId: 'toolop_safe_1',
+      sessionId: 'session_owner',
+      taskRunId: 'task_owner',
+      requestedBy: 'system',
+      timeoutMs: 5_000,
+    });
+    await controlOwnedToolOperation(toolOperations, {
+      action: 'cancel',
+      operationId: 'toolop_safe_1',
+      sessionId: 'session_owner',
+      taskRunId: 'task_owner',
+      requestedBy: 'user',
+    });
+
+    expect(toolOperations.get).toHaveBeenCalledTimes(3);
+    expect(toolOperations.wait).toHaveBeenCalledWith('toolop_safe_1', { timeoutMs: 5_000 });
+    expect(toolOperations.cancel).toHaveBeenCalledWith('toolop_safe_1', {
+      requestedBy: 'user',
+    });
+  });
+
+  it('does not disclose or control another session or task owner', async () => {
+    const toolOperations = operations(record());
+
+    await expect(
+      controlOwnedToolOperation(toolOperations, {
+        action: 'cancel',
+        operationId: 'toolop_safe_1',
+        sessionId: 'session_other',
+        taskRunId: 'task_other',
+        requestedBy: 'model',
+      }),
+    ).rejects.toThrow('tool operation not found');
+    expect(toolOperations.cancel).not.toHaveBeenCalled();
+  });
+});

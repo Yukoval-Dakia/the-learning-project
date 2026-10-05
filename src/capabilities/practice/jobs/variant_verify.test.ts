@@ -8,6 +8,7 @@ import { event, knowledge, mistake_variant, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeVariantQuestionProposal } from '@/kernel/proposals/producers';
 import { resolveSubjectProfile } from '@/subjects/profile';
+import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runVariantVerify } from './variant_verify';
 
@@ -141,6 +142,7 @@ async function seedActiveMistakeVariant(opts: {
   parentId: string;
   variantId: string;
   attemptId: string;
+  prepare?: boolean;
 }) {
   const db = testDb();
   // 1) parent + variant questions
@@ -176,6 +178,7 @@ async function seedActiveMistakeVariant(opts: {
     created_at: now,
     updated_at: now,
   });
+  if (opts.prepare !== false) await migrateCanonicalProjections(db);
   return { mvId, proposalId };
 }
 
@@ -262,6 +265,24 @@ describe('runVariantVerify', () => {
     });
     // YUK-350 (L3, RL5) — a 'pass' verify carries NO failure_class.
     expect((verifyEvents[0].payload as Record<string, unknown>).failure_class).toBeUndefined();
+  });
+
+  it('unprepared history is rejected before a paid verification attempt', async () => {
+    await seedKnowledge();
+    const { mvId } = await seedActiveMistakeVariant({
+      parentId: 'q_parent',
+      variantId: 'q_variant',
+      attemptId: createId(),
+      prepare: false,
+    });
+    const runTaskFn = vi.fn(async () => ({ text: PASS_OUTPUT }));
+    await expect(
+      runVariantVerify({ db: testDb(), mistakeVariantId: mvId, runTaskFn }),
+    ).rejects.toThrow('canonical projection migration');
+    expect(runTaskFn).not.toHaveBeenCalled();
+    expect(
+      (await testDb().select().from(mistake_variant).where(eq(mistake_variant.id, mvId)))[0].status,
+    ).toBe('active');
   });
 
   it('drift path: verdict=fail flips status to broken with failure_reasons', async () => {

@@ -76,6 +76,12 @@ export const fastTestInclude = [
   // src/db/client.ts. `postgres` is vi.mock'd and the only @/db/client import is
   // a dynamic `await import()`, so no live Postgres is touched → unit partition.
   'src/db/client.test.ts',
+  // YUK-1005 — pure (no-DB) unit for the sourced-markup (MathJye→markdown/LaTeX)
+  // normalizer: a lenient tag tokenizer with zero imports → unit partition.
+  'src/server/questions/sourced-markup.test.ts',
+  // YUK-1043 — 纯（无 IO）contract-normalizer 单测：legacy 行 → 评估契约四层
+  // 的身份纪律与可发布性。不走 DB，进 unit 分区（sourced-markup 同先例）。
+  'src/server/questions/contract-normalizer.test.ts',
   // YUK-383 Phase 0 — pure (no-DB) unit for the pgvector customType codec in
   // src/db/vector.ts (string <-> number[] only; no Postgres touched) → unit partition.
   'src/db/vector.test.ts',
@@ -101,49 +107,93 @@ export const fastTestInclude = [
   'src/core/**/*.test.ts',
   'src/capabilities/practice/server/judge/**/*.test.ts',
   // YUK-238 / YUK-240 — streamTask client-disconnect abort + stuck-run warn.
-  // Pure no-DB unit: @anthropic-ai/claude-agent-sdk and @/server/ai/log are
-  // vi.mock'd and `db` is an untouched stub, so no live Postgres is needed.
+  // Pure no-DB unit (post YUK-1025: the pi adapter is swapped via
+  // __setPiAdapterForTests, not a module mock) and @/server/ai/log is vi.mock'd;
+  // `db` is an untouched stub, so no live Postgres is needed.
   // (The sibling runner.test.ts stays in the db partition because it drives the
   // real ai/log writers against a container.)
   'src/server/ai/stream-cancel.test.ts',
   // YUK-266 (C1) — streamTaskCollecting collecting-stream unit. Same justification
-  // as stream-cancel: @anthropic-ai/claude-agent-sdk + @/server/ai/log are vi.mock'd
+  // as stream-cancel: fake pi adapter + @/server/ai/log are vi.mock'd
   // and `db` is an untouched stub, so no live Postgres is needed.
   'src/server/ai/runner.stream-collect.test.ts',
-  // YUK-757 — pure spawn permission/depth contract. It imports SDK types only;
+  // YUK-757 — pure spawn permission/depth contract. It imports vendored sdk-types only;
   // no DB client, network, or subprocess is touched.
   'src/server/ai/spawn-contract.unit.test.ts',
   'src/server/ai/run-lifecycle.test.ts',
   'src/server/ai/run-lifecycle.admission.test.ts',
+  // YUK-1049 — typed primitive runner (OpenRouter systemone): failure-fixture
+  // unit tests. fetchImpl stub replaces ONLY the wire; @/server/ai/log is
+  // vi.mock'd and `db` is an untouched stub → no live Postgres. Enumerate like
+  // every other src/server/ai/** file (no unit glob). The sibling
+  // typed-primitive-runner.db.test.ts exercises the real log writers.
+  'src/server/ai/typed-primitive-runner.test.ts',
+  // YUK-1092 — cumulative retry-cost unit tests. Same no-DB justification;
+  // split file because they mock @/ai/registry with a retry-2 budget clone.
+  'src/server/ai/typed-primitive-runner.cumulative-cost.test.ts',
+  // YUK-1049 — Jev ModelUnitExecutorPort adapter (escalation/admission/
+  // criterion mapping). Same no-DB justification as the runner test above.
+  'src/server/assessment/jev-model-executor.test.ts',
+  // YUK-1058 — D18 jev-openrouter EvalInvoker lane: `run` seam replaces the
+  // typed runner, `db` is an untouched stub → no live Postgres / no wire.
+  'src/server/eval/d18-jev-invoker.test.ts',
   // YUK-842 — pure config/failure-policy unit. DB coordination lives in the
   // sibling *.db.test.ts and remains in the container partition.
   'src/server/ai/provider-session-admission.test.ts',
-  // YUK-299 — runner outputFormat seam: zero-regression + structured_output
-  // three-state read. Same justification as stream-cancel: @anthropic-ai/
-  // claude-agent-sdk + @/server/ai/log are vi.mock'd and `db` is an untouched stub
-  // → no live Postgres. src/server/ai/** has no unit glob, so this MUST be listed
-  // or the db config's src/**/*.test.ts glob would sweep it into the container.
+  // YUK-299 — runner structured_output consume seam + options wiring.
+  // Same justification as stream-cancel: fake pi adapter + @/server/ai/log are
+  // vi.mock'd and `db` is an untouched stub → no live Postgres. src/server/ai/**
+  // has no unit glob, so this MUST be listed or the db config's src/**/*.test.ts
+  // glob would sweep it into the container.
   'src/server/ai/runner.seam.test.ts',
   'src/server/ai/runner.provider-admission.test.ts',
   // YUK-750 — bound runner adapter contract. Pure no-DB: runner is mocked and
   // the Db value is an untouched structural stub.
   'src/server/ai/runner-fn.unit.test.ts',
-  // YUK-299 — Zod→outputFormat adapter unit. Pure no-DB: imports only
-  // ./output-format (→ zod-to-json-schema, pure JS) + @/core/schema/business (Zod).
-  // Same enumeration requirement as above (no src/server/ai/** unit glob).
-  'src/server/ai/output-format.test.ts',
+  // YUK-1013 — ExecutionAdapter seam (P0): resolveExecutionAdapter fail-closed
+  // pin + explicitProviderRouting precedence + modelBinding retry-pin. Pure
+  // no-DB: imports ./execution-adapter (vendored sdk-types + startup, not invoked) +
+  // ./run-lifecycle (transientRetryEnabled only). src/server/ai/** has no unit
+  // glob, so this MUST be listed (same enumeration requirement as above).
+  'src/server/ai/execution-adapter.test.ts',
+  // YUK-921 P1 — PiAgentAdapter event→SDK-frame normalization + startup gates.
+  // Pure no-DB: imports ./pi-agent-adapter (pi-ai/pi-agent-core types + a
+  // scripted in-memory agentLoop — deps are injectable, no network, no SDK)
+  // + ./providers types. Same enumeration requirement as above (no
+  // src/server/ai/** unit glob).
+  'src/server/ai/pi-agent-adapter.test.ts',
+  // Real pi driver with offline SSE; no DB or paid provider calls.
+  'src/server/ai/pi-usage-evidence.test.ts',
+  // Installed pi engine with a scripted provider stream; no DB or paid requests.
+  'src/server/ai/pi-agent-loop.unit.test.ts',
+  'src/server/ai/pi-provider-catalog.test.ts',
+  // YUK-1027 — openai/gpt-6-astra Responses wire contract: real pi-ai driver +
+  // injected fake fetch (no network, no key, no DB). Imports ./pi-models whose
+  // pi-ai imports are all dynamic — enumerate like every other
+  // src/server/ai/** file (no unit glob).
+  'src/server/ai/astra-responses-contract.test.ts',
   // YUK-607 — LLM JSON 修复带提取器。Pure no-DB: imports only ./json-extract (→ jsonrepair, pure JS).
   'src/server/ai/json-extract.test.ts',
   // YUK-359 — pure arithmetic cost fallback, no DB/SDK imports.
   'src/server/ai/pricing.test.ts',
+  // YUK-924 — ModelProfile registry (config-over-catalog + capability gate).
+  // Pure no-DB: imports ./model-profiles (→ committed catalog snapshot +
+  // ./providers → @/ai/registry); no @/db / postgres / SDK.
+  'src/server/ai/model-profiles.test.ts',
   'src/server/ai/attempt-cost.test.ts',
   'src/server/ai/provider-attempt-lifecycle.test.ts',
+  'src/server/ai/provider-attempt-decisions.test.ts',
   // YUK-365 — provider resolution (key vs oauth authMode, AI_PROVIDER_OVERRIDE
   // switch). Pure no-DB: imports only ./providers (→ @/ai/registry) + stubs env;
   // no @/db/client / postgres / SDK. src/server/ai/** has no unit glob, so this
   // MUST be listed or the db config's src/**/*.test.ts glob sweeps it into the
   // testcontainer partition (pricing.test.ts lesson).
   'src/server/ai/providers.test.ts',
+  // YUK-482 / YUK-924 — vision-judge lane override reader. Pure no-DB: imports
+  // only ./vision-judge-config (→ ./model-profiles → ./providers →
+  // @/ai/registry + the committed catalog snapshot); no @/db / postgres / SDK.
+  // Previously swept into the db partition by the src/** glob for no DB reason.
+  'src/server/ai/vision-judge-config.test.ts',
   // B1-W1 (ADR-0035) — ItemPriorTask output parse barrier. Pure no-DB: imports
   // only ./item-prior (→ @/core/schema/item_prior, Zod) — no @/db/client /
   // postgres / drizzle / PgBoss. src/server/ai/** has no unit glob, so this MUST
@@ -151,7 +201,7 @@ export const fastTestInclude = [
   // the testcontainer partition (pricing.test.ts lesson).
   'src/server/ai/item-prior.test.ts',
   // YUK-576 — runner transient-retry loop + AgentRunError classification. Same
-  // justification as runner.seam.test.ts: @anthropic-ai/claude-agent-sdk +
+  // justification as runner.seam.test.ts: fake pi adapter +
   // @/server/ai/log are vi.mock'd and `db` is an untouched stub → no live
   // Postgres. src/server/ai/** has no unit glob, so this MUST be listed.
   'src/server/ai/runner.fallback.test.ts',
@@ -259,8 +309,16 @@ export const fastTestInclude = [
   'src/capabilities/practice/server/question-supply/jyeoo-spawn.test.ts',
   'src/capabilities/practice/server/question-supply/jyeoo-supply-config.test.ts',
   'src/server/ai/tools/registry.test.ts',
-  'src/server/ai/tools/allowlists.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
+  // YUK-1021 (921 P2) — pi tool-mount surface: DomainTool→AgentTool compile +
+  // remote-MCP bridge. Pure unit (registry + mocked MCP client), no DB.
+  'src/server/ai/tools/pi-tools.test.ts',
+  // YUK-1022 (921 P3) — pi spawn-contract gate + Task/Agent AgentTool surface
+  // over the shared SpawnDecider. Pure unit — no engine, no DB.
+  'src/server/ai/tools/pi-subagent.test.ts',
+  // YUK-1022 (921 P3) — pi hook bridge (ordered gates/observers, fail-open
+  // observers, field-wise merge). Pure unit — no engine, no DB.
+  'src/server/ai/pi-hooks.test.ts',
   // M5-T3 (YUK-321) — copilotTools 组合根聚合器：纯 registry 操作，无 DB。
   'src/server/ai/tools/register-capability-tools.unit.test.ts',
   // YUK-203 U4 / L-memtool — search_memory_facts DomainTool. Pure DI unit: the
@@ -268,11 +326,12 @@ export const fastTestInclude = [
   // touched (the real createMemoryClient is never constructed in tests).
   'src/server/ai/tools/search-memory-facts.test.ts',
   // YUK-198 — pure (no-DB) Tavily remote MCP builder: reads TAVILY_API_KEY via
-  // vi.stubEnv, returns a static McpHttpServerConfig. No live DB / AI / network.
+  // vi.stubEnv, returns a static RemoteMcpHttpConfig. No live DB / AI / network.
   'src/server/ai/mcp/tavily.test.ts',
-  // P5.1 / YUK-143 — pure (no-DB) budget constants + per-message context throttle.
-  'src/server/ai/tools/budgets.test.ts',
-  'src/server/ai/tools/context-throttle.test.ts',
+  // YUK-962 — pure no-DB provider admission config and provenance arithmetic.
+  // src/server/ai/** has no unit glob, so enumerate these fast tests explicitly.
+  'src/server/ai/provider-attempt-admission-config.test.ts',
+  'src/server/ai/provenance.test.ts',
   // M3 (YUK-317) — body-blocks-snippet / hub-dismiss / note-refine-triggers 三条
   // unit 条目已随 notes 域迁入 src/capabilities/notes/（重命名 *.unit.test.ts），
   // 由约定 glob 接管。editing-session / presence 留旧位置（dwell ⚖️ 争议行未裁）。
@@ -286,6 +345,12 @@ export const fastTestInclude = [
   // YUK-751 (review TcWGF) — subscription-dispatch mount wiring; queue-config (its only DB-tainted
   // import) is vi.mock'd, so no live DB is touched — fast unit.
   'src/server/event-subscriptions/dispatch-mount.unit.test.ts',
+  // YUK-1055 — contract-epoch 纯规则/分类表（rules.ts / jobs.ts 零 import），
+  // *.unit.test.ts 约定进 unit 分区；DB 面在 epoch.db.test.ts（db 分区）。
+  'src/server/contract-epoch/**/*.unit.test.ts',
+  // YUK-1059 — release manifest 纯函数（lane 分类 / assertions 表；零 import
+  // DB，仅 type-only）。*.unit.test.ts 约定进 unit 分区。
+  'src/server/release/**/*.unit.test.ts',
   // YUK-406 Phase 0 (关系脑 conjecture engine) — the pure evidence aggregator moved to
   // src/capabilities/agency/server/conjecture/evidence.unit.test.ts and is covered by
   // the capability *.unit.test.ts convention above. Keep only the remaining legacy
@@ -393,15 +458,13 @@ export const fastTestInclude = [
   // default-profile over-match fix for the derived ?subject= axis.
   'src/subjects/resolve-known-subject-id.test.ts',
   // YUK-610 — Dockerfile 运行时 skills COPY 覆盖断言（纯 fs：读 Dockerfile +
-  // 目录扫描，零 DB）。populateIsolatedSkills 走 readdirSync 非 import，漏拷
-  // 不进 tsc/esbuild 视野，这条断言是唯一构建期防线（_shared 漏拷生产事故）。
+  // 目录扫描，零 DB）。skill-doc resolver 走 fs 非 import，漏拷不进
+  // tsc/esbuild 视野，这条断言是唯一构建期防线（_shared 漏拷生产事故）。
   'src/subjects/skills-image-coverage.test.ts',
   // YUK-611 — skill 命名空间：rewrite helper unit + 真树静态撞名 audit（纯 fs，
   // 零 DB）。audit 是构建期防线：跨科 basename 重复 / frontmatter name 漂移即红。
   'src/subjects/skill-namespace.test.ts',
-  // YUK-611 — populateIsolatedSkills 镜像命名空间化 unit（纯 fs：fixture 树 +
-  // isolatedDir 双 mkdtemp；模块自 runner.ts 摘出，零 SDK import）。
-  'src/server/ai/populate-skills.test.ts',
+
   // YUK-599 — trait 分解/装配互逆 + 种子合法性 + strict 写门（纯函数零 IO）。
   // v3 §8-13 零行为变化基线：assemble(decompose(p)) 与 4 个硬编码 profile
   // 逐字段 deep-equal。
@@ -439,6 +502,7 @@ export const fastTestInclude = [
   // falls through to the DB partition.
   'src/server/memory/brief-writer.test.ts',
   'src/server/memory/client.test.ts',
+  'src/server/memory/mem0-sdk-failure.unit.test.ts',
   'src/server/memory/provider-operation.test.ts',
   'src/server/memory/provider-operation-invariant.test.ts',
   'src/server/memory/provider-operation-untracked.test.ts',
@@ -446,6 +510,7 @@ export const fastTestInclude = [
   'src/server/memory/memory-reconcile-handoff.unit.test.ts',
   // P2 (YUK-342) — pure (no-DB) GLM reconcile LLM unit: mocks fetch, no live DB.
   'src/server/memory/reconcile-llm.test.ts',
+  'src/server/memory/reconcile-decisions.test.ts',
   // P3 (YUK-351) — pure (no-DB) mem0 READ wrapper: stubbed MemoryClient.search,
   // asserts soft-superseded filtering + per-kind recency rerank. No live DB.
   'src/server/memory/read.test.ts',
@@ -471,6 +536,7 @@ export const fastTestInclude = [
   'src/ui/**/*.test.ts',
   'src/ui/**/*.test.tsx',
   'tests/core/**/*.test.ts',
+  'tests/acceptance/deadline.test.ts',
   'tests/schema/**/*.test.ts',
   'tests/subjects/**/*.test.ts',
   'tests/integration/judge-gap-audit.test.ts',

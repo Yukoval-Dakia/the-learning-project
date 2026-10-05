@@ -4,8 +4,8 @@
 // overwrite / docx-ingestion INSERT / import virtual-card INSERT) ALSO emits a self-sufficient
 // canonical `experimental:question_block_create` event in the SAME transaction so the W3-B2 fold
 // (foldQuestionBlock) can reproduce the row from the event log. ADDITIVE: the imperative INSERT/
-// UPDATE stays the row writer (the per-entity projectionIsWriter('question_block') flag stays OFF in
-// this lane); this only appends the create event + carries the FULL row snapshot (full-snapshot rule
+// UPDATE captures database defaults for creation; subsequent editing uses the canonical projection.
+// This appends the create event + carries the FULL row snapshot (full-snapshot rule
 // — the fold cannot rebuild a row from the id-only ExtractSourceDocument payload).
 //
 // SAME-TX ROLLBACK NOTE: writeEvent() runs parseEvent() → QuestionBlockCreateExperimental →

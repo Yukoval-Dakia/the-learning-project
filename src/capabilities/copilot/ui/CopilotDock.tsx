@@ -6,18 +6,16 @@
 //   • summary  — /api/today/copilot-summary (Coach + Dreaming digest), preserved
 //                verbatim. The route stays Today-scoped (the data genuinely IS
 //                today's), so the "今日摘要"-style copy in this slot is correct.
-//   • chat     — message list + real request to the streaming POST
-//                /api/copilot/chat (YUK-266 C1: SSE delta events then a terminal
-//                reply event). On open, the list is prefilled from GET
-//                /api/copilot/turns (replay-last-N) so the conversation is
-//                continuous across drawer reopens / reloads.
+//   • chat     — message list + durable 202 acceptance via /api/copilot/chat.
+//                Each accepted run has an independent reconnectable job-event
+//                subscription. GET /api/copilot/turns restores persisted turns
+//                and every active run after reopen/reload.
 //   • footer   — quick-chips + composer (Enter to send, Shift+Enter newline).
 //
 // Contract notes (see docs/design/2026-06-04-redraw-composer-preflight.md +
 // docs/design/2026-06-04-l-copilot-preflight.md):
-//   • The endpoint streams over SSE (YUK-266 C1) — a "thinking" bubble covers the
-//     pre-first-byte gap, then deltas render incrementally into a live bubble with
-//     a typing caret, and the terminal reply event is the authoritative text.
+//   • POST never owns execution or streams an inline reply. The authenticated
+//     job-event Location streams progress; terminal reply metadata is authoritative.
 //   • The route never returns child transcript/reasoning. It may expose only the
 //     structural public subtask lifecycle used by the progress cards below.
 //   • Turn persistence + replay-last-N is AF Slice 3a. Rolling summary is S3b
@@ -30,10 +28,8 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { memo, useCallback, useEffect, useRef, useState } from 'react';
-import type { CopilotSkillContextT } from '@/capabilities/copilot/server/chat';
-import type { CopilotChatRequestT } from '@/capabilities/copilot/server/chat-contracts';
-import { ApiError, apiFetch, apiJson } from '@/ui/lib/api';
+import { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { ApiAuthError, ApiError, apiFetch, apiJson } from '@/ui/lib/api';
 import {
   DeferredMarkdownRenderer,
   preloadMarkdownRenderer,
@@ -48,36 +44,47 @@ import { Button } from '@/ui/primitives/Button';
 import { CopilotDrawer } from '@/ui/primitives/CopilotDrawer';
 import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
-import { LoomIcon } from '@/ui/primitives/LoomIcon';
-import { ToolUseCard, type ToolUseStatus } from '@/ui/primitives/ToolUseCard';
+import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
+import { ToolUseCard } from '@/ui/primitives/ToolUseCard';
 import { CopilotHeroCard } from './CopilotHeroCard';
+import { type CopilotSessionListItem, CopilotSessionPanel } from './CopilotSessionPanel';
 import {
-  type PersistedDurableCopilotReconnect,
+  type PersistedPendingCopilotRequestBody,
   type PersistedPendingCopilotTurn,
-  clearPersistedDurableCopilotReconnect,
   clearPersistedPendingCopilotTurn,
-  discardPersistedPendingCopilotTurn,
+  discardLegacyDurableCopilotReconnect,
   durableRunIdFromLocation,
-  loadPersistedDurableCopilotReconnect,
-  loadPersistedPendingCopilotTurn,
-  persistDurableCopilotReconnect,
+  loadPersistedPendingCopilotTurns,
   persistPendingCopilotTurn,
 } from './durable-reconnect-storage';
+import { learnerGlobalBrief } from './learner-global-brief';
+import {
+  type ChatMessage,
+  type ToolCallRecord,
+  acceptPendingCopilotRun,
+  copilotRunReplyMessageId,
+  projectCopilotRunUpdate,
+  projectPendingCopilotMessagePair,
+  reconcileCopilotSnapshotMessages,
+} from './message-projection';
 import { nextNudgeSessionAfterTurn, resolveTurnAmbientFocus } from './nudge-focus';
-import { type ReplayPrimaryView, type ReplayTurn, replayToMessages } from './replay';
-import { isOneShotSkill } from './skill-lifecycle';
+import {
+  type ReplaySkillContext as CopilotSkillContextT,
+  type ReplaySubagentRun,
+  type ReplayToolOperation,
+  type ReplayTurn,
+  replayToMessages,
+} from './replay';
+import { restoreSkillContext } from './skill-lifecycle';
 import {
   type CopilotRunView,
-  type CopilotSubtaskView,
   DurablePickupStalledError,
   consumeDurableCopilotRun,
   createCopilotRunView,
-  foldCopilotRunFrames,
-  parseCopilotSseStream,
-  parseInlineSubtaskEvent,
-  subtaskEventToFrame,
 } from './subtask-events';
 import { useCopilotNudges } from './useCopilotNudges';
+
+export type { ChatMessage, ToolCallRecord } from './message-projection';
 
 interface DreamingPreviewRow {
   proposal_id: string;
@@ -99,61 +106,31 @@ interface CopilotSummary {
 
 function durableReconnectErrorMessage(error: unknown): string {
   return error instanceof DurablePickupStalledError
-    ? '后台任务还在等待开始，可能正在排队；本次任务已保留，可以稍后重新连接。'
-    : '后台进度连接仍未恢复；任务可能仍在运行，可以再次连接。';
+    ? '任务还在等待开始，可能正在排队；本次请求已保留，可以稍后重新连接。'
+    : '进度连接仍未恢复；任务可能仍在运行，可以再次连接。';
 }
 
-// AF S4 / YUK-203 U6 — UI-side mirror of the server CopilotSkillTurn carrier
-// (src/capabilities/copilot/server/chat.ts). Set only when a teaching/solve skill ran a
-// structured turn; absent for free-form chat (so the existing text-only render
-// path is untouched). The Dock reads `structured_question` + `suggested_next`
-// to render the inline question card + corrective chip.
-interface SkillTurn {
-  kind: 'explain' | 'ask_check' | 'end';
-  structured_question?: {
-    id: string;
-    kind: string;
-    prompt_md: string;
-    choices_md: string[] | null;
-  };
-  // Contract mirror of the server CopilotSkillTurn.suggested_next field.
-  // Reserved for future chip-level UX (e.g. auto-suggest "继续" / "结束" chips).
-  // End-of-session rendering is driven by kind==='end', not this field.
-  suggested_next?: 'continue' | 'end';
-}
-
-// POST /api/copilot/chat response shape — see src/capabilities/copilot/server/chat.ts
-// (CopilotChatResult). `reply` is the complete final text (non-streaming).
-interface CopilotChatResponse {
-  task_run_id: string;
-  reply: string;
-  surface: string;
-  triggered_by: string;
-  session_id: string;
-  reply_event_id: string;
-  checkpoint_event_id?: string;
-  user_ask_event_id?: string;
-  // AF S4 / YUK-203 U6 — additive optional structured-turn carrier.
-  skill_turn?: SkillTurn;
-  // YUK-266 (C1) — set only when the SSE stream errored mid-flight but partial
-  // text was still persisted (graceful degrade). The Dock keeps the partial reply
-  // and surfaces its existing error affordance.
-  error?: string;
-  // YUK-307 (presentation layer §2.3) — the agent's per-reply hero nomination,
-  // carried verbatim on the terminal `reply` SSE event (chat.ts sets
-  // CopilotChatResult.primary_view). Absent = no hero (the common case).
-  primary_view?: ReplayPrimaryView;
-}
-
-interface DurableCopilotReconnect extends PersistedDurableCopilotReconnect {
-  /** Last safely folded cursor/view, so a manual retry resumes rather than replays from zero. */
+interface ActiveCopilotRun {
+  runId: string;
+  sessionId: string;
+  location: string;
+  userMessage?: string;
   view: CopilotRunView;
+  controller?: AbortController;
+  connectionError?: string;
+  stopPending: boolean;
+  cancelRequested: boolean;
+}
+
+interface PendingCopilotTurn extends PersistedPendingCopilotTurn {
+  dispatching: boolean;
+  error?: string;
 }
 
 type CopilotProgressStage = 'dispatch' | 'generation' | 'evidence-review';
 
 const COPILOT_PROGRESS_LABELS: Record<CopilotProgressStage, string> = {
-  dispatch: '调度中…',
+  dispatch: '准备中…',
   generation: '生成中…',
   'evidence-review': '证据审阅中…',
 };
@@ -181,155 +158,164 @@ function copilotProgressStage(view: CopilotRunView): CopilotProgressStage {
 
 // GET /api/copilot/turns response shape — see src/capabilities/copilot/server/turns.ts.
 interface CopilotTurnsResponse {
+  session_id: string | null;
   turns: ReplayTurn[];
+  active_runs: Array<{
+    run_id: string;
+    session_id: string;
+    status: 'queued' | 'started' | 'running' | 'cancel_requested';
+    events_url: string;
+  }>;
 }
 
-export interface ChatMessage {
+interface CopilotSessionResponse {
   id: string;
-  role: 'user' | 'ai' | 'tombstone';
-  text: string;
-  checkpoint_event_id?: string;
-  // AF S4 / YUK-203 U6 — set on an AI message produced by a teaching/solve
-  // skill turn. `skill_turn` drives the structured-question card + chips;
-  // `session_id` is the Copilot session id the corrective accept-chip posts to;
-  // `reply_event_id` is the precise anchor for the corrective chip resolver
-  // (PR #305 — avoids wrong-anchor on multi-card sessions);
-  // `skill_context` is the originating skill selector, forwarded from the turns
-  // API (round-2) so activeSkillRef can be restored on replay.
-  skill_turn?: SkillTurn;
-  session_id?: string;
-  reply_event_id?: string;
-  skill_context?: CopilotSkillContextT;
-  // YUK-266 (C1) — true while SSE deltas are still flowing into this AI message;
-  // drives the typing caret affordance. Cleared on the terminal `reply` event.
-  streaming?: boolean;
-  // YUK-307 (presentation layer §2.5) — the agent's hero nomination for this AI
-  // turn, rendered below the reply text by CopilotHeroCard. Forwarded from the
-  // terminal reply event (live) or replayToMessages (reopen). Absent = no hero.
-  primary_view?: ReplayPrimaryView;
-  // YUK-757 — public child lifecycle only. The raw nested-agent transcript,
-  // prompt and reasoning never enter ChatMessage.
-  subtasks?: CopilotSubtaskView[];
-  // YUK-457 — per-call tool-use records from live SSE and replay prefill.
-  // Appended on `tool_use`, enriched on `tool_result`, preserved on the terminal
-  // `reply` event so the full call log stays on the AI turn after finalize.
-  tool_calls?: ToolCallRecord[];
+  status: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
-/** YUK-457 — a single tool-use record (live stream or replay). */
-export interface ToolCallRecord {
-  toolName: string;
-  input: Record<string, unknown>;
-  toolUseId?: string;
-  summary?: string;
-  status?: 'running' | 'done' | 'failed';
-  errorReason?: string;
+interface CopilotSessionsResponse {
+  sessions: CopilotSessionResponse[];
 }
 
-function toolCallCardStatus(call: ToolCallRecord): ToolUseStatus {
+interface CopilotCreateSessionResponse {
+  session: CopilotSessionResponse;
+}
+
+const LEARNER_TOOL_LABELS: Readonly<Record<string, string>> = {
+  query_mistakes: '错题整理',
+  get_review_due: '复习安排',
+  knowledge_mutation: '学习内容建议',
+};
+
+function learnerToolLabel(toolName: string): string {
+  return LEARNER_TOOL_LABELS[toolName] ?? '学习辅助任务';
+}
+
+function subtaskErrorMessage(error: string | undefined): string {
+  if (!error) return '这一步未能完成。';
+  return error.replaceAll('子任务', '这一步');
+}
+
+type LifecycleStatus = ReplayToolOperation['status'] | ReplaySubagentRun['status'];
+
+function lifecycleCardStatus(status: LifecycleStatus): 'running' | 'done' | 'failed' {
+  if (status === 'running') return 'running';
+  return status === 'succeeded' ? 'done' : 'failed';
+}
+
+function lifecycleErrorMessage(status: LifecycleStatus): string {
+  if (status === 'cancelled') return '已取消。';
+  if (status === 'lost') return '结果暂时无法确认，请查看回复后再试。';
+  return '这一步未完成，请稍后再试。';
+}
+
+type ToolCallCardStatus = 'running' | 'done' | 'failed';
+
+function toolCallCardStatus(call: ToolCallRecord): ToolCallCardStatus {
   if (call.status === 'failed') return 'failed';
   if (call.status === 'running') return 'running';
   return 'done';
 }
 
-function parseToolUseSse(data: string): ToolCallRecord | null {
-  try {
-    const raw = JSON.parse(data) as {
-      toolName?: unknown;
-      input?: unknown;
-      toolUseId?: unknown;
-    };
-    if (typeof raw.toolName !== 'string') return null;
-    return {
-      toolName: raw.toolName,
-      input:
-        raw.input !== null && typeof raw.input === 'object' && !Array.isArray(raw.input)
-          ? (raw.input as Record<string, unknown>)
-          : {},
-      ...(typeof raw.toolUseId === 'string' ? { toolUseId: raw.toolUseId } : {}),
-      status: 'running',
-    };
-  } catch {
-    return null;
-  }
+// YUK-913 — one COMPRESSED card per tool call: a single-line row (label +
+// status pill + one-line summary) whose state evolves IN PLACE 谓用中 → 已完成/失败,
+// with the full detail collapsed behind the row itself. Replaces the previous
+// two-band rich card (header band + result band) that read as a large block.
+const TOOL_ROW_PILL: Record<'running' | 'done' | 'failed', string> = {
+  running: '调用中',
+  done: '已完成',
+  failed: '失败',
+};
+
+function toolRowIcon(status: 'running' | 'done' | 'failed'): LoomIconName {
+  if (status === 'running') return 'refresh';
+  if (status === 'failed') return 'alert';
+  return 'check';
 }
 
-function parseToolResultSse(data: string): Omit<ToolCallRecord, 'toolUseId'> | null {
-  try {
-    const raw = JSON.parse(data) as {
-      toolName?: unknown;
-      input?: unknown;
-      summary?: unknown;
-      errorReason?: unknown;
-    };
-    if (typeof raw.toolName !== 'string') return null;
-    const summary = typeof raw.summary === 'string' ? raw.summary : undefined;
-    const errorReason =
-      typeof raw.errorReason === 'string' && raw.errorReason.length > 0
-        ? raw.errorReason
+function CopilotToolCallRow({ call }: { call: ToolCallRecord }) {
+  const [expanded, setExpanded] = useState(false);
+  const detailId = useId();
+  const status = toolCallCardStatus(call);
+  const label = learnerToolLabel(call.toolName);
+  // Learner-facing one-line copy: done → the tool's summary (when the server
+  // sent one); failed → the fixed retry sentence (internal errorReason never
+  // renders — see the leak test); running → nothing beyond the pill.
+  const lineText =
+    status === 'failed'
+      ? `${label}暂时未完成，请稍后再试。`
+      : status === 'done' && call.summary
+        ? call.summary
         : undefined;
-    return {
-      toolName: raw.toolName,
-      input:
-        raw.input !== null && typeof raw.input === 'object' && !Array.isArray(raw.input)
-          ? (raw.input as Record<string, unknown>)
-          : {},
-      ...(summary ? { summary } : {}),
-      ...(errorReason ? { errorReason } : {}),
-      status: errorReason ? 'failed' : 'done',
-    };
-  } catch {
-    return null;
-  }
-}
-
-function applyToolResult(
-  calls: ToolCallRecord[],
-  result: Omit<ToolCallRecord, 'toolUseId'>,
-): ToolCallRecord[] {
-  const idx = calls.findIndex(
-    (call) => call.toolName === result.toolName && call.status === 'running',
+  const lineContent = (
+    <>
+      <LoomIcon
+        name={toolRowIcon(status)}
+        size={13}
+        className={status === 'running' ? 'spin' : ''}
+      />
+      <span className="copilot-tool-name">{label}</span>
+      <span className={`tuc-pill is-${status}`} data-testid="copilot-tool-use-status">
+        {TOOL_ROW_PILL[status]}
+      </span>
+      {lineText ? <span className="copilot-tool-summary">{lineText}</span> : null}
+    </>
   );
-  if (idx === -1) {
-    return [...calls, result];
-  }
-  const next = [...calls];
-  next[idx] = { ...next[idx], ...result };
-  return next;
+  return (
+    <div
+      className="copilot-tool-row"
+      data-testid="copilot-tool-use-card"
+      data-status={status}
+      aria-live="polite"
+    >
+      {lineText ? (
+        <button
+          type="button"
+          className="copilot-tool-line"
+          data-testid="copilot-tool-use-toggle"
+          aria-expanded={expanded}
+          aria-controls={detailId}
+          aria-label={expanded ? `收起${label}详情` : `展开${label}详情`}
+          onClick={() => setExpanded((open) => !open)}
+        >
+          {lineContent}
+        </button>
+      ) : (
+        <div className="copilot-tool-line is-static">{lineContent}</div>
+      )}
+      {expanded && lineText ? (
+        <div className="copilot-tool-detail" id={detailId} data-testid="copilot-tool-use-detail">
+          {lineText}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function CopilotToolUseList({ calls }: { calls: ToolCallRecord[] }) {
   return (
-    <div className="flex flex-col gap-[6px]" data-testid="copilot-tool-use-list">
-      {calls.map((call, idx) => {
-        const status = toolCallCardStatus(call);
-        const isRunning = status === 'running';
-        const summary = call.summary;
-        return (
-          <div
-            key={call.toolUseId ?? `${call.toolName}-${idx}`}
-            data-testid="copilot-tool-use-card"
-          >
-            <ToolUseCard
-              toolName={call.toolName}
-              summary={summary}
-              status={status}
-              args={isRunning && Object.keys(call.input).length > 0 ? call.input : undefined}
-              actor="agent"
-              running={<span>正在调用…</span>}
-              result={
-                summary ? (
-                  <span>{summary}</span>
-                ) : status === 'done' ? (
-                  <span>已完成</span>
-                ) : undefined
-              }
-              errorView={call.errorReason ? <span>{call.errorReason}</span> : undefined}
-            />
-          </div>
-        );
-      })}
+    <div className="copilot-tool-list" data-testid="copilot-tool-use-list">
+      {calls.map((call, idx) => (
+        <CopilotToolCallRow key={call.toolUseId ?? `${call.toolName}-${idx}`} call={call} />
+      ))}
     </div>
+  );
+}
+
+function CopilotLifecycleCard({ toolName, status }: { toolName: string; status: LifecycleStatus }) {
+  const cardStatus = lifecycleCardStatus(status);
+  return (
+    <ToolUseCard
+      toolName={toolName}
+      actor={null}
+      status={cardStatus}
+      running={<span>正在处理…</span>}
+      result={<span>已完成，结果已整理到回复中。</span>}
+      errorView={<span>{lifecycleErrorMessage(status)}</span>}
+    />
   );
 }
 
@@ -358,6 +344,9 @@ interface MessageRowProps {
   message: ChatMessage;
   navigate: (to: string) => void;
   onAcceptCorrective: (sessionId: string, questionId: string, replyEventId?: string) => void;
+  onSelectCorrection?: (turnId: string, turnNumber: number) => void;
+  correctionTurnNumber?: number;
+  correctionSelected?: boolean;
   onRevert?: (checkpointEventId: string) => void;
   // Per-row (not global) chip flags so a corrective-chip click on ONE message
   // does not re-render every other row: only the matching row sees its flag flip.
@@ -379,11 +368,15 @@ export const MessageRow = memo(function MessageRow({
   message: m,
   navigate,
   onAcceptCorrective,
+  onSelectCorrection,
+  correctionTurnNumber,
+  correctionSelected = false,
   onRevert,
   chipPending,
   chipAcked,
   revertPending,
 }: MessageRowProps) {
+  const correctionTurnId = m.role === 'ai' ? m.reply_event_id : undefined;
   return (
     <div
       className={`msg msg-${m.role}${m.streaming ? ' is-streaming' : ''}`}
@@ -396,10 +389,11 @@ export const MessageRow = memo(function MessageRow({
       )}
       <div className="msg-body">
         {m.role === 'tombstone' ? null : (
-          <div className="msg-name">{m.role === 'ai' ? 'Loom Copilot' : '我'}</div>
+          <div className="msg-name">{m.role === 'ai' ? '编排者' : '我'}</div>
         )}
-        {/* YUK-457 — tool-use cards sit between the user ask and the assistant
-            reply (design stack order). Replay + live SSE both feed tool_calls. */}
+        {/* YUK-457 / YUK-913 — compact tool-call rows sit between the user ask
+            and the assistant reply (design stack order). Replay + live SSE both
+            feed tool_calls; ONE row per logical call, state evolving in place. */}
         {m.role === 'ai' && m.tool_calls && m.tool_calls.length > 0 ? (
           <CopilotToolUseList calls={m.tool_calls} />
         ) : null}
@@ -408,6 +402,19 @@ export const MessageRow = memo(function MessageRow({
             text visible instead of blanking or crashing the conversation.
             Copilot has no subject profile, so dollar syntax stays plain. */}
         <DeferredMarkdownRenderer className="msg-text">{m.text}</DeferredMarkdownRenderer>
+        {correctionTurnId &&
+        correctionTurnNumber !== undefined &&
+        !m.streaming &&
+        onSelectCorrection ? (
+          <button
+            type="button"
+            className={`chip${correctionSelected ? ' is-corrective' : ''}`}
+            aria-pressed={correctionSelected}
+            onClick={() => onSelectCorrection(correctionTurnId, correctionTurnNumber)}
+          >
+            更正这轮
+          </button>
+        ) : null}
         {m.role === 'ai' && m.checkpoint_event_id && !m.streaming && onRevert ? (
           <button
             type="button"
@@ -483,9 +490,9 @@ export const MessageRow = memo(function MessageRow({
         {m.role === 'ai' && m.subtasks && m.subtasks.length > 0 ? (
           <div className="flex flex-col gap-[6px]" data-testid="copilot-subtask-list">
             {m.subtasks.map((subtask) => (
-              <div key={subtask.id} data-testid="copilot-subtask-card" data-subtask-id={subtask.id}>
+              <div key={subtask.id} data-testid="copilot-subtask-card">
                 <ToolUseCard
-                  toolName="后台子任务"
+                  toolName="处理步骤"
                   summary={subtask.label}
                   actor={null}
                   status={
@@ -497,8 +504,29 @@ export const MessageRow = memo(function MessageRow({
                   }
                   running={<span>正在处理…</span>}
                   result={subtask.summary ? <span>{subtask.summary}</span> : <span>已完成</span>}
-                  errorView={<span>{subtask.error ?? '这项子任务未能完成。'}</span>}
+                  errorView={<span>{subtaskErrorMessage(subtask.error)}</span>}
                 />
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {m.role === 'ai' && m.tool_operations && m.tool_operations.length > 0 ? (
+          <div className="flex flex-col gap-[6px]" data-testid="copilot-tool-operation-list">
+            {m.tool_operations.map((operation) => (
+              <div key={operation.id} data-testid="copilot-tool-operation-card">
+                <CopilotLifecycleCard
+                  toolName={learnerToolLabel(operation.tool_name)}
+                  status={operation.status}
+                />
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {m.role === 'ai' && m.subagent_runs && m.subagent_runs.length > 0 ? (
+          <div className="flex flex-col gap-[6px]" data-testid="copilot-subagent-run-list">
+            {m.subagent_runs.map((run) => (
+              <div key={run.id} data-testid="copilot-subagent-run-card">
+                <CopilotLifecycleCard toolName="处理步骤" status={run.status} />
               </div>
             ))}
           </div>
@@ -531,62 +559,80 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     enabled: open,
     refetchInterval: open ? 60_000 : false,
   });
+  const sessionsQ = useQuery({
+    queryKey: ['copilot-sessions'],
+    queryFn: () => apiJson<CopilotSessionsResponse>('/api/copilot/sessions'),
+    enabled: open,
+  });
 
-  const [restoredDurableHandle] = useState<DurableCopilotReconnect | null>(() => {
-    const persisted = loadPersistedDurableCopilotReconnect();
-    return persisted ? { ...persisted, view: createCopilotRunView() } : null;
+  const [restoredPendingTurns] = useState<PersistedPendingCopilotTurn[]>(() => {
+    // Accepted v1 handles are intentionally ignored: the server snapshot is the
+    // only accepted-run inventory. Preserve only exact pre-202 retry tuples.
+    discardLegacyDurableCopilotReconnect();
+    return loadPersistedPendingCopilotTurns();
   });
-  const [restoredPendingTurn] = useState<PersistedPendingCopilotTurn | null>(() => {
-    if (restoredDurableHandle) {
-      // The accepted Location is strictly stronger than a pre-acceptance
-      // handoff. Never revive an older uncertain POST beside a durable run.
-      discardPersistedPendingCopilotTurn();
-      return null;
-    }
-    return loadPersistedPendingCopilotTurn();
-  });
+  const [pendingTurns, setPendingTurns] = useState<PendingCopilotTurn[]>(() =>
+    restoredPendingTurns.map((turn) => ({
+      ...turn,
+      dispatching: false,
+      error: '这次请求的受理状态还不能确认；恢复时会复用原请求，不会创建第二次执行。',
+    })),
+  );
+  const pendingTurnsRef = useRef(pendingTurns);
+  pendingTurnsRef.current = pendingTurns;
+  const recoverySessionId = restoredPendingTurns.at(-1)?.requestBody.session_id ?? null;
   const [messages, setMessages] = useState<ChatMessage[]>(() =>
-    restoredDurableHandle
-      ? [
-          {
-            id: restoredDurableHandle.userMessageId,
-            role: 'user',
-            text: restoredDurableHandle.userMessage,
-          },
-          {
-            id: restoredDurableHandle.aiMessageId,
-            role: 'ai',
-            text: '正在重新连接这次已受理的后台任务；不会重复提交。',
-            streaming: true,
-          },
-        ]
-      : [],
+    restoredPendingTurns
+      .filter((turn) => turn.requestBody.session_id === recoverySessionId)
+      .reduce<ChatMessage[]>(
+        (current, turn) =>
+          projectPendingCopilotMessagePair(current, {
+            idempotencyKey: turn.idempotencyKey,
+            sessionId: turn.requestBody.session_id,
+            userMessageId: turn.userMessageId,
+            aiMessageId: turn.aiMessageId,
+            userMessage: turn.userMessage,
+            dispatching: false,
+          }),
+        [],
+      ),
   );
-  const [sending, setSending] = useState(restoredDurableHandle !== null);
-  const [durableRunning, setDurableRunning] = useState(restoredDurableHandle !== null);
-  const [progressStage, setProgressStage] = useState<CopilotProgressStage | null>(
-    restoredDurableHandle ? copilotProgressStage(restoredDurableHandle.view) : null,
-  );
-  const [stopPending, setStopPending] = useState(false);
-  const [awaitingFirstFrame, setAwaitingFirstFrame] = useState(false);
-  const [error, setError] = useState<string | null>(() =>
-    restoredPendingTurn
-      ? '上次请求的受理状态未知：它可能尚未执行，也可能已经完成。请先查看现有结果，再决定是否恢复这次请求。'
-      : null,
-  );
-  const [pendingAcceptanceUnknown, setPendingAcceptanceUnknown] = useState(
-    restoredPendingTurn !== null,
-  );
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(recoverySessionId);
+  const currentSessionIdRef = useRef(currentSessionId);
+  currentSessionIdRef.current = currentSessionId;
+  const openRef = useRef(open);
+  openRef.current = open;
+  const [sessionPanelOpen, setSessionPanelOpen] = useState(false);
+  const [creatingSession, setCreatingSession] = useState(false);
+  const [optimisticSession, setOptimisticSession] = useState<CopilotSessionResponse | null>(() => {
+    if (!recoverySessionId) return null;
+    const recoveredAt = new Date().toISOString();
+    return {
+      id: recoverySessionId,
+      status: 'active',
+      title: '正在恢复的对话',
+      created_at: recoveredAt,
+      updated_at: recoveredAt,
+    };
+  });
+  const activeRunsRef = useRef(new Map<string, ActiveCopilotRun>());
+  const snapshotRequestSeqRef = useRef(new Map<string, number>());
+  const snapshotAppliedSeqRef = useRef(new Map<string, number>());
+  const [, setRunRevision] = useState(0);
+  const bumpRunRevision = useCallback(() => setRunRevision((revision) => revision + 1), []);
+  const [error, setError] = useState<string | null>(null);
   // Per-checkpoint in-flight id for the revert POST (disables that row's button), and a
   // distinct "revert landed but the refresh failed" flag so a post-revert refetch error is
   // never surfaced as a revert failure (F5).
   const [revertPendingId, setRevertPendingId] = useState<string | null>(null);
   const [refreshFailed, setRefreshFailed] = useState(false);
-  // TchmY — a refetch that was SKIPPED (a send is streaming, so refetchTurns deferred rather than
-  // failed) is distinct from a real refetch FAILURE. Same "revert landed, screen not yet refreshed"
-  // family, but the skip is not an error — it gets a calmer copy (no alert tone).
-  const [refreshSkipped, setRefreshSkipped] = useState(false);
   const [input, setInput] = useState('');
+  const [correctionTarget, setCorrectionTarget] = useState<{
+    turnId: string;
+    turnNumber: number;
+  } | null>(null);
+  const correctionTargetRef = useRef(correctionTarget);
+  correctionTargetRef.current = correctionTarget;
   // YUK-267 (C2) — the current page route, sent as ambient_context.route so the
   // agent can scope its answer to where the user is. Held in a ref + synced each
   // render so `send` stays stable (its deps are []), matching the activeSkillRef
@@ -617,76 +663,135 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   // YUK-577 — the ingestion session a nudge 「看看」opened, injected into ambient_context so the
   // user's first reply is context-aware ("about the material I just processed").
   const nudgeSessionRef = useRef<string | null>(null);
+
+  const detachSubscriptions = useCallback(
+    (sessionId?: string, notify = true) => {
+      let changed = false;
+      for (const run of activeRunsRef.current.values()) {
+        if (sessionId && run.sessionId !== sessionId) continue;
+        if (!run.controller) continue;
+        const controller = run.controller;
+        run.controller = undefined;
+        controller.abort();
+        changed = true;
+      }
+      if (changed && notify) bumpRunRevision();
+    },
+    [bumpRunRevision],
+  );
+
+  useEffect(
+    () => () => {
+      detachSubscriptions(undefined, false);
+    },
+    [detachSubscriptions],
+  );
+
   // AF S4 / YUK-203 U6 — wrap closeDrawer to also clear the active skill context
   // so that re-opening the Dock after closing does not resume a stale skill.
   const closeDrawer = useCallback(() => {
+    // Closing is unsubscribe-only. Server-owned execution and queued successors
+    // remain intact and will be rediscovered on the next snapshot.
+    detachSubscriptions();
     activeSkillRef.current = null;
     nudgeSessionRef.current = null;
     // YUK-272 (C3) — also drop the quiz-chip's in-scope knowledge entity so a
     // re-open does not offer a quiz for a stale knowledge node.
     setFocusedKnowledgeId(null);
+    correctionTargetRef.current = null;
+    setCorrectionTarget(null);
     closeDrawerDwell();
-  }, [closeDrawerDwell]);
-  // A logical turn keeps one stable key until it is accepted. If the server
-  // committed a durable job but its 202 was lost, manual retry replays this key
-  // and recovers the original handle instead of creating a second paid run.
-  const lastUserTurnRef = useRef<{
-    text: string;
-    idempotencyKey: string;
-    /** Reuse only while server acceptance is unknown or explicitly ambiguous. */
-    retryWithSameKey: boolean;
-    userMessageId: string;
-    requestBody: Pick<
-      CopilotChatRequestT,
-      'user_message' | 'triggered_by' | 'skill_context' | 'ambient_context'
-    >;
-  } | null>(
-    restoredPendingTurn
-      ? {
-          text: restoredPendingTurn.userMessage,
-          idempotencyKey: restoredPendingTurn.idempotencyKey,
-          retryWithSameKey: true,
-          userMessageId: restoredPendingTurn.userMessageId,
-          requestBody: restoredPendingTurn.requestBody,
-        }
-      : null,
-  );
-  // A 202 means the paid durable run already exists. If its progress stream later
-  // exhausts automatic reconnects, the error button must resume THIS handle — never
-  // POST the user message again and accidentally create a second run.
-  const durableReconnectRef = useRef<DurableCopilotReconnect | null>(restoredDurableHandle);
-  const restoredReconnectStartedRef = useRef(false);
-  const activeTransportAbortRef = useRef<AbortController | null>(null);
-  const stoppingRunRef = useRef<string | null>(null);
-  useEffect(
-    () => () => {
-      activeTransportAbortRef.current?.abort();
-      activeTransportAbortRef.current = null;
-    },
-    [],
-  );
-  // Synchronous single-flight guard: `sending` state lags a re-render behind,
-  // so rapid double-Enter could fire duplicate POSTs from the stale closure.
-  const sendingRef = useRef(false);
+  }, [closeDrawerDwell, detachSubscriptions]);
   const streamRef = useRef<HTMLDivElement | null>(null);
-  // AF S3a — replay runs once per open; guard so a refetch / re-render does not
-  // clobber the live in-memory list with a stale prefill.
-  const replayedRef = useRef(false);
+  const sessionBootstrapRef = useRef(false);
 
-  // AF S4 / YUK-203 U6 — restore skill state from a replayed message list: adopt the
-  // latest non-end AI skill_context as activeSkillRef, and surface the latest in-scope
-  // knowledge entity for the quiz chip. Newest-first scan (replayed is oldest→newest).
-  // Set-if-found (no reset) so the drawer-open prefill keeps its exact semantics; callers
-  // that must drop stale context (post-revert refetch) reset the refs before calling.
+  const pendingMessagesForSession = useCallback((sessionId: string): ChatMessage[] => {
+    return pendingTurnsRef.current
+      .filter((turn) => turn.requestBody.session_id === sessionId)
+      .reduce<ChatMessage[]>(
+        (current, turn) =>
+          projectPendingCopilotMessagePair(current, {
+            idempotencyKey: turn.idempotencyKey,
+            sessionId,
+            userMessageId: turn.userMessageId,
+            aiMessageId: turn.aiMessageId,
+            userMessage: turn.userMessage,
+            dispatching: turn.dispatching,
+          }),
+        [],
+      );
+  }, []);
+
+  const createConversation = useCallback(async () => {
+    if (creatingSession) return;
+    setCreatingSession(true);
+    setError(null);
+    try {
+      const response = await apiJson<CopilotCreateSessionResponse>('/api/copilot/sessions', {
+        method: 'POST',
+      });
+      if (currentSessionIdRef.current) detachSubscriptions(currentSessionIdRef.current);
+      activeSkillRef.current = null;
+      setFocusedKnowledgeId(null);
+      correctionTargetRef.current = null;
+      setCorrectionTarget(null);
+      setMessages([]);
+      setOptimisticSession(response.session);
+      setCurrentSessionId(response.session.id);
+      void sessionsQ.refetch();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '新对话创建失败');
+    } finally {
+      setCreatingSession(false);
+    }
+  }, [creatingSession, detachSubscriptions, sessionsQ]);
+
+  const selectConversation = useCallback(
+    (sessionId: string) => {
+      const previousSessionId = currentSessionIdRef.current;
+      if (previousSessionId && previousSessionId !== sessionId) {
+        detachSubscriptions(previousSessionId);
+      }
+      activeSkillRef.current = null;
+      setFocusedKnowledgeId(null);
+      correctionTargetRef.current = null;
+      setCorrectionTarget(null);
+      setMessages(pendingMessagesForSession(sessionId));
+      setOptimisticSession(null);
+      setError(null);
+      setCurrentSessionId(sessionId);
+    },
+    [detachSubscriptions, pendingMessagesForSession],
+  );
+
+  useEffect(() => {
+    if (!open || !sessionsQ.data) return;
+    const sessions = sessionsQ.data.sessions;
+    if (sessions.length === 0) {
+      if (sessionBootstrapRef.current) return;
+      sessionBootstrapRef.current = true;
+      void createConversation();
+      return;
+    }
+    sessionBootstrapRef.current = false;
+    if (optimisticSession?.id === currentSessionId) {
+      if (sessions.some((session) => session.id === currentSessionId)) {
+        setOptimisticSession(null);
+      } else {
+        return;
+      }
+    }
+    if (!currentSessionId || !sessions.some((session) => session.id === currentSessionId)) {
+      setCurrentSessionId(sessions[0].id);
+    }
+  }, [createConversation, currentSessionId, open, optimisticSession, sessionsQ.data]);
+
+  // Fold explicit mode transitions oldest→newest, including end barriers. The
+  // quiz chip independently keeps the latest in-scope knowledge entity. A full
+  // post-revert refresh resets both before restoring the remaining history.
   const restoreSkillStateFromReplay = useCallback(
     (replayed: ReturnType<typeof replayToMessages>) => {
-      for (let i = replayed.length - 1; i >= 0; i--) {
-        const m = replayed[i];
-        if (m.role !== 'ai' || !m.skill_turn) continue;
-        if (m.skill_turn.kind === 'end') break; // ended session → leave ref null
-        if (m.skill_context) activeSkillRef.current = m.skill_context;
-        break; // found the latest skill turn — done either way
-      }
+      activeSkillRef.current = restoreSkillContext(replayed, activeSkillRef.current);
       for (let i = replayed.length - 1; i >= 0; i--) {
         const sc = replayed[i].skill_context;
         if (sc?.ref.kind === 'knowledge') {
@@ -698,94 +803,217 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     [],
   );
 
-  // AF S3a — on open, prefill the message list from GET /api/copilot/turns
-  // (replay-last-N). Best-effort: on failure we keep the current in-memory list
-  // (graceful degradation to pre-S3a behaviour) and surface no error for the
-  // prefill path. Only replays into an empty list, and only once per open.
-  //
-  // AF S4 / YUK-203 U6 (round-2) — after prefilling, scan replayed messages for
-  // the latest AI turn whose skill_turn.kind !== 'end' and that carries a
-  // skill_context. If found, restore activeSkillRef so composer answers after a
-  // page refresh continue through the teaching/solve skill. If the last skill turn
-  // is 'end' (or there is none), the ref stays null → free-form.
+  const applyRunViewToMessage = useCallback((run: ActiveCopilotRun) => {
+    // A detached/background session may still finish a delayed acceptance or
+    // callback. Keep its server-owned handle, but never project it into the
+    // currently selected conversation or mutate that conversation's mode.
+    if (currentSessionIdRef.current !== run.sessionId) return;
+    const terminal = run.view.phase === 'completed' || run.view.phase === 'failed';
+    const fallbackText =
+      run.view.phase === 'queued'
+        ? '正在等待处理这次请求。'
+        : run.view.phase === 'cancel_requested' || run.cancelRequested
+          ? '正在停止这次运行。'
+          : '正在处理你的请求，结果会在这里显示。';
+    setMessages((previous) =>
+      projectCopilotRunUpdate(previous, {
+        runId: run.runId,
+        sessionId: run.sessionId,
+        view: run.view,
+        fallbackText,
+        ...(run.userMessage ? { userMessage: run.userMessage } : {}),
+      }),
+    );
+    if (run.view.phase === 'completed') {
+      nudgeSessionRef.current = nextNudgeSessionAfterTurn(nudgeSessionRef.current, true);
+    }
+    if (terminal) run.connectionError = undefined;
+  }, []);
+
+  const reportSendError = useCallback((message: string) => {
+    setRefreshFailed(false);
+    setError(message);
+  }, []);
+
+  const subscribeRun = useCallback(
+    (runId: string) => {
+      const run = activeRunsRef.current.get(runId);
+      if (
+        !run ||
+        run.controller ||
+        run.view.phase === 'completed' ||
+        run.view.phase === 'failed' ||
+        !openRef.current ||
+        currentSessionIdRef.current !== run.sessionId
+      ) {
+        return;
+      }
+      const controller = new AbortController();
+      run.controller = controller;
+      run.connectionError = undefined;
+      bumpRunRevision();
+      void consumeDurableCopilotRun({
+        location: run.location,
+        fetchResponse: apiFetch,
+        initialState: run.view,
+        signal: controller.signal,
+        onUpdate: (view) => {
+          const current = activeRunsRef.current.get(runId);
+          if (!current || current.controller !== controller) return;
+          current.view = view;
+          applyRunViewToMessage(current);
+          bumpRunRevision();
+        },
+      })
+        .then((view) => {
+          const current = activeRunsRef.current.get(runId);
+          if (!current || current.controller !== controller) return;
+          current.view = view;
+          applyRunViewToMessage(current);
+        })
+        .catch((cause) => {
+          const current = activeRunsRef.current.get(runId);
+          if (!current || current.controller !== controller || controller.signal.aborted) return;
+          current.connectionError = durableReconnectErrorMessage(cause);
+          setMessages((previous) =>
+            previous.map((message) =>
+              message.id === copilotRunReplyMessageId(runId)
+                ? { ...message, streaming: false }
+                : message,
+            ),
+          );
+        })
+        .finally(() => {
+          const current = activeRunsRef.current.get(runId);
+          if (current?.controller === controller) current.controller = undefined;
+          bumpRunRevision();
+        });
+    },
+    [applyRunViewToMessage, bumpRunRevision],
+  );
+
+  const synchronizeSnapshot = useCallback(
+    (
+      sessionId: string,
+      snapshot: CopilotTurnsResponse,
+      runsKnownWhenRequested: ReadonlySet<string>,
+    ) => {
+      if (snapshot.session_id !== null && snapshot.session_id !== sessionId) return;
+      const replayed = replayToMessages(snapshot.turns ?? []);
+      const activeRunIds = new Set<string>();
+      for (const item of snapshot.active_runs ?? []) {
+        if (item.session_id !== sessionId) continue;
+        if (durableRunIdFromLocation(item.events_url) !== item.run_id) continue;
+        activeRunIds.add(item.run_id);
+        const userMessage = replayed.find(
+          (message) => message.role === 'user' && message.id === item.run_id,
+        )?.text;
+        const existing = activeRunsRef.current.get(item.run_id);
+        if (existing) {
+          existing.location = item.events_url;
+          if (userMessage) existing.userMessage = userMessage;
+          if (item.status === 'cancel_requested') existing.cancelRequested = true;
+        } else {
+          const view = createCopilotRunView();
+          if (item.status === 'started' || item.status === 'running') view.phase = 'running';
+          if (item.status === 'cancel_requested') view.phase = 'cancel_requested';
+          activeRunsRef.current.set(item.run_id, {
+            runId: item.run_id,
+            sessionId,
+            location: item.events_url,
+            ...(userMessage ? { userMessage } : {}),
+            view,
+            stopPending: false,
+            cancelRequested: item.status === 'cancel_requested',
+          });
+        }
+      }
+
+      for (const [runId, run] of activeRunsRef.current) {
+        if (
+          run.sessionId !== sessionId ||
+          activeRunIds.has(runId) ||
+          !runsKnownWhenRequested.has(runId)
+        ) {
+          continue;
+        }
+        run.controller?.abort();
+        activeRunsRef.current.delete(runId);
+      }
+      const retainedRunIds = new Set(activeRunIds);
+      for (const run of activeRunsRef.current.values()) {
+        if (run.sessionId === sessionId && !runsKnownWhenRequested.has(run.runId)) {
+          retainedRunIds.add(run.runId);
+        }
+      }
+      setMessages((previous) => {
+        let next = reconcileCopilotSnapshotMessages(previous, replayed, sessionId, retainedRunIds);
+        for (const runId of retainedRunIds) {
+          const run = activeRunsRef.current.get(runId);
+          if (!run) continue;
+          const fallbackText =
+            run.view.phase === 'queued'
+              ? '正在等待处理这次请求。'
+              : run.cancelRequested
+                ? '正在停止这次运行。'
+                : '正在处理你的请求，结果会在这里显示。';
+          next = projectCopilotRunUpdate(next, {
+            runId,
+            sessionId,
+            view: run.view,
+            fallbackText,
+            ...(run.userMessage ? { userMessage: run.userMessage } : {}),
+          });
+        }
+        return next;
+      });
+      restoreSkillStateFromReplay(replayed);
+      bumpRunRevision();
+      for (const runId of retainedRunIds) subscribeRun(runId);
+    },
+    [bumpRunRevision, restoreSkillStateFromReplay, subscribeRun],
+  );
+
+  const refetchTurns = useCallback(async (): Promise<boolean> => {
+    const sessionId = currentSessionIdRef.current;
+    if (!sessionId) return false;
+    const requestSequence = (snapshotRequestSeqRef.current.get(sessionId) ?? 0) + 1;
+    snapshotRequestSeqRef.current.set(sessionId, requestSequence);
+    const runsKnownWhenRequested = new Set(
+      [...activeRunsRef.current.values()]
+        .filter((run) => run.sessionId === sessionId)
+        .map((run) => run.runId),
+    );
+    const snapshot = await apiJson<CopilotTurnsResponse>(
+      `/api/copilot/turns?limit=${REPLAY_LIMIT}&session_id=${encodeURIComponent(sessionId)}`,
+    );
+    if (currentSessionIdRef.current !== sessionId) return false;
+    if ((snapshotAppliedSeqRef.current.get(sessionId) ?? 0) >= requestSequence) return false;
+    snapshotAppliedSeqRef.current.set(sessionId, requestSequence);
+    synchronizeSnapshot(sessionId, snapshot, runsKnownWhenRequested);
+    return true;
+  }, [synchronizeSnapshot]);
+
   useEffect(() => {
-    if (!open) {
-      replayedRef.current = false;
+    if (!open || !currentSessionId) {
+      if (!open) detachSubscriptions();
       return;
     }
-    if (replayedRef.current) return;
-    replayedRef.current = true;
-    let cancelled = false;
-    void (async () => {
-      try {
-        const res = await apiJson<CopilotTurnsResponse>(`/api/copilot/turns?limit=${REPLAY_LIMIT}`);
-        if (cancelled) return;
-        const replayed = replayToMessages(res.turns ?? []);
-        if (replayed.length === 0 && !restoredPendingTurn) return;
-        // Only prefill if the user has not already started typing/sending in this
-        // open (don't stomp a live exchange that raced the fetch). An uncertain
-        // pre-202 handoff deliberately waits for this replay first: the inline
-        // server path may already have completed, and hiding that real reply
-        // behind a local pending row would steer the user toward a duplicate run.
-        setMessages((prev) => {
-          if (prev.length !== 0) return prev;
-          if (!restoredPendingTurn) return replayed;
-          const pendingAlreadyVisible = replayed.some(
-            (message) =>
-              message.role === 'user' && message.text === restoredPendingTurn.userMessage,
-          );
-          return pendingAlreadyVisible
-            ? replayed
-            : [
-                ...replayed,
-                {
-                  id: restoredPendingTurn.userMessageId,
-                  role: 'user' as const,
-                  text: restoredPendingTurn.userMessage,
-                },
-              ];
-        });
-        // Restore activeSkillRef + the quiz chip's in-scope knowledge entity from the
-        // replayed turns so composer answers / the quiz chip survive a page refresh.
-        restoreSkillStateFromReplay(replayed);
-      } catch {
-        // Replay is best-effort — stay on the in-memory list.
-      }
-    })();
+    void refetchTurns().catch(() => undefined);
+    const interval = window.setInterval(() => {
+      void refetchTurns().catch(() => undefined);
+    }, 5_000);
     return () => {
-      cancelled = true;
+      window.clearInterval(interval);
+      detachSubscriptions(currentSessionId);
     };
-  }, [open, restoreSkillStateFromReplay, restoredPendingTurn]);
-
-  // Returns true when it actually replaced the message list, false when it SKIPPED (a send is in
-  // flight). Callers use the flag so they don't report a refresh as done when it was skipped
-  // (YUK-497 wave-3).
-  const refetchTurns = useCallback(async (): Promise<boolean> => {
-    const res = await apiJson<CopilotTurnsResponse>(`/api/copilot/turns?limit=${REPLAY_LIMIT}`);
-    const replayed = replayToMessages(res.turns ?? []);
-    // Don't clobber a live exchange. The revert button on a PRIOR AI message is clickable even
-    // while a NEW send is streaming; a full setMessages(replayed) here would drop the locally
-    // tracked streaming message (its aiId is not yet in the server replay), and send()'s later
-    // `map(m => m.id === aiId ? finalized : m)` would silently no-op — the reply vanishes. Skip the
-    // replace while a send is in flight (mirrors the prefill's prev.length===0 guard). The revert
-    // already landed server-side; the tombstone shows on the next refresh (YUK-497 wave-2, major).
-    if (sendingRef.current) return false;
-    setMessages(replayed);
-    // A revert may have removed the turn that owned the active teaching skill / focused
-    // knowledge — reset both, then recompute from the refreshed list (the same scan the
-    // drawer-open prefill runs) so stale skill context never survives a revert.
-    activeSkillRef.current = null;
-    setFocusedKnowledgeId(null);
-    restoreSkillStateFromReplay(replayed);
-    return true;
-  }, [restoreSkillStateFromReplay]);
+  }, [currentSessionId, detachSubscriptions, open, refetchTurns]);
 
   const revertCheckpoint = useCallback(
     async (checkpointEventId: string) => {
       setRevertPendingId(checkpointEventId);
       setError(null);
       setRefreshFailed(false);
-      setRefreshSkipped(false);
       try {
         try {
           await apiJson(
@@ -812,9 +1040,11 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         // is streaming) also surfaces the refresh-pending banner so the user has a cue to retry
         // rather than thinking the revert did nothing (YUK-497 wave-3).
         try {
-          const refreshed = await refetchTurns();
-          // false = SKIPPED (a send is streaming) — deferred, not failed → the calmer skip banner.
-          if (!refreshed) setRefreshSkipped(true);
+          // A successful revert may have removed the skill-owning turn. Reset
+          // before the authoritative snapshot rebuilds the remaining state.
+          activeSkillRef.current = null;
+          setFocusedKnowledgeId(null);
+          await refetchTurns();
         } catch {
           // The refetch itself threw → a real failure.
           setRefreshFailed(true);
@@ -834,672 +1064,283 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     try {
       // Only clear the banners when the refresh actually ran — a skip (a send started during the
       // retry) must keep them up rather than misleading the user that it refreshed (YUK-497 wave-3).
+      activeSkillRef.current = null;
+      setFocusedKnowledgeId(null);
       const refreshed = await refetchTurns();
       if (refreshed) {
         setRefreshFailed(false);
-        setRefreshSkipped(false);
       }
     } catch {
       // Keep the banner up; the revert is already durable, only the refresh is still failing.
     }
   }, [refetchTurns]);
 
-  const applyRunViewToMessage = useCallback(
-    (aiMessageId: string, view: CopilotRunView, fallbackText: string) => {
-      const terminal = view.phase === 'completed' || view.phase === 'failed';
-      setProgressStage(terminal ? null : copilotProgressStage(view));
-      setMessages((prev) => {
-        const existing = prev.find((message) => message.id === aiMessageId);
-        const next: ChatMessage = {
-          ...(existing ?? { id: aiMessageId, role: 'ai' as const }),
-          text:
-            view.replyText ||
-            (view.phase === 'failed' ? fallbackText : existing?.text || fallbackText),
-          checkpoint_event_id:
-            view.failureReason === 'ambiguous_execution'
-              ? undefined
-              : (view.checkpointEventId ?? existing?.checkpoint_event_id),
-          subtasks: view.subtasks,
-          streaming: !terminal,
-        };
-        return existing
-          ? prev.map((message) => (message.id === aiMessageId ? next : message))
-          : [...prev, next];
-      });
-    },
-    [],
-  );
-
-  const reportSendError = useCallback((msg: string) => {
-    // F2 (TdZCB) — a send failure is a fresh, actionable error. A revert that
-    // interleaved with it may have set a refresh banner; clear both so this error
-    // is never masked.
-    setRefreshFailed(false);
-    setRefreshSkipped(false);
-    setError(msg);
-  }, []);
-
-  const reconnectDurable = useCallback(
-    async (handle: DurableCopilotReconnect) => {
-      if (sendingRef.current) return;
-      sendingRef.current = true;
-      const abortController = new AbortController();
-      activeTransportAbortRef.current?.abort();
-      activeTransportAbortRef.current = abortController;
-      setError(null);
-      setRefreshFailed(false);
-      setRefreshSkipped(false);
-      setSending(true);
-      setDurableRunning(true);
-      setProgressStage(copilotProgressStage(handle.view));
-      setAwaitingFirstFrame(false);
-      setMessages((prev) =>
-        prev.map((message) =>
-          message.id === handle.aiMessageId ? { ...message, streaming: true } : message,
-        ),
-      );
-
+  const stopDurableRun = useCallback(
+    async (runId: string) => {
+      const run = activeRunsRef.current.get(runId);
+      if (!run || run.stopPending || run.cancelRequested) return;
+      run.stopPending = true;
+      bumpRunRevision();
       try {
-        const durable = await consumeDurableCopilotRun({
-          location: handle.location,
-          fetchResponse: apiFetch,
-          initialState: handle.view,
-          signal: abortController.signal,
-          onUpdate: (view) => {
-            handle.view = view;
-            applyRunViewToMessage(
-              handle.aiMessageId,
-              view,
-              '正在重新连接这次后台任务；不会重复提交。',
-            );
-          },
-        });
-        handle.view = durable;
-        if (durableReconnectRef.current?.runId === handle.runId) {
-          durableReconnectRef.current = null;
-        }
-        clearPersistedDurableCopilotReconnect(handle.runId);
-        if (durable.phase === 'failed') {
-          applyRunViewToMessage(
-            handle.aiMessageId,
-            durable,
-            '这次后台运行没有完成。可以换个更聚焦的问法再试。',
-          );
-          if (durable.failureReason === 'ambiguous_execution') {
-            // The live copy asks the owner to inspect potentially committed
-            // effects first. Do not pair it with a blind one-click redispatch.
-            lastUserTurnRef.current = null;
-          }
-          reportSendError('后台运行未完成');
-        }
-      } catch (error) {
-        if (stoppingRunRef.current === handle.runId) {
-          stoppingRunRef.current = null;
+        const result = await apiJson<{
+          ok: true;
+          run_id: string;
+          status: 'cancel_requested' | 'cancelled' | 'already_requested' | 'already_settled';
+        }>(`/api/copilot/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' });
+        if (result.run_id !== runId) throw new Error('stop response run mismatch');
+        if (result.status === 'already_settled') {
+          await refetchTurns().catch(() => undefined);
           return;
         }
-        // Keep the accepted handle and its latest cursor. The next click resumes
-        // the same Location; it never falls through to a fresh chat dispatch.
-        durableReconnectRef.current = handle;
-        setMessages((prev) =>
-          prev.map((message) =>
-            message.id === handle.aiMessageId ? { ...message, streaming: false } : message,
-          ),
+        run.cancelRequested = true;
+        applyRunViewToMessage(run);
+        // Keep the per-run subscription attached until the durable cancelled
+        // terminal arrives; Stop is not a transport abort.
+      } catch (err) {
+        reportSendError(
+          err instanceof ApiError ? `停止失败（${err.status}）` : '停止失败，请稍后重试。',
         );
-        reportSendError(durableReconnectErrorMessage(error));
       } finally {
-        if (activeTransportAbortRef.current === abortController) {
-          activeTransportAbortRef.current = null;
-        }
-        sendingRef.current = false;
-        setSending(false);
-        setDurableRunning(false);
-        if (durableReconnectRef.current?.runId !== handle.runId) setProgressStage(null);
-        setAwaitingFirstFrame(false);
+        const current = activeRunsRef.current.get(runId);
+        if (current) current.stopPending = false;
+        bumpRunRevision();
       }
     },
-    [applyRunViewToMessage, reportSendError],
+    [applyRunViewToMessage, bumpRunRevision, refetchTurns, reportSendError],
   );
 
-  const stopDurableRun = useCallback(async () => {
-    const handle = durableReconnectRef.current;
-    if (!handle || stopPending) return;
-    setStopPending(true);
-    try {
-      const result = await apiJson<{
-        ok: true;
-        run_id: string;
-        status: 'cancel_requested' | 'cancelled' | 'already_requested' | 'already_settled';
-      }>(`/api/copilot/runs/${encodeURIComponent(handle.runId)}/cancel`, { method: 'POST' });
-      if (result.status === 'already_settled') return;
-
-      stoppingRunRef.current = handle.runId;
-      activeTransportAbortRef.current?.abort();
-      activeTransportAbortRef.current = null;
-      durableReconnectRef.current = null;
-      clearPersistedDurableCopilotReconnect(handle.runId);
-      const pending = lastUserTurnRef.current;
-      if (pending) clearPersistedPendingCopilotTurn(pending.idempotencyKey);
-      lastUserTurnRef.current = null;
-      setPendingAcceptanceUnknown(false);
-      setError(null);
-      setRefreshFailed(false);
-      setRefreshSkipped(false);
-      setProgressStage(null);
-      setMessages((prev) =>
-        prev.map((message) =>
-          message.id === handle.aiMessageId
-            ? { ...message, text: '已停止这次运行。', streaming: false, subtasks: [] }
-            : message,
-        ),
-      );
-    } catch (err) {
-      reportSendError(
-        err instanceof ApiError ? `停止失败（${err.status}）` : '停止失败，请稍后重试。',
-      );
-    } finally {
-      setStopPending(false);
-    }
-  }, [reportSendError, stopPending]);
-
-  // A 202 accepted before a page reload/unmount is restored from sessionStorage.
-  // Start from cursor zero so job_events, not browser state, rebuilds the view.
-  useEffect(() => {
-    if (!open || !restoredDurableHandle || restoredReconnectStartedRef.current) return;
-    restoredReconnectStartedRef.current = true;
-    void reconnectDurable(restoredDurableHandle);
-  }, [open, reconnectDurable, restoredDurableHandle]);
-
   // Auto-scroll the message stream to the bottom on new messages / loading.
-  // `sending` is an intentional trigger dep: when it flips true the thinking
-  // bubble mounts and we want to scroll to it, even though the effect body
-  // only reads the ref.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: sending drives the scroll-to-thinking-bubble
+  useEffect(() => {
+    // Separate subscriptions may observe FIFO terminals in different network
+    // order. Fold the complete message order so a later teaching end always
+    // wins over an earlier turn regardless of callback arrival order.
+    activeSkillRef.current = restoreSkillContext(messages, activeSkillRef.current);
+  }, [messages]);
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: messages is the scroll trigger
   useEffect(() => {
     const el = streamRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, sending]);
+  }, [messages]);
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: helpers are stable for this component lifetime; refs carry live turn context
-  const send = useCallback(async (raw: string, retryIdempotencyKey?: string) => {
-    const text = raw.trim();
-    if (!text || sendingRef.current) return;
-    sendingRef.current = true;
-    const turnAbortController = new AbortController();
-    activeTransportAbortRef.current?.abort();
-    activeTransportAbortRef.current = turnAbortController;
-    // A deliberate new message supersedes this single-run reconnect affordance.
-    // The old server run/reply stays durable, but its live progress is no longer
-    // pinned in this Dock; multi-active-run recovery belongs to YUK-596.
-    const supersededDurable = durableReconnectRef.current;
-    if (supersededDurable) clearPersistedDurableCopilotReconnect(supersededDurable.runId);
-    durableReconnectRef.current = null;
-    const idempotencyKey = retryIdempotencyKey ?? crypto.randomUUID();
-    const priorLogicalTurn =
-      retryIdempotencyKey && lastUserTurnRef.current?.idempotencyKey === retryIdempotencyKey
-        ? lastUserTurnRef.current
-        : null;
-    const userMessageId = priorLogicalTurn?.userMessageId ?? nextId();
-    // A retry must replay the exact normalized body as well as the key. The
-    // drawer can stay open while navigation/skill focus changes; recomputing
-    // ambient_context here would correctly trigger a server 409 but prevent
-    // recovery of the already accepted original turn.
-    const currentSkillContext = activeSkillRef.current;
-    const route = pathnameRef.current;
-    const focusedEntity = currentSkillContext?.ref;
-    const ambientFocus = resolveTurnAmbientFocus(focusedEntity, nudgeSessionRef.current);
-    const ambientContext = route
-      ? { route, ...(ambientFocus ? { focused_entity: ambientFocus } : {}) }
-      : undefined;
-    const requestBody = priorLogicalTurn?.requestBody ?? {
-      user_message: text,
-      triggered_by: 'chat' as const,
-      ...(currentSkillContext ? { skill_context: currentSkillContext } : {}),
-      ...(ambientContext ? { ambient_context: ambientContext } : {}),
-    };
-    const skillContext = requestBody.skill_context;
-    lastUserTurnRef.current = {
-      text,
-      idempotencyKey,
-      retryWithSameKey: true,
-      userMessageId,
-      requestBody,
-    };
-    // Persist before the POST begins. If this component unmounts before response
-    // headers arrive, the next mount can present an explicit human-controlled
-    // recovery using this exact key + body. It never auto-POSTs: automatic
-    // dispatch may have completed inline, whose current server path is not
-    // idempotently replayable.
-    persistPendingCopilotTurn({
-      v: 1,
-      idempotencyKey,
-      userMessageId,
-      userMessage: text,
-      requestBody,
-    });
-    setPendingAcceptanceUnknown(false);
-    setError(null);
-    // Clear the "revert landed, refresh failed/skipped" banners when starting a new send: otherwise
-    // they stay set (only retryRefresh success / a new revert clears them) and their suppression of
-    // the generic error banner would mask a failure from THIS send (YUK-497 wave-2).
-    setRefreshFailed(false);
-    setRefreshSkipped(false);
-    setInput('');
-    if (priorLogicalTurn) {
-      // Same-key recovery may already be visible from replay under a different
-      // server event id. Avoid duplicating that one logical turn.
-      setMessages((prev) =>
-        prev.some(
-          (message) =>
-            message.id === userMessageId || (message.role === 'user' && message.text === text),
-        )
-          ? prev
-          : [...prev, { id: userMessageId, role: 'user', text }],
+  const send = useCallback(
+    async (raw: string, recovery?: PersistedPendingCopilotTurn) => {
+      const text = recovery?.userMessage ?? raw.trim();
+      const selectedSessionId = recovery?.requestBody.session_id ?? currentSessionIdRef.current;
+      if (!text) return;
+      if (!selectedSessionId) {
+        setError('对话仍在加载，请稍后再试。');
+        return;
+      }
+      const idempotencyKey = recovery?.idempotencyKey ?? crypto.randomUUID();
+      const userMessageId = recovery?.userMessageId ?? nextId();
+      const aiMessageId = recovery?.aiMessageId ?? nextId();
+      // A retry must replay the exact normalized body as well as the key. The
+      // drawer can stay open while navigation/skill focus changes; recomputing
+      // ambient_context here would correctly trigger a server 409 but prevent
+      // recovery of the already accepted original turn.
+      const selectedCorrectionTarget = correctionTargetRef.current;
+      const currentSkillContext = selectedCorrectionTarget ? null : activeSkillRef.current;
+      const route = pathnameRef.current;
+      const focusedEntity = currentSkillContext?.ref;
+      const ambientFocus = resolveTurnAmbientFocus(focusedEntity, nudgeSessionRef.current);
+      const ambientContext = route
+        ? { route, ...(ambientFocus ? { focused_entity: ambientFocus } : {}) }
+        : undefined;
+      const requestBody: PersistedPendingCopilotRequestBody = recovery?.requestBody ?? {
+        session_id: selectedSessionId,
+        user_message: text,
+        triggered_by: 'chat' as const,
+        ...(currentSkillContext ? { skill_context: currentSkillContext } : {}),
+        ...(ambientContext ? { ambient_context: ambientContext } : {}),
+        ...(selectedCorrectionTarget
+          ? { correction_target_turn_id: selectedCorrectionTarget.turnId }
+          : {}),
+      };
+      const pending: PendingCopilotTurn = {
+        v: 2,
+        idempotencyKey,
+        userMessageId,
+        aiMessageId,
+        userMessage: text,
+        requestBody,
+        dispatching: true,
+      };
+      persistPendingCopilotTurn(pending);
+      setPendingTurns((previous) =>
+        previous.some((turn) => turn.idempotencyKey === idempotencyKey)
+          ? previous.map((turn) => (turn.idempotencyKey === idempotencyKey ? pending : turn))
+          : [...previous, pending],
       );
-    } else {
-      // A terminal failure retry owns a fresh key and therefore a fresh domain
-      // ask, even when the user-visible text is identical.
-      setMessages((prev) => [...prev, { id: userMessageId, role: 'user', text }]);
-    }
-    setSending(true);
-    setProgressStage('dispatch');
-    setAwaitingFirstFrame(true);
-    // YUK-266 (C1) — the AI message id is minted up-front so the incremental SSE
-    // deltas can target the SAME message as it grows; the terminal `reply` event
-    // then overwrites its text with the authoritative reply + attaches the
-    // structured fields.
-    const aiId = nextId();
-    let aiCreated = false;
-    let durableAccepted = false;
-    let durableHandleMissing = false;
-    let durableHandle: DurableCopilotReconnect | null = null;
-    let inlineReplyStarted = false;
-    let inlineSubtaskVersion = 0;
-    let inlineRunView = createCopilotRunView();
-    const inlineToolCalls: ToolCallRecord[] = [];
-    let dispatchResponseReceived = false;
-    try {
-      const res = await apiFetch('/api/copilot/chat', {
-        method: 'POST',
-        signal: turnAbortController.signal,
-        headers: { 'Idempotency-Key': idempotencyKey },
-        body: JSON.stringify(requestBody),
-      });
-      dispatchResponseReceived = true;
-      // YUK-757/YUK-596 bridge — durable dispatch returns 202 JSON + a generic
-      // authenticated job-events Location instead of inline chat SSE. Consume it
-      // with explicit Last-Event-ID reconnects; every update patches the SAME AI
-      // row, so replay cannot create duplicate cards or a ghost reply.
-      if (res.status === 202) {
-        // 202 is the authoritative acceptance boundary. Prefer Location, but a
-        // proxy may strip it while preserving the JSON run_id. Reconstruct only
-        // the same-origin canonical job-events path; if neither carrier is
-        // usable, retain the exact key + body for explicit same-key recovery.
-        durableAccepted = true;
+      setError(null);
+      setRefreshFailed(false);
+      setInput('');
+      correctionTargetRef.current = null;
+      setCorrectionTarget(null);
+      setMessages((previous) =>
+        projectPendingCopilotMessagePair(previous, {
+          idempotencyKey,
+          sessionId: selectedSessionId,
+          userMessageId,
+          aiMessageId,
+          userMessage: text,
+          dispatching: true,
+        }),
+      );
+      try {
+        const res = await apiFetch('/api/copilot/chat', {
+          method: 'POST',
+          headers: { 'Idempotency-Key': idempotencyKey },
+          body: JSON.stringify(requestBody),
+        });
+        if (res.status !== 202) {
+          throw new Error(`Copilot acceptance protocol failed (${res.status}); retry the same key`);
+        }
         let location = res.headers.get('Location');
         let runId = durableRunIdFromLocation(location);
-        if (runId) {
-          // A valid header is sufficient even if the informational JSON body is
-          // truncated after headers. Do not let body parsing weaken acceptance.
-          void res.body?.cancel().catch(() => undefined);
-        } else {
+        if (!runId) {
           try {
-            const acceptedBody = (await res.json()) as { run_id?: unknown };
-            if (typeof acceptedBody.run_id === 'string') {
-              const reconstructedLocation = `/api/jobs/copilot_run/${encodeURIComponent(acceptedBody.run_id)}/events`;
-              if (durableRunIdFromLocation(reconstructedLocation) === acceptedBody.run_id) {
-                runId = acceptedBody.run_id;
-                location = reconstructedLocation;
+            const body = (await res.json()) as { run_id?: unknown };
+            if (typeof body.run_id === 'string') {
+              const reconstructed = `/api/jobs/copilot_run/${encodeURIComponent(body.run_id)}/events`;
+              if (durableRunIdFromLocation(reconstructed) === body.run_id) {
+                runId = body.run_id;
+                location = reconstructed;
               }
             }
           } catch {
-            // The human-controlled recovery below replays the exact key/body.
+            // The exact pending tuple remains available for same-key recovery.
           }
+        } else {
+          void res.body?.cancel().catch(() => undefined);
         }
-        aiCreated = true;
-        applyRunViewToMessage(
-          aiId,
-          inlineRunView,
-          '这件事需要多步处理，我已转到后台；进度会在这里持续更新。',
+        if (!runId || !location) {
+          throw new Error('请求可能已受理，但响应缺少稳定句柄；请用原请求恢复。');
+        }
+
+        clearPersistedPendingCopilotTurn(idempotencyKey);
+        setPendingTurns((previous) =>
+          previous.filter((turn) => turn.idempotencyKey !== idempotencyKey),
         );
-        if (!location || !runId) {
-          // Acceptance is known, but the stable reconnect handle is not. Keep
-          // lastUserTurnRef + sessionStorage intact: the only safe redispatch is
-          // an explicit replay of this exact key and normalized body.
-          durableHandleMissing = true;
-          throw new Error('后台任务已受理，但没有返回进度地址；请用原请求恢复进度。');
-        }
-        durableHandle = {
-          v: 1,
+        setMessages((previous) =>
+          currentSessionIdRef.current === selectedSessionId
+            ? acceptPendingCopilotRun(previous, {
+                idempotencyKey,
+                sessionId: selectedSessionId,
+                runId,
+              })
+            : previous,
+        );
+        const run = activeRunsRef.current.get(runId) ?? {
           runId,
+          sessionId: selectedSessionId,
           location,
-          userMessageId,
-          aiMessageId: aiId,
           userMessage: text,
-          view: inlineRunView,
+          view: createCopilotRunView(),
+          stopPending: false,
+          cancelRequested: false,
         };
-        durableReconnectRef.current = durableHandle;
-        if (persistDurableCopilotReconnect(durableHandle)) {
-          // The stable accepted Location supersedes the uncertain POST record.
+        run.location = location;
+        run.userMessage = text;
+        activeRunsRef.current.set(runId, run);
+        applyRunViewToMessage(run);
+        bumpRunRevision();
+        subscribeRun(runId);
+      } catch (err) {
+        const acceptanceUnknown =
+          (!(err instanceof ApiError) && !(err instanceof ApiAuthError)) ||
+          (err instanceof ApiError && err.code === 'copilot_enqueue_ambiguous');
+        if (!acceptanceUnknown) {
           clearPersistedPendingCopilotTurn(idempotencyKey);
+          setPendingTurns((previous) =>
+            previous.filter((turn) => turn.idempotencyKey !== idempotencyKey),
+          );
+          setMessages((previous) =>
+            previous.map((message) =>
+              message.idempotency_key === idempotencyKey && message.role === 'ai'
+                ? {
+                    ...message,
+                    text:
+                      err instanceof ApiError
+                        ? `请求失败（${err.status}）`
+                        : '访问令牌已失效，请重新输入。',
+                    streaming: false,
+                    idempotency_key: undefined,
+                  }
+                : message.idempotency_key === idempotencyKey
+                  ? { ...message, idempotency_key: undefined }
+                  : message,
+            ),
+          );
+          reportSendError(
+            err instanceof ApiError ? `请求失败（${err.status}）` : '访问令牌已失效，请重新输入。',
+          );
+          return;
         }
-        if (lastUserTurnRef.current?.idempotencyKey === idempotencyKey) {
-          lastUserTurnRef.current.retryWithSameKey = false;
-        }
-        setDurableRunning(true);
-        setAwaitingFirstFrame(false);
-        const durable = await consumeDurableCopilotRun({
-          location,
-          fetchResponse: apiFetch,
-          signal: turnAbortController.signal,
-          onUpdate: (view) => {
-            if (durableHandle) durableHandle.view = view;
-            applyRunViewToMessage(
-              aiId,
-              view,
-              '这件事需要多步处理，我已转到后台；进度会在这里持续更新。',
-            );
-          },
-        });
-        if (durable.phase === 'failed') {
-          applyRunViewToMessage(aiId, durable, '这次后台运行没有完成。可以换个更聚焦的问法再试。');
-          if (durable.failureReason === 'ambiguous_execution') {
-            lastUserTurnRef.current = null;
-          }
-          reportSendError('后台运行未完成');
-        }
-        if (durableReconnectRef.current?.runId === durableHandle.runId) {
-          durableReconnectRef.current = null;
-        }
-        clearPersistedDurableCopilotReconnect(durableHandle.runId);
-        clearPersistedPendingCopilotTurn(idempotencyKey);
-        nudgeSessionRef.current = nextNudgeSessionAfterTurn(nudgeSessionRef.current, true);
-        return;
+        const message = err instanceof Error ? err.message : '请求受理状态暂时无法确认。';
+        setPendingTurns((previous) =>
+          previous.map((turn) =>
+            turn.idempotencyKey === idempotencyKey
+              ? { ...turn, dispatching: false, error: message }
+              : turn,
+          ),
+        );
+        setMessages((previous) =>
+          previous.map((item) =>
+            item.idempotency_key === idempotencyKey && item.role === 'ai'
+              ? { ...item, text: '受理状态暂时无法确认。', streaming: false }
+              : item,
+          ),
+        );
       }
-      // A concrete inline response settles the POST acceptance question. Clear
-      // the pre-acceptance handoff before consuming the body: a later stream
-      // disconnect must not be mistaken for a never-answered dispatch.
-      clearPersistedPendingCopilotTurn(idempotencyKey);
-      if (lastUserTurnRef.current?.idempotencyKey === idempotencyKey) {
-        lastUserTurnRef.current.retryWithSameKey = false;
-      }
-      const body = res.body;
-      // Graceful degrade (red line): no streamable body → read the whole thing
-      // and treat it as a single terminal reply. The terminal `reply` event is the
-      // source of truth, so even zero deltas render correctly.
-      let finalReply: CopilotChatResponse | null = null;
-      if (!body) {
-        finalReply = (await res.json()) as CopilotChatResponse;
-      } else {
-        for await (const evt of parseCopilotSseStream(body)) {
-          if (evt.event === 'delta') {
-            let chunk = '';
-            try {
-              chunk = (JSON.parse(evt.data) as { text?: string }).text ?? '';
-            } catch {
-              chunk = '';
-            }
-            if (!chunk) continue;
-            // First delta swaps the "thinking" bubble for a live streaming AI
-            // message; subsequent deltas grow its text.
-            if (!aiCreated) {
-              aiCreated = true;
-              inlineReplyStarted = true;
-              setAwaitingFirstFrame(false);
-              setProgressStage('generation');
-              setMessages((prev) => [
-                ...prev,
-                {
-                  id: aiId,
-                  role: 'ai',
-                  text: chunk,
-                  streaming: true,
-                  subtasks: inlineRunView.subtasks,
-                },
-              ]);
-            } else {
-              const appendToReply = inlineReplyStarted;
-              inlineReplyStarted = true;
-              setMessages((prev) =>
-                prev.map((m) =>
-                  m.id === aiId ? { ...m, text: appendToReply ? m.text + chunk : chunk } : m,
-                ),
-              );
-            }
-          } else if (evt.event === 'subtask') {
-            const subtask = parseInlineSubtaskEvent(evt.data);
-            if (!subtask) continue;
-            inlineSubtaskVersion += 1;
-            inlineRunView = foldCopilotRunFrames(inlineRunView, [
-              subtaskEventToFrame(subtask, inlineSubtaskVersion),
-            ]);
-            if (!aiCreated) {
-              aiCreated = true;
-              setAwaitingFirstFrame(false);
-            }
-            applyRunViewToMessage(
-              aiId,
-              inlineRunView,
-              '我正在协调这些子任务，完成后会在这里统一收口。',
-            );
-          } else if (evt.event === 'tool_use') {
-            const call = parseToolUseSse(evt.data);
-            if (call) {
-              inlineToolCalls.push(call);
-              const snapshot = [...inlineToolCalls];
-              if (!aiCreated) {
-                aiCreated = true;
-                setAwaitingFirstFrame(false);
-                setMessages((prev) => [
-                  ...prev,
-                  {
-                    id: aiId,
-                    role: 'ai',
-                    text: '',
-                    streaming: true,
-                    subtasks: inlineRunView.subtasks,
-                    tool_calls: snapshot,
-                  },
-                ]);
-              } else {
-                setMessages((prev) =>
-                  prev.map((m) => (m.id === aiId ? { ...m, tool_calls: snapshot } : m)),
-                );
-              }
-            }
-          } else if (evt.event === 'tool_result') {
-            const result = parseToolResultSse(evt.data);
-            if (result) {
-              inlineToolCalls.splice(
-                0,
-                inlineToolCalls.length,
-                ...applyToolResult(inlineToolCalls, result),
-              );
-              const snapshot = [...inlineToolCalls];
-              if (!aiCreated) {
-                aiCreated = true;
-                setAwaitingFirstFrame(false);
-                setMessages((prev) => [
-                  ...prev,
-                  {
-                    id: aiId,
-                    role: 'ai',
-                    text: '',
-                    streaming: true,
-                    subtasks: inlineRunView.subtasks,
-                    tool_calls: snapshot,
-                  },
-                ]);
-              } else {
-                setMessages((prev) =>
-                  prev.map((m) => (m.id === aiId ? { ...m, tool_calls: snapshot } : m)),
-                );
-              }
-            }
-          } else if (evt.event === 'reply') {
-            try {
-              finalReply = JSON.parse(evt.data) as CopilotChatResponse;
-            } catch {
-              finalReply = null;
-            }
-          }
-        }
-      }
+    },
+    [applyRunViewToMessage, bumpRunRevision, reportSendError, subscribeRun],
+  );
 
-      if (!finalReply || typeof finalReply.reply !== 'string') {
-        // No usable terminal payload — degrade to the error affordance. If a
-        // partial bubble was created, drop it so we don't strand a half message.
-        if (aiCreated) setMessages((prev) => prev.filter((m) => m.id !== aiId));
-        reportSendError(finalReply?.error ?? '请求失败');
-        return;
-      }
+  const retryPendingTurn = useCallback(
+    (idempotencyKey: string) => {
+      const pending = pendingTurnsRef.current.find(
+        (turn) => turn.idempotencyKey === idempotencyKey,
+      );
+      if (pending && !pending.dispatching) void send(pending.userMessage, pending);
+    },
+    [send],
+  );
 
-      const res2 = finalReply;
-      // AF S4 / YUK-203 U6 — clear the active skill on end turn so subsequent
-      // free-form messages are not re-routed to the stale skill context.
-      if (res2.skill_turn?.kind === 'end') {
-        activeSkillRef.current = null;
-      }
-      // YUK-272 (C3) / YUK-213 F2 — one-shot-stuck minimal fix. quiz + solve return
-      // NO terminal skill_turn, so the `end`-turn clear above never fires for them
-      // and the stale skill_context would re-send on every follow-up. Clear it after
-      // a SUCCESSFUL one-shot send (a failed send keeps the context so 重试 reuses
-      // it). The server-side skill_turn redesign is the real fix (YUK-213); this is
-      // the Dock-only guard. If YUK-213 later makes solve multi-turn, the server will
-      // emit a non-`end` skill_turn and this rule must be revisited.
-      if (skillContext && isOneShotSkill(skillContext.skill)) {
-        activeSkillRef.current = null;
-      }
-      // YUK-577 (Codex P2-1) — one-shot nudge focus: the ingestion-session anchor a 「看看」click
-      // seeded only applies to the FIRST turn after the click, then clears. Same rule as the
-      // one-shot skill clear above — a FAILED send never reaches here (it early-returns at the
-      // no-terminal-payload guard / throws to catch), so 重试 keeps the anchor. Without this, every
-      // later free-form turn would keep re-sending the stale learning_session focus until the
-      // drawer closes (the nudge anchor should not stick to the whole session).
-      nudgeSessionRef.current = nextNudgeSessionAfterTurn(nudgeSessionRef.current, true);
-      const finalized: ChatMessage = {
-        id: aiId,
-        role: 'ai',
-        // The terminal reply is authoritative (reconciles any delta drift).
-        text: res2.reply,
-        checkpoint_event_id: res2.checkpoint_event_id,
-        skill_turn: res2.skill_turn,
-        session_id: res2.session_id,
-        reply_event_id: res2.reply_event_id,
-        // Store the originating skill_context on the message so the replay
-        // path can reconstruct activeSkillRef on next open without waiting
-        // for the turns API to echo it back.
-        skill_context: skillContext ?? undefined,
-        streaming: false,
-        // YUK-307 — the hero nomination from the terminal reply event (chat.ts
-        // CopilotChatResult.primary_view). Undefined ⇒ no hero rendered.
-        primary_view: res2.primary_view,
-        subtasks: inlineRunView.subtasks,
-        // YUK-457 — preserve accumulated tool-use records; mark any still-running
-        // calls done when the terminal reply lands (remote MCP paths may skip tool_result).
-        ...(inlineToolCalls.length > 0
-          ? {
-              tool_calls: inlineToolCalls.map((call) =>
-                call.status === 'running'
-                  ? { ...call, status: 'done' as const, summary: call.summary ?? '已完成' }
-                  : call,
-              ),
-            }
-          : {}),
-      };
-      setMessages((prev) =>
-        aiCreated ? prev.map((m) => (m.id === aiId ? finalized : m)) : [...prev, finalized],
-      );
-      // YUK-266 (C1) — a partial-degrade reply still rendered (text persisted);
-      // surface the error affordance alongside it so the user knows it was cut.
-      if (res2.error) reportSendError(res2.error);
-    } catch (err) {
-      if (durableHandle && stoppingRunRef.current === durableHandle.runId) {
-        stoppingRunRef.current = null;
-        return;
-      }
-      // Network / stream error mid-flight. Drop any partial bubble and show the
-      // existing 重试 affordance — the inline turn was best-effort. A durable
-      // 202 was already accepted server-side, so keep its row whenever a stable
-      // handle exists. With no usable handle, drop only the placeholder; the
-      // exact same-key recovery will rebuild one authoritative row.
-      if (aiCreated && (!durableAccepted || durableHandleMissing)) {
-        setMessages((prev) => prev.filter((m) => m.id !== aiId));
-      } else if (durableAccepted) {
-        setMessages((prev) => prev.map((m) => (m.id === aiId ? { ...m, streaming: false } : m)));
-        if (durableHandle) durableReconnectRef.current = durableHandle;
-      }
-      let message = '请求失败';
-      // A structured server error is definitive except for the explicit
-      // accepted-but-queue-unknown contract. Transport loss keeps same-key
-      // recovery because the 202 itself may have been lost in flight.
-      if (
-        !durableAccepted &&
-        err instanceof ApiError &&
-        err.code !== 'copilot_enqueue_ambiguous' &&
-        lastUserTurnRef.current?.idempotencyKey === idempotencyKey
-      ) {
-        lastUserTurnRef.current.retryWithSameKey = false;
-        clearPersistedPendingCopilotTurn(idempotencyKey);
-      }
-      setPendingAcceptanceUnknown(
-        durableHandleMissing ||
-          (!dispatchResponseReceived &&
-            (!(err instanceof ApiError) || err.code === 'copilot_enqueue_ambiguous')),
-      );
-      if (durableHandleMissing) {
-        message = '后台任务已受理，但没有返回进度地址；请用原请求恢复进度。';
-      } else if (durableAccepted) {
-        message = durableReconnectErrorMessage(err);
-      } else if (err instanceof ApiError) {
-        message = `请求失败（${err.status}）`;
-      } else if (err instanceof Error) {
-        message = err.message;
-      }
-      reportSendError(message);
-    } finally {
-      if (activeTransportAbortRef.current === turnAbortController) {
-        activeTransportAbortRef.current = null;
-      }
-      sendingRef.current = false;
-      setSending(false);
-      setDurableRunning(false);
-      if (durableReconnectRef.current?.runId !== durableHandle?.runId) setProgressStage(null);
-      setAwaitingFirstFrame(false);
-    }
+  const discardPendingRecovery = useCallback((idempotencyKey: string) => {
+    clearPersistedPendingCopilotTurn(idempotencyKey);
+    setPendingTurns((previous) =>
+      previous.filter((turn) => turn.idempotencyKey !== idempotencyKey),
+    );
+    setMessages((previous) =>
+      previous.filter((message) => message.idempotency_key !== idempotencyKey),
+    );
   }, []);
 
-  const retry = useCallback(() => {
-    const durable = durableReconnectRef.current;
-    if (durable) {
-      void reconnectDurable(durable);
-      return;
-    }
-    const last = lastUserTurnRef.current;
-    if (last) void send(last.text, last.retryWithSameKey ? last.idempotencyKey : undefined);
-  }, [reconnectDurable, send]);
-
-  const discardPendingRecovery = useCallback(() => {
-    const pending = lastUserTurnRef.current;
-    if (pending) clearPersistedPendingCopilotTurn(pending.idempotencyKey);
-    lastUserTurnRef.current = null;
-    setPendingAcceptanceUnknown(false);
-    setError(null);
-  }, []);
+  const reconnectRun = useCallback(
+    (runId: string) => {
+      const run = activeRunsRef.current.get(runId);
+      if (!run) return;
+      run.connectionError = undefined;
+      setMessages((previous) =>
+        previous.map((message) =>
+          message.id === copilotRunReplyMessageId(runId)
+            ? { ...message, streaming: true }
+            : message,
+        ),
+      );
+      subscribeRun(runId);
+      bumpRunRevision();
+    },
+    [bumpRunRevision, subscribeRun],
+  );
 
   // YUK-272 (C3) — quiz quick-chip. When a knowledge node is in scope, seed a quiz
-  // skill turn with that real id; `send` clears the one-shot context afterwards via
-  // isOneShotSkill. ADR-0031 / YUK-304 retired the hard quiz intercept, so without a
+  // skill turn with that real id; `send` clears context only on explicit server
+  // end state. ADR-0031 / YUK-304 retired the hard quiz intercept, so without a
   // focused node the same user-readable prompt deliberately follows normal Copilot
   // routing and lets the model clarify/orchestrate instead of becoming a dead chip.
   const sendQuiz = useCallback(() => {
-    // YUK-266 — single-flight guard. On the first SSE delta `send` flips `sending`
-    // false (to re-open the composer for the live reply) while `sendingRef.current`
-    // stays true until the turn settles. In that window the quiz chip re-enables;
-    // without this guard a click would mutate activeSkillRef to {skill:'quiz',…}
-    // and then `send('出题')` would early-return on its own sendingRef guard — the
-    // quiz turn is dropped BUT activeSkillRef is left polluted, mis-routing the
-    // user's NEXT free-form message as a quiz turn. No-op while a send is in flight.
-    if (sendingRef.current) return;
     if (focusedKnowledgeId) {
       activeSkillRef.current = {
         skill: 'quiz',
@@ -1595,10 +1436,9 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     const prefill = openRequest.prefill;
     clearRequest();
     if (prefill) {
-      // A cross-surface handoff must never disappear while a prior turn is streaming. Keep it
-      // in the visible composer for the user to send next instead of letting send() early-return.
-      if (sendingRef.current) setInput(prefill);
-      else void send(prefill);
+      // Every turn is independently accepted and server-serialized, so a
+      // cross-surface handoff can be sent while earlier work is still active.
+      void send(prefill);
     }
   }, [openRequest, prepareAndOpenDrawer, clearRequest, send]);
 
@@ -1615,7 +1455,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
             className="flex items-start gap-[8px] border-l-2 border-[var(--ink-3)] pl-[8px] py-[3px]"
           >
             <LoomIcon name="sparkle" size={14} />
-            <p className="flex-1 text-[12.5px] text-[var(--ink)] leading-[1.5]">{n.headline}</p>
+            <p className="flex-1 text-[14px] text-[var(--ink)] leading-[1.5]">{n.headline}</p>
             <button
               type="button"
               className="chip"
@@ -1646,6 +1486,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       </div>
     ) : null;
 
+  const learnerBriefGlobal = learnerGlobalBrief(summaryQ.data?.brief_global_md);
   const summaryBody = summaryQ.data ? (
     // 4-slot order per Wave 5 ready-to-launch lock §Human decision points:
     // Coach focus → review_due → brief → dreaming → footer.
@@ -1653,43 +1494,95 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       {/* 在线徽标已上移到 drawer-head（copilot.jsx L107）；摘要直接从 daily_focus 起。 */}
       <p className="text-[13px] text-[var(--ink)] leading-[1.55]">{summaryQ.data.daily_focus}</p>
       {summaryQ.data.review_due_count > 0 ? (
-        <p className="text-[12.5px] text-[var(--ink-2)]" data-testid="copilot-summary-review-due">
+        <p className="text-[14px] text-[var(--ink-2)]" data-testid="copilot-summary-review-due">
           今日待复习 <strong>{summaryQ.data.review_due_count}</strong> 题
         </p>
       ) : null}
-      {summaryQ.data.brief_global_md ? (
+      {learnerBriefGlobal ? (
         <p
-          className="text-[12px] text-[var(--ink-3)] italic leading-[1.5]"
+          className="text-[14px] text-[var(--ink-3)] italic leading-[1.5]"
           data-testid="copilot-summary-brief-global"
         >
-          {summaryQ.data.brief_global_md}
+          {learnerBriefGlobal}
         </p>
       ) : null}
       {summaryQ.data.dreaming_preview.length > 0 ? (
-        <ul className="list-disc list-inside text-[12.5px] text-[var(--ink-2)]">
+        <ul className="list-disc list-inside text-[14px] text-[var(--ink-2)]">
           {summaryQ.data.dreaming_preview.map((row) => (
-            <li key={row.proposal_id}>
-              <span className="font-mono text-[var(--ink-3)]">{row.kind}</span> {row.brief}
-            </li>
+            <li key={row.proposal_id}>{row.brief}</li>
           ))}
         </ul>
       ) : null}
-      <p className="text-[11.5px] text-[var(--ink-3)]">
-        共 {summaryQ.data.pending_proposals_total} 条 pending 提案
-        {summaryQ.data.coach_last_run_at
-          ? ` · Coach ${new Date(summaryQ.data.coach_last_run_at).toLocaleString()}`
-          : ''}
-      </p>
+      {summaryQ.data.pending_proposals_total > 0 ? (
+        <p className="text-[14px] text-[var(--ink-3)]">更多建议已整理到收件箱。</p>
+      ) : null}
     </div>
   ) : summaryQ.isLoading ? (
-    <p className="text-[12.5px] text-[var(--ink-3)]">加载摘要…</p>
+    <p className="text-[14px] text-[var(--ink-3)]">加载摘要…</p>
   ) : (
-    <p className="text-[12.5px] text-[var(--ink-3)]">摘要暂不可用。</p>
+    <p className="text-[14px] text-[var(--ink-3)]">摘要暂不可用。</p>
   );
+
+  const listedSessions = sessionsQ.data?.sessions ?? [];
+  const visibleSessions =
+    optimisticSession && !listedSessions.some((session) => session.id === optimisticSession.id)
+      ? [optimisticSession, ...listedSessions]
+      : listedSessions;
+  const sessionItems: CopilotSessionListItem[] = visibleSessions.map((session) => ({
+    id: session.id,
+    status: session.status,
+    title: `${
+      session.title?.trim() ||
+      `对话 · ${new Date(session.updated_at).toLocaleString('zh-CN', {
+        month: 'numeric',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })}`
+    }${session.status === 'active' || session.status === 'idle' ? '' : ' · 已结束'}`,
+    updated_at: session.updated_at,
+  }));
+  const selectedSession = visibleSessions.find((session) => session.id === currentSessionId);
+  const conversationReady =
+    !creatingSession &&
+    (selectedSession?.status === 'active' || selectedSession?.status === 'idle');
+  const currentRuns = [...activeRunsRef.current.values()].filter(
+    (run) =>
+      run.sessionId === currentSessionId &&
+      run.view.phase !== 'completed' &&
+      run.view.phase !== 'failed',
+  );
+  const currentPendingTurns = pendingTurns.filter(
+    (turn) => turn.requestBody.session_id === currentSessionId,
+  );
+  const sending =
+    currentPendingTurns.some((turn) => turn.dispatching) ||
+    currentRuns.some((run) => run.controller !== undefined);
+
+  const selectCorrectionTarget = useCallback((turnId: string, turnNumber: number) => {
+    const target = { turnId, turnNumber };
+    correctionTargetRef.current = target;
+    setCorrectionTarget(target);
+  }, []);
+
+  const clearCorrectionTarget = useCallback(() => {
+    correctionTargetRef.current = null;
+    setCorrectionTarget(null);
+  }, []);
 
   // YUK-577 — nudge bar rides above the summary body (shows even while summary loads/unavailable).
   const summary = (
     <>
+      {sessionPanelOpen ? (
+        <CopilotSessionPanel
+          sessions={sessionItems}
+          currentSessionId={currentSessionId}
+          creating={creatingSession}
+          disabled={false}
+          onSelect={selectConversation}
+          onCreate={() => void createConversation()}
+        />
+      ) : null}
       {nudgeBar}
       {summaryBody}
     </>
@@ -1697,21 +1590,40 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
 
   const footer = (
     <div className="copilot-loom">
-      {durableReconnectRef.current ? (
-        <div className="mb-[8px] flex items-center justify-between gap-[8px]">
-          <span className="text-[12px] text-[var(--ink-3)]" data-testid="copilot-run-stage-footer">
-            {COPILOT_PROGRESS_LABELS[progressStage ?? 'dispatch']}
+      {currentRuns.map((run) => (
+        <div
+          key={run.runId}
+          className="mb-[8px] flex items-center justify-between gap-[8px]"
+          data-run-id={run.runId}
+          data-run-status={run.cancelRequested ? 'cancel_requested' : run.view.phase}
+        >
+          <span className="text-[14px] text-[var(--ink-3)]" data-testid="copilot-run-stage-footer">
+            {run.cancelRequested
+              ? '停止中…'
+              : COPILOT_PROGRESS_LABELS[copilotProgressStage(run.view)]}
           </span>
           <Btn
             variant="ghost"
             size="sm"
-            aria-label="停止这次运行"
+            aria-label={`停止这次运行 ${run.runId}`}
             data-testid="copilot-stop-run"
-            disabled={stopPending}
-            onClick={() => void stopDurableRun()}
+            disabled={run.stopPending || run.cancelRequested}
+            onClick={() => void stopDurableRun(run.runId)}
           >
-            {stopPending ? '停止中…' : '停止'}
+            {run.stopPending || run.cancelRequested ? '停止中…' : '停止'}
           </Btn>
+        </div>
+      ))}
+      {correctionTarget ? (
+        <div className="chat-chips" data-testid="copilot-correction-target">
+          <button
+            type="button"
+            className="chip is-corrective"
+            aria-label="取消更正目标"
+            onClick={clearCorrectionTarget}
+          >
+            将更正第 {correctionTarget.turnNumber} 轮<span aria-hidden="true">×</span>
+          </button>
         </div>
       ) : null}
       <div className="chat-chips">
@@ -1720,7 +1632,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
             key={chip}
             type="button"
             className="chip"
-            disabled={sending}
+            disabled={!conversationReady}
             onClick={() => void send(chip)}
           >
             {chip}
@@ -1733,7 +1645,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           type="button"
           className="chip"
           data-testid="copilot-quiz-chip"
-          disabled={sending}
+          disabled={!conversationReady}
           onClick={sendQuiz}
         >
           {focusedKnowledgeId ? '出题 · 当前知识点' : '出题'}
@@ -1746,7 +1658,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           placeholder="问 Loom 任何事…"
           aria-label="问 Loom 任何事"
           data-testid="copilot-composer-input"
-          disabled={sending}
+          disabled={!conversationReady}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={(e) => {
             // isComposing guard: Enter during IME composition (中文选词确认)
@@ -1763,7 +1675,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           icon="send"
           aria-label="发送"
           data-testid="copilot-composer-send"
-          disabled={sending || input.trim().length === 0}
+          disabled={!conversationReady || input.trim().length === 0}
           onClick={() => void send(input)}
         />
       </div>
@@ -1789,7 +1701,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       <CopilotDrawer
         open={open}
         onClose={closeDrawer}
-        title="Copilot"
+        title="编排者"
         icon="copilot"
         headBadge={
           <LoomBadge tone="good" dot pulse>
@@ -1797,17 +1709,28 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           </LoomBadge>
         }
         headActions={
-          // 教学模式（copilot.jsx L110）：教学是服务端 skill 驱动（skill_context），
-          // 客户端无持久「模式」开关——此按钮发一条教学意图消息触发既有教学 skill，
-          // 语义同 QUICK_CHIPS，不是死按钮也不伪造客户端状态。
-          <IconBtn
-            icon="teach"
-            size={16}
-            title="教学模式"
-            aria-label="教学模式"
-            disabled={sending}
-            onClick={() => void send('我想进入教学模式，请带我一步步学习当前内容')}
-          />
+          <>
+            <IconBtn
+              icon="history"
+              size={16}
+              title={sessionPanelOpen ? '收起对话记录' : '对话记录'}
+              aria-label={sessionPanelOpen ? '收起对话记录' : '对话记录'}
+              aria-pressed={sessionPanelOpen}
+              onClick={() => setSessionPanelOpen((value) => !value)}
+              data-testid="copilot-session-list-toggle"
+            />
+            {/* 教学模式（copilot.jsx L110）：教学是服务端 skill 驱动（skill_context），
+                客户端无持久「模式」开关——此按钮发一条教学意图消息触发既有教学 skill，
+                语义同 QUICK_CHIPS，不是死按钮也不伪造客户端状态。 */}
+            <IconBtn
+              icon="teach"
+              size={16}
+              title="教学模式"
+              aria-label="教学模式"
+              disabled={!conversationReady}
+              onClick={() => void send('我想进入教学模式，请带我一步步学习当前内容')}
+            />
+          </>
         }
         summary={summary}
         footer={footer}
@@ -1815,11 +1738,16 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         <div className="copilot-loom" data-testid="copilot-chat">
           <div className="chat-stream" ref={streamRef}>
             {messages.length === 0 && !sending ? (
-              <p className="chat-empty">
-                问 Loom 任何事 —— 它会读你的错题、知识图谱与今日计划来回答。
-              </p>
+              // YUK-340 — 空线程开场白回写设计稿手稿语气（copilot.jsx L135-141
+              // cop-blank 文案逐字），copy 层零结构改动：仍走 .chat-empty。
+              <>
+                <p className="chat-empty">我是你的编排者</p>
+                <p className="chat-empty">
+                  问我今天该学什么、为什么这么排，或让我改动；每一句话我都给你一份可留可撤的改动。
+                </p>
+              </>
             ) : null}
-            {messages.map((m) => {
+            {messages.map((m, messageIndex) => {
               // Per-row chip flags: only the message whose structured question is
               // pending/acked flips, so a corrective-chip state change re-renders
               // that one row instead of every memoized row.
@@ -1830,6 +1758,17 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                   message={m}
                   navigate={navigate}
                   onAcceptCorrective={acceptCorrectiveChip}
+                  onSelectCorrection={selectCorrectionTarget}
+                  correctionTurnNumber={
+                    m.role === 'ai'
+                      ? messages
+                          .slice(0, messageIndex + 1)
+                          .filter((message) => message.role === 'ai').length
+                      : undefined
+                  }
+                  correctionSelected={
+                    m.reply_event_id != null && correctionTarget?.turnId === m.reply_event_id
+                  }
                   onRevert={revertCheckpoint}
                   chipPending={qid != null && chipPending === qid}
                   chipAcked={qid != null && chipAcked === qid}
@@ -1839,61 +1778,71 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                 />
               );
             })}
-            {progressStage && (awaitingFirstFrame || sending || durableRunning) ? (
-              <div className="msg msg-ai" data-testid="copilot-run-stage-message">
-                <div className="msg-avatar">
-                  <LoomIcon name="sparkle" size={14} />
-                </div>
-                <div className="msg-body">
-                  <div className="msg-name">Loom Copilot</div>
-                  <div className="chat-thinking">
-                    <LoomIcon name="refresh" size={13} className="spin" />
-                    <span data-testid="copilot-run-stage" role="status" aria-live="polite">
-                      {COPILOT_PROGRESS_LABELS[progressStage]}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-            {error && !refreshFailed && !refreshSkipped ? (
+            {error && !refreshFailed ? (
               <div className="chat-error" data-testid="copilot-error" role="alert">
                 <LoomIcon name="alert" size={14} />
                 <span>{error}</span>
-                {pendingAcceptanceUnknown && lastUserTurnRef.current ? (
-                  <>
-                    <Btn variant="ghost" size="sm" onClick={discardPendingRecovery}>
-                      不再恢复
-                    </Btn>
-                    <Btn variant="ghost" size="sm" icon="refresh" onClick={retry}>
-                      恢复
-                    </Btn>
-                  </>
-                ) : durableReconnectRef.current || lastUserTurnRef.current ? (
-                  <Btn variant="ghost" size="sm" icon="refresh" onClick={retry}>
-                    {durableReconnectRef.current ? '重新连接' : '重试'}
-                  </Btn>
-                ) : null}
               </div>
             ) : null}
+            {currentPendingTurns
+              .filter((turn) => turn.error)
+              .map((turn) => (
+                <div
+                  key={turn.idempotencyKey}
+                  className="chat-error"
+                  data-testid="copilot-pending-recovery"
+                  data-idempotency-key={turn.idempotencyKey}
+                  role="alert"
+                >
+                  <LoomIcon name="alert" size={14} />
+                  <span>{turn.error}</span>
+                  <Btn
+                    variant="ghost"
+                    size="sm"
+                    disabled={turn.dispatching}
+                    onClick={() => discardPendingRecovery(turn.idempotencyKey)}
+                  >
+                    不再恢复
+                  </Btn>
+                  <Btn
+                    variant="ghost"
+                    size="sm"
+                    icon="refresh"
+                    disabled={turn.dispatching}
+                    onClick={() => retryPendingTurn(turn.idempotencyKey)}
+                  >
+                    {turn.dispatching ? '恢复中…' : '恢复'}
+                  </Btn>
+                </div>
+              ))}
+            {currentRuns
+              .filter((run) => run.connectionError)
+              .map((run) => (
+                <div
+                  key={run.runId}
+                  className="chat-error"
+                  data-testid="copilot-run-reconnect"
+                  data-run-id={run.runId}
+                  role="alert"
+                >
+                  <LoomIcon name="alert" size={14} />
+                  <span>{run.connectionError}</span>
+                  <Btn
+                    variant="ghost"
+                    size="sm"
+                    icon="refresh"
+                    onClick={() => reconnectRun(run.runId)}
+                  >
+                    重新连接
+                  </Btn>
+                </div>
+              ))}
             {/* F5 (TdY96) — independent conditionals, not a nested ternary. The two are mutually
                 exclusive: refreshFailed wins via the !refreshFailed guard on the skip banner. */}
             {refreshFailed ? (
               <div className="chat-error" data-testid="copilot-refresh-error" role="alert">
                 <LoomIcon name="alert" size={14} />
                 <span>撤回已完成，但刷新对话失败。</span>
-                <Btn variant="ghost" size="sm" icon="refresh" onClick={() => void retryRefresh()}>
-                  刷新
-                </Btn>
-              </div>
-            ) : null}
-            {!refreshFailed && refreshSkipped ? (
-              // TchmY — a SKIP is not an error: the revert landed, the on-screen refresh was just
-              // deferred because a reply is streaming. Calmer copy (no failure wording) + a polite
-              // role="status" live region (vs the failure banner's role="alert"), same 刷新 retry. The
-              // div keeps styling parity with the sibling chat-error banner (hence role, not <output>).
-              <div className="chat-error" data-testid="copilot-refresh-skipped" role="status">
-                <LoomIcon name="refresh" size={14} />
-                <span>撤回已生效，当前回复结束后可刷新查看。</span>
                 <Btn variant="ghost" size="sm" icon="refresh" onClick={() => void retryRefresh()}>
                   刷新
                 </Btn>

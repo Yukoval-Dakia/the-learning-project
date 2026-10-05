@@ -11,6 +11,7 @@ import { asc } from 'drizzle-orm';
 import type { Db } from '@/db/client';
 import { subject } from '@/db/schema';
 import { validateSubject } from '@/server/subjects/subject-control-write';
+import { auditEvaluationSemantics } from '@/subjects/evaluation-semantics-audit';
 
 export interface DbProfileAuditEntry {
   id: string;
@@ -42,12 +43,17 @@ export async function auditProfilesFromDb(db: Db): Promise<DbProfileAuditResult>
   const entries: DbProfileAuditEntry[] = [];
   for (const row of rows) {
     const result = await validateSubject(db, row.id);
+    // YUK-739 — same builtin fail-closed semantics check as the compile-time
+    // audit mode (an owner-edited pre-YUK-739 cause_taxonomy trait row surfaces
+    // here as invalid instead of silently inheriting cross-subject defaults).
+    const semanticErrors =
+      result?.profile !== undefined ? auditEvaluationSemantics(result.profile) : [];
     entries.push({
       id: row.id,
       displayName: row.displayName,
       retired: row.retiredAt !== null,
-      valid: result?.valid ?? false,
-      errors: result?.errors ?? ['subject vanished mid-audit'],
+      valid: (result?.valid ?? false) && semanticErrors.length === 0,
+      errors: [...(result?.errors ?? ['subject vanished mid-audit']), ...semanticErrors],
       warnings: result?.warnings ?? [],
     });
   }

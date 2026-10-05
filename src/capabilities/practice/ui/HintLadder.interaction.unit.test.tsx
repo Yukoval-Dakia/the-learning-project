@@ -23,6 +23,7 @@ const question: QuestionDetail = {
   choices_md: ['A', 'B'],
   difficulty: 2,
   labels: [],
+  notation: null,
 };
 
 afterEach(cleanup);

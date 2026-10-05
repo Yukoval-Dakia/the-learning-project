@@ -16,8 +16,11 @@
 // practice answer flow; a photo-only answer is allowed (the route gates it server-side).
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useState } from 'react';
-import { uploadAsset, useAssetUrl } from '@/ui/lib/assets';
+import { useState } from 'react';
+// YUK-1051 — probe 作答区换成通用 EvidenceComposer（文字原文 + 附件证据一个组件；
+// 上传失败不丢同批已成功的纪律在组件内）。conjecture 裁决语义不变。
+import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
+import type { EvidenceAttachment } from '@/ui/components/response/response-types';
 import { Btn } from '@/ui/primitives/Btn';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
@@ -111,40 +114,21 @@ export function ProbeAnswerCard({
 }) {
   const qc = useQueryClient();
   const [answerMd, setAnswerMd] = useState('');
-  const [imageRefs, setImageRefs] = useState<string[]>([]);
-  const [uploading, setUploading] = useState(false);
+  const [evidence, setEvidence] = useState<EvidenceAttachment[]>([]);
   const [submitting, setSubmitting] = useState(false);
+  // YUK-1094 — 图片上传中：提交入口并入 upload-pending，避免提交旧 image refs。
+  const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
   const [verdict, setVerdict] = useState<ProbeAnswerVerdict['resolution'] | null>(null);
 
-  useEffect(() => {
-    if (!toast) return;
-    const timeout = window.setTimeout(() => setToast(null), 5000);
-    return () => window.clearTimeout(timeout);
-  }, [toast]);
-
+  const imageRefs = evidence.map((a) => a.asset_id);
   // "has any answer" = text OR image (mirrors the route's submit gate).
   const hasAnswer = answerMd.trim().length > 0 || imageRefs.length > 0;
 
-  async function onFiles(files: FileList | null) {
-    if (!files || files.length === 0) return;
-    setUploading(true);
-    setError(null);
-    // allSettled (not all): a single failed upload must NOT discard the images that
-    // already succeeded in the same batch (CodeRabbit review-784).
-    const results = await Promise.allSettled(Array.from(files).map((f) => uploadAsset(f)));
-    const uploadedIds = results.flatMap((r) => (r.status === 'fulfilled' ? [r.value.id] : []));
-    if (uploadedIds.length > 0) setImageRefs((refs) => [...refs, ...uploadedIds]);
-    if (uploadedIds.length < results.length) setError('部分图片上传失败，请重试');
-    setUploading(false);
-  }
-
   async function onSubmit() {
-    if (!hasAnswer || submitting) return;
+    if (!hasAnswer || submitting || uploading) return;
     setSubmitting(true);
     setError(null);
-    setToast(null);
     let resolution: ProbeAnswerVerdict['resolution'] | null = null;
     try {
       const res = await submitProbeAnswer(probe.probe_question_id, answerMd.trim(), imageRefs);
@@ -157,8 +141,9 @@ export function ProbeAnswerCard({
     } catch {
       // An actually ungradable judge result or network failure stays retryable.
       // A gradable unrelated error returns the recorded `inconclusive` verdict above.
+      // YUK-911 — exactly ONE live region carries this failure (the role="alert"
+      // .pa-error below); no second polite/status region may double-announce it.
       setError(JUDGE_FAILURE_MESSAGE);
-      setToast(JUDGE_FAILURE_MESSAGE);
       onFailed?.();
     } finally {
       setSubmitting(false);
@@ -192,41 +177,20 @@ export function ProbeAnswerCard({
         </output>
       ) : (
         <>
-          <textarea
-            className="pa-answer"
-            value={answerMd}
-            onChange={(e) => setAnswerMd(e.target.value)}
+          {/* YUK-1051 — 通用文字 + 附件（图片/音频/视频/PDF/文本都走同一 composer；
+              probe 的提交契约只吃 image ids，非图片附件在提交时如实剔出并提示。 */}
+          <EvidenceComposer
+            text={answerMd}
+            onTextChange={setAnswerMd}
+            attachments={evidence}
+            onAttachmentsChange={setEvidence}
+            disabled={submitting}
             placeholder="写下你的解答（也可以只拍照 / 传图）"
-            rows={3}
+            ariaLabel="作答"
+            accept="image/*"
+            onUploadingChange={setUploading}
           />
-          {imageRefs.length > 0 && (
-            <div className="pa-thumbs">
-              {imageRefs.map((id, i) => (
-                <ProbeThumb
-                  key={id}
-                  id={id}
-                  onRemove={() => setImageRefs((refs) => refs.filter((_, j) => j !== i))}
-                />
-              ))}
-            </div>
-          )}
           <div className="pa-actions">
-            <label className="pa-upload">
-              {/* Visually hidden but kept in the a11y tree + tab order (NOT `hidden`),
-                  so keyboard users can focus it (via the label) and open the picker
-                  with Space/Enter (CodeRabbit review-784 a11y). */}
-              <input
-                type="file"
-                accept="image/*"
-                multiple
-                className="visually-hidden"
-                onChange={(e) => {
-                  void onFiles(e.target.files);
-                  e.target.value = '';
-                }}
-              />
-              <LoomIcon name="image" size={14} /> {uploading ? '上传中…' : '传图'}
-            </label>
             <Btn
               size="sm"
               variant="primary"
@@ -242,26 +206,8 @@ export function ProbeAnswerCard({
               {error}
             </div>
           )}
-          {toast && (
-            <div className="pa-toast" role="status" aria-live="polite">
-              <LoomIcon name="alert" size={14} className="pa-toast-icon" />
-              {toast}
-            </div>
-          )}
         </>
       )}
     </LoomCard>
-  );
-}
-
-function ProbeThumb({ id, onRemove }: { id: string; onRemove: () => void }) {
-  const { url } = useAssetUrl(id);
-  return (
-    <span className="pa-thumb">
-      {url ? <img src={url} alt="作答图" /> : <span className="pa-thumb-sk" />}
-      <button type="button" className="pa-thumb-x" onClick={onRemove} aria-label="移除图片">
-        <LoomIcon name="close" size={11} />
-      </button>
-    </span>
   );
 }

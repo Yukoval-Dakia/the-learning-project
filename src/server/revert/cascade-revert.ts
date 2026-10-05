@@ -21,8 +21,7 @@
 //   B-class  structural fold      — splits by whether a LIVE SoT row exists:
 //
 //     · imperative_undo  generate(knowledge_edge) CREATE: a real knowledge_edge
-//                        ROW exists (the imperative write path still owns it —
-//                        proposals/actions.ts). Event-layer `correct` alone is a
+//                        ROW exists. Event-layer `correct` alone is a
 //                        NO-OP on that row + a fold LIE: NO poller reconciles
 //                        action='correct' into the named projection, and the edge
 //                        fold (gatherAndFoldKnowledgeEdge) gathers ONLY events
@@ -30,10 +29,8 @@
 //                        — the cascade's `correct` (subject_kind='event') is
 //                        invisible to it, so a projection REBUILD re-folds the
 //                        still-present generate(create) and RESURRECTS the live row.
-//                        We therefore mirror the FULL live archive dual-write
-//                        (actions.ts:413-439): archive the edge row imperatively
-//                        AND write a fold-visible generate(edge_op='archive')
-//                        (same tx, same `now`) so a rebuild re-derives archived.
+//                        Knowledge's archive owner therefore records a fold-visible
+//                        archive and projects it in the same transaction.
 //                        The `correct` event is also written (belt-and-braces for a
 //                        future SoT-flip reader). generate(knowledge_edge) ARCHIVE
 //                        (reverting an archive) is IRREVERSIBLE here — the fold has
@@ -77,7 +74,7 @@
 // snapshot payload is validated against StateSnapshotExperimental before use.
 
 import { and, eq, inArray } from 'drizzle-orm';
-import { archiveKnowledgeEdge } from '@/capabilities/knowledge/public';
+import { archiveKnowledgeEdgeFromEvents } from '@/capabilities/knowledge/public';
 import { newId } from '@/core/ids';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import {
@@ -85,7 +82,7 @@ import {
   type StateSnapshotExperimentalT,
 } from '@/core/schema/event/state-snapshot';
 import type { Db, Tx } from '@/db/client';
-import { event, knowledge_edge, mastery_state, material_fsrs_state } from '@/db/schema';
+import { event, mastery_state, material_fsrs_state } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock, acquireSortedAdvisoryLocks } from '@/server/advisory-locks';
 import { type CollectCascadeOptions, collectCascadeFromCheckpoint } from '@/server/events/cascade';
@@ -618,19 +615,9 @@ export async function orchestrateCascadeRevert(
 type EventRow = typeof event.$inferSelect;
 
 /**
- * Apply the imperative inverse for a `structural_imperative` node: revert a
- * `generate(create)` edge by ARCHIVING it. Mirrors the FULL live archive dual-write
- * (actions.ts:413-439) — NOT just the imperative half:
- *   (1) imperative soft-delete via archiveKnowledgeEdge(tx, edgeId, now);
- *   (2) a fold-visible `generate(edge_op='archive', subject_id=edgeId)` event so a
- *       projection REBUILD (gatherAndFoldKnowledgeEdge / rebuild-projection.ts) re-
- *       derives the archived row. Without (2) the edge fold — which reads ONLY
- *       generate(knowledge_edge) events keyed to the edge, NEVER correct events —
- *       would re-fold the still-present generate(create) and RESURRECT the edge as
- *       live (the HIGH fold-parity defect). The shared tx-wide `now` makes the
- *       imperative archived_at == the folded archived_at (no ms drift).
- *
- * Throws on a missing edge — fail-loud, never a silent no-op.
+ * Keep the existing rollback taxonomy while delegating the complete, replayable
+ * archive to Knowledge. Missing history or a concurrent archive aborts the cascade;
+ * compensation retains its original cause, timestamp and memory-outbox opt-out.
  */
 async function applyImperativeUndo(
   tx: Tx,
@@ -645,62 +632,15 @@ async function applyImperativeUndo(
   // archive-generate revert is fail-closed in classifyRow).
   const { edgeId } = undo;
 
-  // Read the live edge to carry its real structural fields onto the fold-visible
-  // archive event (so the fold's archive branch preserves the right row identity).
-  const rows = await tx
-    .select({
-      from_knowledge_id: knowledge_edge.from_knowledge_id,
-      to_knowledge_id: knowledge_edge.to_knowledge_id,
-      relation_type: knowledge_edge.relation_type,
-      reasoning: knowledge_edge.reasoning,
-      weight: knowledge_edge.weight,
-    })
-    .from(knowledge_edge)
-    .where(eq(knowledge_edge.id, edgeId))
-    .limit(1);
-  const edge = rows[0];
-  if (!edge) {
-    // The edge was hard-deleted out-of-band (no live caller does this; the live
-    // path soft-deletes only). Fail-loud — never silently skip. NOTE: this is the
-    // ONE throw-not-typed-refuse path in the orchestrator (it rolls back the tx,
-    // so still atomic + fail-loud; a typed conflict refusal is a deferred polish).
-    throw new Error(
-      `cascade revert: knowledge_edge ${edgeId} not found for archive (hard-deleted out-of-band?)`,
-    );
-  }
-
-  // (1) Imperative soft-delete, stamped with the tx-wide `now`.
-  const archived = await archiveKnowledgeEdge(tx, edgeId, now);
+  const archived = await archiveKnowledgeEdgeFromEvents(tx, edgeId, {
+    caused_by_event_id: revertedGenerateEventId,
+    created_at: now,
+    // Preserve the compensation ledger's explicit memory-outbox opt-out.
+    ingest_at: now,
+  });
   if (!archived.archived) {
     throw new Error(`cascade revert: knowledge_edge ${edgeId} changed before archive`);
   }
-
-  // (2) Fold-visible archive event (mirrors actions.ts:418-439). user/self so the
-  // parse barrier accepts a null reasoning (agent-actor would require non-empty).
-  // The fold's archive branch spreads `...row` (preserving the create's metadata)
-  // and only stamps archived_at = this event's created_at = `now`.
-  await writeEvent(tx, {
-    id: newId(),
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'generate',
-    subject_kind: 'knowledge_edge',
-    subject_id: edgeId,
-    outcome: 'success',
-    payload: {
-      edge_op: 'archive',
-      archive_edge_id: edgeId,
-      from_knowledge_id: edge.from_knowledge_id,
-      to_knowledge_id: edge.to_knowledge_id,
-      relation_type: edge.relation_type,
-      reasoning: edge.reasoning ?? null,
-    },
-    // Provenance: the cascade revert of this generate, under this checkpoint.
-    caused_by_event_id: revertedGenerateEventId,
-    created_at: now,
-    // Internal rollback ledger row — opt out of the memory outbox.
-    ingest_at: now,
-  });
 }
 
 /** Thrown inside the tx when the in-tx conflict re-check fails (defence-in-depth). */
@@ -782,16 +722,26 @@ async function acquireSnapshotStateLocks(
   // G (acquired above) is the primary guard against concurrent writers; the regular grading path
   // (updateThetaForAttempt / upsertMasteryState) only holds G, not these per-KC locks. These
   // per-row advisory locks are defense-in-depth for the conflict guard's FOR-UPDATE reads.
-  const ids = new Set<string>();
+  // YUK-1093 — 'ability_global' theta entries lock under their own
+  // `mastery:ability_global:<domain>` namespace (same key shape updateThetaForAttempt's
+  // per-domain block takes), ordered AFTER the fsrs keys to match the writer's
+  // per-KC → per-domain acquire order (deadlock-safe).
+  const fsrsIds = new Set<string>();
+  const globalIds = new Set<string>();
   for (const payload of payloads) {
     for (const snap of payload.theta_snapshots) {
-      ids.add(`knowledge:${snap.kc_id}`);
+      if (snap.subject_kind === 'ability_global') {
+        globalIds.add(snap.kc_id);
+      } else {
+        fsrsIds.add(`knowledge:${snap.kc_id}`);
+      }
     }
     for (const snap of payload.fsrs_snapshots) {
-      ids.add(`${snap.subject_kind}:${snap.subject_id}`);
+      fsrsIds.add(`${snap.subject_kind}:${snap.subject_id}`);
     }
   }
-  await acquireSortedAdvisoryLocks(tx, 'fsrs', [...ids]);
+  await acquireSortedAdvisoryLocks(tx, 'fsrs', [...fsrsIds]);
+  await acquireSortedAdvisoryLocks(tx, 'mastery:ability_global', [...globalIds]);
 }
 
 /**
@@ -811,11 +761,14 @@ async function assertSnapshotMatchesCurrent(
   lockRows = false,
 ): Promise<{ kind: 'theta' | 'fsrs'; subjectKind: string; subjectId: string } | null> {
   for (const snap of payload.theta_snapshots) {
+    // YUK-1093 — theta snapshots are subject_kind-tagged ('knowledge' | 'ability_global');
+    // absent = pre-YUK-1093 payload ⇒ 'knowledge'.
+    const subjectKind = snap.subject_kind ?? 'knowledge';
     const rows = await db
       .select({ theta_hat: mastery_state.theta_hat })
       .from(mastery_state)
       .where(
-        and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, snap.kc_id)),
+        and(eq(mastery_state.subject_kind, subjectKind), eq(mastery_state.subject_id, snap.kc_id)),
       )
       .limit(1)
       .for(lockRows ? 'update' : 'no key update');
@@ -823,7 +776,7 @@ async function assertSnapshotMatchesCurrent(
     // The current θ̂ must equal the snapshot's after. A missing row means the
     // after-state is gone → conflict.
     if (current === undefined || !thetaExactEq(current, snap.after)) {
-      return { kind: 'theta', subjectKind: 'knowledge', subjectId: snap.kc_id };
+      return { kind: 'theta', subjectKind, subjectId: snap.kc_id };
     }
   }
 

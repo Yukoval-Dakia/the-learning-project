@@ -1,5 +1,8 @@
 # AI Provider 抽象推迟到真正需要切换时
 
+> **2026-10-04 mechanism amendment (YUK-1119):** The provider history below is retained. Current provider selection uses native pi presets (including protocol, compat, auth and headers); URL/key-only Anthropic-compatible switching is retired.
+> See [ADR-0065](./0065-pi-execution-and-conversation-replay.md) for the approved migration and current source evidence.
+
 > **Status (2026-05-17)**: Sub 0d 落地，下文"原决策"被 §2026-05-17 修订段更新——`providers.ts` 已存在，`xiaomi` 是当前默认 provider（12 个 task 全切），`anthropic` 退为预留 fallback。下文 §原决策 / §理由 / §触发条件 留作历史上下文，便于理解为何这一抽象在 Phase 1 大半时间被刻意延后。
 
 ---

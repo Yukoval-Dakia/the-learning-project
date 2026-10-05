@@ -68,7 +68,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     'transition-[background,color,border-color,transform] duration-[var(--dur-fast)]',
     'active:scale-[0.98]',
     'focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)]',
-    size === 'sm' ? 'px-[10px] py-[6px] text-[12.5px]' : 'px-[13px] py-[9px] text-[13.5px]',
+    size === 'sm' ? 'px-[10px] py-[6px] text-[14px]' : 'px-[13px] py-[9px] text-[14px]',
     VARIANT_STYLES[variant],
     className ?? '',
   ]

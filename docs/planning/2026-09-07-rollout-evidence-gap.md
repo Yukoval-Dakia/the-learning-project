@@ -1,0 +1,421 @@
+# YUK-887 — bounded rollout evidence gap
+
+## Latest actual delta — 2026-09-09
+
+Owner explicitly authorized a new10USD allowance. Older pools/reservations are
+unchanged. Current new-pool conservative reserve is6.70USD, remaining3.30USD:
+0.10 for first storage-only attempt,2.10 for successful GLM upload,2.00 for Tencent
+submission/six describes,0.50 for final same-job observation and2.00 for Copilot
+paid-response/process-death acceptance. These are reserves,
+not bills; unknown Tencent costs remain null rather than zero.
+
+### Real default-engine upload and extraction: PASS
+
+Source fea0512447a1cafdfa0cfc696a8f31fa694ed7e0 has no runtime difference from
+tested e514ef94. API used unchanged e514ef94 image; physical worker used the same
+entrypoint bundled with only GLM/Xiaomi endpoint literals redirected through a
+counting proxy. No substituted model result/parser/job handler was used. The proxy
+allowed one OCR and one Structure request,512KB input and8192 model output tokens;
+real keys stayed in the controller. Auto-enroll/observe were explicitly off.
+
+The first attempt uploaded correctly but dispatched before the fresh worker had
+registered its queue:500 `Queue tencent_ocr_extract does not exist`, zero model
+wires. The corrected worker-first sequence passed on fresh `loom_upload_887_glm_v2`:
+multipart assets201 → independently downloaded R2 bytes match fixture hash →
+session201/uploaded → operation202 with repeated identical operation identity →
+physical pg-boss job331e2c6f-3137-4a96-b927-b5245d59038d completed → session extracted /
+operation succeeded. Session o5rh2hz5evs9tq2plsn1jdfr; operation
+ingop_h34ytjkbtmd7ouymq4jc2cfo. Three draft question blocks preserve the shared stem,
+two subquestions,18/12/22/48 table, zero-probability and unknown-count wording, with
+no invented answers. Independent read-only fold/live comparison: all three diffs[].
+
+GLM actual200:740 input/272 output, provider attempt
+3cce688c-2686-4474-8933-b66cb66cfdc9, wire_count1, succeeded/released admission,
+estimated0.0002024CNY. StructureTask oyx84ypkqyqdxb2y81rzzed7 succeeded, Xiaomi
+mimo-v2.5 actual200:2865 input/600 output, estimated0.0005691USD. No auto_enroll
+job. Source/parser and pricing estimates are not invoice proof.
+
+Evidence under the existing private runtime directory:
+upload887-glm-v2.json SHA e131560b0aea65380228edcfe983ac54705d008d7e7532dea9b98907a3fafd0a;
+upload887-glm-v2-verification.json SHA2b6d9171a8bd54e20eb6b438e3bbb6631346975bbe231699e02ee07dee868c3a.
+Worker bundle SHA18a4fa7aad98929451ba7985157605e1aff297dacd5d48ea634c698b61b56691.
+Temporary API/worker containers were stopped and removed after logs; clone DBs and
+the synthetic content-addressed R2 object are retained. This intentionally writes
+one test object in the project's R2 bucket, not production learner/database rows.
+Production event/task/attempt counts remained454/280/21. No NAS change.
+
+### Real Tencent saved-JobId process recovery: PASS
+
+The current executeTencentOcrSubmit owner called the real official Tencent SDK
+once for the same synthetic page. afterJobSaved killed the submitting process
+with SIGKILL, after external JobId1489202432483262464 was committed in provider
+attempt cdd6a51f-1498-8ec4-90e1-40080061c881. A new process with the same operation
+identity and next delivery index returned that saved JobId without invoking submit.
+Six real Describe calls still returned RUN; the bounded observer exited incomplete,
+not evidence of remote failure. A subsequent describe-only observer of the exact
+same job returned DONE. Total: one submit, seven describes; every wire has its
+own durable attempt and request identity. Cost basis stays unknown/null.
+
+This exercises the actual provider owner across OS process death and real Tencent
+requests, not a physical Tencent worker redelivery, UI flow or Tencent+Structure
+quality sample. Do not expand its scope to those claims. Original and final records:
+tencent887-resume-v1.json SHAd5f2916f7ff4e73a0043d95c77a73634bc10cc06c5d29680174e61f13e215294;
+tencent887-observe-v2.json SHAb8ea7a0111c9b3aac99b1458024a7a034620afe7c3ce7ca1de8f4fb9dbf6d94a.
+
+### Real Copilot paid response, Stop and physical recovery: PASS with observation boundary
+
+Source8da1d6e68 is runtime-equal to e514ef94. Fresh isolated DB
+loom_copilot_887_crash_v1 used the unchanged shipped API and the same endpoint-only
+instrumented physical worker bundle above. Proxy allowed exactly one model request,
+1MB input and2048 output-token ceiling. Actual Xiaomi mimo-v2.5-pro returned200,
+13116 input/35 output and the synthetic requested echo; the proxy deliberately did
+not relay the successful response. Worker was physically SIGKILLed (exit137) at
+2026-09-09T10:07:21.191Z before any durable reply. Public Stop returned
+cancel_requested at10:07:21.374Z, then the same worker container restarted.
+
+Run copilot_user_ask_993d1ec3e9d2d6e1d7e7dd7d2e751c69f04d417472b0584ad7fc5401616dbe88;
+physical job3420e900-2857-5d04-b5c8-7985313dd07b completed at retry_count1.
+At10:19:44.655Z,12m30 after the execution fence, the owner committed exactly one
+ambiguous_execution failure and one explanatory reply, no DONE and no fabricated
+upstream echo. There was no second paid wire. This is the contract for an execution
+whose outcome cannot be recovered: Stop does not establish whether prior external
+effects happened. Source owner: copilot_run.ts handleAmbiguousExecution.
+
+The original controller incorrectly required only reason=cancelled and exited1.
+That original record is preserved; a separate read-only verifier of the same
+DB/events/job/reply proves the actual ambiguous_execution contract. No model rerun
+or clock manipulation was used to repair an assertion. Original CopilotTask log
+remains running and cost_ledger is empty at this observation; the existing1h
+stuck-run threshold plus boot/nightly sweep owns eventual unknown-cost settlement.
+This proves durable run/log identity continuity, not immediate task-log convergence
+or a provider invoice. The2USD reserve remains held.
+
+Private copilot887-crash-v1.json SHA
+ed4b0257e93bd4a2511392c7134943b840a45a7f6bbf33ad4edb42e439240328;
+copilot887-crash-verification.json SHA
+770a7407ce1ecd94342e1c6ff21cca9f09949c96b5c985ff8ede923eb26705ed.
+Both temporary containers were stopped/removed after logs; clone DB retained.
+Production event/task/attempt counts stayed454/280/21; production worker identity
+and start time were unchanged by this campaign. No NAS or production learner write.
+
+### Final requirement map and remaining boundaries
+
+| Original rollout requirement | Named evidence and exact boundary |
+| --- | --- |
+| Provider identity/admission/terminal/cost/log | Existing named API/worker evidence plus current GLM and Tencent records above; unknown costs remain unknown, opaque Mem0 is not a fabricated per-wire meter |
+| Notes two handoff crash recovery | YUK981 actual SIGKILL at both handoffs and generation replay; record linked in verified deltas below |
+| Memory paid-add crash recovery | YUK979 actual paid add, same physical job/event lookup after process death, no reburn |
+| Valid/invalid DomainTool output | Actual MCP bridge/DB component canary below, not model-invoked output |
+| Each F3 representative operation + separate judgment | Existing Copilot/Knowledge/Practice actual records; learner judge/FSRS, Notes, Tagging/import and Agency planning below; current real upload adds missing OCR/worker/three golden judgments |
+| Human-approved proposal lifecycle | Current canonical shipped HTTP accept/dismiss/retract/idempotency plus accept/retract fold comparisons below; not every proposal kind/UI click |
+| Copilot Stop/restart/reconcile continuity | Physical current model-response/crash/retry above plus existing HTTP/replay/late-Stop coverage; immediate generic task-log settlement is not claimed |
+
+Current root build and architecture audit pass:49 TaskSpecs/42 tools/53 queues/
+19 proposal kinds, dependency totals428/0/48; catalogued five-capability SCC remains.
+The three behavior owners (ingestion completion, judging settlement, Knowledge
+merge) were independently inspected for duplicate rules and cross-owner internal
+writes; no remaining concrete violation was found. This is not a claim that every
+future change is local or every historical test/assertion was manually audited.
+Whole-project pruning evidence remains in the test-pruning census/evidence records;
+critical permissions, cost, concurrency, rollback, parser and recovery gates remain.
+YUK977/980/982 P2 differences and921/572/832 HOLD are outside this rollout closure.
+
+The older pending-budget/upload/matrix statements below are historical checkpoints,
+superseded by this dated map only for the exact scopes above. Final independent
+review and exact-head documentation integration are still required before closure.
+
+Latest update 2026-09-08: Mac API/worker e514ef94 after canonical Knowledge delivery;
+current proposal HTTP/replay revalidation is recorded below. The earlier8bce5f0a
+model samples remain scoped evidence, not the current deployment identity.
+The original inventory below retains its historical evidence boundaries; the
+new verified deltas at the end supersede its open Notes/Memory/judging rows.
+The purpose is to finish the original rollout requirements, not to restart a
+general architecture cleanup.
+
+## Seven rollout requirements
+
+| Requirement from YUK-887 | Evidence available now | Remaining proof / next action |
+| --- | --- | --- |
+| Provider identity, admission, terminal, cost and run-log linkage in API/worker roles | Versioned Copilot actual-output records; production provider_attempt has four succeeded DashScope embedding rows, all dated August 15–16 with unknown costs | Old rows do not prove current rollout. Map each current live provider lane to relevant existing wire evidence before buying a missing sample; do not recreate retired wire paths merely to match historical names |
+| Notes accept→generate and ready→verify crash recovery | Current note_generate/note_verify owners and durable handoff/claim implementation; scoped DB evidence | Real worker death/restart at both handoffs has not been established. A normal restart or mocked provider is insufficient |
+| Memory crash after paid add, event-id reuse, no reburn | client.findByEventId and ingest recovery owner; DB/unit contracts | Need actual Mem0 add and replay across a process boundary, comparing memory IDs and provider-operation evidence; do not replay the user's existing failed ingestion/DLQ |
+| Valid and intentionally invalid test-only DomainTool output | New actual Agent SDK MCP client/server canary below; real DB log/mirror linkage | Component runtime verified. This is not a model-invoked or deployed-container canary; retain that distinction when closing the broader rollout |
+| A real operation per F3 capability slice, actual output and separate projection/golden judgment | Copilot, knowledge read/presentation and question generation have versioned actual records; 973/974 provide separate projection/golden evidence | Complete a per-capability coverage map, especially Notes/Ingestion/Agency; do not count an adjacent capability's tool call as blanket coverage |
+| Proposal draft→accept/dismiss/retract, human approval intact | Actual proposal-only sample, owner DB lifecycle tests, and new shipped API scenario below | Representative knowledge-node lifecycle passes; no UI click or blanket assertion for all proposal kinds |
+| Copilot cancellation, worker restart/reconcile, durable run/log continuity | 948/950 real HTTP→physical fetch→worker continuity; 975 real shutdown; 978 actual physical pg-boss missing-child repair and late-Stop DB regression | Reuse those named scopes. They do not prove live-model interruption followed by worker crash; enumerate the exact remaining scenario before testing |
+
+This table is an evidence gap, not seven new implementation tasks. YUK-887 remains
+In Progress and its production rollout gate remains distinct from implementation
+completion. No existing actual model sample is rerun solely because its SHA differs
+from today's tip. Relevant source changes determine whether a sample is stale.
+
+## Concrete evidence anchors
+
+- [Unified conversation](evidence/2026-09-07-unified-conversation-actual.json):
+  exact a5bfa5a3, two real HTTP/pg-boss fetch/worker turns, preserved SDK session;
+  not automatic polling or browser UX proof.
+- [Native compaction](evidence/2026-09-06-native-compaction-actual.json): two
+  accepted real manual-compaction samples; no general net-cost-saving claim.
+- [Question generation](evidence/2026-09-07-learning-content-positive-actual.json):
+  exact 219a1816, generate_question_candidate and present_primary_view,
+  actual validators and persisted view; direct handler, not physical queue E2E.
+- [Knowledge observation](evidence/2026-09-07-knowledge-observation-actual.json):
+  exact 5717bcbd, query_knowledge plus presentation, explicit evidence boundaries.
+- [State rollout](2026-09-07-local-production-state-cutover.md),
+  [canonical writers](2026-09-07-canonical-state-writers.md),
+  [shutdown](2026-09-07-api-shutdown.md), and
+  [native settlement](2026-09-07-native-child-settlement.md) retain the migration,
+  golden, real process and physical queue observations separately.
+
+## New zero-cost MCP component canary
+
+Executed the real `buildMcpServerFromRegistry` with Agent SDK 0.3.220 and MCP SDK
+1.29.0, a real MCP Client, initialize/listTools/callTool protocol, and linked
+InMemoryTransport endpoints. No mocked SDK tool handler or mocked DB/logger was
+used. The database was the existing isolated synthetic
+`loom_native_978_ba4bc7fe_verify`, never production `loom`.
+
+Two test-only read tools return nested hits plus an explicit null unknown field.
+The input and evidence include 160 repetitions of a Chinese evidence-boundary
+sentence. The invalid result changes numeric hits[0].score to `uncertain`.
+Valid output returns score 0.75/null. Invalid output returns only a structural
+error (`output_schema_invalid: hits.0.score`), not unvalidated hits. Two real log
+rows link to one success and one failure tool_use event. AI tasks and provider
+attempts remain zero. The initial probe used the wrong response envelope in its
+assertion and failed; the corrected run below is the accepted evidence.
+
+- Task identity: `canary_887_real_mcp_20260907_v2`.
+- Input SHA256: `5eb69e4b37fe9c38b4ef0ebb5cc90eef56e93bdef614698d8d6461a4a080847e`.
+- Combined output SHA256: `c031dab02541f5496a0b04b63eab8e883c10601086737a9b14594a23dc509835`.
+- Failure event: `tool_use_g9e13m4rhb76s731cpbrvzl4`.
+- Success event: `tool_use_xlbbz73kqllkulibq9aqn8j4`.
+- Bridge source SHA256: `6ceb80e97c97861a19a99d9ebee498ae2100d9a08a7d7cb433d5fef41c718c73`.
+- Local probe `.tmp/yuk887-bridge-canary.cjs`, SHA256
+  `b40ed6ec598e3ba413bad69aaa7dcee8772484316d25ad864fee1e97dcfb62b9`.
+
+This is isolated component runtime evidence, not a paid model invocation,
+network-transport test, or production rollout completion.
+
+The two local probe scripts were subsequently formatted for the workspace lint
+gate, without rerunning providers. The original hashes above identify the executed
+bytes. Current formatted MCP script SHA256 is
+`27ebaa914d0beb69c72ae5a75038c19a4b73a1fadda103c43d29470934af5e3e`;
+proposal script SHA256 is
+`8ee1d8cb6c3c3c3475736a930765fb0070ed46e2444fb242b0f610c88d40b7f0`.
+
+## New zero-cost shipped proposal API canary
+
+Started the clean deployed image `582b2e66` as an isolated API-only container on
+loopback 18887 against the same synthetic database. No worker or provider credentials
+were supplied. Two synthetic knowledge-node proposals were written through the
+real proposal writer under the seeded yuwen root. The initial malformed decision
+body was rejected with 400 before mutation; after correcting the test client to
+send reason_md only for retract, the full scenario passed:
+
+- Before approval, neither proposed knowledge node existed.
+- Unauthenticated accept returned 401 and still created no node.
+- Explicit authenticated accept returned 201 and materialized exactly one node.
+  Repeating it returned 200 and the identical decision event.
+- Dismiss of the second proposal returned 201 and created no node.
+- Retract of the accepted proposal returned 201 and archived its materialized node,
+  preserving the row/history. Repeating retract returned 200 and the same event.
+- AI task/provider-attempt counts remained zero. Production counts independently
+  stayed 423 events / 258 AI tasks / 4 provider attempts.
+
+Proposal IDs: `canary_887_proposal_accept`, `canary_887_proposal_dismiss`.
+Accept event `kxipbpurfa6jfg0d03wi26cc`; dismiss event `lnjwn53bt6gt26h6hq6pr1uk`;
+retract event `iojv9h70swevpzs00m0jqbox`; materialized node `t6aq0h0m4eo7cboxi45lg9mj`.
+The local probe is `.tmp/yuk887-proposal-canary.cjs`. Container
+`tlp-proposal-887-582b2e66` was stopped after verification. No production data was
+created or deleted. This is actual shipped HTTP/DB behavior with explicit test
+client approval, not browser clicks, model proposal generation, or proof for every
+proposal kind.
+
+## Execution order and spending boundary
+
+Owner approved the pending budget-transfer request on 2026-09-08: the unused
+$3 historical-recovery allowance may fund the bounded Notes/Memory real recovery
+acceptance instead. This is the same $3, not an additional $3. No paid call has
+yet been started under that transfer; keep the original $10 reserve unchanged.
+
+The archive was read recursively on 2026-09-08 local time: all 41 encountered
+output/output_sha256 pairs match their stored text. This is an integrity check,
+not 41 independent successes: nested copies and deliberately failed samples are
+included. Current manifest ownership disambiguates the remaining slice coverage:
+
+| Slice | Reusable actual evidence | Not proved by that evidence |
+| --- | --- | --- |
+| Copilot | Unified two-turn sample, native child, correction, compaction, presentation | Live-model crash scenario beyond the named physical recovery tests |
+| Knowledge | query_knowledge and presented snapshot; representative proposal API lifecycle | Every mutation/merge variant as a production operation |
+| Practice supply | QuestionAuthorTask plus four real validators in positive-content sample | Learner attempt grading and FSRS/review settlement |
+| Practice judging | Existing validators validate generated content; get_attempt_context/get_review_due are Practice reads | They are not an actual learner attempt→judging→review-settlement run |
+| Notes | presentation-control archive actually called author_artifact, returning artifact art_sarsg30nxr0pvpdi9pdvscv5 | Automatic note_generate/note_verify and their crash handoffs |
+| Ingestion | Existing deterministic/DB and historical rollout data | No current accepted ingestion actual-output sample located in this archive |
+| Agency | Existing owner/transaction/golden checks | No current accepted Agency actual-output sample located in this archive |
+
+Neither query_events (Copilot-owned) nor get_review_due/get_attempt_context
+(Practice-owned) counts as an Agency actual operation. author_artifact is
+Notes-owned, but its successful interactive page must not stand in for automatic
+note generation. This mapping prevents both unnecessary repeats and false coverage.
+
+1. Reuse the now-completed MCP and representative proposal API scenarios; finish
+   the per-capability actual-output coverage map without rerunning accepted cases.
+2. If authorized, run only missing Notes/Memory real recovery scenarios with a
+   fixed reserve per attempted call. Stop at the authorized cap or unknown spend.
+3. Finish YUK-951 from actual queue expiry/retry/backoff/jitter and durable activity
+   evidence. A point-in-time empty queue does not prove a continuous drain window.
+4. Final business-owner acceptance uses learning intent/import/judging/review/
+   proposal behavior, rule uniqueness and recovery ownership, not file/test counts.
+
+The original $10 pool has conservative safe remaining $0.04177. The unused $3
+allowance is now transferred to Notes/Memory acceptance by the approval above;
+no paid call has occurred under it yet.
+YUK-977 remains a deferred P2, not a new blocker. No NAS operation, historical data
+deletion, or broad source-cleanup branch is part of this lane.
+
+## Verified deltas — 2026-09-08
+
+- Memory: [YUK979 record](2026-09-08-memory-failure-truth.md) proves real paid add,
+  confirmed process death, same physical job replay/event lookup and no reburn.
+- Notes: [YUK981 record](2026-09-08-notes-generation-acceptance.md) proves both
+  actual handoffs across SIGKILL, generation/verification and zero-cost successful
+  generation replay. Backend recovery passes; check prose visibility remains
+  the separately captured YUK982 P2 product-surface difference.
+- Learner judging: fresh `loom_judging_887_actual_v2`, source
+  `2a9638183f6192b033fa5ed06b8745ae97e260a3`, runtime code equal to validated8bce5f0a,
+  image8bce5f0a. The real `createAttemptResource` handled a canonical `/api/attempts`
+  Request with a complete conditional-probability answer, `auto_rate:true` and
+  initial rating `again`. One actual SemanticJudgeTask returned correct/score1,
+  and the owner returned201 with auto-rating `good`, one review, one causally
+  linked judge event, and knowledge FSRS reps1/next due advanced. No supplied
+  fake verdict, deterministic content validator, or mocked model replaced it.
+  This is a public route-handler component scenario, not a claim of shipped Hono
+  HTTP transport or durable judge_run crash/retry coverage.
+
+Judging task `xhql6qtd7nybtdooy3w0c0ic`, review `clf6tik0bhrn7u266rjtjgke`, judge
+`yq1t2m1op421zb84e0wkt7jd`; FSRS subject `knowledge/k_judging887`, next due
+2026-09-08T10:29:41.933Z. Real Xiaomi mimo-v2.5-pro HTTP200/end_turn:830 input,
+278 output, estimated0.00060291 USD (not invoice). Private evidence
+`judging887-actual-v2.json` SHA256
+`f08c1c94f5e0b869a212ac5b899282bdeba44e6bee00ff2a711b00fd0ef41731`;
+bundle `f595fd2475e6270c31c77e07da59e55f7f8e340d3199a86605d7a9e0c892ec77`;
+controller `d5a8c29d8f3762b777e353cce863c59584b263b5ee23b2d16f3d345fa5683e95`.
+The v1 transport probe rejected the SDK URL query variant locally: zero upstream
+calls/reserve, not a product/model failure. v2 allows the canonical pathname with
+SDK query parameters and caps one wire/64KB input/4096 output. Both processes
+stopped. Production454event/280task/21attempt stayed unchanged.
+
+Owner's newly approved3 USD pool now retains1 USD for Notes and1 USD for judging;
+remaining1 USD. Earlier pools/reserves are unchanged. Ingestion and Agency actual
+acceptance remain open; a production CoachTask success/parsed plan was located,
+but its probability/calculus subject_mix needs semantic verification and cannot
+be accepted merely from its success status. No new paid Coach sample was run.
+
+## Ingestion and Agency actual — subsequent delta
+
+Source `3582ab884384ab917fb54bbf18467c8876a00976`, runtime code equal8bce5f0a,
+fresh DB `loom_import_plan_887_actual_v1`, image8bce5f0a. Two bounded real wires
+passed (one per model, 64KB input / 4096 output ceiling, 0.50 USD reserve each).
+
+- TaggingTask `h2p42dbhmj2gmutvvkg0nu1m`: mimo-v2.5,756 input/434 output,
+  estimate0.00022736 USD. Correct conditional-probability tag, excludes Bayes
+  and polynomial decoys. Explicit client tag selection then real
+  `completeIngestionImport` created question `ey7rsk7flmua801g0tz0weet` and
+  learning record `k14l5t376lmy7zqtojt2lm2x`, imported block/session. Separate
+  read-only questionBlock fold-vs-live golden: diffs[], one question.
+- LearningIntentTask `maqegljxethl9jic861g6spq`: mimo-v2.5-pro,988 input/1820
+  output, estimate0.00201318 USD. Real `planLearningIntent` persisted valid hub
+  proposal `fhs89tf6jz95bqxrer0wp038`, two existing scoped knowledge targets,
+  no invented/decoy targets. Not automatically accepted: zero learning items
+  and artifacts. This is representative planning, not blanket Coach quality.
+
+Ingestion starts at an explicitly synthetic extracted-block checkpoint; no claim
+of file upload, OCR, R2 or shipped worker transport acceptance. Production
+454event/280task/21attempt remained unchanged. Isolated process exited0.
+Private evidence `import-plan887-actual-v1.json` SHA256
+`77da4a1a202dba48fef3af23e29df58e4ce1853d2070fdfdb22ca24ff9fc68ed`;
+golden `import-plan887-golden.jsonl` SHA256
+`ade94572fc81663b02b9110b1ecb83e659fb6a1e9e9f4b88d614ec9ddfa51a48`.
+The new3 USD pool now retains all3 USD (Notes1, judging1, import/planning1),
+remaining0. Estimates are not invoices; earlier reservations are not reclaimed.
+No further paid call is authorized by the later UI-only approval.
+
+## Current canonical proposal revalidation — 2026-09-08
+
+Knowledge canonical writers changed after the original shipped proposal sample,
+so that behavior was revalidated without rerunning any model. The exact shipped
+image e514ef94 ran as API-only `tlp-887-canonical-proposal` on loopback18895 against
+the retained isolated `loom_before_984_verify` clone. No worker or provider keys
+were supplied. The controller seeded two synthetic proposals through the current
+proposal writer; decisions used real shipped Hono HTTP, not substituted handlers.
+
+- Before explicit approval, neither node existed. Anonymous accept returned401
+  without materialization; authenticated accept returned201 and one live node.
+- Repeated accept returned200 and the identical decision event. Dismiss returned201
+  and no node. Retract returned201 and retained the archived node/history;
+  repeated retract returned200 with the identical correction event.
+- Independent read-only gather/fold versus live snapshots had zero differences
+  after acceptance and after retraction.
+- Clone task/attempt counts remained280/21. Production independently remained
+ 454 events/280 tasks/21 attempts/zero pending jobs. The canary container is stopped.
+
+Accepted proposal `canonical887_0_49c03094-1a01-4f2e-a39a-0eb8a9b320bb`,
+dismissed proposal `canonical887_1_81dcd2fc-e74e-4490-9a7a-a3f68ecd95c0`;
+accept event `b8u7iwik3lm3xkevz5yfzmtv`, dismiss `b9decl5z0lu0ggaurr53fjpj`,
+retract `i13de2uht9l3plspc566xbc9`, node `b2vzrnf15uy1z4tv4yr43zyr`.
+Executed controller `.tmp/yuk887-canonical-proposal.cjs` SHA256
+`17846215c12f42f9fef76f836174cc0007e91e23a2672b744d56d56b9d15e4a9`.
+This is a representative knowledge proposal with synthetic client approval, not
+model creation, UI-click coverage, every proposal kind or full rollout completion.
+
+The missing upload scenario starts at multipart `/api/assets`, verifies R2 bytes,
+then real session dispatch/physical worker OCR and StructureTask output. Current
+worker presence-only preflight confirms required credentials are configured and
+the selected engine is `glm`; this is not authentication/network verification.
+Tencent is an intentionally retained selectable engine, not a deleted path, and
+one default GLM run cannot prove Tencent JobId resume. Existing extracted-block
+Tagging/import and Agency outputs do not prove file upload/OCR. A bounded $2 request
+for the default-engine scenario has been presented; no new paid authority or call
+is assumed until an explicit answer arrives.
+
+## Upload preparation and bounded ownership audit — 2026-09-08
+
+The future upload canary must use the canonical public resources, not merely the
+deprecated `/api/ingestion/[id]/extract` adapter:
+`POST /api/assets` (multipart file), `POST /api/ingestion-sessions` (entrypoint and
+asset_ids), then `POST /api/ingestion-sessions/[id]/operations` with
+`{"kind":"extract"}` and an Idempotency-Key. Poll the returned operation resource.
+The extract branch enqueues `tencent_ocr_extract` directly with its operationId;
+`ingestion_operation` handles the other operation kinds. Assert repeated operation
+acceptance reuses identity and does not dispatch another paid wire.
+
+Offline synthetic fixture `.tmp/ingestion887-worksheet.png` is1000x1250/121846bytes,
+SHA256 `20d9ceaedc2042fe9e2074856b1956800732bffb783aaef98d560b6ceb6bba23`.
+Its rendered image was visually checked: a2x2 table (18/12/22/48), a shared stem
+with two subquestions, conditional probability, zero-probability conditioning and
+an explicitly unknown count. Expected extraction retains the table, grouping,
+numbering and boundary wording without inventing printed answers. SVG source is
+`.tmp/ingestion887-worksheet.svg`, SHA256
+`bfc0c14aba216ca2171b65d01c5a059856bb9630d2f7fe9581a8e99845b16d39`.
+No file upload, R2 write, worker launch or provider call occurred in this preparation.
+
+An independent read-only ownership audit on main8ea58bd4 found no remaining
+duplicated business rule or cross-owner internal-table write in the three original
+report scenarios; root inspected the consequential source and rollback assertions:
+
+- Ingestion routes and worker converge on `completeIngestionImport`; the durable
+  wrapper owns operation identity/receipt in the same transaction. Receipt failure
+  rolls back imported facts, rather than reporting FAILED after committing them.
+- Practice has three behavior-specific settlement entries but one private
+  `applyLearningEffects` implementation for shared learning effects. Paper identity
+  and deferred late-arrival rules remain behavior-specific, not duplicate engines.
+- Knowledge acceptance coordinates one transaction and delegates attribution to
+  Practice/Agency owners, records repair provenance then projects structural rows.
+  Existing DB regression faults the last edge repair and asserts rollback across
+  question, learning item, goal, knowledge and learning state.
+
+This is source-level evidence for those three behaviors, not a full production
+journey or an assertion that every file/test is ideal. No new tests were run by
+the reviewer. Root reran architecture-deepening:49 TaskSpecs/42 DomainTools/53
+manifest queues/19 proposal kinds, dependencies428/0/48; the five-capability SCC
+still contains21 catalogued command files. Counts are not the ownership proof.

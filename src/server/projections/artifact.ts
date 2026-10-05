@@ -1,9 +1,8 @@
 // YUK-471 W3-B1 — projectArtifact: the IO shell around the PURE artifact fold.
 //
-// The read→fold→write-through shell the artifact write sites (the 8 INSERT sites /
-// editArtifactBodyBlocks / note_generate·note_verify / retract archive / persistNoteRefineApply)
-// flip to as the SOLE writer of an `artifact` row WHEN the per-entity flag
-// projectionIsWriter('artifact') is ON (design §6, added in C3). It:
+// Read→fold→write-through for canonical body editing, replay and rebuild.
+// Creation/lifecycle owners also emit complete events in their write transactions.
+// Writer flags are retired; rollback requires the previous release. It:
 //   1. GATHERS the superset of `event` rows that can affect `artifactId` (the pure reducer filters
 //      internally, but the shell over-collects — a missed event silently drops a mutation),
 //   2. maps each DB row → the flat FoldEvent envelope,

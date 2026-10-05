@@ -150,6 +150,7 @@ const ALL_TABLES = [
   'provider_attempt',
   // YUK-842 — operational provider query-session leases/start-window rows (loose refs).
   'provider_session_admission',
+  'copilot_evidence_checkpoint',
   'placement_starter_cost_component',
   'placement_starter_attempt_question',
   'placement_starter_attempt',
@@ -189,12 +190,18 @@ const ALL_TABLES = [
   // it MUST be listed now that the promotion writer gives it a write path.
   'misconception',
   'misconception_edge',
+  // YUK-1016 (454-B) — cause vocabulary DB overlay. No FK, so resetDb must list it
+  // explicitly or it leaks across tests (same footgun as misconception above).
+  'cause_category_overlay',
   'learning_session',
   'answer',
   'completion_evidence',
   'memory_brief_note',
   'learning_record',
   'artifact',
+  'artifact_block_ref',
+  'artifact_edit_session',
+  'hub_sync_reconciliation',
   'learning_item',
   'mistake_variant',
   // M2 (YUK-316) — 练习流日程表。
@@ -222,6 +229,7 @@ const ALL_TABLES = [
   'source_asset',
   'knowledge',
   'ai_task_runs',
+  'tool_operation',
   'tool_call_log',
   'cost_ledger',
   // YUK-599 (v3 trait 合同 §2.2) — subject 控制面六表。loose text-ref 无 FK，
@@ -238,6 +246,32 @@ const ALL_TABLES = [
   // footgun：orchestrator DB 测试跨用例复用 RUN_DATE，漏清会让上一用例的 run 被下一用例采纳）。
   'dag_orchestration_run',
   'dag_orchestration_node',
+  // YUK-1044 — 统一评估契约真相源九表。有 enforced FK（0105/0106），但 TRUNCATE
+  // CASCADE 不触发 BEFORE DELETE trigger（guard 只拦 DELETE），且必须显式列入
+  // 否则备份回测 fixture 漏清 → 跨测泄漏。子表在前（与 CASCADE 无关，纯可读性）。
+  'evaluation_effective_head',
+  'evaluation',
+  'assessment_submission',
+  'assessment_response_draft',
+  'evaluation_group',
+  'assessment_issuance',
+  'question_admission_verification',
+  'question_group_lifecycle',
+  'assessment_identity_mapping',
+  'question_revision',
+  // YUK-1050 — apply 执行器运维账本（无 immutable trigger，TRUNCATE 即可；
+  // 不列入会跨测泄漏 run/phase 状态，破坏幂等/续跑测试的隔离）。
+  'migration_apply_phase',
+  'migration_apply_run',
+  // YUK-1055 — DB contract epoch marker 历史。不列入会跨测泄漏 epoch 状态，
+  // 破坏 fence/transition 测试的隔离（「缺表/空表 = 隐式 legacy」语义要求
+  // 每个用例从空表开始）。
+  'contract_epoch',
+  // YUK-1007 — 热加载配置面三表。无 FK，但 TRUNCATE 必须列入——否则跨测泄漏
+  // DB config 值 / journal 行 / epoch，破坏 setConfig/hydrate 测试隔离。
+  'system_config',
+  'system_config_journal',
+  'system_config_epoch',
 ] as const;
 
 export async function resetDb() {

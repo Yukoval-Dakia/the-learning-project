@@ -236,6 +236,8 @@ describe('AI observability admin read model', () => {
     expect(cost.days[0]).toMatchObject({
       reported_cost: 0,
       estimated_cost: 0,
+      reported_attempts: 0,
+      estimated_attempts: 0,
       unknown_attempts: 0,
       legacy_rows: 3,
     });
@@ -326,6 +328,8 @@ describe('AI observability admin read model', () => {
     const cost = await getAdminCost(db, { days: 7 });
     expect(cost.days).toHaveLength(1);
     expect(cost.days[0]).toMatchObject({
+      reported_attempts: 1,
+      estimated_attempts: 1,
       unknown_attempts: 1,
       legacy_rows: 1,
       calls: 4,

@@ -47,7 +47,7 @@ export async function GET(req: Request, params: Record<string, string>): Promise
     const bytes = await getR2().get(row.storage_key);
     if (!bytes) throw new ApiError('not_found', `asset ${id} bytes missing from R2`, 404);
 
-    return new Response(bytes as unknown as BodyInit, {
+    return new Response(new Uint8Array(bytes), {
       status: 200,
       headers: {
         'Content-Type': row.mime_type,

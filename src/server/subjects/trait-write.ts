@@ -41,9 +41,9 @@ import { assembleSubjectProfile } from '@/subjects/trait-compose';
 import {
   SUBJECT_TRAIT_KINDS,
   type SubjectTraitKind,
-  type SubjectTraitPayloads,
   TRAIT_PAYLOAD_SCHEMAS,
   TRAIT_PAYLOAD_SCHEMA_VERSIONS,
+  parseTraitPayloads,
 } from '@/subjects/trait-schemas';
 
 // ---------- 结果联合（route 壳映射状态码） ----------
@@ -122,7 +122,7 @@ async function validateBinders(
       issues.push({ subjectId: binderId, errors: ['incomplete trait bindings'] });
       continue;
     }
-    const payloads = {} as Record<SubjectTraitKind, unknown>;
+    const payloads: Partial<Record<SubjectTraitKind, unknown>> = {};
     for (const b of bound) {
       // 该 kind 一律用候选 payload（编辑=新值 / rollback=目标行 / 换绑=目标 trait /
       // reset-to-seed=代码种子），其余 kind 用当前绑定的活 payload。
@@ -133,7 +133,7 @@ async function validateBinders(
         id: binderId,
         displayName,
         version: 'preflight',
-        payloads: payloads as unknown as SubjectTraitPayloads,
+        payloads: parseTraitPayloads(payloads),
       });
       const result = validateProfile(profile, capRegistry);
       if (!result.valid) issues.push({ subjectId: binderId, errors: result.errors.slice(0, 5) });

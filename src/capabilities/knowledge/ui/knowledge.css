@@ -68,6 +68,18 @@
   stroke-width: 2.5px;
 }
 
+.mesh-node.is-ghost .mesh-disc {
+  fill: var(--paper-tint);
+  stroke: var(--info);
+  stroke-dasharray: 4 3;
+  opacity: 0.82;
+}
+
+.mesh-node.is-ghost .mesh-node-label {
+  fill: var(--ink-3);
+  font-style: italic;
+}
+
 /* ── S9 (YUK-335 / YUK-297) 图谱材质三层 — screens-2b.css 逐值照搬 ──
    线框稿 → 设计材质：disc + track + arc 三层节点、typed 5 色边 + 中点标签、
    缩放 controls、关系图例。点阵底复用 globals 的 .kg-svg-stage（mesh-wrap 给
@@ -149,6 +161,11 @@
   stroke-width: 2;
 }
 
+.mesh-edge2.is-cross {
+  stroke: var(--info);
+  stroke-width: 2.5;
+}
+
 /* 节点三层：满轨底环 + 掌握度弧（screens-2b.css L54-55） */
 .mesh-track {
   stroke: var(--paper-raised);
@@ -186,6 +203,24 @@
 }
 .rel-legend svg line {
   stroke-width: 2;
+}
+
+.mesh-cross-legend {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-3);
+  padding: var(--s-2) var(--s-3);
+  border: 1px solid var(--info);
+  border-radius: var(--r-2);
+  color: var(--info-ink);
+  background: var(--info-soft);
+  font-size: var(--fs-meta);
+}
+
+.mesh-cross-legend-mark {
+  width: 26px;
+  border-top: 2px dashed var(--info);
 }
 
 /* S8 (YUK-335 audit §3.9)：活动时间线「查看全部 / 收起」折叠触发器。

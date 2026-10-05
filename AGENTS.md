@@ -24,8 +24,12 @@ nested `AGENTS.md` / `.claude/rules`，机械约束放在 hooks。
   `.remember/` 为准，不靠会话记忆。
 - 中途发现的 bug/follow-up 当场写入 Linear 或 `PLAN.md` PARKED。
 - 并行实施必须每 lane 独立 branch + worktree；不要让多个对等会话写同一工作树。
-- 创建 subagent 时默认 Opus；fable 只用于终裁/最难验证，Sonnet 仅机械轻活，
-  Haiku 基本不用。
+- 创建 subagent 时按当前工具**已注册**角色与任务性质分流：实施路径和验收已定的
+  机械修改给 Fixer；目标明确但需本地调查、局部方案或调试的非 UI 实施给
+  Implementer；UI 交互与视觉给 Designer；高风险架构决策和独立复核给 Oracle。
+  角色不可用时由编排者先收敛任务，再交给可用执行者；同一 diff 不派两个写入者。
+- 具体模型、variant 和请求故障回退由当前工具配置决定；代码质量不达标须重新
+  判断任务与角色，不把模型 fallback 当作质量升级。
 - 收尾时对齐 `PLAN.md` 四栏、Linear 状态、`.remember` handoff、开放
   PR/workflow/worktree；需要落盘的看板更新必须 commit。
 
@@ -54,7 +58,7 @@ nested `AGENTS.md` / `.claude/rules`，机械约束放在 hooks。
 - 后端 route/job/copilotTool 只能经
   `src/capabilities/<name>/manifest.ts` 贡献到组合根。
 - `server/app.ts` 对 `/api/*` 校验 `x-internal-token`，仅
-  `/api/health` 豁免。
+  `/api/health` 与 `/api/ready` 豁免。
 - 浏览器不持 provider key；AI 调用只经 Hono route 或 worker。
 - `core/` 只放跨科目逻辑；科目专属逻辑留在 `subjects/<name>/`。
 - AI 动作须可追踪、可逆，并保留现有 run logging。
@@ -148,6 +152,7 @@ Cloudflare Tunnel。无 Vercel、无 Redis。部署细节与验证命令以 `REA
 ## Review, merge, and delivery
 
 - authoring 与独立 review 分离；review agent 必须能读取真实 diff。
+- **Merge 等待窗（owner 2026-09-26 拍板）**：合并前等待至少 ~17 分钟（从最后一次 push 起算），给 advisory review（Codex/PR-Agent/OCR/CodeRabbit）发出时间。等待窗内已发出的 P0/P1 必须裁决（回复 + 修或 rationale-skip）才可 merge；等待窗结束后再出现的新 review 不重置，但不得无视既有 P0/P1。
 - **Review budget（owner 2026-07-30 拍板）**：自动 review 是 advisory，不是 CI correctness
   gate。每个 PR 最多一轮初审 + 一轮 P0/P1 修复后的验证审；push 后出现的新 bot review
   不重置预算，除非 owner 明确要求，不得启动第三轮。

@@ -1,9 +1,8 @@
 // YUK-471 W3-B2 — projectQuestionBlock: the IO shell around the PURE question_block fold.
 //
-// The read→fold→write-through shell the question_block write sites (applyExtractionResult /
-// applyRescue / persistStructured / mergeQuestions in block-structured-edit.ts + ingestion.ts) flip
-// to as the SOLE writer of a `question_block` row WHEN the per-entity flag
-// projectionIsWriter('question_block') is ON (design §6, added in C3). It:
+// Read→fold→write-through for all structured/merge/figure editors, replay and rebuild.
+// Creation/lifecycle owners also emit complete events in their write transactions.
+// Writer flags are retired; rollback requires the previous release. It:
 //   1. GATHERS the superset of `event` rows that can affect `blockId` (the pure reducer filters
 //      internally, but the shell over-collects — a missed event silently drops a mutation),
 //   2. maps each DB row → the flat FoldEvent envelope,

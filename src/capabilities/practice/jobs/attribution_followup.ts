@@ -44,7 +44,8 @@ export interface RunAttributionFollowupResult {
     | 'skipped:attempt_not_active'
     | 'skipped:unsupported_judge'
     | 'skipped:user_cause_present'
-    | 'skipped:question_not_found';
+    | 'skipped:question_not_found'
+    | 'skipped:verdict_overturned';
 }
 
 /**

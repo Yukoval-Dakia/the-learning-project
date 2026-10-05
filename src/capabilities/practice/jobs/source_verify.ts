@@ -33,6 +33,14 @@ import {
   type SourceGroundingVerifyResult,
   runSourceGroundingVerify,
 } from '@/capabilities/practice/server/judge/source-grounding-verify';
+import {
+  LEGACY_DRAFT_STATUS,
+  MARKING_RULE_PROVENANCE,
+  QUESTION_AVAILABILITY,
+  SCORING_ADMISSION_STATE,
+  SCORING_ADMISSION_WITHHELD_REASON,
+  SUSPENSION_REASON,
+} from '@/core/schema/assessment/lifecycle';
 import { readDifficultyEvidenceFromMetadata } from '@/core/schema/difficulty-evidence';
 import { WebSourcedProvenance, deriveSourceTier } from '@/core/schema/provenance';
 import { toUnifiedVerifyResult } from '@/core/schema/verify-contract';
@@ -44,10 +52,14 @@ import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { type TaskTextResult, type TaskTextRunFn, aiAgentRef } from '@/server/ai/provenance';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type SubjectProfile, resolveSubjectProfile } from '@/subjects/profile';
+import { normalizeToCanonicalKind } from '@/subjects/question-kind';
 import { initialFsrsState } from '../server/fsrs';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from '../server/placement-scope';
 import { SupplyTraceV1 } from '../server/question-supply/evidence-demand';
 import { lockPlacementSupplyScopes } from '../server/question-supply/placement-supply-lock';
+import { DEDUP_OVERLAP_THRESHOLD, maxNgramOverlap } from '../server/question-supply/sourced-dedup';
 import {
   type SolveCheckImageFetchFn,
   type SolveCheckQuestion,
@@ -56,7 +68,6 @@ import {
   checksForTier,
   runSolveCheck,
 } from '../server/quiz/verify-framework';
-import { maxNgramOverlap } from './quiz_verify';
 
 export interface SourceVerifyJobData {
   question_ids: string[];
@@ -71,11 +82,10 @@ type DepsOverride = {
   runTaskFn?: RunTaskFn;
 };
 
-// Dedup threshold: a sourced question whose prompt n-gram overlap with an existing
-// ACTIVE pool question (sharing a knowledge point) is at/above this is treated as a
-// near-duplicate. Reuses quiz_verify's deterministic maxNgramOverlap (word-shingle
-// Jaccard, CJK-aware). CONSERVATIVE start, tunable.
-export const DEDUP_OVERLAP_THRESHOLD = 0.7;
+// YUK-986 — 阈值本体下沉到 server/question-supply/sourced-dedup.ts；此处 re-export
+// 保既有 import 路径。near-duplicate 判定仍用同一 maxNgramOverlap（word-shingle
+// Jaccard, CJK-aware）。
+export { DEDUP_OVERLAP_THRESHOLD };
 
 export interface CheckOutcome {
   check: VerifyCheck;
@@ -125,7 +135,14 @@ function checkStructureCompleteness(row: QuestionRow): CheckOutcome {
   if (!row.reference_md || row.reference_md.trim().length === 0) {
     problems.push('empty reference_md');
   }
-  if (row.kind === 'choice' && (row.choices_md ?? []).length < 2) {
+  // YUK-386 — kind is a free-form label; fold through the vocab (single_choice /
+  // multiple_choice → choice) so legacy profile-vocab rows keep the same check,
+  // then read the STRUCTURE: a choice-shaped row must carry ≥2 options.
+  const choices = row.choices_md ?? [];
+  if (
+    (normalizeToCanonicalKind(row.kind) === 'choice' || choices.length === 1) &&
+    choices.length < 2
+  ) {
     problems.push('choice question has <2 choices');
   }
   return problems.length === 0
@@ -514,41 +531,65 @@ export async function runSourceVerify(
         };
       }
       if (outcome.status === 'transient_error') {
-        // TRANSIENT image-fetch / VLM / parse failure (or a bare throw, above) — NOT a content
-        // verdict. FAIL-CLOSED (thread 1): the row was pre-promoted 'active', and throwing to
-        // retry would otherwise leave it pool-selectable during the retry window, bypassing
-        // this gate. Demote it to 'draft' FIRST — a bare UPDATE scoped to THIS single-source
-        // row, committed independently of the throwing verify tx so it survives the throw —
-        // then throw so the catch-bottom writes the retriable outcome='error' event and
-        // pg-boss re-runs; a later 'grounded' re-check re-promotes it. Scope is limited to this
-        // single_source_grounding row: no other verify error semantics change.
-        //
-        // OVERLAPPING-DELIVERY GUARD (thread 2, codex): pg-boss can have TWO deliveries of the
-        // same question in flight (this run passed the top idempotency check before a
-        // concurrent run committed). If that concurrent run has SINCE terminally verified +
-        // promoted this question (a source_verify outcome='success' event now exists), it owns
-        // the row's 'active' state — this stale run must NOT yank it back out. The NOT EXISTS
-        // subquery makes the check atomic with the demote (no check-then-act TOCTOU): the
-        // UPDATE demotes ONLY when no success verify event exists.
-        //
-        // VERSION GUARD (thread 2 round-2, codex): mirror the normal promote/demote branch's
-        // `current.version !== row.version` staleness check. This run's grounding verdict was
-        // computed against `row.version`; if the question was EDITED (version bumped) during the
-        // VLM call, this delivery is stale and must NOT act on the newer row — pin the demote to
-        // `version = row.version` so a bumped row is untouched (this run then throws and is
-        // re-run against the fresh version). Without it, a stale delivery could yank a freshly
-        // re-verified newer version out of the pool.
-        await db
-          .update(question)
-          .set({ draft_status: 'draft', updated_at: new Date() })
-          .where(
-            and(
-              eq(question.id, questionId),
-              eq(question.draft_status, 'active'),
-              eq(question.version, row.version),
-              sql`NOT EXISTS (SELECT 1 FROM ${event} WHERE ${event.action} = 'experimental:source_verify' AND ${event.subject_kind} = 'question' AND ${event.subject_id} = ${questionId} AND ${event.outcome} = 'success')`,
-            ),
-          );
+        // Transient grounding is retriable, not a content verdict. Commit legacy draft
+        // and contract suspended/withheld together before throwing to retry. Root→child
+        // locks serialize with editing/publishing; re-read version and terminal success
+        // under those locks so a stale delivery cannot undo a newer admission.
+        // A failed suspension rolls back the demotion too; catch-bottom records an error.
+        try {
+          await db.transaction(async (suspendTx) => {
+            const groupRootId = row.parent_question_id ?? questionId;
+            await suspendTx
+              .select({ id: question.id })
+              .from(question)
+              .where(eq(question.id, groupRootId))
+              .for('update')
+              .limit(1);
+            const [post] = await suspendTx
+              .select({
+                version: question.version,
+                promotedElsewhere: sql<boolean>`EXISTS (
+                  SELECT 1 FROM ${event}
+                  WHERE ${event.action} = 'experimental:source_verify'
+                    AND ${event.subject_kind} = 'question'
+                    AND ${event.subject_id} = ${questionId}
+                    AND ${event.outcome} = 'success'
+                )`,
+              })
+              .from(question)
+              .where(eq(question.id, questionId))
+              .for('update')
+              .limit(1);
+            const maySuspendContract =
+              post != null && post.version === row.version && !post.promotedElsewhere;
+            if (!maySuspendContract) return;
+            await suspendTx
+              .update(question)
+              .set({ draft_status: LEGACY_DRAFT_STATUS.DRAFT, updated_at: new Date() })
+              .where(eq(question.id, questionId));
+            await publishQuestionGroupFromRow(suspendTx, {
+              rootId: groupRootId,
+              admission: {
+                state: SCORING_ADMISSION_STATE.WITHHELD,
+                reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
+              },
+              suspension: { suspended: true, reason: SUSPENSION_REASON.VERIFY_HOLD },
+              verification: {
+                policy_id: 'source_verify@1',
+                outcome: 'suspended',
+                evidence: {
+                  check: 'source_grounding',
+                  transient: true,
+                  message: outcome.message,
+                },
+              },
+              actorRef: 'source_verify:suspend',
+              now: new Date(),
+            });
+          });
+        } catch (suspendErr) {
+          console.error('[source_verify] verify-hold write failed for', questionId, suspendErr);
+        }
         throw new Error(
           `source_verify source grounding failed (transient) for ${questionId}: ${outcome.message}`,
         );
@@ -631,13 +672,36 @@ export async function runSourceVerify(
       // race. Locking row.knowledge_ids (pre-tx snapshot) is safe: on attribution drift the version
       // guard below throws and pg-boss reruns against the fresh scope.
       await lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
+      // Match editing/archive/publisher order even when this delivery targets a child.
+      // Keep the global learning-write and placement-supply locks ahead of all row locks.
+      if (row.parent_question_id != null) {
+        await tx
+          .select({ id: question.id })
+          .from(question)
+          .where(eq(question.id, row.parent_question_id))
+          .for('update')
+          .limit(1);
+      }
       // The checks above ran against `row.version`. Cross-KC reconciliation bumps that version
       // under the same row lock; a mismatch makes this verdict stale, so abort before writing a
       // terminal event/promotion. The catch records a retriable outcome='error' and pg-boss reruns
       // against the current KC set. If this lock wins first, the later reconciler observes active
       // lifecycle and enrolls its added KC atomically.
       const [current] = await tx
-        .select({ version: question.version, knowledgeIds: question.knowledge_ids })
+        .select({
+          version: question.version,
+          knowledgeIds: question.knowledge_ids,
+          draftStatus: question.draft_status,
+          // As in the transient branch, a committed terminal success makes a failed
+          // overlapping delivery stale: it must skip both demotion and suspension.
+          promotedElsewhere: sql<boolean>`EXISTS (
+            SELECT 1 FROM ${event}
+            WHERE ${event.action} = 'experimental:source_verify'
+              AND ${event.subject_kind} = 'question'
+              AND ${event.subject_id} = ${questionId}
+              AND ${event.outcome} = 'success'
+          )`,
+        })
         .from(question)
         .where(eq(question.id, questionId))
         .limit(1)
@@ -651,7 +715,7 @@ export async function runSourceVerify(
         // Supply scope already locked at the top of this tx (G→row order above).
         await tx
           .update(question)
-          .set({ draft_status: 'active', updated_at: now })
+          .set({ draft_status: LEGACY_DRAFT_STATUS.ACTIVE, updated_at: now })
           .where(eq(question.id, questionId));
 
         // FSRS enroll-if-absent per knowledge point (identical convention to
@@ -661,6 +725,15 @@ export async function runSourceVerify(
         const fsrsSubjectIds = Array.from(new Set(current.knowledgeIds ?? []));
         if (fsrsSubjectIds.length > 0) {
           for (const knowledgeId of fsrsSubjectIds) {
+            // YUK-1037 — a synthetic subject root ('seed:<subj>:root', the
+            // plan-executor coarse-fallback binding) is a structural anchor,
+            // never a content KC: skip FSRS enrollment so the question can't
+            // mint a due card for an id the subject read axis already excludes
+            // (resolveSubjectKnowledgeIds). The raw-ids branch condition is
+            // deliberate: a roots-only label set is NOT "unlabeled", so it
+            // enrolls ZERO cards — the question-level fallback below stays
+            // reserved for a genuinely unlabeled legacy row.
+            if (SYNTHETIC_SUBJECT_ROOT_RE.test(knowledgeId)) continue;
             const existing = await getFsrsState(tx, 'knowledge', knowledgeId);
             if (existing) continue;
             await upsertFsrsState(tx, {
@@ -683,6 +756,41 @@ export async function runSourceVerify(
             });
           }
         }
+
+        // YUK-1043 — 统一发布链：verified promote 即 §3.3 的 admission 时刻（同事务）。
+        // web_sourced 参考答案源自原始页面（非 model-proposed）且 tier-2 checks 已对
+        // extract 确定性核验 ⇒ official + 结构校验（publisher 契约校验）+ 无独立模型
+        // 门（independent=null，checks 摘要记入 note —— D1 双门不适用于非模型规则）。
+        // 已发布过同内容的组在此只更新 admission 维度（generation+1）。
+        // YUK-1045 — suspension:false 清 verify_hold（同版复核通过 ⇒ 幂等恢复，
+        // §3.3 表「同版复核通过」行）；retraction_hold 不属本票接线，publisher 恒保留。
+        await publishQuestionGroupFromRow(tx, {
+          rootId: row.parent_question_id ?? questionId,
+          admission: {
+            state: SCORING_ADMISSION_STATE.ADMITTED,
+            evidence: {
+              marking_provenance: MARKING_RULE_PROVENANCE.OFFICIAL,
+              verification: {
+                structural_check_passed: true,
+                independent_verification: null,
+                note: `source_verify tier-2 checks passed (${checks.length})`,
+              },
+              model_slice: null,
+            },
+          },
+          suspension: { suspended: false },
+          verification: {
+            policy_id: 'source_verify@1',
+            outcome: 'passed',
+            evidence: {
+              checks: checks.map((c) => ({ check: c.check, verdict: c.verdict })),
+              demoted: false,
+            },
+          },
+          availability: QUESTION_AVAILABILITY.GENERAL_POOL,
+          actorRef: 'source_verify:promote',
+          now,
+        });
       } else {
         // ---- YUK-479 — auto-promote one-way gate fix: demote a pre-promoted draft on FAIL. ----
         // The cold-start image-upload path (image-candidate-accept.ts) PRE-PROMOTES a
@@ -706,12 +814,55 @@ export async function runSourceVerify(
         // it stops FUTURE selection; any existing history is untouched. A later re-enqueue is
         // short-circuited by the failure verify event (idempotency), so the question stays out of
         // the pool until a human (verify-and-promote owner override) intervenes.
-        const demotedRows = await tx
-          .update(question)
-          .set({ draft_status: 'draft', updated_at: now })
-          .where(and(eq(question.id, questionId), eq(question.draft_status, 'active')))
-          .returning({ id: question.id });
+        // 并发终验成功（§3.3「旧验证不能改变较新 admission 决定」）⇒ 行已归
+        // 那笔成功投递：demote 与 suspend 双双跳过（与 transient 分支同一
+        // OVERLAPPING-DELIVERY 守卫，锁内读原子）。
+        const promotedElsewhere = current.promotedElsewhere === true;
+        const demotedRows = promotedElsewhere
+          ? []
+          : await tx
+              .update(question)
+              .set({ draft_status: LEGACY_DRAFT_STATUS.DRAFT, updated_at: now })
+              .where(
+                and(
+                  eq(question.id, questionId),
+                  eq(question.draft_status, LEGACY_DRAFT_STATUS.ACTIVE),
+                  sql`NOT EXISTS (SELECT 1 FROM ${event} WHERE ${event.action} = 'experimental:source_verify' AND ${event.subject_kind} = 'question' AND ${event.subject_id} = ${questionId} AND ${event.outcome} = 'success')`,
+                ),
+              )
+              .returning({ id: question.id });
         wasDemoted = demotedRows.length > 0;
+
+        // YUK-1045 — verify 挂起串行化（§3.3）：非 promote 的 verify（失败或
+        // needs_review）必须同事务把 contract 维度翻 suspended（verify_hold）+
+        // admission 折叠 withheld ——「未发出的题」在 contract 读面不可用，且
+        // 只挂 suspension，不动 live 去重 claim（挂起不释放 claim）。组未发布
+        // 时 FromRow 直接铸 suspended 首版（同样 fail-closed）。
+        // promotedElsewhere ⇒ 本投递 stale：不翻 contract 维度（honest：stale
+        // 投递也不写核验记录 —— 记录的是「本版核验结果」，不该落在较新决定上）。
+        if (!promotedElsewhere) {
+          await publishQuestionGroupFromRow(tx, {
+            rootId: row.parent_question_id ?? questionId,
+            admission: {
+              state: SCORING_ADMISSION_STATE.WITHHELD,
+              reason:
+                failingCheck != null
+                  ? SCORING_ADMISSION_WITHHELD_REASON.VERIFICATION_FAILED
+                  : SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
+            },
+            suspension: { suspended: true, reason: SUSPENSION_REASON.VERIFY_HOLD },
+            verification: {
+              policy_id: 'source_verify@1',
+              outcome: failingCheck != null ? 'failed' : 'suspended',
+              evidence: {
+                checks: checks.map((c) => ({ check: c.check, verdict: c.verdict })),
+                demoted: wasDemoted,
+              },
+            },
+            actorRef: 'source_verify:suspend',
+            now,
+          });
+        }
       }
 
       await writeEvent(tx, {
@@ -781,8 +932,8 @@ export async function runSourceVerify(
     return { status: promote ? 'verified' : 'failed', checks };
   } catch (err) {
     // failure-bottom: write a TRANSIENT-error event so pg-boss redelivery re-runs the
-    // verify (idempotency guard treats outcome='error' as retriable). The draft stays
-    // draft_status='draft' — the catch path NEVER promotes (mirrors quiz_verify).
+    // verify (idempotency guard treats outcome='error' as retriable). A failed write
+    // transaction preserves its prior state; the catch path never promotes.
     // YUK-350 (RL1) — error-safe: promotion happens only inside the try (post-LLM
     // gate), so reaching this catch guarantees the question was never promoted. The
     // unified system_error projection now ALSO gives tier-2 a symmetric result-layer

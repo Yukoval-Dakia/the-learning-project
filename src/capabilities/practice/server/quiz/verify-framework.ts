@@ -3,6 +3,7 @@ import {
   type JudgeAnswerParams,
   runSemanticJudge,
 } from '@/capabilities/practice/server/judge/question-contract';
+import { isObjectiveAnswerKind } from '@/core/schema/answer-class';
 // YUK-216 S2 (题源扩展 Strategy D) — slice 1 verification-gate framework.
 //
 // docs/superpowers/specs/2026-06-05-question-source-expansion-design.md §4
@@ -40,7 +41,6 @@ import type { Db, Tx } from '@/db/client';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import { type RepairLevel, parseJsonObjectLoose } from '@/server/ai/json-extract';
-import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import {
   type TaskTextResult,
   type TaskTextRunFn,
@@ -54,8 +54,6 @@ import {
   type PlacementVerificationAuthority,
   assertPlacementAuthority,
 } from '../question-supply/placement-starter-attempts';
-
-const SOLUTION_GENERATE_OUTPUT_FORMAT = zodToJsonSchemaOutputFormat(SolutionGenerateOutput);
 
 // ---------- check identifiers ----------
 //
@@ -151,6 +149,10 @@ export interface QuestionContentValidationInput {
   author_material?: { title_md: string; body_md: string };
   placement_authority?: PlacementVerificationAuthority;
   validation_mode?: 'release_strict';
+  /** Selects learner-visible axis admission without changing question-pool policy. */
+  validation_purpose?: 'learning_content';
+  /** Actually executed remote-MCP calls of this request turn (executed evidence, not declarations). */
+  remote_tool_evidence?: unknown;
 }
 
 export interface QuestionContentValidationRun {
@@ -210,14 +212,14 @@ export async function runQuestionContentValidation(
     runTaskFn: TaskTextRunFn;
     subjectProfile: SubjectProfile;
     db?: Db;
-    skills?: string[];
+    piSkillDocs?: readonly { name: string; body: string }[];
     afterTaskRun?: (result: TaskTextResult) => Promise<void>;
   },
 ): Promise<QuestionContentValidationRun> {
   const taskResult = await options.runTaskFn('QuizVerifyTask', input, {
     ...(options.db ? { db: options.db } : {}),
     subjectProfile: options.subjectProfile,
-    ...(options.skills ? { skills: options.skills } : {}),
+    ...(options.piSkillDocs ? { piSkillDocs: options.piSkillDocs } : {}),
   });
   await options.afterTaskRun?.(taskResult);
   const parsed = parseQuestionContentValidationOutput(taskResult, {
@@ -241,14 +243,11 @@ export async function runQuestionContentValidation(
 // satisfy the type), so solve-check cost is answerable from the verify event.
 export type SolveCheckRunTaskFn = TaskTextRunFn;
 
-// The minimal subject-profile shape solve-check threads to the solver / judge. We
-// keep this loose (not the full SubjectProfile import) so the check stays a leaf —
-// callers already hold a resolved profile and pass it through.
+// The resolved subject profile is forwarded unchanged to the solver / judge.
 export interface SolveCheckProfile {
   id: string;
   // passed straight into SemanticJudge's JudgeAnswerParams.subjectProfile.
-  // biome-ignore lint/suspicious/noExplicitAny: caller passes a resolved SubjectProfile; this leaf only forwards it.
-  full: any;
+  full: SubjectProfile;
 }
 
 /**
@@ -358,8 +357,7 @@ export interface IndependentSolutionOptions {
   runTaskFn: SolveCheckRunTaskFn;
   profile: SolveCheckProfile;
   // db is needed whenever SemanticJudge runs, including an exact-mismatch fallback.
-  // biome-ignore lint/suspicious/noExplicitAny: leaf forwards the caller's Db handle to SemanticJudge.
-  db?: any;
+  db?: Db;
   /** OF-4(ii) seam: override the solver model per tier. Threaded into ctx.override.model. */
   solverModelOverride?: string;
   /**
@@ -393,7 +391,10 @@ export interface IndependentSolutionOptions {
   ) => Promise<void>;
 }
 
-export interface SolveCheckOptions extends IndependentSolutionOptions {}
+export interface SolveCheckOptions extends IndependentSolutionOptions {
+  /** Learner-visible release needs affirmative agreement, not legacy non-disagreement. */
+  validationMode?: 'release_strict';
+}
 
 // CONSERVATIVE threshold for the open-question semantic path (OF-4 / R2): only an
 // 'incorrect' verdict AT OR ABOVE this confidence fails solve-check. High by design
@@ -448,24 +449,26 @@ export function solveCheckBlocks(
   return false; // compared_by === 'none' never accompanies verdict='fail'; defensive.
 }
 
-// Question kinds whose answer is an EXACT token (compare by normalization). Open
-// kinds (prose) route to the conservative semantic path. Mirrors the judge layer's
-// exact-vs-semantic split without importing it (this is a content-quality check, not
-// a student-grading judge).
-const EXACT_KINDS = new Set(['choice', 'true_false', 'fill_blank']);
-
+// YUK-391 (kind Step 4): "answer is an EXACT token (compare by normalization)"
+// is now derived from the answer-class axis instead of the hand-maintained
+// EXACT_KINDS set: the objective kind family (isObjectiveAnswerKind — kinds
+// whose answer-class is exact/keyword under EVERY keyword shape → choice /
+// true_false / fill_blank) is byte-equivalent to the retired set, including on
+// raw profile-vocab strings (single_choice etc. derive semantic → NOT exact —
+// only persisted choices carry such a row to the normalize path, exactly like
+// before). Open kinds (prose) route to the conservative semantic path.
 function isExactQuestion(q: SolveCheckQuestion): boolean {
   if (q.judge_kind_override === 'exact') return true;
   if (q.judge_kind_override === 'keyword' || q.judge_kind_override === 'semantic') return false;
   // Structure is the source of truth for the exact/semantic split, mirroring the
   // formal judge dispatch (route-resolve.ts: `choices.length > 0 → 'exact'`). A row
-  // with persisted choices is a single/multiple-choice item regardless of the kind
-  // string a subject profile uses (history/学科 题型 expose 'single_choice' etc.
-  // while the canonical QuestionKind enum only knows 'choice'). Without this, those
-  // rows fell through to the conservative semantic path and a wrong reference answer
-  // went undetected by solve-check.
+  // with persisted choices is a single/multiple-choice item regardless of the
+  // free-form kind label a subject profile uses (history/学科 题型 expose
+  // 'single_choice' etc.; YUK-386 made kind a free-form display label). Without
+  // this, those rows fell through to the conservative semantic path and a wrong
+  // reference answer went undetected by solve-check.
   if ((q.choices_md ?? []).length > 0) return true;
-  return EXACT_KINDS.has(q.kind);
+  return isObjectiveAnswerKind(q.kind);
 }
 
 // F2: the question's declared answer for solve-check comparison. solution-generate.ts
@@ -485,8 +488,8 @@ function isExactQuestion(q: SolveCheckQuestion): boolean {
 // decimals like "3.14" never truncate) as candidates; the quiz_gen prompt contract puts the
 // bare answer first (choice/true_false: correct option text). Reverse (false-pass) risk: a
 // solver final_answer would have to normalize-equal a NON-answer prose line — implausible
-// for exact-shaped rows (the exact path is already gated to EXACT_KINDS / persisted choices
-// / judge='exact'), and a rare false pass merely reproduces the pre-solve-check status quo,
+// for exact-shaped rows (the exact path is already gated to the objective kind family
+//  / persisted choices / judge='exact'), and a rare false pass merely reproduces the pre-solve-check status quo,
 // vs. the certain false FAIL today. Whole-text candidate kept (multi-candidate `.includes`
 // = any hit passes); candidate[0] stays the whole text so the semantic path's reference is
 // unchanged. No kind gate — spec 附录 B (review A1 裁决).
@@ -768,7 +771,6 @@ async function runIndependentSolutionInternal(
   const ctx: Record<string, unknown> = {
     db: opts.db,
     subjectProfile: opts.profile.full,
-    outputFormat: SOLUTION_GENERATE_OUTPUT_FORMAT,
   };
   if (solverOverride) ctx.override = solverOverride;
 
@@ -987,6 +989,7 @@ export async function runSolveCheck(
   question: SolveCheckQuestion,
   opts: SolveCheckOptions,
 ): Promise<SolveCheckResult> {
+  const releaseStrict = opts.validationMode === 'release_strict';
   // F2: prefer the structured final answer (rubric_json.reference_solution) over the
   // worked-solution prose in reference_md. referenceAnswer is the primary candidate
   // used for human-readable reason strings + the semantic-path reference; the full
@@ -1018,16 +1021,18 @@ export async function runSolveCheck(
       figures: question.figures,
     },
     opts,
-    {
-      // Preserve the ordinary question-supply adapter byte-for-byte while the
-      // exported validator seam remains strictly reference-free.
-      advisoryHints: {
-        existing_answers_hint: meta.tencent_right_answer ?? null,
-        existing_analysis_hint: meta.tencent_answer_analysis ?? null,
-      },
-      includePlacementAuthorityInTaskInput: true,
-      allowPartialContract: true,
-    },
+    releaseStrict
+      ? {}
+      : {
+          // Preserve the ordinary question-supply adapter byte-for-byte while the
+          // exported validator seam remains strictly reference-free.
+          advisoryHints: {
+            existing_answers_hint: meta.tencent_right_answer ?? null,
+            existing_analysis_hint: meta.tencent_answer_analysis ?? null,
+          },
+          includePlacementAuthorityInTaskInput: true,
+          allowPartialContract: true,
+        },
   );
   if (independentlySolved.status === 'unsupported') {
     return {
@@ -1173,7 +1178,12 @@ export async function runSolveCheck(
       knowledge_ids: question.knowledge_ids ?? null,
       metadata: question.metadata ?? null,
     },
-    answer_md: solverFinalAnswer,
+    // Method/derivation questions must compare the independent worked solution,
+    // not discard it and then penalize the solver for providing only a number.
+    // Keep the final answer explicit, including for legacy answer-only outputs.
+    answer_md: independentlySolved.worked_solution_md
+      ? `${solverFinalAnswer}\n\n${independentlySolved.worked_solution_md}`
+      : solverFinalAnswer,
     subjectProfile: opts.profile.full,
     runTaskFn: recordingRunTaskFn,
   };
@@ -1203,15 +1213,15 @@ export async function runSolveCheck(
   // `incorrect` does not establish equivalence. Preserve it as `unsupported`
   // so provenance-anchored tier 2 can hold for review instead of silently
   // promoting; tier 3/4 continues treating unsupported as non-blocking.
-  const exactFallbackUnresolved =
-    normalizedExactMismatch && !confidentlyEquivalent && !confidentlyDisagrees;
+  const comparisonUnresolved =
+    (normalizedExactMismatch || releaseStrict) && !confidentlyEquivalent && !confidentlyDisagrees;
   const fallbackPrefix = normalizedExactMismatch ? 'Normalized exact candidates disagreed; ' : '';
   let verdict: SolveCheckResult['verdict'];
   let reason: string;
   if (confidentlyDisagrees) {
     verdict = 'fail';
     reason = `${fallbackPrefix}SemanticJudge confidently scored the independent solver answer as incorrect (confidence ${judged.confidence.toFixed(2)} >= ${SOLVE_CHECK_SEMANTIC_THRESHOLD})`;
-  } else if (exactFallbackUnresolved) {
+  } else if (comparisonUnresolved) {
     verdict = 'unsupported';
     reason = `${fallbackPrefix}SemanticJudge could not establish equivalence (outcome=${judged.coarse_outcome}, confidence=${judged.confidence.toFixed(2)}) — hold provenance-anchored sources for review`;
   } else if (confidentlyEquivalent) {
@@ -1283,8 +1293,7 @@ export interface TeachingQualityOptions {
   // itself is subject-neutral (pass-through, registry.ts) and does not consume it.
   profile: {
     id: string;
-    // biome-ignore lint/suspicious/noExplicitAny: caller passes a resolved SubjectProfile; this leaf only forwards it.
-    full: any;
+    full: SubjectProfile;
   };
   placementAuthority?: PlacementVerificationAuthority;
   assertPlacementAuthorityFn?: typeof assertPlacementAuthority;

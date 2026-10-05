@@ -1,0 +1,106 @@
+vite v8.2.1 building client environment for production...
+[2Ktransforming...✓ 3478 modules transformed.
+rendering chunks...
+computing gzip size...
+web/dist/assets/favicon-C9LPG-gf.svg                    0.21 kB │ gzip:   0.18 kB
+web/dist/index.html                                     1.83 kB │ gzip:   0.58 kB
+web/dist/assets/NoteReaderPage-cPUxbEP2.css             3.81 kB │ gzip:   0.93 kB
+web/dist/assets/ScreenProfile-DKj7vizT.css              8.32 kB │ gzip:   1.85 kB
+web/dist/assets/KnowledgeDetailPage-JoSDxgag.css       12.11 kB │ gzip:   2.45 kB
+web/dist/assets/onboarding-BUHhbkC2.css                17.35 kB │ gzip:   3.24 kB
+web/dist/assets/DraftReviewPage-LkZKXc7k.css           19.22 kB │ gzip:   3.63 kB
+web/dist/assets/shell-Cy5DaKp3.css                     20.20 kB │ gzip:   3.55 kB
+web/dist/assets/questions-D_jvbV0r.css                 22.90 kB │ gzip:   4.26 kB
+web/dist/assets/PracticeFacePage-BXAcy5TA.css          30.86 kB │ gzip:   5.17 kB
+web/dist/assets/index-AlDBWqpe.css                    274.72 kB │ gzip:  42.21 kB
+web/dist/assets/limits-C7nkFjQd.js                      0.02 kB │ gzip:   0.04 kB
+web/dist/assets/makeLookup-CQ4qbBBe.js                  0.04 kB │ gzip:   0.06 kB
+web/dist/assets/routes-BUWoHriM.js                      0.07 kB │ gzip:   0.09 kB
+web/dist/assets/calibration-maturity-api-1xuAaLCo.js    0.14 kB │ gzip:   0.14 kB
+web/dist/assets/profile-api-Byz2x_tD.js                 0.15 kB │ gzip:   0.15 kB
+web/dist/assets/SectionLabel-D4gdFYVo.js                0.30 kB │ gzip:   0.20 kB
+web/dist/assets/Stateful-CxCF_Srx.js                    0.33 kB │ gzip:   0.25 kB
+web/dist/assets/relation-cue-NTlnANg0.js                0.39 kB │ gzip:   0.27 kB
+web/dist/assets/LoomCard-CenO0Iw5.js                    0.40 kB │ gzip:   0.29 kB
+web/dist/assets/LoomBadge-BTQprlPv.js                   0.41 kB │ gzip:   0.30 kB
+web/dist/assets/usePagehideTransition-BttgVVEI.js       0.43 kB │ gzip:   0.27 kB
+web/dist/assets/EmptyState-CI_bDAOa.js                  0.48 kB │ gzip:   0.27 kB
+web/dist/assets/PageHeader-DPMXu5sk.js                  0.50 kB │ gzip:   0.27 kB
+web/dist/assets/SkLines-CO-tZcKK.js                     0.53 kB │ gzip:   0.30 kB
+web/dist/assets/ErrorState-WWuqnYjI.js                  0.54 kB │ gzip:   0.35 kB
+web/dist/assets/Btn-BCFt7XZv.js                         0.57 kB │ gzip:   0.38 kB
+web/dist/assets/SubjectFilterTabs-ISuGg77o.js           0.59 kB │ gzip:   0.35 kB
+web/dist/assets/BrandMark-Bkjr_7oN.js                   0.65 kB │ gzip:   0.36 kB
+web/dist/assets/rolldown-runtime-hePW80VL.js            0.71 kB │ gzip:   0.42 kB
+web/dist/assets/utils-GtvbzWLn.js                       0.74 kB │ gzip:   0.38 kB
+web/dist/assets/useSubjects-BC73F5Z5.js                 0.76 kB │ gzip:   0.45 kB
+web/dist/assets/ObSteps-D4k2zLgZ.js                     0.76 kB │ gzip:   0.47 kB
+web/dist/assets/Badge-DM_JJVcP.js                       1.10 kB │ gzip:   0.55 kB
+web/dist/assets/useInfiniteQuery-BYlCADiU.js            1.11 kB │ gzip:   0.46 kB
+web/dist/assets/preload-helper-Czpn1I53.js              1.19 kB │ gzip:   0.67 kB
+web/dist/assets/assets-BWOKjhUc.js                      1.21 kB │ gzip:   0.56 kB
+web/dist/assets/api-D-SPNEt4.js                         1.75 kB │ gzip:   0.91 kB
+web/dist/assets/math-markdown-CjW77zNn.js               1.77 kB │ gzip:   0.91 kB
+web/dist/assets/subject-BgwK_U92.js                     2.17 kB │ gzip:   0.94 kB
+web/dist/assets/observability-shared-CiugpsKv.js        2.19 kB │ gzip:   0.98 kB
+web/dist/assets/admin-failures-DsgMZ0ho.js              2.48 kB │ gzip:   1.20 kB
+web/dist/assets/NotesPage-CHy2ZZRY.js                   3.15 kB │ gzip:   1.57 kB
+web/dist/assets/subjects-CBVRA2Qf.js                    3.16 kB │ gzip:   1.42 kB
+web/dist/assets/sse-p8rD7kCB.js                         3.28 kB │ gzip:   1.68 kB
+web/dist/assets/admin-cost-B3o7SP2b.js                  3.49 kB │ gzip:   1.52 kB
+web/dist/assets/page-BJxf6xFJ.js                        4.01 kB │ gzip:   1.95 kB
+web/dist/assets/useMutation-C_dSqCJr.js                 5.60 kB │ gzip:   1.81 kB
+web/dist/assets/remark-math-mQmSALL7.js                 5.92 kB │ gzip:   2.22 kB
+web/dist/assets/practice-api-vJOupBke.js                6.40 kB │ gzip:   2.31 kB
+web/dist/assets/LoomIcon-BgCBhCsB.js                    6.71 kB │ gzip:   2.43 kB
+web/dist/assets/ScreenProfile-BntQZObC.js               7.36 kB │ gzip:   3.19 kB
+web/dist/assets/OnboardRecord-J1ZoBOOJ.js               7.49 kB │ gzip:   3.06 kB
+web/dist/assets/coverage-lattice-DJdEn5N2.js            7.89 kB │ gzip:   3.14 kB
+web/dist/assets/jsx-runtime-DE3RlOCf.js                 7.89 kB │ gzip:   2.99 kB
+web/dist/assets/admin-runs-CFWlvUqZ.js                  8.05 kB │ gzip:   3.25 kB
+web/dist/assets/conjecture-scores-CrvVLF5_.js           8.09 kB │ gzip:   3.07 kB
+web/dist/assets/MistakesPage-B3bBUybo.js                8.14 kB │ gzip:   3.34 kB
+web/dist/assets/useAgentReads-Cuqxq1t3.js               8.81 kB │ gzip:   3.51 kB
+web/dist/assets/WelcomePage-BW7grvfc.js                 9.33 kB │ gzip:   3.55 kB
+web/dist/assets/EventDetailPage-DQCEigHV.js             9.45 kB │ gzip:   3.68 kB
+web/dist/assets/ScreenPlacement-BYsPfZ3o.js            10.15 kB │ gzip:   4.11 kB
+web/dist/assets/QuestionsPage-CvfLPeAB.js              13.97 kB │ gzip:   4.96 kB
+web/dist/assets/subject-traits-Bv3wnWDV.js             15.68 kB │ gzip:   4.86 kB
+web/dist/assets/KnowledgePage-BfuXzT4h.js              16.83 kB │ gzip:   5.54 kB
+web/dist/assets/DraftReviewPage-BCOX7I1z.js            20.61 kB │ gzip:   6.81 kB
+web/dist/assets/KnowledgeDetailPage-D0qE3XI8.js        22.34 kB │ gzip:   7.62 kB
+web/dist/assets/NoteReaderPage-rOqhFFk_.js             22.64 kB │ gzip:   7.02 kB
+web/dist/assets/QuestionDetailPage-DDRhszlO.js         23.18 kB │ gzip:   7.06 kB
+web/dist/assets/useQuery-wfC8tjLo.js                   23.96 kB │ gzip:   7.94 kB
+web/dist/assets/InboxPage-DlfR_Tby.js                  26.25 kB │ gzip:   9.12 kB
+web/dist/assets/shell-Edzc2_by.js                      28.36 kB │ gzip:   8.11 kB
+web/dist/assets/CoachHub-DXJfYYDY.js                   33.94 kB │ gzip:  10.50 kB
+web/dist/assets/profile-0HZuLYa_.js                    38.14 kB │ gzip:  11.38 kB
+web/dist/assets/TodayPage-3tKaUObl.js                  39.97 kB │ gzip:  12.10 kB
+web/dist/assets/RecordPage-CucaT70B.js                 45.21 kB │ gzip:  13.28 kB
+web/dist/assets/PracticeFacePage-C7ThIj1N.js           58.08 kB │ gzip:  18.19 kB
+web/dist/assets/business-mhafY02k.js                   88.75 kB │ gzip:  24.18 kB
+web/dist/assets/markdown-renderer-DZPM8SEs.js         116.09 kB │ gzip:  35.11 kB
+web/dist/assets/accelerator-FCcl3QDH.js               219.02 kB │ gzip:  64.51 kB
+web/dist/assets/rehype-katex-oJ64cLdo.js              267.80 kB │ gzip:  80.88 kB
+web/dist/assets/index-C2sKjG4b.js                     391.60 kB │ gzip: 124.40 kB
+web/dist/assets/MeshGraph-DPUnnPM2.js                 566.59 kB │ gzip: 174.24 kB
+
+✓ built in 1.04s
+[plugin builtin:vite-reporter]
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+
+  dist/server.cjs  24.0mb ⚠️
+
+⚡ Done in 1149ms
+
+  dist/worker.cjs  24.1mb ⚠️
+
+⚡ Done in 709ms
+
+  dist/migrate.cjs  3.0mb ⚠️
+
+⚡ Done in 82ms

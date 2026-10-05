@@ -15,24 +15,20 @@
 // regresses, the "product is openable" contract breaks before the flag ever flips.
 
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';
 import { event, goal, knowledge, mastery_state, question } from '@/db/schema';
+import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
-const placementFlag = { value: true };
-vi.mock('@/server/session/placement', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/server/session/placement')>();
-  return {
-    ...actual,
-    get PLACEMENT_PROBE_ENABLED() {
-      return placementFlag.value;
-    },
-  };
+// YUK-1007：getter-mock 换成 config overlay——setTestConfig 注入的生效值压过
+// env/code-default（pinned 键直读 env 层，overlay 恒最上层）。注入是值快照。
+beforeEach(() => {
+  setTestConfig({ PLACEMENT_PROBE_ENABLED: true });
 });
 
-import { seedKnowledge as seedSubjectRoots } from '@/capabilities/knowledge/server/seed';
-import { tagKnowledge } from '@/capabilities/knowledge/server/tag-knowledge';
+import { seedKnowledge as seedSubjectRoots, tagKnowledge } from '@/capabilities/knowledge/public';
 import { EMBED_DIMS } from '@/server/ai/embed';
 import { GET as getProfile } from './placement-profile';
 import { POST as startPlacement } from './placement-start';
@@ -40,8 +36,10 @@ import { POST as startPlacement } from './placement-start';
 const db = testDb();
 
 beforeEach(() => {
-  placementFlag.value = true;
   return resetDb();
+});
+afterEach(() => {
+  resetTestConfig();
 });
 
 function jsonReq(body: unknown): Request {
@@ -70,6 +68,7 @@ async function seedDayOneGoal(id: string): Promise<void> {
     updated_at: now,
     version: 0,
   });
+  await migrateCanonicalProjections(db);
 }
 
 // The placement-eligibility-faithful landed shape: draft_status 'active' + tagged KC match

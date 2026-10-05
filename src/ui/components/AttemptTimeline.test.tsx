@@ -42,7 +42,7 @@ describe('AttemptTimeline', () => {
       mkAttempt({
         event_id: 'a1',
         outcome: 'failure',
-        cause: { primary: 'careless_mistake', confidence: 0.8 },
+        cause: { primary: 'careless_mistake', primary_label: null, confidence: 0.8 },
         duration_ms: 4_500,
       }),
       mkReview({
@@ -66,15 +66,15 @@ describe('AttemptTimeline', () => {
     const events: AttemptTimelineEvent[] = [
       mkAttempt({
         event_id: 'a1',
-        cause: { primary: 'careless_mistake', confidence: 0.7 },
+        cause: { primary: 'careless_mistake', primary_label: null, confidence: 0.7 },
       }),
       mkAttempt({
         event_id: 'a2',
-        cause: { primary: 'careless_mistake', confidence: 0.8 },
+        cause: { primary: 'careless_mistake', primary_label: null, confidence: 0.8 },
       }),
       mkAttempt({
         event_id: 'a3',
-        cause: { primary: 'concept', confidence: 0.6 },
+        cause: { primary: 'concept', primary_label: null, confidence: 0.6 },
       }),
     ];
 
@@ -85,6 +85,47 @@ describe('AttemptTimeline', () => {
     expect(html).toMatch(/×[^<]*?<!-- -->careless_mistake|×careless_mistake/);
     // The non-repeated cause should NOT carry the "×" marker.
     expect(html).not.toMatch(/×[^<]*?concept|×concept/);
+  });
+
+  it('renders primary_label instead of the raw misc id, but counts repeats by raw id', () => {
+    // YUK-1018: misc_<sha> stays the identity; the misconception title is display-only.
+    // Two entries sharing the same raw id still count as a repeated cause even if the
+    // title text drifted between attributions.
+    const events: AttemptTimelineEvent[] = [
+      mkAttempt({
+        event_id: 'a1',
+        cause: {
+          primary: 'misc_abc123',
+          primary_label: '把「之」当普通助词',
+          confidence: 0.8,
+        },
+      }),
+      mkAttempt({
+        event_id: 'a2',
+        cause: {
+          primary: 'misc_abc123',
+          primary_label: '把「之」当普通助词（修订）',
+          confidence: 0.7,
+        },
+      }),
+    ];
+
+    const html = renderToString(<AttemptTimeline events={events} now_sec={NOW_SEC} />);
+    expect(html).toContain('把「之」当普通助词');
+    expect(html).not.toContain('misc_abc123');
+    // Repeated-cause marker still fires because grouping keys on the raw primary id.
+    expect(html.match(/data-repeated-cause="true"/g)).toHaveLength(2);
+  });
+
+  it('falls back to the raw primary when primary_label is null', () => {
+    const events: AttemptTimelineEvent[] = [
+      mkAttempt({
+        event_id: 'a1',
+        cause: { primary: 'misc_gone', primary_label: null, confidence: 0.5 },
+      }),
+    ];
+    const html = renderToString(<AttemptTimeline events={events} now_sec={NOW_SEC} />);
+    expect(html).toContain('misc_gone');
   });
 
   it('falls back to time formatting when older than a day', () => {

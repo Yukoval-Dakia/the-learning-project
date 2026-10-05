@@ -147,6 +147,13 @@ const AttemptOnQuestionSchema = z.object({
     // 下游：attribution_followup 从此字段读入 AttributionInput.reasoning_trace_md（通电，
     // 见 attribute.ts）。REASONING_TRACE_MAX_LEN 与 hints_used 同风格封上界，挡失真大文本。
     reasoning_trace: z.string().max(REASONING_TRACE_MAX_LEN).optional(),
+    // YUK-1051 / Q-922 (A10) — self_confidence: 学生在看到判定之前对本作答的主观把握
+    // （1–5 整数，1=完全没底 … 5=十拿九稳）。**observe-only**：仅作分析采集，绝不进
+    // θ̂ / FSRS / 判分（mirror ReviewOnQuestion.payload.self_confidence 的语义与命名）。
+    // 来源是卷面 per-question 信心自评插拍（PfPaper → buildPaperSubmissionBody）。
+    // OPTIONAL：无自评 / 历史 attempt / 非卷作答恒缺省 → 既有 attempt 读路径逐字不变
+    // （byte-identical）；engagement 红线（零强制）= 字段 optional。
+    self_confidence: z.number().int().min(1).max(5).optional(),
     // YUK-804 — immutable question evidence at answer time. Optional only for
     // historical events; every live attempt writer must stamp it. The snapshot
     // includes a shared parent stem for question parts, so later edits/deletes
@@ -831,6 +838,84 @@ export const ToolUseQuery = z
   });
 export type ToolUseQueryT = z.infer<typeof ToolUseQuery>;
 
+const TOOL_OPERATION_EVENT_NAME_MAX_CHARS = 256;
+const TOOL_OPERATION_EVENT_ERROR_CODE_MAX_CHARS = 100;
+const TOOL_OPERATION_EVENT_ERROR_MESSAGE_MAX_CHARS = 4_000;
+
+export const ToolOperationYielded = z.object({
+  actor_kind: z.literal('system'),
+  actor_ref: z.literal('tool_operations'),
+  action: z.literal('tool_operation_yielded'),
+  subject_kind: z.literal('tool_operation'),
+  subject_id: z.string(),
+  outcome: z.null(),
+  payload: z.object({
+    tool_name: z.string().min(1).max(TOOL_OPERATION_EVENT_NAME_MAX_CHARS),
+    effect: z.enum(['read', 'propose', 'write']),
+    process_id: z.string().min(1).max(TOOL_OPERATION_EVENT_NAME_MAX_CHARS),
+  }),
+  ...baseOptionalFields,
+});
+export type ToolOperationYieldedT = z.infer<typeof ToolOperationYielded>;
+
+export const ToolOperationSettled = z
+  .object({
+    actor_kind: z.literal('system'),
+    actor_ref: z.literal('tool_operations'),
+    action: z.literal('tool_operation_settled'),
+    subject_kind: z.literal('tool_operation'),
+    subject_id: z.string(),
+    outcome: z.enum(['success', 'failure']),
+    payload: z.object({
+      state: z.enum(['succeeded', 'failed', 'cancelled', 'lost']),
+      side_effect_risk: z.enum(['none', 'possible']).optional(),
+      error: z
+        .object({
+          code: z.string().min(1).max(TOOL_OPERATION_EVENT_ERROR_CODE_MAX_CHARS),
+          message: z.string().min(1).max(TOOL_OPERATION_EVENT_ERROR_MESSAGE_MAX_CHARS),
+        })
+        .optional(),
+      terminal_tool_call_log_id: z
+        .string()
+        .min(1)
+        .max(TOOL_OPERATION_EVENT_NAME_MAX_CHARS)
+        .optional(),
+    }),
+    ...baseOptionalFields,
+  })
+  .superRefine((data, ctx) => {
+    const isSucceeded = data.payload.state === 'succeeded';
+    if ((data.outcome === 'success') !== isSucceeded) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'outcome must match the terminal state',
+        path: ['outcome'],
+      });
+    }
+    if (isSucceeded && (data.payload.error || data.payload.side_effect_risk)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'succeeded operations cannot carry error or side-effect risk',
+        path: ['payload'],
+      });
+    }
+    if (!isSucceeded && !data.payload.error) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'non-success terminal states require an error',
+        path: ['payload', 'error'],
+      });
+    }
+    if ((data.payload.state === 'lost') !== Boolean(data.payload.side_effect_risk)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'side-effect risk is required only for lost operations',
+        path: ['payload', 'side_effect_risk'],
+      });
+    }
+  });
+export type ToolOperationSettledT = z.infer<typeof ToolOperationSettled>;
+
 // 11. RateKnowledgeEdge — actor=user / action='rate' / subject='knowledge_edge'
 //
 // 用户对 propose / generate 的 edge 投票。rating='change_type' 时 new_relation_type 必填、
@@ -906,6 +991,8 @@ export const KnownEvent = z
     AcceptSuggestionChip,
     ExtractSourceDocument,
     ToolUseQuery,
+    ToolOperationYielded,
+    ToolOperationSettled,
   ])
   .superRefine(enforceStableUserActorRef);
 export type KnownEventT = z.infer<typeof KnownEvent>;

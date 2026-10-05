@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import { type Provider, type TaskKind, tasks } from '@/ai/registry';
-import { isAiTaskKind } from '@/ai/task-prompts';
+import type { Provider, TaskKind } from '@/capabilities/task-registry';
+import { getLearnerLocale, isAiTaskKind } from '@/capabilities/task-registry';
 import { getDefaultRegistry } from '@/core/capability/judges';
 import type { CapabilityRegistry } from '@/core/capability/registry';
 import { JudgeKind as JudgeKindSchema } from '@/core/schema/business';
@@ -11,7 +11,6 @@ import {
   type JudgeResultV2T,
 } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
-import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
 import type { TaskTextResult } from '@/server/ai/provenance';
 import {
   crossoverModelForProvider,
@@ -30,7 +29,6 @@ import {
 } from './judge-execution-provenance';
 import { narrowQuestionToPart } from './narrow-part';
 import {
-  FUTURE_JUDGE_ROUTES,
   type JudgeAnswerParams,
   RUNNABLE_ROUTES,
   buildLocalJudgeQuestion,
@@ -39,11 +37,6 @@ import {
   unsupportedResult,
 } from './question-contract';
 import { resolveQuestionJudgeRoute } from './route-resolve';
-
-const unitDimensionOutputSchema = tasks.UnitDimensionFallback.structuredOutputSchema;
-const UNIT_DIMENSION_OUTPUT_FORMAT = unitDimensionOutputSchema
-  ? zodToJsonSchemaOutputFormat(unitDimensionOutputSchema)
-  : undefined;
 
 export const JudgeInvokerQuestionSchema = z
   .object({
@@ -87,7 +80,7 @@ export const JudgeInvokerInputSchema = z.object({
   //
   // W5 #TuwGv — `isKnownProvider` ALONE does not deliver that promise: it is
   // `Object.hasOwn(PROVIDERS, name)`, which is true for the reserved-but-unwired names
-  // (`openrouter` / `gateway` / `openai`), so those passed the boundary and threw later at
+  // (`openrouter` / `gateway`), so those passed the boundary and threw later at
   // `resolveTaskProvider`'s "reserved but not implemented" guard — exactly the downstream
   // failure this validation exists to prevent. Both predicates are needed, and together they
   // match the discipline `judgeFallbackProvider` already applies on the config side. Still
@@ -202,12 +195,13 @@ export class JudgeInvoker {
       // provider timeout (steps/semantic swallow into 'unsupported') still records
       // that the model WAS attempted (→ historical_unknown, never deterministic).
       modelAttempted = true;
+      const learnerLocale = callCtx?.learnerLocale ?? getLearnerLocale();
       // YUK-594 (D7/D9) — durable runs override the runner ctx per-call: FORCE
       // enableTransientRetry:false (queue redelivery is the durable handler's only
       // transient layer, D7 single-transient-layer) and, on the fallback redelivery,
       // pin RunTaskCtx.override.provider so the call crosses to the fallback lane
       // (reuses the existing resolveTaskProvider seam — no new plumbing, D9). The
-      // sync HTTP paths never set `durable`, so callCtx passes through UNCHANGED
+      // sync HTTP paths never set `durable`, so callCtx otherwise passes through
       // (K2: the vision judges' sanctioned enableTransientRetry survives on them).
       // Cast note: `enableTransientRetry` is Omit'ted from the typed RunTaskCallCtx,
       // but judgeDefaultRunTaskFn forwards the ctx verbatim to runTask, so setting it
@@ -222,7 +216,7 @@ export class JudgeInvoker {
       // runTask boundary, so that refactor fails CI on the D7 single-transient-layer
       // invariant rather than degrading in production. Keep that test if this moves.
       const durable = narrowed.durable;
-      let effectiveCtx = callCtx;
+      let effectiveCtx = { ...callCtx, learnerLocale };
       if (durable) {
         const base = (callCtx && typeof callCtx === 'object' ? callCtx : {}) as Record<
           string,
@@ -230,6 +224,7 @@ export class JudgeInvoker {
         >;
         effectiveCtx = {
           ...base,
+          learnerLocale,
           enableTransientRetry: false,
           // W5 #TurRP — crossing lanes must pin the MODEL too, not just the provider.
           // `resolveTaskProvider` layers the two independently
@@ -250,7 +245,7 @@ export class JudgeInvoker {
                 },
               }
             : {}),
-        } as typeof callCtx;
+        } as typeof effectiveCtx;
       }
       // Compute the judge result FIRST — it must NEVER be lost to a failure in the
       // advisory provenance metadata below.
@@ -278,6 +273,7 @@ export class JudgeInvoker {
             taskInput,
             subjectProfile: narrowed.subjectProfile,
             judgeRoute: route,
+            learnerLocale,
           }),
           prompt_template_revision: JUDGE_PROMPT_TEMPLATE_REVISION,
         };
@@ -363,10 +359,15 @@ export class JudgeInvoker {
   }
 
   private async dispatch(route: JudgeKind, input: JudgeAnswerParams): Promise<JudgeResultV2T> {
+    // YUK-374 — a route outside RUNNABLE_ROUTES (today: the 'rubric' /
+    // 'ai_flexible' enum members, see UNIMPLEMENTED_JUDGE_ROUTES in
+    // question-contract.ts) has NO runner, so dispatch fails loudly with
+    // `unsupported`. The evidence records only the dispatched route — no
+    // `allowed_future_routes` claim: nothing consumed that key, and it
+    // advertised a "sanctioned upcoming" capability surface that does not exist.
     if (!RUNNABLE_ROUTES.has(route)) {
       return unsupportedResult(route, `judge route '${route}' is not implemented`, {
         route,
-        allowed_future_routes: FUTURE_JUDGE_ROUTES,
       });
     }
 
@@ -422,7 +423,6 @@ export class JudgeInvoker {
           runTaskFn: runTaskFn ?? defaultRunTaskFn(input.db),
           runTaskCtx: {
             subjectProfile: input.subjectProfile,
-            outputFormat: UNIT_DIMENSION_OUTPUT_FORMAT,
           },
         },
       );

@@ -985,7 +985,7 @@ const traitHeadStyle: CSSProperties = {
 
 const kindStyle: CSSProperties = {
   fontFamily: 'var(--font-mono)',
-  fontSize: 12.5,
+  fontSize: 'var(--fs-caption)',
   minWidth: 110,
 };
 
@@ -1010,13 +1010,13 @@ const fieldLabelStyle: CSSProperties = {
 
 const fieldNameStyle: CSSProperties = {
   fontFamily: 'var(--font-mono)',
-  fontSize: 11.5,
+  fontSize: 'var(--fs-caption)',
   color: 'var(--ink-4)',
 };
 
 const fieldInputStyle: CSSProperties = {
   fontFamily: 'var(--font-mono)',
-  fontSize: 12,
+  fontSize: 'var(--fs-caption)',
   padding: 6,
   border: '1px solid var(--line-soft)',
   borderRadius: 6,
@@ -1033,7 +1033,7 @@ const actionRowStyle: CSSProperties = {
 
 const inlineBtnStyle: CSSProperties = {
   fontFamily: 'var(--font-mono)',
-  fontSize: 11.5,
+  fontSize: 'var(--fs-caption)',
   padding: '3px 10px',
   border: '1px solid var(--line-soft)',
   borderRadius: 999,
@@ -1044,7 +1044,7 @@ const inlineBtnStyle: CSSProperties = {
 
 const renameInputStyle: CSSProperties = {
   fontFamily: 'var(--font-mono)',
-  fontSize: 12,
+  fontSize: 'var(--fs-caption)',
   padding: '4px 10px',
   border: '1px solid var(--line-soft)',
   borderRadius: 999,
@@ -1065,17 +1065,17 @@ const noticeStyle: CSSProperties = {
 
 const errStyle: CSSProperties = {
   margin: 0,
-  fontSize: 12.5,
+  fontSize: 'var(--fs-caption)',
   color: 'var(--coral, #c0392b)',
 };
 
 const monoSmallStyle: CSSProperties = {
   fontFamily: 'var(--font-mono)',
-  fontSize: 11.5,
+  fontSize: 'var(--fs-caption)',
 };
 
 const mutedTextStyle: CSSProperties = {
   margin: 0,
   color: 'var(--ink-3)',
-  fontSize: 12.5,
+  fontSize: 'var(--fs-caption)',
 };

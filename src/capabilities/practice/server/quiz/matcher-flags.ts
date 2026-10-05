@@ -11,7 +11,7 @@
  *
  * false (default) → demand.answerClass is RECEIVED on the Demand but NOT pushed into the
  *   pool-fetch WHERE (the gated-YUK-395 「v1 收下不进 WHERE」 behaviour is unchanged). The pool
- *   query is BYTE-IDENTICAL to pre-B4 (the legacy kindsMatch shim in rankPool is untouched).
+ *   query is BYTE-IDENTICAL to pre-B4 (the answerClassCompatible label filter in rankPool is untouched).
  * true → demand.answerClass (when present) is forwarded to poolFetch.answerClass, adding the
  *   NULL-lenient hard filter `(answer_class = $X OR answer_class IS NULL)` to the WHERE so a
  *   candidate is eligible only if its answer_class matches the demand — a `steps` demand can

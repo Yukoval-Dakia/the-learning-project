@@ -1,8 +1,9 @@
 import { and, eq, sql } from 'drizzle-orm';
-
+import { LearningItemStateRestoreExperimental } from '@/core/schema/event/learning-item-events';
 import type { Tx } from '@/db/client';
 import { completion_evidence, learning_item } from '@/db/schema';
 import type { ProposalRetractInput } from '@/kernel/proposals';
+import { applyLearningItemRepair } from './learning-item-projection-port';
 export interface LearningStateRetractRuntime {
   findExistingRateEvent: (
     tx: Tx,
@@ -40,24 +41,13 @@ export async function retractCompletionProposal(
 
   const item = (
     await tx
-      .select({ id: learning_item.id, version: learning_item.version })
+      .select({ id: learning_item.id })
       .from(learning_item)
       .where(and(eq(learning_item.id, learningItemId), eq(learning_item.status, 'done')))
-      .limit(1)
+      .for('update')
   )[0];
   if (item) {
-    await tx
-      .update(learning_item)
-      .set({
-        status:
-          typeof payload.materialized_prior_status === 'string'
-            ? payload.materialized_prior_status
-            : 'in_progress',
-        completed_at: priorCompletedAt(payload, null),
-        updated_at: new Date(),
-        version: item.version + 1,
-      })
-      .where(and(eq(learning_item.id, learningItemId), eq(learning_item.version, item.version)));
+    await restorePriorState(tx, input, learningItemId, payload, 'done', 'in_progress', null);
   }
   await tx
     .delete(completion_evidence)
@@ -84,23 +74,52 @@ export async function retractRelearnProposal(
 
   const item = (
     await tx
-      .select({ id: learning_item.id, version: learning_item.version })
+      .select({ id: learning_item.id })
       .from(learning_item)
       .where(and(eq(learning_item.id, learningItemId), eq(learning_item.status, 'in_progress')))
-      .limit(1)
+      .for('update')
   )[0];
   if (!item) return;
 
-  await tx
-    .update(learning_item)
-    .set({
-      status:
-        typeof payload.materialized_prior_status === 'string'
-          ? payload.materialized_prior_status
-          : 'done',
-      completed_at: priorCompletedAt(payload, new Date()),
-      updated_at: new Date(),
-      version: item.version + 1,
-    })
-    .where(and(eq(learning_item.id, learningItemId), eq(learning_item.version, item.version)));
+  await restorePriorState(
+    tx,
+    input,
+    learningItemId,
+    payload,
+    'in_progress',
+    'done',
+    input.correction_at,
+  );
+}
+
+async function restorePriorState(
+  tx: Tx,
+  input: ProposalRetractInput,
+  itemId: string,
+  payload: PriorLearningItemState,
+  expectedStatus: 'done' | 'in_progress',
+  fallbackStatus: 'done' | 'in_progress',
+  fallbackCompletedAt: Date | null,
+): Promise<void> {
+  await applyLearningItemRepair(
+    tx,
+    LearningItemStateRestoreExperimental.parse({
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:learning_item_state_restore',
+      subject_kind: 'learning_item',
+      subject_id: itemId,
+      outcome: 'success',
+      caused_by_event_id: input.proposalId,
+      payload: {
+        expected_status: expectedStatus,
+        status:
+          typeof payload.materialized_prior_status === 'string'
+            ? payload.materialized_prior_status
+            : fallbackStatus,
+        completed_at: priorCompletedAt(payload, fallbackCompletedAt)?.toISOString() ?? null,
+      },
+    }),
+    input.correction_at,
+  );
 }

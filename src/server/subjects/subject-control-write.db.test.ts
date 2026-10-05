@@ -9,6 +9,7 @@ import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
 import {
   event,
   knowledge,
+  materialized_id_index,
   subject,
   subject_control_journal,
   subject_trait,
@@ -58,6 +59,36 @@ beforeEach(async () => {
 });
 
 describe('renameSubject（§8-7）', () => {
+  it.each(['missing history', 'structural drift'])(
+    'rejects %s and rolls back the subject rename',
+    async (failure) => {
+      const id = await createCustom();
+      const rootId = subjectRootId(id);
+      if (failure === 'missing history') {
+        await db
+          .delete(materialized_id_index)
+          .where(eq(materialized_id_index.materialized_id, rootId));
+        await db.delete(event).where(eq(event.subject_id, rootId));
+      } else {
+        await db
+          .update(knowledge)
+          .set({ name: 'untracked root edit' })
+          .where(eq(knowledge.id, rootId));
+      }
+      const beforeSubject = await subjectRow(id);
+      const beforeRoot = await db.select().from(knowledge).where(eq(knowledge.id, rootId));
+      const beforeJournal = await controlActions(id);
+      const beforeEvents = await db.select().from(event).orderBy(event.id);
+      await expect(
+        renameSubject(db, { subjectId: id, expectedRevision: 0, displayName: '化学基础' }),
+      ).rejects.toThrow(/history|drift/);
+      expect(await subjectRow(id)).toEqual(beforeSubject);
+      expect(await db.select().from(knowledge).where(eq(knowledge.id, rootId))).toEqual(beforeRoot);
+      expect(await controlActions(id)).toEqual(beforeJournal);
+      expect(await db.select().from(event).orderBy(event.id)).toEqual(beforeEvents);
+    },
+  );
+
   it('rename 化学→化学基础：display_name/norm + root.name 同步 + journal {from,to}', async () => {
     const id = await createCustom();
     const result = await renameSubject(db, {
@@ -254,6 +285,24 @@ describe('resetSubject — 只换绑，永不改共享 payload（§8-8）', () =
 });
 
 describe('validateSubject — 无状态预检（§8-15）', () => {
+  it.each([
+    'charter',
+    'judge_policy',
+    'cause_taxonomy',
+    'source_policy',
+    'render_theme',
+    'scheduling',
+  ] as const)(
+    'rejects an explicitly malformed %s override with its kind in the error',
+    async (kind) => {
+      const id = await createCustom('坏覆盖预检');
+      const result = await validateSubject(db, id, { [kind]: null });
+      expect(result?.valid).toBe(false);
+      expect(result?.errors.join('\n')).toContain(kind);
+      expect((await validateSubject(db, id))?.valid).toBe(true);
+    },
+  );
+
   it('现状 valid；幻 judge override → errors；零落库', async () => {
     const id = await createCustom();
     const clean = await validateSubject(db, id);

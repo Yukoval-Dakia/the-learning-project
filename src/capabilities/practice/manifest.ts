@@ -7,6 +7,16 @@ import {
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
 import {
+  CreateSubmissionBodySchema,
+  IssuanceCreatedSchema,
+  IssuanceParamsSchema,
+  IssuanceStateSchema,
+  IssueAssessmentBodySchema,
+  SaveResponseDraftBodySchema,
+  SaveResponseDraftResponseSchema,
+  SubmissionCreatedSchema,
+} from './api/assessment-contracts';
+import {
   AppealResponseSchema,
   AttemptResponseSchema,
   CreateAppealBodySchema,
@@ -69,6 +79,8 @@ import {
   QuestionListResponseSchema,
   QuestionParamsSchema,
   QuestionSolveParamsSchema,
+  RestoreQuestionBodySchema,
+  RestoreQuestionResponseSchema,
   SolveSessionCreatedSchema,
   SolveSessionParamsSchema,
   SolveSessionResponseSchema,
@@ -78,6 +90,10 @@ import {
   UpdateQuestionBodySchema,
   UpdateQuestionResponseSchema,
 } from './api/question-solve-contracts';
+import {
+  QuizGenTriggerAcceptedSchema,
+  QuizGenTriggerBodySchema,
+} from './api/quiz-gen-trigger-contracts';
 import {
   FixedAnchorBodySchema,
   FixedAnchorResponseSchema,
@@ -734,6 +750,36 @@ export const practiceCapability = defineCapability({
         successStatus: 200,
         load: () => import('./api/question-detail').then((m) => m.DELETE),
       },
+      {
+        // YUK-1045 — archive 的对偶：恢复 = withdrawn 复位 + 原子重取 claim。
+        // UI slice 是 YUK-1051 lane；本端点先落地契约（幂等/冲突语义确定）。
+        method: 'POST',
+        path: '/api/questions/[id]/restore',
+        operationId: 'restoreQuestion',
+        request: { params: QuestionParamsSchema, body: RestoreQuestionBodySchema },
+        responses: { 200: RestoreQuestionResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/question-restore').then((m) => m.POST),
+      },
+      // YUK-605 ① + YUK-555 — owner manual quiz_gen trigger. The consumption entry
+      // three code comments + ADR-0038 referenced but that never existed (the only
+      // enqueue path was the nightly dispatcher). Thin route: real knowledge read
+      // (empty → 404) → enqueue via the dispatcher's kernel path → 202 with job id.
+      // count carries the YUK-555 two-layer guardrail (warn watermark informs; hard
+      // cap 15 rejects — constants live in the db-light contracts module).
+      {
+        method: 'POST',
+        path: '/api/questions/quiz-gen',
+        operationId: 'triggerQuizGen',
+        request: { body: QuizGenTriggerBodySchema },
+        responses: {
+          202: QuizGenTriggerAcceptedSchema,
+          ...API_ERROR_RESPONSES,
+          502: ApiErrorResponseSchema,
+        },
+        successStatus: 202,
+        load: () => import('./api/quiz-gen-trigger').then((m) => m.POST),
+      },
       // YUK-453 (cold-start inc-A) — owner FIXED-ANCHOR write face. owner 钦定 ~5-10 道
       // 锚题的难度档（粗分桶）→ item_calibration source='fixed_anchor'。n=1 唯一不违红线
       // 的「校 LLM 难度系统性 offset」杠杆（cold-start day-one design §5 inc-A / §4.1）。
@@ -748,6 +794,58 @@ export const practiceCapability = defineCapability({
         successStatus: 200,
         load: () => import('./api/calibration-anchors').then((m) => m.POST),
       },
+      // YUK-1052 — 统一发题/提交/自动保存（issueAssessment + saveSubmission +
+      // D11 pinned-issuance 自动保存）。preselected ≠ issued：只有本路由实际
+      // 落 assessment_issuance 行才算发题（不可变 revision/材料/呈现顺序绑定）。
+      {
+        method: 'POST',
+        path: '/api/issuances',
+        operationId: 'createIssuance',
+        request: { body: IssueAssessmentBodySchema },
+        responses: {
+          200: IssuanceCreatedSchema,
+          201: IssuanceCreatedSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 201],
+        load: () => import('./api/assessment-route').then((m) => m.createIssuance),
+      },
+      {
+        // pending 恢复读面：issuance + live draft + 已接收提交。
+        method: 'GET',
+        path: '/api/issuances/[id]',
+        operationId: 'getIssuance',
+        request: { params: IssuanceParamsSchema },
+        responses: { 200: IssuanceStateSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/assessment-route').then((m) => m.getIssuance),
+      },
+      {
+        // D11 服务端自动保存：全练习面（solo/paper/placement）在 pinned
+        // issuance 上自动保存；ack 只在落库后产生（saved 200）。
+        method: 'POST',
+        path: '/api/issuances/[id]/responses',
+        operationId: 'saveResponseDraft',
+        request: { params: IssuanceParamsSchema, body: SaveResponseDraftBodySchema },
+        responses: { 200: SaveResponseDraftResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/assessment-route').then((m) => m.saveDraft),
+      },
+      {
+        // 正式提交：同 (group,idempotency_key) 幂等 —— 一致 replay(200) /
+        // 不同 conflict(409)；submission 绑定不可变 revision（不回取 latest）。
+        method: 'POST',
+        path: '/api/submissions',
+        operationId: 'createSubmission',
+        request: { body: CreateSubmissionBodySchema },
+        responses: {
+          200: SubmissionCreatedSchema,
+          201: SubmissionCreatedSchema,
+          ...API_ERROR_RESPONSES,
+        },
+        successStatus: [200, 201],
+        load: () => import('./api/assessment-route').then((m) => m.createSubmission),
+      },
     ],
   },
   jobs: {
@@ -755,15 +853,14 @@ export const practiceCapability = defineCapability({
     // job 已随 B3 退役。YUK-870 F3.5b：rejudge / judge_run / session_summary
     // 三条注册自 handlers.ts 渐缩簿收编，practice 域自此无留簿注册。）
     handlers: [
+      // YUK-988 E3 — sourcing 单体 job 退役（找+判+存一体）：找题核下沉
+      // web_fetch_candidates（SourcingTask 在工具内部），存由 store_sourced_question
+      // commit seam 唯一负责。本入口换为确定性供给执行 job（plan-executor 的
+      // pg-boss 面三入口共用：planner phase-2 / dispatcher 安全网 / 手动 caller）。
       {
-        name: 'sourcing',
+        name: 'supply_execute',
         queue: 'agent',
-        load: () => import('./jobs/sourcing').then((m) => m.buildSourcingHandler),
-      },
-      {
-        name: 'jyeoo_fetch',
-        queue: 'agent',
-        load: () => import('./jobs/jyeoo-fetch').then((m) => m.buildJyeooFetchHandler),
+        load: () => import('./jobs/supply_execute').then((m) => m.buildSupplyExecuteHandler),
       },
       {
         name: 'quiz_gen',
@@ -855,6 +952,21 @@ export const practiceCapability = defineCapability({
         load: () =>
           import('./jobs/judge_pending_reconcile').then((m) => m.buildJudgePendingReconcileHandler),
       },
+      // YUK-986 (Supply-Agent/1) — jyeoo staged 图片资产回收。jyeoo_fetch_candidates
+      // 即期持久化候选图片（origin='jyeoo_staged'），未提交候选的孤儿资产每日回收
+      // （宽限 24h）。无 LLM、无外部调用，fast 层。
+      {
+        name: 'jyeoo_staged_asset_reap',
+        schedule: {
+          cron: '40 3 * * *',
+          tz: 'Asia/Shanghai',
+          singletonKey: 'jyeoo_staged_asset_reap-sweep',
+          singletonSeconds: 60 * 60,
+        },
+        queue: 'fast',
+        load: () =>
+          import('./jobs/jyeoo_staged_asset_reap').then((m) => m.buildJyeooStagedAssetReapHandler),
+      },
       // B1-W1 (ADR-0035 慢热阶段①) — ItemPriorTask 冷启先验 backfill。夜间扫
       // 无 item_calibration 硬轨 row 的题，逐题估 b 写锚（出题 + 录入两条路径产生
       // 的新题都被此 job 兜住，无需每条创建路径埋 hook）。
@@ -917,6 +1029,19 @@ export const practiceCapability = defineCapability({
         queue: 'llm',
         load: () =>
           import('./jobs/question_supply_nightly').then((m) => m.buildQuestionSupplyNightlyHandler),
+      },
+      // YUK-987 (985/E2) — 供给需求层 planner agent。LLM 产出 SupplyPlanV1 需求计划，机器门
+      // （schema/活KC/词表/去重/预算声明，supply-plan-gate.ts）校验后逐项 emit manual 需求
+      // 留痕（E3 executor 未落地）。05:50 cron：在 recalibration 固化（DAG 04:50 起）之后、
+      // question_supply_nightly（DAG ~06:00）之前。与 DAG 无硬边是设计使然：扫描器安全网必须
+      // 能在 planner 失败/空计划时照常派发缺口（planner 不得拖死安全网）；反向也无边——
+      // planner 读原始信号而非扫描器结论，需求独立形成，同 job 内跑 discoverSupplyTargets
+      // 写 shadow 对比事件（YUK-698 Phase D 影子评估）。queue=llm：LLM burn 同档 DLQ 重试。
+      {
+        name: 'supply_planner',
+        schedule: { cron: '50 5 * * *', tz: 'Asia/Shanghai' },
+        queue: 'llm',
+        load: () => import('./jobs/supply_planner').then((m) => m.buildSupplyPlannerHandler),
       },
       // YUK-533 (ADR-0036 RT1 consumer) — confusable-contrast supply discovery + dispatch.
       // Scans the confusable_with misconception mesh → one supply target per confusable KC
@@ -1003,6 +1128,10 @@ export const practiceCapability = defineCapability({
         load: () =>
           import('./jobs/answer_class_backfill').then((m) => m.buildAnswerClassBackfillHandler),
       },
+      // YUK-386 — `kind_cleanup_backfill` 已删除：question.kind 现在是自由文本展示
+      // 标签，不再有「必须收敛到 canonical 词表」的不变量要维护；读侧词表折叠
+      // （canonicalKindToPersistedForms / answerClassCompatible）继续覆盖历史
+      // profile-vocab 标签行。
       // YUK-348 (B1 four-engine soft-track inc-1, ADR-0035 决定 #3 + 决定 #4 红线) — 软轨 KT
       // 估计夜扫。每夜扫「有硬轨 item_calibration 行 + 有非空二元作答序列」的非 draft 题，逐题
       // estimateBkt (纯 BKT forward) → applyKtEstimate 落 item_calibration.kt_json。kt_json 是
@@ -1094,8 +1223,35 @@ export const practiceCapability = defineCapability({
               (module) => module.questionDraftProposalAcceptApplier,
             ),
         },
+        // YUK-308 — dismiss tombstones the still-draft question row
+        // (metadata.dismissed_at) so a rejected draft stops reading as a live
+        // pending draft to query_questions / write_quiz / the draft-review pool.
+        dismiss: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.questionDraftProposalDismissApplier,
+            ),
+        },
       },
       { kind: 'judge_retraction' },
+      // YUK-1016 / 454-B — 错因 catalog 扩张：accept INSERT overlay 行、retract
+      // 置 archived_at。dismiss 无定制语义（pending 期尚无行可立），走 generic
+      // rate-event 路径。
+      {
+        kind: 'cause_category',
+        accept: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.causeCategoryProposalAcceptApplier,
+            ),
+        },
+        retract: {
+          load: () =>
+            import('./server/proposal-accept-applier').then(
+              (module) => module.causeCategoryProposalRetractApplier,
+            ),
+        },
+      },
       {
         kind: 'question_edit',
         accept: {
@@ -1147,6 +1303,35 @@ export const practiceCapability = defineCapability({
       {
         name: 'author_question',
         load: () => import('./server/tools/proposal-tools').then((m) => m.authorQuestionTool),
+      },
+      {
+        name: 'generate_question_candidate',
+        load: () =>
+          import('./server/tools/generate-question-candidate').then(
+            (m) => m.generateQuestionCandidateTool,
+          ),
+      },
+      // YUK-986 (Supply-Agent/1) — 供给 agent 化的 jyeoo fetch/commit 双 tool。
+      // E1 只注册进 inventory（无任何 surface 授权）；E3（YUK-988）才把
+      // jyeoo_fetch_candidates 授给 executor surface，store_sourced_question
+      // 保持服务端/executor 专用。
+      {
+        name: 'jyeoo_fetch_candidates',
+        load: () =>
+          import('./server/tools/jyeoo-fetch-candidates').then((m) => m.jyeooFetchCandidatesTool),
+      },
+      {
+        name: 'store_sourced_question',
+        load: () =>
+          import('./server/tools/store-sourced-question').then((m) => m.storeSourcedQuestionTool),
+      },
+      // YUK-988 (Supply-Agent/3) — web 候选生产线 DomainTool（Tavily 检索 +
+      // SourcingTask 抽取，candidate-only 不写库）。E3 只注册进 inventory（无任何
+      // surface 授权，与 jyeoo_fetch_candidates 的 E1 先例同款）。
+      {
+        name: 'web_fetch_candidates',
+        load: () =>
+          import('./server/tools/web-fetch-candidates').then((m) => m.webFetchCandidatesTool),
       },
       {
         name: 'query_questions',

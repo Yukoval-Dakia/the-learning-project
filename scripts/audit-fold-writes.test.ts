@@ -5,7 +5,7 @@ import {
   type SanctionedWriter,
   type StaleWriter,
   type WriteSite,
-  collectLiveWriterAdvisories,
+  collectWriterAdvisories,
   computeFoldWriteAudit,
   findWriteSites,
   reverseCheckWriters,
@@ -192,13 +192,11 @@ describe('computeFoldWriteAudit — sanction / violation / allowlist / stale', (
     expect(result.ok).toBe(true);
   });
 
-  it('advises every LIVE writer not locally fold-constrained, including mixed proposals + seed', () => {
+  it('advises remaining writers whose event contract is supplied by callers', () => {
     const files = [
-      'src/capabilities/knowledge/server/proposals.ts',
-      'src/capabilities/knowledge/server/seed.ts',
-      'src/capabilities/knowledge/server/edges.ts',
-      'src/server/subjects/ensure-subject-root.ts',
-      'src/server/subjects/subject-control-write.ts',
+      'src/capabilities/practice/jobs/quiz_gen.ts',
+      'src/capabilities/practice/server/tools/tool-quiz-core.ts',
+      'src/server/session/docx-ingestion.ts',
     ];
     const verdicts = files.map((file, index) => {
       const declared = SANCTIONED_WRITERS.find((w) => w.file === file);
@@ -206,7 +204,7 @@ describe('computeFoldWriteAudit — sanction / violation / allowlist / stale', (
       return {
         file,
         table: declared.table,
-        op: index === 0 ? ('update' as const) : ('insert' as const),
+        op: 'insert' as const,
         form: 'drizzle' as const,
         line: index + 1,
         status: 'sanctioned' as const,
@@ -214,12 +212,12 @@ describe('computeFoldWriteAudit — sanction / violation / allowlist / stale', (
       };
     });
 
-    expect(collectLiveWriterAdvisories(verdicts).map((v) => v.file)).toEqual(files);
+    expect(collectWriterAdvisories(verdicts).map((v) => v.file)).toEqual(files);
   });
 
-  it('does not advise LIVE throat/gated/maintenance or any writer on an OFF table', () => {
+  it('does not advise constrained roles or the explicit anchor-only calibration policy', () => {
     expect(
-      collectLiveWriterAdvisories([
+      collectWriterAdvisories([
         {
           file: 'throat.ts',
           table: 'knowledge',
@@ -249,7 +247,7 @@ describe('computeFoldWriteAudit — sanction / violation / allowlist / stale', (
         },
         {
           file: 'off.ts',
-          table: 'artifact',
+          table: 'item_calibration',
           op: 'update',
           form: 'drizzle',
           line: 4,
@@ -258,6 +256,28 @@ describe('computeFoldWriteAudit — sanction / violation / allowlist / stale', (
         },
       ]),
     ).toEqual([]);
+  });
+
+  it('covers every canonical or switchable table without claiming live deployment flags', () => {
+    const tables = [
+      'knowledge',
+      'knowledge_edge',
+      'goal',
+      'mistake_variant',
+      'learning_item',
+      'artifact',
+      'question_block',
+    ] as const;
+    const sites = tables.map((table) => ({
+      file: `${table}-owner.ts`,
+      table,
+      op: 'update' as const,
+      form: 'drizzle' as const,
+      line: 1,
+      status: 'sanctioned' as const,
+      role: 'event-native-by-caller' as const,
+    }));
+    expect(collectWriterAdvisories(sites)).toEqual(sites);
   });
 
   it('a write site in an UNDECLARED file is a VIOLATION', () => {

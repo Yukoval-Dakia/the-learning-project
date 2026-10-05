@@ -1,4 +1,3 @@
-import { tasks } from '@/ai/registry';
 import {
   MultimodalDirectLlmOutput,
   type MultimodalDirectLlmOutputT,
@@ -7,24 +6,20 @@ import { ConjectureProbeSpecV2 } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import type { Db } from '@/db/client';
 import { parseJsonObjectLoose } from '@/server/ai/json-extract';
-import { zodToJsonSchemaOutputFormat } from '@/server/ai/output-format';
-import { visionJudgeProviderOverride } from '@/server/ai/vision-judge-config';
 import type { SubjectProfile } from '@/subjects/profile';
 import { defaultStructuredRunTaskFn } from './judge-output-parse';
+import { type LaneDegradationEvidence, runTaskWithLaneFallback } from './provider-lane-fallback';
 import type { JudgeQuestionRow } from './question-contract';
 // Reuse the steps@1 R2 image fetcher verbatim — no R2 logic duplicated here.
 import { defaultImageFetch } from './steps-judge';
 
 const CAPABILITY_REF = { id: 'multimodal_direct', version: '1.0.0' };
 
-// YUK-591 — the SDK structured-output envelope, built ONCE from the registry's
-// declared schema so the registry declaration (audited by §7) is the single,
-// load-bearing source. The ternary keeps the un-declared case typed; in practice
-// MultimodalDirectJudgeTask always declares it (the audit enforces exactly that).
-const outputSchema = tasks.MultimodalDirectJudgeTask.structuredOutputSchema;
-const OUTPUT_FORMAT = outputSchema ? zodToJsonSchemaOutputFormat(outputSchema) : undefined;
+// YUK-591 — the registry-declared structuredOutputSchema (audited by §7) is the
+// single source for the app-level Zod parse below; there is no transport-level
+// structured-output envelope post-P4.
 
-/** Widened (YUK-591) to carry the SDK `structured_output` passthrough. */
+/** Widened (YUK-591) to carry the engine-neutral `structured_output` passthrough. */
 export type MultimodalDirectRunTaskFn = (
   kind: string,
   input: { text: string; images: Array<{ data: string; mediaType: string }> } | unknown,
@@ -63,13 +58,13 @@ function unsupportedResult(reason: string, evidence: Record<string, unknown>): J
  * YUK-591 — three-state dispatch over the task result (mirrors variant_verify's
  * parseVariantVerifyResult). Exported so the unit test can feed constructed
  * results directly.
- *   (A) structured_output present (endpoint honoured outputFormat) → parse it
- *       through the SAME Zod schema. The Zod pass is NOT optional: outputFormat
+ *   (A) structured_output present (endpoint honoured structured output) → parse
+ *       it through the SAME Zod schema. The Zod pass is NOT optional: the wire
  *       only guarantees JSON shape, not the app-level enum/range constraints, so
  *       a shape-valid-but-constraint-violating payload still throws (→ the
  *       caller's `unsupported` fallback, byte-identical bucket to today).
- *   (B) structured_output absent/null (mimo ignores outputFormat, or the model
- *       fell back to text) → char-scan plus the deterministic JSON repair band.
+ *   (B) structured_output absent/null (mimo ignores structured output, or the
+ *       model fell back to text) → char-scan plus the deterministic JSON repair band.
  *       This preserves malformed-but-unambiguous content quotes/Markdown math
  *       before the same strict output schema validates the complete payload.
  * `.parse` (throwing) is kept over safeParse so the thrown message is identical
@@ -211,34 +206,52 @@ export async function runMultimodalDirectJudge(
 
   const runTaskFn = params.runTaskFn ?? defaultStructuredRunTaskFn;
   let taskResult: { text: string; structured_output?: unknown };
+  // YUK-893 — set when the configured lane hard-failed and the registry-default
+  // retry produced this verdict; merged into the result's evidence_json.
+  let laneDegradation: LaneDegradationEvidence | undefined;
   try {
     // YUK-482 Lane C ③: route the vision judge to a configured provider (e.g.
     // Opus 4.8 via anthropic-sub) when VISION_JUDGE_PROVIDER is set; default
     // unset → undefined → registry mimo default (byte-identical to today). The
-    // override is merged into ctx here (the call site), so an injected test
+    // override is merged into ctx at the call site, so an injected test
     // runTaskFn still receives it and can assert on ctx.override.
     //
     // YUK-576 — enableTransientRetry: true, same rationale + boundaries as
     // steps-judge.ts (sync-route sensor, no durable backstop; single module-level
     // call site covers all callers; operator-pinned routing turns retry off).
     //
-    // YUK-591 — outputFormat: the SDK structured-output envelope (built from the
-    // registry-declared MultimodalDirectLlmOutput). Threaded in ctx here so an
-    // injected test runTaskFn can assert on it. A structured-output-capable
-    // endpoint constrains + SDK-retries the model to the schema; mimo ignores it
-    // and the dispatch falls back to the char-scan text parse (zero-loss).
-    const result = await runTaskFn(
-      'MultimodalDirectJudgeTask',
-      { text: llmTextPayload, images },
-      {
+    // YUK-591 — structured extraction stays app-level: the result text is Zod-
+    // parsed against the registry-declared MultimodalDirectLlmOutput. Lanes
+    // without a transport contract (mimo) fall back to the char-scan text
+    // parse (zero-loss).
+    //
+    // YUK-893 — the lane call goes through runTaskWithLaneFallback: a provider
+    // HARD failure (HTTP 403/5xx/auth/quota) on a configured lane retries once
+    // on the standard resolution chain and records degradation evidence; a hard
+    // failure on every lane fails CLOSED below with error_kind=
+    // 'provider_hard_failure' instead of the anonymous 'LLM call failed' bucket.
+    // Non-provider errors rethrow and keep the byte-identical old semantics.
+    const laneRun = await runTaskWithLaneFallback({
+      kind: 'MultimodalDirectJudgeTask',
+      input: { text: llmTextPayload, images },
+      baseCtx: {
         db: params.db,
         subjectProfile: params.subjectProfile,
-        override: visionJudgeProviderOverride(),
         enableTransientRetry: true,
-        outputFormat: OUTPUT_FORMAT,
       },
-    );
-    taskResult = result;
+      runTaskFn,
+    });
+    if (!laneRun.ok) {
+      // Fail-closed preserved: still coarse_outcome='unsupported' with score
+      // null — the judge does NOT guess a verdict; it just fails honestly.
+      return unsupportedResult('LLM provider lane hard-failed', {
+        ...laneRun.hardFailure,
+        prompt_image_refs: promptImageRefs,
+        student_image_refs: studentImageRefs,
+      });
+    }
+    taskResult = laneRun.taskResult;
+    laneDegradation = laneRun.laneDegradation;
   } catch (err) {
     return unsupportedResult('LLM call failed', {
       error: err instanceof Error ? err.message : String(err),
@@ -260,11 +273,22 @@ export async function runMultimodalDirectJudge(
         taskResult.structured_output != null
           ? JSON.stringify(taskResult.structured_output).slice(0, 4000)
           : taskResult.text,
+      // YUK-893 — if this output arrived via the fallback lane, the degradation
+      // evidence must not be lost to the parse failure.
+      ...(laneDegradation ? { lane_degradation: laneDegradation } : {}),
     });
   }
 
-  return composeJudgeResult(parsed, {
+  const composed = composeJudgeResult(parsed, {
     prompt_image_count: promptImages.length,
     student_image_count: studentImages.length,
   });
+  // YUK-893 — a verdict produced by the fallback lane carries its degradation
+  // evidence (failed lane, why, fallback used) on the successful result too.
+  return laneDegradation
+    ? {
+        ...composed,
+        evidence_json: { ...composed.evidence_json, lane_degradation: laneDegradation },
+      }
+    : composed;
 }

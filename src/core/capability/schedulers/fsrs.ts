@@ -15,6 +15,7 @@
 import type { z } from 'zod';
 import type { FsrsRating } from '@/core/schema/business';
 import type { CapabilityManifestT, JudgeResultV2T } from '@/core/schema/capability';
+import { UNIVERSAL_RATING_FROM_OUTCOME } from '@/core/schema/profile-decl';
 import type { SchedulerCapabilityRunner, SchedulingDecision, SchedulingInput } from './types';
 
 type RatingLabel = z.infer<typeof FsrsRating>;
@@ -35,22 +36,16 @@ const manifest: CapabilityManifestT = {
 };
 
 /**
- * Coarse judge outcome → FSRS rating. Identical mapping to
- * `src/server/review/judge-rating.ts#ratingFromCoarseOutcome`; duplicated as a
- * pure function here so the core capability never imports `src/server`. If the
- * rating surface changes, both must change together (single 3-state surface today).
+ * YUK-739 — coarse judge outcome → FSRS rating. The duplicated inline switch
+ * is gone; the mapping is the subject-owned rating policy's universal default,
+ * exported from `src/core/schema/profile-decl.ts`
+ * (`UNIVERSAL_RATING_FROM_OUTCOME`). This scheduler capability deliberately
+ * receives no SubjectProfile (ADR-0014 §5: declaration/validation surface; the
+ * live path schedules via the practice route, which resolves the profile), so
+ * it pins the tracked universal constant — same values, one source of truth.
  */
 function ratingFromCoarseOutcome(outcome: JudgeResultV2T['coarse_outcome']): RatingLabel | null {
-  switch (outcome) {
-    case 'correct':
-      return 'good';
-    case 'partial':
-      return 'hard';
-    case 'incorrect':
-      return 'again';
-    case 'unsupported':
-      return null;
-  }
+  return UNIVERSAL_RATING_FROM_OUTCOME[outcome] ?? null;
 }
 
 function run(input: SchedulingInput): SchedulingDecision {

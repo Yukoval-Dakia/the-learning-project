@@ -56,7 +56,7 @@ export interface FewShotRetrieveParams {
 const CANDIDATE_POOL = 20;
 const DEFAULT_LIMIT = 3;
 
-interface CandidateRow {
+type CandidateRow = {
   id: string;
   kind: string;
   prompt_md: string;
@@ -67,8 +67,9 @@ interface CandidateRow {
   knowledge_ids: string[];
   source: string;
   metadata: Record<string, unknown> | null;
-  created_at: Date;
-}
+  // Raw postgres-js execute results carry timestamp strings.
+  created_at: string;
+};
 
 function overlapCount(a: string[], b: Set<string>): number {
   let n = 0;
@@ -131,7 +132,7 @@ export async function retrieveFewShotExamples(
   // C2 (YUK-569): notDraftPredicate emits a QUALIFIED "question"."draft_status"; safe here only
   // while the FROM is an unaliased single table (FROM question) — the qualified column resolves
   // unambiguously alongside the other bare columns. Alias/join this query → re-check first.
-  const rows = (await db.execute(sql`
+  const rows = await db.execute<CandidateRow>(sql`
       SELECT id, kind, prompt_md, reference_md, choices_md, rubric_json, difficulty,
              knowledge_ids, source, metadata, created_at
       FROM question
@@ -140,7 +141,7 @@ export async function retrieveFewShotExamples(
         ${overlapPredicate}
       ORDER BY ${tierRank} ASC, created_at DESC
       LIMIT ${CANDIDATE_POOL}
-    `)) as unknown as CandidateRow[];
+    `);
 
   if (rows.length === 0) return [];
 
@@ -151,7 +152,7 @@ export async function retrieveFewShotExamples(
         row,
         tier,
         overlap: overlapCount(row.knowledge_ids ?? [], knowledgeSet),
-        createdAt: row.created_at instanceof Date ? row.created_at.getTime() : 0,
+        createdAt: new Date(row.created_at).getTime(),
       };
     })
     .sort((a, b) => {

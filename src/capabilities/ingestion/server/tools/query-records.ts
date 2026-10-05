@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, inArray, isNull, or, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { learning_record } from '@/db/schema';
+import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
 import { excerpt, recordKnowledgeContainsAny } from './record-tool-support';
 import type { DomainTool, ToolContext } from './types';
 
@@ -109,7 +110,7 @@ async function executeQueryRecords(
       activity_kind: row.activity_kind,
       origin_event_id: row.origin_event_id ?? null,
       processing_status: row.processing_status,
-      knowledge_ids: row.knowledge_ids ?? [],
+      knowledge_ids: learnerVisibleKnowledgeIds(row.knowledge_ids ?? []),
       links: {
         question_id: row.question_id ?? null,
         attempt_event_id: row.attempt_event_id ?? null,

@@ -26,7 +26,7 @@ import type { DependencySnapshot } from './audit-capability-boundaries';
 //      stay kind-branch-free, the central boss book stays housekeeping-only,
 //      the central events directory is transport/envelope only, and the
 //      central tools directory holds infrastructure only — no concrete tools;
-//   6. TaskSpec ownership census — exactly 52 supported TaskSpecs, each with one
+//   6. TaskSpec ownership census — exactly 51 supported TaskSpecs, each with one
 //      capability owner, ProfileCriticTask Ingestion-owned with its live CLI
 //      caller, no copied central TaskDef, no runtime task locator/discovery;
 //   7. DomainTool ownership — every registered tool has one owner, input/output
@@ -103,7 +103,7 @@ export const WRITE_SIGNATURES: readonly RegExp[] = [
 // Public symbols whose names mark them as commands (mutation / LLM / dispatch
 // surface) rather than read models. A "read" consumer may not import these.
 export const COMMAND_NAME_RE =
-  /^(?:accept|apply|archive|propose|create|write|enqueue|spawn|dismiss|retract|promote|merge|upsert|tag|author|induce|dispatch|persist|update)/;
+  /^(?:accept|apply|archive|propose|create|write|record(?=[A-Z])|enqueue|spawn|dismiss|retract|promote|merge|upsert|tag|author|induce|dispatch|persist|update)/;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
@@ -414,6 +414,10 @@ const REGISTRY_SEMANTIC_RES = [
 const CENTRAL_TOOL_INFRASTRUCTURE = new Set([
   'src/server/ai/tools/registry.ts',
   'src/server/ai/tools/mcp-bridge.ts',
+  'src/server/ai/tools/pi-tools.ts',
+  // YUK-1022 — pi-side spawn contract + Task/Agent tool shell: the nested-run
+  // host lives in the adapter; this file is spec mapping + gate wiring only.
+  'src/server/ai/tools/pi-subagent.ts',
   'src/server/ai/tools/register-capability-tools.ts',
   'src/server/ai/tools/fixtures-assert.ts',
 ]);
@@ -486,7 +490,7 @@ export function scanCentralRoots(sources: readonly SourceFile[]): OwnershipViola
     }
   }
 
-  for (const { path, code } of sources) {
+  for (const { path } of sources) {
     if (!path.startsWith('src/server/events/') || TEST_RE.test(path)) continue;
     if (!CENTRAL_EVENTS_TRANSPORT_FILES.has(path)) {
       violations.push({
@@ -520,9 +524,12 @@ export function scanCentralRoots(sources: readonly SourceFile[]): OwnershipViola
 /** Structural shape of one owned TaskSpec (fixture-friendly; the real specs match). */
 export interface OwnedTaskSpecShape {
   readonly ownership?: string;
-  readonly definition?: { readonly kind?: string } | null;
+  readonly definition?: { readonly kind?: string; readonly execution?: string } | null;
   readonly parseText?: unknown;
   readonly outputSchema?: { safeParse?: unknown } | null;
+  // YUK-1049 — typed-execution specs parse provider output via typed.inputSchema,
+  // not a chat-text parseText. Presence of this field exempts the parseText check.
+  readonly typed?: { readonly inputSchema?: unknown } | null;
 }
 
 export interface TaskOwnerMapShape {
@@ -581,11 +588,18 @@ export function scanTaskSpecOwnership(
           reason: 'owner map key does not match spec.definition.kind',
         });
       }
-      if (typeof spec.parseText !== 'function') {
+      if (typeof spec.parseText !== 'function' && spec.typed === undefined) {
         violations.push({
           path: `${owner}/${key}`,
           source: '',
           reason: 'owned TaskSpec is missing parseText',
+        });
+      }
+      if (spec.typed !== undefined && definition.execution !== 'typed') {
+        violations.push({
+          path: `${owner}/${key}`,
+          source: '',
+          reason: 'typed spec declares typed.inputSchema but definition.execution is not "typed"',
         });
       }
       if (
@@ -1273,7 +1287,7 @@ export function auditArchitectureDeepening(
 
 async function runCli(): Promise<void> {
   const { publicReadCycleCatalog } = await import('./capability-public-read-cycles.js');
-  const { taskCatalog } = await import('../src/ai/task-catalog.js');
+  const { taskCatalog } = await import('../src/capabilities/task-catalog.js');
   const { capabilities } = await import('../src/capabilities/index.js');
   const { auditTaskCensus, LIVE_NON_CALLER_CLASSIFICATIONS } = await import(
     './audit-task-census.js'
@@ -1284,7 +1298,9 @@ async function runCli(): Promise<void> {
   const { collectDependencySnapshot, compareDependencySnapshot } = await import(
     './audit-capability-boundaries.js'
   );
-  const { READ_TOOLS, PROPOSE_WRITE_TOOLS } = await import('../src/kernel/tools/allowlists.js');
+  const { CONTROL_TOOLS, READ_TOOLS, PROPOSE_WRITE_TOOLS } = await import(
+    '../src/kernel/tools/allowlists.js'
+  );
   const { AiProposalPayload } = await import('../src/core/schema/proposal.js');
   const { z } = await import('zod');
   const projectRoot = process.cwd();
@@ -1319,6 +1335,7 @@ async function runCli(): Promise<void> {
       hasLoad: Boolean(tool.load),
     })),
   );
+  process.env.DATABASE_URL ??= 'postgresql://audit:unused@127.0.0.1:1/audit?sslmode=disable';
   const loadedTools: DomainToolShape[] = [];
   for (const capability of capabilities) {
     for (const decl of capability.copilotTools?.tools ?? []) {
@@ -1387,10 +1404,14 @@ async function runCli(): Promise<void> {
 
   const result = auditArchitectureDeepening(projectRoot, publicReadCycleCatalog, {
     ownerMaps,
-    expectedTaskCount: 52,
+    // YUK-987: 50（+SupplyPlanTask 供给需求层 planner）。
+    // YUK-1016: 51（+CauseCategoryProposeTask cause catalog 增长提议）。
+    // YUK-376: 52（+ItemPriorLlasaTask LLaSA 学生模拟冷启锚 opt-in 变体）。
+    // YUK-1049: 53（+JevScoringDecisionTask 首个 typed execution spec）。
+    expectedTaskCount: 54,
     taskCensus: {
       catalogCount: census.catalogCount,
-      expectedCount: 52,
+      expectedCount: 54,
       errors: census.errors,
       profileCriticCallerPresent: census.profileCriticCaller !== null,
       forbiddenPatternViolations: scanForbiddenTaskCatalogPatterns(projectRoot).map(
@@ -1401,7 +1422,7 @@ async function runCli(): Promise<void> {
     tools: {
       declarations: toolDeclarations,
       loadedTools,
-      allowlistNames: [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS],
+      allowlistNames: [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS, ...CONTROL_TOOLS],
       bridgeValidatesOutput: bridgeSource.includes('outputSchema.safeParse'),
     },
     queues: {
@@ -1455,7 +1476,7 @@ async function runCli(): Promise<void> {
   }
 
   console.log(
-    `Architecture deepening audit passed: ${result.counts.taskSpecs} owned TaskSpecs (census ${census.catalogCount}/50 invoked/1 compatibility); ${result.counts.domainTools} owned DomainTools; ${result.counts.manifestQueues} manifest queues + 0 central semantic registrations; ${result.counts.proposalKinds} owned proposal kinds + 0 central kind switches; 0 central semantic definitions; 0 central concrete tools; SCC [${result.sccs
+    `Architecture deepening audit passed: ${result.counts.taskSpecs} owned TaskSpecs (census ${census.catalogCount}/${census.discoveredKinds.length} invoked/${Object.keys(census.nonLiveClassifications).length} compatibility); ${result.counts.domainTools} owned DomainTools; ${result.counts.manifestQueues} manifest queues + 0 central semantic registrations; ${result.counts.proposalKinds} owned proposal kinds + 0 central kind switches; 0 central semantic definitions; 0 central concrete tools; SCC [${result.sccs
       .map((component) => component.join('/'))
       .join(
         '; ',

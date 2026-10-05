@@ -15,7 +15,7 @@
 | Schema / 校验 | Zod |
 | 数据库 | Postgres（`pgvector/pgvector:pg16`）+ Drizzle ORM（`postgresql` dialect, `postgres` driver） |
 | Blob 存储 | R2 / S3-compatible storage via `@aws-sdk/client-s3` |
-| AI runtime | AI SDK v6 (`ai`) + Claude Agent SDK runner；默认 provider 走 Mimo / 小米（`XIAOMI_API_KEY`，Anthropic-protocol-compat），Anthropic direct（`@ai-sdk/anthropic`）为 fallback |
+| AI runtime | Pi agent runtime（`@earendil-works/pi-agent-core` in-process agentLoop，`src/server/ai/pi-agent-adapter.ts`）；默认 provider 走 Mimo / 小米（`XIAOMI_API_KEY`，pi 原生 OpenAI Completions），另有 anthropic-sub OAuth / opencode-go / zai-coding-cn lane（`ZAI_CODING_CN_API_KEY`）（`src/server/ai/providers.ts`）。opt-in `openai` lane（`OPENAI_API_KEY`）经 pi builtin provider 走 OpenAI Responses API 服务 gpt-6-astra（YUK-1027，仅显式 binding 可用，生产默认不变） |
 | 记忆 / 事实层 | Mem0 (`mem0ai`) + pgvector store；embedder 默认 OpenAI `text-embedding-3-small`（ADR-0017） |
 | 富文本编辑 | Tiptap（block-tree note 编辑器，slash / cross-link suggestion） |
 | 数学渲染 | KaTeX + mathjs + `react-markdown` / `remark-math` / `rehype-katex` |
@@ -62,6 +62,9 @@ dev 拓扑必须 api + web + worker 三进程齐活（YUK-321 M5 双进程拓扑
 pnpm smoke:local
 ```
 
+模型能力目录（YUK-924）：`pnpm gen:model-catalog` 从 models.dev 拉取并重写
+`src/server/ai/model-catalog.snapshot.json`（已入仓的裁剪快照；运行时不发网络请求）。
+
 生产 / NAS compose 配置放在 `.env`；host-side local dev 也从 `.env` 的 `POSTGRES_*`
 派生本地连接串。浏览器代码不持有 provider key，所有 AI 调用都通过 Hono route 或
 pg-boss worker 在服务端执行。
@@ -79,6 +82,7 @@ API 与独立 worker 都先由 `server/env.ts` 加载 `.env.local` / `.env`，�
 ```bash
 pnpm typecheck        # tsc --noEmit
 pnpm lint             # biome check .
+pnpm lint:ratchet     # warning/info 总数 ratchet（基线 scripts/lint-baseline.json，只降不升；修完 warning 后 pnpm lint:ratchet:update 重生基线）
 pnpm test             # CI 全量门禁（含 audit:task-census + unit/db/migration；本机按 AGENTS.md 跑 scoped tests）
 pnpm audit:schema     # schema write-path 审计（新表/字段必须有 write path）
 pnpm audit:partition  # 测试分区审计（依赖 DB 的测试不得进 unit config）
@@ -112,30 +116,64 @@ pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / di
    INTERNAL_TOKEN=...
    XIAOMI_API_KEY=...
    ANTHROPIC_API_KEY=...
-   OPENAI_API_KEY=...            # Mem0 fact-layer embedder (ADR-0017)
+   # OPENAI_API_KEY=...          # 可选：opt-in openai/gpt-6-astra Responses lane（YUK-1027），默认路径不需要
    TUNNEL_TOKEN=<paste-token-here>
    TUNNEL_PROTOCOL=auto          # use http2 if outbound UDP/7844 is blocked
    # + R2 / Tencent OCR keys
    # MEM0_* keys are optional — see .env.example for defaults
    ```
 
-   `OPENAI_API_KEY` is required as soon as the worker processes its first
-   `memory_event_ingest` job (every `writeEvent` enqueues one, per ADR-0017
-   §"Write triggers" #1). The fact layer defaults to Mem0's `openai` embedder
-   per ADR-0017 errata 2026-05-27 and the spike findings in
-   [docs/superpowers/plans/2026-05-27-t37-mem0-spike-findings.md](docs/superpowers/plans/2026-05-27-t37-mem0-spike-findings.md).
-   The `MEM0_*` overrides (embedding model / dims, LLM model, pgvector
-   collection + index toggles, Anthropic base URL) all have sensible defaults
-   baked into `src/server/memory/client.ts` and only need to be set if you are
-   diverging from those.
+   `DASHSCOPE_API_KEY`（+ `ZHIPU_API_KEY`）is required as soon as the worker
+   processes its first `memory_event_ingest` job (every `writeEvent` enqueues
+   one, per ADR-0017 §"Write triggers" #1). The fact layer runs on Mem0 with
+   the 阿里百炼 `text-embedding-v4` embedder + 智谱 GLM LLM per ADR-0017 and the
+   current `src/server/memory/client.ts` defaults — `OPENAI_API_KEY` is NOT on
+   that path anymore; it only gates the opt-in `openai`/`gpt-6-astra` Responses
+   lane (YUK-1027). The `MEM0_*` overrides (embedding model / dims, LLM model,
+   pgvector collection + index toggles, Anthropic base URL) all have sensible
+   defaults baked into `src/server/memory/client.ts` and only need to be set if
+   you are diverging from those.
 
 3. **Database migrations run automatically.** A dedicated `migrate` init container
    (YUK-65) applies the bundled drizzle migrations before `app` / `worker` start on
    every `docker compose up` — idempotent, drizzle's `__drizzle_migrations` table
-   tracks applied state. To force a manual re-run against the running stack:
+   tracks applied state. The runner also prepares Goal/LearningItem/MistakeVariant/Artifact/QuestionBlock
+   legacy anchors and checks fold/live values and row sets. Incomplete history or drift
+   fails deployment without rebuilding live rows; all newly prepared anchors roll back.
+   For an upgrade from the legacy mailbox release, first complete the special drain
+   procedure below. Otherwise, stop application writers before a manual re-run (the preparation takes table locks
+   and fails after 5 seconds if an existing transaction prevents acquisition):
    ```bash
+   docker compose stop app worker
    docker compose run --rm migrate
    ```
+   The runner also refuses an undrained legacy Copilot mailbox. Before upgrading
+   from the mailbox release, prove the full retry window is empty, stop admission,
+   unschedule exactly `copilot_subagent_reconcile` with the previous pg-boss client,
+   and let the previous worker drain any queued housekeeping ticks before stopping it.
+   A remaining legacy child, continuation, queued/active/retry job or old schedule
+   blocks migration; terminal history and native child projections are retained.
+   Never delete pending jobs to pass readiness. Rolling back the worker restores its
+   schedule, so repeat this check before retrying the upgrade. See
+   [ADR-0063](docs/adr/0063-retire-copilot-mailbox-execution.md).
+   Goal, LearningItem and MistakeVariant now have one structural writer; their old
+   `PROJECTION_IS_WRITER_*` switches are ignored. Rollback requires the previous
+   release plus a verified recovery configuration, not switching these entities OFF
+   in the new release. The previous reducers cannot replay the new LearningItem repair
+   events: previous-release recovery must preserve materialized rows, disable its three
+   structural projection modes, and never rebuild them with those older reducers.
+   Before returning to canonical mode after rollback writes, repeat readiness checks
+   and repair any mismatch. See the [cutover evidence](docs/planning/2026-09-07-canonical-state-writers.md).
+   Knowledge, KnowledgeEdge, Note and QuestionBlock editors also use canonical
+   projection writers; the global `PROJECTION_IS_WRITER` and retired per-entity
+   flags no longer select alternate writers. Deployment preparation validates all
+   seven entities, including knowledge creation indexes/acceptances and merge-source
+   history, before seeding only genuinely eventless legacy rows. A failed history
+   check requires repair; do not bypass it with a replacement genesis or live rebuild.
+   Rollback uses the previous release and its matching configuration, not toggles
+   in the new release. ItemCalibration remains Scheme A, default OFF.
+   Restart worker, then app only after migration succeeds. Do not bypass a failed
+   readiness check with `--no-deps` or snapshot over incomplete event history.
 
 ### Deploy
 
@@ -165,6 +203,11 @@ Dockerfile（node:24-slim 多阶段）build 出 4 件产物：`web/dist`（Vite 
 compose 层 `command: ["node", "dist/worker.cjs"]` 覆盖。**无 Redis 服务**——editing presence 走
 PG 表 `editing_presence`（PgPresenceStore，YUK-321 M5 gate 选项 b）。
 
+停止时 API 先停止接纳 HTTP，请求最多排空 30 秒（超时断开订阅连接，不等于
+Copilot Stop），再等待同进程 worker 就绪并执行 pg-boss 的 30 秒清理、关闭 DB pool。
+API 总退出期限 65 秒，Compose 留 70 秒；独立 worker 保留 30 秒清理，Compose 留 40 秒。
+超出总期限或清理失败以非零退出并记录日志；未完成的持久任务仍按既有恢复策略处理。
+
 ### Verify
 
 ```bash
@@ -174,7 +217,49 @@ curl https://loom.<your-domain>/api/health
 
 ### Backup
 
-`db:dump` streams a `pg_dump` from the running `postgres` container to a timestamped SQL file on the host:
+**日级自动 dump（YUK-992 安装，YUK-1041 修复，Mac 生产）**：launchd 每日 07:15
+（Asia/Shanghai）跑 `mac-daily-dump.sh`，向 runtime 目录写
+`loom-daily-YYYYMMDD.dump`（custom format，`pg_restore` 用；保留最近 14 份 +
+每月 1 号归档）。
+
+⚠️ **launchd 子进程被 macOS TCC 拒绝对 `/Volumes/*`（外置盘）的任何 I/O**
+（exec / read / write / 建 stdout 文件全部 EPERM，表现为 `last exit code = 78`
+EX_CONFIG "spawn failed"，脚本根本跑不起来）。所以脚本与 launchd log 必须装在
+内置盘 `~/Library/Application Support/loom-daily-dump/`，对 runtime 目录的读写
+全部经 `docker run -v` 在容器内完成（OrbStack virtiofs 不走 TCC）。一次性安装：
+
+```bash
+mkdir -p ~/Library/Application\ Support/loom-daily-dump
+cp scripts/mac-daily-dump.sh ~/Library/Application\ Support/loom-daily-dump/
+chmod +x ~/Library/Application\ Support/loom-daily-dump/mac-daily-dump.sh
+cp scripts/launchd/studio.yukoval.loom-daily-dump.plist ~/Library/LaunchAgents/
+launchctl bootout gui/$(id -u)/studio.yukoval.loom-daily-dump  # 若已装载
+launchctl bootstrap gui/$(id -u) ~/Library/LaunchAgents/studio.yukoval.loom-daily-dump.plist
+```
+
+失败发现面与巡检（YUK-1056 加固）：成功写 `.loom-daily-dump-last-success` epoch 戳
+（连续 2 日未更新即异常）；失败写 `.loom-daily-dump-FAILED-YYYYMMDD` 标记 **且
+`exit 1`** —— 容器可达时写进 runtime 目录，容器/daemon 不可达时改写
+`~/Library/Application Support/loom-daily-dump/`（本地兜底，launchd `last exit code` 可见）。
+脚本日志 `loom-daily-dump.log`（runtime 目录），launchd stdout/stderr 在
+`~/Library/Application Support/loom-daily-dump/launchd.log`。环境覆盖
+`LOOM_RUNTIME_DIR`/`LOOM_PG_CONTAINER`/`LOOM_DB_USER`/`LOOM_DB_NAME`/`LOOM_KEEP_DAILY`/
+`LOOM_MIN_BYTES`（默认值=当前 Mac 生产）。巡检命令：
+
+```bash
+cat …/tlp-local-prod-*/.loom-daily-dump-last-success   # epoch 戳，>2 日即 stale
+launchctl print gui/$(id -u)/studio.yukoval.loom-daily-dump | grep -E 'last exit|runs'
+~/Library/Application\ Support/loom-daily-dump/mac-daily-dump.sh  # 手动补一份（幂等，同日覆盖）
+~/Library/Application\ Support/loom-daily-dump/mac-daily-dump.sh --check  # fresh/stale 巡检
+```
+
+**恢复演练（restore 证明，YUK-1056）**：`scripts/restore-drill.sh` 在隔离
+scratch 容器内 `pg_restore` + 行数核验，产出 `verified` JSON 证据；
+**统一切换最终备份**：`scripts/cutover-final-backup.sh` 停 writer 后
+DLQ tombstone 导出 + pg_dump + TOC + migration:capture + cutover manifest。
+详见 `docs/runbooks/cutover-final-backup-and-restore.md`。
+
+**手动 dump/restore**：`db:dump` streams a `pg_dump` from the running `postgres` container to a timestamped SQL file on the host:
 
 ```bash
 pnpm db:dump
@@ -185,6 +270,8 @@ To restore:
 ```bash
 pnpm db:restore < /tmp/loom-20260101-000000.sql
 ```
+
+恢复完整 runbook（OrbStack VM wipe 等场景）：`docs/sub5-restore-cli.md`。
 
 ## 目录
 

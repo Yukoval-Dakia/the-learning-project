@@ -62,11 +62,11 @@ export async function GET(): Promise<Response> {
     // Single aggregate query. Upper bound `due_at < soonCutoff` keeps far-future
     // cards out before the group-by; there is no lower bound because overdue
     // knowledge cards may be arbitrarily far in the past.
-    const rows = (await db.execute(sql<{
+    const rows = await db.execute<{
       knowledge_id: string;
       overdue: number;
       due_soon: number;
-    }>`
+    }>(sql`
       SELECT
         ${material_fsrs_state.subject_id} AS knowledge_id,
         count(*) FILTER (WHERE ${material_fsrs_state.due_at} <= ${nowIso}::timestamptz)::int AS overdue,
@@ -75,7 +75,7 @@ export async function GET(): Promise<Response> {
       WHERE ${material_fsrs_state.subject_kind} = 'knowledge'
         AND ${material_fsrs_state.due_at} < ${soonCutoffIso}::timestamptz
       GROUP BY ${material_fsrs_state.subject_id}
-    `)) as unknown as Array<{ knowledge_id: string; overdue: number; due_soon: number }>;
+    `);
 
     const summary: Record<string, ReviewDueNodeSummary> = {};
     for (const row of rows) {

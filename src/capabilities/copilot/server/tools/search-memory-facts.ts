@@ -93,6 +93,10 @@ export function buildSearchMemoryFactsTool(
     if (ctx.providerSessionDeadlineAt === undefined) {
       throw new TypeError('search_memory_facts requires a provider session deadline');
     }
+    ctx.signal?.throwIfAborted();
+    if (Date.now() >= ctx.providerSessionDeadlineAt) {
+      throw new Error('hard_deadline_exceeded');
+    }
     const topK = input.topK ?? DEFAULT_FACTS_TOP_K;
     const scopeKey = input.scopeKey ?? null;
     const inputDigest = createHash('sha256')

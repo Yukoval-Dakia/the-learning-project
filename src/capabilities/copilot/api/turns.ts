@@ -1,6 +1,6 @@
 // M5-T3 (YUK-321) — GET /api/copilot/turns?limit=20（重放 last-N，等价平移）。
 
-import { getRecentCopilotTurns } from '@/capabilities/copilot/server/turns';
+import { getCopilotConversationSnapshot } from '@/capabilities/copilot/server/turns';
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
 import { CopilotTurnsQuerySchema } from './contracts';
@@ -9,10 +9,16 @@ export async function GET(req: Request): Promise<Response> {
   try {
     const url = new URL(req.url);
     const raw = url.searchParams.get('limit');
-    const query = CopilotTurnsQuerySchema.parse({ limit: raw ?? undefined });
+    const query = CopilotTurnsQuerySchema.parse({
+      limit: raw ?? undefined,
+      session_id: url.searchParams.get('session_id') ?? undefined,
+    });
     const limit = query.limit === undefined ? undefined : Number.parseInt(query.limit, 10);
-    const turns = await getRecentCopilotTurns(db, { limit });
-    return Response.json({ turns });
+    const snapshot = await getCopilotConversationSnapshot(db, {
+      limit,
+      sessionId: query.session_id,
+    });
+    return Response.json(snapshot);
   } catch (err) {
     return errorResponse(err);
   }

@@ -21,7 +21,7 @@
 //     No terminal event ⇒ 'unverified' (未验过 raw draft).
 //   - reason: payload.summary_md when present (the model's驳回理由), else null.
 
-import { and, desc, eq, inArray, lt, ne, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lt, ne, or, sql } from 'drizzle-orm';
 
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
@@ -32,6 +32,7 @@ import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
+import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
 
 type DbLike = Db | Tx;
 
@@ -270,15 +271,30 @@ export async function listDraftReview(
 
   const conditions = [
     eq(question.draft_status, 'draft'),
+    // YUK-1011 — composite children (question_part rows) are group-internal:
+    // they carry no independent verify intent and must never appear as separate
+    // unverified drafts — their lifecycle is the parent's verify cascade.
+    // (Legacy paper/import parts are NULL≡active and already filtered by the
+    // draft_status predicate; this only affects generated draft parts.)
+    isNull(question.parent_question_id),
     // Product-owned one-shot diagnostics are retired with draft_status='draft'
     // after settlement. They are not moderation drafts, and this surface exposes
     // reference_md, so admitting them would leak the gold answer before +7/+21.
     sql`${question.source} IS DISTINCT FROM ${INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE}`,
     // exclude soft-archived (deleted) drafts: metadata.archived_at IS NULL/absent.
     sql`(${question.metadata} -> 'archived_at') IS NULL`,
+    // YUK-308 — exclude proposal-dismissed drafts (metadata.dismissed_at): the
+    // owner already said no; they are not pending-review items.
+    sql`(${question.metadata} -> 'dismissed_at') IS NULL`,
   ];
   if (opts.source) conditions.push(eq(question.source, opts.source));
-  if (opts.kind) conditions.push(eq(question.kind, opts.kind));
+  // YUK-386 — kind is a free-form label; expand the requested label through the
+  // vocab fold (canonicalKindToPersistedForms) so a canonical filter still hits
+  // legacy profile-vocab rows (single_choice…), YUK-288-style. Unknown labels
+  // pass through as an exact match on themselves.
+  if (opts.kind) {
+    conditions.push(inArray(question.kind, canonicalKindToPersistedForms(opts.kind)));
+  }
   const countWhere = and(...conditions);
   if (cursor) {
     const cursorFilter = or(
@@ -407,9 +423,14 @@ export async function getDraftReviewDetail(
       and(
         eq(question.id, id),
         eq(question.draft_status, 'draft'),
+        // YUK-1011 — mirror the list filter: a composite child is not an
+        // independently reviewable draft (its lifecycle rides the parent's).
+        isNull(question.parent_question_id),
         sql`${question.source} IS DISTINCT FROM ${INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE}`,
         // exclude soft-archived (deleted) drafts (mirror the list filter).
         sql`(${question.metadata} -> 'archived_at') IS NULL`,
+        // YUK-308 — dismissed drafts are not reviewable items.
+        sql`(${question.metadata} -> 'dismissed_at') IS NULL`,
       ),
     )
     .limit(1);

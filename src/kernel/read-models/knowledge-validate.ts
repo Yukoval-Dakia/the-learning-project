@@ -1,9 +1,9 @@
 import { and, inArray, isNull } from 'drizzle-orm';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { knowledge } from '@/db/schema';
 
 export async function assertKnowledgeIdsExist(
-  db: Db,
+  db: Db | Tx,
   ids: string[],
 ): Promise<{ ok: true } | { ok: false; missing: string[] }> {
   if (ids.length === 0) return { ok: true };

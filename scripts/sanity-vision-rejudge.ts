@@ -21,8 +21,10 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config } from 'dotenv';
-import type { JudgeQuestionRow } from '../src/capabilities/practice/server/judge/question-contract';
-import { runStepsJudge } from '../src/capabilities/practice/server/judge/steps-judge';
+import type { JudgeQuestionRow } from '@/capabilities/practice/public';
+// YUK-1064 exception: keep this opt-in, injected-DB harness independent of
+// application DB initialization, including before dotenv configuration below.
+import { runStepsJudge } from '@/capabilities/practice/server/judge/steps-judge';
 import type { Db } from '../src/db/client';
 import { loadMathDerivationFixtures } from '../src/subjects/math/fixtures/derivation';
 import { resolveSubjectProfile } from '../src/subjects/profile';

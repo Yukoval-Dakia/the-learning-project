@@ -1,32 +1,12 @@
+import type { AgentTool } from '@earendil-works/pi-agent-core';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { capabilities } from '@/capabilities';
+import { presentPrimaryViewTool } from '@/capabilities/copilot/server/tools/present-primary-view';
+import type { ToolOperationRecord, ToolOperations } from '@/kernel/tools/tool-operations';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, registerTool } from './registry';
-
-// Mock the SDK so the bridge can run without a Claude subprocess.
-const mockAgentSdk = vi.hoisted(() => ({
-  capturedServerOptions: undefined as unknown,
-  toolDefs: [] as Array<{
-    name: string;
-    description: string;
-    schema: unknown;
-    handler: (args: unknown) => Promise<unknown>;
-  }>,
-}));
-
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  createSdkMcpServer: vi.fn((opts: unknown) => {
-    mockAgentSdk.capturedServerOptions = opts;
-    return { type: 'sdk', instance: opts };
-  }),
-  tool: vi.fn((name: string, description: string, schema: unknown, handler: unknown) => {
-    const def = { name, description, schema, handler } as (typeof mockAgentSdk.toolDefs)[number];
-    mockAgentSdk.toolDefs.push(def);
-    return def;
-  }),
-}));
 
 // Mock writeToolCallLog / setToolCallLogMirroredEventId — bridge calls them
 // but unit tests just need to capture invocations.
@@ -54,11 +34,14 @@ vi.mock('@/kernel/events', () => ({
   }),
 }));
 
+import { writeEvent } from '@/kernel/events';
+import { setToolCallLogMirroredEventId, writeToolCallLog } from '@/server/ai/log';
 import {
   __resolveMirrorPolicy,
-  buildMcpServerFromRegistry,
+  executeDomainToolCall,
   shouldEmitToolUseForCaller,
 } from './mcp-bridge';
+import { buildPiDomainAgentTools } from './pi-tools';
 
 function makeReadTool<I, O>(
   name: string,
@@ -87,11 +70,79 @@ const ctx: ToolContext = {
   callerActor: { kind: 'agent', ref: 'agent:test:bridge' },
 };
 
-describe('buildMcpServerFromRegistry', () => {
+function toolOperationRecord(overrides: Partial<ToolOperationRecord> = {}): ToolOperationRecord {
+  const now = new Date('2026-08-27T12:00:00.000Z');
+  return {
+    id: 'toolop_bridge_safe',
+    sessionId: 'session_bridge',
+    taskRunId: 'tr_test',
+    toolName: 'remote_reader',
+    effect: 'read',
+    status: 'running',
+    processId: 'process_bridge',
+    inputHash: 'a'.repeat(64),
+    input: { args: { query: 'nested evidence' }, tool_use_id: 'toolu_bridge_4' },
+    result: null,
+    error: null,
+    sideEffectRisk: null,
+    cancelledBy: null,
+    terminalToolCallLogId: null,
+    hardDeadlineAt: new Date('2026-08-27T12:05:00.000Z'),
+    startedAt: now,
+    ownerHeartbeatAt: now,
+    leaseExpiresAt: new Date('2026-08-27T12:00:30.000Z'),
+    settledAt: null,
+    updatedAt: now,
+    ...overrides,
+  };
+}
+
+function fakeToolOperations(options: {
+  waited: ToolOperationRecord;
+  terminal?: ToolOperationRecord;
+  order?: string[];
+}): ToolOperations {
+  const terminal = options.terminal ?? options.waited;
+  return {
+    start: vi.fn(async (_input, execute) => {
+      void execute({
+        operationId: options.waited.id,
+        signal: new AbortController().signal,
+      });
+      return {
+        id: options.waited.id,
+        wait: vi.fn(async () => options.waited),
+        waitUntilSettled: vi.fn(async () => {
+          options.order?.push('settlement-observed');
+          return terminal;
+        }),
+        cancel: vi.fn(async () => options.waited),
+      };
+    }),
+    get: vi.fn(async () => terminal),
+    wait: vi.fn(async () => options.waited),
+    waitUntilSettled: vi.fn(async () => {
+      options.order?.push('settlement-observed');
+      return terminal;
+    }),
+    cancel: vi.fn(async () => options.waited),
+    linkTerminalToolCallLog: vi.fn(async (_id, terminalToolCallLogId) => {
+      options.order?.push('terminal-linked');
+      return toolOperationRecord({
+        ...terminal,
+        terminalToolCallLogId,
+      });
+    }),
+    recoverLost: vi.fn(async () => []),
+  };
+}
+
+describe('buildPiDomainAgentTools', () => {
+  let agentTools: AgentTool[] = [];
+
   beforeEach(() => {
     __resetRegistryForTests();
-    mockAgentSdk.capturedServerOptions = undefined;
-    mockAgentSdk.toolDefs = [];
+    agentTools = [];
     captured.toolCallLogs = [];
     captured.mirroredLinks = [];
     captured.events = [];
@@ -115,30 +166,236 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['demo_a', 'demo_b'] });
+    agentTools = buildPiDomainAgentTools({
+      ctx,
+      serverName: 'loom_v2',
+      toolNames: ['demo_a', 'demo_b'],
+    });
 
-    const server = mockAgentSdk.capturedServerOptions as { name: string };
-    expect(server.name).toBe('loom_v2');
-    expect(mockAgentSdk.toolDefs.map((t) => t.name)).toEqual(['demo_a', 'demo_b']);
+    expect(agentTools.map((t) => t.name)).toEqual(['mcp__loom_v2__demo_a', 'mcp__loom_v2__demo_b']);
     // Raw shape, not a ZodObject — SDK contract.
-    expect((mockAgentSdk.toolDefs[0].schema as Record<string, unknown>).q).toBeDefined();
+    expect(
+      (
+        (agentTools[0].parameters as { properties: Record<string, unknown> }).properties as Record<
+          string,
+          unknown
+        >
+      ).q,
+    ).toBeDefined();
   });
 
-  it('constructs the production MCP server with run_task and query_events included', async () => {
+  it('keeps undeclared tools blocking and never creates a ToolOperations identity', async () => {
+    const toolOperations = fakeToolOperations({ waited: toolOperationRecord() });
+    registerTool(
+      makeReadTool<{ query: string }, { count: number }>(
+        'local_reader',
+        { query: z.string() },
+        () => ({ count: 3 }),
+        () => 'local reader · 3',
+      ),
+    );
+    agentTools = buildPiDomainAgentTools({
+      ctx: { ...ctx, sessionId: 'session_bridge' },
+      serverName: 'loom',
+      toolNames: ['local_reader'],
+      toolOperations,
+    });
+
+    const response = (await agentTools[0]?.execute('call_test', { query: 'local facts' })) as {
+      content: Array<{ text: string }>;
+    };
+
+    expect(JSON.parse(response.content[0]?.text ?? '')).toMatchObject({
+      output: { count: 3 },
+    });
+    expect(toolOperations.start).not.toHaveBeenCalled();
+  });
+
+  it('returns the final output without yielded semantics when a safe remote read settles first', async () => {
+    const settled = toolOperationRecord({
+      status: 'succeeded',
+      result: { facts: [{ id: 'fact_fast', score: 0.91 }], count: 1 },
+      settledAt: new Date('2026-08-27T12:00:04.000Z'),
+    });
+    const toolOperations = fakeToolOperations({ waited: settled });
+    registerTool({
+      ...makeReadTool<{ query: string }, { facts: unknown[]; count: number }>(
+        'remote_reader',
+        { query: z.string() },
+        () => ({ facts: [], count: 0 }),
+        (_input, result) => `remote reader · ${result.count}`,
+      ),
+      safeHandoff: { transport: 'remote', idempotent: true },
+    });
+    agentTools = buildPiDomainAgentTools({
+      ctx: { ...ctx, sessionId: 'session_bridge' },
+      serverName: 'loom',
+      toolNames: ['remote_reader'],
+      toolOperations,
+    });
+
+    const response = (await agentTools[0]?.execute('toolu_fast_1', { query: 'fast facts' })) as {
+      content: Array<{ text: string }>;
+    };
+    const body = JSON.parse(response.content[0]?.text ?? '') as Record<string, unknown>;
+
+    expect(body).toMatchObject({ output: { facts: [{ id: 'fact_fast' }], count: 1 } });
+    expect(JSON.stringify(body)).not.toContain('tool_operation');
+    expect(toolOperations.start).toHaveBeenCalledTimes(1);
+    expect(toolOperations.linkTerminalToolCallLog).toHaveBeenCalledTimes(1);
+  });
+
+  it('blocks until settlement and returns the final output in the same MCP response', async () => {
+    const order: string[] = [];
+    const running = toolOperationRecord();
+    const terminal = toolOperationRecord({
+      status: 'succeeded',
+      result: { facts: [{ id: 'fact_late', memory: 'late result' }], count: 1 },
+      settledAt: new Date('2026-08-27T12:00:52.000Z'),
+    });
+    const toolOperations = fakeToolOperations({ waited: running, terminal, order });
+    registerTool({
+      ...makeReadTool<{ query: string }, { facts: unknown[]; count: number }>(
+        'remote_reader',
+        { query: z.string() },
+        () => ({ facts: [], count: 0 }),
+        (_input, result) => `remote reader · ${result.count}`,
+      ),
+      safeHandoff: { transport: 'remote', idempotent: true },
+      mirrorEvent: 'always',
+    });
+    agentTools = buildPiDomainAgentTools({
+      ctx: { ...ctx, sessionId: 'session_bridge' },
+      serverName: 'loom',
+      toolNames: ['remote_reader'],
+      toolOperations,
+      onExecuteSettled: () => {
+        order.push('execution-released');
+      },
+    });
+
+    const response = (await agentTools[0]?.execute('call_test', { query: 'nested evidence' })) as {
+      content: Array<{ text: string }>;
+    };
+    expect(JSON.parse(response.content[0]?.text ?? '')).toMatchObject({
+      output: { facts: [{ id: 'fact_late' }], count: 1 },
+    });
+    expect(JSON.stringify(response)).not.toContain('tool_operation');
+    expect(toolOperations.start).toHaveBeenCalledTimes(1);
+    expect(toolOperations.waitUntilSettled).toHaveBeenCalledWith('toolop_bridge_safe');
+    expect(toolOperations.wait).not.toHaveBeenCalled();
+    expect(captured.toolCallLogs).toHaveLength(1);
+    expect(toolOperations.linkTerminalToolCallLog).toHaveBeenCalledTimes(1);
+    expect(order).toEqual(['settlement-observed', 'terminal-linked', 'execution-released']);
+    expect(captured.events).toHaveLength(1);
+  });
+
+  it('claims correlation from the original call before interceptInput rewrites execution args', async () => {
+    const running = toolOperationRecord({
+      input: { args: { query: 'original', limit: 3 }, tool_use_id: 'toolu_original_call' },
+    });
+    const toolOperations = fakeToolOperations({ waited: running, terminal: running });
+    registerTool({
+      ...makeReadTool<{ query: string; limit: number }, { facts: unknown[] }>(
+        'remote_capped_reader',
+        { query: z.string(), limit: z.number().default(10) },
+        () => ({ facts: [] }),
+        () => 'remote capped reader',
+      ),
+      safeHandoff: { transport: 'remote', idempotent: true },
+    });
+    agentTools = buildPiDomainAgentTools({
+      ctx: { ...ctx, sessionId: 'session_bridge' },
+      serverName: 'loom',
+      toolNames: ['remote_capped_reader'],
+      toolOperations,
+      interceptInput: (_tool, args) => ({
+        args: { ...(args as object), query: 'rewritten', limit: 3 },
+      }),
+    });
+
+    await agentTools[0]?.execute('toolu_original_call', { query: 'original' });
+    expect(toolOperations.start).toHaveBeenCalledWith(
+      expect.objectContaining({
+        input: {
+          args: { query: 'rewritten', limit: 3 },
+          tool_use_id: 'toolu_original_call',
+        },
+      }),
+      expect.any(Function),
+    );
+  });
+
+  it('exposes the real SDK tool-use id for an ordinary directly executed DomainTool', async () => {
+    registerTool(
+      makeReadTool<{ query: string }, { facts: string[] }>(
+        'direct_reader',
+        { query: z.string() },
+        () => ({ facts: ['fact_1'] }),
+        () => 'direct reader',
+      ),
+    );
+    agentTools = buildPiDomainAgentTools({
+      ctx,
+      serverName: 'loom',
+      toolNames: ['direct_reader'],
+    });
+
+    const response = (await agentTools[0]?.execute('toolu_direct_reader', {
+      query: 'evidence',
+    })) as {
+      content: Array<{ text: string }>;
+    };
+    expect(JSON.parse(response.content[0]?.text ?? '')).toMatchObject({
+      tool_use_id: 'toolu_direct_reader',
+      output: { facts: ['fact_1'] },
+    });
+  });
+
+  it('rejects safe handoff for a non-read declaration', async () => {
+    expect(() =>
+      registerTool({
+        ...makeReadTool<{ intent: string }, { accepted: true }>(
+          'non_read_generator',
+          { intent: z.string() },
+          () => ({ accepted: true }),
+          () => 'run task accepted',
+        ),
+        effect: 'write',
+        safeHandoff: { transport: 'remote', idempotent: true },
+      }),
+    ).toThrow(
+      "DomainTool 'non_read_generator' safeHandoff requires an explicitly idempotent remote read",
+    );
+  });
+
+  it('constructs the production MCP server with both owned generation tools and query_events', async () => {
     await registerCapabilityTools(capabilities);
 
-    expect(() =>
-      buildMcpServerFromRegistry({
-        ctx,
-        serverName: 'loom_v2',
-        toolNames: ['run_task', 'query_events'],
-      }),
+    expect(
+      () =>
+        (agentTools = buildPiDomainAgentTools({
+          ctx,
+          serverName: 'loom_v2',
+          toolNames: ['generate_goal_outline', 'generate_question_candidate', 'query_events'],
+        })),
     ).not.toThrow();
-    expect(mockAgentSdk.toolDefs.map((tool) => tool.name)).toEqual(['run_task', 'query_events']);
-    const runTaskSchema = mockAgentSdk.toolDefs[0].schema as Record<string, unknown>;
-    expect(runTaskSchema.task_kind).toBeDefined();
-    expect(runTaskSchema.intent).toBeDefined();
-    const queryEventsSchema = mockAgentSdk.toolDefs[1].schema as Record<string, unknown>;
+    expect(agentTools.map((tool) => tool.name)).toEqual([
+      'mcp__loom_v2__generate_goal_outline',
+      'mcp__loom_v2__generate_question_candidate',
+      'mcp__loom_v2__query_events',
+    ]);
+    const goalOutlineSchema = (agentTools[0].parameters as { properties: Record<string, unknown> })
+      .properties as Record<string, unknown>;
+    expect(goalOutlineSchema.goal_title).toBeDefined();
+    expect(goalOutlineSchema.task_kind).toBeUndefined();
+    const questionCandidateSchema = (
+      agentTools[1].parameters as { properties: Record<string, unknown> }
+    ).properties;
+    expect(questionCandidateSchema.seed_mode).toBeDefined();
+    expect(questionCandidateSchema.knowledge_ids).toBeDefined();
+    const queryEventsSchema = (agentTools[2].parameters as { properties: Record<string, unknown> })
+      .properties;
     expect(queryEventsSchema.filter).toBeDefined();
     expect(queryEventsSchema.cursor).toBeDefined();
   });
@@ -154,7 +411,7 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom_v2',
       toolNames: ['demo_x'],
@@ -162,8 +419,8 @@ describe('buildMcpServerFromRegistry', () => {
         observedResults.push(result);
       },
     });
-    const def = mockAgentSdk.toolDefs[0];
-    const result = (await def.handler({ q: 'hello' })) as {
+    const def = agentTools[0];
+    const result = (await def.execute('call_test', { q: 'hello' })) as {
       content: Array<{ type: string; text: string }>;
     };
 
@@ -182,12 +439,59 @@ describe('buildMcpServerFromRegistry', () => {
       {
         name: 'demo_x',
         effect: 'read',
+        tool_use_id: 'call_test',
         input: { q: 'hello' },
         output: { len: 5 },
         error_reason: null,
         executed: true,
       },
     ]);
+  });
+
+  it('executes and logs the presentation control without mirroring a domain event', async () => {
+    const observedResults: unknown[] = [];
+    registerTool(presentPrimaryViewTool as DomainTool<unknown, unknown>);
+    agentTools = buildPiDomainAgentTools({
+      ctx,
+      serverName: 'loom',
+      toolNames: ['present_primary_view'],
+      onResult: (result) => {
+        observedResults.push(result);
+      },
+    });
+
+    const nomination = {
+      source: 'tool_result',
+      ref: { kind: 'query_knowledge', id: 'toolu_read_1' },
+    };
+    const result = (await agentTools[0]?.execute('call_test', nomination)) as {
+      content: Array<{ text: string }>;
+    };
+
+    expect(JSON.parse(result.content[0]?.text ?? '')).toMatchObject({ output: nomination });
+    expect(captured.toolCallLogs[0]).toMatchObject({
+      tool_name: 'present_primary_view',
+      effect: 'control',
+    });
+    expect(observedResults).toEqual([
+      {
+        name: 'present_primary_view',
+        effect: 'control',
+        tool_use_id: 'call_test',
+        input: nomination,
+        output: {
+          ...nomination,
+          presentation_lifecycle: {
+            saved_with_conversation: true,
+            discarded_on_close: false,
+            standalone_artifact: false,
+          },
+        },
+        error_reason: null,
+        executed: true,
+      },
+    ]);
+    expect(captured.events).toEqual([]);
   });
 
   it('binds proposal calls to a server-owned FULL owner gate instead of model prose', async () => {
@@ -207,9 +511,13 @@ describe('buildMcpServerFromRegistry', () => {
       mirrorEvent: 'when_causal',
     });
 
-    buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['demo_proposal'] });
+    agentTools = buildPiDomainAgentTools({
+      ctx,
+      serverName: 'loom_v2',
+      toolNames: ['demo_proposal'],
+    });
 
-    const result = (await mockAgentSdk.toolDefs[0]?.handler({ target_id: 'node_b' })) as {
+    const result = (await agentTools[0]?.execute('call_test', { target_id: 'node_b' })) as {
       content: Array<{ type: string; text: string }>;
     };
     const parsed = JSON.parse(result.content[0]?.text ?? '') as Record<string, unknown>;
@@ -246,9 +554,13 @@ describe('buildMcpServerFromRegistry', () => {
       mirrorEvent: 'when_causal',
     });
 
-    buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['author_question'] });
+    agentTools = buildPiDomainAgentTools({
+      ctx,
+      serverName: 'loom_v2',
+      toolNames: ['author_question'],
+    });
 
-    const result = (await mockAgentSdk.toolDefs[0]?.handler({
+    const result = (await agentTools[0]?.execute('call_test', {
       seed_mode: 'knowledge',
       knowledge_ids: ['kc_seed'],
     })) as { content: Array<{ type: string; text: string }> };
@@ -266,7 +578,7 @@ describe('buildMcpServerFromRegistry', () => {
       },
     });
 
-    const failedResult = (await mockAgentSdk.toolDefs[0]?.handler({
+    const failedResult = (await agentTools[0]?.execute('call_test', {
       seed_mode: 'knowledge',
       knowledge_ids: ['kc_missing'],
     })) as { content: Array<{ type: string; text: string }> };
@@ -310,8 +622,8 @@ describe('buildMcpServerFromRegistry', () => {
         mirrorEvent: 'when_causal',
       });
 
-      buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: [name] });
-      const handler = mockAgentSdk.toolDefs[0]?.handler;
+      agentTools = buildPiDomainAgentTools({ ctx, serverName: 'loom_v2', toolNames: [name] });
+      const handler = (a: unknown) => agentTools[0]?.execute('call_test', a);
       const baseInput = {
         attempt_event_id: 'evt_failure',
         ...(name === 'author_question' ? { seed_mode: 'variant' as const } : {}),
@@ -357,13 +669,13 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom_v2',
       toolNames: ['demo_gate'],
       beforeExecute,
     });
-    const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'hello' })) as {
+    const result = (await agentTools[0].execute('call_test', { q: 'hello' })) as {
       content: Array<{ type: string; text: string }>;
     };
 
@@ -397,7 +709,7 @@ describe('buildMcpServerFromRegistry', () => {
         (_input, output) => `validated ${output.validated_probes} probes`,
       ),
     );
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom_v2',
       toolNames: ['demo_async_cancel_gate'],
@@ -407,7 +719,7 @@ describe('buildMcpServerFromRegistry', () => {
       },
     });
 
-    const execution = mockAgentSdk.toolDefs[0].handler({
+    const execution = agentTools[0].execute('call_test', {
       answer_ids: Array.from({ length: 48 }, (_, index) => `answer_${index + 1}`),
       transfer_count: 9,
     });
@@ -429,7 +741,7 @@ describe('buildMcpServerFromRegistry', () => {
         () => 'should not execute',
       ),
     );
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom_v2',
       toolNames: ['demo_async_cancel_rejection'],
@@ -438,7 +750,7 @@ describe('buildMcpServerFromRegistry', () => {
       },
     });
 
-    const result = (await mockAgentSdk.toolDefs[0].handler({
+    const result = (await agentTools[0].execute('call_test', {
       prompt: 'author three linked artifacts from nine transfer variants',
     })) as { content: Array<{ text: string }> };
 
@@ -461,7 +773,7 @@ describe('buildMcpServerFromRegistry', () => {
         (_input, output) => `authored ${output.question_id}`,
       ),
     );
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
       serverName: 'loom_v2',
       toolNames: ['demo_barrier'],
@@ -475,7 +787,7 @@ describe('buildMcpServerFromRegistry', () => {
       },
     });
 
-    await mockAgentSdk.toolDefs[0].handler({
+    await agentTools[0].execute('call_test', {
       prompt: 'construct a unique-solution transfer item with dimensional validation',
     });
 
@@ -496,7 +808,7 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom_v2',
       toolNames: ['demo_capped'],
@@ -508,7 +820,7 @@ describe('buildMcpServerFromRegistry', () => {
         observedResults.push(result);
       },
     });
-    const result = (await mockAgentSdk.toolDefs[0].handler({ limit: 10 })) as {
+    const result = (await agentTools[0].execute('call_test', { limit: 10 })) as {
       content: Array<{ type: string; text: string }>;
     };
 
@@ -533,6 +845,7 @@ describe('buildMcpServerFromRegistry', () => {
       {
         name: 'demo_capped',
         effect: 'read',
+        tool_use_id: 'call_test',
         input: { limit: 3 },
         output: {
           rows: 3,
@@ -555,7 +868,7 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom_v2',
       toolNames: ['demo_observer_failure'],
@@ -564,7 +877,7 @@ describe('buildMcpServerFromRegistry', () => {
       },
     });
 
-    const result = (await mockAgentSdk.toolDefs[0].handler({
+    const result = (await agentTools[0].execute('call_test', {
       subject_id: 'diagnostic_subject_observer_failure',
     })) as { content: Array<{ text: string }> };
 
@@ -597,7 +910,7 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom_v2',
       toolNames: ['demo_exhausted'],
@@ -609,7 +922,7 @@ describe('buildMcpServerFromRegistry', () => {
     });
 
     // No throw — handler resolves with a normal MCP content shape.
-    const result = (await mockAgentSdk.toolDefs[0].handler({ limit: 20 })) as {
+    const result = (await agentTools[0].execute('call_test', { limit: 20 })) as {
       content: Array<{ type: string; text: string }>;
     };
 
@@ -636,14 +949,14 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom_v2',
       toolNames: ['demo_blocked_then_intercept'],
       beforeExecute: () => 'budget reached',
       interceptInput,
     });
-    await mockAgentSdk.toolDefs[0].handler({ q: 'x' });
+    await agentTools[0].execute('call_test', { q: 'x' });
 
     expect(interceptInput).not.toHaveBeenCalled();
     expect(runFn).not.toHaveBeenCalled();
@@ -663,13 +976,13 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx,
       serverName: 'loom_v2',
       toolNames: ['demo_gate_throw'],
       beforeExecute,
     });
-    const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'hello' })) as {
+    const result = (await agentTools[0].execute('call_test', { q: 'hello' })) as {
       content: Array<{ type: string; text: string }>;
     };
 
@@ -696,13 +1009,13 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
       serverName: 'loom_v2',
       toolNames: ['demo_summary_err'],
     });
-    const def = mockAgentSdk.toolDefs[0];
-    const result = (await def.handler({ q: 'hi' })) as {
+    const def = agentTools[0];
+    const result = (await def.execute('call_test', { q: 'hi' })) as {
       content: Array<{ type: string; text: string }>;
     };
 
@@ -736,9 +1049,9 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['demo_err'] });
-    const def = mockAgentSdk.toolDefs[0];
-    const result = (await def.handler({ q: 'x' })) as {
+    agentTools = buildPiDomainAgentTools({ ctx, serverName: 'loom_v2', toolNames: ['demo_err'] });
+    const def = agentTools[0];
+    const result = (await def.execute('call_test', { q: 'x' })) as {
       content: Array<{ type: string; text: string }>;
     };
 
@@ -753,8 +1066,9 @@ describe('buildMcpServerFromRegistry', () => {
   });
 
   it('throws when a requested tool is not registered', () => {
-    expect(() =>
-      buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['nope'] }),
+    expect(
+      () =>
+        (agentTools = buildPiDomainAgentTools({ ctx, serverName: 'loom_v2', toolNames: ['nope'] })),
     ).toThrow(/not registered/);
   });
 
@@ -768,13 +1082,13 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
       serverName: 'loom_v2',
       toolNames: ['demo_mirror_ok'],
     });
-    const def = mockAgentSdk.toolDefs[0];
-    await def.handler({ q: 'hi' });
+    const def = agentTools[0];
+    await def.execute('call_test', { q: 'hi' });
 
     expect(captured.events).toHaveLength(1);
     const ev = captured.events[0] as Record<string, unknown>;
@@ -805,13 +1119,13 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
       serverName: 'loom_v2',
       toolNames: ['demo_mirror_err'],
     });
-    const def = mockAgentSdk.toolDefs[0];
-    await def.handler({ q: 'x' });
+    const def = agentTools[0];
+    await def.execute('call_test', { q: 'x' });
 
     expect(captured.events).toHaveLength(1);
     const ev = captured.events[0] as Record<string, unknown>;
@@ -830,12 +1144,12 @@ describe('buildMcpServerFromRegistry', () => {
       ),
     );
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, callerActor: { kind: 'user', ref: 'self' } },
       serverName: 'loom_v2',
       toolNames: ['demo_no_mirror_user'],
     });
-    await mockAgentSdk.toolDefs[0].handler({ q: 'x' });
+    await agentTools[0].execute('call_test', { q: 'x' });
 
     expect(captured.events).toHaveLength(0);
     expect(captured.toolCallLogs).toHaveLength(1); // tcl still written
@@ -851,12 +1165,12 @@ describe('buildMcpServerFromRegistry', () => {
     t.mirrorEvent = 'never';
     registerTool(t);
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
       serverName: 'loom_v2',
       toolNames: ['demo_never'],
     });
-    await mockAgentSdk.toolDefs[0].handler({ q: 'x' });
+    await agentTools[0].execute('call_test', { q: 'x' });
 
     expect(captured.events).toHaveLength(0);
   });
@@ -876,13 +1190,13 @@ describe('buildMcpServerFromRegistry', () => {
     registerTool(t);
     const onToolComplete = vi.fn();
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
       serverName: 'loom_v2',
       toolNames: ['demo_complete_never'],
       onToolComplete,
     });
-    await mockAgentSdk.toolDefs[0].handler({ q: 'x' });
+    await agentTools[0].execute('call_test', { q: 'x' });
 
     expect(onToolComplete).not.toHaveBeenCalled();
     // Same decision, same call: no persisted mirror either.
@@ -902,19 +1216,20 @@ describe('buildMcpServerFromRegistry', () => {
     );
     const onToolComplete = vi.fn();
 
-    buildMcpServerFromRegistry({
+    agentTools = buildPiDomainAgentTools({
       ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
       serverName: 'loom_v2',
       toolNames: ['demo_complete_uv'],
       onToolComplete,
     });
-    await mockAgentSdk.toolDefs[0].handler({ q: 'hello' });
+    await agentTools[0].execute('call_test', { q: 'hello' });
 
     expect(onToolComplete).toHaveBeenCalledTimes(1);
     expect(onToolComplete).toHaveBeenCalledWith({
       toolName: 'demo_complete_uv',
       input: { q: 'hello' },
       summary: 'demo_complete_uv · hello → 5',
+      toolUseId: 'call_test',
     });
     expect(captured.events).toHaveLength(1);
   });
@@ -939,7 +1254,7 @@ describe('buildMcpServerFromRegistry', () => {
         mirrorEvent: 'never',
       });
 
-      buildMcpServerFromRegistry({
+      agentTools = buildPiDomainAgentTools({
         ctx,
         serverName: 'loom_v2',
         toolNames: ['bad_primitive_output'],
@@ -947,7 +1262,7 @@ describe('buildMcpServerFromRegistry', () => {
           settled.push('settled');
         },
       });
-      const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'x' })) as {
+      const result = (await agentTools[0].execute('call_test', { q: 'x' })) as {
         content: Array<{ type: string; text: string }>;
       };
 
@@ -978,8 +1293,12 @@ describe('buildMcpServerFromRegistry', () => {
         mirrorEvent: 'never',
       });
 
-      buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['strict_output'] });
-      const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'x' })) as {
+      agentTools = buildPiDomainAgentTools({
+        ctx,
+        serverName: 'loom_v2',
+        toolNames: ['strict_output'],
+      });
+      const result = (await agentTools[0].execute('call_test', { q: 'x' })) as {
         content: Array<{ type: string; text: string }>;
       };
 
@@ -1005,8 +1324,12 @@ describe('buildMcpServerFromRegistry', () => {
         mirrorEvent: 'never',
       });
 
-      buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['transformed_output'] });
-      const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'x' })) as {
+      agentTools = buildPiDomainAgentTools({
+        ctx,
+        serverName: 'loom_v2',
+        toolNames: ['transformed_output'],
+      });
+      const result = (await agentTools[0].execute('call_test', { q: 'x' })) as {
         content: Array<{ type: string; text: string }>;
       };
 
@@ -1037,7 +1360,7 @@ describe('buildMcpServerFromRegistry', () => {
         mirrorEvent: 'never',
       });
 
-      buildMcpServerFromRegistry({
+      agentTools = buildPiDomainAgentTools({
         ctx,
         serverName: 'loom_v2',
         toolNames: ['invalid_output_observer_fails'],
@@ -1045,7 +1368,7 @@ describe('buildMcpServerFromRegistry', () => {
           throw new Error('observer exploded');
         },
       });
-      const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'x' })) as {
+      const result = (await agentTools[0].execute('call_test', { q: 'x' })) as {
         content: Array<{ type: string; text: string }>;
       };
 
@@ -1076,7 +1399,7 @@ describe('buildMcpServerFromRegistry', () => {
         mirrorEvent: 'never',
       });
 
-      buildMcpServerFromRegistry({
+      agentTools = buildPiDomainAgentTools({
         ctx,
         serverName: 'loom_v2',
         toolNames: ['schema_fail_barrier'],
@@ -1084,7 +1407,7 @@ describe('buildMcpServerFromRegistry', () => {
           settledCalls.push('released');
         },
       });
-      await mockAgentSdk.toolDefs[0].handler({ q: 'x' });
+      await agentTools[0].execute('call_test', { q: 'x' });
 
       expect(settledCalls).toHaveLength(1);
       expect(settledCalls[0]).toBe('released');
@@ -1107,12 +1430,12 @@ describe('buildMcpServerFromRegistry', () => {
         mirrorEvent: 'always',
       });
 
-      buildMcpServerFromRegistry({
+      agentTools = buildPiDomainAgentTools({
         ctx: { ...ctx, callerActor: { kind: 'agent', ref: 'agent:copilot' } },
         serverName: 'loom_v2',
         toolNames: ['schema_fail_mirror'],
       });
-      await mockAgentSdk.toolDefs[0].handler({ q: 'x' });
+      await agentTools[0].execute('call_test', { q: 'x' });
 
       const log = captured.toolCallLogs[0] as Record<string, unknown>;
       expect(log.error_reason).toMatch(/output_schema_invalid/);
@@ -1143,8 +1466,12 @@ describe('buildMcpServerFromRegistry', () => {
         mirrorEvent: 'never',
       });
 
-      buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['redact_check'] });
-      const result = (await mockAgentSdk.toolDefs[0].handler({ q: 'x' })) as {
+      agentTools = buildPiDomainAgentTools({
+        ctx,
+        serverName: 'loom_v2',
+        toolNames: ['redact_check'],
+      });
+      const result = (await agentTools[0].execute('call_test', { q: 'x' })) as {
         content: Array<{ type: string; text: string }>;
       };
 
@@ -1171,8 +1498,13 @@ describe('buildMcpServerFromRegistry', () => {
       mirrorEvent: 'never',
     };
     registerTool(badTool);
-    expect(() =>
-      buildMcpServerFromRegistry({ ctx, serverName: 'loom_v2', toolNames: ['bad_schema'] }),
+    expect(
+      () =>
+        (agentTools = buildPiDomainAgentTools({
+          ctx,
+          serverName: 'loom_v2',
+          toolNames: ['bad_schema'],
+        })),
     ).toThrow(/must be a z\.object/);
   });
 });
@@ -1274,9 +1606,132 @@ describe('shouldEmitToolUseForCaller — live tool_use gate (YUK-457)', () => {
     // Task is dropped later by the SSE sanitizer; Tavily cards are governed by
     // the finalize force-done ruling — the gate must not touch either.
     expect(shouldEmitToolUseForCaller('Task', 'loom', copilot)).toBe(true);
-    expect(shouldEmitToolUseForCaller('mcp__tavily__tavily-search', 'loom', copilot)).toBe(true);
+    expect(shouldEmitToolUseForCaller('mcp__exa__web-search-exa', 'loom', copilot)).toBe(true);
     expect(shouldEmitToolUseForCaller('mcp__loom__not_a_registered_tool', 'loom', copilot)).toBe(
       true,
     );
   });
+});
+
+describe('DomainTool phase ordering contract', () => {
+  it.each([false, true])(
+    'settles after every observation and persistence phase, with bookkeeping failure=%s',
+    async (failBookkeeping) => {
+      const order: string[] = [];
+      const observations: Record<string, unknown> = {};
+      const original = {
+        query: '  Explain necessity vs sufficiency with a counterexample.  ',
+        limit: 8,
+      };
+      const parsed = { ...original, query: original.query.trim() };
+      const executed = { ...parsed, limit: 2 };
+      const note = { level: 'warning', dimensions: { characters: 1200, calls: 4 } };
+      const tool: DomainTool<unknown, unknown> = {
+        name: 'phase_order',
+        description: 'phase ordering characterization',
+        effect: 'read',
+        costClass: 'local',
+        mirrorEvent: 'always',
+        inputSchema: z
+          .object({ query: z.string().trim(), limit: z.number() })
+          .transform((value) => {
+            order.push('parse');
+            return value;
+          }),
+        outputSchema: z.object({ evidence: z.array(z.string()) }).transform((value) => {
+          order.push('schema');
+          return { ...value, count: value.evidence.length };
+        }),
+        execute: async (_ctx, input) => {
+          order.push('execute');
+          expect(input).toEqual(executed);
+          return {
+            evidence: [
+              'A implies B; the converse needs its own proof.',
+              'Take a square and a rectangle.',
+            ],
+          };
+        },
+        summarize: (input, output) => {
+          order.push('summary');
+          expect(input).toEqual(parsed);
+          expect(output).toMatchObject({ count: 2, context_budget: note });
+          return 'two evidence statements';
+        },
+      };
+      vi.mocked(writeToolCallLog).mockImplementationOnce(async (_db, row) => {
+        order.push('log');
+        observations.loggedInput = row.input_json;
+        if (failBookkeeping) throw new Error('log unavailable');
+        return 'phase-log';
+      });
+      vi.mocked(writeEvent).mockImplementationOnce(async (_db, row) => {
+        order.push('mirror');
+        observations.mirroredPayload = row.payload;
+        if (failBookkeeping) throw new Error('mirror unavailable');
+        return row.id ?? 'phase-event';
+      });
+      if (!failBookkeeping)
+        vi.mocked(setToolCallLogMirroredEventId).mockImplementationOnce(async () => {
+          order.push('mirror-link');
+        });
+      const response = await executeDomainToolCall(tool, original, {
+        ctx,
+        correlatedToolUseId: 'call-phase-order',
+        beforeExecute: () => {
+          order.push('gate');
+        },
+        interceptInput: (_gate, input) => {
+          order.push('intercept');
+          expect(input).toEqual(parsed);
+          return { args: executed, truncationNote: note };
+        },
+        onExecuteStart: () => {
+          order.push('start');
+        },
+        onResult: (result) => {
+          order.push('result');
+          observations.resultInput = result.input;
+          observations.resultOutput = result.output;
+          if (failBookkeeping) throw new Error('observer unavailable');
+        },
+        onToolComplete: (result) => {
+          order.push('complete');
+          observations.completeInput = result.input;
+          if (failBookkeeping) throw new Error('visibility unavailable');
+        },
+        onExecuteSettled: () => {
+          order.push('settle');
+          if (failBookkeeping) throw new Error('settlement observer unavailable');
+        },
+      });
+      expect(observations).toMatchObject({
+        loggedInput: parsed,
+        mirroredPayload: { args: parsed },
+        resultInput: executed,
+        resultOutput: { count: 2, context_budget: note },
+        completeInput: executed,
+      });
+      expect(order).toEqual([
+        'parse',
+        'gate',
+        'intercept',
+        'start',
+        'execute',
+        'schema',
+        'result',
+        'summary',
+        'complete',
+        'log',
+        'mirror',
+        ...(!failBookkeeping ? ['mirror-link'] : []),
+        'settle',
+      ]);
+      expect(JSON.parse(response.content[0].text)).toMatchObject({
+        summary: 'two evidence statements',
+        tool_use_id: 'call-phase-order',
+        output: { count: 2, context_budget: note },
+      });
+    },
+  );
 });

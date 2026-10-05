@@ -1,7 +1,0 @@
-{
-  "disabled_hooks": [
-    "context-window-monitor",
-    "preemptive-compaction",
-    "anthropic-context-window-limit-recovery"
-  ]
-}

@@ -28,6 +28,7 @@
 // non-blocking path — see verify-framework.ts.) The bare model-only override (no provider) is a
 // same-provider model swap and is passed through as-is.
 
+import { getLaneOverride } from '@/core/config/store';
 import {
   type Provider,
   isKnownProvider,
@@ -57,8 +58,11 @@ export interface SolveOverride {
 export function resolveSolveOverrideFromEnv(
   warn: (message: string) => void = (m) => console.warn(m),
 ): SolveOverride {
-  const provider = process.env[VERIFY_SOLVE_PROVIDER_ENV]?.trim() || undefined;
-  const model = process.env[VERIFY_SOLVE_MODEL_ENV]?.trim() || undefined;
+  // YUK-1007：DB 层（lane.verify_solve.provider/model）> env 层（VERIFY_SOLVE_*
+  // env fallback）。getLaneOverride 每 key 已合并两层。
+  const resolved = getLaneOverride('verify_solve');
+  const provider = resolved?.provider?.trim() || undefined;
+  const model = resolved?.model?.trim() || undefined;
 
   if (!provider && !model) return {};
 
@@ -68,12 +72,14 @@ export function resolveSolveOverrideFromEnv(
     // lane. Ordered cheapest-first; all reuse providers.ts predicates (no second hard-coded copy).
     if (!isKnownProvider(provider)) {
       warn(
-        `[quiz_verify] ${VERIFY_SOLVE_PROVIDER_ENV}='${provider}' is not a known provider; solve_check falls back to the default lane`,
+        `[quiz_verify] solve_check override provider '${provider}' is not a known provider; solve_check falls back to the default lane`,
       );
       return {};
     }
+    // Narrowed: provider is a Provider from here on.
+    const _providerName: Provider = provider;
     if (!isProviderImplemented(provider)) {
-      // Reserved-but-not-implemented (openrouter / gateway / openai). resolveTaskProvider would
+      // Reserved-but-not-implemented (openrouter / gateway). resolveTaskProvider would
       // throw at dispatch; reject HERE so verify degrades to the default lane, not to a runtime
       // 'unsupported' after the closed-book checks already passed.
       warn(

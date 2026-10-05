@@ -17,16 +17,23 @@
 // **绝不** import 或复刻两 handler 的 check 逻辑 / promote 事务 / metadata 构造 / writeAgentNote
 // —— 那是「合并抽取」的滑坡，被 b1 决策否决。
 
-import { and, desc, eq, inArray, isNull, ne } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import { newId } from '@/core/ids';
+import {
+  LEGACY_DRAFT_STATUS,
+  MARKING_RULE_PROVENANCE,
+  QUESTION_AVAILABILITY,
+} from '@/core/schema/assessment/lifecycle';
 import type { Db } from '@/db/client';
 import { event, knowledge, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { type RunTaskFn, runQuizVerify } from '../../jobs/quiz_verify';
 import { runSourceVerify } from '../../jobs/source_verify';
 import { initialFsrsState } from '../fsrs';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from '../placement-scope';
 import { lockPlacementSupplyScopes } from '../question-supply/placement-supply-lock';
 
 export interface VerifyAndPromoteParams {
@@ -119,6 +126,7 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       draft_status: question.draft_status,
       knowledge_ids: question.knowledge_ids,
       metadata: question.metadata,
+      parent_question_id: question.parent_question_id,
     })
     .from(question)
     .where(eq(question.id, questionId))
@@ -126,6 +134,17 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
   const row = rows[0];
   if (!row) {
     return { promoted: false, status: 'skipped:not_found', reason: 'question not found' };
+  }
+
+  // YUK-1011 — a question_part is group-internal: it has no independent verify
+  // intent and must never be promoted standalone (an active child under a
+  // still-draft parent breaks the composite atomic gate). Guard HERE — one
+  // choke point covers BOTH branches below: the normal dispatch would route a
+  // quiz_gen part into a paid runQuizVerify, and the override branch would
+  // force-promote it with no verify at all. Parts go active only via the
+  // parent's verify cascade (quiz_verify.ts).
+  if (row.parent_question_id != null) {
+    return { promoted: false, status: 'skipped:question_part' };
   }
 
   // ── override 分支 (skipVerify) ──────────────────────────────────────────────
@@ -146,15 +165,17 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       return { promoted: false, status: 'skipped:unsupported_source' };
     }
     // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate (spec §2.5).
-    if (row.draft_status !== 'draft') {
+    if (row.draft_status !== LEGACY_DRAFT_STATUS.DRAFT) {
       return { promoted: false, status: 'skipped:not_draft' };
     }
     // YUK-400 B-archived-draft (inc-4a) — a soft-archived (re-drafted) question
     // carries metadata.archived_at (set by archiveQuestion, src/server/questions/
     // write.ts). owner force-enable must NEVER resurrect such a draft back to active;
     // reject WITHOUT promoting or writing any verify event (don't update it back to active).
-    const metaArchivedAt = (row.metadata as Record<string, unknown> | null)?.archived_at;
-    if (metaArchivedAt !== undefined && metaArchivedAt !== null) {
+    // YUK-308 — same for metadata.dismissed_at (question_draft proposal dismiss): an
+    // owner-rejected draft must NEVER be force-enabled back into the pool.
+    const meta = row.metadata as Record<string, unknown> | null;
+    if (meta?.archived_at != null || meta?.dismissed_at != null) {
       return { promoted: false, status: 'skipped:archived_draft' };
     }
     // YUK-400 B-archived-KC (inc-4a) — owner override builds FSRS cards per
@@ -186,36 +207,71 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       await lockPlacementSupplyScopes(tx, row.knowledge_ids ?? []);
       await tx
         .update(question)
-        .set({ draft_status: 'active', updated_at: now })
+        .set({ draft_status: LEGACY_DRAFT_STATUS.ACTIVE, updated_at: now })
         .where(eq(question.id, questionId));
 
       // FSRS enroll — per-knowledge enroll-if-absent (mirror quiz_verify / source_verify /
       // acceptQuestionDraftProposal): never reset a node that already has a schedule;
       // question-level fallback when the row carries no knowledge ids.
       const initial = initialFsrsState(now);
+      const enrollIfAbsent = async (subjectKind: 'knowledge' | 'question', subjectId: string) => {
+        // YUK-1037 — a synthetic subject root ('seed:<subj>:root') is a structural
+        // anchor, never a content KC: skip knowledge-level enrollment so an owner
+        // override can't mint a due card for an id the subject read axis already
+        // excludes (resolveSubjectKnowledgeIds). One choke covers the parent loop
+        // AND the composite-parts cascade below; a roots-only label set enrolls
+        // ZERO cards (it is labeled-but-anchor-only, not unlabeled — the
+        // question-level fallback stays reserved for a truly empty binding).
+        if (subjectKind === 'knowledge' && SYNTHETIC_SUBJECT_ROOT_RE.test(subjectId)) return;
+        const existing = await getFsrsState(tx, subjectKind, subjectId);
+        if (existing) return;
+        await upsertFsrsState(tx, {
+          subject_kind: subjectKind,
+          subject_id: subjectId,
+          state: initial.state,
+          due_at: initial.dueAt,
+          last_review_event_id: verifyEventId,
+        });
+      };
       const fsrsSubjectIds = Array.from(new Set(row.knowledge_ids ?? []));
       if (fsrsSubjectIds.length > 0) {
         for (const knowledgeId of fsrsSubjectIds) {
-          const existing = await getFsrsState(tx, 'knowledge', knowledgeId);
-          if (existing) continue;
-          await upsertFsrsState(tx, {
-            subject_kind: 'knowledge',
-            subject_id: knowledgeId,
-            state: initial.state,
-            due_at: initial.dueAt,
-            last_review_event_id: verifyEventId,
-          });
+          await enrollIfAbsent('knowledge', knowledgeId);
         }
       } else {
-        const existing = await getFsrsState(tx, 'question', questionId);
-        if (!existing) {
-          await upsertFsrsState(tx, {
-            subject_kind: 'question',
-            subject_id: questionId,
-            state: initial.state,
-            due_at: initial.dueAt,
-            last_review_event_id: verifyEventId,
-          });
+        await enrollIfAbsent('question', questionId);
+      }
+
+      // YUK-1011 — composite cascade on owner override: a force-enabled 篇
+      // parent must take its draft children with it (the same atomic-group rule
+      // the quiz_verify cascade applies on the verified path). Otherwise the
+      // parent becomes pool-eligible (EXISTS counts the still-draft children)
+      // while the parts — excluded from moderation and owning no verify intent
+      // — stay draft forever. The draft/tombstone predicates live in the
+      // UPDATE's WHERE (returning-gated) so a concurrent archive/dismiss can't
+      // be overwritten back to 'active'; FSRS enroll mirrors the parent rule
+      // (knowledge-level when labeled — usually a no-op since the parent's loop
+      // just enrolled those ids — question-level fallback when unlabeled).
+      const promotedParts = await tx
+        .update(question)
+        .set({ draft_status: LEGACY_DRAFT_STATUS.ACTIVE, updated_at: now })
+        .where(
+          and(
+            eq(question.parent_question_id, questionId),
+            eq(question.draft_status, LEGACY_DRAFT_STATUS.DRAFT),
+            sql`${question.metadata}->>'archived_at' IS NULL`,
+            sql`${question.metadata}->>'dismissed_at' IS NULL`,
+          ),
+        )
+        .returning({ id: question.id, knowledgeIds: question.knowledge_ids });
+      for (const part of promotedParts) {
+        const partKnowledgeIds = Array.from(new Set(part.knowledgeIds ?? []));
+        if (partKnowledgeIds.length > 0) {
+          for (const knowledgeId of partKnowledgeIds) {
+            await enrollIfAbsent('knowledge', knowledgeId);
+          }
+        } else {
+          await enrollIfAbsent('question', part.id);
         }
       }
 
@@ -241,6 +297,36 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
         cost_micro_usd: null,
         created_at: now,
       });
+
+      // YUK-1043 — 统一发布链：owner-override promote 即 §3.3 的 admission 时刻。
+      // 同事务重发组 revision 为 admitted（结构校验通过；跳过独立核验是 owner
+      // 决定，evidence 如实记录 —— D1：manual ≠ official）。
+      // YUK-1045 — suspension:false 清 verify_hold：owner 复核通过即「同版复核
+      // 通过」恢复路径（§3.3 表）；retraction_hold 恒保留。
+      await publishQuestionGroupFromRow(tx, {
+        rootId: row.parent_question_id ?? questionId,
+        admission: {
+          state: 'admitted',
+          evidence: {
+            marking_provenance: MARKING_RULE_PROVENANCE.MANUAL,
+            verification: {
+              structural_check_passed: true,
+              independent_verification: null,
+            },
+            model_slice: null,
+          },
+        },
+        suspension: { suspended: false },
+        verification: {
+          // owner 跳过独立核验的决定如实记账（policy=manual override，非模型判定）。
+          policy_id: 'owner_override@1',
+          outcome: 'passed',
+          evidence: { override_reason: skipVerify.reason ?? null },
+        },
+        availability: QUESTION_AVAILABILITY.GENERAL_POOL,
+        actorRef: 'verify-and-promote:owner_override',
+        now,
+      });
     });
 
     return { promoted: true, status: 'skipped:owner_override', verifyEventId };
@@ -260,7 +346,7 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
   //     active row, never legitimately promoted via this path) → skipped:not_draft.
   // Either way the PAID run fn is NOT dispatched against a non-draft.
   // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate (spec §2.5).
-  if (row.draft_status !== 'draft') {
+  if (row.draft_status !== LEGACY_DRAFT_STATUS.DRAFT) {
     const verifyEventId = await lookupVerifyEventId(
       db,
       questionId,
@@ -270,6 +356,15 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       return { promoted: true, status: 'skipped:already_verified', verifyEventId };
     }
     return { promoted: false, status: 'skipped:not_draft' };
+  }
+  // YUK-308 — mirror the override branch's tombstone guard (metadata.archived_at
+  // check above) and extend it to metadata.dismissed_at: a proposal-dismissed or
+  // soft-archived row is dead, not pending — never dispatch a PAID verify against
+  // it and never promote it back to active. The matcher already skips these, but
+  // owner-UI retry / direct callers can land here.
+  const normalMeta = row.metadata as Record<string, unknown> | null;
+  if (normalMeta?.archived_at != null || normalMeta?.dismissed_at != null) {
+    return { promoted: false, status: 'skipped:archived_draft' };
   }
   // 按 source 字面转调现有 per-question run 函数 (整体调用)。三态 / writeAgentNote note /
   // metadata 写回 / catch / 幂等 全部由被转调的 run 函数天然产生.
@@ -308,7 +403,8 @@ export async function verifyAndPromote(p: VerifyAndPromoteParams): Promise<Verif
       .where(eq(question.id, questionId))
       .limit(1);
     // NOT isPoolVisible — fail-closed promote guard (not-a-draft → reject/skip); do not fold into notDraftPredicate (spec §2.5).
-    const alreadyActive = post[0] !== undefined && post[0].draft_status !== 'draft';
+    const alreadyActive =
+      post[0] !== undefined && post[0].draft_status !== LEGACY_DRAFT_STATUS.DRAFT;
     if (alreadyActive) {
       const verifyEventId = await lookupVerifyEventId(
         db,

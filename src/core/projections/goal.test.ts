@@ -141,7 +141,12 @@ function statusUpdate(opts: {
 function scopeUpdate(opts: {
   created_at: Date;
   goalId: string;
-  patch: { title?: string; scope_knowledge_ids?: string[]; sequence_hint?: number };
+  patch: {
+    title?: string;
+    scope_knowledge_ids?: string[];
+    sequence_hint?: number;
+    declared_stage?: 'middle_school' | 'high_school' | 'university' | 'custom' | null;
+  };
 }): FoldEvent {
   return {
     id: nextId('scope'),
@@ -231,6 +236,68 @@ describe('foldGoal — scope_mode (YUK-603)', () => {
   });
 });
 
+// YUK-1009 — declared_stage fold parity (mirrors the scope_mode block): the genesis seed
+// carries it verbatim, a legacy payload without the key folds to NULL, the scope_update
+// patch applies a correction, and explicit NULL clears. Proposal-materialized goals fold
+// NULL (the proposal payload has no learner-declared field). Curriculum constraint only —
+// never an ability/θ̂ input.
+describe('foldGoal — declared_stage (YUK-1009)', () => {
+  it('a genesis payload carrying declared_stage folds it verbatim', () => {
+    const seed = goalSnapshot({ declared_stage: 'high_school', source: 'manual' });
+    const row = foldGoal('goal_1', [genesis({ created_at: at(0), row: seed })]);
+    expect(row?.declared_stage).toBe('high_school');
+  });
+
+  it('a legacy genesis payload WITHOUT declared_stage folds NULL (undeclared)', () => {
+    const row = foldGoal('goal_1', [genesis({ created_at: at(0), row: goalSnapshot() })]);
+    expect(row?.declared_stage).toBeNull();
+  });
+
+  it('proposal-materialized goals fold declared_stage=NULL (never guessed from evidence)', () => {
+    const propose = goalPropose({ created_at: at(0), goalId: 'goal_1', title: 'T' });
+    const accept = rateAccept({ created_at: at(1000), causedBy: propose.id, goalId: 'goal_1' });
+    const row = foldGoal('goal_1', [propose, accept]);
+    expect(row?.declared_stage).toBeNull();
+  });
+
+  it('goal_scope_update patch applies a stage correction; explicit NULL clears it', () => {
+    const seed = goalSnapshot({ declared_stage: 'middle_school', source: 'manual' });
+    const corrected = foldGoal('goal_1', [
+      genesis({ created_at: at(0), row: seed }),
+      scopeUpdate({
+        created_at: at(1000),
+        goalId: 'goal_1',
+        patch: { declared_stage: 'high_school' },
+      }),
+    ]);
+    expect(corrected?.declared_stage).toBe('high_school');
+    expect(corrected?.version).toBe(1);
+
+    const cleared = foldGoal('goal_1', [
+      genesis({ created_at: at(0), row: seed }),
+      scopeUpdate({
+        created_at: at(1000),
+        goalId: 'goal_1',
+        patch: { declared_stage: 'high_school' },
+      }),
+      scopeUpdate({ created_at: at(2000), goalId: 'goal_1', patch: { declared_stage: null } }),
+    ]);
+    expect(cleared?.declared_stage).toBeNull();
+    expect(cleared?.version).toBe(2);
+  });
+
+  it('status updates and unrelated scope patches preserve declared_stage', () => {
+    const seed = goalSnapshot({ declared_stage: 'university', source: 'manual' });
+    const row = foldGoal('goal_1', [
+      genesis({ created_at: at(0), row: seed }),
+      statusUpdate({ created_at: at(1000), goalId: 'goal_1', status: 'dormant' }),
+      scopeUpdate({ created_at: at(2000), goalId: 'goal_1', patch: { title: 'T2' } }),
+    ]);
+    expect(row?.declared_stage).toBe('university');
+    expect(row?.status).toBe('dormant');
+  });
+});
+
 // YUK-600（阻断④ fold 镜像，review-760 P3）— proposal-materialization 分支现在经
 // registry 归一 subject_id（与 accept 写路同一语义，fold==row 不变量）。改动落在 core，
 // 直测也落在 core：alias→canonical、unknown→null（db 层防线测试只覆盖写路一侧）。
@@ -317,7 +384,8 @@ describe('foldGoal — genesis seed', () => {
     const snap = goalSnapshot({ status: 'done', version: 4, sequence_hint: 7 });
     const row = foldGoal('goal_1', [genesis({ created_at: at(0), row: snap })]);
     // YUK-603 — a legacy snapshot has no scope_mode; the fold materializes the column default.
-    expect(row).toEqual({ ...snap, scope_mode: 'explicit' });
+    // YUK-1009 — same for declared_stage: legacy payloads carry no key → NULL (undeclared).
+    expect(row).toEqual({ ...snap, scope_mode: 'explicit', declared_stage: null });
   });
 
   it('returns null when no event seeds/creates the goal', () => {

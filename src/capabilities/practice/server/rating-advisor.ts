@@ -23,6 +23,7 @@
 import type { z } from 'zod';
 import type { FsrsRating } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
+import { type RatingPolicyProfileLike, ratingFromOutcomeFor } from '@/core/schema/profile-decl';
 
 export type FsrsRatingT = z.infer<typeof FsrsRating>;
 
@@ -39,22 +40,43 @@ export interface RatingAdvisorContext {
   /**
    * The effective cause category id from
    * effectiveCauseCategoryForFailureAttempt(failure) at the call site. Pass
-   * the helper output directly; do not pre-process. Subject profiles supply
-   * the id namespace (physics uses 'careless' / 'concept'; generic ids
-   * 'carelessness' / 'conceptual_error' are also recognised).
+   * the helper output directly; do not pre-process.
+   *
+   * YUK-739 — the id is interpreted ONLY through `subjectProfile`'s own
+   * `rating_lean` declarations (each subject declares the lean on its OWN
+   * vocabulary: math/yuwen 'carelessness' and physics 'careless' both declare
+   * carelessness-lean; 'concept' declares conceptual-lean). The hard-coded
+   * id-string lists are gone: without a profile (or for an id the profile does
+   * not declare a lean on) the advisory stays neutral instead of guessing
+   * subject semantics from the raw id.
    */
   causeCategory?: string | null;
+  /** The subject profile that owns the cause vocabulary being interpreted. */
+  subjectProfile?: AdvisorSubjectProfileLike | null;
 }
 
-/** Returns +1 for carelessness-leaning, -1 for conceptual-leaning, 0 otherwise. */
-function causeLean(causeCategory: string | null | undefined): -1 | 0 | 1 {
-  if (!causeCategory) return 0;
-  const id = causeCategory.toLowerCase();
-  // Carelessness-leaning: physics 'careless', generic 'carelessness'.
-  if (id === 'careless' || id === 'carelessness') return 1;
-  // Conceptual-leaning: physics 'concept', generic 'conceptual_error', any
-  // 'conceptual*' id.
-  if (id === 'concept' || id.startsWith('conceptual')) return -1;
+type AdvisorSubjectProfileLike = RatingPolicyProfileLike & {
+  causeCategories?: Array<{ id: string; rating_lean?: 'carelessness' | 'conceptual' | null }>;
+};
+
+/** Returns +1 for carelessness-lean, -1 for conceptual-lean, 0 otherwise. */
+function causeLean(
+  causeCategory: string | null | undefined,
+  profile: AdvisorSubjectProfileLike | null | undefined,
+): -1 | 0 | 1 {
+  if (!causeCategory || !profile) return 0;
+  const declared = profile.causeCategories?.find(
+    (category) => category.id === causeCategory,
+  )?.rating_lean;
+  if (declared === 'carelessness') return 1;
+  if (declared === 'conceptual') return -1;
+  // YUK-739 historical compatibility (NOT a subject mirror): `conceptual_error`
+  // and `conceptual*` ids come from the pre-profile CC-1 spec vocabulary and can
+  // sit in persisted user_cause rows. Current-subject vocabularies never emit
+  // them, so they only reach here as historical values — interpret them with
+  // the lean they always had instead of silently re-reading them as neutral.
+  // Only fires on the profile-routed path (an unrouted caller gets neutral).
+  if (causeCategory.startsWith('conceptual')) return -1;
   return 0;
 }
 
@@ -87,10 +109,15 @@ export function judgeResultToRatingAdvice(
     };
   }
 
+  // YUK-739 — the correct/incorrect anchor ratings resolve through the
+  // profile's ratingPolicy (universal map for every built-in → unchanged
+  // behavior, but a subject override now actually takes effect here too).
+  const anchored = ratingFromOutcomeFor(ctx.subjectProfile);
+
   if (result.coarse_outcome === 'incorrect') {
     return {
-      rating: 'again',
-      reason: `${capabilityLabel} 给出 incorrect，推荐 again`,
+      rating: anchored.incorrect,
+      reason: `${capabilityLabel} 给出 incorrect，推荐 ${anchored.incorrect}`,
       evidence_score: result.score,
     };
   }
@@ -100,15 +127,15 @@ export function judgeResultToRatingAdvice(
     // project's FsrsRating is 3-state (again|hard|good) — easy collapses
     // to good. Documented intent: route.ts:80-82.
     return {
-      rating: 'good',
-      reason: `${capabilityLabel} 给出 correct，score ${formatScore(result.score)}，推荐 good`,
+      rating: anchored.correct,
+      reason: `${capabilityLabel} 给出 correct，score ${formatScore(result.score)}，推荐 ${anchored.correct}`,
       evidence_score: result.score,
     };
   }
 
   // coarse_outcome === 'partial' — apply cause lean.
   const baseRating = defaultPartialRating(result.score);
-  const lean = causeLean(ctx.causeCategory);
+  const lean = causeLean(ctx.causeCategory, ctx.subjectProfile);
   let rating: FsrsRatingT = baseRating;
   let leanNote = '';
   if (lean === 1) {

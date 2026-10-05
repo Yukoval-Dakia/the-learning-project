@@ -92,7 +92,7 @@ async function tableExists(name: string): Promise<boolean> {
         ) AS exists`,
   );
   // drizzle/postgres-js returns an array-like of rows
-  const first = (rows as unknown as Array<{ exists: boolean }>)[0];
+  const first = rows[0];
   return Boolean(first?.exists);
 }
 
@@ -122,7 +122,7 @@ async function readAttempts(): Promise<{
           AND subject_kind = 'question'
           AND (payload->>'__synthetic') = 'true'`,
   );
-  const syntheticSkipped = (synthRows as unknown as Array<{ n: number }>)[0]?.n ?? 0;
+  const syntheticSkipped = synthRows[0]?.n ?? 0;
 
   const rows = await db.execute<{
     id: string;
@@ -139,16 +139,9 @@ async function readAttempts(): Promise<{
           AND (payload->>'__synthetic') IS DISTINCT FROM 'true'
         ORDER BY created_at ASC`,
   );
-  const arr = rows as unknown as Array<{
-    id: string;
-    subject_id: string;
-    outcome: string;
-    payload: { referenced_knowledge_ids?: string[]; unsupported_judge?: boolean };
-    created_at: Date;
-  }>;
   let unjudgedSkipped = 0;
   const scorable: RawAttemptRow[] = [];
-  for (const r of arr) {
+  for (const r of rows) {
     if (r.payload?.unsupported_judge === true) {
       unjudgedSkipped += 1;
       continue;
@@ -212,12 +205,7 @@ async function buildAnchorResolver(
               sql`, `,
             )})`}`,
     );
-    for (const c of cal as unknown as Array<{
-      question_id: string;
-      b: number | null;
-      b_anchor: number | null;
-      b_calib: number | null;
-    }>) {
+    for (const c of cal) {
       calibById.set(c.question_id, { b: c.b, b_anchor: c.b_anchor, b_calib: c.b_calib });
     }
   }

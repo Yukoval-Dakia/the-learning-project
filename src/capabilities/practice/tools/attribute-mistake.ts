@@ -1,11 +1,13 @@
 import { z } from 'zod';
 import {
+  type FailureAttemptJudge,
   getFailureAttemptWithReasoningTraceById,
-  getJudgeForAttempt,
 } from '@/capabilities/practice/server/attempt-events';
 import { createFailureLearning } from '@/capabilities/practice/server/failure-learning';
 import { makePracticeTaskRunFn } from '@/capabilities/practice/server/task-runtime';
 import type { Db } from '@/db/client';
+import { resolveVerdictForAttempt } from '@/kernel/read-models/assessment-verdict';
+import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import type { DomainTool, ToolContext } from './types';
 
 const TEXT_EXCERPT_MAX = 180;
@@ -25,7 +27,12 @@ const AttributeMistakeOutputSchema = z.object({
   cause: z
     .object({
       primary_category: z.string(),
+      // YUK-1018 — misc_ id 的显示回填（active misconception title）；非 misc /
+      // unresolvable → null。
+      primary_label: z.string().nullable(),
       secondary_categories: z.array(z.string()),
+      // YUK-1020 — secondary 里 misc_ id 的显示回填（id→title map；缺席→裸 id）。
+      secondary_labels: z.record(z.string(), z.string()),
       confidence: z.number().nullable(),
       analysis_excerpt: z.string(),
     })
@@ -36,16 +43,22 @@ const AttributeMistakeOutputSchema = z.object({
 type AttributeMistakeInput = z.infer<typeof AttributeMistakeInputSchema>;
 type AttributeMistakeOutput = z.infer<typeof AttributeMistakeOutputSchema>;
 
-function judgeOutput(
+async function judgeOutput(
+  db: Db,
   status: 'written' | 'skipped:existing_judge',
-  judge: NonNullable<Awaited<ReturnType<typeof getJudgeForAttempt>>>,
-): AttributeMistakeOutput {
+  judge: FailureAttemptJudge,
+): Promise<AttributeMistakeOutput> {
+  const secondary = judge.cause.secondary_categories ?? [];
+  // YUK-1020 — primary + secondary 的 misc_ id 同一批查询。
+  const labels = await resolveMiscCauseLabels(db, [judge.cause.primary_category, ...secondary]);
   return {
     status,
     judge_event_id: judge.judge_event_id,
     cause: {
       primary_category: judge.cause.primary_category,
-      secondary_categories: judge.cause.secondary_categories ?? [],
+      primary_label: labels.get(judge.cause.primary_category) ?? null,
+      secondary_categories: secondary,
+      secondary_labels: miscCauseLabelMap(labels, secondary),
       confidence: judge.cause.confidence ?? null,
       analysis_excerpt: excerpt(judge.cause.analysis_md),
     },
@@ -90,11 +103,25 @@ async function attributeMistakeExecute(
     return { status: 'failed' };
   }
 
-  const judge = await getJudgeForAttempt(ctx.db, input.attempt_event_id);
-  if (!judge) {
+  // YUK-1054 (§9 dual-track) — 链解析后的 effective 判（subject∪caused_by
+  // 双锚）；caused_by-only 读面会漏申诉重判行的同时拿错回读指针。
+  const verdicts = await resolveVerdictForAttempt(ctx.db, input.attempt_event_id);
+  const effectiveJudge = verdicts.effective;
+  if (!effectiveJudge || effectiveJudge.verdict.cause === null) {
     return { status: 'failed', reason: 'AttributionTask completed without writing a judge event' };
   }
-  return judgeOutput(result.status === 'written' ? 'written' : 'skipped:existing_judge', judge);
+  const judge: FailureAttemptJudge = {
+    judge_event_id: effectiveJudge.judge_event_id,
+    cause: effectiveJudge.verdict.cause,
+    referenced_knowledge_ids: effectiveJudge.verdict.referenced_knowledge_ids,
+    created_at: effectiveJudge.created_at,
+    correction_state: effectiveJudge.correction_state,
+  };
+  return judgeOutput(
+    ctx.db,
+    result.status === 'written' ? 'written' : 'skipped:existing_judge',
+    judge,
+  );
 }
 
 export const attributeMistakeTool: DomainTool<AttributeMistakeInput, AttributeMistakeOutput> = {
@@ -107,7 +134,8 @@ export const attributeMistakeTool: DomainTool<AttributeMistakeInput, AttributeMi
   costClass: 'cheap_llm',
   execute: attributeMistakeExecute,
   summarize(input, output) {
-    return `attribute ${input.attempt_event_id.slice(0, 8)}: ${output.status}${output.cause ? ` (${output.cause.primary_category})` : ''}`;
+    const causeName = output.cause?.primary_label ?? output.cause?.primary_category;
+    return `attribute ${input.attempt_event_id.slice(0, 8)}: ${output.status}${causeName ? ` (${causeName})` : ''}`;
   },
   mirrorEvent: 'when_causal',
 };

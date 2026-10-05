@@ -16,7 +16,7 @@
 .seg-eyebrow .seg-no {
   display: grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px;
   border-radius: var(--r-pill); background: var(--paper-sunk); color: var(--ink-3);
-  font: 600 10px/1 var(--font-mono); letter-spacing: 0;
+  font: 600 var(--fs-caption)/1 var(--font-mono); letter-spacing: 0;
 }
 .seg-eyebrow.is-after .seg-no { background: var(--coral-soft); color: var(--coral-ink); }
 .seg-eyebrow .seg-rule { flex: 1; min-width: 16px; height: 1px; background: var(--line); }
@@ -255,7 +255,7 @@
 }
 .mv-band.is-soft .mv-point { background: var(--paper-raised); border-color: var(--ink-3); }
 .mv-band .mv-scale { display: flex; margin-top: 6px; }
-.mv-band .mv-tick { flex: 1; text-align: center; font: 500 10px/1 var(--font-sans); color: var(--ink-5); }
+.mv-band .mv-tick { flex: 1; text-align: center; font: 500 var(--fs-caption)/1 var(--font-sans); color: var(--ink-5); }
 .mv-band .mv-tick.on { color: var(--ink-2); font-weight: 600; }
 
 /* ── 方向 (words-first, no axis) ── */

@@ -89,6 +89,51 @@ describe('auditProfiles', () => {
     expect(result.entries[0]?.errors.some((error) => error.includes('duplicate id'))).toBe(true);
   });
 
+  // YUK-739 — audit fails closed on missing evaluation-semantics declarations
+  // where they are required: a BUILTIN subject must declare meta_cause_prior on
+  // EVERY cause category (explicit null allowed — undeclared is not).
+  it('fails closed when a builtin profile category omits meta_cause_prior', () => {
+    const stripped = subjectProfiles.math.causeCategories.map(({ id, label }) => ({ id, label }));
+    const result = auditProfiles(
+      [makeAuditProfile({ id: 'math', causeCategories: stripped })],
+      getDefaultRegistry(),
+    );
+
+    expect(result.valid).toBe(false);
+    expect(result.entries[0]?.errors.some((error) => error.includes('meta_cause_prior'))).toBe(
+      true,
+    );
+  });
+
+  it('allows a non-builtin (custom) profile to omit meta_cause_prior (inheritance)', () => {
+    const stripped = subjectProfiles.math.causeCategories.map(({ id, label }) => ({ id, label }));
+    const result = auditProfiles(
+      [makeAuditProfile({ id: 'subj_custom_no_policy', causeCategories: stripped })],
+      getDefaultRegistry(),
+    );
+
+    expect(result.valid).toBe(true);
+  });
+
+  it('fails closed when a builtin declares an invalid rating policy value', () => {
+    // 'easy' is outside the FsrsRating surface (again|hard|good) — the cast is
+    // the point: the audit must reject what the type system forbids at compile
+    // time but a hand-written profile/DB row could still contain at runtime.
+    const badProfile = {
+      ...makeAuditProfile({ id: 'physics' }),
+      ratingPolicy: {
+        outcomeToRating: {
+          ...subjectProfiles.physics.ratingPolicy.outcomeToRating,
+          correct: 'easy',
+        },
+      },
+    } as unknown as SubjectProfile;
+    const result = auditProfiles([badProfile], getDefaultRegistry());
+
+    expect(result.valid).toBe(false);
+    expect(result.entries[0]?.errors.some((error) => error.includes('ratingPolicy'))).toBe(true);
+  });
+
   it('fails when promptFragments is missing', () => {
     const { promptFragments: _promptFragments, ...profile } = makeAuditProfile();
     const result = auditProfiles([profile as SubjectProfile], getDefaultRegistry());

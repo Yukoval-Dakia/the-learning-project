@@ -13,6 +13,15 @@ describe('deriveCopilotRunStatus', () => {
     expect(deriveCopilotRunStatus([{ event_type: COPILOT_RUN_EVENTS.QUEUED }])).toBe('queued');
   });
 
+  it('dispatched 仍是 queued，直到 worker 真正 started', () => {
+    expect(
+      deriveCopilotRunStatus([
+        { event_type: COPILOT_RUN_EVENTS.QUEUED },
+        { event_type: COPILOT_RUN_EVENTS.DISPATCHED },
+      ]),
+    ).toBe('queued');
+  });
+
   it('queued → started → running 推进', () => {
     expect(
       deriveCopilotRunStatus([

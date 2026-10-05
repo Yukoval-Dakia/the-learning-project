@@ -28,9 +28,9 @@
 import { sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import {
-  DEDUP_DISTANCE_MAX,
-  DEDUP_MAX_PAIRS,
-  DEDUP_WINDOW_DAYS,
+  dedupDistanceMax,
+  dedupMaxPairs,
+  dedupWindowDays,
 } from '@/capabilities/knowledge/server/dedup-flags';
 import {
   type WriteProposalEntry,
@@ -38,7 +38,6 @@ import {
 } from '@/capabilities/knowledge/server/proposals';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
-import { knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 
 export interface KcDedupNightlyResult {
@@ -56,27 +55,27 @@ export interface KcDedupNightlyResult {
 export type ProposeFn = (db: Db, entry: WriteProposalEntry) => Promise<string>;
 
 export interface RunKcDedupNightlyOpts {
-  /** cosine-distance ceiling; default DEDUP_DISTANCE_MAX. */
+  /** cosine-distance ceiling; default dedupDistanceMax(). */
   distanceMax?: number;
-  /** recent-auto-created lookback window in days; default DEDUP_WINDOW_DAYS. */
+  /** recent-auto-created lookback window in days; default dedupWindowDays(). */
   windowDays?: number;
-  /** per-run proposal cap; default DEDUP_MAX_PAIRS. */
+  /** per-run proposal cap; default dedupMaxPairs(). */
   maxPairs?: number;
   /** propose writer seam; default writeKnowledgeProposeEvent. */
   proposeFn?: ProposeFn;
 }
 
-interface NearDupPairRow {
+type NearDupPairRow = {
   a_id: string;
   b_id: string;
   a_name: string;
   b_name: string;
   a_version: number;
   b_version: number;
-  a_created_at: Date;
-  b_created_at: Date;
+  a_created_at: string;
+  b_created_at: string;
   distance: number;
-}
+};
 
 /**
  * Detect near-duplicate auto-created KC pairs by cosine distance and PROPOSE a
@@ -85,18 +84,21 @@ interface NearDupPairRow {
  * archives or merges a KC itself. Returns {scanned_pairs, merge_proposals_created,
  * skipped} and writes one `experimental:kc_dedup_scan` audit event with the counts.
  *
- * Budget: the scan is bounded to pairs where at least one side is a KC minted by
- * auto-tagging within `windowDays` (an `experimental:auto_tag_kc_created` event),
- * AND is still live (non-archived). This keeps the nightly cost proportional to
- * recent auto-tagging churn, not the whole tree.
+ * Budget: the scan is bounded to pairs where at least one side is a KC minted
+ * within `windowDays` — either auto-tagged (`experimental:auto_tag_kc_created`)
+ * or proposal-minted (propose_new / split, resolved via materialized_id_index
+ * anchor → event). It must also still be live (non-archived). This keeps the
+ * nightly cost proportional to recent minting churn, not the whole tree.
+ * Note: proposal-minted KCs arrive with embedding=null; they enter the window
+ * immediately but only become pair-eligible after embed_backfill fills them.
  */
 export async function runKcDedupNightly(
   db: Db,
   opts: RunKcDedupNightlyOpts = {},
 ): Promise<KcDedupNightlyResult> {
-  const distanceMax = opts.distanceMax ?? DEDUP_DISTANCE_MAX;
-  const windowDays = opts.windowDays ?? DEDUP_WINDOW_DAYS;
-  const maxPairs = opts.maxPairs ?? DEDUP_MAX_PAIRS;
+  const distanceMax = opts.distanceMax ?? dedupDistanceMax();
+  const windowDays = opts.windowDays ?? dedupWindowDays();
+  const maxPairs = opts.maxPairs ?? dedupMaxPairs();
   const proposeFn = opts.proposeFn ?? writeKnowledgeProposeEvent;
 
   // Pairwise SELF-JOIN over non-archived, embedded `knowledge` rows:
@@ -113,9 +115,8 @@ export async function runKcDedupNightly(
   // set is materialized inline as a CTE of distinct subject_ids. Bind the window
   // as days via make_interval so the parameter is a plain number (no string
   // interpolation into the SQL text).
-  // drizzle + the `postgres` driver returns the rows array directly (house cast
-  // convention: `as unknown as Array<Row>` — see due-list.ts / mastery/state.ts).
-  const pairRows = (await db.execute(sql`
+  // Drizzle + postgres returns the row array directly; execute carries its selected row type.
+  const pairRows = await db.execute<NearDupPairRow>(sql`
     WITH recent_auto AS (
       SELECT DISTINCT subject_id AS id
       FROM event
@@ -123,6 +124,21 @@ export async function runKcDedupNightly(
         AND subject_kind = 'knowledge'
         AND outcome = 'success'
         AND created_at > now() - make_interval(days => ${windowDays})
+      UNION
+      -- YUK-1010 — proposal-minted KCs were invisible to the window: propose_new /
+      -- split mints carry no auto_tag event; the minted id lives in
+      -- materialized_id_index anchored to its propose/split event. Genesis-anchored
+      -- rows are excluded (baseline backfill, not a recent mint).
+      -- The window keys on m.created_at (the ACCEPT-time mint stamp), not
+      -- e.created_at (propose time): a proposal pending longer than windowDays
+      -- still mints a fresh KC that belongs in the window (OCR review).
+      SELECT m.materialized_id AS id
+      FROM materialized_id_index m
+      JOIN event e ON e.id = m.anchor_event_id
+      WHERE m.subject_kind = 'knowledge'
+        AND e.action IN ('propose', 'experimental:knowledge_split')
+        AND e.subject_kind = 'knowledge'
+        AND m.created_at > now() - make_interval(days => ${windowDays})
     )
     SELECT
       a.id AS a_id,
@@ -145,7 +161,7 @@ export async function runKcDedupNightly(
       AND (a.embedding <=> b.embedding) <= ${distanceMax}
     ORDER BY distance ASC
     LIMIT ${maxPairs}
-  `)) as unknown as NearDupPairRow[];
+  `);
 
   let merge_proposals_created = 0;
   let skipped = 0;
@@ -159,11 +175,13 @@ export async function runKcDedupNightly(
   // window (respects the rejection); pending → no duplicate. After the window a still-present
   // dup may re-propose (acceptable). The merge event payload carries top-level `into_id` +
   // `from_ids` (proposals.ts generic branch spreads `...rest` into event_override.payload).
-  const priorMergeRows = (await db.execute(sql`
+  const priorMergeRows = await db.execute<{
+    payload: { into_id?: string; from_ids?: string[] } | null;
+  }>(sql`
     SELECT payload FROM event
     WHERE action = 'experimental:knowledge_merge'
       AND created_at > now() - make_interval(days => ${windowDays})
-  `)) as unknown as Array<{ payload: { into_id?: string; from_ids?: string[] } | null }>;
+  `);
   const proposedPairKeys = new Set<string>();
   for (const row of priorMergeRows) {
     const into = row.payload?.into_id;

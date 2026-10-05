@@ -874,7 +874,7 @@ describe('runAutoEnrollForSession', () => {
     // Use the REAL tagKnowledge default but stub its model seams: an embedFn returning an
     // orthogonal vector (→ no match → PROPOSE) + a nameKcFn returning a FIXED name (so both
     // siblings propose the same name → the batchCache dedups the second).
-    const { tagKnowledge } = await import('@/capabilities/knowledge/server/tag-knowledge');
+    const { tagKnowledge } = await import('@/capabilities/knowledge/public');
     const fixedVec = new Array<number>(1024).fill(0);
     fixedVec[3] = 1; // orthogonal to the root's seeded embedding (none here → no candidates anyway)
     const tagKnowledgeFn: RunAutoEnrollParams['tagKnowledgeFn'] = (deps, input) =>
@@ -2242,7 +2242,9 @@ describe('runAutoEnrollForSession — YUK-482 cut ④ student-answer grading', (
     const questions = await db.select().from(question);
     expect(questions[0]?.image_refs).toEqual(['pa', 'pb', 'pc']);
   });
+});
 
+describe('auto-enroll pure helpers', () => {
   // ---------------------------------------------------------------------------
   // detectStudentWork — pure detection (no DB): Tencent handwriting OR VLM
   // student_answer_present → true; neither → false.

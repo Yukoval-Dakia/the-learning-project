@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { ApiPageSchema } from '@/kernel/http-contracts';
+import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 
 /** Bound answer text copied into judge prompts and immutable paper events. */
 export const MAX_PAPER_ANSWER_CHARS = 12_000;
@@ -87,6 +88,15 @@ const PaperSubmissionBodyFields = {
   answer_md: z.string().max(MAX_PAPER_ANSWER_CHARS),
   image_refs: z.array(z.string()).default([]),
   latency_ms: z.number().int().min(0).max(Number.MAX_SAFE_INTEGER).nullable().optional(),
+  // YUK-784 — 卷提交的过程文本（observe-only），镜像 CreateAttemptBodySchema.reasoning_trace
+  // 的形态：nullable().optional()，上界单一真源 REASONING_TRACE_MAX_LEN。缺省 absent → 既有卷
+  // 提交 wire 逐字不变；server 侧 conditional-spread 落 AttemptOnQuestion.payload.reasoning_trace
+  // （槽位 YUK-562 先行铺好）。
+  reasoning_trace: z.string().max(REASONING_TRACE_MAX_LEN).nullable().optional(),
+  // YUK-1051 / Q-922 — 卷面 per-question 信心自评（1–5，observe-only）。nullable().optional()
+  // 镜像 reasoning_trace：缺省 absent → 既有卷提交 wire 逐字不变；server 侧 conditional-spread
+  // 落 AttemptOnQuestion.payload.self_confidence，绝不进 θ̂ / FSRS / 判分。
+  self_confidence: z.number().int().min(1).max(5).nullable().optional(),
 };
 
 export const LegacyPaperSubmissionBodySchema = z.object({
@@ -121,6 +131,7 @@ const PaperQuestionFaceSchema = z.object({
   id: z.string(),
   kind: z.string(),
   prompt_md: z.string(),
+  notation: z.string().nullable(),
   choices_md: z.array(z.string()).nullable(),
   difficulty: z.number(),
   parent_question_id: z.string().nullable(),

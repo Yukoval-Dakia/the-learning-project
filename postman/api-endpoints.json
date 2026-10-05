@@ -52,7 +52,7 @@
         ],
         "contentType": null,
         "bodyExample": null,
-        "notes": "days 默认 30；按币种返回 cost，并附 reported_cost、estimated_cost、legacy_cost、unknown_attempts、legacy_rows；by_truth 按 currency/entry_kind/cost_basis/cost_ref 提供可审计聚合；unknown 不进入金额 SUM"
+        "notes": "days 默认 30；按币种返回 cost，并附 reported_cost、estimated_cost、legacy_cost、reported_attempts、estimated_attempts、unknown_attempts、legacy_rows；basis-specific attempt 计数让已知零金额保留来源；by_truth 按 currency/entry_kind/cost_basis/cost_ref 提供可审计聚合；unknown 不进入金额 SUM"
       }
     ]
   },
@@ -388,9 +388,10 @@
         "bodyExample": {
           "title": "高中文言文",
           "subjectId": "yuwen",
-          "knowledgeIds": ["kc-1"]
+          "knowledgeIds": ["kc-1"],
+          "declaredStage": "high_school"
         },
-        "notes": "冷启入口直写 goal（source=manual），与 ADR-0025 proposal-materialize 路径并存。scope 解析：knowledgeIds 优先，否则 subjectId 经 effective-domain 轴派生；二者皆不可解析/空 scope → 400。title 必填。返回 {id,title,subjectId,scopeKnowledgeIds,status}"
+        "notes": "冷启入口直写 goal（source=manual），与 ADR-0025 proposal-materialize 路径并存。scope 解析：knowledgeIds 优先，否则 subjectId 经 effective-domain 轴派生；空 scope 允许（冷启 north-star）。title 必填。declaredStage 可选（middle_school|high_school|university|custom，YUK-1009 学习者自述学段，落 goal.declared_stage 供供给侧课程范围约束消费，不作能力判定）。返回 {id,title,subjectId,scopeKnowledgeIds,declaredStage,status}"
       }
     ]
   },
@@ -399,7 +400,7 @@
     "methods": [
       {
         "method": "POST",
-        "summary": "向 Copilot 发送一条用户消息。普通 chat 会自动分流为 200 SSE 或 202 durable JSON；durable:false/true 可显式固定模式",
+        "summary": "向 Copilot 发送消息；统一持久接纳 202，断线不取消，同会话顺序执行",
         "query": [],
         "headers": [
           {
@@ -410,6 +411,7 @@
         ],
         "contentType": "application/json",
         "bodyExample": {
+          "session_id": "REPLACE_COPILOT_SESSION_ID",
           "user_message": "帮我讲解之字主谓间用法",
           "triggered_by": "chat",
           "ambient_context": {
@@ -420,7 +422,7 @@
             }
           }
         },
-        "notes": "triggered_by 枚举：chat|chip。可选 correction_target_turn_id 必须是 conversation_history 中一个 AI reply 的 event id；它是更正已有回复的唯一显式目标，未提供时服务端不会把“上一轮”自动绑定到任何历史回复。未提供 durable 的普通 chat 先由 bounded classifier 分流：inline 返回 200 text/event-stream（event: delta 逐块，event: reply 终止）；多步/多 artifact 工作返回 202 JSON { run_id, session_id, checkpoint_event_id } 并带 Location，进度经通用 job-events SSE replay。durable:false 强制 inline，durable:true 强制 durable；chip 与 skill_context 保持 inline。Zod 失败时返回普通 JSON 错误。客户端应为每个逻辑 turn 发送稳定 Idempotency-Key（最多 200 字符）：同 key + 同规范化输入在 backlog/rate/classifier 之前重放原 202 handle；同 key + 不同输入返回 409 idempotency_conflict。user ask + QUEUED 原子受理，pg-boss 使用稳定 job id；send 状态无法确认时返回 503 copilot_enqueue_ambiguous，须用同 key 重试，不能生成新 turn。durable 原子受理前检测到断开则返回 499 且事务回滚。需 x-internal-token"
+        "notes": "session_id 指定当前 Copilot conversation；省略时保留 find-or-create 行为。chat、chip 和教学均持久接纳，成功统一返回 202 JSON { run_id, session_id, checkpoint_event_id? } 与 Location。durable 字段仅兼容旧请求，不改变生命周期；chip 不声明手输消息撤回锚点。同会话按接纳顺序执行，进度经 job-events SSE replay，GET /api/copilot/turns 返回当前 session 与 active_runs。必须发送稳定 Idempotency-Key（1–200 字符）；同 key + 同规范化输入重放原受理结果，不同输入返回 409 idempotency_conflict。接纳提交前发现断线则 499 并回滚；提交后断线不取消执行。接纳状态不明时 503 copilot_enqueue_ambiguous，须用原 key 重试。队列禁用返回 503，不回退到 HTTP 内执行。correction_target_turn_id 仍只能明确指向历史 AI reply，不自动绑定上一轮。需 x-internal-token。"
       }
     ]
   },
@@ -451,21 +453,47 @@
     ]
   },
   {
+    "path": "/api/copilot/sessions",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "列出 Copilot 对话 session，最近更新优先",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "响应 { sessions: [{ id, status, title, created_at, updated_at }] }。"
+      },
+      {
+        "method": "POST",
+        "summary": "创建一个新的 Copilot 对话 session",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "不替换或结束旧 session；返回 201 { session }。"
+      }
+    ]
+  },
+  {
     "path": "/api/copilot/turns",
     "methods": [
       {
         "method": "GET",
-        "summary": "获取最近 N 条 Copilot 对话轮次（ask/chip + reply 对），oldest→newest",
+        "summary": "获取 Copilot 会话快照：历史轮次与按接纳顺序排列的未结束运行",
         "query": [
           {
             "name": "limit",
             "required": false,
             "example": "20"
+          },
+          {
+            "name": "session_id",
+            "required": false,
+            "example": "REPLACE_COPILOT_SESSION_ID"
           }
         ],
         "contentType": null,
         "bodyExample": null,
-        "notes": "limit 正整数，省略用服务端默认；响应 { turns: [...] }"
+        "notes": "limit 正整数，省略用服务端默认；session_id 指定 Copilot session，省略时读取 current reusable session。响应同一数据库快照 { session_id, turns, active_runs }；active_runs 含 run_id/session_id/status/events_url，不依赖浏览器本地任务缓存。AI turn 的可选 run_id 仅关联同会话 ask/chip 根输入，用于合并恢复消息；不代表可撤回，撤回资格仍由 checkpoint_event_id 表达。primary_view.source=tool_result 可含服务端生成的 snapshot：available 时为有界公开结果及完整性说明，unavailable 时为原因；历史 ref-only 仍可读取。恢复不重新执行工具，快照不进入后续模型历史。"
       }
     ]
   },
@@ -517,7 +545,7 @@
         "query": [],
         "contentType": null,
         "bodyExample": null,
-        "notes": "按 BJT（UTC+8）午夜划窗口；按币种返回 cost、reported_cost、estimated_cost、legacy_cost、unknown_attempts、legacy_rows；by_truth 按 currency/entry_kind/cost_basis/cost_ref 提供可审计聚合；unknown 不进入金额 SUM，且不跨币种求和"
+        "notes": "按 BJT（UTC+8）午夜划窗口；按币种返回 cost、reported_cost、estimated_cost、legacy_cost、reported_attempts、estimated_attempts、unknown_attempts、legacy_rows；basis-specific attempt 计数让已知零金额保留来源；by_truth 按 currency/entry_kind/cost_basis/cost_ref 提供可审计聚合；unknown 不进入金额 SUM，且不跨币种求和"
       }
     ]
   },
@@ -607,7 +635,7 @@
         "query": [],
         "contentType": null,
         "bodyExample": null,
-        "notes": "窗口=Asia/Shanghai 日界前一日历日（昨日 00:00 BJT 含 → 今日 00:00 BJT 不含；owner 可调，默认前一日历日）。返回 { window:{from,to}, has_overnight_activity, runs:[{task_kind,count,status_breakdown}], note_changes_count, new_proposals_count, new_conjectures_count, agent_notes_count }。5 夜间事实源任一窗内有事实 → has_overnight_activity=true（空夜显式信号，与加载中/失败可区分）。new_proposals 不含 conjecture（两数不重叠）。纯读零写；prep-desk confidence/predicted_p 等内部校准数永不过 wire（只取 count）。需 x-internal-token"
+        "notes": "窗口=Asia/Shanghai 日界前一日历日（昨日 00:00 BJT 含 → 今日 00:00 BJT 不含；owner 可调，默认前一日历日）。返回 { window:{from,to}, has_overnight_activity, runs:[{task_kind,count,status_breakdown}], note_changes_count, new_proposals_count, new_conjectures_count, agent_notes_count }。另返回 degraded_kinds 与 cost:{scope:all_activity,records,by_currency,details}。cost覆盖该日全部前台/后台账本记录，按provider/model/lane/task与费用/用量来源分组；reported/estimated/unknown/legacy及币种分开，未知lane/用量保留；记录数不是物理请求数，目录估算不是订阅额度扣减。5 原有事实源任一窗内有事实 → has_overnight_activity=true；费用记录独立在cost中展示，不冒充任务/业务产出（空夜显式信号，与加载中/失败可区分）。new_proposals 不含 conjecture（两数不重叠）。纯读零写；prep-desk confidence/predicted_p 等内部校准数永不过 wire（只取 count）。需 x-internal-token"
       }
     ]
   },
@@ -704,6 +732,19 @@
     ]
   },
   {
+    "path": "/api/ready",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "DB contract epoch readiness（YUK-1055：health ≠ readiness）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "无需 x-internal-token（中间件豁免）；返回 {ok, epoch, state, code_epoch, reason}；维护窗或 epoch 不匹配时 503"
+      }
+    ]
+  },
+  {
     "path": "/api/hubs/:id/dismiss-link",
     "methods": [
       {
@@ -787,11 +828,40 @@
             "name": "question_id",
             "required": false,
             "example": "qid_abc123"
+          },
+          {
+            "name": "subject",
+            "required": false,
+            "example": "math"
           }
         ],
         "contentType": null,
         "bodyExample": null,
-        "notes": "limit 默认 50 上限 200；since 为 ISO-8601；投影 shape：id/question_id/prompt_md/wrong_answer_md/knowledge_ids/cause/created_at"
+        "notes": "limit 默认 50 上限 200；since 为 ISO-8601；subject 按 question → knowledge → effective_domain 派生；投影 shape：id/question_id/prompt_md/wrong_answer_md/knowledge_ids/cause/created_at"
+      }
+    ]
+  },
+  {
+    "path": "/api/notes",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "列出已关联知识点的笔记，支持 subject 派生轴过滤与 query 文本搜索",
+        "query": [
+          {
+            "name": "subject",
+            "required": false,
+            "example": "math"
+          },
+          {
+            "name": "query",
+            "required": false,
+            "example": "函数"
+          }
+        ],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "subject 经 note knowledge_ids → knowledge effective_domain 派生；query 为标题/正文大小写不敏感子串匹配（title ILIKE OR body_blocks 序列化文本 ILIKE），与 subject AND 组合；仅返回未归档 note_atomic/note_hub/note_long"
       }
     ]
   },
@@ -926,6 +996,38 @@
         "contentType": null,
         "bodyExample": null,
         "notes": "不带 confirm=true 始终 409；confirm=true 时 version 必填；软归档=设回 draft"
+      }
+    ]
+  },
+  {
+    "path": "/api/questions/:id/restore",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "恢复软归档题目（archive 的对偶）：contract withdrawn 复位 + 原子重取 live 去重 claim（YUK-1045）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "version": 1
+        },
+        "notes": "body={version(必填, 乐观锁)}；恢复为 draft（不直接回 active，重进 owner/verify 门）；级联恢复 archived_via_parent=本题的 parts；任一成员 claim 被占 → 409 claim_conflict 全组回滚；verify 挂起不解除（同版复核通过才恢复准入）；题不存在 404、非归档题 409、intervention 诊断题 409；需 x-internal-token"
+      }
+    ]
+  },
+  {
+    "path": "/api/questions/quiz-gen",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "owner 手动 quiz_gen 补库触发面：给指定知识点入队 N 道题的生成（YUK-605 ① / YUK-555）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "knowledge_id": "kn_abc123",
+          "count": 5,
+          "generation_method": "closed_book"
+        },
+        "notes": "body = {knowledge_id(必填), count(默认 3；1..15 硬顶——超顶 400；≥6 响应带 warning 但照常受理), generation_method(可选 material_grounded|closed_book；material_grounded 需 TAVILY_API_KEY，未配 → 409)}；knowledge_id 必须命中未归档 knowledge 行，空读 → 404（不入队）；复用 dispatcher 的 kernel enqueue 面入队 quiz_gen 队列（trigger=manual）；202 返回 {status:'enqueued', queue:'quiz_gen', job_id, knowledge_id, count[, generation_method][, warning]}；入队无 job id → 502；需 x-internal-token"
       }
     ]
   },
@@ -1134,6 +1236,57 @@
     ]
   },
   {
+    "path": "/api/admin/config",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "热加载配置读面：registry key 生效值/来源分层/默认/接线状态 + TaskSpec 默认与覆盖",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "只读。keys[] 每行：value（env pin > DB > env fallback > code-default 分层合成）、source、default、env_mode、read_only（compose 强制键）、wired/consumer（运行时 reader 是否消费）。tasks[] 每行：静态 catalog 默认 + DB 覆盖（provider/model 按执行类型接线；budget_wiring/effective_budget 逐字段报告，chat费用与typed轮数未消费为null，调用参数及重试门仍优先）+ global_pin；effective_binding由真实resolver给出provider/model基线或安全错误（无凭据字段），未注入时null。providers[] 包含 pi_provider 原生身份及 models[] 的 id/api/input，模型清单与执行预设一致。不暴露 secret，不枚举 process.env 注入运行事实时无效global pin为null；视觉lane逐消费者解析、原生目录及能力校验，失败为null与安全说明。schedules包含server-event-subscriptions条件调度声明，不代表worker实际挂载。"
+      },
+      {
+        "method": "PATCH",
+        "summary": "原子写入或重置注册配置（原生 provider/model 终态校验）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "changes": [
+            {
+              "action": "set",
+              "key": "task.QuizGenTask.provider",
+              "value": "opencode-go"
+            },
+            {
+              "action": "set",
+              "key": "task.QuizGenTask.model",
+              "value": "glm-5.3-flash"
+            }
+          ],
+          "note": "Use the native Go preset"
+        },
+        "notes": "需 x-internal-token。整批行+journal+epoch 同事务；固定 actor=panel:admin。重复/未知键400、部署固定键409、非法模型/预算422、未注入writer503。返回 committed_epoch、snapshot_epoch、snapshot_current及changes；snapshot_current只指本进程观测到提交或更新版本，不代表worker确认或值未被后续写覆盖。"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/config/reset",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "原子恢复一组配置到 env/registry 默认",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "keys": ["task.QuizGenTask.provider", "task.QuizGenTask.model"],
+          "note": "Restore defaults"
+        },
+        "notes": "需 x-internal-token。按整批删除后的原生组合校验，失败全部回滚。历史journal保留；清理后重新写入revision持续递增。响应与PATCH配置相同。"
+      }
+    ]
+  },
+  {
     "path": "/api/admin/conjecture-scores",
     "methods": [
       {
@@ -1169,6 +1322,94 @@
         "contentType": null,
         "bodyExample": null,
         "notes": "返回 { subjects:[{ id, displayName, renderConfig{font_family,notation,code_highlight}, causeCategories:[{id,label}], isGeneralFallback }] }。selectable 视图：general 结构性排除、retired 状态性排除；custom 科目经 YUK-599 水合自动进列。isGeneralFallback = 派生布尔（六绑定全指向 general 种子 trait，v3 §2.3；badge 数据源）。server-only AI 合同字段（promptFragments/noteTemplate/grounding/judgePolicy/sourceWhitelist）绝不下发（unit 负测钉死）。需 x-internal-token"
+      }
+    ]
+  },
+  {
+    "path": "/api/issuances",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "issueAssessment：发题时绑定不可变 revision/目标 part/实际材料/选项展示映射（preselected≠issued；§3.1/§7.1）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "group_id": "REPLACE_group_root",
+          "part_ids": ["p1"],
+          "mode": "auto_score",
+          "container_occurrence_ref": null,
+          "claim": {
+            "claimed_by_ref": "REPLACE_occurrence"
+          },
+          "revision_id": "REPLACE_revision_optional"
+        },
+        "notes": "mode:auto_score(默认,要求 admitted) | manual(D9)；container_only 组必填 container_occurrence_ref。返回 {status,issuance,practice_dto(公开面无答案键),admission_generation_observed}。错误：not_found(404)/unpublished|suspended|withdrawn|not_admitted|container_ref_required|binding_invalid(422)/claim_unavailable|issuance_id_conflict(409)；replayed→200"
+      }
+    ]
+  },
+  {
+    "path": "/api/issuances/:id",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "pending 恢复读面：issuance + live draft + 已接收提交（draft=null 即服务端无未保存草稿）",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "返回 {issuance,draft,submissions}；issuance 不存在 → 404"
+      }
+    ]
+  },
+  {
+    "path": "/api/issuances/:id/responses",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "saveResponseDraft：D11 服务端自动保存（全练习面 solo/paper/placement 在 pinned issuance 上自动保存；ack 只在落库后产生）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "evaluation_group_ref": "REPLACE_group_or_null",
+          "response_set": {
+            "entries": [
+              {
+                "slot_id": "p1::r",
+                "kind": "choice",
+                "option_ids": ["opt-a"]
+              }
+            ]
+          },
+          "group_evidence": [],
+          "expected_save_epoch": 1
+        },
+        "notes": "body={evaluation_group_ref?,response_set,group_evidence?,expected_save_epoch?}；response_set 只校验发出范围内槽位。返回 {status:'saved',issuance_id,save_epoch,updated_at}。错误：not_found(404)/invalid_response(422)/stale_draft(409)"
+      }
+    ]
+  },
+  {
+    "path": "/api/submissions",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "saveSubmission：ResponseSet 幂等保存（同 (group,idempotency_key) 一致→replayed 200 / 不同→409；绑定不可变 revision，不回取 latest）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "issuance_id": "REPLACE_issuance",
+          "evaluation_group_id": "REPLACE_group",
+          "idempotency_key": "REPLACE_key",
+          "response_set": {
+            "entries": [
+              {
+                "slot_id": "p1::r",
+                "kind": "choice",
+                "option_ids": ["opt-a"]
+              }
+            ]
+          },
+          "group_evidence": []
+        },
+        "notes": "单事务：evaluation_group upsert→assessment_submission 不可变行→初始 head→清对应 draft→事件。返回 {status,submission,revision_id,issuance_id}。错误：issuance_not_found(404)/invalid_response(422)/revision_not_found|group_conflict|idempotency_conflict(409)"
       }
     ]
   }

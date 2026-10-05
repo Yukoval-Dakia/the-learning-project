@@ -1,7 +1,7 @@
 /**
- * task-catalog.ts — central composition root for all 52 TaskDefinition specs.
+ * task-catalog.ts — shared immutable composer for injected owner TaskDefinition specs.
  *
- * YUK-863 / F3.2 — Census and compose 52 owner TaskSpecs.
+ * YUK-863 / YUK-939 — Census and compose owner TaskSpecs.
  *
  * Rules (enforced at module load):
  *  - Each spec appears under exactly one owner.
@@ -17,12 +17,6 @@
  *  - dynamic import() task discovery
  */
 
-import { agencyTaskSpecs } from '@/capabilities/agency/tasks/index';
-import { copilotTaskSpecs } from '@/capabilities/copilot/tasks/index';
-import { ingestionTaskSpecs } from '@/capabilities/ingestion/tasks/index';
-import { knowledgeTaskSpecs } from '@/capabilities/knowledge/tasks/index';
-import { notesTaskSpecs } from '@/capabilities/notes/tasks/index';
-import { practiceTaskSpecs } from '@/capabilities/practice/tasks/index';
 import type { TaskOwner } from './owned-task-specs';
 import type { TaskDefinition } from './task-spec';
 
@@ -96,19 +90,3 @@ export function composeTaskCatalog<const OwnerMaps extends readonly OwnerTaskSpe
 
   return Object.freeze(result) as Readonly<CatalogFromOwnerMaps<OwnerMaps>>;
 }
-
-/**
- * The composed, frozen catalog of all 52 TaskDefinitions.
- * Indexed by TaskKind string. Runtime may index this by kind.
- */
-export const taskCatalog = composeTaskCatalog(
-  [
-    { owner: 'practice', specs: practiceTaskSpecs },
-    { owner: 'ingestion', specs: ingestionTaskSpecs },
-    { owner: 'knowledge', specs: knowledgeTaskSpecs },
-    { owner: 'notes', specs: notesTaskSpecs },
-    { owner: 'agency', specs: agencyTaskSpecs },
-    { owner: 'copilot', specs: copilotTaskSpecs },
-  ] as const,
-  52,
-);

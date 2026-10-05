@@ -93,13 +93,17 @@ describe('runQuestionAuthor (ADR-0031 lane B)', () => {
   it('inserts a draft question + question_draft proposal in one shot (knowledge seed)', async () => {
     const db = testDb();
     await seedKnowledge();
-    const runTaskFn = mockRunTask(draftFixture());
+    const emitted = JSON.parse(draftFixture());
+    emitted.structured.options = null;
+    emitted.structured.sub_questions = null;
+    const runTaskFn = mockRunTask(JSON.stringify(emitted));
 
     const result = await runQuestionAuthor(
       { seed_mode: 'knowledge', knowledge_ids: ['k_zhi'] },
       deps(runTaskFn),
     );
     expect(result.status).toBe('proposed');
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
     if (result.status !== 'proposed') throw new Error('unreachable');
 
     // The model got the validated knowledge context + the subject profile.
@@ -271,6 +275,41 @@ describe('runQuestionAuthor (ADR-0031 lane B)', () => {
         ),
       ),
     ).rejects.toThrow(/sub_question/);
+
+    expect(await db.select().from(question)).toHaveLength(0);
+    expect(await listProposalInboxRows(db, { status: 'pending' })).toHaveLength(0);
+  });
+
+  // YUK-308 — the judge-executability contract quiz_gen has enforced since
+  // §2/§5 now gates the author flow too (shared
+  // assertGeneratedQuestionHasJudgeContract): a shape-valid but ungradeable
+  // draft is rejected BEFORE the row + proposal persist.
+  it('rejects an ungradeable draft before persisting (shared judge contract)', async () => {
+    const db = testDb();
+    await seedKnowledge();
+
+    // prose kind pinned to the exact judge → ungradeable.
+    await expect(
+      runQuestionAuthor(
+        { seed_mode: 'knowledge', knowledge_ids: ['k_zhi'] },
+        deps(mockRunTask(draftFixture({ judge_kind_override: 'exact' }))),
+      ),
+    ).rejects.toThrow(/question_author short_answer question.*cannot use exact judge/);
+
+    // semantic route without required_points → ungradeable.
+    await expect(
+      runQuestionAuthor(
+        { seed_mode: 'knowledge', knowledge_ids: ['k_zhi'] },
+        deps(
+          mockRunTask(
+            draftFixture({
+              judge_kind_override: 'semantic',
+              rubric_json: { criteria: [{ name: 'c', weight: 1, descriptor: 'd' }] },
+            }),
+          ),
+        ),
+      ),
+    ).rejects.toThrow(/question_author question.*without required_points/);
 
     expect(await db.select().from(question)).toHaveLength(0);
     expect(await listProposalInboxRows(db, { status: 'pending' })).toHaveLength(0);

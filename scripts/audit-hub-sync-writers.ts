@@ -257,6 +257,10 @@ function listSourceFiles(root: string): string[] {
       }
       if (!/\.(ts|tsx)$/.test(entry)) continue;
       if (/\.(test|db\.test|unit\.test)\.tsx?$/.test(entry)) continue;
+      // Generated artifacts (e.g. api-schema.generated.ts) are type-only
+      // documents — they can never own a hub-sync write path, but their
+      // mega-unions recurse trustedType into a stack overflow (YUK-1051).
+      if (/\.generated\.tsx?$/.test(entry)) continue;
       // This audit's own source contains rule marker strings and synthetic patterns.
       if (normalizePath(relative(root, abs)) === 'scripts/audit-hub-sync-writers.ts') continue;
       out.push(abs);

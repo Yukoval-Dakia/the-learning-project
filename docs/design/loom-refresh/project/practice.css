@@ -22,11 +22,11 @@
 
 .paper-count { text-align: right; flex: none; line-height: 1; }
 .paper-count b { display: block; font-family: var(--font-serif); font-size: var(--fs-h3); color: var(--ink); }
-.paper-count span { font-family: var(--font-mono); font-size: 11px; color: var(--ink-4); }
+.paper-count span { font-family: var(--font-mono); font-size: var(--fs-caption); color: var(--ink-4); }
 
 /* knowledge chips */
 .paper-know { display: flex; flex-wrap: wrap; gap: 6px; }
-.paper-know .chip { font-size: 11px; padding: 3px 8px; }
+.paper-know .chip { font-size: var(--fs-caption); padding: 3px 8px; }
 
 /* coach reason note */
 .paper-reason { display: flex; align-items: flex-start; gap: 6px; font-size: var(--fs-caption); color: var(--coral-ink); background: var(--coral-soft); border: 1px solid var(--coral-line); border-radius: var(--r-2); padding: var(--s-2) var(--s-3); }
@@ -59,7 +59,7 @@
 .dist-legend .g-wrong { color: var(--again-ink); }
 .dist-score { text-align: right; flex: none; }
 .dist-score b { font-family: var(--font-serif); font-size: var(--fs-h4); color: var(--ink); white-space: nowrap; }
-.dist-score span { display: block; font-family: var(--font-mono); font-size: 10px; color: var(--ink-4); white-space: nowrap; }
+.dist-score span { display: block; font-family: var(--font-mono); font-size: var(--fs-caption); color: var(--ink-4); white-space: nowrap; }
 
 /* footer action row */
 .paper-foot { display: flex; align-items: center; gap: var(--s-2); margin-top: auto; padding-top: var(--s-1); }

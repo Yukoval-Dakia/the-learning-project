@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { NudgeKind, SuggestionKind } from '@/kernel/capability-contract-schemas';
 import { ApiErrorResponseSchema, ApiIdParamsSchema } from '@/kernel/http-contracts';
+import { CopilotPrimaryViewSchema } from '../primary-view-contract';
 import { CopilotChatRequest } from '../server/chat-contracts';
 
 export { CopilotChatRequest };
@@ -9,7 +10,7 @@ export const CopilotRouteIdParamsSchema = ApiIdParamsSchema;
 export const CopilotRunParamsSchema = ApiIdParamsSchema;
 export const CopilotCheckpointParamsSchema = z.object({ eventId: z.string().min(1) });
 export const CopilotChatHeadersSchema = z.object({
-  'Idempotency-Key': z.string().min(1).max(200).optional(),
+  'Idempotency-Key': z.string().min(1).max(200),
 });
 
 // YUK-497 review F3 — the cascade-revert refusal envelope the handler emits at 404
@@ -74,12 +75,10 @@ export const CopilotCheckpointRevertSuccessSchema = z.discriminatedUnion('status
   }),
 ]);
 
-export const CopilotChatStreamResponseSchema = z.string();
-
 export const CopilotDurableRunResponseSchema = z.object({
   run_id: z.string(),
   session_id: z.string(),
-  checkpoint_event_id: z.string(),
+  checkpoint_event_id: z.string().optional(),
 });
 
 export const CopilotCancelRunResponseSchema = z.object({
@@ -92,6 +91,23 @@ export const CopilotTurnsQuerySchema = z.object({
   // Preserve the existing wire behavior: the route applies Number.parseInt and
   // the reader clamps invalid/out-of-range values to its established bounds.
   limit: z.string().optional(),
+  session_id: z.string().min(1).max(160).optional(),
+});
+
+export const CopilotSessionSchema = z.object({
+  id: z.string(),
+  status: z.string(),
+  title: z.string().nullable(),
+  created_at: z.string().datetime(),
+  updated_at: z.string().datetime(),
+});
+
+export const CopilotSessionsResponseSchema = z.object({
+  sessions: z.array(CopilotSessionSchema),
+});
+
+export const CopilotCreateSessionResponseSchema = z.object({
+  session: CopilotSessionSchema,
 });
 
 const CopilotStructuredQuestionSchema = z.object({
@@ -107,14 +123,6 @@ const CopilotTurnSkillSchema = z.object({
   suggested_next: z.enum(['continue', 'end']).optional(),
 });
 
-const CopilotPrimaryViewSchema = z.discriminatedUnion('source', [
-  z.object({
-    source: z.enum(['tool_result', 'artifact']),
-    ref: z.object({ kind: z.string(), id: z.string() }),
-  }),
-  z.object({ source: z.literal('ephemeral_html'), ref: z.string() }),
-]);
-
 const CopilotTurnToolCallSchema = z.object({
   toolName: z.string(),
   input: z.record(z.string(), z.unknown()),
@@ -128,6 +136,7 @@ export const CopilotTurnSchema = z.object({
   text: z.string(),
   at: z.string().datetime(),
   event_id: z.string(),
+  run_id: z.string().optional(),
   session_id: z.string().optional(),
   reply_event_id: z.string().optional(),
   checkpoint_event_id: z.string().optional(),
@@ -142,7 +151,18 @@ export const CopilotTurnSchema = z.object({
   tool_calls: z.array(CopilotTurnToolCallSchema).optional(),
 });
 
-export const CopilotTurnsResponseSchema = z.object({ turns: z.array(CopilotTurnSchema) });
+export const CopilotTurnsResponseSchema = z.object({
+  session_id: z.string().nullable(),
+  turns: z.array(CopilotTurnSchema),
+  active_runs: z.array(
+    z.object({
+      run_id: z.string(),
+      session_id: z.string(),
+      status: z.enum(['queued', 'started', 'running', 'cancel_requested']),
+      events_url: z.string(),
+    }),
+  ),
+});
 
 export const CopilotSummaryResponseSchema = z.object({
   daily_focus: z.string(),

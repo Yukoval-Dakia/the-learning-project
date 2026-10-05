@@ -14,20 +14,30 @@ export {
   CauseCategory,
   CauseCategoryId,
   CauseSchema,
-  DEFAULT_META_CAUSE_BY_CATEGORY,
   MetaCause,
   MetaCauseFields,
   MetacogFlag,
   getAllowedCauseIds,
   getCauseLabel,
   getCausePriority,
-  getDefaultMetaCause,
+  getMetaCausePrior,
   validateCauseAgainstProfile,
 } from './cause';
 
 // ---------- 业务 enum ----------
 
-export const QuestionKind = z.enum([
+// YUK-386 (kind 收编收尾) — `question.kind` 不再是闭集权威：它是一个自由文本的
+// 「题面展示标签」。行为分支一律读 answer_class / 结构信号（choices_md /
+// structured / parent_question_id），绝不读 kind 的闭集成员资格。schema 层只
+// 要求非空字符串；KNOWN_QUESTION_KIND_IDS 是系统已知的惯用标签集合（UI 建议、
+// 词表折叠、旋转分类的识别面），不是 gate——集合之外的标签照样合法落库。
+export const QuestionKind = z.string().min(1);
+
+// The known kind-label vocabulary (former QuestionKind enum members). Data, not
+// an authority: consumers fold legacy/profile-vocab labels onto these ids, and
+// the rotation/judge classifiers recognise them — but an unknown label is a
+// valid free-form value, never a rejection reason.
+export const KNOWN_QUESTION_KIND_IDS = [
   'choice',
   'true_false',
   'fill_blank',
@@ -39,18 +49,16 @@ export const QuestionKind = z.enum([
   // M2.1 (2026-05-22): math derivation — vision-aware steps@1 judge target.
   // See docs/superpowers/specs/2026-05-21-math-mvp-vision-design.md §7.
   'derivation',
-]);
+] as const;
 
-// UI-selectable question kinds (the manual / vision picker subset).
+// UI suggestion list for the manual / vision pickers (YUK-387 Step 0
+// consolidation; YUK-386: kind is a free-form label, so this list SUGGESTS —
+// it never gates a write or read).
 //
-// YUK-387 Step 0 — consolidation only, zero behavior change. RecordPage,
-// VisionTab, and auto-enroll each maintained their own copy of this 8-value
-// labeled list / id union; this is the single source they now import.
-//
-// DELIBERATELY 8 values, NOT the full 9-value `QuestionKind` enum above:
+// DELIBERATELY 8 values, NOT the full 9-label KNOWN_QUESTION_KIND_IDS list:
 // 'derivation' is a vision/judge-only kind and was never offered in the manual
 // or vision form pickers. Keep it excluded here to preserve the existing UI
-// behavior — do not "fix" this by spreading `QuestionKind.options`.
+// behavior — do not "fix" this by spreading KNOWN_QUESTION_KIND_IDS.
 export const QUESTION_KIND_OPTIONS = [
   { id: 'choice', label: '选择' },
   { id: 'true_false', label: '判断' },
@@ -116,6 +124,15 @@ export const LearningItemStatus = z.enum([
 // worked. Keep this subset next to the full lifecycle enum so consumers cannot invent statuses
 // (YUK-604: three readers used the non-existent `active` literal and skipped every genesis row).
 export const LearningItemOpenStatus = z.enum(['pending', 'in_progress']);
+
+// YUK-1009 — learner-declared curriculum stage (学段), the canonical vocabulary persisted on
+// `goal.declared_stage`. Declared at onboarding (WelcomePage Q1) as a CURRICULUM/scope
+// constraint only — it is NEVER an ability/θ̂ input (placement probes measure ability; the
+// stage only constrains which material sources are relevant, e.g. the jyeoo grade-route
+// corpus covering 高中 grades 10-12). `custom` = learner's stage is none of the standard
+// bands — consumers that cannot map it must treat the item as UNCONSTRAINED, not guess.
+export const DeclaredStage = z.enum(['middle_school', 'high_school', 'university', 'custom']);
+export type DeclaredStageT = z.infer<typeof DeclaredStage>;
 
 export const LearningRecordKind = z.enum([
   'mistake',
@@ -207,6 +224,11 @@ export const QuestionBlockRole = z.enum(['prompt', 'answer_area', 'continuation'
 
 export const VisualComplexity = z.enum(['low', 'medium', 'high']);
 
+// YUK-374 — 'rubric' / 'ai_flexible' are JudgeKind-space members with NO runner:
+// they parse (so an explicit judge_kind_override fails loudly as `unsupported`
+// instead of silently re-routing) but are not dispatchable. Runnable set =
+// RUNNABLE_ROUTES; declared-but-unimplemented set = UNIMPLEMENTED_JUDGE_ROUTES
+// (capabilities/practice/server/judge/question-contract.ts).
 export const JudgeKind = z.enum([
   'exact',
   'keyword',

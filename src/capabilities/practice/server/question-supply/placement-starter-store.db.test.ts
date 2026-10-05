@@ -1,6 +1,5 @@
 import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { insertGoal } from '@/capabilities/agency/server/goals/queries';
 import { selectNextPlacementItem } from '@/capabilities/practice/server/placement-select';
 import {
   event,
@@ -15,6 +14,7 @@ import {
 } from '@/db/schema';
 import type { QuizGenJobData } from '@/kernel/quiz-gen-contract';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { insertLegacyGoal as insertGoal } from '../../../../../tests/helpers/legacy-goal';
 import { dispatchSupplyTarget } from './dispatcher';
 import { SupplyTraceV1 } from './evidence-demand';
 import { buildPlacementStarterTarget, dispatchPlacementStarterClaimTx } from './placement-starter';
@@ -621,7 +621,7 @@ describe('placement starter store', () => {
         dispatchSupplyTarget(tx, buildPlacementStarterTarget(claim), {
           atomic: true,
           cooldownDays: 0,
-          tavilyAvailable: () => true,
+          webSearchAvailable: () => true,
           transformSupplyTrace: (trace) => ({ ...trace, claim_id: '' }),
           enqueueQuizGen: async () => {
             sends += 1;

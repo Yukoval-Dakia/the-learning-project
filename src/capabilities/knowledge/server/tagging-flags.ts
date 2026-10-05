@@ -29,8 +29,9 @@
  * correct band yet below the wrong/novel floor (≈ cosine similarity ≥ 0.45 to match).
  *
  * Still **UNTUNED** on a production corpus — n=6 cannot pin the boundary precisely;
- * rigorous calibration on real KC vectors + question text is a follow-up (Refs
- * YUK-396). Failure mode is non-destructive either way: too-tight → duplicate KCs
+ * rigorous calibration on real KC vectors + question text is tracked by
+ * YUK-677 (`pnpm audit:threshold-calibration` — report-only replay). Failure mode
+ * is non-destructive either way: too-tight → duplicate KCs
  * (caught by the P5 dedup-on-maintenance lane); too-loose → a related-but-wrong match
  * (rarer). A future refinement is to embed a concept-shaped projection of the question
  * (not the raw prompt) for a more symmetric query↔label distance.
@@ -41,11 +42,21 @@
  */
 const DEFAULT_MATCH_THRESHOLD = 0.55;
 
-function resolveMatchThreshold(): number {
-  const raw = process.env.TAGGING_MATCH_THRESHOLD;
-  if (raw == null || raw.trim() === '') return DEFAULT_MATCH_THRESHOLD;
-  const parsed = Number(raw);
-  return Number.isFinite(parsed) ? parsed : DEFAULT_MATCH_THRESHOLD;
+import { getConfig } from '@/core/config/store';
+
+export function matchThreshold(): number {
+  // YUK-1007：DB > env > code-default(0.55)；非有限 → 默认（原语义）。
+  const v = getConfig('TAGGING_MATCH_THRESHOLD');
+  return typeof v === 'number' && Number.isFinite(v) ? v : DEFAULT_MATCH_THRESHOLD;
 }
 
-export const MATCH_THRESHOLD: number = resolveMatchThreshold();
+/**
+ * Retrieval window for the match-or-propose axis: `tagKnowledge` fetches the
+ * GLOBALLY nearest `RETRIEVAL_TOP_K` active embedded KCs via
+ * `matchKnowledgeBySimilarity` and only THEN drops cross-domain candidates —
+ * so an in-domain KC ranked beyond this window is invisible to the match
+ * decision. Lives here (not in tag-knowledge.ts) so the YUK-677 calibration
+ * replay (`pnpm audit:threshold-calibration`) reads the SAME live value
+ * instead of duplicating a driftable constant.
+ */
+export const RETRIEVAL_TOP_K = 10;

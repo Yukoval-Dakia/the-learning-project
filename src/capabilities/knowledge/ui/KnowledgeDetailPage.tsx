@@ -92,9 +92,11 @@ function NoteLinkRow({
 export function InteractiveArtifactDiscovery({
   artifacts,
   go,
+  entryId,
 }: {
   artifacts: NoteSummary[];
   go: (to: string) => void;
+  entryId?: string;
 }) {
   if (artifacts.length === 0) return null;
   return (
@@ -104,7 +106,13 @@ export function InteractiveArtifactDiscovery({
           type="button"
           key={a.id}
           className="note-link-row"
-          onClick={() => go(`/notes/${a.id}`)}
+          onClick={() =>
+            go(
+              entryId
+                ? `/notes/${encodeURIComponent(a.id)}?entry=${encodeURIComponent(entryId)}`
+                : `/notes/${encodeURIComponent(a.id)}`,
+            )
+          }
         >
           <span className="note-kind-tag note-kind-interactive">
             <LoomIcon name="sparkle" size={12} />
@@ -129,7 +137,7 @@ const BL_META: Record<string, { label: string; icon: string }> = {
 
 export function knowledgeBacklinkHref(fromType: string, artifactId: string, entryId: string) {
   return fromType === 'interactive' || fromType.startsWith('note_')
-    ? `/notes/${artifactId}?entry=${entryId}`
+    ? `/notes/${encodeURIComponent(artifactId)}?entry=${encodeURIComponent(entryId)}`
     : null;
 }
 
@@ -382,6 +390,7 @@ export default function KnowledgeDetailPage({
                 <InteractiveArtifactDiscovery
                   artifacts={node.interactive_artifacts}
                   go={navigate}
+                  entryId={id}
                 />
               </div>
             </>

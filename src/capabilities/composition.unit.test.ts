@@ -21,7 +21,9 @@ describe('composition root', () => {
       (count, capability) => count + (capability.api?.routes.length ?? 0),
       0,
     );
-    expect(generatedOperations).toBe(manifestRoutes + 3);
+    // builtin routes outside manifests: /api/health, /api/ready, /openapi.json,
+    // /docs (the last two serve the spec itself).
+    expect(generatedOperations).toBe(manifestRoutes + 4);
   });
 
   it('includes the agency capability', () => {

@@ -55,6 +55,7 @@ import { type ProjectionAllowlist, loadAllowlist } from './audit-projection';
 import {
   backfillArtifactGenesis,
   backfillGoalGenesis,
+  backfillItemCalibrationGenesis,
   backfillKnowledgeEdgeGenesis,
   backfillKnowledgeGenesis,
   backfillLearningItemGenesis,
@@ -77,6 +78,7 @@ const KIND_BACKFILL: Record<ProjectionKind, (db: Db, now: Date) => Promise<KindB
   learning_item: backfillLearningItemGenesis,
   artifact: backfillArtifactGenesis,
   question_block: backfillQuestionBlockGenesis,
+  item_calibration: backfillItemCalibrationGenesis,
 };
 
 export interface B3GateReport {

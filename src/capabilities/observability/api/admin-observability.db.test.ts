@@ -110,6 +110,8 @@ describe('AI observability route contracts', () => {
         reported_cost: 0,
         estimated_cost: 0,
         legacy_cost: 0.25,
+        reported_attempts: 0,
+        estimated_attempts: 0,
         unknown_attempts: 0,
         legacy_rows: 1,
       },
@@ -202,6 +204,87 @@ describe('AI observability route contracts', () => {
         }),
       ]),
     );
+  });
+
+  it('keeps zero-cost attempt provenance visible at every aggregation grain (YUK-977)', async () => {
+    const occurredAt = new Date();
+    await db.insert(cost_ledger).values([
+      {
+        id: 'today_zero_reported',
+        task_run_id: 'today_run_zero_reported',
+        task_kind: 'ZeroTask',
+        provider: 'xiaomi',
+        model: 'mimo-zero',
+        cost: 0,
+        entry_kind: 'attempt',
+        cost_basis: 'reported',
+        cost_ref: 'sdk:total_cost_usd',
+        tokens_in: 10,
+        tokens_out: 1,
+        occurred_at: occurredAt,
+      },
+      {
+        id: 'today_zero_unknown',
+        task_run_id: 'today_run_zero_unknown',
+        task_kind: 'ZeroTask',
+        provider: 'xiaomi',
+        model: 'mimo-future',
+        cost: null,
+        entry_kind: 'attempt',
+        cost_basis: 'unknown',
+        cost_ref: 'unpriced:xiaomi/mimo-future',
+        tokens_in: 0,
+        tokens_out: 0,
+        occurred_at: occurredAt,
+      },
+    ]);
+
+    const response = await getTodayCost(new Request('http://localhost/api/cost/today'));
+    const today = CostTodayResponseSchema.parse(await response.json()).today;
+    expect(today.by_currency).toEqual([
+      expect.objectContaining({
+        currency: 'USD',
+        cost: 0,
+        reported_cost: 0,
+        reported_attempts: 1,
+        estimated_attempts: 0,
+        unknown_attempts: 1,
+      }),
+    ]);
+    expect(today.by_task).toEqual([
+      expect.objectContaining({
+        task_kind: 'ZeroTask',
+        calls: 2,
+        by_currency: [
+          expect.objectContaining({
+            reported_attempts: 1,
+            estimated_attempts: 0,
+            unknown_attempts: 1,
+            cost: 0,
+          }),
+        ],
+      }),
+    ]);
+
+    const adminResponse = await getAdminCost(new Request('http://localhost/api/admin/cost?days=7'));
+    const admin = AdminCostResponseSchema.parse(await adminResponse.json());
+    expect(admin.days).toEqual([
+      expect.objectContaining({
+        reported_attempts: 1,
+        estimated_attempts: 0,
+        unknown_attempts: 1,
+        cost: 0,
+      }),
+    ]);
+    expect(admin.by_task).toEqual([
+      expect.objectContaining({
+        task_kind: 'ZeroTask',
+        reported_attempts: 1,
+        estimated_attempts: 0,
+        unknown_attempts: 1,
+        cost: 0,
+      }),
+    ]);
   });
 
   it('projects provider attempt cost truth once and excludes no-wire attempts', async () => {

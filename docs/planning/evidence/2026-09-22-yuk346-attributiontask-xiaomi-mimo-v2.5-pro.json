@@ -1,0 +1,31 @@
+{
+  "captured_at": "2026-09-23T09:50:01.871Z",
+  "code_revision": "70b6ff76a6e32bb724c0441b10fae0746a917c87",
+  "ticket": "YUK-346",
+  "lane": {
+    "adapter": "pi",
+    "provider": "xiaomi",
+    "model": "mimo-v2.5-pro",
+    "task_kind": "AttributionTask",
+    "pin": "explicit ctx.modelBinding (post-P4 routing surface)"
+  },
+  "task_run_id": "gf7yehx4yhtl6o9dyv6pj4wf",
+  "wall_ms": 9297,
+  "parse_ok": true,
+  "input_digest": "sha256:b4b923128301d177c965a1b988ea6672ffdff3b717b169c411004f00bb050ed6",
+  "output_digest": "sha256:4d3c0e548edc1e0125056b7976ed5fd909d8a7681eafde6bff0d3fbecc414f33",
+  "output_excerpt": "{\"primary_category\": \"calculation\", \"secondary_categories\": [], \"analysis_md\": \"用户解方程 x² - 5x + 6 = 0，得到 x = 2 或 x = 4，而参考答案为 x = 2 或 x = 3。差异在于一个根不正确。\\n\\n用户可能使用了因式分解法，正确分解应为 (x - 2)(x - 3) = 0，从而得到根 x = 2 和 x = 3。用户错误地得到 x = 4，可能是在因式分解时，将常数项 6 的因数组合错误，例如误认为 6 = 2 × 4，从而得到 (x - 2)(x - 4) = 0，展开后得到 x² - 6x + 8，这与原方程 x² - 5x + 6 不符。或者，在使用求根公式时，可能在计算判别式或后续代入时出现数值计算错误。这属于代数运算过程中的具体数值计算失误，而非对一元二次方程解的概念、解法策略或审题理解错误。\", \"confidence\": 0.9, \"meta_cause\": \"execution_slip\", \"meta_cause_secondary\": null, \"metacog_flag\": null, \"bloom_level\": \"apply\", \"self_corrected_on_hint\": null, \"recurred_cross_item\": null}",
+  "subject": "math",
+  "status": "success",
+  "finish_reason": "end_turn",
+  "usage": {
+    "inputTokens": 1006,
+    "outputTokens": 313
+  },
+  "cost": {
+    "basis": "estimated",
+    "amount_usd": 0.00070992,
+    "ref": "pricebook:2026-09-06-mimo-public-usd-v2/xiaomi/mimo-v2.5-pro"
+  },
+  "provenance": "PiRunnerMessage frames carry source=pi; terminal evidence normalized from pi agentLoop agent_end + final assistant usage. Cost stays catalog-estimated (zhipu coding-plan catalog rates are 0 — flat subscription; mimo rates are the dated public per-token estimate)."
+}

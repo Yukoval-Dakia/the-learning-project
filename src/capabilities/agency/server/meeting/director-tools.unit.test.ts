@@ -1,6 +1,7 @@
-// YUK-572 PR-2 — director write-face MCP server unit tests. Pure, no DB: the SDK is
-// mocked so the tool() factory captures each handler and we invoke it directly with
-// injected fake writers. Asserts the server-side single-writer discipline:
+// YUK-572 PR-2 — director write-face tool server unit tests. Pure, no DB:
+// `buildDirectorServer` returns pi `AgentTool`s directly (post-P4 `custom`
+// mount surface), so the harness invokes `tool.execute` with injected fake
+// writers. Asserts the server-side single-writer discipline:
 // propose_conjecture cap / pending-dedup / Zod / baseline_p auto-snapshot, and
 // leave_agent_note cap / target whitelist / summary truncation / primary-ref filter.
 
@@ -14,33 +15,11 @@ import type { MasteryProjection } from '@/server/mastery/state';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../../tests/helpers/conjecture-probe-fixtures';
 
-// Capture the registered tool handlers via a mocked SDK (same shape as evidence-mcp.db.test).
-const mockSdk = vi.hoisted(() => ({
-  handlers: new Map<
-    string,
-    (args: unknown) => Promise<{ content: { type: string; text: string }[] }>
-  >(),
-  registeredNames: [] as string[],
-  serverName: undefined as string | undefined,
-}));
-
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  createSdkMcpServer: vi.fn((opts: { name: string; tools: unknown[] }) => {
-    mockSdk.serverName = opts.name;
-    return { type: 'sdk', name: opts.name, instance: {} };
-  }),
-  tool: vi.fn(
-    (
-      name: string,
-      _desc: string,
-      _schema: unknown,
-      handler: (args: unknown) => Promise<{ content: { type: string; text: string }[] }>,
-    ) => {
-      mockSdk.handlers.set(name, handler);
-      mockSdk.registeredNames.push(name);
-      return { name };
-    },
-  ),
+// The built DirectorServer's tools list is captured per build() for direct
+// `execute` invocation (pi AgentTool: `name` is the wire name, `label` the
+// bare tool name).
+const captured = vi.hoisted(() => ({
+  tools: [] as { name: string; label: string }[],
 }));
 
 import {
@@ -60,9 +39,16 @@ import {
 const NOW = new Date('2026-07-06T00:00:00.000Z');
 
 async function callTool(name: string, args: unknown): Promise<Record<string, unknown>> {
-  const handler = mockSdk.handlers.get(name);
-  if (!handler) throw new Error(`no registered handler for ${name}`);
-  const res = await handler(args);
+  const tool = captured.tools.find((t) => t.label === name);
+  if (!tool) throw new Error(`no registered tool for ${name}`);
+  const res = await (
+    tool as unknown as {
+      execute: (
+        id: string,
+        params: unknown,
+      ) => Promise<{ content: { type: string; text: string }[] }>;
+    }
+  ).execute(`call_${name}`, args);
   return JSON.parse(res.content[0].text) as Record<string, unknown>;
 }
 
@@ -147,8 +133,7 @@ interface Harness {
 }
 
 function build(opts: Partial<BuildDirectorServerOpts> = {}): Harness {
-  mockSdk.handlers.clear();
-  mockSdk.registeredNames.length = 0;
+  captured.tools = [];
   const proposals: WriteAiProposalInput[] = [];
   const notes: WriteAgentNoteInput[] = [];
   const nestedTaskContexts: unknown[] = [];
@@ -226,22 +211,21 @@ function build(opts: Partial<BuildDirectorServerOpts> = {}): Harness {
     },
     ...opts,
   });
+  captured.tools = director.tools;
   return { proposals, notes, caps, director, nestedTaskContexts };
 }
 
 beforeEach(() => {
-  mockSdk.handlers.clear();
-  mockSdk.registeredNames.length = 0;
+  captured.tools = [];
 });
 
 describe('buildDirectorServer — registration', () => {
   it('registers get_meeting_context + propose_conjecture + leave_agent_note on the director server', () => {
     build();
-    expect(mockSdk.serverName).toBe('research_meeting_director');
-    expect(mockSdk.registeredNames).toEqual([
-      'get_meeting_context',
-      'propose_conjecture',
-      'leave_agent_note',
+    expect(captured.tools.map((t) => t.name)).toEqual([
+      'mcp__research_meeting_director__get_meeting_context',
+      'mcp__research_meeting_director__propose_conjecture',
+      'mcp__research_meeting_director__leave_agent_note',
     ]);
   });
 

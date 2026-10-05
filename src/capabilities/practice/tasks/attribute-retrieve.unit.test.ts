@@ -15,13 +15,20 @@
 //     matching.
 
 import { describe, expect, it } from 'vitest';
+import { CauseCategoryId } from '@/core/schema/business';
 import {
   type SubjectProfile,
   getDefaultSubjectRegistry,
   resolveSubjectProfile,
 } from '@/subjects/profile';
-import { K_MAX, K_SMALL, retrieveCauseCandidates } from './attribute-retrieve';
-import type { AttributionInput } from './attribution';
+import {
+  K_MAX,
+  K_SMALL,
+  type MisconceptionCauseSource,
+  misconceptionToCandidate,
+  retrieveCauseCandidates,
+} from './attribute-retrieve';
+import { type AttributionInput, parseAttributionOutput } from './attribution';
 
 const retrieveInput: AttributionInput = {
   prompt_md: '"之"在主谓之间的用法?',
@@ -145,5 +152,128 @@ describe('retrieveCauseCandidates — large-vocab scorer path (YUK-465 #1/#2)', 
     // ...while the substring-only candidate gains NO spurious point, stays at the
     // tail (score 0, declaration order), and is truncated out of the top-K.
     expect(result.some((c) => c.id === 'substr')).toBe(false);
+  });
+});
+
+// ── YUK-1015 (454-A): misconception candidates ∪ vocab ───────────────────────
+// Design §L1: retrieve candidates = vocab ∪ 已晋升误区节点. Misc ids are already
+// `misc_<sha256-24>` (valid CauseCategoryId); a rerank picking one must SURVIVE
+// post-LLM validation — which the caller achieves by extending the validation
+// vocab with the same candidates (see failure-learning-attribution.ts).
+
+const miscSource: MisconceptionCauseSource = {
+  id: 'misc_a1b2c3d4e5f6a7b8c9d0e1f2',
+  title: '「之」作助词的整体性误判',
+  reasoning: '三次把主谓间「之」按普通助词处理，忽略其取消独立性的句法作用',
+};
+
+describe('misconceptionToCandidate — id mapping (YUK-1015)', () => {
+  it('passes a well-formed misc_<hash> id through verbatim', () => {
+    const candidate = misconceptionToCandidate(miscSource);
+    expect(candidate.id).toBe(miscSource.id);
+    expect(candidate.label).toBe(miscSource.title);
+    expect(candidate.description).toBe(miscSource.reasoning);
+    expect(candidate.source_pack).toEqual({ id: 'misconception', version: 'promoted' });
+  });
+
+  it('produced ids always satisfy CauseCategoryId (defensive sanitize + prefix)', () => {
+    // The promote writer mints misc_<sha256-24> today; if a future source emits
+    // another shape the mapper must still yield a schema-valid namespaced id.
+    for (const id of ['misc_a1b2c3', 'plainId', 'misc:X-Y', '9bad', 'UPPER']) {
+      const candidate = misconceptionToCandidate({ ...miscSource, id });
+      expect(
+        CauseCategoryId.safeParse(candidate.id).success,
+        `id '${id}' mapped to '${candidate.id}' — fails CauseCategoryId`,
+      ).toBe(true);
+      expect(candidate.id.startsWith('misc_')).toBe(true);
+    }
+  });
+
+  it('omits description when reasoning is null', () => {
+    const candidate = misconceptionToCandidate({ ...miscSource, reasoning: null });
+    expect(candidate.description).toBeUndefined();
+  });
+});
+
+describe('retrieveCauseCandidates — misc union (YUK-1015)', () => {
+  it('small pool (vocab + misc <= K_SMALL) returns the whole union, vocab first', () => {
+    const yuwen = resolveSubjectProfile('yuwen');
+    const misc = misconceptionToCandidate(miscSource);
+    const result = retrieveCauseCandidates(retrieveInput, yuwen, [misc]);
+    expect(result.length).toBe(yuwen.causeCategories.length + 1);
+    // Vocab order preserved verbatim; the misc candidate is appended AFTER it
+    // (declaration order wins scorer ties).
+    expect(result.slice(0, yuwen.causeCategories.length)).toEqual(yuwen.causeCategories);
+    expect(result[result.length - 1]).toEqual(misc);
+  });
+
+  it('empty misc input still returns the SAME vocab reference (invariant intact)', () => {
+    const yuwen = resolveSubjectProfile('yuwen');
+    expect(retrieveCauseCandidates(retrieveInput, yuwen, [])).toBe(yuwen.causeCategories);
+    expect(retrieveCauseCandidates(retrieveInput, yuwen)).toBe(yuwen.causeCategories);
+  });
+
+  it('misc candidates participate in the large-vocab scorer path', () => {
+    // Pool > K_SMALL activates the dormant scorer; a misc whose label matches
+    // the attempt text must outrank zero-score placeholders and survive top-K.
+    const profile = synthProfile(K_SMALL + 1);
+    const misc = misconceptionToCandidate({
+      id: 'misc_ffffaaaa1111222233334444',
+      title: '助词误用',
+      reasoning: '把「之」误判为普通助词',
+    });
+    const result = retrieveCauseCandidates(retrieveInput, profile, [misc]);
+    expect(result.length).toBeLessThanOrEqual(K_MAX);
+    expect(result.some((c) => c.id === misc.id)).toBe(true);
+  });
+});
+
+describe('misc candidate → attribution validation contract (YUK-1015)', () => {
+  const rerankJson = (id: string, secondary: string[] = []) =>
+    `{"primary_category":"${id}","secondary_categories":${JSON.stringify(
+      secondary,
+    )},"analysis_md":"把主谓间「之」按普通助词处理","confidence":0.8}`;
+
+  it('misc id SURVIVES as primary when the validation vocab includes the candidate', () => {
+    const yuwen = resolveSubjectProfile('yuwen');
+    const misc = misconceptionToCandidate(miscSource);
+    // Mirrors failure-learning-attribution.ts: validation profile = profile ∪ miscs.
+    const extended: SubjectProfile = {
+      ...yuwen,
+      causeCategories: [...yuwen.causeCategories, misc],
+    };
+    const out = parseAttributionOutput(rerankJson(misc.id), extended);
+    expect(out.primary_category).toBe(misc.id);
+    // No meta_cause_prior declared on misc candidates → honest null.
+    expect(out.meta_cause).toBeNull();
+  });
+
+  it('misc id CLAMPS to other without the extension — the silent-drop being prevented', () => {
+    const yuwen = resolveSubjectProfile('yuwen');
+    const out = parseAttributionOutput(rerankJson(miscSource.id), yuwen);
+    expect(out.primary_category).toBe('other');
+  });
+
+  it('misc id survives in secondary_categories under the extended vocab', () => {
+    const yuwen = resolveSubjectProfile('yuwen');
+    const misc = misconceptionToCandidate(miscSource);
+    const extended: SubjectProfile = {
+      ...yuwen,
+      causeCategories: [...yuwen.causeCategories, misc],
+    };
+    const out = parseAttributionOutput(rerankJson('concept', [misc.id]), extended);
+    expect(out.primary_category).toBe('concept');
+    expect(out.secondary_categories).toEqual([misc.id]);
+  });
+
+  it('a hallucinated id outside BOTH vocab and miscs still clamps (contract preserved)', () => {
+    const yuwen = resolveSubjectProfile('yuwen');
+    const misc = misconceptionToCandidate(miscSource);
+    const extended: SubjectProfile = {
+      ...yuwen,
+      causeCategories: [...yuwen.causeCategories, misc],
+    };
+    const out = parseAttributionOutput(rerankJson('bogus_id'), extended);
+    expect(out.primary_category).toBe('other');
   });
 });

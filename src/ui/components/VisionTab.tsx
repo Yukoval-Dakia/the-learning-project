@@ -20,6 +20,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { QUESTION_KIND_OPTIONS, type QuestionKindOptionId } from '@/core/schema/business';
 import { RecordLanding, knowledgeLabelsFor } from '@/ui/components/RecordLanding';
+import { deriveOptionIds } from '@/ui/components/response/response-types';
 import { type ApiSubject, useSubjects } from '@/ui/hooks/useSubjects';
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset, useAssetUrl } from '@/ui/lib/assets';
@@ -213,9 +214,13 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // A8 (YUK-354): 成功着陆态。批量导入成功后不再硬跳 /mistakes，停在着陆视图
   // （收好了 N 道题 / 去向 / 下一步）。null = 仍在上传/审阅流程。
+  // YUK-542 — landing 快照额外携带 warnings（learning_session.warnings 持久化
+  // 字段，import 成功后读一次），让降级告诫活到落地卡（SSE timeline 的
+  // warning 行只在 extracting/reviewing 相可见）。
   const [landing, setLanding] = useState<{
     count: number;
     knowledge: { id: string; label: string }[];
+    warnings: string[];
   } | null>(null);
   const [blockForms, setBlockForms] = useState<Record<string, BlockFormState>>({});
   // bucketByBlockId[blockId] = primary block id of the merge bucket. Initially
@@ -495,7 +500,29 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
       setLanding({
         count,
         knowledge: knowledgeLabelsFor(knowledgeQ.data?.rows ?? [], selectedKnowledgeIds),
+        warnings: [],
       });
+      // YUK-542 — 落地渲染之后再补读持久化的 learning_session.warnings：import 已
+      // 成功，这个 advisory GET 绝不能 gate 着陆视图（apiFetch 无超时 —— 请求挂死
+      // 会把「导入中…」钉在审阅相，reviewer P2 指出）。resolve 后把 warnings 补丁
+      // 进 landing 快照（banner 随后弹出）；reject/挂死 → 落地卡无 banner，不回退。
+      // `cur ?` 守卫：用户已点「继续传」reset 掉 landing 时不复活它。
+      if (sessionId) {
+        void apiJson<{ session?: { warnings?: unknown } | null } | null>(
+          `/api/ingestion-sessions/${encodeURIComponent(sessionId)}`,
+        )
+          .then((detail) => {
+            const raw = detail?.session?.warnings;
+            const warnings = Array.isArray(raw)
+              ? raw.filter((w): w is string => typeof w === 'string')
+              : [];
+            if (warnings.length === 0) return;
+            setLanding((cur) => (cur ? { ...cur, warnings } : cur));
+          })
+          .catch(() => {
+            // advisory only — landing stays up without the banner
+          });
+      }
     },
     onError: (err) => setErrorMessage(formatError(err)),
   });
@@ -644,6 +671,7 @@ export function VisionTab({ mode, routing }: { mode: Mode; routing: VisionTabRou
           count={landing.count}
           isBatch
           knowledge={landing.knowledge}
+          warnings={landing.warnings}
           navigate={routing.navigate}
           onRecordAnother={reset}
         />
@@ -1253,11 +1281,19 @@ function StructuredOutline({ node, depth = 0 }: { node: StructuredNode; depth?: 
         <span style={structuredPromptStyle}>{node.prompt_text}</span>
         {node.options && node.options.length > 0 && (
           <ul style={{ ...structuredListStyle, marginTop: 2 }}>
-            {node.options.map((o) => (
-              <li key={o.label} style={structuredOptionStyle}>
-                <code style={timelineCodeStyle}>{o.label}.</code> {o.text}
-              </li>
-            ))}
+            {/* YUK-1051 — 选项身份与作答面同源（内容派生 stable id，response-types）；
+                label 只是展示序号，不作 key（重复 label 不再撞 key）。 */}
+            {(() => {
+              const opts = node.options ?? [];
+              return deriveOptionIds(
+                opts.map((x) => x.text),
+                node.id,
+              ).map((oid, i) => (
+                <li key={oid} style={structuredOptionStyle}>
+                  <code style={timelineCodeStyle}>{opts[i].label}.</code> {opts[i].text}
+                </li>
+              ));
+            })()}
           </ul>
         )}
         {node.answers && node.answers.length > 0 && (
@@ -1701,7 +1737,7 @@ const followerPillStyle: React.CSSProperties = {
 
 const splitBtnStyle: React.CSSProperties = {
   fontFamily: 'var(--font-mono)',
-  fontSize: 12,
+  fontSize: 'var(--fs-caption)',
   color: 'var(--ink-3)',
   cursor: 'pointer',
 };

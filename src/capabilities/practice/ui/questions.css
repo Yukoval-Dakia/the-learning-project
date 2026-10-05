@@ -197,6 +197,14 @@
 .qf2 select:hover {
   border-color: var(--ink-5);
 }
+/* YUK-915 — 科目筛选改用共享 SubjectFilterTabs；全局 .subject-filter-row 带
+   margin/padding-top + 虚线分隔（页首独立摆放形态），在 qb-filterbar 内只需
+   芯片本体，去掉分隔形态。 */
+.qb-filterbar .subject-filter-row {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}
 .qf2-diff {
   display: inline-flex;
   gap: 3px;

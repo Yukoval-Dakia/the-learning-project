@@ -7,7 +7,7 @@
 //     self copy_safety, source_refs, source_pack), source_ref = trigger pointer,
 //     created_by = aiAgentRef('QuizGenTask', ...), rubric_json from the agent.
 //   - the Tavily remote MCP + in-process domain-tool MCP are mounted, and the
-//     allowedTools fold in TAVILY_MCP_ALLOWED_TOOLS only when a Tavily config is
+//     allowedTools fold in EXA_MCP_ALLOWED_TOOLS only when a Tavily config is
 //     present (env-gated graceful degradation).
 //   - quiz_verify is enqueued with { question_ids } on success.
 
@@ -23,6 +23,11 @@ import {
 } from '@/capabilities/practice/public';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {
+  type StructuredQuestionT,
+  structuredToPromptMarkdown,
+  structuredToReferenceMarkdown,
+} from '@/core/schema/structured_question';
+import {
   artifact,
   event,
   knowledge,
@@ -35,8 +40,10 @@ import {
   question,
   source_document,
 } from '@/db/schema';
-import { DOMAIN_TOOL_MCP_SERVER_NAME, toMcpAllowedToolName } from '@/kernel/tools/allowlists';
-import { TAVILY_MCP_ALLOWED_TOOLS, TAVILY_MCP_SERVER_NAME } from '@/server/ai/mcp/tavily';
+import * as eventWriter from '@/kernel/events';
+import { toMcpAllowedToolName } from '@/kernel/tools/allowlists';
+import { EXA_MCP_ALLOWED_TOOLS, EXA_MCP_SERVER_NAME } from '@/server/ai/mcp/exa';
+import type { PiToolMount } from '@/server/ai/tools/pi-tools';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { canonicalQuestionContentHash } from '../server/quiz/content-fingerprint';
 import {
@@ -47,25 +54,102 @@ import {
   runQuizGen,
   synthesizeMaterialSourceRefs,
 } from './quiz_gen';
+import { QUIZ_PLAN_MAX_ATTEMPTS } from './quiz_gen_plan';
 
 const FAKE_TAVILY_CONFIG = {
   type: 'http' as const,
   url: 'https://mcp.tavily.com/mcp/?tavilyApiKey=test',
 };
 
-// The ctx shape the handler passes to its runAgentTaskFn seam (db + mcpServers +
+// The ctx shape the handler passes to its runAgentTaskFn seam (db + piToolMounts +
 // allowedTools). Declared here so `mock.calls[0]` carries it (typed tuple).
 type AgentCtx = {
   db: unknown;
-  mcpServers?: Record<string, unknown>;
+  piToolMounts?: PiToolMount[];
   allowedTools?: string[];
 };
+
+// ADR-0038 plan-then-generate — the handler chains QuizPlanTask before QuizGenTask,
+// so the mock must answer BOTH kinds. Plan-input slice the synthesized plan needs.
+type PlanInput = {
+  count?: number;
+  knowledge_context?: Array<{ id?: string }>;
+  requested_generation_method?: string;
+  // YUK-1011 — when the run pins 篇 the mirrored plan must mark EVERY item
+  // composite:true or the plan gate rejects it before generation.
+  composite_parent_only?: boolean;
+};
+
+// Synthesizes a QuizPlanTask answer that MIRRORS the generation fixture: same
+// question kinds in order, the trigger's real KC, the pinned (or fixture's)
+// generation_method — so the deterministic gate accepts the plan and the
+// generation output conforms item-for-item without touching each call site.
+// Unparseable / empty-question fixtures fall back to a generic valid plan so the
+// failure still lands at its ORIGINAL stage (generation parse / exact_count …).
+function planTextFor(output: string, input: PlanInput): string {
+  type FixtureQuestion = {
+    kind?: unknown;
+    difficulty?: unknown;
+    reference_md?: unknown;
+  };
+  let questions: FixtureQuestion[] = [];
+  let outputMethod: unknown;
+  const start = output.indexOf('{');
+  const end = output.lastIndexOf('}');
+  if (start !== -1 && end > start) {
+    try {
+      const parsed: unknown = JSON.parse(output.slice(start, end + 1));
+      if (parsed && typeof parsed === 'object') {
+        const obj = parsed as { questions?: unknown; generation_method?: unknown };
+        if (Array.isArray(obj.questions)) questions = obj.questions as FixtureQuestion[];
+        outputMethod = obj.generation_method;
+      }
+    } catch {
+      // malformed fixture — generic fallback plan below
+    }
+  }
+  const fallbackKnowledgeId = input.knowledge_context?.[0]?.id ?? 'k1';
+  const isObjective = (kind: unknown): boolean =>
+    kind === 'choice' || kind === 'true_false' || kind === 'fill_blank';
+  const itemFor = (q: FixtureQuestion) => ({
+    // Always plan the trigger's real node: the gate re-reads the knowledge table,
+    // so mirroring a fixture's hallucinated id would fail the plan instead of the
+    // persist-time salvage path the fixture exists to test.
+    knowledge_id: fallbackKnowledgeId,
+    kind: typeof q.kind === 'string' ? q.kind : 'short_answer',
+    difficulty: typeof q.difficulty === 'number' ? q.difficulty : 3,
+    ...(input.composite_parent_only ? { composite: true } : {}),
+    ...(isObjective(q.kind) && !input.composite_parent_only
+      ? {
+          answer_anchor:
+            typeof q.reference_md === 'string' && q.reference_md.trim().length > 0
+              ? q.reference_md.split('\n')[0].trim()
+              : '标准答案',
+        }
+      : {}),
+  });
+  const items =
+    questions.length > 0
+      ? questions.map(itemFor)
+      : Array.from({ length: input.count ?? 3 }, () => ({
+          knowledge_id: fallbackKnowledgeId,
+          kind: 'short_answer',
+          difficulty: 3,
+        }));
+  const method =
+    input.requested_generation_method ??
+    (typeof outputMethod === 'string' ? outputMethod : undefined) ??
+    'closed_book';
+  return JSON.stringify({ items, generation_method: method });
+}
+
 // Typed agent-mock factory: gives mock.calls[0] the [kind, input, ctx] tuple so
 // destructuring the recorded ctx typechecks (the bare vi.fn(async () => …) has
-// no declared params → calls[0] is `[]`).
+// no declared params → calls[0] is `[]`). Dispatches on kind: QuizPlanTask gets
+// the mirrored plan text, everything else gets the fixture output verbatim.
 function agentMock(output: string, taskRunId?: string, costUsd?: number) {
-  return vi.fn(async (_kind: string, _input: unknown, _ctx: AgentCtx) => ({
-    text: output,
+  return vi.fn(async (kind: string, input: unknown, _ctx: AgentCtx) => ({
+    text: kind === 'QuizPlanTask' ? planTextFor(output, input as PlanInput) : output,
     ...(taskRunId === undefined ? {} : { task_run_id: taskRunId }),
     ...(costUsd === undefined ? {} : { cost_usd: costUsd }),
   }));
@@ -273,6 +357,184 @@ const MATERIAL_OUTPUT = JSON.stringify({
   },
 });
 
+// YUK-1011 — composite_parent_only (篇) run: every output question carries a
+// structured stem+sub_questions tree. The handler normalizes it (server-side
+// ids — the model's 'model-stem-id'/'model-sub-*' placeholders are discarded),
+// persists the tree on the parent's `structured` column, derives the parent's
+// prompt_md/reference_md from it, and materializes each sub as a question_part
+// child row in the same transaction.
+const COMPOSITE_PASSAGE =
+  '陈太丘与友期行，期日中。过中不至，太丘舍去，去后乃至。元方时年七岁，门外戏。客问元方：「尊君在不？」答曰：「待君久不至，已去。」友人便怒曰：「非人哉！与人期行，相委而去。」元方曰：「君与家君期日中。日中不至，则是无信；对子骂父，则是无礼。」友人惭，下车引之。元方入门不顾。';
+const COMPOSITE_STRUCTURED = {
+  id: 'model-stem-id',
+  role: 'stem',
+  prompt_text: COMPOSITE_PASSAGE,
+  sub_questions: [
+    {
+      id: 'model-sub-1',
+      role: 'sub',
+      question_no: '(1)',
+      prompt_text: '「太丘舍去」中「去」的意思是？',
+      options: [
+        { label: 'A', text: '前往' },
+        { label: 'B', text: '离开' },
+        { label: 'C', text: '到达' },
+        { label: 'D', text: '回来' },
+      ],
+      answers: ['B 离开'],
+      analysis: '「去」在文言中常释为「离开」，与现代汉语义相反。',
+    },
+    {
+      id: 'model-sub-2',
+      role: 'sub',
+      question_no: '(2)',
+      prompt_text: '元方反驳友人的话表现了他怎样的品格？',
+      answers: ['元方以「无信」「无礼」据理反驳，表现了守信明礼、方正率真的品格。'],
+      analysis: '扣住「日中不至，则是无信；对子骂父，则是无礼」作答即可。',
+    },
+  ],
+};
+const COMPOSITE_OUTPUT = JSON.stringify({
+  questions: [
+    {
+      kind: 'reading',
+      prompt_md: `${COMPOSITE_PASSAGE}\n\n(1). 「太丘舍去」中「去」的意思是？\n(2). 元方反驳友人的话表现了他怎样的品格？`,
+      reference_md:
+        '(1) B 离开。\n(2) 元方以「无信」「无礼」据理反驳，表现了守信明礼、方正率真的品格。',
+      choices_md: null,
+      judge_kind_override: 'semantic',
+      rubric_json: {
+        criteria: [{ name: 'correctness', weight: 1, descriptor: '各小题答案正确' }],
+        required_points: ['「去」释为离开（选 B）', '答出元方守信明礼、方正率真'],
+        reference_solution: {
+          expected_signals: ['离开', '守信明礼'],
+          final_answer: '(1) B 离开 (2) 守信明礼、方正率真',
+          answer_equivalents: [],
+        },
+      },
+      difficulty: 3,
+      knowledge_ids: ['k1'],
+      source_refs: [
+        {
+          url: 'https://example.edu/wenyan/chentaiqiu',
+          title: '陈太丘与友期行',
+          snippet: '期日中。过中不至，太丘舍去。',
+          used_for: 'fact',
+          extracted: true,
+        },
+      ],
+      structured: COMPOSITE_STRUCTURED,
+    },
+  ],
+  source_pack: {
+    query_plan: ['陈太丘与友期行 原文'],
+    searched_at: '2026-06-02T10:00:00.000Z',
+    tool: 'tavily',
+  },
+  generation_method: 'search_grounded',
+  self_copy_safety: { verdict: 'original', max_overlap: 0.05, checked_by: 'agent_self' },
+});
+
+// A pinned run whose output degrades to a single-sub stem — below the ≥2
+// sub_question floor the composite gate enforces.
+const COMPOSITE_ONE_SUB_OUTPUT = JSON.stringify({
+  questions: [
+    {
+      kind: 'reading',
+      prompt_md: `${COMPOSITE_PASSAGE}\n\n(1). 「太丘舍去」中「去」的意思是？`,
+      reference_md: '(1) B 离开。',
+      choices_md: null,
+      judge_kind_override: 'semantic',
+      rubric_json: {
+        criteria: [{ name: 'correctness', weight: 1, descriptor: '小题答案正确' }],
+        required_points: ['「去」释为离开'],
+        reference_solution: {
+          expected_signals: ['离开'],
+          final_answer: '(1) B 离开',
+          answer_equivalents: [],
+        },
+      },
+      difficulty: 3,
+      knowledge_ids: ['k1'],
+      source_refs: [
+        {
+          url: 'https://example.edu/wenyan/chentaiqiu',
+          title: '陈太丘与友期行',
+          used_for: 'fact',
+          extracted: true,
+        },
+      ],
+      structured: {
+        id: 'model-stem-id',
+        role: 'stem',
+        prompt_text: COMPOSITE_PASSAGE,
+        sub_questions: [COMPOSITE_STRUCTURED.sub_questions[0]],
+      },
+    },
+  ],
+  source_pack: { query_plan: [], searched_at: '2026-06-02T10:00:00.000Z', tool: 'tavily' },
+  generation_method: 'search_grounded',
+  self_copy_safety: { verdict: 'original', checked_by: 'agent_self' },
+});
+
+// material_grounded composite: the stem's prompt_text is the FRAMING text only
+// (per the prompt contract); the handler embeds material.body_md into it before
+// normalization so the derived views — and every narrowed part view — stay
+// self-contained, and material_source_document_id lands on parent + children.
+const COMPOSITE_MATERIAL_OUTPUT = JSON.stringify({
+  questions: [
+    {
+      kind: 'reading',
+      prompt_md: '阅读下面的短文，完成小题。',
+      reference_md: '(1) 公元前 202 年。(2) 长安。',
+      choices_md: null,
+      judge_kind_override: 'semantic',
+      rubric_json: {
+        criteria: [{ name: 'correctness', weight: 1, descriptor: '各小题答案正确' }],
+        required_points: ['公元前 202 年', '长安'],
+        reference_solution: {
+          expected_signals: ['公元前 202 年', '长安'],
+          final_answer: '(1) 公元前 202 年 (2) 长安',
+          answer_equivalents: [],
+        },
+      },
+      difficulty: 2,
+      knowledge_ids: ['k1'],
+      source_refs: [],
+      structured: {
+        id: 'model-stem-id',
+        role: 'stem',
+        prompt_text: '阅读下面的短文，完成下列小题。',
+        sub_questions: [
+          {
+            id: 'm-sub-1',
+            role: 'sub',
+            question_no: '(1)',
+            prompt_text: '汉朝建立于哪一年？',
+            answers: ['公元前 202 年'],
+          },
+          {
+            id: 'm-sub-2',
+            role: 'sub',
+            question_no: '(2)',
+            prompt_text: '汉朝定都在哪里？',
+            answers: ['长安'],
+          },
+        ],
+      },
+    },
+  ],
+  source_pack: { query_plan: [], searched_at: '2026-06-06T10:00:00.000Z', tool: 'tavily' },
+  generation_method: 'material_grounded',
+  self_copy_safety: { verdict: 'original', max_overlap: 0.1, checked_by: 'agent_self' },
+  material: {
+    body_md: MATERIAL_PASSAGE,
+    url: 'https://example.edu/han/founding',
+    title: '汉朝的建立',
+    fetched_at: '2026-06-06T10:00:00.000Z',
+  },
+});
+
 async function seedKnowledge(opts: { id: string; domain?: string | null }) {
   const db = testDb();
   const now = new Date();
@@ -351,12 +613,96 @@ describe('runQuizGen', () => {
     await resetDb();
   });
 
+  it.each(['plan', 'plan_retry', 'producer', 'parse', 'persist', 'event'] as const)(
+    'retains failure stage and completed provider evidence when %s fails',
+    async (failurePoint) => {
+      await seedKnowledge({ id: 'k1' });
+      const failure = new Error(`injected ${failurePoint} failure`);
+      let planCalls = 0;
+      const runAgentTaskFn = vi.fn(async (kind: string, input: unknown) => {
+        if (kind === 'QuizPlanTask') {
+          planCalls += 1;
+          if (failurePoint === 'plan' || (failurePoint === 'plan_retry' && planCalls > 1)) {
+            throw failure;
+          }
+          return {
+            text:
+              failurePoint === 'plan_retry' ? '{}' : planTextFor(VALID_OUTPUT, input as PlanInput),
+            task_run_id: 'tr-phase-plan',
+            cost_usd: 0.001,
+          };
+        }
+        if (failurePoint === 'producer') throw failure;
+        return {
+          text: failurePoint === 'parse' ? 'no JSON payload' : VALID_OUTPUT,
+          task_run_id: 'tr-phase-producer',
+          cost_usd: 0.002,
+        };
+      });
+      const enqueueQuizVerify = vi.fn(async () => {});
+      const originalWriteEvent = eventWriter.writeEvent;
+      const eventSpy = vi.spyOn(eventWriter, 'writeEvent').mockImplementation(async (db, input) => {
+        if (
+          failurePoint === 'event' &&
+          input.action === 'experimental:quiz_gen' &&
+          input.outcome === 'success'
+        )
+          throw failure;
+        return originalWriteEvent(db, input);
+      });
+      try {
+        await expect(
+          runQuizGen({
+            db: testDb(),
+            trigger: 'knowledge',
+            refId: 'k1',
+            runAgentTaskFn,
+            enqueueQuizVerify,
+            buildExaMcpServerFn: () => null,
+            retrieveFewShotFn: async () => [],
+            afterExactDuplicateLookupMiss: async () => {
+              if (failurePoint === 'persist') throw failure;
+            },
+          }),
+        ).rejects.toThrow(failurePoint === 'parse' ? /parseOutput/ : failure.message);
+      } finally {
+        eventSpy.mockRestore();
+      }
+      const rows = await testDb()
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:quiz_gen'));
+      expect(rows).toHaveLength(1);
+      const produced = ['parse', 'persist', 'event'].includes(failurePoint);
+      expect(rows[0]).toMatchObject({
+        outcome: 'failure',
+        task_run_id: produced ? 'tr-phase-producer' : null,
+        cost_micro_usd: produced ? 2000 : null,
+        payload: {
+          failure_stage:
+            failurePoint === 'plan_retry'
+              ? 'plan'
+              : failurePoint === 'parse'
+                ? 'producer'
+                : failurePoint,
+          plan_task_run_id: failurePoint === 'plan' ? null : 'tr-phase-plan',
+        },
+      });
+      if (failurePoint === 'plan_retry') {
+        expect(rows[0].payload).toMatchObject({ plan_rejections: [expect.any(Array)] });
+      }
+      expect(planCalls).toBe(failurePoint === 'plan_retry' ? 2 : 1);
+      expect(await testDb().select().from(question)).toHaveLength(failurePoint === 'event' ? 2 : 0);
+      expect(await testDb().select().from(artifact)).toHaveLength(failurePoint === 'event' ? 1 : 0);
+      expect(enqueueQuizVerify).not.toHaveBeenCalled();
+    },
+  );
+
   it('inserts draft questions with source=quiz_gen + metadata.quiz_gen, and enqueues quiz_verify', async () => {
     await seedKnowledge({ id: 'k1' });
     const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_1');
     const enqueueQuizVerify = vi.fn(async () => {});
-    const buildTavilyMcpServerFn = vi.fn(() => FAKE_TAVILY_CONFIG);
-    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+    const buildExaMcpServerFn = vi.fn(() => FAKE_TAVILY_CONFIG);
     const supplyTrace = buildSupplyTrace(
       {
         targetId: 'target-quiz-1',
@@ -379,8 +725,7 @@ describe('runQuizGen', () => {
       count: 2,
       runAgentTaskFn,
       enqueueQuizVerify,
-      buildTavilyMcpServerFn,
-      buildMcpServerFn,
+      buildExaMcpServerFn,
       supplyTrace,
     });
 
@@ -422,7 +767,7 @@ describe('runQuizGen', () => {
     expect(meta?.copy_safety).toMatchObject({ verdict: 'original', checked_by: 'agent_self' });
     expect(meta?.source_pack).toMatchObject({ tool: 'tavily' });
     expect(Array.isArray(meta?.source_refs)).toBe(true);
-    expect((meta?.source_refs as unknown[]).length).toBe(1);
+    expect(meta?.source_refs).toHaveLength(1);
     const difficultyEvidence = (q1?.metadata as Record<string, unknown>).difficulty_evidence;
     expect(difficultyEvidence).toMatchObject({
       value: q1?.difficulty,
@@ -533,8 +878,7 @@ describe('runQuizGen', () => {
       count: 2,
       runAgentTaskFn: agentMock(VALID_OUTPUT, 'tr-quiz-merge'),
       enqueueQuizVerify,
-      buildTavilyMcpServerFn: () => FAKE_TAVILY_CONFIG,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+      buildExaMcpServerFn: () => FAKE_TAVILY_CONFIG,
     });
 
     expect(result.question_ids).toHaveLength(1);
@@ -651,8 +995,7 @@ describe('runQuizGen', () => {
       generationMethod: 'closed_book',
       runAgentTaskFn: agentMock(replacementOutput, 'tr-quiz-replacement'),
       enqueueQuizVerify,
-      buildTavilyMcpServerFn: () => null,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+      buildExaMcpServerFn: () => null,
     });
 
     expect(result.question_ids).toHaveLength(1);
@@ -713,8 +1056,7 @@ describe('runQuizGen', () => {
       count: 2,
       runAgentTaskFn: agentMock(JSON.stringify(parsed), 'tr-intra-batch-duplicate'),
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: () => null,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+      buildExaMcpServerFn: () => null,
     });
 
     expect(result.question_ids).toHaveLength(1);
@@ -755,8 +1097,7 @@ describe('runQuizGen', () => {
       trigger: 'knowledge' as const,
       count: 1,
       enqueueQuizVerify,
-      buildTavilyMcpServerFn: () => null,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+      buildExaMcpServerFn: () => null,
       afterExactDuplicateLookupMiss: barrier,
     };
 
@@ -864,8 +1205,7 @@ describe('runQuizGen', () => {
         placementAttempt: attempt,
         runAgentTaskFn: agentMock(CLOSED_BOOK_OUTPUT, 'tr-raced', 0),
         enqueueQuizVerify,
-        buildTavilyMcpServerFn: () => null,
-        buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+        buildExaMcpServerFn: () => null,
         afterExactDuplicateLookupMiss: async () => {
           await testDb()
             .insert(question)
@@ -919,8 +1259,7 @@ describe('runQuizGen', () => {
           placementAttempt: attempt,
           runAgentTaskFn: agentMock(output, 'tr-invalid-placement-output'),
           enqueueQuizVerify: vi.fn(async () => {}),
-          buildTavilyMcpServerFn: () => null,
-          buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+          buildExaMcpServerFn: () => null,
         }),
       ).rejects.toBeInstanceOf(PlacementStarterUnknownCostError);
 
@@ -979,8 +1318,7 @@ describe('runQuizGen', () => {
           placementAttempt: attempt,
           runAgentTaskFn: agentMock(output, 'tr-known-invalid-placement-output', 0.01),
           enqueueQuizVerify: vi.fn(async () => {}),
-          buildTavilyMcpServerFn: () => null,
-          buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+          buildExaMcpServerFn: () => null,
         }),
       ).rejects.toThrow(expectedError);
 
@@ -1006,7 +1344,17 @@ describe('runQuizGen', () => {
   it('rejects settlement when the placement fence goes stale during the paid call', async () => {
     const now = new Date();
     const attempt = await acquireInvalidOutputPlacementAttempt(now);
-    const runAgentTaskFn = vi.fn(async () => {
+    const runAgentTaskFn = vi.fn(async (kind: string) => {
+      if (kind !== 'QuizGenTask') {
+        // Plan phase: return a valid plan (mirrors CLOSED_BOOK_OUTPUT, anchored to
+        // the trigger's real node) without touching the attempt — the paid
+        // generation call is what goes stale.
+        return {
+          text: planTextFor(CLOSED_BOOK_OUTPUT, {
+            knowledge_context: [{ id: INVALID_OUTPUT_PLACEMENT.knowledgeId }],
+          }),
+        };
+      }
       await testDb()
         .update(placement_starter_attempt)
         .set({ status: 'underfilled' })
@@ -1022,8 +1370,7 @@ describe('runQuizGen', () => {
         placementAttempt: attempt,
         runAgentTaskFn,
         enqueueQuizVerify: vi.fn(async () => {}),
-        buildTavilyMcpServerFn: () => null,
-        buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+        buildExaMcpServerFn: () => null,
       }),
     ).rejects.toBeInstanceOf(PlacementStarterStaleAuthorityError);
 
@@ -1076,8 +1423,7 @@ describe('runQuizGen', () => {
       count: 2,
       runAgentTaskFn: agentMock(VALID_OUTPUT),
       enqueueQuizVerify,
-      buildTavilyMcpServerFn: () => FAKE_TAVILY_CONFIG,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+      buildExaMcpServerFn: () => FAKE_TAVILY_CONFIG,
     });
 
     expect(result.question_ids).toHaveLength(0);
@@ -1111,8 +1457,7 @@ describe('runQuizGen', () => {
       count: 1,
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => null),
     });
 
     const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
@@ -1140,8 +1485,7 @@ describe('runQuizGen', () => {
       count: 1,
       runAgentTaskFn,
       enqueueQuizVerify,
-      buildTavilyMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
     });
 
     expect(result.status).toBe('ready');
@@ -1215,8 +1559,7 @@ describe('runQuizGen', () => {
       count: 2,
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => null),
     });
 
     expect(result.question_ids).toHaveLength(2);
@@ -1251,8 +1594,7 @@ describe('runQuizGen', () => {
       count: 1,
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => null),
     });
 
     const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
@@ -1291,8 +1633,7 @@ describe('runQuizGen', () => {
       count: 1,
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => null),
     });
 
     const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
@@ -1310,8 +1651,7 @@ describe('runQuizGen', () => {
   it('mounts Tavily + domain MCP and folds Tavily tools into allowedTools when a config is present', async () => {
     await seedKnowledge({ id: 'k1' });
     const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_2');
-    const buildTavilyMcpServerFn = vi.fn(() => FAKE_TAVILY_CONFIG);
-    const buildMcpServerFn = vi.fn(() => ({ name: 'fake-loom' }) as never);
+    const buildExaMcpServerFn = vi.fn(() => FAKE_TAVILY_CONFIG);
 
     await runQuizGen({
       db: testDb(),
@@ -1319,26 +1659,38 @@ describe('runQuizGen', () => {
       refId: 'k1',
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn,
-      buildMcpServerFn,
+      buildExaMcpServerFn,
     });
 
-    expect(runAgentTaskFn).toHaveBeenCalledTimes(1);
-    const [taskKind, , ctx] = runAgentTaskFn.mock.calls[0];
+    expect(runAgentTaskFn).toHaveBeenCalledTimes(2);
+    // ADR-0038 — call 1 is QuizPlanTask (plan phase, NO Tavily mounted), call 2 is
+    // QuizGenTask (generation phase, Tavily + domain MCP).
+    const [planKind] = runAgentTaskFn.mock.calls[0];
+    expect(planKind).toBe('QuizPlanTask');
+    const [, , planCtx] = runAgentTaskFn.mock.calls[0];
+    expect(planCtx.piToolMounts?.some((m) => m.type === 'domain')).toBe(true);
+    expect(planCtx.piToolMounts?.some((m) => m.type === 'remote-mcp')).toBe(false);
+    const genCall = runAgentTaskFn.mock.calls.find(([kind]) => kind === 'QuizGenTask');
+    expect(genCall).toBeDefined();
+    const [taskKind, , ctx] = genCall as [string, unknown, AgentCtx];
     expect(taskKind).toBe('QuizGenTask');
-    expect(ctx.mcpServers).toHaveProperty(DOMAIN_TOOL_MCP_SERVER_NAME);
-    expect(ctx.mcpServers).toHaveProperty(TAVILY_MCP_SERVER_NAME);
+    expect(ctx.piToolMounts?.some((m) => m.type === 'domain')).toBe(true);
+    expect(
+      ctx.piToolMounts?.some(
+        (m) => m.type === 'remote-mcp' && m.serverName === EXA_MCP_SERVER_NAME,
+      ),
+    ).toBe(true);
     // domain read tools present...
     for (const name of QUIZ_GEN_READ_TOOLS) {
       expect(ctx.allowedTools).toContain(toMcpAllowedToolName(name));
     }
     // ...and the Tavily scoped tools.
-    for (const tool of TAVILY_MCP_ALLOWED_TOOLS) {
+    for (const tool of EXA_MCP_ALLOWED_TOOLS) {
       expect(ctx.allowedTools).toContain(tool);
     }
   });
 
-  it('does NOT register Tavily (or its tools) when buildTavilyMcpServerFn returns null', async () => {
+  it('does NOT register Tavily (or its tools) when buildExaMcpServerFn returns null', async () => {
     await seedKnowledge({ id: 'k1' });
     const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_3');
 
@@ -1348,14 +1700,13 @@ describe('runQuizGen', () => {
       refId: 'k1',
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => null),
     });
 
     const [, , ctx] = runAgentTaskFn.mock.calls[0];
-    expect(ctx.mcpServers).toHaveProperty(DOMAIN_TOOL_MCP_SERVER_NAME);
-    expect(ctx.mcpServers).not.toHaveProperty(TAVILY_MCP_SERVER_NAME);
-    for (const tool of TAVILY_MCP_ALLOWED_TOOLS) {
+    expect(ctx.piToolMounts?.some((m) => m.type === 'domain')).toBe(true);
+    expect(ctx.piToolMounts?.some((m) => m.type === 'remote-mcp')).toBe(false);
+    for (const tool of EXA_MCP_ALLOWED_TOOLS) {
       expect(ctx.allowedTools).not.toContain(tool);
     }
     // domain read tools are still present (Tavily-independent).
@@ -1373,8 +1724,7 @@ describe('runQuizGen', () => {
       refId: 'li1',
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
     });
 
     expect(result.status).toBe('ready');
@@ -1428,8 +1778,7 @@ describe('runQuizGen', () => {
       count: 1,
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => null),
     });
 
     expect(result.status).toBe('ready');
@@ -1473,8 +1822,7 @@ describe('runQuizGen', () => {
       generationMethod: 'closed_book',
       runAgentTaskFn: agentMock(JSON.stringify(parsed), 'tr-ordered-fallback'),
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => null),
     });
 
     const [row] = await testDb()
@@ -1505,8 +1853,7 @@ describe('runQuizGen', () => {
       generationMethod: 'closed_book',
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => null),
     });
 
     const [, input] = runAgentTaskFn.mock.calls[0];
@@ -1526,8 +1873,7 @@ describe('runQuizGen', () => {
       count: 1,
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => null),
     });
 
     const [, input] = runAgentTaskFn.mock.calls[0];
@@ -1548,8 +1894,7 @@ describe('runQuizGen', () => {
       count: 1,
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => null),
     });
 
     expect(result.status).toBe('ready');
@@ -1568,8 +1913,7 @@ describe('runQuizGen', () => {
     const handler = buildQuizGenHandler(testDb(), {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: () => null,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+      buildExaMcpServerFn: () => null,
     });
 
     const jobs = [
@@ -1612,8 +1956,7 @@ describe('runQuizGen', () => {
         generationMethod: 'material_grounded',
         runAgentTaskFn,
         enqueueQuizVerify,
-        buildTavilyMcpServerFn: vi.fn(() => null),
-        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        buildExaMcpServerFn: vi.fn(() => null),
       }),
     ).rejects.toThrow(
       /pinned generation_method='material_grounded' but agent produced 'search_grounded'/,
@@ -1642,8 +1985,7 @@ describe('runQuizGen', () => {
       generationMethod: 'closed_book',
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => null),
     });
 
     expect(result.status).toBe('ready');
@@ -1683,8 +2025,7 @@ describe('runQuizGen', () => {
       count: 1,
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => null),
     });
 
     expect(result.status).toBe('ready');
@@ -1725,8 +2066,7 @@ describe('runQuizGen', () => {
       count: 1,
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => null),
     });
 
     // The run is skipped (archived node resolves to nothing), never reaching the agent.
@@ -1749,8 +2089,7 @@ describe('runQuizGen', () => {
       kind: 'reading',
       runAgentTaskFn,
       enqueueQuizVerify,
-      buildTavilyMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => null),
     });
 
     expect(result.status).toBe('ready');
@@ -1764,21 +2103,24 @@ describe('runQuizGen', () => {
     await seedKnowledge({ id: 'k1' });
     const enqueueQuizVerify = vi.fn(async () => {});
     const runAgentTaskFn = agentMock(VALID_OUTPUT, 'tr_required_kind_mismatch');
+    // YUK-386: conformance is answer-class level — 'choice' (exact) vs the
+    // fixture's 'short_answer' (semantic) is a class mismatch → reject.
     await expect(
       runQuizGen({
         db: testDb(),
         trigger: 'knowledge',
         refId: 'k1',
-        kind: 'reading',
+        kind: 'choice',
         kindRequired: true,
         runAgentTaskFn,
         enqueueQuizVerify,
-        buildTavilyMcpServerFn: vi.fn(() => null),
-        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        buildExaMcpServerFn: vi.fn(() => null),
       }),
-    ).rejects.toThrow(/required kind='reading'.*'short_answer'/);
+    ).rejects.toThrow(
+      /item 1 plans kind 'short_answer' whose answer class does not match required kind 'choice'/,
+    );
     expect(runAgentTaskFn.mock.calls[0][1]).toMatchObject({
-      requested_kind: 'reading',
+      requested_kind: 'choice',
       kind_required: true,
     });
     expect(enqueueQuizVerify).not.toHaveBeenCalled();
@@ -1797,10 +2139,11 @@ describe('runQuizGen', () => {
         objectiveOnly: true,
         runAgentTaskFn,
         enqueueQuizVerify,
-        buildTavilyMcpServerFn: vi.fn(() => null),
-        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        buildExaMcpServerFn: vi.fn(() => null),
       }),
-    ).rejects.toThrow(/objective-only kind='choice'.*'short_answer'/);
+    ).rejects.toThrow(
+      /item 1 plans kind 'short_answer' whose answer class does not match objective-only kind 'choice'/,
+    );
     expect(runAgentTaskFn.mock.calls[0][1]).toMatchObject({
       requested_kind: 'choice',
       objective_only: true,
@@ -1823,8 +2166,7 @@ describe('runQuizGen', () => {
       kind: 'short_answer',
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => null),
     });
 
     expect(result.status).toBe('ready');
@@ -1833,7 +2175,7 @@ describe('runQuizGen', () => {
   });
 
   // YUK-226 S2-5b (PR #320 验证轮 A3) — cross-vocabulary pin: a profile-vocabulary pin
-  // ('reading_comprehension') MATCHES a canonical 'reading' output via kindsMatch. The old
+  // ('reading_comprehension') MATCHES a canonical 'reading' output via answerClassCompatible. The old
   // skill-space compare (questionKindToSkillKind(q.kind) !== params.kind) would have FAILED
   // this (reading → reading_comprehension !== reading_comprehension? no — it compared
   // 'reading' to 'reading_comprehension' and threw). This proves the canonical compare.
@@ -1851,8 +2193,7 @@ describe('runQuizGen', () => {
       kind: 'reading_comprehension',
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
     });
 
     expect(result.status).toBe('ready');
@@ -1877,8 +2218,7 @@ describe('runQuizGen', () => {
       kind: 'short_answer',
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => null),
     });
 
     const [, input] = runAgentTaskFn.mock.calls[0];
@@ -1891,8 +2231,7 @@ describe('runQuizGen', () => {
     const handler = buildQuizGenHandler(testDb(), {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: () => null,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+      buildExaMcpServerFn: () => null,
     });
 
     const jobs = [
@@ -1914,8 +2253,7 @@ describe('runQuizGen', () => {
       refId: 'missing',
       runAgentTaskFn,
       enqueueQuizVerify,
-      buildTavilyMcpServerFn: vi.fn(() => null),
-      buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+      buildExaMcpServerFn: vi.fn(() => null),
     });
 
     expect(result.status).toBe('skipped:ref_not_found');
@@ -1937,13 +2275,623 @@ describe('runQuizGen', () => {
         refId: 'k1',
         runAgentTaskFn,
         enqueueQuizVerify,
-        buildTavilyMcpServerFn: vi.fn(() => null),
-        buildMcpServerFn: vi.fn(() => ({ name: 'fake-loom' }) as never),
+        buildExaMcpServerFn: vi.fn(() => null),
       }),
     ).rejects.toThrow(/parseOutput/);
 
     const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
     expect(rows).toHaveLength(0);
+    expect(enqueueQuizVerify).not.toHaveBeenCalled();
+  });
+
+  // ── ADR-0038 决定#2 — plan-then-generate（two-phase QuizGen）──────────────────
+  //
+  // Phase 1 (QuizPlanTask) emits the machine-checkable plan; a deterministic gate
+  // (schema + real KC existence + kind/anchor sanity) must accept it BEFORE the
+  // generation call runs. Rejected plans regenerate bounded (with reasons fed
+  // back) then fail closed — generation must NEVER run off a rejected plan.
+  const PLAN_CHOICE_ANCHOR = '主谓间助词';
+  const VALID_PLAN = JSON.stringify({
+    items: [
+      { knowledge_id: 'k1', kind: 'short_answer', difficulty: 3 },
+      { knowledge_id: 'k1', kind: 'choice', difficulty: 2, answer_anchor: PLAN_CHOICE_ANCHOR },
+    ],
+    generation_method: 'search_grounded',
+  });
+  const INVALID_PLAN_MISSING_ANCHOR = JSON.stringify({
+    items: [{ knowledge_id: 'k1', kind: 'choice', difficulty: 2 }],
+    generation_method: 'search_grounded',
+  });
+  const INVALID_PLAN_UNKNOWN_KC = JSON.stringify({
+    items: [{ knowledge_id: 'ghost_kc', kind: 'short_answer', difficulty: 3 }],
+    generation_method: 'closed_book',
+  });
+
+  function planAwareMock(planOutput: string, generationOutput: string, taskRunId?: string) {
+    return vi.fn(async (kind: string, _input: unknown, _ctx: AgentCtx) => ({
+      text: kind === 'QuizPlanTask' ? planOutput : generationOutput,
+      ...(taskRunId === undefined ? {} : { task_run_id: taskRunId }),
+    }));
+  }
+
+  const planAwareDeps = () => ({
+    enqueueQuizVerify: vi.fn(async () => {}),
+    buildExaMcpServerFn: vi.fn(() => null),
+  });
+
+  it('(a) plan gate rejects an invalid plan (missing anchor / unknown KC) WITHOUT invoking generation', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const deps = planAwareDeps();
+    // Anchor sanity is schema-level (fail-fast): an objective-kind item without
+    // its answer_anchor rejects the WHOLE plan at parse, before any DB read.
+    const invalidPlan = JSON.stringify({
+      items: [{ knowledge_id: 'k1', kind: 'true_false', difficulty: 2 }],
+      generation_method: 'search_grounded',
+    });
+    const runAgentTaskFn = planAwareMock(invalidPlan, VALID_OUTPUT, 'tr_plan_invalid');
+
+    const runPromise = runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 1,
+      runAgentTaskFn,
+      ...deps,
+    });
+    await expect(runPromise).rejects.toThrow(/requires an answer_anchor/);
+
+    // Generation was NEVER invoked — only QuizPlanTask calls happened.
+    const kinds = runAgentTaskFn.mock.calls.map(([kind]) => kind);
+    expect(kinds).not.toContain('QuizGenTask');
+    expect(
+      await testDb().select().from(question).where(eq(question.source, 'quiz_gen')),
+    ).toHaveLength(0);
+    expect(deps.enqueueQuizVerify).not.toHaveBeenCalled();
+  });
+
+  it('(b) valid plan proceeds and generation consumes it (plan-derived constraints at the seam)', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const deps = planAwareDeps();
+    const runAgentTaskFn = planAwareMock(VALID_PLAN, VALID_OUTPUT, 'tr_plan_ok');
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 2,
+      runAgentTaskFn,
+      ...deps,
+    });
+
+    expect(result.status).toBe('ready');
+    const genCall = runAgentTaskFn.mock.calls.find(([kind]) => kind === 'QuizGenTask');
+    expect(genCall).toBeDefined();
+    const input = genCall?.[1] as { plan?: { items?: unknown[]; generation_method?: string } };
+    // The accepted plan is threaded as STRUCTURED input into the generation call.
+    expect(input.plan?.generation_method).toBe('search_grounded');
+    expect(input.plan?.items).toEqual([
+      { knowledge_id: 'k1', kind: 'short_answer', difficulty: 3 },
+      { knowledge_id: 'k1', kind: 'choice', difficulty: 2, answer_anchor: PLAN_CHOICE_ANCHOR },
+    ]);
+    const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
+    expect(rows).toHaveLength(2);
+  });
+
+  it('(c) bounded regeneration then fail-closed on persistently invalid plans', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const deps = planAwareDeps();
+    const runAgentTaskFn = planAwareMock(
+      INVALID_PLAN_MISSING_ANCHOR,
+      VALID_OUTPUT,
+      'tr_plan_persist_bad',
+    );
+
+    await expect(
+      runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: 'k1',
+        count: 1,
+        runAgentTaskFn,
+        ...deps,
+      }),
+    ).rejects.toThrow(/quiz_plan gate rejected/i);
+
+    // Exactly QUIZ_PLAN_MAX_ATTEMPTS plan attempts, generation never invoked.
+    const planCalls = runAgentTaskFn.mock.calls.filter(([kind]) => kind === 'QuizPlanTask');
+    expect(planCalls).toHaveLength(QUIZ_PLAN_MAX_ATTEMPTS);
+    expect(runAgentTaskFn.mock.calls.some(([kind]) => kind === 'QuizGenTask')).toBe(false);
+    // The regeneration attempt carries the previous rejection reasons as feedback.
+    const secondInput = planCalls[1]?.[1] as { previous_rejection?: string[] };
+    expect(secondInput?.previous_rejection?.join('\n')).toMatch(/requires an answer_anchor/);
+    expect(
+      await testDb().select().from(question).where(eq(question.source, 'quiz_gen')),
+    ).toHaveLength(0);
+    expect(deps.enqueueQuizVerify).not.toHaveBeenCalled();
+  });
+
+  it('rejects an unknown-KC plan even when generation would have succeeded (gate fires first)', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const deps = planAwareDeps();
+    const runAgentTaskFn = planAwareMock(INVALID_PLAN_UNKNOWN_KC, VALID_OUTPUT, 'tr_plan_ghost');
+
+    await expect(
+      runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: 'k1',
+        count: 1,
+        runAgentTaskFn,
+        ...deps,
+      }),
+    ).rejects.toThrow(/targets unknown or archived knowledge_id 'ghost_kc'/);
+    expect(runAgentTaskFn.mock.calls.some(([kind]) => kind === 'QuizGenTask')).toBe(false);
+  });
+
+  it('fails the run when generation deviates from the accepted plan (kind conformance)', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const deps = planAwareDeps();
+    // Plan says choice; the generation fixture writes short_answer — the plan is
+    // the contract (ADR-0038: 机检约束前置), so the run fails closed.
+    const plan = JSON.stringify({
+      items: [{ knowledge_id: 'k1', kind: 'choice', difficulty: 2, answer_anchor: '对' }],
+      generation_method: 'closed_book',
+    });
+    const runAgentTaskFn = planAwareMock(plan, CLOSED_BOOK_OUTPUT, 'tr_plan_deviate');
+
+    await expect(
+      runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: 'k1',
+        count: 1,
+        runAgentTaskFn,
+        ...deps,
+      }),
+    ).rejects.toThrow(/deviates from planned kind 'choice'/);
+    expect(
+      await testDb().select().from(question).where(eq(question.source, 'quiz_gen')),
+    ).toHaveLength(0);
+    expect(deps.enqueueQuizVerify).not.toHaveBeenCalled();
+  });
+
+  it('echoes the accepted plan into the run event payload (auditability)', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const deps = planAwareDeps();
+    const runAgentTaskFn = planAwareMock(VALID_PLAN, VALID_OUTPUT, 'tr_plan_echo');
+
+    await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 2,
+      runAgentTaskFn,
+      ...deps,
+    });
+
+    const events = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:quiz_gen'));
+    const success = events.find((e) => e.outcome === 'success');
+    expect(success).toBeDefined();
+    const payload = success?.payload as {
+      plan?: { items?: unknown[]; generation_method?: string };
+      plan_task_run_id?: string;
+    };
+    expect(payload.plan?.generation_method).toBe('search_grounded');
+    expect(payload.plan?.items).toHaveLength(2);
+    expect(payload.plan_task_run_id).toBe('tr_plan_echo');
+  });
+});
+
+// YUK-1011 — 篇 (composite_parent_only) run: the YUK-287 pin is finally
+// consumed. A pinned run must produce a composite parent (structured stem+subs
+// on the row) + ≥2 question_part children in the same tx; flat output or an
+// undersized tree fails the whole batch closed instead of silently degrading.
+describe('runQuizGen — composite_parent_only (YUK-1011)', () => {
+  beforeEach(async () => {
+    await resetDb();
+  });
+
+  it('persists one composite parent + question_part children atomically, drafts all, verifies the parent', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const runAgentTaskFn = agentMock(COMPOSITE_OUTPUT, 'tr_c');
+    const enqueueQuizVerify = vi.fn(async () => {});
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 1,
+      compositeParentOnly: true,
+      runAgentTaskFn,
+      enqueueQuizVerify,
+      buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
+    });
+
+    expect(result.status).toBe('ready');
+    // Only the PARENT is a first-class quiz product: artifact + verify intent +
+    // result ids reference it alone; children ride the verify cascade.
+    expect(result.question_ids).toHaveLength(1);
+    const parentId = result.question_ids?.[0];
+    if (!parentId) throw new Error('expected exactly one composite parent id');
+
+    const parents = await testDb().select().from(question).where(eq(question.id, parentId));
+    expect(parents).toHaveLength(1);
+    const parent = parents[0];
+    expect(parent.kind).toBe('reading');
+    expect(parent.source).toBe('quiz_gen');
+    expect(parent.draft_status).toBe('draft');
+    expect(parent.parent_question_id).toBeNull();
+    expect(parent.judge_kind_override).toBe('semantic');
+    expect(parent.choices_md).toBeNull();
+    expect(parent.knowledge_ids).toEqual(['k1']);
+    expect(parent.canonical_content_hash).toEqual(expect.any(String));
+    expect(parent.created_by).toMatchObject({ by: 'ai', task_kind: 'QuizGenTask' });
+
+    // The normalized stem+subs tree lands on the structured column; node ids
+    // were regenerated server-side (the model's 'model-*' placeholders are gone).
+    const tree = parent.structured as {
+      id: string;
+      role: string;
+      prompt_text: string;
+      sub_questions: Array<{ id: string; role: string; prompt_text: string }>;
+    };
+    expect(tree.role).toBe('stem');
+    expect(tree.id).not.toBe('model-stem-id');
+    expect(tree.prompt_text).toContain('陈太丘与友期行');
+    expect(tree.sub_questions).toHaveLength(2);
+    expect(tree.sub_questions.map((s) => s.id)).not.toContain('model-sub-1');
+    expect(tree.sub_questions.map((s) => s.role)).toEqual(['sub', 'sub']);
+
+    // Derived flat views: prompt carries stem + both subs; reference merges
+    // per-sub answers (single source of truth = the tree).
+    expect(parent.prompt_md).toContain('陈太丘与友期行');
+    expect(parent.prompt_md).toContain('「太丘舍去」中「去」的意思是？');
+    expect(parent.prompt_md).toContain('元方反驳友人的话表现了他怎样的品格？');
+    expect(parent.reference_md).toContain('B 离开');
+    expect(parent.reference_md).toContain('守信明礼');
+    const parentMeta = parent.metadata as Record<string, unknown>;
+    expect(parentMeta.quiz_gen).toMatchObject({ generation_status: 'ready' });
+
+    // Children: question_part rows linked + ordered, drafts like the parent,
+    // narrowed stem+single-sub trees whose prompt stays self-contained.
+    const children = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.parent_question_id, parentId));
+    expect(children).toHaveLength(2);
+    const byIndex = new Map(children.map((c) => [c.part_index, c]));
+    const child0 = byIndex.get(0);
+    const child1 = byIndex.get(1);
+    expect(child0).toBeDefined();
+    expect(child1).toBeDefined();
+    for (const child of children) {
+      expect(child.kind).toBe('question_part');
+      expect(child.draft_status).toBe('draft');
+      expect(child.source).toBe('quiz_gen');
+      // ADR-0028 (U0 A2): a generated part inherits the parent's PERSISTED
+      // knowledge labels at write time — it is a KC probe, and attempts on it
+      // attribute to the same knowledge projection (the cascade enrolls
+      // per-KC, not question-level).
+      expect(child.knowledge_ids).toEqual(['k1']);
+      expect(child.created_by).toBeNull();
+      expect(child.canonical_content_hash).toBeNull();
+      expect(child.prompt_md).toContain('陈太丘与友期行');
+      const childTree = child.structured as { sub_questions: Array<{ id: string }> };
+      expect(childTree.sub_questions).toHaveLength(1);
+      const childMeta = child.metadata as Record<string, unknown>;
+      expect(childMeta.part_of_question_id).toBe(parentId);
+      expect(childMeta.part_index).toBe(child.part_index);
+      // part_ref = the normalized sub id inside the PARENT's tree (the judge
+      // narrowing coordinate), and the child's own narrowed tree carries the
+      // same node.
+      expect(childMeta.part_ref).toBe(tree.sub_questions[child.part_index ?? -1]?.id);
+      expect(childTree.sub_questions[0].id).toBe(childMeta.part_ref);
+      expect(childMeta.quiz_gen).toMatchObject({ generation_status: 'ready' });
+    }
+    expect(child0?.prompt_md).toContain('「太丘舍去」中「去」的意思是？');
+    // codex P2 (round 2) — the objective child's options live in choices_md
+    // (below) and render as buttons; they must NOT also be inlined into
+    // prompt_md or every choice paints twice.
+    expect(child0?.prompt_md).not.toContain('A. 前往');
+    expect(child0?.prompt_md).not.toContain('B. 离开');
+    // codex P1 (round 2) — the reference keeps a deterministic answer HEAD:
+    // bare answer + a marked 解析： tail so extractAnswerHead cuts it and the
+    // exact judge can resolve 'B 离开' → choice index against the learner's
+    // letter/option-body submission.
+    expect(child0?.reference_md).toBe(
+      'B 离开\n解析：「去」在文言中常释为「离开」，与现代汉语义相反。',
+    );
+    expect(child0?.prompt_md).not.toContain('元方反驳友人的话');
+    expect(child1?.prompt_md).toContain('元方反驳友人的话表现了他怎样的品格？');
+    expect(child1?.reference_md).toContain('守信明礼');
+
+    // Codex P1 (objective contract) — the choice sub persists its option BODIES
+    // as choices_md so route-resolve short-circuits it to the deterministic
+    // 'exact' judge; the free-response sub keeps NULL and grades semantically.
+    expect(child0?.choices_md).toEqual(['前往', '离开', '到达', '回来']);
+    expect(child0?.answer_class).toBe('exact');
+    expect(child1?.choices_md).toBeNull();
+    expect(child1?.answer_class).toBe('semantic');
+
+    // Artifact + verify dispatch reference the parent only.
+    const quizArtifacts = await testDb()
+      .select()
+      .from(artifact)
+      .where(eq(artifact.id, result.tool_quiz_artifact_id ?? ''));
+    expect(quizArtifacts[0]?.tool_state).toMatchObject({ question_ids: [parentId] });
+    expect(enqueueQuizVerify).toHaveBeenCalledTimes(1);
+    expect(enqueueQuizVerify).toHaveBeenCalledWith([parentId], expect.any(Object));
+
+    // Run event carries the composite observability fields.
+    const quizEvents = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:quiz_gen'));
+    const success = quizEvents.find((e) => e.outcome === 'success');
+    expect(success?.payload).toMatchObject({
+      composite_parent_only: true,
+      composite_part_count: 2,
+    });
+  });
+
+  it('fails closed when a pinned run emits flat questions (no silent downgrade)', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const enqueueQuizVerify = vi.fn(async () => {});
+
+    await expect(
+      runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: 'k1',
+        count: 1,
+        compositeParentOnly: true,
+        runAgentTaskFn: agentMock(VALID_OUTPUT),
+        enqueueQuizVerify,
+        buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
+      }),
+    ).rejects.toThrow(/has no structured stem\+sub_questions/);
+    expect(await testDb().select().from(question)).toHaveLength(0);
+    expect(enqueueQuizVerify).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when an unpinned run emits structured (no smuggled composite)', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const enqueueQuizVerify = vi.fn(async () => {});
+
+    await expect(
+      runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: 'k1',
+        count: 1,
+        runAgentTaskFn: agentMock(COMPOSITE_OUTPUT),
+        enqueueQuizVerify,
+        buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
+      }),
+    ).rejects.toThrow(/did not pin composite_parent_only/);
+    expect(await testDb().select().from(question)).toHaveLength(0);
+    expect(enqueueQuizVerify).not.toHaveBeenCalled();
+  });
+
+  it('fails closed when a composite item carries fewer than 2 sub_questions', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const enqueueQuizVerify = vi.fn(async () => {});
+
+    await expect(
+      runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: 'k1',
+        count: 1,
+        compositeParentOnly: true,
+        runAgentTaskFn: agentMock(COMPOSITE_ONE_SUB_OUTPUT),
+        enqueueQuizVerify,
+        buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
+      }),
+    ).rejects.toThrow(/at least 2 sub_questions/);
+    expect(await testDb().select().from(question)).toHaveLength(0);
+    expect(enqueueQuizVerify).not.toHaveBeenCalled();
+  });
+
+  it('material_grounded composite: embeds the passage into the stem and shares one source_document', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const enqueueQuizVerify = vi.fn(async () => {});
+
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 1,
+      compositeParentOnly: true,
+      runAgentTaskFn: agentMock(COMPOSITE_MATERIAL_OUTPUT, 'tr_cm'),
+      enqueueQuizVerify,
+      buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
+    });
+
+    const parentId = result.question_ids?.[0];
+    if (!parentId) throw new Error('expected a composite parent id');
+    const parents = await testDb().select().from(question).where(eq(question.id, parentId));
+    const parent = parents[0];
+    // The framing-only stem text got the material body embedded pre-normalize,
+    // so the derived prompt_md shows the learner the passage.
+    expect(parent.prompt_md).toContain('阅读下面的短文，完成下列小题。');
+    expect(parent.prompt_md).toContain(MATERIAL_PASSAGE);
+    const parentMeta = parent.metadata as Record<string, unknown>;
+    const materialDocId = (parentMeta.quiz_gen as Record<string, unknown>)
+      .material_source_document_id;
+    expect(materialDocId).toEqual(expect.any(String));
+    const docs = await testDb()
+      .select()
+      .from(source_document)
+      .where(eq(source_document.id, materialDocId as string));
+    expect(docs).toHaveLength(1);
+    expect(docs[0].body_md).toBe(MATERIAL_PASSAGE);
+
+    const children = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.parent_question_id, parentId));
+    expect(children).toHaveLength(2);
+    for (const child of children) {
+      // Each part view is self-contained: passage + its own sub only.
+      expect(child.prompt_md).toContain(MATERIAL_PASSAGE);
+      const childMeta = child.metadata as Record<string, unknown>;
+      expect((childMeta.quiz_gen as Record<string, unknown>).material_source_document_id).toBe(
+        materialDocId,
+      );
+    }
+    expect(children.map((c) => c.part_index).sort()).toEqual([0, 1]);
+    expect(children[0].prompt_md).not.toBe(children[1].prompt_md);
+  });
+
+  it('repeated composite generation dedupes at the parent hash — never a partial group', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const enqueueQuizVerify = vi.fn(async () => {});
+    const deps = {
+      db: testDb(),
+      trigger: 'knowledge' as const,
+      refId: 'k1',
+      count: 1,
+      compositeParentOnly: true,
+      enqueueQuizVerify,
+      buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
+    };
+
+    const first = await runQuizGen({
+      ...deps,
+      runAgentTaskFn: agentMock(COMPOSITE_OUTPUT, 'tr_c1'),
+    });
+    const parentId = first.question_ids?.[0];
+    if (!parentId) throw new Error('expected a composite parent id');
+
+    // Second identical run: the parent's canonical hash hits the dedup index →
+    // merge path `continue`s BEFORE any part insert — no second group, no
+    // orphaned children, no zero-question artifact, no re-enqueue.
+    const second = await runQuizGen({
+      ...deps,
+      runAgentTaskFn: agentMock(COMPOSITE_OUTPUT, 'tr_c2'),
+    });
+    expect(second.question_ids).toHaveLength(0);
+
+    const allQuestions = await testDb().select().from(question);
+    expect(allQuestions).toHaveLength(3); // 1 parent + 2 parts, unchanged.
+    const children = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.parent_question_id, parentId));
+    expect(children).toHaveLength(2);
+    const artifacts = await testDb()
+      .select({ id: artifact.id })
+      .from(artifact)
+      .where(eq(artifact.tool_kind, 'quiz_gen'));
+    expect(artifacts).toHaveLength(1); // only the first run's artifact.
+    expect(enqueueQuizVerify).toHaveBeenCalledTimes(1);
+  });
+
+  it('a flat row whose text matches the composite render does NOT absorb the composite (shape discriminator)', async () => {
+    // Codex P2 — without the composite flag in the canonical hash, a flat row
+    // whose normalized prompt/reference/choices/rubric equal the composite's
+    // derived render would be adopted as an exact duplicate: the merge branch
+    // `continue`s before part materialization, no children exist, and
+    // poolFetch(compositeParentOnly) still rejects the childless row — the
+    // 篇 supply gap silently unresolved. The discriminator namespaces the two
+    // shapes so the composite inserts fresh with its full group.
+    await seedKnowledge({ id: 'k1' });
+    const flatPrompt = structuredToPromptMarkdown(COMPOSITE_STRUCTURED as StructuredQuestionT);
+    const flatReference = structuredToReferenceMarkdown(
+      COMPOSITE_STRUCTURED as StructuredQuestionT,
+    );
+    const flatRubric = JSON.parse(COMPOSITE_OUTPUT).questions[0].rubric_json;
+    const flatHash = canonicalQuestionContentHash({
+      promptMd: flatPrompt,
+      referenceMd: flatReference,
+      choicesMd: null,
+      rubricJson: flatRubric,
+    });
+    const now = new Date();
+    await testDb()
+      .insert(question)
+      .values({
+        id: 'flat-collider',
+        kind: 'reading',
+        prompt_md: flatPrompt,
+        reference_md: flatReference,
+        rubric_json: flatRubric,
+        knowledge_ids: ['k1'],
+        difficulty: 3,
+        source: 'quiz_gen',
+        source_ref: 'k1',
+        draft_status: 'active',
+        metadata: {},
+        canonical_content_hash: flatHash,
+        created_at: now,
+        updated_at: now,
+      });
+
+    const enqueueQuizVerify = vi.fn(async () => {});
+    const result = await runQuizGen({
+      db: testDb(),
+      trigger: 'knowledge',
+      refId: 'k1',
+      count: 1,
+      compositeParentOnly: true,
+      runAgentTaskFn: agentMock(COMPOSITE_OUTPUT, 'tr_shape'),
+      enqueueQuizVerify,
+      buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
+    });
+
+    // Fresh parent + children — the flat collider is untouched, not merged.
+    expect(result.question_ids).toHaveLength(1);
+    const parentId = result.question_ids?.[0];
+    if (!parentId) throw new Error('expected a composite parent id');
+    expect(parentId).not.toBe('flat-collider');
+    const children = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.parent_question_id, parentId));
+    expect(children).toHaveLength(2);
+    const colliderRows = await testDb()
+      .select()
+      .from(question)
+      .where(eq(question.id, 'flat-collider'));
+    expect(colliderRows[0]?.knowledge_ids).toEqual(['k1']); // no merge write
+    expect(enqueueQuizVerify).toHaveBeenCalledWith([parentId], expect.any(Object));
+  });
+
+  it('rejects at the plan gate when a pinned plan omits composite:true', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const enqueueQuizVerify = vi.fn(async () => {});
+    // A plan mock that ignores the composite_parent_only input pin — every
+    // attempt comes back unmarked, so the gate rejects all QUIZ_PLAN_MAX_ATTEMPTS.
+    const runAgentTaskFn = vi.fn(async (kind: string, _input: unknown, _ctx: AgentCtx) => ({
+      text:
+        kind === 'QuizPlanTask'
+          ? JSON.stringify({
+              items: [{ knowledge_id: 'k1', kind: 'reading', difficulty: 3 }],
+              generation_method: 'search_grounded',
+            })
+          : COMPOSITE_OUTPUT,
+    }));
+
+    await expect(
+      runQuizGen({
+        db: testDb(),
+        trigger: 'knowledge',
+        refId: 'k1',
+        count: 1,
+        compositeParentOnly: true,
+        runAgentTaskFn,
+        enqueueQuizVerify,
+        buildExaMcpServerFn: vi.fn(() => FAKE_TAVILY_CONFIG),
+      }),
+    ).rejects.toThrow(/missing composite:true/);
+    expect(runAgentTaskFn.mock.calls.filter((c) => c[0] === 'QuizPlanTask')).toHaveLength(
+      QUIZ_PLAN_MAX_ATTEMPTS,
+    );
+    expect(await testDb().select().from(question)).toHaveLength(0);
     expect(enqueueQuizVerify).not.toHaveBeenCalled();
   });
 });
@@ -1962,8 +2910,7 @@ describe('buildQuizGenHandler', () => {
     const handler = buildQuizGenHandler(testDb(), {
       runAgentTaskFn,
       enqueueQuizVerify,
-      buildTavilyMcpServerFn: () => null,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+      buildExaMcpServerFn: () => null,
     });
 
     const jobs = [
@@ -1973,7 +2920,8 @@ describe('buildQuizGenHandler', () => {
 
     await handler(jobs);
 
-    expect(runAgentTaskFn).toHaveBeenCalledTimes(2);
+    // 2 jobs × (QuizPlanTask + QuizGenTask) = 4 chained calls.
+    expect(runAgentTaskFn).toHaveBeenCalledTimes(4);
     const rows = await testDb().select().from(question).where(eq(question.source, 'quiz_gen'));
     // The second job returned byte-identical content, so canonical identity keeps
     // the first batch and skips the duplicate batch without another verify enqueue.
@@ -1988,8 +2936,7 @@ describe('buildQuizGenHandler', () => {
     const handler = buildQuizGenHandler(testDb(), {
       runAgentTaskFn,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: () => null,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+      buildExaMcpServerFn: () => null,
       now: () => now,
     });
 
@@ -2010,7 +2957,8 @@ describe('buildQuizGenHandler', () => {
         } as never,
       ]),
     ).resolves.toBeUndefined();
-    expect(runAgentTaskFn).toHaveBeenCalledOnce();
+    // Plan phase ran (no task_run_id needed there) + the paid generation call.
+    expect(runAgentTaskFn).toHaveBeenCalledTimes(2);
 
     const [claim] = await testDb()
       .select()
@@ -2057,8 +3005,7 @@ describe('buildQuizGenHandler', () => {
     const handler = buildQuizGenHandler(testDb(), {
       runAgentTaskFn: runAgentTaskFn as never,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: () => null,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+      buildExaMcpServerFn: () => null,
     });
 
     const job = {
@@ -2110,8 +3057,7 @@ describe('buildQuizGenHandler', () => {
     const handler = buildQuizGenHandler(testDb(), {
       runAgentTaskFn: runAgentTaskFn as never,
       enqueueQuizVerify: vi.fn(async () => {}),
-      buildTavilyMcpServerFn: () => null,
-      buildMcpServerFn: () => ({ name: 'fake-loom' }) as never,
+      buildExaMcpServerFn: () => null,
     });
 
     await expect(

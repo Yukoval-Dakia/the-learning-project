@@ -18,14 +18,16 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
 import { HIERARCHICAL_ELO_ENABLED } from '@/core/theta';
-import { knowledge, mastery_state, material_fsrs_state, question } from '@/db/schema';
+import { event, knowledge, mastery_state, material_fsrs_state, question } from '@/db/schema';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { upsertMasteryState } from '@/server/mastery/state';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
 import { recordJudgePendingAttempt } from '../server/judge-run-dispatch';
+import { settleDeferredSoloReview } from '../server/review-settlement';
 import { CreateAttemptBodySchema } from './contracts';
-import { persistSubmit } from './submit';
+import { enqueueDurableJudge } from './submit';
 
 const MINUTE = 60_000;
 
@@ -77,6 +79,8 @@ function manualJudged() {
     suggestedRating: null,
     finalRating: 'good' as const,
     adviceCauseCategory: null,
+    // YUK-739 — JudgedSubmit now carries the advice profile (advisor routing).
+    adviceSubjectProfile: null,
   };
 }
 
@@ -86,6 +90,139 @@ describe('late-arrival guard — evidence water mark (YUK-777 B2)', () => {
     __resetRateLimitForTests();
     vi.unstubAllEnvs();
   });
+
+  it.each([
+    ['new root only', false, false, false, true],
+    ['legacy root only', true, false, false, true],
+    ['legacy root only without frozen map', true, false, false, false],
+    ['legacy mixed unrelated KC', true, true, false, true],
+    ['new real sibling', false, true, true, true],
+    ['legacy real sibling', true, true, true, true],
+  ] as const)(
+    'pending domain evidence follows real theta targets: %s',
+    async (_name, legacy, mixed, sameDomain, frozen) => {
+      const db = testDb();
+      const root = 'seed:math:root';
+      await seedKnowledge(root, 'math');
+      await seedKnowledge('k1', 'math');
+      await seedKnowledge('k2', sameDomain ? 'math' : 'history');
+      const oldQuestion = `q_${newId()}`;
+      const newQuestion = `q_${newId()}`;
+      const labels = mixed ? [root, 'k2'] : [root];
+      await seedQuestion(oldQuestion, ['k1']);
+      await seedQuestion(newQuestion, labels);
+      const older = new Date(Date.now() - 10 * MINUTE);
+      const newer = new Date(Date.now() - MINUTE);
+      const validated = await buildValidated(newQuestion, newer, {
+        rating: 'good',
+        response_md: '答案：42。',
+        auto_rate: true,
+      });
+      if (legacy) {
+        await recordJudgePendingAttempt(db, {
+          runId: newId(),
+          sessionId: null,
+          questionId: newQuestion,
+          knowledgeIds: labels,
+          abilityGlobalIds: mixed && !sameDomain ? ['math', 'history'] : ['math'],
+          submit: {
+            body: validated.body,
+            question_id: newQuestion,
+            subject_profile: resolveSubjectProfile('math'),
+            question_snapshot: { knowledge_ids: labels },
+            ...(frozen
+              ? {
+                  ability_global_by_knowledge_id: {
+                    [root]: 'math',
+                    ...(mixed ? { k2: sameDomain ? 'math' : 'history' } : {}),
+                  },
+                }
+              : {}),
+            submitted_at: newer.toISOString(),
+          },
+          submittedAt: newer,
+        });
+      } else {
+        const sent = vi.fn(async () => newId());
+        const response = await enqueueDurableJudge(validated, resolveSubjectProfile('math'), {
+          boss: { send: sent },
+        });
+        expect(response.status).toBe(202);
+        expect(sent).toHaveBeenCalledOnce();
+      }
+      const [pending] = await db.select().from(event).where(eq(event.subject_id, newQuestion));
+      expect(pending.payload).toMatchObject({
+        submit: { question_snapshot: { knowledge_ids: labels } },
+      });
+      if (!legacy) {
+        expect(pending.payload).toMatchObject({
+          knowledge_ids: mixed ? ['k2'] : [],
+          ability_global_ids: sameDomain ? ['math'] : [],
+          submit: { ability_global_by_knowledge_id: sameDomain ? { k2: 'math' } : {} },
+        });
+      }
+      const settled = await settleDeferredSoloReview(db, {
+        validated: await buildValidated(oldQuestion, older, { rating: 'good' }),
+        judged: manualJudged(),
+        runId: newId(),
+        frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
+      });
+      expect(settled.lateArrival).toBe(sameDomain);
+      expect(settled.effect).toBe(sameDomain ? 'evidence_only_late' : 'applied');
+      expect(await db.select().from(event).where(eq(event.id, pending.id))).toEqual([pending]);
+    },
+  );
+
+  it.each(['root-knowledge', 'root-domain', 'real-knowledge', 'real-domain'] as const)(
+    'late arrival follows real theta targets: %s',
+    async (target) => {
+      const root = 'seed:math:root';
+      await seedKnowledge(root, 'anchor-domain');
+      await seedKnowledge('k1', 'math');
+      const questionId = `q_${newId()}`;
+      await seedQuestion(questionId, [root, 'k1']);
+      const older = new Date(Date.now() - 10 * MINUTE);
+      const newer = new Date(Date.now() - MINUTE);
+      const isRoot = target.startsWith('root');
+      const isDomain = target.endsWith('domain');
+      const subjectId = isDomain ? (isRoot ? 'anchor-domain' : 'math') : isRoot ? root : 'k1';
+      await upsertMasteryState(testDb(), {
+        subject_kind: isDomain ? 'ability_global' : 'knowledge',
+        subject_id: subjectId,
+        theta_hat: 0.5,
+        evidence_count: 1,
+        success_count: 1,
+        fail_count: 0,
+        last_outcome_at: newer,
+      });
+      const persisted = await settleDeferredSoloReview(testDb(), {
+        validated: await buildValidated(questionId, older, { rating: 'good' }),
+        judged: manualJudged(),
+        runId: newId(),
+        frozenAbilityGlobalByKnowledgeId: { [root]: 'anchor-domain', k1: 'math' },
+      });
+      expect(persisted.lateArrival).toBe(!isRoot);
+      expect(persisted.effect).toBe(isRoot ? 'applied' : 'evidence_only_late');
+      const [seeded] = await testDb()
+        .select()
+        .from(mastery_state)
+        .where(
+          and(
+            eq(mastery_state.subject_kind, isDomain ? 'ability_global' : 'knowledge'),
+            eq(mastery_state.subject_id, subjectId),
+          ),
+        );
+      expect(seeded.theta_hat).toBe(0.5);
+      expect(seeded.last_outcome_at?.getTime()).toBe(newer.getTime());
+      const knowledgeRows = await testDb()
+        .select()
+        .from(mastery_state)
+        .where(eq(mastery_state.subject_kind, 'knowledge'));
+      expect(knowledgeRows.map((r) => r.subject_id).sort()).toEqual(
+        isRoot ? (isDomain ? ['k1'] : ['k1', root]) : isDomain ? [] : ['k1'],
+      );
+    },
+  );
 
   it('detects a late attempt from a newer attempt that WROTE NOTHING (the post-skip hole)', async () => {
     await seedKnowledge('k1', 'math');
@@ -121,13 +258,23 @@ describe('late-arrival guard — evidence water mark (YUK-777 B2)', () => {
     expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
     expect(await testDb().select().from(mastery_state)).toHaveLength(0);
 
-    const persisted = await persistSubmit(
-      await buildValidated(olderQ, older, { rating: 'good', referenced_knowledge_ids: ['k1'] }),
-      manualJudged(),
-      { attemptEventId: newId(), enforceAttemptOrdering: true },
-    );
+    const persisted = await settleDeferredSoloReview(testDb(), {
+      validated: await buildValidated(olderQ, older, {
+        rating: 'good',
+        referenced_knowledge_ids: ['k1'],
+      }),
+      judged: manualJudged(),
+      runId: newId(),
+      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
+    });
 
     expect(persisted.lateArrival).toBe(true);
+    expect(persisted.effect).toBe('evidence_only_late');
+    expect(persisted.terminalResult).toMatchObject({
+      attempt_event_id: persisted.attemptEventId,
+      outcome: 'success',
+      final_rating: 'good',
+    });
     // Late ⇒ evidence only. The schedule must not have moved onto older evidence.
     expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
   });
@@ -175,11 +322,15 @@ describe('late-arrival guard — evidence water mark (YUK-777 B2)', () => {
       submittedAt: relatedAt,
     });
 
-    const result = await persistSubmit(
-      await buildValidated(oldQ, old, { rating: 'good', referenced_knowledge_ids: ['k1'] }),
-      manualJudged(),
-      { attemptEventId: newId(), enforceAttemptOrdering: true },
-    );
+    const result = await settleDeferredSoloReview(testDb(), {
+      validated: await buildValidated(oldQ, old, {
+        rating: 'good',
+        referenced_knowledge_ids: ['k1'],
+      }),
+      judged: manualJudged(),
+      runId: newId(),
+      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
+    });
     expect(result.lateArrival).toBe(true);
   });
 
@@ -207,11 +358,12 @@ describe('late-arrival guard — evidence water mark (YUK-777 B2)', () => {
       submittedAt: at,
     });
 
-    const persisted = await persistSubmit(
-      await buildValidated(questionId, at, { rating: 'good' }),
-      manualJudged(),
-      { attemptEventId: runId, enforceAttemptOrdering: true },
-    );
+    const persisted = await settleDeferredSoloReview(testDb(), {
+      validated: await buildValidated(questionId, at, { rating: 'good' }),
+      judged: manualJudged(),
+      runId,
+      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
+    });
 
     expect(persisted.lateArrival).toBe(false);
     expect(await testDb().select().from(material_fsrs_state)).toHaveLength(1);
@@ -242,11 +394,12 @@ describe('late-arrival guard — evidence water mark (YUK-777 B2)', () => {
       submittedAt: newer,
     });
 
-    const persisted = await persistSubmit(
-      await buildValidated(mine, older, { rating: 'good' }),
-      manualJudged(),
-      { attemptEventId: newId(), enforceAttemptOrdering: true },
-    );
+    const persisted = await settleDeferredSoloReview(testDb(), {
+      validated: await buildValidated(mine, older, { rating: 'good' }),
+      judged: manualJudged(),
+      runId: newId(),
+      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
+    });
 
     // A guard that fired on any newer attempt anywhere would freeze the whole schedule
     // whenever a learner answers two questions out of order.
@@ -291,11 +444,12 @@ describe('late-arrival guard — shared θ_global domain row (YUK-777 B1)', () =
 
     // The newer attempt was itself skipped: no projection records the shared-domain collision.
     expect(await testDb().select().from(mastery_state)).toHaveLength(0);
-    const persisted = await persistSubmit(
-      await buildValidated(olderQ, older, { rating: 'good' }),
-      manualJudged(),
-      { attemptEventId: newId(), enforceAttemptOrdering: true },
-    );
+    const persisted = await settleDeferredSoloReview(testDb(), {
+      validated: await buildValidated(olderQ, older, { rating: 'good' }),
+      judged: manualJudged(),
+      runId: newId(),
+      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
+    });
 
     expect(persisted.lateArrival).toBe(true);
     expect(await testDb().select().from(mastery_state)).toHaveLength(0);
@@ -329,11 +483,12 @@ describe('late-arrival guard — shared θ_global domain row (YUK-777 B1)', () =
       last_outcome_at: newer,
     });
 
-    const persisted = await persistSubmit(
-      await buildValidated(questionId, older, { rating: 'good' }),
-      manualJudged(),
-      { attemptEventId: newId(), enforceAttemptOrdering: true },
-    );
+    const persisted = await settleDeferredSoloReview(testDb(), {
+      validated: await buildValidated(questionId, older, { rating: 'good' }),
+      judged: manualJudged(),
+      runId: newId(),
+      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
+    });
 
     expect(persisted.lateArrival).toBe(true);
     // The shared domain row must not have absorbed the older observation, and its
@@ -363,11 +518,12 @@ describe('late-arrival guard — shared θ_global domain row (YUK-777 B1)', () =
       last_outcome_at: long_ago,
     });
 
-    const persisted = await persistSubmit(
-      await buildValidated(questionId, new Date(), { rating: 'good' }),
-      manualJudged(),
-      { attemptEventId: newId(), enforceAttemptOrdering: true },
-    );
+    const persisted = await settleDeferredSoloReview(testDb(), {
+      validated: await buildValidated(questionId, new Date(), { rating: 'good' }),
+      judged: manualJudged(),
+      runId: newId(),
+      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
+    });
 
     expect(persisted.lateArrival).toBe(false);
     expect(await testDb().select().from(material_fsrs_state)).toHaveLength(1);
@@ -386,10 +542,11 @@ describe('late-arrival guard — shared θ_global domain row (YUK-777 B1)', () =
       .set({ domain: 'math-after', updated_at: new Date() })
       .where(eq(knowledge.id, 'k1'));
 
-    const persisted = await persistSubmit(validated, manualJudged(), {
-      attemptEventId: newId(),
-      enforceAttemptOrdering: true,
-      abilityGlobalByKnowledgeId: { k1: 'math-before' },
+    const persisted = await settleDeferredSoloReview(testDb(), {
+      validated,
+      judged: manualJudged(),
+      runId: newId(),
+      frozenAbilityGlobalByKnowledgeId: { k1: 'math-before' },
     });
 
     expect(persisted.lateArrival).toBe(false);

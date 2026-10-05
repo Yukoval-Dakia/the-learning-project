@@ -111,6 +111,24 @@ describe('canonical question content fingerprint', () => {
     );
   });
 
+  // YUK-1011 codex P2 — the composite discriminator namespaces 篇 parents away
+  // from flat rows: identical rendered text must still dedupe WITHIN each shape
+  // but never ACROSS them. Flat callers (absent/false) keep the legacy
+  // byte-identical canonical string — pinned by the fixture test above.
+  it('composite discriminator separates the flat/composite identity namespaces', () => {
+    const flat = canonicalQuestionContentHash(base);
+    const composite = canonicalQuestionContentHash({ ...base, composite: true });
+    expect(composite).not.toBe(flat);
+    // Absent / false both omit the key → byte-identical to the legacy shape.
+    expect(canonicalQuestionContentHash({ ...base, composite: false })).toBe(flat);
+    // Composite↔composite still dedupes on content.
+    expect(composite).toBe(canonicalQuestionContentHash({ ...base, composite: true }));
+    // Content drift inside the composite namespace still changes identity.
+    expect(composite).not.toBe(
+      canonicalQuestionContentHash({ ...base, composite: true, promptMd: '别的题面' }),
+    );
+  });
+
   it('canonicalizes rubric object key order without regard to insertion order', () => {
     const a = canonicalQuestionContentHash({
       ...base,

@@ -317,6 +317,9 @@ describe('Foundation D M2 read tools', () => {
     ).toEqual([
       'expand_knowledge_subgraph',
       'find_knowledge_paths',
+      // YUK-939 — generation-only owner tools; no proposal/draft writes.
+      'generate_goal_outline',
+      'generate_question_candidate',
       'get_attempt_context',
       'get_learning_item_context',
       // ADR-0032 D6-draftread (YUK-203 lane L5) — ingestion draft-layer structure reader.
@@ -325,6 +328,8 @@ describe('Foundation D M2 read tools', () => {
       'get_record_context',
       'get_review_due',
       'get_subject_graph_overview',
+      // YUK-986 — jyeoo 候选抓取（E1 仅注册入 registry，无 surface 授予）。
+      'jyeoo_fetch_candidates',
       'query_events',
       'query_knowledge',
       'query_memory_brief',
@@ -333,10 +338,64 @@ describe('Foundation D M2 read tools', () => {
       'query_questions',
       'query_records',
       'read_agent_notes',
-      // YUK-756 — generation-only registry dispatcher is a read-effect DomainTool.
-      'run_task',
       'search_memory_facts',
+      // YUK-988 (Supply-Agent/3) — web 候选抓取（E3 仅注册入 registry，无 surface 授予）。
+      'web_fetch_candidates',
     ]);
+  });
+
+  it('distinguishes unrequested, empty, nonempty and unmatched optional knowledge observations', async () => {
+    await seedAll();
+    const unrequested = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'yuwen',
+      nodeId: 'k_root',
+      include: ['children'],
+    });
+    expect(unrequested.nodes.length).toBeGreaterThan(1);
+    expect(unrequested.coverage).toMatchObject({
+      stats_observation: 'not_requested',
+      recent_failures_observation: 'not_requested',
+    });
+    expect(unrequested.recent_failures).toBeUndefined();
+    expect(unrequested.nodes.every((node) => node.stats === undefined)).toBe(true);
+    expect(unrequested.claim_boundaries.supports_recent_failure_absence_claim).toBe(false);
+
+    const empty = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'yuwen',
+      nodeId: 'k_root',
+      include: ['stats', 'recent_failures'],
+    });
+    expect(empty.coverage).toMatchObject({
+      stats_observation: 'observed',
+      recent_failures_observation: 'observed',
+      recent_failures_time_scope: 'all_recorded_attempts',
+      recent_failures_limit: 10,
+    });
+    expect(empty.recent_failures).toEqual([]);
+    expect(empty.nodes[0].stats?.recent_failure_count_30d).toBe(0);
+    expect(empty.claim_boundaries.supports_recent_failure_absence_claim).toBe(true);
+
+    const nonempty = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'yuwen',
+      nodeId: 'k_zhi',
+      include: ['stats', 'recent_failures'],
+    });
+    expect(nonempty.coverage.recent_failures_observation).toBe('observed');
+    expect(nonempty.recent_failures?.map((row) => row.event_id)).toContain('att_new');
+    expect(nonempty.nodes[0].stats?.recent_failure_count_30d).toBe(1);
+    expect(nonempty.claim_boundaries.supports_recent_failure_absence_claim).toBe(false);
+
+    const unmatched = await queryKnowledgeTool.execute(ctx(), {
+      subjectId: 'yuwen',
+      nodeId: 'missing-node',
+      include: ['stats', 'recent_failures'],
+    });
+    expect(unmatched.coverage).toMatchObject({
+      stats_observation: 'no_returned_nodes',
+      recent_failures_observation: 'no_returned_nodes',
+    });
+    expect(unmatched.recent_failures).toEqual([]);
+    expect(unmatched.claim_boundaries.supports_recent_failure_absence_claim).toBe(false);
   });
 
   it('reads graph overview, local nodes, subgraph, and path explanations', async () => {
@@ -553,6 +612,41 @@ describe('Foundation D M2 read tools', () => {
     expect(questionContext.question?.id).toBe('q_new');
     expect(questionContext.lifecycle.attempt_counts.failure).toBe(1);
     expect(questionContext.records?.[0].record_id).toBe('rec_mistake');
+  });
+
+  it('hides known fixture knowledge IDs from record recommendations and context (YUK-897 E1)', async () => {
+    await seedAll();
+    const db = testDb();
+    const fixtureId = 'kc_yuk792_canary_20260731a';
+    await db.insert(knowledge).values({
+      id: fixtureId,
+      name: 'fixture canary',
+      domain: 'yuwen',
+      parent_id: null,
+      created_at: BASE,
+      updated_at: BASE,
+    });
+    await db
+      .update(learning_record)
+      .set({ knowledge_ids: ['k_zhi', fixtureId, 'synthetic:yuwen:fixture'] })
+      .where(eq(learning_record.id, 'rec_mistake'));
+    await db
+      .update(question)
+      .set({ knowledge_ids: ['k_zhi', fixtureId, 'synthetic:yuwen:fixture'] })
+      .where(eq(question.id, 'q_new'));
+
+    const records = await queryRecordsTool.execute(ctx(), { kind: ['mistake'] });
+    expect(records.rows[0]?.knowledge_ids).toEqual(['k_zhi']);
+
+    const context = await getRecordContextTool.execute(ctx(), {
+      recordId: 'rec_mistake',
+      include: ['question', 'knowledge_context'],
+    });
+    expect(context.record?.knowledge_ids).toEqual(['k_zhi']);
+    expect(context.question?.knowledge_ids).toEqual(['k_zhi']);
+    expect(context.knowledge_context?.paths).toEqual([['文言虚词', '之的用法']]);
+    expect(JSON.stringify(context)).not.toContain(fixtureId);
+    expect(JSON.stringify(context)).not.toContain('synthetic:');
   });
 
   it('hides intervention diagnostic prompts and answers from generic Copilot context reads', async () => {

@@ -18,6 +18,7 @@ import {
   JOB_RETRY_LIMIT,
   createOrUpdateQueue,
 } from '@/server/boss/queue-config';
+import { fenceAwareJobHandler } from '@/server/contract-epoch';
 
 import { loadEventSubscriptionRegistry } from './registry';
 import { runSubscriptionDispatchCycle } from './runtime';
@@ -25,7 +26,13 @@ import { runSubscriptionDispatchCycle } from './runtime';
 export const EVENT_SUBSCRIPTION_DISPATCH_QUEUE = 'event_subscription_dispatch';
 
 // pg-boss cron granularity floors at 1 minute; the lease makes the period non-load-bearing.
-const DEFAULT_DISPATCH_CRON = '* * * * *';
+export const EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE = {
+  name: EVENT_SUBSCRIPTION_DISPATCH_QUEUE,
+  queue: EVENT_SUBSCRIPTION_DISPATCH_QUEUE,
+  cron: '* * * * *',
+  tz: 'Asia/Shanghai',
+  note: '仅在存在订阅时挂载；此处为默认调度声明，不代表 worker 已挂载或确认。',
+} as const;
 const DEFAULT_DISPATCH_MAX_ATTEMPTS = 5;
 
 // H2 (Tdx9E) — explicit retry policy for the dispatch queue instead of pg-boss defaults (which would
@@ -59,13 +66,15 @@ export async function mountSubscriptionDispatch(
 
   const owner = options.owner ?? `worker:${process.pid}`;
   const maxAttempts = options.maxAttempts ?? DEFAULT_DISPATCH_MAX_ATTEMPTS;
-  const cron = options.cron ?? DEFAULT_DISPATCH_CRON;
+  const cron = options.cron ?? EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE.cron;
 
   await createOrUpdateQueue(boss, EVENT_SUBSCRIPTION_DISPATCH_QUEUE, DISPATCH_QUEUE_OPTS);
   await boss.work(
     EVENT_SUBSCRIPTION_DISPATCH_QUEUE,
     { pollingIntervalSeconds: 2, batchSize: 1 },
-    async () => {
+    // YUK-1055 — epoch fence（'drain'：delivery 自带 idempotency，分发器与合同无关，
+    // 但维护窗下仍停拍）。pending 翻译在 bootstrapSubscription（runtime.ts）。
+    fenceAwareJobHandler(db, EVENT_SUBSCRIPTION_DISPATCH_QUEUE, async () => {
       // Tc4HL — log the cycle result (counts + duration) so the dispatcher is observable; a
       // dead-lettered delivery is a real handler failure that needs attention → warn.
       const startedAt = Date.now();
@@ -83,10 +92,15 @@ export async function mountSubscriptionDispatch(
         });
         throw err;
       }
-    },
+    }),
   );
   // Tc4HM — align tz with the codebase's boss.schedule convention (Asia/Shanghai). Cadence is not
   // load-bearing (leases serialize), but keep the schedule row's tz consistent with the rest.
-  await boss.schedule(EVENT_SUBSCRIPTION_DISPATCH_QUEUE, cron, {}, { tz: 'Asia/Shanghai' });
+  await boss.schedule(
+    EVENT_SUBSCRIPTION_DISPATCH_QUEUE,
+    cron,
+    {},
+    { tz: EVENT_SUBSCRIPTION_DISPATCH_SCHEDULE.tz },
+  );
   return true;
 }

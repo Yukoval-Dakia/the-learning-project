@@ -12,7 +12,7 @@
 //   - skip paths: not_found / not_web_sourced.
 
 import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -24,8 +24,17 @@ import {
 import type { SourceGroundingVerifyResult } from '@/capabilities/practice/server/judge/source-grounding-verify';
 import { buildProducerDifficultyEvidence } from '@/core/schema/difficulty-evidence';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
-import { event, knowledge, question } from '@/db/schema';
+import type { Db, Tx } from '@/db/client';
+import {
+  event,
+  knowledge,
+  question,
+  question_admission_verification,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
 import { getFsrsState } from '@/server/fsrs/state';
+import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { semanticJudgeOutput } from '../../../../tests/helpers/solve-check-fixtures';
 import { type SourceGroundingParams, runSourceVerify } from './source_verify';
@@ -185,6 +194,218 @@ describe('runSourceVerify', () => {
     await resetDb();
   });
 
+  it.each(['grounded', 'not_grounded', 'transient'] as const)(
+    'YUK-1118 serializes child %s verification behind a root-first edit',
+    async (outcome) => {
+      const db = testDb();
+      await seedKnowledge('k1');
+      const rootId = await seedQuestion({
+        id: 'verify-lock-root',
+        kind: 'composite',
+        source: 'quiz_gen',
+        knowledgeIds: [],
+        prompt: '阅读论语材料，回答各小题。',
+      });
+      const childId = await seedQuestion({
+        id: 'verify-lock-child',
+        draftStatus: 'active',
+        metadataOverride: groundingMetadata('verify-lock-asset'),
+      });
+      await db
+        .update(question)
+        .set({ parent_question_id: rootId, part_index: 0 })
+        .where(eq(question.id, childId));
+
+      let releaseEditor!: () => void;
+      const editGate = new Promise<void>((resolve) => {
+        releaseEditor = resolve;
+      });
+      let rootLocked!: () => void;
+      const rootReady = new Promise<void>((resolve) => {
+        rootLocked = resolve;
+      });
+      // Same order as a scoring-input edit: lock group root, update child, publish group.
+      const editor = db
+        .transaction(async (tx) => {
+          await tx
+            .select({ id: question.id })
+            .from(question)
+            .where(eq(question.id, rootId))
+            .for('update');
+          rootLocked();
+          await editGate;
+          await tx
+            .update(question)
+            .set({
+              prompt_md: '结合「学而时习之」说明「之」指代的内容。',
+              version: 1,
+            })
+            .where(eq(question.id, childId));
+          return publishQuestionGroupFromRow(tx, {
+            rootId,
+            actorRef: 'test:concurrent-edit',
+            now: new Date(),
+          });
+        })
+        .then(
+          (value) => ({ ok: true as const, value }),
+          (error) => ({ ok: false as const, error }),
+        );
+
+      let verifyPid = 0;
+      const observedTransaction = <T>(
+        fn: (tx: Tx) => Promise<T>,
+        config?: Parameters<Db['transaction']>[1],
+      ) =>
+        db.transaction(async (tx) => {
+          const rows = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
+          verifyPid = Number(rows[0].pid);
+          return fn(tx);
+        }, config);
+      const observedDb = new Proxy(db, {
+        get(target, property) {
+          if (property === 'transaction') return observedTransaction;
+          const value = Reflect.get(target, property);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      await rootReady;
+      const verification = runSourceVerify({
+        db: observedDb,
+        questionId: childId,
+        runTaskFn: vi.fn(async () => ({ text: solverOutput('代词') })),
+        sourceGroundingFn: vi.fn(async () => groundingResult(outcome)),
+      }).then(
+        (value) => ({ ok: true as const, value }),
+        (error) => ({ ok: false as const, error }),
+      );
+      try {
+        await vi.waitFor(() => expect(verifyPid).toBeGreaterThan(0), { timeout: 5_000 });
+        await vi.waitFor(
+          async () => {
+            const rows = await db.execute<{ n: number }>(
+              sql`select count(*)::int as n from pg_locks where pid = ${verifyPid} and not granted`,
+            );
+            expect(Number(rows[0].n)).toBeGreaterThan(0);
+          },
+          { timeout: 5_000 },
+        );
+        // Waiting for the root must not independently commit a legacy demotion.
+        const [waitingChild] = await db.select().from(question).where(eq(question.id, childId));
+        expect(waitingChild.draft_status).toBe('active');
+        releaseEditor();
+        const editResult = await editor;
+        expect(editResult.ok).toBe(true);
+        const verifyResult = await verification;
+        expect(verifyResult.ok).toBe(false);
+        if (verifyResult.ok) throw new Error('stale verification unexpectedly committed');
+        expect(String(verifyResult.error)).toContain(
+          outcome === 'transient'
+            ? 'source grounding failed (transient)'
+            : 'changed during verification',
+        );
+        const [child] = await db.select().from(question).where(eq(question.id, childId));
+        expect(child).toMatchObject({ version: 1, draft_status: 'active' });
+        const [lifecycle] = await db
+          .select()
+          .from(question_group_lifecycle)
+          .where(eq(question_group_lifecycle.group_id, rootId));
+        expect(lifecycle.suspended).toBe(false);
+        const events = await db
+          .select()
+          .from(event)
+          .where(eq(event.action, 'experimental:source_verify'));
+        expect(events).toHaveLength(1);
+        expect(events[0].outcome).toBe('error');
+      } finally {
+        releaseEditor();
+        await Promise.all([editor, verification]);
+      }
+    },
+  );
+
+  it.each([false, true])(
+    'YUK-1118 rolls back legacy demotion when suspension fails (published=%s)',
+    async (published) => {
+      const db = testDb();
+      await seedKnowledge('k1');
+      const qid = await seedQuestion({
+        draftStatus: 'active',
+        metadataOverride: groundingMetadata('verify-atomic-asset'),
+      });
+      if (published) {
+        await publishQuestionGroupFromRow(db, {
+          rootId: qid,
+          admission: {
+            state: 'admitted',
+            evidence: {
+              marking_provenance: 'official',
+              verification: { structural_check_passed: true, independent_verification: null },
+              model_slice: null,
+            },
+          },
+          actorRef: 'test:initial-admission',
+          now: new Date(),
+        });
+      }
+      const snapshot = async () => ({
+        questions: await db.select().from(question),
+        lifecycles: await db.select().from(question_group_lifecycle),
+        revisions: await db.select().from(question_revision),
+        verifications: await db.select().from(question_admission_verification),
+        publishEvents: await db
+          .select()
+          .from(event)
+          .where(eq(event.action, 'experimental:assessment_publish')),
+      });
+      const before = await snapshot();
+      await db.execute(sql`CREATE FUNCTION fail_verify_suspension() RETURNS trigger AS $$
+        BEGIN
+          IF NEW.suspended THEN RAISE EXCEPTION 'injected verify suspension failure'; END IF;
+          RETURN NEW;
+        END; $$ LANGUAGE plpgsql`);
+      await db.execute(sql`CREATE TRIGGER fail_verify_suspension_trg
+        BEFORE INSERT OR UPDATE ON question_group_lifecycle
+        FOR EACH ROW EXECUTE FUNCTION fail_verify_suspension()`);
+      const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const run = () =>
+        runSourceVerify({
+          db,
+          questionId: qid,
+          runTaskFn: vi.fn(async () => ({ text: solverOutput('代词') })),
+          sourceGroundingFn: vi.fn(async () => groundingResult('transient')),
+        });
+      try {
+        await expect(run()).rejects.toThrow('source grounding failed (transient)');
+        expect(errorLog).toHaveBeenCalledWith(
+          '[source_verify] verify-hold write failed for',
+          qid,
+          expect.any(Error),
+        );
+        expect(await snapshot()).toEqual(before);
+        const events = await db
+          .select()
+          .from(event)
+          .where(eq(event.action, 'experimental:source_verify'));
+        expect(events).toHaveLength(1);
+        expect(events[0].outcome).toBe('error');
+      } finally {
+        errorLog.mockRestore();
+        await db.execute(sql`DROP TRIGGER fail_verify_suspension_trg ON question_group_lifecycle`);
+        await db.execute(sql`DROP FUNCTION fail_verify_suspension()`);
+      }
+      // The retriable error must permit a later atomic draft + suspended/withheld commit.
+      await expect(run()).rejects.toThrow('source grounding failed (transient)');
+      const [child] = await db.select().from(question).where(eq(question.id, qid));
+      const [lifecycle] = await db
+        .select()
+        .from(question_group_lifecycle)
+        .where(eq(question_group_lifecycle.group_id, qid));
+      expect(child.draft_status).toBe('draft');
+      expect(lifecycle).toMatchObject({ suspended: true, scoring_admission_state: 'withheld' });
+    },
+  );
+
   it('promotes draft→active + FSRS-enrolls when every tier-2 check passes', async () => {
     const db = testDb();
     await seedKnowledge('k1');
@@ -233,6 +454,69 @@ describe('runSourceVerify', () => {
       supply_trace: supplyTrace,
       difficulty_evidence: difficultyEvidence,
     });
+
+    // YUK-1043 — verified promote 经统一发布链落 §3.3 admission：该行由测试
+    // 直接 seed（无 sourced-draft-insert 首版）⇒ promote 铸首版 revision 并直接
+    // admitted（official —— 参考答案源自原始页面非 model-proposed；结构校验过，
+    // 无独立模型门，note 记 tier-2 摘要）。
+    const revisions1043 = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, qid));
+    expect(revisions1043).toHaveLength(1);
+    expect(revisions1043[0].revision_ordinal).toBe(1);
+    const lifecycles1043 = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycles1043[0].current_revision_id).toBe(revisions1043[0].revision_id);
+    expect(lifecycles1043[0].scoring_admission_state).toBe('admitted');
+    expect(lifecycles1043[0].scoring_admission_evidence).toMatchObject({
+      marking_provenance: 'official',
+      verification: { structural_check_passed: true, independent_verification: null },
+    });
+  });
+
+  // ── YUK-1037 — synthetic subject roots are structural anchors, not content KCs ──
+  // The subject read axis already excludes 'seed:<subj>:root' (resolveSubjectKnowledgeIds);
+  // the FSRS enrollment axis must match, or an invisible-in-subject question becomes a due
+  // probe through a fake KC card (YUK-1032 audit: 'seed:math:root' acquired exactly such a
+  // row in production). The seed-root KNOWLEDGE row is seeded here because production has it
+  // (ensureSubjectRoot plants it) and the F3 knowledge-survival gate requires every bound id
+  // to be a live node.
+  it('promotes a seed-root-only question but enrolls ZERO FSRS cards (production seed:math:root shape)', async () => {
+    const db = testDb();
+    await seedKnowledge('seed:math:root', 'math');
+    const qid = await seedQuestion({ knowledgeIds: ['seed:math:root'] });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
+    expect(result.status).toBe('verified');
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('active');
+
+    // No knowledge-level card for the anchor — and NO question-level fallback:
+    // a roots-only label set is labeled-but-anchor-only, not unlabeled.
+    expect(await getFsrsState(db, 'knowledge', 'seed:math:root')).toBeNull();
+    expect(await getFsrsState(db, 'question', qid)).toBeNull();
+  });
+
+  it('mixed bindings enroll only the real KC, never the synthetic root', async () => {
+    const db = testDb();
+    await seedKnowledge('seed:math:root', 'math');
+    await seedKnowledge('k_math_real', 'math');
+    const qid = await seedQuestion({ knowledgeIds: ['seed:math:root', 'k_math_real'] });
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+
+    const result = await runSourceVerify({ db, questionId: qid, runTaskFn });
+    expect(result.status).toBe('verified');
+    expect((await db.select().from(question).where(eq(question.id, qid)))[0].draft_status).toBe(
+      'active',
+    );
+
+    expect(await getFsrsState(db, 'knowledge', 'seed:math:root')).toBeNull();
+    expect(await getFsrsState(db, 'knowledge', 'k_math_real')).not.toBeNull();
+    expect(await getFsrsState(db, 'question', qid)).toBeNull();
   });
 
   it('rejects a stale verdict when KC attribution changes mid-verify, then retries current version', async () => {
@@ -537,6 +821,30 @@ describe('runSourceVerify', () => {
       .from(event)
       .where(eq(event.action, 'experimental:source_verify'));
     expect((events[0].payload as Record<string, unknown>).demoted).toBe(false);
+
+    // YUK-1045 — 非 promote 的 verify（内容失败）翻 contract 维度：suspended
+    // (verify_hold) + admission withheld(verification_failed) + append-only
+    // 核验记录（outcome 'failed'；demoted:false 如实记入 evidence）。
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycle.suspended).toBe(true);
+    expect(lifecycle.suspension_reason).toBe('verify_hold');
+    expect(lifecycle.scoring_admission_state).toBe('withheld');
+    expect(lifecycle.scoring_admission_withheld_reason).toBe('verification_failed');
+    const verRows = await db
+      .select()
+      .from(question_admission_verification)
+      .where(
+        eq(
+          question_admission_verification.revision_id,
+          lifecycle.current_revision_id ?? 'missing-revision',
+        ),
+      );
+    expect(verRows).toHaveLength(1);
+    expect(verRows[0].outcome).toBe('failed');
+    expect(verRows[0].evidence).toMatchObject({ demoted: false });
   });
 
   it('YUK-479 leaves a pre-promoted (active) cold-start draft active when verify passes (demoted:false)', async () => {
@@ -720,6 +1028,75 @@ describe('runSourceVerify', () => {
     // The row stays 'active' — the concurrent success event blocked the demote.
     const rows = await db.select().from(question).where(eq(question.id, qid));
     expect(rows[0].draft_status).toBe('active');
+    // YUK-1045 — §3.3「旧验证不能改变较新 admission 决定」：同一守卫也拦住
+    // contract 挂起写 —— 并发成功已提交 ⇒ 本投递 stale，不得 mint suspended 首版。
+    const lifecycles = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycles).toHaveLength(0);
+  });
+
+  it('YUK-1045 P1 repro: a stale transient run cannot suspend a group a concurrent verify already ADMITTED', async () => {
+    const db = testDb();
+    await seedKnowledge('k1');
+    const qid = await seedQuestion({
+      knowledgeIds: ['k1'],
+      draftStatus: 'active',
+      metadataOverride: groundingMetadata('asset-src-race2'),
+    });
+    // 并发投递已终验 + 已发布 admitted（带 admitted 分支完整性所需 evidence）。
+    await publishQuestionGroupFromRow(db, {
+      rootId: qid,
+      admission: {
+        state: 'admitted',
+        evidence: {
+          marking_provenance: 'official',
+          verification: {
+            structural_check_passed: true,
+            independent_verification: null,
+          },
+          model_slice: null,
+        },
+      },
+      actorRef: 'test:publish',
+      now: new Date(),
+    });
+
+    const runTaskFn = vi.fn(async () => ({ text: solverOutput('代词') }));
+    const sourceGroundingFn = vi.fn(async () => {
+      // 并发成功事件在 grounding 调用窗口内提交（与本投递探测交错）。
+      await db.insert(event).values({
+        id: createId(),
+        session_id: null,
+        actor_kind: 'agent',
+        actor_ref: 'source_verify',
+        action: 'experimental:source_verify',
+        subject_kind: 'question',
+        subject_id: qid,
+        outcome: 'success',
+        payload: { question_id: qid, promoted: true },
+        caused_by_event_id: null,
+        created_at: new Date(),
+      });
+      return groundingResult('transient');
+    });
+
+    await expect(
+      runSourceVerify({ db, questionId: qid, runTaskFn, sourceGroundingFn }),
+    ).rejects.toThrow('source grounding failed (transient)');
+
+    const rows = await db.select().from(question).where(eq(question.id, qid));
+    expect(rows[0].draft_status).toBe('active');
+    // 守卫未修前这里被 stale suspend 改写为 suspended+withheld —— 现在必须
+    // 原样保留 admitted 维度（含 generation 不回涨）。
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycle.scoring_admission_state).toBe('admitted');
+    expect(lifecycle.suspended).toBe(false);
+    expect(lifecycle.scoring_admission_generation).toBe(1);
   });
 
   it('YUK-230 version race: a transient run does NOT demote a row EDITED (version bumped) during the VLM call', async () => {
@@ -773,6 +1150,29 @@ describe('runSourceVerify', () => {
     // FAIL-CLOSED: the row is demoted out of the pool (was 'active') before the throw.
     const rows = await db.select().from(question).where(eq(question.id, qid));
     expect(rows[0].draft_status).toBe('draft');
+
+    // YUK-1045 — transient demote 同事务等效地翻 contract 维度：suspended
+    // (verify_hold) + admission withheld + append-only 核验记录（outcome
+    // 'suspended' —— transient 不是内容判定）。
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycle.suspended).toBe(true);
+    expect(lifecycle.suspension_reason).toBe('verify_hold');
+    expect(lifecycle.scoring_admission_state).toBe('withheld');
+    const verRows = await db
+      .select()
+      .from(question_admission_verification)
+      .where(
+        eq(
+          question_admission_verification.revision_id,
+          lifecycle.current_revision_id ?? 'missing-revision',
+        ),
+      );
+    expect(verRows).toHaveLength(1);
+    expect(verRows[0].policy_id).toBe('source_verify@1');
+    expect(verRows[0].outcome).toBe('suspended');
 
     // The error event is retriable (outcome='error'); the idempotency guard re-runs it, and a
     // later 'grounded' re-check re-promotes the row to 'active'.

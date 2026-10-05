@@ -3,8 +3,9 @@
 // lineage + composite 大题小题 + prompt 预览）。questions.css 直接 port（同目录 import）。
 //
 // 与设计 demo 的真数据取舍（demo 用 data-questions.jsx 内存模型，这里全接真投影）：
-//   • QKIND — 用真 QuestionKind enum（choice/reading/computation/...，9 值）而非 demo 的
-//     mcq/short/trans/cloze/reading 5 值；canonical 词表见 core/schema/business.ts。
+//   • QKIND — 用 KNOWN 题面标签词表（choice/reading/computation/...，9 标签）而非 demo 的
+//     mcq/short/trans/cloze/reading 5 值；词表见 core/schema/business.ts KNOWN_QUESTION_KIND_IDS
+//     （kind 是自由文本，词表外标签走 fallback，YUK-386）。
 //   • QSOURCE — 用真 QuestionSource enum（13 值）而非 demo 的 seed/quiz/exam/variant 4 值；
 //     AI 生成类→coral/sparkle，采集/拍照类→info/camera|download，人工/教学类→neutral。
 //   • subject — 真后端派生（list enrich：knowledge_ids[0] → effectiveDomain → subject
@@ -25,10 +26,11 @@
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { Fragment, memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { resolveKnownSubjectId } from '@/subjects/profile';
+import { SubjectFilterTabs } from '@/ui/components/SubjectFilterTabs';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { makeLookup } from '@/ui/lib/makeLookup';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
-import { type SubjectRowLike, listSubjectChoices, subjectDisplayName } from '@/ui/lib/subject';
+import { type SubjectRowLike, subjectDisplayName } from '@/ui/lib/subject';
 import { formatCnDateOnly } from '@/ui/lib/utils';
 import { Btn } from '@/ui/primitives/Btn';
 import { Card } from '@/ui/primitives/Card';
@@ -43,7 +45,8 @@ import { type QBankQuestion, getQuestionsList } from './practice-api';
 
 type Tone = 'neutral' | 'info' | 'coral' | 'good' | 'hard' | 'again';
 
-// 真 QuestionKind enum（core/schema/business.ts，9 值）→ label/icon。
+// KNOWN 题面标签（core/schema/business.ts KNOWN_QUESTION_KIND_IDS，9 标签；kind 为自由文本，
+// 词表外走 fallback）→ label/icon。
 const QKIND: Record<string, { label: string; icon: LoomIconName }> = {
   choice: { label: '选择', icon: 'list' },
   true_false: { label: '判断', icon: 'check' },
@@ -623,27 +626,9 @@ export default function QuestionsPage({ navigate }: QuestionsPageProps) {
 
           {/* filter bar */}
           <div className="qb-filterbar">
-            <div className="qf2">
-              <span className="qf2-l">科目</span>
-              <div className="qb-seg">
-                {[
-                  ['all', '全部'],
-                  // YUK-249 → YUK-598：科目筛选项行驱动（provider selectable 视图，
-                  // custom 科目即时进筛选；断网退化三 builtin）。
-                  ...listSubjectChoices(subjectRowsForFilter).map((c) => [c.id, c.label]),
-                ].map(([s, l]) => (
-                  <button
-                    type="button"
-                    key={s}
-                    className={subject === s ? 'on' : ''}
-                    aria-pressed={subject === s}
-                    onClick={() => setSubject(s)}
-                  >
-                    {l}
-                  </button>
-                ))}
-              </div>
-            </div>
+            {/* YUK-915 — 科目筛选统一走共享 SubjectFilterTabs（同 Notes/Knowledge 面），
+                旧的本地 chip 实现删除；选中语义不变（'all' → 不带 subject 查询）。 */}
+            <SubjectFilterTabs value={subject} rows={subjectRowsForFilter} onChange={setSubject} />
             <span className="qb-filter-div" />
             <div className="qf2">
               <span className="qf2-l">来源</span>

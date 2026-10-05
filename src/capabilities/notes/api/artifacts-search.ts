@@ -7,9 +7,10 @@
 // P5 review). Small + read-only; the L2 `artifact_block_ref` index is written
 // elsewhere (Lane-0 write-through on save), never here.
 
-import { and, desc, eq, ilike, inArray, isNull, ne } from 'drizzle-orm';
+import { and, desc, ilike, inArray, ne } from 'drizzle-orm';
 
 import { ArtifactSearchQuerySchema } from '@/capabilities/notes/api/contracts';
+import { readyArtifactReferenceCondition } from '@/capabilities/notes/server/live-artifact-reference';
 import { db } from '@/db/client';
 import { artifact } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
@@ -48,8 +49,7 @@ export async function GET(req: Request): Promise<Response> {
     // pending/failed artifacts as cross-link targets — only live, ready notes.
     const conditions = [
       ilike(artifact.title, `%${escapeLike(q)}%`),
-      isNull(artifact.archived_at),
-      eq(artifact.generation_status, 'ready'),
+      readyArtifactReferenceCondition,
       // ADR-0033 D1 (YUK-306) — keep opaque types (interactive) out of the mesh.
       inArray(artifact.type, CROSS_LINKABLE_TYPES),
     ];

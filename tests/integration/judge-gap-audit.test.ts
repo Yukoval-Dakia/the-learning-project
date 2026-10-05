@@ -2,10 +2,13 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  FUTURE_JUDGE_ROUTES,
   RUNNABLE_ROUTES,
+  UNIMPLEMENTED_JUDGE_ROUTES,
+  resolveQuestionJudgeRoute,
 } from '@/capabilities/practice/server/judge/question-contract';
 import { getDefaultRegistry } from '@/core/capability/judges';
+import { ANSWER_CLASSES, deriveAnswerClass } from '@/core/schema/answer-class';
+import { KNOWN_QUESTION_KIND_IDS } from '@/core/schema/business';
 import { subjectProfiles } from '@/subjects/profile';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
@@ -37,7 +40,65 @@ async function walkFiles(root: string): Promise<string[]> {
 }
 
 describe('Judge v2 light gap-prevention audit', () => {
-  it('subject judgeCapabilities resolve and future preferredRoutes are explicitly allowlisted', () => {
+  // YUK-391 (kind Step 4) — 「每 answer-class × profile 都有 verifier」: judge
+  // routing converged onto the answer-class axis, so the gap-prevention contract is
+  // stated per answer-class: across the FULL structural matrix (every canonical
+  // kind × with/without choices × with/without rubric keywords), every route the
+  // resolver picks under every profile must (a) be runnable by the invoker and
+  // (b) have a registered judge capability, and every (profile × answer-class)
+  // pairing must actually be served by at least one such route — a class with no
+  // verifier under a profile is a silent grading gap.
+  it('every answer-class × profile resolves to routes that all have a live verifier', () => {
+    const registry = getDefaultRegistry();
+    const runnable = RUNNABLE_ROUTES;
+    const served = new Map<string, Set<string>>();
+    const note = (profileId: string, cls: string, route: string): void => {
+      const key = `${profileId}|${cls}`;
+      const routes = served.get(key) ?? new Set<string>();
+      routes.add(route);
+      served.set(key, routes);
+    };
+
+    for (const profile of Object.values(subjectProfiles)) {
+      for (const kind of KNOWN_QUESTION_KIND_IDS) {
+        for (const withChoices of [false, true]) {
+          for (const withKw of [false, true]) {
+            const rubric = withKw ? { criteria: [], keywords: ['x'] } : null;
+            const choices = withChoices ? ['甲', '乙'] : null;
+            const cell = `${profile.id}|${kind}|${withChoices ? 'c' : '-'}|${withKw ? 'k' : '-'}`;
+            const route = resolveQuestionJudgeRoute(
+              {
+                id: `q-${cell}`,
+                kind,
+                rubric_json: rubric,
+                choices_md: choices,
+                judge_kind_override: null,
+              },
+              profile,
+            );
+            expect(runnable.has(route), `${cell}: route '${route}' not runnable`).toBe(true);
+            expect(registry.hasJudge(route), `${cell}: route '${route}' has no judge`).toBe(true);
+            note(
+              profile.id,
+              deriveAnswerClass({ kind, rubric_json: rubric, choices_md: choices }),
+              route,
+            );
+          }
+        }
+      }
+    }
+
+    for (const profile of Object.values(subjectProfiles)) {
+      for (const cls of ANSWER_CLASSES) {
+        expect(
+          served.get(`${profile.id}|${cls}`),
+          `${profile.id}: answer-class '${cls}' has no verifier route`,
+        ).toBeDefined();
+      }
+    }
+  });
+
+  it('subject judgeCapabilities resolve and non-runnable preferredRoutes are allowlisted as unimplemented', () => {
     const registry = getDefaultRegistry();
     // M2.2 (2026-05-22): use canonical RUNNABLE_ROUTES export — adding routes
     // (e.g. 'steps') no longer requires updating this audit's hardcoded set.
@@ -49,11 +110,15 @@ describe('Judge v2 light gap-prevention audit', () => {
           `${profile.id}.judgeCapabilities contains unregistered '${capability}'`,
         ).toBe(true);
       }
+      // YUK-374 — a preferredRoutes entry that is NOT runnable must be a member
+      // of UNIMPLEMENTED_JUDGE_ROUTES (a JudgeKind-space member with no runner,
+      // declared as intent only). Anything else is a typo'd route the resolver
+      // can never branch on — flag it here instead of letting it sit inert.
       for (const route of profile.judgePolicy.preferredRoutes) {
         if (runnable.has(route)) continue;
         expect(
-          Object.keys(FUTURE_JUDGE_ROUTES),
-          `${profile.id}.preferredRoutes contains future route '${route}' without status`,
+          Object.keys(UNIMPLEMENTED_JUDGE_ROUTES),
+          `${profile.id}.preferredRoutes contains non-runnable route '${route}' not allowlisted as unimplemented`,
         ).toContain(route);
       }
     }

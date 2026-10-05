@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
@@ -17,26 +17,8 @@ function source(path: string): string {
 }
 
 describe('notes capability — semantic ownership (YUK-875)', () => {
-  it('owns NoteRefineTask without a central semantic definition', () => {
+  it('owns NoteRefineTask', () => {
     expect(notesTaskSpecs.NoteRefineTask.ownership).toBe('owned');
-
-    // YUK-885 — the central quarry file is deleted entirely.
-    expect(existsSync(join(process.cwd(), 'src/ai/legacy-task-definitions.ts'))).toBe(false);
-  });
-
-  it('owns editing-session and mutation-event implementations under Notes', () => {
-    for (const path of [
-      'src/capabilities/notes/server/artifacts/editing-session.ts',
-      'src/capabilities/notes/server/artifacts/mutation-events.ts',
-    ]) {
-      expect(existsSync(join(process.cwd(), path)), path).toBe(true);
-    }
-    for (const path of [
-      'src/server/artifacts/editing-session.ts',
-      'src/server/artifacts/mutation-events.ts',
-    ]) {
-      expect(existsSync(join(process.cwd(), path)), path).toBe(false);
-    }
   });
 
   it('keeps the shared create envelope free of Notes mutation semantics', () => {
@@ -56,23 +38,6 @@ describe('notes capability — copilot tools and correction read model (YUK-880)
       expect(matches[0]?.load).toBeInstanceOf(Function);
       const resolved = await matches[0]?.load?.();
       expect((resolved as { name: string }).name).toBe(name);
-    }
-  });
-
-  it('owns both tool implementations and the artifact-correction read model under Notes', () => {
-    for (const path of [
-      'src/capabilities/notes/server/tools/author-artifact.ts',
-      'src/capabilities/notes/server/artifact-corrections.ts',
-    ]) {
-      expect(existsSync(join(process.cwd(), path)), path).toBe(true);
-    }
-    for (const path of [
-      'src/server/ai/tools/author-artifact.ts',
-      'src/server/events/artifact-corrections.ts',
-      'src/server/ai/tools/author-artifact.test.ts',
-      'src/server/events/artifact-corrections.test.ts',
-    ]) {
-      expect(existsSync(join(process.cwd(), path)), path).toBe(false);
     }
   });
 

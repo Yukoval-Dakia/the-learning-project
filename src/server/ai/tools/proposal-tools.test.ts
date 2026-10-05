@@ -38,7 +38,7 @@ import {
   rollbackTestTransaction,
   testDb,
 } from '../../../../tests/helpers/db';
-import { buildMcpServerFromRegistry } from './mcp-bridge';
+import { buildPiDomainAgentTools } from './pi-tools';
 import { registerCapabilityTools } from './register-capability-tools';
 import { __resetRegistryForTests, getTool, listTools } from './registry';
 
@@ -51,20 +51,8 @@ vi.mock('@/server/ai/runner', () => ({
 }));
 
 // PR #219 review fix — exercise the rubric-reject logging via the REAL bridge.
-// Mock the Agent SDK so `tool()` captures the handler instead of spawning Claude
-// (same pattern as mcp-bridge.integration.test.ts).
-const mockSdk = vi.hoisted(() => ({
-  toolDefs: [] as Array<{ name: string; handler: (args: unknown) => Promise<unknown> }>,
-}));
-
-vi.mock('@anthropic-ai/claude-agent-sdk', () => ({
-  createSdkMcpServer: vi.fn((opts: unknown) => ({ type: 'sdk', instance: opts })),
-  tool: vi.fn((name: string, _desc: string, _schema: unknown, handler: unknown) => {
-    const def = { name, handler } as (typeof mockSdk.toolDefs)[number];
-    mockSdk.toolDefs.push(def);
-    return def;
-  }),
-}));
+// Pi lane: buildPiDomainAgentTools compiles the same registry tools into
+// AgentTools; execute(callId, args) runs the identical shared pipeline.
 
 const BASE = new Date('2026-05-28T00:00:00.000Z');
 
@@ -323,6 +311,8 @@ describe('Wave 3 proposal/action DomainTools', () => {
       'reassign_figure',
       'set_question_type',
       'split_stem',
+      // YUK-986 — 外部题源唯一入库缝（E1 仅注册入 registry，无 surface 授予）。
+      'store_sourced_question',
       // ADR-0033 D6 (YUK-306 lane D) — interactive artifact iterate (full-html
       // replace, version bump + history append).
       'update_artifact',
@@ -624,7 +614,9 @@ describe('Wave 3 proposal/action DomainTools', () => {
     // still flow through (candidates is added on top, so toMatchObject passes).
     expect(taskKind).toBe('AttributionRerankTask');
     expect(taskInput).toMatchObject({ wrong_answer_md: '代词' });
-    expect(taskCtx).toMatchObject({ db: toolCtx.db, subjectProfile: expect.any(Object) });
+    // Check connection identity without recursively traversing Drizzle's live client/schema.
+    expect(taskCtx.db).toBe(toolCtx.db);
+    expect(taskCtx).toMatchObject({ subjectProfile: expect.any(Object) });
     expect(taskCtx).not.toHaveProperty('enableTransientRetry');
 
     const skipped = await attributeMistakeTool.execute(ctx(), { attempt_event_id: 'att_failure' });
@@ -969,7 +961,6 @@ describe('P5.4 rubric enforcement — propose_knowledge_edge', () => {
     await beginTestTransaction();
     __resetRegistryForTests();
     mockRunner.runTask.mockReset();
-    mockSdk.toolDefs = [];
   });
 
   afterEach(rollbackTestTransaction);
@@ -1026,18 +1017,18 @@ describe('P5.4 rubric enforcement — propose_knowledge_edge', () => {
     await seedKnowledgeGraph();
 
     // Drive the tool through the REAL bridge so we exercise the same logging
-    // path Copilot/Dreaming/Coach use. The Agent SDK is mocked (see top of file)
-    // so `tool()` captures the handler; we invoke it directly.
+    // path Copilot/Dreaming/Coach use — the pi AgentTool runs the identical
+    // shared pipeline.
     await registerCapabilityTools(capabilities);
-    buildMcpServerFromRegistry({
+    const agentTools = buildPiDomainAgentTools({
       ctx: ctx(),
       serverName: 'loom_v2',
       toolNames: ['propose_knowledge_edge'],
     });
-    const def = mockSdk.toolDefs.find((d) => d.name === 'propose_knowledge_edge');
-    if (!def) throw new Error('propose_knowledge_edge not wired into the mocked SDK');
+    const def = agentTools.find((t) => t.name === 'mcp__loom_v2__propose_knowledge_edge');
+    if (!def) throw new Error('propose_knowledge_edge not wired');
 
-    const result = (await def.handler({
+    const result = (await def.execute('call_test', {
       from_knowledge_id: 'k_zhi',
       to_knowledge_id: 'k_er',
       relation_type: 'related_to',
@@ -1154,7 +1145,6 @@ describe('P5.6 suggestion_kind on propose tools (YUK-178)', () => {
     await beginTestTransaction();
     __resetRegistryForTests();
     mockRunner.runTask.mockReset();
-    mockSdk.toolDefs = [];
   });
 
   afterEach(rollbackTestTransaction);

@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>studio.yukoval.loom-daily-dump</string>
+  <!--
+    YUK-1041：program 与 log 路径都必须在内置盘。launchd 子进程对
+    /Volumes/*（外置盘）的任何 I/O（含 exec 本身与创建 stdout 文件）都会被
+    TCC/sandbox 拒绝 → EX_CONFIG(78) "spawn failed"，脚本从未执行。
+    对 runtime 目录的读写全部在容器内完成，见 scripts/mac-daily-dump.sh 头注。
+  -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/yuqi/Library/Application Support/loom-daily-dump/mac-daily-dump.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>7</integer>
+    <key>Minute</key>
+    <integer>15</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <false/>
+  <key>StandardOutPath</key>
+  <string>/Users/yuqi/Library/Application Support/loom-daily-dump/launchd.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/yuqi/Library/Application Support/loom-daily-dump/launchd.log</string>
+</dict>
+</plist>

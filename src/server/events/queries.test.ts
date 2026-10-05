@@ -4,11 +4,10 @@
 // must funnel through this module. Tests seed `event` table directly with
 // hand-built KnownEvent-shaped rows; no Step 3 migration in test fixtures.
 
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { getQuestionTimeline, getRecentReviewEvents } from '@/capabilities/copilot/public';
 import { deterministicId, newId } from '@/core/ids';
-import type { EventT } from '@/core/schema/event';
 import type { AttemptQuestionSnapshotT } from '@/core/schema/question-evidence-snapshot';
 import { event, material_fsrs_state } from '@/db/schema';
 import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-policy';
@@ -750,6 +749,47 @@ describe('getFailureAttempts', () => {
     });
 
     await expect(getFailureAttemptById(db, attemptId)).resolves.toBeNull();
+  });
+
+  // YUK-1054 — 单加载器与批量加载器同轨的 original_judge：最早 raw judge 行
+  // （未链解析）独立于 effective judge；supersede 后 original 仍是第一判。
+  it('getFailureAttemptById populates original_judge as earliest judge after supersede', async () => {
+    const db = testDb();
+    const baseTime = new Date('2026-05-01T12:00:00Z');
+    const attemptId = await seedAttemptEvent({ question_id: 'q1', created_at: baseTime });
+    const j1Id = await seedJudgeEvent({
+      attempt_event_id: attemptId,
+      primary_category: 'concept',
+      analysis_md: 'first verdict',
+      created_at: new Date(baseTime.getTime() + 60_000),
+    });
+    const j2Id = await seedJudgeEvent({
+      attempt_event_id: attemptId,
+      primary_category: 'memory',
+      analysis_md: 'rejudged verdict',
+      created_at: new Date(baseTime.getTime() + 120_000),
+    });
+    await seedCorrectionEvent({
+      target_event_id: j1Id,
+      correction_kind: 'supersede',
+      replacement_event_id: j2Id,
+      caused_by_event_id: j2Id,
+      created_at: new Date(baseTime.getTime() + 130_000),
+    });
+
+    const failure = await getFailureAttemptById(db, attemptId);
+    if (!failure) throw new Error('expected failure attempt projection');
+    // effective judge = 链端新判。
+    expect(failure.judge).toMatchObject({
+      judge_event_id: j2Id,
+      cause: { primary_category: 'memory' },
+    });
+    // original judge = 最早收据行，仍是被 supersede 的第一判。
+    expect(failure.original_judge).toMatchObject({
+      judge_event_id: j1Id,
+      cause: { primary_category: 'concept', analysis_md: 'first verdict' },
+    });
+    expect(failure.original_judge?.correction_state.state).toBe('superseded');
   });
 });
 

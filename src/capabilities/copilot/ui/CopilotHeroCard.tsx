@@ -11,9 +11,8 @@
 //                     D's sandboxed iframe (InteractiveArtifactRenderer), whose
 //                     null-origin + network-deny CSP security model is inherited
 //                     verbatim. §2.4 「持久交互式产物」的一次性孪生.
-//   • tool_result   → read-only bespoke view (§2.4 不持久 / §2.5 次要路径). The
-//                     Dock renders no tool traces today and 不重复取数 forbids a
-//                     re-fetch, so the honest rendering is a named placeholder.
+//   • tool_result   → read-only public result snapshot. The same saved value
+//                     renders live and on replay, without re-running the tool.
 //
 // T5 ribbon dosage (§2.5/T5): a hero is the deliverable, not a receipt — this
 // card carries NO technical ribbon (cost/model/caused_by). The Dock has no
@@ -27,6 +26,7 @@ import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifact
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { type ArtifactHero, isInteractiveArtifactRef, resolveArtifactHero } from './hero';
 import type { ReplayPrimaryView } from './replay';
+import { ToolResultView } from './ToolResultView';
 
 export interface CopilotHeroCardProps {
   primaryView: ReplayPrimaryView;
@@ -137,9 +137,11 @@ export function CopilotHeroCard({ primaryView, navigate }: CopilotHeroCardProps)
   }
 
   return (
-    <div className="copilot-hero copilot-hero-ref" data-testid="copilot-hero-tool-result">
-      <LoomIcon name="eye" size={16} />
-      <span className="copilot-hero-label">{primaryView.ref.kind}</span>
+    <div
+      className="copilot-hero w-[min(20rem,calc(100vw-7rem))] max-w-full"
+      data-testid="copilot-hero-tool-result"
+    >
+      <ToolResultView toolName={primaryView.ref.kind} snapshot={primaryView.snapshot} />
     </div>
   );
 }

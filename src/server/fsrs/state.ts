@@ -10,6 +10,7 @@
 
 import { and, eq, inArray } from 'drizzle-orm';
 
+import { retrievabilityForKc } from '@/core/fsrs';
 import { newId } from '@/core/ids';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
@@ -22,6 +23,19 @@ import {
 
 type DbLike = Db | Tx;
 export type FsrsSubjectKind = 'question' | 'knowledge';
+
+/** Retention is a state-owner query, not a consumer's interpretation of card storage.
+ * Missing cards stay absent (unknown), distinct from a real New card's zero retention.
+ */
+export async function getFsrsRetrievabilityByIds(
+  db: DbLike,
+  subjectKind: FsrsSubjectKind,
+  ids: string[],
+  now: Date,
+): Promise<Map<string, number>> {
+  const rows = await getFsrsStatesByIds(db, subjectKind, ids);
+  return new Map([...rows].map(([id, row]) => [id, retrievabilityForKc(row.state, now)]));
+}
 
 export interface UpsertFsrsStateInput {
   subject_kind: FsrsSubjectKind;
@@ -217,10 +231,8 @@ export async function getFsrsState(
  * caller treats "no row" as "no retrievability data yet", NOT R=0).
  *
  * SoT read only — this stays the single-owner module for `material_fsrs_state`.
- * It never computes retrievability (no ts-fsrs dependency here); the per-KC
- * R(t) ∈ [0,1] mapping lives in the knowledge-capability read that consumes this
- * (retrievabilityForKc is a practice-capability pure function — keeping it out of
- * src/server avoids a server→capability layering inversion).
+ * Consumers needing only retention use getFsrsRetrievabilityByIds instead of
+ * interpreting raw cards. Both operations share the cross-subject scheduling math.
  */
 export async function getFsrsStatesByIds(
   db: DbLike,

@@ -64,7 +64,7 @@
 }
 .dr-seg button:hover { color: var(--ink); }
 .dr-seg button.on { background: var(--paper-raised); color: var(--ink); box-shadow: var(--shadow-1); }
-.dr-seg .seg-n { font-family: var(--font-mono); font-size: 11px; color: var(--ink-5); }
+.dr-seg .seg-n { font-family: var(--font-mono); font-size: var(--fs-caption); color: var(--ink-5); }
 .dr-seg button.on .seg-n { color: var(--coral); }
 
 .dr-reset {

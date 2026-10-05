@@ -1,8 +1,10 @@
 import { z } from 'zod';
 import {
   CauseCategoryDeclaration,
+  RatingPolicySchema,
   RenderConfig,
   SchedulingHints,
+  UNIVERSAL_RATING_POLICY,
 } from '@/core/schema/profile-decl';
 
 export type SubjectId = string;
@@ -38,7 +40,10 @@ export const SubjectQuestionKindSchema = z.enum([
 export type SubjectQuestionKind = z.infer<typeof SubjectQuestionKindSchema>;
 
 // Desired route families for subject policy. These are allowed to mention
-// future strategies; judgeCapabilities below lists registry-backed runners.
+// strategies that have NO runner yet (declared intent only — the allowlist is
+// UNIMPLEMENTED_JUDGE_ROUTES in capabilities/practice/server/judge/
+// question-contract.ts, enforced by tests/integration/judge-gap-audit.test.ts);
+// judgeCapabilities below lists registry-backed runners.
 export const JudgeRouteKindSchema = z.enum([
   'exact',
   'keyword',
@@ -90,6 +95,11 @@ export const SubjectProfileSchema = z.object({
     rubricGuidance: z.string().default(''),
   }),
   causeCategories: z.array(CauseCategoryDeclaration).min(1),
+  // YUK-739 — rating/cause semantics policy. `ratingPolicy` maps judge coarse
+  // outcomes onto the FSRS rating surface; every profile declares or (via this
+  // default) inherits the universal map, and consumers resolve it through the
+  // profile instead of local inline copies. See profile-decl.ts.
+  ratingPolicy: RatingPolicySchema.default(UNIVERSAL_RATING_POLICY),
   renderConfig: RenderConfig,
   schedulingHints: SchedulingHints,
   judgeCapabilities: z.array(z.string().trim().min(1)),
@@ -111,16 +121,6 @@ export const SubjectProfileSchema = z.object({
       SubjectQuestionKindSchema,
       z.array(z.enum(['sourced', 'material', 'closed_book', 'variant'])).min(1),
     )
-    .optional(),
-  // YUK-697 — jyeooSupply: 声明本 subject 有 jyeoo-rs 确定性题源 producer。存在 = supply
-  // dispatcher 在本 subject 的 tier-2 缺口上把 jyeoo_fetch 路由排到 sourcing_web 之前
-  // （route-planner），并按 JYEOO_FETCH_ENABLED kill switch 派发。`subject` = jyeoo-rs 的
-  // 站内 subject 词表 token（如 'math2'），NOT loom subject id。缺省 = 无 jyeoo 支持。
-  jyeooSupply: z
-    .object({
-      subject: z.string().trim().min(1),
-    })
-    .strict()
     .optional(),
 });
 export type SubjectProfile = z.infer<typeof SubjectProfileSchema>;

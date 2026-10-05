@@ -445,7 +445,7 @@ async function defaultLoadKnownConjectureKeys(db: Db): Promise<Set<string>> {
 
 /**
  * Real runner: wrap runTask and INJECT `db` into the ctx that induceConjecture
- * supplies ({ override, outputFormat }). induceConjecture stays db-free (unit
+ * supplies ({ override, modelBinding }). induceConjecture stays db-free (unit
  * testable); the job is the seam that binds db (same role as runGoalScopeAndWrite).
  */
 function makeDefaultRunTaskFn(db: Db): TaskTextRunFn {
