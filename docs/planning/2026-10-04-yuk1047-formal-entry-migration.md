@@ -319,3 +319,10 @@ full evidence target editing/media acceptance and complete frozen teaching input
 - worker主suite24例迁到真实native原件/录制executor/真实结算；terminal五例实际注入job_event写失败，验证提交后通知失败不写FAILED、最终投递瞬时失败有界补写、原始失败仍进入DLQ。原有旧provider自动fallback/读current补造断言按已批准退出方向替换为不重付/不补造；晚到由原生有序重放覆盖，不靠吞掉练习维持计数。
 - 118distinctDB（native11/worker24/terminal5/poll+reconcile+真实boss合同43/solo原生35）及30status unit通过；typecheck、changedBiome（零errors/8warnings）、build、Postman、capability边界审计通过，baseline再收紧448→447（practice→http4→3）。
 - 仍未PR/push/review/CI/部署/付费；旧solo大suite与diagnostic/下游尚待迁移，rejudge/probe/ingestion旧执行仍在，不称八入口已完成。下一步申诉旧分支和诊断消费链。
+
+## 2026-10-05 01:12 UTC — 申诉旧执行删除（未发布）
+
+- 历史judge申诉API不再创建重判任务，返回409 historical_unknown；先RED证明原先200且新增事件。旧队列未决申诉写单一held回执，重放/并发幂等；历史已完成申诉继续读取，不改历史原判。
+- 删除rejudge旧current-row/model/revert分支，只保留原生冻结original→新candidate→head CAS与结算。真实发布/原件/recorded离线端口替换旧judgeFn fixture，覆盖改判/同分/确定性/冻结输入/并发/试卷/明确用户FSRS/自动theta/失败回滚/晚到有序重放/KC合并保护。partial原生规则为未局部化则abstain，随后full才写一次success；不恢复已否决的旧partial→1。
+- 59DB（API7/worker20/native提交32）、typecheck、changedBiome、build、Postman通过。边界去掉旧revert边，baseline收紧447→446，无新增豁免。所有模型为离线fixture，不代表真实质量验证。
+- probe检查确认目标错误签名是独立承重语义，后续必须冻结并保留，不能只移植coarse score。剩余probe/ingestion/diagnostic生产与消费、旧solo主测试仍在1047主线。未PR/push/review/CI/部署/付费，不停止检查点。

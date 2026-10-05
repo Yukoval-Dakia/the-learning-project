@@ -13,7 +13,7 @@
   },
   "debts": {
     "capabilityToServer": {
-      "total": 447,
+      "total": 446,
       "byOwnerPair": {
         "agency -> ai": 28,
         "agency -> boss": 10,
@@ -88,7 +88,6 @@
         "practice -> proposals": 5,
         "practice -> questions": 15,
         "practice -> r2": 2,
-        "practice -> revert": 1,
         "practice -> runtime-env": 4,
         "practice -> session": 16,
         "shell -> boss": 1,

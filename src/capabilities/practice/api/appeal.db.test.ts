@@ -1,7 +1,8 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { event } from '@/db/schema';
+import { nativeAppealFixture } from '../../../../tests/fixtures/native-appeal';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST, createAppealResource } from './appeal';
 import { AppealResponseSchema } from './contracts';
@@ -34,15 +35,17 @@ function makeReq(body: unknown): Request {
 }
 
 describe('POST /api/review/appeal', () => {
+  afterEach(() => vi.restoreAllMocks());
   beforeEach(async () => {
     await resetDb();
   });
 
   // M2 (YUK-316, D15)：申诉不再产 proposal——判分属软判断层，appeal 直接触发
   // 异步 rejudge job（测试环境不入队，链路由 rejudge.db.test.ts E2E 覆盖）。
-  it('writes appeal_request event chained to judge event — and NO proposal (D15)', async () => {
-    const judgeEventId = await seedJudgeEvent();
-    const res = await POST(makeReq({ judge_event_id: judgeEventId, reason_md: '我觉得对' }));
+  it('writes a native appeal for the effective evaluation without a proposal', async () => {
+    const { original } = await nativeAppealFixture(testDb(), { model: false });
+    const evaluationId = original.evaluation_id;
+    const res = await POST(makeReq({ evaluation_id: evaluationId, reason_md: '我觉得对' }));
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.appeal_event_id).toBeDefined();
@@ -52,9 +55,9 @@ describe('POST /api/review/appeal', () => {
       .from(event)
       .where(eq(event.id, json.appeal_event_id));
     expect(appealEvt.action).toBe('experimental:appeal_request');
-    expect(appealEvt.subject_kind).toBe('event');
-    expect(appealEvt.subject_id).toBe(judgeEventId);
-    expect(appealEvt.caused_by_event_id).toBe(judgeEventId);
+    expect(appealEvt.subject_kind).toBe('evaluation');
+    expect(appealEvt.subject_id).toBe(evaluationId);
+    expect(appealEvt.payload.expected_effective_id).toBe(evaluationId);
     expect(appealEvt.actor_kind).toBe('user');
     expect((appealEvt.payload as { reason_md: string }).reason_md).toBe('我觉得对');
 
@@ -65,10 +68,22 @@ describe('POST /api/review/appeal', () => {
     expect(proposals).toHaveLength(0);
   });
 
+  it('rejects legacy judge re-execution without creating an appeal or rewriting history', async () => {
+    const judgeId = await seedJudgeEvent();
+    const before = await testDb().select().from(event);
+    const response = await POST(
+      makeReq({ judge_event_id: judgeId, reason_md: '请复核这条历史记录' }),
+    );
+    expect.soft(response.status).toBe(409);
+    expect.soft(await response.json()).toMatchObject({ error: 'historical_unknown' });
+    expect(await testDb().select().from(event)).toEqual(before);
+  });
+
   it('canonical appeal creation returns 201 with the event Location', async () => {
-    const judgeEventId = await seedJudgeEvent();
+    const { original } = await nativeAppealFixture(testDb(), { model: false });
+    const evaluationId = original.evaluation_id;
     const response = await createAppealResource(
-      makeReq({ judge_event_id: judgeEventId, reason_md: '需要重判' }),
+      makeReq({ evaluation_id: evaluationId, reason_md: '需要重判' }),
     );
 
     expect(response.status).toBe(201);

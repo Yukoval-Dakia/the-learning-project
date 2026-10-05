@@ -1,9 +1,7 @@
-import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { REJUDGE_SINGLETON_SECONDS } from '@/capabilities/practice/jobs/rejudge-config';
 import { db } from '@/db/client';
 import { event } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
 import { canonicalResourceResponse, deprecatedRouteResponse, errorResponse } from '@/kernel/http';
 import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
 import { createNativeAppeal } from '../server/assessment/appeal';
@@ -47,7 +45,7 @@ export async function createAppeal(req: Request) {
       return errorResponse(error);
     }
   }
-  const { judge_event_id, reason_md } = parsed.data;
+  const { judge_event_id } = parsed.data;
 
   const [judgeEvent] = await db.select().from(event).where(eq(event.id, judge_event_id));
   if (!judgeEvent) {
@@ -57,35 +55,8 @@ export async function createAppeal(req: Request) {
     return Response.json({ error: 'evidence_ref_must_be_judge_event' }, { status: 422 });
   }
 
-  // ADR-0005 single-owner: all event inserts go through writeEvent.
-  const appealEventId = await writeEvent(db, {
-    id: createId(),
-    session_id: judgeEvent.session_id,
-    actor_kind: 'user',
-    actor_ref: 'self',
-    action: 'experimental:appeal_request',
-    subject_kind: 'event',
-    subject_id: judge_event_id,
-    outcome: null,
-    payload: { reason_md: reason_md ?? '' },
-    caused_by_event_id: judge_event_id,
-  });
-
-  // 异步重判（不阻塞流——设计稿「重判中 · 不阻塞，先继续」）。singletonKey =
-  // appeal event id + singletonSeconds：同一申诉的并发/重复 enqueue 折叠成一个
-  // job（YUK-491：standard-policy 队列上裸 singletonKey inert，须配 seconds 才
-  // 真去重；handler caused_by 查重是结构性兜底）。测试环境
-  // （shouldEnqueueBackgroundJobs false）只写事件，由测试直接调 handler。
-  if (shouldEnqueueBackgroundJobs()) {
-    const boss = await getPracticeBoss();
-    await boss.send(
-      'rejudge',
-      { appeal_event_id: appealEventId },
-      { singletonKey: appealEventId, singletonSeconds: REJUDGE_SINGLETON_SECONDS },
-    );
-  }
-
-  return Response.json({ appeal_event_id: appealEventId });
+  // Historical judgments remain readable; no frozen original means no new execution.
+  return Response.json({ error: 'historical_unknown' }, { status: 409 });
 }
 
 export async function createAppealResource(req: Request): Promise<Response> {
