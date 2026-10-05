@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-05。YUK-1047八入口迁移及初审3项P1已修；唯一验证审确认无P0/P1，独立30unit通过。105DB/57unit gate修复、typecheck/build、lint299≤305通过；真实浏览器8题完成、长文刷新恢复、双页CAS冲突及保存失败退出门禁通过。已合入最新origin/main工具配置；PR #1568已打开，等待exact-head CI，未部署/新付费。详见2026-10-05-yuk1047-placement-repair.md。
+> 更新于2026-10-05。YUK-1047 PR #1568首轮完整CI暴露任务计数及9项旧fixture/写者清单失败，已修于226cca21f/480580028。架构227unit、迁移51unit/58distinctDB、typecheck/build、lint298≤305通过；父线程复验后推送新head重跑CI及17分钟窗。既有浏览器验收/三P1修复与唯一验证审结论保留，review预算已用尽。未部署/新付费。详见placement-repair。
 
 ## NOW
 

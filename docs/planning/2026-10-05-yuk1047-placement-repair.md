@@ -322,3 +322,10 @@ test, delegation, paid call, production access, PR/comment or push ran here.
 There is no separate actionable follow-up from this bounded repair; these fixes
 belong to the existing YUK-1047 task. `.serena/project.yml` remains unrelated and
 unstaged. Writer ownership returns to parent after this lane's evidence commit.
+
+Parent acceptance of the CI repair: inspected the actual fixture and writer
+inventory diff, verified the native block update and lifecycle event share the
+activation transaction, independently reran 24 resource/invariant unit tests,
+27 fold scanner unit tests, and 22 parity/global-lock DB tests; all passed.
+Logs: `/tmp/yuk1047-parent-ci-repair-{unit,scanner,db}.log`. This is author
+acceptance, not an additional independent review round.
