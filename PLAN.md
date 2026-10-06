@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-06。YUK-1047五项收尾、三项correctness修复和真实Solo验收完成；PR #1571首轮CI除contracts外全部通过。YUK-1322修复历史表审计契约及Seroval/proxy-addr依赖，定向测试/typecheck/lint/build通过；准备推送后重新验证exact-head CI与17分钟窗。未部署，未准入模型仍withheld。
+> 更新于2026-10-06。YUK-1047/YUK-1322收尾PR #1571已合并fb5ee31d8；head8863df830完整CI37452852992通过，17分钟窗及审查完成，Linear两票Done。真实Solo验收通过。非阻塞分页总查询量留YUK-1137。未部署，未准入模型仍withheld。
 
 ## NOW
 
@@ -83,18 +83,18 @@
 
 ## NEXT
 
-1. YUK-1047/#1571收尾：五项及后续修复已完成，唯一验证审与真实Solo验收通过。YUK-1322审计修复4e7894f52、依赖修复73da2bffc已完成；推送后等exact-head CI及17分钟窗，满足后合并并关闭两票。不部署，不宣称模型质量准入。
+1. YUK-1047/YUK-1322已完成并合入main fb5ee31d8（#1571）；两票Done，PR监听结束。CI/等待窗/独立审查/真实Solo验收完成。YUK-1137跟进无questionIds时总分页查询量；未部署/模型准入。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
 ## PARKED
 
-- YUK-1322基线contracts阻塞已修，随#1571等待CI：历史checkpoint固定19列且禁止生产写入，删除16临时豁免；仅lockfile升级Seroval1.6.8/proxy-addr2.0.8。未抬expiry或降低审计。
+- YUK-1322基线contracts阻塞已修，已随#1571合并：历史checkpoint固定19列且禁止生产写入，删除16临时豁免；仅lockfile升级Seroval1.6.8/proxy-addr2.0.8。未抬expiry或降低审计。
 
-- YUK-1047原失败历史分页跟进已由#1571实现并验证有界SQL读取，待合并；不声称生产延迟改善。
+- YUK-1047原失败历史分页跟进已由#1571实现并验证有界SQL读取，已合并；不声称生产延迟改善，总查询量继续YUK-1137。
 
 
-- YUK-1047原未发子题KC混入及PfSolo退出丢草稿已由#1571修复并通过DB/真实浏览器验收，待合并。
+- YUK-1047原未发子题KC混入及PfSolo退出丢草稿已由#1571修复并通过DB/真实浏览器验收，已合并。
 
 - YUK-1047生产模型质量actual-output准入仍缺新证据；本轮禁止新增付费provider测试，未准入模型计划保持withheld。Coach最小修正与CSV已实施，不再是未批准/待实施项。
 
