@@ -20,7 +20,6 @@
 // pi route comes from the explicit modelBinding on the task run — the only
 // post-P4 routing surface (the ops rollout env pins were retired).
 
-import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -32,6 +31,7 @@ import { runWebSourcingAgentDefault } from '@/capabilities/practice/server/tools
 import { ai_task_runs, event, knowledge, tool_call_log } from '@/db/schema';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { testDb } from '../../../tests/helpers/db';
+import { captureGitEvidence } from '../../../tests/helpers/git-evidence';
 import { registerCapabilityTools } from './tools/register-capability-tools';
 import { __resetRegistryForTests } from './tools/registry';
 
@@ -140,10 +140,11 @@ describe.skipIf(!HAS_KEY)('pi tool-loop actual-output gate (YUK-1021)', () => {
       (e) => mirroredIds.has(e.id),
     );
 
-    const revision = execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
+    // YUK-1341 — evidence seals the EXACT code executed: commit SHA plus a
+    // digest of any uncommitted patch (this gate runs before the binding commit).
     const evidence = {
       captured_at: new Date().toISOString(),
-      code_revision: revision,
+      ...captureGitEvidence(),
       ticket: 'YUK-1021',
       lane: {
         adapter: 'pi',
