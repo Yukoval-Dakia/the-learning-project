@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> 更新于2026-10-06。YUK-588 Today费用UI已获批准并完成本地实施：18unit、8真实构建浏览器场景、typecheck/lint/build及初审通过，等待PR/exact-head CI和17分钟窗。同期1153/1132各独立工作树完成本地修复，安全初审接续中。外置卷Git访问已恢复；未部署、无付费调用。
+> 更新于2026-10-06。第一批 YUK-588/1153/1132 已完成并合并 #1574/#1573/#1572；本地验证、独立初审、exact-head CI 均通过，Linear Done。Owner 更新合并规则：bot 全部结束且无 findings 时免等待窗，见 AGENTS.md。未部署、无付费调用。
 
 ## NOW
 
-- YUK-588：昨日全天费用独立折叠区已接入，币种/口径/未知/用量缺失保真；18unit与8浏览器回归通过，初审无P0/P1。UI已批准，交付步骤见 `.remember/yuk588-today-cost-ui.md`。
+- YUK-588/#1574 已合入 main `29afb45d3`；昨日全天费用独立折叠区交付，18unit/8浏览器、本地gate、独立初审及CI37462573054通过。YUK-1153/#1573 合入 `5b0cd9143`，10unit及CI37462471896通过；YUK-1132/#1572 合入 `86adca335`，16unit及CI37462450623通过；两票本地gate和独立安全初审通过。三票Done，详见 `.remember/yuk588-today-cost-ui.md`。
 
 - YUK-1112/#1524：pi-agent-core/pi-ai/pi-telemetry1.0.1已合入main `d58a9614`；108 unit+61 Copilot DB、全部本地gate、独立review及exact-head CI `37123780543`通过，17分钟窗口完成，Linear Done；无生产部署/付费调用。
 
@@ -67,7 +67,7 @@
 
 - YUK-766/#1553已交付main69c524df：8语义DB回归先RED，62DB/83unit与全部本地gate通过；初审旧API fixture/mock阻塞修复后唯一验证审16unit/15DB通过，CI37211421697及17分钟窗完成。增量迁移/浏览器未实际运行；下游队列恢复仍Todo。
 
-- YUK-588/#1554后端已交付main8ecb4f64：52DB/50unit、全部本地gate；初次CI发现旧周报午夜fixture竞态，固定Date先RED再修，28DB6unit通过。独立初审及唯一验证审6DB6unit通过，最终head6185e457的CI37215466305全绿（82迁移/34浏览器），17分钟窗完成；后端交付不代表整票完成；UI于10-06获批并在独立工作树实施，见当前NOW。
+- YUK-588/#1554后端已交付main8ecb4f64：52DB/50unit、全部本地gate；初次CI发现旧周报午夜fixture竞态，固定Date先RED再修，28DB6unit通过。独立初审及唯一验证审6DB6unit通过，最终head6185e457的CI37215466305全绿（82迁移/34浏览器），17分钟窗完成；UI于10-06获批并由#1574交付，整票Done，见当前NOW。
 
 
 - YUK-1119/#1555已交付maine3001200：22 Markdown文件，pi机制ADR0065、历史说明和四份漂移报告归并；本地gates/独立初审/exact-head CI37216925990及17分钟窗通过。docs-only CI测试步骤跳过，不计实际测试。旧报告PR1515/1517/1519/1531关闭且保留分支。
@@ -85,7 +85,7 @@
 
 ## NEXT
 
-- 当前批：588发布PR并验exact-head CI；1153/1132各自提交PR，主线程接续独立初审并集成验收。每票按最后push重新计17分钟窗，1128留第二批。
+- 第一批已交付；YUK-1128 留第二批，尚未启动。
 
 1. YUK-1047/#1571收尾：五项及后续修复已完成，唯一验证审与真实Solo验收通过。YUK-1322审计修复4e7894f52、依赖修复73da2bffc已完成；推送后等exact-head CI及17分钟窗，满足后合并并关闭两票。不部署，不宣称模型质量准入。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
