@@ -351,7 +351,8 @@ export function extractDrizzleWriteIndex(
     const table = target(call.expression.expression, method === 'set' ? 'update' : 'insert');
     if (!table) continue;
     const fields = columns(call.arguments[0], method === 'onConflictDoUpdate' ? 'set' : undefined);
-    if (!fields.size && kind === 'update') continue;
+    // Preserve the table target even when bounded payload tracing is opaque.
+    // It supplies no field evidence, but historical tables forbid every write.
     let payload = `{${[...fields].map((field) => `${JSON.stringify(field)}: true`).join(',')}}`;
     const arg = unwrap(call.arguments[0]);
     // Preserve inspectable literal evidence for callers; field matching still
