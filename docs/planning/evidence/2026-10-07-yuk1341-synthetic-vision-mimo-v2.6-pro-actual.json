@@ -1,0 +1,45 @@
+{
+  "captured_at": "2026-10-06T18:07:39.292Z",
+  "ticket": "YUK-1341",
+  "phase": "A-synthetic-vision-ability-pre-binding",
+  "code_revision": "5d738dbc012913f294f7b471027314c933996ddb",
+  "working_tree": "dirty",
+  "patch_digest": "sha256:01fecdc90f39070d795d4e4b7ff879546e32f2bdabdbf07afb62b4f82d0beee9",
+  "patch_paths": [
+    "docs/planning/evidence/2026-09-21-pi-p3-copilot-mimo-v2.6-pro-actual.json",
+    "docs/planning/evidence/2026-09-21-pi-tool-loop-mimo-v2.6-pro-actual.json",
+    "docs/planning/evidence/2026-10-07-yuk1341-synthetic-tool-mimo-v2.6-pro-actual.json",
+    "docs/planning/evidence/2026-10-07-yuk1341-synthetic-vision-mimo-v2.6-pro-actual.json",
+    "src/capabilities/copilot/jobs/copilot-pi-actual.db.test.ts",
+    "src/server/ai/AGENTS.md",
+    "src/server/ai/model-profiles.test.ts",
+    "src/server/ai/pi-synthetic-tool-actual.db.test.ts",
+    "src/server/ai/pi-tool-loop-actual.db.test.ts",
+    "src/server/ai/providers.ts",
+    "tests/helpers/git-evidence.ts"
+  ],
+  "lane": {
+    "adapter": "pi",
+    "provider": "opencode-go",
+    "model": "mimo-v2.6-pro",
+    "task_kind": "AttributionTask",
+    "run_id": "yuk1341_vision_fc35rab0zjwdbq3xmf3ipiem",
+    "session_header": "x-opencode-session=<run_id>",
+    "input_modality": "text + image/png base64 (1x1 solid red, generated in-test)"
+  },
+  "input_digest": "sha256:3877f09fdccaf53f722126a83f57caa0afa8dbef50262512efd7de4cfeeeae72",
+  "terminal": {
+    "subtype": "success",
+    "is_error": false,
+    "stop_reason": "end_turn",
+    "output_digest": "sha256:ba19e9c3d5f49882ddaafed4f286a8a81491150426d321179270e27e74a89097",
+    "output_excerpt": "Red"
+  },
+  "cost": {
+    "basis": "estimated",
+    "amount_usd": 0.000067425,
+    "ref": "pi-catalog:opencode-go/mimo-v2.6-pro",
+    "note": "pi usage.cost is the catalog rate-card estimate (design §6 R1), never an invoice"
+  },
+  "provenance": "Vision for this lane is declared by the native pi catalog (input: text+image) — no providers.ts vision binding exists or is needed. This probe confirms the wire actually carries an image block."
+}

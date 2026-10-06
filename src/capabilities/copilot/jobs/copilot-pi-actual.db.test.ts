@@ -22,7 +22,6 @@
 // provider call — a blocked/marker verdict would still be recorded as evidence
 // but is not what this gate measures.
 
-import { execSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -34,6 +33,7 @@ import { ai_task_runs, event, learning_session } from '@/db/schema';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { __resetRegistryForTests } from '@/server/ai/tools/registry';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { captureGitEvidence } from '../../../../tests/helpers/git-evidence';
 import { assembleCopilotRunInput } from '../server/copilot-run-input';
 import { runCopilotRun } from './copilot_run';
 
@@ -144,10 +144,11 @@ describe.skipIf(!HAS_KEY)('pi copilot-lane actual-output gate (YUK-1022)', () =>
       .from(event)
       .where(and(eq(event.session_id, sessionId), eq(event.action, 'experimental:copilot_reply')));
 
-    const revision = execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
+    // YUK-1341 — evidence seals the EXACT code executed: commit SHA plus a
+    // digest of any uncommitted patch.
     const evidence = {
       captured_at: new Date().toISOString(),
-      code_revision: revision,
+      ...captureGitEvidence(),
       ticket: 'YUK-1022',
       lane: {
         adapter: 'pi',

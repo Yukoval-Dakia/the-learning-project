@@ -236,6 +236,17 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
       // authoritative classification for opencode-go.
       'glm-5.3-flash': { capabilities: { toolCalling: true } },
       'deepseek-v4-pro': { capabilities: { toolCalling: true } },
+      // YUK-1341 — mimo-v2.6-pro is the post-incident product lane for
+      // CopilotTask and the other needsToolCall kinds (xiaomi mimo-v2.5-pro
+      // hit 402 insufficient_balance). Sealed evidence before this flip:
+      //   docs/planning/evidence/2026-10-07-yuk1341-synthetic-tool-mimo-v2.6-pro-actual.json
+      //     (phase A: low-level PiAgentAdapter + synthetic tool loop, run
+      //      BEFORE this binding existed — wire proof, not a capability claim)
+      //   docs/planning/evidence/2026-09-21-pi-tool-loop-mimo-v2.6-pro-actual.json
+      //     (production SourcingTask entry + tool_call_log reconciliation)
+      // Vision needs no binding here: the native pi catalog declares
+      // input text+image and model-profiles reads it as authoritative.
+      'mimo-v2.6-pro': { capabilities: { toolCalling: true } },
     },
   },
   // YUK-365 — subscription-OAuth lane. Opus 4.8 via the owner's Claude Max
