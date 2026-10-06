@@ -178,3 +178,18 @@ RED 全量输出：`/tmp/yuk1340-p1-red.txt`（本轮会话临时文件；表中
 - 未改服务端 24h 窗口政策、显式 sessionId 语义、API/DB/schema。
 - 未跑完整 `pnpm test`（本机禁 full test，归 exact-head CI）；未 push/merge/deploy/建 GitHub/Linear。
 - 不宣称生产已修复：待 PR + CI Gate + 17 分钟等待窗 + 合并部署后复验。
+
+## 父线程复验最终修复
+
+父线程在 `0ab3f29874ac9469d9e06dc9fff3fc6848e49768` 直接检查依赖方向，并重新运行两项架构审计、19 文件 / 124 项 Copilot UI 测试、2 文件 / 57 项 conversation/turns DB 测试、typecheck、lint、build，全部 exit 0。DB 测试由仓库 setup 创建独立 testcontainer，未访问生产。检查与完整日志保存在父工作树 `.remember/evidence/2026-10-07-yuk1340-final-parent-checks/`；作者日志另存 `2026-10-07-yuk1340-boundary-writer-logs/`，两者分别保留。
+
+T3 preview status/open 再次明确返回 automation host 不可用，因此以独立 Playwright 访问父线程刚构建的 SPA，端口 `127.0.0.1:8791`。全部 API 由合成夹具接住，浏览器时钟固定为 `2026-10-07T20:00:00Z`：
+
+- 48h 前的 idle 和 active 都新建一次，未自动选择旧对话；手动点选旧 idle 后仍可输入，不额外新建。
+- 5h 前 idle、1h 前 active、恰好24h边界 idle 都直接续接，不发创建请求。
+- 超出24h边界1ms及非法更新时间都保守新建。
+- 原四个场景再次通过：新 ended 不抢可继续 idle；显式 ended 只读并可新建；仅已结束历史自动新建；503 后显式重试；创建响应迟到不抢用户改选。窄屏下只读提示和新建入口仍可见。
+
+七项年龄场景和四项既有场景全部通过，未处理 API 请求均为空，只有预期的合成 session POST，无生产数据写入、消息发送或模型调用。父线程目视核对过期新建、24h边界续接与窄屏历史截图，随后停止自有 preview PID47241。脚本、状态 JSON 与 PNG 分别位于父工作树 `.remember/evidence/2026-10-07-yuk1340-p1-browser/` 和 `2026-10-07-yuk1340-p1-existing-browser/`。冻结日期仅为测试夹具，不是用户学习记录。
+
+MiMo 唯一 P0/P1 验证审固定上述源代码提交进行中（`yuk1340-session-entry-review-r2-20261007`），当前不能称独立验证审通过。后续提交仅补本证据和 PLAN；仍需新 head CI、等待窗、合并与生产验收。
