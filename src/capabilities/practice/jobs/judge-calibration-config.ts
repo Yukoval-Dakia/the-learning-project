@@ -28,17 +28,24 @@ export function readJudgeCalibrationConfig(
   // YUK-1007：四键 DB > env > code-default；clamp 仍在 reader 侧（registry
   // schema 校验 DB 写入，但 env 层经 numberEnv 来值仍需本地 clamp，与原
   // readIntInRange 逐位一致）。
+  // Project the operator chat pin into sample provenance; the handler's existing
+  // resolveTaskProvider preflight validates it before any paid request.
+  const pin = env.AI_PROVIDER_OVERRIDE
+    ? { provider: env.AI_PROVIDER_OVERRIDE, model: env.AI_PROVIDER_MODEL }
+    : undefined;
   const batchMax = getConfig('JUDGE_CALIBRATION_BATCH_MAX', env);
   const windowDays = getConfig('JUDGE_CALIBRATION_WINDOW_DAYS', env);
   const rejudgeProvider = getConfig('JUDGE_CALIBRATION_REJUDGE_PROVIDER', env);
   const rejudgeModel = getConfig('JUDGE_CALIBRATION_REJUDGE_MODEL', env);
   return {
-    rejudgeProvider:
-      typeof rejudgeProvider === 'string' && rejudgeProvider !== ''
+    rejudgeProvider: pin?.provider
+      ? pin.provider
+      : typeof rejudgeProvider === 'string' && rejudgeProvider !== ''
         ? rejudgeProvider
         : JUDGE_CALIBRATION_DEFAULTS.rejudgeProvider,
-    rejudgeModel:
-      typeof rejudgeModel === 'string' && rejudgeModel !== ''
+    rejudgeModel: pin?.model
+      ? pin.model
+      : typeof rejudgeModel === 'string' && rejudgeModel !== ''
         ? rejudgeModel
         : JUDGE_CALIBRATION_DEFAULTS.rejudgeModel,
     batchMax:

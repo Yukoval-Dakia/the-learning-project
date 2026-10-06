@@ -498,8 +498,8 @@ export type ResolvedProvider =
  * SCOPE = GLOBAL (process-wide). This is the simplest switch that satisfies the
  * issue ("route AI tasks … to Opus via Max, default stays mimo"): the owner
  * flips the env and the whole process runs against the subscription lane.
- * Per-task override is still available via the explicit `override` arg
- * (test/dev escape hatch), which takes precedence over the env switch.
+ * For chat tasks the process env pin wins over explicit overrides, including
+ * persisted model bindings. Typed non-chat protocols retain their explicit pin.
  *
  * Returns undefined when unset → callers fall through to the registry default
  * (current mimo behaviour, byte-for-byte).
@@ -568,7 +568,7 @@ export function hasGlobalProviderOverride(): boolean {
  * Resolve a task to its concrete provider binding.
  *
  * Lookup order（YUK-1007 DB override 层落地后）：
- *   1. `override.provider` / `override.model` if supplied (test/dev escape hatch)
+ *   1. Chat process env pin, then explicit `override.provider` / `override.model`
  *   2. 全局 switch：`AI_PROVIDER_OVERRIDE`/`AI_PROVIDER_MODEL` env → DB
  *      `lane.global.*`（owner 裁决：env pin 恒压 DB——它是 incident kill-switch）
  *   3. DB `task.<kind>.provider` / `.model` per-task override（面板写点）
@@ -581,10 +581,15 @@ export function resolveTaskProvider(
   override?: { provider?: Provider; model?: string },
 ): ResolvedProvider {
   const def = tasks[kind];
+  // Product-wide incident pin must also cover explicit caller/modelBinding routes.
+  // Typed primitives have a separate wire contract, not a chat model API.
+  const envPin =
+    'execution' in def && def.execution === 'typed' ? undefined : readEnvOverride(process.env);
+  if (envPin) override = envPin;
   const globalSwitch = readGlobalProviderSwitch();
   const dbTaskOverride = getTaskOverride(kind);
 
-  // Explicit arg > global switch (env pin > DB global) > DB per-task > registry.
+  // Chat env pin > explicit arg > DB global > DB per-task > registry.
   // The arg may set only `model`, so fall back through each layer per-field.
   if (
     !override?.provider &&
@@ -613,7 +618,8 @@ export function resolveTaskProvider(
   // The exempt set lives in `providerRequiresExplicitModel` (single source of
   // truth, also read by override pre-flights + config write validation) so it
   // can't drift from a second hard-coded copy.
-  const cameFromGlobalSwitch = !override?.provider && globalSwitch?.provider !== undefined;
+  const cameFromGlobalSwitch =
+    envPin !== undefined || (!override?.provider && globalSwitch?.provider !== undefined);
   if (
     cameFromGlobalSwitch &&
     providerRequiresExplicitModel(providerName) &&
@@ -630,7 +636,7 @@ export function resolveTaskProvider(
   }
 
   // When the subscription lane is selected and no model is named anywhere, use
-  // its Opus 4.8 default. Otherwise the layered model wins (arg > global > db task > registry).
+  // its Opus 4.8 default. Otherwise the layered model wins (chat env pin > arg > DB global > db task > registry).
   const subDefaultModel =
     providerName === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : def.defaultModel;
   const modelId =

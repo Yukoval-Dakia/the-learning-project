@@ -1,0 +1,1050 @@
+{
+  "target": {
+    "provider": "opencode-go",
+    "model": "mimo-v2.6-pro",
+    "activation": "AI_PROVIDER_OVERRIDE + AI_PROVIDER_MODEL on app and worker"
+  },
+  "task_count": 55,
+  "chat_task_count": 54,
+  "tasks": [
+    {
+      "kind": "AttributionTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": []
+    },
+    {
+      "kind": "AttributionRerankTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "AttributionRerankTask",
+          "file": "src/capabilities/practice/server/failure-learning-attribution.ts",
+          "line": 218,
+          "column": 20,
+          "callee": "params.runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "CauseCategoryProposeTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "CauseCategoryProposeTask",
+          "file": "src/capabilities/practice/server/cause-catalog.ts",
+          "line": 187,
+          "column": 26,
+          "callee": "params.runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "VariantGenTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "VariantGenTask",
+          "file": "src/capabilities/practice/server/failure-learning-variant.ts",
+          "line": 263,
+          "column": 24,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "SemanticJudgeTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "SemanticJudgeTask",
+          "file": "src/capabilities/copilot/server/copilot-execution.ts",
+          "line": 236,
+          "column": 20,
+          "callee": "adapters.runAgentTaskFn"
+        },
+        {
+          "kind": "SemanticJudgeTask",
+          "file": "src/capabilities/practice/server/judge/question-contract.ts",
+          "line": 381,
+          "column": 26,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "UnitDimensionFallback",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "UnitDimensionFallback",
+          "file": "src/core/capability/judges/unit_dimension/llm-fallback.ts",
+          "line": 56,
+          "column": 24,
+          "callee": "runTask"
+        }
+      ]
+    },
+    {
+      "kind": "StepsJudgeTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": true,
+      "callers": [
+        {
+          "kind": "StepsJudgeTask",
+          "file": "src/capabilities/practice/server/judge/provider-lane-fallback.ts",
+          "line": 91,
+          "column": 19,
+          "callee": "runTaskFn"
+        },
+        {
+          "kind": "StepsJudgeTask",
+          "file": "src/capabilities/practice/server/judge/provider-lane-fallback.ts",
+          "line": 110,
+          "column": 28,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "MultimodalDirectJudgeTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": true,
+      "callers": [
+        {
+          "kind": "MultimodalDirectJudgeTask",
+          "file": "src/capabilities/practice/server/judge/provider-lane-fallback.ts",
+          "line": 91,
+          "column": 19,
+          "callee": "runTaskFn"
+        },
+        {
+          "kind": "MultimodalDirectJudgeTask",
+          "file": "src/capabilities/practice/server/judge/provider-lane-fallback.ts",
+          "line": 110,
+          "column": 28,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "SourceGroundingVerifyTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": true,
+      "callers": [
+        {
+          "kind": "SourceGroundingVerifyTask",
+          "file": "src/capabilities/practice/server/judge/source-grounding-verify.ts",
+          "line": 115,
+          "column": 24,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "VariantVerifyTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "VariantVerifyTask",
+          "file": "src/capabilities/practice/jobs/variant_verify.ts",
+          "line": 270,
+          "column": 24,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "SolutionGenerateTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "SolutionGenerateTask",
+          "file": "src/capabilities/copilot/server/copilot-execution.ts",
+          "line": 232,
+          "column": 20,
+          "callee": "adapters.runAgentTaskFn"
+        },
+        {
+          "kind": "SolutionGenerateTask",
+          "file": "src/capabilities/practice/server/quiz/verify-framework.ts",
+          "line": 820,
+          "column": 29,
+          "callee": "opts.runTaskFn"
+        },
+        {
+          "kind": "SolutionGenerateTask",
+          "file": "src/server/ai/solution-generate.ts",
+          "line": 109,
+          "column": 28,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "SolutionGenerateVisionTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": true,
+      "callers": [
+        {
+          "kind": "SolutionGenerateVisionTask",
+          "file": "src/capabilities/practice/server/quiz/verify-framework.ts",
+          "line": 820,
+          "column": 29,
+          "callee": "opts.runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "QuizGenTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": true,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "QuizGenTask",
+          "file": "src/capabilities/practice/jobs/quiz_gen.ts",
+          "line": 828,
+          "column": 24,
+          "callee": "run"
+        }
+      ]
+    },
+    {
+      "kind": "QuizPlanTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": true,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "QuizPlanTask",
+          "file": "src/capabilities/practice/jobs/quiz_gen.ts",
+          "line": 726,
+          "column": 36,
+          "callee": "run"
+        }
+      ]
+    },
+    {
+      "kind": "QuizVerifyTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "QuizVerifyTask",
+          "file": "src/capabilities/copilot/server/copilot-execution.ts",
+          "line": 228,
+          "column": 20,
+          "callee": "adapters.runAgentTaskFn"
+        },
+        {
+          "kind": "QuizVerifyTask",
+          "file": "src/capabilities/practice/server/quiz/verify-framework.ts",
+          "line": 219,
+          "column": 28,
+          "callee": "options.runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "TeachingQualityTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "TeachingQualityTask",
+          "file": "src/capabilities/copilot/server/copilot-execution.ts",
+          "line": 240,
+          "column": 20,
+          "callee": "adapters.runAgentTaskFn"
+        },
+        {
+          "kind": "TeachingQualityTask",
+          "file": "src/capabilities/practice/server/quiz/verify-framework.ts",
+          "line": 1450,
+          "column": 23,
+          "callee": "opts.runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "QuestionAuthorTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "QuestionAuthorTask",
+          "file": "src/capabilities/practice/server/tools/question-author.ts",
+          "line": 233,
+          "column": 34,
+          "callee": "deps.runTaskFn"
+        },
+        {
+          "kind": "QuestionAuthorTask",
+          "file": "src/capabilities/practice/server/tools/question-author.ts",
+          "line": 241,
+          "column": 20,
+          "callee": "deps.runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "ItemPriorTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "ItemPriorTask",
+          "file": "src/capabilities/practice/jobs/item_prior_backfill.ts",
+          "line": 99,
+          "column": 29,
+          "callee": "runTaskFn"
+        },
+        {
+          "kind": "ItemPriorTask",
+          "file": "src/capabilities/practice/jobs/item_prior_backfill.ts",
+          "line": 105,
+          "column": 31,
+          "callee": "runTaskFn"
+        },
+        {
+          "kind": "ItemPriorTask",
+          "file": "scripts/item-prior-reps-eval.ts",
+          "line": 180,
+          "column": 26,
+          "callee": "runTaskFn"
+        },
+        {
+          "kind": "ItemPriorTask",
+          "file": "scripts/llasa-prior-eval.ts",
+          "line": 188,
+          "column": 26,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "ItemPriorLlasaTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "ItemPriorLlasaTask",
+          "file": "src/capabilities/practice/jobs/item_prior_backfill.ts",
+          "line": 199,
+          "column": 22,
+          "callee": "runTaskFn"
+        },
+        {
+          "kind": "ItemPriorLlasaTask",
+          "file": "scripts/llasa-prior-eval.ts",
+          "line": 188,
+          "column": 26,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "SelectionOrchestratorTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "SelectionOrchestratorTask",
+          "file": "src/capabilities/practice/server/softmax-selection.ts",
+          "line": 582,
+          "column": 26,
+          "callee": "fn"
+        }
+      ]
+    },
+    {
+      "kind": "SessionSummaryTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "SessionSummaryTask",
+          "file": "src/server/session/summary.ts",
+          "line": 223,
+          "column": 24,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "SourcingTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": true,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "SourcingTask",
+          "file": "src/capabilities/practice/server/tools/web-fetch-candidates.ts",
+          "line": 91,
+          "column": 24,
+          "callee": "runAgentTask"
+        }
+      ]
+    },
+    {
+      "kind": "SupplyPlanTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": true,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "SupplyPlanTask",
+          "file": "src/capabilities/practice/jobs/supply_planner.ts",
+          "line": 350,
+          "column": 29,
+          "callee": "run"
+        }
+      ]
+    },
+    {
+      "kind": "JevScoringDecisionTask",
+      "default_provider": "openrouter",
+      "default_model": "typesafe/jev-1.13",
+      "execution": "typed",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": []
+    },
+    {
+      "kind": "AssessmentRuleJudgeTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": true,
+      "callers": [
+        {
+          "kind": "AssessmentRuleJudgeTask",
+          "file": "src/server/assessment/pi-model-executor.ts",
+          "line": 150,
+          "column": 11,
+          "callee": "runTask"
+        }
+      ]
+    },
+    {
+      "kind": "VisionExtractTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": true,
+      "callers": [
+        {
+          "kind": "VisionExtractTask",
+          "file": "src/capabilities/ingestion/server/image-candidate-accept.ts",
+          "line": 641,
+          "column": 27,
+          "callee": "runTaskFn"
+        },
+        {
+          "kind": "VisionExtractTask",
+          "file": "src/capabilities/ingestion/server/rescue.ts",
+          "line": 94,
+          "column": 28,
+          "callee": "runTaskFn"
+        },
+        {
+          "kind": "VisionExtractTask",
+          "file": "src/capabilities/ingestion/server/vision.ts",
+          "line": 23,
+          "column": 24,
+          "callee": "params.runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "VisionExtractTaskHeavy",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": true,
+      "callers": [
+        {
+          "kind": "VisionExtractTaskHeavy",
+          "file": "src/capabilities/ingestion/server/rescue.ts",
+          "line": 94,
+          "column": 28,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "StructureTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": true,
+      "callers": [
+        {
+          "kind": "StructureTask",
+          "file": "src/capabilities/ingestion/server/structure.ts",
+          "line": 244,
+          "column": 26,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "MistakeEnrollTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "MistakeEnrollTask",
+          "file": "src/capabilities/ingestion/server/mistake_enroll.ts",
+          "line": 107,
+          "column": 26,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "TaggingTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "TaggingTask",
+          "file": "src/capabilities/ingestion/server/tagging.ts",
+          "line": 158,
+          "column": 26,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "ColdStartPlacementBridgeTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "ColdStartPlacementBridgeTask",
+          "file": "src/capabilities/ingestion/server/cold-start-bridge.ts",
+          "line": 75,
+          "column": 26,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "BlockAssemblyTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "BlockAssemblyTask",
+          "file": "src/capabilities/ingestion/server/block-assembly.ts",
+          "line": 127,
+          "column": 26,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "ProfileCriticTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "ProfileCriticTask",
+          "file": "scripts/compile-profile.ts",
+          "line": 206,
+          "column": 24,
+          "callee": "runAgentTask"
+        }
+      ]
+    },
+    {
+      "kind": "KnowledgeEdgeProposeTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "KnowledgeEdgeProposeTask",
+          "file": "src/capabilities/knowledge/server/propose_edge.ts",
+          "line": 250,
+          "column": 26,
+          "callee": "params.runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "FrontierPrerequisiteTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "FrontierPrerequisiteTask",
+          "file": "src/capabilities/knowledge/jobs/frontier_fill_nightly.ts",
+          "line": 283,
+          "column": 30,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "KnowledgeReviewTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": true,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "KnowledgeReviewTask",
+          "file": "src/capabilities/knowledge/server/review.ts",
+          "line": 695,
+          "column": 10,
+          "callee": "streamTask"
+        }
+      ]
+    },
+    {
+      "kind": "NoteGenerateTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "NoteGenerateTask",
+          "file": "src/capabilities/notes/jobs/note_generate.ts",
+          "line": 196,
+          "column": 26,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "NoteVerifyTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "NoteVerifyTask",
+          "file": "src/capabilities/notes/jobs/note_verify.ts",
+          "line": 344,
+          "column": 32,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "NoteRefineTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "NoteRefineTask",
+          "file": "src/capabilities/notes/jobs/note-refine.ts",
+          "line": 208,
+          "column": 28,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "LearningIntentOutlineTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "LearningIntentOutlineTask",
+          "file": "src/capabilities/agency/server/learning-intent.ts",
+          "line": 241,
+          "column": 24,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "GoalScopeTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "GoalScopeTask",
+          "file": "src/capabilities/agency/server/goals/scope.ts",
+          "line": 140,
+          "column": 26,
+          "callee": "params.runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "MindModelInductionTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": true,
+      "callers": [
+        {
+          "kind": "MindModelInductionTask",
+          "file": "src/capabilities/agency/server/conjecture/induce.ts",
+          "line": 467,
+          "column": 7,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "ConjectureGroupingTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "ConjectureGroupingTask",
+          "file": "src/capabilities/agency/server/conjecture/induce.ts",
+          "line": 362,
+          "column": 20,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "ConjectureProbeAuthorTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": true,
+      "callers": [
+        {
+          "kind": "ConjectureProbeAuthorTask",
+          "file": "src/capabilities/agency/server/conjecture/probe-quality.ts",
+          "line": 104,
+          "column": 28,
+          "callee": "input.runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "ConjectureProbeReviewTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": true,
+      "callers": [
+        {
+          "kind": "ConjectureProbeReviewTask",
+          "file": "src/capabilities/agency/server/conjecture/probe-quality.ts",
+          "line": 204,
+          "column": 28,
+          "callee": "input.runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "InterventionRecommendationTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "InterventionRecommendationTask",
+          "file": "src/capabilities/agency/server/intervention/recommend.ts",
+          "line": 62,
+          "column": 40,
+          "callee": "input.runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "InterventionPackageAuthorTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "InterventionPackageAuthorTask",
+          "file": "src/capabilities/practice/server/intervention-author.ts",
+          "line": 663,
+          "column": 24,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "InterventionPackageReviewTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "InterventionPackageReviewTask",
+          "file": "src/capabilities/practice/server/intervention-author.ts",
+          "line": 772,
+          "column": 24,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "ResearchMeetingDirectorTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": true,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "ResearchMeetingDirectorTask",
+          "file": "src/capabilities/agency/server/meeting/director.ts",
+          "line": 404,
+          "column": 24,
+          "callee": "runAgentTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "DreamingTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": true,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "DreamingTask",
+          "file": "src/capabilities/agency/jobs/dreaming_nightly.ts",
+          "line": 353,
+          "column": 30,
+          "callee": "run"
+        }
+      ]
+    },
+    {
+      "kind": "CoachTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": true,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "CoachTask",
+          "file": "src/capabilities/agency/jobs/coach_daily.ts",
+          "line": 351,
+          "column": 30,
+          "callee": "run"
+        }
+      ]
+    },
+    {
+      "kind": "MemoryBriefTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "MemoryBriefTask",
+          "file": "src/server/memory/brief-writer.ts",
+          "line": 142,
+          "column": 24,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "CopilotTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": true,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "CopilotTask",
+          "file": "src/capabilities/copilot/server/copilot-execution.ts",
+          "line": 484,
+          "column": 28,
+          "callee": "adapters.streamTaskCollectingFn"
+        }
+      ]
+    },
+    {
+      "kind": "TeachingTurnTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5-pro",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": false,
+      "callers": [
+        {
+          "kind": "TeachingTurnTask",
+          "file": "src/capabilities/copilot/server/skills/solve-skill.ts",
+          "line": 100,
+          "column": 24,
+          "callee": "run"
+        },
+        {
+          "kind": "TeachingTurnTask",
+          "file": "src/capabilities/copilot/server/skills/teaching-skill.ts",
+          "line": 124,
+          "column": 24,
+          "callee": "run"
+        },
+        {
+          "kind": "TeachingTurnTask",
+          "file": "src/capabilities/copilot/server/teaching.ts",
+          "line": 168,
+          "column": 24,
+          "callee": "runTaskFn"
+        },
+        {
+          "kind": "TeachingTurnTask",
+          "file": "src/capabilities/practice/server/solve-session.ts",
+          "line": 237,
+          "column": 15,
+          "callee": "runTaskFn"
+        }
+      ]
+    },
+    {
+      "kind": "TeachingTurnVisionTask",
+      "default_provider": "xiaomi",
+      "default_model": "mimo-v2.5",
+      "execution": "chat",
+      "needs_tool": false,
+      "multimodal": true,
+      "callers": [
+        {
+          "kind": "TeachingTurnVisionTask",
+          "file": "src/capabilities/practice/server/solve-session.ts",
+          "line": 229,
+          "column": 15,
+          "callee": "runTaskFn"
+        }
+      ]
+    }
+  ],
+  "unresolved_callers": []
+}

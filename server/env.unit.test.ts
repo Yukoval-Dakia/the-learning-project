@@ -16,6 +16,8 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { resolveTaskProvider } from '@/server/ai/providers';
+import { createMem0Config } from '@/server/memory/client';
 import { loadEnv } from './env';
 
 const KEYS = [
@@ -23,6 +25,11 @@ const KEYS = [
   'YUK365_FROM_ENV_ONLY',
   'YUK365_IN_BOTH',
   'YUK365_PREEXISTING',
+  'AI_PROVIDER_OVERRIDE',
+  'AI_PROVIDER_MODEL',
+  'OPENCODE_API_KEY',
+  'DATABASE_URL',
+  'DASHSCOPE_API_KEY',
 ] as const;
 
 let sandbox: string;
@@ -81,5 +88,29 @@ describe('loadEnv — .env.local precedence + only-fill-unset (Finding 2)', () =
     process.env.YUK365_PREEXISTING = 'real-runtime-value';
     loadEnv(sandbox);
     expect(process.env.YUK365_PREEXISTING).toBe('real-runtime-value');
+  });
+  it('loads the same product and memory pair in fresh API and worker environments', () => {
+    writeFileSync(
+      join(sandbox, '.env.local'),
+      [
+        'AI_PROVIDER_OVERRIDE=opencode-go',
+        'AI_PROVIDER_MODEL=mimo-v2.6-pro',
+        'OPENCODE_API_KEY=dummy-go',
+        'DASHSCOPE_API_KEY=dummy-embedding',
+        'DATABASE_URL=postgres://test:test@127.0.0.1:5432/test',
+      ].join('\n'),
+    );
+    for (const role of ['api', 'worker']) {
+      for (const key of KEYS) delete process.env[key];
+      loadEnv(sandbox);
+      expect(resolveTaskProvider('CopilotTask'), role).toMatchObject({
+        provider: 'opencode-go',
+        model: 'mimo-v2.6-pro',
+      });
+      expect(createMem0Config().llm.config, role).toMatchObject({
+        model: 'mimo-v2.6-pro',
+        apiKey: 'dummy-go',
+      });
+    }
   });
 });
