@@ -10,7 +10,11 @@ import { isOriginalEvidenceQuote } from '@/core/schema/assessment/evidence-quote
 import { AssessmentRuleDecision } from '@/core/schema/assessment/model-decision';
 import type { Db } from '@/db/client';
 import { AgentRunError } from '@/server/ai/agent-run-error';
-import { traceMetadata, traceOperation } from '@/server/ai/laminar-tracing';
+import {
+  isLaminarTracingEnabled,
+  traceMetadata,
+  traceOperation,
+} from '@/server/ai/laminar-tracing';
 import type { RunTaskCtx, RunTaskResult } from '@/server/ai/runner';
 import {
   type AssessmentAssetLoader,
@@ -18,6 +22,13 @@ import {
   prepareAssessmentModelInput,
   withinAssessmentSignal,
 } from './assessment-model-assets';
+import {
+  assessmentExecutionOutcome,
+  assessmentParseTraceOutput,
+  assessmentTaskTraceOutput,
+  assessmentTraceInput,
+  assessmentTraceOutput,
+} from './assessment-trace-content';
 
 export interface PiModelExecutorOptions {
   db: Db;
@@ -152,6 +163,9 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
             db: options.db,
             taskRunId,
             signal,
+            laminarContent: isLaminarTracingEnabled()
+              ? { input: assessmentTraceInput(request), output: assessmentTaskTraceOutput }
+              : undefined,
             providerSessionDeadlineAt: options.deadlineAt,
             budgetOverride: {
               maxIterations: budget.maxIterations,
@@ -184,6 +198,11 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
           AssessmentRuleDecision.parse(
             modelResult.structured_output ?? JSON.parse(modelResult.text.trim()),
           ),
+        {
+          content: isLaminarTracingEnabled()
+            ? { input: assessmentTraceInput(request), output: assessmentParseTraceOutput }
+            : undefined,
+        },
       );
       // Pending citations are validated by the model schema but cannot supply a score.
       // The domain pending outcome retains only its reason and paid run provenance.
@@ -288,6 +307,12 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
         traceMetadata({ business_outcome: outcome.kind === 'scored' ? 'accepted' : 'pending' });
         return outcome;
       },
-      { signal: callerSignal ?? options.signal },
+      {
+        signal: callerSignal ?? options.signal,
+        content: isLaminarTracingEnabled()
+          ? { input: assessmentTraceInput(request), output: assessmentTraceOutput }
+          : undefined,
+        outcome: assessmentExecutionOutcome,
+      },
     );
 }
