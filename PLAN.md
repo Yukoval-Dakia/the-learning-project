@@ -5,7 +5,7 @@
 ## NOW
 
 - **YUK-1103 自主交付**：单条活动线为本机日用验收与 AI 帮助恢复。http://localhost:8787 运行 main `5d738dbc0`；app/worker healthy、115项迁移、readiness active，最终停写备份恢复与副本原生结算验证通过。不要重复部署旧版本。
-- **YUK-1341 产品 AI 切换**：此树源码commit `14cb6b326` 已完成54聊天task + Mem0抽取/调和接线；388unit、31scopedDB、4次MiMo实际输出、static/build/audits通过。实际费用Pi估值$0.001130681 + 两项memory unknown，总保守占用$1.50113≤$3；仅封存净化输出。父线程接续独立review/CI/集成/发布，生产旧5d738dbc0未改。专用embedding/typed/OCR保留，评分slice准入不放宽。
+- **YUK-1341 产品 AI 切换**：此树源码commit `14cb6b326` 已完成54聊天task + Mem0抽取/调和接线；388unit、31scopedDB、4次MiMo实际输出、static/build/audits通过。实际费用Pi估值$0.001130681 + 两项memory unknown，总保守占用$1.50113≤$3；仅封存净化输出。独立初审无P0/P1；父线程28项针对性测试与最终build通过，待PR/CI/发布，生产旧5d738dbc0未改。专用embedding/typed/OCR保留，评分slice准入不放宽。
 - **YUK-1340 会话入口**：独立工作树正在修复默认选中已结束会话导致输入禁用，须保留历史只读与显式新对话，并完成真实组件及浏览器验收。
 - **开发模型与产品模型**：开发代理按AGENTS常规Sol6.1 high；产品AI目标为OpenCode Go MiMo2.6Pro。旧dev-only范围解释已作废。
 - **行为基线 / YUK-405**：[完整设计](docs/design/2026-10-06-continuous-learning-system-behavior.md)由 agent 在持续委托下采用并负责验证，连接学校、纸笔、自习与数字工具，不是已实现清单。
@@ -18,6 +18,8 @@
 - YUK-1338 目标架构集成保持 Backlog，单独证明状态版本、过期结果拒绝与重启恢复。
 
 ## PARKED
+
+- YUK-1345：视觉校准同源推断仍可能优先采用旧VISION_JUDGE_PROVIDER；独立初审P2跟进，未修复，不把同一MiMo输出宣称异源证据。
 
 - YUK-1342：付费探针显式运行开关与不可覆盖封存，初审成组 P2；本轮不扩张能力接线改动。
 
