@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-05。YUK-1047 PR #1568：2164c42完整CI已绿；晚到paper反馈P1修复4fd2263d7，参考答案用冻结派生值，详情/列表独立按冻结策略隐藏buffered摘要。92DB/43unit/typecheck/lint/build/8audits通过，parent复验26DB通过。待新push的CI与17分钟窗；review预算用尽，不部署/付费。
+> 更新于2026-10-06。YUK-1047 closeout分支已完成五项遗留278025112，并修真实runtime重入缓存/初审两P1至405e4689e；89unit/51DB与本地gates通过。唯一修复验证审和新build真实浏览器复验进行中，尚未PR/push，不部署/付费。模型未准入继续withheld，不阻塞代码票在实际验收后关闭。
 
 ## NOW
 
@@ -83,7 +83,7 @@
 
 ## NEXT
 
-1. YUK-1047推进PR #1568，完成exact-head CI和最后push后17分钟窗口，裁决已有P0/P1。独立review预算已用尽，不开第三审。源码迁移不代替生产部署或模型actual-output准入；其他主线不启动。
+1. YUK-1047/#1568已合并028c6619b；owner授权closeout五项遗留。当前405e4689e等待唯一验证审/runtime复验，之后新PR、exact-head CI及17分钟窗，满足原AC后关闭代码票；不宣称生产部署或模型质量准入。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 

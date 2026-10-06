@@ -1,3 +1,7 @@
+# 当前交接 — 2026-10-06 YUK-1047 closeout
+
+分支fix/yuk-1047-closeout基于main028c6619b。五项遗留278025112完成；首次runtime发现同页重入旧缓存，初审两P1为返回保存与提交竞态、归档冻结KC回滚activation，已先RED再修405e4689e。89unit/51DB/typecheck/lint/build/boundary通过；新build证据/tmp/yuk1047-closeout-reentry-build-evidence.json。唯一验证审和独立新build浏览器验收正在跑；未PR/push。模型准入继续withheld，无生产/付费；完成五项及最终代码验收可关闭1047。额外schema审计16过期豁免已证实基线同失败，详见closeout文档与Linear；不得抬expiry。保留.serena。
+
 # 当前交接 — 2026-10-05 PR准备
 
 最新4fd2263d7修paper参考答案与详情/列表反馈隐藏。正常capture已有resolver门禁，本修复覆盖缺可选标记的读取端，未声称常规producer泄露。92DB/43unit/typecheck/lint/build/8audits通过，parent复验26DB通过。2164c42完整CI已绿但新修复须push后再验CI与17分钟窗，评论4184804038/4184804047待push后resolve。1047仍In Progress；无第三审/部署/付费。
