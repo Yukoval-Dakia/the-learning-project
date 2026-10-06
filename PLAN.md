@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-06。YUK-1047 closeout分支已完成五项遗留278025112，并修真实runtime重入缓存/初审两P1至405e4689e；89unit/51DB与本地gates通过。唯一修复验证审和新build真实浏览器复验进行中，尚未PR/push，不部署/付费。模型未准入继续withheld，不阻塞代码票在实际验收后关闭。
+> 更新于2026-10-06。YUK-1047 closeout五项及三项后续修复已完成，唯一验证审通过，新build真实Solo运行验收通过六次同页恢复/ACK/503/CAS/返回互斥。parent源码census无legacy与遗漏，定向unit/DB复验通过。准备新PR与exact-head CI/17分钟窗后关闭；不部署/付费，未准入模型保持withheld。
 
 ## NOW
 
@@ -88,6 +88,8 @@
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
 ## PARKED
+
+- 基线schema审计：copilot_evidence_checkpoint 16项豁免于2026-10-05到期，base028c6619b同样失败；已在Linear记录，未抬expiry。本轮1047不扩为Copilot schema实施。
 
 - YUK-1047非阻塞性能跟进：getCurrentFailureAttempts强制limit:null后解析全历史再slice。已在Linear/PR回复，未有实测超时或结果错误，按性能默认P2延期。后续保留DB/keyset分页边界、改判过滤增量补页，覆盖长前缀/同时间戳/每题limit和查询行数。
 

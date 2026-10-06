@@ -1,3 +1,5 @@
+2026-10-06最新：405e4689e三修复唯一验证审无P0/P1，独立30unit+8QueryObserver断言；新build真实Solo六次同页恢复、ACK、503、双tab409与返回互斥通过，证据/tmp/yuk1047-closeout-runtime-repaired。parent64unit和关键DB复验、源码census通过。准备新PR/CI/17分钟窗口后关闭1047代码票，模型未准入仍withheld，不生产/付费。
+
 # 当前交接 — 2026-10-06 YUK-1047 closeout
 
 分支fix/yuk-1047-closeout基于main028c6619b。五项遗留278025112完成；首次runtime发现同页重入旧缓存，初审两P1为返回保存与提交竞态、归档冻结KC回滚activation，已先RED再修405e4689e。89unit/51DB/typecheck/lint/build/boundary通过；新build证据/tmp/yuk1047-closeout-reentry-build-evidence.json。唯一验证审和独立新build浏览器验收正在跑；未PR/push。模型准入继续withheld，无生产/付费；完成五项及最终代码验收可关闭1047。额外schema审计16过期豁免已证实基线同失败，详见closeout文档与Linear；不得抬expiry。保留.serena。
