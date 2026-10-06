@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> 更新于2026-10-06。YUK-1323引用/pending兼容修复完成独立验证审及真实输出回放，交付分支本地验证通过，PR/CI待完成；YUK-1325 Laminar在隔离工作树实施。模型准入仍withheld。
+> 更新于2026-10-06。SCF 198票批量处置进行中：本轮已关闭7票，其中1121/1127经77 DB回归证明旧风险已覆盖，1293/1271/1307/1277/1316由#1578交付main9f1e0945c。下一批1224/1226/1196/1236；worker统一OpenCode Go DeepSeek V4.1 Flash high、full-access。未部署。
 
 ## NOW
+
+- SCF批量处置是本线程当前active线。#1578的33unit+47DB父线程复验、本地gate、独立初审及exact-head CI37471533645通过，五票Done；1121/1127经native真实DB测试关闭。原始票面与每票证据保留Linear。另10票只读核验正在运行，不将静态判断计为关闭。
 
 - YUK-1323：JSON同路径同值引用与typed pending兼容，重复键/危险属性拒绝；165unit与21独立探针通过，两次真实MiMo输出在最终代码离线回放通过。分支fix/yuk-1323-output-compat-delivery基于a60637d3f，集成165unit/typecheck/lint/build通过，PR/CI待完成；无部署或模型准入。YUK-1325 Laminar独立实施中。
 
@@ -87,7 +89,7 @@
 
 ## NEXT
 
-- 第一批已交付；YUK-1128 留第二批，尚未启动。
+- SCF下一批实施YUK-1224/1226/1196/1236；随后处理1134 claim释放竞态与1131 tokened资产URL。1128 CI planner尚未实施。
 
 1. YUK-1047/#1571收尾：五项及后续修复已完成，唯一验证审与真实Solo验收通过。YUK-1322审计修复4e7894f52、依赖修复73da2bffc已完成；推送后等exact-head CI及17分钟窗，满足后合并并关闭两票。不部署，不宣称模型质量准入。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。

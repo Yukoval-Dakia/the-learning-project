@@ -1,3 +1,9 @@
+# 当前交接 — 2026-10-06 SCF批量处置
+
+198票YUK-1121至1318，本轮新增关闭7票。1121/1127旧paper风险已由native执行链覆盖，父线程77 DB通过；1293/1271/1307/1277/1316由#1578合入9f1e0945c，33unit+47DB父线程复验、作者typecheck/build、完整lint297warnings、独立初审无P0/P1、CI37471533645全绿。未部署。
+
+下一writer分支fix/yuk-1224-parser-assets-batch基于最新origin/main9f1e0945c，处理1224/1226/1196/1236。OpenCode Go opencode-go/deepseek-v4.1-flash high、full-access已获明确授权，相关源码/票面/测试可发送，凭据/.env/生产数据除外。10票no-change独立核验任务scf198-nochange10-20261006仍运行，结果需父线程验证才关闭。不得完整本机pnpm test，不派嵌套代理，不改全局/Serena memory。
+
 # 当前交接 — 2026-10-06 YUK-1323
 
 工作树/tmp/tlp-yuk1323-delivery，分支fix/yuk-1323-output-compat-delivery，基于a60637d3f移植两个已审查提交。165unit和21独立探针通过，无剩余P0/P1；初审与唯一验证审预算已用完。两次真实MiMo调用发生于a361026b0，最终97369397c离线回放通过，不能称最终HEAD真实调用。集成165unit/typecheck/lint/build通过；PR、exact-head CI与等待窗仍待完成。Laminar YUK-1325在/tmp/tlp-laminar-yuk1325另行实施。无部署/准入。
