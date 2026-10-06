@@ -169,6 +169,14 @@ pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / di
 `pnpm test` 的 db / migration 分区用 `@testcontainers/postgresql` 启动真实 Postgres，
 运行前需要 Docker Desktop 或 OrbStack。
 
+## 当前部署目标：这台 Mac
+
+Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[授权记录](docs/planning/2026-10-07-autonomous-delivery-charter.md)。本机生产入口是 <http://localhost:8787>，沿用独立 app、worker 和 PostgreSQL。完整行为设计见[连续学习系统](docs/design/2026-10-06-continuous-learning-system-behavior.md)，设计基线不等于当前实现。
+
+当前发布准备与已验证结果见 [PLAN](PLAN.md)。不要从脏开发目录或过期 `/tmp` 覆盖文件直接重建生产。实际部署必须固定镜像提交、保存当前配置和数据、通过隔离恢复与完整迁移预演，再停止 writer、取最终备份、执行迁移，并按 worker / app 顺序恢复。
+
+下面的 NAS / Cloudflare Tunnel 指南保留为可选方式，不是当前 Mac 的默认操作入口。
+
 ## Self-host on NAS
 
 ### Prerequisites
