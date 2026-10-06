@@ -1,3 +1,7 @@
+# 当前交接 — YUK-1325 Laminar
+
+/tmp/tlp-laminar-yuk1325 feat/yuk-1325-laminar source4189a1430，初审P1隐私与live token映射缺陷均修复，唯一验证审337tests无P0/P1。两条原始真实MiMo与两条明确OFFLINE REPLAY的真实SDK→SQL验证见planning doc。浏览器确认新摘要；genericTaskEvaluator仍只读空LLM transcript误判失败，不能作质量gate。PR/CI待完成，不再启动第三review。无新模型调用/部署/准入；Serena ignored bytes与recovery stash保留。
+
 # 当前交接 — 2026-10-06 YUK-1323
 
 工作树/tmp/tlp-yuk1323-delivery，分支fix/yuk-1323-output-compat-delivery，基于a60637d3f移植两个已审查提交。165unit和21独立探针通过，无剩余P0/P1；初审与唯一验证审预算已用完。两次真实MiMo调用发生于a361026b0，最终97369397c离线回放通过，不能称最终HEAD真实调用。集成165unit/typecheck/lint/build通过；PR、exact-head CI与等待窗仍待完成。Laminar YUK-1325在/tmp/tlp-laminar-yuk1325另行实施。无部署/准入。

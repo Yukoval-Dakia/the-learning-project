@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> 更新于2026-10-06。YUK-1323引用/pending兼容修复完成独立验证审及真实输出回放，交付分支本地验证通过，PR/CI待完成；YUK-1325 Laminar在隔离工作树实施。模型准入仍withheld。
+> 更新于2026-10-06。YUK-1325 Laminar已完成独立验证审及真实SDK→SQL回放，准备PR；通用Task Evaluator仍误解空LLM transcript，不作评分质量gate。YUK-1323/#1577已交付，未部署。
 
 ## NOW
+
+- YUK-1325：可选Laminar trace、导入隐私检查、cache-inclusive tokens及安全评分角色摘要完成；337独立tests与真实SDK→SQL回放通过，浏览器已见。初审/唯一验证审预算用完；PR/CI待完成。通用external signal任务语义不适配，不能据此判断评分质量；无部署或模型准入。
 
 - YUK-1323：JSON同路径同值引用与typed pending兼容，重复键/危险属性拒绝；165unit与21独立探针通过，两次真实MiMo输出在最终代码离线回放通过。分支fix/yuk-1323-output-compat-delivery基于a60637d3f，集成165unit/typecheck/lint/build通过，PR/CI待完成；无部署或模型准入。YUK-1325 Laminar独立实施中。
 
