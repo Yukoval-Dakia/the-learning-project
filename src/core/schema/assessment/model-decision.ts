@@ -20,6 +20,19 @@ export const AssessmentRuleDecision = z.discriminatedUnion('kind', [
     })
     .strict(),
   z.object({ kind: z.literal('level'), level_id: z.string().min(1), ...support }).strict(),
-  z.object({ kind: z.literal('pending'), detail: z.string().min(1) }).strict(),
+  z
+    .object({
+      kind: z.literal('pending'),
+      detail: z.string().min(1),
+      evidence_citations: z
+        .array(
+          EvidenceCitation.strict().refine(
+            (citation) => citation.slot_id !== undefined || citation.evidence_id !== undefined,
+            'A pending citation must identify a slot or evidence attachment',
+          ),
+        )
+        .optional(),
+    })
+    .strict(),
 ]);
 export type AssessmentRuleDecisionT = z.infer<typeof AssessmentRuleDecision>;
