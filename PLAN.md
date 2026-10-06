@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> 更新于2026-10-06。第一批 YUK-588/1153/1132 已完成并合并 #1574/#1573/#1572；本地验证、独立初审、exact-head CI 均通过，Linear Done。Owner 更新合并规则：bot 全部结束且无 findings 时免等待窗，见 AGENTS.md。未部署、无付费调用。
+> 更新于2026-10-06。YUK-1323引用/pending兼容修复完成独立验证审及真实输出回放，交付分支本地验证通过，PR/CI待完成；YUK-1325 Laminar在隔离工作树实施。模型准入仍withheld。
 
 ## NOW
+
+- YUK-1323：JSON同路径同值引用与typed pending兼容，重复键/危险属性拒绝；165unit与21独立探针通过，两次真实MiMo输出在最终代码离线回放通过。分支fix/yuk-1323-output-compat-delivery基于a60637d3f，集成165unit/typecheck/lint/build通过，PR/CI待完成；无部署或模型准入。YUK-1325 Laminar独立实施中。
 
 - YUK-588/#1574 已合入 main `29afb45d3`；昨日全天费用独立折叠区交付，18unit/8浏览器、本地gate、独立初审及CI37462573054通过。YUK-1153/#1573 合入 `5b0cd9143`，10unit及CI37462471896通过；YUK-1132/#1572 合入 `86adca335`，16unit及CI37462450623通过；两票本地gate和独立安全初审通过。三票Done，详见 `.remember/yuk588-today-cost-ui.md`。
 
