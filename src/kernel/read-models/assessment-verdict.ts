@@ -1,4 +1,7 @@
-import { loadAssessmentLearningScopes } from './assessment-learning-scope';
+import {
+  issuedLearningKnowledgeIds,
+  loadAssessmentLearningScopes,
+} from './assessment-learning-scope';
 // YUK-1054 — 双轨裁决读模型（grounding §9–§10 read-model 切分）。
 //
 // 所有「某次作答/评估最终判了什么」的消费面共享这一个 resolver：
@@ -897,16 +900,11 @@ export async function resolveVerdictsForNativeAttempts(
         submission,
         issuance,
         revision,
-        knowledge_ids:
-          learningScopes.get(submission.submission_id)?.group_id === revision.group_id
-            ? [
-                ...new Set(
-                  learningScopes
-                    .get(submission.submission_id)
-                    ?.questions.flatMap((q) => q.knowledge_ids) ?? [],
-                ),
-              ]
-            : [],
+        knowledge_ids: issuedLearningKnowledgeIds({
+          scope: learningScopes.get(submission.submission_id),
+          groupId: revision.group_id,
+          partIds: issuance.part_ids,
+        }),
         original_evaluation_id: originalEvaluationId,
         ...(row.payload.paper_feedback_policy === 'judge_now_show_later' &&
         (typeof row.payload.paper_started_at !== 'string' ||

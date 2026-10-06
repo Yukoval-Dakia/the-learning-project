@@ -6,7 +6,7 @@
 // answer input surviving the failure.
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
@@ -108,7 +108,10 @@ function memoryStorage(): Storage {
   };
 }
 
-function renderSolo(addToast: (text: string, tone?: 'info', icon?: string) => void) {
+function renderSolo(
+  addToast: (text: string, tone?: 'info', icon?: string) => void,
+  onBack = vi.fn(),
+) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
@@ -118,7 +121,7 @@ function renderSolo(addToast: (text: string, tone?: 'info', icon?: string) => vo
         pos={1}
         total={1}
         onDone={vi.fn()}
-        onBack={vi.fn()}
+        onBack={onBack}
         onCommittedBack={vi.fn()}
         addToast={addToast}
       />
@@ -615,4 +618,142 @@ describe('PfSolo frozen photo requirements', () => {
     expect(buttons).toHaveLength(3);
     for (const button of buttons) expect(button).toHaveProperty('disabled', false);
   });
+});
+
+describe('PfSolo final draft acknowledgement before returning (YUK-1047)', () => {
+  const finalAnswer =
+    '导数是函数在给定点的局部变化率。\n先比较差商，再令增量趋向零；不可把平均变化率直接当作瞬时变化率。';
+
+  function draftTransport(save: (init?: RequestInit) => Promise<Response>) {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        if (url.endsWith('/responses')) return save(init);
+        const issuance = issuanceResponse(url);
+        if (issuance) return issuance;
+        if (url.includes('/api/questions/')) return Response.json(QUESTION);
+        return Response.json({});
+      }),
+    );
+  }
+
+  function ack(epoch: number) {
+    return Response.json({
+      status: 'saved',
+      save_epoch: epoch,
+      issuance_id: 'iss_stream_si_1',
+      updated_at: '2026-10-06T00:00:00.000Z',
+    });
+  }
+
+  it('flushes a debounce-pending edit and unmounts only after its server ACK', async () => {
+    let acknowledge!: (response: Response) => void;
+    const save = vi.fn(
+      (_init?: RequestInit) =>
+        new Promise<Response>((resolve) => {
+          acknowledge = resolve;
+        }),
+    );
+    draftTransport(save);
+    const onBack = vi.fn(() => view.unmount());
+    const view = renderSolo(vi.fn(), onBack);
+    const answer = await screen.findByRole('textbox', { name: '作答' });
+    fireEvent.change(answer, { target: { value: finalAnswer } });
+    fireEvent.click(screen.getByRole('button', { name: '返回流' }));
+    await waitFor(() => expect(save).toHaveBeenCalledOnce());
+    expect(onBack).not.toHaveBeenCalled();
+    expect(screen.getByRole('textbox', { name: '作答' })).toBe(answer);
+    expect(
+      JSON.parse(save.mock.calls[0]?.[0]?.body?.toString() ?? '{}').response_set.entries[0].text_md,
+    ).toBe(finalAnswer);
+    await act(async () => {
+      acknowledge(ack(1));
+    });
+    await waitFor(() => expect(onBack).toHaveBeenCalledOnce());
+    expect(screen.queryByRole('textbox', { name: '作答' })).toBeNull();
+  });
+
+  it.each([200, 503, 409])(
+    'awaits an older in-flight ACK and final ACK or retry after HTTP %s',
+    async (status) => {
+      const acknowledge: Array<(response: Response) => void> = [];
+      const save = vi.fn(
+        (_init?: RequestInit) =>
+          new Promise<Response>((resolve) => {
+            acknowledge.push(resolve);
+          }),
+      );
+      draftTransport(save);
+      const onBack = vi.fn();
+      renderSolo(vi.fn(), onBack);
+      const answer = await screen.findByRole('textbox', { name: '作答' });
+      fireEvent.change(answer, { target: { value: '先写差商' } });
+      await waitFor(() => expect(save).toHaveBeenCalledOnce(), { timeout: 1500 });
+      fireEvent.change(answer, { target: { value: finalAnswer } });
+      fireEvent.click(screen.getByRole('button', { name: '返回流' }));
+      expect(onBack).not.toHaveBeenCalled();
+      await act(async () => {
+        acknowledge[0]?.(ack(7));
+      });
+      await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+      expect(onBack).not.toHaveBeenCalled();
+      const finalPayload = JSON.parse(save.mock.calls[1]?.[0]?.body?.toString() ?? '{}');
+      expect(finalPayload.expected_save_epoch).toBe(7);
+      expect(finalPayload.response_set.entries[0].text_md).toBe(finalAnswer);
+      await act(async () => {
+        acknowledge[1]?.(
+          status === 200 ? ack(8) : Response.json({ error: 'draft_not_saved' }, { status }),
+        );
+      });
+      if (status !== 200) {
+        await screen.findByText(status === 409 ? '版本有更新 · 先刷新再改' : '保存失败 · 重试');
+        expect(onBack).not.toHaveBeenCalled();
+        expect(answer).toMatchObject({ value: finalAnswer });
+        fireEvent.click(screen.getByRole('button', { name: '返回流' }));
+        await waitFor(() => expect(save).toHaveBeenCalledTimes(3));
+        expect(
+          JSON.parse(save.mock.calls[2]?.[0]?.body?.toString() ?? '{}').expected_save_epoch,
+        ).toBe(7);
+        await act(async () => {
+          acknowledge[2]?.(ack(8));
+        });
+      }
+      await waitFor(() => expect(onBack).toHaveBeenCalledOnce());
+    },
+  );
+
+  it.each([503, 409])(
+    'preserves recoverable input after HTTP %s and exits only after a successful retry ACK',
+    async (status) => {
+      let acknowledge!: (response: Response) => void;
+      const save = vi
+        .fn((_init?: RequestInit) =>
+          Promise.resolve(Response.json({ error: 'draft_not_saved' }, { status })),
+        )
+        .mockImplementationOnce(async () => Response.json({ error: 'draft_not_saved' }, { status }))
+        .mockImplementationOnce(
+          () =>
+            new Promise<Response>((resolve) => {
+              acknowledge = resolve;
+            }),
+        );
+      draftTransport(save);
+      const onBack = vi.fn();
+      renderSolo(vi.fn(), onBack);
+      const answer = await screen.findByRole('textbox', { name: '作答' });
+      fireEvent.change(answer, { target: { value: finalAnswer } });
+      fireEvent.click(screen.getByRole('button', { name: '返回流' }));
+      await screen.findByText(status === 409 ? '版本有更新 · 先刷新再改' : '保存失败 · 重试');
+      expect(onBack).not.toHaveBeenCalled();
+      expect(answer).toMatchObject({ value: finalAnswer });
+      fireEvent.click(screen.getByRole('button', { name: '返回流' }));
+      await waitFor(() => expect(save).toHaveBeenCalledTimes(2));
+      expect(onBack).not.toHaveBeenCalled();
+      await act(async () => {
+        acknowledge(ack(1));
+      });
+      await waitFor(() => expect(onBack).toHaveBeenCalledOnce());
+    },
+  );
 });

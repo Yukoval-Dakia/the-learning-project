@@ -1,9 +1,14 @@
+// biome-ignore-all lint/suspicious/noTemplateCurlyInString: Source fixtures intentionally contain unevaluated SQL template expressions.
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   type WriteStatement,
+  auditSchemaWrites,
+  buildProductionWriteIndex,
   countWriteHits,
   extractMergedPrRefsFromGitLog,
   extractWriteStatements,
+  formatHistoricalRetention,
   parseSchema,
   todayIso,
   validateAllowlistHygiene,
@@ -521,5 +526,167 @@ describe('extractWriteStatements upsert + bare-ident + statement bounding (YUK-1
       insert_files: 0,
       update_files: 0,
     });
+  });
+});
+
+const retainedTable = 'copilot_evidence_checkpoint';
+const currentSchema = readFileSync('src/db/schema.ts', 'utf8');
+const retainedBlock = currentSchema.slice(
+  currentSchema.indexOf('export const copilot_evidence_checkpoint ='),
+  currentSchema.indexOf('export const provider_attempt ='),
+);
+const retentionAudit = (schema = retainedBlock, source = '') =>
+  auditSchemaWrites(schema, new Map([['src/copilot/checkpoint.ts', source]]));
+
+describe('ADR-0058 / YUK-939 historical checkpoint retention', () => {
+  it('keeps every retained column visible with rationale in JSON and text, including defaults', () => {
+    const report = retentionAudit();
+    expect(report.historicalRetention.issues).toEqual([]);
+    expect(report.results).toHaveLength(19);
+    expect(report.results.every((field) => field.status === 'historical-retained')).toBe(true);
+    expect(
+      report.results.every((field) => field.insert_files === 0 && field.update_files === 0),
+    ).toBe(true);
+    const json = JSON.stringify(report);
+    const text = formatHistoricalRetention(report.historicalRetention);
+    for (const name of ['id', 'created_at', 'updated_at', 'records_json', 'expires_at']) {
+      expect(json).toContain(name);
+      expect(text).toContain(name);
+    }
+    expect(json).toContain('ADR-0058');
+    expect(text).toContain('YUK-939');
+    expect(text).toContain('19');
+  });
+
+  it.each([
+    ['', 'missing_table'],
+    [
+      retainedBlock.replace(
+        "timestamp('expires_at', { withTimezone: true })",
+        "timestamp('expires_at', { withTimezone: false })",
+      ),
+      'changed_column_type',
+    ],
+    [retainedBlock.replace("    slot: text('slot').notNull(),", ''), 'missing_column'],
+    [
+      retainedBlock.replace("    slot: text('slot')", "    slot: integer('slot')"),
+      'changed_column_type',
+    ],
+    [
+      retainedBlock.replace("    slot: text('slot')", "    slot: text('renamed_slot')"),
+      'missing_column',
+    ],
+    [
+      retainedBlock.replace("    slot: text('slot')", "    slot: customType('slot')"),
+      'changed_column_type',
+    ],
+    [retainedBlock.replace('    id:', "    extra: jsonb('extra'),\n    id:"), 'added_column'],
+    [retainedBlock.replace('    id:', "    extra: customType('extra'),\n    id:"), 'added_column'],
+  ])('rejects a missing table or changed complete column inventory (%s)', (schema, code) => {
+    expect(retentionAudit(schema).historicalRetention.issues).toContainEqual(
+      expect.objectContaining({ code }),
+    );
+  });
+
+  it.each([
+    [
+      'insert',
+      "await tx.insert(copilot_evidence_checkpoint).values({ id: 'cp-1', task_kind: 'CopilotEvidenceReviewTask', slot: 'research', protocol_version: 2, records_json: [{ source_id: 'paper-1', excerpt: 'Long historical evidence with nested citations', citations: [{ page: 3, offsets: [40, 120] }] }], expires_at: new Date() });",
+    ],
+    [
+      'update',
+      "await tx.update(copilot_evidence_checkpoint).set({ status: 'sealed', revision: 4, sealed_output_json: { summary: 'Historical evidence conclusion', sources: [{ id: 'paper-1', passages: ['long excerpt'] }] } }).where(eq(copilot_evidence_checkpoint.id, id));",
+    ],
+    [
+      'insert',
+      "db.insert(copilot_evidence_checkpoint).values({ id: 'cp-2', created_at: new Date() });",
+    ],
+    ['insert', 'db.insert(copilot_evidence_checkpoint).values(opaquePayload);'],
+    [
+      'update',
+      'db.update(copilot_evidence_checkpoint).set(opaquePayload).where(eq(copilot_evidence_checkpoint.id, id));',
+    ],
+    ['update', "db.update(copilot_evidence_checkpoint).set({ unknown_field: 'unrecognized' });"],
+    [
+      'update',
+      'db.insert(copilot_evidence_checkpoint).values({ id }).onConflictDoUpdate({ target: copilot_evidence_checkpoint.id, set: opaquePayload });',
+    ],
+    [
+      'insert',
+      'await tx.execute(sql`insert into copilot_evidence_checkpoint (id, records_json) values (${id}, ${JSON.stringify(records)})`);',
+    ],
+    [
+      'update',
+      'await tx.execute(sql`update copilot_evidence_checkpoint c set records_json = ${records}, revision = revision + 1 where c.id = ${id}`);',
+    ],
+    [
+      'insert',
+      'await tx.execute(sql`insert into copilot_evidence_checkpoint (id) values (${id})`);',
+    ],
+    ['insert', 'await tx.execute(sql`insert into copilot_evidence_checkpoint default values`);'],
+    [
+      'insert',
+      'await tx.execute(sql`insert into copilot_evidence_checkpoint values (${opaquePayload})`);',
+    ],
+    [
+      'update',
+      'await tx.execute(sql`update copilot_evidence_checkpoint set ${opaqueAssignment} where id = ${id}`);',
+    ],
+  ])('rejects table-level %s independently of field evidence: %s', (kind, source) => {
+    expect(retentionAudit(retainedBlock, source).historicalRetention.issues).toContainEqual(
+      expect.objectContaining({
+        code: 'production_write',
+        kind,
+        path: 'src/copilot/checkpoint.ts',
+      }),
+    );
+  });
+
+  it('preserves opaque UPDATE table evidence in the production index', () => {
+    expect(
+      buildProductionWriteIndex(
+        new Map([['src/writer.ts', 'db.update(copilot_evidence_checkpoint).set(opaquePayload);']]),
+      ).get('src/writer.ts'),
+    ).toContainEqual({ kind: 'update', table: retainedTable, payload: '{}' });
+  });
+
+  it('does not reject fixture writes, read-only exports, unused SQL or database defaults', () => {
+    const sources = new Map([
+      [
+        'src/export.ts',
+        "const historical = await db.select().from(copilot_evidence_checkpoint); const docs = sql`update copilot_evidence_checkpoint set status = 'sealed'`;",
+      ],
+      [
+        'src/copilot/checkpoint.test.ts',
+        'db.update(copilot_evidence_checkpoint).set(opaquePayload);',
+      ],
+      [
+        'src/fixtures/checkpoint.ts',
+        "db.insert(copilot_evidence_checkpoint).values({ id: 'fixture' });",
+      ],
+      ['src/db/schema.ts', retainedBlock],
+    ]);
+    expect(auditSchemaWrites(retainedBlock, sources).historicalRetention.issues).toEqual([]);
+  });
+
+  it('does not excuse unrelated stubs or expired allowances', () => {
+    const report = retentionAudit(
+      `${retainedBlock}export const active = pgTable('active', {\n  pending: text('pending'),\n});`,
+    );
+    expect(report.results).toContainEqual(
+      expect.objectContaining({ table: 'active', field: 'pending', status: 'stub' }),
+    );
+    const hygiene = validateAllowlistHygiene(
+      {
+        'active.pending': {
+          reason: 'Still awaiting a live writer',
+          resolves_when: { kind: 'manual', ref: 'YUK-1113', expected_by: '2026-10-05' },
+        },
+      },
+      { ...OPTIONS, today: '2026-10-06' },
+    );
+    expect(hygiene.issues).toContainEqual(
+      expect.objectContaining({ key: 'active.pending', code: 'expired_expected_by' }),
+    );
   });
 });

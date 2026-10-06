@@ -32,7 +32,7 @@ export interface ResponseDraftAutosave {
   state: SaveState;
   generation: number;
   /** 立即保存当前值（取消待发 debounce）；keepalive 供 pagehide。 */
-  flush: (opts?: { keepalive?: boolean }) => void;
+  flush: (opts?: { keepalive?: boolean }) => Promise<boolean>;
   retry: () => void;
   lastSavedAt: number | null;
 }
@@ -56,7 +56,7 @@ export function useResponseDraftAutosave<T>({
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   // seq 守卫：只有最新一轮保存的响应可以写状态（旧成功不盖新失败，反之亦然）。
   const seqRef = useRef(0);
-  const inFlightRef = useRef(false);
+  const inFlightRef = useRef<Promise<boolean> | null>(null);
   const enabledRef = useRef(enabled);
   enabledRef.current = enabled;
   const saveRef = useRef(save);
@@ -64,32 +64,37 @@ export function useResponseDraftAutosave<T>({
   const serializeRef = useRef(serialize);
   serializeRef.current = serialize;
 
-  const runSave = useCallback((keepalive: boolean) => {
-    if (!enabledRef.current || inFlightRef.current) return;
+  const runSave = useCallback((keepalive: boolean): Promise<boolean> => {
+    if (inFlightRef.current) return inFlightRef.current;
+    if (!enabledRef.current) return Promise.resolve(true);
     const seq = ++seqRef.current;
-    inFlightRef.current = true;
     setState('saving');
-    const snapshot = valueRef.current;
-    const snapshotSerialized = serializeRef.current(snapshot);
-    void Promise.resolve()
-      .then(() => saveRef.current(snapshot, { keepalive }))
-      .then(() => {
-        if (seqRef.current !== seq) return;
-        inFlightRef.current = false;
-        baselineRef.current = snapshotSerialized;
-        setLastSavedAt(Date.now());
-        if (enabledRef.current && serializeRef.current(valueRef.current) !== snapshotSerialized) {
-          // 保存途中又改了 —— 立即补一轮（不再等 debounce）。
-          runSave(false);
-          return;
+    const pending = Promise.resolve().then(async () => {
+      try {
+        for (;;) {
+          const snapshot = valueRef.current;
+          const snapshotSerialized = serializeRef.current(snapshot);
+          await saveRef.current(snapshot, { keepalive });
+          if (seqRef.current !== seq) return false;
+          baselineRef.current = snapshotSerialized;
+          setLastSavedAt(Date.now());
+          if (enabledRef.current && serializeRef.current(valueRef.current) !== snapshotSerialized) {
+            keepalive = false;
+            continue;
+          }
+          setState('saved');
+          return true;
         }
-        setState('saved');
-      })
-      .catch((err) => {
-        if (seqRef.current !== seq) return;
-        inFlightRef.current = false;
-        setState(err instanceof ApiError && err.status === 409 ? 'conflict' : 'error');
-      });
+      } catch (err) {
+        if (seqRef.current === seq)
+          setState(err instanceof ApiError && err.status === 409 ? 'conflict' : 'error');
+        return false;
+      } finally {
+        if (seqRef.current === seq) inFlightRef.current = null;
+      }
+    });
+    inFlightRef.current = pending;
+    return pending;
   }, []);
 
   // 内容变更追踪：generation +1；去抖排程。
@@ -117,7 +122,7 @@ export function useResponseDraftAutosave<T>({
     if (timerRef.current) clearTimeout(timerRef.current);
     timerRef.current = setTimeout(() => {
       timerRef.current = null;
-      runSave(false);
+      void runSave(false);
     }, debounceMs);
   }, [value, debounceMs, enabled, runSave]);
 
@@ -131,25 +136,22 @@ export function useResponseDraftAutosave<T>({
   );
   const flush = useCallback(
     (opts: { keepalive?: boolean } = {}) => {
-      if (!enabledRef.current) return;
       if (timerRef.current) {
         clearTimeout(timerRef.current);
         timerRef.current = null;
       }
-      // 无脏内容不空发；在飞的一轮已经是「最新值」（valueRef 同步于渲染）。
+      // Await the full save chain, including edits made while an older ACK is pending.
       const serialized = serializeRef.current(valueRef.current);
-      if (serialized === baselineRef.current) return;
-      if (inFlightRef.current) {
-        return;
-      }
+      if (inFlightRef.current) return inFlightRef.current;
+      if (!enabledRef.current || serialized === baselineRef.current) return Promise.resolve(true);
       lastSerializedRef.current = serialized;
-      runSave(opts.keepalive === true);
+      return runSave(opts.keepalive === true);
     },
     [runSave],
   );
   const retry = useCallback(() => {
     if (inFlightRef.current) return;
-    runSave(false);
+    void runSave(false);
   }, [runSave]);
   return { state, generation, flush, retry, lastSavedAt };
 }

@@ -55,12 +55,16 @@ export function extractExecutedSqlWrites(source: string): WriteStatement[] {
       ) {
         const sql = staticSql(arg.template);
         for (const match of sql.matchAll(
-          /\binsert\s+into\s+([a-z_][\w]*)\s*\(([^()]*)\)\s*(?:values|select)\b/gi,
+          /\binsert\s+into\s+([a-z_][\w]*)\s*(?:\(([^()]*)\)\s*)?(?:default\s+values|values|select)\b/gi,
         )) {
-          const columns = match[2].split(',').map((column) => column.trim());
-          if (columns.every((column) => /^[a-z_][\w]*$/i.test(column))) {
-            statements.push({ kind: 'insert', table: match[1], payload: payload(columns) });
-          }
+          const columns = match[2]?.split(',').map((column) => column.trim()) ?? [];
+          statements.push({
+            kind: 'insert',
+            table: match[1],
+            payload: payload(
+              columns.every((column) => /^[a-z_][\w]*$/i.test(column)) ? columns : [],
+            ),
+          });
         }
         const top = topLevelSql(sql);
         for (const match of top.matchAll(
@@ -70,8 +74,7 @@ export function extractExecutedSqlWrites(source: string): WriteStatement[] {
             const column = /^\s*([a-z_][\w]*)\s*=/.exec(assignment)?.[1];
             return column ? [column] : [];
           });
-          if (columns.length)
-            statements.push({ kind: 'update', table: match[1], payload: payload(columns) });
+          statements.push({ kind: 'update', table: match[1], payload: payload(columns) });
         }
       }
     }

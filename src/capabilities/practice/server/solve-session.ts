@@ -9,7 +9,7 @@ import { question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
-import { createLearningRecord } from '@/kernel/records/queries';
+import { createAssessmentLearningRecord } from '@/kernel/records/queries';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import { sanitizeJsonStringLiterals } from '@/server/orchestrator/json-sanitize';
 import { Tutor } from '@/server/session';
@@ -366,7 +366,7 @@ export async function submitSolveAttempt(
           ];
           const assetRefs = [...new Set(attachments.map((item) => item.asset.asset_id))];
           if (belowMastery)
-            await createLearningRecord(tx, {
+            await createAssessmentLearningRecord(tx, {
               id: mistakeId,
               kind: 'mistake',
               title: null,
@@ -376,7 +376,7 @@ export async function submitSolveAttempt(
               activity_kind: 'attempt',
               processing_status: 'raw',
               origin_event_id: attemptId,
-              knowledge_ids: [],
+              submission_id: prepared.submission.submission_id,
               question_id: questionId,
               attempt_event_id: attemptId,
               asset_refs: assetRefs,

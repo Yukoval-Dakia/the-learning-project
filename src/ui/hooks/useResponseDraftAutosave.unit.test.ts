@@ -62,7 +62,9 @@ describe('useResponseDraftAutosave', () => {
       acknowledge();
     });
     await waitFor(() => expect(result.current.state).toBe('error'));
-    act(() => result.current.flush({ keepalive: true }));
+    act(() => {
+      void result.current.flush({ keepalive: true });
+    });
     await waitFor(() => expect(save).toHaveBeenCalledTimes(3));
     expect(save).toHaveBeenLastCalledWith('newest edit', { keepalive: true });
   });

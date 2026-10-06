@@ -326,6 +326,8 @@ export function PfSolo({
   const [appealOpen, setAppealOpen] = useState(false);
   const [appealText, setAppealText] = useState('');
   const [committing, setCommitting] = useState(false);
+  const [returning, setReturning] = useState(false);
+  const returningRef = useRef(false);
   const [coach, setCoach] = useState(false);
   // YUK-432 — 客观题在 preview 回来时已自动 commit（auto_rate:true）。记下来：反馈卡保留判定，
   // 「下一项」只 onDone() 推进（不再二次 commit）。开放题恒 false → 现有手动流不变。
@@ -353,6 +355,7 @@ export function PfSolo({
     queryKey: ['practice-issuance', issuanceId, issuanceMode],
     enabled: q !== null,
     retry: false,
+    refetchOnMount: 'always',
     queryFn: async () => {
       try {
         return await getIssuanceState(issuanceId);
@@ -374,10 +377,17 @@ export function PfSolo({
   const hydratedIssuance = useRef<string | null>(null);
   const [restoredIssuanceId, setRestoredIssuanceId] = useState<string | null>(null);
   useEffect(() => {
-    if (!frozenQ.data?.issuance || hydratedIssuance.current === frozenQ.data.issuance.issuance_id)
+    // Cached data belongs to the previous answering session. Restore only after this
+    // mount's successful read, then keep background reads from replacing local edits.
+    if (
+      !frozenQ.isFetchedAfterMount ||
+      frozenQ.isError ||
+      !frozenQ.data?.issuance ||
+      hydratedIssuance.current === frozenQ.data.issuance.issuance_id
+    )
       return;
     hydratedIssuance.current = frozenQ.data.issuance.issuance_id;
-    const restored = frozenQ.data.draft ?? frozenQ.data.submissions[0];
+    const restored = frozenQ.data.submissions[0] ?? frozenQ.data.draft;
     setNativeResponses(restored?.response_set ?? { entries: [] });
     setEvidence(
       (restored?.group_evidence ?? []).map((item) => ({
@@ -389,7 +399,7 @@ export function PfSolo({
     );
     draftEpoch.current = frozenQ.data.draft?.save_epoch;
     setRestoredIssuanceId(frozenQ.data.issuance.issuance_id);
-  }, [frozenQ.data]);
+  }, [frozenQ.data, frozenQ.isFetchedAfterMount, frozenQ.isError]);
   const nativeEvidence = useMemo(
     () =>
       evidence.flatMap((item) =>
@@ -456,6 +466,7 @@ export function PfSolo({
     .join('\n');
   const canSubmit =
     !!frozen &&
+    !returning &&
     !judging &&
     !pendingRun &&
     !uploading &&
@@ -488,8 +499,19 @@ export function PfSolo({
   const phase = committedPreview ? 'feedback' : derivePhase(preview, pendingPreview);
   // YUK-432 (Bugbot FINDING 1) — 「返回流」出口：自动 commit 后必须标 slot done（onCommittedBack），
   // 否则只 onBack 会留下「已判分但 slot 卡 in_progress」的不一致。未自动 commit → 原 onBack。
-  const handleBack = () =>
-    shouldMarkSlotDoneOnBack(autoCommitted) && onCommittedBack ? onCommittedBack() : onBack();
+  const handleBack = async () => {
+    if (returningRef.current || uploading || judging || committing) return;
+    returningRef.current = true;
+    setReturning(true);
+    try {
+      if (!(await autosave.flush())) return;
+      if (shouldMarkSlotDoneOnBack(autoCommitted) && onCommittedBack) onCommittedBack();
+      else onBack();
+    } finally {
+      returningRef.current = false;
+      setReturning(false);
+    }
+  };
 
   // YUK-433 — solo 路径 RT capture：题面就绪（q 拿到）那刻起算计时器，per 题 RESET。host 给每个 StreamItem
   // 复用本组件实例（query 的 key 含 item.ref_id）。依赖列表只用 q?.id 即足够且更准：换题时 queryKey 变 →
@@ -588,7 +610,7 @@ export function PfSolo({
     previewOverride?: JudgePreview;
   }) => {
     const pv = opts.previewOverride ?? preview;
-    if (!q || (!pv && issuanceMode !== 'manual') || committing) return;
+    if (returningRef.current || !q || (!pv && issuanceMode !== 'manual') || committing) return;
     setCommitting(true);
     try {
       const res = await submitReview({
@@ -691,7 +713,7 @@ export function PfSolo({
   };
 
   const runJudge = async () => {
-    if (!q || !canSubmit || issuanceMode === 'manual') return;
+    if (returningRef.current || !q || !canSubmit || issuanceMode === 'manual') return;
     setJudging(true);
     try {
       if (isInterventionDiagnostic) {
@@ -824,6 +846,8 @@ export function PfSolo({
       </div>
     );
 
+  if (restoredIssuanceId !== issuanceId) return <p className="quiet-empty">正在恢复作答</p>;
+
   const displayedPreview = preview ?? committedPreview;
   const verdict = displayedPreview ? VERDICT_OF[displayedPreview.coarse_outcome] : null;
 
@@ -831,7 +855,13 @@ export function PfSolo({
     <div className="pfs" data-screen-label={`散题作答 · ${q.id}`}>
       <div className="pfs-top">
         {/* YUK-432 (FINDING 1) — 自动 commit 后「返回流」走 handleBack（标 slot done），否则 onBack。 */}
-        <Btn size="sm" variant="ghost" icon="arrowL" onClick={() => handleBack()}>
+        <Btn
+          size="sm"
+          variant="ghost"
+          icon="arrowL"
+          disabled={returning}
+          onClick={() => void handleBack()}
+        >
           返回流
         </Btn>
         <span className="pfs-pos">
@@ -918,7 +948,7 @@ export function PfSolo({
                   value={nativeResponseValue(entry)}
                   label={slot.placement?.label}
                   notation={q.notation}
-                  disabled={phase !== 'answering' || !!accepted}
+                  disabled={returning || phase !== 'answering' || !!accepted}
                   onChange={(value) =>
                     updateNativeResponse(nativeResponseEntry(slot, value, entry))
                   }
@@ -939,7 +969,7 @@ export function PfSolo({
               showText={false}
               attachments={evidence}
               onAttachmentsChange={setEvidence}
-              disabled={phase !== 'answering' || !!accepted}
+              disabled={returning || phase !== 'answering' || !!accepted}
               onUploadingChange={setUploading}
             />
           </>

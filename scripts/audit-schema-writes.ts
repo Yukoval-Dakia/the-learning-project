@@ -17,6 +17,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import { extractDrizzleWriteIndex, payloadColumns } from './schema-drizzle-producers';
 import { extractDatabaseGeneratedWrites, extractExecutedSqlWrites } from './schema-write-producers';
 
@@ -66,8 +67,173 @@ type WriteHit = {
   type: string;
   insert_files: number;
   update_files: number;
-  status: 'live' | 'init-only' | 'update-only' | 'stub';
+  status: 'live' | 'init-only' | 'update-only' | 'stub' | 'historical-retained';
 };
+
+// ADR-0058 / YUK-939 intentionally retired this writer, not its historical
+// schema. This fixed inventory is a retention contract, never a dated allowance.
+const HISTORICAL_TABLE = 'copilot_evidence_checkpoint';
+const HISTORICAL_COLUMNS: Readonly<Record<string, string>> = {
+  id: 'text',
+  task_kind: 'text',
+  slot: 'text',
+  protocol_version: 'integer',
+  prompt_fingerprint: 'text',
+  base_input_sha256: 'text',
+  source_catalog_sha256: 'text',
+  binding_extras: 'jsonb',
+  status: 'text',
+  revision: 'integer',
+  records_json: 'jsonb',
+  record_digests_json: 'jsonb',
+  attempts_json: 'jsonb',
+  sealed_output_json: 'jsonb',
+  sealed_digest_sha256: 'text',
+  sealed_task_run_id: 'text',
+  created_at: 'timestamp with time zone',
+  updated_at: 'timestamp with time zone',
+  expires_at: 'timestamp with time zone',
+};
+type HistoricalRetentionIssue =
+  | {
+      code: 'missing_table' | 'missing_column' | 'added_column' | 'changed_column_type';
+      message: string;
+    }
+  | { code: 'production_write'; kind: WriteStatement['kind']; path: string; message: string };
+type HistoricalRetention = {
+  table: string;
+  reason: string;
+  fields: Field[];
+  issues: HistoricalRetentionIssue[];
+};
+
+/** Narrow inventory check including columns the business-field regex cannot parse. */
+function historicalRetention(
+  schema: string,
+  productionIndex: ReadonlyMap<string, WriteStatement[]>,
+): HistoricalRetention {
+  const fields: Field[] = [];
+  const issues: HistoricalRetentionIssue[] = [];
+  let found = false;
+  const file = ts.createSourceFile('schema.ts', schema, ts.ScriptTarget.Latest, true);
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'pgTable'
+    ) {
+      const [name, columns] = node.arguments;
+      if (name && ts.isStringLiteral(name) && name.text === HISTORICAL_TABLE) {
+        found = true;
+        if (columns && ts.isObjectLiteralExpression(columns)) {
+          for (const column of columns.properties) {
+            if (!ts.isPropertyAssignment(column)) {
+              issues.push({
+                code: 'added_column',
+                message: 'Historical columns must remain explicit property assignments',
+              });
+              continue;
+            }
+            let builder = column.initializer;
+            while (
+              ts.isCallExpression(builder) &&
+              ts.isPropertyAccessExpression(builder.expression)
+            ) {
+              builder = builder.expression.expression;
+            }
+            const columnName = ts.isCallExpression(builder) ? builder.arguments[0] : undefined;
+            const field =
+              columnName && ts.isStringLiteral(columnName)
+                ? columnName.text
+                : column.name.getText(file);
+            let type =
+              columnName &&
+              ts.isStringLiteral(columnName) &&
+              ts.isCallExpression(builder) &&
+              ts.isIdentifier(builder.expression)
+                ? builder.expression.text
+                : 'unrecognized';
+            if (type === 'timestamp' && ts.isCallExpression(builder)) {
+              const options = builder.arguments[1];
+              const timezone =
+                options && ts.isObjectLiteralExpression(options)
+                  ? options.properties.find(
+                      (option) =>
+                        ts.isPropertyAssignment(option) &&
+                        option.name.getText(file) === 'withTimezone',
+                    )
+                  : undefined;
+              if (
+                timezone &&
+                ts.isPropertyAssignment(timezone) &&
+                timezone.initializer.kind === ts.SyntaxKind.TrueKeyword
+              )
+                type = 'timestamp with time zone';
+            }
+            fields.push({ table: HISTORICAL_TABLE, field, type });
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  if (!found)
+    issues.push({ code: 'missing_table', message: `${HISTORICAL_TABLE} must remain in schema` });
+  for (const [field, type] of Object.entries(HISTORICAL_COLUMNS)) {
+    const actual = fields.filter((column) => column.field === field);
+    if (!actual.length)
+      issues.push({
+        code: 'missing_column',
+        message: `${HISTORICAL_TABLE}.${field} (${type}) must remain`,
+      });
+    for (const column of actual) {
+      if (column.type !== type)
+        issues.push({
+          code: 'changed_column_type',
+          message: `${HISTORICAL_TABLE}.${field}: expected ${type}, found ${column.type}`,
+        });
+    }
+    if (actual.length > 1)
+      issues.push({ code: 'added_column', message: `${HISTORICAL_TABLE}.${field} is duplicated` });
+  }
+  for (const column of fields) {
+    if (!Object.hasOwn(HISTORICAL_COLUMNS, column.field))
+      issues.push({
+        code: 'added_column',
+        message: `${HISTORICAL_TABLE}.${column.field} (${column.type}) is outside the retained inventory`,
+      });
+  }
+  // Count table targets before adding schema-generated defaults. A forbidden
+  // write needs no recognized payload columns, including trivial-only writes.
+  for (const [path, statements] of productionIndex) {
+    for (const statement of statements) {
+      if (statement.table === HISTORICAL_TABLE)
+        issues.push({
+          code: 'production_write',
+          kind: statement.kind,
+          path,
+          message: `${path}: ${statement.kind.toUpperCase()} targets historical ${HISTORICAL_TABLE}`,
+        });
+    }
+  }
+  return {
+    table: HISTORICAL_TABLE,
+    reason:
+      'ADR-0058 / YUK-939 retired Copilot evidence checkpoint writers; retain historical rows/schema and export/restore compatibility. Production INSERT/UPDATE is forbidden.',
+    fields,
+    issues,
+  };
+}
+
+export function formatHistoricalRetention(retention: HistoricalRetention): string {
+  return [
+    `Historical retention: ${retention.table} (${retention.fields.length} columns)`,
+    retention.reason,
+    ...retention.fields.map((field) => `  ${field.table}.${field.field}: ${field.type}`),
+    ...retention.issues.map((issue) => `  ${issue.code}: ${issue.message}`),
+  ].join('\n');
+}
 
 const TRIVIAL_FIELDS = new Set(['id', 'created_at', 'updated_at', 'version', 'archived_at']);
 const RESOLVE_KINDS = new Set<ResolveKind>(['pr', 'phase', 'manual']);
@@ -463,19 +629,19 @@ export function countWriteHits(
   return { insert_files: insertFiles, update_files: updateFiles };
 }
 
-function audit(): WriteHit[] {
-  const src = readFileSync(SCHEMA_PATH, 'utf8');
-  const fields = parseSchema(src);
-  const files: string[] = [];
-  for (const d of SEARCH_DIRS) walkFiles(d, files);
-  const index = buildProductionWriteIndex(
-    new Map(files.map((path) => [path, readFileSync(path, 'utf8')])),
-  );
-  // Generated defaults are schema-owned INSERT producers, not fixture writes.
-  index.set(SCHEMA_PATH, extractDatabaseGeneratedWrites(src));
+export function auditSchemaWrites(schema: string, sources: ReadonlyMap<string, string>) {
+  const index = buildProductionWriteIndex(sources);
+  const retention = historicalRetention(schema, index);
+  const retainedHits = retention.fields.map((field) => ({
+    ...field,
+    ...countWriteHits(field.table, field.field, index),
+  }));
+  // Defaults remain valid business-field evidence, but cannot resurrect a
+  // retired production writer or violate historical retention.
+  index.set(SCHEMA_PATH, extractDatabaseGeneratedWrites(schema));
   const results: WriteHit[] = [];
-  for (const f of fields) {
-    if (TRIVIAL_FIELDS.has(f.field)) continue;
+  for (const f of parseSchema(schema)) {
+    if (f.table === HISTORICAL_TABLE || TRIVIAL_FIELDS.has(f.field)) continue;
     const { insert_files, update_files } = countWriteHits(f.table, f.field, index);
     let status: WriteHit['status'];
     if (insert_files > 0 && update_files > 0) status = 'live';
@@ -484,7 +650,21 @@ function audit(): WriteHit[] {
     else status = 'stub';
     results.push({ ...f, insert_files, update_files, status });
   }
-  return results;
+  for (const field of retainedHits) {
+    // Explicitly report all 19 columns, even id/timestamps. Their inventory and
+    // the table's production-write prohibition are enforced separately above.
+    results.push({ ...field, status: 'historical-retained' });
+  }
+  return { results, historicalRetention: retention };
+}
+
+function audit() {
+  const files: string[] = [];
+  for (const d of SEARCH_DIRS) walkFiles(d, files);
+  return auditSchemaWrites(
+    readFileSync(SCHEMA_PATH, 'utf8'),
+    new Map(files.map((path) => [path, readFileSync(path, 'utf8')])),
+  );
 }
 
 function main() {
@@ -492,7 +672,7 @@ function main() {
   const asJson = args.includes('--json');
   const listOnly = args.includes('--list');
 
-  const results = audit();
+  const { results, historicalRetention: retention } = audit();
   const hygiene = validateAllowlistHygiene(loadAllowlist(), {
     today: todayIso(),
     mergedPrRefs: readMergedPrRefs(),
@@ -506,12 +686,24 @@ function main() {
   if (asJson) {
     console.log(
       JSON.stringify(
-        { results, unallowedStubs, allowedStubs, allowlistIssues: hygiene.issues },
+        {
+          results,
+          historicalRetention: retention,
+          unallowedStubs,
+          allowedStubs,
+          allowlistIssues: hygiene.issues,
+        },
         null,
         2,
       ),
     );
-    process.exit(listOnly ? 0 : unallowedStubs.length > 0 || hygiene.issues.length > 0 ? 1 : 0);
+    process.exit(
+      listOnly
+        ? 0
+        : unallowedStubs.length > 0 || hygiene.issues.length > 0 || retention.issues.length > 0
+          ? 1
+          : 0,
+    );
   }
 
   console.log('\n=== Schema 字段健康表（仅显示非 live）===\n');
@@ -525,7 +717,9 @@ function main() {
     );
   }
 
+  console.log(`\n${formatHistoricalRetention(retention)}`);
   console.log(`\nTotal fields audited: ${results.length}`);
+  console.log(`  historical-retained: ${retention.fields.length}`);
   console.log(`  live: ${results.filter((r) => r.status === 'live').length}`);
   console.log(`  init-only: ${results.filter((r) => r.status === 'init-only').length}`);
   console.log(`  update-only: ${results.filter((r) => r.status === 'update-only').length}`);
@@ -533,6 +727,8 @@ function main() {
   console.log(
     `  stub (unallowed): ${unallowedStubs.length}${unallowedStubs.length > 0 ? ' ⚠️' : ''}`,
   );
+
+  if (retention.issues.length > 0 && !listOnly) process.exit(1);
 
   if (hygiene.issues.length > 0 && !listOnly) {
     console.log('\n⚠️  Allowlist hygiene issues found:\n');

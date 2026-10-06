@@ -2,9 +2,19 @@ import { createId } from '@paralleldrive/cuid2';
 import { type SQL, and, desc, eq, gte, inArray, isNull, lt, or, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
-import { knowledge, learning_record } from '@/db/schema';
+import {
+  assessment_issuance,
+  assessment_submission,
+  knowledge,
+  learning_record,
+  question_revision,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import {
+  issuedLearningKnowledgeIds,
+  loadAssessmentLearningScope,
+} from '@/kernel/read-models/assessment-learning-scope';
 import type {
   CreateLearningRecordInput,
   CreateLearningRecordResult,
@@ -109,7 +119,45 @@ export async function createLearningRecord(
   input: CreateLearningRecordInput,
 ): Promise<CreateLearningRecordResult> {
   await assertKnowledgeIdsActive(db, input.knowledge_ids);
+  return insertLearningRecord(db, input);
+}
 
+/** Historical associations come from an accepted submission, never from new input tags. */
+export async function createAssessmentLearningRecord(
+  db: DbLike,
+  input: Omit<CreateLearningRecordInput, 'knowledge_ids'> & { submission_id: string },
+): Promise<CreateLearningRecordResult> {
+  const [binding] = await db
+    .select({ groupId: question_revision.group_id, partIds: assessment_issuance.part_ids })
+    .from(assessment_submission)
+    .innerJoin(
+      assessment_issuance,
+      eq(assessment_submission.issuance_id, assessment_issuance.issuance_id),
+    )
+    .innerJoin(
+      question_revision,
+      eq(assessment_submission.revision_id, question_revision.revision_id),
+    )
+    .where(eq(assessment_submission.submission_id, input.submission_id));
+  if (!binding)
+    throw new ApiError('validation_error', 'accepted assessment submission required', 400);
+  const scope = await loadAssessmentLearningScope(db, input.submission_id, binding.groupId);
+  if (!scope)
+    throw new ApiError('historical_unknown', 'assessment learning scope unavailable', 409);
+  return insertLearningRecord(db, {
+    ...input,
+    knowledge_ids: issuedLearningKnowledgeIds({
+      scope,
+      groupId: binding.groupId,
+      partIds: binding.partIds,
+    }),
+  });
+}
+
+async function insertLearningRecord(
+  db: DbLike,
+  input: CreateLearningRecordInput,
+): Promise<CreateLearningRecordResult> {
   const now = new Date();
   const id = input.id ?? createId();
   let originEventId = input.origin_event_id ?? null;

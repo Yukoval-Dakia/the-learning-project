@@ -1,3 +1,9 @@
+# 当前交接 — 2026-10-06 YUK-1047 closeout
+
+PR #1571，分支fix/yuk-1047-closeout。五项及三项修复完成，唯一验证审和真实Solo新build六次同页恢复/ACK/503/CAS/返回互斥通过。父线程64unit/36DB复验通过。首轮CI37449910759除contracts外全部通过。
+
+YUK-1322修复contracts：4e7894f52以固定19列、禁止生产写入替代历史checkpoint的16项过期豁免；父线程102tests通过。73da2bffc仅锁文件升级Seroval1.6.8/proxy-addr2.0.8，clean frozen install、27unit、runtime smoke/typecheck/lint/build通过，audit无high/critical。待推送后新exact-head CI及17分钟窗，再合并关闭1047/1322。review预算已用完，不启动第三轮。未部署/付费，模型未准入保持withheld。保留外部.serena改动。
+
 # 当前交接 — 2026-10-05 PR准备
 
 最新4fd2263d7修paper参考答案与详情/列表反馈隐藏。正常capture已有resolver门禁，本修复覆盖缺可选标记的读取端，未声称常规producer泄露。92DB/43unit/typecheck/lint/build/8audits通过，parent复验26DB通过。2164c42完整CI已绿但新修复须push后再验CI与17分钟窗，评论4184804038/4184804047待push后resolve。1047仍In Progress；无第三审/部署/付费。

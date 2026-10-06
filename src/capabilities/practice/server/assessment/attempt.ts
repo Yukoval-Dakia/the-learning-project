@@ -93,7 +93,7 @@ export async function previewFormalAttempt(
     modelAdmission?: 'durable';
   } = {},
 ) {
-  const { revision, scopedBasis, scopedUnitIds, submission, assisted } =
+  const { issuance, revision, scopedBasis, scopedUnitIds, submission, assisted } =
     await prepareFormalAttemptSubmission(database, entry, questionId, request);
   const candidate = await evaluateAttempt({
     db: database,
@@ -138,6 +138,8 @@ export async function previewFormalAttempt(
     .where(eq(evaluation_effective_head.evaluation_group_id, submission.evaluation_group_id))
     .limit(1);
   return {
+    issuance,
+    revision,
     candidate,
     submission: submission,
     automatic_commit:
