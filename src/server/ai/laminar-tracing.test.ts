@@ -21,7 +21,12 @@ import {
   tracePiStream,
   withTraceContext,
 } from './laminar-tracing';
-import { memoryTraceExporter, traceField } from './laminar-tracing.test-support';
+import {
+  memoryTraceExporter,
+  piTraceUsage,
+  piTraceUsageCases,
+  traceField,
+} from './laminar-tracing.test-support';
 import { withPiUsageEvidence } from './pi-usage-evidence';
 
 const sdk = vi.hoisted(() => ({ initialize: vi.fn(), flush: vi.fn(async () => {}) }));
@@ -90,31 +95,35 @@ afterEach(() => {
 });
 
 describe('optional telemetry isolation', () => {
-  it.each(['LMNR_DEBUG', 'LMNR_TRACE_METADATA', 'LMNR_SPAN_CONTEXT', 'baseline', 'no-key'])(
-    'isolates real SDK initialization from dotenv: %s',
-    async (scenario) => {
-      const cwd = await mkdtemp(join(tmpdir(), 'tlp-laminar-sdk-'));
-      try {
-        const { stdout } = await promisify(execFile)(
-          process.execPath,
-          [
-            '--import',
-            import.meta.resolve('tsx'),
-            fileURLToPath(new URL('./laminar-tracing.sdk.test-support.ts', import.meta.url)),
-            scenario,
-          ],
-          { cwd, env: { NODE_ENV: 'production' }, timeout: 8000 },
-        ).catch((error: unknown) => {
-          if (error instanceof Error && 'stdout' in error) console.log(error.stdout);
-          throw error;
-        });
-        expect(stdout).toContain('"networkAttempts":0');
-        console.log(stdout.trim());
-      } finally {
-        await rm(cwd, { recursive: true, force: true });
-      }
-    },
-  );
+  it.each([
+    'LMNR_DEBUG',
+    'LMNR_TRACE_METADATA',
+    'LMNR_SPAN_CONTEXT',
+    'baseline',
+    'no-key',
+    'usage-accounting',
+  ])('isolates real SDK initialization from dotenv: %s', async (scenario) => {
+    const cwd = await mkdtemp(join(tmpdir(), 'tlp-laminar-sdk-'));
+    try {
+      const { stdout } = await promisify(execFile)(
+        process.execPath,
+        [
+          '--import',
+          import.meta.resolve('tsx'),
+          fileURLToPath(new URL('./laminar-tracing.sdk.test-support.ts', import.meta.url)),
+          scenario,
+        ],
+        { cwd, env: { NODE_ENV: 'production' }, timeout: 8000 },
+      ).catch((error: unknown) => {
+        if (error instanceof Error && 'stdout' in error) console.log(error.stdout);
+        throw error;
+      });
+      expect(stdout).toContain('"networkAttempts":0');
+      console.log(stdout.trim());
+    } finally {
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
   it('does not load the SDK without a key and leaves callbacks untouched', async () => {
     const loadSdk = vi.fn(async () => {
       throw new Error('must not load');
@@ -285,6 +294,85 @@ describe('optional telemetry isolation', () => {
 });
 
 describe('model stream lifetime and usage', () => {
+  it.each(piTraceUsageCases)(
+    'exports total input and nonadditive reconciliation: $name',
+    async (fixture) => {
+      const { records, exporter } = memoryTraceExporter();
+      __setTraceExporterForTests(exporter);
+      const parent = startTraceSpan('task.attempt', {
+        additive_usage: false,
+        includes_child_usage: true,
+        usage_observed: fixture.observed,
+        cost_basis: fixture.observed ? 'estimated' : 'unknown',
+        aggregate_input_tokens: fixture.totalInput,
+        aggregate_output_tokens: fixture.observed ? fixture.output : undefined,
+        aggregate_cost_usd: fixture.observed ? fixture.totalCost : undefined,
+      });
+      const stream = createAssistantMessageEventStream();
+      const message = { ...assistant(), usage: piTraceUsage(fixture) };
+      const traced = await withTraceContext(parent, () =>
+        tracePiStream(
+          (m, c, o) =>
+            withPiUsageEvidence(
+              async (_m, _c, options) => {
+                if (fixture.observed)
+                  await options?.onProviderStreamEvent?.(
+                    {
+                      usage: {
+                        prompt_tokens: fixture.totalInput,
+                        completion_tokens: fixture.output,
+                      },
+                    },
+                    model,
+                  );
+                return stream;
+              },
+              m,
+              c,
+              o,
+            ),
+          model,
+          context,
+        ),
+      );
+      stream.push({ type: 'done', reason: 'stop', message });
+      expect(await traced.result()).toBe(message);
+      parent.end();
+      const leaf = records[1];
+      expect(leaf.parent).toBe(records[0].context);
+      expect(leaf.ends).toBe(1);
+      expect(leaf.attributes['gen_ai.usage.input_tokens']).toBe(fixture.totalInput);
+      expect(leaf.attributes['gen_ai.usage.output_tokens']).toBe(
+        fixture.observed ? fixture.output : undefined,
+      );
+      expect(leaf.attributes['llm.usage.total_tokens']).toBe(
+        fixture.observed ? fixture.totalTokens : undefined,
+      );
+      expect(leaf.attributes['gen_ai.usage.cache_read_input_tokens']).toBe(
+        fixture.observed ? fixture.cacheRead : undefined,
+      );
+      expect(leaf.attributes['gen_ai.usage.cache_creation_input_tokens']).toBe(
+        fixture.observed ? fixture.cacheWrite : undefined,
+      );
+      expect(leaf.attributes['gen_ai.usage.cost']).toBe(
+        fixture.observed ? fixture.totalCost : undefined,
+      );
+      expect(leaf.attributes[traceField('usage_observed')]).toBe(fixture.observed);
+      expect(leaf.attributes[traceField('cost_basis')]).toBe(
+        fixture.observed ? 'estimated' : 'unknown',
+      );
+      expect(leaf.attributes[traceField('additive_usage')]).toBe(true);
+      expect(records[0].attributes[traceField('aggregate_input_tokens')]).toBe(fixture.totalInput);
+      expect(records[0].attributes[traceField('additive_usage')]).toBe(false);
+      expect(
+        Object.keys(records[0].attributes).some(
+          (key) => key.startsWith('gen_ai.usage.') || key === 'llm.usage.total_tokens',
+        ),
+      ).toBe(false);
+      expect(JSON.stringify(records)).not.toMatch(/SENTINEL/);
+    },
+  );
+
   it.each([undefined, 0, 12])('retains explicit-zero versus unknown usage: %s', async (tokens) => {
     const { records, exporter } = memoryTraceExporter();
     __setTraceExporterForTests(exporter);

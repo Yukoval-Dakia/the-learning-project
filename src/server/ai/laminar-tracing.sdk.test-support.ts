@@ -36,7 +36,9 @@ const dotenvSettings = {
   }),
 };
 const setting = Object.entries(dotenvSettings).find(([key]) => key === scenario);
-assert.ok(setting || scenario === 'baseline' || scenario === 'no-key');
+assert.ok(
+  setting || scenario === 'baseline' || scenario === 'no-key' || scenario === 'usage-accounting',
+);
 for (const key of Object.keys(dotenvSettings)) assert.equal(process.env[key], undefined);
 assert.equal(process.env.LMNR_PROJECT_API_KEY, undefined);
 writeFileSync(
@@ -106,7 +108,123 @@ try {
     tracing.initializeLaminarTracing(options),
   ]);
   const result = { text: 'PRIVATE_OUTPUT_SENTINEL' };
-  if (scenario === 'baseline') {
+  if (scenario === 'usage-accounting') {
+    const { createAssistantMessageEventStream, normalizeContext } = await import(
+      '@earendil-works/pi-ai'
+    );
+    const { piTraceUsage, piTraceUsageCases, traceField } = await import(
+      './laminar-tracing.test-support'
+    );
+    const { withPiUsageEvidence } = await import('./pi-usage-evidence');
+    const model: Model<'openai-completions'> = {
+      id: 'mimo-v2.6-pro',
+      name: 'Offline captured usage',
+      provider: 'opencode-go',
+      api: 'openai-completions',
+      reasoning: false,
+      baseUrl: 'https://offline.invalid',
+      input: ['text'],
+      contextWindow: 10000,
+      maxTokens: 100,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+    for (const fixture of piTraceUsageCases) {
+      const start = exported.length;
+      await tracing.traceOperation('task.run', {}, () =>
+        tracing.traceOperation(
+          'task.attempt',
+          {
+            additive_usage: false,
+            includes_child_usage: true,
+            usage_observed: fixture.observed,
+            cost_basis: fixture.observed ? 'estimated' : 'unknown',
+            aggregate_input_tokens: fixture.totalInput,
+            aggregate_output_tokens: fixture.observed ? fixture.output : undefined,
+            aggregate_cost_usd: fixture.observed ? fixture.totalCost : undefined,
+          },
+          async () => {
+            const stream = createAssistantMessageEventStream();
+            const traced = await tracing.tracePiStream(
+              (m, c, o) =>
+                withPiUsageEvidence(
+                  async (_m, _c, options) => {
+                    if (fixture.observed)
+                      await options?.onProviderStreamEvent?.(
+                        {
+                          usage: {
+                            prompt_tokens: fixture.totalInput,
+                            completion_tokens: fixture.output,
+                          },
+                        },
+                        model,
+                      );
+                    return stream;
+                  },
+                  m,
+                  c,
+                  o,
+                ),
+              model,
+              normalizeContext({
+                messages: [{ role: 'user', content: 'PRIVATE_HISTORY_SENTINEL', timestamp: 1 }],
+              }),
+            );
+            const message: AssistantMessage = {
+              role: 'assistant',
+              api: model.api,
+              provider: model.provider,
+              model: model.id,
+              timestamp: 1,
+              content: [
+                { type: 'text', text: 'PRIVATE_OUTPUT_SENTINEL' },
+                { type: 'thinking', thinking: 'RAW_COT_SENTINEL' },
+              ],
+              stopReason: 'stop',
+              usage: piTraceUsage(fixture),
+            };
+            stream.push({ type: 'done', reason: 'stop', message });
+            assert.equal(await traced.result(), message);
+          },
+        ),
+      );
+      const spans = exported.slice(start);
+      assert.equal(spans.length, 3);
+      const named = Object.fromEntries(spans.map((span) => [span.name, span]));
+      const leaf = named['llm.call'];
+      const parent = named['task.attempt'];
+      assert.equal(leaf.parent, parent.id);
+      assert.equal(parent.parent, named['task.run'].id);
+      assert.equal(new Set(spans.map((span) => span.trace)).size, 1);
+      for (const [key, expected] of [
+        ['gen_ai.usage.input_tokens', fixture.totalInput],
+        ['gen_ai.usage.output_tokens', fixture.observed ? fixture.output : undefined],
+        ['llm.usage.total_tokens', fixture.observed ? fixture.totalTokens : undefined],
+        ['gen_ai.usage.cache_read_input_tokens', fixture.observed ? fixture.cacheRead : undefined],
+        [
+          'gen_ai.usage.cache_creation_input_tokens',
+          fixture.observed ? fixture.cacheWrite : undefined,
+        ],
+        ['gen_ai.usage.cost', fixture.observed ? fixture.totalCost : undefined],
+        [traceField('usage_observed'), fixture.observed],
+        [traceField('cost_basis'), fixture.observed ? 'estimated' : 'unknown'],
+        [traceField('additive_usage'), true],
+      ] satisfies [string, string | number | boolean | undefined][]) {
+        assert.equal(leaf.attributes[key], expected, `${fixture.name}: ${key}`);
+      }
+      assert.equal(parent.attributes[traceField('aggregate_input_tokens')], fixture.totalInput);
+      assert.equal(
+        parent.attributes[traceField('aggregate_cost_usd')],
+        fixture.observed ? fixture.totalCost : undefined,
+      );
+      assert.equal(parent.attributes[traceField('additive_usage')], false);
+      assert.equal(
+        Object.keys(parent.attributes).some(
+          (key) => key.startsWith('gen_ai.usage.') || key === 'llm.usage.total_tokens',
+        ),
+        false,
+      );
+    }
+  } else if (scenario === 'baseline') {
     const { createAssistantMessageEventStream, normalizeContext } = await import(
       '@earendil-works/pi-ai'
     );
@@ -214,7 +332,12 @@ try {
   console.log(JSON.stringify(report));
   assert.equal(networkAttempts, 0);
   assert.equal(JSON.stringify(exported).includes('SENTINEL'), false);
-  if (scenario === 'baseline') {
+  if (scenario === 'usage-accounting') {
+    assert.equal(tracing.isLaminarTracingEnabled(), true);
+    assert.equal(initializeCalls, 1);
+    assert.equal(loadCalls, 1);
+    assert.equal(exported.length, 18);
+  } else if (scenario === 'baseline') {
     assert.equal(tracing.isLaminarTracingEnabled(), true);
     assert.equal(initializeCalls, 1);
     assert.equal(loadCalls, 1);

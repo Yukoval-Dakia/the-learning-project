@@ -358,7 +358,8 @@ function recordPiLlmUsage(span: TraceSpan, message: AssistantMessage): void {
   if (!observed) return;
   const usage = message.usage;
   for (const [name, value] of [
-    ['gen_ai.usage.input_tokens', usage.input],
+    // Pi excludes cache reads/writes from input; GenAI input includes both.
+    ['gen_ai.usage.input_tokens', usage.input + usage.cacheRead + usage.cacheWrite],
     ['gen_ai.usage.output_tokens', usage.output],
     ['llm.usage.total_tokens', usage.totalTokens],
     ['gen_ai.usage.cache_read_input_tokens', usage.cacheRead],
