@@ -5,6 +5,10 @@
 **Amends**: `docs/superpowers/specs/2026-06-10-architecture-redesign-design.md` §2.1–2.2 的当前代码执行方式，不推翻其产品裁决
 **Related**: YUK-767 · YUK-840 · YUK-841 · YUK-842 · YUK-847 · YUK-848 · YUK-849 · ADR-0004 · ADR-0021 · ADR-0032
 
+**2026-10-06 target amendment**: [ADR-0065](0065-typescript-adaptive-learning-architecture.md)
+已批准 TanStack Start + Pi + PostgreSQL/Drizzle + DBOS 作为目标技术栈，修订本文 §6 的技术选型；
+本文的产品操作所有权继续有效。目标尚未实施，本文记录的现役 runtime 不因此自动改变。
+
 ## Context
 
 上一轮 architecture deepening 已经完成静态 capability composition、`public` / `ui-public`
