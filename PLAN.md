@@ -5,7 +5,7 @@
 ## NOW
 
 - **YUK-1103 自主交付**：单条活动线为本机日用验收与 AI 帮助恢复。http://localhost:8787 运行 main `5d738dbc0`；app/worker healthy、115项迁移、readiness active，最终停写备份恢复与副本原生结算验证通过。不要重复部署旧版本。
-- **YUK-1341 Copilot 阻塞**：新对话可输入，但实际请求 `xiaomi/mimo-v2.5-pro` 返回402余额不足。暂不能交付 AI 辅导。OpenCode Go MiMo2.6Pro 已完成隔离工具、图像输入和 Copilot 双轮验证；证据标签已修正，等待唯一验证审及 PR/CI。产品内部 AI 路由按最新指令暂保留，不能声称线上已恢复。
+- **YUK-1341 PR1582 CI dependency fix**：r2 review resolved；contracts audit 因 sharp 0.35.4 / MCP SDK 1.29.0 两个 high 漏洞失败，已最小更新至 sharp 0.35.5 / @modelcontextprotocol/sdk 1.32.1 并通过 RED→GREEN 验证。
 - **YUK-1340 会话入口**：独立工作树正在修复默认选中已结束会话导致输入禁用，须保留历史只读与显式新对话，并完成真实组件及浏览器验收。
 - **工作模型**：后续子任务使用 `opencode / opencode-go/mimo-v2.6-pro`，自动任务提示已更新。父线程切换曾中断且未保持，不能声称已经全面生效；MiMo 子任务已完成并读取真实截图，父线程核对了可见细节。
 - **行为基线 / YUK-405**：[完整设计](docs/design/2026-10-06-continuous-learning-system-behavior.md)由 agent 在持续委托下采用并负责验证，连接学校、纸笔、自习与数字工具，不是已实现清单。
