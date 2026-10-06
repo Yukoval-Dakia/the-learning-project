@@ -545,6 +545,9 @@ export const fastTestInclude = [
   'tests/integration/audit-docs-invariant.test.ts',
   'tests/integration/step12-docs-invariant.test.ts',
   'tests/integration/step9-invariant-audit.test.ts',
+  // YUK-1341 evidence-metadata correction — pure no-network unit over
+  // tests/helpers/synthetic-evidence-meta.ts (string builders only; no DB/AI).
+  'tests/helpers/synthetic-evidence-meta.test.ts',
 ];
 
 export const migrationSmokeInclude = ['tests/integration/migration-smoke.test.ts'];
