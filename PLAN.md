@@ -1,29 +1,29 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-07：owner 将产品决定、实现及本机部署运维交由 agent 持续执行，后续主要提供使用建议。[授权与每小时任务](docs/planning/2026-10-07-autonomous-delivery-charter.md)已建立；调度启用不等于完整产品已交付。[原 main 看板](docs/planning/2026-10-07-delivery-baseline-snapshot.md)保留各线历史证据。
+> Linear 是权威 tracker。2026-10-07：[本机发布记录](docs/planning/2026-10-07-local-release-result.md)已保存；现有版本升级完成，Copilot 实际回答因旧 provider 余额不足失败，正在修复。完整目标与[自主交付授权](docs/planning/2026-10-07-autonomous-delivery-charter.md)继续有效。[原 main 看板](docs/planning/2026-10-07-delivery-baseline-snapshot.md)保留历史证据。
 
 ## NOW
 
-- **YUK-1103 自主交付与本机运维**：当前一条执行线为恢复可重复的本机发布，随后用真实学习行为验证产品。每小时任务绑定 T3 线程 `57961995-70c3-4121-a9dd-97d90471be1a`，首次计划 2026-10-07 01:03:22 JST。不得重复启动同一发布或抢写其他工作树。
-- **行为基线 / YUK-405**：[连续学习系统设计](docs/design/2026-10-06-continuous-learning-system-behavior.md)连接学校、纸笔、自习和数字工具；agent 在持续委托下采用并负责细化、验证，不再等待 owner 逐项审阅。它不是已实现清单。
-- **本机实查**：原 app/worker 为 9 月 28 日镜像且无 revision，数据库112项迁移；`/today`令牌登录成功，无页面/API错误。10月6日日备份在隔离PG恢复成功，2626条event、112项迁移。latest main `5d738dbc0`镜像构建与115项迁移预演进行中，尚未升级生产。
-- **YUK-1329 发布缺口**：已确认旧Compose引用的 `/tmp/docker-compose.deployfix.yml`丢失，已保留实际运行配置与私有恢复副本。完整发布入口及故障注入验收仍未完成，跟进留既有票。
-- **技术目标 / YUK-1337**：[ADR-0066](docs/adr/0066-typescript-adaptive-learning-architecture.md)保留 TanStack Start + Pi + PostgreSQL/Drizzle + DBOS 的已批准方向。main已占用0065，整合时仅更正编号。当前仍是 Hono + Vite + pg-boss，架构迁移尚未实施。
+- **YUK-1103 自主交付**：单条活动线为本机日用验收与 AI 帮助恢复。http://localhost:8787 运行 main `5d738dbc0`；app/worker healthy、115项迁移、readiness active，最终停写备份恢复与副本原生结算验证通过。不要重复部署旧版本。
+- **YUK-1341 Copilot 阻塞**：新对话可输入，但实际请求 `xiaomi/mimo-v2.5-pro` 返回402余额不足。暂不能交付 AI 辅导。正在核查用户指定的 OpenCode Go MiMo2.6Pro 接入和能力证据，不盲目重试旧请求。
+- **工作模型**：后续子任务使用 `opencode / opencode-go/mimo-v2.6-pro`，自动任务提示已更新。父线程切换曾中断且未保持，不能声称已经全面生效；MiMo 子任务已完成并读取真实截图，父线程核对了可见细节。
+- **行为基线 / YUK-405**：[完整设计](docs/design/2026-10-06-continuous-learning-system-behavior.md)由 agent 在持续委托下采用并负责验证，连接学校、纸笔、自习与数字工具，不是已实现清单。
+- **技术目标 / YUK-1337**：[ADR-0066](docs/adr/0066-typescript-adaptive-learning-architecture.md)保留 TanStack Start + Pi + PostgreSQL/Drizzle + DBOS 方向；当前仍为 Hono + Vite + pg-boss。
 
 ## NEXT
 
-- 完成新版本在恢复副本上的迁移与浏览器检查，核对模型配置和旧任务义务；最终备份后执行本机部署，保存镜像SHA、恢复位置与实际行为证据。
-- 以“椭圆难题做完仍不稳固”检验记录、状态判断、后续安排和再次验证的衔接，将真实缺口去重写入Linear并实施。确定性工具保留，不能用部署成功替代学习效果验收。
-- YUK-1338 技术集成验证保持Backlog；按已批准目标开展时单独建立兼容与恢复证据，不把框架替换当产品完成。
+- 修复 Copilot 实际回答阻塞，验证真实工具与图像能力、费用和失败恢复；再以椭圆学习场景验收记录、状态、后续安排与再次验证的衔接。
+- YUK-1340 修复已结束会话被默认选中而输入禁用的入口问题，保留历史只读与显式新对话。
+- YUK-1042 按已有副作用和幂等身份恢复38条 DLQ，不能清空或当作升级新增。
+- YUK-1338 目标架构集成保持 Backlog，单独证明状态版本、过期结果拒绝与重启恢复。
 
 ## PARKED
 
-- 其他线程的YUK-1325 Laminar / PR #1580独立推进，不接管其工作树或重复实施。已合并SCF与评分入口等变更的证据保留原看板快照与Linear；合并不代表已部署。
-- YUK-1007 设置范围、YUK-1042 DLQ、YUK-766恢复等未完成项以当前Linear为准，不因本轮接管批量标Done。
-- `pi-durable` 不作为已选持久化基础，不与DBOS同时拥有一个循环的恢复；现有模型计费、重试、并发和回滚测试保留。
-- 历史看板中的暂停或未验证事项不自动变成已完成；相关决定在具体产品工作中复核。
+- YUK-1329 保留通用发布入口和故障注入验收；一次手工安全发布不关闭整票。旧镜像直接回退兼容性未验证。
+- 其他线程 YUK-1325 / PR #1580 独立推进，不接管其工作树。其他历史事项见原看板和 Linear，不批量标 Done。
+- `pi-durable` 不作为已选持久化基础，不与 DBOS 同时拥有同一循环恢复；现有确定性功能及费用、重试、并发、恢复测试保留。
 
 ## BLOCKED-ON
 
-- 当前无需 owner 追加授权。部署尚待构建、迁移预演、恢复/兼容检查和真实验收通过；这些是未完成的验证，不是等待用户批准。
-- T3 preview明确无自动化host，本轮采用已安装Playwright浏览器验收。自动任务依赖本机与T3调度运行环境可用；首次自动执行仍待记录。
+- 无需 owner 追加日常授权。旧 Xiaomi 余额不足是当前已证实的 AI 调用阻塞；先复用已提供资源解决，不自行开新订阅。
+- 每小时任务已唤起原线程，下一次按 T3 返回时间执行；依赖本机/T3运行。完整无人值守交付尚待实际证明。
