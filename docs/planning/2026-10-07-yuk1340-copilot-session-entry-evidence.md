@@ -78,3 +78,15 @@ T3 `preview_status` 与 `preview_open` 都明确返回没有可用的 automation
 - 创建响应延迟时改选历史，响应回来后仍保持该历史的选择与只读状态。
 
 每个场景只产生预期的 `/api/copilot/sessions` 合成 POST，没有其他 mutation 或未处理请求。证据位于父工作树 `.remember/evidence/2026-10-07-yuk1340-parent-validation/`，包含脚本、状态 JSON、截图和检查日志。此验证仍是补丁 SPA 加合成服务合同；真实生产会话验收须在发布后完成。
+
+390×844 窄屏下等待抽屉宽度过渡结束，再确认抽屉 x=0、页面无横向溢出、只读提示和“开始新对话”可见；截图 `parent-history-mobile.png` 经父线程目视核对。父线程自有 8791 预览服务在验收后已停止。初次使用被 shell 隐藏的内部 trigger 导致脚本超时，改为用户可见入口后通过，不将脚本定位错误记为产品故障。
+
+## 独立初审与集成
+
+OpenCode Go MiMo 2.6 Pro 独立初审固定读取 `e11405d466db8d5658389e9acdbbf555deb49767` 相对 `bccb6df1121912a5bd6f36ce59f4d31f3ef41b1e` 的真实 diff、组件与服务端会话合同，结论无 P0/P1。审查为只读源码核对，没有独立重跑测试或生产操作；父线程验收见上。
+
+两组成组 P2 已去重记录到 YUK-1343：补齐失败重试、显式创建时改选及非空消息隔离的组件回归；评估自动创建失败后关闭/重开抽屉的 latch 语义。当前失败后有可见手动重试入口，浏览器已验证该入口，因此延期，不称已修复。
+
+PR1582 已合并 main `8a53792855580fc1eec2c344b70f4122e5310bb7`。本分支正常合入该 main，合并提交 `0cb2659f3c7e140e5797c4ad47669363d403c5cf`；依赖安装使用 frozen lockfile，实际更新 sharp0.35.5 与 MCP SDK1.32.1。合并后的检查另存父工作树 `.remember/evidence/2026-10-07-yuk1340-combined-validation/`，不把旧检查结果冒称为新依赖树的验证。
+
+合并后父线程重新运行 Copilot UI 的 19 文件 / 117 项测试、typecheck、lint、build，全部 exit 0。检查运行于上述合并提交；后续提交仅更新 PLAN 与本证据文档。未运行完整本机 pnpm test、未新增付费调用、未修改生产。
