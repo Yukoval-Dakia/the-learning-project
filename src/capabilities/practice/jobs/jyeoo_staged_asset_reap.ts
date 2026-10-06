@@ -58,13 +58,20 @@ export async function runJyeooStagedAssetReap(
 
   const orphanIds: string[] = [];
   for (const asset of staged) {
-    // 引用探测：question.image_refs / figures[].asset_id 任一命中即保留。
+    // 引用探测（YUK-1226/SCF-143）：question.image_refs / figures[].asset_id 任一命中即保留，
+    // 另加 reference_md 与 structured（含 structured.answers 参考答案）里的内部资产 URL。
+    // candidate 阶段只有 prompt/choices 图进 image_refs/figures；参考答案图只被改写进
+    // reference_md（与 structured.answers），只看那两列会把已提交题的 solution-only 资产误删。
+    // URL 形态与 persistQuestionImages 一致：/api/assets/<encodeURIComponent(id)>/content。
+    const assetUrl = `/api/assets/${encodeURIComponent(asset.id)}/content`;
     const referenced = await db
       .select({ id: question.id })
       .from(question)
       .where(
         sql`(${question.image_refs} @> ${JSON.stringify([asset.id])}::jsonb)
-          or (${question.figures} @> ${JSON.stringify([{ asset_id: asset.id }])}::jsonb)`,
+          or (${question.figures} @> ${JSON.stringify([{ asset_id: asset.id }])}::jsonb)
+          or (strpos(${question.reference_md}, ${assetUrl}) > 0)
+          or (strpos(${question.structured}::text, ${assetUrl}) > 0)`,
       )
       .limit(1);
     if (referenced.length > 0) result.keptReferenced += 1;

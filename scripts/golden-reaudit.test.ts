@@ -69,3 +69,34 @@ describe('reauditGolden — live edge mesh boundary', () => {
     expect(result.drifted).toHaveLength(1);
   });
 });
+
+describe('reauditGolden — inherited-key kind guard (YUK-1236 / SCF-161)', () => {
+  // golden.kind is JSON.parse + `as` cast, so a corrupted/future golden can carry an
+  // inherited Object.prototype name. PROJECTION_FOLDS[kind] then resolves to
+  // Object.prototype / a builtin — truthy, and sometimes callable — so the falsy guard
+  // is skipped and the fold call throws (or misbehaves) instead of the named error.
+  it.each(['__proto__', 'constructor', 'toString', 'hasOwnProperty', 'valueOf'])(
+    'rejects the inherited key %s with the named unknown-kind error',
+    (kind) => {
+      const corrupted: GoldenSnapshot = {
+        kind: kind as GoldenSnapshot['kind'],
+        capturedAt: '2026-09-24T11:00:00Z',
+        rowCount: 1,
+        rows: { x: { id: 'x' } },
+        events: [],
+      };
+      expect(() => reauditGolden(corrupted)).toThrow(`unknown ProjectionKind '${kind}'`);
+    },
+  );
+
+  it('still folds a genuinely registered kind (own-key control)', () => {
+    const golden: GoldenSnapshot = {
+      kind: 'artifact',
+      capturedAt: '2026-09-24T11:00:00Z',
+      rowCount: 0,
+      rows: {},
+      events: [],
+    };
+    expect(reauditGolden(golden)).toEqual({ kind: 'artifact', checked: 0, drifted: [] });
+  });
+});

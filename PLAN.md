@@ -1,10 +1,14 @@
 # PLAN — 活看板
 
-> 更新于2026-10-06。YUK-1325 Laminar已完成独立验证审及真实SDK→SQL回放，准备PR；通用Task Evaluator仍误解空LLM transcript，不作评分质量gate。YUK-1323/#1577已交付，未部署。
+> 更新于2026-10-06。SCF 198票批量处置：本轮新增关闭20票：5票由#1578修复交付，15票经当前调用链及适用测试核验关闭，逐票证据见Linear。本批1224/1226/1196/1236已实现并开PR #1579；worker统一OpenCode Go DeepSeek V4.1 Flash high、full-access。未部署。 YUK-1325/#1580开发transcript授权实施中。
 
 ## NOW
 
-- YUK-1325：可选Laminar trace、导入隐私检查、cache-inclusive tokens及安全评分角色摘要完成；337独立tests与真实SDK→SQL回放通过，浏览器已见。初审/唯一验证审预算用完；PR/CI待完成。通用external signal任务语义不适配，不能据此判断评分质量；无部署或模型准入。
+- YUK-1325/#1580：可选Laminar trace、导入隐私检查、cache-inclusive tokens及安全评分摘要已完成；337独立tests与真实SDK→SQL回放通过。初审/唯一验证审预算用完，不再启动review。Owner现授权开发阶段transcript传输，当前实施仅development显式opt-in，默认metadata、禁止credentials/原始CoT；父线程负责新功能SQL/browser验收、PR/CI/tracker。未部署或新增模型调用。
+
+- YUK-1224/1226/1196/1236（SCF-141/143/109/161）本批已实现并开PR #1579，Linear In Review。1224把TRAILING_JUNK_RE指数回溯改为线性own-scan并保留语义（差异oracle+硬超时子进程，RED ETIMEDOUT→GREEN <1s）；1226让jyeoo_staged_asset_reap在image_refs/figures外认reference_md与structured(answers)的内部资产URL（含存量行，不改路由）；1196把groupByIntentSource改为Map+Object.fromEntries（__proto__/constructor/toString不再500）；1236给golden-reaudit的PROJECTION_FOLDS查找加Object.hasOwn。scoped 43unit+27DB、typecheck、完整lint(0 error/297 warnings)、build全过；未部署。
+
+- SCF批量处置是本线程当前active线。#1578的33unit+47DB父线程复验、本地gate、独立初审及exact-head CI37471533645通过，五票Done；1121/1127经native真实DB测试关闭。nochange批次新增关闭1142/1148/1156/1192/1214/1218/1244七票（父线程50DB+102unit及1192的77DB）；1189/1195待live边界调查、1217缺withheld-unsuspended负例，保持打开。逐票证据保留Linear。
 
 - YUK-1323：JSON同路径同值引用与typed pending兼容，重复键/危险属性拒绝；165unit与21独立探针通过，两次真实MiMo输出在最终代码离线回放通过。分支fix/yuk-1323-output-compat-delivery基于a60637d3f，集成165unit/typecheck/lint/build通过，PR/CI待完成；无部署或模型准入。YUK-1325 Laminar独立实施中。
 
@@ -89,7 +93,7 @@
 
 ## NEXT
 
-- 第一批已交付；YUK-1128 留第二批，尚未启动。
+- #1579四票已实施、In Review，父线程43unit及包含本批27项的77DB复验通过；待独立初审与exact-head CI后合并，禁止重复实施。下一批处理1134 claim释放竞态与1131 tokened资产URL；1189/1195替代入口核验待裁决。1128 CI planner尚未实施。
 
 1. YUK-1047/#1571收尾：五项及后续修复已完成，唯一验证审与真实Solo验收通过。YUK-1322审计修复4e7894f52、依赖修复73da2bffc已完成；推送后等exact-head CI及17分钟窗，满足后合并并关闭两票。不部署，不宣称模型质量准入。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。

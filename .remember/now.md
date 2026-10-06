@@ -1,6 +1,26 @@
 # 当前交接 — YUK-1325 Laminar
 
-/tmp/tlp-laminar-yuk1325 feat/yuk-1325-laminar source4189a1430，初审P1隐私与live token映射缺陷均修复，唯一验证审337tests无P0/P1。两条原始真实MiMo与两条明确OFFLINE REPLAY的真实SDK→SQL验证见planning doc。浏览器确认新摘要；genericTaskEvaluator仍只读空LLM transcript误判失败，不能作质量gate。PR/CI待完成，不再启动第三review。无新模型调用/部署/准入；Serena ignored bytes与recovery stash保留。
+/tmp/tlp-laminar-yuk1325 feat/yuk-1325-laminar source4189a1430，初审P1隐私与live token映射缺陷均修复，唯一验证审337tests无P0/P1。两条原始真实MiMo与两条明确OFFLINE REPLAY的真实SDK→SQL验证见planning doc。浏览器确认新摘要；genericTaskEvaluator仍只读空LLM transcript误判失败，不能作质量gate。PR #1580已开，CI与父线程验收待完成，不再启动第三review。无新模型调用/部署/准入；Serena ignored bytes与recovery stash保留。
+
+Owner新授权：允许开发阶段transcript传输。当前子writer实施development显式开关、清理credentials/CoT与有界payload；父线程负责SQL/browser新功能验收和tracker，不启动第三review。
+
+# 当前交接 — 2026-10-06 YUK-1224/1226/1196/1236（SCF-141/143/109/161）
+
+工作树 /Users/yuqi/.t3/worktrees/the-learning-project/feat-yuk-588-today-cost-ui，分支 fix/yuk-1224-parser-assets-batch（upstream 已改为同名远端分支），base origin/main 9f1e0945c，含父线程文档提交 d2d5cff80。本 writer 提交 2364d4306，PR #1579（base main，四个 Closes 各自一行）。
+
+四票均在本机复现 RED→GREEN：1224 `judge-routing-dos.test.ts` 硬超时子进程在旧 regex 下两例 ETIMEDOUT（n24≈140字符与12000字符），修后 <1s；语义由 `judge-routing.test.ts` 对已退役 regex 的差异 oracle（curated+400 fuzz）逐字节钉住。1226 reaper 旧码把 solution-only/mixed/decoy 的 staged 资产删除（RED），修后只删真孤儿，且覆盖存量行（reference_md/structured.answers 的内部 URL）。1196 旧码 `TypeError: bucket.push is not a function`（RED），修后 own-key。1236 旧码继承 key 解析/misbehave（RED），修后 named error。
+
+证据：`pnpm vitest run --config vitest.unit.config.ts src/core/schema/judge-routing.test.ts src/core/schema/judge-routing-dos.test.ts scripts/golden-reaudit.test.ts` = 43 passed；`pnpm vitest run --config vitest.db.config.ts src/capabilities/practice/jobs/jyeoo_staged_asset_reap.db.test.ts src/server/questions/detail.test.ts` = 27 passed；`pnpm typecheck` 干净；完整 `pnpm lint` 0 error/297 warnings（基线）；`pnpm build` exit 0。无部署/生产库/付费调用。
+
+未做：不跑完整本机 `pnpm test`（repo 政策，交 exact-head CI Gate）；未合并（父线程负责独立 review/merge/等待窗）。T3 link_pull_request 在本 ACP 不可用（无 T3_ACP_MCP_NODE / acp-mcp-call / t3-code 工具），PR URL 已报父线程。Linear 四票 In Review（非 Done）。capture gate：搜索无重复 actionable follow-up，未新开票。
+
+# 当前交接 — 2026-10-06 SCF批量处置
+
+198票YUK-1121至1318，本轮新增关闭20票。5票由#1578合入9f1e0945c；15票经当前源码与适用测试核验无需改码关闭：1121/1127/1142/1148/1156/1192/1214/1218/1244/1210/1212/1219/1229/1231/1292。逐票来源ID、证据与限制已写Linear。
+
+#1579四票已实施并In Review，不能重复启动writer；父线程43unit及77DB复验通过，其中27DB属于本批、50DB用于settle/restore/conjecture-scores核验，另33epoch/TLS unit通过。独立初审进行中，未合并。1270的ability_global、1217的withheld负例尚缺，不关闭；1238/1258/1273有残余缺陷候选；1187/1265/1314证据不足。下一实施候选1134/1131，1189/1195实际路径核验待裁决。
+
+worker统一OpenCode Go opencode-go/deepseek-v4.1-flash high、full-access，相关源码/票面/测试发送已获授权，凭据/.env/生产数据除外。禁止完整本机pnpm test、生产部署、产品付费调用、嵌套代理和全局/Serena memory写入。
 
 # 当前交接 — 2026-10-06 YUK-1323
 
