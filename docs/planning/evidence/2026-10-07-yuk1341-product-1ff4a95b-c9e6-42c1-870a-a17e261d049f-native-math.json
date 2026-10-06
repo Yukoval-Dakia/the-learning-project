@@ -18,10 +18,7 @@
   "input_digest": "sha256:9def8e4f28d8e34828235affb56b620f7c4f0c8546af8fd20463995f0767cb7f",
   "input": {
     "submission_id": "sub-original",
-    "submission_ids": [
-      "sub-original",
-      "sub-second"
-    ],
+    "submission_ids": ["sub-original", "sub-second"],
     "evaluation_group_id": "group",
     "revision_id": "rev-original",
     "attempt": 2,
@@ -34,13 +31,9 @@
     },
     "unit": {
       "scoring_unit_id": "u1",
-      "slot_refs": [
-        "s1"
-      ],
+      "slot_refs": ["s1"],
       "evidence_slot_refs": [],
-      "material_refs": [
-        "table"
-      ],
+      "material_refs": ["table"],
       "requires_group_evidence": false,
       "criterion": {
         "kind": "rule_reference",
@@ -54,9 +47,7 @@
       {
         "part_id": "p1",
         "prompt_md": "使用表格数据求船的静水速度。保留原始单位并写出方程。",
-        "material_ids": [
-          "table"
-        ]
+        "material_ids": ["table"]
       }
     ],
     "response_slots": [
@@ -103,9 +94,7 @@
       }
     ],
     "confidence": 0.99,
-    "run_refs": [
-      "f4d82fc0-9dd0-470c-a6a5-baa018623cb0"
-    ],
+    "run_refs": ["f4d82fc0-9dd0-470c-a6a5-baa018623cb0"],
     "cost_usd_micros": 612
   },
   "output_digest": "sha256:76e6a5fe1231b39208390df49e9cec934a765e1163589097ede94fdc9c78ff1b",

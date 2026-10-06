@@ -19,10 +19,7 @@
   "input_digest": "sha256:7488279996f49345fb24eaebc3f3daaca6847cc06e24495998b3b257f986716f",
   "input": {
     "submission_id": "sub-original",
-    "submission_ids": [
-      "sub-original",
-      "sub-second"
-    ],
+    "submission_ids": ["sub-original", "sub-second"],
     "evaluation_group_id": "group",
     "revision_id": "rev-original",
     "attempt": 2,
@@ -35,13 +32,9 @@
     },
     "unit": {
       "scoring_unit_id": "u1",
-      "slot_refs": [
-        "s1"
-      ],
+      "slot_refs": ["s1"],
       "evidence_slot_refs": [],
-      "material_refs": [
-        "diagram"
-      ],
+      "material_refs": ["diagram"],
       "requires_group_evidence": false,
       "criterion": {
         "kind": "rule_reference",
@@ -55,9 +48,7 @@
       {
         "part_id": "p1",
         "prompt_md": "求图中直角三角形的斜边和面积。",
-        "material_ids": [
-          "diagram"
-        ]
+        "material_ids": ["diagram"]
       }
     ],
     "response_slots": [
@@ -103,9 +94,7 @@
       }
     ],
     "confidence": 1,
-    "run_refs": [
-      "6a50bdf6-b1ff-4797-972e-c609280fe2cd"
-    ],
+    "run_refs": ["6a50bdf6-b1ff-4797-972e-c609280fe2cd"],
     "cost_usd_micros": 520
   },
   "output_digest": "sha256:826a101c832cedda45c9599db786364d2e29a74d270472879b5bd682d41b27e7",
