@@ -37,7 +37,7 @@ nested `AGENTS.md` / `.claude/rules`，机械约束放在 hooks。
 
 ## UI design pre-flight
 
-写任何 UI 代码前，先向用户提交并等待批准：
+2026-10-07 owner 持续委托见 [自主交付授权](docs/planning/2026-10-07-autonomous-delivery-charter.md)。本委托范围内，agent 在实施前记录以下 pre-flight 并承担方案与验收责任，不再等待 owner 逐项批准；owner 后续限制优先。未获此委托的工作仍须先提交并等待批准：
 
 1. 逐字引用相关 design doc，给路径与行号/章节。
 2. 声明组件类型：drawer / route / modal / page / other。
@@ -148,8 +148,7 @@ Linear（Yukoval Studios / YUK）是新规划和跟进的权威 tracker；GitHub
 
 ## Deployment
 
-生产为 NAS docker compose：app、worker、migrate、Postgres/pgvector 和
-Cloudflare Tunnel。无 Vercel、无 Redis。部署细节与验证命令以 `README.md` 为准。
+2026-10-07 起 owner 指定生产部署与运维在这台 Mac，沿用 Docker Compose 的 app、worker、migrate 和 Postgres/pgvector，默认本机访问。Cloudflare Tunnel / NAS 是可选历史部署方式，不是当前发布目标。部署授权持续有效，数据恢复、独立审查与验收要求仍保留。当前入口见 `README.md` 和[自主交付授权](docs/planning/2026-10-07-autonomous-delivery-charter.md)。
 
 ## Review, merge, and delivery
 
