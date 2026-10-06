@@ -1,3 +1,4 @@
+import { observeTaskOperation } from '@/ai/task-observation';
 import type { Db } from '@/db/client';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -8,7 +9,6 @@ import { resolveContextBudget } from '@/kernel/tools/budgets';
 import { ContextBudgetTracker } from '@/kernel/tools/context-throttle';
 import type { ValidateLearningContentFn } from '@/kernel/tools/types';
 import type { ModelBinding } from '@/server/ai/execution-adapter';
-import { traceMetadata, traceOperation } from '@/server/ai/laminar-tracing';
 import {
   EXA_MCP_ALLOWED_TOOLS,
   EXA_MCP_SERVER_NAME,
@@ -497,12 +497,11 @@ export function createCopilotExecutionOwner(
       if (resumeSessionId && partial) {
         throw new Error('resumed agent session returned partial output');
       }
-      const finalization = await traceOperation(
-        'copilot.finalize',
-        { task_run_id: result.task_run_id },
-        async () => {
+      const finalization = await observeTaskOperation(
+        { operation: 'finalize', taskKind: 'CopilotTask', taskRunId: result.task_run_id },
+        async (reportOutcome) => {
           const finalized = await finalizer.finalizeTerminal(terminalText);
-          traceMetadata({ business_outcome: finalized.accepted ? 'accepted' : 'rejected' });
+          reportOutcome(finalized.accepted ? 'accepted' : 'rejected');
           return finalized;
         },
       );

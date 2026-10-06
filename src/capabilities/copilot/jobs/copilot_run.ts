@@ -10,6 +10,7 @@
 import { createHash } from 'node:crypto';
 import { and, asc, eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+import { observeTaskOperation } from '@/ai/task-observation';
 import { isDurableWorkerTouchEvent } from '@/capabilities/copilot/durable-pickup';
 import {
   type PreparedCopilotReply,
@@ -58,7 +59,6 @@ import { reconcileNativeSubagentsForParent } from '@/capabilities/copilot/server
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
 import type { ModelBinding } from '@/server/ai/execution-adapter';
-import { traceMetadata, traceOperation } from '@/server/ai/laminar-tracing';
 import {
   type BossJobObservation,
   type BossJobObserver,
@@ -623,18 +623,20 @@ async function awaitClaimedCopilotExecution(
 }
 
 export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCopilotRunResult> {
-  return traceOperation('copilot.run', { logical_run_id: params.data.run_id }, async () => {
-    const result = await runCopilotRunImpl(params);
-    traceMetadata({
-      business_outcome:
+  return observeTaskOperation(
+    { operation: 'run', taskKind: 'CopilotTask', logicalRunId: params.data.run_id },
+    async (reportOutcome) => {
+      const result = await runCopilotRunImpl(params);
+      reportOutcome(
         result.status === 'done'
           ? 'accepted'
           : result.status === 'cancelled'
             ? 'cancelled'
             : 'rejected',
-    });
-    return result;
-  });
+      );
+      return result;
+    },
+  );
 }
 
 async function runCopilotRunImpl(params: RunCopilotRunParams): Promise<RunCopilotRunResult> {

@@ -24,6 +24,7 @@
 
 import { createHash } from 'node:crypto';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
+import { installTaskOperationObserver } from '@/ai/task-observation';
 import type { TaskBudget, TaskDefinition } from '@/ai/task-spec';
 import {
   type TaskBudgetOverride,
@@ -51,7 +52,7 @@ import {
   type RunnerMessage,
   resolveExecutionAdapter,
 } from './execution-adapter';
-import { type TraceContent, traceOperation } from './laminar-tracing';
+import { type TraceContent, traceMetadata, traceOperation } from './laminar-tracing';
 import { logMissingToolMountsWarning } from './log';
 import type { PiHookBridge } from './pi-hooks';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission';
@@ -78,6 +79,24 @@ import type {
 import { isSpawnToolName } from './spawn-contract';
 import type { PiSubagentSpec } from './tools/pi-subagent';
 import type { PiToolMount } from './tools/pi-tools';
+
+// The runner is loaded before capability execution. Keep the shared observation
+// contract backend-free while using the same async trace context as task/model spans.
+installTaskOperationObserver((observation, execute) =>
+  traceOperation(
+    observation.taskKind === 'CopilotTask'
+      ? observation.operation === 'run'
+        ? 'copilot.run'
+        : 'copilot.finalize'
+      : 'task.run',
+    {
+      task_kind: observation.taskKind,
+      task_run_id: observation.taskRunId,
+      logical_run_id: observation.logicalRunId,
+    },
+    () => execute((business_outcome) => traceMetadata({ business_outcome })),
+  ),
+);
 
 // ============================================================================
 // Public surface

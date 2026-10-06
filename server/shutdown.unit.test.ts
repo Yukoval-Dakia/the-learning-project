@@ -1,6 +1,8 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { resolve } from 'node:path';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { buildSync } from 'esbuild';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { __setTraceExporterForTests } from '@/server/ai/laminar-tracing';
@@ -120,7 +122,10 @@ it('real SIGTERM stops admission but lets an in-flight HTTP response finish befo
     bundle: true,
     write: false,
   }).outputFiles[0].text;
-  const child = spawn(process.execPath, ['-e', code], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+  const sandbox = mkdtempSync(join(tmpdir(), 'shutdown-signal-'));
+  const entry = join(sandbox, 'shutdown.cjs');
+  writeFileSync(entry, code);
+  const child = spawn(process.execPath, [entry], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   const exited = once(child, 'exit');
   try {
     const [ready] = await once(child, 'message');
@@ -149,5 +154,6 @@ it('real SIGTERM stops admission but lets an in-flight HTTP response finish befo
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
     await exited;
+    rmSync(sandbox, { recursive: true, force: true });
   }
 });

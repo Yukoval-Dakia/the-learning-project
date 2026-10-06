@@ -9,6 +9,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import {
   __setTraceExporterForTests,
   initializeLaminarTracing,
+  startTraceSpan,
   traceOperation,
   tracePiStream,
 } from './laminar-tracing';
@@ -18,7 +19,13 @@ import {
   piTraceUsageCases,
   traceField,
 } from './laminar-tracing.test-support';
-import { sanitizeTracePayload } from './laminar-transcript';
+import {
+  piInputTranscript,
+  piOutputTranscript,
+  sanitizeTraceMessages,
+  sanitizeTracePayload,
+} from './laminar-transcript';
+import syntheticTranscripts from './laminar-transcript.synthetic.json';
 import {
   transcriptAssistant,
   transcriptContext,
@@ -324,4 +331,125 @@ it('shows truncation for large actual message collections without exporting medi
   expect(input).toContain('TRUNCATED');
   expect(input.length).toBeLessThanOrEqual(65536);
   expect(() => JSON.parse(input)).not.toThrow();
+});
+
+it.each(['XIAOMI_API_KEY', 'OPENAI_API_KEY', 'ZAI_CODING_CN_API_KEY', 'openaiApiKey'])(
+  'removes prefixed assignments and structured fields through the public sanitizer: %s',
+  (key) => {
+    const secret = 'SYNTHETIC_PREFIXED_CREDENTIAL';
+    const payload = {
+      plain: `${key}=${secret}; the learner answer is x=2.`,
+      quoted: `${key}="${secret} with spaces"; ordinary educational text`,
+      singleQuoted: `${key}='${secret} with spaces'; answer remains`,
+      nested: { [key]: secret, answer: 'intersection = {999}' },
+      encoded: JSON.stringify({ wrapper: { [key]: secret, final_answer: { text: 'x=2' } } }),
+      prose: 'An API key is a credential. The answer follows from the intersection.',
+    };
+    const serialized = JSON.stringify(sanitizeTracePayload(payload));
+    expect(serialized).not.toContain(secret);
+    expect(serialized).toContain('the learner answer is x=2.');
+    expect(serialized).toContain('ordinary educational text');
+    expect(serialized).toContain('answer remains');
+    expect(serialized).toContain('intersection = {999}');
+    expect(serialized).toContain('An API key is a credential.');
+  },
+);
+
+// Sanitization canonicalizes encoded JSON. Compare the complete decoded data,
+// including every ordinary field, while checking final span bytes against the first projection.
+function decodedStructuredText(value: unknown): unknown {
+  if (typeof value === 'string' && /^\s*[[{]/.test(value)) {
+    try {
+      return decodedStructuredText(JSON.parse(value));
+    } catch {
+      return value;
+    }
+  }
+  if (Array.isArray(value)) return value.map(decodedStructuredText);
+  if (value !== null && typeof value === 'object') {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, decodedStructuredText(item)]),
+    );
+  }
+  return value;
+}
+
+it.each(syntheticTranscripts)(
+  'preserves frozen nested learner answers and citations in actual TraceSpan output: $caseId',
+  ({ userText, assistantText }) => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('LMNR_DEV_TRANSCRIPTS', '1');
+    const { records, exporter } = memoryTraceExporter();
+    __setTraceExporterForTests(exporter);
+    const span = startTraceSpan('llm.call');
+    const input = piInputTranscript([
+      { role: 'user', content: [{ type: 'text', text: userText }], timestamp: 1 },
+    ]);
+    const output = piOutputTranscript({
+      ...transcriptAssistant,
+      content: [{ type: 'text', text: assistantText }],
+    });
+    span.transcript('input', () => input);
+    span.transcript('output', () => output);
+    span.end();
+    expect(records[0].attributes['lmnr.span.input']).toBe(JSON.stringify(input));
+    expect(records[0].attributes['lmnr.span.output']).toBe(JSON.stringify(output));
+    expect(JSON.stringify(sanitizeTraceMessages(sanitizeTraceMessages(input)))).toBe(
+      JSON.stringify(input),
+    );
+    expect(records[0].attributes['lmnr.span.input']).not.toContain('TRUNCATED');
+    expect(records[0].attributes['lmnr.span.output']).not.toContain('TRUNCATED');
+    // This is ordinary frozen content, so both helpers must preserve every original field.
+    expect(
+      decodedStructuredText(
+        JSON.parse(String(records[0].attributes['lmnr.span.input']))[0].content,
+      ),
+    ).toEqual(decodedStructuredText(userText));
+    expect(
+      decodedStructuredText(
+        JSON.parse(String(records[0].attributes['lmnr.span.output']))[0].content,
+      ),
+    ).toEqual(decodedStructuredText(assistantText));
+  },
+);
+
+it('still bounds logical payload depth, encoded JSON depth, cycles and total message budgets', () => {
+  let deep: unknown = { answer: 'DEEP_LEAF' };
+  for (let depth = 0; depth < 20; depth++) deep = { nested: deep };
+  let encoded = JSON.stringify({ answer: 'ENCODED_LEAF' });
+  for (let depth = 0; depth < 10; depth++) encoded = JSON.stringify({ nested: encoded });
+  const circular: { answer: string; self?: unknown } = { answer: 'ordinary answer' };
+  circular.self = circular;
+  const content = JSON.stringify({ deep, encoded });
+  expect(content.length).toBeLessThan(65536);
+  const sanitized = sanitizeTraceMessages([
+    { role: 'user', content },
+    {
+      role: 'tool',
+      content: JSON.stringify(sanitizeTracePayload(circular)),
+      tool_call_id: 'bounded-call',
+    },
+    ...Array.from({ length: 100 }, () => ({
+      role: 'user',
+      content: 'learner content '.repeat(700),
+    })),
+  ]);
+  const serialized = JSON.stringify(sanitized);
+  expect(serialized).toContain('TRUNCATED');
+  expect(serialized).toContain('circular');
+  expect(serialized).not.toContain('DEEP_LEAF');
+  expect(serialized).not.toContain('ENCODED_LEAF');
+  expect(serialized.length).toBeLessThanOrEqual(65536);
+});
+
+it('retains scalar leaves at the eight-container boundary and truncates the ninth container', () => {
+  let nested: unknown = { answer: 'BOUNDARY_LEAF' };
+  for (let depth = 0; depth < 8; depth++) nested = { nested };
+  expect(JSON.stringify(sanitizeTracePayload(nested))).toContain('BOUNDARY_LEAF');
+  expect(JSON.stringify(sanitizeTracePayload({ nested }))).not.toContain('BOUNDARY_LEAF');
+  const message = [{ role: 'user', content: JSON.stringify(nested) }];
+  expect(JSON.stringify(sanitizeTraceMessages(message))).toContain('BOUNDARY_LEAF');
+  expect(
+    JSON.stringify(sanitizeTraceMessages([{ role: 'user', content: JSON.stringify({ nested }) }])),
+  ).not.toContain('BOUNDARY_LEAF');
 });

@@ -7,7 +7,7 @@ const TEXT_LIMIT = 8000;
 const ENTRY_LIMIT = 64;
 const TRUNCATED = '[TRUNCATED: transcript limit]';
 const privateKey =
-  /^(?:api[-_]?key|key[-_]?auth|auth(?:orization|entication|headers)?|.*credential.*|.*password.*|.*secret.*|(?:access|refresh|id|api|auth|oauth)?[-_]?token|cookie|set[-_]?cookie|headers|requestHeaders|env|environment|processEnv|bindings?|providerBindings?|modelBindings?|privateKey|signingKey|rawCot|cotContent|rawThinking|thinking|thinkingSignature|reasoning|reasoningContent|rawReasoning|chainOfThought|cot|textSignature|base64|binary)$/i;
+  /^(?:.*api[-_]?key|key[-_]?auth|auth(?:orization|entication|headers)?|.*credential.*|.*password.*|.*secret.*|(?:access|refresh|id|api|auth|oauth)?[-_]?token|cookie|set[-_]?cookie|headers|requestHeaders|env|environment|processEnv|bindings?|providerBindings?|modelBindings?|privateKey|signingKey|rawCot|cotContent|rawThinking|thinking|thinkingSignature|reasoning|reasoningContent|rawReasoning|chainOfThought|cot|textSignature|base64|binary)$/i;
 
 export function developmentTranscriptsEnabled(): boolean {
   return process.env.NODE_ENV === 'development' && process.env.LMNR_DEV_TRANSCRIPTS === '1';
@@ -31,7 +31,7 @@ function cleanText(value: string): string {
       '[omitted: credential]',
     )
     .replace(
-      /\b(api[-_]?key|password|secret|access[-_]?token|refresh[-_]?token|authorization|cookie)\b["']?\s*[:=]\s*(?:"[^"\n]*"|'[^'\n]*'|[^\s,;]+)(?:\s+[^\s,;]+)?/gi,
+      /\b([a-z0-9_-]*api[-_]?key|password|secret|access[-_]?token|refresh[-_]?token|authorization|cookie)\b["']?\s*[:=]\s*(?:"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|[^\s,;"'}\]]+)/gi,
       '$1=[omitted: credential]',
     )
     .replace(/(?:https?:\/\/)[^\s<>"'；]+/gi, (url) => {
@@ -51,6 +51,13 @@ function cleanText(value: string): string {
 
 /** Traverse data descriptors only; never invoke getters, toJSON, or fetch assets. */
 export function sanitizeTracePayload(value: unknown): TraceValue {
+  return sanitizePayload(value, 0);
+}
+
+// Message-array and message-object containers are transport envelopes. Their
+// content starts at logical payload depth zero; every payload still shares the
+// node, entry, text and serialized budgets of the complete transcript.
+function sanitizePayload(value: unknown, envelopeDepth: 0 | 2): TraceValue {
   const ancestors = new WeakSet<object>();
   let nodes = 0;
   let remaining = 24000;
@@ -62,7 +69,7 @@ export function sanitizeTracePayload(value: unknown): TraceValue {
     return result + (result.length < cleaned.length ? TRUNCATED : '');
   };
   const visit = (item: unknown, depth: number): TraceValue => {
-    if (++nodes > 1000 || depth > 8 || remaining <= 0) return TRUNCATED;
+    if (++nodes > 1000 || remaining <= 0) return TRUNCATED;
     if (item === null || typeof item === 'boolean') return item;
     if (typeof item === 'number')
       return Number.isFinite(item) ? item : '[omitted: nonfinite number]';
@@ -73,7 +80,7 @@ export function sanitizeTracePayload(value: unknown): TraceValue {
         if (item.length > TRANSCRIPT_MAX_SERIALIZED_CHARS)
           return '[TRUNCATED: structured text exceeds parsing limit]';
         try {
-          return JSON.stringify(visit(JSON.parse(item), depth + 1));
+          return JSON.stringify(visit(JSON.parse(item), depth));
         } catch {
           /* Plain prose. */
         }
@@ -81,6 +88,9 @@ export function sanitizeTracePayload(value: unknown): TraceValue {
       return text(item);
     }
     if (typeof item !== 'object') return '[omitted: non-JSON value]';
+    // Depth bounds nested containers, not their scalar leaves. Decoding a JSON
+    // string preserves its logical depth, so repeated sanitization is stable.
+    if (depth > 8) return TRUNCATED;
     if (item instanceof Error) return '[omitted: error object]';
     if (ArrayBuffer.isView(item) || item instanceof ArrayBuffer) return '[omitted: binary]';
     if (ancestors.has(item)) return '[omitted: circular]';
@@ -136,7 +146,7 @@ export function sanitizeTracePayload(value: unknown): TraceValue {
     }
   };
   try {
-    const result = visit(value, 0);
+    const result = visit(value, -envelopeDepth);
     return JSON.stringify(result).length <= TRANSCRIPT_MAX_SERIALIZED_CHARS ? result : TRUNCATED;
   } catch {
     return '[omitted: unserializable payload]';
@@ -162,7 +172,7 @@ const transcriptMessageSchema = z.object({
 
 /** Keep truncation in a supported message shape so the transcript remains readable. */
 export function sanitizeTraceMessages(value: unknown): TraceValue {
-  const sanitized = sanitizeTracePayload(value);
+  const sanitized = sanitizePayload(value, 2);
   const messages: z.infer<typeof transcriptMessageSchema>[] = [];
   let omitted = !Array.isArray(sanitized);
   if (Array.isArray(sanitized))
