@@ -1,15 +1,19 @@
-# YUK-588 Today费用UI，2026-10-06
+# YUK-588 第一批交付，2026-10-06
 
-用户批准Linear具体UI方案并指示启动588/1153/1132第一批。588工作树 `/Users/yuqi/.t3/worktrees/the-learning-project/feat-yuk-588-today-cost-ui`，branch `feat/yuk-588-today-cost-ui`，base `fb5ee31d8`。
+用户已批准 Today UI 与第一批 588/1153/1132 实施。三票均已合并、Linear Done。
 
-实现：OvernightCostSummary.tsx+unit，TodayPage接入+probe回归，shell.css；浏览器fixture补后端已有cost字段及两尺寸测试。没有API/schema/权限变化。
+| 票 | PR | 已验证 head | CI Gate | main squash |
+| --- | --- | --- | --- | --- |
+| 588 | #1574 | cc9265f72132c53b7ed9d1d279178d0ae917b05a | 37462573054 | 29afb45d37633054787995288ad906557007220d |
+| 1153 | #1573 | 7cbb7cd09646d39bb040b67bef6f5a9f779a7b7a | 37462471896 | 5b0cd91438dd661e5f268291d4505a216eccecbb |
+| 1132 | #1572 | f234f62a29bd768aa8290de35365a8755b4f987b | 37462450623 | 86adca335791b9f763126113f659a3723ad0ca0a |
 
-证据：18unit、typecheck、lint297旧warning、build通过；8focused browser against built local :18788通过，API均fixture，没有DB/provider调用。截图 `test-results/usability/yuk588-cost-1440.png` 与 `yuk588-cost-390.png`。Git元数据短暂被macOS外置卷访问拒绝，现已恢复；api-client生成blob与base一致，需重跑git依赖audit后提交。
+588：18 scoped unit、8 built-app browser（1440/390与键盘）、typecheck/lint/build及相关audit通过。独立初审无P0/P1，fixture一致性已在PR前修正复验。截图 test-results/usability/yuk588-cost-1440.png 与 yuk588-cost-390.png。预览工具明确不可用，使用仓库Playwright；API fixtures不代表真实DB/provider记账验收。原有桌面背景横向溢出已去重登记YUK-1324，未混入本票。
 
-初审任务 `yuk588-ui-review-r1-20261006` 已完成，无P0/P1。P2夹具汇总与明细不一致已在PR前补齐并重跑；不再发起新一轮初审。新增独立视觉跟进YUK-1324。
+1153：10 scoped unit、typecheck/lint/build通过；token从argv移到私有临时JSON并从child env删除。测试mock spawn和信号，未验真实Newman；SIGKILL/主机崩溃残留限制保留。
+1132：16真实subprocess tests、typecheck/lint/build通过；exact-key allowlist过滤继承和override，保持删除/空值语义。独立review核对本机jyeoo-rs环境需求；未做外站或生产运行。
+两票中断后的初审已续接完成，无P0/P1或新增可行动P2，未开启第二轮。
 
-并行1153：thread mcp:5ff738d5-b6b7-4d61-b656-263be8d6392f，工作树fix-yuk-1153-smoke-token-argv；父线程复跑10unit通过。
-并行1132：thread mcp:2e210231-fd2b-4355-9a14-7a3969ec3caa，工作树fix-yuk-1132-jyeoo-child-env；父线程复跑16subprocess unit通过。
-两票独立初审被重启取消，没有最终finding；接续任务 `yuk1153-yuk1132-security-review-r1-resume-20261006` 在运行，只接续首轮。作者各自commit/PR，不自行merge。
+所有bot已结束且无findings，owner明确免除剩余17分钟窗口，并要求以后同样执行；持久规则见AGENTS.md。合并于12:29:45Z、12:29:53Z、12:30:00Z（1132/1153/588）。
 
-后续：588提交PR并link；各票exact-head CI Gate与最后push后17分钟窗，裁决已发P0/P1后自主merge。未部署/付费/full local test。原.serena/project.yml不纳入commit。保留原始外置卷脏树与所有分支。
+保留三条工作树、原外置卷脏树及各.serena/project.yml。外置卷Git访问故障已恢复。没有生产部署、付费provider调用或本地完整pnpm test。1128第二批未启动。

@@ -1,6 +1,6 @@
 # 当前交接 — 2026-10-06 YUK-588第一批
 
-588 UI已获批准并完成本地实现、18unit/8浏览器/typecheck/lint/build与初审，待PR与exact-head CI。1153/1132各独立工作树推进；Git访问已恢复，安全初审接续中。详见 `.remember/yuk588-today-cost-ui.md`。无部署/付费调用。
+588/1153/1132 第一批已合并 #1574/#1573/#1572，Linear Done；本地验证、独立初审与 exact-head CI 全部通过。Owner 更新 bot 无 findings 时免等待规则，见 AGENTS.md。详见 `.remember/yuk588-today-cost-ui.md`。1128 未启动，无部署/付费调用。
 
 # 当前交接 — 2026-10-06 YUK-1047 closeout
 
