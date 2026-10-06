@@ -125,5 +125,5 @@
 ## BLOCKED-ON
 
 - 本轮明确不部署。Mac/NAS生产数据库、容器、flags与provider凭据不动。opencode-go临时凭据的两请求授权探针已完成；扩大付费测试上限仍待owner选择。pi升级与原生provider迁移已获明确授权，不含生产部署。
-- 各交付PR须独立review、真实required check与最后push后约17分钟等待窗。本看板最后合并，不能用文档先称业务PR已落main。
+- 各交付PR须独立review和真实required check；等待窗及bot全部结束且无findings时的豁免以 AGENTS.md 为准。本看板最后合并，不能用文档先称业务PR已落main。
 - 原始脏工作树不动。实施和交付使用独立工作树，所有未合入分支保留。不删计费、重试、复杂parser、并发/回滚/恢复、UI安全测试来凑计数。
