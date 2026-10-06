@@ -15,7 +15,7 @@ export interface SpawnJyeooOptions {
   timeoutMs: number;
   maxStdoutBytes: number;
   maxStderrBytes: number;
-  /** Extra env for the child (merged over process.env). Cookie path etc. */
+  /** Overrides for allowlisted child env only; undefined removes an inherited value. */
   env?: Record<string, string | undefined>;
   cwd?: string;
 }
@@ -82,6 +82,32 @@ export function sliceToCharBoundary(buf: Buffer, maxBytes: number): Buffer {
   return buf.subarray(0, end);
 }
 
+// jyeoo-rs reads cookie/account paths, HOME and RUST_LOG; wreq reads proxy settings.
+// Keep runtime paths/locales for the producer and helpers, but never inherit arbitrary
+// server credentials or runtime injection settings (NODE_OPTIONS, LD_PRELOAD, etc.).
+const JYEOO_CHILD_ENV_KEYS = [
+  'PATH',
+  'HOME',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TZ',
+  'JYEOO_COOKIES',
+  'JYEOO_API_ACCOUNT',
+  'RUST_LOG',
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'ALL_PROXY',
+  'NO_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'all_proxy',
+  'no_proxy',
+] as const;
+
 /**
  * Spawn jyeoo-rs with bounded stdout/stderr + a hard timeout. Never rejects on a
  * non-zero exit — the disposition (exitCode/signal/timedOut) is returned for the
@@ -105,11 +131,11 @@ export function spawnJyeooFetch(opts: SpawnJyeooOptions): Promise<SpawnJyeooResu
   }
 
   return new Promise<SpawnJyeooResult>((resolve, reject) => {
-    // Merge env over process.env, DROPPING undefined values — an undefined entry in
-    // opts.env would otherwise unset (or stringify to "undefined") an inherited var.
+    // Filter both inherited env and overrides at the single subprocess boundary.
     const childEnv: Record<string, string> = {};
-    for (const [k, v] of Object.entries({ ...process.env, ...opts.env })) {
-      if (v !== undefined) childEnv[k] = v;
+    for (const key of JYEOO_CHILD_ENV_KEYS) {
+      const value = opts.env && Object.hasOwn(opts.env, key) ? opts.env[key] : process.env[key];
+      if (value !== undefined) childEnv[key] = value;
     }
     // Default stdio (all piped) → ChildProcessWithoutNullStreams, so stdout/stderr are
     // non-null for capture. stdin is piped but unused (we never write to it).
