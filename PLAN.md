@@ -1,16 +1,16 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-10-06：owner 要求先用语言设计完整系统与行为，不讨论实施先后。本轮形成 [连续学习系统行为设计 r0](docs/design/2026-10-06-continuous-learning-system-behavior.md)，归既有 YUK-405 产品愿景讨论；具体行为仍为提案。已批准的技术目标见 [ADR-0065](docs/adr/0065-typescript-adaptive-learning-architecture.md)，尚未启动迁移。旧看板见 [历史快照](docs/planning/2026-10-06-plan-snapshot.md)。
+> Linear 是权威 tracker；更新于 2026-10-07：owner 已将产品决定、实施与本机部署运维交由 agent 持续执行，见[持续授权](docs/planning/2026-10-07-autonomous-delivery-charter.md)。本轮形成 [连续学习系统行为设计 r0](docs/design/2026-10-06-continuous-learning-system-behavior.md)，归既有 YUK-405 产品愿景讨论；具体行为仍为提案。已批准的技术目标见 [ADR-0065](docs/adr/0065-typescript-adaptive-learning-architecture.md)，尚未启动迁移。旧看板见 [历史快照](docs/planning/2026-10-06-plan-snapshot.md)。
 
 ## NOW
 
-- **当前单线 / YUK-405 产品设计**：围绕学校、纸笔、自习及数字工具中的连续学习，完整说明记录、学情判断、动态安排、教学、主动备课、纠偏、自主权、隐私与失败恢复；不以 MVP、阶段或开发顺序组织。
+- **当前单线 / YUK-1103 自主交付**：每小时 T3 自动任务已启用；先恢复本机可重复发布并验证真实学习行为。活动工作树 `/Volumes/YukovalSBak/yukoval-projects/tlp-autonomous-local-delivery`，branch `ops/yuk-1103-local-delivery`。完整当前看板见该树 `PLAN.md`，交接见 `.remember/2026-10-07-autonomous-local-delivery.md`。本根树原有未提交改动保留，不在此部署旧代码。
 - **本轮交付**：行为设计 r0、场景与验收样例、独立场景/边界检查及本地 handoff。设计提案不代表 owner 已批准，也不代表当前实现具备这些行为。
 - **已定边界**：实时状态与安排共同演进；TanStack Start + Pi + PostgreSQL/Drizzle + DBOS 技术目标保留。当前 Hono + Vite SPA + pg-boss 运行形态未改变；本轮不改 UI 或业务代码。
 
 ## NEXT
 
-- 与 owner 审阅完整行为稿，修正具体场景与默认权限，形成确认版本；本轮不拆实施票、不排开发顺序。
+- agent 在持续委托下采用行为稿为基线，负责设计细化、实现与验收；无需 owner 逐项审阅。完成新镜像构建、恢复副本迁移预演、最终备份和本机部署。
 - **YUK-1338** 的技术集成验证保留 Backlog、未启动；行为稿不视为该验证已完成或新的迁移授权。
 
 ## PARKED
@@ -28,5 +28,5 @@
 
 ## BLOCKED-ON
 
-- 本次设计无外部访问阻塞；r0 的新增行为与重大默认取舍待 owner 审阅，不更新已批准领域词条或现役权限。
-- 本次没有启动迁移、生产数据切换、部署或付费模型评估；历史授权与预算留在原 handoff，不自动转用到新任务。
+- 无需 owner 追加授权。实际交付尚待构建、兼容/恢复检查和真实浏览器验收。
+- 当前旧生产仍可用；隔离副本已恢复112项迁移、2626条事件。尚未升级生产，首次每小时自动执行仍待记录。
