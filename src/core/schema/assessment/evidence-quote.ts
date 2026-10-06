@@ -4,6 +4,45 @@ const jsonValue = z.json();
 type JsonValue = z.infer<typeof jsonValue>;
 const numberContext = z.object({ source: z.string() });
 
+/** Inspect raw members before JSON.parse/Zod can overwrite or discard keys. */
+function assertLosslessJsonMembers(text: string): void {
+  const frames: Array<
+    { kind: 'object'; keys: Set<string>; expectingKey: boolean } | { kind: 'array' }
+  > = [];
+  for (let index = 0; index < text.length; index++) {
+    const character = text[index];
+    const frame = frames.at(-1);
+    if (character === '"') {
+      const start = index++;
+      while (index < text.length && text[index] !== '"') {
+        // Skip an entire escape, so escaped quotes/backslashes cannot end the token.
+        index += text[index] === '\\' ? 2 : 1;
+      }
+      if (index >= text.length) throw new Error('Unterminated JSON string');
+      if (frame?.kind === 'object' && frame.expectingKey) {
+        const key: unknown = JSON.parse(text.slice(start, index + 1));
+        if (typeof key !== 'string' || frame.keys.has(key)) {
+          throw new Error('Duplicate JSON member');
+        }
+        if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
+          throw new Error('Prototype-related JSON member');
+        }
+        frame.keys.add(key);
+        frame.expectingKey = false;
+      }
+    } else if (character === '{') {
+      frames.push({ kind: 'object', keys: new Set(), expectingKey: true });
+    } else if (character === '[') {
+      frames.push({ kind: 'array' });
+    } else if (character === '}' || character === ']') {
+      frames.pop();
+    } else if (character === ',' && frame?.kind === 'object') {
+      frame.expectingKey = true;
+    }
+  }
+  // JSON.parse below validates the complete grammar; this scan checks raw member identity.
+}
+
 function decimalIdentity(token: string): string {
   const match = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/.exec(token);
   if (!match) throw new Error('Invalid JSON number');
@@ -17,6 +56,7 @@ function decimalIdentity(token: string): string {
 }
 
 function parseWithoutNumericLoss(text: string): JsonValue {
+  assertLosslessJsonMembers(text);
   return jsonValue.parse(
     JSON.parse(text, (_key: string, value: unknown, context?: unknown) => {
       if (typeof value === 'number') {
@@ -45,9 +85,10 @@ function matchesProjection(original: JsonValue, quote: JsonValue, allowProjectio
   if (quote !== null && typeof quote === 'object') {
     if (original === null || typeof original !== 'object' || Array.isArray(original)) return false;
     const entries = Object.entries(quote);
+    const originalSize = Object.keys(original).length;
     return (
-      entries.length > 0 &&
-      (allowProjection || Object.keys(original).length === entries.length) &&
+      (entries.length > 0 || originalSize === 0) &&
+      (allowProjection || originalSize === entries.length) &&
       entries.every(
         ([key, value]) =>
           Object.hasOwn(original, key) && matchesProjection(original[key], value, allowProjection),
