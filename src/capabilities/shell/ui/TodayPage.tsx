@@ -34,6 +34,7 @@ import { ProfileBand } from './blocks/ProfileBand';
 import { ProposalStrip } from './blocks/ProposalStrip';
 import { SessionsStrip } from './blocks/SessionsStrip';
 import { WeekHeat } from './blocks/WeekHeat';
+import { OvernightCostSummary } from './OvernightCostSummary';
 import { PrepDeskConjectures } from './PrepDeskConjectures';
 import { ProbeAnswers } from './ProbeAnswers';
 import { getActiveProbes } from './probe-answer-api';
@@ -426,6 +427,7 @@ export function OvernightDigestBand({ navigate }: { navigate: (to: string) => vo
               )}
             </>
           )}
+          {d && <OvernightCostSummary cost={d.cost} window={d.window} />}
         </Stateful>
       </LoomCard>
       {hasProbes && (

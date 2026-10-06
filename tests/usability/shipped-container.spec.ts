@@ -1166,3 +1166,137 @@ for (const width of [1280, 390]) {
     expect(fixture.unexpectedRequests).toEqual([]);
   });
 }
+
+for (const width of [1440, 390]) {
+  test(`yesterday cost evidence and keyboard disclosure at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const fixture = await installApiFixtures(page, 'existing-evidence');
+    await page.route('**/api/workbench/overnight-digest', (route) =>
+      route.fulfill({
+        json: {
+          window: { from: '2026-10-04T16:00:00.000Z', to: '2026-10-05T16:00:00.000Z' },
+          has_overnight_activity: false,
+          runs: [],
+          degraded_kinds: [],
+          note_changes_count: 0,
+          new_proposals_count: 0,
+          new_conjectures_count: 0,
+          agent_notes_count: 0,
+          cost: {
+            scope: 'all_activity',
+            records: 4,
+            by_currency: [
+              {
+                currency: 'USD',
+                cost: 0.0000000123,
+                reported_cost: 0,
+                estimated_cost: 0.0000000123,
+                legacy_cost: 0,
+                reported_attempts: 1,
+                estimated_attempts: 1,
+                unknown_attempts: 1,
+                legacy_rows: 0,
+              },
+              {
+                currency: 'CNY',
+                cost: 2.5,
+                reported_cost: 0,
+                estimated_cost: 0,
+                legacy_cost: 2.5,
+                reported_attempts: 0,
+                estimated_attempts: 0,
+                unknown_attempts: 0,
+                legacy_rows: 1,
+              },
+            ],
+            details: [
+              {
+                provider: 'provider-with-long-name',
+                model: 'model/long-version-with-long-name',
+                lane_id: 'subscription-lane-with-long-name',
+                task_kind: 'CoachTask',
+                source: 'provider_attempt',
+                entry_kind: 'attempt',
+                cost_basis: 'unknown',
+                cost_ref: null,
+                currency: 'USD',
+                amount: null,
+                records: 1,
+                wire_calls: null,
+                unknown_wire_records: 1,
+                usage_basis: 'reported',
+                usage_unit: 'seconds',
+                usage_source: 'provider-response',
+                usage_input: 125,
+                usage_output: null,
+                usage_total: null,
+                missing_input_records: 0,
+                missing_output_records: 1,
+                missing_total_records: 1,
+              },
+            ].flatMap((unknown) => [
+              unknown,
+              {
+                ...unknown,
+                cost_basis: 'reported',
+                amount: 0,
+                usage_unit: null,
+                usage_basis: 'unknown',
+                usage_source: null,
+                usage_input: null,
+                missing_input_records: 1,
+              },
+              { ...unknown, cost_basis: 'estimated', amount: 0.0000000123 },
+              {
+                ...unknown,
+                source: 'cost_ledger',
+                entry_kind: 'legacy',
+                cost_basis: null,
+                currency: 'CNY',
+                amount: 2.5,
+                lane_id: null,
+                usage_basis: 'unclassified',
+              },
+            ]),
+          },
+        },
+      }),
+    );
+    await page.goto('/today');
+    const region = page.getByRole('region', { name: '昨日 AI 用量与费用' });
+    const toggle = region.getByRole('button', { name: '昨日 AI 用量与费用' });
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    const collapsedPageWidth = await page.evaluate(() => document.documentElement.scrollWidth);
+    await expect(page.getByText(/昨夜没有需要交班的活动/)).toBeVisible();
+    await toggle.focus();
+    await page.keyboard.press('Enter');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(region).toContainText('北京时间 2026/10/05 00:00 至 2026/10/06 00:00');
+    await expect(region).toContainText('包含前台与后台活动');
+    await expect(region).toContainText('已报告：USD 0 · 1 条记录');
+    await expect(region).toContainText('估算：USD 0.0000000123 · 1 条记录');
+    await expect(region).toContainText('历史口径：CNY 2.5 · 1 条记录');
+    await expect(region).toContainText('费用未知：1 条记录');
+    await expect(region).toContainText('单位：seconds');
+    await expect(region).toContainText('记录数不等于实际请求数');
+    await expect(region).toContainText('未知（1 条记录缺失）');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(
+      collapsedPageWidth,
+    );
+    expect(await region.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true,
+    );
+    if (width === 390) {
+      expect(
+        await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+      ).toBe(true);
+    }
+    await region.screenshot({ path: `test-results/usability/yuk588-cost-${width}.png` });
+    await page.keyboard.press('Space');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect(region.getByRole('list', { name: '费用与用量明细' })).toBeHidden();
+    await toggle.click();
+    await expect(region.getByRole('list', { name: '费用与用量明细' })).toBeVisible();
+    expect(fixture.unexpectedRequests).toEqual([]);
+  });
+}
