@@ -1,3 +1,4 @@
+import { flushLaminarTracing } from '@/server/ai/laminar-tracing';
 /** The API owns transport drain; disconnecting a stream is not a durable run Stop. */
 export function installApiShutdown(
   server: {
@@ -28,9 +29,11 @@ export function installApiShutdown(
       });
       clearTimeout(transportDeadline);
       await closeRuntime();
+      await flushLaminarTracing();
       console.log('[rw:api] stopped cleanly');
       process.exit(0);
     } catch (error) {
+      await flushLaminarTracing();
       console.error('[rw:api] shutdown failed', error);
       process.exit(1);
     } finally {

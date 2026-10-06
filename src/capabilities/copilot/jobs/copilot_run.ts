@@ -58,6 +58,7 @@ import { reconcileNativeSubagentsForParent } from '@/capabilities/copilot/server
 import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
 import type { ModelBinding } from '@/server/ai/execution-adapter';
+import { traceMetadata, traceOperation } from '@/server/ai/laminar-tracing';
 import {
   type BossJobObservation,
   type BossJobObserver,
@@ -622,6 +623,21 @@ async function awaitClaimedCopilotExecution(
 }
 
 export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCopilotRunResult> {
+  return traceOperation('copilot.run', { logical_run_id: params.data.run_id }, async () => {
+    const result = await runCopilotRunImpl(params);
+    traceMetadata({
+      business_outcome:
+        result.status === 'done'
+          ? 'accepted'
+          : result.status === 'cancelled'
+            ? 'cancelled'
+            : 'rejected',
+    });
+    return result;
+  });
+}
+
+async function runCopilotRunImpl(params: RunCopilotRunParams): Promise<RunCopilotRunResult> {
   try {
     return await executeAcceptedCopilotRun(params);
   } finally {

@@ -3,6 +3,8 @@ import { once } from 'node:events';
 import { resolve } from 'node:path';
 import { buildSync } from 'esbuild';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { __setTraceExporterForTests } from '@/server/ai/laminar-tracing';
+import { memoryTraceExporter } from '@/server/ai/laminar-tracing.test-support';
 import { installApiShutdown } from './shutdown';
 
 describe('API shutdown deadlines', () => {
@@ -19,10 +21,42 @@ describe('API shutdown deadlines', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
   afterEach(() => {
+    __setTraceExporterForTests();
     handlers.clear();
     vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it('flushes after drain and exits within 500ms even if telemetry never responds', async () => {
+    const order: string[] = [];
+    const { exporter } = memoryTraceExporter();
+    __setTraceExporterForTests({
+      ...exporter,
+      flush: () => {
+        order.push('flush');
+        return new Promise<void>(() => {});
+      },
+    });
+    installApiShutdown(
+      {
+        close: (done) => {
+          order.push('http');
+          done();
+        },
+      },
+      async () => {
+        order.push('runtime');
+      },
+    );
+    const stopping = handlers.get('SIGTERM')?.('SIGTERM');
+    await vi.advanceTimersByTimeAsync(499);
+    expect(order).toEqual(['http', 'runtime', 'flush']);
+    expect(process.exit).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await stopping;
+    expect(process.exit).toHaveBeenCalledExactlyOnceWith(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('cuts off an open transport after 30s, then releases runtime exactly once', async () => {

@@ -29,6 +29,47 @@
 
 设计原则：用成熟 OSS 解成熟问题；AI 调用按 task 抽象，不做聊天框；破坏性 AI 动作走 proposal + 用户确认。
 
+## Optional Laminar application tracing
+
+Set `LMNR_PROJECT_API_KEY` in the API and worker environment to enable application
+traces with `@lmnr-ai/lmnr` 0.8.49. API startup and both worker modes initialize it
+idempotently after environment loading. An empty key skips SDK loading and export.
+Restart the relevant processes after changing this environment setting.
+
+The default export contains allowlisted IDs, task/tool/model names, execution and
+business outcomes, and usage evidence. It excludes prompts, tool arguments/results,
+provider credentials, headers, history, images, raw reasoning, and exception text.
+`instrumentModules: {}` disables broad SDK capture. `LMNR_DEBUG`,
+`LMNR_TRACE_METADATA`, and `LMNR_SPAN_CONTEXT` disable this integration when set;
+those SDK modes exceed its application capture policy.
+
+A capability may opt one run into sanitized business text through `RunTaskCtx`:
+
+```ts
+await runTask(kind, businessInput, {
+  ...context,
+  laminarContent: {
+    input: { summary: 'Synthetic fixture: compare two supplied statements' },
+    output: (result) => ({ summary: sanitizeFinalBusinessAnswer(result.text) }),
+  },
+});
+```
+
+The capability owns sanitization. Each summary is capped at 4,000 characters;
+there is no global content-capture switch. Returning a provider result does not
+establish business acceptance: attempt spans remain `business_outcome=unassessed`.
+Native assessment validation and Copilot finalization/settlement add their own verdicts.
+
+Only `llm.call` leaves carry additive token/cost attributes. Attempt aggregates are
+reconciliation metadata and include child usage, so do not add them to leaf totals.
+Pi catalog costs are estimates, not invoices; absent usage remains unknown.
+Worker pickup starts a new `job.run` root, with logical-run correlation on Copilot;
+queue trace headers and payloads are unchanged. Flush runs only after shutdown drain
+and waits at most 500 ms. Trace export is best effort and cannot retry application work.
+
+See [YUK-1325 design and verification](docs/planning/2026-10-06-yuk1325-laminar.md)
+for exact boundaries and current limits.
+
 ## 开发
 
 Prerequisites: **Node.js >=24.0.0**（`.node-version` 固定最低支持版本）与

@@ -9,6 +9,7 @@ import type {
 import { AssessmentRuleDecision } from '@/core/schema/assessment/model-decision';
 import type { Db } from '@/db/client';
 import { AgentRunError } from '@/server/ai/agent-run-error';
+import { traceMetadata, traceOperation } from '@/server/ai/laminar-tracing';
 import type { RunTaskCtx, RunTaskResult } from '@/server/ai/runner';
 import {
   type AssessmentAssetLoader,
@@ -77,7 +78,7 @@ function citationProblem(
 
 /** Standalone native pi lane, selected only by an explicit published task and descriptor. */
 export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUnitExecutorPort {
-  return async (request, callerSignal) => {
+  const execute: ModelUnitExecutorPort = async (request, callerSignal) => {
     if (
       request.executor.task_kind !== 'AssessmentRuleJudgeTask' ||
       request.executor.admitted_slice_id === null
@@ -171,8 +172,14 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
           [result.task_run_id],
           cost,
         );
-      const decision = AssessmentRuleDecision.parse(
-        result.structured_output ?? JSON.parse(result.text.trim()),
+      const modelResult = result;
+      const decision = await traceOperation(
+        'assessment.parse',
+        { task_run_id: result.task_run_id },
+        async () =>
+          AssessmentRuleDecision.parse(
+            modelResult.structured_output ?? JSON.parse(modelResult.text.trim()),
+          ),
       );
       if (decision.kind === 'pending')
         return pending(
@@ -266,4 +273,15 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
       );
     }
   };
+  return (request, callerSignal) =>
+    traceOperation(
+      'assessment.execute',
+      { task_kind: 'AssessmentRuleJudgeTask' },
+      async () => {
+        const outcome = await execute(request, callerSignal);
+        traceMetadata({ business_outcome: outcome.kind === 'scored' ? 'accepted' : 'pending' });
+        return outcome;
+      },
+      { signal: callerSignal ?? options.signal },
+    );
 }
