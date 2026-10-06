@@ -1,8 +1,12 @@
 // YUK-1341 — run-time git evidence for actual-output seals. Every paid probe
-// must record the EXACT code it executed: the commit SHA plus (when the tree is
-// dirty) a digest of the uncommitted patch material, so a reviewer can rebuild
-// the precise tree the run happened on. Clean trees record `patch_digest: null`
-// instead of a fabricated digest.
+// records the code it executed: the commit SHA plus (when the tree is dirty) an
+// integrity digest of the uncommitted patch material. The digest only verifies
+// bytes a reviewer already possesses — this helper does NOT archive the patch
+// itself, so an exact dirty tree cannot be rebuilt from these records alone.
+// Historical seals whose `working_tree` is 'dirty' are therefore integrity-
+// checkable only against separately preserved material; their source snapshots
+// are NOT reconstructable from committed records. Clean trees record
+// `patch_digest: null` instead of a fabricated digest.
 //
 // Test-harness helper only — no production caller.
 
@@ -14,7 +18,11 @@ import { join } from 'node:path';
 export interface GitEvidence {
   code_revision: string;
   working_tree: 'clean' | 'dirty';
-  /** `sha256:<hex>` over tracked diff + untracked file contents; null on clean. */
+  /**
+   * `sha256:<hex>` over tracked diff + untracked file contents; null on clean.
+   * Integrity fingerprint only — the patch bytes are not archived, so this is
+   * not a reconstructable source snapshot.
+   */
   patch_digest: string | null;
   /** Sorted paths the uncommitted patch touches (tracked + untracked). */
   patch_paths: string[];

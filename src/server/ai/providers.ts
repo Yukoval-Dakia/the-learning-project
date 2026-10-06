@@ -238,12 +238,18 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
       'deepseek-v4-pro': { capabilities: { toolCalling: true } },
       // YUK-1341 — mimo-v2.6-pro is the post-incident product lane for
       // CopilotTask and the other needsToolCall kinds (xiaomi mimo-v2.5-pro
-      // hit 402 insufficient_balance). Sealed evidence before this flip:
-      //   docs/planning/evidence/2026-10-07-yuk1341-synthetic-tool-mimo-v2.6-pro-actual.json
-      //     (phase A: low-level PiAgentAdapter + synthetic tool loop, run
-      //      BEFORE this binding existed — wire proof, not a capability claim)
+      // hit 402 insufficient_balance). Sealed evidence for this binding:
       //   docs/planning/evidence/2026-09-21-pi-tool-loop-mimo-v2.6-pro-actual.json
-      //     (production SourcingTask entry + tool_call_log reconciliation)
+      //     (production SourcingTask entry + tool_call_log reconciliation,
+      //      2026-10-06T18:02Z)
+      //   docs/planning/evidence/2026-09-21-pi-p3-copilot-mimo-v2.6-pro-actual.json
+      //     (production Copilot two durable turns, 2026-10-06T18:05Z)
+      //   docs/planning/evidence/2026-10-07-yuk1341-synthetic-tool-mimo-v2.6-pro-actual.json
+      //     (PiAgentAdapter + synthetic tool wire proof — the surviving
+      //      artifact is the 2026-10-06T18:07Z post-binding reseal; the harness
+      //      had hardcoded pre-binding labels, superseded in that file's
+      //      `correction` record. The original pre-binding seal was overwritten
+      //      by the reseal and is not recoverable.)
       // Vision needs no binding here: the native pi catalog declares
       // input text+image and model-profiles reads it as authoritative.
       'mimo-v2.6-pro': { capabilities: { toolCalling: true } },

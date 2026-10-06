@@ -1,7 +1,7 @@
 {
   "captured_at": "2026-10-06T18:07:39.292Z",
   "ticket": "YUK-1341",
-  "phase": "A-synthetic-vision-ability-pre-binding",
+  "phase": "A-synthetic-vision-ability",
   "code_revision": "5d738dbc012913f294f7b471027314c933996ddb",
   "working_tree": "dirty",
   "patch_digest": "sha256:01fecdc90f39070d795d4e4b7ff879546e32f2bdabdbf07afb62b4f82d0beee9",
@@ -25,7 +25,7 @@
     "task_kind": "AttributionTask",
     "run_id": "yuk1341_vision_fc35rab0zjwdbq3xmf3ipiem",
     "session_header": "x-opencode-session=<run_id>",
-    "input_modality": "text + image/png base64 (1x1 solid red, generated in-test)"
+    "input_modality": "text + image/png base64 (1x1 semitransparent red RGBA alpha=0x7f, generated in-test)"
   },
   "input_digest": "sha256:3877f09fdccaf53f722126a83f57caa0afa8dbef50262512efd7de4cfeeeae72",
   "terminal": {
@@ -41,5 +41,21 @@
     "ref": "pi-catalog:opencode-go/mimo-v2.6-pro",
     "note": "pi usage.cost is the catalog rate-card estimate (design §6 R1), never an invoice"
   },
-  "provenance": "Vision for this lane is declared by the native pi catalog (input: text+image) — no providers.ts vision binding exists or is needed. This probe confirms the wire actually carries an image block."
+  "provenance": "Vision for this lane is declared by the native pi catalog (input: text+image) — no providers.ts vision binding exists or is needed. This probe confirms the wire actually carries an image block. Smoke scope only: a 1x1 semitransparent red PNG proves image-input wire acceptance — no mathematical-diagram vision quality claim and no production browser acceptance.",
+  "correction": {
+    "corrected_at": "2026-10-06T19:28:08Z",
+    "reason": "YUK-1341 evidence-metadata correction. This capture is the final-tree RESEAL executed at 2026-10-06T18:07:39.292Z — after the providers.ts toolCalling binding flip and after the production SourcingTask (18:02:13.026Z) / Copilot (18:05:00.128Z) seals. The harness hardcoded a pre-binding phase label; it also described the fixture as 1x1 'solid red' when the PNG is RGBA semitransparent red (alpha=0x7f). Both labels described only the ORIGINAL pre-binding run whose artifacts this reseal overwrote at the same filename.",
+    "superseded_labels": {
+      "phase": "A-synthetic-vision-ability-pre-binding",
+      "input_modality": "text + image/png base64 (1x1 solid red, generated in-test)"
+    },
+    "superseded_because": "Hardcoded harness narrative; false for this 18:07Z post-binding capture. Post-binding ordering is established from the run timeline and the parent-confirmed execution order — NOT from a pre-call observation, which this harness did not record.",
+    "preserved_unchanged": "captured_at, run_id, model, input_digest (prompt + PNG bytes unchanged), terminal digests, cost — genuine for this capture and byte-identical.",
+    "limitations": [
+      "The original pre-binding A2 artifacts this filename held were overwritten by this reseal and are NOT recoverable from committed records; no earlier evidence is manufactured here.",
+      "The overwritten first A2 run's raw cost record is gone; parent-observed prior estimate $0.000070905 (this file's cost is the reseal's $0.000067425).",
+      "Vision scope is smoke-only (image-input wire acceptance): no mathematical-diagram vision quality claim and no production browser acceptance.",
+      "No paid probe was rerun to repair metadata."
+    ]
+  }
 }

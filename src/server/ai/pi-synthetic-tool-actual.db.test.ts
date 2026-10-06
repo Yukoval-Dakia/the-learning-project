@@ -1,5 +1,6 @@
-// YUK-1341 phase A — opencode-go/mimo-v2.6-pro ISOLATED tool-ability proof,
-// run BEFORE the providers.ts toolCalling binding flips.
+// YUK-1341 phase A — opencode-go/mimo-v2.6-pro ISOLATED tool-ability proof:
+// low-level PiAgentAdapter against ONE harmless synthetic math tool (plus a
+// 1x1 vision smoke), with no production entry point involved.
 //
 // Why this gate exists: the per-model `toolCalling:true` declaration in
 // providers.ts is evidence-gated (a sealed actual-output tool-loop run must
@@ -7,18 +8,23 @@
 // a toolCalling:false lane BEFORE any paid call
 // (assertModelProfileCapabilityFit in run-lifecycle.ts). That is exactly the
 // bootstrap trap the ticket names: the production harness cannot generate the
-// evidence its own admission gate demands. So phase A drives the low-level
+// evidence its own admission gate demands. So this harness drives the low-level
 // PiAgentAdapter directly — the same execution engine production uses, with
 // the same x-opencode-session injection and the same toolCall→toolResult frame
 // normalization — against ONE harmless synthetic math tool. No production
-// DomainTools, no Exa, no learner data, and providers.ts is NOT touched by
-// this run (no capability is advertised before the evidence exists).
+// DomainTools, no Exa, no learner data.
 //
-// Only after this run seals does providers.ts declare
-// `models['mimo-v2.6-pro'].capabilities.toolCalling: true`, after which the
-// production-entry gate (pi-tool-loop-actual.db.test.ts with
-// PI_ACTUAL_MODEL=mimo-v2.6-pro) seals the named binding evidence file
-// docs/planning/evidence/2026-09-21-pi-tool-loop-mimo-v2.6-pro-actual.json.
+// METADATA CONTRACT (YUK-1341 correction): evidence records the binding state
+// OBSERVED from resolveModelProfile BEFORE the paid call, and uses a NEUTRAL
+// phase label. This harness must never hardcode an ordering narrative such as
+// "binding NOT yet declared" / "pre-binding" / "declared only after this seal".
+// The design intent remains: synthetic wire proof first, then the providers.ts
+// flip, then the production-entry seal
+// (docs/planning/evidence/2026-09-21-pi-tool-loop-mimo-v2.6-pro-actual.json) —
+// but each capture only states what it observed. NB: a re-run writes the same
+// evidence filename and OVERWRITES the previous seal (the 2026-10-06T18:07Z
+// final-tree reseal overwrote the original pre-binding artifacts and was itself
+// post-binding; its superseded labels live in that file's `correction` record).
 //
 // Re-run locally:
 //   OPENCODE_API_KEY=sk-... pnpm vitest run --config vitest.db.config.ts \
@@ -28,9 +34,10 @@
 //   docs/planning/evidence/2026-10-07-yuk1341-synthetic-vision-<model>-actual.json
 //
 // INERT wherever OPENCODE_API_KEY is unset — CI never carries that key, so the
-// describes skip wholesale. Public input is synthetic math / a 1px solid-color
-// PNG generated in-test; no learner data crosses the wire. One attempt per
-// probe — a failure seals its evidence and is never blindly retried.
+// describes skip wholesale. Public input is synthetic math / a 1x1
+// semitransparent red PNG generated in-test; no learner data crosses the wire.
+// One attempt per probe — a failure seals its evidence and is never blindly
+// retried.
 
 import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
@@ -39,7 +46,13 @@ import { createId } from '@paralleldrive/cuid2';
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { captureGitEvidence } from '../../../tests/helpers/git-evidence';
+import {
+  SYNTHETIC_TOOL_PHASE,
+  SYNTHETIC_VISION_PHASE,
+  describeObservedBindingState,
+} from '../../../tests/helpers/synthetic-evidence-meta';
 import type { PreparedExecutionQuery } from './execution-adapter';
+import { resolveModelProfile } from './model-profiles';
 import { PiAgentAdapter } from './pi-agent-adapter';
 import { type ResolvedProvider, resolveTaskProvider } from './providers';
 import type { Options, SDKAssistantMessage, SDKResultMessage, SDKUserMessage } from './sdk-types';
@@ -53,7 +66,11 @@ const TOOL_SERVER = 'yuk1341_probe';
 const TOOL_NAME = 'add_numbers';
 const TOOL_WIRE_NAME = `mcp__${TOOL_SERVER}__${TOOL_NAME}`;
 
-/** 1×1 solid red PNG — a self-contained vision probe fixture, no external asset. */
+/**
+ * 1×1 semitransparent red PNG (RGBA, alpha=0x7f) — a self-contained vision
+ * smoke fixture, no external asset. Image-input wire proof only: no
+ * mathematical-diagram quality claim, no production browser acceptance.
+ */
 const RED_PIXEL_PNG_BASE64 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
@@ -120,6 +137,9 @@ describe.skipIf(!HAS_KEY)('mimo-v2.6-pro synthetic tool-ability proof (YUK-1341 
     timeout: 300_000,
   }, async () => {
     const runId = `yuk1341_synth_${createId()}`;
+    // YUK-1341 correction: OBSERVE the binding state before the paid call and
+    // record it verbatim — never hardcode a pre/post-binding narrative.
+    const profileBeforeCall = resolveModelProfile('opencode-go', MODEL);
     const prompt =
       `You have exactly one tool available: ${TOOL_WIRE_NAME}. ` +
       'Call it ONCE with a=17 and b=25. Do not compute the sum yourself. ' +
@@ -206,7 +226,7 @@ describe.skipIf(!HAS_KEY)('mimo-v2.6-pro synthetic tool-ability proof (YUK-1341 
     const evidence = {
       captured_at: new Date().toISOString(),
       ticket: 'YUK-1341',
-      phase: 'A-synthetic-tool-ability-pre-binding',
+      phase: SYNTHETIC_TOOL_PHASE,
       ...captureGitEvidence(),
       lane: {
         adapter: 'pi',
@@ -216,7 +236,7 @@ describe.skipIf(!HAS_KEY)('mimo-v2.6-pro synthetic tool-ability proof (YUK-1341 
         run_id: runId,
         session_header: 'x-opencode-session=<run_id>',
         mount: 'piCustomTool (synthetic, TEST-ONLY) — no production DomainTools, no Exa',
-        binding_state: 'providers.ts toolCalling NOT yet declared for this model',
+        binding_state: describeObservedBindingState(profileBeforeCall, 'toolCalling'),
       },
       prompt_digest: `sha256:${sha256(prompt)}`,
       prompt_excerpt: prompt.slice(0, 300),
@@ -242,8 +262,9 @@ describe.skipIf(!HAS_KEY)('mimo-v2.6-pro synthetic tool-ability proof (YUK-1341 
         'PiAgentAdapter (the only post-P4 execution engine) with the default ' +
         'builtinModels()/agentLoop deps — same x-opencode-session injection and ' +
         'toolCall→toolResult frame normalization production uses. The synthetic ' +
-        'tool proves the WIRE carries tool calls end-to-end; production capability ' +
-        'is declared in providers.ts only after this seal.',
+        'tool proves the WIRE carries tool calls end-to-end; binding state is ' +
+        'recorded as observed before this call (no ordering claim — see the ' +
+        'evidence note for the seal timeline).',
     };
     writeFileSync(
       join(EVIDENCE_DIR, `2026-10-07-yuk1341-synthetic-tool-${MODEL}-actual.json`),
@@ -264,6 +285,9 @@ describe.skipIf(!HAS_KEY)('mimo-v2.6-pro synthetic tool-ability proof (YUK-1341 
     timeout: 180_000,
   }, async () => {
     const runId = `yuk1341_vision_${createId()}`;
+    // YUK-1341 correction: OBSERVE the capability state before the paid call —
+    // never hardcode a pre/post-binding narrative in evidence metadata.
+    const profileBeforeCall = resolveModelProfile('opencode-go', MODEL);
     const promptText =
       'This is a solid single-color image. Reply with ONLY the dominant color, one word.';
     const userMessage = {
@@ -324,7 +348,7 @@ describe.skipIf(!HAS_KEY)('mimo-v2.6-pro synthetic tool-ability proof (YUK-1341 
     const evidence = {
       captured_at: new Date().toISOString(),
       ticket: 'YUK-1341',
-      phase: 'A-synthetic-vision-ability-pre-binding',
+      phase: SYNTHETIC_VISION_PHASE,
       ...captureGitEvidence(),
       lane: {
         adapter: 'pi',
@@ -333,7 +357,9 @@ describe.skipIf(!HAS_KEY)('mimo-v2.6-pro synthetic tool-ability proof (YUK-1341 
         task_kind: KIND,
         run_id: runId,
         session_header: 'x-opencode-session=<run_id>',
-        input_modality: 'text + image/png base64 (1x1 solid red, generated in-test)',
+        input_modality:
+          'text + image/png base64 (1x1 semitransparent red RGBA alpha=0x7f, generated in-test)',
+        capability_state: describeObservedBindingState(profileBeforeCall, 'vision'),
       },
       input_digest: `sha256:${sha256(promptText + RED_PIXEL_PNG_BASE64)}`,
       terminal: resultFrame
@@ -350,7 +376,10 @@ describe.skipIf(!HAS_KEY)('mimo-v2.6-pro synthetic tool-ability proof (YUK-1341 
       provenance:
         'Vision for this lane is declared by the native pi catalog ' +
         '(input: text+image) — no providers.ts vision binding exists or is ' +
-        'needed. This probe confirms the wire actually carries an image block.',
+        'needed. This probe confirms the wire actually carries an image block. ' +
+        'Smoke scope only: a 1x1 semitransparent red PNG proves image-input ' +
+        'wire acceptance — no mathematical-diagram vision quality claim and no ' +
+        'production browser acceptance.',
     };
     writeFileSync(
       join(EVIDENCE_DIR, `2026-10-07-yuk1341-synthetic-vision-${MODEL}-actual.json`),

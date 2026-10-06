@@ -1,7 +1,7 @@
 {
   "captured_at": "2026-10-06T18:07:35.098Z",
   "ticket": "YUK-1341",
-  "phase": "A-synthetic-tool-ability-pre-binding",
+  "phase": "A-synthetic-tool-ability",
   "code_revision": "5d738dbc012913f294f7b471027314c933996ddb",
   "working_tree": "dirty",
   "patch_digest": "sha256:d45ad36c8f4dddb87c3c3a3ec6f8e6bcc5ac4b25cf0d793c7f94dd3370fd0feb",
@@ -26,7 +26,7 @@
     "run_id": "yuk1341_synth_m0vpdjawixfcqtmnqx26vxk6",
     "session_header": "x-opencode-session=<run_id>",
     "mount": "piCustomTool (synthetic, TEST-ONLY) — no production DomainTools, no Exa",
-    "binding_state": "providers.ts toolCalling NOT yet declared for this model"
+    "binding_state": "corrected post-hoc (see correction record): providers.ts toolCalling binding for this model was already present at this 18:07Z capture; the hardcoded label 'NOT yet declared' is superseded and false for this capture"
   },
   "prompt_digest": "sha256:fea83700dfdf378676b8ac00a9e735debd97026d78fa48a5c13d692bd1a95ad2",
   "prompt_excerpt": "You have exactly one tool available: mcp__yuk1341_probe__add_numbers. Call it ONCE with a=17 and b=25. Do not compute the sum yourself. After you receive the tool result, reply with ONLY the final number.",
@@ -72,5 +72,21 @@
     "ref": "pi-catalog:opencode-go/mimo-v2.6-pro",
     "note": "pi usage.cost is the catalog rate-card estimate (design §6 R1), never an invoice"
   },
-  "provenance": "PiAgentAdapter (the only post-P4 execution engine) with the default builtinModels()/agentLoop deps — same x-opencode-session injection and toolCall→toolResult frame normalization production uses. The synthetic tool proves the WIRE carries tool calls end-to-end; production capability is declared in providers.ts only after this seal."
+  "provenance": "PiAgentAdapter (the only post-P4 execution engine) with the default builtinModels()/agentLoop deps — same x-opencode-session injection and toolCall→toolResult frame normalization production uses. The synthetic tool proves the WIRE carries tool calls end-to-end. Ordering claims removed: this artifact is the 2026-10-06T18:07Z post-binding reseal — see correction record.",
+  "correction": {
+    "corrected_at": "2026-10-06T19:28:08Z",
+    "reason": "YUK-1341 evidence-metadata correction. This capture is the final-tree RESEAL executed at 2026-10-06T18:07:35.098Z — after the providers.ts toolCalling binding was already present in the working tree, and after the production SourcingTask (18:02:13.026Z) and Copilot (18:05:00.128Z) seals. The harness hardcoded pre-binding phase/binding_state labels and a post-seal ordering claim in provenance; those labels described only the ORIGINAL pre-binding run whose artifacts this reseal overwrote at the same filename.",
+    "superseded_labels": {
+      "phase": "A-synthetic-tool-ability-pre-binding",
+      "lane.binding_state": "providers.ts toolCalling NOT yet declared for this model",
+      "provenance_trailing_claim": "production capability is declared in providers.ts only after this seal."
+    },
+    "superseded_because": "Hardcoded harness narrative; false for this 18:07Z post-binding capture. Binding presence at capture is established from the run timeline (SourcingTask needsToolCall run f30079jh19psp9xoal5x7u9b succeeded 18:02:13Z, which the capability gate would reject without the binding) and the parent-confirmed execution order — NOT from a pre-call observation, which this harness did not record.",
+    "preserved_unchanged": "captured_at, run_id, model, prompt/tool wire facts, usage, terminal digests, cost — genuine for this capture and byte-identical.",
+    "limitations": [
+      "The original pre-binding A1 artifacts this filename held were overwritten by this reseal and are NOT recoverable from committed records; no earlier evidence is manufactured here.",
+      "The overwritten first A1 run's raw cost record is gone; parent-observed prior estimate $0.000281010 (this file's cost is the reseal's $0.000271875).",
+      "No paid probe was rerun to repair metadata."
+    ]
+  }
 }
