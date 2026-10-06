@@ -549,6 +549,7 @@ export const fastTestInclude = [
   // YUK-1341 evidence-metadata correction — pure no-network unit over
   // tests/helpers/synthetic-evidence-meta.ts (string builders only; no DB/AI).
   'tests/helpers/synthetic-evidence-meta.test.ts',
+  'tests/helpers/yuk1341-product-evidence.test.ts',
 ];
 
 export const migrationSmokeInclude = ['tests/integration/migration-smoke.test.ts'];

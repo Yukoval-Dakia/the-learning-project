@@ -21,6 +21,7 @@ import {
   nativeAssessmentFixture,
 } from '../../../tests/fixtures/assessment-native-model';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import { productWireEvidence } from '../../../tests/helpers/yuk1341-product-evidence';
 import { createDirectProviderOperationContext } from './direct-provider-attempt';
 import { createMem0OpaqueOperationContext } from './opaque-provider-operation';
 
@@ -184,7 +185,7 @@ describe.skipIf(!enabled)('product routing actual output, no retries', () => {
             wire.push({
               input_digest: digest(raw),
               output_digest: digest(body),
-              body: JSON.parse(body),
+              body: productWireEvidence(JSON.parse(body)),
             });
             res.writeHead(response.status, { 'content-type': 'application/json' }).end(body);
           } catch {
@@ -288,7 +289,7 @@ describe.skipIf(!enabled)('product routing actual output, no retries', () => {
           }),
           fetchImpl: async (url, init) => {
             const response = await fetch(url, init);
-            evidence.raw_response = await response.clone().json();
+            evidence.raw_response = productWireEvidence(await response.clone().json());
             return response;
           },
         });

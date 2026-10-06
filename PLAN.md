@@ -5,7 +5,7 @@
 ## NOW
 
 - **YUK-1103 自主交付**：单条活动线为本机日用验收与 AI 帮助恢复。http://localhost:8787 运行 main `5d738dbc0`；app/worker healthy、115项迁移、readiness active，最终停写备份恢复与副本原生结算验证通过。不要重复部署旧版本。
-- **YUK-1341 产品 AI 切换**：此树唯一writer正在接线全部聊天task与Mem0抽取/调和到 `opencode-go / mimo-v2.6-pro`。PR1582能力绑定及原证据已合入base8a5379285，保留pre-binding更正。保留专用embedding、typed和OCR协议，不放宽评分slice准入；源码验证交接父线程，不改生产。
+- **YUK-1341 产品 AI 切换**：此树源码commit `14cb6b326` 已完成54聊天task + Mem0抽取/调和接线；388unit、31scopedDB、4次MiMo实际输出、static/build/audits通过。实际费用Pi估值$0.001130681 + 两项memory unknown，总保守占用$1.50113≤$3；仅封存净化输出。父线程接续独立review/CI/集成/发布，生产旧5d738dbc0未改。专用embedding/typed/OCR保留，评分slice准入不放宽。
 - **YUK-1340 会话入口**：独立工作树正在修复默认选中已结束会话导致输入禁用，须保留历史只读与显式新对话，并完成真实组件及浏览器验收。
 - **开发模型与产品模型**：开发代理按AGENTS常规Sol6.1 high；产品AI目标为OpenCode Go MiMo2.6Pro。旧dev-only范围解释已作废。
 - **行为基线 / YUK-405**：[完整设计](docs/design/2026-10-06-continuous-learning-system-behavior.md)由 agent 在持续委托下采用并负责验证，连接学校、纸笔、自习与数字工具，不是已实现清单。

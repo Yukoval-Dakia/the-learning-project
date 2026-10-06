@@ -38,7 +38,7 @@ PR1582 已合并，tool binding、公开 Sourcing tool_call_log、Copilot两轮�
 
 新增 actual-output 文件使用唯一 capture id、exclusive create，测试仅 `YUK1341_PRODUCT_ACTUAL=1` 显式启用。四个场景各预留$0.75，总预留$3；每个场景单次，无失败自动重跑：frozen结构化数学评分、合成三角形图判读、真实Mem0 SDK抽取、真实记忆调和。Mem0抽取使用本地合成4维向量/内存store，仅LLM到真实Go；不把它当DashScope/生产pgvector验收。每份产物记录exact source revision、输入输出digest、task_run或opaque/direct attempt身份、tokens/cost真相。完整评分质量准入、真实生产浏览器和部署验收由父线程另行完成。
 
-本地 unit/DB/static/audit/build 和 actual-output 结果将在本说明的最终证据小节封存。完整 `pnpm test` 未运行。独立review、exact-head CI Gate、merge等待窗尚归父线程。
+本地 unit/DB/static/audit/build 和 actual-output 结果见下文最终证据小节。完整 `pnpm test` 未运行。独立review、exact-head CI Gate、merge等待窗尚归父线程。
 
 ## 私有运行配置迁移与回退
 
@@ -53,3 +53,67 @@ PR1582 已合并，tool binding、公开 Sourcing tool_call_log、Copilot两轮�
 配置回退：停止新AI接纳并按既有恢复纪律停/等writer，恢复切换前的两项pair状态及既有MEM0_LLM_*，同时重启app/worker以清除缓存client。该回退回到旧registry Xiaomi和GLM；Xiaomi402已知仍会失败，不能声称恢复日用。需要保留可用的上一版Go配置/镜像时，以父线程已验证的版本为准。无schema改变不免除发布时的恢复/旧镜像兼容检查；不得自动覆盖生产DB或删卷。
 
 Linear capture与PR操作按任务约束留父线程。当前新增可行动事项只有本任务内修正，未对外建票；YUK-1342探针封存跟进继续存在，本轮harness只做任务专用安全开关，不扩张通用系统。
+
+
+## 最终本机证据与父线程交接
+
+付费执行源码精确revision：`14cb6b3263b6d78a4b3e142575f67e3f9727a88d`。首次捕获前工作树干净。四例在一个隔离testcontainer运行，4/4通过，27.52秒模型测试耗时；没有付费重试、生产DB调用或队列重放。后续改动只涉及probe证据过滤、其unit测试、文档和产物，产品运行代码未改变。最终HEAD本身没有重新付费调用，不把原revision的实证冒作新HEAD实跑。
+
+| 场景 / 净化封存文件 | task_run / provider_attempt身份 | tokens in/out | 结果 / 费用USD |
+| --- | --- | --- | --- |
+| [native-math](evidence/2026-10-07-yuk1341-product-1ff4a95b-c9e6-42c1-870a-a17e261d049f-native-math.json) | `f4d82fc0-9dd0-470c-a6a5-baa018623cb0` | 953 / 226 | 静水速度15 km/h，5分，exact quote；estimated 0.000611175 |
+| [native-vision](evidence/2026-10-07-yuk1341-product-1ff4a95b-c9e6-42c1-870a-a17e261d049f-native-vision.json) | `6a50bdf6-b1ff-4797-972e-c609280fe2cd` | 1016 / 343 | 读出直角边3/4，斜边5、面积6，5分；estimated 0.000519506 |
+| [mem0-extraction-redacted](evidence/2026-10-07-yuk1341-product-1ff4a95b-c9e6-42c1-870a-a17e261d049f-mem0-extraction-redacted.json) | `0bc221fe-0e90-456d-ad37-301fbe4dd4b0` | wire 8116 / 142；SDK ledger unknown | 真实SDK抽取椭圆画图/反例偏好；cost unknown |
+| [memory-reconcile-redacted](evidence/2026-10-07-yuk1341-product-1ff4a95b-c9e6-42c1-870a-a17e261d049f-memory-reconcile-redacted.json) | `1c24583b-13bd-4b1c-9311-42953e0e9e4d` | 529 / 131 reported | SUPERSEDE旧“不画图”偏好，confidence0.88；cost unknown |
+
+四份均保存输入/业务输出SHA256；图像另有字节digest；native保留完整ai_task_runs/cost_ledger，Mem0/direct保留provider_attempt。mem0不伪造task_run_id：opaque记录仍为mem0/model=null；代理捕获的真实响应明确model=mimo-v2.6-pro。直接调和记录为opencode-go/mimo-v2.6-pro。native两次Pi catalog estimated合计$0.001130681，不能冒作invoice。两次记忆成本unknown，各保守占用$0.75，合计保守占用$1.501130681≤$3；开跑时四例总预留$3。raw tokens只作探针观测，没有把未知SDK费用回写为已知或零。
+
+捕获后的隐私校验发现两份task-owned、未提交的provider JSON含reasoning_content。已移除该原始推理正文，另存`-redacted`唯一文件并移除未提交原稿；保留原稿SHA256、业务结果/请求digest、exact调用revision和更正原因。没有覆盖PR1582证据，也没有为此重发请求。`productWireEvidence`在每层用allowlist schema仅保留最终content、response id/model、finish reason、tokens及cached/reasoning token计数；unit验证原始thinking、headers、credentials/debug扩展均剔除。provider整包digest是完整性摘要，不是可恢复raw JSON的快照。
+
+验证结果：
+
+- 最终集中scoped unit：18 files / 388 passed，涵盖provider、全部54聊天task覆盖、real SDK ESM/CJS、direct调和、loader双进程、adapter/stream/tool/compaction/错误/重试、worker boot和两类audit；另新增隐私allowlist unit 1 passed。此前重复的unit组不累计。
+- scoped DB：3 files / 17 passed（native runner/成本、产品pin失败不重复回退、Mem0失败/原子性）；另2 files / 14 passed（recorded executor及native calibration入口，含admission/withheld边界）。共31项不同scoped DB，actual-output另列4项。
+- `pnpm typecheck` PASS；最终local `pnpm lint` 0 errors / 297基线warnings；`pnpm build` PASS，web/server/worker/migrate。补probe过滤后执行scoped Biome/typecheck，不再重烧模型。
+- provider-lanes、provider-attempt-truth、partition、capability-boundaries、architecture-deepening、schema、profile、task-census、draft-status、draft-status-reads、api-client、api-client-usage均PASS；capability→server/server→capability/cross-capability ratchets仍437/0/48，没有放宽。
+- `pnpm audit --prod --audit-level=high` 无high/critical，3 low/15 moderate沿基线；sharp0.35.5与MCP1.32.1保留。
+- 未运行完整本地`pnpm test`。没有push/PR/merge/GitHub评论/Linear/部署/用户级配置。独立review、exact-head CI、最终镜像和生产浏览器/API/DB验收尚归父线程。
+
+此次没有未解决的聊天consumer绕过点。尚未实跑全部54任务/全部选用job、生产Copilot session入口或完整评分质量集；source/scoped证据不能替代它们。专用Jev typed、OCR、embedding边界见上文，不隐瞒这些实际服务仍在。YUK-1340 UI工作树和CopilotDock/UItests未触及。
+
+## 提交文件清单
+
+第一源码commit覆盖以下30个task-owned文件：
+
+- `.env.example`
+- `PLAN.md`
+- `README.md`
+- `docs/planning/2026-10-07-autonomous-delivery-charter.md`
+- `docs/planning/2026-10-07-local-release-result.md`
+- `docs/planning/2026-10-07-yuk1341-product-mimo-routing.md`
+- `docs/planning/evidence/2026-10-07-yuk1341-product-consumer-inventory.json`
+- `patches/README.md`
+- `patches/mem0ai@3.0.13.patch`
+- `pnpm-lock.yaml`
+- `scripts/provider-lane-inventory.ts`
+- `server/env.unit.test.ts`
+- `src/capabilities/knowledge/server/edge-reconcile.ts`
+- `src/capabilities/practice/jobs/judge-calibration-config.ts`
+- `src/capabilities/practice/server/judge/provider-lane-fallback.ts`
+- `src/capabilities/practice/server/pi-model-executor.db.test.ts`
+- `src/capabilities/practice/server/product-provider-pin.db.test.ts`
+- `src/server/ai/AGENTS.md`
+- `src/server/ai/execution-adapter.ts`
+- `src/server/ai/providers.test.ts`
+- `src/server/ai/providers.ts`
+- `src/server/ai/run-lifecycle.ts`
+- `src/server/ai/yuk1341-product-routing-actual.db.test.ts`
+- `src/server/boss/start-worker.ts`
+- `src/server/memory/client.ts`
+- `src/server/memory/llm-config.ts`
+- `src/server/memory/mem0-sdk-failure.unit.test.ts`
+- `src/server/memory/product-routing.unit.test.ts`
+- `src/server/memory/reconcile-llm.ts`
+- `vitest.shared.ts`
+
+后续封存commit另含四份上述actual-output净化证据、`tests/helpers/yuk1341-product-evidence.ts`及其unit测试，并更新本说明/PLAN/probe import/vitest分区。父线程可按两commit顺序集成；运行配置不在git变更内。
