@@ -488,8 +488,18 @@ export function PfSolo({
   const phase = committedPreview ? 'feedback' : derivePhase(preview, pendingPreview);
   // YUK-432 (Bugbot FINDING 1) — 「返回流」出口：自动 commit 后必须标 slot done（onCommittedBack），
   // 否则只 onBack 会留下「已判分但 slot 卡 in_progress」的不一致。未自动 commit → 原 onBack。
-  const handleBack = () =>
-    shouldMarkSlotDoneOnBack(autoCommitted) && onCommittedBack ? onCommittedBack() : onBack();
+  const returning = useRef(false);
+  const handleBack = async () => {
+    if (returning.current || uploading || judging || committing) return;
+    returning.current = true;
+    try {
+      if (!(await autosave.flush())) return;
+      if (shouldMarkSlotDoneOnBack(autoCommitted) && onCommittedBack) onCommittedBack();
+      else onBack();
+    } finally {
+      returning.current = false;
+    }
+  };
 
   // YUK-433 — solo 路径 RT capture：题面就绪（q 拿到）那刻起算计时器，per 题 RESET。host 给每个 StreamItem
   // 复用本组件实例（query 的 key 含 item.ref_id）。依赖列表只用 q?.id 即足够且更准：换题时 queryKey 变 →
@@ -831,7 +841,7 @@ export function PfSolo({
     <div className="pfs" data-screen-label={`散题作答 · ${q.id}`}>
       <div className="pfs-top">
         {/* YUK-432 (FINDING 1) — 自动 commit 后「返回流」走 handleBack（标 slot done），否则 onBack。 */}
-        <Btn size="sm" variant="ghost" icon="arrowL" onClick={() => handleBack()}>
+        <Btn size="sm" variant="ghost" icon="arrowL" onClick={() => void handleBack()}>
           返回流
         </Btn>
         <span className="pfs-pos">

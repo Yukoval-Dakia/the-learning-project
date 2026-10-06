@@ -38,6 +38,6 @@ export async function loadNativeFailureContext(db: Db | Tx, attemptEventId: stri
     prompt_md: `${context.prompt_md}\n\nIssued response controls:\n${JSON.stringify(context.practice_dto.response_spec)}`,
     reference_md: context.reference_md,
     answer_md: JSON.stringify(verdict.submission.response_set),
-    knowledge_ids: [...new Set(scope.questions.flatMap((item) => item.knowledge_ids))],
+    knowledge_ids: verdict.knowledge_ids,
   };
 }

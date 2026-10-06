@@ -20,6 +20,35 @@ export const LearningScope = z.object({
   ability_global_by_knowledge_id: z.record(z.string(), z.string()),
 });
 
+/** Restrict frozen tags to issued parts and independently owned root tags. */
+export function issuedLearningKnowledgeIds({
+  scope,
+  groupId,
+  partIds,
+}: {
+  scope: z.infer<typeof LearningScope> | null | undefined;
+  groupId: string;
+  partIds: readonly string[];
+}): string[] {
+  if (!scope || scope.group_id !== groupId) return [];
+  const issued = new Set(partIds);
+  const partKnowledge = new Set(
+    scope.questions.filter((row) => issued.has(row.id)).flatMap((row) => row.knowledge_ids),
+  );
+  const unissuedKnowledge = new Set(
+    scope.questions
+      .filter((row) => row.id !== groupId && !issued.has(row.id))
+      .flatMap((row) => row.knowledge_ids),
+  );
+  const rootKnowledge = scope.questions.find((row) => row.id === groupId)?.knowledge_ids ?? [];
+  return [
+    ...new Set([
+      ...rootKnowledge.filter((id) => !unissuedKnowledge.has(id) || partKnowledge.has(id)),
+      ...partKnowledge,
+    ]),
+  ];
+}
+
 /** Historical receipts remain readable; malformed new snapshots cannot fall back to live tags. */
 export async function loadAssessmentLearningScope(
   tx: Db | Tx,

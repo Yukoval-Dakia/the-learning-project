@@ -8,6 +8,10 @@ import type { Db } from '@/db/client';
 import { question } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { REASONING_TRACE_MAX_LEN } from '@/kernel/limits';
+import {
+  issuedLearningKnowledgeIds,
+  loadAssessmentLearningScope,
+} from '@/kernel/read-models/assessment-learning-scope';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { createLearningRecord } from '@/kernel/records/queries';
 import { makeRunTaskTextFn } from '@/server/ai/runner-fn';
@@ -376,7 +380,15 @@ export async function submitSolveAttempt(
               activity_kind: 'attempt',
               processing_status: 'raw',
               origin_event_id: attemptId,
-              knowledge_ids: [],
+              knowledge_ids: issuedLearningKnowledgeIds({
+                scope: await loadAssessmentLearningScope(
+                  tx,
+                  prepared.submission.submission_id,
+                  prepared.revision.group_id,
+                ),
+                groupId: prepared.revision.group_id,
+                partIds: prepared.issuance.part_ids,
+              }),
               question_id: questionId,
               attempt_event_id: attemptId,
               asset_refs: assetRefs,

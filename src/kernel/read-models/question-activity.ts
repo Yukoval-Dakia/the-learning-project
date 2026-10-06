@@ -206,7 +206,9 @@ export async function getQuestionTimeline(
   // YUK-1054 — judge 双轨解析（subject_id ∪ caused_by 双通道锚 + 链解析）。
   // 旧实现只查 caused_by_event_id IN attemptIds：申诉重判的 caused_by=appeal.id
   // 会被漏掉，改判后的新判进不了 timeline。cause 归因子读 effective 判。
-  const attemptIds = activeRows.filter((r) => r.action === 'attempt').map((r) => r.id);
+  const attemptIds = activeRows
+    .filter((r) => r.action === 'attempt' || r.action === 'experimental:assessment_attempt')
+    .map((r) => r.id);
   const verdicts =
     attemptIds.length > 0 ? await resolveVerdictsForAttempts(db, attemptIds) : new Map();
 
@@ -223,6 +225,26 @@ export async function getQuestionTimeline(
   );
 
   return activeRows.map((row): QuestionTimelineEntry => {
+    const verdict = verdicts.get(row.id);
+    const judgeCause = verdict?.effective?.verdict.cause ?? null;
+    let cause: {
+      primary: string;
+      confidence: number | null;
+      primary_label: string | null;
+      secondary: string[];
+      secondary_labels: Record<string, string>;
+    } | null = null;
+    if (judgeCause) {
+      const secondary = judgeCause.secondary_categories ?? [];
+      cause = {
+        primary: judgeCause.primary_category,
+        confidence: judgeCause.confidence ?? null,
+        primary_label: miscLabels.get(judgeCause.primary_category) ?? null,
+        secondary,
+        secondary_labels: miscCauseLabelMap(miscLabels, secondary),
+      };
+    }
+
     if (row.action === 'experimental:assessment_attempt') {
       const group = nativeVerdicts.get(row.id);
       return {
@@ -232,8 +254,15 @@ export async function getQuestionTimeline(
         created_at: row.created_at,
         outcome: nativeAttemptOutcome(group),
         duration_ms: typeof row.payload.duration_ms === 'number' ? row.payload.duration_ms : null,
-        cause: null,
-        judge: null,
+        cause,
+        judge:
+          verdict?.original || verdict?.effective
+            ? {
+                original_event_id:
+                  verdict.original?.judge_event_id ?? verdict.effective?.judge_event_id ?? '',
+                effective_event_id: verdict.effective?.judge_event_id ?? null,
+              }
+            : null,
         ...(group
           ? {
               assessment: {
@@ -252,25 +281,6 @@ export async function getQuestionTimeline(
         duration_ms?: number;
         referenced_knowledge_ids: string[];
       };
-      const verdict = verdicts.get(row.id);
-      const judgeCause = verdict?.effective?.verdict.cause ?? null;
-      let cause: {
-        primary: string;
-        confidence: number | null;
-        primary_label: string | null;
-        secondary: string[];
-        secondary_labels: Record<string, string>;
-      } | null = null;
-      if (judgeCause) {
-        const secondary = judgeCause.secondary_categories ?? [];
-        cause = {
-          primary: judgeCause.primary_category,
-          confidence: judgeCause.confidence ?? null,
-          primary_label: miscLabels.get(judgeCause.primary_category) ?? null,
-          secondary,
-          secondary_labels: miscCauseLabelMap(miscLabels, secondary),
-        };
-      }
       return {
         kind: 'attempt',
         event_id: row.id,
