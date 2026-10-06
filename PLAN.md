@@ -4,13 +4,13 @@
 
 ## NOW
 
-- **当前单线 / YUK-1103 自主交付**：每小时 T3 自动任务已启用；先恢复本机可重复发布并验证真实学习行为。活动工作树 `/Volumes/YukovalSBak/yukoval-projects/tlp-autonomous-local-delivery`，branch `ops/yuk-1103-local-delivery`。完整当前看板见该树 `PLAN.md`，交接见 `.remember/2026-10-07-autonomous-local-delivery.md`。本根树原有未提交改动保留，不在此部署旧代码。
+- **当前单线 / YUK-1103 自主交付**：每小时 T3 自动任务已启用；main5d738dbc0 已在本机发布；当前修复 Copilot 旧 provider 余额不足并验证真实学习行为。活动工作树 `/Volumes/YukovalSBak/yukoval-projects/tlp-autonomous-local-delivery`，branch `ops/yuk-1103-local-delivery`。完整当前看板见该树 `PLAN.md`，交接见 `.remember/2026-10-07-autonomous-local-delivery.md`。本根树原有未提交改动保留，不在此部署旧代码。
 - **本轮交付**：行为设计 r0、场景与验收样例、独立场景/边界检查及本地 handoff。设计提案不代表 owner 已批准，也不代表当前实现具备这些行为。
 - **已定边界**：实时状态与安排共同演进；TanStack Start + Pi + PostgreSQL/Drizzle + DBOS 技术目标保留。当前 Hono + Vite SPA + pg-boss 运行形态未改变；本轮不改 UI 或业务代码。
 
 ## NEXT
 
-- agent 在持续委托下采用行为稿为基线，负责设计细化、实现与验收；无需 owner 逐项审阅。完成新镜像构建、恢复副本迁移预演、最终备份和本机部署。
+- agent 在持续委托下采用行为稿为基线，负责设计细化、实现与验收；无需 owner 逐项审阅。本机部署及恢复演练已完成，下一步恢复真实 AI 帮助和学习行为验收。
 - **YUK-1338** 的技术集成验证保留 Backlog、未启动；行为稿不视为该验证已完成或新的迁移授权。
 
 ## PARKED
@@ -28,5 +28,5 @@
 
 ## BLOCKED-ON
 
-- 无需 owner 追加授权。实际交付尚待构建、兼容/恢复检查和真实浏览器验收。
-- 当前旧生产仍可用；隔离副本已恢复112项迁移、2626条事件。尚未升级生产，首次每小时自动执行仍待记录。
+- 无需 owner 追加授权。本机 main5d738dbc0 健康、115项迁移；Copilot 实际调用旧 Xiaomi 返回402余额不足，暂未通过 AI 日用验收。
+- 每小时任务已实际唤起；新工作子任务统一使用 OpenCode Go MiMo2.6Pro。父线程选择切换未保持，不重复触发中断。最新证据与后续入口见活动树 PLAN 和本地 handoff。
