@@ -163,6 +163,7 @@ export const fastTestInclude = [
   // src/server/ai/** unit glob).
   'src/server/ai/pi-agent-adapter.test.ts',
   'src/server/ai/laminar-tracing.test.ts',
+  'src/server/ai/laminar-transcript.test.ts',
   'src/server/ai/pi-agent-adapter.tracing.test.ts',
   // Real pi driver with offline SSE; no DB or paid provider calls.
   'src/server/ai/pi-usage-evidence.test.ts',

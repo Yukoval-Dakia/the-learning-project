@@ -109,6 +109,7 @@ function tool(execute: AgentTool['execute']): AgentTool {
 afterEach(() => {
   __setTraceExporterForTests();
   vi.restoreAllMocks();
+  vi.unstubAllEnvs();
 });
 
 it.each(['success', 'throw', 'isError', 'blocked'])(
@@ -265,3 +266,56 @@ it('keeps business model/tool call counts and frames when every exporter operati
   expect(terminal?.type).toBe('result');
   if (terminal?.type === 'result') expect(terminal.subtype).toBe('success');
 });
+
+it.each(['success', 'isError', 'blocked'])(
+  'captures development tool arguments/results through the actual Pi loop: %s',
+  async (outcome) => {
+    vi.stubEnv('NODE_ENV', 'development');
+    vi.stubEnv('LMNR_DEV_TRANSCRIPTS', '1');
+    const execute = vi.fn<AgentTool['execute']>(async () => ({
+      content: [{ type: 'text', text: '二次函数有两个实根。' }],
+      details: { feedback: '解释充分', credentials: 'FORBIDDEN_TOOL_SECRET' },
+      isError: outcome === 'isError',
+    }));
+    const fixture = setup(
+      [
+        call('education-call', 'mcp__loom__fixture', { query: '比较根的意义' }),
+        assistant([{ type: 'text', text: '两根分别为2与-2。' }]),
+      ],
+      tool(execute),
+      {
+        options: { systemPrompt: '根据学生原答反馈。' },
+        piHooks: {
+          beforeToolCall: [
+            () => (outcome === 'blocked' ? { block: true, reason: '该工具暂不可用。' } : undefined),
+          ],
+        },
+      },
+    );
+    await traceOperation('task.run', { task_run_id: 'dev-turn' }, async () => {
+      const prepared = await fixture.adapter.startup(fixture.args);
+      for await (const _frame of prepared.query('学生说只有正根，是否正确？')) {
+        /* consume once */
+      }
+      await prepared.close();
+    });
+    expect(fixture.streamSimple).toHaveBeenCalledTimes(2);
+    expect(execute).toHaveBeenCalledTimes(outcome === 'blocked' ? 0 : 1);
+    const toolSpan = fixture.records.find((record) => record.type === 'TOOL');
+    expect(toolSpan?.attributes['lmnr.span.input']).toContain(
+      outcome === 'blocked' ? 'arguments unavailable' : '比较根的意义',
+    );
+    expect(toolSpan?.attributes['lmnr.span.output']).toContain(
+      outcome === 'blocked' ? '暂不可用' : '解释充分',
+    );
+    expect(toolSpan?.attributes[traceField('tool_call_id')]).toBe('education-call');
+    const llms = fixture.records.filter((record) => record.type === 'LLM');
+    expect(llms[0].attributes['lmnr.span.input']).toContain('学生说只有正根');
+    expect(llms[1].attributes['lmnr.span.input']).toContain('education-call');
+    expect(llms[1].attributes['lmnr.span.output']).toContain('两根分别为2与-2');
+    expect(JSON.stringify(fixture.records)).not.toContain('FORBIDDEN');
+    expect(JSON.stringify(fixture.records)).not.toContain('SECRET_KEY_SENTINEL');
+    expect(JSON.stringify(fixture.records)).not.toContain('SECRET_COT_SENTINEL');
+    expect(fixture.records.every((record) => record.ends === 1)).toBe(true);
+  },
+);

@@ -796,7 +796,11 @@ class PiPreparedQuery implements PreparedExecutionQuery {
             executed: true,
           },
           () => tool.execute(...args),
-          { signal: args[2], outcome: (result) => (result.isError ? 'error' : 'success') },
+          {
+            signal: args[2],
+            outcome: (result) => (result.isError ? 'error' : 'success'),
+            transcript: { input: () => args[1], output: (result) => result },
+          },
         );
       },
     }));
@@ -818,6 +822,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       tool_call_id: event.toolCallId,
       executed: false,
     });
+    span.transcript('input', () => ({
+      arguments: '[omitted: arguments unavailable on terminal event]',
+    }));
+    span.transcript('output', () => event.result);
     span.end(this.abort.signal.aborted ? 'cancelled' : event.isError ? 'error' : 'success');
   }
 

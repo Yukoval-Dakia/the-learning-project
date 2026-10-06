@@ -37,12 +37,16 @@ const dotenvSettings = {
 };
 const setting = Object.entries(dotenvSettings).find(([key]) => key === scenario);
 assert.ok(
-  setting || scenario === 'baseline' || scenario === 'no-key' || scenario === 'usage-accounting',
+  setting ||
+    scenario === 'baseline' ||
+    scenario === 'no-key' ||
+    scenario === 'usage-accounting' ||
+    scenario === 'transcript',
 );
 for (const key of Object.keys(dotenvSettings)) assert.equal(process.env[key], undefined);
 assert.equal(process.env.LMNR_PROJECT_API_KEY, undefined);
 writeFileSync(
-  '.env.production',
+  `.env.${process.env.NODE_ENV}`,
   setting
     ? `${setting[0]}=${setting[1]}\n`
     : scenario === 'no-key'
@@ -108,7 +112,66 @@ try {
     tracing.initializeLaminarTracing(options),
   ]);
   const result = { text: 'PRIVATE_OUTPUT_SENTINEL' };
-  if (scenario === 'usage-accounting') {
+  if (scenario === 'transcript') {
+    const { transcriptAssistant, transcriptContext, transcriptToolInput, transcriptToolResult } =
+      await import('./laminar-transcript.test-support');
+    const { createAssistantMessageEventStream } = await import('@earendil-works/pi-ai');
+    const model: Model<'openai-completions'> = {
+      id: 'offline-model',
+      name: 'Offline',
+      provider: 'offline',
+      api: 'openai-completions',
+      reasoning: false,
+      baseUrl: 'https://offline.invalid',
+      input: ['text'],
+      contextWindow: 10000,
+      maxTokens: 100,
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    };
+    await tracing.traceOperation('task.run', { task_run_id: 'synthetic-transcript' }, () =>
+      tracing.traceOperation(
+        'tool.execute',
+        { tool_call_id: 'turn-2-call' },
+        () =>
+          tracing.traceOperation('agent.child', {}, async () => {
+            const stream = createAssistantMessageEventStream();
+            const traced = await tracing.tracePiStream(() => stream, model, transcriptContext, {
+              apiKey: 'FORBIDDEN_OPTION',
+            });
+            stream.push({ type: 'done', reason: 'toolUse', message: transcriptAssistant });
+            assert.equal(await traced.result(), transcriptAssistant);
+            return transcriptToolResult;
+          }),
+        { transcript: { input: () => transcriptToolInput, output: (value) => value } },
+      ),
+    );
+    const named = Object.fromEntries(exported.map((span) => [span.name, span]));
+    assert.equal(named['tool.execute'].parent, named['task.run'].id);
+    assert.equal(named['agent.child'].parent, named['tool.execute'].id);
+    assert.equal(named['llm.call'].parent, named['agent.child'].id);
+    assert.equal(new Set(exported.map((span) => span.trace)).size, 1);
+    if (process.env.NODE_ENV === 'development') {
+      const messages = JSON.parse(String(named['llm.call'].attributes['lmnr.span.input']));
+      assert.deepEqual(
+        messages.map((m: { role: string }) => m.role),
+        ['system', 'user', 'assistant', 'tool', 'user'],
+      );
+      assert.equal(messages[2].tool_calls[0].id, 'turn-2-call');
+      assert.equal(messages[3].tool_call_id, 'turn-2-call');
+      const output = JSON.parse(String(named['llm.call'].attributes['lmnr.span.output']));
+      assert.equal(output[0].role, 'assistant');
+      assert.equal(output[0].tool_calls[0].function.name, 'lookup');
+      assert.ok(output[0].content.includes('可见结论'));
+      assert.ok(String(named['tool.execute'].attributes['lmnr.span.output']).includes('解法正确'));
+    } else
+      for (const span of exported) {
+        assert.equal(span.attributes['lmnr.span.input'], undefined);
+        assert.equal(span.attributes['lmnr.span.output'], undefined);
+      }
+    assert.equal(named['llm.call'].attributes['gen_ai.usage.input_tokens'], 2494);
+    assert.equal(named['llm.call'].attributes['gen_ai.usage.cost'], 0.000328106);
+    assert.equal(JSON.stringify(exported).includes('FORBIDDEN'), false);
+  } else if (scenario === 'usage-accounting') {
     const { createAssistantMessageEventStream, normalizeContext } = await import(
       '@earendil-works/pi-ai'
     );
@@ -332,7 +395,9 @@ try {
   console.log(JSON.stringify(report));
   assert.equal(networkAttempts, 0);
   assert.equal(JSON.stringify(exported).includes('SENTINEL'), false);
-  if (scenario === 'usage-accounting') {
+  if (scenario === 'transcript') {
+    assert.equal(exported.length, 4);
+  } else if (scenario === 'usage-accounting') {
     assert.equal(tracing.isLaminarTracingEnabled(), true);
     assert.equal(initializeCalls, 1);
     assert.equal(loadCalls, 1);

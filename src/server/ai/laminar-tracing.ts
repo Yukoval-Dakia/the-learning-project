@@ -1,6 +1,13 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { StreamFn } from '@earendil-works/pi-agent-core';
 import type { AssistantMessage } from '@earendil-works/pi-ai';
+import {
+  developmentTranscriptsEnabled,
+  piInputTranscript,
+  piOutputTranscript,
+  sanitizeTraceMessages,
+  sanitizeTracePayload,
+} from './laminar-transcript';
 import { hasPiUsageEvidence } from './pi-usage-evidence';
 
 type Sdk = typeof import('@lmnr-ai/lmnr');
@@ -82,6 +89,8 @@ type Attribute = string | number | boolean;
 export interface TraceSinkSpan {
   context?: string;
   setAttribute(name: string, value: Attribute): void;
+  setInput?(value: unknown): void;
+  setOutput?(value: unknown): void;
   setStatus(status: { code: number }): void;
   end(): void;
 }
@@ -166,6 +175,14 @@ export async function initializeLaminarTracing(
             setAttribute: (name, value) => {
               span.setAttribute(name, value);
             },
+            // 0.8.49 returns LaminarSpan at runtime, but startSpan declares OTel Span.
+            setInput: (value) => {
+              if ('setInput' in span && typeof span.setInput === 'function') span.setInput(value);
+            },
+            setOutput: (value) => {
+              if ('setOutput' in span && typeof span.setOutput === 'function')
+                span.setOutput(value);
+            },
             setStatus: (status) => {
               span.setStatus(status);
             },
@@ -186,7 +203,10 @@ export async function initializeLaminarTracing(
 export class TraceSpan {
   private ended = false;
   private readonly identities: TraceMetadata = {};
-  constructor(private readonly sink?: TraceSinkSpan) {}
+  constructor(
+    private readonly sink?: TraceSinkSpan,
+    private readonly name?: SpanName,
+  ) {}
   get context(): string | undefined {
     return this.sink?.context;
   }
@@ -226,6 +246,17 @@ export class TraceSpan {
       );
     }
   }
+  transcript(direction: 'input' | 'output', project: () => unknown): void {
+    if (this.ended || !this.sink || !developmentTranscriptsEnabled()) return;
+    telemetry(() => {
+      const value =
+        this.name === 'llm.call'
+          ? sanitizeTraceMessages(project())
+          : sanitizeTracePayload(project());
+      if (direction === 'input') this.sink?.setInput?.(value);
+      else this.sink?.setOutput?.(value);
+    });
+  }
   end(outcome: 'success' | 'error' | 'cancelled' | 'not_started' = 'success'): void {
     if (this.ended) return;
     this.metadata({ execution_outcome: outcome });
@@ -248,7 +279,7 @@ export function startTraceSpan(name: SpanName, metadata: TraceMetadata = {}): Tr
       parentContext: activeSpan.getStore()?.context,
     });
   });
-  const span = new TraceSpan(sink);
+  const span = new TraceSpan(sink, name);
   span.metadata(activeSpan.getStore()?.identityMetadata ?? {});
   span.metadata(metadata);
   return span;
@@ -269,6 +300,7 @@ export async function traceOperation<T>(
   options: {
     signal?: AbortSignal;
     content?: TraceContent<T>;
+    transcript?: { input: () => unknown; output: (result: T) => unknown };
     outcome?: (result: T) => 'success' | 'error' | 'cancelled';
   } = {},
 ): Promise<T> {
@@ -276,12 +308,15 @@ export async function traceOperation<T>(
   const span = startTraceSpan(name, metadata);
   telemetry(() => {
     span.content('input', options.content?.input);
+    if (options.transcript) span.transcript('input', options.transcript.input);
   });
   return withTraceContext(span, async () => {
     try {
       const result = await callback();
       telemetry(() => {
         span.content('output', options.content?.output?.(result));
+        if (!options.signal?.aborted && options.transcript)
+          span.transcript('output', () => options.transcript?.output(result));
       });
       let outcome: 'success' | 'error' | 'cancelled' = 'success';
       telemetry(() => {
@@ -302,7 +337,7 @@ export async function tracePiStream(
   ...args: Parameters<StreamFn>
 ): Promise<Awaited<ReturnType<StreamFn>>> {
   if (!exporter) return streamFn(...args);
-  const [model, , options] = args;
+  const [model, context, options] = args;
   const span = startTraceSpan('llm.call', {
     provider: model.provider,
     model: model.id,
@@ -311,6 +346,7 @@ export async function tracePiStream(
     cost_basis: 'unknown',
     cost_ref: `pi-catalog:${model.provider}/${model.id}`,
   });
+  span.transcript('input', () => piInputTranscript(context.messages));
   span.attribute('gen_ai.system', model.provider);
   span.attribute('gen_ai.request.model', model.id);
   const signal = options?.signal;
@@ -324,6 +360,7 @@ export async function tracePiStream(
     stream.result = () => result;
     void result.then(
       (message) => {
+        span.transcript('output', () => piOutputTranscript(message));
         telemetry(() => recordPiLlmUsage(span, message));
         span.end(
           signal?.aborted

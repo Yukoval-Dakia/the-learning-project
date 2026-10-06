@@ -29,6 +29,12 @@ export function memoryTraceExporter() {
         setAttribute: (name, value) => {
           record.attributes[name] = value;
         },
+        setInput: (value) => {
+          record.attributes['lmnr.span.input'] = JSON.stringify(value);
+        },
+        setOutput: (value) => {
+          record.attributes['lmnr.span.output'] = JSON.stringify(value);
+        },
         setStatus: (status) => {
           record.status = status.code;
         },

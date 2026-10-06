@@ -1,14 +1,14 @@
 # PLAN — 活看板
 
-> 更新于2026-10-06。SCF 198票批量处置：本轮新增关闭20票：5票由#1578修复交付，15票经当前调用链及适用测试核验关闭，逐票证据见Linear。本批1224/1226/1196/1236已实现并开PR #1579；worker统一OpenCode Go DeepSeek V4.1 Flash high、full-access。未部署。 YUK-1325/#1580开发transcript授权实施中。
+> 更新于2026-10-06。SCF 198票批量处置：本轮新增关闭20票：5票由#1578修复交付，15票经当前调用链及适用测试核验关闭，逐票证据见Linear。本批1224/1226/1196/1236已实现并开PR #1579；worker统一OpenCode Go DeepSeek V4.1 Flash high、full-access。未部署。 YUK-1325/#1580开发transcript实现完成，102scoped/unit与typecheck/lint/build通过，父线程新功能验收待完成。
 
 ## NOW
 
-- YUK-1325/#1580：可选Laminar trace、导入隐私检查、cache-inclusive tokens及安全评分摘要已完成；337独立tests与真实SDK→SQL回放通过。初审/唯一验证审预算用完，不再启动review。Owner现授权开发阶段transcript传输，当前实施仅development显式opt-in，默认metadata、禁止credentials/原始CoT；父线程负责新功能SQL/browser验收、PR/CI/tracker。未部署或新增模型调用。
+- YUK-1325/#1580：可选Laminar trace、导入隐私检查、cache-inclusive tokens及安全评分摘要已完成；337独立tests与真实SDK→SQL回放通过。初审/唯一验证审预算用完，不再启动review。Owner已授权开发阶段transcript传输，development显式opt-in已实现，默认metadata、禁止credentials/原始CoT；102scoped/unit及typecheck/lint/build通过。父线程负责新功能SQL/browser验收、PR/CI/tracker，未push。未部署或新增模型调用。
 
 - YUK-1224/1226/1196/1236（SCF-141/143/109/161）本批已实现并开PR #1579，Linear In Review。1224把TRAILING_JUNK_RE指数回溯改为线性own-scan并保留语义（差异oracle+硬超时子进程，RED ETIMEDOUT→GREEN <1s）；1226让jyeoo_staged_asset_reap在image_refs/figures外认reference_md与structured(answers)的内部资产URL（含存量行，不改路由）；1196把groupByIntentSource改为Map+Object.fromEntries（__proto__/constructor/toString不再500）；1236给golden-reaudit的PROJECTION_FOLDS查找加Object.hasOwn。scoped 43unit+27DB、typecheck、完整lint(0 error/297 warnings)、build全过；未部署。
 
-- SCF批量处置是本线程当前active线。#1578的33unit+47DB父线程复验、本地gate、独立初审及exact-head CI37471533645通过，五票Done；1121/1127经native真实DB测试关闭。nochange批次新增关闭1142/1148/1156/1192/1214/1218/1244七票（父线程50DB+102unit及1192的77DB）；1189/1195待live边界调查、1217缺withheld-unsuspended负例，保持打开。逐票证据保留Linear。
+- SCF批量处置是main来源线程的active线。#1578的33unit+47DB父线程复验、本地gate、独立初审及exact-head CI37471533645通过，五票Done；1121/1127经native真实DB测试关闭。nochange批次新增关闭1142/1148/1156/1192/1214/1218/1244七票（父线程50DB+102unit及1192的77DB）；1189/1195待live边界调查、1217缺withheld-unsuspended负例，保持打开。逐票证据保留Linear。
 
 - YUK-1323：JSON同路径同值引用与typed pending兼容，重复键/危险属性拒绝；165unit与21独立探针通过，两次真实MiMo输出在最终代码离线回放通过。分支fix/yuk-1323-output-compat-delivery基于a60637d3f，集成165unit/typecheck/lint/build通过，PR/CI待完成；无部署或模型准入。YUK-1325 Laminar独立实施中。
 
