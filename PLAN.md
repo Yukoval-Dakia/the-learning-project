@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-06。YUK-1047 closeout五项及三项后续修复已完成，唯一验证审通过，新build真实Solo运行验收通过六次同页恢复/ACK/503/CAS/返回互斥。parent源码census无legacy与遗漏，定向unit/DB复验通过。准备新PR与exact-head CI/17分钟窗后关闭；不部署/付费，未准入模型保持withheld。
+> 更新于2026-10-06。YUK-1047五项收尾、三项correctness修复和真实Solo验收完成；PR #1571首轮CI除contracts外全部通过。YUK-1322修复历史表审计契约及Seroval/proxy-addr依赖，定向测试/typecheck/lint/build通过；准备推送后重新验证exact-head CI与17分钟窗。未部署，未准入模型仍withheld。
 
 ## NOW
 
@@ -83,18 +83,18 @@
 
 ## NEXT
 
-1. YUK-1047/#1568已合并028c6619b；owner授权closeout五项遗留。当前405e4689e等待唯一验证审/runtime复验，之后新PR、exact-head CI及17分钟窗，满足原AC后关闭代码票；不宣称生产部署或模型质量准入。
+1. YUK-1047/#1571收尾：五项及后续修复已完成，唯一验证审与真实Solo验收通过。YUK-1322审计修复4e7894f52、依赖修复73da2bffc已完成；推送后等exact-head CI及17分钟窗，满足后合并并关闭两票。不部署，不宣称模型质量准入。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
 3. YUK-1103 autonomous-product-loop保持挂起，YUK-1101保持Backlog，不因本轮清PR自动启动。
 
 ## PARKED
 
-- 基线schema审计：copilot_evidence_checkpoint 16项豁免于2026-10-05到期，base028c6619b同样失败；已在Linear记录，未抬expiry。本轮1047不扩为Copilot schema实施。
+- YUK-1322基线contracts阻塞已修，随#1571等待CI：历史checkpoint固定19列且禁止生产写入，删除16临时豁免；仅lockfile升级Seroval1.6.8/proxy-addr2.0.8。未抬expiry或降低审计。
 
-- YUK-1047非阻塞性能跟进：getCurrentFailureAttempts强制limit:null后解析全历史再slice。已在Linear/PR回复，未有实测超时或结果错误，按性能默认P2延期。后续保留DB/keyset分页边界、改判过滤增量补页，覆盖长前缀/同时间戳/每题limit和查询行数。
+- YUK-1047原失败历史分页跟进已由#1571实现并验证有界SQL读取，待合并；不声称生产延迟改善。
 
 
-- YUK-1047初审非阻塞P2：native failure读面混入未发子题KC；PfSolo快速退出取消未ack自动保存尾部。已归并Linear原票，未声称修复。
+- YUK-1047原未发子题KC混入及PfSolo退出丢草稿已由#1571修复并通过DB/真实浏览器验收，待合并。
 
 - YUK-1047生产模型质量actual-output准入仍缺新证据；本轮禁止新增付费provider测试，未准入模型计划保持withheld。Coach最小修正与CSV已实施，不再是未批准/待实施项。
 

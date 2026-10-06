@@ -1,8 +1,8 @@
-2026-10-06最新：405e4689e三修复唯一验证审无P0/P1，独立30unit+8QueryObserver断言；新build真实Solo六次同页恢复、ACK、503、双tab409与返回互斥通过，证据/tmp/yuk1047-closeout-runtime-repaired。parent64unit和关键DB复验、源码census通过。准备新PR/CI/17分钟窗口后关闭1047代码票，模型未准入仍withheld，不生产/付费。
-
 # 当前交接 — 2026-10-06 YUK-1047 closeout
 
-分支fix/yuk-1047-closeout基于main028c6619b。五项遗留278025112完成；首次runtime发现同页重入旧缓存，初审两P1为返回保存与提交竞态、归档冻结KC回滚activation，已先RED再修405e4689e。89unit/51DB/typecheck/lint/build/boundary通过；新build证据/tmp/yuk1047-closeout-reentry-build-evidence.json。唯一验证审和独立新build浏览器验收正在跑；未PR/push。模型准入继续withheld，无生产/付费；完成五项及最终代码验收可关闭1047。额外schema审计16过期豁免已证实基线同失败，详见closeout文档与Linear；不得抬expiry。保留.serena。
+PR #1571，分支fix/yuk-1047-closeout。五项及三项修复完成，唯一验证审和真实Solo新build六次同页恢复/ACK/503/CAS/返回互斥通过。父线程64unit/36DB复验通过。首轮CI37449910759除contracts外全部通过。
+
+YUK-1322修复contracts：4e7894f52以固定19列、禁止生产写入替代历史checkpoint的16项过期豁免；父线程102tests通过。73da2bffc仅锁文件升级Seroval1.6.8/proxy-addr2.0.8，clean frozen install、27unit、runtime smoke/typecheck/lint/build通过，audit无high/critical。待推送后新exact-head CI及17分钟窗，再合并关闭1047/1322。review预算已用完，不启动第三轮。未部署/付费，模型未准入保持withheld。保留外部.serena改动。
 
 # 当前交接 — 2026-10-05 PR准备
 
