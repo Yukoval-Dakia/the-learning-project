@@ -64,12 +64,16 @@ agent 在本委托下采用的方案（最小充分变更，只用既有 primiti
 
 | 文件 | 动作 |
 | --- | --- |
-| `src/capabilities/copilot/session-reuse.ts` | 新建：共享 `COPILOT_REUSE_WINDOW_MS` + `isWithinCopilotReuseWindow()` |
-| `src/server/session/conversation.ts` | 修改：import 共享常量（re-export 保持兼容） |
+| `src/core/limits.ts` | 修改：新增 `COPILOT_REUSE_WINDOW_MS`（24h）单源常量（架构门禁修复后落点） |
+| `src/kernel/limits.ts` | 修改：facade 复导出 `COPILOT_REUSE_WINDOW_MS`（供 UI 侧经 `@/kernel/limits` 取数） |
+| `src/capabilities/copilot/session-reuse.ts` | 新建：`isWithinCopilotReuseWindow()`（UI 侧年龄判定），常量改经 `@/kernel/limits` 取，非本地定义 |
+| `src/server/session/conversation.ts` | 修改：import 共享常量改经 `@/core/limits`（不再 deep-import capability） |
 | `src/capabilities/copilot/ui/CopilotDock.tsx` | 修改：bootstrap resumable find 增加年龄检查 |
 | `src/capabilities/copilot/ui/CopilotDock.session-entry.unit.test.tsx` | 修改：新增 7 条冻结时钟测试 |
 | `src/capabilities/copilot/ui/CopilotDock.durable-retry.unit.test.tsx` | 修改：夹具日期改相对时间 |
 | `src/capabilities/copilot/ui/CopilotDock.tool-use.unit.test.tsx` | 修改：同上 |
+
+> 注：0bd4796ee 中间态把常量放 `session-reuse.ts` 并让 `conversation.ts` 直引 `@/capabilities/copilot/session-reuse`，构成 `server→capability deep` 越界，boundaries/deepening 两 audit RED。本轮改为共享叶 `core/limits`（见 evidence「架构门禁回归与修复」），两 audit GREEN；UI 与 server 同一 24h 常量、gte 语义、非法时间保守、显式选择均不变。
 
 不改服务端窗口政策、显式 sessionId 语义、API/DB/schema。验证与证据见 evidence 文档 P1 节。
 

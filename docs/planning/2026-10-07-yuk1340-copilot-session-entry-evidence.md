@@ -108,7 +108,7 @@ PR1582 已合并 main `8a53792855580fc1eec2c344b70f4122e5310bb7`。本分支正�
 | 文件 | 动作 |
 | --- | --- |
 | `src/capabilities/copilot/session-reuse.ts` | 新建：`COPILOT_REUSE_WINDOW_MS` + `isWithinCopilotReuseWindow()` 共享叶模块（UI 不能 import `@/server/`） |
-| `src/server/session/conversation.ts` | 修改：import 共享常量替换本地定义，re-export 保持兼容 |
+| `src/server/session/conversation.ts` | 修改：import 共享常量替换本地定义（经 `@/core/limits` 单源，见「架构门禁回归与修复」——非 re-export 保兼容） |
 | `src/capabilities/copilot/ui/CopilotDock.tsx` | 修改：bootstrap `resumable` find 增加 `isWithinCopilotReuseWindow(session.updated_at)` 年龄检查 |
 | `src/capabilities/copilot/ui/CopilotDock.session-entry.unit.test.tsx` | 修改：新增 7 条组件测试（冻结时钟 `2026-10-07T20:00:00Z`） |
 | `src/capabilities/copilot/ui/CopilotDock.durable-retry.unit.test.tsx` | 修改：夹具 `updated_at` 改为相对时间（P1 年龄检查使旧硬编码日期不可续接） |
@@ -139,22 +139,42 @@ RED 全量输出：`/tmp/yuk1340-p1-red.txt`（本轮会话临时文件；表中
 
 ### 本机检查（scoped，未跑完整 pnpm test）
 
-| 检查 | 命令 | 结果 |
-| --- | --- | --- |
-| copilot/ui 全量 unit | `pnpm vitest run --config vitest.unit.config.ts src/capabilities/copilot/ui` | 19 files / 124 tests 全过（原 117 + 新增 7） |
-| typecheck | `pnpm typecheck` | exit 0 |
-| lint | `pnpm lint` | exit 0（0 error；297 warnings 存量） |
-| build | `pnpm build` | exit 0 |
+**P1 行为修复（0bd4796ee）当轮已跑**：copilot/ui 全量 unit 19 files / 124 tests（含新增 7 条冻结时钟）、typecheck exit 0、lint exit 0（0 error；297 warnings 存量）、build exit 0。
 
-日志：`/tmp/yuk1340-p1-ui-tests.log`、`/tmp/yuk1340-p1-typecheck.log`、`/tmp/yuk1340-p1-lint.log`、`/tmp/yuk1340-p1-build.log`。
+**架构门禁修复（本轮，父线程验证发现 RED）当轮已跑**：
 
-### 共享常量跨层变动说明
+| 检查 | 命令 | 修复前（RED） | 修复后（GREEN） |
+| --- | --- | --- | --- |
+| capability boundaries | `pnpm audit:capability-boundaries` | exit 1：`session -> copilot` deep 回归 1>0、total 1≠0 | exit 0：`server->capability-deep=0`（capability->server=437、cross-capability-value=48） |
+| architecture deepening | `pnpm audit:architecture-deepening` | exit 1：4 条（deep import + bucket-zero + 2 debt） | exit 0：dependency totals 437/0/48 严格低于 531/70/62 |
+| copilot/ui 全量 unit（行为保持） | `pnpm vitest run --config vitest.unit.config.ts src/capabilities/copilot/ui` | — | 19 files / 124 tests 全过（7 条 P1 冻结时钟保持） |
+| DB 消费者（本轮实跑，非回归） | `pnpm vitest run --config vitest.db.config.ts src/server/session/conversation.test.ts src/capabilities/copilot/server/turns.db.test.ts` | — | 2 files / 57 tests 全过（conversation 31 + turns.db 26） |
+| typecheck | `pnpm typecheck` | — | exit 0 |
+| lint | `pnpm lint` | — | exit 0（0 error；297 warnings 存量） |
+| build | `pnpm build` | — | exit 0 |
 
-`COPILOT_REUSE_WINDOW_MS` 从 `conversation.ts` 模块私有提取到 `src/capabilities/copilot/session-reuse.ts`（UI 不能 import `@/server/`，server 已有 import capability public 的先例）。`conversation.ts` re-export 保持既有导入兼容。不改 API/DB 行为；服务端 predicate 语义不变。`conversation.test.ts`（DB 测试）未在本机运行，归 exact-head CI。
+日志：`/tmp/yuk1340-boundary-logs/audit-boundaries-{RED,GREEN}.log`、`audit-deepening-{RED,GREEN}.log`、`copilot-ui-unit-19.log`、`db-consumers.log`、`typecheck.log`、`lint.log`、`build.log`。DB 测试经 `tests/global-setup.ts` 独立 testcontainer（`PostgreSqlContainer` + tmpfs，强制 `DATABASE_URL/TEST_DATABASE_URL` 到容器），不碰生产。
 
-### 边界与未做
+### 共享常量跨层变动说明（含架构门禁回归与修复）
 
+`COPILOT_REUSE_WINDOW_MS` 是单一真源，服务端 `findReusableCopilotConversation` 的 `gte(updated_at, cutoff)` 与 UI `isWithinCopilotReuseWindow` 用同一个数，24h 窗口语义不变。
+
+**0bd4796ee 中间态与回归**：0bd 把常量从 `conversation.ts` 模块私有提取到 `src/capabilities/copilot/session-reuse.ts`，并让 `conversation.ts` 直接 `import '@/capabilities/copilot/session-reuse'`。这构成 `server → capability deep` 越界（server 直入 capability 深路径，未经 public 缝），触发架构门禁 RED：`pnpm audit:capability-boundaries`（2 条）与 `pnpm audit:architecture-deepening`（4 条，含「central code must consume '@/capabilities/<owner>/public' ports only」）。
+
+**本轮修复（共享叶，不动 baseline）**：把常量定义迁到纯叶 `src/core/limits.ts`（与 `REASONING_TRACE_MAX_LEN` 同型——跨层数值上界放 core/limits 纯叶，避免 deep import + 不把 server 模块拖进 SPA）；`src/kernel/limits.ts` facade 复导出，`copilot/session-reuse.ts` 经 `@/kernel/limits` 取数（守「capability → @/kernel/*」纪律），`conversation.ts` 直引 `@/core/limits`。`session-reuse.ts` 保留 UI 侧 `isWithinCopilotReuseWindow`（gte + 非法时间保守），`CopilotDock` 不变。服务端不再 deep-import capability，`server→capability-deep` 回到 0；两个 audit RED→GREEN。
+
+**为何不用 `@/capabilities/copilot/public`**：`public.ts` 是 server contract，且会形成模块求值环（`public → legacy-drain-readiness → subagent-mailbox → copilot-run-outcome → turns → conversation`），故走共享叶而非 public 缝；UI 侧经 `@/kernel/limits` 纯叶取数，不把 server 模块拖进浏览器。
+
+**纠正 0bd 不实描述**：`conversation.ts` 的 `export { COPILOT_REUSE_WINDOW_MS }` 无「保持既有导入兼容」作用——常量在 0bd 前是 `conversation.ts` 模块私有（非导出），无任何 consumer 从 `conversation.ts` 导入它；该 re-export 多余，本轮已删除。API/DB 行为与服务端 predicate 语义均不变。
+
+### 边界与未做（已验 vs 待父线程）
+
+**本轮已验（修复结果）**：boundaries / deepening 两 audit RED→GREEN；124 UI tests（含 7 条 P1 冻结时钟行为保持）；57 DB tests（conversation.test.ts + turns.db.test.ts）；typecheck / lint / build exit 0。日志见上。
+
+**待父线程，本 agent 未做**：
+
+- 唯一 P0/P1 验证审（父线程保留预算，待本修复实测成功后才开启）。
+- 浏览器 acceptance（父线程验证流程，本 agent 不做 browser 验收）。
 - 未改服务端 24h 窗口政策、显式 sessionId 语义、API/DB/schema。
-- 未跑完整 `pnpm test`；`conversation.test.ts` / `turns.db.test.ts` 等 DB 测试归 exact-head CI。
-- 本修复待父线程独立核验后 push，再启动一次 P0/P1 验证审（当前 PR 初审已用，无第三轮）。
-- 不宣称生产已修复：待 PR + CI Gate 合并部署后复验。
+- 未跑完整 `pnpm test`（本机禁 full test，归 exact-head CI）；未 push/merge/deploy/建 GitHub/Linear。
+- 不宣称生产已修复：待 PR + CI Gate + 17 分钟等待窗 + 合并部署后复验。
