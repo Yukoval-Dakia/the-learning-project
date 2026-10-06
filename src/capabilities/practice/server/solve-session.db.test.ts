@@ -1,9 +1,10 @@
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import {
   ai_task_runs,
   assessment_submission,
+  evaluation_effective_head,
   event,
   knowledge,
   learning_record,
@@ -222,51 +223,87 @@ describe('frozen solve session lifecycle', () => {
       payload: { assessment: { revision_id: s.revisionId } },
     });
   });
-  it('enrolls the accepted frozen KC scope after hot edits and remains visible through knowledge filtering', async () => {
-    const s = await seed();
-    await db.insert(knowledge).values([
-      {
-        id: 'solve_frozen_kc',
-        name: '因式分解与非零条件',
-        domain: 'math',
-        created_at: new Date(),
-        updated_at: new Date(),
-      },
-      {
-        id: 'solve_live_kc',
-        name: '另一知识点',
-        domain: 'math',
-        created_at: new Date(),
-        updated_at: new Date(),
-      },
-    ]);
-    await db
-      .update(question)
-      .set({ knowledge_ids: ['solve_frozen_kc'] })
-      .where(eq(question.id, s.id));
-    const request = s.submission('a-b');
-    const accepted = await saveSubmission(db, request.assessment);
-    expect(accepted.status).toBe('saved');
-    await db
-      .update(question)
-      .set({ knowledge_ids: ['solve_live_kc'], prompt_md: 'EDITED AFTER ACCEPTANCE' })
-      .where(eq(question.id, s.id));
-    const result = await submitSolveAttempt({ db, sessionId: s.sessionId, submission: request });
-    expect(result.mistake_id).toBeTruthy();
-    const [record] = await db
-      .select()
-      .from(learning_record)
-      .where(eq(learning_record.id, result.mistake_id ?? 'missing'));
-    expect(record.knowledge_ids).toEqual(['solve_frozen_kc']);
-    expect(
-      await listLearningRecords(db, { kind: ['mistake'], knowledge_id: 'solve_frozen_kc' }),
-    ).toMatchObject([{ id: result.mistake_id }]);
-    expect(
-      await listLearningRecords(db, { kind: ['mistake'], knowledge_id: 'solve_live_kc' }),
-    ).toEqual([]);
-    await submitSolveAttempt({ db, sessionId: s.sessionId, submission: request });
-    expect(await db.select().from(learning_record)).toHaveLength(1);
-  });
+  it.each([false, true])(
+    'enrolls the accepted frozen KC scope after hot edits with archived=%s and remains visible through knowledge filtering',
+    async (archived) => {
+      const s = await seed();
+      await db.insert(knowledge).values([
+        {
+          id: 'solve_frozen_kc',
+          name: '因式分解与非零条件',
+          domain: 'math',
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+        {
+          id: 'solve_live_kc',
+          name: '另一知识点',
+          domain: 'math',
+          created_at: new Date(),
+          updated_at: new Date(),
+        },
+      ]);
+      await db
+        .update(question)
+        .set({ knowledge_ids: ['solve_frozen_kc'] })
+        .where(eq(question.id, s.id));
+      const request = s.submission('a-b');
+      const accepted = await saveSubmission(db, request.assessment);
+      expect(accepted.status).toBe('saved');
+      if (accepted.status !== 'saved') throw new Error('fixture submission was not accepted');
+      if (archived)
+        await db
+          .update(knowledge)
+          .set({ archived_at: new Date() })
+          .where(eq(knowledge.id, 'solve_frozen_kc'));
+      await db
+        .update(question)
+        .set({ knowledge_ids: ['solve_live_kc'], prompt_md: 'EDITED AFTER ACCEPTANCE' })
+        .where(eq(question.id, s.id));
+      const result = await submitSolveAttempt({ db, sessionId: s.sessionId, submission: request });
+      expect(result.judge.coarse_outcome).toBe('incorrect');
+      expect(result.status).toBe('effective');
+      expect(await Tutor.getTutorQuestionId(db, s.sessionId)).toMatchObject({ status: 'judged' });
+      expect(await db.select().from(evaluation_effective_head)).toMatchObject([
+        {
+          submission_id: accepted.submission.submission_id,
+          effective_evaluation_id: result.assessment?.candidate_id,
+          generation: 1,
+        },
+      ]);
+      expect(result.mistake_id).toBeTruthy();
+      const [record] = await db
+        .select()
+        .from(learning_record)
+        .where(eq(learning_record.id, result.mistake_id ?? 'missing'));
+      expect(record.knowledge_ids).toEqual(['solve_frozen_kc']);
+      expect(
+        await listLearningRecords(db, { kind: ['mistake'], knowledge_id: 'solve_frozen_kc' }),
+      ).toMatchObject([{ id: result.mistake_id }]);
+      expect(
+        await listLearningRecords(db, { kind: ['mistake'], knowledge_id: 'solve_live_kc' }),
+      ).toEqual([]);
+      await submitSolveAttempt({ db, sessionId: s.sessionId, submission: request });
+      expect(await db.select().from(learning_record)).toHaveLength(1);
+      expect(await db.select().from(evaluation_effective_head)).toMatchObject([{ generation: 1 }]);
+      for (const action of [
+        'experimental:assessment_activation',
+        'experimental:assessment_settlement',
+      ]) {
+        expect(
+          await db
+            .select()
+            .from(event)
+            .where(
+              and(
+                eq(event.action, action),
+                eq(event.subject_id, request.assessment.evaluation_group_id),
+              ),
+            ),
+        ).toHaveLength(1);
+      }
+    },
+  );
   it('replays an already judged answer without a second FSRS occurrence', async () => {
     const s = await seed();
     const params = { db, sessionId: s.sessionId, submission: s.submission() };
