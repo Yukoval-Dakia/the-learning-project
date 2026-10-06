@@ -2,8 +2,8 @@
  * api:smoke — run the Postman collection headlessly via Newman.
  *
  * Mirrors `scripts/dev-local.ts`: loads INTERNAL_TOKEN from `.env` and injects
- * it (plus baseUrl) into Newman as env-vars, so the secret never lands in the
- * committed `postman/learning-local.postman_environment.json` (it ships empty).
+ * it into a private temporary Newman environment, keeping it out of process
+ * arguments and the committed Postman environment (which ships empty).
  *
  * Newman itself is NOT a project dependency — we run it through `pnpm dlx` so
  * the smoke runner stays zero-footprint. First invocation fetches newman into
@@ -21,12 +21,15 @@
  * (`pnpm dev:local`, default :3001) before running.
  */
 import { spawn } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { config } from 'dotenv';
+import environment from '../postman/learning-local.postman_environment.json';
 
 config({ path: '.env', override: false });
 
 const COLLECTION = 'postman/learning-api.postman_collection.json';
-const ENVIRONMENT = 'postman/learning-local.postman_environment.json';
 const DEFAULT_FOLDER = 'health';
 
 const token = process.env.INTERNAL_TOKEN ?? '';
@@ -47,15 +50,29 @@ const folder = runAll ? undefined : (folderArg ?? DEFAULT_FOLDER);
 // Pass through any extra newman flags the caller appended (e.g. --verbose, --bail).
 const passthrough = argv.filter((a) => a.startsWith('-') && a !== '--no-folder' && a !== folderArg);
 
+// mkdtemp creates an owner-only directory and honors umask. The token is never
+// part of an argv or filename, and the committed environment stays unchanged.
+const environmentDir = mkdtempSync(join(tmpdir(), 'tlp-api-smoke-'));
+const environmentPath = join(environmentDir, 'environment.json');
+const cleanup = () => rmSync(environmentDir, { recursive: true, force: true });
+process.once('exit', cleanup);
+writeFileSync(
+  environmentPath,
+  JSON.stringify({
+    ...environment,
+    values: environment.values.map((variable) =>
+      variable.key === 'internalToken' ? { ...variable, value: token } : variable,
+    ),
+  }),
+);
+
 const newmanArgs = [
   'dlx',
   'newman@6',
   'run',
   COLLECTION,
   '--environment',
-  ENVIRONMENT,
-  '--env-var',
-  `internalToken=${token}`,
+  environmentPath,
   '--env-var',
   `baseUrl=${baseUrl}`,
   ...(folder ? ['--folder', folder] : []),
@@ -64,9 +81,26 @@ const newmanArgs = [
 
 console.log(`[api:smoke] target=${baseUrl} folder=${folder ?? '(whole collection)'}`);
 
-const child = spawn('pnpm', newmanArgs, { stdio: 'inherit', env: process.env });
+const childEnv = { ...process.env };
+delete childEnv.INTERNAL_TOKEN;
+const child = spawn('pnpm', newmanArgs, { stdio: 'inherit', env: childEnv });
+
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+  process.once(signal, () => {
+    cleanup();
+    child.kill(signal);
+    process.kill(process.pid, signal);
+  });
+}
+
+child.on('error', () => {
+  cleanup();
+  console.error('[api:smoke] failed to start Newman');
+  process.exit(1);
+});
 
 child.on('exit', (code, signal) => {
+  cleanup();
   if (signal) {
     process.kill(process.pid, signal);
     return;
