@@ -421,7 +421,11 @@ describe('canonical projection deployment migration', () => {
     ).toEqual([]);
   });
 
-  it('rejects a mutation-only goal whose broad anchor predicate cannot reconstruct its base', async () => {
+  // SCF-250 (YUK-1307): a goal whose only goal-subject event is a status/scope ACTION is NOT
+  // event-sourced (foldGoal cannot reconstruct a base from it), so the anchor gate now flags it as
+  // history-without-a-base-anchor — the operator must repair it rather than have the migration
+  // treat it as a reconstructible row.
+  it('rejects a mutation-only goal as history without a base anchor', async () => {
     await legacyRows();
     await writeEvent(testDb(), {
       id: 'orphan-goal-status',
@@ -434,7 +438,9 @@ describe('canonical projection deployment migration', () => {
       payload: { status: 'dormant' },
       created_at: T1,
     });
-    await expect(migrateCanonicalProjections(testDb(), T1)).rejects.toThrow('fold/live drift');
+    await expect(migrateCanonicalProjections(testDb(), T1)).rejects.toThrow(
+      'history without a base anchor',
+    );
     expect(await testDb().select().from(materialized_id_index)).toEqual([]);
     expect((await testDb().select().from(event)).map((row) => row.id)).toEqual([
       'orphan-goal-status',

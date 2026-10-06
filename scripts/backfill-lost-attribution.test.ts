@@ -76,4 +76,23 @@ describe('parseLimit', () => {
   it('accepts a plain decimal integer with no truncation', () => {
     expect(parseLimit(['--limit=100'])).toBe(100);
   });
+
+  // SCF-234 / YUK-1293: the round-2 `/^\d+$/` guard still admitted an OVERSIZED all-digit
+  // literal — parseInt overflows it to Infinity, which the `n <= 0` check alone accepted and
+  // handed to the census's Drizzle `.limit()`. Must warn + fall back to DEFAULT_LIMIT.
+  it('warns and falls back on an oversized decimal that parseInts to Infinity', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(parseLimit([`--limit=${'9'.repeat(400)}`])).toBe(DEFAULT_LIMIT);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
+
+  // Boundary: the largest SAFE integer is still a legitimate (if absurd) count and is preserved
+  // verbatim; an out-of-safe-range decimal is lossy and must be rejected like the other bad forms.
+  it('preserves MAX_SAFE_INTEGER but rejects an out-of-safe-range decimal', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(parseLimit([`--limit=${Number.MAX_SAFE_INTEGER}`])).toBe(Number.MAX_SAFE_INTEGER);
+    expect(warn).not.toHaveBeenCalled();
+    expect(parseLimit(['--limit=9007199254740992'])).toBe(DEFAULT_LIMIT);
+    expect(warn).toHaveBeenCalledTimes(1);
+  });
 });

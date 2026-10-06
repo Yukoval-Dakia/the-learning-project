@@ -243,6 +243,31 @@ describe('resetSubject — 只换绑，永不改共享 payload（§8-8）', () =
     ).toHaveLength(0);
   });
 
+  // SCF-260 / YUK-1316: builtin reset renames back to the code seed. Before the fix it skipped the
+  // live-name uniqueness check the rename/restore paths use, so a custom subject holding the seed
+  // name made reset create a DUPLICATE live display name. Now it returns the same 409 conflict and
+  // writes nothing.
+  it('builtin reset 撞名：种子名被 custom 占用 → conflict，零写入（SCF-260）', async () => {
+    await seedKnowledge(db);
+    // yuwen 改名漂移，种子名「语文」空出。
+    await renameSubject(db, { subjectId: 'yuwen', expectedRevision: 0, displayName: '古文' });
+    // custom 科占用「语文」。
+    await createCustom('语文');
+    const result = await resetSubject(db, { subjectId: 'yuwen', expectedRevision: 1 });
+    expect(result.kind).toBe('conflict');
+    const row = await subjectRow('yuwen');
+    expect(row?.display_name).toBe('古文');
+    expect(row?.revision).toBe(1);
+    expect(await controlActions('yuwen')).toEqual(['create', 'rename']);
+    // 只有 rename 写过 root.name 事件；冲突的 reset 未落任何事件。
+    expect(
+      await db
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:subject_root_name_update')),
+    ).toHaveLength(1);
+  });
+
   it('builtin reset：rename 漂移后回种子名 + root.name 同步 + 绑定回本科种子（review-765 P3）', async () => {
     // yuwen 先改名再 reset：displayName 回种子「语文」、root.name 同步、绑定仍指
     // trt_seed_yuwen_*（builtin 的种子是本科种子非 general）。

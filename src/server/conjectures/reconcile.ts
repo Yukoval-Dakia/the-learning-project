@@ -44,7 +44,7 @@
 // RESERVED_EXPERIMENTAL_ACTIONS → both validate via the loose generic ExperimentalEvent
 // with zero schema-file change. Do NOT reserve them.
 
-import { z } from 'zod';
+import { ZodError, z } from 'zod';
 import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
 import {
   PREDICTION_SCORE_ACTION,
@@ -463,18 +463,22 @@ export async function reconcileConjecturePredictions(
       skipped += 1;
       continue;
     }
-    // The READ is the only fail-soft step. The default getEventById runs the row through
-    // parseEvent, which THROWS on a corrupt / unparseable conjecture row (schema drift,
-    // manual DB edit). Catch ONLY the read → counted skip, so one bad row can't abort the
-    // nightly run (which also gates the propose half). The WRITES below are intentionally
-    // NOT caught: a write fault must propagate so pg-boss retries, and the
+    // The READ is fail-soft ONLY for a corrupt / unparseable conjecture ROW: the default
+    // getEventById runs the row through parseEvent, which throws a ZodError on schema drift or a
+    // manual DB edit. Narrow to THAT class → counted skip, so one poison-pill row can't abort the
+    // nightly run (which also gates the propose half). Every OTHER read failure — DB /
+    // connection / timeout / a future read-layer error — is RETRYABLE and must PROPAGATE so
+    // pg-boss retries the job; swallowing it would report a failed reconcile as a successful skip
+    // and let the propose half run against stale state (SCF-216 / YUK-1277). The WRITES below are
+    // likewise intentionally NOT caught: a write fault must propagate so pg-boss retries, and the
     // upsert-before-anchor order (see below) makes that retry self-healing.
     let conjEvent: { payload: unknown } | null;
     try {
       conjEvent = await getEventByIdFn(db, pr.conjecture_event_id);
     } catch (err) {
+      if (!(err instanceof ZodError)) throw err;
       console.warn(
-        '[reconcile] skipping probe_result — conjecture ref unreadable',
+        '[reconcile] skipping probe_result — conjecture ref unparseable',
         pr.probe_result_event_id,
         pr.conjecture_event_id,
         err,
