@@ -119,7 +119,7 @@ drizzle/.snapshots/
 .cortexkit/
 .qoderignore
 .devin/config.local.json
-.serena/project.local.yml
+.serena/
 .codegraph/
 .visual/
 .mimocode-project-id
