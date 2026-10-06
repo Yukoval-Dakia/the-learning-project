@@ -27,6 +27,8 @@ import { backfillGoalGenesis } from '../../../scripts/backfill-genesis-events';
 import { migrateCanonicalProjections } from '../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { gatherAndFoldGoal } from './gather';
+import { projectGoalGuarded } from './goal';
+import { goalsWithGenesisAnchor, hasGoalGenesisAnchor } from './parity';
 
 const T0 = new Date('2026-06-01T00:00:00.000Z');
 
@@ -414,5 +416,57 @@ describe('auditProjection — goal section', () => {
     const drifted = result.drift.find((d) => d.id === 'goal_1' && d.subject_kind === 'goal');
     expect(drifted).toBeDefined();
     expect(drifted?.diffs.join(';')).toContain('title');
+  });
+});
+
+describe('goal genesis-anchor gate — base-producing anchors only (SCF-250 / YUK-1307)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await resetIndex();
+  });
+
+  // A goal whose ONLY goal-subject event is a W2 status/scope action. foldGoal applies those
+  // ONLY onto an existing row (`if (row === null) continue`), so this log folds to null and must
+  // NOT count as an anchor — otherwise the guarded write-through would DELETE the live row and
+  // the genesis backfill would SKIP it.
+  async function insertActionOnlyGoal(id: string): Promise<void> {
+    await insertManualGoal(id);
+    await writeEvent(testDb(), {
+      id: newId(),
+      actor_kind: 'system',
+      actor_ref: 'goal-status-update',
+      action: 'experimental:goal_status_update',
+      subject_kind: 'goal',
+      subject_id: id,
+      outcome: 'success',
+      payload: { status: 'done' },
+      created_at: new Date(T0.getTime() + 1000),
+    });
+  }
+
+  it('an action-only goal is NOT anchored (its log folds to null)', async () => {
+    const db = testDb();
+    await insertActionOnlyGoal('goal_action_only');
+    // Precondition — the bug's trigger: the log has events but folds to null.
+    expect(await gatherAndFoldGoal(db, 'goal_action_only')).toBeNull();
+    expect(await hasGoalGenesisAnchor(db, 'goal_action_only')).toBe(false);
+    expect((await goalsWithGenesisAnchor(db, ['goal_action_only'])).has('goal_action_only')).toBe(
+      false,
+    );
+  });
+
+  it('the guarded write-through KEEPS the live row of a fold-null action-only goal', async () => {
+    const db = testDb();
+    await insertActionOnlyGoal('goal_kept');
+    await projectGoalGuarded(db, 'goal_kept');
+    expect(await liveGoal('goal_kept')).not.toBeNull();
+  });
+
+  it('a genesis-backfilled goal stays anchored (positive control)', async () => {
+    const db = testDb();
+    await insertManualGoal('goal_anchored');
+    await backfillGoalGenesis(db, T0);
+    expect(await hasGoalGenesisAnchor(db, 'goal_anchored')).toBe(true);
+    expect((await goalsWithGenesisAnchor(db, ['goal_anchored'])).has('goal_anchored')).toBe(true);
   });
 });

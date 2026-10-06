@@ -6,6 +6,7 @@ import type {
   ModelUnitOutcomeT,
   PendingStateT,
 } from '@/core/schema/assessment';
+import { isOriginalEvidenceQuote } from '@/core/schema/assessment/evidence-quote';
 import { AssessmentRuleDecision } from '@/core/schema/assessment/model-decision';
 import type { Db } from '@/db/client';
 import { AgentRunError } from '@/server/ai/agent-run-error';
@@ -72,7 +73,10 @@ function citationProblem(
     const evidenceText = textEvidence.find(
       (item) => item.evidence_id === citation.evidence_id,
     )?.text;
-    return ![text, evidenceText].some((source) => source?.includes(citation.quote ?? ''));
+    const quote = citation.quote;
+    return ![text, evidenceText].some(
+      (source) => source !== undefined && isOriginalEvidenceQuote({ source, quote }),
+    );
   });
 }
 
@@ -181,6 +185,8 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
             modelResult.structured_output ?? JSON.parse(modelResult.text.trim()),
           ),
       );
+      // Pending citations are validated by the model schema but cannot supply a score.
+      // The domain pending outcome retains only its reason and paid run provenance.
       if (decision.kind === 'pending')
         return pending(
           { reason: 'insufficient_evidence', detail: decision.detail },

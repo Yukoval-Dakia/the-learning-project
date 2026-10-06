@@ -641,6 +641,7 @@ export async function installApiFixtures(
       return fulfill(route, {
         window: { from: '2026-07-12T18:00:00.000Z', to: '2026-07-13T00:00:00.000Z' },
         has_overnight_activity: false,
+        cost: { scope: 'all_activity', records: 0, by_currency: [], details: [] },
         runs: [],
         note_changes_count: 0,
         new_proposals_count: 0,

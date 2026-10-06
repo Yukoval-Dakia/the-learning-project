@@ -1,3 +1,11 @@
+# 当前交接 — 2026-10-06 YUK-1323
+
+工作树/tmp/tlp-yuk1323-delivery，分支fix/yuk-1323-output-compat-delivery，基于a60637d3f移植两个已审查提交。165unit和21独立探针通过，无剩余P0/P1；初审与唯一验证审预算已用完。两次真实MiMo调用发生于a361026b0，最终97369397c离线回放通过，不能称最终HEAD真实调用。集成165unit/typecheck/lint/build通过；PR、exact-head CI与等待窗仍待完成。Laminar YUK-1325在/tmp/tlp-laminar-yuk1325另行实施。无部署/准入。
+
+# 当前交接 — 2026-10-06 YUK-588第一批
+
+588/1153/1132 第一批已合并 #1574/#1573/#1572，Linear Done；本地验证、独立初审与 exact-head CI 全部通过。Owner 更新 bot 无 findings 时免等待规则，见 AGENTS.md。详见 `.remember/yuk588-today-cost-ui.md`。1128 未启动，无部署/付费调用。
+
 # 当前交接 — 2026-10-06 YUK-1047 closeout
 
 PR #1571，分支fix/yuk-1047-closeout。五项及三项修复完成，唯一验证审和真实Solo新build六次同页恢复/ACK/503/CAS/返回互斥通过。父线程64unit/36DB复验通过。首轮CI37449910759除contracts外全部通过。

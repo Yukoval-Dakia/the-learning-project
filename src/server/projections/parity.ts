@@ -65,21 +65,37 @@ type ParitySubjectKind =
   | 'artifact'
   | 'question_block';
 
+// diffFieldName — the VALUE-FREE field name (or whole-row sentinel) of one diff line, for the
+// prod warn. A normal line is "<col>: <live> → <folded>" (snapshot-diff), so the column name is
+// the prefix before its first ':'. Whole-row sentinels are angle-bracketed and may carry their
+// OWN ':' — `<row>`, `<fold-threw>`, and the ADR-0034 reject marker `<fold-threw:topology>` — so
+// the whole `<...>` token is the name. A bare `split(':', 1)[0]` truncates that tag to
+// `<fold-threw`, making a topology reject indistinguishable from a generic fold throw in the
+// structured prod log (SCF-210 / YUK-1271). Column names never contain '<', so the branch is
+// unambiguous, and the returned token is still never a user VALUE.
+function diffFieldName(line: string): string {
+  if (line.startsWith('<')) {
+    const end = line.indexOf('>');
+    if (end !== -1) return line.slice(0, end + 1);
+  }
+  return line.split(':', 1)[0] ?? line;
+}
+
 // onParityMismatch — the dev-throws / prod-logs severity switch (see the file header for the
 // full contract). PROD: structured warn + return (never break a live accept). ELSE: throw.
 function onParityMismatch(subjectKind: ParitySubjectKind, id: string, diff: string[]): void {
   const diffText = diff.join('; ');
   if (process.env.NODE_ENV === 'production') {
     // PROD: log only the diverged FIELD NAMES + count — NEVER the values. Each diff line is
-    // "<col>: <live> → <folded>", so the prefix before the first ':' is the column (or a
-    // '<row>' / '<fold-threw>' sentinel). Knowledge names, domains and edge reasoning are
+    // "<col>: <live> → <folded>"; diffFieldName takes the column (or the WHOLE '<row>' /
+    // '<fold-threw[:topology]>' sentinel). Knowledge names, domains and edge reasoning are
     // user content and must not leak into prod logs; full per-value detail stays in the
     // dev/test thrown message and is recoverable offline via `pnpm audit:projection` against
     // a prod-clone (PR-B's B3 SoT-flip gate).
     console.warn('[projection-parity] fold != live row', {
       subject_kind: subjectKind,
       id,
-      diff_fields: diff.map((line) => line.split(':', 1)[0] ?? line),
+      diff_fields: diff.map(diffFieldName),
       diff_count: diff.length,
     });
     return;
@@ -270,17 +286,18 @@ export async function knowledgeEdgesWithGenesisAnchor(
 //   1. an `experimental:genesis` seed (backfilled pre-W2 / event-less manual goal),
 //   2. an `experimental:proposal` event with subject_kind='goal' subject_id=goalId (the
 //      goal_scope proposal that materialized it — the proposal+accept chain folds it),
-//   3. a W2 goal action event (`experimental:goal_status_update` / `experimental:goal_scope_update`),
-//   4. a `materialized_id_index` row keyed by goalId with subject_kind='goal' (the backfill anchor).
+//   3. a `materialized_id_index` row keyed by goalId with subject_kind='goal' (the backfill anchor).
 // All of these have subject_id = goalId (no minting indirection), so the event check is a single
 // subject-keyed scan over the action set.
-
-const GOAL_ANCHOR_ACTIONS = [
-  'experimental:genesis',
-  'experimental:proposal',
-  'experimental:goal_status_update',
-  'experimental:goal_scope_update',
-] as const;
+//
+// SCF-250 (YUK-1307): the W2 action events (`experimental:goal_status_update` /
+// `experimental:goal_scope_update`) are deliberately NOT anchors. foldGoal applies them ONLY
+// onto an EXISTING row (`if (row === null) continue`), so a goal whose log holds ONLY a
+// status/scope action folds to null. Counting it as an anchor would call such a goal
+// "event-sourced", make the guarded write-through DELETE its live row, and make the backfill
+// SKIP it — a latent data-integrity bug. Anchors must be BASE-producing (genesis / materializing
+// proposal / index), which is exactly what foldGoal can reconstruct.
+const GOAL_ANCHOR_ACTIONS = ['experimental:genesis', 'experimental:proposal'] as const;
 
 /**
  * Does this `goal` have a genesis anchor / originating event chain — i.e. is it event-sourced
