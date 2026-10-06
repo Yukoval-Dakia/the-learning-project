@@ -637,6 +637,46 @@
   margin-top: var(--s-3);
 }
 
+.overnight-cost {
+  margin-top: var(--s-3);
+  min-width: 0;
+  font-size: var(--fs-meta);
+  overflow-wrap: anywhere;
+}
+.overnight-cost p {
+  margin-block: var(--s-2);
+}
+.overnight-cost-currencies,
+.overnight-cost-details {
+  display: grid;
+  gap: var(--s-3);
+  list-style: none;
+  padding: 0;
+}
+.overnight-cost-currencies ul {
+  padding-inline-start: var(--s-4);
+}
+.overnight-cost-detail {
+  border-top: 1px solid var(--line);
+  padding-top: var(--s-3);
+}
+.overnight-cost-provider {
+  font-weight: 500;
+}
+.overnight-cost-usage {
+  display: grid;
+  gap: var(--s-2);
+  margin: 0;
+}
+.overnight-cost .overnight-cost-usage > div {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: var(--s-3);
+}
+.overnight-cost .overnight-cost-usage dd {
+  margin: 0;
+}
+
 /* ---- responsive (screens.css L352-363 相关行) ---- */
 @media (max-width: 720px) {
   .inbox-loom .proposal-foot .meta-row {

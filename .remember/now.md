@@ -1,3 +1,7 @@
+# 当前交接 — 2026-10-06 YUK-588第一批
+
+588 UI已获批准并完成本地实现、18unit/8浏览器/typecheck/lint/build与初审，待PR与exact-head CI。1153/1132各独立工作树推进；Git访问已恢复，安全初审接续中。详见 `.remember/yuk588-today-cost-ui.md`。无部署/付费调用。
+
 # 当前交接 — 2026-10-06 YUK-1047 closeout
 
 PR #1571，分支fix/yuk-1047-closeout。五项及三项修复完成，唯一验证审和真实Solo新build六次同页恢复/ACK/503/CAS/返回互斥通过。父线程64unit/36DB复验通过。首轮CI37449910759除contracts外全部通过。
