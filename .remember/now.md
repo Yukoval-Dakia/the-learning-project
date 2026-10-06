@@ -1,3 +1,13 @@
+# 当前交接 — 2026-10-06 YUK-1224/1226/1196/1236（SCF-141/143/109/161）
+
+工作树 feat-yuk-1224-parser-assets-batch，分支 fix/yuk-1224-parser-assets-batch（upstream 已改为同名远端分支），base origin/main 9f1e0945c，含父线程文档提交 d2d5cff80。本 writer 提交 2364d4306，PR #1579（base main，四个 Closes 各自一行）。
+
+四票均在本机复现 RED→GREEN：1224 `judge-routing-dos.test.ts` 硬超时子进程在旧 regex 下两例 ETIMEDOUT（n24≈140字符与12000字符），修后 <1s；语义由 `judge-routing.test.ts` 对已退役 regex 的差异 oracle（curated+400 fuzz）逐字节钉住。1226 reaper 旧码把 solution-only/mixed/decoy 的 staged 资产删除（RED），修后只删真孤儿，且覆盖存量行（reference_md/structured.answers 的内部 URL）。1196 旧码 `TypeError: bucket.push is not a function`（RED），修后 own-key。1236 旧码继承 key 解析/misbehave（RED），修后 named error。
+
+证据：`pnpm vitest run --config vitest.unit.config.ts src/core/schema/judge-routing.test.ts src/core/schema/judge-routing-dos.test.ts scripts/golden-reaudit.test.ts` = 43 passed；`pnpm vitest run --config vitest.db.config.ts src/capabilities/practice/jobs/jyeoo_staged_asset_reap.db.test.ts src/server/questions/detail.test.ts` = 27 passed；`pnpm typecheck` 干净；完整 `pnpm lint` 0 error/297 warnings（基线）；`pnpm build` exit 0。无部署/生产库/付费调用。
+
+未做：不跑完整本机 `pnpm test`（repo 政策，交 exact-head CI Gate）；未合并（父线程负责独立 review/merge/等待窗）。T3 link_pull_request 在本 ACP 不可用（无 T3_ACP_MCP_NODE / acp-mcp-call / t3-code 工具），PR URL 已报父线程。Linear 四票 In Review（非 Done）。capture gate：搜索无重复 actionable follow-up，未新开票。
+
 # 当前交接 — 2026-10-06 SCF批量处置
 
 198票YUK-1121至1318，本轮新增关闭7票。1121/1127旧paper风险已由native执行链覆盖，父线程77 DB通过；1293/1271/1307/1277/1316由#1578合入9f1e0945c，33unit+47DB父线程复验、作者typecheck/build、完整lint297warnings、独立初审无P0/P1、CI37471533645全绿。未部署。
