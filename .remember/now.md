@@ -1,6 +1,6 @@
 # 当前交接 — 2026-10-06 YUK-1224/1226/1196/1236（SCF-141/143/109/161）
 
-工作树 feat-yuk-1224-parser-assets-batch，分支 fix/yuk-1224-parser-assets-batch（upstream 已改为同名远端分支），base origin/main 9f1e0945c，含父线程文档提交 d2d5cff80。本 writer 提交 2364d4306，PR #1579（base main，四个 Closes 各自一行）。
+工作树 /Users/yuqi/.t3/worktrees/the-learning-project/feat-yuk-588-today-cost-ui，分支 fix/yuk-1224-parser-assets-batch（upstream 已改为同名远端分支），base origin/main 9f1e0945c，含父线程文档提交 d2d5cff80。本 writer 提交 2364d4306，PR #1579（base main，四个 Closes 各自一行）。
 
 四票均在本机复现 RED→GREEN：1224 `judge-routing-dos.test.ts` 硬超时子进程在旧 regex 下两例 ETIMEDOUT（n24≈140字符与12000字符），修后 <1s；语义由 `judge-routing.test.ts` 对已退役 regex 的差异 oracle（curated+400 fuzz）逐字节钉住。1226 reaper 旧码把 solution-only/mixed/decoy 的 staged 资产删除（RED），修后只删真孤儿，且覆盖存量行（reference_md/structured.answers 的内部 URL）。1196 旧码 `TypeError: bucket.push is not a function`（RED），修后 own-key。1236 旧码继承 key 解析/misbehave（RED），修后 named error。
 
@@ -10,9 +10,11 @@
 
 # 当前交接 — 2026-10-06 SCF批量处置
 
-198票YUK-1121至1318，本轮新增关闭7票。1121/1127旧paper风险已由native执行链覆盖，父线程77 DB通过；1293/1271/1307/1277/1316由#1578合入9f1e0945c，33unit+47DB父线程复验、作者typecheck/build、完整lint297warnings、独立初审无P0/P1、CI37471533645全绿。未部署。
+198票YUK-1121至1318，本轮新增关闭20票。5票由#1578合入9f1e0945c；15票经当前源码与适用测试核验无需改码关闭：1121/1127/1142/1148/1156/1192/1214/1218/1244/1210/1212/1219/1229/1231/1292。逐票来源ID、证据与限制已写Linear。
 
-下一writer分支fix/yuk-1224-parser-assets-batch基于最新origin/main9f1e0945c，处理1224/1226/1196/1236。OpenCode Go opencode-go/deepseek-v4.1-flash high、full-access已获明确授权，相关源码/票面/测试可发送，凭据/.env/生产数据除外。10票no-change独立核验任务scf198-nochange10-20261006仍运行，结果需父线程验证才关闭。不得完整本机pnpm test，不派嵌套代理，不改全局/Serena memory。
+#1579四票已实施并In Review，不能重复启动writer；父线程43unit及77DB复验通过，其中27DB属于本批、50DB用于settle/restore/conjecture-scores核验，另33epoch/TLS unit通过。独立初审进行中，未合并。1270的ability_global、1217的withheld负例尚缺，不关闭；1238/1258/1273有残余缺陷候选；1187/1265/1314证据不足。下一实施候选1134/1131，1189/1195实际路径核验待裁决。
+
+worker统一OpenCode Go opencode-go/deepseek-v4.1-flash high、full-access，相关源码/票面/测试发送已获授权，凭据/.env/生产数据除外。禁止完整本机pnpm test、生产部署、产品付费调用、嵌套代理和全局/Serena memory写入。
 
 # 当前交接 — 2026-10-06 YUK-1323
 

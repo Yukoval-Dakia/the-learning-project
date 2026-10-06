@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> 更新于2026-10-06。SCF 198票批量处置：本轮新增关闭14票（1121/1127经native DB回归；1293/1271/1307/1277/1316由#1578交付main9f1e0945c；1142/1148/1156/1192/1214/1218/1244经nochange核验）。本批1224/1226/1196/1236已实现并开PR #1579；worker统一OpenCode Go DeepSeek V4.1 Flash high、full-access。未部署。
+> 更新于2026-10-06。SCF 198票批量处置：本轮新增关闭20票：5票由#1578修复交付，15票经当前调用链及适用测试核验关闭，逐票证据见Linear。本批1224/1226/1196/1236已实现并开PR #1579；worker统一OpenCode Go DeepSeek V4.1 Flash high、full-access。未部署。
 
 ## NOW
 
@@ -91,7 +91,7 @@
 
 ## NEXT
 
-- SCF下一批实施YUK-1224/1226/1196/1236；随后处理1134 claim释放竞态与1131 tokened资产URL。1128 CI planner尚未实施。
+- #1579四票已实施、In Review，父线程43unit及包含本批27项的77DB复验通过；待独立初审与exact-head CI后合并，禁止重复实施。下一批处理1134 claim释放竞态与1131 tokened资产URL；1189/1195替代入口核验待裁决。1128 CI planner尚未实施。
 
 1. YUK-1047/#1571收尾：五项及后续修复已完成，唯一验证审与真实Solo验收通过。YUK-1322审计修复4e7894f52、依赖修复73da2bffc已完成；推送后等exact-head CI及17分钟窗，满足后合并并关闭两票。不部署，不宣称模型质量准入。
 2. YUK-1105 revision-registry producer与pending映射回放保留Backlog，首次产物审核放行方式待owner裁决。
