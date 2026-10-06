@@ -1,17 +1,17 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker；更新于 2026-10-06：owner 已批准 **TanStack Start + Pi + PostgreSQL/Drizzle + DBOS** 的单服务器目标架构。决策见 [ADR-0065](docs/adr/0065-typescript-adaptive-learning-architecture.md)。本轮记录决策，尚未实施迁移。原看板与历史状态已归档到 [历史快照](docs/planning/2026-10-06-plan-snapshot.md)。
+> Linear 是权威 tracker；更新于 2026-10-06：owner 要求先用语言设计完整系统与行为，不讨论实施先后。本轮形成 [连续学习系统行为设计 r0](docs/design/2026-10-06-continuous-learning-system-behavior.md)，归既有 YUK-405 产品愿景讨论；具体行为仍为提案。已批准的技术目标见 [ADR-0065](docs/adr/0065-typescript-adaptive-learning-architecture.md)，尚未启动迁移。旧看板见 [历史快照](docs/planning/2026-10-06-plan-snapshot.md)。
 
 ## NOW
 
-- **YUK-1337 / 目标架构决定**：学习状态与教学安排持续共同演进；页面、Pi 工具和后台任务共用业务操作；Pi 保留，DBOS 承担目标持久执行机制，PostgreSQL 保存权威事实与版本。
-- **本轮交付**：ADR-0065、领域术语、ADR-0051 修订入口及 handoff；仅文档与 Linear 记录。当前 Hono + Vite SPA + pg-boss 运行形态未改变。
-- **进度边界**：目标已批准；Pi/DBOS 集成与迁移尚未实施。项目 [P-YUK-23](https://linear.app/yukoval-studios/project/tlp-ts-全栈与实时自适应学习-5cc10bf2aaea) 保持 Backlog。
+- **当前单线 / YUK-405 产品设计**：围绕学校、纸笔、自习及数字工具中的连续学习，完整说明记录、学情判断、动态安排、教学、主动备课、纠偏、自主权、隐私与失败恢复；不以 MVP、阶段或开发顺序组织。
+- **本轮交付**：行为设计 r0、场景与验收样例、独立场景/边界检查及本地 handoff。设计提案不代表 owner 已批准，也不代表当前实现具备这些行为。
+- **已定边界**：实时状态与安排共同演进；TanStack Start + Pi + PostgreSQL/Drizzle + DBOS 技术目标保留。当前 Hono + Vite SPA + pg-boss 运行形态未改变；本轮不改 UI 或业务代码。
 
 ## NEXT
 
-1. **YUK-1338（Backlog，未启动）**：在隔离工作树和测试数据库验证 Pi + DBOS 的业务竖切：新证据影响安排、旧版本结果受提交校验、真实进程重启不重复已提交业务效果。
-2. 根据验证证据制定模块、持久任务和数据的迁移计划，明确旧任务义务、回滚及实际版本；不能把整段 agentLoop 重试视为步骤恢复。
+- 与 owner 审阅完整行为稿，修正具体场景与默认权限，形成确认版本；本轮不拆实施票、不排开发顺序。
+- **YUK-1338** 的技术集成验证保留 Backlog、未启动；行为稿不视为该验证已完成或新的迁移授权。
 
 ## PARKED
 
@@ -28,5 +28,5 @@
 
 ## BLOCKED-ON
 
-- 本次架构决策记录无外部阻塞；后续 Pi/DBOS 恢复语义、实际延迟及输出质量仍需验证，不能声称已经通过。
+- 本次设计无外部访问阻塞；r0 的新增行为与重大默认取舍待 owner 审阅，不更新已批准领域词条或现役权限。
 - 本次没有启动迁移、生产数据切换、部署或付费模型评估；历史授权与预算留在原 handoff，不自动转用到新任务。
