@@ -90,3 +90,71 @@ OpenCode Go MiMo 2.6 Pro 独立初审固定读取 `e11405d466db8d5658389e9acdbbf
 PR1582 已合并 main `8a53792855580fc1eec2c344b70f4122e5310bb7`。本分支正常合入该 main，合并提交 `0cb2659f3c7e140e5797c4ad47669363d403c5cf`；依赖安装使用 frozen lockfile，实际更新 sharp0.35.5 与 MCP SDK1.32.1。合并后的检查另存父工作树 `.remember/evidence/2026-10-07-yuk1340-combined-validation/`，不把旧检查结果冒称为新依赖树的验证。
 
 合并后父线程重新运行 Copilot UI 的 19 文件 / 117 项测试、typecheck、lint、build，全部 exit 0。检查运行于上述合并提交；后续提交仅更新 PLAN 与本证据文档。未运行完整本机 pnpm test、未新增付费调用、未修改生产。
+
+---
+
+## P1 修复：自动续接遵循 24h 复用窗口（GitHub discussion 4200151363）
+
+### 旧验收与新修复的区分
+
+以上「RED→GREEN」「本机检查」「浏览器验收」均对应 e11405d46 的 4 项组件测试与 117 项全量 UI 测试——即**初版会话入口修复**（bootstrap 落位 active/idle + 历史只读 + 新建入口 + 竞态防护）。本节记录的是**初审后新增 P1 缺口的第二轮修复**：bootstrap 自动续接遗漏了服务端 `COPILOT_REUSE_WINDOW_MS`（24h）年龄检查。
+
+### 缺陷根因
+
+`CopilotDock.tsx` bootstrap `resumable` find 仅检查 `status === 'active' || status === 'idle'`，遗漏 `updated_at >= now - 24h`。服务端 `findReusableCopilotConversation`（`src/server/session/conversation.ts:138-160`）同时检查 status 与 `gte(updated_at, cutoff)`（cutoff = now − 24h，`:112` `COPILOT_REUSE_WINDOW_MS`）。当列表含最新 ended + 过期 active/idle（>24h）时，UI 自动选旧 row 并把新消息附到过时历史；服务端本来会新建。
+
+### 变更文件
+
+| 文件 | 动作 |
+| --- | --- |
+| `src/capabilities/copilot/session-reuse.ts` | 新建：`COPILOT_REUSE_WINDOW_MS` + `isWithinCopilotReuseWindow()` 共享叶模块（UI 不能 import `@/server/`） |
+| `src/server/session/conversation.ts` | 修改：import 共享常量替换本地定义，re-export 保持兼容 |
+| `src/capabilities/copilot/ui/CopilotDock.tsx` | 修改：bootstrap `resumable` find 增加 `isWithinCopilotReuseWindow(session.updated_at)` 年龄检查 |
+| `src/capabilities/copilot/ui/CopilotDock.session-entry.unit.test.tsx` | 修改：新增 7 条组件测试（冻结时钟 `2026-10-07T20:00:00Z`） |
+| `src/capabilities/copilot/ui/CopilotDock.durable-retry.unit.test.tsx` | 修改：夹具 `updated_at` 改为相对时间（P1 年龄检查使旧硬编码日期不可续接） |
+| `src/capabilities/copilot/ui/CopilotDock.tool-use.unit.test.tsx` | 修改：同上 |
+
+### RED（修复前实际输出）→ GREEN（修复后）
+
+命令：`pnpm vitest run --config vitest.unit.config.ts src/capabilities/copilot/ui/CopilotDock.session-entry.unit.test.tsx`
+
+| 测试（真实组件渲染 + 冻结时钟 2026-10-07T20:00:00Z） | RED（修复前） | GREEN（修复后） |
+| --- | --- | --- |
+| P1: 超过24h的 idle 不能自动续接（应新建） | `expected [] to have a length of 1 but got +0`（bootstrap 选了过期 idle，无 POST） | ✓ |
+| P1: 超过24h的 active 不能自动续接（应新建） | 同上 | ✓ |
+| 窗口内 active/idle 仍自动续接，不新建 | ✓（无回归） | ✓ |
+| 恰好24h边界的 idle 仍在复用窗口内（gte 语义） | ✓（无回归） | ✓ |
+| 刚好超过24h边界的 idle 不可自动续接（应新建） | `expected [] to have a length of 1 but got +0` | ✓ |
+| updated_at 非法时保守处理为不可续接（应新建） | 同上 | ✓ |
+| 显式选择超过24h的 idle 仍可继续 | `expected [] to have a length of 1 but got +0`（首步 waitFor 未建会话） | ✓ |
+
+RED 全量输出：`/tmp/yuk1340-p1-red.txt`（本轮会话临时文件；表中为逐条失败断言原样）。
+
+### 24h 边界与显式选择语义
+
+- **边界（与服务端 `gte` 一致）**：`updated_at === now - 24h` → 在窗口内（可续接）；`updated_at < now - 24h` → 窗口外（新建）。恰好 24h 仍可续接。
+- **非法时间**：`updated_at` 为 NaN/invalid → 保守判定为不可续接（不自动选）。
+- **显式选择**：用户点选历史会话（含 >24h 的 active/idle）不受年龄限制——与服务端显式 `sessionId` 路径（`conversation.ts:322-355`）一致，仅检查 status。显式选择旧行为不变。
+- **自动 vs 显式**：仅 bootstrap 自动续接遵循 status + 24h；用户显式选择只看 status。
+
+### 本机检查（scoped，未跑完整 pnpm test）
+
+| 检查 | 命令 | 结果 |
+| --- | --- | --- |
+| copilot/ui 全量 unit | `pnpm vitest run --config vitest.unit.config.ts src/capabilities/copilot/ui` | 19 files / 124 tests 全过（原 117 + 新增 7） |
+| typecheck | `pnpm typecheck` | exit 0 |
+| lint | `pnpm lint` | exit 0（0 error；297 warnings 存量） |
+| build | `pnpm build` | exit 0 |
+
+日志：`/tmp/yuk1340-p1-ui-tests.log`、`/tmp/yuk1340-p1-typecheck.log`、`/tmp/yuk1340-p1-lint.log`、`/tmp/yuk1340-p1-build.log`。
+
+### 共享常量跨层变动说明
+
+`COPILOT_REUSE_WINDOW_MS` 从 `conversation.ts` 模块私有提取到 `src/capabilities/copilot/session-reuse.ts`（UI 不能 import `@/server/`，server 已有 import capability public 的先例）。`conversation.ts` re-export 保持既有导入兼容。不改 API/DB 行为；服务端 predicate 语义不变。`conversation.test.ts`（DB 测试）未在本机运行，归 exact-head CI。
+
+### 边界与未做
+
+- 未改服务端 24h 窗口政策、显式 sessionId 语义、API/DB/schema。
+- 未跑完整 `pnpm test`；`conversation.test.ts` / `turns.db.test.ts` 等 DB 测试归 exact-head CI。
+- 本修复待父线程独立核验后 push，再启动一次 P0/P1 验证审（当前 PR 初审已用，无第三轮）。
+- 不宣称生产已修复：待 PR + CI Gate 合并部署后复验。

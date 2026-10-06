@@ -46,6 +46,7 @@ import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { ToolUseCard } from '@/ui/primitives/ToolUseCard';
+import { isWithinCopilotReuseWindow } from '../session-reuse';
 import { CopilotHeroCard } from './CopilotHeroCard';
 import { type CopilotSessionListItem, CopilotSessionPanel } from './CopilotSessionPanel';
 import {
@@ -785,10 +786,12 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       return;
     }
     if (creatingSession) return;
-    // 优先落位最近的可继续会话（active/idle，与服务端 reuse 判定一致），
-    // 不再无条件选 sessions[0] 把学员按在最新 ended/abandoned 上（YUK-1340）。
+    // 优先落位最近的可继续会话（active/idle 且在服务端24h复用窗口内，
+    // 与 findReusableCopilotConversation 判定一致），过期候选不自动续接。
     const resumable = sessions.find(
-      (session) => session.status === 'active' || session.status === 'idle',
+      (session) =>
+        (session.status === 'active' || session.status === 'idle') &&
+        isWithinCopilotReuseWindow(session.updated_at),
     );
     if (resumable) {
       sessionBootstrapRef.current = false;

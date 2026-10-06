@@ -58,6 +58,21 @@ agent 在本委托下采用的方案（最小充分变更，只用既有 primiti
 
 不触碰：`CopilotSessionPanel.tsx`（历史面板已只读展示 + 自带「新对话」）、server/api/schema/manifest、路由与 admission。
 
+## P1 修正补充（2026-10-07 初审后）
+
+初审发现 bootstrap 自动续接遗漏服务端 24h 复用窗口（GitHub discussion 4200151363）。修正范围：
+
+| 文件 | 动作 |
+| --- | --- |
+| `src/capabilities/copilot/session-reuse.ts` | 新建：共享 `COPILOT_REUSE_WINDOW_MS` + `isWithinCopilotReuseWindow()` |
+| `src/server/session/conversation.ts` | 修改：import 共享常量（re-export 保持兼容） |
+| `src/capabilities/copilot/ui/CopilotDock.tsx` | 修改：bootstrap resumable find 增加年龄检查 |
+| `src/capabilities/copilot/ui/CopilotDock.session-entry.unit.test.tsx` | 修改：新增 7 条冻结时钟测试 |
+| `src/capabilities/copilot/ui/CopilotDock.durable-retry.unit.test.tsx` | 修改：夹具日期改相对时间 |
+| `src/capabilities/copilot/ui/CopilotDock.tool-use.unit.test.tsx` | 修改：同上 |
+
+不改服务端窗口政策、显式 sessionId 语义、API/DB/schema。验证与证据见 evidence 文档 P1 节。
+
 ## 验收映射
 
 | 验收条件 | 落点 |

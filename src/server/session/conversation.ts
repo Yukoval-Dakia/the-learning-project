@@ -1,11 +1,10 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
-
+import { COPILOT_REUSE_WINDOW_MS } from '@/capabilities/copilot/session-reuse';
 import type { Db, Tx } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/server/events/writer';
-
 import { assertFromState } from './guards';
 
 // LearningSession.Conversation.* — Phase 2C Active Teaching Session.
@@ -109,7 +108,9 @@ export async function startConversation(
  * transaction, and an `idle` reuse is inline-resumed to `active` here rather
  * than leaving the row stale. Single-user tool → no `FOR UPDATE` fan-out needed.
  */
-const COPILOT_REUSE_WINDOW_MS = 24 * 60 * 60 * 1000;
+// Reuse window constant lives in the copilot capability so the UI bootstrap
+// auto-selection and this server predicate cannot drift (YUK-1340 P1).
+export { COPILOT_REUSE_WINDOW_MS };
 export const COPILOT_SESSION_SELECTION_LOCK = 'copilot:session-selection';
 
 export async function lockCopilotSessionSelection(tx: Tx): Promise<void> {

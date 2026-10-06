@@ -161,6 +161,9 @@ function session(partial: {
   return partial;
 }
 
+/** Frozen clock: 2026-10-07T20:00:00Z. All fixture ages are relative to this. */
+const FROZEN_NOW = new Date('2026-10-07T20:00:00.000Z');
+
 const HISTORY_MULTI_STATUS: SessionFixture[] = [
   session({
     id: 's-ended-new',
@@ -226,6 +229,86 @@ const HISTORY_LIVE_PLUS_OLDER_ENDED: SessionFixture[] = [
   }),
 ];
 
+/** P1: recently ended + stale idle (>24h) — server would create new, not reuse stale idle. */
+const HISTORY_STALE_IDLE_PLUS_RECENT_ENDED: SessionFixture[] = [
+  session({
+    id: 's-ended-recent',
+    status: 'ended',
+    title: '刚结束的对话',
+    created_at: '2026-10-07T18:00:00.000Z',
+    updated_at: '2026-10-07T19:00:00.000Z',
+  }),
+  session({
+    id: 's-idle-stale',
+    status: 'idle',
+    title: '过期闲置对话',
+    created_at: '2026-10-05T08:00:00.000Z',
+    updated_at: '2026-10-05T10:00:00.000Z',
+  }),
+];
+
+/** P1 variant: recently ended + stale active (>24h) — same contract. */
+const HISTORY_STALE_ACTIVE_PLUS_RECENT_ENDED: SessionFixture[] = [
+  session({
+    id: 's-ended-recent-b',
+    status: 'ended',
+    title: '最近完结讨论',
+    created_at: '2026-10-07T17:00:00.000Z',
+    updated_at: '2026-10-07T18:30:00.000Z',
+  }),
+  session({
+    id: 's-active-stale',
+    status: 'active',
+    title: '过期进行中对话',
+    created_at: '2026-10-04T08:00:00.000Z',
+    updated_at: '2026-10-04T10:00:00.000Z',
+  }),
+];
+
+/** Within window: idle updated 5h before FROZEN_NOW → still reusable. */
+const HISTORY_FRESH_IDLE: SessionFixture[] = [
+  session({
+    id: 's-idle-fresh',
+    status: 'idle',
+    title: '新鲜闲置对话',
+    created_at: '2026-10-07T14:00:00.000Z',
+    updated_at: '2026-10-07T15:00:00.000Z',
+  }),
+];
+
+/** Boundary: idle updated exactly 24h before FROZEN_NOW → gte cutoff → reusable. */
+const HISTORY_IDLE_AT_BOUNDARY: SessionFixture[] = [
+  session({
+    id: 's-idle-boundary',
+    status: 'idle',
+    title: '边界闲置对话',
+    created_at: '2026-10-06T18:00:00.000Z',
+    updated_at: '2026-10-06T20:00:00.000Z',
+  }),
+];
+
+/** Just past boundary: idle updated 24h+1ms before FROZEN_NOW → outside window. */
+const HISTORY_IDLE_PAST_BOUNDARY: SessionFixture[] = [
+  session({
+    id: 's-idle-past-boundary',
+    status: 'idle',
+    title: '刚好过期对话',
+    created_at: '2026-10-06T18:00:00.000Z',
+    updated_at: '2026-10-06T19:59:59.999Z',
+  }),
+];
+
+/** Illegal updated_at: conservative → treat as not reusable → create new. */
+const HISTORY_IDLE_INVALID_TIME: SessionFixture[] = [
+  session({
+    id: 's-idle-invalid-time',
+    status: 'idle',
+    title: '时间戳异常对话',
+    created_at: '2026-10-07T10:00:00.000Z',
+    updated_at: 'not-a-date',
+  }),
+];
+
 function createSessionResponse(id: string): { session: SessionFixture } {
   return {
     session: session({
@@ -268,6 +351,8 @@ describe('CopilotDock 会话入口 (YUK-1340)', () => {
   let createSessionHandler: () => Promise<{ session: SessionFixture }>;
 
   beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(FROZEN_NOW);
     window.sessionStorage.clear();
     apiFetchMock.mockReset();
     apiJsonMock.mockReset();
@@ -295,6 +380,7 @@ describe('CopilotDock 会话入口 (YUK-1340)', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     cleanup();
   });
 
@@ -411,5 +497,98 @@ describe('CopilotDock 会话入口 (YUK-1340)', () => {
     ).toBe('true');
     expect(composerDisabled()).toBe(true);
     expect(screen.getByTestId('copilot-readonly-notice').textContent).toContain('仅供回看');
+  });
+
+  // ── YUK-1340 P1: 自动续接必须遵循 status + 24h 年龄规则 ──────────────────
+
+  it('P1: 超过24h的 idle 不能自动续接，即使它是唯一的 live 候选（应新建）', async () => {
+    createSessionHandler = async () => createSessionResponse('s-created-stale-idle');
+    sessionsQueryState.data = { sessions: HISTORY_STALE_IDLE_PLUS_RECENT_ENDED };
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+
+    // RED（修复前）：bootstrap 只看 status，自动选中 s-idle-stale（>24h），
+    //   把新问题写进过时对话。
+    // GREEN（修复后）：s-idle-stale 超出服务端24h复用窗口 → 走 createConversation。
+    await waitFor(() => expect(createPostCalls()).toHaveLength(1));
+    await waitFor(() => expect(composerDisabled()).toBe(false));
+  });
+
+  it('P1: 超过24h的 active 不能自动续接（应新建）', async () => {
+    createSessionHandler = async () => createSessionResponse('s-created-stale-active');
+    sessionsQueryState.data = { sessions: HISTORY_STALE_ACTIVE_PLUS_RECENT_ENDED };
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+
+    await waitFor(() => expect(createPostCalls()).toHaveLength(1));
+    await waitFor(() => expect(composerDisabled()).toBe(false));
+  });
+
+  it('窗口内 active/idle 仍自动续接，不新建', async () => {
+    sessionsQueryState.data = { sessions: HISTORY_FRESH_IDLE };
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+
+    await waitFor(() => expect(composerDisabled()).toBe(false));
+    expect(createPostCalls()).toHaveLength(0);
+
+    const panel = await openHistoryPanel(userEvent.setup());
+    expect(
+      within(panel)
+        .getByRole('button', { name: /新鲜闲置对话/ })
+        .getAttribute('aria-current'),
+    ).toBe('true');
+  });
+
+  it('恰好24h边界的 idle 仍在复用窗口内（gte 语义，与服务端一致）', async () => {
+    sessionsQueryState.data = { sessions: HISTORY_IDLE_AT_BOUNDARY };
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+
+    await waitFor(() => expect(composerDisabled()).toBe(false));
+    expect(createPostCalls()).toHaveLength(0);
+
+    const panel = await openHistoryPanel(userEvent.setup());
+    expect(
+      within(panel)
+        .getByRole('button', { name: /边界闲置对话/ })
+        .getAttribute('aria-current'),
+    ).toBe('true');
+  });
+
+  it('刚好超过24h边界的 idle 不可自动续接（应新建）', async () => {
+    createSessionHandler = async () => createSessionResponse('s-created-past-boundary');
+    sessionsQueryState.data = { sessions: HISTORY_IDLE_PAST_BOUNDARY };
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+
+    await waitFor(() => expect(createPostCalls()).toHaveLength(1));
+    await waitFor(() => expect(composerDisabled()).toBe(false));
+  });
+
+  it('updated_at 非法时保守处理为不可续接（应新建）', async () => {
+    createSessionHandler = async () => createSessionResponse('s-created-invalid-time');
+    sessionsQueryState.data = { sessions: HISTORY_IDLE_INVALID_TIME };
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+
+    await waitFor(() => expect(createPostCalls()).toHaveLength(1));
+    await waitFor(() => expect(composerDisabled()).toBe(false));
+  });
+
+  it('显式选择超过24h的 idle 会话仍可继续（不改显式选择语义）', async () => {
+    const user = userEvent.setup();
+    createSessionHandler = async () => createSessionResponse('s-created-for-explicit');
+    sessionsQueryState.data = { sessions: HISTORY_STALE_IDLE_PLUS_RECENT_ENDED };
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+
+    // bootstrap 因过期候选走新建
+    await waitFor(() => expect(createPostCalls()).toHaveLength(1));
+
+    // 用户显式打开历史，点选过期 idle 会话
+    const panel = await openHistoryPanel(user);
+    await user.click(within(panel).getByRole('button', { name: /过期闲置对话/ }));
+
+    // 显式选择不受 24h 窗口限制：idle → composer 可用
+    await waitFor(() => expect(composerDisabled()).toBe(false));
+    expect(
+      within(panel)
+        .getByRole('button', { name: /过期闲置对话/ })
+        .getAttribute('aria-current'),
+    ).toBe('true');
   });
 });
