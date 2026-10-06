@@ -724,20 +724,25 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
 
   const createConversation = useCallback(async () => {
     if (creatingSession) return;
+    // YUK-1340 — bootstrap 可能异步开新对话；若发起后学员显式改选了别的会话，
+    // 保留学员的选择，新会话只进列表，不抢占当前视图。
+    const selectionAtRequest = currentSessionIdRef.current;
     setCreatingSession(true);
     setError(null);
     try {
       const response = await apiJson<CopilotCreateSessionResponse>('/api/copilot/sessions', {
         method: 'POST',
       });
-      if (currentSessionIdRef.current) detachSubscriptions(currentSessionIdRef.current);
-      activeSkillRef.current = null;
-      setFocusedKnowledgeId(null);
-      correctionTargetRef.current = null;
-      setCorrectionTarget(null);
-      setMessages([]);
-      setOptimisticSession(response.session);
-      setCurrentSessionId(response.session.id);
+      if (currentSessionIdRef.current === selectionAtRequest) {
+        if (currentSessionIdRef.current) detachSubscriptions(currentSessionIdRef.current);
+        activeSkillRef.current = null;
+        setFocusedKnowledgeId(null);
+        correctionTargetRef.current = null;
+        setCorrectionTarget(null);
+        setMessages([]);
+        setOptimisticSession(response.session);
+        setCurrentSessionId(response.session.id);
+      }
       void sessionsQ.refetch();
     } catch (err) {
       setError(err instanceof Error ? err.message : '新对话创建失败');
@@ -767,24 +772,50 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   useEffect(() => {
     if (!open || !sessionsQ.data) return;
     const sessions = sessionsQ.data.sessions;
-    if (sessions.length === 0) {
-      if (sessionBootstrapRef.current) return;
-      sessionBootstrapRef.current = true;
-      void createConversation();
-      return;
-    }
-    sessionBootstrapRef.current = false;
+    // 刚创建的乐观会话已被选中：等列表追上，不做任何 bootstrap 决定。
     if (optimisticSession?.id === currentSessionId) {
       if (sessions.some((session) => session.id === currentSessionId)) {
         setOptimisticSession(null);
-      } else {
-        return;
       }
+      return;
     }
-    if (!currentSessionId || !sessions.some((session) => session.id === currentSessionId)) {
+    // 学员当前的选择（含显式打开的只读历史会话）永远不被异步 bootstrap 覆盖。
+    if (currentSessionId && sessions.some((session) => session.id === currentSessionId)) {
+      sessionBootstrapRef.current = false;
+      return;
+    }
+    if (creatingSession) return;
+    // 优先落位最近的可继续会话（active/idle，与服务端 reuse 判定一致），
+    // 不再无条件选 sessions[0] 把学员按在最新 ended/abandoned 上（YUK-1340）。
+    const resumable = sessions.find(
+      (session) => session.status === 'active' || session.status === 'idle',
+    );
+    if (resumable) {
+      sessionBootstrapRef.current = false;
+      setCurrentSessionId(resumable.id);
+      return;
+    }
+    if (currentSessionId && sessions.length > 0) {
+      // 原选择已不在列表但历史还在：落在最新一条上只读回看（footer 提供
+      // 开始新对话），不在学员背后静默建线程。
+      sessionBootstrapRef.current = false;
       setCurrentSessionId(sessions[0].id);
+      return;
     }
-  }, [createConversation, currentSessionId, open, optimisticSession, sessionsQ.data]);
+    // 没有任何可继续会话且学员没有选择（空历史或全部 ended/abandoned）：
+    // 打开 Copilot 要能直接继续提问，走与空历史相同的 createConversation。
+    // ref 防止创建失败后的重试风暴；失败时 footer 的「开始新对话」仍可用。
+    if (sessionBootstrapRef.current) return;
+    sessionBootstrapRef.current = true;
+    void createConversation();
+  }, [
+    createConversation,
+    creatingSession,
+    currentSessionId,
+    open,
+    optimisticSession,
+    sessionsQ.data,
+  ]);
 
   // Fold explicit mode transitions oldest→newest, including end barriers. The
   // quiz chip independently keeps the latest in-scope knowledge entity. A full
@@ -1624,6 +1655,32 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           >
             将更正第 {correctionTarget.turnNumber} 轮<span aria-hidden="true">×</span>
           </button>
+        </div>
+      ) : null}
+      {/* YUK-1340 — 会话不可继续（ended/abandoned 或尚无会话）时，禁用控件旁必须有
+          可见的「开始新对话」入口（不再依赖隐藏的「对话记录」菜单）；历史保持只读。 */}
+      {!conversationReady ? (
+        <div
+          className="mb-[8px] flex items-center justify-between gap-[8px]"
+          data-testid="copilot-readonly-notice"
+        >
+          <span className="text-[14px] text-[var(--ink-3)]">
+            {creatingSession
+              ? '正在准备新对话…'
+              : selectedSession
+                ? '这段对话已结束，仅供回看。'
+                : '还没有可继续的对话。'}
+          </span>
+          <Btn
+            variant="primary"
+            size="sm"
+            icon="plus"
+            data-testid="copilot-start-new"
+            disabled={creatingSession}
+            onClick={() => void createConversation()}
+          >
+            {creatingSession ? '创建中…' : '开始新对话'}
+          </Btn>
         </div>
       ) : null}
       <div className="chat-chips">
