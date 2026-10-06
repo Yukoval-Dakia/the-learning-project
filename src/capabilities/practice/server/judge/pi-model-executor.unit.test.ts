@@ -435,6 +435,175 @@ describe('YUK-1323 structured original citations and pending compatibility', () 
       blank: '   ',
     },
   });
+  const simpleSource = '{"background":"ungraded","final_answer":{"text":"v=12"}}';
+  it.each([
+    ['quote nested keys', simpleSource, '{"final_answer":{"text":"v=15","text":"v=12"}}'],
+    [
+      'quote escaped keys',
+      simpleSource,
+      String.raw`{"final_answer":{"text":"v=15","te\u0078t":"v=12"}}`,
+    ],
+    [
+      'quote root keys',
+      simpleSource,
+      '{"final_answer":{"text":"v=15"},"final_answer":{"text":"v=12"}}',
+    ],
+    [
+      'source nested keys',
+      '{"background":"ungraded","final_answer":{"text":"v=15","text":"v=12"}}',
+      '{ "final_answer": {"text":"v=12"} }',
+    ],
+    [
+      'source escaped keys',
+      String.raw`{"background":"ungraded","final_answer":{"text":"v=15","te\u0078t":"v=12"}}`,
+      '{ "final_answer": {"text":"v=12"} }',
+    ],
+    [
+      'source root keys',
+      '{"background":"ungraded","final_answer":{"text":"v=15"},"final_answer":{"text":"v=12"}}',
+      '{ "final_answer": {"text":"v=12"} }',
+    ],
+    [
+      'quote array member keys',
+      '{"background":"ungraded","final_answer":{"steps":[{"text":"v=12"}]}}',
+      '{"final_answer":{"steps":[{"text":"v=15","text":"v=12"}]}}',
+    ],
+    [
+      'source array member keys',
+      '{"background":"ungraded","final_answer":{"steps":[{"text":"v=15","text":"v=12"}]}}',
+      '{ "final_answer": {"steps":[{"text":"v=12"}]} }',
+    ],
+  ])(
+    'rejects duplicate %s before discarded members can justify a score',
+    async (_label, text_md, quote) => {
+      expect(text_md.includes(quote)).toBe(false);
+      const input = fixture();
+      input.slot_responses = [{ kind: 'text', slot_id: 's1', text_md }];
+      expect(
+        await setup({ ...decision(), evidence_citations: [{ slot_id: 's1', quote }] }).port(input),
+      ).toMatchObject({
+        kind: 'pending',
+        pending: { reason: 'unjudgeable' },
+        run_refs: ['run-native'],
+        cost_usd_micros: 4000,
+      });
+    },
+  );
+  it.each([
+    ['quote root', simpleSource, '{"final_answer":{"text":"v=12"},"__proto__":{"text":"v=15"}}'],
+    [
+      'quote escaped key',
+      simpleSource,
+      String.raw`{"final_answer":{"text":"v=12"},"\u005f_proto__":{"text":"v=15"}}`,
+    ],
+    ['quote nested', simpleSource, '{"final_answer":{"text":"v=12","__proto__":{"text":"v=15"}}}'],
+    [
+      'quote array member',
+      '{"background":"ungraded","final_answer":{"steps":[{"text":"v=12"}]}}',
+      '{"final_answer":{"steps":[{"text":"v=12","__proto__":{"text":"v=15"}}]}}',
+    ],
+    ...['__proto__', 'constructor', 'prototype', String.raw`\u005f_proto__`].map((key) => [
+      `source ${key}`,
+      `{"background":{"${key}":{"text":"v=15"}},"final_answer":{"text":"v=12"}}`,
+      '{ "final_answer": {"text":"v=12"} }',
+    ]),
+  ])(
+    'rejects prototype-related %s before member loss can justify a score',
+    async (_label, text_md, quote) => {
+      expect(text_md.includes(quote)).toBe(false);
+      const input = fixture();
+      input.slot_responses = [{ kind: 'text', slot_id: 's1', text_md }];
+      expect(
+        await setup({ ...decision(), evidence_citations: [{ slot_id: 's1', quote }] }).port(input),
+      ).toMatchObject({
+        kind: 'pending',
+        pending: { reason: 'unjudgeable' },
+        run_refs: ['run-native'],
+        cost_usd_micros: 4000,
+      });
+    },
+  );
+  it.each([
+    [
+      'complete array containing an empty object',
+      '{"background":"ungraded","final_answer":{"steps":[{},{"text":"v=12"}]}}',
+      '{ "final_answer": {"steps":[{},{"text":"v=12"}]} }',
+    ],
+    [
+      'unchanged empty object alongside meaningful content',
+      '{"background":"ungraded","final_answer":{"metadata":{},"text":"v=12"}}',
+      '{ "final_answer": {"metadata":{},"text":"v=12"} }',
+    ],
+  ])('accepts a faithful %s', async (_label, text_md, quote) => {
+    expect(text_md.includes(quote)).toBe(false);
+    const input = fixture();
+    input.slot_responses = [{ kind: 'text', slot_id: 's1', text_md }];
+    expect(
+      await setup({ ...decision(), evidence_citations: [{ slot_id: 's1', quote }] }).port(input),
+    ).toMatchObject({ kind: 'scored', points_awarded: 5 });
+  });
+  it.each([
+    [
+      'escaped member spelling',
+      simpleSource,
+      String.raw`{"final_\u0061nswer":{"te\u0078t":"v=12"}}`,
+    ],
+    [
+      'repeated member spelling in separate objects',
+      '{"background":{"text":"v=15"},"final_answer":{"text":"v=12","steps":[{"text":"a"},{"text":"b"}]}}',
+      '{"final_answer":{"text":"v=12","steps":[{"text":"a"},{"text":"b"}]}}',
+    ],
+    [
+      'JSON-looking and prototype-related string values',
+      String.raw`{"background":"ungraded","final_answer":{"text":"\"text\":\"v=15\",\"text\":\"v=12\",{}[]\\\\","notes":"__proto__ constructor prototype"}}`,
+      String.raw`{"final_answer":{"notes":"__proto__ constructor prototype","text":"\"text\":\"v=15\",\"text\":\"v=12\",{}[]\\\\"}}`,
+    ],
+    [
+      'quoted and backslash member names',
+      String.raw`{"background":"ungraded","final_answer":{"a\"b":"v=12","a\\b":"v=15"}}`,
+      String.raw`{ "final_answer": {"a\\b":"v=15","a\"b":"v=12"} }`,
+    ],
+    [
+      'literal backslash-u and decoded Unicode names remain distinct',
+      String.raw`{"background":"ungraded","final_answer":{"ax":"v=12","a\\u0078":"v=15"}}`,
+      String.raw`{ "final_answer": {"a\\u0078":"v=15","ax":"v=12"} }`,
+    ],
+    [
+      'prototype-related prefixes and ordinary own property names',
+      '{"background":"ungraded","final_answer":{"__proto__label":"a","constructor_text":"b","prototype_text":"c","toString":"d","hasOwnProperty":"e"}}',
+      '{ "final_answer": {"hasOwnProperty":"e","toString":"d","prototype_text":"c","constructor_text":"b","__proto__label":"a"} }',
+    ],
+  ])('accepts faithful JSON with %s', async (_label, text_md, quote) => {
+    expect(text_md.includes(quote)).toBe(false);
+    const input = fixture();
+    input.slot_responses = [{ kind: 'text', slot_id: 's1', text_md }];
+    expect(
+      await setup({ ...decision(), evidence_citations: [{ slot_id: 's1', quote }] }).port(input),
+    ).toMatchObject({ kind: 'scored', points_awarded: 5 });
+  });
+  it.each([
+    ['removed empty array member', '{ "final_answer": {"steps":[{"text":"v=12"}]} }'],
+    ['reordered empty array member', '{ "final_answer": {"steps":[{"text":"v=12"},{}]} }'],
+    ['inserted empty array member', '{ "final_answer": {"steps":[{},{},{"text":"v=12"}]} }'],
+    [
+      'changed empty array member',
+      '{ "final_answer": {"steps":[{"text":"v=15"},{"text":"v=12"}]} }',
+    ],
+    ['emptied nonempty sibling', '{ "final_answer": {"metadata":{},"text":"v=12"} }'],
+  ])('rejects %s despite meaningful content elsewhere', async (_label, quote) => {
+    const input = fixture();
+    input.slot_responses = [
+      {
+        kind: 'text',
+        slot_id: 's1',
+        text_md:
+          '{"background":"ungraded","final_answer":{"steps":[{},{"text":"v=12"}],"metadata":{"authority":"ungraded"},"text":"v=12"}}',
+      },
+    ];
+    expect(
+      await setup({ ...decision(), evidence_citations: [{ slot_id: 's1', quote }] }).port(input),
+    ).toMatchObject({ kind: 'pending', pending: { reason: 'unjudgeable' } });
+  });
   it.each([
     ['same paths, formatted projection', '{ "final_answer": { "amount": 12, "text": "v=12" } }'],
     ['ordered array', '{"final_answer":{"ordered":[2,3,5]}}'],
