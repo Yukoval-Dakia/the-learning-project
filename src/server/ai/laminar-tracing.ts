@@ -123,19 +123,25 @@ function metadataAttributes(metadata: TraceMetadata, span: TraceSinkSpan): void 
   }
 }
 
+function sdkCaptureSettingsAreSafe(): boolean {
+  // SDK debug/global context can capture data outside this explicit allowlist.
+  if (process.env.LMNR_DEBUG || process.env.LMNR_TRACE_METADATA || process.env.LMNR_SPAN_CONTEXT) {
+    console.warn('[laminar] disabled: unsupported SDK debug/global-context settings');
+    return false;
+  }
+  return true;
+}
+
 export async function initializeLaminarTracing(
   options: { projectApiKey?: string; loadSdk?: () => Promise<Sdk> } = {},
 ): Promise<void> {
   const key = options.projectApiKey ?? process.env.LMNR_PROJECT_API_KEY;
-  if (!key?.trim() || exporter) return;
-  // SDK debug/global context can capture data outside this explicit allowlist.
-  if (process.env.LMNR_DEBUG || process.env.LMNR_TRACE_METADATA || process.env.LMNR_SPAN_CONTEXT) {
-    console.warn('[laminar] disabled: unsupported SDK debug/global-context settings');
-    return;
-  }
+  if (!key?.trim() || exporter || !sdkCaptureSettingsAreSafe()) return;
   initializing ??= (async () => {
     try {
       const { Laminar } = await (options.loadSdk ?? (() => import('@lmnr-ai/lmnr')))();
+      // SDK import loads dotenv; recheck before creating its tracer/debug runtime.
+      if (!sdkCaptureSettingsAreSafe()) return;
       Laminar.initialize({
         projectApiKey: key,
         instrumentModules: {},

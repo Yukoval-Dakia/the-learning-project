@@ -1,3 +1,9 @@
+import { execFile } from 'node:child_process';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { promisify } from 'node:util';
 import {
   type AssistantMessage,
   type Model,
@@ -84,6 +90,31 @@ afterEach(() => {
 });
 
 describe('optional telemetry isolation', () => {
+  it.each(['LMNR_DEBUG', 'LMNR_TRACE_METADATA', 'LMNR_SPAN_CONTEXT', 'baseline', 'no-key'])(
+    'isolates real SDK initialization from dotenv: %s',
+    async (scenario) => {
+      const cwd = await mkdtemp(join(tmpdir(), 'tlp-laminar-sdk-'));
+      try {
+        const { stdout } = await promisify(execFile)(
+          process.execPath,
+          [
+            '--import',
+            import.meta.resolve('tsx'),
+            fileURLToPath(new URL('./laminar-tracing.sdk.test-support.ts', import.meta.url)),
+            scenario,
+          ],
+          { cwd, env: { NODE_ENV: 'production' }, timeout: 8000 },
+        ).catch((error: unknown) => {
+          if (error instanceof Error && 'stdout' in error) console.log(error.stdout);
+          throw error;
+        });
+        expect(stdout).toContain('"networkAttempts":0');
+        console.log(stdout.trim());
+      } finally {
+        await rm(cwd, { recursive: true, force: true });
+      }
+    },
+  );
   it('does not load the SDK without a key and leaves callbacks untouched', async () => {
     const loadSdk = vi.fn(async () => {
       throw new Error('must not load');
