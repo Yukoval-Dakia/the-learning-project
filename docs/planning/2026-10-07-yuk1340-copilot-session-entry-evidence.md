@@ -60,5 +60,21 @@ RED 全量输出：`/tmp/yuk1340-red.txt`（会话内临时文件；表中为逐
 ## 边界与未做
 
 - 未改 backend / schema / route / provider / 默认值 / admission；未动 `CopilotSessionPanel`（历史面板保持只读展示）。
-- 未跑完整 `pnpm test`（归 exact-head GitHub CI）；未提交/推送/开 PR（parent 负责）。
+- 未跑完整 `pnpm test`（归 exact-head GitHub CI）；实施提交 e11405d46 已交回；PR 与发布由 parent 负责。
 - 不宣称生产已修复：生产缺陷记录在 `2026-10-07-local-release-result.md`，待本分支经 PR + CI Gate 合并部署后才能在生产复验。
+
+
+## 父线程独立验收
+
+在提交 `e11405d466db8d5658389e9acdbbf555deb49767` 的实际构建产物上复验：19 个 Copilot UI 文件、117 项测试，以及 typecheck、lint、build 全部 exit 0。原 RED 日志包含四项失败，修复后四项通过。
+
+T3 `preview_status` 与 `preview_open` 都明确返回没有可用的 automation host，因此使用独立 Playwright 浏览器访问隔离端口 `127.0.0.1:8791`。复用仓库 `tests/usability/api-fixtures.ts` 的合成工作台合同，并局部覆盖 Copilot 会话/turns API；全部 API 请求都被夹具接住，无生产访问或模型调用。
+
+父线程从用户可见的“打开 Copilot”按钮进入，验证了：
+
+- ended 更新但仍有 idle 时默认进入 idle；显式点选 ended 后只读，点击“开始新对话”才发起一次创建。
+- 仅 ended/abandoned 时自动创建一次新会话并可输入。
+- 首次创建返回 503 时显示失败、保留可点击的新建入口；显式重试第二次成功，无自动重试风暴。
+- 创建响应延迟时改选历史，响应回来后仍保持该历史的选择与只读状态。
+
+每个场景只产生预期的 `/api/copilot/sessions` 合成 POST，没有其他 mutation 或未处理请求。证据位于父工作树 `.remember/evidence/2026-10-07-yuk1340-parent-validation/`，包含脚本、状态 JSON、截图和检查日志。此验证仍是补丁 SPA 加合成服务合同；真实生产会话验收须在发布后完成。
