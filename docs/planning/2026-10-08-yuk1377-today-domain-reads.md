@@ -24,6 +24,8 @@ The six current summary DB fixtures exercise only zero due counts. Their public-
 
 Also verify the summary retains its 200-row sample using more than 200 eligible entries, with future-due and excluded entries present. Practice owns selector ordering and eligibility tests; shell should assert only its aggregation, sampling and database forwarding. The practice dependency already tests transaction forwarding at its own public boundary, but that does not prove the summary forwards its database correctly.
 
+The new `api/workbench-summary-due.db.test.ts` fixture is prepared but remains uncommitted until integration. Parent ran both cases against `a2654fdc1` plus that test on 2026-10-07 at 22:00Z. Both failed for the expected reason: due counts were 0 instead of 3 and 200, and both `review_due` values were false. The other fixture, singleton-invisibility and rollback assertions did not fail. This proves the regression is detectable; it does not prove the fix or the fixture's final eligible counts yet. Log: `/tmp/yuk1377-due-red-db.log`. Temporary Postgres exited, the original four services remained healthy, release bytes were unchanged, and the owner-checked lock was released at 22:00:49Z. Cleanup: `/tmp/yuk1377-due-red-cleanup.json`. Repeat after the merged typed-due dependency and summary integration.
+
 ## Evidence to collect
 
 - Existing HTTP and public-domain outputs agree on realistic empty, populated, error and boundary fixtures.
