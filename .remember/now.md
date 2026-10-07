@@ -1,6 +1,6 @@
 # 当前交付 — 1376首批已合并，native读取接续
 
-PR1598已19:02:53Z合入c7c2482ca，tree b55aff84与CI head291f1c5b3一致。CI37669157822成功，独立初审NONE，17min窗满足，T3已unwatch。新分支feat/yuk-1376-native-mistake-evidence从最新main创建。readonly调查completed/noPending，四文件读取适配已给主线协调78cabefd；尚无无重叠回执，不启动writer。父只改交接文档。未部署，无锁/服务。1376仍未完成native完整投影、Start/浏览器/旧SPA退出，主线已收到合并接口通知。
+PR1598已19:02:53Z合入c7c2482ca，tree b55aff84与CI head291f1c5b3一致。CI37669157822成功，独立初审NONE，17min窗满足，T3已unwatch。新分支feat/yuk-1376-native-mistake-evidence从最新main创建。readonly调查completed/noPending，已直接读78cabefd position1586的18:59:01Z四路径无重叠回执。唯一writer task yuk1376-native-frozen-read-implementation-20261008-v1已running，codex/gpt-6.1-sol/xhigh；只写records投影/helper及两份scoped DB测试。父只改交接文档，不并发代码或测试。未部署，无锁/服务。1376仍未完成native完整投影、Start/浏览器/旧SPA退出，主线已收到合并接口通知。
 
 # 当前交付 — 1376实现交回与父DB通过
 

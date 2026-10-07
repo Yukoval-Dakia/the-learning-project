@@ -4,7 +4,7 @@
 
 ## NOW
 
-- **YUK-1376**：PR1598已合入c7c2482ca，独立review NONE、exact CI全绿、tree一致；typed读取及三项历史证据缺口已修。接续native冻结读取，精确四文件边界等待恢复线程无重叠回执，尚无writer。[证据](docs/planning/2026-10-08-yuk1376-mistakes-domain.md)。Start挂载、native完整投影、浏览器及旧入口退出未核销。
+- **YUK-1376**：PR1598已合入c7c2482ca，独立review NONE、exact CI全绿、tree一致；typed读取及三项历史证据缺口已修。接续native冻结读取，已核恢复线程四路径无重叠，唯一writer实施native冻结读取。[证据](docs/planning/2026-10-08-yuk1376-mistakes-domain.md)。Start挂载、native完整投影、浏览器及旧入口退出未核销。
 
 - **YUK-1376（1358 W1 /mistakes）**：YUK1375已随PR1597合入36f719675，exact CI与独立review通过；本线程从最新main承接错题页非UI领域/API消费者迁移，保留视觉与现有行为；不改全局路由/manifest/package/lock或1352组合根，挂载交主线。1359退出清单继续由本线程维护。1352/1355/1356唯一集成与writer归主线57961995，不写其三树。
 

@@ -24,7 +24,7 @@ Native FailureAttempt上游尚不支持题面/答题图片快照适配，本提�
 
 ## Native读取接续
 
-从已合入的 `c7c2482ca` 创建 `feat/yuk-1376-native-mistake-evidence`。只读调查已完成，父抽查实际schema和公开DTO，主线确认读取适配归本线程。拟修改 `src/server/records/mistakes.ts`、新增同目录 `native-mistake-evidence.ts` 及scoped DB测试、`src/capabilities/ingestion/api/mistakes.db.test.ts`。截至本记录，78cabefd恢复线程尚未返回精确路径无重叠确认，因此未启动writer。
+从已合入的 `c7c2482ca` 创建 `feat/yuk-1376-native-mistake-evidence`。只读调查已完成，父抽查实际schema和公开DTO，主线确认读取适配归本线程。拟修改 `src/server/records/mistakes.ts`、新增同目录 `native-mistake-evidence.ts` 及scoped DB测试、`src/capabilities/ingestion/api/mistakes.db.test.ts`。父随后直接读取78cabefd原线程position1586，确认其18:59:01Z已逐条声明四路径无WIP、无计划、可立即开工。已启动唯一writer `yuk1376-native-frozen-read-implementation-20261008-v1`，codex/gpt-6.1-sol/xhigh，父不并发代码或测试。
 
 使用submission/revision/issuance冻结坐标，优先复用公开发题投影的绑定校验与私有材料过滤。按发出part、slot和group evidence目标读取原始作答，不复制整组证据到无关卡片；图像需匹配身份、digest和所属范围。参考答案必须遵守已有揭示策略，不能将scoring basis或私有rubric直接公开。缺席与损坏分别处理，不回退到mutable题面。多part、多submission、各响应类型、重判撤回和正常编辑后的历史稳定性均需真实scoped DB验证。不改kernel契约、评分写入、全局组合根或UI，不增加表或回填历史。
 
