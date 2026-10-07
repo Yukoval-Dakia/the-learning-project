@@ -195,3 +195,16 @@ Normal merge of main `36f719675` into `39bb243c9`; conflicts only in PLAN and ha
 - typecheck: exit 0; `.cache/yuk1346-main1375/typecheck.log`; SHA256 `8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92`.
 - lint: exit 0; `.cache/yuk1346-main1375/lint.log`; SHA256 `5673a4ef4d26f23561f6fba815d7a6c385816b69568e209d7989e1f957456e78`.
 - build: exit 0; `.cache/yuk1346-main1375/build.log`; SHA256 `4a59cc8385237c6bd263d004db395042d756b39aa9533dc6c034388f81c7a120`.
+
+
+## Integration of YUK-1376 typed mistake reads
+
+Normal merge of main `c7c2482ca` into `07eb76cad`; conflicts only PLAN/handoff. All ingestion and records mistake code, public interface and SPA consumers equal main. Generated API/Postman files merged automatically and regeneration produces no diff. Scoped 13 unit and 59 disposable DB tests, typecheck, lint and build passed under Node24. No native frozen-evidence implementation is added here; that remains the other owner's separate lane. No runtime/provider/replay operation. Prior retention acceptance limitations remain.
+
+- unit: exit 0; `.cache/yuk1346-main1376/unit.log`; SHA256 `c83cedd90766a355c99009a05f04eb5431d33e833774bec5ed1d3cabd8b2923a`.
+- db: exit 0; `.cache/yuk1346-main1376/db.log`; SHA256 `d2ab61fd6110aaaca240539d8449375ea611c859782deb810413b9cc592611b4`.
+- typecheck: exit 0; `.cache/yuk1346-main1376/typecheck.log`; SHA256 `8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92`.
+- lint: exit 0; `.cache/yuk1346-main1376/lint.log`; SHA256 `8d35c2a5e46848ca4cfd43f5df44fb6c112927c1cae421dc604d1745a2517026`.
+- build: exit 0; `.cache/yuk1346-main1376/build.log`; SHA256 `9362066e9490a35f54de610bd881ba7cfece988ac816bb1570c3696b7ba6df9b`.
+- api-client: exit 0; `.cache/yuk1346-main1376/api-client.log`; SHA256 `f26bc904f865f0cc5a1a1613ea5d4017d46fdab55aceaf8eb0a831aedd0cea7c`.
+- postman: exit 0; `.cache/yuk1346-main1376/postman.log`; SHA256 `3aaa19807ed6f0270b0c336b21a857618af66e696d351ca7ae870f0bd2f66a25`.

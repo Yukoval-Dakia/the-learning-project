@@ -1,3 +1,7 @@
+## main1376 integration
+
+YUK1376 typed readMistakes已随main c7c2482ca合入；保留其领域/API/SPA消费者，Start挂载仍待1352主线。Native冻结证据缺口归7631独立四文件lane，不在1346补写。
+
 ## YUK1375 main integration
 
 正常合入36f719675，保留1346/1350行为与已通过的1364集成证据。仅audit工具及文档改变，重新执行scoped audit测试/真实CLI/typecheck/lint/build；原592unit/538DB不重标为本轮重跑。1376与1359归7631。

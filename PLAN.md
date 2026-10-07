@@ -4,6 +4,8 @@
 
 ## NOW
 
+- YUK1376 typed readMistakes已随main c7c2482ca合入；保留其领域/API/SPA消费者，Start挂载仍待1352主线。Native冻结证据缺口归7631独立四文件lane，不在1346补写。
+
 - **最新集成**：合入main36f719675的YUK1375相对路径audit修复，allowlist不改；相关audit重新验证。1364已由7631发布为5aa2/build853/image9b76（owner报告）。1376 /mistakes与1359归7631，1352/55/56归主线；不交叉写入。
 
 - **YUK-1346 / YUK-1350 integration**：clean `31098cdbceb320da9b678f07c83ca95dbecf448e` 正常 merge `5aa2a9e989984dfa065b3ba400b67b6b987b12e3`。实际冲突仅 PLAN/now；源码自动合并。可信逐轮 answer_only、raw chat 保留、不派生记忆/模型历史、cold 六 read/no cursor 与 operation-kind fence/deadline/未知结果不重投保持。旧聊天审核 consumer 已退休，P1 superseded，不恢复 gate。[恢复证据](docs/planning/2026-10-07-yuk1346-main-streaming-recovery.md)。本轮25文件592 unit、17文件538 fresh Testcontainers DB及Node24静态/构建通过。
