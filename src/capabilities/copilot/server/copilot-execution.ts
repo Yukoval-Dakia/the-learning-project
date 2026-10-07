@@ -31,7 +31,10 @@ import {
   piDomainMount,
   piRemoteMcpMount,
 } from '@/server/ai/tools/pi-tools';
-import { resolveCopilotSkillDocs } from '@/subjects/copilot-skills';
+import {
+  resolveCopilotLearningContentProtocol,
+  resolveCopilotSkillDocs,
+} from '@/subjects/copilot-skills';
 import { copilotTaskSpec } from '../tasks/agent';
 import { reviewCopilotLearningContent } from './content-validation';
 import type { CopilotRunCancellationControl } from './copilot-run-cancellation';
@@ -394,7 +397,9 @@ export function createCopilotExecutionOwner(
         ...(piSpawnContract ? [piSpawnContract.gate] : []),
       ],
     });
-    const piSkillDocs = answerOnly ? undefined : await adapters.resolveCopilotSkillDocsFn();
+    const piSkillDocs = answerOnly
+      ? [{ name: '_shared--copilot', body: await resolveCopilotLearningContentProtocol() }]
+      : await adapters.resolveCopilotSkillDocsFn();
     const contextDigest = copilotSessionContextDigest(input);
     const resumeSessionId = answerOnly ? undefined : policy.resumeSessionId;
     const mode: 'cold' | 'resume' = resumeSessionId ? 'resume' : 'cold';

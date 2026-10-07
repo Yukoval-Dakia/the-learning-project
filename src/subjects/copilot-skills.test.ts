@@ -20,6 +20,7 @@ import {
   COPILOT_QUIZ_GEN_SKILL_NAME,
   COPILOT_SHARED_SUBJECT_DIR,
   COPILOT_SKILL_NAME,
+  resolveCopilotLearningContentProtocol,
   resolveCopilotSkillDocs,
 } from './copilot-skills';
 
@@ -37,6 +38,45 @@ function fixtureRoot(layout: Record<string, string[]>): string {
 }
 
 const names = (docs: { name: string; body: string }[] | undefined) => docs?.map((d) => d.name);
+
+describe('restricted reply validation protocol', () => {
+  it.each(['\n', '\r\n'])(
+    'reads only the shared validation section with %j newlines',
+    async (newline) => {
+      const root = fixtureRoot({ [COPILOT_SHARED_SUBJECT_DIR]: [COPILOT_SKILL_NAME] });
+      writeFileSync(
+        join(root, COPILOT_SHARED_SUBJECT_DIR, 'skills', COPILOT_SKILL_NAME, 'SKILL.md'),
+        [
+          '---',
+          'name: copilot',
+          '---',
+          '## 提案',
+          'propose_knowledge_mutation / write_agent_note',
+          '## 新学习题的独立校验标记',
+          '协议正文与 subject_id、questions；纯讲解无需标记。',
+          '### 尾标字段',
+          'prompt_md / reference_md / choices_md',
+          '## 后台研究',
+          'Task / copilot-researcher / Exa',
+        ].join(newline),
+      );
+      const protocol = await resolveCopilotLearningContentProtocol(root);
+      expect(protocol).toContain('协议正文与 subject_id、questions；纯讲解无需标记。');
+      expect(protocol).toContain('### 尾标字段');
+      expect(protocol).not.toMatch(
+        /propose_|write_agent_note|Task|copilot-researcher|Exa|name: copilot/,
+      );
+    },
+  );
+
+  it('fails closed when the required section is missing rather than loading the full skill', async () => {
+    const root = fixtureRoot({ [COPILOT_SHARED_SUBJECT_DIR]: [COPILOT_SKILL_NAME] });
+    await expect(resolveCopilotLearningContentProtocol(root)).rejects.toThrow(
+      'protocol is missing',
+    );
+    await expect(resolveCopilotLearningContentProtocol(join(root, 'missing'))).rejects.toThrow();
+  });
+});
 
 describe('resolveCopilotSkillDocs — resolver discovery', () => {
   it("returns ['_shared--copilot','_shared--quiz-gen'] when BOTH shared packs exist (probe order, YUK-611 namespaced)", async () => {

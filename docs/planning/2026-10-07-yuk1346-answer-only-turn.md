@@ -1,6 +1,6 @@
 # YUK-1346 单轮内容用途控制
 
-状态：2026-10-07，由父线程依持续自主交付授权确定的实施方案。源码实施、本地 scoped 验证与父线程独立初审已完成；PR1588 P1/CI fixture 修复后的唯一验证审查、真实隔离验收、新 exact-head CI 和发布待父线程完成。Linear 为 YUK-1346，不标 Done。
+状态：2026-10-07，YUK-1346 / PR1588 仍 In Progress。初审+唯一修复后验证审查预算已用完，不启动第三轮。本轮仅修复 clean f5709896dd 中受限 prompt 丢失最小校验协议的确认源码缺口。首个真实 R 执行成功、公开 learning_content blocked，精确原因未知；保护摘要未变，真实 restricted-ingest 已通过，A 未发送，新 exact-head CI/剩余验收和发布待父线程。
 
 ## 用户行为与边界
 
@@ -137,3 +137,15 @@ memory ingest 在 provider lookup、provider-start、add、reconcile 和 brief f
 修复后 scoped GREEN 为 **7 文件 142 unit passed / 3 文件 29 DB passed**。组件覆盖初始旧服务器、先前缓存支持后 fresh 缺省/非法/失败、加载提示、选择持久性、原 key/body 重试、missing/mismatching/invalid/null/unreadable 202 ACK 无错误 badge，以及 legacy allow ACK。DB 覆盖严格 enum、旧缺省不默认支持、真实 sessions 响应与 no-store、既有持久队列/派生 guard。`pnpm typecheck`、`CODEX_FULL_GATE=1 pnpm lint` 和 `CODEX_FULL_GATE=1 pnpm build` 全部 exit 0；lint 297 warnings / 0 errors，baseline 未放宽。API client 与 Postman 已重新生成。14 项相关审计全通过：schema、partition、api-contracts、api-client（重新生成与 staged 生成物一致）、api-client-usage、capability-boundaries、architecture-deepening、provider-lanes、provider-attempt-truth、learner-copy、profile、task-census、draft-status、draft-status-reads --strict。
 
 日志 `/tmp/yuk1346-p1-{pi-red,ui-red,contract-red,unit-final,db-final,typecheck,lint,build,api-generation,postman}.log`；相关审计日志 `/tmp/yuk1346-p1-audit-*.log`。这些是本地源码/组件/API/DB 证据，不是新的 exact-head CI、独立验证审查、真实浏览器/模型验收或发布证据。父线程独占 push、discussion 回复/resolve、唯一 P1 修复后 verification review、真实隔离验收、Linear capture/status 与发布。没有新增独立 actionable follow-up，两条修复均属既有 YUK-1346/PR1588。未触及 `/tmp/yuk1346-acceptance-driver`。源码 commit 完成后本子线程无继续写入授权。
+
+## f570 真实隔离观察与最小协议修复
+
+以下运行证据由父线程提供，本源码子线程未重跑 driver、访问生产或发起新 paid/model 调用。首个真实受限 R 执行成功，费用 $0.0019227，但公开 reply 的 learning_content 仍为 blocked。原始最终候选不可取得、仅有 hash，精确拦截原因未知；不能据此声称 detector heuristic 是根因，也不能把本次源码修复称为该候选已通过验证。
+
+父线程只读确认 `/tmp/yuk1346-acceptance-driver/run-f570-03/observed-R-after-stop.json`：所有受保护业务表、旧事件、vector、reconcile 与保留队列内容摘要未变。确定性 learner header 是既有状态的系统投影，无 R marker/causation，ingest opt-out。原 f570 driver restricted-ingest 阶段已使用真实 handler 对 R ask+reply 通过，provider_delta=0、queue_delta=0、memory_count=0，保护快照仍未变。A 尚未发送；R 不重发、不增加付费，发布仍待完成。
+
+已确认的独立源码缺口是 `copilot-execution.ts` 在 answer_only 下完全省略 piSkillDocs，连带删除共享 `src/subjects/_shared/skills/copilot/SKILL.md` 的“新学习题的独立校验标记”协议。现有产品允许 Markdown 解答已有题目，服务端仍要求对应 manifest。本轮在 `src/subjects/copilot-skills.ts` 从既有共享 SKILL.md 中只提取该节，并经受限 piSkillDocs 注入实际 system prompt，压缩时随 system 消息保留；不另抄一份协议。缺失文件/协议时失败，不回退至完整 skill 或绕过验证。普通模式解析链、六工具 allowlist、完整 skill/写入/提案/agent note/子研究/Exa 禁用边界不变，detector 与服务端内容验证未修改。
+
+focused seam tests 从实际 answer_only system prompt 注入正文提取 marker 并经真实 schema/parser 核对 subject_id、questions、id/kind/prompt_md/reference_md/choices_md/rubric_json。测试核对用户题干与最终答案规则、唯一尾标、5题/12000字符限制及纯概念讲解例外；无标记 prose 直接收口且不调用验证。已存在题目解答缺标记仍拦截；带标记时真实服务端校验链接收完整题干和答案，离线 validator 不可用时仍拦截。六读名单、读效果限制、提案/agent note 写入拒绝、无 full skill/Exa/子研究/cursor 继续覆盖，普通 mode skill 注入也保持。
+
+本轮最终 gates 使用 PATH 中 Node 24.19.0：5 文件 **120 unit passed**（copilot-skills、skill-namespace、copilot-execution、content-validation、pi-agent-adapter）；`pnpm typecheck`、`CODEX_FULL_GATE=1 pnpm lint`、`CODEX_FULL_GATE=1 pnpm build` 均 exit 0。lint 297 warnings / 0 errors，baseline 未放宽；完整 build 覆盖 web/server/worker/migrate，bundle size 警告保留。四项相关静态审计 partition、capability-boundaries、provider-lanes、provider-attempt-truth 均 exit 0。日志 `/tmp/yuk1346-validation-protocol-{unit,typecheck,lint,build}.log` 和 `/tmp/yuk1346-validation-protocol-audit-*.log`。无 API/schema/migration/依赖变化，不运行完整本机 pnpm test，不运行 DB/容器/真实 provider 验收。父线程负责实际整合、PR/Linear 状态、新 exact-head CI 和剩余验收/发布；review 预算已用完，不开第三轮。无新增独立 actionable follow-up，本次确认缺口归现有 YUK-1346。源码 commit 后本子线程无继续写授权，terminal 通知不构成授权。

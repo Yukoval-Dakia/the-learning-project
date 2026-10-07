@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
-import { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY } from './content-validation';
+import {
+  COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY,
+  CopilotLearningContentSchema,
+  extractCopilotLearningContent,
+} from './content-validation';
 import {
   type CopilotExecutionAdapters,
   DURABLE_COPILOT_EXECUTION_BUDGET,
@@ -101,9 +105,12 @@ async function piAfter(
 }
 
 describe('Copilot execution owner', () => {
-  it('runs restricted turns cold with the six reads only, no Exa/subagents/skill pack, and no reusable cursor', async () => {
+  it('runs restricted turns cold with the validation protocol and six reads only, no full skill pack or reusable cursor', async () => {
     const exa = vi.fn(() => null);
     const skills = vi.fn(async () => undefined);
+    const validator = vi.fn<CopilotExecutionAdapters['runAgentTaskFn']>(async () => {
+      throw new Error('pure prose must not invoke learning-content validation');
+    });
     const stream = vi.fn<CopilotExecutionAdapters['streamTaskCollectingFn']>(
       async (_kind, _input, ctx) => {
         await ctx.sdkSession?.onSessionId?.('pi:restricted_discarded');
@@ -119,13 +126,48 @@ describe('Copilot execution owner', () => {
         expect(
           await mount.options.beforeExecute?.({ name: 'query_knowledge', effect: 'write' }),
         ).toContain('仅用于本次回答');
+        for (const name of ['propose_knowledge_mutation', 'write_agent_note']) {
+          expect(await mount.options.beforeExecute?.({ name, effect: 'write' })).toContain(
+            '仅用于本次回答',
+          );
+        }
         expect(
           await mount.options.beforeExecute?.({ name: 'query_knowledge', effect: 'read' }),
         ).toBeUndefined();
         expect(ctx.sdkSession?.resume).toBeUndefined();
         expect(ctx.piSessionReplay).toBeUndefined();
         expect(ctx.piAgents).toBeUndefined();
-        expect(ctx.piSkillDocs).toBeUndefined();
+        expect(ctx.piSkillDocs).toHaveLength(1);
+        expect(ctx.piSkillDocs?.[0]?.name).toBe('_shared--copilot');
+        const prompt = ctx.piSkillDocs?.[0]?.body ?? '';
+        const manifest = extractCopilotLearningContent(prompt);
+        expect(manifest.status).toBe('valid');
+        if (manifest.status !== 'valid')
+          throw new Error('missing model-visible validation protocol');
+        expect(manifest.content).toEqual({
+          subjectId: '学科 id',
+          questions: [
+            {
+              id: '本回复内唯一 id',
+              kind: '题型',
+              prompt_md: '与正文逐字一致的完整题干',
+              reference_md: '标准答案',
+              choices_md: null,
+              rubric_json: {},
+            },
+          ],
+        });
+        expect(prompt).toContain('给出用户现有题目的解答/标准答案');
+        expect(prompt).toContain('把用户题干完整写入 `prompt_md`');
+        expect(prompt).toContain('把本次最终答案写入 `reference_md`');
+        expect(prompt).toContain('纯概念讲解或不涉及具体题目与答案的内容不要输出该标记');
+        expect(prompt).toContain('且只输出一个机器标记');
+        expect(prompt).toContain('最多 5 题');
+        expect(prompt).toContain('不超过 12000 字符');
+        expect(prompt).toContain('不要在标记后输出任何文字');
+        expect(prompt).not.toMatch(
+          /propose_knowledge|write_agent_note|copilot-researcher|quiz-gen|Task|Exa/,
+        );
         expect(ctx.compiledModelPrompt?.mode).toBe('cold');
         expect(ctx.allowedTools).toEqual(
           [
@@ -146,6 +188,7 @@ describe('Copilot execution owner', () => {
       },
     );
     const owner = createCopilotExecutionOwner({
+      runAgentTaskFn: validator,
       streamTaskCollectingFn: stream,
       buildExaMcpServerFn: exa,
       resolveCopilotSkillDocsFn: skills,
@@ -166,9 +209,86 @@ describe('Copilot execution owner', () => {
     );
     expect(exa).not.toHaveBeenCalled();
     expect(skills).not.toHaveBeenCalled();
+    expect(validator).not.toHaveBeenCalled();
     expect(result.sdkSessionId).toBeUndefined();
     expect(result.finalization.accepted).toBe(true);
+    expect(result.finalization.replyText).toBe('本轮给出假设分析，证据尚不足。');
   });
+
+  it.each(['unmarked', 'marked'] as const)(
+    'keeps server validation enforced for an answer_only existing-question solution: %s',
+    async (mode) => {
+      const question = '一个矩形长为 17 cm，宽为 19 cm。求它的面积，并说明单位？';
+      const answer = '答案：面积为 323 cm²，面积单位是平方厘米。';
+      const validator = vi.fn<CopilotExecutionAdapters['runAgentTaskFn']>(async () => {
+        throw new Error('isolated validator unavailable');
+      });
+      const stream = vi.fn<CopilotExecutionAdapters['streamTaskCollectingFn']>(
+        async (_kind, _input, ctx) => {
+          const sample = ctx.piSkillDocs?.[0]?.body.match(
+            /<!--copilot_learning_content:(\{[^\n]+\})-->/,
+          )?.[1];
+          if (!sample) throw new Error('missing answer_only manifest instructions');
+          const manifest = CopilotLearningContentSchema.parse(JSON.parse(sample));
+          manifest.subject_id = 'math';
+          manifest.questions = [
+            {
+              id: 'existing-rectangle',
+              kind: 'computation',
+              prompt_md: question,
+              reference_md: answer,
+              choices_md: null,
+              rubric_json: { units: 'cm²', checks: ['乘积正确', '面积单位正确'] },
+            },
+          ];
+          const candidate =
+            mode === 'marked'
+              ? `${answer}\n<!--copilot_learning_content:${JSON.stringify(manifest)}-->`
+              : answer;
+          return {
+            task_run_id: 'restricted_solution',
+            text: candidate,
+            terminalText: candidate,
+            partial: false,
+          };
+        },
+      );
+      const execute = ownerWith(validator, stream);
+      const result = await execute(
+        {} as never,
+        {
+          input: { ...input, user_message: question, derivation_policy: 'answer_only' },
+          sessionId: 'restricted_solution',
+          taskRunId: 'restricted_solution',
+        },
+        { cancellation: fakeCancellation(), deadlineAt: Date.now() + 60_000 },
+      );
+      expect(result.finalization.receipt.learning_content).toBe('blocked');
+      expect(result.finalization.replyText).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+      expect(stream).toHaveBeenCalledTimes(1);
+      if (mode === 'unmarked') expect(validator).not.toHaveBeenCalled();
+      else
+        expect(validator.mock.calls).toEqual(
+          expect.arrayContaining([
+            [
+              'QuizVerifyTask',
+              expect.objectContaining({
+                question: expect.objectContaining({
+                  id: 'existing-rectangle',
+                  kind: 'computation',
+                  prompt_md: question,
+                  reference_md: answer,
+                  choices_md: null,
+                }),
+                validation_mode: 'release_strict',
+                validation_purpose: 'learning_content',
+              }),
+              expect.anything(),
+            ],
+          ]),
+        );
+    },
+  );
 
   it('preserves the paid reply but discards the SDK cursor when native projection persistence fails', async () => {
     const stream = vi.fn<CopilotExecutionAdapters['streamTaskCollectingFn']>(
@@ -455,9 +575,7 @@ describe('Copilot execution owner', () => {
       'domain',
       'remote-mcp',
     ]);
-    expect(runnerContext?.piSkillDocs).toEqual(
-      expect.arrayContaining([expect.objectContaining({ name: '_shared--copilot' })]),
-    );
+    expect(runnerContext?.piSkillDocs).toEqual([{ name: '_shared--copilot', body: 'skill body' }]);
   });
 
   it('rejects unmarked learning content through the persistent root', async () => {

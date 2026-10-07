@@ -35,6 +35,21 @@ export const COPILOT_QUIZ_GEN_SKILL_NAME = 'quiz-gen';
 // then the quiz-gen pack (task-specific methodology).
 const COPILOT_SHARED_SKILL_NAMES = [COPILOT_SKILL_NAME, COPILOT_QUIZ_GEN_SKILL_NAME] as const;
 
+/** Required reply-validation protocol, without the proposal/write/research methodology. */
+export async function resolveCopilotLearningContentProtocol(
+  skillsRoot: string = join(process.cwd(), 'src', 'subjects'),
+): Promise<string> {
+  const body = await readFile(
+    join(skillsRoot, COPILOT_SHARED_SUBJECT_DIR, 'skills', COPILOT_SKILL_NAME, 'SKILL.md'),
+    'utf8',
+  );
+  const section = body.split(/^## /m).find((part) => /^新学习题的独立校验标记\r?\n/.test(part));
+  if (!section?.slice(section.indexOf('\n') + 1).trim()) {
+    throw new Error('Copilot learning-content protocol is missing');
+  }
+  return `## ${section.trim()}`;
+}
+
 /**
  * Resolve the Copilot shared Agent Skill docs (cross-subject). Probes BOTH
  * `_shared/skills/copilot/SKILL.md` and `_shared/skills/quiz-gen/SKILL.md` and

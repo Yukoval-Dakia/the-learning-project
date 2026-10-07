@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-07：YUK-1346/PR1588 P1 与 exact-c9 CI fixture 已修复，本轮 142 unit / 29 DB、typecheck/lint/build、14相关审计通过。父线程唯一修复验证审查、真实隔离验收、新 exact-head CI 与发布待完成。生产沿用既有 f3 记录，本子线程未访问或改动生产。
+> Linear 是权威 tracker。2026-10-07：YUK-1346/PR1588 首个真实受限 R 执行成功，费用 $0.0019227，公开回复被 learning_content 拦截且原因未知。保护摘要未变，R 真实 restricted-ingest handler 已通过，A 未发送，发布待完成。本轮从 clean f5709896dd 仅修复受限 prompt 缺少共享验证协议的已确认源码缺口，120 scoped unit/typecheck/lint/build 与4项相关静态审计通过。
 
 ## NOW
 
-- **YUK-1346 In Progress**：隔离树 `tlp-yuk-1346-turn-retention`，分支 `feat/yuk-1346-turn-retention`；从 clean `c9ab7e299` 修复 PR1588 discussion `4202949273`。既有 sessions GET 显式报告用途支持；每次受限发送/原 key 重试必须 fresh 检查，缺省/失败不 POST 且保留输入，受限 202 必须匹配 ACK，未知用途保留原 tuple 且无错误 badge。离线 Pi fixture 修复不削弱真实 DB guard。本轮 142 unit / 29 DB、typecheck/lint/build 与 API/Postman 生成通过。原功能 255 unit / 235 DB 证据和本轮详情见[方案与本地交接](docs/planning/2026-10-07-yuk1346-answer-only-turn.md)。实际验收和发布待父线程，不标 Done。
+- **YUK-1346 In Progress**：隔离树 `tlp-yuk-1346-turn-retention`，分支 `feat/yuk-1346-turn-retention` / PR1588。本轮只将共享 Copilot SKILL.md 的验证-manifest 协议注入 answer_only prompt；完整 skill/写入/提案/子研究/Exa 仍禁用，普通模式和六读工具不变，不改 detector。真实 R 原候选仅存 hash、不可取得，不能认定拦截根因。父线程确认保护业务表/旧事件/vector/reconcile/保留队列内容摘要未变，R ask/reply 的真实 restricted-ingest provider_delta=0、queue_delta=0、memory_count=0。A 尚未发送；源码检查和实际验收分开记，详情见[方案与本地交接](docs/planning/2026-10-07-yuk1346-answer-only-turn.md)。不标 Done。
 - **YUK-1103 自主交付**：本机 http://localhost:8787；远程 https://loom-mac-mini.tail2ee344.ts.net/（同一 tailnet，沿用 Loom 令牌）。app/worker `f3bfff2cf` healthy，115项迁移、readiness active。已备份及恢复验证；不要重复发布旧 `5d738dbc0`。
 - **YUK-1341 产品 AI**：PR #1585 已通过 exact-head CI、独立初审和等待窗并合并。app/worker 都固定 `opencode-go/mimo-v2.6-pro`；54聊天任务和 Mem0 接线已落地。生产两轮 Copilot 成功，原会话及 Pi cursor 连续、刷新回放一致；后台 MemoryBrief 也已实际成功。未宣称所有任务质量或评分切片均获准入。
 - **YUK-1340 会话入口已交付**：PR #1583 满足 exact-head CI、审查和等待窗后合并。准确 ARM64 镜像完成副本迁移、旧镜像读取兼容、停写备份恢复及生产页面验收。默认续接、历史只读、新建、重开、刷新保持会话均通过；没有发送 AI 消息。YUK-1343 两条 P2 仍延期。
@@ -13,7 +13,7 @@
 
 ## NEXT
 
-- 父线程接收 YUK-1346 P1 修复 commit，push 并回复/resolve 既有 discussion，只执行唯一修复后验证审查，完成真实隔离浏览器/API/worker/模型输入验收、新 exact-head CI/等待窗及发布。跨版本发布须停全部写入者，新 worker 先于 app 恢复写入，受限数据写入后禁止旧 f3 回退。再沿“椭圆难题 → 记录过程与帮助程度 → 区分暂时理解和独立迁移 → 后续验证安排”的真实学习路径推进。
+- 父线程检查并整合 YUK-1346 最小验证协议修复 commit，负责 push/PR/Linear、新 exact-head CI 和剩余实际隔离验收；初审+唯一验证审查预算已用完，不启动第三轮。R 不重付/不重发，A 仍未发送，由父线程决定预算内后续验收。发布仍待完成；跨版本须停全部写入者，新 worker 先于 app 恢复写入，受限数据写入后禁止旧 f3 回退。
 - YUK-1042：42 failed +42 DLQ 原义务保留；先查每项副作用和幂等身份再恢复，不清队列或重付未知结果。
 - YUK-1338 目标架构集成保持 Backlog，单独证明状态版本、过期结果拒绝与重启恢复；ADR-0066 的 TanStack Start/Pi/PostgreSQL/DBOS 方向尚非当前运行形态。
 
