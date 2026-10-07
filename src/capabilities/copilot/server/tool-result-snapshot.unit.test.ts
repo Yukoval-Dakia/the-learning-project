@@ -3,10 +3,7 @@ import { z } from 'zod';
 import type { DomainTool } from '@/kernel/tools/types';
 import * as registry from '@/server/ai/tools/registry';
 import { CopilotToolResultSnapshotSchema } from '../primary-view-contract';
-import {
-  buildCopilotToolResultSnapshot,
-  requiresToolResultLearningValidation,
-} from './tool-result-snapshot';
+import { buildCopilotToolResultSnapshot } from './tool-result-snapshot';
 
 // Seam tests; the DB companion validates the real registered output contracts.
 function schema(outputSchema: z.ZodType) {
@@ -105,10 +102,6 @@ describe('bounded public result projection', () => {
         cost_usd: 0,
       }),
     ).toMatchObject({ state: 'unavailable', reason: 'size_limit' });
-    expect(requiresToolResultLearningValidation('mcp__loom__generate_question_candidate')).toBe(
-      true,
-    );
-    expect(requiresToolResultLearningValidation('query_knowledge')).toBe(false);
   });
 
   it('fails closed on invalid, unknown, unregistered and internal observations', () => {

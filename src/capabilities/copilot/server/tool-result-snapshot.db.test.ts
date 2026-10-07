@@ -1,15 +1,10 @@
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { capabilities } from '@/capabilities';
 import { knowledge } from '@/db/schema';
 import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
 import { getTool } from '@/server/ai/tools/registry';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { reviewCopilotLearningContent } from './content-validation';
-import {
-  createCopilotReplyFinalizer,
-  primaryViewLearningContent,
-  primaryViewLearningQuestions,
-} from './reply-finalization';
+import { createCopilotReplyFinalizer } from './reply-finalization';
 import { REALISTIC_EVIDENCE_TRACE } from './reply-finalization.actual-fixture';
 import { buildCopilotToolResultSnapshot } from './tool-result-snapshot';
 
@@ -89,10 +84,9 @@ describe('result snapshots use real registered domain output contracts', () => {
     expect(JSON.stringify(snapshot)).not.toContain('internal_prompt');
   });
 
-  it.each(['pass', 'fail', 'input-mismatch'] as const)(
-    'publishes a generated candidate only after real validation contracts %s',
-    async (outcome) => {
-      const verdict = outcome === 'fail' ? 'fail' : 'pass';
+  it.each(['success'] as const)(
+    'binds a generated candidate to its actual tool output without a second review %s',
+    async () => {
       await testDb().insert(knowledge).values({
         id: 'k_snapshot_math',
         name: '整数乘法',
@@ -124,68 +118,13 @@ describe('result snapshots use real registered domain output contracts', () => {
         cost_ref: 'private-price',
         finish_reason: 'end_turn',
       };
-      const calls: string[] = [];
-      const runner = async (kind: string) => {
-        calls.push(kind);
-        const results: Record<string, unknown> = {
-          QuizVerifyTask: {
-            grounding: { verdict: 'pass', reason: 'self-contained', basis: 'closed_world_givens' },
-            copy_safety: { verdict: 'unknown' },
-            knowledge_hit: { verdict: 'pass', reason: 'on topic' },
-            overall: 'needs_review',
-            summary_md: '结构正确',
-            confidence: 0.9,
-          },
-          SolutionGenerateTask: {
-            reference_solution: {
-              final_answer: '323',
-              expected_signals: ['323'],
-              answer_equivalents: [],
-            },
-            worked_solution_md: '17×20−17=323。',
-            confidence: 0.99,
-          },
-          SemanticJudgeTask: {
-            score: 1,
-            coarse_outcome: 'correct',
-            confidence: 0.99,
-            feedback_md: '答案一致',
-            evidence_json: { matched_points: [], missing_points: [] },
-          },
-          TeachingQualityTask: {
-            clarity: { verdict, reason: '检查完整题面' },
-            unique_answer: { verdict, reason: '独立检验答案' },
-            summary: verdict,
-          },
-        };
-        if (!results[kind]) throw new Error(`unexpected validator ${kind}`);
-        return { task_run_id: `validation-${kind}`, text: JSON.stringify(results[kind]) };
-      };
-      const validate = vi.fn(
-        async (
-          reply: string,
-          _context: string,
-          _task: string,
-          view?: Parameters<typeof primaryViewLearningContent>[0],
-          observedQuestion?: { input: unknown; output: unknown },
-        ) =>
-          reviewCopilotLearningContent(reply, _context, _task, {
-            db: testDb(),
-            runTaskFn: runner,
-            additionalVisibleText: primaryViewLearningContent(view),
-            additionalQuestionContent: primaryViewLearningQuestions(view),
-            observedQuestion,
-          }),
-      );
       const finalizer = createCopilotReplyFinalizer({
         rootTaskRunId: 'root-42',
-        userContextText: '帮我练习定义域',
         correctionContract: {
           available_prior_turn_ids: [],
           prior_turn_summaries: {},
           required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
         },
-        validateLearningContent: validate,
         resolveArtifactReference: async () => null,
       });
       const pre = finalizer.piHooks.beforeToolCall[0];
@@ -206,12 +145,7 @@ describe('result snapshots use real registered domain output contracts', () => {
         );
         finalizer.observeDomainTool({
           ...observation,
-          input:
-            observation.name === name
-              ? outcome === 'input-mismatch'
-                ? { ...intent, knowledge_ids: ['forged'] }
-                : intent
-              : {},
+          input: observation.name === name ? intent : {},
           executed: true,
           error_reason: null,
         });
@@ -219,23 +153,12 @@ describe('result snapshots use real registered domain output contracts', () => {
       output.text = 'mutated after observation';
       intent.knowledge_ids[0] = 'mutated after observation';
       const result = await finalizer.finalizeTerminal('已准备练习。');
-      if (outcome === 'input-mismatch') {
-        expect(result.accepted).toBe(false);
-        expect(result.preparedReply.primaryView).toBeUndefined();
-        expect(calls).toEqual([]);
-        return;
-      }
-      const published = validate.mock.calls[0][3];
-      expect(primaryViewLearningQuestions(published)?.questions[0].prompt_md).toBe('计算 17×19');
-      expect(calls).toEqual(
-        expect.arrayContaining(['QuizVerifyTask', 'SolutionGenerateTask', 'TeachingQualityTask']),
-      );
-      expect(calls.filter((kind) => kind === 'QuizVerifyTask')).toHaveLength(1);
+      const published = result.preparedReply.primaryView;
+      expect(result.accepted).toBe(true);
+      expect(JSON.stringify(published)).toContain('计算 17×19');
+      expect(JSON.stringify(published)).not.toContain('mutated after observation');
       expect(JSON.stringify(published)).not.toContain('private-price');
-      if (verdict === 'pass') expect(result.preparedReply.primaryView).toEqual(published);
-      else expect(result.preparedReply.primaryView).toBeUndefined();
-      expect(result.receipt.learning_content).toBe(verdict === 'pass' ? 'passed' : 'blocked');
-      if (verdict === 'pass') expect(result.replyText).toContain('未对外部题库进行原创性比对');
+      expect(result.replyText).toBe('已准备练习。');
     },
   );
 });

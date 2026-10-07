@@ -11,7 +11,6 @@ describe('Copilot mode completion', () => {
     expect(
       resolveCopilotModeCompletion(quizContext, {
         kind: 'success',
-        learningContent: 'passed',
       }),
     ).toEqual({
       skill_turn: { kind: 'end' },
@@ -30,28 +29,18 @@ describe('Copilot mode completion', () => {
     expect(
       resolveCopilotModeCompletion(
         { skill: 'teaching', ref: { kind: 'learning_item', id: 'li_1' } },
-        { kind: 'success', learningContent: 'not_applicable' },
+        { kind: 'success' },
       ),
     ).toBeUndefined();
     expect(
       resolveCopilotModeCompletion(
         { skill: 'solve', ref: { kind: 'question', id: 'question_legacy' } },
-        { kind: 'success', learningContent: 'not_applicable' },
+        { kind: 'success' },
       ),
     ).toBeUndefined();
     expect(
       resolveCopilotModeCompletion(undefined, {
         kind: 'success',
-        learningContent: 'not_applicable',
-      }),
-    ).toBeUndefined();
-  });
-
-  it('does not end when learning-content validation had to block the quiz result', () => {
-    expect(
-      resolveCopilotModeCompletion(quizContext, {
-        kind: 'success',
-        learningContent: 'blocked',
       }),
     ).toBeUndefined();
   });
