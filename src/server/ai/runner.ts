@@ -612,6 +612,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   notifySessionId?: boolean;
   shouldRecordToolCall: (block: SDKToolUseBlock) => boolean;
   onAssistant?: (msg: SDKAssistantMessage) => Promise<void> | void;
+  onTextDelta?: (text: string) => Promise<void> | void;
   onToolUse?: (block: SDKToolUseBlock) => void;
   onSuccess?: (msg: SDKSuccessResultMessage) => Promise<void> | void;
   onApiError?: (msg: SDKSuccessResultMessage) => void;
@@ -624,6 +625,10 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   let stepStartTime = Date.now();
 
   for await (const msg of args.query) {
+    if (msg.type === 'text_delta') {
+      if (!args.lifecycle.abortController.signal.aborted) await args.onTextDelta?.(msg.text);
+      continue;
+    }
     if (args.notifySessionId && msg.type === 'system' && msg.subtype === 'init') {
       await notifySdkSessionId(args.ctx, msg);
     }
@@ -1020,7 +1025,17 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
                   ctx,
                   lifecycle,
                   shouldRecordToolCall: () => ctx.autoLogToolCalls !== false,
+                  onTextDelta: (text) => {
+                    controller.enqueue(encoder.encode(text));
+                    resultText += text;
+                  },
                   onAssistant: (msg) => {
+                    if (
+                      lifecycle.abortController.signal.aborted ||
+                      msg.text_streamed ||
+                      msg.parent_tool_use_id != null
+                    )
+                      return;
                     const text = extractAssistantText(msg);
                     if (text) {
                       controller.enqueue(encoder.encode(text));
@@ -1122,9 +1137,9 @@ function extractAssistantText(msg: SDKAssistantMessage): string {
 
 // ============================================================================
 // streamTaskCollecting — YUK-266 (C1). A collecting variant of streamTask:
-// streams text deltas to an `onDelta(chunk)` callback (one call per
-// assistant-message text chunk — the same honest per-model-turn granularity
-// streamTask uses, since buildQueryOptions does NOT set includePartialMessages),
+// streams root Pi text_delta frames to `onDelta(chunk)` as the provider emits them.
+// Complete assistant frames retain usage/tool collection without re-emitting text.
+// Adapters/fixtures without partial frames fall back to completed-message text.
 // then RESOLVES the full RunTaskResult (text + task_run_id + usage + cost). Unlike
 // streamTask (which returns a text-only Response and discards the final metadata),
 // the Copilot S3a turn-persistence contract needs the full reply text AND the real
@@ -1220,7 +1235,17 @@ async function streamTaskCollectingImpl(
           lifecycle,
           notifySessionId: true,
           shouldRecordToolCall: () => ctx.autoLogToolCalls !== false,
+          onTextDelta: (text) => {
+            onDelta(text);
+            resultText += text;
+          },
           onAssistant: (msg) => {
+            if (
+              lifecycle.abortController.signal.aborted ||
+              msg.text_streamed ||
+              msg.parent_tool_use_id != null
+            )
+              return;
             const text = extractAssistantText(msg);
             if (text) {
               onDelta(text);

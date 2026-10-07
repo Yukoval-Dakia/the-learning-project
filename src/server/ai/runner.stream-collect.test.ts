@@ -647,7 +647,10 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
 
   it('propagates a mid-flight owner Stop, preserves the collected delta, and records failure', async () => {
     const partial = '已核对 48 条历史回答、3 份讲义和 4/6 个薄弱点探针；9 个迁移变式尚未开始。';
-    mockPi.messages = [assistant(partial), resultMsg];
+    mockPi.messages = [
+      { type: 'text_delta', text: partial, source: 'pi', session_id: 'partial-before-message-end' },
+      resultMsg,
+    ];
     mockPi.waitForAbortAfter = 1;
     const owner = new AbortController();
     const deltas: string[] = [];

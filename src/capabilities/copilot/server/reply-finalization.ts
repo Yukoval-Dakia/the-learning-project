@@ -2,7 +2,6 @@ import { createHash } from 'node:crypto';
 import type { AfterToolCallResult } from '@earendil-works/pi-agent-core';
 import { z } from 'zod';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
-import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/kernel/tools/allowlists';
 import type { PiAfterToolCall, PiBeforeToolCall, PiHookBridge } from '@/server/ai/pi-hooks';
 
 export { CopilotPrimaryViewSchema } from '../primary-view-contract';
@@ -12,17 +11,10 @@ import type {
   ToolExecutionGateInput,
   ToolExecutionResultObservation,
 } from '@/kernel/tools/types';
-import {
-  type CopilotLearningContent,
-  CopilotLearningContentSchema,
-  copilotLearningContentRequiresValidation,
-} from './content-validation';
 import type { CopilotCorrectionContract } from './correction-contract';
 import { resolveCorrectionReply } from './correction-contract';
-import {
-  buildCopilotToolResultSnapshot,
-  requiresToolResultLearningValidation,
-} from './tool-result-snapshot';
+import { stripCopilotInternalComments } from './prose-stream';
+import { buildCopilotToolResultSnapshot } from './tool-result-snapshot';
 import {
   type PresentPrimaryViewInput,
   PresentPrimaryViewOutputSchema,
@@ -30,11 +22,6 @@ import {
 import type { CopilotPrimaryView } from './turns';
 
 export const COPILOT_REPLY_TRACE_MAX_CALLS = 60;
-
-/** Per-call bound on the JSONified remote-MCP evidence payload (input + output/failure). */
-export const REMOTE_MCP_EVIDENCE_MAX_CALL_CHARS = 64_000;
-/** Turn-wide bound on the summed JSONified remote-MCP evidence payloads. */
-export const REMOTE_MCP_EVIDENCE_MAX_TOTAL_CHARS = 256_000;
 
 const MAX_REPLY_CHARS = 64_000;
 const FINALIZATION_FAILURE_REPLY = '这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。';
@@ -121,7 +108,7 @@ export function extractPrimaryView(
 
 export const CopilotReplyFinalizationReceiptSchema = z
   .object({
-    protocol_version: z.literal(1),
+    protocol_version: z.literal(2),
     assurance: z.literal('execution_trace_bound'),
     root_task_run_id: z.string().min(1),
     candidate_sha256: z.string().length(64),
@@ -131,7 +118,6 @@ export const CopilotReplyFinalizationReceiptSchema = z
     observed_completed_tool_use_ids: z.array(z.string().min(1)).max(COPILOT_REPLY_TRACE_MAX_CALLS),
     correction: z.enum(['normal', 'clarify', 'corrected']),
     proposal_disclosure: z.enum(['none', 'server_composed']),
-    learning_content: z.enum(['not_applicable', 'passed', 'blocked']),
     primary_view: z.enum(['absent', 'retained', 'dropped']),
   })
   .strict();
@@ -142,19 +128,6 @@ export interface PreparedCopilotReply {
   text: string;
   primaryView?: CopilotPrimaryView;
 }
-
-/** One actually executed remote-MCP tool call of this turn, captured at its hook. */
-export interface RemoteMcpEvidenceCall {
-  tool_name: string;
-  tool_use_id: string;
-  root_call: boolean;
-  input: unknown;
-  output?: unknown;
-  failure?: { error: string; is_interrupt?: boolean };
-}
-
-/** Request-turn scoped: derived only from this turn's trace, no transcript or reasoning fields. */
-export type RemoteMcpEvidencePacket = RemoteMcpEvidenceCall[];
 
 interface TraceEntry {
   ordinal: number;
@@ -167,48 +140,7 @@ interface TraceEntry {
   root_call: boolean;
   proposal_effect_contract?: ProposalEffectContract;
   domain_output?: unknown;
-  /** In-memory provenance only; raw source material never enters the receipt. */
-  domain_input?: unknown;
   domain_executed?: boolean;
-  /** In-memory remote-MCP evidence for the final review; raw payloads never enter the digest or receipt. */
-  remote_input?: unknown;
-  remote_output?: unknown;
-  remote_failure?: { error: string; is_interrupt?: boolean };
-  remote_evidence_overflow?: boolean;
-  remote_capture_failed?: boolean;
-}
-
-/** Only newly generated content adds a learning-validation surface. Read-model
- * facts keep their existing owner validation, with no extra model evaluation. */
-export function primaryViewLearningContent(view?: CopilotPrimaryView): string | undefined {
-  if (view?.source === 'ephemeral_html') return view.ref;
-  if (
-    view?.source === 'tool_result' &&
-    view.snapshot?.state === 'available' &&
-    requiresToolResultLearningValidation(view.ref.kind) &&
-    isRecord(view.snapshot.value) &&
-    typeof view.snapshot.value.text === 'string'
-  )
-    return view.snapshot.value.text;
-  return undefined;
-}
-
-export function primaryViewLearningQuestions(
-  view?: CopilotPrimaryView,
-): CopilotLearningContent | undefined {
-  if (
-    view?.source !== 'tool_result' ||
-    view.ref.kind !== 'generate_question_candidate' ||
-    view.snapshot?.state !== 'available'
-  )
-    return undefined;
-  if (!isRecord(view.snapshot.value) || !isRecord(view.snapshot.value.question))
-    throw new Error('invalid generated question snapshot');
-  const content = CopilotLearningContentSchema.parse({
-    subject_id: view.snapshot.value.subject_id,
-    questions: [{ ...view.snapshot.value.question, id: `preview:${view.ref.id}`.slice(0, 120) }],
-  });
-  return { subjectId: content.subject_id, questions: content.questions };
 }
 
 export interface CopilotReplyFinalizationResult {
@@ -221,17 +153,8 @@ export interface CopilotReplyFinalizationResult {
 export interface CreateCopilotReplyFinalizerOptions {
   rootTaskRunId: string;
   correctionContract: CopilotCorrectionContract;
-  userContextText: string;
   /** Deterministic service reply that supersedes model prose for this turn. */
   authoritativeReply?: { reply: string; correction: 'clarify' };
-  validateLearningContent: (
-    text: string,
-    contextText: string,
-    taskRunId: string,
-    primaryView?: CopilotPrimaryView,
-    observedQuestion?: { input: unknown; output: unknown },
-    remoteEvidence?: RemoteMcpEvidencePacket,
-  ) => Promise<{ replyText: string; passed: boolean }>;
   /** Owned live-row validation plus canonical product reference. Null rejects the nomination. */
   resolveArtifactReference: (ref: {
     kind: string;
@@ -337,42 +260,7 @@ function sha256Text(value: string): string {
 }
 
 function digestTrace(trace: readonly TraceEntry[]): string {
-  return sha256CanonicalJson(
-    trace.map(
-      ({
-        domain_output: _output,
-        domain_input: _input,
-        remote_input: _remoteInput,
-        remote_output: _remoteOutput,
-        remote_failure: _remoteFailure,
-        ...entry
-      }) => entry,
-    ),
-  );
-}
-
-/** Turn's executed remote-MCP calls as a review packet; undefined when none were captured. */
-function buildRemoteMcpEvidencePacket(
-  trace: readonly TraceEntry[],
-): RemoteMcpEvidencePacket | undefined {
-  const calls: RemoteMcpEvidenceCall[] = [];
-  for (const entry of trace) {
-    if (
-      entry.remote_input === undefined &&
-      entry.remote_output === undefined &&
-      entry.remote_failure === undefined
-    )
-      continue;
-    calls.push({
-      tool_name: entry.tool_name,
-      tool_use_id: entry.tool_use_id,
-      root_call: entry.root_call,
-      input: entry.remote_input,
-      ...(entry.remote_output !== undefined ? { output: entry.remote_output } : {}),
-      ...(entry.remote_failure !== undefined ? { failure: entry.remote_failure } : {}),
-    });
-  }
-  return calls.length > 0 ? calls : undefined;
+  return sha256CanonicalJson(trace.map(({ domain_output: _output, ...entry }) => entry));
 }
 
 function domainToolName(toolName: string): string {
@@ -415,50 +303,9 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
   const trace: TraceEntry[] = [];
   const byId = new Map<string, TraceEntry>();
   let traceVersion = 0;
-  let remoteEvidenceTotalChars = 0;
-
-  /** Fail-closed evidence capture: never blocks the tool call, never stores truncated payloads. */
-  function captureRemoteMcpEvidenceView(
-    entry: TraceEntry,
-    view: {
-      toolInput: unknown;
-      toolResponse?: unknown;
-      failure?: { error: string; is_interrupt?: boolean };
-    },
-  ): void {
-    try {
-      const callChars = JSON.stringify({
-        input: view.toolInput,
-        ...(view.failure === undefined ? { output: view.toolResponse } : { failure: view.failure }),
-      }).length;
-      if (
-        callChars > REMOTE_MCP_EVIDENCE_MAX_CALL_CHARS ||
-        remoteEvidenceTotalChars + callChars > REMOTE_MCP_EVIDENCE_MAX_TOTAL_CHARS
-      ) {
-        entry.remote_evidence_overflow = true;
-        return;
-      }
-      // Clone the observed value so a caller retaining the mutable hook payload
-      // cannot later change what the final review corroborates against.
-      entry.remote_input = structuredClone(view.toolInput);
-      if (view.failure === undefined) {
-        entry.remote_output = structuredClone(view.toolResponse);
-      } else {
-        entry.remote_failure = view.failure;
-      }
-      remoteEvidenceTotalChars += callChars;
-    } catch (error) {
-      entry.remote_capture_failed = true;
-      console.error('[copilot-reply-finalization] remote MCP evidence capture failed', {
-        task_run_id: options.rootTaskRunId,
-        tool_use_id: entry.tool_use_id,
-        error,
-      });
-    }
-  }
 
   // The pi hook pair. `piBeforeToolCall` opens a trace entry (ceiling deny →
-  // {block}); `piAfterToolCall` settles status/output hash/remote evidence and
+  // {block}); `piAfterToolCall` settles status/output hash and
   // appends the `tool_use_id=` context block.
   const piBeforeToolCall: PiBeforeToolCall = (call, args) => {
     if (trace.length >= COPILOT_REPLY_TRACE_MAX_CALLS) {
@@ -489,23 +336,6 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     entry.output_sha256 = sha256CanonicalJson(
       observation.isError ? { error: piToolErrorText(observation.error) } : observation.output,
     );
-    if (
-      observation.call.name.startsWith('mcp__') &&
-      !observation.call.name.startsWith(`mcp__${DOMAIN_TOOL_MCP_SERVER_NAME}__`)
-    )
-      captureRemoteMcpEvidenceView(entry, {
-        toolInput: observation.args,
-        ...(observation.isError
-          ? {
-              failure: {
-                error: piToolErrorText(observation.error),
-                ...(observation.interrupted !== undefined
-                  ? { is_interrupt: observation.interrupted }
-                  : {}),
-              },
-            }
-          : { toolResponse: observation.output }),
-      });
     traceVersion += 1;
     const content: NonNullable<AfterToolCallResult['content']> = [
       ...(Array.isArray(observation.output)
@@ -533,9 +363,6 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       }
       if (trace.some((entry) => entry.status === 'in_flight' || entry.output_sha256 === null)) {
         throw new Error('cannot seal an incomplete tool trace');
-      }
-      if (trace.some((entry) => entry.remote_evidence_overflow || entry.remote_capture_failed)) {
-        throw new Error('remote MCP evidence capture overflowed or failed');
       }
       const candidateSha = sha256Text(terminalText);
       const legacyPresented = extractPrimaryView(
@@ -566,63 +393,23 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         text: legacyPresented.text,
         ...(resolvedNomination ? { primaryView: resolvedNomination } : {}),
       };
-      const correction = resolveCorrectionReply(presented.text, options.correctionContract);
+      const correction = resolveCorrectionReply(
+        presented.text,
+        options.correctionContract,
+        stripCopilotInternalComments,
+      );
       const disclosure = proposalDisclosure(trace);
-      const disclosed = applyProposalDisclosure(correction.reply, disclosure);
-      const requiresLearningValidation =
-        primaryViewLearningQuestions(presented.primaryView) !== undefined ||
-        copilotLearningContentRequiresValidation(disclosed) ||
-        copilotLearningContentRequiresValidation(
-          primaryViewLearningContent(presented.primaryView) ?? '',
-        );
-      const learning = await options.validateLearningContent(
-        disclosed,
-        options.userContextText,
-        options.rootTaskRunId,
-        presented.primaryView,
-        (() => {
-          const view = presented.primaryView;
-          if (
-            view?.source !== 'tool_result' ||
-            view.ref.kind !== 'generate_question_candidate' ||
-            view.snapshot?.state !== 'available'
-          )
-            return undefined;
-          const observed = byId.get(view.ref.id);
-          if (observed?.domain_input === undefined)
-            throw new Error('generated question input is not trace-bound');
-          return structuredClone({ input: observed.domain_input, output: observed.domain_output });
-        })(),
-        buildRemoteMcpEvidencePacket(trace),
-      );
-      let fixed = applyProposalDisclosure(
-        !learning.passed && correction.kind !== 'normal' ? correction.reply : learning.replyText,
-        disclosure,
-      );
-      if (!learning.passed) {
-        // The fixed review re-validates the sanitized replacement text on its own
-        // merits; turn evidence (primaryView, observedQuestion, remote packet) is
-        // candidate-review material and must not re-open a failed adjudication.
-        const fixedReview = await options.validateLearningContent(
-          fixed,
-          options.userContextText,
-          options.rootTaskRunId,
-        );
-        if (!fixedReview.passed || fixedReview.replyText !== fixed) {
-          fixed = applyProposalDisclosure(FINALIZATION_FAILURE_REPLY, disclosure);
-        }
-      }
+      const fixed = applyProposalDisclosure(correction.reply, disclosure);
       if (
         traceVersion !== startVersion ||
         digestTrace(trace) !== startTraceSha ||
         trace.some((entry) => entry.status === 'in_flight')
       ) {
-        throw new Error('tool trace changed while reply validation was in progress');
+        throw new Error('tool trace changed while reply finalization was in progress');
       }
-      const learningBlocked = !learning.passed;
-      const primaryView = learning.passed ? presented.primaryView : undefined;
+      const primaryView = presented.primaryView;
       const receipt: CopilotReplyFinalizationReceipt = {
-        protocol_version: 1,
+        protocol_version: 2,
         assurance: 'execution_trace_bound',
         root_task_run_id: options.rootTaskRunId,
         candidate_sha256: candidateSha,
@@ -632,11 +419,6 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         observed_completed_tool_use_ids: observedCompletedToolUseIds(),
         correction: options.authoritativeReply?.correction ?? correction.kind,
         proposal_disclosure: disclosure ? 'server_composed' : 'none',
-        learning_content: learningBlocked
-          ? 'blocked'
-          : requiresLearningValidation
-            ? 'passed'
-            : 'not_applicable',
         primary_view:
           successfulControls.length > 0 ? (primaryView ? 'retained' : 'dropped') : 'absent',
       };
@@ -659,11 +441,6 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     // Capture the observed value once. A caller retaining the mutable output
     // cannot later change a nomination or displayed result behind its trace hash.
     const output = structuredClone(result.output);
-    if (
-      result.name === 'generate_question_candidate' &&
-      sha256CanonicalJson(result.input) === entry.input_sha256
-    )
-      entry.domain_input = structuredClone(result.input);
     entry.effect = result.effect;
     entry.status = result.error_reason === null ? 'succeeded' : 'failed';
     entry.output_sha256 = sha256CanonicalJson(output);
@@ -682,7 +459,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       preparedReply: { text: replyText },
       accepted: false,
       receipt: {
-        protocol_version: 1,
+        protocol_version: 2,
         assurance: 'execution_trace_bound',
         root_task_run_id: options.rootTaskRunId,
         candidate_sha256: sha256Text(''),
@@ -692,7 +469,6 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         observed_completed_tool_use_ids: observedCompletedToolUseIds(),
         correction: 'normal',
         proposal_disclosure: disclosure ? 'server_composed' : 'none',
-        learning_content: 'blocked',
         primary_view: 'absent',
       },
     };

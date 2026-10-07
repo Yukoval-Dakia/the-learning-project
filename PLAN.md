@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-07：YUK-1360 正常合入 main a86d4e633 的 Laminar；仅源码集成与自有 disposable tests。主 runtime 已由 thread7631 重置为 Agent TEST ONLY f3，非日用；本 lane 无 runtime 权限。父线程独占 PR/Linear/push/后续验收。见 [YUK-1360 证据](docs/planning/2026-10-07-yuk1360-dependency-integration-evidence.md)。
+> Linear 是权威 tracker。2026-10-07 YUK-1365：聊天审核删除与真实流式已提交 PR1593，b54c9a06d CI成功、最终独立review无P0/P1。正在合入依赖更新26f101581并重验；未部署。发布锁归本线程，服务仍为f3 Agent TEST。
 
 ## NOW
+
+- **YUK-1365**：真实 Pi DELTA/SSE、取消和终态替换实现完成；聊天关键词审核和强制marker已删除。正式工具API保留。最终复核P1已修复；新main依赖合入后需新exact-head CI。
 
 - **本轮 main P0 集成**：PR1590 已合入 main42987dfd7；本树保留26项依赖升级、Mem0修补与DBOS5.2.11 gate。合并后验证待完成；旧bb39f38 CI不能替代本轮。主环境仅AgentTEST，UI暂缓，1352/1355/1356隔离实施。
 
@@ -15,6 +17,8 @@
 
 ## NEXT
 
+- YUK-1365：完成新依赖scoped验证、PR合并、准确镜像恢复/备份及真实provider/browser流式验收。YUK-1367独占正式练习出版/评分准入和/practice?paper链接修复；不并发部署。
+
 - YUK-1360本 lane 仅正常merge commit后交回父线程，不push、不新开review。父线程检查artifact、最终exact-head CI、PR delivery、Linear capture与另行授权的Agent-test API/SPA/BAM验收；本lane不接触runtime/private backup/R2，1346候选与unknown requests不恢复或replay。
 - 先落实 YUK-1346 的可信单次记忆/派生用途策略，再沿“椭圆难题 → 记录过程与帮助程度 → 区分暂时理解和独立迁移 → 后续验证安排”的真实学习路径推进。短回答成功不等于可靠评估已经兑现。
 - YUK-1042历史42failed+42DLQ已随owner明确授权的reset退出主runtime并离线保留；不自动restore/replay，清库不代表原缺陷或未知结果已修。
@@ -24,7 +28,7 @@
 ## PARKED
 
 - **YUK-1360 父线程发布验收义务**：真实 startup 返回 schema44 时仍有7项 BAM index 工作 pending；不能把 start/health/Drizzle smoke 当作 background migration 完成。本 lane 验证 disposable 完成与 index validity；生产需父线程在既有发布流程核验。旧12.26.3默认启动仅证明单个 synthetic queue 操作，`migrate:false`拒绝44；没有执行或批准 queue downgrade。归入既有 YUK-1360/YUK-1329 验收，不在此 lane 新建 Linear。
-- YUK-1346：单次“不写入记忆”的可信策略尚未实现，High/Backlog，选为下一条产品线；两条原假设验收摘要保留，不冒称已修。
+- YUK-1346：源码已有单次派生用途策略，本轮保持其边界，不重开记忆修复。
 - YUK-1343：失败创建提前标为显式来源、50条历史截断隐藏可续接会话均未修；已成组登记，不阻塞此次已裁决发布。
 
 - YUK-1342：付费探针开关、不可覆盖封存及 OpenAI4 node-fetch 绕过 global-fetch 观测。副本记忆功能通过，但整体探针仍 FALSE；SDK wire/count/cost 不完整，不重复付费刷绿。

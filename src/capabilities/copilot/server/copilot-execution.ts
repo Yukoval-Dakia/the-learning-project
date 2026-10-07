@@ -32,7 +32,6 @@ import {
 } from '@/server/ai/tools/pi-tools';
 import { resolveCopilotSkillDocs } from '@/subjects/copilot-skills';
 import { copilotTaskSpec } from '../tasks/agent';
-import { reviewCopilotLearningContent } from './content-validation';
 import type { CopilotRunCancellationControl } from './copilot-run-cancellation';
 import type { CopilotRunInput } from './copilot-run-input';
 import { selectActorRef } from './copilot-run-input';
@@ -50,12 +49,11 @@ import {
 import { validateLearningContent as validatePreparedLearningContent } from './practice-port';
 import { resolveLivePrimaryViewArtifact } from './primary-view-reference';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
+import { createCopilotProseStream } from './prose-stream';
 import {
   type CopilotReplyFinalizationResult,
   createCopilotReplyFinalizer,
   prependCopilotPiFinalizationHooks,
-  primaryViewLearningContent,
-  primaryViewLearningQuestions,
 } from './reply-finalization';
 import { bindSubagentParentCancellation, handleNativeSubagentTaskEvent } from './subagent-mailbox';
 import {
@@ -75,6 +73,7 @@ export const DURABLE_COPILOT_EXECUTION_BUDGET = {
 } as const;
 
 export type CopilotExecutionActivity =
+  | { kind: 'prose_delta'; text: string }
   | { kind: 'subtask'; event: CopilotSubtaskEvent }
   | {
       kind: 'tool_started';
@@ -121,7 +120,6 @@ export interface CopilotExecutionResult {
   finalization: CopilotReplyFinalizationResult;
   partial: boolean;
   error?: string;
-  candidateDeltaObserved: boolean;
   sdkSessionId?: string;
   contextDigest: string;
 }
@@ -250,30 +248,7 @@ export function createCopilotExecutionOwner(
     const finalizer = createCopilotReplyFinalizer({
       rootTaskRunId: turn.taskRunId,
       correctionContract: input.correction_contract,
-      userContextText: [
-        input.user_message,
-        ...(input.validator_context_history ?? []).map((historyTurn) => historyTurn.text),
-      ].join('\n'),
       ...(authoritativeReply ? { authoritativeReply } : {}),
-      validateLearningContent: async (
-        text,
-        contextText,
-        validationTaskRunId,
-        primaryView,
-        observedQuestion,
-        remoteEvidence,
-      ) => {
-        await policy.cancellation.probe();
-        validationSignal.throwIfAborted();
-        return reviewCopilotLearningContent(text, contextText, validationTaskRunId, {
-          db,
-          runTaskFn: validationRunner,
-          additionalVisibleText: primaryViewLearningContent(primaryView),
-          additionalQuestionContent: primaryViewLearningQuestions(primaryView),
-          observedQuestion,
-          ...(remoteEvidence ? { remoteToolEvidence: remoteEvidence } : {}),
-        });
-      },
       resolveArtifactReference: (ref) => resolveLivePrimaryViewArtifact(db, ref),
     });
 
@@ -451,7 +426,10 @@ export function createCopilotExecutionOwner(
         );
       },
     };
-    let candidateDeltaObserved = false;
+    const prose = createCopilotProseStream((text) => {
+      if (policy.cancellation.signal.aborted || lifecycleAbortController.signal.aborted) return;
+      void emitActivity(policy, { kind: 'prose_delta', text });
+    });
     let retainSdkSession = false;
     const disposeSubagentCancellation = bindSubagentParentCancellation(db, {
       sessionId: turn.sessionId,
@@ -487,9 +465,10 @@ export function createCopilotExecutionOwner(
         input,
         runnerContext,
         (text) => {
-          if (text.length > 0) candidateDeltaObserved = true;
+          prose.push(text);
         },
       );
+      prose.finish();
       const terminalText = result.terminalText ?? '';
       const nativeChildrenComplete = await drainNativeTasks();
       const partial = result.partial === true;
@@ -512,7 +491,6 @@ export function createCopilotExecutionOwner(
         finalization,
         partial,
         ...(executionError ? { error: executionError } : {}),
-        candidateDeltaObserved,
         ...(observedSdkSessionId && retainSdkSession ? { sdkSessionId: observedSdkSessionId } : {}),
         contextDigest,
       };

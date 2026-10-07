@@ -1,3 +1,27 @@
+# YUK-1365 发布接续更新
+
+PR1593 b54c9a06d CI37626148643 success、第二轮独立review NONE。初审未闭合comment吞掉server说明P1已RED/GREEN修复。上游26f101581依赖升级导致文档冲突，保留双方handoff；新的scoped/CI仍待运行。发布锁在deployment-20261007/deployment.lock，owner bed93b71；当前未停写，旧f3仍运行。候选b54镜像构建只作缓存，不得当作新merge源码发布。
+
+# YUK-1365 writer handoff — 2026-10-07
+
+本树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1365-copilot-stream`，实际分支 `fix/yuk-1365-copilot-stream-without-content-gate`，HEAD/fetched origin/main 均 `a86d4e633a67f802554ae114387ab06b7110c135`，启动时落后计数 0。实现已提交为 99f0143dc；合入 main 42987dfd7 仅在本文件和 PLAN 发生叙事冲突，保留两条 lane 证据；父线程独占独立 review、真实验收、Linear capture/status、commit/push/PR/exact-head CI/发布。没有外部通信、子代理、真实 provider、生产操作或完整本机 pnpm test。
+
+Owner 完整删除决定已实现：删除 Copilot 聊天 question/solution keyword detector、独立 learning review、强制 `copilot_learning_content` prompt/manifest 和关联 dead code/tests。没有 greeting whitelist、替代 classifier 或主动结构化出题行为。实际出题工具的 domain validation/authorization 保留；correction/proposal truth、presentation trace/security、retention 与 causal/history filtering 保留。
+
+真正 Pi root `message_update/text_delta` → runner → execution `prose_delta` → serialized durable DELTA 已落地；message_end 只收 usage/tools，不重复追加。Stop 后只抑制正文，继续收尾已观测 usage/tool frames。DELTA/STEP 写入与取消/终态共用 settlement lock，终态 REPLY/FAILED 权威替换；恢复只修终态，不再整段 DELTA。增量/终态过滤 protocol HTML comments，split marker 或 JSON 内 `-->` 不泄露。没有 UI 实施改动。
+
+真实 installed Pi-loop DB 回归只脚本化 provider：在 message_end/最终结果未决时确认 DB 已有正文 delta；两个真实 query_events 调用、第二 model turn、usage 90 tokens、最终替换/重复回放/重投不复调均通过。取消回归确认 provider signal abort、无晚到 delta、已观测 usage 45 tokens 保留。既有 pure reducer/SSE suites 也通过。
+
+验证：14文件182unit；finalizer/shared runner补充4文件117unit（含后加两条 remote trace，无独立 review）；8文件124DB；shared runner/SSE另2文件33DB（157 distinct DB）。最终取消/usage 修复后重验4文件130unit和2文件23DB。计数有重叠，不能相加。frozen install、typecheck、lint（297warning/0error）、build、diff whitespace check 均成功。准确命令、日志位置和41个改动文件见 `docs/planning/evidence/2026-10-07-yuk1365-local-checks.md`；决定与边界见 `docs/planning/2026-10-07-yuk1365-copilot-prose-stream.md`，ADR0061已加修订。
+
+并行 lane `787449db-4205-41f0-bc22-0997649cdfbf` 独占 author_question/generate_question_candidate/write_quiz/present_primary_view→展示/作答缺口。本树四工具输入输出接口未改。已报告父线程：finalizer 删除 validateLearningContent/userContextText 与 primaryViewLearningContent/Questions；receipt v2 删除 learning_content；execution 删除 candidateDeltaObserved，新 observer prose_delta；validator_context_history 与 reviewed-whole-delta recovery flag 删除。旧持久化 flag 忽略，无 migration。
+
+未验收：真实 provider timing/output、真实 browser Stop/reconnect 和 host restart durability。本地 mock/provider evidence 不升级为 actual-output/部署 PASS。DELTA/STEP 可见性沿用 best-effort 写入；终态仍负责恢复，缺 delta 不重付。父线程预检 localhost8787 `f3bfff2cf` 已 repurpose agent-development-test + local SeaweedFS；runtime 指针 `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/current-release.json` 由父线程管理，本树没有部署。本范围没有新增已证实 actionable follow-up；外部去重/capture交父线程。
+
+下文是旧交接，不覆盖本树状态、所有权或当前 runtime 用途。
+
+---
+
 # 当前父线程整合 — PR1584
 
 正常合入 main42987dfd7，保留依赖升级与DBOS gate；本轮检查待完成，旧证据为历史。父线程唯一writer，无runtime或provider操作。
