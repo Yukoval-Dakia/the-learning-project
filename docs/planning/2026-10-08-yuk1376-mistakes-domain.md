@@ -40,3 +40,10 @@ Native FailureAttempt上游尚不支持题面/答题图片快照适配，本提�
 独立初审 `yuk1376-native-independent-review-20261008-v1` 已启动，codex/gpt-6.1-sol/xhigh，只读固定002712b79对3fef55277；结果待交回。准确head CI及真实HTTP/附件字节验收尚未完成，未部署。
 
 native参考答案继续null：该读取路径没有持久化的可信reveal-policy输入，不临时发明全公开策略。严重损坏冻结坐标导致kernel无法确认effective failure时，原reader先过滤该行；直接helper损坏输入测试不能证明GET会展示这种unknown行。本次不改既有kernel过滤或伪造失败。figure仅有公开caption/alt摘要，完整图片与非图像媒体展示尚未完成。这些边界继续属于1376/1359核销范围，不能以本次95DB宣称整个迁移完成。
+
+
+### PR1599初审与修复
+
+初审固定002712b79，P0 NONE、两项P1。`anchorUnits`要求slot交集，遗漏合法仅依赖group evidence的unit；按单submission issued范围投影评分依据，又遗漏联合评估跨part unit及依赖完整范围的聚合器，导致本submission自己的合法图片消失。父已核scoring schema和assessment-verdict的冻结成员并集解析。唯一writer `yuk1376-native-p1-evidence-scope-repair-20261008-v1`在原四文件修复，先通过真实GET/DB复现。原95DB不能证明这两项通过，旧候选不进入runtime验收；修后只安排剩余一次验证审。
+
+隔离预检仅确认当前Agent TEST主release仍5aa2/9b76、四服务健康及当时未见部署锁。已保存002的源码archive用于准备，尚未构建镜像或启动服务。实际服务验收前仍须重新核锁、原子获取并通知owner。

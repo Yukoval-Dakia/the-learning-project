@@ -1,3 +1,7 @@
+# 当前交付 — native初审两项P1修复中
+
+PR1599 head9dc2ad0ce。初审task yuk1376-native-independent-review-20261008-v1 completed/noPending，P0 NONE、P1两项：group-only unit无slot交集丢图；联合评分用单成员issued范围丢cross-part/聚合器图片。父已核源码分支，唯一writer yuk1376-native-p1-evidence-scope-repair-20261008-v1 running（codex/gpt6.1sol xhigh），只原四文件，先RED再修。原95DB/48unit不证明新finding已修。剩余一次验证审，禁止第三轮。候选002只做source archive到runtimeRoot/yuk1376-preflight-002712b79/source，未build镜像/启动服务。实际主环境5aa2/9b76四服务healthy、锁owner未见，仅只读，runtime owner已收到未来隔离窗口预告。父不并发代码/测试。
+
 # 当前交付 — native读取实现交回
 
 002712b79仅四文件，writer completed/noPending，父127hash全部匹配、独立95DB通过。证据/tmp/yuk1376-native-implementation-evidence.md、implementation-hashes.sha256与parent-db.log。独立review task yuk1376-native-independent-review-20261008-v1已running，只读固定002对3fef。父现在集成/PR/CI；无runtime/付费调用。reference无可信reveal policy保持null、figure本体/非图媒体、上游unknown过滤、Start/browser/旧入口退出仍未核销，不标1376Done。
