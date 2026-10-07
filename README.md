@@ -100,7 +100,7 @@ pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / di
 
 Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[授权记录](docs/planning/2026-10-07-autonomous-delivery-charter.md)。本机生产入口是 <http://localhost:8787>，沿用独立 app、worker 和 PostgreSQL。完整行为设计见[连续学习系统](docs/design/2026-10-06-continuous-learning-system-behavior.md)，设计基线不等于当前实现。
 
-当前发布准备与已验证结果见 [PLAN](PLAN.md)。不要从脏开发目录或过期 `/tmp` 覆盖文件直接重建生产。实际部署必须固定镜像提交、保存当前配置和数据、通过隔离恢复与完整迁移预演，再停止 writer、取最终备份、执行迁移，并按 worker / app 顺序恢复。
+已部署版本与证据见 [MiMo 本机发布记录](docs/planning/2026-10-07-mimo-local-release-result.md)，后续工作见 [PLAN](PLAN.md)。远程入口为 <https://loom-mac-mini.tail2ee344.ts.net/>：访问设备须登录同一 Tailscale 网络，Loom 仍使用原访问令牌。Mac 需开机且用户会话内的 Tailscale daemon 在运行；没有开启公网 Funnel。不要从脏开发目录或过期 `/tmp` 覆盖文件直接重建生产。实际部署必须固定镜像提交、保存当前配置和数据、通过隔离恢复与完整迁移预演，再停止 writer、取最终备份、执行迁移，并按 worker / app 顺序恢复。
 
 下面的 NAS / Cloudflare Tunnel 指南保留为可选方式，不是当前 Mac 的默认操作入口。
 
@@ -131,9 +131,11 @@ Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[�
    # MEM0_* keys are optional — see .env.example for defaults
    ```
 
-   `DASHSCOPE_API_KEY`（+ `ZHIPU_API_KEY`）is required as soon as the worker
+   `DASHSCOPE_API_KEY` is required as soon as the worker
    processes its first `memory_event_ingest` job (every `writeEvent` enqueues
-   one, per ADR-0017 §"Write triggers" #1). The fact layer runs on Mem0 with
+   one, per ADR-0017 §"Write triggers" #1). Pinned memory extraction requires
+   `OPENCODE_API_KEY`; `ZHIPU_API_KEY` is needed only for the unpinned GLM
+   path or a configured dedicated GLM OCR path. The fact layer runs on Mem0 with
    the 阿里百炼 `text-embedding-v4` embedder. Product generative AI uses
    `AI_PROVIDER_OVERRIDE=opencode-go` + `AI_PROVIDER_MODEL=mimo-v2.6-pro` with
    `OPENCODE_API_KEY` in **both app and worker**. This pair covers chat task
