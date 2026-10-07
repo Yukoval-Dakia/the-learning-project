@@ -202,3 +202,115 @@ Logs in `/tmp/yuk1360-dependency-repair-20261007`:
 - `start-main-build.log` SHA256 `b0587d0cf27612a41781052d83a6d509eda9e2545395be81c491293b9da6826a`
 - `start-main-frozen2.log` SHA256 `a720d2354f86aa164a430019ded3b7ec7cbd3f4b478621e92ed3e1b94f08d21d`
 - `start-main-lint.log` SHA256 `4e15f428c495287f24033c3e957a2caf3d21b9d878087cca73dc0064724348a7`
+
+## 2026-10-08 authenticated /mistakes consumer preflight
+
+This continuation is sole-writer work in the original1352 tree. Owner7631 retains
+native evidence, materials and the1359 exit inventory. The parent owns PR1592,
+push/CI/review/Linear and runtime/browser acceptance. No runtime listener is started here.
+
+UI preflight under delegated authority, before mounting edits:
+
+- `docs/planning/2026-10-07-non-ui-migration-priority.md:9` says:
+  “先完成整个非 UI 技术迁移，保留现有页面及行为；视觉设计与 UI 重写暂缓”.
+- `docs/design/2026-06-04-redraw-mistakes-preflight.md` §0 says:
+  “唯一 `useQuery(['mistakes'])` + 派生计数 + `<Link>` 跳转**全部保留**”.
+  This is historical visual guidance; current filter/query behavior remains authoritative.
+- Component types: route and shared shell mounting adapter. Existing markup, tokens,
+  primitives, filters, timing, attachments, fallback text and navigation targets are reused.
+- Planned source changes: `server/start/{context,mistakes-read,mistakes-function,mistakes-client}.ts`,
+  `server/start/routes/{__root,mistakes}.tsx`, `server/start/vite.config.ts`, generated route tree,
+  `server/frontdoor.ts`, the main-integration seam in `server/index.ts`,
+  `web/src/routes/MistakesPage.tsx`, `web/src/router.tsx`, and new `web/src/RootShell.tsx`.
+  Scoped auth/client/mount tests live in Start and the existing page test seams.
+  PLAN/now and this delivery document record the handoff.
+
+The additional shell overlap was reported before editing: `web/src/router.tsx` moves
+its existing RootShell into `web/src/RootShell.tsx` with pathname/navigation/children
+props. Both mounts consume the same shell; this does not authorize visual redesign.
+
+### Consumer, checks and parent handoff
+
+Fetched main `7bc216509` and normally merged it as `d98d965aa`. PLAN/now use the
+newer main facts; `server/index.ts` combines Start dispatch with the newer SSE
+start/stop lifecycle. All protected ingestion, records, practice, shared kernel
+and global manifest files match that main. No unmerged PR1600 source was used.
+
+`/mistakes` is now a Start component route with browser-only loading, the original
+TokenGate and the shared original shell. Its injected list function calls the
+actual GET server function. Every function request retains Hono token/epoch
+checks; the explicit consumer guard also checks before invoking the lazy host
+reader. That reader imports the DB and ingestion public operation only after
+access is granted. Query validation, subject/since/question/cursor policy and the
+`data/rows/page/next_cursor` envelope belong to unchanged `readMistakes`.
+Host errors become Responses before the CJS/ESM boundary, preserving domain400s.
+No secret is substituted for a caller header. Anonymous document rendering does
+not call the reader. Asset URLs use `/_build/`; router and RPC base stay `/`.
+
+The shell's effects and render body match the merged original after replacing
+Outlet with children. Existing page markup/behavior is unchanged except its list
+injection. Built SPA `/mistakes` performs a document handoff to Start, including
+navigation from unported `/record`; Vite-only development temporarily keeps the
+original HTTP consumer. Other routes still use the SPA fallback. Remove that dev
+adapter together with old SPA dev/build/image/fallback paths only after all real
+route consumers migrate and1359's behavior/rollback exit conditions pass.
+
+Final local evidence uses Node24.19.0 / pnpm11.13.1 in an `env -i` whitelist with
+only HOME/PATH/TMPDIR and CODEX_FULL_GATE for build. No private env is loaded.
+
+- 11 scoped files / 75 tests pass, including auth/epoch-before-import, unchanged
+  query forwarding, client401 re-gating,400/503 errors, injected subject filter,
+  reset/retry/empty/deep links, old card/TokenGate, inventory and startup/shutdown.
+- typecheck, lint, lint ratchet and full application build pass. Lint remains
+  297 warnings/0 errors; the baseline is not changed. Existing bundle warnings remain.
+- Capability boundary audit passes with zero deep cross-capability imports.
+- In-process compiled dispatch checks401/503, query/cursor/envelope, operation400,
+  the Start document and unrelated fallback with a controlled reader/epoch seam.
+  Actual frontdoor static dispatch reads10 referenced JS/CSS assets and missing404.
+  These checks open no listener and access no database/provider. Client artifacts
+  contain none of `DATABASE_URL`, `postgres-js`, host-reader/auth-helper names or
+  `INTERNAL_TOKEN`. They do not prove authenticated native/material/attachment behavior.
+- Scoped shutdown testing uses its existing temporary child listener; no persistent
+  server, shared service, container or runtime lock was started or acquired here.
+- No full local `pnpm test`, disposable DB test, paid call, replay, deployment,
+  push, host merge, Linear operation, new review or delegation was performed.
+
+[Machine evidence](evidence/2026-10-08-yuk1352-start-mistakes.json) records source
+and log digests. Temporary compiled/static scripts remain under this worktree's
+`.cache/yuk1352-mistakes/`; their hashes are recorded. The old1352 evidence remains historical.
+
+After the parent obtains the runtime lock and7631 supplies an isolated acceptance
+DB and token, run from this worktree with the already-built outputs:
+
+```bash
+env -i HOME="$HOME" \
+  PATH="/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin" \
+  TMPDIR=/tmp NODE_ENV=production API_PORT=18952 \
+  DATABASE_URL="$YUK1352_ACCEPTANCE_DATABASE_URL" \
+  INTERNAL_TOKEN="$YUK1352_ACCEPTANCE_TOKEN" \
+  pnpm exec tsx server/start/acceptance-server.ts
+```
+
+The entry binds only `127.0.0.1`; change `API_PORT` for a different isolated port.
+Open `http://127.0.0.1:18952/mistakes` in T3. Enter the supplied token in the retained
+password field; it stays under `loom_internal_token` in that browser and travels
+as `x-internal-token`. The entry loads no `.env`, starts no worker/event listener,
+does no boot tool recovery or subject/config hydration, and uses the real default
+Hono epoch gate and real public DB read. It is a route acceptance entry, not a
+release-runtime startup proof. Supply only the required storage env separately for
+7631's real attachment acceptance; never copy provider secrets into the browser.
+Stop with SIGINT/SIGTERM after the parent's acceptance work.
+
+Remaining acceptance is owned by the parent and7631: direct/refresh/record-to-mistakes
+navigation; saved-token resume and401 re-gating; real native and legacy frozen rows;
+subject/state/cause combinations,200+ indication and pending timer; attachment
+bytes/MIME/404, Lightbox close/reopen; event/knowledge/practice navigation and return.
+Use canonical runtime boot for hydrated custom subjects/config and release/SSE
+acceptance. Native public-material fixes and1359 exit inventory remain7631-owned.
+The parent owns push, exact-head CI, existing review budget, tracker and any release.
+YUK1352 and global SPA retirement are not marked accepted or Done here.
+
+Linear capture: no new domain defect remains from this task; mounting defects were
+fixed within1352 and known consumer-exit obligations are already1359/1376. The parent
+performs the tracker gate, as explicitly required by this assignment. The sole writer
+is released after the final local commit; the canceled1356 dirtytree is untouched.

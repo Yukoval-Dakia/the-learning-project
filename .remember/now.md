@@ -1,3 +1,22 @@
+# 当前交接 — 2026-10-08 YUK-1352 authenticated Start /mistakes
+
+唯一writer树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor`，
+branch `feat/yuk-1352-start-frontdoor`。从clean4a7f81541正常merge最新main7bc216509为
+d98d965aa，保留即时SSE listener及1364/1365/1375/1376修复；没有cherry-pick PR1600。
+Start `/mistakes`复用TokenGate、原shell及MistakesPage。客户端调用实际GET server function，
+经原Hono token/epoch门后，host惰性调用ingestion/public readMistakes(db,input)。过滤与cursor
+透传；400/401/503不变。生产旧SPA的/mistakes只做document handoff；其他路由及dev fallback
+尚未退出。shell render/effects与merged baseline一致，仅Outlet改children。
+75 scoped tests、Node24.19.0 typecheck/lint/build、lint ratchet及capability audit通过。
+编译产物用无listener/DB的受控适配检查了RPC与静态文件，不能冒称runtime/browser通过。
+证据、命令及parent loopback启动见1352交付doc和evidence/2026-10-08-yuk1352-start-mistakes.json。
+没有持persistent server、container、runtime lock；没有.env、私人数据、provider/paidcall/replay，
+没有push/hostmerge/Linear/新review/委派；取消的1356 dirtytree未接触。
+父线程独占PR1592后续、准确CI、既有review及runtime lock/T3浏览器；7631独占native/materials
+和1359inventory验收。writer在本次terminal commit后释放，不自动恢复写入。
+
+以下为合入main的历史交接，不表示当前服务或PR状态。
+
 # 当前交付 — native P1修复已验证，最后审查通过，等待准确CI
 
 修复f2013412370d7dc802dcf84dc70db6b96068a90e已提交，writer completed/noPending，四文件、树clean。两项有效RED与GREEN封存于/tmp/yuk1376-native-p1-implementation-evidence.md；作者102DB/107unit/typecheck/lint/build/四audit通过。父独立262项hash全匹配，102DB exit0，日志/tmp/yuk1376-native-p1-parent-db.log。唯一剩余验证审 task yuk1376-native-p1-verification-review-20261008-v1，codex/gpt-6.1-sol/xhigh，只读固定f201对e4a，已completed/noPending，P0/P1 NONE，两项原finding resolved；禁止第三轮。PR1599等待新head CI与审查裁决。未启动隔离服务、未持部署锁；旧002源码archive不能用于修复后验收。reference/full media/Start/browser及旧入口退出仍待核销。

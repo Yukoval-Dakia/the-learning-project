@@ -1,6 +1,14 @@
 {
   "extends": "../../tsconfig.json",
-  "compilerOptions": { "incremental": false },
-  "include": ["./**/*.ts", "./**/*.tsx"],
-  "exclude": ["./**/*.test.ts"]
+  "compilerOptions": {
+    "incremental": false
+  },
+  "include": [
+    "./**/*.ts",
+    "./**/*.tsx",
+    "../../web/src/**/*.d.ts",
+    "../../src/**/*.d.ts",
+    "../start-artifact.d.ts"
+  ],
+  "exclude": ["./**/*.test.ts", "./**/*.test.tsx"]
 }

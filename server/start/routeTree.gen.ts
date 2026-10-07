@@ -10,12 +10,18 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as SplatRouteImport } from './routes/$'
+import { Route as MistakesRouteImport } from './routes/mistakes'
 import { Route as BuildSplatRouteImport } from './routes/[_]build.$'
 import { Route as ApiSplatRouteImport } from './routes/api.$'
 
 const SplatRoute = SplatRouteImport.update({
   id: '/$',
   path: '/$',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MistakesRoute = MistakesRouteImport.update({
+  id: '/mistakes',
+  path: '/mistakes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BuildSplatRoute = BuildSplatRouteImport.update({
@@ -31,30 +37,34 @@ const ApiSplatRoute = ApiSplatRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/$': typeof SplatRoute
+  '/mistakes': typeof MistakesRoute
   '/_build/$': typeof BuildSplatRoute
   '/api/$': typeof ApiSplatRoute
 }
 export interface FileRoutesByTo {
   '/$': typeof SplatRoute
+  '/mistakes': typeof MistakesRoute
   '/_build/$': typeof BuildSplatRoute
   '/api/$': typeof ApiSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/$': typeof SplatRoute
+  '/mistakes': typeof MistakesRoute
   '/_build/$': typeof BuildSplatRoute
   '/api/$': typeof ApiSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/$' | '/_build/$' | '/api/$'
+  fullPaths: '/$' | '/mistakes' | '/_build/$' | '/api/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/$' | '/_build/$' | '/api/$'
-  id: '__root__' | '/$' | '/_build/$' | '/api/$'
+  to: '/$' | '/mistakes' | '/_build/$' | '/api/$'
+  id: '__root__' | '/$' | '/mistakes' | '/_build/$' | '/api/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   SplatRoute: typeof SplatRoute
+  MistakesRoute: typeof MistakesRoute
   BuildSplatRoute: typeof BuildSplatRoute
   ApiSplatRoute: typeof ApiSplatRoute
 }
@@ -66,6 +76,13 @@ declare module '@tanstack/react-router' {
       path: '/$'
       fullPath: '/$'
       preLoaderRoute: typeof SplatRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mistakes': {
+      id: '/mistakes'
+      path: '/mistakes'
+      fullPath: '/mistakes'
+      preLoaderRoute: typeof MistakesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_build/$': {
@@ -87,6 +104,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   SplatRoute: SplatRoute,
+  MistakesRoute: MistakesRoute,
   BuildSplatRoute: BuildSplatRoute,
   ApiSplatRoute: ApiSplatRoute,
 }

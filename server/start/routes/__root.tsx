@@ -1,6 +1,6 @@
 import { HeadContent, Outlet, Scripts, createRootRoute } from '@tanstack/react-router';
 
-// P1 serves the original SPA document. This document is for future migrated routes.
+// Migrated routes use this document; unrelated routes keep the P7-owned SPA fallback.
 export const Route = createRootRoute({
   component: () => (
     <html lang="zh-CN">
@@ -8,7 +8,9 @@ export const Route = createRootRoute({
         <HeadContent />
       </head>
       <body>
-        <Outlet />
+        <div id="root">
+          <Outlet />
+        </div>
         <Scripts />
       </body>
     </html>
