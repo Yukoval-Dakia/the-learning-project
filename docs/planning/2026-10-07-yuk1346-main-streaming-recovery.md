@@ -3,6 +3,10 @@
 Recovered the clean implementation tree at `c59bb7dadae9dec440b5ccbb0a0ab93478369e1c`
 on `fix/yuk-1346-reconcile-safety`. Normal merge of main
 `df08399ff179c5882b39da87e162237fd18246c7`, without rebase or force.
+The first merge is `6cce7fe40971d98049f3e250d7614183fa9b8f92`. During verification,
+main advanced to `6e54da8dfb371887e5d6cd4076d1ff9cd7713beb` with the other
+owner's landed PR1594 listener follow-up. A second normal merge incorporates
+that commit; no listener implementation was authored here.
 The task brief reports PR1593 was already deployed by another owner. This lane
 did not inspect runtime or its locks, and does not assert a live revision.
 
@@ -73,7 +77,7 @@ hidden-answer validation, or mandatory question-generation workflow.
   locks. These implementations equal main. Chat gate removal does not remove
   materialization or grading admission.
 
-## Verification and exact artifacts
+## First merge verification and exact artifacts
 
 [Machine evidence](evidence/2026-10-07-yuk1346-main-streaming-recovery.json) records
 all commands, file lists, source comparisons and SHA256 digests. It includes
@@ -84,7 +88,7 @@ Practice admission, Pi/DBOS gate, package/lock and recovery retention/fencing.
 Relative to main, the actual source/test diff has 59 files, 2637 insertions and
 243 deletions. The JSON lists every path; no new UI implementation was made.
 
-The final scoped run passed 444 unit tests in 17 files and 188 DB tests in 9
+The df08399ff merge scoped run passed 444 unit tests in 17 files and 188 DB tests in 9
 files. DB global setup started a fresh pgvector Testcontainer, migrated it and
 cloned isolated fork databases. Only PATH/HOME/TMPDIR/USER/LANG were inherited;
 existing DB/provider environment was excluded. Provider output/transport was
@@ -101,10 +105,34 @@ Runtime revision, fresh provider/browser behavior, host-restart durability,
 exact-head CI and the old timed-out request's outcome/cost are unverified here.
 Old R/R2/R3/R4/A/ingest and unknown requests were not replayed. Historical
 failures/DLQ, backup and restore obligations remain unchanged. Parent owns the
-P1 supersession reply, new CI and runtime acceptance. PR1594 belongs to another
-owner. This implementation lane commits locally, returns a clean tree and
+P1 supersession reply, new CI and runtime acceptance. PR1594 implementation and runtime acceptance belong to the other
+owner; this lane only integrates its landed main commit. This implementation lane commits locally, returns a clean tree and
 releases its sole-writer authority without pushing.
 
 Capture gate: no new actionable product follow-up was found. The temporary
 test-wiring failure was fixed locally. Existing follow-ups remain with the
 parent; this lane was explicitly prohibited from Linear access or new review.
+
+
+## Final verification after the landed listener follow-up
+
+The second merge changes only `server/index.ts` and its existing unit suite
+among the 3134 source/config files hashed for the first verification. Its API
+startup/shutdown, CI PostgreSQL service and usability docs are byte-identical to
+main `6e54da8df`. All 31 first-merge source comparisons still hold; five more
+exact comparisons cover the landed follow-up. `server/index.ts:144` starts the
+existing job-events LISTEN loop before HTTP serve; shutdown stops it before
+closing the DB. These unit fixtures mock HTTP, LISTEN and DB. No real API or
+worker was started by this lane.
+
+[Final machine evidence](evidence/2026-10-07-yuk1346-main-streaming-recovery-final.json)
+records the second merge parents, 36 exact comparisons, updated source manifest,
+patches against recovery/first-merge/latest-main, fresh log hashes and final
+commands. Final verification passed 451 unit tests in 18 files, 188 DB tests in
+9 new disposable Testcontainers files, typecheck, lint, build and the same ten
+audits. Counts from the two runs overlap and must not be added. Evidence JSON
+formatting was corrected after the first documentation lint; that failure log
+is retained. Runtime/provider/browser/CI and unknown-result limitations above
+still apply. No runtime lock or other owner worktree was touched.
+
+Final documentation lint log: `/tmp/yuk1346-recovery-listen-ceaxnml2/final-document-lint.log`, SHA256 `347f8652750eccc5bcdd9db78bcb2da127b5d13438f5aadcf2ff2706c83af9d4`.

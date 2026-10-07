@@ -1,14 +1,14 @@
 # 当前 YUK-1346 / YUK-1350 cancelled 实施恢复
 
-本 lane 唯一 writer 位于 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety`，branch `fix/yuk-1346-reconcile-safety`。恢复起点 clean `c59bb7dadae9dec440b5ccbb0a0ab93478369e1c`，正常 merge main `df08399ff179c5882b39da87e162237fd18246c7`。a9cf71d3d/db887fe4a/75eaeb82b/c59bb7dad 的旧 gate/协议修改已实际检查，没有重复实现。
+本 lane 唯一 writer 位于 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety`，branch `fix/yuk-1346-reconcile-safety`。恢复起点 clean `c59bb7dadae9dec440b5ccbb0a0ab93478369e1c`，正常 merge main `df08399ff179c5882b39da87e162237fd18246c7` 为 `6cce7fe40971d98049f3e250d7614183fa9b8f92`，再正常合入新 main `6e54da8dfb371887e5d6cd4076d1ff9cd7713beb` 的已落地 PR1594。a9cf71d3d/db887fe4a/75eaeb82b/c59bb7dad 的旧 gate/协议修改已实际检查，没有重复实现。
 
 YUK-1365 最新 owner 决定已删除聊天审核及强制 marker。旧 discussion4207279165 缺陷/RED 证据保留，当前消费者已退休，记 superseded 而非 repaired。删除旧 validator、无 consumer 的 branch kernel receipt、full-response/purpose 分支与 restricted 协议 loader/tests；Copilot skill、Practice admission 与 main 相同，不加替代 classifier 或主动出题 workflow。
 
-保留1346 trusted per-turn answer_only 的接纳/幂等、raw-chat 保存、不派生 memory/模型历史、cold 六 read/no skill/research/remote/no reusable cursor，以及1350 operation-kind provider start fence、body/deadline abort 与未知结果不重投。合入1365真实 incremental prose、Stop/终态/replay 行为；package/lock保留26项升级、Mem0 patch、Laminar与Pi+DBOS gate。owner brief 报告PR1593已由other owner部署，本lane未读runtime/锁，live revision未知；PR1594不接管。
+保留1346 trusted per-turn answer_only 的接纳/幂等、raw-chat 保存、不派生 memory/模型历史、cold 六 read/no skill/research/remote/no reusable cursor，以及1350 operation-kind provider start fence、body/deadline abort 与未知结果不重投。合入1365真实 incremental prose、Stop/终态/replay 行为；package/lock保留26项升级、Mem0 patch、Laminar与Pi+DBOS gate。owner brief 报告PR1593已由other owner部署，本lane未读runtime/锁，live revision未知；PR1594 只整合已落地main代码，不接管其owner的实施/runtime验收。
 
-最终444 scoped unit/17files、188 fresh Testcontainers DB/9files通过；frozen install/typecheck/lint/build/10audits/diff whitespace通过。297既有lint warnings。新test的observe回调拼写先被unit/typecheck捕获，修正后复验通过，初始失败log仍封存。没有真实provider/model质量、browser、host restart、new exact-head CI或现有/private DB证据。
+最终451 scoped unit/18files、188 fresh Testcontainers DB/9files通过；frozen install/typecheck/lint/build/10audits/diff whitespace通过。297既有lint warnings。新test的observe回调拼写先被unit/typecheck捕获，修正后复验通过，初始失败log仍封存。新evidence JSON格式在文档lint捕获后已修正；最终lint再次通过。没有真实provider/model质量、browser、host restart、new exact-head CI或现有/private DB证据。
 
-精确diff、31 source comparisons、3134文件source manifest、predecessor log及parent RED SHA256、所有命令/log hashes见 `docs/planning/2026-10-07-yuk1346-main-streaming-recovery.md` 和相邻 evidence JSON。历史R4/A/ingest及timeout成本/结果不重标，旧请求/失败/DLQ不replay。没有新actionable产品follow-up；既有tracker capture归父，本lane禁Linear。
+精确diff、第一merge的31及最终36 source comparisons、3134文件source manifest、predecessor log及parent RED SHA256、所有命令/log hashes见 `docs/planning/2026-10-07-yuk1346-main-streaming-recovery.md` 和相邻 evidence JSON。历史R4/A/ingest及timeout成本/结果不重标，旧请求/失败/DLQ不replay。没有新actionable产品follow-up；既有tracker capture归父，本lane禁Linear。
 
 提交后本实施任务completed/noPending并释放sole-writer权。父独占PR1588 push/reply/resolve/新CI/runtime验收/发布；本lane不push/watch/hostmerge/新review/delegation。后续PR通知不得重新启动写入。
 

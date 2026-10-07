@@ -364,6 +364,20 @@ jobs:
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: usability
+          POSTGRES_PASSWORD: usability
+          POSTGRES_DB: usability
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U usability"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - name: Usability lane skipped
         if: needs.changes.outputs.usability_changed != 'true' && needs.changes.outputs.build_changed != 'true'
@@ -403,7 +417,7 @@ jobs:
           RW_STATIC_DIR=web/dist \
           API_PORT=18787 \
           INTERNAL_TOKEN=usability-ci-token \
-          DATABASE_URL=postgres://placeholder:placeholder@127.0.0.1:1/placeholder \
+          DATABASE_URL=postgres://usability:usability@127.0.0.1:5432/usability \
           node dist/server.cjs > usability-server.log 2>&1 &
           SERVER_PID=$!
           for i in $(seq 1 60); do

@@ -1,11 +1,11 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-07 YUK-1346/1350 恢复 cancelled 实施，正常合入 main df08399ff。按 YUK-1365 owner 决定删除旧聊天审核残留，保留 answer-only、provider fence、真实 streaming、26 项依赖升级与确定性评分准入。444 unit/188 fresh DB/typecheck/lint/build/10 audits 通过。本 lane 仅本地提交后交还写权，父独占 PR1588/CI/runtime。
+> Linear 是权威 tracker。2026-10-07 YUK-1346/1350 恢复 cancelled 实施，正常合入 main df08399ff 后，再合入 main6e54da8df 的已落地PR1594 listener接线。按 YUK-1365 owner 决定删除旧聊天审核残留，保留 answer-only、provider fence、真实 streaming、26 项依赖升级与确定性评分准入。451 unit/188 fresh DB/typecheck/lint/build/10 audits 通过。本 lane 仅本地提交后交还写权，父独占 PR1588/CI/runtime。
 
 ## NOW
 
-- **YUK-1346 / YUK-1350**：本 lane 从 clean c59bb7dad 正常 merge main df08399ff；旧 P1 discussion4207279165 的聊天审核 consumer 已被 YUK-1365 明确退休，按 source evidence 记 superseded，不冒称新路径修复或事实审核。answer-only 可信逐轮接纳、不派生记忆/模型历史、cold/no cursor 与未知结果不重投保留。最终 444 unit/188 fresh Testcontainers DB、typecheck/lint/build/10 audits 通过；[恢复与证据](docs/planning/2026-10-07-yuk1346-main-streaming-recovery.md)。父负责最终 PR 回复与 CI/runtime 验收。
-- **YUK-1365**：main df08399ff 已含 PR1593 的真实 Pi DELTA/SSE、取消/权威终态替换及聊天审核/强制 marker 删除。任务 brief 报告另一 owner 已部署，本 lane 没有读取 runtime 或锁，不宣称 live revision。正式工具、物化和评分准入保留；不接管 PR1594 Hono LISTEN lane。
+- **YUK-1346 / YUK-1350**：本 lane 从 clean c59bb7dad 经6cce7fe40正常 merge main df08399ff，再正常合入 main6e54da8df 已落地listener follow-up；旧 P1 discussion4207279165 的聊天审核 consumer 已被 YUK-1365 明确退休，按 source evidence 记 superseded，不冒称新路径修复或事实审核。answer-only 可信逐轮接纳、不派生记忆/模型历史、cold/no cursor 与未知结果不重投保留。最终 451 unit/188 fresh Testcontainers DB、typecheck/lint/build/10 audits 通过；[恢复与证据](docs/planning/2026-10-07-yuk1346-main-streaming-recovery.md)。父负责最终 PR 回复与 CI/runtime 验收。
+- **YUK-1365**：main df08399ff 已含 PR1593 的真实 Pi DELTA/SSE、取消/权威终态替换及聊天审核/强制 marker 删除。任务 brief 报告另一 owner 已部署，本 lane 没有读取 runtime 或锁，不宣称 live revision。正式工具、物化和评分准入保留；PR1594 的 owner 实施已在 main6e54da8df 落地，按最新main正常合入，不接管该owner的runtime验收。
 - **YUK-1338 / YUK-1351 / YUK-1360 main source**：保留 PR1590 Pi+DBOS gate、26f101581 的26 production/3 type upgrades、Mem0 858dc patch、Laminar0.8.49 和 DBOS5.2.11。依赖/锁与 main 逐字节一致，本 lane 新源码检查不替代旧 gate/provider/BAM 的运行验收。Owner 完整非 UI 迁移优先、UI 暂缓；1352/1355/1356 继续各自隔离实施。
 - **历史 YUK-1103 发布记录（已被 Agent TEST ONLY reset 覆盖用途）**：本机 http://localhost:8787；远程 https://loom-mac-mini.tail2ee344.ts.net/（同一 tailnet，沿用 Loom 令牌）。app/worker `f3bfff2cf` healthy，115项迁移、readiness active。已备份及恢复验证；不要重复发布旧 `5d738dbc0`。
 - **历史 YUK-1341 产品 AI 发布**：PR #1585 已通过 exact-head CI、独立初审和等待窗并合并。app/worker 都固定 `opencode-go/mimo-v2.6-pro`；54聊天任务和 Mem0 接线已落地。生产两轮 Copilot 成功，原会话及 Pi cursor 连续、刷新回放一致；后台 MemoryBrief 也已实际成功。未宣称所有任务质量或评分切片均获准入。
