@@ -14,6 +14,7 @@ import { effectiveCauseForFailureAttempt } from '@/kernel/read-models/cause-poli
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
 import { miscCauseLabelMap, resolveMiscCauseLabels } from '@/kernel/read-models/misc-cause-labels';
 import { listLearningRecords } from '@/kernel/records/queries';
+import { readNativeMistakeEvidence } from './native-mistake-evidence';
 
 export interface ListMistakeProjectionFilter {
   limit: number;
@@ -138,10 +139,11 @@ async function projectMistakeRecords(
   )) {
     if (failure) failureByAttempt.set(failure.attempt_event_id, failure);
   }
-  const legacyFailures = [...failureByAttempt.values()].filter(
-    (failure) =>
-      attemptIds.has(failure.attempt_event_id) && failure.question_snapshot === undefined,
+  const pageFailures = [...failureByAttempt.values()].filter((failure) =>
+    attemptIds.has(failure.attempt_event_id),
   );
+  const nativeEvidence = await readNativeMistakeEvidence(db, pageFailures);
+  const legacyFailures = pageFailures.filter((failure) => failure.question_snapshot === undefined);
   const legacyQuestionIds = [...new Set(legacyFailures.map((failure) => failure.question_id))];
   const questions =
     legacyQuestionIds.length > 0
@@ -228,9 +230,11 @@ async function projectMistakeRecords(
         id: failure.attempt_event_id,
         record_id: record.id,
         question_id: failure.question_id,
-        ...historicalQuestionText(failure, questionById, editsByQuestionId),
-        wrong_answer_md: (failure.answer_md ?? '').slice(0, 200),
-        wrong_answer_image_refs: failure.answer_image_refs,
+        ...(nativeEvidence.get(failure.attempt_event_id) ?? {
+          ...historicalQuestionText(failure, questionById, editsByQuestionId),
+          wrong_answer_md: (failure.answer_md ?? '').slice(0, 200),
+          wrong_answer_image_refs: failure.answer_image_refs,
+        }),
         knowledge_ids: learnerVisibleKnowledgeIds(failure.referenced_knowledge_ids),
         cause,
         correction_state: failure.correction_state,

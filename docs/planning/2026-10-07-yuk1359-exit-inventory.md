@@ -109,7 +109,7 @@ Linear1359已登记1352候选 `server/start/routes/$.ts`、`server/frontdoor.ts`
 
 ## YUK1376 挂载与退出验收矩阵
 
-基线 `36f719675`（PR1597已合入）。下表从现有 `MistakesPage.tsx` 和 `ingestion/api/mistakes.db.test.ts` 核对，供领域实现与主线挂载分别验收。当前各行均未核销；已有测试名称仅定位行为，不代表新实现已通过。
+基线 `36f719675`（PR1597已合入）。下表从现有 `MistakesPage.tsx` 和 `ingestion/api/mistakes.db.test.ts` 核对，供领域实现与主线挂载分别验收。该表列出完整退出要求；各层的已验证状态见下方PR1598交付记录，不能以领域层通过核销浏览器或旧入口退出。
 
 | 必须保留的行为 | 领域/API证据 | 新入口浏览器及退出证据 |
 | --- | --- | --- |
@@ -124,3 +124,19 @@ Linear1359已登记1352候选 `server/start/routes/$.ts`、`server/frontdoor.ts`
 | 单一业务读取与旧入口退出 | GET和主线Start适配调用同一typed operation；浏览器依赖图无server-only泄漏 | 主线实际挂载证据、旧SPA消费者替换diff、构建与镜像入口核对后才核销旧路径 |
 
 现有UI的“已纠正”分支与API的retracted排除是不同证据层，验收不能只凭页面标签推断领域语义。typed领域层交回后，本线程核源码与隔离DB，主线负责组合根挂载；最终浏览器和旧路径退出仍归1358/1359共同交付。设置面板 `/admin/config` 保持在W5范围，本lane不修改或删除。
+
+
+### PR1598已验证范围与剩余退出条件
+
+2026-10-07 19:02:53Z，PR1598合入 `c7c2482ca`。CI head `291f1c5b3` 与合并tree一致，CI Gate `37669157822`成功，独立初审无P0/P1。父在固定代码 `d23140344` 独立跑过59项DB测试，日志 `/tmp/yuk1376-parent-db.log`；后续只改文档。以下范围由实际测试及diff核对，不扩大到尚未运行的验收。
+
+| 层与行为 | 当前证据 | 尚未完成 |
+| --- | --- | --- |
+| 领域/API读取 | GET和公开 `readMistakes` 共用校验与投影；科目、参数、cursor、撤回、替代judge与归因优先级有scoped DB覆盖 | Start实际挂载尚未交回 |
+| Legacy历史题面和作答图片 | 冻结父子题、正常编辑、缺席/损坏快照、图片ID保留及旧cursor页回归通过 | 图片实际字节及浏览器展示尚未验收 |
+| Native错题 | 现有测试证明保留失败记录且不使用mutable题面伪造历史 | 冻结revision/issuance/submission读取适配正在1376实施，不能算完整支持 |
+| 浏览器客户端契约 | generated operation、wire schema、异常传播与SSR附件按钮通过scoped unit | loading/retry、组合筛选、计时更新、深链、鉴权续接、Lightbox真实交互仍待浏览器 |
+| 附件读取 | 源码链为AttachmentStrip/Lightbox → AssetEvidencePreview → apiFetch →鉴权content端点→Blob URL | 要以真实文件验证字节/MIME、缺失404、无token拒绝及关闭重开；mock R2或仅有asset ID不足以核销 |
+| 旧SPA退出 | 无退出完成证据 | 页面仍由旧SPA承载；主线需提供Start挂载及旧消费者/构建/镜像入口替换证据 |
+
+这些剩余项保留在1376及1358/1359，未因PR合并关闭完整路由迁移。设置面板仍属于W5，未被删除或从清单中移除。本记录不增加新功能票，也不代表已部署。
