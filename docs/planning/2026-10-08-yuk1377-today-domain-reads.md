@@ -18,6 +18,12 @@ Summary's `countDue` currently constructs a Request and calls `handleReviewDue`,
 
 Start consumers must enforce authentication and contract epoch before invoking reads and preserve safe error responses. The Hono middleware does not automatically protect a direct server-function call. Main owns this integration and its real entry acceptance.
 
+### Database-injection regression to add with the due integration
+
+The six current summary DB fixtures exercise only zero due counts. Their public-loader/HTTP parity cannot detect a due selector using the wrong connection. Keep those tests, and add a separate public-summary test using `beginTestTransaction()` from `tests/helpers/db.ts`: its `testDb()` returns a `Db` on a reserved connection, while the HTTP singleton remains on another connection. Insert uncommitted eligible questions, knowledge and due states through that injected database. Assert a nonzero summary due count and cold-start review evidence while the HTTP singleton cannot see those rows. Always roll back the helper transaction in cleanup. Do not change the public loader to accept `Tx` merely for this fixture.
+
+Also verify the summary retains its 200-row sample using more than 200 eligible entries, with future-due and excluded entries present. Practice owns selector ordering and eligibility tests; shell should assert only its aggregation, sampling and database forwarding. The practice dependency already tests transaction forwarding at its own public boundary, but that does not prove the summary forwards its database correctly.
+
 ## Evidence to collect
 
 - Existing HTTP and public-domain outputs agree on realistic empty, populated, error and boundary fixtures.
