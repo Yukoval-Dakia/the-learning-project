@@ -25,4 +25,8 @@ Start consumers must enforce authentication and contract epoch before invoking r
 - The Start consumer and real browser/HTTP/DB behavior require their own candidate evidence after mounting.
 - UI appearance remains unchanged. Whole-page and old-SPA exit remain open until all relevant consumers are replaced and verified.
 
-At creation, investigation completed without edits or tests. The sole implementation task `yuk1377-today-public-read-implementation-20261008-v1` is running; no code or test result is claimed yet. No runtime action is authorized by this record itself.
+Implementation `1aa3fd8925c5e580ea4daa42119410f3087ca2d3` is committed, with four source/test files. The writer completed with no pending child runs. Parent verified all eight source hashes. Author validation: 35 scoped unit tests, typecheck, lint, build and partition/capability audits passed. Whole-repository lint reported 297 warnings; owned files had no Biome diagnostics.
+
+Parent independently ran the six existing workbench DB fixtures through the public loader and HTTP consumer: all six passed, exit 0. The standard test setup created a fresh temporary Postgres container and migrated it; it did not use the retained acceptance database. Log: `/tmp/yuk1377-parent-db.log`. Owner-checked deployment lock released at 2026-10-07 21:52:13Z after temporary Postgres exited; main release digest was unchanged and four original services remained healthy. Cleanup: `/tmp/yuk1377-db-cleanup.json`.
+
+These checks cover the public export and current HTTP contract only. The summary implementation still uses the old due HTTP handler/global database. Main has started an independent YUK1356 typed-due delivery from the latest main, separate from its Pi/tool WIP. Wait for its exact merged commit, then integrate and test. Independent review and exact-head CI for the finished lane have not run; Start mounting and runtime acceptance remain pending.

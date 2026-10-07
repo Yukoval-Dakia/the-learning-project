@@ -2,7 +2,7 @@
 
 PR1601已于2026-10-07 21:40:32Z合入 `1bbd82795`，tree与39c4 head一致，准确CI37688816252 success、独立review NONE、等待窗满足。当前分支feat/yuk-1358-w1-domain-reads从该main创建。
 
-主线确认本线程独占Today公共读取/HTTP契约；唯一writer为T3任务yuk1377-today-public-read-implementation-20261008-v1，Codex gpt-6.1-sol high。父独占docs/tracker/验收。不写1352/55/56三树，不动Start/全局组合/manifest/package/lock/UI；Inbox仅调查。1356负责queryReviewDue输出，尚未消除summary全局DB依赖。
+主线确认本线程独占Today公共读取/HTTP契约；T3任务yuk1377-today-public-read-implementation-20261008-v1已completed/noPending，源码1aa3fd892，35unit/父独立6DB/static/build通过。21:52:13Z已释放DB测试锁，主环境不变。父独占docs/tracker/验收。不写1352/55/56三树，不动Start/全局组合/manifest/package/lock/UI；Inbox仅调查。1356负责queryReviewDue输出，尚未消除summary全局DB依赖。
 
 1376真实Start候选3d6273a14的有限运行验收已交主线：RPC/auth/冻结记录/图片/filter/reload/retry通过；导航practice lazy-compose使practice_stream_item 0→1，不能声明整段DB不变。158构建文件未变。21:39:38Z已释放锁并停止自有18952/18995/18994，主runtime不动。证据 runtimeRoot/yuk1376-start-3d6273a14/RESULT.md，Linear1376保持InProgress。
 
