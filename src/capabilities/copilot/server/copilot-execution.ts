@@ -14,6 +14,7 @@ import {
   EXA_SCOPED_TOOL_NAMES,
   buildExaMcpServer,
 } from '@/server/ai/mcp/exa';
+import type { PiAfterToolCall } from '@/server/ai/pi-hooks';
 import {
   type RunTaskResult,
   type StreamCollectResult,
@@ -30,7 +31,6 @@ import {
   piRemoteMcpMount,
 } from '@/server/ai/tools/pi-tools';
 import { resolveCopilotSkillDocs } from '@/subjects/copilot-skills';
-import { copilotTaskSpec } from '../tasks/agent';
 import { reviewCopilotLearningContent } from './content-validation';
 import type { CopilotRunCancellationControl } from './copilot-run-cancellation';
 import type { CopilotRunInput } from './copilot-run-input';
@@ -52,6 +52,7 @@ import { createCopilotProposalFlowGate } from './proposal-flow-gate';
 import {
   type CopilotReplyFinalizationResult,
   createCopilotReplyFinalizer,
+  piToolErrorText,
   prependCopilotPiFinalizationHooks,
   primaryViewLearningContent,
   primaryViewLearningQuestions,
@@ -66,12 +67,31 @@ import {
   isCopilotSubagentEnabled,
 } from './subagents';
 
-/** Persistence removes the HTTP deadline, not the existing default model/tool cost caps. */
+/**
+ * Durable Copilot runs carry NO quantity ceilings — owner directive removes all
+ * spend caps (agentic turns, tool calls, row budgets are uncapped; the Copilot
+ * context-budget surface keeps advisory warnings only). What remains is the
+ * wall-clock execution window, which exists for owner recovery, not cost:
+ * `timeoutMs` doubles as the basis of DURABLE_OWNER_SETTLEMENT_BUDGET_MS in
+ * copilot_run.ts, and it MUST stay finite and strictly below
+ * STUCK_RUN_THRESHOLD_MS (1h) or the stuck-run sweeper would converge a live
+ * execution. 45min leaves the sweeper a ~14.5min margin.
+ */
 export const DURABLE_COPILOT_EXECUTION_BUDGET = {
-  maxIterations: copilotTaskSpec.definition.budget.maxIterations,
-  maxToolCalls: resolveContextBudget('copilot').toolCalls.hard,
-  timeoutMs: 12 * 60_000,
+  /** 'unbounded' maps to no `shouldStopAfterTurn` on the pi lane — turns are
+   *  limited only by explicit Stop, cancellation, or the timeout below. */
+  maxIterations: 'unbounded',
+  timeoutMs: 45 * 60_000,
 } as const;
+
+/**
+ * The wire-name predicate for hosted-MCP calls (Exa today): any `mcp__` tool
+ * not served by the in-process domain mount. Kept identical to the
+ * remote-evidence predicate in reply-finalization.ts.
+ */
+export function isRemoteMcpToolCall(name: string): boolean {
+  return name.startsWith('mcp__') && !name.startsWith(`mcp__${DOMAIN_TOOL_MCP_SERVER_NAME}__`);
+}
 
 export type CopilotExecutionActivity =
   | { kind: 'subtask'; event: CopilotSubtaskEvent }
@@ -330,7 +350,9 @@ export function createCopilotExecutionOwner(
       ...(exa ? EXA_MCP_ALLOWED_TOOLS : []),
     ];
     const subagentsEnabled = policy.subagentsEnabled ?? isCopilotSubagentEnabled();
-    const parentMaxTurns = DURABLE_COPILOT_EXECUTION_BUDGET.maxIterations;
+    // Root turns are uncapped; the nested researcher inherits that (its loop
+    // still ends with the parent's abort lineage / owner deadline).
+    const parentMaxTurns = undefined;
     const { allowedTools, piSpawnContract } = buildCopilotNativeResearchConfig({
       baseAllowedTools,
       enabled: subagentsEnabled,
@@ -376,6 +398,33 @@ export function createCopilotExecutionOwner(
         }
       : undefined;
 
+    // Remote-MCP completion card: `onToolComplete` lives inside the domain
+    // bridge (executeDomainToolCall), so remote calls never produced a
+    // tool_finished step — the SSE card spun forever. The pi afterToolCall
+    // observer fires for every settled call including remote ones; emit the
+    // matching finish here. Domain tools are excluded (their card already
+    // comes from the bridge); native Task/Agent calls never match the
+    // `mcp__` predicate.
+    const remoteMcpToolFinished: PiAfterToolCall = (observation) => {
+      if (!isRemoteMcpToolCall(observation.call.name)) return undefined;
+      const summaryText = observation.isError
+        ? `error: ${piToolErrorText(observation.error)}`
+        : piToolErrorText(observation.output);
+      void Promise.resolve(
+        emitActivity(policy, {
+          kind: 'tool_finished',
+          toolName: observation.call.name,
+          input: observation.args,
+          summary: summaryText.slice(0, 180),
+          ...(observation.isError
+            ? { errorReason: piToolErrorText(observation.error).slice(0, 500) }
+            : {}),
+          toolUseId: observation.call.id,
+        }),
+      ).catch(() => undefined);
+      return undefined;
+    };
+
     // The hook stack: finalizer entries first, then cancellation, spawn gate
     // last — the spawn gate's `{block:false}` allow short-circuit requires it
     // to run after every deny-capable entry. The loop's native toolCall.id
@@ -385,6 +434,7 @@ export function createCopilotExecutionOwner(
         policy.cancellation.piBeforeToolCall,
         ...(piSpawnContract ? [piSpawnContract.gate] : []),
       ],
+      afterToolCall: [remoteMcpToolFinished],
     });
     const piSkillDocs = await adapters.resolveCopilotSkillDocsFn();
     const contextDigest = copilotSessionContextDigest(input);
@@ -436,7 +486,7 @@ export function createCopilotExecutionOwner(
         : {}),
       ...(policy.modelBinding ? { modelBinding: policy.modelBinding } : {}),
       budgetOverride: {
-        maxIterations: DURABLE_COPILOT_EXECUTION_BUDGET.maxIterations,
+        maxIterations: 'unbounded',
         timeoutMs: DURABLE_COPILOT_EXECUTION_BUDGET.timeoutMs,
       },
       sdkSession,
@@ -489,13 +539,13 @@ export function createCopilotExecutionOwner(
           if (text.length > 0) candidateDeltaObserved = true;
         },
       );
-      const terminalText = result.terminalText ?? '';
+      // Partial results carry the collected assistant text in `text` but no
+      // `terminalText` (set only on a clean success frame) — fall back so the
+      // finalizer reviews whatever was actually produced instead of ''.
+      const terminalText = result.terminalText ?? result.text;
       const nativeChildrenComplete = await drainNativeTasks();
       const partial = result.partial === true;
       const executionError = result.error;
-      if (resumeSessionId && partial) {
-        throw new Error('resumed agent session returned partial output');
-      }
       const finalization = await finalizer.finalizeTerminal(terminalText);
       retainSdkSession = !partial && finalization.accepted && nativeChildrenComplete;
       return {

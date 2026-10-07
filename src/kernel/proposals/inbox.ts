@@ -698,7 +698,13 @@ function deriveLegacyAiProposal(row: EventRow): AiProposalPayloadT | null {
       proposed_change: {
         mutation: 'propose_new',
         name: String(payload.name ?? ''),
-        parent_id: String(payload.parent_id ?? ''),
+        // Root proposals carry null + the anchoring domain; legacy events
+        // always had a string parent, so null only ever comes from the new
+        // root-creation contract.
+        parent_id: payload.parent_id == null ? null : String(payload.parent_id),
+        ...(typeof payload.domain === 'string' && payload.domain.length > 0
+          ? { domain: payload.domain }
+          : {}),
       },
     });
   }
@@ -941,6 +947,9 @@ function legacyPayloadFor(row: EventRow): { payload: Record<string, unknown>; re
         mutation: 'propose_new',
         name: payload.name,
         parent_id: payload.parent_id,
+        ...(typeof payload.domain === 'string' && payload.domain.length > 0
+          ? { domain: payload.domain }
+          : {}),
       },
       reasoning: String(payload.reasoning ?? ''),
     };

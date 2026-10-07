@@ -22665,10 +22665,11 @@ export interface operations {
                                 /** @enum {string} */
                                 kind: "knowledge_node";
                                 proposed_change: {
+                                    domain?: string;
                                     /** @enum {string} */
                                     mutation: "propose_new";
                                     name: string;
-                                    parent_id: string;
+                                    parent_id: string | null;
                                 };
                                 reason_md: string;
                                 rollback_plan?: unknown;
@@ -23740,10 +23741,11 @@ export interface operations {
                                 /** @enum {string} */
                                 kind: "knowledge_node";
                                 proposed_change: {
+                                    domain?: string;
                                     /** @enum {string} */
                                     mutation: "propose_new";
                                     name: string;
-                                    parent_id: string;
+                                    parent_id: string | null;
                                 };
                                 reason_md: string;
                                 rollback_plan?: unknown;

@@ -91,10 +91,10 @@ import type { CopilotPrimaryView } from '../server/turns';
 
 export type { CopilotRunJobData } from '../server/durable-dispatch';
 
-// One execution owner resolves the budget. Unified persistent conversations
-// retain the normal six model turns and 25-tool cap; moving off HTTP is not an
-// authorization to multiply model usage. The 12-minute wall-clock safety cap
-// accommodates slow tools while staying below stuck-run recovery thresholds.
+// One execution owner resolves the budget. Copilot spend ceilings were removed
+// by owner directive — turns and tool calls are uncapped; the 45-minute
+// wall-clock window remains as the owner-recovery bound and stays below the
+// stuck-run sweeper threshold (STUCK_RUN_THRESHOLD_MS = 1h, asserted in tests).
 export const DURABLE_BUDGET = DURABLE_COPILOT_EXECUTION_BUDGET;
 
 export interface RunCopilotRunParams {

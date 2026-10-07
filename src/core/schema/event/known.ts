@@ -351,7 +351,8 @@ export type ReviewOnQuestionT = z.infer<typeof ReviewOnQuestion>;
 // 4. ProposeKnowledge — actor=agent / action='propose' / subject='knowledge'
 //
 // AI 提议新增一个 knowledge 节点。outcome='success' 或 'partial'（部分理由不齐时）。
-// payload 含 name / parent_id（挂哪个 tree node）/ reasoning（必填，AI 解释为啥提议）。
+// payload 含 name / parent_id（挂哪个 tree node；null = 提议新学科/domain 根节点，
+// 此时 domain 必填）/ reasoning（必填，AI 解释为啥提议）。
 
 export const ProposeKnowledge = z.object({
   actor_kind: z.literal('agent'),
@@ -362,7 +363,8 @@ export const ProposeKnowledge = z.object({
   outcome: z.enum(['success', 'partial']),
   payload: z.object({
     name: z.string(),
-    parent_id: z.string(),
+    parent_id: z.string().nullable(),
+    domain: z.string().optional(),
     reasoning: z.string(),
   }),
   ...baseOptionalFields,

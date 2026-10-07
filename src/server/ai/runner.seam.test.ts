@@ -684,6 +684,16 @@ describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () =>
     expect('budgetOverride' in opts).toBe(false);
   });
 
+  it("budgetOverride.maxIterations='unbounded' → Options.maxTurns undefined (no pi shouldStopAfterTurn)", async () => {
+    await runTask(
+      COPILOT,
+      { user_message: 'hi', triggered_by: 'chat' },
+      { db: fakeDb, budgetOverride: { maxIterations: 'unbounded' } },
+    );
+    const opts = capturedOptions() as Record<string, unknown>;
+    expect(opts.maxTurns).toBeUndefined();
+  });
+
   it('empty budgetOverride object → registry maxTurns (|| 1 fallback preserved)', async () => {
     await runTask(
       COPILOT,
@@ -731,6 +741,20 @@ describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () =>
       () => {},
     );
     expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 90_000);
+  });
+
+  // YUK-1373 — an uncapped (non-finite) execution budget must never reach
+  // setTimeout: Node collapses setTimeout(Infinity) to ~1ms, which would abort
+  // the run instantly instead of leaving it unbounded.
+  it('streamTaskCollecting: non-finite timeoutMs arms no abort timer (never setTimeout(Infinity))', async () => {
+    const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
+    await streamTaskCollecting(
+      COPILOT,
+      { user_message: 'hi', triggered_by: 'chat' },
+      { db: fakeDb, budgetOverride: { timeoutMs: Number.POSITIVE_INFINITY } },
+      () => {},
+    );
+    expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), Number.POSITIVE_INFINITY);
   });
 });
 

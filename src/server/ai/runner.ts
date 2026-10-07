@@ -238,8 +238,11 @@ export interface RunTaskCtx {
    * `def.budget` verbatim ⇒
    * byte-identical to pre-seam (zero regression); only the copilot_run handler sets
    * it. It is consumed into maxTurns / the timer and is never an Options key.
+   * `maxIterations: 'unbounded'` removes the agentic-turn ceiling entirely —
+   * the pi lane then mounts no `shouldStopAfterTurn` (durable copilot runs are
+   * turn-uncapped; only Stop/cancellation/timeoutMs still end the loop).
    */
-  budgetOverride?: { maxIterations?: number; timeoutMs?: number };
+  budgetOverride?: { maxIterations?: number | 'unbounded'; timeoutMs?: number };
   /**
    * Optional caller-owned correlation id shared with an in-process MCP server.
    * Omitted callers keep runner-generated ids. `runTask` uses it for the first
@@ -481,8 +484,12 @@ function buildQueryOptions(
     systemPrompt: getTaskSystemPrompt(kind, ctx.subjectProfile),
     abortController,
     tools: ctx.allowedTools ?? def.allowedTools,
-    // YUK-575 (N5) — durable copilot run overrides the turn ceiling per-call.
-    maxTurns: (ctx.budgetOverride?.maxIterations ?? def.budget.maxIterations) || 1,
+    // YUK-575 (N5) — durable copilot run overrides the turn ceiling per-call;
+    // 'unbounded' removes it entirely (pi mounts no shouldStopAfterTurn).
+    maxTurns:
+      ctx.budgetOverride?.maxIterations === 'unbounded'
+        ? undefined
+        : (ctx.budgetOverride?.maxIterations ?? def.budget.maxIterations) || 1,
   };
   // YUK-923 — reasoning effort tier: per-run modelBinding wins over the
   // task-kind declaration; unset → the provider default applies.

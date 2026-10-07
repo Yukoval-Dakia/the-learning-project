@@ -144,6 +144,39 @@ describe('Copilot execution owner', () => {
     expect(run).not.toHaveBeenCalled();
   });
 
+  it('feeds collected partial text into finalization when the stream ends without terminalText', async () => {
+    // streamTaskCollecting's graceful-partial return carries `text` (collected
+    // assistant output) but NO `terminalText` (success-frame field). The owner
+    // must hand `result.text` to the finalizer — not '' — so a mid-flight cut
+    // still produces a reviewable reply instead of the empty fallback.
+    const stream = vi.fn<CopilotExecutionAdapters['streamTaskCollectingFn']>(async () => ({
+      task_run_id: 'root_partial_resume',
+      text: '已检索到两段材料，但整理尚未完成。',
+      partial: true,
+      error: 'error_max_turns',
+    }));
+    const db = { transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(db)) };
+    const run = vi.fn<CopilotExecutionAdapters['runAgentTaskFn']>();
+    const owner = ownerWith(run, stream);
+    const result = await owner(
+      db as never,
+      {
+        input,
+        sessionId: 'session_partial_resume',
+        sourceEventId: 'ask_partial_resume',
+        taskRunId: 'root_partial_resume',
+      },
+      {
+        cancellation: fakeCancellation(),
+        deadlineAt: Date.now() + 60_000,
+        subagentsEnabled: false,
+      },
+    );
+    expect(result.partial).toBe(true);
+    expect(result.finalization.preparedReply.text).toBe('已检索到两段材料，但整理尚未完成。');
+    expect(result.sdkSessionId).toBeUndefined();
+  });
+
   it('reinjects learner state on cached resumes and supplies complete current context for compact', async () => {
     const current = {
       ...input,
@@ -268,7 +301,11 @@ describe('Copilot execution owner', () => {
     const warning = mcp?.interceptInput?.(readTool, { limit: 10 });
     expect(warning?.truncationNote).toMatchObject({
       level: 'warning',
-      dimensions: { toolCalls: { used: 10, hard_remaining: 15 } },
+      // Uncapped surface: the hard limit is the JSON-safe inert sentinel, so
+      // hard_remaining reports effectively-infinite headroom.
+      dimensions: {
+        toolCalls: { used: 10, hard_remaining: Number.MAX_SAFE_INTEGER - 10 },
+      },
     });
   });
 
@@ -301,16 +338,15 @@ describe('Copilot execution owner', () => {
       taskRunId: 'root_2',
       signal: cancellation.signal,
       budgetOverride: {
-        maxIterations: DURABLE_COPILOT_EXECUTION_BUDGET.maxIterations,
+        maxIterations: 'unbounded',
         timeoutMs: DURABLE_COPILOT_EXECUTION_BUDGET.timeoutMs,
       },
     });
     expect(ctx?.sdkSession).toMatchObject({ persist: true });
     expect(ctx?.nativeCompaction).toMatchObject({ sessionContext: expect.anything() });
     expect(ctx?.allowedTools).toContain('Task');
-    expect(ctx?.piAgents?.['copilot-researcher']).toMatchObject({
-      maxTurns: DURABLE_COPILOT_EXECUTION_BUDGET.maxIterations,
-    });
+    // Root turns are uncapped, so the nested researcher carries no maxTurns.
+    expect(ctx?.piAgents?.['copilot-researcher']).not.toHaveProperty('maxTurns');
     expect(ctx?.onTaskEvent).toEqual(expect.any(Function));
     expect(ctx?.providerSessionDeadlineAt).toBeUndefined();
     expect(mcp?.ctx.providerSessionDeadlineAt).toBe(900_000);
@@ -324,10 +360,11 @@ describe('Copilot execution owner', () => {
     );
     expect(cancellation.beforeTool).toHaveBeenCalledTimes(1);
     const durableTool = { name: 'query_knowledge', effect: 'read' as const };
-    expect(DURABLE_COPILOT_EXECUTION_BUDGET).toMatchObject({ maxIterations: 6, maxToolCalls: 25 });
+    // Uncapped budget: 'unbounded' turns, finite recovery-bound timeout.
+    expect(DURABLE_COPILOT_EXECUTION_BUDGET).toMatchObject({
+      maxIterations: 'unbounded',
+    });
     const graphTool = { name: 'expand_knowledge_subgraph', effect: 'read' as const };
-    // Each request is valid under the real tool schema's maxNodes <=60.
-    // Only cumulative reads cross the per-message ceiling (16*60 +40).
     const graphArgs = {
       centerNodeId: 'kc_parameter_boundary',
       maxNodes: 60,
@@ -335,22 +372,16 @@ describe('Copilot execution owner', () => {
       include: ['ancestors', 'neighbors', 'recent_failures'],
       relationTypes: ['prerequisite', 'related'],
     };
-    for (let index = 1; index < DURABLE_COPILOT_EXECUTION_BUDGET.maxToolCalls; index += 1) {
+    // Well past every historical hard ceiling: the tracker still counts and can
+    // attach advisory warnings, but never truncates args and never soft-stops.
+    for (let index = 1; index <= 60; index += 1) {
       await expect(mcp?.beforeExecute?.(graphTool)).resolves.toBeUndefined();
       const capped = mcp?.interceptInput?.(graphTool, graphArgs);
-      if (index <= 16) expect(capped?.args).toEqual(graphArgs);
-      else if (index === 17) {
-        expect(capped?.args).toEqual({ ...graphArgs, maxNodes: 40 });
-        expect(capped?.truncationNote).toMatchObject({
-          level: 'hard',
-          truncated: true,
-          applied_limit: 40,
-          requested_limit: 60,
-        });
-      } else expect(capped?.softStop).toMatch(/hard context budget exhausted/);
+      expect(capped?.args).toEqual(graphArgs);
+      expect(capped?.softStop).toBeNull();
     }
     expect(graphArgs.maxNodes).toBe(60);
-    await expect(mcp?.beforeExecute?.(durableTool)).resolves.toMatch(/hard context budget reached/);
+    await expect(mcp?.beforeExecute?.(durableTool)).resolves.toBeUndefined();
   });
 
   it('owns optional web grounding and skill resolution', async () => {
@@ -388,6 +419,88 @@ describe('Copilot execution owner', () => {
     ]);
     expect(runnerContext?.piSkillDocs).toEqual(
       expect.arrayContaining([expect.objectContaining({ name: '_shared--copilot' })]),
+    );
+  });
+
+  it('emits tool_finished for settled remote-MCP calls and skips domain/native calls', async () => {
+    let runnerContext: Parameters<CopilotExecutionAdapters['runAgentTaskFn']>[2] | undefined;
+    const execute = createCopilotExecutionOwner({
+      streamTaskCollectingFn: async (_kind, _input, ctx) => {
+        runnerContext = ctx;
+        return {
+          task_run_id: 'remote_finished_task',
+          text: '已核对公开资料。',
+          terminalText: '已核对公开资料。',
+        };
+      },
+      buildExaMcpServerFn: () => ({
+        type: 'http',
+        url: 'https://mcp.exa.ai/mcp',
+      }),
+      resolveCopilotSkillDocsFn: async () => undefined,
+    });
+    const observe = vi.fn();
+
+    await execute(
+      {} as never,
+      { input, sessionId: 'session_remote', taskRunId: 'root_remote' },
+      {
+        cancellation: fakeCancellation(),
+        deadlineAt: 900_000,
+        subagentsEnabled: false,
+        observe,
+      },
+    );
+
+    const ctx = runnerContext as {
+      piHooks?: { afterToolCall?: readonly ((...args: never[]) => unknown)[] };
+    };
+    // Remote exa call — the domain bridge never sees it, so the pi
+    // afterToolCall observer is the only finish signal for its card.
+    await piAfter(ctx, {
+      call: { id: 'call_exa_1', name: 'mcp__exa__web_search_exa' },
+      args: { query: 'IELTS reading' },
+      isError: false,
+      output: [{ text: 'result payload' }],
+    });
+    // Remote failure also emits (with errorReason) — the card must not spin.
+    await piAfter(ctx, {
+      call: { id: 'call_exa_2', name: 'mcp__exa__web_fetch_exa' },
+      args: { url: 'https://example.com' },
+      isError: true,
+      error: new Error('fetch timeout'),
+    });
+    // Domain mount calls are finished by the bridge's onToolComplete — the
+    // observer must not double-emit; native Task calls never match `mcp__`.
+    await piAfter(ctx, {
+      call: { id: 'call_loom', name: 'mcp__loom__query_knowledge' },
+      args: { query: 'x' },
+      isError: false,
+      output: {},
+    });
+    await piAfter(ctx, {
+      call: { id: 'call_task', name: 'Task' },
+      args: {},
+      isError: false,
+      output: {},
+    });
+    await vi.waitFor(() => {
+      expect(observe).toHaveBeenCalledTimes(2);
+    });
+    expect(observe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'tool_finished',
+        toolName: 'mcp__exa__web_search_exa',
+        toolUseId: 'call_exa_1',
+      }),
+    );
+    expect(observe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'tool_finished',
+        toolName: 'mcp__exa__web_fetch_exa',
+        toolUseId: 'call_exa_2',
+        errorReason: expect.stringContaining('fetch timeout'),
+      }),
     );
   });
 
