@@ -962,7 +962,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "copilot", "sessions"]
             },
-            "description": "列出 Copilot 对话 session，最近更新优先\n\n**Notes:** 响应 { server_time: ISO 时间（自动续接 24h 窗口的服务端时钟）, sessions: [{ id, status, title, created_at, updated_at }] }。"
+            "description": "列出 Copilot 对话 session，最近更新优先\n\n**Notes:** 响应 { server_time: ISO 时间（自动续接 24h 窗口的服务端时钟）, sessions: [{ id, status, title, created_at, updated_at }], supported_derivation_policies: [allow, answer_only] }，Cache-Control: no-store。旧服务器可能缺省支持字段，客户端不得默认支持；每次受限发送及原 key 重试前重新读取，缺省/非法/失败时不发送受限内容。受限 202 还须显式确认匹配的 answer_only 用途。"
           },
           "response": []
         },

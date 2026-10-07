@@ -273,6 +273,21 @@ describe('Copilot declared route response contracts', () => {
     expect(Date.parse(body.server_time)).toBeLessThanOrEqual(Date.now());
     const listed = CopilotSessionsResponseSchema.parse(body);
     expect(listed.sessions).toContainEqual(created.session);
+    expect(body.supported_derivation_policies).toEqual(['allow', 'answer_only']);
+    expect(listed.supported_derivation_policies).toEqual(['allow', 'answer_only']);
+    expect(listedResponse.headers.get('Cache-Control')).toBe('no-store');
+    // Missing on legacy servers is detectable, never defaulted to support.
+    expect(
+      CopilotSessionsResponseSchema.parse({ sessions: [], server_time: body.server_time }),
+    ).not.toHaveProperty('supported_derivation_policies');
+    for (const unsupported of ['answer_only', ['allow', 'temporary'], [null]]) {
+      expect(
+        CopilotSessionsResponseSchema.safeParse({
+          ...body,
+          supported_derivation_policies: unsupported,
+        }).success,
+      ).toBe(false);
+    }
   });
 
   it('keeps the accept-chip anchor gate and parses its real success response', async () => {

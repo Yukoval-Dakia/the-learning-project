@@ -12,8 +12,16 @@
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
 import { __resetRegistryForTests, registerTool } from './registry';
+
+const policyRead = vi.hoisted(() => vi.fn<() => Promise<DerivationPolicyT>>());
+// Offline pipeline tests replace only the DB reader; execution still enforces
+// the accepted source policy. The real reader/guard is covered by DB tests.
+vi.mock('@/kernel/events/derivation-policy', () => ({
+  readEventDerivationPolicy: policyRead,
+}));
 
 const captured = vi.hoisted(() => ({
   toolCallLogs: [] as Array<Record<string, unknown>>,
@@ -106,6 +114,8 @@ const ctx: ToolContext = {
 };
 
 beforeEach(() => {
+  policyRead.mockReset();
+  policyRead.mockResolvedValue('allow');
   __resetRegistryForTests();
   captured.toolCallLogs.length = 0;
   captured.mirroredLinks.length = 0;
@@ -142,6 +152,34 @@ describe('piToolWireName / mount descriptors', () => {
 });
 
 describe('buildPiDomainAgentTools', () => {
+  it('uses the accepted causal policy even when the caller declares allow', async () => {
+    policyRead.mockResolvedValue('answer_only');
+    const execute = vi.fn(() => ({ hits: ['must not run'] }));
+    registerTool(makeTool('read_mistakes', execute));
+    const [agentTool] = buildPiDomainAgentTools({
+      ctx: { ...ctx, derivationPolicy: 'allow' },
+      serverName: 'loom',
+      toolNames: ['read_mistakes'],
+    });
+    const result = await agentTool.execute(
+      'tc_restricted',
+      { q: 'private hypothesis, not learning evidence' },
+      undefined,
+    );
+    expect(policyRead).toHaveBeenCalledWith(ctx.db, ctx.causedByEventId);
+    expect(result.content).toEqual([
+      { type: 'text', text: expect.stringContaining('仅用于本次回答') },
+    ]);
+    expect(execute).not.toHaveBeenCalled();
+    expect(captured.toolCallLogs[0]).toMatchObject({
+      error_reason: expect.stringContaining('仅用于本次回答'),
+    });
+    expect(captured.events[0]).toMatchObject({
+      action: 'tool_use',
+      outcome: 'failure',
+      payload: { derivation_policy: 'answer_only' },
+    });
+  });
   it('compiles a DomainTool into an AgentTool with wire name + JSON-schema parameters', () => {
     registerTool(makeTool('read_mistakes', () => ({ hits: ['a'] })));
     const [agentTool] = buildPiDomainAgentTools({

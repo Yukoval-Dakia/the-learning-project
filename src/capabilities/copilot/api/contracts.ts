@@ -107,6 +107,8 @@ export const CopilotSessionSchema = z.object({
 export const CopilotSessionsResponseSchema = z.object({
   server_time: z.string().datetime(),
   sessions: z.array(CopilotSessionSchema),
+  // Legacy responses omit this field; absence never promises policy support.
+  supported_derivation_policies: z.array(DerivationPolicy).optional(),
 });
 
 export const CopilotCreateSessionResponseSchema = z.object({

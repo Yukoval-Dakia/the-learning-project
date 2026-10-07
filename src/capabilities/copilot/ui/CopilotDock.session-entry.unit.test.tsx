@@ -36,6 +36,7 @@ const { apiFetchMock, apiJsonMock, consumeDurableMock, sessionsQueryState, drawe
     sessionsQueryState: {
       data: null as {
         server_time?: string;
+        supported_derivation_policies?: Array<'allow' | 'answer_only'>;
         sessions: Array<{
           id: string;
           status: string;
@@ -147,7 +148,11 @@ vi.mock('./subtask-events', async (importOriginal) => {
 });
 
 import { CopilotDock } from './CopilotDock';
-import { PENDING_COPILOT_TURN_STORAGE_KEY } from './durable-reconnect-storage';
+import {
+  PENDING_COPILOT_TURN_STORAGE_KEY,
+  loadCopilotDerivationPreference,
+  saveCopilotDerivationPreference,
+} from './durable-reconnect-storage';
 
 let queryClient: QueryClient;
 function render(ui: ReactNode) {
@@ -368,6 +373,7 @@ describe('CopilotDock 会话入口 (YUK-1340)', () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(FROZEN_NOW);
     window.sessionStorage.clear();
+    window.localStorage.clear();
     apiFetchMock.mockReset();
     apiJsonMock.mockReset();
     consumeDurableMock.mockReset();
@@ -375,6 +381,7 @@ describe('CopilotDock 会话入口 (YUK-1340)', () => {
     sessionsQueryState.refetch.mockReset();
     sessionsQueryState.refetch.mockImplementation(async () => ({
       server_time: FROZEN_NOW.toISOString(),
+      supported_derivation_policies: ['allow', 'answer_only'],
       ...sessionsQueryState.data,
     }));
     createSessionHandler = async () => createSessionResponse('s-created-default');
@@ -403,6 +410,47 @@ describe('CopilotDock 会话入口 (YUK-1340)', () => {
     vi.useRealTimers();
     cleanup();
     queryClient.clear();
+  });
+
+  it('保留受限偏好并显示旧服务器未支持，输入内容不会发送或丢失', async () => {
+    const user = userEvent.setup();
+    saveCopilotDerivationPreference('answer_only');
+    sessionsQueryState.data = {
+      sessions: HISTORY_MULTI_STATUS,
+      supported_derivation_policies: undefined,
+    };
+    render(<CopilotDock pathname="/subjects/math" navigate={vi.fn()} />);
+    await waitFor(() => expect(composerDisabled()).toBe(false));
+    expect((screen.getByLabelText('本轮用途') as HTMLSelectElement).value).toBe('answer_only');
+    expect(screen.getByRole('status').textContent).toContain('当前服务器不支持');
+    const input = screen.getByTestId('copilot-composer-input');
+    await user.type(input, '仅为临时假设：含边界、反例与未经验证的长式推导。');
+    await user.click(screen.getByTestId('copilot-composer-send'));
+    await waitFor(() =>
+      expect(screen.getByTestId('copilot-error').textContent).toContain('当前服务器'),
+    );
+    expect(apiFetchMock).not.toHaveBeenCalled();
+    expect((input as HTMLTextAreaElement).value).toContain('未经验证');
+    expect(loadCopilotDerivationPreference()).toBe('answer_only');
+  });
+
+  it('检查服务器支持时显示加载状态，不静默切换已保存的用途', async () => {
+    saveCopilotDerivationPreference('answer_only');
+    const gate = deferred<unknown>();
+    sessionsQueryState.refetch.mockReturnValueOnce(gate.promise);
+    render(<CopilotDock pathname="/subjects/math" navigate={vi.fn()} />);
+    expect(screen.getByRole('status').textContent).toContain('检查');
+    expect((screen.getByLabelText('本轮用途') as HTMLSelectElement).value).toBe('answer_only');
+    await act(async () =>
+      gate.resolve({
+        server_time: FROZEN_NOW.toISOString(),
+        sessions: HISTORY_MULTI_STATUS,
+        supported_derivation_policies: ['allow', 'answer_only'],
+      }),
+    );
+    await waitFor(() => expect(composerDisabled()).toBe(false));
+    expect(screen.getByRole('status').textContent).toContain('聊天和必要运行记录仍会保存');
+    expect(loadCopilotDerivationPreference()).toBe('answer_only');
   });
 
   it('落位最近的可继续会话（active/idle），不被更新的 ended 抢走，也不自动建会话', async () => {

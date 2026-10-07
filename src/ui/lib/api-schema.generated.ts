@@ -11259,6 +11259,7 @@ export interface operations {
                             /** Format: date-time */
                             updated_at: string;
                         }[];
+                        supported_derivation_policies?: ("allow" | "answer_only")[];
                     };
                 };
             };

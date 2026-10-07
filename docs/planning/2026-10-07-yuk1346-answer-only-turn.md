@@ -1,6 +1,6 @@
 # YUK-1346 单轮内容用途控制
 
-状态：2026-10-07，由父线程依持续自主交付授权确定的实施方案。只读架构咨询、验收咨询及本地源码实施/scoped 验证已完成；父线程独立审查、真实隔离验收、exact-head CI 和发布尚未完成。Linear 为 YUK-1346，不标 Done。
+状态：2026-10-07，由父线程依持续自主交付授权确定的实施方案。源码实施、本地 scoped 验证与父线程独立初审已完成；PR1588 P1/CI fixture 修复后的唯一验证审查、真实隔离验收、新 exact-head CI 和发布待父线程完成。Linear 为 YUK-1346，不标 Done。
 
 ## 用户行为与边界
 
@@ -55,7 +55,7 @@
 - `src/capabilities/copilot/ui/CopilotDock.tsx`、`durable-reconnect-storage.ts` 及其相关 scoped tests。
 - `src/capabilities/copilot/ui/message-projection.ts`、`replay.ts`：将已受理用途传至 pending/live/replay 问答，不以当前 selector 覆盖历史。
 - `src/capabilities/copilot/server/chat-contracts.ts`、`durable-dispatch.ts`、`conversation-writes.ts`、`turns.ts`、`copilot-run-input.ts`、`copilot-execution.ts`、`copilot-worker-session.ts` 和对应测试；`live-turn-context.ts` / `correction-contract.ts` 仅负责模型序列化与确定性引用防线。
-- `src/capabilities/copilot/api/chat.ts`、`api/turns.ts`、API response contracts、`jobs/copilot_run.ts` 以及必要的取消/终态恢复调用方。
+- `src/capabilities/copilot/api/chat.ts`、`api/turns.ts`、`api/sessions.ts`、既有 `api/contracts.ts` response contracts、`jobs/copilot_run.ts` 以及必要的取消/终态恢复调用方。PR1588 P1 修复沿用 sessions GET 明示支持的用途；UI 每次受限发送及原 key 重试前重新读取，不使用旧缓存授权。受限 202 必须显式确认匹配用途，缺失/非法/不匹配时保留原 key/body 并说明不确定；未确认时不能显示已受理用途 badge。
 - `src/core/schema/event/known.ts` 中 Copilot 和 tool_use payload 契约；`src/kernel/tools/types.ts`、`src/server/ai/tools/mcp-bridge.ts` 中冻结策略传递与镜像。
 - `src/server/memory/triggers.ts`、`client.ts` 及必要的恢复入口、brief 读取防线；`src/capabilities/copilot/server/tools/query-events.ts`、`src/capabilities/practice/server/tools/get-attempt-context.ts` 等已证实会再次提供这些事件的证据读取者。
 - `src/server/session/conversation.ts` 仅在现有 cursor 更新需要安全的条件写入时修改。
@@ -70,6 +70,8 @@
 在既有接纳事务中冻结原始 ask、QUEUED/job_data 的最终策略。worker 以被接纳的源事件为真相，与 job_data 不一致时拒绝执行。沿用 advisory lock、first-write-wins 与 FIFO，不新建可变策略表。
 
 202、公开 turns、重连存储与 pending UI 显示同一策略。不要让刷新恢复的手工 body 投影丢字段，也不要用用户当前开关重建旧请求。成功、失败、取消、reconcile 修复的回复都继承原 ask 策略。
+
+PR1588 P1 修复补充：既有 `GET /api/copilot/sessions` 显式返回 `supported_derivation_policies: ['allow', 'answer_only']` 并禁用缓存。契约允许旧服务器缺省字段，仅供检测旧版本，不能默认支持。UI 在每次受限发送和原 key 重试前直接重新 GET，缺省、非法或失败时不 POST，保留原输入/重试 tuple。selector 显示检查中或当前不可用，保持已保存选择。受限请求的 202 只有显式匹配 `answer_only` ACK 才完成客户端接纳；缺失、非法、`allow` 或无法读取 JSON 时仍保留原 key/body，显示用途不确定，不显示受限已受理 badge。普通 allow 保持旧 202/Location 恢复协议，公开 turns 和 active_runs 的服务端策略仍是已接纳真相。
 
 ## 派生与跨轮约束
 
@@ -96,6 +98,8 @@ memory ingest 在 provider lookup、provider-start、add、reconcile 和 brief f
 本轮暂按 $2 保守预算占用，仍受自主交付章程每次 $5 / 每日 $20 上限。未知 SDK 内部费用和 wire 数量不伪装精确，已有 YUK-1342 观测缺口不因本功能验收改称解决。
 
 生产在独立审查、exact-head CI Gate、等待窗和真实验收后，按既有停写备份/恢复/兼容流程发布。此文不是验收记录。
+
+独立初审确认的发布约束继续有效：客户端 preflight 无法使跨版本 rolling deploy 原子化，检查之后服务器仍可能换成旧版本。生产发布必须停止所有写入者，完成停写备份/恢复要求，并让新 worker 在新 app 恢复写入之前就绪；不得混用旧 worker。受限数据写入后禁止直接回退到旧 `f3bfff2cf` app/worker，因为旧版本会消费受限历史与派生。此约束不是源码修复的替代，也不是本子线程已执行的部署。
 
 
 ## 本地实施证据与父线程交接
@@ -125,3 +129,11 @@ memory ingest 在 provider lookup、provider-start、add、reconcile 和 brief f
 最终日志位于 `/tmp/yuk1346-unit-final.log`、`/tmp/yuk1346-db-final.log`、`/tmp/yuk1346-typecheck.log`、`/tmp/yuk1346-lint.log`、`/tmp/yuk1346-build.log`、`/tmp/yuk1346-api-generation.log`、`/tmp/yuk1346-postman.log` 和 `/tmp/yuk1346-audit-*.log`。咨询指针仍为 `/tmp/yuk1346-retention-consult.md`、`/tmp/yuk1346-acceptance-recipe.md`，不是运行验收证据。
 
 未执行 paid model、生产库/凭据访问、真实最终浏览器/模型输入验收、外部 tracker 更新、PR/push/watch/merge/deploy。上述 unit 使用 provider/SDK substitutes，DB 使用实际持久 owners；不以它们冒称真实模型输出或发布验收。父线程继续按前述隔离副本和两条新消息预算验证准确镜像、实际模型输入排除、普通记忆链与无受限业务派生，然后完成独立 review、exact-head CI、等待窗和发布。无新发现的独立 material follow-up；本票剩余发布门槛属于既定验收，Linear capture/status 由父线程负责。
+
+## PR1588 P1 与 CI fixture 修复的本地证据
+
+本轮仅在同一隔离树从 clean `c9ab7e2993f4d9f63926622d1f1ea88192bc99f5` 修复 discussion `4202949273` 与 exact-c9 CI Gate `37569454148` 的 unit shard 3 失败。RED 重现 `pi-tools.test.ts` 原三例 `db.select is not a function`、10 项组件失败，以及 sessions 实际 GET 缺省能力字段的 DB 契约失败。离线 Pi fixture 只替换 `readEventDerivationPolicy` DB seam；生产 reader/守卫未修改。新增用例确认 caller 声明 allow 也不能绕过受限因果源。现有真实 Postgres 测试仍证明六工具名单/effect 双重限制和镜像 outbox 排除。
+
+修复后 scoped GREEN 为 **7 文件 142 unit passed / 3 文件 29 DB passed**。组件覆盖初始旧服务器、先前缓存支持后 fresh 缺省/非法/失败、加载提示、选择持久性、原 key/body 重试、missing/mismatching/invalid/null/unreadable 202 ACK 无错误 badge，以及 legacy allow ACK。DB 覆盖严格 enum、旧缺省不默认支持、真实 sessions 响应与 no-store、既有持久队列/派生 guard。`pnpm typecheck`、`CODEX_FULL_GATE=1 pnpm lint` 和 `CODEX_FULL_GATE=1 pnpm build` 全部 exit 0；lint 297 warnings / 0 errors，baseline 未放宽。API client 与 Postman 已重新生成。14 项相关审计全通过：schema、partition、api-contracts、api-client（重新生成与 staged 生成物一致）、api-client-usage、capability-boundaries、architecture-deepening、provider-lanes、provider-attempt-truth、learner-copy、profile、task-census、draft-status、draft-status-reads --strict。
+
+日志 `/tmp/yuk1346-p1-{pi-red,ui-red,contract-red,unit-final,db-final,typecheck,lint,build,api-generation,postman}.log`；相关审计日志 `/tmp/yuk1346-p1-audit-*.log`。这些是本地源码/组件/API/DB 证据，不是新的 exact-head CI、独立验证审查、真实浏览器/模型验收或发布证据。父线程独占 push、discussion 回复/resolve、唯一 P1 修复后 verification review、真实隔离验收、Linear capture/status 与发布。没有新增独立 actionable follow-up，两条修复均属既有 YUK-1346/PR1588。未触及 `/tmp/yuk1346-acceptance-driver`。源码 commit 完成后本子线程无继续写入授权。

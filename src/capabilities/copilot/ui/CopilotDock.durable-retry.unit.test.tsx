@@ -5,11 +5,14 @@ import userEvent from '@testing-library/user-event';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { apiFetchMock, apiJsonMock, consumeDurableMock } = vi.hoisted(() => ({
-  apiFetchMock: vi.fn(),
-  apiJsonMock: vi.fn(),
-  consumeDurableMock: vi.fn(),
-}));
+const { apiFetchMock, apiJsonMock, consumeDurableMock, sessionCapabilitiesMock } = vi.hoisted(
+  () => ({
+    apiFetchMock: vi.fn(),
+    apiJsonMock: vi.fn(),
+    consumeDurableMock: vi.fn(),
+    sessionCapabilitiesMock: vi.fn(),
+  }),
+);
 
 vi.mock('@/ui/lib/api', () => ({
   ApiAuthError: class ApiAuthError extends Error {},
@@ -31,6 +34,7 @@ vi.mock('@/ui/lib/api', () => ({
 
 vi.mock('@tanstack/react-query', () => {
   const data = {
+    supported_derivation_policies: ['allow', 'answer_only'],
     server_time: new Date().toISOString(),
     sessions: [
       {
@@ -173,14 +177,21 @@ function activeRun(
   } as const;
 }
 
-function accepted(runId: string): Response {
-  return new Response(JSON.stringify({ run_id: runId, session_id: 'copilot-session-test' }), {
-    status: 202,
-    headers: {
-      Location: `/api/jobs/copilot_run/${runId}/events`,
-      'Content-Type': 'application/json',
+function accepted(runId: string, policy?: unknown): Response {
+  return new Response(
+    JSON.stringify({
+      run_id: runId,
+      session_id: 'copilot-session-test',
+      derivation_policy: policy,
+    }),
+    {
+      status: 202,
+      headers: {
+        Location: `/api/jobs/copilot_run/${runId}/events`,
+        'Content-Type': 'application/json',
+      },
     },
-  });
+  );
 }
 
 function deferred<T>() {
@@ -224,7 +235,7 @@ describe('CopilotDock unified durable conversation', () => {
     expect(original.skill_context).toBeUndefined();
     await waitFor(() => expect(screen.getByRole('button', { name: '恢复' })).toBeDefined());
     await user.selectOptions(screen.getByLabelText('本轮用途'), 'allow');
-    apiFetchMock.mockResolvedValueOnce(accepted('run-restricted-recovered'));
+    apiFetchMock.mockResolvedValueOnce(accepted('run-restricted-recovered', 'answer_only'));
     await user.click(screen.getByRole('button', { name: '恢复' }));
     await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(2));
     expect(JSON.parse(apiFetchMock.mock.calls[1][1].body)).toEqual(original);
@@ -236,6 +247,137 @@ describe('CopilotDock unified durable conversation', () => {
     await user.click(screen.getByTestId('copilot-session-list-toggle'));
     await user.click(screen.getByText('旧对话：定义域复盘'));
     expect((screen.getByLabelText('本轮用途') as HTMLSelectElement).value).toBe('answer_only');
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['allow only', ['allow']],
+    ['empty', []],
+    ['invalid member', ['answer_only', 'temporary']],
+    ['invalid list', 'answer_only'],
+  ])(
+    'blocks a restricted draft after cached support when fresh capabilities are %s',
+    async (_label, policies) => {
+      const user = userEvent.setup();
+      sessionCapabilitiesMock.mockResolvedValueOnce({ supported_derivation_policies: policies });
+      render(<CopilotDock pathname="/subjects/math" navigate={vi.fn()} />);
+      await user.selectOptions(screen.getByLabelText('本轮用途'), 'answer_only');
+      const text = '仅核对假设：椭圆退化分支、单位和边界，尚不能作为独立迁移证据。';
+      await sendMessage(user, text);
+      await waitFor(() =>
+        expect(screen.getByTestId('copilot-error').textContent).toContain('当前服务器'),
+      );
+      expect(apiFetchMock).not.toHaveBeenCalled();
+      expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).value).toBe(
+        text,
+      );
+      expect((screen.getByLabelText('本轮用途') as HTMLSelectElement).value).toBe('answer_only');
+      expect(screen.getByRole('status').textContent).toContain('当前服务器');
+      expect(loadPersistedPendingCopilotTurns()).toEqual([]);
+      expect(screen.queryAllByText('仅用于本次回答', { selector: 'span' })).toEqual([]);
+    },
+  );
+
+  it('keeps the draft while checking support and when the fresh capability read fails', async () => {
+    const user = userEvent.setup();
+    const capabilityRead = deferred<unknown>();
+    sessionCapabilitiesMock.mockReturnValueOnce(capabilityRead.promise);
+    render(<CopilotDock pathname="/today" navigate={vi.fn()} />);
+    await user.selectOptions(screen.getByLabelText('本轮用途'), 'answer_only');
+    await sendMessage(user, '临时推演含嵌套条件，先验证 a=0 与 a≠0 两条分支。');
+    expect(screen.getByRole('status').textContent).toContain('检查');
+    expect(apiFetchMock).not.toHaveBeenCalled();
+    expect((screen.getByTestId('copilot-composer-input') as HTMLTextAreaElement).value).toContain(
+      '嵌套条件',
+    );
+    await act(async () => capabilityRead.reject(new Error('offline')));
+    await waitFor(() =>
+      expect(screen.getByTestId('copilot-error').textContent).toContain('当前服务器'),
+    );
+    expect(apiFetchMock).not.toHaveBeenCalled();
+    expect(loadPersistedPendingCopilotTurns()).toEqual([]);
+  });
+
+  it('checks fresh support on an original-key retry, preserving the tuple until a matching ACK', async () => {
+    const user = userEvent.setup();
+    apiFetchMock.mockRejectedValueOnce(new Error('lost 202 acknowledgement'));
+    render(<CopilotDock pathname="/subjects/math" navigate={vi.fn()} />);
+    await user.selectOptions(screen.getByLabelText('本轮用途'), 'answer_only');
+    await sendMessage(user, '受限假设：不能据此更新计划；退化情况和长式推导都需复核。');
+    await screen.findByRole('button', { name: '恢复' });
+    const original = loadPersistedPendingCopilotTurns()[0];
+    const firstRequest = apiFetchMock.mock.calls[0][1];
+    expect(screen.queryAllByText('仅用于本次回答', { selector: 'span' })).toEqual([]);
+    await user.selectOptions(screen.getByLabelText('本轮用途'), 'allow');
+    sessionCapabilitiesMock.mockResolvedValueOnce({});
+    await user.click(screen.getByRole('button', { name: '恢复' }));
+    await waitFor(() =>
+      expect(screen.getByTestId('copilot-pending-recovery').textContent).toContain('当前服务器'),
+    );
+    expect(apiFetchMock).toHaveBeenCalledTimes(1);
+    expect(loadPersistedPendingCopilotTurns()).toEqual([original]);
+    apiFetchMock.mockResolvedValueOnce(accepted('run-confirmed-restricted', 'answer_only'));
+    await user.click(screen.getByRole('button', { name: '恢复' }));
+    await waitFor(() => expect(consumeDurableMock).toHaveBeenCalledTimes(1));
+    expect(sessionCapabilitiesMock).toHaveBeenCalledTimes(3);
+    expect(apiFetchMock.mock.calls[1][1]).toEqual(firstRequest);
+    expect(loadPersistedPendingCopilotTurns()).toEqual([]);
+    expect(screen.getAllByText('仅用于本次回答', { selector: 'span' })).toHaveLength(2);
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['mismatching', 'allow'],
+    ['invalid', 'temporary'],
+    ['null', null],
+  ])(
+    'retains a restricted original key/body and shows uncertainty for a %s 202 policy ACK',
+    async (_label, policy) => {
+      const user = userEvent.setup();
+      apiFetchMock.mockResolvedValueOnce(accepted('run-unconfirmed-restricted', policy));
+      render(<CopilotDock pathname="/today" navigate={vi.fn()} />);
+      await user.selectOptions(screen.getByLabelText('本轮用途'), 'answer_only');
+      await sendMessage(user, '本次只推演一个含反例的临时假设，保留原始条件和边界。');
+      await screen.findByRole('button', { name: '恢复' });
+      expect(screen.getByTestId('copilot-pending-recovery').textContent).toContain(
+        '用途暂时无法确认',
+      );
+      const pending = loadPersistedPendingCopilotTurns()[0];
+      expect(pending?.idempotencyKey).toBe(
+        apiFetchMock.mock.calls[0][1].headers['Idempotency-Key'],
+      );
+      expect(pending?.requestBody).toEqual(JSON.parse(apiFetchMock.mock.calls[0][1].body));
+      expect(consumeDurableMock).not.toHaveBeenCalled();
+      expect(screen.queryAllByText('仅用于本次回答', { selector: 'span' })).toEqual([]);
+    },
+  );
+
+  it('does not accept a restricted 202 with unreadable JSON through Location alone', async () => {
+    const user = userEvent.setup();
+    apiFetchMock.mockResolvedValueOnce(
+      new Response('{broken', {
+        status: 202,
+        headers: { Location: '/api/jobs/copilot_run/run-unreadable/events' },
+      }),
+    );
+    render(<CopilotDock pathname="/today" navigate={vi.fn()} />);
+    await user.selectOptions(screen.getByLabelText('本轮用途'), 'answer_only');
+    await sendMessage(user, '仅用于本次回答的假设，包含未证实的推理。');
+    await screen.findByRole('button', { name: '恢复' });
+    expect(loadPersistedPendingCopilotTurns()).toHaveLength(1);
+    expect(consumeDurableMock).not.toHaveBeenCalled();
+    expect(screen.queryAllByText('仅用于本次回答', { selector: 'span' })).toEqual([]);
+  });
+
+  it('accepts legacy allow 202 without a policy ACK or restricted capability read', async () => {
+    const user = userEvent.setup();
+    apiFetchMock.mockResolvedValueOnce(accepted('run-legacy-allow'));
+    sessionCapabilitiesMock.mockRejectedValueOnce(new Error('legacy server'));
+    render(<CopilotDock pathname="/today" navigate={vi.fn()} />);
+    await sendMessage(user, '日常复盘：已独立验证定义域、单位与边界条件。');
+    await waitFor(() => expect(consumeDurableMock).toHaveBeenCalledTimes(1));
+    expect(sessionCapabilitiesMock).not.toHaveBeenCalled();
+    expect(loadPersistedPendingCopilotTurns()).toEqual([]);
   });
 
   it('keeps the exact pending body when a 202 contains an invalid accepted policy', async () => {
@@ -270,10 +412,15 @@ describe('CopilotDock unified durable conversation', () => {
     apiFetchMock.mockReset();
     apiJsonMock.mockReset();
     consumeDurableMock.mockReset();
+    sessionCapabilitiesMock.mockReset();
+    sessionCapabilitiesMock.mockResolvedValue({
+      supported_derivation_policies: ['allow', 'answer_only'],
+    });
     snapshots.clear();
     snapshots.set('copilot-session-test', snapshot('copilot-session-test'));
     snapshots.set('copilot-session-old', snapshot('copilot-session-old'));
     apiJsonMock.mockImplementation(async (url: string) => {
+      if (url === '/api/copilot/sessions') return sessionCapabilitiesMock();
       if (url.startsWith('/api/copilot/turns')) {
         const sessionId = new URL(url, 'http://local').searchParams.get('session_id') ?? '';
         return snapshots.get(sessionId) ?? snapshot(sessionId);
