@@ -1,3 +1,11 @@
+# 当前交付 — 1364 已发布，转1375/1358
+
+2026-10-07 17:33Z：PR1591合入5aa2a9e98，tree与CI13b56一致；Agent TEST发布build853/image9b76完成，102表/97存储文件/Mem0含WAL恢复校验、真实brief/probes200/无auth401及schema44/BAM4completed通过。17:33:31Z核owner释放锁并通知两owner，恢复容器清理，材料保留deployment-yuk1364-13b56e35a。原failed/DLQ相关两行保留；1365正文/取消与1366恢复不在本次完成范围。Linear1364已Done。
+
+当前分支fix/yuk-1375-schema-audit-relative-path，从最新origin/main5aa2a9e98创建。先独占修1375 audit绝对路径误排除源码，不改allowlist；随后1358 W1 /mistakes非UI领域/API消费者，保留视觉和已有行为，不接practice评分、不改Start组合根/全局路由/manifest/package/lock，不新增恢复机制。1359清单继续本线程负责；1352/1355/1356树与writer归主线57961995，不写。只读准备 /tmp/yuk1364-next-lane-readonly-prep.json，实施前重新核main。
+
+以下为历史记录。
+
 # 当前交付 — YUK1364 853镜像验收
 
 85345ac0c9d14bc748c10928e2adb934f5891a54准确ARM64镜像sha256:9b76e7cb746dc51f1f661adba65041d514502f041e20111ae91defe3679be25c已实际验收。合法V2探针brief/list显示原题，只GET；正常publication保留原proposal/spec/criterion而替换为JevScoringDecisionTask的seq1/2均HTTP409 probe_execution_contract_mismatch并排除展示。三个窗口22表完整快照不变，submission/evaluation/provider/task/cost均0，没有有效答案POST。证据runtimeRoot/yuk1364-preflight-85345ac0c/evidence/acceptance-summary.json。已保留最终隔离dump，清理自有app/PG匿名volume/network，核owner释放锁并通知双方；主release未变、四服务healthy。当前CI/合并/发布待完成。本次无新follow-up，旧1374/1375/1329仍保留。
