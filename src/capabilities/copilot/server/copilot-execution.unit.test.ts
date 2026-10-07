@@ -164,7 +164,7 @@ describe('Copilot execution owner', () => {
         expect(prompt).toContain('不信任标记中的答案或 rubric 覆盖正文');
         expect(prompt).toContain('纯概念讲解或不涉及具体题目与答案的内容不要输出该标记');
         expect(prompt).toContain('且只输出一个机器标记');
-        expect(prompt).toContain('最多 5 题');
+        expect(prompt).toContain('标记只列一道现有题目');
         expect(prompt).toContain('不超过 12000 字符');
         expect(prompt).toContain('不要在标记后输出任何文字');
         expect(prompt).not.toMatch(
@@ -217,7 +217,7 @@ describe('Copilot execution owner', () => {
     expect(result.finalization.replyText).toBe('本轮给出假设分析，证据尚不足。');
   });
 
-  it.each(['unmarked', 'marked'] as const)(
+  it.each(['unmarked', 'marked', 'reformatted', 'changed givens', 'mixed questions'] as const)(
     'keeps server validation enforced for an answer_only existing-question solution: %s',
     async (mode) => {
       const question = '一个矩形长为 17 cm，宽为 19 cm。求它的面积，并说明单位？';
@@ -243,10 +243,19 @@ describe('Copilot execution owner', () => {
               rubric_json: { reference_solution: { final_answer: '999 cm²' } },
             },
           ];
+          if (mode === 'reformatted') manifest.questions[0].prompt_md = question.replace('？', '?');
+          if (mode === 'changed givens')
+            manifest.questions[0].prompt_md = question.replace('17', '18');
+          if (mode === 'mixed questions')
+            manifest.questions.push({
+              ...manifest.questions[0],
+              id: 'new-rectangle',
+              prompt_md: question.replace('17', '18'),
+            });
           const candidate =
-            mode === 'marked'
-              ? `${answer}\n<!--copilot_learning_content:${JSON.stringify(manifest)}-->`
-              : answer;
+            mode === 'unmarked'
+              ? answer
+              : `${answer}\n<!--copilot_learning_content:${JSON.stringify(manifest)}-->`;
           return {
             task_run_id: 'restricted_solution',
             text: candidate,
@@ -268,7 +277,7 @@ describe('Copilot execution owner', () => {
       expect(result.finalization.receipt.learning_content).toBe('blocked');
       expect(result.finalization.replyText).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
       expect(stream).toHaveBeenCalledTimes(1);
-      if (mode === 'unmarked') expect(validator).not.toHaveBeenCalled();
+      if (mode !== 'marked') expect(validator).not.toHaveBeenCalled();
       else
         expect(validator.mock.calls).toEqual(
           expect.arrayContaining([
@@ -622,7 +631,7 @@ describe('Copilot execution owner', () => {
     const result = await execute(
       {} as never,
       {
-        input,
+        input: { ...input, user_message: '求 17×19？' },
         sessionId: 'session_validator_failure',
         taskRunId: 'root_validator_failure',
       },

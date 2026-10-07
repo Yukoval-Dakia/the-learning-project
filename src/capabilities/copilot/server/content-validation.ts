@@ -144,73 +144,40 @@ export function copilotLearningContentRequiresValidation(candidateText: string):
   );
 }
 
-function normalizedLearningText(value: string): string {
-  return value
-    .replace(/[*_`~#]/g, '')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .toLocaleLowerCase();
-}
-
 function bindLearningContentToReply(
   content: CopilotLearningContent,
   replyText: string,
   contextText: string,
-): { content: CopilotLearningContent; answerScope?: 'full_response' } | null {
-  const normalizedReply = normalizedLearningText(replyText);
-  const normalizedContext = normalizedLearningText(contextText);
+): { content: CopilotLearningContent; answerScope: 'full_response' } | null {
   const visibleQuestionCount = [...replyText.matchAll(/(?:^|\n)\s*[^\n]{1,500}[？?](?=\n|$)/g)]
     .length;
   if (visibleQuestionCount > 0 && visibleQuestionCount !== content.questions.length) return null;
   if (new Set(content.questions.map((question) => question.id)).size !== content.questions.length)
     return null;
-  const existingQuestions = content.questions.filter((question) => {
-    const prompt = normalizedLearningText(question.prompt_md);
-    return prompt.length > 0 && normalizedContext.includes(prompt);
-  });
-  if (existingQuestions.length > 0) {
-    // Only one existing question has an unambiguous whole-response answer.
-    // Never assign the same response to several questions or fall back to a
-    // hidden summary merely because the question was repeated in the reply.
-    const question = existingQuestions[0];
-    if (
-      content.questions.length !== 1 ||
-      !question ||
-      replyText.trim().length === 0 ||
-      replyText.length > 12_000 ||
-      !(question.choices_md ?? []).every((choice) => {
-        const normalizedChoice = normalizedLearningText(choice);
-        return normalizedChoice.length > 0 && normalizedContext.includes(normalizedChoice);
-      })
-    )
-      return null;
-    const { rubric_json: _untrustedRubric, ...boundQuestion } = question;
-    return {
-      content: {
-        ...content,
-        questions: [{ ...boundQuestion, reference_md: replyText }],
-      },
-      answerScope: 'full_response',
-    };
-  }
-  const matches = content.questions.every((question) => {
-    const prompt = normalizedLearningText(question.prompt_md);
-    const promptInReply = normalizedReply.includes(prompt);
-    const promptInContext = normalizedContext.includes(prompt);
-    if (prompt.length === 0 || (!promptInReply && !promptInContext)) return false;
-    const choices = question.choices_md ?? [];
-    const choicesVisible = choices.every((choice) => {
-      const normalizedChoice = normalizedLearningText(choice);
-      return (
-        normalizedReply.includes(normalizedChoice) || normalizedContext.includes(normalizedChoice)
-      );
-    });
-    if (!choicesVisible) return false;
-    if (promptInReply) return true;
-    const reference = normalizedLearningText(question.reference_md ?? '');
-    return reference.length > 0 && normalizedReply.includes(reference);
-  });
-  return matches ? { content } : null;
+  // A reply marker cannot establish generated-question provenance. A failed
+  // existing-question match is ambiguous, not permission to judge its hidden
+  // reference. Generated previews use the trace-bound additionalQuestionContent
+  // consumer instead. Exact bytes preserve the original givens, including math
+  // operators that presentation normalization could otherwise erase.
+  const question = content.questions[0];
+  if (
+    content.questions.length !== 1 ||
+    !question ||
+    !question.prompt_md.trim() ||
+    !contextText.includes(question.prompt_md) ||
+    replyText.trim().length === 0 ||
+    replyText.length > 12_000 ||
+    !(question.choices_md ?? []).every((choice) => choice.trim() && contextText.includes(choice))
+  )
+    return null;
+  const { rubric_json: _untrustedRubric, ...boundQuestion } = question;
+  return {
+    content: {
+      ...content,
+      questions: [{ ...boundQuestion, reference_md: replyText }],
+    },
+    answerScope: 'full_response',
+  };
 }
 
 export interface CopilotLearningContentValidationDeps extends LearningContentValidationDeps {
@@ -288,6 +255,9 @@ export async function reviewCopilotLearningContent(
     extracted.status === 'valid' &&
     (!bound || (bound.answerScope === 'full_response' && deps.additionalQuestionContent))
   ) {
+    return finish(false, 'mapping_rejected');
+  }
+  if (deps.additionalQuestionContent && !deps.observedQuestion) {
     return finish(false, 'mapping_rejected');
   }
   let additionalValidated = false;

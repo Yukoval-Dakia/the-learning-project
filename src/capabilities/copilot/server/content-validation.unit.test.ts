@@ -109,6 +109,91 @@ function syntheticValidationTasks(
 }
 
 describe('server-bound full visible answer', () => {
+  it('rejects a reformatted existing prompt with an incorrect visible answer and correct hidden answer', async () => {
+    const reformatted = { ...syntheticQuestion, prompt_md: syntheticPrompt.replace('？', '?') };
+    const correctTasks = syntheticValidationTasks();
+    const incorrectTasks = syntheticValidationTasks('incorrect');
+    const runTaskFn: CopilotLearningContentValidationDeps['runTaskFn'] = (...args) =>
+      args[0] === 'SemanticJudgeTask' && JSON.stringify(args[1]).includes('25-9=25')
+        ? incorrectTasks(...args)
+        : correctTasks(...args);
+    const result = await reviewCopilotLearningContent(
+      `题目：${reformatted.prompt_md}\n答案：c=5，焦点为 (±5,0)。因为 25-9=25。\n${syntheticMarker([reformatted])}`,
+      syntheticPrompt,
+      'reformatted-existing-answer',
+      { db: {} as never, runTaskFn },
+    );
+    expect(result.passed).toBe(false);
+  });
+
+  it.each([
+    ['ASCII punctuation', syntheticPrompt.replace('？', '?')],
+    ['LaTeX delimiters', String.raw`椭圆 \(x²/25+y²/9=1\) 的焦点坐标是什么？请说明计算过程。`],
+    ['paraphrase', '已知椭圆 x²/25+y²/9=1，计算其焦点并解释步骤。'],
+    ['changed givens', syntheticPrompt.replace('/25', '/36')],
+  ])(
+    'fails closed for an unbound %s without reclassifying it as generated',
+    async (_name, prompt_md) => {
+      const runTaskFn = syntheticValidationTasks();
+      const question = { ...syntheticQuestion, prompt_md };
+      const result = await reviewCopilotLearningContent(
+        `题目：${prompt_md}\n答案：c=5，焦点为 (±5,0)。因为 25-9=25。\n${syntheticMarker([question])}`,
+        syntheticPrompt,
+        'ambiguous-existing-answer',
+        { db: {} as never, runTaskFn },
+      );
+      expect(result).toMatchObject({
+        passed: false,
+        replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY,
+        validationDecision: { reason: 'mapping_rejected', checks: [] },
+      });
+      expect(runTaskFn).not.toHaveBeenCalled();
+    },
+  );
+
+  it('keeps math operators in the original givens rather than normalizing them away', async () => {
+    const question = { ...syntheticQuestion, prompt_md: '计算 23 的值？' };
+    const runTaskFn = syntheticValidationTasks();
+    const result = await reviewCopilotLearningContent(
+      `题目：${question.prompt_md}\n答案：23。\n${syntheticMarker([question])}`,
+      '计算 2*3 的值？',
+      'changed-original-operator',
+      { db: {} as never, runTaskFn },
+    );
+    expect(result.validationDecision).toMatchObject({ reason: 'mapping_rejected', checks: [] });
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  it('judges wrong visible givens against the exact original prompt, ignoring the correct hidden answer', async () => {
+    const correctTasks = syntheticValidationTasks();
+    const incorrectTasks = syntheticValidationTasks('incorrect');
+    const runTaskFn = vi.fn<CopilotLearningContentValidationDeps['runTaskFn']>((...args) =>
+      args[0] === 'SemanticJudgeTask' && JSON.stringify(args[1]).includes('25-9=25')
+        ? incorrectTasks(...args)
+        : correctTasks(...args),
+    );
+    const visible = '题目：椭圆 x²/36+y²/9=1。\n答案：c=5，因为 25-9=25。';
+    const result = await reviewCopilotLearningContent(
+      `${visible}\n${syntheticMarker()}`,
+      syntheticPrompt,
+      'exact-original-wrong-visible',
+      { db: {} as never, runTaskFn },
+    );
+    expect(result.passed).toBe(false);
+    expect(result.validationDecision?.checks[0]?.purpose).toBe('existing_answer');
+    expect(
+      runTaskFn.mock.calls.find(([kind]) => kind === 'SolutionGenerateTask')?.[1],
+    ).toMatchObject({
+      prompt_md: syntheticPrompt,
+      existing_answers_hint: null,
+      existing_analysis_hint: null,
+    });
+    expect(runTaskFn.mock.calls.find(([kind]) => kind === 'SemanticJudgeTask')?.[1]).toMatchObject({
+      question: { prompt_md: syntheticPrompt },
+      answer: { content: visible },
+    });
+  });
+
   it.each([
     ['LaTeX', syntheticLatexAnswer, 'correct'],
     ['prose', '长轴沿 x 轴，25-9=16，所以半焦距为 4，焦点是 (±4,0)。', 'correct'],
@@ -212,6 +297,14 @@ describe('server-bound full visible answer', () => {
         { ...syntheticQuestion, id: 'synthetic-new', prompt_md: '求 3+3？', reference_md: '6' },
       ]),
     ],
+    [
+      'mixed reformatted existing and new questions',
+      syntheticPrompt,
+      syntheticMarker([
+        { ...syntheticQuestion, prompt_md: syntheticPrompt.replace('？', '?') },
+        { ...syntheticQuestion, id: 'synthetic-new', prompt_md: '求 3+3？', reference_md: '6' },
+      ]),
+    ],
     ['duplicate ids', '', syntheticMarker([syntheticQuestion, syntheticQuestion])],
     ['duplicate manifests', syntheticPrompt, `${syntheticMarker()}\n${syntheticMarker()}`],
     ['invalid manifest', syntheticPrompt, '<!--copilot_learning_content:{bad json}-->'],
@@ -254,7 +347,7 @@ describe('server-bound full visible answer', () => {
     });
   });
 
-  it('preserves separate references for multiple new questions', async () => {
+  it('does not grant generated purpose to multiple untraced new questions', async () => {
     const questions = [
       { ...syntheticQuestion, id: 'synthetic-new-one', prompt_md: '求 2+2？', reference_md: '4' },
       { ...syntheticQuestion, id: 'synthetic-new-two', prompt_md: '求 3+3？', reference_md: '6' },
@@ -266,20 +359,9 @@ describe('server-bound full visible answer', () => {
       'synthetic-separate-new-questions',
       { db: {} as never, runTaskFn },
     );
-    expect(result.passed).toBe(true);
-    const contentInputs = runTaskFn.mock.calls
-      .filter(([kind]) => kind === 'QuizVerifyTask')
-      .map(([, input]) => input);
-    expect(contentInputs).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          question: expect.objectContaining({ id: 'synthetic-new-one', reference_md: '4' }),
-        }),
-        expect.objectContaining({
-          question: expect.objectContaining({ id: 'synthetic-new-two', reference_md: '6' }),
-        }),
-      ]),
-    );
+    expect(result.passed).toBe(false);
+    expect(result.validationDecision).toMatchObject({ reason: 'mapping_rejected', checks: [] });
+    expect(runTaskFn).not.toHaveBeenCalled();
   });
 
   it('requires every choice in the eligible context even when repeated in the reply', async () => {
@@ -740,7 +822,7 @@ describe('validatePreparedLearningContent', () => {
       };
     };
 
-    const forwarded = await reviewCopilotLearningContent(manifest, '', 'evidence-forward', {
+    const forwarded = await reviewCopilotLearningContent(manifest, '求 1+1', 'evidence-forward', {
       db: {} as never,
       runTaskFn,
       remoteToolEvidence: packet,
@@ -748,15 +830,21 @@ describe('validatePreparedLearningContent', () => {
     expect(forwarded.passed).toBe(true);
     expect(quizInputs[0]?.remote_tool_evidence).toEqual(packet);
 
-    const withoutEvidence = await reviewCopilotLearningContent(manifest, '', 'evidence-absent', {
-      db: {} as never,
-      runTaskFn,
-    });
+    const withoutEvidence = await reviewCopilotLearningContent(
+      manifest,
+      '求 1+1',
+      'evidence-absent',
+      {
+        db: {} as never,
+        runTaskFn,
+      },
+    );
     expect(withoutEvidence.passed).toBe(true);
     expect(quizInputs[1]).not.toHaveProperty('remote_tool_evidence');
   });
 
   it('admits executed_remote_evidence content only with the executed packet, and never leaks an unreviewed candidate', async () => {
+    const context = '根据最新统计，2024 年全球可再生能源发电量占比约为多少？';
     const manifest =
       '题目：根据最新统计，2024 年全球可再生能源发电量占比约为多少？\n<!--copilot_learning_content:{"subject_id":"general","questions":[{"id":"q1","kind":"fill_blank","prompt_md":"根据最新统计，2024 年全球可再生能源发电量占比约为多少？","reference_md":"约 30%（IEA 2024 年报告口径）","choices_md":null,"rubric_json":{}}]}-->';
     const packet = [
@@ -829,7 +917,7 @@ describe('validatePreparedLearningContent', () => {
 
     // Corroborated by the executed packet AND cleared by review → admitted,
     // and the candidate text is released.
-    const admitted = await reviewCopilotLearningContent(manifest, '', 'evidence-admit', {
+    const admitted = await reviewCopilotLearningContent(manifest, context, 'evidence-admit', {
       db: {} as never,
       runTaskFn,
       remoteToolEvidence: packet,
@@ -840,7 +928,7 @@ describe('validatePreparedLearningContent', () => {
 
     // Same judge claim but NO executed packet → basis unsupported → fail
     // closed, and the unreviewed candidate must not leak into the reply.
-    const blocked = await reviewCopilotLearningContent(manifest, '', 'evidence-blocked', {
+    const blocked = await reviewCopilotLearningContent(manifest, context, 'evidence-blocked', {
       db: {} as never,
       runTaskFn,
     });
@@ -1367,7 +1455,7 @@ describe('existing answer purpose and durable decision', () => {
     });
   });
 
-  it('ignores model-authored purpose and rubric and keeps generated content under the authoring gate', async () => {
+  it('ignores model-authored purpose and rubric without granting generated provenance', async () => {
     const marker = `<!--copilot_learning_content:${JSON.stringify({
       subject_id: 'math',
       validation_purpose: 'existing_answer',
@@ -1387,10 +1475,26 @@ describe('existing answer purpose and durable decision', () => {
       { db: {} as never, runTaskFn: existingAnswerPolicyTasks() },
     );
     expect(result.passed).toBe(false);
-    expect(result.validationDecision?.checks[0]?.purpose).toBe('learning_content');
+    expect(result.validationDecision).toMatchObject({ reason: 'mapping_rejected', checks: [] });
     const existing = await policyReview(existingAnswerPolicyTasks(), syntheticPrompt, marker);
     expect(existing.passed).toBe(true);
     expect(existing.validationDecision?.checks[0]?.purpose).toBe('existing_answer');
+  });
+
+  it('requires an executed observation for a server-generated preview', async () => {
+    const runTaskFn = syntheticValidationTasks();
+    const result = await reviewCopilotLearningContent(
+      '已准备练习。',
+      '请出一道题。',
+      'untraced-preview',
+      {
+        db: {} as never,
+        runTaskFn,
+        additionalQuestionContent: { subjectId: 'math', questions: [syntheticQuestion] },
+      },
+    );
+    expect(result.validationDecision).toMatchObject({ reason: 'mapping_rejected', checks: [] });
+    expect(runTaskFn).not.toHaveBeenCalled();
   });
 
   it.each([false, true])(

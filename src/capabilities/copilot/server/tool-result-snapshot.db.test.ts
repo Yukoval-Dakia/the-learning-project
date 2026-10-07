@@ -235,6 +235,20 @@ describe('result snapshots use real registered domain output contracts', () => {
       if (verdict === 'pass') expect(result.preparedReply.primaryView).toEqual(published);
       else expect(result.preparedReply.primaryView).toBeUndefined();
       expect(result.receipt.learning_content).toBe(verdict === 'pass' ? 'passed' : 'blocked');
+      expect(result.receipt.validation_decision?.checks).toMatchObject([
+        {
+          purpose: 'learning_content',
+          items: [
+            {
+              authoring: {
+                copy_safety: { applicability: 'required' },
+                knowledge_hit: { applicability: 'required' },
+              },
+              semantic: { direction: 'independent_solution_against_declared_reference' },
+            },
+          ],
+        },
+      ]);
       if (verdict === 'pass') expect(result.replyText).toContain('未对外部题库进行原创性比对');
     },
   );
