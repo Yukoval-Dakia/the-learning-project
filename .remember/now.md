@@ -1,3 +1,9 @@
+# 当前交付 — 1375 实施交回与父验收
+
+4370670a6仅修audit脚本/测试，writer已释放。32项hash父核，123unit/typecheck/lint/build通过；父54unit与真实CLI170467字节JSON一致，885字段/0未豁免/41allowed，allowlist未改。独立review task yuk1375-independent-review-20261008-v1（同8abc7d36 task前缀），codex gpt6.1sol xhigh只读，尚待结果。证据见docs/planning/2026-10-08-yuk1375-schema-audit-paths.md。尚未push/PR/CI，不称Done；无runtime动作。
+
+以下为历史记录。
+
 # 接续补充 — 1375 writer active / 1376 Todo
 
 T3子任务 yuk1375-relative-source-path-repair-20261008-v1（完整ID前缀node:delegated-task:command%3Amcp%3A8abc7d36-c3c9-4544-adaf-b15a177e2fab%3Adelegate-task%3A），codex gpt-6.1-sol high唯一代码writer，本轮task_status实查仍running/working，父不并发代码或测试。负责scripts/audit-schema-writes.ts及对应test，父仅docs/tracker。
