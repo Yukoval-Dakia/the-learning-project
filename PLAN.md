@@ -4,6 +4,8 @@
 
 ## NOW
 
+- **本轮 main P0 集成**：PR1590 已合入 main42987dfd7；本树保留26项依赖升级、Mem0修补与DBOS5.2.11 gate。合并后验证待完成；旧bb39f38 CI不能替代本轮。主环境仅AgentTEST，UI暂缓，1352/1355/1356隔离实施。
+
 - **YUK-1360 source ready**：保留全部26 production/3 type upgrades、Mem0 858dc patch，正常合入 main `a86d4e633` 的 Laminar0.8.49/gRPC1.14.5。新 frozen install、362 unit、98 DB、typecheck/lint/build、10 audits通过；新证据与历史97 DB/146 unit/82 migration/pg-boss37→44分开封存。父线程初审与CI仅适用于历史784b80ac，待最终merge head CI。
 - **历史 YUK-1103 发布记录（已被 Agent TEST ONLY reset 覆盖用途）**：本机 http://localhost:8787；远程 https://loom-mac-mini.tail2ee344.ts.net/（同一 tailnet，沿用 Loom 令牌）。app/worker `f3bfff2cf` healthy，115项迁移、readiness active。已备份及恢复验证；不要重复发布旧 `5d738dbc0`。
 - **历史 YUK-1341 产品 AI 发布**：PR #1585 已通过 exact-head CI、独立初审和等待窗并合并。app/worker 都固定 `opencode-go/mimo-v2.6-pro`；54聊天任务和 Mem0 接线已落地。生产两轮 Copilot 成功，原会话及 Pi cursor 连续、刷新回放一致；后台 MemoryBrief 也已实际成功。未宣称所有任务质量或评分切片均获准入。

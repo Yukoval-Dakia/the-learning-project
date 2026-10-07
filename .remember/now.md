@@ -1,3 +1,7 @@
+# 当前父线程整合 — PR1584
+
+正常合入 main42987dfd7，保留依赖升级与DBOS gate；本轮检查待完成，旧证据为历史。父线程唯一writer，无runtime或provider操作。
+
 # 当前 lane handoff — YUK-1360 main Laminar source integration
 
 Owned tree `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1360-dependency-integration`，branch `fix/yuk-1360-dependency-integration`。正常 merge parents `784b80ac023df71de88309ab118fdcc06155fdad` + `a86d4e633a67f802554ae114387ab06b7110c135`。保留26 production/3 type upgrades、Mem0 patch858dc与main Laminar0.8.49/gRPC1.14.5；锁语义2174refs、1108packages/snapshots通过。新frozen install、362unit、98DB、typecheck/lint/build/10audits通过；297warnings未上调。四个peer warnings继承parents，无新增actionable issue。

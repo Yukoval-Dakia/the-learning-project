@@ -95,3 +95,18 @@ The parent reports the initial `yuk1360-dependency-review-r1` found no P0/P1 at 
 Owner override: thread7631 reset the main runtime at f3 for Agent development tests only, not personal daily use. This writer did not access runtime containers, app, worker, existing databases, private backup/restore material, R2 or candidate1346 PG/apps; their stopped/unknown-request state was not changed and no requests were replayed. No model/provider/telemetry call, subscription, UI rewrite, deployment, push, PR/watch/comment, Linear update or delegation occurred. Only source integration and the owned disposable tests were performed.
 
 Capture handoff: no new actionable defect was found. The four peer warnings are inherited, and runtime/BAM/mixed-version limits remain the existing YUK-1360/YUK-1329 obligations. The parent owns deduplication/capture, resulting-head CI, artifact inspection, and any separately authorized Agent-test runtime acceptance. Personal daily-use deployment remains subject to the owner's later explicit instruction. This lane commits the normal merge only and releases authority on return.
+
+
+## Main P0 gate integration (2026-10-07)
+
+Normal merge of main `42987dfd7` into `bb39f38bc` preserves the 26 dependency upgrades, three type upgrades, Mem0 patch and adds DBOS 5.2.11 gate. Initial merged lock lacked an express snapshot; pnpm resolution repaired it. Final semantic/reference check and offline frozen install passed. Scoped Laminar/P0 unit and P0 process-recovery DB tests, typecheck, lint (297 warnings) and build passed. These checks do not establish runtime acceptance or replace final-head CI. Main environment remains Agent TEST ONLY.
+
+Logs under `/tmp/yuk1360-dependency-repair-20261007`:
+
+- `p0-merge-semantic2.log`: `15344cf3f8659310484f4eb13011697bf4fc55cadc3c76a68f14ea9c351fc79d`
+- `p0-merge-frozen.log`: `33e85cabb52e6ed545d2ec90a140b6a05979ba5c598095aa0d3ef91886c65fcd`
+- `p0-merge-unit.log`: `e764a5e6b7f231fde0f22ca142331faee66499d0381def0ad2d0d4ff989505c9`
+- `p0-merge-db.log`: `71e24a157b6c24724eabf4b7d25927509edd36e19a8b5b1e4a49b4e08e5bb396`
+- `p0-merge-typecheck.log`: `8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92`
+- `p0-merge-lint.log`: `7d50ee626289de69f00e994b1909b025df707d7ad2876f2f4a12012253b569f1`
+- `p0-merge-build.log`: `7035843f0f3a826424784a7fbf435f5b7c4ec3bf96fe65cdd164f685841c1feb`
