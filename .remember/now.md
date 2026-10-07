@@ -1,3 +1,7 @@
+# 当前交付 — 1376首批已合并，native读取接续
+
+PR1598已19:02:53Z合入c7c2482ca，tree b55aff84与CI head291f1c5b3一致。CI37669157822成功，独立初审NONE，17min窗满足，T3已unwatch。新分支feat/yuk-1376-native-mistake-evidence从最新main创建。readonly调查completed/noPending，四文件读取适配已给主线协调78cabefd；尚无无重叠回执，不启动writer。父只改交接文档。未部署，无锁/服务。1376仍未完成native完整投影、Start/浏览器/旧SPA退出，主线已收到合并接口通知。
+
 # 当前交付 — 1376实现交回与父DB通过
 
 固定d23140344，writer completed/noPending；父137项hash全匹配，独立59DB exit0。作者59DB/16unit/static/build/audits通过。独立review task yuk1376-independent-review-20261008-v1仍运行，只读固定d231。父负责docs/PR/CI，主线已收readMistakes挂载接口；无runtime操作。完整证据见docs/planning/2026-10-08-yuk1376-mistakes-domain.md。Native完整题面/图片适配与Start/浏览器退出不可冒称完成；1243不同根因保留。

@@ -1,6 +1,6 @@
 # YUK1376 错题读取迁移
 
-实现提交：`d231403441345b7a6936cec10157df741d69c955`，基于main `36f719675`。状态：实现交回、父DB通过；独立review及exact-head CI待完成。未部署，未核销Start挂载或旧SPA退出。
+实现提交：`d231403441345b7a6936cec10157df741d69c955`，基于main `36f719675`。状态：PR1598于2026-10-07 19:02:53Z合入main `c7c2482ca`。独立初审P0/P1 NONE，准确head `291f1c5b3` 的CI Gate `37669157822`全部成功；合并tree `b55aff84e4212d3ee65161323551d4eca5c2edf9`与候选一致，17分钟等待窗已满足。未部署，未核销Start挂载或旧SPA退出。
 
 ## 行为与接口
 
@@ -17,6 +17,15 @@ Native FailureAttempt上游尚不支持题面/答题图片快照适配，本提�
 - 父核验137项文件/日志/build hashes；manifest SHA256 `325729f513e12ee505b3dec5a9f8d7c26facccb47758aaab2e0d4aed3e4dfa88`。
 - 父在固定d23140344上独立运行 `pnpm vitest run --config vitest.db.config.ts src/capabilities/ingestion/api/mistakes.db.test.ts`，59 passed，exit0。日志 `/tmp/yuk1376-parent-db.log`。框架隔离DB，无主运行库或provider调用。
 - RED `/tmp/yuk1376-red-db.log` 与 `/tmp/yuk1376-red-cursor-db.log` 保留；完整作者记录 `/tmp/yuk1376-implementation-evidence.md`、hash清单 `/tmp/yuk1376-artifact-manifest.json`。
-- 独立初审task `yuk1376-independent-review-20261008-v1`，codex/gpt-6.1-sol/xhigh，只读固定d23140344，尚待结果。无第三方review完成宣称。
+- 独立初审task `yuk1376-independent-review-20261008-v1`，codex/gpt-6.1-sol/xhigh，只读固定d23140344，P0/P1 NONE；后续仅文档。Codex额度耗尽、CodeRabbit跳过，无新增finding，不宣称它们完成了代码审查。
 
 本线程拥有领域交付、PR和1359证据；主线57961995拥有Start组合根挂载及1352/55/56集成。无部署锁或runtime操作，无付费provider，无DLQ重放。三项修复已纳入1376；1243仍独立Backlog，native完整投影是尚未核销的迁移验收边界。
+
+
+## Native读取接续
+
+从已合入的 `c7c2482ca` 创建 `feat/yuk-1376-native-mistake-evidence`。只读调查已完成，父抽查实际schema和公开DTO，主线确认读取适配归本线程。拟修改 `src/server/records/mistakes.ts`、新增同目录 `native-mistake-evidence.ts` 及scoped DB测试、`src/capabilities/ingestion/api/mistakes.db.test.ts`。截至本记录，78cabefd恢复线程尚未返回精确路径无重叠确认，因此未启动writer。
+
+使用submission/revision/issuance冻结坐标，优先复用公开发题投影的绑定校验与私有材料过滤。按发出part、slot和group evidence目标读取原始作答，不复制整组证据到无关卡片；图像需匹配身份、digest和所属范围。参考答案必须遵守已有揭示策略，不能将scoring basis或私有rubric直接公开。缺席与损坏分别处理，不回退到mutable题面。多part、多submission、各响应类型、重判撤回和正常编辑后的历史稳定性均需真实scoped DB验证。不改kernel契约、评分写入、全局组合根或UI，不增加表或回填历史。
+
+真实附件验收另需走鉴权content端点，核对原始字节、缺失附件及未授权请求；返回ID和SSR附件按钮不等于浏览器Lightbox已验收。冻结题面媒体完整呈现仍须单独核销，不能以本轮文字投影代替。
