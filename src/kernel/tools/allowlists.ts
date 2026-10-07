@@ -53,6 +53,8 @@ export const READ_TOOLS = [
 ] as const;
 
 export const PROPOSE_WRITE_TOOLS = [
+  // YUK-1356 inventory only. No surface may submit until trusted user-original authorization exists.
+  'submit_review_answer',
   'propose_knowledge_edge',
   'propose_knowledge_mutation',
   'attribute_mistake',

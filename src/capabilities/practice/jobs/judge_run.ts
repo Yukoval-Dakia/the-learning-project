@@ -156,7 +156,9 @@ export async function runJudgeRun(
     if (!willRetry) {
       const claimedAt = new Date(data.submit.submitted_at);
       if (!Number.isNaN(claimedAt.getTime())) {
-        await (await import('../api/submit')).releaseInterventionDiagnosticSubmissionClaim(
+        await (
+          await import('../server/review-operation')
+        ).releaseInterventionDiagnosticSubmissionClaim(
           { questionId: data.submit.question_id, claimedAt },
           db,
         );

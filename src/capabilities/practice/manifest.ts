@@ -1301,6 +1301,11 @@ export const practiceCapability = defineCapability({
         load: () => import('./server/tools/question-context').then((m) => m.getQuestionContextTool),
       },
       {
+        // No surface grant until a trusted original and submission authorization are bound.
+        name: 'submit_review_answer',
+        load: () => import('./tools/submit-review-answer').then((m) => m.submitReviewAnswerTool),
+      },
+      {
         name: 'get_review_due',
         load: () => import('./server/tools/question-context').then((m) => m.getReviewDueTool),
       },
