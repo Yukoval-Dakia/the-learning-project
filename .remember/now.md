@@ -1,3 +1,9 @@
+# 2026-10-07 05:18Z 真实R2仍被拦截，未发布
+
+PR1588产品候选236a5a4 exactCI37574277449通过，隔离app/driver镜像82b08c218746；05:15真实R2终文已封存但public blocked，A未发送。父核对数学正确，独立校验仍未通过，不能合并/发布。费用estimated $0.001444664，原R $0.0019227独立保留不重付。新run `/tmp/yuk1346-acceptance-driver/run-236a5a4-01`，candidateSHA fa99d3707c983101245d0aac8b75bec5d05c5cc112945af963354c173ce8f56a。只读observer确认全部保护摘要未变；physical job f31c6f0e-b1d3-5f33-9729-84561d544cb0因心跳超时变retry0，durable DONE，绝不重新执行。无fullworker，旧112675job/57memory/原R均保留。
+
+已有只读离线诊断 task `yuk1346-real-candidate-contract-diagnosis-20261007-v1` 运行，源码只读、无网络/DB/模型调用，不是第三review。父唯一源码/运行写入者，不开重复任务；接终态后核验拒绝分支和最小修复。生产f3健康、没有发布锁或版本变更。实际验收预算最多新两条但本pair已停止，不自动再次付费。
+
 # 当前交接 — 2026-10-07 YUK-1346 最小验证协议修复
 
 当前唯一实施线 YUK-1346 In Progress，PR1588。工作树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1346-turn-retention`，branch `feat/yuk-1346-turn-retention`。本轮从 clean `f5709896dd553a31ce73d128b2d72e8bcf03c5a3` 修复确认的源码缺口：answer_only 删除完整 piSkillDocs 时也丢失共享 SKILL.md 的独立校验 manifest 协议。现在只提取该节经 piSkillDocs 注入受限 system prompt，压缩后仍保留，普通模式和六读工具不变；完整技能包、写入/提案/agent note/子研究/Exa 仍禁用，服务端验证与 detector 未改。focused seam tests 核对实际 system prompt 注入正文的字段、题干/答案对应规则、纯 prose 无 marker 可收口，以及解答缺标记/验证不可用时仍拦截。

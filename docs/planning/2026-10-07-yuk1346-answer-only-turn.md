@@ -149,3 +149,16 @@ memory ingest 在 provider lookup、provider-start、add、reconcile 和 brief f
 focused seam tests 从实际 answer_only system prompt 注入正文提取 marker 并经真实 schema/parser 核对 subject_id、questions、id/kind/prompt_md/reference_md/choices_md/rubric_json。测试核对用户题干与最终答案规则、唯一尾标、5题/12000字符限制及纯概念讲解例外；无标记 prose 直接收口且不调用验证。已存在题目解答缺标记仍拦截；带标记时真实服务端校验链接收完整题干和答案，离线 validator 不可用时仍拦截。六读名单、读效果限制、提案/agent note 写入拒绝、无 full skill/Exa/子研究/cursor 继续覆盖，普通 mode skill 注入也保持。
 
 本轮最终 gates 使用 PATH 中 Node 24.19.0：5 文件 **120 unit passed**（copilot-skills、skill-namespace、copilot-execution、content-validation、pi-agent-adapter）；`pnpm typecheck`、`CODEX_FULL_GATE=1 pnpm lint`、`CODEX_FULL_GATE=1 pnpm build` 均 exit 0。lint 297 warnings / 0 errors，baseline 未放宽；完整 build 覆盖 web/server/worker/migrate，bundle size 警告保留。四项相关静态审计 partition、capability-boundaries、provider-lanes、provider-attempt-truth 均 exit 0。日志 `/tmp/yuk1346-validation-protocol-{unit,typecheck,lint,build}.log` 和 `/tmp/yuk1346-validation-protocol-audit-*.log`。无 API/schema/migration/依赖变化，不运行完整本机 pnpm test，不运行 DB/容器/真实 provider 验收。父线程负责实际整合、PR/Linear 状态、新 exact-head CI 和剩余验收/发布；review 预算已用完，不开第三轮。无新增独立 actionable follow-up，本次确认缺口归现有 YUK-1346。源码 commit 后本子线程无继续写授权，terminal 通知不构成授权。
+
+
+## 2026-10-07 05:18Z 最终候选真实R2未通过
+
+准确候选236a5a47b21e0b40f9be7fbac8eb69dda147fc39的ARM64镜像OCI ID为sha256:82b08c218746b58ef423f7232c9e74dfbf107b5efc28b2a515e5640d40057b73。父核对运行app/driver、真实产品pin、115迁移/active及新隔离Mem0路径；浏览器预检和exact CI37574277449通过。scratch final bundle SHA347751cccd5b2e9fc12831d4adfaaae36fe280cdb51433c1c7aa17bb9172d67f。T3preview明确无host后使用真实Chromium，不替换响应。
+
+本轮只执行R2一次：202受理冻结answer_only，run `copilot_user_ask_249b13e025d22a330beefcb3b7300d363f154b5468c081241bfcd598b417f9cf`，session `i5ll75jd4s0apo2nem5gj1g8`，MiMo2.6Pro success/end_turn，estimatedUSD0.001444664。实际候选终文SHA `fa99d3707c983101245d0aac8b75bec5d05c5cc112945af963354c173ce8f56a` 私有保存在run-236a5a4-01/terminal-R.private.md；父人工核对25-9=16、c=4与焦点±4正确。但finalization learning_content=blocked、publicly_withheld=true，不能将模型执行成功等同产品通过。A未发送，后续记忆链/幂等/重投阶段均未运行。
+
+父只读observer确认新R2前后受保护业务表、旧events、57旧vectors、旧reconcile、112675保留jobs和原R完整job摘要不变。R2 ask/reply都ingested/scopes[]/answer_only。未生成completed-R假通过回执。该新physical job f31c6f0e-b1d3-5f33-9729-84561d544cb0在验收器停止后因heartbeat timeout成为retry、retry_count0；durable DONE与模型已成功必须保留，不能重新消费或重付。观察脚本初次假设job仍active被只读检查否证，改为精确核对已观察retry状态后通过；没有DB写入或重执行。
+
+运行证据在私有candidate answer-only-preflight-20261007-236a5a47b/evidence与/tmp/yuk1346-acceptance-driver/run-236a5a4-01。旧R、失败回执与旧bundle均封存；两次Copilot已知费用合计estimatedUSD0.003367364，整体Mem0内部wire/cost观测缺口仍未解决，本pair未启动Mem0。父保持原$2保守预留，不声明供应商硬cap。
+
+只读离线诊断任务yuk1346-real-candidate-contract-diagnosis-20261007-v1核对本次实际终文、prompt和拒绝分支；无模型/DB/网络或新review，不把f570未知候选的原因追认为相同。需依据免费复现再修复，不删校验、不修改公开结果或盲目重试。当前PR不合并，生产仍f3，无生产写入或发布。该失败归现有YUK1346，无新独立产品问题，Linear保持InProgress。
