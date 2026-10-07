@@ -1,3 +1,7 @@
+# YUK-1363 / YUK-1364 接续 — 2026-10-07
+
+独立 SeaweedFS 测试附件存储已上线，真实上传/读取/删除、去重引用、负向和重建持久化通过，独立复核待返回。current-release 指向 deployment-test-storage-20261007；app/worker 仍 f3/e681，不再清库、不恢复私人 R2。主服务健康，11:57Z 已释放部署锁并通知自主交付线程；复核只读。YUK-1364 子任务独占代码 writer，父线程只做 ops/文档。工作树 tlp-yuk-1363-test-storage，branch ops/yuk-1363-test-storage，基于57fbc95fc；root脏树不动。详情见 docs/planning/2026-10-07-agent-test-storage.md。以下为历史记录。
+
 # 当前部署覆盖指令 — 2026-10-07 YUK-1362
 
 Owner 明确要求清空当前本地业务库，改作 Agent 开发测试；只有后续明确说“为我日常使用的部署”才切换日用。主 app/worker 仍为已部署镜像 f3bfff2cf，未引入 PR1584/1588 候选。清空前 PG/Mem0 已备份，恢复101表计数一致；loom 已 DROP/CREATE，115项迁移与 epoch active 通过，主服务健康。新 Mem0 卷，无旧会话/题目/判分/模型调用数据，3条 genesis 是系统初始化。
