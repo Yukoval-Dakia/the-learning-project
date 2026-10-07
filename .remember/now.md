@@ -1,3 +1,11 @@
+# 当前交接 — 2026-10-08 JST YUK-1364
+
+完整spec P1修复已交回，代码9d962371f，唯一writer已释放。父核对9 source/21 log/8 artifact哈希和实际diff，独立三文件113 DB通过；writer270 DB/136 unit/typecheck/lint/build及scoped audits通过。原proposal的完整sequence-specific契约参与active/list/answer/completed校验，不能只匹配prompt/reference。PR1591待推送本次文档与代码、回复4208030193、新exact CI和隔离监听HTTP。现无自有runtime服务/部署锁；下一次runtime操作前必须实际复核并原子取锁、通知1365与主线。
+
+1359已补齐28个路由责任表，1358 Linear波次纳入mistakes且admin更正8页，主线已确认。root及其他owner树不动。原66e发布脚本已封禁且从未执行；必须使用新提交重新构建镜像。1365正文/取消及1366 memory恢复由其owner负责，本线程不付费重试或重放DLQ。用途Agent TEST ONLY，永不再次清库。
+
+以下为历史记录。
+
 # 当前修复集成 — 2026-10-07 14:13Z YUK-1364
 
 冻结rubric P1正式交回，代码3d1134bbf；191DB/72unit/typecheck/lint/build、Postman生成与两audit通过，父核对20项文件/日志hash。writer已释放，父当前唯一writer；正常merge main6e54da8df，仅PLAN/本文件文档冲突，合并50954a9c4后父独立124DB/77unit/typecheck/lint/build全通过，待新push/CI与最终镜像HTTP。旧ac4候选基线与新head验收分开；14:03Z已清理并释放锁，1365负责PR1594发布，不碰runtime。

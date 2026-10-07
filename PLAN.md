@@ -11,10 +11,10 @@
 
 - **YUK-1338 / YUK-1351 P0 gate**：PR #1590 已合入主线 42987dfd7，本分支同步集成。测试容器中验证 Pi + DBOS 状态版本、过期拒绝、四个进程终止边界、响应复用与单次业务效果；不等于整个迁移或真实 provider 重复付费问题已解决。证据见[gate 记录](docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md)。
 
-- **YUK-1363 / YUK-1364**：测试附件存储已验收。PR1591 ac4b0f265 exact-head CI全绿，新 P1（冻结评分依据与proposal不一致）已由3d1134bbf修复，191 DB/72 unit及本地门禁通过；父核对20项文件/日志hash，合入main6e54da8df为50954a9c4后124 DB/77 unit及本地门禁通过，待新CI与最终镜像验收，两轮独立review预算不重开。ac4+独立PG真实HTTP基线验证了未发题409、冻结题面、停用排除、合成历史结果和幂等ack；14:03Z已清理并释放锁。未覆盖新P1或原生模型评分，不是最终验收或主环境部署。见[证据](docs/planning/2026-10-07-yuk1364-probe-issuance.md)。
+- **YUK-1363 / YUK-1364**：测试附件存储已验收。PR1591完整spec P1修复为 `9d962371f`，原始proposal与冻结评分契约按sequence全字段绑定。270 DB/136 unit及静态构建通过，父核对38项hash并独立113 DB通过。待新head CI、隔离镜像HTTP和发布门禁；旧66e运行证据不覆盖新修复，不启动第三轮独立review。见[证据](docs/planning/2026-10-07-yuk1364-probe-issuance.md)。
 - **YUK-1356 业务操作迁移**：接口与消费者调查已交付[实施输入](docs/planning/2026-10-07-yuk1356-operation-seams.md)。主线57961995已接手独立树唯一实施writer，与1352/1355协调；本线程不重复实施。Pi可信作答来源、队列诊断投影与coverage语义必须保留，三入口统一尚未验收。
 
-- **YUK-1362 / 当前部署用途**：仅供 Agent 开发测试，禁止再次清库或恢复私人数据。13:51Z实读 current-release 指向1365发布df08399ff/image28f89c8b2b9d，app/worker健康；1365已报告备份恢复/BAM通过，但SSE监听缺口由其PR1594补齐，尚待发布验收。历史f3重置记录不再表示当前镜像；日用须owner明确要求。
+- **YUK-1362 / 当前部署用途**：仅供 Agent 开发测试，禁止再次清库或恢复私人数据。14:30Z实读 current-release 为1365发布 `6e54da8df` / image `fd8c046b97fe`，锁不存在；即时SSE已有1365证据，正文/取消验收仍受provider限额阻碍，1366负责现存DLQ。本线程未操作服务。此处是带时间的观察，后续发布仍须重新核验并原子取锁；日用须owner明确要求。
 - **历史 YUK-1341 产品 AI 发布**：PR #1585 已通过 exact-head CI、独立初审和等待窗并合并。app/worker 都固定 `opencode-go/mimo-v2.6-pro`；54聊天任务和 Mem0 接线已落地。生产两轮 Copilot 成功，原会话及 Pi cursor 连续、刷新回放一致；后台 MemoryBrief 也已实际成功。未宣称所有任务质量或评分切片均获准入。
 - **历史 YUK-1340 会话入口发布**：PR #1583 满足 exact-head CI、审查和等待窗后合并。准确 ARM64 镜像完成副本迁移、旧镜像读取兼容、停写备份恢复及生产页面验收。默认续接、历史只读、新建、重开、刷新保持会话均通过；没有发送 AI 消息。YUK-1343 两条 P2 仍延期。
 - **行为基线 / YUK-405**：[完整设计](docs/design/2026-10-06-continuous-learning-system-behavior.md)连接学校、纸笔、自习与数字工具，由 agent 在持续委托下负责实现和验证，不是已实现清单。

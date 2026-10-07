@@ -87,3 +87,14 @@ writer最终9文件191 DB、4文件72 unit、typecheck/lint/build、API contract
 正常合入 main `6e54da8df`（包含1365 PR1593/1594）为 `50954a9c4`，冲突仅PLAN/历史交接，保留有效owner边界和最新优先级。合并后父独立运行4文件124 DB、5文件77 unit及typecheck/lint/build，全部exit0；日志 `/tmp/yuk1364-parent-rubric-merge-{db,unit,typecheck,lint,build}.log`。另运行API startup scoped unit，结果见同前缀`startup.log`。
 
 14:11Z实读主release已为6e54da8df/build765c61f/imagefd8c046b97fe，Agent TEST ONLY，验收范围记录为部分：即时生命周期SSE已确认，真实正文因provider429限额未完成；没有代为重试或重放DLQ。新修复head尚未部署或完成容器HTTP复验；ac4旧基线不能替代它。
+
+
+## 完整评分契约 P1 修复与父验收
+
+GitHub comment `4208030193` 指出冻结 `probe_spec` 只比较 prompt/reference，仍允许 gold、target-error signature、response mode、elicitation 等评分字段偏离原 proposal。父核对后接纳，修复提交 `9d962371f`。所有来源加载器传递初次与复验的完整原始 spec；Agency 共享校验按 sequence 选择契约，以既有 canonical serializer 比较全部 schema 解析后的字段。单侧缺失 native spec 同样拒绝。Prep Desk、TeachingBrief、评分准入和已完成结果使用此校验；评分响应模式从原 proposal 读取。legacy 契约和正常编辑后的历史证据语义保留。
+
+原实现完整契约漂移 RED 为14失败；封存原 validator 的定向 RED 为4失败，其中两条作答返回200并实际调用一次执行端、各写入一条 claim/submission/evaluation。相同定向修复后4通过。新增79条数据库用例覆盖两个 sequence、五种响应模式、字段/嵌套签名漂移、契约缺失、completed evidence/report/ack 与合法历史编辑。45条负向请求均返回409，执行端、claim、submission、evaluation、task-run增量均为0，八表快照保持一致。
+
+writer最终270 DB、136 unit、typecheck/lint/build及boundary/API/partition audits通过。父核对9项源码、21份日志和8项封存材料的SHA256，并重新运行 complete-spec、probe-answer、prep-desk 三个DB文件，113/113通过，exit0。父日志 `/tmp/yuk1364-complete-spec-parent-db.log`；完整清单 `/tmp/yuk1364-complete-spec-manifest.json`。新测试使用真实隔离Postgres和Request/Response处理函数，模型执行端为脚本替身，没有付费调用。这不等于监听HTTP、镜像或真实模型质量验收。
+
+先前66e候选的隔离监听HTTP已验证错误reference拒绝、冻结题面、正常编辑后的合成历史结果及幂等ack，14:18Z清理自有服务并释放锁；该旧证据不覆盖本次完整spec修复。当前新head仍待exact-head CI、镜像隔离HTTP及发布门禁，不启动第三轮独立review。旧66e发布脚本已加拒绝执行保护，未执行。当前actionable finding归既有YUK-1364，无需另建重复票。

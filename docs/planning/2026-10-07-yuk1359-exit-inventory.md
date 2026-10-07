@@ -73,3 +73,27 @@ Linear1359已登记1352候选 `server/start/routes/$.ts`、`server/frontdoor.ts`
 `COPILOT_NUDGE_EVALUATE_QUEUE` 的值由 `src/server/boss/queue-names.ts` 定义为 `copilot_nudge_evaluate`。上述53项不包含6个基础设施 housekeeping schedule，也不能覆盖 manifest 之外的 memory handoff/recovery。README 中“52 registered / 51 static / 1 compatibility”是 AI task census，不能拿来与此队列注册数比较。
 
 同基线 `UI_SURFACES` 有28项（27个 page、1个根路径 redirect），包含 `/admin/config` 设置页。页面存在的静态证据不等于导航可达或浏览器行为已验收。迁移台账应逐页核对保留行为及旧入口退出条件。完整静态提取保存在 `/tmp/yuk1359-static-registries.json`；这些数量仅用于发现漏项，不作为整个迁移完成的证明。
+
+## 非 UI 波次覆盖补充
+
+2026-10-07 14:32Z 对本分支 `66e1c463d` 的 `src/kernel/ui-surfaces.ts`、`web/src/router.tsx` 和 Linear YUK-1358 再次核对，发现波次表需要补全两处。以下是迁移范围修正，不涉及视觉重写。
+
+- `/mistakes` 已注册，页面读取 `/api/mistakes`，并承接录入后的导航。1358 原波次表没有列入它；旧1354视觉任务延期后，现有错题本的路由、数据和导航仍须迁移。归入1358的W1，与首页和收件入口一并保持行为。
+- 管理页实际为8个：`/admin/config`、`/admin/runs`、`/admin/cost`、`/admin/failures`、`/admin/subjects`、`/admin/subjects/$id`、`/admin/coverage-lattice`、`/admin/conjecture-scores`。1358的“七个页面”应更正为8个；设置面板是其中之一，不能因UI延期而从迁移清单消失。
+
+`/practice` 由1356首条业务操作迁移负责；1358各波验收后，1359仍须对全部28项逐一核对新入口和旧入口退出证据，不能只检查波次数量。相关遗漏已在1358及主线交接中登记，不新建重复票。
+
+以下逐项分配与 `66e1c463d` 的 `UI_SURFACES` 对照。它只证明范围完整，不证明迁移已完成；每项仍需新入口、行为验收和旧入口删除证据。
+
+| 责任方 | 现有路由 | 尚需的退出证据 |
+| --- | --- | --- |
+| 1358 W1 | `/`、`/today`、`/inbox`、`/mistakes` | 根路径跳转、首页与收件数据、录入至错题本导航在新入口保留 |
+| 1358 W2 | `/record`、`/events/$id`、`/drafts`、`/onboarding/upload`、`/welcome`、`/placement` | 录入与材料处理、事件深链、草稿及入门流程保留；关联后台义务唯一恢复 |
+| 1358 W3 | `/questions`、`/questions/$id`、`/notes`、`/notes/$id`、`/knowledge`、`/knowledge/$id`、`/agent-notes` | 列表、详情深链、编辑与关联操作保留；知识和笔记任务切换 |
+| 1358 W4 | `/coach`、`/profile` | 回看和档案行为保留；跨页面 CopilotDock 另验会话、流式与恢复，不额外计作路由 |
+| 1358 W5 | `/admin/config`、`/admin/runs`、`/admin/cost`、`/admin/failures`、`/admin/subjects`、`/admin/subjects/$id`、`/admin/coverage-lattice`、`/admin/conjecture-scores` | 设置读写、运行与成本查询、故障诊断、科目详情及两个诊断视图保留 |
+| 1356 首条业务操作 | `/practice` | 页面命令、Pi工具及后台恢复共用业务操作；原有练习行为保留 |
+
+1352负责上述页面共同的前门、鉴权及承载机制；这不代替逐页功能验收。1359在所有责任方交回后统一核销旧SPA挂载、构建、静态回落及重复恢复路径。
+
+本次还确认 README 的恢复演练段落引用 `docs/runbooks/cutover-final-backup-and-restore.md`，但该路径不在当前文件系统或Git跟踪文件中。1359清理时须与1329恢复演练工作对齐，补上实际使用且验证过的运行手册并修正链接。现有发布证据不能替代可执行的通用手册，也不能从旧脚本的DLQ清理描述推导出重放或删除授权。此项已登记1359，未在本轮改动发布脚本或服务。
