@@ -484,6 +484,14 @@ describe('Copilot execution owner', () => {
       isError: false,
       output: {},
     });
+    // Nested-agent calls (researcher → Exa) carry agentType and have no outer
+    // tool_started card — a root-level tool_finished would orphan in the UI.
+    await piAfter(ctx, {
+      call: { id: 'call_exa_nested', name: 'mcp__exa__web_search_exa', agentType: 'researcher' },
+      args: { query: 'nested' },
+      isError: false,
+      output: {},
+    });
     await vi.waitFor(() => {
       expect(observe).toHaveBeenCalledTimes(2);
     });

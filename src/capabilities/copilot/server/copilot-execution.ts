@@ -382,6 +382,10 @@ export function createCopilotExecutionOwner(
     // comes from the bridge); native Task/Agent calls never match the
     // `mcp__` predicate.
     const remoteMcpToolFinished: PiAfterToolCall = (observation) => {
+      // Nested-agent calls (researcher → Exa) have agentType set and no outer
+      // tool_started card — emitting a root-level tool_finished for them would
+      // surface an orphaned card that duplicates the subtask presentation.
+      if (observation.call.agentType !== undefined) return undefined;
       if (!isRemoteMcpToolCall(observation.call.name)) return undefined;
       const summaryText = observation.isError
         ? `error: ${piToolErrorText(observation.error)}`

@@ -180,10 +180,14 @@ export function knowledgeNodeCooldownKey(payload: {
   domain?: string;
 }): string {
   // Each component is URI-encoded so ':' inside a domain or name can't collide
-  // across key positions; the domain is additionally key-normalized so alias /
-  // case spellings dedupe to one pending proposal.
+  // across key positions. The domain is canonicalized through the same
+  // sanitizeProposedNodeDomain seam the writer persists ('Mathematics' →
+  // 'math'), so alias spellings dedupe to one pending proposal; 'general'/
+  // blank fall back to the normalized raw form for a stable skip-check key.
+  const rootDomain =
+    sanitizeProposedNodeDomain(payload.domain) ?? normalizeSubjectKey(payload.domain ?? '');
   return payload.parent_id === null
-    ? `knowledge_node:root:${encodeURIComponent(normalizeSubjectKey(payload.domain ?? ''))}:${encodeURIComponent(payload.name)}`
+    ? `knowledge_node:root:${encodeURIComponent(rootDomain)}:${encodeURIComponent(payload.name)}`
     : `knowledge_node:${payload.parent_id}:${payload.name}`;
 }
 
