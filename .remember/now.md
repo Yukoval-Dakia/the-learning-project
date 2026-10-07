@@ -1,3 +1,9 @@
+# YUK-1364 完成结果来源修复进行中 — 2026-10-07
+
+PR1591 GitHub P1 4206851930 已实际复现：正常 editQuestion 的 KC/draft/kind/choices 更新不应使已完成的正式发题结果失效。唯一代码 writer 为 T3 task yuk1364-issued-provenance-repair-20261007-v1，尚在运行；父只读核对 diff，当前日志299 DB/72 unit通过，未作最终验收或提交。Agency 新 completed-probe-provenance 共享冻结记录与评分绑定校验，Shell调用；历史未发题规则与撤回语义保留。不得与子任务并发跑测试、不得按旧CI合并。最终以交还文件hash与父独立验收为准。
+
+以下为历史记录。
+
 # YUK-1364 连续复验修复与 YUK-1356 交接 — 2026-10-07
 
 PR1591已创建并link/watch，head8eb10cb8a；本地另有纯文档11eef5749/e44769edf，待随修复push。唯一验证审发现第二条P1：probe-evidence连续复验依赖仍读mutable题面。writer任务yuk1364-recurrence-repair-20261007-v1已完成并释放；两条完整链路RED→GREEN。最终248DB/72unit/typecheck/lint/build通过，父核对hash并独立85DB通过。生产guard未改，fixture最终通过；修复8264556d6待push与新exact-head CI，不启动第三审，未部署。
