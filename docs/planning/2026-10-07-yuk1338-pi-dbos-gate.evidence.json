@@ -959,5 +959,14 @@
       "observedLockWait": true,
       "effects": 0
     }
+  ],
+  "sourceRevision": "995cdc2a4272beafc698f1ff107a0fa5ef2f3dcd",
+  "commands": [
+    "pnpm vitest run --config vitest.unit.config.ts tests/pi-dbos-gate/contract.unit.test.ts",
+    "TLP_GATE_EVIDENCE_PATH=.cache/yuk1338/evidence.json pnpm vitest run --config vitest.db.config.ts tests/pi-dbos-gate/recovery.db.test.ts",
+    "pnpm typecheck",
+    "pnpm lint",
+    "pnpm build",
+    "pnpm audit:partition"
   ]
 }
