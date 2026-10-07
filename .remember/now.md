@@ -1,3 +1,9 @@
+# 当前交付 — YUK1364 853镜像验收
+
+85345ac0c9d14bc748c10928e2adb934f5891a54准确ARM64镜像sha256:9b76e7cb746dc51f1f661adba65041d514502f041e20111ae91defe3679be25c已实际验收。合法V2探针brief/list显示原题，只GET；正常publication保留原proposal/spec/criterion而替换为JevScoringDecisionTask的seq1/2均HTTP409 probe_execution_contract_mismatch并排除展示。三个窗口22表完整快照不变，submission/evaluation/provider/task/cost均0，没有有效答案POST。证据runtimeRoot/yuk1364-preflight-85345ac0c/evidence/acceptance-summary.json。已保留最终隔离dump，清理自有app/PG匿名volume/network，核owner释放锁并通知双方；主release未变、四服务healthy。当前CI/合并/发布待完成。本次无新follow-up，旧1374/1375/1329仍保留。
+
+以下为历史记录。
+
 # 当前交付 — YUK1364 执行契约修复收回
 
 执行契约修复a5e623045960dd3a40d468f77f37111b15188bbc已收回，writer释放。生产validator校验固定executor、单一assignment、slot/evidence绑定、1分/sum/blank与escalation；V1/absent历史human_review和动态slice/cost保留。六个RED经真实formal dispatcher到离线Jev边界，V2持久化后422、V1/absent错误分数被采纳；不等于真实provider输出。377DB/130unit/静态构建与3audit通过；父核完整manifest hash并用Node24重跑196DB通过。证据/tmp/yuk1364-execution-contract-evidence.md及manifest，父日志/tmp/yuk1364-execution-parent-db.log。新head CI/准确镜像HTTP尚未执行，旧77c验收不覆盖本修复。当前无锁/自有服务。无新增可执行follow-up，1374/1375与1329保持既有归属。
