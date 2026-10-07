@@ -1,3 +1,15 @@
+# 当前交接 — 2026-10-07 YUK-1338 Pi + DBOS 隔离 gate
+
+owner 指示本线程负责 epic YUK-1351 的第一道 gate。工作树 `/Users/yuqi/.t3/worktrees/the-learning-project/feat-yuk-1338-pi-dbos-gate`，branch `feat/yuk-1338-pi-dbos-gate`，base `8841ce68a69e30bacf20e8241f28cd1669b38a1f`。父线程唯一 writer；非 UI、不合并、不部署、不碰生产数据或 provider 配置。
+
+Pi 1.0.2 + DBOS 5.2.11 exact devDependency。仅 testing capability / Testcontainers 领域与独立 DBOS schema。真实 SIGKILL/restart 验证响应检查点、业务提交和工具回执；状态版本与过期拒绝、三入口共享 arrangeNext。未知外部结果窗口记录替身第二次调用，不宣称 provider exactly-once 或零重复付费。锁等待前读取 clock_timestamp 的缺陷已复现并改为锁取得后再读。
+
+本机2 unit/10 DB通过，typecheck/lint/build通过；lint基线297 warnings，partition无P0。证据与模块说明见 `docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md` 与相邻 evidence JSON。源码 hash/app version 单独封存；独立 review由 T3 Codex/gpt-6.1-sol xhigh 完成，无P0/P1；P2首次并发证据创建及provider请求身份要求已归入YUK1356。PR提交中。完成后仅把YUK1338置In Review，不置Done，不启动P1/P4/P5。
+
+本轮没有核验或操作生产。既有生产指针与义务保留在下面的上一轮交接中，不能把旧记录称为本次新验收。
+
+---
+
 # 当前交接 — 2026-10-07 会话入口生产发布完成
 
 生产 `f3bfff2cfe2aea0efbf7d11ead8a84ebfab497ef`，02:17Z app/worker 同准确镜像 e681a7b502aa；MiMo 产品 pin 保持不变。PR1583 在 exact d3906a7 CI37556260516成功、P0/P1裁决及17分钟窗后，于02:05:19Z合并，watch已结束。真实生产 Chromium 通过 fresh sessions/server_time、默认续接、结束历史只读、新建空会话、重开及刷新一致；无模型调用，SQL task runs仍2712。完整记录见 `docs/planning/2026-10-07-session-entry-local-release-result.md`。

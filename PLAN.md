@@ -1,9 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-07：会话入口 PR1583 已合并并在 02:17Z 部署 `f3bfff2cf`，真实生产浏览器验收通过。当前完成 YUK-1340 发布记录，下一产品线为 YUK-1346 的单次保留策略。见[本机入口发布记录](docs/planning/2026-10-07-session-entry-local-release-result.md)。
+> Linear 是权威 tracker。2026-10-07：YUK-1338 的 Pi + DBOS 隔离 gate 五项验收通过，独立 review 无 P0/P1；正在提交 PR，由 owner 合并。无生产路径变更、部署或付费调用。见[gate 证据](docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md)。
 
 ## NOW
 
+- **YUK-1338 / YUK-1351 P0 gate**：Pi 1.0.2 + DBOS 5.2.11，测试容器中完成新证据影响下一项、版本/过期拒绝、四个进程终止边界、响应复用与单次业务效果。2 unit / 10 DB passed；typecheck/lint/build 通过；独立 review 无 P0/P1。P2 首次并发证据创建与 provider 请求身份要求已记入 YUK-1356；owner 指定不自主合并，当前生产 Hono/Vite/pg-boss 不改。
 - **YUK-1103 自主交付**：本机 http://localhost:8787；远程 https://loom-mac-mini.tail2ee344.ts.net/（同一 tailnet，沿用 Loom 令牌）。app/worker `f3bfff2cf` healthy，115项迁移、readiness active。已备份及恢复验证；不要重复发布旧 `5d738dbc0`。
 - **YUK-1341 产品 AI**：PR #1585 已通过 exact-head CI、独立初审和等待窗并合并。app/worker 都固定 `opencode-go/mimo-v2.6-pro`；54聊天任务和 Mem0 接线已落地。生产两轮 Copilot 成功，原会话及 Pi cursor 连续、刷新回放一致；后台 MemoryBrief 也已实际成功。未宣称所有任务质量或评分切片均获准入。
 - **YUK-1340 会话入口已交付**：PR #1583 满足 exact-head CI、审查和等待窗后合并。准确 ARM64 镜像完成副本迁移、旧镜像读取兼容、停写备份恢复及生产页面验收。默认续接、历史只读、新建、重开、刷新保持会话均通过；没有发送 AI 消息。YUK-1343 两条 P2 仍延期。
@@ -14,7 +15,7 @@
 
 - 先落实 YUK-1346 的可信单次记忆/派生用途策略，再沿“椭圆难题 → 记录过程与帮助程度 → 区分暂时理解和独立迁移 → 后续验证安排”的真实学习路径推进。短回答成功不等于可靠评估已经兑现。
 - YUK-1042：42 failed +42 DLQ 原义务保留；先查每项副作用和幂等身份再恢复，不清队列或重付未知结果。
-- YUK-1338 目标架构集成保持 Backlog，单独证明状态版本、过期结果拒绝与重启恢复；ADR-0066 的 TanStack Start/Pi/PostgreSQL/DBOS 方向尚非当前运行形态。
+- YUK-1351 的 P1/P4/P5 等迁移仍需 gate PR 的审查与合入；不由本次隔离验证直接启动或部署。ADR-0066 的 TanStack Start/Pi/PostgreSQL/DBOS 方向尚非当前运行形态。
 
 ## PARKED
 
