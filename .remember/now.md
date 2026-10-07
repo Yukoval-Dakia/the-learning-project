@@ -1,3 +1,7 @@
+# YUK-1364 代码提交准备 — 2026-10-07
+
+P1修复writer已释放。124 scoped DB/52unit/typecheck/lint/build通过，父独立23DB通过，送审4文件hash一致。唯一验证审yuk1364-verification-review-20261007-v1运行中；PR待创建/CI。不允许第三审。未部署，1363Done、存储锁释放。迁移主线已实际启动1352/1355隔离writer；本线程负责1364收口，避免重复writer。
+
 # YUK-1364 初审修复 — 2026-10-07
 
 独立初审发现 P1：loadProbeBrief 已使用冻结题面，但 validateAckableOutcome 仍读取 mutable question，可能使新支持的 legacy 已发题场景作答后结果消失、ack409、report 判 corrupt。父核对源码，修复子任务 yuk1364-p1-repair-20261007-v1（Codex gpt-6.1-sol xhigh）独占代码 writer，先完整隔离复现再修。修复后最多一次验证审，不启动第三审。当前未提交的代码4文件保留；此前90DB/52unit/typecheck/lint/build及父独立16DB通过不足以越过此P1。生产仍f3，1363已Done且锁释放。Owner新增“迁移彻底干净、结构优雅易维护”已同步自主交付主线57961995。
