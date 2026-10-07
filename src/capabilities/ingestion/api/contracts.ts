@@ -131,6 +131,7 @@ export const MistakeProjectionSchema = z.object({
   prompt_md: z.string(),
   reference_md: z.string().nullable(),
   wrong_answer_md: z.string(),
+  wrong_answer_image_refs: z.array(z.string()).default([]),
   knowledge_ids: z.array(z.string()),
   cause: z
     .object({
@@ -157,6 +158,9 @@ export const MistakeListResponseSchema = z.object({
   page: ApiPageSchema,
   next_cursor: z.string().nullable(),
 });
+
+export type MistakeProjection = z.infer<typeof MistakeProjectionSchema>;
+export type MistakeListResponse = z.infer<typeof MistakeListResponseSchema>;
 
 export const PdfExpansionResponseSchema = z.object({
   asset_ids: z.array(z.string()).min(1).max(MAX_PDF_PAGES),

@@ -3,13 +3,19 @@
 
 import { and, desc, eq, gt, inArray, lte, or, sql } from 'drizzle-orm';
 import {
+  type CompletedProbeProposal,
   type EffectiveProbeResultStatus,
   getEffectiveProbeResultStatuses,
+  loadCompletedProbeAssessmentAnchors,
+  validateCompletedProbeProvenance,
+  validateIssuedProbeProvenance,
 } from '@/capabilities/agency/public';
+import { ConjectureProbeSpec } from '@/core/schema/business';
 import type { CauseCategoryT } from '@/core/schema/cause';
 import {
   BRIEF_ACK_ACTION,
   PROBE_NON_EVIDENCE_RESOLUTION,
+  PROBE_QUESTION_INITIAL_VERSION,
   PROBE_QUESTION_SOURCE,
   PROBE_RESOLUTION_RULE_VERSION,
   PROBE_RESULT_ACTION,
@@ -20,7 +26,13 @@ import {
 import { AiProposalPayload, type ProposalEvidenceRefT } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate } from '@/db/predicates';
-import { event, question } from '@/db/schema';
+import {
+  assessment_issuance,
+  event,
+  question,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { type ProposalInboxRow, getProposalInboxRow } from '@/kernel/proposals/inbox';
 
@@ -214,8 +226,7 @@ type BriefStage = 'outcome' | 'probe' | 'finding';
 // inside its advisory-locked transaction (YUK-708 round-8), so these readers accept a Tx.
 type DbLike = Db | Tx;
 
-interface ConjectureFacts {
-  id: string;
+interface ConjectureFacts extends CompletedProbeProposal {
   /**
    * NORMALIZED (trimmed) proposal claim. Both proposal and correction schemas now trim,
    * while the manual normalization here remains defense in depth for legacy persisted rows.
@@ -223,12 +234,8 @@ interface ConjectureFacts {
    * same canonical value.
    */
   claimMd: string;
-  knowledgeId: string;
   causeCategory: CauseCategoryT;
   reasonMd: string;
-  probeMd: string;
-  /** Sequence-2 prompt authored with the proposal; absent only on historical v1 rows. */
-  followupProbeMd: string | null;
   evidence: TeachingBriefEvidenceRef[];
   createdAt: Date;
   /** Internal selector ranking only — never serialized into the wire (contract §5). */
@@ -372,7 +379,11 @@ function factsFromProposalRow(
       causeCategory: change.cause_category,
       reasonMd: row.payload.reason_md,
       probeMd: change.probe_md,
+      probeReferenceMd: change.probe_reference_md,
+      probeSpec: change.probe_spec ?? null,
       followupProbeMd: change.followup_probe_md ?? null,
+      followupProbeReferenceMd: change.followup_probe_reference_md ?? null,
+      followupProbeSpec: change.followup_probe_spec ?? null,
       evidence: dedupeEvidence(
         row.payload.evidence_refs.map((ref) => ({
           role: 'induction' as const,
@@ -416,7 +427,11 @@ function factsFromRawProposalRow(row: EventRow): CandidateResult<ConjectureFacts
       causeCategory: change.cause_category,
       reasonMd: payload.reason_md,
       probeMd: change.probe_md,
+      probeReferenceMd: change.probe_reference_md,
+      probeSpec: change.probe_spec ?? null,
       followupProbeMd: change.followup_probe_md ?? null,
+      followupProbeReferenceMd: change.followup_probe_reference_md ?? null,
+      followupProbeSpec: change.followup_probe_spec ?? null,
       evidence: dedupeEvidence(
         payload.evidence_refs.map((ref) => ({
           role: 'induction' as const,
@@ -428,6 +443,19 @@ function factsFromRawProposalRow(row: EventRow): CandidateResult<ConjectureFacts
       salience: change.confidence * change.recurrence_count,
     },
   };
+}
+
+/** Active lists share the same original proposal facts as completed report evidence. */
+export function validateIssuedProbeFromProposal({
+  proposalRow,
+  ...issued
+}: Omit<Parameters<typeof validateIssuedProbeProvenance>[0], 'proposal'> & {
+  proposalRow: EventRow | null;
+}) {
+  if (!proposalRow) return { reason: 'proposal_not_found' };
+  const proposal = factsFromRawProposalRow(proposalRow);
+  if (isCandidateError(proposal)) return proposal;
+  return validateIssuedProbeProvenance({ ...issued, proposal: proposal.value });
 }
 
 async function loadLatestRatesByProposal(
@@ -602,8 +630,9 @@ export interface AckableOutcomeFacts {
  *      deriveProposalStatus, which FOLDS corrections (retract/mark_wrong/supersede flip the
  *      status off 'accepted'), so proposal-correction exclusion is covered by this shared
  *      path with no extra predicate;
- *   5. the probe is canonical for that proposal (validateProbeQuestion — source/draft/
- *      provenance/KC/prompt/created-in-future).
+ *   5. Agency validates the completed issued provenance against the original
+ *      proposal/revision and native assessment anchors. Unissued historical
+ *      outcomes retain validateProbeQuestion's original row-based semantics.
  * The ONE reader dimension deliberately NOT re-gated here is the `NOT EXISTS ack` filter:
  * for the writer that is the idempotency check, so an already-acked result returns
  * idempotent:true (see acknowledgeTeachingBriefOutcome), not a 409. Reason codes stay stable
@@ -642,7 +671,7 @@ export async function validateAckableOutcome(
   // (factsFromRawProposalRow — verifies it is a canonical conjecture, no status fold) instead of
   // loadProposalFacts(...'accepted'). Every non-status structural check still runs: canonical body
   // + self-consistent provenance + probe exists (a deleted probe is real corruption → still skip) +
-  // the probe is canonical for its proposal (validateProbeQuestion). Default false → reader/ack exact.
+  // the completed provenance is canonical. Default false → reader/ack exact.
   {
     serial = false,
     skipTimeWindow = false,
@@ -682,7 +711,19 @@ export async function validateAckableOutcome(
   // connections); on a single-connection transaction (serial:true) they must run one at a
   // time. Both orderings check probe_not_found first, so the reason precedence is stable.
   const loadProbe = () =>
-    db.select().from(question).where(eq(question.id, probeQuestionId)).limit(1);
+    db
+      .select({ probe: question, issuance: assessment_issuance, revision: question_revision })
+      .from(question)
+      .leftJoin(
+        assessment_issuance,
+        eq(assessment_issuance.issuance_id, sql<string>`'iss_probe_' || ${question.id}`),
+      )
+      .leftJoin(
+        question_revision,
+        eq(question_revision.revision_id, assessment_issuance.revision_id),
+      )
+      .where(eq(question.id, probeQuestionId))
+      .limit(1);
   // skipCurrentStatusFold → read the proposal from its RAW event (verifies it is a canonical
   // conjecture, no correction/status fold), otherwise require the folded status to be 'accepted'
   // (the live reader/ack path).
@@ -690,7 +731,7 @@ export async function validateAckableOutcome(
     skipCurrentStatusFold
       ? loadRawConjectureFacts(db, conjectureEventId)
       : loadProposalFacts(db, conjectureEventId, 'accepted');
-  let probeRows: QuestionRow[];
+  let probeRows: Awaited<ReturnType<typeof loadProbe>>;
   let proposalResult: CandidateResult<ConjectureFacts>;
   if (serial) {
     probeRows = await loadProbe();
@@ -698,14 +739,29 @@ export async function validateAckableOutcome(
   } else {
     [probeRows, proposalResult] = await Promise.all([loadProbe(), loadProposal()]);
   }
-  const probe = probeRows[0];
+  const probeRow = probeRows[0];
   // probe_not_found stays the first-checked break so its reason code precedence is stable.
-  if (!probe) return { reason: 'probe_not_found' };
+  if (!probeRow) return { reason: 'probe_not_found' };
   if (isCandidateError(proposalResult)) return proposalResult;
   const proposal = proposalResult.value;
 
-  const probeError = validateProbeQuestion(probe, proposal, now);
-  if (probeError) return { reason: probeError };
+  const probe = probeRow.probe;
+  if (probeRow.issuance) {
+    const completed = validateCompletedProbeProvenance({
+      result,
+      probe,
+      proposal,
+      issuance: probeRow.issuance,
+      revision: probeRow.revision,
+      assessmentAnchors: await loadCompletedProbeAssessmentAnchors(db, [result]),
+      now,
+    });
+    if (isCandidateError(completed)) return completed;
+  } else {
+    // Historical unissued outcomes retain their original row-based semantics.
+    const probeError = validateProbeQuestion(probe, proposal, now);
+    if (probeError) return { reason: probeError };
+  }
 
   return { value: { proposal, probe, resolution, conjectureEventId } };
 }
@@ -1001,11 +1057,33 @@ export async function loadOutcomeBrief(
 
 async function loadProbeBrief(db: Db, now: Date): Promise<TeachingBrief | null> {
   const probes = await db
-    .select()
+    .select({ probe: question, issuance: assessment_issuance, revision: question_revision })
     .from(question)
+    .innerJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
+    .innerJoin(
+      assessment_issuance,
+      eq(assessment_issuance.issuance_id, sql<string>`'iss_probe_' || ${question.id}`),
+    )
+    .innerJoin(
+      question_revision,
+      and(
+        eq(question_revision.revision_id, assessment_issuance.revision_id),
+        eq(question_revision.group_id, question.id),
+      ),
+    )
     .where(
       and(
         eq(question.source, PROBE_QUESTION_SOURCE),
+        eq(question_group_lifecycle.scoring_admission_state, 'admitted'),
+        eq(question_group_lifecycle.suspended, false),
+        eq(question_group_lifecycle.withdrawn, false),
+        // The probe answer endpoint supports exactly one frozen open response.
+        // Filter issuance eligibility before the candidate window, so legacy
+        // unissued rows cannot hide an older answerable probe.
+        sql`CASE WHEN jsonb_typeof(${question_revision.response_spec}->'slots') = 'array'
+          THEN jsonb_array_length(${question_revision.response_spec}->'slots') = 1
+          ELSE false END`,
+        sql`${question_revision.response_spec}->'slots'->0->>'kind' = 'open_response'`,
         // Cheap canonical-shape checks run pre-window so drifted probes cannot
         // crowd out an older valid served probe; validateProbeQuestion below
         // stays authoritative (and keeps the observable skip log) for the rest.
@@ -1022,8 +1100,25 @@ async function loadProbeBrief(db: Db, now: Date): Promise<TeachingBrief | null> 
     .orderBy(desc(question.created_at), desc(question.id))
     .limit(TEACHING_BRIEF_CANDIDATE_WINDOW);
 
-  for (const probe of probes) {
+  for (const { probe, issuance, revision } of probes) {
     const metadata = toRecord(probe.metadata);
+    // Preserve the submit endpoint's authored-snapshot guard for response-aware
+    // probes. Legacy rows without that snapshot use the frozen issuance face.
+    if (metadata.probe_spec !== undefined) {
+      const authored = ConjectureProbeSpec.safeParse(metadata.probe_spec);
+      if (!authored.success) {
+        warnSkipped('probe', probe.id, 'probe_snapshot_invalid');
+        continue;
+      }
+      if (
+        probe.version !== PROBE_QUESTION_INITIAL_VERSION ||
+        probe.prompt_md !== authored.data.prompt_md ||
+        probe.reference_md !== authored.data.reference_md
+      ) {
+        warnSkipped('probe', probe.id, 'probe_snapshot_changed');
+        continue;
+      }
+    }
     const proposalId = metadata.conjecture_proposal_id;
     if (typeof proposalId !== 'string' || proposalId.length === 0) {
       warnSkipped('probe', probe.id, 'probe_metadata_ref_missing');
@@ -1035,7 +1130,13 @@ async function loadProbeBrief(db: Db, now: Date): Promise<TeachingBrief | null> 
       continue;
     }
     const proposal = proposalResult.value;
-    const probeError = validateProbeQuestion(probe, proposal, now);
+    const issued = validateIssuedProbeProvenance({ probe, proposal, issuance, revision, now });
+    if (isCandidateError(issued)) {
+      warnSkipped('probe', probe.id, issued.reason);
+      continue;
+    }
+    const projected = { ...probe, prompt_md: issued.value.promptMd };
+    const probeError = validateProbeQuestion(projected, proposal, now);
     if (probeError) {
       warnSkipped('probe', probe.id, probeError);
       continue;
@@ -1054,11 +1155,11 @@ async function loadProbeBrief(db: Db, now: Date): Promise<TeachingBrief | null> 
       prepared_action: {
         kind: 'answer_probe',
         probe_question_id: probe.id,
-        prompt_md: probe.prompt_md,
+        prompt_md: projected.prompt_md,
       },
       current_outcome: {
         status: 'awaiting_answer',
-        // YUK-785/787 — validateProbeQuestion above already proved prompt_md equals
+        // YUK-785/787 — validateProbeQuestion above proved the issued prompt equals
         // the sequence-specific prompt authored with this proposal, so after a rewrite
         // this prepared question demonstrably tests the pre-edit claim.
         summary_md:

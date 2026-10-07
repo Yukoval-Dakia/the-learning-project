@@ -131,6 +131,8 @@ void (async () => {
   await recoverToolOperationsBeforeServe();
   await injectAdminConfigFactsBeforeServe();
   await injectAdminConfigWriterBeforeServe();
+  const { startListenLoop, stopListenLoop } = await import('@/server/events/listen_loop');
+  await startListenLoop();
   // Start owns the Web front door whenever a built SPA is configured. Startup,
   // DB hydration, tool recovery and shutdown keep their existing single owner.
   const fetch = env.RW_STATIC_DIR ? await createFrontdoor(app, env.RW_STATIC_DIR) : app.fetch;
@@ -157,7 +159,11 @@ void (async () => {
       if (boss) await stopBossGracefully(boss, 'API shutdown');
     } finally {
       configRefresh?.stop();
-      await db.$client.end({ timeout: 3 });
+      try {
+        await stopListenLoop();
+      } finally {
+        await db.$client.end({ timeout: 3 });
+      }
     }
   });
 

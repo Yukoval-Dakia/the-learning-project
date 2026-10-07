@@ -920,7 +920,7 @@
                 }
               ]
             },
-            "description": "猜测探针作答（conjecture-wire #13 / YUK-538 ⑬）：owner 回答已派发的判别探针，judge 纯评价 → outcome → resolution 分流\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** YUK-1047：已准入探针在备课台实际发题时冻结 native issuance；服务端保存 ResponseSet 与原始图片 digest 后经 evaluateSubmission 产出 candidate，answerProbe 仅写唯一 experimental:probe_result，不激活练习结算/FSRS/θ̂。未准入探针 withheld，不自动降级 manual。v2 复验分流：judge 'incorrect' → outcome=0；第一次为 'evidence_for' 并原子派发预先独立创作的 sequence-2 probe，第二道独立 probe 也 incorrect 才为 'confirmed'。历史 v1 proposal 无 follow-up，保留单题 incorrect → 'confirmed' 的终态规则。任一 probe judge 'correct' → outcome=1 → 'retired'（猜测被反驳）。fail-closed：'partial'/'unsupported' → 422，不写 probe_result，探针保持 active（slot 未消费，owner 可重答或走 admin S4）。幂等：重答返回记录的 outcome/resolution（不覆盖）。需 x-internal-token。响应：{ status, resolution, outcome, probe_result_event_id, coarse_outcome, idempotent }",
+            "description": "猜测探针作答（conjecture-wire #13 / YUK-538 ⑬）：owner 回答已派发的判别探针，judge 纯评价 → outcome → resolution 分流\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** YUK-1364：评分前由 Agency 共享校验原始 proposal 与冻结 issuance/revision 的题面、单一 open_response 和 rule_reference/probe_spec 评分依据；不匹配返回 409（如 probe_reference_mismatch），不创建 judge claim、submission/evaluation 或调用模型；不支持的评分契约仍返回 422。YUK-1047：已准入探针在备课台实际发题时冻结 native issuance；服务端保存 ResponseSet 与原始图片 digest 后经 evaluateSubmission 产出 candidate，answerProbe 仅写唯一 experimental:probe_result，不激活练习结算/FSRS/θ̂。未准入探针 withheld，不自动降级 manual。v2 复验分流：judge 'incorrect' → outcome=0；第一次为 'evidence_for' 并原子派发预先独立创作的 sequence-2 probe，第二道独立 probe 也 incorrect 才为 'confirmed'。历史 v1 proposal 无 follow-up，保留单题 incorrect → 'confirmed' 的终态规则。任一 probe judge 'correct' → outcome=1 → 'retired'（猜测被反驳）。fail-closed：'partial'/'unsupported' → 422，不写 probe_result，探针保持 active（slot 未消费，owner 可重答或走 admin S4）。幂等：重答返回记录的 outcome/resolution（不覆盖）。需 x-internal-token。响应：{ status, resolution, outcome, probe_result_event_id, coarse_outcome, idempotent }",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"answer_md\": \"2x·cos(x^2)\"\n}",
@@ -1524,10 +1524,16 @@
                   "value": "math",
                   "disabled": true,
                   "description": "optional"
+                },
+                {
+                  "key": "cursor",
+                  "value": "<next_cursor>",
+                  "disabled": true,
+                  "description": "optional"
                 }
               ]
             },
-            "description": "查询错题列表（event-stream 投影），支持时间过滤和 question 过滤\n\n**Query:**\n- `limit` (optional) e.g. `50`\n- `since` (optional) e.g. `2026-01-01T00:00:00Z`\n- `question_id` (optional) e.g. `qid_abc123`\n- `subject` (optional) e.g. `math`\n\n**Notes:** limit 默认 50 上限 200；since 为 ISO-8601；subject 按 question → knowledge → effective_domain 派生；投影 shape：id/question_id/prompt_md/wrong_answer_md/knowledge_ids/cause/created_at"
+            "description": "查询错题列表（event-stream 投影），支持时间过滤和 question 过滤\n\n**Query:**\n- `limit` (optional) e.g. `50`\n- `since` (optional) e.g. `2026-01-01T00:00:00Z`\n- `question_id` (optional) e.g. `qid_abc123`\n- `subject` (optional) e.g. `math`\n- `cursor` (optional) e.g. `<next_cursor>`\n\n**Notes:** limit 默认 50，钳制 1–200；since 为 ISO-8601；subject 按 question → knowledge → effective_domain 派生；cursor 使用响应 next_cursor。响应含 data/rows/page/next_cursor；行含 id/record_id/question_id/prompt_md/reference_md/wrong_answer_md/wrong_answer_image_refs/knowledge_ids/cause/correction_state/created_at。题面优先冻结 snapshot（含父题干）；历史无 snapshot 仅在可证明作答后未编辑时读现值，损坏或不支持证据保留行并返回空题面、null 参考答案；错答图片来自原 attempt answer_image_refs。"
           },
           "response": []
         },

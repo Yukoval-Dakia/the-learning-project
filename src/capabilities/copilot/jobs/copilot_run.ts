@@ -1,9 +1,10 @@
 // Copilot's single persistent execution owner (ADR-0062).
 // HTTP admission commits the input and queues its session head; this worker
 // owns execution, Stop, native session reuse and outcome settlement. Safe STEP
-// progress may publish during execution; reply text publishes only after the
-// reviewed domain outcome is committed. Closing a subscriber cannot cancel it.
-// Input/reply writes live in conversation-writes; the execution/validation
+// progress and provider prose publish during execution; authoritative reply
+// replacement follows the finalized domain outcome commit. Closing a subscriber
+// cannot cancel it.
+// Input/reply writes live in conversation-writes; the execution/finalization
 // policy lives in copilot-execution. Registered tools come from capability
 // manifests before worker pickup, never from an extra chat adapter.
 
@@ -542,19 +543,6 @@ async function projectCopilotOutcomeMarker(
     async (tx, lockedEvents) => {
       const marker = await findPersistedDurableReply(tx, runId);
       if (!marker) throw new Error(`durable outcome marker missing for ${runId}`);
-      // YUK-832: the domain marker records whether the primary stream produced
-      // user-facing text. Publish one finalized full-text DELTA inside this same
-      // settlement transaction, immediately before the terminal projection.
-      // An owner crash after marker commit is therefore repaired identically by
-      // redelivery/reconcile, and no interleaving can produce REPLY,DONE,DELTA.
-      if (marker.emitReviewedDelta && marker.replyMd.length > 0) {
-        await writeJobEvent(tx, {
-          business_table: COPILOT_RUN_TABLE,
-          business_id: runId,
-          event_type: COPILOT_RUN_EVENTS.DELTA,
-          payload: { text: marker.replyMd },
-        });
-      }
       if (marker.outcome === 'success') {
         await projectSuccessfulTerminal(tx, { runId, ...marker }, lockedEvents);
         return {
@@ -589,7 +577,7 @@ async function projectCopilotOutcomeMarker(
 /**
  * An overlapping physical delivery must neither execute nor declare the live
  * owner ambiguous. Wait within the 2h pg-boss lease for the primary + final
- * review + settlement owner budget, then re-enter through normal replay guards. If the owner crashed,
+ * finalization + settlement owner budget, then re-enter through normal replay guards. If the owner crashed,
  * the expired fence becomes an honest ambiguous terminal; if it committed an
  * outcome/terminal, replay repairs or returns it without paid work.
  */
@@ -983,16 +971,23 @@ async function executeAcceptedCopilotRun(
             params.onSpawnBudgetObservation?.(activity.observation);
             return;
           }
-          const payload = projectCopilotActivity(activity);
+          const isProse = activity.kind === 'prose_delta';
+          const payload = isProse ? { text: activity.text } : projectCopilotActivity(activity);
           if (!payload) return;
           progressChain = progressChain
             .catch(() => undefined)
             .then(async () => {
-              await writeJobEvent(db, {
-                business_table: COPILOT_RUN_TABLE,
-                business_id: runId,
-                event_type: COPILOT_RUN_EVENTS.STEP,
-                payload,
+              // Stop and terminal commits share this lock. A queued delta cannot
+              // cross either boundary, even when persistence lags the provider.
+              await withCopilotExecutionSettlementLock(db, runId, async (tx, events) => {
+                if (hasCancelRequest(events) || (await findPersistedDurableReply(tx, runId)))
+                  return;
+                await writeJobEvent(tx, {
+                  business_table: COPILOT_RUN_TABLE,
+                  business_id: runId,
+                  event_type: isProse ? COPILOT_RUN_EVENTS.DELTA : COPILOT_RUN_EVENTS.STEP,
+                  payload,
+                });
               });
             });
           return progressChain;
@@ -1001,13 +996,12 @@ async function executeAcceptedCopilotRun(
     );
     await drainDeltaChain(progressChain, runId);
     const finalized = result.finalization;
-    const candidateDeltaObserved = result.candidateDeltaObserved;
-    const reviewedReply = finalized.replyText;
-    const reviewedPreparedReply: PreparedCopilotReply = finalized.preparedReply;
-    const reviewedCancellationReply = finalized.accepted ? reviewedReply : undefined;
+    const finalReply = finalized.replyText;
+    const preparedReply: PreparedCopilotReply = finalized.preparedReply;
+    const cancellationReply = finalized.accepted ? finalReply : undefined;
     if ((await cancellationControl.probe()) === 'cancel_requested') {
       return await settleObservedCancellation(
-        reviewedCancellationReply,
+        cancellationReply,
         result.taskRunId,
         finalized.accepted ? finalized.receipt : undefined,
         finalized.accepted ? finalized.preparedReply : undefined,
@@ -1026,19 +1020,18 @@ async function executeAcceptedCopilotRun(
         sessionId: data.session_id,
         actorRef,
         taskRunId: result.taskRunId,
-        partialText: reviewedReply,
-        preparedReply: reviewedPreparedReply,
+        partialText: finalReply,
+        preparedReply,
         projectSuccessfulTerminal,
         projectFailedTerminal,
         writeCopilotReplyFn: persistReply,
         replyFinalization: finalized.receipt,
         createCancelledMarker: cancellationMarker(
-          reviewedCancellationReply,
+          cancellationReply,
           result.taskRunId,
           finalized.accepted ? finalized.receipt : undefined,
           finalized.accepted ? finalized.preparedReply : undefined,
         ),
-        emitReviewedDelta: candidateDeltaObserved,
       });
     }
 
@@ -1049,20 +1042,18 @@ async function executeAcceptedCopilotRun(
         sessionId: data.session_id,
         actorRef,
         taskRunId: result.taskRunId,
-        partialText: reviewedReply,
-        preparedReply: reviewedPreparedReply,
+        partialText: finalReply,
+        preparedReply,
         projectSuccessfulTerminal,
         projectFailedTerminal,
         writeCopilotReplyFn: persistReply,
         replyFinalization: finalized.receipt,
         createCancelledMarker: cancellationMarker(),
-        emitReviewedDelta: candidateDeltaObserved,
       });
     }
 
     const modeState = resolveCopilotModeCompletion(data.skill_context, {
       kind: 'success',
-      learningContent: finalized.receipt.learning_content,
     });
 
     // YUK-364 (F1) — commit the domain outcome marker first, then project the
@@ -1078,14 +1069,13 @@ async function executeAcceptedCopilotRun(
           const { cleanedReply } = await persistReply(tx, {
             sessionId: data.session_id,
             userAskEventId: runId,
-            replyText: reviewedReply,
-            preparedReply: reviewedPreparedReply,
+            replyText: finalReply,
+            preparedReply,
             actorRef,
             taskRunId: result.taskRunId,
             replyFinalization: finalized.receipt,
             outcome: 'success',
             durableFinishReason: result.finishReason,
-            durableEmitReviewedDelta: candidateDeltaObserved,
             ...(modeState ? { modeState } : {}),
             now: new Date(),
           });
@@ -1096,14 +1086,12 @@ async function executeAcceptedCopilotRun(
             taskRunId: result.taskRunId,
             finishReason: result.finishReason,
             ...(modeState ? { modeState } : {}),
-            ...(reviewedPreparedReply.primaryView
-              ? { primaryView: reviewedPreparedReply.primaryView }
-              : {}),
+            ...(preparedReply.primaryView ? { primaryView: preparedReply.primaryView } : {}),
           };
         },
         {
           createCancelled: cancellationMarker(
-            reviewedCancellationReply,
+            cancellationReply,
             result.taskRunId,
             finalized.accepted ? finalized.receipt : undefined,
             finalized.accepted ? finalized.preparedReply : undefined,
@@ -1228,8 +1216,6 @@ async function handleDurableFailure(
     replyFinalization?: CopilotReplyFinalizationReceipt;
     /** Settlement-lock race winner when Stop committed before this failure marker. */
     createCancelledMarker?: (tx: Tx) => Promise<PersistedDurableReply>;
-    /** Persisted recovery flag for one finalized full-text DELTA before FAILED. */
-    emitReviewedDelta?: boolean;
   },
 ): Promise<RunCopilotRunResult> {
   const {
@@ -1245,7 +1231,6 @@ async function handleDurableFailure(
     writeCopilotReplyFn,
     replyFinalization,
     createCancelledMarker,
-    emitReviewedDelta,
   } = args;
   const message = String((err as Error)?.message ?? err);
   const failureTaskRunId = taskRunId ?? `copilot_run_exhausted_${runId}`;
@@ -1270,7 +1255,6 @@ async function handleDurableFailure(
           replyFinalization,
           outcome: 'failure',
           durableFailure: { reason: 'exhausted', error: message },
-          durableEmitReviewedDelta: emitReviewedDelta,
           now: new Date(),
         });
         return {
@@ -1279,7 +1263,6 @@ async function handleDurableFailure(
           taskRunId: failureTaskRunId,
           reason: 'exhausted' as const,
           error: message,
-          ...(emitReviewedDelta ? { emitReviewedDelta: true } : {}),
         };
       },
       createCancelledMarker ? { createCancelled: createCancelledMarker } : {},

@@ -17,10 +17,8 @@
 //     --config vitest.db.config.ts src/capabilities/copilot/jobs/copilot-pi-actual.db.test.ts
 // Evidence lands in docs/planning/evidence/2026-09-21-pi-p3-copilot-<model>-actual.json.
 //
-// The user messages demand short declarative prose (no questions, no equations)
-// so the learning-content reviewer short-circuits locally without an extra
-// provider call — a blocked/marker verdict would still be recorded as evidence
-// but is not what this gate measures.
+// This gate remains provider opt-in. Chat no longer performs an independent
+// learning-content review; task/domain quality admission is separate.
 
 import { createHash } from 'node:crypto';
 import { writeFileSync } from 'node:fs';

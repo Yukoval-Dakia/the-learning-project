@@ -7,9 +7,8 @@ import { loadAttemptQuestionSnapshot } from '@/capabilities/practice/public';
 import { db } from '@/db/client';
 import { knowledge, question, source_asset } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { ApiError, collectionPayload, errorResponse, resourceResponse } from '@/kernel/http';
+import { ApiError, errorResponse, resourceResponse } from '@/kernel/http';
 import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-overlay';
-import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
 import {
   assertCauseAllowedForSubjectProfile,
   resolveSubjectProfileForKnowledgeIds,
@@ -17,8 +16,8 @@ import {
 import { createLearningRecord } from '@/kernel/records/queries';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
-import { listMistakeProjectionPage } from '@/server/records/mistakes';
-import { CreateMistakeBodySchema, MistakeListQuerySchema } from './contracts';
+import { readMistakes } from '../server/mistakes-read';
+import { CreateMistakeBodySchema } from './contracts';
 
 async function assertAssetsExist(
   ids: string[],
@@ -222,53 +221,12 @@ export async function POST(req: Request): Promise<Response> {
   }
 }
 
-// ----- Phase 1c.1 Step 6.G — GET (event-stream projection) -----
-//
-// GET /api/mistakes?limit=N&since=ISO&question_id=X
-//   → { rows: [{ id, question_id, prompt_md, reference_md, wrong_answer_md, knowledge_ids,
-//                cause, created_at }] }
-//
-// Same projection / back-compat shape as `/api/mistakes/recent`. Filters:
-//   - limit: default 50, clamped [1, 200]
-//   - since: ISO-8601 timestamp (created_at >= since)
-//   - question_id: restrict to one question's failure attempts
-
-const DEFAULT_LIMIT = 50;
-const MAX_LIMIT = 200;
-
+// HTTP adaptation only; query policy belongs to the shared ingestion read operation.
 export async function GET(req: Request): Promise<Response> {
   try {
-    const url = new URL(req.url);
     const raw: Record<string, string> = {};
-    for (const [key, value] of url.searchParams.entries()) raw[key] = value;
-    const parsed = MistakeListQuerySchema.safeParse(raw);
-    if (!parsed.success) {
-      const message = parsed.error.issues
-        .map((i) => `${i.path.join('.')}: ${i.message}`)
-        .join('; ');
-      throw new ApiError('validation_error', message, 400);
-    }
-    const limit = Math.min(
-      Math.max(parsed.data.limit ? Number.parseInt(parsed.data.limit, 10) : DEFAULT_LIMIT, 1),
-      MAX_LIMIT,
-    );
-    const since = parsed.data.since ? new Date(parsed.data.since) : undefined;
-    const questionIds = parsed.data.question_id ? [parsed.data.question_id] : undefined;
-    const subjectKnowledgeIds = parsed.data.subject
-      ? await resolveSubjectKnowledgeIds(db, parsed.data.subject)
-      : undefined;
-
-    const page = await listMistakeProjectionPage(db, {
-      limit,
-      since,
-      questionIds,
-      subjectKnowledgeIds,
-      cursor: parsed.data.cursor,
-    });
-
-    return Response.json(
-      collectionPayload(page.rows, { limit, next_cursor: page.next_cursor }, page),
-    );
+    for (const [key, value] of new URL(req.url).searchParams.entries()) raw[key] = value;
+    return Response.json(await readMistakes(db, raw));
   } catch (err) {
     return errorResponse(err);
   }

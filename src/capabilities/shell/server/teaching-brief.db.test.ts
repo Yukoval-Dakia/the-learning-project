@@ -7,7 +7,7 @@
 
 import { and, count, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { answerProbe, serveProbeOnce } from '@/capabilities/agency/public';
+import { answerProbe, serveProbeOnce, servePublishedProbe } from '@/capabilities/agency/public';
 import { TeachingBriefResponseSchema } from '@/capabilities/shell/api/contracts';
 import { shellCapability } from '@/capabilities/shell/manifest';
 import {
@@ -21,6 +21,7 @@ import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
+import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const NOW = new Date('2026-07-19T12:00:00.000Z');
@@ -202,6 +203,8 @@ async function seedProbe(opts: {
     now: opts.createdAt,
   });
   if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
+  await publishPaperModelFixture(testDb(), served.probe_question_id);
+  await servePublishedProbe(testDb(), served.probe_question_id);
   return served.probe_question_id;
 }
 
