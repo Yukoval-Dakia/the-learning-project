@@ -1,4 +1,5 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import { PublishedQuestionRevision, projectPracticeIssuance } from '@/core/schema/assessment';
 import {
   PROBE_QUESTION_INITIAL_VERSION,
   PROBE_QUESTION_KIND,
@@ -8,8 +9,9 @@ import {
 } from '@/core/schema/conjecture';
 import { AiProposalPayload } from '@/core/schema/proposal';
 import type { Db, Tx } from '@/db/client';
-import { event, question } from '@/db/schema';
+import { assessment_issuance, event, question, question_revision } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
+import { issuanceRowToContract, revisionRowToContract } from '@/kernel/records/assessment-issuance';
 
 type DbLike = Db | Tx;
 
@@ -134,6 +136,8 @@ function parseConjectureProbeSpec(row: typeof event.$inferSelect): ConjecturePro
 function supportingQuestionSequence(
   row: SupportingQuestionRow,
   spec: ConjectureProbeSpec,
+  issuance: typeof assessment_issuance.$inferSelect | null,
+  revision: typeof question_revision.$inferSelect | null,
 ): 1 | 2 | null {
   const metadata = toRecord(row.metadata);
   const sequence = metadata.probe_sequence ?? 1;
@@ -142,7 +146,6 @@ function supportingQuestionSequence(
   const expectedReference = sequence === 2 ? spec.followupReferenceMd : spec.referenceMd;
   if (
     row.kind !== PROBE_QUESTION_KIND ||
-    row.version !== PROBE_QUESTION_INITIAL_VERSION ||
     row.source !== PROBE_QUESTION_SOURCE ||
     row.source_ref !== spec.id ||
     row.draft_status !== 'draft' ||
@@ -151,13 +154,53 @@ function supportingQuestionSequence(
     row.knowledge_ids[0] !== spec.knowledgeId ||
     expectedPrompt === null ||
     expectedReference === null ||
-    row.prompt_md !== expectedPrompt ||
-    row.reference_md !== expectedReference ||
     row.choices_md !== null
   ) {
     return null;
   }
-  return sequence;
+  // Historical unissued evidence keeps its original mutable-row contract. An
+  // issued probe was answered against this revision, even after later edits or
+  // publications. Current lifecycle/snapshot guards only govern new answers.
+  if (!issuance) {
+    return row.version === PROBE_QUESTION_INITIAL_VERSION &&
+      row.prompt_md === expectedPrompt &&
+      row.reference_md === expectedReference
+      ? sequence
+      : null;
+  }
+  if (
+    !revision ||
+    revision.group_id !== row.id ||
+    issuance.container_occurrence_ref !== `probe:${row.id}`
+  ) {
+    return null;
+  }
+  try {
+    const published = PublishedQuestionRevision.parse(revisionRowToContract(revision));
+    const frozen = projectPracticeIssuance(published, issuanceRowToContract(issuance));
+    const slot = frozen.response_spec.slots[0];
+    const unit = published.scoring_basis.units[0];
+    if (
+      frozen.response_spec.slots.length !== 1 ||
+      slot.kind !== 'open_response' ||
+      frozen.faces.map((part) => part.prompt_md).join('\n\n') !== expectedPrompt ||
+      published.scoring_basis.units.length !== 1 ||
+      !unit.slot_refs.includes(slot.slot_id) ||
+      unit.criterion.kind !== 'rule_reference'
+    ) {
+      return null;
+    }
+    const criterion = unit.criterion;
+    const referenceMatches = criterion.probe_spec
+      ? criterion.probe_spec.prompt_md === expectedPrompt &&
+        criterion.probe_spec.reference_md === expectedReference
+      : criterion.statement_md === expectedReference ||
+        // The legacy probe publisher appends this fixed judging-intent note.
+        criterion.statement_md === `${expectedReference}\n\n（判分意图：multimodal_direct）`;
+    return referenceMatches ? sequence : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -165,7 +208,8 @@ function supportingQuestionSequence(
  * v2 recurrence confirmation. Evidence is active only while its proposal-specific
  * question chain remains canonical. Correcting either the terminal result or any
  * supporting result referenced by `independent_probe_question_ids`, or drifting
- * any supporting question's prompt/KC/provenance, invalidates the terminal evidence.
+ * any supporting question's KC/provenance or issued content, invalidates the
+ * terminal evidence. Unissued historical questions retain row-based validation.
  */
 export async function getEffectiveProbeResultStatuses(
   db: DbLike,
@@ -232,8 +276,8 @@ export async function getEffectiveProbeResultStatuses(
 
   // Recurrence always validates every supporting question. Consumers that use
   // already-anchored direct results as live inputs can opt into the same
-  // proposal/question provenance validation so later generic question edits
-  // fail closed instead of changing ranking or other derived state.
+  // proposal/question provenance validation. Issued content stays frozen while
+  // later provenance edits still fail closed for ranking and other derived state.
   const evidenceRows = options.validateDirectChain
     ? [...new Map([...dependencyRows, ...activeRows].map((row) => [row.id, row] as const)).values()]
     : dependencyRows;
@@ -252,8 +296,20 @@ export async function getEffectiveProbeResultStatuses(
     evidenceQuestionIds.length === 0
       ? []
       : await db
-          .select(supportingQuestionColumns)
+          .select({
+            probe: supportingQuestionColumns,
+            issuance: assessment_issuance,
+            revision: question_revision,
+          })
           .from(question)
+          .leftJoin(
+            assessment_issuance,
+            eq(assessment_issuance.issuance_id, sql<string>`'iss_probe_' || ${question.id}`),
+          )
+          .leftJoin(
+            question_revision,
+            eq(question_revision.revision_id, assessment_issuance.revision_id),
+          )
           .where(inArray(question.id, evidenceQuestionIds));
   const proposalRows =
     evidenceConjectureEventIds.length === 0
@@ -272,7 +328,7 @@ export async function getEffectiveProbeResultStatuses(
     db,
     proposalRows.map((row) => row.id),
   );
-  const questionById = new Map(questionRows.map((row) => [row.id, row] as const));
+  const questionById = new Map(questionRows.map((row) => [row.probe.id, row] as const));
   const specByConjectureId = new Map(
     proposalRows.flatMap((row) => {
       if (proposalCorrectionStatuses.get(row.id)?.state !== 'active') return [];
@@ -285,7 +341,14 @@ export async function getEffectiveProbeResultStatuses(
     if (typeof conjectureEventId !== 'string') return null;
     const spec = specByConjectureId.get(conjectureEventId);
     const supportingQuestion = questionById.get(row.subject_id);
-    return spec && supportingQuestion ? supportingQuestionSequence(supportingQuestion, spec) : null;
+    return spec && supportingQuestion
+      ? supportingQuestionSequence(
+          supportingQuestion.probe,
+          spec,
+          supportingQuestion.issuance,
+          supportingQuestion.revision,
+        )
+      : null;
   };
 
   for (const row of activeRows) statuses.set(row.id, 'active');

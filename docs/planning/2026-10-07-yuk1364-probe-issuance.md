@@ -24,4 +24,10 @@ active 与 completed consumer 现在共享冻结题面投影。完成后的结�
 
 唯一验证审已完成，仍有一项 P1：带 follow-up 的连续复验通过 `probe-evidence.ts` 校验支持链，`supportingQuestionSequence` 仍读取可变题面、参考答案和版本。已正式发题的 legacy follow-up 编辑后，可能作答成功却使 confirmed 结果不可见、ack 409、报告误判 corrupt。该发现来自源码追踪；上述单次 probe 回归不能证明连续复验通过。
 
-独占 implementation writer 正在用隔离 DB 复现并修复；PR #1591 暂不合并，不启动第三轮审查。父线程仍须检查实际修复和回归结果。此记录不代表 exact-head CI 已通过，也不代表该修复已部署。真实 provider 输出质量不属于本次离线契约验证结论。
+该 P1 已用两条完整连续复验链路 RED→GREEN 复现并修复。共享 evidence fold 对已发题结果读取冻结 issuance/revision，历史未发题结果保留旧校验；KC/来源/依赖撤销仍使结果失效。生产 guard、schema 和合法 fallback 选择规则未改。
+
+最终 12 文件 248 DB、5 文件 72 unit、typecheck/lint/build 与 diff check 通过；父线程核对实际 diff、文件哈希后，独立复跑 issuance、Scout、accountability 三文件 85 DB 全通过。准确命令与哈希见 `/tmp/yuk1364-recurrence-commands.log`，父日志 `/tmp/yuk1364-parent-recurrence-db.log`。
+
+负向 fixture 曾因冻结 guard、外键及合法初次结果 fallback 失败；最终通过既有隔离 restore fixture 构造异常，保留生产约束并明确验证正常写入仍被拒绝。没有通过删除或放宽生产约束取得测试通过。
+
+独立初审及唯一验证审均已完成，发现已修复，不启动第三轮审查。PR #1591 仍需新提交的 exact-head CI 和合并条件；此记录不代表已部署。真实 provider 输出质量不属于本次离线契约验证结论。
