@@ -1,10 +1,22 @@
-# main integration 2026-10-07
+# 当前整合交接 — 2026-10-07 YUK-1346 / YUK-1350
+
+本轮从干净 `77d1656c7358c3b9f04d1e91e2065c3634932e84` 普通 merge `origin/main` 的 `42987dfd7d456ca187e716509d11ea100e7353b9`，不 rebase/force。冲突仅 PLAN 和本交接。代码保留两侧，新增 main Pi + DBOS TESTONLY gate 和 DBOS 5.2.11 devDependency。本实施子任务 completed/noPending，完成本地提交即释放写权，由父线程接回；不 push/PR/watch/GitHub merge/新审查/委派。
+
+Owner 完整非 UI 迁移优先，UI 暂缓；主 runtime agent TESTONLY，旧 automation disabled。YUK-1352/1355/1356 各自其他树继续，本树不实现这些票。main gate 的未知外部结果替身重调不等于真实 provider 安全策略，YUK-1350 未知结果仍不可重投。
+
+旧 fea545aa1/365871dab 实际验收及 77d1656c7 前的本地检查不覆盖新 merge。新 exact-head CI、候选/真实 runtime、全局 brief/原 key 幂等/重投/最终数据保护验收仍由父线程负责。所有实际模型请求及失败/DLQ 原义务保留，本轮不运行主 runtime、候选、existing DB 或付费 provider。
+
+main YUK-1338 封存证据见 `docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md` 和相邻 JSON；不改写原证据归属，也不重复 review。
+
+本轮 57 unit / 16 fresh Testcontainers DB passed、24 DB 明确 skipped；typecheck/lint/build/partition exit 0，lint 297 既有 warnings。整个 src 除新增隔离 gate 外与第一 parent 逐字节一致，main gate/依赖/原封存证据与第二 parent 一致。日志与 SHA256 见 `docs/planning/2026-10-07-yuk1346-acceptance-and-reconcile-safety.md` 的 42987dfd7 整合节。没有新 actionable follow-up，不新建重复票或修改 SaaS 状态。
+
+## 上轮整合证据
 
 父正常merge main a86d4e633a67f802554ae114387ab06b7110c135，保留 observeTaskOperation finalization 和 !answerOnly SDK retention。生产f3不动，旧候选365及fea原始实际证据均保持原版本标签；新集成后须新CI/候选验收。93相关unit、Copilot教学/输入DB、typecheck/lint/build均通过；待新CI。
 
-# 当前交接 — 2026-10-07 YUK-1346 / YUK-1350
+## 上轮 YUK-1346 / YUK-1350 交接与保留义务
 
-父线程是 /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety 的唯一 writer；分支 fix/yuk-1346-reconcile-safety，源码324381a3bb94486155d865d24e5ab504c97cafee。实施子任务已 completed/noPending，写权结束。父负责PR1588/CI/watch/Linear/验收/发布。旧 tlp-yuk-1346-turn-retention 保持 fea545aa1 封存，不在旧树继续写。
+上轮父线程独占 /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety；分支 fix/yuk-1346-reconcile-safety，以下修复证据归属源码324381a3bb94486155d865d24e5ab504c97cafee。实施子任务已 completed/noPending，写权结束。父负责PR1588/CI/watch/Linear/验收/发布。旧 tlp-yuk-1346-turn-retention 保持 fea545aa1 封存，不在旧树继续写。
 
 真实结果、失效验收脚本、超时、费用及保护边界见 docs/planning/2026-10-07-yuk1346-acceptance-and-reconcile-safety.md。此前 now 内容保存在 fea545aa1 的 Git 历史；完整持续接续记录在根树 .remember/2026-10-07-autonomous-local-delivery.md。不要沿用旧“A未发送/R4未验收”状态。
 

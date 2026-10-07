@@ -1,11 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-07 本轮合入最新 main，保留 Laminar finalization tracing 与 answer-only SDK 隔离。此前：R4/A 已完成真实回答及记忆边界验证；整理调用超时暴露的 YUK-1350 重投保护已提交 324381a3b，父线程42 unit/6 DB复验通过，PR1588整合中，生产仍 f3。
+> Linear 是权威 tracker。2026-10-07 本轮正常 merge origin/main 42987dfd7；代码无冲突，交接文档合并两侧状态。保留 answer-only fail-closed、YUK-1350 start fence、Laminar 和 main Pi + DBOS TESTONLY gate。本轮57 unit/16 fresh DB及typecheck/lint/build/partition通过；旧实际验收不覆盖新 merge。本轮不 push、不启动 runtime 或付费调用，提交后子任务释放写权。
 
 ## NOW
 
 - **YUK-1346 / YUK-1350 In Progress**：当前集成树 `tlp-yuk1346-reconcile-safety`，父唯一 writer，PR1588。真实 R4 椭圆答案通过全文判决，受限轮不派生记忆、后续 A 输入排除 R；普通 A 提取成功。整理请求真实超时，结果/费用未知不重投。324381a3b 复用现有 start fence，覆盖响应体超时并服从剩余 deadline；作者62 unit/80 DB/typecheck/lint/build通过，父独立42 unit/6真实DB复验通过。详见[验收与修复记录](docs/planning/2026-10-07-yuk1346-acceptance-and-reconcile-safety.md)。
-- **YUK-1103 自主交付**：本机 http://localhost:8787；远程 https://loom-mac-mini.tail2ee344.ts.net/（同一 tailnet，沿用 Loom 令牌）。app/worker `f3bfff2cf` healthy，115项迁移、readiness active。已备份及恢复验证；不要重复发布旧 `5d738dbc0`。
+- **YUK-1338 / YUK-1351 P0 gate**：main `42987dfd7` 已包含 PR #1590 的隔离 Pi + DBOS gate。main 封存的 2 unit / 10 DB、typecheck/lint/build 及独立 review 证据仍归属原 revision；本树集成检查另记，不称生产迁移或真实 provider 验收。首次并发创建及 provider 请求身份要求仍归 YUK-1356。
+- **YUK-1103 自主交付**：本机 http://localhost:8787；远程 https://loom-mac-mini.tail2ee344.ts.net/（同一 tailnet，沿用 Loom 令牌）。此前发布记录为 app/worker `f3bfff2cf` healthy、115项迁移、readiness active，本轮未复验 runtime。此前已备份及恢复验证；不要重复发布旧 `5d738dbc0`。
 - **YUK-1341 产品 AI**：PR #1585 已通过 exact-head CI、独立初审和等待窗并合并。app/worker 都固定 `opencode-go/mimo-v2.6-pro`；54聊天任务和 Mem0 接线已落地。生产两轮 Copilot 成功，原会话及 Pi cursor 连续、刷新回放一致；后台 MemoryBrief 也已实际成功。未宣称所有任务质量或评分切片均获准入。
 - **YUK-1340 会话入口已交付**：PR #1583 满足 exact-head CI、审查和等待窗后合并。准确 ARM64 镜像完成副本迁移、旧镜像读取兼容、停写备份恢复及生产页面验收。默认续接、历史只读、新建、重开、刷新保持会话均通过；没有发送 AI 消息。YUK-1343 两条 P2 仍延期。
 - **行为基线 / YUK-405**：[完整设计](docs/design/2026-10-06-continuous-learning-system-behavior.md)连接学校、纸笔、自习与数字工具，由 agent 在持续委托下负责实现和验证，不是已实现清单。
@@ -13,9 +14,9 @@
 
 ## NEXT
 
-- 整合安全修复及最新记录，推 PR1588，等待新 exact-head CI 与17分钟窗；不启第三轮审查。完成剩余整理/全局摘要、原key幂等、重投及最终数据保护验收后，再做新镜像、停写备份/恢复验证和发布。旧 R/R2/R3、成功 R4/A/提取及未知整理请求均不重发。
+- 父线程接回本树后整合安全修复及最新记录，再推 PR1588，等待新 exact-head CI 与17分钟窗；不启第三轮审查。完成剩余整理/全局摘要、原key幂等、重投及最终数据保护验收后，再做新镜像、停写备份/恢复验证和发布。旧 R/R2/R3、成功 R4/A/提取及未知整理请求均不重发。
 - YUK-1042：42 failed +42 DLQ 原义务保留；先查每项副作用和幂等身份再恢复，不清队列或重付未知结果。
-- **TS 迁移 + UI 重写（epic YUK-1351）2026-10-07 owner 指示开工**：[准备计划](docs/planning/2026-10-07-ts-migration-and-ui-rewrite-prep.md) 按路由合并交付（每条 TanStack 路由同时上线新 UI）。首批并行：**YUK-1338**（Pi + DBOS 状态版本/过期拒绝/重启恢复竖切，第一道 gate，不过 gate 不动生产）与 **YUK-1353**（视觉方向 loft）。UI 票（YUK-1353/1354/1357 及 P6 UI 子票）只交 Claude Opus 5.5；非 UI 开发按 AGENTS 常规选择。ADR 以 main 的 0066 为准。
+- **TS 迁移 + UI 重写（epic YUK-1351）**：Owner 完整非 UI 迁移优先，UI 暂缓。主 runtime agent 为 TESTONLY，旧 automation disabled；Pi + DBOS gate 不授权启动主 runtime。YUK-1352/1355/1356 在各自其他 worktree 实施，本树不触及。ADR 以 main 的 0066 为准，具体迁移由父线程协调。
 - **早期单收口（2026-10-07）**：YUK-100..500 的 20 张已在 Linear 逐张裁定——147/213/295/310/406/443/464 转 Todo，369 Canceled（被 1038 取代），其余设触发条件与 10-21 / 11-07 复查截止，到期未触发即取消；406 验收裁定连带 405/418/419。
 
 ## PARKED
@@ -38,4 +39,4 @@
 - 无需 owner 追加日常授权。旧 Xiaomi402 不再阻塞新 Copilot；历史失败没有删除。
 - 默认会话入口已在生产修复；完整学习状态评估和自适应安排仍需逐条行为验收，不能以此次日用修复冒称产品完成。
 - 旧0f81整镜像读取新迁移副本兼容已验证；回退需刷新浏览器且恢复旧入口缺陷。数据库恢复仍须保护备份后新写入，不可自动覆盖。当前指针已更新且发布锁已释放。
-- 每小时 T3 任务仍绑定原线程；需要 Mac/T3 运行。远程访问需要同一 tailnet、Mac 开机且用户会话内 daemon 在运行。
+- 旧 automation disabled；本轮不恢复定时任务。远程访问需要同一 tailnet、Mac 开机且用户会话内 daemon 在运行。

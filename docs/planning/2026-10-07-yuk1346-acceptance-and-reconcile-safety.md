@@ -45,3 +45,37 @@ Normal merge of main a86d4e633a67f802554ae114387ab06b7110c135 retains both obser
 
 /tmp/pr1588-main-build.log SHA256 da87233c1a5cee741da788f596da031009205b7ddde2be3cc70d29b794ae0ed3
 
+
+## 42987dfd7 main integration, local only
+
+本轮在独占 worktree `tlp-yuk1346-reconcile-safety`、branch `fix/yuk-1346-reconcile-safety`，从干净 `77d1656c7358c3b9f04d1e91e2065c3634932e84` 普通 merge `origin/main` 的 `42987dfd7d456ca187e716509d11ea100e7353b9`。这是两个 merge parents，不 rebase/force。只有 `PLAN.md` 和 `.remember/now.md` 文档冲突，按两侧实际版本与 Owner 当前限制合并；所有代码自动合入。
+
+相对第一 parent，源码仅新增 main 的 `src/capabilities/practice/testing/pi-dbos-gate/{manifest,operations}.ts`，以及 gate 测试、原封存证据、DBOS 5.2.11 devDependency/lock 和 unit partition。其余整个 `src/` 逐字节不变，因此 answer_only 的 fail-closed 派生、模型历史/SDK session、YUK-1350 operation_kind providerStartFence 与未知结果不重试、Laminar finalization 均保留。gate 源码、测试、依赖、分区及原 evidence/doc 逐字节等于第二 parent。没有以全取一边覆盖代码。
+
+Owner 完整非 UI 迁移优先，UI 暂缓；主 runtime agent TESTONLY，旧 automation disabled。YUK-1352/1355/1356 在各自其他树实施，本树不触及。main gate 对未知结果重调可控替身的场景不能授权真实付费重试；其生产化要求仍归原 YUK-1356。
+
+本轮 scoped 检查在清理过的子进程环境执行，仅保留 PATH/HOME/TMPDIR/USER/LANG，不继承现有 DB/provider 环境；迁移连接由 globalSetup 固定为 fresh Testcontainers URL。DB config 的 globalSetup 新建 pgvector Testcontainers、迁移并克隆 fresh fork databases，未使用 existing DB。gate 子进程只收到隔离数据库与显式测试参数。结果：
+
+- `pnpm install --frozen-lockfile` exit 0，未改写 manifest/lock。
+- `pnpm vitest run --config vitest.unit.config.ts tests/pi-dbos-gate/contract.unit.test.ts src/server/memory/reconcile-llm.test.ts src/capabilities/copilot/server/copilot-execution.unit.test.ts`：3 files / 57 passed。模型为合成 seam，不调用 provider。
+- `pnpm vitest run --config vitest.db.config.ts tests/pi-dbos-gate/recovery.db.test.ts src/server/memory/reconcile-handler.db.test.ts -t 'Pi|direct provider-start fence after abort'`：2 files / 16 passed、24 skipped；10 项 Pi + DBOS 真实子进程恢复，6 项 direct fence/deadline，transport 为合成替身。
+- `pnpm typecheck`、`pnpm lint`、`pnpm build`、`pnpm audit:partition` 均 exit 0。lint 297 既有 warnings；partition 的既有启发式提示不等于新增分区失败。没有修改规则、baseline 或 exemptions。
+- 源码比较和 `git diff --check` 通过。没有新的源码冲突，无需重跑与这次 merge 无关的旧整套验证。
+
+日志与本轮 gate 合成证据单独保存在 `/tmp`，main 原封存 evidence 不被覆盖。
+
+| Artifact | SHA256 |
+| --- | --- |
+| `/tmp/yuk1346-merge-42987-install.log` | `0bf1076d1cd84e8a11e439609d21d8fbfa35ea30a642e0175da280627b426f86` |
+| `/tmp/yuk1346-merge-42987-unit.log` | `b6c4aaeaa965e6775013f091bb44b03072235d2073badc7fd25c05784b312376` |
+| `/tmp/yuk1346-merge-42987-db.log` | `ae41d6142782238d318a9c320dca406bb5ae26d681eda0833571a4d8a0a172b1` |
+| `/tmp/yuk1346-merge-42987-typecheck.log` | `8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92` |
+| `/tmp/yuk1346-merge-42987-lint.log` | `d8fe28d97a4f9b51ff5d5746eac99836a4a8208c1e59870c075bd17f8f0d51b7` |
+| `/tmp/yuk1346-merge-42987-build.log` | `be8c232e77265a851422a9c34001f079aeebda1fe563894c176144ee1b93d7e0` |
+| `/tmp/yuk1346-merge-42987-partition.log` | `ef5ba51eada64d944fe1ebb07c74d9eb2f537d9a506f67ddc3363b5a9df4a9ee` |
+| `/tmp/yuk1346-merge-42987-source-check.json` | `103ae551bd5b681a896b9d8908efd4e3199a8f968db6dda1161b49960f64c26d` |
+| `/tmp/yuk1346-merge-42987-gate-evidence.json` | `3ad48f8e4d61500b70f2d4e9e3ad4e37f3b4a25098c6ff46c1f481420cd787ac` |
+
+旧 fea545aa1/365871dab 的真实 R4/A/提取和 77d1656c7 前的本地证据仍归属各自版本，不能称为新 merge 运行验收。本轮无完整本机 pnpm test、主 runtime/候选、existing DB、付费 provider、push、PR 操作、watch、GitHub merge、部署、委派或新 review；审查预算保持已耗尽。
+
+capture gate：本次没有发现新的 actionable bug/follow-up，既有 YUK-1356 生产化要求与 YUK-1347/1348/1349 等继续保留，不新建重复票或改 SaaS 状态。父线程接回后负责新 exact-head CI 与候选/真实运行验收、全局 brief、原 key 幂等、completed redelivery 和最终数据保护。未知整理请求及旧 R/R2/R3/R4/A/提取不重放，失败/DLQ 义务与未知成本不改写。此次仅完成本地 merge；本实施子任务提交后 completed/noPending，释放写权。
