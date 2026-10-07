@@ -20,7 +20,6 @@ import {
   COPILOT_QUIZ_GEN_SKILL_NAME,
   COPILOT_SHARED_SUBJECT_DIR,
   COPILOT_SKILL_NAME,
-  resolveCopilotLearningContentProtocol,
   resolveCopilotSkillDocs,
 } from './copilot-skills';
 
@@ -38,62 +37,6 @@ function fixtureRoot(layout: Record<string, string[]>): string {
 }
 
 const names = (docs: { name: string; body: string }[] | undefined) => docs?.map((d) => d.name);
-
-describe('restricted reply validation protocol', () => {
-  it('ships the server-owned full-answer rule and the multiple-existing-question boundary', async () => {
-    const protocol = await resolveCopilotLearningContentProtocol();
-    expect(protocol).toContain('完整可见回复作为待校验答案');
-    expect(protocol).toContain('不要求正文逐字复制 `reference_md`');
-    expect(protocol).toContain('不信任标记中的答案或 rubric 覆盖正文');
-    expect(protocol).toContain('多道现有题目或现有题目与新题混合');
-    expect(protocol).toContain('不能因此转入新题校验');
-    expect(protocol).toContain('逐字保留原始条件、LaTeX 分隔符和标点');
-    expect(protocol).not.toContain('generate_question_candidate');
-  });
-
-  it('keeps the traced generation workflow in the full skill pack', async () => {
-    const docs = await resolveCopilotSkillDocs();
-    const copilot = docs?.find((doc) => doc.name === '_shared--copilot');
-    expect(copilot?.body).toContain('新题使用 `generate_question_candidate`');
-    expect(copilot?.body).toContain('以 `present_primary_view` 提名该次工具结果');
-  });
-  it.each(['\n', '\r\n'])(
-    'reads only the shared validation section with %j newlines',
-    async (newline) => {
-      const root = fixtureRoot({ [COPILOT_SHARED_SUBJECT_DIR]: [COPILOT_SKILL_NAME] });
-      writeFileSync(
-        join(root, COPILOT_SHARED_SUBJECT_DIR, 'skills', COPILOT_SKILL_NAME, 'SKILL.md'),
-        [
-          '---',
-          'name: copilot',
-          '---',
-          '## 提案',
-          'propose_knowledge_mutation / write_agent_note',
-          '## 新学习题的独立校验标记',
-          '协议正文与 subject_id、questions；纯讲解无需标记。',
-          '### 尾标字段',
-          'prompt_md / reference_md / choices_md',
-          '## 后台研究',
-          'Task / copilot-researcher / Exa',
-        ].join(newline),
-      );
-      const protocol = await resolveCopilotLearningContentProtocol(root);
-      expect(protocol).toContain('协议正文与 subject_id、questions；纯讲解无需标记。');
-      expect(protocol).toContain('### 尾标字段');
-      expect(protocol).not.toMatch(
-        /propose_|write_agent_note|Task|copilot-researcher|Exa|name: copilot/,
-      );
-    },
-  );
-
-  it('fails closed when the required section is missing rather than loading the full skill', async () => {
-    const root = fixtureRoot({ [COPILOT_SHARED_SUBJECT_DIR]: [COPILOT_SKILL_NAME] });
-    await expect(resolveCopilotLearningContentProtocol(root)).rejects.toThrow(
-      'protocol is missing',
-    );
-    await expect(resolveCopilotLearningContentProtocol(join(root, 'missing'))).rejects.toThrow();
-  });
-});
 
 describe('resolveCopilotSkillDocs — resolver discovery', () => {
   it("returns ['_shared--copilot','_shared--quiz-gen'] when BOTH shared packs exist (probe order, YUK-611 namespaced)", async () => {

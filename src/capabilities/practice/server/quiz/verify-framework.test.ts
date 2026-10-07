@@ -1047,56 +1047,6 @@ describe('runSolveCheck — A1 fallback candidates (答案+解析 reference_md)'
 
 // ---------- EFF-1 (YUK-554 review) — cost/provenance threading ----------
 
-describe('runSolveCheck full-response comparison', () => {
-  it.each(['correct', 'partial', 'incorrect', 'unparseable', 'error', 'cancel'] as const)(
-    'always judges the actual complete answer, with %s fixture output',
-    async (outcome) => {
-      // Synthetic recorded output shapes verify the production seam, not model reasoning.
-      const visible = '\n2\n解释：1+1=3，但上面的答案还是 2。';
-      const runTaskFn = vi.fn(async (kind: string, _input: unknown) => {
-        if (kind === 'SolutionGenerateTask') return { text: solverOutput('2') };
-        if (kind !== 'SemanticJudgeTask') throw new Error(`unexpected task ${kind}`);
-        if (outcome === 'error') throw new Error('synthetic provider failure');
-        if (outcome === 'cancel') throw new DOMException('synthetic cancelled', 'AbortError');
-        return { text: outcome === 'unparseable' ? 'not-json' : semanticOutput(outcome, 0.99) };
-      });
-      const result = await runSolveCheck(
-        {
-          ...exactQuestion,
-          prompt_md: '计算 1+1 并说明过程。',
-          reference_md: visible,
-          rubric_json: { reference_solution: { final_answer: '2', answer_equivalents: ['3'] } },
-        },
-        {
-          runTaskFn,
-          profile: fakeProfile,
-          db: fakeDb,
-          answerScope: 'full_response',
-          validationMode: 'release_strict',
-        },
-      );
-      expect(result.verdict).toBe(
-        outcome === 'correct' ? 'pass' : outcome === 'incorrect' ? 'fail' : 'unsupported',
-      );
-      expect(result.compared_by).toBe('semantic');
-      expect(runTaskFn.mock.calls.map(([kind]) => kind)).toEqual([
-        'SolutionGenerateTask',
-        'SemanticJudgeTask',
-      ]);
-      expect(runTaskFn.mock.calls[0]?.[1]).not.toHaveProperty('reference_md');
-      expect(runTaskFn.mock.calls[0]?.[1]).not.toHaveProperty('rubric_json');
-      expect(runTaskFn.mock.calls[1]?.[1]).toMatchObject({
-        answer: { content: visible },
-        question: {
-          reference_md: '2\n\nwork',
-          required_points: ['s', expect.stringContaining('全部推导、解释')],
-          acceptable_answers: [],
-        },
-      });
-    },
-  );
-});
-
 describe('runSolveCheck — EFF-1 cost/provenance threading', () => {
   it.each([
     ['partial', 0.99],

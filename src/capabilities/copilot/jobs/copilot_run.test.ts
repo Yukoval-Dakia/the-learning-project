@@ -6,7 +6,7 @@
 //   ② 非 transient error（plain Error）→ terminal FAILED(exhausted)+reply+return（不 throw，YUK-575 MF1）；
 //   ③ 启动前已有 cancel 事件 → 早停写 failed(cancelled)，不调 AI；
 //   ④ run handle = run_id = 传入 checkpoint_id（job_events.business_id）。
-//   YUK-575/YUK-832: N2 reviewed full-delta settlement（S3）/ N3+S4 ambient 装配往返 / N5+MF-A budget /
+//   YUK-575/YUK-832: N2 incremental durable streaming（S3）/ N3+S4 ambient 装配往返 / N5+MF-A budget /
 //            MF1/MF2 transient·exhausted 分诊 + 幂等守卫 / S6 static 约束。
 
 import { createHash } from 'node:crypto';
@@ -15,7 +15,6 @@ import type { EventStream, Api as PiApi, Model as PiModel } from '@earendil-work
 import { and, eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { capabilities } from '@/capabilities';
-import { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY } from '@/capabilities/copilot/server/content-validation';
 import { writeCopilotReply } from '@/capabilities/copilot/server/conversation-writes';
 import {
   type CopilotExecutionAdapters,
@@ -110,7 +109,7 @@ type AgentCtx = {
 
 // streamTaskCollecting mock — 匹配 (kind, input, ctx, onDelta) => Promise<StreamCollectResult>。
 // deltas 若给则在 resolve 前逐个 onDelta（模拟 primary stream 曾产生正文）；handler
-// 只保留这个布尔事实，审阅后由 settlement 投影一条完整安全 DELTA。partial/error 模拟
+// 将每条增量写入 durable DELTA。partial/error 模拟
 // graceful-degrade。默认不 emit delta（保既有 [STARTED,REPLY,DONE] 事件序列断言）。
 function streamMock(
   text: string,
@@ -159,7 +158,7 @@ const stubRunInput: NonNullable<RunCopilotRunParams['resolveCopilotRunInputFn']>
   ...(params.chipKind ? { chip_kind: params.chipKind } : {}),
   proposal_feedback: [],
   conversation_history: [],
-  validator_context_history: [],
+
   correction_contract: {
     available_prior_turn_ids: [],
     prior_turn_summaries: {},
@@ -179,9 +178,7 @@ function targetedRunInput(
     conversation_history: [
       { role: 'ai', text: '水箱 D02：原推导用了错误高度。', event_id: targetId },
     ],
-    validator_context_history: [
-      { role: 'ai', text: '水箱 D02：原推导用了错误高度。', event_id: targetId },
-    ],
+
     correction_contract: {
       target_prior_turn_id: targetId,
       available_prior_turn_ids: [targetId],
@@ -236,7 +233,7 @@ function successfulWorkerExecution(taskRunId: string, replyText: string, sdkSess
       replyText,
       preparedReply: { text: replyText },
       receipt: {
-        protocol_version: 1 as const,
+        protocol_version: 2 as const,
         assurance: 'execution_trace_bound' as const,
         root_task_run_id: taskRunId,
         candidate_sha256: createHash('sha256').update(replyText).digest('hex'),
@@ -246,13 +243,13 @@ function successfulWorkerExecution(taskRunId: string, replyText: string, sdkSess
         observed_completed_tool_use_ids: [],
         correction: 'normal' as const,
         proposal_disclosure: 'none' as const,
-        learning_content: 'not_applicable' as const,
+
         primary_view: 'absent' as const,
       },
       accepted: true,
     },
     partial: false,
-    candidateDeltaObserved: false,
+
     contextDigest: 'ignored-by-worker',
   };
 }
@@ -452,7 +449,7 @@ describe('runCopilotRun', () => {
     expect(replies[0]?.payload).toMatchObject({ reply_md: '这是回答', task_run_id: 'tr_x' });
   });
 
-  it('fails closed when a durable solution reply omits the learning-content marker', async () => {
+  it('publishes generated solution prose and completes quiz without chat content review', async () => {
     const runId = 'copilot_user_ask_durable_unverified_solution';
     const result = await runCopilotRun({
       db: testDb(),
@@ -472,16 +469,10 @@ describe('runCopilotRun', () => {
 
     expect(result).toMatchObject({
       status: 'done',
-      reply: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY,
+      reply: '解：1+1=3。',
     });
-    expect(result).not.toHaveProperty('skill_turn');
-    for (const event of await replay(runId)) {
-      expect(event.payload).not.toHaveProperty('skill_turn');
-    }
-    expect(
-      (await copilotReplyEvents('sess_durable_unverified_solution'))[0]?.payload,
-    ).not.toHaveProperty('skill_turn');
-    expect(JSON.stringify(await replay(runId))).not.toContain('1+1=3');
+    expect(result).toHaveProperty('skill_turn', { kind: 'end' });
+    expect(JSON.stringify(await replay(runId))).toContain('1+1=3');
   });
 
   it.each([
@@ -1144,7 +1135,6 @@ describe('runCopilotRun', () => {
       payload: {
         reply_md: reply,
         durable_finish_reason: 'end_turn',
-        durable_emit_reviewed_delta: true,
         skill_turn: { kind: 'end' },
         skill_context: skillContext,
       },
@@ -1153,6 +1143,8 @@ describe('runCopilotRun', () => {
       COPILOT_RUN_EVENTS.QUEUED,
       COPILOT_RUN_EVENTS.STARTED,
       COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+      COPILOT_RUN_EVENTS.DELTA,
+      COPILOT_RUN_EVENTS.DELTA,
     ]);
     expect(await countOutstandingDurableRuns(testDb())).toBe(1);
 
@@ -1172,12 +1164,15 @@ describe('runCopilotRun', () => {
       COPILOT_RUN_EVENTS.STARTED,
       COPILOT_RUN_EVENTS.EXECUTION_STARTED,
       COPILOT_RUN_EVENTS.DELTA,
+      COPILOT_RUN_EVENTS.DELTA,
       COPILOT_RUN_EVENTS.REPLY,
       COPILOT_RUN_EVENTS.DONE,
     ]);
-    expect(repairedEvents.filter((item) => item.event_type === COPILOT_RUN_EVENTS.DELTA)).toEqual([
-      expect.objectContaining({ payload: { text: reply } }),
-    ]);
+    expect(
+      repairedEvents
+        .filter((item) => item.event_type === COPILOT_RUN_EVENTS.DELTA)
+        .map((item) => item.payload.text),
+    ).toEqual(['已核对 42 次作答；', '三轮延迟复习与五个探针也已完成。']);
     expect(repairedEvents.some((item) => item.event_type === COPILOT_RUN_EVENTS.FAILED)).toBe(
       false,
     );
@@ -1247,7 +1242,6 @@ describe('runCopilotRun', () => {
       caused_by_event_id: runId,
       payload: {
         reply_md: '这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。',
-        durable_emit_reviewed_delta: true,
         durable_failure: { reason: 'exhausted', error: providerError },
       },
     });
@@ -1255,6 +1249,8 @@ describe('runCopilotRun', () => {
       COPILOT_RUN_EVENTS.QUEUED,
       COPILOT_RUN_EVENTS.STARTED,
       COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+      COPILOT_RUN_EVENTS.DELTA,
+      COPILOT_RUN_EVENTS.DELTA,
     ]);
     expect(await countOutstandingDurableRuns(testDb())).toBe(1);
 
@@ -1269,15 +1265,14 @@ describe('runCopilotRun', () => {
       COPILOT_RUN_EVENTS.STARTED,
       COPILOT_RUN_EVENTS.EXECUTION_STARTED,
       COPILOT_RUN_EVENTS.DELTA,
+      COPILOT_RUN_EVENTS.DELTA,
       COPILOT_RUN_EVENTS.FAILED,
     ]);
-    expect(repairedEvents.filter((item) => item.event_type === COPILOT_RUN_EVENTS.DELTA)).toEqual([
-      expect.objectContaining({
-        payload: {
-          text: '这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。',
-        },
-      }),
-    ]);
+    expect(
+      repairedEvents
+        .filter((item) => item.event_type === COPILOT_RUN_EVENTS.DELTA)
+        .map((item) => item.payload.text),
+    ).toEqual(['已完成 42 次历史作答核对；', '五个探针只跑完三题。']);
     expect(repairedEvents.at(-1)?.payload).toMatchObject({
       reason: 'exhausted',
       error: providerError,
@@ -1532,7 +1527,7 @@ describe('runCopilotRun', () => {
     expect(await countOutstandingDurableRuns(testDb())).toBe(1);
 
     // A genuine recovery happens only after the 12-minute primary run, bounded
-    // final evidence review, and settlement grace have elapsed. Age the fence
+    // finalization and settlement grace have elapsed. Age the fence
     // rather than mis-model an early overlap as a crashed owner.
     await testDb()
       .update(job_events)
@@ -1724,7 +1719,7 @@ describe('runCopilotRun', () => {
           replyText: reply,
           preparedReply: { text: reply, primaryView },
           receipt: {
-            protocol_version: 1,
+            protocol_version: 2,
             assurance: 'execution_trace_bound',
             root_task_run_id: 'tr_primary_view_repair',
             candidate_sha256: createHash('sha256').update(reply).digest('hex'),
@@ -1734,13 +1729,13 @@ describe('runCopilotRun', () => {
             observed_completed_tool_use_ids: ['toolu_root_read_1', 'toolu_present_1'],
             correction: 'normal',
             proposal_disclosure: 'none',
-            learning_content: 'not_applicable',
+
             primary_view: 'retained',
           },
           accepted: true,
         },
         partial: false,
-        candidateDeltaObserved: true,
+
         contextDigest: 'primary-view-context',
       }));
       const projectTerminal = vi
@@ -1806,7 +1801,7 @@ describe('runCopilotRun', () => {
         replyText: reply,
         preparedReply: { text: reply, primaryView },
         receipt: {
-          protocol_version: 1,
+          protocol_version: 2,
           assurance: 'execution_trace_bound',
           root_task_run_id: 'tr_partial_primary_view',
           candidate_sha256: createHash('sha256').update(reply).digest('hex'),
@@ -1816,14 +1811,14 @@ describe('runCopilotRun', () => {
           observed_completed_tool_use_ids: ['toolu_partial_read', 'toolu_partial_present'],
           correction: 'normal',
           proposal_disclosure: 'none',
-          learning_content: 'not_applicable',
+
           primary_view: 'retained',
         },
         accepted: true,
       },
       partial: true,
       error: 'provider stream ended before terminal completion',
-      candidateDeltaObserved: true,
+
       contextDigest: 'partial-primary-view-context',
     }));
 
@@ -1847,9 +1842,8 @@ describe('runCopilotRun', () => {
     }
   });
 
-  // YUK-575/YUK-832 (N2/S3) — 原始 chunks 只作“有正文”信号；review 后的完整安全
-  // DELTA 与 terminal 在同一 settlement transaction 内写入，保证可恢复且 id 单调。
-  it('N2/S3 — one reviewed full-text DELTA 严格早于 REPLY/DONE', async () => {
+  // YUK-1365 — incremental DELTAs commit before the terminal and replay in id order.
+  it('N2/S3 — incremental DELTAs precede authoritative REPLY/DONE without a whole-text append', async () => {
     const runId = 'run_delta_fifo';
     const run = streamMock('最终答复', { deltas: ['最', '终', '答复'] });
     const result = await runCopilotRun({
@@ -1864,11 +1858,13 @@ describe('runCopilotRun', () => {
     // id 单调递增。
     const ids = events.map((e) => e.id);
     expect(ids).toEqual([...ids].sort((a, b) => a - b));
-    // 事件序列：STARTED, EXECUTION_STARTED, reviewed full DELTA, REPLY, DONE。
+    // Incremental deltas are followed by one authoritative REPLY and DONE.
     const types = events.map((e) => e.event_type);
     expect(types).toEqual([
       COPILOT_RUN_EVENTS.STARTED,
       COPILOT_RUN_EVENTS.EXECUTION_STARTED,
+      COPILOT_RUN_EVENTS.DELTA,
+      COPILOT_RUN_EVENTS.DELTA,
       COPILOT_RUN_EVENTS.DELTA,
       COPILOT_RUN_EVENTS.REPLY,
       COPILOT_RUN_EVENTS.DONE,
@@ -1881,9 +1877,10 @@ describe('runCopilotRun', () => {
     const doneId = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.DONE)?.id ?? 0;
     expect(maxDeltaId).toBeLessThan(replyId);
     expect(replyId).toBeLessThan(doneId);
-    // delta payload 是审阅后的完整正文，不重放 raw chunk 边界。
-    const firstDelta = events.find((e) => e.event_type === COPILOT_RUN_EVENTS.DELTA);
-    expect(firstDelta?.payload).toMatchObject({ text: '最终答复' });
+    // Each provider chunk is emitted once.
+    expect(
+      events.filter((e) => e.event_type === COPILOT_RUN_EVENTS.DELTA).map((e) => e.payload.text),
+    ).toEqual(['最', '终', '答复']);
     // 流式态派生为 running（终态 done 前）。
     expect(deriveCopilotRunStatus(events.slice(0, 3))).toBe('running');
   });
@@ -2514,101 +2511,6 @@ describe('runCopilotRun', () => {
     expect(JSON.stringify(events)).not.toContain(partialReply);
   });
 
-  it('Stop — aborts validator provider calls through the durable cancellation signal', async () => {
-    const runId = 'copilot_user_ask_stop_during_learning_validation';
-    const controller = new AbortController();
-    const observedValidatorSignals: boolean[] = [];
-    let markProviderStarted: (() => void) | undefined;
-    const providerStarted = new Promise<void>((resolve) => {
-      markProviderStarted = resolve;
-    });
-    const cancellationControl = {
-      signal: controller.signal,
-      hasConfirmedCancellation: false,
-      materializingToolStarted: false,
-      startPolling: vi.fn(),
-      dispose: vi.fn(),
-      probe: vi.fn(async () => (controller.signal.aborted ? 'cancel_requested' : 'clear')),
-      beforeTool: vi.fn(async () => undefined),
-      onToolExecutionStarted: vi.fn(),
-      onToolExecutionSettled: vi.fn(),
-      waitForInFlight: vi.fn(async () => true),
-    };
-    const validationRunner = vi.fn(async (kind: string, _input: unknown, ctx: AgentCtx) => {
-      markProviderStarted?.();
-      await new Promise<void>((resolve) => {
-        if (ctx.signal?.aborted) resolve();
-        else ctx.signal?.addEventListener('abort', () => resolve(), { once: true });
-      });
-      observedValidatorSignals.push(ctx.signal?.aborted === true);
-      if (kind === 'QuizVerifyTask') {
-        return {
-          task_run_id: 'verify-stop',
-          text: JSON.stringify({
-            grounding: { verdict: 'pass', reason: 'self-contained', basis: 'closed_world_givens' },
-            copy_safety: { verdict: 'original', max_overlap: 0 },
-            knowledge_hit: { verdict: 'pass', reason: 'on topic' },
-            overall: 'pass',
-            summary_md: 'pass',
-            confidence: 0.99,
-          }),
-        };
-      }
-      if (kind === 'SolutionGenerateTask') {
-        return {
-          task_run_id: 'solve-stop',
-          text: JSON.stringify({
-            reference_solution: {
-              final_answer: '2',
-              expected_signals: ['1+1'],
-              answer_equivalents: [],
-            },
-            worked_solution_md: '1+1=2',
-            confidence: 0.99,
-          }),
-        };
-      }
-      if (kind === 'SemanticJudgeTask') {
-        return {
-          task_run_id: 'judge-stop',
-          text: JSON.stringify({
-            score: 1,
-            coarse_outcome: 'correct',
-            confidence: 0.99,
-            feedback_md: 'pass',
-            evidence_json: { matched_points: ['1+1=2'], missing_points: [] },
-          }),
-        };
-      }
-      return {
-        task_run_id: 'teaching-stop',
-        text: JSON.stringify({
-          clarity: { verdict: 'pass', reason: 'clear' },
-          unique_answer: { verdict: 'pass', reason: 'unique' },
-          summary: 'pass',
-        }),
-      };
-    });
-    const candidate =
-      '题目\n1. 求 1+1？\n<!--copilot_learning_content:{"subject_id":"math","questions":[{"id":"q1","kind":"computation","prompt_md":"求 1+1？","reference_md":"2","choices_md":null,"rubric_json":{}}]}-->';
-
-    const runPromise = runCopilotRun({
-      db: testDb(),
-      data: { ...baseData, run_id: runId, session_id: 'sess_stop_learning_validation' },
-      streamTaskCollectingFn: streamMock(candidate) as never,
-      runValidationTaskFn: validationRunner as never,
-      resolveCopilotRunInputFn: stubRunInput,
-      createCancellationControlFn: (() => cancellationControl) as never,
-    });
-    await providerStarted;
-    controller.abort(new Error('user requested Stop during learning validation'));
-    const result = await runPromise;
-
-    expect(result).toEqual({ status: 'cancelled' });
-    expect(observedValidatorSignals.length).toBeGreaterThan(0);
-    expect(observedValidatorSignals.every(Boolean)).toBe(true);
-  });
-
   it('Stop — does not persist an unsealed targeted-correction partial', async () => {
     const runId = 'copilot_user_ask_stop_targeted_without_envelope';
     const sessionId = 'sess_stop_targeted_without_envelope';
@@ -2842,7 +2744,7 @@ describe('runCopilotRun', () => {
             replyText: candidate,
             preparedReply: { text: candidate, primaryView },
             receipt: {
-              protocol_version: 1,
+              protocol_version: 2,
               assurance: 'execution_trace_bound',
               root_task_run_id: 'tr_worker_ephemeral_first',
               candidate_sha256: createHash('sha256').update(candidate).digest('hex'),
@@ -2852,13 +2754,13 @@ describe('runCopilotRun', () => {
               observed_completed_tool_use_ids: [],
               correction: 'normal',
               proposal_disclosure: 'none',
-              learning_content: 'not_applicable',
+
               primary_view: 'retained',
             },
             accepted: true,
           },
           partial: false,
-          candidateDeltaObserved: true,
+
           contextDigest: 'ignored-by-worker',
         };
       })
@@ -2871,7 +2773,7 @@ describe('runCopilotRun', () => {
             replyText: '第二轮冷启动后的回答。',
             preparedReply: { text: '第二轮冷启动后的回答。' },
             receipt: {
-              protocol_version: 1,
+              protocol_version: 2,
               assurance: 'execution_trace_bound',
               root_task_run_id: 'tr_worker_ephemeral_second',
               candidate_sha256: createHash('sha256').update('第二轮冷启动后的回答。').digest('hex'),
@@ -2881,13 +2783,13 @@ describe('runCopilotRun', () => {
               observed_completed_tool_use_ids: [],
               correction: 'normal',
               proposal_disclosure: 'none',
-              learning_content: 'not_applicable',
+
               primary_view: 'absent',
             },
             accepted: true,
           },
           partial: false,
-          candidateDeltaObserved: false,
+
           contextDigest: 'ignored-by-worker',
         };
       });
@@ -2943,7 +2845,7 @@ describe('runCopilotRun', () => {
             replyText,
             preparedReply: { text: replyText },
             receipt: {
-              protocol_version: 1 as const,
+              protocol_version: 2 as const,
               assurance: 'execution_trace_bound' as const,
               root_task_run_id: taskRunId,
               candidate_sha256: createHash('sha256').update(replyText).digest('hex'),
@@ -2953,13 +2855,13 @@ describe('runCopilotRun', () => {
               observed_completed_tool_use_ids: [],
               correction: 'normal' as const,
               proposal_disclosure: 'none' as const,
-              learning_content: 'not_applicable' as const,
+
               primary_view: 'absent' as const,
             },
             accepted: true,
           },
           partial: false,
-          candidateDeltaObserved: false,
+
           contextDigest: 'ignored-by-worker',
         };
       };
@@ -3008,7 +2910,7 @@ describe('runCopilotRun', () => {
             replyText,
             preparedReply: { text: replyText },
             receipt: {
-              protocol_version: 1,
+              protocol_version: 2,
               assurance: 'execution_trace_bound',
               root_task_run_id: 'tr_worker_foreign_cursor',
               candidate_sha256: createHash('sha256').update(replyText).digest('hex'),
@@ -3018,13 +2920,13 @@ describe('runCopilotRun', () => {
               observed_completed_tool_use_ids: [],
               correction: 'normal',
               proposal_disclosure: 'none',
-              learning_content: 'not_applicable',
+
               primary_view: 'absent',
             },
             accepted: true,
           },
           partial: false,
-          candidateDeltaObserved: false,
+
           contextDigest: 'ignored-by-worker',
         };
       },

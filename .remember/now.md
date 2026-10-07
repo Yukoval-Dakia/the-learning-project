@@ -1,47 +1,44 @@
-# 当前 P1 修复与依赖整合 — 2026-10-07 YUK-1346 / YUK-1350
+# 当前 YUK-1346 / YUK-1350 cancelled 实施恢复
 
-唯一 writer 位于 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety`，branch `fix/yuk-1346-reconcile-safety`。本次接管起点 e352ecf17757b1ebc3dab7279f591497e45852bc，父17行uncommitted regression已由本writer接管并纳入a9cf71d3dd8320db151922fcb1808412463fe48f。父RED及独立复现RED均保持在 `/tmp/yuk1346-purpose-p1-e352ecf17`。172 scoped unit通过，最终merged-content检查待完成。
+本 lane 唯一 writer 位于 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety`，branch `fix/yuk-1346-reconcile-safety`。恢复起点 clean `c59bb7dadae9dec440b5ccbb0a0ab93478369e1c`，正常 merge main `df08399ff179c5882b39da87e162237fd18246c7`。a9cf71d3d/db887fe4a/75eaeb82b/c59bb7dad 的旧 gate/协议修改已实际检查，没有重复实现。
 
-a9cf71d3d移除失败exact-context匹配转generated-purpose的路径；题干/选项须保留eligible server context中的原始字节，单题仍全文验证并丢弃model rubric。未绑定改写与混题fail-closed。新题由generate_question_candidate + present_primary_view实际trace绑定，保留Practice authoring gates；actual模型质量未证明。没有扩semantic regex或引入unused flag。
+YUK-1365 最新 owner 决定已删除聊天审核及强制 marker。旧 discussion4207279165 缺陷/RED 证据保留，当前消费者已退休，记 superseded 而非 repaired。删除旧 validator、无 consumer 的 branch kernel receipt、full-response/purpose 分支与 restricted 协议 loader/tests；Copilot skill、Practice admission 与 main 相同，不加替代 classifier 或主动出题 workflow。
 
-用户随后明确扩展同一writer正常merge最新origin/main。fetch确认26f1015810cc3d902f6229b615d9630f05982eef。仅PLAN/.remember冲突；package/lock和retryCount fixture自动合并，保留26 dependency upgrades、Mem0 patch、DBOS gate、Laminar和原answer-only/reconcile fences。主runtime用途沿main handoff报告为Agent TEST ONLY；本writer不检查或操作runtime，不restore/replay旧未知请求。
+保留1346 trusted per-turn answer_only 的接纳/幂等、raw-chat 保存、不派生 memory/模型历史、cold 六 read/no skill/research/remote/no reusable cursor，以及1350 operation-kind provider start fence、body/deadline abort 与未知结果不重投。合入1365真实 incremental prose、Stop/终态/replay 行为；package/lock保留26项升级、Mem0 patch、Laminar与Pi+DBOS gate。owner brief 报告PR1593已由other owner部署，本lane未读runtime/锁，live revision未知；PR1594不接管。
 
-父线程拥有PR1588/watch/push/reply resolve/new CI/actual acceptance/Linear。审查预算已用尽，不开第三审、不委派、不改UI或YUK1356树、不运行full pnpm test。完成最终检查和文档提交后释放写权。
+最终444 scoped unit/17files、188 fresh Testcontainers DB/9files通过；frozen install/typecheck/lint/build/10audits/diff whitespace通过。297既有lint warnings。新test的observe回调拼写先被unit/typecheck捕获，修正后复验通过，初始失败log仍封存。没有真实provider/model质量、browser、host restart、new exact-head CI或现有/private DB证据。
 
-## 历史 1346 / 1350 整合交接
+精确diff、31 source comparisons、3134文件source manifest、predecessor log及parent RED SHA256、所有命令/log hashes见 `docs/planning/2026-10-07-yuk1346-main-streaming-recovery.md` 和相邻 evidence JSON。历史R4/A/ingest及timeout成本/结果不重标，旧请求/失败/DLQ不replay。没有新actionable产品follow-up；既有tracker capture归父，本lane禁Linear。
 
-# 当前整合交接 — 2026-10-07 YUK-1346 / YUK-1350
+提交后本实施任务completed/noPending并释放sole-writer权。父独占PR1588 push/reply/resolve/新CI/runtime验收/发布；本lane不push/watch/hostmerge/新review/delegation。后续PR通知不得重新启动写入。
 
-本轮从干净 `77d1656c7358c3b9f04d1e91e2065c3634932e84` 普通 merge `origin/main` 的 `42987dfd7d456ca187e716509d11ea100e7353b9`，不 rebase/force。冲突仅 PLAN 和本交接。代码保留两侧，新增 main Pi + DBOS TESTONLY gate 和 DBOS 5.2.11 devDependency。本实施子任务 completed/noPending，完成本地提交即释放写权，由父线程接回；不 push/PR/watch/GitHub merge/新审查/委派。
+下文逐字保留来自main的历史handoff，不覆盖上述当前状态、所有权或owner报告；其中“未部署/旧f3/待检查”描述只属于原始记录时间。
 
-Owner 完整非 UI 迁移优先，UI 暂缓；主 runtime agent TESTONLY，旧 automation disabled。YUK-1352/1355/1356 各自其他树继续，本树不实现这些票。main gate 的未知外部结果替身重调不等于真实 provider 安全策略，YUK-1350 未知结果仍不可重投。
+---
 
-旧 fea545aa1/365871dab 实际验收及 77d1656c7 前的本地检查不覆盖新 merge。新 exact-head CI、候选/真实 runtime、全局 brief/原 key 幂等/重投/最终数据保护验收仍由父线程负责。所有实际模型请求及失败/DLQ 原义务保留，本轮不运行主 runtime、候选、existing DB 或付费 provider。
+# YUK-1365 发布接续更新
 
-main YUK-1338 封存证据见 `docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md` 和相邻 JSON；不改写原证据归属，也不重复 review。
+PR1593 b54c9a06d CI37626148643 success、第二轮独立review NONE。初审未闭合comment吞掉server说明P1已RED/GREEN修复。上游26f101581依赖升级导致文档冲突，保留双方handoff；新的scoped/CI仍待运行。发布锁在deployment-20261007/deployment.lock，owner bed93b71；当前未停写，旧f3仍运行。候选b54镜像构建只作缓存，不得当作新merge源码发布。
 
-本轮 57 unit / 16 fresh Testcontainers DB passed、24 DB 明确 skipped；typecheck/lint/build/partition exit 0，lint 297 既有 warnings。整个 src 除新增隔离 gate 外与第一 parent 逐字节一致，main gate/依赖/原封存证据与第二 parent 一致。日志与 SHA256 见 `docs/planning/2026-10-07-yuk1346-acceptance-and-reconcile-safety.md` 的 42987dfd7 整合节。没有新 actionable follow-up，不新建重复票或修改 SaaS 状态。
+# YUK-1365 writer handoff — 2026-10-07
 
-## 上轮整合证据
+本树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1365-copilot-stream`，实际分支 `fix/yuk-1365-copilot-stream-without-content-gate`，HEAD/fetched origin/main 均 `a86d4e633a67f802554ae114387ab06b7110c135`，启动时落后计数 0。实现已提交为 99f0143dc；合入 main 42987dfd7 仅在本文件和 PLAN 发生叙事冲突，保留两条 lane 证据；父线程独占独立 review、真实验收、Linear capture/status、commit/push/PR/exact-head CI/发布。没有外部通信、子代理、真实 provider、生产操作或完整本机 pnpm test。
 
-父正常merge main a86d4e633a67f802554ae114387ab06b7110c135，保留 observeTaskOperation finalization 和 !answerOnly SDK retention。生产f3不动，旧候选365及fea原始实际证据均保持原版本标签；新集成后须新CI/候选验收。93相关unit、Copilot教学/输入DB、typecheck/lint/build均通过；待新CI。
+Owner 完整删除决定已实现：删除 Copilot 聊天 question/solution keyword detector、独立 learning review、强制 `copilot_learning_content` prompt/manifest 和关联 dead code/tests。没有 greeting whitelist、替代 classifier 或主动结构化出题行为。实际出题工具的 domain validation/authorization 保留；correction/proposal truth、presentation trace/security、retention 与 causal/history filtering 保留。
 
-## 上轮 YUK-1346 / YUK-1350 交接与保留义务
+真正 Pi root `message_update/text_delta` → runner → execution `prose_delta` → serialized durable DELTA 已落地；message_end 只收 usage/tools，不重复追加。Stop 后只抑制正文，继续收尾已观测 usage/tool frames。DELTA/STEP 写入与取消/终态共用 settlement lock，终态 REPLY/FAILED 权威替换；恢复只修终态，不再整段 DELTA。增量/终态过滤 protocol HTML comments，split marker 或 JSON 内 `-->` 不泄露。没有 UI 实施改动。
 
-上轮父线程独占 /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety；分支 fix/yuk-1346-reconcile-safety，以下修复证据归属源码324381a3bb94486155d865d24e5ab504c97cafee。实施子任务已 completed/noPending，写权结束。父负责PR1588/CI/watch/Linear/验收/发布。旧 tlp-yuk-1346-turn-retention 保持 fea545aa1 封存，不在旧树继续写。
+真实 installed Pi-loop DB 回归只脚本化 provider：在 message_end/最终结果未决时确认 DB 已有正文 delta；两个真实 query_events 调用、第二 model turn、usage 90 tokens、最终替换/重复回放/重投不复调均通过。取消回归确认 provider signal abort、无晚到 delta、已观测 usage 45 tokens 保留。既有 pure reducer/SSE suites 也通过。
 
-真实结果、失效验收脚本、超时、费用及保护边界见 docs/planning/2026-10-07-yuk1346-acceptance-and-reconcile-safety.md。此前 now 内容保存在 fea545aa1 的 Git 历史；完整持续接续记录在根树 .remember/2026-10-07-autonomous-local-delivery.md。不要沿用旧“A未发送/R4未验收”状态。
+验证：14文件182unit；finalizer/shared runner补充4文件117unit（含后加两条 remote trace，无独立 review）；8文件124DB；shared runner/SSE另2文件33DB（157 distinct DB）。最终取消/usage 修复后重验4文件130unit和2文件23DB。计数有重叠，不能相加。frozen install、typecheck、lint（297warning/0error）、build、diff whitespace check 均成功。准确命令、日志位置和41个改动文件见 `docs/planning/evidence/2026-10-07-yuk1365-local-checks.md`；决定与边界见 `docs/planning/2026-10-07-yuk1365-copilot-prose-stream.md`，ADR0061已加修订。
 
-R4答案及受限记忆/后续上下文边界已真实通过；普通A实际记忆提取成功。随后整理调用60秒abort，wire1、usage/cost未知，无判决行，不重投。旧脚本未ACK的ingest已failed且关联DLQ保留，不能伪造物理完成。全局brief、原key幂等、completed Copilot redelivery和最终保护检查待完成。
+并行 lane `787449db-4205-41f0-bc22-0997649cdfbf` 独占 author_question/generate_question_candidate/write_quiz/present_primary_view→展示/作答缺口。本树四工具输入输出接口未改。已报告父线程：finalizer 删除 validateLearningContent/userContextText 与 primaryViewLearningContent/Questions；receipt v2 删除 learning_content；execution 删除 candidateDeltaObserved，新 observer prose_delta；validator_context_history 与 reviewed-whole-delta recovery flag 删除。旧持久化 flag 忽略，无 migration。
 
-YUK-1350 修复现有operation_kind fence与完整body/deadline超时，62 scoped unit/80 DB/typecheck/lint/build及3 audits通过；父已读真实diff，关键6 DB与42 unit独立复验通过。只合成transport，无付费，不是新运行验收。PR1588初审和唯一复审预算已用完，不开第三审。新push后需exact-head CI和17分钟窗。
+未验收：真实 provider timing/output、真实 browser Stop/reconnect 和 host restart durability。本地 mock/provider evidence 不升级为 actual-output/部署 PASS。DELTA/STEP 可见性沿用 best-effort 写入；终态仍负责恢复，缺 delta 不重付。父线程预检 localhost8787 `f3bfff2cf` 已 repurpose agent-development-test + local SeaweedFS；runtime 指针 `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/current-release.json` 由父线程管理，本树没有部署。本范围没有新增已证实 actionable follow-up；外部去重/capture交父线程。
 
-生产 f3bfff2cfe2aea0efbf7d11ead8a84ebfab497ef 保持；入口 http://localhost:8787 与 https://loom-mac-mini.tail2ee344.ts.net/。产品AI pin opencode-go/mimo-v2.6-pro，embedding专用协议保留。旧备份SHA537954657ecc296464c28728a02729a95f1d418ff438bec39d52b3502d6632d4已复核但不够新鲜。受限写入后不能直接降级旧f3；新发布仍需新镜像、停全部writer后备份/恢复及worker先于app。
+下文是旧交接，不覆盖本树状态、所有权或当前 runtime 用途。
 
-已知模型估算累计USD0.020229617；opaque SDK及真实abort费用未知，保留原$2reserve，不写成0。旧R/R2/R3、R4/A、提取和超时整理均不得重放。YUK1347/1348/1349/1342/1344等未完跟进见PLAN，不能称完成。
-
-
-## 历史依赖 lane handoff（继承 main，非当前writer授权）
+---
 
 # 当前父线程整合 — PR1584
 

@@ -9,7 +9,6 @@ function input(overrides: Partial<CopilotRunInput> = {}): CopilotRunInput {
     user_message: '请比较定义域边界。',
     proposal_feedback: [],
     conversation_history: [],
-    validator_context_history: [],
     learner_state_header: '',
     correction_contract: {
       available_prior_turn_ids: [],
@@ -98,9 +97,6 @@ describe('compileCopilotModelInput', () => {
     const modelInput = compileCopilotModelInput(
       input({
         conversation_history: [{ role: 'ai', text: '很长的历史回答', event_id: 'reply_1' }],
-        validator_context_history: [
-          { role: 'ai', text: 'validator 需要的历史回答', event_id: 'reply_1' },
-        ],
       }),
       'resume',
     );

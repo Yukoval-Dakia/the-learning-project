@@ -1,6 +1,6 @@
 # YUK-1346 实际验收与整理重投修复
 
-2026-10-07。生产仍为 f3bfff2cfe2aea0efbf7d11ead8a84ebfab497ef；本记录不代表发布完成。
+2026-10-07 原验收时记录的生产为 f3bfff2cfe2aea0efbf7d11ead8a84ebfab497ef；这是历史状态，不代表当前 runtime。最新 owner 已退休聊天审核，恢复/source 验证与旧 P1 supersession 见[当前恢复记录](2026-10-07-yuk1346-main-streaming-recovery.md)。任务报告 PR1593 已由另一 owner 部署，本 lane 未复验。
 
 ## 已观察的产品行为
 
@@ -24,7 +24,7 @@
 
 作者62 scoped unit、80 scoped DB、typecheck/lint/build及3 audits通过。DB使用独立testcontainers、真实handler/lifecycle加合成transport；旧源码复现第二次fetch，修复后off/observe/enforce模式同job重投总fetch=1，先前abort记录不变且无假结果或记忆修改。证据 /tmp/yuk1350-reconcile-safety-implementation/report.md。父已核对真实diff，独立42 unit与6个真实DB关键复验通过；没有第三轮PR审查、付费调用或生产写入。
 
-## 尚未完成
+## 当时未完成的验收
 
 新修复的exact-head CI、候选运行及剩余全局brief/原key幂等/重投/最终数据保护验收。旧R4/A实际结果不能冒称新镜像全量验收。新发布仍需新镜像、停写后新鲜备份与恢复验证。生产42 failed/42 DLQ保留。
 

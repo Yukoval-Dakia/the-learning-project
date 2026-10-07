@@ -121,13 +121,6 @@ export async function writeCopilotReply(
     outcome?: 'success' | 'failure' | 'partial';
     /** Durable success metadata needed to rebuild the DONE projection. */
     durableFinishReason?: string;
-    /**
-     * Durable YUK-832 projection contract. When true, recovery must publish one
-     * finalized full-text DELTA in the same transaction and immediately before
-     * REPLY/DONE or FAILED. The marker makes that suffix recoverable after an
-     * owner crash; legacy markers omit it and keep their previous projection.
-     */
-    durableEmitReviewedDelta?: boolean;
     /** Durable failure metadata needed to rebuild the FAILED projection. */
     durableFailure?: { reason: string; error: string; checkpoint_safe?: boolean };
     /** ask 的 created_at；reply 戳 now+1ms 保证 (created_at,id) 排序里 reply 在 ask 之后。 */
@@ -185,7 +178,6 @@ export async function writeCopilotReply(
       ...(params.evidenceValidation ? { evidence_validation: params.evidenceValidation } : {}),
       ...(sealed.receipt ? { reply_finalization: sealed.receipt } : {}),
       ...(params.durableFinishReason ? { durable_finish_reason: params.durableFinishReason } : {}),
-      ...(params.durableEmitReviewedDelta ? { durable_emit_reviewed_delta: true } : {}),
       ...(params.durableFailure ? { durable_failure: params.durableFailure } : {}),
       ...(params.modeState ?? {}),
       ...(params.teaching
@@ -214,13 +206,7 @@ export async function writeTeachingCopilotReply(
   db: Db | Tx,
   params: Pick<
     Parameters<typeof writeCopilotReply>[1],
-    | 'sessionId'
-    | 'userAskEventId'
-    | 'actorRef'
-    | 'durableFinishReason'
-    | 'durableEmitReviewedDelta'
-    | 'now'
-    | 'writeFn'
+    'sessionId' | 'userAskEventId' | 'actorRef' | 'durableFinishReason' | 'now' | 'writeFn'
   > & {
     outcome?: 'success';
     skillContext: CopilotSkillContextT;

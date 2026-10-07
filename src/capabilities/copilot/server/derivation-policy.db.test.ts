@@ -375,7 +375,7 @@ describe('accepted answer-only lifecycle', () => {
     expect(execute).toHaveBeenCalledTimes(2);
   });
 
-  it('keeps ordinary→restricted→ordinary history visible while filtering cold/replay/validator/compaction and correction references', async () => {
+  it('keeps ordinary→restricted→ordinary history visible while filtering cold/replay/compaction and correction references', async () => {
     const ordinary = await accept('allow', '日常标记：允许后续复验定义域与退化参数。');
     await writeCopilotReply(testDb(), {
       sessionId,
@@ -428,7 +428,8 @@ describe('accepted answer-only lifecycle', () => {
     expect(legacyFallback.correction_contract.restricted_prior_turn_ids).toContain(restrictedReply);
 
     expect(JSON.stringify(input.conversation_history)).toContain('日常标记');
-    expect(JSON.stringify(input.validator_context_history)).toContain('日常回答');
+    expect(JSON.stringify(input.conversation_history)).toContain('日常回答');
+    expect(input).not.toHaveProperty('validator_context_history');
     expect(JSON.stringify(input.conversation_history)).not.toContain('受限');
     expect(input.correction_contract.restricted_target).toBe(true);
     expect(

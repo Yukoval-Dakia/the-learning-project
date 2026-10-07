@@ -7,14 +7,9 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';
 import type { PiToolCallObservation } from '@/server/ai/pi-hooks';
 import { writeCopilotReply } from './conversation-writes';
-import {
-  EXA_WEB_SEARCH_FAILURE_OBSERVATION,
-  EXA_WEB_SEARCH_OBSERVATION,
-} from './exa-remote-mcp.actual-fixture';
+import { EXA_WEB_SEARCH_OBSERVATION } from './exa-remote-mcp.actual-fixture';
 import {
   EPHEMERAL_PRESENTATION_STORAGE_NOTICE,
-  REMOTE_MCP_EVIDENCE_MAX_CALL_CHARS,
-  type RemoteMcpEvidencePacket,
   createCopilotReplyFinalizer,
   sealCommittedPresentationReply,
 } from './reply-finalization';
@@ -103,9 +98,6 @@ describe('committed presentation storage policy', () => {
 });
 
 function finalizer(
-  validateLearningContent: Parameters<
-    typeof createCopilotReplyFinalizer
-  >[0]['validateLearningContent'] = async (text) => ({ replyText: text, passed: true }),
   resolveArtifactReference: Parameters<
     typeof createCopilotReplyFinalizer
   >[0]['resolveArtifactReference'] = async () => null,
@@ -113,8 +105,6 @@ function finalizer(
   return createCopilotReplyFinalizer({
     rootTaskRunId: 'root_run_1',
     correctionContract,
-    userContextText: '用户正在核对一条复杂学习链。',
-    validateLearningContent,
     resolveArtifactReference,
   });
 }
@@ -137,34 +127,28 @@ async function post(value: ReturnType<typeof finalizer>, observation: PiToolCall
   return value.piHooks.afterToolCall?.[0]?.(observation, new AbortController().signal);
 }
 
-function exaPost(
-  toolUseId: string,
-  overrides: {
-    args?: unknown;
-    output?: unknown;
-    error?: unknown;
-    isError?: boolean;
-    interrupted?: boolean;
-    agentType?: string;
-  } = {},
-): PiToolCallObservation {
-  const base = structuredClone(EXA_WEB_SEARCH_OBSERVATION);
-  return {
-    ...base,
-    call: {
-      ...base.call,
-      id: toolUseId,
-      ...(overrides.agentType ? { agentType: overrides.agentType } : {}),
-    },
-    ...(overrides.args !== undefined ? { args: overrides.args as Record<string, unknown> } : {}),
-    ...(overrides.output !== undefined ? { output: overrides.output } : {}),
-    ...(overrides.error !== undefined ? { error: overrides.error } : {}),
-    ...(overrides.isError !== undefined ? { isError: overrides.isError } : {}),
-    ...(overrides.interrupted !== undefined ? { interrupted: overrides.interrupted } : {}),
-  };
-}
-
 describe('Copilot root reply finalization', () => {
+  it.each([false, true])(
+    'binds remote tool success/failure to the trace without a content review: %s',
+    async (isError) => {
+      const value = finalizer();
+      const observed: PiToolCallObservation = {
+        ...structuredClone(EXA_WEB_SEARCH_OBSERVATION),
+        isError,
+      };
+      await pre(value, observed.call.name, observed.call.id, observed.args);
+      await post(value, observed);
+      const result = await value.finalizeTerminal('题目：根据工具结果解释可再生能源比例。');
+      expect(result.accepted).toBe(true);
+      expect(result.receipt.trace_call_count).toBe(1);
+      expect(result.receipt.observed_completed_tool_use_ids).toEqual(
+        isError ? [] : [observed.call.id],
+      );
+      expect(result.replyText).toBe('题目：根据工具结果解释可再生能源比例。');
+      expect(result.receipt).not.toHaveProperty('learning_content');
+    },
+  );
+
   it('captures nomination output immutably instead of following later caller mutation', async () => {
     const value = finalizer();
     await pre(value, 'mcp__loom__query_knowledge', 'observed-root', {});
@@ -343,9 +327,7 @@ describe('Copilot root reply finalization', () => {
     { label: 'archived', resolvedType: null, nominatedKind: 'note_atomic' },
     { label: 'wrong type', resolvedType: 'tool_quiz', nominatedKind: 'interactive' },
   ])('drops a $label artifact nomination', async ({ resolvedType, nominatedKind }) => {
-    const value = finalizer(undefined, async (ref) =>
-      resolvedType === nominatedKind ? ref : null,
-    );
+    const value = finalizer(async (ref) => (resolvedType === nominatedKind ? ref : null));
     await pre(value, 'mcp__loom__present_primary_view', 'present_artifact', {
       source: 'artifact',
       ref: { kind: nominatedKind, id: 'artifact_1' },
@@ -366,7 +348,7 @@ describe('Copilot root reply finalization', () => {
   });
 
   it('publishes the owner-resolved artifact reference rather than its storage kind', async () => {
-    const value = finalizer(undefined, async (ref) => ({ ...ref, kind: 'quiz' }));
+    const value = finalizer(async (ref) => ({ ...ref, kind: 'quiz' }));
     const nomination = {
       source: 'artifact' as const,
       ref: { kind: 'tool_quiz', id: 'artifact_quiz_1' },
@@ -393,12 +375,8 @@ describe('Copilot root reply finalization', () => {
     expect(result.receipt.primary_view).toBe('retained');
   });
 
-  it('applies the existing learning-content gate to controlled ephemeral HTML', async () => {
-    const validate = vi
-      .fn<Parameters<typeof createCopilotReplyFinalizer>[0]['validateLearningContent']>()
-      .mockResolvedValueOnce({ replyText: '学习内容未通过校验。', passed: false })
-      .mockImplementation(async (text) => ({ replyText: text, passed: true }));
-    const value = finalizer(validate);
+  it('retains authorized learning HTML without a chat content review', async () => {
+    const value = finalizer();
     const nomination = {
       source: 'ephemeral_html' as const,
       ref: '<section><h2>题目</h2><p>17×19？</p><p>答案：323</p></section>',
@@ -415,18 +393,9 @@ describe('Copilot root reply finalization', () => {
     });
 
     const result = await value.finalizeTerminal('请在卡片里作答。');
-    expect(validate).toHaveBeenNthCalledWith(
-      1,
-      '请在卡片里作答。',
-      '用户正在核对一条复杂学习链。',
-      'root_run_1',
-      nomination,
-      undefined,
-      undefined,
-    );
-    expect(result.preparedReply).toEqual({ text: '学习内容未通过校验。' });
-    expect(result.receipt.primary_view).toBe('dropped');
-    expect(result.receipt.learning_content).toBe('blocked');
+    expect(result.accepted).toBe(true);
+    expect(result.preparedReply).toEqual({ text: '请在卡片里作答。', primaryView: nomination });
+    expect(result.receipt.primary_view).toBe('retained');
   });
 
   it('strips a legacy marker without authorizing a primary view', async () => {
@@ -446,7 +415,6 @@ describe('Copilot root reply finalization', () => {
       assurance: 'execution_trace_bound',
       trace_call_count: 0,
       observed_completed_tool_use_ids: [],
-      learning_content: 'not_applicable',
     });
     expect(result.receipt.reply_sha256).toBe(
       createHash('sha256').update(result.replyText, 'utf8').digest('hex'),
@@ -585,32 +553,36 @@ describe('Copilot root reply finalization', () => {
     expect((await incomplete.finalizeTerminal('仍在读取。')).accepted).toBe(false);
   });
 
-  it('rejects terminal Markdown when the trace changes during validation', async () => {
-    let releaseValidation!: () => void;
-    const validationStarted = new Promise<void>((resolve) => {
-      releaseValidation = resolve;
+  it('rejects a trace that changes while an artifact reference is resolving', async () => {
+    let release!: () => void;
+    let entered!: () => void;
+    const ready = new Promise<void>((resolve) => {
+      entered = resolve;
     });
-    let enterValidation!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      enterValidation = resolve;
+    const wait = new Promise<void>((resolve) => {
+      release = resolve;
     });
-    const value = finalizer(async (text) => {
-      enterValidation();
-      await validationStarted;
-      return { replyText: text, passed: true };
+    const value = finalizer(async (ref) => {
+      entered();
+      await wait;
+      return ref;
+    });
+    const nomination = { source: 'artifact' as const, ref: { kind: 'quiz', id: 'quiz_1' } };
+    await pre(value, 'mcp__loom__present_primary_view', 'present_1', nomination);
+    value.observeDomainTool({
+      name: 'present_primary_view',
+      tool_use_id: 'present_1',
+      effect: 'control',
+      input: nomination,
+      output: nomination,
+      executed: true,
+      error_reason: null,
     });
     const sealing = value.finalizeTerminal('稳定候选。');
-    await entered;
-    const late = await pre(value, 'mcp__exa__web_search_exa', 'late_1', {
-      query: '后续搜索',
-    });
-    releaseValidation();
-    await sealing;
-
-    const result = await sealing;
-    expect(late).toBeUndefined();
-    expect(result.accepted).toBe(false);
-    expect(result.replyText).not.toBe('稳定候选。');
+    await ready;
+    await pre(value, 'mcp__exa__web_search_exa', 'late_1', { query: '后续搜索' });
+    release();
+    expect((await sealing).accepted).toBe(false);
   });
 
   it('fails closed only on empty or over-limit terminal Markdown', async () => {
@@ -622,84 +594,83 @@ describe('Copilot root reply finalization', () => {
     }
   });
 
-  it('server-composes FULL proposal disclosure that model prose cannot omit', async () => {
-    const value = finalizer();
-    await pre(value, 'mcp__loom__propose_learning_item_archive', 'proposal_1', {
-      learning_item_id: 'item_1',
-    });
-    value.observeDomainTool({
-      tool_use_id: 'proposal_1',
-      name: 'propose_learning_item_archive',
-      effect: 'propose',
-      input: { learning_item_id: 'item_1' },
-      output: { status: 'proposed', proposal_id: 'proposal_1' },
-      error_reason: null,
-      executed: true,
-      proposal_effect_contract: {
-        owner_gate: 'FULL',
-        direct_write: false,
-        rollback: 'dismiss_before_accept',
-      },
-    });
-    await pre(value, 'mcp__loom__propose_learning_item_archive', 'proposal_failed', {
-      learning_item_id: 'item_2',
-    });
-    value.observeDomainTool({
-      tool_use_id: 'proposal_failed',
-      name: 'propose_learning_item_archive',
-      effect: 'propose',
-      input: { learning_item_id: 'item_2' },
-      output: { status: 'failed' },
-      error_reason: 'write conflict',
-      executed: true,
-      proposal_effect_contract: {
-        owner_gate: 'FULL',
-        direct_write: false,
-        rollback: 'dismiss_before_accept',
-      },
-    });
-    await pre(value, 'mcp__loom__author_question', 'proposal_retained', {
-      prompt_md: '求定义域。',
-    });
-    value.observeDomainTool({
-      tool_use_id: 'proposal_retained',
-      name: 'author_question',
-      effect: 'propose',
-      input: { prompt_md: '求定义域。' },
-      output: { status: 'proposed', proposal_id: 'proposal_question_1' },
-      error_reason: null,
-      executed: true,
-      proposal_effect_contract: {
-        owner_gate: 'FULL',
-        direct_write: false,
-        rollback: 'dismiss_before_accept',
-        retained_draft: {
-          kind: 'question',
-          written_before_accept: true,
-          reversible: false,
-          retained_after_dismiss: true,
+  it.each(['', '<!--copilot_learning_content:{"private":"'])(
+    'server-composes proposal disclosure despite trailing comment %s',
+    async (suffix) => {
+      const value = finalizer();
+      await pre(value, 'mcp__loom__propose_learning_item_archive', 'proposal_1', {
+        learning_item_id: 'item_1',
+      });
+      value.observeDomainTool({
+        tool_use_id: 'proposal_1',
+        name: 'propose_learning_item_archive',
+        effect: 'propose',
+        input: { learning_item_id: 'item_1' },
+        output: { status: 'proposed', proposal_id: 'proposal_1' },
+        error_reason: null,
+        executed: true,
+        proposal_effect_contract: {
+          owner_gate: 'FULL',
+          direct_write: false,
+          rollback: 'dismiss_before_accept',
         },
-      },
-    });
-    const result = await value.finalizeTerminal(
-      '已直接归档，LIGHT 即可，无需 owner 通过 FULL gate 接受。',
-    );
-    expect(result.replyText).toContain('owner gate: FULL');
-    expect(result.replyText).toContain('direct target write: false');
-    expect(result.replyText).toContain('尚未直接写入');
-    expect(result.replyText).not.toContain('已直接归档');
-    expect(result.replyText).not.toContain('LIGHT');
-    expect(result.replyText).toContain('仍需 owner 通过 FULL gate 接受 proposal');
-    expect(result.replyText).toContain('未产生可供 owner 接受的 proposal');
-    expect(result.replyText).toContain('retained draft=question');
-    expect(result.receipt.proposal_disclosure).toBe('server_composed');
-  });
+      });
+      await pre(value, 'mcp__loom__propose_learning_item_archive', 'proposal_failed', {
+        learning_item_id: 'item_2',
+      });
+      value.observeDomainTool({
+        tool_use_id: 'proposal_failed',
+        name: 'propose_learning_item_archive',
+        effect: 'propose',
+        input: { learning_item_id: 'item_2' },
+        output: { status: 'failed' },
+        error_reason: 'write conflict',
+        executed: true,
+        proposal_effect_contract: {
+          owner_gate: 'FULL',
+          direct_write: false,
+          rollback: 'dismiss_before_accept',
+        },
+      });
+      await pre(value, 'mcp__loom__author_question', 'proposal_retained', {
+        prompt_md: '求定义域。',
+      });
+      value.observeDomainTool({
+        tool_use_id: 'proposal_retained',
+        name: 'author_question',
+        effect: 'propose',
+        input: { prompt_md: '求定义域。' },
+        output: { status: 'proposed', proposal_id: 'proposal_question_1' },
+        error_reason: null,
+        executed: true,
+        proposal_effect_contract: {
+          owner_gate: 'FULL',
+          direct_write: false,
+          rollback: 'dismiss_before_accept',
+          retained_draft: {
+            kind: 'question',
+            written_before_accept: true,
+            reversible: false,
+            retained_after_dismiss: true,
+          },
+        },
+      });
+      const result = await value.finalizeTerminal(
+        `已直接归档，LIGHT 即可，无需 owner 通过 FULL gate 接受。${suffix}`,
+      );
+      expect(result.replyText).toContain('owner gate: FULL');
+      expect(result.replyText).toContain('direct target write: false');
+      expect(result.replyText).toContain('尚未直接写入');
+      expect(result.replyText).not.toContain('已直接归档');
+      expect(result.replyText).not.toContain('LIGHT');
+      expect(result.replyText).toContain('仍需 owner 通过 FULL gate 接受 proposal');
+      expect(result.replyText).toContain('未产生可供 owner 接受的 proposal');
+      expect(result.replyText).toContain('retained draft=question');
+      expect(result.receipt.proposal_disclosure).toBe('server_composed');
+    },
+  );
 
-  it('applies deterministic correction and blocks unverified learning content before seal', async () => {
-    const validate = vi
-      .fn<Parameters<typeof createCopilotReplyFinalizer>[0]['validateLearningContent']>()
-      .mockResolvedValueOnce({ replyText: '这份学习内容未完成独立校验，暂不展示。', passed: false })
-      .mockImplementation(async (text) => ({ replyText: text, passed: true }));
+  it('retains deterministic correction truth without a learning content review', async () => {
     const value = createCopilotReplyFinalizer({
       rootTaskRunId: 'root_run_1',
       correctionContract: {
@@ -707,15 +678,36 @@ describe('Copilot root reply finalization', () => {
         target_prior_turn_id: 'turn_1',
         available_prior_turn_ids: ['turn_1'],
       },
-      userContextText: '更正上一轮。',
-      validateLearningContent: validate,
       resolveArtifactReference: async () => null,
     });
     const result = await value.finalizeTerminal('缺少更正尾标，并给出练习题。');
     expect(result.replyText).toContain('prior_turn_id');
     expect(result.receipt.correction).toBe('clarify');
-    expect(result.receipt.learning_content).toBe('blocked');
-    expect(validate).toHaveBeenCalledTimes(2);
+  });
+
+  it('preserves parsed correction fields after unfinished model comments', async () => {
+    const value = createCopilotReplyFinalizer({
+      rootTaskRunId: 'root_run_1',
+      correctionContract: {
+        ...correctionContract,
+        target_prior_turn_id: 'turn_1',
+        available_prior_turn_ids: ['turn_1'],
+      },
+      resolveArtifactReference: async () => null,
+    });
+    const result = await value.finalizeTerminal(
+      '已更正。<!--unfinished:{"private":"\n<!-- copilot-correction {"prior_turn_id":"turn_1","changed":["x=2"],"retained":["定义域"],"uncertain":["边界"]} -->',
+    );
+    expect(result.accepted).toBe(true);
+    expect(result.receipt.correction).toBe('corrected');
+    expect(result.replyText).toContain('更正目标 prior_turn_id：turn_1');
+    expect(result.replyText).toContain('已变更：x=2');
+    expect(result.replyText).toContain('保留：定义域');
+    expect(result.replyText).toContain('不确定：边界');
+    expect(result.replyText).not.toContain('<!--');
+    expect(result.receipt.reply_sha256).toBe(
+      createHash('sha256').update(result.replyText).digest('hex'),
+    );
   });
 
   it('drops a legacy read-bearing presentation side channel without a control call', async () => {
@@ -761,174 +753,5 @@ describe('Copilot root reply finalization', () => {
     expect(original.trace_call_count).toBe(REALISTIC_EVIDENCE_TRACE.length);
     expect(original.trace_call_count).toBeLessThanOrEqual(60);
     expect(original.trace_sha256).not.toBe(mutated.trace_sha256);
-  });
-});
-
-describe('Copilot remote-MCP evidence capture', () => {
-  function finalizerWithValidate() {
-    const validate = vi
-      .fn<Parameters<typeof createCopilotReplyFinalizer>[0]['validateLearningContent']>()
-      .mockImplementation(async (text) => ({ replyText: text, passed: true }));
-    return { value: finalizer(validate), validate };
-  }
-
-  it('captures the actual executed Exa search I/O and delivers it as the final review packet', async () => {
-    const { value, validate } = finalizerWithValidate();
-    const observation = structuredClone(EXA_WEB_SEARCH_OBSERVATION);
-    await pre(value, observation.call.name, observation.call.id, observation.args);
-    await post(value, observation);
-    // Later mutation of the pi-owned observation must not reach the sealed evidence.
-    (observation.output as Array<{ text: string }>)[0].text = 'tampered-after-hook';
-    const result = await value.finalizeTerminal('已检索外部证据。');
-
-    expect(result.accepted).toBe(true);
-    expect(validate.mock.calls[0]?.[4]).toBeUndefined();
-    expect(validate.mock.calls[0]?.[5]).toEqual([
-      {
-        tool_name: 'mcp__exa__web_search_exa',
-        tool_use_id: 'call_9cea61a7cc314aa5a35c04a8',
-        root_call: true,
-        input: EXA_WEB_SEARCH_OBSERVATION.args,
-        output: EXA_WEB_SEARCH_OBSERVATION.output,
-      },
-    ]);
-
-    const clean = finalizer();
-    await pre(
-      clean,
-      EXA_WEB_SEARCH_OBSERVATION.call.name,
-      EXA_WEB_SEARCH_OBSERVATION.call.id,
-      EXA_WEB_SEARCH_OBSERVATION.args,
-    );
-    await post(clean, structuredClone(EXA_WEB_SEARCH_OBSERVATION));
-    const cleanResult = await clean.finalizeTerminal('已检索外部证据。');
-    expect(result.receipt.trace_sha256).toBe(cleanResult.receipt.trace_sha256);
-  });
-
-  it('captures the actual failure event with error and interrupt flag instead of a success output', async () => {
-    const { value, validate } = finalizerWithValidate();
-    const observation = structuredClone(EXA_WEB_SEARCH_FAILURE_OBSERVATION);
-    await pre(value, observation.call.name, observation.call.id, observation.args);
-    await post(value, observation);
-
-    const result = await value.finalizeTerminal('检索失败，改为闭卷回答。');
-    expect(result.accepted).toBe(true);
-    expect(validate.mock.calls[0]?.[5]).toEqual([
-      {
-        tool_name: 'mcp__exa__web_search_exa',
-        tool_use_id: 'call_2988d2e479a64c09bb7f9c80',
-        root_call: true,
-        input: EXA_WEB_SEARCH_FAILURE_OBSERVATION.args,
-        failure: {
-          error: EXA_WEB_SEARCH_FAILURE_OBSERVATION.error,
-          is_interrupt: false,
-        },
-      },
-    ]);
-  });
-
-  it('does not capture Loom domain-tool calls as remote evidence', async () => {
-    const { value, validate } = finalizerWithValidate();
-    await pre(value, 'mcp__loom__query_knowledge', 'loom_1', { query: '函数' });
-    await post(value, {
-      call: { id: 'loom_1', name: 'mcp__loom__query_knowledge' },
-      args: { query: '函数' },
-      isError: false,
-      output: { nodes: [] },
-      error: undefined,
-      interrupted: false,
-    });
-
-    const result = await value.finalizeTerminal('已核对。');
-    expect(result.accepted).toBe(true);
-    expect(validate.mock.calls[0]?.[5]).toBeUndefined();
-  });
-
-  it('captures a remote call exactly once per tool_use_id', async () => {
-    const { value, validate } = finalizerWithValidate();
-    const observation = structuredClone(EXA_WEB_SEARCH_OBSERVATION);
-    await pre(value, observation.call.name, observation.call.id, observation.args);
-    await post(value, observation);
-    const duplicate = await post(value, structuredClone(EXA_WEB_SEARCH_OBSERVATION));
-
-    expect(duplicate).toBeUndefined();
-    await value.finalizeTerminal('已检索。');
-    const packet = validate.mock.calls[0]?.[5] as RemoteMcpEvidencePacket | undefined;
-    expect(packet).toHaveLength(1);
-    expect(packet?.[0]?.tool_use_id).toBe('call_9cea61a7cc314aa5a35c04a8');
-  });
-
-  it('captures copilot-researcher subagent remote calls with root_call false', async () => {
-    const { value, validate } = finalizerWithValidate();
-    await pre(
-      value,
-      'mcp__exa__web_search_exa',
-      'call_9cea61a7cc314aa5a35c04a8',
-      EXA_WEB_SEARCH_OBSERVATION.args,
-      'researcher_1',
-    );
-    await post(value, exaPost('call_9cea61a7cc314aa5a35c04a8', { agentType: 'researcher_1' }));
-
-    await value.finalizeTerminal('子任务检索已完成。');
-    expect(validate.mock.calls[0]?.[5]).toMatchObject([
-      { root_call: false, tool_use_id: 'call_9cea61a7cc314aa5a35c04a8' },
-    ]);
-  });
-
-  it('fails closed when one remote call exceeds the per-call evidence bound', async () => {
-    const value = finalizer();
-    await pre(value, 'mcp__exa__web_search_exa', 'huge_1', { query: 'x' });
-    await post(
-      value,
-      exaPost('huge_1', {
-        args: { query: 'x' },
-        output: { blob: 'x'.repeat(REMOTE_MCP_EVIDENCE_MAX_CALL_CHARS) },
-      }),
-    );
-
-    const result = await value.finalizeTerminal('已检索。');
-    expect(result.accepted).toBe(false);
-    expect(result.replyText).toBe('这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。');
-    expect(result.receipt.learning_content).toBe('blocked');
-  });
-
-  it('fails closed when the summed remote evidence exceeds the turn-wide bound', async () => {
-    const value = finalizer();
-    const chunk = 'x'.repeat(60_000);
-    for (let index = 0; index < 5; index += 1) {
-      const toolUseId = `bulk_${index}`;
-      await pre(value, 'mcp__exa__web_search_exa', toolUseId, { query: 'x' });
-      await post(value, exaPost(toolUseId, { args: { query: 'x' }, output: { blob: chunk } }));
-    }
-
-    const result = await value.finalizeTerminal('已检索。');
-    expect(result.accepted).toBe(false);
-    expect(result.replyText).toBe('这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。');
-  });
-
-  it('fails closed when evidence capture itself throws', async () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    try {
-      const value = finalizer();
-      await pre(value, 'mcp__exa__web_search_exa', 'bomb_1', { query: 'x' });
-      await post(
-        value,
-        exaPost('bomb_1', {
-          args: { query: 'x' },
-          output: {
-            toJSON: () => {
-              throw new Error('unserializable evidence');
-            },
-          },
-        }),
-      );
-
-      const result = await value.finalizeTerminal('已检索。');
-      expect(result.accepted).toBe(false);
-      expect(result.replyText).toBe('这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。');
-      expect(errorSpy).toHaveBeenCalled();
-    } finally {
-      errorSpy.mockRestore();
-    }
   });
 });

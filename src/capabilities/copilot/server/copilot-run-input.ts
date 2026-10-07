@@ -64,7 +64,6 @@ export interface CopilotRunInput {
   chip_kind?: string;
   proposal_feedback: ScopedProposalFeedbackCell[];
   conversation_history: CopilotHistoryTurn[];
-  validator_context_history: CopilotHistoryTurn[];
   learner_state_header?: string;
   correction_contract: CopilotCorrectionContract;
   ambient_context?: CopilotAmbientContext;
@@ -270,7 +269,6 @@ export async function assembleCopilotRunInput(
     ...(chipKind ? { chip_kind: chipKind } : {}),
     proposal_feedback: learnerState.proposal_feedback,
     conversation_history: conversationHistory,
-    validator_context_history: projectedHistory,
     learner_state_header: learnerState.header_md,
     correction_contract: {
       ...(restrictedCorrectionTarget ? { restricted_target: true } : {}),

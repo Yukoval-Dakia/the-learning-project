@@ -132,9 +132,6 @@ const COLLECTIONS = new Set([
 function bare(name: string): string {
   return name.startsWith('mcp__loom__') ? name.slice(11) : name;
 }
-export function requiresToolResultLearningValidation(name: string): boolean {
-  return POLICIES[bare(name)] === 'generated';
-}
 function record(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }

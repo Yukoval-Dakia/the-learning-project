@@ -286,10 +286,6 @@ describe('task prompt definitions', () => {
       expect(prompt).toContain("缺少足够独立依据给 grounding='unclear'");
       expect(prompt).not.toContain('卜算子·咏梅');
       expect(prompt).toContain('copy_safety 保留 unknown');
-      expect(prompt).toContain("validation_purpose='existing_answer'");
-      expect(prompt).toContain('reference_md 是用户实际可见的完整解答');
-      expect(prompt).toContain('grounding 必须核验完整解答的每个事实断言、运算和解释');
-      expect(prompt).toContain('创作诊断，不是既有答案正确性的门槛');
       expect(prompt).toContain('不确定轴优先按下一条 needs_review，硬伤优先 fail');
       // YUK-993 — the learning_content basis vocabulary must offer
       // executed_remote_evidence AND bind it to corroborating executed calls:
