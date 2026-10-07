@@ -258,3 +258,21 @@ Post-merge verification completed on the integrated source:
 - Typecheck, lint with297 existing warnings, API-client drift audit, capability boundaries and architecture deepening all passed. Boundaries remain exact437/0/48. Integrated full build passed with `CODEX_FULL_GATE=1`.
 - Final integrated built Hono/SPA ran on the same reserved18983 port using synthetic token and placeholder DB, PID35747, cwd equal to this worktree. Final browser suite again passed all36, 30.5seconds. ServedJS/CSS filenames, bytes and hashes remain exactly those in the table above. Loaded API bundle hash `3f6a3f262c9ae9b9f764db4bc6081e5e47bde2fe550f2c6c61ea34612a642027`; identity proof is `.remember/evidence/yuk1340-retained-main-assets.json`. PID35747 was stopped with SIGTERM, port18983 has no listener. Logs use the `yuk1340-retained-main-*` prefix.
 - T3 confirms PR1583 was already linked. No watcher was started by this writer; the parent's existing PR watch was left untouched. No PR comment/push/review/merge or production operation was performed. Final ordinary merge commit and clean status are returned in the handoff.
+
+
+## Parent acceptance and integration, 2026-10-07 01:14Z
+
+The parent read the completed writer result and inspected the actual `ac9ab2ad1` diff. The writer has no pending child runs and has released ownership. Parent integration commit `43de65f35` includes documentation-only main `d501ea163` from PR1586; only PLAN conflicted. Production remains the previously accepted `0f81e198f`, not this UI branch.
+
+Parent checks on the handed-off source:
+
+- Real-component entry, durable-retry and tool-use files: **42 tests passed**. Copilot API contracts and conversation DB files: **37 tests passed**, using disposable testcontainers.
+- T3 preview status and open both explicitly reported no automation host. Parent used real Chromium against the owned built Hono process PID50419 on port18983, with no env files, a cleared environment, placeholder DB at127.0.0.1:1, synthetic token and `RW_WORKER=0`. Business requests were intercepted with synthetic fixtures.
+- Three focused built-page scenarios passed: retained automatic idle crossed24h while closed and waited for the fresh response before exactly one new session; failed reopen fetch kept input disabled and retry restored the eligible original session without creation; explicitly chosen old idle remained usable when a reopen fetch failed. The first case used a server clock ahead of the browser, proving the client clock did not authorize stale reuse. No chat POST, unexpected API request or page error occurred.
+- Existing shipped-container Copilot subset: **7/7 passed**, including consecutive messages, ambiguous acceptance and original identity, four primary views, completion and replay. Combined parent browser coverage is ten scenarios, not a new production/model acceptance.
+- Served JS/CSS bytes matched the local assets and the writer's recorded hashes. API bundle SHA256 also matched `3f6a3f262c9ae9b9f764db4bc6081e5e47bde2fe550f2c6c61ea34612a642027`. Parent stopped PID50419 and confirmed no18983 listener.
+- Parent rebuilt the integrated source with Node24 and `CODEX_FULL_GATE=1 pnpm build`, exit0. Server, JS and CSS hashes remained identical to the accepted browser artifacts. No full local test suite or new paid model request ran.
+
+The first parent focused-browser driver omitted the synthetic summary response; the catch-all fixture reported `GET /api/today/copilot-summary` as unexpected. This was a driver failure, not a product regression. The original script/result/log are retained with `-v1`; the corrected driver supplied that response and all three scenarios passed. Evidence and screenshots are under `.remember/evidence/yuk1340-parent-retained-*` and `yuk1340-parent-<scenario>.png`.
+
+The source repair and parent verification address discussion4200906261. Reply/resolve follows the actual push; fresh exact-head CI and17minutes from that push still gate merge. Review rounds r1/r2 remain the only independent rounds, with no third review. Production browser acceptance follows the eventual release.

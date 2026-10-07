@@ -4,7 +4,9 @@
 
 私有 runtime `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/deployment-mimo-20261007-0f81e198`；当前指针为其上级 `current-release.json`。42failed+42DLQ保留，不自动重放。旧镜像单独回退未验证；DB恢复不可覆盖新写入。记忆副本探针整体FALSE，功能成功但 SDK wire/count/cost 未观测完整，勿改称PASS或付费重跑。
 
-唯一活动代码 writer：YUK1340 `tlp-yuk-1340-session-entry`，task `yuk1340-retained-session-p1-recovery-20261007-v2`（CodexSol6.1 xhigh；旧writer已停止归档，排队turn已取消），修自动会话P1与main冲突。禁止父线程抢写、重复任务、第三审或子线程watch。交回后父验收再push。1583由父线程watch。
+YUK1340 writer已交回94c0f0934并释放写入权；父线程为UI树唯一集成者。修复ac9ab2ad1增加每次打开时的fresh sessions/server_time校验；43de65f35合入PR1586文档main d501ea163，已解决PLAN冲突。父线程42组件、37DB、10个实际构建页面场景及最终build通过；浏览器/API为隔离夹具，未宣称生产验收。当前待push、新exact-head CI与17分钟窗；P1回复/resolve须在push后。无第三审，1583仅父线程watch。
+
+新观察已登记YUK1346：两次明确不记忆的假设验收请求仍各生成Mem0摘要，未变成掌握/计划改写。原两条及私有证据保留；不删除、重放或混入当前UI修复。
 
 同原线程hourlyautomation启用；scope已纠正为产品AI而非开发。远程 https://loom-mac-mini.tail2ee344.ts.net/ 已配置；真实外部设备仍待1344。下一步先完成会话入口，然后推进椭圆学习证据与复验路径；模型切换不等于完整产品完成。
 

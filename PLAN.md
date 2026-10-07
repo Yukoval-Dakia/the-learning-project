@@ -6,7 +6,7 @@
 
 - **YUK-1103 自主交付**：本机 http://localhost:8787；远程 https://loom-mac-mini.tail2ee344.ts.net/（同一 tailnet，沿用 Loom 令牌）。app/worker `0f81e198f` healthy，115项迁移、readiness active。已备份及恢复验证；不要重复发布旧 `5d738dbc0`。
 - **YUK-1341 产品 AI**：PR #1585 已通过 exact-head CI、独立初审和等待窗并合并。app/worker 都固定 `opencode-go/mimo-v2.6-pro`；54聊天任务和 Mem0 接线已落地。生产两轮 Copilot 成功，原会话及 Pi cursor 连续、刷新回放一致；后台 MemoryBrief 也已实际成功。未宣称所有任务质量或评分切片均获准入。
-- **YUK-1340 会话入口 / PR #1583**：writer 已交回 `94c0f0934`，修复 `ac9ab2ad1` 每次打开重新取得会话和服务端时间，保留显式选择、原请求与执行恢复。181 scoped unit、37 DB、36 构建页面用例及静态/构建门禁通过；父线程复验42组件与37DB通过，正在核验构建页面并集成发布文档 main。仍待push、新 exact-head CI、P1处置与17分钟窗。两轮 review 预算已用完，不开第三审。
+- **YUK-1340 会话入口 / PR #1583**：writer 已交回 `94c0f0934`，修复 `ac9ab2ad1` 每次打开重新取得会话和服务端时间，保留显式选择、原请求与执行恢复。181 scoped unit、37 DB、36 构建页面用例及静态/构建门禁通过；父线程复验42组件、37DB、10个构建页面场景及最终build通过，已集成发布文档 main。仍待push、新 exact-head CI、P1处置与17分钟窗。两轮 review 预算已用完，不开第三审。
 - **行为基线 / YUK-405**：[完整设计](docs/design/2026-10-06-continuous-learning-system-behavior.md)连接学校、纸笔、自习与数字工具，由 agent 在持续委托下负责实现和验证，不是已实现清单。
 - **模型范围**：产品生成式/多模态 AI 为 MiMo2.6Pro；开发按 AGENTS 常规选模。专用 embedding、typed Jev 和 OCR 协议保留。现有评分准入与确定性功能不降级。
 
@@ -17,6 +17,8 @@
 - YUK-1338 目标架构集成保持 Backlog，单独证明状态版本、过期结果拒绝与重启恢复；ADR-0066 的 TanStack Start/Pi/PostgreSQL/DBOS 方向尚非当前运行形态。
 
 ## PARKED
+
+- YUK-1346：生产验收明确“不写入记忆”仍触发两条Mem0长期摘要；语义标为假设验收、未改掌握/计划。已去重登记High，需单次可信保留策略覆盖异步写入/重试/派生用途，当前不混入会话入口修复。
 
 - YUK-1342：付费探针开关、不可覆盖封存及 OpenAI4 node-fetch 绕过 global-fetch 观测。副本记忆功能通过，但整体探针仍 FALSE；SDK wire/count/cost 不完整，不重复付费刷绿。
 - YUK-1345：provider-only 校准默认值及旧 vision lane 同源归因，已裁决非阻塞；不把统一模型称为异源证据。
