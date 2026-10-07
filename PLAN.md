@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-07 YUK-1365：聊天审核删除与真实流式已提交 PR1593，b54c9a06d CI成功、最终独立review无P0/P1。正在合入依赖更新26f101581并重验；未部署。发布锁归本线程，服务仍为f3 Agent TEST。
+> Linear 是权威 tracker。2026-10-07 YUK-1355 本地集成 fetched main df08399：Node24.19/pg-boss12.36 实际cron与恢复检查通过；只迁prune、Agent TEST ONLY、automation disabled。父线程持有PR/CI/Linear及验收；YUK-1365 runtime锁bed93b71不触碰。见 [新版本证据](docs/planning/2026-10-07-yuk1355-node24-integration-evidence.md)。
 
 ## NOW
 
-- **YUK-1355 非 UI lane**：隔离树 feat/yuk-1355-dbos-migration，默认 pg-boss、不自动生产切换；prune 唯一 consumer，68 队列源台账与回退手册。业务族仍由原 pg-boss/领域 owner 恢复。69 scoped DB/48 unit/26 migration 与静态/build 通过，仅提交本地实现与检查，等待父 gate；1356 port 已发布，不触及其领域/API/tool hunks。
+- **YUK-1355 非 UI lane**：正常merge保留main依赖与1365业务；默认pg-boss、prune唯一DBOS族。新版本4 cron/recovery +28 worker/registrar DB、77 unit、26 selected migration及静态/build检查见证据文档；68源族逐名核对。R1/R2 NONE适用于48ead，审查预算已用；无push/PR/deploy，父线程artifact验收后开PR。
 
 - **YUK-1365**：真实 Pi DELTA/SSE、取消和终态替换实现完成；聊天关键词审核和强制marker已删除。正式工具API保留。最终复核P1已修复；新main依赖合入后需新exact-head CI。
 
@@ -24,7 +24,7 @@
 - YUK-1360本 lane 仅正常merge commit后交回父线程，不push、不新开review。父线程检查artifact、最终exact-head CI、PR delivery、Linear capture与另行授权的Agent-test API/SPA/BAM验收；本lane不接触runtime/private backup/R2，1346候选与unknown requests不恢复或replay。
 - 先落实 YUK-1346 的可信单次记忆/派生用途策略，再沿“椭圆难题 → 记录过程与帮助程度 → 区分暂时理解和独立迁移 → 后续验证安排”的真实学习路径推进。短回答成功不等于可靠评估已经兑现。
 - YUK-1042历史42failed+42DLQ已随owner明确授权的reset退出主runtime并离线保留；不自动restore/replay，清库不代表原缺陷或未知结果已修。
-- **TS 迁移（epic YUK-1351）owner 最新覆盖**：先完成所有非 UI 迁移，保留现有页面和确定性能力，UI 重写暂缓，不等待 Opus/UI 票。1338 最终 gate 仍由父核验；1352/1355/1356 各守隔离 ownership，1363/1364 另线程独占。1355 的 source/test 完成不代表业务任务族、runtime 或全迁移已验收；剩余族归 1356/1358，兼容清理归 1355/1359。
+- **TS 迁移（epic YUK-1351）owner 最新覆盖**：先完成所有非 UI 迁移，保留现有页面和确定性能力，UI 重写暂缓，不等待 Opus/UI 票。1338 最终 gate 仍由父核验；1352/1355/1356 各守隔离 ownership，1363/1364 另线程独占。1355 的 source/test 完成不代表业务任务族、runtime 或全迁移已验收；剩余族归 1356/1358，兼容清理归 1355/1359。 当前只在Agent测试环境验收，automation disabled；不恢复私人库。
 - **早期单收口（2026-10-07）**：YUK-100..500 的 20 张已在 Linear 逐张裁定——147/213/295/310/406/443/464 转 Todo，369 Canceled（被 1038 取代），其余设触发条件与 10-21 / 11-07 复查截止，到期未触发即取消；406 验收裁定连带 405/418/419。
 
 ## PARKED

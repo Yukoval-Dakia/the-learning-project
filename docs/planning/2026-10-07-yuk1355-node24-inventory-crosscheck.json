@@ -732,7 +732,10 @@
     "prior1359ManifestLoadHandlers": 53,
     "prior1359ManifestSchedules": 18,
     "priorInfraSchedules": 6,
-    "readmeAiTaskRegistry": 52
+    "readmeAiTaskRegistry": 52,
+    "integratedAiTaskRegisteredKinds": 55,
+    "integratedAiTaskStaticallyInvokedKinds": 53,
+    "integratedAiTaskCompatibilityKinds": 2
   },
   "method": "TypeScript AST reads of jobs.handlers; manifest names compared individually with the ledger and YUK-1359; fourteen non-manifest registrations checked at named createQueue/work sites. No lazy handler execution."
 }
