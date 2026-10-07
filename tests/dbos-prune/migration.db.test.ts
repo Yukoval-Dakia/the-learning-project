@@ -251,7 +251,8 @@ describe('YUK-1355 prune full cutover/drain/rollback with real worker processes'
       legacyRetryCompleted: retry,
       retiredFailure: failed,
       unknownUntouched: unknown,
-      doubleSchedule: false,
+      scheduleRegistrationProjectionChecked: true,
+      cronTickExecutionObserved: false,
     });
   });
   it.each(['business-committed', 'checkpoint-saved'])(

@@ -8,7 +8,8 @@
       "legacyRetryCompleted": "71345286-c798-4f56-85b1-1ef6de5b7628",
       "retiredFailure": "cb97b799-1a0d-4eff-8ce4-fdd48538e4ec",
       "unknownUntouched": "aa3b0f25-594b-4bf5-8cfe-4f3ce74a3410",
-      "doubleSchedule": false
+      "scheduleRegistrationProjectionChecked": true,
+      "cronTickExecutionObserved": false
     },
     {
       "scenario": "business-committed",
@@ -120,5 +121,6 @@
       "path": ".cache/yuk1355-worker.cjs",
       "sha256": "fd5e95ec4d9a5f25b4912c3d7a447ddc81afc99cf9fb5ee5f4ddc56ac57881fe"
     }
-  ]
+  ],
+  "scope": "Historical recovery and schedule-registration projection only; cron tick execution was not observed in this artifact."
 }

@@ -16,6 +16,16 @@ export async function readPrunePhase(db: Executor): Promise<PrunePhase> {
   return prunePhaseSchema.parse(rows[0]?.phase);
 }
 
+/** pg-boss forwards the previous cron point for 60 seconds, even after rollback. */
+export async function hasRecentDbosPruneReceipt(db: Executor): Promise<boolean> {
+  // Receipt cutoff is scheduledDate minus 30 * 86400 seconds; include the 60s lookback.
+  const rows = await db.execute(sql`select exists (
+    select 1 from prune_job_events_receipt
+    where cutoff > clock_timestamp() - interval '2592060 seconds'
+  ) as recent`);
+  return z.boolean().parse(rows[0]?.recent);
+}
+
 export async function installPruneProducerFence(db: Db): Promise<void> {
   // Transactional DDL. A separate advisory lock serializes concurrent worker boots.
   await db.transaction(async (tx) => {
@@ -57,7 +67,11 @@ export async function drainLegacyPrune(db: Db) {
   await db.transaction(async (tx) => {
     await tx.execute(sql`select phase from prune_job_events_control for update`);
     const phase = await readPrunePhase(tx);
-    if (phase === 'pg-boss' || phase === 'draining-pg-boss') await runPruneJobEvents(tx);
+    if (
+      (phase === 'pg-boss' || phase === 'draining-pg-boss') &&
+      !(await hasRecentDbosPruneReceipt(tx))
+    )
+      await runPruneJobEvents(tx);
   });
 }
 

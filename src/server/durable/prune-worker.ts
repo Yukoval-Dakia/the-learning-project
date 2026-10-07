@@ -10,6 +10,7 @@ import {
   PRUNE_FAMILY,
   commitPrune,
   drainLegacyPrune,
+  hasRecentDbosPruneReceipt,
   installPruneProducerFence,
   readPrunePhase,
 } from './prune-family';
@@ -147,7 +148,7 @@ async function mountPruneWorker({
           await boss.offWork(PRUNE_FAMILY, { wait: false });
           mounted = false;
         }
-        if (phase === 'pg-boss')
+        if (phase === 'pg-boss' && !(await hasRecentDbosPruneReceipt(tx)))
           await boss.schedule(PRUNE_FAMILY, schedule.cron, {}, { tz: schedule.tz });
         else await boss.unschedule(PRUNE_FAMILY);
       });
