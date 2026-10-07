@@ -31,3 +31,9 @@ active 与 completed consumer 现在共享冻结题面投影。完成后的结�
 负向 fixture 曾因冻结 guard、外键及合法初次结果 fallback 失败；最终通过既有隔离 restore fixture 构造异常，保留生产约束并明确验证正常写入仍被拒绝。没有通过删除或放宽生产约束取得测试通过。
 
 独立初审及唯一验证审均已完成，发现已修复，不启动第三轮审查。PR #1591 仍需新提交的 exact-head CI 和合并条件；此记录不代表已部署。真实 provider 输出质量不属于本次离线契约验证结论。
+
+## GitHub 后续 P1：完整的历史来源
+
+PR comment `4206851930` 指出，已完成结果投影只冻结题面，仍从可变 question 读取知识点与草稿状态。正常 `editQuestion` 修改这些字段后，历史结果可能消失、ack 失败或报告计为 corrupt。父线程源码核对后接纳该 finding；通过正式编辑入口的三条回归（正确、错误、连续复验）已实际 RED，日志 `/tmp/yuk1364-completed-provenance-red-full.log`。
+
+正在实施 Agency 拥有的已完成结果来源契约，由 Shell 与共享 evidence fold 消费，区分当前新作答准入与不可变历史事实。历史未发题语义、真实来源损坏及证据撤销仍需保留。当前 `eb0e5f53b` 不可合并；前述248 DB/72 unit和父85 DB不覆盖此新缺口。该任务是既有 finding 的实施修复，不是第三轮审查；没有部署或运行库变更。
