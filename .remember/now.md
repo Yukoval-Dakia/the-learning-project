@@ -1,3 +1,11 @@
+# YUK-1352 隔离 lane 交付
+
+此工作树唯一 writer 完成 Start 非 UI 前门，提交后释放写权限。源码与检查/证据/剩余项见
+`docs/planning/2026-10-07-yuk1352-start-frontdoor.md` 和相邻 evidence JSON，日志本树 `.cache/yuk1352/`。
+没有操作主runtime/生产/数据库/worker/provider，没有push/PR/watch/merge或委派。
+父线程负责独立review、最终CI及隔离业务/image drill，不置Done。1355/1356领域/dispatch文件均未改。
+
+---
 # 当前交接 — 2026-10-07 YUK-1338 Pi + DBOS 隔离 gate
 
 owner 指示本线程负责 epic YUK-1351 的第一道 gate。工作树 `/Users/yuqi/.t3/worktrees/the-learning-project/feat-yuk-1338-pi-dbos-gate`，branch `feat/yuk-1338-pi-dbos-gate`，base `8841ce68a69e30bacf20e8241f28cd1669b38a1f`。本线程是原树唯一 writer；57961995 父线程负责主线迁移协调与 PR watch/最终 merge。非 UI、不合并、不部署、不碰生产数据或 provider 配置。

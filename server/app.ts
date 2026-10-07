@@ -27,7 +27,7 @@ import {
 // policy keeps inline style/script/eval compatibility while denying every external fetch channel
 // except same-origin API/static assets and local data/blob media. Removing those compatibility
 // tokens requires first moving interactive artifacts off inherited local-scheme documents.
-const SECURITY_HEADERS = secureHeaders({
+export const SECURITY_HEADERS = secureHeaders({
   contentSecurityPolicy: {
     defaultSrc: ["'self'"],
     baseUri: ["'self'"],
