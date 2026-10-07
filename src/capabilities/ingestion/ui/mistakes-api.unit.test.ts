@@ -9,6 +9,7 @@ const row: MistakeProjection = {
   record_id: 'record_original',
   question_id: 'question_part',
   prompt_md: '共享材料：讨论语法关系。\n\n解释「之」。',
+  prompt_materials: [],
   reference_md: null,
   wrong_answer_md: '原答：代词。\n补充推导与上下文。'.repeat(8),
   wrong_answer_image_refs: ['answer_page_1', 'answer_page_2'],

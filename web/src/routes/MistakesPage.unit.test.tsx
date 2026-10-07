@@ -24,6 +24,7 @@ function mistake(
     record_id: 'record_1',
     question_id: 'question_1',
     prompt_md: '“之”在主谓之间有什么作用？',
+    prompt_materials: [],
     reference_md: referenceMd,
     wrong_answer_md: '代词',
     wrong_answer_image_refs: [],
