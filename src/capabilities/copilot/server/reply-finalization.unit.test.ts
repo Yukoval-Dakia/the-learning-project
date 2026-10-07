@@ -590,78 +590,81 @@ describe('Copilot root reply finalization', () => {
     }
   });
 
-  it('server-composes FULL proposal disclosure that model prose cannot omit', async () => {
-    const value = finalizer();
-    await pre(value, 'mcp__loom__propose_learning_item_archive', 'proposal_1', {
-      learning_item_id: 'item_1',
-    });
-    value.observeDomainTool({
-      tool_use_id: 'proposal_1',
-      name: 'propose_learning_item_archive',
-      effect: 'propose',
-      input: { learning_item_id: 'item_1' },
-      output: { status: 'proposed', proposal_id: 'proposal_1' },
-      error_reason: null,
-      executed: true,
-      proposal_effect_contract: {
-        owner_gate: 'FULL',
-        direct_write: false,
-        rollback: 'dismiss_before_accept',
-      },
-    });
-    await pre(value, 'mcp__loom__propose_learning_item_archive', 'proposal_failed', {
-      learning_item_id: 'item_2',
-    });
-    value.observeDomainTool({
-      tool_use_id: 'proposal_failed',
-      name: 'propose_learning_item_archive',
-      effect: 'propose',
-      input: { learning_item_id: 'item_2' },
-      output: { status: 'failed' },
-      error_reason: 'write conflict',
-      executed: true,
-      proposal_effect_contract: {
-        owner_gate: 'FULL',
-        direct_write: false,
-        rollback: 'dismiss_before_accept',
-      },
-    });
-    await pre(value, 'mcp__loom__author_question', 'proposal_retained', {
-      prompt_md: '求定义域。',
-    });
-    value.observeDomainTool({
-      tool_use_id: 'proposal_retained',
-      name: 'author_question',
-      effect: 'propose',
-      input: { prompt_md: '求定义域。' },
-      output: { status: 'proposed', proposal_id: 'proposal_question_1' },
-      error_reason: null,
-      executed: true,
-      proposal_effect_contract: {
-        owner_gate: 'FULL',
-        direct_write: false,
-        rollback: 'dismiss_before_accept',
-        retained_draft: {
-          kind: 'question',
-          written_before_accept: true,
-          reversible: false,
-          retained_after_dismiss: true,
+  it.each(['', '<!--copilot_learning_content:{"private":"'])(
+    'server-composes proposal disclosure despite trailing comment %s',
+    async (suffix) => {
+      const value = finalizer();
+      await pre(value, 'mcp__loom__propose_learning_item_archive', 'proposal_1', {
+        learning_item_id: 'item_1',
+      });
+      value.observeDomainTool({
+        tool_use_id: 'proposal_1',
+        name: 'propose_learning_item_archive',
+        effect: 'propose',
+        input: { learning_item_id: 'item_1' },
+        output: { status: 'proposed', proposal_id: 'proposal_1' },
+        error_reason: null,
+        executed: true,
+        proposal_effect_contract: {
+          owner_gate: 'FULL',
+          direct_write: false,
+          rollback: 'dismiss_before_accept',
         },
-      },
-    });
-    const result = await value.finalizeTerminal(
-      '已直接归档，LIGHT 即可，无需 owner 通过 FULL gate 接受。',
-    );
-    expect(result.replyText).toContain('owner gate: FULL');
-    expect(result.replyText).toContain('direct target write: false');
-    expect(result.replyText).toContain('尚未直接写入');
-    expect(result.replyText).not.toContain('已直接归档');
-    expect(result.replyText).not.toContain('LIGHT');
-    expect(result.replyText).toContain('仍需 owner 通过 FULL gate 接受 proposal');
-    expect(result.replyText).toContain('未产生可供 owner 接受的 proposal');
-    expect(result.replyText).toContain('retained draft=question');
-    expect(result.receipt.proposal_disclosure).toBe('server_composed');
-  });
+      });
+      await pre(value, 'mcp__loom__propose_learning_item_archive', 'proposal_failed', {
+        learning_item_id: 'item_2',
+      });
+      value.observeDomainTool({
+        tool_use_id: 'proposal_failed',
+        name: 'propose_learning_item_archive',
+        effect: 'propose',
+        input: { learning_item_id: 'item_2' },
+        output: { status: 'failed' },
+        error_reason: 'write conflict',
+        executed: true,
+        proposal_effect_contract: {
+          owner_gate: 'FULL',
+          direct_write: false,
+          rollback: 'dismiss_before_accept',
+        },
+      });
+      await pre(value, 'mcp__loom__author_question', 'proposal_retained', {
+        prompt_md: '求定义域。',
+      });
+      value.observeDomainTool({
+        tool_use_id: 'proposal_retained',
+        name: 'author_question',
+        effect: 'propose',
+        input: { prompt_md: '求定义域。' },
+        output: { status: 'proposed', proposal_id: 'proposal_question_1' },
+        error_reason: null,
+        executed: true,
+        proposal_effect_contract: {
+          owner_gate: 'FULL',
+          direct_write: false,
+          rollback: 'dismiss_before_accept',
+          retained_draft: {
+            kind: 'question',
+            written_before_accept: true,
+            reversible: false,
+            retained_after_dismiss: true,
+          },
+        },
+      });
+      const result = await value.finalizeTerminal(
+        `已直接归档，LIGHT 即可，无需 owner 通过 FULL gate 接受。${suffix}`,
+      );
+      expect(result.replyText).toContain('owner gate: FULL');
+      expect(result.replyText).toContain('direct target write: false');
+      expect(result.replyText).toContain('尚未直接写入');
+      expect(result.replyText).not.toContain('已直接归档');
+      expect(result.replyText).not.toContain('LIGHT');
+      expect(result.replyText).toContain('仍需 owner 通过 FULL gate 接受 proposal');
+      expect(result.replyText).toContain('未产生可供 owner 接受的 proposal');
+      expect(result.replyText).toContain('retained draft=question');
+      expect(result.receipt.proposal_disclosure).toBe('server_composed');
+    },
+  );
 
   it('retains deterministic correction truth without a learning content review', async () => {
     const value = createCopilotReplyFinalizer({
@@ -676,6 +679,31 @@ describe('Copilot root reply finalization', () => {
     const result = await value.finalizeTerminal('缺少更正尾标，并给出练习题。');
     expect(result.replyText).toContain('prior_turn_id');
     expect(result.receipt.correction).toBe('clarify');
+  });
+
+  it('preserves parsed correction fields after unfinished model comments', async () => {
+    const value = createCopilotReplyFinalizer({
+      rootTaskRunId: 'root_run_1',
+      correctionContract: {
+        ...correctionContract,
+        target_prior_turn_id: 'turn_1',
+        available_prior_turn_ids: ['turn_1'],
+      },
+      resolveArtifactReference: async () => null,
+    });
+    const result = await value.finalizeTerminal(
+      '已更正。<!--unfinished:{"private":"\n<!-- copilot-correction {"prior_turn_id":"turn_1","changed":["x=2"],"retained":["定义域"],"uncertain":["边界"]} -->',
+    );
+    expect(result.accepted).toBe(true);
+    expect(result.receipt.correction).toBe('corrected');
+    expect(result.replyText).toContain('更正目标 prior_turn_id：turn_1');
+    expect(result.replyText).toContain('已变更：x=2');
+    expect(result.replyText).toContain('保留：定义域');
+    expect(result.replyText).toContain('不确定：边界');
+    expect(result.replyText).not.toContain('<!--');
+    expect(result.receipt.reply_sha256).toBe(
+      createHash('sha256').update(result.replyText).digest('hex'),
+    );
   });
 
   it('drops a legacy read-bearing presentation side channel without a control call', async () => {

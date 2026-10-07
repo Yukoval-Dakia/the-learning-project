@@ -184,3 +184,15 @@ typecheck, lint (297 warnings, zero errors), full build and the two streaming DB
 tests passed again. The merge resolved only PLAN/handoff prose conflicts;
 upstream added the isolated DBOS test dependency and gate. Logs:
 `/tmp/yuk1365-main-{install,typecheck,lint,build,stream-db}.log`.
+
+## Independent review repair
+
+Round 1 found a P1 interaction: filtering an unfinished model comment after
+appending server text could erase proposal disclosure or correction fields.
+Two regressions reproduced the defect before repair (2 failed, 30 passed).
+Filtering now applies to model prose after correction-envelope parsing and
+before authoritative correction/proposal composition; the receipt hashes the
+final bytes. Finalizer/correction/prose suites pass all 47 tests. Scoped
+copilot_run and real Pi-loop streaming DB tests, typecheck, lint and build also
+pass. Logs: `/tmp/yuk1365-review-{red,green,db,typecheck,lint,build}.log`.
+A separate read-only verification review is running as the second/final round.

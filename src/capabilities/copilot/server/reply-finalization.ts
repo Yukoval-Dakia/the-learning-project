@@ -393,10 +393,13 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         text: legacyPresented.text,
         ...(resolvedNomination ? { primaryView: resolvedNomination } : {}),
       };
-      const correction = resolveCorrectionReply(presented.text, options.correctionContract);
+      const correction = resolveCorrectionReply(
+        presented.text,
+        options.correctionContract,
+        stripCopilotInternalComments,
+      );
       const disclosure = proposalDisclosure(trace);
-      const disclosed = applyProposalDisclosure(correction.reply, disclosure);
-      const fixed = stripCopilotInternalComments(disclosed);
+      const fixed = applyProposalDisclosure(correction.reply, disclosure);
       if (
         traceVersion !== startVersion ||
         digestTrace(trace) !== startTraceSha ||
