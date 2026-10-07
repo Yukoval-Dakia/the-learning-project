@@ -1,4 +1,16 @@
-# 当前交接 — 2026-10-07 会话入口生产发布完成
+# 当前 lane — 2026-10-07 YUK-1360 依赖集成
+
+唯一 writer 位于 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1360-dependency-integration`，branch `fix/yuk-1360-dependency-integration`，base `c54f5ddd3`。正常 merge `8841ce68a` 已提交 `574106ae9`，保留所有26项升级及 Mem0 hash `858dc62f5cb028767f44e081b4e6713f302c6a47e760f21c403b62a43ec969e7`。只修改七个 test fixture，未知 queue observation 为 null，初始 retryCount 为0；没有 production source repair。
+
+本 lane 的97 DB、146 unit、82 migration、typecheck/lint/build均通过。populated queue37→44验证通过：12个原job/data/state/output/计数完整保持，7项BAM全部完成，retry/lost-claim signal及settlement fence、真实Drizzle enqueue rollback/commit、graceful/forced shutdown与restart通过。旧版仅在disposable schema44副本验证一次send/fetch/complete；严格schema检查拒绝44，没有downgrade。所有容器已停止。完整命令/输出位于 `/tmp/yuk1360-dependency-repair-20261007`，结果封存于 `docs/planning/2026-10-07-yuk1360-dependency-integration-evidence.md` 及两个 versioned JSON。父线程需核验真实SPA/API与生产BAM gate，不能将本证据称为独立审查或发布通过。
+
+父线程拥有 PR1584、watch/replies/push/merge、Linear、独立审查和生产。此 lane 不委派、不 push、不读凭据/原env、不操作现有服务或数据库、不调用真实provider。完成后 authority 结束，通知不恢复写入权。
+
+下方为 main 继承的历史产品交接，不是本 lane 的实施范围。
+
+---
+
+# 历史交接 — 2026-10-07 会话入口生产发布完成
 
 生产 `f3bfff2cfe2aea0efbf7d11ead8a84ebfab497ef`，02:17Z app/worker 同准确镜像 e681a7b502aa；MiMo 产品 pin 保持不变。PR1583 在 exact d3906a7 CI37556260516成功、P0/P1裁决及17分钟窗后，于02:05:19Z合并，watch已结束。真实生产 Chromium 通过 fresh sessions/server_time、默认续接、结束历史只读、新建空会话、重开及刷新一致；无模型调用，SQL task runs仍2712。完整记录见 `docs/planning/2026-10-07-session-entry-local-release-result.md`。
 

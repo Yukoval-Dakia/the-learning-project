@@ -1,9 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-07：会话入口 PR1583 已合并并在 02:17Z 部署 `f3bfff2cf`，真实生产浏览器验收通过。当前完成 YUK-1340 发布记录，下一产品线为 YUK-1346 的单次保留策略。见[本机入口发布记录](docs/planning/2026-10-07-session-entry-local-release-result.md)。
+> Linear 是权威 tracker。2026-10-07：此独立 lane 仅实施 YUK-1360 / PR1584 依赖集成与兼容验证。父线程拥有 PR、Linear、独立 review、push、merge、生产及其他工作树。见 [YUK-1360 证据](docs/planning/2026-10-07-yuk1360-dependency-integration-evidence.md)。
 
 ## NOW
 
+- **YUK-1360 source ready**：`fix/yuk-1360-dependency-integration` 已正常合入 `origin/main 8841ce68a`；保留全部26项升级、main 的 Mem0 patch hash 与产品 AI 路由。七个 DB fixture 已修复。独立 frozen install、97 DB、146 unit、82 migration、typecheck/lint/build 已通过；populated pg-boss37→44、7项 BAM完成、12原job完整保持、retry/lost-claim/tx rollback/shutdown/restart 均通过，disposable container 已停止。待父线程审查与 delivery。
 - **YUK-1103 自主交付**：本机 http://localhost:8787；远程 https://loom-mac-mini.tail2ee344.ts.net/（同一 tailnet，沿用 Loom 令牌）。app/worker `f3bfff2cf` healthy，115项迁移、readiness active。已备份及恢复验证；不要重复发布旧 `5d738dbc0`。
 - **YUK-1341 产品 AI**：PR #1585 已通过 exact-head CI、独立初审和等待窗并合并。app/worker 都固定 `opencode-go/mimo-v2.6-pro`；54聊天任务和 Mem0 接线已落地。生产两轮 Copilot 成功，原会话及 Pi cursor 连续、刷新回放一致；后台 MemoryBrief 也已实际成功。未宣称所有任务质量或评分切片均获准入。
 - **YUK-1340 会话入口已交付**：PR #1583 满足 exact-head CI、审查和等待窗后合并。准确 ARM64 镜像完成副本迁移、旧镜像读取兼容、停写备份恢复及生产页面验收。默认续接、历史只读、新建、重开、刷新保持会话均通过；没有发送 AI 消息。YUK-1343 两条 P2 仍延期。
@@ -12,12 +13,14 @@
 
 ## NEXT
 
+- YUK-1360证据已封存，本 lane 仅提交后交回父线程。父线程读取真实 diff 独立审查，承担 SPA/API 集成验收、PR delivery、exact-head CI 与 Linear capture。本 writer 不 push；完成结束 authority。
 - 先落实 YUK-1346 的可信单次记忆/派生用途策略，再沿“椭圆难题 → 记录过程与帮助程度 → 区分暂时理解和独立迁移 → 后续验证安排”的真实学习路径推进。短回答成功不等于可靠评估已经兑现。
 - YUK-1042：42 failed +42 DLQ 原义务保留；先查每项副作用和幂等身份再恢复，不清队列或重付未知结果。
 - YUK-1338 目标架构集成保持 Backlog，单独证明状态版本、过期结果拒绝与重启恢复；ADR-0066 的 TanStack Start/Pi/PostgreSQL/DBOS 方向尚非当前运行形态。
 
 ## PARKED
 
+- **YUK-1360 父线程发布验收义务**：真实 startup 返回 schema44 时仍有7项 BAM index 工作 pending；不能把 start/health/Drizzle smoke 当作 background migration 完成。本 lane 验证 disposable 完成与 index validity；生产需父线程在既有发布流程核验。旧12.26.3默认启动仅证明单个 synthetic queue 操作，`migrate:false`拒绝44；没有执行或批准 queue downgrade。归入既有 YUK-1360/YUK-1329 验收，不在此 lane 新建 Linear。
 - YUK-1346：单次“不写入记忆”的可信策略尚未实现，High/Backlog，选为下一条产品线；两条原假设验收摘要保留，不冒称已修。
 - YUK-1343：失败创建提前标为显式来源、50条历史截断隐藏可续接会话均未修；已成组登记，不阻塞此次已裁决发布。
 
@@ -30,6 +33,7 @@
 
 ## BLOCKED-ON
 
+- YUK-1360 本地证据不构成独立 review、merge approval、生产升级或回退授权；后续只由父线程推进。无现有服务/DB 操作、无真实 provider 调用。
 - 无需 owner 追加日常授权。旧 Xiaomi402 不再阻塞新 Copilot；历史失败没有删除。
 - 默认会话入口已在生产修复；完整学习状态评估和自适应安排仍需逐条行为验收，不能以此次日用修复冒称产品完成。
 - 旧0f81整镜像读取新迁移副本兼容已验证；回退需刷新浏览器且恢复旧入口缺陷。数据库恢复仍须保护备份后新写入，不可自动覆盖。当前指针已更新且发布锁已释放。

@@ -171,6 +171,7 @@ describe('actual SDK failure through Memory ingestion owner', () => {
       data: { event_id: id },
       expireInSeconds: 60,
       heartbeatSeconds: null,
+      retryCount: 0,
       signal: new AbortController().signal,
     };
     return { id, handler, job, send };
