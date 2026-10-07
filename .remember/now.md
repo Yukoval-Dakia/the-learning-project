@@ -1,3 +1,139 @@
+# 当前交付 — YUK1364 853镜像验收
+
+85345ac0c9d14bc748c10928e2adb934f5891a54准确ARM64镜像sha256:9b76e7cb746dc51f1f661adba65041d514502f041e20111ae91defe3679be25c已实际验收。合法V2探针brief/list显示原题，只GET；正常publication保留原proposal/spec/criterion而替换为JevScoringDecisionTask的seq1/2均HTTP409 probe_execution_contract_mismatch并排除展示。三个窗口22表完整快照不变，submission/evaluation/provider/task/cost均0，没有有效答案POST。证据runtimeRoot/yuk1364-preflight-85345ac0c/evidence/acceptance-summary.json。已保留最终隔离dump，清理自有app/PG匿名volume/network，核owner释放锁并通知双方；主release未变、四服务healthy。当前CI/合并/发布待完成。本次无新follow-up，旧1374/1375/1329仍保留。
+
+以下为历史记录。
+
+# 当前交付 — YUK1364 执行契约修复收回
+
+执行契约修复a5e623045960dd3a40d468f77f37111b15188bbc已收回，writer释放。生产validator校验固定executor、单一assignment、slot/evidence绑定、1分/sum/blank与escalation；V1/absent历史human_review和动态slice/cost保留。六个RED经真实formal dispatcher到离线Jev边界，V2持久化后422、V1/absent错误分数被采纳；不等于真实provider输出。377DB/130unit/静态构建与3audit通过；父核完整manifest hash并用Node24重跑196DB通过。证据/tmp/yuk1364-execution-contract-evidence.md及manifest，父日志/tmp/yuk1364-execution-parent-db.log。新head CI/准确镜像HTTP尚未执行，旧77c验收不覆盖本修复。当前无锁/自有服务。无新增可执行follow-up，1374/1375与1329保持既有归属。
+
+以下为历史记录。
+
+# 当前交付 — YUK1364 execution plan P1
+
+最终 e468492d3 的 CI37653519120 已全绿，审查前6threads resolved，但合并前再次读取发现新P1 PRRT_kwDOSXB98s6qAM6d：冻结execution_plan允许非探针executor/task，可能先错误评分再422或V1采纳。禁止合并/发布e468。T3 codex gpt-6-astra high 唯一码writer task yuk1364-executor-contract-repair-20261008-v1 正在生产/冻结/消费矩阵与RED复现后修复，不是第三review。父仅docs/ops，不能并发测试或编辑源码。
+
+当前无部署锁、无自有容器。候选 deployment-yuk1364-e468492d3 helper未执行，无release-gates-verified.json。新增verify_mem0_archive完整目录/WAL恢复校验合成测试通过，已记YUK1329并通知1365owner；旧main-file-only integrity ok仍能漏WAL行，但不推断生产损坏。主live6e是e468祖先，listener/worker/package/lock相同。77c镜像HTTP旧证据不覆盖未来新修复。
+
+以下为历史记录。
+
+# 当前交付 — YUK-1364 77c 镜像验收
+
+77c7df79c/image993fcdd5fdd6准确镜像HTTP已完成：正常publication只改statement的seq1/2均409 probe_criterion_mismatch，brief/list排除，22表前后快照相同。首次fixture因JSON字段顺序比较失败，父shell未停误发合法答案422，产生隔离submission/evaluation各1；provider/task/cost0。此失败完整保留，后续负例以这1/1为baseline，未清除数据刷绿。合法原题GET可见。全部证据及最终dump在runtimeRoot/yuk1364-preflight-77c7df79c。40项证据hash封存，自有app/PG/volume/network清理，核owner释放锁并通知两owner；主fd8四服务healthy、release不变。
+
+准确head CI待完成，所有既有P1已push后reply/resolve；无需第三review。后续按正常门禁合并、停写备份恢复与Agent TEST发布。此后文档提交不改77c应用源码，发布仍记录buildSourceRevision=77c。没有新增产品follow-up；1374/1375仍独立未修。
+
+以下为历史记录。
+
+# 当前交付 — YUK-1364 V2 criterion 修复收回
+
+ba49af22de08aac685ceb45a50ab1a42de7bf3c4 已提交完整 canonical criterion 共用修复。子任务 writer 已释放，无 pending child runs。父核验 manifest 全部45项hash，并实跑 V1 + complete-spec 两文件112DB通过，日志 /tmp/yuk1364-criterion-parent-db.log。父测试使用当前 Node26.10.0；镜像仍按项目 Node24 构建。子任务275DB/130unit/typecheck/lint/build及3audit通过，schema audit未运行未称PASS。没有新增独立review。
+
+下一步提交本三份父文档、push并回复resolve4209163971，然后准确新head CI及镜像HTTP验收。此前586镜像证据不覆盖此修复。尚未操作runtime或取得锁；任何服务操作先实际核锁、原子mkdir并通知两owner。Agent TEST ONLY。
+
+以下为历史记录。
+
+# 当前交付 — 2026-10-07 16:15Z YUK-1364
+
+586c3e456/imagecfe16253598dd70b4d0df055cddec429ec67c355e6260f3b7f3e9f2c55168a3e的V1隔离HTTP完成，41证据hash已封存到runtimeRoot/yuk1364-preflight-586c3e456/evidence。合法seq1/2显示原题面，unissued409，正常reference edit触发更早probe_snapshot_changed409而非shared-validator HTTP分支；四窗口22表无写及评分相关表0行。已清理自有app/PG匿名volume/network，核owner释放锁并通知双方；主fd8四服务healthy、current-release未变。
+
+GitHub新P1 4209163971 / PRRT_kwDOSXB98s6p_Wf_确认V2 criterion.statement_md漏比较，却经assessment-model-assets传模型。不得merge/deploy586。新唯一writer task yuk1364-v2-criterion-repair-20261008-v1，T3 codex/gpt-6-astra/high，先生产-冻结-消费完整criterion矩阵，再共享canonical边界修复。非第三review。父只改PLAN/.remember/本planning文档，无并发代码测试；子任务完成自动通知。旧HTTP不覆盖新修复。
+
+上一条gh查询已终止：pr view因unexpected EOF失败，reviewThreads成功获取新P1；session64033已结束。镜像build session32980已成功，所有本轮exec session结束。无部署锁/自有运行服务。新的release helper尚未准备，不执行旧70b/9a helper。Linear已同步InProgress、两owner已收到新P1状态。
+
+父已准备 /tmp/yuk1364-v2-criterion-runtime-fixture.ts 及notes.md：只在first issuance前通过正常publication改statement_md，保留question/version/prompt/reference/proposal及embedded spec，避免早期snapshot guard。旧归档compile通过，未绑定候选执行会在import前拒绝；尚未运行DB/HTTP。
+
+以下为历史记录。
+
+# 当前交付 — 2026-10-07 16:02Z YUK-1364
+
+V1修复faf2e66b012e3725df533189e58ad2dab31de188已交回，源码writer释放。281DB/82unit/typecheck/lint/build及10audit通过；schema audit在准确base相同失败，父已核实绝对路径test-storage误杀并登记YUK-1375、通知主线。父核对23日志与20build源码hash，新V1/V2两文件重点100 DB已通过。尚未push新head/CI/HTTP/merge/deploy。父现在唯一writer。
+
+V1 HTTP scratch /tmp/yuk1364-v1-http-runtime-fixture.ts已准备但未绑定，执行会在import前拒绝；待准确最终head归档后替换HEAD和所有9a路径，必须重新bundle。真实HTTP只做V1 seq1/2可见及坏reference409，不POST有效答案。旧9a/70b运行证据不覆盖新修复。任何runtime动作先重新核验并原子取锁通知两owner，Agent TEST ONLY，不清库、不私人R2、不DLQ重放。
+
+以下为历史记录。
+
+# 当前交付 — 2026-10-07 15:50Z YUK-1364
+
+PR1591 head70bd102bd CI37645299169已绿且CLEAN，但P1 4208871927确认历史V1 probe spec被误按V2要求criterion.probe_spec，禁止合并当前head。T3唯一源码writer yuk1364-v1-provenance-compat-repair-20261008-v1仍在运行，先做absent/V1/V2契约矩阵再修复；父仅处理disjoint文档/协调。新P2列表LIMIT先于provenance过滤已登记YUK-1374，未修。主线和1365已通知当前无runtime操作/持锁，下一次仍重新核验锁并原子获取。9a隔离HTTP和70b制品等价证明只覆盖旧代码，不能覆盖待完成V1修复。
+
+父已准备 /tmp/yuk1364-v1-http-runtime-fixture.ts 和对应 notes.md。仅旧归档编译通过，并实测未绑定新候选时在导入应用前拒绝执行。待writer完成后绑定准确源码和镜像，再做V1 seq1/2可见、漂移409/22表无写的真实HTTP；当前未启动任何服务。
+
+以下为历史记录。
+
+# 当前交付 — 2026-10-07 15:35Z YUK-1364
+
+9a43085a0/image d4c166346ad7隔离HTTP已通过native seq1/2漂移409、合法seq2显示、22表无写及legacy历史/ack。15:18:17Z清理自有容器/volume/network并核owner释放锁，主fd8四服务healthy未变。证据runtimeRoot/yuk1364-preflight-9a43085a0/evidence/acceptance-summary.json与lock-release.json，65证据hash核对。
+
+原PR CI37642044307各job成功但汇总job未生成，整体failure且GitHub拒绝retry。手动完整CI37643395029在9a准确head全绿。普通expected-head squash仍被base policy拒绝；未admin绕过。现提交真实运行验收文档重触发PR gate，源码未变；下次核最终head/CI/image对应关系。部署脚本deployment-yuk1364-9a43085a0只准备未执行，缺release-gates-verified.json且要求release phase的本线程锁。
+
+以下为历史记录。
+
+# 当前交接 — 2026-10-08 JST YUK-1364
+
+完整spec P1修复已交回，代码9d962371f，唯一writer已释放。父核对9 source/21 log/8 artifact哈希和实际diff，独立三文件113 DB通过；writer270 DB/136 unit/typecheck/lint/build及scoped audits通过。原proposal的完整sequence-specific契约参与active/list/answer/completed校验，不能只匹配prompt/reference。PR1591待推送本次文档与代码、回复4208030193、新exact CI和隔离监听HTTP。现无自有runtime服务/部署锁；下一次runtime操作前必须实际复核并原子取锁、通知1365与主线。
+
+1359已补齐28个路由责任表，1358 Linear波次纳入mistakes且admin更正8页，主线已确认。root及其他owner树不动。原66e发布脚本已封禁且从未执行；必须使用新提交重新构建镜像。1365正文/取消及1366 memory恢复由其owner负责，本线程不付费重试或重放DLQ。用途Agent TEST ONLY，永不再次清库。
+
+以下为历史记录。
+
+# 当前修复集成 — 2026-10-07 14:13Z YUK-1364
+
+冻结rubric P1正式交回，代码3d1134bbf；191DB/72unit/typecheck/lint/build、Postman生成与两audit通过，父核对20项文件/日志hash。writer已释放，父当前唯一writer；正常merge main6e54da8df，仅PLAN/本文件文档冲突，合并50954a9c4后父独立124DB/77unit/typecheck/lint/build全通过，待新push/CI与最终镜像HTTP。旧ac4候选基线与新head验收分开；14:03Z已清理并释放锁，1365负责PR1594发布，不碰runtime。
+
+以下为历史记录。
+
+# 当前集成 — 2026-10-07 14:04Z YUK-1364
+
+ac4b0f265 CI全绿，但新P1 comment4207603575要求active frozen rubric/proposal一致性；唯一源码writer task yuk1364-frozen-basis-repair-20261007-v1实施中，不第三审。main df08399ff预检冲突仅PLAN/本文件，须writer释放后正常merge。父只做ops与非重叠docs。ac4独立容器业务HTTP基线已完成：未发题不答题/POST409，issued冻结面、GET8表无写、suspend排除、合成历史结果正常edit后保留、ack404/201/200且1事件；没有原生assessment refs/provider调用。fixture首次user actor_ref错误的部分写入保留，新run ac4c成功；不存在主库清空。14:03:33Z清理自有app/PG/migrator/internal network并核对owner释放锁，已通知1365和主线；主runtime仍df083/image28f。证据在yuk1364-preflight-ac4b0f265/evidence/baseline-summary.json和lock-release.json。新P1修复未完成，后续只源码/docs，PR1594由1365重新取锁发布。不要把本状态当作未来实际锁/运行状态。
+
+以下为历史记录。
+
+# 当前集成 — 2026-10-07 YUK-1364 / YUK-1359
+
+PR1591 a6da290a7 exact CI全绿、无未解决review thread，但main26f101581合入PR1584产生文档冲突。已正常merge b62c01dc6，保留依赖变化及双方有效状态。合并后冻结安装、309 DB/74 unit/typecheck/lint/build通过，待新CI；未部署。1359首轮调查提交1ffe53c12，父抽查并纠正旧ADR状态和路径笔误。独立1364镜像构建成功，runtime验收未启动：deployment.lock属于thread bed93b71 / YUK1365，不能接管。T3通知请求回执不可确认，线程读取仍等待。
+
+以下为历史记录。
+
+# YUK-1364 完成结果来源修复进行中 — 2026-10-07
+
+PR1591 GitHub P1 4206851930 已实际复现：正常 editQuestion 的 KC/draft/kind/choices 更新不应使已完成的正式发题结果失效。修复任务已交还，代码提交b7badc0bc。299 DB/72 unit及静态/构建通过；父已核对五文件hash，独立94 DB通过。已正常合入主线42987dfd7为67f465e79，只有本文件和PLAN文档冲突，保留双方有效记录。合并后冻结安装、104 DB/74 unit/typecheck/lint/build通过，待push新CI。Agency 新 completed-probe-provenance 共享冻结记录与评分绑定校验，Shell调用；历史未发题规则与撤回语义保留。不得按旧CI合并；未部署。
+
+以下为历史记录。
+
+# YUK-1364 连续复验修复与 YUK-1356 交接 — 2026-10-07
+
+PR1591已创建并link/watch，head8eb10cb8a；本地另有纯文档11eef5749/e44769edf，待随修复push。唯一验证审发现第二条P1：probe-evidence连续复验依赖仍读mutable题面。writer任务yuk1364-recurrence-repair-20261007-v1已完成并释放；两条完整链路RED→GREEN。最终248DB/72unit/typecheck/lint/build通过，父核对hash并独立85DB通过。生产guard未改，fixture最终通过；修复8264556d6待push与新exact-head CI，不启动第三审，未部署。
+
+YUK1356只读消费者调查已交付docs/planning/2026-10-07-yuk1356-operation-seams.md，Linear In Progress。主线57961995已在独立树启动唯一writer；本线程只负责接口调查和1364收口，不重复写1356。注意worker→HTTP claim release依赖、Pi尚无submit tool、用户原件来源、Pi队列投影/coverage与HTTP排序差异。以下记录为历史。
+
+# YUK-1364 代码提交准备 — 2026-10-07
+
+P1修复writer已释放。124 scoped DB/52unit/typecheck/lint/build通过，父独立23DB通过，送审4文件hash一致。唯一验证审yuk1364-verification-review-20261007-v1运行中；PR待创建/CI。不允许第三审。未部署，1363Done、存储锁释放。迁移主线已实际启动1352/1355隔离writer；本线程负责1364收口，避免重复writer。
+
+# YUK-1364 初审修复 — 2026-10-07
+
+独立初审发现 P1：loadProbeBrief 已使用冻结题面，但 validateAckableOutcome 仍读取 mutable question，可能使新支持的 legacy 已发题场景作答后结果消失、ack409、report 判 corrupt。父核对源码，修复子任务 yuk1364-p1-repair-20261007-v1（Codex gpt-6.1-sol xhigh）独占代码 writer，先完整隔离复现再修。修复后最多一次验证审，不启动第三审。当前未提交的代码4文件保留；此前90DB/52unit/typecheck/lint/build及父独立16DB通过不足以越过此P1。生产仍f3，1363已Done且锁释放。Owner新增“迁移彻底干净、结构优雅易维护”已同步自主交付主线57961995。
+
+# YUK-1363 / YUK-1364 接续 — 2026-10-07
+
+独立 SeaweedFS 测试附件存储已上线，真实上传/读取/删除、去重引用、负向和重建持久化通过，独立复核无P0/P1；volume.max由4改16，最终配置下持久化/CRUD复验通过，12:08Z锁再次释放。current-release 指向 deployment-test-storage-20261007；app/worker 仍 f3/e681，不再清库、不恢复私人 R2。主服务健康，11:57Z 已释放部署锁并通知自主交付线程；复核只读。YUK-1364 子任务独占代码 writer，父线程只做 ops/文档。工作树 tlp-yuk-1363-test-storage，branch ops/yuk-1363-test-storage，基于57fbc95fc；root脏树不动。详情见 docs/planning/2026-10-07-agent-test-storage.md。以下为历史记录。
+
+# 当前部署覆盖指令 — 2026-10-07 YUK-1362
+
+Owner 明确要求清空当前本地业务库，改作 Agent 开发测试；只有后续明确说“为我日常使用的部署”才切换日用。主 app/worker 仍为已部署镜像 f3bfff2cf，未引入 PR1584/1588 候选。清空前 PG/Mem0 已备份，恢复101表计数一致；loom 已 DROP/CREATE，115项迁移与 epoch active 通过，主服务健康。新 Mem0 卷，无旧会话/题目/判分/模型调用数据，3条 genesis 是系统初始化。
+
+当前用途和运行位置以私有 runtime 的 environment-purpose.json、current-release.json 为准；目录 `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/deployment-agent-test-20261007`。私人 R2/隧道凭据已从新 app/worker 移除，独立测试附件存储未配置。原自动运维任务保持 disabled，提示已更新用途。旧数据备份不可自动恢复或重放。独立只读核验通过，部署锁已释放。详见 docs/planning/2026-10-07-agent-test-environment-reset.md。以下发布/数据计数均为重置前历史。
+
+## 主线 P0 gate 原交接（历史）
+
+# 当前交接 — 2026-10-07 YUK-1338 Pi + DBOS 隔离 gate
+
+## 主线依赖集成原交接（历史）
+
+## 合入主线的历史交接（不表示当前运行状态）
+
 # YUK-1365 发布接续更新
 
 PR1593 b54c9a06d CI37626148643 success、第二轮独立review NONE。初审未闭合comment吞掉server说明P1已RED/GREEN修复。上游26f101581依赖升级导致文档冲突，保留双方handoff；新的scoped/CI仍待运行。发布锁在deployment-20261007/deployment.lock，owner bed93b71；当前未停写，旧f3仍运行。候选b54镜像构建只作缓存，不得当作新merge源码发布。

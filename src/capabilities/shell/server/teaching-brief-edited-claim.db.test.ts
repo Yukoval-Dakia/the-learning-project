@@ -20,13 +20,14 @@
 
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { answerProbe } from '@/capabilities/agency/public';
+import { answerProbe, servePublishedProbe } from '@/capabilities/agency/public';
 import { TeachingBriefResponseSchema } from '@/capabilities/shell/api/contracts';
 import { loadTeachingBrief } from '@/capabilities/shell/server/teaching-brief';
 import { classifyConjectureProbeResponseFromJudgeMatch } from '@/core/schema/conjecture-probe-response';
 import { event, question } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { acceptAiProposal } from '@/server/proposals/actions';
+import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
 import { RESPONSE_AWARE_PROBE_FIELDS } from '../../../../tests/helpers/conjecture-probe-fixtures';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
@@ -168,6 +169,8 @@ async function acceptWithRewrite(): Promise<{ proposalId: string; probeQuestionI
   });
   const [probe] = await db.select().from(question).where(eq(question.source_ref, proposalId));
   if (!probe) throw new Error('edited accept served no probe question');
+  await publishPaperModelFixture(db, probe.id);
+  await servePublishedProbe(db, probe.id);
   return { proposalId, probeQuestionId: probe.id };
 }
 
@@ -281,6 +284,10 @@ describe('YUK-785 — an owner rewrite must not inherit the original claim’s p
     await acceptAiProposal(db, proposalId, {
       corrected_payload: { claim_md: ORIGINAL_CLAIM },
     });
+    const [probe] = await db.select().from(question).where(eq(question.source_ref, proposalId));
+    if (!probe) throw new Error('accepted conjecture served no probe question');
+    await publishPaperModelFixture(db, probe.id);
+    await servePublishedProbe(db, probe.id);
 
     const response = await loadTeachingBrief(db, new Date(Date.now() + 1000));
     expect(() => TeachingBriefResponseSchema.parse(response)).not.toThrow();

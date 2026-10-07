@@ -4,9 +4,11 @@ import { canonicalHash } from '@/core/migration/canonical';
 import { ConjectureProbeSpec, ConjectureProbeSpecV2 } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import { PROBE_QUESTION_INITIAL_VERSION } from '@/core/schema/conjecture';
+import { AiProposalPayload } from '@/core/schema/proposal';
 import { db } from '@/db/client';
 import {
   assessment_issuance,
+  event,
   question,
   question_group_lifecycle,
   question_revision,
@@ -14,6 +16,7 @@ import {
 import { ApiError, errorResponse } from '@/kernel/http';
 import { previewFormalAttempt } from '@/kernel/judge';
 import { freezeImageEvidence } from '@/kernel/records/assessment-evidence';
+import { validateIssuedProbeProvenance } from '../server/conjecture/completed-probe-provenance';
 import {
   type AnswerProbeResult,
   answerProbe,
@@ -136,9 +139,6 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         409,
       );
     }
-    const responseAwareProbeSpec = ConjectureProbeSpecV2.safeParse(
-      authoredProbeSpec?.success ? authoredProbeSpec.data : undefined,
-    );
     if (
       authoredProbeSpec?.success &&
       (probe.version !== PROBE_QUESTION_INITIAL_VERSION ||
@@ -175,14 +175,42 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     ) {
       throw new ApiError('not_admitted', 'probe is not available for automatic evaluation', 422);
     }
-    const slot = revision.response_spec.slots[0];
-    if (revision.response_spec.slots.length !== 1 || slot.kind !== 'open_response') {
+    const proposalId = metadata.conjecture_proposal_id;
+    if (typeof proposalId !== 'string' || proposalId.length === 0) {
+      throw new ApiError('probe_missing_conjecture_ref', 'probe has no proposal reference', 409);
+    }
+    const [proposalRow] = await db.select().from(event).where(eq(event.id, proposalId));
+    const proposal = AiProposalPayload.safeParse(proposalRow?.payload.ai_proposal);
+    if (!proposal.success || proposal.data.kind !== 'conjecture') {
+      throw new ApiError('probe_proposal_invalid', 'probe proposal payload is invalid', 500);
+    }
+    const change = proposal.data.proposed_change;
+    const issued = validateIssuedProbeProvenance({
+      probe,
+      issuance,
+      revision,
+      proposal: {
+        id: proposalId,
+        knowledgeId: change.knowledge_id,
+        probeMd: change.probe_md,
+        probeReferenceMd: change.probe_reference_md,
+        probeSpec: change.probe_spec ?? null,
+        followupProbeMd: change.followup_probe_md ?? null,
+        followupProbeReferenceMd: change.followup_probe_reference_md ?? null,
+        followupProbeSpec: change.followup_probe_spec ?? null,
+      },
+    });
+    if ('reason' in issued) {
       throw new ApiError(
-        'unsupported_probe_contract',
-        'probe requires one frozen open response',
-        422,
+        issued.reason,
+        'issued probe does not match its original proposal',
+        issued.reason === 'unsupported_probe_contract' ? 422 : 409,
       );
     }
+    const responseAwareProbeSpec = ConjectureProbeSpecV2.safeParse(
+      issued.value.sequence === 2 ? change.followup_probe_spec : change.probe_spec,
+    );
+    const slot = revision.response_spec.slots[0];
     const evidence = await freezeImageEvidence(db, answerImageRefs);
     const responseSet = {
       entries: [{ slot_id: slot.slot_id, kind: 'open' as const, text_md: answerMd, evidence }],
