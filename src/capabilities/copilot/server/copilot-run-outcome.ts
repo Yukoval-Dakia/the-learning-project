@@ -14,7 +14,6 @@ export type PersistedDurableReply =
       finishReason: string;
       modeState?: CopilotModeState;
       primaryView?: CopilotPrimaryView;
-      emitReviewedDelta?: boolean;
     }
   | {
       outcome: 'failure';
@@ -23,7 +22,6 @@ export type PersistedDurableReply =
       reason: 'cancelled' | 'exhausted' | 'ambiguous_execution' | 'pre_execution_lost';
       error: string;
       checkpointSafe?: boolean;
-      emitReviewedDelta?: boolean;
     };
 
 /** The same persisted outcome decoder serves paid settlement and native child fencing. */
@@ -72,7 +70,6 @@ export async function findPersistedDurableReply(
       reason,
       error: typeof failureRecord.error === 'string' ? failureRecord.error : replyMd,
       ...(failureRecord.checkpoint_safe === false ? { checkpointSafe: false } : {}),
-      ...(payload.durable_emit_reviewed_delta === true ? { emitReviewedDelta: true } : {}),
     };
   }
   if (row.outcome !== 'success') return null;
@@ -86,7 +83,6 @@ export async function findPersistedDurableReply(
       typeof payload.durable_finish_reason === 'string'
         ? payload.durable_finish_reason
         : 'recovered',
-    ...(payload.durable_emit_reviewed_delta === true ? { emitReviewedDelta: true } : {}),
     ...(modeState ? { modeState } : {}),
     ...(primaryView.success ? { primaryView: primaryView.data } : {}),
   };

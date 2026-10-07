@@ -158,8 +158,5 @@ describe('assembleCopilotRunInput degradation', () => {
     expect(result.conversation_history).toEqual([
       { role: 'context', text: '状态：目标是边界条件' },
     ]);
-    expect(result.validator_context_history).toEqual([
-      { role: 'context', text: '状态：目标是边界条件' },
-    ]);
   });
 });

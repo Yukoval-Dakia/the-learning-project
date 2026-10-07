@@ -90,6 +90,8 @@ export interface SDKPermissionDenial {
 
 export interface SDKAssistantMessage {
   type: 'assistant';
+  /** Text was already delivered by root Pi text_delta frames. Usage/tools remain complete. */
+  text_streamed?: boolean;
   /** Native error counters may be placeholders without usage/cost evidence. */
   usage_observed?: boolean;
   message: BetaMessage;
