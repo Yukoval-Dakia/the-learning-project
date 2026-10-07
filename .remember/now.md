@@ -1,3 +1,17 @@
+# 当前交付 — YUK1364 执行契约修复收回
+
+执行契约修复a5e623045960dd3a40d468f77f37111b15188bbc已收回，writer释放。生产validator校验固定executor、单一assignment、slot/evidence绑定、1分/sum/blank与escalation；V1/absent历史human_review和动态slice/cost保留。六个RED经真实formal dispatcher到离线Jev边界，V2持久化后422、V1/absent错误分数被采纳；不等于真实provider输出。377DB/130unit/静态构建与3audit通过；父核完整manifest hash并用Node24重跑196DB通过。证据/tmp/yuk1364-execution-contract-evidence.md及manifest，父日志/tmp/yuk1364-execution-parent-db.log。新head CI/准确镜像HTTP尚未执行，旧77c验收不覆盖本修复。当前无锁/自有服务。无新增可执行follow-up，1374/1375与1329保持既有归属。
+
+以下为历史记录。
+
+# 当前交付 — YUK1364 execution plan P1
+
+最终 e468492d3 的 CI37653519120 已全绿，审查前6threads resolved，但合并前再次读取发现新P1 PRRT_kwDOSXB98s6qAM6d：冻结execution_plan允许非探针executor/task，可能先错误评分再422或V1采纳。禁止合并/发布e468。T3 codex gpt-6-astra high 唯一码writer task yuk1364-executor-contract-repair-20261008-v1 正在生产/冻结/消费矩阵与RED复现后修复，不是第三review。父仅docs/ops，不能并发测试或编辑源码。
+
+当前无部署锁、无自有容器。候选 deployment-yuk1364-e468492d3 helper未执行，无release-gates-verified.json。新增verify_mem0_archive完整目录/WAL恢复校验合成测试通过，已记YUK1329并通知1365owner；旧main-file-only integrity ok仍能漏WAL行，但不推断生产损坏。主live6e是e468祖先，listener/worker/package/lock相同。77c镜像HTTP旧证据不覆盖未来新修复。
+
+以下为历史记录。
+
 # 当前交付 — YUK-1364 77c 镜像验收
 
 77c7df79c/image993fcdd5fdd6准确镜像HTTP已完成：正常publication只改statement的seq1/2均409 probe_criterion_mismatch，brief/list排除，22表前后快照相同。首次fixture因JSON字段顺序比较失败，父shell未停误发合法答案422，产生隔离submission/evaluation各1；provider/task/cost0。此失败完整保留，后续负例以这1/1为baseline，未清除数据刷绿。合法原题GET可见。全部证据及最终dump在runtimeRoot/yuk1364-preflight-77c7df79c。40项证据hash封存，自有app/PG/volume/network清理，核owner释放锁并通知两owner；主fd8四服务healthy、release不变。
