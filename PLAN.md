@@ -4,9 +4,9 @@
 
 ## NOW
 
-- **YUK-1376**：PR1600已于2026-10-07 21:18:58Z合入 `7100dfae4`，合并tree `743ee4d80617dc9b34c7533d724e052af5fd50c4` 与准确head `c40a18621` 一致；CI Gate `37686417034` 成功，独立初审P0/P1 NONE，无未裁决review threads，完整17分钟窗满足。未部署。Start挂载任务归主线，实际新入口行为及旧SPA退出尚未完成。 [验收矩阵](docs/planning/2026-10-08-yuk1376-start-acceptance.md)。
+- **YUK-1377 / Today 读取迁移**：从main `1bbd82795` 接续，主线已明确本线程独占shell公共读取/HTTP契约范围。复用现有summary和overnight facade，唯一writer已启动；不改UI/Start/组合根。due-count等待1356交付 `queryReviewDue(db, { limit: 200 })`，在接入前不能声称消除全局DB依赖。详情见[1377记录](docs/planning/2026-10-08-yuk1377-today-domain-reads.md)。
 
-- **YUK-1376（1358 W1 /mistakes）**：YUK1375已随PR1597合入36f719675，exact CI与独立review通过；本线程从最新main承接错题页非UI领域/API消费者迁移，保留视觉与现有行为；不改全局路由/manifest/package/lock或1352组合根，挂载交主线。1359退出清单继续由本线程维护。1352/1355/1356唯一集成与writer归主线57961995，不写其三树。
+- **YUK-1376 / Start候选验收**：候选 `3d6273a14` 实际Start RPC、鉴权、冻结内容、图片bytes/Lightbox、筛选、刷新和重试通过。完整导航因旧practice GET首次初始化新增1行，其他85表不变；之后错题读取阶段86表不变，不能把整段称DB不变。158构建文件hash不变、源码树clean。21:39:38Z停自有服务并核owner释放锁，主四服务healthy/release未变；主线保留1352/PR1592集成发布。未关闭整个迁移或旧SPA退出。
 
 - **YUK-1365**：PR1593/1594已分别合入df08399ff/6e54da8df。主线恢复即时SSE listener接线；其发布负责人负责新镜像与真实流式验收，本线程不接管。1367另线负责正式练习出版/评分准入与paper深链。
 
