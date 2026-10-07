@@ -74,3 +74,16 @@ PR comment `4206851930` 指出，已完成结果投影只冻结题面，仍从�
 一次性 fixture 由现有测试业务步骤整理，父核对后从准确 ac4 源码归档打包，避免读入并行修复。初次 fixture 的 user actor_ref 错误导致写入在 proposal 后中断；改为既有事件契约要求的 self 后，使用新 run ID 继续，失败数据未被清空。残留 proposal 因而产生合法 finding fallback，原“brief必须null”的断言不适用，实际验收条件是未发题不能成为可答题，已核对返回体。首次bundle目录没有依赖解析入口也已修正；以上均为验收脚本问题，未修改产品约束。
 
 最终证据为上述目录内 `baseline-summary.json`、`http-unissued.json`、`http-issued.json`、`http-frozen.json`、`http-suspended.json`、`http-edited-completed.json`、`http-ack.json` 和 `fixture-ac4c-*.json`。14:03:33Z 停止并删除自有 app/PG/migrator、匿名测试存储和internal网络后，核对主release仍为28f、四个主服务健康，再仅删除本线程owner.json并rmdir释放锁；`lock-release.json`留证。已明确通知1365与主线线程，后续发布需它们重新核验取锁。新的 P1 修复仍在进行，此后本线程只做源码/文档。
+
+
+## 冻结评分依据 P1 修复与主线再集成
+
+`4207603575` 已实际 RED：旧 probe 在 withheld 时通过正常编辑修改 reference，再首次正式发题，旧代码展示该题并返回200，执行端被调用一次，写入submission/evaluation和claim。修复 `3d1134bbf` 抽取 Agency `validateIssuedProbeProvenance`，由 active brief、评分前准入与 completed provenance 共用；冻结 rule_reference/probe_spec 必须匹配原始 proposal，错误在构造评分执行端和写claim之前以409拒绝。已完成结果另保留原生assessment绑定校验。
+
+legacy错误reference与native probe-spec题面/reference漂移均覆盖；合法legacy/native路径、正常编辑后的已完成历史和撤销语义保留。API旧fixture的缩略参考与proposal完整参考原本不一致，现改为同一原始完整参考，不降低生产校验。Postman仅更新该端点说明并重新生成，无请求形状改变。
+
+writer最终9文件191 DB、4文件72 unit、typecheck/lint/build、API contract及capability boundary audit通过，297既有lint warnings。父核对20项source/patch/log SHA-256一致，读取实际diff及红测；准确命令和日志hash在 `/tmp/yuk1364-rubric-repair-evidence.md`。本次是实现修复，未增加第三轮独立review。
+
+正常合入 main `6e54da8df`（包含1365 PR1593/1594）为 `50954a9c4`，冲突仅PLAN/历史交接，保留有效owner边界和最新优先级。合并后父独立运行4文件124 DB、5文件77 unit及typecheck/lint/build，全部exit0；日志 `/tmp/yuk1364-parent-rubric-merge-{db,unit,typecheck,lint,build}.log`。另运行API startup scoped unit，结果见同前缀`startup.log`。
+
+14:11Z实读主release已为6e54da8df/build765c61f/imagefd8c046b97fe，Agent TEST ONLY，验收范围记录为部分：即时生命周期SSE已确认，真实正文因provider429限额未完成；没有代为重试或重放DLQ。新修复head尚未部署或完成容器HTTP复验；ac4旧基线不能替代它。

@@ -11,7 +11,7 @@
 
 - **YUK-1338 / YUK-1351 P0 gate**：PR #1590 已合入主线 42987dfd7，本分支同步集成。测试容器中验证 Pi + DBOS 状态版本、过期拒绝、四个进程终止边界、响应复用与单次业务效果；不等于整个迁移或真实 provider 重复付费问题已解决。证据见[gate 记录](docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md)。
 
-- **YUK-1363 / YUK-1364**：测试附件存储已验收。PR1591 ac4b0f265 exact-head CI全绿，新 P1（冻结评分依据与proposal不一致）已由3d1134bbf修复，191 DB/72 unit及本地门禁通过；父核对20项文件/日志hash，正在集成main6e54da8df并复验，两轮独立review预算不重开。ac4+独立PG真实HTTP基线验证了未发题409、冻结题面、停用排除、合成历史结果和幂等ack；14:03Z已清理并释放锁。未覆盖新P1或原生模型评分，不是最终验收或主环境部署。见[证据](docs/planning/2026-10-07-yuk1364-probe-issuance.md)。
+- **YUK-1363 / YUK-1364**：测试附件存储已验收。PR1591 ac4b0f265 exact-head CI全绿，新 P1（冻结评分依据与proposal不一致）已由3d1134bbf修复，191 DB/72 unit及本地门禁通过；父核对20项文件/日志hash，合入main6e54da8df为50954a9c4后124 DB/77 unit及本地门禁通过，待新CI与最终镜像验收，两轮独立review预算不重开。ac4+独立PG真实HTTP基线验证了未发题409、冻结题面、停用排除、合成历史结果和幂等ack；14:03Z已清理并释放锁。未覆盖新P1或原生模型评分，不是最终验收或主环境部署。见[证据](docs/planning/2026-10-07-yuk1364-probe-issuance.md)。
 - **YUK-1356 业务操作迁移**：接口与消费者调查已交付[实施输入](docs/planning/2026-10-07-yuk1356-operation-seams.md)。主线57961995已接手独立树唯一实施writer，与1352/1355协调；本线程不重复实施。Pi可信作答来源、队列诊断投影与coverage语义必须保留，三入口统一尚未验收。
 
 - **YUK-1362 / 当前部署用途**：仅供 Agent 开发测试，禁止再次清库或恢复私人数据。13:51Z实读 current-release 指向1365发布df08399ff/image28f89c8b2b9d，app/worker健康；1365已报告备份恢复/BAM通过，但SSE监听缺口由其PR1594补齐，尚待发布验收。历史f3重置记录不再表示当前镜像；日用须owner明确要求。
