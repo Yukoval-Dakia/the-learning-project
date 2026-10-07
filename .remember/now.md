@@ -1,6 +1,6 @@
-# 当前交付 — 1376公开材料 DB通过，独立审查中
+# 当前交付 — 1376公开材料HTTP通过，PR1600待CI
 
-冻结公开材料读取已交回，source head `b86bd05dc20f4ad3dd57e40a91e7f6e9d06a4664`，tree `b68f60c8d2b9df3a7e5d08c9d9350f0b23f066b3`。七类公开材料通过既有 PublicMaterialView 投影，区分 inline/available/missing/unavailable，reference 保持 null；未改 UI。子任务31单测、typecheck/lint/build和六项audit通过，父核139项文件与日志哈希全部匹配。父实际执行两个scoped DB suite，127/127通过、退出0。独立初审 `yuk1376-materials-independent-review-20261008-v1` 正在进行。20:51:18Z核owner后释放部署锁并通知主线与runtime owner，原四服务健康。准确版本CI与新增媒体真实HTTP/blob验收仍待，旧PR1599证据不代表新实现。
+PR1600准确运行候选 `1bd0263e5` / ARM64 image `8c7d64632ebdf1b4ea6b99501f06caf88e696bf2b02a526ef121e4bafd3e73b3` 已完成隔离材料HTTP验收：4条保留错题共9 GET，完整inline passage和available figure精确字段、73字节PNG冻结SHA/ETag、私有排除、reference null、401、过滤与重复读取全部通过；86张非系统表前后count/digest完全一致。独立初审P0/P1 NONE；127父DB、31unit、typecheck/lint/build及六audit通过。21:00:58Z核owner释放锁，隔离app/PG/S3已停且卷保留，原四服务healthy/current-release哈希未变。PR1600待准确最终head CI及合并等待窗；Start挂载/旧入口退出未完成。
 
 以下为历史记录，状态以顶部为准。
 

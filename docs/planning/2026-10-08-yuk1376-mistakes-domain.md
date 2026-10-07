@@ -82,3 +82,12 @@ PR1599已合入7bc216509，tree与CI head6ab98ed8c一致；CI Gate37677610975成
 本轮代码差异为 `4e2f8918e..b86bd05dc`，独立初审与PR1599既有审查分开。实现清单及日志见 `/tmp/yuk1376-materials-implementation-evidence.md`，父DB日志 `/tmp/yuk1376-materials-parent-db.log`，锁释放证据 `/tmp/yuk1376-materials-parent-lock-release.json`。DB使用 tests/global-setup.ts 创建的 Testcontainers及独立fork数据库，没有连接主数据库。available 只证明资产元数据与冻结digest相符，真实blob交付仍需新版本HTTP验收。
 
 本次未发现需另开票的独立问题；剩余验收由既有YUK-1376与YUK-1359承接，不能标Done。
+
+
+## 公开材料真实HTTP与只读验收
+
+PR1600准确运行候选 `1bd0263e5` / ARM64 image `8c7d64632ebdf1b4ea6b99501f06caf88e696bf2b02a526ef121e4bafd3e73b3` 已完成隔离材料HTTP验收：4条保留错题共9 GET，完整inline passage和available figure精确字段、73字节PNG冻结SHA/ETag、私有排除、reference null、401、过滤与重复读取全部通过；86张非系统表前后count/digest完全一致。独立初审P0/P1 NONE；127父DB、31unit、typecheck/lint/build及六audit通过。21:00:58Z核owner释放锁，隔离app/PG/S3已停且卷保留，原四服务healthy/current-release哈希未变。PR1600待准确最终head CI及合并等待窗；Start挂载/旧入口退出未完成。
+
+证据根：`/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1376-materials-1bd0263e5/evidence`。`running-image.json`绑定运行image与revision，`http-acceptance/http-exact-image-01/`保存九次请求与真实PNG，`db-before.json`/`db-after.json`及`http-invariance.json`记录86表只读事务排序摘要，`lock-release.json`记录释放。公开材料checker SHA256为 `f251ebd653aec834f65ee33350b2906f182cb999e7373b61d1ceb63587fa81c6`。
+
+本轮仅复用既有短passage与figure，不代表其他材料真实blob、长文媒体页面渲染或模型评分质量。127 scoped DB覆盖七种材料契约与缺失/损坏分支，须与此HTTP证据分开报告。未迁移、重新播种或修改保留fixture；没有worker/provider/DLQ操作。后续文档提交不改变受测源码。
