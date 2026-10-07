@@ -4,6 +4,8 @@
 
 ## NOW
 
+- **YUK-1376**：实现d23140344已交回，父137项hash与59DB通过；typed read/页面消费者及三项历史证据缺口修复，独立review/CI待完成。[证据](docs/planning/2026-10-08-yuk1376-mistakes-domain.md)。Start挂载、native完整投影、浏览器及旧入口退出未核销。
+
 - **YUK-1376（1358 W1 /mistakes）**：YUK1375已随PR1597合入36f719675，exact CI与独立review通过；本线程从最新main承接错题页非UI领域/API消费者迁移，保留视觉与现有行为；不改全局路由/manifest/package/lock或1352组合根，挂载交主线。1359退出清单继续由本线程维护。1352/1355/1356唯一集成与writer归主线57961995，不写其三树。
 
 - **YUK-1365**：PR1593/1594已分别合入df08399ff/6e54da8df。主线恢复即时SSE listener接线；其发布负责人负责新镜像与真实流式验收，本线程不接管。1367另线负责正式练习出版/评分准入与paper深链。
