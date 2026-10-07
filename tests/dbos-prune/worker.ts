@@ -1,6 +1,8 @@
 import { DBOS } from '@dbos-inc/dbos-sdk';
 import { PgBoss } from 'pg-boss';
 import { z } from 'zod';
+import dbosPackage from '../../node_modules/@dbos-inc/dbos-sdk/package.json';
+import pgBossPackage from '../../node_modules/pg-boss/package.json';
 import { db } from '@/db/client';
 import { changePrunePhase, retireFailedPrune } from '@/server/durable/prune-family';
 import { startPruneWorker, stopDurableWorker } from '@/server/durable/prune-worker';
@@ -99,7 +101,16 @@ async function main() {
     ]);
     if (workflow !== repeated)
       throw new Error('Repeated same-process registration duplicated DBOS');
-    process.send?.({ kind: 'ready', pid: process.pid });
+    process.send?.({
+      kind: 'ready',
+      pid: process.pid,
+      runtime: {
+        node: process.version,
+        execPath: process.execPath,
+        pgBoss: pgBossPackage.version,
+        dbos: dbosPackage.version,
+      },
+    });
     process.on('message', async (message) => {
       try {
         const command = z

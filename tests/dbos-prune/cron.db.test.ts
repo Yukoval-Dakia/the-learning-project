@@ -8,6 +8,8 @@ import { PgBoss } from 'pg-boss';
 import postgres from 'postgres';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 import { z } from 'zod';
+import dbosPackage from '../../node_modules/@dbos-inc/dbos-sdk/package.json';
+import pgBossPackage from '../../node_modules/pg-boss/package.json';
 
 const messageSchema = z.object({ kind: z.string(), error: z.string().optional() }).passthrough();
 const children = new Set<ChildProcess>();
@@ -230,8 +232,14 @@ afterAll(async () => {
         {
           capturedAt: new Date().toISOString(),
           passed,
-          dbos: '5.2.11',
-          pgBoss: '12.26.3',
+          dbos: dbosPackage.version,
+          pgBoss: pgBossPackage.version,
+          runner: {
+            node: process.version,
+            execPath: process.execPath,
+            pgBoss: pgBossPackage.version,
+            dbos: dbosPackage.version,
+          },
           strategy: {
             productionCron: '0 4 * * *',
             testCron: '* * * * *',
@@ -256,6 +264,9 @@ afterAll(async () => {
               'tests/dbos-prune/worker.ts',
               'tests/dbos-prune/cron.db.test.ts',
               'drizzle/0115_yuk1355_prune_backend.sql',
+              'pnpm-lock.yaml',
+              'node_modules/pg-boss/package.json',
+              'node_modules/@dbos-inc/dbos-sdk/package.json',
               '.cache/yuk1355-cron-worker.cjs',
               'node_modules/pg-boss/dist/timekeeper.js',
               'node_modules/@dbos-inc/dbos-sdk/dist/src/scheduler/scheduler.js',

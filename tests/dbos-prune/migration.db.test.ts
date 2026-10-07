@@ -8,6 +8,8 @@ import { PgBoss } from 'pg-boss';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import dbosPackage from '../../node_modules/@dbos-inc/dbos-sdk/package.json';
+import pgBossPackage from '../../node_modules/pg-boss/package.json';
 
 const ipcSchema = z
   .object({
@@ -22,6 +24,13 @@ const children = new Set<ChildProcess>();
 let sql: ReturnType<typeof postgres>;
 let boss: PgBoss;
 const evidence: unknown[] = [];
+const processLogs: {
+  pid: number | undefined;
+  messages: unknown[];
+  stdout: string;
+  stderr: string;
+  exit?: unknown;
+}[] = [];
 const execFileAsync = promisify(execFile);
 function startWorker(options: { id?: string; pauseAt?: string; recover?: boolean } = {}) {
   const child = spawn(process.execPath, [resolve('.cache/yuk1355-worker.cjs')], {
@@ -40,14 +49,29 @@ function startWorker(options: { id?: string; pauseAt?: string; recover?: boolean
   const exited = once(child, 'exit');
   const messages: z.infer<typeof ipcSchema>[] = [];
   let logs = '';
+  const log: (typeof processLogs)[number] = {
+    pid: child.pid,
+    messages: [],
+    stdout: '',
+    stderr: '',
+  };
+  processLogs.push(log);
   child.stdout?.on('data', (chunk) => {
+    log.stdout += String(chunk);
     logs = (logs + String(chunk)).slice(-5000);
   });
   child.stderr?.on('data', (chunk) => {
+    log.stderr += String(chunk);
     logs = (logs + String(chunk)).slice(-5000);
   });
-  child.on('message', (message) => messages.push(ipcSchema.parse(message)));
-  child.on('exit', () => children.delete(child));
+  child.on('message', (message) => {
+    messages.push(ipcSchema.parse(message));
+    log.messages.push(message);
+  });
+  child.on('exit', (code, signal) => {
+    log.exit = { code, signal };
+    children.delete(child);
+  });
   async function wait(kind: string) {
     let value: z.infer<typeof ipcSchema> | undefined;
     await expect
@@ -142,9 +166,17 @@ afterAll(async () => {
       `${JSON.stringify(
         {
           capturedAt: new Date().toISOString(),
-          dbos: '5.2.11',
+          dbos: dbosPackage.version,
+          pgBoss: pgBossPackage.version,
+          runner: {
+            node: process.version,
+            execPath: process.execPath,
+            pgBoss: pgBossPackage.version,
+            dbos: dbosPackage.version,
+          },
           providerCalls: 0,
           evidence,
+          processLogs,
           sourceHashes: await Promise.all(
             [
               'src/server/durable/prune-family.ts',
@@ -152,6 +184,9 @@ afterAll(async () => {
               'tests/dbos-prune/worker.ts',
               'tests/dbos-prune/migration.db.test.ts',
               'drizzle/0115_yuk1355_prune_backend.sql',
+              'pnpm-lock.yaml',
+              'node_modules/pg-boss/package.json',
+              'node_modules/@dbos-inc/dbos-sdk/package.json',
               'package.json',
               '.cache/yuk1355-worker.cjs',
             ].map(async (path) => ({
