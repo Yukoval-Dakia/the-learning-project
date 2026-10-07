@@ -43,7 +43,7 @@ import {
   glmChatCostCny,
   isDirectProviderAttemptInvariantError,
 } from '@/server/ai/direct-provider-attempt';
-import { type Env, createMem0Config } from '@/server/memory/client';
+import { type Env, memoryLlmHeaders, resolveMemoryLlmConfig } from '@/server/memory/client';
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
@@ -153,21 +153,9 @@ type GlmChatResponse = {
   error?: { code?: string | number; message?: string };
 };
 
-export type GlmConfig = {
-  baseURL: string;
-  apiKey: string;
-  model: string;
-};
+export type GlmConfig = ReturnType<typeof resolveMemoryLlmConfig>;
 
-export function resolveGlmConfig(env: Env): GlmConfig {
-  const mem0Config = createMem0Config(env);
-  const llmConfig = mem0Config.llm.config;
-  return {
-    baseURL: llmConfig.baseURL ?? '',
-    apiKey: llmConfig.apiKey ?? '',
-    model: String(llmConfig.model ?? 'glm-5.2'),
-  };
-}
+export const resolveGlmConfig = resolveMemoryLlmConfig;
 
 /** A neighbor referenced in the prompt by index; describes one endpoint pair. */
 function describeEdge(e: {
@@ -304,12 +292,12 @@ export function parseEdgeReconcileResponse(
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new ReconcileParseError('GLM edge-reconcile response is not valid JSON', raw);
+    throw new ReconcileParseError('Edge reconcile response is not valid JSON', raw);
   }
 
   const obj = parsed as { decision?: unknown };
   if (!obj || typeof obj !== 'object' || obj.decision == null || typeof obj.decision !== 'object') {
-    throw new ReconcileParseError('GLM edge-reconcile response missing decision object', raw);
+    throw new ReconcileParseError('Edge reconcile response missing decision object', raw);
   }
 
   const d = obj.decision as Record<string, unknown>;
@@ -419,11 +407,7 @@ export async function judgeEdgeReconcile(
   }
 
   const env = opts.env ?? process.env;
-  const glmConfig = resolveGlmConfig(env);
-  if (!glmConfig.apiKey) {
-    throw new PermanentError('GLM edge-reconcile requires ZHIPU_API_KEY (via mem0 config)');
-  }
-
+  const glmConfig = resolveMemoryLlmConfig(env);
   const { system, user } = buildEdgeReconcilePrompt(candidate, neighbors);
   const body: GlmChatBody = {
     model: glmConfig.model,
@@ -444,13 +428,13 @@ export async function judgeEdgeReconcile(
   const result = await executeDirectProviderAttempt(
     providerOperation,
     {
-      provider: 'glm',
+      provider: glmConfig.provider,
       model: glmConfig.model,
       lane: 'glm.knowledge-edge-reconcile',
       protocol: 'http',
       endpointClass: 'openai-compatible.chat-completions',
       operationKind: 'edge_reconcile',
-      unknownCostCurrency: 'CNY',
+      unknownCostCurrency: glmConfig.provider === 'glm' ? 'CNY' : 'USD',
     },
     async (attempt) => {
       const controller = new AbortController();
@@ -462,6 +446,7 @@ export async function judgeEdgeReconcile(
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${glmConfig.apiKey}`,
+            ...memoryLlmHeaders(glmConfig, attempt.attemptId),
           },
           body: JSON.stringify(body),
           signal: controller.signal,
@@ -474,11 +459,11 @@ export async function judgeEdgeReconcile(
         );
         if (aborted) {
           throw new RetryableError(
-            `GLM edge-reconcile request aborted/timed out after ${timeoutMs}ms`,
+            `Edge reconcile request aborted/timed out after ${timeoutMs}ms`,
             { cause: err },
           );
         }
-        throw new RetryableError(`GLM edge-reconcile network error: ${String(err)}`, {
+        throw new RetryableError(`Edge reconcile network error: ${String(err)}`, {
           cause: err,
         });
       } finally {
@@ -500,7 +485,7 @@ export async function judgeEdgeReconcile(
           await attempt.recordExternalRequestId(bodyRequestId);
         }
         const code = errBody?.error?.code ?? '';
-        const message = `GLM edge-reconcile error [http ${resp.status}${code ? ` code ${code}` : ''}]: ${errBody?.error?.message ?? 'no message'}`;
+        const message = `Edge reconcile error [http ${resp.status}${code ? ` code ${code}` : ''}]: ${errBody?.error?.message ?? 'no message'}`;
         if (resp.status === 401 || resp.status === 403) throw new PermanentError(message);
         if (resp.status === 429 || resp.status >= 500) throw new RetryableError(message);
         throw new PermanentError(message);
@@ -511,7 +496,7 @@ export async function judgeEdgeReconcile(
         json = (await resp.json()) as GlmChatResponse;
       } catch (err) {
         attempt.markTerminal('failed', 'provider_response_malformed');
-        throw new PermanentError('GLM edge-reconcile returned a non-JSON 2xx body', {
+        throw new PermanentError('Edge reconcile returned a non-JSON 2xx body', {
           cause: err,
         });
       }
@@ -533,7 +518,7 @@ export async function judgeEdgeReconcile(
           total: typeof totalTokens === 'number' ? totalTokens : null,
         });
       }
-      if (hasPricedTokens) {
+      if (hasPricedTokens && glmConfig.provider === 'glm') {
         const estimatedCostCny = glmChatCostCny(promptTokens ?? 0, completionTokens ?? 0);
         attempt.estimateCost({
           amount: estimatedCostCny,
@@ -546,7 +531,7 @@ export async function judgeEdgeReconcile(
       if (typeof content !== 'string' || content.trim().length === 0) {
         attempt.markTerminal('failed', 'provider_response_malformed');
         throw new ReconcileParseError(
-          'GLM edge-reconcile response has no message content',
+          'Edge reconcile response has no message content',
           JSON.stringify(json),
         );
       }

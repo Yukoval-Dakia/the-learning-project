@@ -219,7 +219,7 @@ export function resolveExecutionAdapter(
  * Effective explicit routing for provider resolution. `ctx.override` (the
  * documented test/dev escape hatch) wins per-field over `ctx.modelBinding`
  * (the per-run binding); both then sit above env/registry inside
- * resolveTaskProvider's unchanged `explicit > env > registry` order.
+ * resolveTaskProvider's unchanged `env chat pin > explicit > DB global > task/default` order.
  * Returns undefined when neither layer names a field — callers pass it
  * straight into `override:` so resolution stays byte-identical.
  */

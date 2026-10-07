@@ -234,7 +234,7 @@ Raw logs remain in this worktree under `.remember/evidence/yuk1340-retained-*` a
 
 Command: `USABILITY_BASE_URL=http://127.0.0.1:18983 pnpm exec playwright test --config playwright.usability.config.ts` using Node 24. Result: **36 passed, 30.7 seconds**. Both T3 preview status/open explicitly reported no automation host; Playwright was the supported fallback.
 
-Process `27806`, started 2026-10-07 09:57:25 UTC, ran `node dist/server.cjs` with cwd equal to this worktree. Port 18983 was free before launch. The process used a cleared environment with a placeholder database at `127.0.0.1:1`, synthetic internal token and `RW_WORKER=0`, serving this worktree's `web/dist`. Expected database-refusal startup warnings did not invalidate the fixture-backed browser run. All test business API responses came from synthetic browser fixtures, and the separate scoped DB suite used disposable testcontainers.
+Process `27806`, started 2026-10-07 09:57:25 JST, ran `node dist/server.cjs` with cwd equal to this worktree. Port 18983 was free before launch. The process used a cleared environment with a placeholder database at `127.0.0.1:1`, synthetic internal token and `RW_WORKER=0`, serving this worktree's `web/dist`. Expected database-refusal startup warnings did not invalidate the fixture-backed browser run. All test business API responses came from synthetic browser fixtures, and the separate scoped DB suite used disposable testcontainers.
 
 Served HTML names matched local HTML, and fetched assets matched local bytes:
 
@@ -244,3 +244,17 @@ Served HTML names matched local HTML, and fetched assets matched local bytes:
 | `/assets/index-CaK2AAhq.css` | `c184ca6da8f3e6221e691009163fd7c2d5beac9e232c5cebe5fcedd3568b5a47` | 279943 |
 
 Asset proof is `.remember/evidence/yuk1340-retained-assets.json`. PID 27806 was stopped with SIGTERM after acceptance. No browser watcher remains. This proves the owned built UI against API fixtures and scoped server/DB contracts, not production or model-output acceptance. Parent owns integration and tracker capture; no new independent actionable follow-up was found beyond the existing YUK-1343 race/recovery coverage.
+
+### Ordinary main integration
+
+After implementation commit `ac9ab2ad1`, fetched `origin/main` at `0f81e198f2b2cf51bdc5df231e3b7e5fbba06ad4` and began an ordinary merge. Only PLAN.md conflicted. Resolution retains main's product MiMo scope, autonomous charter and routing changes, and records the parent's current PR1585/deployment handoff rather than reintroducing the superseded development-only model or old5d deployment claim. Runtime truth in PLAN is parent-reported, not a production verification by this writer. The independent1341 tree owns detailed release closeout. Main changes runtime/provider/memory code and the Mem0 package patch, so frozen dependency install and scoped post-merge verification/build are required before handoff.
+
+
+Post-merge verification completed on the integrated source:
+
+- `pnpm install --frozen-lockfile` passed and installed main's updated Mem0 patch. Worktree node_modules is an owned directory, not a symlink to the unrelated root checkout.
+- Scoped unit command: `pnpm vitest run --config vitest.unit.config.ts src/capabilities/copilot/ui server/env.unit.test.ts src/server/ai/providers.test.ts src/server/memory/product-routing.unit.test.ts src/server/memory/mem0-sdk-failure.unit.test.ts`. The first run had 175 passed / 6 failed, all failures from the worktree's existing better-sqlite3 native ABI147 versus required Node24 ABI137. The native file had link count1 and resolved inside this worktree. `pnpm rebuild better-sqlite3` under Node24 repaired it; a direct in-memory SQLite smoke passed, then `pnpm vitest run --config vitest.unit.config.ts src/server/memory/mem0-sdk-failure.unit.test.ts` passed all14. Across those scoped runs all181 unique tests in23files passed. Mem0/provider checks used dummy credentials, synthetic fetches and loopback fixtures, with no paid calls.
+- Copilot contract/conversation DB rerun: 37 passed in2files.
+- Typecheck, lint with297 existing warnings, API-client drift audit, capability boundaries and architecture deepening all passed. Boundaries remain exact437/0/48. Integrated full build passed with `CODEX_FULL_GATE=1`.
+- Final integrated built Hono/SPA ran on the same reserved18983 port using synthetic token and placeholder DB, PID35747, cwd equal to this worktree. Final browser suite again passed all36, 30.5seconds. ServedJS/CSS filenames, bytes and hashes remain exactly those in the table above. Loaded API bundle hash `3f6a3f262c9ae9b9f764db4bc6081e5e47bde2fe550f2c6c61ea34612a642027`; identity proof is `.remember/evidence/yuk1340-retained-main-assets.json`. PID35747 was stopped with SIGTERM, port18983 has no listener. Logs use the `yuk1340-retained-main-*` prefix.
+- T3 confirms PR1583 was already linked. No watcher was started by this writer; the parent's existing PR watch was left untouched. No PR comment/push/review/merge or production operation was performed. Final ordinary merge commit and clean status are returned in the handoff.

@@ -1,0 +1,147 @@
+{
+  "code_revision": "14cb6b3263b6d78a4b3e142575f67e3f9727a88d",
+  "captured_at": "2026-10-06T23:23:50.125Z",
+  "capture_id": "1ff4a95b-c9e6-42c1-870a-a17e261d049f",
+  "case": "native-vision",
+  "synthetic_only": true,
+  "reserved_usd": 0.75,
+  "max_total_reserve_usd": 3,
+  "provider": "opencode-go",
+  "model": "mimo-v2.6-pro",
+  "task_run_id": "6a50bdf6-b1ff-4797-972e-c609280fe2cd",
+  "provider_attempt_id": null,
+  "cost": {
+    "basis": "estimated",
+    "amount_usd": 0.000519506,
+    "ref": "pi-catalog:opencode-go/mimo-v2.6-pro"
+  },
+  "image_digest": "sha256:702d8310dadceefc8acd3f223c56eea57cba05e05c2c82f15836844baf1ab7fe",
+  "input_digest": "sha256:7488279996f49345fb24eaebc3f3daaca6847cc06e24495998b3b257f986716f",
+  "input": {
+    "submission_id": "sub-original",
+    "submission_ids": ["sub-original", "sub-second"],
+    "evaluation_group_id": "group",
+    "revision_id": "rev-original",
+    "attempt": 2,
+    "scoring_unit_id": "u1",
+    "executor": {
+      "kind": "model_executor",
+      "task_kind": "AssessmentRuleJudgeTask",
+      "admitted_slice_id": "slice-approved",
+      "max_cost_usd_micros": 20000
+    },
+    "unit": {
+      "scoring_unit_id": "u1",
+      "slot_refs": ["s1"],
+      "evidence_slot_refs": [],
+      "material_refs": ["diagram"],
+      "requires_group_evidence": false,
+      "criterion": {
+        "kind": "rule_reference",
+        "rule_id": "r1",
+        "source": "official",
+        "statement_md": "依据原图独立计算，两者均正确5分，否则0分。反馈必须写出读到的两条直角边和计算过程；原始图不可用必须pending。"
+      },
+      "points": 5
+    },
+    "question_parts": [
+      {
+        "part_id": "p1",
+        "prompt_md": "求图中直角三角形的斜边和面积。",
+        "material_ids": ["diagram"]
+      }
+    ],
+    "response_slots": [
+      {
+        "slot_id": "s1",
+        "part_id": "p1",
+        "kind": "text",
+        "math_preview": true
+      }
+    ],
+    "slot_responses": [
+      {
+        "slot_id": "s1",
+        "kind": "text",
+        "text_md": "斜边5，面积6。"
+      }
+    ],
+    "group_evidence": [],
+    "materials": [
+      {
+        "material_id": "diagram",
+        "kind": "figure",
+        "asset": {
+          "asset_id": "synthetic-diagram",
+          "digest": "sha256:702d8310dadceefc8acd3f223c56eea57cba05e05c2c82f15836844baf1ab7fe"
+        }
+      }
+    ],
+    "spent_cost_usd_micros": 7000
+  },
+  "output": {
+    "kind": "scored",
+    "points_awarded": 5,
+    "matched": {
+      "rule_id": "r1",
+      "option_ids": []
+    },
+    "feedback_md": "读到的两条直角边为3和4。斜边：√(3²+4²)=√25=5；面积：3×4÷2=6。答案正确。",
+    "evidence_citations": [
+      {
+        "slot_id": "s1",
+        "quote": "斜边5，面积6。"
+      }
+    ],
+    "confidence": 1,
+    "run_refs": ["6a50bdf6-b1ff-4797-972e-c609280fe2cd"],
+    "cost_usd_micros": 520
+  },
+  "output_digest": "sha256:826a101c832cedda45c9599db786364d2e29a74d270472879b5bd682d41b27e7",
+  "run": {
+    "id": "6a50bdf6-b1ff-4797-972e-c609280fe2cd",
+    "task_kind": "AssessmentRuleJudgeTask",
+    "provider": "opencode-go",
+    "model": "mimo-v2.6-pro",
+    "input_hash": "8e017895df6afd4c63b58d84c5380c5146cae34b8da91a04bfcfb97e9f92faf5",
+    "prompt_fingerprint": null,
+    "result_digest": null,
+    "compiled_prompt_hash": null,
+    "prompt_codec_version": null,
+    "prompt_codec_mode": null,
+    "prompt_context_digest": null,
+    "status": "success",
+    "finish_reason": "end_turn",
+    "usage_json": {
+      "inputTokens": 1016,
+      "outputTokens": 343,
+      "thinkingBlocks": 1,
+      "thinkingCharacters": 913
+    },
+    "cost_usd": 0.000519506,
+    "cost_basis": "estimated",
+    "cost_ref": "pi-catalog:opencode-go/mimo-v2.6-pro",
+    "error_message": null,
+    "started_at": "2026-10-06T23:23:50.373Z",
+    "finished_at": "2026-10-06T23:24:00.921Z"
+  },
+  "cost_ledger": [
+    {
+      "id": "wl3dgewmzr5cq57em75fj6iw",
+      "task_run_id": "6a50bdf6-b1ff-4797-972e-c609280fe2cd",
+      "task_kind": "AssessmentRuleJudgeTask",
+      "provider": "opencode-go",
+      "model": "mimo-v2.6-pro",
+      "cost": 0.000519506,
+      "currency": "USD",
+      "entry_kind": "attempt",
+      "cost_basis": "estimated",
+      "cost_ref": "pi-catalog:opencode-go/mimo-v2.6-pro",
+      "tokens_in": 1016,
+      "tokens_out": 343,
+      "outcome": "success",
+      "pgboss_job_id": null,
+      "occurred_at": "2026-10-06T23:24:00.921Z"
+    }
+  ]
+}
