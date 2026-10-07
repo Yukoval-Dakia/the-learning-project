@@ -107,3 +107,77 @@ Linear capture：清理义务已有 YUK-1359，不重复开票；既有字体/CS
 [fetch entry](https://tanstack.com/start/latest/docs/framework/react/guide/server-entry-point)、
 [server routes](https://tanstack.com/start/latest/docs/framework/react/guide/server-routes)、
 [middleware](https://tanstack.com/start/latest/docs/framework/react/guide/middleware)。
+
+## PR1592 normal-main integration（2026-10-07，本次最新交接）
+
+以上是初次 lane 交付的历史记录，证据与限制保留。本次 parent 指定唯一 writer 在同一工作树
+从 clean `5deb26ccaca70dd6dd5d6dc1a2b5a3735cefab99` 正常执行
+`git merge --no-commit --no-ff origin/main`，第二 parent 固定为
+`42987dfd7d456ca187e716509d11ea100e7353b9`。没有 rebase、force 或 push。
+P0 PR1590 已 squash merged 到该 main。PR1592 已由父线程确认初次独立 review
+NONE P0/P1、旧 head checks pass；新 merge head exact CI 尚未运行，待父线程 push 后核验。
+本次不启动新 review，不改变原审查预算，不置 YUK-1352 Done。
+
+### 冲突裁决与真实源码比较
+
+实际冲突只有 `PLAN.md`、`.remember/now.md` 和 `pnpm-lock.yaml`。
+前两项以 owner 最新事实重写当前状态；保留下方历史 handoff。
+lock 选择已验证的 Start 分支版本，保留 exact Start 1.168.60 / Router 1.170.41、
+seroval-plugins 1.6.8、Start 的 rou3 及已有 optional-peer snapshot 标识，未重新解析依赖。
+`package.json` 自动合并后与 first parent 原字节相同。
+
+`git rev-parse a6d89037^{tree} origin/main^{tree}` 两次均为
+`4effc57353803263f74448dfaa95aa523f8751ab`，证明 main squash 是原 P0 gate 的同一 tree。
+`git diff --cached HEAD` 在本节追加前只有 PLAN/now；全树 4359 个其余 tracked 文件相同，
+原 Start evidence 中 22 个 SHA-256 全匹配，P0 的 10 个源码/测试/版本化证据文件同时匹配
+两 parent。P0 文档与 JSON 未修改；应用依赖、Dockerfile、配置、Start/Hono 源码与测试全部
+匹配旧 PR head。auth/health/readiness、原始 Request/Response 的 multipart/binary/SSE/cancel
+传输路径没有源码变化。本次以字节相同证明保留合同，没有重跑 listener 或新增 runtime 证明。
+
+最终 first-parent diff 仅 PLAN、now 与本交付文档。本次 main-relative diff 保留原 Start 前门
+实现和依赖、Dockerfile、README、配置及其 scoped/acceptance tests，另含最新 planning/handoff
+和本节证据；没有新增领域操作、任务恢复、DB/schema 或 UI 改动。
+`git diff --cached origin/main --stat` / `--numstat` 已检查，原 Start 源码增量保持；
+1355/1356/1364/PR1591 与主 dirty tree 未触及。
+
+完整比较记录命令为 `python3 .cache/yuk1352-main-integration/compare.py`；
+script SHA-256 `5e2ac5bc1488a82796af98262241dbf638af6a8bd2b2cffb2cc7523370f31589`。
+JSON 比较记录 `.cache/yuk1352-main-integration/comparisons.json` 的 SHA-256 为
+`526f6e748bfaac64341334778bef0dc2d639f438eb8390cdd542776b0534e808`，文本日志 `comparisons.log` 的 SHA-256 为
+`e1a919a57d85a8c6f8eaba54488c1a7ea4e2c8ca2865d1d2ac752eb37b1db6fd`。记录包含两 parent、tree、4359 文件 hash、P0 文件 hash 和
+main-relative numstat。构建后 `git diff --name-only HEAD` 再次只报 PLAN/now，无生成源码漂移。
+
+| 保留原字节的文件 | SHA-256 |
+| --- | --- |
+| `pnpm-lock.yaml` | `7f53823be77d0a9708de4a6d5580910b42991ddd3eb09a19e11dce83fce1e2ac` |
+| `package.json` | `64cb72ef9b9c833374dc6f55f8c18db4ae99d2263861177209df0d6cc5edfecf` |
+| `docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md` | `a32aca2210e5f6659485d994bd1fba00aecb3ae319ab8ac0a84dacf989a08df6` |
+| `docs/planning/2026-10-07-yuk1338-pi-dbos-gate.evidence.json` | `e8a3cda98b4ae0371f1ee29c7e40702c5da42ea59fd03c8f3905d2da06cbd0a0` |
+| `docs/planning/evidence/2026-10-07-yuk1352-start-frontdoor.json` | `952282d385a79900c8671764702a26a3594646736b087611c2e3a06c560257e2` |
+
+### 本次验证与限制
+
+以下命令使用 `env` 白名单 PATH、原 HOME、树内 TMPDIR/XDG_CACHE_HOME 与
+`CODEX_FULL_GATE=1`，不继承 DB/provider/token 或生产配置；未 loadEnv，树内无 `.env`。
+Node 26.10.0 / pnpm 11.13.1，使用本树既有 node_modules。依赖 manifest/lock 相对 first parent
+零变化，因此不做无关 frozen reinstall，原 frozen-install 证据保留。本次只改文档且源字节
+匹配，沿用旧 scoped/transport 证据及其 revision，不重复 unit/DB/migration/HTTP/browser gate。
+
+| 命令 | 结果 | 本树日志 | SHA-256 |
+| --- | --- | --- | --- |
+| `pnpm typecheck` | PASS / exit 0 | `.cache/yuk1352-main-integration/typecheck.log` | `36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6` |
+| `pnpm lint` | PASS / exit 0 | `.cache/yuk1352-main-integration/lint.log` | `1168b44726e392e16927cc57a8f3844940df14e591c0d68c2cba86c7a63b1779` |
+| `pnpm lint:ratchet` | PASS / exit 0 | `.cache/yuk1352-main-integration/lint-ratchet.log` | `058dfaa3ca09abec9e7800e4ed6b1c82faa62a66c3dbd606d108250acc6a6918` |
+| `CODEX_FULL_GATE=1 pnpm build` | PASS / exit 0 | `.cache/yuk1352-main-integration/build.log` | `6245d89fa30c98b3e1304950666692975b3916adb9ca530ac0253669117358a1` |
+
+lint 为 0 errors / 297 既有 warnings；warning ratchet 未放宽。build 产出旧 SPA、Start
+client/server 与三个 CJS entry，保留既有大 chunk/bundle warning。没有完整本机 `pnpm test`。
+本次本地通过不代替新 head exact CI、认证领域流程、Node24 image/rollback drill 或部署验收。
+新 head CI 仍 pending，父线程独占 push/CI/host merge/Linear 及后续验收。
+
+当前优先完成整个非 UI 迁移，UI deferred；Hono/SPA 是有 P7/YUK-1359 退出条件的过渡形态，
+不是最终架构。runtime Agent TEST ONLY，automation disabled，不供个人日用。
+本次没有 runtime、现有 DB、services、ports、worker、provider 操作、部署、host PR 修改、watch
+或委派；仅为 T3 登记既有 PR1592 关联。没有新增 substantive P0/P1 或 actionable follow-up，
+未新建票，既有 YUK-1356/P7 义务保留；用户禁止本 writer 操作 Linear，父线程负责 tracker。
+正常 merge commit 完成后 writer 在 terminal 释放，不因通知自动恢复写入。

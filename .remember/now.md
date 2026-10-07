@@ -1,9 +1,19 @@
-# YUK-1352 隔离 lane 交付
+# 当前交接 — 2026-10-07 YUK-1352 PR1592 normal-main integration
 
-此工作树唯一 writer 完成 Start 非 UI 前门，提交后释放写权限。源码与检查/证据/剩余项见
-`docs/planning/2026-10-07-yuk1352-start-frontdoor.md` 和相邻 evidence JSON，日志本树 `.cache/yuk1352/`。
-没有操作主runtime/生产/数据库/worker/provider，没有push/PR/watch/merge或委派。
-父线程负责独立review、最终CI及隔离业务/image drill，不置Done。1355/1356领域/dispatch文件均未改。
+唯一 writer 工作树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor`，
+branch `feat/yuk-1352-start-frontdoor`。从 clean `5deb26ccaca70dd6dd5d6dc1a2b5a3735cefab99`
+正常 merge `origin/main` `42987dfd7d456ca187e716509d11ea100e7353b9`，不 rebase/force。
+P0 PR1590 已 squash merged；main tree 与原 a6d89037b tree 相同，原 gate 源码/证据保留。
+PR1592 初次独立 review NONE P0/P1、旧 head checks pass 由父线程确认；新 head exact CI
+仍待父线程 push 后核验，本 writer 不 push/host merge/watch/Linear，也不再委派或审查。
+源码保留 Start auth/health/readiness、multipart/binary/SSE/cancel 合同；本轮不启动 listener。
+合并差异与最终 static/build 日志 digest 见 `docs/planning/2026-10-07-yuk1352-start-frontdoor.md`。
+
+整个非 UI 迁移优先，UI deferred；Hono/SPA 是有 P7/YUK-1359 退出条件的过渡方案。
+runtime Agent TEST ONLY，automation disabled，不供个人日用；下方旧生产/automation 叙述
+仅为历史证据，不覆盖当前限制。没有 runtime/DB/services/ports/provider 操作，没有触及
+1355/1356/1364/PR1591 或主 dirty tree。父线程继续负责 final CI、隔离业务/image drill 和 tracker。
+本次无新增 actionable follow-up，既有 P2 与清理归属不变。writer 在 terminal 提交后释放。
 
 ---
 # 当前交接 — 2026-10-07 YUK-1338 Pi + DBOS 隔离 gate

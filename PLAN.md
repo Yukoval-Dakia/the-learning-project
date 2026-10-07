@@ -1,13 +1,13 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-07：YUK-1352 非UI前门源码与隔离传输/页面验收完成，writer提交后释放；父线程负责独立review、exact-head CI、隔离业务/image drill及P0最终gate。无主runtime、部署、真实数据或付费调用。见[1352交付](docs/planning/2026-10-07-yuk1352-start-frontdoor.md)。
+> Linear 是权威 tracker。2026-10-07：P0 PR #1590 已合入 main `42987dfd7`；YUK-1352 PR #1592 正常 merge 此 main，保留 Start 前门及原 gate 证据。初审 NONE P0/P1，旧 head checks 已通过，新 head exact CI 待父线程 push 后核验。全非 UI 迁移优先，UI 暂缓；runtime Agent TEST ONLY，automation disabled，不供个人日用。见[1352交付](docs/planning/2026-10-07-yuk1352-start-frontdoor.md)。
 
 ## NOW
 
-- **YUK-1352 非 UI 前门**：隔离树 `tlp-yuk1352-start-frontdoor` 完成固定 Start 1.168.60 / Router 1.170.41 + 原 Hono/SPA 回落；51 scoped unit、typecheck/lint/build 与边界审计通过，独立18952端口92鉴权/28页面/stream及T3令牌门证据。[交付/runbook](docs/planning/2026-10-07-yuk1352-start-frontdoor.md)。无主runtime/DB/部署/付费/push/PR/merge；父核独立review、exact CI和隔离业务/image drill，P7清理由1359负责。1355/1356/1363/1364 ownership未触及。
+- **YUK-1352 非 UI 前门 / PR #1592**：Start 1.168.60 / Router 1.170.41 与原 Hono/SPA 回落源码保留；旧 head `5deb26cca` 的 scoped/static/build、隔离传输与页面证据保留，初次独立 review NONE P0/P1。正常 merge main `42987dfd7` 后的新 head CI 尚未运行，父线程负责 push、exact CI 及隔离业务/image drill；不置 Done。Hono/SPA 是过渡方案，P7/YUK-1359 负责退出。1355/1356/1364/PR1591 ownership 未触及。
 
-- **YUK-1338 / YUK-1351 P0 gate**：Pi 1.0.2 + DBOS 5.2.11，测试容器中完成新证据影响下一项、版本/过期拒绝、四个进程终止边界、响应复用与单次业务效果。2 unit / 10 DB passed；typecheck/lint/build 通过；独立 review 无 P0/P1。PR #1590 / In Review；旧 run lint format 失败已修复，复验后 push，不能用本机通过替代最终 CI；P2 首次并发证据创建与 provider 请求身份要求已记入 YUK-1356；owner 指定不自主合并，当前生产 Hono/Vite/pg-boss 不改。
-- **YUK-1103 自主交付**：本机 http://localhost:8787；远程 https://loom-mac-mini.tail2ee344.ts.net/（同一 tailnet，沿用 Loom 令牌）。app/worker `f3bfff2cf` healthy，115项迁移、readiness active。已备份及恢复验证；不要重复发布旧 `5d738dbc0`。
+- **YUK-1338 / YUK-1351 P0 gate**：PR #1590 已 squash 合入 main `42987dfd7d456ca187e716509d11ea100e7353b9`。该 main tree 与原 `a6d89037b` tree 相同；Pi 1.0.2 / DBOS 5.2.11 的源码及版本化证据完整保留。原 2 unit / 10 DB、静态/build、独立 review NONE P0/P1 属于 P0 原 revision，不代替 PR #1592 新 head CI。P2 首次并发证据创建与 provider 请求身份要求已归 YUK-1356。此合入未发布 runtime。
+- **YUK-1103 runtime 边界**：当前 Agent TEST ONLY，automation disabled，不供个人日用。历史 app/worker `f3bfff2cf`、备份/恢复及访问地址是先前发布记录，本轮未重新核验或操作。禁止据此启动服务、恢复库、部署或重发旧镜像。
 - **YUK-1341 产品 AI**：PR #1585 已通过 exact-head CI、独立初审和等待窗并合并。app/worker 都固定 `opencode-go/mimo-v2.6-pro`；54聊天任务和 Mem0 接线已落地。生产两轮 Copilot 成功，原会话及 Pi cursor 连续、刷新回放一致；后台 MemoryBrief 也已实际成功。未宣称所有任务质量或评分切片均获准入。
 - **YUK-1340 会话入口已交付**：PR #1583 满足 exact-head CI、审查和等待窗后合并。准确 ARM64 镜像完成副本迁移、旧镜像读取兼容、停写备份恢复及生产页面验收。默认续接、历史只读、新建、重开、刷新保持会话均通过；没有发送 AI 消息。YUK-1343 两条 P2 仍延期。
 - **行为基线 / YUK-405**：[完整设计](docs/design/2026-10-06-continuous-learning-system-behavior.md)连接学校、纸笔、自习与数字工具，由 agent 在持续委托下负责实现和验证，不是已实现清单。
@@ -15,9 +15,9 @@
 
 ## NEXT
 
-- 先落实 YUK-1346 的可信单次记忆/派生用途策略，再沿“椭圆难题 → 记录过程与帮助程度 → 区分暂时理解和独立迁移 → 后续验证安排”的真实学习路径推进。短回答成功不等于可靠评估已经兑现。
+- **TS 非 UI 迁移（epic YUK-1351）owner 最新覆盖**：先完成整个非 UI 迁移，UI 重写暂缓，保留现有页面及确定性行为。父线程协调 1352 前门、1355 任务迁移和 1356 共享业务操作；P0 PR1590 已合入，不以 UI 或独占 1364/PR1591 为串行阻塞。Hono/SPA 为过渡形态，P7/YUK-1359 负责退出，不宣称最终架构；数据库唯一真相源、三入口共用业务操作、每类任务唯一恢复 owner。runtime Agent TEST ONLY，automation disabled，不供个人日用。
+- 当前优先整个非 UI 迁移；YUK-1346 的可信单次记忆/派生用途策略与真实学习路径继续保留为后续产品义务。短回答成功不等于可靠评估已经兑现。
 - YUK-1042：42 failed +42 DLQ 原义务保留；先查每项副作用和幂等身份再恢复，不清队列或重付未知结果。
-- **TS 非UI迁移（epic YUK-1351）owner 最新覆盖**：先完成非UI迁移，UI重写暂缓，保留现有页面及确定性行为。父协调1352前门、1355任务迁移和1356共享业务操作，P0最终gate由父核验，不以Opus/UI票或独占1363/1364为串行阻塞。兼容层有P7退出/清理归属；数据库唯一真相源、三入口共用业务操作、每类任务唯一恢复owner。主环境Agent TEST ONLY。
 - **早期单收口（2026-10-07）**：YUK-100..500 的 20 张已在 Linear 逐张裁定——147/213/295/310/406/443/464 转 Todo，369 Canceled（被 1038 取代），其余设触发条件与 10-21 / 11-07 复查截止，到期未触发即取消；406 验收裁定连带 405/418/419。
 
 ## PARKED
@@ -37,4 +37,4 @@
 - 无需 owner 追加日常授权。旧 Xiaomi402 不再阻塞新 Copilot；历史失败没有删除。
 - 默认会话入口已在生产修复；完整学习状态评估和自适应安排仍需逐条行为验收，不能以此次日用修复冒称产品完成。
 - 旧0f81整镜像读取新迁移副本兼容已验证；回退需刷新浏览器且恢复旧入口缺陷。数据库恢复仍须保护备份后新写入，不可自动覆盖。当前指针已更新且发布锁已释放。
-- 每小时 T3 任务仍绑定原线程；需要 Mac/T3 运行。远程访问需要同一 tailnet、Mac 开机且用户会话内 daemon 在运行。
+- 当前 automation disabled；每小时任务绑定原线程的说法仅属历史记录，不得据此启用自动化或个人日用。
