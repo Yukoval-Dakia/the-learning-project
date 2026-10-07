@@ -136,3 +136,51 @@ is retained. Runtime/provider/browser/CI and unknown-result limitations above
 still apply. No runtime lock or other owner worktree was touched.
 
 Final documentation lint log: `/tmp/yuk1346-recovery-listen-ceaxnml2/final-document-lint.log`, SHA256 `347f8652750eccc5bcdd9db78bcb2da127b5d13438f5aadcf2ff2706c83af9d4`.
+
+## 2026-10-08 fetched-main probe integration
+
+Normal merge of fetched main `5aa2a9e989984dfa065b3ba400b67b6b987b12e3`
+into clean lane HEAD `31098cdbceb320da9b678f07c83ca95dbecf448e`.
+Actual conflicts were only `PLAN.md` and `.remember/now.md`. The board now
+records implemented retention separately from pending runtime acceptance; both
+historical handoffs remain. Agent TEST ONLY, automation disabled, and complete
+non-UI migration priority take precedence. The incoming Linear inventory had
+one trailing blank line; it was removed for the whitespace check.
+
+All 84 byte comparisons match their intended parent. Incoming canonical
+criterion, fixed execution contract, complete original probe spec, immutable
+completed provenance, and V1/absent compatibility equal fetched main. Retention,
+operation-kind provider fence, response-body deadline/abort, and unknown-outcome
+protection equal the supplied lane HEAD. Streaming/listener, finalization,
+package/lock, and the unchanged schema-audit script equal fetched main. No
+chat-review gate was restored and no product source repair was authored here.
+
+Node 24.19.0 and pnpm 11.13.1 passed 592 scoped unit tests in 25 files and 538
+DB tests in 17 files. Fresh Testcontainers migrated and cloned disposable fork
+databases; existing DB/provider environment was excluded. Installed Pi-loop
+and provider transports remain scripted/mocked. Typecheck, lint, build, ten
+audits, regenerated Postman equality and whitespace checks passed. Lint retains
+297 existing warnings. Counts overlap the earlier runs and must not be added.
+
+Initial Postman/audit commands failed before execution because the chosen
+temporary Unix-socket path exceeded macOS's length limit. All failure logs are
+retained. The affected commands passed with a shorter cache path inside this
+worktree. YUK-1375 remains an inherited audit limitation for absolute paths
+containing test/spec tokens; this worktree's real schema audit reports 885
+fields and zero unallowed stubs. No allowlist or audit script was changed, and
+this result does not repair or relabel the earlier test-storage failure.
+
+[Exact source and command evidence](evidence/2026-10-08-yuk1346-main1364-integration.json)
+records both merge parents, every comparison hash, the 3147-file source-manifest
+digest, actual commands, all log hashes, and the inspected runner provenance.
+Logs and source manifests are under this worktree's
+`.cache/yuk1346-main1364-20261008/`; no old runner logs were overwritten. No
+full local `pnpm test`, delegation, review, push, PR/watch, Linear, private env
+read, provider call, existing runtime/container/DB/queue operation, deployment
+lock, or unknown replay was performed. Capture remains with the parent because
+this lane is prohibited from Linear and found no new actionable product issue.
+
+New exact-head CI, real provider/browser behavior, host-restart durability, live
+revision and old unknown request outcomes/cost remain unverified. Parent owns
+those actions. After the normal local commit this lane releases sole-writer
+authority; later notifications do not reopen it.

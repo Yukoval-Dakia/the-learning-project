@@ -1,0 +1,934 @@
+{
+  "worktree": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety",
+  "branch": "fix/yuk-1346-reconcile-safety",
+  "merge_parents": [
+    "31098cdbceb320da9b678f07c83ca95dbecf448e",
+    "5aa2a9e989984dfa065b3ba400b67b6b987b12e3"
+  ],
+  "conflicts": ["PLAN.md", ".remember/now.md"],
+  "source_repair": "None. Incoming source equals fetched main; retention/fencing source equals lane HEAD.",
+  "source_manifest_file_count": 3147,
+  "source_comparisons": [
+    {
+      "path": "src/capabilities/agency/api/probe-answer.db.test.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "eee65f53b0fc05196bcbc95f4cfc62cd36a53fe81d6285f6c1b85c88b0fe8ddd",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/agency/api/probe-answer.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "fa36c94e7b9912b9e5afd16a05254dccb036179789990fe5467806c3e5b1f74f",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/agency/public.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "00f031b6ea047f3f90f10a82b82f40bff1eb4429e465281dd45778cea5b211cf",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/agency/server/conjecture/completed-probe-provenance.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "4614bc8bdc82f779a43ca99bc4db34417c3df2eaf962c3c681d6d436d111f43d",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/agency/server/conjecture/probe-evidence.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "4098c4b896a1e8be2ad085f46a8b93ba657aa17d2dcabc470d76aff448689d95",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/shell/server/prep-desk-probes.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "803cdcf1a4b8c61967e9a9574718cefe9612830e48acdfec339da241f306608c",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/shell/server/teaching-brief-complete-spec.db.test.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "e2a041d006b65033e9bc0b809c52a1f04b474613eb56e547542c028bed12e043",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/shell/server/teaching-brief-edited-claim.db.test.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "ce7e60c1b746f6cd138203ecdbf34ff8a8089498dde027dfe7b50aa1cb452503",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/shell/server/teaching-brief-issuance.db.test.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "4c2df5edf4b4beb6e8420af2180657e01d2c4e0c285bf018cf272a3f67114733",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/shell/server/teaching-brief-v1-compat.db.test.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "ea6381691f36549dd034c564112c2aa1ec5912e6bbeffa540b80585541dec4cb",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/shell/server/teaching-brief.db.test.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "7916d0c5061a6c9336c53671387470895f385aa700156dfa3bfb723524d6de7f",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/shell/server/teaching-brief.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "8fd6a58b08d3edd83a35c2807d0bef509229e98a21fd39135a09a0428bdfc642",
+      "equal": true
+    },
+    {
+      "path": "src/kernel/records/assessment-normalization.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "ecae3e03f5e3699c1f37a225b43bdaddb9b08e948fc5bed78337515ac81b8d95",
+      "equal": true
+    },
+    {
+      "path": "src/kernel/records/assessment-probe-criterion.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "76c0c844bc0615b356dcbec312b5f44a5d358f9d9f867694f97cde5b1d5d0335",
+      "equal": true
+    },
+    {
+      "path": "src/server/questions/contract-normalizer.test.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "8696391be6bd23f3b8dddea8e92671a058853942e2c4715dfc3d7c46f8dfafd5",
+      "equal": true
+    },
+    {
+      "path": "tests/fixtures/conjecture-probe-spec.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "784004f11e9a366a6cde37fb527631c3caa84c708c2df3061d429f2e4586401b",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/api/chat.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "1d5edfb3abe2ab69697c3ce3ef144dc483b10767f817908ae6efca190ab63668",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/api/chat.unit.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "a82d51045cab4fb2add6d0e8133d0effdb26b74f2158db409b26940a87b921e5",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/api/contracts.db.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "523db25461510ad667e9df67acf140216b7eb37de6dad11cb7eca20eb32b1c53",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/api/contracts.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "c129ad5ccd47175793776d8d2b7ce4b3f07ca8ddb5ce68498a6b750db72b5599",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/api/sessions.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "2634f74777f66d3756eecb4d4ecf3fc0234d73bdf84eeac9f264935eff1f809a",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/jobs/copilot_run.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "6f57c6ad711982b79bb77faef61c1c7a61c82bd0f9e6fc2dcff18b13cc273b20",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/jobs/copilot_run.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "8f98e3ac8bf7115ad9975e3d7c23067c2fe8b1b381e3cfe4e2f82ed51b3ee2a8",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/chat-contracts.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "ef4c8f1fe1039530b64ad401d73076992bc048368d6dbbb5809e0206d9e299f6",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/chat-contracts.unit.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "12eaa1a82c4b88b5fb85e00aeee9a044238007114530f3d0491033e408a9ed8c",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/conversation-writes.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "b6c6c5347f76708a7b87f2398497ded8fa7434744e4a9a603869771e4d48ef93",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/copilot-execution.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "041ca17d2f6f9a2414af277ccbfa00df8076206834902a1b57dbc4b86f2b7e6f",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/copilot-execution.unit.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "9f4363a88dee2538b6f3c0bc2e8c70f465ccbb2612de053b55455492a82b76a7",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/copilot-run-input.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "4346b54bfb6afdba786739db555db37ff21df0df713a89120279beef8ad51b1f",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/correction-contract.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "7087e7af990eef4be51f9d921d21dda3b3c76e62065413172970b4c77466a1e5",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/derivation-policy.db.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "3a3ca7dd1a5102e00d08937cb10731b03fe4b2dcdfefa565b7761cee39c3d65c",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/derivation-policy.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "070a083428bc58eb1c6818910cc95ab47f9307df0d60ae0334074e3702039229",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/durable-dispatch.db.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "6fe1cc314f150a87e5f15c37a28dafc1317514d71f44618348b43d43ba22c47f",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/durable-dispatch.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "e8ef57d1d0186662c8c1fb1ae46ce875e379f1b6d382eb963810516b46045fe1",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/durable-session-queue.db.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "75c88ff8cbab934f222c53b4ebd94f525e4f5eecb9764d245c64446c9a62ed50",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/live-turn-context.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "5d59c1e562c64e9b1f26fa3d5bcbfb2c7aa7a7539f30bdbce420ffad7369e81b",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/live-turn-context.unit.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "0208145bf147731082071eb6e9184376637598c319d1ece1db8ad5ba5357c136",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/reply-finalization.unit.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "ebba93a433ed9e849397ec63f6297fa25554d34d8c4bd8073ea4273882bd4acb",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/tools/query-events.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "4b0691e7c7fae3fb54d3f1deb7cbdcdb186e0527da78930bdd95f815a54fa73f",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/turns.db.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "ac3ea6a12accb92f6b303c6245afedf8fa87f94fecb0cd20ca1120b13a3db560",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/turns.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "7487cb86a2e1d22ff0c2b58da145e77155b8f5d49fae0687f4f6d2148e889762",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/ui/CopilotDock.durable-retry.unit.test.tsx",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "42bc0980ad7fa91e8da53778a621917def96fedd4f901b212a92254b569ec120",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/ui/CopilotDock.session-entry.unit.test.tsx",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "7717643c48de67bbf34d0febc729d0b56677971f0a456cb9790671d21366aa62",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/ui/CopilotDock.tsx",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "de51cfbc9e9eca3532729af8ec1b790057b46f04f3994221e35393b1406f6bc3",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/ui/durable-reconnect-storage.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "684b7da2160a9380ac2d0b9a10b00cd22476e08dd79adcc5b313f6d78e4a42ab",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/ui/durable-reconnect-storage.unit.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "2dd3df7d6c3d8d3b2cbcb83d48bc8f84c158717dfb174d62989ea693f1b669de",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/ui/message-projection.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "529acad898c4038488769c0fe7cb31ac6dd7ff1d75fe7b9f2928b0253cce2df6",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/ui/message-projection.unit.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "360c3c3435d87075fbc45b82ac3a8d55ae2772f48394a52b38be322a2c44f0e4",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/ui/replay.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "e2834b1cd569c646f58faac8a2e2eb506aa074913fc97a3fde8e3b4a74401134",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/practice/server/tools/get-attempt-context.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "21e97e0f4fcf1dedbb41b5d05049890e502e9a1ab1e1a5b63f807a1c6fb30630",
+      "equal": true
+    },
+    {
+      "path": "src/core/schema/derivation-policy.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "fede09be8d5cf80ff6e5f4632ef65f1c41fc67645c30a564dce34449551d9048",
+      "equal": true
+    },
+    {
+      "path": "src/core/schema/derivation-policy.unit.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "6e946e984b05dfe676e9664ed1ac6552bb2a233cd4f72189389be7f2c4161a77",
+      "equal": true
+    },
+    {
+      "path": "src/core/schema/event/known.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "273cbdaa15f436f1835793a110e3bc619f1b269b43f9b140dac2809f24684a15",
+      "equal": true
+    },
+    {
+      "path": "src/kernel/events/derivation-policy.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "a4baba69853321de3e6051eed7fec3df1ab28060214b45722a0d4fadff2ea19d",
+      "equal": true
+    },
+    {
+      "path": "src/kernel/events/events.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "81d5d46d5e0173ac02f9d32069962afe4f45433ca9d1c3820e2381086ca6b7aa",
+      "equal": true
+    },
+    {
+      "path": "src/kernel/events/index.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "b0a574658a3dba1ca7225723faf80399e8c71d701a9db8061e100a87e9e873d0",
+      "equal": true
+    },
+    {
+      "path": "src/kernel/tools/derivation-policy.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "92655c025119c73acfe46a171931a9e25de68e54e4e8f4e6d74c988f27b51e6f",
+      "equal": true
+    },
+    {
+      "path": "src/kernel/tools/types.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "5d8b00e31f89892818e3659ec49a41b2fbc4f15398ef07d46f97247cd343d5d4",
+      "equal": true
+    },
+    {
+      "path": "src/server/ai/direct-provider-attempt.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "beef26b75a5731fec0bee3e6caffa1287d5852a478828cae71f5d33c95c86aa8",
+      "equal": true
+    },
+    {
+      "path": "src/server/ai/tools/mcp-bridge.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "f96754cc4fd7a95d6ecd4360b0cb5d7fc6fb1e5887658c0114693289f860b031",
+      "equal": true
+    },
+    {
+      "path": "src/server/ai/tools/mcp-bridge.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "ab5405224cbeb482e5845fd0fbc8808322a6e00a8615b35ae97dbc2cd126a940",
+      "equal": true
+    },
+    {
+      "path": "src/server/ai/tools/pi-tools.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "ffff7beb8ea9bdc1302d68ae50da90760eea76d1c3ad14a19e8484aa1c1b8736",
+      "equal": true
+    },
+    {
+      "path": "src/server/memory/brief-writer.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "144339e7938af5988bd7f5bc57ed2ae0ee444d168beb7ccdccaf9cf428dfdd8b",
+      "equal": true
+    },
+    {
+      "path": "src/server/memory/brief.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "7babfd17121cc433a1f6a0ef8f4f8d9cb331464d74733f976512064b140d3174",
+      "equal": true
+    },
+    {
+      "path": "src/server/memory/client.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "39d1acf60afef20d66c9a8258239466be62b4f08a9a2c09566075b4e5970b04c",
+      "equal": true
+    },
+    {
+      "path": "src/server/memory/client.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "9ba9a5cefdcce86c0c935478484cb9fe112576da9f15c61b98f94f74878fcc57",
+      "equal": true
+    },
+    {
+      "path": "src/server/memory/memory-ingest-recovery-store.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "b8cbfdbd3f20d432512eefb6e836f72f1be5cb403dd99d7ce42bab42d755aacd",
+      "equal": true
+    },
+    {
+      "path": "src/server/memory/memory-reconcile-handoff.db.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "0bce1f9af75e01891d6cba4fce768f90bfd0dc757e9359546ee78d23ff1f5263",
+      "equal": true
+    },
+    {
+      "path": "src/server/memory/memory-reconcile-handoff.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "bc47f8a02192803cf27b15d0f4e0c5e6b6c93e3f84420d38bb42ae42e05d2faf",
+      "equal": true
+    },
+    {
+      "path": "src/server/memory/reconcile-handler.db.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "5390bd31dee3360ad9f42ae09ecd6ac861658beb9a8c38920d748fa5a341eacf",
+      "equal": true
+    },
+    {
+      "path": "src/server/memory/reconcile-llm.test.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "e00455a56a0ac106e6b1b56739dfa3540828c4d81998cfb7b6666fae5901d4c0",
+      "equal": true
+    },
+    {
+      "path": "src/server/memory/reconcile-llm.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "6e8814d640201957530500fd457c13fb60a72eda72943e0f19b7e40aa1b19901",
+      "equal": true
+    },
+    {
+      "path": "src/server/memory/triggers.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "20f0603cd50881d732382e63d05719934e63b180cfcec9b5b58357816a47fe15",
+      "equal": true
+    },
+    {
+      "path": "src/server/session/conversation.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "c0f2b4e52e7371371758156b0ac228bbec1c485cb19db7281d744f939d59adbb",
+      "equal": true
+    },
+    {
+      "path": "src/ui/lib/api-schema.generated.ts",
+      "parent": "31098cdbceb320da9b678f07c83ca95dbecf448e",
+      "sha256": "2e6746d77c19e0c9460dcdf572d70a38b3c491a263bdc88a8f042d86c53e0da5",
+      "equal": true
+    },
+    {
+      "path": "server/index.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "da8c399287df870f858f63a72be553e6d157db86e8dca707d7e763bb7c4558f6",
+      "equal": true
+    },
+    {
+      "path": "server/index.unit.test.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "5e248ee4ec98cec8b9819ae1141907d5d54f8be482f7feace957c28ba24f1ac1",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/prose-stream.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "3afc279660c32c5adc762712a6a1ee28746e88ef001f29828b906c00d194073f",
+      "equal": true
+    },
+    {
+      "path": "src/capabilities/copilot/server/reply-finalization.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "b9f625f5c6e3351fede031988c89023793537f3fa48de6a387c88e8c8b40f7b3",
+      "equal": true
+    },
+    {
+      "path": "src/server/ai/runner.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "eb497e8e5c6478f91073260bc7f54751e72ac09b9584c57759ebb8b8dda7936c",
+      "equal": true
+    },
+    {
+      "path": "src/server/ai/pi-agent-adapter.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "194045aa9decfcabea4ff936ed45dd64501de8f55a09f810e16ec9d2f1b6e333",
+      "equal": true
+    },
+    {
+      "path": "package.json",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "af6086e9e8427830b697f5d48ce98693dd981c6aedbc01c6c749701db9bc8f68",
+      "equal": true
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "7b1a3254d428b208c15ae5b86f831c76ae3d327018f47584cc84a7a6c27f9cf5",
+      "equal": true
+    },
+    {
+      "path": "scripts/audit-schema-writes.ts",
+      "parent": "5aa2a9e989984dfa065b3ba400b67b6b987b12e3",
+      "sha256": "b491544b8ab5f14b0246cf88e49e01d608171e9119aa27fa1f948f54e5938636",
+      "equal": true
+    }
+  ],
+  "results": {
+    "unit": [
+      {
+        "command": [
+          "pnpm",
+          "vitest",
+          "run",
+          "--config",
+          "vitest.unit.config.ts",
+          "server/index.unit.test.ts",
+          "src/core/schema/derivation-policy.unit.test.ts",
+          "src/capabilities/copilot/api/chat.unit.test.ts",
+          "src/capabilities/copilot/server/chat-contracts.unit.test.ts",
+          "src/capabilities/copilot/server/copilot-execution.unit.test.ts",
+          "src/capabilities/copilot/server/copilot-run-input.unit.test.ts",
+          "src/capabilities/copilot/server/live-turn-context.unit.test.ts",
+          "src/capabilities/copilot/server/reply-finalization.unit.test.ts",
+          "src/capabilities/copilot/server/prose-stream.unit.test.ts",
+          "src/capabilities/copilot/server/mode-completion.unit.test.ts",
+          "src/subjects/copilot-skills.test.ts",
+          "src/capabilities/task-registry.unit.test.ts",
+          "src/capabilities/practice/server/quiz/verify-framework.test.ts",
+          "src/server/ai/runner.stream-collect.test.ts",
+          "src/server/ai/tools/mcp-bridge.test.ts",
+          "src/server/ai/tools/pi-tools.test.ts",
+          "src/server/memory/client.test.ts",
+          "src/server/memory/reconcile-llm.test.ts",
+          "src/server/questions/contract-normalizer.test.ts",
+          "src/capabilities/shell/api/teaching-brief-contract.unit.test.ts",
+          "src/capabilities/agency/server/conjecture/probe-resolution.unit.test.ts",
+          "src/capabilities/copilot/ui/CopilotDock.durable-retry.unit.test.tsx",
+          "src/capabilities/copilot/ui/CopilotDock.session-entry.unit.test.tsx",
+          "src/capabilities/copilot/ui/durable-reconnect-storage.unit.test.ts",
+          "src/capabilities/copilot/ui/message-projection.unit.test.ts"
+        ],
+        "exit_code": 0,
+        "seconds": 6.25,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/unit.log",
+        "sha256": "3a4c32fe4e0a9d5411f902231b5afa7e382c2ccc7cba9def8c6f4e3f1c401df5"
+      }
+    ],
+    "db": [
+      {
+        "command": [
+          "pnpm",
+          "vitest",
+          "run",
+          "--config",
+          "vitest.db.config.ts",
+          "src/capabilities/copilot/jobs/copilot_run.test.ts",
+          "src/capabilities/copilot/jobs/copilot_run.streaming.db.test.ts",
+          "src/capabilities/copilot/server/derivation-policy.db.test.ts",
+          "src/capabilities/copilot/server/turns.db.test.ts",
+          "src/capabilities/copilot/server/durable-session-queue.db.test.ts",
+          "src/capabilities/copilot/server/tool-result-snapshot.db.test.ts",
+          "src/server/memory/reconcile-handler.db.test.ts",
+          "src/capabilities/practice/server/learning-content-validation.db.test.ts",
+          "src/capabilities/notes/server/tools/author-artifact.db.test.ts",
+          "src/capabilities/agency/api/probe-answer.db.test.ts",
+          "src/capabilities/agency/server/conjecture/probe-lifecycle.db.test.ts",
+          "src/capabilities/shell/server/teaching-brief-complete-spec.db.test.ts",
+          "src/capabilities/shell/server/teaching-brief-issuance.db.test.ts",
+          "src/capabilities/shell/server/teaching-brief-v1-compat.db.test.ts",
+          "src/capabilities/shell/server/teaching-brief-edited-claim.db.test.ts",
+          "src/capabilities/shell/server/teaching-brief.db.test.ts",
+          "src/capabilities/shell/server/prep-desk-probes.db.test.ts"
+        ],
+        "exit_code": 0,
+        "seconds": 29.88,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/db.log",
+        "sha256": "1e336778549a62ef88dd2a9700bf79910b22b5b827bab9a811d13b96a7bd0212"
+      }
+    ],
+    "initial-static": [
+      {
+        "command": ["pnpm", "typecheck"],
+        "exit_code": 0,
+        "seconds": 6.48,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/initial-typecheck.log",
+        "sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+      },
+      {
+        "command": ["pnpm", "lint"],
+        "exit_code": 0,
+        "seconds": 3.13,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/initial-lint.log",
+        "sha256": "2dab0eeef702ccade9b0846ef5e611948c7773b179b50bbb461d295e3021275a"
+      },
+      {
+        "command": ["pnpm", "audit:schema"],
+        "exit_code": 1,
+        "seconds": 1.38,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/initial-audit-schema.log",
+        "sha256": "f865452bc96130308e3d1ee70360c235ae13ae34d453c8fb97aa3afce6e630bb"
+      },
+      {
+        "command": ["pnpm", "audit:partition"],
+        "exit_code": 1,
+        "seconds": 1.36,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/initial-audit-partition.log",
+        "sha256": "5186a72cbda32500ae30fb1d56beb9f319d840833894231e19146dcb8308f0ac"
+      },
+      {
+        "command": ["pnpm", "audit:api-client"],
+        "exit_code": 1,
+        "seconds": 4.07,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/initial-audit-api-client.log",
+        "sha256": "2099bd4724a9e3667d687007022096b613c2d042235d7d4b88f0489a08a04557"
+      },
+      {
+        "command": ["pnpm", "audit:api-client-usage"],
+        "exit_code": 1,
+        "seconds": 1.52,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/initial-audit-api-client-usage.log",
+        "sha256": "0c25dec592da4d7f78889640531da7ec64e3dea3865be7e58633c761075462ea"
+      },
+      {
+        "command": ["pnpm", "audit:capability-boundaries"],
+        "exit_code": 1,
+        "seconds": 1.36,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/initial-audit-capability-boundaries.log",
+        "sha256": "a10d281f94a1202f0e4565f93e6842aff402daa48a49033d3c1efbc4dc5fbb65"
+      },
+      {
+        "command": ["pnpm", "audit:provider-lanes"],
+        "exit_code": 1,
+        "seconds": 1.36,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/initial-audit-provider-lanes.log",
+        "sha256": "b202d320279715c95ade91c4257af629d0294f001a55bf7b3bb9da1229efcc76"
+      },
+      {
+        "command": ["pnpm", "audit:profile"],
+        "exit_code": 1,
+        "seconds": 1.37,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/initial-audit-profile.log",
+        "sha256": "e0d8d98f94499cc693539684c2cfbf785bb3521f4fe2868502c437e5e19f40c5"
+      },
+      {
+        "command": ["pnpm", "audit:task-census"],
+        "exit_code": 1,
+        "seconds": 1.38,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/initial-audit-task-census.log",
+        "sha256": "b0615a259af99e395c2070730bb6616282c11c09ea335b7216f2c6e10915402b"
+      },
+      {
+        "command": ["pnpm", "audit:draft-status"],
+        "exit_code": 1,
+        "seconds": 1.39,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/initial-audit-draft-status.log",
+        "sha256": "9f32b098f5833e01d5fdf05b8544262d599c95cf116c60e685d4034a8f43f38c"
+      },
+      {
+        "command": ["pnpm", "audit:draft-status-reads"],
+        "exit_code": 1,
+        "seconds": 1.36,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/initial-audit-draft-status-reads.log",
+        "sha256": "3ebbbf2d9a5d9c83dd0a50bef9fd507e1bc1670bb5e963c0805a24695c44997e"
+      },
+      {
+        "command": ["pnpm", "build"],
+        "exit_code": 0,
+        "seconds": 10.98,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/initial-build.log",
+        "sha256": "f4c6df9b39dbb0d495333ba25b13cc7055e3751c9567e701b1eb79f399385cce"
+      }
+    ],
+    "initial-postman": [
+      {
+        "command": ["pnpm", "gen:postman"],
+        "exit_code": 1,
+        "seconds": 1.61,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/initial-postman.log",
+        "sha256": "99ee32f4c5cb1e10eec8152e8248daac4cb5aefa76962000c197a3658d34823e"
+      }
+    ],
+    "postman": [
+      {
+        "command": ["pnpm", "gen:postman"],
+        "exit_code": 0,
+        "seconds": 3.63,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/postman.log",
+        "sha256": "3aaa19807ed6f0270b0c336b21a857618af66e696d351ca7ae870f0bd2f66a25"
+      }
+    ],
+    "audits": [
+      {
+        "command": ["pnpm", "audit:schema"],
+        "exit_code": 0,
+        "seconds": 4.46,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/audit-schema.log",
+        "sha256": "dcf9b31b80baa2ab85ecd72aad12df032efae015514bac30c02c5379f5a8a230"
+      },
+      {
+        "command": ["pnpm", "audit:partition"],
+        "exit_code": 0,
+        "seconds": 1.86,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/audit-partition.log",
+        "sha256": "6f1bcfc1958aed748a7a49672b375756d3efdeca8f7a3d3c88364dc71691ccdc"
+      },
+      {
+        "command": ["pnpm", "audit:api-client"],
+        "exit_code": 0,
+        "seconds": 5.1,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/audit-api-client.log",
+        "sha256": "f26bc904f865f0cc5a1a1613ea5d4017d46fdab55aceaf8eb0a831aedd0cea7c"
+      },
+      {
+        "command": ["pnpm", "audit:api-client-usage"],
+        "exit_code": 0,
+        "seconds": 1.41,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/audit-api-client-usage.log",
+        "sha256": "71c2c93dd9e51bd4fc368e7845a5a34d42b2b56cf97e4dcf94a8556a99f45b46"
+      },
+      {
+        "command": ["pnpm", "audit:capability-boundaries"],
+        "exit_code": 0,
+        "seconds": 2.6,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/audit-capability-boundaries.log",
+        "sha256": "42a7d0cb9f8f9a7948bd6aeb552b2b64b70d98953edea22293a755a32000bba1"
+      },
+      {
+        "command": ["pnpm", "audit:provider-lanes"],
+        "exit_code": 0,
+        "seconds": 5.27,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/audit-provider-lanes.log",
+        "sha256": "4e94a5c1aa34213ec2cbb56a60b90e883fdcf6a7fd9c10daff833b754ea85b5c"
+      },
+      {
+        "command": ["pnpm", "audit:profile"],
+        "exit_code": 0,
+        "seconds": 1.53,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/audit-profile.log",
+        "sha256": "f2f14ec06808ef23b857f78b1f54fd2fb25ba55e75776644d2a00aef10981db4"
+      },
+      {
+        "command": ["pnpm", "audit:task-census"],
+        "exit_code": 0,
+        "seconds": 3.23,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/audit-task-census.log",
+        "sha256": "ddf8d63319f242b650617ac0e743a24966ea2eb10c9c446a74b9d24f8c58df6a"
+      },
+      {
+        "command": ["pnpm", "audit:draft-status"],
+        "exit_code": 0,
+        "seconds": 1.52,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/audit-draft-status.log",
+        "sha256": "de3569839d7a890654a591c9c6b77334b1031fa56e3ecedef457f132dd24eb8d"
+      },
+      {
+        "command": ["pnpm", "audit:draft-status-reads"],
+        "exit_code": 0,
+        "seconds": 1.57,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/audit-draft-status-reads.log",
+        "sha256": "28bacc70f0d5e252783273175d9786facf9f10c85817fccbf0ebba1827767f14"
+      }
+    ],
+    "preflight": [
+      {
+        "command": ["node", "--version"],
+        "exit_code": 0,
+        "seconds": 0.06,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/node-version.log",
+        "sha256": "b7677d3ec37ee1897ba07dc2cfe8292fe421c9ac93396cca5bbece486d1a2a41"
+      },
+      {
+        "command": ["pnpm", "--version"],
+        "exit_code": 0,
+        "seconds": 1.47,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/pnpm-version.log",
+        "sha256": "9e506f63f29732fe5178ff3d2e9536bcd84d57e2521c1c4caba68b88caf895c4"
+      },
+      {
+        "command": ["docker", "--version"],
+        "exit_code": 0,
+        "seconds": 0.12,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/docker-version.log",
+        "sha256": "052e12d05ede7aae32852d293abc360e85a93259b5ef3bff41216413ad5074af"
+      }
+    ],
+    "document": [
+      {
+        "command": [
+          "pnpm",
+          "exec",
+          "biome",
+          "format",
+          "--write",
+          "docs/planning/evidence/2026-10-08-yuk1346-main1364-integration.json"
+        ],
+        "exit_code": 0,
+        "seconds": 1.46,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/evidence-format.log",
+        "sha256": "1966255d0c460558f623ef6648d58ac81476909a6eebb25552ad7628ad8d7865"
+      },
+      {
+        "command": ["pnpm", "lint"],
+        "exit_code": 0,
+        "seconds": 3.03,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/final-document-lint.log",
+        "sha256": "4f8b68f28922cc9082defd0628b8fb9db609cfd52ceb23e8f2b4a69aa885f8e1"
+      },
+      {
+        "command": ["git", "diff", "--check"],
+        "exit_code": 0,
+        "seconds": 0.03,
+        "log": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/working-whitespace.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      }
+    ]
+  },
+  "counts": {
+    "unit_files": 25,
+    "unit_tests": 592,
+    "db_files": 17,
+    "db_tests": 538,
+    "lint_warnings": 297,
+    "schema_fields": 885,
+    "schema_unallowed_stubs": 0
+  },
+  "artifact_hashes": [
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/source-files.json",
+      "sha256": "97294843d33578bb54b9fadfd5817d13a18ba05bf20f3ab40722e7f66f9ac5be"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/source-comparisons.json",
+      "sha256": "884ad04ed02f794e4a6c212d85aba9b4aa2ecbec51bd9a7f4e28e33b2f35d775"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/run-checks.py",
+      "sha256": "39b638504edf95d41737986c8dcfc19581f7ccb0d36361f713b7a8f9c5c37501"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/runner-provenance.json",
+      "sha256": "38db6ae9920f86eb31fee566fae7170493f68ab1749362a69a41b40cee46e5ce"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/final-source-vs-base.patch",
+      "sha256": "418558934238909745b32f6cfa81258d2f811dfba0610eb0e77a8eef30de580d"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/.cache/yuk1346-main1364-20261008/final-source-vs-main.patch",
+      "sha256": "b4f0c2c32d5f081b0bbc378aa3ea409a4a12115dafd370cc0bcc3a64d8d30b6a"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/dist/migrate.cjs",
+      "sha256": "5512e9b3d3cc3ee3fc6aaa66b6d4a4de1429cf3835c080b9df7d7997687dad28"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/dist/server.cjs",
+      "sha256": "b7a2ed90409bdf3422defb20dc65da7b2cd0d32c8ba2ccbc733c2652b7ee18d1"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety/dist/worker.cjs",
+      "sha256": "8f72c189755054e96ee3fc5cdd469219137b4f3a6ef78121880f698dfe6424c9"
+    }
+  ],
+  "inspected_existing_runner": {
+    "path": "/tmp/yuk1346-recovery-listen-ceaxnml2/run-checks.py",
+    "sha256": "d0cd7d70c8e5017112c809407398c2dbc974e69db688bdddf13677803a1d4e3a"
+  },
+  "environment": {
+    "node": "24.19.0",
+    "pnpm": "11.13.1",
+    "inherited_keys": ["HOME", "USER", "LANG"],
+    "explicit_keys": ["PATH", "TMPDIR"],
+    "node_path": "/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin",
+    "private_env_files_present": false,
+    "existing_database_or_provider_env_inherited": false
+  },
+  "limitations": [
+    "YUK-1375 absolute-path test/spec production-filter defect remains unresolved; earlier test-storage failure is not relabeled.",
+    "Initial Postman/audits failed before execution due to a too-long task-owned TMPDIR socket path. All logs retained, affected commands passed with shorter owned path.",
+    "Source/scoped local checks only; no new exact-head CI, independent review, runtime, real provider/browser, host-restart or old unknown-outcome/cost acceptance.",
+    "No full pnpm test, delegation, review, push, PR/watch, Linear, existing runtime/container/DB/queues, deployment lock, provider calls, paid work or replay."
+  ],
+  "capture": "No new actionable product issue found. Parent owns existing YUK-1375/YUK-1374 and Linear capture; this writer is prohibited from Linear.",
+  "files_changed_against_lane_head": [
+    ".remember/now.md",
+    "PLAN.md",
+    "README.md",
+    "docs/planning/2026-10-07-agent-test-environment-reset.md",
+    "docs/planning/2026-10-07-agent-test-storage.md",
+    "docs/planning/2026-10-07-autonomous-delivery-charter.md",
+    "docs/planning/2026-10-07-linear-remaining-inventory.md",
+    "docs/planning/2026-10-07-non-ui-migration-priority.md",
+    "docs/planning/2026-10-07-yuk1346-main-streaming-recovery.md",
+    "docs/planning/2026-10-07-yuk1356-operation-seams.md",
+    "docs/planning/2026-10-07-yuk1359-exit-inventory.md",
+    "docs/planning/2026-10-07-yuk1364-probe-issuance.md",
+    "docs/planning/evidence/2026-10-08-yuk1346-main1364-integration.json",
+    "postman/api-endpoints.json",
+    "postman/learning-api.postman_collection.json",
+    "src/capabilities/agency/api/probe-answer.db.test.ts",
+    "src/capabilities/agency/api/probe-answer.ts",
+    "src/capabilities/agency/public.ts",
+    "src/capabilities/agency/server/conjecture/completed-probe-provenance.ts",
+    "src/capabilities/agency/server/conjecture/probe-evidence.ts",
+    "src/capabilities/shell/server/prep-desk-probes.ts",
+    "src/capabilities/shell/server/teaching-brief-complete-spec.db.test.ts",
+    "src/capabilities/shell/server/teaching-brief-edited-claim.db.test.ts",
+    "src/capabilities/shell/server/teaching-brief-issuance.db.test.ts",
+    "src/capabilities/shell/server/teaching-brief-v1-compat.db.test.ts",
+    "src/capabilities/shell/server/teaching-brief.db.test.ts",
+    "src/capabilities/shell/server/teaching-brief.ts",
+    "src/kernel/records/assessment-normalization.ts",
+    "src/kernel/records/assessment-probe-criterion.ts",
+    "src/server/questions/contract-normalizer.test.ts",
+    "tests/fixtures/conjecture-probe-spec.ts"
+  ],
+  "files_authored_here": [
+    "PLAN.md",
+    ".remember/now.md",
+    "docs/planning/2026-10-07-linear-remaining-inventory.md",
+    "docs/planning/2026-10-07-yuk1346-main-streaming-recovery.md",
+    "docs/planning/evidence/2026-10-08-yuk1346-main1364-integration.json"
+  ]
+}

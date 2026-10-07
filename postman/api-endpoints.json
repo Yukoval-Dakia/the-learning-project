@@ -623,7 +623,7 @@
         "bodyExample": {
           "answer_md": "2x·cos(x^2)"
         },
-        "notes": "YUK-1047：已准入探针在备课台实际发题时冻结 native issuance；服务端保存 ResponseSet 与原始图片 digest 后经 evaluateSubmission 产出 candidate，answerProbe 仅写唯一 experimental:probe_result，不激活练习结算/FSRS/θ̂。未准入探针 withheld，不自动降级 manual。v2 复验分流：judge 'incorrect' → outcome=0；第一次为 'evidence_for' 并原子派发预先独立创作的 sequence-2 probe，第二道独立 probe 也 incorrect 才为 'confirmed'。历史 v1 proposal 无 follow-up，保留单题 incorrect → 'confirmed' 的终态规则。任一 probe judge 'correct' → outcome=1 → 'retired'（猜测被反驳）。fail-closed：'partial'/'unsupported' → 422，不写 probe_result，探针保持 active（slot 未消费，owner 可重答或走 admin S4）。幂等：重答返回记录的 outcome/resolution（不覆盖）。需 x-internal-token。响应：{ status, resolution, outcome, probe_result_event_id, coarse_outcome, idempotent }"
+        "notes": "YUK-1364：评分前由 Agency 共享校验原始 proposal 与冻结 issuance/revision 的题面、单一 open_response 和 rule_reference/probe_spec 评分依据；不匹配返回 409（如 probe_reference_mismatch），不创建 judge claim、submission/evaluation 或调用模型；不支持的评分契约仍返回 422。YUK-1047：已准入探针在备课台实际发题时冻结 native issuance；服务端保存 ResponseSet 与原始图片 digest 后经 evaluateSubmission 产出 candidate，answerProbe 仅写唯一 experimental:probe_result，不激活练习结算/FSRS/θ̂。未准入探针 withheld，不自动降级 manual。v2 复验分流：judge 'incorrect' → outcome=0；第一次为 'evidence_for' 并原子派发预先独立创作的 sequence-2 probe，第二道独立 probe 也 incorrect 才为 'confirmed'。历史 v1 proposal 无 follow-up，保留单题 incorrect → 'confirmed' 的终态规则。任一 probe judge 'correct' → outcome=1 → 'retired'（猜测被反驳）。fail-closed：'partial'/'unsupported' → 422，不写 probe_result，探针保持 active（slot 未消费，owner 可重答或走 admin S4）。幂等：重答返回记录的 outcome/resolution（不覆盖）。需 x-internal-token。响应：{ status, resolution, outcome, probe_result_event_id, coarse_outcome, idempotent }"
       }
     ]
   },

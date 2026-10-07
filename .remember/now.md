@@ -1,3 +1,17 @@
+# 当前 integration — 2026-10-08 YUK-1346 / YUK-1350 / YUK-1364
+
+本 lane 唯一 writer：`/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety`，`fix/yuk-1346-reconcile-safety`。clean31098cdbceb320da9b678f07c83ca95dbecf448e 正常合入 fetched main5aa2a9e989984dfa065b3ba400b67b6b987b12e3。冲突仅 PLAN/now；本轮 Node24.19.0：592 unit/25files、538 fresh Testcontainers DB/17files、typecheck/lint/build/10audits/Postman通过；297既有lint warnings。旧统计不替代新head。保留 answer_only/1350 fence/deadline、1364 canonical criterion/execution/V1 compatibility 与1365 streaming/listener，不恢复已退休聊天gate。
+
+用途 Agent TEST ONLY，automation disabled，完整非 UI 迁移优先、UI 暂缓。禁止 runtime/private env/原DB/queue/provider/付费/replay/锁/部署；仅新自有 scoped Testcontainers。review预算用尽，无 delegation/push/PR/watch/Linear，capture与host actions归父。YUK1375已知audit路径限制保留，不改allowlist。
+
+84 parent source comparisons与3147文件SHA256 manifest全部保持；初始tsx IPC因TMPDIR过长失败，原log保留，改为本树短缓存路径复验通过。schema audit本树885字段/0unallowed stub，YUK1375对test-storage绝对路径的已知限制仍未修，不改allowlist。准确命令、源文件/日志digest见 `docs/planning/evidence/2026-10-08-yuk1346-main1364-integration.json`；日志仅在本树 `.cache/yuk1346-main1364-20261008/`。
+
+本地正常merge提交后release sole writer/noPending。父独占artifact验收、PR/CI/Linear/runtime与host动作；本lane无新actionable follow-up，无新增review，后续通知不得恢复写权。provider/browser/host restart/当前runtime与旧未知结果未验证、不replay。
+
+以下逐字保留双方历史handoff，所有运行/部署状态只属于原记录时间，不覆盖本轮权限或当前状态。
+
+---
+
 # 当前 YUK-1346 / YUK-1350 cancelled 实施恢复
 
 本 lane 唯一 writer 位于 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety`，branch `fix/yuk-1346-reconcile-safety`。恢复起点 clean `c59bb7dadae9dec440b5ccbb0a0ab93478369e1c`，正常 merge main `df08399ff179c5882b39da87e162237fd18246c7` 为 `6cce7fe40971d98049f3e250d7614183fa9b8f92`，再正常合入新 main `6e54da8dfb371887e5d6cd4076d1ff9cd7713beb` 的已落地 PR1594。a9cf71d3d/db887fe4a/75eaeb82b/c59bb7dad 的旧 gate/协议修改已实际检查，没有重复实现。
@@ -15,6 +29,328 @@ YUK-1365 最新 owner 决定已删除聊天审核及强制 marker。旧 discussi
 下文逐字保留来自main的历史handoff，不覆盖上述当前状态、所有权或owner报告；其中“未部署/旧f3/待检查”描述只属于原始记录时间。
 
 ---
+
+# YUK-1365 发布接续更新
+
+PR1593 b54c9a06d CI37626148643 success、第二轮独立review NONE。初审未闭合comment吞掉server说明P1已RED/GREEN修复。上游26f101581依赖升级导致文档冲突，保留双方handoff；新的scoped/CI仍待运行。发布锁在deployment-20261007/deployment.lock，owner bed93b71；当前未停写，旧f3仍运行。候选b54镜像构建只作缓存，不得当作新merge源码发布。
+
+# YUK-1365 writer handoff — 2026-10-07
+
+本树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1365-copilot-stream`，实际分支 `fix/yuk-1365-copilot-stream-without-content-gate`，HEAD/fetched origin/main 均 `a86d4e633a67f802554ae114387ab06b7110c135`，启动时落后计数 0。实现已提交为 99f0143dc；合入 main 42987dfd7 仅在本文件和 PLAN 发生叙事冲突，保留两条 lane 证据；父线程独占独立 review、真实验收、Linear capture/status、commit/push/PR/exact-head CI/发布。没有外部通信、子代理、真实 provider、生产操作或完整本机 pnpm test。
+
+Owner 完整删除决定已实现：删除 Copilot 聊天 question/solution keyword detector、独立 learning review、强制 `copilot_learning_content` prompt/manifest 和关联 dead code/tests。没有 greeting whitelist、替代 classifier 或主动结构化出题行为。实际出题工具的 domain validation/authorization 保留；correction/proposal truth、presentation trace/security、retention 与 causal/history filtering 保留。
+
+真正 Pi root `message_update/text_delta` → runner → execution `prose_delta` → serialized durable DELTA 已落地；message_end 只收 usage/tools，不重复追加。Stop 后只抑制正文，继续收尾已观测 usage/tool frames。DELTA/STEP 写入与取消/终态共用 settlement lock，终态 REPLY/FAILED 权威替换；恢复只修终态，不再整段 DELTA。增量/终态过滤 protocol HTML comments，split marker 或 JSON 内 `-->` 不泄露。没有 UI 实施改动。
+
+真实 installed Pi-loop DB 回归只脚本化 provider：在 message_end/最终结果未决时确认 DB 已有正文 delta；两个真实 query_events 调用、第二 model turn、usage 90 tokens、最终替换/重复回放/重投不复调均通过。取消回归确认 provider signal abort、无晚到 delta、已观测 usage 45 tokens 保留。既有 pure reducer/SSE suites 也通过。
+
+验证：14文件182unit；finalizer/shared runner补充4文件117unit（含后加两条 remote trace，无独立 review）；8文件124DB；shared runner/SSE另2文件33DB（157 distinct DB）。最终取消/usage 修复后重验4文件130unit和2文件23DB。计数有重叠，不能相加。frozen install、typecheck、lint（297warning/0error）、build、diff whitespace check 均成功。准确命令、日志位置和41个改动文件见 `docs/planning/evidence/2026-10-07-yuk1365-local-checks.md`；决定与边界见 `docs/planning/2026-10-07-yuk1365-copilot-prose-stream.md`，ADR0061已加修订。
+
+并行 lane `787449db-4205-41f0-bc22-0997649cdfbf` 独占 author_question/generate_question_candidate/write_quiz/present_primary_view→展示/作答缺口。本树四工具输入输出接口未改。已报告父线程：finalizer 删除 validateLearningContent/userContextText 与 primaryViewLearningContent/Questions；receipt v2 删除 learning_content；execution 删除 candidateDeltaObserved，新 observer prose_delta；validator_context_history 与 reviewed-whole-delta recovery flag 删除。旧持久化 flag 忽略，无 migration。
+
+未验收：真实 provider timing/output、真实 browser Stop/reconnect 和 host restart durability。本地 mock/provider evidence 不升级为 actual-output/部署 PASS。DELTA/STEP 可见性沿用 best-effort 写入；终态仍负责恢复，缺 delta 不重付。父线程预检 localhost8787 `f3bfff2cf` 已 repurpose agent-development-test + local SeaweedFS；runtime 指针 `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/current-release.json` 由父线程管理，本树没有部署。本范围没有新增已证实 actionable follow-up；外部去重/capture交父线程。
+
+下文是旧交接，不覆盖本树状态、所有权或当前 runtime 用途。
+
+---
+
+# 当前父线程整合 — PR1584
+
+正常合入 main42987dfd7，保留依赖升级与DBOS gate；本轮检查待完成，旧证据为历史。父线程唯一writer，无runtime或provider操作。
+
+# 当前 lane handoff — YUK-1360 main Laminar source integration
+
+Owned tree `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1360-dependency-integration`，branch `fix/yuk-1360-dependency-integration`。正常 merge parents `784b80ac023df71de88309ab118fdcc06155fdad` + `a86d4e633a67f802554ae114387ab06b7110c135`。保留26 production/3 type upgrades、Mem0 patch858dc与main Laminar0.8.49/gRPC1.14.5；锁语义2174refs、1108packages/snapshots通过。新frozen install、362unit、98DB、typecheck/lint/build/10audits通过；297warnings未上调。四个peer warnings继承parents，无新增actionable issue。
+
+本轮证据见 `docs/planning/evidence/2026-10-07-yuk1360-main-laminar-merge.json`。旧97DB/146unit/82migration/pgboss37→44、父线程reported初审noP0/P1/CI at784b80ac/19DB为历史，不等于新head CI或runtime验收。本writer不新review、不push；正常merge commit交回父线程检视。
+
+Owner override优先：thread7631已将主f3 runtime重置为Agent TEST ONLY，非personal；1362 purpose doc57fbc95fc仅只读，未cherry-pick。无runtime/container/app/worker/existingDB/R2/private backup/restore/deploy权限。仅自有disposabletestcontainer；1346candidate PG/apps stopped/unknown状态未触及，unknown requests不replay。无provider/model/telemetry calls、subscription、UIrewrite、PR/watch/comment、Linear、delegation。父线程独占delivery/capture及后续另行授权的test runtime/BAM/API/SPA；日用切换须owner后续明确指示。return后authority结束，后续PR通知不得重启写入。
+
+下方所有旧source counts/hashes与产品release描述均为历史，不能覆盖上述用途/权限/新source-verification limits。
+
+---
+
+# 历史 lane — 2026-10-07 YUK-1360 依赖集成
+
+唯一 writer 位于 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1360-dependency-integration`，branch `fix/yuk-1360-dependency-integration`，base `c54f5ddd3`。正常 merge `8841ce68a` 已提交 `574106ae9`，保留所有26项升级及 Mem0 hash `858dc62f5cb028767f44e081b4e6713f302c6a47e760f21c403b62a43ec969e7`。只修改七个 test fixture，未知 queue observation 为 null，初始 retryCount 为0；没有 production source repair。
+
+本 lane 的97 DB、146 unit、82 migration、typecheck/lint/build均通过。populated queue37→44验证通过：12个原job/data/state/output/计数完整保持，7项BAM全部完成，retry/lost-claim signal及settlement fence、真实Drizzle enqueue rollback/commit、graceful/forced shutdown与restart通过。旧版仅在disposable schema44副本验证一次send/fetch/complete；严格schema检查拒绝44，没有downgrade。所有容器已停止。完整命令/输出位于 `/tmp/yuk1360-dependency-repair-20261007`，结果封存于 `docs/planning/2026-10-07-yuk1360-dependency-integration-evidence.md` 及两个 versioned JSON。父线程需核验真实SPA/API与生产BAM gate，不能将本证据称为独立审查或发布通过。
+
+父线程拥有 PR1584、watch/replies/push/merge、Linear、独立审查和生产。此 lane 不委派、不 push、不读凭据/原env、不操作现有服务或数据库、不调用真实provider。完成后 authority 结束，通知不恢复写入权。
+
+下方为 main 继承的历史产品交接，不是本 lane 的实施范围。
+
+# 历史 PR1580 接续 — 2026-10-07
+
+父线程唯一 writer。6787c423b 的 CI 已绿，但新 P1 discussion4205696120 确认：R2_SECRET_ACCESS_KEY、DB_PASSWORD、CLAUDE_CODE_OAUTH_TOKEN 等文本及部分结构字段仍泄露。扩大10类回归先RED，现文本和结构字段共用credentialNamePattern后73 scoped tests通过，保留普通正文和wrapped assignment覆盖。修复后须新exact CI及17分钟等待；最终SQL/browser验收仍待完成，不启动第三审、不部署。
+
+---
+
+# 历史交接 — 2026-10-07 会话入口生产发布完成
+
+生产 `f3bfff2cfe2aea0efbf7d11ead8a84ebfab497ef`，02:17Z app/worker 同准确镜像 e681a7b502aa；MiMo 产品 pin 保持不变。PR1583 在 exact d3906a7 CI37556260516成功、P0/P1裁决及17分钟窗后，于02:05:19Z合并，watch已结束。真实生产 Chromium 通过 fresh sessions/server_time、默认续接、结束历史只读、新建空会话、重开及刷新一致；无模型调用，SQL task runs仍2712。完整记录见 `docs/planning/2026-10-07-session-entry-local-release-result.md`。
+
+私有 runtime `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/deployment-session-entry-20261007-f3bfff2c`；上级current-release.json已更新，锁已释放。先副本迁移/旧0f81读兼容，再停app/worker取得最终DB/Mem0/R2，恢复101表计数一致，115迁移/2744events。42failed+42DLQ完整JSON保持。旧镜像/配置留存，回退需browser reload且恢复旧入口bug，不能自动恢复DB覆盖新写入。本轮副本容器已停止保留。
+
+当前交付树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1340-session-entry`，分支 `ops/yuk-1340-session-entry-release`，父线程唯一writer；root旧树mixed dirty保留。生产已发布，不因文档PR待合并而重复部署。YUK1343两条P2未修，1346单次不记忆策略High/Backlog为下一产品线。旧memory probe整体FALSE/wire-cost未知、1042历史义务保留、1344离家设备验证未完成，均不改称已通过。
+
+本机 http://localhost:8787；远程 https://loom-mac-mini.tail2ee344.ts.net/ 使用原令牌。本机和远程health/ready200，sessions无令牌401、有令牌200；远程检查来自本Mac。hourlyautomation仍绑定原5796线程。先承接用户反馈与运行状态，再推进单次保留用途控制和椭圆学习证据/复验路径。开发模型常规选择，产品生成式路由MiMo；不要切父线程模型或重启终态子任务。
+
+以下为历史交接，旧授权、版本和模型选择不覆盖上述当前状态。
+
+---
+
+# 当前交接 — 2026-10-07 YUK-1325 Laminar writer released
+
+工作树 `/private/tmp/tlp-laminar-yuk1325`，分支 `feat/yuk-1325-laminar`。保留既有修复 `1be38edbc`、sharp `1af72b427` 和 main merge `3940d61f9`；正常 merge main `8841ce68a` 为 `e484efa60`，保留产品 MiMo/autonomous delivery 指导与 Laminar。359 unit、全部19 CI audit加provider-lanes/agent-control-plane、typecheck/lint/build/lint-ratchet通过；297既有warnings、零high/critical依赖告警。P1 #4196957316 的4种prefixed API-key控制在a529全部RED、当前全部GREEN，未重写既有修复。完整命令/日志digest见 `docs/planning/evidence/2026-10-07-yuk1325-babysit-checks.txt`，本地日志 `.cache/yuk1325-babysit-20261007/`。
+
+源码/backend/sanitizer/audit baseline完整保留，无prod/HTTP-worker/model/DB/export/full-test/push/第三审。历史真实调用及OFFLINE REPLAY仅适用于原记录revision，最终development transcript SDK→SQL/browser验收仍待父线程。父线程独占PR watch/push/replies/merge/Linear/deploy；P2 typed primitive tracing仍延期YUK-1339；无新增actionable follow-up。提交此交接后writer释放，不因PR通知重启写入。
+
+# 当前交接 — 2026-10-06 YUK-1224/1226/1196/1236（SCF-141/143/109/161）
+
+工作树 /Users/yuqi/.t3/worktrees/the-learning-project/feat-yuk-588-today-cost-ui，分支 fix/yuk-1224-parser-assets-batch（upstream 已改为同名远端分支），base origin/main 9f1e0945c，含父线程文档提交 d2d5cff80。本 writer 提交 2364d4306，PR #1579（base main，四个 Closes 各自一行）。
+
+四票均在本机复现 RED→GREEN：1224 `judge-routing-dos.test.ts` 硬超时子进程在旧 regex 下两例 ETIMEDOUT（n24≈140字符与12000字符），修后 <1s；语义由 `judge-routing.test.ts` 对已退役 regex 的差异 oracle（curated+400 fuzz）逐字节钉住。1226 reaper 旧码把 solution-only/mixed/decoy 的 staged 资产删除（RED），修后只删真孤儿，且覆盖存量行（reference_md/structured.answers 的内部 URL）。1196 旧码 `TypeError: bucket.push is not a function`（RED），修后 own-key。1236 旧码继承 key 解析/misbehave（RED），修后 named error。
+
+证据：`pnpm vitest run --config vitest.unit.config.ts src/core/schema/judge-routing.test.ts src/core/schema/judge-routing-dos.test.ts scripts/golden-reaudit.test.ts` = 43 passed；`pnpm vitest run --config vitest.db.config.ts src/capabilities/practice/jobs/jyeoo_staged_asset_reap.db.test.ts src/server/questions/detail.test.ts` = 27 passed；`pnpm typecheck` 干净；完整 `pnpm lint` 0 error/297 warnings（基线）；`pnpm build` exit 0。无部署/生产库/付费调用。
+
+未做：不跑完整本机 `pnpm test`（repo 政策，交 exact-head CI Gate）；未合并（父线程负责独立 review/merge/等待窗）。T3 link_pull_request 在本 ACP 不可用（无 T3_ACP_MCP_NODE / acp-mcp-call / t3-code 工具），PR URL 已报父线程。Linear 四票 In Review（非 Done）。capture gate：搜索无重复 actionable follow-up，未新开票。
+
+# 当前交接 — 2026-10-06 SCF批量处置
+
+198票YUK-1121至1318，本轮新增关闭20票。5票由#1578合入9f1e0945c；15票经当前源码与适用测试核验无需改码关闭：1121/1127/1142/1148/1156/1192/1214/1218/1244/1210/1212/1219/1229/1231/1292。逐票来源ID、证据与限制已写Linear。
+
+#1579四票已实施并In Review，不能重复启动writer；父线程43unit及77DB复验通过，其中27DB属于本批、50DB用于settle/restore/conjecture-scores核验，另33epoch/TLS unit通过。独立初审进行中，未合并。1270的ability_global、1217的withheld负例尚缺，不关闭；1238/1258/1273有残余缺陷候选；1187/1265/1314证据不足。下一实施候选1134/1131，1189/1195实际路径核验待裁决。
+
+worker统一OpenCode Go opencode-go/deepseek-v4.1-flash high、full-access，相关源码/票面/测试发送已获授权，凭据/.env/生产数据除外。禁止完整本机pnpm test、生产部署、产品付费调用、嵌套代理和全局/Serena memory写入。
+
+# 当前交接 — 2026-10-06 YUK-1323
+
+工作树/tmp/tlp-yuk1323-delivery，分支fix/yuk-1323-output-compat-delivery，基于a60637d3f移植两个已审查提交。165unit和21独立探针通过，无剩余P0/P1；初审与唯一验证审预算已用完。两次真实MiMo调用发生于a361026b0，最终97369397c离线回放通过，不能称最终HEAD真实调用。集成165unit/typecheck/lint/build通过；PR、exact-head CI与等待窗仍待完成。Laminar YUK-1325在/tmp/tlp-laminar-yuk1325另行实施。无部署/准入。
+
+# 当前交接 — 2026-10-06 YUK-588第一批
+
+588/1153/1132 第一批已合并 #1574/#1573/#1572，Linear Done；本地验证、独立初审与 exact-head CI 全部通过。Owner 更新 bot 无 findings 时免等待规则，见 AGENTS.md。详见 `.remember/yuk588-today-cost-ui.md`。1128 未启动，无部署/付费调用。
+
+# 当前交接 — 2026-10-06 YUK-1047 closeout
+
+PR #1571，分支fix/yuk-1047-closeout。五项及三项修复完成，唯一验证审和真实Solo新build六次同页恢复/ACK/503/CAS/返回互斥通过。父线程64unit/36DB复验通过。首轮CI37449910759除contracts外全部通过。
+
+YUK-1322修复contracts：4e7894f52以固定19列、禁止生产写入替代历史checkpoint的16项过期豁免；父线程102tests通过。73da2bffc仅锁文件升级Seroval1.6.8/proxy-addr2.0.8，clean frozen install、27unit、runtime smoke/typecheck/lint/build通过，audit无high/critical。待推送后新exact-head CI及17分钟窗，再合并关闭1047/1322。review预算已用完，不启动第三轮。未部署/付费，模型未准入保持withheld。保留外部.serena改动。
+
+# 当前交接 — 2026-10-05 PR准备
+
+最新4fd2263d7修paper参考答案与详情/列表反馈隐藏。正常capture已有resolver门禁，本修复覆盖缺可选标记的读取端，未声称常规producer泄露。92DB/43unit/typecheck/lint/build/8audits通过，parent复验26DB通过。2164c42完整CI已绿但新修复须push后再验CI与17分钟窗，评论4184804038/4184804047待push后resolve。1047仍In Progress；无第三审/部署/付费。
+
+
+630df36完整CI37303447957已绿，但晚到P1 reference reveal漏返回derived reference已确认RED并修。34DB/16unit/typecheck/lint和全部build通过，推送新head再验CI与等待窗。无第三审、部署或付费。
+
+
+第二轮CI37302850917在163d3b71d发现新增测试深导入source_verify。改由Practice public导出并由ingestion消费；3ownership unit/27DB/边界/typecheck/build通过，待新push精确CI。未改评分行为或放宽审计。
+
+
+PR #1568首轮CI37298719939失败，任务计数54→55已修226cca21f，7文件9测试迁原生契约和已验证写者清单已修480580028。51unit/58distinctDB/typecheck/build/lint298≤305通过；父线程复验后推送新head。完整CI与最后push17分钟窗重新验收，禁止第三审；原浏览器/模型准入边界不变。
+
+
+YUK-1047正式迁移与三P1修复已提交f6f8f638a，最新main无冲突合入bb269d9aa。唯一验证审确认三P1解决、无新P0/P1，独立30unit通过；review预算用尽。gate修复105DB/57unit、typecheck/build、lint299≤305；同步main后build和两项工具审计再次通过。真实隔离浏览器长文保存刷新、8题到profile、双标签CAS409恢复、模拟503阻止退出及重试成功通过。PR #1568已打开并绑定T3；下一步exact-head CI和最后push后17分钟窗；不部署/新付费，不改.serena/project.yml。详见docs/planning/2026-10-05-yuk1047-placement-repair.md。
+
+# 当前交接 — 2026-10-05 原主线恢复
+
+主线程2b3fe612接手8989635f。4dc02c77收尾线程已释放写入权。工作树/Volumes/YukovalSBak/yukoval-projects/tlp-assessment-entries，fix/yuk-1047-formal-entries。原会话全文与两路初审保存在/Users/yuqi/Documents/Codex/recovered-sessions/2026-10-05-assessment/。初审3 P1，已修buffer completion durable release与photo-only missing guard，40 DB/100 unit通过；placement仍待，只有一次修复验证审预算。无PR/CI/生产/新付费。详细状态见PLAN与2026-10-04-yuk1047-formal-entry-migration.md。保留.serena/project.yml外部修改。
+
+# Current handoff — 2026-10-05 resumed on Mac
+
+Owner已要求接手并推送迁移分支；此前stop已撤销。当前工作树/Volumes/YukovalSBak/yukoval-projects/tlp-assessment-entries，分支fix/yuk-1047-formal-entries，恢复head9beca1aff。旧review-settlement writer与JudgedSubmit删除，ValidatedSubmit保留；源码快照审计迁真实native settle owner。23DB/19unit/typecheck/build通过，边界依赖446→440，未部署/付费。生产诊断发布、probe、ingestion及消费者继续同一1047主线，尚未PR/review/CI，不标Done。历史交接与逐批记录仍见docs/planning/2026-10-05-yuk1047-handoff.md及2026-10-04-yuk1047-formal-entry-migration.md。
+
+# Current handoff — 2026-10-04
+1120/#1557 merged2026-10-04T17:46:45Z main d8e57a805e69e21ffb3fe26bad2bec42acce12e0. 76unit50DB/localgates/independent61unit50DB/exactCI37220574124/17minwindow done. CI82migration34browser actually ran.1120Done,61open after original1047reopened. GitHub CLI401 this turn; connector works, used expected-head squash. git fetch works.
+1047/#1558 merged2026-10-04 18:12UTC main6de5323959f36c2e0a752787d0684b46a9ea269f. 30unit/localgates/independent30unit+2CLI/exactCI37222377773/17minwindow done. CI82migration34browser actually ran. Bounded source evidence still8legacycalls1executor;1047InProgress.
+1047/#1559 merged2026-10-04 18:36UTC main093c0c2418a3dea48a04f409d2af40af0cb76e52.72unit51DB/localgates/independent65unit30DB+2finalfixtureDB/exactCI37224007026/17minwindow done.82migration34browser actuallyran. Frozenpublicbody/private rubric boundary delivered; eightcaller migrationstillpending1047InProgress.
+1045/#1560 merged2026-10-04 19:08UTC main d815df4befc48862fd7357fd1b9836c89e130071.116unit77DB/alllocalgates/initialreview+soleP1verification63unit16DB/exactCI37226077585/17minwindow done.82migration34browseractuallyran.1045Done61open. No prod/paid/dependencychanges.
+Active1091 /workspace/tlp-assessment-joint fix/yuk-1091-joint-input. Formalvalidjoint4assertionsRED thenGREEN. Fixedanchor/fullmemberproof/corejointview/DBfirstcandidate seal/settlev3/read/feedback implemented.138unit136DB(includingmigrationapply/backup)/alllocalgates PASS;82migrationPASS;initialreviewrunning. Rootignored designnotes/RED+lockprobes in .remember/2026-10-04-assessment-group-design-notes.md.1047formal8caller migrationstillpending.
+181/#1556 alreadyDone main0ab54920.766LIGHT/FULL and588UI async questions remain unanswered.1091multihead unresolved. All HOLD/prod/paid bounds unchanged. No dependency chasing. One active implementation line; preserve branches/worktrees.
+
+1091/#1561 initial review completed:96unit64DB, one proven P1 anchor-vs-last-member occurrence. Two formal DB regressions first RED (9 assertions), fixed all current occurrence consumers from validated plan;50DB green. Sole verification passed original2probes+39DB inclv1/v2. Final formal20DB/typecheck/lint/build passed after explicit null guard+Date normalization of JSON FSRS last_review;runtime unchanged. Final-head CI pending. PR-Agent reader chunk suspicion disproved (chunks group IDs, fetches all members); digest hypothetical nonblocking.
+
+1091/#1561 merged2026-10-04 19:51UTC maincd61afabdff84cda6b8260ec3cc9107137e863e4. exactCI37228786465 actual82migration34browser +17minwindow done. Initial96unit64DB found1P1; soleverification original2probes+39DB passed, authorfinal20DB/typecheck/lint/build passed. LinearDone60open.
+1047 model-context inworktree/workspace/tlp-assessment-model-context branchfix/yuk-1047-model-context.4contexttestsRED+7materialtestsRED then84unit72distinctDB/localgatespassed. Frozenpatch/tmp/review-yuk1047-context-frozen.patch ed0c645f initialreviewrunning. Existing8caller216DBbaselinegreen, fullmigrationstillopen. No production/paid/dependency. Groundingignoredroot/.remember/2026-10-04-assessment-entry-grounding.md.
+
+1047/#1562 initial review84unit21DB found1P1 inline original images in prompts/materials/options. Formal3location tests firstRED45soft failures, parser-based fix94unitPASS/alllocalgatesPASS. CommonMark existingreact-markdown nofetch/noadditionaldependencies. Soleverificationrunning. Lastnewhead pendingpush.
+
+1047/#1562 merged2026-10-04 20:18UTC mainad8dad7598eb75e278c77a0f9f5c208e42e9842c.94unit72DB/localgates/initialreview1P1+soleverification3old5new94unit/exactCI37230475644actual82migration34browser/17minwindow PASS.1047stillInProgress60open.
+Active1047native worktree/workspace/tlp-assessment-native-model branchfix/yuk-1047-native-model basedb7239b81 pendingrebase. Explicitnative task+descriptor, frozenassetguard, standalone(noautomaticJevfallback/admission). RealrunnerDB missingMiMousagecost firstRED1failed5passed thenfixusagepresence;unknownvsactualzero preserved. Finalgatesrunning. No paid/prod/dependency.
+
+Nativecost proof extended to realpi normalization: /tmp/yuk1047-native-adapter-red.log 2failed1passed41skipped then44adapterPASS. usage_observed false onfailedplaceholderzero/noassistant; collector+price resolver distinguishmissing fromactualzero.374distinctunit48DB; finalgatesrunning, initialreviewnotstartedyet.
+
+1047/#1563 initialreview2P1 fixed: failedknowncost via AgentRunError; missing successfulusage via native onProviderStreamEvent observation.3formalDBfirstRED then10DBGREEN. Postfix281unit30DB/typecheck/lint299/build/11auditsPASS. InitialCI37232144534failed exactjudgeinventory four→five; assertion fixed. Soleverification+newheadCI pending.60open, eightformalentriesstilllegacy.
+
+1047 formal entries WIP /workspace/tlp-assessment-entries branchfix/yuk-1047-formal-entries. Commits4ed66fbe/a6d2c17c/588dbc34/bcdbf171/d82ac7a5/165a1e43; 06e8031b removesoldpaperexecution.23:55UTC94DB/typecheck/changedBiome/buildPASS; regrade replay+masteryprogress+native notes fixed. Nativepaper fixtures helper tests/fixtures/assessment-paper.ts. paper-cycle/provenance/API fixtures stilllegacy andmustmigrate. Unit_dimension local deterministic conversion mustpreservepreAI math capability; donotweaken expectedcorrect tounsupported. NoPR/push/review/CI, no paid/prod/dependency. Continue1047eightentry/removal/consumers; user /goal dontstop. Otherholdsunchanged.
+
+2026-10-05 00:05UTC native numeric_unit_conversion comparator+publisher metadata frozen.128unit39DB/typecheck/changedBiome/buildPASS, genAPI/Postmanpass nochangedgenerated. Model provenance paper4DBpassed withrecordedofflineexecutor. Numericpolicyexplicitreference/tolerance only, no5%invention/nohistoricalpartials; oldnumeric_toleranceunchanged. Nextpaper-cycle/API fixtures thenremainingentries/consumers. Unpublished WIP; do not stop atcheckpoint.
+
+2026-10-05 00:25UTC paper cycle/API/UI fixtures migrated.63DB93unit/typecheck/changedBiome0errors12warnings/build/PostmanPASS. Legacy draft rejects409; unboundhistoricalpaperreadonly; humanreadablefrozenresponsecapture. UnpublishedWIP continue1047solo/durable/rejudge/probe/ingestion/consumers; nopaid/prod/dependency.
+
+2026-10-05 00:45UTC native solo HTTPguard+oldinline/producerdeleted; workerstilllegacyjudgeSubmit. Frozenlearning_scopeinoriginalsubmission fixes3REDtargets; regrade/emptydomaincovered. Nullfirstsendnoqueuedmarker/refund.140distinctDB+final26/typecheck/changedBiome0errors12warnings/build/PostmanPASS; boundarytightened450→448 noexemptions. Native fixture tests/fixtures/assessment-solo.ts. Continueworker/rejudge/diagnostic+remainingoldsolo suites, probe/ingestion/consumers. WIPunpublished noPR/review/CI/paid/prod.
+
+2026-10-05 00:55UTC deletedjudgeSubmit+legacyworkerexecution/providerfallback/currentrowrebuild. Legacyunfinishedqueuehistorical_unknown; originalpendingpreserved; historicalcompletedrecoverykept.118distinctDB30statusunit/typecheck/changedBiome0errors8warnings/build/Postman/boundary447PASS. Newtests/fixtures/native-judge-run.ts offlineactualnativeworkerfixture. Oldsolo mainsuite notmigrated; review-settlement historichelpers/typesstillkept forlegacytests. Nextrejudge/probe/ingestion anddiagnostic/nativeconsumers; unpublishedWIP dontstop.
+
+2026-10-05 01:12UTC rejudge旧execution/revert删除；legacy API409/queuedheld有界幂等，native candidate/CAS/settlement唯一执行。59DB/typecheck/changedBiome/build/PostmanPASS，boundary447→446。tests/fixtures/native-appeal.ts真实original+recorded模型，20worker涵盖late replay/atomicrollback/KCmerge/userFSRS。下一步probe签名判别与冻结发题/诊断消费者/ingestion+oldsolo suite。无PR/push/review/CI/付费/生产。
+
+2026-10-05 01:29UTC native诊断HTTP retry/ResponseSet +冻结元数据消费者/详情恢复/lease recovery完成128distinctDB+final55DB/84unit/typecheck/Biome12warnings/build/API/Postman/boundary446PASS。Agency订阅v3 assessment_activation真实eventowner已登记；G锁实现移db/learning-state-lock.ts共享，server只reexport（无baseline提高）。仍需生产诊断publication和不可信manual/assisted/unsupported head撤销旧passed的显式pending语义（本检查点只跳过，不能发布此缺口）；probe/ingestion+oldsolo suite/归因消费者继续。无PR/push/review/CI/付费/生产。
+
+2026-10-05 01:44UTC native诊断held+原答correct v4完成；manual/assisted/unsupported或原答mark_wrong/retract清旧结论，可信/restore恢复，晚到当前状态幂等。65DB22unit/typecheck/Biome0error8warning/build/API/Postman/boundary446通过，之前held25unit。下步study-context原生选项/配对/布局冻结投影，再生产诊断/probe/ingestion+oldsolo fixtures/消费者。无PR/push/review/CI/生产/付费，1047InProgress继续。
+
+2026-10-05 01:52UTC studycontext frozen publicDTO→hint，matching左右字段与跨槽ID串用已修。2unit42DB/typecheck/Biome0error1warning/build/boundary446PASS。TeachingTurn仍textonly，未声称图片字节接通。下步native难度labelhook接线：settle.plan.difficultyLabelStreamItemId硬null，原生缺现有label写者，须recordOriginal在activation事务settle前+从原始attempt读取stream ID并纳入replayplan，central executePlan savepoint写label(stl ID)使revert/replay有效。然后旧solo主suite迁移。无PR/push/review/CI/paid/prod，继续1047。
+
+2026-10-05 01:59UTC native难度label修复完成157distinctDB/typecheck/Biome0error4warning/build/boundary446。activateSubmissionCandidate.recordOriginal在settle前同事务写capture，scope从原答stream ID冻结进replayplan，executePlan savepoint调现有labelhook绑定stlID，revert已有删除/重放可用。新9DB覆盖正误、显式FSRS、selfreport/assisted排除、缺/错流、真实SQL失败隔离、manual替换和later重放。下一步旧submit/advice suite仍legacy需迁，诊断producer/probe/ingestion/归因/多模态教学未完成；无PR/push/review/CI/paid/prod，继续1047。
+
+2026-10-05 02:11UTC oldsubmit/advice主suite改真实native55HTTP，诊断12/校准9独立覆盖替代。rate RED200→429修recorded beforeClaim(localcheckbeforeclaimtx)、ModelExecutionNotStartedError corepropagates、serviceunwrapcause，未执行拒绝不封record，原件可重试已sealed不耗token。139distinctDB+66coreunit/typecheck/changedBiome0warning/build/boundary446PASS。新fixture tests/fixtures/native-solo-http.ts。下步旧review-settlement.ts仅tests引用；迁review-settlement.db6与submit-late-arrival.db8后删除旧writer+JudgedSubmit类型；probe/ingestion/diagnosticproducer/消费者仍待。无PR/push/review/CI/paid/prod，继续1047。
+
+2026-10-05 本机续接诊断生产发布：kernel共享publisher/normalizer、V2冻结签名、缺签名待复核、未准入withheld无FSRS/stream、one-time强制claim与原件租约守恒完成。44+33+12+30 DB/151unit/typecheck/build/boundary440通过。下一步Probe/ingestion/native consumers/registry；无PR/paid/prod，1047继续。
+
+2026-10-05 Probe native production接线完成：draft publication→admitted queue实际issuance→图片/文本原件→native candidate→独立签名probe_result。无练习activation，通用激活拒绝probe容器；70DB+151unit/25lifecycle/6queue/18真实代码闭环离线模型端口、typecheck/build/Postman/boundary439通过。继续ingestion先持久化/native failure consumers/准入registry；无PR/paid/prod。
+
+YUK-1047续：共享原生评分已拆为短事务读/事务外模型/短事务封存，同组session锁保留幂等与attempt串行；22+34 scoped DB、typecheck/build通过。ingestion原件捕获与消费者仍未完成。
+
+2026-10-05 续接：ingestion原件捕获/原revision重试/确定性收录/撤回重放；native归因与变式冻结内容+晚到有效判复核；失败统计/知识工具/待复习候选/关联计数/cache接线。12capture44diagnostic40attribution30variant80reporting4native（重叠）通过；typecheck/build/boundary437通过。余native复习次数/rating与CSV纯快照、registry准入census/最终gates/reviewPRCI。T3 occurrence-export-design任务完成已读，提出按evaluation_group存活FSRS效果去重，不将rating当correctness。CoachHub现有UI语义问题已PARKED待Linear去重。全部工作仍未部署/付费，主writer未动.serena。
+
+---
+
+# 当前交付 — YUK1364 853镜像验收
+
+85345ac0c9d14bc748c10928e2adb934f5891a54准确ARM64镜像sha256:9b76e7cb746dc51f1f661adba65041d514502f041e20111ae91defe3679be25c已实际验收。合法V2探针brief/list显示原题，只GET；正常publication保留原proposal/spec/criterion而替换为JevScoringDecisionTask的seq1/2均HTTP409 probe_execution_contract_mismatch并排除展示。三个窗口22表完整快照不变，submission/evaluation/provider/task/cost均0，没有有效答案POST。证据runtimeRoot/yuk1364-preflight-85345ac0c/evidence/acceptance-summary.json。已保留最终隔离dump，清理自有app/PG匿名volume/network，核owner释放锁并通知双方；主release未变、四服务healthy。当前CI/合并/发布待完成。本次无新follow-up，旧1374/1375/1329仍保留。
+
+以下为历史记录。
+
+# 当前交付 — YUK1364 执行契约修复收回
+
+执行契约修复a5e623045960dd3a40d468f77f37111b15188bbc已收回，writer释放。生产validator校验固定executor、单一assignment、slot/evidence绑定、1分/sum/blank与escalation；V1/absent历史human_review和动态slice/cost保留。六个RED经真实formal dispatcher到离线Jev边界，V2持久化后422、V1/absent错误分数被采纳；不等于真实provider输出。377DB/130unit/静态构建与3audit通过；父核完整manifest hash并用Node24重跑196DB通过。证据/tmp/yuk1364-execution-contract-evidence.md及manifest，父日志/tmp/yuk1364-execution-parent-db.log。新head CI/准确镜像HTTP尚未执行，旧77c验收不覆盖本修复。当前无锁/自有服务。无新增可执行follow-up，1374/1375与1329保持既有归属。
+
+以下为历史记录。
+
+# 当前交付 — YUK1364 execution plan P1
+
+最终 e468492d3 的 CI37653519120 已全绿，审查前6threads resolved，但合并前再次读取发现新P1 PRRT_kwDOSXB98s6qAM6d：冻结execution_plan允许非探针executor/task，可能先错误评分再422或V1采纳。禁止合并/发布e468。T3 codex gpt-6-astra high 唯一码writer task yuk1364-executor-contract-repair-20261008-v1 正在生产/冻结/消费矩阵与RED复现后修复，不是第三review。父仅docs/ops，不能并发测试或编辑源码。
+
+当前无部署锁、无自有容器。候选 deployment-yuk1364-e468492d3 helper未执行，无release-gates-verified.json。新增verify_mem0_archive完整目录/WAL恢复校验合成测试通过，已记YUK1329并通知1365owner；旧main-file-only integrity ok仍能漏WAL行，但不推断生产损坏。主live6e是e468祖先，listener/worker/package/lock相同。77c镜像HTTP旧证据不覆盖未来新修复。
+
+以下为历史记录。
+
+# 当前交付 — YUK-1364 77c 镜像验收
+
+77c7df79c/image993fcdd5fdd6准确镜像HTTP已完成：正常publication只改statement的seq1/2均409 probe_criterion_mismatch，brief/list排除，22表前后快照相同。首次fixture因JSON字段顺序比较失败，父shell未停误发合法答案422，产生隔离submission/evaluation各1；provider/task/cost0。此失败完整保留，后续负例以这1/1为baseline，未清除数据刷绿。合法原题GET可见。全部证据及最终dump在runtimeRoot/yuk1364-preflight-77c7df79c。40项证据hash封存，自有app/PG/volume/network清理，核owner释放锁并通知两owner；主fd8四服务healthy、release不变。
+
+准确head CI待完成，所有既有P1已push后reply/resolve；无需第三review。后续按正常门禁合并、停写备份恢复与Agent TEST发布。此后文档提交不改77c应用源码，发布仍记录buildSourceRevision=77c。没有新增产品follow-up；1374/1375仍独立未修。
+
+以下为历史记录。
+
+# 当前交付 — YUK-1364 V2 criterion 修复收回
+
+ba49af22de08aac685ceb45a50ab1a42de7bf3c4 已提交完整 canonical criterion 共用修复。子任务 writer 已释放，无 pending child runs。父核验 manifest 全部45项hash，并实跑 V1 + complete-spec 两文件112DB通过，日志 /tmp/yuk1364-criterion-parent-db.log。父测试使用当前 Node26.10.0；镜像仍按项目 Node24 构建。子任务275DB/130unit/typecheck/lint/build及3audit通过，schema audit未运行未称PASS。没有新增独立review。
+
+下一步提交本三份父文档、push并回复resolve4209163971，然后准确新head CI及镜像HTTP验收。此前586镜像证据不覆盖此修复。尚未操作runtime或取得锁；任何服务操作先实际核锁、原子mkdir并通知两owner。Agent TEST ONLY。
+
+以下为历史记录。
+
+# 当前交付 — 2026-10-07 16:15Z YUK-1364
+
+586c3e456/imagecfe16253598dd70b4d0df055cddec429ec67c355e6260f3b7f3e9f2c55168a3e的V1隔离HTTP完成，41证据hash已封存到runtimeRoot/yuk1364-preflight-586c3e456/evidence。合法seq1/2显示原题面，unissued409，正常reference edit触发更早probe_snapshot_changed409而非shared-validator HTTP分支；四窗口22表无写及评分相关表0行。已清理自有app/PG匿名volume/network，核owner释放锁并通知双方；主fd8四服务healthy、current-release未变。
+
+GitHub新P1 4209163971 / PRRT_kwDOSXB98s6p_Wf_确认V2 criterion.statement_md漏比较，却经assessment-model-assets传模型。不得merge/deploy586。新唯一writer task yuk1364-v2-criterion-repair-20261008-v1，T3 codex/gpt-6-astra/high，先生产-冻结-消费完整criterion矩阵，再共享canonical边界修复。非第三review。父只改PLAN/.remember/本planning文档，无并发代码测试；子任务完成自动通知。旧HTTP不覆盖新修复。
+
+上一条gh查询已终止：pr view因unexpected EOF失败，reviewThreads成功获取新P1；session64033已结束。镜像build session32980已成功，所有本轮exec session结束。无部署锁/自有运行服务。新的release helper尚未准备，不执行旧70b/9a helper。Linear已同步InProgress、两owner已收到新P1状态。
+
+父已准备 /tmp/yuk1364-v2-criterion-runtime-fixture.ts 及notes.md：只在first issuance前通过正常publication改statement_md，保留question/version/prompt/reference/proposal及embedded spec，避免早期snapshot guard。旧归档compile通过，未绑定候选执行会在import前拒绝；尚未运行DB/HTTP。
+
+以下为历史记录。
+
+# 当前交付 — 2026-10-07 16:02Z YUK-1364
+
+V1修复faf2e66b012e3725df533189e58ad2dab31de188已交回，源码writer释放。281DB/82unit/typecheck/lint/build及10audit通过；schema audit在准确base相同失败，父已核实绝对路径test-storage误杀并登记YUK-1375、通知主线。父核对23日志与20build源码hash，新V1/V2两文件重点100 DB已通过。尚未push新head/CI/HTTP/merge/deploy。父现在唯一writer。
+
+V1 HTTP scratch /tmp/yuk1364-v1-http-runtime-fixture.ts已准备但未绑定，执行会在import前拒绝；待准确最终head归档后替换HEAD和所有9a路径，必须重新bundle。真实HTTP只做V1 seq1/2可见及坏reference409，不POST有效答案。旧9a/70b运行证据不覆盖新修复。任何runtime动作先重新核验并原子取锁通知两owner，Agent TEST ONLY，不清库、不私人R2、不DLQ重放。
+
+以下为历史记录。
+
+# 当前交付 — 2026-10-07 15:50Z YUK-1364
+
+PR1591 head70bd102bd CI37645299169已绿且CLEAN，但P1 4208871927确认历史V1 probe spec被误按V2要求criterion.probe_spec，禁止合并当前head。T3唯一源码writer yuk1364-v1-provenance-compat-repair-20261008-v1仍在运行，先做absent/V1/V2契约矩阵再修复；父仅处理disjoint文档/协调。新P2列表LIMIT先于provenance过滤已登记YUK-1374，未修。主线和1365已通知当前无runtime操作/持锁，下一次仍重新核验锁并原子获取。9a隔离HTTP和70b制品等价证明只覆盖旧代码，不能覆盖待完成V1修复。
+
+父已准备 /tmp/yuk1364-v1-http-runtime-fixture.ts 和对应 notes.md。仅旧归档编译通过，并实测未绑定新候选时在导入应用前拒绝执行。待writer完成后绑定准确源码和镜像，再做V1 seq1/2可见、漂移409/22表无写的真实HTTP；当前未启动任何服务。
+
+以下为历史记录。
+
+# 当前交付 — 2026-10-07 15:35Z YUK-1364
+
+9a43085a0/image d4c166346ad7隔离HTTP已通过native seq1/2漂移409、合法seq2显示、22表无写及legacy历史/ack。15:18:17Z清理自有容器/volume/network并核owner释放锁，主fd8四服务healthy未变。证据runtimeRoot/yuk1364-preflight-9a43085a0/evidence/acceptance-summary.json与lock-release.json，65证据hash核对。
+
+原PR CI37642044307各job成功但汇总job未生成，整体failure且GitHub拒绝retry。手动完整CI37643395029在9a准确head全绿。普通expected-head squash仍被base policy拒绝；未admin绕过。现提交真实运行验收文档重触发PR gate，源码未变；下次核最终head/CI/image对应关系。部署脚本deployment-yuk1364-9a43085a0只准备未执行，缺release-gates-verified.json且要求release phase的本线程锁。
+
+以下为历史记录。
+
+# 当前交接 — 2026-10-08 JST YUK-1364
+
+完整spec P1修复已交回，代码9d962371f，唯一writer已释放。父核对9 source/21 log/8 artifact哈希和实际diff，独立三文件113 DB通过；writer270 DB/136 unit/typecheck/lint/build及scoped audits通过。原proposal的完整sequence-specific契约参与active/list/answer/completed校验，不能只匹配prompt/reference。PR1591待推送本次文档与代码、回复4208030193、新exact CI和隔离监听HTTP。现无自有runtime服务/部署锁；下一次runtime操作前必须实际复核并原子取锁、通知1365与主线。
+
+1359已补齐28个路由责任表，1358 Linear波次纳入mistakes且admin更正8页，主线已确认。root及其他owner树不动。原66e发布脚本已封禁且从未执行；必须使用新提交重新构建镜像。1365正文/取消及1366 memory恢复由其owner负责，本线程不付费重试或重放DLQ。用途Agent TEST ONLY，永不再次清库。
+
+以下为历史记录。
+
+# 当前修复集成 — 2026-10-07 14:13Z YUK-1364
+
+冻结rubric P1正式交回，代码3d1134bbf；191DB/72unit/typecheck/lint/build、Postman生成与两audit通过，父核对20项文件/日志hash。writer已释放，父当前唯一writer；正常merge main6e54da8df，仅PLAN/本文件文档冲突，合并50954a9c4后父独立124DB/77unit/typecheck/lint/build全通过，待新push/CI与最终镜像HTTP。旧ac4候选基线与新head验收分开；14:03Z已清理并释放锁，1365负责PR1594发布，不碰runtime。
+
+以下为历史记录。
+
+# 当前集成 — 2026-10-07 14:04Z YUK-1364
+
+ac4b0f265 CI全绿，但新P1 comment4207603575要求active frozen rubric/proposal一致性；唯一源码writer task yuk1364-frozen-basis-repair-20261007-v1实施中，不第三审。main df08399ff预检冲突仅PLAN/本文件，须writer释放后正常merge。父只做ops与非重叠docs。ac4独立容器业务HTTP基线已完成：未发题不答题/POST409，issued冻结面、GET8表无写、suspend排除、合成历史结果正常edit后保留、ack404/201/200且1事件；没有原生assessment refs/provider调用。fixture首次user actor_ref错误的部分写入保留，新run ac4c成功；不存在主库清空。14:03:33Z清理自有app/PG/migrator/internal network并核对owner释放锁，已通知1365和主线；主runtime仍df083/image28f。证据在yuk1364-preflight-ac4b0f265/evidence/baseline-summary.json和lock-release.json。新P1修复未完成，后续只源码/docs，PR1594由1365重新取锁发布。不要把本状态当作未来实际锁/运行状态。
+
+以下为历史记录。
+
+# 当前集成 — 2026-10-07 YUK-1364 / YUK-1359
+
+PR1591 a6da290a7 exact CI全绿、无未解决review thread，但main26f101581合入PR1584产生文档冲突。已正常merge b62c01dc6，保留依赖变化及双方有效状态。合并后冻结安装、309 DB/74 unit/typecheck/lint/build通过，待新CI；未部署。1359首轮调查提交1ffe53c12，父抽查并纠正旧ADR状态和路径笔误。独立1364镜像构建成功，runtime验收未启动：deployment.lock属于thread bed93b71 / YUK1365，不能接管。T3通知请求回执不可确认，线程读取仍等待。
+
+以下为历史记录。
+
+# YUK-1364 完成结果来源修复进行中 — 2026-10-07
+
+PR1591 GitHub P1 4206851930 已实际复现：正常 editQuestion 的 KC/draft/kind/choices 更新不应使已完成的正式发题结果失效。修复任务已交还，代码提交b7badc0bc。299 DB/72 unit及静态/构建通过；父已核对五文件hash，独立94 DB通过。已正常合入主线42987dfd7为67f465e79，只有本文件和PLAN文档冲突，保留双方有效记录。合并后冻结安装、104 DB/74 unit/typecheck/lint/build通过，待push新CI。Agency 新 completed-probe-provenance 共享冻结记录与评分绑定校验，Shell调用；历史未发题规则与撤回语义保留。不得按旧CI合并；未部署。
+
+以下为历史记录。
+
+# YUK-1364 连续复验修复与 YUK-1356 交接 — 2026-10-07
+
+PR1591已创建并link/watch，head8eb10cb8a；本地另有纯文档11eef5749/e44769edf，待随修复push。唯一验证审发现第二条P1：probe-evidence连续复验依赖仍读mutable题面。writer任务yuk1364-recurrence-repair-20261007-v1已完成并释放；两条完整链路RED→GREEN。最终248DB/72unit/typecheck/lint/build通过，父核对hash并独立85DB通过。生产guard未改，fixture最终通过；修复8264556d6待push与新exact-head CI，不启动第三审，未部署。
+
+YUK1356只读消费者调查已交付docs/planning/2026-10-07-yuk1356-operation-seams.md，Linear In Progress。主线57961995已在独立树启动唯一writer；本线程只负责接口调查和1364收口，不重复写1356。注意worker→HTTP claim release依赖、Pi尚无submit tool、用户原件来源、Pi队列投影/coverage与HTTP排序差异。以下记录为历史。
+
+# YUK-1364 代码提交准备 — 2026-10-07
+
+P1修复writer已释放。124 scoped DB/52unit/typecheck/lint/build通过，父独立23DB通过，送审4文件hash一致。唯一验证审yuk1364-verification-review-20261007-v1运行中；PR待创建/CI。不允许第三审。未部署，1363Done、存储锁释放。迁移主线已实际启动1352/1355隔离writer；本线程负责1364收口，避免重复writer。
+
+# YUK-1364 初审修复 — 2026-10-07
+
+独立初审发现 P1：loadProbeBrief 已使用冻结题面，但 validateAckableOutcome 仍读取 mutable question，可能使新支持的 legacy 已发题场景作答后结果消失、ack409、report 判 corrupt。父核对源码，修复子任务 yuk1364-p1-repair-20261007-v1（Codex gpt-6.1-sol xhigh）独占代码 writer，先完整隔离复现再修。修复后最多一次验证审，不启动第三审。当前未提交的代码4文件保留；此前90DB/52unit/typecheck/lint/build及父独立16DB通过不足以越过此P1。生产仍f3，1363已Done且锁释放。Owner新增“迁移彻底干净、结构优雅易维护”已同步自主交付主线57961995。
+
+# YUK-1363 / YUK-1364 接续 — 2026-10-07
+
+独立 SeaweedFS 测试附件存储已上线，真实上传/读取/删除、去重引用、负向和重建持久化通过，独立复核无P0/P1；volume.max由4改16，最终配置下持久化/CRUD复验通过，12:08Z锁再次释放。current-release 指向 deployment-test-storage-20261007；app/worker 仍 f3/e681，不再清库、不恢复私人 R2。主服务健康，11:57Z 已释放部署锁并通知自主交付线程；复核只读。YUK-1364 子任务独占代码 writer，父线程只做 ops/文档。工作树 tlp-yuk-1363-test-storage，branch ops/yuk-1363-test-storage，基于57fbc95fc；root脏树不动。详情见 docs/planning/2026-10-07-agent-test-storage.md。以下为历史记录。
+
+# 当前部署覆盖指令 — 2026-10-07 YUK-1362
+
+Owner 明确要求清空当前本地业务库，改作 Agent 开发测试；只有后续明确说“为我日常使用的部署”才切换日用。主 app/worker 仍为已部署镜像 f3bfff2cf，未引入 PR1584/1588 候选。清空前 PG/Mem0 已备份，恢复101表计数一致；loom 已 DROP/CREATE，115项迁移与 epoch active 通过，主服务健康。新 Mem0 卷，无旧会话/题目/判分/模型调用数据，3条 genesis 是系统初始化。
+
+当前用途和运行位置以私有 runtime 的 environment-purpose.json、current-release.json 为准；目录 `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/deployment-agent-test-20261007`。私人 R2/隧道凭据已从新 app/worker 移除，独立测试附件存储未配置。原自动运维任务保持 disabled，提示已更新用途。旧数据备份不可自动恢复或重放。独立只读核验通过，部署锁已释放。详见 docs/planning/2026-10-07-agent-test-environment-reset.md。以下发布/数据计数均为重置前历史。
+
+## 主线 P0 gate 原交接（历史）
+
+# 当前交接 — 2026-10-07 YUK-1338 Pi + DBOS 隔离 gate
+
+## 主线依赖集成原交接（历史）
+
+## 合入主线的历史交接（不表示当前运行状态）
 
 # YUK-1365 发布接续更新
 
