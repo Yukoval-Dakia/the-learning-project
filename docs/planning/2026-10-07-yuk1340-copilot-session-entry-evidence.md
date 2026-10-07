@@ -193,3 +193,54 @@ T3 preview status/open 再次明确返回 automation host 不可用，因此以�
 七项年龄场景和四项既有场景全部通过，未处理 API 请求均为空，只有预期的合成 session POST，无生产数据写入、消息发送或模型调用。父线程目视核对过期新建、24h边界续接与窄屏历史截图，随后停止自有 preview PID47241。脚本、状态 JSON 与 PNG 分别位于父工作树 `.remember/evidence/2026-10-07-yuk1340-p1-browser/` 和 `2026-10-07-yuk1340-p1-existing-browser/`。冻结日期仅为测试夹具，不是用户学习记录。
 
 MiMo 唯一 P0/P1 验证审固定上述源代码提交进行中（`yuk1340-session-entry-review-r2-20261007`），当前不能称独立验证审通过。后续提交仅补本证据和 PLAN；仍需新 head CI、等待窗、合并与生产验收。
+
+## Retained automatic selection P1 repair, implementation recovery
+
+Verified comment: [4200906261](https://github.com/Yukoval-Dakia/the-learning-project/pull/1583#discussion_r4200906261), thread `PRRT_kwDOSXB98s6prQzQ`. Writer started from clean `b6c488ed5eba6b5db31ef670adb84879bfe55fc3` in `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1340-session-entry`. The parent revoked the prior writer and owns push, CI, review handling, merge and production acceptance. No new review round, delegation, Linear operation, paid call or production access was authorized or performed here.
+
+### Result and owned changes
+
+- Sessions GET now returns authoritative ISO `server_time`; declared Zod contract, generated UI response type and Postman collection match. The existing owner is `api/sessions.ts`; `server/sessions.ts` does not exist.
+- Each drawer opening owns a separate React Query request. Only a successful fetch after that observer mounts can authorize automatic bootstrap, turns replay or send. Previous cached lists still support explicit history selection. An earlier open's late response cannot authorize this opening.
+- Retained automatic active/idle and automatically created sessions are rechecked against the server's 24h cutoff. Switching automatically clears the old message and skill context through the existing selection path.
+- Explicit history/new conversation and original pending/active-run recovery retain their session semantics. Pending retries preserve the original normalized body and Idempotency-Key. Server permission for explicit old idle remains unchanged; ended history stays read-only.
+- Failed fresh loading keeps automatic send disabled and offers `重试加载` and the existing explicit new-conversation action. Selection revision prevents a late create from stealing a repeated explicit selection.
+
+Owned files: CopilotDock and its session-entry/durable-retry/tool-use tests; Copilot API sessions, contracts and contract DB test; generated API schema; Postman source and generated collection; four shipped-browser session fixtures; YUK-1340 preflight and this evidence document. No new database schema or subsystem.
+
+### RED and GREEN evidence
+
+All commands ran in this worktree using Node `24.19.0` from `/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin` with pnpm `11.13.1`. No local full `pnpm test` was run.
+
+| Command | Observed result |
+| --- | --- |
+| `pnpm vitest run --config vitest.unit.config.ts src/capabilities/copilot/ui/CopilotDock.session-entry.unit.test.tsx` before source edits | RED, 5 failed / 13 passed. Retained automatic idle and active crossed the cutoff on reopen; slow client clock reused expired idle; failed fresh fetch lacked retry; old open's in-flight request prevented a fresh second-open request. |
+| `pnpm vitest run --config vitest.db.config.ts src/capabilities/copilot/api/contracts.db.test.ts -t 'creates and lists Copilot sessions'` before source edits | RED, 1 failed / 5 skipped, `server_time` was undefined. |
+| `pnpm vitest run --config vitest.unit.config.ts src/capabilities/copilot/ui` after repairs | GREEN, 19 files / 135 tests. Entry file has 22 cases, using a real React Query client and real CopilotDock. |
+| `pnpm vitest run --config vitest.db.config.ts src/capabilities/copilot/api/contracts.db.test.ts src/server/session/conversation.test.ts` | GREEN, 2 files / 37 tests, real disposable Postgres. Server clock is canonical ISO and between request/response timestamps; existing explicit conversation semantics remain covered. |
+| `pnpm typecheck` | exit 0 |
+| `pnpm lint` | exit 0, 297 existing warnings, no errors |
+| `CODEX_FULL_GATE=1 pnpm build` | exit 0, SPA + API + worker + migrate |
+| `pnpm gen:postman`, `pnpm gen:api-client` | exit 0; expected `server_time` generated changes included |
+| API contracts/client/client usage, capability boundaries, architecture deepening, partition, schema, provider lanes, profile, task census, draft status and draft status reads audits | all exit 0 after staging the owned generated schema for the client drift audit |
+
+Entry regressions also cover a cached retained selection waiting for reopening's fetch, explicit old idle despite fetch failure, exact pending retry identity, automatically created session age on reopening, explicit new-conversation recovery, a late create after selecting away and back, late old-session message isolation, and original active-run recovery without a second chat POST. Existing durable retry and shipped-browser cases cover ambiguous 202 acceptance and delayed responses.
+
+Check failures during iteration were resolved: the first expanded UI run failed its new active-run test because its snapshot fixture incorrectly returned no active runs, and was interrupted when two legacy query mocks returned new arrays every render. The final fixture reports the real active run and stable query data; the complete 135-case rerun passes without unhandled errors. The initial API-client audit exited 1 because its drift check compared the expected unstaged generated schema to HEAD; after staging that exact owned change, regeneration and drift checking exited 0. The ordinary build command was rejected by workflow-guard; the guard's documented deliberate-final-gate flag was then used. Git danger hooks were not bypassed.
+
+Raw logs remain in this worktree under `.remember/evidence/yuk1340-retained-*` and `yuk1340-server-time-red.log`. Historical fixture CI RED and b6 CI GREEN were already recorded by the parent and were not rerun to reconstruct evidence.
+
+### Owned built SPA and browser acceptance
+
+Command: `USABILITY_BASE_URL=http://127.0.0.1:18983 pnpm exec playwright test --config playwright.usability.config.ts` using Node 24. Result: **36 passed, 30.7 seconds**. Both T3 preview status/open explicitly reported no automation host; Playwright was the supported fallback.
+
+Process `27806`, started 2026-10-07 09:57:25 UTC, ran `node dist/server.cjs` with cwd equal to this worktree. Port 18983 was free before launch. The process used a cleared environment with a placeholder database at `127.0.0.1:1`, synthetic internal token and `RW_WORKER=0`, serving this worktree's `web/dist`. Expected database-refusal startup warnings did not invalidate the fixture-backed browser run. All test business API responses came from synthetic browser fixtures, and the separate scoped DB suite used disposable testcontainers.
+
+Served HTML names matched local HTML, and fetched assets matched local bytes:
+
+| Asset | SHA-256 | Bytes |
+| --- | --- | --- |
+| `/assets/index-DRQTJGlc.js` | `784d889d75db7d2e9d779c3fc605103803a30df15e042bb01c1a2cf2b2db3de4` | 476932 |
+| `/assets/index-CaK2AAhq.css` | `c184ca6da8f3e6221e691009163fd7c2d5beac9e232c5cebe5fcedd3568b5a47` | 279943 |
+
+Asset proof is `.remember/evidence/yuk1340-retained-assets.json`. PID 27806 was stopped with SIGTERM after acceptance. No browser watcher remains. This proves the owned built UI against API fixtures and scoped server/DB contracts, not production or model-output acceptance. Parent owns integration and tracker capture; no new independent actionable follow-up was found beyond the existing YUK-1343 race/recovery coverage.

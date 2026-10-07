@@ -147,6 +147,7 @@ test('Copilot accepts consecutive messages and restores each run without cancell
     if (path === '/api/copilot/sessions')
       return route.fulfill({
         json: {
+          server_time: new Date().toISOString(),
           sessions: [
             {
               id: sessionId,
@@ -273,6 +274,7 @@ test('Copilot recovers ambiguous acceptance after reload with the original key a
     if (path === '/api/copilot/sessions')
       return route.fulfill({
         json: {
+          server_time: new Date().toISOString(),
           sessions: [
             {
               id: 'ambiguous-session',
@@ -399,6 +401,7 @@ for (const transport of ['persistent'] as const) {
         if (path === '/api/copilot/sessions')
           return route.fulfill({
             json: {
+              server_time: new Date().toISOString(),
               sessions: [
                 {
                   id: 'session-42',
@@ -528,6 +531,7 @@ for (const transport of ['persistent'] as const) {
       if (path === '/api/copilot/sessions')
         return route.fulfill({
           json: {
+            server_time: new Date().toISOString(),
             sessions: [
               {
                 id: 'session-42',

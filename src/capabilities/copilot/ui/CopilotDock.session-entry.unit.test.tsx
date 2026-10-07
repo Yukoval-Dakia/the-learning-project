@@ -14,28 +14,39 @@
 //   3) 显式查看历史保持只读 + 可见「开始新对话」，无隐藏自动历史变更
 //   4) 异步 bootstrap 建会话不抢用户在等待期间的显式选择（race）
 
-import { act, cleanup, render, screen, waitFor, within } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  act,
+  cleanup,
+  render as renderComponent,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { apiFetchMock, apiJsonMock, consumeDurableMock, sessionsQueryState } = vi.hoisted(() => ({
-  apiFetchMock: vi.fn(),
-  apiJsonMock: vi.fn(),
-  consumeDurableMock: vi.fn(),
-  sessionsQueryState: {
-    data: null as {
-      sessions: Array<{
-        id: string;
-        status: string;
-        title: string | null;
-        created_at: string;
-        updated_at: string;
-      }>;
-    } | null,
-    refetch: vi.fn(),
-  },
-}));
+const { apiFetchMock, apiJsonMock, consumeDurableMock, sessionsQueryState, drawerState } =
+  vi.hoisted(() => ({
+    apiFetchMock: vi.fn(),
+    apiJsonMock: vi.fn(),
+    consumeDurableMock: vi.fn(),
+    drawerState: { open: true },
+    sessionsQueryState: {
+      data: null as {
+        server_time?: string;
+        sessions: Array<{
+          id: string;
+          status: string;
+          title: string | null;
+          created_at: string;
+          updated_at: string;
+        }>;
+      } | null,
+      refetch: vi.fn(),
+    },
+  }));
 
 vi.mock('@/ui/lib/api', () => ({
   ApiAuthError: class ApiAuthError extends Error {},
@@ -55,22 +66,17 @@ vi.mock('@/ui/lib/api', () => ({
   apiJson: apiJsonMock,
 }));
 
-vi.mock('@tanstack/react-query', () => ({
-  useQuery: ({ queryKey }: { queryKey: string[] }) =>
-    queryKey[0] === 'copilot-sessions'
-      ? {
-          data: sessionsQueryState.data,
-          isLoading: sessionsQueryState.data === null,
-          refetch: sessionsQueryState.refetch,
-        }
-      : { data: null, isLoading: false, refetch: vi.fn() },
-}));
-
 vi.mock('@/ui/lib/use-copilot-dwell', () => {
   const signalState = { request: null, clearRequest: vi.fn() };
   return {
     openCopilotForNudge: vi.fn(),
-    useCopilotDwell: () => ({ open: true, openDrawer: vi.fn(), closeDrawer: vi.fn() }),
+    useCopilotDwell: () => ({
+      open: drawerState.open,
+      openDrawer: vi.fn(),
+      closeDrawer: () => {
+        drawerState.open = false;
+      },
+    }),
     useCopilotOpenSignal: (selector: (state: typeof signalState) => unknown) =>
       selector(signalState),
   };
@@ -141,6 +147,12 @@ vi.mock('./subtask-events', async (importOriginal) => {
 });
 
 import { CopilotDock } from './CopilotDock';
+import { PENDING_COPILOT_TURN_STORAGE_KEY } from './durable-reconnect-storage';
+
+let queryClient: QueryClient;
+function render(ui: ReactNode) {
+  return renderComponent(<QueryClientProvider client={queryClient}>{ui}</QueryClientProvider>);
+}
 
 interface SessionFixture {
   id: string;
@@ -351,6 +363,8 @@ describe('CopilotDock 会话入口 (YUK-1340)', () => {
   let createSessionHandler: () => Promise<{ session: SessionFixture }>;
 
   beforeEach(() => {
+    queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    drawerState.open = true;
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(FROZEN_NOW);
     window.sessionStorage.clear();
@@ -359,9 +373,15 @@ describe('CopilotDock 会话入口 (YUK-1340)', () => {
     consumeDurableMock.mockReset();
     sessionsQueryState.data = null;
     sessionsQueryState.refetch.mockReset();
-    sessionsQueryState.refetch.mockResolvedValue(undefined);
+    sessionsQueryState.refetch.mockImplementation(async () => ({
+      server_time: FROZEN_NOW.toISOString(),
+      ...sessionsQueryState.data,
+    }));
     createSessionHandler = async () => createSessionResponse('s-created-default');
     apiJsonMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url === '/api/copilot/sessions' && init?.method !== 'POST')
+        return sessionsQueryState.refetch();
+      if (url === '/api/today/copilot-summary') return null;
       if (url.startsWith('/api/copilot/turns')) {
         const sessionId = new URL(url, 'http://local').searchParams.get('session_id') ?? '';
         return { session_id: sessionId, turns: [], active_runs: [] };
@@ -382,6 +402,7 @@ describe('CopilotDock 会话入口 (YUK-1340)', () => {
   afterEach(() => {
     vi.useRealTimers();
     cleanup();
+    queryClient.clear();
   });
 
   it('落位最近的可继续会话（active/idle），不被更新的 ended 抢走，也不自动建会话', async () => {
@@ -590,5 +611,262 @@ describe('CopilotDock 会话入口 (YUK-1340)', () => {
         .getByRole('button', { name: /过期闲置对话/ })
         .getAttribute('aria-current'),
     ).toBe('true');
+  });
+
+  async function reopen(view: ReturnType<typeof render>) {
+    await userEvent.setup().click(screen.getByTestId('drawer-close'));
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <CopilotDock pathname="/practice" navigate={vi.fn()} />
+      </QueryClientProvider>,
+    );
+    drawerState.open = true;
+    view.rerender(
+      <QueryClientProvider client={queryClient}>
+        <CopilotDock pathname="/practice" navigate={vi.fn()} />
+      </QueryClientProvider>,
+    );
+  }
+
+  it.each(['idle', 'active'])(
+    'revalidates retained automatic %s across the 24h boundary on reopen',
+    async (status) => {
+      sessionsQueryState.data = {
+        sessions: HISTORY_IDLE_AT_BOUNDARY.map((row) => ({ ...row, status })),
+      };
+      const view = render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+      await waitFor(() => expect(composerDisabled()).toBe(false));
+      sessionsQueryState.data.server_time = new Date(FROZEN_NOW.getTime() + 1).toISOString();
+      await reopen(view);
+      await waitFor(() => expect(createPostCalls()).toHaveLength(1));
+      await waitFor(() => expect(composerDisabled()).toBe(false));
+      const calls = apiJsonMock.mock.calls.filter(([url]) => String(url).includes('/turns'));
+      expect(calls.at(-1)?.[0]).toContain('s-created-default');
+    },
+  );
+
+  it('uses server_time when a slow client clock would reuse an expired session', async () => {
+    vi.setSystemTime(new Date(FROZEN_NOW.getTime() - 86_400_000));
+    sessionsQueryState.data = {
+      server_time: FROZEN_NOW.toISOString(),
+      sessions: HISTORY_IDLE_PAST_BOUNDARY,
+    };
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    await waitFor(() => expect(createPostCalls()).toHaveLength(1));
+    await waitFor(() => expect(composerDisabled()).toBe(false));
+  });
+
+  it('cached data cannot bootstrap or send before a fresh fetch, and failed fetch can be retried', async () => {
+    sessionsQueryState.data = { sessions: HISTORY_FRESH_IDLE };
+    const view = render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    await waitFor(() => expect(composerDisabled()).toBe(false));
+    expect(queryClient.getQueriesData({ queryKey: ['copilot-sessions'] })).toHaveLength(1);
+    const turnsBeforeReopen = apiJsonMock.mock.calls.filter(([url]) =>
+      String(url).includes('/turns'),
+    ).length;
+    const gate = deferred<{ server_time: string; sessions: SessionFixture[] }>();
+    sessionsQueryState.refetch.mockImplementationOnce(() => gate.promise);
+    await reopen(view);
+    await waitFor(() => expect(sessionsQueryState.refetch).toHaveBeenCalledTimes(2));
+    expect(composerDisabled()).toBe(true);
+    expect(apiJsonMock.mock.calls.filter(([url]) => String(url).includes('/turns'))).toHaveLength(
+      turnsBeforeReopen,
+    );
+    expect(createPostCalls()).toHaveLength(0);
+    await act(async () => gate.reject(new Error('sessions temporarily unavailable')));
+    expect(composerDisabled()).toBe(true);
+    await userEvent.setup().click(await screen.findByTestId('copilot-sessions-retry'));
+    await waitFor(() => expect(composerDisabled()).toBe(false));
+    expect(apiFetchMock).not.toHaveBeenCalled();
+  });
+
+  it('retained automatic selection waits for this reopen, even if the prior open request finishes late', async () => {
+    sessionsQueryState.data = { sessions: HISTORY_FRESH_IDLE };
+    const first = deferred<{ server_time: string; sessions: SessionFixture[] }>();
+    const second = deferred<{ server_time: string; sessions: SessionFixture[] }>();
+    sessionsQueryState.refetch
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementationOnce(() => second.promise);
+    const view = render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    await waitFor(() => expect(sessionsQueryState.refetch).toHaveBeenCalledOnce());
+    await reopen(view);
+    await waitFor(() => expect(sessionsQueryState.refetch).toHaveBeenCalledTimes(2));
+    await act(async () =>
+      first.resolve({ server_time: FROZEN_NOW.toISOString(), sessions: HISTORY_FRESH_IDLE }),
+    );
+    expect(composerDisabled()).toBe(true);
+    expect(createPostCalls()).toHaveLength(0);
+    await act(async () =>
+      second.resolve({ server_time: FROZEN_NOW.toISOString(), sessions: HISTORY_FRESH_IDLE }),
+    );
+    await waitFor(() => expect(composerDisabled()).toBe(false));
+  });
+
+  it('explicit old idle selection survives reopen while the sessions fetch fails', async () => {
+    sessionsQueryState.data = { sessions: HISTORY_STALE_IDLE_PLUS_RECENT_ENDED };
+    const view = render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    await waitFor(() => expect(createPostCalls()).toHaveLength(1));
+    const panel = await openHistoryPanel(userEvent.setup());
+    await userEvent.setup().click(within(panel).getByRole('button', { name: /过期闲置对话/ }));
+    await waitFor(() => expect(composerDisabled()).toBe(false));
+    sessionsQueryState.refetch.mockRejectedValueOnce(new Error('offline'));
+    await reopen(view);
+    await waitFor(() => expect(sessionsQueryState.refetch).toHaveBeenCalledTimes(3));
+    expect(composerDisabled()).toBe(false);
+    expect(createPostCalls()).toHaveLength(1);
+    expect(
+      within(panel)
+        .getByRole('button', { name: /过期闲置对话/ })
+        .getAttribute('aria-current'),
+    ).toBe('true');
+  });
+
+  it('recovers a pending old session with its exact original body and key despite failed sessions fetch', async () => {
+    const requestBody = {
+      session_id: 's-original-old',
+      user_message: '恢复椭圆边界问题',
+      triggered_by: 'chat',
+      ambient_context: { route: '/notes/original' },
+    };
+    window.sessionStorage.setItem(
+      PENDING_COPILOT_TURN_STORAGE_KEY,
+      JSON.stringify({
+        v: 2,
+        turns: [
+          {
+            v: 2,
+            idempotencyKey: 'original-idempotency-key',
+            userMessageId: 'original-user',
+            aiMessageId: 'original-ai',
+            userMessage: requestBody.user_message,
+            requestBody,
+          },
+        ],
+      }),
+    );
+    sessionsQueryState.refetch.mockRejectedValue(new Error('offline'));
+    apiFetchMock.mockRejectedValue(new Error('uncertain acceptance'));
+    render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    const recovery = await screen.findByTestId('copilot-pending-recovery');
+    expect(apiFetchMock).not.toHaveBeenCalled();
+    await userEvent.setup().click(within(recovery).getByText('恢复'));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledOnce());
+    const init = apiFetchMock.mock.calls[0]?.[1];
+    expect(JSON.parse(init.body)).toEqual(requestBody);
+    expect(new Headers(init.headers).get('Idempotency-Key')).toBe('original-idempotency-key');
+    expect(createPostCalls()).toHaveLength(0);
+  });
+
+  it('revalidates an automatically created session after close/reopen without bypassing age', async () => {
+    sessionsQueryState.data = { sessions: HISTORY_ONLY_TERMINAL };
+    const view = render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    await waitFor(() => expect(composerDisabled()).toBe(false));
+    expect(createPostCalls()).toHaveLength(1);
+    sessionsQueryState.data = {
+      server_time: '2026-10-08T19:00:00.001Z',
+      sessions: [createSessionResponse('s-created-default').session],
+    };
+    createSessionHandler = async () => createSessionResponse('s-created-next-open');
+    await reopen(view);
+    await waitFor(() => expect(createPostCalls()).toHaveLength(2));
+  });
+
+  it('explicit new conversation can recover from a failed fresh list and survives reopen', async () => {
+    sessionsQueryState.refetch.mockRejectedValue(new Error('offline'));
+    const view = render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    await screen.findByTestId('copilot-sessions-retry');
+    await userEvent.setup().click(screen.getByTestId('copilot-start-new'));
+    await waitFor(() => expect(composerDisabled()).toBe(false));
+    await reopen(view);
+    expect(composerDisabled()).toBe(false);
+    expect(createPostCalls()).toHaveLength(1);
+  });
+
+  it('late create cannot steal a repeated explicit selection, and late turns cannot mix message contexts', async () => {
+    const gate = deferred<{ session: SessionFixture }>();
+    const oldTurns = deferred<{
+      session_id: string;
+      turns: Array<{ role: 'ai'; text: string; event_id: string; at: string }>;
+      active_runs: [];
+    }>();
+    sessionsQueryState.data = { sessions: HISTORY_MULTI_STATUS };
+    const view = render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    await waitFor(() => expect(composerDisabled()).toBe(false));
+    const user = userEvent.setup();
+    const panel = await openHistoryPanel(user);
+    const ended = within(panel).getByRole('button', { name: /椭圆难题复盘/ });
+    apiJsonMock.mockImplementationOnce(() => oldTurns.promise);
+    await user.click(ended);
+    createSessionHandler = () => gate.promise;
+    await user.click(screen.getByTestId('copilot-start-new'));
+    await user.click(within(panel).getByRole('button', { name: /函数定义域整理/ }));
+    await user.click(ended);
+    await act(async () => gate.resolve(createSessionResponse('s-late')));
+    expect(ended.getAttribute('aria-current')).toBe('true');
+    expect(composerDisabled()).toBe(true);
+    await user.click(within(panel).getByRole('button', { name: /函数定义域整理/ }));
+    await act(async () =>
+      oldTurns.resolve({
+        session_id: 's-ended-new',
+        turns: [
+          {
+            role: 'ai',
+            text: '迟到的椭圆历史只属于原对话',
+            event_id: 'old-reply',
+            at: '2026-10-07T19:00:00Z',
+          },
+        ],
+        active_runs: [],
+      }),
+    );
+    expect(screen.queryByText('迟到的椭圆历史只属于原对话')).toBeNull();
+    expect(
+      within(panel)
+        .getByRole('button', { name: /函数定义域整理/ })
+        .getAttribute('aria-current'),
+    ).toBe('true');
+    expect(composerDisabled()).toBe(false);
+    expect(createPostCalls()).toHaveLength(1);
+    await reopen(view);
+    expect(createPostCalls()).toHaveLength(1);
+  });
+
+  it('keeps the original active run on reopen across age expiry without creating or reposting', async () => {
+    sessionsQueryState.data = { sessions: HISTORY_IDLE_AT_BOUNDARY };
+    apiFetchMock.mockResolvedValue(
+      new Response(JSON.stringify({ run_id: 'run-original' }), {
+        status: 202,
+        headers: { Location: '/api/jobs/copilot_run/run-original/events' },
+      }),
+    );
+    const view = render(<CopilotDock pathname="/practice" navigate={vi.fn()} />);
+    await waitFor(() => expect(composerDisabled()).toBe(false));
+    const user = userEvent.setup();
+    await user.type(screen.getByTestId('copilot-composer-input'), '保留正在处理的椭圆问题');
+    await user.click(screen.getByTestId('copilot-composer-send'));
+    await waitFor(() => expect(consumeDurableMock).toHaveBeenCalledOnce());
+    const defaultApi = apiJsonMock.getMockImplementation();
+    apiJsonMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.startsWith('/api/copilot/turns'))
+        return {
+          session_id: 's-idle-boundary',
+          turns: [],
+          active_runs: [
+            {
+              run_id: 'run-original',
+              session_id: 's-idle-boundary',
+              status: 'running',
+              events_url: '/api/jobs/copilot_run/run-original/events',
+            },
+          ],
+        };
+      return defaultApi?.(url, init);
+    });
+    sessionsQueryState.data.server_time = new Date(FROZEN_NOW.getTime() + 1).toISOString();
+    await reopen(view);
+    await waitFor(() => expect(consumeDurableMock).toHaveBeenCalledTimes(2));
+    expect(createPostCalls()).toHaveLength(0);
+    expect(apiFetchMock).toHaveBeenCalledOnce();
+    expect(JSON.parse(apiFetchMock.mock.calls[0]?.[1]?.body).session_id).toBe('s-idle-boundary');
   });
 });

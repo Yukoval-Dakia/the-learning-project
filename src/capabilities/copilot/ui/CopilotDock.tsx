@@ -29,7 +29,13 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
-import { ApiAuthError, ApiError, apiFetch, apiJson } from '@/ui/lib/api';
+import {
+  ApiAuthError,
+  ApiError,
+  type ApiOperationJsonResponse,
+  apiFetch,
+  apiJson,
+} from '@/ui/lib/api';
 import {
   DeferredMarkdownRenderer,
   preloadMarkdownRenderer,
@@ -169,21 +175,9 @@ interface CopilotTurnsResponse {
   }>;
 }
 
-interface CopilotSessionResponse {
-  id: string;
-  status: string;
-  title: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
-interface CopilotSessionsResponse {
-  sessions: CopilotSessionResponse[];
-}
-
-interface CopilotCreateSessionResponse {
-  session: CopilotSessionResponse;
-}
+type CopilotSessionsResponse = ApiOperationJsonResponse<'listCopilotSessions'>;
+type CopilotSessionResponse = CopilotSessionsResponse['sessions'][number];
+type CopilotCreateSessionResponse = ApiOperationJsonResponse<'createCopilotSession'>;
 
 const LEARNER_TOOL_LABELS: Readonly<Record<string, string>> = {
   query_mistakes: '错题整理',
@@ -560,11 +554,32 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     enabled: open,
     refetchInterval: open ? 60_000 : false,
   });
+  // Each opening owns a query, so cached or late responses from another visit
+  // can populate history but cannot authorize automatic reuse.
+  const sessionQueryInstance = useId();
+  const [drawerVisit, setDrawerVisit] = useState({ open, epoch: 0 });
+  if (drawerVisit.open !== open) {
+    setDrawerVisit({ open, epoch: drawerVisit.epoch + (open ? 1 : 0) });
+  }
+  const drawerEpochRef = useRef(drawerVisit.epoch);
+  drawerEpochRef.current = drawerVisit.epoch;
   const sessionsQ = useQuery({
-    queryKey: ['copilot-sessions'],
-    queryFn: () => apiJson<CopilotSessionsResponse>('/api/copilot/sessions'),
+    queryKey: ['copilot-sessions', sessionQueryInstance, drawerVisit.epoch],
+    queryFn: ({ signal }) => apiJson<CopilotSessionsResponse>('/api/copilot/sessions', { signal }),
     enabled: open,
+    placeholderData: (previous) => previous,
   });
+  const [retainedSessions, setRetainedSessions] = useState<CopilotSessionResponse[]>([]);
+  useEffect(() => {
+    if (sessionsQ.data) setRetainedSessions(sessionsQ.data.sessions);
+  }, [sessionsQ.data]);
+  const freshSessions =
+    open &&
+    sessionsQ.isFetchedAfterMount &&
+    sessionsQ.isSuccess &&
+    Number.isFinite(Date.parse(sessionsQ.data.server_time))
+      ? sessionsQ.data
+      : null;
 
   const [restoredPendingTurns] = useState<PersistedPendingCopilotTurn[]>(() => {
     // Accepted v1 handles are intentionally ignored: the server snapshot is the
@@ -599,6 +614,11 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       ),
   );
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(recoverySessionId);
+  const [selectionOrigin, setSelectionOrigin] = useState<'automatic' | 'explicit' | 'recovery'>(
+    recoverySessionId ? 'recovery' : 'automatic',
+  );
+  const selectionRevisionRef = useRef(0);
+  const automaticCreatedOpenRef = useRef<number | null>(null);
   const currentSessionIdRef = useRef(currentSessionId);
   currentSessionIdRef.current = currentSessionId;
   const openRef = useRef(open);
@@ -704,7 +724,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     closeDrawerDwell();
   }, [closeDrawerDwell, detachSubscriptions]);
   const streamRef = useRef<HTMLDivElement | null>(null);
-  const sessionBootstrapRef = useRef(false);
+  const sessionBootstrapRef = useRef<number | null>(null);
 
   const pendingMessagesForSession = useCallback((sessionId: string): ChatMessage[] => {
     return pendingTurnsRef.current
@@ -723,37 +743,50 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       );
   }, []);
 
-  const createConversation = useCallback(async () => {
-    if (creatingSession) return;
-    // YUK-1340 — bootstrap 可能异步开新对话；若发起后学员显式改选了别的会话，
-    // 保留学员的选择，新会话只进列表，不抢占当前视图。
-    const selectionAtRequest = currentSessionIdRef.current;
-    setCreatingSession(true);
-    setError(null);
-    try {
-      const response = await apiJson<CopilotCreateSessionResponse>('/api/copilot/sessions', {
-        method: 'POST',
-      });
-      if (currentSessionIdRef.current === selectionAtRequest) {
-        if (currentSessionIdRef.current) detachSubscriptions(currentSessionIdRef.current);
-        activeSkillRef.current = null;
-        setFocusedKnowledgeId(null);
-        correctionTargetRef.current = null;
-        setCorrectionTarget(null);
-        setMessages([]);
-        setOptimisticSession(response.session);
-        setCurrentSessionId(response.session.id);
+  const createConversation = useCallback(
+    async (origin: 'automatic' | 'explicit' = 'explicit') => {
+      if (creatingSession) return;
+      // YUK-1340 — bootstrap 可能异步开新对话；若发起后学员显式改选了别的会话，
+      // 保留学员的选择，新会话只进列表，不抢占当前视图。
+      const selectionAtRequest = ++selectionRevisionRef.current;
+      const openAtRequest = drawerVisit.epoch;
+      if (origin === 'explicit') setSelectionOrigin('explicit');
+      setCreatingSession(true);
+      setError(null);
+      try {
+        const response = await apiJson<CopilotCreateSessionResponse>('/api/copilot/sessions', {
+          method: 'POST',
+        });
+        if (
+          selectionRevisionRef.current === selectionAtRequest &&
+          (origin === 'explicit' || (openRef.current && drawerEpochRef.current === openAtRequest))
+        ) {
+          if (currentSessionIdRef.current) detachSubscriptions(currentSessionIdRef.current);
+          activeSkillRef.current = null;
+          setFocusedKnowledgeId(null);
+          correctionTargetRef.current = null;
+          setCorrectionTarget(null);
+          setMessages([]);
+          currentSessionIdRef.current = response.session.id;
+          setSelectionOrigin(origin);
+          automaticCreatedOpenRef.current = origin === 'automatic' ? openAtRequest : null;
+          setOptimisticSession(response.session);
+          setCurrentSessionId(response.session.id);
+        }
+        void sessionsQ.refetch();
+      } catch (err) {
+        setError(err instanceof Error ? err.message : '新对话创建失败');
+      } finally {
+        setCreatingSession(false);
       }
-      void sessionsQ.refetch();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : '新对话创建失败');
-    } finally {
-      setCreatingSession(false);
-    }
-  }, [creatingSession, detachSubscriptions, sessionsQ]);
+    },
+    [creatingSession, detachSubscriptions, drawerVisit.epoch, sessionsQ],
+  );
 
   const selectConversation = useCallback(
-    (sessionId: string) => {
+    (sessionId: string, origin: 'automatic' | 'explicit' = 'explicit') => {
+      selectionRevisionRef.current += 1;
+      setSelectionOrigin(origin);
       const previousSessionId = currentSessionIdRef.current;
       if (previousSessionId && previousSessionId !== sessionId) {
         detachSubscriptions(previousSessionId);
@@ -765,59 +798,84 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       setMessages(pendingMessagesForSession(sessionId));
       setOptimisticSession(null);
       setError(null);
+      currentSessionIdRef.current = sessionId;
       setCurrentSessionId(sessionId);
     },
     [detachSubscriptions, pendingMessagesForSession],
   );
 
+  const listedSessions = sessionsQ.data?.sessions ?? retainedSessions;
+  const visibleSessions =
+    optimisticSession && !listedSessions.some((session) => session.id === optimisticSession.id)
+      ? [optimisticSession, ...listedSessions]
+      : listedSessions;
+  const selectedSession = visibleSessions.find((session) => session.id === currentSessionId);
+  const recoveringCurrentSession =
+    pendingTurns.some((turn) => turn.requestBody.session_id === currentSessionId) ||
+    [...activeRunsRef.current.values()].some(
+      (run) =>
+        run.sessionId === currentSessionId &&
+        run.view.phase !== 'completed' &&
+        run.view.phase !== 'failed',
+    );
+  const automaticSession =
+    freshSessions?.sessions.find((session) => session.id === currentSessionId) ??
+    (automaticCreatedOpenRef.current === drawerVisit.epoch ? optimisticSession : null);
+  const selectionValidated =
+    selectionOrigin !== 'automatic' ||
+    recoveringCurrentSession ||
+    Boolean(
+      freshSessions &&
+        automaticSession &&
+        (automaticSession.status === 'active' || automaticSession.status === 'idle') &&
+        isWithinCopilotReuseWindow(
+          automaticSession.updated_at,
+          new Date(freshSessions.server_time),
+        ),
+    );
+  const selectionValidatedRef = useRef(selectionValidated);
+  selectionValidatedRef.current = selectionValidated;
+  const conversationReady =
+    !creatingSession &&
+    selectionValidated &&
+    (selectedSession?.status === 'active' || selectedSession?.status === 'idle');
+
   useEffect(() => {
-    if (!open || !sessionsQ.data) return;
-    const sessions = sessionsQ.data.sessions;
-    // 刚创建的乐观会话已被选中：等列表追上，不做任何 bootstrap 决定。
-    if (optimisticSession?.id === currentSessionId) {
-      if (sessions.some((session) => session.id === currentSessionId)) {
+    if (!open || !freshSessions || selectionOrigin !== 'automatic' || recoveringCurrentSession)
+      return;
+    const sessions = freshSessions.sessions;
+    if (selectionValidated) {
+      if (optimisticSession && sessions.some((session) => session.id === optimisticSession.id)) {
         setOptimisticSession(null);
       }
-      return;
-    }
-    // 学员当前的选择（含显式打开的只读历史会话）永远不被异步 bootstrap 覆盖。
-    if (currentSessionId && sessions.some((session) => session.id === currentSessionId)) {
-      sessionBootstrapRef.current = false;
+      sessionBootstrapRef.current = null;
       return;
     }
     if (creatingSession) return;
-    // 优先落位最近的可继续会话（active/idle 且在服务端24h复用窗口内，
-    // 与 findReusableCopilotConversation 判定一致），过期候选不自动续接。
     const resumable = sessions.find(
       (session) =>
         (session.status === 'active' || session.status === 'idle') &&
-        isWithinCopilotReuseWindow(session.updated_at),
+        isWithinCopilotReuseWindow(session.updated_at, new Date(freshSessions.server_time)),
     );
     if (resumable) {
-      sessionBootstrapRef.current = false;
-      setCurrentSessionId(resumable.id);
+      sessionBootstrapRef.current = null;
+      selectConversation(resumable.id, 'automatic');
       return;
     }
-    if (currentSessionId && sessions.length > 0) {
-      // 原选择已不在列表但历史还在：落在最新一条上只读回看（footer 提供
-      // 开始新对话），不在学员背后静默建线程。
-      sessionBootstrapRef.current = false;
-      setCurrentSessionId(sessions[0].id);
-      return;
-    }
-    // 没有任何可继续会话且学员没有选择（空历史或全部 ended/abandoned）：
-    // 打开 Copilot 要能直接继续提问，走与空历史相同的 createConversation。
-    // ref 防止创建失败后的重试风暴；失败时 footer 的「开始新对话」仍可用。
-    if (sessionBootstrapRef.current) return;
-    sessionBootstrapRef.current = true;
-    void createConversation();
+    if (sessionBootstrapRef.current === drawerVisit.epoch) return;
+    sessionBootstrapRef.current = drawerVisit.epoch;
+    void createConversation('automatic');
   }, [
-    createConversation,
-    creatingSession,
-    currentSessionId,
     open,
+    freshSessions,
+    selectionOrigin,
+    recoveringCurrentSession,
+    selectionValidated,
     optimisticSession,
-    sessionsQ.data,
+    creatingSession,
+    selectConversation,
+    drawerVisit.epoch,
+    createConversation,
   ]);
 
   // Fold explicit mode transitions oldest→newest, including end barriers. The
@@ -1029,7 +1087,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   }, [synchronizeSnapshot]);
 
   useEffect(() => {
-    if (!open || !currentSessionId) {
+    if (!open || !currentSessionId || !selectionValidated) {
       if (!open) detachSubscriptions();
       return;
     }
@@ -1041,7 +1099,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       window.clearInterval(interval);
       detachSubscriptions(currentSessionId);
     };
-  }, [currentSessionId, detachSubscriptions, open, refetchTurns]);
+  }, [currentSessionId, detachSubscriptions, open, refetchTurns, selectionValidated]);
 
   const revertCheckpoint = useCallback(
     async (checkpointEventId: string) => {
@@ -1161,7 +1219,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     async (raw: string, recovery?: PersistedPendingCopilotTurn) => {
       const text = recovery?.userMessage ?? raw.trim();
       const selectedSessionId = recovery?.requestBody.session_id ?? currentSessionIdRef.current;
-      if (!text) return;
+      if (!text || (!recovery && !selectionValidatedRef.current)) return;
       if (!selectedSessionId) {
         setError('对话仍在加载，请稍后再试。');
         return;
@@ -1557,11 +1615,6 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     <p className="text-[14px] text-[var(--ink-3)]">摘要暂不可用。</p>
   );
 
-  const listedSessions = sessionsQ.data?.sessions ?? [];
-  const visibleSessions =
-    optimisticSession && !listedSessions.some((session) => session.id === optimisticSession.id)
-      ? [optimisticSession, ...listedSessions]
-      : listedSessions;
   const sessionItems: CopilotSessionListItem[] = visibleSessions.map((session) => ({
     id: session.id,
     status: session.status,
@@ -1576,10 +1629,6 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
     }${session.status === 'active' || session.status === 'idle' ? '' : ' · 已结束'}`,
     updated_at: session.updated_at,
   }));
-  const selectedSession = visibleSessions.find((session) => session.id === currentSessionId);
-  const conversationReady =
-    !creatingSession &&
-    (selectedSession?.status === 'active' || selectedSession?.status === 'idle');
   const currentRuns = [...activeRunsRef.current.values()].filter(
     (run) =>
       run.sessionId === currentSessionId &&
@@ -1670,10 +1719,24 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           <span className="text-[14px] text-[var(--ink-3)]">
             {creatingSession
               ? '正在准备新对话…'
-              : selectedSession
-                ? '这段对话已结束，仅供回看。'
-                : '还没有可继续的对话。'}
+              : !selectionValidated
+                ? sessionsQ.isError
+                  ? '对话记录加载失败，请重试或开始新对话。'
+                  : '正在加载对话记录…'
+                : selectedSession
+                  ? '这段对话已结束，仅供回看。'
+                  : '还没有可继续的对话。'}
           </span>
+          {!selectionValidated && sessionsQ.isError ? (
+            <Btn
+              variant="ghost"
+              size="sm"
+              data-testid="copilot-sessions-retry"
+              onClick={() => void sessionsQ.refetch()}
+            >
+              重试加载
+            </Btn>
+          ) : null}
           <Btn
             variant="primary"
             size="sm"

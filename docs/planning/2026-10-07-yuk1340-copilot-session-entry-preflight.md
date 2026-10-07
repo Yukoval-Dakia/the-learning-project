@@ -91,3 +91,15 @@ agent 在本委托下采用的方案（最小充分变更，只用既有 primiti
 - 只动 CopilotDock 与本地测试/文档；无后端、schema、provider、默认值、route、admission 变更。
 - 本机只跑 scoped 组件测试 + `typecheck`/`lint`/`build`；完整 `pnpm test` 归 exact-head GitHub CI。
 - 浏览器验收在本机补丁 UI + 合成 API 夹具上进行（fixture-backed，不写生产、不发付费消息）；不宣称生产已修复。
+
+## Retained automatic selection P1 correction pre-flight
+
+Before source edits, 2026-10-07. Component: **drawer**, the existing CopilotDock. Standing autonomous charter applies; this writer has implementation/check/commit authorization only.
+
+Exact design quote, `docs/design/2026-10-06-continuous-learning-system-behavior.md:257`:
+
+> 回来时先利用已有记录恢复上下文，再按最新情况提出合适的继续方式。可以短暂确认重要变化，但不强制重走初始化测评。
+
+Files to modify: `src/capabilities/copilot/ui/CopilotDock.tsx`, its session-entry/durable-retry/tool-use component tests, `src/capabilities/copilot/api/sessions.ts`, `api/contracts.ts`, `api/contracts.db.test.ts`, `src/ui/lib/api-schema.generated.ts`, `postman/api-endpoints.json` and its generated collection, `tests/usability/shipped-container.spec.ts`, this preflight and the YUK-1340 evidence document. The requested server/sessions.ts does not exist; the existing route owner is api/sessions.ts. No schema or subsystem addition.
+
+Settled behavior: GET sessions adds authoritative ISO `server_time`. Automatic selection/creation must await a successful fetch for this drawer opening and recheck the 24h predicate. Explicit selection/new conversation and original pending or active-run recovery preserve identity and do not force a new session. Cached lists remain usable for explicit history selection but are insufficient for automatic bootstrap/send. Failed fetch offers retry and explicit new conversation. A late create or snapshot cannot steal user selection or mix messages.
