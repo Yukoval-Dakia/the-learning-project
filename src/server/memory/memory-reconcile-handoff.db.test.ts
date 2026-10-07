@@ -142,6 +142,7 @@ describe('memory reconcile append-only handoff', () => {
       {
         memories: [first, second],
         user_id: 'self',
+        source_event_id: 'source-ack',
       },
       {
         id: jobId,

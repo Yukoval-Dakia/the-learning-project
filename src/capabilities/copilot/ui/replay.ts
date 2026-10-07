@@ -1,3 +1,4 @@
+import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { CopilotPrimaryView } from '../primary-view-contract';
 import { projectReplayMessage } from './message-projection';
 
@@ -38,6 +39,7 @@ export type ReplayPrimaryView = CopilotPrimaryView;
 
 export interface ReplayTurn {
   role: ReplayTurnRole;
+  derivation_policy?: DerivationPolicyT;
   text: string;
   at: string;
   event_id: string;
@@ -60,6 +62,7 @@ export interface ReplayTurn {
 
 export interface ReplayChatMessage {
   id: string;
+  derivation_policy?: DerivationPolicyT;
   role: 'user' | 'ai' | 'tombstone';
   text: string;
   checkpoint_event_id?: string;

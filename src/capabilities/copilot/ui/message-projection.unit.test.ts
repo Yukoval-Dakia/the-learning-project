@@ -36,6 +36,44 @@ const reply = {
 };
 
 describe('Copilot message projection', () => {
+  it('freezes accepted policy on pending/live/replayed messages independently of composer selection', () => {
+    const pending = projectPendingCopilotMessagePair([], {
+      sessionId: 'session-retention',
+      userMessageId: 'optimistic_ask',
+      aiMessageId: 'optimistic_reply',
+      idempotencyKey: 'frozen_request',
+      userMessage: '假设还未证实，先分析退化边界。',
+      derivationPolicy: 'answer_only',
+    });
+    expect(pending.map((message) => message.derivation_policy)).toEqual([
+      'answer_only',
+      'answer_only',
+    ]);
+    const accepted = acceptPendingCopilotRun(pending, {
+      sessionId: 'session-retention',
+      runId: 'accepted_ask',
+      idempotencyKey: 'frozen_request',
+      derivationPolicy: 'allow',
+    });
+    expect(accepted.map((message) => message.derivation_policy)).toEqual(['allow', 'allow']);
+    const live = projectCopilotReply(
+      { ...base, derivation_policy: 'allow' },
+      { ...reply, derivation_policy: 'answer_only' },
+    );
+    const [replayed] = replayToMessages([
+      {
+        ...reply,
+        role: 'ai',
+        event_id: 'reply-42',
+        text: reply.reply,
+        at: '2026-10-07T00:00:00Z',
+        derivation_policy: 'answer_only',
+      },
+    ]);
+    expect(live?.derivation_policy).toBe('answer_only');
+    expect(replayed.derivation_policy).toBe(live?.derivation_policy);
+  });
+
   it('preserves the same result snapshot on live/replay and drops it on failed delivery', () => {
     const value = {
       nodes: [{ name: '磁通量', mastery: 0, evidence: null, approved: false }],

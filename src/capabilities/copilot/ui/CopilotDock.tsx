@@ -29,6 +29,7 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { DerivationPolicy, type DerivationPolicyT } from '@/core/schema/derivation-policy';
 import {
   ApiAuthError,
   ApiError,
@@ -61,8 +62,10 @@ import {
   clearPersistedPendingCopilotTurn,
   discardLegacyDurableCopilotReconnect,
   durableRunIdFromLocation,
+  loadCopilotDerivationPreference,
   loadPersistedPendingCopilotTurns,
   persistPendingCopilotTurn,
+  saveCopilotDerivationPreference,
 } from './durable-reconnect-storage';
 import { learnerGlobalBrief } from './learner-global-brief';
 import {
@@ -122,6 +125,7 @@ interface ActiveCopilotRun {
   sessionId: string;
   location: string;
   userMessage?: string;
+  derivationPolicy?: DerivationPolicyT;
   view: CopilotRunView;
   controller?: AbortController;
   connectionError?: string;
@@ -172,6 +176,7 @@ interface CopilotTurnsResponse {
     session_id: string;
     status: 'queued' | 'started' | 'running' | 'cancel_requested';
     events_url: string;
+    derivation_policy?: DerivationPolicyT;
   }>;
 }
 
@@ -383,6 +388,9 @@ export const MessageRow = memo(function MessageRow({
         </div>
       )}
       <div className="msg-body">
+        {m.derivation_policy === 'answer_only' ? (
+          <LoomBadge tone="neutral">仅用于本次回答</LoomBadge>
+        ) : null}
         {m.role === 'tombstone' ? null : (
           <div className="msg-name">{m.role === 'ai' ? '编排者' : '我'}</div>
         )}
@@ -581,6 +589,9 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       ? sessionsQ.data
       : null;
 
+  const [derivationPolicy, setDerivationPolicy] = useState(loadCopilotDerivationPreference);
+  const derivationPolicyRef = useRef(derivationPolicy);
+  derivationPolicyRef.current = derivationPolicy;
   const [restoredPendingTurns] = useState<PersistedPendingCopilotTurn[]>(() => {
     // Accepted v1 handles are intentionally ignored: the server snapshot is the
     // only accepted-run inventory. Preserve only exact pre-202 retry tuples.
@@ -608,6 +619,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
             userMessageId: turn.userMessageId,
             aiMessageId: turn.aiMessageId,
             userMessage: turn.userMessage,
+            derivationPolicy: turn.requestBody.derivation_policy ?? 'allow',
             dispatching: false,
           }),
         [],
@@ -737,6 +749,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
             userMessageId: turn.userMessageId,
             aiMessageId: turn.aiMessageId,
             userMessage: turn.userMessage,
+            derivationPolicy: turn.requestBody.derivation_policy ?? 'allow',
             dispatching: turn.dispatching,
           }),
         [],
@@ -912,6 +925,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         runId: run.runId,
         sessionId: run.sessionId,
         view: run.view,
+        derivationPolicy: run.derivationPolicy,
         fallbackText,
         ...(run.userMessage ? { userMessage: run.userMessage } : {}),
       }),
@@ -1003,6 +1017,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         const existing = activeRunsRef.current.get(item.run_id);
         if (existing) {
           existing.location = item.events_url;
+          existing.derivationPolicy = item.derivation_policy ?? 'allow';
           if (userMessage) existing.userMessage = userMessage;
           if (item.status === 'cancel_requested') existing.cancelRequested = true;
         } else {
@@ -1013,6 +1028,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
             runId: item.run_id,
             sessionId,
             location: item.events_url,
+            derivationPolicy: item.derivation_policy ?? 'allow',
             ...(userMessage ? { userMessage } : {}),
             view,
             stopPending: false,
@@ -1053,6 +1069,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
             runId,
             sessionId,
             view: run.view,
+            derivationPolicy: run.derivationPolicy,
             fallbackText,
             ...(run.userMessage ? { userMessage: run.userMessage } : {}),
           });
@@ -1242,8 +1259,11 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       const requestBody: PersistedPendingCopilotRequestBody = recovery?.requestBody ?? {
         session_id: selectedSessionId,
         user_message: text,
+        derivation_policy: derivationPolicyRef.current,
         triggered_by: 'chat' as const,
-        ...(currentSkillContext ? { skill_context: currentSkillContext } : {}),
+        ...(currentSkillContext && derivationPolicyRef.current === 'allow'
+          ? { skill_context: currentSkillContext }
+          : {}),
         ...(ambientContext ? { ambient_context: ambientContext } : {}),
         ...(selectedCorrectionTarget
           ? { correction_target_turn_id: selectedCorrectionTarget.turnId }
@@ -1276,6 +1296,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           userMessageId,
           aiMessageId,
           userMessage: text,
+          derivationPolicy: requestBody.derivation_policy ?? 'allow',
           dispatching: true,
         }),
       );
@@ -1288,23 +1309,31 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         if (res.status !== 202) {
           throw new Error(`Copilot acceptance protocol failed (${res.status}); retry the same key`);
         }
+        let acceptedPolicy = requestBody.derivation_policy ?? 'allow';
+        let acceptedBody: unknown;
+        let responseRunId: string | undefined;
+        try {
+          acceptedBody = await res.json();
+        } catch {
+          // Legacy responses can recover through Location and server snapshot.
+        }
+        if (acceptedBody !== null && typeof acceptedBody === 'object') {
+          if ('run_id' in acceptedBody && typeof acceptedBody.run_id === 'string')
+            responseRunId = acceptedBody.run_id;
+          if ('derivation_policy' in acceptedBody) {
+            const policy = DerivationPolicy.safeParse(acceptedBody.derivation_policy);
+            if (!policy.success) throw new Error('受理用途暂时无法确认，请用原请求恢复。');
+            acceptedPolicy = policy.data;
+          }
+        }
         let location = res.headers.get('Location');
         let runId = durableRunIdFromLocation(location);
-        if (!runId) {
-          try {
-            const body = (await res.json()) as { run_id?: unknown };
-            if (typeof body.run_id === 'string') {
-              const reconstructed = `/api/jobs/copilot_run/${encodeURIComponent(body.run_id)}/events`;
-              if (durableRunIdFromLocation(reconstructed) === body.run_id) {
-                runId = body.run_id;
-                location = reconstructed;
-              }
-            }
-          } catch {
-            // The exact pending tuple remains available for same-key recovery.
+        if (!runId && responseRunId) {
+          const reconstructed = `/api/jobs/copilot_run/${encodeURIComponent(responseRunId)}/events`;
+          if (durableRunIdFromLocation(reconstructed) === responseRunId) {
+            runId = responseRunId;
+            location = reconstructed;
           }
-        } else {
-          void res.body?.cancel().catch(() => undefined);
         }
         if (!runId || !location) {
           throw new Error('请求可能已受理，但响应缺少稳定句柄；请用原请求恢复。');
@@ -1320,6 +1349,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                 idempotencyKey,
                 sessionId: selectedSessionId,
                 runId,
+                derivationPolicy: acceptedPolicy,
               })
             : previous,
         );
@@ -1334,6 +1364,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         };
         run.location = location;
         run.userMessage = text;
+        run.derivationPolicy = acceptedPolicy;
         activeRunsRef.current.set(runId, run);
         applyRunViewToMessage(run);
         bumpRunRevision();
@@ -1773,6 +1804,30 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         >
           {focusedKnowledgeId ? '出题 · 当前知识点' : '出题'}
         </button>
+      </div>
+      <div className="px-[16px] py-[8px] text-[14px] text-[var(--ink-2)]">
+        <label className="flex items-center gap-[8px]">
+          本轮用途
+          <select
+            aria-label="本轮用途"
+            data-testid="copilot-derivation-policy"
+            value={derivationPolicy}
+            className="rounded-[var(--r-2)] border border-[var(--line-soft)] bg-[var(--paper)] px-[8px] py-[4px] text-[var(--ink)]"
+            onChange={(event) => {
+              const policy = DerivationPolicy.parse(event.target.value);
+              setDerivationPolicy(policy);
+              saveCopilotDerivationPreference(policy);
+            }}
+          >
+            <option value="allow">日常学习</option>
+            <option value="answer_only">仅用于本次回答</option>
+          </select>
+        </label>
+        {derivationPolicy === 'answer_only' ? (
+          <p className="mt-[8px] leading-relaxed" role="status">
+            聊天和必要运行记录仍会保存。本轮不进入长期记忆、学情判断或后续安排，也不会自动带入下一轮。可读取已有学习资料并回答，不创建练习、笔记或计划。
+          </p>
+        ) : null}
       </div>
       <div className="composer">
         <textarea

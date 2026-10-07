@@ -101,6 +101,75 @@ async function piAfter(
 }
 
 describe('Copilot execution owner', () => {
+  it('runs restricted turns cold with the six reads only, no Exa/subagents/skill pack, and no reusable cursor', async () => {
+    const exa = vi.fn(() => null);
+    const skills = vi.fn(async () => undefined);
+    const stream = vi.fn<CopilotExecutionAdapters['streamTaskCollectingFn']>(
+      async (_kind, _input, ctx) => {
+        await ctx.sdkSession?.onSessionId?.('pi:restricted_discarded');
+        const mount = ctx.piToolMounts?.[0];
+        expect(mount?.type).toBe('domain');
+        if (mount?.type !== 'domain') throw new Error('missing domain mount');
+        expect(
+          await mount.options.beforeExecute?.({
+            name: 'generate_question_candidate',
+            effect: 'read',
+          }),
+        ).toContain('仅用于本次回答');
+        expect(
+          await mount.options.beforeExecute?.({ name: 'query_knowledge', effect: 'write' }),
+        ).toContain('仅用于本次回答');
+        expect(
+          await mount.options.beforeExecute?.({ name: 'query_knowledge', effect: 'read' }),
+        ).toBeUndefined();
+        expect(ctx.sdkSession?.resume).toBeUndefined();
+        expect(ctx.piSessionReplay).toBeUndefined();
+        expect(ctx.piAgents).toBeUndefined();
+        expect(ctx.piSkillDocs).toBeUndefined();
+        expect(ctx.compiledModelPrompt?.mode).toBe('cold');
+        expect(ctx.allowedTools).toEqual(
+          [
+            'query_knowledge',
+            'get_subject_graph_overview',
+            'get_question_context',
+            'query_questions',
+            'query_memory_brief',
+            'search_memory_facts',
+          ].map((name) => `mcp__loom__${name}`),
+        );
+        return {
+          task_run_id: 'root_answer_only',
+          text: '本轮给出假设分析，证据尚不足。',
+          terminalText: '本轮给出假设分析，证据尚不足。',
+          partial: false,
+        };
+      },
+    );
+    const owner = createCopilotExecutionOwner({
+      streamTaskCollectingFn: stream,
+      buildExaMcpServerFn: exa,
+      resolveCopilotSkillDocsFn: skills,
+    });
+    const result = await owner(
+      {} as never,
+      {
+        input: { ...input, derivation_policy: 'answer_only' },
+        sessionId: 'restricted_session',
+        taskRunId: 'root_answer_only',
+      },
+      {
+        cancellation: fakeCancellation(),
+        deadlineAt: Date.now() + 60_000,
+        resumeSessionId: 'pi:old_cursor',
+        subagentsEnabled: true,
+      },
+    );
+    expect(exa).not.toHaveBeenCalled();
+    expect(skills).not.toHaveBeenCalled();
+    expect(result.sdkSessionId).toBeUndefined();
+    expect(result.finalization.accepted).toBe(true);
+  });
+
   it('preserves the paid reply but discards the SDK cursor when native projection persistence fails', async () => {
     const stream = vi.fn<CopilotExecutionAdapters['streamTaskCollectingFn']>(
       async (_kind, _input, ctx) => {

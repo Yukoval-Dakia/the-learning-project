@@ -238,6 +238,7 @@ describe('durable Copilot dispatch acceptance', () => {
       sessionId,
       inputHash,
       bossJobId,
+      derivationPolicy: 'allow',
     });
   });
 

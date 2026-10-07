@@ -78,6 +78,7 @@ function durableAcceptanceResponse(
     {
       run_id: acceptance.runId,
       session_id: acceptance.sessionId,
+      derivation_policy: acceptance.derivationPolicy ?? 'allow',
       ...(parsed.triggered_by === 'chat' ? { checkpoint_event_id: acceptance.runId } : {}),
     },
     {
@@ -132,6 +133,7 @@ async function dispatchAcceptedRun(
             run_id: acceptance.runId,
             session_id: acceptance.sessionId,
             user_message: parsed.user_message,
+            derivation_policy: acceptance.derivationPolicy ?? 'allow',
             triggered_by: parsed.triggered_by,
             ...(parsed.chip_kind ? { chip_kind: parsed.chip_kind } : {}),
             ...(parsed.ambient_context ? { ambient: parsed.ambient_context } : {}),
@@ -314,6 +316,7 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
           },
           jobData: {
             user_message: parsed.user_message,
+            derivation_policy: parsed.derivation_policy ?? 'allow',
             triggered_by: parsed.triggered_by,
             ...(parsed.chip_kind ? { chip_kind: parsed.chip_kind } : {}),
             ...(parsed.ambient_context ? { ambient: parsed.ambient_context } : {}),

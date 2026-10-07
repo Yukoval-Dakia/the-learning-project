@@ -54,6 +54,51 @@ const env = {
 };
 
 describe('Mem0 SDK loading', () => {
+  it('rejects answer-only inputs before SDK initialization, lookup, provider start or add', async () => {
+    const before = sdk.loaded.mock.calls.length;
+    const beforeAdd = vi.fn();
+    const operation = testProviderOperation();
+    const client = createMemoryClient({ env });
+    await expect(
+      client.addEventMemoryOnce(
+        {
+          id: 'restricted_ask',
+          action: 'experimental:copilot_user_ask',
+          actor_kind: 'user',
+          subject_kind: 'query',
+          subject_id: 'restricted_ask',
+          kind: 'event',
+          affected_scopes: [],
+          payload: {
+            derivation_policy: 'answer_only',
+            user_message: '假设椭圆参数退化，尚未验证；不要进入长期判断。',
+          },
+          created_at: new Date(),
+        },
+        operation,
+        beforeAdd,
+      ),
+    ).rejects.toThrow('cannot enter memory');
+    await expect(
+      client.addVerbatimOnce(
+        '受限原文及多分支假设',
+        { derivation_policy: 'answer_only' },
+        'restricted_projection',
+        operation,
+        beforeAdd,
+      ),
+    ).rejects.toThrow('cannot enter memory');
+    await expect(
+      client.restoreVerbatim(
+        '恢复不能重新引入受限原文',
+        { derivation_policy: 'answer_only' },
+        operation,
+      ),
+    ).rejects.toThrow('cannot enter memory');
+    expect(sdk.loaded.mock.calls.length).toBe(before);
+    expect(beforeAdd).not.toHaveBeenCalled();
+  });
+
   it('does not load for configuration or client creation, then shares initialization across operations', async () => {
     expect(sdk.loaded).not.toHaveBeenCalled();
     createMem0Config(env);

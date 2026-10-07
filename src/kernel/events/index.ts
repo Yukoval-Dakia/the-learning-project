@@ -11,6 +11,7 @@ export {
   getCorrectionStatus,
   getCorrectionStatuses,
 } from './corrections';
+export { eventAllowsDerivationSql, readEventDerivationPolicy } from './derivation-policy';
 export {
   type EffectiveTruth,
   type EffectiveTruthState,

@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-07：PR1587 发布记录已合并为 main `8841ce68a`，生产仍为已验收的 `f3bfff2cf`，不重复部署文档。当前唯一实施线 YUK-1346，见[单轮用途方案](docs/planning/2026-10-07-yuk1346-answer-only-turn.md)。
+> Linear 是权威 tracker。2026-10-07：YUK-1346 隔离树源码和本地 scoped 验证完成（255 unit / 235 DB，typecheck/lint/build 通过）；父线程真实隔离验收、独立审查、exact-head CI 与发布待完成。生产仍为既有已验收 `f3bfff2cf`，未在本实施子线程改动。
 
 ## NOW
 
-- **YUK-1346 In Progress**：隔离树 `tlp-yuk-1346-turn-retention`，分支 `feat/yuk-1346-turn-retention`，基于 main `8841ce68a`。已完成只读架构/验收咨询及父方案决定。将提供“仅用于本次回答”，聊天可回看、长期派生和后续模型上下文排除；策略由接纳事务冻结。尚未实现或发布，普通学习行为保留。
+- **YUK-1346 In Progress**：隔离树 `tlp-yuk-1346-turn-retention`，分支 `feat/yuk-1346-turn-retention`，基于 main `8841ce68a`。源码已实现“仅用于本次回答”：接纳事务冻结策略，聊天可回看，受限派生/后续模型历史排除，六个资料读取工具双重守卫；普通行为保留。255 unit、235 DB 及 typecheck/lint/build、API/Postman 生成和13相关审计通过。详情见[方案与本地交接](docs/planning/2026-10-07-yuk1346-answer-only-turn.md)。尚未真实模型/浏览器验收或发布，不标 Done。
 - **YUK-1103 自主交付**：本机 http://localhost:8787；远程 https://loom-mac-mini.tail2ee344.ts.net/（同一 tailnet，沿用 Loom 令牌）。app/worker `f3bfff2cf` healthy，115项迁移、readiness active。已备份及恢复验证；不要重复发布旧 `5d738dbc0`。
 - **YUK-1341 产品 AI**：PR #1585 已通过 exact-head CI、独立初审和等待窗并合并。app/worker 都固定 `opencode-go/mimo-v2.6-pro`；54聊天任务和 Mem0 接线已落地。生产两轮 Copilot 成功，原会话及 Pi cursor 连续、刷新回放一致；后台 MemoryBrief 也已实际成功。未宣称所有任务质量或评分切片均获准入。
 - **YUK-1340 会话入口已交付**：PR #1583 满足 exact-head CI、审查和等待窗后合并。准确 ARM64 镜像完成副本迁移、旧镜像读取兼容、停写备份恢复及生产页面验收。默认续接、历史只读、新建、重开、刷新保持会话均通过；没有发送 AI 消息。YUK-1343 两条 P2 仍延期。
@@ -13,7 +13,7 @@
 
 ## NEXT
 
-- 完成 YUK-1346 的实现、真实隔离浏览器/API/worker 验收及发布，再沿“椭圆难题 → 记录过程与帮助程度 → 区分暂时理解和独立迁移 → 后续验证安排”的真实学习路径推进。短回答成功不等于可靠评估已经兑现。
+- 父线程先独立审查 YUK-1346 已提交源码，完成真实隔离浏览器/API/worker/模型输入验收、exact-head CI/等待窗及发布，再沿“椭圆难题 → 记录过程与帮助程度 → 区分暂时理解和独立迁移 → 后续验证安排”的真实学习路径推进。短回答成功不等于可靠评估已经兑现。
 - YUK-1042：42 failed +42 DLQ 原义务保留；先查每项副作用和幂等身份再恢复，不清队列或重付未知结果。
 - YUK-1338 目标架构集成保持 Backlog，单独证明状态版本、过期结果拒绝与重启恢复；ADR-0066 的 TanStack Start/Pi/PostgreSQL/DBOS 方向尚非当前运行形态。
 

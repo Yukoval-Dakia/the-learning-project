@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DerivationPolicy } from '@/core/schema/derivation-policy';
 import { NudgeKind, SuggestionKind } from '@/kernel/capability-contract-schemas';
 import { ApiErrorResponseSchema, ApiIdParamsSchema } from '@/kernel/http-contracts';
 import { CopilotPrimaryViewSchema } from '../primary-view-contract';
@@ -79,6 +80,7 @@ export const CopilotDurableRunResponseSchema = z.object({
   run_id: z.string(),
   session_id: z.string(),
   checkpoint_event_id: z.string().optional(),
+  derivation_policy: DerivationPolicy.optional(),
 });
 
 export const CopilotCancelRunResponseSchema = z.object({
@@ -141,6 +143,7 @@ export const CopilotTurnSchema = z.object({
   session_id: z.string().optional(),
   reply_event_id: z.string().optional(),
   checkpoint_event_id: z.string().optional(),
+  derivation_policy: DerivationPolicy.optional(),
   skill_turn: CopilotTurnSkillSchema.optional(),
   skill_context: z
     .object({
@@ -160,6 +163,7 @@ export const CopilotTurnsResponseSchema = z.object({
       run_id: z.string(),
       session_id: z.string(),
       status: z.enum(['queued', 'started', 'running', 'cancel_requested']),
+      derivation_policy: DerivationPolicy.optional(),
       events_url: z.string(),
     }),
   ),

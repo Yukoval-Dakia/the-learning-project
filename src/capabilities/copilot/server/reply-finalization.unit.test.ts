@@ -1,3 +1,7 @@
+vi.mock('@/kernel/events/derivation-policy', () => ({
+  readEventDerivationPolicy: vi.fn(async () => 'allow'),
+}));
+
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it, vi } from 'vitest';

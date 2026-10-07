@@ -1,6 +1,6 @@
 # YUK-1346 单轮内容用途控制
 
-状态：2026-10-07，由父线程依持续自主交付授权确定的实施方案。只读架构咨询和验收咨询已完成；尚未实施、验收或发布。Linear 为 YUK-1346。
+状态：2026-10-07，由父线程依持续自主交付授权确定的实施方案。只读架构咨询、验收咨询及本地源码实施/scoped 验证已完成；父线程独立审查、真实隔离验收、exact-head CI 和发布尚未完成。Linear 为 YUK-1346，不标 Done。
 
 ## 用户行为与边界
 
@@ -53,7 +53,8 @@
 计划修改：
 
 - `src/capabilities/copilot/ui/CopilotDock.tsx`、`durable-reconnect-storage.ts` 及其相关 scoped tests。
-- `src/capabilities/copilot/server/chat-contracts.ts`、`durable-dispatch.ts`、`conversation-writes.ts`、`turns.ts`、`copilot-run-input.ts`、`copilot-execution.ts`、`copilot-worker-session.ts` 和对应测试。
+- `src/capabilities/copilot/ui/message-projection.ts`、`replay.ts`：将已受理用途传至 pending/live/replay 问答，不以当前 selector 覆盖历史。
+- `src/capabilities/copilot/server/chat-contracts.ts`、`durable-dispatch.ts`、`conversation-writes.ts`、`turns.ts`、`copilot-run-input.ts`、`copilot-execution.ts`、`copilot-worker-session.ts` 和对应测试；`live-turn-context.ts` / `correction-contract.ts` 仅负责模型序列化与确定性引用防线。
 - `src/capabilities/copilot/api/chat.ts`、`api/turns.ts`、API response contracts、`jobs/copilot_run.ts` 以及必要的取消/终态恢复调用方。
 - `src/core/schema/event/known.ts` 中 Copilot 和 tool_use payload 契约；`src/kernel/tools/types.ts`、`src/server/ai/tools/mcp-bridge.ts` 中冻结策略传递与镜像。
 - `src/server/memory/triggers.ts`、`client.ts` 及必要的恢复入口、brief 读取防线；`src/capabilities/copilot/server/tools/query-events.ts`、`src/capabilities/practice/server/tools/get-attempt-context.ts` 等已证实会再次提供这些事件的证据读取者。
@@ -95,3 +96,32 @@ memory ingest 在 provider lookup、provider-start、add、reconcile 和 brief f
 本轮暂按 $2 保守预算占用，仍受自主交付章程每次 $5 / 每日 $20 上限。未知 SDK 内部费用和 wire 数量不伪装精确，已有 YUK-1342 观测缺口不因本功能验收改称解决。
 
 生产在独立审查、exact-head CI Gate、等待窗和真实验收后，按既有停写备份/恢复/兼容流程发布。此文不是验收记录。
+
+
+## 本地实施证据与父线程交接
+
+实施只发生在 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1346-turn-retention`，基于 clean `0814062b3d529eb7a7841da035feb58e4087e020`。无新增表、迁移、cron、依赖或全局配置。`src/core/schema/derivation-policy.ts` 提供严格共享枚举；`src/kernel/events/derivation-policy.ts` 只处理既有 ask/直接因果回复与镜像；`src/kernel/tools/derivation-policy.ts` 同时用于挂载名单和执行时守卫。缺省与显式 allow 的 hash 保持旧形状，新 ask/QUEUED/job_data 显式冻结最终策略，worker 对源消息、session、trigger、策略及已冻结完整 job body 逐项核对。
+
+六工具实际调用链已核对，未发现业务物化或学习状态更新：
+
+| 工具 | 已核对实现链 | 允许的效果 |
+| --- | --- | --- |
+| query_knowledge / get_subject_graph_overview | knowledge/server/tools/knowledge-readers.ts → loadKnowledgeRows/loadEdges/loadMasteryMap/loadRecentFailureCounts | 本地 PG 读取 |
+| get_question_context | practice/server/tools/question-context.ts → question/timeline/review/FSRS/variant/knowledge/asset/structure readers | 本地已有题目与证据读取 |
+| query_questions | practice/server/tools/query-questions.ts → resolveSubjectKnowledgeIds/listQuestions | 本地题目列表读取 |
+| query_memory_brief | copilot/server/tools/memory-brief.ts → memory_brief_note SELECT | 本地已有摘要读取 |
+| search_memory_facts | copilot/server/tools/search-memory-facts.ts → readMemoryFacts/searchMemories/client.search | 已有记忆检索及既有 embedding/provider 审计；不写学习内容 |
+
+受限模式同时要求固定工具名及 effect=read，generation 类型 read 工具仍拒绝。teaching worker 分支与独立物化提交各有服务器守卫；远程 Exa、原生子研究、技能包不挂载，受限父运行也不执行原生子研究恢复。根终稿 Markdown 仍按既有安全终稿协议保存。
+
+受限 cursor 清理与 EXECUTION_STARTED fence 在同一事务；普通有效 cursor 与领域结果 marker 同事务提交，早于终态发布。失败清理在持有 settlement 的终态事务内完成，没有晚到 finally 写入或清理。未执行的受限排队轮被取消时不拥有旧 cursor，因而保留前一轮的合法 cursor。成功、失败、执行前/中取消、reconcile/ambiguous、直接重投及后继 cursor 已有 scoped DB 覆盖。
+
+模型读取在 SQL LIMIT 前过滤受限 ask/回复；legacy missing-anchor fallback 也过滤。correction 只读取 policy/ID 位置元数据，确定性拒绝受限目标并要求重新输入；这些内部限制元数据不序列化到 cold/resume/compaction prompt。公开聊天回放保留原文和用途 badge。memory ingest 在构造客户端、lookup/provider-start/add、调和和 brief fan-out 前拒绝受限来源；客户端直接受限输入及 operator recovery 亦拒绝。brief 文本输入、scope 判定与 evidence IDs 都过滤。
+
+本地最终 scoped 验证：16 文件 **255 unit passed**；17 文件 **235 DB passed**，使用隔离 Testcontainers，含真实 Hono route owners、pg-boss FIFO 和 Postgres 事务。主要新增生命周期用例在 `src/capabilities/copilot/server/derivation-policy.db.test.ts`；真实 202/pending/同 key 重试/换用途 409 在 `durable-session-queue.db.test.ts`；selector 持续性、丢失 ACK 后原 body 重试及非法 202 策略恢复在 CopilotDock scoped UI tests。
+
+`pnpm typecheck`、`CODEX_FULL_GATE=1 pnpm lint`、`CODEX_FULL_GATE=1 pnpm build` 均 exit 0；lint 0 errors / 297 warnings，未放宽 baseline。API client 和 Postman 已生成。13 项相关审计通过：schema、partition、api-contracts、api-client、api-client-usage、capability-boundaries、architecture-deepening、provider-lanes、provider-attempt-truth、learner-copy、profile、task-census、draft-status-reads --strict。
+
+最终日志位于 `/tmp/yuk1346-unit-final.log`、`/tmp/yuk1346-db-final.log`、`/tmp/yuk1346-typecheck.log`、`/tmp/yuk1346-lint.log`、`/tmp/yuk1346-build.log`、`/tmp/yuk1346-api-generation.log`、`/tmp/yuk1346-postman.log` 和 `/tmp/yuk1346-audit-*.log`。咨询指针仍为 `/tmp/yuk1346-retention-consult.md`、`/tmp/yuk1346-acceptance-recipe.md`，不是运行验收证据。
+
+未执行 paid model、生产库/凭据访问、真实最终浏览器/模型输入验收、外部 tracker 更新、PR/push/watch/merge/deploy。上述 unit 使用 provider/SDK substitutes，DB 使用实际持久 owners；不以它们冒称真实模型输出或发布验收。父线程继续按前述隔离副本和两条新消息预算验证准确镜像、实际模型输入排除、普通记忆链与无受限业务派生，然后完成独立 review、exact-head CI、等待窗和发布。无新发现的独立 material follow-up；本票剩余发布门槛属于既定验收，Linear capture/status 由父线程负责。

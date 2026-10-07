@@ -4,6 +4,11 @@ import { and, eq, sql } from 'drizzle-orm';
 import type { ConnectionOptions, JobWithMetadata, SendOptions } from 'pg-boss';
 
 import { PICKUP_TIMEOUT_MS } from '@/capabilities/copilot/durable-pickup';
+import {
+  DerivationPolicy,
+  type DerivationPolicyT,
+  readDerivationPolicy,
+} from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { job_events } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';
@@ -17,6 +22,7 @@ export const COPILOT_SESSION_QUEUE_PROTOCOL_VERSION = 2;
 /** The exact worker input persisted while a later turn waits behind its session head. */
 export interface CopilotAcceptedJobData {
   user_message: string;
+  derivation_policy?: DerivationPolicyT;
   triggered_by: 'chat' | 'chip';
   chip_kind?: string;
   ambient?: {
@@ -51,6 +57,7 @@ export interface CopilotDurableAcceptance {
   sessionId: string;
   inputHash: string;
   bossJobId: string;
+  derivationPolicy?: DerivationPolicyT;
 }
 
 export interface CopilotSessionHead {
@@ -96,6 +103,7 @@ function parsePersistedJobData(
   ) {
     return undefined;
   }
+  if (!DerivationPolicy.optional().safeParse(value.derivation_policy).success) return undefined;
   return value as unknown as CopilotRunJobData;
 }
 
@@ -112,6 +120,11 @@ function canonicalJson(value: unknown): string {
 
 /** Bind an Idempotency-Key to the complete normalized Copilot execution input. */
 export function hashCopilotDurableInput(input: unknown): string {
+  if (input !== null && typeof input === 'object' && !Array.isArray(input)) {
+    const { derivation_policy, ...legacy } = Object.fromEntries(Object.entries(input));
+    const policy = readDerivationPolicy({ derivation_policy });
+    input = policy === 'allow' ? legacy : { ...legacy, derivation_policy: policy };
+  }
   return createHash('sha256').update(canonicalJson(input)).digest('hex');
 }
 
@@ -152,7 +165,13 @@ export async function readCopilotDurableAcceptanceByRunId(
   const inputHash = payloadString(payload, 'input_hash');
   const bossJobId = payloadString(payload, 'boss_job_id');
   if (!sessionId || !inputHash || !bossJobId) return null;
-  return { runId, sessionId, inputHash, bossJobId };
+  return {
+    runId,
+    sessionId,
+    inputHash,
+    bossJobId,
+    derivationPolicy: readDerivationPolicy(payload),
+  };
 }
 
 export async function isCopilotSessionQueueRun(db: Db | Tx, runId: string): Promise<boolean> {
@@ -253,13 +272,19 @@ export async function reserveCopilotDurableAcceptance(
       userMessage: input.userMessage,
       triggeredBy: input.jobData?.triggered_by,
       chipKind: input.jobData?.chip_kind,
+      derivationPolicy: readDerivationPolicy(input.jobData ?? input.queuedPayload),
       now: new Date(),
       ...(deterministicRunId ? { eventId: deterministicRunId } : {}),
     });
     input.assertActive?.();
     const bossJobId = copilotBossJobId(runId);
     const persistedJobData: CopilotRunJobData | undefined = input.jobData
-      ? { ...input.jobData, run_id: runId, session_id: input.sessionId }
+      ? {
+          ...input.jobData,
+          derivation_policy: readDerivationPolicy(input.jobData),
+          run_id: runId,
+          session_id: input.sessionId,
+        }
       : undefined;
     await writeJobEvent(tx, {
       business_table: COPILOT_RUN_TABLE,
@@ -267,6 +292,7 @@ export async function reserveCopilotDurableAcceptance(
       event_type: COPILOT_RUN_EVENTS.QUEUED,
       payload: {
         ...input.queuedPayload,
+        derivation_policy: readDerivationPolicy(input.jobData ?? input.queuedPayload),
         run_id: runId,
         input_hash: input.inputHash,
         boss_job_id: bossJobId,
@@ -292,6 +318,7 @@ export async function reserveCopilotDurableAcceptance(
         sessionId: input.sessionId,
         inputHash: input.inputHash,
         bossJobId,
+        derivationPolicy: readDerivationPolicy(input.jobData ?? input.queuedPayload),
       },
     };
   });
@@ -413,7 +440,11 @@ async function dispatchSessionHeadTx(
       db: adapter,
     });
     const existingData = existing?.data as Partial<CopilotRunJobData> | undefined;
-    if (existingData?.run_id !== head.runId || existingData.session_id !== sessionId) {
+    if (
+      existingData?.run_id !== head.runId ||
+      existingData.session_id !== sessionId ||
+      hashCopilotDurableInput(existingData) !== hashCopilotDurableInput(head.jobData)
+    ) {
       throw new Error(`copilot session head ${head.runId} was not dispatched`);
     }
   }

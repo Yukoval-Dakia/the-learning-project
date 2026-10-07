@@ -63,8 +63,9 @@ async function accept(
   label: string,
   sessionId = SESSION_ID,
   assertActive?: () => void,
+  policy?: 'allow' | 'answer_only',
 ): Promise<CopilotDurableAcceptance> {
-  const jobData = richJobData(label);
+  const jobData = { ...richJobData(label), ...(policy ? { derivation_policy: policy } : {}) };
   const result = await reserveCopilotDurableAcceptance(
     testDb(),
     {
@@ -282,9 +283,46 @@ describe('durable Copilot session FIFO — real pg-boss contract', () => {
     expect(restored.turns.filter((turn) => turn.event_id === first.run_id)).toHaveLength(1);
   });
 
+  it('returns frozen policy through real 202, pending snapshot, same-key retry and changed-policy conflict', async () => {
+    vi.spyOn(runtimeEnv, 'shouldEnqueueBackgroundJobs').mockReturnValue(true);
+    const key = randomUUID();
+    const body = {
+      user_message: '假设椭圆参数退化，先核对边界与反例；本条只作临时讨论。',
+      triggered_by: 'chat',
+      derivation_policy: 'answer_only',
+    };
+    const request = (value: unknown) =>
+      new Request('http://test/api/copilot/chat', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': key },
+        body: JSON.stringify(value),
+      });
+    const first = await sendMessage(request(body), {});
+    expect(first.status).toBe(202);
+    const accepted = CopilotDurableRunResponseSchema.parse(await first.json());
+    expect(accepted.derivation_policy).toBe('answer_only');
+    const snapshot = CopilotTurnsResponseSchema.parse(
+      await (
+        await readConversation(
+          new Request(`http://test/api/copilot/turns?session_id=${accepted.session_id}`),
+        )
+      ).json(),
+    );
+    expect(snapshot.turns[0]?.derivation_policy).toBe('answer_only');
+    expect(snapshot.active_runs[0]?.derivation_policy).toBe('answer_only');
+    const retry = await sendMessage(request(body), {});
+    expect(retry.status).toBe(202);
+    expect(CopilotDurableRunResponseSchema.parse(await retry.json())).toEqual(accepted);
+    const changed = await sendMessage(request({ ...body, derivation_policy: 'allow' }), {});
+    expect(changed.status).toBe(409);
+    expect(
+      await boss.findJobs('copilot_run', { data: { session_id: accepted.session_id } }),
+    ).toHaveLength(1);
+  });
+
   it('accepts three turns but dispatches only the head, then advances with the complete job body', async () => {
     const first = await accept(boss, 'one');
-    const second = await accept(boss, 'two');
+    const second = await accept(boss, 'two', SESSION_ID, undefined, 'answer_only');
     const third = await accept(boss, 'three');
 
     expect(await boss.getJobById('copilot_run', first.bossJobId)).toMatchObject({
@@ -309,6 +347,7 @@ describe('durable Copilot session FIFO — real pg-boss contract', () => {
     const physicalSecond = await boss.getJobById('copilot_run', second.bossJobId);
     expect(physicalSecond?.data).toEqual({
       ...richJobData('two'),
+      derivation_policy: 'answer_only',
       run_id: second.runId,
       session_id: SESSION_ID,
     } satisfies CopilotRunJobData);

@@ -34,6 +34,29 @@ function pending(sequence: number) {
 }
 
 describe('pending Copilot acceptance storage', () => {
+  it('preserves the restricted body and rejects corrupt explicit policies on reload', () => {
+    const first = pending(1);
+    const restricted = {
+      ...first,
+      requestBody: { ...first.requestBody, derivation_policy: 'answer_only' as const },
+    };
+    expect(persistPendingCopilotTurn(restricted)).toBe(true);
+    expect(loadPersistedPendingCopilotTurns()).toEqual([restricted]);
+    window.sessionStorage.setItem(
+      PENDING_COPILOT_TURN_STORAGE_KEY,
+      JSON.stringify({
+        v: 2,
+        turns: [
+          {
+            ...restricted,
+            requestBody: { ...restricted.requestBody, derivation_policy: 'temporary' },
+          },
+        ],
+      }),
+    );
+    expect(loadPersistedPendingCopilotTurns()).toEqual([]);
+  });
+
   beforeEach(() => window.sessionStorage.clear());
 
   it('round-trips multiple exact key/body tuples and clears only the accepted turn', () => {

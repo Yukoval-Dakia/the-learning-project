@@ -70,6 +70,30 @@ describe('compileCopilotModelInput', () => {
     expect(modelInput.match(/当前目标：含参方程/g)).toHaveLength(1);
   });
 
+  it('never serializes restricted correction positions or target metadata into cold, resume or compaction', () => {
+    const current = input({
+      correction_contract: {
+        target_prior_turn_id: 'restricted_reply_hidden',
+        restricted_target: true,
+        prior_turn_order: ['ordinary_reply_1', 'restricted_reply_hidden'],
+        restricted_prior_turn_ids: ['restricted_reply_hidden'],
+        positions_unavailable: true,
+        available_prior_turn_ids: ['ordinary_reply_1'],
+        prior_turn_summaries: { ordinary_reply_1: '允许使用的定义域证据' },
+        required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
+      },
+    });
+    for (const text of [
+      compileCopilotModelInput(current, 'cold'),
+      compileCopilotModelInput(current, 'resume'),
+      compileCopilotSessionContext(current),
+    ]) {
+      expect(text).not.toContain('restricted_reply_hidden');
+      expect(text).not.toContain('prior_turn_order');
+      expect(text).not.toContain('positions_unavailable');
+    }
+  });
+
   it('sends exact plaintext on a plain resume without re-sending history', () => {
     const modelInput = compileCopilotModelInput(
       input({

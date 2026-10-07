@@ -1,5 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
-import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
 import { COPILOT_REUSE_WINDOW_MS } from '@/core/limits';
 import type { Db, Tx } from '@/db/client';
 import { learning_session } from '@/db/schema';
@@ -301,7 +301,11 @@ export async function setAgentSdkSessionId(
 }
 
 /** YUK-936 — clear stored id on resume miss/fail/restart (ADR-0054 resume-fail). */
-export async function clearAgentSdkSessionId(db: Db | Tx, sessionId: string): Promise<void> {
+export async function clearAgentSdkSessionId(
+  db: Db | Tx,
+  sessionId: string,
+  expected?: string | null,
+): Promise<void> {
   await db
     .update(learning_session)
     .set({ agent_sdk_session_id: null, updated_at: new Date() })
@@ -310,6 +314,13 @@ export async function clearAgentSdkSessionId(db: Db | Tx, sessionId: string): Pr
         eq(learning_session.id, sessionId),
         eq(learning_session.type, 'conversation'),
         eq(learning_session.entrypoint, 'copilot'),
+        ...(expected === undefined
+          ? []
+          : [
+              expected === null
+                ? isNull(learning_session.agent_sdk_session_id)
+                : eq(learning_session.agent_sdk_session_id, expected),
+            ]),
       ),
     );
 }

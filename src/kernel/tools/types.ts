@@ -11,6 +11,7 @@
 // interface-only.
 
 import type { z } from 'zod';
+import type { DerivationPolicyT } from '@/core/schema/derivation-policy';
 import type { Db } from '@/db/client';
 
 export type ToolEffect = 'read' | 'propose' | 'write' | 'control';
@@ -84,6 +85,7 @@ export type ValidateLearningContentFn = (
 ) => Promise<LearningContentValidationOutcome>;
 
 export interface ToolContext {
+  derivationPolicy?: DerivationPolicyT;
   db: Db;
   sessionId?: string;
   validateLearningContent?: ValidateLearningContentFn;

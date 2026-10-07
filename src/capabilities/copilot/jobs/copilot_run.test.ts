@@ -643,6 +643,7 @@ describe('runCopilotRun', () => {
     expect(assembleSpy.mock.calls[0]?.[1]).toEqual({
       sessionId: oldPayload.session_id,
       userMessage: oldPayload.user_message,
+      derivationPolicy: 'allow',
       triggeredBy: oldPayload.triggered_by,
       now: expect.any(Date),
       historyAnchorEventId: oldPayload.run_id,
@@ -822,7 +823,7 @@ describe('runCopilotRun', () => {
       subject_kind: 'copilot_turn',
       subject_id: runId,
       outcome: null,
-      payload: { message: '核对复杂证据' },
+      payload: { user_message: baseData.user_message },
     });
     let mcpOptions: BuildMcpServerOptions | undefined;
     const run = vi.fn(

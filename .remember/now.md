@@ -1,6 +1,10 @@
 # 当前交接 — 2026-10-07 YUK-1346 单轮用途控制
 
-当前唯一实施线 YUK-1346 In Progress。工作树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1346-turn-retention`，branch `feat/yuk-1346-turn-retention`，base main `8841ce68a69e30bacf20e8241f28cd1669b38a1f`。父线程已完成只读架构与验收咨询，并冻结 `docs/planning/2026-10-07-yuk1346-answer-only-turn.md` 中 UI preflight/产品与持久策略。现在尚无源码实现或实际验收，勿标完成。接下来的单一实施 writer 由父 T3 委派，子线程不得 push/watch/部署或自行续写。
+当前唯一实施线 YUK-1346 In Progress。工作树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1346-turn-retention`，branch `feat/yuk-1346-turn-retention`，base main `8841ce68a69e30bacf20e8241f28cd1669b38a1f`，从 clean `0814062b3d529eb7a7841da035feb58e4087e020` 实施。父线程冻结的方案/UI preflight 保持，源码和本地验证已完成：16文件255 unit / 17文件235 DB，typecheck、lint（297 warnings/0 errors）、完整 build、API/Postman 生成、13相关审计通过。无 migration/table/cron/dependency 变化。详细调用链、策略边界、测试和日志见 `docs/planning/2026-10-07-yuk1346-answer-only-turn.md` 的本地证据段。
+
+父线程接下去负责独立 review、准确候选镜像上的真实隔离 browser/API/worker/model 验收、exact-head CI、等待窗及发布。真实模型输出/输入审计、普通 Mem0 回读和发布尚未完成；不要标 Done。只处理两条新 Copilot 及本轮 IDs，不挂生产 Mem0 卷，不启动全量旧队列/outbox 恢复。新请求 default preference 在 localStorage 中持续；每轮 ask/QUEUED/job_data 固定策略，重试沿用原 body。受限轮 cold，无可复用 cursor，六工具必须同时固定名单且 read；search_memory_facts 仍有既有查询 embedding/audit。SDK/聊天/运行记录仍保留，不宣称绝不落盘。排队且未执行的受限取消不拥有旧 cursor；执行中/失败/恢复清理在拥有执行/settlement 的事务边界，旧 replay 不覆盖后继 cursor。
+
+实施子线程无 paid 调用、生产访问、外部 Linear/PR/push/watch/merge/deploy、child delegation 或用户配置改动。无新独立 material follow-up；父线程执行 Linear capture/status gate。源码 commit 后本子线程写授权终止，PR 通知不得自动续写。最终日志 `/tmp/yuk1346-{unit-final,db-final,typecheck,lint,build}.log`，API生成 `/tmp/yuk1346-api-generation.log`、Postman `/tmp/yuk1346-postman.log`，audit 日志 `/tmp/yuk1346-audit-*.log`。
 
 PR1587 于03:05:42Z合并为上述 main，exact80369b155 CI37561726136及等待窗通过；已登记并结束watch。文档合并不需要重新部署 f3。README旧部署指针P2已明确延期并归YUK1329，不冒称修复。两条旧假设验收Mem0摘要继续保留。
 

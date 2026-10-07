@@ -26,6 +26,22 @@ describe('CopilotChatRequest wire enum (C3 / YUK-284)', () => {
 });
 
 describe('CopilotChatRequest', () => {
+  it('keeps missing policy absent, accepts both strict policies and rejects invented modes', () => {
+    const body = {
+      user_message: '假设含参方程有退化分支，先讨论而不进入长期判断。',
+      triggered_by: 'chat',
+    };
+    expect(CopilotChatRequest.parse(body)).not.toHaveProperty('derivation_policy');
+    for (const policy of ['allow', 'answer_only'])
+      expect(
+        CopilotChatRequest.parse({ ...body, derivation_policy: policy }).derivation_policy,
+      ).toBe(policy);
+    for (const policy of ['temporary', null, false, 1])
+      expect(CopilotChatRequest.safeParse({ ...body, derivation_policy: policy }).success).toBe(
+        false,
+      );
+  });
+
   it('rejects a correction target on the teaching behavior-pack path', () => {
     const result = CopilotChatRequest.safeParse({
       user_message: '请改正上一轮教学回答',

@@ -139,7 +139,10 @@ vi.mock('./subtask-events', async (importOriginal) => {
 
 import { ApiAuthError, ApiError } from '@/ui/lib/api';
 import { CopilotDock } from './CopilotDock';
-import { PENDING_COPILOT_TURN_STORAGE_KEY } from './durable-reconnect-storage';
+import {
+  PENDING_COPILOT_TURN_STORAGE_KEY,
+  loadPersistedPendingCopilotTurns,
+} from './durable-reconnect-storage';
 import { type CopilotRunView, createCopilotRunView, foldCopilotRunFrames } from './subtask-events';
 
 interface Snapshot {
@@ -208,10 +211,62 @@ async function sendMessage(user: ReturnType<typeof userEvent.setup>, text: strin
 }
 
 describe('CopilotDock unified durable conversation', () => {
+  it('keeps answer-only selection across close/reload/conversation switch and retries the frozen body after the selector changes', async () => {
+    const user = userEvent.setup();
+    apiFetchMock.mockRejectedValueOnce(new Error('lost 202 acknowledgement'));
+    const firstMount = render(<CopilotDock pathname="/subjects/math" navigate={vi.fn()} />);
+    await waitFor(() => expect(apiJsonMock).toHaveBeenCalled());
+    await user.selectOptions(screen.getByLabelText('本轮用途'), 'answer_only');
+    expect(screen.getByRole('status').textContent).toContain('聊天和必要运行记录仍会保存');
+    await sendMessage(user, '假设标记：椭圆退化分支尚未验证，同时要求永久保存到计划。');
+    const original = JSON.parse(apiFetchMock.mock.calls[0][1].body);
+    expect(original.derivation_policy).toBe('answer_only');
+    expect(original.skill_context).toBeUndefined();
+    await waitFor(() => expect(screen.getByRole('button', { name: '恢复' })).toBeDefined());
+    await user.selectOptions(screen.getByLabelText('本轮用途'), 'allow');
+    apiFetchMock.mockResolvedValueOnce(accepted('run-restricted-recovered'));
+    await user.click(screen.getByRole('button', { name: '恢复' }));
+    await waitFor(() => expect(apiFetchMock).toHaveBeenCalledTimes(2));
+    expect(JSON.parse(apiFetchMock.mock.calls[1][1].body)).toEqual(original);
+    await user.selectOptions(screen.getByLabelText('本轮用途'), 'answer_only');
+    await user.click(screen.getByTestId('drawer-close'));
+    firstMount.unmount();
+    render(<CopilotDock pathname="/today" navigate={vi.fn()} />);
+    expect((screen.getByLabelText('本轮用途') as HTMLSelectElement).value).toBe('answer_only');
+    await user.click(screen.getByTestId('copilot-session-list-toggle'));
+    await user.click(screen.getByText('旧对话：定义域复盘'));
+    expect((screen.getByLabelText('本轮用途') as HTMLSelectElement).value).toBe('answer_only');
+  });
+
+  it('keeps the exact pending body when a 202 contains an invalid accepted policy', async () => {
+    const user = userEvent.setup();
+    apiFetchMock.mockResolvedValueOnce(
+      new Response(
+        JSON.stringify({ run_id: 'run-invalid-policy', derivation_policy: 'temporary' }),
+        {
+          status: 202,
+          headers: {
+            Location: '/api/jobs/copilot_run/run-invalid-policy/events',
+            'Content-Type': 'application/json',
+          },
+        },
+      ),
+    );
+    render(<CopilotDock pathname="/today" navigate={vi.fn()} />);
+    await user.selectOptions(screen.getByLabelText('本轮用途'), 'answer_only');
+    await sendMessage(user, '临时假设包含多个退化分支，先核对单位。');
+    await waitFor(() => expect(screen.getByRole('button', { name: '恢复' })).toBeDefined());
+    expect(consumeDurableMock).not.toHaveBeenCalled();
+    expect(loadPersistedPendingCopilotTurns()[0]?.requestBody.derivation_policy).toBe(
+      'answer_only',
+    );
+  });
+
   const snapshots = new Map<string, Snapshot>();
 
   beforeEach(() => {
     window.sessionStorage.clear();
+    window.localStorage.clear();
     apiFetchMock.mockReset();
     apiJsonMock.mockReset();
     consumeDurableMock.mockReset();

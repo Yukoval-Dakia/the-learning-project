@@ -3,8 +3,10 @@
 
 import { createHash } from 'node:crypto';
 import { createId } from '@paralleldrive/cuid2';
+import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
+import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import type { CopilotModeState, CopilotSkillContextT, CopilotSkillTurn } from './chat-contracts';
 import {
   type CopilotReplyFinalizationReceipt,
@@ -34,6 +36,7 @@ export async function writeCopilotInputEvent(
   params: {
     sessionId: string;
     userMessage: string;
+    derivationPolicy?: DerivationPolicyT;
     triggeredBy?: 'chat' | 'chip';
     chipKind?: string;
     now: Date;
@@ -58,6 +61,7 @@ export async function writeCopilotInputEvent(
     payload: {
       surface: 'copilot',
       user_message: params.userMessage,
+      derivation_policy: readDerivationPolicy({ derivation_policy: params.derivationPolicy }),
       ...(isChip ? { chip_kind: params.chipKind ?? null } : {}),
       // AF S3a — redundant portable copy of the conversation envelope id.
       session_id: params.sessionId,
@@ -158,6 +162,9 @@ export async function writeCopilotReply(
   // created_at 严格晚于 ask（now + 1ms）：整轮共享一个 now，无偏移则 ask/reply
   // 在 created_at 上打平，turns 读取器的 (created_at, id) 排序可能把 reply 排到自己
   // 的 ask 之前。reply 真在 ask 之后发生，1ms bump 既忠实又保 pair 顺序。
+  const derivationPolicy = params.userAskEventId
+    ? await readEventDerivationPolicy(db, params.userAskEventId)
+    : 'allow';
   const replyAt = new Date(params.now.getTime() + 1);
   const replyEventId = params.replyEventId ?? `copilot_reply_${createId()}`;
   await write(db, {
@@ -173,6 +180,7 @@ export async function writeCopilotReply(
       surface: 'copilot',
       session_id: params.sessionId,
       reply_md: cleanedReply,
+      derivation_policy: derivationPolicy,
       task_run_id: params.taskRunId,
       ...(params.evidenceValidation ? { evidence_validation: params.evidenceValidation } : {}),
       ...(sealed.receipt ? { reply_finalization: sealed.receipt } : {}),
@@ -221,6 +229,12 @@ export async function writeTeachingCopilotReply(
   },
 ): Promise<WriteCopilotReplyResult & { skillTurn: CopilotSkillTurn; materialized: boolean }> {
   const { skillContext, skillResult, materializeAskCheckFn, ...commit } = params;
+  if (
+    params.userAskEventId &&
+    (await readEventDerivationPolicy(db, params.userAskEventId)) === 'answer_only'
+  ) {
+    throw new Error('仅用于本次回答：不创建教学练习，请重新提交需要用于日常学习的内容。');
+  }
   return db.transaction(async (tx) => {
     const replyEventId = `copilot_reply_${createId()}`;
     const question = skillResult.pendingQuestion

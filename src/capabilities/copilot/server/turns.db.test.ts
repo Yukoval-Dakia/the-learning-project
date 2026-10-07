@@ -354,6 +354,7 @@ describe('getRecentCopilotTurns', () => {
     expect(ours[0]).toEqual({
       role: 'user',
       text: '今天该复习哪些？',
+      derivation_policy: 'allow',
       at: t0.toISOString(),
       event_id: askId,
       checkpoint_event_id: askId,
@@ -362,6 +363,7 @@ describe('getRecentCopilotTurns', () => {
     expect(ours[1]).toEqual({
       role: 'ai',
       text: '有 3 道题到期。',
+      derivation_policy: 'allow',
       at: new Date('2026-06-04T10:00:05.000Z').toISOString(),
       event_id: replyId,
       run_id: askId,

@@ -34,6 +34,10 @@ vi.mock('@/kernel/events', () => ({
   }),
 }));
 
+vi.mock('@/kernel/events/derivation-policy', () => ({
+  readEventDerivationPolicy: vi.fn(async () => 'allow'),
+}));
+
 import { writeEvent } from '@/kernel/events';
 import { setToolCallLogMirroredEventId, writeToolCallLog } from '@/server/ai/log';
 import {

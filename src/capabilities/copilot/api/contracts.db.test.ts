@@ -223,18 +223,21 @@ describe('Copilot declared route response contracts', () => {
       {
         run_id: ids[1],
         session_id: session.id,
+        derivation_policy: 'allow',
         status: 'running',
         events_url: `/api/jobs/copilot_run/${ids[1]}/events`,
       },
       {
         run_id: ids[2],
         session_id: session.id,
+        derivation_policy: 'allow',
         status: 'cancel_requested',
         events_url: `/api/jobs/copilot_run/${ids[2]}/events`,
       },
       {
         run_id: ids[3],
         session_id: session.id,
+        derivation_policy: 'allow',
         status: 'queued',
         events_url: `/api/jobs/copilot_run/${ids[3]}/events`,
       },

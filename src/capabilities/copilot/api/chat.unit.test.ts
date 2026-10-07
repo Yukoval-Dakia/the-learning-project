@@ -179,7 +179,11 @@ describe('POST /api/copilot/chat — unified acceptance', () => {
       expect(reserveAcceptanceMock).toHaveBeenCalledWith(
         expect.anything(),
         expect.objectContaining({
-          jobData: { user_message: input.user_message, triggered_by: 'chat' },
+          jobData: {
+            user_message: input.user_message,
+            triggered_by: 'chat',
+            derivation_policy: 'allow',
+          },
           queuedPayload: expect.objectContaining({ dispatch: { source: 'unified_conversation' } }),
         }),
         expect.objectContaining({ transactionDb: fromPgBossDrizzleTxMock }),
@@ -234,6 +238,7 @@ describe('POST /api/copilot/chat — unified acceptance', () => {
     expect(await response.json()).not.toHaveProperty('checkpoint_event_id');
     expect(reserveAcceptanceMock.mock.calls[0]?.[1].jobData).toEqual({
       user_message: input.user_message,
+      derivation_policy: 'allow',
       triggered_by: 'chip',
       chip_kind: input.chip_kind,
       ambient: input.ambient_context,
@@ -279,6 +284,7 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
       run_id: 'copilot_user_ask_recovered_lost_202',
       session_id: 'sess_recovered_lost_202',
       checkpoint_event_id: 'copilot_user_ask_recovered_lost_202',
+      derivation_policy: 'allow',
     });
     expect(dbExecuteMock).not.toHaveBeenCalled();
     expect(runMock).not.toHaveBeenCalled();
@@ -608,6 +614,7 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
       run_id: 'copilot_user_ask_RID',
       session_id: 'sess_1',
       checkpoint_event_id: 'copilot_user_ask_RID',
+      derivation_policy: 'allow',
     });
     // user_ask 写入 = run handle。
     expect(writeUserAskMock).toHaveBeenCalledWith(
@@ -634,6 +641,7 @@ describe('POST /api/copilot/chat — durable dispatch (YUK-364)', () => {
         jobData: {
           user_message: '讲讲这道题',
           triggered_by: 'chat',
+          derivation_policy: 'allow',
         },
       }),
       {

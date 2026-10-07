@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { DerivationPolicy } from '@/core/schema/derivation-policy';
 import { REASONING_TRACE_MAX_LEN } from '../../limits';
 import { ActivityRef } from '../activity';
 import { AttemptPayload } from '../attempt-payload';
@@ -815,6 +816,7 @@ export const ToolUseQuery = z
     subject_id: z.string(),
     outcome: z.enum(['success', 'failure']),
     payload: z.object({
+      derivation_policy: DerivationPolicy.optional(),
       tool_name: z.string(),
       args: z.record(z.string(), z.unknown()),
       result_summary: z.string().optional(),

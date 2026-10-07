@@ -7,6 +7,7 @@
 // its response was lost. Retrying that tuple can only recover the same run.
 
 import type { CopilotChatRequestT } from '@/capabilities/copilot/server/chat-contracts';
+import { DerivationPolicy, type DerivationPolicyT } from '@/core/schema/derivation-policy';
 
 export const PENDING_COPILOT_TURN_STORAGE_KEY = 'loom:copilot:pending-turns:v2';
 const LEGACY_PENDING_COPILOT_TURN_STORAGE_KEY = 'loom:copilot:pending-turn:v1';
@@ -21,6 +22,7 @@ const MAX_IDEMPOTENCY_KEY_CHARS = 200;
 
 export type PersistedPendingCopilotRequestBody = Pick<
   CopilotChatRequestT,
+  | 'derivation_policy'
   | 'user_message'
   | 'triggered_by'
   | 'skill_context'
@@ -112,6 +114,8 @@ function parsePendingCopilotTurn(value: unknown): PersistedPendingCopilotTurn | 
     skillContext = { skill: rawSkill.skill, ref };
   }
 
+  const policy = DerivationPolicy.optional().safeParse(rawBody.derivation_policy);
+  if (!policy.success) return null;
   const sessionId = boundedString(rawBody.session_id, 160);
   if (!sessionId) return null;
 
@@ -143,6 +147,7 @@ function parsePendingCopilotTurn(value: unknown): PersistedPendingCopilotTurn | 
     requestBody: {
       session_id: sessionId,
       user_message: userMessage,
+      ...(policy.data !== undefined ? { derivation_policy: policy.data } : {}),
       triggered_by: 'chat',
       ...(skillContext ? { skill_context: skillContext } : {}),
       ...(ambientContext ? { ambient_context: ambientContext } : {}),
@@ -257,5 +262,24 @@ export function durableRunIdFromLocation(location: unknown): string | null {
     return location === `/api/jobs/copilot_run/${encodeURIComponent(runId)}/events` ? runId : null;
   } catch {
     return null;
+  }
+}
+
+export const COPILOT_DERIVATION_PREFERENCE_KEY = 'loom:copilot:derivation-policy:v1';
+export function loadCopilotDerivationPreference(): DerivationPolicyT {
+  try {
+    const parsed = DerivationPolicy.safeParse(
+      window.localStorage.getItem(COPILOT_DERIVATION_PREFERENCE_KEY),
+    );
+    return parsed.success ? parsed.data : 'allow';
+  } catch {
+    return 'allow';
+  }
+}
+export function saveCopilotDerivationPreference(policy: DerivationPolicyT): void {
+  try {
+    window.localStorage.setItem(COPILOT_DERIVATION_PREFERENCE_KEY, policy);
+  } catch {
+    /* Best-effort preference storage. */
   }
 }
