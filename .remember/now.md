@@ -1,6 +1,6 @@
 # YUK-1364 连续复验修复与 YUK-1356 交接 — 2026-10-07
 
-PR1591已创建并link/watch，head8eb10cb8a；本地另有纯文档11eef5749/e44769edf，待随修复push。唯一验证审发现第二条P1：probe-evidence连续复验依赖仍读mutable题面。独占code writer任务yuk1364-recurrence-repair-20261007-v1运行中，父只改docs。两条完整链路RED→GREEN；扩展42DB初跑36pass/6fail，六项均为corruption fixture更新冻结issuance被DB guard拒绝，writer修fixture，不准改生产guard。最终验证未完成，勿合并/部署，不启动第三审。
+PR1591已创建并link/watch，head8eb10cb8a；本地另有纯文档11eef5749/e44769edf，待随修复push。唯一验证审发现第二条P1：probe-evidence连续复验依赖仍读mutable题面。writer任务yuk1364-recurrence-repair-20261007-v1已完成并释放；两条完整链路RED→GREEN。最终248DB/72unit/typecheck/lint/build通过，父核对hash并独立85DB通过。生产guard未改，fixture最终通过；修复8264556d6待push与新exact-head CI，不启动第三审，未部署。
 
 YUK1356只读消费者调查已交付docs/planning/2026-10-07-yuk1356-operation-seams.md，Linear In Progress。主线57961995已在独立树启动唯一writer；本线程只负责接口调查和1364收口，不重复写1356。注意worker→HTTP claim release依赖、Pi尚无submit tool、用户原件来源、Pi队列投影/coverage与HTTP排序差异。以下记录为历史。
 
