@@ -94,6 +94,16 @@ const port = () => {
 };
 
 describe('native assessment through real runner and durable lifecycle', () => {
+  it('persists the Go product pin for the native assessment runner', async () => {
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'opencode-go');
+    vi.stubEnv('AI_PROVIDER_MODEL', 'mimo-v2.6-pro');
+    vi.stubEnv('OPENCODE_API_KEY', 'offline-go-fixture');
+    expect(await port()(fixture())).toMatchObject({ kind: 'scored', points_awarded: 5 });
+    expect(captured?.resolved).toMatchObject({ provider: 'opencode-go', model: 'mimo-v2.6-pro' });
+    const [run] = await testDb().select().from(ai_task_runs);
+    expect(run).toMatchObject({ provider: 'opencode-go', model: 'mimo-v2.6-pro' });
+  });
+
   it('assembles pi, preserves frozen input and persists exactly one native attempt/cost row', async () => {
     const input = fixture();
     const out = await port()(input);

@@ -5,7 +5,7 @@ import { createCopilotConversation, listCopilotConversations } from '@/server/se
 export async function GET(): Promise<Response> {
   try {
     const sessions = await listCopilotConversations(db);
-    return Response.json({ sessions });
+    return Response.json({ sessions, server_time: new Date().toISOString() });
   } catch (err) {
     return errorResponse(err);
   }

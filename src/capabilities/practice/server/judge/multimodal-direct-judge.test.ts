@@ -514,7 +514,7 @@ describe('runMultimodalDirectJudge — provider lane hard-failure semantics (YUK
   it('(b) configured-lane hard failure falls back to the registry default and the judge completes with degradation evidence', async () => {
     vi.stubEnv('VISION_JUDGE_PROVIDER', 'anthropic-sub');
     vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'tok-123');
-    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'anthropic-sub');
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
     const attemptedProviders: Array<string | undefined> = [];
     const runTaskFn = vi.fn(async (_kind: string, _input: unknown, ctx: unknown) => {
       const provider = providerFromRunCtx(ctx);
@@ -541,6 +541,29 @@ describe('runMultimodalDirectJudge — provider lane hard-failure semantics (YUK
       fallback_lane: 'xiaomi',
       error: expect.stringContaining('permission denied'),
     });
+  });
+
+  it('keeps a global pin authoritative and does not retry the same failed lane', async () => {
+    vi.stubEnv('VISION_JUDGE_PROVIDER', 'anthropic-sub');
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'opencode-go');
+    vi.stubEnv('AI_PROVIDER_MODEL', 'mimo-v2.6-pro');
+    const runTaskFn = vi.fn(async () => {
+      throw provider403();
+    });
+    const result = await runMultimodalDirectJudge({
+      db: mockDb,
+      question: makeRow({}),
+      answer_md: '5 N',
+      subjectProfile: physicsProfile,
+      runTaskFn,
+      imageFetchFn: async () => [{ data: 'AAA', mediaType: 'image/png' }],
+    });
+    expect(runTaskFn).toHaveBeenCalledTimes(1);
+    expect(result.coarse_outcome).toBe('unsupported');
+    expect(result.score).toBeNull();
+    expect(result.evidence_json.error_kind).toBe('provider_hard_failure');
+    expect(result.evidence_json.failed_lane).toBe('opencode-go');
+    expect(result.evidence_json.lane_degradation).toBeUndefined();
   });
 
   it('(c) genuinely-unsupported route (output schema mismatch) still yields the OLD unsupported semantics — no error_kind', async () => {

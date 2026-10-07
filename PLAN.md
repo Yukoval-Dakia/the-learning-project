@@ -1,31 +1,36 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-07：[本机发布记录](docs/planning/2026-10-07-local-release-result.md)已保存；现有版本升级完成，Copilot 实际回答因旧 provider 余额不足失败，正在修复。完整目标与[自主交付授权](docs/planning/2026-10-07-autonomous-delivery-charter.md)继续有效。[原 main 看板](docs/planning/2026-10-07-delivery-baseline-snapshot.md)保留历史证据。
+> Linear 是权威 tracker。2026-10-07：会话入口 PR1583 已合并并在 02:17Z 部署 `f3bfff2cf`，真实生产浏览器验收通过。当前完成 YUK-1340 发布记录，下一产品线为 YUK-1346 的单次保留策略。见[本机入口发布记录](docs/planning/2026-10-07-session-entry-local-release-result.md)。
 
 ## NOW
 
-- **YUK-1103 自主交付**：单条活动线为本机日用验收与 AI 帮助恢复。http://localhost:8787 运行 main `5d738dbc0`；app/worker healthy、115项迁移、readiness active，最终停写备份恢复与副本原生结算验证通过。不要重复部署旧版本。
-- **YUK-1341 Copilot 阻塞 / PR1582**：MiMo2.6Pro 隔离能力实证和证据修正已通过最终验证审。CI 两项高危依赖已更新为 sharp0.35.5 / MCP SDK1.32.1；本机依赖审计、52项聚焦测试、实际图像处理和MCP通信、静态检查与构建通过，等待新head完整CI。生产仍因旧Xiaomi402无法回答，产品AI路由暂保留，不能称已恢复日用。
-- **YUK-1340 会话入口**：独立工作树正在修复默认选中已结束会话导致输入禁用，须保留历史只读与显式新对话，并完成真实组件及浏览器验收。
-- **工作模型**：后续子任务使用 `opencode / opencode-go/mimo-v2.6-pro`，自动任务提示已更新。父线程切换曾中断且未保持，不能声称已经全面生效；MiMo 子任务已完成并读取真实截图，父线程核对了可见细节。
-- **行为基线 / YUK-405**：[完整设计](docs/design/2026-10-06-continuous-learning-system-behavior.md)由 agent 在持续委托下采用并负责验证，连接学校、纸笔、自习与数字工具，不是已实现清单。
-- **技术目标 / YUK-1337**：[ADR-0066](docs/adr/0066-typescript-adaptive-learning-architecture.md)保留 TanStack Start + Pi + PostgreSQL/Drizzle + DBOS 方向；当前仍为 Hono + Vite + pg-boss。
+- **YUK-1103 自主交付**：本机 http://localhost:8787；远程 https://loom-mac-mini.tail2ee344.ts.net/（同一 tailnet，沿用 Loom 令牌）。app/worker `f3bfff2cf` healthy，115项迁移、readiness active。已备份及恢复验证；不要重复发布旧 `5d738dbc0`。
+- **YUK-1341 产品 AI**：PR #1585 已通过 exact-head CI、独立初审和等待窗并合并。app/worker 都固定 `opencode-go/mimo-v2.6-pro`；54聊天任务和 Mem0 接线已落地。生产两轮 Copilot 成功，原会话及 Pi cursor 连续、刷新回放一致；后台 MemoryBrief 也已实际成功。未宣称所有任务质量或评分切片均获准入。
+- **YUK-1340 会话入口已交付**：PR #1583 满足 exact-head CI、审查和等待窗后合并。准确 ARM64 镜像完成副本迁移、旧镜像读取兼容、停写备份恢复及生产页面验收。默认续接、历史只读、新建、重开、刷新保持会话均通过；没有发送 AI 消息。YUK-1343 两条 P2 仍延期。
+- **行为基线 / YUK-405**：[完整设计](docs/design/2026-10-06-continuous-learning-system-behavior.md)连接学校、纸笔、自习与数字工具，由 agent 在持续委托下负责实现和验证，不是已实现清单。
+- **模型范围**：产品生成式/多模态 AI 为 MiMo2.6Pro；开发按 AGENTS 常规选模。专用 embedding、typed Jev 和 OCR 协议保留。现有评分准入与确定性功能不降级。
 
 ## NEXT
 
-- 修复 Copilot 实际回答阻塞，验证真实工具与图像能力、费用和失败恢复；再以椭圆学习场景验收记录、状态、后续安排与再次验证的衔接。
-- YUK-1042 按已有副作用和幂等身份恢复38条 DLQ，不能清空或当作升级新增。
-- YUK-1338 目标架构集成保持 Backlog，单独证明状态版本、过期结果拒绝与重启恢复。
+- 先落实 YUK-1346 的可信单次记忆/派生用途策略，再沿“椭圆难题 → 记录过程与帮助程度 → 区分暂时理解和独立迁移 → 后续验证安排”的真实学习路径推进。短回答成功不等于可靠评估已经兑现。
+- YUK-1042：42 failed +42 DLQ 原义务保留；先查每项副作用和幂等身份再恢复，不清队列或重付未知结果。
+- YUK-1338 目标架构集成保持 Backlog，单独证明状态版本、过期结果拒绝与重启恢复；ADR-0066 的 TanStack Start/Pi/PostgreSQL/DBOS 方向尚非当前运行形态。
 
 ## PARKED
 
-- YUK-1342：付费探针显式运行开关与不可覆盖封存，初审成组 P2；本轮不扩张能力接线改动。
+- YUK-1346：单次“不写入记忆”的可信策略尚未实现，High/Backlog，选为下一条产品线；两条原假设验收摘要保留，不冒称已修。
+- YUK-1343：失败创建提前标为显式来源、50条历史截断隐藏可续接会话均未修；已成组登记，不阻塞此次已裁决发布。
 
-- YUK-1329 保留通用发布入口和故障注入验收；一次手工安全发布不关闭整票。旧镜像直接回退兼容性未验证。
-- 其他线程 YUK-1325 / PR #1580 独立推进，不接管其工作树。其他历史事项见原看板和 Linear，不批量标 Done。
-- `pi-durable` 不作为已选持久化基础，不与 DBOS 同时拥有同一循环恢复；现有确定性功能及费用、重试、并发、恢复测试保留。
+- YUK-1342：付费探针开关、不可覆盖封存及 OpenAI4 node-fetch 绕过 global-fetch 观测。副本记忆功能通过，但整体探针仍 FALSE；SDK wire/count/cost 不完整，不重复付费刷绿。
+- YUK-1345：provider-only 校准默认值及旧 vision lane 同源归因，已裁决非阻塞；不把统一模型称为异源证据。
+- YUK-1344：Tailscale 本机 HTTPS/鉴权和既有独立 peer 已验证，离家实体设备验证尚缺。
+- YUK-1329：通用发布与回退演练仍未完成。旧备份 helper 的 auto-purge 文案/清单不适用当前保留策略；此前 MiMo 发布的 R2 时序补证保留。本次入口发布全部最终备份在停写后，101表计数恢复一致、63附件完整。
+- YUK-1235：镜像外部 MCP/sharp 版本与 lock 漂移已有票；本轮无已证实可达 P0/P1，不扩张成依赖整治。
+- 其他线程 YUK-1325 / PR #1580 独立推进；不接管其工作树或批量标 Done。旧完成线程被 PR 通知唤醒后越界写入的风险继续由父线程独占 watch 约束，平台跟进仍待去重登记。
 
 ## BLOCKED-ON
 
-- 无需 owner 追加日常授权。旧 Xiaomi 余额不足是当前已证实的 AI 调用阻塞；不自行开新订阅。工作模型已切换不代表产品路由获准切换，后者暂保留。
-- 每小时任务已唤起原线程，下一次按 T3 返回时间执行；依赖本机/T3运行。完整无人值守交付尚待实际证明。
+- 无需 owner 追加日常授权。旧 Xiaomi402 不再阻塞新 Copilot；历史失败没有删除。
+- 默认会话入口已在生产修复；完整学习状态评估和自适应安排仍需逐条行为验收，不能以此次日用修复冒称产品完成。
+- 旧0f81整镜像读取新迁移副本兼容已验证；回退需刷新浏览器且恢复旧入口缺陷。数据库恢复仍须保护备份后新写入，不可自动覆盖。当前指针已更新且发布锁已释放。
+- 每小时 T3 任务仍绑定原线程；需要 Mac/T3 运行。远程访问需要同一 tailnet、Mac 开机且用户会话内 daemon 在运行。

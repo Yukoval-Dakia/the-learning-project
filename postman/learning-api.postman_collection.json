@@ -962,7 +962,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "copilot", "sessions"]
             },
-            "description": "列出 Copilot 对话 session，最近更新优先\n\n**Notes:** 响应 { sessions: [{ id, status, title, created_at, updated_at }] }。"
+            "description": "列出 Copilot 对话 session，最近更新优先\n\n**Notes:** 响应 { server_time: ISO 时间（自动续接 24h 窗口的服务端时钟）, sessions: [{ id, status, title, created_at, updated_at }] }。"
           },
           "response": []
         },

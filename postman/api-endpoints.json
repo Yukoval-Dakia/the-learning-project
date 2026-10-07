@@ -461,7 +461,7 @@
         "query": [],
         "contentType": null,
         "bodyExample": null,
-        "notes": "响应 { sessions: [{ id, status, title, created_at, updated_at }] }。"
+        "notes": "响应 { server_time: ISO 时间（自动续接 24h 窗口的服务端时钟）, sessions: [{ id, status, title, created_at, updated_at }] }。"
       },
       {
         "method": "POST",

@@ -36,26 +36,32 @@ vi.mock('@/ui/lib/api', () => ({
   apiJson: apiJsonMock,
 }));
 
-vi.mock('@tanstack/react-query', () => ({
-  useQuery: ({ queryKey }: { queryKey: string[] }) =>
-    queryKey[0] === 'copilot-sessions'
-      ? {
-          data: {
-            sessions: [
-              {
-                id: 'copilot-session-tools',
-                status: 'active',
-                title: '错题整理对话',
-                created_at: '2026-08-20T08:00:00.000Z',
-                updated_at: '2026-08-20T08:00:00.000Z',
-              },
-            ],
-          },
-          isLoading: false,
-          refetch: vi.fn(),
-        }
-      : { data: null, isLoading: false, refetch: vi.fn() },
-}));
+vi.mock('@tanstack/react-query', () => {
+  const data = {
+    server_time: new Date().toISOString(),
+    sessions: [
+      {
+        id: 'copilot-session-tools',
+        status: 'active',
+        title: '错题整理对话',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+    ],
+  };
+  return {
+    useQuery: ({ queryKey }: { queryKey: string[] }) =>
+      queryKey[0] === 'copilot-sessions'
+        ? {
+            isFetchedAfterMount: true,
+            isSuccess: true,
+            data,
+            isLoading: false,
+            refetch: vi.fn(),
+          }
+        : { data: null, isLoading: false, refetch: vi.fn() },
+  };
+});
 
 vi.mock('@/ui/lib/use-copilot-dwell', () => ({
   openCopilotForNudge: vi.fn(),

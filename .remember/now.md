@@ -1,3 +1,17 @@
+# 当前交接 — 2026-10-07 会话入口生产发布完成
+
+生产 `f3bfff2cfe2aea0efbf7d11ead8a84ebfab497ef`，02:17Z app/worker 同准确镜像 e681a7b502aa；MiMo 产品 pin 保持不变。PR1583 在 exact d3906a7 CI37556260516成功、P0/P1裁决及17分钟窗后，于02:05:19Z合并，watch已结束。真实生产 Chromium 通过 fresh sessions/server_time、默认续接、结束历史只读、新建空会话、重开及刷新一致；无模型调用，SQL task runs仍2712。完整记录见 `docs/planning/2026-10-07-session-entry-local-release-result.md`。
+
+私有 runtime `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/deployment-session-entry-20261007-f3bfff2c`；上级current-release.json已更新，锁已释放。先副本迁移/旧0f81读兼容，再停app/worker取得最终DB/Mem0/R2，恢复101表计数一致，115迁移/2744events。42failed+42DLQ完整JSON保持。旧镜像/配置留存，回退需browser reload且恢复旧入口bug，不能自动恢复DB覆盖新写入。本轮副本容器已停止保留。
+
+当前交付树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1340-session-entry`，分支 `ops/yuk-1340-session-entry-release`，父线程唯一writer；root旧树mixed dirty保留。生产已发布，不因文档PR待合并而重复部署。YUK1343两条P2未修，1346单次不记忆策略High/Backlog为下一产品线。旧memory probe整体FALSE/wire-cost未知、1042历史义务保留、1344离家设备验证未完成，均不改称已通过。
+
+本机 http://localhost:8787；远程 https://loom-mac-mini.tail2ee344.ts.net/ 使用原令牌。本机和远程health/ready200，sessions无令牌401、有令牌200；远程检查来自本Mac。hourlyautomation仍绑定原5796线程。先承接用户反馈与运行状态，再推进单次保留用途控制和椭圆学习证据/复验路径。开发模型常规选择，产品生成式路由MiMo；不要切父线程模型或重启终态子任务。
+
+以下为历史交接，旧授权、版本和模型选择不覆盖上述当前状态。
+
+---
+
 # 当前交接 — 2026-10-06 YUK-1224/1226/1196/1236（SCF-141/143/109/161）
 
 工作树 /Users/yuqi/.t3/worktrees/the-learning-project/feat-yuk-588-today-cost-ui，分支 fix/yuk-1224-parser-assets-batch（upstream 已改为同名远端分支），base origin/main 9f1e0945c，含父线程文档提交 d2d5cff80。本 writer 提交 2364d4306，PR #1579（base main，四个 Closes 各自一行）。
