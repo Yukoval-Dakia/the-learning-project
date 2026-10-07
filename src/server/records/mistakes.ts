@@ -232,6 +232,7 @@ async function projectMistakeRecords(
         question_id: failure.question_id,
         ...(nativeEvidence.get(failure.attempt_event_id) ?? {
           ...historicalQuestionText(failure, questionById, editsByQuestionId),
+          prompt_materials: [],
           wrong_answer_md: (failure.answer_md ?? '').slice(0, 200),
           wrong_answer_image_refs: failure.answer_image_refs,
         }),

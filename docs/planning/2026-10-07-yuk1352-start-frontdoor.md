@@ -255,7 +255,7 @@ original HTTP consumer. Other routes still use the SPA fallback. Remove that dev
 adapter together with old SPA dev/build/image/fallback paths only after all real
 route consumers migrate and1359's behavior/rollback exit conditions pass.
 
-Final local evidence uses Node24.19.0 / pnpm11.13.1 in an `env -i` whitelist with
+The pre-PR1600 local evidence used Node24.19.0 / pnpm11.13.1 in an `env -i` whitelist with
 only HOME/PATH/TMPDIR and CODEX_FULL_GATE for build. No private env is loaded.
 
 - 11 scoped files / 75 tests pass, including auth/epoch-before-import, unchanged
@@ -314,3 +314,25 @@ Linear capture: no new domain defect remains from this task; mounting defects we
 fixed within1352 and known consumer-exit obligations are already1359/1376. The parent
 performs the tracker gate, as explicitly required by this assignment. The sole writer
 is released after the final local commit; the canceled1356 dirtytree is untouched.
+
+
+### Final integration of published PR1600
+
+During this task the shared origin/main advanced to `7100dfae4` after PR1600 was
+merged. The implementation was first committed as `3819a695c`, then this tree
+normally merged that published main. Only PLAN/now conflicted; the latest7631
+public-material source, API schema, generated client and original tests are
+preserved verbatim. The only local follow-up source change adds the required
+`prompt_materials: []` to the injected-page test fixture. No private contract or
+records file was authored here. The adapter forwards public materials unchanged;
+the existing card renderer does not gain new material UI in this mounting task.
+7631 retains materials, real bytes and UI/acceptance responsibility.
+
+Final checks on the integrated source are13 scoped files /98 tests, typecheck,
+lint with297 warnings/0 errors, lint ratchet, full build and capability boundary
+audit, all PASS. The compiled controlled-dispatch and real static-byte checks
+also pass again. The machine evidence now refers to this7100dfae4 integration
+and final log/source hashes; earlier75-test statements describe3819a695c only.
+The parent startup command and remaining runtime/browser/release limitations
+above are unchanged. Protected records/ingestion/practice/kernel/manifest files
+have zero diff against7100dfae4. No new authorization or review round was used.

@@ -1,8 +1,8 @@
 {
   "task": "YUK-1352 authenticated Start /mistakes",
   "baseline": "4a7f81541a5e5e07bbe73c07b5e56a7ddaca6090",
-  "merged_main": "7bc2165097d6ca43bb99e2a4ef9de692039a5bc6",
-  "normal_merge": "d98d965aa",
+  "merged_main": "7100dfae404449c7a5331c25548957da036021ad",
+  "normal_merge": "normal no-ff merge; final commit second parent is merged_main",
   "environment": {
     "node": "24.19.0",
     "pnpm": "11.13.1",
@@ -32,15 +32,15 @@
     "server/start/vite.config.ts": "1fb3a1cfcc0806ca1c46e98ecb4ce646a0f9d2148d8f3cedc720728f32127192",
     "web/src/RootShell.tsx": "094b56960e301d1a7627c9daba92b9d0b32678f62ee14fbb4f5fe9b077a37ef0",
     "web/src/router.tsx": "d863352213bbbbb974da8242d1277a346785fdffeeaa043731818d0be8b9902c",
-    "web/src/routes/MistakesPage.start.unit.test.tsx": "285c4adbadbd4f1fbc2d141cab196bc4202e378372ff7625678668bf07820faf",
+    "web/src/routes/MistakesPage.start.unit.test.tsx": "ce2c47d333bad3119f8031debfa336704ab66bc2d957aa7f4952ee4862973805",
     "web/src/routes/MistakesPage.tsx": "f7e0ceba429de6a8231a6aae121c1808b60de59b4c6905bda6fb307a9fad1802",
-    "web/src/routes/MistakesPage.unit.test.tsx": "b76821764aae88127f5a45745b002fa2f1413194e9c12b8f92a99a21acceb8cc",
+    "web/src/routes/MistakesPage.unit.test.tsx": "7d450881fa943269f45bb4cd614cd66c4ad4011c077ba459f2df0182f7627ec1",
     "web/src/surface-inventory.unit.test.ts": "89851aed909730c0425d2da5e28e4f81bb0e19e2156006db32a063b735925797"
   },
   "logs": {
     "unit": {
       "path": "/tmp/yuk1352-mistakes-unit.log",
-      "sha256": "5343f360d1453fd2813431d106fe87741592ee55251b15f602c93862180cf30e",
+      "sha256": "9367d2384f0b4369b44fd7f0f033b53b3be97daa05971809886ce2c1c33a3a53",
       "result": "PASS"
     },
     "typecheck": {
@@ -50,7 +50,7 @@
     },
     "lint": {
       "path": "/tmp/yuk1352-mistakes-lint.log",
-      "sha256": "ff6fd897afc50dc04c11f0179f316a405cd434cc49c7a88c7bf5dd0695794f7a",
+      "sha256": "c8422a209fd58ea625b45e846b1580c87594888b0d2fe176a30df648f94c887f",
       "result": "PASS"
     },
     "lint-ratchet": {
@@ -60,7 +60,7 @@
     },
     "build": {
       "path": "/tmp/yuk1352-mistakes-build.log",
-      "sha256": "57c3b434623b02107aa55cc20c1741729e322e13ae7994800ddf116d15276099",
+      "sha256": "b7ee59a24b5731f2e0f477f4ef051b389dacc2e9b2c195f95c9e7798aef5bf67",
       "result": "PASS"
     },
     "capability-audit": {
@@ -84,8 +84,8 @@
     ".cache/yuk1352-mistakes/assets-check.ts": "41a86372be4f81905c894836e3e6221e498305e46308b7956ba145792ea5ac74"
   },
   "scoped_tests": {
-    "files": 11,
-    "tests": 75
+    "files": 13,
+    "tests": 98
   },
   "lint": {
     "errors": 0,
@@ -121,5 +121,7 @@
     "replay": false,
     "deployment": false
   },
-  "new_main_observed_after_checks": "7100dfae4 PR1600 now merged; will normal-merge and refresh evidence"
+  "initial_main_merge": "d98d965aa",
+  "implementation_commit": "3819a695ccb4692871bb33749bf443f7eadf3106",
+  "public_materials": "PR1600 preserved as merged source; existing rendering unchanged; owner7631 retains acceptance"
 }

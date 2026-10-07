@@ -32,6 +32,7 @@ function row(id: string, knowledge: string, cause: MistakeProjection['cause']): 
     record_id: `record-${id}`,
     question_id: `question-${id}`,
     prompt_md: `历史题面 ${id}`,
+    prompt_materials: [],
     reference_md: '冻结参考答案',
     wrong_answer_md: '保留原答及帮助程度',
     wrong_answer_image_refs: [],

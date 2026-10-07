@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PublicMaterialView } from '@/core/schema/assessment';
 
 import {
   CauseCategory,
@@ -124,11 +125,28 @@ const MistakeCorrectionStateSchema = z.object({
   chain: z.array(MistakeCorrectionStepSchema),
 });
 
+const PromptMaterialTextSchema = PublicMaterialView.omit({ asset_id: true });
+
+/** Frozen public material only. Available means asset metadata matches; blob delivery is separate. */
+export const MistakePromptMaterialSchema = z.discriminatedUnion('availability', [
+  PromptMaterialTextSchema.extend({
+    availability: z.literal('inline'),
+    kind: PublicMaterialView.shape.kind.extract(['passage', 'table', 'plaintext']),
+    content_md: z.string(),
+  }).strict(),
+  PublicMaterialView.extend({ availability: z.literal('available') }).strict(),
+  PromptMaterialTextSchema.extend({
+    // Missing row and present-but-incompatible metadata are distinct. Neither exposes a download ID.
+    availability: z.enum(['missing', 'unavailable']),
+  }).strict(),
+]);
+
 export const MistakeProjectionSchema = z.object({
   id: z.string(),
   record_id: z.string(),
   question_id: z.string(),
   prompt_md: z.string(),
+  prompt_materials: z.array(MistakePromptMaterialSchema).default([]),
   reference_md: z.string().nullable(),
   wrong_answer_md: z.string(),
   wrong_answer_image_refs: z.array(z.string()).default([]),

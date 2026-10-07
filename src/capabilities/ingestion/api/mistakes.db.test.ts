@@ -238,6 +238,7 @@ describe('POST /api/mistakes', () => {
     const list = await (await getMistakes(`question_id=${body.question_id}`)).json();
     expect(list.rows).toHaveLength(1);
     expect(list.rows[0].wrong_answer_image_refs).toEqual(['asset_w']);
+    expect(list.rows[0].prompt_materials).toEqual([]);
   });
 
   it('reads the frozen historical question after the mutable question is edited', async () => {
@@ -258,6 +259,10 @@ describe('POST /api/mistakes', () => {
     expect(responseBody.rows).toHaveLength(1);
     expect(responseBody.rows[0].prompt_md).toBe(prompt.slice(0, 200));
     expect(responseBody.rows[0].reference_md).toBe(reference.slice(0, 200));
+    expect(responseBody.rows[0].prompt_materials).toEqual([]);
+    expect((await readMistakes(testDb(), { question_id: created.question_id })).rows).toEqual(
+      responseBody.rows,
+    );
     expect(responseBody.rows[0].cause).toMatchObject({ source: 'user', user_notes: '没记牢' });
   });
 
@@ -725,6 +730,7 @@ describe('GET /api/mistakes', () => {
       expect(result.rows[0]).toMatchObject({
         id: 'legacy',
         prompt_md: '',
+        prompt_materials: [],
         reference_md: null,
         wrong_answer_md: 'wrong',
       });
