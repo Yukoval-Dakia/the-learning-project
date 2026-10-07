@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-07 YUK-1365：聊天审核删除与真实流式已提交 PR1593，b54c9a06d CI成功、最终独立review无P0/P1。正在合入依赖更新26f101581并重验；未部署。发布锁归本线程，服务仍为f3 Agent TEST。
+> Linear 是权威 tracker。2026-10-07 YUK-1365：PR1593已合并并部署到Agent TEST，备份恢复/BAM/健康通过；真实SSE发现API未启动LISTEN，10秒补偿批量刷新。继续最小启动/关闭接线修复，未宣称流式验收完成。
 
 ## NOW
 
