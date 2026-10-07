@@ -201,3 +201,12 @@ focused seam tests 从实际 answer_only system prompt 注入正文提取 marker
 父在自主授权内决定：新源码已修复免费重放确定的验证对象绑定错误，下一次只在最终准确隔离镜像上做一组新场景（R3现有椭圆题临时解答、A普通偏好记忆），最多2条新accepted Copilot，总计4条；原R/R2不重执行、不修写历史blocked结果，也不消费其队列。沿用$2保守预留及$5/wake/$20/day，现已知两条Copilot合计estimatedUSD0.003367364；未知内部wire/cost仍未知。每阶段单次，根生成及必要验证任务受限；失败即封存并停止，不为凑绿重复采样。
 
 新baseline须保留两个历史验收run/task/job和全部历史数据：原Rcompleted，R2durableDONE/tasksuccess但physicalretry0，后者不得因retry状态重投。完整job摘要纳入保护。新会话、新Mem0辅助路径；仍无fullworker，父只受控投递新场景和其因果memory链。修复后的独立验证须真正调用并作出判决，单测/actual输入合成输出不能替代。具体运行目标、镜像与新source固定后再绑定driver。未完成实际验收/新exactCI/等待窗前不合并或发布，生产继续f3。
+
+
+## 2026-10-07 06:05Z：完整可见答案修复后的真实R3结果
+
+exact `8e199b68e` 的 CI Gate37577667244已通过，准确ARM64候选1dfbc392d9e7与控制driver35ec4c4c8899通过一次真实浏览器接纳新R3。根Copilot及四个独立任务均真实执行、success/end_turn；实际最终请求中，QuizVerify/TeachingQuality/SemanticJudge收到完整可见正文，SolutionGenerate未见正文或隐藏reference。父核对该题全部数学步骤一致，正文SHA `a992596bad8b3a9652d6ec586c5e1558e9f79ccc93548c319bc9cc0f52a94b9c`。
+
+公开结果仍 `learning_content=blocked`，普通记忆对照A未发送。五任务成功仅代表执行结束，不等于判决通过；观测仅保留返回hash，没有具体validator轴/解析结果，不能断言实际拒绝轴。后续先免费核查既有题解答是否错误使用新题原创性门禁，并补足后续一次正常验收所需的结构化拒绝证据；不为缺日志重执行R3。
+
+R3 run `copilot_user_ask_4aff84fdf95f9bebe06af724047832b1cb57c5e99f7e6e87931197fda3c3f36f`，job `712142b0-241c-5b73-9137-4bf47597b833`，durableDONE、physical heartbeat timeout retry0。原失败回执完整保留，不重投，不补造通过记录。父只读观测确认受保护业务、旧events/vectors/reconcile、112675保留队列及两旧job与task/job-event摘要均不变。R3本次估算$0.006731654，三次相关已知估算累计$0.010099018；未知SDK费用仍未知，不能宣称供应商硬cap。没有生产发布。

@@ -1,16 +1,18 @@
-# 当前交接 — 2026-10-07 05:36Z YUK-1346 完整可见答案校验修复
+# 当前交接 — 2026-10-07 06:05Z YUK-1346 真实R3仍被拦截
 
-唯一源码实施树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1346-turn-retention`，branch `feat/yuk-1346-turn-retention`，起点 clean `580773c09085a8415a1d0c37e5297023142c316b`。PR1588未合并，YUK1346仍待父整合和真实验收。本子线程独占源码写入、不委派；本地source+docs commit后写授权终止，terminal/PR通知不能续权。
+父持有交付树写入权 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1346-turn-retention`，PR1588源码8e199b68e679c078d477d19305206ab9cc0efb88；exact CI Gate37577667244成功，等待窗已过，但实际R/A验收失败，不合并/部署。生产f3bfff2cf app/worker/PG仍健康，未改。
 
-已修复精确R2确定性错误分支：单道现有题的完整题干和选项绑定eligible用户上下文后，服务端用剥除marker后的完整可见回复作验证reference，丢弃marker rubric。重复题干不走隐藏摘要捷径。Practice新增仅服务端选择的full_response比较模式：reference-free solver保持release_strict；semantic judge以独立完整解为reference，以实际可见正文为submission，required_points含独立signals及全部解释正确/一致要求；不能靠正确首行normalize通过。题面、教学、limits和失败/取消/deadline关闭策略保留。新题/教学路径沿用原接线；多道现有题或混合映射不明时拒绝，不复制整条回复到每题。无新表/schema/migration/materialization、权限、provider路由或子系统。
+唯一scratch准备任务full-answer-final-pair-preparation已completed并交权；父确认backing线程所有run completed/无pending，检查变换且重新离线验证0 TS诊断/27负例/14header控制。旧236a bundle/provenance保存到 `/tmp/yuk1346-acceptance-driver/archive-final-bundle-before-8e199b6-parent`；新准确8e bundle SHA35ec4c4c8899dc380472f153643712d11ab77d5cb4b66e66f6dcf6efe401bb37。8e镜像1dfbc392d9e7、app/idle driver/PG目标和provider pin已父核对，无fullworker。T3preview status/open明确nohost后使用真实Chromium。
 
-本轮Node24.19.0：5文件256 scoped unit通过；精确私有R2实际Practice离线7项通过，但所有task输出都是明确synthetic，仅证明真实输入接线/拒绝策略。另有10个mocked Practice seam controls和5个real finalizer离线控制；fail/error/cancel/deadline的12个历史blocked receipt字段逐一一致。R2 candidate SHA fa99d3707c983101245d0aac8b75bec5d05c5cc112945af963354c173ce8f56a，实际visible-answer SHA 8b6ba9ab93a56b4f028e53fff863e5588facc1b640cf3bf5aad925ceba3a2529。typecheck、lint、CODEX_FULL_GATE build和9项相关静态审计通过，lint297 warnings/0 errors，无baseline放宽。证据和日志全在新 `/tmp/yuk1346-visible-answer-repair`；旧diagnosis/acceptance/运行收据只读，private transcript未入git。
+06:04Z R3真UI202，run `copilot_user_ask_4aff84fdf95f9bebe06af724047832b1cb57c5e99f7e6e87931197fda3c3f36f`，job712142b0-241c-5b73-9137-4bf47597b833。根Copilot及QuizVerify/TeachingQuality/SolutionGenerate/SemanticJudge全部真实MiMo success/end_turn，估算合计$0.006731654；连同旧两次约$0.010099018，SDK不完整费用仍unknown。本轮可见正文SHAa992596bad8b3a9652d6ec586c5e1558e9f79ccc93548c319bc9cc0f52a94b9c：三个judge收到完整正文、solver无正文或hiddenreference，有实际finalpayload证据。父核对全文25-9=16/c4/foci±4正确，但finalization仍blocked，不能声称系统校验通过。
 
-没有新paid/model、网络、DB、browser/container、GitHub/Linear/watch/生产动作，不重执行R/R2，不发送A。不冒称真实数学输出质量、runtime acceptance或部署。生产仍f3、产品pin opencode-go/mimo-v2.6-pro是既有父证据，本轮未live核查。原236a R2费用estimated $0.001444664，原R $0.0019227；durable DONE但physical job retry0不重投。旧112675jobs/57memory和保护摘要保留；原f570受限ingest provider_delta/queue_delta/memory_count=0是历史父证据，不能代替本轮验收。
+验收脚本立即停止，A未发送，R3受限ingest/记忆/幂等阶段均未执行。原R/R2/R3都不得重投。R3 durableDONE、physical heartbeat timeout retry0，保留失败收据且不伪造completed-R。只读observe-R3-after-stop.mjs证明受保护business/旧event/57vector/reconcile/112675retainedjobs及两旧job/durable全摘要一致，ask/reply仍answer_only/ingested/scopes[]。run目录 `/tmp/yuk1346-acceptance-driver/run-8e199b6-01`，candidate `tlp-local-prod-20260907.sjUaCU/answer-only-preflight-20261007-8e199b68e`。
 
-父独占整合、push、PR/Linear capture、新exact-head CI、实际validator判决、剩余R/A预算和发布。初审+唯一验证审预算已耗尽，不开第三审。当前阻断归既有1346；单独的marker-free检测缺口已带digest-only证据写PLAN PARKED，父已去重归YUK1347 Backlog。精确可见R2正文不带marker时现有detector判无需校验且0次validator直接通过；本次未扩regex或改变此分支。详见方案末节。发布须停全部写入者、新worker先于app；受限数据写入后禁止直接回退旧f3。
+实际validator返回只保存text/result hash，没有各轴判决，且产品console日志在driver中关闭。因此当前不能确定R3是哪个轴拒绝；不得拿synthetic复现冒充实际判决。待检验的前提：既有题目解答可以沿用新题入池原创性准入；源码要求未给比对材料时copy_safety=unknown，而现有题source缺省，copyOnlyReview要求closed_book来源，这一契约是否必然拒绝需免费复现。
 
-以下为历史运行交接；旧下一条/Backlog叙述不能覆盖上方YUK1346实施状态。
+唯一运行只读诊断 `yuk1346-r3-validation-rejection-diagnosis-20261007-v1`（T3 codex/gpt-6.1-sol xhigh），可写新/tmp/yuk1346-r3-diagnosis离线复现，禁止产品写/DB/network/model/PR/再委派，不是第三审。父继续唯一产品writer；收到终态检查证据后决定最小修复/下一预算，不自动付费补日志。只读ops-cutover-recipe已交回可复用发布步骤；没有执行发布。父独占PRwatch。YUK1346保持InProgress，1347既有marker-free缺口仍独立Backlog。
+
+以下为历史已交付版本的记录。
 
 # 2026-10-07 会话入口生产发布完成
 
