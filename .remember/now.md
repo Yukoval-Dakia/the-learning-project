@@ -1,3 +1,7 @@
+# 当前交付 — native读取实现交回
+
+002712b79仅四文件，writer completed/noPending，父127hash全部匹配、独立95DB通过。证据/tmp/yuk1376-native-implementation-evidence.md、implementation-hashes.sha256与parent-db.log。独立review task yuk1376-native-independent-review-20261008-v1已running，只读固定002对3fef。父现在集成/PR/CI；无runtime/付费调用。reference无可信reveal policy保持null、figure本体/非图媒体、上游unknown过滤、Start/browser/旧入口退出仍未核销，不标1376Done。
+
 # 当前交付 — 1376首批已合并，native读取接续
 
 PR1598已19:02:53Z合入c7c2482ca，tree b55aff84与CI head291f1c5b3一致。CI37669157822成功，独立初审NONE，17min窗满足，T3已unwatch。新分支feat/yuk-1376-native-mistake-evidence从最新main创建。readonly调查completed/noPending，已直接读78cabefd position1586的18:59:01Z四路径无重叠回执。唯一writer task yuk1376-native-frozen-read-implementation-20261008-v1已running，codex/gpt-6.1-sol/xhigh；只写records投影/helper及两份scoped DB测试。父只改交接文档，不并发代码或测试。未部署，无锁/服务。1376仍未完成native完整投影、Start/浏览器/旧SPA退出，主线已收到合并接口通知。

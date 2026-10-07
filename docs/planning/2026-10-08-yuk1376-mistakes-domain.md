@@ -29,3 +29,14 @@ Native FailureAttempt上游尚不支持题面/答题图片快照适配，本提�
 使用submission/revision/issuance冻结坐标，优先复用公开发题投影的绑定校验与私有材料过滤。按发出part、slot和group evidence目标读取原始作答，不复制整组证据到无关卡片；图像需匹配身份、digest和所属范围。参考答案必须遵守已有揭示策略，不能将scoring basis或私有rubric直接公开。缺席与损坏分别处理，不回退到mutable题面。多part、多submission、各响应类型、重判撤回和正常编辑后的历史稳定性均需真实scoped DB验证。不改kernel契约、评分写入、全局组合根或UI，不增加表或回填历史。
 
 真实附件验收另需走鉴权content端点，核对原始字节、缺失附件及未授权请求；返回ID和SSR附件按钮不等于浏览器Lightbox已验收。冻结题面媒体完整呈现仍须单独核销，不能以本轮文字投影代替。
+
+
+## Native实现交回与父验证
+
+实现 `002712b79a9318dae35d8d7a320e5e5cec559432` 只改已约定四文件。唯一writer已completed/noPending、工作树clean。helper批量读取当前页submission及其原issuance/revision，复用公开发题投影，按part/slot投影文字与图片，不读取mutable question拼native历史。source_asset的digest、MIME、大小和上传时间须与冻结附件一致。
+
+保留RED证明原GET题面、选择答案及图片为空。作者95DB、48unit、typecheck/lint/build及capability/API/schema audits通过；父核127项hash全部匹配，manifest SHA256 `71a2c1e51971d01b396db3e3edfbda3594803ec5bf84dcbf3c150bf62c90f135`，并在固定002712b79上独立复跑两份scoped DB文件，95 passed、exit0。父日志 `/tmp/yuk1376-native-parent-db.log`。作者完整证据 `/tmp/yuk1376-native-implementation-evidence.md`。
+
+独立初审 `yuk1376-native-independent-review-20261008-v1` 已启动，codex/gpt-6.1-sol/xhigh，只读固定002712b79对3fef55277；结果待交回。准确head CI及真实HTTP/附件字节验收尚未完成，未部署。
+
+native参考答案继续null：该读取路径没有持久化的可信reveal-policy输入，不临时发明全公开策略。严重损坏冻结坐标导致kernel无法确认effective failure时，原reader先过滤该行；直接helper损坏输入测试不能证明GET会展示这种unknown行。本次不改既有kernel过滤或伪造失败。figure仅有公开caption/alt摘要，完整图片与非图像媒体展示尚未完成。这些边界继续属于1376/1359核销范围，不能以本次95DB宣称整个迁移完成。
