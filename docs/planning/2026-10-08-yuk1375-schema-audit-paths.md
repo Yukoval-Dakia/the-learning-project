@@ -9,3 +9,7 @@
 证据：/tmp/yuk1375-evidence.md、/tmp/yuk1375-sha256.txt、/tmp/yuk1375-comparison.json、/tmp/yuk1375-parent-unit.log、/tmp/yuk1375-parent-cli.json。审计仍是有界静态语法证据，不证明运行时行为或完整迁移完成。未修改产品/schema/dependencies，未操作runtime，无需为此工具修复重部署应用。
 
 当前独立只读review仍在进行，exact-head CI待push；不能先记Done。没有新暴露的未豁免stub或需独立建票的缺陷，41已有allowed项保持原归属。下一实施票1376承接/mistakes非UI迁移，主线负责最终挂载。
+
+## 合并结果
+
+2026-10-07 18:09Z，PR1597 squash合入 `36f719675a3c85cb82f8a802c7972e29f6b5bcb5`。tree与exact CI head `6d0b1ba7ebf0564e2c416346e3a09eb07e155e00` 相同；CI37662468013 SUCCESS，独立review NONE P0/P1，等待窗满足且无review threads。Linear1375 Done。工具修复无需runtime部署，无新增actionable follow-up。

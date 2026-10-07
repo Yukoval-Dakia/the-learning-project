@@ -1,3 +1,9 @@
+# 当前交付 — 1375已合并，接续1376
+
+PR1597于18:09Z合入36f719675，tree等于CI head6d0b1ba7；CI37662468013全绿，独立review NONE P0/P1、等待窗满足，Linear1375 Done。无runtime操作。已fetch并从最新origin/main36f719675创建feat/yuk-1376-mistakes-domain。下一步唯一writer实施/mistakes非UI领域/API接线，父负责文档、tracker、集成验收；1352/55/56不碰。现有mutable题面和图片投影缺口先真实DB复现，三态snapshot不得盲目回退。
+
+以下为历史记录。
+
 # 当前交付 — 1375 实施交回与父验收
 
 4370670a6仅修audit脚本/测试，writer已释放。32项hash父核，123unit/typecheck/lint/build通过；父54unit与真实CLI170467字节JSON一致，885字段/0未豁免/41allowed，allowlist未改。独立review task yuk1375-independent-review-20261008-v1（同8abc7d36 task前缀），codex gpt6.1sol xhigh只读，尚待结果。证据见docs/planning/2026-10-08-yuk1375-schema-audit-paths.md。尚未push/PR/CI，不称Done；无runtime动作。

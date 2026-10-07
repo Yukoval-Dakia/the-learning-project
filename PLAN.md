@@ -4,7 +4,7 @@
 
 ## NOW
 
-- **YUK-1375 → YUK-1376（1358 W1 /mistakes）**：本线程在1364发布收口后独占audit相对路径修复（不改allowlist），随后承接错题页非UI领域/API消费者迁移，保留视觉与现有行为；不改全局路由/manifest/package/lock或1352组合根，挂载交主线。1359退出清单继续由本线程维护。1352/1355/1356唯一集成与writer归主线57961995，不写其三树。
+- **YUK-1376（1358 W1 /mistakes）**：YUK1375已随PR1597合入36f719675，exact CI与独立review通过；本线程从最新main承接错题页非UI领域/API消费者迁移，保留视觉与现有行为；不改全局路由/manifest/package/lock或1352组合根，挂载交主线。1359退出清单继续由本线程维护。1352/1355/1356唯一集成与writer归主线57961995，不写其三树。
 
 - **YUK-1365**：PR1593/1594已分别合入df08399ff/6e54da8df。主线恢复即时SSE listener接线；其发布负责人负责新镜像与真实流式验收，本线程不接管。1367另线负责正式练习出版/评分准入与paper深链。
 
@@ -32,7 +32,6 @@
 
 ## PARKED
 
-- **YUK-1375**：schema audit 对绝对路径做test/spec过滤，当前test-storage工作树误排除生产源码；准确base与修复后JSON一致。修复4370670a6已交回，123unit与静态构建通过；父54unit/真实CLI885字段0未豁免通过，待独立review和CI，不改allowlist掩盖，详见1364证据。
 
 - **YUK-1360 父线程发布验收义务**：真实 startup 返回 schema44 时仍有7项 BAM index 工作 pending；不能把 start/health/Drizzle smoke 当作 background migration 完成。本 lane 验证 disposable 完成与 index validity；生产需父线程在既有发布流程核验。旧12.26.3默认启动仅证明单个 synthetic queue 操作，`migrate:false`拒绝44；没有执行或批准 queue downgrade。归入既有 YUK-1360/YUK-1329 验收，不在此 lane 新建 Linear。
 - YUK-1346：单次“不写入记忆”的可信策略尚未实现，High/Backlog，选为下一条产品线；两条原假设验收摘要保留，不冒称已修。
