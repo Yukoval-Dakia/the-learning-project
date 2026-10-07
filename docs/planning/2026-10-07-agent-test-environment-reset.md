@@ -32,8 +32,8 @@ Mem0 新卷没有历史文件。没有发起模型请求。此次验证覆盖重
 
 旧数据备份和旧 Mem0 卷离线保留，不自动恢复或重放。原 failed/DLQ 历史已随本次明确授权的清库退出运行环境，其完整历史仍在 dump 中。清库不表示此前判题、重试或保留策略缺陷已修复。
 
-独立测试附件存储尚未配置，因此当前附件上传不可用。尝试取得独立 S3 测试服务镜像时，镜像源返回访问或传输错误，未回退到私人 R2。此限制纳入 Linear 后续，不能宣称完整附件流程通过。
+独立测试附件存储尚未配置，因此当前附件上传不可用。尝试取得独立 S3 测试服务镜像时，镜像源返回访问或传输错误，未回退到私人 R2。此限制由 [YUK-1363](https://linear.app/yukoval-studios/issue/YUK-1363) 跟踪，不能宣称完整附件流程通过。
 
 操作期间 OrbStack 因系统盘 ENOSPC 停止。系统空闲空间回升后恢复 OrbStack，随后重新停止主 writer 进行备份。未执行磁盘清理，也未主动恢复其他线程的候选容器。
 
-原 TeachingBrief 故障已定位为展示层没有过滤无正式 issuance 的旧 canary 题。重置移除了这批旧数据，但后续仍需对齐 TeachingBrief 与正式判题准入条件。
+原 TeachingBrief 故障已定位为展示层没有过滤无正式 issuance 的旧 canary 题。重置移除了这批旧数据，但后续仍需对齐 TeachingBrief 与正式判题准入条件，由 [YUK-1364](https://linear.app/yukoval-studios/issue/YUK-1364) 跟踪。
