@@ -132,3 +132,21 @@ P2 4208871942 的 LIMIT-before-validation 已源码确认，运行影响尚未�
 代码faf2e66b012e3725df533189e58ad2dab31de188仅改变共享validator及两测试文件。通过schema-owned V2 safeParse区分V1和V2；V1/无spec沿用原始sequence的冻结prompt/reference，任一侧含V2仍要求完整契约相等。21项新V1 DB覆盖两个sequence、真实publisher/issuance、scripted executor作答、正常edit后的native及历史结果、ack幂等、report、recurrence与correction fold、错误参考/题面、V1/V2交换及坏proposal拒绝。修正测试fixture SQL数组错误后的RED为7个实际兼容性失败，另两个坏proposal控制通过；保留初始失败日志。
 
 最终281 DB、82 unit、typecheck/lint/build及10项audit通过。父核对23日志hash与20构建时源码hash；schema audit限制见上节YUK-1375。writer已释放。父重点两文件100 DB已通过，日志/tmp/yuk1364-v1-parent-db.log；新head CI/镜像HTTP仍待完成，不把旧镜像验收延伸到本修复。完整证据/tmp/yuk1364-v1-compat-evidence.md、manifest.json、final.patch。
+
+
+## 2026-10-07 16:15Z V1 HTTP验收与新criterion缺口
+
+586c3e456准确ARM64镜像cfe16253598dd70b4d0df055cddec429ec67c355e6260f3b7f3e9f2c55168a3e以独立PG/app/internal network实际验证V1 seq1/2原冻结题面可见；unissued隐藏且409 probe_not_issued；正常reference编辑后的题隐藏且409 probe_snapshot_changed。最后一项命中更早authored snapshot guard，不是shared-validator分支的HTTP证明；该分支负向证据在DB回归。四个HTTP窗口22表完整快照一致，无submission/evaluation/taskrun/provider/cost/judge-start记录，不执行有效答案或provider。初始summary断言错预期probe_spec_mismatch，核对源码顺序后按真实错误修正记录，未改fixture或重试改变结果。
+
+41份证据hash封存runtimeRoot/yuk1364-preflight-586c3e456/evidence/evidence-sha256.json，acceptance-summary.json记录完整限制。自有app/PG匿名卷/network已清理，lock-release.json记录owner核验释放；主fd8四服务healthy且current-release未变。
+
+之后PR新P1 4209163971指出V2 criterion.statement_md单独传给模型但共享validator只比嵌入probe_spec。父源码核实normalizer的canonical statement和assessment-model-assets消费路径，交独占implementation writer先复现、梳理完整评分criterion生成/消费边界再修复。当前586不得合并部署，既有HTTP不覆盖待完成修复。不增加独立review轮次。
+
+
+### V2 完整 criterion 修复 ba49af22d
+
+发布与来源校验共用 `createProbeV2Criterion`，绑定 statement_md、rule_id、source 与完整 probe_spec，历史 V1/absent 分支保持不变。六个正常发题前变更用例先复现进入脚本化评分，再验证409/probe_criterion_mismatch且不产生claim/submission/evaluation/provider/task/cost效果。已完成记录的导入损坏用例使用显式事务内restore fixture gate，不表示正常允许修改冻结行。
+
+子任务275DB、130unit、typecheck/lint/build及3相关audit通过；父核对45项来源/制品/日志hash，另跑V1与完整契约两文件112DB通过。父日志 `/tmp/yuk1364-criterion-parent-db.log` 使用Node26.10.0。详细证据 `/tmp/yuk1364-v2-criterion-evidence.md` 与 manifest同前缀。schema audit不作PASS，YUK1375仍独立跟进。
+
+源码writer已释放。新head CI、准确镜像HTTP与发布尚未完成，586证据不能覆盖此修复。本轮没有新增可执行follow-up，修复对应现有P1；1374/1375状态不变。

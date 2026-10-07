@@ -1,3 +1,23 @@
+# 当前交付 — YUK-1364 V2 criterion 修复收回
+
+ba49af22de08aac685ceb45a50ab1a42de7bf3c4 已提交完整 canonical criterion 共用修复。子任务 writer 已释放，无 pending child runs。父核验 manifest 全部45项hash，并实跑 V1 + complete-spec 两文件112DB通过，日志 /tmp/yuk1364-criterion-parent-db.log。父测试使用当前 Node26.10.0；镜像仍按项目 Node24 构建。子任务275DB/130unit/typecheck/lint/build及3audit通过，schema audit未运行未称PASS。没有新增独立review。
+
+下一步提交本三份父文档、push并回复resolve4209163971，然后准确新head CI及镜像HTTP验收。此前586镜像证据不覆盖此修复。尚未操作runtime或取得锁；任何服务操作先实际核锁、原子mkdir并通知两owner。Agent TEST ONLY。
+
+以下为历史记录。
+
+# 当前交付 — 2026-10-07 16:15Z YUK-1364
+
+586c3e456/imagecfe16253598dd70b4d0df055cddec429ec67c355e6260f3b7f3e9f2c55168a3e的V1隔离HTTP完成，41证据hash已封存到runtimeRoot/yuk1364-preflight-586c3e456/evidence。合法seq1/2显示原题面，unissued409，正常reference edit触发更早probe_snapshot_changed409而非shared-validator HTTP分支；四窗口22表无写及评分相关表0行。已清理自有app/PG匿名volume/network，核owner释放锁并通知双方；主fd8四服务healthy、current-release未变。
+
+GitHub新P1 4209163971 / PRRT_kwDOSXB98s6p_Wf_确认V2 criterion.statement_md漏比较，却经assessment-model-assets传模型。不得merge/deploy586。新唯一writer task yuk1364-v2-criterion-repair-20261008-v1，T3 codex/gpt-6-astra/high，先生产-冻结-消费完整criterion矩阵，再共享canonical边界修复。非第三review。父只改PLAN/.remember/本planning文档，无并发代码测试；子任务完成自动通知。旧HTTP不覆盖新修复。
+
+上一条gh查询已终止：pr view因unexpected EOF失败，reviewThreads成功获取新P1；session64033已结束。镜像build session32980已成功，所有本轮exec session结束。无部署锁/自有运行服务。新的release helper尚未准备，不执行旧70b/9a helper。Linear已同步InProgress、两owner已收到新P1状态。
+
+父已准备 /tmp/yuk1364-v2-criterion-runtime-fixture.ts 及notes.md：只在first issuance前通过正常publication改statement_md，保留question/version/prompt/reference/proposal及embedded spec，避免早期snapshot guard。旧归档compile通过，未绑定候选执行会在import前拒绝；尚未运行DB/HTTP。
+
+以下为历史记录。
+
 # 当前交付 — 2026-10-07 16:02Z YUK-1364
 
 V1修复faf2e66b012e3725df533189e58ad2dab31de188已交回，源码writer释放。281DB/82unit/typecheck/lint/build及10audit通过；schema audit在准确base相同失败，父已核实绝对路径test-storage误杀并登记YUK-1375、通知主线。父核对23日志与20build源码hash，新V1/V2两文件重点100 DB已通过。尚未push新head/CI/HTTP/merge/deploy。父现在唯一writer。

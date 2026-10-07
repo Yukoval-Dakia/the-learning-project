@@ -11,7 +11,7 @@
 
 - **YUK-1338 / YUK-1351 P0 gate**：PR #1590 已合入主线 42987dfd7，本分支同步集成。测试容器中验证 Pi + DBOS 状态版本、过期拒绝、四个进程终止边界、响应复用与单次业务效果；不等于整个迁移或真实 provider 重复付费问题已解决。证据见[gate 记录](docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md)。
 
-- **YUK-1363 / YUK-1364**：测试附件存储已验收。PR1591历史V1兼容修复已提交faf2e66b0，writer释放；281 DB/82 unit/typecheck/lint/build及10项audit通过。schema audit在准确base同样失败，已定位工作树绝对路径误排除并登记YUK-1375，不能称全绿。父已核对23日志/20源码hash，独立V1/V2两文件100 DB已通过；后续新head CI与隔离HTTP，未合并部署，不第三审。P2列表窗口另记YUK-1374。见[证据](docs/planning/2026-10-07-yuk1364-probe-issuance.md)。
+- **YUK-1363 / YUK-1364**：测试存储已验收，V1兼容修复faf2e66b0完成281DB/82unit/静态构建及父100DB。586c3e456准确镜像V1隔离HTTP完成，资源清理且锁已释放；但新P1确认V2 criterion.statement_md未绑定原proposal，修复ba49af22d已收回并核验45项hash，275DB/130unit及静态构建通过，父另跑112DB通过。新head CI与准确镜像HTTP待验，当前禁止合并发布。YUK-1375记录既有schema audit路径误判，1374记录P2列表窗口。见[证据](docs/planning/2026-10-07-yuk1364-probe-issuance.md)。
 - **YUK-1356 业务操作迁移**：接口与消费者调查已交付[实施输入](docs/planning/2026-10-07-yuk1356-operation-seams.md)。主线57961995已接手独立树唯一实施writer，与1352/1355协调；本线程不重复实施。Pi可信作答来源、队列诊断投影与coverage语义必须保留，三入口统一尚未验收。
 
 - **YUK-1362 / 当前部署用途**：仅供 Agent 开发测试，禁止再次清库或恢复私人数据。14:30Z实读 current-release 为1365发布 `6e54da8df` / image `fd8c046b97fe`，锁不存在；即时SSE已有1365证据，正文/取消验收仍受provider限额阻碍，1366负责现存DLQ。本线程未操作服务。此处是带时间的观察，后续发布仍须重新核验并原子取锁；日用须owner明确要求。
