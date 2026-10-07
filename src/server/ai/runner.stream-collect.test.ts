@@ -127,7 +127,9 @@ import {
   type RunnerMessage,
   __setPiAdapterForTests,
 } from './execution-adapter';
-import { type TaskEventMessage, runTask, streamTaskCollecting } from './runner';
+import { __setTraceExporterForTests } from './laminar-tracing';
+import { memoryTraceExporter, traceField } from './laminar-tracing.test-support';
+import { type TaskEventMessage, runTask, streamTask, streamTaskCollecting } from './runner';
 import { SPAWN_TOOL_ALIASES, SPAWN_TOOL_NAME } from './spawn-contract';
 import { createPiSpawnContract } from './tools/pi-subagent';
 
@@ -303,8 +305,65 @@ describe('streamTaskCollecting — YUK-266 collecting stream', () => {
   });
 
   afterEach(() => {
+    __setTraceExporterForTests();
     vi.clearAllMocks();
     vi.unstubAllEnvs();
+  });
+
+  it('keeps Response producer and attempt spans open until cancelled work drains', async () => {
+    const { records, exporter } = memoryTraceExporter();
+    __setTraceExporterForTests(exporter);
+    mockPi.messages = [assistant('first bytes'), resultMsg];
+    mockPi.waitForAbortAfter = 1;
+    const response = streamTask('AttributionTask', { history: 'SECRET_HISTORY' }, { db: fakeDb });
+    if (!response.body) throw new Error('missing stream body');
+    const reader = response.body.getReader();
+    expect(new TextDecoder().decode((await reader.read()).value)).toBe('first bytes');
+    const root = records.find((record) => record.name === 'task.run');
+    const attempt = records.find((record) => record.name === 'task.attempt');
+    expect(root?.ends).toBe(0);
+    expect(attempt?.ends).toBe(0);
+    expect(attempt?.parent).toBe(root?.context);
+    await reader.cancel();
+    await vi.waitFor(() => expect(root?.ends).toBe(1));
+    expect(attempt?.ends).toBe(1);
+    expect(attempt?.attributes[traceField('execution_outcome')]).toBe('cancelled');
+    expect(root?.attributes[traceField('execution_outcome')]).toBe('cancelled');
+    expect(JSON.stringify(records)).not.toContain('SECRET_HISTORY');
+  });
+
+  it('captures per-run sanitized business text and ends after middleware, without accepting provider execution as business success', async () => {
+    const { records, exporter } = memoryTraceExporter();
+    __setTraceExporterForTests(exporter);
+    mockPi.messages = [assistant('synthetic final'), resultMsg];
+    const afterRun = vi.fn(() => {
+      expect(records.every((record) => record.ends === 0)).toBe(true);
+    });
+    const result = await streamTaskCollecting(
+      'AttributionTask',
+      { private: 'SECRET_INPUT' },
+      {
+        db: fakeDb,
+        middleware: { afterRun },
+        laminarContent: {
+          input: { summary: 'synthetic business input' },
+          output: (value) => ({ summary: value.text }),
+        },
+      },
+      () => {},
+    );
+    expect(result.text).toBe('synthetic final');
+    expect(afterRun).toHaveBeenCalledOnce();
+    expect(records.every((record) => record.ends === 1)).toBe(true);
+    expect(
+      records.find((record) => record.name === 'task.run')?.attributes['lmnr.span.output'],
+    ).toBe('{"summary":"synthetic final"}');
+    const attempt = records.find((record) => record.name === 'task.attempt');
+    expect(attempt?.attributes[traceField('business_outcome')]).toBe('unassessed');
+    expect(attempt?.attributes[traceField('durable_settled')]).toBe(true);
+    expect(attempt?.attributes[traceField('task_run_id')]).toBe(result.task_run_id);
+    expect(attempt?.attributes['gen_ai.usage.cost']).toBeUndefined();
+    expect(JSON.stringify(records)).not.toContain('SECRET_INPUT');
   });
 
   it('fires onDelta once per assistant-message chunk and resolves the concatenated text', async () => {

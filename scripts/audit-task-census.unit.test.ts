@@ -330,6 +330,110 @@ describe('registered infrastructure evidence', () => {
     ).toEqual([]);
   });
 
+  const guardedImplementation = `
+    async function runTaskImpl(kind, input, ctx) {
+      if (!isKnownTask(kind)) { throw new Error('unknown task'); }
+      const def = tasks[kind];
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const lifecycle = createRunLifecycle({ kind, db: ctx.db });
+        await runTaskAttempt({ lifecycle, def });
+      }
+    }
+  `;
+  const tracedEntry = `
+    import { traceOperation } from './laminar-tracing';
+    export async function runTask(kind, input, ctx) {
+      return traceOperation('task.run', { task_kind: kind }, () => runTaskImpl(kind, input, ctx));
+    }
+  `;
+  function runnerGuard(source: string): boolean {
+    return inspectRunLogContract(createSourceFixture({ 'src/server/ai/runner.ts': source }))
+      .runnerCatalogGuard;
+  }
+
+  it('follows the returned tracing callback to the guarded execution owner', () => {
+    expect(runnerGuard(tracedEntry + guardedImplementation)).toBe(true);
+  });
+
+  it('still recognizes an unwrapped guarded runner', () => {
+    expect(runnerGuard(guardedImplementation.replace('runTaskImpl', 'runTask'))).toBe(true);
+  });
+
+  it.each([
+    [
+      'missing guard',
+      guardedImplementation.replace(
+        "if (!isKnownTask(kind)) { throw new Error('unknown task'); }",
+        '',
+      ),
+    ],
+    [
+      'non-terminating guard',
+      guardedImplementation.replace("throw new Error('unknown task');", 'logUnknown(kind);'),
+    ],
+    [
+      'guard after catalog access',
+      guardedImplementation.replace(
+        "if (!isKnownTask(kind)) { throw new Error('unknown task'); }\n      const def = tasks[kind];",
+        "const def = tasks[kind];\n      if (!isKnownTask(kind)) { throw new Error('unknown task'); }",
+      ),
+    ],
+    [
+      'guard after execution',
+      guardedImplementation.replace(
+        "if (!isKnownTask(kind)) { throw new Error('unknown task'); }",
+        "createRunLifecycle({ kind }); if (!isKnownTask(kind)) { throw new Error('unknown task'); }",
+      ),
+    ],
+    [
+      'different guarded kind',
+      guardedImplementation.replace('isKnownTask(kind)', 'isKnownTask(otherKind)'),
+    ],
+    [
+      'wrong lifecycle kind',
+      guardedImplementation.replace(
+        'createRunLifecycle({ kind,',
+        'createRunLifecycle({ kind: otherKind,',
+      ),
+    ],
+    [
+      'guard hidden in nested callback',
+      guardedImplementation.replace(
+        "if (!isKnownTask(kind)) { throw new Error('unknown task'); }",
+        "const unused = () => { if (!isKnownTask(kind)) { throw new Error('unknown task'); } };",
+      ),
+    ],
+  ])('rejects a delegated owner mutation: %s', (_name, implementation) => {
+    expect(runnerGuard(tracedEntry + implementation)).toBe(false);
+  });
+
+  it.each([
+    [
+      'unused owner',
+      tracedEntry.replace(
+        '() => runTaskImpl(kind, input, ctx)',
+        '() => Promise.resolve(undefined)',
+      ),
+    ],
+    [
+      'wrong forwarded kind',
+      tracedEntry.replace('runTaskImpl(kind, input, ctx)', 'runTaskImpl(otherKind, input, ctx)'),
+    ],
+    [
+      'non-tracing wrapper',
+      tracedEntry.replace("from './laminar-tracing'", "from './untrusted-wrapper'"),
+    ],
+    [
+      'execution before delegation',
+      tracedEntry.replace(
+        'return traceOperation',
+        'createRunLifecycle({ kind }); return traceOperation',
+      ),
+    ],
+  ])('rejects a tracing entry mutation: %s', (_name, entry) => {
+    expect(runnerGuard(entry + guardedImplementation)).toBe(false);
+  });
+
   it('rejects run-log contract fragments hidden in comments and strings', () => {
     const root = createSourceFixture({
       'src/db/schema.ts': `

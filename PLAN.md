@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-07：会话入口 PR1583 已合并并在 02:17Z 部署 `f3bfff2cf`，真实生产浏览器验收通过。当前完成 YUK-1340 发布记录，下一产品线为 YUK-1346 的单次保留策略。见[本机入口发布记录](docs/planning/2026-10-07-session-entry-local-release-result.md)。
+> Linear 是权威 tracker。2026-10-07 本轮：PR1580 新 P1 前缀凭据泄露已复现并修复，等待新提交 CI；未部署。此前：会话入口 PR1583 已合并并在 02:17Z 部署 `f3bfff2cf`，真实生产浏览器验收通过。当前完成 YUK-1340 发布记录，下一产品线为 YUK-1346 的单次保留策略。见[本机入口发布记录](docs/planning/2026-10-07-session-entry-local-release-result.md)。
 
 ## NOW
 
@@ -26,7 +26,7 @@
 - YUK-1344：Tailscale 本机 HTTPS/鉴权和既有独立 peer 已验证，离家实体设备验证尚缺。
 - YUK-1329：通用发布与回退演练仍未完成。旧备份 helper 的 auto-purge 文案/清单不适用当前保留策略；此前 MiMo 发布的 R2 时序补证保留。本次入口发布全部最终备份在停写后，101表计数恢复一致、63附件完整。
 - YUK-1235：镜像外部 MCP/sharp 版本与 lock 漂移已有票；本轮无已证实可达 P0/P1，不扩张成依赖整治。
-- 其他线程 YUK-1325 / PR #1580 独立推进；不接管其工作树或批量标 Done。旧完成线程被 PR 通知唤醒后越界写入的风险继续由父线程独占 watch 约束，平台跟进仍待去重登记。
+- YUK-1325 / PR #1580：保留 `1be38edbc`、`1af72b427`、`3940d61f9`，正常合入 main `8841ce68a` 为 `e484efa60`；359 scoped tests、21 audits、typecheck/lint/build 与 lint ratchet 通过，无 high/critical 依赖告警。开发 transcript 与产品 MiMo/自主交付指导同时保留。writer 已释放，父线程负责最终 SDK/SQL/browser 回放、push、exact-head CI、review replies、Linear 与发布；P2 typed tracing 留 YUK-1339，不启动第三审。详情见 [Laminar 记录](docs/planning/2026-10-06-yuk1325-laminar.md)。旧完成线程越界写入风险仍由父线程独占 watch 约束，平台跟进待去重登记。
 
 ## BLOCKED-ON
 

@@ -10,6 +10,7 @@
 import { createHash } from 'node:crypto';
 import { and, asc, eq } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
+import { observeTaskOperation } from '@/ai/task-observation';
 import { isDurableWorkerTouchEvent } from '@/capabilities/copilot/durable-pickup';
 import {
   type PreparedCopilotReply,
@@ -622,6 +623,23 @@ async function awaitClaimedCopilotExecution(
 }
 
 export async function runCopilotRun(params: RunCopilotRunParams): Promise<RunCopilotRunResult> {
+  return observeTaskOperation(
+    { operation: 'run', taskKind: 'CopilotTask', logicalRunId: params.data.run_id },
+    async (reportOutcome) => {
+      const result = await runCopilotRunImpl(params);
+      reportOutcome(
+        result.status === 'done'
+          ? 'accepted'
+          : result.status === 'cancelled'
+            ? 'cancelled'
+            : 'rejected',
+      );
+      return result;
+    },
+  );
+}
+
+async function runCopilotRunImpl(params: RunCopilotRunParams): Promise<RunCopilotRunResult> {
   try {
     return await executeAcceptedCopilotRun(params);
   } finally {

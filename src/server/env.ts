@@ -71,6 +71,13 @@ const server = {
   KC_DEDUP_DISTANCE_MAX: optionalString,
   KC_DEDUP_MAX_PAIRS: optionalString,
   KC_DEDUP_WINDOW_DAYS: optionalString,
+  // Optional tracing controls. Unsupported SDK global-context flags are declared
+  // for inventory, but the tracing owner still refuses to initialize when set.
+  LMNR_DEBUG: optionalString,
+  LMNR_DEV_TRANSCRIPTS: optionalString,
+  LMNR_PROJECT_API_KEY: optionalString,
+  LMNR_SPAN_CONTEXT: optionalString,
+  LMNR_TRACE_METADATA: optionalString,
   LOCAL_NEXT_PORT: optionalString,
   LOCAL_POSTGRES_HOST: optionalString,
   LOCAL_POSTGRES_PORT: optionalString,

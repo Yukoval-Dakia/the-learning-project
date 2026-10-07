@@ -1,3 +1,7 @@
+# PR1580 接续 — 2026-10-07
+
+父线程唯一 writer。6787c423b 的 CI 已绿，但新 P1 discussion4205696120 确认：R2_SECRET_ACCESS_KEY、DB_PASSWORD、CLAUDE_CODE_OAUTH_TOKEN 等文本及部分结构字段仍泄露。扩大10类回归先RED，现文本和结构字段共用credentialNamePattern后73 scoped tests通过，保留普通正文和wrapped assignment覆盖。修复后须新exact CI及17分钟等待；最终SQL/browser验收仍待完成，不启动第三审、不部署。
+
 # 当前交接 — 2026-10-07 会话入口生产发布完成
 
 生产 `f3bfff2cfe2aea0efbf7d11ead8a84ebfab497ef`，02:17Z app/worker 同准确镜像 e681a7b502aa；MiMo 产品 pin 保持不变。PR1583 在 exact d3906a7 CI37556260516成功、P0/P1裁决及17分钟窗后，于02:05:19Z合并，watch已结束。真实生产 Chromium 通过 fresh sessions/server_time、默认续接、结束历史只读、新建空会话、重开及刷新一致；无模型调用，SQL task runs仍2712。完整记录见 `docs/planning/2026-10-07-session-entry-local-release-result.md`。
@@ -11,6 +15,12 @@
 以下为历史交接，旧授权、版本和模型选择不覆盖上述当前状态。
 
 ---
+
+# 当前交接 — 2026-10-07 YUK-1325 Laminar writer released
+
+工作树 `/private/tmp/tlp-laminar-yuk1325`，分支 `feat/yuk-1325-laminar`。保留既有修复 `1be38edbc`、sharp `1af72b427` 和 main merge `3940d61f9`；正常 merge main `8841ce68a` 为 `e484efa60`，保留产品 MiMo/autonomous delivery 指导与 Laminar。359 unit、全部19 CI audit加provider-lanes/agent-control-plane、typecheck/lint/build/lint-ratchet通过；297既有warnings、零high/critical依赖告警。P1 #4196957316 的4种prefixed API-key控制在a529全部RED、当前全部GREEN，未重写既有修复。完整命令/日志digest见 `docs/planning/evidence/2026-10-07-yuk1325-babysit-checks.txt`，本地日志 `.cache/yuk1325-babysit-20261007/`。
+
+源码/backend/sanitizer/audit baseline完整保留，无prod/HTTP-worker/model/DB/export/full-test/push/第三审。历史真实调用及OFFLINE REPLAY仅适用于原记录revision，最终development transcript SDK→SQL/browser验收仍待父线程。父线程独占PR watch/push/replies/merge/Linear/deploy；P2 typed primitive tracing仍延期YUK-1339；无新增actionable follow-up。提交此交接后writer释放，不因PR通知重启写入。
 
 # 当前交接 — 2026-10-06 YUK-1224/1226/1196/1236（SCF-141/143/109/161）
 
