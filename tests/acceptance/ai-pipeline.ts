@@ -86,7 +86,7 @@ const CASE_COST_RESERVE_USD: Readonly<Record<CaseName, number>> = {
   unified: 1.6,
   cancel: 0,
 };
-// Derived from the current content-validation call graph: verify-framework's
+// Domain tool validators retained after removing Copilot chat review: verify-framework's
 // runQuestionContentValidation → QuizVerifyTask; non-vision computation
 // solve-check → SolutionGenerateTask; runTeachingQualityCheck → TeachingQualityTask.
 const SEMANTIC_VALIDATOR_TASK_KINDS = [
@@ -304,7 +304,6 @@ async function main(): Promise<void> {
       { registerCapabilityTools },
       { Conversation },
       { getTool, listTools, registerTool, __resetRegistryForTests },
-      { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY },
     ] = await Promise.all([
       import('@/db/client'),
       import('@/db/schema'),
@@ -317,7 +316,6 @@ async function main(): Promise<void> {
       import('@/server/ai/tools/register-capability-tools'),
       import('@/server/session'),
       import('@/server/ai/tools/registry'),
-      import('@/capabilities/copilot/server/content-validation'),
     ]);
     const { and, asc, eq, inArray } = await import('drizzle-orm');
     const { getStartedBoss, fromPgBossDrizzleTx } = await import('@/server/boss/client');
@@ -1131,7 +1129,7 @@ async function main(): Promise<void> {
         proposal:
           '只调用 propose_knowledge_mutation，为「文言虚词之」提出一个新增子节点的提议；不得直接写入或声称已经执行，不要出题。',
         semantic:
-          '这是合成校验夹具。请原样输出且不要更正：\n题目：计算 17×19？\n答案：324\n并添加唯一的 copilot_learning_content marker：subject_id 为 math；唯一 question 的 id=acceptance_bad_product、kind=computation、prompt_md 精确为“计算 17×19？”，reference_md 为“324”，choices_md=null，rubric_json={}。不要调用工具，不要解释。',
+          '这是合成校验夹具。请原样输出且不要更正：\n题目：计算 17×19？\n答案：324\n不要调用工具，不要解释。',
         'native-task':
           '必须调用一次 Task，subagent_type 为 copilot-researcher，目标仅为调用 query_knowledge（subjectId:yuwen、nodeId:actual:classical-root、include:[children]）总结实际返回的节点；不用记忆或外部搜索。等 tool_result 后用一句话转述，禁止第二个 Task、出题和写入。',
       };
@@ -1234,13 +1232,12 @@ async function main(): Promise<void> {
           if (
             view?.source !== 'tool_result' ||
             view.ref.kind !== 'generate_question_candidate' ||
-            view.snapshot?.state !== 'available' ||
-            receipt?.learning_content !== 'passed'
+            view.snapshot?.state !== 'available'
           )
             throw new Error(
-              'presentation-candidate: a generated question was not independently validated and published',
+              'presentation-candidate: a generated question was not trace-bound and published',
             );
-          for (const kind of ['QuestionAuthorTask', ...SEMANTIC_VALIDATOR_TASK_KINDS]) {
+          for (const kind of ['QuestionAuthorTask']) {
             if (!observed.rows.some((row) => row.kind === kind && row.status === 'success'))
               throw new Error(`presentation-candidate: missing successful ${kind}`);
           }
@@ -1249,12 +1246,8 @@ async function main(): Promise<void> {
             1
           )
             throw new Error('presentation-candidate: generation must run exactly once');
-          if (!result.reply.includes('未对外部题库进行原创性比对'))
-            throw new Error('presentation-candidate: missing honest comparison scope');
-          if (validatorObservations.length < 3)
-            throw new Error(
-              'presentation-candidate: missing actual validator input/output evidence',
-            );
+          if (validatorObservations.length > 0)
+            throw new Error('presentation-candidate: unexpected chat content review');
         }
         if (
           caseName === 'presentation-html' &&
@@ -1269,8 +1262,6 @@ async function main(): Promise<void> {
           };
       }
       if (caseName === 'claims') {
-        if (receipt?.learning_content === 'blocked')
-          throw new Error('claims: finalization blocked the authoritative reply');
         if (!terminals.get(result.task_run_id)?.trim())
           throw new Error(
             'claims: no authoritative model terminal; a safe failure reply is not acceptance',
@@ -1379,33 +1370,20 @@ async function main(): Promise<void> {
         }
       }
       if (caseName === 'semantic') {
-        const semanticEvidence = caseEvidence.at(-1);
-        const observedKinds = new Set(observed.rows.map((row) => row.kind));
-        const validatorsObserved = SEMANTIC_VALIDATOR_TASK_KINDS.every((kind) =>
-          observedKinds.has(kind),
-        );
-        if (!validatorsObserved) {
-          if (semanticEvidence) semanticEvidence.semantic_fixture = 'not_emitted';
-          throw new Error('semantic: fixture_not_emitted; dedicated validator attempts absent');
-        }
+        // Owner YUK-1365 removed chat content review. This case checks transport,
+        // not mathematical correctness or model-quality admission.
         if (
-          receipt?.learning_content !== 'blocked' ||
-          result.reply !== COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY ||
-          result.reply.includes('324') ||
-          result.reply.includes('copilot_learning_content')
-        ) {
-          if (semanticEvidence) semanticEvidence.semantic_fixture = 'not_emitted';
-          throw new Error(
-            'semantic: fixture_not_emitted; unsafe candidate was repaired or accepted',
-          );
-        }
-        if (observed.tools.length > 0) {
-          throw new Error('semantic: unexpected DomainTool activity');
-        }
-        if (semanticEvidence) {
-          semanticEvidence.semantic_fixture = 'rejected_by_existing_validators';
-          semanticEvidence.validator_task_kinds = [...SEMANTIC_VALIDATOR_TASK_KINDS];
-        }
+          observed.rows.some((row) =>
+            SEMANTIC_VALIDATOR_TASK_KINDS.some((kind) => kind === row.kind),
+          )
+        )
+          throw new Error('semantic: unexpected independent chat content review');
+        if (!result.reply.includes('324') || result.reply.includes('copilot_learning_content'))
+          throw new Error('semantic: generated prose suppressed or internal marker exposed');
+        if (observed.tools.length > 0) throw new Error('semantic: unexpected DomainTool activity');
+        const semanticEvidence = caseEvidence.at(-1);
+        if (semanticEvidence)
+          semanticEvidence.semantic_fixture = 'chat_prose_without_content_review';
       }
       if (caseName === 'native-task') {
         const children = await db

@@ -8,7 +8,7 @@ root terminal output remains Markdown, and the current execution budgets stay fi
 Copilot contributes `present_primary_view` through its existing manifest. It is a
 local presentation control, not a read, proposal or domain mutation. The server
 validates the nomination against successful root trace, live artifact ownership
-and existing HTML/content gates before publishing the existing primary-view DTO.
+and existing HTML presentation security before publishing the primary-view DTO.
 Tool-result, persisted-artifact and ephemeral-HTML sources are all retained.
 Inline, durable live delivery and replay publish the same final product state.
 
@@ -35,3 +35,13 @@ Partial, cancellation and failure paths remove the view before this boundary.
 Durable repair/replay use the committed text, and foreground discards a mismatched
 SDK cursor so model history cannot silently diverge from the visible reply.
 This adds no model call, and does not change data retention or production UI code.
+
+## Chat prose streams without a content review
+
+Owner removed Copilot question/solution keyword detection, mandatory learning
+content markers and the independent chat learning-content review on 2026-10-07
+(YUK-1365). This applies to prose and authorized ephemeral/generated-result
+presentations. Registered domain tools retain their own validation; presentation
+trace binding, correction truth and proposal disclosure remain server-owned.
+Root Pi text deltas stream through durable job events, while terminal REPLY/FAILED
+replaces the provisional draft. See the [implementation decision](../planning/2026-10-07-yuk1365-copilot-prose-stream.md).

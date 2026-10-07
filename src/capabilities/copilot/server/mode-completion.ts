@@ -5,12 +5,7 @@ import {
   readCopilotSkillTurn,
 } from './chat-contracts';
 
-export type CopilotTerminalOutcome =
-  | {
-      kind: 'success';
-      learningContent: 'not_applicable' | 'passed' | 'blocked';
-    }
-  | { kind: 'partial' | 'failed' | 'cancelled' };
+export type CopilotTerminalOutcome = { kind: 'success' | 'partial' | 'failed' | 'cancelled' };
 
 /**
  * Resolve product mode completion without adding transport or model-input state.
@@ -21,11 +16,7 @@ export function resolveCopilotModeCompletion(
   skillContext: CopilotSkillContextT | undefined,
   outcome: CopilotTerminalOutcome,
 ): CopilotModeState | undefined {
-  if (
-    outcome.kind !== 'success' ||
-    outcome.learningContent === 'blocked' ||
-    skillContext?.skill !== 'quiz'
-  ) {
+  if (outcome.kind !== 'success' || skillContext?.skill !== 'quiz') {
     return undefined;
   }
   return {

@@ -112,11 +112,12 @@ export function resolveDeterministicCorrectionContract(
 export function resolveCorrectionReply(
   reply: string,
   contract: CopilotCorrectionContract,
+  sanitizeProse: (text: string) => string = (text) => text,
 ): CopilotCorrectionResolution {
   const matched = reply.match(CORRECTION_ENVELOPE);
   if (!matched) {
     return contract.target_prior_turn_id === undefined
-      ? { kind: 'normal', reply }
+      ? { kind: 'normal', reply: sanitizeProse(reply) }
       : { kind: 'clarify', reply: clarificationReply(contract) };
   }
 
@@ -136,7 +137,7 @@ export function resolveCorrectionReply(
     return { kind: 'clarify', reply: clarificationReply(contract) };
   }
 
-  const body = reply.slice(0, matched.index).trimEnd();
+  const body = sanitizeProse(reply.slice(0, matched.index)).trimEnd();
   const fields = [
     `更正目标 prior_turn_id：${parsed.data.prior_turn_id}`,
     `已变更：${parsed.data.changed.join('；') || '无'}`,

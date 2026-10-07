@@ -84,7 +84,7 @@ import {
   connectPiRemoteMcp,
 } from './tools/pi-tools';
 
-type PiModels = PiMutableModels;
+type PiModels = Pick<PiMutableModels, 'getModel' | 'streamSimple'>;
 type PiUserContent = Extract<PiMessage, { role: 'user' }>['content'];
 type PiToolResultMessage = Extract<PiMessage, { role: 'toolResult' }>;
 
@@ -1317,15 +1317,32 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       tools: this.allTools,
     });
     const stream = this.deps.agentLoop(prompts, context, config, this.abort.signal, this.streamFn);
+    let textStreamed = false;
     for await (const event of stream) {
       this.observeToolAttempt(event);
       // Frames queued inside the loop (subagent task_*, compact_boundary)
       // surface before the engine event that follows them — matching the SDK
       // wire order where lifecycle frames precede the parent tool_result.
       yield* this.drainFrames();
+      if (
+        event.type === 'message_update' &&
+        event.message.role === 'assistant' &&
+        event.assistantMessageEvent.type === 'text_delta'
+      ) {
+        const text = event.assistantMessageEvent.delta;
+        if (text.length > 0 && !this.abort.signal.aborted) {
+          textStreamed = true;
+          yield { type: 'text_delta', text, session_id: this.sessionId, source: 'pi' };
+        }
+        continue;
+      }
       if (event.type === 'message_end' && event.message.role === 'assistant') {
         numTurns += 1;
-        yield piAssistantToSdkFrame(event.message as PiAssistantMessage, this.sessionId);
+        yield {
+          ...piAssistantToSdkFrame(event.message as PiAssistantMessage, this.sessionId),
+          ...(textStreamed ? { text_streamed: true } : {}),
+        };
+        textStreamed = false;
         continue;
       }
       if (event.type === 'message_end' && event.message.role === 'toolResult') {
