@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-10-07T11:08:40.958Z",
+  "capturedAt": "2026-10-07T12:08:45.996Z",
   "codeDigest": "40979c7e51ec92b0d48757001052ebfbc3f4b7b9028f0438da4f4062d1372b00",
   "codeFiles": [
     "src/capabilities/practice/testing/pi-dbos-gate/operations.ts",
@@ -64,22 +64,22 @@
     {
       "scenario": "evidence-changes-arrangement",
       "assistedJob": {
-        "workflowId": "62a88de3-9537-479b-97bd-60fdf0a09b9d",
-        "learnerId": "04d363c3-b4f7-4476-83af-1bdd3fc54867",
+        "workflowId": "6a313bfb-d26c-4a83-91ce-9212de684ff7",
+        "learnerId": "a5a538d9-f585-404e-8127-285121537124",
         "entry": "pi",
-        "validUntil": "2026-10-07T11:09:07.578Z",
-        "timestamp": 1791371287578
+        "validUntil": "2026-10-07T12:09:13.770Z",
+        "timestamp": 1791374893770
       },
       "independentJob": {
-        "workflowId": "8795e053-20a9-43b3-99bc-2531f1311e36",
-        "learnerId": "04d363c3-b4f7-4476-83af-1bdd3fc54867",
+        "workflowId": "d98e811d-b001-4198-b272-22dd61bfef64",
+        "learnerId": "a5a538d9-f585-404e-8127-285121537124",
         "entry": "pi",
-        "validUntil": "2026-10-07T11:09:08.292Z",
-        "timestamp": 1791371288292
+        "validUntil": "2026-10-07T12:09:14.708Z",
+        "timestamp": 1791374894708
       },
       "inputs": [
         {
-          "learnerId": "04d363c3-b4f7-4476-83af-1bdd3fc54867",
+          "learnerId": "a5a538d9-f585-404e-8127-285121537124",
           "version": 1,
           "evidence": {
             "evidenceId": "assisted-before",
@@ -87,9 +87,7 @@
             "answer": "椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n椭圆 x²/25 + y²/9 = 1，焦点为 (±4,0)。先用了切线公式，但把斜率与点的坐标混在一起；老师提示后得到局部结论，尚未独立完成迁移。\n",
             "independent": false,
             "correct": false,
-            "misconceptions": [
-              "tangent-slope-coordinate-confusion"
-            ],
+            "misconceptions": ["tangent-slope-coordinate-confusion"],
             "observations": [
               {
                 "part": "a",
@@ -108,11 +106,11 @@
               }
             ]
           },
-          "evidenceCommittedAt": "2026-10-07 11:08:07.576344+00",
+          "evidenceCommittedAt": "2026-10-07 12:08:13.768541+00",
           "nextActivity": null
         },
         {
-          "learnerId": "04d363c3-b4f7-4476-83af-1bdd3fc54867",
+          "learnerId": "a5a538d9-f585-404e-8127-285121537124",
           "version": 3,
           "evidence": {
             "evidenceId": "independent-after",
@@ -139,7 +137,7 @@
               }
             ]
           },
-          "evidenceCommittedAt": "2026-10-07 11:08:08.290647+00",
+          "evidenceCommittedAt": "2026-10-07 12:08:14.706691+00",
           "nextActivity": null
         }
       ],
@@ -148,21 +146,18 @@
           "kind": "accepted",
           "version": 2,
           "activity": "ellipse-supported-review",
-          "appliedAt": "2026-10-07T11:08:08.268Z",
-          "latencyMs": 692
+          "appliedAt": "2026-10-07T12:08:14.679Z",
+          "latencyMs": 911
         },
         {
           "kind": "accepted",
           "version": 4,
           "activity": "ellipse-transfer",
-          "appliedAt": "2026-10-07T11:08:08.756Z",
-          "latencyMs": 466
+          "appliedAt": "2026-10-07T12:08:15.225Z",
+          "latencyMs": 519
         }
       ],
-      "commitAckToEffectObservedMs": [
-        712.5568330000006,
-        485.6504160000004
-      ],
+      "commitAckToEffectObservedMs": [935.1347079999996, 541.9973749999999],
       "finalVersion": 4,
       "finalActivity": "ellipse-transfer",
       "effects": 2
@@ -170,15 +165,15 @@
     {
       "scenario": "model-returned",
       "job": {
-        "workflowId": "5dbe8f11-d90c-4015-95bd-fd1a184bb93f",
-        "learnerId": "41d79661-f76f-4b6d-84f4-e1abb59bcfc8",
+        "workflowId": "0b16e297-3566-4a58-a273-6d9ff05b0c33",
+        "learnerId": "378e7e4d-5dab-4baa-9637-86f9a9b65d1e",
         "entry": "pi",
-        "validUntil": "2026-10-07T11:09:08.782Z",
-        "timestamp": 1791371288782
+        "validUntil": "2026-10-07T12:09:15.254Z",
+        "timestamp": 1791374895254
       },
       "evidenceDigest": "4214d7fef9fe8b642ee132b655795fc641f59bbbe07f9cf9d348e09d174e1856",
       "input": {
-        "learnerId": "41d79661-f76f-4b6d-84f4-e1abb59bcfc8",
+        "learnerId": "378e7e4d-5dab-4baa-9637-86f9a9b65d1e",
         "version": 2,
         "evidence": {
           "evidenceId": "independent-b",
@@ -205,11 +200,11 @@
             }
           ]
         },
-        "evidenceCommittedAt": "2026-10-07 11:08:08.779889+00",
+        "evidenceCommittedAt": "2026-10-07 12:08:15.253409+00",
         "nextActivity": null
       },
-      "killedPid": 99853,
-      "restartPid": 99890,
+      "killedPid": 40439,
+      "restartPid": 40440,
       "signal": "SIGKILL",
       "preCrashStatus": "PENDING",
       "recoveryAttempts": 2,
@@ -217,39 +212,39 @@
       "steps": [
         {
           "name": "read-state",
-          "outputDigest": "c483547aa9e3440ab9d666c3cfbc3ea1ba4e57f5f9874fdec2b7b78af0b68e74"
+          "outputDigest": "4c33a3c43dff89887074cd283b14025f1583f23d1ca47e47fa810c7e802b03dc"
         },
         {
           "name": "model-response-0",
-          "outputDigest": "fb1ae6d744e73944bbeffa170df63a0dc621a371c0fb7a8b2240dd4c373358bd"
+          "outputDigest": "876a6f7582e68767db52db54d71c7b17e7deb8c62e776c4350799d417cb06f3c"
         },
         {
           "name": "business-commit-arrange:0",
-          "outputDigest": "de700dcbc74666e4633491d6c6c594630e3c28f8480a78e5debe39c8982fb62d"
+          "outputDigest": "ab55f0b9a7c0e68665717f22a3ea81f11bead384400f148e8a00c105f99cca05"
         },
         {
           "name": "tool-receipt-arrange:0",
-          "outputDigest": "de700dcbc74666e4633491d6c6c594630e3c28f8480a78e5debe39c8982fb62d"
+          "outputDigest": "ab55f0b9a7c0e68665717f22a3ea81f11bead384400f148e8a00c105f99cca05"
         },
         {
           "name": "model-response-1",
-          "outputDigest": "386111d3b0181ec23a015179a9aabf9aa14b8feeb2be3da43c5581ca24d04a4c"
+          "outputDigest": "6a34257f8178cdb5b8196831f5ee9839a3548fece5b05712494d49583d6cc05f"
         }
       ],
       "receipt": {
         "kind": "accepted",
         "version": 3,
         "activity": "ellipse-transfer",
-        "appliedAt": "2026-10-07T11:08:10.946Z",
-        "latencyMs": 2167
+        "appliedAt": "2026-10-07T12:08:17.365Z",
+        "latencyMs": 2112
       },
       "finalVersion": 3,
       "effects": 1,
       "modelAttempts": [
         {
           "turn": 0,
-          "inputDigest": "0c00341835e6d32f2c6aac914c722387f06da3816b1677991f21a5ab6c27e173",
-          "outputDigest": "131099839454157a89a3beeabae83ca0502411ad97664bd860b0eacf2f6e784f",
+          "inputDigest": "01e11591ab4e3fa15d461eee975aaae822eb1f9986bd8098ab161bc02de4bb47",
+          "outputDigest": "0d9e79def56b13cc7d7bc3aa78f2bea6dbd74103bf22aeb58b5a59761fc19dcc",
           "response": {
             "api": "openai-completions",
             "role": "assistant",
@@ -274,24 +269,24 @@
                 "name": "arrange_next",
                 "type": "toolCall",
                 "arguments": {
-                  "learnerId": "41d79661-f76f-4b6d-84f4-e1abb59bcfc8",
+                  "learnerId": "378e7e4d-5dab-4baa-9637-86f9a9b65d1e",
                   "rationale": "基于不可变作答证据及帮助程度安排下一项；教师提示后的局部正确不等同于独立迁移，保留边界情况与不确定性。",
-                  "validUntil": "2026-10-07T11:09:08.782Z",
-                  "operationId": "5dbe8f11-d90c-4015-95bd-fd1a184bb93f:arrange:0",
+                  "validUntil": "2026-10-07T12:09:15.254Z",
+                  "operationId": "0b16e297-3566-4a58-a273-6d9ff05b0c33:arrange:0",
                   "nextActivity": "ellipse-transfer",
                   "expectedVersion": 2
                 }
               }
             ],
             "provider": "gate-controlled",
-            "timestamp": 1791371288782,
+            "timestamp": 1791374895254,
             "stopReason": "toolUse"
           }
         },
         {
           "turn": 0,
-          "inputDigest": "96dfa5522844d0ba9312f1fab4263811970cda8b0b26ea6a987bb4266c3038da",
-          "outputDigest": "131099839454157a89a3beeabae83ca0502411ad97664bd860b0eacf2f6e784f",
+          "inputDigest": "48b46202af6a42802e4178f113d8d6e4b2589ec17920f88358fd0d54cc3ed162",
+          "outputDigest": "0d9e79def56b13cc7d7bc3aa78f2bea6dbd74103bf22aeb58b5a59761fc19dcc",
           "response": {
             "api": "openai-completions",
             "role": "assistant",
@@ -316,24 +311,24 @@
                 "name": "arrange_next",
                 "type": "toolCall",
                 "arguments": {
-                  "learnerId": "41d79661-f76f-4b6d-84f4-e1abb59bcfc8",
+                  "learnerId": "378e7e4d-5dab-4baa-9637-86f9a9b65d1e",
                   "rationale": "基于不可变作答证据及帮助程度安排下一项；教师提示后的局部正确不等同于独立迁移，保留边界情况与不确定性。",
-                  "validUntil": "2026-10-07T11:09:08.782Z",
-                  "operationId": "5dbe8f11-d90c-4015-95bd-fd1a184bb93f:arrange:0",
+                  "validUntil": "2026-10-07T12:09:15.254Z",
+                  "operationId": "0b16e297-3566-4a58-a273-6d9ff05b0c33:arrange:0",
                   "nextActivity": "ellipse-transfer",
                   "expectedVersion": 2
                 }
               }
             ],
             "provider": "gate-controlled",
-            "timestamp": 1791371288782,
+            "timestamp": 1791374895254,
             "stopReason": "toolUse"
           }
         },
         {
           "turn": 1,
-          "inputDigest": "03594aced2a2a856db78e986249f61fd251341082dbd56184a0cb52c8d76f3cf",
-          "outputDigest": "cbc3ee552dfd784b98221d4648b3429dead4d5088500776e1d1807313f7f6564",
+          "inputDigest": "ae5ccec3cb1e65ab6ee9455c2650865661b44c9c6c9d53881e3fad5197ed0caa",
+          "outputDigest": "4bd9010cc8a375c57b509895119feebd97a459416aa9ed57821e756aa573a7de",
           "response": {
             "api": "openai-completions",
             "role": "assistant",
@@ -359,7 +354,7 @@
               }
             ],
             "provider": "gate-controlled",
-            "timestamp": 1791371288782,
+            "timestamp": 1791374895254,
             "stopReason": "stop"
           }
         }
@@ -369,15 +364,15 @@
     {
       "scenario": "model-saved",
       "job": {
-        "workflowId": "f27cfd35-fcf1-4ca9-81ae-01f93970c2d3",
-        "learnerId": "0ff2b680-6019-446e-b74e-77a868db15fa",
+        "workflowId": "7f3c8d96-3ddd-4956-b0f9-fc15ec3044df",
+        "learnerId": "789c43b0-6d2e-4044-9f3a-0ed28364940f",
         "entry": "pi",
-        "validUntil": "2026-10-07T11:09:12.557Z",
-        "timestamp": 1791371292557
+        "validUntil": "2026-10-07T12:09:18.882Z",
+        "timestamp": 1791374898882
       },
       "evidenceDigest": "4214d7fef9fe8b642ee132b655795fc641f59bbbe07f9cf9d348e09d174e1856",
       "input": {
-        "learnerId": "0ff2b680-6019-446e-b74e-77a868db15fa",
+        "learnerId": "789c43b0-6d2e-4044-9f3a-0ed28364940f",
         "version": 2,
         "evidence": {
           "evidenceId": "independent-b",
@@ -404,11 +399,11 @@
             }
           ]
         },
-        "evidenceCommittedAt": "2026-10-07 11:08:12.549335+00",
+        "evidenceCommittedAt": "2026-10-07 12:08:18.881565+00",
         "nextActivity": null
       },
-      "killedPid": 125,
-      "restartPid": 790,
+      "killedPid": 40443,
+      "restartPid": 40445,
       "signal": "SIGKILL",
       "preCrashStatus": "PENDING",
       "recoveryAttempts": 2,
@@ -416,39 +411,39 @@
       "steps": [
         {
           "name": "read-state",
-          "outputDigest": "7409c0d4a790f5ade73eabfe597e3ec32a4e1dfcc40a97a74c390c932750b81e"
+          "outputDigest": "a2e8fee74fdf63396f68b564cdcc030d2d6ec1b374abc50fd2bdaebdf1a5c34d"
         },
         {
           "name": "model-response-0",
-          "outputDigest": "22d17704a451b7107c5551edb2d1f4ffd5749fea3cadc4203b7a351d99705af3"
+          "outputDigest": "cf6ef70ae496bfbc47e3e40970b514513bb7f47ac0c8f1df94186b13c2f12ec7"
         },
         {
           "name": "business-commit-arrange:0",
-          "outputDigest": "c80a875c2f45f8e8ed291f55c2e11f39276862d9be5f126d0181e3a7063a26d4"
+          "outputDigest": "cb9e95e65d700a2ae156470805049ae237c97f1975477a1bd1200aa9eee80b7e"
         },
         {
           "name": "tool-receipt-arrange:0",
-          "outputDigest": "c80a875c2f45f8e8ed291f55c2e11f39276862d9be5f126d0181e3a7063a26d4"
+          "outputDigest": "cb9e95e65d700a2ae156470805049ae237c97f1975477a1bd1200aa9eee80b7e"
         },
         {
           "name": "model-response-1",
-          "outputDigest": "5883faee4f65c76a40d7643b8e1cc245e298b6b7fea5284cf445eae6ccd7edcb"
+          "outputDigest": "3992c5b58ea2ccd069aab4e5206d655da08719d29ab08de6bd145d2d88943645"
         }
       ],
       "receipt": {
         "kind": "accepted",
         "version": 3,
         "activity": "ellipse-transfer",
-        "appliedAt": "2026-10-07T11:08:18.148Z",
-        "latencyMs": 5599
+        "appliedAt": "2026-10-07T12:08:21.021Z",
+        "latencyMs": 2140
       },
       "finalVersion": 3,
       "effects": 1,
       "modelAttempts": [
         {
           "turn": 0,
-          "inputDigest": "f1a90cffd37c7a04c99a3b5f562c28adf2dfa38ac15798e23e718a21239a314b",
-          "outputDigest": "dda239e395ea0695db7ac336428a31f2ebbeb9b402c746bdd412830f33d3a222",
+          "inputDigest": "79f03041cb69b1a9730c4c9c4ca60f46a060d6d1900de555f9e352311d1cab95",
+          "outputDigest": "135dd01f220ad6bac9e4033deeda92420a281c081fc6e57744f1d2aef37b0bc6",
           "response": {
             "api": "openai-completions",
             "role": "assistant",
@@ -473,24 +468,24 @@
                 "name": "arrange_next",
                 "type": "toolCall",
                 "arguments": {
-                  "learnerId": "0ff2b680-6019-446e-b74e-77a868db15fa",
+                  "learnerId": "789c43b0-6d2e-4044-9f3a-0ed28364940f",
                   "rationale": "基于不可变作答证据及帮助程度安排下一项；教师提示后的局部正确不等同于独立迁移，保留边界情况与不确定性。",
-                  "validUntil": "2026-10-07T11:09:12.557Z",
-                  "operationId": "f27cfd35-fcf1-4ca9-81ae-01f93970c2d3:arrange:0",
+                  "validUntil": "2026-10-07T12:09:18.882Z",
+                  "operationId": "7f3c8d96-3ddd-4956-b0f9-fc15ec3044df:arrange:0",
                   "nextActivity": "ellipse-transfer",
                   "expectedVersion": 2
                 }
               }
             ],
             "provider": "gate-controlled",
-            "timestamp": 1791371292557,
+            "timestamp": 1791374898882,
             "stopReason": "toolUse"
           }
         },
         {
           "turn": 1,
-          "inputDigest": "85494dd620cfd5f8d516d1ab31d21666d9cc45fede134997f0549e7f4ef5e25f",
-          "outputDigest": "d71a60897cef2f5d7d663a7b449d3b7b17d04cc0d79403e0c2da0f79dbf49cd3",
+          "inputDigest": "7eab864be6437f007ff20be93a2db7b4b7c482d241107102dc08e9f4220d2c33",
+          "outputDigest": "7a530ef71cbc54c9e6f94a88e60409deafa4a0a1702fa2dec8bea01ea828d5ab",
           "response": {
             "api": "openai-completions",
             "role": "assistant",
@@ -516,7 +511,7 @@
               }
             ],
             "provider": "gate-controlled",
-            "timestamp": 1791371292557,
+            "timestamp": 1791374898882,
             "stopReason": "stop"
           }
         }
@@ -526,15 +521,15 @@
     {
       "scenario": "tool-committed",
       "job": {
-        "workflowId": "c87343ec-6918-4996-bdff-77fe07f14755",
-        "learnerId": "27f8d736-d61d-4f96-a888-0a683ced6e4b",
+        "workflowId": "7ff488dd-2590-4e5c-8d18-f2fd83358f52",
+        "learnerId": "7c55b575-c719-408a-8ee5-071c858423c3",
         "entry": "pi",
-        "validUntil": "2026-10-07T11:09:19.630Z",
-        "timestamp": 1791371299630
+        "validUntil": "2026-10-07T12:09:22.513Z",
+        "timestamp": 1791374902513
       },
       "evidenceDigest": "4214d7fef9fe8b642ee132b655795fc641f59bbbe07f9cf9d348e09d174e1856",
       "input": {
-        "learnerId": "27f8d736-d61d-4f96-a888-0a683ced6e4b",
+        "learnerId": "7c55b575-c719-408a-8ee5-071c858423c3",
         "version": 2,
         "evidence": {
           "evidenceId": "independent-b",
@@ -561,11 +556,11 @@
             }
           ]
         },
-        "evidenceCommittedAt": "2026-10-07 11:08:19.628225+00",
+        "evidenceCommittedAt": "2026-10-07 12:08:22.512717+00",
         "nextActivity": null
       },
-      "killedPid": 1049,
-      "restartPid": 1050,
+      "killedPid": 40459,
+      "restartPid": 40460,
       "signal": "SIGKILL",
       "preCrashStatus": "PENDING",
       "recoveryAttempts": 2,
@@ -573,39 +568,39 @@
       "steps": [
         {
           "name": "read-state",
-          "outputDigest": "7e7d233ce1c3c47e1daf18008c8e354149fca16bdb261035361921cf017c3a1a"
+          "outputDigest": "a83f0d68b6480cb42a16b56f0ba740954f0b7d34708348d3543dde57e2df40c8"
         },
         {
           "name": "model-response-0",
-          "outputDigest": "045760dac914f24e730ab5d57b3ca625f2b9195f0a0b48cb63cf0a5cfa33ac24"
+          "outputDigest": "cf32c57f91ef98fca757e086b4ca679320308fbeaca7d89841e4b57162a8b694"
         },
         {
           "name": "business-commit-arrange:0",
-          "outputDigest": "c85d4acd0ad33b423638356397d0046fec17172d9cfc3ccfb299df3b84a0c394"
+          "outputDigest": "b3a99246ffc455b0d17cfb7787c3ad57cd93f41ccb14b09262697da73d9ef6a8"
         },
         {
           "name": "tool-receipt-arrange:0",
-          "outputDigest": "c85d4acd0ad33b423638356397d0046fec17172d9cfc3ccfb299df3b84a0c394"
+          "outputDigest": "b3a99246ffc455b0d17cfb7787c3ad57cd93f41ccb14b09262697da73d9ef6a8"
         },
         {
           "name": "model-response-1",
-          "outputDigest": "4504ddd9aa613afe9ad2622771eec94bdbab50d1184daf4e5cf1b733ea035be1"
+          "outputDigest": "30f48dfc3325f37a899ea6f4a46d7edf483e56133299ce93f980d1ee2ad864bf"
         }
       ],
       "receipt": {
         "kind": "accepted",
         "version": 3,
         "activity": "ellipse-transfer",
-        "appliedAt": "2026-10-07T11:08:20.087Z",
-        "latencyMs": 459
+        "appliedAt": "2026-10-07T12:08:23.014Z",
+        "latencyMs": 502
       },
       "finalVersion": 3,
       "effects": 1,
       "modelAttempts": [
         {
           "turn": 0,
-          "inputDigest": "444a65de9fa12a903acc40fc6779aecc81795ddc93f3fc8143d5231e3583ce14",
-          "outputDigest": "49af1dca4636199cc9f5b6d860b02feb5973ec971fb6db926bb5b0affaab3417",
+          "inputDigest": "57b2a09fb6f6c9b38b885bd40263fbbe162618d75adf99cf6950058d410a2bd7",
+          "outputDigest": "2a4619c3a10d9b0e56228053d60a8ac8e62da2b9a0600145cadda7fd3074947e",
           "response": {
             "api": "openai-completions",
             "role": "assistant",
@@ -630,24 +625,24 @@
                 "name": "arrange_next",
                 "type": "toolCall",
                 "arguments": {
-                  "learnerId": "27f8d736-d61d-4f96-a888-0a683ced6e4b",
+                  "learnerId": "7c55b575-c719-408a-8ee5-071c858423c3",
                   "rationale": "基于不可变作答证据及帮助程度安排下一项；教师提示后的局部正确不等同于独立迁移，保留边界情况与不确定性。",
-                  "validUntil": "2026-10-07T11:09:19.630Z",
-                  "operationId": "c87343ec-6918-4996-bdff-77fe07f14755:arrange:0",
+                  "validUntil": "2026-10-07T12:09:22.513Z",
+                  "operationId": "7ff488dd-2590-4e5c-8d18-f2fd83358f52:arrange:0",
                   "nextActivity": "ellipse-transfer",
                   "expectedVersion": 2
                 }
               }
             ],
             "provider": "gate-controlled",
-            "timestamp": 1791371299630,
+            "timestamp": 1791374902513,
             "stopReason": "toolUse"
           }
         },
         {
           "turn": 1,
-          "inputDigest": "8d165febfd1dda3f4864d48018b4a4bed5757046d8ab91dea84f852d7005ce92",
-          "outputDigest": "e9db7fb928871dcf5237997879bc4a0c96c132e232ee163a6ea298b54835575b",
+          "inputDigest": "7edcb802ea823a708adc5f12d0b65d23b57fbed49917ba9c9677e9a0aa360dd5",
+          "outputDigest": "df7c2f0df3085c43e5f80cf92953e591e60ad288f503f566c03e16b7ca61067e",
           "response": {
             "api": "openai-completions",
             "role": "assistant",
@@ -673,7 +668,7 @@
               }
             ],
             "provider": "gate-controlled",
-            "timestamp": 1791371299630,
+            "timestamp": 1791374902513,
             "stopReason": "stop"
           }
         }
@@ -683,15 +678,15 @@
     {
       "scenario": "tool-receipt-saved",
       "job": {
-        "workflowId": "62f4bd3d-9237-461b-b806-3f89a2d90231",
-        "learnerId": "6cdeec4b-12c3-482f-9691-35a26c09aec9",
+        "workflowId": "e477ea73-19aa-40f3-bbd0-53016b7f0c0a",
+        "learnerId": "1569da82-8282-4533-bd24-e26865742742",
         "entry": "pi",
-        "validUntil": "2026-10-07T11:09:23.017Z",
-        "timestamp": 1791371303017
+        "validUntil": "2026-10-07T12:09:26.335Z",
+        "timestamp": 1791374906335
       },
       "evidenceDigest": "4214d7fef9fe8b642ee132b655795fc641f59bbbe07f9cf9d348e09d174e1856",
       "input": {
-        "learnerId": "6cdeec4b-12c3-482f-9691-35a26c09aec9",
+        "learnerId": "1569da82-8282-4533-bd24-e26865742742",
         "version": 2,
         "evidence": {
           "evidenceId": "independent-b",
@@ -718,11 +713,11 @@
             }
           ]
         },
-        "evidenceCommittedAt": "2026-10-07 11:08:23.015278+00",
+        "evidenceCommittedAt": "2026-10-07 12:08:26.334217+00",
         "nextActivity": null
       },
-      "killedPid": 1231,
-      "restartPid": 1232,
+      "killedPid": 40477,
+      "restartPid": 40480,
       "signal": "SIGKILL",
       "preCrashStatus": "PENDING",
       "recoveryAttempts": 2,
@@ -730,39 +725,39 @@
       "steps": [
         {
           "name": "read-state",
-          "outputDigest": "31b7bdd611a561a485c4b88dd787a3e3980e611e146b630672c7474fe7108796"
+          "outputDigest": "ed167a4987a22e96850cefdb3e79546c1c644846e452bf82d3b5a7b924ab6a21"
         },
         {
           "name": "model-response-0",
-          "outputDigest": "3f572ee0dd9f6c2af0070205fa707d4a9d63556629573027494ec1e24aba6fd2"
+          "outputDigest": "a89d43f60dc9f13ef37d1aeeb53e30db754c69ea0aa073d7370030af48430e11"
         },
         {
           "name": "business-commit-arrange:0",
-          "outputDigest": "8d0c8427a51f97faa6ab2d758836acd817260708e1e7bf7c90e05ed79a4eeac4"
+          "outputDigest": "337022c90303ee499ab28156f08efc7d65524ada3bcc0c32f0e94fcc38c0f47d"
         },
         {
           "name": "tool-receipt-arrange:0",
-          "outputDigest": "8d0c8427a51f97faa6ab2d758836acd817260708e1e7bf7c90e05ed79a4eeac4"
+          "outputDigest": "337022c90303ee499ab28156f08efc7d65524ada3bcc0c32f0e94fcc38c0f47d"
         },
         {
           "name": "model-response-1",
-          "outputDigest": "5fd893353148dcb08d67febcd2a6a67a119f2d1684d3345e68a6f01e3f71bb50"
+          "outputDigest": "aff50bed439ad6edf77fd3b46a5426706407ffd3e0a1d3ce3ecaff831f48d2b5"
         }
       ],
       "receipt": {
         "kind": "accepted",
         "version": 3,
         "activity": "ellipse-transfer",
-        "appliedAt": "2026-10-07T11:08:23.470Z",
-        "latencyMs": 455
+        "appliedAt": "2026-10-07T12:08:27.536Z",
+        "latencyMs": 1202
       },
       "finalVersion": 3,
       "effects": 1,
       "modelAttempts": [
         {
           "turn": 0,
-          "inputDigest": "cd6b8a2d047767d5dadd005161d481e0292443bdf22ac8cc506abe1a14be39c9",
-          "outputDigest": "ba92cf258e4af222b9716e2385110230781e65bfda2e842c2131737a682ce699",
+          "inputDigest": "b59b1b53e7f40a8613cd75774e5feadabda53d4da97fc5c76f3949823d90aa1d",
+          "outputDigest": "0604bbc832659c5c17789e5d91f558ae587f46605bd070370034d030d72937e0",
           "response": {
             "api": "openai-completions",
             "role": "assistant",
@@ -787,24 +782,24 @@
                 "name": "arrange_next",
                 "type": "toolCall",
                 "arguments": {
-                  "learnerId": "6cdeec4b-12c3-482f-9691-35a26c09aec9",
+                  "learnerId": "1569da82-8282-4533-bd24-e26865742742",
                   "rationale": "基于不可变作答证据及帮助程度安排下一项；教师提示后的局部正确不等同于独立迁移，保留边界情况与不确定性。",
-                  "validUntil": "2026-10-07T11:09:23.017Z",
-                  "operationId": "62f4bd3d-9237-461b-b806-3f89a2d90231:arrange:0",
+                  "validUntil": "2026-10-07T12:09:26.335Z",
+                  "operationId": "e477ea73-19aa-40f3-bbd0-53016b7f0c0a:arrange:0",
                   "nextActivity": "ellipse-transfer",
                   "expectedVersion": 2
                 }
               }
             ],
             "provider": "gate-controlled",
-            "timestamp": 1791371303017,
+            "timestamp": 1791374906335,
             "stopReason": "toolUse"
           }
         },
         {
           "turn": 1,
-          "inputDigest": "ed111914324bc3249f134a5cef6d1ba563239f7731ade58242bb103115a3de73",
-          "outputDigest": "c4119836dbad587b09c40494b898072f295296598f59ac2d95016a35b14e19a0",
+          "inputDigest": "f2ca8af64b268936894c6786f55ed190012e7e9456e2d0d5f9e480e53d3f5c96",
+          "outputDigest": "084b5f112fb64fcacc0540a0481a42daa27d5c5d81b4d2fe3255c60a8b7f4ae4",
           "response": {
             "api": "openai-completions",
             "role": "assistant",
@@ -830,7 +825,7 @@
               }
             ],
             "provider": "gate-controlled",
-            "timestamp": 1791371303017,
+            "timestamp": 1791374906335,
             "stopReason": "stop"
           }
         }
@@ -840,18 +835,18 @@
     {
       "scenario": "stale-after-restart",
       "staleJob": {
-        "workflowId": "0dcc3303-79a2-44c7-83c0-13e1a428cd12",
-        "learnerId": "83716e7e-3bf3-4dcd-947e-9c54be3748d9",
+        "workflowId": "db5136e3-6745-4c37-8be8-f10d16232761",
+        "learnerId": "6b7139da-1b5b-4250-894c-5dbf87d38254",
         "entry": "pi",
-        "validUntil": "2026-10-07T11:09:26.420Z",
-        "timestamp": 1791371306420
+        "validUntil": "2026-10-07T12:09:30.657Z",
+        "timestamp": 1791374910657
       },
       "freshJob": {
-        "workflowId": "ca6b24d1-021c-4edf-b72e-8f608c35c3c0",
-        "learnerId": "83716e7e-3bf3-4dcd-947e-9c54be3748d9",
+        "workflowId": "bbb25cf1-ec80-46b2-95cc-1427045ab4db",
+        "learnerId": "6b7139da-1b5b-4250-894c-5dbf87d38254",
         "entry": "pi",
-        "validUntil": "2026-10-07T11:09:29.338Z",
-        "timestamp": 1791371309338
+        "validUntil": "2026-10-07T12:09:33.846Z",
+        "timestamp": 1791374913846
       },
       "receipt": {
         "kind": "rejected",
@@ -862,8 +857,8 @@
         "kind": "accepted",
         "version": 3,
         "activity": "ellipse-transfer",
-        "appliedAt": "2026-10-07T11:08:29.806Z",
-        "latencyMs": 2934
+        "appliedAt": "2026-10-07T12:08:34.399Z",
+        "latencyMs": 3237
       },
       "evidenceVersion": 2,
       "staleEffects": 0,
@@ -872,11 +867,11 @@
     {
       "scenario": "expired",
       "job": {
-        "workflowId": "4004f64e-a47d-4e94-8195-fd160f1a5232",
-        "learnerId": "93244d68-64d3-496d-8389-268e453a5330",
+        "workflowId": "f6125cb1-5168-4a10-ae0e-04f689bf3bbe",
+        "learnerId": "5cc34490-f6f8-4827-9ba7-6617070e4c41",
         "entry": "pi",
-        "validUntil": "2026-10-07T11:08:35.831Z",
-        "timestamp": 1791371309831
+        "validUntil": "2026-10-07T12:08:40.427Z",
+        "timestamp": 1791374914427
       },
       "receipt": {
         "kind": "rejected",
@@ -894,11 +889,11 @@
             "kind": "accepted",
             "version": 2,
             "activity": "ellipse-transfer",
-            "appliedAt": "2026-10-07T11:08:38.409Z",
-            "latencyMs": 17
+            "appliedAt": "2026-10-07T12:08:43.297Z",
+            "latencyMs": 27
           },
           "effects": 1,
-          "operationId": "bc5d6abf-8fff-4a67-baff-0ceb2f3954bb:arrange:0"
+          "operationId": "a37d2b93-0d1b-41a8-8444-7f113a6ff361:arrange:0"
         },
         {
           "entry": "pi",
@@ -906,11 +901,11 @@
             "kind": "accepted",
             "version": 2,
             "activity": "ellipse-transfer",
-            "appliedAt": "2026-10-07T11:08:38.883Z",
-            "latencyMs": 469
+            "appliedAt": "2026-10-07T12:08:43.860Z",
+            "latencyMs": 555
           },
           "effects": 1,
-          "operationId": "43b95a40-99ca-4e04-8268-3c5802005698:arrange:0"
+          "operationId": "27e6e749-0a32-4df9-800b-263b85699f7f:arrange:0"
         },
         {
           "entry": "background",
@@ -918,11 +913,11 @@
             "kind": "accepted",
             "version": 2,
             "activity": "ellipse-transfer",
-            "appliedAt": "2026-10-07T11:08:39.390Z",
-            "latencyMs": 485
+            "appliedAt": "2026-10-07T12:08:44.439Z",
+            "latencyMs": 529
           },
           "effects": 1,
-          "operationId": "ee50d2e4-3eb5-4bc6-95fa-f74a71cecf87:arrange:0"
+          "operationId": "1cc1d4a5-7bdf-4b6e-a4ee-ce043819774d:arrange:0"
         }
       ],
       "unauthorizedStatus": 401
@@ -935,8 +930,8 @@
           "kind": "accepted",
           "version": 2,
           "activity": "ellipse-transfer",
-          "appliedAt": "2026-10-07T11:08:39.413Z",
-          "latencyMs": 5
+          "appliedAt": "2026-10-07T12:08:44.463Z",
+          "latencyMs": 3
         },
         {
           "kind": "rejected",
@@ -949,10 +944,10 @@
     {
       "scenario": "expiry-after-lock-wait",
       "command": {
-        "learnerId": "57af3538-ee94-452d-9f40-3c186d2c6306",
-        "operationId": "c10d984b-1bc0-478a-b93a-b00ce7a06ae9",
+        "learnerId": "7b3a05e8-ace6-4df6-988b-4937531745b8",
+        "operationId": "83aaec8d-bd40-463a-8861-189974647139",
         "expectedVersion": 1,
-        "validUntil": "2026-10-07T11:08:40.928Z",
+        "validUntil": "2026-10-07T12:08:45.973Z",
         "nextActivity": "ellipse-transfer",
         "rationale": "基于不可变作答证据及帮助程度安排下一项；教师提示后的局部正确不等同于独立迁移，保留边界情况与不确定性。"
       },
@@ -965,13 +960,31 @@
       "effects": 0
     }
   ],
-  "sourceRevision": "e6204eb8515d93e9c3b79ac479f9df374520c8ec",
+  "sourceRevision": "a3078179ad0c7ea8e713060a5e896225466c57b0",
   "commands": [
-    "pnpm install --frozen-lockfile",
     "pnpm vitest run --config vitest.unit.config.ts tests/pi-dbos-gate/contract.unit.test.ts",
-    "TLP_GATE_EVIDENCE_PATH=.cache/yuk1338/merge-evidence.json pnpm vitest run --config vitest.db.config.ts tests/pi-dbos-gate/recovery.db.test.ts",
+    "TLP_GATE_EVIDENCE_PATH=.cache/yuk1338/repair-evidence.json pnpm vitest run --config vitest.db.config.ts tests/pi-dbos-gate/recovery.db.test.ts",
     "pnpm typecheck",
+    "pnpm build",
+    "pnpm exec biome format --write docs/planning/2026-10-07-yuk1338-pi-dbos-gate.evidence.json",
     "pnpm lint",
-    "pnpm build"
-  ]
+    "node scripts/ci/lint-ratchet.mjs"
+  ],
+  "ciRepair": {
+    "failedRun": "https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/37612250074",
+    "failedHead": "a3078179ad0c7ea8e713060a5e896225466c57b0",
+    "typecheck": "success",
+    "failure": "Lint and warning ratchet: Biome evidence JSON format error after final sealing",
+    "localReproduction": {
+      "errors": 1,
+      "warnings": 297,
+      "infos": 0,
+      "path": "docs/planning/2026-10-07-yuk1338-pi-dbos-gate.evidence.json",
+      "category": "format"
+    },
+    "failedJobLogSha256": "2207ca01543d6b4b6bd42b4d412a6c113dc9ad0b1c3e1a45bc902b3ce9e93aa5",
+    "sourceBehaviorChanged": false,
+    "independentReviewRepeated": false,
+    "finalCi": "pending new push, parent owns watch/merge"
+  }
 }

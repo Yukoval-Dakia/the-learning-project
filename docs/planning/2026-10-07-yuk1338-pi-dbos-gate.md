@@ -1,6 +1,6 @@
 # YUK-1338：Pi + DBOS 隔离恢复 gate
 
-日期：2026-10-07。所属 epic：YUK-1351。依据：ADR-0066、ADR-0065、准备计划 §4/§5/§8/§9。按 owner 自主交付委托实施，非 UI；本 PR 不合并、不部署。
+日期：2026-10-07。所属 epic：YUK-1351。依据：ADR-0066、ADR-0065、准备计划 §4/§5/§8/§9。按 owner 自主交付委托实施，非 UI；本线程不合并、不部署。
 
 ## 范围和决定
 
@@ -68,13 +68,13 @@ pnpm build
 
 main 的 PR #1580/#1589 已正常合入本分支，锁文件冲突按两边依赖合集解决，`pnpm install --frozen-lockfile` 通过；没有升级 main 既有依赖版本。合并后重新执行上述全部 scoped/static/build gate，10 DB 场景耗时 33.40 秒。
 
-验证源码固定为 `e6204eb8515d93e9c3b79ac479f9df374520c8ec`；每个 `sourceHashes` 均已与该提交的 git blob 逐项核对。PR [#1590](https://github.com/Yukoval-Dakia/the-learning-project/pull/1590) 已登记 T3，YUK-1338 为 In Review；exact-head CI 尚待结果。
+验证源码固定为 `a3078179ad0c7ea8e713060a5e896225466c57b0`；每个 `sourceHashes` 均已与该提交的 git blob 逐项核对。PR [#1590](https://github.com/Yukoval-Dakia/the-learning-project/pull/1590) 已登记 T3，YUK-1338 为 In Review；旧 exact-head CI run 37612250074 因 lint 失败，修复 push 后的新结果交父线程核验。
 
 ## 结论与后续边界
 
 本机 gate 的五项验收通过：scoped unit **2 passed**，scoped DB **10 passed**；typecheck、lint、build 均 exit 0。lint 是已有 **297 warnings**，没有提高基线或关闭规则；partition audit 没有未分区测试或 unmocked DB unit。T3 Codex / gpt-6.1-sol xhigh 已读取真实源码 diff 和封存证据，独立审查 **P0/P1 NONE**；没有运行测试或服务。exact-head CI 状态在 PR 交接中单独记录。该 gate 只决定能否继续评估 ADR-0066 的步骤级执行方案；不等于当前产品迁移、上线或真实模型准入。
 
-封存结果见 [原始合成证据](2026-10-07-yuk1338-pi-dbos-gate.evidence.json)。两轮安排在输入 v1/v3 上分别生效为 v2/v4；提交确认至效果可读观测为约 **713 / 486 ms**。四个崩溃边界的最终效果均一条；未知模型窗口第一轮替身调用两次，其余保存后的第一轮响应只有一次调用。
+封存结果见 [原始合成证据](2026-10-07-yuk1338-pi-dbos-gate.evidence.json)。两轮安排在输入 v1/v3 上分别生效为 v2/v4；提交确认至效果可读观测为约 **935 / 542 ms**。四个崩溃边界的最终效果均一条；未知模型窗口第一轮替身调用两次，其余保存后的第一轮响应只有一次调用。
 
 独立审查保留一项 P2：`recordAnswer` 在 learner 尚不存在时不能锁住创建，两个同 learner/evidence 身份的首次并发提交可使第二个 evidence INSERT 返回 `23505`。不丢数据，不影响本 gate 的工具副作用恢复；当前 PR 不扩张修复该生产作答入口问题，也不把它称为已修。已归入现有 YUK-1356：生产化前序列化首次创建或复用现有事件幂等协议，并加入并发首次提交验收。
 
@@ -87,3 +87,13 @@ main 的 PR #1580/#1589 已正常合入本分支，锁文件冲突按两边依�
 不新增需要删除的恢复机制。P4a/YUK-1356 迁移到生产域时须把该示例的版本/事务边界适配现有事件、FSRS、掌握度和 run logging，之后移除 gate 专用领域表/替身，不让它成为第二套学习状态真相源。P5/YUK-1355 按任务族保留现有 pg-boss 义务，切换后排空并退役对应旧 producer/handler/reconcile/cron；本 gate 不删除或排空现役机制。
 
 SDK 依据：[DBOS workflow determinism](https://docs.dbos.dev/typescript/tutorials/workflow-tutorial)、[steps](https://docs.dbos.dev/typescript/tutorials/step-tutorial)、[recovery](https://docs.dbos.dev/production/workflow-recovery)、[Pi 1.0.2 agent source](https://github.com/earendil-works/pi/tree/v1.0.2/packages/agent/src)。实际接受标准以本 PR 的数据库和进程证据为准。
+
+## CI 修复与父线程交接
+
+已实查 [run 37612250074](https://github.com/Yukoval-Dakia/the-learning-project/actions/runs/37612250074) 的 `typecheck · lint` 日志：Typecheck 成功，`Lint and warning ratchet` 失败。原树相同命令复现 **1 error / 297 warnings / 0 infos**；唯一 error 为最后封存的 evidence JSON 的 Biome format（短数组的排版），不是 TypeScript 或恢复契约错误。上次在证据末次落盘后漏跑 lint，旧 run 不能称为最终 gate 通过。
+
+修复只规范化证据文件格式并更新本次实测数据/交接，没有修改 gate 源码、依赖、CI 配置、formatter 规则或 warning baseline。末次封存后执行 Biome format，再执行 lint 与 CI 同款 `node scripts/ci/lint-ratchet.mjs`；全部最终检查完成后才提交。失败日志 SHA256 与复现计数记录在 evidence JSON 的 `ciRepair`，五项验收仍映射到既有故障矩阵。
+
+本次重新运行 **2 unit / 10 DB**（DB 场景 32.27 秒）、typecheck、lint、warning ratchet、build；10 个源码 hash 与 a3078179a 的 git blob 均一致。未知外部结果限制和原独立 review 结论不变，没有重复独立 review。CI 最终结论以新 push 的 exact-head run 为准；本机通过不能替代最终 CI。
+
+57961995-70c3-4121-a9dd-97d90471be1a 父线程负责 PR watch、最终 merge 和迁移协调；本线程不 watch、不 merge、不接触 runtime、部署锁或旧未知候选。P0 最终通过后由父线程立即衔接 P1/P5，不把 YUK-1363/1364 的独立运维工作作为串行 gate。本次无新增产品缺陷或架构改变需要新 follow-up；原 YUK-1356 的生产化要求保留。
