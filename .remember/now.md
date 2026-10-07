@@ -1,3 +1,17 @@
+# 当前交付 — 1376公开材料HTTP通过，PR1600待CI
+
+PR1600准确运行候选 `1bd0263e5` / ARM64 image `8c7d64632ebdf1b4ea6b99501f06caf88e696bf2b02a526ef121e4bafd3e73b3` 已完成隔离材料HTTP验收：4条保留错题共9 GET，完整inline passage和available figure精确字段、73字节PNG冻结SHA/ETag、私有排除、reference null、401、过滤与重复读取全部通过；86张非系统表前后count/digest完全一致。独立初审P0/P1 NONE；127父DB、31unit、typecheck/lint/build及六audit通过。21:00:58Z核owner释放锁，隔离app/PG/S3已停且卷保留，原四服务healthy/current-release哈希未变。PR1600待准确最终head CI及合并等待窗；Start挂载/旧入口退出未完成。
+
+以下为历史记录，状态以顶部为准。
+
+# 当前交付 — 1376隔离验收完成本轮范围，锁已释放
+
+PR1599已合入7bc216509，tree与CI head6ab98ed8c一致；CI Gate37677610975成功、独立验证审P0/P1 NONE。隔离真实HTTP四行冻结错题、附件字节及负例通过；原页面刷新四行、语文筛选空列表、八张缩略图与Lightbox解码通过。20:26:50Z停止自有隔离容器并核owner释放锁，保留独立卷；主四服务healthy，release未变。整组图片真实模型评分、完整媒体/参考答案策略、Start挂载及旧入口退出仍未核销。
+
+证据根 `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1376-preflight-6ab98ed8c/evidence`。主线与runtime owner已收到释放通知。本线程没有活动writer；后续只推进本线程1376/1359，不接管1352/55/56。
+
+以下为历史记录，状态以顶部为准。
+
 # 当前交付 — native P1修复已验证，最后审查通过，等待准确CI
 
 修复f2013412370d7dc802dcf84dc70db6b96068a90e已提交，writer completed/noPending，四文件、树clean。两项有效RED与GREEN封存于/tmp/yuk1376-native-p1-implementation-evidence.md；作者102DB/107unit/typecheck/lint/build/四audit通过。父独立262项hash全匹配，102DB exit0，日志/tmp/yuk1376-native-p1-parent-db.log。唯一剩余验证审 task yuk1376-native-p1-verification-review-20261008-v1，codex/gpt-6.1-sol/xhigh，只读固定f201对e4a，已completed/noPending，P0/P1 NONE，两项原finding resolved；禁止第三轮。PR1599等待新head CI与审查裁决。未启动隔离服务、未持部署锁；旧002源码archive不能用于修复后验收。reference/full media/Start/browser及旧入口退出仍待核销。

@@ -58,3 +58,36 @@ native参考答案继续null：该读取路径没有持久化的可信reveal-pol
 最后一轮独立验证审 `yuk1376-native-p1-verification-review-20261008-v1` 已启动，codex/gpt-6.1-sol/xhigh，只读固定f201对e4a。准确head CI及运行验收待完成。没有两项既有P1之外的新actionable follow-up；其余边界保留在1376/1359，不另建重复票。
 
 验证审已completed/noPending，固定f20134123的P0/P1均NONE，两项原finding均resolved。审查追踪resolver成员与digest校验、不可变DB约束、分页范围、撤回过滤及私有内容隔离，核对四文件hash和RED/GREEN断言；未运行测试或操作runtime。初审加本次验证审预算已用完，不启动第三轮。后续提交仅更新交付文档。
+
+
+## 隔离HTTP与原页面验收，2026-10-07 20:26Z
+
+PR1599已合入7bc216509，tree与CI head6ab98ed8c一致；CI Gate37677610975成功、独立验证审P0/P1 NONE。隔离真实HTTP四行冻结错题、附件字节及负例通过；原页面刷新四行、语文筛选空列表、八张缩略图与Lightbox解码通过。20:26:50Z停止自有隔离容器并核owner释放锁，保留独立卷；主四服务healthy，release未变。整组图片真实模型评分、完整媒体/参考答案策略、Start挂载及旧入口退出仍未核销。
+
+候选镜像 `sha256:8f60bc0c79f9231109dbbb897022e3fa7f94761f8b05b13a18699dff88e71ecc` 来自6ab98ed8c，合并tree为 `446b3e3787af39bfe6d1b540856fe9fb8966f2ba`。独立Compose `tlp-yuk1376-native-acceptance` 使用独立PG18995、S3 18994和app18996，无worker，无私人数据或provider配置。115迁移、epoch active及三条系统genesis均保留。
+
+父实际执行fixture `aaeed06f832378d0670c796271c2561c60a8f29401e184a30ba5563ce5f4b5d3`，正常发布/发题/提交/确定性评估/激活/记录产生四行，覆盖partial、multipart及joint成员；修改working题面后仍返回冻结公开题面与本submission附件。实际网络HTTP校验图片原字节、SHA、MIME、ETag、304及401/404负例。另实际上传四个离线合成PNG，删除一个后读取404，非法上传400。未调用imagegen或产品模型。GET前后events/submissions/evaluations摘要不变，modelRuns为0。
+
+证据根为 `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1376-preflight-6ab98ed8c/evidence`，主要文件为 `http-asset-receipts.json`、`fixture-seed.log`、`fixture-http.log`、`fixture-http-invariance.json`、`browser-acceptance.json` 和 `lock-release.json`。fixture及详细HTTP结果保留在 `/tmp/yuk1376-native-http-fixture`。
+
+浏览器经真实token入口访问原SPA，刷新后四条冻结题面且无mutable/private标记；八个附件缩略图和Lightbox图片均实际解码。语文筛选显示零行。归因中状态对应隔离环境未启动worker，不能冒称归因执行完成。
+
+本轮三图片在不同证据角色复用，不能代替完整独立图片角色矩阵；纯整组图片评分仍需合法模型准入与actual-output证据。确定性跨part fixture只证明投影范围，不证明图片理解。reference继续null、figure仅公开caption/alt，完整媒体呈现、Start迁移与旧入口删除未完成。保留在1376/1359，不另建重复follow-up。
+
+
+## 2026-10-08 公开材料读取验收进展
+
+冻结公开材料读取已交回，source head `b86bd05dc20f4ad3dd57e40a91e7f6e9d06a4664`，tree `b68f60c8d2b9df3a7e5d08c9d9350f0b23f066b3`。七类公开材料通过既有 PublicMaterialView 投影，区分 inline/available/missing/unavailable，reference 保持 null；未改 UI。子任务31单测、typecheck/lint/build和六项audit通过，父核139项文件与日志哈希全部匹配。父实际执行两个scoped DB suite，127/127通过、退出0。独立初审 `yuk1376-materials-independent-review-20261008-v1` 正在进行。20:51:18Z核owner后释放部署锁并通知主线与runtime owner，原四服务健康。准确版本CI与新增媒体真实HTTP/blob验收仍待，旧PR1599证据不代表新实现。
+
+本轮代码差异为 `4e2f8918e..b86bd05dc`，独立初审与PR1599既有审查分开。实现清单及日志见 `/tmp/yuk1376-materials-implementation-evidence.md`，父DB日志 `/tmp/yuk1376-materials-parent-db.log`，锁释放证据 `/tmp/yuk1376-materials-parent-lock-release.json`。DB使用 tests/global-setup.ts 创建的 Testcontainers及独立fork数据库，没有连接主数据库。available 只证明资产元数据与冻结digest相符，真实blob交付仍需新版本HTTP验收。
+
+本次未发现需另开票的独立问题；剩余验收由既有YUK-1376与YUK-1359承接，不能标Done。
+
+
+## 公开材料真实HTTP与只读验收
+
+PR1600准确运行候选 `1bd0263e5` / ARM64 image `8c7d64632ebdf1b4ea6b99501f06caf88e696bf2b02a526ef121e4bafd3e73b3` 已完成隔离材料HTTP验收：4条保留错题共9 GET，完整inline passage和available figure精确字段、73字节PNG冻结SHA/ETag、私有排除、reference null、401、过滤与重复读取全部通过；86张非系统表前后count/digest完全一致。独立初审P0/P1 NONE；127父DB、31unit、typecheck/lint/build及六audit通过。21:00:58Z核owner释放锁，隔离app/PG/S3已停且卷保留，原四服务healthy/current-release哈希未变。PR1600待准确最终head CI及合并等待窗；Start挂载/旧入口退出未完成。
+
+证据根：`/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1376-materials-1bd0263e5/evidence`。`running-image.json`绑定运行image与revision，`http-acceptance/http-exact-image-01/`保存九次请求与真实PNG，`db-before.json`/`db-after.json`及`http-invariance.json`记录86表只读事务排序摘要，`lock-release.json`记录释放。公开材料checker SHA256为 `f251ebd653aec834f65ee33350b2906f182cb999e7373b61d1ceb63587fa81c6`。
+
+本轮仅复用既有短passage与figure，不代表其他材料真实blob、长文媒体页面渲染或模型评分质量。127 scoped DB覆盖七种材料契约与缺失/损坏分支，须与此HTTP证据分开报告。未迁移、重新播种或修改保留fixture；没有worker/provider/DLQ操作。后续文档提交不改变受测源码。

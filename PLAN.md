@@ -4,7 +4,7 @@
 
 ## NOW
 
-- **YUK-1376**：PR1598已合入c7c2482ca，独立review NONE、exact CI全绿、tree一致；typed读取及三项历史证据缺口已修。接续native冻结读取，native实现002712b79已交回，父127hash/95DB通过；初审发现整组/联合评分图片两项P1，修复f20134123已交回，父262hash/102DB通过，最后验证审P0/P1 NONE，待exact CI，旧候选不验收。[证据](docs/planning/2026-10-08-yuk1376-mistakes-domain.md)。Start挂载、native完整投影、浏览器及旧入口退出未核销。
+- **YUK-1376**：PR1600准确运行候选 `1bd0263e5` / ARM64 image `8c7d64632ebdf1b4ea6b99501f06caf88e696bf2b02a526ef121e4bafd3e73b3` 已完成隔离材料HTTP验收：4条保留错题共9 GET，完整inline passage和available figure精确字段、73字节PNG冻结SHA/ETag、私有排除、reference null、401、过滤与重复读取全部通过；86张非系统表前后count/digest完全一致。独立初审P0/P1 NONE；127父DB、31unit、typecheck/lint/build及六audit通过。21:00:58Z核owner释放锁，隔离app/PG/S3已停且卷保留，原四服务healthy/current-release哈希未变。PR1600待准确最终head CI及合并等待窗；Start挂载/旧入口退出未完成。
 
 - **YUK-1376（1358 W1 /mistakes）**：YUK1375已随PR1597合入36f719675，exact CI与独立review通过；本线程从最新main承接错题页非UI领域/API消费者迁移，保留视觉与现有行为；不改全局路由/manifest/package/lock或1352组合根，挂载交主线。1359退出清单继续由本线程维护。1352/1355/1356唯一集成与writer归主线57961995，不写其三树。
 
