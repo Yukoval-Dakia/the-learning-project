@@ -26,6 +26,8 @@ Brief 为 `null`，probes 和 sessions 为空。question、assessment_submission
 
 Mem0 新卷没有历史文件。没有发起模型请求。此次验证覆盖重置、恢复、空库迁移和运行接口，不代表评分质量、迁移项目、UI 重写或个人日用验收完成。
 
+独立只读核验于 11:13Z 完成，复查实际容器、SQL、五个接口、运行记录及用途文档，未发现 consequential discrepancy。备份恢复由主线程执行，独立核验只检查其证据，没有重复恢复。部署锁已在核验后释放。
+
 ## 保留的证据与限制
 
 私有运行根为 `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU`，本次目录为 `deployment-agent-test-20261007`。其中 `backup/` 保存 PG dump、Mem0 archive、计数和摘要；`evidence/` 保存恢复计数、清空前后数据库 OID、迁移和 epoch 日志；`release-result.json` 保存接口和数据验收。根目录 `current-release.json` 指向本次部署，`environment-purpose.json` 记录用途和日用切换条件。私有 Compose 含凭据，不提交仓库。

@@ -2,7 +2,7 @@
 
 Owner 明确要求清空当前本地业务库，改作 Agent 开发测试；只有后续明确说“为我日常使用的部署”才切换日用。主 app/worker 仍为已部署镜像 f3bfff2cf，未引入 PR1584/1588 候选。清空前 PG/Mem0 已备份，恢复101表计数一致；loom 已 DROP/CREATE，115项迁移与 epoch active 通过，主服务健康。新 Mem0 卷，无旧会话/题目/判分/模型调用数据，3条 genesis 是系统初始化。
 
-当前用途和运行位置以私有 runtime 的 environment-purpose.json、current-release.json 为准；目录 `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/deployment-agent-test-20261007`。私人 R2/隧道凭据已从新 app/worker 移除，独立测试附件存储未配置。原自动运维任务保持 disabled，提示已更新用途。旧数据备份不可自动恢复或重放。详见 docs/planning/2026-10-07-agent-test-environment-reset.md。以下发布/数据计数均为重置前历史。
+当前用途和运行位置以私有 runtime 的 environment-purpose.json、current-release.json 为准；目录 `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/deployment-agent-test-20261007`。私人 R2/隧道凭据已从新 app/worker 移除，独立测试附件存储未配置。原自动运维任务保持 disabled，提示已更新用途。旧数据备份不可自动恢复或重放。独立只读核验通过，部署锁已释放。详见 docs/planning/2026-10-07-agent-test-environment-reset.md。以下发布/数据计数均为重置前历史。
 
 # PR1580 接续 — 2026-10-07
 
