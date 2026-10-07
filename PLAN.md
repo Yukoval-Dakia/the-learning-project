@@ -1,9 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-07 本轮：PR1580 新 P1 前缀凭据泄露已复现并修复，等待新提交 CI；未部署。此前：会话入口 PR1583 已合并并在 02:17Z 部署 `f3bfff2cf`，真实生产浏览器验收通过。当前完成 YUK-1340 发布记录，下一产品线为 YUK-1346 的单次保留策略。见[本机入口发布记录](docs/planning/2026-10-07-session-entry-local-release-result.md)。
+> Linear 是权威 tracker。2026-10-07 本 lane：完成 Copilot 机制与学习者数据审计，登记 YUK-1368–1372，并补充既有 YUK-1350。YUK-1367 候选仍未发布；本轮未调用产品模型或操作 runtime。当前只读核验的发布指针为 `6e54da8df` / `fd8c046b97fe`，测试环境；其余 lane 的下列历史状态须以各自 Linear/交接为准。见[审计与候选交接](docs/audit/2026-10-07-copilot-mechanisms-and-learner-data.md)。
 
 ## NOW
 
+- **YUK-1367 / 机制审计**：审计已完成，结构化出题候选保持 In Progress。UI 入口已有提交，六个源码/提示词文件仍未提交；新增严格解题复核也已明列，开放题评分准入未由此完成。源码、测试、部署与真实行为证据分别记录在审计交接中。
 - **YUK-1103 自主交付**：本机 http://localhost:8787；远程 https://loom-mac-mini.tail2ee344.ts.net/（同一 tailnet，沿用 Loom 令牌）。app/worker `f3bfff2cf` healthy，115项迁移、readiness active。已备份及恢复验证；不要重复发布旧 `5d738dbc0`。
 - **YUK-1341 产品 AI**：PR #1585 已通过 exact-head CI、独立初审和等待窗并合并。app/worker 都固定 `opencode-go/mimo-v2.6-pro`；54聊天任务和 Mem0 接线已落地。生产两轮 Copilot 成功，原会话及 Pi cursor 连续、刷新回放一致；后台 MemoryBrief 也已实际成功。未宣称所有任务质量或评分切片均获准入。
 - **YUK-1340 会话入口已交付**：PR #1583 满足 exact-head CI、审查和等待窗后合并。准确 ARM64 镜像完成副本迁移、旧镜像读取兼容、停写备份恢复及生产页面验收。默认续接、历史只读、新建、重开、刷新保持会话均通过；没有发送 AI 消息。YUK-1343 两条 P2 仍延期。
@@ -12,6 +13,7 @@
 
 ## NEXT
 
+- **YUK-1367 接续**：核对最新 main，完成候选剩余 lint/本地检查与修复验证审，再做真实工具→练习→作答验收。本轮收到 provider 429 后未重试，尚无 actual-output 验收；不以静态提示词断言代替。
 - 先落实 YUK-1346 的可信单次记忆/派生用途策略，再沿“椭圆难题 → 记录过程与帮助程度 → 区分暂时理解和独立迁移 → 后续验证安排”的真实学习路径推进。短回答成功不等于可靠评估已经兑现。
 - YUK-1042：42 failed +42 DLQ 原义务保留；先查每项副作用和幂等身份再恢复，不清队列或重付未知结果。
 - **TS 迁移 + UI 重写（epic YUK-1351）2026-10-07 owner 指示开工**：[准备计划](docs/planning/2026-10-07-ts-migration-and-ui-rewrite-prep.md) 按路由合并交付（每条 TanStack 路由同时上线新 UI）。首批并行：**YUK-1338**（Pi + DBOS 状态版本/过期拒绝/重启恢复竖切，第一道 gate，不过 gate 不动生产）与 **YUK-1353**（视觉方向 loft）。UI 票（YUK-1353/1354/1357 及 P6 UI 子票）只交 Claude Opus 5.5；非 UI 开发按 AGENTS 常规选择。ADR 以 main 的 0066 为准。
@@ -19,6 +21,7 @@
 
 ## PARKED
 
+- **本轮审计 follow-up**：YUK-1368 状态/错误归因、1371 提案正文正则、1369 原生作答消费者、1370 brief 来源身份均为 Todo；1372 撤回证据/在途取消为 Backlog，先本地复现。已在 Linear 登记，不代表已修复。1346/1348/1366/1176/794 继续复用既有任务。
 - YUK-1346：单次“不写入记忆”的可信策略尚未实现，High/Backlog，选为下一条产品线；两条原假设验收摘要保留，不冒称已修。
 - YUK-1343：失败创建提前标为显式来源、50条历史截断隐藏可续接会话均未修；已成组登记，不阻塞此次已裁决发布。
 

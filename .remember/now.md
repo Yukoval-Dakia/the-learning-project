@@ -1,4 +1,14 @@
-# PR1580 接续 — 2026-10-07
+# YUK-1367 本 lane 接续 — 2026-10-07 机制审计完成
+
+本工作树 `tlp-yuk-1367-structured-practice` / `feat/yuk-1367-structured-practice` 由父线程独写。用户要求抓出全部 Copilot 兜底/复核/安全机制，解释刚发送即“受理不明确/后台处理”，并核查学习者分析；本轮完成源码与已有证据审计，报告见 `docs/audit/2026-10-07-copilot-mechanisms-and-learner-data.md`。下方其他 lane 的旧交接保留作历史，不能覆盖这次版本与任务状态。
+
+当前只读核验 runtime source `6e54da8df` / image `fd8c046b97fe`，环境 `agent-development-test`。YUK-1365 已修 LISTEN，started 0.833s；provider 429 使正文/取消验收仍缺，UI 将其替换为“未完成可验证收口”。未重调 provider、重放 memory DLQ1、取得部署锁或修改 runtime。下次操作前需重新核对实际指针与锁。
+
+跟进已去重登记：YUK-1368 状态伪回复/错误归因；1371 整篇提案正则；1369 原生作答→画像消费者；1370 MemoryBrief 来源；1372 mirror→撤回与 Exa 取消条件复现；embedding 响应体超时并入1350。1346单回合策略未在本次部署，1348记忆事实与回复矛盾、1366恢复、1176事件成本、794typed混淆沿用既有票。
+
+YUK-1367 仍 In Progress：HEAD `2cc8e6e80` 已含 UI 入口，六个未提交源码文件保留原样；author_question 候选新增严格解题复核 1–2 个模型任务，尚未发布，也未完成开放题模型评分准入。41 DB/38 UI scoped 用例通过；最终 lint 未绿，typecheck/build 最终退出码未在本轮确认；修复验证审、CI、真实工具到作答均未完成。没有 PR/push/merge/deploy。本轮仅提交审计、PLAN 和本交接。
+
+# PR1580 历史接续 — 2026-10-07
 
 父线程唯一 writer。6787c423b 的 CI 已绿，但新 P1 discussion4205696120 确认：R2_SECRET_ACCESS_KEY、DB_PASSWORD、CLAUDE_CODE_OAUTH_TOKEN 等文本及部分结构字段仍泄露。扩大10类回归先RED，现文本和结构字段共用credentialNamePattern后73 scoped tests通过，保留普通正文和wrapped assignment覆盖。修复后须新exact CI及17分钟等待；最终SQL/browser验收仍待完成，不启动第三审、不部署。
 
