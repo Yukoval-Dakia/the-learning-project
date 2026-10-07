@@ -894,7 +894,7 @@ describe('YUK-1364 TeachingBrief frozen issuance eligibility', () => {
         { id: invalid },
       );
       expect(response.status).toBe(409);
-      expect(await response.json()).toMatchObject({ error: 'probe_reference_mismatch' });
+      expect(await response.json()).toMatchObject({ error: 'probe_spec_mismatch' });
       expect(factory).not.toHaveBeenCalled();
       expect(await db.select().from(assessment_submission)).toHaveLength(0);
       expect(await db.select().from(evaluation)).toHaveLength(0);

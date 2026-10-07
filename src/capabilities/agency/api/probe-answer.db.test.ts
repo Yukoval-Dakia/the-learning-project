@@ -36,8 +36,9 @@ import {
   validateAckableOutcome,
 } from '@/capabilities/shell/server/teaching-brief';
 import { newId } from '@/core/ids';
-import { ConjectureProbeSpecV2 } from '@/core/schema/business';
+import { ConjectureProbeSpecV2, type ConjectureProbeSpecV2T } from '@/core/schema/business';
 import { ConjectureProbeSignatureMatch } from '@/core/schema/conjecture-probe-response';
+import { ConjectureProposalChange } from '@/core/schema/proposal';
 import {
   ai_task_runs,
   assessment_issuance,
@@ -56,6 +57,7 @@ import { writeAiProposal } from '@/kernel/proposals/writer';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { editQuestion } from '@/server/questions/write';
 import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
+import { withProbeSpecs } from '../../../../tests/fixtures/conjecture-probe-spec';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { agencyCapability } from '../manifest';
 import { ProbeAnswerResponseSchema } from './contracts';
@@ -156,7 +158,43 @@ async function seedKnowledge(): Promise<void> {
     .onConflictDoNothing();
 }
 
-async function seedConjecture(opts: { includeFollowup?: boolean } = {}): Promise<string> {
+async function seedConjecture(
+  opts: { includeFollowup?: boolean; probeSpec?: ConjectureProbeSpecV2T } = {},
+): Promise<string> {
+  const change = ConjectureProposalChange.parse({
+    claim_md: 'you treat the chain rule as multiplying derivatives',
+    knowledge_id: KC_ID,
+    cause_category: 'concept_misunderstanding',
+    confidence: 0.7,
+    recurrence_count: 2,
+    probe_md: 'd/dx sin(x^2) = ?',
+    probe_reference_md: PROBE_REFERENCE,
+    ...(opts.includeFollowup === false
+      ? {}
+      : {
+          followup_probe_md: 'd/dx cos(x^3) = ?',
+          followup_probe_reference_md: '-3x^2·sin(x^3) — outer -sin × inner 3x².',
+        }),
+    discriminating: true,
+    predicted_p: 0.3,
+    baseline_p_at_induction: 0.6,
+  });
+  const nativeChange = opts.probeSpec
+    ? withProbeSpecs(
+        change,
+        opts.probeSpec,
+        ConjectureProbeSpecV2.parse({
+          ...opts.probeSpec,
+          prompt_md: change.followup_probe_md,
+          reference_md: change.followup_probe_reference_md,
+          expected_target_error_answer_md: '-sin(x³) + 3x²',
+          context_kind: 'applied',
+          representation_kind: 'natural_language',
+          gold_response_signature: { kind: 'text', response_md: '-3x² sin(x³)' },
+          target_error_response_signature: { kind: 'text', response_md: '-sin(x³) + 3x²' },
+        }),
+      )
+    : change;
   const proposalId = await writeAiProposal(testDb(), {
     actor_ref: 'research_meeting',
     payload: {
@@ -165,24 +203,7 @@ async function seedConjecture(opts: { includeFollowup?: boolean } = {}): Promise
       reason_md: 'recurrent cause×KC failure cell',
       evidence_refs: [{ kind: 'event', id: 'evt_a' }],
       cooldown_key: `conjecture:${KC_ID}`,
-      proposed_change: {
-        claim_md: 'you treat the chain rule as multiplying derivatives',
-        knowledge_id: KC_ID,
-        cause_category: 'concept_misunderstanding',
-        confidence: 0.7,
-        recurrence_count: 2,
-        probe_md: 'd/dx sin(x^2) = ?',
-        probe_reference_md: PROBE_REFERENCE,
-        ...(opts.includeFollowup === false
-          ? {}
-          : {
-              followup_probe_md: 'd/dx cos(x^3) = ?',
-              followup_probe_reference_md: '-3x^2·sin(x^3) — outer -sin × inner 3x².',
-            }),
-        discriminating: true,
-        predicted_p: 0.3,
-        baseline_p_at_induction: 0.6,
-      },
+      proposed_change: nativeChange,
     },
   });
   await writeEvent(testDb(), {
@@ -213,7 +234,6 @@ async function serveProbe(): Promise<string> {
 }
 
 async function serveResponseAwareProbe(): Promise<string> {
-  const proposalId = await seedConjecture();
   const probeSpec = ConjectureProbeSpecV2.parse({
     schema_version: 2,
     prompt_md: 'd/dx sin(x^2) = ?',
@@ -229,6 +249,7 @@ async function serveResponseAwareProbe(): Promise<string> {
       response_md: 'cos(x^2)+2x',
     },
   });
+  const proposalId = await seedConjecture({ probeSpec });
   const served = await serveProbeOnce({
     db: testDb(),
     conjectureProposalId: proposalId,

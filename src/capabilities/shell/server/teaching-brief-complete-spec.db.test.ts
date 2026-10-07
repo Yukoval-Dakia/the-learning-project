@@ -1,0 +1,788 @@
+import { eq, sql } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ProbeAnswerResponseSchema } from '@/capabilities/agency/api/contracts';
+import { POST as ANSWER } from '@/capabilities/agency/api/probe-answer';
+import {
+  getEffectiveProbeResultStatuses,
+  serveProbeOnce,
+  servePublishedProbe,
+} from '@/capabilities/agency/public';
+import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
+import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
+import { ConjectureProbeSpecV2, type ConjectureProbeSpecV2T } from '@/core/schema/business';
+import { ConjectureProposalChange } from '@/core/schema/proposal';
+import {
+  ai_task_runs,
+  assessment_issuance,
+  assessment_submission,
+  evaluation,
+  event,
+  knowledge,
+  question,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
+import { writeAiProposal } from '@/kernel/proposals/writer';
+import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
+import { __resetRateLimitForTests } from '@/server/http/rate-limit';
+import { editQuestion } from '@/server/questions/write';
+import { loadTeachingBriefReportInput } from '../../../../scripts/report-teaching-brief';
+import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
+import { withProbeSpecs } from '../../../../tests/fixtures/conjecture-probe-spec';
+import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { POST as ACK } from '../api/teaching-brief-ack';
+import { loadActiveProbes } from './prep-desk-probes';
+import { loadTeachingBrief, validateAckableOutcome } from './teaching-brief';
+
+const NOW = new Date('2026-10-07T12:00:00Z');
+const PRIMARY = ConjectureProbeSpecV2.parse({
+  schema_version: 2,
+  prompt_md:
+    '求 sin(x²) 的导数。解释外层与内层导数如何组合，并说明 x=0 的特殊值为何不能验证一般规则。',
+  reference_md: '2x cos(x²)。外层 cos(x²) 与内层 2x 相乘；特殊点相同不能证明函数恒等。',
+  expected_target_error_answer_md: 'cos(x²) + 2x，把内外层导数相加。',
+  elicits_target_error_reason_md: '把乘法规则与加法错误区分开，同时避免用特殊点推断一般结论。',
+  context_kind: 'abstract',
+  representation_kind: 'symbolic',
+  response_mode: 'short_answer',
+  gold_response_signature: { kind: 'text', response_md: '2x cos(x²)' },
+  target_error_response_signature: { kind: 'text', response_md: 'cos(x²) + 2x' },
+});
+const FOLLOWUP = ConjectureProbeSpecV2.parse({
+  ...PRIMARY,
+  prompt_md:
+    '面积变化率模型为 cos(t³)。求其瞬时变化率并解释内外层的组合；判断 t=0 能否验证全部时间。',
+  reference_md: '-3t² sin(t³)。外层 -sin(t³) 与内层 3t² 相乘。',
+  expected_target_error_answer_md: '-sin(t³) + 3t²，把内外层导数相加。',
+  context_kind: 'applied',
+  representation_kind: 'natural_language',
+  gold_response_signature: { kind: 'text', response_md: '-3t² sin(t³)' },
+  target_error_response_signature: { kind: 'text', response_md: '-sin(t³) + 3t²' },
+});
+const CHANGE = ConjectureProposalChange.parse({
+  claim_md: '求导复合函数时可能把内外层导数相加。',
+  knowledge_id: 'kn_chain_rule',
+  cause_category: 'concept_misunderstanding',
+  confidence: 0.7,
+  recurrence_count: 2,
+  probe_md: PRIMARY.prompt_md,
+  probe_reference_md: PRIMARY.reference_md,
+  followup_probe_md: FOLLOWUP.prompt_md,
+  followup_probe_reference_md: FOLLOWUP.reference_md,
+  discriminating: true,
+  predicted_p: 0.3,
+  baseline_p_at_induction: 0.6,
+});
+
+type SpecMutation = {
+  name: string;
+  mutate: (spec: ConjectureProbeSpecV2T) => ConjectureProbeSpecV2T;
+};
+const MUTATIONS: SpecMutation[] = [
+  { name: 'prompt', mutate: (s) => ({ ...s, prompt_md: '另一份题干，要求求 sin(x³) 的导数。' }) },
+  { name: 'reference', mutate: (s) => ({ ...s, reference_md: '另一份金标，3x² cos(x³)。' }) },
+  {
+    name: 'gold signature',
+    mutate: (s) => ({
+      ...s,
+      gold_response_signature: { kind: 'text', response_md: '错误金标：内外层导数相加。' },
+    }),
+  },
+  {
+    name: 'target-error signature',
+    mutate: (s) => ({
+      ...s,
+      target_error_response_signature: {
+        kind: 'text',
+        response_md: '另一种错误：遗漏全部内层因子。',
+      },
+    }),
+  },
+  {
+    name: 'expected target-error answer',
+    mutate: (s) => ({
+      ...s,
+      expected_target_error_answer_md: '遗漏内层因子，这是另一个错误规则。',
+    }),
+  },
+  {
+    name: 'elicitation rule',
+    mutate: (s) => ({ ...s, elicits_target_error_reason_md: '只检测外层负号，不检测内外层组合。' }),
+  },
+  {
+    name: 'context',
+    mutate: (s) => ({ ...s, context_kind: s.context_kind === 'abstract' ? 'applied' : 'abstract' }),
+  },
+  {
+    name: 'representation',
+    mutate: (s) => ({
+      ...s,
+      representation_kind: s.representation_kind === 'symbolic' ? 'natural_language' : 'symbolic',
+    }),
+  },
+  {
+    name: 'response mode and nested reason signatures',
+    mutate: (s) => ({
+      ...s,
+      response_mode: 'answer_with_reason',
+      gold_response_signature: {
+        kind: 'answer_with_reason',
+        answer_md: s.reference_md,
+        required_reason_features_md: ['说明外层导数。', '解释内外层为何相乘。'],
+      },
+      target_error_response_signature: {
+        kind: 'answer_with_reason',
+        answer_md: s.expected_target_error_answer_md,
+        required_reason_features_md: ['说明加法错误规则。'],
+      },
+    }),
+  },
+];
+const CASES = ([1, 2] as const).flatMap((sequence) =>
+  MUTATIONS.map((mutation) => ({ sequence, ...mutation })),
+);
+const MODES = [
+  {
+    mode: 'single_choice',
+    gold: { kind: 'choice', option_ids: ['A'] },
+    target: { kind: 'choice', option_ids: ['B'] },
+  },
+  {
+    mode: 'multiple_select',
+    gold: { kind: 'choice', option_ids: ['A', 'C'] },
+    target: { kind: 'choice', option_ids: ['B', 'D'] },
+  },
+  {
+    mode: 'short_answer',
+    gold: PRIMARY.gold_response_signature,
+    target: PRIMARY.target_error_response_signature,
+  },
+  {
+    mode: 'answer_with_reason',
+    gold: {
+      kind: 'answer_with_reason',
+      answer_md: PRIMARY.reference_md,
+      required_reason_features_md: ['外层导数。', '内层因子。'],
+    },
+    target: {
+      kind: 'answer_with_reason',
+      answer_md: PRIMARY.expected_target_error_answer_md,
+      required_reason_features_md: ['把内外层导数相加。', '错误地用特殊点验证恒等。'],
+    },
+  },
+  {
+    mode: 'constructed_response',
+    gold: { kind: 'rubric', required_features_md: ['正确外层导数。', '乘以内层导数。'] },
+    target: { kind: 'rubric', required_features_md: ['错误外层组合。', '内外层导数相加。'] },
+  },
+] as const;
+const MODE_CASES = ([1, 2] as const).flatMap((sequence) =>
+  MODES.map((mode) => ({ sequence, ...mode })),
+);
+const SIGNATURE_CASES = MODE_CASES.flatMap((mode) =>
+  (['gold_response_signature', 'target_error_response_signature'] as const).map((field) => ({
+    ...mode,
+    field,
+  })),
+);
+
+/** Model corrupted imported/restore bindings without weakening production immutability. */
+async function replaceFrozenSpec(probeId: string, spec: unknown) {
+  const db = testDb();
+  const [issuance] = await db
+    .select()
+    .from(assessment_issuance)
+    .where(eq(assessment_issuance.issuance_id, `iss_probe_${probeId}`));
+  const [revision] = await db
+    .select()
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, issuance.revision_id));
+  const copy = structuredClone(revision);
+  const scoringBasis = {
+    ...copy.scoring_basis,
+    units: copy.scoring_basis.units.map((unit) => ({
+      ...unit,
+      criterion: { ...unit.criterion, probe_spec: spec },
+    })),
+  };
+  copy.integrity_digest = contractIntegrityDigest({ ...copy, scoring_basis: scoringBasis });
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SET LOCAL app.assessment_restore_mode = 'on'`);
+    await tx
+      .update(question_revision)
+      .set({
+        scoring_basis: sql`${JSON.stringify(scoringBasis)}::jsonb`,
+        integrity_digest: copy.integrity_digest,
+      })
+      .where(eq(question_revision.revision_id, copy.revision_id));
+  });
+  await expect(
+    db
+      .update(question_revision)
+      .set({ integrity_digest: 'ordinary-writer-must-fail' })
+      .where(eq(question_revision.revision_id, copy.revision_id)),
+  ).rejects.toMatchObject({ cause: { code: 'P0001' } });
+}
+
+async function seed(
+  sequence: 1 | 2,
+  frozenSpec: ConjectureProbeSpecV2T | null,
+  nativeProposal = true,
+  pair = { primary: PRIMARY, followup: FOLLOWUP },
+) {
+  const db = testDb();
+  const original = sequence === 1 ? pair.primary : pair.followup;
+  await writeAiProposal(db, {
+    id: 'original_proposal',
+    actor_ref: 'research_meeting',
+    created_at: new Date(NOW.getTime() - 600_000),
+    payload: {
+      kind: 'conjecture',
+      target: { subject_kind: 'mind_model', subject_id: CHANGE.knowledge_id },
+      reason_md: '两次嵌套求导出错，另一次独立练习正确；冻结完整探针以区分稳定错误与偶发失误。',
+      evidence_refs: [{ kind: 'event', id: 'offline-evidence' }],
+      cooldown_key: 'complete-spec',
+      proposed_change: nativeProposal
+        ? withProbeSpecs(CHANGE, pair.primary, pair.followup)
+        : CHANGE,
+    },
+  });
+  await writeEvent(db, {
+    id: 'accepted_original',
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'rate',
+    subject_kind: 'event',
+    subject_id: 'original_proposal',
+    outcome: 'success',
+    payload: { rating: 'accept', conjecture_id: 'original_proposal', calibration_anchor: 'accept' },
+    caused_by_event_id: 'original_proposal',
+    created_at: NOW,
+  });
+  const served = await serveProbeOnce({
+    db,
+    conjectureProposalId: 'original_proposal',
+    knowledgeId: CHANGE.knowledge_id,
+    probeMd: original.prompt_md,
+    referenceMd: original.reference_md,
+    probeSequence: sequence,
+    ...(nativeProposal ? { probeSpec: original } : {}),
+    now: new Date(NOW.getTime() - 600_000),
+  });
+  if (served.status !== 'served') throw new Error(`fixture serve: ${served.status}`);
+  const probeId = served.probe_question_id;
+  const contract = await publishPaperModelFixture(db, probeId);
+  const criterion = contract.scoring_basis.units[0].criterion;
+  if (criterion.kind !== 'rule_reference') throw new Error('fixture needs a rule reference');
+  criterion.statement_md = original.reference_md;
+  if (frozenSpec) criterion.probe_spec = frozenSpec;
+  else delete criterion.probe_spec;
+  contract.integrity_digest = contractIntegrityDigest(contract);
+  const [lifecycle] = await db
+    .select()
+    .from(question_group_lifecycle)
+    .where(eq(question_group_lifecycle.group_id, probeId));
+  expect(
+    await publishQuestionGroup(db, {
+      group_id: probeId,
+      contract,
+      expectedCurrentRevision: lifecycle.current_revision_id,
+      expectedAdmissionGeneration: lifecycle.scoring_admission_generation,
+      availability: lifecycle.availability,
+      actorRef: 'test:complete-spec',
+      now: NOW,
+      admission: { state: 'admitted', evidence: lifecycle.scoring_admission_evidence },
+    }),
+  ).toMatchObject({ status: 'published' });
+  expect(await servePublishedProbe(db, probeId)).toMatchObject({ status: 'issued' });
+  return probeId;
+}
+
+function pairForMode(mode: (typeof MODES)[number]) {
+  const convert = (spec: ConjectureProbeSpecV2T) =>
+    ConjectureProbeSpecV2.parse({
+      ...spec,
+      response_mode: mode.mode,
+      gold_response_signature:
+        mode.mode === 'short_answer'
+          ? spec.gold_response_signature
+          : mode.mode === 'answer_with_reason'
+            ? { ...mode.gold, answer_md: spec.reference_md }
+            : mode.gold,
+      target_error_response_signature:
+        mode.mode === 'short_answer'
+          ? spec.target_error_response_signature
+          : mode.mode === 'answer_with_reason'
+            ? { ...mode.target, answer_md: spec.expected_target_error_answer_md }
+            : mode.target,
+    });
+  return { primary: convert(PRIMARY), followup: convert(FOLLOWUP) };
+}
+
+function offlineJudge(match: 'gold' | 'target_error' | 'neither' = 'gold') {
+  const execute = vi.fn<Parameters<typeof createRecordedModelExecutor>[1]>(
+    async (input, _signal, runId) => ({
+      kind: 'scored',
+      points_awarded: match === 'gold' ? (input.unit.points ?? 0) : 0,
+      matched: {
+        rule_id: input.unit.criterion.kind === 'rule_reference' ? input.unit.criterion.rule_id : '',
+        option_ids: [],
+      },
+      probe_signature_match: {
+        match,
+        explanation_md: '脚本化签名匹配，仅验证本地真实评分持久化与来源约束。',
+      },
+      confidence: 0.9,
+      feedback_md: '离线模型，无 provider 调用。',
+      evidence_citations: input.slot_responses.flatMap((r) =>
+        r.kind === 'open' && r.text_md ? [{ slot_id: r.slot_id, quote: r.text_md }] : [],
+      ),
+      run_refs: [runId],
+      cost_usd_micros: 0,
+    }),
+  );
+  const factory = vi
+    .spyOn(evaluationService, 'createFormalModelExecutor')
+    .mockImplementation(() => createRecordedModelExecutor(testDb(), execute));
+  return { execute, factory };
+}
+function answer(probeId: string) {
+  return ANSWER(
+    new Request('http://test.invalid/probe/answer', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        answer_md: '给出完整推导，外层与内层导数相乘并排除特殊点的偶然相同。',
+      }),
+    }),
+    { id: probeId },
+  );
+}
+function snapshot() {
+  const db = testDb();
+  return Promise.all([
+    db.select().from(question),
+    db.select().from(event),
+    db.select().from(assessment_issuance),
+    db.select().from(question_revision),
+    db.select().from(question_group_lifecycle),
+    db.select().from(assessment_submission),
+    db.select().from(evaluation),
+    db.select().from(ai_task_runs),
+  ]);
+}
+async function expectRejected(probeId: string, reason = 'probe_spec_mismatch') {
+  const { execute, factory } = offlineJudge();
+  const before = await snapshot();
+  expect
+    .soft((await loadTeachingBrief(testDb(), NOW)).brief?.prepared_action)
+    .not.toMatchObject({ probe_question_id: probeId });
+  expect
+    .soft((await loadActiveProbes(testDb())).probes)
+    .not.toEqual(expect.arrayContaining([expect.objectContaining({ probe_question_id: probeId })]));
+  const response = await answer(probeId);
+  const body: unknown = await response.json();
+  expect.soft(response.status).toBe(409);
+  expect.soft(body).toMatchObject({ error: reason });
+  expect.soft(factory).not.toHaveBeenCalled();
+  expect.soft(execute).not.toHaveBeenCalled();
+  expect.soft(await testDb().select().from(assessment_submission)).toHaveLength(0);
+  expect.soft(await testDb().select().from(evaluation)).toHaveLength(0);
+  expect.soft(await testDb().select().from(ai_task_runs)).toHaveLength(0);
+  expect
+    .soft(
+      (await testDb().select().from(event)).filter(
+        (e) => e.action === 'experimental:probe_judge_started',
+      ),
+    )
+    .toHaveLength(0);
+  expect.soft(await snapshot()).toEqual(before);
+  console.info(
+    '[complete-spec rejection counts]',
+    JSON.stringify({
+      http_status: response.status,
+      factory: factory.mock.calls.length,
+      executor: execute.mock.calls.length,
+      judge_claim: (await testDb().select().from(event)).filter(
+        (e) => e.action === 'experimental:probe_judge_started',
+      ).length,
+      submission: (await testDb().select().from(assessment_submission)).length,
+      evaluation: (await testDb().select().from(evaluation)).length,
+      task_run: (await testDb().select().from(ai_task_runs)).length,
+    }),
+  );
+}
+
+describe('YUK-1364 complete original probe-spec binding', () => {
+  beforeEach(async () => {
+    vi.restoreAllMocks();
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    __resetRateLimitForTests();
+    await resetDb();
+    await testDb()
+      .insert(knowledge)
+      .values({ id: CHANGE.knowledge_id, name: '链式法则', created_at: NOW, updated_at: NOW });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it.each(CASES)(
+    'rejects complete spec drift in sequence $sequence: $name before advertisement or answer',
+    async ({ sequence, name, mutate }) => {
+      const original = sequence === 1 ? PRIMARY : FOLLOWUP;
+      const drifted = ConjectureProbeSpecV2.parse(mutate(original));
+      const probeId = await seed(sequence, drifted);
+      // Even a matching mutable metadata copy cannot replace the original proposal.
+      const [row] = await testDb().select().from(question).where(eq(question.id, probeId));
+      if (name !== 'prompt' && name !== 'reference') {
+        await testDb()
+          .update(question)
+          .set({ metadata: { ...row.metadata, probe_spec: drifted } })
+          .where(eq(question.id, probeId));
+      }
+      await expectRejected(probeId);
+    },
+  );
+
+  it.each(SIGNATURE_CASES)(
+    'rejects changed nested $field for $mode in sequence $sequence',
+    async ({ sequence, field, ...modeCase }) => {
+      const pair = pairForMode(modeCase);
+      const original = sequence === 1 ? pair.primary : pair.followup;
+      const drifted = structuredClone(original);
+      const signature = drifted[field];
+      switch (signature.kind) {
+        case 'choice':
+          signature.option_ids = [...signature.option_ids, 'Z'];
+          if (modeCase.mode === 'single_choice') signature.option_ids = ['Z'];
+          break;
+        case 'text':
+          signature.response_md = '另一种目标错误。';
+          break;
+        case 'answer_with_reason':
+          signature.required_reason_features_md.reverse();
+          break;
+        case 'rubric':
+          signature.required_features_md.reverse();
+          break;
+      }
+      await expectRejected(await seed(sequence, ConjectureProbeSpecV2.parse(drifted), true, pair));
+    },
+  );
+
+  it.each(MODE_CASES)(
+    'accepts the complete original $mode spec in sequence $sequence',
+    async ({ sequence, ...modeCase }) => {
+      const pair = pairForMode(modeCase);
+      const spec = sequence === 1 ? pair.primary : pair.followup;
+      const probeId = await seed(sequence, spec, true, pair);
+      const { execute } = offlineJudge();
+      const response = await answer(probeId);
+      expect(response.status).toBe(200);
+      expect(ProbeAnswerResponseSchema.parse(await response.json())).toMatchObject({
+        status: 'retired',
+        answer_result: 'correct',
+        target_error_match: 'not_matched',
+      });
+      expect(execute.mock.calls[0][0].unit.criterion).toMatchObject({ probe_spec: spec });
+      expect(execute).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('accepts schema-normalized spec whitespace and object key order', async () => {
+    if (PRIMARY.target_error_response_signature.kind !== 'text')
+      throw new Error('text fixture expected');
+    const normalized = {
+      ...PRIMARY,
+      elicits_target_error_reason_md: `  ${PRIMARY.elicits_target_error_reason_md}  `,
+      target_error_response_signature: {
+        response_md: `  ${PRIMARY.target_error_response_signature.response_md}  `,
+        kind: 'text' as const,
+      },
+    };
+    const probeId = await seed(1, normalized);
+    offlineJudge();
+    const response = await answer(probeId);
+    expect(response.status).toBe(200);
+  });
+
+  it('keeps full native recurrence, normal completed edits, corrections and spec restoration consistent', async () => {
+    const initial = await seed(1, PRIMARY);
+    const { execute } = offlineJudge('target_error');
+    const firstResponse = await answer(initial);
+    expect(firstResponse.status).toBe(200);
+    const first = ProbeAnswerResponseSchema.parse(await firstResponse.json());
+    expect(first.status).toBe('evidence_for');
+    expect(
+      (
+        await ACK(
+          new Request('http://test.invalid/ack', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ probe_result_event_id: first.probe_result_event_id }),
+          }),
+        )
+      ).status,
+    ).toBe(201);
+    const [followup] = (await testDb().select().from(question)).filter(
+      (q) => q.source_ref === 'original_proposal' && q.metadata?.probe_sequence === 2,
+    );
+    expect(followup.metadata).toMatchObject({ probe_spec: FOLLOWUP });
+    await publishPaperModelFixture(testDb(), followup.id);
+    await servePublishedProbe(testDb(), followup.id);
+    expect((await loadTeachingBrief(testDb(), NOW)).brief?.prepared_action).toMatchObject({
+      probe_question_id: followup.id,
+      prompt_md: FOLLOWUP.prompt_md,
+    });
+    const terminalResponse = await answer(followup.id);
+    expect(terminalResponse.status).toBe(200);
+    const terminal = ProbeAnswerResponseSchema.parse(await terminalResponse.json());
+    expect(terminal.status).toBe('confirmed');
+    expect(execute.mock.calls.map(([input]) => input.unit.criterion)).toMatchObject([
+      { probe_spec: PRIMARY },
+      { probe_spec: FOLLOWUP },
+    ]);
+    for (const probeId of [initial, followup.id]) {
+      const [q] = await testDb().select().from(question).where(eq(question.id, probeId));
+      expect(
+        await editQuestion(
+          testDb(),
+          probeId,
+          q.version,
+          {
+            prompt_md: '后续编目修改。',
+            reference_md: '后续参考修改。',
+            knowledge_ids: [],
+            draft_status: 'active',
+            kind: 'choice',
+            choices_md: ['A', 'B'],
+          },
+          'self',
+        ),
+      ).toMatchObject({ status: 'updated' });
+    }
+    const [terminalRow] = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.id, terminal.probe_result_event_id));
+    const status = async () =>
+      (
+        await getEffectiveProbeResultStatuses(testDb(), [terminalRow.id], {
+          validateDirectChain: true,
+        })
+      ).get(terminalRow.id);
+    expect(await status()).toBe('active');
+    expect(await validateAckableOutcome(testDb(), terminalRow, NOW)).not.toHaveProperty('reason');
+    await replaceFrozenSpec(initial, MUTATIONS[3].mutate(PRIMARY));
+    expect(await status()).toBe('dependency_inactive');
+    expect(await validateAckableOutcome(testDb(), terminalRow, NOW)).toHaveProperty('reason');
+    await replaceFrozenSpec(initial, PRIMARY);
+    expect(await status()).toBe('active');
+    for (const subjectId of [first.probe_result_event_id, 'original_proposal']) {
+      for (const [index, kind] of (['retract', 'restore'] as const).entries()) {
+        await writeEvent(testDb(), {
+          id: `${subjectId}_${kind}`,
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'correct',
+          subject_kind: 'event',
+          subject_id: subjectId,
+          outcome: 'success',
+          caused_by_event_id: subjectId,
+          payload: {
+            correction_kind: kind,
+            reason_md: '核验完成来源的撤回与恢复。',
+            affected_refs: [{ kind: 'question', id: initial }],
+          },
+          created_at: new Date(NOW.getTime() + index + 1),
+        });
+        expect(await status()).toBe(kind === 'retract' ? 'dependency_inactive' : 'active');
+      }
+    }
+    expect((await loadTeachingBrief(testDb(), NOW)).brief).toMatchObject({
+      state: 'outcome_confirmed',
+    });
+    expect(
+      (await loadTeachingBriefReportInput(testDb(), '2026-10-07', '2026-10-07'))
+        .skippedCorruptOutcomes,
+    ).toBe(0);
+    expect(execute).toHaveBeenCalledTimes(2);
+  });
+
+  it.each(['schema version', 'unknown field', 'invalid signature'] as const)(
+    'rejects malformed frozen native %s before any writes',
+    async (kind) => {
+      const probeId = await seed(1, PRIMARY);
+      const malformed =
+        kind === 'schema version'
+          ? { ...PRIMARY, schema_version: 1 }
+          : kind === 'unknown field'
+            ? { ...PRIMARY, new_scoring_rule: 'unparsed rule' }
+            : {
+                ...PRIMARY,
+                target_error_response_signature: {
+                  kind: 'rubric',
+                  required_features_md: ['错误规则'],
+                },
+              };
+      await replaceFrozenSpec(probeId, malformed);
+      await expectRejected(probeId, 'probe_issuance_unprojectable');
+    },
+  );
+
+  it.each(CASES)(
+    'rejects altered completed frozen spec in sequence $sequence: $name across evidence, delivery, ack and report',
+    async ({ sequence, mutate }) => {
+      const original = sequence === 1 ? PRIMARY : FOLLOWUP;
+      const probeId = await seed(sequence, original);
+      offlineJudge();
+      const response = await answer(probeId);
+      expect(response.status).toBe(200);
+      const result = ProbeAnswerResponseSchema.parse(await response.json());
+      const [resultRow] = await testDb()
+        .select()
+        .from(event)
+        .where(eq(event.id, result.probe_result_event_id));
+      expect(await validateAckableOutcome(testDb(), resultRow, NOW)).not.toHaveProperty('reason');
+      await replaceFrozenSpec(probeId, ConjectureProbeSpecV2.parse(mutate(original)));
+      const before = await snapshot();
+      expect(await validateAckableOutcome(testDb(), resultRow, NOW)).toEqual({
+        reason: 'probe_spec_mismatch',
+      });
+      expect(
+        (
+          await getEffectiveProbeResultStatuses(testDb(), [resultRow.id], {
+            validateDirectChain: true,
+          })
+        ).get(resultRow.id),
+      ).toBe('dependency_inactive');
+      expect((await loadTeachingBrief(testDb(), NOW)).brief?.current_outcome).not.toMatchObject({
+        probe_result_event_id: resultRow.id,
+      });
+      const report = await loadTeachingBriefReportInput(testDb(), '2026-10-07', '2026-10-07');
+      expect(report.probeResults).toEqual([]);
+      expect(report.skippedCorruptOutcomes).toBe(1);
+      expect(
+        (
+          await ACK(
+            new Request('http://test.invalid/ack', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ probe_result_event_id: resultRow.id }),
+            }),
+          )
+        ).status,
+      ).toBe(409);
+      expect(await snapshot()).toEqual(before);
+    },
+  );
+
+  it.each([1, 2] as const)(
+    'uses the original native response mode when mutable metadata is absent in sequence %s',
+    async (sequence) => {
+      const probeId = await seed(sequence, sequence === 1 ? PRIMARY : FOLLOWUP);
+      const [row] = await testDb().select().from(question).where(eq(question.id, probeId));
+      const { probe_spec: _spec, ...metadata } = row.metadata ?? {};
+      await testDb().update(question).set({ metadata }).where(eq(question.id, probeId));
+      const { execute } = offlineJudge('neither');
+      const response = await answer(probeId);
+      expect(response.status).toBe(200);
+      expect(ProbeAnswerResponseSchema.parse(await response.json())).toMatchObject({
+        status: 'inconclusive',
+        answer_result: 'incorrect',
+        target_error_match: 'not_matched',
+      });
+      expect(execute).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each([1, 2] as const)(
+    'rejects a missing native frozen spec in sequence %s',
+    async (sequence) => {
+      await expectRejected(await seed(sequence, null));
+    },
+  );
+  it.each([1, 2] as const)(
+    'rejects an unexpected native frozen spec for a no-spec proposal in sequence %s',
+    async (sequence) => {
+      await expectRejected(await seed(sequence, sequence === 1 ? PRIMARY : FOLLOWUP, false));
+    },
+  );
+
+  it.each([1, 2] as const)(
+    'accepts the exact original native sequence %s and preserves completion after normal edits',
+    async (sequence) => {
+      const spec = sequence === 1 ? PRIMARY : FOLLOWUP;
+      const probeId = await seed(sequence, spec);
+      const { execute } = offlineJudge();
+      expect((await loadTeachingBrief(testDb(), NOW)).brief).toMatchObject({
+        state: 'probe_ready',
+        prepared_action: { probe_question_id: probeId, prompt_md: spec.prompt_md },
+      });
+      expect((await loadActiveProbes(testDb())).probes).toEqual([
+        {
+          probe_question_id: probeId,
+          prompt_md: spec.prompt_md,
+          knowledge_id: CHANGE.knowledge_id,
+        },
+      ]);
+      const response = await answer(probeId);
+      expect(response.status).toBe(200);
+      const result = ProbeAnswerResponseSchema.parse(await response.json());
+      expect(result.status).toBe('retired');
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(execute.mock.calls[0][0].unit.criterion).toMatchObject({ probe_spec: spec });
+      const [row] = await testDb().select().from(question).where(eq(question.id, probeId));
+      expect(
+        await editQuestion(
+          testDb(),
+          probeId,
+          row.version,
+          {
+            knowledge_ids: [],
+            draft_status: 'active',
+            kind: 'choice',
+            choices_md: ['加', '乘'],
+            prompt_md: '后续编目题面。',
+            reference_md: '后续编目参考。',
+          },
+          'self',
+        ),
+      ).toMatchObject({ status: 'updated' });
+      const [resultRow] = await testDb()
+        .select()
+        .from(event)
+        .where(eq(event.id, result.probe_result_event_id));
+      const before = await snapshot();
+      expect(await validateAckableOutcome(testDb(), resultRow, NOW)).not.toHaveProperty('reason');
+      expect(
+        (
+          await getEffectiveProbeResultStatuses(testDb(), [resultRow.id], {
+            validateDirectChain: true,
+          })
+        ).get(resultRow.id),
+      ).toBe('active');
+      expect((await loadTeachingBrief(testDb(), NOW)).brief).toMatchObject({
+        state: 'outcome_retired',
+      });
+      expect(
+        (await loadTeachingBriefReportInput(testDb(), '2026-10-07', '2026-10-07')).probeResults,
+      ).toEqual([{ result_event_id: resultRow.id, resolution: 'retired' }]);
+      expect(await snapshot()).toEqual(before);
+      expect(
+        (
+          await ACK(
+            new Request('http://test.invalid/ack', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ probe_result_event_id: resultRow.id }),
+            }),
+          )
+        ).status,
+      ).toBe(201);
+    },
+  );
+});

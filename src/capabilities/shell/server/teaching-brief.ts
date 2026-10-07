@@ -380,8 +380,10 @@ function factsFromProposalRow(
       reasonMd: row.payload.reason_md,
       probeMd: change.probe_md,
       probeReferenceMd: change.probe_reference_md,
+      probeSpec: change.probe_spec ?? null,
       followupProbeMd: change.followup_probe_md ?? null,
       followupProbeReferenceMd: change.followup_probe_reference_md ?? null,
+      followupProbeSpec: change.followup_probe_spec ?? null,
       evidence: dedupeEvidence(
         row.payload.evidence_refs.map((ref) => ({
           role: 'induction' as const,
@@ -426,8 +428,10 @@ function factsFromRawProposalRow(row: EventRow): CandidateResult<ConjectureFacts
       reasonMd: payload.reason_md,
       probeMd: change.probe_md,
       probeReferenceMd: change.probe_reference_md,
+      probeSpec: change.probe_spec ?? null,
       followupProbeMd: change.followup_probe_md ?? null,
       followupProbeReferenceMd: change.followup_probe_reference_md ?? null,
+      followupProbeSpec: change.followup_probe_spec ?? null,
       evidence: dedupeEvidence(
         payload.evidence_refs.map((ref) => ({
           role: 'induction' as const,
@@ -439,6 +443,19 @@ function factsFromRawProposalRow(row: EventRow): CandidateResult<ConjectureFacts
       salience: change.confidence * change.recurrence_count,
     },
   };
+}
+
+/** Active lists share the same original proposal facts as completed report evidence. */
+export function validateIssuedProbeFromProposal({
+  proposalRow,
+  ...issued
+}: Omit<Parameters<typeof validateIssuedProbeProvenance>[0], 'proposal'> & {
+  proposalRow: EventRow | null;
+}) {
+  if (!proposalRow) return { reason: 'proposal_not_found' };
+  const proposal = factsFromRawProposalRow(proposalRow);
+  if (isCandidateError(proposal)) return proposal;
+  return validateIssuedProbeProvenance({ ...issued, proposal: proposal.value });
 }
 
 async function loadLatestRatesByProposal(

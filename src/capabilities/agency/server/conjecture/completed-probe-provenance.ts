@@ -1,6 +1,8 @@
 import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
+import { stableStringify } from '@/core/migration/canonical';
 import { PublishedQuestionRevision, projectPracticeIssuance } from '@/core/schema/assessment';
+import type { ConjectureProbeSpecT } from '@/core/schema/business';
 import { PROBE_QUESTION_SOURCE } from '@/core/schema/conjecture';
 import type { Db, Tx } from '@/db/client';
 import {
@@ -18,8 +20,10 @@ export interface CompletedProbeProposal {
   knowledgeId: string;
   probeMd: string;
   probeReferenceMd: string;
+  probeSpec: ConjectureProbeSpecT | null;
   followupProbeMd: string | null;
   followupProbeReferenceMd: string | null;
+  followupProbeSpec: ConjectureProbeSpecT | null;
 }
 
 type ResultRow = Pick<typeof event.$inferSelect, 'id' | 'subject_id' | 'caused_by_event_id'> & {
@@ -123,6 +127,7 @@ export function validateIssuedProbeProvenance({
   const expectedPrompt = sequence === 2 ? proposal.followupProbeMd : proposal.probeMd;
   const expectedReference =
     sequence === 2 ? proposal.followupProbeReferenceMd : proposal.probeReferenceMd;
+  const expectedSpec = sequence === 2 ? proposal.followupProbeSpec : proposal.probeSpec;
   if (expectedPrompt === null || expectedReference === null)
     return { reason: 'probe_followup_missing' };
   if (
@@ -150,12 +155,24 @@ export function validateIssuedProbeProvenance({
     const promptMd = frozen.faces.map((part) => part.prompt_md).join('\n\n');
     if (promptMd !== expectedPrompt) return { reason: 'probe_prompt_mismatch' };
     const criterion = unit.criterion;
-    const referenceMatches = criterion.probe_spec
-      ? criterion.probe_spec.prompt_md === expectedPrompt &&
-        criterion.probe_spec.reference_md === expectedReference
-      : criterion.statement_md === expectedReference ||
-        criterion.statement_md === `${expectedReference}\n\n（判分意图：multimodal_direct）`;
-    if (!referenceMatches) return { reason: 'probe_reference_mismatch' };
+    // Proposal loaders parse the complete original spec; the published schema
+    // parses the frozen counterpart. Compare every typed field, including nested
+    // signatures, without depending on editable question metadata or key order.
+    // Either-side presence prevents a native spec from becoming legacy scoring.
+    if (expectedSpec !== null || criterion.probe_spec !== undefined) {
+      if (
+        expectedSpec === null ||
+        criterion.probe_spec === undefined ||
+        stableStringify(criterion.probe_spec) !== stableStringify(expectedSpec)
+      ) {
+        return { reason: 'probe_spec_mismatch' };
+      }
+    } else if (
+      criterion.statement_md !== expectedReference &&
+      criterion.statement_md !== `${expectedReference}\n\n（判分意图：multimodal_direct）`
+    ) {
+      return { reason: 'probe_reference_mismatch' };
+    }
     return {
       value: {
         probeQuestionId: probe.id,

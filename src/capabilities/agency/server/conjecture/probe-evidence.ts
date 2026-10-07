@@ -124,8 +124,10 @@ function parseConjectureProbeSpec(row: typeof event.$inferSelect): CompletedProb
     knowledgeId: change.knowledge_id,
     probeMd: change.probe_md,
     probeReferenceMd: change.probe_reference_md,
+    probeSpec: change.probe_spec ?? null,
     followupProbeMd: change.followup_probe_md ?? null,
     followupProbeReferenceMd: change.followup_probe_reference_md ?? null,
+    followupProbeSpec: change.followup_probe_spec ?? null,
   };
 }
 

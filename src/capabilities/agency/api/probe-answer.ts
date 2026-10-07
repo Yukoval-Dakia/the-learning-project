@@ -139,9 +139,6 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         409,
       );
     }
-    const responseAwareProbeSpec = ConjectureProbeSpecV2.safeParse(
-      authoredProbeSpec?.success ? authoredProbeSpec.data : undefined,
-    );
     if (
       authoredProbeSpec?.success &&
       (probe.version !== PROBE_QUESTION_INITIAL_VERSION ||
@@ -197,8 +194,10 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         knowledgeId: change.knowledge_id,
         probeMd: change.probe_md,
         probeReferenceMd: change.probe_reference_md,
+        probeSpec: change.probe_spec ?? null,
         followupProbeMd: change.followup_probe_md ?? null,
         followupProbeReferenceMd: change.followup_probe_reference_md ?? null,
+        followupProbeSpec: change.followup_probe_spec ?? null,
       },
     });
     if ('reason' in issued) {
@@ -208,6 +207,9 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         issued.reason === 'unsupported_probe_contract' ? 422 : 409,
       );
     }
+    const responseAwareProbeSpec = ConjectureProbeSpecV2.safeParse(
+      issued.value.sequence === 2 ? change.followup_probe_spec : change.probe_spec,
+    );
     const slot = revision.response_spec.slots[0];
     const evidence = await freezeImageEvidence(db, answerImageRefs);
     const responseSet = {
