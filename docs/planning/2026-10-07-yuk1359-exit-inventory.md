@@ -126,17 +126,17 @@ Linear1359已登记1352候选 `server/start/routes/$.ts`、`server/frontdoor.ts`
 现有UI的“已纠正”分支与API的retracted排除是不同证据层，验收不能只凭页面标签推断领域语义。typed领域层交回后，本线程核源码与隔离DB，主线负责组合根挂载；最终浏览器和旧路径退出仍归1358/1359共同交付。设置面板 `/admin/config` 保持在W5范围，本lane不修改或删除。
 
 
-### PR1598已验证范围与剩余退出条件
+### PR1598/1599已验证范围与剩余退出条件
 
-2026-10-07 19:02:53Z，PR1598合入 `c7c2482ca`。CI head `291f1c5b3` 与合并tree一致，CI Gate `37669157822`成功，独立初审无P0/P1。父在固定代码 `d23140344` 独立跑过59项DB测试，日志 `/tmp/yuk1376-parent-db.log`；后续只改文档。以下范围由实际测试及diff核对，不扩大到尚未运行的验收。
+2026-10-07 19:02:53Z，PR1598合入 `c7c2482ca`。CI head `291f1c5b3` 与合并tree一致，CI Gate `37669157822`成功，独立初审无P0/P1。父在固定代码 `d23140344` 独立跑过59项DB测试，日志 `/tmp/yuk1376-parent-db.log`；后续只改文档。下表已纳入PR1599及20:26Z隔离验收结果；完整证据见文末补充，不扩大到未运行的场景。
 
 | 层与行为 | 当前证据 | 尚未完成 |
 | --- | --- | --- |
 | 领域/API读取 | GET和公开 `readMistakes` 共用校验与投影；科目、参数、cursor、撤回、替代judge与归因优先级有scoped DB覆盖 | Start实际挂载尚未交回 |
 | Legacy历史题面和作答图片 | 冻结父子题、正常编辑、缺席/损坏快照、图片ID保留及旧cursor页回归通过 | 图片实际字节及浏览器展示尚未验收 |
-| Native错题 | 现有测试证明保留失败记录且不使用mutable题面伪造历史 | 冻结revision/issuance/submission读取适配正在1376实施，不能算完整支持 |
-| 浏览器客户端契约 | generated operation、wire schema、异常传播与SSR附件按钮通过scoped unit | loading/retry、组合筛选、计时更新、深链、鉴权续接、Lightbox真实交互仍待浏览器 |
-| 附件读取 | 源码链为AttachmentStrip/Lightbox → AssetEvidencePreview → apiFetch →鉴权content端点→Blob URL | 要以真实文件验证字节/MIME、缺失404、无token拒绝及关闭重开；mock R2或仅有asset ID不足以核销 |
+| Native错题 | PR1599冻结revision/issuance/submission读取已合入；102 DB及隔离HTTP四行证明编辑后保持冻结题面、本submission附件与联合范围 | 整组图片真实模型评分、完整媒体与可信参考答案揭示仍开放 |
+| 浏览器客户端契约 | scoped unit通过；原SPA真实登录、刷新四行、语文空筛选、八缩略图及Lightbox打开和Escape关闭已验收 | 新Start入口尚未可验收；loading/retry、组合筛选、计时、深链与关闭后重开未全部验证 |
+| 附件读取 | 隔离S3实际上传/读取/删除、原字节/SHA/MIME/ETag/304、404与401通过；浏览器Blob图片实际解码 | 独立图片角色矩阵与新Start入口仍需验收；本轮三个图片复用不能证明完整媒体支持 |
 | 旧SPA退出 | 无退出完成证据 | 页面仍由旧SPA承载；主线需提供Start挂载及旧消费者/构建/镜像入口替换证据 |
 
 这些剩余项保留在1376及1358/1359，未因PR合并关闭完整路由迁移。设置面板仍属于W5，未被删除或从清单中移除。本记录不增加新功能票，也不代表已部署。
