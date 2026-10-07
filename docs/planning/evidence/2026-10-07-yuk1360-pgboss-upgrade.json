@@ -1,0 +1,1451 @@
+{
+  "oldVersion": "12.26.3",
+  "newVersion": "12.36.0",
+  "synthetic": true,
+  "startedOn": "2026-10-07T10:38:59.219Z",
+  "steps": [
+    {
+      "name": "schema37 populated and writer stopped",
+      "details": {
+        "version": 37,
+        "rows": [
+          {
+            "id": "513fb6b6-f71d-458f-a817-8e18f2b4b704",
+            "name": "y1360_active",
+            "priority": 0,
+            "data": {
+              "text": "\u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea ",
+              "index": 1,
+              "state": "active",
+              "nested": {
+                "evidence": [
+                  {
+                    "id": "synthetic-active-1",
+                    "accepted": false
+                  }
+                ],
+                "optional": null,
+                "ambiguity": ["x", "y"]
+              },
+              "provenance": "YUK-1360 synthetic"
+            },
+            "state": "active",
+            "retry_limit": 2,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_backoff": false,
+            "retry_delay_max": null,
+            "expire_seconds": 3600,
+            "deletion_seconds": 604800,
+            "singleton_key": null,
+            "singleton_on": null,
+            "group_id": null,
+            "group_tier": null,
+            "start_after": "2026-10-07T10:39:00.798219+00:00",
+            "created_on": "2026-10-07T10:39:00.798219+00:00",
+            "started_on": "2026-10-07T10:39:00.798855+00:00",
+            "completed_on": null,
+            "keep_until": "2026-10-08T10:39:00.798219+00:00",
+            "output": null,
+            "dead_letter": null,
+            "policy": "standard",
+            "heartbeat_on": "2026-10-07T10:39:00.798855+00:00",
+            "heartbeat_seconds": null,
+            "blocked": false,
+            "blocking": false,
+            "pending_dependencies": 0,
+            "source_name": null,
+            "source_id": null,
+            "source_created_on": null,
+            "source_retry_count": null
+          },
+          {
+            "id": "6c5b7d3e-4969-4153-accc-32016f559a87",
+            "name": "y1360_active",
+            "priority": 0,
+            "data": {
+              "text": "\u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea ",
+              "index": 0,
+              "state": "active",
+              "nested": {
+                "evidence": [
+                  {
+                    "id": "synthetic-active-0",
+                    "accepted": false
+                  }
+                ],
+                "optional": null,
+                "ambiguity": ["x", "y"]
+              },
+              "provenance": "YUK-1360 synthetic"
+            },
+            "state": "active",
+            "retry_limit": 2,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_backoff": false,
+            "retry_delay_max": null,
+            "expire_seconds": 3600,
+            "deletion_seconds": 604800,
+            "singleton_key": null,
+            "singleton_on": null,
+            "group_id": null,
+            "group_tier": null,
+            "start_after": "2026-10-07T10:39:00.795438+00:00",
+            "created_on": "2026-10-07T10:39:00.795438+00:00",
+            "started_on": "2026-10-07T10:39:00.797369+00:00",
+            "completed_on": null,
+            "keep_until": "2026-10-08T10:39:00.795438+00:00",
+            "output": null,
+            "dead_letter": null,
+            "policy": "standard",
+            "heartbeat_on": "2026-10-07T10:39:00.797369+00:00",
+            "heartbeat_seconds": null,
+            "blocked": false,
+            "blocking": false,
+            "pending_dependencies": 0,
+            "source_name": null,
+            "source_id": null,
+            "source_created_on": null,
+            "source_retry_count": null
+          },
+          {
+            "id": "22762456-33e9-4696-9c5d-3f6f3dfcf686",
+            "name": "y1360_completed",
+            "priority": 0,
+            "data": {
+              "text": "\u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea ",
+              "index": 1,
+              "state": "completed",
+              "nested": {
+                "evidence": [
+                  {
+                    "id": "synthetic-completed-1",
+                    "accepted": false
+                  }
+                ],
+                "optional": null,
+                "ambiguity": ["x", "y"]
+              },
+              "provenance": "YUK-1360 synthetic"
+            },
+            "state": "completed",
+            "retry_limit": 2,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_backoff": false,
+            "retry_delay_max": null,
+            "expire_seconds": 3600,
+            "deletion_seconds": 604800,
+            "singleton_key": null,
+            "singleton_on": null,
+            "group_id": null,
+            "group_tier": null,
+            "start_after": "2026-10-07T10:39:00.802009+00:00",
+            "created_on": "2026-10-07T10:39:00.802009+00:00",
+            "started_on": "2026-10-07T10:39:00.802445+00:00",
+            "completed_on": "2026-10-07T10:39:00.802933+00:00",
+            "keep_until": "2026-10-08T10:39:00.802009+00:00",
+            "output": {
+              "nested": {
+                "index": 1,
+                "unicode": "\u2705"
+              },
+              "result": "synthetic completed"
+            },
+            "dead_letter": null,
+            "policy": "standard",
+            "heartbeat_on": "2026-10-07T10:39:00.802445+00:00",
+            "heartbeat_seconds": null,
+            "blocked": false,
+            "blocking": false,
+            "pending_dependencies": 0,
+            "source_name": null,
+            "source_id": null,
+            "source_created_on": null,
+            "source_retry_count": null
+          },
+          {
+            "id": "336e5973-9739-49b4-8c23-65cadb5b980a",
+            "name": "y1360_completed",
+            "priority": 0,
+            "data": {
+              "text": "\u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea ",
+              "index": 0,
+              "state": "completed",
+              "nested": {
+                "evidence": [
+                  {
+                    "id": "synthetic-completed-0",
+                    "accepted": false
+                  }
+                ],
+                "optional": null,
+                "ambiguity": ["x", "y"]
+              },
+              "provenance": "YUK-1360 synthetic"
+            },
+            "state": "completed",
+            "retry_limit": 2,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_backoff": false,
+            "retry_delay_max": null,
+            "expire_seconds": 3600,
+            "deletion_seconds": 604800,
+            "singleton_key": null,
+            "singleton_on": null,
+            "group_id": null,
+            "group_tier": null,
+            "start_after": "2026-10-07T10:39:00.800134+00:00",
+            "created_on": "2026-10-07T10:39:00.800134+00:00",
+            "started_on": "2026-10-07T10:39:00.80084+00:00",
+            "completed_on": "2026-10-07T10:39:00.801546+00:00",
+            "keep_until": "2026-10-08T10:39:00.800134+00:00",
+            "output": {
+              "nested": {
+                "index": 0,
+                "unicode": "\u2705"
+              },
+              "result": "synthetic completed"
+            },
+            "dead_letter": null,
+            "policy": "standard",
+            "heartbeat_on": "2026-10-07T10:39:00.80084+00:00",
+            "heartbeat_seconds": null,
+            "blocked": false,
+            "blocking": false,
+            "pending_dependencies": 0,
+            "source_name": null,
+            "source_id": null,
+            "source_created_on": null,
+            "source_retry_count": null
+          },
+          {
+            "id": "a2a678f2-4367-4307-92ef-10a0c283897e",
+            "name": "y1360_dlq",
+            "priority": 0,
+            "data": {
+              "text": "\u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea ",
+              "index": 1,
+              "state": "failed",
+              "nested": {
+                "evidence": [
+                  {
+                    "id": "synthetic-failed-1",
+                    "accepted": false
+                  }
+                ],
+                "optional": null,
+                "ambiguity": ["x", "y"]
+              },
+              "provenance": "YUK-1360 synthetic"
+            },
+            "state": "created",
+            "retry_limit": 2,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_backoff": false,
+            "retry_delay_max": null,
+            "expire_seconds": 900,
+            "deletion_seconds": 604800,
+            "singleton_key": null,
+            "singleton_on": null,
+            "group_id": null,
+            "group_tier": null,
+            "start_after": "2026-10-07T10:39:00.807504+00:00",
+            "created_on": "2026-10-07T10:39:00.807504+00:00",
+            "started_on": null,
+            "completed_on": null,
+            "keep_until": "2026-10-08T10:39:00.807504+00:00",
+            "output": {
+              "error": "synthetic failure",
+              "nested": {
+                "index": 1,
+                "state": "failed"
+              }
+            },
+            "dead_letter": null,
+            "policy": null,
+            "heartbeat_on": null,
+            "heartbeat_seconds": null,
+            "blocked": false,
+            "blocking": false,
+            "pending_dependencies": 0,
+            "source_name": "y1360_failed",
+            "source_id": "466637b4-3e8f-47dc-8897-3f37ac62c125",
+            "source_created_on": "2026-10-07T10:39:00.806265+00:00",
+            "source_retry_count": 0
+          },
+          {
+            "id": "ad65f046-894e-4fb2-818b-d680748406f0",
+            "name": "y1360_dlq",
+            "priority": 0,
+            "data": {
+              "text": "\u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea ",
+              "index": 0,
+              "state": "failed",
+              "nested": {
+                "evidence": [
+                  {
+                    "id": "synthetic-failed-0",
+                    "accepted": false
+                  }
+                ],
+                "optional": null,
+                "ambiguity": ["x", "y"]
+              },
+              "provenance": "YUK-1360 synthetic"
+            },
+            "state": "created",
+            "retry_limit": 2,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_backoff": false,
+            "retry_delay_max": null,
+            "expire_seconds": 900,
+            "deletion_seconds": 604800,
+            "singleton_key": null,
+            "singleton_on": null,
+            "group_id": null,
+            "group_tier": null,
+            "start_after": "2026-10-07T10:39:00.805095+00:00",
+            "created_on": "2026-10-07T10:39:00.805095+00:00",
+            "started_on": null,
+            "completed_on": null,
+            "keep_until": "2026-10-08T10:39:00.805095+00:00",
+            "output": {
+              "error": "synthetic failure",
+              "nested": {
+                "index": 0,
+                "state": "failed"
+              }
+            },
+            "dead_letter": null,
+            "policy": null,
+            "heartbeat_on": null,
+            "heartbeat_seconds": null,
+            "blocked": false,
+            "blocking": false,
+            "pending_dependencies": 0,
+            "source_name": "y1360_failed",
+            "source_id": "d92ed524-c411-4581-a5f2-6479da36b49c",
+            "source_created_on": "2026-10-07T10:39:00.803977+00:00",
+            "source_retry_count": 0
+          },
+          {
+            "id": "466637b4-3e8f-47dc-8897-3f37ac62c125",
+            "name": "y1360_failed",
+            "priority": 0,
+            "data": {
+              "text": "\u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea ",
+              "index": 1,
+              "state": "failed",
+              "nested": {
+                "evidence": [
+                  {
+                    "id": "synthetic-failed-1",
+                    "accepted": false
+                  }
+                ],
+                "optional": null,
+                "ambiguity": ["x", "y"]
+              },
+              "provenance": "YUK-1360 synthetic"
+            },
+            "state": "failed",
+            "retry_limit": 0,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_backoff": false,
+            "retry_delay_max": null,
+            "expire_seconds": 3600,
+            "deletion_seconds": 604800,
+            "singleton_key": null,
+            "singleton_on": null,
+            "group_id": null,
+            "group_tier": null,
+            "start_after": "2026-10-07T10:39:00.806265+00:00",
+            "created_on": "2026-10-07T10:39:00.806265+00:00",
+            "started_on": "2026-10-07T10:39:00.807041+00:00",
+            "completed_on": "2026-10-07T10:39:00.807504+00:00",
+            "keep_until": "2026-10-08T10:39:00.806265+00:00",
+            "output": {
+              "error": "synthetic failure",
+              "nested": {
+                "index": 1,
+                "state": "failed"
+              }
+            },
+            "dead_letter": "y1360_dlq",
+            "policy": "standard",
+            "heartbeat_on": null,
+            "heartbeat_seconds": null,
+            "blocked": false,
+            "blocking": false,
+            "pending_dependencies": 0,
+            "source_name": null,
+            "source_id": null,
+            "source_created_on": null,
+            "source_retry_count": null
+          },
+          {
+            "id": "d92ed524-c411-4581-a5f2-6479da36b49c",
+            "name": "y1360_failed",
+            "priority": 0,
+            "data": {
+              "text": "\u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea ",
+              "index": 0,
+              "state": "failed",
+              "nested": {
+                "evidence": [
+                  {
+                    "id": "synthetic-failed-0",
+                    "accepted": false
+                  }
+                ],
+                "optional": null,
+                "ambiguity": ["x", "y"]
+              },
+              "provenance": "YUK-1360 synthetic"
+            },
+            "state": "failed",
+            "retry_limit": 0,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_backoff": false,
+            "retry_delay_max": null,
+            "expire_seconds": 3600,
+            "deletion_seconds": 604800,
+            "singleton_key": null,
+            "singleton_on": null,
+            "group_id": null,
+            "group_tier": null,
+            "start_after": "2026-10-07T10:39:00.803977+00:00",
+            "created_on": "2026-10-07T10:39:00.803977+00:00",
+            "started_on": "2026-10-07T10:39:00.804452+00:00",
+            "completed_on": "2026-10-07T10:39:00.805095+00:00",
+            "keep_until": "2026-10-08T10:39:00.803977+00:00",
+            "output": {
+              "error": "synthetic failure",
+              "nested": {
+                "index": 0,
+                "state": "failed"
+              }
+            },
+            "dead_letter": "y1360_dlq",
+            "policy": "standard",
+            "heartbeat_on": null,
+            "heartbeat_seconds": null,
+            "blocked": false,
+            "blocking": false,
+            "pending_dependencies": 0,
+            "source_name": null,
+            "source_id": null,
+            "source_created_on": null,
+            "source_retry_count": null
+          },
+          {
+            "id": "1febacff-52b3-4096-9960-a8634c5c5ae2",
+            "name": "y1360_pending",
+            "priority": 0,
+            "data": {
+              "text": "\u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea ",
+              "index": 1,
+              "state": "pending",
+              "nested": {
+                "evidence": [
+                  {
+                    "id": "synthetic-pending-1",
+                    "accepted": false
+                  }
+                ],
+                "optional": null,
+                "ambiguity": ["x", "y"]
+              },
+              "provenance": "YUK-1360 synthetic"
+            },
+            "state": "created",
+            "retry_limit": 2,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_backoff": false,
+            "retry_delay_max": null,
+            "expire_seconds": 3600,
+            "deletion_seconds": 604800,
+            "singleton_key": null,
+            "singleton_on": null,
+            "group_id": null,
+            "group_tier": null,
+            "start_after": "2026-10-08T10:39:00.784032+00:00",
+            "created_on": "2026-10-07T10:39:00.784032+00:00",
+            "started_on": null,
+            "completed_on": null,
+            "keep_until": "2026-10-09T10:39:00.784032+00:00",
+            "output": null,
+            "dead_letter": null,
+            "policy": "standard",
+            "heartbeat_on": null,
+            "heartbeat_seconds": null,
+            "blocked": false,
+            "blocking": false,
+            "pending_dependencies": 0,
+            "source_name": null,
+            "source_id": null,
+            "source_created_on": null,
+            "source_retry_count": null
+          },
+          {
+            "id": "6a5fae73-9ed4-42ad-9db5-494131c5c571",
+            "name": "y1360_pending",
+            "priority": 0,
+            "data": {
+              "text": "\u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea ",
+              "index": 0,
+              "state": "pending",
+              "nested": {
+                "evidence": [
+                  {
+                    "id": "synthetic-pending-0",
+                    "accepted": false
+                  }
+                ],
+                "optional": null,
+                "ambiguity": ["x", "y"]
+              },
+              "provenance": "YUK-1360 synthetic"
+            },
+            "state": "created",
+            "retry_limit": 2,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_backoff": false,
+            "retry_delay_max": null,
+            "expire_seconds": 3600,
+            "deletion_seconds": 604800,
+            "singleton_key": null,
+            "singleton_on": null,
+            "group_id": null,
+            "group_tier": null,
+            "start_after": "2026-10-08T10:39:00.781516+00:00",
+            "created_on": "2026-10-07T10:39:00.781516+00:00",
+            "started_on": null,
+            "completed_on": null,
+            "keep_until": "2026-10-09T10:39:00.781516+00:00",
+            "output": null,
+            "dead_letter": null,
+            "policy": "standard",
+            "heartbeat_on": null,
+            "heartbeat_seconds": null,
+            "blocked": false,
+            "blocking": false,
+            "pending_dependencies": 0,
+            "source_name": null,
+            "source_id": null,
+            "source_created_on": null,
+            "source_retry_count": null
+          },
+          {
+            "id": "8cc13fd7-b835-4d22-a005-d08867a9be4b",
+            "name": "y1360_retry",
+            "priority": 0,
+            "data": {
+              "text": "\u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea ",
+              "index": 0,
+              "state": "retry",
+              "nested": {
+                "evidence": [
+                  {
+                    "id": "synthetic-retry-0",
+                    "accepted": false
+                  }
+                ],
+                "optional": null,
+                "ambiguity": ["x", "y"]
+              },
+              "provenance": "YUK-1360 synthetic"
+            },
+            "state": "retry",
+            "retry_limit": 2,
+            "retry_count": 0,
+            "retry_delay": 3600,
+            "retry_backoff": false,
+            "retry_delay_max": null,
+            "expire_seconds": 3600,
+            "deletion_seconds": 604800,
+            "singleton_key": null,
+            "singleton_on": null,
+            "group_id": null,
+            "group_tier": null,
+            "start_after": "2026-10-07T11:39:00.786954+00:00",
+            "created_on": "2026-10-07T10:39:00.785101+00:00",
+            "started_on": "2026-10-07T10:39:00.785769+00:00",
+            "completed_on": null,
+            "keep_until": "2026-10-08T10:39:00.785101+00:00",
+            "output": {
+              "error": "synthetic failure",
+              "nested": {
+                "index": 0,
+                "state": "retry"
+              }
+            },
+            "dead_letter": null,
+            "policy": "standard",
+            "heartbeat_on": null,
+            "heartbeat_seconds": null,
+            "blocked": false,
+            "blocking": false,
+            "pending_dependencies": 0,
+            "source_name": null,
+            "source_id": null,
+            "source_created_on": null,
+            "source_retry_count": null
+          },
+          {
+            "id": "c1c59771-3c0d-43ca-957a-ac8ed01307cb",
+            "name": "y1360_retry",
+            "priority": 0,
+            "data": {
+              "text": "\u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea ",
+              "index": 1,
+              "state": "retry",
+              "nested": {
+                "evidence": [
+                  {
+                    "id": "synthetic-retry-1",
+                    "accepted": false
+                  }
+                ],
+                "optional": null,
+                "ambiguity": ["x", "y"]
+              },
+              "provenance": "YUK-1360 synthetic"
+            },
+            "state": "retry",
+            "retry_limit": 2,
+            "retry_count": 0,
+            "retry_delay": 3600,
+            "retry_backoff": false,
+            "retry_delay_max": null,
+            "expire_seconds": 3600,
+            "deletion_seconds": 604800,
+            "singleton_key": null,
+            "singleton_on": null,
+            "group_id": null,
+            "group_tier": null,
+            "start_after": "2026-10-07T11:39:00.789025+00:00",
+            "created_on": "2026-10-07T10:39:00.788187+00:00",
+            "started_on": "2026-10-07T10:39:00.788596+00:00",
+            "completed_on": null,
+            "keep_until": "2026-10-08T10:39:00.788187+00:00",
+            "output": {
+              "error": "synthetic failure",
+              "nested": {
+                "index": 1,
+                "state": "retry"
+              }
+            },
+            "dead_letter": null,
+            "policy": "standard",
+            "heartbeat_on": null,
+            "heartbeat_seconds": null,
+            "blocked": false,
+            "blocking": false,
+            "pending_dependencies": 0,
+            "source_name": null,
+            "source_id": null,
+            "source_created_on": null,
+            "source_retry_count": null
+          }
+        ],
+        "counts": [
+          {
+            "name": "y1360_active",
+            "state": "active",
+            "count": 2
+          },
+          {
+            "name": "y1360_completed",
+            "state": "completed",
+            "count": 2
+          },
+          {
+            "name": "y1360_dlq",
+            "state": "created",
+            "count": 2
+          },
+          {
+            "name": "y1360_failed",
+            "state": "failed",
+            "count": 2
+          },
+          {
+            "name": "y1360_pending",
+            "state": "created",
+            "count": 2
+          },
+          {
+            "name": "y1360_retry",
+            "state": "retry",
+            "count": 2
+          }
+        ],
+        "schedules": [
+          {
+            "name": "y1360_scheduled",
+            "key": "",
+            "cron": "0 3 * * *",
+            "timezone": "Asia/Tokyo",
+            "data": {
+              "text": "\u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea ",
+              "index": 0,
+              "state": "schedule",
+              "nested": {
+                "evidence": [
+                  {
+                    "id": "synthetic-schedule-0",
+                    "accepted": false
+                  }
+                ],
+                "optional": null,
+                "ambiguity": ["x", "y"]
+              },
+              "provenance": "YUK-1360 synthetic"
+            },
+            "options": {
+              "tz": "Asia/Tokyo",
+              "retryLimit": 2
+            },
+            "created_on": "2026-10-07T10:39:00.868Z",
+            "updated_on": "2026-10-07T10:39:00.868Z"
+          }
+        ],
+        "digest": "578343f09bd61c34eb78fad18d67c9d599193fde91b048c4e10219dda987df38",
+        "bam": []
+      },
+      "at": "2026-10-07T10:39:00.887Z"
+    },
+    {
+      "name": "schema44 startup returned with original rows preserved",
+      "details": {
+        "starts": ["fulfilled", "fulfilled"],
+        "version": 44,
+        "digest": "578343f09bd61c34eb78fad18d67c9d599193fde91b048c4e10219dda987df38",
+        "bam": [
+          {
+            "id": "9744142d-658e-43c9-ae4b-4715d13f89cb",
+            "name": "key_strict_fifo_head_index",
+            "version": 38,
+            "status": "pending",
+            "queue": null,
+            "table_name": "job_common",
+            "error": null
+          },
+          {
+            "id": "583d59eb-27ef-4b81-82c5-0f3cc9a69f1f",
+            "name": "fetch_index_priority_build",
+            "version": 40,
+            "status": "pending",
+            "queue": null,
+            "table_name": "job_common",
+            "error": null
+          },
+          {
+            "id": "ea83807f-6f89-4d72-8639-1ee2c066f1c1",
+            "name": "fetch_index_priority_build",
+            "version": 40,
+            "status": "pending",
+            "queue": "y1360_active",
+            "table_name": "jbfb5057dcb2c82248eda837bc20de85dcdde5d4f57e39c32aee6bcb1",
+            "error": null
+          },
+          {
+            "id": "4f961c0c-bd26-473a-8374-67936ca80302",
+            "name": "fetch_index_retire",
+            "version": 40,
+            "status": "pending",
+            "queue": null,
+            "table_name": "job_common",
+            "error": null
+          },
+          {
+            "id": "fc55b0b8-8021-49e6-b46b-a6d35c7f264b",
+            "name": "fetch_index_retire",
+            "version": 40,
+            "status": "pending",
+            "queue": "y1360_active",
+            "table_name": "jbfb5057dcb2c82248eda837bc20de85dcdde5d4f57e39c32aee6bcb1",
+            "error": null
+          },
+          {
+            "id": "97589770-98a7-470e-959c-b8172abbf3d2",
+            "name": "source_root_index_build",
+            "version": 43,
+            "status": "pending",
+            "queue": null,
+            "table_name": "job_common",
+            "error": null
+          },
+          {
+            "id": "184369dd-2805-4371-9e85-01ae6c5b886d",
+            "name": "source_root_index_build",
+            "version": 43,
+            "status": "pending",
+            "queue": "y1360_active",
+            "table_name": "jbfb5057dcb2c82248eda837bc20de85dcdde5d4f57e39c32aee6bcb1",
+            "error": null
+          }
+        ]
+      },
+      "at": "2026-10-07T10:39:00.917Z"
+    },
+    {
+      "name": "background migration progress",
+      "details": [
+        {
+          "status": "pending",
+          "count": 7
+        }
+      ],
+      "at": "2026-10-07T10:39:00.918Z"
+    },
+    {
+      "name": "background migration progress",
+      "details": [
+        {
+          "status": "completed",
+          "count": 1
+        },
+        {
+          "status": "pending",
+          "count": 6
+        }
+      ],
+      "at": "2026-10-07T10:39:10.946Z"
+    },
+    {
+      "name": "background migration progress",
+      "details": [
+        {
+          "status": "completed",
+          "count": 2
+        },
+        {
+          "status": "pending",
+          "count": 5
+        }
+      ],
+      "at": "2026-10-07T10:39:21.062Z"
+    },
+    {
+      "name": "background migration progress",
+      "details": [
+        {
+          "status": "completed",
+          "count": 3
+        },
+        {
+          "status": "pending",
+          "count": 4
+        }
+      ],
+      "at": "2026-10-07T10:39:31.058Z"
+    },
+    {
+      "name": "background migration progress",
+      "details": [
+        {
+          "status": "completed",
+          "count": 4
+        },
+        {
+          "status": "pending",
+          "count": 3
+        }
+      ],
+      "at": "2026-10-07T10:39:41.082Z"
+    },
+    {
+      "name": "background migration progress",
+      "details": [
+        {
+          "status": "completed",
+          "count": 5
+        },
+        {
+          "status": "pending",
+          "count": 2
+        }
+      ],
+      "at": "2026-10-07T10:39:51.015Z"
+    },
+    {
+      "name": "background migration progress",
+      "details": [
+        {
+          "status": "completed",
+          "count": 6
+        },
+        {
+          "status": "pending",
+          "count": 1
+        }
+      ],
+      "at": "2026-10-07T10:40:01.099Z"
+    },
+    {
+      "name": "background migration progress",
+      "details": [
+        {
+          "status": "completed",
+          "count": 7
+        }
+      ],
+      "at": "2026-10-07T10:40:11.035Z"
+    },
+    {
+      "name": "concurrent startup schema44 preservation and background completion",
+      "details": {
+        "starts": ["fulfilled", "fulfilled"],
+        "digestBefore": "578343f09bd61c34eb78fad18d67c9d599193fde91b048c4e10219dda987df38",
+        "digestAfter": "578343f09bd61c34eb78fad18d67c9d599193fde91b048c4e10219dda987df38",
+        "counts": [
+          {
+            "name": "y1360_active",
+            "state": "active",
+            "count": 2
+          },
+          {
+            "name": "y1360_completed",
+            "state": "completed",
+            "count": 2
+          },
+          {
+            "name": "y1360_dlq",
+            "state": "created",
+            "count": 2
+          },
+          {
+            "name": "y1360_failed",
+            "state": "failed",
+            "count": 2
+          },
+          {
+            "name": "y1360_pending",
+            "state": "created",
+            "count": 2
+          },
+          {
+            "name": "y1360_retry",
+            "state": "retry",
+            "count": 2
+          }
+        ],
+        "bam": [
+          {
+            "id": "9744142d-658e-43c9-ae4b-4715d13f89cb",
+            "name": "key_strict_fifo_head_index",
+            "version": 38,
+            "status": "completed",
+            "queue": null,
+            "table_name": "job_common",
+            "error": null
+          },
+          {
+            "id": "583d59eb-27ef-4b81-82c5-0f3cc9a69f1f",
+            "name": "fetch_index_priority_build",
+            "version": 40,
+            "status": "completed",
+            "queue": null,
+            "table_name": "job_common",
+            "error": null
+          },
+          {
+            "id": "ea83807f-6f89-4d72-8639-1ee2c066f1c1",
+            "name": "fetch_index_priority_build",
+            "version": 40,
+            "status": "completed",
+            "queue": "y1360_active",
+            "table_name": "jbfb5057dcb2c82248eda837bc20de85dcdde5d4f57e39c32aee6bcb1",
+            "error": null
+          },
+          {
+            "id": "4f961c0c-bd26-473a-8374-67936ca80302",
+            "name": "fetch_index_retire",
+            "version": 40,
+            "status": "completed",
+            "queue": null,
+            "table_name": "job_common",
+            "error": null
+          },
+          {
+            "id": "fc55b0b8-8021-49e6-b46b-a6d35c7f264b",
+            "name": "fetch_index_retire",
+            "version": 40,
+            "status": "completed",
+            "queue": "y1360_active",
+            "table_name": "jbfb5057dcb2c82248eda837bc20de85dcdde5d4f57e39c32aee6bcb1",
+            "error": null
+          },
+          {
+            "id": "97589770-98a7-470e-959c-b8172abbf3d2",
+            "name": "source_root_index_build",
+            "version": 43,
+            "status": "completed",
+            "queue": null,
+            "table_name": "job_common",
+            "error": null
+          },
+          {
+            "id": "184369dd-2805-4371-9e85-01ae6c5b886d",
+            "name": "source_root_index_build",
+            "version": 43,
+            "status": "completed",
+            "queue": "y1360_active",
+            "table_name": "jbfb5057dcb2c82248eda837bc20de85dcdde5d4f57e39c32aee6bcb1",
+            "error": null
+          }
+        ],
+        "invalidIndexes": [],
+        "instances": [
+          {
+            "id": "a204bcb1-16b0-48a2-9cd5-1a02fca6f8f7",
+            "name": null,
+            "host": "bancho-home.local",
+            "pid": 97363,
+            "version": "12.36.0",
+            "nodeVersion": "v24.19.0",
+            "applicationName": "pgboss:a204bcb1",
+            "heartbeatSeconds": 30,
+            "supervise": false,
+            "schedule": false,
+            "migrate": true,
+            "persistQueueStats": false,
+            "persistWarnings": false,
+            "poolMax": 2,
+            "poolTotal": 1,
+            "poolIdle": 0,
+            "poolWaiting": 0,
+            "workers": [],
+            "metrics": {
+              "cpu": 0.006,
+              "rss": 28409856,
+              "cgroup": null,
+              "cpuLimit": 10,
+              "heapUsed": 63130672,
+              "heapLimit": 4496293888,
+              "loopDelay": 3.3,
+              "memoryUsed": null,
+              "memoryLimit": 17179869184,
+              "cpuThrottled": null,
+              "loopDelayMax": 6.1,
+              "loopUtilization": 0.011
+            },
+            "config": {
+              "max": 2,
+              "adapter": "pg",
+              "backend": "postgres",
+              "migrate": true,
+              "reindex": true,
+              "schedule": false,
+              "supervise": false,
+              "createSchema": true,
+              "useListenNotify": false,
+              "bamIntervalSeconds": 10,
+              "flowIntervalSeconds": 5,
+              "warningRetentionDays": 365,
+              "monitorIntervalSeconds": 60,
+              "queueStatRetentionDays": 7,
+              "reindexIntervalSeconds": 86400,
+              "instanceHeartbeatSeconds": 30,
+              "superviseIntervalSeconds": 60,
+              "cronWorkerIntervalSeconds": 5,
+              "queueCacheIntervalSeconds": 60,
+              "cronMonitorIntervalSeconds": 30,
+              "maintenanceIntervalSeconds": 86400,
+              "clockMonitorIntervalSeconds": 600
+            },
+            "crashRestarts": 0,
+            "crashRestartsSince": null,
+            "startedOn": "2026-10-07T10:39:00.908Z",
+            "heartbeatOn": "2026-10-07T10:40:00.993Z",
+            "stoppedOn": null,
+            "live": true
+          },
+          {
+            "id": "5660c492-1b9f-43b3-b9a7-887fe255683c",
+            "name": null,
+            "host": "bancho-home.local",
+            "pid": 97363,
+            "version": "12.36.0",
+            "nodeVersion": "v24.19.0",
+            "applicationName": "pgboss:5660c492",
+            "heartbeatSeconds": 30,
+            "supervise": false,
+            "schedule": false,
+            "migrate": true,
+            "persistQueueStats": false,
+            "persistWarnings": false,
+            "poolMax": 2,
+            "poolTotal": 1,
+            "poolIdle": 1,
+            "poolWaiting": 0,
+            "workers": [],
+            "metrics": {
+              "cpu": 0.006,
+              "rss": 37797888,
+              "cgroup": null,
+              "cpuLimit": 10,
+              "heapUsed": 63362552,
+              "heapLimit": 4496293888,
+              "loopDelay": 3.4,
+              "memoryUsed": null,
+              "memoryLimit": 17179869184,
+              "cpuThrottled": null,
+              "loopDelayMax": 6.1,
+              "loopUtilization": 0.011
+            },
+            "config": {
+              "max": 2,
+              "adapter": "pg",
+              "backend": "postgres",
+              "migrate": true,
+              "reindex": true,
+              "schedule": false,
+              "supervise": false,
+              "createSchema": true,
+              "useListenNotify": false,
+              "bamIntervalSeconds": 10,
+              "flowIntervalSeconds": 5,
+              "warningRetentionDays": 365,
+              "monitorIntervalSeconds": 60,
+              "queueStatRetentionDays": 7,
+              "reindexIntervalSeconds": 86400,
+              "instanceHeartbeatSeconds": 30,
+              "superviseIntervalSeconds": 60,
+              "cronWorkerIntervalSeconds": 5,
+              "queueCacheIntervalSeconds": 60,
+              "cronMonitorIntervalSeconds": 30,
+              "maintenanceIntervalSeconds": 86400,
+              "clockMonitorIntervalSeconds": 600
+            },
+            "crashRestarts": 0,
+            "crashRestartsSince": null,
+            "startedOn": "2026-10-07T10:39:00.911Z",
+            "heartbeatOn": "2026-10-07T10:40:00.953Z",
+            "stoppedOn": null,
+            "live": true
+          }
+        ]
+      },
+      "at": "2026-10-07T10:40:11.052Z"
+    },
+    {
+      "name": "stale retry settlement fenced",
+      "details": {
+        "id": "fc0ccd56-f87d-42e5-8b33-636b9c25add3",
+        "retryCount": 1,
+        "staleComplete": {
+          "jobs": ["fc0ccd56-f87d-42e5-8b33-636b9c25add3"],
+          "requested": 1,
+          "affected": 0,
+          "settled": []
+        },
+        "staleFail": {
+          "jobs": ["fc0ccd56-f87d-42e5-8b33-636b9c25add3"],
+          "requested": 1,
+          "affected": 0,
+          "settled": []
+        }
+      },
+      "at": "2026-10-07T10:40:11.085Z"
+    },
+    {
+      "name": "heartbeat abort and automatic late worker completion fenced",
+      "details": {
+        "id": "bd309fa0-138d-4dbd-a1cb-86548325e971",
+        "oldRetryCount": 0,
+        "newRetryCount": 1,
+        "signalReason": "job bd309fa0-138d-4dbd-a1cb-86548325e971 is no longer active under this worker's claim",
+        "final": {
+          "id": "bd309fa0-138d-4dbd-a1cb-86548325e971",
+          "name": "y1360_lostclaim",
+          "data": {
+            "text": "\u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea \u692d\u5706\u4e0e\u8fc1\u79fb \ud83e\uddea ",
+            "index": 0,
+            "state": "lostclaim",
+            "nested": {
+              "evidence": [
+                {
+                  "id": "synthetic-lostclaim-0",
+                  "accepted": false
+                }
+              ],
+              "optional": null,
+              "ambiguity": ["x", "y"]
+            },
+            "provenance": "YUK-1360 synthetic"
+          },
+          "retryCount": 1,
+          "expireInSeconds": 900,
+          "heartbeatSeconds": 10,
+          "groupId": null,
+          "groupTier": null,
+          "policy": "standard",
+          "state": "completed",
+          "priority": 0,
+          "retryLimit": 2,
+          "retryDelay": 0,
+          "retryBackoff": false,
+          "retryDelayMax": null,
+          "startAfter": "2026-10-07T10:40:11.597Z",
+          "startedOn": "2026-10-07T10:40:11.599Z",
+          "singletonKey": null,
+          "singletonOn": null,
+          "deleteAfterSeconds": 604800,
+          "heartbeatOn": "2026-10-07T10:40:11.599Z",
+          "createdOn": "2026-10-07T10:40:11.101Z",
+          "completedOn": "2026-10-07T10:40:12.617Z",
+          "keepUntil": "2026-10-21T10:40:11.101Z",
+          "deadLetter": null,
+          "blocked": false,
+          "blocking": false,
+          "pendingDependencies": 0,
+          "output": {
+            "replacement": true
+          },
+          "sourceName": null,
+          "sourceId": null,
+          "sourceCreatedOn": null,
+          "sourceRetryCount": null,
+          "sourceOutput": null,
+          "sourceRootId": null
+        }
+      },
+      "at": "2026-10-07T10:40:12.618Z"
+    },
+    {
+      "name": "project Drizzle adapter rollback and commit",
+      "details": {
+        "rollbackId": "01d3b873-317d-459f-937f-8435803d3c3d",
+        "rollbackAbsent": true,
+        "commitId": "5d300983-d00f-4a0d-ba08-8db151f3c782",
+        "committed": true
+      },
+      "at": "2026-10-07T10:40:12.631Z"
+    },
+    {
+      "name": "graceful drain and same instance restart",
+      "details": {
+        "id": "e4b61f42-8c2a-4e62-a40e-364c6e118e2f",
+        "state": "completed",
+        "persistedId": "5d300983-d00f-4a0d-ba08-8db151f3c782",
+        "instances": [
+          {
+            "id": "a204bcb1-16b0-48a2-9cd5-1a02fca6f8f7",
+            "name": null,
+            "host": "bancho-home.local",
+            "pid": 97363,
+            "version": "12.36.0",
+            "nodeVersion": "v24.19.0",
+            "applicationName": "pgboss:a204bcb1",
+            "heartbeatSeconds": 30,
+            "supervise": false,
+            "schedule": false,
+            "migrate": true,
+            "persistQueueStats": false,
+            "persistWarnings": false,
+            "poolMax": 2,
+            "poolTotal": 1,
+            "poolIdle": 0,
+            "poolWaiting": 0,
+            "workers": [],
+            "metrics": {
+              "cpu": 0.006,
+              "rss": 28409856,
+              "cgroup": null,
+              "cpuLimit": 10,
+              "heapUsed": 63130672,
+              "heapLimit": 4496293888,
+              "loopDelay": 3.3,
+              "memoryUsed": null,
+              "memoryLimit": 17179869184,
+              "cpuThrottled": null,
+              "loopDelayMax": 6.1,
+              "loopUtilization": 0.011
+            },
+            "config": {
+              "max": 2,
+              "adapter": "pg",
+              "backend": "postgres",
+              "migrate": true,
+              "reindex": true,
+              "schedule": false,
+              "supervise": false,
+              "createSchema": true,
+              "useListenNotify": false,
+              "bamIntervalSeconds": 10,
+              "flowIntervalSeconds": 5,
+              "warningRetentionDays": 365,
+              "monitorIntervalSeconds": 60,
+              "queueStatRetentionDays": 7,
+              "reindexIntervalSeconds": 86400,
+              "instanceHeartbeatSeconds": 30,
+              "superviseIntervalSeconds": 60,
+              "cronWorkerIntervalSeconds": 5,
+              "queueCacheIntervalSeconds": 60,
+              "cronMonitorIntervalSeconds": 30,
+              "maintenanceIntervalSeconds": 86400,
+              "clockMonitorIntervalSeconds": 600
+            },
+            "crashRestarts": 0,
+            "crashRestartsSince": null,
+            "startedOn": "2026-10-07T10:39:00.908Z",
+            "heartbeatOn": "2026-10-07T10:40:00.993Z",
+            "stoppedOn": null,
+            "live": true
+          },
+          {
+            "id": "5660c492-1b9f-43b3-b9a7-887fe255683c",
+            "name": null,
+            "host": "bancho-home.local",
+            "pid": 97363,
+            "version": "12.36.0",
+            "nodeVersion": "v24.19.0",
+            "applicationName": "pgboss:5660c492",
+            "heartbeatSeconds": 30,
+            "supervise": false,
+            "schedule": false,
+            "migrate": true,
+            "persistQueueStats": false,
+            "persistWarnings": false,
+            "poolMax": 2,
+            "poolTotal": 1,
+            "poolIdle": 1,
+            "poolWaiting": 0,
+            "workers": [],
+            "metrics": {
+              "cpu": null,
+              "rss": 55394304,
+              "cgroup": null,
+              "cpuLimit": 10,
+              "heapUsed": 69098272,
+              "heapLimit": 4496293888,
+              "loopDelay": null,
+              "memoryUsed": null,
+              "memoryLimit": 17179869184,
+              "cpuThrottled": null,
+              "loopDelayMax": null,
+              "loopUtilization": null
+            },
+            "config": {
+              "max": 2,
+              "adapter": "pg",
+              "backend": "postgres",
+              "migrate": true,
+              "reindex": true,
+              "schedule": false,
+              "supervise": false,
+              "createSchema": true,
+              "useListenNotify": false,
+              "bamIntervalSeconds": 10,
+              "flowIntervalSeconds": 5,
+              "warningRetentionDays": 365,
+              "monitorIntervalSeconds": 60,
+              "queueStatRetentionDays": 7,
+              "reindexIntervalSeconds": 86400,
+              "instanceHeartbeatSeconds": 30,
+              "superviseIntervalSeconds": 60,
+              "cronWorkerIntervalSeconds": 5,
+              "queueCacheIntervalSeconds": 60,
+              "cronMonitorIntervalSeconds": 30,
+              "maintenanceIntervalSeconds": 86400,
+              "clockMonitorIntervalSeconds": 600
+            },
+            "crashRestarts": 0,
+            "crashRestartsSince": null,
+            "startedOn": "2026-10-07T10:40:13.271Z",
+            "heartbeatOn": "2026-10-07T10:40:13.271Z",
+            "stoppedOn": null,
+            "live": true
+          }
+        ]
+      },
+      "at": "2026-10-07T10:40:13.277Z"
+    },
+    {
+      "name": "forced drain timeout retried and settled",
+      "details": {
+        "id": "4c01f342-9d57-4b32-833c-48b1b9099c53",
+        "elapsedMs": 1059,
+        "aborted": true,
+        "retryCount": 1,
+        "state": "completed"
+      },
+      "at": "2026-10-07T10:40:14.858Z"
+    },
+    {
+      "name": "old version on isolated upgraded database copy",
+      "details": {
+        "start": "passed",
+        "sendFetchComplete": "passed",
+        "id": "d39eccbb-1e67-4fa9-89ac-0eba9dde7042",
+        "schema": 44,
+        "noDowngradeExecuted": true,
+        "limit": "One queue operation only. Does not authorize rollback or mixed-version production writers."
+      },
+      "at": "2026-10-07T10:40:15.072Z"
+    },
+    {
+      "name": "old strict schema check rejects upgraded copy without downgrade",
+      "details": {
+        "message": "pg-boss database requires migrations",
+        "schema": 44,
+        "noDowngradeExecuted": true
+      },
+      "at": "2026-10-07T10:40:15.091Z"
+    },
+    {
+      "name": "preservation after lifecycle checks and stopped registrations",
+      "details": {
+        "digest": "578343f09bd61c34eb78fad18d67c9d599193fde91b048c4e10219dda987df38",
+        "originalIds": [
+          "513fb6b6-f71d-458f-a817-8e18f2b4b704",
+          "6c5b7d3e-4969-4153-accc-32016f559a87",
+          "22762456-33e9-4696-9c5d-3f6f3dfcf686",
+          "336e5973-9739-49b4-8c23-65cadb5b980a",
+          "a2a678f2-4367-4307-92ef-10a0c283897e",
+          "ad65f046-894e-4fb2-818b-d680748406f0",
+          "466637b4-3e8f-47dc-8897-3f37ac62c125",
+          "d92ed524-c411-4581-a5f2-6479da36b49c",
+          "1febacff-52b3-4096-9960-a8634c5c5ae2",
+          "6a5fae73-9ed4-42ad-9db5-494131c5c571",
+          "8cc13fd7-b835-4d22-a005-d08867a9be4b",
+          "c1c59771-3c0d-43ca-957a-ac8ed01307cb"
+        ],
+        "stoppedInstances": [
+          {
+            "id": "0ec656b8-443f-440f-ba9e-d9fb6a1eee35",
+            "stopped_on": "2026-10-07 10:40:14.809213+00"
+          },
+          {
+            "id": "5660c492-1b9f-43b3-b9a7-887fe255683c",
+            "stopped_on": "2026-10-07 10:40:14.86106+00"
+          },
+          {
+            "id": "a204bcb1-16b0-48a2-9cd5-1a02fca6f8f7",
+            "stopped_on": "2026-10-07 10:40:14.877987+00"
+          }
+        ]
+      },
+      "at": "2026-10-07T10:40:15.093Z"
+    }
+  ],
+  "errors": [],
+  "oldPgVersion": "8.22.0",
+  "newPgVersion": "8.23.1",
+  "containerId": "74e6b172da42ff687ab12d276312af89488f489fd47ed3c5768eb0250c907fca",
+  "passed": true,
+  "finishedOn": "2026-10-07T10:40:15.953Z",
+  "containerStopped": true
+}

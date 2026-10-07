@@ -212,6 +212,7 @@ describe('Mem0 opaque provider-start fence', () => {
       data: { event_id: 'edited-conjecture-fence' },
       expireInSeconds: 60,
       heartbeatSeconds: null,
+      retryCount: 0,
       signal: new AbortController().signal,
     };
 
