@@ -35,6 +35,8 @@
 
 ## BLOCKED-ON
 
+- **PR1588 新有效 P1 / discussion4207279165**：6bb4ddb 的 content-validation 以 normalizedContext.includes(prompt) 判定 existing answer，LaTeX/标点改写可落入 generated 分支而只验证隐藏 reference。父已核实源码；禁止 merge。待修服务端可信用途/歧义 fail-closed 及可见全文回归，不扩 regex 假称语义绑定。review预算不重开。
+
 - 365871dab 的 CI 与候选 HTTP 原key幂等、只读页面验收已通过；合入 main 后需新 exact-head CI/运行验收。先前真实超时没有判决行，global brief/幂等/最终保护检查未完成；旧验收脚本未ACK导致的 ingest failed/DLQ 保留。CI绿色不替代这些证据。
 - 无需 owner 追加日常授权。旧 Xiaomi402 不再阻塞新 Copilot；历史失败没有删除。
 - 默认会话入口已在生产修复；完整学习状态评估和自适应安排仍需逐条行为验收，不能以此次日用修复冒称产品完成。
