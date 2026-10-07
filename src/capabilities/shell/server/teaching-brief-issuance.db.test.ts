@@ -1,5 +1,6 @@
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { ProbeAnswerResponseSchema } from '@/capabilities/agency/api/contracts';
 import { POST } from '@/capabilities/agency/api/probe-answer';
 import {
@@ -14,6 +15,7 @@ import { PROBE_RESOLUTION_RULE_VERSION } from '@/core/schema/conjecture';
 import {
   assessment_issuance,
   event,
+  knowledge,
   question,
   question_group_lifecycle,
   question_revision,
@@ -23,6 +25,7 @@ import { writeAiProposal } from '@/kernel/proposals/writer';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
+import { editQuestion } from '@/server/questions/write';
 import { computeTeachingBriefReport } from '../../../../scripts/lib/teaching-brief-report';
 import { loadTeachingBriefReportInput } from '../../../../scripts/report-teaching-brief';
 import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
@@ -182,7 +185,46 @@ async function admitOriginalProbeReference(probeId: string) {
   await servePublishedProbe(db, probeId);
 }
 
-async function completeIssuedRecurrence(editInitial = false, nativeReference = false) {
+async function editCompletedProbe(probeId: string) {
+  const db = testDb();
+  const [row] = await db.select().from(question).where(eq(question.id, probeId));
+  expect(
+    await editQuestion(
+      db,
+      probeId,
+      row.version,
+      { knowledge_ids: [], draft_status: 'active' },
+      'self',
+    ),
+  ).toMatchObject({ status: 'updated', version: row.version + 1 });
+  await db.insert(knowledge).values({
+    id: `relabeled_${probeId}`,
+    name: '后续编目知识点',
+    created_at: NOW,
+    updated_at: NOW,
+  });
+  expect(
+    await editQuestion(
+      db,
+      probeId,
+      row.version + 1,
+      {
+        knowledge_ids: [`relabeled_${probeId}`],
+        kind: 'choice',
+        choices_md: ['A: 内外层相加', 'B: 内外层相乘'],
+        prompt_md: '后续编目题面，不能重写已经完成的原题。',
+        reference_md: '后续题目参考，不能重写原结果。',
+      },
+      'self',
+    ),
+  ).toMatchObject({ status: 'updated', version: row.version + 2 });
+}
+
+async function completeIssuedRecurrence(
+  editInitial = false,
+  nativeReference = false,
+  editCompleted = false,
+) {
   vi.useFakeTimers({ toFake: ['Date'] });
   vi.setSystemTime(NOW);
   __resetRateLimitForTests();
@@ -222,8 +264,11 @@ async function completeIssuedRecurrence(editInitial = false, nativeReference = f
   await expectProbe(initialId);
   const first = await submitIncorrectProbe(initialId, '内外层相加：cos(x²) + 2x。');
   expect(first).toMatchObject({ status: 'evidence_for', coarse_outcome: 'incorrect' });
-  expect((await loadTeachingBrief(db, NOW)).brief).toMatchObject({ state: 'outcome_evidence_for' });
-  expect((await ackOutcome(first.probe_result_event_id)).status).toBe(201);
+  if (editCompleted) await editCompletedProbe(initialId);
+  expect
+    .soft((await loadTeachingBrief(db, NOW)).brief)
+    .toMatchObject({ state: 'outcome_evidence_for' });
+  expect.soft((await ackOutcome(first.probe_result_event_id)).status).toBe(201);
 
   const [followup] = (await db.select().from(question)).filter(
     (row) => row.source_ref === 'frozen_recurrence' && row.metadata?.probe_sequence === 2,
@@ -252,6 +297,7 @@ async function completeIssuedRecurrence(editInitial = false, nativeReference = f
   });
   const terminal = await submitIncorrectProbe(followup.id, '-sin(x³) + 3x²，内外层导数相加。');
   expect(terminal).toMatchObject({ status: 'confirmed', coarse_outcome: 'incorrect' });
+  if (editCompleted) await editCompletedProbe(followup.id);
   expect(execute).toHaveBeenCalledTimes(2);
   expect(execute.mock.calls.map(([input]) => input.question_parts)).toMatchObject([
     [{ prompt_md: PROMPT }],
@@ -304,15 +350,17 @@ describe('YUK-1364 TeachingBrief frozen issuance eligibility', () => {
   });
 
   it.each([
-    { editInitial: false, nativeReference: false },
-    { editInitial: true, nativeReference: false },
-    { editInitial: true, nativeReference: true },
+    { editInitial: false, nativeReference: false, editCompleted: false },
+    { editInitial: true, nativeReference: false, editCompleted: false },
+    { editInitial: true, nativeReference: true, editCompleted: false },
+    { editInitial: true, nativeReference: true, editCompleted: true },
   ])(
     'delivers the full issued recurrence after followup edits, with %j',
-    async ({ editInitial, nativeReference }) => {
+    async ({ editInitial, nativeReference, editCompleted }) => {
       const { db, terminal, terminalEvent } = await completeIssuedRecurrence(
         editInitial,
         nativeReference,
+        editCompleted,
       );
       expect
         .soft((await getEffectiveProbeResultStatuses(db, [terminalEvent.id])).get(terminalEvent.id))
@@ -365,17 +413,21 @@ describe('YUK-1364 TeachingBrief frozen issuance eligibility', () => {
   );
 
   it.each([
-    'knowledge',
+    'source',
     'metadata',
     'source_ref',
     'sequence',
-    'choices',
     'frozen_prompt',
     'frozen_reference',
     'wrong_group',
     'unknown_part',
     'malformed_revision',
     'container',
+    'result_proposal',
+    'assessment_issuance',
+    'assessment_submission',
+    'assessment_evaluation',
+    'assessment_shape',
   ] as const)('rejects %s corruption in an issued recurrence dependency', async (corruption) => {
     const replacesRevision = [
       'frozen_prompt',
@@ -418,15 +470,60 @@ describe('YUK-1364 TeachingBrief frozen issuance eligibility', () => {
     // Frozen-binding corruption cannot occur through normal writes. Only these
     // isolated negative fixtures use the existing transaction-local restore path.
     switch (corruption) {
-      case 'knowledge':
+      case 'result_proposal':
+      case 'assessment_issuance':
+      case 'assessment_submission':
+      case 'assessment_evaluation':
+      case 'assessment_shape': {
+        const [supportResult] = await db
+          .select()
+          .from(event)
+          .where(
+            sql`${event.action} = 'experimental:probe_result' AND ${event.subject_id} = ${initialId}`,
+          );
+        const [otherResult] = await db.select().from(event).where(eq(event.id, terminalEvent.id));
+        const otherRefs = z
+          .object({ submission_id: z.string(), evaluation_id: z.string() })
+          .parse(otherResult.payload?.assessment);
+        const payload = supportResult.payload;
+        if (!payload || typeof payload.assessment !== 'object' || !payload.assessment || !otherRefs)
+          throw new Error('native assessment fixture missing');
+        await db
+          .update(event)
+          .set({
+            payload: {
+              ...payload,
+              ...(corruption === 'result_proposal'
+                ? { conjecture_event_id: 'another_proposal' }
+                : {}),
+              assessment:
+                corruption === 'assessment_shape'
+                  ? { issuance_id: null }
+                  : {
+                      ...payload.assessment,
+                      ...(corruption === 'assessment_issuance'
+                        ? { issuance_id: `iss_probe_${followupId}` }
+                        : {}),
+                      ...(corruption === 'assessment_submission'
+                        ? { submission_id: otherRefs.submission_id }
+                        : {}),
+                      ...(corruption === 'assessment_evaluation'
+                        ? { evaluation_id: otherRefs.evaluation_id }
+                        : {}),
+                    },
+            },
+          })
+          .where(eq(event.id, supportResult.id));
+        break;
+      }
+      case 'source':
       case 'metadata':
       case 'source_ref':
       case 'sequence':
-      case 'choices':
         await db
           .update(question)
           .set({
-            ...(corruption === 'knowledge' ? { knowledge_ids: ['kn_unrelated'] } : {}),
+            ...(corruption === 'source' ? { source: 'quiz_gen' } : {}),
             ...(corruption === 'metadata'
               ? { metadata: { ...support.metadata, conjecture_proposal_id: 'another_proposal' } }
               : {}),
@@ -434,7 +531,6 @@ describe('YUK-1364 TeachingBrief frozen issuance eligibility', () => {
             ...(corruption === 'sequence'
               ? { metadata: { ...support.metadata, probe_sequence: 2 } }
               : {}),
-            ...(corruption === 'choices' ? { choices_md: ['A: 相加', 'B: 相乘'] } : {}),
           })
           .where(eq(question.id, initialId));
         break;
@@ -531,7 +627,7 @@ describe('YUK-1364 TeachingBrief frozen issuance eligibility', () => {
   it.each(['support', 'terminal', 'proposal'] as const)(
     'invalidates and restores an issued recurrence after correction of its %s',
     async (target) => {
-      const { db, first, terminalEvent } = await completeIssuedRecurrence();
+      const { db, first, terminalEvent } = await completeIssuedRecurrence(false, false, true);
       const targetId =
         target === 'support'
           ? first.probe_result_event_id
@@ -579,7 +675,7 @@ describe('YUK-1364 TeachingBrief frozen issuance eligibility', () => {
     },
   );
 
-  it.each(['prompt', 'reference', 'version'] as const)(
+  it.each(['prompt', 'reference', 'version', 'knowledge', 'draft', 'kind', 'choices'] as const)(
     'preserves historical unissued recurrence invalidation for mutable %s drift',
     async (drift) => {
       const db = testDb();
@@ -606,6 +702,10 @@ describe('YUK-1364 TeachingBrief frozen issuance eligibility', () => {
           ...(drift === 'prompt' ? { prompt_md: '后改的历史题干' } : {}),
           ...(drift === 'reference' ? { reference_md: '后改的历史参考' } : {}),
           ...(drift === 'version' ? { version: followup.version + 1 } : {}),
+          ...(drift === 'knowledge' ? { knowledge_ids: ['kn_unrelated'] } : {}),
+          ...(drift === 'draft' ? { draft_status: 'active' } : {}),
+          ...(drift === 'kind' ? { kind: 'choice' } : {}),
+          ...(drift === 'choices' ? { choices_md: ['A: 相加', 'B: 相乘'] } : {}),
         })
         .where(eq(question.id, followup.id));
       expect(
@@ -827,7 +927,7 @@ describe('YUK-1364 TeachingBrief frozen issuance eligibility', () => {
   });
 
   it.each(['correct', 'incorrect'] as const)(
-    'delivers and acknowledges the %s frozen answer after legacy prompt/reference edits, and counts it in the report',
+    'delivers and acknowledges the %s frozen answer after normal KC/draft edits, and counts it in the report',
     async (answerResult) => {
       vi.useFakeTimers({ toFake: ['Date'] });
       vi.setSystemTime(NOW);
@@ -896,12 +996,28 @@ describe('YUK-1364 TeachingBrief frozen issuance eligibility', () => {
         .select()
         .from(event)
         .where(eq(event.id, result.probe_result_event_id));
+      await editCompletedProbe(probeId);
+      const snapshot = () =>
+        Promise.all([
+          db.select().from(question),
+          db.select().from(event),
+          db.select().from(assessment_issuance),
+          db.select().from(question_revision),
+          db.select().from(question_group_lifecycle),
+        ]);
+      const before = await snapshot();
+      expect(
+        (
+          await getEffectiveProbeResultStatuses(db, [resultEvent.id], { validateDirectChain: true })
+        ).get(resultEvent.id),
+      ).toBe('active');
       // Soft assertions exercise the whole completed chain even when delivery fails.
       expect.soft(await validateAckableOutcome(db, resultEvent, NOW)).not.toHaveProperty('reason');
       expect.soft((await loadTeachingBrief(db, NOW)).brief).toMatchObject({
         state: `outcome_${resolution}`,
         current_outcome: { probe_result_event_id: result.probe_result_event_id },
       });
+      expect(await snapshot()).toEqual(before);
       const ack = await ACK(
         new Request('http://test.invalid/prep-desk/brief/ack', {
           method: 'POST',

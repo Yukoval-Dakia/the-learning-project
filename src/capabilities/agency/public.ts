@@ -1,6 +1,11 @@
 // Stable server contract for consumers outside the agency capability.
 
 // YUK-885 — conjecture evidence ports repointed from central deep imports.
+export type { CompletedProbeProposal } from './server/conjecture/completed-probe-provenance';
+export {
+  loadCompletedProbeAssessmentAnchors,
+  validateCompletedProbeProvenance,
+} from './server/conjecture/completed-probe-provenance';
 export {
   type ConjectureEvidenceAssetRef,
   type ConjectureEvidenceImageSource,

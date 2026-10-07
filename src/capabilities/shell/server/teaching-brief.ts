@@ -3,8 +3,11 @@
 
 import { and, desc, eq, gt, inArray, lte, or, sql } from 'drizzle-orm';
 import {
+  type CompletedProbeProposal,
   type EffectiveProbeResultStatus,
   getEffectiveProbeResultStatuses,
+  loadCompletedProbeAssessmentAnchors,
+  validateCompletedProbeProvenance,
 } from '@/capabilities/agency/public';
 import { projectPracticeIssuance } from '@/core/schema/assessment';
 import { ConjectureProbeSpec } from '@/core/schema/business';
@@ -224,8 +227,7 @@ type BriefStage = 'outcome' | 'probe' | 'finding';
 // inside its advisory-locked transaction (YUK-708 round-8), so these readers accept a Tx.
 type DbLike = Db | Tx;
 
-interface ConjectureFacts {
-  id: string;
+interface ConjectureFacts extends CompletedProbeProposal {
   /**
    * NORMALIZED (trimmed) proposal claim. Both proposal and correction schemas now trim,
    * while the manual normalization here remains defense in depth for legacy persisted rows.
@@ -233,12 +235,8 @@ interface ConjectureFacts {
    * same canonical value.
    */
   claimMd: string;
-  knowledgeId: string;
   causeCategory: CauseCategoryT;
   reasonMd: string;
-  probeMd: string;
-  /** Sequence-2 prompt authored with the proposal; absent only on historical v1 rows. */
-  followupProbeMd: string | null;
   evidence: TeachingBriefEvidenceRef[];
   createdAt: Date;
   /** Internal selector ranking only — never serialized into the wire (contract §5). */
@@ -382,7 +380,9 @@ function factsFromProposalRow(
       causeCategory: change.cause_category,
       reasonMd: row.payload.reason_md,
       probeMd: change.probe_md,
+      probeReferenceMd: change.probe_reference_md,
       followupProbeMd: change.followup_probe_md ?? null,
+      followupProbeReferenceMd: change.followup_probe_reference_md ?? null,
       evidence: dedupeEvidence(
         row.payload.evidence_refs.map((ref) => ({
           role: 'induction' as const,
@@ -426,7 +426,9 @@ function factsFromRawProposalRow(row: EventRow): CandidateResult<ConjectureFacts
       causeCategory: change.cause_category,
       reasonMd: payload.reason_md,
       probeMd: change.probe_md,
+      probeReferenceMd: change.probe_reference_md,
       followupProbeMd: change.followup_probe_md ?? null,
+      followupProbeReferenceMd: change.followup_probe_reference_md ?? null,
       evidence: dedupeEvidence(
         payload.evidence_refs.map((ref) => ({
           role: 'induction' as const,
@@ -582,7 +584,7 @@ function validateProbeQuestion(
   return null;
 }
 
-/** Use the same issued face for active answers and completed outcome provenance. */
+/** Active admission uses the issued face plus current row/lifecycle guards. */
 function projectIssuedProbeQuestion(
   probe: QuestionRow,
   issuance: typeof assessment_issuance.$inferSelect,
@@ -640,8 +642,9 @@ export interface AckableOutcomeFacts {
  *      deriveProposalStatus, which FOLDS corrections (retract/mark_wrong/supersede flip the
  *      status off 'accepted'), so proposal-correction exclusion is covered by this shared
  *      path with no extra predicate;
- *   5. the probe is canonical for that proposal (validateProbeQuestion — source/draft/
- *      provenance/KC/prompt/created-in-future).
+ *   5. Agency validates the completed issued provenance against the original
+ *      proposal/revision and native assessment anchors. Unissued historical
+ *      outcomes retain validateProbeQuestion's original row-based semantics.
  * The ONE reader dimension deliberately NOT re-gated here is the `NOT EXISTS ack` filter:
  * for the writer that is the idempotency check, so an already-acked result returns
  * idempotent:true (see acknowledgeTeachingBriefOutcome), not a 409. Reason codes stay stable
@@ -680,7 +683,7 @@ export async function validateAckableOutcome(
   // (factsFromRawProposalRow — verifies it is a canonical conjecture, no status fold) instead of
   // loadProposalFacts(...'accepted'). Every non-status structural check still runs: canonical body
   // + self-consistent provenance + probe exists (a deleted probe is real corruption → still skip) +
-  // the probe is canonical for its proposal (validateProbeQuestion). Default false → reader/ack exact.
+  // the completed provenance is canonical. Default false → reader/ack exact.
   {
     serial = false,
     skipTimeWindow = false,
@@ -754,18 +757,23 @@ export async function validateAckableOutcome(
   if (isCandidateError(proposalResult)) return proposalResult;
   const proposal = proposalResult.value;
 
-  // Pre-issuance outcomes retain their historical row-based provenance. When an
-  // issuance exists, its frozen face is authoritative even after later edits or
-  // lifecycle changes. Current admission and authored-snapshot guards govern new
-  // answers, not outcomes already recorded.
-  const projected = probeRow.issuance
-    ? projectIssuedProbeQuestion(probeRow.probe, probeRow.issuance, probeRow.revision)
-    : { value: probeRow.probe };
-  if (isCandidateError(projected)) return projected;
-  const probe = projected.value;
-
-  const probeError = validateProbeQuestion(probe, proposal, now);
-  if (probeError) return { reason: probeError };
+  const probe = probeRow.probe;
+  if (probeRow.issuance) {
+    const completed = validateCompletedProbeProvenance({
+      result,
+      probe,
+      proposal,
+      issuance: probeRow.issuance,
+      revision: probeRow.revision,
+      assessmentAnchors: await loadCompletedProbeAssessmentAnchors(db, [result]),
+      now,
+    });
+    if (isCandidateError(completed)) return completed;
+  } else {
+    // Historical unissued outcomes retain their original row-based semantics.
+    const probeError = validateProbeQuestion(probe, proposal, now);
+    if (probeError) return { reason: probeError };
+  }
 
   return { value: { proposal, probe, resolution, conjectureEventId } };
 }
