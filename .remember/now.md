@@ -1,3 +1,7 @@
+## YUK-1355 PR1595 已提交
+
+源码/证据98de7653e，父核验148项hash一致；PR1595待exact-head CI和17分钟窗，仅prune族，不代表全迁移。主环境发布归其他owner；最新1365报告PR1594已发布，但正文验收受provider429阻塞，memory DLQ不重放。无本lane运行变更。
+
 # YUK-1355 Node 24 integration handoff — 2026-10-07
 
 Sole writer /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1355-dbos-migration, feat/yuk-1355-dbos-migration. Normal merge of fetched main df08399ff179c5882b39da87e162237fd18246c7 is 3e04890bb72da34ebbe5df746eab64066b119782. Final source/evidence capture commit 71d2f0cfd3301823eeb858de9a22e546c0345467 preserves dependencies and YUK-1365 streaming. Prune remains the only DBOS admitted family. Actual Node 24.19.0 runner and all ten bundled fixture children report pg-boss 12.36.0 / DBOS 5.2.11. New cron/recovery artifacts are separate from historical 12.26.3 / Node 26 evidence; see docs/planning/2026-10-07-yuk1355-node24-integration-evidence.md for final gates and hashes.

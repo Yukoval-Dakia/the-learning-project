@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-07 YUK-1355 本地集成 fetched main df08399：Node24.19/pg-boss12.36 实际cron与恢复检查通过；只迁prune、Agent TEST ONLY、automation disabled。父线程持有PR/CI/Linear及验收；YUK-1365 runtime锁bed93b71不触碰。见 [新版本证据](docs/planning/2026-10-07-yuk1355-node24-integration-evidence.md)。
+> Linear 是权威 tracker。2026-10-07 YUK-1355 本地集成 fetched main df08399：Node24.19/pg-boss12.36 实际cron与恢复检查通过；只迁prune、Agent TEST ONLY、automation disabled。PR1595已提交，父已核对148项hash；exact-head CI及运行验收待完成。运行环境另线程负责，不碰锁。见 [新版本证据](docs/planning/2026-10-07-yuk1355-node24-integration-evidence.md)。
 
 ## NOW
 
-- **YUK-1355 非 UI lane**：正常merge保留main依赖与1365业务；默认pg-boss、prune唯一DBOS族。新版本4 cron/recovery +28 worker/registrar DB、77 unit、26 selected migration及静态/build检查见证据文档；68源族逐名核对。R1/R2 NONE适用于48ead，审查预算已用；无push/PR/deploy，父线程artifact验收后开PR。
+- **YUK-1355 非 UI lane**：正常merge保留main依赖与1365业务；默认pg-boss、prune唯一DBOS族。新版本4 cron/recovery +28 worker/registrar DB、77 unit、26 selected migration及静态/build检查见证据文档；68源族逐名核对。R1/R2 NONE适用于48ead，审查预算已用；PR1595已push并登记，尚未合并/部署；父核验148项hash通过，T3监视CI。
 
 - **YUK-1365**：真实 Pi DELTA/SSE、取消和终态替换实现完成；聊天关键词审核和强制marker已删除。正式工具API保留。最终复核P1已修复；新main依赖合入后需新exact-head CI。
 
