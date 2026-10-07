@@ -1,3 +1,7 @@
+# YUK-1364 初审修复 — 2026-10-07
+
+独立初审发现 P1：loadProbeBrief 已使用冻结题面，但 validateAckableOutcome 仍读取 mutable question，可能使新支持的 legacy 已发题场景作答后结果消失、ack409、report 判 corrupt。父核对源码，修复子任务 yuk1364-p1-repair-20261007-v1（Codex gpt-6.1-sol xhigh）独占代码 writer，先完整隔离复现再修。修复后最多一次验证审，不启动第三审。当前未提交的代码4文件保留；此前90DB/52unit/typecheck/lint/build及父独立16DB通过不足以越过此P1。生产仍f3，1363已Done且锁释放。Owner新增“迁移彻底干净、结构优雅易维护”已同步自主交付主线57961995。
+
 # YUK-1363 / YUK-1364 接续 — 2026-10-07
 
 独立 SeaweedFS 测试附件存储已上线，真实上传/读取/删除、去重引用、负向和重建持久化通过，独立复核无P0/P1；volume.max由4改16，最终配置下持久化/CRUD复验通过，12:08Z锁再次释放。current-release 指向 deployment-test-storage-20261007；app/worker 仍 f3/e681，不再清库、不恢复私人 R2。主服务健康，11:57Z 已释放部署锁并通知自主交付线程；复核只读。YUK-1364 子任务独占代码 writer，父线程只做 ops/文档。工作树 tlp-yuk-1363-test-storage，branch ops/yuk-1363-test-storage，基于57fbc95fc；root脏树不动。详情见 docs/planning/2026-10-07-agent-test-storage.md。以下为历史记录。
