@@ -79,6 +79,7 @@ describe('Mem0 opaque operation durable surfaces', () => {
       data: { event_id: 'evt_worker_852' },
       expireInSeconds: 60,
       heartbeatSeconds: null,
+      retryCount: 0,
       signal: new AbortController().signal,
     };
     await handler([job]);

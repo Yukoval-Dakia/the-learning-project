@@ -1,3 +1,4 @@
+import type { ResponseSlotT } from '@/core/schema/assessment';
 // YUK-1051 — ResponseSlotField：按槽 spec 分发到通用作答控件的门面组件。
 // 「多空/表格」= 每显式 slot 一个 ResponseSlotField（宿主按行/列/题面定位摆放），
 // 混合响应与整题计分不互相强制一对一（grounding §7.2）。
@@ -140,4 +141,35 @@ export function ResponseSlotField({
       {body}
     </div>
   );
+}
+
+/** Native published IDs and displayed labels remain distinct. */
+export function nativeSlotFieldSpec(slot: ResponseSlotT): ResponseSlotSpec | null {
+  switch (slot.kind) {
+    case 'single_choice':
+    case 'multi_choice':
+      return {
+        kind: slot.kind === 'single_choice' ? 'choice_single' : 'choice_multi',
+        options: slot.options.map((o) => ({ id: o.option_id, label: o.label, text_md: o.text })),
+      };
+    case 'text':
+    case 'numeric':
+    case 'formula':
+      return { kind: slot.kind };
+    case 'open_response':
+      return { kind: 'text' };
+    case 'table':
+      return null;
+    case 'matching':
+      return {
+        kind: 'matching',
+        left: slot.left_items.map((i) => ({ id: i.item_id, text_md: i.text })),
+        right: slot.right_options.map((o) => ({ id: o.option_id, text_md: o.text })),
+      };
+    case 'ordering':
+      return {
+        kind: 'ordering',
+        items: slot.items.map((i) => ({ id: i.item_id, text_md: i.text })),
+      };
+  }
 }

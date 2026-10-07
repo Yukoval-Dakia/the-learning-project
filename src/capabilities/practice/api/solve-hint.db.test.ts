@@ -1,8 +1,8 @@
 import { createId } from '@paralleldrive/cuid2';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-
 import { question } from '@/db/schema';
 import { Tutor } from '@/server/session';
+import { freezeSolveQuestion } from '../../../../tests/fixtures/assessment-solve';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 vi.mock('@/server/ai/runner', () => ({
@@ -49,7 +49,8 @@ describe('POST /api/questions/[id]/solve/[sid]/hint', () => {
       updated_at: now,
       version: 0,
     });
-    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id });
+    const { issuanceId } = await freezeSolveQuestion(db, id, true);
+    const { sessionId } = await Tutor.startTutorSession(db, { questionId: id, issuanceId });
 
     const res = await POST(
       new Request('http://t/x', { method: 'POST', body: JSON.stringify({ hint_index: 0 }) }),

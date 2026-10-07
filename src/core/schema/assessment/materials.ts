@@ -43,6 +43,8 @@ export const SharedMaterial = z.object({
   material_id: z.string().min(1),
   kind: SharedMaterialKind,
   asset: VersionedAssetRef,
+  /** 作答期公开材料与私有评分输入共用冻结资产；不设 default，避免改写旧 revision。 */
+  visibility: z.enum(['public', 'private']).optional(),
   caption: z.string().optional(),
   /** 可读替代说明（§7.2 —— 独立材料渲染、缩放、可读替代）。 */
   alt_text: z.string().optional(),
@@ -53,6 +55,16 @@ export const SharedMaterial = z.object({
   content_md: z.string().optional(),
 });
 export type SharedMaterialT = z.infer<typeof SharedMaterial>;
+
+/** Public projection only; never rewrite frozen revisions or issuance bindings.
+ * rub_<12 hex> is the existing normalizer's reserved private-rubric asset namespace.
+ * Old revisions lack visibility, so that namespace remains private even if mislabeled public.
+ */
+export function isPublicSharedMaterial(material: SharedMaterialT): boolean {
+  return (
+    material.visibility !== 'private' && !/^(?:rub|sol)_[0-9a-f]{12}$/.test(material.asset.asset_id)
+  );
+}
 
 // ---------- D10 原始证据 ----------
 

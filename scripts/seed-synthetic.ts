@@ -38,9 +38,9 @@
 import './load-env';
 
 import { and, eq, inArray, sql } from 'drizzle-orm';
-import { runKnowledgeEdgeProposeNightly } from '@/capabilities/knowledge/jobs/knowledge_edge_propose_nightly';
-import type { RubricGate } from '@/capabilities/knowledge/server/rubric-validator';
-import { scheduleReview } from '@/capabilities/practice/server/fsrs';
+import type { RubricGate } from '@/capabilities/knowledge/public';
+import { runKnowledgeEdgeProposeNightly } from '@/capabilities/knowledge/public';
+import { scheduleReview } from '@/capabilities/practice/public';
 import { CauseSchema } from '@/core/schema/cause';
 import type { FsrsStateSchemaT } from '@/core/schema/event/blocks';
 import type { AiProposalPayloadInputT } from '@/core/schema/proposal';
@@ -904,7 +904,7 @@ export async function printReport(dbh: DbLike, now: Date = new Date()): Promise<
         sql`${material_fsrs_state.subject_id} LIKE ${'synthetic:q:%'}`,
       ),
     );
-  const neverReviewed = (await dbh.execute(sql`
+  const neverReviewed = await dbh.execute<{ n: number }>(sql`
     SELECT count(DISTINCT e.subject_id)::int AS n
     FROM "event" e
     WHERE e.action = 'attempt' AND e.subject_kind = 'question' AND e.outcome = 'failure'
@@ -914,24 +914,24 @@ export async function printReport(dbh: DbLike, now: Date = new Date()): Promise<
         SELECT 1 FROM "material_fsrs_state" m
         WHERE m.subject_kind = 'question' AND m.subject_id = e.subject_id
       )
-  `)) as unknown as Array<{ n: number }>;
+  `);
 
   // 2. proposal_signals rows with total > 0 + acceptance_rate, grouped by kind.
   const rates = await getProposalAcceptanceRates(dbh);
 
   // 3. edge propose events: PASS (no rubric_verdict) + rubric-rejected.
-  const passProposes = (await dbh.execute(sql`
+  const passProposes = await dbh.execute<{ n: number }>(sql`
     SELECT count(*)::int AS n FROM "event"
     WHERE action = 'propose' AND subject_kind = 'knowledge_edge'
       AND (payload->'rubric_verdict') IS NULL
       AND (payload->>'from_knowledge_id') LIKE 'synthetic:%'
       AND (payload->>'to_knowledge_id') LIKE 'synthetic:%'
-  `)) as unknown as Array<{ n: number }>;
-  const rejectProposes = (await dbh.execute(sql`
+  `);
+  const rejectProposes = await dbh.execute<{ n: number }>(sql`
     SELECT count(*)::int AS n FROM "event"
     WHERE action = 'propose' AND subject_kind = 'knowledge_edge'
       AND (payload->'rubric_verdict'->>'ok') = 'false'
-  `)) as unknown as Array<{ n: number }>;
+  `);
 
   // 4. L2 gate-bump on the sized dismiss relation.
   const bump = await resolveEdgeGateBump(

@@ -1,3 +1,4 @@
+import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
 // Phase 1c.1 Step 9.B — `/api/review/due` handler over `material_fsrs_state`.
 //
 // Extracted out of app/api/review/due/route.ts so it can be deps-injectable and
@@ -15,7 +16,7 @@
 // Wire contract preserved: { rows: [{ id, question_id, prompt_md, reference_md,
 // knowledge_ids, cause, fsrs_state, created_at }] }.
 
-import { and, eq, inArray, lte, sql } from 'drizzle-orm';
+import { and, eq, inArray, lte } from 'drizzle-orm';
 // YUK-167 / ADR-0025 — North-Star W10 review soft-bias. Active goals supply a
 // SOFT, goal-relevant re-rank of the overdue review items. ND-5: this is order-
 // only — never touches the FSRS due path, the returned set, counts, or due_at.
@@ -97,24 +98,8 @@ async function loadLatestFailureQuestionIds(
   activeDb: DbLike,
   candidateLimit: number,
 ): Promise<string[]> {
-  const rows = (await activeDb.execute(sql<{ question_id: string }>`
-    SELECT subject_id AS question_id
-    FROM (
-      SELECT
-        subject_id,
-        created_at,
-        id,
-        row_number() OVER (PARTITION BY subject_id ORDER BY created_at DESC, id DESC) AS rn
-      FROM event
-      WHERE action = 'attempt'
-        AND subject_kind = 'question'
-        AND outcome = 'failure'
-    ) ranked
-    WHERE rn = 1
-    ORDER BY created_at DESC, id DESC
-    LIMIT ${candidateLimit}
-  `)) as unknown as Array<{ question_id: string }>;
-  return rows.map((row) => row.question_id);
+  const rows = await getCurrentFailureAttempts(activeDb, { perQuestionLimit: 1 });
+  return [...new Set(rows.map((row) => row.question_id))].slice(0, candidateLimit);
 }
 
 async function getFailureAttemptsPerQuestion(

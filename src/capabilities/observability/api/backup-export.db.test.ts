@@ -26,14 +26,18 @@ function extractSql(query: unknown): string {
 }
 
 vi.mock('@/db/client', () => {
+  const execute = vi.fn(async (query: unknown) => {
+    const sqlStr = extractSql(query);
+    const m = sqlStr.match(/from\s+"?(\w+)"?/i);
+    const t = m?.[1] ?? '';
+    return tableMock[t] ?? [];
+  });
   return {
     db: {
-      execute: vi.fn(async (query: unknown) => {
-        const sqlStr = extractSql(query);
-        const m = sqlStr.match(/from\s+"?(\w+)"?/i);
-        const t = m?.[1] ?? '';
-        return tableMock[t] ?? [];
-      }),
+      execute,
+      transaction: vi.fn(async (cb: (tx: { execute: typeof execute }) => unknown) =>
+        cb({ execute }),
+      ),
     },
   };
 });

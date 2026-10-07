@@ -5,6 +5,8 @@ import ts from 'typescript';
 const GUARDED_FILES = [
   'src/ai/task-catalog.ts',
   'src/ai/owned-task-specs.ts',
+  'src/capabilities/task-catalog.ts',
+  'src/capabilities/task-registry.ts',
   'src/capabilities/practice/tasks/index.ts',
   'src/capabilities/notes/tasks/index.ts',
   'src/capabilities/ingestion/tasks/index.ts',

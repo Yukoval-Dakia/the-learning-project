@@ -1,335 +1,199 @@
-// T-RA — pre-submit RatingAdvisor preview route (YUK-98).
-//
-// This endpoint must not write review events or mutate FSRS state. It exists so
-// `/review` can show advisory before the user commits a rating.
-
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+// Native preview persists an immutable original/candidate, never participation or learning.
+import { eq } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import {
-  INTERVENTION_CONTRACT_VERSION,
-  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-} from '@/core/schema/intervention';
-import { event, material_fsrs_state, question } from '@/db/schema';
-import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
+  assessment_submission,
+  evaluation,
+  evaluation_effective_head,
+  event,
+  mastery_state,
+  material_fsrs_state,
+  question,
+} from '@/db/schema';
+import { issueSoloFixture } from '../../../../tests/fixtures/assessment-solo';
+import {
+  nativeHttpRequest,
+  nativeSoloHttpFixture,
+} from '../../../../tests/fixtures/native-solo-http';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-// YUK-101 (iter2 fix F12) — shared seeders from tests/helpers/event-seed.
-// Iter1 duplicated these byte-for-byte in advice + submit test files; the
-// helper also adds the paired learning_record(kind='mistake') mirror that
-// every other test in the repo creates alongside failure attempts.
 import { seedAttempt, seedUserCause } from '../../../../tests/helpers/event-seed';
 import { POST } from './advice';
 import { ReviewAdviceResponseSchema } from './review-planning-contracts';
+import { createAttempt } from './submit';
 
-vi.mock('@/kernel/read-models/subject-profile', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/kernel/read-models/subject-profile')>();
-  return {
-    ...actual,
-    resolveSubjectProfileForKnowledgeIds: vi.fn(actual.resolveSubjectProfileForKnowledgeIds),
-  };
-});
-
-const QUESTION_BASE = {
-  kind: 'short_answer' as const,
-  reference_md: null,
-  knowledge_ids: [] as string[],
-  difficulty: 3,
-  source: 'manual' as const,
-  variant_depth: 0,
-  version: 0,
-};
-
-async function seedQuestion(id: string, overrides: Partial<typeof question.$inferInsert> = {}) {
-  const db = testDb();
-  const now = new Date();
-  await db.insert(question).values({
-    id,
-    prompt_md: `Prompt for ${id}`,
-    created_at: now,
-    updated_at: now,
-    ...QUESTION_BASE,
-    ...overrides,
-  });
+beforeEach(resetDb);
+afterEach(() => vi.restoreAllMocks());
+const preview = (body: unknown) => POST(nativeHttpRequest(body));
+const actions = (action: string) => testDb().select().from(event).where(eq(event.action, action));
+async function noLearning() {
+  expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
+  expect(await testDb().select().from(mastery_state)).toHaveLength(0);
+  expect(await actions('experimental:assessment_attempt')).toHaveLength(0);
+  expect(await actions('experimental:assessment_activation')).toHaveLength(0);
 }
 
-function adviceReq(body: unknown) {
-  return new Request('http://localhost/api/review/advice', {
-    method: 'POST',
-    body: JSON.stringify(body),
-    headers: { 'content-type': 'application/json' },
-  });
-}
-
-describe('POST /api/review/advice', () => {
-  beforeEach(async () => {
-    await resetDb();
-    vi.mocked(resolveSubjectProfileForKnowledgeIds).mockClear();
-  });
-
-  it('returns exact judge + rating advice without writing review event or FSRS state', async () => {
-    await seedQuestion('q_advice_exact', {
-      kind: 'fill_blank',
-      reference_md: '答案',
-    });
-
-    const res = await POST(
-      adviceReq({
-        activity_ref: { kind: 'question', id: 'q_advice_exact' },
-        response_md: '答案',
-      }),
-    );
-
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(() => ReviewAdviceResponseSchema.parse(json)).not.toThrow();
-    const body = json as {
-      question_id: string;
-      judge: {
-        route: string;
-        score_meaning: string;
-        coarse_outcome: string;
-        suggested_rating: string | null;
-      };
-      advice: { rating: string | null; evidence_score: number | null; reason: string };
-    };
-    expect(body.question_id).toBe('q_advice_exact');
-    expect(body.judge.route).toBe('exact');
-    expect(body.judge.score_meaning).toBe('correctness');
-    expect(body.judge.coarse_outcome).toBe('correct');
-    expect(body.judge.suggested_rating).toBe('good');
-    expect(body.advice.rating).toBe('good');
-
-    const events = await testDb()
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'review'), eq(event.subject_id, 'q_advice_exact')));
-    expect(events).toHaveLength(0);
-    const stateRows = await testDb()
-      .select()
-      .from(material_fsrs_state)
-      .where(eq(material_fsrs_state.subject_id, 'q_advice_exact'));
-    expect(stateRows).toHaveLength(0);
-  });
-
-  it('rejects diagnostic advice even after the fixed due time', async () => {
-    await seedQuestion('q_advice_intervention', {
-      kind: 'fill_blank',
-      reference_md: '答案',
-      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-      knowledge_ids: [],
-      metadata: {
-        intervention_diagnostic: {
-          schema_version: INTERVENTION_CONTRACT_VERSION,
-          intervention_id: 'int_advice',
-          intervention_version: 1,
-          diagnostic_kind: 'immediate',
-          knowledge_id: 'kc_math',
-          due_at: '2026-07-01T00:00:00.000Z',
-        },
-      },
-    });
-
-    const res = await POST(
-      adviceReq({
-        activity_ref: { kind: 'question', id: 'q_advice_intervention' },
-        response_md: '答案',
-      }),
-    );
-
-    expect(res.status).toBe(409);
-    expect(resolveSubjectProfileForKnowledgeIds).not.toHaveBeenCalled();
-  });
-
-  it('rejects advice for a diagnostic before its fixed due time', async () => {
-    await seedQuestion('q_advice_intervention_future', {
-      source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-      knowledge_ids: [],
-      metadata: {
-        intervention_diagnostic: {
-          schema_version: INTERVENTION_CONTRACT_VERSION,
-          intervention_id: 'int_advice_future',
-          intervention_version: 1,
-          diagnostic_kind: 'delayed',
-          knowledge_id: 'kc_math',
-          due_at: new Date(Date.now() + 86_400_000).toISOString(),
-        },
-      },
-    });
-
-    const res = await POST(
-      adviceReq({
-        activity_ref: { kind: 'question', id: 'q_advice_intervention_future' },
-        response_md: '试探答案',
-      }),
-    );
-
-    expect(res.status).toBe(409);
-    expect(resolveSubjectProfileForKnowledgeIds).not.toHaveBeenCalled();
-  });
-
-  it('returns partial keyword advice as hard before final user rating', async () => {
-    await seedQuestion('q_advice_keyword', {
-      kind: 'fill_blank',
-      reference_md: '虚词；代词；连词',
-      judge_kind_override: 'keyword',
-      rubric_json: {
-        criteria: [{ name: 'correctness', weight: 1, descriptor: '命中关键词' }],
-        keywords: ['虚词', '代词', '连词'],
-      },
-    });
-
-    const res = await POST(
-      adviceReq({
-        activity_ref: { kind: 'question', id: 'q_advice_keyword' },
-        response_md: '虚词和代词',
-      }),
-    );
-
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as {
-      judge: { route: string; coarse_outcome: string };
-      advice: { rating: string | null; evidence_score: number | null; reason: string };
-    };
-    expect(body.judge.route).toBe('keyword');
-    expect(body.judge.coarse_outcome).toBe('partial');
-    expect(body.advice.rating).toBe('hard');
-    expect(body.advice.evidence_score).toBeGreaterThanOrEqual(0.5);
-    expect(body.advice.reason).toMatch(/partial/i);
-  });
-
-  it('rejects empty response_md because advice requires an answer to judge', async () => {
-    await seedQuestion('q_advice_empty', {
-      kind: 'fill_blank',
-      reference_md: '答案',
-    });
-
-    const res = await POST(
-      adviceReq({
-        activity_ref: { kind: 'question', id: 'q_advice_empty' },
-        response_md: '   ',
-      }),
-    );
-
-    expect(res.status).toBe(422);
-    const body = (await res.json()) as { error: string; message: string };
-    expect(body.error).toBe('missing_answer');
-    expect(body.message).toContain('response_md');
-  });
-
-  // YUK-100 (W-05) — Cause wiring fix. Driver T-RA §1.1 says partial-credit
-  // advisor must lean toward 'good' when effective cause is carelessness-like
-  // and toward 'again' when it's conceptual-like, sourced via CC-1's
-  // effectiveCauseCategoryForFailureAttempt() helper. Pre-fix the advice route
-  // never threaded cause into the advisor, so the lean was dead code in
-  // production. These tests pin the wiring at the route layer.
-  describe('YUK-100 — partial-credit cause lean (W-05 wiring)', () => {
-    it('applies carelessness lean when cause=carelessness on prior failure attempt', async () => {
-      // partial-credit keyword judge with prior carelessness user_cause should
-      // promote 'hard' default → 'good' per driver T-RA §1.1.
-      await seedQuestion('q_advice_careless', {
-        kind: 'fill_blank',
-        reference_md: '虚词；代词；连词',
-        judge_kind_override: 'keyword',
-        rubric_json: {
-          criteria: [{ name: 'correctness', weight: 1, descriptor: '命中关键词' }],
-          keywords: ['虚词', '代词', '连词'],
-        },
+describe('native assessment advice', () => {
+  it.each([
+    { answer: 'A', verdict: 'correct', rating: 'good' },
+    { answer: 'B', verdict: 'incorrect', rating: 'again' },
+    { answer: '', verdict: 'incorrect', rating: 'again' },
+  ])(
+    'previews the frozen $answer response without participation or learning',
+    async ({ answer, verdict, rating }) => {
+      const f = await nativeSoloHttpFixture(testDb());
+      const response = await preview(f.body({ assessment: f.issued.assessment(answer) }));
+      expect(response.status).toBe(200);
+      const body = ReviewAdviceResponseSchema.parse(await response.json());
+      expect(body).toMatchObject({
+        question_id: f.id,
+        automatic_commit: true,
+        judge: { route: 'evaluate_submission', coarse_outcome: verdict, suggested_rating: rating },
+        advice: { rating },
       });
-      await seedAttempt({
-        id: 'a_advice_careless',
-        question_id: 'q_advice_careless',
-        answer_md: 'old wrong',
-      });
-      await seedUserCause({
-        id: 'uc_advice_careless',
-        attempt_event_id: 'a_advice_careless',
-        primary_category: 'carelessness',
-      });
+      expect(await testDb().select().from(assessment_submission)).toHaveLength(1);
+      expect(await testDb().select().from(evaluation)).toHaveLength(1);
+      expect(f.execute).not.toHaveBeenCalled();
+      await noLearning();
+    },
+  );
 
-      const res = await POST(
-        adviceReq({
-          activity_ref: { kind: 'question', id: 'q_advice_careless' },
-          response_md: '虚词和代词',
-        }),
+  it('requires the original issuance instead of recreating it from legacy flat text', async () => {
+    const f = await nativeSoloHttpFixture(testDb());
+    const response = await preview(f.body({ assessment: undefined, response_md: 'A' }));
+    expect(response.status).toBe(400);
+    expect(await testDb().select().from(assessment_submission)).toHaveLength(0);
+    await noLearning();
+  });
+
+  it.each(['2020-01-01T00:00:00.000Z', '2099-01-01T00:00:00.000Z'])(
+    'rejects diagnostic preview at due time %s without spending or writing a candidate',
+    async (dueAt) => {
+      const f = await nativeSoloHttpFixture(testDb(), { model: true });
+      await testDb()
+        .update(question)
+        .set({
+          source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+          metadata: { intervention_diagnostic: { due_at: dueAt } },
+        })
+        .where(eq(question.id, f.id));
+      expect((await preview(f.body())).status).toBe(409);
+      expect(f.execute).not.toHaveBeenCalled();
+      expect(await testDb().select().from(assessment_submission)).toHaveLength(0);
+      await noLearning();
+    },
+  );
+
+  it.each([
+    { cause: 'carelessness', rating: 'good' },
+    { cause: 'conceptual_error', rating: 'again' },
+    { cause: null, rating: 'hard' },
+  ])(
+    'keeps partial-credit $cause advice informational and reuses one model evaluation',
+    async ({ cause, rating }) => {
+      const f = await nativeSoloHttpFixture(testDb(), { model: true, points: 0.5 });
+      if (cause) {
+        await seedAttempt({
+          id: `prior_${f.id}`,
+          question_id: f.id,
+          knowledge_ids: f.knowledgeIds,
+          answer_md: '历史错误原答',
+          outcome: 'failure',
+          created_at: new Date(Date.now() - 60_000),
+        });
+        await seedUserCause({ attempt_event_id: `prior_${f.id}`, primary_category: cause });
+      }
+      const response = await preview(f.body());
+      expect(response.status).toBe(200);
+      const body = ReviewAdviceResponseSchema.parse(await response.json());
+      expect(body).toMatchObject({
+        automatic_commit: false,
+        judge: { coarse_outcome: 'partial', suggested_rating: 'hard' },
+        advice: { rating },
+      });
+      expect((await preview(f.body())).status).toBe(200);
+      expect(f.execute).toHaveBeenCalledOnce();
+      await noLearning();
+      const committed = await createAttempt(
+        nativeHttpRequest(
+          f.body({ activation_intent: body.activation_intent, auto_rate: false, rating: 'hard' }),
+        ),
       );
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        judge: { route: string; coarse_outcome: string };
-        advice: { rating: string | null; reason: string };
-      };
-      expect(body.judge.route).toBe('keyword');
-      expect(body.judge.coarse_outcome).toBe('partial');
-      expect(body.advice.rating).toBe('good');
-      expect(body.advice.reason).toMatch(/careless|carelessness/i);
+      expect(committed.status).toBe(200);
+      expect(f.execute).toHaveBeenCalledOnce();
+      expect(await actions('experimental:assessment_settlement')).toMatchObject([
+        { payload: { rating: 'hard', rating_source: 'user' } },
+      ]);
+    },
+  );
+
+  it('reads a user cause from a real native failed attempt for the next issued preview', async () => {
+    const f = await nativeSoloHttpFixture(testDb(), { model: true, points: 0 });
+    const failed = await createAttempt(nativeHttpRequest(f.body()));
+    expect(failed.status).toBe(200);
+    const original = await failed.json();
+    await seedUserCause({
+      attempt_event_id: original.review_event.id,
+      primary_category: 'carelessness',
     });
-
-    it('applies conceptual lean when cause=conceptual_error on prior failure attempt', async () => {
-      // partial-credit keyword judge with prior conceptual_error user_cause
-      // should demote 'hard' default → 'again' per driver T-RA §1.1.
-      await seedQuestion('q_advice_concept', {
-        kind: 'fill_blank',
-        reference_md: '虚词；代词；连词',
-        judge_kind_override: 'keyword',
-        rubric_json: {
-          criteria: [{ name: 'correctness', weight: 1, descriptor: '命中关键词' }],
-          keywords: ['虚词', '代词', '连词'],
-        },
-      });
-      await seedAttempt({
-        id: 'a_advice_concept',
-        question_id: 'q_advice_concept',
-        answer_md: 'old wrong',
-      });
-      await seedUserCause({
-        id: 'uc_advice_concept',
-        attempt_event_id: 'a_advice_concept',
-        primary_category: 'conceptual_error',
-      });
-
-      const res = await POST(
-        adviceReq({
-          activity_ref: { kind: 'question', id: 'q_advice_concept' },
-          response_md: '虚词和代词',
-        }),
-      );
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        judge: { route: string; coarse_outcome: string };
-        advice: { rating: string | null; reason: string };
-      };
-      expect(body.judge.route).toBe('keyword');
-      expect(body.judge.coarse_outcome).toBe('partial');
-      expect(body.advice.rating).toBe('again');
-      expect(body.advice.reason).toMatch(/concept|conceptual/i);
+    const cards = await testDb().select().from(material_fsrs_state);
+    const theta = await testDb().select().from(mastery_state);
+    const issued = await issueSoloFixture(testDb(), f.id, true);
+    f.setOutcome(0.5);
+    const response = await preview(
+      f.body({ assessment: issued.assessment('保持水量相同，改变坡度。') }),
+    );
+    expect(response.status).toBe(200);
+    expect(ReviewAdviceResponseSchema.parse(await response.json())).toMatchObject({
+      judge: { coarse_outcome: 'partial' },
+      advice: { rating: 'good' },
     });
+    expect(await testDb().select().from(material_fsrs_state)).toEqual(cards);
+    expect(await testDb().select().from(mastery_state)).toEqual(theta);
+    expect(await actions('experimental:assessment_attempt')).toHaveLength(1);
+  });
 
-    it('falls back to default partial-credit bucket when no prior failure attempt exists', async () => {
-      // Sanity: no cause history → advisor keeps default partial-credit bucket
-      // (this is the legal fallback for `causeCategory = null`).
-      await seedQuestion('q_advice_nocause', {
-        kind: 'fill_blank',
-        reference_md: '虚词；代词；连词',
-        judge_kind_override: 'keyword',
-        rubric_json: {
-          criteria: [{ name: 'correctness', weight: 1, descriptor: '命中关键词' }],
-          keywords: ['虚词', '代词', '连词'],
-        },
-      });
-
-      const res = await POST(
-        adviceReq({
-          activity_ref: { kind: 'question', id: 'q_advice_nocause' },
-          response_md: '虚词和代词',
-        }),
-      );
-      expect(res.status).toBe(200);
-      const body = (await res.json()) as {
-        judge: { coarse_outcome: string };
-        advice: { rating: string | null; reason: string };
-      };
-      expect(body.judge.coarse_outcome).toBe('partial');
-      // Default partial bucket for score ≥ 0.5 is 'hard' — no lean applied.
-      expect(body.advice.rating).toBe('hard');
-      expect(body.advice.reason).not.toMatch(/careless|conceptual/i);
+  it('keeps the preview tied to the issued question and accepted answer after current-row edits', async () => {
+    const f = await nativeSoloHttpFixture(testDb(), { model: true });
+    const response = await preview(f.body());
+    expect(response.status).toBe(200);
+    const first = ReviewAdviceResponseSchema.parse(await response.json());
+    await testDb()
+      .update(question)
+      .set({
+        prompt_md: '后来的题面',
+        reference_md: '后来的答案',
+        choices_md: ['后来选项'],
+        knowledge_ids: [],
+      })
+      .where(eq(question.id, f.id));
+    const second = await preview(f.body({ response_md: '观察文本不能重写原始ResponseSet' }));
+    expect(ReviewAdviceResponseSchema.parse(await second.json())).toMatchObject({
+      candidate_id: first.candidate_id,
+      judge: first.judge,
     });
+    expect(f.execute).toHaveBeenCalledOnce();
+    expect(JSON.stringify(f.execute.mock.calls[0][0])).not.toContain('后来');
+    await noLearning();
+    const conflict = await preview(f.body({ assessment: f.issued.assessment('不同原答') }));
+    expect(conflict.status).toBe(409);
+    expect(f.execute).toHaveBeenCalledOnce();
+  });
+
+  it('holds an unjudgeable preview without activating or dropping the accepted original', async () => {
+    const f = await nativeSoloHttpFixture(testDb(), { model: true });
+    f.setOutcome('pending');
+    const response = await preview(f.body());
+    expect(response.status).toBe(200);
+    expect(ReviewAdviceResponseSchema.parse(await response.json())).toMatchObject({
+      automatic_commit: false,
+      judge: { coarse_outcome: 'unsupported', suggested_rating: null },
+      advice: { rating: null },
+    });
+    expect(await testDb().select().from(assessment_submission)).toHaveLength(1);
+    expect(await testDb().select().from(evaluation_effective_head)).toMatchObject([
+      { effective_evaluation_id: null },
+    ]);
+    await noLearning();
   });
 });

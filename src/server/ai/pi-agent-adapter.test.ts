@@ -177,8 +177,8 @@ describe('PiPreparedQuery.query — agentLoop wiring', () => {
     expect(captured.config?.apiKey).toBe('sk-opencode-test');
     expect(captured.config?.reasoning).toBe('high');
     expect(captured.config?.model).toBe(FAKE_MODEL);
-    expect(captured.context?.systemPrompt).toBe('You are a test system prompt.');
-    expect(captured.context?.messages).toEqual([]);
+    expect(captured.context?.messages[0]?.content).toBe('You are a test system prompt.');
+    expect(captured.context?.messages).toHaveLength(1);
     expect(captured.prompts).toHaveLength(1);
     expect(captured.prompts?.[0]).toMatchObject({ role: 'user', content: 'solve this' });
   });
@@ -380,6 +380,29 @@ describe('PiPreparedQuery.query — frame normalization', () => {
     expect(result.errors).toEqual(['upstream 500']);
   });
 
+  it('marks failed native placeholder zero usage as unknown', async () => {
+    const failed = piAssistant({
+      stopReason: 'error',
+      errorMessage: 'upstream disconnected',
+      usage: piUsage({
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+      }),
+    });
+    const deps = makeDeps([
+      { type: 'message_end', message: failed },
+      { type: 'agent_end', messages: [failed] },
+    ]);
+    const prepared = await new PiAgentAdapter(deps as never).startup(startupArgs());
+    const frames = (await drain(prepared.query('go'))) as Record<string, unknown>[];
+    expect(frames.find((frame) => frame.type === 'assistant')?.usage_observed).toBe(false);
+    expect(frames.at(-1)?.usage_observed).toBe(false);
+  });
+
   it('reports agent_end with no assistant message as an engine error', async () => {
     const deps = makeDeps([{ type: 'agent_end', messages: [] }]);
     const adapter = new PiAgentAdapter(deps as never);
@@ -390,6 +413,7 @@ describe('PiPreparedQuery.query — frame normalization', () => {
     const result = frames[1] as Record<string, unknown>;
     expect(result.subtype).toBe('error_during_execution');
     expect(result.errors).toEqual(['pi agent_loop ended without an assistant message']);
+    expect(result.usage_observed).toBe(false);
   });
 });
 
@@ -471,7 +495,7 @@ describe('PiPreparedQuery — abort and close semantics', () => {
 
 // ────────────────────────────────────────────────────────────────────────────
 // YUK-921 P2 (YUK-1021) — tool-loop surface: mounts, beforeToolCall parity,
-// shouldStopAfterTurn → error_max_turns, toolResult→user frames, P3 guards.
+// finishTurn → error_max_turns, toolResult→user frames, P3 guards.
 // ────────────────────────────────────────────────────────────────────────────
 
 function fakeAgentTool(name: string): AgentTool {
@@ -565,7 +589,7 @@ describe('PiPreparedQuery — tool-loop frames and turn ceiling', () => {
 
   it('lets a clean first turn succeed under maxTurns=1 (YUK-1026 SDK parity)', async () => {
     const assistant = piAssistant();
-    // The real loop calls config.shouldStopAfterTurn between turns; a turn
+    // The real loop calls config.finishTurn between turns; a turn
     // with no tool calls exits naturally — the ceiling must not engage.
     const agentLoop = vi.fn(
       (
@@ -577,7 +601,7 @@ describe('PiPreparedQuery — tool-loop frames and turn ceiling', () => {
       ): EventStream<AgentEvent, AgentMessage[]> =>
         (async function* () {
           yield { type: 'message_end', message: assistant } as AgentEvent;
-          await config.shouldStopAfterTurn?.({
+          await config.finishTurn?.({
             message: assistant,
             toolResults: [],
             context: _context,
@@ -605,7 +629,7 @@ describe('PiPreparedQuery — tool-loop frames and turn ceiling', () => {
         { type: 'toolCall', id: 'call_1', name: 'mcp__loom__read_mistakes', arguments: {} },
       ],
     } as Partial<PiAssistantMessage>);
-    // The real loop calls config.shouldStopAfterTurn between turns; the fake
+    // The real loop calls config.finishTurn between turns; the fake
     // honors the same contract so the adapter's counter actually engages.
     const agentLoop = vi.fn(
       (
@@ -617,13 +641,13 @@ describe('PiPreparedQuery — tool-loop frames and turn ceiling', () => {
       ): EventStream<AgentEvent, AgentMessage[]> =>
         (async function* () {
           yield { type: 'message_end', message: toolCallTurn } as AgentEvent;
-          const stop = await config.shouldStopAfterTurn?.({
+          const stop = await config.finishTurn?.({
             message: toolCallTurn,
             toolResults: [],
             context: _context,
             newMessages: [toolCallTurn],
           });
-          if (!stop) {
+          if (stop?.action !== 'end') {
             yield { type: 'message_end', message: toolCallTurn } as AgentEvent;
           }
           yield { type: 'agent_end', messages: [toolCallTurn] } as AgentEvent;
@@ -643,13 +667,13 @@ describe('PiPreparedQuery — tool-loop frames and turn ceiling', () => {
     expect(frames.filter((f) => f.type === 'assistant')).toHaveLength(1);
   });
 
-  it('does not install shouldStopAfterTurn when maxTurns is unset', async () => {
+  it('does not install finishTurn when maxTurns is unset', async () => {
     const captured: Partial<CapturedLoop> = {};
     const deps = makeDeps([{ type: 'agent_end', messages: [piAssistant()] }], captured);
     const adapter = new PiAgentAdapter(deps as never);
     const prepared = await adapter.startup(startupArgs());
     await drain(prepared.query('go'));
-    expect(captured.config?.shouldStopAfterTurn).toBeUndefined();
+    expect(captured.config?.finishTurn).toBeUndefined();
   });
 
   it('close() releases remote MCP mount handles', async () => {
@@ -705,14 +729,15 @@ describe('PiPreparedQuery — P3 session replay (sdkSession → piSessionReplay)
 
     expect((frames[0] as Record<string, unknown>).session_id).toBe('pi:existing-session-id');
     const messages = captured.context?.messages ?? [];
-    expect(messages).toHaveLength(3);
+    expect(messages).toHaveLength(4);
+    expect(messages[0]).toMatchObject({ role: 'system', content: 'You are a test system prompt.' });
     // 'context' turns fold into user-role messages — the same position the
     // pinned header occupies in the cold-start envelope.
-    expect(messages[0]).toMatchObject({ role: 'user', content: 'PINNED LEARNER HEADER' });
-    expect(messages[1]).toMatchObject({ role: 'user', content: 'first question' });
+    expect(messages[1]).toMatchObject({ role: 'user', content: 'PINNED LEARNER HEADER' });
+    expect(messages[2]).toMatchObject({ role: 'user', content: 'first question' });
     // Historical assistant text becomes a valid assistant message under the
     // resolved model's envelope (honest bookkeeping, not fabricated usage).
-    expect(messages[2]).toMatchObject({
+    expect(messages[3]).toMatchObject({
       role: 'assistant',
       content: [{ type: 'text', text: 'first answer' }],
       api: 'openai-completions',
@@ -720,7 +745,7 @@ describe('PiPreparedQuery — P3 session replay (sdkSession → piSessionReplay)
       model: MODEL_ID,
       stopReason: 'stop',
     });
-    expect((messages[2] as PiAssistantMessage).usage.totalTokens).toBe(0);
+    expect((messages[3] as PiAssistantMessage).usage.totalTokens).toBe(0);
   });
 
   it('fails closed on options.resume without piSessionReplay', async () => {
@@ -770,7 +795,7 @@ describe('PiPreparedQuery — P3 skills injection', () => {
     });
     const prepared = await adapter.startup(args);
     await drain(prepared.query('go'));
-    expect(captured.context?.systemPrompt).toBe(
+    expect(captured.context?.messages[0]?.content).toBe(
       'You are a test system prompt.\n\n' +
         '<skill name="quiz-gen-pack">\nSKILL BODY: always cite sources.\n</skill>\n\n' +
         '<skill name="tone-pack">\nSECOND BODY: keep it short.\n</skill>',
@@ -1112,7 +1137,7 @@ describe('PiPreparedQuery — P3 nested subagents (Task/Agent host)', () => {
         signal: AbortSignal | undefined,
         _streamFn: StreamFn,
       ): EventStream<AgentEvent, AgentMessage[]> => {
-        if (context.systemPrompt === SCOUT_PROMPT) {
+        if (context.messages[0]?.content === SCOUT_PROMPT) {
           childCalls.push({ context, config, signal });
           return (
             childStreamFactory?.({ context, config, signal }) ??
@@ -1199,10 +1224,10 @@ describe('PiPreparedQuery — P3 nested subagents (Task/Agent host)', () => {
     // the spec's allowlist minus spawn names (depth-one is structural).
     expect(childCalls).toHaveLength(1);
     const child = childCalls[0];
-    expect(child?.context.systemPrompt).toBe(SCOUT_PROMPT);
+    expect(child?.context.messages[0]?.content).toBe(SCOUT_PROMPT);
     expect(child?.context.tools?.map((t) => t.name)).toEqual(['mcp__loom__read_mistakes']);
     expect(child?.signal).toBeInstanceOf(AbortSignal);
-    expect(child?.config.shouldStopAfterTurn).toBeTypeOf('function');
+    expect(child?.config.finishTurn).toBeTypeOf('function');
     // Steering/follow-up are root-loop surfaces — a synchronous child
     // execution must not drain a parent queue.
     expect(child?.config.getSteeringMessages).toBeUndefined();
@@ -1318,18 +1343,31 @@ describe('PiPreparedQuery — P3 nested subagents (Task/Agent host)', () => {
   });
 
   it('marks the child failed when it exhausts spec.maxTurns (ADR-0056 fail-closed)', async () => {
-    // The real loop calls shouldStopAfterTurn after each completed turn;
+    // The real loop calls finishTurn after each completed turn;
     // maxTurns=3 ends the child mid-investigation. A capped child must not
     // surface as completed with a placeholder report.
     const { adapter, args } = nestedStartup(
       () => [],
       undefined,
-      ({ config }) =>
+      ({ config, context }) =>
         (async function* () {
-          const assistant = childAssistant();
+          const assistant: PiAssistantMessage = {
+            ...childAssistant(),
+            content: [{ type: 'toolCall', id: 'child_call', name: 'search', arguments: {} }],
+          };
           for (let turn = 0; turn < 4; turn++) {
             yield { type: 'message_end', message: assistant } as AgentEvent;
-            if (await config.shouldStopAfterTurn?.({} as never)) break;
+            if (
+              (
+                await config.finishTurn?.({
+                  message: assistant,
+                  toolResults: [],
+                  context,
+                  newMessages: [assistant],
+                })
+              )?.action === 'end'
+            )
+              break;
           }
           yield { type: 'agent_end', messages: [assistant] } as AgentEvent;
         })() as unknown as EventStream<AgentEvent, AgentMessage[]>,

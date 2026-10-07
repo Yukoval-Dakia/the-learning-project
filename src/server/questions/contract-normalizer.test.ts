@@ -11,6 +11,7 @@ import {
   validateResponseSpec,
   validateScoringBasis,
 } from '@/core/schema/assessment';
+import { evaluateSubmissionCore } from '@/core/schema/assessment/evaluation';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 import {
   type NormalizableQuestionRow,
@@ -42,7 +43,83 @@ function expectValidContract(n: ReturnType<typeof normalizeQuestionRowToContract
   expect(validateExecutionPlan(n.execution_plan, n.scoring_basis)).toEqual([]);
 }
 
+async function evaluateNormalizedText(
+  n: ReturnType<typeof normalizeQuestionRowToContract>,
+  given: string,
+) {
+  const revisionId = 'rev-normalized';
+  const now = '2026-10-03T00:00:00.000Z';
+  return evaluateSubmissionCore({
+    evaluation_id: 'eval-normalized',
+    attempt: 1,
+    revision: {
+      ...n,
+      revision_id: revisionId,
+      revision_ordinal: 1,
+      published_at: now,
+      supersedes_revision_id: null,
+    },
+    submission: {
+      submission_id: 'sub-normalized',
+      issuance_id: 'iss-normalized',
+      revision_id: revisionId,
+      evaluation_group_id: 'eg-normalized',
+      idempotency_key: 'idem-normalized',
+      submitted_at: now,
+      response_set: {
+        entries: [{ slot_id: n.response_spec.slots[0].slot_id, kind: 'text', text_md: given }],
+      },
+      group_evidence: [],
+    },
+  });
+}
+
 describe('normalizeQuestionRowToContract — 契约四层可发布', () => {
+  it('freezes private probe signatures into the digest without admitting a model slice', () => {
+    const probe = {
+      schema_version: 2,
+      prompt_md: '求 sin(3x²) 的导数，并说明内外层如何组合。',
+      reference_md: '6x cos(3x²)，外层导数与内层导数相乘。',
+      expected_target_error_answer_md: 'cos(3x²)，遗漏内层导数。',
+      elicits_target_error_reason_md: '区分链式法则遗漏与其他计算错误。',
+      context_kind: 'abstract',
+      representation_kind: 'symbolic',
+      response_mode: 'short_answer',
+      gold_response_signature: { kind: 'text', response_md: '6x cos(3x²)' },
+      target_error_response_signature: { kind: 'text', response_md: 'cos(3x²)' },
+    };
+    const row = baseRow({
+      kind: 'short_answer',
+      choices_md: null,
+      prompt_md: probe.prompt_md,
+      reference_md: probe.reference_md,
+      source: 'intervention_diagnostic',
+      metadata: { probe_spec: probe },
+    });
+    const original = normalizeQuestionRowToContract(row);
+    expect(original.scoring_basis.units[0].criterion).toMatchObject({ probe_spec: probe });
+    expect(original.scoring_basis.blank_scores_zero).toBe(false);
+    expect(original.execution_plan.assignments[0].executor).toEqual({
+      kind: 'model_executor',
+      task_kind: 'AssessmentRuleJudgeTask',
+      admitted_slice_id: null,
+    });
+    expect(
+      validateExecutionPlan(original.execution_plan, original.scoring_basis).map(
+        (issue) => issue.code,
+      ),
+    ).toEqual(['unadmitted_model_executor']);
+    expect(JSON.stringify(original.response_spec)).not.toContain('target_error_response_signature');
+    expect(JSON.stringify(original.structure)).not.toContain('target_error_response_signature');
+    probe.target_error_response_signature.response_md = '6 cos(3x²)，遗漏 x 因子。';
+    expect(normalizeQuestionRowToContract(row).integrity_digest).not.toBe(
+      original.integrity_digest,
+    );
+    expect(original.scoring_basis.units[0].criterion).toMatchObject({
+      probe_spec: { target_error_response_signature: { response_md: 'cos(3x²)' } },
+    });
+  });
+
   it('produces a contract that passes all three deterministic validators', () => {
     const n = normalizeQuestionRowToContract(baseRow());
     expectValidContract(n);
@@ -118,11 +195,65 @@ describe('normalizeQuestionRowToContract — 契约四层可发布', () => {
     const unit = n.scoring_basis.units[0];
     if (unit.criterion.kind !== 'text_key') throw new Error('expected text_key');
     expect(unit.criterion.accepted_texts).toEqual(['42']);
-    expect(unit.criterion.normalization).toBe('trim');
+    expect(unit.criterion.normalization).toBe('answer_head');
     expect(n.execution_plan.assignments[0].executor).toEqual({
       kind: 'deterministic',
       comparator: 'exact_text',
     });
+  });
+
+  it.each([
+    ['42', '答：４２。\n\n解析：将两项相加即可。', 1],
+    ['答案：ABC', 'ａｂｃ', 1],
+    ['42', '42', 1],
+    ['42', '答案：43\n\n解析：计算有误。', 0],
+  ])(
+    'published exact contract grades reference %s against %s',
+    async (reference, given, points) => {
+      const n = normalizeQuestionRowToContract(
+        baseRow({
+          kind: 'short_answer',
+          choices_md: null,
+          reference_md: reference,
+          judge_kind_override: 'exact',
+        }),
+      );
+      expectValidContract(n);
+      const out = await evaluateNormalizedText(n, given);
+      expect(out.record.status).toBe('completed');
+      expect(out.record.aggregate).toMatchObject({ kind: 'points_total', points });
+    },
+  );
+
+  it('standalone row fallback and structured alternative answers use the same comparator', async () => {
+    for (const answers of [undefined, ['答案：ABC', '答：XYZ']]) {
+      const n = normalizeQuestionRowToContract(
+        baseRow({
+          kind: 'short_answer',
+          choices_md: null,
+          reference_md: 'ABC',
+          judge_kind_override: answers ? 'exact' : null,
+          structured: {
+            id: 'solo',
+            role: 'standalone',
+            prompt_text: '写出缩写。',
+            answers,
+          } as StructuredQuestionT,
+        }),
+      );
+      expectValidContract(n);
+      const before = JSON.stringify(n);
+      for (const given of answers
+        ? ['ａｂｃ', '答案：ｘｙｚ。\n\n解析：另一种写法。']
+        : ['答：ａｂｃ。']) {
+        const out = await evaluateNormalizedText(n, given);
+        expect(out.record.aggregate).toMatchObject({ kind: 'points_total', points: 1 });
+      }
+      expect((await evaluateNormalizedText(n, 'ABD')).record.aggregate).toMatchObject({
+        points: 0,
+      });
+      expect(JSON.stringify(n)).toBe(before);
+    }
   });
 
   it('P1-2: rule_reference provenance maps the ACTUAL answer origin — web_sourced→official, quiz_gen→system_proposed, manual→manual', () => {
@@ -209,10 +340,17 @@ describe('normalizeQuestionRowToContract — 契约四层可发布', () => {
       },
     ] as unknown as FigureRefT[];
     const n = normalizeQuestionRowToContract(baseRow({ figures }));
-    expect(n.structure.materials).toHaveLength(1);
+    expect(n.structure.materials).toHaveLength(2);
     expect(n.structure.materials[0].kind).toBe('figure');
     expect(n.structure.materials[0].asset.asset_id).toBe('ast_fig1');
-    expect(n.structure.parts[0].material_ids).toEqual([n.structure.materials[0].material_id]);
+    expect(n.structure.parts[0].material_ids).toEqual(
+      n.structure.materials.map((material) => material.material_id),
+    );
+    expect(n.structure.materials[1]).toMatchObject({
+      visibility: 'private',
+      caption: 'reference solution',
+      content_md: baseRow().reference_md,
+    });
     expectValidContract(n);
   });
 });
@@ -241,10 +379,14 @@ describe('structured 树归一（P1-2 保真）', () => {
   it('leaf node ids become part identities; stem prompt becomes a shared plaintext material', () => {
     const n = normalizeQuestionRowToContract(baseRow({ structured: tree(), choices_md: null }));
     expect(n.structure.parts.map((p) => p.part_id)).toEqual(['node_a', 'node_b']);
-    expect(n.structure.materials).toHaveLength(1);
+    expect(n.structure.materials).toHaveLength(3);
     expect(n.structure.materials[0].kind).toBe('plaintext');
     expect(n.structure.materials[0].asset.digest).toMatch(/^sha256:/);
-    expect(n.structure.parts.every((p) => p.material_ids.length === 1)).toBe(true);
+    expect(n.structure.parts.every((p) => p.material_ids.length === 2)).toBe(true);
+    expect(n.structure.parts[0].material_ids[1]).not.toBe(n.structure.parts[1].material_ids[1]);
+    expect(
+      n.structure.materials.slice(1).every((material) => material.visibility === 'private'),
+    ).toBe(true);
     expectValidContract(n);
   });
 
@@ -305,10 +447,15 @@ describe('物理多 part 组归一（P1-2 保真）', () => {
       },
     ]);
     expect(n.group_id).toBe('grp');
-    expect(n.structure.materials).toHaveLength(1);
+    expect(n.structure.materials).toHaveLength(3);
     expect(n.structure.materials[0].kind).toBe('plaintext');
     expect(n.structure.parts.map((p) => p.part_id)).toEqual(['p1', 'p2']);
-    expect(n.structure.parts.every((p) => p.material_ids.length === 1)).toBe(true);
+    expect(n.structure.parts.every((p) => p.material_ids.length === 2)).toBe(true);
+    expect(n.structure.materials.slice(1).map((material) => material.content_md)).toEqual([
+      '42',
+      'B',
+    ]);
+    expect(n.structure.parts[0].material_ids[1]).not.toBe(n.structure.parts[1].material_ids[1]);
     const unitP2 = n.scoring_basis.units.find((u) => u.scoring_unit_id === 'p2::u');
     if (unitP2?.criterion.kind !== 'option_set_key') {
       throw new Error('expected p2 option_set_key from ITS OWN reference');
@@ -382,6 +529,7 @@ describe('第二轮复审 P1-2/P1-3 — 保真与身份（先红后绿）', () =
     const rubricMat = n.structure.materials.find((m) => m.caption?.startsWith('rubric'));
     if (!rubricMat) throw new Error('rubric material missing');
     expect((rubricMat as { content_md?: string }).content_md).toContain('论点');
+    expect(rubricMat).toHaveProperty('visibility', 'private');
   });
 
   it('P1-2b: structured leaf WITHOUT its own answer is unresolved — root reference must NOT become its key', () => {
@@ -607,7 +755,7 @@ describe('第二轮复审 P1-2/P1-3 — 保真与身份（先红后绿）', () =
     const assetIds = n.structure.materials.map((m) => m.asset.asset_id);
     expect(assetIds).toContain('ast_part');
     expect(assetIds).toContain('ast_root');
-    expect(n.structure.parts[0].material_ids).toHaveLength(3); // stem + root figure + part figure
+    expect(n.structure.parts[0].material_ids).toHaveLength(4); // stem + root figure + part figure + private solution
   });
 
   it('YUK-1099 #2: physical part prompt derives from its edited structured leaf, not the stale prompt_md column', () => {
@@ -721,5 +869,55 @@ describe('身份纪律（§3.1）', () => {
     expect(mintOptionId('A', 'text')).toBe(mintOptionId('A', 'text'));
     expect(mintOptionId('A', 'text')).not.toBe(mintOptionId('A', 'text '));
     expect(mintOptionId('A', 'text')).not.toBe(mintOptionId('B', 'text'));
+  });
+});
+
+describe('native local numeric/unit publication', () => {
+  it('freezes explicit numeric metadata and its tolerance without a runtime route resolver', () => {
+    const input = baseRow({
+      kind: 'calculation',
+      choices_md: null,
+      reference_md: '30 m/s',
+      judge_kind_override: 'unit_dimension',
+      metadata: { reference_value: 30, reference_unit: 'm/s', reference_tolerance: 0.05 },
+    });
+    const contract = normalizeQuestionRowToContract(input);
+    expectValidContract(contract);
+    expect(contract.response_spec.slots[0]).toMatchObject({ kind: 'numeric' });
+    expect(contract.scoring_basis.units[0].criterion).toEqual({
+      kind: 'numeric_key',
+      expected: 30,
+      expected_unit: 'm/s',
+      tolerance: { kind: 'relative', ratio: 0.05 },
+    });
+    expect(contract.execution_plan.assignments[0].executor).toEqual({
+      kind: 'deterministic',
+      comparator: 'numeric_unit_conversion',
+    });
+    expect(
+      normalizeQuestionRowToContract({
+        ...input,
+        metadata: { ...input.metadata, reference_value: 31 },
+      }).integrity_digest,
+    ).not.toBe(contract.integrity_digest);
+  });
+
+  it('does not invent legacy partial grades or a default 5% tolerance', () => {
+    const contract = normalizeQuestionRowToContract(
+      baseRow({
+        kind: 'calculation',
+        choices_md: null,
+        reference_md: '30 m/s',
+        judge_kind_override: 'unit_dimension',
+        metadata: { reference_value: 30, reference_unit: 'm/s' },
+      }),
+    );
+    expectValidContract(contract);
+    expect(contract.scoring_basis.units[0].criterion).toMatchObject({
+      kind: 'numeric_key',
+      tolerance: { kind: 'absolute', value: 0 },
+    });
+    expect(contract.scoring_basis.units).toHaveLength(1);
+    expect(contract.scoring_basis.units[0].points).toBe(1);
   });
 });

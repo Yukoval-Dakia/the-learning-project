@@ -1,69 +1,19 @@
-// conjecture-wire #13 (YUK-538 ⑬ / spec §6 S3) — probe answer route.
-//
-// The CONSUMER half of the dark-loop: the owner answers a served probe and this
-// route closes the lifecycle.
-//
-// ND-5 RED LINE — the boundary is `answerProbe`, NOT the judge dispatch:
-//   - the judge runs via `evaluateAttempt({entry:'conjecture_probe'})` — the
-//     single authoritative-grading funnel (YUK-1047); on the legacy lane it
-//     delegates to `JudgeInvoker.invoke()`, the SAME pure-evaluation
-//     chokepoint submit.ts uses. `JudgeInvoker.invoke()` resolves the route,
-//     runs the judge (incl. the real `runSemanticJudge` async LLM path for
-//     free-text probes), and emits telemetry. It does NOT write FSRS /
-//     attempt / θ̂ — the FSRS write in submit.ts happens AFTER the judge call,
-//     in submit's own code, not inside the invoker (verified: `invoker.ts`
-//     has zero fsrs/attempt/event writes). The invoker is judge-only.
-//   - this route writes a paid-judge claim marker before invoking the model, then
-//     `answerProbe` writes exactly ONE `experimental:probe_result` outcome event
-//     and may serve the pre-authored follow-up question. Neither path writes
-//     attempt / FSRS / learner-state rows.
-//   - the earlier "isolated registry path" (`resolveJudge().run()`) was a
-//     defect (review PR #705 CRITICAL): the base registry's semantic runner is a
-//     profile-validation STUB returning coarse_outcome='unsupported' — so every
-//     free-text probe fail-closed 422 and no probe_result was ever written. The
-//     invoker path is the ONLY path that actually evaluates free-text.
-//
-// YUK-787/YUK-827 outcome→resolution split:
-//   - Historical probes without a response contract retain the coarse outcome
-//     mapping for compatibility.
-//   - Response-aware probes advance outcome=0 only when the same judge call
-//     classifies the learner response as the declared target-error signature.
-//     A generic wrong answer, missing match, ambiguity, snapshot drift, or a
-//     correctness/signature conflict writes no evidence.
-//   - A correctness verdict that also matches the gold signature maps to
-//     outcome=1 → resolution='retired' (the conjecture is falsified).
-//
-// Fail-closed (spec §6 S3): judge 'unsupported' (reference missing / kind
-// mismatch) OR 'partial' (ambiguous on a discriminating probe) → 422, NO
-// probe_result written, the probe stays served-but-unanswered. A partial does
-// not discriminate cleanly; injecting ambiguous evidence into an n=1
-// calibration anchor would poison the soft-track signal. The owner can re-answer
-// after the paid-judge claim cooldown or resolve via the admin reader (S4).
-//
-// Idempotency: a cheap `peekExistingProbeResult` pre-check short-circuits a
-// re-answer to the RECORDED outcome/resolution WITHOUT invoking the judge (LLM
-// cost guard — mirrors acceptConjectureProposal's `existingAcceptRate` pattern).
-// A corrupt existing row falls through to `answerProbe`, which surfaces it as a
-// `probe_result_corrupt` 500 (never papered over).
-
+// Grade the persisted probe original; only answerProbe writes its terminal outcome.
 import { eq } from 'drizzle-orm';
-import { ConjectureProbeSpec, ConjectureProbeSpecV2, JudgeKind } from '@/core/schema/business';
+import { canonicalHash } from '@/core/migration/canonical';
+import { ConjectureProbeSpec, ConjectureProbeSpecV2 } from '@/core/schema/business';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import { PROBE_QUESTION_INITIAL_VERSION } from '@/core/schema/conjecture';
-import {
-  ConjectureProbeSignatureMatch,
-  classifyConjectureProbeResponseFromJudgeMatch,
-} from '@/core/schema/conjecture-probe-response';
 import { db } from '@/db/client';
-import { question } from '@/db/schema';
-import { ApiError, errorResponse } from '@/kernel/http';
 import {
-  IMAGE_CONSUMING_JUDGE_ROUTES,
-  evaluateAttempt,
-  resolveQuestionJudgeRoute,
-} from '@/kernel/judge';
-import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
-import { checkRateLimit } from '@/server/http/rate-limit';
+  assessment_issuance,
+  question,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
+import { ApiError, errorResponse } from '@/kernel/http';
+import { previewFormalAttempt } from '@/kernel/judge';
+import { freezeImageEvidence } from '@/kernel/records/assessment-evidence';
 import {
   type AnswerProbeResult,
   answerProbe,
@@ -167,25 +117,6 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       });
     }
 
-    // YUK-386 — question.kind is a free-form display label, so there is no
-    // "unknown kind" to reject here: an unrecognized label simply routes to the
-    // answer-class default (semantic) inside the judge resolver. The remaining
-    // guard below covers judge_kind_override, which IS still a closed enum.
-    const overrideParsed = probe.judge_kind_override
-      ? JudgeKind.safeParse(probe.judge_kind_override)
-      : null;
-    // NOTE: `safeParse()` returns a truthy result object whether success or
-    // failure — the guard must check `.success`, NOT truthiness of the result
-    // (a plain `!overrideParsed` is always false here, since SafeParseReturnType
-    // is always a truthy object). Caught by CodeRabbit + OCR review (PR #705).
-    if (overrideParsed && !overrideParsed.success) {
-      throw new ApiError(
-        'unsupported_judge_route',
-        `probe ${probeQuestionId} has unknown judge_kind_override '${probe.judge_kind_override}'`,
-        422,
-      );
-    }
-
     // Fail malformed proposal provenance before claiming or paying the judge.
     // Well-formed v1 proposals remain answerable under answerProbe's terminal legacy
     // rule, while v2 proposals continue through the recurrence gate.
@@ -221,32 +152,42 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       );
     }
 
-    // Judge via the standard invoker chokepoint (same path submit.ts uses).
-    // `resolveSubjectProfileForKnowledgeIds` always returns a profile (falls back
-    // to default on unresolvable knowledge id), so no null guard needed. ND-5
-    // preserved: invoke() is judge-only (zero FSRS/attempt writes); answerProbe owns
-    // the result write and the optional pre-authored follow-up question below.
-    const subjectProfile = await resolveSubjectProfileForKnowledgeIds(
-      db,
-      probe.knowledge_ids ?? [],
-    );
-    // Photo-only gate (mirrors submit.ts F4): a photo-only answer is judgeable ONLY
-    // by an image-consuming route (steps / multimodal_direct). On a text-only route
-    // the empty answer_md would be graded as wrong and poison the n=1 anchor — so
-    // fail-closed 422 (no probe_result written; the probe stays served, re-answerable).
-    // NOTE: serveProbeOnce stamps judge_kind_override='multimodal_direct' on every probe,
-    // so in practice this gate never fires — it's defense-in-depth if that policy changes.
-    const photoOnly = answerMd.length === 0 && answerImageRefs.length > 0;
-    if (photoOnly) {
-      const route = resolveQuestionJudgeRoute(probe, subjectProfile);
-      if (!IMAGE_CONSUMING_JUDGE_ROUTES.has(route)) {
-        throw new ApiError(
-          'unsupported_judge_route',
-          `photo-only answer but probe ${probeQuestionId} routes to text-only judge '${route}' (fail-closed: probe stays active)`,
-          422,
-        );
-      }
+    const [issuance] = await db
+      .select()
+      .from(assessment_issuance)
+      .where(eq(assessment_issuance.issuance_id, `iss_probe_${probeQuestionId}`));
+    if (!issuance)
+      throw new ApiError('probe_not_issued', 'probe has no admitted frozen serve record', 409);
+    const [revision] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, issuance.revision_id));
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, probeQuestionId));
+    if (
+      !revision ||
+      revision.group_id !== probeQuestionId ||
+      lifecycle?.scoring_admission_state !== 'admitted' ||
+      lifecycle.suspended ||
+      lifecycle.withdrawn
+    ) {
+      throw new ApiError('not_admitted', 'probe is not available for automatic evaluation', 422);
     }
+    const slot = revision.response_spec.slots[0];
+    if (revision.response_spec.slots.length !== 1 || slot.kind !== 'open_response') {
+      throw new ApiError(
+        'unsupported_probe_contract',
+        'probe requires one frozen open response',
+        422,
+      );
+    }
+    const evidence = await freezeImageEvidence(db, answerImageRefs);
+    const responseSet = {
+      entries: [{ slot_id: slot.slot_id, kind: 'open' as const, text_md: answerMd, evidence }],
+    };
+    const responseKey = canonicalHash(responseSet);
 
     // YUK-691 — close both amplification dimensions immediately before the paid
     // call: the process-wide AI budget bounds bursts across probes, while the
@@ -264,43 +205,57 @@ export async function POST(req: Request, params: Record<string, string>): Promis
       });
     }
     try {
-      // Charge the shared budget only after this request owns the paid slot.
-      checkRateLimit();
-      const invoked = await evaluateAttempt({
-        entry: 'conjecture_probe',
-        legacy: {
-          db,
-          question: probe,
-          answer_md: answerMd,
-          student_image_refs: answerImageRefs,
-          subjectProfile,
+      const original = await previewFormalAttempt(
+        db,
+        'conjecture_probe',
+        probeQuestionId,
+        {
+          issuance_id: issuance.issuance_id,
+          evaluation_group_id: `probe:${probeQuestionId}:${responseKey}`,
+          idempotency_key: responseKey,
+          response_set: responseSet,
+          group_evidence: [],
         },
-      });
+        req.signal,
+      );
+      const invoked = original.candidate;
       const judgeResult = invoked.result;
+      if (
+        invoked.evaluation.record.provenance?.source !== 'automatic' ||
+        invoked.evaluation.record.provenance.assisted
+      ) {
+        throw new ApiError(
+          'probe_response_ungradable',
+          'probe evidence must be an unassisted automatic evaluation',
+          422,
+        );
+      }
 
       let outcome: 0 | 1 | null = mapGradingOutcome(judgeResult.coarse_outcome);
+      const unit = invoked.evaluation.record.unit_results[0];
+      const responseJudgement = responseAwareProbeSpec.success
+        ? (unit?.probe_judgement ?? null)
+        : null;
+      if (responseAwareProbeSpec.success && !responseJudgement) {
+        throw new ApiError(
+          'probe_response_ungradable',
+          'frozen signature judgement is missing',
+          422,
+        );
+      }
+      if (responseJudgement && !responseJudgement.gradable) {
+        throw new ApiError(
+          'probe_response_ungradable',
+          `probe ${probeQuestionId} response could not be reconciled with its declared signatures (${responseJudgement.reason_code}); no conjecture evidence was written`,
+          422,
+        );
+      }
       if (outcome === null) {
         // Fail-closed: NO probe_result written. The probe stays served-but-unanswered
         // (its slot is not consumed) so the owner can re-answer or resolve via admin.
         throw new ApiError(
           'unsupported_judge_route',
           `judge returned coarse_outcome='${judgeResult.coarse_outcome}' for probe ${probeQuestionId} (fail-closed: no probe_result written; probe stays active)`,
-          422,
-        );
-      }
-      const signatureMatch = ConjectureProbeSignatureMatch.safeParse(
-        judgeResult.evidence_json.probe_signature_match,
-      );
-      const responseJudgement = responseAwareProbeSpec.success
-        ? classifyConjectureProbeResponseFromJudgeMatch(
-            judgeResult.coarse_outcome,
-            signatureMatch.success ? signatureMatch.data : undefined,
-          )
-        : null;
-      if (responseJudgement && !responseJudgement.gradable) {
-        throw new ApiError(
-          'probe_response_ungradable',
-          `probe ${probeQuestionId} response could not be reconciled with its declared signatures (${responseJudgement.reason_code}); no conjecture evidence was written`,
           422,
         );
       }
@@ -319,7 +274,12 @@ export async function POST(req: Request, params: Record<string, string>): Promis
         outcome,
         answer_md: answerMd,
         answer_image_refs: answerImageRefs,
-        taskRunId: invoked.task_run_id,
+        taskRunId: invoked.evaluation.record.run_refs[0],
+        assessment: {
+          issuance_id: issuance.issuance_id,
+          submission_id: original.submission.submission_id,
+          evaluation_id: invoked.evaluation.record.evaluation_id,
+        },
         response_judgement: responseJudgement,
       });
 

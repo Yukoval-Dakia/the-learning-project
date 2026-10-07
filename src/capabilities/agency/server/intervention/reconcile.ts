@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { type SQL, and, asc, eq, gt, or, sql } from 'drizzle-orm';
 import type { Job, JobWithMetadata } from 'pg-boss';
 import type { Db } from '@/db/client';
+import { withLearningStateLock } from '@/db/learning-state-lock';
 import { intervention } from '@/db/schema';
 import { eventCorrectionLockKey, eventCorrectionsGlobalLockKey } from '@/kernel/events';
 import { getRunningBoss } from '@/server/boss/client';
@@ -103,7 +104,7 @@ export async function recoverEligibleInterventionDiagnostics(
 
     for (const row of rows) {
       try {
-        const outcome = await db.transaction(async (tx) => {
+        const outcome = await withLearningStateLock(db, async (tx) => {
           await tx.execute(
             sql`SELECT pg_advisory_xact_lock(hashtextextended(${`intervention:${row.id}:${row.version}`}, 0))`,
           );

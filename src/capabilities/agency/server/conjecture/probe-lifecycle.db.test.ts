@@ -23,7 +23,7 @@ import {
   peekExistingProbeResult,
   serveProbeOnce,
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
-import { handleReviewDue } from '@/capabilities/practice/server/due-list';
+import { handleReviewDue } from '@/capabilities/practice/public';
 import { newId } from '@/core/ids';
 import type { ConjectureProbeResponseJudgementT } from '@/core/schema/conjecture-probe-response';
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';

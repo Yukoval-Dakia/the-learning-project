@@ -43,6 +43,7 @@ import { redactMigrationCapture, redactedFieldPolicy } from '@/core/migration/re
 import type { MigrationCapture, MigrationManifest } from '@/core/migration/types';
 import * as schema from '@/db/schema';
 import { captureMigrationCheckpoint } from '@/server/migration/capture';
+import { migrationTargetSsl } from './lib/migration-target-ssl';
 
 export const TOOL_VERSION = '1.0.0';
 
@@ -88,10 +89,8 @@ export function describeTarget(url: string): string {
 }
 
 function buildDb(targetUrl: string) {
-  const isLocal = /localhost|127\.0\.0\.1/.test(targetUrl);
-  const hasSslDisable = /[?&]sslmode=disable\b/.test(targetUrl);
   const client = postgres(targetUrl, {
-    ssl: isLocal || hasSslDisable ? false : 'require',
+    ssl: migrationTargetSsl(targetUrl),
     max: 2,
   });
   return { db: drizzle(client, { schema }), close: () => client.end() };

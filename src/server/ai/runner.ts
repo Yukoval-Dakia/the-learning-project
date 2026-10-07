@@ -12,7 +12,8 @@
 //   - `pi:` session cursors + durable-turn replay (session resume)
 //
 // Provider wire protocols are the adapter's business (anthropic-messages for
-// xiaomi/zhipu/anthropic/anthropic-sub, openai-* for opencode-go); the runner
+// Anthropic for Claude, OpenAI Completions for Xiaomi/Z.AI, and the native
+// API mix for opencode-go); the runner
 // only ever sees normalized frames.
 //
 // Memory-layer extensibility:
@@ -23,9 +24,16 @@
 
 import { createHash } from 'node:crypto';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
-import { type TaskKind, tasks } from '@/ai/registry';
-import { getTaskSystemPrompt } from '@/ai/task-prompts';
-import type { TaskDefinition } from '@/ai/task-spec';
+import { installTaskOperationObserver } from '@/ai/task-observation';
+import type { TaskBudget, TaskDefinition } from '@/ai/task-spec';
+import {
+  type TaskBudgetOverride,
+  type TaskKind,
+  getLearnerLocale,
+  getTaskSystemPrompt,
+  resolveTaskBudget,
+  tasks,
+} from '@/capabilities/task-registry';
 import type { Db } from '@/db/client';
 import type { SubjectProfile } from '@/subjects/profile';
 import { resolveProviderSessionDeadlineAt } from '../http/provider-session-deadline';
@@ -44,6 +52,7 @@ import {
   type RunnerMessage,
   resolveExecutionAdapter,
 } from './execution-adapter';
+import { type TraceContent, traceMetadata, traceOperation } from './laminar-tracing';
 import { logMissingToolMountsWarning } from './log';
 import type { PiHookBridge } from './pi-hooks';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission';
@@ -70,6 +79,24 @@ import type {
 import { isSpawnToolName } from './spawn-contract';
 import type { PiSubagentSpec } from './tools/pi-subagent';
 import type { PiToolMount } from './tools/pi-tools';
+
+// The runner is loaded before capability execution. Keep the shared observation
+// contract backend-free while using the same async trace context as task/model spans.
+installTaskOperationObserver((observation, execute) =>
+  traceOperation(
+    observation.taskKind === 'CopilotTask'
+      ? observation.operation === 'run'
+        ? 'copilot.run'
+        : 'copilot.finalize'
+      : 'task.run',
+    {
+      task_kind: observation.taskKind,
+      task_run_id: observation.taskRunId,
+      logical_run_id: observation.logicalRunId,
+    },
+    () => execute((business_outcome) => traceMetadata({ business_outcome })),
+  ),
+);
 
 // ============================================================================
 // Public surface
@@ -137,6 +164,8 @@ export interface TaskMiddleware {
 
 export interface RunTaskCtx {
   db: Db;
+  /** Per-run capability-owned sanitized content; omitted runs export metadata only. */
+  laminarContent?: TraceContent<RunTaskResult>;
   /** Caller-owned cancellation propagated into the SDK run lifecycle. */
   signal?: AbortSignal;
   /**
@@ -194,6 +223,8 @@ export interface RunTaskCtx {
   allowedTools?: string[];
   /** Subject context for prompts that are rendered from SubjectProfile. */
   subjectProfile?: SubjectProfile;
+  /** Stable prompt language for this execution, including retries and provenance. */
+  learnerLocale?: 'zh-CN' | 'en';
   /**
    * ADR-0060 compaction: the bounded session context the adapter's
    * transformContext re-injects after a budget prune. Never contains raw
@@ -230,19 +261,14 @@ export interface RunTaskCtx {
    * below cloudflared idle-100s. A durable pg-boss run needs a much larger
    * ceiling but MUST NOT mutate the shared registry default (YUK-458 revert lesson:
    * a raised inline budget only turned error_max_turns into an inline-request abort).
-   * NARROW: only `maxIterations` (→ runner maxTurns) and `timeoutMs` (→ the abort timer).
-   * The THIRD durable knob — the tool-call ceiling (maxToolCalls) — is NOT here: it
-   * lives in the ContextBudgetTracker (budgets.ts, surface-keyed) and is overridden
-   * at the handler when constructing the tracker (MF-A). OMITTED (the default) ⇒
-   * buildQueryOptions / the runTask and collecting lifecycle timers read
-   * `def.budget` verbatim ⇒
-   * byte-identical to pre-seam (zero regression); only the copilot_run handler sets
-   * it. It is consumed into maxTurns / the timer and is never an Options key.
+   * Overrides the configured task budget per field. Each entry point snapshots
+   * the budget before middleware/admission/startup; retries retain that snapshot.
+   * Tool-call limits remain owned by ContextBudgetTracker, not this seam.
    * `maxIterations: 'unbounded'` removes the agentic-turn ceiling entirely —
    * the pi lane then mounts no `shouldStopAfterTurn` (durable copilot runs are
    * turn-uncapped; only Stop/cancellation/timeoutMs still end the loop).
    */
-  budgetOverride?: { maxIterations?: number | 'unbounded'; timeoutMs?: number };
+  budgetOverride?: TaskBudgetOverride;
   /**
    * Optional caller-owned correlation id shared with an in-process MCP server.
    * Omitted callers keep runner-generated ids. `runTask` uses it for the first
@@ -472,6 +498,7 @@ function buildQueryOptions(
   // single resolution per attempt keeps the retry loop's env/model provably
   // per-attempt-consistent.
   resolved: ResolvedProvider,
+  budget: TaskBudget,
 ): Options {
   // The registry map's value type is the union of every spec's inferred literal
   // shape. Optional fields (reasoningEffort) only exist on declaring members, so
@@ -481,15 +508,12 @@ function buildQueryOptions(
   const declaredDef: TaskDefinition = def;
   const options: Options = {
     model: resolved.model,
-    systemPrompt: getTaskSystemPrompt(kind, ctx.subjectProfile),
+    systemPrompt: getTaskSystemPrompt(kind, ctx.subjectProfile, ctx.learnerLocale),
     abortController,
     tools: ctx.allowedTools ?? def.allowedTools,
     // YUK-575 (N5) — durable copilot run overrides the turn ceiling per-call;
     // 'unbounded' removes it entirely (pi mounts no shouldStopAfterTurn).
-    maxTurns:
-      ctx.budgetOverride?.maxIterations === 'unbounded'
-        ? undefined
-        : (ctx.budgetOverride?.maxIterations ?? def.budget.maxIterations) || 1,
+    maxTurns: budget.maxIterations === 'unbounded' ? undefined : budget.maxIterations || 1,
   };
   // YUK-923 — reasoning effort tier: per-run modelBinding wins over the
   // task-kind declaration; unset → the provider default applies.
@@ -592,6 +616,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   notifySessionId?: boolean;
   shouldRecordToolCall: (block: SDKToolUseBlock) => boolean;
   onAssistant?: (msg: SDKAssistantMessage) => Promise<void> | void;
+  onTextDelta?: (text: string) => Promise<void> | void;
   onToolUse?: (block: SDKToolUseBlock) => void;
   onSuccess?: (msg: SDKSuccessResultMessage) => Promise<void> | void;
   onApiError?: (msg: SDKSuccessResultMessage) => void;
@@ -604,6 +629,10 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
   let stepStartTime = Date.now();
 
   for await (const msg of args.query) {
+    if (msg.type === 'text_delta') {
+      if (!args.lifecycle.abortController.signal.aborted) await args.onTextDelta?.(msg.text);
+      continue;
+    }
     if (args.notifySessionId && msg.type === 'system' && msg.subtype === 'init') {
       await notifySdkSessionId(args.ctx, msg);
     }
@@ -702,6 +731,7 @@ async function consumeProviderAttempt<TResult extends RunTaskResult>(args: {
 async function runTaskAttempt(args: {
   kind: TaskKind;
   actualInput: unknown;
+  budget: TaskBudget;
   ctx: RunTaskCtx;
   lifecycle: AiRunLifecycle<RunTaskResult>;
   /** Effective binding after the env rollout pin — resolved once by the caller. */
@@ -709,7 +739,7 @@ async function runTaskAttempt(args: {
   onProviderQueryStarted?: () => Promise<void>;
   warnMissingMcp?: boolean;
 }): Promise<RunTaskResult> {
-  const { kind, actualInput, ctx, lifecycle, modelBinding } = args;
+  const { kind, actualInput, budget, ctx, lifecycle, modelBinding } = args;
 
   let resultText = '';
   // Purely local preparation can perform cold-start filesystem work (notably
@@ -718,7 +748,13 @@ async function runTaskAttempt(args: {
   // heartbeat beyond its DB-derived deadline even though no provider work has
   // started yet.
   const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
-  const callOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
+  const callOptions = buildQueryOptions(
+    kind,
+    ctx,
+    lifecycle.abortController,
+    lifecycle.resolved,
+    budget,
+  );
   const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
     if (args.warnMissingMcp) {
       logMissingToolMountsWarning({
@@ -786,12 +822,21 @@ async function runTaskAttempt(args: {
 export async function runTask(
   kind: string,
   input: unknown,
-  ctx: RunTaskCtx,
+  initialCtx: RunTaskCtx,
 ): Promise<RunTaskResult> {
+  const ctx = { ...initialCtx, learnerLocale: initialCtx.learnerLocale ?? getLearnerLocale() };
+  return traceOperation('task.run', { task_kind: kind }, () => runTaskImpl(kind, input, ctx), {
+    signal: ctx.signal,
+    content: ctx.laminarContent,
+  });
+}
+
+async function runTaskImpl(kind: string, input: unknown, ctx: RunTaskCtx): Promise<RunTaskResult> {
   if (!isKnownTask(kind)) {
     throw new Error(`Unknown task kind: ${kind}`);
   }
   assertChatExecutionKind(kind);
+  const budget = resolveTaskBudget(kind, ctx.budgetOverride);
   const def = tasks[kind];
 
   // beforeRun runs exactly once, OUTSIDE the attempt loop — every attempt sees
@@ -803,14 +848,14 @@ export async function runTask(
   const modelBinding = ctx.modelBinding;
   // Narrow pass, not {...ctx}: RunTaskCtx consumers may define lazy getters
   // (allowedTools et al.) whose evaluation must stay single-shot and ordered.
-  const maxAttempts = maxLifecycleAttempts(kind, {
+  const maxAttempts = maxLifecycleAttempts(budget.transientRetries, {
     enableTransientRetry: ctx.enableTransientRetry,
     override: ctx.override,
     modelBinding,
   });
   const firstAttemptStartedAt = Date.now();
   const retryingSyncDeadlineAt =
-    maxAttempts > 1 ? firstAttemptStartedAt + RETRY_ELAPSED_CAP_MS + def.budget.timeout : undefined;
+    maxAttempts > 1 ? firstAttemptStartedAt + RETRY_ELAPSED_CAP_MS + budget.timeout : undefined;
   const callerProviderSessionDeadlineAt = resolveProviderSessionDeadlineAt(
     ctx.providerSessionDeadlineAt,
   );
@@ -827,7 +872,7 @@ export async function runTask(
     const lifecycle = createRunLifecycle<RunTaskResult>({
       db: ctx.db,
       kind,
-      timeoutMs: ctx.budgetOverride?.timeoutMs ?? def.budget.timeout,
+      timeoutMs: budget.timeout,
       abortController: ctx.lifecycleAbortController,
       override: ctx.override,
       modelBinding,
@@ -847,21 +892,24 @@ export async function runTask(
         : undefined,
     });
     try {
-      return await runTaskAttempt({
-        kind,
-        actualInput,
-        ctx,
-        lifecycle,
-        modelBinding,
-        // needsToolCall with no pi-visible mounts runs tool-less — warn once.
-        warnMissingMcp: attempt === 1 && def.needsToolCall && !ctx.piToolMounts?.length,
-        onProviderQueryStarted: retrySource
-          ? async () => {
-              await retrySource?.markRetried();
-              retrySource = undefined;
-            }
-          : undefined,
-      });
+      return await lifecycle.withTracing(() =>
+        runTaskAttempt({
+          kind,
+          actualInput,
+          budget,
+          ctx,
+          lifecycle,
+          modelBinding,
+          // needsToolCall with no pi-visible mounts runs tool-less — warn once.
+          warnMissingMcp: attempt === 1 && def.needsToolCall && !ctx.piToolMounts?.length,
+          onProviderQueryStarted: retrySource
+            ? async () => {
+                await retrySource?.markRetried();
+                retrySource = undefined;
+              }
+            : undefined,
+        }),
+      );
     } catch (err) {
       // Admission timeout/rejection happens before durable model-attempt start.
       // It has an admission row but no YUK-841 cost attempt and is never retried
@@ -872,6 +920,7 @@ export async function runTask(
         kind,
         taskRunId: lifecycle.taskRunId,
         aborted: lifecycle.aborted,
+        costUsd: lifecycle.costUsd,
       });
       lastErr = boundError;
       const retry = classifyLifecycleRetry({
@@ -923,17 +972,18 @@ export async function runAgentTask(
 // deltas to the body. Tool-use blocks land in tool_call_log per turn.
 // ============================================================================
 
-export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Response {
+export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskCtx): Response {
+  const ctx = { ...initialCtx, learnerLocale: initialCtx.learnerLocale ?? getLearnerLocale() };
   if (!isKnownTask(kind)) {
     throw new Error(`Unknown task kind: ${kind}`);
   }
   assertChatExecutionKind(kind);
-  const def = tasks[kind];
+  const budget = resolveTaskBudget(kind, ctx.budgetOverride);
   const modelBinding = ctx.modelBinding;
   const lifecycle = createRunLifecycle<RunTaskResult>({
     db: ctx.db,
     kind,
-    timeoutMs: def.budget.timeout,
+    timeoutMs: budget.timeout,
     abortController: ctx.lifecycleAbortController,
     override: ctx.override,
     modelBinding,
@@ -951,88 +1001,120 @@ export function streamTask(kind: string, input: unknown, ctx: StreamTaskCtx): Re
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const encoder = new TextEncoder();
-      let resultText = '';
-      let shouldClose = true;
+      await traceOperation(
+        'task.run',
+        { task_kind: kind },
+        () =>
+          lifecycle.withTracing(async () => {
+            const encoder = new TextEncoder();
+            let resultText = '';
+            let shouldClose = true;
 
-      try {
-        const actualInput = ctx.middleware?.beforeRun
-          ? await ctx.middleware.beforeRun(kind, input, ctx)
-          : input;
-        const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
-        const callOptions = buildQueryOptions(
-          kind,
-          ctx,
-          lifecycle.abortController,
-          lifecycle.resolved,
-        );
-        const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
-          await consumeProviderAttempt({
-            query: q,
-            kind,
-            ctx,
-            lifecycle,
-            shouldRecordToolCall: () => ctx.autoLogToolCalls !== false,
-            onAssistant: (msg) => {
-              const text = extractAssistantText(msg);
-              if (text) {
-                controller.enqueue(encoder.encode(text));
-                resultText += text;
+            try {
+              const actualInput = ctx.middleware?.beforeRun
+                ? await ctx.middleware.beforeRun(kind, input, ctx)
+                : input;
+              const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
+              const callOptions = buildQueryOptions(
+                kind,
+                ctx,
+                lifecycle.abortController,
+                lifecycle.resolved,
+                budget,
+              );
+              const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
+                await consumeProviderAttempt({
+                  query: q,
+                  kind,
+                  ctx,
+                  lifecycle,
+                  shouldRecordToolCall: () => ctx.autoLogToolCalls !== false,
+                  onTextDelta: (text) => {
+                    controller.enqueue(encoder.encode(text));
+                    resultText += text;
+                  },
+                  onAssistant: (msg) => {
+                    if (
+                      lifecycle.abortController.signal.aborted ||
+                      msg.text_streamed ||
+                      msg.parent_tool_use_id != null
+                    )
+                      return;
+                    const text = extractAssistantText(msg);
+                    if (text) {
+                      controller.enqueue(encoder.encode(text));
+                      resultText += text;
+                    }
+                  },
+                  abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted with no terminal result`,
+                });
+              };
+              await withPreparedExecutionQuery(
+                lifecycle,
+                modelBinding,
+                actualInput,
+                promptText,
+                callOptions,
+                consumePreparedQuery,
+                ctx.beforeProviderQuery,
+                ctx,
+              );
+
+              const result: RunTaskResult = {
+                task_run_id: lifecycle.taskRunId,
+                text: resultText,
+                finishReason: lifecycle.finishReason,
+                usage: lifecycle.usage,
+                cost_usd: lifecycle.costUsd,
+                cost_basis: lifecycle.costBasis,
+                cost_ref: lifecycle.costRef,
+              };
+              await lifecycle.finishSuccess(result);
+              return result;
+            } catch (error) {
+              if (lifecycle.started) {
+                const boundError = bindAgentRunError({
+                  error,
+                  kind,
+                  taskRunId: lifecycle.taskRunId,
+                  aborted: lifecycle.aborted,
+                  costUsd: lifecycle.costUsd,
+                });
+                const settled = await lifecycle.finishFailure(boundError);
+                if (!settled) {
+                  // Assistant bytes may already have reached a live reader and cannot be
+                  // retracted. Error the stream so the protocol cannot still complete
+                  // cleanly while its durable attempt truth remains unsettled.
+                  shouldClose = false;
+                  if (!clientCancelled) controller.error(boundError);
+                  return;
+                }
               }
-            },
-            abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted with no terminal result`,
-          });
-        };
-        await withPreparedExecutionQuery(
-          lifecycle,
-          modelBinding,
-          actualInput,
-          promptText,
-          callOptions,
-          consumePreparedQuery,
-          ctx.beforeProviderQuery,
-          ctx,
-        );
-
-        const result: RunTaskResult = {
-          task_run_id: lifecycle.taskRunId,
-          text: resultText,
-          finishReason: lifecycle.finishReason,
-          usage: lifecycle.usage,
-          cost_usd: lifecycle.costUsd,
-          cost_basis: lifecycle.costBasis,
-          cost_ref: lifecycle.costRef,
-        };
-        await lifecycle.finishSuccess(result);
-      } catch (error) {
-        if (lifecycle.started) {
-          const boundError = bindAgentRunError({
-            error,
-            kind,
-            taskRunId: lifecycle.taskRunId,
-            aborted: lifecycle.aborted,
-          });
-          const settled = await lifecycle.finishFailure(boundError);
-          if (!settled) {
-            // Assistant bytes may already have reached a live reader and cannot be
-            // retracted. Error the stream so the protocol cannot still complete
-            // cleanly while its durable attempt truth remains unsettled.
-            shouldClose = false;
-            if (!clientCancelled) controller.error(boundError);
-            return;
-          }
-        }
-        if (clientCancelled) {
-          shouldClose = false;
-          return;
-        }
-        const message =
-          error instanceof Error ? `[streamTask] ${error.message}` : '[streamTask] unknown error';
-        controller.enqueue(encoder.encode(`\n\n${message}\n`));
-      } finally {
-        lifecycle.dispose();
-        if (shouldClose && !clientCancelled) controller.close();
-      }
+              if (clientCancelled) {
+                shouldClose = false;
+                return;
+              }
+              const message =
+                error instanceof Error
+                  ? `[streamTask] ${error.message}`
+                  : '[streamTask] unknown error';
+              controller.enqueue(encoder.encode(`\n\n${message}\n`));
+            } finally {
+              lifecycle.dispose();
+              if (shouldClose && !clientCancelled) controller.close();
+            }
+          }),
+        {
+          signal: lifecycle.abortController.signal,
+          outcome: (result) => (result ? 'success' : 'error'),
+          content: ctx.laminarContent
+            ? {
+                input: ctx.laminarContent.input,
+                output: (result) => (result ? ctx.laminarContent?.output?.(result) : undefined),
+              }
+            : undefined,
+        },
+      );
     },
     cancel() {
       clientCancelled = true;
@@ -1059,9 +1141,9 @@ function extractAssistantText(msg: SDKAssistantMessage): string {
 
 // ============================================================================
 // streamTaskCollecting — YUK-266 (C1). A collecting variant of streamTask:
-// streams text deltas to an `onDelta(chunk)` callback (one call per
-// assistant-message text chunk — the same honest per-model-turn granularity
-// streamTask uses, since buildQueryOptions does NOT set includePartialMessages),
+// streams root Pi text_delta frames to `onDelta(chunk)` as the provider emits them.
+// Complete assistant frames retain usage/tool collection without re-emitting text.
+// Adapters/fixtures without partial frames fall back to completed-message text.
 // then RESOLVES the full RunTaskResult (text + task_run_id + usage + cost). Unlike
 // streamTask (which returns a text-only Response and discards the final metadata),
 // the Copilot S3a turn-persistence contract needs the full reply text AND the real
@@ -1088,6 +1170,25 @@ export interface StreamCollectResult extends RunTaskResult {
 export async function streamTaskCollecting(
   kind: string,
   input: unknown,
+  initialCtx: StreamTaskCtx,
+  onDelta: (text: string) => void,
+): Promise<StreamCollectResult> {
+  const ctx = { ...initialCtx, learnerLocale: initialCtx.learnerLocale ?? getLearnerLocale() };
+  return traceOperation(
+    'task.run',
+    { task_kind: kind },
+    () => streamTaskCollectingImpl(kind, input, ctx, onDelta),
+    {
+      signal: ctx.signal,
+      content: ctx.laminarContent,
+      outcome: (result) => (result.partial ? 'error' : 'success'),
+    },
+  );
+}
+
+async function streamTaskCollectingImpl(
+  kind: string,
+  input: unknown,
   ctx: StreamTaskCtx,
   onDelta: (text: string) => void,
 ): Promise<StreamCollectResult> {
@@ -1095,12 +1196,12 @@ export async function streamTaskCollecting(
     throw new Error(`Unknown task kind: ${kind}`);
   }
   assertChatExecutionKind(kind);
-  const def = tasks[kind];
+  const budget = resolveTaskBudget(kind, ctx.budgetOverride);
   const modelBinding = ctx.modelBinding;
   const lifecycle = createRunLifecycle<StreamCollectResult>({
     db: ctx.db,
     kind,
-    timeoutMs: ctx.budgetOverride?.timeoutMs ?? def.budget.timeout,
+    timeoutMs: budget.timeout,
     abortController: ctx.lifecycleAbortController,
     override: ctx.override,
     modelBinding,
@@ -1117,104 +1218,123 @@ export async function streamTaskCollecting(
   let resultText = '';
   let terminalText: string | undefined;
 
-  try {
-    const actualInput = ctx.middleware?.beforeRun
-      ? await ctx.middleware.beforeRun(kind, input, ctx)
-      : input;
-    const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
-    const callOptions = buildQueryOptions(kind, ctx, lifecycle.abortController, lifecycle.resolved);
-    const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
-      await consumeProviderAttempt({
-        query: q,
+  return lifecycle.withTracing(async () => {
+    try {
+      const actualInput = ctx.middleware?.beforeRun
+        ? await ctx.middleware.beforeRun(kind, input, ctx)
+        : input;
+      const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
+      const callOptions = buildQueryOptions(
         kind,
         ctx,
-        lifecycle,
-        notifySessionId: true,
-        shouldRecordToolCall: () => ctx.autoLogToolCalls !== false,
-        onAssistant: (msg) => {
-          const text = extractAssistantText(msg);
-          if (text) {
+        lifecycle.abortController,
+        lifecycle.resolved,
+        budget,
+      );
+      const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
+        await consumeProviderAttempt({
+          query: q,
+          kind,
+          ctx,
+          lifecycle,
+          notifySessionId: true,
+          shouldRecordToolCall: () => ctx.autoLogToolCalls !== false,
+          onTextDelta: (text) => {
             onDelta(text);
             resultText += text;
-          }
-        },
-        onSuccess: (msg) => {
-          terminalText = msg.result;
-        },
-        onToolUse: ctx.onToolUse
-          ? (block) => {
-              ctx.onToolUse?.({
-                toolName: block.name,
-                input: (block.input ?? {}) as Record<string, unknown>,
-                toolUseId: block.id,
-              });
+          },
+          onAssistant: (msg) => {
+            if (
+              lifecycle.abortController.signal.aborted ||
+              msg.text_streamed ||
+              msg.parent_tool_use_id != null
+            )
+              return;
+            const text = extractAssistantText(msg);
+            if (text) {
+              onDelta(text);
+              resultText += text;
             }
-          : undefined,
-        onApiError: (msg) => {
-          console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {
-            event: 'task_run_success_with_error_flag',
-            task_run_id: lifecycle.taskRunId,
-            kind,
-            api_error_status: msg.api_error_status ?? null,
-          });
-        },
-        apiErrorMessages: (msg) => (msg.result ? [msg.result] : []),
-        abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted with no terminal result`,
-      });
-    };
-    await withPreparedExecutionQuery(
-      lifecycle,
-      modelBinding,
-      actualInput,
-      promptText,
-      callOptions,
-      consumePreparedQuery,
-      ctx.beforeProviderQuery,
-      ctx,
-    );
+          },
+          onSuccess: (msg) => {
+            terminalText = msg.result;
+          },
+          onToolUse: ctx.onToolUse
+            ? (block) => {
+                ctx.onToolUse?.({
+                  toolName: block.name,
+                  input: (block.input ?? {}) as Record<string, unknown>,
+                  toolUseId: block.id,
+                });
+              }
+            : undefined,
+          onApiError: (msg) => {
+            console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {
+              event: 'task_run_success_with_error_flag',
+              task_run_id: lifecycle.taskRunId,
+              kind,
+              api_error_status: msg.api_error_status ?? null,
+            });
+          },
+          apiErrorMessages: (msg) => (msg.result ? [msg.result] : []),
+          abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted with no terminal result`,
+        });
+      };
+      await withPreparedExecutionQuery(
+        lifecycle,
+        modelBinding,
+        actualInput,
+        promptText,
+        callOptions,
+        consumePreparedQuery,
+        ctx.beforeProviderQuery,
+        ctx,
+      );
 
-    const result: StreamCollectResult = {
-      task_run_id: lifecycle.taskRunId,
-      text: resultText,
-      ...(terminalText !== undefined ? { terminalText } : {}),
-      finishReason: lifecycle.finishReason,
-      usage: lifecycle.usage,
-      cost_usd: lifecycle.costUsd,
-      cost_basis: lifecycle.costBasis,
-      cost_ref: lifecycle.costRef,
-    };
-    await lifecycle.finishSuccess(result);
-    return result;
-  } catch (error) {
-    if (!lifecycle.started) throw error;
-    const successSettlementFailed = error instanceof AttemptSettlementError;
-    const boundError = bindAgentRunError({
-      error,
-      kind,
-      taskRunId: lifecycle.taskRunId,
-      aborted: lifecycle.aborted,
-    });
-    const settled = await lifecycle.finishFailure(boundError);
-    // A provider-success payload whose success projection failed must never be
-    // returned as graceful partial text, even if the bounded fallback records
-    // the application attempt as failure successfully. Admission fencing is
-    // likewise a fail-closed control-plane verdict, not an SDK stream failure
-    // that Copilot may persist and present as a graceful partial reply.
-    if (!settled || successSettlementFailed || boundError.subtype === 'provider_admission') {
-      throw boundError;
+      const result: StreamCollectResult = {
+        task_run_id: lifecycle.taskRunId,
+        text: resultText,
+        ...(terminalText !== undefined ? { terminalText } : {}),
+        finishReason: lifecycle.finishReason,
+        usage: lifecycle.usage,
+        cost_usd: lifecycle.costUsd,
+        cost_basis: lifecycle.costBasis,
+        cost_ref: lifecycle.costRef,
+      };
+      await lifecycle.finishSuccess(result);
+      return result;
+    } catch (error) {
+      if (!lifecycle.started) throw error;
+      const successSettlementFailed = error instanceof AttemptSettlementError;
+      const boundError = bindAgentRunError({
+        error,
+        kind,
+        taskRunId: lifecycle.taskRunId,
+        aborted: lifecycle.aborted,
+        costUsd: lifecycle.costUsd,
+      });
+      const settled = await lifecycle.finishFailure(boundError);
+      // A provider-success payload whose success projection failed must never be
+      // returned as graceful partial text, even if the bounded fallback records
+      // the application attempt as failure successfully. Admission fencing is
+      // likewise a fail-closed control-plane verdict, not an SDK stream failure
+      // that Copilot may persist and present as a graceful partial reply.
+      if (!settled || successSettlementFailed || boundError.subtype === 'provider_admission') {
+        throw boundError;
+      }
+      return {
+        task_run_id: lifecycle.taskRunId,
+        text: resultText,
+        finishReason: 'error',
+        usage: lifecycle.usage,
+        cost_usd: lifecycle.costUsd,
+        cost_basis: lifecycle.costBasis,
+        cost_ref: lifecycle.costRef,
+        partial: true,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      lifecycle.dispose();
     }
-    return {
-      task_run_id: lifecycle.taskRunId,
-      text: resultText,
-      finishReason: 'error',
-      usage: lifecycle.usage,
-      cost_usd: lifecycle.costUsd,
-      cost_basis: lifecycle.costBasis,
-      cost_ref: lifecycle.costRef,
-      partial: true,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  } finally {
-    lifecycle.dispose();
-  }
+  });
 }

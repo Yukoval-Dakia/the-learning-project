@@ -34,10 +34,17 @@
  * YUK-365 (deferred to call time, not validated here).
  */
 
-import type { Provider } from '@/ai/registry';
+import type { Provider, TaskKind } from '@/capabilities/task-registry';
 import { getLaneOverride } from '@/core/config/store';
 import { resolveModelProfile } from '@/server/ai/model-profiles';
 import { ANTHROPIC_SUB_DEFAULT_MODEL, isOauthProvider } from '@/server/ai/providers';
+
+/** Live consumers of the vision override; keep validation and read facts aligned. */
+export const VISION_JUDGE_TASK_KINDS = [
+  'StepsJudgeTask',
+  'MultimodalDirectJudgeTask',
+  'SourceGroundingVerifyTask',
+] as const satisfies readonly TaskKind[];
 
 /** Env var that names the provider for the two vision judges. Default UNSET. */
 export const VISION_JUDGE_PROVIDER_FLAG = 'VISION_JUDGE_PROVIDER';

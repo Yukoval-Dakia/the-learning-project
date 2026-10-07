@@ -26,7 +26,7 @@ import type { DependencySnapshot } from './audit-capability-boundaries';
 //      stay kind-branch-free, the central boss book stays housekeeping-only,
 //      the central events directory is transport/envelope only, and the
 //      central tools directory holds infrastructure only — no concrete tools;
-//   6. TaskSpec ownership census — exactly 51 supported TaskSpecs, each with one
+//   6. TaskSpec ownership census — exactly 55 supported TaskSpecs, each with one
 //      capability owner, ProfileCriticTask Ingestion-owned with its live CLI
 //      caller, no copied central TaskDef, no runtime task locator/discovery;
 //   7. DomainTool ownership — every registered tool has one owner, input/output
@@ -1287,7 +1287,7 @@ export function auditArchitectureDeepening(
 
 async function runCli(): Promise<void> {
   const { publicReadCycleCatalog } = await import('./capability-public-read-cycles.js');
-  const { taskCatalog } = await import('../src/ai/task-catalog.js');
+  const { taskCatalog } = await import('../src/capabilities/task-catalog.js');
   const { capabilities } = await import('../src/capabilities/index.js');
   const { auditTaskCensus, LIVE_NON_CALLER_CLASSIFICATIONS } = await import(
     './audit-task-census.js'
@@ -1408,10 +1408,11 @@ async function runCli(): Promise<void> {
     // YUK-1016: 51（+CauseCategoryProposeTask cause catalog 增长提议）。
     // YUK-376: 52（+ItemPriorLlasaTask LLaSA 学生模拟冷启锚 opt-in 变体）。
     // YUK-1049: 53（+JevScoringDecisionTask 首个 typed execution spec）。
-    expectedTaskCount: 53,
+    // YUK-1047: native frozen-rule pi task + frozen solve hint vision sibling → 55.
+    expectedTaskCount: 55,
     taskCensus: {
       catalogCount: census.catalogCount,
-      expectedCount: 53,
+      expectedCount: 55,
       errors: census.errors,
       profileCriticCallerPresent: census.profileCriticCaller !== null,
       forbiddenPatternViolations: scanForbiddenTaskCatalogPatterns(projectRoot).map(

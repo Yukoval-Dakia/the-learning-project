@@ -15,13 +15,14 @@
  * `final_prompt_md`），所以兼容；但**未来 UI** 渲染 block 列表时要同时处理两种形态，
  * 或派生 `structuredToPromptMarkdown(structured)` 作为统一展示源。
  */
+
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-
 // T-OC slice 1 (YUK-145, OC-3): generalized capture — outcome is a signal,
 // routed by enrollCapturedBlock instead of the old hardcoded
 // attempt(outcome='failure') + learning_record(kind='mistake'). See ADR-0024.
 import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
+import { canonicalHash } from '@/core/migration/canonical';
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { knowledge, learning_session, question, question_block } from '@/db/schema';
@@ -236,9 +237,11 @@ export async function completeIngestionImport(
       // enrollCapturedBlock attribution below.
       const blockKnowledgeIds = effectiveKnowledgeIds[blockIndex];
       let importedBlockId: string;
+      let importedVisualComplexity: string | null = null;
 
       if (block.block_id !== undefined) {
         importedBlockId = block.block_id;
+        importedVisualComplexity = sourceBlockRows.get(block.block_id)?.visual_complexity ?? null;
       } else {
         // Virtual card (merged or split): INSERT new question_block
         importedBlockId = createId();
@@ -250,6 +253,7 @@ export async function completeIngestionImport(
           : sourceRows.some((r) => r.visual_complexity === 'medium')
             ? 'medium'
             : 'low';
+        if (sourceRows.length > 0) importedVisualComplexity = visualComplexity;
         // YUK-221 (#919 review) — extraction order is authoritative (ordinal = true
         // reading position). This else-branch serves TWO block kinds, so the ordinal
         // source differs by which one we're inserting:
@@ -358,9 +362,47 @@ export async function completeIngestionImport(
       }
       // else: manual block (no source) — figures=[], structured=null (defaults)
 
-      const questionId = createId();
+      const pendingCaptures =
+        block.source_block_ids.length === 0
+          ? []
+          : await tx
+              .select()
+              .from(question)
+              .where(
+                and(
+                  sql`${question.metadata}->>'ingestion_session_id' = ${sessionId}`,
+                  sql`${question.metadata}->>'question_block_id' IN (${sql.join(
+                    block.source_block_ids.map((id) => sql`${id}`),
+                    sql`, `,
+                  )})`,
+                  sql`${question.metadata}->>'capture_block_version' IS NOT NULL`,
+                ),
+              );
+      const sourceRow = block.block_id ? sourceBlockRows.get(block.block_id) : undefined;
+      const reusable =
+        block.source_block_ids.length === 1 &&
+        sourceRow &&
+        (sourceRow.wrong_answer_md ?? '') === block.final_wrong_answer_md
+          ? pendingCaptures.find(
+              (row) =>
+                row.metadata?.capture_block_version === sourceRow.version &&
+                row.kind === block.question_kind &&
+                row.prompt_md === block.final_prompt_md &&
+                row.reference_md === block.final_reference_md &&
+                row.difficulty === block.difficulty &&
+                canonicalHash(row.knowledge_ids) === canonicalHash(blockKnowledgeIds) &&
+                canonicalHash(row.figures) === canonicalHash(importedFigures) &&
+                canonicalHash(row.image_refs) === canonicalHash(block.image_refs) &&
+                canonicalHash(row.structured) === canonicalHash(importedStructured),
+            )
+          : undefined;
+      const questionId = reusable?.id ?? createId();
       questionIds.push(questionId);
       const questionMetadata = {
+        ...(reusable?.metadata ?? {}),
+        ...(pendingCaptures.length > 0
+          ? { captured_original_question_ids: pendingCaptures.map((row) => row.id) }
+          : {}),
         // deprecated (M-1 / 2026-05-21): new code reads question.image_refs (first-class).
         // Kept for legacy reader compat; M3 后视使用情况移除。
         prompt_image_refs: block.image_refs,
@@ -369,34 +411,42 @@ export async function completeIngestionImport(
         ingestion_session_id: sessionId,
         question_block_id: importedBlockId,
       };
-      await tx.insert(question).values(
-        withAnswerClass({
-          id: questionId,
-          kind: block.question_kind,
-          prompt_md: block.final_prompt_md,
-          reference_md: block.final_reference_md,
-          knowledge_ids: blockKnowledgeIds,
-          difficulty: block.difficulty,
-          source: sessionEntrypoint,
-          draft_status: null,
-          variant_depth: 0,
-          figures: importedFigures,
-          image_refs: block.image_refs,
-          structured: importedStructured,
-          metadata: questionMetadata,
-          created_at: now,
-          updated_at: now,
-          version: 0,
-        }),
-      );
+      if (reusable) {
+        await tx
+          .update(question)
+          .set({ draft_status: null, metadata: questionMetadata, updated_at: now })
+          .where(eq(question.id, questionId));
+      } else {
+        await tx.insert(question).values(
+          withAnswerClass({
+            id: questionId,
+            kind: block.question_kind,
+            prompt_md: block.final_prompt_md,
+            reference_md: block.final_reference_md,
+            knowledge_ids: blockKnowledgeIds,
+            difficulty: block.difficulty,
+            visual_complexity: importedVisualComplexity,
+            source: sessionEntrypoint,
+            draft_status: null,
+            variant_depth: 0,
+            figures: importedFigures,
+            image_refs: block.image_refs,
+            structured: importedStructured,
+            metadata: questionMetadata,
+            created_at: now,
+            updated_at: now,
+            version: 0,
+          }),
+        );
 
-      // YUK-1043（复审裁决：可行写口即刻收敛）—— 导入题 INSERT 同事务铸首版
-      // revision（withheld —— 未核验；导入块的判分输入可契约化，无需等 cutover）。
-      await publishQuestionGroupFromRow(tx, {
-        rootId: questionId,
-        actorRef: 'import-completion:question',
-        now,
-      });
+        // YUK-1043（复审裁决：可行写口即刻收敛）—— 导入题 INSERT 同事务铸首版
+        // revision（withheld —— 未核验；导入块的判分输入可契约化，无需等 cutover）。
+        await publishQuestionGroupFromRow(tx, {
+          rootId: questionId,
+          actorRef: 'import-completion:question',
+          now,
+        });
+      }
 
       // T-OC slice 1 (YUK-145, OC-3): generalized capture. The capture's
       // `outcome` is a SIGNAL routed by enrollCapturedBlock — failure → attempt

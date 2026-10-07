@@ -1,3 +1,6 @@
+import { activateSubmissionCandidate, evaluateSubmission } from '../judge/evaluate-submission';
+import { recordAssistanceExposure } from './assistance';
+import { commitFormalAttempt, previewFormalAttempt } from './attempt';
 // YUK-1052 — issueAssessment / saveResponseDraft / saveSubmission DB 测试
 //（db 分区；testcontainer + resetDb）。断言契约：
 //   (1) 发题绑定不可变 revision/part/材料/呈现顺序（preselected≠issued）；显式
@@ -9,26 +12,49 @@
 //   (5) 组行锁 + head 锚定第一份提交（多提交组 head 不重锚）。
 
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
-
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { canonicalHash } from '@/core/migration/canonical';
 import type { ResponseSetT } from '@/core/schema/assessment';
 import {
   assessment_issuance,
   assessment_response_draft,
   assessment_submission,
+  evaluation,
   evaluation_effective_head,
   evaluation_group,
+  event,
+  learning_record,
+  learning_session,
+  mastery_state,
+  material_fsrs_state,
   question,
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
+import { getFailureAttemptById, getFailureAttempts } from '@/kernel/read-models/failure-attempts';
+import {
+  getQuestionAttemptOutcomeCounts,
+  getQuestionTimeline,
+} from '@/kernel/read-models/question-activity';
 import {
   type NormalizableQuestionRow,
+  contractIntegrityDigest,
   normalizeQuestionRowToContract,
 } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
+import { Tutor } from '@/server/session';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { POST as previewAdvice } from '../../api/advice';
+import { createAppeal } from '../../api/appeal';
+import { revealStudyReference } from '../../api/assessment-route';
+import { AttemptResponseSchema } from '../../api/contracts';
+import { GET as questionDetail } from '../../api/question-detail';
+import { createSolveSubmissionResource } from '../../api/resource-routes';
+import { createAttempt } from '../../api/submit';
+import { handleRejudge } from '../../jobs/rejudge';
+import { planSolveHint, startSolveSession } from '../solve-session';
 import { issueAssessment } from './issue';
+import { revealFrozenStudyReference } from './study-context';
 import {
   getIssuanceState,
   listResponseDraftsByGroup,
@@ -75,12 +101,26 @@ interface Published {
 /** 种子 + 发布 admitted 单题组，返回发题/作答所需的真实坐标。 */
 async function publishAdmitted(
   qid: string,
-  opts?: { claimPolicy?: 'one_time' | 'unbounded' },
+  opts?: { claimPolicy?: 'one_time' | 'unbounded'; referenceOnly?: boolean },
 ): Promise<Published> {
   const db = testDb();
   await seedQuestion(qid);
   const [row] = await db.select().from(question).where(eq(question.id, qid)).limit(1);
   const n = normalizeQuestionRowToContract(row as NormalizableQuestionRow);
+  if (opts?.referenceOnly) {
+    const solutions = new Set(
+      n.structure.materials
+        .filter((material) => /^sol_[0-9a-f]{12}$/.test(material.asset.asset_id))
+        .map((material) => material.material_id),
+    );
+    n.structure.materials = n.structure.materials.filter(
+      (material) => !solutions.has(material.material_id),
+    );
+    for (const part of n.structure.parts)
+      part.material_ids = part.material_ids.filter((id) => !solutions.has(id));
+    n.integrity_digest = contractIntegrityDigest(n);
+  }
+
   const result = await publishQuestionGroup(db, {
     group_id: n.group_id,
     contract: {
@@ -260,6 +300,31 @@ describe('issueAssessment', () => {
 
   // P1-2（YUK-1091）：one_time claim 的重试命中自己持有的 issuance —— 幂等
   // 解析必须先于 claim 互斥判，否则正常重试被误报 claim_unavailable。
+  it('atomically claims one-time issuance even when callers omit claim', async () => {
+    const pub = await publishAdmitted('implicitClaim', { claimPolicy: 'one_time' });
+    const requests = ['implicit_a', 'implicit_b'].map((issuance_id) => ({
+      group_id: pub.groupId,
+      issuance_id,
+    }));
+    const results = await Promise.all(
+      requests.map((request) => issueAssessment(testDb(), request)),
+    );
+    expect(results.map((result) => result.status).sort()).toEqual(['claim_unavailable', 'issued']);
+    const winner = results.find((result) => result.status === 'issued');
+    if (!winner || winner.status !== 'issued') throw new Error('missing issuance');
+    expect(winner.issuance.claim).toEqual({
+      policy: 'one_time',
+      status: 'claimed',
+      claimed_by_ref: winner.issuance.issuance_id,
+    });
+    expect(
+      await issueAssessment(testDb(), {
+        group_id: pub.groupId,
+        issuance_id: winner.issuance.issuance_id,
+      }),
+    ).toMatchObject({ status: 'replayed', issuance: winner.issuance });
+  });
+
   it('one_time claim retry with same issuance_id replays instead of claim_unavailable', async () => {
     const pub = await publishAdmitted('issClaim', { claimPolicy: 'one_time' });
     const first = await issueAssessment(testDb(), {
@@ -459,6 +524,15 @@ describe('saveResponseDraft / pending restore', () => {
     const state = await getIssuanceState(testDb(), iid);
     expect(state.draft).toBeNull();
     expect(state.submissions).toHaveLength(1);
+    const [stored] = await testDb()
+      .select()
+      .from(assessment_submission)
+      .where(eq(assessment_submission.submission_id, state.submissions[0].submission_id));
+    expect(state.submissions[0]).toMatchObject({
+      response_set: stored.response_set,
+      group_evidence: stored.group_evidence,
+      idempotency_key: stored.idempotency_key,
+    });
 
     // 另一次尝试（新组锚点）仍允许新草稿 —— tombstone 不误伤下一题面。
     const next = await saveResponseDraft(testDb(), {
@@ -885,5 +959,692 @@ describe('listResponseDraftsByGroup (paper session restore)', () => {
     expect(drafts).toHaveLength(2);
     expect(drafts.map((d) => d.issuance_id).every(Boolean)).toBe(true);
     expect(await listResponseDraftsByGroup(testDb(), 'empty_grp')).toEqual([]);
+  });
+});
+
+describe('formal manual candidate and atomic activation', () => {
+  beforeEach(resetDb);
+  it('commits native solve input and session transitions atomically, replays once, and reveals only the frozen reference', async () => {
+    const pub = await publishAdmitted('native_solve');
+    const issued = await issueAssessment(testDb(), { group_id: pub.groupId });
+    if (issued.status !== 'issued') throw new Error(issued.status);
+    const session = await startSolveSession({
+      db: testDb(),
+      questionId: pub.qid,
+      issuanceId: issued.issuance.issuance_id,
+    });
+    const key = `solve_${session.sessionId}`;
+    const body = {
+      question_id: pub.qid,
+      student_text_steps: ['先列条件，再检查方向。'],
+      student_final_answer_text: 'display text is not the scoring input',
+      hints_used: 0,
+      final_hint_level: 0,
+      assessment: {
+        issuance_id: issued.issuance.issuance_id,
+        evaluation_group_id: key,
+        idempotency_key: key,
+        response_set: rs(pub),
+      },
+    };
+    const send = (value = body) =>
+      createSolveSubmissionResource(
+        new Request('http://local/api/solve-sessions/s/submissions', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(value),
+        }),
+        { sid: session.sessionId },
+      );
+    await testDb()
+      .update(question)
+      .set({ reference_md: 'NEW ANSWER MUST NOT LEAK' })
+      .where(eq(question.id, pub.qid));
+    const transition = vi
+      .spyOn(Tutor, 'markJudgedTx')
+      .mockRejectedValueOnce(new Error('session transition storage unavailable'));
+    expect((await send()).status).toBe(500);
+    transition.mockRestore();
+    expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
+    expect(await testDb().select().from(learning_record)).toHaveLength(0);
+    expect(await testDb().select().from(learning_session)).toMatchObject([
+      { id: session.sessionId, status: 'active' },
+    ]);
+    const response = await send();
+    expect(response.status).toBe(201);
+    const result = await response.json();
+    expect(result).toMatchObject({
+      status: 'effective',
+      judge: { coarse_outcome: 'incorrect' },
+      revealed_solution_md: 'B',
+    });
+    expect(await testDb().select().from(learning_session)).toMatchObject([
+      { id: session.sessionId, status: 'judged' },
+    ]);
+    const [capture] = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.id, result.attempt_event_id));
+    expect(capture).toMatchObject({
+      action: 'experimental:assessment_attempt',
+      outcome: null,
+      payload: { reasoning_trace: '先列条件，再检查方向。', hints_used: 0, final_hint_level: 0 },
+    });
+    expect(await (await send()).json()).toMatchObject({
+      attempt_event_id: result.attempt_event_id,
+      assessment: { effect: 'idempotent_replay' },
+    });
+    expect(await testDb().select().from(learning_record)).toHaveLength(1);
+    expect(await testDb().select().from(material_fsrs_state)).toMatchObject([
+      { state: { reps: 1 } },
+    ]);
+    expect(
+      (
+        await send({
+          ...body,
+          assessment: {
+            ...body.assessment,
+            response_set: {
+              entries: [{ slot_id: pub.slotId, kind: 'choice', option_ids: [pub.optionIds[1]] }],
+            },
+          },
+        })
+      ).status,
+    ).toBe(409);
+  });
+  it('pages past native successes and removes a corrected failure using the selected evaluation', async () => {
+    const pub = await publishAdmitted('native_failure_paging');
+    const db = testDb();
+    const issue = await issueAssessment(db, { group_id: pub.groupId });
+    if (issue.status !== 'issued') throw new Error(issue.status);
+    const failed = await commitFormalAttempt(db, 'solo_submit', pub.qid, {
+      issuance_id: issue.issuance.issuance_id,
+      evaluation_group_id: 'paging_failure',
+      idempotency_key: 'first',
+      response_set: rs(pub),
+      now: NOW,
+    });
+    for (let i = 0; i < 5; i++) {
+      const issued = await issueAssessment(db, { group_id: pub.groupId });
+      if (issued.status !== 'issued') throw new Error(issued.status);
+      await commitFormalAttempt(db, 'solo_submit', pub.qid, {
+        issuance_id: issued.issuance.issuance_id,
+        evaluation_group_id: `paging_success_${i}`,
+        idempotency_key: 'answer',
+        response_set: {
+          entries: [{ slot_id: pub.slotId, kind: 'choice', option_ids: [pub.optionIds[1]] }],
+        },
+      });
+    }
+    for (const opts of [
+      { limit: 1 },
+      { perQuestionLimit: 1 },
+      { limit: 1, order: 'asc' as const },
+    ]) {
+      const failures = await getFailureAttempts(db, { ...opts, questionIds: [pub.qid] });
+      expect(failures).toHaveLength(1);
+      expect(failures[0]).toMatchObject({
+        attempt_event_id: failed.attempt_id,
+        question_snapshot: null,
+        assessment: {
+          revision_id: pub.revisionId,
+          response_set: rs(pub),
+          effective_evaluation_id: failed.candidate.evaluation.record.evaluation_id,
+        },
+      });
+    }
+    const corrected = await evaluateSubmission(db, {
+      submission_id: failed.submission.submission_id,
+      evaluation_group_id: 'paging_failure',
+      evaluation_key: 'manual-correction',
+      mode: 'manual_assert',
+      provenance: { source: 'manual', assisted: false },
+      asserted_unit_results: failed.candidate.evaluation.record.unit_results.map((unit) => ({
+        status: 'scored',
+        scoring_unit_id: unit.scoring_unit_id,
+        points_awarded: 1,
+        scored_because: 'response',
+        evidence_citations: [],
+      })),
+    });
+    const [head] = await db
+      .select()
+      .from(evaluation_effective_head)
+      .where(eq(evaluation_effective_head.evaluation_group_id, 'paging_failure'));
+    expect(
+      await activateSubmissionCandidate(
+        db,
+        {
+          evaluation_id: corrected.record.evaluation_id,
+          expected_effective_id: head.effective_evaluation_id,
+          expected_generation: head.generation,
+        },
+        { actorRef: 'test:teacher' },
+      ),
+    ).toMatchObject({ status: 'activated' });
+    expect(await getFailureAttempts(db, { questionIds: [pub.qid], limit: 1 })).toEqual([]);
+    expect(await getFailureAttemptById(db, failed.attempt_id)).toBeNull();
+    expect(await getQuestionAttemptOutcomeCounts(db, pub.qid)).toEqual({
+      success: 6,
+      partial: 0,
+      failure: 0,
+    });
+  });
+  it('appeals the effective native candidate using frozen input, preserves user FSRS, and holds a stale competing appeal', async () => {
+    const pub = await publishAdmitted('native_appeal');
+    const issued = await issueAssessment(testDb(), { group_id: pub.groupId });
+    if (issued.status !== 'issued') throw new Error(issued.status);
+    const committed = await commitFormalAttempt(
+      testDb(),
+      'solo_submit',
+      pub.qid,
+      {
+        issuance_id: issued.issuance.issuance_id,
+        evaluation_group_id: 'appeal_group',
+        idempotency_key: 'original-answer',
+        response_set: rs(pub),
+      },
+      { userRating: 'hard' },
+    );
+    expect(committed.candidate.result.coarse_outcome).toBe('incorrect');
+    const evaluationId = committed.candidate.evaluation.record.evaluation_id;
+    const appeal = (reason: string) =>
+      createAppeal(
+        new Request('http://local/api/appeals', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ evaluation_id: evaluationId, reason_md: reason }),
+        }),
+      );
+    const reason =
+      'Please reconsider the direction in my original answer; do not use a newly edited question.';
+    const response = await appeal(reason);
+    expect(response.status).toBe(200);
+    const first = await response.json();
+    expect(await (await appeal(reason)).json()).toEqual(first);
+    const second = await (
+      await appeal('Separate review requested before the first one completes.')
+    ).json();
+    await testDb()
+      .update(question)
+      .set({ reference_md: 'A', prompt_md: 'MUTATED QUESTION MUST NOT REPLACE ISSUED INPUT' })
+      .where(eq(question.id, pub.qid));
+    const resolved = await handleRejudge(testDb(), first);
+    expect(resolved.status).toBe('reassessed');
+    if (resolved.status !== 'reassessed') throw new Error(resolved.status);
+    const [candidate] = await testDb()
+      .select()
+      .from(evaluation)
+      .where(eq(evaluation.evaluation_id, resolved.evaluation_id));
+    expect(candidate.provenance).toMatchObject({
+      source: 'automatic',
+      assisted: false,
+      review_context: {
+        appeal_event_id: first.appeal_event_id,
+        prior_evaluation_id: evaluationId,
+        reason_md: reason,
+      },
+    });
+    expect(candidate.aggregate).toMatchObject({ kind: 'points_total', points: 0 });
+    expect(candidate.submission_id).toBe(committed.submission.submission_id);
+    expect(await testDb().select().from(material_fsrs_state)).toMatchObject([
+      { state: { reps: 1 } },
+    ]);
+    expect(await handleRejudge(testDb(), first)).toMatchObject({
+      status: 'skipped',
+      reason: 'already_resolved',
+    });
+    expect(await handleRejudge(testDb(), second)).toMatchObject({
+      status: 'held',
+      reason: 'stale_head',
+    });
+    expect(await testDb().select().from(evaluation)).toHaveLength(2);
+    expect((await appeal('A new appeal on the obsolete head.')).status).toBe(409);
+    const timeline = await getQuestionTimeline(testDb(), pub.qid);
+    expect(timeline).toHaveLength(1);
+    expect(timeline[0]).toMatchObject({
+      kind: 'attempt',
+      event_id: committed.attempt_id,
+      outcome: 'failure',
+      judge: null,
+      assessment: {
+        evaluation_group_id: 'appeal_group',
+        original_evaluation_id: evaluationId,
+        effective_evaluation_id: resolved.evaluation_id,
+      },
+    });
+    expect(await getQuestionAttemptOutcomeCounts(testDb(), pub.qid)).toEqual({
+      success: 0,
+      partial: 0,
+      failure: 1,
+    });
+    expect(
+      await getFailureAttempts(testDb(), { questionIds: [pub.qid], perQuestionLimit: 1 }),
+    ).toMatchObject([{ attempt_event_id: committed.attempt_id }]);
+    expect(await getFailureAttemptById(testDb(), committed.attempt_id)).toMatchObject({
+      attempt_event_id: committed.attempt_id,
+    });
+    await testDb()
+      .update(evaluation_effective_head)
+      .set({ effective_evaluation_id: null })
+      .where(eq(evaluation_effective_head.evaluation_group_id, 'appeal_group'));
+    expect(await getFailureAttempts(testDb(), { limit: 1 })).toEqual([]);
+    expect(await getFailureAttemptById(testDb(), committed.attempt_id)).toBeNull();
+    expect(await getQuestionTimeline(testDb(), pub.qid)).toMatchObject([{ outcome: 'pending' }]);
+    expect(await getQuestionAttemptOutcomeCounts(testDb(), pub.qid)).toEqual({
+      success: 0,
+      partial: 0,
+      failure: 0,
+    });
+  });
+  it('rejects unbound solo writes without inventing an original or scheduling a review', async () => {
+    const pub = await publishAdmitted('unbound_solo');
+    const originalEvents = await testDb().select().from(event);
+    for (const autoRate of [false, true]) {
+      const response = await createAttempt(
+        new Request('http://local/api/attempts', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            question_id: pub.qid,
+            rating: 'good',
+            response_md: 'B',
+            auto_rate: autoRate,
+          }),
+        }),
+      );
+      expect.soft(response.status).toBe(409);
+      expect.soft(await response.json()).toMatchObject({ error: 'historical_unknown' });
+    }
+    expect(await testDb().select().from(assessment_submission)).toHaveLength(0);
+    expect(await testDb().select().from(evaluation)).toHaveLength(0);
+    expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
+    expect(await testDb().select().from(event)).toEqual(originalEvents);
+  });
+
+  it('preview and commit use one frozen candidate through the actual HTTP handlers', async () => {
+    const pub = await publishAdmitted('preview_commit_api');
+    const issued = await issueAssessment(testDb(), { group_id: pub.groupId });
+    if (issued.status !== 'issued') throw new Error(issued.status);
+    const assessment = {
+      issuance_id: issued.issuance.issuance_id,
+      evaluation_group_id: 'api_group',
+      idempotency_key: 'api_answer',
+      response_set: rs(pub),
+    };
+    const request = (body: unknown) =>
+      new Request('http://local/api/attempts', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+    const preview = await previewAdvice(request({ question_id: pub.qid, assessment }));
+    expect(preview.status).toBe(200);
+    const advice = await preview.json();
+    expect(advice).toMatchObject({
+      automatic_commit: true,
+      judge: { coarse_outcome: 'incorrect' },
+    });
+    expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
+    const body = {
+      question_id: pub.qid,
+      rating: 'good',
+      auto_rate: true,
+      assessment,
+      activation_intent: advice.activation_intent,
+    };
+    const committed = await createAttempt(request(body));
+    expect(committed.status).toBe(200);
+    expect(await committed.json()).toMatchObject({
+      status: 'effective',
+      assessment: { candidate_id: advice.candidate_id, effect: 'applied' },
+      judge: { suggested_rating: 'again' },
+    });
+    expect((await createAttempt(request(body))).status).toBe(200);
+    expect(await testDb().select().from(evaluation)).toHaveLength(1);
+    expect(await testDb().select().from(material_fsrs_state)).toMatchObject([
+      { state: { reps: 1 } },
+    ]);
+    expect(await testDb().select().from(event).where(eq(event.action, 'review'))).toHaveLength(0);
+    expect(
+      (
+        await createAttempt(
+          request({
+            ...body,
+            activation_intent: { ...advice.activation_intent, evaluation_id: 'eva_unrelated' },
+          }),
+        )
+      ).status,
+    ).toBe(409);
+  });
+
+  it('reveals a frozen scoring-basis answer without solution material and records its digest', async () => {
+    const pub = await publishAdmitted('study_reference_only', { referenceOnly: true });
+    const issued = await issueAssessment(testDb(), { group_id: pub.groupId });
+    if (issued.status !== 'issued') throw new Error(issued.status);
+    await testDb()
+      .update(question)
+      .set({ reference_md: 'NEW PRIVATE ANSWER', choices_md: ['NEW A', 'NEW B'] })
+      .where(eq(question.id, pub.qid));
+    const response = await revealStudyReference(
+      new Request('http://local/reveal', { method: 'POST' }),
+      { id: issued.issuance.issuance_id },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ reference_md: 'B. 乙' });
+    const exposures = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_assistance'));
+    expect(exposures).toHaveLength(1);
+    expect(exposures[0].payload).toMatchObject({
+      kind: 'solution',
+      impact: 'answer_help',
+      content_digest: `sha256:${canonicalHash('B. 乙')}`,
+    });
+  });
+
+  it('teaches and reveals the issued reference after current-row edits, with server assistance recorded', async () => {
+    const pub = await publishAdmitted('study_native');
+    const issued = await issueAssessment(testDb(), { group_id: pub.groupId });
+    if (issued.status !== 'issued') throw new Error(issued.status);
+    const session = await startSolveSession({
+      db: testDb(),
+      questionId: pub.qid,
+      issuanceId: issued.issuance.issuance_id,
+    });
+    await testDb()
+      .update(question)
+      .set({
+        reference_md: 'NEW PRIVATE ANSWER',
+        prompt_md: 'NEW QUESTION',
+        metadata: { private_answer: 'NEW PRIVATE ANSWER' },
+      })
+      .where(eq(question.id, pub.qid));
+    const detail = await questionDetail(
+      new Request(`http://local/api/questions/${pub.qid}?surface=practice`),
+      { id: pub.qid },
+    );
+    expect(await detail.json()).toMatchObject({
+      reference_md: null,
+      rubric_json: null,
+      metadata: {},
+    });
+    const hintRunner = vi
+      .fn()
+      .mockResolvedValue({ text: JSON.stringify({ text_md: '先比较题目给出的三个选项。' }) });
+    await planSolveHint({
+      db: testDb(),
+      sessionId: session.sessionId,
+      hintIndex: 0,
+      runTaskFn: hintRunner,
+    });
+    expect(hintRunner).toHaveBeenCalledOnce();
+    expect(hintRunner.mock.calls[0][1]).toMatchObject({
+      learning_item: { one_line_intent: `题面 ${pub.qid}` },
+      atomic_sections: { worked_solution: 'B' },
+      frozen_question: {
+        issuance_id: issued.issuance.issuance_id,
+        faces: [{ prompt_md: `题面 ${pub.qid}` }],
+        response_spec: { slots: [{ options: [{ text: '甲' }, { text: '乙' }, { text: '丙' }] }] },
+      },
+    });
+    expect(JSON.stringify(hintRunner.mock.calls[0][1])).not.toContain('NEW PRIVATE');
+    await expect(
+      planSolveHint({
+        db: testDb(),
+        sessionId: session.sessionId,
+        hintIndex: 1,
+        issuanceId: 'another_issuance',
+        runTaskFn: hintRunner,
+      }),
+    ).rejects.toMatchObject({ code: 'coordinate_mismatch' });
+    expect(hintRunner).toHaveBeenCalledOnce();
+    expect(await revealFrozenStudyReference(testDb(), issued.issuance.issuance_id)).toEqual({
+      reference_md: 'B',
+    });
+    const exposures = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_assistance'));
+    expect(exposures.map((row) => row.payload.impact).sort()).toEqual(['answer_help', 'unknown']);
+    expect(JSON.stringify(exposures)).not.toContain('NEW PRIVATE');
+  });
+  it.each(['answer_help', 'unknown'] as const)(
+    'freezes %s assistance and permits only explicit FSRS while retaining the score',
+    async (impact) => {
+      const pub = await publishAdmitted(`assistance_${impact}`);
+      const issued = await issueAssessment(testDb(), { group_id: pub.groupId });
+      if (issued.status !== 'issued') throw new Error(issued.status);
+      await recordAssistanceExposure(testDb(), {
+        issuanceId: issued.issuance.issuance_id,
+        questionId: pub.qid,
+        kind: 'hint',
+        impact,
+        contentDigest: `sha256:${'a'.repeat(64)}`,
+      });
+      const request = {
+        issuance_id: issued.issuance.issuance_id,
+        evaluation_group_id: `assisted_${impact}`,
+        idempotency_key: 'answer',
+        response_set: {
+          entries: [
+            { slot_id: pub.slotId, kind: 'choice' as const, option_ids: [pub.optionIds[1]] },
+          ],
+        },
+      };
+      const preview = await previewFormalAttempt(testDb(), 'advice_preview', pub.qid, request);
+      expect(preview.candidate.result.coarse_outcome).toBe('correct');
+      expect(preview.candidate.evaluation.record.provenance).toMatchObject({ assisted: true });
+      expect(preview.automatic_commit).toBe(false);
+      expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
+      const committed = await commitFormalAttempt(testDb(), 'solo_submit', pub.qid, request, {
+        activationIntent: preview.activation_intent,
+        userRating: 'hard',
+      });
+      expect(committed.status).toBe('effective');
+      expect(committed.candidate.evaluation.record.evaluation_id).toBe(
+        preview.candidate.evaluation.record.evaluation_id,
+      );
+      expect(await testDb().select().from(mastery_state)).toHaveLength(0);
+      expect(await testDb().select().from(material_fsrs_state)).toMatchObject([
+        { state: { reps: 1 } },
+      ]);
+    },
+  );
+
+  it('does not penalize verified harmless clarification or rewrite a submitted assistance snapshot', async () => {
+    const pub = await publishAdmitted('harmless');
+    const issued = await issueAssessment(testDb(), { group_id: pub.groupId });
+    if (issued.status !== 'issued') throw new Error(issued.status);
+    const exposure = {
+      issuanceId: issued.issuance.issuance_id,
+      questionId: pub.qid,
+      kind: 'hint' as const,
+      contentDigest: `sha256:${'b'.repeat(64)}`,
+    };
+    await recordAssistanceExposure(testDb(), { ...exposure, impact: 'harmless_clarification' });
+    const request = {
+      issuance_id: issued.issuance.issuance_id,
+      evaluation_group_id: 'clarified',
+      idempotency_key: 'original',
+      response_set: rs(pub),
+    };
+    const preview = await previewFormalAttempt(testDb(), 'advice_preview', pub.qid, request);
+    expect(preview.automatic_commit).toBe(true);
+    expect(preview.candidate.evaluation.record.provenance).toMatchObject({ assisted: false });
+    await recordAssistanceExposure(testDb(), {
+      ...exposure,
+      kind: 'solution',
+      impact: 'answer_help',
+    });
+    const replay = await previewFormalAttempt(testDb(), 'advice_preview', pub.qid, request);
+    expect(replay.candidate.evaluation.record).toEqual(preview.candidate.evaluation.record);
+    const subsequent = await previewFormalAttempt(testDb(), 'advice_preview', pub.qid, {
+      ...request,
+      evaluation_group_id: 'after-reveal',
+      idempotency_key: 'later',
+    });
+    expect(subsequent.candidate.evaluation.record.provenance).toMatchObject({ assisted: true });
+    await expect(
+      recordAssistanceExposure(testDb(), {
+        ...exposure,
+        questionId: 'unrelated',
+        impact: 'unknown',
+      }),
+    ).rejects.toMatchObject({ code: 'coordinate_mismatch' });
+  });
+  it('commits the native API receipt once, preserves capture, and keeps manual ratings out of mastery', async () => {
+    const pub = await publishAdmitted('manual_api');
+    await setUnadmitted(pub.groupId);
+    const issued = await issueAssessment(testDb(), { group_id: pub.groupId, mode: 'manual' });
+    if (issued.status !== 'issued') throw new Error(issued.status);
+    const body = {
+      question_id: pub.qid,
+      rating: 'hard',
+      self_report: true,
+      response_md: '我认为是甲，但无法确认这个推导。',
+      reasoning_trace: '先逐个排除；仍不确定条件是否足够。',
+      self_confidence: 2,
+      latency_ms: 12000,
+      assessment: {
+        issuance_id: issued.issuance.issuance_id,
+        evaluation_group_id: 'manual_api_group',
+        idempotency_key: 'manual_api_key',
+        response_set: rs(pub),
+      },
+    };
+    const send = (value: typeof body) =>
+      createAttempt(
+        new Request('http://local/api/attempts', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(value),
+        }),
+      );
+    const first = await send(body);
+    expect(first.status).toBe(200);
+    const receipt = AttemptResponseSchema.parse(await first.json());
+    expect(receipt).toMatchObject({
+      status: 'effective',
+      assessment: { effect: 'applied' },
+      judge: null,
+    });
+    const repeated = await send({ ...body, latency_ms: 18000 });
+    expect(repeated.status).toBe(200);
+    expect(await repeated.json()).toMatchObject({
+      status: 'effective',
+      review_event: receipt.review_event,
+      assessment: { effect: 'idempotent_replay' },
+    });
+    const rows = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_attempt'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: receipt.review_event.id,
+      outcome: null,
+      payload: {
+        response_md: body.response_md,
+        reasoning_trace: body.reasoning_trace,
+        self_confidence: 2,
+        duration_ms: 12000,
+        evaluation_group_id: 'manual_api_group',
+      },
+    });
+    expect(await testDb().select().from(mastery_state)).toHaveLength(0);
+    expect(await testDb().select().from(material_fsrs_state)).toMatchObject([
+      { state: { reps: 1 } },
+    ]);
+    expect((await send({ ...body, rating: 'good' })).status).toBe(409);
+    expect(
+      await getFailureAttempts(testDb(), { questionIds: [pub.qid], includeReviewFailures: true }),
+    ).toEqual([]);
+    expect(await getQuestionTimeline(testDb(), pub.qid)).toMatchObject([
+      { kind: 'attempt', outcome: 'unsupported', duration_ms: 12000, judge: null },
+    ]);
+    expect(await getQuestionAttemptOutcomeCounts(testDb(), pub.qid)).toEqual({
+      success: 0,
+      partial: 0,
+      failure: 0,
+    });
+    expect(await testDb().select().from(material_fsrs_state)).toMatchObject([
+      { state: { reps: 1 } },
+    ]);
+  });
+  it('unadmitted manual practice schedules only explicit FSRS and rolls back with its receipt', async () => {
+    const pub = await publishAdmitted('manual_native');
+    await setUnadmitted(pub.groupId);
+    const issued = await issueAssessment(testDb(), {
+      group_id: pub.groupId,
+      mode: 'manual',
+      now: NOW,
+    });
+    if (issued.status !== 'issued') throw new Error(`Unexpected issue state ${issued.status}`);
+    const prepared = await previewFormalAttempt(
+      testDb(),
+      'solo_submit',
+      pub.qid,
+      {
+        issuance_id: issued.issuance.issuance_id,
+        evaluation_group_id: 'manual_group',
+        idempotency_key: 'manual-key',
+        response_set: rs(pub),
+        now: NOW,
+      },
+      undefined,
+      { selfReport: true },
+    );
+    expect(prepared.candidate.evaluation.record).toMatchObject({
+      status: 'completed',
+      provenance: { source: 'self_report' },
+      aggregate: { kind: 'unresolved' },
+    });
+    expect(prepared.candidate.evaluation.record.run_refs).toEqual([]);
+    const intent = { ...prepared.activation_intent, user_rating: 'hard' as const };
+    await expect(
+      activateSubmissionCandidate(testDb(), intent, {
+        actorRef: 'test:formal',
+        now: NOW,
+        record: async () => {
+          throw new Error('receipt failed');
+        },
+      }),
+    ).rejects.toThrow('receipt failed');
+    expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
+    expect(await testDb().select().from(mastery_state)).toHaveLength(0);
+    const [head] = await testDb()
+      .select()
+      .from(evaluation_effective_head)
+      .where(eq(evaluation_effective_head.evaluation_group_id, 'manual_group'));
+    expect(head).toMatchObject({ generation: 0, effective_evaluation_id: null });
+    let receiptCount = 0;
+    expect(
+      await activateSubmissionCandidate(testDb(), intent, {
+        actorRef: 'test:formal',
+        now: NOW,
+        record: async () => {
+          receiptCount++;
+        },
+      }),
+    ).toMatchObject({ status: 'activated', effect: 'applied' });
+    expect(
+      await activateSubmissionCandidate(testDb(), intent, {
+        actorRef: 'test:formal',
+        now: NOW,
+        record: async () => {
+          receiptCount++;
+        },
+      }),
+    ).toMatchObject({ status: 'already_effective' });
+    expect(receiptCount).toBe(1);
+    expect(await testDb().select().from(mastery_state)).toHaveLength(0);
+    const [card] = await testDb().select().from(material_fsrs_state);
+    expect(card).toMatchObject({
+      subject_kind: 'question',
+      subject_id: pub.qid,
+      state: { reps: 1 },
+    });
   });
 });

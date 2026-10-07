@@ -71,6 +71,13 @@ const server = {
   KC_DEDUP_DISTANCE_MAX: optionalString,
   KC_DEDUP_MAX_PAIRS: optionalString,
   KC_DEDUP_WINDOW_DAYS: optionalString,
+  // Optional tracing controls. Unsupported SDK global-context flags are declared
+  // for inventory, but the tracing owner still refuses to initialize when set.
+  LMNR_DEBUG: optionalString,
+  LMNR_DEV_TRANSCRIPTS: optionalString,
+  LMNR_PROJECT_API_KEY: optionalString,
+  LMNR_SPAN_CONTEXT: optionalString,
+  LMNR_TRACE_METADATA: optionalString,
   LOCAL_NEXT_PORT: optionalString,
   LOCAL_POSTGRES_HOST: optionalString,
   LOCAL_POSTGRES_PORT: optionalString,
@@ -121,7 +128,6 @@ const server = {
   RW_WORKER: optionalString,
   SEED_SYNTHETIC_OK: optionalString,
   SELECTION_POLICY: optionalString,
-  SKIP_BOSS_INGEST: optionalString,
   TAGGING_MATCH_THRESHOLD: optionalString,
   EXA_API_KEY: optionalString,
   TENCENT_OCR_REGION: optionalString,
@@ -145,6 +151,7 @@ const server = {
   WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED: optionalString,
   XIAOMI_API_KEY: optionalString,
   ZHIPU_API_KEY: optionalString,
+  ZAI_CODING_CN_API_KEY: optionalString,
 };
 
 export const SERVER_ENV_KEYS: ReadonlySet<string> = new Set(Object.keys(server));
@@ -163,6 +170,20 @@ export function createServerEnv(
 
 export function getServerEnv(): ReturnType<typeof createServerEnv> {
   return createServerEnv();
+}
+
+/**
+ * YUK-1007 — API_PORT 的单一解析点（从 server/index.ts 内联逻辑平移，语义
+ * 逐字保留：trim → 空串→默认 8787 → 非正整数 throw）。admin config 读面的
+ * runtime 分区（facts seam）与 API 入口共用本函数，端口事实不会漂移两份。
+ */
+export function resolveApiPort(rawApiPort: string | undefined): number {
+  const trimmed = rawApiPort?.trim();
+  const parsed = trimmed ? Number(trimmed) : 8787;
+  if (!Number.isInteger(parsed) || parsed <= 0) {
+    throw new Error(`API_PORT must be a positive integer, got: ${JSON.stringify(rawApiPort)}`);
+  }
+  return parsed;
 }
 
 export function requireApiInternalToken(

@@ -15,16 +15,41 @@
 //   8. section knowledge_focus_names resolved from DB; unknown id falls back to id.
 //   9. Face has no reference_md field (reference is gated, not pre-answer-visible).
 
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { autosaveAnswerDraft } from '@/capabilities/practice/server/answer-draft';
-import { submitPaperSlot } from '@/capabilities/practice/server/paper-submit';
 import { newId } from '@/core/ids';
-import { artifact, event, knowledge, learning_session, question } from '@/db/schema';
-import { Review } from '@/server/session';
+import {
+  artifact,
+  evaluation,
+  evaluation_effective_head,
+  event,
+  knowledge,
+  learning_session,
+  question,
+  question_revision,
+} from '@/db/schema';
+import {
+  contractIntegrityDigest,
+  normalizeQuestionRowToContract,
+} from '@/server/questions/contract-normalizer';
+import { publishQuestionGroup } from '@/server/questions/publisher';
+import {
+  correctPaperFixture,
+  paperFixtureAssessment,
+  startFrozenPaperFixture,
+  submitPaperFixture as submitPaperSlot,
+} from '../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { PaperDetailResponseSchema } from './paper-contracts';
+import { readPaperAssessmentBinding } from '../server/assessment/paper-issuance';
+import { getIssuanceState } from '../server/assessment/submit';
+import {
+  activateSubmissionCandidate,
+  evaluateSubmission,
+} from '../server/judge/evaluate-submission';
+import { createAnswerDraft } from './paper-answer-route';
+import { PaperDetailResponseSchema, PaperListResponseSchema } from './paper-contracts';
 import { GET } from './paper-detail-route';
+import { GET as listPapers } from './papers-list';
 
 async function seedQuestion(id: string, reference: string, kind = 'true_false') {
   const db = testDb();
@@ -32,6 +57,7 @@ async function seedQuestion(id: string, reference: string, kind = 'true_false') 
   await db.insert(question).values({
     id,
     kind,
+    judge_kind_override: 'exact',
     prompt_md: `Prompt for ${id}`,
     reference_md: reference,
     knowledge_ids: ['k1'],
@@ -113,6 +139,42 @@ function makeRequest(artifactId: string): [Request, Record<string, string>] {
   return [new Request(`http://localhost/api/practice/${artifactId}`), { id: artifactId }];
 }
 
+async function publishWithoutSolutionMaterials(questionId: string) {
+  const db = testDb();
+  const [row] = await db.select().from(question).where(eq(question.id, questionId));
+  const contract = normalizeQuestionRowToContract(row);
+  const solutions = new Set(
+    contract.structure.materials
+      .filter((material) => /^sol_/.test(material.asset.asset_id))
+      .map((material) => material.material_id),
+  );
+  expect(solutions.size).toBeGreaterThan(0);
+  contract.structure.materials = contract.structure.materials.filter(
+    (material) => !solutions.has(material.material_id),
+  );
+  for (const part of contract.structure.parts)
+    part.material_ids = part.material_ids.filter((id) => !solutions.has(id));
+  contract.integrity_digest = contractIntegrityDigest(contract);
+  const published = await publishQuestionGroup(db, {
+    group_id: questionId,
+    contract,
+    expectedCurrentRevision: null,
+    expectedAdmissionGeneration: null,
+    availability: 'general_pool',
+    actorRef: 'test:paper-basis-without-solution',
+    now: new Date(),
+    admission: {
+      state: 'admitted',
+      evidence: {
+        marking_provenance: 'official',
+        verification: { structural_check_passed: true, independent_verification: null },
+        model_slice: null,
+      },
+    },
+  });
+  expect(published.status).toBe('published');
+}
+
 describe('GET /api/practice/[id]', () => {
   beforeEach(async () => {
     await resetDb();
@@ -154,33 +216,33 @@ describe('GET /api/practice/[id]', () => {
     await seedQuestion('q1', 'true');
     await seedPaper('p1', { questionIds: ['q1'] });
     const db = testDb();
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'p1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'p1');
 
-    await autosaveAnswerDraft(db, {
-      sessionId,
-      questionId: 'q1',
-      inputKind: 'text',
-      contentMd: 'my draft answer',
-      paperArtifactId: 'p1',
-    });
+    const saved = await createAnswerDraft(
+      new Request('http://localhost/paper-draft', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          session_id: sessionId,
+          question_id: 'q1',
+          content_md: 'my draft answer',
+          assessment: await paperFixtureAssessment(db, sessionId, 'q1', 'my draft answer'),
+          expected_save_epoch: 0,
+        }),
+      }),
+      { id: 'p1' },
+    );
+    expect(saved.status).toBe(200);
 
     const [req, ctx] = makeRequest('p1');
     const res = await GET(req, ctx);
-    const body = (await res.json()) as {
-      sections: Array<{
-        slots: Array<{
-          question_id: string;
-          slot_state: {
-            draft: { content_md: string; input_kind: string } | null;
-            submission: null;
-          };
-        }>;
-      }>;
-    };
+    const body = PaperDetailResponseSchema.parse(await res.json());
 
     const slot = body.sections[0]?.slots.find((s) => s.question_id === 'q1');
-    expect(slot?.slot_state.draft?.content_md).toBe('my draft answer');
-    expect(slot?.slot_state.draft?.input_kind).toBe('text');
+    expect(slot?.assessment?.response_set.entries).toMatchObject([
+      { kind: 'text', text_md: 'my draft answer' },
+    ]);
+    expect(slot?.assessment?.save_epoch).toBe(1);
     expect(slot?.slot_state.submission).toBeNull();
   });
 
@@ -188,7 +250,7 @@ describe('GET /api/practice/[id]', () => {
     await seedQuestion('q1', 'true'); // reference_md = 'true'
     await seedPaper('p1', { questionIds: ['q1'], feedbackPolicy: 'immediate' });
     const db = testDb();
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'p1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'p1');
 
     await submitPaperSlot(
       {
@@ -227,7 +289,7 @@ describe('GET /api/practice/[id]', () => {
     await seedQuestion('q1', 'true');
     await seedPaper('p1', { questionIds: ['q1'], feedbackPolicy: 'judge_now_show_later' });
     const db = testDb();
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'p1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'p1');
 
     await submitPaperSlot(
       {
@@ -264,7 +326,7 @@ describe('GET /api/practice/[id]', () => {
     await seedQuestion('q1', 'true'); // reference_md = 'true'
     await seedPaper('p1', { questionIds: ['q1'], feedbackPolicy: 'judge_now_show_later' });
     const db = testDb();
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'p1' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'p1');
 
     // Submit the correct answer so coarse_outcome='correct' after reveal.
     await submitPaperSlot(
@@ -425,7 +487,7 @@ describe('GET /api/practice/[id]', () => {
     await seedQuestion('q1', 'true');
     await seedPaper('p_rj', { questionIds: ['q1'], feedbackPolicy: 'immediate' });
     const db = testDb();
-    const { sessionId } = await Review.startReviewSession(db, { artifactId: 'p_rj' });
+    const { sessionId } = await startFrozenPaperFixture(db, 'p_rj');
 
     const sub = await submitPaperSlot(
       {
@@ -448,20 +510,7 @@ describe('GET /api/practice/[id]', () => {
     expect(before.session?.right).toBe(1);
     expect(before.session?.wrong).toBe(0);
 
-    // Insert a superseding judge event: coarse_outcome='incorrect'.
-    await db.insert(event).values({
-      id: newId(),
-      session_id: sessionId,
-      actor_kind: 'agent',
-      actor_ref: 'rejudge',
-      action: 'judge',
-      subject_kind: 'event',
-      subject_id: sub.attemptEventId,
-      outcome: 'success',
-      payload: { coarse_outcome: 'incorrect', referenced_knowledge_ids: [] },
-      caused_by_event_id: sub.attemptEventId,
-      created_at: new Date(),
-    });
+    await correctPaperFixture(db, sub.attemptEventId, 0);
 
     // After rejudge: detail summary must use newest judge event → wrong=1.
     const [req1, ctx1] = makeRequest('p_rj');
@@ -471,4 +520,300 @@ describe('GET /api/practice/[id]', () => {
     expect(after.session?.right).toBe(0);
     expect(after.session?.wrong).toBe(1);
   });
+});
+
+describe('frozen paper feedback disclosure, YUK-1047 late P1s', () => {
+  beforeEach(resetDb);
+
+  it.each([
+    { policy: 'immediate', outcome: 'correct', answer: 'true', right: 1, wrong: 0 },
+    { policy: 'immediate', outcome: 'incorrect', answer: 'false', right: 0, wrong: 1 },
+    { policy: 'immediate', outcome: 'partial', answer: 'false', right: 1, wrong: 0 },
+    { policy: 'judge_now_show_later', outcome: 'correct', answer: 'true', right: 1, wrong: 0 },
+    { policy: 'judge_now_show_later', outcome: 'incorrect', answer: 'false', right: 0, wrong: 1 },
+    { policy: 'judge_now_show_later', outcome: 'partial', answer: 'false', right: 1, wrong: 0 },
+  ])(
+    '$policy $outcome survives pause, completion and hot edits without disclosing buffered grades',
+    async ({ policy, outcome, answer, right, wrong }) => {
+      const db = testDb();
+      await seedQuestion('q_frozen', 'true');
+      const frozenPrompt =
+        '实验组与对照组使用相同体积的水、同种容器和同一计时方式。\n' +
+        '表格记录三次重复实验；实验组只改变坡度，对照组保持原坡度。\n' +
+        '判断：比较水流速度时，坡度是自变量。不要把重复次数当作自变量。';
+      await db.update(question).set({ prompt_md: frozenPrompt }).where(eq(question.id, 'q_frozen'));
+      await publishWithoutSolutionMaterials('q_frozen');
+      await seedPaper('p_frozen', { questionIds: ['q_frozen'], feedbackPolicy: policy });
+      const { sessionId } = await startFrozenPaperFixture(db, 'p_frozen');
+      const binding = await readPaperAssessmentBinding(db, sessionId);
+      if (!binding) throw new Error('expected real frozen paper opening');
+      const state = await getIssuanceState(db, binding.slots[0].issuance_id);
+      if (!state.issuance) throw new Error('expected frozen issuance');
+      const [revision] = await db
+        .select()
+        .from(question_revision)
+        .where(eq(question_revision.revision_id, state.issuance.binding.revision_id));
+      expect(
+        revision.structure.materials.some((material) => /^sol_/.test(material.asset.asset_id)),
+      ).toBe(false);
+      expect(revision.scoring_basis.units[0].criterion).toMatchObject({
+        kind: 'text_key',
+        accepted_texts: ['true'],
+      });
+
+      const submitted = await submitPaperSlot(
+        {
+          sessionId,
+          paperArtifactId: 'p_frozen',
+          questionId: 'q_frozen',
+          answerMd: answer,
+          primaryKnowledgeId: 'k1',
+          feedbackPolicy: policy,
+        },
+        db,
+      );
+      if (outcome === 'partial') await correctPaperFixture(db, submitted.attemptEventId, 0.5);
+      if (policy === 'judge_now_show_later') {
+        // Capture policy is optional; the immutable opening receipt must enforce disclosure itself.
+        const [capture] = await db
+          .select()
+          .from(event)
+          .where(eq(event.id, submitted.attemptEventId));
+        const { paper_feedback_policy: _optionalPolicy, ...payload } = capture.payload;
+        await db.update(event).set({ payload }).where(eq(event.id, capture.id));
+      }
+
+      // Neither mutable question content nor the current paper plan controls disclosure.
+      await db
+        .update(question)
+        .set({ prompt_md: 'HOT PROMPT', reference_md: 'HOT ANSWER' })
+        .where(eq(question.id, 'q_frozen'));
+      await seedPaper('p_hot_plan', {
+        questionIds: ['q_frozen'],
+        feedbackPolicy: policy === 'immediate' ? 'judge_now_show_later' : 'immediate',
+      });
+      const [hotPlan] = await db.select().from(artifact).where(eq(artifact.id, 'p_hot_plan'));
+      await db
+        .update(artifact)
+        .set({ tool_state: hotPlan.tool_state })
+        .where(eq(artifact.id, 'p_frozen'));
+
+      for (const status of ['started', 'paused', 'completed']) {
+        await db.update(learning_session).set({ status }).where(eq(learning_session.id, sessionId));
+        const detailResponse = await GET(...makeRequest('p_frozen'));
+        expect(detailResponse.status).toBe(200);
+        const detail = PaperDetailResponseSchema.parse(await detailResponse.json());
+        const list = PaperListResponseSchema.parse(await (await listPapers()).json());
+        const listed = list.papers.find((item) => item.artifact_id === 'p_frozen');
+        const visible = policy === 'immediate' || status === 'completed';
+        const expected = { pos: 1, right: visible ? right : 0, wrong: visible ? wrong : 0 };
+        expect.soft(detail.session, `detail ${status}`).toMatchObject(expected);
+        expect.soft(listed?.session, `list ${status}`).toMatchObject(expected);
+        const slot = detail.sections[0].slots[0];
+        expect.soft(slot.question.prompt_md).toBe(frozenPrompt);
+        expect.soft(detail.sections[0].feedback_policy).toBe(policy);
+        const submission = slot.slot_state.submission;
+        expect
+          .soft(submission)
+          .toMatchObject({ submitted: true, answer_md: answer, visible_to_user: visible });
+        if (visible) {
+          expect.soft(submission).toMatchObject({ outcome, reference_md: 'true' });
+        } else {
+          expect.soft(submission).toMatchObject({ feedback_buffered: true });
+          for (const field of ['outcome', 'score', 'feedback_md', 'reference_md']) {
+            expect.soft(submission).not.toHaveProperty(field);
+          }
+        }
+        expect.soft(JSON.stringify(detail)).not.toMatch(/HOT PROMPT|HOT ANSWER/);
+      }
+      const restored = PaperDetailResponseSchema.parse(
+        await (await GET(...makeRequest('p_frozen'))).json(),
+      );
+      expect.soft(restored.session).toMatchObject({ status: 'completed', pos: 1, right, wrong });
+      expect
+        .soft(restored.sections[0].slots[0].slot_state.submission)
+        .toMatchObject({ outcome, reference_md: 'true' });
+    },
+  );
+
+  it.each(['correct', 'incorrect'] as const)(
+    'mixed policy counts only the immediate %s slot before completion',
+    async (immediateOutcome) => {
+      const db = testDb();
+      await seedQuestion('q_buffered', 'true');
+      await seedQuestion('q_immediate', 'false');
+      await seedPaper('p_mixed', {
+        questionIds: ['q_buffered'],
+        feedbackPolicy: 'judge_now_show_later',
+      });
+      await seedPaper('p_immediate_plan', {
+        questionIds: ['q_immediate'],
+        feedbackPolicy: 'immediate',
+      });
+      const [bufferedPaper] = await db.select().from(artifact).where(eq(artifact.id, 'p_mixed'));
+      const [immediatePaper] = await db
+        .select()
+        .from(artifact)
+        .where(eq(artifact.id, 'p_immediate_plan'));
+      await db
+        .update(artifact)
+        .set({
+          tool_state: {
+            question_ids: ['q_buffered', 'q_immediate'],
+            sections: [
+              ...(bufferedPaper.tool_state?.sections ?? []),
+              ...(immediatePaper.tool_state?.sections ?? []),
+            ],
+          },
+        })
+        .where(eq(artifact.id, 'p_mixed'));
+      const { sessionId } = await startFrozenPaperFixture(db, 'p_mixed');
+      const buffered = await submitPaperSlot(
+        {
+          sessionId,
+          paperArtifactId: 'p_mixed',
+          questionId: 'q_buffered',
+          answerMd: 'false',
+          primaryKnowledgeId: 'k1',
+          feedbackPolicy: 'judge_now_show_later',
+        },
+        db,
+      );
+      await correctPaperFixture(db, buffered.attemptEventId, 0.5);
+      const [capture] = await db.select().from(event).where(eq(event.id, buffered.attemptEventId));
+      const { paper_feedback_policy: _optionalPolicy, ...payload } = capture.payload;
+      await db.update(event).set({ payload }).where(eq(event.id, capture.id));
+      await submitPaperSlot(
+        {
+          sessionId,
+          paperArtifactId: 'p_mixed',
+          questionId: 'q_immediate',
+          answerMd: immediateOutcome === 'correct' ? 'false' : 'true',
+          primaryKnowledgeId: 'k1',
+          feedbackPolicy: 'immediate',
+        },
+        db,
+      );
+      for (const status of ['started', 'paused', 'completed']) {
+        await db.update(learning_session).set({ status }).where(eq(learning_session.id, sessionId));
+        const detail = PaperDetailResponseSchema.parse(
+          await (await GET(...makeRequest('p_mixed'))).json(),
+        );
+        const list = PaperListResponseSchema.parse(await (await listPapers()).json());
+        const expected = {
+          pos: 2,
+          right: Number(immediateOutcome === 'correct') + Number(status === 'completed'),
+          wrong: Number(immediateOutcome === 'incorrect'),
+        };
+        expect.soft(detail.session, `mixed detail ${status}`).toMatchObject(expected);
+        expect
+          .soft(
+            list.papers.find((item) => item.artifact_id === 'p_mixed')?.session,
+            `mixed list ${status}`,
+          )
+          .toMatchObject(expected);
+        expect.soft(detail.sections[1].slots[0].slot_state.submission).toMatchObject({
+          visible_to_user: true,
+          outcome: immediateOutcome,
+          reference_md: 'false',
+        });
+        if (status !== 'completed')
+          expect
+            .soft(detail.sections[0].slots[0].slot_state.submission)
+            .not.toHaveProperty('outcome');
+        else
+          expect
+            .soft(detail.sections[0].slots[0].slot_state.submission)
+            .toMatchObject({ visible_to_user: true, outcome: 'partial', reference_md: 'true' });
+      }
+    },
+  );
+
+  it.each(['missing', 'unresolved'] as const)(
+    'a completed submission with %s adjudication preserves progress without counting a wrong answer',
+    async (adjudication) => {
+      const db = testDb();
+      await seedQuestion('q_pending', 'true');
+      await seedPaper('p_pending', {
+        questionIds: ['q_pending'],
+        feedbackPolicy: 'judge_now_show_later',
+      });
+      const { sessionId } = await startFrozenPaperFixture(db, 'p_pending');
+      const submitted = await submitPaperSlot(
+        {
+          sessionId,
+          paperArtifactId: 'p_pending',
+          questionId: 'q_pending',
+          answerMd: 'false',
+          primaryKnowledgeId: 'k1',
+          feedbackPolicy: 'judge_now_show_later',
+        },
+        db,
+      );
+      const [anchor] = await db.select().from(event).where(eq(event.id, submitted.attemptEventId));
+      const groupId = anchor.payload.evaluation_group_id;
+      if (typeof groupId !== 'string') throw new Error('native capture missing group');
+      const [head] = await db
+        .select()
+        .from(evaluation_effective_head)
+        .where(eq(evaluation_effective_head.evaluation_group_id, groupId));
+      if (adjudication === 'missing') {
+        // Model the valid no-effective-head read state without rewriting the original capture.
+        await db
+          .update(evaluation_effective_head)
+          .set({ effective_evaluation_id: null })
+          .where(eq(evaluation_effective_head.evaluation_group_id, groupId));
+      } else {
+        if (!head.effective_evaluation_id) throw new Error('expected original active grade');
+        const [original] = await db
+          .select()
+          .from(evaluation)
+          .where(eq(evaluation.evaluation_id, head.effective_evaluation_id));
+        const candidate = await evaluateSubmission(db, {
+          submission_id: original.submission_id,
+          evaluation_group_id: groupId,
+          evaluation_key: 'paper-terminal-unresolved',
+          mode: 'manual_assert',
+          provenance: { source: 'manual', assisted: false },
+          asserted_unit_results: original.unit_results.map((unit) => ({
+            scoring_unit_id: unit.scoring_unit_id,
+            status: 'pending',
+            pending: {
+              reason: 'unjudgeable',
+              detail: '判据无法支持确定裁决；保留原始作答，等待有证据的复核。',
+            },
+          })),
+        });
+        expect(
+          await activateSubmissionCandidate(
+            db,
+            {
+              evaluation_id: candidate.record.evaluation_id,
+              expected_effective_id: head.effective_evaluation_id,
+              expected_generation: head.generation,
+            },
+            { actorRef: 'test:paper-unresolved' },
+          ),
+        ).toMatchObject({ status: 'activated' });
+      }
+      await db
+        .update(learning_session)
+        .set({ status: 'completed' })
+        .where(eq(learning_session.id, sessionId));
+      const detail = PaperDetailResponseSchema.parse(
+        await (await GET(...makeRequest('p_pending'))).json(),
+      );
+      const list = PaperListResponseSchema.parse(await (await listPapers()).json());
+      expect.soft(detail.session).toMatchObject({ pos: 1, right: 0, wrong: 0 });
+      expect
+        .soft(list.papers.find((item) => item.artifact_id === 'p_pending')?.session)
+        .toMatchObject({ pos: 1, right: 0, wrong: 0 });
+      expect.soft(detail.sections[0].slots[0].slot_state.submission).toMatchObject({
+        visible_to_user: true,
+        outcome: 'unsupported',
+        score: null,
+        reference_md: 'true',
+      });
+    },
+  );
 });

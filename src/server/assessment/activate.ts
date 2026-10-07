@@ -9,11 +9,11 @@
 // 锁序（§11「先锁 common learning-write，再一致地锁 submission/head」）：
 //   1. `acquireLearningStateWriteLock`（全局学习写锁 G —— 所有学习态写方先取
 //      它，天然与结算串行化）；
-//   2. `evaluation` candidate 行锁（FOR UPDATE —— 读坐标；evaluation 行不在
-//      他人写路径的锁点上，先于 submission/head 取锁不构成环）；
-//   3. `assessment_submission` 行锁（FOR UPDATE）；
-//   4. `evaluation_effective_head` 行锁（FOR UPDATE —— CAS 串行化点）；
-//   5. `question` 组根行锁（FOR UPDATE —— publish/verify 链在
+//   2. 只读 candidate 坐标，取 assessment-evaluation-group advisory 锁；
+//   3. `evaluation` candidate 行锁（FOR UPDATE）；
+//   4. `assessment_submission` 行锁（FOR UPDATE）；
+//   5. `evaluation_effective_head` 行锁（FOR UPDATE —— CAS 串行化点）；
+//   6. `question` 组根行锁（FOR UPDATE —— publish/verify 链在
 //      `publishQuestionGroupFromRow` 内先取同一锁，故 suspension/admission
 //      写与 activation 读在组根行锁上互斥 ⇒ §3.3「发题/激活与 verify 状态
 //      变更串行化」落实为同一锁点，而非额外锁面）。
@@ -22,11 +22,10 @@
 // admission 校验（§3.3「已排队/正在评估：可以保存 candidate，activation
 // 重新核对 admission generation」）：
 //   - 组根在组根行锁下读 lifecycle：suspended 或 withdrawn ⇒ stale_admission；
-//   - 评估时观察到的 admission generation（请求显式值优先，否则回退读
-//     `evaluation.provenance.admission_generation`，由 1047 写方盖上）与
-//     当前 generation 不一致 ⇒ stale_admission；观察值缺省 = 不比对
-//     该维度（仍做 suspended/withdrawn 校验）。
-//   - legacy 组（无 lifecycle 行）不阻断（§3.3 同源：无 lifecycle = 未接线面）。
+//   - 自动评分必须有服务端在执行前封存的 admission_snapshot；同 revision、
+//     admitted、同 generation 且无 hold，才可生效。缺证据历史保持 held。
+//   - 请求 generation 仅附加约束，不能覆盖/补造候选证据；无 lifecycle 拒绝。
+//   - D9/D15 显式手动/自评不要求规则准入，仍受现有 hold/withdrawn 守卫。
 //
 // 原子提交（§11「receipt + 学习结算 + effective head + outbox 同事务原子」）：
 //   - 结算经注入端口 `LearningSettlementPort`（YUK-1047 evaluator convergence
@@ -57,8 +56,15 @@
 // ====================================================================
 
 import { createId } from '@paralleldrive/cuid2';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
+import {
+  evaluationMemberFromRows,
+  freezeEvaluationInput,
+  matchesEvaluationInput,
+  sameMemberSet,
+} from '@/core/assessment-input';
+import { GroupInputContractError } from '@/core/schema/assessment/group-input';
 import type {
   EvaluationGroupIdT,
   EvaluationIdT,
@@ -67,13 +73,16 @@ import type {
   SubmissionIdT,
 } from '@/core/schema/assessment/ids';
 import { ActivateEvaluationIntent, resolveActivationCas } from '@/core/schema/assessment/ids';
-import type { EvaluationRecordT } from '@/core/schema/assessment/judgment';
+import { EvaluationProvenance, type EvaluationRecordT } from '@/core/schema/assessment/judgment';
+import { FsrsRating } from '@/core/schema/business';
 import type { Tx } from '@/db/client';
 import {
   assessment_issuance,
   assessment_submission,
   evaluation,
   evaluation_effective_head,
+  evaluation_group,
+  event,
   question,
   question_group_lifecycle,
   question_revision,
@@ -106,6 +115,16 @@ export interface ActivationSettleInput {
   issuance: typeof assessment_issuance.$inferSelect;
   /** 组根 question id（question_revision.group_id）。 */
   questionGroupId: string;
+  /** Validated complete input scope; legacy single-member fixtures retain their issuance. */
+  inputScope?: {
+    issued_part_ids: string[];
+    occurrence_at: string;
+    member_submission_ids: string[];
+  };
+  /** Explicit scheduling choice; never alters the candidate's grading evidence. */
+  userRating?: z.infer<typeof FsrsRating>;
+  /** Server-observed receipt: reactivating an old candidate is not new practice. */
+  reusesActivation?: boolean;
   now: Date;
 }
 
@@ -134,10 +153,10 @@ export const settlementUnavailable: LearningSettlementPort = () => {
 // ---------- 输入契约（zod 沿用 REQUIRED-null CAS 语义） ----------
 
 export const ActivateEvaluationRequest = ActivateEvaluationIntent.extend({
+  user_rating: FsrsRating.optional(),
   /**
-   * 评估时观察到的 admission generation（§3.3「旧验证不能改变较新
-   * admission 决定」的对偶面：旧评估不能盖过新 admission）。缺省则回退读
-   * `evaluation.provenance.admission_generation`；两者都缺 = 不校验该维度。
+   * 调用方的附加 generation 约束。自动评分的权威证据来自 candidate 内
+   * 服务端封存的 admission_snapshot；本字段不能覆盖或补造缺失快照。
    */
   admission_generation_observed: z.number().int().min(0).optional(),
 });
@@ -151,9 +170,11 @@ export type ActivateEvaluationResult =
       status:
         | 'not_found'
         | 'not_completed'
+        | 'occurrence_withdrawn'
         | 'head_missing'
         | 'coordinate_mismatch'
-        | 'stale_admission';
+        | 'stale_admission'
+        | 'rating_conflict';
     }
   | { status: 'cas_conflict'; conflict: 'stale_head' | 'generation_mismatch' };
 
@@ -182,7 +203,12 @@ export async function insertInitialEvaluationHead(
 export async function activateEvaluation(
   tx: Tx,
   rawInput: ActivateEvaluationRequestT,
-  options: { settle?: LearningSettlementPort; actorRef?: string; now?: Date } = {},
+  options: {
+    settle?: LearningSettlementPort;
+    actorRef?: string;
+    now?: Date;
+    allowCapturedOriginal?: boolean;
+  } = {},
 ): Promise<ActivateEvaluationResult> {
   const input = ActivateEvaluationRequest.parse(rawInput);
   const settle = options.settle ?? settlementUnavailable;
@@ -191,6 +217,29 @@ export async function activateEvaluation(
 
   // 1) common learning-write lock（锁序第一步）。
   await acquireLearningStateWriteLock(tx);
+
+  const [coordinate] = await tx
+    .select({ groupId: evaluation.evaluation_group_id })
+    .from(evaluation)
+    .where(eq(evaluation.evaluation_id, input.evaluation_id))
+    .limit(1);
+  if (!coordinate) return { status: 'not_found' };
+  await tx.execute(
+    sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${coordinate.groupId}))`,
+  );
+
+  const [withdrawal] = await tx
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:assessment_settlement'),
+        eq(event.subject_id, coordinate.groupId),
+        sql`${event.payload}->>'effect' = 'withdrawn'`,
+      ),
+    )
+    .limit(1);
+  if (withdrawal) return { status: 'occurrence_withdrawn' };
 
   // 2) candidate evaluation 行锁 + 读（先取 opaque id 拿 submission/group
   //    坐标）。
@@ -225,6 +274,39 @@ export async function activateEvaluation(
   if (!head) return { status: 'head_missing' };
   if (head.submission_id !== sub.submission_id) return { status: 'coordinate_mismatch' };
 
+  // The choice belongs to the candidate's first activation, not only to its
+  // current effective tenure. Validate every old receipt before allowing ABA.
+  const receipts = await tx
+    .select({ payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, ASSESSMENT_ACTIVATION_ACTION),
+        eq(event.subject_kind, 'evaluation_group'),
+        eq(event.subject_id, cand.evaluation_group_id),
+        sql`${event.payload}->>'evaluation_id' = ${cand.evaluation_id}`,
+      ),
+    );
+  const firstChoice = receipts[0]?.payload?.user_rating;
+  if (
+    receipts.some((row) => row.payload?.user_rating !== firstChoice) ||
+    (firstChoice !== undefined && !FsrsRating.safeParse(firstChoice).success)
+  ) {
+    return { status: 'rating_conflict' };
+  }
+  const previouslyActivated = receipts.length > 0;
+  if (
+    input.user_rating !== undefined &&
+    (previouslyActivated || head.effective_evaluation_id === cand.evaluation_id) &&
+    input.user_rating !== firstChoice
+  )
+    return { status: 'rating_conflict' };
+  const userRating = previouslyActivated
+    ? firstChoice === undefined
+      ? undefined
+      : FsrsRating.parse(firstChoice)
+    : input.user_rating;
+
   // 5) 幂等重放：candidate 已是当前 effective ⇒ 已结算过，如实返回不重写。
   const cas = resolveActivationCas(
     {
@@ -258,17 +340,71 @@ export async function activateEvaluation(
     .from(assessment_issuance)
     .where(eq(assessment_issuance.issuance_id, sub.issuance_id))
     .limit(1);
-  if (!issuance || issuance.revision_id !== sub.revision_id) {
+  if (
+    !issuance ||
+    issuance.revision_id !== sub.revision_id ||
+    issuance.container_occurrence_ref?.startsWith('probe:') ||
+    (issuance.container_occurrence_ref?.startsWith('ingestion:') && !options.allowCapturedOriginal)
+  ) {
     return { status: 'coordinate_mismatch' };
   }
 
   const [revRow] = await tx
-    .select({ group_id: question_revision.group_id })
+    .select()
     .from(question_revision)
     .where(eq(question_revision.revision_id, sub.revision_id))
     .limit(1);
   if (!revRow) return { status: 'not_found' };
   const questionGroupId = revRow.group_id;
+  const [group] = await tx
+    .select()
+    .from(evaluation_group)
+    .where(eq(evaluation_group.evaluation_group_id, cand.evaluation_group_id))
+    .limit(1);
+  const memberRows = await tx
+    .select()
+    .from(assessment_submission)
+    .where(eq(assessment_submission.evaluation_group_id, cand.evaluation_group_id));
+  if (
+    !group ||
+    !sameMemberSet(
+      group.submission_ids,
+      memberRows.map((row) => row.submission_id),
+    )
+  ) {
+    return { status: 'coordinate_mismatch' };
+  }
+  const memberIssuances = await tx
+    .select()
+    .from(assessment_issuance)
+    .where(
+      inArray(
+        assessment_issuance.issuance_id,
+        memberRows.map((row) => row.issuance_id),
+      ),
+    );
+  let inputScope: ActivationSettleInput['inputScope'];
+  try {
+    const members = memberRows.map((row) => {
+      const binding = memberIssuances.find((item) => item.issuance_id === row.issuance_id);
+      if (!binding)
+        throw new GroupInputContractError('invalid_group_input', 'missing member issuance');
+      return evaluationMemberFromRows(row, binding);
+    });
+    const anchor = members.find((member) => member.submission.submission_id === sub.submission_id);
+    if (!anchor) return { status: 'coordinate_mismatch' };
+    const actual = freezeEvaluationInput(anchor.submission, revRow, members);
+    const snapshot = cand.provenance?.input_snapshot;
+    // Old single-member inputs are unambiguous and now sealed against append.
+    // Historical joint candidates never acquire invented evidence at activation.
+    if (snapshot == null ? members.length !== 1 : !matchesEvaluationInput(snapshot, actual)) {
+      return { status: 'coordinate_mismatch' };
+    }
+    inputScope = actual;
+  } catch (error) {
+    if (!(error instanceof GroupInputContractError) && !(error instanceof z.ZodError)) throw error;
+    return { status: 'coordinate_mismatch' };
+  }
 
   // 组根行锁 —— 与 publish/verify 生命周期写互斥的线性化点。
   await tx
@@ -284,16 +420,34 @@ export async function activateEvaluation(
     .where(eq(question_group_lifecycle.group_id, questionGroupId))
     .limit(1);
 
-  const provenanceGeneration =
-    typeof cand.provenance?.admission_generation === 'number'
-      ? cand.provenance.admission_generation
-      : undefined;
-  const observedGeneration = input.admission_generation_observed ?? provenanceGeneration;
-  if (lifecycle) {
-    if (lifecycle.suspended || lifecycle.withdrawn) return { status: 'stale_admission' };
+  // Missing lifecycle is unknown, not a legacy bypass. A caller token is only
+  // an additional constraint; it cannot replace the candidate's frozen evidence.
+  if (!lifecycle || lifecycle.suspended || lifecycle.withdrawn) {
+    return { status: 'stale_admission' };
+  }
+  if (
+    input.admission_generation_observed !== undefined &&
+    lifecycle.scoring_admission_generation !== input.admission_generation_observed
+  ) {
+    return { status: 'stale_admission' };
+  }
+  const parsedProvenance = EvaluationProvenance.safeParse(cand.provenance ?? {});
+  if (!parsedProvenance.success) return { status: 'stale_admission' };
+  const provenance = parsedProvenance.data;
+  // D9/D15: explicitly asserted user ratings do not need admitted marking rules.
+  // Automatic scores require the server snapshot and current admission to agree
+  // on the exact immutable revision and generation before any learning write.
+  if (provenance.source === 'automatic') {
+    const snapshot = provenance.admission_snapshot;
     if (
-      observedGeneration !== undefined &&
-      lifecycle.scoring_admission_generation !== observedGeneration
+      !snapshot ||
+      snapshot.current_revision_id !== sub.revision_id ||
+      snapshot.state !== 'admitted' ||
+      snapshot.suspended ||
+      snapshot.withdrawn ||
+      lifecycle.current_revision_id !== sub.revision_id ||
+      lifecycle.scoring_admission_state !== 'admitted' ||
+      snapshot.generation !== lifecycle.scoring_admission_generation
     ) {
       return { status: 'stale_admission' };
     }
@@ -307,6 +461,9 @@ export async function activateEvaluation(
     head,
     issuance,
     questionGroupId,
+    inputScope,
+    userRating,
+    reusesActivation: previouslyActivated,
     now,
   });
 
@@ -365,6 +522,7 @@ export async function activateEvaluation(
       generation: nextGeneration,
       effect,
       attempt: cand.attempt,
+      ...(userRating === undefined ? {} : { user_rating: userRating }),
     } satisfies Record<string, unknown>,
   });
 

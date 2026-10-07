@@ -22,6 +22,7 @@ import {
   event,
   question,
   question_group_lifecycle,
+  question_revision,
 } from '@/db/schema';
 import {
   type NormalizableQuestionRow,
@@ -111,10 +112,14 @@ async function seedChain(prefix: string, opts: { withHead?: boolean } = {}): Pro
   const submissionId = `${prefix}_sub`;
   await seedQuestion(qid);
   const { revisionId, admissionGeneration } = await publishAdmitted(qid);
+  const [revision] = await db
+    .select()
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, revisionId));
   await db.insert(assessment_issuance).values({
     issuance_id: issuanceId,
     revision_id: revisionId,
-    part_ids: [],
+    part_ids: revision.structure.parts.map((part) => part.part_id),
     material_bindings: [],
     option_order: [],
     claim_policy: 'one_time',
@@ -162,7 +167,13 @@ async function seedEvaluation(
   const db = testDb();
   const provenance: Record<string, unknown> = { source: 'automatic', assisted: false };
   if (opts.observedGeneration !== 'omit') {
-    provenance.admission_generation = opts.observedGeneration ?? seed.admissionGeneration;
+    provenance.admission_snapshot = {
+      current_revision_id: seed.revisionId,
+      generation: opts.observedGeneration ?? seed.admissionGeneration,
+      state: 'admitted',
+      suspended: false,
+      withdrawn: false,
+    };
   }
   await db.insert(evaluation).values({
     evaluation_id: evalId,

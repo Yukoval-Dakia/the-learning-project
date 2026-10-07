@@ -330,6 +330,33 @@ describe('loadQuestionDetail', () => {
     expect(res?.backlinks_by_intent_source).toEqual({});
   });
 
+  // YUK-1196 (SCF-109) — intent_source is DB text, so an artifact row can carry an
+  // inherited Object.prototype name. A plain-object bucket read returned
+  // Object.prototype / a builtin instead of undefined and crashed on push.
+  it('groups backlinks on inherited Object keys instead of crashing', async () => {
+    const qid = await seedQuestion({ knowledge_ids: [] });
+    await seedArtifact({ intent_source: '__proto__', question_ids: [qid] });
+    await seedArtifact({ intent_source: 'constructor', question_ids: [qid] });
+    await seedArtifact({ intent_source: 'toString', question_ids: [qid] });
+    await seedArtifact({ intent_source: 'quiz_gen', question_ids: [qid] });
+
+    const res = await loadQuestionDetail(testDb(), qid);
+    expect(res?.backlinks).toHaveLength(4);
+    const groups = res?.backlinks_by_intent_source ?? {};
+    expect(groups.quiz_gen).toHaveLength(1);
+    // The special keys are OWN data properties (not the inherited accessor).
+    for (const key of ['__proto__', 'constructor', 'toString']) {
+      const descriptor = Object.getOwnPropertyDescriptor(groups, key);
+      expect(Array.isArray(descriptor?.value)).toBe(true);
+      expect(descriptor?.value).toHaveLength(1);
+    }
+    // ...and survive the JSON round-trip the API performs.
+    const parsed = JSON.parse(JSON.stringify(groups)) as Record<string, unknown>;
+    expect(parsed.__proto__).toHaveLength(1);
+    expect(parsed.constructor).toHaveLength(1);
+    expect(parsed.toString).toHaveLength(1);
+  });
+
   it('hydrates the event timeline via getQuestionTimeline', async () => {
     const k1 = newId();
     await seedKnowledge(k1);

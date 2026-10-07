@@ -7,6 +7,7 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { issueAssessment } from '@/capabilities/practice/server/assessment/issue';
 
 import type { AdmissionEvidenceT } from '@/core/schema/assessment';
 import {
@@ -19,6 +20,7 @@ import {
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   type NormalizableQuestionRow,
+  contractIntegrityDigest,
   normalizeQuestionRowToContract,
 } from './contract-normalizer';
 import {
@@ -91,6 +93,90 @@ describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
   beforeEach(resetDb);
   afterEach(resetDb);
 
+  it('freezes an unadmitted model plan as withheld without allowing automatic issuance', async () => {
+    const db = testDb();
+    await seedQuestion('unadmitted-model', {
+      kind: 'short_answer',
+      choices_md: [],
+      reference_md: '解释推导过程',
+    });
+    const input = publishInput(await readRow('unadmitted-model'));
+    for (const assignment of input.contract.execution_plan.assignments) {
+      assignment.executor = {
+        kind: 'model_executor',
+        task_kind: 'AssessmentRuleJudgeTask',
+        admitted_slice_id: null,
+      };
+    }
+    input.contract.integrity_digest = contractIntegrityDigest(input.contract);
+    const published = await publishQuestionGroup(db, input);
+    expect(published.status).toBe('published');
+    expect(await issueAssessment(db, { group_id: 'unadmitted-model' })).toEqual({
+      status: 'not_admitted',
+    });
+    await expect(
+      publishQuestionGroup(db, {
+        ...input,
+        admission: { state: 'admitted', evidence: ADMITTED_EVIDENCE },
+      }),
+    ).rejects.toThrow('unadmitted_model_executor');
+  });
+
+  for (const existing of [false, true]) {
+    it.each([
+      'duplicate_part_id',
+      'duplicate_material_id',
+      'unresolved_material_ref',
+      'empty_prompt',
+    ] as const)(`YUK-1118 rejects %s without writes (existing=${existing})`, async (code) => {
+      const db = testDb();
+      const qid = 'pub_structure_boundary';
+      await seedQuestion(qid);
+      const row = await readRow(qid);
+      const input = publishInput(row);
+      if (existing) {
+        const first = await publishQuestionGroup(db, input);
+        if (first.status !== 'published') throw new Error('initial publish failed');
+        input.expectedCurrentRevision = first.revision_id;
+        input.expectedAdmissionGeneration = 1;
+      }
+      const snapshot = async () => ({
+        revisions: await db.select().from(question_revision),
+        lifecycles: await db.select().from(question_group_lifecycle),
+        events: await db.select().from(event),
+        verifications: await db.select().from(question_admission_verification),
+      });
+      const before = await snapshot();
+      const structure = input.contract.structure;
+      switch (code) {
+        case 'duplicate_part_id':
+          structure.parts.push(structuredClone(structure.parts[0]));
+          break;
+        case 'duplicate_material_id': {
+          const material = {
+            material_id: 'shared-passage',
+            kind: 'plaintext' as const,
+            asset: { asset_id: 'txt-passage', digest: 'passage-digest' },
+            content_md: '阅读材料：学而时习之，不亦说乎？请结合上下文辨析代词的指代。',
+          };
+          structure.materials = [material, structuredClone(material)];
+          structure.parts[0].material_ids = [material.material_id];
+          break;
+        }
+        case 'unresolved_material_ref':
+          structure.parts[0].material_ids = ['missing-passage'];
+          break;
+        case 'empty_prompt':
+          structure.parts[0].prompt_md = ' \n\t ';
+          break;
+      }
+      // A valid digest must not disguise an invalid structure at the write barrier.
+      input.contract.integrity_digest = contractIntegrityDigest(input.contract);
+      await expect(publishQuestionGroup(db, input)).rejects.toThrow(code);
+      expect(await snapshot()).toEqual(before);
+    });
+  }
+
   it('atomically writes revision + lifecycle + publish event; CAS digest noop on republish', async () => {
     const db = testDb();
     const qid = 'pub_q1';
@@ -152,6 +238,66 @@ describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
       current_revision_id: first.revision_id,
       reason: 'revision_cas',
     });
+  });
+
+  it('republishing an exact contract upgrades normalization without rewriting its old revision', async () => {
+    const db = testDb();
+    const qid = 'pub_exact_normalization';
+    await seedQuestion(qid, {
+      kind: 'short_answer',
+      choices_md: null,
+      reference_md: '答案：ABC',
+      judge_kind_override: 'exact',
+    });
+    const row = await readRow(qid);
+    const legacy = publishInput(row);
+    const legacyCriterion = legacy.contract.scoring_basis.units[0].criterion;
+    if (legacyCriterion.kind !== 'text_key') throw new Error('expected text_key');
+    legacyCriterion.normalization = 'trim';
+    legacy.contract.integrity_digest = contractIntegrityDigest(legacy.contract);
+    const first = await publishQuestionGroup(db, legacy);
+    if (first.status !== 'published') throw new Error('legacy publish failed');
+    const [original] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, first.revision_id));
+
+    const current = publishInput(row, {
+      expectedCurrentRevision: first.revision_id,
+      expectedAdmissionGeneration: 1,
+    });
+    const second = await publishQuestionGroup(db, current);
+    if (second.status !== 'published') throw new Error('normalization republish failed');
+    const [replacement] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, second.revision_id));
+    expect(replacement.scoring_basis.units[0].criterion).toMatchObject({
+      kind: 'text_key',
+      normalization: 'answer_head',
+    });
+    expect(replacement.revision_ordinal).toBe(2);
+    expect(replacement.supersedes_revision_id).toBe(first.revision_id);
+    expect(replacement.integrity_digest).not.toBe(original.integrity_digest);
+    const [preserved] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, first.revision_id));
+    expect(preserved).toEqual(original);
+    const [lifecycle] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, qid));
+    expect(lifecycle.current_revision_id).toBe(second.revision_id);
+    expect(lifecycle.scoring_admission_state).toBe('withheld');
+    expect(lifecycle.scoring_admission_generation).toBe(2);
+    expect(
+      await publishQuestionGroup(db, {
+        ...current,
+        expectedCurrentRevision: second.revision_id,
+        expectedAdmissionGeneration: 2,
+      }),
+    ).toMatchObject({ status: 'noop', current_revision_id: second.revision_id });
   });
 
   it('content edit publishes a new revision with supersedes chain + identity diff', async () => {
@@ -1155,5 +1301,72 @@ describe('YUK-1045 — suspension 维度 + verify 记录（§3.3 verify 挂起�
       .where(eq(question_group_lifecycle.group_id, qid));
     expect(afterEdit.suspended).toBe(true);
     expect(afterEdit.suspension_reason).toBe('verify_hold');
+  });
+});
+
+describe('native unit comparator publication through physical child rows', () => {
+  beforeEach(resetDb);
+  it('keeps each child numeric reference separate from root metadata and publishes a new basis when it changes', async () => {
+    const db = testDb();
+    await seedQuestion('numeric_root', {
+      kind: 'composite',
+      choices_md: null,
+      reference_md: null,
+      metadata: { reference_value: 999, reference_unit: 'kg' },
+    });
+    await seedQuestion('numeric_child', {
+      parent_question_id: 'numeric_root',
+      part_index: 0,
+      kind: 'calculation',
+      choices_md: null,
+      reference_md: '30 m/s',
+      judge_kind_override: 'unit_dimension',
+      metadata: { reference_value: 30, reference_unit: 'm/s', reference_tolerance: 0.01 },
+    });
+    const first = await publishQuestionGroupFromRow(db, {
+      rootId: 'numeric_root',
+      actorRef: 'test:numeric',
+      now: new Date(),
+      admission: { state: 'admitted', evidence: ADMITTED_EVIDENCE },
+    });
+    if (first.status !== 'published') throw new Error('publication failed');
+    const [original] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, first.revision_id));
+    expect(original.scoring_basis.units[0].criterion).toMatchObject({
+      kind: 'numeric_key',
+      expected: 30,
+      expected_unit: 'm/s',
+    });
+    expect(original.execution_plan.assignments[0].executor).toMatchObject({
+      kind: 'deterministic',
+      comparator: 'numeric_unit_conversion',
+    });
+    await db
+      .update(question)
+      .set({ metadata: { reference_value: 40, reference_unit: 'm/s', reference_tolerance: 0.01 } })
+      .where(eq(question.id, 'numeric_child'));
+    const second = await publishQuestionGroupFromRow(db, {
+      rootId: 'numeric_root',
+      actorRef: 'test:numeric-edit',
+      now: new Date(),
+    });
+    expect(second.status).toBe('published');
+    expect(
+      await db
+        .select()
+        .from(question_revision)
+        .where(eq(question_revision.revision_id, first.revision_id)),
+    ).toEqual([original]);
+    const revisions = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.group_id, 'numeric_root'));
+    expect(revisions).toHaveLength(2);
+    expect(
+      revisions.find((row) => row.revision_id !== first.revision_id)?.scoring_basis.units[0]
+        .criterion,
+    ).toMatchObject({ expected: 40 });
   });
 });

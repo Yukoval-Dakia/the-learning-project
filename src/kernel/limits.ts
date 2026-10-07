@@ -16,4 +16,7 @@
 // 上界的原因。单一真源不变：定义仍在 core/limits.ts。
 //
 // 按「第二实例原则」只导出有真实使用方的项——需要别的上界时再往下加。
-export { REASONING_TRACE_MAX_LEN } from '@/core/limits';
+// COPILOT_REUSE_WINDOW_MS（YUK-1340）：浏览器侧 CopilotDock（经
+// copilot/session-reuse.ts）取这个24h复用窗口上界；同 REASONING_TRACE_MAX_LEN，
+// 走本 facade 而非 core/limits 直引，保持「capability → @/kernel/*」依赖纪律。
+export { COPILOT_REUSE_WINDOW_MS, REASONING_TRACE_MAX_LEN } from '@/core/limits';

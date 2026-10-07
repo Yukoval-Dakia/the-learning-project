@@ -4,6 +4,7 @@ import { db } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { Review } from '@/server/session';
+import { withFrozenPaperReopen } from '../server/assessment/paper-session-transition';
 import { UpdateReviewSessionBody } from './contracts';
 import { enqueueReviewSessionSummary } from './session-end';
 
@@ -48,7 +49,9 @@ export async function PATCH(req: Request, params: Record<string, string>): Promi
       );
     }
 
-    const transition = await Review.transitionReviewSession(db, params.id, parsed.data.status);
+    const transition = await withFrozenPaperReopen(db, params.id, (tx) =>
+      Review.transitionReviewSession(tx, params.id, parsed.data.status),
+    );
     if (transition.changed && transition.status === 'completed') {
       await enqueueReviewSessionSummary(params.id);
     }

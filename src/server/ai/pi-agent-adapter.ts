@@ -7,7 +7,7 @@
 //   - tools surface under the SAME `mcp__<server>__<tool>` wire names, so
 //     allowedTools filtering / recordToolCall / shouldEmitToolUseForCaller
 //     see identical names;
-//   - maxTurns maps to shouldStopAfterTurn — the terminal frame reports the
+//   - maxTurns maps to finishTurn — the terminal frame reports the
 //     SDK subtype 'error_max_turns';
 //   - beforeToolCall composes the piHooks gate chain (deny →
 //     {block, reason}, interrupt → terminate); arg-rewriting allows
@@ -38,11 +38,12 @@ import { randomUUID } from 'node:crypto';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
 import type {
   AgentContext,
+  AgentEvent,
   AgentLoopConfig,
   AgentMessage,
   AgentTool,
   BeforeToolCallContext,
-  ShouldStopAfterTurnContext,
+  FinishTurn,
   StreamFn,
   agentLoop as piAgentLoop,
 } from '@earendil-works/pi-agent-core';
@@ -54,7 +55,7 @@ import type {
   MutableModels as PiMutableModels,
   Usage as PiUsage,
 } from '@earendil-works/pi-ai';
-import { tasks } from '@/ai/registry';
+import { tasks } from '@/capabilities/task-registry';
 import { getConfig } from '@/core/config/store';
 import type {
   ExecutionAdapter,
@@ -64,8 +65,11 @@ import type {
   PreparedExecutionQuery,
   RunnerMessage,
 } from './execution-adapter';
+import { startTraceSpan, traceOperation, tracePiStream } from './laminar-tracing';
 import { emitPiAfterToolCall, runPiBeforeToolCall } from './pi-hooks';
 import { createLoomPiModels } from './pi-models';
+import { piProviderId } from './pi-provider-catalog';
+import { hasPiUsageEvidence, withPiUsageEvidence } from './pi-usage-evidence';
 import type { SDKAssistantMessage, SDKResultMessage, SDKUserMessage } from './sdk-types';
 import { isSpawnToolName } from './spawn-contract';
 import {
@@ -80,7 +84,7 @@ import {
   connectPiRemoteMcp,
 } from './tools/pi-tools';
 
-type PiModels = PiMutableModels;
+type PiModels = Pick<PiMutableModels, 'getModel' | 'streamSimple'>;
 type PiUserContent = Extract<PiMessage, { role: 'user' }>['content'];
 type PiToolResultMessage = Extract<PiMessage, { role: 'toolResult' }>;
 
@@ -100,7 +104,7 @@ const OPENCODE_SESSION_HEADER = 'x-opencode-session';
  * short transient absorption while returning control to loom's one deliberate
  * retry layer. An unparseable value falls back to the default, not a throw.
  */
-function piMaxRetries(): number | undefined {
+export function piMaxRetries(): number | undefined {
   // YUK-1007：DB > env > code-default(2)。env 层保留原语义（非有限/负 → 默认）。
   const v = getConfig('CLAUDE_CODE_MAX_RETRIES');
   return typeof v === 'number' ? v : 2;
@@ -150,7 +154,7 @@ function estimatePiTokens(messages: readonly AgentMessage[]): number {
     cjkChars += text.match(PI_COMPACT_CJK_RE)?.length ?? 0;
   };
   for (const message of messages) {
-    if (message.role === 'user' || message.role === 'toolResult') {
+    if (message.role === 'user' || message.role === 'toolResult' || message.role === 'system') {
       const content = message.content;
       if (typeof content === 'string') {
         addText(content);
@@ -158,6 +162,10 @@ function estimatePiTokens(messages: readonly AgentMessage[]): number {
         for (const block of content) {
           if (block.type === 'text') addText(block.text);
         }
+      }
+      if (message.role === 'system') {
+        if (message.sections) addText(JSON.stringify(message.sections));
+        if (message.toolsAdded) addText(JSON.stringify(message.toolsAdded));
       }
     } else if (message.role === 'assistant') {
       for (const block of message.content) {
@@ -168,6 +176,20 @@ function estimatePiTokens(messages: readonly AgentMessage[]): number {
     }
   }
   return Math.ceil((chars - cjkChars) / PI_COMPACT_CHARS_PER_TOKEN + cjkChars);
+}
+
+/** End at the configured ceiling without turning a clean final answer into failure. */
+function turnLimiter(maxTurns: number, onToolLimit: () => void): FinishTurn {
+  let completed = 0;
+  return ({ message }) => {
+    completed += 1;
+    // Pi calls finishTurn on failures too. Preserve the provider error/abort truth.
+    if (message.stopReason === 'error' || message.stopReason === 'aborted') return;
+    if (completed < maxTurns) return;
+    if (message.content.some((block) => block.type === 'toolCall')) onToolLimit();
+    // Also suppress queue polling after a clean final turn at the ceiling.
+    return { action: 'end' };
+  };
 }
 
 const EMPTY_PI_USAGE: PiUsage = {
@@ -456,6 +478,7 @@ export function piAssistantToSdkFrame(
   return {
     source: 'pi',
     type: 'assistant',
+    usage_observed: hasPiUsageEvidence(message),
     message: sdkMessage as unknown as SDKAssistantMessage['message'],
     parent_tool_use_id: null,
     uuid: randomUUID(),
@@ -556,7 +579,7 @@ export function piTerminalResultFrame(args: {
   durationMs: number;
   numTurns: number;
   aborted: boolean;
-  /** Set when shouldStopAfterTurn hit the configured turn ceiling — the pi
+  /** Set when finishTurn hit the configured turn ceiling — the pi
    *  equivalent of the SDK's `error_max_turns` terminal subtype. */
   cappedByMaxTurns?: boolean;
   /** P3 — nested-child usage rolled into the run's terminal evidence, the
@@ -567,6 +590,18 @@ export function piTerminalResultFrame(args: {
   const base = {
     source: 'pi' as const,
     type: 'result' as const,
+    usage_observed:
+      args.messages.some(
+        (message) =>
+          message.role === 'assistant' && hasPiUsageEvidence(message as PiAssistantMessage),
+      ) ||
+      [
+        args.childUsage?.input,
+        args.childUsage?.output,
+        args.childUsage?.cacheRead,
+        args.childUsage?.cacheWrite,
+        args.childUsage?.costUsd,
+      ].some((value) => value !== undefined && value > 0),
     duration_ms: args.durationMs,
     duration_api_ms: args.durationMs,
     num_turns: Math.max(1, args.numTurns),
@@ -574,7 +609,18 @@ export function piTerminalResultFrame(args: {
     uuid: randomUUID(),
     session_id: args.sessionId,
   };
-  const usage = final?.usage;
+  // agent_end contains this invocation's messages (not replay history). Pi usage
+  // is per response, so sum every root turn before adding nested-loop spend.
+  const usage: PiUsage = { ...EMPTY_PI_USAGE, cost: { ...EMPTY_PI_USAGE.cost } };
+  for (const message of args.messages) {
+    if (message.role !== 'assistant' || !message.usage) continue;
+    for (const key of ['input', 'output', 'cacheRead', 'cacheWrite', 'totalTokens'] as const) {
+      usage[key] += message.usage[key];
+    }
+    for (const key of ['input', 'output', 'cacheRead', 'cacheWrite', 'total'] as const) {
+      usage.cost[key] += message.usage.cost[key];
+    }
+  }
   const child = args.childUsage;
   const costUsd = (usage?.cost?.total ?? 0) + (child?.costUsd ?? 0);
   const usageParts = piUsageToResultUsage(usage, args.model);
@@ -706,6 +752,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   private readonly allTools: AgentTool[];
   private readonly queuedFrames: RunnerMessage[] = [];
   private readonly childUsage = emptyPiChildUsage();
+  private readonly executedToolCalls = new Map<string, number>();
 
   constructor(
     private readonly args: ExecutionAdapterStartupArgs,
@@ -736,7 +783,50 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         : [];
     const visibleSpawn =
       allowed === undefined ? spawnTools : spawnTools.filter((tool) => allowed.has(tool.name));
-    this.allTools = [...tools, ...visibleSpawn];
+    this.allTools = [...tools, ...visibleSpawn].map((tool) => ({
+      ...tool,
+      execute: (...args: Parameters<AgentTool['execute']>) => {
+        this.executedToolCalls.set(args[0], (this.executedToolCalls.get(args[0]) ?? 0) + 1);
+        return traceOperation(
+          'tool.execute',
+          {
+            task_run_id: this.args.runId,
+            tool_name: tool.name,
+            tool_call_id: args[0],
+            executed: true,
+          },
+          () => tool.execute(...args),
+          {
+            signal: args[2],
+            outcome: (result) => (result.isError ? 'error' : 'success'),
+            transcript: { input: () => args[1], output: (result) => result },
+          },
+        );
+      },
+    }));
+  }
+
+  private observeToolAttempt(event: AgentEvent): void {
+    if (event.type !== 'tool_execution_end') return;
+    const executions = this.executedToolCalls.get(event.toolCallId) ?? 0;
+    if (executions > 0) {
+      if (executions === 1) this.executedToolCalls.delete(event.toolCallId);
+      else this.executedToolCalls.set(event.toolCallId, executions - 1);
+      return;
+    }
+    // Pi emits start/end even for validation, missing-tool and hook-blocked calls.
+    // None crossed AgentTool.execute; do not label them executed or copy errors/args.
+    const span = startTraceSpan('tool.attempt', {
+      task_run_id: this.args.runId,
+      tool_name: event.toolName,
+      tool_call_id: event.toolCallId,
+      executed: false,
+    });
+    span.transcript('input', () => ({
+      arguments: '[omitted: arguments unavailable on terminal event]',
+    }));
+    span.transcript('output', () => event.result);
+    span.end(this.abort.signal.aborted ? 'cancelled' : event.isError ? 'error' : 'success');
   }
 
   private emitFrame(frame: RunnerMessage): void {
@@ -837,10 +927,16 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         const startedAt = Date.now();
         // Keep the newest tail that fits the target; the current-turn prompt
         // is the last element and is never dropped.
+        // Pi 1.0 carries instructions and tool declarations in system messages.
+        // Replay their deltas before pruning so neither can disappear with history.
+        const { getCurrentSystemMessage } = await import('@earendil-works/pi-ai');
+        const system = getCurrentSystemMessage(messages);
+        const history = messages.filter((message) => message.role !== 'system');
+        const prefix: AgentMessage[] = [...(system ? [system] : []), piUserMessage(sessionContext)];
         const kept: AgentMessage[] = [];
-        let budget = targetTokens;
-        for (let i = messages.length - 1; i >= 0; i -= 1) {
-          const message = messages[i];
+        let budget = targetTokens - estimatePiTokens(prefix);
+        for (let i = history.length - 1; i >= 0; i -= 1) {
+          const message = history[i];
           const cost = estimatePiTokens([message]);
           if (kept.length > 0 && cost > budget) break;
           kept.unshift(message);
@@ -857,7 +953,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
         while (tail.length > 1 && tail[0].role === 'toolResult') {
           tail.shift();
         }
-        const transformed: AgentMessage[] = [piUserMessage(sessionContext), ...tail];
+        const transformed: AgentMessage[] = [...prefix, ...tail];
         this.emitFrame(
           piCompactBoundaryFrame({
             sessionId,
@@ -889,7 +985,10 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       convertToLlm: (messages): PiMessage[] =>
         messages.filter(
           (m): m is PiMessage =>
-            m.role === 'user' || m.role === 'assistant' || m.role === 'toolResult',
+            m.role === 'system' ||
+            m.role === 'user' ||
+            m.role === 'assistant' ||
+            m.role === 'toolResult',
         ),
       // The x-opencode-session header is an opencode-go wire requirement
       // (400 MissingSessionID without it). Scope it to that lane: forwarding a
@@ -913,7 +1012,19 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   }
 
   private readonly streamFn: StreamFn = (model, llmContext, streamOptions) =>
-    this.deps.models.streamSimple(model, llmContext, streamOptions);
+    tracePiStream(
+      (m, context, options) =>
+        withPiUsageEvidence(
+          (innerModel, innerContext, innerOptions) =>
+            this.deps.models.streamSimple(innerModel, innerContext, innerOptions),
+          m,
+          context,
+          options,
+        ),
+      model,
+      llmContext,
+      streamOptions,
+    );
 
   /**
    * Child tool set: the spec's allowlist over the parent's mounted wire names,
@@ -938,168 +1049,176 @@ class PiPreparedQuery implements PreparedExecutionQuery {
    * (the SDK Task-call parity).
    */
   private readonly subagentHost: PiSubagentHost = {
-    runNested: async ({ toolCallId, subagentType, description, prompt, spec, signal }) => {
-      const taskId = toolCallId;
-      const startedAt = Date.now();
-      this.emitFrame(
-        piTaskStartedFrame({
-          sessionId: this.sessionId,
-          taskId,
-          toolCallId,
-          description,
-          subagentType,
-          prompt,
-        }),
-      );
-      const childModel = this.childModelFor(spec);
-      const childTools = this.childToolsFor(spec);
-      const childSignal = signal ? AbortSignal.any([this.abort.signal, signal]) : this.abort.signal;
-      const childContext: AgentContext = {
-        systemPrompt: spec.prompt,
-        messages: [],
-        ...(childTools.length > 0 ? { tools: childTools } : {}),
-      };
-      const childMaxTurns = spec.maxTurns;
-      let childTurns = 0;
-      let childCapped = false;
-      let toolUses = 0;
-      let totalTokens = 0;
-      let lastToolName: string | undefined;
-      const childConfig: AgentLoopConfig = {
-        model: childModel,
-        ...this.baseLoopConfig(),
-        ...(childTools.length > 0 ? { toolExecution: 'sequential' as const } : {}),
-        ...(childMaxTurns !== undefined
-          ? {
-              shouldStopAfterTurn: () => {
-                childTurns += 1;
-                if (childTurns >= childMaxTurns) {
-                  childCapped = true;
-                  return true;
-                }
-                return false;
-              },
-            }
-          : {}),
-        beforeToolCall: this.makeBeforeToolCall(subagentType),
-        afterToolCall: this.makeAfterToolCall(subagentType),
-      };
-
-      const accumulate = (message: PiAssistantMessage) => {
-        const usage = message.usage;
-        if (!usage) return;
-        totalTokens += usage.totalTokens;
-        this.childUsage.input += usage.input;
-        this.childUsage.output += usage.output;
-        this.childUsage.cacheRead += usage.cacheRead;
-        this.childUsage.cacheWrite += usage.cacheWrite;
-        this.childUsage.costUsd += usage.cost.total;
-        const entry = this.childUsage.byModel.get(childModel.id) ?? {
-          inputTokens: 0,
-          outputTokens: 0,
-          cacheReadInputTokens: 0,
-          cacheCreationInputTokens: 0,
-          webSearchRequests: 0,
-          costUSD: 0,
-          contextWindow: childModel.contextWindow,
-          maxOutputTokens: childModel.maxTokens,
-        };
-        entry.inputTokens += usage.input;
-        entry.outputTokens += usage.output;
-        entry.cacheReadInputTokens += usage.cacheRead;
-        entry.cacheCreationInputTokens += usage.cacheWrite;
-        entry.costUSD += usage.cost.total;
-        this.childUsage.byModel.set(childModel.id, entry);
-      };
-
-      let finalMessages: AgentMessage[] = [];
-      try {
-        const stream = this.deps.agentLoop(
-          [piUserMessage(prompt)],
-          childContext,
-          childConfig,
-          childSignal,
-          this.streamFn,
-        );
-        for await (const event of stream) {
-          if (event.type === 'tool_execution_start') {
-            toolUses += 1;
-            lastToolName = event.toolName;
-            continue;
-          }
-          if (event.type === 'message_end' && event.message.role === 'assistant') {
-            const assistant = event.message as PiAssistantMessage;
-            accumulate(assistant);
-            this.emitFrame(
-              piTaskProgressFrame({
-                sessionId: this.sessionId,
-                taskId,
-                toolCallId,
-                description,
-                subagentType,
-                totalTokens,
-                toolUses,
-                durationMs: Date.now() - startedAt,
-                ...(lastToolName ? { lastToolName } : {}),
-              }),
-            );
-            continue;
-          }
-          if (event.type === 'agent_end') {
-            finalMessages = event.messages;
-          }
-        }
-        if (childSignal.aborted || this.abort.signal.aborted) {
-          throw new Error('nested subagent aborted');
-        }
-        const final = lastAssistantMessage(finalMessages);
-        // Root-loop terminal parity: no assistant at all, a capped turn
-        // ceiling, or a provider-side error/aborted stop all mean the child
-        // FAILED — a completed task_* row would let the parent answer from
-        // a report that does not exist.
-        if (!final) {
-          throw new Error(`nested subagent '${subagentType}' ended without an assistant message`);
-        }
-        if (childCapped) {
-          throw new Error(
-            `nested subagent '${subagentType}' stopped at the configured turn ceiling (${childMaxTurns})`,
-          );
-        }
-        if (final.stopReason === 'error' || final.stopReason === 'aborted') {
-          throw new Error(
-            final.errorMessage ??
-              `nested subagent '${subagentType}' ended with stopReason='${final.stopReason}'`,
-          );
-        }
-        const text = assistantText(final);
-        this.emitFrame(
-          piTaskUpdatedFrame({
-            sessionId: this.sessionId,
-            taskId,
-            status: 'completed',
-          }),
-        );
-        return text.length > 0 ? text : '(subagent ended without a text report)';
-      } catch (error) {
-        // An aborted child may either end its stream quietly (handled above)
-        // or throw the abort — both must still close the durable task_* row.
-        if (childSignal.aborted || this.abort.signal.aborted) {
+    runNested: async ({ toolCallId, subagentType, description, prompt, spec, signal }) =>
+      traceOperation(
+        'agent.child',
+        {
+          task_run_id: this.args.runId,
+          tool_call_id: toolCallId,
+          additive_usage: false,
+        },
+        async () => {
+          const taskId = toolCallId;
+          const startedAt = Date.now();
           this.emitFrame(
-            piTaskUpdatedFrame({ sessionId: this.sessionId, taskId, status: 'killed' }),
-          );
-        } else {
-          this.emitFrame(
-            piTaskUpdatedFrame({
+            piTaskStartedFrame({
               sessionId: this.sessionId,
               taskId,
-              status: 'failed',
-              error: error instanceof Error ? error.message : String(error),
+              toolCallId,
+              description,
+              subagentType,
+              prompt,
             }),
           );
-        }
-        throw error;
-      }
-    },
+          const childModel = this.childModelFor(spec);
+          const childTools = this.childToolsFor(spec);
+          const childSignal = signal
+            ? AbortSignal.any([this.abort.signal, signal])
+            : this.abort.signal;
+          const childContext: AgentContext = {
+            messages: [{ role: 'system', content: spec.prompt, timestamp: Date.now() }],
+            ...(childTools.length > 0 ? { tools: childTools } : {}),
+          };
+          const childMaxTurns = spec.maxTurns;
+          let childCapped = false;
+          let toolUses = 0;
+          let totalTokens = 0;
+          let lastToolName: string | undefined;
+          const childConfig: AgentLoopConfig = {
+            model: childModel,
+            ...this.baseLoopConfig(),
+            ...(childTools.length > 0 ? { toolExecution: 'sequential' as const } : {}),
+            ...(childMaxTurns !== undefined
+              ? {
+                  finishTurn: turnLimiter(childMaxTurns, () => {
+                    childCapped = true;
+                  }),
+                }
+              : {}),
+            beforeToolCall: this.makeBeforeToolCall(subagentType),
+            afterToolCall: this.makeAfterToolCall(subagentType),
+          };
+
+          const accumulate = (message: PiAssistantMessage) => {
+            const usage = message.usage;
+            if (!usage) return;
+            totalTokens += usage.totalTokens;
+            this.childUsage.input += usage.input;
+            this.childUsage.output += usage.output;
+            this.childUsage.cacheRead += usage.cacheRead;
+            this.childUsage.cacheWrite += usage.cacheWrite;
+            this.childUsage.costUsd += usage.cost.total;
+            const entry = this.childUsage.byModel.get(childModel.id) ?? {
+              inputTokens: 0,
+              outputTokens: 0,
+              cacheReadInputTokens: 0,
+              cacheCreationInputTokens: 0,
+              webSearchRequests: 0,
+              costUSD: 0,
+              contextWindow: childModel.contextWindow,
+              maxOutputTokens: childModel.maxTokens,
+            };
+            entry.inputTokens += usage.input;
+            entry.outputTokens += usage.output;
+            entry.cacheReadInputTokens += usage.cacheRead;
+            entry.cacheCreationInputTokens += usage.cacheWrite;
+            entry.costUSD += usage.cost.total;
+            this.childUsage.byModel.set(childModel.id, entry);
+          };
+
+          let finalMessages: AgentMessage[] = [];
+          try {
+            const stream = this.deps.agentLoop(
+              [piUserMessage(prompt)],
+              childContext,
+              childConfig,
+              childSignal,
+              this.streamFn,
+            );
+            for await (const event of stream) {
+              this.observeToolAttempt(event);
+              if (event.type === 'tool_execution_start') {
+                toolUses += 1;
+                lastToolName = event.toolName;
+                continue;
+              }
+              if (event.type === 'message_end' && event.message.role === 'assistant') {
+                const assistant = event.message as PiAssistantMessage;
+                accumulate(assistant);
+                this.emitFrame(
+                  piTaskProgressFrame({
+                    sessionId: this.sessionId,
+                    taskId,
+                    toolCallId,
+                    description,
+                    subagentType,
+                    totalTokens,
+                    toolUses,
+                    durationMs: Date.now() - startedAt,
+                    ...(lastToolName ? { lastToolName } : {}),
+                  }),
+                );
+                continue;
+              }
+              if (event.type === 'agent_end') {
+                finalMessages = event.messages;
+              }
+            }
+            if (childSignal.aborted || this.abort.signal.aborted) {
+              throw new Error('nested subagent aborted');
+            }
+            const final = lastAssistantMessage(finalMessages);
+            // Root-loop terminal parity: no assistant at all, a capped turn
+            // ceiling, or a provider-side error/aborted stop all mean the child
+            // FAILED — a completed task_* row would let the parent answer from
+            // a report that does not exist.
+            if (!final) {
+              throw new Error(
+                `nested subagent '${subagentType}' ended without an assistant message`,
+              );
+            }
+            if (childCapped) {
+              throw new Error(
+                `nested subagent '${subagentType}' stopped at the configured turn ceiling (${childMaxTurns})`,
+              );
+            }
+            if (final.stopReason === 'error' || final.stopReason === 'aborted') {
+              throw new Error(
+                final.errorMessage ??
+                  `nested subagent '${subagentType}' ended with stopReason='${final.stopReason}'`,
+              );
+            }
+            const text = assistantText(final);
+            this.emitFrame(
+              piTaskUpdatedFrame({
+                sessionId: this.sessionId,
+                taskId,
+                status: 'completed',
+              }),
+            );
+            return text.length > 0 ? text : '(subagent ended without a text report)';
+          } catch (error) {
+            // An aborted child may either end its stream quietly (handled above)
+            // or throw the abort — both must still close the durable task_* row.
+            if (childSignal.aborted || this.abort.signal.aborted) {
+              this.emitFrame(
+                piTaskUpdatedFrame({ sessionId: this.sessionId, taskId, status: 'killed' }),
+              );
+            } else {
+              this.emitFrame(
+                piTaskUpdatedFrame({
+                  sessionId: this.sessionId,
+                  taskId,
+                  status: 'failed',
+                  error: error instanceof Error ? error.message : String(error),
+                }),
+              );
+            }
+            throw error;
+          }
+        },
+        { signal: signal ?? this.abort.signal },
+      ),
   };
 
   /** Resolve a spec.model override: 'inherit'/unset → parent model; a pi
@@ -1108,7 +1227,7 @@ class PiPreparedQuery implements PreparedExecutionQuery {
   private childModelFor(spec: PiSubagentSpec): PiModel<PiApi> {
     const declared = spec.model;
     if (declared === undefined || declared === 'inherit') return this.model;
-    const resolved = this.deps.models.getModel(this.args.resolved.provider, declared);
+    const resolved = this.deps.models.getModel(piProviderId(this.args.resolved.provider), declared);
     if (!resolved) {
       throw new Error(
         `pi adapter cannot resolve nested-agent model '${declared}' in provider '${this.args.resolved.provider}' — declare a pi catalog id or 'inherit' (SDK alias names are not portable).`,
@@ -1138,23 +1257,25 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       systemPrompt = `${systemPrompt}\n\n${docs}`;
     }
     const context: AgentContext = {
-      systemPrompt,
       // sdkSession→本地回放: durable-turn replay seeds context.messages — the
       // pi equivalent of reattaching an SDK session file.
-      messages: piReplayTurnsToMessages(this.args.piSessionReplay ?? [], this.model),
+      messages: [
+        { role: 'system', content: systemPrompt, timestamp: Date.now() },
+        ...piReplayTurnsToMessages(this.args.piSessionReplay ?? [], this.model),
+      ],
       ...(this.allTools.length > 0 ? { tools: this.allTools } : {}),
     };
     // options.maxTurns is the runner's agentic-turn ceiling. Pi has no built-in
-    // equivalent — shouldStopAfterTurn counts completed turns and asks the
+    // equivalent — finishTurn counts completed turns and asks the
     // loop to end; the terminal frame then reports the normalized subtype
     // 'error_max_turns' so lifecycle/finish-reason handling stays identical.
     // YUK-1026 — SDK parity: the ceiling only bites when the agent wants
     // ANOTHER turn. A turn whose assistant message carries no tool calls ends
-    // the loop on its own (pending steering/follow-up aside) and must report
+    // the loop successfully; the ceiling also leaves queued follow-ups undrained.
+    // It must report
     // success, not error_max_turns — under the unconditional counter every
     // maxTurns=1 task deterministically failed after its first clean turn.
     const maxTurns = typeof options.maxTurns === 'number' ? options.maxTurns : undefined;
-    let completedTurns = 0;
     let cappedByMaxTurns = false;
     const config: AgentLoopConfig = {
       model: this.model,
@@ -1164,19 +1285,9 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       ...(this.allTools.length > 0 ? { toolExecution: 'sequential' as const } : {}),
       ...(maxTurns !== undefined
         ? {
-            shouldStopAfterTurn: (turn: ShouldStopAfterTurnContext) => {
-              completedTurns += 1;
-              if (completedTurns < maxTurns) return false;
-              // The callback cannot observe batch termination (`terminate`
-              // never reaches ToolResultMessage) — toolCall presence is the
-              // faithful "loop intends another turn" signal available here.
-              const wantsAnotherTurn = turn.message.content.some(
-                (block) => block.type === 'toolCall',
-              );
-              if (!wantsAnotherTurn) return false;
+            finishTurn: turnLimiter(maxTurns, () => {
               cappedByMaxTurns = true;
-              return true;
-            },
+            }),
           }
         : {}),
       beforeToolCall: this.makeBeforeToolCall(),
@@ -1206,14 +1317,32 @@ class PiPreparedQuery implements PreparedExecutionQuery {
       tools: this.allTools,
     });
     const stream = this.deps.agentLoop(prompts, context, config, this.abort.signal, this.streamFn);
+    let textStreamed = false;
     for await (const event of stream) {
+      this.observeToolAttempt(event);
       // Frames queued inside the loop (subagent task_*, compact_boundary)
       // surface before the engine event that follows them — matching the SDK
       // wire order where lifecycle frames precede the parent tool_result.
       yield* this.drainFrames();
+      if (
+        event.type === 'message_update' &&
+        event.message.role === 'assistant' &&
+        event.assistantMessageEvent.type === 'text_delta'
+      ) {
+        const text = event.assistantMessageEvent.delta;
+        if (text.length > 0 && !this.abort.signal.aborted) {
+          textStreamed = true;
+          yield { type: 'text_delta', text, session_id: this.sessionId, source: 'pi' };
+        }
+        continue;
+      }
       if (event.type === 'message_end' && event.message.role === 'assistant') {
         numTurns += 1;
-        yield piAssistantToSdkFrame(event.message as PiAssistantMessage, this.sessionId);
+        yield {
+          ...piAssistantToSdkFrame(event.message as PiAssistantMessage, this.sessionId),
+          ...(textStreamed ? { text_streamed: true } : {}),
+        };
+        textStreamed = false;
         continue;
       }
       if (event.type === 'message_end' && event.message.role === 'toolResult') {
@@ -1277,9 +1406,8 @@ export class PiAgentAdapter implements ExecutionAdapter {
       // Each import evaluates only when its injected dep is absent — tests
       // that inject both never load the pi tree at all.
       this.resolved = {
-        // Loom's catalog = pi builtins (opencode-go, anthropic) + custom
-        // providers for the anthropic-compat endpoints (xiaomi/zhipu) and the
-        // OAuth subscription lane (anthropic-sub). See pi-models.ts.
+        // Native pi presets own wire behavior; anthropic-sub selects the
+        // native Anthropic preset with the separately resolved OAuth credential.
         models: this.init.models ?? (await createLoomPiModels()),
         agentLoop: this.init.agentLoop ?? (await import('@earendil-works/pi-agent-core')).agentLoop,
         connectRemoteMcp: this.init.connectRemoteMcp ?? connectPiRemoteMcp,
@@ -1343,7 +1471,7 @@ export class PiAgentAdapter implements ExecutionAdapter {
         'pi adapter cannot serve options.resume without ctx.piSessionReplay — there is no provider session file; replay the durable turns instead.',
       );
     }
-    const model = deps.models.getModel(args.resolved.provider, args.resolved.model);
+    const model = deps.models.getModel(piProviderId(args.resolved.provider), args.resolved.model);
     if (!model) {
       throw new Error(
         `pi adapter has no model '${args.resolved.model}' in provider '${args.resolved.provider}' — check the loom pi catalog (pi-models.ts) for the id.`,

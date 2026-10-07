@@ -1,4 +1,6 @@
+import { eq } from 'drizzle-orm';
 import type { Db } from '@/db/client';
+import { event } from '@/db/schema';
 import type {
   EventSubscriptionDelivery,
   EventSubscriptionHandlerFactory,
@@ -32,13 +34,23 @@ export async function handleFailureLearningAttemptDelivery(
   }
 
   return db.transaction(async (tx) => {
+    const [source] = await tx.select().from(event).where(eq(event.id, delivery.sourceEventId));
+    const attemptEventId =
+      source?.action === 'experimental:assessment_activation' &&
+      typeof source.payload.submission_id === 'string'
+        ? `evt_assessment_${source.payload.submission_id}`
+        : source?.action === 'experimental:assessment_feedback_released' &&
+            source.subject_kind === 'event' &&
+            source.payload.attempt_event_id === source.subject_id
+          ? source.subject_id
+          : delivery.sourceEventId;
     const result = await requestFailureLearning(
       {
         db: tx,
         enqueueAttribution: (attemptEventId) =>
           enqueueAttributionFollowup(send, attemptEventId, tx),
       },
-      { attemptEventId: delivery.sourceEventId },
+      { attemptEventId },
     );
     if (result.status === 'ignored') {
       const reasons = {
@@ -54,7 +66,7 @@ export async function handleFailureLearningAttemptDelivery(
     return {
       status: 'succeeded',
       detail: {
-        attempt_event_id: delivery.sourceEventId,
+        attempt_event_id: attemptEventId,
         attribution_job_id: result.attributionJobId,
       },
     };

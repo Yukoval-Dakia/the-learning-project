@@ -98,7 +98,8 @@ vi.mock('@/server/ai/log', () => ({
   writeToolCallLog: logMock.tool,
 }));
 
-import { tasks } from '@/ai/registry';
+import { LEARNER_LOCALE_PIN, getTaskSystemPrompt } from '@/capabilities/task-registry';
+import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import {
   type ExecutionAdapterStartupArgs,
   type PreparedExecutionQuery,
@@ -106,7 +107,6 @@ import {
   __setPiAdapterForTests,
 } from './execution-adapter';
 import { runTask, streamTask, streamTaskCollecting } from './runner';
-import type { Options } from './sdk-types';
 import { taskInputHash } from './task-input-hash';
 
 // Minimal db stub — never dereferenced because every ai/log writer is mocked.
@@ -634,7 +634,7 @@ describe('runTask — YUK-365 subscription-OAuth resolution', () => {
       authMode: 'key',
       provider: 'xiaomi',
       apiKey: 'sk-test-key',
-      baseUrl: 'https://api.xiaomimimo.com/anthropic',
+      baseUrl: 'https://api.xiaomimimo.com/v1',
     });
     expect(args.options.model).toBe('mimo-v2.5-pro');
   });
@@ -743,18 +743,19 @@ describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () =>
     expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 90_000);
   });
 
-  // YUK-1373 — an uncapped (non-finite) execution budget must never reach
-  // setTimeout: Node collapses setTimeout(Infinity) to ~1ms, which would abort
-  // the run instantly instead of leaving it unbounded.
-  it('streamTaskCollecting: non-finite timeoutMs arms no abort timer (never setTimeout(Infinity))', async () => {
-    const setTimeoutSpy = vi.spyOn(global, 'setTimeout');
-    await streamTaskCollecting(
-      COPILOT,
-      { user_message: 'hi', triggered_by: 'chat' },
-      { db: fakeDb, budgetOverride: { timeoutMs: Number.POSITIVE_INFINITY } },
-      () => {},
-    );
-    expect(setTimeoutSpy).not.toHaveBeenCalledWith(expect.any(Function), Number.POSITIVE_INFINITY);
+  // YUK-1373 — the shared budget resolver (src/ai/task-budget.ts) rejects a
+  // non-finite timeoutMs before the runner can arm setTimeout(Infinity) (Node
+  // would collapse it to ~1ms and abort instantly). 'unbounded' uncapping is
+  // limited to maxIterations; timeout stays finite by construction.
+  it('streamTaskCollecting: non-finite timeoutMs is rejected by the shared budget resolver', async () => {
+    await expect(
+      streamTaskCollecting(
+        COPILOT,
+        { user_message: 'hi', triggered_by: 'chat' },
+        { db: fakeDb, budgetOverride: { timeoutMs: Number.POSITIVE_INFINITY } },
+        () => {},
+      ),
+    ).rejects.toThrow(RangeError);
   });
 });
 
@@ -876,7 +877,7 @@ describe('runTask — YUK-924 model-profile seams', () => {
     logMock.cost.mockClear();
     logMock.tool.mockClear();
     process.env.XIAOMI_API_KEY = 'sk-test-key';
-    process.env.ZHIPU_API_KEY = 'sk-zhipu-test-key';
+    process.env.ZAI_CODING_CN_API_KEY = 'sk-zhipu-test-key';
     process.env.ANTHROPIC_API_KEY = 'sk-anthropic-test-key';
   });
   afterEach(() => {
@@ -899,17 +900,17 @@ describe('runTask — YUK-924 model-profile seams', () => {
     expect(logMock.started).not.toHaveBeenCalled();
   });
 
-  it('REJECTS a multimodal task on a confirmed text-only model (glm-5.2) before any SDK call', async () => {
+  it('REJECTS a multimodal task on a confirmed text-only model (glm-5.3) before any SDK call', async () => {
     await expect(
       runTask(
         'MultimodalDirectJudgeTask',
         { answer_md: 'x' },
         {
           db: fakeDb,
-          override: { provider: 'zhipu', model: 'glm-5.2' },
+          override: { provider: 'zai-coding-cn', model: 'glm-5.3' },
         },
       ),
-    ).rejects.toThrow(/requires vision input.*glm-5.2.*does not support/s);
+    ).rejects.toThrow(/requires vision input.*glm-5.3.*does not support/s);
     expect(mockPi.capturedArgs).toBeUndefined();
   });
 
@@ -1097,4 +1098,177 @@ describe('runTask — YUK-1013 modelBinding (per-run binding seam)', () => {
     ).rejects.toThrow(/retired in YUK-1025/);
     expect(mockPi.queryStarted).not.toHaveBeenCalled();
   });
+});
+
+describe('runner locale execution snapshot', () => {
+  beforeEach(() => {
+    __setPiAdapterForTests(fakePiAdapter());
+    mockPi.messages = [successResult()];
+    vi.stubEnv('XIAOMI_API_KEY', 'test-key');
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
+    vi.stubEnv('AI_PROVIDER_MODEL', '');
+  });
+  afterEach(() => {
+    resetTestConfig();
+    __setPiAdapterForTests(undefined);
+    vi.unstubAllEnvs();
+  });
+
+  it('pins the language before async middleware and reads updates on the next run', async () => {
+    await runTask(
+      'AttributionTask',
+      { question: 'Explain why x² ≥ 0 for real x.' },
+      {
+        db: fakeDb,
+        middleware: {
+          beforeRun: async (_kind, input) => {
+            setTestConfig({ 'locale.learner': 'en' });
+            return input;
+          },
+        },
+      },
+    );
+    expect(capturedOptions().systemPrompt).toBe(
+      getTaskSystemPrompt('AttributionTask', undefined, 'zh-CN'),
+    );
+    expect(String(capturedOptions().systemPrompt).endsWith(LEARNER_LOCALE_PIN)).toBe(true);
+    await runTask(
+      'AttributionTask',
+      { question: 'Explain why x² ≥ 0 for real x.' },
+      { db: fakeDb },
+    );
+    expect(capturedOptions().systemPrompt).toContain('[Output language]');
+  });
+
+  it.each(['run', 'stream', 'collect'] as const)(
+    'honors the provenance locale in %s execution',
+    async (mode) => {
+      setTestConfig({ 'locale.learner': 'en' });
+      const ctx = { db: fakeDb, learnerLocale: 'zh-CN' as const };
+      if (mode === 'run') await runTask('AttributionTask', { q: 1 }, ctx);
+      else if (mode === 'stream') await streamTask('AttributionTask', { q: 1 }, ctx).text();
+      else await streamTaskCollecting('AttributionTask', { q: 1 }, ctx, () => {});
+      expect(capturedOptions().systemPrompt).toBe(
+        getTaskSystemPrompt('AttributionTask', undefined, 'zh-CN'),
+      );
+    },
+  );
+});
+
+describe('task budget configuration snapshots', () => {
+  beforeEach(() => {
+    __setPiAdapterForTests(fakePiAdapter());
+    mockPi.messages = [successResult()];
+    vi.stubEnv('XIAOMI_API_KEY', 'test-key');
+  });
+  afterEach(() => {
+    resetTestConfig();
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+    __setPiAdapterForTests(undefined);
+  });
+
+  it.each(['ordinary', 'sse', 'collecting'] as const)(
+    '%s freezes configuration before middleware and refreshes on the next invocation',
+    async (mode) => {
+      const configured = { maxIterations: 13, timeout: 123_456 };
+      setTestConfig({ 'task.CopilotTask.budget': configured });
+      const timers = vi.spyOn(global, 'setTimeout');
+      const invoke = async (beforeRun?: () => Promise<unknown>, explicit = false) => {
+        const ctx = {
+          db: fakeDb,
+          ...(beforeRun ? { middleware: { beforeRun } } : {}),
+          ...(explicit ? { budgetOverride: { maxIterations: 21, timeoutMs: 345_678 } } : {}),
+        };
+        if (mode === 'ordinary') await runTask('CopilotTask', { text: '求解并核对定义域' }, ctx);
+        else if (mode === 'sse')
+          await streamTask('CopilotTask', { text: '求解并核对定义域' }, ctx).text();
+        else await streamTaskCollecting('CopilotTask', { text: '求解并核对定义域' }, ctx, () => {});
+      };
+      await invoke(async () => {
+        configured.maxIterations = 99;
+        setTestConfig({ 'task.CopilotTask.budget': { maxIterations: 17, timeout: 234_567 } });
+        return { text: '求解并核对定义域' };
+      });
+      expect(capturedOptions().maxTurns).toBe(13);
+      expect(timers).toHaveBeenCalledWith(expect.any(Function), 123_456);
+      timers.mockClear();
+      await invoke();
+      expect(capturedOptions().maxTurns).toBe(17);
+      expect(timers).toHaveBeenCalledWith(expect.any(Function), 234_567);
+      timers.mockClear();
+      await invoke(undefined, true);
+      expect(capturedOptions().maxTurns).toBe(21);
+      expect(timers).toHaveBeenCalledWith(expect.any(Function), 345_678);
+    },
+  );
+});
+
+it('observes capability scopes through the shared port with the runner trace context', async () => {
+  const { observeTaskOperation } = await import('@/ai/task-observation');
+  const { __setTraceExporterForTests, traceOperation } = await import('./laminar-tracing');
+  const { memoryTraceExporter, traceField } = await import('./laminar-tracing.test-support');
+  const { records, exporter } = memoryTraceExporter();
+  __setTraceExporterForTests(exporter);
+  try {
+    const businessResult = { accepted: false, reply: 'ordinary learner explanation' };
+    const finalize = vi.fn(async (reportOutcome: (outcome: 'rejected') => void) => {
+      reportOutcome('rejected');
+      return businessResult;
+    });
+    expect(
+      await observeTaskOperation(
+        { operation: 'run', taskKind: 'CopilotTask', logicalRunId: 'logical-synthetic' },
+        async (reportOutcome) => {
+          await traceOperation('task.run', { task_kind: 'CopilotTask' }, async () => undefined);
+          const result = await observeTaskOperation(
+            { operation: 'finalize', taskKind: 'CopilotTask', taskRunId: 'task-synthetic' },
+            finalize,
+          );
+          reportOutcome('rejected');
+          return result;
+        },
+      ),
+    ).toBe(businessResult);
+    expect(finalize).toHaveBeenCalledOnce();
+    expect(records.map((record) => record.name)).toEqual([
+      'copilot.run',
+      'task.run',
+      'copilot.finalize',
+    ]);
+    expect(records[1].parent).toBe(records[0].context);
+    expect(records[2].parent).toBe(records[0].context);
+    expect(records[0].attributes[traceField('logical_run_id')]).toBe('logical-synthetic');
+    expect(records[2].attributes[traceField('task_run_id')]).toBe('task-synthetic');
+    expect(records[2].attributes[traceField('business_outcome')]).toBe('rejected');
+    expect(records.every((record) => record.ends === 1)).toBe(true);
+  } finally {
+    __setTraceExporterForTests();
+  }
+});
+
+it('preserves exactly-once business execution and errors when capability telemetry is disabled or fails', async () => {
+  const { observeTaskOperation } = await import('@/ai/task-observation');
+  const { __setTraceExporterForTests } = await import('./laminar-tracing');
+  const { memoryTraceExporter } = await import('./laminar-tracing.test-support');
+  for (const exporter of [
+    undefined,
+    {
+      ...memoryTraceExporter().exporter,
+      start: () => {
+        throw new Error('telemetry unavailable');
+      },
+    },
+  ]) {
+    __setTraceExporterForTests(exporter);
+    const failure = new Error('business failure');
+    const execute = vi.fn(async () => {
+      throw failure;
+    });
+    await expect(
+      observeTaskOperation({ operation: 'run', taskKind: 'CopilotTask' }, execute),
+    ).rejects.toBe(failure);
+    expect(execute).toHaveBeenCalledOnce();
+  }
+  __setTraceExporterForTests();
 });

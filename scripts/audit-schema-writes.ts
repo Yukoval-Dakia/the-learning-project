@@ -17,6 +17,9 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
+import { extractDrizzleWriteIndex, payloadColumns } from './schema-drizzle-producers';
+import { extractDatabaseGeneratedWrites, extractExecutedSqlWrites } from './schema-write-producers';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
@@ -64,8 +67,173 @@ type WriteHit = {
   type: string;
   insert_files: number;
   update_files: number;
-  status: 'live' | 'init-only' | 'update-only' | 'stub';
+  status: 'live' | 'init-only' | 'update-only' | 'stub' | 'historical-retained';
 };
+
+// ADR-0058 / YUK-939 intentionally retired this writer, not its historical
+// schema. This fixed inventory is a retention contract, never a dated allowance.
+const HISTORICAL_TABLE = 'copilot_evidence_checkpoint';
+const HISTORICAL_COLUMNS: Readonly<Record<string, string>> = {
+  id: 'text',
+  task_kind: 'text',
+  slot: 'text',
+  protocol_version: 'integer',
+  prompt_fingerprint: 'text',
+  base_input_sha256: 'text',
+  source_catalog_sha256: 'text',
+  binding_extras: 'jsonb',
+  status: 'text',
+  revision: 'integer',
+  records_json: 'jsonb',
+  record_digests_json: 'jsonb',
+  attempts_json: 'jsonb',
+  sealed_output_json: 'jsonb',
+  sealed_digest_sha256: 'text',
+  sealed_task_run_id: 'text',
+  created_at: 'timestamp with time zone',
+  updated_at: 'timestamp with time zone',
+  expires_at: 'timestamp with time zone',
+};
+type HistoricalRetentionIssue =
+  | {
+      code: 'missing_table' | 'missing_column' | 'added_column' | 'changed_column_type';
+      message: string;
+    }
+  | { code: 'production_write'; kind: WriteStatement['kind']; path: string; message: string };
+type HistoricalRetention = {
+  table: string;
+  reason: string;
+  fields: Field[];
+  issues: HistoricalRetentionIssue[];
+};
+
+/** Narrow inventory check including columns the business-field regex cannot parse. */
+function historicalRetention(
+  schema: string,
+  productionIndex: ReadonlyMap<string, WriteStatement[]>,
+): HistoricalRetention {
+  const fields: Field[] = [];
+  const issues: HistoricalRetentionIssue[] = [];
+  let found = false;
+  const file = ts.createSourceFile('schema.ts', schema, ts.ScriptTarget.Latest, true);
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === 'pgTable'
+    ) {
+      const [name, columns] = node.arguments;
+      if (name && ts.isStringLiteral(name) && name.text === HISTORICAL_TABLE) {
+        found = true;
+        if (columns && ts.isObjectLiteralExpression(columns)) {
+          for (const column of columns.properties) {
+            if (!ts.isPropertyAssignment(column)) {
+              issues.push({
+                code: 'added_column',
+                message: 'Historical columns must remain explicit property assignments',
+              });
+              continue;
+            }
+            let builder = column.initializer;
+            while (
+              ts.isCallExpression(builder) &&
+              ts.isPropertyAccessExpression(builder.expression)
+            ) {
+              builder = builder.expression.expression;
+            }
+            const columnName = ts.isCallExpression(builder) ? builder.arguments[0] : undefined;
+            const field =
+              columnName && ts.isStringLiteral(columnName)
+                ? columnName.text
+                : column.name.getText(file);
+            let type =
+              columnName &&
+              ts.isStringLiteral(columnName) &&
+              ts.isCallExpression(builder) &&
+              ts.isIdentifier(builder.expression)
+                ? builder.expression.text
+                : 'unrecognized';
+            if (type === 'timestamp' && ts.isCallExpression(builder)) {
+              const options = builder.arguments[1];
+              const timezone =
+                options && ts.isObjectLiteralExpression(options)
+                  ? options.properties.find(
+                      (option) =>
+                        ts.isPropertyAssignment(option) &&
+                        option.name.getText(file) === 'withTimezone',
+                    )
+                  : undefined;
+              if (
+                timezone &&
+                ts.isPropertyAssignment(timezone) &&
+                timezone.initializer.kind === ts.SyntaxKind.TrueKeyword
+              )
+                type = 'timestamp with time zone';
+            }
+            fields.push({ table: HISTORICAL_TABLE, field, type });
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  if (!found)
+    issues.push({ code: 'missing_table', message: `${HISTORICAL_TABLE} must remain in schema` });
+  for (const [field, type] of Object.entries(HISTORICAL_COLUMNS)) {
+    const actual = fields.filter((column) => column.field === field);
+    if (!actual.length)
+      issues.push({
+        code: 'missing_column',
+        message: `${HISTORICAL_TABLE}.${field} (${type}) must remain`,
+      });
+    for (const column of actual) {
+      if (column.type !== type)
+        issues.push({
+          code: 'changed_column_type',
+          message: `${HISTORICAL_TABLE}.${field}: expected ${type}, found ${column.type}`,
+        });
+    }
+    if (actual.length > 1)
+      issues.push({ code: 'added_column', message: `${HISTORICAL_TABLE}.${field} is duplicated` });
+  }
+  for (const column of fields) {
+    if (!Object.hasOwn(HISTORICAL_COLUMNS, column.field))
+      issues.push({
+        code: 'added_column',
+        message: `${HISTORICAL_TABLE}.${column.field} (${column.type}) is outside the retained inventory`,
+      });
+  }
+  // Count table targets before adding schema-generated defaults. A forbidden
+  // write needs no recognized payload columns, including trivial-only writes.
+  for (const [path, statements] of productionIndex) {
+    for (const statement of statements) {
+      if (statement.table === HISTORICAL_TABLE)
+        issues.push({
+          code: 'production_write',
+          kind: statement.kind,
+          path,
+          message: `${path}: ${statement.kind.toUpperCase()} targets historical ${HISTORICAL_TABLE}`,
+        });
+    }
+  }
+  return {
+    table: HISTORICAL_TABLE,
+    reason:
+      'ADR-0058 / YUK-939 retired Copilot evidence checkpoint writers; retain historical rows/schema and export/restore compatibility. Production INSERT/UPDATE is forbidden.',
+    fields,
+    issues,
+  };
+}
+
+export function formatHistoricalRetention(retention: HistoricalRetention): string {
+  return [
+    `Historical retention: ${retention.table} (${retention.fields.length} columns)`,
+    retention.reason,
+    ...retention.fields.map((field) => `  ${field.table}.${field.field}: ${field.type}`),
+    ...retention.issues.map((issue) => `  ${issue.code}: ${issue.message}`),
+  ].join('\n');
+}
 
 const TRIVIAL_FIELDS = new Set(['id', 'created_at', 'updated_at', 'version', 'archived_at']);
 const RESOLVE_KINDS = new Set<ResolveKind>(['pr', 'phase', 'manual']);
@@ -396,353 +564,43 @@ function walkFiles(dir: string, out: string[] = []): string[] {
 }
 
 // A single drizzle write statement, scoped to the table it targets. `kind`
-// distinguishes INSERT (`.insert(table).values({...})`) from UPDATE
-// (`.update(table).set({...})`); `payload` is the brace-balanced object literal
-// passed to `.values(` / `.set(` so field matching is confined to THIS statement
+// distinguishes INSERT from UPDATE; `payload` is either a direct object literal
+// or the top-level keys proved by bounded AST construction/caller tracing.
+// Field matching reads top-level syntax keys only, confined to THIS statement
 // (YUK-166: the old file-level matcher ignored table identity and let a write to
 // `mistake_variant.parent_question_id` satisfy `question.parent_question_id`).
 export type WriteStatement = { kind: 'insert' | 'update'; table: string; payload: string };
 
-// Balanced-brace / bracket extractor with string + comment awareness, so braces
-// inside strings, template literals, or comments don't throw off the depth count.
-// Starts at `openIdx` (must be `{` or `[`) and returns the inclusive slice through
-// the matching close char, or null if unbalanced.
-function extractBalanced(src: string, openIdx: number): string | null {
-  const open = src[openIdx];
-  if (open !== '{' && open !== '[') return null;
-  let depth = 0;
-  let inSingle = false;
-  let inDouble = false;
-  let inTemplate = false;
-  let inLineComment = false;
-  let inBlockComment = false;
-  for (let i = openIdx; i < src.length; i += 1) {
-    const c = src[i];
-    const next = src[i + 1];
-    if (inLineComment) {
-      if (c === '\n') inLineComment = false;
-      continue;
-    }
-    if (inBlockComment) {
-      if (c === '*' && next === '/') {
-        inBlockComment = false;
-        i += 1;
-      }
-      continue;
-    }
-    if (inSingle) {
-      if (c === '\\') i += 1;
-      else if (c === "'") inSingle = false;
-      continue;
-    }
-    if (inDouble) {
-      if (c === '\\') i += 1;
-      else if (c === '"') inDouble = false;
-      continue;
-    }
-    if (inTemplate) {
-      if (c === '\\') i += 1;
-      else if (c === '`') inTemplate = false;
-      continue;
-    }
-    if (c === '/' && next === '/') {
-      inLineComment = true;
-      i += 1;
-      continue;
-    }
-    if (c === '/' && next === '*') {
-      inBlockComment = true;
-      i += 1;
-      continue;
-    }
-    if (c === "'") {
-      inSingle = true;
-      continue;
-    }
-    if (c === '"') {
-      inDouble = true;
-      continue;
-    }
-    if (c === '`') {
-      inTemplate = true;
-      continue;
-    }
-    if (c === '{' || c === '[') {
-      depth += 1;
-      continue;
-    }
-    if (c === '}' || c === ']') {
-      depth -= 1;
-      if (depth === 0) return src.slice(openIdx, i + 1);
-    }
-  }
-  return null;
+/** Historical fixture/rehearsal writes cannot satisfy a production column. */
+export function isProductionSource(path: string): boolean {
+  const normalized = path.replaceAll('\\', '/');
+  return (
+    !/(?:^|\/)(?:tests?|__tests__|fixtures?|__fixtures__|__mocks__|rehearsal)(?:\/|$)/.test(
+      normalized,
+    ) &&
+    !/(?:^|[./_-])(?:test|spec|fixtures?|rehearsal)(?:[.-]|$)/.test(normalized) &&
+    !/(?:^|\/)(?:schema|.*generated)\.tsx?$/.test(normalized) &&
+    !normalized.endsWith('.d.ts')
+  );
 }
 
-// Statement terminator scan (YUK-166 F3). Returns the exclusive end offset of the
-// drizzle write statement that starts at `headEnd` — the first `;` (string/comment
-// aware) OR the next `.insert(<table>)` / `.update(<table>)` head, whichever comes
-// first. Bounding every sub-search (`.values(` / `.set(` / `.onConflictDoUpdate(`)
-// to this window stops a later statement's payload from bleeding into an earlier
-// head that has no payload of its own (e.g. `db.insert(a).returning()` followed by
-// `db.insert(b).values({...})` — `b`'s values must NOT attach to `a`).
-function statementEnd(src: string, headEnd: number): number {
-  const nextHeadRe = /\.(?:insert|update)\(\s*\w+\s*\)/g;
-  nextHeadRe.lastIndex = headEnd;
-  const nextHead = nextHeadRe.exec(src);
-  let bound = nextHead ? nextHead.index : src.length;
-  // Find the first top-level `;` before the next head (string/comment aware).
-  let inSingle = false;
-  let inDouble = false;
-  let inTemplate = false;
-  let inLineComment = false;
-  let inBlockComment = false;
-  for (let i = headEnd; i < bound; i += 1) {
-    const c = src[i];
-    const next = src[i + 1];
-    if (inLineComment) {
-      if (c === '\n') inLineComment = false;
-      continue;
-    }
-    if (inBlockComment) {
-      if (c === '*' && next === '/') {
-        inBlockComment = false;
-        i += 1;
-      }
-      continue;
-    }
-    if (inSingle) {
-      if (c === '\\') i += 1;
-      else if (c === "'") inSingle = false;
-      continue;
-    }
-    if (inDouble) {
-      if (c === '\\') i += 1;
-      else if (c === '"') inDouble = false;
-      continue;
-    }
-    if (inTemplate) {
-      if (c === '\\') i += 1;
-      else if (c === '`') inTemplate = false;
-      continue;
-    }
-    if (c === '/' && next === '/') {
-      inLineComment = true;
-      i += 1;
-      continue;
-    }
-    if (c === '/' && next === '*') {
-      inBlockComment = true;
-      i += 1;
-      continue;
-    }
-    if (c === "'") {
-      inSingle = true;
-      continue;
-    }
-    if (c === '"') {
-      inDouble = true;
-      continue;
-    }
-    if (c === '`') {
-      inTemplate = true;
-      continue;
-    }
-    if (c === ';') {
-      bound = i;
-      break;
-    }
-  }
-  return bound;
+export function extractWriteStatements(source: string): WriteStatement[] {
+  return extractDrizzleWriteIndex(new Map([['runtime.ts', source]])).get('runtime.ts') ?? [];
 }
 
-// Inspect the argument region of a `.call( ... )` and return the FIRST object /
-// array literal opened anywhere inside that call's parentheses (string + comment
-// aware, paren-depth tracked) — covering inline `{...}`, array-of-objects
-// `[{...}]`, AND builder forms like `rows.map((r) => ({ ... }))`. Returns `'bare'`
-// when the call closes with NO object literal inside (a true bare identifier /
-// variable, e.g. `.values(row)` / `.values(initial)`): such args are opaque —
-// columns cannot be enumerated from a variable, so the caller records an
-// empty-payload insert (table identity known, zero columns claimed) instead of
-// skipping forward into the chain and wrongly grabbing a later object literal
-// (YUK-166 F2). Returns `null` when the call is malformed/unterminated within
-// `bound`.
-function objectArgAfter(
-  src: string,
-  callIdx: number,
-  callLen: number,
-  bound: number,
-): { kind: 'literal'; payload: string } | { kind: 'bare' } | null {
-  // callIdx + callLen points just past the opening `(` of the call.
-  let parenDepth = 1;
-  let inSingle = false;
-  let inDouble = false;
-  let inTemplate = false;
-  let inLineComment = false;
-  let inBlockComment = false;
-  for (let i = callIdx + callLen; i < bound && i < src.length; i += 1) {
-    const c = src[i];
-    const next = src[i + 1];
-    if (inLineComment) {
-      if (c === '\n') inLineComment = false;
-      continue;
-    }
-    if (inBlockComment) {
-      if (c === '*' && next === '/') {
-        inBlockComment = false;
-        i += 1;
-      }
-      continue;
-    }
-    if (inSingle) {
-      if (c === '\\') i += 1;
-      else if (c === "'") inSingle = false;
-      continue;
-    }
-    if (inDouble) {
-      if (c === '\\') i += 1;
-      else if (c === '"') inDouble = false;
-      continue;
-    }
-    if (inTemplate) {
-      if (c === '\\') i += 1;
-      else if (c === '`') inTemplate = false;
-      continue;
-    }
-    if (c === '/' && next === '/') {
-      inLineComment = true;
-      i += 1;
-      continue;
-    }
-    if (c === '/' && next === '*') {
-      inBlockComment = true;
-      i += 1;
-      continue;
-    }
-    if (c === "'") {
-      inSingle = true;
-      continue;
-    }
-    if (c === '"') {
-      inDouble = true;
-      continue;
-    }
-    if (c === '`') {
-      inTemplate = true;
-      continue;
-    }
-    if (c === '{' || c === '[') {
-      // First object/array literal inside the call → enumerable payload.
-      const payload = extractBalanced(src, i);
-      return payload ? { kind: 'literal', payload } : null;
-    }
-    if (c === '(') {
-      parenDepth += 1;
-      continue;
-    }
-    if (c === ')') {
-      parenDepth -= 1;
-      if (parenDepth === 0) {
-        // Call closed with no object literal inside → opaque bare argument.
-        return { kind: 'bare' };
-      }
-    }
-  }
-  return null;
-}
-
-// Extract every table-scoped INSERT / UPDATE statement in a source file. Handles:
-//   • `(db|tx|...).insert(<table>).values({...} | [{...}] | builder(...))` — inline
-//     object, array-of-objects, and builder forms (`rows.map((r) => ({...}))`).
-//   • `(db|tx|...).insert(<table>).values(<ident>)` — bare identifier ⇒ OPAQUE insert
-//     (table identity known, zero enumerable columns) (YUK-166 F2).
-//   • `.onConflictDoUpdate({ ... set: {...} })` chained on an insert ⇒ the set-object
-//     keys are UPDATE writes on the SAME table (YUK-166 F1: drizzle upsert).
-//   • `(db|tx|...).update(<table>).set({...})` — standalone UPDATE.
-// Every sub-search is bounded to the current statement (YUK-166 F3) so a later
-// statement's payload cannot bleed into an earlier head that has none of its own.
-// Schema var names equal SQL table names in this repo, so the captured `<table>`
-// matches parseSchema's table key directly.
-export function extractWriteStatements(src: string): WriteStatement[] {
-  const statements: WriteStatement[] = [];
-
-  // INSERT statements: `.insert(<table>)` → its own `.values(` (object, array, or
-  // opaque bare ident) AND any chained `.onConflictDoUpdate({ ... set: {...} })`,
-  // both bounded to the current statement.
-  const insertHeadRe = /\.insert\(\s*(\w+)\s*\)/g;
-  for (const head of src.matchAll(insertHeadRe)) {
-    const table = head[1];
-    const headEnd = (head.index ?? 0) + head[0].length;
-    const bound = statementEnd(src, headEnd);
-
-    // .values(...) — within this statement only.
-    const valuesIdx = src.indexOf('.values(', headEnd);
-    if (valuesIdx !== -1 && valuesIdx < bound) {
-      const arg = objectArgAfter(src, valuesIdx, '.values('.length, bound);
-      if (arg?.kind === 'literal') {
-        statements.push({ kind: 'insert', table, payload: arg.payload });
-      } else if (arg?.kind === 'bare') {
-        // Opaque insert: table identity known, columns unknowable from a variable.
-        // Empty payload claims zero columns (conservative-correct) — it neither
-        // misattributes the chained onConflictDoUpdate set object (F2) nor masks.
-        statements.push({ kind: 'insert', table, payload: '{}' });
-      }
-    }
-
-    // .onConflictDoUpdate({ ... set: { ... } }) — set-object columns are UPDATE
-    // writes on the same table (YUK-166 F1). Bounded to this statement.
-    const upsertIdx = src.indexOf('.onConflictDoUpdate(', headEnd);
-    if (upsertIdx !== -1 && upsertIdx < bound) {
-      const arg = objectArgAfter(src, upsertIdx, '.onConflictDoUpdate('.length, bound);
-      if (arg?.kind === 'literal') {
-        // Find the `set:` key inside the config object and balance its value.
-        // Work within the extracted payload string so offsets stay self-consistent.
-        const slice = arg.payload;
-        const setMatch = /\bset\s*:\s*/.exec(slice);
-        if (setMatch) {
-          let j = setMatch.index + setMatch[0].length;
-          while (j < slice.length && slice[j] !== '{') j += 1;
-          const setPayload = j < slice.length ? extractBalanced(slice, j) : null;
-          if (setPayload) statements.push({ kind: 'update', table, payload: setPayload });
-        }
-      }
-    }
-  }
-
-  // UPDATE statements: `.update(<table>)` → its own `.set(`, bounded to the
-  // current statement.
-  const updateHeadRe = /\.update\(\s*(\w+)\s*\)/g;
-  for (const head of src.matchAll(updateHeadRe)) {
-    const table = head[1];
-    const headEnd = (head.index ?? 0) + head[0].length;
-    const bound = statementEnd(src, headEnd);
-    const setIdx = src.indexOf('.set(', headEnd);
-    if (setIdx === -1 || setIdx >= bound) continue;
-    const arg = objectArgAfter(src, setIdx, '.set('.length, bound);
-    if (arg?.kind === 'literal') {
-      statements.push({ kind: 'update', table, payload: arg.payload });
-    }
-  }
-
-  return statements;
-}
-
-function buildIndex(files: string[]): Map<string, WriteStatement[]> {
-  const index = new Map<string, WriteStatement[]>();
-  for (const f of files) {
-    const src = readFileSync(f, 'utf8');
-    index.set(f, extractWriteStatements(src));
+export function buildProductionWriteIndex(
+  sources: ReadonlyMap<string, string>,
+): Map<string, WriteStatement[]> {
+  const production = new Map([...sources].filter(([path]) => isProductionSource(path)));
+  const index = extractDrizzleWriteIndex(production);
+  for (const [path, source] of production) {
+    index.set(path, [...(index.get(path) ?? []), ...extractExecutedSqlWrites(source)]);
   }
   return index;
 }
 
 function statementMatchesField(payload: string, field: string): boolean {
-  // 字段名匹配两种形式：
-  //   1. `field: <value>` —— 长形式
-  //   2. `field,` 或 `field }` —— Drizzle shorthand（变量名同字段名）
-  const longForm = new RegExp(`\\b${field}\\s*:`);
-  const shortForm = new RegExp(`[,{(\\s]${field}\\s*[,}]`);
-  return longForm.test(payload) || shortForm.test(payload);
+  return payloadColumns(payload).has(field);
 }
 
 // Table-aware write-path count (YUK-166). A field counts as written only when a
@@ -771,19 +629,19 @@ export function countWriteHits(
   return { insert_files: insertFiles, update_files: updateFiles };
 }
 
-function audit(): WriteHit[] {
-  const src = readFileSync(SCHEMA_PATH, 'utf8');
-  const fields = parseSchema(src);
-  const files: string[] = [];
-  for (const d of SEARCH_DIRS) walkFiles(d, files);
-  // 排除 schema.ts / generated.ts / test files（INSERT/UPDATE 在 fixture 不算业务写入；但允许 test 算）
-  const businessFiles = files.filter(
-    (f) => !f.endsWith('schema.ts') && !f.endsWith('generated.ts'),
-  );
-  const index = buildIndex(businessFiles);
+export function auditSchemaWrites(schema: string, sources: ReadonlyMap<string, string>) {
+  const index = buildProductionWriteIndex(sources);
+  const retention = historicalRetention(schema, index);
+  const retainedHits = retention.fields.map((field) => ({
+    ...field,
+    ...countWriteHits(field.table, field.field, index),
+  }));
+  // Defaults remain valid business-field evidence, but cannot resurrect a
+  // retired production writer or violate historical retention.
+  index.set(SCHEMA_PATH, extractDatabaseGeneratedWrites(schema));
   const results: WriteHit[] = [];
-  for (const f of fields) {
-    if (TRIVIAL_FIELDS.has(f.field)) continue;
+  for (const f of parseSchema(schema)) {
+    if (f.table === HISTORICAL_TABLE || TRIVIAL_FIELDS.has(f.field)) continue;
     const { insert_files, update_files } = countWriteHits(f.table, f.field, index);
     let status: WriteHit['status'];
     if (insert_files > 0 && update_files > 0) status = 'live';
@@ -792,7 +650,21 @@ function audit(): WriteHit[] {
     else status = 'stub';
     results.push({ ...f, insert_files, update_files, status });
   }
-  return results;
+  for (const field of retainedHits) {
+    // Explicitly report all 19 columns, even id/timestamps. Their inventory and
+    // the table's production-write prohibition are enforced separately above.
+    results.push({ ...field, status: 'historical-retained' });
+  }
+  return { results, historicalRetention: retention };
+}
+
+function audit() {
+  const files: string[] = [];
+  for (const d of SEARCH_DIRS) walkFiles(d, files);
+  return auditSchemaWrites(
+    readFileSync(SCHEMA_PATH, 'utf8'),
+    new Map(files.map((path) => [path, readFileSync(path, 'utf8')])),
+  );
 }
 
 function main() {
@@ -800,7 +672,7 @@ function main() {
   const asJson = args.includes('--json');
   const listOnly = args.includes('--list');
 
-  const results = audit();
+  const { results, historicalRetention: retention } = audit();
   const hygiene = validateAllowlistHygiene(loadAllowlist(), {
     today: todayIso(),
     mergedPrRefs: readMergedPrRefs(),
@@ -814,12 +686,24 @@ function main() {
   if (asJson) {
     console.log(
       JSON.stringify(
-        { results, unallowedStubs, allowedStubs, allowlistIssues: hygiene.issues },
+        {
+          results,
+          historicalRetention: retention,
+          unallowedStubs,
+          allowedStubs,
+          allowlistIssues: hygiene.issues,
+        },
         null,
         2,
       ),
     );
-    process.exit(listOnly ? 0 : unallowedStubs.length > 0 || hygiene.issues.length > 0 ? 1 : 0);
+    process.exit(
+      listOnly
+        ? 0
+        : unallowedStubs.length > 0 || hygiene.issues.length > 0 || retention.issues.length > 0
+          ? 1
+          : 0,
+    );
   }
 
   console.log('\n=== Schema 字段健康表（仅显示非 live）===\n');
@@ -833,7 +717,9 @@ function main() {
     );
   }
 
+  console.log(`\n${formatHistoricalRetention(retention)}`);
   console.log(`\nTotal fields audited: ${results.length}`);
+  console.log(`  historical-retained: ${retention.fields.length}`);
   console.log(`  live: ${results.filter((r) => r.status === 'live').length}`);
   console.log(`  init-only: ${results.filter((r) => r.status === 'init-only').length}`);
   console.log(`  update-only: ${results.filter((r) => r.status === 'update-only').length}`);
@@ -841,6 +727,8 @@ function main() {
   console.log(
     `  stub (unallowed): ${unallowedStubs.length}${unallowedStubs.length > 0 ? ' ⚠️' : ''}`,
   );
+
+  if (retention.issues.length > 0 && !listOnly) process.exit(1);
 
   if (hygiene.issues.length > 0 && !listOnly) {
     console.log('\n⚠️  Allowlist hygiene issues found:\n');

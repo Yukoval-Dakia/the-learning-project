@@ -1,6 +1,6 @@
 import { createId } from '@paralleldrive/cuid2';
-import { type TaskKind, tasks } from '@/ai/registry';
 import type { TaskDefinition } from '@/ai/task-spec';
+import { type TaskKind, tasks } from '@/capabilities/task-registry';
 import type { Db } from '@/db/client';
 import {
   ProviderSessionWallClockBudgetError,
@@ -13,6 +13,13 @@ import {
   unknownAttemptCostTruth,
 } from './attempt-cost';
 import { type ModelBinding, explicitProviderRouting } from './execution-adapter';
+import {
+  type TraceSpan,
+  isLaminarTracingEnabled,
+  startTraceSpan,
+  traceMetadata,
+  withTraceContext,
+} from './laminar-tracing';
 import {
   type AiTaskUsage,
   writeAiTaskAttemptFinished,
@@ -52,12 +59,17 @@ export interface LifecycleResult {
 export interface TerminalResultEvidence {
   usage: LifecycleUsage;
   tokenCounts: TokenCounts;
+  /** Distinguishes missing usage from explicitly observed zero token counts. */
+  tokenUsageObserved?: boolean;
   costUsd?: number;
   finishReason: string;
   structuredOutput?: unknown;
 }
 
-export type ObservedRunUsage = Pick<TerminalResultEvidence, 'usage' | 'tokenCounts' | 'costUsd'>;
+export type ObservedRunUsage = Pick<
+  TerminalResultEvidence,
+  'usage' | 'tokenCounts' | 'tokenUsageObserved' | 'costUsd'
+>;
 
 interface LifecycleConfig<TResult extends LifecycleResult> {
   db: Db;
@@ -177,6 +189,29 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
   private terminalSettledStatus: AttemptTerminalStatus | undefined;
   private lastTerminalWriteError: unknown;
   private durableStart = false;
+  private trace: TraceSpan | undefined;
+  private traceOutcome: 'success' | 'error' | 'cancelled' | 'not_started' = 'not_started';
+
+  withTracing<T>(callback: () => T): T {
+    if (!isLaminarTracingEnabled()) return callback();
+    if (!this.trace)
+      traceMetadata({
+        task_kind: this.kind,
+        task_run_id: this.taskRunId,
+        parent_task_run_id: this.config.parentTaskRunId,
+      });
+    this.trace ??= startTraceSpan('task.attempt', {
+      task_kind: this.kind,
+      task_run_id: this.taskRunId,
+      parent_task_run_id: this.config.parentTaskRunId,
+      provider: this.resolved.provider,
+      model: this.resolved.model,
+      business_outcome: 'unassessed',
+      additive_usage: false,
+      includes_child_usage: true,
+    });
+    return withTraceContext(this.trace, callback);
+  }
 
   constructor(private readonly config: LifecycleConfig<TResult>) {
     this.abortController = config.abortController ?? new AbortController();
@@ -184,7 +219,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     this.kind = config.kind;
     // YUK-1013 — the binding's provider/model merge in here (escape-hatch
     // override wins per-field) so EVERY lifecycle caller gets the same
-    // explicit > env > registry layering, not just the runner's three sites.
+    // env chat pin > explicit > DB global > task/default layering, not just the runner's three sites.
     this.resolved = resolveTaskProvider(config.kind, explicitProviderRouting(config));
     // YUK-924 P2 — fail-closed capability gate at task resolution: a task that
     // declares needsToolCall / isMultimodal may only run on a lane whose
@@ -228,6 +263,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
             provider: this.resolved.provider,
             model: this.resolved.model,
             tokens: evidence.tokenCounts,
+            tokensObserved: evidence.tokenUsageObserved,
             reportedCostUsd: evidence.costUsd,
           })
         : unknownAttemptCostTruth(this.resolved.provider, this.resolved.model);
@@ -438,6 +474,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
         started_at: new Date(),
       });
       this.durableStart = true;
+      this.trace?.metadata({ task_run_id: this.taskRunId, durable_settled: false });
       // YUK-924 P2 — run lifecycle metadata: record where the effective model
       // profile came from and which reasoning effort the run wires (the task
       // spec's YUK-923 declaration, else the profile's operational default).
@@ -479,6 +516,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       provider: this.resolved.provider,
       model: this.resolved.model,
       tokens: terminal.tokenCounts,
+      tokensObserved: terminal.tokenUsageObserved,
       reportedCostUsd: terminal.costUsd,
     });
   }
@@ -540,6 +578,9 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       });
     }
 
+    this.traceOutcome = 'success';
+    this.trace?.metadata({ execution_outcome: 'success', durable_settled: true });
+
     if (this.config.afterRun) {
       try {
         await this.config.afterRun(result);
@@ -561,6 +602,8 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       errorMessage: error instanceof Error ? error.message : String(error),
       outcome: isTransientAgentFailure(error) ? 'failed_retryable' : 'failed_permanent',
     });
+    this.traceOutcome = this.aborted ? 'cancelled' : 'error';
+    this.trace?.metadata({ execution_outcome: this.traceOutcome, durable_settled: settled });
     if (!settled && !this.terminalSettledStatus) {
       const writeError = this.lastTerminalWriteError ?? error;
       console.warn(`[${this.config.logScope}] task_run_stuck_in_running`, {
@@ -597,6 +640,22 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
 
   dispose(): void {
     this.clearExecutionTimer();
+    this.trace?.metadata(() => {
+      const evidence = this.terminal ?? this.observedUsage;
+      const observed =
+        evidence?.tokenUsageObserved === true ||
+        this.usage.inputTokens > 0 ||
+        this.usage.outputTokens > 0;
+      return {
+        usage_observed: observed,
+        cost_basis: this.costBasis,
+        cost_ref: this.costRef,
+        aggregate_input_tokens: observed ? this.usage.inputTokens : undefined,
+        aggregate_output_tokens: observed ? this.usage.outputTokens : undefined,
+        aggregate_cost_usd: this.costUsd,
+      };
+    });
+    this.trace?.end(this.aborted ? 'cancelled' : this.traceOutcome);
   }
 
   abort(): void {
@@ -695,8 +754,8 @@ export function transientRetryEnabled(ctx: LifecycleRetryContext): boolean {
   return true;
 }
 
-export function maxLifecycleAttempts(kind: TaskKind, ctx: LifecycleRetryContext): number {
-  return 1 + (transientRetryEnabled(ctx) ? tasks[kind].budget.transientRetries : 0);
+export function maxLifecycleAttempts(transientRetries: number, ctx: LifecycleRetryContext): number {
+  return 1 + (transientRetryEnabled(ctx) ? transientRetries : 0);
 }
 
 export function classifyLifecycleRetry(input: {

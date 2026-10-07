@@ -6,8 +6,8 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
-import { selectNextPlacementItem } from '@/capabilities/practice/server/placement-select';
+import { seedKnowledge } from '@/capabilities/knowledge/public';
+import { runSourceVerify, selectNextPlacementItem } from '@/capabilities/practice/public';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import {
   ai_task_runs,
@@ -17,14 +17,19 @@ import {
   proposal_signals,
   question,
   question_block,
+  question_group_lifecycle,
   source_asset,
 } from '@/db/schema';
+import { commitFormalAttempt } from '@/kernel/judge';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
 import { acceptAiProposal, dismissAiProposal } from '@/server/proposals/actions';
+import { editQuestion } from '@/server/questions/write';
 import { backfillQuestionBlockGenesis } from '../../../../scripts/backfill-genesis-events';
+import { issueSoloFixture } from '../../../../tests/fixtures/assessment-solo';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { assertProposalLifecycleResult } from '../../../../tests/helpers/proposal-lifecycle';
+import { semanticJudgeOutput, solverOutput } from '../../../../tests/helpers/solve-check-fixtures';
 import type {
   ImageCandidateAcceptDeps,
   ImageCandidateAcceptResult,
@@ -1070,7 +1075,8 @@ describe('image_candidate cold-start bridges (YUK-478)', () => {
   const VLM_OUTPUT_NO_REF = JSON.stringify({
     blocks: [
       {
-        extracted_prompt_md: '解方程 x^2 - 5x + 6 = 0。',
+        extracted_prompt_md:
+          '解方程 x^2 - 5x + 6 = 0。先观察常数项与一次项系数的关系，列出和为五、积为六的两个正整数。\n将二次式写成两个一次式的乘积，再分别令两个因式等于零。检验两个根代回原式均成立，不能只写一个根，也不能在移项时改变常数项的符号。',
         reference_md: null,
         wrong_answer_md: null,
         page_index: 0,
@@ -1156,7 +1162,7 @@ describe('image_candidate cold-start bridges (YUK-478)', () => {
     return { deps, runColdStartBridgeFn, tagKnowledgeFn };
   }
 
-  it('no-KC-match upload → child KC under subject root via tagKnowledge + draft→active + placement-selectable', async () => {
+  it('no-KC-match upload → child KC → reviewed reference and source verification → placement-selectable', async () => {
     const db = testDb();
     // Thin seed: only subject-root nodes (seed:<subjectId>:root) exist.
     await seedKnowledge(db);
@@ -1197,10 +1203,69 @@ describe('image_candidate cold-start bridges (YUK-478)', () => {
     // structural verify (prompt + kind + ≥1 live KC) auto-promoted draft→active.
     expect(q.draft_status).toBe('active');
 
-    // The question is now selectable by placement against the new KC's subgraph.
+    // Active alone cannot issue an automatic assessment without a verified reference.
+    expect(await selectNextPlacementItem(db, { knowledgeIds: [childKc.id] })).toBeNull();
+    const [initial] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, result.question_id));
+    expect(initial.scoring_admission_state).toBe('withheld');
+    expect(deps.enqueueSourceVerify).toHaveBeenCalledWith([result.question_id]);
+
+    // The existing question editor authors a local choice key before source_verify;
+    // the classification bridge's generated answer never becomes scoring authority.
+    const edited = await editQuestion(
+      db,
+      result.question_id,
+      q.version,
+      {
+        kind: 'choice',
+        reference_md: 'A',
+        choices_md: ['x = 2 或 x = 3', 'x = -2 或 x = -3'],
+      },
+      'test:cold-start-reviewed-reference',
+    );
+    expect(edited.status).toBe('updated');
+    const grounding = vi.fn(async () => ({
+      status: 'grounded' as const,
+      confidence: 0.99,
+      observed_md: '来源图片中题干为 x² - 5x + 6 = 0。',
+      reason_md: '原图与冻结题干一致。',
+    }));
+    const verification = await runSourceVerify({
+      db,
+      questionId: result.question_id,
+      runTaskFn: vi.fn(async (kind) => ({
+        text:
+          kind === 'SemanticJudgeTask'
+            ? semanticJudgeOutput('correct', 0.99)
+            : solverOutput('A', ['x = 2 或 x = 3']),
+      })),
+      imageFetchFn: async (refs) => refs.map(() => ({ data: 'AQIDBA==', mediaType: 'image/png' })),
+      sourceGroundingFn: grounding,
+    });
+    expect(verification.status, JSON.stringify(verification)).toBe('verified');
+    expect(verification.checks?.every((check) => check.verdict !== 'fail')).toBe(true);
+    expect(grounding).toHaveBeenCalledTimes(1);
+    const [verified] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, result.question_id));
+    expect(verified.scoring_admission_state).toBe('admitted');
+
+    // The actual verification/publisher chain makes the cold-start question selectable.
     const pick = await selectNextPlacementItem(db, { knowledgeIds: [childKc.id] });
     expect(pick).not.toBeNull();
     expect(pick?.questionId).toBe(result.question_id);
+    const issued = await issueSoloFixture(db, result.question_id);
+    const submitted = await commitFormalAttempt(
+      db,
+      'solo_submit',
+      result.question_id,
+      issued.assessment('A'),
+    );
+    expect(submitted.status).toBe('effective');
+    expect(submitted.candidate.result.coarse_outcome).toBe('correct');
   });
 
   it('echoes the OCR-extracted reference answer (does not regenerate) when one was present', async () => {

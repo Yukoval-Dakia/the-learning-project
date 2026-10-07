@@ -34,7 +34,7 @@
 //   - 草稿只属于 mutable 层：绝不代表已接收作答，D5 守恒只发生在
 //     assessment_submission 落库那一下 ack。
 //
-// 锁序（固定，无环）：issuance 行 → advisory(group) → evaluation_group 行 →
+// 锁序（固定，无环）：advisory(group) → issuance 行 → evaluation_group 行 →
 // draft 行。
 // ====================================================================
 
@@ -63,12 +63,15 @@ import {
   assessment_issuance,
   assessment_response_draft,
   assessment_submission,
+  evaluation,
   evaluation_effective_head,
   evaluation_group,
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { snapshotAssessmentLearningScope } from '../judge/evaluate-submission';
+import { snapshotIssuanceAssistance } from './assistance';
 // （初始 head 插入已内联 —— 原 insertInitialEvaluationHead 归 server/activate，
 //  capability 边界不允许 server import；语义等价：空 effective、generation 0。）
 import {
@@ -172,6 +175,9 @@ export interface IssuanceState {
     submission_id: SubmissionIdT;
     evaluation_group_id: EvaluationGroupIdT;
     submitted_at: string;
+    idempotency_key: string;
+    response_set: ResponseSetT;
+    group_evidence: GroupEvidenceT[];
   }>;
 }
 
@@ -318,10 +324,9 @@ export async function saveResponseDraft(
  * §4.3 saveSubmission：单事务原子提交。
  *
  * 次序（replay 不污染组内锚点 —— 先判幂等再改组）：
- *   1. 锁 issuance（发题事实不可变读）+ revision 快照；
- *   2. 校验 response_set 对发出 spec；
- *   3. advisory 锁 evaluation_group（并发同组提交的线性化点 ——
- *      FOR UPDATE 锁不住不存在的组行）；
+ *   1. advisory 锁 evaluation_group（与评估/激活/DB guard 共用）；
+ *   2. 锁 issuance（发题事实不可变读）+ revision 快照；
+ *   3. 校验 response_set 对发出 spec；
  *   4. 幂等预检：(group,key) / submission_id —— replay/conflict 直接返回，
  *      不触碰 evaluation_group.submission_ids；
  *   5. 锁组行/冲突安全建组（onConflictDoNothing + 锁内重读）→
@@ -338,6 +343,10 @@ export async function saveSubmission(
   const actorRef = request.actorRef ?? 'assessment:submit';
 
   return await db.transaction(async (tx) => {
+    // Group first: serializes first creation, member appends and candidate freezing.
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${request.evaluation_group_id}))`,
+    );
     const [issuance] = await tx
       .select()
       .from(assessment_issuance)
@@ -348,7 +357,11 @@ export async function saveSubmission(
     const revisionId = issuance.revision_id;
 
     const [revRow] = await tx
-      .select({ response_spec: question_revision.response_spec })
+      .select({
+        response_spec: question_revision.response_spec,
+        group_id: question_revision.group_id,
+        structure: question_revision.structure,
+      })
       .from(question_revision)
       .where(eq(question_revision.revision_id, revisionId))
       .limit(1);
@@ -363,17 +376,6 @@ export async function saveSubmission(
 
     const submissionId = request.submission_id ?? `sub_${createId()}`;
     const groupEvidence = request.group_evidence ?? [];
-
-    // ---- 组串行化点（P1-4）：同一 evaluation_group 的提交先做 advisory 锁。
-    //    FOR UPDATE 锁不住不存在的组行 —— 两个 issuance 并发首提同组会各自
-    //    看到 existingGroup==null 后 PK 撞车 500。advisory 锁把本缝的全部
-    //    组内写入（幂等预检 → 组锚点 → submission → head）串行化：并发同组
-    //    写按锁序观察彼此已提交的结果（幂等重试确定性地走 replay 分支）。
-    //    锁序：issuance 行 → advisory(group) → 组行 → draft 行 —— 与既有
-    //    声明顺序一致，不引入环。
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${request.evaluation_group_id}))`,
-    );
 
     // ---- 幂等预检（先于任何组内变更：replay 不得污染 submission_ids） ----
     const [byKey] = await tx
@@ -441,6 +443,18 @@ export async function saveSubmission(
             : `submission '${byId.submission_id}' already exists under key '${byId.idempotency_key}'`,
       };
     }
+
+    const [frozenCandidate] = await tx
+      .select({ id: evaluation.evaluation_id })
+      .from(evaluation)
+      .where(eq(evaluation.evaluation_group_id, request.evaluation_group_id))
+      .limit(1);
+    if (frozenCandidate)
+      return {
+        status: 'group_conflict',
+        conflict_reason:
+          'evaluation group input is frozen; submit new answers as a new attempt group',
+      };
 
     // ---- 组锚点（先锁再追加；锁由上面的 advisory 锁提供） ----
     // 冲突收敛：advisory 锁内不应撞 PK，但缝外写者（迁移/修复脚本）不受锁管，
@@ -583,6 +597,12 @@ export async function saveSubmission(
         response_set: request.response_set,
         group_evidence: groupEvidence,
         submitted_at: now.toISOString(),
+        assistance: await snapshotIssuanceAssistance(tx, request.issuance_id),
+        learning_scope: await snapshotAssessmentLearningScope(
+          tx,
+          revRow.group_id,
+          revRow.structure.parts.map((part) => part.part_id),
+        ),
       } satisfies Record<string, unknown>,
       created_at: now,
     });
@@ -633,6 +653,9 @@ export async function getIssuanceState(
       submission_id: assessment_submission.submission_id,
       evaluation_group_id: assessment_submission.evaluation_group_id,
       submitted_at: assessment_submission.submitted_at,
+      idempotency_key: assessment_submission.idempotency_key,
+      response_set: assessment_submission.response_set,
+      group_evidence: assessment_submission.group_evidence,
     })
     .from(assessment_submission)
     .where(eq(assessment_submission.issuance_id, issuanceId))
@@ -698,6 +721,9 @@ export async function getIssuanceState(
       submission_id: row.submission_id,
       evaluation_group_id: row.evaluation_group_id,
       submitted_at: row.submitted_at.toISOString(),
+      idempotency_key: row.idempotency_key,
+      response_set: row.response_set,
+      group_evidence: row.group_evidence,
     })),
   };
 }

@@ -1,4 +1,9 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { resetTestConfig, setTestConfig } from '@/core/config/store';
+import { judgePromptFingerprint } from './judge-execution-provenance';
+
+afterEach(() => resetTestConfig());
+
 import type { JudgeQuestionRow } from '@/capabilities/practice/server/judge/question-contract';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db } from '@/db/client';
@@ -150,6 +155,61 @@ describe('JudgeInvoker', () => {
       expect.objectContaining({ subjectProfile: yuwenProfile }),
     );
     expect(runTaskFn.mock.calls[0]?.[2]).not.toHaveProperty('db');
+  });
+
+  it('pins execution and persisted judge provenance when locale changes during the model call', async () => {
+    setTestConfig({ 'locale.learner': 'en' });
+    let executedFingerprint: string | undefined;
+    const runTaskFn = vi.fn(
+      async (_kind: string, taskInput: unknown, _ctx?: { learnerLocale?: string }) => {
+        executedFingerprint = judgePromptFingerprint({
+          taskKind: 'SemanticJudgeTask',
+          taskInput,
+          subjectProfile: yuwenProfile,
+          judgeRoute: 'semantic',
+        });
+        await Promise.resolve();
+        setTestConfig({ 'locale.learner': 'zh-CN' });
+        return {
+          task_run_id: 'tr-locale-race',
+          text: JSON.stringify({
+            score: 0.92,
+            coarse_outcome: 'correct',
+            confidence: 0.81,
+            feedback_md: 'The cited argument supports p1.',
+            evidence_json: { matched_points: ['p1'], missing_points: ['missing premise'] },
+          }),
+        };
+      },
+    );
+    const persist = vi.fn(() => ({ where: async () => undefined }));
+    const db = { update: () => ({ set: persist }) } as unknown as Db;
+    const result = await new JudgeInvoker({ runTaskFn }).invoke({
+      db,
+      question: {
+        ...baseQuestion,
+        judge_kind_override: 'semantic',
+        rubric_json: {
+          criteria: [{ name: 'correctness', weight: 1, descriptor: 'Cite each premise' }],
+          required_points: ['p1'],
+        },
+      },
+      answer_md: 'Claim p1 follows from source A, but premise B remains uncertain.',
+      subjectProfile: yuwenProfile,
+    });
+    expect(result.execution?.prompt_fingerprint).toBe(executedFingerprint);
+    expect(runTaskFn.mock.calls[0]?.[2]).toMatchObject({ learnerLocale: 'en' });
+    expect(persist).toHaveBeenCalledWith(
+      expect.objectContaining({ prompt_fingerprint: executedFingerprint }),
+    );
+    expect(result.execution?.prompt_fingerprint).not.toBe(
+      judgePromptFingerprint({
+        taskKind: 'SemanticJudgeTask',
+        taskInput: runTaskFn.mock.calls[0]?.[1],
+        subjectProfile: yuwenProfile,
+        judgeRoute: 'semantic',
+      }),
+    );
   });
 
   // YUK-212 + YUK-484(B) critic §6b — the C1 leak proof at the INVOKER layer.

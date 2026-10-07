@@ -43,7 +43,14 @@ interface WeeklyResponse {
   window: { days: number; from: number; to: number; time_zone: string };
   totals: { reviews: number; failures: number; cost_usd: number };
   ratings: { again: number; hard: number; good: number; easy: number };
-  daily: Array<{ date: string; count: number; correct: number }>;
+  daily: Array<{
+    date: string;
+    count: number;
+    correct: number;
+    incorrect: number;
+    partial: number;
+    ungraded: number;
+  }>;
   top_causes: Array<{ category: string; category_label: string | null; count: number }>;
   top_knowledge: Array<{ id: string; name: string; failure_count: number }>;
 }
@@ -79,18 +86,18 @@ export function CoachKpi({
   decimals = 0,
 }: {
   label: string;
-  value: number;
+  value: number | null;
   unit?: string;
   prefix?: string;
   decimals?: number;
 }) {
-  const shown = decimals > 0 ? value.toFixed(decimals) : Math.round(value);
+  const shown = value === null ? '—' : decimals > 0 ? value.toFixed(decimals) : Math.round(value);
   return (
     <div className="coach-kpi">
       <div className="coach-kpi-n serif tnum">
         {prefix}
         {shown}
-        {unit ? <span className="coach-kpi-u">{unit}</span> : null}
+        {unit && value !== null ? <span className="coach-kpi-u">{unit}</span> : null}
       </div>
       <div className="coach-kpi-l meta">{label}</div>
     </div>
@@ -248,11 +255,18 @@ function CoachActivityView({ navigate }: { navigate: (to: string) => void }) {
   );
 }
 
-function CoachReport({ data, navigate }: { data: WeeklyResponse; navigate: (to: string) => void }) {
+export function CoachReport({
+  data,
+  navigate,
+}: {
+  data: WeeklyResponse;
+  navigate: (to: string) => void;
+}) {
   const { totals, ratings, daily, top_causes, top_knowledge } = data;
   const distTotal = ratings.again + ratings.hard + ratings.good + ratings.easy;
-  const correctRate =
-    totals.reviews > 0 ? Math.round(((ratings.good + ratings.easy) / totals.reviews) * 100) : 0;
+  const graded = daily.reduce((n, d) => n + d.correct + d.incorrect + d.partial, 0);
+  const correct = daily.reduce((n, d) => n + d.correct, 0);
+  const correctRate = graded > 0 ? Math.round((correct / graded) * 100) : null;
   const causeTotal = top_causes.reduce((s, c) => s + c.count, 0);
   const maxDay = Math.max(1, ...daily.map((d) => d.count));
   const maxFail = Math.max(1, ...top_knowledge.map((k) => k.failure_count));
@@ -354,14 +368,10 @@ function CoachReport({ data, navigate }: { data: WeeklyResponse; navigate: (to: 
 
       <SectionLabel>逐日复习量</SectionLabel>
       <LoomCard pad>
-        {/* Per-day stack is 2-segment (correct=good / wrong=again): the
-            weekly endpoint exposes only daily {count, correct}, not an
-            again/hard/good per-day split. Three-tier per-day breakdown is
-            phase-deferred to FSRS event-stream group-by-rating (P3) — see
-            docs/design/2026-06-04-u0-decisions.md D1/D5. No mock. */}
+        <p className="meta">正确率只统计已判分作答；部分正确单列，未判分不计入正确率。</p>
         <div className="stack-chart">
           {daily.map((d) => {
-            const wrong = d.count - d.correct;
+            const wrong = d.incorrect;
             return (
               <div key={d.date} className="stack-col">
                 <div className="stack-bars" style={{ height: 140 }}>
@@ -374,6 +384,19 @@ function CoachReport({ data, navigate }: { data: WeeklyResponse; navigate: (to: 
                     className="stack-seg tone-again"
                     style={{ height: `${(wrong / maxDay) * 140}px` }}
                     title={`错 ${wrong}`}
+                  />
+                  <span
+                    className="stack-seg"
+                    style={{ height: `${(d.partial / maxDay) * 140}px`, background: 'var(--hard)' }}
+                    title={`部分正确 ${d.partial}`}
+                  />
+                  <span
+                    className="stack-seg"
+                    style={{
+                      height: `${(d.ungraded / maxDay) * 140}px`,
+                      background: 'var(--ink-3)',
+                    }}
+                    title={`未判分 ${d.ungraded}`}
                   />
                 </div>
                 <span className="stack-x meta">{d.date.slice(5)}</span>

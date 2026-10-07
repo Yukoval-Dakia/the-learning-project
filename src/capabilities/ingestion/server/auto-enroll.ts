@@ -35,7 +35,6 @@ import {
   isTagKnowledgeInvariantError,
   tagKnowledge,
 } from '@/capabilities/knowledge/public';
-import type { CoarseOutcomeT } from '@/core/schema/capability';
 import type { MistakeEnrollOutputT } from '@/core/schema/mistake_enroll';
 import {
   type StructuredQuestionT,
@@ -76,67 +75,16 @@ import type { WriteEventInput } from '@/kernel/events';
  * `generated_by='workflow_judge'` event marker to let the user inspect + revert.
  */
 import { writeEvent } from '@/kernel/events';
-import type { JudgeQuestionRow } from '@/kernel/judge';
-import {
-  type MultimodalDirectImageFetchFn,
-  type MultimodalDirectRunTaskFn,
-  evaluateAttempt,
-} from '@/kernel/judge';
 import { withActiveCauseCategoryOverlays } from '@/kernel/read-models/cause-overlay';
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
-import {
-  isObjectiveJudgeRoute,
-  recordFamilyObservationForAttempt,
-} from '@/server/mastery/personalized-difficulty';
-import { getMasteryState, updateThetaForAttempt } from '@/server/mastery/state';
 import { writeQuestionBlockLifecycleEvent } from '@/server/projections/question_block-lifecycle-event';
 import { withAnswerClass } from '@/server/questions/answer-class-write';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
-import { getKnownSubjects, resolveSubjectProfile } from '@/subjects/profile';
+import { getKnownSubjects } from '@/subjects/profile';
+import { enrollNativeCapture } from './assessment-capture';
 
 export type AutoEnrollSkipReason = 'flag_off' | 'session_not_found' | 'wrong_status';
-
-/**
- * YUK-482 cut ④ — the graded verdict for one block's student work on the whole
- * page image. `coarse_outcome` ∈ JudgeResultV2's CoarseOutcome
- * (correct/partial/incorrect/unsupported); `confidence` ∈ [0,1]. Produced by the
- * `multimodal_direct` judge (or a test stub) OUTSIDE the enroll tx.
- */
-export interface StudentGradeVerdict {
-  coarse_outcome: CoarseOutcomeT;
-  confidence: number;
-}
-
-/**
- * YUK-482 cut ④ — student-answer grading seam (injectable). Defaults to the
- * production `multimodal_direct` judge (`defaultGradeStudentAnswer`). Builds
- * nothing itself — the caller passes a `JudgeQuestionRow` built from the BLOCK's
- * content (pre-tx) plus the whole-page `studentImageRefs` (= block.source_asset_ids)
- * so the photo-only image path runs.
- *
- * CRITICAL (independent review): the default DIRECTLY invokes
- * `runMultimodalDirectJudge` — it does NOT route through the JudgeInvoker /
- * `resolveQuestionJudgeRoute`. Route resolution would only pick `multimodal_direct`
- * when `q.image_refs.length>0 AND the subject profile lists multimodal_direct in
- * preferredRoutes` (today only `physics`), so a yuwen/math/short_answer block
- * resolves to `semantic` → handwriting pixels never looked at. The direct call
- * unconditionally grades the page image, removing the preferredRoutes trap.
- *
- * `subjectId` is the ingestion session's subject (best pre-tx subject signal); the
- * default resolves the SubjectProfile from it (the judge uses the profile but does
- * NOT gate on preferredRoutes). `runTaskFn` / `imageFetchFn` are the
- * `runMultimodalDirectJudge` seams — DB tests inject them to exercise the real
- * default grader without a model or R2.
- */
-export type GradeStudentAnswerFn = (params: {
-  db: Db;
-  question: JudgeQuestionRow;
-  studentImageRefs: string[];
-  subjectId?: string;
-  runTaskFn?: MultimodalDirectRunTaskFn;
-  imageFetchFn?: MultimodalDirectImageFetchFn;
-}) => Promise<StudentGradeVerdict>;
 
 export interface AutoEnrolledBlock {
   block_id: string;
@@ -201,36 +149,6 @@ export interface RunAutoEnrollParams {
    * retaining Knowledge's real match/propose behavior. Existing bridge results can be reused.
    */
   runColdStartBridgeFn?: ColdStartBridgeRunTaskFn;
-  /**
-   * YUK-482 cut ④ — student-answer grading seam. DB tests inject a stub so the
-   * whole-page vision judge runs WITHOUT a real model. Defaults to the production
-   * `multimodal_direct` judge via a DIRECT `runMultimodalDirectJudge` call
-   * (`defaultGradeStudentAnswer`) — NOT the JudgeInvoker / route resolution (see
-   * the CRITICAL note on GradeStudentAnswerFn: route resolution would send a
-   * non-physics block to `semantic`, ignoring the handwriting). Returns the graded
-   * verdict (coarse outcome + confidence) for the student work on the page image.
-   * Mirrors the `runColdStartBridgeFn` seam: the LLM call runs OUTSIDE the enroll
-   * tx (judge does R2 image fetch + an LLM call). To exercise the REAL default
-   * grader model-free, inject `gradeRunTaskFn` / `gradeImageFetchFn` instead.
-   */
-  gradeStudentAnswerFn?: GradeStudentAnswerFn;
-  /**
-   * YUK-482 cut ④ — `runMultimodalDirectJudge` runTask seam, threaded to the
-   * DEFAULT grader (`defaultGradeStudentAnswer`). DB tests inject a stub so the
-   * REAL default grader runs the vision judge WITHOUT a model — proving the
-   * vision judge actually fires on the page image (the class of defect a
-   * `gradeStudentAnswerFn` stub can't catch). Ignored when `gradeStudentAnswerFn`
-   * is injected (the stub replaces the whole grader). Defaults to the production
-   * `runTask`.
-   */
-  gradeRunTaskFn?: MultimodalDirectRunTaskFn;
-  /**
-   * YUK-482 cut ④ — `runMultimodalDirectJudge` R2 image-fetch seam, threaded to
-   * the DEFAULT grader. DB tests inject a stub so the real grader skips R2.
-   * Ignored when `gradeStudentAnswerFn` is injected. Defaults to the production
-   * `defaultImageFetch`.
-   */
-  gradeImageFetchFn?: MultimodalDirectImageFetchFn;
   /** Override env for the flag / threshold reads (tests). */
   env?: FlagEnv;
   /** Shared wall-clock for the batch. */
@@ -261,16 +179,7 @@ export async function runAutoEnrollForSession(
     return { status: 'skipped:flag_off', enrolled: 0, routed_to_review: 0, blocks: [] };
   }
 
-  // SHARED confidence threshold (default 0.85, env `AUTO_ENROLL_THRESHOLD`).
-  // Two semantically distinct gates reuse this ONE number:
-  //   (a) the TAGGING/routing judge — does this block auto-enroll vs route to human
-  //       review (the historical use, gates the per-block `verdict` below);
-  //   (b) the STUDENT-GRADE vision judge (cut ④) — is the vision verdict reliable
-  //       enough to synthesize a graded attempt (gates `studentGradeVerdict`).
-  // Deliberately shared for cut ④: introducing a separate `STUDENT_GRADE_THRESHOLD`
-  // is deferred to YUK-485 (per-question narrowing), which is also where the
-  // dense-page attribution concern lands. Flip ONE env to tune both today; revisit
-  // if real rollout data shows the two judges need different bars.
+  // Routing confidence does not grant native scoring admission.
   const threshold = autoEnrollThreshold(env);
   const now = params.now ?? new Date();
   const runTaggingFn = params.runTaggingFn ?? runTaggingTask;
@@ -282,7 +191,6 @@ export async function runAutoEnrollForSession(
   // learning data). When OFF (the default), detectStudentWork is never consulted →
   // the per-block flow below is byte-for-byte today's text-draft path.
   const studentGrading = mode === 'enroll' && studentAnswerGradingEnabled(env);
-  const gradeStudentAnswerFn = params.gradeStudentAnswerFn ?? defaultGradeStudentAnswer;
 
   // Load the session (must be an ingestion session in an extractable state).
   const sessionRows = await params.db
@@ -379,87 +287,6 @@ export async function runAutoEnrollForSession(
     // the student image_refs below, AND the stored answer image_refs at enroll — so the judge
     // sees only this question's pages (not every sibling's), narrowing inter-page bleed.
     const scopedPageRefs = pageScopedQuestionImageRefs(block);
-
-    // ---- YUK-482 cut ④ — student-answer grading (OUTSIDE the tx). ----
-    // When the flag is ON and student work is plausible on the page (see the
-    // YUK-487 fail-open gate below), grade the WHOLE PAGE IMAGE via the existing
-    // multimodal_direct judge BEFORE any tagging/enroll. The judge does an R2 image
-    // fetch + an LLM call, so — like the cold-start bridge — it MUST run outside the
-    // DB transaction; the resulting verdict is stashed and consumed at the enroll
-    // site below. Handwriting stays PIXELS (answer_md:'' + whole-page
-    // student_image_refs = the photo-only image path; NEVER OCR-transcribed).
-    //
-    // YUK-485 needs-review gate (dense-page attribution bleed): when the verdict is
-    // unconfident (confidence < threshold) OR the route could not grade
-    // (coarse_outcome === 'unsupported'), do NOT synthesize a graded attempt —
-    // route to human review (block stays 'draft'), mirroring the review-routing
-    // below. This keeps dense-page bleed out of mastery / 错因.
-    let studentGradeVerdict: StudentGradeVerdict | null = null;
-    // YUK-487 — fail-OPEN the whole-page judge when extraction did not reliably assess
-    // handwriting. detectStudentWork reads signals (student_answer_present /
-    // extraction_evidence.handwriting) that ONLY the VLM StructureTask ('vlm_structure')
-    // and Tencent ('tencent_ocr') set; on the 'glm_ocr' fallback (StructureTask down) or
-    // an unknown/absent source a *false* result is uninformative, NOT a real "no student
-    // work" — so grade anyway and let the judge be the detector (it returns
-    // 'unsupported'/low-confidence → route-to-review below for blocks with no real
-    // answer, so fail-open never synthesizes a bogus attempt). The reliable Opus judge
-    // must not be blocked by a degraded extraction. Holistic per-page grading that drops
-    // the extraction dependency entirely = YUK-488 (Fix B).
-    if (studentGrading && shouldGradeStudentWork(block)) {
-      // Build the judge row from the BLOCK's content (available pre-tx) — NOT a
-      // persisted question row. image_refs = the whole-page images (YUK-488: scoped to
-      // THIS question's pages, not all session pages), fed as the judge's prompt images.
-      const judgeQuestion: JudgeQuestionRow = {
-        id: block.id,
-        kind: block.structured?.kind ?? 'short_answer',
-        prompt_md: questionMd,
-        reference_md: block.reference_md ?? null,
-        rubric_json: null,
-        choices_md: null,
-        judge_kind_override: null,
-        knowledge_ids: null,
-        metadata: null,
-        figures: block.figures,
-        // YUK-488 — page-scoped (was block.image_refs = all session pages). Scoping ONLY
-        // studentImageRefs below would be insufficient: the judge also fetches prompt
-        // image_refs, so the page bleed would persist through this field. Both narrowed.
-        image_refs: scopedPageRefs,
-        structured: block.structured ?? null,
-      };
-      try {
-        studentGradeVerdict = await gradeStudentAnswerFn({
-          db: params.db,
-          question: judgeQuestion,
-          // YUK-488 — the student answer photo(s), page-scoped to THIS question's pages
-          // (was block.source_asset_ids = every session page → inter-page bleed). cut ④
-          // still grades the whole PAGE (no figure/bbox cropping) — just the right pages.
-          studentImageRefs: scopedPageRefs,
-          // Best pre-tx subject signal = the ingestion session's subject (the
-          // grader resolves the SubjectProfile from it; the vision judge uses the
-          // profile but does NOT gate on preferredRoutes — see GradeStudentAnswerFn).
-          subjectId: params.subjectId,
-          // runMultimodalDirectJudge seams (ignored when a stub gradeStudentAnswerFn
-          // is injected; threaded so the REAL default grader is testable model-free).
-          runTaskFn: params.gradeRunTaskFn,
-          imageFetchFn: params.gradeImageFetchFn,
-        });
-      } catch (err) {
-        // A grading outage must NEVER synthesize an attempt — route to review.
-        console.error(`[auto_enroll:student_grade] judge failed for block ${block.id}`, err);
-        routedToReview += 1;
-        continue;
-      }
-      if (
-        studentGradeVerdict.coarse_outcome === 'unsupported' ||
-        // NOTE: shared threshold (see declaration above) — deliberately the SAME
-        // bar as the tagging/routing judge for cut ④; split is YUK-485 follow-up.
-        studentGradeVerdict.confidence < threshold
-      ) {
-        // YUK-485 gate: unconfident / ungradable → human review, block stays draft.
-        routedToReview += 1;
-        continue;
-      }
-    }
 
     // ---- Tagging (CONTENT/KC axis). ----------------------------------------------
     // P3 (YUK-489): the ENROLL path now runs the UNIFIED `tagKnowledge` (embedding
@@ -582,6 +409,28 @@ export async function runAutoEnrollForSession(
       threshold,
     });
 
+    const hasCapturedAnswer =
+      Boolean(block.wrong_answer_md?.trim()) || (studentGrading && shouldGradeStudentWork(block));
+    if (mode === 'enroll' && hasCapturedAnswer) {
+      try {
+        const result = await enrollNativeCapture(params.db, {
+          block,
+          knowledgeIds: verdict.prefilled.knowledge_ids,
+          difficulty: verdict.prefilled.difficulty,
+          confidence: verdict.confidence,
+          canEnroll: verdict.route === 'auto',
+          pageRefs: scopedPageRefs,
+          now,
+        });
+        if (result) enrolled.push(result);
+        else routedToReview += 1;
+      } catch (error) {
+        console.error(`[auto_enroll:capture] block ${block.id} requires review`, error);
+        routedToReview += 1;
+      }
+      continue;
+    }
+
     // A1/A2 (YUK-145/164): for an ANSWERED block routed 'auto', draft the mistake
     // metadata (outcome / cause) the human fills by hand. Computed ONCE here and
     // shared: observe attaches it to the audit event (A1); enroll enrolls the real
@@ -590,7 +439,7 @@ export async function runAutoEnrollForSession(
     // 'unanswered'); a non-MistakeEnrollTaskError re-raises (infra fault → retry).
     let mistakeDraft: MistakeEnrollOutputT | undefined;
     const studentAnswer = block.wrong_answer_md?.trim() ?? '';
-    if (verdict.route === 'auto' && studentAnswer.length > 0) {
+    if (mode === 'observe' && verdict.route === 'auto' && studentAnswer.length > 0) {
       // YUK-1016 — enroll 词表 = 声明 ∪ overlay.active：owner accept 的 ov_
       // 类目必须出现在 allowedCauseIds 且 clamp 不掉（否则收编类目 enroll
       // 表达不了，全被挤回 'other'）。
@@ -674,66 +523,11 @@ export async function runAutoEnrollForSession(
       continue;
     }
 
-    // ---- MEDIUM-2 (independent review) — graded attempt MUST be mastery-attributable. ----
-    // The student-grade gate and the tagging gate are independent, so a student-graded block
-    // could in principle reach enroll with ZERO attributable KCs. If we enrolled it, the
-    // `enrollKnowledgeIds.length>0` θ̂ guard below would silently skip mastery while the graded
-    // attempt + 错因 are still written → an asymmetric attempt-without-mastery row. A graded
-    // verdict that cannot be attributed to any KC belongs in HUMAN review (YUK-485). Kept as a
-    // DEFENSIVE gate: with tagKnowledge always yielding ≥1 id (verdict.prefilled.knowledge_ids
-    // is non-empty whenever route==='auto'), attributableKcCount is always ≥1 today, so this
-    // never fires on the live enroll path — but it stays so a future tagging change that could
-    // yield [] cannot synthesize a half-enrolled graded attempt. Only gates the graded path.
-    const attributableKcCount = verdict.prefilled.knowledge_ids.length;
-    if (studentGradeVerdict && attributableKcCount === 0) {
-      routedToReview += 1;
-      continue;
-    }
-
-    // ---- Auto-enroll this block (one tx, mirrors the human import route). ----
-    // A2 (YUK-164): an ANSWERED block enrolls its REAL outcome from the draft
-    // (failure/partial/success); an unanswered block (or a draft outage) stays
-    // 'unanswered' (item-bank, no attempt) — the safest fallback (slice-3 behavior). A
-    // PROPOSE-tagged enroll (a freshly-minted KC, no prior attempt) has no mistakeDraft when
-    // unanswered, so it stays 'unanswered' = item-bank — matching the judge's outcome:'unanswered'
-    // contract (workflow-judge.ts:79).
-    // YUK-482 cut ④ — on the STUDENT-GRADED path the outcome comes from the vision
-    // verdict (graded OUTSIDE the tx, above) and the answer IS the whole page image
-    // (handwriting stays pixels: answerMd:'' + answerImageRefs = source_asset_ids,
-    // captureMode:'image'). This REPLACES the text-draft triplet ONLY here; the
-    // normal auto path is unchanged (outcome from mistakeDraft / 'unanswered').
-    // Capture a non-null const so TS narrows it inside the tx closure below.
-    const gradedVerdict = studentGradeVerdict;
-    const outcome = gradedVerdict
-      ? gradeOutcomeFromVerdict(gradedVerdict.coarse_outcome)
-      : (mistakeDraft?.wrong_answer ?? 'unanswered');
-
-    // Explicit if/else (biome/OCR readability): graded verdict → the answer is the
-    // page image (no text); unanswered → empty; otherwise the drafted wrong-answer md.
-    let answerMd: string;
-    if (gradedVerdict) {
-      answerMd = '';
-    } else if (outcome === 'unanswered') {
-      answerMd = '';
-    } else {
-      answerMd = block.wrong_answer_md ?? '';
-    }
-
-    // YUK-488 — store the SAME page-scoped images the judge graded (was
-    // block.source_asset_ids = all session pages). The stored answer photos must match
-    // what produced the verdict — this question's pages, not every sibling's.
-    const answerImageRefs = gradedVerdict ? scopedPageRefs : [];
-
-    // Explicit if/else (biome/OCR readability): graded or figure-bearing → image
-    // capture; otherwise text capture.
-    let captureMode: 'text' | 'image';
-    if (gradedVerdict) {
-      captureMode = 'image';
-    } else if (block.image_refs.length > 0) {
-      captureMode = 'image';
-    } else {
-      captureMode = 'text';
-    }
+    // Genuine unanswered material retains the existing item-bank path.
+    const outcome = 'unanswered' as const;
+    const answerMd = '';
+    const answerImageRefs: string[] = [];
+    const captureMode = block.image_refs.length > 0 ? 'image' : 'text';
     const result = await params.db.transaction(async (tx) => {
       // YUK-497 — global learning-state write lock FIRST (shared tx-entry order with every
       // material_fsrs_state / mastery_state writer and the cascade revert); this tx reaches
@@ -753,7 +547,7 @@ export async function runAutoEnrollForSession(
       // (tencent_ocr_extract / docx-ingestion) is a best-effort layer that only REDUCES how many
       // duplicate jobs reach here; it does not bear correctness (and a bare singletonKey with no
       // seconds is inert on a standard-policy queue — see AUTO_ENROLL_SINGLETON_SECONDS). The
-      // pre-tx tagKnowledge/grade LLM work the loser already did is wasted but harmless —
+      // pre-tx tagKnowledge LLM work the loser already did is wasted but harmless —
       // correctness, not cost, is the contract here. Precedent: revert-auto-enroll.ts.
       const claimRows = await tx
         .select({ status: question_block.status })
@@ -846,17 +640,6 @@ export async function runAutoEnrollForSession(
               judge_route: verdict.route,
               confidence: verdict.confidence,
               reasoning: verdict.reasoning,
-              // YUK-482 cut ④ — traceability for a student-graded enroll: mark that
-              // the whole page image was vision-graded + the graded confidence (the
-              // YUK-485 gate above already enforced confidence >= threshold). Absent
-              // (→ undefined) on the normal auto path so the metadata shape is unchanged.
-              ...(gradedVerdict
-                ? {
-                    student_answer_graded: true,
-                    student_grade_confidence: gradedVerdict.confidence,
-                    student_grade_outcome: gradedVerdict.coarse_outcome,
-                  }
-                : {}),
             },
           },
           created_at: now,
@@ -881,9 +664,6 @@ export async function runAutoEnrollForSession(
         questionId,
         outcome,
         answerMd,
-        // YUK-482 cut ④ — the student-graded path passes the whole-page asset ids as
-        // the answer images (handwriting stays pixels); the normal auto path passes
-        // [] (unchanged). captureMode is 'image' for a student-graded enroll.
         answerImageRefs,
         knowledgeIds: enrollKnowledgeIds,
         imageRefs: block.image_refs,
@@ -892,123 +672,6 @@ export async function runAutoEnrollForSession(
         now,
         generatedBy: 'workflow_judge',
       });
-
-      // ---- YUK-482 cut ④ — mastery (θ̂) for the student-graded attempt. ----
-      // YUK-1054 (§9 历史分歧 · 显式保留) —「auto-enroll 独立 θ̂ 写」面：本路径
-      // 直接写 mastery_state（updateThetaForAttempt / recordFamilyObservationForAttempt），
-      // 不经 contract-lane settle.ts 的 family_fold effect —— 它不产生 evaluation /
-      // settlement / priorEffectiveId 链。YUK-1054 为读侧 ticket（不改写路径），
-      // 该分歧按 §9 显式保留于此注释锚点；读侧经 attempt 事件照常 dual-track 解析
-      // （attempt.payload.judge 是 embedded-grade 轨，与 solve-session 同）。
-      // enrollCapturedBlock writes the attempt + record but does NOT touch θ̂ (the
-      // live paper path does it separately at paper-submit.ts:640). Add it here ONLY
-      // for the student-graded path, keyed on the question's primary KC (the
-      // attributed enrollKnowledgeIds — the unified tagKnowledge verdict's ids, a MATCH to
-      // existing KC(s) or a freshly auto-approved PROPOSE child). Mirrors paper-submit's call shape:
-      // outcome success/partial → 1, failure → 0 (partial≈success evidence, conservative
-      // — same as paper-submit.ts:643). No responseTimeMs (no RT on the ingestion path).
-      // Skipped for an unanswered enroll (no attempt event) and the normal text path.
-      if (gradedVerdict && enroll.attemptEventId && enrollKnowledgeIds.length > 0) {
-        const familyPrimaryKnowledgeId = enrollKnowledgeIds[0];
-        // PRE-attempt θ̂ for the family primary KC — captured BEFORE
-        // updateThetaForAttempt moves mastery_state.theta_hat to the POSTERIOR
-        // (mirror paper-submit.ts:636-638). The family residual must anchor on the
-        // answer-time θ̂; reading it after would bias the residual.
-        const familyThetaBefore = familyPrimaryKnowledgeId
-          ? ((await getMasteryState(tx, familyPrimaryKnowledgeId))?.theta_hat ?? 0)
-          : 0;
-
-        await updateThetaForAttempt(tx, {
-          knowledgeIds: enrollKnowledgeIds,
-          questionId,
-          outcome: outcome === 'failure' ? 0 : 1,
-          difficulty: verdict.prefilled.difficulty,
-          attemptEventId: enroll.attemptEventId,
-          now,
-          // family delta composition (paper-submit precedent) — keyed on the question's
-          // canonical primary KC (enrollKnowledgeIds[0], which IS this question's
-          // knowledge_ids[0] at insert above).
-          kind: verdict.prefilled.question_kind,
-          source: sessionEntrypoint,
-          familyPrimaryKnowledgeId,
-        });
-
-        // MEDIUM-1 (independent review) — family b_personalized sibling. Both live
-        // attempt paths (paper-submit.ts:685, practice/api/submit.ts:673) call
-        // recordFamilyObservationForAttempt in the same tx alongside
-        // updateThetaForAttempt; cut ④ omitted it. Add it for parity, SAVEPOINT-
-        // isolated + best-effort exactly as paper-submit does it: the family write
-        // running on the outer tx can poison it (25P02) on any DB-level error
-        // (advisory-lock serialization, 23505 first-insert race, malformed-jsonb
-        // cast) → the whole enroll tx would roll back. tx.transaction(...) becomes a
-        // SAVEPOINT so a family-write failure rolls back only the savepoint; the
-        // committed attempt survives.
-        //
-        // The hook early-returns unless judgeRoute ∈ OBJECTIVE_JUDGE_ROUTES
-        // (exact/keyword). The student-graded path runs the `multimodal_direct`
-        // vision judge — NOT an objective route — so the hook is GUARANTEED to be a
-        // NO-OP today. Guard with `isObjectiveJudgeRoute('multimodal_direct')` so the
-        // SAVEPOINT (and its DB round-trip) is skipped entirely when the route is
-        // non-objective; the block re-enables automatically if `multimodal_direct`
-        // is ever added to OBJECTIVE_JUDGE_ROUTES. partial is also early-returned
-        // inside the hook (kept out of family calibration by design).
-        if (isObjectiveJudgeRoute('multimodal_direct')) {
-          try {
-            await tx.transaction(async (sp) => {
-              await recordFamilyObservationForAttempt(sp, {
-                primaryKnowledgeId: familyPrimaryKnowledgeId,
-                questionId,
-                kind: verdict.prefilled.question_kind,
-                source: sessionEntrypoint,
-                difficulty: verdict.prefilled.difficulty,
-                outcome: outcome === 'failure' ? 0 : 1,
-                attemptOutcome: outcome === 'unanswered' ? undefined : outcome,
-                // The student-graded path runs the multimodal_direct vision judge
-                // directly (defaultGradeStudentAnswer) — record that route verbatim.
-                judgeRoute: 'multimodal_direct',
-                thetaBefore: familyThetaBefore,
-                now,
-              });
-            });
-          } catch (err) {
-            console.warn(
-              `[auto_enroll:student_grade] recordFamilyObservationForAttempt failed (non-fatal) for block ${block.id}:`,
-              err,
-            );
-          }
-        }
-      }
-
-      // A2: write the drafted cause directly as a chained judge event (mirrors
-      // attribute.ts) — only for a failure that produced both an attempt event and
-      // a cause. The draft already paid the LLM cost (no AttributionTask re-run);
-      // writeEvent stays the single owner (ADR-0005). OC-5 lets the user correct it.
-      if (outcome === 'failure' && enroll.attemptEventId && mistakeDraft?.cause) {
-        await writeEvent(tx, {
-          id: createId(),
-          session_id: null,
-          actor_kind: 'agent',
-          actor_ref: 'workflow_judge',
-          action: 'judge',
-          subject_kind: 'event',
-          subject_id: enroll.attemptEventId,
-          outcome: 'success',
-          payload: {
-            cause: {
-              primary_category: mistakeDraft.cause.primary_category,
-              secondary_categories: mistakeDraft.cause.secondary_categories,
-              analysis_md: mistakeDraft.cause.analysis_md,
-              confidence: mistakeDraft.cause.confidence,
-            },
-            referenced_knowledge_ids: verdict.prefilled.knowledge_ids,
-            generated_by: 'workflow_judge',
-          },
-          caused_by_event_id: enroll.attemptEventId,
-          task_run_id: null,
-          cost_micro_usd: null,
-          created_at: now,
-        });
-      }
 
       const [{ version: blockVersion }] = await tx
         .update(question_block)
@@ -1252,72 +915,4 @@ export function pageScopedQuestionImageRefs(block: {
   // Belt-and-suspenders: any out-of-range index ⇒ the page map is untrustworthy → feed all.
   if (sorted.some((p) => p < 0 || p >= all.length)) return all;
   return sorted.map((p) => all[p]);
-}
-
-/**
- * YUK-482 cut ④ — map the vision judge's coarse outcome → the EnrollOutcome the
- * 错因/mastery chains consume. Mirrors paper-submit.ts:275-276
- * (correct→success, partial→partial, else→failure). `unsupported` is gated out
- * upstream (YUK-485) so it never reaches here on the graded path.
- */
-function gradeOutcomeFromVerdict(coarse: CoarseOutcomeT): 'success' | 'partial' | 'failure' {
-  if (coarse === 'correct') return 'success';
-  if (coarse === 'partial') return 'partial';
-  return 'failure';
-}
-
-/**
- * YUK-482 cut ④ — production student-answer grader.
- *
- * YUK-1047 — now routed through `evaluateAttempt` (the single authoritative-
- * grading funnel, entry='ingestion_grading'). The grade path deliberately
- * forces `judge_kind_override='multimodal_direct'`: the resolver only picks
- * `multimodal_direct` when the question carries prompt figures AND the subject
- * profile lists `multimodal_direct` in `preferredRoutes` (today only
- * `physics`); a yuwen/math/short_answer block would resolve to `semantic`,
- * which ignores `student_image_refs` and judges an empty `answer_md` → the
- * handwriting pixels are never looked at. The override preserves the original
- * direct-call dispatch verbatim (the invoker's `multimodal_direct` dispatch
- * invokes the same `runMultimodalDirectJudge` runner) while adding the
- * funnel's telemetry + provenance capture. Cut ④ grades PER-QUESTION (no
- * part-narrowing — that is YUK-485, out of scope), so no `part_ref` is passed.
- *
- * `answer_md:''` + whole-page `student_image_refs` (= block.source_asset_ids) runs
- * the photo-only image path (handwriting stays pixels — never OCR-transcribed).
- *
- * SubjectProfile: resolved from the best pre-tx subject signal — the ingestion
- * session's subject (`params.subjectId`) when reachable, else the block's
- * `knowledge_hint`-derived KCs (none pre-tx → the helper falls back to general).
- * The judge USES the profile (e.g. for the prompt's subject hint) but does NOT
- * gate on `preferredRoutes`, so whatever profile resolves is safe.
- */
-async function defaultGradeStudentAnswer(params: {
-  db: Db;
-  question: JudgeQuestionRow;
-  studentImageRefs: string[];
-  subjectId?: string;
-  runTaskFn?: MultimodalDirectRunTaskFn;
-  imageFetchFn?: MultimodalDirectImageFetchFn;
-}): Promise<StudentGradeVerdict> {
-  const subjectProfile = params.subjectId
-    ? resolveSubjectProfile(params.subjectId)
-    : await resolveSubjectProfileForKnowledgeIds(params.db, params.question.knowledge_ids ?? []);
-  const invoked = await evaluateAttempt({
-    entry: 'ingestion_grading',
-    legacy: {
-      db: params.db,
-      // Forced vision route — see the doc comment above for why the resolver
-      // must not choose for this path (the pixels are the entire answer).
-      question: { ...params.question, judge_kind_override: 'multimodal_direct' },
-      answer_md: '',
-      student_image_refs: params.studentImageRefs,
-      subjectProfile,
-      runTaskFn: params.runTaskFn,
-      imageFetchFn: params.imageFetchFn,
-    },
-  });
-  return {
-    coarse_outcome: invoked.result.coarse_outcome,
-    confidence: invoked.result.confidence,
-  };
 }

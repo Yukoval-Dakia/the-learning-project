@@ -30,8 +30,8 @@
 // their truth (unknown cost counts as the reserve — never zero).
 
 import type { ZodTypeAny } from 'zod';
-import { type TaskKind, tasks } from '@/ai/registry';
 import type { TaskDefinition } from '@/ai/task-spec';
+import { type TaskKind, resolveTaskBudget, tasks } from '@/capabilities/task-registry';
 import { JevScoringDecisionInput, JevSystemOneResponse } from '@/core/schema/jev-systemone';
 import type { Db } from '@/db/client';
 import {
@@ -53,6 +53,8 @@ import {
 export const TYPED_RESERVE_PER_CALL_USD = 0.005;
 /** Native typed decisions endpoint — NOT the chat completions façade. */
 export const SYSTEMONE_ENDPOINT_URL = 'https://openrouter.ai/api/v1/systemone';
+/** The actual typed transport provider, shared by execution and read-only facts. */
+const TYPED_PRIMITIVE_PROVIDER = 'openrouter' as const;
 /** TypeSafe is the only provider ever allowed to serve this lane. */
 export const TYPESAFE_PROVIDER_CONSTRAINTS = {
   only: ['TypeSafe'],
@@ -93,6 +95,14 @@ export function isRegisteredTypedTask(kind: string): kind is TaskKind {
   return Object.hasOwn(TYPED_TASKS, kind);
 }
 
+/** Registered executable bindings only; never infer typed support from chat routing. */
+export function registeredTypedTaskBindings() {
+  return Object.keys(TYPED_TASKS)
+    .filter(isRegisteredTypedTask)
+    .filter((kind) => (tasks[kind] as TaskDefinition).execution === 'typed')
+    .map((kind) => ({ kind, provider: TYPED_PRIMITIVE_PROVIDER, model: tasks[kind].defaultModel }));
+}
+
 export interface TypedPrimitiveCtx {
   readonly db: Db;
   /** Caller-pinned attempt-1 run id (idempotent replays). */
@@ -113,6 +123,7 @@ export interface TypedPrimitiveCtx {
   /** Test seam: replace ONLY the wire transport (never the lifecycle). */
   readonly fetchImpl?: typeof fetch;
   readonly logScope?: string;
+  readonly retry?: 'none';
 }
 
 export interface TypedPrimitiveOutcome<Output = unknown> {
@@ -155,7 +166,7 @@ const ERROR_SNIPPET_MAX = 500;
  * PERMANENT — no blind retry; 429/529/5xx and connection-class transport
  * failures retry only inside the shared wall-clock bound (RETRY_ELAPSED_CAP_MS
  * start gate + session deadline), never multiplied by SDK/queue retries —
- * this path performs at most def.budget.transientRetries extra wire calls.
+ * this path performs at most budget.transientRetries extra wire calls.
  */
 export async function runTypedPrimitiveTask<Output = unknown>(
   kind: string,
@@ -174,6 +185,7 @@ export async function runTypedPrimitiveTask<Output = unknown>(
   if ((def.execution ?? 'chat') !== 'typed') {
     throw new Error(`typed primitive runner: '${kind}' is not a typed-execution task`);
   }
+  const budget = resolveTaskBudget(kind);
   // Input is schema-parsed directly — a failure is a caller contract bug,
   // thrown BEFORE any lifecycle/admission/cost work exists (no task_run row).
   const parsedInput = registration.inputSchema.parse(input);
@@ -188,15 +200,15 @@ export async function runTypedPrimitiveTask<Output = unknown>(
     ...(parsedInput as Record<string, unknown>),
   };
 
-  const maxAttempts = 1 + def.budget.transientRetries;
+  const maxAttempts = ctx.retry === 'none' ? 1 : 1 + budget.transientRetries;
   const reserveUsd = TYPED_RESERVE_PER_CALL_USD;
-  const maxCostUsd = def.budget.maxCost;
+  const maxCostUsd = budget.maxCost;
   const firstAttemptStartedAt = Date.now();
   // runTask parity: the in-process session bound covers retries inside one
   // wall clock; the caller deadline bounds the whole invocation INCLUDING the
   // application-layer advanced fallback.
   const retryingDeadlineAt =
-    maxAttempts > 1 ? firstAttemptStartedAt + RETRY_ELAPSED_CAP_MS + def.budget.timeout : undefined;
+    maxAttempts > 1 ? firstAttemptStartedAt + RETRY_ELAPSED_CAP_MS + budget.timeout : undefined;
   const providerSessionDeadlineAt =
     ctx.deadlineAt === undefined
       ? retryingDeadlineAt
@@ -229,12 +241,12 @@ export async function runTypedPrimitiveTask<Output = unknown>(
     const lifecycle = createRunLifecycle<LifecycleResult>({
       db: ctx.db,
       kind,
-      timeoutMs: def.budget.timeout,
+      timeoutMs: budget.timeout,
       abortController: ctx.abortController,
       // Pin provider+model explicitly: a global AI_PROVIDER_OVERRIDE must never
       // redirect the typed lane onto a chat-incompatible provider, and the
       // model pin is the verified request id, not an alias (spec §5.2).
-      override: { provider: 'openrouter', model: def.defaultModel },
+      override: { provider: TYPED_PRIMITIVE_PROVIDER, model: def.defaultModel },
       parentTaskRunId: ctx.parentTaskRunId,
       providerStartDeadlineAt:
         retrySource !== undefined ? firstAttemptStartedAt + RETRY_ELAPSED_CAP_MS : undefined,

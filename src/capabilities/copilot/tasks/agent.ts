@@ -1,6 +1,5 @@
 // YUK-878 — CopilotTask spec (the single user-facing conversational agent),
-// moved verbatim from the central src/ai quarry. Assistant text remains buffered
-// for progress accounting; the SDK terminal Markdown is finalized and bound to
+// moved from the central src/ai quarry. Root Pi text deltas stream immediately; the SDK terminal Markdown is finalized and bound to
 // the server-observed execution trace by reply-finalization.ts.
 
 import { z } from 'zod';

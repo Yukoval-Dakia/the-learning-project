@@ -1,6 +1,6 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
-import type { TaskKind } from '@/ai/registry';
+import type { TaskKind } from '@/capabilities/task-registry';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, cost_ledger, tool_call_log } from '@/db/schema';
 import type { AttemptCostBasis, AttemptCostTruth } from './attempt-cost';

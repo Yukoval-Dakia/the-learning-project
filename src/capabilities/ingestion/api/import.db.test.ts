@@ -1008,6 +1008,30 @@ describe('POST /api/ingestion/[id]/import', () => {
     expect(blk.status).toBe('auto_enrolled');
   });
 
+  it.each(['low', 'medium', 'high'])(
+    'carries sourced visual complexity %s into the question',
+    async (complexity) => {
+      const db = testDb();
+      const { sessionId, sourceDocId } = await setupSession(db);
+      await insertBlock(db, {
+        id: 'block_a',
+        sessionId,
+        docId: sourceDocId,
+        visual_complexity: complexity,
+      });
+      await insertKnowledge(db, 'k1');
+      const res = await post(sessionId, makeImportBody());
+      expect(res.status).toBe(200);
+      const [imported] = await db.select().from(question);
+      expect(imported.visual_complexity).toBe(complexity);
+      const [source] = await db
+        .select()
+        .from(question_block)
+        .where(eq(question_block.id, 'block_a'));
+      expect(source.visual_complexity).toBe(complexity);
+    },
+  );
+
   it('preserves high visual_complexity when merging from any high source block', async () => {
     const db = testDb();
     const { sessionId, sourceDocId } = await setupSession(db, { assetIds: ['asset_1', 'asset_2'] });
@@ -1054,6 +1078,8 @@ describe('POST /api/ingestion/[id]/import', () => {
     const virtualBlock = allBlocks.find((b) => b.id !== 'block_low' && b.id !== 'block_high');
     expect(virtualBlock).toBeDefined();
     expect(virtualBlock?.visual_complexity).toBe('high');
+    const [importedQuestion] = await db.select().from(question);
+    expect(importedQuestion.visual_complexity).toBe('high');
   });
 
   it('manual block (Tier 4 fallback): block_id=undefined, source_block_ids=[] → 200, question + mistake created', async () => {
@@ -1081,6 +1107,8 @@ describe('POST /api/ingestion/[id]/import', () => {
     });
 
     expect(res.status).toBe(200);
+    const [manualQuestion] = await db.select().from(question);
+    expect(manualQuestion.visual_complexity).toBeNull();
     const body = (await res.json()) as { question_ids: string[]; mistake_ids: string[] };
     expect(body.question_ids).toHaveLength(1);
     expect(body.mistake_ids).toHaveLength(1);

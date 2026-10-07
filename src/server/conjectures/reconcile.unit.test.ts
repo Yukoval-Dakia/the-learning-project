@@ -5,9 +5,11 @@
 //     the written kc_typed_state (which has no R column — fold-replayable);
 //   - this loop NEVER writes FSRS (ND-5);
 //   - a missing / malformed / non-conjecture proposal is SKIPPED (parse-barrier),
-//     never throws the whole nightly run.
+//     never throws the whole nightly run — but a RETRYABLE read failure (DB / timeout)
+//     PROPAGATES so pg-boss retries the job (SCF-216 / YUK-1277).
 
 import { describe, expect, it, vi } from 'vitest';
+import { ZodError } from 'zod';
 import type { Db } from '@/db/client';
 import type { WriteEventInput } from '@/kernel/events';
 import type { UpsertKcTypedStateInput } from '@/server/conjectures/typed-state';
@@ -251,16 +253,29 @@ describe('reconcileConjecturePredictions (U8 — A13 dark-loop consumer)', () =>
     expect(upserts).toHaveLength(0);
   });
 
-  it('skips (never throws) when the conjecture READ throws — poison-pill guard (review fix)', async () => {
-    // getEventById parse-throws on a corrupt row; the loop must degrade to a counted skip,
-    // NOT abort the whole nightly run (which also gates the propose half).
+  it('skips (never throws) a corrupt/unparseable conjecture row — ZodError poison-pill guard', async () => {
+    // getEventById parse-throws (a ZodError) on a corrupt row; the loop must degrade to a counted
+    // skip, NOT abort the whole nightly run (which also gates the propose half).
     const { deps, events, upserts } = baseDeps({
       getEventByIdFn: vi.fn(async () => {
-        throw new Error('parseEvent: corrupt referenced row');
+        throw new ZodError([]);
       }),
     });
     const result = await reconcileConjecturePredictions(DB, deps);
     expect(result).toEqual({ reconciled: 0, skipped: 1 });
+    expect(events).toHaveLength(0);
+    expect(upserts).toHaveLength(0);
+  });
+
+  it('PROPAGATES a retryable read failure (DB / timeout) so pg-boss retries — never misreports it as a skip', async () => {
+    const { deps, events, upserts } = baseDeps({
+      getEventByIdFn: vi.fn(async () => {
+        throw new Error('connection terminated unexpectedly');
+      }),
+    });
+    await expect(reconcileConjecturePredictions(DB, deps)).rejects.toThrow(
+      /connection terminated unexpectedly/,
+    );
     expect(events).toHaveLength(0);
     expect(upserts).toHaveLength(0);
   });

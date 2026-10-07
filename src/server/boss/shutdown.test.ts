@@ -1,6 +1,8 @@
-import type { PgBoss } from 'pg-boss';
+import { PgBoss } from 'pg-boss';
 import { type MockInstance, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { __setTraceExporterForTests } from '@/server/ai/laminar-tracing';
+import { memoryTraceExporter } from '@/server/ai/laminar-tracing.test-support';
 import { installBootShutdownHandler, installShutdownHandler } from './shutdown';
 
 type WorkerState = 'created' | 'active' | 'stopping' | 'stopped';
@@ -38,11 +40,40 @@ describe('installShutdownHandler (YUK-241)', () => {
   });
 
   afterEach(() => {
+    __setTraceExporterForTests();
+    vi.useRealTimers();
     exitSpy.mockRestore();
     logSpy.mockRestore();
     warnSpy.mockRestore();
     errorSpy.mockRestore();
     onSpy.mockRestore();
+  });
+
+  it('drains standalone worker before a bounded flush and exits once', async () => {
+    vi.useFakeTimers();
+    const order: string[] = [];
+    const boss = new PgBoss({ connectionString: 'postgresql://offline.invalid/test' });
+    vi.spyOn(boss, 'getWipData').mockReturnValue([]);
+    vi.spyOn(boss, 'stop').mockImplementation(async () => {
+      order.push('drain');
+    });
+    const { exporter } = memoryTraceExporter();
+    __setTraceExporterForTests({
+      ...exporter,
+      flush: () => {
+        order.push('flush');
+        return new Promise<void>(() => {});
+      },
+    });
+    installBootShutdownHandler(() => boss);
+    registered.SIGTERM('SIGTERM');
+    registered.SIGINT('SIGINT');
+    await vi.advanceTimersByTimeAsync(499);
+    expect(order).toEqual(['drain', 'flush']);
+    expect(exitSpy).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(exitSpy).toHaveBeenCalledExactlyOnceWith(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('registers SIGTERM + SIGINT handlers', () => {

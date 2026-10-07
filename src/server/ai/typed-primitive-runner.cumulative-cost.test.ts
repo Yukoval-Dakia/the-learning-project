@@ -27,21 +27,21 @@ vi.mock('@/server/ai/log', () => ({
   writeToolCallLog: logMocks.tool,
 }));
 
-vi.mock('@/ai/registry', async (importOriginal) => {
-  const original = await importOriginal<typeof import('@/ai/registry')>();
-  return {
-    ...original,
-    tasks: {
-      ...original.tasks,
-      JevScoringDecisionTask: {
-        ...original.tasks.JevScoringDecisionTask,
-        budget: {
-          ...original.tasks.JevScoringDecisionTask.budget,
-          transientRetries: 2,
-        },
+vi.mock('@/capabilities/task-registry', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/capabilities/task-registry')>();
+  const { createTaskBudgetReaders } = await import('@/ai/task-budget');
+  const tasks = {
+    ...original.tasks,
+    JevScoringDecisionTask: {
+      ...original.tasks.JevScoringDecisionTask,
+      budget: {
+        ...original.tasks.JevScoringDecisionTask.budget,
+        transientRetries: 2,
       },
     },
   };
+  // The composition binds readers to its catalog; bind the fixture's retry budget too.
+  return { ...original, tasks, ...createTaskBudgetReaders(tasks) };
 });
 
 import { runTypedPrimitiveTask } from './typed-primitive-runner';

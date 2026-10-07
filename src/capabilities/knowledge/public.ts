@@ -3,6 +3,8 @@
 // YUK-876 / FULL F3.7b — the failure-attempt evidence + attribution read models
 // (moved from src/server/events/queries.ts) are part of this contract.
 
+// YUK-885 — public read-model ports repointed from central deep imports.
+export { isDirectTreePair } from '@/core/topology-gate';
 export { loadConfusablePairs } from '@/kernel/read-models/confusables';
 export type {
   FailureAttempt,
@@ -35,6 +37,11 @@ export {
   batchResolveSubjectIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
+// YUK-1064 — script and cross-capability integration ports.
+export { runKnowledgeEdgeProposeNightly } from './jobs/knowledge_edge_propose_nightly';
+// YUK-1007 — knowledge 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
+// 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
+export { knowledgeConfigEffectiveFacts } from './server/config-effective-facts';
 export type {
   EdgeProposalDecision,
   EdgeProposalDecisionInput,
@@ -78,10 +85,15 @@ export {
 export type { AcceptResult as KnowledgeAcceptResult } from './server/proposals';
 export {
   ACCEPT_RESULT_KINDS,
+  acceptProposal,
   dismissProposal,
+  writeKnowledgeProposeEvent,
 } from './server/proposals';
+export type { RubricGate } from './server/rubric-validator';
+export { seedKnowledge } from './server/seed';
 export type { NameKcFn } from './server/tag-knowledge';
 export { isTagKnowledgeInvariantError, tagKnowledge } from './server/tag-knowledge';
-// YUK-885 — public read-model ports repointed from central deep imports.
-export { isDirectTreePair } from './server/topology-gate';
 export { loadTreeSnapshot } from './server/tree';
+
+// YUK-1062 — task composition uses the narrow task-public entry directly.
+export { knowledgeTaskSpecs } from './task-public';

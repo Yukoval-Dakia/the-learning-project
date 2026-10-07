@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ConjectureProbeSpecV2 } from '../business';
 import type { ResponseSlotT, ResponseSpecT } from './response';
 import type { QuestionGroupStructureT } from './structure';
 
@@ -76,6 +77,7 @@ export const RuleReferenceCriterion = z.object({
   rule_id: z.string().min(1),
   statement_md: z.string().min(1),
   source: z.enum(['official', 'system_proposed', 'manual']),
+  probe_spec: ConjectureProbeSpecV2.optional(),
 });
 export type RuleReferenceCriterionT = z.infer<typeof RuleReferenceCriterion>;
 

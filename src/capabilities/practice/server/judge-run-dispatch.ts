@@ -40,12 +40,13 @@ import { getStartedBoss } from '@/server/boss/client';
 import { observeBossJob } from '@/server/boss/job-observation';
 import { checkRateLimit, refundRateLimit } from '@/server/http/rate-limit';
 import { JUDGE_RUN_QUEUE } from './judge-durable-config';
-import type { JudgeRunJobData } from './judge-run-payload';
+import type { JudgeRunJobData, LegacyJudgeRunJobData } from './judge-run-payload';
 import {
   JUDGE_RUN_EVENTS,
   JUDGE_RUN_TABLE,
   JudgeRunRequeuedPayloadSchema,
 } from './judge-run-status';
+import { SYNTHETIC_SUBJECT_ROOT_RE } from './placement-scope';
 
 /** The reserved action name. Single source for the writer, the scan, and the guard. */
 export const JUDGE_PENDING_ATTEMPT_ACTION = 'experimental:judge_pending_attempt' as const;
@@ -97,12 +98,12 @@ export interface RecordJudgePendingAttemptInput {
   runId: string;
   sessionId: string | null;
   questionId: string;
-  /** The question's OWN labels at answer time = the θ̂ write domain (⊇ the FSRS subset). */
+  /** The question's real KC labels at answer time = the θ̂ write domain (⊇ FSRS subset). */
   knowledgeIds: string[];
   /** Frozen hierarchical-Elo domain rows this attempt can write. */
   abilityGlobalIds?: string[];
   /** The frozen judge input, stored verbatim so recovery re-judges the same inputs (D5). */
-  submit: JudgeRunJobData['submit'];
+  submit: LegacyJudgeRunJobData['submit'];
   /** The answer instant — the ordering water mark. Also the row's `created_at`. */
   submittedAt: Date;
 }
@@ -183,6 +184,10 @@ export interface JudgeRunEnqueueDeps {
  * attempt behind a 429 would have the sweeper judge it minutes later — quietly turning a
  * refusal into a deferral and letting every rejected submit through the budget after all.
  */
+export function refundJudgeRunAdmission(token: number, deps: JudgeRunEnqueueDeps = {}): void {
+  (deps.refundRateLimit ?? refundRateLimit)(token);
+}
+
 export function admitJudgeRun(deps: JudgeRunEnqueueDeps = {}): number {
   return (deps.checkRateLimit ?? checkRateLimit)();
 }
@@ -558,8 +563,8 @@ export async function findStalledJudgePendingAttempts(
  * conditional on a verdict landing, so B is visible here whether or not it wrote anything.
  *
  * Overlap is material overlap: the same question, any shared knowledge id, or any shared frozen
- * hierarchical-Elo domain. Every membership predicate uses top-level `payload @> ...`
- * containment so `event_payload_idx` (`jsonb_path_ops`) can support it.
+ * hierarchical-Elo domain. Top-level containment keeps the indexed candidate lookup;
+ * domain matches additionally exclude structural-root targets in old frozen evidence.
  */
 export async function hasNewerAttemptEvidence(
   tx: Tx,
@@ -581,12 +586,30 @@ export async function hasNewerAttemptEvidence(
           ),
           sql` OR `,
         )})`;
+  // Existing pending rows are immutable and can still include root-derived domains.
+  // Use their frozen KC map when present; pre-freeze rows retain recorded domains only
+  // if they contain a real KC. The same-question guard below remains independent.
   const abilityGlobalOverlap =
     args.abilityGlobalIds.length === 0
       ? sql`false`
       : sql`(${sql.join(
           args.abilityGlobalIds.map(
-            (id) => sql`${event.payload} @> ${JSON.stringify({ ability_global_ids: [id] })}::jsonb`,
+            (id) => sql`(
+              ${event.payload} @> ${JSON.stringify({ ability_global_ids: [id] })}::jsonb
+              AND EXISTS (
+                SELECT 1 FROM jsonb_array_elements_text(
+                  CASE WHEN jsonb_typeof(${event.payload}->'knowledge_ids') = 'array'
+                    THEN ${event.payload}->'knowledge_ids' ELSE '[]'::jsonb END
+                ) AS pending_kc(id)
+                WHERE btrim(pending_kc.id) <> ''
+                  AND btrim(pending_kc.id) !~ ${SYNTHETIC_SUBJECT_ROOT_RE.source}
+                  AND CASE
+                    WHEN jsonb_typeof(${event.payload} #> '{submit,ability_global_by_knowledge_id}') = 'object'
+                    THEN (${event.payload} #> '{submit,ability_global_by_knowledge_id}') ->> btrim(pending_kc.id) = ${id}
+                    ELSE true
+                  END
+              )
+            )`,
           ),
           sql` OR `,
         )})`;

@@ -6,7 +6,8 @@
 // CLAUDE_CODE_OAUTH_TOKEN (in .env.local) is never read, printed, or relied upon.
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { tasks } from '@/ai/registry';
+import { tasks } from '@/capabilities/task-registry';
+import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import {
   ANTHROPIC_SUB_DEFAULT_MODEL,
   OPENAI_ASTRA_MODEL_ID,
@@ -35,7 +36,7 @@ describe('resolveTaskProvider — default (key auth, mimo)', () => {
     expect(resolved.model).toBe('mimo-v2.5-pro');
     if (resolved.authMode !== 'key') throw new Error('expected key authMode');
     expect(resolved.apiKey).toBe('sk-test-key');
-    expect(resolved.baseUrl).toBe('https://api.xiaomimimo.com/anthropic');
+    expect(resolved.baseUrl).toBe('https://api.xiaomimimo.com/v1');
   });
 
   it('throws clearly when the key env is missing (current behaviour preserved)', () => {
@@ -98,12 +99,12 @@ describe('resolveTaskProvider — AI_PROVIDER_OVERRIDE=anthropic-sub (subscripti
     expect(resolved.model).toBe('claude-opus-4-8-custom');
   });
 
-  it('an explicit per-call override arg still beats the env switch', () => {
+  it('the process env pin beats an explicit chat override', () => {
     vi.stubEnv('XIAOMI_API_KEY', 'sk-test-key');
     const resolved = resolveTaskProvider(KIND, { provider: 'xiaomi', model: 'mimo-v2.5' });
-    expect(resolved.provider).toBe('xiaomi');
-    expect(resolved.authMode).toBe('key');
-    expect(resolved.model).toBe('mimo-v2.5');
+    expect(resolved.provider).toBe('anthropic-sub');
+    expect(resolved.authMode).toBe('oauth');
+    expect(resolved.model).toBe('claude-opus-4-8');
   });
 });
 
@@ -237,5 +238,50 @@ describe('resolveTaskProvider — openai Responses lane (YUK-1027)', () => {
     // Registry-default lanes unchanged.
     expect(crossoverModelForProvider('xiaomi', KIND)).toBe(tasks[KIND].defaultModel);
     expect(crossoverModelForProvider('anthropic-sub', KIND)).toBe(ANTHROPIC_SUB_DEFAULT_MODEL);
+  });
+});
+
+describe('native provider configuration migration', () => {
+  afterEach(() => {
+    resetTestConfig();
+    vi.unstubAllEnvs();
+  });
+  it('restored legacy task providers fail visibly instead of falling back to Xiaomi', () => {
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
+    setTestConfig({
+      'task.AttributionTask.provider': 'zhipu',
+      'task.AttributionTask.model': 'glm-5.2',
+    });
+    expect(() => resolveTaskProvider(KIND)).toThrow(/migrate legacy 'zhipu' to 'zai-coding-cn'/);
+  });
+  it('explicit and global emergency pins retain precedence over restored legacy task config', () => {
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
+    vi.stubEnv('XIAOMI_API_KEY', 'native-test-key');
+    setTestConfig({
+      'task.AttributionTask.provider': 'zhipu',
+      'task.AttributionTask.model': 'glm-5.2',
+    });
+    expect(resolveTaskProvider(KIND, { provider: 'xiaomi', model: 'mimo-v2.5' })).toMatchObject({
+      provider: 'xiaomi',
+      model: 'mimo-v2.5',
+    });
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'xiaomi');
+    vi.stubEnv('AI_PROVIDER_MODEL', 'mimo-v2.5');
+    expect(resolveTaskProvider(KIND)).toMatchObject({ provider: 'xiaomi', model: 'mimo-v2.5' });
+  });
+  it('native Z.AI reads its own credential and explicit model', () => {
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
+    vi.stubEnv('ZAI_CODING_CN_API_KEY', 'native-test-key');
+    vi.stubEnv('ZHIPU_API_KEY', 'ocr-only-test-key');
+    setTestConfig({
+      'task.AttributionTask.provider': 'zai-coding-cn',
+      'task.AttributionTask.model': 'glm-5.3',
+    });
+    expect(resolveTaskProvider(KIND)).toMatchObject({
+      provider: 'zai-coding-cn',
+      model: 'glm-5.3',
+      apiKey: 'native-test-key',
+      baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+    });
   });
 });

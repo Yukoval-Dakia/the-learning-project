@@ -4,6 +4,7 @@ export type { QuestionDetail } from './ui/practice-api';
 export {
   computeLatencyMs,
   getQuestion,
+  saveResponseDraft,
 } from './ui/practice-api';
 
 export const loadPracticeFacePage = () =>

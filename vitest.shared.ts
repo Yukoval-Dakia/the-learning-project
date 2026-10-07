@@ -52,6 +52,7 @@ export const allTestInclude = [
 ];
 
 export const fastTestInclude = [
+  'tests/pi-dbos-gate/contract.unit.test.ts',
   // ARCH-P1 (YUK-311) — 新 kernel/capabilities 树的约定式快分区：
   // *.unit.test.ts 按【命名约定】跑 no-DB 车道，零逐文件登记；*.db.test.ts
   // 落到 db 分区（匹配 allTestInclude 的 src/**/*.test.ts，又被下面这两个
@@ -134,6 +135,9 @@ export const fastTestInclude = [
   // YUK-1049 — Jev ModelUnitExecutorPort adapter (escalation/admission/
   // criterion mapping). Same no-DB justification as the runner test above.
   'src/server/assessment/jev-model-executor.test.ts',
+  // YUK-1058 — D18 jev-openrouter EvalInvoker lane: `run` seam replaces the
+  // typed runner, `db` is an untouched stub → no live Postgres / no wire.
+  'src/server/eval/d18-jev-invoker.test.ts',
   // YUK-842 — pure config/failure-policy unit. DB coordination lives in the
   // sibling *.db.test.ts and remains in the container partition.
   'src/server/ai/provider-session-admission.test.ts',
@@ -159,6 +163,14 @@ export const fastTestInclude = [
   // + ./providers types. Same enumeration requirement as above (no
   // src/server/ai/** unit glob).
   'src/server/ai/pi-agent-adapter.test.ts',
+  'src/server/ai/laminar-tracing.test.ts',
+  'src/server/ai/laminar-transcript.test.ts',
+  'src/server/ai/pi-agent-adapter.tracing.test.ts',
+  // Real pi driver with offline SSE; no DB or paid provider calls.
+  'src/server/ai/pi-usage-evidence.test.ts',
+  // Installed pi engine with a scripted provider stream; no DB or paid requests.
+  'src/server/ai/pi-agent-loop.unit.test.ts',
+  'src/server/ai/pi-provider-catalog.test.ts',
   // YUK-1027 — openai/gpt-6-astra Responses wire contract: real pi-ai driver +
   // injected fake fetch (no network, no key, no DB). Imports ./pi-models whose
   // pi-ai imports are all dynamic — enumerate like every other
@@ -174,6 +186,7 @@ export const fastTestInclude = [
   'src/server/ai/model-profiles.test.ts',
   'src/server/ai/attempt-cost.test.ts',
   'src/server/ai/provider-attempt-lifecycle.test.ts',
+  'src/server/ai/provider-attempt-decisions.test.ts',
   // YUK-365 — provider resolution (key vs oauth authMode, AI_PROVIDER_OVERRIDE
   // switch). Pure no-DB: imports only ./providers (→ @/ai/registry) + stubs env;
   // no @/db/client / postgres / SDK. src/server/ai/** has no unit glob, so this
@@ -493,6 +506,7 @@ export const fastTestInclude = [
   // falls through to the DB partition.
   'src/server/memory/brief-writer.test.ts',
   'src/server/memory/client.test.ts',
+  'src/server/memory/product-routing.unit.test.ts',
   'src/server/memory/mem0-sdk-failure.unit.test.ts',
   'src/server/memory/provider-operation.test.ts',
   'src/server/memory/provider-operation-invariant.test.ts',
@@ -501,6 +515,7 @@ export const fastTestInclude = [
   'src/server/memory/memory-reconcile-handoff.unit.test.ts',
   // P2 (YUK-342) — pure (no-DB) GLM reconcile LLM unit: mocks fetch, no live DB.
   'src/server/memory/reconcile-llm.test.ts',
+  'src/server/memory/reconcile-decisions.test.ts',
   // P3 (YUK-351) — pure (no-DB) mem0 READ wrapper: stubbed MemoryClient.search,
   // asserts soft-superseded filtering + per-kind recency rerank. No live DB.
   'src/server/memory/read.test.ts',
@@ -535,6 +550,10 @@ export const fastTestInclude = [
   'tests/integration/audit-docs-invariant.test.ts',
   'tests/integration/step12-docs-invariant.test.ts',
   'tests/integration/step9-invariant-audit.test.ts',
+  // YUK-1341 evidence-metadata correction — pure no-network unit over
+  // tests/helpers/synthetic-evidence-meta.ts (string builders only; no DB/AI).
+  'tests/helpers/synthetic-evidence-meta.test.ts',
+  'tests/helpers/yuk1341-product-evidence.test.ts',
 ];
 
 export const migrationSmokeInclude = ['tests/integration/migration-smoke.test.ts'];

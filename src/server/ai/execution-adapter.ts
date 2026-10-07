@@ -11,8 +11,8 @@
 // import remains.
 
 import type { AgentMessage } from '@earendil-works/pi-agent-core';
-import type { TaskKind } from '@/ai/registry';
 import type { EffortLevel } from '@/ai/task-spec';
+import type { TaskKind } from '@/capabilities/task-registry';
 import { PiAgentAdapter } from './pi-agent-adapter';
 import type { PiHookBridge } from './pi-hooks';
 import type { ResolvedProvider } from './providers';
@@ -60,6 +60,7 @@ export interface ModelBinding {
  * unchanged.
  */
 export type PiRunnerMessage =
+  | { type: 'text_delta'; text: string; session_id: string; source: 'pi' }
   | (SDKAssistantMessage & { source: 'pi' })
   | (SDKResultMessage & { source: 'pi' })
   | (SDKUserMessage & { source: 'pi' })
@@ -219,7 +220,7 @@ export function resolveExecutionAdapter(
  * Effective explicit routing for provider resolution. `ctx.override` (the
  * documented test/dev escape hatch) wins per-field over `ctx.modelBinding`
  * (the per-run binding); both then sit above env/registry inside
- * resolveTaskProvider's unchanged `explicit > env > registry` order.
+ * resolveTaskProvider's unchanged `env chat pin > explicit > DB global > task/default` order.
  * Returns undefined when neither layer names a field — callers pass it
  * straight into `override:` so resolution stays byte-identical.
  */

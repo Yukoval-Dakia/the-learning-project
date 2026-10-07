@@ -1,7 +1,7 @@
 // Both attempts are pinned, so runner transient retry stays disabled and this
 // helper remains the only cross-lane retry layer.
 
-import { type Provider, tasks } from '@/ai/registry';
+import { type Provider, tasks } from '@/capabilities/task-registry';
 import { getLaneOverride } from '@/core/config/store';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import type { RunTaskCtx } from '@/server/ai/runner';
@@ -59,7 +59,11 @@ type LaneFallbackRunResult<T> =
 function effectiveUnconfiguredLane(kind: LaneFallbackTaskKind): string {
   // YUK-1007：与 resolveTaskProvider 一致——env pin (AI_PROVIDER_OVERRIDE) >
   // DB lane.global.provider > registry default。
-  return getLaneOverride('global')?.provider || tasks[kind].defaultProvider;
+  return (
+    process.env.AI_PROVIDER_OVERRIDE ||
+    getLaneOverride('global')?.provider ||
+    tasks[kind].defaultProvider
+  );
 }
 
 /**
@@ -82,7 +86,9 @@ export async function runTaskWithLaneFallback<T>({
   baseCtx: Omit<RunTaskCtx, 'override'>;
   runTaskFn: (kind: LaneFallbackTaskKind, input: unknown, ctx: RunTaskCtx) => Promise<T>;
 }): Promise<LaneFallbackRunResult<T>> {
-  const override = visionJudgeProviderOverride();
+  // A process pin is authoritative. A registry retry would hit the same pinned
+  // model and burn another paid request, not provide a cross-lane recovery.
+  const override = process.env.AI_PROVIDER_OVERRIDE ? undefined : visionJudgeProviderOverride();
 
   let first: T;
   try {

@@ -27,7 +27,9 @@
 // `parseLimit` — stays importable in the unit test without a DATABASE_URL.
 import './load-env';
 
-import type { FailureLearningBossSend } from '@/capabilities/practice/jobs/failure-learning-jobs';
+import type { FailureLearningBossSend } from '@/capabilities/practice/public';
+// YUK-1064 CLI exception: this one-off backfill keeps its pure limit parser
+// importable without a DB URL. A value import from practice/public pulls app runtime.
 import {
   type EnqueueAttributionFollowupFn,
   runLostAttributionBackfill,
@@ -47,6 +49,12 @@ const SIX_HOURS_MS = 6 * 60 * 60 * 1000;
  * 100), fractionals silently floored. `raw` must match `/^\d+$/` (plain
  * unsigned decimal digits only) before `parseInt(raw, 10)`; anything else, or a
  * non-positive result, warns and falls back to {@link DEFAULT_LIMIT}.
+ *
+ * Round-3 (SCF-234 / YUK-1293): the round-2 regex still admitted an OVERSIZED
+ * all-digit literal. `parseInt` overflows such a value to `Infinity`, which the
+ * `n <= 0` check alone let through and handed to the census's Drizzle `.limit()`
+ * (an invalid query that crashes the one-off operator CLI). Reject any result
+ * that is not a positive SAFE integer the same way as the other invalid forms.
  */
 export function parseLimit(argv: string[]): number {
   let raw: string | undefined;
@@ -65,7 +73,10 @@ export function parseLimit(argv: string[]): number {
     return DEFAULT_LIMIT;
   }
   const n = Number.parseInt(raw, 10);
-  if (n <= 0) {
+  // Round-3 (SCF-234 / YUK-1293): `Number.isSafeInteger` rejects the Infinity an oversized
+  // decimal parses to (and any lossy out-of-safe-range value), so it can never reach
+  // `censusLostAttributions` / Drizzle `.limit()`. A legit in-range decimal still passes verbatim.
+  if (!Number.isSafeInteger(n) || n <= 0) {
     console.warn(
       `[backfill-lost-attribution] ignoring invalid --limit "${raw}"; using default ${DEFAULT_LIMIT}.`,
     );
@@ -87,6 +98,8 @@ async function main(): Promise<number> {
 
   let send: EnqueueAttributionFollowupFn | undefined;
   if (!dryRun) {
+    // YUK-1064 CLI exception: load the concrete queue sender only after explicit
+    // non-dry-run selection, preserving the backfill's lazy DB/boss startup.
     const { enqueueAttributionFollowup } = await import(
       '@/capabilities/practice/jobs/failure-learning-jobs'
     );

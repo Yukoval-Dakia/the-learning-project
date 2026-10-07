@@ -11,6 +11,8 @@
 | `api/admin-failures.ts` | failure 聚类 |
 | `api/admin-subjects.ts` | subject registry 只读视图 |
 | `api/coverage-lattice.ts` / `server/coverage-lattice.ts` | 供题治理覆盖细目表（YUK-579，`/api/admin/coverage-lattice`）：scanCoverageGaps 四规则的 KC 池级覆盖 + emitted 缺口 targets + 单条 `experimental:question_supply` 活动聚合。READ-ONLY，复用发现引擎 `assembleScanInput`（零新查询子系统）|
+| `api/admin-config.ts` / `server/config-read-model.ts` / `server/admin-config-facts.ts` | 热加载配置读面（YUK-1007，`/api/admin/config`）：registry key configured 值/来源分层（env pin > DB > env fallback > code-default；compose-forced 只读）+ **effective 分列**（真实 reader 产出，经 facts seam 注入）+ wired/consumer 接线普查 + TaskSpec 静态默认↔DB 覆盖分列（预算逐字段报告wired/effective；chat费用与typed轮数为null）+ providers[]（key-presence 布尔，绝无 secret）+ schedules[]（manifest/boss/memory 声明源投影，只读）+ runtime 分区。READ-ONLY，复用 `src/core/config` store 快照 + 组合根注入（`server/config/admin-config-facts.ts` → `public.ts` setter，capability 边界零新增）；不暴露 secret、不枚举 process.env |
+| `api/admin-config-write.ts` / `server/admin-config-writer.ts` | 配置写面：token保护的PATCH `/api/admin/config`与POST `/api/admin/config/reset`，经public/组合根注入窄writer。成组set/clear、原生provider/model终态校验、journal与epoch同事务；分别返回DB提交epoch/本进程snapshot epoch。未注入503，不接受secret配置或URL/key provider替代。 |
 | `api/conjecture-scores.ts` | conjecture 判别探针 A4 双读 reader（`/api/admin/conjecture-scores`）：`prediction_score` LOG 事件**已通电**；`kc_typed_state` confused-with-X 半边**待通电**——当前无写者产出该态（reconcile 硬编码 `confused_with_kc_id=null`），owner 已裁定通电、执行见 YUK-794，落地前该栏暂空，详见 ADR-0050 §(a) |
 | `api/calibration-maturity.ts` / `effectiveness-trend.ts` | 成效趋势只读面 |
 | `api/backup-export.ts` / `backup-import.ts` | 备份/恢复（破坏性，需 confirm） |
@@ -18,6 +20,7 @@
 | `api/job-events.ts` | 通用异步 job SSE tracker |
 | `server/` | AI observability 读模型、cost 汇总、failure 聚类、覆盖细目、备份/恢复、event correction |
 | `ui/admin-runs.tsx` / `admin-cost.tsx` / `admin-failures.tsx` | 三张独立 lazy admin React 面；共享 chrome/helper 在 `observability-shared.tsx`，`observability.tsx` 仅兼容 barrel |
+| `ui/config.tsx` / `config-sections.tsx` / `config-task-editor.tsx` / `config-model.ts` | `/admin/config`：六区设置页；原生模型组合、已接线预算与AI语言行内确认编辑，其余配置只读，提交与快照刷新分开报告 |
 | `ui/subjects.tsx` / `ui/coverage-lattice.tsx` | subject 与覆盖细目 admin React 面 |
 
 ## CONVENTIONS

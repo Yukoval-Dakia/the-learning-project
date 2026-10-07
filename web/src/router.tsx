@@ -21,6 +21,7 @@ import { loadRecordPage } from '@/capabilities/ingestion/ui-public';
 import { loadKnowledgeDetailPage, loadKnowledgePage } from '@/capabilities/knowledge/ui-public';
 import { loadNoteReaderPage, loadNotesPage } from '@/capabilities/notes/ui-public';
 import {
+  loadAdminConfigSurface,
   loadAdminConjectureScoresSurface,
   loadAdminCostSurface,
   loadAdminCoverageLatticeSurface,
@@ -550,6 +551,40 @@ const coachRoute = createRoute({
   component: CoachRoute,
 });
 
+const AdminConfigRoute = lazyRouteComponent(async () => {
+  const AdminConfigSurface = await loadAdminConfigSurface();
+  function AdminConfigRouteComponent() {
+    const router = useRouter();
+    const searchStr = useRouterState({ select: (state) => state.location.searchStr });
+    const getQuery = useCallback(
+      (key: string) => new URLSearchParams(searchStr).get(key),
+      [searchStr],
+    );
+    const setQuery = useCallback(
+      (key: string, value: string | null) => {
+        const params = new URLSearchParams(window.location.search);
+        if (value === null) params.delete(key);
+        else params.set(key, value);
+        router.history.replace(`${window.location.pathname}${params.size ? `?${params}` : ''}`);
+      },
+      [router],
+    );
+    return (
+      <AdminConfigSurface
+        navigate={(to) => router.history.push(to)}
+        getQuery={getQuery}
+        setQuery={setQuery}
+      />
+    );
+  }
+  return { default: AdminConfigRouteComponent };
+});
+const adminConfigRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: surfacePath('admin-config'),
+  component: AdminConfigRoute,
+});
+
 const AdminRunsRoute = lazyNavigableRoute(loadAdminRunsSurface);
 
 const adminRunsRoute = createRoute({
@@ -639,6 +674,7 @@ const routeTree = rootRoute.addChildren([
   notesRoute,
   noteReaderRoute,
   coachRoute,
+  adminConfigRoute,
   adminRunsRoute,
   adminCostRoute,
   adminFailuresRoute,

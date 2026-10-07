@@ -6,7 +6,7 @@
 // active-row machinery (takeActiveRows / filterActiveRows / newerEventRow)
 // stays central and is imported below.
 
-import { and, asc, desc, eq, gt, gte, inArray, or, sql } from 'drizzle-orm';
+import { type SQL, and, asc, desc, eq, gt, gte, inArray, lt, or, sql } from 'drizzle-orm';
 import {
   type EffectiveTruth,
   activeEffectiveTruth,
@@ -19,7 +19,14 @@ import {
 } from '@/core/schema/question-evidence-snapshot';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
-import { filterActiveRows, newerEventRow, takeActiveRows } from '@/kernel/events';
+import { filterActiveRows, newerEventRow } from '@/kernel/events';
+
+import {
+  type NativeAttemptVerdict,
+  nativeAttemptOutcome,
+  resolveVerdictsForAttempts,
+  resolveVerdictsForNativeAttempts,
+} from './assessment-verdict';
 
 type DbLike = Db | Tx;
 type EventRow = typeof event.$inferSelect;
@@ -67,6 +74,14 @@ export type FailureAttempt = {
    * `judge` 语义。
    */
   original_judge?: FailureAttemptJudge | null;
+  assessment?: Pick<
+    NativeAttemptVerdict['submission'],
+    'submission_id' | 'revision_id' | 'response_set' | 'group_evidence'
+  > & {
+    evaluation_group_id: string;
+    original_evaluation_id: string | null;
+    effective_evaluation_id: string | null;
+  };
   user_cause?: FailureAttemptUserCause;
 };
 
@@ -91,10 +106,8 @@ export interface GetFailureAttemptsOpts {
   //
   // Mutually exclusive with `limit`: callers using per-question coverage
   // semantics (e.g. `/api/review/due` building the never-reviewed slice) want
-  // each question represented, not a flat newest-first window. When provided,
-  // the function ignores `limit` and skips the offset-based batch loop because
-  // the partitioned slice is already bounded by `questionIds.length *
-  // perQuestionLimit * 3`.
+  // each question represented, not a flat newest-first window. The function
+  // ignores `limit` and replenishes bounded partition windows after filtering.
   perQuestionLimit?: number;
   // YUK-583 — keyset cursor for the knowledge_edge_propose_nightly watermark
   // 续扫. When BOTH are set, only attempts strictly AFTER (afterCreatedAt,
@@ -169,6 +182,15 @@ function failureEvidenceFromRow(row: EventRow): {
   /** undefined = historical absence; null = present but invalid/corrupt. */
   question_snapshot: AttemptQuestionSnapshotT | null | undefined;
 } {
+  if (row.action === 'experimental:assessment_attempt') {
+    return {
+      answer_md: typeof row.payload.response_md === 'string' ? row.payload.response_md : null,
+      answer_image_refs: [],
+      referenced_knowledge_ids: [],
+      // Never substitute today's question for a native frozen assessment.
+      question_snapshot: null,
+    };
+  }
   const payload = row.payload as {
     answer_md?: string | null;
     user_response_md?: string | null;
@@ -256,9 +278,48 @@ export type FailureAttemptWithReasoningTrace = {
   reasoning_trace: string | null;
 };
 
+function nativeFailureReference(
+  value: NativeAttemptVerdict | undefined,
+): FailureAttempt['assessment'] {
+  if (!value) return undefined;
+  const sub = value.submission;
+  return {
+    submission_id: sub.submission_id,
+    revision_id: sub.revision_id,
+    response_set: sub.response_set,
+    group_evidence: sub.group_evidence,
+    evaluation_group_id: value.evaluation_group_id,
+    original_evaluation_id: value.original_evaluation_id,
+    effective_evaluation_id: value.effective?.evaluation_id ?? null,
+  };
+}
+
+async function filterActiveFailureRows(
+  db: DbLike,
+  rows: EventRow[],
+  currentOnly = false,
+): Promise<EventRow[]> {
+  const active = await filterActiveRows(db, rows);
+  const native = await resolveVerdictsForNativeAttempts(db, active);
+  const legacy = await resolveVerdictsForAttempts(
+    db,
+    currentOnly
+      ? active
+          .filter((row) => row.action !== 'experimental:assessment_attempt')
+          .map((row) => row.id)
+      : [],
+  );
+  return active.filter((row) => {
+    if (row.action === 'experimental:assessment_attempt')
+      return nativeAttemptOutcome(native.get(row.id)) === 'failure';
+    return legacy.get(row.id)?.effective?.verdict.coarse_outcome !== 'correct';
+  });
+}
+
 async function loadFailureAttempts(
   db: DbLike,
   opts: GetFailureAttemptsOpts = {},
+  currentOnly = false,
 ): Promise<FailureAttemptWithReasoningTrace[]> {
   const unbounded = opts.limit === null;
   const limit = opts.limit ?? DEFAULT_FAILURE_ATTEMPTS_LIMIT;
@@ -266,11 +327,16 @@ async function loadFailureAttempts(
   if (perQuestionLimit !== undefined && perQuestionLimit <= 0) return [];
   if (perQuestionLimit === undefined && !unbounded && limit <= 0) return [];
   const conditions = [
-    opts.includeReviewFailures
-      ? inArray(event.action, ['attempt', 'review'])
-      : eq(event.action, 'attempt'),
+    or(
+      and(
+        opts.includeReviewFailures
+          ? inArray(event.action, ['attempt', 'review'])
+          : eq(event.action, 'attempt'),
+        eq(event.outcome, 'failure'),
+      ),
+      eq(event.action, 'experimental:assessment_attempt'),
+    ),
     eq(event.subject_kind, 'question'),
-    eq(event.outcome, 'failure'),
   ];
   if (opts.questionIds && opts.questionIds.length > 0) {
     conditions.push(inArray(event.subject_id, opts.questionIds));
@@ -282,7 +348,7 @@ async function loadFailureAttempts(
   // afterEventId)" so the row at the exact cursor is excluded but a DIFFERENT row
   // sharing the cursor's created_at (larger id) is still returned (no same-instant
   // event loss). Lives in `conditions` so both the main query and the
-  // takeActiveRows offset loop share it. Only applied when BOTH cursor parts are set.
+  // bounded scan share it. Only applied when BOTH cursor parts are set.
   if (opts.afterCreatedAt !== undefined && opts.afterEventId !== undefined) {
     const cursorPredicate = or(
       gt(event.created_at, opts.afterCreatedAt),
@@ -305,7 +371,7 @@ async function loadFailureAttempts(
     // active corrections (some head rows get retracted; over-sample so the
     // final per-question cap still holds). If a partition head is fully
     // retracted, keep fetching deeper windows for that question.
-    const partitionBatchLimit = perQuestionLimit * 3;
+    const partitionBatchLimit = Math.min(perQuestionLimit * 3, 300);
     const activeRowsByQuestion = new Map<string, EventRow[]>();
     const targetQuestionIds =
       opts.questionIds && opts.questionIds.length > 0 ? [...new Set(opts.questionIds)] : null;
@@ -318,7 +384,7 @@ async function loadFailureAttempts(
         partitionBatchLimit,
       );
       if (attemptRows.length === 0) break;
-      const filtered = await filterActiveRows(db, attemptRows);
+      const filtered = await filterActiveFailureRows(db, attemptRows, currentOnly);
       for (const row of filtered) {
         const rows = activeRowsByQuestion.get(row.subject_id) ?? [];
         if (rows.length >= perQuestionLimit) continue;
@@ -339,34 +405,33 @@ async function loadFailureAttempts(
       .flat()
       .sort((a, b) => b.created_at.getTime() - a.created_at.getTime() || b.id.localeCompare(a.id));
   } else {
-    // YUK-583 — 'asc' (oldest first) for the watermark scan so a backlog > limit
-    // pages forward deterministically; default 'desc' keeps the legacy
-    // newest-first window for every other caller. Both the main query and the
-    // takeActiveRows offset loop must share the SAME order.
-    const orderBy =
-      (opts.order ?? 'desc') === 'asc'
-        ? [asc(event.created_at), asc(event.id)]
-        : [desc(event.created_at), desc(event.id)];
-    const attemptQuery = db
-      .select()
-      .from(event)
-      .where(and(...conditions))
-      .orderBy(...orderBy);
-    const attemptRows = unbounded ? await attemptQuery : await attemptQuery.limit(limit * 3);
-
-    if (attemptRows.length === 0) return [];
-
-    activeAttemptRows = unbounded
-      ? await filterActiveRows(db, attemptRows)
-      : await takeActiveRows(db, attemptRows, limit, async (nextLimit, offset) =>
-          db
-            .select()
-            .from(event)
-            .where(and(...conditions))
-            .orderBy(...orderBy)
-            .limit(nextLimit)
-            .offset(offset),
-        );
+    const ascending = opts.order === 'asc';
+    const orderBy = ascending
+      ? [asc(event.created_at), asc(event.id)]
+      : [desc(event.created_at), desc(event.id)];
+    const batchSize = unbounded ? 300 : Math.min(limit * 3, 300);
+    activeAttemptRows = [];
+    let cursor: EventRow | undefined;
+    for (;;) {
+      const compare = ascending ? gt : lt;
+      const cursorCondition = cursor
+        ? or(
+            compare(event.created_at, cursor.created_at),
+            and(eq(event.created_at, cursor.created_at), compare(event.id, cursor.id)),
+          )
+        : undefined;
+      const rows = await db
+        .select()
+        .from(event)
+        .where(and(...conditions, cursorCondition))
+        .orderBy(...orderBy)
+        .limit(batchSize);
+      if (rows.length === 0) break;
+      activeAttemptRows.push(...(await filterActiveFailureRows(db, rows, currentOnly)));
+      if ((!unbounded && activeAttemptRows.length >= limit) || rows.length < batchSize) break;
+      cursor = rows.at(-1);
+    }
+    if (!unbounded) activeAttemptRows = activeAttemptRows.slice(0, limit);
   }
 
   if (activeAttemptRows.length === 0) return [];
@@ -434,14 +499,19 @@ async function loadFailureAttempts(
     [...originalJudgeRowByAttempt.values()].map((r) => r.id),
   );
 
+  const nativeVerdicts = await resolveVerdictsForNativeAttempts(db, activeAttemptRows);
   return activeAttemptRows.map((a) => {
     const evidence = failureEvidenceFromRow(a);
     const result: FailureAttempt = {
+      ...(nativeVerdicts.has(a.id)
+        ? { assessment: nativeFailureReference(nativeVerdicts.get(a.id)) }
+        : {}),
       attempt_event_id: a.id,
       question_id: a.subject_id,
       answer_md: evidence.answer_md,
       answer_image_refs: evidence.answer_image_refs,
-      referenced_knowledge_ids: evidence.referenced_knowledge_ids,
+      referenced_knowledge_ids:
+        nativeVerdicts.get(a.id)?.knowledge_ids ?? evidence.referenced_knowledge_ids,
       question_snapshot: evidence.question_snapshot,
       created_at: a.created_at,
       correction_state: attemptTruths.get(a.id) ?? activeEffectiveTruth(a.id),
@@ -622,9 +692,11 @@ async function loadFailureAttemptById(
   const attempt = rows[0];
   if (!attempt) return null;
   if (
-    (attempt.action !== 'attempt' && attempt.action !== 'review') ||
+    (attempt.action !== 'attempt' &&
+      attempt.action !== 'review' &&
+      attempt.action !== 'experimental:assessment_attempt') ||
     attempt.subject_kind !== 'question' ||
-    attempt.outcome !== 'failure'
+    (attempt.action !== 'experimental:assessment_attempt' && attempt.outcome !== 'failure')
   ) {
     return null;
   }
@@ -636,6 +708,10 @@ async function loadFailureAttemptById(
     return null;
   }
 
+  const native = await resolveVerdictsForNativeAttempts(db, [attempt]);
+  if (attempt.action === 'experimental:assessment_attempt') {
+    if (nativeAttemptOutcome(native.get(attempt.id)) !== 'failure') return null;
+  }
   const evidence = failureEvidenceFromRow(attempt);
   // YUK-1054 — 一次拉全 judge 行（subject_id ∪ caused_by 双锚、最老排序），
   // 同批做链解析分出 original（earliest 原始收据）+ effective（最新 live 判）。
@@ -694,11 +770,15 @@ async function loadFailureAttemptById(
     }
   }
   const failure: FailureAttempt = {
+    ...(native.has(attempt.id)
+      ? { assessment: nativeFailureReference(native.get(attempt.id)) }
+      : {}),
     attempt_event_id: attempt.id,
     question_id: attempt.subject_id,
     answer_md: evidence.answer_md,
     answer_image_refs: evidence.answer_image_refs,
-    referenced_knowledge_ids: evidence.referenced_knowledge_ids,
+    referenced_knowledge_ids:
+      native.get(attempt.id)?.knowledge_ids ?? evidence.referenced_knowledge_ids,
     question_snapshot: evidence.question_snapshot,
     created_at: attempt.created_at,
     correction_state: attemptTruth,
@@ -739,8 +819,7 @@ async function loadFailureAttemptById(
 // use a raw lateral subquery for the rownumber filter.
 async function getPartitionedFailureRows(
   db: DbLike,
-  // biome-ignore lint/suspicious/noExplicitAny: drizzle condition tuple is heterogeneous.
-  conditions: any[],
+  conditions: (SQL | undefined)[],
   partitionOffset: number,
   partitionLimit: number,
 ): Promise<EventRow[]> {
@@ -762,6 +841,9 @@ async function getPartitionedFailureRows(
   const rows = await db
     .select({
       id: event.id,
+      dispatch_seq: event.dispatch_seq,
+      affected_scopes: event.affected_scopes,
+      ingest_at: event.ingest_at,
       session_id: event.session_id,
       actor_kind: event.actor_kind,
       actor_ref: event.actor_ref,
@@ -781,5 +863,13 @@ async function getPartitionedFailureRows(
       sql`${ranked.rn} > ${partitionOffset} AND ${ranked.rn} <= ${partitionOffset + partitionLimit}`,
     )
     .orderBy(desc(event.created_at), desc(event.id));
-  return rows as EventRow[];
+  return rows;
+}
+
+/** Reporting view: filter current grades before applying each requested quota. */
+export async function getCurrentFailureAttempts(db: DbLike, opts: GetFailureAttemptsOpts = {}) {
+  // Reporting callers without a limit retain full totals, read through bounded pages.
+  return (await loadFailureAttempts(db, { ...opts, limit: opts.limit ?? null }, true)).map(
+    (row) => row.failure,
+  );
 }

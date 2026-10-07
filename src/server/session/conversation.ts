@@ -1,11 +1,10 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, desc, eq, gte, inArray, sql } from 'drizzle-orm';
-
+import { COPILOT_REUSE_WINDOW_MS } from '@/core/limits';
 import type { Db, Tx } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/server/events/writer';
-
 import { assertFromState } from './guards';
 
 // LearningSession.Conversation.* — Phase 2C Active Teaching Session.
@@ -40,11 +39,10 @@ async function loadConversationSessionForUpdate(
   tx: Db | Tx,
   sessionId: string,
 ): Promise<{ status: string; goal_id: string | null } | null> {
-  const rows = await tx.execute(
+  const rows = await tx.execute<{ status: string; goal_id: string | null }>(
     sql`SELECT status, goal_id FROM learning_session WHERE id = ${sessionId} AND type = 'conversation' FOR UPDATE`,
   );
-  const arr = rows as unknown as Array<{ status: string; goal_id: string | null }>;
-  const row = arr[0];
+  const row = rows[0];
   if (!row) return null;
   return { status: row.status, goal_id: row.goal_id };
 }
@@ -110,7 +108,11 @@ export async function startConversation(
  * transaction, and an `idle` reuse is inline-resumed to `active` here rather
  * than leaving the row stale. Single-user tool → no `FOR UPDATE` fan-out needed.
  */
-const COPILOT_REUSE_WINDOW_MS = 24 * 60 * 60 * 1000;
+// Reuse window constant lives in @/core/limits (single source of truth) so the UI
+// bootstrap auto-selection (copilot/session-reuse.ts) and this server predicate cannot
+// drift. The server must not deep-import the copilot capability for it
+// (server→capability-deep is an architecture regression), hence the shared-leaf
+// placement (YUK-1340 P1).
 export const COPILOT_SESSION_SELECTION_LOCK = 'copilot:session-selection';
 
 export async function lockCopilotSessionSelection(tx: Tx): Promise<void> {

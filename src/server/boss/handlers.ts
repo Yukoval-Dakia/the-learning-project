@@ -27,7 +27,70 @@ import {
 //   - echo（golden E2E，0.5s polling）
 //   - prune_job_events / prune_orphan_* / promote_conversation_idle（FAST housekeeping cron）
 //   - registerMemoryHandlers（memory_* 队列归 memory 模块）
-//   - verify_dispatch_recovery（question-supply 安全网，读 durable intents 只补发 verify）
+//   - verify_dispatch_recover（VERIFY_DISPATCH_RECOVERY_QUEUE，question-supply 安全网，只补发 verify）
+
+/**
+ * YUK-1007 — 本簿 cron 声明的**静态投影表**（单一真相源）：registerHandlers
+ * 尾部从本表循环注册 boss.schedule，admin config 读面（schedules[] 的 infra
+ * 行）也经组合根 facts seam 投影同一张表——两边不会漂移出第二份手工清单。
+ * 仅收录本簿拥有的 cron；域 job 的 schedule 在各 capability manifest 声明。
+ */
+export interface InfraScheduleDeclaration {
+  readonly name: string;
+  readonly cron: string;
+  readonly tz: string;
+  readonly queue: 'fast';
+  readonly note?: string;
+}
+
+export const INFRA_HOUSEKEEPING_SCHEDULES: readonly InfraScheduleDeclaration[] = [
+  {
+    name: 'prune_job_events',
+    cron: '0 4 * * *',
+    tz: 'Asia/Shanghai',
+    queue: 'fast',
+    note: 'nightly housekeeping cron（bulk DELETE，掉一拍下个 cron 重跑）',
+  },
+  {
+    name: 'prune_orphan_review_sessions',
+    cron: '15 4 * * *',
+    tz: 'Asia/Shanghai',
+    queue: 'fast',
+    note: 'ADR-0013: abandon review sessions stuck in started >6h（BJT 04:15 after prune_job_events）',
+  },
+  {
+    name: 'prune_orphan_placement_sessions',
+    cron: '35 4 * * *',
+    tz: 'Asia/Shanghai',
+    queue: 'fast',
+    note: 'YUK-470: abandon placement probes stuck in started >6h（BJT 04:35 stagger）',
+  },
+  {
+    name: 'promote_conversation_idle',
+    cron: '* * * * *',
+    tz: 'Asia/Shanghai',
+    queue: 'fast',
+    note: "YUK-14: promote active conversation sessions to 'idle' after 5min idle",
+  },
+  {
+    name: 'prune_orphan_conversation_sessions',
+    cron: '25 4 * * *',
+    tz: 'Asia/Shanghai',
+    queue: 'fast',
+    note: 'YUK-14: abandon conversation sessions stuck in active/idle >6h（BJT 04:25，与 review prune 错峰 10min）',
+  },
+  {
+    // 队列名必须用 verify-dispatch-outbox 导出的常量（值为
+    // 'verify_dispatch_recover'，无尾部 y）——手写字面量会撞 cron FK（CI
+    // run 36557897314 的 RED：pg-boss 报 Queue verify_dispatch_recovery
+    // not found，连锁拖死 worker-boot/verify-dispatch-recovery/extract 三面）。
+    name: VERIFY_DISPATCH_RECOVERY_QUEUE,
+    cron: '10 4 * * *',
+    tz: 'Asia/Shanghai',
+    queue: 'fast',
+    note: 'YUK-700 nightly safety net：只补发 source_verify/quiz_verify，从不重跑 sourcing/quiz_gen（startup 触发在 start-worker）',
+  },
+];
 
 /**
  * Register pg-boss queue handlers + schedules for infrastructure/housekeeping
@@ -54,7 +117,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     'prune_job_events',
     fenceAwareJobHandler(db, 'prune_job_events', buildPruneJobEventsHandler(db)),
   );
-  await boss.schedule('prune_job_events', '0 4 * * *', {}, { tz: 'Asia/Shanghai' });
 
   // T-37 / YUK-185: Mem0 fact ingest + per-scope brief regen queues. Station 2A
   // injects the real brief writer (buildBriefGenerator) so the regen pipeline
@@ -75,7 +137,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
       buildPruneOrphanReviewSessionsHandler(db),
     ),
   );
-  await boss.schedule('prune_orphan_review_sessions', '15 4 * * *', {}, { tz: 'Asia/Shanghai' });
 
   // YUK-470 (orphan-sweep leg): abandon placement probes stuck in 'started' >6h
   // (sibling of the review sweep; placement has no 'paused'). BJT 04:35 — the three
@@ -91,7 +152,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
       buildPruneOrphanPlacementSessionsHandler(db),
     ),
   );
-  await boss.schedule('prune_orphan_placement_sessions', '35 4 * * *', {}, { tz: 'Asia/Shanghai' });
 
   // YUK-14 (docs/design/2026-05-24-teaching-idle-state-machine.md): promote
   // active conversation sessions to 'idle' after 5min of no user input.
@@ -101,7 +161,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
     'promote_conversation_idle',
     fenceAwareJobHandler(db, 'promote_conversation_idle', buildPromoteConversationIdleHandler(db)),
   );
-  await boss.schedule('promote_conversation_idle', '* * * * *', {}, { tz: 'Asia/Shanghai' });
 
   // YUK-14: abandon conversation sessions stuck in 'active'|'idle' >6h
   // (sendBeacon fallback). BJT 04:25, offset 10min from review prune to
@@ -114,12 +173,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
       'prune_orphan_conversation_sessions',
       buildPruneOrphanConversationSessionsHandler(db),
     ),
-  );
-  await boss.schedule(
-    'prune_orphan_conversation_sessions',
-    '25 4 * * *',
-    {},
-    { tz: 'Asia/Shanghai' },
   );
 
   // YUK-700 — startup + nightly safety net for drafts whose verify enqueue was
@@ -159,12 +212,16 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
       buildVerifyDispatchRecoveryHandler(db, enqueueRecoveredVerify),
     ),
   );
-  await boss.schedule(
-    VERIFY_DISPATCH_RECOVERY_QUEUE,
-    '10 4 * * *',
-    {},
-    {
-      tz: 'Asia/Shanghai',
-    },
-  );
+
+  // YUK-1007：cron 注册从 INFRA_HOUSEKEEPING_SCHEDULES 静态表循环驱动（单一
+  // 真相源——上表即读面投影的同一份声明，队列名一律取各导出常量）。
+  //
+  // 诚实说明（P2，保留现状不改）：相对旧的逐点内联注册，本循环把全部 cron
+  // 注册后移到 registerHandlers 末尾——若某个中途步骤 throw，失败前已启动的
+  // consumer 数量/时序与旧实现不同（旧行为：prune_job_events 的 cron 在早期
+  // 已挂）。验证审裁定为 P2 默认不在本 PR 改；启动尾部完整行为由 worker-boot
+  // （YUK-980）与 QA 独立覆盖。
+  for (const decl of INFRA_HOUSEKEEPING_SCHEDULES) {
+    await boss.schedule(decl.name, decl.cron, {}, { tz: decl.tz });
+  }
 }

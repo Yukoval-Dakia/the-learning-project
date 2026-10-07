@@ -1,3 +1,7 @@
+import {
+  issuedLearningKnowledgeIds,
+  loadAssessmentLearningScopes,
+} from './assessment-learning-scope';
 // YUK-1054 — 双轨裁决读模型（grounding §9–§10 read-model 切分）。
 //
 // 所有「某次作答/评估最终判了什么」的消费面共享这一个 resolver：
@@ -29,9 +33,7 @@
 //       evaluation 行；original = 第一条 active
 //       `experimental:assessment_activation` 事件的 evaluation_id（回退：最早
 //       applied settlement 的 evaluation_id，再退 attempt=1 行）。verdict 经
-//       deriveCoarseVerdict（需 submission.revision_id → question_revision.
-//       scoring_basis）。今日无 live contract activation（EVALUATION_ENTRY_POINTS
-//       全 lane:'legacy'）——本轨为前向接线，行为已由测试钉住。
+//       deriveCoarseVerdict（submission 的冻结 revision + issuance 范围）。
 //
 // replay 结构性保证（read 侧约束）：settlement replay 只写
 //   `experimental:assessment_settlement`（replay_of + reverted_settlement_event_ids
@@ -41,6 +43,17 @@
 //   replay 产生的新行做判定。
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
+import { ZodError } from 'zod';
+import {
+  evaluationMemberFromRows,
+  freezeEvaluationInput,
+  matchesEvaluationInput,
+} from '@/core/assessment-input';
+import {
+  EvaluationContractError,
+  projectIssuedScoringBasis,
+} from '@/core/schema/assessment/evaluation';
+import { GroupInputContractError } from '@/core/schema/assessment/group-input';
 import type { EvaluationRecordT } from '@/core/schema/assessment/judgment';
 import type { ScoringBasisT } from '@/core/schema/assessment/scoring';
 import {
@@ -51,15 +64,18 @@ import {
 import type { CauseSchemaT } from '@/core/schema/event/blocks';
 import type { Db, Tx } from '@/db/client';
 import {
+  assessment_issuance,
   assessment_submission,
   evaluation,
   evaluation_effective_head,
   event,
+  learning_session,
   question_revision,
 } from '@/db/schema';
 import {
   type EffectiveTruth,
   activeEffectiveTruth,
+  compareEventRowsAsc,
   filterActiveRows,
   getEffectiveTruths,
   newerEventRow,
@@ -103,7 +119,12 @@ export interface JudgeVerdictPayload {
 /** 一条 judge event 行 + 其链解析状态 + 规范化 payload 视图。 */
 export interface JudgeVerdictProjection {
   judge_event_id: string;
-  /** 该行在事件流里的原始 id；对 effective 投影 = 链端 effective 行 id。 */
+  /**
+   * 该投影对应链的**源**行 id：original 投影 = 该行自身；effective 投影 =
+   * 解析到该 effective 行的**最早链来源**（链根）——例如 j_old supersede→
+   * j_new 时 effective.original_event_id=j_old（改判来源保留，YUK-1106 钉
+   * 死，与候选返回顺序无关）。
+   */
   original_event_id: string;
   created_at: Date;
   /** original 行的链解析状态（effective 投影上 = 指向它的 original 链）。 */
@@ -213,6 +234,14 @@ async function effectiveTruthsChunked(
 // judge 候选行双通道拉取（subject_id ∪ caused_by）。分两查询各自 chunk——
 // or(inArray,inArray) 单语句把两通道的 id 都塞进同一次参数计数，是 104-cap
 // 违规最快路径；拆分后每查询只带一条 ≤64 的 IN 列表。
+//
+// YUK-1106：返回前按规范序（created_at, dispatch_seq, id）**升序排序**。
+// 原实现无 ORDER BY ⇒ 返回顺序由 planner/堆序决定；当多个候选链解析到同一
+// effective 行（j_old supersede→j_new 与 j_new 自链）时，聚合 loop 的
+// comparison 不更新、先到者 truth 保留 ⇒ effective.original_event_id 取决于
+// 返回顺序（CI run 36444482025 的 flaky RED）。升序处理保证同一 effective
+// 端点的**最早链来源**（链根）先到并保留；original（最老）/newest_raw（最新）
+// 在全序下本就与处理顺序无关，排序对它们零语义变化。
 async function judgeCandidatesForAttempts(db: DbLike, attemptIds: string[]): Promise<EventRow[]> {
   const uniqueIds = [...new Set(attemptIds)];
   const byId = new Map<string, EventRow>();
@@ -243,7 +272,8 @@ async function judgeCandidatesForAttempts(db: DbLike, attemptIds: string[]): Pro
     for (const row of bySubject) byId.set(row.id, row);
     for (const row of byCausedBy) byId.set(row.id, row);
   }
-  return [...byId.values()];
+  // YUK-1106：去重后的候选按规范序升序处理（见函数头注释）。
+  return [...byId.values()].sort(compareEventRowsAsc);
 }
 
 /**
@@ -405,6 +435,7 @@ export async function resolveVerdictForAttempt(
 // ============================================================================
 
 export interface EvaluationVerdict {
+  scoring_basis: ScoringBasisT | null;
   evaluation_id: string;
   /** evaluation.attempt（重试序号）。 */
   attempt: number;
@@ -425,10 +456,9 @@ export interface GroupVerdict {
 
 /**
  * 批量解析 evaluation_group 的 original/effective 裁决。
- * verdict 经 deriveCoarseVerdict（basis 来自 submission.revision_id →
- * question_revision.scoring_basis；缺 revision/basis ⇒ verdict=null，如实
- * 返回行不造判定 —— deriveCoarseVerdict 不处理「无 basis」面，调用方拿
- * verdict=null 当 unsupported 语义处理）。
+ * verdict 经 deriveCoarseVerdict；分母来自 submission 冻结 revision 与
+ * issuance 范围。缺失或不可投影的范围返回 unsupported/issuance_scope_unavailable，
+ * 不退回完整 revision，也不从缺少的 unit result 猜发题范围。
  */
 export async function resolveVerdictsForGroups(
   db: DbLike,
@@ -482,6 +512,84 @@ export async function resolveVerdictsForGroups(
     .from(event)
     .where(eq(event.action, ASSESSMENT_SETTLEMENT_ACTION));
 
+  // 冻结 revision + issuance：不能只用完整 revision 的分母。
+  const revisionIds = [...new Set(submissions.map((s) => s.revision_id))];
+  const revisionRows: Pick<
+    typeof question_revision.$inferSelect,
+    'revision_id' | 'integrity_digest' | 'structure' | 'response_spec' | 'scoring_basis'
+  >[] = [];
+  for (let offset = 0; offset < revisionIds.length; offset += QUERY_ID_CHUNK) {
+    const chunk = revisionIds.slice(offset, offset + QUERY_ID_CHUNK);
+    const rows = await db
+      .select({
+        revision_id: question_revision.revision_id,
+        integrity_digest: question_revision.integrity_digest,
+        scoring_basis: question_revision.scoring_basis,
+        structure: question_revision.structure,
+        response_spec: question_revision.response_spec,
+      })
+      .from(question_revision)
+      .where(inArray(question_revision.revision_id, chunk));
+    revisionRows.push(...rows);
+  }
+  const issuanceIds = [...new Set(submissions.map((s) => s.issuance_id))];
+  const issuanceRows: (typeof assessment_issuance.$inferSelect)[] = [];
+  for (let offset = 0; offset < issuanceIds.length; offset += QUERY_ID_CHUNK) {
+    issuanceRows.push(
+      ...(await db
+        .select()
+        .from(assessment_issuance)
+        .where(
+          inArray(
+            assessment_issuance.issuance_id,
+            issuanceIds.slice(offset, offset + QUERY_ID_CHUNK),
+          ),
+        )),
+    );
+  }
+  const activeActivationRows = await filterActiveRows(db, activationRows);
+  return projectGroupVerdicts({
+    groupIds: uniqueIds,
+    heads,
+    evaluations: evalRows,
+    submissions,
+    revisions: revisionRows,
+    issuances: issuanceRows,
+    activeActivations: activeActivationRows,
+    settlements: settlementRows,
+  });
+}
+
+/** Shared synchronous projection for live reads and exported database snapshots. */
+export function projectGroupVerdicts(input: {
+  groupIds: string[];
+  heads: (typeof evaluation_effective_head.$inferSelect)[];
+  evaluations: EvaluationRow[];
+  submissions: (typeof assessment_submission.$inferSelect)[];
+  revisions: Pick<
+    typeof question_revision.$inferSelect,
+    'revision_id' | 'integrity_digest' | 'structure' | 'response_spec' | 'scoring_basis'
+  >[];
+  issuances: (typeof assessment_issuance.$inferSelect)[];
+  activeActivations: Pick<EventRow, 'subject_id' | 'payload'>[];
+  settlements: Pick<EventRow, 'id' | 'created_at' | 'payload'>[];
+}): Map<string, GroupVerdict> {
+  const {
+    heads,
+    evaluations: evalRows,
+    submissions,
+    revisions: revisionRows,
+    issuances: issuanceRows,
+    activeActivations: activeActivationRows,
+    settlements: settlementRows,
+  } = input;
+  const uniqueIds = [...new Set(input.groupIds)];
+  const out = new Map<string, GroupVerdict>(
+    uniqueIds.map((id) => [
+      id,
+      { evaluation_group_id: id, effective: null, original: null, head: null },
+    ]),
+  );
   const headByGroup = new Map(heads.map((h) => [h.evaluation_group_id, h]));
   const evalById = new Map(evalRows.map((r) => [r.evaluation_id, r]));
   const evalsByGroup = new Map<string, EvaluationRow[]>();
@@ -490,27 +598,46 @@ export async function resolveVerdictsForGroups(
     list.push(row);
     evalsByGroup.set(row.evaluation_group_id, list);
   }
-  const subById = new Map(submissions.map((s) => [s.submission_id, s]));
 
-  // revision basis：submission.revision_id → question_revision.scoring_basis。
-  const revisionIds = [...new Set(submissions.map((s) => s.revision_id))];
-  const revisionRows: { revision_id: string; scoring_basis: unknown }[] = [];
-  for (let offset = 0; offset < revisionIds.length; offset += QUERY_ID_CHUNK) {
-    const chunk = revisionIds.slice(offset, offset + QUERY_ID_CHUNK);
-    const rows = await db
-      .select({
-        revision_id: question_revision.revision_id,
-        scoring_basis: question_revision.scoring_basis,
-      })
-      .from(question_revision)
-      .where(inArray(question_revision.revision_id, chunk));
-    revisionRows.push(...rows);
-  }
-  const basisByRevision = new Map(revisionRows.map((r) => [r.revision_id, r.scoring_basis]));
+  const revisionById = new Map(revisionRows.map((r) => [r.revision_id, r]));
+  const issuanceById = new Map(issuanceRows.map((r) => [r.issuance_id, r]));
+  const basisForEvaluation = (row: EvaluationRow): ScoringBasisT | undefined => {
+    const groupMembers = submissions.filter(
+      (sub) => sub.evaluation_group_id === row.evaluation_group_id,
+    );
+    const anchorRow = groupMembers.find((sub) => sub.submission_id === row.submission_id);
+    const revision = anchorRow && revisionById.get(anchorRow.revision_id);
+    if (!anchorRow || !revision) return undefined;
+    try {
+      const members = groupMembers.map((sub) => {
+        const issuance = issuanceById.get(sub.issuance_id);
+        if (!issuance)
+          throw new GroupInputContractError('invalid_group_input', 'missing member issuance');
+        return evaluationMemberFromRows(sub, issuance);
+      });
+      const anchor = members.find(
+        (member) => member.submission.submission_id === row.submission_id,
+      );
+      if (!anchor) return undefined;
+      const actual = freezeEvaluationInput(anchor.submission, revision, members);
+      const snapshot = row.provenance?.input_snapshot;
+      if (snapshot == null ? members.length !== 1 : !matchesEvaluationInput(snapshot, actual))
+        return undefined;
+      return projectIssuedScoringBasis(revision, actual.issued_part_ids);
+    } catch (error) {
+      if (
+        !(error instanceof EvaluationContractError) &&
+        !(error instanceof GroupInputContractError) &&
+        !(error instanceof ZodError)
+      )
+        throw error;
+      return undefined;
+    }
+  };
 
   // original 轨：第一条 active activation 事件的 evaluation_id（retract 的
   // activation 收据不算「第一判生效」）。
-  const activeActivationRows = await filterActiveRows(db, activationRows);
+
   const firstActivationByGroup = new Map<string, string>();
   for (const row of activeActivationRows) {
     const p = (row.payload ?? {}) as Record<string, unknown>;
@@ -541,12 +668,10 @@ export async function resolveVerdictsForGroups(
   }
 
   const project = (row: EvaluationRow): EvaluationVerdict | null => {
-    const sub = subById.get(row.submission_id);
-    const basis = sub
-      ? (basisByRevision.get(sub.revision_id) as ScoringBasisT | undefined)
-      : undefined;
+    const basis = basisForEvaluation(row);
     return {
       evaluation_id: row.evaluation_id,
+      scoring_basis: basis ?? null,
       attempt: row.attempt,
       status: row.status,
       verdict: basis
@@ -554,7 +679,7 @@ export async function resolveVerdictsForGroups(
         : // 无 basis 无法派生 —— 如实回 unsupported/pending 面，不造判定。
           {
             verdict: 'unsupported' as AssessmentVerdict,
-            reason: 'evaluation_pending' as const,
+            reason: 'issuance_scope_unavailable' as const,
             points: null,
             maxPoints: null,
             normalized: null,
@@ -605,4 +730,207 @@ export async function resolveVerdictForGroup(db: DbLike, groupId: string): Promi
       head: null,
     }
   );
+}
+
+/** Native participation anchors carry no verdict bit. Resolve their frozen
+ * coordinates before reading the group's currently selected evaluation. */
+export type NativeAttemptVerdict = GroupVerdict & {
+  knowledge_ids: string[];
+  issuance: typeof assessment_issuance.$inferSelect;
+  revision: typeof question_revision.$inferSelect;
+  submission: typeof assessment_submission.$inferSelect;
+  original_evaluation_id: string | null;
+};
+
+export async function resolveVerdictsForNativeAttempts(
+  db: DbLike,
+  rows: EventRow[],
+): Promise<Map<string, NativeAttemptVerdict>> {
+  const anchors = rows.filter(
+    (row) => row.action === 'experimental:assessment_attempt' && row.subject_kind === 'question',
+  );
+  const ids = [
+    ...new Set(
+      anchors.flatMap((row) =>
+        typeof row.payload.submission_id === 'string' ? [row.payload.submission_id] : [],
+      ),
+    ),
+  ];
+  const coordinates = [];
+  for (let offset = 0; offset < ids.length; offset += QUERY_ID_CHUNK) {
+    coordinates.push(
+      ...(await db
+        .select({
+          submission: assessment_submission,
+          issuance: assessment_issuance,
+          revision: question_revision,
+        })
+        .from(assessment_submission)
+        .innerJoin(
+          assessment_issuance,
+          eq(assessment_issuance.issuance_id, assessment_submission.issuance_id),
+        )
+        .innerJoin(
+          question_revision,
+          eq(question_revision.revision_id, assessment_submission.revision_id),
+        )
+        .where(
+          inArray(assessment_submission.submission_id, ids.slice(offset, offset + QUERY_ID_CHUNK)),
+        )),
+    );
+  }
+  const originalIds = [
+    ...new Set(
+      anchors.flatMap((row) =>
+        typeof row.payload.original_evaluation_id === 'string'
+          ? [row.payload.original_evaluation_id]
+          : [],
+      ),
+    ),
+  ];
+  const originals = new Map<string, { submission_id: string; evaluation_group_id: string }>();
+  for (let offset = 0; offset < originalIds.length; offset += QUERY_ID_CHUNK) {
+    const found = await db
+      .select({
+        evaluation_id: evaluation.evaluation_id,
+        submission_id: evaluation.submission_id,
+        evaluation_group_id: evaluation.evaluation_group_id,
+      })
+      .from(evaluation)
+      .where(inArray(evaluation.evaluation_id, originalIds.slice(offset, offset + QUERY_ID_CHUNK)));
+    for (const item of found) originals.set(item.evaluation_id, item);
+  }
+  // Queued anchors predate evaluation. Resolve the first actual candidate, never
+  // the first activation (a later self-report may be the first effective record).
+  const firstBySubmission = new Map<string, string>();
+  for (let offset = 0; offset < ids.length; offset += QUERY_ID_CHUNK) {
+    const found = await db
+      .select({
+        evaluation_id: evaluation.evaluation_id,
+        submission_id: evaluation.submission_id,
+        evaluation_group_id: evaluation.evaluation_group_id,
+      })
+      .from(evaluation)
+      .where(inArray(evaluation.submission_id, ids.slice(offset, offset + QUERY_ID_CHUNK)))
+      .orderBy(asc(evaluation.attempt), asc(evaluation.evaluation_id));
+    for (const item of found) {
+      originals.set(item.evaluation_id, item);
+      if (!firstBySubmission.has(item.submission_id))
+        firstBySubmission.set(item.submission_id, item.evaluation_id);
+    }
+  }
+  const learningScopes = await loadAssessmentLearningScopes(db, ids);
+  const coordinateById = new Map(
+    coordinates.map((value) => [value.submission.submission_id, value]),
+  );
+  const valid = anchors.flatMap((row) => {
+    const p = row.payload;
+    const coordinate =
+      typeof p.submission_id === 'string' ? coordinateById.get(p.submission_id) : undefined;
+    if (!coordinate) return [];
+    const { submission, issuance, revision } = coordinate;
+    if (
+      p.evaluation_group_id !== submission.evaluation_group_id ||
+      p.issuance_id !== submission.issuance_id ||
+      p.revision_id !== submission.revision_id ||
+      issuance.revision_id !== revision.revision_id ||
+      (row.subject_id !== revision.group_id && !issuance.part_ids.includes(row.subject_id))
+    )
+      return [];
+    const originalId =
+      typeof p.original_evaluation_id === 'string'
+        ? p.original_evaluation_id
+        : (firstBySubmission.get(submission.submission_id) ?? null);
+    const original = originalId ? originals.get(originalId) : undefined;
+    const originalEvaluationId =
+      original?.submission_id === submission.submission_id &&
+      original?.evaluation_group_id === submission.evaluation_group_id
+        ? originalId
+        : null;
+    return [
+      {
+        row,
+        submission,
+        issuance,
+        revision,
+        groupId: submission.evaluation_group_id,
+        originalEvaluationId,
+      },
+    ];
+  });
+  const groups = await resolveVerdictsForGroups(
+    db,
+    valid.map((entry) => entry.groupId),
+  );
+  const bufferedSessionIds = [
+    ...new Set(
+      anchors.flatMap((row) =>
+        row.payload.paper_feedback_policy === 'judge_now_show_later' && row.session_id
+          ? [row.session_id]
+          : [],
+      ),
+    ),
+  ];
+  const completedSessions = new Map<string, string>();
+  for (let offset = 0; offset < bufferedSessionIds.length; offset += QUERY_ID_CHUNK) {
+    const sessions = await db
+      .select({
+        id: learning_session.id,
+        status: learning_session.status,
+        started_at: learning_session.started_at,
+      })
+      .from(learning_session)
+      .where(
+        inArray(learning_session.id, bufferedSessionIds.slice(offset, offset + QUERY_ID_CHUNK)),
+      );
+    for (const session of sessions)
+      if (session.status === 'completed')
+        completedSessions.set(session.id, session.started_at.toISOString());
+  }
+  return new Map(
+    valid.map(({ row, groupId, submission, issuance, revision, originalEvaluationId }) => [
+      row.id,
+      {
+        ...(groups.get(groupId) ?? {
+          evaluation_group_id: groupId,
+          original: null,
+          effective: null,
+          head: null,
+        }),
+        submission,
+        issuance,
+        revision,
+        knowledge_ids: issuedLearningKnowledgeIds({
+          scope: learningScopes.get(submission.submission_id),
+          groupId: revision.group_id,
+          partIds: issuance.part_ids,
+        }),
+        original_evaluation_id: originalEvaluationId,
+        ...(row.payload.paper_feedback_policy === 'judge_now_show_later' &&
+        (typeof row.payload.paper_started_at !== 'string' ||
+          completedSessions.get(row.session_id ?? '') !== row.payload.paper_started_at)
+          ? { original: null, effective: null }
+          : {}),
+      },
+    ]),
+  );
+}
+
+export function nativeAttemptOutcome(
+  group: GroupVerdict | undefined,
+): 'success' | 'failure' | 'partial' | 'pending' | 'unsupported' {
+  const selected = group?.effective;
+  if (!selected || selected.status === 'pending') return 'pending';
+  // Self-report owns a practice rating, never an inferred score.
+  if (selected.row.provenance?.source === 'self_report') return 'unsupported';
+  switch (selected.verdict.verdict) {
+    case 'correct':
+      return 'success';
+    case 'incorrect':
+      return 'failure';
+    case 'partial':
+      return 'partial';
+    default:
+      return 'unsupported';
+  }
 }

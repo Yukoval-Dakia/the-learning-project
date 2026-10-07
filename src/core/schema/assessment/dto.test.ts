@@ -11,6 +11,7 @@ import {
   projectFeedback,
   projectPracticeIssuance,
 } from './dto';
+import { projectIssuedScoringBasis } from './evaluation';
 import {
   EvaluationRecord,
   type EvaluationRecordT,
@@ -23,8 +24,10 @@ import {
   type AssessmentIssuanceT,
   PublishedQuestionRevision,
   type PublishedQuestionRevisionT,
+  deriveIssuanceBinding,
   validateIssuanceBinding,
 } from './revision';
+import { type AggregationPolicyT, validateScoringBasis } from './scoring';
 
 function revision(): PublishedQuestionRevisionT {
   return PublishedQuestionRevision.parse({
@@ -114,6 +117,103 @@ describe('PracticeIssuanceDto — 公开面是 strict schema，不是渲染约�
     expect(dto.materials).toHaveLength(1);
     expect(dto.response_spec.slots[0]).toMatchObject({ slot_id: 'mc', kind: 'single_choice' });
   });
+
+  it('projects evidence substitution only when every unit for the slot uses a model', () => {
+    const rev = revision();
+    expect(projectPracticeIssuance(rev, issuance()).response_requirements).toEqual([
+      { slot_id: 'mc', evidence_unit_ids: [] },
+    ]);
+    rev.execution_plan.assignments[0].executor = {
+      kind: 'model_executor',
+      task_kind: 'AssessmentRuleJudgeTask',
+      admitted_slice_id: 'slice_private',
+    };
+    const dto = projectPracticeIssuance(rev, issuance());
+    expect(dto.response_requirements).toEqual([{ slot_id: 'mc', evidence_unit_ids: ['u_mc'] }]);
+    expect(JSON.stringify(dto)).not.toContain('slice_private');
+    expect(JSON.stringify(dto)).not.toContain('AssessmentRuleJudgeTask');
+    rev.scoring_basis.units.push({ ...rev.scoring_basis.units[0], scoring_unit_id: 'u_second' });
+    rev.execution_plan.assignments.push({
+      scoring_unit_ids: ['u_second'],
+      executor: { kind: 'deterministic', comparator: 'exact_option_set' },
+    });
+    expect(projectPracticeIssuance(rev, issuance()).response_requirements).toEqual([
+      { slot_id: 'mc', evidence_unit_ids: [] },
+    ]);
+  });
+
+  it.each([
+    { kind: 'capped_sum', cap: 5 },
+    { kind: 'threshold_levels', thresholds: [{ level_id: 'pass', min_points: 5 }] },
+  ] satisfies AggregationPolicyT[])(
+    'projects public requirements for partial $kind while retaining its scoring prohibition',
+    (aggregation) => {
+      const rev = revision();
+      rev.structure.parts.push({
+        part_id: 'p2',
+        prompt_md: '另题：解释电流分配，并附上完整计算过程。',
+        material_ids: [],
+      });
+      rev.response_spec.slots.push({
+        slot_id: 'proof',
+        part_id: 'p2',
+        kind: 'open_response',
+        accepted_evidence: [],
+        evidence_required: false,
+      });
+      const rule = {
+        kind: 'rule_reference',
+        rule_id: 'private-proof-rule',
+        statement_md: '私有评分依据：完整推导和独立复核步骤均须符合冻结规则。',
+        source: 'official',
+      } as const;
+      rev.scoring_basis.units.push(
+        {
+          ...rev.scoring_basis.units[0],
+          scoring_unit_id: 'u_unissued',
+          slot_refs: ['proof'],
+          criterion: rule,
+        },
+        {
+          ...rev.scoring_basis.units[0],
+          scoring_unit_id: 'u_cross_scope',
+          evidence_slot_refs: ['proof'],
+          criterion: rule,
+        },
+      );
+      rev.scoring_basis.aggregation = aggregation;
+      rev.execution_plan.assignments = [
+        {
+          scoring_unit_ids: rev.scoring_basis.units.map((unit) => unit.scoring_unit_id),
+          executor: {
+            kind: 'model_executor',
+            task_kind: 'AssessmentRuleJudgeTask',
+            admitted_slice_id: 'private-slice',
+          },
+        },
+      ];
+      expect(validateScoringBasis(rev.scoring_basis, rev.response_spec, rev.structure)).toEqual([]);
+      const dto = projectPracticeIssuance(rev, issuance());
+      expect(dto.response_requirements).toEqual([{ slot_id: 'mc', evidence_unit_ids: ['u_mc'] }]);
+      expect(dto.response_spec.slots.map((slot) => slot.slot_id)).toEqual(['mc']);
+      const serialized = JSON.stringify(dto);
+      for (const privateValue of [
+        'u_unissued',
+        'u_cross_scope',
+        'private-proof-rule',
+        rule.statement_md,
+        'private-slice',
+        'AssessmentRuleJudgeTask',
+        'accepted_option_ids',
+        'aggregation',
+      ]) {
+        expect(serialized).not.toContain(privateValue);
+      }
+      expect(() => projectIssuedScoringBasis(rev, issuance().binding.part_ids)).toThrow(
+        /unprojectable_aggregation/,
+      );
+    },
+  );
 
   it('injected answer keys / rubric / execution plans / metadata fail parse', () => {
     const dto = projectPracticeIssuance(revision(), issuance());
@@ -526,5 +626,90 @@ describe('AssessmentFeedbackDto — 按可见性 policy 揭示', () => {
     // 连贯输入仍然投影成功（防御不破坏主路径）。
     const ok = projectFeedback(submission, evaluation, revision(), allOff);
     expect(ok.submission_id).toBe('sub_9');
+  });
+});
+
+describe('YUK-1047 frozen public material bodies', () => {
+  const passage =
+    '阅读：雨水沿坡面流动，比较三组控制变量。\n\n' +
+    '须区分相关与因果；单位 m/s，$v = \\sqrt{2gh}$。\n'.repeat(35) +
+    '|坡度|流速|备注|\n|5°|0.4|保持水量|\n|10°|0.8|重复三次|';
+
+  it.each(['passage', 'table', 'plaintext'] as const)(
+    'preserves complete %s bytes and only issued material references',
+    (kind) => {
+      const rev = revision();
+      rev.structure.materials.push({
+        material_id: 'reading',
+        kind,
+        asset: { asset_id: 'txt_reading', digest: 'sha256:reading' },
+        content_md: passage,
+      });
+      rev.structure.parts[0].material_ids.push('reading');
+      rev.structure.materials.push({
+        material_id: 'unissued',
+        kind: 'plaintext',
+        asset: { asset_id: 'txt_other', digest: 'sha256:other' },
+        content_md: 'OTHER PART ONLY',
+      });
+      rev.structure.parts.push({ part_id: 'p2', prompt_md: '另题', material_ids: ['unissued'] });
+      const served = { ...issuance(), binding: deriveIssuanceBinding(rev, { part_ids: ['p1'] }) };
+      const before = JSON.stringify({ rev, served });
+      const dto = projectPracticeIssuance(rev, served);
+      expect(dto.materials.find((m) => m.material_id === 'reading')).toMatchObject({
+        content_md: passage,
+      });
+      expect(dto.materials.map((m) => m.material_id)).toEqual(['mat_fig', 'reading']);
+      expect(dto.faces[0].material_ids).toEqual(['mat_fig', 'reading']);
+      expect(JSON.stringify(dto)).not.toContain('OTHER PART ONLY');
+      expect(JSON.stringify({ rev, served })).toBe(before);
+    },
+  );
+
+  it.each([
+    { asset_id: 'custom-private-asset', visibility: 'private' },
+    { asset_id: 'rub_0123456789ab' },
+    { asset_id: 'rub_abcdef012345', visibility: 'public' },
+  ])('excludes private bytes, captions and face references: %j', ({ asset_id, ...visibility }) => {
+    const rev = PublishedQuestionRevision.parse({
+      ...revision(),
+      structure: {
+        ...revision().structure,
+        materials: [
+          ...revision().structure.materials,
+          {
+            material_id: 'private-rubric',
+            kind: 'plaintext',
+            asset: { asset_id, digest: 'sha256:private' },
+            ...visibility,
+            caption: 'PRIVATE CAPTION',
+            alt_text: 'PRIVATE ALT',
+            content_md: 'PRIVATE ANSWER: 42',
+          },
+        ],
+        parts: [{ ...revision().structure.parts[0], material_ids: ['mat_fig', 'private-rubric'] }],
+      },
+    });
+    const served = { ...issuance(), binding: deriveIssuanceBinding(rev) };
+    const before = JSON.stringify({ rev, served });
+    // Internal frozen evidence remains complete, including historical unmarked rubric refs.
+    expect(served.binding.material_bindings).toHaveLength(2);
+    const dto = projectPracticeIssuance(rev, served);
+    expect(dto.materials.map((m) => m.material_id)).toEqual(['mat_fig']);
+    expect(dto.faces[0].material_ids).toEqual(['mat_fig']);
+    expect(JSON.stringify(dto)).not.toMatch(
+      /PRIVATE|private-rubric|rub_0123456789ab|rub_abcdef012345/,
+    );
+    expect(JSON.stringify({ rev, served })).toBe(before);
+    expect(rev.structure.materials[0]).not.toHaveProperty('visibility');
+    expect(PublishedQuestionRevision.parse(rev)).toEqual(rev);
+  });
+
+  it('still rejects stale material digests before exposing inline text', () => {
+    const rev = revision();
+    rev.structure.materials[0].content_md = passage;
+    const served = issuance();
+    served.binding.material_bindings[0].asset_digest = 'sha256:stale';
+    expect(() => projectPracticeIssuance(rev, served)).toThrow('digest mismatch');
   });
 });

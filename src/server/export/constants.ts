@@ -100,13 +100,16 @@
 // YUK-1007: system_config / system_config_journal / system_config_epoch — owner 可调
 // 运行时配置 + 审计 + 失效轴（authored 运营真相，非瞬态）→ FK_ORDER 非 EXCLUDED。
 // NEW FK_ORDER tables 必 bump：64 → 67 tables，4.23 → 4.24。
-export const SCHEMA_VERSION = '4.24';
+// YUK-766: preserve subscription progress and causal effects; only process claims reset.
+export const SCHEMA_VERSION = '4.25';
 
-// CF Worker free plan caps at 50 subrequests per request. We use 18 D1 SELECTs
-// + a few R2 reads for assets + future-proof headroom. Cap inline assets at 45;
-// users with more must use refs-only export + wrangler r2 cp sidecar.
-// Paid plan = 1000 subrequests; bump to ~950 if you upgrade.
-// (Note: D1/Workers no longer in use post sub-0b1; cap retained as a safety guardrail.)
+export const SUBSCRIPTION_PROGRESS_TABLES = [
+  'event_subscription_checkpoint',
+  'event_subscription_delivery',
+  'event_subscription_effect',
+] as const;
+
+// Bound inline asset transfers; larger exports use a refs-only ZIP plus an asset sidecar.
 export const MAX_INLINE_ASSETS = 45;
 
 // FK topological order. Insert sweeps forward; wipe sweeps reverse. Any schema
@@ -216,6 +219,8 @@ export const FK_ORDER = [
   'artifact_block_ref',
   'answer',
   'event',
+  // Event/artifact parents precede checkpoint → delivery → effect.
+  ...SUBSCRIPTION_PROGRESS_TABLES,
   // YUK-791 — versioned intervention aggregate. Its source/conjecture refs are
   // enforced event FKs, so place it after event. Authored recommendation,
   // package, reviews, and terminal reason are not disposable worker state.
@@ -371,15 +376,6 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   // YUK-932: live mailbox ownership and one-shot continuation claims are operational fences.
   'subagent_run',
   'copilot_continuation',
-  // YUK-751 durable subscription dispatcher recovery state. All three tables are
-  // reconstructed by manifest reconciliation + event-log discovery; restoring stale
-  // checkpoints, claims, deliveries, or debounce reservations would be incorrect.
-  // They are WIPE-BUT-NOT-BACKUP (see RESTORE_WIPE_ONLY_TABLES): excluded from the
-  // archive write, but explicitly wiped on restore so their ON DELETE no action FKs to
-  // event/artifact don't block the FK_ORDER parent wipe (YUK-751 review, codex P1).
-  'event_subscription_checkpoint',
-  'event_subscription_delivery',
-  'event_subscription_effect',
   // YUK-758 夜间任务编排 DAG 的调度运行态（run 头 + 逐节点态）。纯瞬态运维态：一夜一条
   // run，丢了下一夜锚点 cron 自然重建，restoring stale scheduling rows 是错的（会复活过
   // 期的「今晚图」）。也登记进 RESTORE_WIPE_ONLY_TABLES——不是因为 FK（本对表无 enforced
@@ -396,27 +392,10 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   'migration_apply_phase',
 ]);
 
-// Operational tables that are EXCLUDED from the archive (above) but must still be DELETED during
-// restore. Two independent reasons put a table here:
-//
-//  (1) FK blocking — its ON DELETE no action FKs into FK_ORDER parents (event / artifact) would
-//      otherwise BLOCK the FK_ORDER wipe: residual delivery/effect rows keep `delete from "event"` /
-//      `delete from "artifact"` from succeeding (YUK-751 review, codex P1).
-//  (2) Harmful residue — the rows describe live operational state of the PRE-restore database, so
-//      surviving a restore actively corrupts post-restore behavior even without any FK (YUK-758
-//      review ToTeC). The DAG orchestration tables are this case: a surviving `running` run makes
-//      the next anchor ADOPT a graph whose node states describe the discarded data (already
-//      'succeeded' nodes never re-run against the restored rows), and a surviving `completed` run
-//      makes the cron redeliver-guard (`getLatestRunForDate`) skip that calendar day's chain
-//      entirely. Both are silent; the run_date partial-unique index does not help because the stale
-//      row IS the conflict.
-//
-// restoreFromArchive wipes these FIRST (child→parent order among themselves) so the parent wipe is
-// unblocked; it does NOT restore them (the dispatcher re-bootstraps from the event-log + manifest
-// reconciliation post-restore; the DAG rebuilds from the next nightly anchor). Excluded tables whose
-// FKs are ON DELETE cascade (artifact_edit_session, hub_sync_reconciliation) are cleared by the
-// parent wipe and need no entry here.
-// Order matters (child → parent): effect → delivery → checkpoint, and node → run.
+// Excluded process/queue state must not survive a restore into another data timeline.
+// Wipe child tables before their excluded parents (DAG node→run, migration phase→run).
+// Cascading children of backed-up parents need no separate entry here.
+// Subscription progress is durable and lives in FK_ORDER; restore clears only its claims.
 export const RESTORE_WIPE_ONLY_TABLES: readonly string[] = [
   // YUK-851: clear pre-restore owners before durable provider_attempt rows are replaced.
   'provider_attempt_admission',
@@ -425,9 +404,6 @@ export const RESTORE_WIPE_ONLY_TABLES: readonly string[] = [
   'tool_operation',
   'copilot_continuation',
   'subagent_run',
-  'event_subscription_effect',
-  'event_subscription_delivery',
-  'event_subscription_checkpoint',
   'dag_orchestration_node',
   'dag_orchestration_run',
   // YUK-1050 — 迁移 apply 运行账本（run 头 + 逐阶段进度/WAL 观测）。纯运维态：

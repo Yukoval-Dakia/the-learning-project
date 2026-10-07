@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AssessmentAttemptCapture } from '../assessment/capture';
 
 // ====================================================================
 // JudgePendingAttemptExperimental — YUK-777 A2 record-unjudged-at-submit
@@ -59,7 +60,7 @@ export const JudgePendingSubmitInput = z.object({
 });
 export type JudgePendingSubmitInputT = z.infer<typeof JudgePendingSubmitInput>;
 
-export const JudgePendingAttemptPayload = z.object({
+const LegacyJudgePendingAttemptPayload = z.object({
   /**
    * Load-bearing join key. The reserved `judge_run` handle, which is ALSO the id the
    * worker gives the `review` event it writes on backfill (the submit-face contract).
@@ -88,6 +89,30 @@ export const JudgePendingAttemptPayload = z.object({
   /** The frozen judge input, re-enqueued verbatim on recovery. */
   submit: JudgePendingSubmitInput,
 });
+export const NativeJudgePendingSubmitInput = z.object({
+  question_id: z.string().min(1),
+  submission_id: z.string().min(1),
+  evaluation_group_id: z.string().min(1),
+  submitted_at: z.string().datetime(),
+  expected_head: z.object({
+    expected_effective_id: z.string().min(1).nullable(),
+    expected_generation: z.number().int().nonnegative(),
+  }),
+  user_rating: z.enum(['again', 'hard', 'good']).optional(),
+  capture: AssessmentAttemptCapture,
+  require_unassisted_model_evidence: z.boolean().default(false),
+});
+export type NativeJudgePendingSubmitInputT = z.infer<typeof NativeJudgePendingSubmitInput>;
+export const JudgePendingAttemptPayload = z.discriminatedUnion('caller', [
+  LegacyJudgePendingAttemptPayload,
+  z.object({
+    run_id: z.string().min(1),
+    caller: z.literal('native_assessment'),
+    knowledge_ids: z.array(z.string()),
+    ability_global_ids: z.array(z.string()).optional(),
+    submit: NativeJudgePendingSubmitInput,
+  }),
+]);
 export type JudgePendingAttemptPayloadT = z.infer<typeof JudgePendingAttemptPayload>;
 
 export const JudgePendingAttemptExperimental = z.object({

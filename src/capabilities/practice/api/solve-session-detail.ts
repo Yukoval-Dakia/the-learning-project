@@ -3,6 +3,7 @@ import { and, eq } from 'drizzle-orm';
 import { db } from '@/db/client';
 import { learning_session } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { Tutor } from '@/server/session';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
@@ -23,7 +24,17 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     if (!session) {
       throw new ApiError('not_found', `solve session ${params.sid} not found`, 404);
     }
-    return Response.json(session);
+    const binding = await Tutor.getTutorQuestionId(db, session.id);
+    return Response.json({
+      ...session,
+      ...(binding.issuanceId
+        ? {
+            issuance_id: binding.issuanceId,
+            evaluation_group_id: `solve_${session.id}`,
+            idempotency_key: `solve_${session.id}`,
+          }
+        : {}),
+    });
   } catch (err) {
     return errorResponse(err);
   }

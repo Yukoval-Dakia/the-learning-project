@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, knowledge, learning_record } from '@/db/schema';
 import {
   archiveLearningRecord,
+  createAssessmentLearningRecord,
   createLearningRecord,
   getLearningRecord,
   listLearningRecords,
@@ -75,6 +76,43 @@ describe('LearningRecord queries', () => {
         create_capture_event: true,
       }),
     ).rejects.toThrow(/unknown or archived knowledge_ids: missing/);
+  });
+
+  it('still rejects archived knowledge for new manual records', async () => {
+    await seedKnowledge('archived_kc');
+    await testDb()
+      .update(knowledge)
+      .set({ archived_at: new Date() })
+      .where(eq(knowledge.id, 'archived_kc'));
+    await expect(
+      createLearningRecord(testDb(), {
+        kind: 'mistake',
+        content_md: '新的手工录入，不能借历史入口关联归档知识点。',
+        source: 'manual',
+        capture_mode: 'text',
+        activity_kind: 'attempt',
+        knowledge_ids: ['archived_kc'],
+        payload: { steps: ['检查左右极限', '保留不一致的边界'] },
+        create_capture_event: true,
+      }),
+    ).rejects.toMatchObject({ code: 'validation_error', status: 400 });
+    expect(await testDb().select().from(learning_record)).toHaveLength(0);
+    expect(await testDb().select().from(event)).toHaveLength(0);
+  });
+
+  it('requires a persisted accepted submission for historical assessment associations', async () => {
+    await expect(
+      createAssessmentLearningRecord(testDb(), {
+        submission_id: 'missing_submission',
+        kind: 'mistake',
+        content_md: '提交坐标不存在时不能伪造历史关联。',
+        source: 'manual',
+        capture_mode: 'text',
+        activity_kind: 'attempt',
+        payload: { assessment: { submission_id: 'missing_submission' } },
+      }),
+    ).rejects.toMatchObject({ code: 'validation_error', status: 400 });
+    expect(await testDb().select().from(learning_record)).toHaveLength(0);
   });
 
   it('lists active records by kind and excludes archived rows', async () => {

@@ -16,6 +16,7 @@ import {
   memoryIntentDigest,
   normalizeReconcileInputs,
   persistDispatchCompleted,
+  persistObserveDispatchSkipped,
   readIngestCompleted,
 } from './memory-reconcile-handoff-store';
 
@@ -84,6 +85,7 @@ export async function dispatchMemoryReconcile(
     readonly sourceEventId: string;
     readonly memories: readonly ReconcileMemInput[];
     readonly completion?: IngestCompleted;
+    readonly mode: MemoryReconcileHandoffMode;
   },
 ): Promise<string | null> {
   const memories = normalizeReconcileInputs(input.memories);
@@ -103,8 +105,10 @@ export async function dispatchMemoryReconcile(
     return jobId;
   }
   let confirmed = false;
+  let sendReturnedNull = false;
   try {
     const sentId = await boss.send(MEMORY_RECONCILE_QUEUE, { memories, user_id: 'self' }, options);
+    sendReturnedNull = sentId === null;
     confirmed = sentId === jobId || (await readback(boss, jobId));
   } catch (error) {
     try {
@@ -113,6 +117,14 @@ export async function dispatchMemoryReconcile(
       throw error;
     }
     if (!confirmed) throw error;
+  }
+  if (!confirmed && sendReturnedNull && input.mode === 'observe') {
+    await persistObserveDispatchSkipped(db, input.sourceEventId, memories, jobId);
+    console.warn('[memory_reconcile] observe dispatch skipped: singleton send returned null', {
+      sourceEventId: input.sourceEventId,
+      jobId,
+    });
+    return null;
   }
   if (!confirmed)
     throw new MemoryReconcileHandoffError(`enqueue unconfirmed ${input.sourceEventId}`);
@@ -236,6 +248,7 @@ export async function recoverMemoryReconcileHandoffs(
           sourceEventId: candidate.sourceId,
           memories,
           completion,
+          mode,
         });
         count += 1;
       } catch (error) {

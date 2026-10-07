@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { IssuanceStateSchema } from './assessment-contracts';
 
 export const PlacementSessionParamsSchema = z.object({ id: z.string().min(1) });
 
@@ -9,16 +10,26 @@ export const CreatePlacementSessionBodySchema = z.object({
   pace: z.enum(['light', 'medium', 'dense']).optional(),
 });
 
-const PlacementSelectionSchema = z.object({
+export const PlacementQuestionSchema = z.object({
   questionId: z.string(),
   score: z.number(),
   scoreKind: z.enum(['mfi', 'klp', 'klp_grid']),
+  assessment: z.object({
+    issuance_id: z.string(),
+    evaluation_group_id: z.string(),
+    submission_id: z.string(),
+    idempotency_key: z.string(),
+    state: IssuanceStateSchema,
+    phase: z.enum(['answering', 'retry', 'pending', 'held']),
+    pending_run: z.object({ run_id: z.string(), poll_url: z.string() }).nullable(),
+  }),
 });
 
 export const PlacementSessionCreatedSchema = z.object({
   sessionId: z.string(),
   knowledgeIds: z.array(z.string()),
-  question: PlacementSelectionSchema.nullable(),
+  answeredCount: z.number().int().nonnegative(),
+  question: PlacementQuestionSchema.nullable(),
   sourcingNeeded: z.boolean(),
 });
 
@@ -36,7 +47,7 @@ export const PlacementQuestionSelectionResponseSchema = z.discriminatedUnion('do
   }),
   z.object({
     done: z.literal(false),
-    question: PlacementSelectionSchema.nullable(),
+    question: PlacementQuestionSchema.nullable(),
     answeredCount: z.number().int().nonnegative(),
     sourcingNeeded: z.boolean(),
   }),

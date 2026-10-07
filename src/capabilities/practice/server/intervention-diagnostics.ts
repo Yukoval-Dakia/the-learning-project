@@ -1,5 +1,19 @@
-import { and, desc, eq, gt, inArray, isNull, lte, notExists, sql } from 'drizzle-orm';
+import {
+  and,
+  desc,
+  eq,
+  exists,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  notExists,
+  or,
+  sql,
+} from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
+import { z } from 'zod';
 import { newId } from '@/core/ids';
 import { JudgeOnEvent, ReviewOnQuestion } from '@/core/schema/event/known';
 import {
@@ -14,8 +28,20 @@ import {
   type InterventionSnapshotT,
 } from '@/core/schema/intervention';
 import type { Db, Tx } from '@/db/client';
-import { event, job_events, practice_stream_item, question } from '@/db/schema';
+import {
+  assessment_issuance,
+  assessment_submission,
+  evaluation_effective_head,
+  event,
+  job_events,
+  practice_stream_item,
+  question,
+  question_group_lifecycle,
+  question_revision,
+} from '@/db/schema';
 import { getEventById } from '@/kernel/events';
+import { resolveVerdictsForNativeAttempts } from '@/kernel/read-models/assessment-verdict';
+import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { enrollFsrsStateIfAbsent, retireQuestionFsrsState } from '@/server/fsrs/state';
 import { initialFsrsState } from './fsrs';
 import { JUDGE_PENDING_ATTEMPT_ACTION } from './judge-run-dispatch';
@@ -23,6 +49,44 @@ import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './judge-run-status';
 import { streamLocalDate } from './stream-date';
 
 export const INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS = 10 * 60 * 1000;
+
+function acceptedDiagnosticOriginal(tx: Tx) {
+  return exists(
+    tx
+      .select({ id: assessment_submission.submission_id })
+      .from(assessment_submission)
+      .innerJoin(
+        question_revision,
+        eq(question_revision.revision_id, assessment_submission.revision_id),
+      )
+      .where(eq(question_revision.group_id, question.id)),
+  );
+}
+
+/** Recovery treats an effective native original like a committed historical review. */
+function committedDiagnosticAttempt(tx: Tx) {
+  return or(
+    eq(event.action, 'review'),
+    and(
+      eq(event.action, 'experimental:assessment_attempt'),
+      exists(
+        tx
+          .select({ id: evaluation_effective_head.evaluation_group_id })
+          .from(evaluation_effective_head)
+          .where(
+            and(
+              eq(
+                evaluation_effective_head.evaluation_group_id,
+                sql`${event.payload}->>'evaluation_group_id'`,
+              ),
+              eq(evaluation_effective_head.submission_id, sql`${event.payload}->>'submission_id'`),
+              isNotNull(evaluation_effective_head.effective_evaluation_id),
+            ),
+          ),
+      ),
+    ),
+  );
+}
 
 function diagnosticMetadata(input: {
   interventionId: string;
@@ -124,18 +188,107 @@ export async function loadLatestTrustedInterventionDiagnosticVerdict(
   return null;
 }
 
+/** Immutable original metadata and current head, including a non-diagnostic replacement. */
+export async function loadNativeInterventionDiagnosticState(db: Db | Tx, attemptId: string) {
+  const review = await getEventById(db, attemptId);
+  if (!review) return null;
+  const [anchor] = await db.select().from(event).where(eq(event.id, attemptId));
+  if (!anchor) return null;
+  const resolved = (await resolveVerdictsForNativeAttempts(db, [anchor])).get(attemptId);
+  const effective = resolved?.effective;
+  if (!resolved || !effective) return null;
+  const trusted =
+    review.correction_status.state === 'active' &&
+    effective.status === 'completed' &&
+    effective.row.provenance?.source === 'automatic' &&
+    effective.row.provenance.assisted === false &&
+    effective.row.run_refs.length > 0 &&
+    effective.verdict.verdict !== 'unsupported';
+  const [original] = await db
+    .select({ payload: event.payload })
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:assessment_submission'),
+        eq(event.subject_kind, 'submission'),
+        eq(event.subject_id, resolved.submission.submission_id),
+      ),
+    )
+    .limit(1);
+  const scope = z
+    .object({
+      version: z.literal(1),
+      group_id: z.string(),
+      questions: z.array(
+        z.object({
+          id: z.string(),
+          source: z.string(),
+          intervention_diagnostic: InterventionDiagnosticQuestionMetadata.optional(),
+        }),
+      ),
+    })
+    .safeParse(original?.payload.learning_scope);
+  if (!scope.success) return null;
+  const frozenQuestion = scope.data.questions.find((row) => row.id === review.subject_id);
+  if (
+    frozenQuestion?.source !== INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE ||
+    !frozenQuestion.intervention_diagnostic
+  )
+    return null;
+  const [activation] = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:assessment_activation'),
+        eq(event.subject_kind, 'evaluation_group'),
+        eq(event.subject_id, resolved.evaluation_group_id),
+        sql`${event.payload}->>'effective_evaluation_id' = ${effective.evaluation_id}`,
+        sql`${event.payload}->>'generation' = ${String(resolved.head?.generation)}`,
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(1);
+  if (
+    !activation ||
+    activation.payload.question_group_id !== scope.data.group_id ||
+    activation.payload.submission_id !== resolved.submission.submission_id
+  )
+    return null;
+  // Invalidating the original changes the aggregate even if its evaluation head did not move.
+  const verdictEvent =
+    review.correction_status.state === 'active'
+      ? activation
+      : await getEventById(db, review.correction_status.correction_event_id);
+  if (!verdictEvent) return null;
+  return {
+    review,
+    metadata: frozenQuestion.intervention_diagnostic,
+    effective,
+    activation,
+    verdictEvent,
+    trusted,
+  };
+}
+
+export async function loadNativeInterventionDiagnosticVerdict(db: Db | Tx, attemptId: string) {
+  const state = await loadNativeInterventionDiagnosticState(db, attemptId);
+  return state?.trusted ? state : null;
+}
+
 export interface CommittedInterventionDiagnosticAttempt {
   review_event: {
     id: string;
-    rating: 'again' | 'hard' | 'good';
+    rating: 'again' | 'hard' | 'good' | null;
   };
   judge: {
-    route: 'multimodal_direct';
-    coarse_outcome: 'correct' | 'partial' | 'incorrect';
+    route: 'multimodal_direct' | 'evaluate_submission';
+    coarse_outcome: 'correct' | 'partial' | 'incorrect' | 'unsupported';
     confidence: number;
     feedback_md: string;
-    suggested_rating: 'again' | 'hard' | 'good';
-    judge_event_id: string;
+    suggested_rating: 'again' | 'hard' | 'good' | null;
+    judge_event_id: string | null;
+    evaluation_id?: string;
   };
 }
 
@@ -149,6 +302,46 @@ export async function loadCommittedInterventionDiagnosticAttempt(
   db: Db,
   questionId: string,
 ): Promise<CommittedInterventionDiagnosticAttempt | null> {
+  const nativeAttempts = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:assessment_attempt'),
+        eq(event.subject_kind, 'question'),
+        eq(event.subject_id, questionId),
+      ),
+    )
+    .orderBy(desc(event.created_at), desc(event.id))
+    .limit(50);
+  for (const attempt of nativeAttempts) {
+    const native = await loadNativeInterventionDiagnosticState(db, attempt.id);
+    if (!native) continue;
+    const verdict = native.trusted ? native.effective.verdict.verdict : 'unsupported';
+    const rating =
+      verdict === 'unsupported'
+        ? null
+        : verdict === 'correct'
+          ? 'good'
+          : verdict === 'partial'
+            ? 'hard'
+            : 'again';
+    const units = native.effective.row.unit_results.filter((unit) => unit.status === 'scored');
+    return {
+      review_event: { id: attempt.id, rating },
+      judge: {
+        route: 'evaluate_submission',
+        coarse_outcome: verdict,
+        confidence: 0, // Native candidate records do not assert model confidence.
+        feedback_md: native.trusted
+          ? units.flatMap((unit) => (unit.feedback_md ? [unit.feedback_md] : [])).join('\n\n')
+          : '本次作答已保存，当前评估尚不能用于诊断结论，等待复核。',
+        suggested_rating: rating,
+        judge_event_id: null,
+        evaluation_id: native.effective.evaluation_id,
+      },
+    };
+  }
   const candidates = await db
     .select({ id: event.id })
     .from(event)
@@ -220,7 +413,11 @@ async function appendImmediateDiagnosticToLiveStream(
   await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${`stream:compose:${date}`}))`);
   await tx.execute(sql.raw("SET LOCAL lock_timeout = '0'"));
   const [existingDelivery] = await tx
-    .select({ id: practice_stream_item.id, status: practice_stream_item.status })
+    .select({
+      id: practice_stream_item.id,
+      status: practice_stream_item.status,
+      date: practice_stream_item.date,
+    })
     .from(practice_stream_item)
     .where(
       and(
@@ -231,6 +428,31 @@ async function appendImmediateDiagnosticToLiveStream(
     )
     .limit(1);
   if (existingDelivery) {
+    const [issued] = await tx
+      .select({ id: assessment_issuance.issuance_id })
+      .from(assessment_issuance)
+      .innerJoin(
+        question_revision,
+        eq(question_revision.revision_id, assessment_issuance.revision_id),
+      )
+      .where(eq(question_revision.group_id, input.questionId))
+      .limit(1);
+    if (!issued && existingDelivery.date !== date) {
+      const [current] = await tx
+        .select({ position: sql<number>`coalesce(max(${practice_stream_item.position}), 0)::int` })
+        .from(practice_stream_item)
+        .where(and(eq(practice_stream_item.date, date), isNull(practice_stream_item.session_id)));
+      await tx
+        .update(practice_stream_item)
+        .set({
+          date,
+          position: (current?.position ?? 0) + 1,
+          status: 'pending',
+          updated_at: input.now,
+        })
+        .where(eq(practice_stream_item.id, existingDelivery.id));
+      return;
+    }
     let restorePending = existingDelivery.status === 'skipped';
     if (existingDelivery.status === 'done') {
       const [attempt] = await tx
@@ -238,7 +460,7 @@ async function appendImmediateDiagnosticToLiveStream(
         .from(event)
         .where(
           and(
-            eq(event.action, 'review'),
+            committedDiagnosticAttempt(tx),
             eq(event.subject_kind, 'question'),
             eq(event.subject_id, input.questionId),
             sql`${event.payload} ->> 'stream_item_id' = ${existingDelivery.id}`,
@@ -296,20 +518,22 @@ async function appendImmediateDiagnosticToLiveStream(
  * review surface. Each is a one-shot question-scoped FSRS card so the exact
  * authored probe—not a same-KC substitute—appears when its fixed due time arrives.
  */
+interface MaterializeInterventionDiagnosticsInput {
+  package: InterventionPackageT;
+  settlement: InterventionSettlementT;
+  snapshot: InterventionSnapshotT;
+  now: Date;
+  /**
+   * Set only by the aggregate transaction that records the first immediate
+   * review. It activates and re-enrolls the newly anchored follow-ups in the
+   * same transaction as the settlement update.
+   */
+  activateAnchoredFollowups?: boolean;
+}
+
 export async function materializeInterventionDiagnostics(
   tx: Tx,
-  input: {
-    package: InterventionPackageT;
-    settlement: InterventionSettlementT;
-    snapshot: InterventionSnapshotT;
-    now: Date;
-    /**
-     * Set only by the aggregate transaction that records the first immediate
-     * review. It activates and re-enrolls the newly anchored follow-ups in the
-     * same transaction as the settlement update.
-     */
-    activateAnchoredFollowups?: boolean;
-  },
+  input: MaterializeInterventionDiagnosticsInput,
 ): Promise<void> {
   const packageValue = InterventionPackage.parse(input.package);
   const settlement = InterventionSettlement.parse(input.settlement);
@@ -325,44 +549,42 @@ export async function materializeInterventionDiagnostics(
     )
     .map((kind) => settlement.diagnostics[kind].question_id);
 
-  await tx
-    .insert(question)
-    .values(
-      kinds.map((kind) => {
-        const diagnostic = packageValue.diagnostics[kind];
-        const scheduled = settlement.diagnostics[kind];
-        return {
-          id: scheduled.question_id,
-          kind: 'short_answer',
-          prompt_md: learnerFacingInterventionDiagnosticPrompt(packageValue, kind),
-          reference_md: diagnostic.probe_spec.reference_md,
-          judge_kind_override: 'multimodal_direct',
-          knowledge_ids: [],
-          difficulty: 3,
-          source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-          source_ref: sourceRef,
-          // Product-owned diagnostics have already passed package authoring,
-          // independent review, deterministic validation, and the lineage proof below.
-          draft_status:
-            scheduled.status === 'scheduled' && (kind === 'immediate' || followupsReady)
-              ? 'active'
-              : 'draft',
-          metadata: diagnosticMetadata({
-            interventionId: snapshot.intervention_id,
-            version: snapshot.intervention_version,
-            knowledgeId: snapshot.conjecture.knowledge_id,
-            kind,
-            dueAt: scheduled.due_at,
-            probeSpec: diagnostic.probe_spec,
-          }),
-          figures: [],
-          image_refs: [],
-          created_at: input.now,
-          updated_at: input.now,
-        };
-      }),
-    )
-    .onConflictDoNothing();
+  for (const kind of kinds) {
+    const diagnostic = packageValue.diagnostics[kind];
+    const scheduled = settlement.diagnostics[kind];
+    await tx
+      .insert(question)
+      .values({
+        id: scheduled.question_id,
+        kind: 'short_answer',
+        prompt_md: learnerFacingInterventionDiagnosticPrompt(packageValue, kind),
+        reference_md: diagnostic.probe_spec.reference_md,
+        judge_kind_override: 'multimodal_direct',
+        knowledge_ids: [],
+        difficulty: 3,
+        source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+        source_ref: sourceRef,
+        // Product-owned diagnostics have already passed package authoring,
+        // independent review, deterministic validation, and the lineage proof below.
+        draft_status:
+          scheduled.status === 'scheduled' && (kind === 'immediate' || followupsReady)
+            ? 'active'
+            : 'draft',
+        metadata: diagnosticMetadata({
+          interventionId: snapshot.intervention_id,
+          version: snapshot.intervention_version,
+          knowledgeId: snapshot.conjecture.knowledge_id,
+          kind,
+          dueAt: scheduled.due_at,
+          probeSpec: diagnostic.probe_spec,
+        }),
+        figures: [],
+        image_refs: [],
+        created_at: input.now,
+        updated_at: input.now,
+      })
+      .onConflictDoNothing();
+  }
 
   const ids = kinds.map((kind) => settlement.diagnostics[kind].question_id);
   // A synchronous process can die after the active→draft one-shot claim but
@@ -383,6 +605,7 @@ export async function materializeInterventionDiagnostics(
         eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
         eq(question.draft_status, 'draft'),
         lte(question.updated_at, staleClaimBefore),
+        sql`NOT ${acceptedDiagnosticOriginal(tx)}`,
         notExists(
           tx
             .select({ id: event.id })
@@ -391,7 +614,7 @@ export async function materializeInterventionDiagnostics(
               and(
                 eq(event.subject_kind, 'question'),
                 eq(event.subject_id, question.id),
-                eq(event.action, 'review'),
+                committedDiagnosticAttempt(tx),
               ),
             ),
         ),
@@ -447,6 +670,7 @@ export async function materializeInterventionDiagnostics(
     .from(question)
     .where(inArray(question.id, ids));
   const byId = new Map(rows.map((row) => [row.id, row]));
+  let immediateAdmitted = false;
   for (const kind of kinds) {
     const scheduled = settlement.diagnostics[kind];
     const row = byId.get(scheduled.question_id);
@@ -492,13 +716,103 @@ export async function materializeInterventionDiagnostics(
             : scheduled.status === 'scheduled' && kind !== 'immediate' && !followupsReady
               ? { draft_status: 'draft' as const }
               : {}),
-          updated_at: input.now,
+          ...(shouldActivateAnchoredFollowup ? { updated_at: input.now } : {}),
         })
         .where(eq(question.id, scheduled.question_id));
     }
 
+    let [lifecycle] = await tx
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, scheduled.question_id));
+    if (!lifecycle?.current_revision_id) {
+      await publishQuestionGroupFromRow(tx, {
+        rootId: scheduled.question_id,
+        admission: { state: 'withheld', reason: 'no_admitted_executor' },
+        claimPolicy: 'one_time',
+        availability: 'general_pool',
+        actorRef: 'intervention:diagnostic-publication',
+        now: input.now,
+      });
+      [lifecycle] = await tx
+        .select()
+        .from(question_group_lifecycle)
+        .where(eq(question_group_lifecycle.group_id, scheduled.question_id));
+    }
+    const admitted =
+      lifecycle?.scoring_admission_state === 'admitted' &&
+      !lifecycle.suspended &&
+      !lifecycle.withdrawn;
+    if (kind === 'immediate') immediateAdmitted = admitted;
+    if (!admitted) {
+      if (scheduled.status === 'scheduled') {
+        await tx
+          .update(question)
+          .set({ draft_status: 'draft', updated_at: input.now })
+          .where(and(eq(question.id, scheduled.question_id), eq(question.draft_status, 'active')));
+        await retireQuestionFsrsState(tx, scheduled.question_id);
+        await tx
+          .update(practice_stream_item)
+          .set({ status: 'skipped', updated_at: input.now })
+          .where(
+            and(
+              eq(practice_stream_item.ref_id, scheduled.question_id),
+              eq(practice_stream_item.item_kind, 'question'),
+              eq(practice_stream_item.status, 'pending'),
+              notExists(
+                tx
+                  .select({ id: assessment_issuance.issuance_id })
+                  .from(assessment_issuance)
+                  .innerJoin(
+                    question_revision,
+                    eq(question_revision.revision_id, assessment_issuance.revision_id),
+                  )
+                  .where(eq(question_revision.group_id, scheduled.question_id)),
+              ),
+            ),
+          );
+      }
+      continue;
+    }
     const ready = kind === 'immediate' || followupsReady;
     if (scheduled.status === 'scheduled' && ready) {
+      // Admission can arrive after authoring. Only an unissued card is freshly
+      // released here; issued cards retain the submission/recovery lease above.
+      await tx
+        .update(question)
+        .set({ draft_status: 'active', updated_at: input.now })
+        .where(
+          and(
+            eq(question.id, scheduled.question_id),
+            eq(question.draft_status, 'draft'),
+            sql`NOT ${acceptedDiagnosticOriginal(tx)}`,
+            notExists(
+              tx
+                .select({ id: assessment_issuance.issuance_id })
+                .from(assessment_issuance)
+                .innerJoin(
+                  question_revision,
+                  eq(question_revision.revision_id, assessment_issuance.revision_id),
+                )
+                .where(eq(question_revision.group_id, scheduled.question_id)),
+            ),
+            notExists(
+              tx
+                .select({ id: event.id })
+                .from(event)
+                .where(
+                  and(
+                    eq(event.subject_kind, 'question'),
+                    eq(event.subject_id, scheduled.question_id),
+                    or(
+                      committedDiagnosticAttempt(tx),
+                      eq(event.action, JUDGE_PENDING_ATTEMPT_ACTION),
+                    ),
+                  ),
+                ),
+            ),
+          ),
+        );
       const dueAt = new Date(scheduled.due_at);
       const initial = initialFsrsState(dueAt);
       // A pre-fix installation may already have activation-anchored follow-up
@@ -521,7 +835,7 @@ export async function materializeInterventionDiagnostics(
     }
   }
 
-  if (settlement.diagnostics.immediate.status === 'scheduled') {
+  if (settlement.diagnostics.immediate.status === 'scheduled' && immediateAdmitted) {
     await appendImmediateDiagnosticToLiveStream(tx, {
       questionId: settlement.diagnostics.immediate.question_id,
       interventionId: snapshot.intervention_id,

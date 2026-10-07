@@ -12,7 +12,7 @@ export type AttemptTimelineEvent =
       kind: 'attempt';
       event_id: string;
       created_at_sec: number;
-      outcome: 'success' | 'failure' | 'partial';
+      outcome: 'success' | 'failure' | 'partial' | 'pending' | 'unsupported';
       duration_ms: number | null;
       cause: {
         primary: string;
@@ -48,16 +48,26 @@ const RATING_TONE: Record<'again' | 'hard' | 'good', 'again' | 'hard' | 'good'> 
   good: 'good',
 };
 
-const ATTEMPT_OUTCOME_LABEL: Record<'success' | 'failure' | 'partial', string> = {
+const ATTEMPT_OUTCOME_LABEL: Record<
+  'success' | 'failure' | 'partial' | 'pending' | 'unsupported',
+  string
+> = {
   success: '答对',
   failure: '答错',
   partial: '部分',
+  pending: '待评估',
+  unsupported: '未判分',
 };
 
-const ATTEMPT_OUTCOME_TONE: Record<'success' | 'failure' | 'partial', 'good' | 'again' | 'hard'> = {
+const ATTEMPT_OUTCOME_TONE: Record<
+  'success' | 'failure' | 'partial' | 'pending' | 'unsupported',
+  'good' | 'again' | 'hard' | 'info'
+> = {
   success: 'good',
   failure: 'again',
   partial: 'hard',
+  pending: 'info',
+  unsupported: 'info',
 };
 
 function formatRelative(seconds_sec: number, now_sec: number): string {

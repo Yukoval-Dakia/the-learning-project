@@ -13,10 +13,10 @@
 // enqueue gate are mocked so the send actually fires (the other appeal tests run
 // with shouldEnqueueBackgroundJobs() false and never reach the send).
 
-import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { event } from '@/db/schema';
+import { nativeAppealFixture } from '../../../../tests/fixtures/native-appeal';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 const bossSend = vi.fn(async () => 'rejudge-job-1');
@@ -34,25 +34,6 @@ vi.mock('@/server/runtime-env', async (orig) => ({
 import { REJUDGE_SINGLETON_SECONDS } from '@/capabilities/practice/jobs/rejudge-config';
 import { POST } from './appeal';
 
-async function seedJudgeEvent(): Promise<string> {
-  const id = createId();
-  await testDb()
-    .insert(event)
-    .values({
-      id,
-      session_id: null,
-      actor_kind: 'agent',
-      actor_ref: 'judge_runner',
-      action: 'judge',
-      subject_kind: 'event',
-      subject_id: 'attempt-evt-1',
-      outcome: 'success',
-      payload: { coarse_outcome: 'partial' },
-      caused_by_event_id: 'attempt-evt-1',
-    });
-  return id;
-}
-
 function makeReq(body: unknown): Request {
   return new Request('http://localhost/api/review/appeal', {
     method: 'POST',
@@ -68,8 +49,10 @@ describe('POST /api/review/appeal — rejudge enqueue dedup (YUK-491)', () => {
   });
 
   it('sends rejudge with singletonKey AND singletonSeconds (dedup actually engages)', async () => {
-    const judgeEventId = await seedJudgeEvent();
-    const res = await POST(makeReq({ judge_event_id: judgeEventId, reason_md: '我觉得对' }));
+    const { original } = await nativeAppealFixture(testDb(), { model: false });
+    const res = await POST(
+      makeReq({ evaluation_id: original.evaluation_id, reason_md: '我觉得对' }),
+    );
     expect(res.status).toBe(200);
     const { appeal_event_id } = (await res.json()) as { appeal_event_id: string };
 
@@ -84,5 +67,8 @@ describe('POST /api/review/appeal — rejudge enqueue dedup (YUK-491)', () => {
     // on a row that exists).
     const [appealEvt] = await testDb().select().from(event).where(eq(event.id, appeal_event_id));
     expect(appealEvt.action).toBe('experimental:appeal_request');
+    expect(appealEvt.subject_kind).toBe('evaluation');
+    expect(appealEvt.subject_id).toBe(original.evaluation_id);
+    expect(appealEvt.payload.expected_effective_id).toBe(original.evaluation_id);
   });
 });

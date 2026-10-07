@@ -34,7 +34,13 @@ vi.mock('@/kernel/events', () => ({
   }),
 }));
 
-import { __resolveMirrorPolicy, shouldEmitToolUseForCaller } from './mcp-bridge';
+import { writeEvent } from '@/kernel/events';
+import { setToolCallLogMirroredEventId, writeToolCallLog } from '@/server/ai/log';
+import {
+  __resolveMirrorPolicy,
+  executeDomainToolCall,
+  shouldEmitToolUseForCaller,
+} from './mcp-bridge';
 import { buildPiDomainAgentTools } from './pi-tools';
 
 function makeReadTool<I, O>(
@@ -1605,4 +1611,127 @@ describe('shouldEmitToolUseForCaller — live tool_use gate (YUK-457)', () => {
       true,
     );
   });
+});
+
+describe('DomainTool phase ordering contract', () => {
+  it.each([false, true])(
+    'settles after every observation and persistence phase, with bookkeeping failure=%s',
+    async (failBookkeeping) => {
+      const order: string[] = [];
+      const observations: Record<string, unknown> = {};
+      const original = {
+        query: '  Explain necessity vs sufficiency with a counterexample.  ',
+        limit: 8,
+      };
+      const parsed = { ...original, query: original.query.trim() };
+      const executed = { ...parsed, limit: 2 };
+      const note = { level: 'warning', dimensions: { characters: 1200, calls: 4 } };
+      const tool: DomainTool<unknown, unknown> = {
+        name: 'phase_order',
+        description: 'phase ordering characterization',
+        effect: 'read',
+        costClass: 'local',
+        mirrorEvent: 'always',
+        inputSchema: z
+          .object({ query: z.string().trim(), limit: z.number() })
+          .transform((value) => {
+            order.push('parse');
+            return value;
+          }),
+        outputSchema: z.object({ evidence: z.array(z.string()) }).transform((value) => {
+          order.push('schema');
+          return { ...value, count: value.evidence.length };
+        }),
+        execute: async (_ctx, input) => {
+          order.push('execute');
+          expect(input).toEqual(executed);
+          return {
+            evidence: [
+              'A implies B; the converse needs its own proof.',
+              'Take a square and a rectangle.',
+            ],
+          };
+        },
+        summarize: (input, output) => {
+          order.push('summary');
+          expect(input).toEqual(parsed);
+          expect(output).toMatchObject({ count: 2, context_budget: note });
+          return 'two evidence statements';
+        },
+      };
+      vi.mocked(writeToolCallLog).mockImplementationOnce(async (_db, row) => {
+        order.push('log');
+        observations.loggedInput = row.input_json;
+        if (failBookkeeping) throw new Error('log unavailable');
+        return 'phase-log';
+      });
+      vi.mocked(writeEvent).mockImplementationOnce(async (_db, row) => {
+        order.push('mirror');
+        observations.mirroredPayload = row.payload;
+        if (failBookkeeping) throw new Error('mirror unavailable');
+        return row.id ?? 'phase-event';
+      });
+      if (!failBookkeeping)
+        vi.mocked(setToolCallLogMirroredEventId).mockImplementationOnce(async () => {
+          order.push('mirror-link');
+        });
+      const response = await executeDomainToolCall(tool, original, {
+        ctx,
+        correlatedToolUseId: 'call-phase-order',
+        beforeExecute: () => {
+          order.push('gate');
+        },
+        interceptInput: (_gate, input) => {
+          order.push('intercept');
+          expect(input).toEqual(parsed);
+          return { args: executed, truncationNote: note };
+        },
+        onExecuteStart: () => {
+          order.push('start');
+        },
+        onResult: (result) => {
+          order.push('result');
+          observations.resultInput = result.input;
+          observations.resultOutput = result.output;
+          if (failBookkeeping) throw new Error('observer unavailable');
+        },
+        onToolComplete: (result) => {
+          order.push('complete');
+          observations.completeInput = result.input;
+          if (failBookkeeping) throw new Error('visibility unavailable');
+        },
+        onExecuteSettled: () => {
+          order.push('settle');
+          if (failBookkeeping) throw new Error('settlement observer unavailable');
+        },
+      });
+      expect(observations).toMatchObject({
+        loggedInput: parsed,
+        mirroredPayload: { args: parsed },
+        resultInput: executed,
+        resultOutput: { count: 2, context_budget: note },
+        completeInput: executed,
+      });
+      expect(order).toEqual([
+        'parse',
+        'gate',
+        'intercept',
+        'start',
+        'execute',
+        'schema',
+        'result',
+        'summary',
+        'complete',
+        'log',
+        'mirror',
+        ...(!failBookkeeping ? ['mirror-link'] : []),
+        'settle',
+      ]);
+      expect(JSON.parse(response.content[0].text)).toMatchObject({
+        summary: 'two evidence statements',
+        tool_use_id: 'call-phase-order',
+        output: { count: 2, context_budget: note },
+      });
+    },
+  );
 });

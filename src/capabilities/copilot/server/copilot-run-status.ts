@@ -25,11 +25,7 @@ export const COPILOT_RUN_EVENTS = {
   EXECUTION_STARTED: 'copilot_run.execution_started',
   /** 回合/进度心跳（工具步进等；v1 保留为 forward-compat 进度槽）。 */
   STEP: 'copilot_run.step',
-  /**
-   * YUK-575/YUK-832 — 文本增量。durable handler 先缓冲 candidate；最终证据审阅后，
-   * marker 记下是否有正文，settlement projection 再把一条 reviewed full-text delta 与
-   * REPLY/DONE 或 FAILED 同事务写入（严格在 terminal 前且可由 redelivery 修复）。非终态。
-   */
+  /** Root provider prose increments. Nonterminal; REPLY/FAILED authoritatively replaces the draft. */
   DELTA: 'copilot_run.delta',
   /** 终稿 reply 文本就位（done 的前序，分开以便流式消费者先渲染 reply 再收 done）。 */
   REPLY: 'copilot_run.reply',

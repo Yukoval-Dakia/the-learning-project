@@ -14,6 +14,7 @@ import {
   IssueAssessmentBodySchema,
   SaveResponseDraftBodySchema,
   SaveResponseDraftResponseSchema,
+  StudyReferenceResponseSchema,
   SubmissionCreatedSchema,
 } from './api/assessment-contracts';
 import {
@@ -138,6 +139,12 @@ export const practiceCapability = defineCapability({
       // Canonical judge publisher (submit + rejudge); Agency consumes trusted
       // verdicts for intervention settlement.
       'judge',
+      // Native head transitions are the authoritative trigger for diagnostic consumers.
+      'experimental:assessment_activation',
+      'experimental:assessment_publish',
+      'experimental:assessment_attempt',
+      'experimental:assessment_feedback_released',
+      'experimental:assessment_placement_issued',
       'experimental:judge_calibration_sample',
       'experimental:judge_calibration_run_summary',
       'experimental:hint_request',
@@ -152,8 +159,13 @@ export const practiceCapability = defineCapability({
     handlers: [
       {
         id: 'practice.failure-learning-attempt',
-        version: 1,
-        actions: ['attempt'],
+        version: 3,
+        actions: [
+          'attempt',
+          'experimental:assessment_attempt',
+          'experimental:assessment_activation',
+          'experimental:assessment_feedback_released',
+        ],
         load: () =>
           import('./server/failure-learning-subscription').then(
             (m) => m.buildFailureLearningAttemptSubscriber,
@@ -845,6 +857,15 @@ export const practiceCapability = defineCapability({
         },
         successStatus: [200, 201],
         load: () => import('./api/assessment-route').then((m) => m.createSubmission),
+      },
+      {
+        method: 'POST',
+        path: '/api/issuances/[id]/reference-reveals',
+        operationId: 'revealStudyReference',
+        request: { params: IssuanceParamsSchema },
+        responses: { 200: StudyReferenceResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        load: () => import('./api/assessment-route').then((m) => m.revealStudyReference),
       },
     ],
   },

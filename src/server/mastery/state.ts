@@ -595,12 +595,9 @@ export function splitProjectionEdgeRows(rows: ProjectionEdgeRow[]): {
 }
 
 export async function getMasteryProjection(
-  // PR #468 finding E — display/AI read-side projection: every caller passes a
-  // full Db (node-page / tree / detail / knowledge-readers all
-  // hold a Db, never a Tx). Unlike getMasteryState / upsertMasteryState (which run
-  // inside updateThetaForAttempt's attempt Tx and so keep DbLike), this never runs
-  // in a transaction, so the param is the concrete Db — no Db|Tx ambiguity.
-  db: Db,
+  // Read inside activation as well as display requests, so progress telemetry
+  // observes this occurrence before any later settlements are replayed.
+  db: DbLike,
   knowledgeIds: string[],
   subjectKind = 'knowledge',
 ): Promise<Map<string, MasteryProjection>> {
@@ -699,7 +696,7 @@ export async function getMasteryProjection(
  * runs only when at least one of A5/A6 is enabled.
  */
 async function applyKgSoftLayer(
-  db: Db,
+  db: DbLike,
   requestedIds: string[],
   observedRows: Array<typeof mastery_state.$inferSelect>,
   projection: Map<string, MasteryProjection>,
@@ -866,7 +863,7 @@ async function applyKgSoftLayer(
  * in the final node set.
  */
 async function loadEdgesForProjection(
-  db: Db,
+  db: DbLike,
   kcIds: string[],
 ): Promise<{ symmetric: SymmetricEdge[]; directed: DirectedEdge[] }> {
   const edgeRows = await db
@@ -913,7 +910,7 @@ async function loadEdgesForProjection(
  * never writes any b column (item-half locked, G4).
  */
 export async function getRepresentativeKcBeta(
-  db: Db,
+  db: DbLike,
   knowledgeIds: string[],
 ): Promise<Map<string, number>> {
   const ids = Array.from(new Set(knowledgeIds.filter((id) => id.length > 0)));
@@ -928,7 +925,7 @@ export async function getRepresentativeKcBeta(
     ids.map((id) => sql`${id}`),
     sql`, `,
   );
-  const rows = (await db.execute(sql`
+  const rows = await db.execute<{ kc: string; beta: number | null }>(sql`
     SELECT
       kc,
       percentile_cont(0.5) WITHIN GROUP (
@@ -940,7 +937,7 @@ export async function getRepresentativeKcBeta(
       AND ic.track = 'hard'
       AND COALESCE(ic.b_calib, ic.b_anchor, ic.b) IS NOT NULL
     GROUP BY kc
-  `)) as unknown as Array<{ kc: string; beta: number | null }>;
+  `);
   const map = new Map<string, number>();
   for (const r of rows) {
     if (r.beta !== null && r.beta !== undefined) {

@@ -1,8 +1,12 @@
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { resolve } from 'node:path';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import { buildSync } from 'esbuild';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { __setTraceExporterForTests } from '@/server/ai/laminar-tracing';
+import { memoryTraceExporter } from '@/server/ai/laminar-tracing.test-support';
 import { installApiShutdown } from './shutdown';
 
 describe('API shutdown deadlines', () => {
@@ -19,10 +23,42 @@ describe('API shutdown deadlines', () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
   });
   afterEach(() => {
+    __setTraceExporterForTests();
     handlers.clear();
     vi.clearAllTimers();
     vi.useRealTimers();
     vi.restoreAllMocks();
+  });
+
+  it('flushes after drain and exits within 500ms even if telemetry never responds', async () => {
+    const order: string[] = [];
+    const { exporter } = memoryTraceExporter();
+    __setTraceExporterForTests({
+      ...exporter,
+      flush: () => {
+        order.push('flush');
+        return new Promise<void>(() => {});
+      },
+    });
+    installApiShutdown(
+      {
+        close: (done) => {
+          order.push('http');
+          done();
+        },
+      },
+      async () => {
+        order.push('runtime');
+      },
+    );
+    const stopping = handlers.get('SIGTERM')?.('SIGTERM');
+    await vi.advanceTimersByTimeAsync(499);
+    expect(order).toEqual(['http', 'runtime', 'flush']);
+    expect(process.exit).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    await stopping;
+    expect(process.exit).toHaveBeenCalledExactlyOnceWith(0);
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('cuts off an open transport after 30s, then releases runtime exactly once', async () => {
@@ -86,7 +122,10 @@ it('real SIGTERM stops admission but lets an in-flight HTTP response finish befo
     bundle: true,
     write: false,
   }).outputFiles[0].text;
-  const child = spawn(process.execPath, ['-e', code], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+  const sandbox = mkdtempSync(join(tmpdir(), 'shutdown-signal-'));
+  const entry = join(sandbox, 'shutdown.cjs');
+  writeFileSync(entry, code);
+  const child = spawn(process.execPath, [entry], { stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
   const exited = once(child, 'exit');
   try {
     const [ready] = await once(child, 'message');
@@ -115,5 +154,6 @@ it('real SIGTERM stops admission but lets an in-flight HTTP response finish befo
   } finally {
     if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
     await exited;
+    rmSync(sandbox, { recursive: true, force: true });
   }
 });

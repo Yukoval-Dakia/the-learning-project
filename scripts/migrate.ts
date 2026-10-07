@@ -12,7 +12,7 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
-import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
+import { seedKnowledge } from '@/capabilities/knowledge/public';
 import * as schema from '@/db/schema';
 import { reconcileBuiltinTraits } from '@/server/subjects/reconcile-builtin-traits';
 
@@ -34,9 +34,7 @@ async function main(): Promise<void> {
 
     // YUK-951: refuse to strand an unverified installation's old mailbox work.
     // Resolve only after the explicit DATABASE_URL is bound; this guard is read-only.
-    const { assertCopilotLegacyDrained } = await import(
-      '../src/capabilities/copilot/server/legacy-drain-readiness'
-    );
+    const { assertCopilotLegacyDrained } = await import('@/capabilities/copilot/public');
     await assertCopilotLegacyDrained(db);
     console.log('[migrate] Copilot legacy drain readiness: clear');
 

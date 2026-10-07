@@ -21,6 +21,7 @@
 import { sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
+import { traceOperation } from '@/server/ai/laminar-tracing';
 import {
   CODE_CONTRACT_EPOCH,
   ContractEpochFenceError,
@@ -110,13 +111,22 @@ export function fenceAwareJobHandler<J extends Job>(
   queue: string,
   handler: JobHandler<J>,
 ): JobHandler<J> {
-  return async (jobs: J[]) => {
-    for (const job of jobs) {
-      const fence = await gateJobDelivery(db, queue, job);
-      if (fence) throw fence;
-    }
-    return handler(jobs);
-  };
+  return async (jobs: J[]) =>
+    traceOperation(
+      'job.run',
+      {
+        job_name: queue,
+        job_id: jobs.length === 1 ? jobs[0].id : undefined,
+        batch_size: jobs.length,
+      },
+      async () => {
+        for (const job of jobs) {
+          const fence = await gateJobDelivery(db, queue, job);
+          if (fence) throw fence;
+        }
+        return handler(jobs);
+      },
+    );
 }
 
 // ───────────────────────── outstanding 处置报告（YUK-1042 衔接） ─────────────────────────

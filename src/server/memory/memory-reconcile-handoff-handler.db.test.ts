@@ -14,6 +14,7 @@ function ingestJob(eventId: string): Job<{ event_id: string }> {
     data: { event_id: eventId },
     expireInSeconds: 60,
     heartbeatSeconds: null,
+    retryCount: 0,
     signal: new AbortController().signal,
   };
 }
@@ -86,6 +87,49 @@ describe('memory reconcile ingest handoff modes and crashes', () => {
     expect(kinds.includes('reconcile_intent')).toBe(fixture.persistsIntents);
     expect(kinds.includes('reconcile_dispatch_complete')).toBe(fixture.persistsIntents);
   });
+
+  it.each(['observe', 'write', 'recover', 'drain'] as const)(
+    'handles an unconfirmed null enqueue in %s without confusing drain with observe',
+    async (mode) => {
+      const sourceId = `null-${mode}`;
+      const handler = buildMemoryEventIngestHandler(
+        testDb(),
+        {
+          send: vi.fn(async () => null),
+          getJobById: vi.fn(async () => null),
+        },
+        {
+          handoffMode: mode,
+          loadEvent: async () => sourceEvent(sourceId),
+          memoryClient: memoryClientMock({
+            addEventMemoryOnce: async (_row, _operation, beforeAdd) => {
+              await beforeAdd();
+              return {
+                resolution: 'provider_result',
+                result: {
+                  results: [
+                    {
+                      id: 'burst-memory',
+                      memory: 'A long-lived fact survives the singleton slot collision.',
+                    },
+                  ],
+                },
+              };
+            },
+          }),
+        },
+      );
+      if (mode === 'observe') await expect(handler([ingestJob(sourceId)])).resolves.toBeUndefined();
+      else await expect(handler([ingestJob(sourceId)])).rejects.toThrow(/enqueue unconfirmed/);
+      const records = await testDb().select().from(event).where(eq(event.subject_id, sourceId));
+      expect(
+        records.filter((row) => row.payload?.handoff_kind === 'reconcile_observe_skipped'),
+      ).toHaveLength(mode === 'observe' ? 1 : 0);
+      expect(
+        records.some((row) => row.payload?.handoff_kind === 'reconcile_dispatch_complete'),
+      ).toBe(false);
+    },
+  );
 
   it('allows only one generic handler through the provider boundary after concurrent lookup misses', async () => {
     const db = testDb();

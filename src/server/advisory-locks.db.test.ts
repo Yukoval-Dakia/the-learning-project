@@ -48,6 +48,8 @@ import {
   upsertMasteryState,
 } from '@/server/mastery/state';
 import { backfillKnowledgeGenesis } from '../../scripts/backfill-genesis-events';
+import { issueSoloFixture } from '../../tests/fixtures/assessment-solo';
+import { nativeSoloHttpFixture } from '../../tests/fixtures/native-solo-http';
 import { resetDb, testDb } from '../../tests/helpers/db';
 
 // The contended production writer must stay blocked at least this long. Unobstructed,
@@ -72,7 +74,7 @@ async function seedKnowledge(id: string) {
     .onConflictDoNothing();
 }
 
-async function seedQuestion(id: string, knowledgeIds: string[]) {
+async function seedQuestion(id: string, knowledgeIds: string[], exact = false) {
   const now = new Date();
   await testDb()
     .insert(question)
@@ -80,7 +82,8 @@ async function seedQuestion(id: string, knowledgeIds: string[]) {
       id,
       kind: 'short_answer',
       prompt_md: `Prompt ${id}`,
-      reference_md: null,
+      reference_md: exact ? 'true' : null,
+      judge_kind_override: exact ? 'exact' : null,
       knowledge_ids: knowledgeIds,
       difficulty: 3,
       source: 'manual',
@@ -108,8 +111,9 @@ async function assertBlocksOnGlobalLock<T>(contended: () => Promise<T>): Promise
   const url = process.env.TEST_DATABASE_URL;
   if (!url) throw new Error('TEST_DATABASE_URL not set — globalSetup did not run');
   const holder = postgres(url, { max: 1 });
+  let release: (() => void) | undefined;
+  let drain = async () => {};
   try {
-    let release!: () => void;
     const released = new Promise<void>((r) => {
       release = r;
     });
@@ -122,21 +126,29 @@ async function assertBlocksOnGlobalLock<T>(contended: () => Promise<T>): Promise
       acquired();
       await released;
     });
+    drain = async () => {
+      await Promise.allSettled([holdTx]);
+    };
     await acquiredP;
 
     let settled = false;
     const contendedP = contended().finally(() => {
       settled = true;
     });
+    drain = async () => {
+      await Promise.allSettled([holdTx, contendedP]);
+    };
     // Swallow nothing: a rejection settles too and fails the pending assertion below
     // (and re-throws when awaited at the end).
     await new Promise((r) => setTimeout(r, LOCK_PROBE_MS));
     expect(settled).toBe(false);
 
-    release();
+    release?.();
     await holdTx;
     return await contendedP;
   } finally {
+    release?.();
+    await drain();
     await holder.end({ timeout: 5 });
   }
 }
@@ -344,12 +356,11 @@ describe('YUK-497 — global learning-state write lock (two-connection regressio
 
   it('the LIVE /api/review/submit route blocks behind the global lock, then lands its FSRS/θ̂ writes', async () => {
     const kc = newId();
-    const qId = newId();
     await seedKnowledge(kc);
-    await seedQuestion(qId, [kc]);
+    const fixture = await nativeSoloHttpFixture(testDb(), { knowledgeIds: [kc] });
 
     const res = await assertBlocksOnGlobalLock(() =>
-      submitPOST(submitReq({ mistake_id: qId, rating: 'good', latency_ms: 1200 })),
+      submitPOST(submitReq(fixture.body({ latency_ms: 1200 }))),
     );
     expect(res.status).toBeLessThan(300);
 
@@ -508,22 +519,26 @@ describe('YUK-497 — global learning-state write lock (two-connection regressio
     const qId = newId();
     await seedKnowledge(kcA);
     await seedKnowledge(kcB);
-    // Question labelled {a,b}; the submit body requests only {b}, so the route's
-    // per-subject FSRS pre-locks cover the SUBSET {b} while updateThetaForAttempt
-    // later locks the SUPERSET {a,b} — the exact pre-fix deadlock shape against a
-    // sorted {a,b} acquirer.
-    await seedQuestion(qId, [kcA, kcB]);
+    // Keep the original caller subset {b} against the frozen scope {a,b} and the
+    // real merge writers. Native settlement owns both scheduling and theta scope.
+    await seedQuestion(qId, [kcA, kcB], true);
 
     for (let i = 0; i < 6; i++) {
       __resetRateLimitForTests();
+      const issued = await issueSoloFixture(testDb(), qId);
       const submitShaped = submitPOST(
         submitReq({
-          mistake_id: qId,
+          question_id: qId,
+          assessment: issued.assessment(i % 2 === 0 ? 'true' : 'false'),
           rating: i % 2 === 0 ? 'good' : 'again',
           referenced_knowledge_ids: [kcB],
         }),
       ).then((res) => {
         expect(res.status).toBeLessThan(300);
+        return res.json().then((body) => {
+          expect(body.status).toBe('effective');
+          expect(body.judge.coarse_outcome).toBe(i % 2 === 0 ? 'correct' : 'incorrect');
+        });
       });
       const mergeShaped = testDb().transaction(async (tx) => {
         // Real merge writers, sorted-{a,b} acquisition (fsrs:knowledge namespace).

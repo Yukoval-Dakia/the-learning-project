@@ -93,7 +93,7 @@ const inputSchema = z.object({
   /** 归属质量：matched = hint/推理命中具体节点；coarse = 兜底挂科目根（树长大后重归因）。 */
   attribution_state: z.enum(['matched', 'coarse']).default('matched'),
   /** loom subject id（whitelist_match 判定的 profile 来源，如 'math'）。 */
-  subject_id: z.string().trim().min(1).default('math'),
+  subject_id: z.string().trim().min(1),
   supply_trace: SupplyTraceV1.optional(),
   /** 需求台账关联（YUK-698 EvidenceDemand；E2 接上 planner 后传入）。 */
   demand_id: z.string().min(1).optional(),
@@ -416,6 +416,7 @@ export const storeSourcedQuestionTool: DomainTool<Input, Output> = {
   description:
     '把一道来源候选题（jyeoo_fetch_candidates 产出）提交进题池草稿层。' +
     '服务端强制 dedup（exact+near）与知识节点活体校验；成功即挂 source_verify 链（过闸才转 active）。' +
+    '必须显式提供 subject_id，用于该学科的来源白名单；' +
     'rejected 候选不要重试；知识归属用 knowledge_ids + attribution_state 声明。',
   effect: 'write',
   inputSchema,

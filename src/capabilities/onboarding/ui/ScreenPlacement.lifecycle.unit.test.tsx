@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { placementStartFixture } from './placement-fixtures';
 import ScreenPlacement from './ScreenPlacement';
 
 const mocks = vi.hoisted(() => ({
@@ -12,28 +13,22 @@ const mocks = vi.hoisted(() => ({
   startPlacement: vi.fn(),
   submitProbeAnswer: vi.fn(),
   getQuestion: vi.fn(),
+  getPlacementSession: vi.fn(),
+  saveResponseDraft: vi.fn(),
 }));
 
 vi.mock('./placement-api', () => mocks);
 
 vi.mock('@/capabilities/practice/ui/practice-api', async (importActual) => {
   const actual = await importActual<typeof import('@/capabilities/practice/ui/practice-api')>();
-  return { ...actual, getQuestion: mocks.getQuestion };
+  return { ...actual, getQuestion: mocks.getQuestion, saveResponseDraft: mocks.saveResponseDraft };
 });
 
-const TEXT_QUESTION = {
-  id: 'q1',
-  kind: 'short',
-  prompt_md: '用一句话解释导数。',
-  choices_md: [],
-  labels: [{ id: 'kn_1', name: '导数' }],
-};
-
-function renderPlacement() {
+function renderPlacement(navigate = vi.fn()) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <ScreenPlacement navigate={vi.fn()} />
+      <ScreenPlacement navigate={navigate} />
     </QueryClientProvider>,
   );
 }
@@ -48,12 +43,13 @@ beforeEach(() => {
     sourcingNeeded: true,
   });
   mocks.placementEnd.mockResolvedValue({ ok: true });
+  mocks.saveResponseDraft.mockResolvedValue({ save_epoch: 1 });
 });
 
 afterEach(cleanup);
 
 describe('ScreenPlacement session lifecycle (YUK-211)', () => {
-  it('abandons the active probe with keepalive on pagehide, without duplicate PATCHes', async () => {
+  it('retains the active probe on ordinary pagehide for refresh recovery', async () => {
     render(<ScreenPlacement navigate={vi.fn()} />);
     expect(await screen.findByText('备题中 · 子图还冷')).toBeDefined();
 
@@ -62,12 +58,8 @@ describe('ScreenPlacement session lifecycle (YUK-211)', () => {
       window.dispatchEvent(new Event('pagehide'));
     });
 
-    await waitFor(() =>
-      expect(mocks.placementEnd).toHaveBeenCalledWith('placement_1', 'abandoned', {
-        keepalive: true,
-      }),
-    );
-    expect(mocks.placementEnd).toHaveBeenCalledTimes(1);
+    expect(mocks.placementEnd).not.toHaveBeenCalled();
+    expect(window.location.search).toContain('session=placement_1');
   });
 
   it('keeps a probe active while the page is only suspended in bfcache', async () => {
@@ -108,31 +100,68 @@ describe('ScreenPlacement session lifecycle (YUK-211)', () => {
     expect(navigate).toHaveBeenCalledWith('/onboarding/upload');
   });
 
-  it('abandons the probe when submit succeeds but next fails — no duplicate submit (YUK-895 quality lane)', async () => {
-    mocks.startPlacement.mockResolvedValue({
-      sessionId: 'placement_1',
-      knowledgeIds: ['kn_1'],
-      question: { questionId: 'q1' },
-      sourcingNeeded: false,
-    });
-    mocks.getQuestion.mockResolvedValue(TEXT_QUESTION);
-    mocks.submitProbeAnswer.mockResolvedValue({ ok: true });
-    mocks.placementNext.mockRejectedValueOnce(new Error('network down'));
+  it('waits for a successful completion transition before profile navigation', async () => {
+    mocks.startPlacement.mockResolvedValue(placementStartFixture());
+    mocks.submitProbeAnswer.mockResolvedValue({ status: 'effective' });
+    mocks.placementNext.mockResolvedValue({ done: true, answeredCount: 1, reason: 'cap' });
+    let finish: (() => void) | undefined;
+    mocks.placementEnd.mockReturnValue(
+      new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    );
+    const navigate = vi.fn();
+    renderPlacement(navigate);
     const user = userEvent.setup();
-    renderPlacement();
-
     await screen.findByText('用一句话解释导数。');
-    const answer = screen.getByRole('textbox', { name: '作答' });
-    await user.type(answer, '导数表示变化率');
+    await user.type(screen.getByRole('textbox', { name: '作答' }), '导数表示变化率');
     await user.click(screen.getByRole('button', { name: '下一题' }));
-
-    // Partial-success window: the attempt WAS recorded, but the probe is abandoned
-    // (judgefail, no retry path) — the same question can never be re-submitted.
-    expect(await screen.findByText(/评分管道暂时不可用/)).toBeTruthy();
-    expect(mocks.submitProbeAnswer).toHaveBeenCalledTimes(1);
-    expect(mocks.placementNext).toHaveBeenCalledTimes(1);
-    expect(mocks.placementEnd).toHaveBeenCalledWith('placement_1', 'abandoned', {
+    await screen.findByText('正在收紧你的画像…');
+    expect(mocks.placementEnd).toHaveBeenCalledWith('placement_1', 'completed', {
       keepalive: false,
     });
+    expect(navigate).not.toHaveBeenCalled();
+    await act(async () => finish?.());
+    await waitFor(() => expect(navigate).toHaveBeenCalledWith('/profile?goal=goal_1'));
+  });
+
+  it('retains the session and offers recovery when completion fails', async () => {
+    mocks.startPlacement.mockResolvedValue(placementStartFixture());
+    mocks.submitProbeAnswer.mockResolvedValue({ status: 'effective' });
+    mocks.placementNext.mockResolvedValue({ done: true, answeredCount: 1, reason: 'cap' });
+    mocks.placementEnd.mockRejectedValue(new Error('completion unavailable'));
+    const navigate = vi.fn();
+    renderPlacement(navigate);
+    const user = userEvent.setup();
+    await screen.findByText('用一句话解释导数。');
+    await user.type(screen.getByRole('textbox', { name: '作答' }), '导数表示变化率');
+    await user.click(screen.getByRole('button', { name: '下一题' }));
+    await screen.findByText('completion unavailable');
+    expect(navigate).not.toHaveBeenCalled();
+    expect(window.location.search).toContain('session=placement_1');
+    expect(screen.getByRole('button', { name: '重试' })).toBeDefined();
+  });
+
+  it('retains an accepted answer when next fails and queries again without duplicate submit', async () => {
+    mocks.startPlacement.mockResolvedValue(placementStartFixture());
+    mocks.submitProbeAnswer.mockResolvedValue({ status: 'effective' });
+    mocks.placementNext
+      .mockRejectedValueOnce(new Error('network down'))
+      .mockResolvedValueOnce({ done: true, answeredCount: 1, reason: 'cap' });
+    const user = userEvent.setup();
+    renderPlacement();
+    await screen.findByText('用一句话解释导数。');
+    await user.type(screen.getByRole('textbox', { name: '作答' }), '导数表示变化率');
+    await user.click(screen.getByRole('button', { name: '下一题' }));
+    await screen.findByText('等待确认作答状态');
+    expect(mocks.submitProbeAnswer).toHaveBeenCalledTimes(1);
+    expect(mocks.placementEnd).not.toHaveBeenCalled();
+    await user.click(screen.getByRole('button', { name: '重新查询状态' }));
+    await waitFor(() =>
+      expect(mocks.placementEnd).toHaveBeenCalledWith('placement_1', 'completed', {
+        keepalive: false,
+      }),
+    );
+    expect(mocks.submitProbeAnswer).toHaveBeenCalledTimes(1);
   });
 });

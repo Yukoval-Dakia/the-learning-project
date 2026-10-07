@@ -60,9 +60,11 @@ export function AttachmentStrip({
               </span>
             )}
             <span className="rs-attach-bind">
-              {att.slot_ids === null
-                ? '整组'
-                : att.slot_ids.map((id) => slotLabel(slotLabels, id)).join('、') || '未绑定'}
+              {att.originalTarget?.scope === 'units'
+                ? '已保存的局部范围'
+                : att.slot_ids === null
+                  ? '整组'
+                  : att.slot_ids.map((id) => slotLabel(slotLabels, id)).join('、') || '未绑定'}
             </span>
             {onRemove && (
               <button

@@ -9,7 +9,7 @@
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { enqueueNoteRefineTrigger } from '@/capabilities/notes/server/note-refine-triggers';
+import { enqueueNoteRefineTrigger } from '@/capabilities/notes/public';
 import {
   MASTERY_PROGRESS_ACTION,
   emitMasteryProgressSignal,

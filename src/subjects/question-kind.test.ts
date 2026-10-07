@@ -96,6 +96,12 @@ describe('questionKindToSkillKind (canonical → representative skill key)', () 
     expect(questionKindToSkillKind('fill_blank')).toBe('fill_blank');
     expect(questionKindToSkillKind('essay')).toBe('essay');
   });
+
+  it('preserves free-form labels in both directions', () => {
+    const label = '跨材料证据比较';
+    expect(questionKindToSkillKind(label)).toBe(label);
+    expect(skillKindToQuestionKind(questionKindToSkillKind(label))).toBe(label);
+  });
 });
 
 describe('canonicalKindToPersistedForms (YUK-288 题型 filter expansion)', () => {

@@ -1,23 +1,23 @@
-// ADR-0013 — POST /api/review/sessions creates a review session.
+// ADR-0013 — POST /api/review-sessions creates a review session.
 
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { learning_session } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { POST } from './sessions';
+import { POST } from './review-sessions';
 
 function req() {
-  return new Request('http://localhost/api/review/sessions', { method: 'POST' });
+  return new Request('http://localhost/api/review-sessions', { method: 'POST' });
 }
 
-describe('POST /api/review/sessions', () => {
+describe('POST /api/review-sessions', () => {
   beforeEach(async () => {
     await resetDb();
   });
 
   it('creates a learning_session(type=review, status=started)', async () => {
-    const res = await POST();
-    expect(res.status).toBe(200);
+    const res = await POST(req());
+    expect(res.status).toBe(201);
     const body = (await res.json()) as { session_id: string };
     expect(body.session_id).toBeTruthy();
 
@@ -33,8 +33,8 @@ describe('POST /api/review/sessions', () => {
   });
 
   it('returns a fresh session id each call', async () => {
-    const a = (await (await POST()).json()) as { session_id: string };
-    const b = (await (await POST()).json()) as { session_id: string };
+    const a = (await (await POST(req())).json()) as { session_id: string };
+    const b = (await (await POST(req())).json()) as { session_id: string };
     expect(a.session_id).not.toBe(b.session_id);
 
     const db = testDb();
@@ -44,7 +44,4 @@ describe('POST /api/review/sessions', () => {
       .where(and(eq(learning_session.type, 'review'), eq(learning_session.status, 'started')));
     expect(rows.length).toBeGreaterThanOrEqual(2);
   });
-
-  // suppress unused-import lint
-  void req;
 });

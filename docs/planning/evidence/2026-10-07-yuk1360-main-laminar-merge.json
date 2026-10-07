@@ -1,0 +1,483 @@
+{
+  "issue": "YUK-1360",
+  "stage": "source integration of main Laminar after historical reviewed head",
+  "mergeParents": [
+    "784b80ac023df71de88309ab118fdcc06155fdad",
+    "a86d4e633a67f802554ae114387ab06b7110c135"
+  ],
+  "node": "24.19.0",
+  "pnpm": "11.13.1",
+  "packageJsonSha256": "2a549b558f9d6c906526671c7bf2158c95e5d3c9125ccf0ff832a395aa866d5e",
+  "pnpmLockSha256": "d08165d50c3f07de9cc37ef86f7af985e17fce29f8f8000fe2decc6af4e04cc0",
+  "workspaceSettingsSha256": "2fb50fd61a912db98be0c7908d825d5117569a695dc3679ff60e84cd7daf149e",
+  "mem0PatchHash": "858dc62f5cb028767f44e081b4e6713f302c6a47e760f21c403b62a43ec969e7",
+  "lockSemantic": {
+    "upgrades": {
+      "dependencies": [
+        {
+          "name": "@anthropic-ai/sdk",
+          "specifier": "^0.131.0",
+          "version": "0.131.0(zod@4.6.5)"
+        },
+        {
+          "name": "@aws-sdk/client-s3",
+          "specifier": "^3.1146.0",
+          "version": "3.1146.0"
+        },
+        {
+          "name": "@hono/node-server",
+          "specifier": "^2.1.3",
+          "version": "2.1.3(hono@4.13.12)"
+        },
+        {
+          "name": "@tanstack/react-query",
+          "specifier": "^5.104.1",
+          "version": "5.104.1(react@19.3.0)"
+        },
+        {
+          "name": "@tanstack/react-router",
+          "specifier": "^1.170.41",
+          "version": "1.170.41(react-dom@19.3.0(react@19.3.0))(react@19.3.0)"
+        },
+        {
+          "name": "@tiptap/core",
+          "specifier": "^3.31.4",
+          "version": "3.31.4(@tiptap/pm@3.31.4)"
+        },
+        {
+          "name": "@tiptap/extension-link",
+          "specifier": "^3.31.4",
+          "version": "3.31.4(@tiptap/core@3.31.4(@tiptap/pm@3.31.4))(@tiptap/pm@3.31.4)"
+        },
+        {
+          "name": "@tiptap/pm",
+          "specifier": "^3.31.4",
+          "version": "3.31.4"
+        },
+        {
+          "name": "@tiptap/react",
+          "specifier": "^3.31.4",
+          "version": "3.31.4(@floating-ui/dom@1.8.0)(@tiptap/core@3.31.4(@tiptap/pm@3.31.4))(@tiptap/pm@3.31.4)(@types/react-dom@19.3.0(@types/react@19.3.0))(@types/react@19.3.0)(react-dom@19.3.0(react@19.3.0))(react@19.3.0)"
+        },
+        {
+          "name": "@tiptap/starter-kit",
+          "specifier": "^3.31.4",
+          "version": "3.31.4"
+        },
+        {
+          "name": "@tiptap/suggestion",
+          "specifier": "^3.31.4",
+          "version": "3.31.4(@floating-ui/dom@1.8.0)(@tiptap/core@3.31.4(@tiptap/pm@3.31.4))(@tiptap/pm@3.31.4)"
+        },
+        {
+          "name": "client-zip",
+          "specifier": "^2.5.1",
+          "version": "2.5.1"
+        },
+        {
+          "name": "cytoscape",
+          "specifier": "^3.34.3",
+          "version": "3.34.3"
+        },
+        {
+          "name": "drizzle-orm",
+          "specifier": "^0.45.3",
+          "version": "0.45.3(@cloudflare/workers-types@4.20260508.1)(@opentelemetry/api@1.9.1)(@types/pg@8.23.1)(better-sqlite3@12.11.1)(pg@8.23.1)(postgres@3.4.9)"
+        },
+        {
+          "name": "fast-xml-parser",
+          "specifier": "^5.11.2",
+          "version": "5.11.2"
+        },
+        {
+          "name": "hono",
+          "specifier": "^4.13.12",
+          "version": "4.13.12"
+        },
+        {
+          "name": "katex",
+          "specifier": "^0.19",
+          "version": "0.19.0"
+        },
+        {
+          "name": "lucide-react",
+          "specifier": "^1.51.0",
+          "version": "1.51.0(@types/react@19.3.0)(react@19.3.0)"
+        },
+        {
+          "name": "pg",
+          "specifier": "^8.23.1",
+          "version": "8.23.1"
+        },
+        {
+          "name": "pg-boss",
+          "specifier": "^12.36.0",
+          "version": "12.36.0(@opentelemetry/api@1.9.1)"
+        },
+        {
+          "name": "react",
+          "specifier": "^19.3.0",
+          "version": "19.3.0"
+        },
+        {
+          "name": "react-dom",
+          "specifier": "^19.3.0",
+          "version": "19.3.0(react@19.3.0)"
+        },
+        {
+          "name": "tencentcloud-sdk-nodejs-ocr",
+          "specifier": "^4.1.322",
+          "version": "4.1.322"
+        },
+        {
+          "name": "ts-fsrs",
+          "specifier": "^5.4.2",
+          "version": "5.4.2"
+        },
+        {
+          "name": "zod",
+          "specifier": "^4.6.5",
+          "version": "4.6.5"
+        },
+        {
+          "name": "zustand",
+          "specifier": "^5.0.15",
+          "version": "5.0.15(@types/react@19.3.0)(react@19.3.0)(use-sync-external-store@1.7.0(react@19.3.0))"
+        }
+      ],
+      "devDependencies": [
+        {
+          "name": "@types/pg",
+          "specifier": "^8.23.1",
+          "version": "8.23.1"
+        },
+        {
+          "name": "@types/react",
+          "specifier": "^19.3.0",
+          "version": "19.3.0"
+        },
+        {
+          "name": "@types/react-dom",
+          "specifier": "^19.3.0",
+          "version": "19.3.0(@types/react@19.3.0)"
+        }
+      ]
+    },
+    "referenceChecks": 2174,
+    "laminar": "@lmnr-ai/lmnr@0.8.49(@langchain/core@1.1.48(@opentelemetry/api@1.9.1)(@opentelemetry/exporter-trace-otlp-proto@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(openai@7.19.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.4)(undici@8.11.2)(ws@8.21.0)(zod@4.6.5))(ws@8.21.0))",
+    "langchain": "@langchain/core@1.1.48(@opentelemetry/api@1.9.1)(@opentelemetry/exporter-trace-otlp-proto@0.222.0(@opentelemetry/api@1.9.1))(@opentelemetry/sdk-trace-base@2.11.0(@opentelemetry/api@1.9.1))(openai@7.19.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.4)(undici@8.11.2)(ws@8.21.0)(zod@4.6.5))(ws@8.21.0)",
+    "peerMismatches": [
+      {
+        "package": "mem0ai@3.0.13",
+        "peer": "@anthropic-ai/sdk",
+        "range": "^0.40.1",
+        "version": "0.131.0",
+        "rangeInOwn": "^0.40.1",
+        "rangeInMain": "^0.40.1"
+      },
+      {
+        "package": "mem0ai@3.0.13",
+        "peer": "@types/pg",
+        "range": "8.11.0",
+        "version": "8.23.1",
+        "rangeInOwn": "8.11.0",
+        "rangeInMain": "8.11.0"
+      },
+      {
+        "package": "mem0ai@3.0.13",
+        "peer": "pg",
+        "range": "8.11.3",
+        "version": "8.23.1",
+        "rangeInOwn": "8.11.3",
+        "rangeInMain": "8.11.3"
+      },
+      {
+        "package": "openai@7.19.0",
+        "peer": "undici",
+        "range": ">=6.28.1 <7",
+        "version": "8.11.2",
+        "rangeInOwn": ">=6.28.1 <7",
+        "rangeInMain": ">=6.28.1 <7"
+      }
+    ],
+    "changedExistingPackageMetadata": [],
+    "packageEntries": 1108,
+    "snapshotEntries": 1108,
+    "unreferencedPackageRecords": []
+  },
+  "checks": {
+    "unit": {
+      "passed": 355,
+      "failed": 0,
+      "files": [
+        {
+          "path": "server/shutdown.unit.test.ts",
+          "passed": 5
+        },
+        {
+          "path": "scripts/audit-env-inventory.unit.test.ts",
+          "passed": 3
+        },
+        {
+          "path": "scripts/audit-task-census.unit.test.ts",
+          "passed": 45
+        },
+        {
+          "path": "src/kernel/zod-json-schema.unit.test.ts",
+          "passed": 5
+        },
+        {
+          "path": "src/core/schema/schema.test.ts",
+          "passed": 29
+        },
+        {
+          "path": "src/core/schema/structured_question.projection.test.ts",
+          "passed": 4
+        },
+        {
+          "path": "src/core/schema/structured_question.test.ts",
+          "passed": 22
+        },
+        {
+          "path": "src/server/ai/laminar-tracing.test.ts",
+          "passed": 26
+        },
+        {
+          "path": "src/server/ai/laminar-transcript.test.ts",
+          "passed": 38
+        },
+        {
+          "path": "src/server/ai/pi-agent-adapter.tracing.test.ts",
+          "passed": 9
+        },
+        {
+          "path": "src/server/ai/run-lifecycle.test.ts",
+          "passed": 8
+        },
+        {
+          "path": "src/server/ai/runner.seam.test.ts",
+          "passed": 53
+        },
+        {
+          "path": "src/server/ai/runner.stream-collect.test.ts",
+          "passed": 22
+        },
+        {
+          "path": "src/server/boss/client.globalthis.test.ts",
+          "passed": 3
+        },
+        {
+          "path": "src/server/boss/job-yield.unit.test.ts",
+          "passed": 24
+        },
+        {
+          "path": "src/server/boss/queue-config.test.ts",
+          "passed": 4
+        },
+        {
+          "path": "src/server/boss/start-worker.test.ts",
+          "passed": 6
+        },
+        {
+          "path": "src/server/memory/mem0-sdk-failure.unit.test.ts",
+          "passed": 14
+        },
+        {
+          "path": "src/server/memory/product-routing.unit.test.ts",
+          "passed": 5
+        },
+        {
+          "path": "src/core/schema/event/actor-ref-gate.test.ts",
+          "passed": 30
+        }
+      ]
+    },
+    "judge-trace-unit": {
+      "passed": 7,
+      "failed": 0,
+      "files": [
+        {
+          "path": "src/capabilities/practice/server/judge/pi-model-executor.trace.unit.test.ts",
+          "passed": 7
+        }
+      ]
+    },
+    "db": {
+      "passed": 98,
+      "failed": 0,
+      "files": [
+        {
+          "path": "src/server/boss/client.test.ts",
+          "passed": 4
+        },
+        {
+          "path": "src/server/boss/job-observation-boss-contract.db.test.ts",
+          "passed": 3
+        },
+        {
+          "path": "src/server/boss/shutdown.test.ts",
+          "passed": 17
+        },
+        {
+          "path": "src/server/boss/verify-dispatch-outbox.db.test.ts",
+          "passed": 14
+        },
+        {
+          "path": "src/server/boss/verify-dispatch-startup-recovery.db.test.ts",
+          "passed": 1
+        },
+        {
+          "path": "src/server/boss/worker-boot.db.test.ts",
+          "passed": 6
+        },
+        {
+          "path": "src/server/orchestration/orchestrator-boss-adapter.db.test.ts",
+          "passed": 3
+        },
+        {
+          "path": "src/server/memory/conjecture-projection.db.test.ts",
+          "passed": 2
+        },
+        {
+          "path": "src/server/memory/mem0-sdk-failure.db.test.ts",
+          "passed": 4
+        },
+        {
+          "path": "src/server/memory/memory-reconcile-handoff-handler.db.test.ts",
+          "passed": 11
+        },
+        {
+          "path": "src/server/memory/memory-reconcile-handoff.db.test.ts",
+          "passed": 12
+        },
+        {
+          "path": "src/server/memory/provider-operation-fence.db.test.ts",
+          "passed": 3
+        },
+        {
+          "path": "src/server/memory/provider-operation.db.test.ts",
+          "passed": 4
+        },
+        {
+          "path": "src/server/memory/triggers.outbox.test.ts",
+          "passed": 9
+        },
+        {
+          "path": "src/capabilities/copilot/jobs/copilot_run_reconcile.db.test.ts",
+          "passed": 5
+        }
+      ]
+    }
+  },
+  "workflowAudits": {
+    "schema": 0,
+    "partition": 0,
+    "api-client": 0,
+    "api-client-usage": 0,
+    "capability-boundaries": 0,
+    "provider-lanes": 0,
+    "profile": 0,
+    "task-census": 0,
+    "draft-status": 0,
+    "draft-status-reads": 0
+  },
+  "otherChecks": {
+    "frozenInstall": "passed, final offline frozen",
+    "typecheck": "passed",
+    "lint": {
+      "passed": true,
+      "warnings": 297,
+      "finalDocLog": "main-merge-final-doc-lint.log"
+    },
+    "build": "passed"
+  },
+  "localLogDirectory": "/tmp/yuk1360-dependency-repair-20261007",
+  "logDigests": {
+    "main-merge-align.cjs": "48b1b04ef4894225c924ef191fdff81ad4c2b490072fc521657a3900fed0e630",
+    "main-merge-align.log": "0030cc92042543f6dc95076da19a862e4c415cce84ac12d91791a64b721faece",
+    "main-merge-audit-api-client-usage.log": "71c2c93dd9e51bd4fc368e7845a5a34d42b2b56cf97e4dcf94a8556a99f45b46",
+    "main-merge-audit-api-client.log": "f26bc904f865f0cc5a1a1613ea5d4017d46fdab55aceaf8eb0a831aedd0cea7c",
+    "main-merge-audit-capability-boundaries.log": "42a7d0cb9f8f9a7948bd6aeb552b2b64b70d98953edea22293a755a32000bba1",
+    "main-merge-audit-draft-status-reads.log": "2efc976718c30b895d8c4863896f018c015cb0184f3ea55edcd38586147bdbb3",
+    "main-merge-audit-draft-status.log": "de3569839d7a890654a591c9c6b77334b1031fa56e3ecedef457f132dd24eb8d",
+    "main-merge-audit-partition.log": "8d41f2d08e440ff37b7b2752c48ff4f82a78377eb5bc7e91c6c32336a43d4730",
+    "main-merge-audit-profile.log": "f2f14ec06808ef23b857f78b1f54fd2fb25ba55e75776644d2a00aef10981db4",
+    "main-merge-audit-provider-lanes.log": "4e94a5c1aa34213ec2cbb56a60b90e883fdcf6a7fd9c10daff833b754ea85b5c",
+    "main-merge-audit-schema.log": "05a3ab08a62f521bbf905b6a0df1a2e252b54bc05786ea4437e4fdd4c2d6d256",
+    "main-merge-audit-task-census.log": "ddf8d63319f242b650617ac0e743a24966ea2eb10c9c446a74b9d24f8c58df6a",
+    "main-merge-audits.json": "e5df917dfb38bd3e03269fbf08eef5579acfef2b6184a549c5c357e493038fd1",
+    "main-merge-build.log": "12a91d7fa8b9bb957232064a970dd8ccb54fc74b9d476fbd2ade89478753fa14",
+    "main-merge-canonical-force.log": "1af1861e1123ab1cc45b0fc055786f3a00d38013791ea1a34ffc60470aa3d455",
+    "main-merge-canonical-lock.log": "24aa24bf3265daa5bef150b3f87fb6bc58f54814d9a5883e2e12294fdc692ffa",
+    "main-merge-check.cjs": "233ddb6ce0e670362c75626ae1f69334698bbe18ed2a84460094ee8c9d09c11d",
+    "main-merge-clean-frozen.log": "227d1fb26a97f8f6a4625514c74667bfc8a1ee8ae564bbc6e6833e90b9bb9538",
+    "main-merge-clean-semantic.log": "99e8a01046c742eba223895bda0704303a6d5eed2b0bc99ad87fda20c000552f",
+    "main-merge-db-command.json": "c6015be0f462cdbc2b65d6823faf9d4f1302f5c3eddb40395efacb5de2f0a60e",
+    "main-merge-db.json": "6d38898df84819ca453b7cbf7636dac5148e583e4679d64bb67aaea7d828b85a",
+    "main-merge-db.log": "e89ab6ab7e824bcfa3430a49479fedc12a94b0f3dd2df3523b0cb96038fc583e",
+    "main-merge-final-frozen-v2.log": "88bd79e908c63b2035e7e7f07a2f21074a538418880efe5b7db100e2fd4a30e5",
+    "main-merge-final-frozen.log": "c5e85a9be0d22b229bc6bcde450f3887c7b753d7c758f85636bf0d8fd919c307",
+    "main-merge-final-peer-semantic.log": "b0034ea0bde222d2537645d42c94e31c0a177219a959bf9368c7969244a3d786",
+    "main-merge-final-peers.log": "b965ef59bb5e75124a0e64da635d9e4fff1d884ca8881919e7873b7b32001a71",
+    "main-merge-final-semantic.log": "99e8a01046c742eba223895bda0704303a6d5eed2b0bc99ad87fda20c000552f",
+    "main-merge-format-clean-v2.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "main-merge-format-clean.log": "ab4fd884f734f2eab68b26d75fdd72c9a10f4992b8c1e4fa83deca770db6ca32",
+    "main-merge-format-final.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "main-merge-format.cjs": "c1364d26b55987b493f69d57c30a91bbf0c2b40cfde3a414c44a53b69c02df35",
+    "main-merge-format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "main-merge-formatted-frozen.log": "d22116617f029a8025109d82e6a98dabd91d243cc2d36707fb9232fba6a137c8",
+    "main-merge-formatted-semantic.log": "99e8a01046c742eba223895bda0704303a6d5eed2b0bc99ad87fda20c000552f",
+    "main-merge-frozen-install.log": "081bd95dfa8760d89871e0e2237a9d0f89bc0db0492b09b89d41e5883be4a404",
+    "main-merge-judge-trace-unit.json": "498212250aa71ac6f9482925693dcbc394922f74b425495bbf56c64cf627159c",
+    "main-merge-judge-trace-unit.log": "74c2f94fbd67a8a3c3a91264d9532d1c193a4da478d6b96dcfa09e513b6ded24",
+    "main-merge-lint.log": "b6a064ec1bd1cdc36dabd417c01059765243aeed3cb2bcc1fba5310cb17a9bba",
+    "main-merge-lock-final-check.log": "e158bd1f7c30fd13b57f20c8c8c225b84e268ac0a27efdebf86cffa75644aaf3",
+    "main-merge-lock-final-install.log": "f0a5449a9c720d569f04f77f8535bebc95d31d1fd7c1eec63fbb1459abeca6cf",
+    "main-merge-lock-format-v2.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "main-merge-lock-resolution.log": "c9a220ea8c3926fd2ec7530e77310c6ff67828b44a763a7f274c41b1524e0d9e",
+    "main-merge-lock-semantic-complete.log": "fd25d94dace4002e8a53a962f49dbf65b54f0a9745ca110018125e565bd14db6",
+    "main-merge-lock-semantic-final.log": "99e8a01046c742eba223895bda0704303a6d5eed2b0bc99ad87fda20c000552f",
+    "main-merge-lock-semantic.json": "b0034ea0bde222d2537645d42c94e31c0a177219a959bf9368c7969244a3d786",
+    "main-merge-lock-semantic.log": "62b6142f5ca185c5d1d09b4ce9ee2b6e36af3d32ed851b8695d6978f0492913d",
+    "main-merge-offline-frozen-final.log": "e4254ba2b93f8939806ed64916aec7a413003a682f2a3506c73732406a0caac6",
+    "main-merge-peers.log": "b965ef59bb5e75124a0e64da635d9e4fff1d884ca8881919e7873b7b32001a71",
+    "main-merge-preserve-metadata-v2.log": "2b359b2a6b33f0cbbfb6f88dd2a3d72e01d85419b86bc1f39a04590961e5ec43",
+    "main-merge-preserve-metadata.cjs": "1f633da68bcab35c64325ba6deb3b3a1c2103b2c4f3c7ef7ed13796b70674cc4",
+    "main-merge-preserve-metadata.log": "5ed0808e37ad401b69c3bb616a93ed97ab685b13e6fe399596640762b4e7d3be",
+    "main-merge-preserved-format.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "main-merge-preserved-frozen.log": "89365576198639d703e90d50feccfd5bef68b95def3dd62bd56b979d19b4aa93",
+    "main-merge-preserved-semantic.log": "fd25d94dace4002e8a53a962f49dbf65b54f0a9745ca110018125e565bd14db6",
+    "main-merge-resolve.cjs": "e3727825b58eb6660e6088197f5cdbea1ffe3d732efd2e7fc5b96db2e80ad48a",
+    "main-merge-seed.log": "c2c4ec233d391c3725b31edd8c4ac13cded04380504f89d3a4a9b630be6c59d4",
+    "main-merge-tests.py": "c170d42b655cd0c02a504ac88483d3cc19918171a8221ba536cf97fb3c828d8f",
+    "main-merge-typecheck.log": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+    "main-merge-unit-command.json": "f69f67cfaf7fdc5f384d69ded13a6563ead3a18a159d2f4cb45e78c992261938",
+    "main-merge-unit.json": "87b1057202a7cede4b6b369827776092098e31babd641a6b1f383202492d4e13",
+    "main-merge-unit.log": "cb828d04910516a8037880d66d8267894ebf1b0a24450bf87954a89c7a7887ec",
+    "main-merge-verified-frozen.log": "7c16704474bf149f766175df1ebc67f2233b297563c7471c5841a398d4bf2779",
+    "main-merge-final-doc-lint.log": "429cf8b1aca8039b20728cd411d87b36042e1a855296698b89a3d7929bac8c64"
+  },
+  "historicalEvidence": {
+    "review": "Parent reports yuk1360-dependency-review-r1 no P0/P1 at 784b80ac; no report artifact located in owned tree or lane temporary directory, no new review",
+    "CI": "Parent reports full CI passed at historical head; not resulting merge CI",
+    "tests": "97 DB / 146 unit / 82 migration and populated pg-boss37->44 remain historical receipts, not rerun as populated upgrade or migration here",
+    "parentDB": "Parent reports 19 DB passed; not this writer run"
+  },
+  "runtimePurposeSource": {
+    "worktree": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1362-agent-test-reset",
+    "commit": "57fbc95fcf2fac435acef346d56c2cf9f0b28afb",
+    "doc": "docs/planning/2026-10-07-agent-test-environment-reset.md",
+    "access": "source document only, no cherry-pick"
+  },
+  "limits": [
+    "No resulting-head CI or new independent review",
+    "No migration smoke or populated queue proof rerun for the resulting merge",
+    "No runtime/container/app/worker/existing DB/R2 access, backup, restore, replay, or deploy",
+    "Only new disposable testcontainer DB suite",
+    "No model/provider/telemetry export, subscription, UI rewrite, push, PR operations, Linear, or delegation"
+  ],
+  "followUps": {
+    "newIssues": [],
+    "remaining": "Parent owns exact resulting-head CI, inspection, integrated runtime/API/SPA and BAM acceptance in a separately authorized test environment; personal daily-use acceptance has not been authorized"
+  }
+}

@@ -1,0 +1,302 @@
+{
+  "issue": "YUK-1360",
+  "syntheticOnly": true,
+  "base": "c54f5ddd3cb3d628ba895f34c41ebf807cb752b8",
+  "main": "8841ce68a69e30bacf20e8241f28cd1669b38a1f",
+  "merge": "574106ae95036a3d2fa83e71d12ac306897b8cf7",
+  "node": "24.19.0",
+  "pnpm": "11.13.1",
+  "dockerClientAndServer": "29.4.0",
+  "fixtureDiffSha256": "0f6211c55ba6ae643d10d9bbabe0b2ea5ed57edb5325ef791f8a31fa103fa05b",
+  "mem0PatchHash": "858dc62f5cb028767f44e081b4e6713f302c6a47e760f21c403b62a43ec969e7",
+  "packageJsonSha256": "c8eef5bb362e87a36cf5c2a4437cd8dd6aa31fb7e0835d1a19b380482f8eeb65",
+  "checks": {
+    "db": {
+      "passed": 97,
+      "failed": 0,
+      "files": [
+        {
+          "path": "src/server/boss/client.test.ts",
+          "passed": 4
+        },
+        {
+          "path": "src/server/boss/job-observation-boss-contract.db.test.ts",
+          "passed": 3
+        },
+        {
+          "path": "src/server/boss/shutdown.test.ts",
+          "passed": 16
+        },
+        {
+          "path": "src/server/boss/verify-dispatch-outbox.db.test.ts",
+          "passed": 14
+        },
+        {
+          "path": "src/server/boss/verify-dispatch-startup-recovery.db.test.ts",
+          "passed": 1
+        },
+        {
+          "path": "src/server/boss/worker-boot.db.test.ts",
+          "passed": 6
+        },
+        {
+          "path": "src/server/memory/conjecture-projection.db.test.ts",
+          "passed": 2
+        },
+        {
+          "path": "src/server/memory/mem0-sdk-failure.db.test.ts",
+          "passed": 4
+        },
+        {
+          "path": "src/server/memory/memory-reconcile-handoff-handler.db.test.ts",
+          "passed": 11
+        },
+        {
+          "path": "src/server/memory/memory-reconcile-handoff.db.test.ts",
+          "passed": 12
+        },
+        {
+          "path": "src/server/memory/provider-operation-fence.db.test.ts",
+          "passed": 3
+        },
+        {
+          "path": "src/server/memory/provider-operation.db.test.ts",
+          "passed": 4
+        },
+        {
+          "path": "src/server/memory/triggers.outbox.test.ts",
+          "passed": 9
+        },
+        {
+          "path": "src/server/orchestration/orchestrator-boss-adapter.db.test.ts",
+          "passed": 3
+        },
+        {
+          "path": "src/capabilities/copilot/jobs/copilot_run_reconcile.db.test.ts",
+          "passed": 5
+        }
+      ]
+    },
+    "unit": {
+      "passed": 146,
+      "failed": 0,
+      "files": [
+        {
+          "path": "src/kernel/zod-json-schema.unit.test.ts",
+          "passed": 5
+        },
+        {
+          "path": "src/core/schema/schema.test.ts",
+          "passed": 29
+        },
+        {
+          "path": "src/core/schema/structured_question.projection.test.ts",
+          "passed": 4
+        },
+        {
+          "path": "src/core/schema/structured_question.test.ts",
+          "passed": 22
+        },
+        {
+          "path": "src/server/boss/client.globalthis.test.ts",
+          "passed": 3
+        },
+        {
+          "path": "src/server/boss/job-yield.unit.test.ts",
+          "passed": 24
+        },
+        {
+          "path": "src/server/boss/queue-config.test.ts",
+          "passed": 4
+        },
+        {
+          "path": "src/server/boss/start-worker.test.ts",
+          "passed": 6
+        },
+        {
+          "path": "src/server/memory/mem0-sdk-failure.unit.test.ts",
+          "passed": 14
+        },
+        {
+          "path": "src/server/memory/product-routing.unit.test.ts",
+          "passed": 5
+        },
+        {
+          "path": "src/core/schema/event/actor-ref-gate.test.ts",
+          "passed": 30
+        }
+      ]
+    },
+    "migration": {
+      "passed": 82,
+      "failed": 0,
+      "files": [
+        {
+          "path": "tests/integration/migration-smoke.test.ts",
+          "passed": 82
+        }
+      ]
+    }
+  },
+  "otherChecks": {
+    "frozenInstall": "passed",
+    "typecheck": "passed",
+    "lint": {
+      "exit": 0,
+      "warnings": 297,
+      "finalLog": "lint-final.log"
+    },
+    "build": "passed"
+  },
+  "limits": [
+    "No full pnpm test",
+    "No provider or telemetry export",
+    "No existing DB/service operation",
+    "No app/worker/browser runtime acceptance",
+    "No independent review",
+    "No push or production release"
+  ],
+  "localLogDirectory": "/tmp/yuk1360-dependency-repair-20261007",
+  "pgBossUpgrade": {
+    "passed": true,
+    "fromSchema": 37,
+    "toSchema": 44,
+    "oldVersion": "12.26.3",
+    "newVersion": "12.36.0",
+    "originalJobs": 12,
+    "backgroundCommandsCompleted": 7,
+    "proofArtifact": "docs/planning/evidence/2026-10-07-yuk1360-pgboss-upgrade.json",
+    "snapshotDigest": "578343f09bd61c34eb78fad18d67c9d599193fde91b048c4e10219dda987df38",
+    "probeScript": "/tmp/yuk1360-dependency-repair-20261007/populated-upgrade.mjs",
+    "probeScriptSha256": "881ff5771af03710157b39c3178d01a9b79673dfafbc15d397e6ae5eaeb4aead",
+    "oldTemporaryDependencyLockSha256": "46dff5ee2761ca24a93f5cc6701e68bf49ba7c624a89f56981925933f866c621",
+    "containerId": "74e6b172da42ff687ab12d276312af89488f489fd47ed3c5768eb0250c907fca",
+    "containerStopped": true,
+    "oldPgVersion": "8.22.0",
+    "newPgVersion": "8.23.1",
+    "oldFrozenInstall": "passed"
+  },
+  "logDigests": {
+    "upgrade-progress-inspect.log": "85f0fb7ab2ff3f94a462cb43078dee84ee9eed689216d7936c756695588d2db6",
+    "old-pin-reconcile.log": "3df641a9b7ae1c6589e37ae45938811377e1c00354fd67497520ffd3feefb702",
+    "upgrade-probe-timestamp-parser-failure.log": "a1a1fff338be0327628ca90cd008de21e531304181143989b4e4c6eadf122786",
+    "migration.log": "7dfe3248fa7f35a38344ebb644d3002c156f7b003ac710cabcc539a5dabd8937",
+    "lint.log": "48d8893101a9cdc19523206647353a6f06cac423868e4631db2ee318753bf7f4",
+    "upgrade.log": "e42396a46d9cdbe4f8b5ef1a5cc1892bfe853e21abb350a01d53690a0f6dad8a",
+    "db.log": "021b36d40bd5ecb2cfafa2181d8657a400fa3b5e8ebd3a71ace9caefcf3057f9",
+    "typecheck.log": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+    "final-owned-check.log": "9b58844f00023c7888ac7db9c68bc8f0ac83619d6e708434a45ef45b68eeefa5",
+    "upgrade-pg823-passed.log": "2af7a47485fa0c82fa1010bef6714062326e44f64882362ad0df2732d9312f2f",
+    "upgrade-interval-repeat.log": "106a4d1ff87818be70746f37836eaf2695181d5f4d8a3ca6680d3636a44fd345",
+    "upgrade-module-provenance-failure.log": "4b88d14b9b73ba6b2227ed2d97518c19280fba0a0718ebe381c6396c8fea8c9d",
+    "upgrade-optional-argument-failure.log": "326437375e5d4ca28806a50837da986d6a47e32c3552e7111127d11efb59c849",
+    "upgrade-import-failure.log": "ec354d7f2f617de2b28bdb69f0cf6dedb89cc28b3592c5757214ee433f0ce8a4",
+    "upgrade-interval-failure.log": "106a4d1ff87818be70746f37836eaf2695181d5f4d8a3ca6680d3636a44fd345",
+    "old-pin-install.log": "c7f1f253dd314a6059dd6fe4de5d3e1575c6c8ddb509d350e22da416581f3972",
+    "upgrade-inspect.log": "268d3b7e5d6bf59d24758ad89a776689a1a55db66d05aec3fefb32da448a09f4",
+    "unit.log": "4bdc222055d059ddb4e8b60872f907ef4ecdbcd702696896a5be7e9ba6c0bedf",
+    "upgrade-negative-check-matcher-failure.log": "a5c9e0b95dab0c8849227a5177da9f2202fb959b1d9bf45c6ce0e5cee1188036",
+    "old-install.log": "5c5f40139f6ac3f35a935a6c09a4f5554703ebd837967d7e8d99640814ff07a0",
+    "upgrade-background-deadline-failure.log": "155f7c60b94299b979e074d9b04bba4145d8a88358be36e32a9bcd4289d5b3aa",
+    "install.log": "7cb0299a60b00f621d7cac524cfb8badc8f7718f4364d4dd966589f6a867c420",
+    "old-frozen-install.log": "721e4e76645c1ac4e01f84436543e4aa0c7f77f3450a82b9f1d0a8f2730aa9bd",
+    "upgrade-old-expiration-boundary-failure.log": "ab6028d80c21e62829c1e4d0094859b3165197a5844e3a04bd3022df200f76fd",
+    "build.log": "17a0226941b1d60754f131158a4c34534a07d31dfe136b74d5e29516bb47bd4a",
+    "lint-final.log": "ed89b230712a7cd5392968345a5bf4cd9d5fc85cccb107e7d060277298b2af41"
+  },
+  "probeFailures": {
+    "upgrade-interval-failure.json": {
+      "message": "configuration assert: bamIntervalSeconds must be at least 10 seconds",
+      "completedSteps": [],
+      "containerStopped": true,
+      "sha256": "da26d025116cbb86d52b262239d4a991b0fc2d25e68f68d55c4b2ac8f5bd821d"
+    },
+    "upgrade-negative-check-matcher-failure.json": {
+      "message": "The validation function is expected to return \"true\". Received false",
+      "completedSteps": [
+        "schema37 populated and writer stopped",
+        "schema44 startup returned with original rows preserved",
+        "background migration progress",
+        "background migration progress",
+        "background migration progress",
+        "background migration progress",
+        "background migration progress",
+        "background migration progress",
+        "background migration progress",
+        "background migration progress",
+        "concurrent startup schema44 preservation and background completion",
+        "stale retry settlement fenced",
+        "heartbeat abort and automatic late worker completion fenced",
+        "project Drizzle adapter rollback and commit",
+        "graceful drain and same instance restart",
+        "forced drain timeout retried and settled",
+        "old version on isolated upgraded database copy"
+      ],
+      "containerStopped": true,
+      "sha256": "31394ac5e6006c65300ecb49f9da172991235ce883fef9e4aad40b5976b5f365"
+    },
+    "upgrade-background-deadline-failure.json": {
+      "message": "Timed out: BAM completion",
+      "completedSteps": ["schema37 populated and writer stopped"],
+      "containerStopped": true,
+      "sha256": "3a0766393dd7b40ca8daca78d9069bca31568b38d9ff85abbd62692c3379b440"
+    },
+    "upgrade-old-expiration-boundary-failure.json": {
+      "message": "configuration assert: expiration cannot exceed 24 hours",
+      "completedSteps": [],
+      "containerStopped": true,
+      "sha256": "1c0273e11453b9920d902a4c766c96fc8c5052980a32f4fa77c39b4dc50e9cdf"
+    },
+    "upgrade-optional-argument-failure.json": {
+      "message": "deadLetter must be a string",
+      "completedSteps": [],
+      "containerStopped": true,
+      "sha256": "453d0fec072cb319ff530e056c6b26197a68ae21870f82ef44dd9ae61d8f7013"
+    },
+    "upgrade-probe-timestamp-parser-failure.json": {
+      "message": "Expected values to be strictly deep-equal:",
+      "completedSteps": [
+        "schema37 populated and writer stopped",
+        "schema44 startup returned with original rows preserved",
+        "background migration progress",
+        "background migration progress",
+        "background migration progress",
+        "background migration progress",
+        "background migration progress",
+        "background migration progress",
+        "background migration progress",
+        "background migration progress",
+        "concurrent startup schema44 preservation and background completion",
+        "stale retry settlement fenced",
+        "heartbeat abort and automatic late worker completion fenced",
+        "project Drizzle adapter rollback and commit",
+        "graceful drain and same instance restart",
+        "forced drain timeout retried and settled"
+      ],
+      "containerStopped": true,
+      "sha256": "e6c4b4fa4775beb6806b1b31c3e33a25526eaf1714d70a96430dc328d3281cc4"
+    },
+    "upgrade-interval-repeat.json": {
+      "message": "configuration assert: bamIntervalSeconds must be at least 10 seconds",
+      "containerStopped": true,
+      "sha256": "f241e249b255f1dac36c32421e39bd64c58b51d59a8ae294f39e0c69ac924af3"
+    }
+  },
+  "changedFilesVsMain": [
+    ".remember/now.md",
+    "PLAN.md",
+    "docs/planning/2026-10-07-yuk1360-dependency-integration-evidence.md",
+    "docs/planning/evidence/2026-10-07-yuk1360-pgboss-upgrade.json",
+    "docs/planning/evidence/2026-10-07-yuk1360-validation.json",
+    "package.json",
+    "pnpm-lock.yaml",
+    "src/capabilities/copilot/jobs/copilot_run_reconcile.db.test.ts",
+    "src/server/memory/conjecture-projection.db.test.ts",
+    "src/server/memory/mem0-sdk-failure.db.test.ts",
+    "src/server/memory/memory-reconcile-handoff-handler.db.test.ts",
+    "src/server/memory/memory-reconcile-handoff.db.test.ts",
+    "src/server/memory/provider-operation-fence.db.test.ts",
+    "src/server/memory/provider-operation.db.test.ts"
+  ],
+  "pnpmLockSha256": "88378f8bb56cae86fac6d297a9b4074034afa152b9750c936afedec09622bb72"
+}

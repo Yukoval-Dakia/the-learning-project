@@ -1,25 +1,5 @@
-// ====================================================================
-// YUK-1047 — evaluateAttempt：全部权威评分入口的统一漏斗（grounding §4.2）
-// ====================================================================
-//
-// 所有产生分数/判词的入口【必须】经本模块进入评估 —— 这是唯一的判分 seam：
-//
-//   - contract lane：调用方携带 {submission_id, evaluation_group_id} ⇒
-//     evaluateSubmission（evaluate-submission.ts）—— 读冻结
-//     submission/revision/issuance，产 candidate evaluation 行，
-//     candidate 永不生效（activation = YUK-1045，settlement = YUK-1053）。
-//   - legacy lane：作答尚未落契约表（saveSubmission/issuance = YUK-1052
-//     未落地）⇒ 既有 JudgeInvoker 管线判分，outcome 如实标注
-//     lane:'legacy' —— 判分权威性不经第三方旁路，全部汇聚于本漏斗。
-//
-// §4.2 八入口的登记与现状见 EVALUATION_ENTRY_POINTS —— 「走统一契约」与
-// 「统一漏斗已收口」是两件事：本 PR 先把【权威性】收敛成单一 seam，逐入口的
-// contract 接线依赖尚未落地的 writer（YUK-1052/1045），登记表如实记录
-// blocked-by，不冒充已切换。
-//
-// 不在本表内的产分路径（问题质量链）有意除外：quiz_verify / source_verify /
-// solve_check / teaching_quality 是教师侧 QA，不是学生评分 —— grounding
-// §4.2 末段明确保留其异源/否决语义，不得机械并入。
+// Student grading consumes frozen submissions. Candidates remain separate from
+// activation and learning settlement; teacher-side QA retains its own judges.
 
 import type { EvaluationRecordT, ScoringBasisT } from '@/core/schema/assessment';
 import {
@@ -33,8 +13,6 @@ import {
   type EvaluateSubmissionResult,
   evaluateSubmission,
 } from './evaluate-submission';
-import { type JudgeInvokerOutput, createDefaultJudgeInvoker } from './invoker';
-import type { JudgeAnswerParams } from './question-contract';
 
 // ---------- 入口登记（grounding §4.2 表） ----------
 
@@ -51,79 +29,60 @@ export type GradingEntryPoint =
 
 export interface EntryPointDisposition {
   entry: GradingEntryPoint;
-  /** 本 PR 后该入口实际走的 funnel lane。 */
-  lane: 'legacy' | 'contract';
-  /**
-   * contract 接线的当前状态。'pending_writer' = 该入口的作答尚不能产生
-   * contract submission（缺 saveSubmission/issuance writer），funnel 已可接
-   * contract 调用 —— 入口侧接线随对应 writer 落地时翻转。
-   */
-  contract_wiring: 'wired' | 'pending_writer' | 'pending_activation';
-  blocked_by: string[];
+  lane: 'contract';
+  contract_wiring: 'wired';
   note: string;
 }
 
-/**
- * 八入口登记表（grounding §4.2 逐行对应）。诚实语义：`lane` 是【当前】实际
- * 走道；`contract_wiring='pending_writer'` 不表示该入口被豁免 —— funnel 是
- * 必经 seam，契约行一旦可写，同一调用改传 contract 引用即完成切换。
- */
+/** Source wiring only. Publication/model admission and deployed acceptance are separate gates. */
 export const EVALUATION_ENTRY_POINTS: readonly EntryPointDisposition[] = [
   {
     entry: 'solo_submit',
-    lane: 'legacy',
-    contract_wiring: 'pending_writer',
-    blocked_by: ['YUK-1052'],
-    note: 'submit.ts judgeSubmit 的同步 invoke；作答落 saveSubmission 后改传 contract。',
+    lane: 'contract',
+    contract_wiring: 'wired',
+    note: 'Synchronous submit commits the served issuance and frozen submission.',
   },
   {
     entry: 'durable_judge_run',
-    lane: 'legacy',
-    contract_wiring: 'pending_writer',
-    blocked_by: ['YUK-1052'],
-    note: 'judge_run 经 judgeSubmit 复用同一判分头；payload 需冻结 submission 引用后切换。',
+    lane: 'contract',
+    contract_wiring: 'wired',
+    note: 'Durable jobs retain submission references and paid-call claims across retries.',
   },
   {
     entry: 'paper_submit',
-    lane: 'legacy',
-    contract_wiring: 'pending_writer',
-    blocked_by: ['YUK-1052'],
-    note: '多 slot 联合 evaluation group 语义由契约侧表达；paid claim/once-only 保留。',
+    lane: 'contract',
+    contract_wiring: 'wired',
+    note: 'Paper members use issued groups, atomic capture and buffered disclosure.',
   },
   {
     entry: 'solve_tutor',
-    lane: 'legacy',
-    contract_wiring: 'pending_writer',
-    blocked_by: ['YUK-1052'],
-    note: 'solve-session 作答落契约后同一 seam 判分，不另建评分系统。',
+    lane: 'contract',
+    contract_wiring: 'wired',
+    note: 'Solve commits the frozen response and assistance provenance.',
   },
   {
     entry: 'appeal_rejudge',
-    lane: 'legacy',
-    contract_wiring: 'pending_writer',
-    blocked_by: ['YUK-1052', 'YUK-1045'],
-    note: '契约侧就绪后改读冻结 submission（文本/图/part/版本），不再用 current row + text-only；已迁移历史作答可经 identity mapping 定位 submission。',
+    lane: 'contract',
+    contract_wiring: 'wired',
+    note: 'Appeals evaluate frozen members and activate against the expected head.',
   },
   {
     entry: 'conjecture_probe',
-    lane: 'legacy',
-    contract_wiring: 'pending_writer',
-    blocked_by: ['YUK-1052'],
-    note: '诊断签名与 partial/unsupported 安全语义保留在入口层；contract 结果经同一投影消费。',
+    lane: 'contract',
+    contract_wiring: 'wired',
+    note: 'Probe preview binds the frozen signature; its result never activates practice learning.',
   },
   {
     entry: 'ingestion_grading',
-    lane: 'legacy',
-    contract_wiring: 'pending_writer',
-    blocked_by: ['YUK-1052'],
-    note: '原绕过 invoker 直连 multimodal_direct；现经 funnel 统一判分（judge_kind_override 保留直派语义），flag 关闭也不是豁免。',
+    lane: 'contract',
+    contract_wiring: 'wired',
+    note: 'Originals persist before evaluation; enrollment requires publication admission.',
   },
   {
     entry: 'advice_preview',
-    lane: 'legacy',
-    contract_wiring: 'pending_writer',
-    blocked_by: ['YUK-1052'],
-    note: '预览不生效不更新学习；contract 切换后签名绑定 revision/submission digest + candidate 引用。',
+    lane: 'contract',
+    contract_wiring: 'wired',
+    note: 'Preview produces a frozen candidate without activating learning.',
   },
 ] as const;
 
@@ -133,7 +92,10 @@ export const EVALUATION_ENTRY_POINTS: readonly EntryPointDisposition[] = [
 export interface ContractGradingRef {
   submission_id: string;
   evaluation_group_id: string;
+  evaluation_key?: string;
+  expected_evaluation_id?: string;
   /** 覆盖 evaluateSubmission 的执行面/来源/manually-asserted 结果。 */
+  expected_submission_ids?: EvaluateSubmissionRequest['expected_submission_ids'];
   policy?: EvaluateSubmissionRequest['policy'];
   mode?: EvaluateSubmissionRequest['mode'];
   asserted_unit_results?: EvaluateSubmissionRequest['asserted_unit_results'];
@@ -141,30 +103,14 @@ export interface ContractGradingRef {
   model_executor?: EvaluateSubmissionRequest['model_executor'];
 }
 
-export interface LegacyAttemptInput {
-  entry: GradingEntryPoint;
-  /** 未落契约的作答：既有 JudgeInvoker 参数（含 db）。 */
-  legacy: JudgeAnswerParams;
-}
 export interface ContractAttemptInput {
   entry: GradingEntryPoint;
   db: Db;
   contract: ContractGradingRef;
 }
-export type EvaluateAttemptInput = LegacyAttemptInput | ContractAttemptInput;
+export type EvaluateAttemptInput = ContractAttemptInput;
 
 // ---------- 输出 ----------
-
-/**
- * legacy lane 结果透传 JudgeInvokerOutput（route/result/telemetry/
- * modelAttempted/execution）—— 下游（resolveInvokedExecutionProvenance、
- * 事件 payload）所需字段原样在位。判分路径与 invoke() 逐字节相同；
- * `lane`/`entry` 只是漏斗标签，不改判分语义。
- */
-export interface LegacyAttemptOutcome extends JudgeInvokerOutput {
-  readonly lane: 'legacy';
-  readonly entry: GradingEntryPoint;
-}
 
 export interface ContractAttemptOutcome {
   readonly lane: 'contract';
@@ -177,7 +123,7 @@ export interface ContractAttemptOutcome {
   result: JudgeResultV2T;
 }
 
-export type EvaluateAttemptOutcome = LegacyAttemptOutcome | ContractAttemptOutcome;
+export type EvaluateAttemptOutcome = ContractAttemptOutcome;
 
 // ---------- contract → JudgeResultV2 投影 ----------
 
@@ -305,53 +251,31 @@ export function projectEvaluationToJudgeResult(
   };
 }
 
-// ---------- 统一漏斗 ----------
-
-/**
- * 全部权威评分入口的【唯一】进入点（YUK-1047）。两条 lane：
- *
- *   - `contract` 引用存在 ⇒ evaluateSubmission（读冻结契约，落 candidate
- *     行；绝不触碰 effective head / 学习状态）；
- *   - `legacy` 参数存在 ⇒ JudgeInvoker（既有判分管线原样透传，含
- *     part_ref narrowing / appeal_context / durable override / imageFetchFn /
- *     runTaskFn seam —— 判分行为零变化，只汇聚入口权威）。
- *
- * 两者互斥；同传 ⇒ 契约优先但立即 fail-loud（调用方 bug 不静默吞）。
- */
-export async function evaluateAttempt(input: ContractAttemptInput): Promise<ContractAttemptOutcome>;
-export async function evaluateAttempt(input: LegacyAttemptInput): Promise<LegacyAttemptOutcome>;
+/** Evaluate one frozen candidate without changing the effective head. */
 export async function evaluateAttempt(
   input: EvaluateAttemptInput,
 ): Promise<EvaluateAttemptOutcome> {
-  if ('contract' in input && 'legacy' in input) {
-    throw new Error(
-      `evaluateAttempt[${input.entry}]: both contract and legacy inputs supplied — callers must choose exactly one lane`,
-    );
-  }
-  if ('contract' in input) {
-    const evaluation = await evaluateSubmission(input.db, {
-      submission_id: input.contract.submission_id,
-      evaluation_group_id: input.contract.evaluation_group_id,
-      policy: input.contract.policy,
-      mode: input.contract.mode,
-      asserted_unit_results: input.contract.asserted_unit_results,
-      provenance: input.contract.provenance,
-      model_executor: input.contract.model_executor,
-    });
-    // 消费侧投影：发布侧聚合声明（归一化分母）随 EvaluateSubmissionResult
-    // 回传（冻结 revision 的 basis 快照）—— 不二次查库，不重推计分语义。
-    return {
-      lane: 'contract',
-      entry: input.entry,
-      evaluation,
-      result: projectEvaluationToJudgeResult(evaluation.record, evaluation.scoring_basis),
-    };
-  }
   if ('legacy' in input) {
-    const invoked = await createDefaultJudgeInvoker().invoke(input.legacy);
-    return { lane: 'legacy', entry: input.entry, ...invoked };
+    throw new Error(`evaluateAttempt[${input.entry}]: legacy grading input is retired`);
   }
-  throw new Error(
-    `evaluateAttempt[${(input as EvaluateAttemptInput).entry}]: neither contract nor legacy input supplied`,
-  );
+  const evaluation = await evaluateSubmission(input.db, {
+    submission_id: input.contract.submission_id,
+    evaluation_group_id: input.contract.evaluation_group_id,
+    evaluation_key: input.contract.evaluation_key,
+    expected_evaluation_id: input.contract.expected_evaluation_id,
+    expected_submission_ids: input.contract.expected_submission_ids,
+    policy: input.contract.policy,
+    mode: input.contract.mode,
+    asserted_unit_results: input.contract.asserted_unit_results,
+    provenance: input.contract.provenance,
+    model_executor: input.contract.model_executor,
+  });
+  // 消费侧投影：发布侧聚合声明（归一化分母）随 EvaluateSubmissionResult
+  // 回传（冻结 revision 的 basis 快照）—— 不二次查库，不重推计分语义。
+  return {
+    lane: 'contract',
+    entry: input.entry,
+    evaluation,
+    result: projectEvaluationToJudgeResult(evaluation.record, evaluation.scoring_basis),
+  };
 }

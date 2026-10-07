@@ -23,7 +23,7 @@ asset_count: ${m.asset_count}
 ## ZIP contents
 
 - \`manifest.json\` — backup metadata + per-table row counts
-- \`data.json\` — every row from every table, in FK topological order
+- \`data.json\` — rows from the registered backup tables, in FK topological order
 - \`mistakes.csv\` — denormalized per-failure-attempt summary (event-stream projection, knowledge names, FSRS state, review count)
 - \`review_events.csv\` — flattened review log (event-stream projection)
 - \`README.md\` — this file
@@ -40,25 +40,38 @@ Excel for Mac may misinterpret \\n inside quoted fields as a row break. Use
 LibreOffice or Python's \`csv.reader\` (or pandas) instead — both handle the
 RFC 4180 quoting correctly.
 
-## Restore (destructive — wipes D1, overwrites R2 keys, leaves R2 orphans)
+## Restore (destructive — replaces backed-up PostgreSQL data, overwrites R2 keys)
 
-Restore is destructive: it DELETEs every row from every table in this app's
-D1, then re-INSERTs from \`data.json\`. R2 assets included in the ZIP are
+Restore is destructive: in one transaction it DELETEs rows from the registered
+PostgreSQL backup tables, then re-INSERTs from \`data.json\`. R2 assets included in the ZIP are
 PUT under their original keys — but pre-existing R2 objects NOT included
 in the ZIP are NOT deleted (they become orphans; clean them up via wrangler
 r2 object delete if needed). Take a fresh export of the *current* state
 before restoring an old one — there is no UNDO.
 
-### Via UI
+### Subscription progress and queue boundary
 
-Open \`/_/inspect\` → "Data" tab → upload this ZIP → type "wipe" in the
-confirm field → click 清空并还原.
+Database rows (including the mem0 collection) are exported from one repeatable-read
+snapshot. Asset bytes are fetched afterwards and are not part of that DB snapshot.
+The archive preserves subscription checkpoints, deliveries and causal effects.
+Restore clears process leases, returns claimed deliveries to pending, and preserves
+pause state, retry backoff/budgets, terminal outcomes and effect idempotency records.
+Existing checkpoints prevent pending work from being reclassified as bootstrap history.
+
+This logical ZIP does not contain pg-boss jobs. A succeeded delivery can mean that
+it enqueued downstream work; an enqueued effect is not proof that the work completed.
+Restoring its ledger does not recreate a missing queue job. Do not delete effect
+records or replay terminal deliveries to force recovery: that can repeat completed
+side effects or paid work. Queue recovery remains an owner-service operation; the
+existing intervention preparation recovery is not a general queue restore.
+Stop writers/workers for a live restore and reconcile operational queues before
+resuming them. Use a full PostgreSQL backup when queue state must also be recovered.
 
 ### Via curl
 
 \`\`\`bash
 TOKEN=...   # value of INTERNAL_TOKEN secret
-HOST=https://your-worker.example.com
+HOST=http://localhost:8787
 
 curl -X POST \\
   -H "x-internal-token: $TOKEN" \\
@@ -72,8 +85,8 @@ report. \`stats\` is keyed by table name; \`{deleted, inserted}\` per table.
 
 ## Re-acquire R2 assets without packing them inline
 
-If you have >45 R2 objects, the inline export refuses (CF Worker free plan
-caps at 50 sub-requests per call; we leave 5 for D1). Take a refs-only
+If you have >45 R2 objects, the inline export refuses under the current
+application asset limit. Take a refs-only
 export and pull the bytes via \`wrangler\`:
 
 \`\`\`bash
@@ -91,7 +104,10 @@ via the restore endpoint above.
 
 This bundle was exported at schema_version ${m.schema_version}. Restore will
 refuse a ZIP whose manifest declares a different version — there is no
-auto-migration in this version. If you need to migrate across versions,
+auto-migration in this version. Version 4.25 requires all three subscription
+progress tables, even when empty. Older ZIPs did not preserve that progress;
+changing the version or adding empty tables cannot recover the missing history.
+If you need to migrate across versions,
 write a one-off transformer that updates \`data.json\` to the new schema
 and bumps \`manifest.json\`.
 `;

@@ -6,8 +6,8 @@ import { OvernightDigestResponseSchema } from '@/capabilities/shell/api/contract
 //
 // 注入 now 让窗口确定性：overnightWindow(NOW) = [2026-06-26T16:00Z, 2026-06-27T16:00Z)（BJT 前一日历日）。
 import { ai_task_runs, event } from '@/db/schema';
+import { loadTodayOvernightDigest as loadOvernightDigest } from '@/server/today/overnight-digest';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { loadOvernightDigest } from './overnight-digest';
 
 const db = testDb();
 

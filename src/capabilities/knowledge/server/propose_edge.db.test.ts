@@ -2,8 +2,8 @@
 
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { getTaskSystemPrompt } from '@/ai/task-prompts';
 import { RUBRIC_EVIDENCE_WINDOW_DAYS } from '@/capabilities/knowledge/server/rubric-validator';
+import { getTaskSystemPrompt } from '@/capabilities/task-registry';
 import {
   cost_ledger,
   edge_reconciliation_log,

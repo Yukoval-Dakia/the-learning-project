@@ -8,13 +8,17 @@ export {
   getEffectiveTruths,
 } from '@/kernel/events';
 export type { QuizGenJobData } from './jobs/quiz_gen';
+export { runSourceVerify } from './jobs/source_verify';
 // YUK-1057 — 隔离演练的 post-cutover writer seam：发题/草稿/提交统一经
 // barrel 透出（import 链为 @kernel + @db 纯链，无 SDK —— migrate bundle 安全）。
 export { issueAssessment } from './server/assessment/issue';
 export { saveResponseDraft, saveSubmission } from './server/assessment/submit';
 export type { AttemptSnapshotBracketsInput } from './server/attempt-snapshot';
 export { writeAttemptSnapshotBrackets } from './server/attempt-snapshot';
-export { retrievabilityForKc } from './server/fsrs';
+// YUK-1007 — practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
+// 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
+export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
+export { retrievabilityForKc, scheduleReview } from './server/fsrs';
 export type { FrontierResolution } from './server/learnable-frontier';
 export {
   isMasteredForFrontier,
@@ -49,7 +53,16 @@ export const handleReviewDue: HandleReviewDue = async (...args) => {
   const dueList = await import('./server/due-list');
   return dueList.handleReviewDue(...args);
 };
+
+// YUK-1064 — explicit operations used by scripts and integration consumers.
+export type { FailureLearningBossSend } from './jobs/failure-learning-jobs';
+export {
+  commitFormalAttempt,
+  previewFormalAttempt,
+  recordFormalAttemptCapture,
+} from './server/assessment/attempt';
 export type { CollectedSignal } from './server/candidate-signals';
+export { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './server/cause-overlay';
 export type {
   ProposeFailureVariantInput,
   VariantProposalResult,
@@ -65,13 +78,58 @@ export {
   INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS,
   loadCommittedInterventionDiagnosticAttempt,
   loadLatestTrustedInterventionDiagnosticVerdict,
+  loadNativeInterventionDiagnosticState,
+  loadNativeInterventionDiagnosticVerdict,
   materializeInterventionDiagnostics,
   retireInterventionDiagnosticQuestion,
 } from './server/intervention-diagnostics';
+// YUK-1063 — explicit judging contract consumed by the stable kernel facade.
+export type { AnswerInput, JudgeResult } from './server/judge';
+export {
+  type ContractAttemptInput,
+  type ContractAttemptOutcome,
+  type ContractGradingRef,
+  EVALUATION_ENTRY_POINTS,
+  type EntryPointDisposition,
+  type EvaluateAttemptInput,
+  type EvaluateAttemptOutcome,
+  EvaluateSubmissionError,
+  type EvaluateSubmissionRequest,
+  type EvaluateSubmissionResult,
+  type GradingEntryPoint,
+  IMAGE_CONSUMING_JUDGE_ROUTES,
+  type JevModelExecutorSpec,
+  type JudgeAnswerParams,
+  type JudgeAnswerResult,
+  type JudgeInvokerOutput,
+  type JudgeKind,
+  type JudgeQuestionRow,
+  type JudgeRoute,
+  type JudgeRouteQuestionRow,
+  type JudgeRouterInput,
+  MODEL_BACKED_JUDGE_ROUTES,
+  type MultimodalDirectImageFetchFn,
+  type MultimodalDirectRunTaskFn,
+  createDefaultJudgeInvoker,
+  defaultImageFetch,
+  evaluateAttempt,
+  evaluateSubmission,
+  isModelBackedJudgeRoute,
+  judgeAnswer,
+  judgeRouter,
+  judgeRouterV2,
+  resolveQuestionJudgeRoute,
+  runMultimodalDirectJudge,
+} from './server/judge';
+export { withdrawCapturedOccurrence } from './server/judge/evaluate-submission';
+export { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './server/judge-run-status';
 export {
   rewriteLearningItemKnowledgeIds,
   rewriteQuestionKnowledgeIds,
 } from './server/merge-attribution';
+export { submitPaperSlot } from './server/paper-submit';
+export { selectNextPlacementItem } from './server/placement-select';
+export { getPracticeList } from './server/practice-read';
 export type {
   EnqueueVariantVerifyFn,
   QuestionDraftAcceptResult,
@@ -259,3 +317,5 @@ export { jyeooFetchCandidatesTool } from './server/tools/jyeoo-fetch-candidates'
 // YUK-892 — due-review queue reader for non-LLM read paths (today summary).
 export { executeGetReviewDue } from './server/tools/question-context';
 export { storeSourcedQuestionTool } from './server/tools/store-sourced-question';
+// YUK-1062 — task composition uses the narrow task-public entry directly.
+export { practiceTaskSpecs } from './task-public';

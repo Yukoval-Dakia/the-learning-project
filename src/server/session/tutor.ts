@@ -2,7 +2,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
-import { learning_session } from '@/db/schema';
+import { job_events, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/server/events/writer';
 
@@ -25,11 +25,10 @@ async function loadTutorSessionForUpdate(
   tx: Db | Tx,
   sessionId: string,
 ): Promise<{ status: string; goal_id: string | null } | null> {
-  const rows = await tx.execute(
+  const rows = await tx.execute<{ status: string; goal_id: string | null }>(
     sql`SELECT status, goal_id FROM learning_session WHERE id = ${sessionId} AND type = 'tutor' FOR UPDATE`,
   );
-  const arr = rows as unknown as Array<{ status: string; goal_id: string | null }>;
-  const row = arr[0];
+  const row = rows[0];
   if (!row) return null;
   return { status: row.status, goal_id: row.goal_id };
 }
@@ -41,6 +40,7 @@ function notFound(sessionId: string): ApiError {
 export type StartTutorSessionParams = {
   /** The question this solve session is about (kept in the goal_id slot). */
   questionId: string;
+  issuanceId?: string;
 };
 
 export async function startTutorSession(
@@ -70,7 +70,10 @@ export async function startTutorSession(
       business_table: SESSION_TABLE,
       business_id: sessionId,
       event_type: 'tutor.started',
-      payload: { question_id: params.questionId },
+      payload: {
+        question_id: params.questionId,
+        ...(params.issuanceId ? { issuance_id: params.issuanceId } : {}),
+      },
     });
     return { sessionId };
   });
@@ -159,7 +162,7 @@ export async function abandonTutor(db: Db, sessionId: string): Promise<void> {
 export async function getTutorQuestionId(
   db: Db,
   sessionId: string,
-): Promise<{ questionId: string | null; status: string }> {
+): Promise<{ questionId: string | null; status: string; issuanceId?: string }> {
   const rows = await db
     .select({ status: learning_session.status, goal_id: learning_session.goal_id })
     .from(learning_session)
@@ -167,5 +170,21 @@ export async function getTutorQuestionId(
     .limit(1);
   const row = rows[0];
   if (!row) throw notFound(sessionId);
-  return { questionId: row.goal_id, status: row.status };
+  const [started] = await db
+    .select({ payload: job_events.payload })
+    .from(job_events)
+    .where(
+      and(
+        eq(job_events.business_table, SESSION_TABLE),
+        eq(job_events.business_id, sessionId),
+        eq(job_events.event_type, 'tutor.started'),
+      ),
+    )
+    .limit(1);
+  const issuanceId = started?.payload?.issuance_id;
+  return {
+    questionId: row.goal_id,
+    status: row.status,
+    ...(typeof issuanceId === 'string' ? { issuanceId } : {}),
+  };
 }

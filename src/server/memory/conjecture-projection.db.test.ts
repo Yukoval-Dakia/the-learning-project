@@ -31,6 +31,7 @@ function ingestJob(eventId: string): Job<{ event_id: string }> {
     data: { event_id: eventId },
     expireInSeconds: 60,
     heartbeatSeconds: null,
+    retryCount: 0,
     signal: new AbortController().signal,
   };
 }

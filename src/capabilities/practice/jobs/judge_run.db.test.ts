@@ -1,20 +1,10 @@
-// YUK-594 (durable judge main path, W1) — judge_run handler DB tests.
-//
-// Covers: enqueue→judge→single-tx backfill (attempt review event id=run_id + judge
-// event + FSRS advance + terminal DONE); idempotent re-delivery does not double-write;
-// judge failure writes a terminal FAILED trace AND rethrows for pg-boss re-delivery;
-// a non-retryable caller writes FAILED without rethrowing. The judge itself is mocked
-// at the judgeSubmit seam (no LLM call); the REAL deferred settlement command runs the backfill tx.
-
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { newId } from '@/core/ids';
-import type { JudgeExecutionProvenanceT } from '@/core/schema/event/known';
+// Worker regressions use the actual original, recorded executor and atomic settlement.
+import { eq } from 'drizzle-orm';
+import type { JobWithMetadata } from 'pg-boss';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  INTERVENTION_CONTRACT_VERSION,
-  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-} from '@/core/schema/intervention';
-import {
+  assessment_submission,
+  evaluation,
   event,
   job_events,
   knowledge,
@@ -22,952 +12,378 @@ import {
   material_fsrs_state,
   question,
 } from '@/db/schema';
+import { ApiError } from '@/kernel/http';
 import { computeReplay } from '@/server/events/sse_replay';
-import { resolveSubjectProfile } from '@/subjects/profile';
+import { nativeJudgeRunFixture } from '../../../../tests/fixtures/native-judge-run';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { freezeQuestionForJudge } from '../server/judge-run-payload';
-import {
-  JUDGE_RUN_EVENTS,
-  deriveJudgeRunStatus,
-  terminalJudgeRunResult,
-} from '../server/judge-run-status';
-import {
-  type JudgeRunDeps,
-  type JudgeRunJobData,
-  buildJudgeRunHandler,
-  runJudgeRun,
-} from './judge_run';
+import { executeNativeAttempt } from '../server/assessment/durable-attempt';
+import { deriveJudgeRunStatus, terminalJudgeRunResult } from '../server/judge-run-status';
+import { type JudgeRunJobData, buildJudgeRunHandler, runJudgeRun } from './judge_run';
 
-const CORRECT_VERDICT = {
-  coarse_outcome: 'correct' as const,
-  score: 1,
-  score_meaning: 'correctness' as const,
-  confidence: 0.9,
-  capability_ref: { id: 'semantic', version: '1.0.0' },
-  feedback_md: 'looks right',
-  evidence_json: {},
-};
-
-// A JudgedSubmit-shaped fixture the mock judgeSubmit returns (auto_rate → 'good').
-const JUDGED_GOOD = {
-  judgeResult: CORRECT_VERDICT,
-  judgeRoute: 'semantic',
-  judgeTelemetry: null,
-  executionProvenance: null as JudgeExecutionProvenanceT | null,
-  suggestedRating: 'good' as const,
-  finalRating: 'good' as const,
-  adviceCauseCategory: null,
-  // YUK-739 — JudgedSubmit now carries the advice profile (advisor routing).
-  adviceSubjectProfile: null,
-};
-
-function mockJudgeSubmit(
-  overrides: Partial<typeof JUDGED_GOOD> = {},
-): JudgeRunDeps['judgeSubmitFn'] {
-  return (async () => ({ ...JUDGED_GOOD, ...overrides })) as JudgeRunDeps['judgeSubmitFn'];
+const first = { retryCount: 0, retryLimit: 2 };
+const final = { retryCount: 2, retryLimit: 2 };
+const minute = 60_000;
+async function replay(runId: string) {
+  return computeReplay(testDb(), { businessTable: 'judge_run', businessId: runId, lastEventId: 0 });
 }
-
-async function seedQuestion(id: string) {
+function delivery(data: unknown): JobWithMetadata<JudgeRunJobData> {
+  return { id: `delivery_${Math.random()}`, data, ...first } as JobWithMetadata<JudgeRunJobData>;
+}
+async function seedKc(id: string, domain = 'math') {
   const now = new Date();
   await testDb()
-    .insert(question)
-    .values({
-      id,
-      prompt_md: `Prompt for ${id}`,
-      kind: 'short_answer',
-      reference_md: null,
-      knowledge_ids: ['k1'],
-      difficulty: 3,
-      source: 'manual',
-      variant_depth: 0,
-      version: 0,
-      created_at: now,
-      updated_at: now,
-    });
+    .insert(knowledge)
+    .values({ id, name: id, domain, created_at: now, updated_at: now });
 }
+beforeEach(resetDb);
+afterEach(() => vi.restoreAllMocks());
 
-function jobData(
-  runId: string,
-  questionId: string,
-  over: Partial<JudgeRunJobData> = {},
-): JudgeRunJobData {
-  return {
-    run_id: runId,
-    caller: 'submit',
-    submit: {
-      body: { question_id: questionId, response_md: 'my answer', rating: 'good', auto_rate: true },
-      question_id: questionId,
-      subject_profile: resolveSubjectProfile(),
-      submitted_at: new Date().toISOString(),
-    },
-    ...over,
-  };
-}
-
-const META0 = { retryCount: 0, retryLimit: 2 };
-
-describe('runJudgeRun — backfill', () => {
-  beforeEach(async () => {
-    await resetDb();
-  });
-
-  it('judges then backfills the attempt (review event id=run_id) + judge event + FSRS + terminal DONE', async () => {
+describe('native judge worker', () => {
+  it('persists original/candidate/completion with one learning effect and a complete DONE verdict', async () => {
     const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const runId = newId();
-
-    const result = await runJudgeRun(db, jobData(runId, questionId), META0, {
-      judgeSubmitFn: mockJudgeSubmit(),
+    await seedKc('k1');
+    const f = await nativeJudgeRunFixture(db, { knowledgeIds: ['k1'] });
+    expect(await runJudgeRun(db, f.job, first)).toMatchObject({
+      status: 'done',
+      coarse_outcome: 'correct',
+      judge_event_id: null,
     });
-    expect(result.status).toBe('done');
-
-    // attempt review event was written with id = run_id (the run handle ≡ attempt id).
-    const attempt = await db.select().from(event).where(eq(event.id, runId));
-    expect(attempt).toHaveLength(1);
-    expect(attempt[0].action).toBe('review');
-    expect(attempt[0].subject_id).toBe(questionId);
-
-    // an independent judge event chained to the attempt was written.
-    const judgeEvents = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'judge'), eq(event.subject_id, runId)));
-    expect(judgeEvents).toHaveLength(1);
-
-    // FSRS advanced for the knowledge subject.
-    const fsrs = await db
-      .select()
-      .from(material_fsrs_state)
-      .where(eq(material_fsrs_state.subject_id, 'k1'));
-    expect(fsrs.length).toBeGreaterThan(0);
-
-    // terminal DONE carries the verdict; status derives to done.
-    const events = await computeReplay(db, {
-      businessTable: 'judge_run',
-      businessId: runId,
-      lastEventId: 0,
+    expect(await db.select().from(evaluation)).toHaveLength(1);
+    expect(await db.select().from(event).where(eq(event.id, f.runId))).toHaveLength(1);
+    expect(await db.select().from(material_fsrs_state)).toMatchObject([
+      { subject_id: 'k1', state: { reps: 1 } },
+    ]);
+    expect(
+      await db.select().from(mastery_state).where(eq(mastery_state.subject_id, 'k1')),
+    ).toMatchObject([{ evidence_count: 1 }]);
+    expect(terminalJudgeRunResult(await replay(f.runId))).toMatchObject({
+      status: 'effective',
+      coarse_outcome: 'correct',
+      score: 1,
+      score_meaning: 'correctness',
+      feedback_md: expect.any(String),
+      assessment: { original_evaluation_id: expect.any(String), candidate_id: expect.any(String) },
     });
-    expect(deriveJudgeRunStatus(events)).toBe('done');
-    const done = events.find((e) => e.event_type === 'judge_run.done');
-    const donePayload = done?.payload as {
-      coarse_outcome?: string;
-      score_meaning?: string;
-      evidence_json?: unknown;
-    };
-    expect(donePayload?.coarse_outcome).toBe('correct');
-    // W5 #Tunnw — the FULL verdict rides the terminal contract. `score` alone is
-    // uninterpretable without `score_meaning`, and `evidence_json` is what a client renders
-    // to show the judge's reasoning; both used to be dropped.
-    expect(donePayload?.score_meaning).toBe('correctness');
-    expect(donePayload?.evidence_json).toBeDefined();
   });
 
-  it('threads the frozen KC-domain map through the worker after a knowledge reparent', async () => {
+  it('uses the original KC-domain map after a reparent', async () => {
     const db = testDb();
-    const now = new Date();
-    await db.insert(knowledge).values({
-      id: 'k1',
-      name: 'K1',
-      domain: 'math-before',
-      parent_id: null,
-      created_at: now,
-      updated_at: now,
-    });
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const data = jobData(newId(), questionId);
-    data.submit.ability_global_by_knowledge_id = { k1: 'math-before' };
-
-    await db
-      .update(knowledge)
-      .set({ domain: 'math-after', updated_at: new Date() })
-      .where(eq(knowledge.id, 'k1'));
-    await runJudgeRun(db, data, META0, { judgeSubmitFn: mockJudgeSubmit() });
-
-    const globals = await db
-      .select({ id: mastery_state.subject_id })
-      .from(mastery_state)
-      .where(eq(mastery_state.subject_kind, 'ability_global'));
-    expect(globals.map((row) => row.id)).toEqual(['math-before']);
+    await seedKc('k1');
+    const f = await nativeJudgeRunFixture(db, { knowledgeIds: ['k1'] });
+    await db.update(knowledge).set({ domain: 'history' }).where(eq(knowledge.id, 'k1'));
+    await runJudgeRun(db, f.job, first);
+    expect(
+      (
+        await db
+          .select()
+          .from(mastery_state)
+          .where(eq(mastery_state.subject_kind, 'ability_global'))
+      ).map((row) => row.subject_id),
+    ).toEqual(['math']);
   });
 
-  it('idempotent re-delivery after commit does not double-write (skips, keeps one attempt + one judge)', async () => {
+  it('idempotent redelivery never executes or schedules twice', async () => {
     const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const runId = newId();
-
-    await runJudgeRun(db, jobData(runId, questionId), META0, { judgeSubmitFn: mockJudgeSubmit() });
-    // Re-deliver the same run_id (worker crashed after commit, before pg-boss marked done).
-    const second = await runJudgeRun(
-      db,
-      jobData(runId, questionId),
-      { retryCount: 1, retryLimit: 2 },
-      {
-        judgeSubmitFn: mockJudgeSubmit(),
-      },
-    );
-    expect(second.status).toBe('skipped');
-
-    const attempts = await db.select().from(event).where(eq(event.id, runId));
-    expect(attempts).toHaveLength(1);
-    const judgeEvents = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'judge'), eq(event.subject_id, runId)));
-    expect(judgeEvents).toHaveLength(1);
+    const f = await nativeJudgeRunFixture(db);
+    await runJudgeRun(db, f.job, first);
+    expect((await runJudgeRun(db, f.job, first)).status).toBe('skipped');
+    expect(f.execute).toHaveBeenCalledTimes(1);
+    expect(await db.select().from(evaluation)).toHaveLength(1);
+    expect(await db.select().from(material_fsrs_state)).toMatchObject([{ state: { reps: 1 } }]);
   });
 
-  // W4 #TtWiB — a RETRYABLE failure with budget left must leave a NON-terminal trace.
-  // Pre-fix it wrote terminal FAILED, so poll/SSE clients correctly concluded the run was
-  // dead and stopped waiting — while pg-boss had a redelivery queued that would likely
-  // write DONE. The run must stay 'started' until the budget is actually spent.
-  it('a RETRYABLE judge failure leaves a non-terminal trace (run stays in flight) and rethrows', async () => {
+  it('retryable infrastructure failure leaves a nonterminal trace and rethrows', async () => {
     const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const runId = newId();
-
-    const boom = (async () => {
-      throw new Error('endpoint down');
-    }) as JudgeRunDeps['judgeSubmitFn'];
-
-    // retryCount 0 < retryLimit 2 → pg-boss will deliver this job again.
+    const f = await nativeJudgeRunFixture(db);
     await expect(
-      runJudgeRun(
-        db,
-        jobData(runId, questionId),
-        { ...META0, deliveryId: 'delivery-retry-1' },
-        { judgeSubmitFn: boom },
-      ),
-    ).rejects.toThrow('endpoint down');
-
-    // no attempt persisted (backfill never reached).
-    const attempts = await db.select().from(event).where(eq(event.id, runId));
-    expect(attempts).toHaveLength(0);
-
-    const events = await computeReplay(db, {
-      businessTable: 'judge_run',
-      businessId: runId,
-      lastEventId: 0,
-    });
-    // The failure IS recorded (observable, SSE can render "retrying")…
-    expect(events.some((e) => e.event_type === 'judge_run.attempt_failed')).toBe(true);
-    expect(events.find((e) => e.event_type === 'judge_run.attempt_failed')?.payload).toMatchObject({
-      delivery_id: 'delivery-retry-1',
-    });
-    // …but NOT as a terminal event: no FAILED, and the derived status keeps clients waiting.
-    expect(events.some((e) => e.event_type === 'judge_run.failed')).toBe(false);
+      runJudgeRun(db, f.job, first, {
+        executeNativeAttemptFn: async () => {
+          throw new Error('database temporarily unavailable');
+        },
+      }),
+    ).rejects.toThrow('temporarily');
+    const events = await replay(f.runId);
     expect(deriveJudgeRunStatus(events)).toBe('started');
+    expect(events.some((row) => row.event_type === 'judge_run.attempt_failed')).toBe(true);
+    expect(events.some((row) => row.event_type === 'judge_run.failed')).toBe(false);
+    expect(f.execute).not.toHaveBeenCalled();
   });
 
-  it('rejects an untrusted durable diagnostic verdict and releases its terminal claim', async () => {
+  it('retains the diagnostic original claim after model failure and never redispatches on redelivery', async () => {
     const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const runId = newId();
-    const data = jobData(runId, questionId);
-    const claimedAt = new Date(data.submit.submitted_at);
+    const f = await nativeJudgeRunFixture(db, { requireUnassistedModelEvidence: true });
     await db
       .update(question)
       .set({
-        source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+        source: 'intervention_diagnostic',
         draft_status: 'draft',
-        judge_kind_override: 'multimodal_direct',
-        knowledge_ids: [],
-        metadata: {
-          intervention_diagnostic: {
-            schema_version: INTERVENTION_CONTRACT_VERSION,
-            intervention_id: 'int_durable_worker',
-            intervention_version: 1,
-            diagnostic_kind: 'immediate',
-            knowledge_id: 'kc_durable',
-            due_at: claimedAt.toISOString(),
-          },
-        },
-        updated_at: claimedAt,
+        updated_at: new Date(f.job.submit.submitted_at),
       })
-      .where(eq(question.id, questionId));
-
-    const settleDeferredSoloReviewFn = vi.fn();
-    await expect(
-      runJudgeRun(
-        db,
-        data,
-        { retryCount: 2, retryLimit: 2 },
-        {
-          judgeSubmitFn: mockJudgeSubmit({
-            judgeResult: {
-              ...CORRECT_VERDICT,
-              capability_ref: { id: 'multimodal_direct', version: '1.0.0' },
-            },
-            judgeRoute: 'multimodal_direct',
-            executionProvenance: {
-              version: 1,
-              kind: 'historical_unknown',
-              prompt_fingerprint: 'b'.repeat(64),
-              prompt_template_revision: 'judge-v1',
-            },
-          }),
-          settleDeferredSoloReviewFn:
-            settleDeferredSoloReviewFn as JudgeRunDeps['settleDeferredSoloReviewFn'],
-        },
-      ),
-    ).rejects.toThrow('requires a verified judge execution');
-    expect(settleDeferredSoloReviewFn).not.toHaveBeenCalled();
-    const [row] = await db
-      .select({ draftStatus: question.draft_status })
-      .from(question)
-      .where(eq(question.id, questionId));
-    expect(row.draftStatus).toBe('active');
-  });
-
-  it('the FINAL delivery (budget spent) writes the terminal FAILED', async () => {
-    const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const runId = newId();
-
-    const boom = (async () => {
-      throw new Error('endpoint down');
-    }) as JudgeRunDeps['judgeSubmitFn'];
-
-    // retryCount === retryLimit → no further delivery; next stop is judge_run_dlq.
-    await expect(
-      runJudgeRun(
-        db,
-        jobData(runId, questionId),
-        { retryCount: 2, retryLimit: 2 },
-        {
-          judgeSubmitFn: boom,
-        },
-      ),
-    ).rejects.toThrow('endpoint down');
-
-    const events = await computeReplay(db, {
-      businessTable: 'judge_run',
-      businessId: runId,
-      lastEventId: 0,
-    });
-    expect(deriveJudgeRunStatus(events)).toBe('failed');
+      .where(eq(question.id, f.questionId));
+    const original = await db.select().from(assessment_submission);
+    expect(original).toHaveLength(1);
+    f.execute.mockRejectedValue(new Error('offline model unavailable'));
+    expect((await runJudgeRun(db, f.job, first)).status).toBe('failed');
+    const [q] = await db.select().from(question).where(eq(question.id, f.questionId));
+    expect(q.draft_status).toBe('draft');
+    expect(await db.select().from(assessment_submission)).toEqual(original);
+    await runJudgeRun(db, f.job, { ...first, retryCount: 1 });
+    expect(await db.select().from(assessment_submission)).toEqual(original);
     expect(
-      (events.find((e) => e.event_type === 'judge_run.failed')?.payload as { reason?: string })
-        ?.reason,
-    ).toBe('retries_exhausted');
+      await db.select().from(event).where(eq(event.action, 'experimental:assessment_model_claim')),
+    ).toHaveLength(1);
+    expect(await db.select().from(material_fsrs_state)).toHaveLength(0);
+    expect(f.execute).toHaveBeenCalledTimes(1);
   });
 
-  it('non-retryable caller (unknown face) writes FAILED without rethrowing', async () => {
+  it('the final infrastructure failure persists FAILED and rethrows for DLQ', async () => {
     const db = testDb();
-    const runId = newId();
-    const data = { ...jobData(runId, 'q_unused'), caller: 'probe' } as unknown as JudgeRunJobData;
+    const f = await nativeJudgeRunFixture(db);
+    await expect(
+      runJudgeRun(db, f.job, final, {
+        executeNativeAttemptFn: async () => {
+          throw new Error('database down');
+        },
+      }),
+    ).rejects.toThrow('database down');
+    expect(deriveJudgeRunStatus(await replay(f.runId))).toBe('failed');
+  });
 
-    const result = await runJudgeRun(db, data, META0, { judgeSubmitFn: mockJudgeSubmit() });
-    expect(result.status).toBe('failed');
-    const events = await computeReplay(db, {
-      businessTable: 'judge_run',
-      businessId: runId,
-      lastEventId: 0,
+  it('unknown caller terminalizes without executing the model', async () => {
+    const db = testDb();
+    const f = await nativeJudgeRunFixture(db);
+    expect(
+      (await runJudgeRun(db, { ...f.job, caller: 'unknown' } as unknown as JudgeRunJobData, first))
+        .status,
+    ).toBe('failed');
+    expect(f.execute).not.toHaveBeenCalled();
+  });
+
+  it('a recorded model failure does not trigger provider fallback or another paid attempt on redelivery', async () => {
+    const db = testDb();
+    const f = await nativeJudgeRunFixture(db);
+    f.execute.mockRejectedValue(new Error('offline model failed after dispatch'));
+    await runJudgeRun(db, f.job, first);
+    expect(terminalJudgeRunResult(await replay(f.runId))).toMatchObject({
+      status: 'review_required',
+      coarse_outcome: 'unsupported',
     });
-    expect(deriveJudgeRunStatus(events)).toBe('failed');
-    // no attempt event.
-    expect(await testDb().select().from(event).where(eq(event.id, runId))).toHaveLength(0);
+    expect((await runJudgeRun(db, f.job, final)).status).toBe('skipped');
+    expect(f.execute).toHaveBeenCalledTimes(1);
+    expect(await db.select().from(material_fsrs_state)).toHaveLength(0);
   });
 
-  it('crosses to the fallback provider lane on the final delivery (D9)', async () => {
+  it('reconstructs the full verdict after a committed run loses its DONE notification', async () => {
     const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const runId = newId();
-    vi.stubEnv('CLAUDE_CODE_OAUTH_TOKEN', 'tok');
+    const f = await nativeJudgeRunFixture(db);
+    await runJudgeRun(db, f.job, first);
+    const original = terminalJudgeRunResult(await replay(f.runId));
+    await db.delete(job_events).where(eq(job_events.business_id, f.runId));
+    await runJudgeRun(db, f.job, first);
+    expect(terminalJudgeRunResult(await replay(f.runId))).toEqual(original);
+    expect(f.execute).toHaveBeenCalledTimes(1);
+  });
 
-    let seenDurable: unknown;
-    const capturingJudge = (async (_validated: unknown, opts: { durable?: unknown }) => {
-      seenDurable = opts?.durable;
-      return { ...JUDGED_GOOD };
-    }) as JudgeRunDeps['judgeSubmitFn'];
+  it('an invalid original timestamp is permanent and cannot reach the model', async () => {
+    const db = testDb();
+    const f = await nativeJudgeRunFixture(db);
+    const bad = { ...f.job, submit: { ...f.job.submit, submitted_at: 'invalid-date' } };
+    expect((await runJudgeRun(db, bad, first)).status).toBe('failed');
+    expect((await replay(f.runId)).at(-1)?.payload).toMatchObject({
+      error_code: 'invalid_payload',
+    });
+    expect(f.execute).not.toHaveBeenCalled();
+  });
 
-    // retryCount == retryLimit → final delivery → provider override applied.
-    await runJudgeRun(
-      db,
-      jobData(runId, questionId),
-      { retryCount: 2, retryLimit: 2 },
-      {
-        judgeSubmitFn: capturingJudge,
-      },
+  it('a payload that changes the accepted original is rejected before evaluation', async () => {
+    const db = testDb();
+    const f = await nativeJudgeRunFixture(db);
+    expect(
+      (
+        await runJudgeRun(
+          db,
+          { ...f.job, submit: { ...f.job.submit, submission_id: 'another-original' } },
+          first,
+        )
+      ).status,
+    ).toBe('failed');
+    expect(f.execute).not.toHaveBeenCalled();
+    expect(await db.select().from(evaluation)).toHaveLength(0);
+  });
+
+  it.each([first, final])(
+    'client traces classify errors without exposing internal text (retry=$retryCount)',
+    async (meta) => {
+      const db = testDb();
+      const f = await nativeJudgeRunFixture(db);
+      await expect(
+        runJudgeRun(db, f.job, meta, {
+          executeNativeAttemptFn: async () => {
+            throw new Error('private-internal-path database error');
+          },
+        }),
+      ).rejects.toThrow();
+      const events = await replay(f.runId);
+      expect(JSON.stringify(events)).not.toContain('private-internal-path');
+      expect(events.at(-1)?.payload).toMatchObject({ error_code: 'judge_failed' });
+    },
+  );
+
+  it('stored state corruption terminalizes immediately without retrying the execution', async () => {
+    const db = testDb();
+    const f = await nativeJudgeRunFixture(db);
+    const execute = vi.fn(async () => {
+      throw new ApiError('corrupt_state', 'internal invalid state', 422);
+    });
+    expect((await runJudgeRun(db, f.job, first, { executeNativeAttemptFn: execute })).status).toBe(
+      'failed',
     );
-    expect(seenDurable).toEqual({ providerOverride: 'anthropic-sub' });
-    vi.unstubAllEnvs();
+    expect((await replay(f.runId)).at(-1)?.payload).toMatchObject({
+      error_code: 'corrupt_state',
+      reason: 'non_retryable',
+    });
+    expect(execute).toHaveBeenCalledTimes(1);
   });
 
-  it('recovery: backfill committed but DONE lost → reconstructs the FULL verdict (not a slim DONE) on re-delivery', async () => {
+  it('grades the served question after current prompt, answer and labels change', async () => {
     const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const runId = newId();
-
-    await runJudgeRun(db, jobData(runId, questionId), META0, { judgeSubmitFn: mockJudgeSubmit() });
-    // Simulate a crash between the persist commit and the terminal DONE write: the
-    // attempt event exists but the DONE job_event is gone.
+    const f = await nativeJudgeRunFixture(db);
     await db
-      .delete(job_events)
-      .where(and(eq(job_events.business_id, runId), eq(job_events.event_type, 'judge_run.done')));
-
-    const second = await runJudgeRun(
-      db,
-      jobData(runId, questionId),
-      { retryCount: 1, retryLimit: 2, deliveryId: 'recovery-delivery-1' },
-      {
-        judgeSubmitFn: mockJudgeSubmit(),
-      },
-    );
-    expect(second.status).toBe('skipped');
-
-    // The reconstructed terminal DONE carries the REAL verdict from the judge event,
-    // not a slim placeholder — poll/SSE recovery gets coarse_outcome back.
-    const events = await computeReplay(db, {
-      businessTable: 'judge_run',
-      businessId: runId,
-      lastEventId: 0,
-    });
-    const result = terminalJudgeRunResult(events) as { coarse_outcome?: string } | null;
-    expect(result?.coarse_outcome).toBe('correct');
-    expect(
-      events.filter((row) => row.event_type === JUDGE_RUN_EVENTS.DONE).at(-1)?.payload,
-    ).toMatchObject({ delivery_id: 'recovery-delivery-1' });
+      .update(question)
+      .set({ prompt_md: '后来替换题面', reference_md: '999', knowledge_ids: ['later'] })
+      .where(eq(question.id, f.questionId));
+    await runJudgeRun(db, f.job, first);
+    expect(f.execute.mock.calls[0][0].question_parts[0].prompt_md).toContain('顺流18');
+    expect(f.execute.mock.calls[0][0].slot_responses).toEqual(f.request.response_set.entries);
+    expect((await db.select().from(material_fsrs_state)).map((row) => row.subject_id)).toEqual([
+      f.questionId,
+    ]);
   });
 
-  it('malformed payload (invalid submitted_at) is non-retryable — FAILED, no rethrow, no attempt', async () => {
+  it('does not rebuild missing legacy snapshots from a current row', async () => {
     const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const runId = newId();
-    const bad = jobData(runId, questionId);
-    bad.submit.submitted_at = 'not-a-date';
-
-    const result = await runJudgeRun(db, bad, META0, { judgeSubmitFn: mockJudgeSubmit() });
-    expect(result.status).toBe('failed');
-    const events = await computeReplay(db, {
-      businessTable: 'judge_run',
-      businessId: runId,
-      lastEventId: 0,
-    });
-    expect(deriveJudgeRunStatus(events)).toBe('failed');
-    expect(
-      (events.find((e) => e.event_type === 'judge_run.failed')?.payload as { reason?: string })
-        ?.reason,
-    ).toBe('non_retryable');
-    expect(await db.select().from(event).where(eq(event.id, runId))).toHaveLength(0);
-  });
-
-  it('malformed payload (bad body → ZodError) is non-retryable — FAILED, no rethrow', async () => {
-    const db = testDb();
-    const runId = newId();
-    const bad = {
-      ...jobData(runId, 'q_unused'),
+    const f = await nativeJudgeRunFixture(db);
+    const old = {
+      run_id: 'legacy_without_binding',
+      caller: 'submit' as const,
       submit: {
-        body: { not: 'valid' },
-        question_id: 'q_unused',
-        subject_profile: resolveSubjectProfile(),
+        question_id: f.questionId,
+        body: { rating: 'good', auto_rate: true, response_md: '15' },
+        subject_profile: {},
         submitted_at: new Date().toISOString(),
       },
-    } as JudgeRunJobData;
-
-    const result = await runJudgeRun(db, bad, META0, { judgeSubmitFn: mockJudgeSubmit() });
-    expect(result.status).toBe('failed');
-    const events = await computeReplay(db, {
-      businessTable: 'judge_run',
-      businessId: runId,
-      lastEventId: 0,
-    });
-    expect(deriveJudgeRunStatus(events)).toBe('failed');
-  });
-
-  // #6 — the FAILED payload rides the generic SSE face verbatim, so it must carry a
-  // classified code, never the raw error text (DB strings / internal paths / provider
-  // response fragments). The raw message stays in the server log.
-  it('failure payloads carry a classified code, NOT the raw error message (both tiers)', async () => {
-    const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const secret = 'connection to 10.0.0.7:5432 refused (/srv/app/internal/path.ts)';
-    const boom = (async () => {
-      throw new Error(secret);
-    }) as JudgeRunDeps['judgeSubmitFn'];
-
-    // Both the non-terminal retry trace and the terminal one ride the generic SSE face
-    // verbatim, so BOTH must be redacted.
-    const retryableRunId = newId();
-    await expect(
-      runJudgeRun(db, jobData(retryableRunId, questionId), META0, { judgeSubmitFn: boom }),
-    ).rejects.toThrow(secret);
-    const terminalRunId = newId();
-    await expect(
-      runJudgeRun(
-        db,
-        jobData(terminalRunId, questionId),
-        { retryCount: 2, retryLimit: 2 },
-        {
-          judgeSubmitFn: boom,
-        },
-      ),
-    ).rejects.toThrow(secret);
-
-    const replay = async (runId: string) =>
-      await computeReplay(db, { businessTable: 'judge_run', businessId: runId, lastEventId: 0 });
-
-    const attemptFailed = (await replay(retryableRunId)).find(
-      (e) => e.event_type === 'judge_run.attempt_failed',
-    );
-    const attemptPayload = attemptFailed?.payload as Record<string, unknown>;
-    expect(attemptPayload.error_code).toBe('judge_failed');
-
-    const failed = (await replay(terminalRunId)).find((e) => e.event_type === 'judge_run.failed');
-    const payload = failed?.payload as Record<string, unknown>;
-    expect(payload.reason).toBe('retries_exhausted');
-    expect(payload.error_code).toBe('judge_failed');
-
-    // The client-facing payloads must not contain the raw message under ANY key.
-    for (const p of [attemptPayload, payload]) {
-      expect(JSON.stringify(p)).not.toContain('10.0.0.7');
-      expect(JSON.stringify(p)).not.toContain('/srv/app/internal');
-    }
-  });
-});
-
-// ── #2 (codex) — 题目数据冻结 ────────────────────────────────────────────────
-describe('runJudgeRun — frozen question snapshot (#2)', () => {
-  beforeEach(async () => {
-    await resetDb();
-  });
-
-  it('judges against the question the LEARNER ANSWERED, not the row edited after the 202', async () => {
-    const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const runId = newId();
-
-    // Freeze the row the learner saw, exactly as enqueueDurableJudge does.
-    const [answered] = await db.select().from(question).where(eq(question.id, questionId));
-    const data = jobData(runId, questionId);
-    data.submit.question_snapshot = freezeQuestionForJudge(answered);
-
-    // Between the 202 and the worker pickup, someone edits the question.
-    await db
-      .update(question)
-      .set({
-        prompt_md: 'EDITED AFTER SUBMIT',
-        reference_md: 'EDITED REFERENCE',
-        difficulty: 5,
-        knowledge_ids: ['k_edited'],
-      })
-      .where(eq(question.id, questionId));
-
-    const captured: {
-      q?: {
-        prompt_md: string;
-        reference_md: string | null;
-        difficulty: number;
-        knowledge_ids: string[];
-      };
-    } = {};
-    const capturing = (async (validated: { q: NonNullable<typeof captured.q> }) => {
-      captured.q = validated.q;
-      return { ...JUDGED_GOOD };
-    }) as JudgeRunDeps['judgeSubmitFn'];
-
-    const result = await runJudgeRun(db, data, META0, { judgeSubmitFn: capturing });
-    expect(result.status).toBe('done');
-
-    // Pre-fix this read the EDITED row and judged the learner against text they never saw.
-    expect(captured.q).toBeDefined();
-    expect(captured.q?.prompt_md).toBe(`Prompt for ${questionId}`);
-    expect(captured.q?.reference_md).toBeNull();
-    expect(captured.q?.difficulty).toBe(3);
-    expect(captured.q?.knowledge_ids).toEqual(['k1']);
-
-    // FSRS scheduled against the FROZEN knowledge tag, not the edited one.
-    const fsrs = await db
-      .select()
-      .from(material_fsrs_state)
-      .where(eq(material_fsrs_state.subject_id, 'k1'));
-    expect(fsrs.length).toBeGreaterThan(0);
-  });
-
-  it('a payload with no snapshot (pre-snapshot in-flight job) still runs against the live row', async () => {
-    const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const runId = newId();
-
-    // jobData() intentionally omits question_snapshot.
-    const result = await runJudgeRun(db, jobData(runId, questionId), META0, {
-      judgeSubmitFn: mockJudgeSubmit(),
-    });
-    expect(result.status).toBe('done');
-  });
-});
-
-// ── W4 #TtWiA (codex P1) — out-of-order FSRS/θ̂ backfill ────────────────────
-// The durable lane decouples "when the learner answered" from "when the verdict lands". An
-// earlier run whose judge failed goes into 30s/60s redelivery while a LATER attempt on the
-// same KC succeeds first; the older run then arrives carrying an EARLIER submitted_at and
-// reschedules on top of the newer state. The tx lock serializes writes but cannot restore
-// time order, so last_review / due / θ̂ / snapshots all get walked backwards.
-describe('runJudgeRun — late-arriving backfill (#TtWiA)', () => {
-  beforeEach(async () => {
-    await resetDb();
-  });
-
-  it('records the late attempt but does NOT regress FSRS or θ̂', async () => {
-    const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-
-    // The NEWER attempt lands first (its run succeeded while the older one was retrying).
-    const newerRunId = newId();
-    const newerData = jobData(newerRunId, questionId);
-    newerData.submit.submitted_at = new Date('2026-07-20T10:00:00Z').toISOString();
-    await runJudgeRun(db, newerData, META0, { judgeSubmitFn: mockJudgeSubmit() });
-
-    const afterNewer = (
-      await db.select().from(material_fsrs_state).where(eq(material_fsrs_state.subject_id, 'k1'))
-    )[0];
-    expect(afterNewer).toBeTruthy();
-    const thetaAfterNewer = (
-      await db.select().from(mastery_state).where(eq(mastery_state.subject_id, 'k1'))
-    )[0]?.theta_hat;
-
-    // Now the OLDER run finally succeeds on redelivery, with an earlier answer timestamp.
-    const olderRunId = newId();
-    const olderData = jobData(olderRunId, questionId);
-    olderData.submit.submitted_at = new Date('2026-07-20T09:00:00Z').toISOString();
-    const result = await runJudgeRun(db, olderData, META0, { judgeSubmitFn: mockJudgeSubmit() });
-    expect(result.status).toBe('done');
-
-    // The attempt IS recorded — it is immutable evidence and must never be dropped.
-    expect(await db.select().from(event).where(eq(event.id, olderRunId))).toHaveLength(1);
-
-    // …but the schedule was NOT walked backwards onto the older attempt.
-    const afterOlder = (
-      await db.select().from(material_fsrs_state).where(eq(material_fsrs_state.subject_id, 'k1'))
-    )[0];
-    expect(afterOlder.due_at.getTime()).toBe(afterNewer.due_at.getTime());
-    expect(afterOlder.last_review_event_id).toBe(afterNewer.last_review_event_id);
-    // θ̂ is equally order-sensitive and is skipped on the same branch.
-    const thetaAfterOlder = (
-      await db.select().from(mastery_state).where(eq(mastery_state.subject_id, 'k1'))
-    )[0]?.theta_hat;
-    expect(thetaAfterOlder).toBe(thetaAfterNewer);
-
-    // And NO revert bracket is minted for the late attempt. writeAttemptSnapshotBrackets
-    // writes a segment iff its snapshot ARRAY is non-empty (not iff before !== after), so
-    // passing the unchanged updates through would create a checkpoint + snapshot describing
-    // a transition that never happened — reversible state for a no-op.
-    const brackets = await db.select().from(event).where(eq(event.subject_id, olderRunId));
-    expect(brackets.map((e) => e.action)).not.toContain('experimental:state_snapshot');
-    expect(brackets.map((e) => e.action)).not.toContain('experimental:grading_checkpoint');
-
-    // W5 #TuezA — the POST-COMMIT mastery-progress signal must be skipped too. It reads
-    // `mastery_state.last_theta_delta` after commit and reports it as THIS attempt's Δθ̂ with
-    // caused_by pointing here; since θ̂ was deliberately not updated, that delta belongs to
-    // the NEWER attempt, so emitting it manufactures mis-attributed experiment data.
-    const signals = await db
-      .select()
-      .from(event)
-      .where(eq(event.action, 'experimental:mastery_progress'));
-    expect(signals.some((e) => e.caused_by_event_id === olderRunId)).toBe(false);
-
-    // The terminal DONE records that the schedule intentionally did not move.
-    const events = await computeReplay(db, {
-      businessTable: 'judge_run',
-      businessId: olderRunId,
-      lastEventId: 0,
-    });
-    expect((terminalJudgeRunResult(events) as { late_arrival?: boolean })?.late_arrival).toBe(true);
-  });
-
-  // W5 #Tuey8 — the detection domain must cover EVERY write domain, not just the FSRS subset.
-  // θ̂ is written for the question's FULL knowledge_ids, while FSRS writes only
-  // `requested ∩ labels`. A newer attempt that advanced a KC OUTSIDE this attempt's FSRS
-  // subset used to slip past a detector that only walked the FSRS updates.
-  it('detects lateness from a KC that only the θ̂ write set covers', async () => {
-    const db = testDb();
-    const questionId = `q_${newId()}`;
-    const now = new Date();
-    // Two labels: the submit below narrows FSRS to k1 via referenced_knowledge_ids, but θ̂
-    // still writes BOTH k1 and k2.
-    await db.insert(question).values({
-      id: questionId,
-      prompt_md: `Prompt for ${questionId}`,
-      kind: 'short_answer',
-      reference_md: null,
-      knowledge_ids: ['k1', 'k2'],
-      difficulty: 3,
-      source: 'manual',
-      variant_depth: 0,
-      version: 0,
-      created_at: now,
-      updated_at: now,
-    });
-
-    // A newer attempt already moved θ̂ for k2 ONLY (nothing touched k1's FSRS card).
-    await db.insert(mastery_state).values({
-      id: newId(),
-      subject_kind: 'knowledge',
-      subject_id: 'k2',
-      theta_hat: 0.5,
-      evidence_count: 1,
-      last_outcome_at: new Date('2026-07-20T10:00:00Z'),
-      updated_at: new Date('2026-07-20T10:00:00Z'),
-    });
-
-    // The late run narrows FSRS to k1, so an FSRS-only detector sees nothing stale.
-    const olderRunId = newId();
-    const olderData = jobData(olderRunId, questionId);
-    olderData.submit.submitted_at = new Date('2026-07-20T09:00:00Z').toISOString();
-    (olderData.submit.body as { referenced_knowledge_ids?: string[] }).referenced_knowledge_ids = [
-      'k1',
-    ];
-
-    const result = await runJudgeRun(db, olderData, META0, { judgeSubmitFn: mockJudgeSubmit() });
-    expect(result.status).toBe('done');
-    // Evidence recorded…
-    expect(await db.select().from(event).where(eq(event.id, olderRunId))).toHaveLength(1);
-    // …but k2's θ̂ was NOT moved backwards by the stale attempt.
-    const k2 = (await db.select().from(mastery_state).where(eq(mastery_state.subject_id, 'k2')))[0];
-    expect(k2.theta_hat).toBe(0.5);
-    expect(k2.evidence_count).toBe(1);
-    // …and no FSRS card was created for k1 either (whole-attempt skip, not a partial one).
-    expect(
-      await db.select().from(material_fsrs_state).where(eq(material_fsrs_state.subject_id, 'k1')),
-    ).toHaveLength(0);
-
-    // W5 #TumMl — k1 is a COLD card (no row ever existed) and the upsert was skipped, so the
-    // event payload must NOT advertise an advanced schedule nobody can observe. It reports the
-    // never-reviewed baseline instead.
-    const [attempt] = await db.select().from(event).where(eq(event.id, olderRunId));
-    const payload = attempt.payload as {
-      fsrs_state_after?: { state?: string; reps?: number };
-      fsrs_state_after_by_subject?: Array<{ subject_id: string; state?: { state?: string } }>;
     };
-    expect(payload.fsrs_state_after?.state).toBe('new');
-    expect(payload.fsrs_state_after?.reps).toBe(0);
-    const k1Reported = payload.fsrs_state_after_by_subject?.find((s) => s.subject_id === 'k1');
-    expect(k1Reported?.state?.state).toBe('new');
-  });
-
-  it('an IN-ORDER backfill still advances FSRS normally (the guard is not a blanket skip)', async () => {
-    const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-
-    const firstRunId = newId();
-    const firstData = jobData(firstRunId, questionId);
-    firstData.submit.submitted_at = new Date('2026-07-20T09:00:00Z').toISOString();
-    await runJudgeRun(db, firstData, META0, { judgeSubmitFn: mockJudgeSubmit() });
-    const afterFirst = (
-      await db.select().from(material_fsrs_state).where(eq(material_fsrs_state.subject_id, 'k1'))
-    )[0];
-
-    const secondRunId = newId();
-    const secondData = jobData(secondRunId, questionId);
-    secondData.submit.submitted_at = new Date('2026-07-20T10:00:00Z').toISOString();
-    await runJudgeRun(db, secondData, META0, { judgeSubmitFn: mockJudgeSubmit() });
-    const afterSecond = (
-      await db.select().from(material_fsrs_state).where(eq(material_fsrs_state.subject_id, 'k1'))
-    )[0];
-
-    // The later attempt owns the schedule now.
-    expect(afterSecond.last_review_event_id).toBe(secondRunId);
-    expect(afterSecond.last_review_event_id).not.toBe(afterFirst.last_review_event_id);
-  });
-});
-
-// ── #1 (major) — duplicate-delivery race ────────────────────────────────────
-// pg-boss can hand the same job to a second worker while the first is inside its LLM call.
-// Both clear the entry guard; the winner commits; the loser's settlement dies on the
-// event PK. That must NOT terminalize the run as FAILED — the run was judged and persisted.
-describe('runJudgeRun — duplicate-delivery race (#1)', () => {
-  beforeEach(async () => {
-    await resetDb();
-  });
-
-  /** Settlement stand-in for the RACE LOSER: the winner's attempt row lands, then the PK blows up. */
-  function losingPersist(
-    runId: string,
-    questionId: string,
-  ): JudgeRunDeps['settleDeferredSoloReviewFn'] {
-    return (async () => {
-      // Worker A committed its backfill in the window between our entry guard and here.
-      await testDb().insert(event).values({
-        id: runId,
-        actor_kind: 'user',
-        actor_ref: 'self',
-        action: 'review',
-        subject_kind: 'question',
-        subject_id: questionId,
-        outcome: 'success',
-        payload: {},
-      });
-      throw new Error(
-        `duplicate key value violates unique constraint "event_pkey" (id)=(${runId})`,
-      );
-    }) as JudgeRunDeps['settleDeferredSoloReviewFn'];
-  }
-
-  it('a PK conflict from the winning delivery recovers instead of writing a permanent FAILED', async () => {
-    const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const runId = newId();
-
-    const result = await runJudgeRun(db, jobData(runId, questionId), META0, {
-      judgeSubmitFn: mockJudgeSubmit(),
-      settleDeferredSoloReviewFn: losingPersist(runId, questionId),
+    expect((await runJudgeRun(db, old, first)).status).toBe('failed');
+    expect((await replay(old.run_id)).at(-1)?.payload).toMatchObject({
+      error_code: 'historical_unknown',
     });
-
-    // The loser recognises "already persisted" and recovers — it does not fail the run.
-    expect(result.status).toBe('skipped');
-    const events = await computeReplay(db, {
-      businessTable: 'judge_run',
-      businessId: runId,
-      lastEventId: 0,
-    });
-    // Pre-fix: a terminal FAILED was written and, being the last terminal event, pinned
-    // deriveJudgeRunStatus to 'failed' forever for a correctly judged submission.
-    expect(events.some((e) => e.event_type === 'judge_run.failed')).toBe(false);
-    expect(deriveJudgeRunStatus(events)).toBe('done');
+    expect(f.execute).not.toHaveBeenCalled();
+    expect(await db.select().from(material_fsrs_state)).toHaveLength(0);
   });
 
-  it('does not overwrite the winner’s real verdict when its DONE already landed', async () => {
+  it('late grading replays in original order without regressing the latest FSRS time', async () => {
     const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const runId = newId();
+    const older = await nativeJudgeRunFixture(db, { now: new Date(Date.now() - 10 * minute) });
+    const newer = await nativeJudgeRunFixture(db, {
+      questionId: older.questionId,
+      now: new Date(Date.now() - minute),
+    });
+    await runJudgeRun(db, newer.job, first);
+    await runJudgeRun(db, older.job, first);
+    const [card] = await db.select().from(material_fsrs_state);
+    expect(card.state.reps).toBe(2);
+    expect(card.state.last_review).toBeTruthy();
+    if (!card.state.last_review) throw new Error('expected last review time');
+    expect(new Date(card.state.last_review).toISOString()).toBe(newer.job.submit.submitted_at);
+  });
 
-    // Worker A ran to completion first (attempt + judge event + terminal DONE).
-    await runJudgeRun(db, jobData(runId, questionId), META0, { judgeSubmitFn: mockJudgeSubmit() });
+  it('late replay includes overlapping KC writes beyond one selected primary target', async () => {
+    const db = testDb();
+    await seedKc('k1');
+    await seedKc('k2');
+    const older = await nativeJudgeRunFixture(db, {
+      knowledgeIds: ['k1', 'k2'],
+      now: new Date(Date.now() - 10 * minute),
+    });
+    const newer = await nativeJudgeRunFixture(db, {
+      knowledgeIds: ['k2'],
+      now: new Date(Date.now() - minute),
+    });
+    await runJudgeRun(db, newer.job, first);
+    await runJudgeRun(db, older.job, first);
+    const cards = await db.select().from(material_fsrs_state);
+    expect(cards.find((row) => row.subject_id === 'k1')?.state.reps).toBe(1);
+    expect(cards.find((row) => row.subject_id === 'k2')?.state.reps).toBe(2);
+    const [k2] = await db.select().from(mastery_state).where(eq(mastery_state.subject_id, 'k2'));
+    expect(k2.evidence_count).toBe(2);
+    expect(k2.last_outcome_at?.toISOString()).toBe(newer.job.submit.submitted_at);
+  });
 
-    // Worker B was already past its entry guard and now fails on the PK.
-    const stillPersisted = (async () => {
-      throw new Error('duplicate key value violates unique constraint "event_pkey"');
-    }) as JudgeRunDeps['settleDeferredSoloReviewFn'];
-    const second = await runJudgeRun(
-      db,
-      jobData(runId, questionId),
-      { retryCount: 1, retryLimit: 2 },
-      { judgeSubmitFn: mockJudgeSubmit(), settleDeferredSoloReviewFn: stillPersisted },
+  it('in-order independent occurrences both advance scheduling', async () => {
+    const db = testDb();
+    const a = await nativeJudgeRunFixture(db);
+    await runJudgeRun(db, a.job, first);
+    const b = await nativeJudgeRunFixture(db, { questionId: a.questionId });
+    await runJudgeRun(db, b.job, first);
+    expect(await db.select().from(material_fsrs_state)).toMatchObject([{ state: { reps: 2 } }]);
+  });
+
+  it('a losing delivery recovers a committed winner instead of writing FAILED', async () => {
+    const db = testDb();
+    const f = await nativeJudgeRunFixture(db);
+    const outcome = await runJudgeRun(db, f.job, first, {
+      executeNativeAttemptFn: async (...args) => {
+        await executeNativeAttempt(...args);
+        throw new Error('duplicate delivery lost after winner committed');
+      },
+    });
+    expect(outcome.status).toBe('skipped');
+    expect(deriveJudgeRunStatus(await replay(f.runId))).toBe('done');
+    expect((await replay(f.runId)).some((row) => row.event_type === 'judge_run.failed')).toBe(
+      false,
     );
-    expect(second.status).toBe('skipped');
+    expect(f.execute).toHaveBeenCalledTimes(1);
+  });
 
-    const events = await computeReplay(db, {
-      businessTable: 'judge_run',
-      businessId: runId,
-      lastEventId: 0,
+  it('does not replace a winner’s complete DONE result on redelivery', async () => {
+    const db = testDb();
+    const f = await nativeJudgeRunFixture(db);
+    await runJudgeRun(db, f.job, first);
+    const before = await replay(f.runId);
+    const execute = vi.fn(executeNativeAttempt);
+    await runJudgeRun(db, f.job, first, { executeNativeAttemptFn: execute });
+    expect(await replay(f.runId)).toEqual(before);
+    expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('one throwing job does not abandon its batch peers and the batch still fails', async () => {
+    const db = testDb();
+    const a = await nativeJudgeRunFixture(db);
+    const b = await nativeJudgeRunFixture(db);
+    const handler = buildJudgeRunHandler(db, {
+      executeNativeAttemptFn: async (database, job) => {
+        if (job.run_id === a.runId) throw new Error('first job unavailable');
+        return executeNativeAttempt(database, job);
+      },
     });
-    expect(events.some((e) => e.event_type === 'judge_run.failed')).toBe(false);
-    expect(deriveJudgeRunStatus(events)).toBe('done');
-    // A's real verdict survives — no slim recovery DONE was appended over it.
-    expect(events.filter((e) => e.event_type === 'judge_run.done')).toHaveLength(1);
-    expect((terminalJudgeRunResult(events) as { coarse_outcome?: string })?.coarse_outcome).toBe(
-      'correct',
+    await expect(handler([delivery(a.job), delivery(b.job)])).rejects.toThrow(
+      'first job unavailable',
     );
-    // Exactly one attempt event and one judge event — no double-write.
-    expect(await db.select().from(event).where(eq(event.id, runId))).toHaveLength(1);
-  });
-});
-
-// ── #11 — per-job isolation in the batch loop ───────────────────────────────
-describe('buildJudgeRunHandler — batch isolation (#11)', () => {
-  beforeEach(async () => {
-    await resetDb();
+    expect(deriveJudgeRunStatus(await replay(a.runId))).toBe('started');
+    expect(deriveJudgeRunStatus(await replay(b.runId))).toBe('done');
   });
 
-  it('a THROWING job does not abandon its batch-mates, and the batch still fails for redelivery', async () => {
-    const db = testDb();
-    const throwingQuestionId = `q_${newId()}`;
-    const goodQuestionId = `q_${newId()}`;
-    await seedQuestion(throwingQuestionId);
-    await seedQuestion(goodQuestionId);
-    const throwingRunId = newId();
-    const goodRunId = newId();
-
-    // Job 1's judge blows up with a RETRYABLE error → runJudgeRun rethrows. Pre-fix that
-    // throw escaped the loop and job 2 never ran at all (pg-boss failed the whole batch).
-    let call = 0;
-    const failFirst = (async () => {
-      call += 1;
-      if (call === 1) throw new Error('endpoint down');
-      return { ...JUDGED_GOOD };
-    }) as JudgeRunDeps['judgeSubmitFn'];
-
-    const handler = buildJudgeRunHandler(db, { judgeSubmitFn: failFirst });
-    const jobs = [
-      { id: 'j1', data: jobData(throwingRunId, throwingQuestionId), retryCount: 0, retryLimit: 2 },
-      { id: 'j2', data: jobData(goodRunId, goodQuestionId), retryCount: 0, retryLimit: 2 },
-    ] as unknown as Parameters<typeof handler>[0];
-
-    // The batch STILL fails (retry semantics unchanged — pg-boss must redeliver job 1)…
-    await expect(handler(jobs)).rejects.toThrow('endpoint down');
-
-    // …but job 2 was drained and completed its backfill instead of being abandoned.
-    expect(await db.select().from(event).where(eq(event.id, goodRunId))).toHaveLength(1);
-    const goodEvents = await computeReplay(db, {
-      businessTable: 'judge_run',
-      businessId: goodRunId,
-      lastEventId: 0,
+  it('a malformed job with a run ID terminalizes instead of disappearing', async () => {
+    await buildJudgeRunHandler(testDb())([delivery({ run_id: 'malformed_with_id' })]);
+    expect(deriveJudgeRunStatus(await replay('malformed_with_id'))).toBe('failed');
+    expect((await replay('malformed_with_id')).at(-1)?.payload).toMatchObject({
+      error_code: 'invalid_payload',
     });
-    expect(deriveJudgeRunStatus(goodEvents)).toBe('done');
-
-    // Job 1 left a NON-terminal failure trace — it still has retry budget (W4 #TtWiB), so
-    // it must not be reported as dead while pg-boss has a redelivery queued.
-    const failedEvents = await computeReplay(db, {
-      businessTable: 'judge_run',
-      businessId: throwingRunId,
-      lastEventId: 0,
-    });
-    expect(failedEvents.some((e) => e.event_type === 'judge_run.attempt_failed')).toBe(true);
-    expect(deriveJudgeRunStatus(failedEvents)).toBe('started');
   });
 
-  // W4 #TtZ8i (OCR major) — a malformed job used to be silently `continue`d, which pg-boss
-  // treats as a successful consume: the job vanished with NO terminal event, stranding the
-  // run pending forever, and `runJudgeRun`'s own malformed-payload guard never even ran.
-  it('a malformed job WITH a run_id is terminalized instead of silently dropped', async () => {
-    const db = testDb();
-    const runId = newId();
-    const handler = buildJudgeRunHandler(db);
-    const jobs = [
-      { id: 'j-malformed', data: { run_id: runId }, retryCount: 0, retryLimit: 2 },
-    ] as unknown as Parameters<typeof handler>[0];
-
-    // Terminalized, so the batch is consumed (a redelivery could not improve a bad payload).
-    await handler(jobs);
-
-    const events = await computeReplay(db, {
-      businessTable: 'judge_run',
-      businessId: runId,
-      lastEventId: 0,
-    });
-    expect(deriveJudgeRunStatus(events)).toBe('failed');
-    const payload = events.find((e) => e.event_type === 'judge_run.failed')?.payload as {
-      reason?: string;
-      error_code?: string;
-    };
-    expect(payload?.reason).toBe('non_retryable');
-    expect(payload?.error_code).toBe('invalid_payload');
-  });
-
-  it('a malformed job with NO run_id fails the batch so pg-boss routes it to the DLQ', async () => {
-    const db = testDb();
-    const handler = buildJudgeRunHandler(db);
-    const jobs = [
-      { id: 'j-no-run-id', data: { caller: 'submit' }, retryCount: 0, retryLimit: 2 },
-    ] as unknown as Parameters<typeof handler>[0];
-
-    // Nothing to terminalize against → the ONLY honest move is to fail the job, so the
-    // malformed payload becomes visible to an operator in the DLQ rather than disappearing.
-    await expect(handler(jobs)).rejects.toThrow('missing run_id');
+  it('a malformed job without a run ID fails the batch for DLQ visibility', async () => {
+    await expect(
+      buildJudgeRunHandler(testDb())([delivery({ caller: 'native_assessment', submit: {} })]),
+    ).rejects.toThrow('missing run_id');
   });
 });

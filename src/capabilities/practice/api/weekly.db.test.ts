@@ -1,9 +1,8 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { event, misconception } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { ReviewWeeklyResponseSchema } from './review-planning-contracts';
 import { GET } from './weekly';
-import { localDateKey } from './weekly-window';
 
 async function seedReview(id: string, createdAt: Date) {
   await testDb()
@@ -102,6 +101,10 @@ describe('GET /api/review/weekly', () => {
     await resetDb();
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it('aggregates top causes through the effective user-first cause policy', async () => {
     await seedFailureWithCauses({
       attemptId: 'attempt_weekly',
@@ -156,9 +159,18 @@ describe('GET /api/review/weekly', () => {
     ]);
   });
 
-  it('includes the learner current local date and reports the applied time zone', async () => {
-    const eventAt = new Date(Date.now() - 1000);
+  it.each([
+    ['2026-10-04T15:59:59.999Z', '2026-10-04', '2026-10-03'],
+    ['2026-10-04T16:00:00.000Z', '2026-10-05', '2026-10-04'],
+    ['2026-10-04T16:00:00.500Z', '2026-10-05', '2026-10-04'],
+  ])('includes the learner current local date at %s', async (instant, today, yesterday) => {
+    // Freeze Date only: DB/network timers keep running. The original now - 1s
+    // fixture belonged to yesterday during the first second after local midnight.
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(new Date(instant));
+    const eventAt = new Date();
     await seedReview('review_current_local_day', eventAt);
+    await seedReview('review_previous_local_day', new Date(eventAt.getTime() - 86_400_000));
 
     const res = await GET(
       new Request('http://localhost/api/review/weekly?days=7&timezone=Asia%2FShanghai'),
@@ -172,9 +184,20 @@ describe('GET /api/review/weekly', () => {
     expect(body.window).toMatchObject({ days: 7, time_zone: 'Asia/Shanghai' });
     expect(body.daily).toHaveLength(7);
     expect(body.daily.at(-1)).toEqual({
-      date: localDateKey(eventAt, 'Asia/Shanghai'),
+      date: today,
       count: 1,
       correct: 1,
+      incorrect: 0,
+      partial: 0,
+      ungraded: 0,
+    });
+    expect(body.daily.at(-2)).toEqual({
+      date: yesterday,
+      count: 1,
+      correct: 1,
+      incorrect: 0,
+      partial: 0,
+      ungraded: 0,
     });
   });
 

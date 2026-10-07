@@ -4,6 +4,7 @@ import {
   extractAnswerHead,
   isExactCapableReference,
   nonEmptyStrings,
+  stripTrailingJunk,
 } from './judge-routing';
 
 describe('nonEmptyStrings', () => {
@@ -142,5 +143,120 @@ describe('isExactCapableReference (YUK-1003)', () => {
     // guard's documented boundary: it catches structurally unwinnable rows,
     // not stylistic process prose.
     expect(isExactCapableReference('解：设 Z=max{X,Y}，由独立性得 F_Z=F_X·F_Y')).toBe(true);
+  });
+});
+
+// ── YUK-1224 (SCF-141) — trailing-junk stripper: semantics pinned to the retired regex ──
+// The retired expression is kept ONLY as an oracle here. It is exponential on the
+// adversarial input handled by judge-routing-dos.test.ts (which runs that case in a
+// hard-timeout child), so this corpus is deliberately capped at 14 chars: long
+// enough to hit every alternative/overlap shape, short enough that the oracle is cheap.
+const RETIRED_TRAILING_JUNK_RE =
+  /(?:[\s。．.，,；;：:、*]|\s*[（(]\s*(?:选项|正确答案)\s*[A-Z]{0,4}\s*[)）]?)+$/;
+
+describe('stripTrailingJunk (YUK-1224 / SCF-141)', () => {
+  it('is byte-for-byte the retired expression on a curated + fuzzed corpus', () => {
+    const curated = [
+      '',
+      ' ',
+      '。',
+      '**',
+      'x',
+      '42。',
+      '宾语前置',
+      '宾语前置．',
+      '解析完。',
+      'C.0.950 **',
+      '答案 D（选项 D）',
+      '答案 D （选项 D）',
+      '答案D（选项D）',
+      'X（正确答案 AB）',
+      'X (正确答案 AB)',
+      'C。原文依据（选项 C）',
+      '（选项A',
+      '(选项A',
+      '(选项)',
+      '（选项）',
+      '（选项 A）',
+      '（选项AB）',
+      '（选项ABCD）',
+      '（选项ABCDE）',
+      '(正确答案)',
+      '（正确答案）',
+      '(选项AB)。',
+      '（选项A）x',
+      '答案（选项A',
+      'A. (选项A',
+      'D\u3000（选项 D）',
+      '(选项（选项AB）',
+      '（选项（选项AB）',
+      '答案 D／（选项 D）',
+      '( 选项 A )',
+      '(选项 AB',
+      '*（选项A）*',
+      '解析完。（选项 A）',
+      '主语（选项）',
+      '待定(选项 A )(选项 B)',
+      '（）',
+      '( )',
+      '(x)',
+      '(选项x)',
+      '(选项 x)',
+    ];
+    // Deterministic LCG fuzz over the token alphabet.
+    const alphabet = [
+      '(',
+      '（',
+      ')',
+      '）',
+      '选',
+      '项',
+      '正',
+      '确',
+      '答',
+      '案',
+      'A',
+      'Z',
+      ' ',
+      '。',
+      '*',
+      'x',
+      '、',
+    ];
+    let seed = 0x2f6e2b1;
+    const next = () => {
+      seed = (seed * 1664525 + 1013904223) >>> 0;
+      return seed / 0x1_0000_0000;
+    };
+    const fuzzed: string[] = [];
+    for (let n = 0; n < 400; n += 1) {
+      const len = Math.floor(next() * 15);
+      let s = '';
+      for (let k = 0; k < len; k += 1) s += alphabet[Math.floor(next() * alphabet.length)];
+      fuzzed.push(s);
+    }
+
+    const mismatches: string[] = [];
+    for (const s of [...curated, ...fuzzed]) {
+      const expected = s.replace(RETIRED_TRAILING_JUNK_RE, '');
+      const actual = stripTrailingJunk(s);
+      if (actual !== expected) {
+        mismatches.push(
+          `${JSON.stringify(s)}: got ${JSON.stringify(actual)}, want ${JSON.stringify(expected)}`,
+        );
+      }
+    }
+    expect(mismatches).toEqual([]);
+  });
+
+  it.each([
+    ['答案 D（选项 D）', '答案 D'],
+    ['答案 D （选项 D）', '答案 D'],
+    ['解析完。', '解析完'],
+    ['C.0.950 **', 'C.0.950'],
+    ['X（正确答案 AB）', 'X'],
+    ['宾语前置', '宾语前置'],
+  ])('extractAnswerHead(%j) → %j (legal oracle cases)', (input, expected) => {
+    expect(extractAnswerHead(input)).toBe(expected);
   });
 });

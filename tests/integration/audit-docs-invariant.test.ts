@@ -15,7 +15,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { taskCatalog } from '@/ai/task-catalog';
+import { taskCatalog } from '@/capabilities/task-catalog';
 
 const REPO_ROOT = path.resolve(__dirname, '..', '..');
 
@@ -96,8 +96,8 @@ describe('Audit 2026-06-06 G8-docs invariants', () => {
   it('docs/architecture.md: §5.1 marks itself non-exhaustive and cites the composition root', () => {
     const doc = read('docs/architecture.md');
     expect(
-      doc.includes('src/ai/task-catalog.ts'),
-      'architecture.md §5.1 should cite src/ai/task-catalog.ts as the canonical composition root',
+      doc.includes('src/capabilities/task-catalog.ts'),
+      'architecture.md §5.1 should cite src/capabilities/task-catalog.ts as the canonical composition root',
     ).toBe(true);
     expect(doc.includes('src/ai/registry.ts')).toBe(true);
     expect(doc.includes('compatibility projection')).toBe(true);

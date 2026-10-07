@@ -35,7 +35,7 @@
 // making `mapOutcome` return null (S3 fails). A closed-loop E2E that cannot go red is just
 // another silently-passing test — exactly what this ticket exists to eliminate.
 
-import { and, eq, or, sql } from 'drizzle-orm';
+import { and, desc, eq, or, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // ── THE SINGLE REPLACED PORT ────────────────────────────────────────────────────
@@ -84,9 +84,20 @@ function fakePiAdapter() {
   };
 }
 
+import { z } from 'zod';
 import { capabilities } from '@/capabilities';
 import { PROBE_QUESTION_SOURCE } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
-import { ai_task_runs, cost_ledger, event, kc_typed_state, knowledge, question } from '@/db/schema';
+import { loadActiveProbes } from '@/capabilities/shell/server/prep-desk-probes';
+import {
+  ai_task_runs,
+  assessment_issuance,
+  cost_ledger,
+  event,
+  event_subscription_delivery,
+  kc_typed_state,
+  knowledge,
+  question,
+} from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { writeAiProposal } from '@/kernel/proposals/writer';
@@ -95,8 +106,14 @@ import {
   PREDICTION_SCORE_ACTION,
   PROBE_RESULT_PROJECTED_ACTION,
 } from '@/server/conjectures/reconcile';
+import { loadEventSubscriptionRegistry } from '@/server/event-subscriptions/registry';
+import {
+  bootstrapSubscription,
+  runSubscriptionDispatchCycle,
+} from '@/server/event-subscriptions/runtime';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { buildHonoApp } from '../../../../server/app';
+import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { RESEARCH_MEETING_SAMPLES, runResearchMeetingNightly } from './research_meeting_nightly';
 
@@ -212,6 +229,30 @@ function sdkSuccess(structured: unknown) {
  * rather than as a silently-correct canned answer.
  */
 function fakeModel(prompt: string): unknown {
+  if (prompt.includes('"scoring_unit":')) {
+    const start = prompt.indexOf('{"submission_id":');
+    const input = z
+      .object({
+        scoring_unit: z.object({ criterion: z.object({ rule_id: z.string() }) }),
+        slot_responses: z.array(z.object({ slot_id: z.string(), text_md: z.string() })),
+      })
+      .parse(JSON.parse(prompt.slice(start).split('\n')[0]));
+    return {
+      ...sdkSuccess({
+        kind: 'rule',
+        rule_id: input.scoring_unit.criterion.rule_id,
+        points_awarded: 0,
+        confidence: 0.95,
+        feedback_md: JUDGE_INCORRECT.feedback_md,
+        probe_signature_match: JUDGE_INCORRECT.probe_signature_match,
+        evidence_citations: input.slot_responses.map((slot) => ({
+          slot_id: slot.slot_id,
+          quote: slot.text_md,
+        })),
+      }),
+      total_cost_usd: 0.0001,
+    };
+  }
   if (prompt.includes('"probe_package":')) {
     return sdkSuccess({
       review: {
@@ -236,7 +277,7 @@ function fakeModel(prompt: string): unknown {
 
 /** The prompt the vision judge sent to the model (exactly one per run). */
 function judgePrompts(): string[] {
-  return sdk.prompts.filter((p) => p.includes('"student_final_answer_text"'));
+  return sdk.prompts.filter((p) => p.includes('"scoring_unit":'));
 }
 
 async function seedKnowledge(): Promise<void> {
@@ -345,6 +386,65 @@ async function apiRequest(path: string, body: unknown): Promise<Response> {
 }
 
 async function answerProbeViaRoute(probeQuestionId: string, answerMd: string): Promise<Response> {
+  const db = testDb();
+  const registry = await loadEventSubscriptionRegistry(capabilities, db);
+  const subscription = registry.subscriptions.find(
+    (sub) => sub.id === 'agency.probe-publication-serve',
+  );
+  if (!subscription) throw new Error('registered probe publication subscriber missing');
+  await bootstrapSubscription(db, registry, subscription);
+  await publishPaperModelFixture(db, probeQuestionId);
+  const beforeRead = await db.select().from(assessment_issuance);
+  expect((await loadActiveProbes(db)).probes.map((probe) => probe.probe_question_id)).not.toContain(
+    probeQuestionId,
+  );
+  expect(await db.select().from(assessment_issuance)).toEqual(beforeRead);
+  const [publication] = await db
+    .select()
+    .from(event)
+    .where(
+      and(
+        eq(event.action, 'experimental:assessment_publish'),
+        eq(event.subject_id, probeQuestionId),
+      ),
+    )
+    .orderBy(desc(event.dispatch_seq))
+    .limit(1);
+  if (!publication) throw new Error('admitted probe publication receipt missing');
+  const dispatchRegistry = { ...registry, subscriptions: [subscription] };
+  for (let cycle = 0; cycle < 8; cycle += 1) {
+    const result = await runSubscriptionDispatchCycle(db, dispatchRegistry, {
+      owner: 'closed-loop-publication-worker',
+      maxAttempts: 1,
+    });
+    expect(result).toMatchObject({ retryScheduled: 0, deadLettered: 0, lostLease: 0 });
+    if (result.dispatched === 0) break;
+  }
+  const [delivery] = await db
+    .select()
+    .from(event_subscription_delivery)
+    .where(
+      and(
+        eq(event_subscription_delivery.subscriber_id, subscription.id),
+        eq(event_subscription_delivery.subscriber_version, subscription.version),
+        eq(event_subscription_delivery.source_event_id, publication.id),
+      ),
+    );
+  expect(delivery).toMatchObject({ status: 'succeeded', source_event_id: publication.id });
+  const issued = await db
+    .select()
+    .from(assessment_issuance)
+    .where(eq(assessment_issuance.issuance_id, `iss_probe_${probeQuestionId}`));
+  expect(issued).toHaveLength(1);
+  expect((await loadActiveProbes(db)).probes.map((probe) => probe.probe_question_id)).toContain(
+    probeQuestionId,
+  );
+  expect(
+    await db
+      .select()
+      .from(assessment_issuance)
+      .where(eq(assessment_issuance.issuance_id, `iss_probe_${probeQuestionId}`)),
+  ).toEqual(issued);
   return apiRequest(`/api/conjecture/probe/${probeQuestionId}/answer`, { answer_md: answerMd });
 }
 
@@ -514,7 +614,7 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     expect(judgeCalls[0]).toContain(PROBE_MD);
     expect(judgeCalls[0]).toContain('使动用法，译作「使他感到奇异」');
     // …and `judge_kind_override` resolved to a real, runnable route (not a validation stub).
-    expect(await taskKindCounts()).toMatchObject({ MultimodalDirectJudgeTask: 1 });
+    expect(await taskKindCounts()).toMatchObject({ AssessmentRuleJudgeTask: 1 });
 
     const [probeResult] = await db
       .select()

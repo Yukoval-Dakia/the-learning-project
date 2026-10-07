@@ -6,7 +6,7 @@
 
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { getTaskSystemPrompt } from '@/ai/task-prompts';
+import { getTaskSystemPrompt } from '@/capabilities/task-registry';
 import { event, goal, knowledge } from '@/db/schema';
 import { getProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { acceptAiProposal, dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';

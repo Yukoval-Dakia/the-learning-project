@@ -12,7 +12,7 @@
 //   - skip paths: not_found / not_web_sourced.
 
 import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -24,6 +24,7 @@ import {
 import type { SourceGroundingVerifyResult } from '@/capabilities/practice/server/judge/source-grounding-verify';
 import { buildProducerDifficultyEvidence } from '@/core/schema/difficulty-evidence';
 import type { WebSourcedProvenanceT } from '@/core/schema/provenance';
+import type { Db, Tx } from '@/db/client';
 import {
   event,
   knowledge,
@@ -192,6 +193,218 @@ describe('runSourceVerify', () => {
   beforeEach(async () => {
     await resetDb();
   });
+
+  it.each(['grounded', 'not_grounded', 'transient'] as const)(
+    'YUK-1118 serializes child %s verification behind a root-first edit',
+    async (outcome) => {
+      const db = testDb();
+      await seedKnowledge('k1');
+      const rootId = await seedQuestion({
+        id: 'verify-lock-root',
+        kind: 'composite',
+        source: 'quiz_gen',
+        knowledgeIds: [],
+        prompt: '阅读论语材料，回答各小题。',
+      });
+      const childId = await seedQuestion({
+        id: 'verify-lock-child',
+        draftStatus: 'active',
+        metadataOverride: groundingMetadata('verify-lock-asset'),
+      });
+      await db
+        .update(question)
+        .set({ parent_question_id: rootId, part_index: 0 })
+        .where(eq(question.id, childId));
+
+      let releaseEditor!: () => void;
+      const editGate = new Promise<void>((resolve) => {
+        releaseEditor = resolve;
+      });
+      let rootLocked!: () => void;
+      const rootReady = new Promise<void>((resolve) => {
+        rootLocked = resolve;
+      });
+      // Same order as a scoring-input edit: lock group root, update child, publish group.
+      const editor = db
+        .transaction(async (tx) => {
+          await tx
+            .select({ id: question.id })
+            .from(question)
+            .where(eq(question.id, rootId))
+            .for('update');
+          rootLocked();
+          await editGate;
+          await tx
+            .update(question)
+            .set({
+              prompt_md: '结合「学而时习之」说明「之」指代的内容。',
+              version: 1,
+            })
+            .where(eq(question.id, childId));
+          return publishQuestionGroupFromRow(tx, {
+            rootId,
+            actorRef: 'test:concurrent-edit',
+            now: new Date(),
+          });
+        })
+        .then(
+          (value) => ({ ok: true as const, value }),
+          (error) => ({ ok: false as const, error }),
+        );
+
+      let verifyPid = 0;
+      const observedTransaction = <T>(
+        fn: (tx: Tx) => Promise<T>,
+        config?: Parameters<Db['transaction']>[1],
+      ) =>
+        db.transaction(async (tx) => {
+          const rows = await tx.execute<{ pid: number }>(sql`select pg_backend_pid() as pid`);
+          verifyPid = Number(rows[0].pid);
+          return fn(tx);
+        }, config);
+      const observedDb = new Proxy(db, {
+        get(target, property) {
+          if (property === 'transaction') return observedTransaction;
+          const value = Reflect.get(target, property);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      await rootReady;
+      const verification = runSourceVerify({
+        db: observedDb,
+        questionId: childId,
+        runTaskFn: vi.fn(async () => ({ text: solverOutput('代词') })),
+        sourceGroundingFn: vi.fn(async () => groundingResult(outcome)),
+      }).then(
+        (value) => ({ ok: true as const, value }),
+        (error) => ({ ok: false as const, error }),
+      );
+      try {
+        await vi.waitFor(() => expect(verifyPid).toBeGreaterThan(0), { timeout: 5_000 });
+        await vi.waitFor(
+          async () => {
+            const rows = await db.execute<{ n: number }>(
+              sql`select count(*)::int as n from pg_locks where pid = ${verifyPid} and not granted`,
+            );
+            expect(Number(rows[0].n)).toBeGreaterThan(0);
+          },
+          { timeout: 5_000 },
+        );
+        // Waiting for the root must not independently commit a legacy demotion.
+        const [waitingChild] = await db.select().from(question).where(eq(question.id, childId));
+        expect(waitingChild.draft_status).toBe('active');
+        releaseEditor();
+        const editResult = await editor;
+        expect(editResult.ok).toBe(true);
+        const verifyResult = await verification;
+        expect(verifyResult.ok).toBe(false);
+        if (verifyResult.ok) throw new Error('stale verification unexpectedly committed');
+        expect(String(verifyResult.error)).toContain(
+          outcome === 'transient'
+            ? 'source grounding failed (transient)'
+            : 'changed during verification',
+        );
+        const [child] = await db.select().from(question).where(eq(question.id, childId));
+        expect(child).toMatchObject({ version: 1, draft_status: 'active' });
+        const [lifecycle] = await db
+          .select()
+          .from(question_group_lifecycle)
+          .where(eq(question_group_lifecycle.group_id, rootId));
+        expect(lifecycle.suspended).toBe(false);
+        const events = await db
+          .select()
+          .from(event)
+          .where(eq(event.action, 'experimental:source_verify'));
+        expect(events).toHaveLength(1);
+        expect(events[0].outcome).toBe('error');
+      } finally {
+        releaseEditor();
+        await Promise.all([editor, verification]);
+      }
+    },
+  );
+
+  it.each([false, true])(
+    'YUK-1118 rolls back legacy demotion when suspension fails (published=%s)',
+    async (published) => {
+      const db = testDb();
+      await seedKnowledge('k1');
+      const qid = await seedQuestion({
+        draftStatus: 'active',
+        metadataOverride: groundingMetadata('verify-atomic-asset'),
+      });
+      if (published) {
+        await publishQuestionGroupFromRow(db, {
+          rootId: qid,
+          admission: {
+            state: 'admitted',
+            evidence: {
+              marking_provenance: 'official',
+              verification: { structural_check_passed: true, independent_verification: null },
+              model_slice: null,
+            },
+          },
+          actorRef: 'test:initial-admission',
+          now: new Date(),
+        });
+      }
+      const snapshot = async () => ({
+        questions: await db.select().from(question),
+        lifecycles: await db.select().from(question_group_lifecycle),
+        revisions: await db.select().from(question_revision),
+        verifications: await db.select().from(question_admission_verification),
+        publishEvents: await db
+          .select()
+          .from(event)
+          .where(eq(event.action, 'experimental:assessment_publish')),
+      });
+      const before = await snapshot();
+      await db.execute(sql`CREATE FUNCTION fail_verify_suspension() RETURNS trigger AS $$
+        BEGIN
+          IF NEW.suspended THEN RAISE EXCEPTION 'injected verify suspension failure'; END IF;
+          RETURN NEW;
+        END; $$ LANGUAGE plpgsql`);
+      await db.execute(sql`CREATE TRIGGER fail_verify_suspension_trg
+        BEFORE INSERT OR UPDATE ON question_group_lifecycle
+        FOR EACH ROW EXECUTE FUNCTION fail_verify_suspension()`);
+      const errorLog = vi.spyOn(console, 'error').mockImplementation(() => {});
+      const run = () =>
+        runSourceVerify({
+          db,
+          questionId: qid,
+          runTaskFn: vi.fn(async () => ({ text: solverOutput('代词') })),
+          sourceGroundingFn: vi.fn(async () => groundingResult('transient')),
+        });
+      try {
+        await expect(run()).rejects.toThrow('source grounding failed (transient)');
+        expect(errorLog).toHaveBeenCalledWith(
+          '[source_verify] verify-hold write failed for',
+          qid,
+          expect.any(Error),
+        );
+        expect(await snapshot()).toEqual(before);
+        const events = await db
+          .select()
+          .from(event)
+          .where(eq(event.action, 'experimental:source_verify'));
+        expect(events).toHaveLength(1);
+        expect(events[0].outcome).toBe('error');
+      } finally {
+        errorLog.mockRestore();
+        await db.execute(sql`DROP TRIGGER fail_verify_suspension_trg ON question_group_lifecycle`);
+        await db.execute(sql`DROP FUNCTION fail_verify_suspension()`);
+      }
+      // The retriable error must permit a later atomic draft + suspended/withheld commit.
+      await expect(run()).rejects.toThrow('source grounding failed (transient)');
+      const [child] = await db.select().from(question).where(eq(question.id, qid));
+      const [lifecycle] = await db
+        .select()
+        .from(question_group_lifecycle)
+        .where(eq(question_group_lifecycle.group_id, qid));
+      expect(child.draft_status).toBe('draft');
+      expect(lifecycle).toMatchObject({ suspended: true, scoring_admission_state: 'withheld' });
+    },
+  );
 
   it('promotes draft→active + FSRS-enrolls when every tier-2 check passes', async () => {
     const db = testDb();

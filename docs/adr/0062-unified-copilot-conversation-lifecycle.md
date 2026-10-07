@@ -4,6 +4,9 @@ status: accepted
 
 # Copilot 只有一种持续会话生命周期
 
+> **2026-10-04 mechanism amendment (YUK-1119):** This product lifecycle remains accepted. References below to SDK query/session files describe the former engine: pi uses process-owned cursors and bounded durable-turn replay; no provider session file or shared volume is involved. Sequential acceptance is still distinct from live steering, and paid execution fences remain.
+> See [ADR-0065](./0065-pi-execution-and-conversation-replay.md) for the approved migration and current source evidence.
+
 Owner 于 2026-09-06 明确“copilot的消息不应该分前后台，默认都是不被打断的，对标chatgpt等产品”。因此取消让用户选择 inline/durable 或 Mission 的方案：消息持久受理后由服务端拥有运行，浏览器只是可重连订阅者。关闭抽屉、刷新、网络断开不代表 Stop；显式停止、安全/费用限制或可解释的执行失败才产生终态。
 
 复用现有 Copilot 会话、`copilot_run`、幂等受理、执行栅栏与终态恢复，不增加通用执行框架。按同一会话顺序持久接纳后续消息，在前一条结束后自动消费；已有活动消息不是 `session_busy` 拒绝理由，也不要求先停止再发送。相同幂等键但不同内容仍是冲突，安全的容量限制仍须明确返回，不能暗中丢消息。在线向同一 SDK query 注入补充内容是额外语义，未验证前不把顺序接纳冒充即时 steer。

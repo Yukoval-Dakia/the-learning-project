@@ -35,14 +35,14 @@ export function shanghaiDayStart(now: Date): Date {
 
 /** 当日已 fetched 总量（成功 canary 事件的 counts.fetched 求和）。 */
 export async function jyeooFetchedToday(db: Db, now: Date = new Date()): Promise<number> {
-  const rows = await db.execute<{ fetched: number | null }>(sql`
+  const rows = await db.execute<{ fetched: number | string | null }>(sql`
     select coalesce(sum((payload->'counts'->>'fetched')::int), 0) as fetched
     from ${event}
     where ${event.action} = ${JYEOO_FETCH_CANARY_ACTION}
       and ${event.outcome} = 'success'
       and ${event.created_at} >= ${shanghaiDayStart(now).toISOString()}
   `);
-  const row = (rows as unknown as Array<{ fetched: number | string | null }>)[0];
+  const row = rows[0];
   const value = row?.fetched;
   const n = typeof value === 'string' ? Number.parseInt(value, 10) : (value ?? 0);
   return Number.isFinite(n) ? Number(n) : 0;

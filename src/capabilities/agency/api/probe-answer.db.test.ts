@@ -18,7 +18,7 @@
 // mock the same chokepoint. serveProbeOnce (the producer half, wired in S2) is real,
 // so the probe question row is genuine.
 
-import { and, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
@@ -26,36 +26,37 @@ import {
   PROBE_JUDGE_STARTED_ACTION,
   countActiveProbes,
   serveProbeOnce,
+  servePublishedProbe,
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
+import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
+import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
+import { loadActiveProbes } from '@/capabilities/shell/server/prep-desk-probes';
 import { newId } from '@/core/ids';
 import { ConjectureProbeSpecV2 } from '@/core/schema/business';
+import { ConjectureProbeSignatureMatch } from '@/core/schema/conjecture-probe-response';
 import {
   ai_task_runs,
+  assessment_issuance,
+  assessment_submission,
   cost_ledger,
+  evaluation,
   event,
   knowledge,
   material_fsrs_state,
   question,
+  question_group_lifecycle,
+  source_asset,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
+import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { agencyCapability } from '../manifest';
 import { ProbeAnswerResponseSchema } from './contracts';
 import { POST } from './probe-answer';
 
-// ── Judge invoker mock ─────────────────────────────────────────────────────────
-// vi.hoisted so the fn reference survives vi.mock's factory hoisting. The route
-// calls `createDefaultJudgeInvoker().invoke(...)` — we mock the invoker module so
-// `invoke` returns a pinned JudgeResultV2T without an LLM call. This is the SAME
-// module submit.ts / advice.ts mock in their tests (the invoker is the shared
-// judge chokepoint; the base registry's `resolveJudge().run()` is a validation
-// stub, NOT a runtime judge — review PR #705 CRITICAL).
-const { mockInvoke } = vi.hoisted(() => ({ mockInvoke: vi.fn() }));
-
-vi.mock('@/capabilities/practice/server/judge/invoker', () => ({
-  createDefaultJudgeInvoker: () => ({ invoke: mockInvoke }),
-}));
+const mockInvoke = vi.fn<(...args: unknown[]) => Promise<ReturnType<typeof invokeResult>>>();
 
 const KC_ID = 'kn_chain_rule';
 const PROBE_RESULT_ACTION = 'experimental:probe_result';
@@ -234,7 +235,20 @@ async function serveResponseAwareProbe(): Promise<string> {
   return served.probe_question_id;
 }
 
+async function issueOfflineProbe(probeQuestionId: string) {
+  const [existing] = await testDb()
+    .select()
+    .from(assessment_issuance)
+    .where(eq(assessment_issuance.issuance_id, `iss_probe_${probeQuestionId}`));
+  const [row] = await testDb().select().from(question).where(eq(question.id, probeQuestionId));
+  if (!existing && row?.source === 'mind_probe') {
+    await publishPaperModelFixture(testDb(), probeQuestionId);
+    await servePublishedProbe(testDb(), probeQuestionId);
+  }
+}
+
 async function answer(probeQuestionId: string, answer_md: string): Promise<Response> {
+  await issueOfflineProbe(probeQuestionId);
   return POST(
     new Request(`http://localhost/api/conjecture/probe/${probeQuestionId}/answer`, {
       method: 'POST',
@@ -250,6 +264,20 @@ async function answerWithImages(
   answer_md: string,
   answer_image_refs: string[],
 ): Promise<Response> {
+  await issueOfflineProbe(probeQuestionId);
+  for (const id of answer_image_refs)
+    await testDb()
+      .insert(source_asset)
+      .values({
+        id,
+        kind: 'image',
+        storage_key: id,
+        mime_type: 'image/png',
+        byte_size: 4,
+        sha256: 'a'.repeat(64),
+        created_at: new Date('2026-10-01T00:00:00Z'),
+      })
+      .onConflictDoNothing();
   return POST(
     new Request(`http://localhost/api/conjecture/probe/${probeQuestionId}/answer`, {
       method: 'POST',
@@ -297,11 +325,182 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     await seedKnowledge();
     __resetRateLimitForTests();
     mockInvoke.mockReset();
+    vi.spyOn(evaluationService, 'createFormalModelExecutor').mockImplementation(() =>
+      createRecordedModelExecutor(testDb(), async (input, _signal, runId) => {
+        expect(
+          await testDb()
+            .select()
+            .from(assessment_submission)
+            .where(eq(assessment_submission.submission_id, input.submission_id)),
+        ).toHaveLength(1);
+        const invoked = await mockInvoke(input);
+        const value = invoked.result;
+        if (input.unit.points === null) throw new Error('fixture requires additive unit');
+        if (value.coarse_outcome === 'unsupported')
+          return {
+            kind: 'pending',
+            pending: { reason: 'unjudgeable', detail: 'offline unsupported fixture' },
+            run_refs: [runId],
+            cost_usd_micros: 0,
+          };
+        const signature = ConjectureProbeSignatureMatch.safeParse(
+          value.evidence_json.probe_signature_match,
+        );
+        return {
+          kind: 'scored',
+          points_awarded:
+            value.coarse_outcome === 'correct'
+              ? input.unit.points
+              : value.coarse_outcome === 'partial'
+                ? input.unit.points / 2
+                : 0,
+          matched: {
+            rule_id:
+              input.unit.criterion.kind === 'rule_reference' ? input.unit.criterion.rule_id : '',
+            option_ids: [],
+          },
+          ...(signature.success ? { probe_signature_match: signature.data } : {}),
+          confidence: value.confidence,
+          feedback_md: value.feedback_md,
+          evidence_citations: input.slot_responses.flatMap((entry) =>
+            entry.kind === 'open'
+              ? [
+                  ...(entry.text_md ? [{ slot_id: entry.slot_id, quote: entry.text_md }] : []),
+                  ...entry.evidence.map((item) => ({ evidence_id: item.evidence_id })),
+                ]
+              : [],
+          ),
+          run_refs: [invoked.task_run_id ?? runId],
+          cost_usd_micros: 0,
+        };
+      }),
+    );
   });
 
   // YUK-567 slice-2 — probes are served with judge_kind_override='multimodal_direct'
   // (an IMAGE_CONSUMING route), so a photo / photo-only answer is graded (not 422'd)
   // and the student image refs thread through to the judge invoke.
+  it('delayed admission delivers through the registered publication command before GET and answer', async () => {
+    const db = testDb();
+    const id = await serveResponseAwareProbe();
+    const subscription = agencyCapability.subscriptions?.handlers.find(
+      (handler) => handler.id === 'agency.probe-publication-serve',
+    );
+    if (!subscription) throw new Error('production probe publication subscription absent');
+    const handler = (await subscription.load())(db);
+    const subscriberId = subscription.id,
+      subscriberVersion = subscription.version;
+    async function deliverLatest() {
+      const rows = await db
+        .select()
+        .from(event)
+        .where(and(eq(event.action, 'experimental:assessment_publish'), eq(event.subject_id, id)))
+        .orderBy(desc(event.created_at), desc(event.id))
+        .limit(1);
+      const publication = rows[0];
+      if (!publication) throw new Error('publication receipt absent');
+      return handler({
+        subscriberId,
+        subscriberVersion,
+        deliverySeq: '1',
+        sourceEventId: publication.id,
+      });
+    }
+    expect(await deliverLatest()).toMatchObject({ status: 'skipped', reason: 'not_admitted' });
+    expect(await loadActiveProbes(db)).toEqual({ probes: [] });
+    expect(await db.select().from(assessment_issuance)).toHaveLength(0);
+    await publishPaperModelFixture(db, id);
+    expect(await loadActiveProbes(db)).toEqual({ probes: [] });
+    expect(await db.select().from(assessment_issuance)).toHaveLength(0);
+    expect(await deliverLatest()).toMatchObject({ status: 'succeeded' });
+    const issued = await db.select().from(assessment_issuance);
+    const read = await loadActiveProbes(db);
+    expect(read.probes.map((probe) => probe.probe_question_id)).toEqual([id]);
+    expect(await deliverLatest()).toMatchObject({ status: 'succeeded' });
+    expect(await loadActiveProbes(db)).toEqual(read);
+    expect(await db.select().from(assessment_issuance)).toEqual(issued);
+    mockInvoke.mockResolvedValue(
+      invokeResult('correct', {
+        match: 'gold',
+        explanation_md: '原始答案包含内层导数 2x，与冻结 gold 签名一致。',
+      }),
+    );
+    const response = await POST(
+      new Request(`http://local/api/conjecture/probe/${id}/answer`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ answer_md: '2x·cos(x²)' }),
+      }),
+      { id },
+    );
+    expect({ status: response.status, body: await response.json() }).toMatchObject({ status: 200 });
+    expect(await probeResultEvents(id)).toHaveLength(1);
+    expect(await loadActiveProbes(db)).toEqual({ probes: [] });
+    expect(await deliverLatest()).toMatchObject({ status: 'skipped', reason: 'already_answered' });
+    expect(await db.select().from(assessment_issuance)).toEqual(issued);
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not issue or grade a production probe without model admission', async () => {
+    const id = await serveResponseAwareProbe();
+    expect(await loadActiveProbes(testDb())).toEqual({ probes: [] });
+    const response = await POST(
+      new Request(`http://local/api/conjecture/probe/${id}/answer`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ answer_md: 'cos(x²)' }),
+      }),
+      { id },
+    );
+    expect(response.status).toBe(409);
+    expect(mockInvoke).not.toHaveBeenCalled();
+    expect(await testDb().select().from(assessment_issuance)).toHaveLength(0);
+    expect(await testDb().select().from(assessment_submission)).toHaveLength(0);
+    expect(await probeResultEvents(id)).toHaveLength(0);
+  });
+
+  it('refuses practice activation of a probe candidate and retains the native original', async () => {
+    const id = await serveProbe();
+    mockInvoke.mockResolvedValue(invokeResult('correct'));
+    expect((await answer(id, '2x cos(x²)')).status).toBe(200);
+    const [candidate] = await testDb().select().from(evaluation);
+    expect(
+      await evaluationService.activateSubmissionCandidate(
+        testDb(),
+        {
+          evaluation_id: candidate.evaluation_id,
+          expected_effective_id: null,
+          expected_generation: 0,
+        },
+        { actorRef: 'test:wrong-probe-entry' },
+      ),
+    ).toEqual({ status: 'coordinate_mismatch' });
+    expect(await testDb().select().from(assessment_submission)).toHaveLength(1);
+    expect(await fsrsRowCount()).toBe(0);
+    expect(
+      await testDb()
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:assessment_activation')),
+    ).toHaveLength(0);
+  });
+
+  it('retains an evaluated original without conjecture evidence if admission is suspended during evaluation', async () => {
+    const id = await serveProbe();
+    mockInvoke.mockImplementation(async () => {
+      await testDb()
+        .update(question_group_lifecycle)
+        .set({ suspended: true })
+        .where(eq(question_group_lifecycle.group_id, id));
+      return invokeResult('correct');
+    });
+    expect((await answer(id, '2x cos(x²)')).status).toBe(409);
+    expect(await testDb().select().from(assessment_submission)).toHaveLength(1);
+    expect(await testDb().select().from(evaluation)).toHaveLength(1);
+    expect(await probeResultEvents(id)).toHaveLength(0);
+    expect(await fsrsRowCount()).toBe(0);
+  });
+
   it('photo-only answer grades via the vision route + threads student images', async () => {
     const probeId = await serveProbe();
     mockInvoke.mockResolvedValue(invokeResult('correct'));
@@ -312,7 +511,17 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     expect(body).toMatchObject({ status: 'retired', outcome: 1, resolution: 'retired' });
     // the uploaded answer image rode through to the judge as student_image_refs.
     expect(mockInvoke).toHaveBeenCalledWith(
-      expect.objectContaining({ student_image_refs: ['asset_hand1'] }),
+      expect.objectContaining({
+        slot_responses: [
+          expect.objectContaining({
+            evidence: [
+              expect.objectContaining({
+                asset: { asset_id: 'asset_hand1', digest: `sha256:${'a'.repeat(64)}` },
+              }),
+            ],
+          }),
+        ],
+      }),
     );
     // Provenance: the photo answer's asset refs are recorded on the probe_result event
     // (not just fed to the judge), so the team can later see what was submitted.
@@ -370,8 +579,7 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     // Invoker received the owner's answer verbatim via the standard chokepoint.
     expect(mockInvoke).toHaveBeenCalledWith(
       expect.objectContaining({
-        question: expect.objectContaining({ id: probeId }),
-        answer_md: 'cos(x^2)',
+        slot_responses: [expect.objectContaining({ text_md: 'cos(x^2)' })],
       }),
     );
   });
@@ -970,8 +1178,9 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     expect(await probeResultEvents(probeId)).toHaveLength(1);
   });
 
-  it('422 when judge_kind_override is corrupt (guard checks .success not truthiness — PR #705 CodeRabbit+OCR)', async () => {
+  it('uses the frozen executor when the mutable judge override changes', async () => {
     const probeId = await serveProbe();
+    await issueOfflineProbe(probeId);
     // Corrupt the override to a non-JudgeKind garbage value. The DB column is
     // free-form text. The guard MUST check `overrideParsed.success`, NOT
     // `!overrideParsed` (safeParse always returns a truthy result object, so a
@@ -983,10 +1192,10 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
 
     mockInvoke.mockResolvedValue(invokeResult('incorrect'));
     const res = await answer(probeId, 'whatever');
-    expect(res.status).toBe(422);
+    expect(res.status).toBe(200);
     // Override guard fires BEFORE the judge call (saves LLM cost).
-    expect(mockInvoke).not.toHaveBeenCalled();
-    expect(await probeResultEvents(probeId)).toHaveLength(0);
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    expect(await probeResultEvents(probeId)).toHaveLength(1);
   });
 });
 

@@ -71,8 +71,6 @@ export {
   type EvaluateAttemptInput,
   type EvaluateAttemptOutcome,
   type GradingEntryPoint,
-  type LegacyAttemptInput,
-  type LegacyAttemptOutcome,
   evaluateAttempt,
   projectEvaluationToJudgeResult,
 } from './evaluation-authority';

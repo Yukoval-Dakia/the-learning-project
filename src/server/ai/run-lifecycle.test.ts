@@ -15,6 +15,8 @@ vi.mock('@/server/ai/log', () => ({
 }));
 
 import { AgentRunError, RETRY_ELAPSED_CAP_MS } from './agent-run-error';
+import { __setTraceExporterForTests, traceOperation } from './laminar-tracing';
+import { memoryTraceExporter, traceField } from './laminar-tracing.test-support';
 import {
   AttemptSettlementError,
   classifyLifecycleRetry,
@@ -33,7 +35,7 @@ describe('AI run lifecycle retry policy', () => {
         override: { provider: 'anthropic' },
       }),
     ).toBe(false);
-    expect(maxLifecycleAttempts('StepsJudgeTask', {})).toBe(1);
+    expect(maxLifecycleAttempts(1, {})).toBe(1);
   });
 
   it('classifies only fast transient non-final attempts for retry', () => {
@@ -84,6 +86,7 @@ describe('AI run lifecycle terminal settlement state machine', () => {
   });
 
   afterEach(() => {
+    __setTraceExporterForTests();
     vi.unstubAllEnvs();
   });
 
@@ -116,6 +119,66 @@ describe('AI run lifecycle terminal settlement state machine', () => {
       cost_ref: lifecycle.costRef,
     };
   }
+
+  it('records attempt settlement separately from business acceptance and closes once', async () => {
+    const { records, exporter } = memoryTraceExporter();
+    __setTraceExporterForTests(exporter);
+    const { lifecycle } = createStartedLifecycle();
+    await traceOperation('task.run', {}, () =>
+      lifecycle.withTracing(async () => {
+        await lifecycle.start({ private: 'SECRET_LIFECYCLE_INPUT' });
+        const result = recordSuccess(lifecycle);
+        await lifecycle.finishSuccess(result);
+        expect(records[1].ends).toBe(0);
+        lifecycle.dispose();
+        lifecycle.dispose();
+      }),
+    );
+    expect(records[1].ends).toBe(1);
+    expect(records[1].parent).toBe(records[0].context);
+    expect(records[1].attributes[traceField('execution_outcome')]).toBe('success');
+    expect(records[1].attributes[traceField('business_outcome')]).toBe('unassessed');
+    expect(records[1].attributes[traceField('aggregate_cost_usd')]).toBe(lifecycle.costUsd);
+    expect(records[1].attributes['gen_ai.usage.cost']).toBeUndefined();
+    expect(JSON.stringify(records)).not.toContain('SECRET_LIFECYCLE_INPUT');
+  });
+
+  it.each([false, true])(
+    'keeps zero-count aggregate usage unknown unless observed: %s',
+    async (observed) => {
+      const { records, exporter } = memoryTraceExporter();
+      __setTraceExporterForTests(exporter);
+      const { lifecycle } = createStartedLifecycle();
+      await lifecycle.withTracing(async () => {
+        await lifecycle.start({ synthetic: true });
+        lifecycle.recordTerminalResult({
+          usage: { inputTokens: 0, outputTokens: 0 },
+          tokenCounts: { inputTokens: 0, outputTokens: 0 },
+          tokenUsageObserved: observed,
+          costUsd: 0,
+          finishReason: 'end_turn',
+        });
+        await lifecycle.finishSuccess({
+          task_run_id: lifecycle.taskRunId,
+          text: 'synthetic',
+          finishReason: 'end_turn',
+          usage: lifecycle.usage,
+          cost_basis: lifecycle.costBasis,
+          cost_ref: lifecycle.costRef,
+        });
+        lifecycle.dispose();
+      });
+      expect(records[0].attributes[traceField('cost_basis')]).toBe(
+        observed ? 'estimated' : 'unknown',
+      );
+      expect(records[0].attributes[traceField('aggregate_cost_usd')]).toBe(
+        observed ? 0 : undefined,
+      );
+      expect(records[0].attributes[traceField('aggregate_input_tokens')]).toBe(
+        observed ? 0 : undefined,
+      );
+    },
+  );
 
   it('owns the tool-shared controller and forwards caller cancellation into it', () => {
     const caller = new AbortController();

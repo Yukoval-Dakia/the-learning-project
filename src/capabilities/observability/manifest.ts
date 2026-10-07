@@ -1,6 +1,12 @@
 import { API_ERROR_RESPONSES, ApiErrorResponseSchema } from '@/kernel/http-contracts';
 import { defineCapability } from '@/kernel/manifest';
 import { uiPagesFor } from '@/kernel/ui-surfaces';
+import { AdminConfigResponseSchema } from './api/admin-config-contracts';
+import {
+  AdminConfigResetBodySchema,
+  AdminConfigWriteBodySchema,
+  AdminConfigWriteResponseSchema,
+} from './api/admin-config-write-contracts';
 import {
   AdminCostQuerySchema,
   AdminCostResponseSchema,
@@ -74,6 +80,7 @@ import {
 // src/server/admin）。ui.pages 随 T4b（admin 四页 SPA，ui/ 目录）声明。
 export const observabilityCapability = defineCapability({
   name: 'observability',
+  events: { actions: ['correct'] },
   description:
     'AI 可观测性：runs 列表/时间线、cost 汇总、failure 聚类、subject registry ' +
     '只读视图、今日成本条（cost_ledger + tool_call_log）。',
@@ -462,6 +469,46 @@ export const observabilityCapability = defineCapability({
         successStatus: 200,
         pagination: 'none',
         load: () => import('./api/coverage-lattice').then((m) => m.GET),
+      },
+      // YUK-1007 — 热加载配置读面（view-only）。装配在 server/config-read-model.ts
+      // （复用 src/core/config 快照，零 DB 读路径）；诚实性契约：registry key 带分层
+      // 来源 + wired/consumer，TaskSpec 默认与运行时覆盖分开标注。/api/* token 校验
+      // 由组合根中间件统一施加。
+      {
+        method: 'GET',
+        path: '/api/admin/config',
+        operationId: 'getAdminConfig',
+        request: {},
+        responses: { 200: AdminConfigResponseSchema, ...API_ERROR_RESPONSES },
+        successStatus: 200,
+        pagination: 'none',
+        load: () => import('./api/admin-config').then((m) => m.GET),
+      },
+      {
+        method: 'PATCH',
+        path: '/api/admin/config',
+        operationId: 'writeAdminConfig',
+        request: { body: AdminConfigWriteBodySchema },
+        responses: {
+          200: AdminConfigWriteResponseSchema,
+          ...API_ERROR_RESPONSES,
+          503: ApiErrorResponseSchema,
+        },
+        successStatus: 200,
+        load: () => import('./api/admin-config-write').then((m) => m.PATCH),
+      },
+      {
+        method: 'POST',
+        path: '/api/admin/config/reset',
+        operationId: 'resetAdminConfig',
+        request: { body: AdminConfigResetBodySchema },
+        responses: {
+          200: AdminConfigWriteResponseSchema,
+          ...API_ERROR_RESPONSES,
+          503: ApiErrorResponseSchema,
+        },
+        successStatus: 200,
+        load: () => import('./api/admin-config-write').then((m) => m.RESET),
       },
     ],
   },

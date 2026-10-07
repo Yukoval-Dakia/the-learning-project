@@ -38,7 +38,7 @@
   fence / legacy worker-touch evidence 做有界修复；只有 QUEUED-only dead delivery 才能标成
   pre-execution loss。不得用 wall-clock 或 heartbeat timestamp 猜测 live queue run 已死。
 - 工具归属以 `manifest.ts` 为准；artifact 创建/更新属于 [Notes manifest](../notes/manifest.ts)，Copilot 仅持调用授权与呈现控制。
-- 根任务以 terminal Markdown 收口；服务端在 runner terminal 后绑定实际 root trace、更正、proposal 披露与学习内容校验。
+- 根任务实时流式发送正文，并以 terminal Markdown 权威替换草稿；服务端在 runner terminal 后绑定实际 root trace、更正、proposal 披露与呈现授权。
   [ADR-0061](../../../docs/adr/0061-copilot-presentation-intent-control.md) 允许 agent 看完结果后按需调用 `present_primary_view` 提名成品，服务端校验后发布；该短交互仍受既有执行预算约束。
 - chip 是 Copilot 回复里的可点击动作卡片，accept-chip 把用户选择物化为教学事件。
 

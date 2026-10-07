@@ -14,7 +14,11 @@
 import { describe, expect, it } from 'vitest';
 import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
-import { type JevModelExecutorSpec, resolveModelExecutor } from './evaluate-submission';
+import {
+  type JevModelExecutorSpec,
+  type PiModelExecutorSpec,
+  resolveModelExecutor,
+} from './evaluate-submission';
 
 const fakeDb = { $client: {} } as unknown as Db;
 const fakeTx = {} as unknown as Tx;
@@ -75,6 +79,8 @@ describe('resolveModelExecutor — model_executor assembly (YUK-1092)', () => {
           },
           points: 4,
         },
+        question_parts: [{ part_id: 'p1', prompt_md: 'Explain the answer.', material_ids: [] }],
+        response_slots: [{ slot_id: 's1', part_id: 'p1', kind: 'text', math_preview: false }],
         slot_responses: [{ slot_id: 's1', kind: 'text', text_md: 'answer' }],
         group_evidence: [],
         materials: [],
@@ -95,5 +101,18 @@ describe('resolveModelExecutor — model_executor assembly (YUK-1092)', () => {
     } finally {
       if (savedKey !== undefined) process.env.OPENROUTER_API_KEY = savedKey;
     }
+  });
+});
+
+describe('native pi assessment executor assembly', () => {
+  it('assembles the native descriptor instead of rejecting the missing execution lane', () => {
+    const spec: PiModelExecutorSpec = {
+      kind: 'pi',
+      deadline_at: Date.now() + 60_000,
+      max_cost_usd_micros: 20_000,
+    };
+    expect(() => resolveModelExecutor(fakeDb, spec)).not.toThrow();
+    expect(typeof resolveModelExecutor(fakeDb, spec)).toBe('function');
+    expect(() => resolveModelExecutor(fakeTx, spec)).toThrowError(/requires the pool Db handle/);
   });
 });

@@ -3,8 +3,7 @@
 日期：2026-10-07（Asia/Tokyo）。状态：**准备完成，未开始实施**。
 决定者：agent，依据[自主交付授权](2026-10-07-autonomous-delivery-charter.md)作出；owner 后续限制优先。
 Epic：[YUK-1351](https://linear.app/yukoval-studios/issue/YUK-1351)。第一道 gate：[YUK-1338](https://linear.app/yukoval-studios/issue/YUK-1338)。
-目标架构：[ADR-0065（本分支编号）](../adr/0065-typescript-adaptive-learning-architecture.md)；origin/main 上已改编为
-`docs/adr/0066-typescript-adaptive-learning-architecture.md`（main 的 0065 是 Pi execution ADR）。下文统称 ADR-0066。
+目标架构：[ADR-0066](../adr/0066-typescript-adaptive-learning-architecture.md)（ADR-0065 是 Pi execution ADR）。
 
 本文件只做规划与票据。不含代码、依赖变更、schema 变更或部署。
 
@@ -118,7 +117,7 @@ W4 CopilotDock/coach/profile → W5 admin-*。顺序依据：先做每日入口�
 
 - route/job/copilotTool 只经 `src/capabilities/<name>/manifest.ts` 贡献；TanStack server function 只是网络入口，
   调用 capability 的业务操作，不在页面重写业务规则（ADR-0051）。
-- `/api/*` 继续校验 `x-internal-token`，仅 `/api/health` 豁免；新增 server function 共用同一校验 helper，并有拒绝测试。
+- `/api/*` 继续校验 `x-internal-token`，仅 `/api/health` 与 `/api/ready` 豁免（部署就绪探针依赖后者，见 `server/app.ts`）；新增 server function 共用同一校验 helper，并有拒绝测试。
   浏览器仍通过 TokenGate 持有内部 token（单用户不变量），**不持任何 provider key**；P1 起每次构建扫描产物。
 - AI 调用只在 Hono route / server function 的服务端或 worker 中执行；保留现有 run logging 与可逆动作。
 - `core/` 跨科目、`subjects/<name>/` 科目专属的划分不变。
@@ -140,7 +139,7 @@ W4 CopilotDock/coach/profile → W5 admin-*。顺序依据：先做每日入口�
 
 - **UI 票**（设计、实施、视觉复核）：只交 **Claude Opus 5.5**，不交 GPT/Codex/MiMo（授权文件 §工作方式）。
   Linear 用 `area:ui` 且标题前缀 `[UI · Opus 5.5 only / Pn]` 标出：YUK-1353、YUK-1354、YUK-1357，以及 P6 每波的 UI 子票。
-- **非 UI 票**：授权默认 OpenCode Go MiMo 2.6 Pro（`providerInstanceId=opencode`、`model=opencode-go/mimo-v2.6-pro`、`options={}`）。
+- **非 UI 票**：按 AGENTS 与授权文件的开发代理常规选择（`gpt-6.1-sol high`）。`opencode-go/mimo-v2.6-pro` 是产品内 AI 的 provider，不用于开发编排。
 - 核对实际运行选择，不把配置回执当作已切换；同一 diff 不派两个写入者；独立 review 与 exact-head CI Gate 照旧。
 
 ## 11. 排期与当前单线
@@ -160,5 +159,4 @@ PLAN 规定单 session 只推动一条 active 线。当前 active 线仍是 YUK-
 | SSE/流式在新前门下行为变化（`src/ui/lib/sse.ts`、ingestion events、copilot subtask events） | 断流、乱序 | 带版本通知 + 重读已提交状态；Copilot 放在最后一波 |
 | `globals.css` 1.58 万行样式债 | 新旧样式冲突 | 新设计系统独立作用域，不整体复制；P7 删除 |
 | UI 只能交 Opus 5.5 | UI 吞吐受限 | UI 票小而独立；后端先行，UI 不阻塞后端合并 |
-| ADR 编号 0065/0066 在分支与 main 不一致 | 引用断链 | 本分支合入 main 时统一改为 0066 |
 | 当前 active 线（YUK-1103 AI 日用验收）未完成 | 并线导致两头半成品 | 按 §11 排期，gate 之前不动生产 |

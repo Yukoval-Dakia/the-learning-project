@@ -114,10 +114,12 @@ drizzle/.snapshots/
 **/.claude/agent-memory-local
 **/.claude/first-run
 **/.claude/assistant-daemon-state.json
-.codex/tmp/
-.codex/logs/
+.codex/
+.qoder/
+.cortexkit/
+.qoderignore
 .devin/config.local.json
-.serena/project.local.yml
+.serena/
 .codegraph/
 .visual/
 .mimocode-project-id
@@ -159,3 +161,8 @@ docs/preflight/*-vision-rejudge.json
 /m4-visual-*.png
 /visual-demo-today.png
 /yuk[0-9]*.png
+
+# BEGIN oh-my-opencode-slim worktrees
+.slim/worktrees/
+.slim/worktrees.json
+# END oh-my-opencode-slim worktrees

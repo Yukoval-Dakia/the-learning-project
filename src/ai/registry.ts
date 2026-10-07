@@ -1,11 +1,13 @@
-import { taskCatalog } from './task-catalog';
 import type { TaskDefinition } from './task-spec';
 
 export type { ModelId, Provider, TaskBudget, TaskPrompt } from './task-spec';
-
 export type TaskDef = TaskDefinition;
+export type TaskCatalog = Readonly<Record<string, TaskDefinition>>;
+export type TaskKindOf<Catalog extends TaskCatalog> = Extract<keyof Catalog, string>;
 
-/** Browser-safe exact alias of the capability-owned TaskSpec catalog. */
-export const tasks = taskCatalog;
-
-export type TaskKind = keyof typeof tasks;
+/** Preserve the injected catalog's identity and exact keys, without global registration. */
+export function createTaskRegistry<const Catalog extends TaskCatalog>(
+  catalog: Catalog,
+): Readonly<Catalog> {
+  return Object.freeze(catalog);
+}

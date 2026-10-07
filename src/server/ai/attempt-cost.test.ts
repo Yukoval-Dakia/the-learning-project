@@ -103,19 +103,19 @@ describe('resolveAttemptCostTruth', () => {
     for (const reportedCostUsd of [0, undefined, -1, Number.NaN]) {
       expect(
         resolveAttemptCostTruth({
-          provider: 'zhipu',
+          provider: 'zai-coding-cn',
           model: 'glm-5.2',
           tokens,
           reportedCostUsd,
         }),
-      ).toEqual({ basis: 'unknown', amountUsd: null, ref: 'unpriced:zhipu/glm-5.2' });
+      ).toEqual({ basis: 'unknown', amountUsd: null, ref: 'unpriced:zai-coding-cn/glm-5.2' });
     }
   });
 
   it('accepts a positive compatibility SDK amount as reported evidence', () => {
     expect(
       resolveAttemptCostTruth({
-        provider: 'zhipu',
+        provider: 'zai-coding-cn',
         model: 'glm-5.2',
         tokens,
         reportedCostUsd: 0.1,
@@ -167,5 +167,29 @@ describe('resolveAttemptCostTruth', () => {
         }),
       ).toEqual({ basis: 'unknown', amountUsd: null, ref: 'unpriced:openai/gpt-6-astra' });
     }
+  });
+});
+
+describe('observed zero vs missing token usage', () => {
+  it.each([false, true])('keeps the distinction for MiMo: observed=%s', (tokensObserved) => {
+    const truth = resolveAttemptCostTruth({
+      provider: 'xiaomi',
+      model: 'mimo-v2.5',
+      tokens: { inputTokens: 0, outputTokens: 0 },
+      tokensObserved,
+    });
+    expect(truth.basis).toBe(tokensObserved ? 'estimated' : 'unknown');
+    expect(truth.amountUsd).toBe(tokensObserved ? 0 : null);
+  });
+  it('retains genuine reported zero without requiring token counts', () => {
+    expect(
+      resolveAttemptCostTruth({
+        provider: 'anthropic',
+        model: 'claude-opus-4-8',
+        tokens: { inputTokens: 0, outputTokens: 0 },
+        tokensObserved: false,
+        reportedCostUsd: 0,
+      }),
+    ).toMatchObject({ basis: 'reported', amountUsd: 0 });
   });
 });

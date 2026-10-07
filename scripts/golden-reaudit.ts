@@ -26,7 +26,7 @@ import { readFileSync, readdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import type { KnowledgeEdgeRowSnapshotT } from '@/core/schema/event/genesis';
+import { KnowledgeEdgeRowSnapshot } from '@/core/schema/event/genesis';
 import type { ProjectionKind } from '@/server/projections/entity-registry';
 // PURE reducer registry (K10/K13): its ONLY runtime imports are the seven @/core reducers — the exact
 // edges the removed per-reducer imports had — so this keeps golden-reaudit's "no DB" property (a value
@@ -71,14 +71,22 @@ export function reauditGolden(golden: GoldenSnapshot): GoldenReauditResult {
   // edge fold needs the live topology mesh — the golden's own live (archived_at IS NULL) edge rows.
   const mesh =
     golden.kind === 'knowledge_edge'
-      ? (Object.values(golden.rows).filter(
-          (r) => r.archived_at === null,
-        ) as unknown as KnowledgeEdgeRowSnapshotT[])
+      ? KnowledgeEdgeRowSnapshot.array().parse(
+          Object.values(golden.rows).filter((r) => r.archived_at === null),
+        )
       : [];
 
   // K10/K13 — the pure per-kind reducer from the registry (was a local `foldGoldenRow` switch). edge
   // folds against the golden live-edge mesh; every other kind ignores it.
-  const fold = PROJECTION_FOLDS[golden.kind];
+  // YUK-1236 (SCF-161) — own-key lookup. `golden.kind` is JSON.parse + an `as` cast and
+  // PROJECTION_FOLDS is a normal object, so an inherited name ('__proto__',
+  // 'constructor', 'toString') resolves to Object.prototype / a builtin: truthy (or
+  // callable), so the falsy guard below would be skipped and the fold call would throw
+  // an opaque "fold is not a function" (or misbehave) instead of the intended named
+  // error. Object.hasOwn restricts the lookup to the eight registered kinds.
+  const fold = Object.hasOwn(PROJECTION_FOLDS, golden.kind)
+    ? PROJECTION_FOLDS[golden.kind]
+    : undefined;
   // round-2 (OCR): golden.kind is JSON.parse + `as` cast, so a corrupted / newer-schema golden can carry
   // an unknown kind → `PROJECTION_FOLDS[kind]` is undefined and `fold(...)` would throw an opaque
   // "fold is not a function". Restore the old switch-default: fail loudly with the offending kind named.

@@ -667,6 +667,9 @@ function printAxis(spec: ThresholdSpec, result: AxisResult): void {
 }
 
 export async function runCli(args: string[] = process.argv.slice(2)): Promise<number> {
+  // YUK-1064 audit-only exception: read concrete threshold definitions without
+  // initializing capability public barrels and their shared application DB pool.
+  // The dedicated read-only connection below remains the sole audit connection.
   // Dynamic imports AFTER loadEnv() — these modules resolve their env overrides at module
   // top, so they must evaluate only once process.env is fully populated. RETRIEVAL_TOP_K
   // comes from the same module (single truth: tag-knowledge.ts imports it from there too)

@@ -52,7 +52,10 @@ import {
   applyReportFileName,
   runMigrationApply,
 } from '@/server/migration/apply';
+import { migrationTargetSsl as applyTargetSsl } from './lib/migration-target-ssl';
 import { describeTarget } from './migration-capture';
+
+export { isLoopbackHost, migrationTargetSsl as applyTargetSsl } from './lib/migration-target-ssl';
 
 export const APPLY_TOOL_VERSION = '1.1.0';
 
@@ -298,34 +301,6 @@ export function loadMigrationArtifacts(artifactsDir: string): LoadedArtifacts {
 
 const FENCE_KEY_LITERAL = 'yuk1050:migration-apply';
 
-/**
- * loopback 判定（YUK-1100 review P1）：只对【解析后的 hostname】精确匹配 ——
- * 'localhost'/'.localhost' 后缀、127.0.0.0/8、::1。绝不对整个 URL 串做
- * includes：密码/库名/查询参数里出现 'localhost' 不得触发裸连。
- */
-export function isLoopbackHost(hostname: string): boolean {
-  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '');
-  if (host === 'localhost' || host.endsWith('.localhost')) return true;
-  if (host === '::1') return true;
-  return /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host);
-}
-
-/**
- * target URL → postgres-js ssl 选项：loopback 主机或显式 sslmode=disable 走
- * 明文，其余一律 'require'。URL 无法解析（或 sslmode 参数解析失败）保守取
- * 'require' —— validateTargetUrl 在前已拒绝残缺 target，这里是双保险。
- */
-export function applyTargetSsl(targetUrl: string): false | 'require' {
-  let parsed: URL;
-  try {
-    parsed = new URL(targetUrl);
-  } catch {
-    return 'require';
-  }
-  if (parsed.searchParams.get('sslmode') === 'disable') return false;
-  return isLoopbackHost(parsed.hostname) ? false : 'require';
-}
-
 /** 单写者 fence：专用连接上的 session advisory lock（跨阶段持有）。 */
 export function advisoryFence(targetUrl: string): MigrationApplyFence & { close(): Promise<void> } {
   const client = postgres(targetUrl, {
@@ -495,7 +470,7 @@ export async function runMigrationApplyCli(args: ApplyCliArgs): Promise<void> {
     ssl: applyTargetSsl(target),
     max: 2,
   });
-  const db = drizzle(client, { schema }) as unknown as Db;
+  const db: Db = drizzle(client, { schema });
   const fence = args.dryRun ? null : advisoryFence(target);
   try {
     const revisionContracts = await loadRevisionContracts(db, registry);

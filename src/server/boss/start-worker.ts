@@ -5,10 +5,11 @@
 // exit(1)）是独立 worker 进程的纪律，留在 scripts/worker.ts，不属于这里。
 
 import type { PgBoss } from 'pg-boss';
-
 import { capabilities } from '@/capabilities';
 import type { Db } from '@/db/client';
 import { recoverToolOperationsOnBoot } from '@/kernel/tools/tool-operations';
+import { initializeLaminarTracing } from '@/server/ai/laminar-tracing';
+import { resolveTaskProvider } from '@/server/ai/providers';
 import { createBoss, isQueueCreateRace, markBossStarted } from '@/server/boss/client';
 import { registerHandlers } from '@/server/boss/handlers';
 import { reconcileStuckAiTaskRuns } from '@/server/boss/handlers/ai_task_run_reconcile';
@@ -16,7 +17,6 @@ import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
 import { sendVerifyDispatchStartupRecovery } from '@/server/boss/verify-dispatch-outbox';
 import { hydrateConfigFromDb, startConfigRefresh } from '@/server/config/hydrate';
 import { waitForRunnableEpoch } from '@/server/contract-epoch';
-import { getServerEnv } from '@/server/env';
 import { mountSubscriptionDispatch } from '@/server/event-subscriptions/dispatch-mount';
 import { registerOrchestrator } from '@/server/orchestration/register';
 import { hydrateSubjectRegistryFromDb, startSubjectRefresh } from '@/server/subjects/hydrate';
@@ -30,6 +30,7 @@ export async function startBossWorker(
   db: Db,
   options: StartBossWorkerOptions = {},
 ): Promise<PgBoss> {
+  await initializeLaminarTracing();
   // YUK-1055 — DB epoch guard 必须排在 recovery/handlers/cron 之前（grounding §15）。
   // marker 'preparing'/'ready'（维护窗）或 epoch 不匹配时本 worker 停在闸门内
   // 轮询，不启动 boss、不挂消费者 —— fenced 不 crash-loop，operator 推到
@@ -37,22 +38,19 @@ export async function startBossWorker(
   // （boot 失败 = supervised restart，与既有 start 失败同语义）。
   await waitForRunnableEpoch(db, { pollIntervalMs: options.epochPollIntervalMs });
   await recoverToolOperationsOnBoot(db);
-  const env = getServerEnv();
   // YUK-599（v2 §4）— worker 首个 job 落地前水合 SubjectRegistry（never-throws：
   // hydrate 内部 WARN + 代码种子地板，绝不挡 worker boot）。
   await hydrateSubjectRegistryFromDb(db);
   // YUK-1007 — 首批 config snapshot 入内存（同 never-throws 先例：表未建/DB down →
   // 空快照 = 纯 env 行为，天然回滚位；§5.1 序 4）。
   await hydrateConfigFromDb(db);
-  // F-2 (YUK-185) / PR #232 review (FIX #6) — the brief regen handler calls the
-  // LLM via runTask, which needs XIAOMI_API_KEY (resolveTaskProvider throws
-  // otherwise, providers.ts:88). Surface a missing key at BOOT — not per-scope
-  // at 3 AM and not inside registerMemoryHandlers (which tests also call).
-  // One-shot WARN; not fatal: ingest/outbox handlers still run and brief regen
-  // degrades to a logged-skip per scope (F-1/D8).
-  if (!env.XIAOMI_API_KEY) {
+  // Validate the effective brief lane after config hydration, without a paid call.
+  try {
+    resolveTaskProvider('MemoryBriefTask');
+  } catch (error) {
     console.warn(
-      '[worker] XIAOMI_API_KEY unset — memory brief regen will fail (logged-skip per scope, F-1/D8)',
+      '[worker] memory brief provider configuration invalid',
+      error instanceof Error ? error.message : 'unknown configuration error',
     );
   }
 

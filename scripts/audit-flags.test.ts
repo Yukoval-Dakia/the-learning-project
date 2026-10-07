@@ -1,13 +1,16 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import {
   FLAG_TOKEN_RE,
   type Ledger,
+  SCOPED_CONTROL_NAMES,
   computeLiteralVariance,
   reconcileFlags,
   scanFlagTokens,
   stripComments,
   validateLedgerEntry,
 } from './audit-flags';
+import ledgerJson from './audit-flags-ledger.json';
 
 // 红线审查 wave F / A5 — audit:flags 的扫描器谓词 + 对账逻辑回归。
 //
@@ -297,5 +300,138 @@ describe('computeLiteralVariance — groups env flags by literal convention', ()
         flags: ['IN_ENABLED', 'OUT_ENABLED'],
       },
     ]);
+  });
+});
+
+describe('YUK-1088 — non-ENABLED control coverage', () => {
+  const controls = [
+    'PROJECTION_IS_WRITER_ITEM_CALIBRATION',
+    'HUB_SYNC_MODE',
+    'SELECTION_POLICY',
+    'MEMORY_RECONCILE_HANDOFF_MODE',
+    'INTERVENTION_DISABLED_METHOD_IDS',
+    'EXTRACT_OCR_ENGINE',
+    'DOCX_CONVERT_ENGINE',
+    'AI_PROVIDER_SESSION_ADMISSION_MODE',
+    'AI_PROVIDER_SESSION_ADMISSION_POLICIES_JSON',
+    'AI_PROVIDER_ATTEMPT_ADMISSION_MODE',
+    'AI_PROVIDER_ATTEMPT_ADMISSION_POLICIES_JSON',
+  ];
+
+  it.each(controls)('detects a live %s independently of ledger membership', (name) => {
+    const source = `// OLD_CONTROL_MODE is retired\nconst key = '${name}';\ngetConfig(key);`;
+    const found = scanFlagTokens(['consumer.ts'], () => source);
+    expect([...found]).toEqual([name]);
+    expect(reconcileFlags(found, {}, () => source).unregistered).toEqual([name]);
+  });
+
+  it('does not expand a scoped control into comments, prefixes or unrelated knobs', () => {
+    const source = `// HUB_SYNC_MODE\n/* SELECTION_POLICY */\nconst HUB_SYNC_MODE_DEFAULT = 'off';\nconst OTHER_MODE = 'not in the bounded census';`;
+    expect([...scanFlagTokens(['consumer.ts'], () => source)]).toEqual([]);
+  });
+});
+
+describe('YUK-1088 — real ledger mutation checks', () => {
+  const ledger = ledgerJson as Ledger;
+  const read = (file: string) => readFileSync(new URL(`../${file}`, import.meta.url), 'utf8');
+  const files = [...new Set(Object.values(ledger).map((entry) => entry.file))];
+  const found = scanFlagTokens(files, read);
+
+  it('reconciles every production reader and preserves boolean grammar distinctions', () => {
+    expect(reconcileFlags(found, ledger, read).ok).toBe(true);
+    expect(ledger.PROJECTION_IS_WRITER_ITEM_CALIBRATION).toMatchObject({
+      kind: 'env',
+      literals: ['1'],
+      case_insensitive: false,
+    });
+    expect(ledger.PLACEMENT_PROBE_ENABLED).toMatchObject({
+      kind: 'env',
+      literals: ['true'],
+      case_insensitive: false,
+    });
+    expect(ledger.HUB_SYNC_MODE).toMatchObject({
+      kind: 'config',
+      values: ['off', 'shadow', 'apply'],
+    });
+    expect(ledger.DOCX_CONVERT_ENGINE).toMatchObject({ kind: 'config', values: ['docker'] });
+    expect(ledger).not.toHaveProperty('SKIP_BOSS_INGEST');
+    expect(computeLiteralVariance(ledger).flatMap((group) => group.flags)).not.toContain(
+      'HUB_SYNC_MODE',
+    );
+  });
+
+  it.each(SCOPED_CONTROL_NAMES)('deleting the actual %s registration fails coverage', (name) => {
+    const changed = { ...ledger };
+    delete changed[name];
+    const result = reconcileFlags(found, changed, read);
+    expect(result.unregistered).toEqual([name]);
+    expect(result.ok).toBe(false);
+  });
+
+  it.each(SCOPED_CONTROL_NAMES)('commenting the actual %s reader fails drift', (name) => {
+    const entry = ledger[name];
+    if (entry.kind === 'const') throw new Error('Expected a runtime reader');
+    const changed = read(entry.file).replace(
+      entry.reader_marker,
+      `/* ${entry.reader_marker} */ unrelatedReader('${name}')`,
+    );
+    const result = reconcileFlags(found, ledger, (file) =>
+      file === entry.file ? changed : read(file),
+    );
+    expect(result.readerDrift).toContainEqual({
+      name,
+      file: entry.file,
+      marker: entry.reader_marker,
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it.each(SCOPED_CONTROL_NAMES)('retaining %s only in comments fails its source check', (name) => {
+    const entry = ledger[name];
+    // Wrap in a line-comment per line: a source file can already contain block comments.
+    const commented = read(entry.file)
+      .split('\n')
+      .map((line) => `// ${line}`)
+      .join('\n');
+    const safelyCommented = reconcileFlags(found, ledger, (file) =>
+      file === entry.file ? commented : read(file),
+    );
+    expect(safelyCommented.stale).toContainEqual({
+      name,
+      file: entry.file,
+      problem: 'name-missing',
+    });
+    expect(safelyCommented.ok).toBe(false);
+  });
+});
+
+describe('config control grammar contract', () => {
+  const base = {
+    kind: 'config',
+    file: 'consumer.ts',
+    notes: 'A live consumer',
+    reader_marker: "getConfig('HUB_SYNC_MODE')",
+  };
+  it.each([
+    { value_type: 'enum', values: ['off', 'shadow', 'apply'] },
+    { value_type: 'csv' },
+    { value_type: 'json' },
+  ])('accepts non-boolean grammar %j', (shape) => {
+    expect(validateLedgerEntry('HUB_SYNC_MODE', { ...base, ...shape })).toEqual([]);
+  });
+  it.each([
+    { value_type: 'boolean' },
+    { value_type: 'enum' },
+    { value_type: 'enum', values: [] },
+    { value_type: 'enum', values: ['off', 'off'] },
+    { value_type: 'enum', values: [false] },
+    { value_type: 'enum', values: [' '] },
+    { value_type: 'csv', values: ['off'] },
+    { value_type: 'json', literals: ['1'] },
+    { value_type: 'csv', polarity: 'opt-in' },
+    { value_type: 'enum', values: ['off'], case_insensitive: true },
+    { value_type: 'json', reader_marker: '' },
+  ])('rejects malformed or boolean-disguised control %j', (shape) => {
+    expect(validateLedgerEntry('HUB_SYNC_MODE', { ...base, ...shape }).length).toBeGreaterThan(0);
   });
 });

@@ -47,7 +47,7 @@ describe('storeSourcedQuestionTool contract', () => {
     expect(storeSourcedQuestionTool.safeHandoff).toBeUndefined();
   });
 
-  it('rejects malformed extraction_hash, empty knowledge_ids, and bad attribution_state', () => {
+  it('requires an explicit subject and rejects malformed candidate attribution', () => {
     const candidate = {
       candidate_id: 'cand-1',
       question: {
@@ -74,6 +74,15 @@ describe('storeSourcedQuestionTool contract', () => {
       subject_id: 'math',
     };
     expect(storeSourcedQuestionTool.inputSchema.safeParse(base).success).toBe(true);
+    expect(
+      storeSourcedQuestionTool.inputSchema.safeParse({ ...base, subject_id: undefined }).success,
+    ).toBe(false);
+    expect(
+      storeSourcedQuestionTool.inputSchema.safeParse({ ...base, subject_id: '   ' }).success,
+    ).toBe(false);
+    expect(
+      storeSourcedQuestionTool.inputSchema.parse({ ...base, subject_id: ' english ' }).subject_id,
+    ).toBe('english');
     expect(
       storeSourcedQuestionTool.inputSchema.safeParse({
         ...base,

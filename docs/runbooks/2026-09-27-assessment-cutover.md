@@ -8,6 +8,14 @@ epoch marker 是唯一开关；回滚边界只有两条（见 §5）。
 > owner 需单独给出 final implementation-ready confirmation（decisions 文件
 > PENDING 段）。D18 actual-output 评测是 owner-triggered，不在本窗口内。
 
+> **2026-10-04 源码复核（YUK-1047）**：下方既有切换记录仍是当时的历史工件，
+> 不证明当前八个正式评分入口完成迁移。当前检出源码仍有八个 legacy 入口与旧 invoker
+> 执行分支；epoch active 只能约束 epoch，不能移除同一二进制内的旧评分逻辑。
+> `release:manifest` 现在独立采集 `evaluation_source`（文件 SHA-256、入口/行号、
+> 未解析调用与缺失入口），有旧执行路径即 fail/exit 1，包括无 `--target` 或库不可达。
+> 未发现旧路径或缺证据只报告 info，必须另验部署镜像身份和端到端迁移；info 不是验收通过。
+> 此次为本地源码复核，没有重新查询或操作生产。实际迁移继续 YUK-1047。
+
 ## 0. 前置（窗口之前；全部只读，不动生产）
 
 | 步骤 | 命令 | 判据 |
@@ -147,7 +155,7 @@ manifest 断言表（fail 即 exit 1）：
 |---|---|---|
 | `epoch-active` | unified-write | marker=assessment-contract-v1/active —— 只有新写口可跑，旧代码 epoch_mismatch |
 | `epoch-history` | unified-write | preparing→ready→active 全序落表（窗口审计证据） |
-| `no-runtime-fallback` | no-fallback | fence 覆盖所有写口 + 1097 映射冻结 + 1099 结构化发布 —— 无对旧路径的运行时猜测（静态证明为主） |
+| `no-runtime-fallback` | no-fallback | 检出源码仍有旧调用/执行分支即 fail；其他情形 info（缺部署证明），active epoch 不能代替迁移证据 |
 | `subscription-translations-zero` | translations | 旧 subscriber_version 上无非终态 delivery |
 | `translate-outstanding-disposed` | translations | translate/fenced 存量计数落盘（处置决策证据） |
 | `pending-evaluations-zero` | translations | `evaluation.status='pending'` = 0 |

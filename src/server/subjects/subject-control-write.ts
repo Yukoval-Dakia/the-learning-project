@@ -40,7 +40,7 @@ import { assembleSubjectProfile } from '@/subjects/trait-compose';
 import {
   SUBJECT_TRAIT_KINDS,
   type SubjectTraitKind,
-  type SubjectTraitPayloads,
+  parseTraitPayloads,
 } from '@/subjects/trait-schemas';
 
 export type ControlWriteResult =
@@ -295,9 +295,19 @@ export async function resetSubject(
       ? (subjectProfiles[args.subjectId]?.displayName ?? row.display_name)
       : row.display_name;
     const nameChanges = seedDisplayName !== row.display_name;
+    const seedDisplayNameNorm = normalizeSubjectKey(seedDisplayName);
 
     if (rebound.length === 0 && !nameChanges) {
       return { kind: 'noop', subjectRevision: row.revision };
+    }
+
+    // SCF-260 (YUK-1316): a builtin reset renames the row back to its code seed (mirroring rename's
+    // write points) but, unlike rename/restore, previously skipped the live-name uniqueness check.
+    // The DB partial unique index covers only live CUSTOM rows, so a reset back onto a name a
+    // custom row now holds would create a duplicate live display name. Same 409 conflict contract
+    // as rename — checked BEFORE any binding/name write so the transaction rolls back untouched.
+    if (nameChanges && (await normCollides(tx, args.subjectId, seedDisplayNameNorm))) {
+      return { kind: 'conflict', message: `display name "${seedDisplayName}" is already taken` };
     }
 
     for (const r of rebound) {
@@ -320,7 +330,7 @@ export async function resetSubject(
         ...(nameChanges
           ? {
               display_name: seedDisplayName,
-              display_name_norm: normalizeSubjectKey(seedDisplayName),
+              display_name_norm: seedDisplayNameNorm,
             }
           : {}),
       })
@@ -384,16 +394,19 @@ export async function validateSubject(
   if (bound.length !== SUBJECT_TRAIT_KINDS.length) {
     return { valid: false, errors: ['incomplete trait bindings'], warnings: [] };
   }
-  const payloads = {} as Record<SubjectTraitKind, unknown>;
+  const payloads: Partial<Record<SubjectTraitKind, unknown>> = {};
   for (const b of bound) {
-    payloads[b.kind] = traitPayloadOverrides?.[b.kind] ?? b.payload;
+    payloads[b.kind] =
+      traitPayloadOverrides && Object.hasOwn(traitPayloadOverrides, b.kind)
+        ? traitPayloadOverrides[b.kind]
+        : b.payload;
   }
   try {
     const profile = assembleSubjectProfile({
       id: subjectId,
       displayName: row.displayName,
       version: 'preflight',
-      payloads: payloads as unknown as SubjectTraitPayloads,
+      payloads: parseTraitPayloads(payloads),
     });
     const result = validateProfile(profile, getDefaultRegistry());
     return {

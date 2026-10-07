@@ -35,7 +35,7 @@ export interface Options {
   systemPrompt?: string;
   /** Caller+lifecycle abort — propagates into the agentLoop signal chain. */
   abortController?: AbortController;
-  /** Agentic-turn ceiling — pi enforces it via `shouldStopAfterTurn`. */
+  /** Agentic-turn ceiling — pi enforces it via `finishTurn`. */
   maxTurns?: number;
   /** allowedTools allowlist — `mcp__<server>__<tool>` wire names. */
   tools?: string[];
@@ -90,6 +90,10 @@ export interface SDKPermissionDenial {
 
 export interface SDKAssistantMessage {
   type: 'assistant';
+  /** Text was already delivered by root Pi text_delta frames. Usage/tools remain complete. */
+  text_streamed?: boolean;
+  /** Native error counters may be placeholders without usage/cost evidence. */
+  usage_observed?: boolean;
   message: BetaMessage;
   parent_tool_use_id: string | null;
   uuid: UUID;
@@ -108,6 +112,7 @@ export interface SDKUserMessage {
 
 export interface SDKResultSuccess {
   type: 'result';
+  usage_observed?: boolean;
   subtype: 'success';
   duration_ms: number;
   duration_api_ms: number;
@@ -128,6 +133,7 @@ export interface SDKResultSuccess {
 
 export interface SDKResultError {
   type: 'result';
+  usage_observed?: boolean;
   subtype:
     | 'error_during_execution'
     | 'error_max_turns'

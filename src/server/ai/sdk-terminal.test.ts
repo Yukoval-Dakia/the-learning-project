@@ -137,6 +137,7 @@ describe('createSdkTerminalEvidenceCollector', () => {
     );
 
     expect(evidence).toEqual({
+      tokenUsageObserved: true,
       usage: { inputTokens: 14, outputTokens: 7 },
       tokenCounts: {
         inputTokens: 10,
@@ -173,6 +174,7 @@ describe('createSdkTerminalEvidenceCollector', () => {
     const evidence = collector.fromResult(successResult({ structuredOutput }));
 
     expect(evidence).toEqual({
+      tokenUsageObserved: true,
       usage: {
         inputTokens: 0,
         outputTokens: 0,
@@ -198,6 +200,7 @@ describe('createSdkTerminalEvidenceCollector', () => {
     Reflect.set(message, 'structured_output', { mustNotEscape: true });
 
     expect(collector.fromResult(message)).toEqual({
+      tokenUsageObserved: true,
       usage: { inputTokens: 3, outputTokens: 4 },
       tokenCounts: {
         inputTokens: 3,
@@ -228,6 +231,7 @@ describe('createSdkTerminalEvidenceCollector', () => {
     );
 
     expect(first).toEqual({
+      tokenUsageObserved: true,
       usage: { inputTokens: 7, outputTokens: 3, thinkingBlocks: 1, thinkingCharacters: 13 },
       tokenCounts: {
         inputTokens: 2,
@@ -237,6 +241,7 @@ describe('createSdkTerminalEvidenceCollector', () => {
       },
     });
     expect(second).toEqual({
+      tokenUsageObserved: true,
       usage: { inputTokens: 35, outputTokens: 16, thinkingBlocks: 2, thinkingCharacters: 25 },
       tokenCounts: {
         inputTokens: 13,
@@ -283,6 +288,32 @@ describe('createSdkTerminalEvidenceCollector', () => {
       outputTokens: 0,
       thinkingBlocks: 1,
       thinkingCharacters: 16,
+    });
+  });
+});
+
+describe('token usage presence survives terminal projection', () => {
+  it('keeps missing terminal usage separate from explicit zero and earlier assistant usage', () => {
+    const absent = {
+      type: 'result',
+      subtype: 'error_during_execution',
+      errors: ['offline failure'],
+    } as ResultMessage;
+    const collector = createSdkTerminalEvidenceCollector();
+    expect(collector.fromResult(absent).tokenUsageObserved).toBe(false);
+    expect(
+      collector.fromResult(successResult({ usage: resultUsage({ input: 0, output: 0 }) }))
+        .tokenUsageObserved,
+    ).toBe(true);
+    collector.observeAssistant(
+      assistant(
+        [{ type: 'text', text: 'partial response', citations: null }],
+        assistantUsage({ input: 12, output: 3 }),
+      ),
+    );
+    expect(collector.fromResult(absent)).toMatchObject({
+      tokenUsageObserved: true,
+      tokenCounts: { inputTokens: 12, outputTokens: 3 },
     });
   });
 });

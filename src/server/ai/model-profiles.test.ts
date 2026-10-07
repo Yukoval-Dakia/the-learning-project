@@ -48,11 +48,10 @@ describe('resolveModelProfile — precedence', () => {
     expect(profile.execution.meteredUsd).toBe(false);
   });
 
-  it('binding field wins over catalog (mimo-v2.5-pro vision override)', () => {
-    // models.dev lists mimo-v2.5-pro as text-only; our operational binding
-    // declares vision true (production multimodal judges run on this lane).
+  it('native MiMo Pro remains text-only after the compatibility route is removed)', () => {
+    // Native preset identity replaces the historical compatibility-lane vision override.
     const profile = resolveModelProfile('xiaomi', 'mimo-v2.5-pro');
-    expect(profile.capabilities.vision).toBe(true);
+    expect(profile.capabilities.vision).toBe(false);
     expect(profile.source).toBe('binding');
     // Catalog fields the binding does not override still fall through.
     expect(profile.limits.contextWindowTokens).toBe(1_048_576);
@@ -61,16 +60,16 @@ describe('resolveModelProfile — precedence', () => {
   });
 
   it('catalog knowledge falls through when the binding is silent', () => {
-    // glm-5.2 has a per-model binding (budgetClass), so the catalog layer must
+    // glm-5.3 has a per-model binding (budgetClass), so the catalog layer must
     // still contribute the fields the binding omits.
-    const profile = resolveModelProfile('zhipu', 'glm-5.2');
+    const profile = resolveModelProfile('zai-coding-cn', 'glm-5.3');
     expect(profile.capabilities.structuredOutput).toBe(true);
     expect(profile.capabilities.toolCalling).toBe(true);
     expect(profile.capabilities.vision).toBe(false); // catalog: text-only
     expect(profile.limits).toEqual({ contextWindowTokens: 1_000_000, maxOutputTokens: 131_072 });
     expect(profile.reasoning).toEqual({
       mode: 'effort',
-      supportedEfforts: ['high', 'max'],
+      supportedEfforts: ['low', 'high', 'max'],
       defaultEffort: 'high', // binding operational default
     });
     expect(profile.execution.timeoutClass).toBe('standard');
@@ -90,7 +89,7 @@ describe('resolveModelProfile — the four active models (acceptance)', () => {
     const profile = resolveModelProfile('xiaomi', 'mimo-v2.5-pro');
     expect(profile.capabilities).toEqual({
       toolCalling: true,
-      vision: true, // binding override over stale catalog
+      vision: false, // native preset is authoritative
       reasoning: true,
       structuredOutput: false, // binding modelDefaults (site 2)
     });
@@ -111,8 +110,8 @@ describe('resolveModelProfile — the four active models (acceptance)', () => {
     expect(profile.execution.localPricebook).toBe(true);
   });
 
-  it('zhipu/glm-5.2 (coding plan): complete profile', () => {
-    const profile = resolveModelProfile('zhipu', 'glm-5.2');
+  it('zai-coding-cn/glm-5.3 (coding plan): complete profile', () => {
+    const profile = resolveModelProfile('zai-coding-cn', 'glm-5.3');
     expect(profile.capabilities.structuredOutput).toBe(true);
     expect(profile.capabilities.vision).toBe(false);
     expect(profile.execution).toEqual({
@@ -123,8 +122,8 @@ describe('resolveModelProfile — the four active models (acceptance)', () => {
     });
   });
 
-  it('zhipu/glm-5.3-flash: durable-heavy tier from the binding (site 1)', () => {
-    const profile = resolveModelProfile('zhipu', 'glm-5.3-flash');
+  it('zai-coding-cn/glm-5.3-flash: durable-heavy tier from the binding (site 1)', () => {
+    const profile = resolveModelProfile('zai-coding-cn', 'glm-5.3-flash');
     expect(profile.execution.timeoutClass).toBe('durable-heavy');
     expect(profile.execution.budgetClass).toBe('cheap');
     expect(profile.capabilities.vision).toBe(true); // catalog: image input
@@ -195,6 +194,28 @@ describe('resolveModelProfile — the four active models (acceptance)', () => {
     expect(profile.limits).toEqual({});
     expect(profile.execution.meteredUsd).toBe(false);
   });
+
+  // YUK-1341 — the product tool-calling lane after the xiaomi 402 incident.
+  // toolCalling comes from the evidence-gated per-model binding; vision /
+  // reasoning / limits come from the native pi catalog override, which is
+  // authoritative over the binding (mimo-v2.6-pro is text+image there).
+  it('opencode-go/mimo-v2.6-pro: toolCalling from the binding, vision from the native catalog', () => {
+    const profile = resolveModelProfile('opencode-go', 'mimo-v2.6-pro');
+    expect(profile.capabilities).toEqual({
+      toolCalling: true, // per-model binding (YUK-1341, evidence-gated)
+      vision: true, // native pi catalog: input text+image
+      reasoning: true,
+      structuredOutput: false, // opencode-go modelDefaults
+    });
+    expect(profile.limits).toEqual({ contextWindowTokens: 1_048_576, maxOutputTokens: 131_072 });
+    expect(profile.execution).toEqual({
+      timeoutClass: 'standard',
+      budgetClass: 'standard',
+      meteredUsd: false,
+      localPricebook: false,
+    });
+    expect(profile.source).toBe('binding');
+  });
 });
 
 describe('parseCatalogModelEntry — narrow fail-closed parse', () => {
@@ -253,7 +274,7 @@ describe('resolveModelProfileByModel — legacy model-only lookup', () => {
     expect(resolveModelProfileByModel('glm-5.3-flash').execution.timeoutClass).toBe(
       'durable-heavy',
     );
-    expect(resolveModelProfileByModel('glm-5.3-flash').provider).toBe('zhipu');
+    expect(resolveModelProfileByModel('glm-5.3-flash').provider).toBe('zai-coding-cn');
     expect(resolveModelProfileByModel('mimo-v2.5-pro').execution.localPricebook).toBe(true);
     expect(resolveModelProfileByModel('claude-opus-4-8').execution.meteredUsd).toBe(true);
   });
@@ -301,7 +322,9 @@ describe('assertModelProfileCapabilityFit — P2 fail-closed gate', () => {
     expect(() =>
       assertModelProfileCapabilityFit(toolTask, 'xiaomi', 'mimo-v2.5-pro'),
     ).not.toThrow();
-    expect(() => assertModelProfileCapabilityFit(toolTask, 'zhipu', 'glm-5.3-flash')).not.toThrow();
+    expect(() =>
+      assertModelProfileCapabilityFit(toolTask, 'zai-coding-cn', 'glm-5.3-flash'),
+    ).not.toThrow();
     // YUK-1027 — the astra binding declares toolCalling:true (offline contract
     // test verifies the wire shape), so CopilotTask admits openai/gpt-6-astra.
     expect(() => assertModelProfileCapabilityFit(toolTask, 'openai', 'gpt-6-astra')).not.toThrow();
@@ -318,18 +341,34 @@ describe('assertModelProfileCapabilityFit — P2 fail-closed gate', () => {
     );
   });
 
-  it('rejects a multimodal task on a confirmed text-only lane (glm-5.2)', () => {
-    expect(() => assertModelProfileCapabilityFit(multimodalTask, 'zhipu', 'glm-5.2')).toThrow(
-      /requires vision input.*glm-5.2.*does not support/i,
-    );
+  it('rejects a multimodal task on a confirmed text-only lane (glm-5.3)', () => {
+    expect(() =>
+      assertModelProfileCapabilityFit(multimodalTask, 'zai-coding-cn', 'glm-5.3'),
+    ).toThrow(/requires vision input.*glm-5.3.*does not support/i);
   });
 
-  it('passes a multimodal task where an explicit binding overrides a text-only catalog entry', () => {
-    // mimo-v2.5-pro is text-only in the catalog; the xiaomi binding's explicit
-    // vision declaration is what makes every production multimodal task pass.
+  it('rejects text-only native MiMo Pro and accepts the native vision model', () => {
     expect(() =>
       assertModelProfileCapabilityFit(multimodalTask, 'xiaomi', 'mimo-v2.5-pro'),
+    ).toThrow(/requires vision input/);
+    expect(() =>
+      assertModelProfileCapabilityFit(multimodalTask, 'xiaomi', 'mimo-v2.5'),
     ).not.toThrow();
+  });
+
+  it('admits tool and multimodal kinds on opencode-go/mimo-v2.6-pro, keeps unknown ids fail-closed', () => {
+    // YUK-1341 — the evidence-gated binding opens BOTH gates for this id…
+    expect(() =>
+      assertModelProfileCapabilityFit(toolTask, 'opencode-go', 'mimo-v2.6-pro'),
+    ).not.toThrow();
+    expect(() =>
+      assertModelProfileCapabilityFit(multimodalTask, 'opencode-go', 'mimo-v2.6-pro'),
+    ).not.toThrow();
+    // …while the generic default stays false: an undeclared id on the same
+    // lane still fails the tool gate (modelDefaults.capabilities.toolCalling).
+    expect(() =>
+      assertModelProfileCapabilityFit(toolTask, 'opencode-go', 'undeclared-model'),
+    ).toThrow(/requires tool calling.*undeclared-model.*does not support/i);
   });
 
   it('rejects a multimodal task on an unknown-vision lane', () => {

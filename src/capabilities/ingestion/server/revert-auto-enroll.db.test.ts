@@ -1,6 +1,6 @@
 import { createId } from '@paralleldrive/cuid2';
 import { and, eq, isNull } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { MistakeEnrollOutputT } from '@/core/schema/mistake_enroll';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
@@ -14,6 +14,7 @@ import {
 } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runAutoEnrollForSession } from './auto-enroll';
+import { enrollCapturedBlock } from './enroll';
 import { revertAutoEnrolledBlock } from './revert-auto-enroll';
 
 const FLAG = 'WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED';
@@ -96,6 +97,45 @@ async function seedAndAutoEnroll(
     version: 0,
   });
 
+  // Preserve regression coverage for historical pre-native auto-enroll rows.
+  if (draft !== 'unanswered') {
+    await db.transaction(async (tx) => {
+      const qid = createId();
+      await tx.insert(question).values({
+        id: qid,
+        kind: 'short_answer',
+        prompt_md: 'Historical captured prompt',
+        reference_md: '参考',
+        source: 'vision_paper',
+        knowledge_ids: ['k1'],
+        difficulty: 3,
+        created_at: now,
+        updated_at: now,
+        version: 0,
+      });
+      const captured = await enrollCapturedBlock(tx, {
+        questionId: qid,
+        outcome: 'failure',
+        answerMd: '学生错答',
+        answerImageRefs: [],
+        imageRefs: ['asset_1'],
+        knowledgeIds: ['k1'],
+        captureMode: 'image',
+        sourceDocumentId: '',
+        now,
+        generatedBy: 'workflow_judge',
+      });
+      await tx
+        .update(question_block)
+        .set({
+          status: 'auto_enrolled',
+          imported_question_id: qid,
+          imported_attempt_event_id: captured.attemptEventId,
+        })
+        .where(eq(question_block.id, blockId));
+    });
+    return { sessionId, blockId };
+  }
   const result = await runAutoEnrollForSession({
     db,
     sessionId,
@@ -106,7 +146,6 @@ async function seedAndAutoEnroll(
     // embedding model is called (runTaggingFn is OBSERVE-only now; kept harmless for parity).
     runTaggingFn: highConfidenceTagging,
     tagKnowledgeFn: async () => ({ kind: 'match' as const, knowledge_ids: ['k1'] }),
-    runMistakeEnrollFn: draft === 'unanswered' ? undefined : vi.fn(async () => draft),
   });
   expect(result.enrolled).toBe(1);
   return { sessionId, blockId };

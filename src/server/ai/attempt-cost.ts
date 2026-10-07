@@ -33,6 +33,8 @@ export function resolveAttemptCostTruth(input: {
   provider: Provider;
   model: string;
   tokens: TokenCounts;
+  /** False when zero counters are placeholders, not observed provider usage. */
+  tokensObserved?: boolean;
   reportedCostUsd?: number;
 }): AttemptCostTruth {
   if (input.provider === 'anthropic-sub') {
@@ -71,7 +73,8 @@ export function resolveAttemptCostTruth(input: {
     if (reported !== undefined && Number.isFinite(reported) && reported >= 0) {
       return { basis: 'reported', amountUsd: reported, ref: 'openrouter:usage.cost' };
     }
-    const estimated = jevLocalCostUsd(input.model, input.tokens);
+    const estimated =
+      input.tokensObserved === false ? null : jevLocalCostUsd(input.model, input.tokens);
     if (estimated !== null && Number.isFinite(estimated) && estimated >= 0) {
       return {
         basis: 'estimated',
@@ -93,7 +96,7 @@ export function resolveAttemptCostTruth(input: {
     return { basis: 'reported', amountUsd: reported, ref: 'sdk:total_cost_usd' };
   }
 
-  const estimated = localCostUsd(input.model, input.tokens);
+  const estimated = input.tokensObserved === false ? null : localCostUsd(input.model, input.tokens);
   if (
     input.provider === 'xiaomi' &&
     hasLocalPricing(input.model) &&

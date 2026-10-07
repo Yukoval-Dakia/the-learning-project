@@ -5,6 +5,7 @@ import { db } from '@/db/client';
 import { artifact, learning_session } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { Review } from '@/server/session';
+import { issuePaperAssessment } from '../server/assessment/paper-issuance';
 
 export interface PaperReviewSessionResult {
   sessionId: string;
@@ -74,6 +75,7 @@ export async function createPaperReviewSession(paperId: string): Promise<PaperRe
     }
 
     const { sessionId } = await Review.startReviewSession(tx, { artifactId: paperId });
+    await issuePaperAssessment(tx, sessionId, paperId);
     return { sessionId, created: true };
   });
 }

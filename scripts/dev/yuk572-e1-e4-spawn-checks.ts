@@ -1,3 +1,5 @@
+// YUK-1064 dev-only exception: this opt-in harness verifies concrete scout/director
+// internals. Those validation seams are intentionally absent from agency/public.
 // YUK-572 PR-2 — E-1..E-4 dev validation harness (spec §10 / §2 / §6).
 //
 // These four checks are UNPROVABLE from the SDK typings (docstring aliases, no exported

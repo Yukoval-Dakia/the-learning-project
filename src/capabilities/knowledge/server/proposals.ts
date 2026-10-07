@@ -22,6 +22,7 @@ import {
 import { newId } from '@/core/ids';
 import type { MergeRepairEntryT, SuggestionKindT } from '@/core/schema/event/known';
 import type { ProposalEvidenceRefT } from '@/core/schema/proposal';
+import { type TopologyEdge, checkEdgeTopology } from '@/core/topology-gate';
 import type { Db, Tx } from '@/db/client';
 import { event, knowledge, knowledge_edge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -49,7 +50,6 @@ import {
   reactivateKnowledgeEdge,
 } from './edges';
 import { rewireMisconceptionEdgesForKnowledgeMerge } from './misconception-edges';
-import { type TopologyEdge, checkEdgeTopology } from './topology-gate';
 
 type DbLike = Db | Tx;
 

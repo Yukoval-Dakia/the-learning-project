@@ -1,8 +1,6 @@
-// Phase 1c.1 Step 9.E — CSV exporters over the event stream only.
-//
-// Pre-Step-9: dual-path — `tables.mistake[]` / `tables.review_event[]` (legacy)
-// vs `tables.event[]` projection. Post-Step-9 the legacy tables are gone;
-// the only source is `tables.event[]` + `tables.material_fsrs_state[]`.
+import { z } from 'zod';
+import { FsrsStateSchema } from '@/core/schema/event/blocks';
+import { projectNativeCsv } from './native-assessment-reporting';
 
 export interface Row {
   [k: string]: unknown;
@@ -109,7 +107,11 @@ function rowCreatedAtValue(row: Row): number {
 function newerRow(a: Row, b: Row): boolean {
   const aTime = rowCreatedAtValue(a);
   const bTime = rowCreatedAtValue(b);
-  return aTime > bTime || (aTime === bTime && rowId(a) > rowId(b));
+  const aSeq = Number(a.dispatch_seq ?? 0);
+  const bSeq = Number(b.dispatch_seq ?? 0);
+  return (
+    aTime > bTime || (aTime === bTime && (aSeq > bSeq || (aSeq === bSeq && rowId(a) > rowId(b))))
+  );
 }
 
 function correctionStatuses(events: Row[]): Map<string, CorrectionStatus> {
@@ -203,6 +205,14 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
   const events = (tables.event ?? []) as Row[];
   const eventsById = new Map(events.filter((e) => e.id).map((e) => [rowId(e), e]));
   const statuses = correctionStatuses(events);
+  const native = projectNativeCsv(
+    tables,
+    new Set(
+      events
+        .filter((event) => activeEffectiveRow(event, eventsById, statuses)?.id === event.id)
+        .map(rowId),
+    ),
+  );
   const attempts = events.filter(
     (e) => e.action === 'attempt' && e.subject_kind === 'question' && e.outcome === 'failure',
   );
@@ -212,11 +222,20 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
   // YUK-1054 — original 判（每 attempt 最早 raw judge 行）。在 judge 索引循环里
   // 同步收集；先于使用它的循环声明。
   const originalJudgeByAttempt = new Map<string, Row>();
+  const nativeAttemptIds = new Set(native.attempts.map((attempt) => attempt.id));
   for (const e of events) {
+    const nativeAttemptId =
+      typeof e.subject_id === 'string' && nativeAttemptIds.has(e.subject_id)
+        ? e.subject_id
+        : typeof e.caused_by_event_id === 'string' && nativeAttemptIds.has(e.caused_by_event_id)
+          ? e.caused_by_event_id
+          : null;
+    const attemptId =
+      nativeAttemptId ?? (e.caused_by_event_id ? String(e.caused_by_event_id) : null);
     if (
       (e.action === 'judge' || e.action === 'experimental:user_cause') &&
       e.subject_kind === 'event' &&
-      e.caused_by_event_id
+      attemptId
     ) {
       const effective = activeEffectiveRow(e, eventsById, statuses);
       if (
@@ -224,12 +243,11 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
         effective.action !== e.action ||
         effective.subject_kind !== e.subject_kind ||
         effective.subject_id !== e.subject_id ||
-        effective.caused_by_event_id !== e.caused_by_event_id
+        (!nativeAttemptId && effective.caused_by_event_id !== e.caused_by_event_id)
       ) {
         continue;
       }
       const bucket = e.action === 'judge' ? judgesByAttempt : userCausesByAttempt;
-      const attemptId = String(e.caused_by_event_id);
       const existing = bucket.get(attemptId);
       if (!existing || newerRow(effective, existing)) {
         bucket.set(attemptId, effective);
@@ -312,6 +330,19 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
 
   const lines: string[] = [MISTAKES_HEADERS.join(',')];
 
+  function reviewStats(qid: string) {
+    const legacy = reviewsByQuestion.get(qid) ?? [];
+    const current = native.reviews.filter((review) => review.questionIds.includes(qid));
+    const times = [
+      ...legacy.map(rowCreatedAtValue),
+      ...current.map((review) => review.occurredAt.getTime()),
+    ];
+    return {
+      count: legacy.length + current.length,
+      last: times.length ? Math.max(...times) : null,
+    };
+  }
+
   for (const a of attempts) {
     const qid = a.subject_id as string;
     const q = questionById.get(qid);
@@ -347,9 +378,7 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
       userCausePayload?.primary_category ?? judgePayload?.cause?.primary_category ?? '';
     const causeUserNotes = userCausePayload?.user_notes ?? '';
 
-    const reviews = reviewsByQuestion.get(qid) ?? [];
-    const lastReview =
-      reviews.length > 0 ? Math.max(...reviews.map((r) => r.created_at as number)) : null;
+    const reviews = reviewStats(qid);
 
     // Codex (PR #295) — index knowledge-level FSRS rows too. The attempt's own
     // referenced_knowledge_ids drive the knowledge fallback; union with the
@@ -380,11 +409,61 @@ export function buildMistakesCsv(tables: Record<string, Row[]>): string {
         // No mistake.status equivalent in event stream — emit 'active' since
         // a failure attempt without an archive event is considered active.
         csvEscape('active'),
-        csvEscape(lastReview ?? ''),
-        csvEscape(reviews.length),
+        csvEscape(reviews.last ?? ''),
+        csvEscape(reviews.count),
         csvEscape(judgePayload?.coarse_outcome ?? ''),
         csvEscape(originalJudgePayload?.coarse_outcome ?? ''),
       ].join(','),
+    );
+  }
+
+  const coarse = (outcome: string) =>
+    outcome === 'success'
+      ? 'correct'
+      : outcome === 'failure'
+        ? 'incorrect'
+        : outcome === 'unsupported'
+          ? 'unknown'
+          : outcome;
+  for (const attempt of native.attempts) {
+    if (attempt.originalOutcome !== 'failure' && attempt.effectiveOutcome !== 'failure') continue;
+    const user = userCausesByAttempt.get(attempt.id);
+    const judge = judgesByAttempt.get(attempt.id);
+    const userParsed = z
+      .object({ primary_category: z.string(), user_notes: z.string().nullable().optional() })
+      .safeParse(parseJsonCell<unknown>(user?.payload));
+    const judgeParsed = z
+      .object({ cause: z.object({ primary_category: z.string() }).nullish() })
+      .safeParse(parseJsonCell<unknown>(judge?.payload));
+    const userPayload = userParsed.success ? userParsed.data : null;
+    const judgePayload = judgeParsed.success ? judgeParsed.data : null;
+    const schedule = resolveFsrsForQuestion(attempt.questionId, attempt.knowledgeIds);
+    const stateParsed = FsrsStateSchema.safeParse(parseJsonCell<unknown>(schedule?.row.state));
+    const state = stateParsed.success ? stateParsed.data : null;
+    const reviews = reviewStats(attempt.questionId);
+    lines.push(
+      [
+        attempt.id,
+        attempt.createdAt.toISOString(),
+        attempt.prompt,
+        attempt.reference,
+        attempt.response,
+        attempt.knowledgeIds.map((id) => knowledgeById.get(id) ?? id).join('; '),
+        userPayload?.primary_category ?? judgePayload?.cause?.primary_category ?? '',
+        userPayload?.user_notes ?? '',
+        attempt.difficulty ?? '',
+        state?.due.toISOString() ?? '',
+        state?.reps ?? '',
+        state?.lapses ?? '',
+        schedule?.kind ?? '',
+        'active',
+        reviews.last ?? '',
+        reviews.count,
+        coarse(attempt.effectiveOutcome),
+        coarse(attempt.originalOutcome),
+      ]
+        .map(csvEscape)
+        .join(','),
     );
   }
 
@@ -415,6 +494,16 @@ export function buildReviewEventsCsv(tables: Record<string, Row[]>): string {
   );
 
   const events = (tables.event ?? []) as Row[];
+  const eventsById = new Map(events.filter((e) => e.id).map((e) => [rowId(e), e]));
+  const statuses = correctionStatuses(events);
+  const native = projectNativeCsv(
+    tables,
+    new Set(
+      events
+        .filter((event) => activeEffectiveRow(event, eventsById, statuses)?.id === event.id)
+        .map(rowId),
+    ),
+  );
   const reviews = events.filter((e) => e.action === 'review' && e.subject_kind === 'question');
 
   const lines: string[] = [REVIEW_HEADERS.join(',')];
@@ -463,6 +552,31 @@ export function buildReviewEventsCsv(tables: Record<string, Row[]>): string {
         csvEscape(''),
         csvEscape(''),
       ].join(','),
+    );
+  }
+
+  for (const review of native.reviews) {
+    lines.push(
+      [
+        review.id,
+        review.occurredAt.toISOString(),
+        '',
+        review.prompt.slice(0, 80).replace(/[\n\r]/g, ' '),
+        review.knowledgeIds.map((id) => knowledgeById.get(id) ?? id).join('; '),
+        review.rating,
+        review.before?.stability ?? '',
+        review.before?.difficulty ?? '',
+        review.before?.due.toISOString() ?? '',
+        review.before?.state ?? '',
+        review.after?.stability ?? '',
+        review.after?.difficulty ?? '',
+        review.after?.due.toISOString() ?? '',
+        review.after?.state ?? '',
+        review.before?.due.toISOString() ?? '',
+        review.after?.due.toISOString() ?? '',
+      ]
+        .map(csvEscape)
+        .join(','),
     );
   }
 

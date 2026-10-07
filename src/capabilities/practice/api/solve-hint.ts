@@ -31,7 +31,13 @@ export async function createHintRequest(
     }
     const hintIndex = parsed.data ? parsed.data.hint_index : 0;
 
-    const hint = await planSolveHint({ db, sessionId: sid, hintIndex, expectedQuestionId: id });
+    const hint = await planSolveHint({
+      db,
+      sessionId: sid,
+      hintIndex,
+      expectedQuestionId: id,
+      issuanceId: parsed.data?.issuance_id,
+    });
     const hintRequestId = newId();
     await writeEvent(db, {
       id: hintRequestId,

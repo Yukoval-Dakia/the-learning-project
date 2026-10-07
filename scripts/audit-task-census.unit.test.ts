@@ -2,8 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { taskCatalog } from '../src/ai/task-catalog';
 import { copilotTaskSpecs } from '../src/capabilities/copilot/tasks';
+import { taskCatalog } from '../src/capabilities/task-catalog';
 import { auditTaskCensus } from './audit-task-census';
 import { scanForbiddenTaskCatalogPatterns } from './lib/task-census-guards';
 import {
@@ -262,6 +262,19 @@ describe('task catalog executable-pattern guard', () => {
     expect(scanForbiddenTaskCatalogPatterns(root)).toEqual([]);
   });
 
+  it.each(['src/capabilities/task-catalog.ts', 'src/capabilities/task-registry.ts'])(
+    'keeps the injected composition guarded against mutable discovery: %s',
+    (file) => {
+      const root = createSourceFixture({ [file]: 'registerTask(process.env.TASK_OWNER);' });
+      expect(scanForbiddenTaskCatalogPatterns(root).map((violation) => violation.reason)).toEqual(
+        expect.arrayContaining([
+          'mutable registerTask registration',
+          'environment-selected task owner',
+        ]),
+      );
+    },
+  );
+
   it('does not inspect registry Copilot prepare imports outside the guarded composition files', () => {
     const root = createSourceFixture({
       'src/ai/task-catalog.ts': '',
@@ -315,6 +328,110 @@ describe('registered infrastructure evidence', () => {
         ],
       }),
     ).toEqual([]);
+  });
+
+  const guardedImplementation = `
+    async function runTaskImpl(kind, input, ctx) {
+      if (!isKnownTask(kind)) { throw new Error('unknown task'); }
+      const def = tasks[kind];
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const lifecycle = createRunLifecycle({ kind, db: ctx.db });
+        await runTaskAttempt({ lifecycle, def });
+      }
+    }
+  `;
+  const tracedEntry = `
+    import { traceOperation } from './laminar-tracing';
+    export async function runTask(kind, input, ctx) {
+      return traceOperation('task.run', { task_kind: kind }, () => runTaskImpl(kind, input, ctx));
+    }
+  `;
+  function runnerGuard(source: string): boolean {
+    return inspectRunLogContract(createSourceFixture({ 'src/server/ai/runner.ts': source }))
+      .runnerCatalogGuard;
+  }
+
+  it('follows the returned tracing callback to the guarded execution owner', () => {
+    expect(runnerGuard(tracedEntry + guardedImplementation)).toBe(true);
+  });
+
+  it('still recognizes an unwrapped guarded runner', () => {
+    expect(runnerGuard(guardedImplementation.replace('runTaskImpl', 'runTask'))).toBe(true);
+  });
+
+  it.each([
+    [
+      'missing guard',
+      guardedImplementation.replace(
+        "if (!isKnownTask(kind)) { throw new Error('unknown task'); }",
+        '',
+      ),
+    ],
+    [
+      'non-terminating guard',
+      guardedImplementation.replace("throw new Error('unknown task');", 'logUnknown(kind);'),
+    ],
+    [
+      'guard after catalog access',
+      guardedImplementation.replace(
+        "if (!isKnownTask(kind)) { throw new Error('unknown task'); }\n      const def = tasks[kind];",
+        "const def = tasks[kind];\n      if (!isKnownTask(kind)) { throw new Error('unknown task'); }",
+      ),
+    ],
+    [
+      'guard after execution',
+      guardedImplementation.replace(
+        "if (!isKnownTask(kind)) { throw new Error('unknown task'); }",
+        "createRunLifecycle({ kind }); if (!isKnownTask(kind)) { throw new Error('unknown task'); }",
+      ),
+    ],
+    [
+      'different guarded kind',
+      guardedImplementation.replace('isKnownTask(kind)', 'isKnownTask(otherKind)'),
+    ],
+    [
+      'wrong lifecycle kind',
+      guardedImplementation.replace(
+        'createRunLifecycle({ kind,',
+        'createRunLifecycle({ kind: otherKind,',
+      ),
+    ],
+    [
+      'guard hidden in nested callback',
+      guardedImplementation.replace(
+        "if (!isKnownTask(kind)) { throw new Error('unknown task'); }",
+        "const unused = () => { if (!isKnownTask(kind)) { throw new Error('unknown task'); } };",
+      ),
+    ],
+  ])('rejects a delegated owner mutation: %s', (_name, implementation) => {
+    expect(runnerGuard(tracedEntry + implementation)).toBe(false);
+  });
+
+  it.each([
+    [
+      'unused owner',
+      tracedEntry.replace(
+        '() => runTaskImpl(kind, input, ctx)',
+        '() => Promise.resolve(undefined)',
+      ),
+    ],
+    [
+      'wrong forwarded kind',
+      tracedEntry.replace('runTaskImpl(kind, input, ctx)', 'runTaskImpl(otherKind, input, ctx)'),
+    ],
+    [
+      'non-tracing wrapper',
+      tracedEntry.replace("from './laminar-tracing'", "from './untrusted-wrapper'"),
+    ],
+    [
+      'execution before delegation',
+      tracedEntry.replace(
+        'return traceOperation',
+        'createRunLifecycle({ kind }); return traceOperation',
+      ),
+    ],
+  ])('rejects a tracing entry mutation: %s', (_name, entry) => {
+    expect(runnerGuard(entry + guardedImplementation)).toBe(false);
   });
 
   it('rejects run-log contract fragments hidden in comments and strings', () => {
@@ -374,8 +491,8 @@ describe('registered infrastructure evidence', () => {
 
 describe('live taskCatalog census', () => {
   it('derives the catalog census from the frozen live composition root', () => {
-    // YUK-1049: 53 = 52 chat tasks + JevScoringDecisionTask (first typed-execution spec).
-    expect(Object.keys(taskCatalog)).toHaveLength(53);
+    // YUK-1047: 55 = 54 chat tasks (including native assessment and image teaching) + Jev typed task.
+    expect(Object.keys(taskCatalog)).toHaveLength(55);
     expect(Object.isFrozen(taskCatalog)).toBe(true);
   });
 
@@ -395,10 +512,14 @@ describe('live taskCatalog census', () => {
     });
 
     expect(result.ok, result.errors.join('\n')).toBe(true);
-    // 51 discovered (Jev's dynamic executor.task_kind arg isn't statically
+    // 53 discovered (Jev's dynamic executor.task_kind arg isn't statically
     // resolvable — that's exactly why it carries a non-live classification).
-    expect(result.discoveredKinds).toHaveLength(51);
-    expect(Object.keys(copilotTaskSpecs).sort()).toEqual(['CopilotTask', 'TeachingTurnTask']);
+    expect(result.discoveredKinds).toHaveLength(53);
+    expect(Object.keys(copilotTaskSpecs).sort()).toEqual([
+      'CopilotTask',
+      'TeachingTurnTask',
+      'TeachingTurnVisionTask',
+    ]);
     expect(result.registrationEvidence.some((item) => item.registration === 'manifest-job')).toBe(
       true,
     );

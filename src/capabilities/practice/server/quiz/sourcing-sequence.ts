@@ -34,7 +34,7 @@ import type { Db } from '@/db/client';
 import { knowledge } from '@/db/schema';
 import { buildExaMcpServer } from '@/server/ai/mcp/exa';
 import { resolveSubjectProfile } from '@/subjects/profile';
-import type { SubjectProfile, SubjectQuestionKind } from '@/subjects/profile-schema';
+import type { SubjectProfile } from '@/subjects/profile-schema';
 import { answerClassCompatible, questionKindToSkillKind } from '@/subjects/question-kind';
 import { poolFetch } from './pool-fetch';
 
@@ -216,7 +216,7 @@ export function resolveRoutePreference(
   // resolves the profile's per-题型 route. Fall back to a '*' default entry, then the
   // hard-coded default.
   const byKind = raw as Record<string, unknown>;
-  const profileKey: SubjectQuestionKind | null = kind ? questionKindToSkillKind(kind) : null;
+  const profileKey: string | null = kind ? questionKindToSkillKind(kind) : null;
   const candidate = (profileKey && byKind[profileKey]) || byKind['*'];
   if (!Array.isArray(candidate)) return DEFAULT_SOURCING_ROUTE;
   const steps: SourcingSequenceStep[] = [];

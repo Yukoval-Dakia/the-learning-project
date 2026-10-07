@@ -1,424 +1,278 @@
-// YUK-777 B1 + B2 — the out-of-order (late-arrival) guard's two remaining holes.
-//
-// Both are the SAME structural mistake in different clothes: the guard enumerated the write
-// targets it expected a newer attempt to have touched, and then asked those targets. Three
-// review rounds produced three same-family holes that way, because an enumeration can always
-// be one target short — and worse, a target that a previous late-skip DELIBERATELY did not
-// write is invisible no matter how complete the enumeration is.
-//
-//   B2 (#Tu1cY) — the skip erases the evidence. Run B covers K1+K2, is judged late because of
-//                 K2, so it skips EVERY derived write and leaves nothing on K1. Older run A,
-//                 covering only K1, reads the projections, sees nothing newer, and walks K1
-//                 backwards. One skip opens the gate for every older attempt behind it.
-//   B1 (#TuxJJ) — the target was never in the enumeration. `mastery_state(ability_global)` is
-//                 keyed by DOMAIN, so two attempts on sibling KCs collide there while sharing
-//                 no knowledge id at all.
-
+// Native ordered replay replaces the retired deferred writer's evidence-only skip.
+// Unknown newer projections remain fail-closed; pending originals never pretend to be scores.
 import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
 import { HIERARCHICAL_ELO_ENABLED } from '@/core/theta';
-import { knowledge, mastery_state, material_fsrs_state, question } from '@/db/schema';
-import { __resetRateLimitForTests } from '@/server/http/rate-limit';
+import { event, knowledge, mastery_state, material_fsrs_state } from '@/db/schema';
 import { upsertMasteryState } from '@/server/mastery/state';
+import { nativeSoloHttpFixture } from '../../../../tests/fixtures/native-solo-http';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
+import { commitFormalAttempt, prepareFormalAttemptSubmission } from '../server/assessment/attempt';
 import { recordJudgePendingAttempt } from '../server/judge-run-dispatch';
-import { settleDeferredSoloReview } from '../server/review-settlement';
-import { CreateAttemptBodySchema } from './contracts';
 
-const MINUTE = 60_000;
-
-async function seedKnowledge(id: string, domain: string | null, parentId: string | null = null) {
-  const now = new Date();
-  await testDb()
-    .insert(knowledge)
-    .values({ id, name: id, domain, parent_id: parentId, created_at: now, updated_at: now });
-}
-
-async function seedQuestion(id: string, knowledgeIds: string[]) {
-  const now = new Date();
-  await testDb()
-    .insert(question)
-    .values({
-      id,
-      prompt_md: `Prompt for ${id}`,
-      kind: 'short_answer',
-      reference_md: null,
-      knowledge_ids: knowledgeIds,
-      difficulty: 3,
-      source: 'manual',
-      variant_depth: 0,
-      version: 0,
-      created_at: now,
-      updated_at: now,
-    });
-}
-
-async function buildValidated(questionId: string, now: Date, body: Record<string, unknown>) {
-  const parsed = CreateAttemptBodySchema.parse({ question_id: questionId, ...body });
-  const q = (await testDb().select().from(question).where(eq(question.id, questionId)))[0];
+const OLDER = new Date('2026-10-04T08:00:00.000Z');
+const NEWER = new Date('2026-10-04T09:00:00.000Z');
+beforeEach(resetDb);
+afterEach(() => vi.restoreAllMocks());
+async function original(ids: string[], at: Date, answer = 'A') {
+  const f = await nativeSoloHttpFixture(testDb(), { knowledgeIds: ids });
+  const request = { ...f.issued.assessment(answer), now: at };
   return {
-    body: parsed,
-    now,
+    ...f,
+    request,
+    prepare: () => prepareFormalAttemptSubmission(testDb(), 'solo_submit', f.id, request),
+    commit: () => commitFormalAttempt(testDb(), 'solo_submit', f.id, request),
+  };
+}
+async function state() {
+  return {
+    theta: await testDb().select().from(mastery_state).orderBy(mastery_state.subject_id),
+    fsrs: await testDb().select().from(material_fsrs_state).orderBy(material_fsrs_state.subject_id),
+  };
+}
+async function external(
+  subjectKind: 'knowledge' | 'ability_global',
+  subjectId: string,
+  at = NEWER,
+) {
+  await upsertMasteryState(testDb(), {
+    subject_kind: subjectKind,
+    subject_id: subjectId,
+    theta_hat: 0.5,
+    evidence_count: 1,
+    success_count: 1,
+    fail_count: 0,
+    last_outcome_at: at,
+  });
+}
+async function historicalPending(
+  questionId: string,
+  ids: string[],
+  globals: string[],
+  frozen?: Record<string, string>,
+) {
+  return recordJudgePendingAttempt(testDb(), {
+    runId: newId(),
+    sessionId: null,
     questionId,
-    activityRef: normalizeReviewSubmitActivityRef(parsed).activity_ref,
-    q,
-  };
-}
-
-/** A manual-rating judged shape — no judge call, so no profile/LLM is involved. */
-function manualJudged() {
-  return {
-    judgeResult: null,
-    judgeRoute: null,
-    judgeTelemetry: null,
-    executionProvenance: null,
-    suggestedRating: null,
-    finalRating: 'good' as const,
-    adviceCauseCategory: null,
-    // YUK-739 — JudgedSubmit now carries the advice profile (advisor routing).
-    adviceSubjectProfile: null,
-  };
-}
-
-describe('late-arrival guard — evidence water mark (YUK-777 B2)', () => {
-  beforeEach(async () => {
-    await resetDb();
-    __resetRateLimitForTests();
-    vi.unstubAllEnvs();
-  });
-
-  it('detects a late attempt from a newer attempt that WROTE NOTHING (the post-skip hole)', async () => {
-    await seedKnowledge('k1', 'math');
-    await seedKnowledge('k2', 'math');
-    const olderQ = `q_${newId()}`;
-    await seedQuestion(olderQ, ['k1']);
-    const newerQ = `q_${newId()}`;
-    await seedQuestion(newerQ, ['k1', 'k2']);
-
-    const older = new Date(Date.now() - 10 * MINUTE);
-    const newer = new Date(Date.now() - 1 * MINUTE);
-
-    // Run B: a NEWER attempt on overlapping material (K1) that was itself judged late and so
-    // skipped every derived write. Its ONLY trace is the pending-attempt evidence — which is
-    // exactly the situation, because that row is written unconditionally at submit.
-    await recordJudgePendingAttempt(testDb(), {
-      runId: newId(),
-      sessionId: null,
-      questionId: newerQ,
-      knowledgeIds: ['k1', 'k2'],
-      submit: {
-        body: { question_id: newerQ, rating: 'good', response_md: 'b', auto_rate: true },
-        question_id: newerQ,
-        subject_profile: {},
-        question_snapshot: {},
-        submitted_at: newer.toISOString(),
-      },
-      submittedAt: newer,
-    });
-
-    // Deliberately assert the premise: no derived state exists at all, so the projection half
-    // of the guard has nothing to find. Without the evidence half this attempt sails through.
-    expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
-    expect(await testDb().select().from(mastery_state)).toHaveLength(0);
-
-    const persisted = await settleDeferredSoloReview(testDb(), {
-      validated: await buildValidated(olderQ, older, {
-        rating: 'good',
-        referenced_knowledge_ids: ['k1'],
-      }),
-      judged: manualJudged(),
-      runId: newId(),
-      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
-    });
-
-    expect(persisted.lateArrival).toBe(true);
-    expect(persisted.effect).toBe('evidence_only_late');
-    expect(persisted.terminalResult).toMatchObject({
-      attempt_event_id: persisted.attemptEventId,
-      outcome: 'success',
-      final_rating: 'good',
-    });
-    // Late ⇒ evidence only. The schedule must not have moved onto older evidence.
-    expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
-  });
-
-  it('finds relevant evidence beyond 200 unrelated newer attempts', async () => {
-    await seedKnowledge('k1', 'math');
-    const oldQ = `q_${newId()}`;
-    const relatedQ = `q_${newId()}`;
-    await seedQuestion(oldQ, ['k1']);
-    await seedQuestion(relatedQ, ['k1']);
-    const old = new Date(Date.now() - 10 * MINUTE);
-
-    for (let i = 0; i < 205; i++) {
-      const unrelatedQ = `q_${newId()}`;
-      await seedQuestion(unrelatedQ, [`unrelated-${i}`]);
-      const submittedAt = new Date(old.getTime() + (i + 1) * 1000);
-      await recordJudgePendingAttempt(testDb(), {
-        runId: newId(),
-        sessionId: null,
-        questionId: unrelatedQ,
-        knowledgeIds: [`unrelated-${i}`],
-        submit: {
-          body: { question_id: unrelatedQ, rating: 'good', response_md: 'x', auto_rate: true },
-          question_id: unrelatedQ,
-          subject_profile: { subject: 'wenyan' },
-          question_snapshot: {},
-          submitted_at: submittedAt.toISOString(),
-        },
-        submittedAt,
-      });
-    }
-    const relatedAt = new Date(old.getTime() + 300_000);
-    await recordJudgePendingAttempt(testDb(), {
-      runId: newId(),
-      sessionId: null,
-      questionId: relatedQ,
-      knowledgeIds: ['k1'],
-      submit: {
-        body: { question_id: relatedQ, rating: 'good', response_md: 'x', auto_rate: true },
-        question_id: relatedQ,
-        subject_profile: { subject: 'wenyan' },
-        question_snapshot: {},
-        submitted_at: relatedAt.toISOString(),
-      },
-      submittedAt: relatedAt,
-    });
-
-    const result = await settleDeferredSoloReview(testDb(), {
-      validated: await buildValidated(oldQ, old, {
-        rating: 'good',
-        referenced_knowledge_ids: ['k1'],
-      }),
-      judged: manualJudged(),
-      runId: newId(),
-      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
-    });
-    expect(result.lateArrival).toBe(true);
-  });
-
-  it('does NOT flag an attempt whose own pending row is the only newer-looking evidence', async () => {
-    await seedKnowledge('k1', 'math');
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId, ['k1']);
-    const runId = newId();
-    // A run's own pending row is stamped at the answer instant. `created_at > now` is false for
-    // it, but pin the self-exclusion explicitly: keying the guard on material alone would make
-    // every durable attempt indict itself the moment the two stamps were not identical.
-    const at = new Date(Date.now() - 5 * MINUTE);
-    await recordJudgePendingAttempt(testDb(), {
-      runId,
-      sessionId: null,
-      questionId,
-      knowledgeIds: ['k1'],
-      submit: {
-        body: { question_id: questionId, rating: 'good', response_md: 'a', auto_rate: true },
+    knowledgeIds: ids,
+    abilityGlobalIds: globals,
+    submit: {
+      body: {
         question_id: questionId,
-        subject_profile: {},
-        question_snapshot: {},
-        submitted_at: at.toISOString(),
+        rating: 'good',
+        auto_rate: true,
+        response_md: '历史未判原件',
       },
-      submittedAt: at,
-    });
+      question_id: questionId,
+      subject_profile: {},
+      question_snapshot: { knowledge_ids: ids },
+      ...(frozen ? { ability_global_by_knowledge_id: frozen } : {}),
+      submitted_at: NEWER.toISOString(),
+    },
+    submittedAt: NEWER,
+  });
+}
 
-    const persisted = await settleDeferredSoloReview(testDb(), {
-      validated: await buildValidated(questionId, at, { rating: 'good' }),
-      judged: manualJudged(),
-      runId,
-      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
-    });
+describe('native late arrival and frozen learning scope', () => {
+  it.each<{
+    name: string;
+    ids: string[];
+    globals: string[];
+    map: Record<string, string> | undefined;
+  }>([
+    { name: 'filtered root', ids: [], globals: [], map: {} },
+    {
+      name: 'legacy root',
+      ids: ['seed:math:root'],
+      globals: ['math'],
+      map: { 'seed:math:root': 'math' },
+    },
+    { name: 'legacy root without map', ids: ['seed:math:root'], globals: ['math'], map: undefined },
+    {
+      name: 'mixed unrelated KC',
+      ids: ['seed:math:root', 'k2'],
+      globals: ['math', 'history'],
+      map: { 'seed:math:root': 'math', k2: 'history' },
+    },
+    { name: 'filtered real sibling', ids: ['k2'], globals: ['math'], map: { k2: 'math' } },
+    { name: 'legacy real sibling without map', ids: ['k2'], globals: ['math'], map: undefined },
+  ])(
+    'retains $name pending history without using its unexecuted answer as learning evidence',
+    async ({ ids, globals, map }) => {
+      const first = await original(['k1'], OLDER);
+      const pendingId = await historicalPending('historical-other-question', ids, globals, map);
+      const history = await testDb().select().from(event).where(eq(event.id, pendingId));
+      expect((await state()).theta).toHaveLength(0);
+      expect(await first.commit()).toMatchObject({
+        status: 'effective',
+        activation: { effect: 'applied' },
+      });
+      expect(await testDb().select().from(event).where(eq(event.id, pendingId))).toEqual(history);
+      expect((await state()).fsrs.map((row) => row.subject_id)).toEqual(['k1']);
+      expect((await state()).theta.map((row) => row.subject_id)).not.toContain('seed:math:root');
+    },
+  );
 
-    expect(persisted.lateArrival).toBe(false);
-    expect(await testDb().select().from(material_fsrs_state)).toHaveLength(1);
+  it.each(['root-knowledge', 'root-domain', 'real-knowledge', 'real-domain'] as const)(
+    'protects newer real projections while ignoring synthetic targets: %s',
+    async (target) => {
+      const f = await original(['seed:math:root', 'k1'], OLDER);
+      await testDb()
+        .update(knowledge)
+        .set({ domain: 'anchor-domain' })
+        .where(eq(knowledge.id, 'seed:math:root'));
+      const isRoot = target.startsWith('root');
+      const kind = target.endsWith('domain') ? 'ability_global' : 'knowledge';
+      const id =
+        kind === 'ability_global'
+          ? isRoot
+            ? 'anchor-domain'
+            : 'math'
+          : isRoot
+            ? 'seed:math:root'
+            : 'k1';
+      await external(kind, id);
+      const before = await state();
+      expect(await f.commit()).toMatchObject({
+        status: 'effective',
+        activation: { effect: isRoot ? 'applied' : 'failed_pending' },
+      });
+      const [preserved] = await testDb()
+        .select()
+        .from(mastery_state)
+        .where(and(eq(mastery_state.subject_kind, kind), eq(mastery_state.subject_id, id)));
+      expect(preserved).toEqual(before.theta[0]);
+      if (!isRoot) expect(await state()).toEqual(before);
+      else expect((await state()).fsrs.map((row) => row.subject_id)).toEqual(['k1']);
+    },
+  );
+
+  it('preserves an unresolved later original and later settles both overlapping KC observations in order', async () => {
+    const first = await original(['k1'], OLDER);
+    const later = await original(['k1', 'k2'], NEWER);
+    await later.prepare();
+    expect((await state()).theta).toHaveLength(0);
+    expect(await first.commit()).toMatchObject({ activation: { effect: 'applied' } });
+    expect(await later.commit()).toMatchObject({ activation: { effect: 'applied' } });
+    const final = await state();
+    expect(final.fsrs.map((row) => [row.subject_id, row.state.reps])).toEqual([
+      ['k1', 2],
+      ['k2', 1],
+    ]);
+    expect(
+      final.theta
+        .filter((row) => row.subject_kind === 'knowledge')
+        .map((row) => [row.subject_id, row.evidence_count, row.last_outcome_at?.toISOString()]),
+    ).toEqual([
+      ['k1', 2, NEWER.toISOString()],
+      ['k2', 1, NEWER.toISOString()],
+    ]);
   });
 
-  it('ignores newer evidence on UNRELATED material', async () => {
-    await seedKnowledge('k1', 'math');
-    await seedKnowledge('k9', 'history');
-    const mine = `q_${newId()}`;
-    await seedQuestion(mine, ['k1']);
-    const theirs = `q_${newId()}`;
-    await seedQuestion(theirs, ['k9']);
-
-    const older = new Date(Date.now() - 10 * MINUTE);
-    const newer = new Date(Date.now() - 1 * MINUTE);
-    await recordJudgePendingAttempt(testDb(), {
-      runId: newId(),
-      sessionId: null,
-      questionId: theirs,
-      knowledgeIds: ['k9'],
-      submit: {
-        body: { question_id: theirs, rating: 'good', response_md: 'x', auto_rate: true },
-        question_id: theirs,
-        subject_profile: {},
-        question_snapshot: {},
-        submitted_at: newer.toISOString(),
-      },
-      submittedAt: newer,
-    });
-
-    const persisted = await settleDeferredSoloReview(testDb(), {
-      validated: await buildValidated(mine, older, { rating: 'good' }),
-      judged: manualJudged(),
-      runId: newId(),
-      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
-    });
-
-    // A guard that fired on any newer attempt anywhere would freeze the whole schedule
-    // whenever a learner answers two questions out of order.
-    expect(persisted.lateArrival).toBe(false);
-  });
-});
-
-describe('late-arrival guard — shared θ_global domain row (YUK-777 B1)', () => {
-  beforeEach(async () => {
+  it('replays a later sibling on the shared domain without requiring overlapping KC IDs', async () => {
+    expect(HIERARCHICAL_ELO_ENABLED).toBe(true);
+    const run = async (reverse: boolean) => {
+      const first = await original(['k1'], OLDER, 'B');
+      const later = await original(['k2'], NEWER, 'A');
+      for (const item of reverse ? [later, first] : [first, later])
+        expect(await item.commit()).toMatchObject({ activation: { effect: 'applied' } });
+      const final = await state();
+      return {
+        theta: final.theta.map((row) => ({
+          kind: row.subject_kind,
+          id: row.subject_id,
+          theta: row.theta_hat,
+          count: row.evidence_count,
+          at: row.last_outcome_at,
+        })),
+        fsrs: final.fsrs.map((row) => ({
+          id: row.subject_id,
+          reps: row.state.reps,
+          at: row.state.last_review,
+        })),
+      };
+    };
+    const chronological = await run(false);
     await resetDb();
-    __resetRateLimitForTests();
-    vi.unstubAllEnvs();
+    expect(await run(true)).toEqual(chronological);
+    const receipts = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_settlement'));
+    expect(receipts.some((row) => typeof row.payload.replay_of === 'string')).toBe(true);
   });
 
-  it('detects a newer skipped sibling attempt from immutable domain evidence alone', async () => {
-    expect(HIERARCHICAL_ELO_ENABLED).toBe(true);
-
-    await seedKnowledge('k1', 'math');
-    await seedKnowledge('k2', 'math');
-    const olderQ = `q_${newId()}`;
-    const newerQ = `q_${newId()}`;
-    await seedQuestion(olderQ, ['k1']);
-    await seedQuestion(newerQ, ['k2']);
-
-    const older = new Date(Date.now() - 10 * MINUTE);
-    const newer = new Date(Date.now() - 1 * MINUTE);
-    await recordJudgePendingAttempt(testDb(), {
-      runId: newId(),
-      sessionId: null,
-      questionId: newerQ,
-      knowledgeIds: ['k2'],
-      abilityGlobalIds: ['math'],
-      submit: {
-        body: { question_id: newerQ, rating: 'good', response_md: 'newer', auto_rate: true },
-        question_id: newerQ,
-        subject_profile: {},
-        question_snapshot: {},
-        submitted_at: newer.toISOString(),
-      },
-      submittedAt: newer,
-    });
-
-    // The newer attempt was itself skipped: no projection records the shared-domain collision.
-    expect(await testDb().select().from(mastery_state)).toHaveLength(0);
-    const persisted = await settleDeferredSoloReview(testDb(), {
-      validated: await buildValidated(olderQ, older, { rating: 'good' }),
-      judged: manualJudged(),
-      runId: newId(),
-      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
-    });
-
-    expect(persisted.lateArrival).toBe(true);
-    expect(await testDb().select().from(mastery_state)).toHaveLength(0);
+  it('does not hide an untracked newer domain write behind more than 200 unrelated receipts', async () => {
+    const first = await original(['k1'], OLDER);
+    await external('ability_global', 'math');
+    const now = new Date(NEWER.getTime() + 1_000);
+    await testDb()
+      .insert(event)
+      .values(
+        Array.from({ length: 205 }, (_, i) => ({
+          id: `historical_pending_${i}`,
+          actor_kind: 'user' as const,
+          actor_ref: 'self',
+          action: 'experimental:judge_pending_attempt',
+          subject_kind: 'question',
+          subject_id: `unrelated_${i}`,
+          payload: {
+            knowledge_ids: [`other_${i}`],
+            ability_global_ids: ['history'],
+            submit: { submitted_at: now.toISOString() },
+          },
+          created_at: now,
+        })),
+      );
+    const before = await state();
+    expect(await first.commit()).toMatchObject({ activation: { effect: 'failed_pending' } });
+    expect(await state()).toEqual(before);
   });
 
-  it('detects a late attempt from a SIBLING KC under the same domain (no shared knowledge id)', async () => {
-    // The flag is a compile-time constant; if it were ever flipped off, no ability_global row
-    // would be written and this hazard would not exist — so assert the premise rather than
-    // let the test silently pass for the wrong reason.
-    expect(HIERARCHICAL_ELO_ENABLED).toBe(true);
+  it('its own pending original cannot suppress its first legitimate learning effect', async () => {
+    const f = await original(['k1'], OLDER);
+    await f.prepare();
+    await f.prepare();
+    expect(await f.commit()).toMatchObject({ activation: { effect: 'applied' } });
+    expect((await state()).fsrs).toMatchObject([{ state: { reps: 1 } }]);
+  });
 
-    await seedKnowledge('k1', 'math');
-    await seedKnowledge('k2', 'math'); // sibling: same domain, DIFFERENT knowledge id
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId, ['k1']);
+  it('unrelated newer projections do not block an earlier assessment on a different domain', async () => {
+    const f = await original(['k1'], OLDER);
+    await external('knowledge', 'unrelated-kc');
+    await external('ability_global', 'history');
+    const before = await state();
+    expect(await f.commit()).toMatchObject({ activation: { effect: 'applied' } });
+    const final = await state();
+    for (const row of before.theta)
+      expect(final.theta.find((after) => after.id === row.id)).toEqual(row);
+    expect(final.fsrs).toHaveLength(1);
+  });
 
-    const older = new Date(Date.now() - 10 * MINUTE);
-    const newer = new Date(Date.now() - 1 * MINUTE);
-
-    // A newer attempt on K2 already moved the SHARED domain row. Nothing on K1 moved, so every
-    // knowledge-keyed read — FSRS and per-KC θ̂ alike — reports "no newer evidence".
-    // Seeded through the PRODUCTION writer, so the row this guard reads is byte-shaped like
-    // one `updateThetaForAttempt` would have left behind.
-    await upsertMasteryState(testDb(), {
-      subject_kind: 'ability_global',
-      subject_id: 'math',
-      theta_hat: 0.5,
-      evidence_count: 1,
-      success_count: 1,
-      fail_count: 0,
-      last_outcome_at: newer,
-    });
-
-    const persisted = await settleDeferredSoloReview(testDb(), {
-      validated: await buildValidated(questionId, older, { rating: 'good' }),
-      judged: manualJudged(),
-      runId: newId(),
-      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
-    });
-
-    expect(persisted.lateArrival).toBe(true);
-    // The shared domain row must not have absorbed the older observation, and its
-    // `last_outcome_at` must not have been walked back.
-    const [globalRow] = await testDb()
+  it('an older external domain row does not suppress a legitimate advance', async () => {
+    const f = await original(['k1'], NEWER);
+    await external('ability_global', 'math', OLDER);
+    expect(await f.commit()).toMatchObject({ activation: { effect: 'applied' } });
+    const [global] = await testDb()
       .select()
       .from(mastery_state)
-      .where(
-        and(eq(mastery_state.subject_kind, 'ability_global'), eq(mastery_state.subject_id, 'math')),
-      );
-    expect(globalRow.theta_hat).toBe(0.5);
-    expect(globalRow.last_outcome_at?.getTime()).toBe(newer.getTime());
-  });
-
-  it('an OLDER domain row does not suppress a legitimate advance', async () => {
-    await seedKnowledge('k1', 'math');
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId, ['k1']);
-    const long_ago = new Date(Date.now() - 60 * MINUTE);
-    await upsertMasteryState(testDb(), {
-      subject_kind: 'ability_global',
-      subject_id: 'math',
-      theta_hat: 0.5,
-      evidence_count: 1,
-      success_count: 1,
-      fail_count: 0,
-      last_outcome_at: long_ago,
-    });
-
-    const persisted = await settleDeferredSoloReview(testDb(), {
-      validated: await buildValidated(questionId, new Date(), { rating: 'good' }),
-      judged: manualJudged(),
-      runId: newId(),
-      frozenAbilityGlobalByKnowledgeId: { k1: 'math' },
-    });
-
-    expect(persisted.lateArrival).toBe(false);
-    expect(await testDb().select().from(material_fsrs_state)).toHaveLength(1);
-  });
-
-  it('writes the submit-time frozen domain after the KC is reparented before backfill', async () => {
-    await seedKnowledge('k1', 'math-before');
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId, ['k1']);
-    const answeredAt = new Date(Date.now() - 5 * MINUTE);
-    const validated = await buildValidated(questionId, answeredAt, { rating: 'good' });
-
-    // The knowledge tree changes while the durable verdict is waiting in the queue.
-    await testDb()
-      .update(knowledge)
-      .set({ domain: 'math-after', updated_at: new Date() })
-      .where(eq(knowledge.id, 'k1'));
-
-    const persisted = await settleDeferredSoloReview(testDb(), {
-      validated,
-      judged: manualJudged(),
-      runId: newId(),
-      frozenAbilityGlobalByKnowledgeId: { k1: 'math-before' },
-    });
-
-    expect(persisted.lateArrival).toBe(false);
-    const globals = await testDb()
-      .select({ id: mastery_state.subject_id })
-      .from(mastery_state)
       .where(eq(mastery_state.subject_kind, 'ability_global'));
-    expect(globals.map((row) => row.id)).toEqual(['math-before']);
+    expect(global.evidence_count).toBe(2);
+    expect(global.last_outcome_at?.toISOString()).toBe(NEWER.toISOString());
+  });
+
+  it('uses the accepted original domain after the KC is reparented while evaluation waits', async () => {
+    const f = await original(['k1'], OLDER);
+    await testDb().update(knowledge).set({ domain: 'math-before' }).where(eq(knowledge.id, 'k1'));
+    await f.prepare();
+    await testDb().update(knowledge).set({ domain: 'math-after' }).where(eq(knowledge.id, 'k1'));
+    expect(await f.commit()).toMatchObject({ activation: { effect: 'applied' } });
+    expect(
+      (await state()).theta
+        .filter((row) => row.subject_kind === 'ability_global')
+        .map((row) => row.subject_id),
+    ).toEqual(['math-before']);
   });
 });

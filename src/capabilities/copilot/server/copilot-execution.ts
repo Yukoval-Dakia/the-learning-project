@@ -1,3 +1,4 @@
+import { observeTaskOperation } from '@/ai/task-observation';
 import type { Db } from '@/db/client';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -31,7 +32,6 @@ import {
   piRemoteMcpMount,
 } from '@/server/ai/tools/pi-tools';
 import { resolveCopilotSkillDocs } from '@/subjects/copilot-skills';
-import { reviewCopilotLearningContent } from './content-validation';
 import type { CopilotRunCancellationControl } from './copilot-run-cancellation';
 import type { CopilotRunInput } from './copilot-run-input';
 import { selectActorRef } from './copilot-run-input';
@@ -49,13 +49,12 @@ import {
 import { validateLearningContent as validatePreparedLearningContent } from './practice-port';
 import { resolveLivePrimaryViewArtifact } from './primary-view-reference';
 import { createCopilotProposalFlowGate } from './proposal-flow-gate';
+import { createCopilotProseStream } from './prose-stream';
 import {
   type CopilotReplyFinalizationResult,
   createCopilotReplyFinalizer,
   piToolErrorText,
   prependCopilotPiFinalizationHooks,
-  primaryViewLearningContent,
-  primaryViewLearningQuestions,
 } from './reply-finalization';
 import { bindSubagentParentCancellation, handleNativeSubagentTaskEvent } from './subagent-mailbox';
 import {
@@ -94,6 +93,7 @@ export function isRemoteMcpToolCall(name: string): boolean {
 }
 
 export type CopilotExecutionActivity =
+  | { kind: 'prose_delta'; text: string }
   | { kind: 'subtask'; event: CopilotSubtaskEvent }
   | {
       kind: 'tool_started';
@@ -140,7 +140,6 @@ export interface CopilotExecutionResult {
   finalization: CopilotReplyFinalizationResult;
   partial: boolean;
   error?: string;
-  candidateDeltaObserved: boolean;
   sdkSessionId?: string;
   contextDigest: string;
 }
@@ -269,30 +268,7 @@ export function createCopilotExecutionOwner(
     const finalizer = createCopilotReplyFinalizer({
       rootTaskRunId: turn.taskRunId,
       correctionContract: input.correction_contract,
-      userContextText: [
-        input.user_message,
-        ...(input.validator_context_history ?? []).map((historyTurn) => historyTurn.text),
-      ].join('\n'),
       ...(authoritativeReply ? { authoritativeReply } : {}),
-      validateLearningContent: async (
-        text,
-        contextText,
-        validationTaskRunId,
-        primaryView,
-        observedQuestion,
-        remoteEvidence,
-      ) => {
-        await policy.cancellation.probe();
-        validationSignal.throwIfAborted();
-        return reviewCopilotLearningContent(text, contextText, validationTaskRunId, {
-          db,
-          runTaskFn: validationRunner,
-          additionalVisibleText: primaryViewLearningContent(primaryView),
-          additionalQuestionContent: primaryViewLearningQuestions(primaryView),
-          observedQuestion,
-          ...(remoteEvidence ? { remoteToolEvidence: remoteEvidence } : {}),
-        });
-      },
       resolveArtifactReference: (ref) => resolveLivePrimaryViewArtifact(db, ref),
     });
 
@@ -500,7 +476,10 @@ export function createCopilotExecutionOwner(
         );
       },
     };
-    let candidateDeltaObserved = false;
+    const prose = createCopilotProseStream((text) => {
+      if (policy.cancellation.signal.aborted || lifecycleAbortController.signal.aborted) return;
+      void emitActivity(policy, { kind: 'prose_delta', text });
+    });
     let retainSdkSession = false;
     const disposeSubagentCancellation = bindSubagentParentCancellation(db, {
       sessionId: turn.sessionId,
@@ -536,17 +515,26 @@ export function createCopilotExecutionOwner(
         input,
         runnerContext,
         (text) => {
-          if (text.length > 0) candidateDeltaObserved = true;
+          prose.push(text);
         },
       );
-      // Partial results carry the collected assistant text in `text` but no
-      // `terminalText` (set only on a clean success frame) — fall back so the
-      // finalizer reviews whatever was actually produced instead of ''.
-      const terminalText = result.terminalText ?? result.text;
+      prose.finish();
+      // `terminalText` doubles as the seal marker: it is set only on a clean
+      // success frame. A partial stream carries text but no terminalText —
+      // passing '' lets the finalizer fail closed so an unsealed draft never
+      // reaches the durable reply.
+      const terminalText = result.terminalText ?? '';
       const nativeChildrenComplete = await drainNativeTasks();
       const partial = result.partial === true;
       const executionError = result.error;
-      const finalization = await finalizer.finalizeTerminal(terminalText);
+      const finalization = await observeTaskOperation(
+        { operation: 'finalize', taskKind: 'CopilotTask', taskRunId: result.task_run_id },
+        async (reportOutcome) => {
+          const finalized = await finalizer.finalizeTerminal(terminalText);
+          reportOutcome(finalized.accepted ? 'accepted' : 'rejected');
+          return finalized;
+        },
+      );
       retainSdkSession = !partial && finalization.accepted && nativeChildrenComplete;
       return {
         taskRunId: result.task_run_id,
@@ -554,7 +542,6 @@ export function createCopilotExecutionOwner(
         finalization,
         partial,
         ...(executionError ? { error: executionError } : {}),
-        candidateDeltaObserved,
         ...(observedSdkSessionId && retainSdkSession ? { sdkSessionId: observedSdkSessionId } : {}),
         contextDigest,
       };

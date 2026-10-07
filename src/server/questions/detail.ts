@@ -125,6 +125,11 @@ export interface QuestionDetailTimelineEntry {
   created_at_sec: number;
   outcome: string;
   duration_ms: number | null;
+  assessment?: {
+    evaluation_group_id: string;
+    original_evaluation_id: string | null;
+    effective_evaluation_id: string | null;
+  };
   // attempt-only
   cause?: {
     primary: string;
@@ -454,13 +459,22 @@ async function loadBacklinks(db: Db, questionId: string): Promise<QuestionDetail
 function groupByIntentSource(
   backlinks: QuestionDetailBacklink[],
 ): Record<string, QuestionDetailBacklink[]> {
-  const out: Record<string, QuestionDetailBacklink[]> = {};
+  // YUK-1196 (SCF-109) — own-key grouping. intent_source is DB text, so a crafted
+  // or restored artifact row can carry an inherited Object.prototype name
+  // ('__proto__' / 'constructor' / 'toString'). Bucketing through a plain object
+  // literal then reads the INHERITED value in the `out[x] ?? []` step instead of
+  // undefined, so `bucket` is not an array and `bucket.push` throws → GET
+  // /api/questions/[id] 500s. A Map keys any string safely; Object.fromEntries
+  // re-materializes the same JSON shape and defines each key as an OWN data
+  // property (__proto__ included), so the API contract is unchanged for ordinary
+  // sources.
+  const buckets = new Map<string, QuestionDetailBacklink[]>();
   for (const b of backlinks) {
-    const bucket = out[b.intent_source] ?? [];
-    bucket.push(b);
-    out[b.intent_source] = bucket;
+    const bucket = buckets.get(b.intent_source);
+    if (bucket) bucket.push(b);
+    else buckets.set(b.intent_source, [b]);
   }
-  return out;
+  return Object.fromEntries(buckets);
 }
 
 function toTimelineEntry(entry: QuestionTimelineEntry): QuestionDetailTimelineEntry {
@@ -470,7 +484,13 @@ function toTimelineEntry(entry: QuestionTimelineEntry): QuestionDetailTimelineEn
     duration_ms: entry.duration_ms,
   };
   if (entry.kind === 'attempt') {
-    return { kind: 'attempt', ...base, outcome: entry.outcome, cause: entry.cause };
+    return {
+      kind: 'attempt',
+      ...base,
+      outcome: entry.outcome,
+      cause: entry.cause,
+      ...(entry.assessment ? { assessment: entry.assessment } : {}),
+    };
   }
   return {
     kind: 'review',

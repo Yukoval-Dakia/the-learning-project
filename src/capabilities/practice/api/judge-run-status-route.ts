@@ -72,7 +72,10 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     // (contract-shaped output, not a raw z.unknown()). safeParse: a malformed/legacy DONE
     // payload degrades to null rather than 500-ing the poll.
     if (status === 'done' || status === 'failed') {
-      const rawResult = status === 'done' ? terminalJudgeRunResult(events) : null;
+      let rawResult = status === 'done' ? terminalJudgeRunResult(events) : null;
+      if (JudgeRunTerminalResultSchema.safeParse(rawResult).data?.assessment) {
+        rawResult = (await reconstructDoneFromDomainEvents(db, runId)) ?? rawResult;
+      }
       const parsed = rawResult === null ? null : JudgeRunTerminalResultSchema.safeParse(rawResult);
       // #7 — the degrade is now OBSERVABLE. A DONE whose payload fails the contract used to
       // return `{status:'done', result:null}` silently, so a malformed/legacy terminal payload

@@ -21,7 +21,7 @@
 
 import { newId } from '@/core/ids';
 import { MASTERY_PROGRESS_ACTION } from '@/core/schema/event';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { writeEvents } from '@/kernel/events';
 import { getMasteryProjection, getMasteryState } from '@/server/mastery/state';
 
@@ -54,7 +54,7 @@ export interface MasteryProgressReading {
  * mastery 通道（红线）。
  */
 export async function readMasteryProgress(
-  db: Db,
+  db: Db | Tx,
   knowledgeIds: string[],
 ): Promise<MasteryProgressReading[]> {
   const ids = Array.from(new Set(knowledgeIds.map((k) => k.trim()).filter((k) => k.length > 0)));
@@ -104,7 +104,7 @@ export async function readMasteryProgress(
  *   warn 计数暴露。
  */
 export async function emitMasteryProgressSignal(input: {
-  db: Db;
+  db: Db | Tx;
   knowledgeIds: string[];
   questionId?: string;
   sourceArtifactId?: string | null;

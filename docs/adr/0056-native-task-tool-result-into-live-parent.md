@@ -1,5 +1,8 @@
 # ADR-0056 — Native Task `tool_result` into live parent; retire mailbox continuation
 
+> **2026-10-04 mechanism amendment (YUK-1119):** Same-parent child results and the single public voice remain. The SDK Task/Options.agents implementation and foreground-versus-worker split below are superseded: depth-one pi child loops serve the ADR-0062 persistent lifecycle, with ADR-0063 mailbox retirement.
+> See [ADR-0065](./0065-pi-execution-and-conversation-replay.md) for the approved migration and current source evidence.
+
 **Status:** Accepted
 **Decision source:** YUK-938; Eng Lead architecture pass at main `c76cb09079997b3a9b07abf5b421830248ed1c63`
 **Related:** ADR-0053 · ADR-0054 · ADR-0055 · ADR-0052 · YUK-842 · YUK-572 · YUK-575 · YUK-927 · YUK-757 · YUK-920 · YUK-837

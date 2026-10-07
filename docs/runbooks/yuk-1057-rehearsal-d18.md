@@ -55,27 +55,34 @@ YUK-1058 扩展：每次调用镜像 `latency_ms`/`score`/`escalated`（NDJSON �
 + ai_task_runs `usage_json.d18_*` 可选字段）；runner 汇总写 `<out>/d18-metrics.json`
 （dev/holdout/all split 的 error_rate、point_error、severe_error_rate、
 upgrade_coverage、cost、latency p50/p95/mean —— 定义见
-`src/core/eval/d18-metrics.ts`）。`--lane` 显式校验：只允许已实现 lane
-（当前只有 `stub`），其他值直接拒绝——防止误启 live egress。合成 corpus
-不带 `expect` gold → 判分指标为 null，指标层正确性由 `d18-metrics.test.ts`
-证明；actual-output run 提供 gold 后自动填充。
+`src/core/eval/d18-metrics.ts`）。`--lane` 校验只允许已实现 lane（`stub` + `jev-openrouter`）；mimo-*
+等其他值直接拒绝——防止误启未实现的 egress。
 
 ### Live actual-output run (owner-triggered)
 
-The shipped invoker is a deterministic **stub** with zero egress — it proves
-harness, gate, metrics, and sealing are ready. A real provider invoker lane
-(`--lane=jev-openrouter|mimo-text|mimo-vision`) is implemented by the eval ticket
-that plugs a provider-bound `EvalInvoker` into `runEvalHarness`; the budget gate,
-retry accounting, metrics layer, and evidence seams are identical. Do not run
-real provider keys through this runner as shipped — there is no live lane wired
-yet (the `--lane` flag actively rejects non-stub values).
+Two lanes exist: deterministic **stub** (zero egress — readiness proof) and
+**jev-openrouter** (owner-authorized live lane, wired YUK-1058 follow-up:
+`src/server/eval/d18-jev-invoker.ts` routes each corpus item through
+`runTypedPrimitiveTask('JevScoringDecisionTask')` → OpenRouter
+`POST /api/v1/systemone`, TypeSafe Jev 1.13 pin). The budget gate, retry
+accounting, metrics layer, and evidence seams are identical for both.
+`mimo-*` lanes are still rejected by `--lane`.
 
-When the live lane lands, the owner-triggered command is:
+The script never reads `.env` — export `OPENROUTER_API_KEY` into the
+process env yourself. Live run:
 
 ```bash
-pnpm eval:d18 --target=<scratch-db-url> --lane=<real-lane> \
-  --items=<corpus-size> --attempts=<max-retries> --run-id=<d18-live-N>
+OPENROUTER_API_KEY=... pnpm eval:d18 --target=<scratch-db-url> \
+  --lane=jev-openrouter --items=<corpus-size> --attempts=<max-retries> \
+  --run-id=<d18-live-N>
 ```
+
+Each live call double-seals: the JevScoringDecisionTask attempt row
+(provider-native usage/cost via run-lifecycle) plus the D18EvalHarness
+evidence row (`provider='openrouter'`, `model='typesafe/jev-1.13'`,
+`usage_json.d18_*` mirrors). The shipped jev corpus is a seal/metrics
+plumbing proof (unambiguous noul claims with synthetic gold) — NOT a
+scoring-quality conclusion; a quality corpus lands with the eval ticket.
 
 D18 budget caps ($5 total, ≤200 verification calls, ≤800 requests, per-call
 token caps, unknown-cost conservative reserve, first-ceiling halt) are pinned in

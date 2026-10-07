@@ -5,6 +5,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { projectFeedback, projectPracticeIssuance } from './dto';
+import { projectIssuedScoringBasis } from './evaluation';
 import { validateExecutionPlan } from './execution';
 import {
   EvaluationRecord,
@@ -305,6 +306,10 @@ describe('复合题全链路（五层模型 + DTO）', () => {
     // 只有发出范围内的槽位进入公开 DTO；表格/配对/开放槽不泄漏。
     expect(dto.response_spec.slots.map((slot) => slot.slot_id)).toEqual(['mc']);
     expect(dto.materials.map((material) => material.material_id)).toEqual(['mat_reading']);
+    expect(dto.response_requirements).toEqual([{ slot_id: 'mc', evidence_unit_ids: [] }]);
+    expect(() => projectIssuedScoringBasis(revision, subset.binding.part_ids)).toThrow(
+      /unprojectable_aggregation/,
+    );
 
     // 跨 scope 的 option_order（引用未发出的配对槽）被拒绝。
     const crossScope = AssessmentIssuance.parse({

@@ -40,7 +40,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { tasks } from '@/ai/registry';
+import { tasks } from '@/capabilities/task-registry';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ALLOWLIST_PATH = join(__dirname, 'audit-structured-judge-allowlist.json');

@@ -40,6 +40,7 @@ export function projectCopilotActivity(
   activity: CopilotExecutionActivity,
 ): Record<string, unknown> | null {
   switch (activity.kind) {
+    case 'prose_delta':
     case 'spawn_budget':
       return null;
     case 'subtask': {

@@ -1,10 +1,8 @@
 // Provider Manager — single source of truth for which upstream serves each
 // AI task. The registry (src/ai/registry.ts) declares `defaultProvider +
 // defaultModel` per task; `resolveTaskProvider()` looks up the provider here
-// and returns a ResolvedProvider; the pi adapter maps it to a pi model —
-// either a builtin catalog entry (opencode-go / anthropic / openai) or a loom
-// custom registration (pi-models.ts PROVIDER_PI_CATALOG_SPECS) for the
-// in-process agentLoop.
+// and returns a ResolvedProvider. Pi's native preset owns the model, API,
+// compatibility flags and wire headers; endpoint/key substitution is not a provider switch.
 //
 // Two auth modes (YUK-365):
 //   - authMode 'key'   — a bearer / x-api-key value (ANTHROPIC_API_KEY style),
@@ -27,8 +25,8 @@
 // authMode:'key', set the env-var name + baseURL. Adding a new task: edit
 // registry.ts only.
 
-import { type Provider, type TaskKind, tasks } from '@/ai/registry';
 import type { TaskDefinition } from '@/ai/task-spec';
+import { type Provider, type TaskKind, tasks } from '@/capabilities/task-registry';
 import { getLaneOverride, getTaskOverride } from '@/core/config/store';
 import type { ProviderModelBinding } from './model-profiles';
 
@@ -91,25 +89,15 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
   },
   xiaomi: {
     authMode: 'key',
-    // No `/v1` suffix — both @anthropic-ai/sdk and the agent SDK append the
-    // `/v1/messages` path themselves. Doubling up gives a 404.
-    baseUrl: 'https://api.xiaomimimo.com/anthropic',
+    baseUrl: 'https://api.xiaomimimo.com/v1',
     apiKeyEnv: 'XIAOMI_API_KEY',
-    description: 'Xiaomi Mimo Anthropic-protocol-compat endpoint (mimo-v2.5* models)',
-    // YUK-924 site 2 — Xiaomi's Anthropic-compatible endpoint never honoured a
-    // transport-level structured-output contract, so EVERY model on this lane
-    // has structuredOutput disabled; structured extraction stays app-level
+    description: 'Native pi Xiaomi preset (OpenAI Completions)',
+    // The app does not pass a transport-level structured-output schema.
+    // Structured extraction stays app-level
     // (Zod parse of the result text, with char-scan fallbacks downstream).
     modelDefaults: { capabilities: { structuredOutput: false } },
     models: {
-      // Catalog (models.dev) lists mimo-v2.5-pro as text-only, but production
-      // operational knowledge overrides: the multimodal judges and multimodal
-      // ingestion tasks (MultimodalDirectJudgeTask / StepsJudgeTask /
-      // VisionExtractTaskHeavy — "mimo-v2.5 multimodal manual rescue") run image
-      // payloads through this exact lane today. Explicit binding wins over the
-      // stale catalog entry (config-over-catalog).
       'mimo-v2.5-pro': {
-        capabilities: { vision: true },
         execution: { localPricebook: true },
       },
       // YUK-924 site 5 — local USD token pricebook membership (rates remain the
@@ -119,16 +107,11 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
       },
     },
   },
-  // Zhipu BigModel GLM coding plan. Anthropic-protocol-compat endpoint (the same
-  // one Claude Code points at for GLM). No `/v1` suffix — the SDK appends
-  // `/v1/messages`. Key forwarded as ANTHROPIC_API_KEY (x-api-key); GLM accepts
-  // it. glm-5.2 is coding-plan only (standard /api/paas/v4 → 403); it is served
-  // on this /api/anthropic endpoint. ZHIPU_API_KEY already in env (GLM-OCR).
-  zhipu: {
+  'zai-coding-cn': {
     authMode: 'key',
-    baseUrl: 'https://open.bigmodel.cn/api/anthropic',
-    apiKeyEnv: 'ZHIPU_API_KEY',
-    description: 'Zhipu BigModel GLM coding plan Anthropic-compat endpoint (glm-5.2 etc.)',
+    baseUrl: 'https://open.bigmodel.cn/api/coding/paas/v4',
+    apiKeyEnv: 'ZAI_CODING_CN_API_KEY',
+    description: 'Native pi Z.AI Coding CN preset (OpenAI Completions)',
     models: {
       // YUK-924 site 1 — flash durable-evidence tier (YUK-839 ruling ①b): the
       // burn-in R2 measured leg maxima that justify the relaxed durable budgets
@@ -138,7 +121,8 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
         execution: { timeoutClass: 'durable-heavy', budgetClass: 'cheap' },
         reasoning: { defaultEffort: 'high' },
       },
-      'glm-5.2': {
+      'glm-5.3': {
+        capabilities: { toolCalling: true },
         execution: { budgetClass: 'heavy' },
         reasoning: { defaultEffort: 'high' },
       },
@@ -252,6 +236,23 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
       // authoritative classification for opencode-go.
       'glm-5.3-flash': { capabilities: { toolCalling: true } },
       'deepseek-v4-pro': { capabilities: { toolCalling: true } },
+      // YUK-1341 — mimo-v2.6-pro is the post-incident product lane for
+      // CopilotTask and the other needsToolCall kinds (xiaomi mimo-v2.5-pro
+      // hit 402 insufficient_balance). Sealed evidence for this binding:
+      //   docs/planning/evidence/2026-09-21-pi-tool-loop-mimo-v2.6-pro-actual.json
+      //     (production SourcingTask entry + tool_call_log reconciliation,
+      //      2026-10-06T18:02Z)
+      //   docs/planning/evidence/2026-09-21-pi-p3-copilot-mimo-v2.6-pro-actual.json
+      //     (production Copilot two durable turns, 2026-10-06T18:05Z)
+      //   docs/planning/evidence/2026-10-07-yuk1341-synthetic-tool-mimo-v2.6-pro-actual.json
+      //     (PiAgentAdapter + synthetic tool wire proof — the surviving
+      //      artifact is the 2026-10-06T18:07Z post-binding reseal; the harness
+      //      had hardcoded pre-binding labels, superseded in that file's
+      //      `correction` record. The original pre-binding seal was overwritten
+      //      by the reseal and is not recoverable.)
+      // Vision needs no binding here: the native pi catalog declares
+      // input text+image and model-profiles reads it as authoritative.
+      'mimo-v2.6-pro': { capabilities: { toolCalling: true } },
     },
   },
   // YUK-365 — subscription-OAuth lane. Opus 4.8 via the owner's Claude Max
@@ -330,12 +331,43 @@ export function isKnownProvider(name: string): name is Provider {
  * provider when the lane isn't wired here (e.g. the subscription token is absent on
  * a given deploy), instead of letting `resolveTaskProvider` throw mid-call. Mirrors
  * the missing-env checks `resolveTaskProvider` performs, without allocating a binding.
+ *
+ * The env-NAME lookup lives in `providerCredentialEnvName` (single source) so the
+ * admin config read face (via the composition-root facts seam) can surface WHICH
+ * env var a lane reads without ever touching its VALUE.
  */
-export function isProviderLaneReady(provider: Provider): boolean {
+export function providerCredentialEnvName(provider: Provider): string | undefined {
   const config = PROVIDERS[provider];
-  if (!config) return false;
-  const envName = config.authMode === 'oauth' ? config.oauthTokenEnv : config.apiKeyEnv;
-  return Boolean(process.env[envName]);
+  if (!config) return undefined;
+  return config.authMode === 'oauth' ? config.oauthTokenEnv : config.apiKeyEnv;
+}
+
+export function isProviderLaneReady(provider: Provider): boolean {
+  const envName = providerCredentialEnvName(provider);
+  return envName !== undefined && Boolean(process.env[envName]);
+}
+
+/**
+ * YUK-1007 — read-only projection of the provider registry's AUTH surface for the
+ * config read face (`GET /api/admin/config` providers[]): one row per PROVIDERS
+ * entry with the credential env NAME (never the value) and the implemented flag
+ * (isProviderImplemented — same predicate resolveTaskProvider enforces). Derived
+ * from PROVIDERS itself so adding a provider cannot drift this list.
+ */
+export interface ProviderAuthSurfaceRow {
+  readonly name: Provider;
+  readonly authMode: 'key' | 'oauth';
+  readonly credentialEnvName: string;
+  readonly implemented: boolean;
+}
+
+export function providerAuthSurface(): readonly ProviderAuthSurfaceRow[] {
+  return (Object.keys(PROVIDERS) as Provider[]).map((name) => ({
+    name,
+    authMode: PROVIDERS[name].authMode,
+    credentialEnvName: providerCredentialEnvName(name) ?? '',
+    implemented: isProviderImplemented(name),
+  }));
 }
 
 // YUK-608 — the KEY-auth providers actually wired to a working endpoint. openrouter / gateway
@@ -345,53 +377,13 @@ export function isProviderLaneReady(provider: Provider): boolean {
 // YUK-921 P4 (YUK-1025) — post-SDK-retirement the pi adapter serves every
 // implemented provider: 'opencode-go' joined the key-auth set when Adapter A
 // was deleted (its pi-builtin catalog + per-request apiKey already worked).
-// YUK-1027 — 'openai' joins the same builtin reuse: pi's own 'openai' provider
-// entry serves gpt-6-astra over the openai-responses API, so no loom custom
-// catalog spec is needed (it is intentionally ABSENT from
-// PROVIDER_PI_CATALOG_SPECS — do not add an anthropic-messages lane for it).
 const IMPLEMENTED_KEY_PROVIDERS: ReadonlySet<Provider> = new Set([
   'anthropic',
   'xiaomi',
-  'zhipu',
+  'zai-coding-cn',
   'opencode-go',
   'openai',
 ]);
-
-/**
- * YUK-921 P4 — providers whose pi model catalog is a loom-authored custom
- * registration (pi-models.ts `createLoomPiModels`), not a pi builtin. The
- * builtin 'opencode-go'/'anthropic'/'openai' entries match our wiring
- * byte-for-byte (openai's builtin serves gpt-6-astra on openai-responses —
- * YUK-1027); these three don't:
- *   - xiaomi / zhipu are Anthropic-protocol COMPAT endpoints (pi's own
- *     'xiaomi'/'zai-coding-cn' builtins speak openai-completions — wrong wire);
- *   - 'anthropic-sub' is the OAuth Bearer lane (CLAUDE_CODE_OAUTH_TOKEN →
- *     the anthropic-messages driver detects sk-ant-oat* and switches to Bearer).
- * `catalogProvider` names the bucket inside model-catalog.snapshot.json the
- * model entries derive from.
- */
-export const PROVIDER_PI_CATALOG_SPECS: Readonly<
-  Record<string, { catalogProvider: string; baseUrl: string; credentialEnv: string; name: string }>
-> = {
-  xiaomi: {
-    catalogProvider: 'xiaomi',
-    baseUrl: PROVIDERS.xiaomi.authMode === 'key' ? (PROVIDERS.xiaomi.baseUrl ?? '') : '',
-    credentialEnv: 'XIAOMI_API_KEY',
-    name: 'Xiaomi Mimo (Anthropic-compat)',
-  },
-  zhipu: {
-    catalogProvider: 'zhipuai-coding-plan',
-    baseUrl: PROVIDERS.zhipu.authMode === 'key' ? (PROVIDERS.zhipu.baseUrl ?? '') : '',
-    credentialEnv: 'ZHIPU_API_KEY',
-    name: 'Zhipu GLM coding plan (Anthropic-compat)',
-  },
-  'anthropic-sub': {
-    catalogProvider: 'anthropic',
-    baseUrl: 'https://api.anthropic.com',
-    credentialEnv: 'CLAUDE_CODE_OAUTH_TOKEN',
-    name: 'Anthropic first-party (Claude Max OAuth)',
-  },
-};
 
 /**
  * YUK-608 — is `provider` actually wired to a working endpoint (vs reserved-but-not-implemented)?
@@ -506,22 +498,24 @@ export type ResolvedProvider =
  * SCOPE = GLOBAL (process-wide). This is the simplest switch that satisfies the
  * issue ("route AI tasks … to Opus via Max, default stays mimo"): the owner
  * flips the env and the whole process runs against the subscription lane.
- * Per-task override is still available via the explicit `override` arg
- * (test/dev escape hatch), which takes precedence over the env switch.
+ * For chat tasks the process env pin wins over explicit overrides, including
+ * persisted model bindings. Typed non-chat protocols retain their explicit pin.
  *
  * Returns undefined when unset → callers fall through to the registry default
  * (current mimo behaviour, byte-for-byte).
  */
-function readEnvOverride(): { provider: Provider; model?: string } | undefined {
-  const raw = process.env.AI_PROVIDER_OVERRIDE;
+function readEnvOverride(
+  env: NodeJS.ProcessEnv,
+): { provider: Provider; model?: string } | undefined {
+  const raw = env.AI_PROVIDER_OVERRIDE;
   if (!raw) return undefined;
   const provider = raw as Provider;
-  if (!(provider in PROVIDERS)) {
+  if (!isKnownProvider(provider)) {
     throw new Error(
       `AI_PROVIDER_OVERRIDE='${raw}' is not a known provider; expected one of ${Object.keys(PROVIDERS).join(' | ')}`,
     );
   }
-  const model = process.env.AI_PROVIDER_MODEL || undefined;
+  const model = env.AI_PROVIDER_MODEL || undefined;
   return { provider, model };
 }
 
@@ -532,11 +526,22 @@ function readEnvOverride(): { provider: Provider; model?: string } | undefined {
  * DB 值经 hydrate schema + 写端 isKnownProvider 校验，但手工注入行可能在写端
  * 之外落地——这里仍走同一 unknown-name throw（与 env 侧一致的 config-error
  * 语义，让错配立刻可观测而不是静默降级）。
+ *
+ * YUK-1007 读面（P1 诚实修正）：本函数是全局 pin 的**运行时真相源**，导出供
+ * 组合根 facts seam 投影 `lane.global.*` 的 effective（model-only 配置 runtime
+ * 不消费 → effective=null；未知 provider 名 → throw 由调用方如实标 fail-visible）。
  */
-function readGlobalProviderSwitch(): { provider: Provider; model?: string } | undefined {
-  const env = readEnvOverride();
+export function readGlobalProviderSwitch(): { provider: Provider; model?: string } | undefined {
+  return resolveGlobalProviderSwitch(process.env, getLaneOverride('global'));
+}
+
+/** Shared with transactional config validation; env provider selects the whole env pair. */
+export function resolveGlobalProviderSwitch(
+  envValues: NodeJS.ProcessEnv,
+  db: { provider?: string; model?: string } | undefined,
+): { provider: Provider; model?: string } | undefined {
+  const env = readEnvOverride(envValues);
   if (env) return env;
-  const db = getLaneOverride('global');
   if (!db?.provider) return undefined;
   if (!isKnownProvider(db.provider)) {
     throw new Error(
@@ -563,7 +568,7 @@ export function hasGlobalProviderOverride(): boolean {
  * Resolve a task to its concrete provider binding.
  *
  * Lookup order（YUK-1007 DB override 层落地后）：
- *   1. `override.provider` / `override.model` if supplied (test/dev escape hatch)
+ *   1. Chat process env pin, then explicit `override.provider` / `override.model`
  *   2. 全局 switch：`AI_PROVIDER_OVERRIDE`/`AI_PROVIDER_MODEL` env → DB
  *      `lane.global.*`（owner 裁决：env pin 恒压 DB——它是 incident kill-switch）
  *   3. DB `task.<kind>.provider` / `.model` per-task override（面板写点）
@@ -576,11 +581,26 @@ export function resolveTaskProvider(
   override?: { provider?: Provider; model?: string },
 ): ResolvedProvider {
   const def = tasks[kind];
+  // Product-wide incident pin must also cover explicit caller/modelBinding routes.
+  // Typed primitives have a separate wire contract, not a chat model API.
+  const envPin =
+    'execution' in def && def.execution === 'typed' ? undefined : readEnvOverride(process.env);
+  if (envPin) override = envPin;
   const globalSwitch = readGlobalProviderSwitch();
   const dbTaskOverride = getTaskOverride(kind);
 
-  // Explicit arg > global switch (env pin > DB global) > DB per-task > registry.
+  // Chat env pin > explicit arg > DB global > DB per-task > registry.
   // The arg may set only `model`, so fall back through each layer per-field.
+  if (
+    !override?.provider &&
+    !globalSwitch?.provider &&
+    dbTaskOverride?.provider &&
+    !isKnownProvider(dbTaskOverride.provider)
+  ) {
+    throw new Error(
+      `task.${kind}.provider='${dbTaskOverride.provider}' is not a native provider; migrate legacy 'zhipu' to 'zai-coding-cn' and choose a model from its pi catalog.`,
+    );
+  }
   const dbTaskProvider =
     dbTaskOverride?.provider && isKnownProvider(dbTaskOverride.provider)
       ? (dbTaskOverride.provider as Provider)
@@ -598,7 +618,8 @@ export function resolveTaskProvider(
   // The exempt set lives in `providerRequiresExplicitModel` (single source of
   // truth, also read by override pre-flights + config write validation) so it
   // can't drift from a second hard-coded copy.
-  const cameFromGlobalSwitch = !override?.provider && globalSwitch?.provider !== undefined;
+  const cameFromGlobalSwitch =
+    envPin !== undefined || (!override?.provider && globalSwitch?.provider !== undefined);
   if (
     cameFromGlobalSwitch &&
     providerRequiresExplicitModel(providerName) &&
@@ -615,7 +636,7 @@ export function resolveTaskProvider(
   }
 
   // When the subscription lane is selected and no model is named anywhere, use
-  // its Opus 4.8 default. Otherwise the layered model wins (arg > global > db task > registry).
+  // its Opus 4.8 default. Otherwise the layered model wins (chat env pin > arg > DB global > db task > registry).
   const subDefaultModel =
     providerName === 'anthropic-sub' ? ANTHROPIC_SUB_DEFAULT_MODEL : def.defaultModel;
   const modelId =
@@ -653,16 +674,7 @@ export function resolveTaskProvider(
     );
   }
 
-  // anthropic + xiaomi + zhipu + opencode-go + openai are wired for key-auth.
-  // anthropic/xiaomi/zhipu speak Anthropic Messages (compat baseUrls); pi's
-  // builtin entries own the wire for opencode-go (openai-completions) and
-  // openai (openai-responses — YUK-1027, gpt-6-astra). openrouter / gateway
-  // land here as "not implemented" because their wire shapes differ; revisit
-  // if a real trigger fires. ('anthropic-sub' is the oauth branch above, so
-  // it never reaches here.) The wired set lives in `isProviderImplemented`
-  // (single source of truth, also read by override pre-flights). YUK-921 P1:
-  // pi-lane providers resolve here — the execution-adapter gate
-  // is what rejects them for SDK-routed runs, not this credential check.
+  // Chat lanes select native pi presets; typed OpenRouter retains its own executor.
   if (!isProviderImplementedForTask(providerName, kind)) {
     // Derive the wired list from the same predicate that gates this throw —
     // a hand-maintained copy drifts on every new lane (opencode-go, then

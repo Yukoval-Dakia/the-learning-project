@@ -65,12 +65,12 @@ export interface CascadeResult {
   truncated: boolean;
 }
 
-interface CascadeRow {
+type CascadeRow = {
   id: string;
   action: string;
   caused_by_event_id: string | null;
   depth: number | string;
-}
+};
 
 /**
  * Collect the downstream cascade of `checkpointEventId` (the events transitively
@@ -113,7 +113,7 @@ export async function collectCascadeFromCheckpoint(
   //      * `c.depth < depthProbe`           — bounded recursion (depth + overflow)
   //  The base seed seeds `path = ARRAY[checkpoint, child.id]` so the checkpoint
   //  itself is in the visited set and can never be re-entered through a cycle.
-  const rows = (await db.execute(sql`
+  const rows = await db.execute<CascadeRow>(sql`
     WITH RECURSIVE cascade AS (
       SELECT
         e.id,
@@ -143,7 +143,7 @@ export async function collectCascadeFromCheckpoint(
     FROM cascade
     ORDER BY depth DESC, id
     LIMIT ${fetchLimit}
-  `)) as unknown as CascadeRow[];
+  `);
 
   const normalised: CascadeNode[] = rows.map((r) => ({
     id: r.id,

@@ -1,5 +1,8 @@
 # ADR-0058: Root-owned Copilot reply finalization
 
+> **2026-10-04 mechanism amendment (YUK-1119):** Root-owned terminal Markdown and trace-bound finalization remain. The runner now exposes pi-normalized success frames through the retained SDK-shaped terminal contract; the SDK runtime is retired. Cursor invalidation is a product recovery rule, not evidence of an SDK session file.
+> See [ADR-0065](./0065-pi-execution-and-conversation-replay.md) for the approved migration and current source evidence.
+
 **Status:** Accepted
 **Date:** 2026-09-05
 **Context:** `docs/planning/2026-09-05-pipeline-finalization-design.md`

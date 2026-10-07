@@ -61,13 +61,13 @@ describe('canonical practice resource adapters', () => {
 
   it('binds solve session creation to question_id', async () => {
     const response = await createSolveSessionResource(
-      jsonRequest({ question_id: 'q1', regenerate: true }),
+      jsonRequest({ question_id: 'q1', issuance_id: 'issuance_1' }),
     );
 
     expect(response.status).toBe(201);
     expect(response.headers.get('Location')).toBe('/api/solve-sessions/solve_1');
     expect(mocks.createSolveSession.mock.calls[0]?.[1]).toEqual({ id: 'q1' });
-    expect(await capturedBody(mocks.createSolveSession)).toEqual({ regenerate: true });
+    expect(await capturedBody(mocks.createSolveSession)).toEqual({ issuance_id: 'issuance_1' });
   });
 
   it('binds hint and solve submissions to the solve session resource', async () => {

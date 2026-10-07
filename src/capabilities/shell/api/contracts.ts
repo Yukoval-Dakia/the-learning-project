@@ -3,6 +3,7 @@ import type { TeachingBrief } from '@/capabilities/shell/server/teaching-brief';
 import { ActivityRef } from '@/core/schema/activity';
 import { CauseCategory } from '@/core/schema/cause';
 import { BRIEF_STATES, PRIMARY_ACTION_KINDS } from '@/core/schema/conjecture';
+import { ProviderCostWindowSchema } from '@/core/schema/cost-observation';
 import { RelationTypeSchema } from '@/core/schema/event/blocks';
 import {
   AiProposalKind,
@@ -178,6 +179,7 @@ const OvernightRunSchema = z.object({
 });
 
 export const OvernightDigestResponseSchema = z.object({
+  cost: ProviderCostWindowSchema,
   window: z.object({ from: z.string(), to: z.string() }),
   has_overnight_activity: z.boolean(),
   runs: z.array(OvernightRunSchema),

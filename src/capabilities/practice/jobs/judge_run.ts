@@ -1,53 +1,19 @@
-// YUK-594 (durable judge main path, W1) — durable judge_run pg-boss handler。
-//
-// 把练习判分从同步 HTTP 面（submit.ts 的 judgeSubmit inline invoke）桥到异步
-// durable pg-boss 面：submit dispatch（JUDGE_DURABLE_ENABLED=1）→ 写 attempt/outcome
-// 占位（run_id）+ boss.send('judge_run') → 本 handler 在 worker 进程判分 → 回填事务
-// 原子写 review event(id=run_id) + 独立 judge event + FSRS/θ̂/snapshot/family/calibration
-// （复用 server/review-settlement 的 deferred sealed command）+ 终态 job_event 携判词，
-// SSE/poll 消费。
-//
-// 蓝本：copilot_run.ts（YUK-575 durable copilot）。差别：judge 是单次无状态 LLM 调用
-// （无对话记忆/工具循环/取消语义），故 handler 远薄；且 judge 需要 pg-boss redelivery
-// 做 transient 层（endpoint-down 兜底），故失败 rethrow 触发重投，最后一次重投切
-// 跨 provider lane（D7/D9）。run handle = run_id = job_events business_id（W2 submit 面：
-// run_id = 该次作答 attempt/outcome event id；其它面 W3 各自定锚，不写死为通用契约）。
-//
-// D5：profile 在 enqueue 时冻结进 payload（reflect 作答当下画像，不重解析）。
-// #2（round-3 codex）：**题面**同样冻结（server/judge-run-payload.ts 的快照），worker
-//   按冻结值判分/调度，故提交后编辑题目不会让判词与 FSRS 打在学习者没见过的题面上。
-// D7：in-process transient retry 对本 durable handler 保持 OFF（durable:{}→invoker
-//   强制 enableTransientRetry:false）；queue redelivery 是唯一 transient 层，worst-case
-//   付费调用 = 1 + JOB_RETRY_LIMIT。
+// Native durable assessment execution; original domain inputs own all scoring.
+// Legacy completed runs can reconstruct notifications. Unfinished legacy payloads
+// retain their original answer and terminate without invoking a retired scorer.
 
 import { and, eq } from 'drizzle-orm';
 import type { JobWithMetadata } from 'pg-boss';
 import { ZodError } from 'zod';
 import type { Db } from '@/db/client';
-import { event, job_events, question } from '@/db/schema';
+import { event, job_events } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { writeJobEvent } from '@/server/events/writer';
-import { SubjectProfileSchema } from '@/subjects/profile';
-import { CreateAttemptBodySchema } from '../api/contracts';
-import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
-import { resolveDurableProviderOverride } from '../server/judge-durable-config';
 import type { JudgeRunJobData } from '../server/judge-run-payload';
-import {
-  FrozenAbilityGlobalByKnowledgeIdSchema,
-  FrozenQuestionSnapshotSchema,
-  applyFrozenQuestion,
-  reconstructDoneFromDomainEvents,
-} from '../server/judge-run-payload';
+import { reconstructDoneFromDomainEvents } from '../server/judge-run-payload';
 import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
-import { settleDeferredSoloReview } from '../server/review-settlement';
 
-/**
- * judge_run job 体。submit 面投递（submit.ts enqueueDurableJudge），YUK-777 起 reconcile
- * sweeper 按同一形状重投。`caller` 标面（W2=submit only；W3 加 probe/paper/advice/solve）。
- *
- * 定义已挪到 `../server/judge-run-payload.ts`（三个生产者共用，且 api/server 不该反向依赖
- * jobs/）；这里 re-export 保持既有 import 面不变。
- */
+// Original native input pointers and historical queue payloads share the recovery envelope.
 export type { JudgeRunJobData } from '../server/judge-run-payload';
 
 export type JudgeRunOutcome =
@@ -56,13 +22,11 @@ export type JudgeRunOutcome =
   | { status: 'failed'; run_id: string; error: string };
 
 export interface JudgeRunDeps {
-  /** test seam — 默认动态 import submit.ts 的 judgeSubmit（durable 复用同步面判分头）。 */
-  judgeSubmitFn?: typeof import('../api/submit')['judgeSubmit'];
-  /** test seam — sealed deferred settlement command; never reaches through the HTTP module. */
-  settleDeferredSoloReviewFn?: typeof settleDeferredSoloReview;
+  /** Failure/recovery seam around the real native executor; production supplies none. */
+  executeNativeAttemptFn?: typeof import('../server/assessment/durable-attempt')['executeNativeAttempt'];
 }
 
-/** pg-boss 投递的 job metadata（retryCount/retryLimit 驱动跨 provider lane 决策）。 */
+/** Queue retry metadata governs infrastructure retries, never automatic model fallback. */
 export interface JudgeRunJobMeta {
   retryCount: number;
   retryLimit: number;
@@ -105,165 +69,25 @@ export async function runJudgeRun(
   // redelivers and the idempotency guard reconstructs the real DONE.
   let persistedOk = false;
   try {
-    if (data.caller !== 'submit') {
-      // W2 只支持 submit 面；其它面 W3 落地。收到未知面 → 不重投（rethrow 只会
-      // 3 次重跑同样失败），写终态 FAILED 后早返（deriveJudgeRunStatus → failed）。
-      throw new NonRetryableJudgeRunError(`unsupported judge_run caller '${data.caller}'`);
+    if (data.caller === 'native_assessment') {
+      const { executeNativeAttempt } = await import('../server/assessment/durable-attempt');
+      const committed = await (deps.executeNativeAttemptFn ?? executeNativeAttempt)(db, data);
+      persistedOk = true;
+      await recoverAlreadyPersisted(db, runId, meta.deliveryId);
+      return {
+        status: 'done',
+        run_id: runId,
+        coarse_outcome: committed.candidate.result.coarse_outcome,
+        judge_event_id: null,
+      };
     }
-
-    const submitModule = await import('../api/submit');
-    const judgeSubmit = deps.judgeSubmitFn ?? submitModule.judgeSubmit;
-    const settleDeferred = deps.settleDeferredSoloReviewFn ?? settleDeferredSoloReview;
-
-    // 重建 ValidatedSubmit（body 复校、profile 用冻结值 D5、题面用冻结快照 #2、
-    // now=作答时刻）。冻结面从「只钉 profile」扩到「profile + 题面」——见下方 #2。
-    const body = CreateAttemptBodySchema.parse(data.submit.body);
-    const subjectProfile = SubjectProfileSchema.parse(data.submit.subject_profile);
-    const frozenQuestion =
-      data.submit.question_snapshot === undefined || data.submit.question_snapshot === null
-        ? null
-        : FrozenQuestionSnapshotSchema.parse(data.submit.question_snapshot);
-    const abilityGlobalByKnowledgeId =
-      data.submit.ability_global_by_knowledge_id === undefined
-        ? undefined
-        : FrozenAbilityGlobalByKnowledgeIdSchema.parse(data.submit.ability_global_by_knowledge_id);
-    const now = new Date(data.submit.submitted_at);
-    // An unparseable submitted_at yields an Invalid Date whose getTime() is NaN;
-    // feeding it into FSRS scheduling (the attempt anchor) corrupts the schedule.
-    // A malformed payload is a permanent defect, NOT a transient failure → don't
-    // burn re-deliveries on it (classified non-retryable below like the Zod parses).
-    if (Number.isNaN(now.getTime())) {
+    if (data.caller === 'submit') {
       throw new NonRetryableJudgeRunError(
-        `judge_run ${runId} has an invalid submitted_at '${data.submit.submitted_at}'`,
+        'legacy queued assessment has no original native binding; answer retained for review',
+        'historical_unknown',
       );
     }
-    const questionId = data.submit.question_id;
-    const live = await loadQuestionRow(db, questionId);
-    if (!live) {
-      throw new NonRetryableJudgeRunError(
-        `question ${questionId} not found for judge_run ${runId}`,
-      );
-    }
-    // #2 (codex) — judge against the question state the LEARNER ANSWERED, not the row as
-    // it stands at pickup. The frozen snapshot overlays every judge/scheduling-relevant
-    // column onto the live row, so an edit to prompt/reference/choices/knowledge/difficulty
-    // between the 202 and this pickup can no longer produce a verdict (and an FSRS
-    // schedule) for a different question than the one on screen. Columns the snapshot does
-    // NOT freeze (source/source_ref/…) are read live — they never reach the judge.
-    const q = frozenQuestion === null ? live : applyFrozenQuestion(live, frozenQuestion);
-    if (frozenQuestion === null) {
-      // Only reachable for a job enqueued before the snapshot landed (flag ships OFF, so
-      // no such job exists in production). Degrade to the old read-live behavior rather
-      // than failing a real in-flight attempt, but make the gap visible.
-      console.warn(
-        `[judge_run] ${runId} carries no frozen question snapshot — judging against the CURRENT question row (pre-snapshot payload)`,
-      );
-    } else if (frozenQuestion.version !== live.version) {
-      // Observability only — the snapshot already made the verdict correct; this just
-      // records that the row moved under the run.
-      console.warn(
-        `[judge_run] ${runId} question ${questionId} drifted since submit (frozen version ${frozenQuestion.version} → live ${live.version}); judged against the frozen snapshot`,
-      );
-    }
-    const activityRef = normalizeReviewSubmitActivityRef(body).activity_ref;
-    const validated = { body, now, questionId, activityRef, q };
-
-    // 跨 provider lane 决策（D7/D9）：仅最后一次重投切 fallback provider（有界）。
-    const providerOverride = resolveDurableProviderOverride({
-      retryCount: meta.retryCount,
-      retryLimit: meta.retryLimit,
-    });
-
-    // 判分（复用同步面 judgeSubmit 头：photo-only gate + invoke + rating 解析）。
-    // durable:{}→invoker 强制 enableTransientRetry:false（D7）+ 末次重投切 provider（D9）。
-    // 冻结 profile（D5）直接注入，不重解析（避免 enqueue↔pickup 间画像编辑漂移）。
-    //
-    // #5 rate-limit 语义（承重）：checkRateLimit 是**进程内**单例，且 worker 与 API 是
-    // 独立进程——worker 侧不会命中 API 侧的窗口。这是**故意**的：judge_run 的唯一入队
-    // 源是 submit 的 enqueueDurableJudge，那里已 checkRateLimit（入队即已限流）；worker
-    // 只是消费已受限的队列，付费上限由 pg-boss 重投预算（1+JOB_RETRY_LIMIT）界定，不做
-    // 二次限流（skipRateLimit:true）。**W3 注意**：若将来新增非入队来源（manual
-    // re-enqueue / rejudge-style），必须让其经同一 rate-limited 入队面，或在 worker 侧
-    // 加一道粗杆闸——否则那条路径的付费调用不受控。
-    const judged = await judgeSubmit(validated, {
-      subjectProfile,
-      skipRateLimit: true,
-      durable: { ...(providerOverride ? { providerOverride } : {}) },
-    });
-    submitModule.assertTrustedInterventionDiagnosticJudgment(q, judged);
-
-    // 回填事务（deferred sealed command：review event(id=run_id) + judge event +
-    // FSRS/θ̂/snapshot/family/calibration 原子 tx + post-commit 信号）。attemptEventId=
-    // run_id 让 attempt event id 与 run handle 对齐（幂等守卫据它跳重投）。
-    // The deferred command owns late-arrival handling by construction; there is
-    // no caller-controlled boolean that can silently omit the guard.
-    const persisted = await settleDeferred(db, {
-      validated,
-      judged,
-      runId,
-      frozenAbilityGlobalByKnowledgeId: abilityGlobalByKnowledgeId,
-    });
-    persistedOk = true;
-
-    // 终态 DONE，携判词（JudgeResultV2 + telemetry + lane provenance）供 SSE/poll 回填。
-    // #2 — MUST throw on failure (writeTerminalJobEvent, not best-effort): swallowing a
-    // failed DONE write leaves the run persisted-but-pending forever. On a throw the
-    // catch sees persistedOk=true and rethrows for redelivery (→ guard reconstructs DONE).
-    await writeTerminalJobEvent(db, {
-      businessId: runId,
-      eventType: JUDGE_RUN_EVENTS.DONE,
-      payload: {
-        attempt_event_id: persisted.terminalResult.attempt_event_id,
-        ...(meta.deliveryId ? { delivery_id: meta.deliveryId } : {}),
-        judge_event_id: persisted.terminalResult.judge_event_id,
-        outcome: persisted.terminalResult.outcome,
-        final_rating: persisted.terminalResult.final_rating,
-        route: persisted.terminalResult.route,
-        // W5 #Tunnw — the FULL JudgeResultV2, not a convenient subset. `score` is
-        // uninterpretable without `score_meaning` (steps / unit_dimension carry different
-        // score semantics), and dropping `evidence_json` left SSE/poll clients unable to show
-        // the judge's evidence at all — including on the crash-recovery path, which can only
-        // return what the terminal contract carries.
-        ...(judged.judgeResult
-          ? {
-              coarse_outcome: judged.judgeResult.coarse_outcome,
-              score: judged.judgeResult.score,
-              score_meaning: judged.judgeResult.score_meaning,
-              confidence: judged.judgeResult.confidence,
-              feedback_md: judged.judgeResult.feedback_md,
-              evidence_json: judged.judgeResult.evidence_json,
-              capability_ref: judged.judgeResult.capability_ref,
-            }
-          : {}),
-        ...(judged.judgeTelemetry ? { telemetry: judged.judgeTelemetry } : {}),
-        // W5 #Tunn0 — lane provenance is the RESOLVED lane, read off the execution provenance
-        // the invoker stamped (`kind:'invoked'` carries the actual provider/model/task_run_id
-        // that ran). `provider_override` alone is a lie about execution: with a global
-        // AI_PROVIDER_OVERRIDE set, a normal delivery runs on a non-default lane while this
-        // handler requested no override at all, so a same-lane calibration reader keyed on it
-        // would mis-attribute every run. Kept alongside — but as what it is: the override THIS
-        // handler REQUESTED, not the lane that executed.
-        provider_override: providerOverride ?? null,
-        ...(judged.executionProvenance?.kind === 'invoked'
-          ? {
-              provider: judged.executionProvenance.provider,
-              model: judged.executionProvenance.model,
-              task_run_id: judged.executionProvenance.task_run_id,
-            }
-          : {}),
-        // W5 — the verdict landed, but newer evidence for this material already existed, so
-        // every derived write (FSRS / θ̂ / signals) was intentionally skipped. Surfaced here
-        // so "why didn't my schedule move?" is answerable from the run's own trace.
-        ...(persisted.lateArrival ? { late_arrival: true } : {}),
-      },
-    });
-
-    return {
-      status: 'done',
-      run_id: runId,
-      coarse_outcome: judged.judgeResult?.coarse_outcome ?? 'unsupported',
-      judge_event_id: persisted.judgeEventId,
-    };
+    throw new NonRetryableJudgeRunError('unsupported judge_run caller');
   } catch (err) {
     const message = String((err as Error)?.message ?? err);
     // #2 — the backfill COMMITTED but the terminal DONE write threw: the run SUCCEEDED,
@@ -307,7 +131,10 @@ export async function runJudgeRun(
     const nonRetryable =
       err instanceof NonRetryableJudgeRunError ||
       err instanceof ZodError ||
-      isPermanentPersistError(err);
+      isPermanentPersistError(err) ||
+      (data.caller === 'native_assessment' &&
+        err instanceof ApiError &&
+        ['coordinate_mismatch', 'stale_head', 'unsupported_judge_route'].includes(err.code));
     // W4 #TtWiB — will pg-boss deliver this job again? Only when the failure is retryable AND
     // the budget is not spent. That question, not "did something fail", decides whether the
     // trace we write is TERMINAL. Round 3 over-generalized the "terminal writes must throw"
@@ -400,7 +227,7 @@ export async function runJudgeRun(
  */
 function classifyJudgeRunFailure(err: unknown): string {
   if (err instanceof ZodError) return 'invalid_payload';
-  if (err instanceof NonRetryableJudgeRunError) return 'unprocessable_run';
+  if (err instanceof NonRetryableJudgeRunError) return err.code;
   if (isPermanentPersistError(err)) return 'corrupt_state';
   return 'judge_failed';
 }
@@ -559,14 +386,15 @@ function sleep(ms: number): Promise<void> {
   return ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 }
 
-async function loadQuestionRow(db: Db, questionId: string) {
-  const rows = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
-  return rows[0] ?? null;
-}
-
 /** 判定为不可重投的失败（未知面 / 题缺失 / body 复校失败）——写 FAILED 后不 rethrow。 */
 export class NonRetryableJudgeRunError extends Error {
   override name = 'NonRetryableJudgeRunError';
+  constructor(
+    message: string,
+    readonly code = 'unprocessable_run',
+  ) {
+    super(message);
+  }
 }
 
 /**

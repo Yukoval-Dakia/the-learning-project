@@ -1,5 +1,5 @@
-import type { AiTaskKind } from '@/ai/task-prompts';
-import { getTaskSystemPrompt } from '@/ai/task-prompts';
+import type { AiTaskKind } from '@/capabilities/task-registry';
+import { getTaskSystemPrompt } from '@/capabilities/task-registry';
 import { sha256Canonical, stableCanonicalValue } from '@/server/ai/task-input-hash';
 import type { SubjectProfile } from '@/subjects/profile';
 export const JUDGE_PROMPT_ENVELOPE_VERSION = 1 as const;
@@ -12,12 +12,13 @@ export function judgePromptFingerprint(input: {
   taskInput: unknown;
   subjectProfile: SubjectProfile;
   judgeRoute: string;
+  learnerLocale?: 'zh-CN' | 'en';
 }): string {
   return sha256Canonical({
     version: JUDGE_PROMPT_ENVELOPE_VERSION,
     task_kind: input.taskKind,
     canonical_model_input: {
-      system: getTaskSystemPrompt(input.taskKind, input.subjectProfile),
+      system: getTaskSystemPrompt(input.taskKind, input.subjectProfile, input.learnerLocale),
       user:
         typeof input.taskInput === 'string'
           ? input.taskInput

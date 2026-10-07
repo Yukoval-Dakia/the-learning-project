@@ -52,7 +52,7 @@ describe('visionJudgeProviderOverride — YUK-924 vision-capability availability
   it('degrades to undefined (+ warns) when the named model confirms NO vision input', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const result = visionJudgeProviderOverride({
-      VISION_JUDGE_PROVIDER: 'zhipu',
+      VISION_JUDGE_PROVIDER: 'zai-coding-cn',
       VISION_JUDGE_MODEL: 'glm-5.2', // catalog: text-only
     });
     expect(result).toBeUndefined();
@@ -98,10 +98,10 @@ describe('visionJudgeProviderOverride — YUK-924 vision-capability availability
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(
       visionJudgeProviderOverride({
-        VISION_JUDGE_PROVIDER: 'zhipu',
+        VISION_JUDGE_PROVIDER: 'zai-coding-cn',
         VISION_JUDGE_MODEL: 'glm-future-unknown',
       }),
-    ).toEqual({ provider: 'zhipu', model: 'glm-future-unknown' });
+    ).toEqual({ provider: 'zai-coding-cn', model: 'glm-future-unknown' });
     expect(warn).not.toHaveBeenCalled();
   });
 });

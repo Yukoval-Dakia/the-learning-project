@@ -1,521 +1,304 @@
-// YUK-594 (durable judge main path, W2) — submit-face async-main divert tests.
-//
-// Covers: flag-OFF byte-identical anchor (no 202, normal review_event shape); the
-// divert predicate (resolveDurableDivert mirrors judgeSubmit's server-invoke gate);
-// and enqueueDurableJudge's 202-pending contract + queued job_event + frozen payload.
-
+// Real native publication/issuance/dispatch; external queue only is offline.
+// Retains W2 session gating, YUK-777 outbox recovery and paid admission invariants.
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
-import { event, job_events, learning_session, question } from '@/db/schema';
+import {
+  assessment_submission,
+  event,
+  job_events,
+  learning_session,
+  material_fsrs_state,
+  question,
+} from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { computeReplay } from '@/server/events/sse_replay';
-import { writeJobEvent } from '@/server/events/writer';
-import { __resetRateLimitForTests } from '@/server/http/rate-limit';
-import { resolveSubjectProfile } from '@/subjects/profile';
+import { __resetRateLimitForTests, checkRateLimit } from '@/server/http/rate-limit';
+import { issueSoloFixture } from '../../../../tests/fixtures/assessment-solo';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
+import { dispatchNativeAttempt } from '../server/assessment/durable-attempt';
 import { JUDGE_PENDING_ATTEMPT_ACTION, judgeRunJobId } from '../server/judge-run-dispatch';
 import { deriveJudgeRunStatus } from '../server/judge-run-status';
-import { CreateAttemptBodySchema } from './contracts';
-import { createAttempt, enqueueDurableJudge, resolveDurableDivert } from './submit';
+import { createAttempt, sessionAdmitsDurableDivert } from './submit';
 
-async function seedQuestion(id: string) {
+async function fixture(model = true) {
+  const db = testDb();
+  const id = `q_${newId()}`;
   const now = new Date();
-  await testDb()
-    .insert(question)
-    .values({
-      id,
-      prompt_md: `Prompt for ${id}`,
-      kind: 'short_answer',
-      reference_md: null,
-      knowledge_ids: ['k1'],
-      difficulty: 3,
-      source: 'manual',
-      variant_depth: 0,
-      version: 0,
-      created_at: now,
-      updated_at: now,
-    });
-}
-
-async function buildValidated(questionId: string, body: Record<string, unknown>) {
-  const parsed = CreateAttemptBodySchema.parse({ question_id: questionId, ...body });
-  const q = (await testDb().select().from(question).where(eq(question.id, questionId)))[0];
-  return {
-    body: parsed,
-    now: new Date(),
-    questionId,
-    activityRef: normalizeReviewSubmitActivityRef(parsed).activity_ref,
-    q,
-  };
-}
-
-describe('submit durable divert (W2)', () => {
-  beforeEach(async () => {
-    await resetDb();
-    __resetRateLimitForTests();
-    vi.unstubAllEnvs();
+  await db.insert(question).values({
+    id,
+    prompt_md: `原题 ${id}：顺流18、逆流12，解释如何消去水速。`,
+    kind: 'short_answer',
+    reference_md: '两式相加，静水速度15 km/h',
+    judge_kind_override: 'exact',
+    knowledge_ids: ['k1'],
+    difficulty: 3,
+    source: 'manual',
+    version: 0,
+    created_at: now,
+    updated_at: now,
   });
+  const issued = await issueSoloFixture(db, id, model);
+  const request = issued.assessment('v+c=18，v-c=12。相加得2v=30，因此v=15 km/h。');
+  const options = { enabled: true, capture: { response_md: '原始观察文本', latency_ms: 321 } };
+  const send = vi.fn().mockResolvedValue('job-1');
+  return { db, id, issued, request, options, send };
+}
+async function pending(db: ReturnType<typeof testDb>) {
+  return db.select().from(event).where(eq(event.action, JUDGE_PENDING_ATTEMPT_ACTION));
+}
+async function seedSession(type: string) {
+  const id = newId();
+  const now = new Date();
+  await testDb().insert(learning_session).values({
+    id,
+    type,
+    status: 'started',
+    warnings: [],
+    created_at: now,
+    updated_at: now,
+    version: 0,
+  });
+  return id;
+}
+beforeEach(async () => {
+  await resetDb();
+  __resetRateLimitForTests();
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
 
-  it('flag-OFF: manual submit stays synchronous — 200 with the normal review_event shape (byte-identical anchor)', async () => {
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    // JUDGE_DURABLE_ENABLED unset → the durable block is skipped entirely.
-    const res = await createAttempt(
-      new Request('http://localhost/api/review/submit', {
+describe('native submit durable dispatch', () => {
+  it('flag-OFF explicit self-report remains synchronous and schedules immediately', async () => {
+    const f = await fixture();
+    const response = await createAttempt(
+      new Request('http://local/api/attempts', {
         method: 'POST',
-        body: JSON.stringify({ question_id: questionId, rating: 'good' }),
         headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          question_id: f.id,
+          rating: 'good',
+          self_report: true,
+          assessment: f.request,
+        }),
       }),
     );
-    expect(res.status).toBe(200);
-    const json = (await res.json()) as { review_event?: { id: string }; verdict?: string };
-    expect(json.review_event?.id).toBeTruthy();
-    expect(json.verdict).toBeUndefined(); // NOT a pending contract.
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      status: 'effective',
+      review_event: { id: expect.any(String) },
+      judge: null,
+    });
+    expect(await pending(f.db)).toHaveLength(0);
+    expect(await f.db.select().from(material_fsrs_state)).toMatchObject([{ state: { reps: 1 } }]);
   });
 
-  it('resolveDurableDivert diverts an auto_rate text answer, and declines the non-judge cases', async () => {
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-
-    // auto_rate + a text answer → would spend a synchronous server judge call → divert.
-    const divertCase = await resolveDurableDivert(
-      await buildValidated(questionId, { rating: 'good', response_md: 'ans', auto_rate: true }),
-    );
-    expect(divertCase.divert).toBe(true);
-    expect(divertCase.subjectProfile).not.toBeNull();
-
-    // auto_rate=false (manual) → no LLM call → no divert.
+  it('dispatches only a declared model task and respects disabled dispatch', async () => {
+    const model = await fixture();
     expect(
-      (await resolveDurableDivert(await buildValidated(questionId, { rating: 'good' }))).divert,
-    ).toBe(false);
-
-    // no answer → sync 422 path, not divert.
+      await dispatchNativeAttempt(
+        model.db,
+        model.id,
+        model.request,
+        { ...model.options, enabled: false },
+        { boss: { send: model.send } },
+      ),
+    ).toBeNull();
+    expect(model.send).not.toHaveBeenCalled();
     expect(
-      (
-        await resolveDurableDivert(
-          await buildValidated(questionId, { rating: 'good', auto_rate: true }),
-        )
-      ).divert,
-    ).toBe(false);
+      await dispatchNativeAttempt(model.db, model.id, model.request, model.options, {
+        boss: { send: model.send },
+      }),
+    ).toBeTruthy();
+    const local = await fixture(false);
+    expect(
+      await dispatchNativeAttempt(local.db, local.id, local.request, local.options, {
+        boss: { send: local.send },
+      }),
+    ).toBeNull();
+    expect(local.send).not.toHaveBeenCalled();
+  });
 
-    // client-supplied verdict → already judged, no LLM call → no divert.
-    const supplied = await resolveDurableDivert(
-      await buildValidated(questionId, {
-        rating: 'good',
-        response_md: 'ans',
-        auto_rate: true,
-        judge_result_v2: {
-          coarse_outcome: 'correct',
-          score: 1,
-          score_meaning: 'correctness',
-          confidence: 0.9,
-          capability_ref: { id: 'exact', version: '1.0.0' },
-          feedback_md: 'ok',
-          evidence_json: {},
+  it('writes queued status with immutable original coordinates and learning scope', async () => {
+    const f = await fixture();
+    const runId = await dispatchNativeAttempt(f.db, f.id, f.request, f.options, {
+      boss: { send: f.send },
+    });
+    expect(runId).toBeTruthy();
+    if (!runId) throw new Error('expected durable run ID');
+    expect(
+      deriveJudgeRunStatus(
+        await computeReplay(f.db, {
+          businessTable: 'judge_run',
+          businessId: runId,
+          lastEventId: 0,
+        }),
+      ),
+    ).toBe('queued');
+    expect(f.send).toHaveBeenCalledTimes(1);
+    const [original] = await f.db.select().from(assessment_submission);
+    expect(f.send.mock.calls[0].slice(0, 2)).toMatchObject([
+      'judge_run',
+      {
+        run_id: runId,
+        caller: 'native_assessment',
+        submit: {
+          submission_id: original.submission_id,
+          evaluation_group_id: f.request.evaluation_group_id,
+          question_id: f.id,
+          submitted_at: original.submitted_at.toISOString(),
+          capture: f.options.capture,
         },
-      }),
-    );
-    expect(supplied.divert).toBe(false);
-  });
-
-  it('enqueueDurableJudge returns 202-pending + writes the queued marker + freezes the profile in the payload', async () => {
-    const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const validated = await buildValidated(questionId, {
-      rating: 'good',
-      response_md: 'ans',
-      auto_rate: true,
-      session_id: 's1',
-    });
-    const profile = resolveSubjectProfile();
-    const send = vi.fn().mockResolvedValue('job-1');
-
-    const res = await enqueueDurableJudge(validated, profile, { boss: { send } });
-    expect(res.status).toBe(202);
-    const body = (await res.json()) as {
-      run_id: string;
-      verdict: string;
-      backfill: { channel: string; url: string; poll_url: string };
-    };
-    expect(body.verdict).toBe('pending');
-    expect(body.backfill.channel).toBe('sse');
-    expect(body.backfill.url).toBe(`/api/jobs/judge_run/${body.run_id}/events`);
-    expect(body.backfill.poll_url).toBe(`/api/jobs/judge_run/${body.run_id}/status`);
-    expect(res.headers.get('Location')).toBe(`/api/jobs/judge_run/${body.run_id}/events`);
-
-    // queued marker committed → status derives to queued.
-    const events = await computeReplay(db, {
-      businessTable: 'judge_run',
-      businessId: body.run_id,
-      lastEventId: 0,
-    });
-    expect(deriveJudgeRunStatus(events)).toBe('queued');
-
-    // job enqueued with the frozen submit inputs (D5 profile frozen into payload).
-    expect(send).toHaveBeenCalledTimes(1);
-    const [queueName, payload] = send.mock.calls[0] as [
-      string,
-      { run_id: string; caller: string; submit: { question_id: string; subject_profile: unknown } },
-    ];
-    expect(queueName).toBe('judge_run');
-    expect(payload.run_id).toBe(body.run_id);
-    expect(payload.caller).toBe('submit');
-    expect(payload.submit.question_id).toBe(questionId);
-    expect(payload.submit.subject_profile).toBeTruthy();
-    // #2 (codex) — the question the learner ANSWERED rides the payload too, so a later
-    // edit to the row can't retroactively change what gets judged/scheduled.
-    const snapshot = (payload.submit as { question_snapshot?: Record<string, unknown> })
-      .question_snapshot;
-    expect(snapshot).toBeTruthy();
-    expect(snapshot?.prompt_md).toBe(`Prompt for ${questionId}`);
-    expect(snapshot?.knowledge_ids).toEqual(['k1']);
-    expect(snapshot?.difficulty).toBe(3);
-
-    // #8 — the divert response carries an EXPLICIT discriminant, not just a bare 202.
-    expect(res.headers.get('x-durable-divert')).toBe('judge');
-
-    // no attempt event exists yet (worker persists it on backfill).
-    expect(await db.select().from(event).where(eq(event.id, body.run_id))).toHaveLength(0);
-  });
-
-  // YUK-777 A2 — these two used to assert 5xx. The dispatch order changed underneath them:
-  // the answer is now recorded as immutable domain evidence BEFORE `boss.send`, so a send
-  // failure no longer means the submission was lost. Reporting a failure for an answer we
-  // have in fact accepted would push the learner to answer again and mint the duplicate
-  // attempt there is no idempotency key to collapse (YUK-800), so the honest response is the
-  // pending contract plus a recorded attempt for `judge_pending_reconcile` to pick up.
-  it('a boss.send failure still RECORDS the answer and returns pending (no stuck-queued marker)', async () => {
-    const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const validated = await buildValidated(questionId, {
-      rating: 'good',
-      response_md: 'ans',
-      auto_rate: true,
-    });
-    const send = vi.fn().mockRejectedValue(new Error('boss down'));
-
-    // job_events is not truncated by resetDb — assert a DELTA of 0 (no new marker),
-    // pollution-proof against markers other tests in this file left behind.
-    const before = (await db.select().from(job_events)).length;
-    const res = await enqueueDurableJudge(validated, resolveSubjectProfile(), { boss: { send } });
-    expect(res.status).toBe(202);
-    // The marker is written AFTER a successful send, so a send failure writes NO new
-    // job_events — nothing sits stuck queued.
-    expect(await db.select().from(job_events)).toHaveLength(before);
-    // …but the answer IS in the permanent domain log, keyed to the run the response named.
-    const runId = ((await res.json()) as { run_id: string }).run_id;
-    const pending = await db
+      },
+    ]);
+    expect(original.response_set).toEqual(f.request.response_set);
+    const [receipt] = await f.db
       .select()
       .from(event)
-      .where(eq(event.action, JUDGE_PENDING_ATTEMPT_ACTION));
-    expect(pending).toHaveLength(1);
-    expect((pending[0].payload as { run_id: string }).run_id).toBe(runId);
+      .where(eq(event.action, 'experimental:assessment_submission'));
+    expect(receipt.payload.learning_scope).toMatchObject({
+      questions: [{ id: f.id, knowledge_ids: ['k1'], difficulty: 3 }],
+    });
+    expect(f.issued.practice_dto.faces[0].prompt_md).toContain('顺流18');
+    expect(await f.db.select().from(event).where(eq(event.id, runId))).toHaveLength(0);
   });
 
-  it('a null boss.send (dedupe/no-job) also records the answer and returns pending', async () => {
-    const db = testDb();
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const validated = await buildValidated(questionId, {
-      rating: 'good',
-      response_md: 'ans',
-      auto_rate: true,
+  it('a boss.send failure preserves the accepted answer without a misleading queued marker', async () => {
+    const f = await fixture();
+    f.send.mockRejectedValue(new Error('boss down'));
+    const before = await f.db.select().from(job_events);
+    const run = await dispatchNativeAttempt(f.db, f.id, f.request, f.options, {
+      boss: { send: f.send },
     });
-    const before = (await db.select().from(job_events)).length;
-    const send = vi.fn().mockResolvedValue(null);
-    const res = await enqueueDurableJudge(validated, resolveSubjectProfile(), { boss: { send } });
-    expect(res.status).toBe(202);
-    expect(await db.select().from(job_events)).toHaveLength(before);
+    expect(run).toBeTruthy();
+    expect(await f.db.select().from(job_events)).toEqual(before);
+    expect(await pending(f.db)).toMatchObject([{ payload: { run_id: run } }]);
+    expect(await f.db.select().from(assessment_submission)).toMatchObject([
+      { response_set: f.request.response_set },
+    ]);
+  });
+
+  it('a null boss.send also preserves the original for domain recovery', async () => {
+    const f = await fixture();
+    f.send.mockResolvedValue(null);
+    const before = await f.db.select().from(job_events);
     expect(
-      await db.select().from(event).where(eq(event.action, JUDGE_PENDING_ATTEMPT_ACTION)),
-    ).toHaveLength(1);
+      await dispatchNativeAttempt(f.db, f.id, f.request, f.options, { boss: { send: f.send } }),
+    ).toBeTruthy();
+    expect(await f.db.select().from(job_events)).toEqual(before);
+    expect(await pending(f.db)).toHaveLength(1);
+    expect(await f.db.select().from(assessment_submission)).toMatchObject([
+      { response_set: f.request.response_set },
+    ]);
   });
 
-  it('rate-limits the durable enqueue on the shared paid-AI budget (does not send when over budget)', async () => {
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const validated = await buildValidated(questionId, {
-      rating: 'good',
-      response_md: 'ans',
-      auto_rate: true,
-    });
-    // Exhaust the in-process budget (default max 30) BEFORE the enqueue.
+  it('rejects a new dispatch when the shared paid admission window is full', async () => {
+    const f = await fixture();
     vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
-    const { checkRateLimit } = await import('@/server/http/rate-limit');
-    checkRateLimit(); // fills the single slot
-    const send = vi.fn().mockResolvedValue('job-1');
-    const res = await enqueueDurableJudge(validated, resolveSubjectProfile(), { boss: { send } });
-    expect(res.status).toBe(429);
-    expect(send).not.toHaveBeenCalled();
+    checkRateLimit();
+    await expect(
+      dispatchNativeAttempt(f.db, f.id, f.request, f.options, { boss: { send: f.send } }),
+    ).rejects.toMatchObject({ status: 429 });
+    expect(f.send).not.toHaveBeenCalled();
+    expect(await pending(f.db)).toHaveLength(0);
   });
 
-  // #9 — the budget gate is injectable like `boss`/`now`, so the over-budget branch is
-  // reachable without module-mocking '@/server/http/rate-limit'.
-  it('honours an injected checkRateLimit seam (no send when the gate throws)', async () => {
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const validated = await buildValidated(questionId, {
-      rating: 'good',
-      response_md: 'ans',
-      auto_rate: true,
-    });
-    const send = vi.fn().mockResolvedValue('job-1');
+  it('honours the injected admission gate before enqueue or outbox creation', async () => {
+    const f = await fixture();
     const gate = vi.fn(() => {
       throw new ApiError('rate_limited', 'over budget', 429);
     });
-    const res = await enqueueDurableJudge(validated, resolveSubjectProfile(), {
-      boss: { send },
-      checkRateLimit: gate,
-    });
+    await expect(
+      dispatchNativeAttempt(f.db, f.id, f.request, f.options, {
+        boss: { send: f.send },
+        checkRateLimit: gate,
+      }),
+    ).rejects.toMatchObject({ status: 429 });
     expect(gate).toHaveBeenCalledTimes(1);
-    expect(res.status).toBe(429);
-    expect(send).not.toHaveBeenCalled();
-  });
-});
-
-// ── W4 #TtWh_ (codex P1) — the shared /api/attempts entry point ────────────────────
-// The placement probe posts through the SAME route with auto_rate:true, then immediately
-// calls /question-selections for the next item. placement-next computes the answered set
-// from PERSISTED review/attempt events, so under a 202 the just-answered question is not in
-// the exclusion set: answeredCount stalls and the probe can re-serve it. W2's divert was
-// written for the practice face; this shared entry point was the leak.
-describe('submit durable divert — session gate (#TtWh_)', () => {
-  beforeEach(async () => {
-    await resetDb();
-    __resetRateLimitForTests();
-    vi.unstubAllEnvs();
+    expect(f.send).not.toHaveBeenCalled();
+    expect(await pending(f.db)).toHaveLength(0);
   });
 
-  async function seedSession(type: string): Promise<string> {
-    const sessionId = newId();
-    const now = new Date();
-    await testDb()
-      .insert(learning_session)
-      .values({
-        id: sessionId,
-        type,
-        status: type === 'placement' ? 'started' : 'started',
-        warnings: [],
-        created_at: now,
-        updated_at: now,
-        version: 0,
-      });
-    return sessionId;
-  }
+  it('PLACEMENT sessions stay synchronous so next-item reads have a persisted verdict', async () => {
+    expect(await sessionAdmitsDurableDivert(await seedSession('placement'))).toBe(false);
+  });
+  it('REVIEW sessions admit the pending protocol', async () => {
+    expect(await sessionAdmitsDurableDivert(await seedSession('review'))).toBe(true);
+  });
+  it('ad-hoc solo practice admits the pending protocol', async () => {
+    expect(await sessionAdmitsDurableDivert(null)).toBe(true);
+  });
+  it('unadmitted and unknown sessions fail closed to synchronous execution', async () => {
+    expect(await sessionAdmitsDurableDivert(await seedSession('conversation'))).toBe(false);
+    expect(await sessionAdmitsDurableDivert(`unknown_${newId()}`)).toBe(false);
+  });
 
-  it('a PLACEMENT session does NOT divert (the probe needs a persisted verdict before /next)', async () => {
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const sessionId = await seedSession('placement');
-    const gate = await resolveDurableDivert(
-      await buildValidated(questionId, {
-        rating: 'good',
-        response_md: 'ans',
-        auto_rate: true,
-        session_id: sessionId,
+  it('a new issuance with identical response text remains a distinct practice occurrence', async () => {
+    const f = await fixture();
+    const first = await dispatchNativeAttempt(f.db, f.id, f.request, f.options, {
+      boss: { send: f.send },
+    });
+    const again = await issueSoloFixture(f.db, f.id, true);
+    const second = await dispatchNativeAttempt(
+      f.db,
+      f.id,
+      again.assessment('v+c=18，v-c=12。相加得2v=30，因此v=15 km/h。'),
+      f.options,
+      { boss: { send: f.send } },
+    );
+    expect(second).not.toBe(first);
+    expect(f.send).toHaveBeenCalledTimes(2);
+    expect(await pending(f.db)).toHaveLength(2);
+  });
+
+  it('pins the queue job ID to the run handle for marker-less recovery', async () => {
+    const f = await fixture();
+    const run = await dispatchNativeAttempt(f.db, f.id, f.request, f.options, {
+      boss: { send: f.send },
+    });
+    expect(run).toBeTruthy();
+    if (!run) throw new Error('expected durable run ID');
+    expect(f.send.mock.calls[0]?.[2]).toEqual({ id: judgeRunJobId(run) });
+  });
+
+  it.each(['throw', 'null'] as const)(
+    'refunds admission on %s send failure; a different operation can use the token',
+    async (failure) => {
+      const f = await fixture();
+      vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
+      if (failure === 'throw') f.send.mockRejectedValue(new Error('boss down'));
+      else f.send.mockResolvedValue(null);
+      expect(
+        await dispatchNativeAttempt(f.db, f.id, f.request, f.options, { boss: { send: f.send } }),
+      ).toBeTruthy();
+      const healthy = await fixture();
+      expect(
+        await dispatchNativeAttempt(healthy.db, healthy.id, healthy.request, healthy.options, {
+          boss: { send: healthy.send },
+        }),
+      ).toBeTruthy();
+      expect(healthy.send).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it('does not refund after a successful enqueue; retries reuse the handle without paying admission twice', async () => {
+    const f = await fixture();
+    vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
+    const run = await dispatchNativeAttempt(f.db, f.id, f.request, f.options, {
+      boss: { send: f.send },
+    });
+    expect(
+      await dispatchNativeAttempt(f.db, f.id, f.request, f.options, { boss: { send: f.send } }),
+    ).toBe(run);
+    expect(f.send).toHaveBeenCalledTimes(1);
+    const next = await fixture();
+    await expect(
+      dispatchNativeAttempt(next.db, next.id, next.request, next.options, {
+        boss: { send: next.send },
       }),
-    );
-    expect(gate.divert).toBe(false);
-    // The profile still resolves — only the async protocol is withheld, and the caller
-    // reuses the profile for the synchronous judge.
-    expect(gate.subjectProfile).not.toBeNull();
-  });
-
-  it('a REVIEW session diverts (the practice face is W2 scope)', async () => {
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const sessionId = await seedSession('review');
-    const gate = await resolveDurableDivert(
-      await buildValidated(questionId, {
-        rating: 'good',
-        response_md: 'ans',
-        auto_rate: true,
-        session_id: sessionId,
-      }),
-    );
-    expect(gate.divert).toBe(true);
-  });
-
-  it('no session_id (ad-hoc solo practice) diverts', async () => {
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const gate = await resolveDurableDivert(
-      await buildValidated(questionId, { rating: 'good', response_md: 'ans', auto_rate: true }),
-    );
-    expect(gate.divert).toBe(true);
-  });
-
-  it('fails CLOSED: an unadmitted session type and an unknown session id both stay synchronous', async () => {
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    // The gate is an allowlist, so a future caller mounting on this shared route cannot
-    // silently inherit the async contract — it has to opt in explicitly.
-    const conversationSession = await seedSession('conversation');
-    expect(
-      (
-        await resolveDurableDivert(
-          await buildValidated(questionId, {
-            rating: 'good',
-            response_md: 'ans',
-            auto_rate: true,
-            session_id: conversationSession,
-          }),
-        )
-      ).divert,
-    ).toBe(false);
-    expect(
-      (
-        await resolveDurableDivert(
-          await buildValidated(questionId, {
-            rating: 'good',
-            response_md: 'ans',
-            auto_rate: true,
-            session_id: `unknown_${newId()}`,
-          }),
-        )
-      ).divert,
-    ).toBe(false);
-  });
-});
-
-// ── W4 #TtWiC — a repeat answer is a REAL attempt, never a deduped retry ────────────
-// Round 3 added a 120s (question_id, answer_hash) dedupe as a stand-in for request
-// idempotency. Without a stable per-request key it could not tell a lost-202 retry from a
-// genuine re-answer, and PfSolo explicitly supports re-answering the same question — so it
-// silently swallowed real attempts: no second run, no immutable attempt row, no FSRS advance.
-// These tests pin the reverted behaviour so the shortcut cannot come back.
-describe('submit durable enqueue — repeat answers are real attempts (#TtWiC)', () => {
-  beforeEach(async () => {
-    await resetDb();
-    __resetRateLimitForTests();
-    vi.unstubAllEnvs();
-  });
-
-  it('re-answering the same question with the SAME text enqueues its own run', async () => {
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const body = { rating: 'good', response_md: 'ans', auto_rate: true, session_id: 's1' };
-    const send = vi.fn().mockResolvedValue('job-1');
-
-    const first = await enqueueDurableJudge(
-      await buildValidated(questionId, body),
-      resolveSubjectProfile(),
-      { boss: { send } },
-    );
-    // A learner re-practising the same item, seconds later, with an identical answer.
-    const second = await enqueueDurableJudge(
-      await buildValidated(questionId, body),
-      resolveSubjectProfile(),
-      { boss: { send } },
-    );
-
-    const firstRunId = ((await first.json()) as { run_id: string }).run_id;
-    const secondRunId = ((await second.json()) as { run_id: string }).run_id;
-    // Distinct runs → two attempts → FSRS advances twice, which is the correct product
-    // behaviour. The dedupe collapsed these into one run and dropped the second attempt.
-    expect(secondRunId).not.toBe(firstRunId);
-    expect(send).toHaveBeenCalledTimes(2);
-  });
-
-  it('pins the run handle to the pg-boss job id so a marker-less run stays resolvable', async () => {
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const send = vi.fn().mockResolvedValue('job-1');
-    const res = await enqueueDurableJudge(
-      await buildValidated(questionId, { rating: 'good', response_md: 'ans', auto_rate: true }),
-      resolveSubjectProfile(),
-      { boss: { send } },
-    );
-    const { run_id } = (await res.json()) as { run_id: string };
-    // W4 #TtWiD — the poll route resolves a marker-less run via boss.getJobById(queue, …),
-    // which only works because the enqueue pins SendOptions.id to a value derived from the
-    // run handle. YUK-777: DERIVED, not the handle itself — pg-boss job ids are uuid columns
-    // and `newId()` is a cuid2, so the original `{ id: run_id }` threw against real pg-boss
-    // (see judge-run-dispatch-boss-contract.db.test.ts). This test passed before only because
-    // the fake `send` accepted any string.
-    expect(send.mock.calls[0]?.[2]).toEqual({ id: judgeRunJobId(run_id) });
-  });
-});
-
-// ── W4 #TtZ8e/#TtZ8k (OCR major) — a failed enqueue must not burn paid-AI budget ────
-describe('submit durable enqueue — rate-limit token refund', () => {
-  beforeEach(async () => {
-    await resetDb();
-    __resetRateLimitForTests();
-    vi.unstubAllEnvs();
-  });
-
-  it('refunds the budget token when boss.send throws', async () => {
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const validated = await buildValidated(questionId, {
-      rating: 'good',
-      response_md: 'ans',
-      auto_rate: true,
-    });
-    // A single-slot window makes the leak observable: pre-fix the failed send consumed the
-    // only token, so the NEXT (healthy) enqueue was 429'd by a job that never existed.
-    vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
-    const failing = vi.fn().mockRejectedValue(new Error('boss down'));
-    const failed = await enqueueDurableJudge(validated, resolveSubjectProfile(), {
-      boss: { send: failing },
-    });
-    // 202 with the answer recorded (see the dispatch-order note above) — what this test is
-    // about is the TOKEN: no job shipped, so the budget slot must come back.
-    expect(failed.status).toBe(202);
-
-    const healthy = vi.fn().mockResolvedValue('job-1');
-    const retry = await enqueueDurableJudge(validated, resolveSubjectProfile(), {
-      boss: { send: healthy },
-    });
-    expect(retry.status).toBe(202);
-    expect(healthy).toHaveBeenCalledTimes(1);
-  });
-
-  it('refunds the budget token when boss.send returns null (nothing enqueued)', async () => {
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const validated = await buildValidated(questionId, {
-      rating: 'good',
-      response_md: 'ans',
-      auto_rate: true,
-    });
-    vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
-    const nullSend = vi.fn().mockResolvedValue(null);
-    expect(
-      (await enqueueDurableJudge(validated, resolveSubjectProfile(), { boss: { send: nullSend } }))
-        .status,
-    ).toBe(202);
-
-    const healthy = vi.fn().mockResolvedValue('job-1');
-    expect(
-      (await enqueueDurableJudge(validated, resolveSubjectProfile(), { boss: { send: healthy } }))
-        .status,
-    ).toBe(202);
-  });
-
-  it('does NOT refund once the job is durably enqueued (the token was really spent)', async () => {
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const validated = await buildValidated(questionId, {
-      rating: 'good',
-      response_md: 'ans',
-      auto_rate: true,
-    });
-    vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
-    const send = vi.fn().mockResolvedValue('job-1');
-    expect(
-      (await enqueueDurableJudge(validated, resolveSubjectProfile(), { boss: { send } })).status,
-    ).toBe(202);
-    // The single slot is now legitimately consumed — the next enqueue must be rejected.
-    const blocked = await enqueueDurableJudge(validated, resolveSubjectProfile(), {
-      boss: { send },
-    });
-    expect(blocked.status).toBe(429);
-    expect(send).toHaveBeenCalledTimes(1);
+    ).rejects.toMatchObject({ status: 429 });
+    expect(next.send).not.toHaveBeenCalled();
   });
 });

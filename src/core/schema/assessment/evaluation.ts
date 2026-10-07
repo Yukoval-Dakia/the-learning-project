@@ -1,8 +1,19 @@
 import { z } from 'zod';
+import {
+  ConjectureProbeSignatureMatch,
+  classifyConjectureProbeResponseFromJudgeMatch,
+} from '../conjecture-probe-response';
 import { extractAnswerHead } from '../judge-routing';
-import { type ExecutorDescriptorT, type ModelExecutorT, validateExecutionPlan } from './execution';
+import {
+  type DeterministicComparatorIdT,
+  type ExecutorDescriptorT,
+  type ModelExecutorT,
+  validateExecutionPlan,
+} from './execution';
+import { type EvaluationInputMember, combineEvaluationMembers } from './group-input';
 import {
   type AggregateOutcomeT,
+  type EvaluationProvenanceT,
   EvaluationRecord,
   type EvaluationRecordT,
   type EvidenceCitationT,
@@ -18,6 +29,7 @@ import type { ResponseSlotT, ResponseSpecT, SlotResponseT } from './response';
 import { isBlankSlotResponse, validateResponseSet } from './response';
 import type { PublishedQuestionRevisionT } from './revision';
 import { type ScoringBasisT, type ScoringUnitT, validateScoringBasis } from './scoring';
+import type { QuestionPartT } from './structure';
 
 // ====================================================================
 // YUK-1047 — 判分执行器统一 · 确定性评估引擎（grounding §4.2–§4.4、D4/D13–D17）
@@ -42,14 +54,6 @@ import { type ScoringBasisT, type ScoringUnitT, validateScoringBasis } from './s
 // 候选语义：评估结果只是 candidate，activation（CAS + admission generation
 // 复核 + 学习结算事务）由 YUK-1045/1053 接管。candidate 永不进显示通道。
 
-// ---------- 评估 provenance（D9/D15/D16） ----------
-
-export const EvaluationProvenance = z.object({
-  source: z.enum(['automatic', 'manual', 'self_report']),
-  assisted: z.boolean().default(false),
-});
-export type EvaluationProvenanceT = z.infer<typeof EvaluationProvenance>;
-
 // ---------- 执行期 policy（不改给分规则，只控执行面） ----------
 
 export const EvaluationExecutionPolicy = z.object({
@@ -64,6 +68,15 @@ export type EvaluationExecutionPolicyT = z.infer<typeof EvaluationExecutionPolic
 
 // ---------- 模型执行器端口（无 LLM；调用方注入实现） ----------
 
+/** Explicit pre-execution refusal. Ports may throw this only before claiming or starting work.
+ * Unlike an uncertain executor failure, this must not become a sealed grading result. */
+export class ModelExecutionNotStartedError extends Error {
+  constructor(cause: Error) {
+    super(cause.message, { cause });
+    this.name = 'ModelExecutionNotStartedError';
+  }
+}
+
 /**
  * 模型单元裁决。`scored` 只报告判据层面的【规则/档位命中】与发布口径分数
  * （additive 单元必须给 points_awarded；holistic 单元必须给 matched.level_id
@@ -74,6 +87,7 @@ export const ModelUnitOutcome = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('scored'),
     points_awarded: z.number().min(0).nullable(),
+    probe_signature_match: ConjectureProbeSignatureMatch.optional(),
     matched: z
       .object({
         rule_id: z.string().min(1).optional(),
@@ -108,7 +122,10 @@ export type ModelUnitOutcomeT = z.infer<typeof ModelUnitOutcome>;
 
 /** 单次模型单元判定的冻结输入（执行器只见它需要的槽位/证据/材料）。 */
 export interface ModelExecutorRequest {
+  review_context?: EvaluationProvenanceT['review_context'];
   submission_id: string;
+  /** Complete frozen member identities; submission_id remains the stable anchor. */
+  submission_ids?: string[];
   evaluation_group_id: string;
   revision_id: string;
   attempt: number;
@@ -122,6 +139,10 @@ export interface ModelExecutorRequest {
    * score.
    */
   unit: ScoringUnitT;
+  /** Frozen question conditions for the parts referenced by this unit. */
+  question_parts: QuestionPartT[];
+  /** Original slot/option meanings and layout for those parts; never inferred from answers. */
+  response_slots: ResponseSlotT[];
   /** 该 unit 声明读取的槽位响应（已按 spec 校验过）。 */
   slot_responses: SlotResponseT[];
   /** 该 unit 命中的 group 级证据（all_units 或显式子集）。 */
@@ -153,6 +174,8 @@ export interface EvaluateSubmissionCoreInput {
   evaluation_id: string;
   /** 冻结作答（D5：原文不改写）。 */
   submission: SubmissionRecordT;
+  /** Explicit original members for joint scoring; never a synthesized submission. */
+  member_inputs?: readonly EvaluationInputMember[];
   /** 不可变发布 revision（submission.revision_id 指向）。 */
   revision: PublishedQuestionRevisionT;
   /**
@@ -184,6 +207,8 @@ export interface EvaluateSubmissionCoreInput {
 
 export interface EvaluateSubmissionCoreOutput {
   record: EvaluationRecordT;
+  /** 与 aggregate 同一冻结发题范围的分母，不是完整 revision 的分母。 */
+  scoring_basis: ScoringBasisT;
   /** 本次实际调用了模型执行器的单元数（观测/成本审计）。 */
   model_units_invoked: number;
   /** 本次模型调用累计成本（micro USD；仅端口如实上报的合计）。 */
@@ -196,9 +221,11 @@ export class EvaluationContractError extends Error {
     public readonly code:
       | 'submission_revision_mismatch'
       | 'invalid_response_set'
+      | 'invalid_issuance_scope'
       | 'invalid_scoring_basis'
       | 'invalid_execution_plan'
       | 'unprojectable_aggregation'
+      | 'execute_mode_requires_automatic_provenance'
       | 'manual_mode_requires_manual_provenance'
       | 'manual_mode_requires_asserted_results'
       | 'manual_result_set_mismatch',
@@ -266,11 +293,11 @@ function extractUnitSuffix(rawInput: string): string | null {
 
 /** 确定性比较器：单槽命中判定（全对=发布 points，否则 0；无部分分）。
  * 判据/槽位不配对是契约违背 —— 返回 pending unjudgeable，绝不落伪零分。 */
-function runDeterministicComparator(
-  comparator: 'exact_option_set' | 'exact_text' | 'numeric_tolerance' | 'exact_matching_pairs',
+async function runDeterministicComparator(
+  comparator: DeterministicComparatorIdT,
   unit: ScoringUnitT,
   entry: SlotResponseT,
-): ScoringUnitResultT {
+): Promise<ScoringUnitResultT> {
   const full = unit.points ?? 0;
   switch (comparator) {
     case 'exact_option_set': {
@@ -303,6 +330,59 @@ function runDeterministicComparator(
             unit.criterion.kind === 'text_key' ? unit.criterion.normalization : 'trim',
           ) === given,
       );
+      return {
+        status: 'scored',
+        scoring_unit_id: unit.scoring_unit_id,
+        points_awarded: hit ? full : 0,
+        scored_because: 'response',
+        evidence_citations: [{ slot_id: entry.slot_id }],
+      };
+    }
+    case 'numeric_unit_conversion': {
+      if (
+        entry.kind !== 'numeric' ||
+        unit.criterion.kind !== 'numeric_key' ||
+        !unit.criterion.expected_unit
+      ) {
+        return unjudgeableMismatch(
+          unit,
+          'numeric unit conversion requires a numeric slot and an explicit reference unit',
+        );
+      }
+      const { expected, tolerance, expected_unit } = unit.criterion;
+      const raw = entry.raw_input?.trim();
+      if (!raw) return unjudgeableMismatch(unit, 'unit conversion requires original raw input');
+      const { unit: parseUnit } = await import('mathjs');
+      let referenceUnit: import('mathjs').Unit;
+      try {
+        referenceUnit = parseUnit(1, expected_unit);
+      } catch {
+        return unjudgeableMismatch(unit, 'published reference unit is not supported');
+      }
+      let converted: number | null = null;
+      try {
+        const studentUnit = parseUnit(raw);
+        if (studentUnit.equalBase(referenceUnit)) converted = studentUnit.toNumber(expected_unit);
+      } catch {
+        return withUnit(
+          pending({
+            reason: 'unparseable_response',
+            slot_id: entry.slot_id,
+            detail: 'original numeric response cannot be interpreted as a supported value/unit',
+          }),
+          unit.scoring_unit_id,
+        );
+      }
+      const difference =
+        converted === null ? Number.POSITIVE_INFINITY : Math.abs(converted - expected);
+      const hit =
+        converted !== null &&
+        Number.isFinite(converted) &&
+        (tolerance.kind === 'absolute'
+          ? difference <= tolerance.value
+          : expected === 0
+            ? difference === 0
+            : difference / Math.abs(expected) <= tolerance.ratio);
       return {
         status: 'scored',
         scoring_unit_id: unit.scoring_unit_id,
@@ -389,7 +469,7 @@ function unjudgeableMismatch(unit: ScoringUnitT, detail: string): ScoringUnitRes
 
 /** 模型引用证据的完整性校验：cited evidence_id 必须真实存在于本提交内（D17 严重错误防线）。 */
 function collectKnownEvidenceIds(
-  submission: SubmissionRecordT,
+  groupEvidence: readonly GroupEvidenceT[],
   slotResponses: readonly SlotResponseT[],
 ): Set<string> {
   const ids = new Set<string>();
@@ -398,8 +478,8 @@ function collectKnownEvidenceIds(
       for (const evidence of entry.evidence) ids.add(evidence.evidence_id);
     }
   }
-  for (const groupEvidence of submission.group_evidence) {
-    ids.add(groupEvidence.evidence.evidence_id);
+  for (const evidence of groupEvidence) {
+    ids.add(evidence.evidence.evidence_id);
   }
   return ids;
 }
@@ -439,6 +519,12 @@ export async function evaluateSubmissionCore(
 
   const provenance = input.provenance ?? { source: 'automatic' as const, assisted: false };
   const mode = input.mode ?? 'execute';
+  if (mode === 'execute' && provenance.source !== 'automatic') {
+    throw new EvaluationContractError(
+      'execute_mode_requires_automatic_provenance',
+      'execute requires provenance.source automatic; manual/self_report require manual_assert',
+    );
+  }
   if (mode === 'manual_assert') {
     if (provenance.source === 'automatic') {
       throw new EvaluationContractError(
@@ -454,12 +540,17 @@ export async function evaluateSubmissionCore(
     }
   }
 
+  const joint = input.member_inputs
+    ? combineEvaluationMembers(submission, revision, input.member_inputs)
+    : null;
+  const responseSet = joint?.response_set ?? submission.response_set;
+  const groupEvidence = joint?.group_evidence ?? submission.group_evidence;
   const spec = revision.response_spec;
   const basis = revision.scoring_basis;
   const plan = revision.execution_plan;
 
   // ---- 结构一致性：冻结响应集合对发出 spec 的静态校验（错 ⇒ 拒绝评估，不逐单元猜）。----
-  const setIssues = validateResponseSet(spec, submission.response_set);
+  const setIssues = validateResponseSet(spec, responseSet);
   if (setIssues.length > 0) {
     throw new EvaluationContractError(
       'invalid_response_set',
@@ -488,22 +579,19 @@ export async function evaluateSubmissionCore(
   }
 
   // ---- 发出范围投影：只评估作答面落在 issued parts 内的 unit。----
-  const issuedParts =
-    input.issued_part_ids == null
-      ? new Set(revision.structure.parts.map((part) => part.part_id))
-      : new Set(input.issued_part_ids);
-  const inScopeSlots = answerableSlots(spec, issuedParts);
-  const slotById = new Map(inScopeSlots.map((slot) => [slot.slot_id, slot] as const));
-  const inScopeUnits = basis.units.filter((unit) => unitInScope(unit, slotById));
+  const issuedPartIds =
+    joint?.issued_part_ids ??
+    input.issued_part_ids ??
+    revision.structure.parts.map((part) => part.part_id);
+  const scopedBasis = projectIssuedScoringBasis(revision, issuedPartIds);
+  const inScopeUnits = scopedBasis.units;
   const inScopeUnitIds = new Set(inScopeUnits.map((unit) => unit.scoring_unit_id));
 
   // ---- 聚合 policy 投影：sum/weighted_sum 可按子集评估；capped/threshold
   //      的 cap/阈值绑死全量 unit 集，子集评估会改义 —— fail-closed。----
-  const scopedBasis: ScoringBasisT = scopedBasisFor(basis, inScopeUnitIds);
+  // 上述 projectIssuedScoringBasis 同时执行该聚合 policy 守卫。
 
-  const entryBySlot = new Map(
-    submission.response_set.entries.map((entry) => [entry.slot_id, entry] as const),
-  );
+  const entryBySlot = new Map(responseSet.entries.map((entry) => [entry.slot_id, entry] as const));
   const materialById = new Map(
     revision.structure.materials.map((material) => [material.material_id, material] as const),
   );
@@ -565,6 +653,7 @@ export async function evaluateSubmissionCore(
         run_refs: runRefs,
         provenance,
       }),
+      scoring_basis: scopedBasis,
       model_units_invoked: modelUnitsInvoked,
       spent_cost_usd_micros: spentCostMicros,
     };
@@ -573,14 +662,21 @@ export async function evaluateSubmissionCore(
   // ---- execute 模式：逐 unit 分发执行器。----
   for (const unit of inScopeUnits) {
     const unitId = unit.scoring_unit_id;
-    const slotIds = [...unit.slot_refs, ...unit.evidence_slot_refs];
+    const slotIds = [...new Set([...unit.slot_refs, ...unit.evidence_slot_refs])];
     const entries = slotIds
       .map((slotId) => entryBySlot.get(slotId))
       .filter((entry): entry is SlotResponseT => entry != null);
 
-    // missing：声明作答面里存在缺条目（区别于主动空白）。
+    const unitGroupEvidence = groupEvidence.filter(
+      (evidence) =>
+        evidence.target.scope === 'all_units' || evidence.target.scoring_unit_ids.includes(unitId),
+    );
+
+    // Scoped original evidence can supply a model-evaluated answer without a text entry.
+    const evidenceOnlyModelAnswer =
+      unitGroupEvidence.length > 0 && assignmentByUnit.get(unitId)?.kind === 'model_executor';
     const missingSlotIds = slotIds.filter((slotId) => !entryBySlot.has(slotId));
-    if (missingSlotIds.length > 0) {
+    if (missingSlotIds.length > 0 && !evidenceOnlyModelAnswer) {
       unitResults.push(
         withUnit(pending({ reason: 'missing_response', slot_ids: missingSlotIds }), unitId),
       );
@@ -588,7 +684,11 @@ export async function evaluateSubmissionCore(
     }
 
     // 空白：全部作答面显式空 —— 政策明确才计零，否则人工复核（绝不伪零分）。
-    if (entries.length > 0 && entries.every(isBlankSlotResponse)) {
+    if (
+      entries.length > 0 &&
+      entries.every(isBlankSlotResponse) &&
+      unitGroupEvidence.length === 0
+    ) {
       if (basis.blank_scores_zero) {
         unitResults.push(
           withUnit(
@@ -625,7 +725,7 @@ export async function evaluateSubmissionCore(
 
     // group 证据：声明消费但本提交没有覆盖本 unit 的 group 证据 ⇒ 证据不足。
     if (unit.requires_group_evidence) {
-      const covering = submission.group_evidence.some(
+      const covering = groupEvidence.some(
         (evidence) =>
           evidence.target.scope === 'all_units' ||
           evidence.target.scoring_unit_ids.includes(unitId),
@@ -651,7 +751,11 @@ export async function evaluateSubmissionCore(
         entry.value === null &&
         (entry.raw_input ?? '').trim().length > 0,
     );
-    if (unparseable != null && unparseable.kind === 'numeric') {
+    const declaredExecutor = assignmentByUnit.get(unitId);
+    const convertsOriginalUnits =
+      declaredExecutor?.kind === 'deterministic' &&
+      declaredExecutor.comparator === 'numeric_unit_conversion';
+    if (unparseable != null && unparseable.kind === 'numeric' && !convertsOriginalUnits) {
       unitResults.push(
         withUnit(
           pending({
@@ -693,7 +797,20 @@ export async function evaluateSubmissionCore(
         );
         continue;
       }
-      unitResults.push(runDeterministicComparator(executor.comparator, unit, primaryEntry));
+      if (isBlankSlotResponse(primaryEntry) && unitGroupEvidence.length > 0) {
+        unitResults.push(
+          withUnit(
+            pending({
+              reason: 'unjudgeable',
+              detail:
+                'original group evidence is present but the deterministic comparator cannot read it',
+            }),
+            unitId,
+          ),
+        );
+        continue;
+      }
+      unitResults.push(await runDeterministicComparator(executor.comparator, unit, primaryEntry));
       continue;
     }
 
@@ -766,24 +883,39 @@ export async function evaluateSubmissionCore(
       continue;
     }
 
-    const unitGroupEvidence = submission.group_evidence.filter(
-      (evidence) =>
-        evidence.target.scope === 'all_units' || evidence.target.scoring_unit_ids.includes(unitId),
+    // A slot reference identifies its question conditions, not just an answer.
+    // Group-only units consume the issued group context; unissued parts stay out.
+    const unitSlotIds = new Set(slotIds);
+    const contextPartIds = new Set(
+      slotIds.length === 0
+        ? issuedPartIds
+        : spec.slots.filter((slot) => unitSlotIds.has(slot.slot_id)).map((slot) => slot.part_id),
     );
+    const questionParts = revision.structure.parts.filter((part) =>
+      contextPartIds.has(part.part_id),
+    );
+    const contextMaterialIds = new Set([
+      ...unit.material_refs,
+      ...questionParts.flatMap((part) => part.material_ids),
+    ]);
     modelUnitsInvoked += 1;
     let outcome: ModelUnitOutcomeT;
     try {
       const raw = await input.model_executor({
+        ...(provenance.review_context ? { review_context: provenance.review_context } : {}),
         submission_id: submission.submission_id,
+        submission_ids: joint?.member_submission_ids ?? [submission.submission_id],
         evaluation_group_id: submission.evaluation_group_id,
         revision_id: revision.revision_id,
         attempt: input.attempt,
         scoring_unit_id: unitId,
         executor,
         unit,
+        question_parts: questionParts,
+        response_slots: spec.slots.filter((slot) => contextPartIds.has(slot.part_id)),
         slot_responses: entries,
         group_evidence: unitGroupEvidence,
-        materials: unit.material_refs
+        materials: [...contextMaterialIds]
           .map((id) => materialById.get(id))
           .filter((material): material is SharedMaterialT => material != null),
         spent_cost_usd_micros: spentCostMicros,
@@ -806,6 +938,7 @@ export async function evaluateSubmissionCore(
       }
       outcome = parsed.data;
     } catch (err) {
+      if (err instanceof ModelExecutionNotStartedError) throw err;
       unitResults.push(
         withUnit(
           pending({
@@ -828,7 +961,7 @@ export async function evaluateSubmissionCore(
         ? citationsResolve(
             outcome.evidence_citations,
             new Set(slotIds),
-            collectKnownEvidenceIds(submission, entries),
+            collectKnownEvidenceIds(unitGroupEvidence, entries),
           )
         : null;
     if (citationIssue != null) {
@@ -870,6 +1003,26 @@ export async function evaluateSubmissionCore(
       );
       continue;
     }
+    const probeJudgement =
+      unit.criterion.kind === 'rule_reference' && unit.criterion.probe_spec
+        ? classifyConjectureProbeResponseFromJudgeMatch(
+            unit.points !== null && unit.points > 0 && outcome.points_awarded === unit.points
+              ? 'correct'
+              : outcome.points_awarded === 0
+                ? 'incorrect'
+                : 'partial',
+            outcome.probe_signature_match,
+          )
+        : undefined;
+    if (probeJudgement && !probeJudgement.gradable) {
+      unitResults.push({
+        status: 'pending',
+        scoring_unit_id: unitId,
+        pending: { reason: 'needs_review', trigger: 'flagged', detail: probeJudgement.reason_code },
+        probe_judgement: probeJudgement,
+      });
+      continue;
+    }
     unitResults.push(
       withUnit(
         {
@@ -880,6 +1033,7 @@ export async function evaluateSubmissionCore(
           ...(outcome.matched ? { matched: outcome.matched } : {}),
           ...(outcome.feedback_md ? { feedback_md: outcome.feedback_md } : {}),
           evidence_citations: outcome.evidence_citations,
+          ...(probeJudgement ? { probe_judgement: probeJudgement } : {}),
         },
         unitId,
       ),
@@ -910,9 +1064,37 @@ export async function evaluateSubmissionCore(
   });
   return {
     record,
+    scoring_basis: scopedBasis,
     model_units_invoked: modelUnitsInvoked,
     spent_cost_usd_micros: spentCostMicros,
   };
+}
+
+/**
+ * 冻结发题范围的唯一计分投影。分子、分母、读模型和学习结算共享此规则；
+ * 不从 unit_results 反推范围，未评分/未决不等于未发题。
+ */
+export function projectIssuedScoringBasis(
+  revision: Pick<PublishedQuestionRevisionT, 'structure' | 'response_spec' | 'scoring_basis'>,
+  issuedPartIds: readonly string[],
+): ScoringBasisT {
+  const parts = new Set(issuedPartIds);
+  const known = new Set(revision.structure.parts.map((part) => part.part_id));
+  if (
+    parts.size === 0 ||
+    parts.size !== issuedPartIds.length ||
+    [...parts].some((id) => !known.has(id))
+  ) {
+    throw new EvaluationContractError(
+      'invalid_issuance_scope',
+      'issued parts must be a nonempty, unique subset of the frozen revision',
+    );
+  }
+  const slots = new Map(
+    answerableSlots(revision.response_spec, parts).map((slot) => [slot.slot_id, slot]),
+  );
+  const units = revision.scoring_basis.units.filter((unit) => unitInScope(unit, slots));
+  return scopedBasisFor(revision.scoring_basis, new Set(units.map((unit) => unit.scoring_unit_id)));
 }
 
 /** 聚合 policy 按 in-scope unit 集投影；不可投影的聚合 fail-closed。 */

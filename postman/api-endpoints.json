@@ -461,7 +461,7 @@
         "query": [],
         "contentType": null,
         "bodyExample": null,
-        "notes": "响应 { sessions: [{ id, status, title, created_at, updated_at }] }。"
+        "notes": "响应 { server_time: ISO 时间（自动续接 24h 窗口的服务端时钟）, sessions: [{ id, status, title, created_at, updated_at }] }。"
       },
       {
         "method": "POST",
@@ -622,7 +622,7 @@
         "bodyExample": {
           "answer_md": "2x·cos(x^2)"
         },
-        "notes": "conjecture-wire #13 (spec §6 S3)。隔离路径：defaultJudgeKindForQuestion → capability registry resolveJudge → runner.run() PURE（不触 FSRS/attempt/θ̂，ND-5）→ answerProbe 写唯一 experimental:probe_result event。v2 复验分流：judge 'incorrect' → outcome=0；第一次为 'evidence_for' 并原子派发预先独立创作的 sequence-2 probe，第二道独立 probe 也 incorrect 才为 'confirmed'。历史 v1 proposal 无 follow-up，保留单题 incorrect → 'confirmed' 的终态规则。任一 probe judge 'correct' → outcome=1 → 'retired'（猜测被反驳）。fail-closed：'partial'/'unsupported' → 422，不写 probe_result，探针保持 active（slot 未消费，owner 可重答或走 admin S4）。幂等：重答返回记录的 outcome/resolution（不覆盖）。需 x-internal-token。响应：{ status, resolution, outcome, probe_result_event_id, coarse_outcome, idempotent }"
+        "notes": "YUK-1047：已准入探针在备课台实际发题时冻结 native issuance；服务端保存 ResponseSet 与原始图片 digest 后经 evaluateSubmission 产出 candidate，answerProbe 仅写唯一 experimental:probe_result，不激活练习结算/FSRS/θ̂。未准入探针 withheld，不自动降级 manual。v2 复验分流：judge 'incorrect' → outcome=0；第一次为 'evidence_for' 并原子派发预先独立创作的 sequence-2 probe，第二道独立 probe 也 incorrect 才为 'confirmed'。历史 v1 proposal 无 follow-up，保留单题 incorrect → 'confirmed' 的终态规则。任一 probe judge 'correct' → outcome=1 → 'retired'（猜测被反驳）。fail-closed：'partial'/'unsupported' → 422，不写 probe_result，探针保持 active（slot 未消费，owner 可重答或走 admin S4）。幂等：重答返回记录的 outcome/resolution（不覆盖）。需 x-internal-token。响应：{ status, resolution, outcome, probe_result_event_id, coarse_outcome, idempotent }"
       }
     ]
   },
@@ -635,7 +635,7 @@
         "query": [],
         "contentType": null,
         "bodyExample": null,
-        "notes": "窗口=Asia/Shanghai 日界前一日历日（昨日 00:00 BJT 含 → 今日 00:00 BJT 不含；owner 可调，默认前一日历日）。返回 { window:{from,to}, has_overnight_activity, runs:[{task_kind,count,status_breakdown}], note_changes_count, new_proposals_count, new_conjectures_count, agent_notes_count }。5 夜间事实源任一窗内有事实 → has_overnight_activity=true（空夜显式信号，与加载中/失败可区分）。new_proposals 不含 conjecture（两数不重叠）。纯读零写；prep-desk confidence/predicted_p 等内部校准数永不过 wire（只取 count）。需 x-internal-token"
+        "notes": "窗口=Asia/Shanghai 日界前一日历日（昨日 00:00 BJT 含 → 今日 00:00 BJT 不含；owner 可调，默认前一日历日）。返回 { window:{from,to}, has_overnight_activity, runs:[{task_kind,count,status_breakdown}], note_changes_count, new_proposals_count, new_conjectures_count, agent_notes_count }。另返回 degraded_kinds 与 cost:{scope:all_activity,records,by_currency,details}。cost覆盖该日全部前台/后台账本记录，按provider/model/lane/task与费用/用量来源分组；reported/estimated/unknown/legacy及币种分开，未知lane/用量保留；记录数不是物理请求数，目录估算不是订阅额度扣减。5 原有事实源任一窗内有事实 → has_overnight_activity=true；费用记录独立在cost中展示，不冒充任务/业务产出（空夜显式信号，与加载中/失败可区分）。new_proposals 不含 conjecture（两数不重叠）。纯读零写；prep-desk confidence/predicted_p 等内部校准数永不过 wire（只取 count）。需 x-internal-token"
       }
     ]
   },
@@ -1169,7 +1169,7 @@
           "goalId": null,
           "knowledgeIds": ["kc-1"]
         },
-        "notes": "dark-ship：gated on PLACEMENT_PROBE_ENABLED（默认 false → 404）。goalId 省略时用 knowledgeIds；二者皆缺/不可解析 → 400。返回 {sessionId, knowledgeIds, question, sourcingNeeded}"
+        "notes": "dark-ship：gated on PLACEMENT_PROBE_ENABLED（默认 false → 404）。goalId 省略时用 knowledgeIds；二者皆缺/不可解析 → 400。返回 {sessionId, knowledgeIds, question, answeredCount, sourcingNeeded}；question.assessment 包含固定 issuance/提交身份、公开 practice_dto 与恢复状态"
       }
     ]
   },
@@ -1186,7 +1186,7 @@
           "cap": 8,
           "seThreshold": null
         },
-        "notes": "答题经 /api/review/submit（session_id=本 probe）后调。cap 仅接受 1..8，服务端有效上限恒为 8。返回 {done, reason?, question?, answeredCount, sourcingNeeded?}。未知 session→404，已关闭→409"
+        "notes": "答题经 /api/attempts（session_id=本 probe，auto_rate=true，携带首题返回的 assessment 身份与原始 response_set/group_evidence）后调。未完成的 issuance 优先恢复；pending/held 在 cap 前阻止推进。cap 仅接受 1..8，服务端有效上限恒为 8。返回 {done, reason?, question?, answeredCount, sourcingNeeded?}。未知 session→404，已关闭→409"
       }
     ]
   },
@@ -1232,6 +1232,57 @@
         "contentType": null,
         "bodyExample": null,
         "notes": "READ-ONLY 只读观测面（零写零 LLM 零新查询子系统）。每次请求跑一次实时扫描：assembleScanInput（复用发现引擎两私有 loader）+ scanCoverageGaps（纯）+ 单条 experimental:question_supply 活动聚合。范围 = scanCoverageGaps 四条单-KC 池规则（frontier_zero/source_quality/diagnostic/format_diversity），非全量缺口并集（confusable_contrast 误区网另计）。响应：{ generated_at, scan_ms, coverage_depth_threshold, near_window, cooldown_days, scope_note, subjects:[{subjectId,displayName,kcs:[{knowledgeId,thetaHat,evidenceCount,usableCount,depthMet,hasHighTier,hasNearThetaAnchor,formatDiverse,gapKinds,gaps:[...]}]}], totals }。需 x-internal-token。"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/config",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "热加载配置读面：registry key 生效值/来源分层/默认/接线状态 + TaskSpec 默认与覆盖",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "只读。keys[] 每行：value（env pin > DB > env fallback > code-default 分层合成）、source、default、env_mode、read_only（compose 强制键）、wired/consumer（运行时 reader 是否消费）。tasks[] 每行：静态 catalog 默认 + DB 覆盖（provider/model 按执行类型接线；budget_wiring/effective_budget 逐字段报告，chat费用与typed轮数未消费为null，调用参数及重试门仍优先）+ global_pin；effective_binding由真实resolver给出provider/model基线或安全错误（无凭据字段），未注入时null。providers[] 包含 pi_provider 原生身份及 models[] 的 id/api/input，模型清单与执行预设一致。不暴露 secret，不枚举 process.env 注入运行事实时无效global pin为null；视觉lane逐消费者解析、原生目录及能力校验，失败为null与安全说明。schedules包含server-event-subscriptions条件调度声明，不代表worker实际挂载。"
+      },
+      {
+        "method": "PATCH",
+        "summary": "原子写入或重置注册配置（原生 provider/model 终态校验）",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "changes": [
+            {
+              "action": "set",
+              "key": "task.QuizGenTask.provider",
+              "value": "opencode-go"
+            },
+            {
+              "action": "set",
+              "key": "task.QuizGenTask.model",
+              "value": "glm-5.3-flash"
+            }
+          ],
+          "note": "Use the native Go preset"
+        },
+        "notes": "需 x-internal-token。整批行+journal+epoch 同事务；固定 actor=panel:admin。重复/未知键400、部署固定键409、非法模型/预算422、未注入writer503。返回 committed_epoch、snapshot_epoch、snapshot_current及changes；snapshot_current只指本进程观测到提交或更新版本，不代表worker确认或值未被后续写覆盖。"
+      }
+    ]
+  },
+  {
+    "path": "/api/admin/config/reset",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "原子恢复一组配置到 env/registry 默认",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "keys": ["task.QuizGenTask.provider", "task.QuizGenTask.model"],
+          "note": "Restore defaults"
+        },
+        "notes": "需 x-internal-token。按整批删除后的原生组合校验，失败全部回滚。历史journal保留；清理后重新写入revision持续递增。响应与PATCH配置相同。"
       }
     ]
   },
@@ -1305,7 +1356,7 @@
         "query": [],
         "contentType": null,
         "bodyExample": null,
-        "notes": "返回 {issuance,draft,submissions}；issuance 不存在 → 404"
+        "notes": "返回 issuance/practice_dto/draft/submissions；已接收 submission 带原始 response_set/group_evidence/idempotency_key，恢复不泄漏候选反馈。不存在返回404。"
       }
     ]
   },
@@ -1359,6 +1410,285 @@
           "group_evidence": []
         },
         "notes": "单事务：evaluation_group upsert→assessment_submission 不可变行→初始 head→清对应 draft→事件。返回 {status,submission,revision_id,issuance_id}。错误：issuance_not_found(404)/invalid_response(422)/revision_not_found|group_conflict|idempotency_conflict(409)"
+      }
+    ]
+  },
+  {
+    "path": "/api/issuances/:id/reference-reveals",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "按需查看已发题范围的冻结参考解答",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "返回 reference_md（历史未封存时为 null）；返回正文前持久化 answer_help；不读取 current question 参考，不揭示其他 part。一次性诊断及容器发题不从此接口揭示。"
+      }
+    ]
+  },
+  {
+    "path": "/api/attempts",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "提交原生作答并激活候选",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "question_id": "REPLACE_question",
+          "rating": "hard",
+          "assessment": {
+            "issuance_id": "REPLACE_issuance",
+            "evaluation_group_id": "REPLACE_evaluation_group",
+            "idempotency_key": "REPLACE_attempt_key",
+            "response_set": {
+              "entries": [
+                {
+                  "slot_id": "REPLACE_slot",
+                  "kind": "text",
+                  "text_md": "original learner response"
+                }
+              ]
+            },
+            "group_evidence": []
+          },
+          "activation_intent": {
+            "evaluation_id": "REPLACE_candidate",
+            "expected_effective_id": null,
+            "expected_generation": 0
+          }
+        },
+        "notes": "原生请求返回 effective/review_required，assessment 带 submission/group/candidate 与学习 effect；重复提交复用原始回执，不产生第二次练习。self_report=true 仅显式 FSRS；auto_rate=true 不把 rating fallback 当用户选择。无 assessment 的旧请求返回 historical_unknown(409)，不会补造发题或写入学习状态。原始提交事务冻结学习知识点/难度/学科目标，排队后的标签编辑不改变本次学习范围。"
+      }
+    ]
+  },
+  {
+    "path": "/api/review/advice",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "保存冻结原始作答并预览候选",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "question_id": "REPLACE_question",
+          "assessment": {
+            "issuance_id": "REPLACE_issuance",
+            "evaluation_group_id": "REPLACE_evaluation_group",
+            "idempotency_key": "REPLACE_attempt_key",
+            "response_set": {
+              "entries": [
+                {
+                  "slot_id": "REPLACE_slot",
+                  "kind": "text",
+                  "text_md": "original learner response"
+                }
+              ]
+            },
+            "group_evidence": []
+          }
+        },
+        "notes": "返回 candidate_id/activation_intent/automatic_commit；不激活学习效应。响应没有评级建议时保留未决态，不补造评级。"
+      }
+    ]
+  },
+  {
+    "path": "/api/appeals",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "请求复核当前生效的原生评估",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "evaluation_id": "REPLACE_effective_evaluation",
+          "reason_md": "请复核原始推导中的单位换算。",
+          "idempotency_key": "REPLACE_appeal_key"
+        },
+        "notes": "只接受当前生效自动评估；原始作答和评分依据保持冻结，理由不替代作答。重复 key 复用请求，后台重判通过 CAS 激活；过时请求保持 held，不产生第二次练习。"
+      }
+    ]
+  },
+  {
+    "path": "/api/solve-sessions",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "使用已发题快照开始解题会话",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "question_id": "REPLACE_question",
+          "issuance_id": "REPLACE_issuance"
+        },
+        "notes": "返回 session_id、evaluation_group_id 与 idempotency_key，提交必须回传该稳定身份。正式原生会话不临时生成或改写参考解答。"
+      }
+    ]
+  },
+  {
+    "path": "/api/solve-sessions/:sid/submissions",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "提交冻结解题作答并原子结束会话",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "question_id": "REPLACE_question",
+          "assessment": {
+            "issuance_id": "REPLACE_issuance",
+            "evaluation_group_id": "REPLACE_session_evaluation_group_id",
+            "idempotency_key": "REPLACE_session_idempotency_key",
+            "response_set": {
+              "entries": [
+                {
+                  "slot_id": "REPLACE_slot",
+                  "kind": "text",
+                  "text_md": "original response"
+                }
+              ]
+            },
+            "group_evidence": []
+          }
+        },
+        "notes": "正式作答与学习结算、会话 judged、错题记录同事务；相同原始输入重复提交复用结果，修改已接受作答返回409。待评估保持 review_required，不揭示答案。"
+      }
+    ]
+  },
+  {
+    "path": "/api/review-sessions",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "创建试卷会话并固定发题绑定",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "paper_id": "REPLACE_paper"
+        },
+        "notes": "paper_id 可省略以创建普通复习会话；试卷必须已发布，创建会话与固定各槽位绑定在同一事务。新建返回201，复用活动会话返回200；返回 session_id。"
+      }
+    ]
+  },
+  {
+    "path": "/api/review-sessions/:id/answer-drafts",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "保存原生试卷作答草稿",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "paper_id": "REPLACE_paper",
+          "question_id": "REPLACE_question",
+          "part_ref": null,
+          "content_md": "original learner response",
+          "input_kind": "text",
+          "image_refs": [],
+          "expected_save_epoch": 0,
+          "assessment": {
+            "issuance_id": "REPLACE_issuance",
+            "evaluation_group_id": "REPLACE_evaluation_group",
+            "idempotency_key": "REPLACE_attempt_key",
+            "response_set": {
+              "entries": [
+                {
+                  "slot_id": "REPLACE_slot",
+                  "kind": "text",
+                  "text_md": "original learner response"
+                }
+              ]
+            },
+            "group_evidence": []
+          }
+        },
+        "notes": "必须先读取 /api/papers/:id，将该槽位 assessment 的 issuance_id/evaluation_group_id/idempotency_key 和 practice_dto 中的槽位、选项原样用于请求；示例 text 仅适用于对应已发布文本槽位。缺少原始发题绑定返回 historical_unknown(409)，不可在提交时补建历史绑定。 expected_save_epoch 使用最近一次服务端 ack 或详情返回的 save_epoch；过期返回 stale_draft(409)。返回 answer_id/created/save_epoch；恢复以详情 assessment.response_set/group_evidence 为准。"
+      }
+    ]
+  },
+  {
+    "path": "/api/review-sessions/:id/submissions",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "提交原生试卷作答",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "paper_id": "REPLACE_paper",
+          "question_id": "REPLACE_question",
+          "part_ref": null,
+          "answer_md": "original learner response",
+          "image_refs": [],
+          "assessment": {
+            "issuance_id": "REPLACE_issuance",
+            "evaluation_group_id": "REPLACE_evaluation_group",
+            "idempotency_key": "REPLACE_attempt_key",
+            "response_set": {
+              "entries": [
+                {
+                  "slot_id": "REPLACE_slot",
+                  "kind": "text",
+                  "text_md": "original learner response"
+                }
+              ]
+            },
+            "group_evidence": []
+          }
+        },
+        "notes": "必须先读取 /api/papers/:id，将该槽位 assessment 的 issuance_id/evaluation_group_id/idempotency_key 和 practice_dto 中的槽位、选项原样用于请求；示例 text 仅适用于对应已发布文本槽位。缺少原始发题绑定返回 historical_unknown(409)，不可在提交时补建历史绑定。 重复请求必须保持原始作答不变；回执投影当前生效候选。缓冲反馈仅返回身份字段和 visible_to_user=false/feedback_buffered=true，不返回 status/coarse_outcome/score。"
+      }
+    ]
+  },
+  {
+    "path": "/api/placement-sessions",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "创建 placement 会话并固定首题原始发题",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "goalId": "REPLACE_goal",
+          "pace": "light"
+        },
+        "notes": "201 + Location。返回 sessionId/answeredCount/question.assessment；question.assessment.state.practice_dto 为冻结公开题面，phase 为 answering/retry/pending/held。"
+      }
+    ]
+  },
+  {
+    "path": "/api/placement-sessions/:id",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "恢复 placement 会话生命周期",
+        "query": [],
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "读取 status、goal_id 和 scope_knowledge_ids。终态不自动重新开始。"
+      },
+      {
+        "method": "PATCH",
+        "summary": "明确完成或放弃 placement 会话",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {
+          "status": "completed"
+        },
+        "notes": "显式退出先等待必要上传及服务端草稿 ACK。刷新/pagehide 只尝试保存，保留 active session。完成成功后再导航档案。"
+      }
+    ]
+  },
+  {
+    "path": "/api/placement-sessions/:id/question-selections",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "恢复固定 issuance 或选择下一道自适应题",
+        "query": [],
+        "contentType": "application/json",
+        "bodyExample": {},
+        "notes": "先恢复未完成的 issuance。pending/held 不推进、不重交；retry 仅重发已接收的相同原始 response_set、group_evidence、submission_id 和 idempotency_key。answeredCount 按不同 question ID 统计原生和历史参与。有效 head 且结算成功后才选择或结束。"
       }
     ]
   }

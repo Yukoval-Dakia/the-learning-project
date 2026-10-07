@@ -2,22 +2,26 @@
 // queue) while its mind_probe question has no experimental:probe_result event; once
 // answered it drops out. Ordered newest-first, capped at ACTIVE_PROBES_MAX.
 
+import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import {
-  answerProbe,
-  serveProbeOnce,
-} from '@/capabilities/agency/server/conjecture/probe-lifecycle';
+import { answerProbe, serveProbeOnce, servePublishedProbe } from '@/capabilities/agency/public';
 import { PrepDeskProbesResponseSchema } from '@/capabilities/shell/api/contracts';
+import { assessment_issuance, event, question, question_group_lifecycle } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
+import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
+import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
+import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { GET } from '../api/prep-desk-probes';
 import { loadActiveProbes } from './prep-desk-probes';
 
 let seq = 0;
 async function serve(
   probeMd: string,
   now: Date,
+  admitted = true,
 ): Promise<{ probeQuestionId: string; conjectureProposalId: string }> {
   seq += 1;
   const conjectureProposalId = `conj_${seq}`;
@@ -69,6 +73,10 @@ async function serve(
     now,
   });
   if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
+  if (admitted) {
+    await publishPaperModelFixture(testDb(), served.probe_question_id);
+    await servePublishedProbe(testDb(), served.probe_question_id);
+  }
   return { probeQuestionId: served.probe_question_id, conjectureProposalId };
 }
 
@@ -76,6 +84,71 @@ describe('loadActiveProbes', () => {
   beforeEach(async () => {
     await resetDb();
     seq = 0;
+  });
+
+  it('withholds unadmitted probes and serves a frozen occurrence only after admission', async () => {
+    const probe = await serve('原始题干：说明链式法则中的内层导数。', new Date(), false);
+    expect(await loadActiveProbes(testDb())).toEqual({ probes: [] });
+    expect(await testDb().select().from(assessment_issuance)).toHaveLength(0);
+    expect(
+      await testDb()
+        .select()
+        .from(question_group_lifecycle)
+        .where(
+          and(
+            eq(question_group_lifecycle.group_id, probe.probeQuestionId),
+            eq(question_group_lifecycle.scoring_admission_state, 'withheld'),
+          ),
+        ),
+    ).toHaveLength(1);
+    const nextContract = await publishPaperModelFixture(testDb(), probe.probeQuestionId);
+    await servePublishedProbe(testDb(), probe.probeQuestionId);
+    const served = await loadActiveProbes(testDb());
+    expect(served.probes).toHaveLength(1);
+    await testDb()
+      .update(question)
+      .set({ prompt_md: '不应重新读取的 mutable 题干' })
+      .where(eq(question.id, probe.probeQuestionId));
+    expect(await loadActiveProbes(testDb())).toEqual(served);
+    expect(await testDb().select().from(assessment_issuance)).toHaveLength(1);
+    const [lifecycle] = await testDb()
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, probe.probeQuestionId));
+    nextContract.structure.parts[0].prompt_md = '下一版题干：不能替换已经送达的探针。';
+    nextContract.integrity_digest = contractIntegrityDigest(nextContract);
+    expect(
+      await publishQuestionGroup(testDb(), {
+        group_id: probe.probeQuestionId,
+        contract: nextContract,
+        expectedCurrentRevision: lifecycle.current_revision_id,
+        expectedAdmissionGeneration: lifecycle.scoring_admission_generation,
+        availability: lifecycle.availability,
+        actorRef: 'test:later-probe-publication',
+        now: new Date(),
+        admission: { state: 'admitted', evidence: lifecycle.scoring_admission_evidence },
+      }),
+    ).toMatchObject({ status: 'published' });
+    expect(await servePublishedProbe(testDb(), probe.probeQuestionId)).toMatchObject({
+      status: 'replayed',
+    });
+    expect(await loadActiveProbes(testDb())).toEqual(served);
+    expect(await testDb().select().from(assessment_issuance)).toHaveLength(1);
+  });
+
+  it('reading an admitted, unissued probe never writes an issuance', async () => {
+    const probe = await serve('等待显式发题的探针：请解释非零分母的条件。', new Date(), false);
+    await publishPaperModelFixture(testDb(), probe.probeQuestionId);
+    const before = await testDb().select().from(assessment_issuance);
+    const eventsBefore = await testDb().select().from(event);
+    const lifecycleBefore = await testDb().select().from(question_group_lifecycle);
+    const response = await GET();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({ probes: [] });
+    await GET();
+    expect(await testDb().select().from(assessment_issuance)).toEqual(before);
+    expect(await testDb().select().from(event)).toEqual(eventsBefore);
+    expect(await testDb().select().from(question_group_lifecycle)).toEqual(lifecycleBefore);
   });
 
   it('lists served-but-unanswered probes, newest first', async () => {
