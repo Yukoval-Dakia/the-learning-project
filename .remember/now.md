@@ -32,6 +32,13 @@ PR1599已合入7bc216509，tree与CI head6ab98ed8c一致；CI Gate37677610975成
 以下为历史记录，状态以顶部为准。
 
 
+源码集成commit `7d26e2403610c1d5a7617557078fb6a17476ac46` 已clean；最终handoff文档
+对照7631的 `/tmp/yuk1376-start-acceptance-matrix-20261008.md`，接口/loopback18952/
+原TokenGate鉴权说明齐备，全部真实browser/DB invariance/image观察留父核验后交7631。
+`/tmp/yuk1359-w1-remaining-consumers-20261008.md` 只作未来上下文，ProfileBand goal读、
+learning-intents pending proposal与best-effort wake等不扩入当前/mistakes writer。
+没有再次merge7100、启动服务或push；最终terminal doc commit后writer释放。
+
 以下为合入main的历史交接，不表示当前服务或PR状态。
 
 # 当前交付 — native P1修复已验证，最后审查通过，等待准确CI

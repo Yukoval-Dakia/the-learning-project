@@ -123,5 +123,11 @@
   },
   "initial_main_merge": "d98d965aa",
   "implementation_commit": "3819a695ccb4692871bb33749bf443f7eadf3106",
-  "public_materials": "PR1600 preserved as merged source; existing rendering unchanged; owner7631 retains acceptance"
+  "public_materials": "PR1600 preserved as merged source; existing rendering unchanged; owner7631 retains acceptance",
+  "source_integration_commit": "7d26e2403610c1d5a7617557078fb6a17476ac46",
+  "acceptance_inputs": {
+    "/tmp/yuk1376-start-acceptance-matrix-20261008.md": "b6bef2eda5ac0663de0ee0e015892c40eaba50ae0dd5ab9ed428e76e8a787259",
+    "/tmp/yuk1359-w1-remaining-consumers-20261008.md": "2c26ecd8ebbdf5edd8cffaa9968d65fe732aacb32998388ce427ef1342c98483"
+  },
+  "acceptance_inputs_status": "reviewed; browser/runtime pending; W1 remaining inventory is future context only"
 }

@@ -336,3 +336,39 @@ and final log/source hashes; earlier75-test statements describe3819a695c only.
 The parent startup command and remaining runtime/browser/release limitations
 above are unchanged. Protected records/ingestion/practice/kernel/manifest files
 have zero diff against7100dfae4. No new authorization or review round was used.
+
+### 7631 acceptance-matrix alignment
+
+The matrix `/tmp/yuk1376-start-acceptance-matrix-20261008.md` was read after the
+source integration commit `7d26e2403610c1d5a7617557078fb6a17476ac46` was clean.
+Its prerequisites and observations remain pending for the parent/7631. Candidate
+source includes published7100dfae404449c7a5331c25548957da036021ad; no candidate
+Docker image or live browser/runtime PASS is claimed by this writer.
+
+The loopback command above supplies the real token/epoch/read operation and
+separate authenticated subject/knowledge reads. It uses no reseeding or worker
+startup. For the image rows, add only these isolated-storage variables to the
+same `env -i` command, supplied by7631 through the parent's private environment:
+
+```bash
+R2_ENDPOINT="$YUK1352_ACCEPTANCE_R2_ENDPOINT" \
+R2_ACCESS_KEY_ID="$YUK1352_ACCEPTANCE_R2_ACCESS_KEY_ID" \
+R2_SECRET_ACCESS_KEY="$YUK1352_ACCEPTANCE_R2_SECRET_ACCESS_KEY" \
+R2_BUCKET="$YUK1352_ACCEPTANCE_R2_BUCKET" \
+```
+
+The full matrix additionally requires before/after non-system table counts and
+digests, with no new jobs/learning records/model runs; actual HTML/bundle token
+absence; observed browser failure/retry; image byte/MIME/digest and401; and
+candidate-specific route/request/browser captures. These are not replaced by
+controlled dispatch/unit tests. Never submit/start practice while checking its
+navigation target. Report missing fixture states or unexercised cases as pending.
+The page's200+ limit remains distinct from API cursor evidence, and prompt_materials
+wire completeness remains distinct from the unchanged card rendering.
+
+`/tmp/yuk1359-w1-remaining-consumers-20261008.md` is future context only. It records
+ProfileBand's goal-scoped `/api/placement/profile?goal`, learning-intent pending
+proposals and after-commit best-effort hub wake, among the remaining Today/Inbox
+consumers. Those obligations remain with1358/1359 and1355/1356 recovery owners;
+this writer adds no route, command, recovery owner or implementation for them.
+The parent first verifies this exact clean handoff, then passes the matrix to7631.
