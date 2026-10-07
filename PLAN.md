@@ -4,6 +4,8 @@
 
 ## NOW
 
+- **YUK-1375 → YUK-1376（1358 W1 /mistakes）**：本线程在1364发布收口后独占audit相对路径修复（不改allowlist），随后承接错题页非UI领域/API消费者迁移，保留视觉与现有行为；不改全局路由/manifest/package/lock或1352组合根，挂载交主线。1359退出清单继续由本线程维护。1352/1355/1356唯一集成与writer归主线57961995，不写其三树。
+
 - **YUK-1365**：PR1593/1594已分别合入df08399ff/6e54da8df。主线恢复即时SSE listener接线；其发布负责人负责新镜像与真实流式验收，本线程不接管。1367另线负责正式练习出版/评分准入与paper深链。
 
 - **YUK-1360 / PR1584**：已合入main26f101581，保留依赖升级与Mem0修补；本分支集成后冻结安装、309 DB/74 unit/typecheck/lint/build通过，等待新CI。源码合入不是部署授权或运行验收；pg-boss schema44/BAM、真实API/SPA及恢复义务见[依赖证据](docs/planning/2026-10-07-yuk1360-dependency-integration-evidence.md)。
@@ -11,7 +13,6 @@
 
 - **YUK-1338 / YUK-1351 P0 gate**：PR #1590 已合入主线 42987dfd7，本分支同步集成。测试容器中验证 Pi + DBOS 状态版本、过期拒绝、四个进程终止边界、响应复用与单次业务效果；不等于整个迁移或真实 provider 重复付费问题已解决。证据见[gate 记录](docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md)。
 
-- **YUK-1363 / YUK-1364**：测试存储已验收，V1兼容修复faf2e66b0完成281DB/82unit/静态构建及父100DB。586c3e456准确镜像V1隔离HTTP完成，资源清理且锁已释放；但新P1确认V2 criterion.statement_md未绑定原proposal，修复ba49af22d已收回并核验45项hash，275DB/130unit及静态构建通过，父另跑112DB通过。77c7df79c准确镜像HTTP两序列拒绝及22表无增量已验证，首次夹具失误保留记录。隔离资源清理、锁释放，最终e468 CI37653519120全绿，但执行契约P1已修a5e623045，377DB/130unit及父196DB通过。853准确镜像HTTP合法显示/两序列错误executor409与22表无写通过，资源清理且锁释放；待最终CI，尚未合并发布。YUK-1375记录既有schema audit路径误判，1374记录P2列表窗口。见[证据](docs/planning/2026-10-07-yuk1364-probe-issuance.md)。
 - **YUK-1356 业务操作迁移**：接口与消费者调查已交付[实施输入](docs/planning/2026-10-07-yuk1356-operation-seams.md)。主线57961995已接手独立树唯一实施writer，与1352/1355协调；本线程不重复实施。Pi可信作答来源、队列诊断投影与coverage语义必须保留，三入口统一尚未验收。
 
 - **YUK-1362 / 当前部署用途**：仅供 Agent 开发测试，禁止再次清库或恢复私人数据。14:30Z实读 current-release 为1365发布 `6e54da8df` / image `fd8c046b97fe`，锁不存在；即时SSE已有1365证据，正文/取消验收仍受provider限额阻碍，1366负责现存DLQ。本线程未操作服务。此处是带时间的观察，后续发布仍须重新核验并原子取锁；日用须owner明确要求。
@@ -22,6 +23,8 @@
 
 ## NEXT
 
+- **YUK-1364 已收口**：PR1591合入5aa2a9e98并发布准确853/image9b76至Agent TEST；102表/97文件/Mem0恢复、真实HTTP与队列核验通过，17:33:31Z释放锁。源码与运行证据详见[1364记录](docs/planning/2026-10-07-yuk1364-probe-issuance.md)。
+
 - 先落实 YUK-1346 的可信单次记忆/派生用途策略，再沿“椭圆难题 → 记录过程与帮助程度 → 区分暂时理解和独立迁移 → 后续验证安排”的真实学习路径推进。短回答成功不等于可靠评估已经兑现。
 - YUK-1042：原队列已随 owner 明确授权的 YUK-1362 清库退出运行环境，完整历史保存在离线备份；不得自动重放或把删除历史当作修复重试安全缺陷。
 - **TS 迁移 + UI 重写（epic YUK-1351）2026-10-07 owner 指示开工**：[准备计划](docs/planning/2026-10-07-ts-migration-and-ui-rewrite-prep.md) 原“每条路由同时交付新 UI”要求已被 owner 后续指令覆盖：先完成非 UI 迁移，保留现有页面，UI 重写暂缓。首批并行：**YUK-1338**（Pi + DBOS 状态版本/过期拒绝/重启恢复竖切，第一道 gate，不过 gate 不动生产）与 **YUK-1353**（视觉方向 loft）。UI 票（YUK-1353/1354/1357 及 P6 UI 子票）只交 Claude Opus 5.5；非 UI 开发按 AGENTS 常规选择。ADR 以 main 的 0066 为准。
@@ -29,7 +32,7 @@
 
 ## PARKED
 
-- **YUK-1375**：schema audit 对绝对路径做test/spec过滤，当前test-storage工作树误排除生产源码；准确base与修复后JSON一致。独立工具修复已登记Todo，不改allowlist掩盖，详见1364证据。
+- **YUK-1375**：schema audit 对绝对路径做test/spec过滤，当前test-storage工作树误排除生产源码；准确base与修复后JSON一致。修复4370670a6已交回，123unit与静态构建通过；父54unit/真实CLI885字段0未豁免通过，待独立review和CI，不改allowlist掩盖，详见1364证据。
 
 - **YUK-1360 父线程发布验收义务**：真实 startup 返回 schema44 时仍有7项 BAM index 工作 pending；不能把 start/health/Drizzle smoke 当作 background migration 完成。本 lane 验证 disposable 完成与 index validity；生产需父线程在既有发布流程核验。旧12.26.3默认启动仅证明单个 synthetic queue 操作，`migrate:false`拒绝44；没有执行或批准 queue downgrade。归入既有 YUK-1360/YUK-1329 验收，不在此 lane 新建 Linear。
 - YUK-1346：单次“不写入记忆”的可信策略尚未实现，High/Backlog，选为下一条产品线；两条原假设验收摘要保留，不冒称已修。

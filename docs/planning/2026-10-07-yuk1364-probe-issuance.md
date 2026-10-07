@@ -170,3 +170,14 @@ P2 4208871942 的 LIMIT-before-validation 已源码确认，运行影响尚未�
 ### 85345ac0c 准确镜像执行计划HTTP
 
 85345ac0c9d14bc748c10928e2adb934f5891a54准确ARM64镜像sha256:9b76e7cb746dc51f1f661adba65041d514502f041e20111ae91defe3679be25c已实际验收。合法V2探针brief/list显示原题，只GET；正常publication保留原proposal/spec/criterion而替换为JevScoringDecisionTask的seq1/2均HTTP409 probe_execution_contract_mismatch并排除展示。三个窗口22表完整快照不变，submission/evaluation/provider/task/cost均0，没有有效答案POST。证据runtimeRoot/yuk1364-preflight-85345ac0c/evidence/acceptance-summary.json。已保留最终隔离dump，清理自有app/PG匿名volume/network，核owner释放锁并通知双方；主release未变、四服务healthy。当前CI/合并/发布待完成。本次无新follow-up，旧1374/1375/1329仍保留。
+
+
+## 2026-10-07 17:33Z 发布收口
+
+PR1591 最终 head `13b56e35a005413fe6e870eb9e90969661cd0d4c` 的 CI37656530209 全绿。七个审查线程均已裁决，最后 push 后17分钟等待窗完成；Codex后续自动审查额度耗尽，不记作无finding。仓库拒绝merge commit，使用允许的squash合入 `5aa2a9e989984dfa065b3ba400b67b6b987b12e3`，父核Git tree与CI head完全一致。
+
+17:26:19Z原子获取部署锁并通知两owner，副本迁移通过；最终停写备份恢复102表、97存储文件、worker Mem0完整目录含WAL校验通过。恢复同时核对表清单/计数、queue状态计数及failed/DLQ完整行，非仅health。app/worker切至准确镜像 `sha256:9b76e7cb746dc51f1f661adba65041d514502f041e20111ae91defe3679be25c`，build source85345ac0c；主库迁移完成，四服务healthy、readiness active、pg-boss44、BAM四项completed、无无效索引。真实HTTP brief/probes200、未认证401；错误executor两sequence409及22表无写由此前准确镜像隔离HTTP证明。未调用付费模型，未重放原两条failed/DLQ相关记录，正文/取消和memory恢复仍归1365/1366。
+
+current-release已更新为合并source/build/image及限定验收范围。自有恢复容器已清理，备份和完整证据留在 `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/deployment-yuk1364-13b56e35a/release-result.json`。17:33:31Z核owner释放锁，两线程已收到显式通知。YUK1364 Done；整体非UI迁移未完成，日用未授权。
+
+Capture gate：已有1374承接列表窗口P2、1375承接schema audit路径误判、1329承接通用恢复工具/Mem0 WAL验证；本次无新独立产品缺陷，不重复建票。下一线为1375，然后1358 W1 /mistakes非UI领域/API消费者；1359退出清单仍本线程独占，1352/1355/1356由主线集成。

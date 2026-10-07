@@ -1,3 +1,23 @@
+# 当前交付 — 1375 实施交回与父验收
+
+4370670a6仅修audit脚本/测试，writer已释放。32项hash父核，123unit/typecheck/lint/build通过；父54unit与真实CLI170467字节JSON一致，885字段/0未豁免/41allowed，allowlist未改。独立review task yuk1375-independent-review-20261008-v1（同8abc7d36 task前缀），codex gpt6.1sol xhigh只读，尚待结果。证据见docs/planning/2026-10-08-yuk1375-schema-audit-paths.md。尚未push/PR/CI，不称Done；无runtime动作。
+
+以下为历史记录。
+
+# 接续补充 — 1375 writer active / 1376 Todo
+
+T3子任务 yuk1375-relative-source-path-repair-20261008-v1（完整ID前缀node:delegated-task:command%3Amcp%3A8abc7d36-c3c9-4544-adaf-b15a177e2fab%3Adelegate-task%3A），codex gpt-6.1-sol high唯一代码writer，本轮task_status实查仍running/working，父不并发代码或测试。负责scripts/audit-schema-writes.ts及对应test，父仅docs/tracker。
+
+Linear首次创建/mistakes子票transport失败；恢复后确认1358子票为空才重试，现已真实创建YUK-1376 Todo。范围/验收及ownership见票和1359退出文档。此前/tmp/yuk1358-mistakes-ticket-pending.md仅历史不确定记录，现在已消歧。
+
+# 当前交付 — 1364 已发布，转1375/1358
+
+2026-10-07 17:33Z：PR1591合入5aa2a9e98，tree与CI13b56一致；Agent TEST发布build853/image9b76完成，102表/97存储文件/Mem0含WAL恢复校验、真实brief/probes200/无auth401及schema44/BAM4completed通过。17:33:31Z核owner释放锁并通知两owner，恢复容器清理，材料保留deployment-yuk1364-13b56e35a。原failed/DLQ相关两行保留；1365正文/取消与1366恢复不在本次完成范围。Linear1364已Done。
+
+当前分支fix/yuk-1375-schema-audit-relative-path，从最新origin/main5aa2a9e98创建。先独占修1375 audit绝对路径误排除源码，不改allowlist；随后1358 W1 /mistakes非UI领域/API消费者，保留视觉和已有行为，不接practice评分、不改Start组合根/全局路由/manifest/package/lock，不新增恢复机制。1359清单继续本线程负责；1352/1355/1356树与writer归主线57961995，不写。只读准备 /tmp/yuk1364-next-lane-readonly-prep.json，实施前重新核main。
+
+以下为历史记录。
+
 # 当前交付 — YUK1364 853镜像验收
 
 85345ac0c9d14bc748c10928e2adb934f5891a54准确ARM64镜像sha256:9b76e7cb746dc51f1f661adba65041d514502f041e20111ae91defe3679be25c已实际验收。合法V2探针brief/list显示原题，只GET；正常publication保留原proposal/spec/criterion而替换为JevScoringDecisionTask的seq1/2均HTTP409 probe_execution_contract_mismatch并排除展示。三个窗口22表完整快照不变，submission/evaluation/provider/task/cost均0，没有有效答案POST。证据runtimeRoot/yuk1364-preflight-85345ac0c/evidence/acceptance-summary.json。已保留最终隔离dump，清理自有app/PG匿名volume/network，核owner释放锁并通知双方；主release未变、四服务healthy。当前CI/合并/发布待完成。本次无新follow-up，旧1374/1375/1329仍保留。
