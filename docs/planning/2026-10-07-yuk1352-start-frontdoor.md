@@ -372,3 +372,31 @@ proposals and after-commit best-effort hub wake, among the remaining Today/Inbox
 consumers. Those obligations remain with1358/1359 and1355/1356 recovery owners;
 this writer adds no route, command, recovery owner or implementation for them.
 The parent first verifies this exact clean handoff, then passes the matrix to7631.
+
+### Parent acceptance of isolated Start route (2026-10-08 JST)
+
+Candidate `3d6273a146c40ccffc8b7677f42048bfb2e98ccf` was exercised by
+the existing YUK1376 acceptance owner using isolated PG/S3 and Start port18952.
+The parent verified39 source/log/input hashes, reran21 auth/read/client/page tests,
+and inspected the returned HTTP, browser, artifact and database records.
+The actual `/_serverFn/` request returned401 without authorization and200 with it.
+Four frozen records and public materials, three images with bytes/MIME/SHA/ETag,
+eight thumbnails/Lightbox, filtering/refresh/return and browser re-gating passed.
+A controlled frontend503 produced a visible error; a real retry restored four rows.
+
+Full navigation database invariance did **not** pass: opening `/practice` created
+one `practice_stream_item`; the other85 tables were unchanged. The parent checked
+`src/capabilities/practice/api/stream.ts`: its existing today's GET explicitly uses
+`composeIfEmpty` and `materializeScoped`. This file has no candidate diff from main.
+This is preserved practice initialization, not evidence that the Start mistakes
+read wrote data. No new product bug is asserted from that existing behavior.
+After navigation, the separate mistakes retry window left all86 tables unchanged.
+The inserted row and original evidence remain intact. This distinction belongs
+in the existing1359/1376 acceptance matrix; no duplicate defect ticket is needed.
+
+All158 build artifacts were unchanged, the tree remained clean, and cleanup
+records show the three isolated ports stopped and the owner lock released.
+The main release was unchanged. Canonical boot, custom-subject hydration, release,
+SSE, all media rendering and full SPA retirement remain unverified by this run.
+No provider, worker or replay ran. The runtime evidence seal is
+[evidence/2026-10-08-yuk1352-start-runtime.json](evidence/2026-10-08-yuk1352-start-runtime.json).

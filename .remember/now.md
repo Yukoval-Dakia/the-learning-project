@@ -1,3 +1,7 @@
+# 1352 parent acceptance — 2026-10-08
+
+3d6273a14 isolated Start RPC/browser/assets/retry evidence inspected;39 hashes and21 parent scoped tests passed. Full navigation changed one practice_stream_item via unchanged lazy-compose GET;85 other tables unchanged, separate retry86 tables unchanged.158 build artifacts unchanged.7631 stopped own services and released lock;1352 source/build ownership returned to parent. Canonical boot/release/SSE/full SPA exit still pending. Evidence docs/planning/evidence/2026-10-08-yuk1352-start-runtime.json. Parent now updates PR1592, no runtime operation.
+
 # 当前交接 — 2026-10-08 YUK-1352 authenticated Start /mistakes
 
 唯一writer树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor`，

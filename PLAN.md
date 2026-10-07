@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：YUK-1352 正常合入 main `7100dfae4`，已接入真实 Start `/mistakes` 与共享 typed read。Node24 scoped/static/build 和无 listener 编译适配检查通过；父线程负责 PR1592、准确 CI、runtime lock 与浏览器验收。未部署，Agent TEST ONLY。
+> Linear 是权威 tracker。2026-10-08：YUK-1352 正常合入 main `7100dfae4`，已接入真实 Start `/mistakes` 与共享 typed read。Node24 scoped/static/build 和无 listener 编译适配检查通过；隔离Start浏览器/RPC/图片与错误重试已验收；练习导航保留首次GET初始化写入，不能称全程DB不变。父线程负责PR1592准确CI与后续门禁。未部署，Agent TEST ONLY。
 
 ## NOW
 
