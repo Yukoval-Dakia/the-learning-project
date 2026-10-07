@@ -150,3 +150,9 @@ P2 4208871942 的 LIMIT-before-validation 已源码确认，运行影响尚未�
 子任务275DB、130unit、typecheck/lint/build及3相关audit通过；父核对45项来源/制品/日志hash，另跑V1与完整契约两文件112DB通过。父日志 `/tmp/yuk1364-criterion-parent-db.log` 使用Node26.10.0。详细证据 `/tmp/yuk1364-v2-criterion-evidence.md` 与 manifest同前缀。schema audit不作PASS，YUK1375仍独立跟进。
 
 源码writer已释放。新head CI、准确镜像HTTP与发布尚未完成，586证据不能覆盖此修复。本轮没有新增可执行follow-up，修复对应现有P1；1374/1375状态不变。
+
+### 77c7df79c 准确镜像 HTTP 验收
+
+77c7df79c/image993fcdd5fdd6准确镜像HTTP已完成：正常publication只改statement的seq1/2均409 probe_criterion_mismatch，brief/list排除，22表前后快照相同。首次fixture因JSON字段顺序比较失败，父shell未停误发合法答案422，产生隔离submission/evaluation各1；provider/task/cost0。此失败完整保留，后续负例以这1/1为baseline，未清除数据刷绿。合法原题GET可见。全部证据及最终dump在runtimeRoot/yuk1364-preflight-77c7df79c。40项证据hash封存，自有app/PG/volume/network清理，核owner释放锁并通知两owner；主fd8四服务healthy、release不变。
+
+准确head CI待完成，所有既有P1已push后reply/resolve；无需第三review。后续按正常门禁合并、停写备份恢复与Agent TEST发布。此后文档提交不改77c应用源码，发布仍记录buildSourceRevision=77c。没有新增产品follow-up；1374/1375仍独立未修。

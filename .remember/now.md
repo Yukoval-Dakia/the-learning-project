@@ -1,3 +1,11 @@
+# 当前交付 — YUK-1364 77c 镜像验收
+
+77c7df79c/image993fcdd5fdd6准确镜像HTTP已完成：正常publication只改statement的seq1/2均409 probe_criterion_mismatch，brief/list排除，22表前后快照相同。首次fixture因JSON字段顺序比较失败，父shell未停误发合法答案422，产生隔离submission/evaluation各1；provider/task/cost0。此失败完整保留，后续负例以这1/1为baseline，未清除数据刷绿。合法原题GET可见。全部证据及最终dump在runtimeRoot/yuk1364-preflight-77c7df79c。40项证据hash封存，自有app/PG/volume/network清理，核owner释放锁并通知两owner；主fd8四服务healthy、release不变。
+
+准确head CI待完成，所有既有P1已push后reply/resolve；无需第三review。后续按正常门禁合并、停写备份恢复与Agent TEST发布。此后文档提交不改77c应用源码，发布仍记录buildSourceRevision=77c。没有新增产品follow-up；1374/1375仍独立未修。
+
+以下为历史记录。
+
 # 当前交付 — YUK-1364 V2 criterion 修复收回
 
 ba49af22de08aac685ceb45a50ab1a42de7bf3c4 已提交完整 canonical criterion 共用修复。子任务 writer 已释放，无 pending child runs。父核验 manifest 全部45项hash，并实跑 V1 + complete-spec 两文件112DB通过，日志 /tmp/yuk1364-criterion-parent-db.log。父测试使用当前 Node26.10.0；镜像仍按项目 Node24 构建。子任务275DB/130unit/typecheck/lint/build及3audit通过，schema audit未运行未称PASS。没有新增独立review。
