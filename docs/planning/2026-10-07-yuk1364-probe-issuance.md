@@ -14,7 +14,7 @@ active 与 completed consumer 现在共享冻结题面投影。完成后的结�
 
 ## 验证证据
 
-2026-10-07 本地最终记录：
+2026-10-07 首次 P1 修复后的记录（未覆盖下述连续复验缺口）：
 
 - 7 个 scoped DB 文件、124 项测试通过，包含正式发题资格、完整结果链路及 probe-answer 消费者。
 - 3 个 scoped unit 文件、52 项测试通过。
@@ -22,4 +22,6 @@ active 与 completed consumer 现在共享冻结题面投影。完成后的结�
 - 测试使用独立 Testcontainers PostgreSQL 和离线模型执行端，未操作 live loom、未调用付费 provider。
 - 独立初审 P1 的红绿记录：`/tmp/yuk1364-p1-red.log`、`/tmp/yuk1364-p1-green.log`。最终回归：`/tmp/yuk1364-p1-db-final.log`、`/tmp/yuk1364-p1-unit.log`；其他门禁为相同前缀的 typecheck/lint/build 日志。
 
-修复验证审正在进行。此记录不代表 exact-head CI 已通过，也不代表该修复已部署。真实 provider 输出质量不属于本次离线契约验证结论。
+唯一验证审已完成，仍有一项 P1：带 follow-up 的连续复验通过 `probe-evidence.ts` 校验支持链，`supportingQuestionSequence` 仍读取可变题面、参考答案和版本。已正式发题的 legacy follow-up 编辑后，可能作答成功却使 confirmed 结果不可见、ack 409、报告误判 corrupt。该发现来自源码追踪；上述单次 probe 回归不能证明连续复验通过。
+
+独占 implementation writer 正在用隔离 DB 复现并修复；PR #1591 暂不合并，不启动第三轮审查。父线程仍须检查实际修复和回归结果。此记录不代表 exact-head CI 已通过，也不代表该修复已部署。真实 provider 输出质量不属于本次离线契约验证结论。
