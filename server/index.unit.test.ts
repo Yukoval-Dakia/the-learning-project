@@ -5,6 +5,10 @@ const mocks = vi.hoisted(() => ({
   recover: vi.fn(async () => []),
   close: vi.fn((done: () => void) => done()),
   end: vi.fn(async () => undefined),
+  startListen: vi.fn(async () => {
+    mocks.order.push('job-events-listening');
+  }),
+  stopListen: vi.fn(async () => undefined),
   workerEnabled: false,
   startWorker: vi.fn(async (): Promise<void> => undefined),
   getBoss: vi.fn<() => unknown>(() => null),
@@ -25,6 +29,10 @@ vi.mock('@/server/projections/sot-flag', () => ({ warnFlipOrder: vi.fn() }));
 vi.mock('./env', () => ({ loadApiEnv: () => ({ RW_WORKER: mocks.workerEnabled ? '1' : '0' }) }));
 vi.mock('./app', () => ({ buildHonoApp: () => ({ fetch: vi.fn(), get: vi.fn(), use: vi.fn() }) }));
 vi.mock('@/db/client', () => ({ db: { $client: { end: mocks.end } } }));
+vi.mock('@/server/events/listen_loop', () => ({
+  startListenLoop: mocks.startListen,
+  stopListenLoop: mocks.stopListen,
+}));
 vi.mock('@/server/boss/client', () => ({ getRunningBoss: mocks.getBoss }));
 vi.mock('@/server/boss/start-worker', () => ({ startBossWorker: mocks.startWorker }));
 vi.mock('@/server/boss/shutdown', () => ({ stopBossGracefully: mocks.drain }));
@@ -80,6 +88,8 @@ describe('API startup', () => {
     mocks.serve.mockClear();
     mocks.close.mockClear();
     mocks.end.mockClear();
+    mocks.startListen.mockClear();
+    mocks.stopListen.mockReset().mockResolvedValue(undefined);
     mocks.workerEnabled = false;
     mocks.startWorker.mockReset().mockResolvedValue(undefined);
     mocks.getBoss.mockReset().mockReturnValue(null);
@@ -101,6 +111,7 @@ describe('API startup', () => {
       'tool-operations-recovered',
       'admin-config-facts-injected',
       'admin-config-writer-injected',
+      'job-events-listening',
       'serve',
     ]);
     expect(mocks.recover).toHaveBeenCalledTimes(1);
@@ -122,6 +133,10 @@ describe('API startup', () => {
       await handlers.get('SIGTERM')?.('SIGTERM');
       expect(mocks.stopConfigRefresh).toHaveBeenCalledTimes(1);
       expect(mocks.close).toHaveBeenCalledTimes(1);
+      expect(mocks.stopListen).toHaveBeenCalledTimes(1);
+      expect(mocks.stopListen.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.end.mock.invocationCallOrder[0],
+      );
       expect(mocks.end).toHaveBeenCalledTimes(1);
       expect(mocks.close.mock.invocationCallOrder[0]).toBeLessThan(
         mocks.end.mock.invocationCallOrder[0],
@@ -154,10 +169,36 @@ describe('API startup', () => {
       'tool-operations-recovered',
       'admin-config-facts-injected',
       'admin-config-writer-injected',
+      'job-events-listening',
       'serve',
     ]);
     await handlers.get('SIGTERM')?.('SIGTERM');
     expect(mocks.stopConfigRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits for the notification subscription before serving HTTP', async () => {
+    let listening = () => {};
+    mocks.startListen.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          listening = resolve;
+        }),
+    );
+    await import('./index');
+    await vi.waitFor(() => expect(mocks.startListen).toHaveBeenCalledTimes(1));
+    expect(mocks.serve).not.toHaveBeenCalled();
+    listening();
+    await vi.waitFor(() => expect(mocks.serve).toHaveBeenCalledTimes(1));
+    await handlers.get('SIGTERM')?.('SIGTERM');
+  });
+
+  it('closes the database even when notification shutdown fails', async () => {
+    mocks.stopListen.mockRejectedValueOnce(new Error('listener stop failed'));
+    await import('./index');
+    await vi.waitFor(() => expect(mocks.serve).toHaveBeenCalledTimes(1));
+    await handlers.get('SIGTERM')?.('SIGTERM');
+    expect(mocks.end).toHaveBeenCalledTimes(1);
+    expect(process.exit).toHaveBeenCalledWith(1);
   });
 
   it('waits for an in-process worker still starting before releasing the DB', async () => {

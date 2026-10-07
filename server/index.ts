@@ -141,6 +141,8 @@ void (async () => {
   await recoverToolOperationsBeforeServe();
   await injectAdminConfigFactsBeforeServe();
   await injectAdminConfigWriterBeforeServe();
+  const { startListenLoop, stopListenLoop } = await import('@/server/events/listen_loop');
+  await startListenLoop();
   const server = serve({ fetch: app.fetch, port }, (info) => {
     const mounted = capabilities.flatMap((c) =>
       (c.api?.routes ?? []).filter((r) => r.load).map((r) => `${r.method} ${r.path}`),
@@ -164,7 +166,11 @@ void (async () => {
       if (boss) await stopBossGracefully(boss, 'API shutdown');
     } finally {
       configRefresh?.stop();
-      await db.$client.end({ timeout: 3 });
+      try {
+        await stopListenLoop();
+      } finally {
+        await db.$client.end({ timeout: 3 });
+      }
     }
   });
 
