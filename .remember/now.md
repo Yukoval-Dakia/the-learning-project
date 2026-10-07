@@ -1,4 +1,26 @@
-# 当前指针 — 2026-09-25，YUK-1038 Q20/Q21 已批准，ticket 拆分已建
+# 当前接续 — 2026-10-07 01:18Z
+
+生产0f81e198f健康，PR1586发布文档已合入main d501ea163。UI PR1583修复已push exact d3906a701f6a3f8d31a5961f43aafc0d1f4ccbd4，P1已回复resolve，父42组件/37DB/10构建页面与最终build通过；等待新exact CI及17min，保守01:34Z前不得merge。UI树tlp-yuk-1340-session-entry干净、父线程唯一写入者，writer已终态，无第三审。1340 InReview；1346不记忆控制HighBacklog已登记。详见.remember/2026-10-07-autonomous-local-delivery.md最新节及UI树PLAN。以下均为历史，不以旧版本/旧writer状态重复执行。
+
+# 最新自主交付状态 — 2026-10-07 00:52Z
+
+生产已为main0f81e198f，app/worker产品MiMo2.6Pro；真实Copilot两轮/刷新与MemoryBrief通过，1341Done。私有current-release.json指向deployment-mimo-20261007-0f81e198，锁已释放；不要按下方历史5d或root旧PLAN重复部署。交付看板在tlp-yuk-1341-mimo-go/PLAN.md，已提交5bd359e7d、文档PR1586等门禁，不需再部署。完整证据与限制见本目录2026-10-07-autonomous-local-delivery.md末尾。
+
+UI1340旧MiMo writer已中断/排队取消/归档，确认无活动后交接给唯一CodexSol6.1 xhigh writer yuk1340-retained-session-p1-recovery-20261007-v2（7016dbb9前缀），在tlp-yuk-1340-session-entry修retainedauto P1和main冲突，提交不push；父线程不抢写、不第三审，唯一watch1583/1586。
+
+以下旧版本和模型范围为历史，不覆盖owner产品AI纠正与上述生产事实。
+
+---
+
+# 当前指针 2026-10-01，现有PR收口完成，回产品主线
+
+- owner要求#1512已有提速进入main，后续优化暂停；回产品主线前收掉现有13个PR，本轮不部署、不新增付费评测。
+- 初始13个PR中10合并、3关闭未合入，GitHub开放PR实查为空。main `071875716` 完整CI Gate `36734331254` 全绿，#1503最后合并并提交最终PLAN。
+- #1512已有提速随 `4e328209a` 入main，perf远端与本地工作树保留。#1505/#1506/#1508原head另存 `retained/pr-1505/1506/1508`，没有通过抬lint基线、硬升Node或丢turn-cap把升级合入。
+- 交接和证据见 `.remember/2026-09-30-pr-closeout.md` 与同日tmp目录。根用户代码和其他本地改动保留，未混入交付。
+- 2026-09-25以下内容保留为历史，不是新的实施/部署授权。Linear connector仍不可用，待办已提交于main PLAN PARKED，未声称写回Linear。YUK-1007预算/语言/UI/写面未做，YUK-1107暂停未达120秒。未自动开始下一段实施。
+
+# 历史指针 2026-09-25，YUK-1038 Q20/Q21 已批准，ticket 拆分已建
 
 - owner 认可五层模型方向，裁决**全量迁移/任意题目/一次切换**，拒绝 LIGHT 分批；**方向认可 ≠ 已实施**。
 - **Q20 UI preflight 已批准**（`docs/design/2026-09-24-assessment-ui-preflight.md` §2–§9）；**Q21 ticket 拆分已批准**——17 张依赖票 **YUK-1043–1059**（parent=YUK-1038，`ready-for-agent`，blockedBy 按 §17 DAG 落位；YUK-1055↔YUK-766、YUK-1049↔YUK-438、YUK-1056↔YUK-1041/1042）。
@@ -742,3 +764,26 @@
 
 ## 21:51 | main
 按指令通过 ToolSearch 加载 web_search_exa 后执行了 exa 搜索「derivative of e^x proof」，但记录在结果前截断——未获取并汇报第一条结果的 title/url，任务未完成。
+
+## 00:38 | yukovaldakia09/yuk-1337-ts-架构决策-固化单服务器全栈与实时自适应学习目标
+Read-only review of TLP autonomous-delivery docs (charter2026-10-07, ADR0066, PLAN snapshot) and .audit/tlp-autonomous-delivery.tsv + deployment evidence: 2 P1 blockers (rollback durability, AGENTS.md contradiction) gating deployment, 8 attention flags, no false achievement claims detected.
+## 01:09 | yukovaldakia09/yuk-1337-ts-架构决策-固化单服务器全栈与实时自适应学习目标
+Verified P1 blockers resolved in docs commit: rollback durability/migrator order now in charter (sequential: scratch migration → stop writers → final backup → migrate → worker → app), AGENTS.md delegation cites standing UI pre-flight approval; docs merge OK; production deployment gate remains pending (final runner not yet built), 5 attention flags logged.
+
+## 2026-10-07 | 自主交付接续
+Owner最新明确纠正：“我指的就是产品内的ai工作，不是开发工作。”产品内判题/辅导/记忆整理/规划等生成式多模态AI须统一OpenCode Go MiMo2.6Pro；旧“只切开发、产品路由暂保留”已作废，刚到旧模板自动消息属于旧排队内容。原hourly scheduler提示已改正，仍绑定本线程。开发模型按AGENTS正常选择，当前UI任务不重启。新产品AI唯一writer在 /Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1341-mimo-go、branch fix/yuk-1341-product-mimo-routes、base main8a5379285；taskId node:delegated-task:command%3Amcp%3A7016dbb9-0466-42f2-a342-2488f7f6be7a%3Adelegate-task%3Ayuk1341-product-ai-mimo-scope-implementation-20261007-v1，开发agent codex/gpt-6.1-sol high，负责consumer census/接线/实际输出验证及版本化charter/PLAN修正，父线程负责集成部署。生产5d738dbc0尚未切换，勿称已完成。
+
+本机仍main5d738dbc0健康，旧Xiaomi402未恢复，生产路由尚待按最新授权切换。main8a5379285；PR1583当前headb6c488ed5，fixture日期修复exact-head CI37538417401已全绿但父线程未完成验收；新P1 discussion4200906261确认：自动选择跨关闭/重开保留，绕过24h检查。PR禁止合并/部署，前r2无P0/P1不覆盖此已裁决分支，review预算用尽不第三审。唯一MiMo writer yuk1340-shipped-fixture-repair-20261007-v1已接顺序扩展：交fixture证据后修自动来源重新校验，保留显式选择/pending恢复，核对clock skew；提交不push。旧3子线程被PR通知唤起曾越界写/push，父线程已中断并指示只unwatch/收尾，禁止重复实施/测试/review。最新持久细节在.remember/2026-10-07-autonomous-local-delivery.md；UI树/PLAN由唯一writer更新，父线程不抢写。每小时原automation及父PRwatch保留。
+
+## 18:50 | yukovaldakia09/yuk-1337-ts-架构决策-固化单服务器全栈与实时自适应学习目标
+
+启动agent处理YUK-100~500范围20张工单（转Todo、补决策与触发条件、设截止日，非代码入main勿标Done），agent运行中尚未完成；迁移大单与UI重写筹备启动（UI由opus 5.5主导）。
+## 19:22 | yukovaldakia09/yuk-1337-ts-架构决策-固化单服务器全栈与实时自适应学习目标
+
+完成20工单处理(YUK-100~500范围，8→Todo、1取消、11→Backlog+触发条件+截止)，UI-Opus规则提交(7ddc53b34)，迁移规划完成(epic YUK-1351、子单YUK-1352~1359、文档、PLAN.md更新，commits 72a3307fc/f268beb9a/79f65c3ab)，未push、10-21/11-07复查未指派。
+## 19:25 | yukovaldakia09/yuk-1337-ts-架构决策-固化单服务器全栈与实时自适应学习目标
+建定时复查任务(Wed/Sat 10:00，10-10首次)，处理10-21(YUK-406/405/418/419/438含政策)、11-07(8张触发单)，附证据评论+更新PLAN.md+11-07后自删。
+## 19:35 | design/yuk-1353-visual-loft
+Wrote 2026-10-07-yuk1353-visual-loft-preflight.md per docs/design/2026-10-06-continuous-learning-system-behavior.md baseline, updated YUK-1353/1351 to In Prog, started deps/tools setup, pending prototypes (3 variants × 2 screens × desktop/mobile × light/dark), screenshots, Opus review, decision doc.
+## 19:51 | yukovaldakia09/yuk-1337-ts-架构决策-固化单服务器全栈与实时自适应学习目标
+合并准备文档 PR #1589（修复 Codex P1：`/api/ready` 豁免、模型路由），启动 YUK-1338（Pi/DBOS 验证）和 YUK-1353（UI 原型）工作线，生产判题失败故障待排查。
