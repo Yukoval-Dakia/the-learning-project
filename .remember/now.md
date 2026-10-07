@@ -1,16 +1,16 @@
-# 当前交接 — 2026-10-07 06:05Z YUK-1346 真实R3仍被拦截
+# 当前交接 — 2026-10-07 07:01Z YUK-1346 既有答案准入源码修复，真实验收待父
 
-父持有交付树写入权 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1346-turn-retention`，PR1588源码8e199b68e679c078d477d19305206ab9cc0efb88；exact CI Gate37577667244成功，等待窗已过，但实际R/A验收失败，不合并/部署。生产f3bfff2cf app/worker/PG仍健康，未改。
+唯一实施子线程在 clean `e9532ce21867e6882377d9d143bb02d70f4db14b` 接管 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1346-turn-retention` / `feat/yuk-1346-turn-retention`。本次 task-owned source/docs commit 与 terminal 后写权结束，交还父线程；终态子线程不因 PR 通知恢复写权。父独占整合、PR1588/push/watch/Linear、后续 exact-head CI、预算和运行验收。
 
-唯一scratch准备任务full-answer-final-pair-preparation已completed并交权；父确认backing线程所有run completed/无pending，检查变换且重新离线验证0 TS诊断/27负例/14header控制。旧236a bundle/provenance保存到 `/tmp/yuk1346-acceptance-driver/archive-final-bundle-before-8e199b6-parent`；新准确8e bundle SHA35ec4c4c8899dc380472f153643712d11ab77d5cb4b66e66f6dcf6efe401bb37。8e镜像1dfbc392d9e7、app/idle driver/PG目标和provider pin已父核对，无fullworker。T3preview status/open明确nohost后使用真实Chromium。
+只读诊断已结束，父确认 12 controls 与 25 source hashes。原 R3 的完整正文已抵达三个 judge，盲 solver 没看到答案；五任务 success/end_turn 不等于判决通过。旧 R3 各轴只保存 hash，精确原拒绝仍未知，不追认、不重放 R/R2/R3，A 仍未发送。旧 8e CI37577667244 已绿、等待窗已过，仅覆盖旧源码。生产 f3bfff2cf 未改；已知三轮相关估算总 USD0.010099018 不变，SDK 未知费用仍未知。
 
-06:04Z R3真UI202，run `copilot_user_ask_4aff84fdf95f9bebe06af724047832b1cb57c5e99f7e6e87931197fda3c3f36f`，job712142b0-241c-5b73-9137-4bf47597b833。根Copilot及QuizVerify/TeachingQuality/SolutionGenerate/SemanticJudge全部真实MiMo success/end_turn，估算合计$0.006731654；连同旧两次约$0.010099018，SDK不完整费用仍unknown。本轮可见正文SHAa992596bad8b3a9652d6ec586c5e1558e9f79ccc93548c319bc9cc0f52a94b9c：三个judge收到完整正文、solver无正文或hiddenreference，有实际finalpayload证据。父核对全文25-9=16/c4/foci±4正确，但finalization仍blocked，不能声称系统校验通过。
+父已裁定并在方案先记录 existing_answer 政策。服务端单题 full_response binding 选择 purpose，忽略 model purpose/rubric。保留受支持 grounding pass、完整正文与独立解的 semantic correct/confidence≥0.8、教学 clarity/unique_answer、取消/deadline/错误/大小及歧义映射防线。copy/knowledge/material/kind 创作诊断及 authoring overall 不再否决既有答案，值保持真实；普通新题创作与入池政策、YUK1347 marker-free 边界均不改。
 
-验收脚本立即停止，A未发送，R3受限ingest/记忆/幂等阶段均未执行。原R/R2/R3都不得重投。R3 durableDONE、physical heartbeat timeout retry0，保留失败收据且不伪造completed-R。只读observe-R3-after-stop.mjs证明受保护business/旧event/57vector/reconcile/112675retainedjobs及两旧job/durable全摘要一致，ask/reply仍answer_only/ingested/scopes[]。run目录 `/tmp/yuk1346-acceptance-driver/run-8e199b6-01`，candidate `tlp-local-prod-20260907.sjUaCU/answer-only-preflight-20261007-8e199b68e`。
+既有 reply_finalization 事件 payload 增加可选严格白名单 validation_decision，旧 receipt 兼容，无 DB schema/table/新 task/tool。包含实际可用根/问题/四任务身份、正文/输入/输出 digest、解析和错误枚举、事实与创作适用性、semantic 方向/结果/置信/阈值、教学轴与总裁决，不含 raw prompt/reply/反馈/notes/expected_signals/思考/provider body。fallback 复检成功或异常均保留原 reject 与 candidate digest；观测失败不能放行。产品不伪造 source revision，由父运行证据绑定。
 
-实际validator返回只保存text/result hash，没有各轴判决，且产品console日志在driver中关闭。因此当前不能确定R3是哪个轴拒绝；不得拿synthetic复现冒充实际判决。待检验的前提：既有题目解答可以沿用新题入池原创性准入；源码要求未给比对材料时copy_safety=unknown，而现有题source缺省，copyOnlyReview要求closed_book来源，这一契约是否必然拒绝需免费复现。
+新证据仅在 `/tmp/yuk1346-existing-answer-policy-repair`。Node24.19.0 下五文件 346 scoped unit、typecheck、CODEX_FULL_GATE=1 lint/build、13 项适用 audits 通过。lint297 warnings/0 errors，无 suppression/baseline 上调，既有 Vite/bundle 警告保留。全部 task outputs 是 synthetic，用真实解析/准入/绑定/finalization/单次 reply writer 测试，不证明实际数学质量或 DB 原子性重启行为；真实运行由父负责。未跑 full pnpm test、DB/container/service/browser/model/provider/network/PR/Linear 或第三审，旧验收目录/receipt/env/finalbundle 未触碰。
 
-唯一运行只读诊断 `yuk1346-r3-validation-rejection-diagnosis-20261007-v1`（T3 codex/gpt-6.1-sol xhigh），可写新/tmp/yuk1346-r3-diagnosis离线复现，禁止产品写/DB/network/model/PR/再委派，不是第三审。父继续唯一产品writer；收到终态检查证据后决定最小修复/下一预算，不自动付费补日志。只读ops-cutover-recipe已交回可复用发布步骤；没有执行发布。父独占PRwatch。YUK1346保持InProgress，1347既有marker-free缺口仍独立Backlog。
+Linear capture 属于现有 YUK1346 阻断，无新独立 follow-up；父处理状态与 capture。YUK1347 已在 PARKED/Backlog，本次不扩 regex。完整改动、适用性与验证边界见 `docs/planning/2026-10-07-yuk1346-answer-only-turn.md`。本次 source success 不代表 runtime acceptance、合并或发布。
 
 以下为历史已交付版本的记录。
 

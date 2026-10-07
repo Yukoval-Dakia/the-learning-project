@@ -150,7 +150,7 @@ export interface QuestionContentValidationInput {
   placement_authority?: PlacementVerificationAuthority;
   validation_mode?: 'release_strict';
   /** Selects learner-visible axis admission without changing question-pool policy. */
-  validation_purpose?: 'learning_content';
+  validation_purpose?: 'learning_content' | 'existing_answer';
   /** Actually executed remote-MCP calls of this request turn (executed evidence, not declarations). */
   remote_tool_evidence?: unknown;
 }
@@ -289,6 +289,12 @@ export interface SolveCheckResult {
   reason: string;
   // Which comparison established the terminal verdict. Exact mismatches fall through to semantic.
   compared_by: 'normalize' | 'semantic' | 'none';
+  /** Parsed comparator evidence for the learner-visible durable decision only. */
+  solver_parse_status?: 'parsed' | 'invalid';
+  semantic_decision?: {
+    outcome: 'correct' | 'partial' | 'incorrect' | 'unsupported';
+    confidence: number;
+  };
   /** Exact candidates disagreed before the SemanticJudge fallback (YUK-612 audit signal). */
   normalized_exact_mismatch?: boolean;
   task_run_ids?: string[];
@@ -337,12 +343,14 @@ type IndependentSolutionExecutionResult =
       task_input_sha256: string;
       solver_output_sha256?: string;
       solver_output_repair_level: Exclude<RepairLevel, 'jsonrepair'>;
+      output_parse_status?: 'parsed' | 'invalid';
       task_run_ids?: string[];
       cost_usd?: number | null;
     }
   | {
       status: 'unsupported';
       reason: string;
+      output_parse_status?: 'parsed' | 'invalid';
       task_run_ids?: string[];
       cost_usd?: number | null;
       image_input_unavailable?: boolean;
@@ -354,6 +362,8 @@ type IndependentSolutionExecutionResult =
 // structural change — pass `{ solverModelOverride }` and the runner picks it up via
 // ctx. Unused this slice except as the documented seam.
 export interface IndependentSolutionOptions {
+  /** Learner-visible receipt only; ordinary consumers keep their provenance shape. */
+  captureParseEvidence?: true;
   runTaskFn: SolveCheckRunTaskFn;
   profile: SolveCheckProfile;
   // db is needed whenever SemanticJudge runs, including an exact-mismatch fallback.
@@ -746,15 +756,22 @@ async function runIndependentSolutionInternal(
   const taskRunIds: string[] = [];
   const costsUsd: Array<number | null | undefined> = [];
   let solverRunCompleted = false;
+  let outputParseStatus: 'parsed' | 'invalid' | undefined;
   const recordRun = (run: { task_run_id?: string; cost_usd?: number }): void => {
     if (typeof run.task_run_id === 'string' && run.task_run_id.length > 0) {
       taskRunIds.push(run.task_run_id);
     }
     costsUsd.push(run.cost_usd);
   };
-  const provenance = (): Pick<IndependentSolutionExecutionResult, 'task_run_ids' | 'cost_usd'> => ({
+  const provenance = (): Pick<
+    IndependentSolutionExecutionResult,
+    'task_run_ids' | 'cost_usd' | 'output_parse_status'
+  > => ({
     ...(taskRunIds.length > 0 ? { task_run_ids: [...taskRunIds] } : {}),
     cost_usd: sumAllKnownCostUsd(costsUsd),
+    ...(opts.captureParseEvidence && outputParseStatus
+      ? { output_parse_status: outputParseStatus }
+      : {}),
   });
 
   const input = {
@@ -843,6 +860,8 @@ async function runIndependentSolutionInternal(
     parsed = normalized.value as Record<string, unknown>;
     if (normalized.repaired) solverOutputRepairLevel = 'deterministic';
     const complete = SolutionGenerateOutput.safeParse(parsed);
+    outputParseStatus =
+      complete.success || legacyAdapter.allowPartialContract ? 'parsed' : 'invalid';
     const rawReference =
       parsed.reference_solution !== null &&
       typeof parsed.reference_solution === 'object' &&
@@ -904,6 +923,7 @@ async function runIndependentSolutionInternal(
     };
   } catch (err) {
     if (!solverRunCompleted) costsUsd.push(null);
+    else outputParseStatus ??= 'invalid';
     // runTask persists a failure row before throwing AgentRunError. Preserve
     // that paid-attempt identity even though this reusable solver seam converts
     // provider errors into `unsupported` for ordinary question verification.
@@ -1042,6 +1062,9 @@ export async function runSolveCheck(
     return {
       verdict: 'unsupported',
       reason: independentlySolved.reason,
+      ...(independentlySolved.output_parse_status
+        ? { solver_parse_status: independentlySolved.output_parse_status }
+        : {}),
       compared_by: 'none',
       ...(independentlySolved.image_input_unavailable ? { image_input_unavailable: true } : {}),
       ...(independentlySolved.task_run_ids
@@ -1067,9 +1090,15 @@ export async function runSolveCheck(
     }
     costsUsd.push(r.cost_usd);
   };
-  const runProvenance = (): Pick<SolveCheckResult, 'task_run_ids' | 'cost_usd'> => ({
+  const runProvenance = (): Pick<
+    SolveCheckResult,
+    'task_run_ids' | 'cost_usd' | 'solver_parse_status'
+  > => ({
     ...(taskRunIds.length > 0 ? { task_run_ids: [...taskRunIds] } : {}),
     cost_usd: sumAllKnownCostUsd(costsUsd),
+    ...(independentlySolved.output_parse_status
+      ? { solver_parse_status: independentlySolved.output_parse_status }
+      : {}),
   });
 
   const assertCurrentAuthority = async (): Promise<void> =>
@@ -1252,6 +1281,9 @@ export async function runSolveCheck(
     solver_final_answer: solverFinalAnswer,
     reason,
     compared_by: 'semantic',
+    ...(opts.captureParseEvidence
+      ? { semantic_decision: { outcome: judged.coarse_outcome, confidence: judged.confidence } }
+      : {}),
     ...(normalizedExactMismatch ? { normalized_exact_mismatch: true } : {}),
     ...runProvenance(),
   };
@@ -1300,6 +1332,8 @@ export interface TeachingQualityQuestion {
 }
 
 export interface TeachingQualityOptions {
+  /** Existing-answer release uses the authoritative structured value and strict text parser. */
+  validationMode?: 'release_strict';
   runTaskFn: TeachingQualityRunTaskFn;
   // YUK-606 — runner 的观测写（ai_task_runs / cost_ledger）读 ctx.db；此前 ctx 漏传 db，
   // 该轴每次 run 的三笔观测写全炸并被 best-effort 吞掉（run 不落库、成本漏记）。
@@ -1468,7 +1502,16 @@ export async function runTeachingQualityCheck(
     recordRun(run);
     await opts.settlePaidCall?.(teachingPaidInvocationId, run);
     teachingPaidSettled = true;
-    parsed = extractJsonObject(run.text, 'teaching-quality: TeachingQualityTask');
+    parsed =
+      opts.validationMode === 'release_strict'
+        ? run.structured_output !== undefined && run.structured_output !== null
+          ? run.structured_output
+          : parseJsonObjectLoose(run.text, 'teaching-quality: TeachingQualityTask', {
+              riskyRepair: 'reject',
+              containerClosure: 'schema_validated',
+              latexEscapes: 'markdown_math',
+            })?.json
+        : extractJsonObject(run.text, 'teaching-quality: TeachingQualityTask');
   } catch (err) {
     if (!teachingRunCompleted) costsUsd.push(null);
     if (teachingPaidInvocationId && !teachingPaidSettled) {

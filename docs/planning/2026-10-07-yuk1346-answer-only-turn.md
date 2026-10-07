@@ -210,3 +210,28 @@ exact `8e199b68e` 的 CI Gate37577667244已通过，准确ARM64候选1dfbc392d9e
 公开结果仍 `learning_content=blocked`，普通记忆对照A未发送。五任务成功仅代表执行结束，不等于判决通过；观测仅保留返回hash，没有具体validator轴/解析结果，不能断言实际拒绝轴。后续先免费核查既有题解答是否错误使用新题原创性门禁，并补足后续一次正常验收所需的结构化拒绝证据；不为缺日志重执行R3。
 
 R3 run `copilot_user_ask_4aff84fdf95f9bebe06af724047832b1cb57c5e99f7e6e87931197fda3c3f36f`，job `712142b0-241c-5b73-9137-4bf47597b833`，durableDONE、physical heartbeat timeout retry0。原失败回执完整保留，不重投，不补造通过记录。父只读观测确认受保护业务、旧events/vectors/reconcile、112675保留队列及两旧job与task/job-event摘要均不变。R3本次估算$0.006731654，三次相关已知估算累计$0.010099018；未知SDK费用仍未知，不能宣称供应商硬cap。没有生产发布。
+
+## 2026-10-07 既有题答案准入与持久决策收据
+
+父线程在自主委托下已裁定：服务端绑定的一道既有题需要事实正确、完整推导一致且清晰的答案，不需要证明已给题目是新原创题或命中新生成知识目标。当前可信分类是单题 binding 的 `answerScope=full_response`，据此选择 `existing_answer`，不接收 marker 中的 purpose、rubric 或生成来源自报。多道既有题及混合映射继续拒绝。
+
+同一 QuizVerifyTask 增加既有答案 purpose 的提示语。grounding 必须解析成功、明确 pass 且 basis 有实际输入支持；独立 solver 继续只看题面、无答案/reference/rubric hint。SemanticJudge 以独立完整解为 reference、实际全部可见正文为 submission，必须 correct 且 confidence≥0.8。教学 clarity、unique_answer 和既有适用安全检查保留。取消、deadline、异常、无法解析、partial、低置信和不可支持依据继续拒绝。
+
+既有答案的 copy_safety、knowledge_hit、material_grounding、kind_conformance 及作者 overall 保留真实诊断，但不直接或间接否决答案。素材/题型轴针对新题创作的适用性由可信服务端上下文定义；本路径未提供原文生成来源或加载出题规范，既有答案不参加这些创作轴。真实素材依据仍须 grounding 核对。普通新题的原创性、知识目标、素材命中、题型与入池政策不改，不把 unknown 伪造成 original/pass，不发明 closed_book 来源。YUK1347 marker-free 检测不在此次范围。
+
+在既有 Copilot reply_finalization payload 内增加可选严格白名单 validation_decision，旧收据继续解析。收据只保存服务端 purpose、根/问题/已执行四任务身份、实际可用的正文/输入/输出 digest、解析状态和有界 reason 枚举、事实依据/判决、创作轴适用性、语义结果/置信/阈值/比较方向、教学轴及总裁决。无结果、未执行和 unknown 分开；不保存正文、prompt、反馈、notes、expected_signals、思考或 provider error body。拒绝正文被替换文本复检时，保留原候选裁决。收据跟随现有 finalization 与回复事务，不新增日志框架、schema/table/task/tool；观测失败不得放行无效答案。产品没有可信 source revision 时由父运行证据绑定，不补造版本。
+
+本次子线程只写授权源码、相关 scoped tests、本方案/PLAN/now。禁止 paid/network/DB/container/browser/service/PR/Linear 操作与第三审，所有新日志放 `/tmp/yuk1346-existing-answer-policy-repair`。旧 R/R2/R3 封存且不重投，实际 R3 拒绝轴仍未知，不能追认通过。源码和合成输出验证不等于真实模型质量或运行验收；父线程负责后续有界真实验证及整合。
+
+
+### 本次源码验证与移交
+
+实现复用现有 TaskTextRunFn，逐题在同一次调用捕获输入和实际消费输出的 digest、成功/异常任务身份，并在真实 parser/admission 后填写白名单判决；没有附加模型调用。TeachingQuality 的 existing-answer 分支使用可信 structured_output 优先和现有严格 JSON parser，普通生成流程保持原解析适配器。共享 kernel 文件只定义 Practice/Copilot 共同消费的 receipt 边界。新 source revision 没有可信产品来源，故未填入收据。
+
+新证据目录 `/tmp/yuk1346-existing-answer-policy-repair` 的 `gate-results.json`、`audit-results.json` 及 `evidence-manifest.json` 记录命令、exit status 与 source/log SHA。Node24.19.0 下五 scoped 文件共346 unit通过：真实 binding、Practice、Quiz/Solution/Semantic/Teaching parsers、finalizer 和 mock event writer，所有模型输出明确 synthetic。unknown/needs_review、无知识目标以及仅创作轴 fail 可接受既有题答案；相同生成控制仍拒绝。正确最终答案旁错误推导、partial/低置信、grounding fail/unclear/缺失或 unsupported basis、教学 fail、malformed/exception/cancel/deadline 都拒绝。完整正文与盲 solver、untrusted purpose/rubric、size/count/重复身份、缺身份/未执行/解析拒绝、观测失败、内容泄漏、旧 receipt 兼容及 fallback primary reject/hash 保留控制通过。mock pass 只证明 contract，不证明实际数学质量。
+
+`pnpm typecheck`、`CODEX_FULL_GATE=1 pnpm lint` 和 `CODEX_FULL_GATE=1 pnpm build` exit0。lint297 warnings/0 errors，无 suppression/baseline bump，既有 Vite 和 bundle size 警告保留。schema、partition、capability-boundaries、architecture-deepening、provider-lanes、provider-attempt-truth、profile、structured-judge、task-census、draft-status、draft-status-reads、agent-control-plane、skill-mirrors 共13 audits exit0。没有完整 pnpm test、DB、真实模型、browser、container/service、网络/外部 tracker、push/watch 或第三审；旧诊断只读，旧 acceptance artifacts 未打开或修改。
+
+本次改动属于已登记 YUK1346 的已验证阻断，capture/状态由父处理；没有新增独立 actionable follow-up。已登记 YUK1347 保持独立 Backlog。源码验证不替代 exact-head CI 或实际 R/A/记忆链验收；本次没有实际 validator 质量或产品 acceptance 证据，不追认 R3。父接收本次 task-owned commit 与 terminal 后恢复唯一写权，本子线程结束写入；父负责整合、预算、实际验证与所有交付动作。
+
+普通 Practice consumer 的 result 不带 Copilot decision，`captureDecision` 仅由 Copilot 收口明确开启，既有答案 full_response 也保留其决策证据。已核对 notes author_artifact 会 spread result，因此非 Copilot 结果形状保持原样，不新增其物化 metadata 或观测失败行为。既有答案同时附带独立生成 preview 时在任何 task 前拒绝混合映射；普通多道新题仍独立校验。

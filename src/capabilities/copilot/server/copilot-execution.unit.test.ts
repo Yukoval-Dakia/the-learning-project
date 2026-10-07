@@ -283,7 +283,7 @@ describe('Copilot execution owner', () => {
                   choices_md: null,
                 }),
                 validation_mode: 'release_strict',
-                validation_purpose: 'learning_content',
+                validation_purpose: 'existing_answer',
               }),
               expect.anything(),
             ],

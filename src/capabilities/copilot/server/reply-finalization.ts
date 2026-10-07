@@ -2,6 +2,10 @@ import { createHash } from 'node:crypto';
 import type { AfterToolCallResult } from '@earendil-works/pi-agent-core';
 import { z } from 'zod';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
+import {
+  type CopilotValidationDecision,
+  CopilotValidationDecisionSchema,
+} from '@/kernel/learning-content-validation';
 import { DOMAIN_TOOL_MCP_SERVER_NAME } from '@/kernel/tools/allowlists';
 import type { PiAfterToolCall, PiBeforeToolCall, PiHookBridge } from '@/server/ai/pi-hooks';
 
@@ -133,6 +137,7 @@ export const CopilotReplyFinalizationReceiptSchema = z
     proposal_disclosure: z.enum(['none', 'server_composed']),
     learning_content: z.enum(['not_applicable', 'passed', 'blocked']),
     primary_view: z.enum(['absent', 'retained', 'dropped']),
+    validation_decision: CopilotValidationDecisionSchema.optional(),
   })
   .strict();
 
@@ -231,7 +236,11 @@ export interface CreateCopilotReplyFinalizerOptions {
     primaryView?: CopilotPrimaryView,
     observedQuestion?: { input: unknown; output: unknown },
     remoteEvidence?: RemoteMcpEvidencePacket,
-  ) => Promise<{ replyText: string; passed: boolean }>;
+  ) => Promise<{
+    replyText: string;
+    passed: boolean;
+    validationDecision?: CopilotValidationDecision;
+  }>;
   /** Owned live-row validation plus canonical product reference. Null rejects the nomination. */
   resolveArtifactReference: (ref: {
     kind: string;
@@ -527,6 +536,8 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
   async function finalizeTerminal(terminalText: string): Promise<CopilotReplyFinalizationResult> {
     const startVersion = traceVersion;
     const startTraceSha = digestTrace(trace);
+    let primaryDecision: CopilotValidationDecision | undefined;
+    let primaryCandidateSha: string | undefined;
     try {
       if (terminalText.length > MAX_REPLY_CHARS || terminalText.trim().length === 0) {
         throw new Error('terminal Markdown must be non-empty and within the reply limit');
@@ -538,6 +549,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         throw new Error('remote MCP evidence capture overflowed or failed');
       }
       const candidateSha = sha256Text(terminalText);
+      primaryCandidateSha = candidateSha;
       const legacyPresented = extractPrimaryView(
         options.authoritativeReply?.reply ?? terminalText,
         {
@@ -595,6 +607,17 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         })(),
         buildRemoteMcpEvidencePacket(trace),
       );
+      if (learning.validationDecision) {
+        primaryDecision = CopilotValidationDecisionSchema.parse(learning.validationDecision);
+        if (
+          primaryDecision.root_task_run_id !== options.rootTaskRunId ||
+          (learning.passed
+            ? primaryDecision.verdict === 'fail'
+            : primaryDecision.verdict !== 'fail')
+        ) {
+          throw new Error('learning validation receipt disagrees with primary decision');
+        }
+      }
       let fixed = applyProposalDisclosure(
         !learning.passed && correction.kind !== 'normal' ? correction.reply : learning.replyText,
         disclosure,
@@ -622,6 +645,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       const learningBlocked = !learning.passed;
       const primaryView = learning.passed ? presented.primaryView : undefined;
       const receipt: CopilotReplyFinalizationReceipt = {
+        ...(primaryDecision ? { validation_decision: primaryDecision } : {}),
         protocol_version: 1,
         assurance: 'execution_trace_bound',
         root_task_run_id: options.rootTaskRunId,
@@ -647,7 +671,7 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
         accepted: true,
       };
     } catch {
-      return failClosed();
+      return failClosed(primaryDecision, primaryCandidateSha);
     }
   }
 
@@ -673,7 +697,10 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
     traceVersion += 1;
   }
 
-  function failClosed(): CopilotReplyFinalizationResult {
+  function failClosed(
+    primaryDecision?: CopilotValidationDecision,
+    primaryCandidateSha?: string,
+  ): CopilotReplyFinalizationResult {
     const disclosure = proposalDisclosure(trace);
     const replyText = applyProposalDisclosure(FINALIZATION_FAILURE_REPLY, disclosure);
     const traceSha = digestTrace(trace);
@@ -682,10 +709,18 @@ export function createCopilotReplyFinalizer(options: CreateCopilotReplyFinalizer
       preparedReply: { text: replyText },
       accepted: false,
       receipt: {
+        validation_decision: primaryDecision ?? {
+          protocol_version: 1,
+          root_task_run_id: options.rootTaskRunId,
+          visible_sha256: null,
+          verdict: 'fail',
+          reason: 'finalization_error',
+          checks: [],
+        },
         protocol_version: 1,
         assurance: 'execution_trace_bound',
         root_task_run_id: options.rootTaskRunId,
-        candidate_sha256: sha256Text(''),
+        candidate_sha256: primaryCandidateSha ?? sha256Text(''),
         reply_sha256: sha256Text(replyText),
         trace_sha256: traceSha,
         trace_call_count: trace.length,

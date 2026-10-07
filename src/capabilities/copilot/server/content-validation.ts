@@ -1,5 +1,11 @@
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { extractVisibleHtmlText, htmlContainsAssessment } from '@/kernel/learning-content';
+import {
+  type CopilotValidationDecision,
+  CopilotValidationDecisionSchema,
+  type LearningContentDecision,
+} from '@/kernel/learning-content-validation';
 import type { LearningContentValidationRequest } from '@/kernel/tools/types';
 import {
   LEARNING_CONTENT_MAX_QUESTIONS,
@@ -218,6 +224,7 @@ export interface CopilotLearningContentValidationDeps extends LearningContentVal
 export interface CopilotLearningContentReviewResult {
   replyText: string;
   passed: boolean;
+  validationDecision?: CopilotValidationDecision;
 }
 
 export async function reviewCopilotLearningContent(
@@ -226,6 +233,36 @@ export async function reviewCopilotLearningContent(
   taskRunId: string,
   deps: CopilotLearningContentValidationDeps,
 ): Promise<CopilotLearningContentReviewResult> {
+  const checks: LearningContentDecision[] = [];
+  const finish = (
+    passed: boolean,
+    reason: CopilotValidationDecision['reason'],
+    replyText = COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY,
+  ): CopilotLearningContentReviewResult => {
+    const parsed = CopilotValidationDecisionSchema.safeParse({
+      protocol_version: 1,
+      root_task_run_id: taskRunId,
+      visible_sha256: createHash('sha256').update(validationSurface, 'utf8').digest('hex'),
+      verdict: passed ? (reason === 'not_applicable' ? 'not_applicable' : 'pass') : 'fail',
+      reason,
+      checks,
+    });
+    if (!parsed.success) {
+      return {
+        passed: false,
+        replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY,
+        validationDecision: {
+          protocol_version: 1,
+          root_task_run_id: taskRunId,
+          visible_sha256: createHash('sha256').update(validationSurface, 'utf8').digest('hex'),
+          verdict: 'fail',
+          reason: 'receipt_error',
+          checks: [],
+        },
+      };
+    }
+    return { passed, replyText, validationDecision: parsed.data };
+  };
   const extracted = extractCopilotLearningContent(candidateText);
   const validationSurface = deps.additionalVisibleText
     ? `${extracted.text}\n${extractVisibleHtmlText(deps.additionalVisibleText)}`
@@ -241,7 +278,17 @@ export async function reviewCopilotLearningContent(
       task_run_id: taskRunId,
       marker_status: extracted.status,
     });
-    return { replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY, passed: false };
+    return finish(false, 'marker_rejected');
+  }
+  const bound =
+    extracted.status === 'valid'
+      ? bindLearningContentToReply(extracted.content, validationSurface, contextText)
+      : null;
+  if (
+    extracted.status === 'valid' &&
+    (!bound || (bound.answerScope === 'full_response' && deps.additionalQuestionContent))
+  ) {
+    return finish(false, 'mapping_rejected');
   }
   let additionalValidated = false;
   let copyNotObserved = false;
@@ -249,48 +296,57 @@ export async function reviewCopilotLearningContent(
     // A typed candidate is always a question, even JSON or prose without '?'.
     // Validate its real normalized fields independently of terminal heuristics.
     try {
-      const validation = await validateLearningContent(deps.additionalQuestionContent, deps);
-      if (validation.verdict !== 'pass')
-        return { replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY, passed: false };
+      const validation = await validateLearningContent(deps.additionalQuestionContent, {
+        ...deps,
+        answerScope: undefined,
+        captureDecision: true,
+      });
+      if (!validation.decision) return finish(false, 'receipt_error');
+      checks.push(validation.decision);
+      if (validation.verdict !== 'pass') return finish(false, 'checks_rejected');
       additionalValidated = true;
       copyNotObserved = validation.copy_comparison === 'not_observed';
     } catch {
-      return { replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY, passed: false };
+      return finish(false, 'validation_error');
     }
   }
   if (extracted.status === 'absent')
-    return {
-      replyText: additionalValidated
+    return finish(
+      true,
+      additionalValidated ? 'passed' : 'not_applicable',
+      additionalValidated
         ? `${extracted.text}\n\n独立内容验证：通过${copyNotObserved ? '；未对外部题库进行原创性比对。' : ''}`
         : extracted.text,
-      passed: true,
-    };
-  const bound = bindLearningContentToReply(extracted.content, validationSurface, contextText);
+    );
   if (!bound) {
     console.error('[copilot-learning-content] manifest does not match visible content', {
       task_run_id: taskRunId,
     });
-    return { replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY, passed: false };
+    return finish(false, 'mapping_rejected');
   }
   try {
     const validation = await validateLearningContent(bound.content, {
       ...deps,
       observedQuestion: undefined,
       answerScope: bound.answerScope,
+      captureDecision: true,
     });
+    if (!validation.decision) return finish(false, 'receipt_error');
+    checks.push(validation.decision);
     if (validation.verdict !== 'pass') {
       console.error('[copilot-learning-content] validation rejected', {
         task_run_id: taskRunId,
         validation,
       });
-      return { replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY, passed: false };
+      return finish(false, 'checks_rejected');
     }
-    return {
-      replyText: `${extracted.text}\n\n独立内容验证：通过${copyNotObserved || validation.copy_comparison === 'not_observed' ? '；未对外部题库进行原创性比对。' : ''}`,
-      passed: true,
-    };
+    return finish(
+      true,
+      'passed',
+      `${extracted.text}\n\n独立内容验证：通过${copyNotObserved || validation.copy_comparison === 'not_observed' ? '；未对外部题库进行原创性比对。' : ''}`,
+    );
   } catch (error) {
     console.error('[copilot-learning-content] validation error', { task_run_id: taskRunId, error });
-    return { replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY, passed: false };
+    return finish(false, 'validation_error');
   }
 }
