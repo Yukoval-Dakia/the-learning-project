@@ -833,11 +833,16 @@
             "name": "subject",
             "required": false,
             "example": "math"
+          },
+          {
+            "name": "cursor",
+            "required": false,
+            "example": "<next_cursor>"
           }
         ],
         "contentType": null,
         "bodyExample": null,
-        "notes": "limit 默认 50 上限 200；since 为 ISO-8601；subject 按 question → knowledge → effective_domain 派生；投影 shape：id/question_id/prompt_md/wrong_answer_md/knowledge_ids/cause/created_at"
+        "notes": "limit 默认 50，钳制 1–200；since 为 ISO-8601；subject 按 question → knowledge → effective_domain 派生；cursor 使用响应 next_cursor。响应含 data/rows/page/next_cursor；行含 id/record_id/question_id/prompt_md/reference_md/wrong_answer_md/wrong_answer_image_refs/knowledge_ids/cause/correction_state/created_at。题面优先冻结 snapshot（含父题干）；历史无 snapshot 仅在可证明作答后未编辑时读现值，损坏或不支持证据保留行并返回空题面、null 参考答案；错答图片来自原 attempt answer_image_refs。"
       }
     ]
   },

@@ -1524,10 +1524,16 @@
                   "value": "math",
                   "disabled": true,
                   "description": "optional"
+                },
+                {
+                  "key": "cursor",
+                  "value": "<next_cursor>",
+                  "disabled": true,
+                  "description": "optional"
                 }
               ]
             },
-            "description": "查询错题列表（event-stream 投影），支持时间过滤和 question 过滤\n\n**Query:**\n- `limit` (optional) e.g. `50`\n- `since` (optional) e.g. `2026-01-01T00:00:00Z`\n- `question_id` (optional) e.g. `qid_abc123`\n- `subject` (optional) e.g. `math`\n\n**Notes:** limit 默认 50 上限 200；since 为 ISO-8601；subject 按 question → knowledge → effective_domain 派生；投影 shape：id/question_id/prompt_md/wrong_answer_md/knowledge_ids/cause/created_at"
+            "description": "查询错题列表（event-stream 投影），支持时间过滤和 question 过滤\n\n**Query:**\n- `limit` (optional) e.g. `50`\n- `since` (optional) e.g. `2026-01-01T00:00:00Z`\n- `question_id` (optional) e.g. `qid_abc123`\n- `subject` (optional) e.g. `math`\n- `cursor` (optional) e.g. `<next_cursor>`\n\n**Notes:** limit 默认 50，钳制 1–200；since 为 ISO-8601；subject 按 question → knowledge → effective_domain 派生；cursor 使用响应 next_cursor。响应含 data/rows/page/next_cursor；行含 id/record_id/question_id/prompt_md/reference_md/wrong_answer_md/wrong_answer_image_refs/knowledge_ids/cause/correction_state/created_at。题面优先冻结 snapshot（含父题干）；历史无 snapshot 仅在可证明作答后未编辑时读现值，损坏或不支持证据保留行并返回空题面、null 参考答案；错答图片来自原 attempt answer_image_refs。"
           },
           "response": []
         },
