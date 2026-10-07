@@ -1,3 +1,9 @@
+# 接续补充 — 1375 writer active / 1376 Todo
+
+T3子任务 yuk1375-relative-source-path-repair-20261008-v1（完整ID前缀node:delegated-task:command%3Amcp%3A8abc7d36-c3c9-4544-adaf-b15a177e2fab%3Adelegate-task%3A），codex gpt-6.1-sol high唯一代码writer，17:40Z task_status仍running/working，父不并发代码或测试。负责scripts/audit-schema-writes.ts及对应test，父仅docs/tracker。
+
+Linear首次创建/mistakes子票transport失败；恢复后确认1358子票为空才重试，现已真实创建YUK-1376 Todo。范围/验收及ownership见票和1359退出文档。此前/tmp/yuk1358-mistakes-ticket-pending.md仅历史不确定记录，现在已消歧。
+
 # 当前交付 — 1364 已发布，转1375/1358
 
 2026-10-07 17:33Z：PR1591合入5aa2a9e98，tree与CI13b56一致；Agent TEST发布build853/image9b76完成，102表/97存储文件/Mem0含WAL恢复校验、真实brief/probes200/无auth401及schema44/BAM4completed通过。17:33:31Z核owner释放锁并通知两owner，恢复容器清理，材料保留deployment-yuk1364-13b56e35a。原failed/DLQ相关两行保留；1365正文/取消与1366恢复不在本次完成范围。Linear1364已Done。
