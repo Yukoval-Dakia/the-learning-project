@@ -8,6 +8,7 @@
 - 专用卷 `the-learning-project_agent_test_assets_20261007`，专用 internal 网络 `the-learning-project_agent_test_storage`，bucket `tlp-agent-test`。没有映射主机端口；管理组件仅监听容器 loopback，关闭 Iceberg/Lance 服务。
 - app/worker 的 `R2_ENDPOINT` 指向 `http://test-storage:8333`，使用新生成的测试凭据。私人 R2 和 Tunnel 凭据没有重新加入。
 - S3 沿用现成客户端的 `region:auto` 和 path-style；没有新增业务存储适配器或自研服务。
+- 容量配置为最多 16 个 volume（每个目标 1024 MB，并非文件系统硬配额）；附件 bucket 和内部元数据日志共用此上限。最初 4 个 volume 不足以容纳元数据日志，独立复核发现后已修正。当前实际磁盘占用很小，仍须监控 Docker 所在磁盘；本机存储没有对象云服务或模型调用费用。
 - SeaweedFS 数据和 filer 元数据都落在 `/data` 持久卷。app/worker 的 Compose 启动依赖存储 healthcheck；实际 S3 鉴权/内容正确性由下述验收证明。
 
 私有运行目录为 `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/deployment-test-storage-20261007`。`compose.local.private.json` 和 `s3.private.json` 含凭据，不提交仓库。唯一当前入口由其上级 `current-release.json` 指定，运维先核对该文件和独占部署锁。
@@ -34,3 +35,5 @@
 存储故障时先保留当前数据库和对象卷；旧无 R2 配置只会恢复“附件不可用”的状态，不可作为完整附件回退。此后如果生成需要保留的测试附件，恢复必须将 PostgreSQL 的 `source_asset` 与同一时点的对象卷配对，不能只恢复其一。
 
 当前仍是 `agent-development-test`，不具备日用部署承诺。用户明确说“为我日常使用的部署”之前，不切换用途。
+
+独立只读复核未发现 P0/P1。复核提出的 volume 数量不足与最终配置重建证据缺口均已修正；12:08Z 最终配置下再验持久化、鉴权和完整 API CRUD 通过，容量报错消失。最终证据为 `asset-final-acceptance.json`、`s3-final-persistence-auth.json`；部署锁已释放。
