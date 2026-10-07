@@ -1,6 +1,8 @@
-# 当前交付 — 1376公开材料HTTP通过，PR1600待CI
+# 当前交付 — PR1600已合并，等待Start候选验收
 
-PR1600准确运行候选 `1bd0263e5` / ARM64 image `8c7d64632ebdf1b4ea6b99501f06caf88e696bf2b02a526ef121e4bafd3e73b3` 已完成隔离材料HTTP验收：4条保留错题共9 GET，完整inline passage和available figure精确字段、73字节PNG冻结SHA/ETag、私有排除、reference null、401、过滤与重复读取全部通过；86张非系统表前后count/digest完全一致。独立初审P0/P1 NONE；127父DB、31unit、typecheck/lint/build及六audit通过。21:00:58Z核owner释放锁，隔离app/PG/S3已停且卷保留，原四服务healthy/current-release哈希未变。PR1600待准确最终head CI及合并等待窗；Start挂载/旧入口退出未完成。
+PR1600已于2026-10-07 21:18:58Z合入 `7100dfae4`，合并tree `743ee4d80617dc9b34c7533d724e052af5fd50c4` 与准确head `c40a18621` 一致；CI Gate `37686417034` 成功，独立初审P0/P1 NONE，无未裁决review threads，完整17分钟窗满足。未部署。Start挂载任务归主线，实际新入口行为及旧SPA退出尚未完成。
+
+W1消费者清单见 docs/planning/2026-10-08-yuk1359-w1-consumers.md，Start验收矩阵见 docs/planning/2026-10-08-yuk1376-start-acceptance.md。无本线程活动代码writer或runtime锁；不写主线1352/55/56树。
 
 以下为历史记录，状态以顶部为准。
 
