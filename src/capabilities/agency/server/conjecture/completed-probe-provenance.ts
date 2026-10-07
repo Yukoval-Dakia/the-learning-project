@@ -14,6 +14,7 @@ import {
   type question_revision,
 } from '@/db/schema';
 import { issuanceRowToContract, revisionRowToContract } from '@/kernel/records/assessment-issuance';
+import { createProbeV2Criterion } from '@/kernel/records/assessment-probe-criterion';
 
 export interface CompletedProbeProposal {
   id: string;
@@ -168,6 +169,15 @@ export function validateIssuedProbeProvenance({
         stableStringify(criterion.probe_spec) !== stableStringify(expectedNativeSpec.data)
       ) {
         return { reason: 'probe_spec_mismatch' };
+      }
+      // The model consumes the entire criterion, including rule identity,
+      // authority and scoring instructions outside the embedded probe spec.
+      const expectedCriterion = createProbeV2Criterion({
+        scoringUnitId: unit.scoring_unit_id,
+        probeSpec: expectedNativeSpec.data,
+      });
+      if (stableStringify(criterion) !== stableStringify(expectedCriterion)) {
+        return { reason: 'probe_criterion_mismatch' };
       }
     } else if (
       criterion.statement_md !== expectedReference &&
