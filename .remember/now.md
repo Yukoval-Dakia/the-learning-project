@@ -8,7 +8,7 @@
 
 没有新paid/model、网络、DB、browser/container、GitHub/Linear/watch/生产动作，不重执行R/R2，不发送A。不冒称真实数学输出质量、runtime acceptance或部署。生产仍f3、产品pin opencode-go/mimo-v2.6-pro是既有父证据，本轮未live核查。原236a R2费用estimated $0.001444664，原R $0.0019227；durable DONE但physical job retry0不重投。旧112675jobs/57memory和保护摘要保留；原f570受限ingest provider_delta/queue_delta/memory_count=0是历史父证据，不能代替本轮验收。
 
-父独占整合、push、PR/Linear capture、新exact-head CI、实际validator判决、剩余R/A预算和发布。初审+唯一验证审预算已耗尽，不开第三审。当前阻断归既有1346；单独的marker-free检测缺口已带digest-only证据写PLAN PARKED，待父去重归票。精确可见R2正文不带marker时现有detector判无需校验且0次validator直接通过；本次未扩regex或改变此分支。详见方案末节。发布须停全部写入者、新worker先于app；受限数据写入后禁止直接回退旧f3。
+父独占整合、push、PR/Linear capture、新exact-head CI、实际validator判决、剩余R/A预算和发布。初审+唯一验证审预算已耗尽，不开第三审。当前阻断归既有1346；单独的marker-free检测缺口已带digest-only证据写PLAN PARKED，父已去重归YUK1347 Backlog。精确可见R2正文不带marker时现有detector判无需校验且0次validator直接通过；本次未扩regex或改变此分支。详见方案末节。发布须停全部写入者、新worker先于app；受限数据写入后禁止直接回退旧f3。
 
 以下为历史运行交接；旧下一条/Backlog叙述不能覆盖上方YUK1346实施状态。
 

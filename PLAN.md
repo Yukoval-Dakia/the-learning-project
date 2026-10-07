@@ -19,7 +19,7 @@
 
 ## PARKED
 
-- 待父线程去重归票：marker-free现有题检测缺口仍可免费重现。精确R2仅剥除标记后的SHA `8b6ba9ab93a56b4f028e53fff863e5588facc1b640cf3bf5aad925ceba3a2529` 被既有detector判为无需校验并直接通过，0次validator；证据 `/tmp/yuk1346-visible-answer-repair/results.json`。本次不扩regex、不删marker或弱化准入；需另行明确权威题目上下文/标记缺失契约。
+- **YUK-1347 Backlog**（父已去重登记）：marker-free现有题检测缺口仍可免费重现。精确R2仅剥除标记后的SHA `8b6ba9ab93a56b4f028e53fff863e5588facc1b640cf3bf5aad925ceba3a2529` 被既有detector判为无需校验并直接通过，0次validator；证据 `/tmp/yuk1346-visible-answer-repair/results.json`。本次不扩regex、不删marker或弱化准入；需另行明确权威题目上下文/标记缺失契约。
 - YUK-1343：失败创建提前标为显式来源、50条历史截断隐藏可续接会话均未修；已成组登记，不阻塞此次已裁决发布。
 
 - YUK-1342：付费探针开关、不可覆盖封存及 OpenAI4 node-fetch 绕过 global-fetch 观测。副本记忆功能通过，但整体探针仍 FALSE；SDK wire/count/cost 不完整，不重复付费刷绿。

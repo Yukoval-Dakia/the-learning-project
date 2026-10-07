@@ -192,3 +192,12 @@ focused seam tests 从实际 answer_only system prompt 注入正文提取 marker
 当前修复属于已验证YUK1346阻断，不另开票，Linear状态/capture由父负责。另一个独立检测缺口仍有证据：只去掉精确R2 marker的可见正文SHA `8b6ba9ab93a56b4f028e53fff863e5588facc1b640cf3bf5aad925ceba3a2529` 被旧detector判无需验证，review直接通过且0次validator。`results.json.marker_free_gap`为观察控制，本次不把它当修复、不扩regex。已写PLAN PARKED供父去重，需另行界定权威现有题上下文/缺标记的拒绝契约；未推断所有marker-free内容或所有新题都存在同样缺口。
 
 父线程独占整合、push、PR1588/Linear、新exact-head CI、真实validator判决、R/A剩余预算及发布。旧exact236a CI不覆盖此修复，初审+唯一验证审预算仍耗尽，不启动第三审。PR未合并，生产版本与费用保护证据保持历史原义。源码+文档commit后本子线程终止写入，terminal/PR通知不续权。
+
+
+## 父线程整合与下一次有界验收
+
+父已接收d717777d27f3b9935654903d08e6b14750c852e5，子任务completed/noPending并终止写权。真实diff、source/docs及14项gate日志SHA与封存一致；父另复跑content-validation及verify-framework scoped unit。marker-free既有问题已去重登记YUK1347 Backlog，当前不扩regex；初审+唯一验证审预算已用完，不开第三审。
+
+父在自主授权内决定：新源码已修复免费重放确定的验证对象绑定错误，下一次只在最终准确隔离镜像上做一组新场景（R3现有椭圆题临时解答、A普通偏好记忆），最多2条新accepted Copilot，总计4条；原R/R2不重执行、不修写历史blocked结果，也不消费其队列。沿用$2保守预留及$5/wake/$20/day，现已知两条Copilot合计estimatedUSD0.003367364；未知内部wire/cost仍未知。每阶段单次，根生成及必要验证任务受限；失败即封存并停止，不为凑绿重复采样。
+
+新baseline须保留两个历史验收run/task/job和全部历史数据：原Rcompleted，R2durableDONE/tasksuccess但physicalretry0，后者不得因retry状态重投。完整job摘要纳入保护。新会话、新Mem0辅助路径；仍无fullworker，父只受控投递新场景和其因果memory链。修复后的独立验证须真正调用并作出判决，单测/actual输入合成输出不能替代。具体运行目标、镜像与新source固定后再绑定driver。未完成实际验收/新exactCI/等待窗前不合并或发布，生产继续f3。
