@@ -1,3 +1,13 @@
+# YUK-1355 isolated lane handoff — 2026-10-07
+
+Only writer: /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1355-dbos-migration, feat/yuk-1355-dbos-migration, base a6d89037b. Parent owns final review/CI/acceptance and Linear status. TEST ONLY; no paid calls, main runtime, private data, delegation, push/PR/watch/merge/deploy. Writer releases ownership at terminal handoff.
+
+Implemented admitted manifest DBOS backend for prune_job_events, default database phase pg-boss, producer fences, old-queue retry drain and explicit terminal disposition, DBOS receipt/commit recovery, single native cron, blocked rollback until DBOS obligations settle, same-process registration reuse and bounded shutdown. Worker-only CLI controls this exact family through DBOSClient, never recovers or replays candidates. No new dependency/lockfile change; optional inactive Winston imports externalized in server/worker build command hunks.
+
+Ledger/runbook and evidence: docs/planning/2026-10-07-yuk1355-dbos-housekeeping.md and adjacent task-inventory/process-evidence JSON. Final local evidence: 69 scoped DB, 48 unit, 26 selected migration passed; typecheck/lint/ratchet/build and schema/partition/capability/task/provider audits passed. Existing297 warnings, baseline305 unchanged. Evidence source/bundle hashes checked. Independent review, exact-head CI, runtime/private-data acceptance remain parent-owned. No claim of business-family migration, review three-entry reuse, provider acceptance, restored private data, deployment or merge.
+
+YUK-1356 port: type NativeAttemptDispatchPort and NativeAttemptDispatchOptions from src/capabilities/practice/server/assessment/native-attempt-dispatch-port.ts; default dispatchNativeAttempt from assessment/durable-attempt.ts. Four args database/questionId/request/options return Promise<string|null>. Null permits sync formal commit; runId means durable intent exists, including enqueue failure recovery. Queue/budget deps remain inside1355. Did not touch review-operation, api/submit, due-list, practice/public, Pi tools/allowlist or judge_run diagnostic-helper import. Remaining family work already tracked in1356/1358, retirement in1359; no duplicate ticket.
+
 # 当前交接 — 2026-10-07 YUK-1338 Pi + DBOS 隔离 gate
 
 owner 指示本线程负责 epic YUK-1351 的第一道 gate。工作树 `/Users/yuqi/.t3/worktrees/the-learning-project/feat-yuk-1338-pi-dbos-gate`，branch `feat/yuk-1338-pi-dbos-gate`，base `8841ce68a69e30bacf20e8241f28cd1669b38a1f`。本线程是原树唯一 writer；57961995 父线程负责主线迁移协调与 PR watch/最终 merge。非 UI、不合并、不部署、不碰生产数据或 provider 配置。

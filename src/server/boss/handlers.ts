@@ -7,7 +7,6 @@ import { buildBriefGenerator } from '@/server/memory/brief-writer';
 import { registerMemoryHandlers } from '@/server/memory/triggers';
 import { buildEchoHandler } from './handlers/echo';
 import { buildPromoteConversationIdleHandler } from './handlers/promote_conversation_idle';
-import { buildPruneJobEventsHandler } from './handlers/prune_job_events';
 import { buildPruneOrphanConversationSessionsHandler } from './handlers/prune_orphan_conversation_sessions';
 import { buildPruneOrphanPlacementSessionsHandler } from './handlers/prune_orphan_placement_sessions';
 import { buildPruneOrphanReviewSessionsHandler } from './handlers/prune_orphan_review_sessions';
@@ -44,13 +43,6 @@ export interface InfraScheduleDeclaration {
 }
 
 export const INFRA_HOUSEKEEPING_SCHEDULES: readonly InfraScheduleDeclaration[] = [
-  {
-    name: 'prune_job_events',
-    cron: '0 4 * * *',
-    tz: 'Asia/Shanghai',
-    queue: 'fast',
-    note: 'nightly housekeeping cron（bulk DELETE，掉一拍下个 cron 重跑）',
-  },
   {
     name: 'prune_orphan_review_sessions',
     cron: '15 4 * * *',
@@ -112,12 +104,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
 
   // Step 5: nightly housekeeping cron（同区段的 knowledge_propose_nightly 已迁
   // knowledge manifest jobs 声明，由注册器挂载）
-  await createOrUpdateQueue(boss, 'prune_job_events', FAST_QUEUE_OPTS); // FAST — bulk DELETE housekeeping, re-runs next cron
-  await boss.work(
-    'prune_job_events',
-    fenceAwareJobHandler(db, 'prune_job_events', buildPruneJobEventsHandler(db)),
-  );
-
   // T-37 / YUK-185: Mem0 fact ingest + per-scope brief regen queues. Station 2A
   // injects the real brief writer (buildBriefGenerator) so the regen pipeline
   // produces memory_brief_note rows instead of falling back to the throwing

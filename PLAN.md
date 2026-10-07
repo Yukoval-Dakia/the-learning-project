@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-07：YUK-1338 本机五项验收通过；PR #1590 run 37612250074 的 lint 失败已复现为最终 evidence JSON 格式问题，格式已修复，scoped/static/build 重新复验；新 exact-head CI 待 push 后核验。YUK-1338 In Review；57961995 父线程负责 watch/最终 merge 和后续 P1/P5 协调。无生产路径变更、部署或付费调用。见[gate 证据](docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md)。
+> Linear 是权威 tracker。2026-10-07 YUK-1355 隔离实施：DBOS/pg-boss 双栈及 prune_job_events 数据库族开关、排空/回退、真实进程恢复证据已交付本地检查；父线程负责最终 review/CI/验收。UI、1363/1364、主环境与付费调用未触及。见 [lane 台账](docs/planning/2026-10-07-yuk1355-dbos-housekeeping.md)。
 
 ## NOW
+
+- **YUK-1355 非 UI lane**：隔离树 feat/yuk-1355-dbos-migration，默认 pg-boss、不自动生产切换；prune 唯一 consumer，68 队列源台账与回退手册。业务族仍由原 pg-boss/领域 owner 恢复。69 scoped DB/48 unit/26 migration 与静态/build 通过，仅提交本地实现与检查，等待父 gate；1356 port 已发布，不触及其领域/API/tool hunks。
 
 - **YUK-1338 / YUK-1351 P0 gate**：Pi 1.0.2 + DBOS 5.2.11，测试容器中完成新证据影响下一项、版本/过期拒绝、四个进程终止边界、响应复用与单次业务效果。2 unit / 10 DB passed；typecheck/lint/build 通过；独立 review 无 P0/P1。PR #1590 / In Review；旧 run lint format 失败已修复，复验后 push，不能用本机通过替代最终 CI；P2 首次并发证据创建与 provider 请求身份要求已记入 YUK-1356；owner 指定不自主合并，当前生产 Hono/Vite/pg-boss 不改。
 - **YUK-1103 自主交付**：本机 http://localhost:8787；远程 https://loom-mac-mini.tail2ee344.ts.net/（同一 tailnet，沿用 Loom 令牌）。app/worker `f3bfff2cf` healthy，115项迁移、readiness active。已备份及恢复验证；不要重复发布旧 `5d738dbc0`。
@@ -15,7 +17,7 @@
 
 - 先落实 YUK-1346 的可信单次记忆/派生用途策略，再沿“椭圆难题 → 记录过程与帮助程度 → 区分暂时理解和独立迁移 → 后续验证安排”的真实学习路径推进。短回答成功不等于可靠评估已经兑现。
 - YUK-1042：42 failed +42 DLQ 原义务保留；先查每项副作用和幂等身份再恢复，不清队列或重付未知结果。
-- **TS 迁移 + UI 重写（epic YUK-1351）2026-10-07 owner 指示开工**：[准备计划](docs/planning/2026-10-07-ts-migration-and-ui-rewrite-prep.md) 按路由合并交付（每条 TanStack 路由同时上线新 UI）。首批：**YUK-1338**（Pi + DBOS 第一道 gate，本机已通过，PR #1590 待审查与 owner 合入；当前不动生产；P0 最终通过后由 57961995 父线程立即衔接 P1/P5，不以 1363/1364 为串行阻塞）与 **YUK-1353**（视觉方向 loft）。UI 票（YUK-1353/1354/1357 及 P6 UI 子票）只交 Claude Opus 5.5；非 UI 开发按 AGENTS 常规选择。ADR 以 main 的 0066 为准。
+- **TS 迁移（epic YUK-1351）owner 最新覆盖**：先完成所有非 UI 迁移，保留现有页面和确定性能力，UI 重写暂缓，不等待 Opus/UI 票。1338 最终 gate 仍由父核验；1352/1355/1356 各守隔离 ownership，1363/1364 另线程独占。1355 的 source/test 完成不代表业务任务族、runtime 或全迁移已验收；剩余族归 1356/1358，兼容清理归 1355/1359。
 - **早期单收口（2026-10-07）**：YUK-100..500 的 20 张已在 Linear 逐张裁定——147/213/295/310/406/443/464 转 Todo，369 Canceled（被 1038 取代），其余设触发条件与 10-21 / 11-07 复查截止，到期未触发即取消；406 验收裁定连带 405/418/419。
 
 ## PARKED
