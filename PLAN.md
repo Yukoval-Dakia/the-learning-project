@@ -4,7 +4,8 @@
 
 ## NOW
 
-- **YUK-1363 / YUK-1364**：独立本地 S3 测试存储已上线，真实附件 CRUD、共享对象删除、鉴权负向和容器重建持久化通过；独立复核无 P0/P1，容量参数及最终持久化补验收已完成。TeachingBrief 正式发题准入与冻结题面修复通过 scoped tests/typecheck/lint/build，独立初审 P1 已复现并修复，124 DB/52 unit/typecheck/lint/build 通过，父独立23 DB通过；唯一验证审与PR门禁推进中，尚未部署。
+- **YUK-1363 / YUK-1364**：独立本地 S3 测试存储已上线并验收。PR #1591 的唯一验证审发现连续复验仍读取可变题面的 P1；两条完整链路已 RED→GREEN，扩展负向回归与门禁尚未完成，暂不合并、不启动第三审、未部署。此前124 DB/52 unit及本地门禁通过不覆盖该剩余缺口，见[修复证据](docs/planning/2026-10-07-yuk1364-probe-issuance.md)。
+- **YUK-1356 业务操作迁移**：接口与消费者调查已交付[实施输入](docs/planning/2026-10-07-yuk1356-operation-seams.md)。主线57961995已接手独立树唯一实施writer，与1352/1355协调；本线程不重复实施。Pi可信作答来源、队列诊断投影与coverage语义必须保留，三入口统一尚未验收。
 
 - **YUK-1362 / 当前部署用途**：http://localhost:8787 仅供 Agent 开发测试。固定 `f3bfff2cf` 镜像，旧库备份后重新建库，115 项迁移、readiness active、app/worker healthy；新空库仅有系统初始化数据。未部署未验收的 PR1584/1588。未来日用部署必须由 owner 明确要求。
 - **YUK-1341 产品 AI**：PR #1585 已通过 exact-head CI、独立初审和等待窗并合并。app/worker 都固定 `opencode-go/mimo-v2.6-pro`；54聊天任务和 Mem0 接线已落地。生产两轮 Copilot 成功，原会话及 Pi cursor 连续、刷新回放一致；后台 MemoryBrief 也已实际成功。未宣称所有任务质量或评分切片均获准入。
