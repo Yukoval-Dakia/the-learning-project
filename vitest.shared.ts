@@ -52,6 +52,7 @@ export const allTestInclude = [
 ];
 
 export const fastTestInclude = [
+  'tests/pi-dbos-gate/contract.unit.test.ts',
   // ARCH-P1 (YUK-311) — 新 kernel/capabilities 树的约定式快分区：
   // *.unit.test.ts 按【命名约定】跑 no-DB 车道，零逐文件登记；*.db.test.ts
   // 落到 db 分区（匹配 allTestInclude 的 src/**/*.test.ts，又被下面这两个

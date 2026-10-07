@@ -4,7 +4,9 @@
 
 ## NOW
 
-- **YUK-1363 / YUK-1364**：独立本地 S3 测试存储已上线并验收。PR #1591 又确认一条 P1：正常编辑 KC/draft 等字段会使已完成的冻结结果失效；当前修复将历史结果校验归 Agency，共享冻结 proposal/issuance/revision 与原生评分绑定。最新日志 299 DB/72 unit 通过，writer 尚未交还，父级最终验收和新 exact-head CI 待完成；旧提交绿色不能作为合并依据。两轮独立审已用完，不启动第三审、未部署。见[修复证据](docs/planning/2026-10-07-yuk1364-probe-issuance.md)。
+- **YUK-1338 / YUK-1351 P0 gate**：PR #1590 已合入主线 42987dfd7，本分支同步集成。测试容器中验证 Pi + DBOS 状态版本、过期拒绝、四个进程终止边界、响应复用与单次业务效果；不等于整个迁移或真实 provider 重复付费问题已解决。证据见[gate 记录](docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md)。
+
+- **YUK-1363 / YUK-1364**：独立本地 S3 测试存储已上线并验收。PR #1591 又确认一条 P1：正常编辑 KC/draft 等字段会使已完成的冻结结果失效；当前修复将历史结果校验归 Agency，共享冻结 proposal/issuance/revision 与原生评分绑定。修复 b7badc0bc 已完成，299 DB/72 unit 与本地门禁通过，父级独立94 DB通过；已合入主线 P0 gate，合并后的依赖验证与新 exact-head CI 待完成。两轮独立审已用完，不启动第三审、未部署。见[修复证据](docs/planning/2026-10-07-yuk1364-probe-issuance.md)。
 - **YUK-1356 业务操作迁移**：接口与消费者调查已交付[实施输入](docs/planning/2026-10-07-yuk1356-operation-seams.md)。主线57961995已接手独立树唯一实施writer，与1352/1355协调；本线程不重复实施。Pi可信作答来源、队列诊断投影与coverage语义必须保留，三入口统一尚未验收。
 
 - **YUK-1362 / 当前部署用途**：http://localhost:8787 仅供 Agent 开发测试。固定 `f3bfff2cf` 镜像，旧库备份后重新建库，115 项迁移、readiness active、app/worker healthy；新空库仅有系统初始化数据。未部署未验收的 PR1584/1588。未来日用部署必须由 owner 明确要求。
