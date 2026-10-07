@@ -12,11 +12,11 @@
 
 ---
 
-# 当前交接 — YUK-1325 Laminar
+# 当前交接 — 2026-10-07 YUK-1325 Laminar writer released
 
-/tmp/tlp-laminar-yuk1325 feat/yuk-1325-laminar source4189a1430，初审P1隐私与live token映射缺陷均修复，唯一验证审337tests无P0/P1。两条原始真实MiMo与两条明确OFFLINE REPLAY的真实SDK→SQL验证见planning doc。浏览器确认新摘要；genericTaskEvaluator仍只读空LLM transcript误判失败，不能作质量gate。PR #1580已开，CI与父线程验收待完成，不再启动第三review。无新模型调用/部署/准入；Serena ignored bytes与recovery stash保留。
+工作树 `/private/tmp/tlp-laminar-yuk1325`，分支 `feat/yuk-1325-laminar`。保留既有修复 `1be38edbc`、sharp `1af72b427` 和 main merge `3940d61f9`；正常 merge main `8841ce68a` 为 `e484efa60`，保留产品 MiMo/autonomous delivery 指导与 Laminar。359 unit、全部19 CI audit加provider-lanes/agent-control-plane、typecheck/lint/build/lint-ratchet通过；297既有warnings、零high/critical依赖告警。P1 #4196957316 的4种prefixed API-key控制在a529全部RED、当前全部GREEN，未重写既有修复。完整命令/日志digest见 `docs/planning/evidence/2026-10-07-yuk1325-babysit-checks.txt`，本地日志 `.cache/yuk1325-babysit-20261007/`。
 
-Owner新授权：允许开发阶段transcript传输。子writer已完成development显式开关，真实SDK setInput/setOutput，LLM标准message数组与tool结构参数/结果，credentials/CoT/media排除及可见限长。102scoped tests、typecheck、lint(0 errors/297基线warnings)、build通过。writer提交后释放所有权，完整命令与日志见 /tmp/yuk1325-development-transcripts-report.md。激活：既有local环境配置project key后 `NODE_ENV=development LMNR_DEV_TRANSCRIPTS=1 pnpm dev:local`，API/worker均重启。生产/test/unset NODE_ENV不能启用；空key不导入SDK。正常main merge提交1cfb8e855保留两侧handoff及staged main源码；无force/reset/rebase。父线程继续SQL/browser synthetic replay验收、PR body/CI/等待窗/tracker，不启动第三review。无push，远端conflicts通知仅在父线程push后才能更新。
+源码/backend/sanitizer/audit baseline完整保留，无prod/HTTP-worker/model/DB/export/full-test/push/第三审。历史真实调用及OFFLINE REPLAY仅适用于原记录revision，最终development transcript SDK→SQL/browser验收仍待父线程。父线程独占PR watch/push/replies/merge/Linear/deploy；P2 typed primitive tracing仍延期YUK-1339；无新增actionable follow-up。提交此交接后writer释放，不因PR通知重启写入。
 
 # 当前交接 — 2026-10-06 YUK-1224/1226/1196/1236（SCF-141/143/109/161）
 
