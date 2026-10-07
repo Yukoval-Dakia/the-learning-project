@@ -4,7 +4,7 @@
 
 ## NOW
 
-- **YUK-1376**：PR1599已合入7bc216509，tree与CI head6ab98ed8c一致；CI Gate37677610975成功、独立验证审P0/P1 NONE。隔离真实HTTP四行冻结错题、附件字节及负例通过；原页面刷新四行、语文筛选空列表、八张缩略图与Lightbox解码通过。20:26:50Z停止自有隔离容器并核owner释放锁，保留独立卷；主四服务healthy，release未变。整组图片真实模型评分、完整媒体/参考答案策略、Start挂载及旧入口退出仍未核销。[证据](docs/planning/2026-10-08-yuk1376-mistakes-domain.md)。
+- **YUK-1376**：当前接续：冻结公开媒体读取。只读调查已交回，父核projectPracticeIssuance/PublicMaterialView与native reader后启动唯一writer `yuk1376-public-material-read-implementation-20261008-v1`，codex/gpt-6.1-sol/xhigh，分支 `feat/yuk-1376-frozen-public-materials`。主线已实查四树授权读取路径无WIP并确认边界。范围仅records/ingestion的prompt_materials与scoped测试；覆盖现有公开材料类型、失败face范围、digest及缺失/损坏，reference保持null。UI/Start/kernel/评分/表/全局配置不改，无服务或provider操作。新实现尚未交回，旧验收不能代表新head。 已合入与上一轮隔离验收见[1376证据](docs/planning/2026-10-08-yuk1376-mistakes-domain.md)。
 
 - **YUK-1376（1358 W1 /mistakes）**：YUK1375已随PR1597合入36f719675，exact CI与独立review通过；本线程从最新main承接错题页非UI领域/API消费者迁移，保留视觉与现有行为；不改全局路由/manifest/package/lock或1352组合根，挂载交主线。1359退出清单继续由本线程维护。1352/1355/1356唯一集成与writer归主线57961995，不写其三树。
 
