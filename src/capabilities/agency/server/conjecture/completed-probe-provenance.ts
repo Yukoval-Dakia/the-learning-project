@@ -92,37 +92,24 @@ export type CompletedProbeProvenanceResult =
   | { reason: string };
 
 /**
- * Completed issued facts use the original proposal, issuance and revision.
+ * Issued probes use the original proposal, issuance and revision.
  * Question source/refs/sequence are not editor fields and remain identity guards.
  * Editable KC, draft status, kind, choices and content cannot reinterpret a result.
  * Callers retain correction/status folds and the historical unissued row contract.
  */
-export function validateCompletedProbeProvenance({
-  result,
+export function validateIssuedProbeProvenance({
   probe,
   proposal,
   issuance,
   revision,
-  assessmentAnchors,
   now,
 }: {
-  result: ResultRow;
   probe: ProbeIdentity;
   proposal: CompletedProbeProposal;
   issuance: typeof assessment_issuance.$inferSelect;
   revision: typeof question_revision.$inferSelect | null;
-  assessmentAnchors: ReadonlyMap<string, AssessmentAnchor>;
   now?: Date;
 }): CompletedProbeProvenanceResult {
-  const provenance = ResultProvenance.safeParse(result.payload);
-  if (
-    !provenance.success ||
-    provenance.data.conjecture_event_id !== proposal.id ||
-    result.caused_by_event_id !== proposal.id ||
-    result.subject_id !== probe.id
-  ) {
-    return { reason: 'result_provenance_mismatch' };
-  }
   if (probe.source !== PROBE_QUESTION_SOURCE) return { reason: 'probe_source_mismatch' };
   if (now && probe.created_at.getTime() > now.getTime())
     return { reason: 'probe_created_in_future' };
@@ -145,23 +132,6 @@ export function validateCompletedProbeProvenance({
     issuance.container_occurrence_ref !== `probe:${probe.id}`
   ) {
     return { reason: 'probe_issuance_unprojectable' };
-  }
-  const refs = provenance.data.assessment;
-  if (refs) {
-    const anchor = assessmentAnchors.get(refs.evaluation_id);
-    if (
-      refs.issuance_id !== issuance.issuance_id ||
-      !anchor ||
-      anchor.submission.submission_id !== refs.submission_id ||
-      anchor.submission.issuance_id !== issuance.issuance_id ||
-      anchor.submission.revision_id !== revision.revision_id ||
-      anchor.evaluation.submission_id !== refs.submission_id ||
-      anchor.evaluation.evaluation_group_id !== anchor.submission.evaluation_group_id ||
-      anchor.evaluation.status !== 'completed' ||
-      !AutomaticProvenance.safeParse(anchor.evaluation.provenance).success
-    ) {
-      return { reason: 'result_assessment_mismatch' };
-    }
   }
   try {
     const published = PublishedQuestionRevision.parse(revisionRowToContract(revision));
@@ -198,4 +168,44 @@ export function validateCompletedProbeProvenance({
   } catch {
     return { reason: 'probe_issuance_unprojectable' };
   }
+}
+
+/** Completed results also bind their native submission and automatic evaluation. */
+export function validateCompletedProbeProvenance({
+  result,
+  assessmentAnchors,
+  ...issued
+}: Parameters<typeof validateIssuedProbeProvenance>[0] & {
+  result: ResultRow;
+  assessmentAnchors: ReadonlyMap<string, AssessmentAnchor>;
+}): CompletedProbeProvenanceResult {
+  const provenance = ResultProvenance.safeParse(result.payload);
+  if (
+    !provenance.success ||
+    provenance.data.conjecture_event_id !== issued.proposal.id ||
+    result.caused_by_event_id !== issued.proposal.id ||
+    result.subject_id !== issued.probe.id
+  ) {
+    return { reason: 'result_provenance_mismatch' };
+  }
+  const validated = validateIssuedProbeProvenance(issued);
+  if ('reason' in validated) return validated;
+  const refs = provenance.data.assessment;
+  if (refs) {
+    const anchor = assessmentAnchors.get(refs.evaluation_id);
+    if (
+      refs.issuance_id !== issued.issuance.issuance_id ||
+      !anchor ||
+      anchor.submission.submission_id !== refs.submission_id ||
+      anchor.submission.issuance_id !== issued.issuance.issuance_id ||
+      anchor.submission.revision_id !== issued.revision?.revision_id ||
+      anchor.evaluation.submission_id !== refs.submission_id ||
+      anchor.evaluation.evaluation_group_id !== anchor.submission.evaluation_group_id ||
+      anchor.evaluation.status !== 'completed' ||
+      !AutomaticProvenance.safeParse(anchor.evaluation.provenance).success
+    ) {
+      return { reason: 'result_assessment_mismatch' };
+    }
+  }
+  return validated;
 }

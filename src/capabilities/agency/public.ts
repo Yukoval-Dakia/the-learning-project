@@ -5,6 +5,7 @@ export type { CompletedProbeProposal } from './server/conjecture/completed-probe
 export {
   loadCompletedProbeAssessmentAnchors,
   validateCompletedProbeProvenance,
+  validateIssuedProbeProvenance,
 } from './server/conjecture/completed-probe-provenance';
 export {
   type ConjectureEvidenceAssetRef,

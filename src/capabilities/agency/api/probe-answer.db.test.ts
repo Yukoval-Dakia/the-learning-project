@@ -31,6 +31,10 @@ import {
 import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
 import { loadActiveProbes } from '@/capabilities/shell/server/prep-desk-probes';
+import {
+  loadTeachingBrief,
+  validateAckableOutcome,
+} from '@/capabilities/shell/server/teaching-brief';
 import { newId } from '@/core/ids';
 import { ConjectureProbeSpecV2 } from '@/core/schema/business';
 import { ConjectureProbeSignatureMatch } from '@/core/schema/conjecture-probe-response';
@@ -50,6 +54,7 @@ import {
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
+import { editQuestion } from '@/server/questions/write';
 import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { agencyCapability } from '../manifest';
@@ -59,6 +64,7 @@ import { POST } from './probe-answer';
 const mockInvoke = vi.fn<(...args: unknown[]) => Promise<ReturnType<typeof invokeResult>>>();
 
 const KC_ID = 'kn_chain_rule';
+const PROBE_REFERENCE = '2x·cos(x^2) — outer cos × inner 2x (chain rule).';
 const PROBE_RESULT_ACTION = 'experimental:probe_result';
 
 function judgeResult(
@@ -166,7 +172,7 @@ async function seedConjecture(opts: { includeFollowup?: boolean } = {}): Promise
         confidence: 0.7,
         recurrence_count: 2,
         probe_md: 'd/dx sin(x^2) = ?',
-        probe_reference_md: '2x·cos(x^2) — outer cos × inner 2x (chain rule).',
+        probe_reference_md: PROBE_REFERENCE,
         ...(opts.includeFollowup === false
           ? {}
           : {
@@ -200,7 +206,7 @@ async function serveProbe(): Promise<string> {
     conjectureProposalId: proposalId,
     knowledgeId: KC_ID,
     probeMd: 'd/dx sin(x^2) = ?',
-    referenceMd: '2x·cos(x^2)',
+    referenceMd: PROBE_REFERENCE,
   });
   if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
   return served.probe_question_id;
@@ -211,7 +217,7 @@ async function serveResponseAwareProbe(): Promise<string> {
   const probeSpec = ConjectureProbeSpecV2.parse({
     schema_version: 2,
     prompt_md: 'd/dx sin(x^2) = ?',
-    reference_md: '2x·cos(x^2)',
+    reference_md: PROBE_REFERENCE,
     expected_target_error_answer_md: 'cos(x^2)+2x',
     elicits_target_error_reason_md: '区分两层导数相乘与相加。',
     context_kind: 'abstract',
@@ -814,12 +820,41 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
     const response = await answer(probeId, '2x·cos(x^2)');
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
+    const result = ProbeAnswerResponseSchema.parse(await response.json());
+    expect(result).toMatchObject({
       status: 'retired',
       outcome: 1,
       answer_result: 'correct',
       target_error_match: 'not_matched',
       gradable: true,
+    });
+    expect(mockInvoke).toHaveBeenCalledTimes(1);
+    const db = testDb();
+    const [probe] = await db.select().from(question).where(eq(question.id, probeId));
+    expect(
+      await editQuestion(
+        db,
+        probeId,
+        probe.version,
+        {
+          knowledge_ids: [],
+          draft_status: 'active',
+          prompt_md: '后来改为求 cos(x³) 的导数，不能重解释原结果。',
+          reference_md: '-3x² sin(x³)，属于后续修订。',
+          kind: 'choice',
+          choices_md: ['A: 内外层导数相加', 'B: 内外层导数相乘'],
+        },
+        'self',
+      ),
+    ).toMatchObject({ status: 'updated' });
+    const [resultEvent] = await db
+      .select()
+      .from(event)
+      .where(eq(event.id, result.probe_result_event_id));
+    expect(await validateAckableOutcome(db, resultEvent, new Date())).not.toHaveProperty('reason');
+    expect((await loadTeachingBrief(db)).brief).toMatchObject({
+      state: 'outcome_retired',
+      current_outcome: { probe_result_event_id: result.probe_result_event_id },
     });
   });
 
@@ -944,7 +979,7 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
       conjectureProposalId: proposalId,
       knowledgeId: KC_ID,
       probeMd: 'd/dx sin(x^2) = ?',
-      referenceMd: '2x·cos(x^2)',
+      referenceMd: PROBE_REFERENCE,
     });
     if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
     mockInvoke.mockResolvedValue(invokeResult('incorrect'));
@@ -988,7 +1023,7 @@ describe('POST /api/conjecture/probe/:id/answer (conjecture-wire #13)', () => {
       conjectureProposalId: proposalId,
       knowledgeId: KC_ID,
       probeMd: 'd/dx sin(x^2) = ?',
-      referenceMd: '2x·cos(x^2)',
+      referenceMd: PROBE_REFERENCE,
     });
     if (served.status !== 'served') throw new Error(`expected served, got ${served.status}`);
     await writeEvent(testDb(), {

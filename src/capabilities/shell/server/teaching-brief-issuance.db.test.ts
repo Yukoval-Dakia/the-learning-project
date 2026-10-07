@@ -11,9 +11,13 @@ import {
 } from '@/capabilities/agency/public';
 import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
+import { ConjectureProbeSpecV2 } from '@/core/schema/business';
 import { PROBE_RESOLUTION_RULE_VERSION } from '@/core/schema/conjecture';
 import {
+  ai_task_runs,
   assessment_issuance,
+  assessment_submission,
+  evaluation,
   event,
   knowledge,
   question,
@@ -736,6 +740,168 @@ describe('YUK-1364 TeachingBrief frozen issuance eligibility', () => {
     expect(await loadTeachingBrief(testDb(), NOW)).toEqual({ brief: null });
     expect(await testDb().select().from(assessment_issuance)).toHaveLength(0);
   });
+
+  it('rejects a legacy rubric edited while withheld before its first admitted issuance, without paying the judge', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(NOW);
+    __resetRateLimitForTests();
+    const db = testDb();
+    const eligible = await seedProbe('older_matching_rubric', 120);
+    const invalid = await seedProbe('edited_withheld_rubric', 10, false);
+    const [original] = await db.select().from(question).where(eq(question.id, invalid));
+    const [withheld] = await db
+      .select()
+      .from(question_group_lifecycle)
+      .where(eq(question_group_lifecycle.group_id, invalid));
+    expect(original.metadata).not.toHaveProperty('probe_spec');
+    expect(withheld.scoring_admission_state).toBe('withheld');
+    expect(await db.select().from(assessment_issuance)).toHaveLength(1);
+    expect(
+      await editQuestion(
+        db,
+        invalid,
+        original.version,
+        { reference_md: '错误的新评分参考：内外层导数相加，cos(x²) + 2x。' },
+        'self',
+      ),
+    ).toMatchObject({ status: 'updated' });
+    await publishPaperModelFixture(db, invalid);
+    expect(await servePublishedProbe(db, invalid)).toMatchObject({ status: 'issued' });
+
+    const execute = vi.fn<Parameters<typeof createRecordedModelExecutor>[1]>(
+      async (input, _signal, runId) => ({
+        kind: 'scored',
+        points_awarded: 0,
+        matched: {
+          rule_id:
+            input.unit.criterion.kind === 'rule_reference' ? input.unit.criterion.rule_id : '',
+          option_ids: [],
+        },
+        confidence: 0.9,
+        feedback_md: '离线评分只用于证明错误参考已进入付费调用边界。',
+        evidence_citations: [],
+        run_refs: [runId],
+        cost_usd_micros: 0,
+      }),
+    );
+    const factory = vi
+      .spyOn(evaluationService, 'createFormalModelExecutor')
+      .mockImplementation(() => createRecordedModelExecutor(db, execute));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const snapshot = () =>
+      Promise.all([
+        db.select().from(question),
+        db.select().from(event),
+        db.select().from(assessment_issuance),
+        db.select().from(question_revision),
+        db.select().from(question_group_lifecycle),
+      ]);
+    const before = await snapshot();
+    expect.soft((await loadTeachingBrief(db, NOW)).brief).toMatchObject({
+      state: 'probe_ready',
+      prepared_action: { probe_question_id: eligible },
+    });
+    expect.soft(warn).toHaveBeenCalledWith('[teaching-brief] skipped candidate', {
+      stage: 'probe',
+      candidate_id: invalid,
+      reason: 'probe_reference_mismatch',
+    });
+    expect(await snapshot()).toEqual(before);
+    const response = await POST(
+      new Request('http://test.invalid/probe/answer', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ answer_md: 'cos(x²) + 2x，内外层导数相加。' }),
+      }),
+      { id: invalid },
+    );
+    expect.soft(response.status).toBe(409);
+    expect.soft(await response.json()).toMatchObject({ error: 'probe_reference_mismatch' });
+    expect.soft(factory).not.toHaveBeenCalled();
+    expect.soft(execute).not.toHaveBeenCalled();
+    expect.soft(await db.select().from(assessment_submission)).toHaveLength(0);
+    expect.soft(await db.select().from(evaluation)).toHaveLength(0);
+    expect.soft(await db.select().from(ai_task_runs)).toHaveLength(0);
+    expect.soft(await snapshot()).toEqual(before);
+  });
+
+  it.each(['prompt', 'reference'] as const)(
+    'rejects a mismatched native probe-spec %s before a judge claim or dispatch',
+    async (drift) => {
+      const db = testDb();
+      const eligible = await seedProbe('older_matching_native', 120);
+      const invalid = await seedProbe('mismatched_native', 10, false);
+      const [row] = await db.select().from(question).where(eq(question.id, invalid));
+      const probeSpec = ConjectureProbeSpecV2.parse({
+        schema_version: 2,
+        prompt_md: row.prompt_md,
+        reference_md: row.reference_md,
+        expected_target_error_answer_md: 'cos(x²) + 2x，内外层导数相加。',
+        elicits_target_error_reason_md: '区分复合函数内外层导数相乘与相加。',
+        context_kind: 'abstract',
+        representation_kind: 'symbolic',
+        response_mode: 'short_answer',
+        gold_response_signature: { kind: 'text', response_md: row.reference_md },
+        target_error_response_signature: { kind: 'text', response_md: 'cos(x²) + 2x' },
+      });
+      await db
+        .update(question)
+        .set({
+          metadata: {
+            ...row.metadata,
+            probe_spec: probeSpec,
+          },
+        })
+        .where(eq(question.id, invalid));
+      const contract = await publishPaperModelFixture(db, invalid);
+      const criterion = contract.scoring_basis.units[0].criterion;
+      if (criterion.kind !== 'rule_reference')
+        throw new Error('fixture requires a frozen rule reference');
+      criterion.probe_spec = {
+        ...probeSpec,
+        ...(drift === 'prompt'
+          ? { prompt_md: '另一题：求 sin(x³) 的导数，解释内外层导数的关系。' }
+          : { reference_md: '错误的新参考：cos(x²) + 2x，内外层导数相加。' }),
+      };
+      contract.integrity_digest = contractIntegrityDigest(contract);
+      const [lifecycle] = await db
+        .select()
+        .from(question_group_lifecycle)
+        .where(eq(question_group_lifecycle.group_id, invalid));
+      expect(
+        await publishQuestionGroup(db, {
+          group_id: invalid,
+          contract,
+          expectedCurrentRevision: lifecycle.current_revision_id,
+          expectedAdmissionGeneration: lifecycle.scoring_admission_generation,
+          availability: lifecycle.availability,
+          actorRef: 'test:mismatched-native-probe-spec',
+          now: NOW,
+          admission: { state: 'admitted', evidence: lifecycle.scoring_admission_evidence },
+        }),
+      ).toMatchObject({ status: 'published' });
+      expect(await servePublishedProbe(db, invalid)).toMatchObject({ status: 'issued' });
+      const factory = vi.spyOn(evaluationService, 'createFormalModelExecutor');
+      const before = await db.select().from(event);
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await expectProbe(eligible);
+      const response = await POST(
+        new Request('http://test.invalid/probe/answer', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ answer_md: 'cos(x²) + 2x，内外层导数相加。' }),
+        }),
+        { id: invalid },
+      );
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({ error: 'probe_reference_mismatch' });
+      expect(factory).not.toHaveBeenCalled();
+      expect(await db.select().from(assessment_submission)).toHaveLength(0);
+      expect(await db.select().from(evaluation)).toHaveLength(0);
+      expect(await db.select().from(ai_task_runs)).toHaveLength(0);
+      expect(await db.select().from(event)).toEqual(before);
+    },
+  );
 
   it('filters more than a candidate window of newer unissued rows before choosing an eligible fallback', async () => {
     const eligible = await seedProbe('older_eligible', 120);

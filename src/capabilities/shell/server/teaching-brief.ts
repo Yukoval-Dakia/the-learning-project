@@ -8,8 +8,8 @@ import {
   getEffectiveProbeResultStatuses,
   loadCompletedProbeAssessmentAnchors,
   validateCompletedProbeProvenance,
+  validateIssuedProbeProvenance,
 } from '@/capabilities/agency/public';
-import { projectPracticeIssuance } from '@/core/schema/assessment';
 import { ConjectureProbeSpec } from '@/core/schema/business';
 import type { CauseCategoryT } from '@/core/schema/cause';
 import {
@@ -35,7 +35,6 @@ import {
 } from '@/db/schema';
 import { getCorrectionStatuses } from '@/kernel/events';
 import { type ProposalInboxRow, getProposalInboxRow } from '@/kernel/proposals/inbox';
-import { issuanceRowToContract, revisionRowToContract } from '@/kernel/records/assessment-issuance';
 
 export const TEACHING_BRIEF_FINDING_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 export const TEACHING_BRIEF_OUTCOME_TTL_MS = 7 * 24 * 60 * 60 * 1000;
@@ -584,34 +583,6 @@ function validateProbeQuestion(
   return null;
 }
 
-/** Active admission uses the issued face plus current row/lifecycle guards. */
-function projectIssuedProbeQuestion(
-  probe: QuestionRow,
-  issuance: typeof assessment_issuance.$inferSelect,
-  revision: typeof question_revision.$inferSelect | null,
-): CandidateResult<QuestionRow> {
-  if (!revision || revision.group_id !== probe.id) {
-    return { reason: 'probe_issuance_unprojectable' };
-  }
-  try {
-    const frozen = projectPracticeIssuance(
-      revisionRowToContract(revision),
-      issuanceRowToContract(issuance),
-    );
-    if (
-      frozen.response_spec.slots.length !== 1 ||
-      frozen.response_spec.slots[0].kind !== 'open_response'
-    ) {
-      return { reason: 'unsupported_probe_contract' };
-    }
-    return {
-      value: { ...probe, prompt_md: frozen.faces.map((part) => part.prompt_md).join('\n\n') },
-    };
-  } catch {
-    return { reason: 'probe_issuance_unprojectable' };
-  }
-}
-
 function appendProbeEvidence(
   proposal: ConjectureFacts,
   probeId: string,
@@ -1131,11 +1102,6 @@ async function loadProbeBrief(db: Db, now: Date): Promise<TeachingBrief | null> 
         continue;
       }
     }
-    const projected = projectIssuedProbeQuestion(probe, issuance, revision);
-    if (isCandidateError(projected)) {
-      warnSkipped('probe', probe.id, projected.reason);
-      continue;
-    }
     const proposalId = metadata.conjecture_proposal_id;
     if (typeof proposalId !== 'string' || proposalId.length === 0) {
       warnSkipped('probe', probe.id, 'probe_metadata_ref_missing');
@@ -1147,7 +1113,13 @@ async function loadProbeBrief(db: Db, now: Date): Promise<TeachingBrief | null> 
       continue;
     }
     const proposal = proposalResult.value;
-    const probeError = validateProbeQuestion(projected.value, proposal, now);
+    const issued = validateIssuedProbeProvenance({ probe, proposal, issuance, revision, now });
+    if (isCandidateError(issued)) {
+      warnSkipped('probe', probe.id, issued.reason);
+      continue;
+    }
+    const projected = { ...probe, prompt_md: issued.value.promptMd };
+    const probeError = validateProbeQuestion(projected, proposal, now);
     if (probeError) {
       warnSkipped('probe', probe.id, probeError);
       continue;
@@ -1166,7 +1138,7 @@ async function loadProbeBrief(db: Db, now: Date): Promise<TeachingBrief | null> 
       prepared_action: {
         kind: 'answer_probe',
         probe_question_id: probe.id,
-        prompt_md: projected.value.prompt_md,
+        prompt_md: projected.prompt_md,
       },
       current_outcome: {
         status: 'awaiting_answer',
