@@ -139,14 +139,11 @@ async function projectMistakeRecords(
   )) {
     if (failure) failureByAttempt.set(failure.attempt_event_id, failure);
   }
-  const nativeEvidence = await readNativeMistakeEvidence(
-    db,
-    [...failureByAttempt.values()].filter((failure) => attemptIds.has(failure.attempt_event_id)),
+  const pageFailures = [...failureByAttempt.values()].filter((failure) =>
+    attemptIds.has(failure.attempt_event_id),
   );
-  const legacyFailures = [...failureByAttempt.values()].filter(
-    (failure) =>
-      attemptIds.has(failure.attempt_event_id) && failure.question_snapshot === undefined,
-  );
+  const nativeEvidence = await readNativeMistakeEvidence(db, pageFailures);
+  const legacyFailures = pageFailures.filter((failure) => failure.question_snapshot === undefined);
   const legacyQuestionIds = [...new Set(legacyFailures.map((failure) => failure.question_id))];
   const questions =
     legacyQuestionIds.length > 0

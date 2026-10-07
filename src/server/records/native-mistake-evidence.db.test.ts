@@ -16,6 +16,7 @@ import type {
   ModelExecutorRequest,
   ModelUnitOutcomeT,
   ResponseSlotT,
+  ScoringBasisT,
   SharedMaterialT,
   SlotResponseT,
 } from '@/core/schema/assessment';
@@ -72,12 +73,28 @@ const OPEN_ENTRY: SlotResponseT = {
   evidence: [],
 };
 const TEXT_ENTRY: SlotResponseT = { slot_id: 's2', kind: 'text', text_md: '原答二：另一部分' };
+const GROUP_UNIT = {
+  scoring_unit_id: 'u_group',
+  slot_refs: [],
+  evidence_slot_refs: [],
+  material_refs: ['private'],
+  requires_group_evidence: true,
+  points: 1,
+  criterion: {
+    kind: 'rule_reference',
+    rule_id: 'group_rule',
+    source: 'official',
+    statement_md: 'PRIVATE_GROUP_RULE',
+  },
+} satisfies ScoringBasisT['units'][number];
+
 const stem = '冻结父材料：船的速度，含长段落、换行与数学 $v+c=18$。';
 
 async function publication(
   db: Db,
   slots: ResponseSlotT[] = [OPEN, TEXT],
   materials: SharedMaterialT[] = [],
+  scoringBasis?: (basis: ScoringBasisT) => ScoringBasisT,
 ) {
   const now = new Date();
   await db
@@ -149,6 +166,7 @@ async function publication(
     aggregation: { kind: 'sum' },
     blank_scores_zero: true,
   };
+  if (scoringBasis) contract.scoring_basis = scoringBasis(contract.scoring_basis);
   contract.execution_plan.assignments = contract.scoring_basis.units.map((unit) => ({
     scoring_unit_ids: [unit.scoring_unit_id],
     executor: {
@@ -264,6 +282,45 @@ async function row(db: Db) {
   return (await readMistakes(db)).rows[0];
 }
 
+async function jointAttempt(db: Db, images: GroupEvidenceT[][]) {
+  const submissions = [];
+  for (const [index, partId] of ['p1', 'p2'].entries()) {
+    const issued = await issueAssessment(db, { group_id: 'root', part_ids: [partId] });
+    if (issued.status !== 'issued') throw new Error(issued.status);
+    const saved = await saveSubmission(db, {
+      issuance_id: issued.issuance.issuance_id,
+      evaluation_group_id: 'joint',
+      idempotency_key: `joint_${index}`,
+      response_set: { entries: [index === 0 ? OPEN_ENTRY : TEXT_ENTRY] },
+      group_evidence: images[index],
+    });
+    if (!('submission' in saved)) throw new Error(saved.status);
+    await db.transaction((tx) =>
+      recordFormalAttemptCapture(tx, 'solo_submit', partId, saved.submission, null),
+    );
+    await record(db, `evt_assessment_${saved.submission.submission_id}`, partId);
+    submissions.push(saved.submission);
+  }
+  const candidate = await evaluationService.evaluateSubmission(db, {
+    submission_id: submissions[0].submission_id,
+    evaluation_group_id: 'joint',
+    evaluation_key: 'joint-evaluate',
+    expected_submission_ids: submissions.map((sub) => sub.submission_id),
+    model_executor: evaluationService.createFormalModelExecutor(db),
+    provenance: { source: 'automatic', assisted: false },
+  });
+  await evaluationService.activateSubmissionCandidate(
+    db,
+    {
+      evaluation_id: candidate.record.evaluation_id,
+      expected_effective_id: null,
+      expected_generation: 0,
+    },
+    { actorRef: 'test:joint' },
+  );
+  return { candidate, submissions };
+}
+
 async function cloneEvidence(
   db: Db,
   original: Awaited<ReturnType<typeof attempt>>,
@@ -334,6 +391,201 @@ describe('native mistake immutable evidence DB projection', () => {
   beforeEach(resetDb);
   afterEach(() => vi.restoreAllMocks());
 
+  it('P1 preserves all_units images when the frozen basis has only a group-evidence unit through GET and readMistakes', async () => {
+    const db = testDb();
+    const fixture = await publication(db, [OPEN, TEXT], [], () => ({
+      units: [GROUP_UNIT],
+      aggregation: { kind: 'sum' },
+      blank_scores_zero: true,
+    }));
+    const image = await handwritingFixture(db);
+    await attempt(db, { anchor: 'p1', images: [image] });
+    const events = await db.select().from(event);
+    const submissions = await db.select().from(assessment_submission);
+    const calls = fixture.execute.mock.calls.length;
+    const response = await GET(new Request('http://localhost/api/mistakes'));
+    expect(response.status).toBe(200);
+    const wire = MistakeListResponseSchema.parse(await response.json());
+    expect(wire.rows).toHaveLength(1);
+    expect(wire.rows[0]).toMatchObject({
+      question_id: 'p1',
+      reference_md: null,
+      wrong_answer_image_refs: [image.evidence.asset.asset_id],
+      wrong_answer_md: expect.stringContaining('原答一'),
+    });
+    expect((await readMistakes(db)).rows).toEqual(wire.rows);
+    expect(await db.select().from(event)).toEqual(events);
+    expect(await db.select().from(assessment_submission)).toEqual(submissions);
+    expect(fixture.execute).toHaveBeenCalledTimes(calls);
+  });
+
+  it.each(['only', 'mixed'])(
+    'P1 preserves unit-targeted group-only images in a %s basis through GET and readMistakes',
+    async (basisKind) => {
+      const db = testDb();
+      await publication(db, [OPEN, TEXT], [], (basis) => ({
+        ...basis,
+        units: basisKind === 'only' ? [GROUP_UNIT] : [...basis.units, GROUP_UNIT],
+      }));
+      const targeted = await handwritingFixture(db);
+      const all = await handwritingFixture(db);
+      const unrelated = await handwritingFixture(db);
+      const unissued = await handwritingFixture(db);
+      await attempt(db, {
+        anchor: 'p1',
+        images: [
+          { ...targeted, target: { scope: 'units', scoring_unit_ids: ['u_group'] } },
+          all,
+          ...(basisKind === 'mixed'
+            ? [
+                {
+                  ...unrelated,
+                  target: { scope: 'units', scoring_unit_ids: ['u_s2'] },
+                } satisfies GroupEvidenceT,
+                {
+                  ...unissued,
+                  target: { scope: 'units', scoring_unit_ids: ['u_s3'] },
+                } satisfies GroupEvidenceT,
+              ]
+            : []),
+        ],
+      });
+      const response = await GET(new Request('http://localhost/api/mistakes'));
+      expect(response.status).toBe(200);
+      const wire = MistakeListResponseSchema.parse(await response.json());
+      expect(wire.rows).toHaveLength(1);
+      expect(wire.rows[0].wrong_answer_image_refs).toEqual([
+        targeted.evidence.asset.asset_id,
+        all.evidence.asset.asset_id,
+      ]);
+      expect((await readMistakes(db)).rows).toEqual(wire.rows);
+    },
+  );
+
+  it('P1 excludes a cross-part unit when only one member part was actually issued', async () => {
+    const db = testDb();
+    await publication(db, [OPEN, TEXT], [], (basis) => ({
+      ...basis,
+      units: [
+        ...basis.units,
+        { ...basis.units[0], scoring_unit_id: 'u_cross', slot_refs: ['s1', 's2'] },
+      ],
+    }));
+    const own = await handwritingFixture(db);
+    const cross = await handwritingFixture(db);
+    await attempt(db, {
+      anchor: 'p1',
+      partIds: ['p1'],
+      entries: [OPEN_ENTRY],
+      images: [own, { ...cross, target: { scope: 'units', scoring_unit_ids: ['u_cross'] } }],
+    });
+    const response = await GET(new Request('http://localhost/api/mistakes'));
+    expect(response.status).toBe(200);
+    const wire = MistakeListResponseSchema.parse(await response.json());
+    expect(wire.rows).toHaveLength(1);
+    expect(wire.rows[0].wrong_answer_image_refs).toEqual([own.evidence.asset.asset_id]);
+    expect((await readMistakes(db)).rows).toEqual(wire.rows);
+  });
+
+  const jointAggregations: ScoringBasisT['aggregation'][] = [
+    { kind: 'sum' },
+    { kind: 'capped_sum', cap: 2 },
+    {
+      kind: 'threshold_levels',
+      thresholds: [
+        { level_id: 'fail', min_points: 0 },
+        { level_id: 'pass', min_points: 2 },
+      ],
+    },
+  ];
+  it.each(jointAggregations)(
+    'P1 retains cross-part and own-unit images for valid joint $kind scoring through GET and readMistakes',
+    async (aggregation) => {
+      const db = testDb();
+      const fixture = await publication(db, [OPEN, TEXT], [], (basis) => ({
+        ...basis,
+        aggregation,
+        units: [
+          ...basis.units.filter(
+            (unit) => aggregation.kind === 'sum' || unit.scoring_unit_id !== 'u_s3',
+          ),
+          {
+            ...basis.units[0],
+            scoring_unit_id: 'u_cross',
+            slot_refs: ['s1', 's2'],
+            evidence_slot_refs: ['s1'],
+            requires_group_evidence: true,
+          },
+        ],
+      }));
+      const images = [];
+      for (const partId of ['p1', 'p2']) {
+        const own = await handwritingFixture(db);
+        const cross = await handwritingFixture(db);
+        const all = await handwritingFixture(db);
+        const unrelated = await handwritingFixture(db);
+        const unissued = aggregation.kind === 'sum' ? await handwritingFixture(db) : null;
+        images.push({ partId, own, cross, all, unrelated, unissued });
+      }
+      const joint = await jointAttempt(
+        db,
+        images.map(({ partId, own, cross, all, unrelated, unissued }) => [
+          {
+            ...own,
+            target: { scope: 'units', scoring_unit_ids: [partId === 'p1' ? 'u_s1' : 'u_s2'] },
+          },
+          { ...cross, target: { scope: 'units', scoring_unit_ids: ['u_cross'] } },
+          all,
+          {
+            ...unrelated,
+            target: { scope: 'units', scoring_unit_ids: [partId === 'p1' ? 'u_s2' : 'u_s1'] },
+          },
+          ...(unissued
+            ? [
+                {
+                  ...unissued,
+                  target: { scope: 'units', scoring_unit_ids: ['u_s3'] },
+                } satisfies GroupEvidenceT,
+              ]
+            : []),
+        ]),
+      );
+      expect(joint.candidate.record.provenance?.input_snapshot).toMatchObject({
+        member_submission_ids: expect.arrayContaining(
+          joint.submissions.map((sub) => sub.submission_id),
+        ),
+        issued_part_ids: ['p1', 'p2'],
+      });
+      expect(
+        joint.candidate.record.unit_results.find((unit) => unit.scoring_unit_id === 'u_cross'),
+      ).toMatchObject({ status: 'scored', points_awarded: 0 });
+      const events = await db.select().from(event);
+      const originals = await db.select().from(assessment_submission);
+      const calls = fixture.execute.mock.calls.length;
+      const response = await GET(new Request('http://localhost/api/mistakes'));
+      expect(response.status).toBe(200);
+      const wire = MistakeListResponseSchema.parse(await response.json());
+      expect(wire.rows).toHaveLength(2);
+      for (const { partId, own, cross, all } of images) {
+        const card = wire.rows.find((card) => card.question_id === partId);
+        expect(card?.wrong_answer_image_refs).toEqual([
+          own.evidence.asset.asset_id,
+          cross.evidence.asset.asset_id,
+          all.evidence.asset.asset_id,
+        ]);
+        expect(card?.reference_md).toBeNull();
+        expect(card?.wrong_answer_md).toContain(partId === 'p1' ? '原答一' : '原答二');
+        expect(card?.wrong_answer_md).not.toContain(partId === 'p1' ? '原答二' : '原答一');
+        const filtered = await readMistakes(db, { question_id: partId });
+        expect(filtered.rows).toEqual([card]);
+      }
+      expect((await readMistakes(db)).rows).toEqual(wire.rows);
+      expect(await db.select().from(event)).toEqual(events);
+      expect(await db.select().from(assessment_submission)).toEqual(originals);
+      expect(fixture.execute).toHaveBeenCalledTimes(calls);
+    },
+  );
+
   it('reads multipart parent materials and issued boundaries, remains stable after mutable edits, and hides private reference content', async () => {
     const db = testDb();
     const fixture = await publication(db);
@@ -395,41 +647,9 @@ describe('native mistake immutable evidence DB projection', () => {
     const db = testDb();
     await publication(db);
     const images = [await handwritingFixture(db), await handwritingFixture(db)];
-    const submissions = [];
-    for (const [index, partId] of ['p1', 'p2'].entries()) {
-      const issued = await issueAssessment(db, { group_id: 'root', part_ids: [partId] });
-      if (issued.status !== 'issued') throw new Error(issued.status);
-      const saved = await saveSubmission(db, {
-        issuance_id: issued.issuance.issuance_id,
-        evaluation_group_id: 'joint',
-        idempotency_key: `joint_${index}`,
-        response_set: { entries: [index === 0 ? OPEN_ENTRY : TEXT_ENTRY] },
-        group_evidence: [images[index]],
-      });
-      if (!('submission' in saved)) throw new Error(saved.status);
-      await db.transaction((tx) =>
-        recordFormalAttemptCapture(tx, 'solo_submit', partId, saved.submission, null),
-      );
-      const id = `evt_assessment_${saved.submission.submission_id}`;
-      await record(db, id, partId);
-      submissions.push(saved.submission);
-    }
-    const candidate = await evaluationService.evaluateSubmission(db, {
-      submission_id: submissions[0].submission_id,
-      evaluation_group_id: 'joint',
-      evaluation_key: 'joint-evaluate',
-      expected_submission_ids: submissions.map((sub) => sub.submission_id),
-      model_executor: evaluationService.createFormalModelExecutor(db),
-      provenance: { source: 'automatic', assisted: false },
-    });
-    await evaluationService.activateSubmissionCandidate(
+    await jointAttempt(
       db,
-      {
-        evaluation_id: candidate.record.evaluation_id,
-        expected_effective_id: null,
-        expected_generation: 0,
-      },
-      { actorRef: 'test:joint' },
+      images.map((image) => [image]),
     );
     const projected = (await readMistakes(db)).rows;
     expect(projected).toHaveLength(2);

@@ -4,6 +4,7 @@ import type { FailureAttempt } from '@/capabilities/knowledge/public';
 import {
   AssessmentIssuance,
   EvaluationContractError,
+  EvaluationInputSnapshot,
   type EvidenceAttachmentT,
   GroupEvidence,
   PublishedQuestionRevision,
@@ -24,6 +25,7 @@ import type { Db, Tx } from '@/db/client';
 import {
   assessment_issuance,
   assessment_submission,
+  evaluation,
   question_revision,
   source_asset,
 } from '@/db/schema';
@@ -166,6 +168,27 @@ export async function readNativeMistakeEvidence(db: Db | Tx, failures: readonly 
     )
     .where(inArray(assessment_submission.submission_id, ids));
   const byId = new Map(rows.map((row) => [row.submission.submission_id, row]));
+  const evaluationIds = [
+    ...new Set(
+      native.flatMap((failure) =>
+        failure.assessment?.effective_evaluation_id
+          ? [failure.assessment.effective_evaluation_id]
+          : [],
+      ),
+    ),
+  ];
+  const evaluations =
+    evaluationIds.length > 0
+      ? await db
+          .select({
+            evaluation_id: evaluation.evaluation_id,
+            evaluation_group_id: evaluation.evaluation_group_id,
+            provenance: evaluation.provenance,
+          })
+          .from(evaluation)
+          .where(inArray(evaluation.evaluation_id, evaluationIds))
+      : [];
+  const evaluationById = new Map(evaluations.map((row) => [row.evaluation_id, row]));
   const imagesByAttempt = new Map<string, EvidenceAttachmentT[]>();
 
   for (const failure of native) {
@@ -249,19 +272,37 @@ export async function readNativeMistakeEvidence(db: Db | Tx, failures: readonly 
           })
           .join('\n')
           .slice(0, 200);
-    // Unit membership follows frozen slot refs, including evidence-only slots. Never share another submission's attachments.
+    // FailureAttempt's resolver has verified this effective evaluation against freezeEvaluationInput.
+    // Its snapshot supplies joint scope only; responses and attachments remain this submission's.
+    const effective = ref.effective_evaluation_id
+      ? evaluationById.get(ref.effective_evaluation_id)
+      : undefined;
+    const parsedInput = EvaluationInputSnapshot.safeParse(effective?.provenance?.input_snapshot);
+    const issuedPartIds =
+      effective?.evaluation_group_id === ref.evaluation_group_id &&
+      parsedInput.success &&
+      parsedInput.data.revision_id === revision.revision_id &&
+      parsedInput.data.member_submission_ids.includes(ref.submission_id) &&
+      issuance.binding.part_ids.every((id) => parsedInput.data.issued_part_ids.includes(id))
+        ? parsedInput.data.issued_part_ids
+        : issuance.binding.part_ids;
+    // Group-only units belong to the frozen group scope, without an invented part or slot.
     const anchorSlotIds = new Set(answerable.map((slot) => slot.slot_id));
     let issuedUnits: ScoringUnitT[] = [];
     try {
-      issuedUnits = projectIssuedScoringBasis(revision, issuance.binding.part_ids).units;
+      issuedUnits = projectIssuedScoringBasis(revision, issuedPartIds).units;
     } catch (error) {
       if (!(error instanceof EvaluationContractError)) throw error;
     }
     const anchorUnits = new Set(
       issuedUnits
-        .filter((unit) =>
-          [...unit.slot_refs, ...unit.evidence_slot_refs].some((id) => anchorSlotIds.has(id)),
-        )
+        .filter((unit) => {
+          const refs = [...unit.slot_refs, ...unit.evidence_slot_refs];
+          return (
+            refs.some((id) => anchorSlotIds.has(id)) ||
+            (refs.length === 0 && unit.requires_group_evidence)
+          );
+        })
         .map((unit) => unit.scoring_unit_id),
     );
     const knownUnits = new Set(revision.scoring_basis.units.map((unit) => unit.scoring_unit_id));

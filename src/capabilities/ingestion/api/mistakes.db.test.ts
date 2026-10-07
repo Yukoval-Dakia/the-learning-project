@@ -6,6 +6,8 @@ import { loadAttemptQuestionSnapshot } from '@/capabilities/practice/public';
 import { commitFormalAttempt } from '@/capabilities/practice/server/assessment/attempt';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import {
+  assessment_submission,
+  evaluation,
   event,
   knowledge,
   learning_record,
@@ -857,6 +859,8 @@ describe('GET /api/mistakes', () => {
         .set({ prompt_md: '现在已编辑', reference_md: '现在的私有答案' })
         .where(eq(question.id, native.questionId));
       const before = await db.select().from(event);
+      const submissionsBefore = await db.select().from(assessment_submission);
+      const evaluationsBefore = await db.select().from(evaluation);
       const calls = native.execute.mock.calls.length;
       const result = MistakeListResponseSchema.parse(await (await getMistakes()).json());
       expect(result.rows).toHaveLength(1);
@@ -868,6 +872,8 @@ describe('GET /api/mistakes', () => {
       });
       expect((await readMistakes(db)).rows).toEqual(result.rows);
       expect(await db.select().from(event)).toEqual(before);
+      expect(await db.select().from(assessment_submission)).toEqual(submissionsBefore);
+      expect(await db.select().from(evaluation)).toEqual(evaluationsBefore);
       expect(native.execute).toHaveBeenCalledTimes(calls);
     } finally {
       vi.restoreAllMocks();
