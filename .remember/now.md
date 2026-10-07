@@ -1,14 +1,12 @@
-# 当前交接 — 2026-10-07 MiMo 产品发布完成
+# 当前交接 — 2026-10-07 会话入口生产发布完成
 
-生产 `0f81e198f2b2cf51bdc5df231e3b7e5fbba06ad4`，app/worker 同为 OpenCode Go `mimo-v2.6-pro`；PR1585已合并，父watch已取消。两轮真实 Copilot、同会话 Pi cursor 和刷新回放通过；MemoryBrief 生产实际成功。完整证据与限制见 `docs/planning/2026-10-07-mimo-local-release-result.md` 和 `PLAN.md`。旧5d738dbc0不再是当前版本，勿重复部署。
+生产 `f3bfff2cfe2aea0efbf7d11ead8a84ebfab497ef`，02:17Z app/worker 同准确镜像 e681a7b502aa；MiMo 产品 pin 保持不变。PR1583 在 exact d3906a7 CI37556260516成功、P0/P1裁决及17分钟窗后，于02:05:19Z合并，watch已结束。真实生产 Chromium 通过 fresh sessions/server_time、默认续接、结束历史只读、新建空会话、重开及刷新一致；无模型调用，SQL task runs仍2712。完整记录见 `docs/planning/2026-10-07-session-entry-local-release-result.md`。
 
-私有 runtime `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/deployment-mimo-20261007-0f81e198`；当前指针为其上级 `current-release.json`。42failed+42DLQ保留，不自动重放。旧镜像单独回退未验证；DB恢复不可覆盖新写入。记忆副本探针整体FALSE，功能成功但 SDK wire/count/cost 未观测完整，勿改称PASS或付费重跑。
+私有 runtime `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/deployment-session-entry-20261007-f3bfff2c`；上级current-release.json已更新，锁已释放。先副本迁移/旧0f81读兼容，再停app/worker取得最终DB/Mem0/R2，恢复101表计数一致，115迁移/2744events。42failed+42DLQ完整JSON保持。旧镜像/配置留存，回退需browser reload且恢复旧入口bug，不能自动恢复DB覆盖新写入。本轮副本容器已停止保留。
 
-YUK1340 writer已交回94c0f0934并释放写入权；父线程为UI树唯一集成者。修复ac9ab2ad1增加每次打开时的fresh sessions/server_time校验；43de65f35合入PR1586文档main d501ea163，已解决PLAN冲突。父线程42组件、37DB、10个实际构建页面场景及最终build通过；浏览器/API为隔离夹具，未宣称生产验收。当前待push、新exact-head CI与17分钟窗；P1回复/resolve须在push后。无第三审，1583仅父线程watch。
+当前交付树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1340-session-entry`，分支 `ops/yuk-1340-session-entry-release`，父线程唯一writer；root旧树mixed dirty保留。生产已发布，不因文档PR待合并而重复部署。YUK1343两条P2未修，1346单次不记忆策略High/Backlog为下一产品线。旧memory probe整体FALSE/wire-cost未知、1042历史义务保留、1344离家设备验证未完成，均不改称已通过。
 
-新观察已登记YUK1346：两次明确不记忆的假设验收请求仍各生成Mem0摘要，未变成掌握/计划改写。原两条及私有证据保留；不删除、重放或混入当前UI修复。
-
-同原线程hourlyautomation启用；scope已纠正为产品AI而非开发。远程 https://loom-mac-mini.tail2ee344.ts.net/ 已配置；真实外部设备仍待1344。下一步先完成会话入口，然后推进椭圆学习证据与复验路径；模型切换不等于完整产品完成。
+本机 http://localhost:8787；远程 https://loom-mac-mini.tail2ee344.ts.net/ 使用原令牌。本机和远程health/ready200，sessions无令牌401、有令牌200；远程检查来自本Mac。hourlyautomation仍绑定原5796线程。先承接用户反馈与运行状态，再推进单次保留用途控制和椭圆学习证据/复验路径。开发模型常规选择，产品生成式路由MiMo；不要切父线程模型或重启终态子任务。
 
 以下为历史交接，旧授权、版本和模型选择不覆盖上述当前状态。
 
