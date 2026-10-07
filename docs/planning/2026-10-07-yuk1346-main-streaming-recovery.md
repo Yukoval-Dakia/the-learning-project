@@ -184,3 +184,14 @@ New exact-head CI, real provider/browser behavior, host-restart durability, live
 revision and old unknown request outcomes/cost remain unverified. Parent owns
 those actions. After the normal local commit this lane releases sole-writer
 authority; later notifications do not reopen it.
+
+
+## Integration of YUK-1375 audit repair
+
+Normal merge of main `36f719675` into `39bb243c9`; conflicts only in PLAN and handoff. Application source remains unchanged from the previous accepted integration. The incoming audit implementation/tests equal main; allowlists are unchanged. Node24 scoped audit tests: 54 passed. Actual CLI: 885 fields, 0 unallowed, 41 existing allowed. Typecheck, lint and build passed. This verifies the repaired path filtering on the current branch; it does not retroactively validate prior affected runs. Earlier 592 unit/538 DB results remain attached to their original revision and were not rerun. No runtime/provider/replay operation.
+
+- unit: exit 0; `.cache/yuk1346-main1375/unit.log`; SHA256 `a2b08f05bef55927a83284336851b341ba492714677a6bfd242ddf3b98277852`.
+- audit: exit 0; `.cache/yuk1346-main1375/audit.log`; SHA256 `dcf9b31b80baa2ab85ecd72aad12df032efae015514bac30c02c5379f5a8a230`.
+- typecheck: exit 0; `.cache/yuk1346-main1375/typecheck.log`; SHA256 `8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92`.
+- lint: exit 0; `.cache/yuk1346-main1375/lint.log`; SHA256 `5673a4ef4d26f23561f6fba815d7a6c385816b69568e209d7989e1f957456e78`.
+- build: exit 0; `.cache/yuk1346-main1375/build.log`; SHA256 `4a59cc8385237c6bd263d004db395042d756b39aa9533dc6c034388f81c7a120`.

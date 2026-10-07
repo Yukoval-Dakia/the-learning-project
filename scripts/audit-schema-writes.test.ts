@@ -1,8 +1,11 @@
 // biome-ignore-all lint/suspicious/noTemplateCurlyInString: Source fixtures intentionally contain unevaluated SQL template expressions.
-import { readFileSync } from 'node:fs';
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   type WriteStatement,
+  audit,
   auditSchemaWrites,
   buildProductionWriteIndex,
   countWriteHits,
@@ -537,6 +540,145 @@ const retainedBlock = currentSchema.slice(
 );
 const retentionAudit = (schema = retainedBlock, source = '') =>
   auditSchemaWrites(schema, new Map([['src/copilot/checkpoint.ts', source]]));
+
+describe('repository discovery boundary (YUK-1375)', () => {
+  it('keeps production evidence and retention violations independent of ancestor names', () => {
+    const temporaryRoot = mkdtempSync(join(tmpdir(), 'yuk1375-schema-audit-'));
+    const repoRoot = join(temporaryRoot, 'ordinary', 'repo');
+    const writeSource = (path: string, source: string) => {
+      const file = join(repoRoot, path);
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(file, source);
+    };
+    try {
+      writeSource(
+        'src/db/schema.ts',
+        `${retainedBlock}
+export const active = pgTable('active', {
+  title: text('title'),
+  details_json: jsonb('details_json'),
+  status: text('status'),
+  excluded_only: text('excluded_only'),
+  nested_only: text('nested_only'),
+});`,
+      );
+      writeSource(
+        'src/domain/rows.ts',
+        `export function build(input) {
+          return { title: input.title, details_json: { nested_only: input.metadata } };
+        }`,
+      );
+      writeSource(
+        'src/domain/persist.ts',
+        `import { active as renamed } from '@/db/schema';
+        export async function persist(row) { await db.insert(renamed).values(row); }`,
+      );
+      const caller = `import { build } from '@/domain/rows';
+        import { persist } from './domain/persist';
+        await persist(build({ title: 'Long evidence with ambiguous citations and Unicode 学習',
+          metadata: { passages: [{ page: 3, offsets: [40, 120] }], discarded: true } }));`;
+      writeSource('src/handler.ts', caller);
+      writeSource(
+        'app/update.ts',
+        "await db.execute(sql`update active set status = 'sealed' where id = ${id}`);",
+      );
+      writeSource(
+        'src/copilot/checkpoint.ts',
+        'await db.update(copilot_evidence_checkpoint).set({ records_json: [{ citations: [{ page: 3 }] }] });',
+      );
+      for (const path of [
+        'src/fixtures/seed.ts',
+        'src/__fixtures__/seed.ts',
+        'src/tests/seed.ts',
+        'src/__tests__/seed.ts',
+        'src/handler.test.ts',
+        'src/handler.spec.tsx',
+        'src/handler.fixture.ts',
+        'src/rehearsal/seed.ts',
+        'src/handler.rehearsal.ts',
+        'src/api.generated.ts',
+        'src/handler.d.ts',
+      ]) {
+        writeSource(
+          path,
+          `import { persist } from '@/domain/persist';
+          await persist({ excluded_only: 'fixture caller must not supply production evidence' });
+          db.insert(active).values({ excluded_only: 'fixture write' });
+          await db.execute(sql\`update active set excluded_only = 'fixture SQL'\`);
+          db.insert(copilot_evidence_checkpoint).values({ id: 'fixture checkpoint' });`,
+        );
+      }
+
+      const baseline = audit(repoRoot);
+      expect(baseline.results.filter((field) => field.table === 'active')).toEqual([
+        {
+          table: 'active',
+          field: 'title',
+          type: 'text',
+          insert_files: 1,
+          update_files: 0,
+          status: 'init-only',
+        },
+        {
+          table: 'active',
+          field: 'details_json',
+          type: 'jsonb',
+          insert_files: 1,
+          update_files: 0,
+          status: 'init-only',
+        },
+        {
+          table: 'active',
+          field: 'status',
+          type: 'text',
+          insert_files: 0,
+          update_files: 1,
+          status: 'update-only',
+        },
+        {
+          table: 'active',
+          field: 'excluded_only',
+          type: 'text',
+          insert_files: 0,
+          update_files: 0,
+          status: 'stub',
+        },
+        {
+          table: 'active',
+          field: 'nested_only',
+          type: 'text',
+          insert_files: 0,
+          update_files: 0,
+          status: 'stub',
+        },
+      ]);
+      for (const ancestor of ['test-storage', 'spec-worktree', 'fixtures']) {
+        const relocatedRoot = join(temporaryRoot, ancestor, 'repo');
+        cpSync(repoRoot, relocatedRoot, { recursive: true });
+        const relocated = audit(relocatedRoot);
+        expect(relocated.results, ancestor).toEqual(baseline.results);
+        expect(relocated.historicalRetention, ancestor).toEqual(baseline.historicalRetention);
+      }
+      expect(baseline.historicalRetention.issues).toEqual([
+        expect.objectContaining({
+          code: 'production_write',
+          kind: 'update',
+          path: 'src/copilot/checkpoint.ts',
+        }),
+      ]);
+
+      writeSource('src/handler.ts', caller.replace('await persist(build(', 'await unknown(build('));
+      const withoutCaller = audit(repoRoot);
+      for (const field of ['title', 'details_json', 'excluded_only']) {
+        expect(withoutCaller.results).toContainEqual(
+          expect.objectContaining({ table: 'active', field, insert_files: 0, status: 'stub' }),
+        );
+      }
+    } finally {
+      rmSync(temporaryRoot, { recursive: true, force: true });
+    }
+  });
+});
 
 describe('ADR-0058 / YUK-939 historical checkpoint retention', () => {
   it('keeps every retained column visible with rationale in JSON and text, including defaults', () => {

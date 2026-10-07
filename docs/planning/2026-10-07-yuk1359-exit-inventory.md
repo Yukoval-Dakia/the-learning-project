@@ -97,3 +97,12 @@ Linear1359已登记1352候选 `server/start/routes/$.ts`、`server/frontdoor.ts`
 1352负责上述页面共同的前门、鉴权及承载机制；这不代替逐页功能验收。1359在所有责任方交回后统一核销旧SPA挂载、构建、静态回落及重复恢复路径。
 
 本次还确认 README 的恢复演练段落引用 `docs/runbooks/cutover-final-backup-and-restore.md`，但该路径不在当前文件系统或Git跟踪文件中。1359清理时须与1329恢复演练工作对齐，补上实际使用且验证过的运行手册并修正链接。现有发布证据不能替代可执行的通用手册，也不能从旧脚本的DLQ清理描述推导出重放或删除授权。此项已登记1359，未在本轮改动发布脚本或服务。
+
+
+## 2026-10-08 W1 /mistakes 独占接续
+
+1364已合并5aa2a9e98并完成Agent TEST发布。主线57961995保留1352/1355/1356唯一集成，本线程7631承接1375 audit路径修复后，独占[1376](https://linear.app/yukoval-studios/issue/YUK-1376)（1358 W1 /mistakes非UI读取/领域操作/页面消费者），不修改主线三树。1359逐页退出清单仍由本线程负责。
+
+当前源码消费者为 `web/src/routes/MistakesPage.tsx` 的 `GET /api/mistakes?limit=200&subject=...`，由 ingestion GET 调用 `listMistakeProjectionPage`；还依赖 knowledge tree 和 subject 配置。后端已支持cursor/next_cursor，页面旧注释称无cursor已过时；迁移保留现有200+截断提示，不借此扩展分页视觉功能。须保留科目/纠错/归因筛选、冻结历史和附件证据、pending时间、record/practice/event/knowledge导航，以及原API校验与科目派生。
+
+1376交付typed领域读取与真实消费者，Start组合根、全局路由/manifest/package/lock由主线负责。领域层单测通过不能核销本表的/mistakes行：仍需主线挂载、真实浏览器/API/DB保留行为证明，以及旧SPA消费者退出证据。没有新增恢复机制，也不接管practice/评分或视觉设计。

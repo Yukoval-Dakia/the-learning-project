@@ -1,3 +1,7 @@
+## YUK1375 main integration
+
+正常合入36f719675，保留1346/1350行为与已通过的1364集成证据。仅audit工具及文档改变，重新执行scoped audit测试/真实CLI/typecheck/lint/build；原592unit/538DB不重标为本轮重跑。1376与1359归7631。
+
 # 当前 integration — 2026-10-08 YUK-1346 / YUK-1350 / YUK-1364
 
 本 lane 唯一 writer：`/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety`，`fix/yuk-1346-reconcile-safety`。clean31098cdbceb320da9b678f07c83ca95dbecf448e 正常合入 fetched main5aa2a9e989984dfa065b3ba400b67b6b987b12e3。冲突仅 PLAN/now；本轮 Node24.19.0：592 unit/25files、538 fresh Testcontainers DB/17files、typecheck/lint/build/10audits/Postman通过；297既有lint warnings。旧统计不替代新head。保留 answer_only/1350 fence/deadline、1364 canonical criterion/execution/V1 compatibility 与1365 streaming/listener，不恢复已退休聊天gate。
