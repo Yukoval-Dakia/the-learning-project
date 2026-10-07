@@ -43,3 +43,12 @@ PR comment `4206851930` 指出，已完成结果投影只冻结题面，仍从�
 主线 P0 gate `42987dfd7` 已正常合入 `67f465e79`，仅看板和历史交接文档发生冲突。合并后冻结依赖安装、104 DB（含 P0 进程恢复）、74 unit、typecheck/lint/build 与 diff check 全部通过；日志 `/tmp/yuk1364-main-{install,db,unit,typecheck,lint,build}.log`。旧 head `eb0e5f53b` 的 CI 不能作为新修复的合并依据。
 
 边界：旧 issued 记录没有原生 assessment refs 时保留冻结 issuance/revision 的历史契约；Scout 按 KC 发现候选的查询仍以当前 question 标签筛选，这与共享 fold 的已发现结果有效性校验不同，本修复未更改其发现语义。未发现需另建票的已证实缺陷；本轮 actionable finding 已在 YUK-1364 内闭环。以上是隔离 DB、离线执行端和本地构建证据，不是 provider 质量、CI 或 live-runtime 验收。该任务修复既有 finding，未启动第三轮审查，未部署或变更运行库。
+
+
+## 主线依赖升级后的集成
+
+`a6da290a7` 的 exact-head CI（含全部DB分片、migration smoke和production build）已通过，review thread均已裁决；随后main合入PR1584引发看板/交接文档冲突，故没有合并旧head。正常集成main `26f101581` 为 `b62c01dc6`，代码和锁文件没有手工冲突裁剪。
+
+合并后的冻结安装、15文件309 DB（299相关回归 + 10项P0进程恢复）、6文件74 unit、typecheck/lint/build和diff检查全部通过；日志 `/tmp/yuk1364-deps-main-{install,db,unit,typecheck,lint,build}.log`。新提交仍需重新通过exact-head CI及合并条件。
+
+旧a6da290a7的ARM64候选镜像已构建并核对revision，image ID `sha256:968e3c3861727ff51eab7319ba51116b100280f2e2e46d6909379bad762c9544`；它不含这次依赖集成，不能冒称当前head的发布镜像。运行验收尚未启动：部署互斥锁归YUK-1365其他线程，本线程mkdir被拒绝，没有删除锁或启动服务。

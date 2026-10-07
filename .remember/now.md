@@ -1,6 +1,6 @@
 # 当前集成 — 2026-10-07 YUK-1364 / YUK-1359
 
-PR1591 a6da290a7 exact CI全绿、无未解决review thread，但main26f101581合入PR1584产生文档冲突。现正正常merge，保留依赖变化及双方有效状态，合并后门禁待完成；未部署。1359首轮调查提交1ffe53c12，父抽查并纠正旧ADR状态和路径笔误。独立1364镜像构建成功，runtime验收未启动：deployment.lock属于thread bed93b71 / YUK1365，不能接管。T3通知请求回执不可确认，线程读取仍等待。
+PR1591 a6da290a7 exact CI全绿、无未解决review thread，但main26f101581合入PR1584产生文档冲突。已正常merge b62c01dc6，保留依赖变化及双方有效状态。合并后冻结安装、309 DB/74 unit/typecheck/lint/build通过，待新CI；未部署。1359首轮调查提交1ffe53c12，父抽查并纠正旧ADR状态和路径笔误。独立1364镜像构建成功，runtime验收未启动：deployment.lock属于thread bed93b71 / YUK1365，不能接管。T3通知请求回执不可确认，线程读取仍等待。
 
 以下为历史记录。
 
