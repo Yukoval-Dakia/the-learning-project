@@ -24,7 +24,7 @@ active 与 completed consumer 现在共享冻结题面投影。完成后的结�
 
 唯一验证审已完成，仍有一项 P1：带 follow-up 的连续复验通过 `probe-evidence.ts` 校验支持链，`supportingQuestionSequence` 仍读取可变题面、参考答案和版本。已正式发题的 legacy follow-up 编辑后，可能作答成功却使 confirmed 结果不可见、ack 409、报告误判 corrupt。该发现来自源码追踪；上述单次 probe 回归不能证明连续复验通过。
 
-该 P1 已用两条完整连续复验链路 RED→GREEN 复现并修复。共享 evidence fold 对已发题结果读取冻结 issuance/revision，历史未发题结果保留旧校验；KC/来源/依赖撤销仍使结果失效。生产 guard、schema 和合法 fallback 选择规则未改。
+该 P1 已用两条完整连续复验链路 RED→GREEN 复现并修复。共享 evidence fold 对已发题结果读取冻结 issuance/revision，历史未发题结果保留旧校验；当时仍以可变 KC 作为来源校验；该限制由下述 GitHub P1 修复纠正。来源身份损坏和依赖撤销仍使结果失效。生产 guard、schema 和合法 fallback 选择规则未改。
 
 最终 12 文件 248 DB、5 文件 72 unit、typecheck/lint/build 与 diff check 通过；父线程核对实际 diff、文件哈希后，独立复跑 issuance、Scout、accountability 三文件 85 DB 全通过。准确命令与哈希见 `/tmp/yuk1364-recurrence-commands.log`，父日志 `/tmp/yuk1364-parent-recurrence-db.log`。
 
@@ -36,4 +36,10 @@ active 与 completed consumer 现在共享冻结题面投影。完成后的结�
 
 PR comment `4206851930` 指出，已完成结果投影只冻结题面，仍从可变 question 读取知识点与草稿状态。正常 `editQuestion` 修改这些字段后，历史结果可能消失、ack 失败或报告计为 corrupt。父线程源码核对后接纳该 finding；通过正式编辑入口的三条回归（正确、错误、连续复验）已实际 RED，日志 `/tmp/yuk1364-completed-provenance-red-full.log`。
 
-正在实施 Agency 拥有的已完成结果来源契约，由 Shell 与共享 evidence fold 消费，区分当前新作答准入与不可变历史事实。历史未发题语义、真实来源损坏及证据撤销仍需保留。当前 `eb0e5f53b` 不可合并；前述248 DB/72 unit和父85 DB不覆盖此新缺口。该任务是既有 finding 的实施修复，不是第三轮审查；没有部署或运行库变更。
+修复 `b7badc0bc` 已建立 Agency 拥有的已完成结果来源契约，由 Shell 与共享 evidence fold 消费。冻结 proposal/issuance/revision 决定历史题面和归属；原生结果的 submission/evaluation ID 必须指向同一次正式发题的已完成、无辅助自动评分。正常编辑 KC、draft、kind、choices 或题面不再重写历史事实。当前新作答准入、历史未发题语义、真实来源身份损坏及证据撤销规则保留；GET 无补写。
+
+三条完整链路 RED→GREEN；最终 14 文件 299 DB、5 文件 72 unit、typecheck/lint/build 通过（297 lint warnings）。父核对五文件 SHA256 与交还一致，独立复跑 issuance、Scout、accountability 三文件 94 DB 通过，日志 `/tmp/yuk1364-parent-completed-provenance-db.log`。准确命令、哈希和消费者说明见 `/tmp/yuk1364-completed-provenance-commands.log`。
+
+主线 P0 gate `42987dfd7` 已正常合入 `67f465e79`，仅看板和历史交接文档发生冲突。合并后冻结依赖安装、104 DB（含 P0 进程恢复）、74 unit、typecheck/lint/build 与 diff check 全部通过；日志 `/tmp/yuk1364-main-{install,db,unit,typecheck,lint,build}.log`。旧 head `eb0e5f53b` 的 CI 不能作为新修复的合并依据。
+
+边界：旧 issued 记录没有原生 assessment refs 时保留冻结 issuance/revision 的历史契约；Scout 按 KC 发现候选的查询仍以当前 question 标签筛选，这与共享 fold 的已发现结果有效性校验不同，本修复未更改其发现语义。未发现需另建票的已证实缺陷；本轮 actionable finding 已在 YUK-1364 内闭环。以上是隔离 DB、离线执行端和本地构建证据，不是 provider 质量、CI 或 live-runtime 验收。该任务修复既有 finding，未启动第三轮审查，未部署或变更运行库。

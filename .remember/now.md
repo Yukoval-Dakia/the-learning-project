@@ -1,6 +1,6 @@
 # YUK-1364 完成结果来源修复进行中 — 2026-10-07
 
-PR1591 GitHub P1 4206851930 已实际复现：正常 editQuestion 的 KC/draft/kind/choices 更新不应使已完成的正式发题结果失效。修复任务已交还，代码提交b7badc0bc。299 DB/72 unit及静态/构建通过；父已核对五文件hash，独立94 DB通过。正在正常合入主线42987dfd7，只有本文件和PLAN文档冲突；合并依赖门禁及新CI待完成。Agency 新 completed-probe-provenance 共享冻结记录与评分绑定校验，Shell调用；历史未发题规则与撤回语义保留。不得按旧CI合并；未部署。
+PR1591 GitHub P1 4206851930 已实际复现：正常 editQuestion 的 KC/draft/kind/choices 更新不应使已完成的正式发题结果失效。修复任务已交还，代码提交b7badc0bc。299 DB/72 unit及静态/构建通过；父已核对五文件hash，独立94 DB通过。已正常合入主线42987dfd7为67f465e79，只有本文件和PLAN文档冲突，保留双方有效记录。合并后冻结安装、104 DB/74 unit/typecheck/lint/build通过，待push新CI。Agency 新 completed-probe-provenance 共享冻结记录与评分绑定校验，Shell调用；历史未发题规则与撤回语义保留。不得按旧CI合并；未部署。
 
 以下为历史记录。
 
