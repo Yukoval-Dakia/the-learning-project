@@ -22,7 +22,7 @@
 
 - Linear 是任务、缺陷和跟进真相源；先去重，状态与实际结果一致。
 - GitHub 保存可审查的代码与交付记录；保留独立 review、真实检查和仓库合并门禁，不以授权跳过正确性。
-- 使用 T3 编排与已安装工具。owner 后续指定本项目工作模型为 OpenCode Go MiMo 2.6 Pro，子任务明确使用 `providerInstanceId=opencode`、`model=opencode-go/mimo-v2.6-pro`、`options={}`，优先于通用模型选择表。核对实际运行选择，不把配置回执当作已切换。角色与浏览器按任务选择。
+- 使用 T3 编排与已安装工具。owner 后续指定本项目工作模型为 OpenCode Go MiMo 2.6 Pro，子任务明确使用 `providerInstanceId=opencode`、`model=opencode-go/mimo-v2.6-pro`、`options={}`，优先于通用模型选择表。例外（owner 2026-10-07）：UI 交互与视觉任务（含 UI 重写的设计、实施与视觉复核）只交给 Claude Opus 5.5，不交给 GPT/Codex 或 MiMo。核对实际运行选择，不把配置回执当作已切换。角色与浏览器按任务选择。
 - 一个工作树仅一个代码写入者；先识别现有工作与资源占用，避免抢写、重复部署和重复计费。并行写入使用隔离工作树。
 - 本机只跑匹配改动的 scoped tests 与适用静态检查、构建；完整测试门禁交给 exact-head GitHub CI。
 - 用户可见的交付需要实际浏览器/接口/数据效果证据；模型质量需要实际输出证据，不能用工具调用成功或替身测试代替。
