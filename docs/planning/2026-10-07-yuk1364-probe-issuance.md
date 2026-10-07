@@ -113,3 +113,22 @@ native fixture通过正式publication在首次issuance前只改target_error_resp
 合并前发现CI Gate 37642044307整体failure，已生成16个job均success或合法skip，最后汇总gate未生成，无failed-step日志。GitHub拒绝一次failed-only retry；改用现有workflow_dispatch在相同head触发37643395029完整gate。根因尚未确定，不能以部分绿色代替完整gate；此记录不代表已合并或部署。
 
 手动完整CI `37643395029` 随后在准确9a43085a0全部通过，包含最后汇总job；本地与镜像证据未变。然而普通expected-head squash仍被base policy拒绝。规则要求GitHub Actions汇总context；REST核对head上该context为success，PR临时merge commit `598d76c545ed186e5ac77acd5021c5d52ddd2338`无check-runs。未使用admin或修改规则。将本次实际验收文档提交到PR，以新的pull_request事件重新取得规则认可的CI，旧工作流失败记录保留。
+
+
+## 2026-10-07 15:50Z 历史 V1 兼容性修复
+
+70bd102bd 的 PR CI 37645299169 全绿，但 GitHub P1 4208871927 经源码核实成立：V1 schema 不含 schema_version，normalizer 将其转成 legacy rule-reference，不保存 V2 的 criterion.probe_spec。现 validator 以原始 spec 非空为条件要求 native 冻结字段，误拒合法 V1。唯一 writer 正在建立 absent/V1/V2 与各消费者的兼容矩阵并补回归，当前不能合并或发布。既有 9a HTTP 和 70b 制品一致证据不覆盖这次待完成修复。
+
+P2 4208871942 的 LIMIT-before-validation 已源码确认，运行影响尚未复现。去重后登记 YUK-1374；本 PR 延期该 P2，不声称修复。运行环境未改动，主线与 1365 owner 已收到状态通知。
+
+
+## 2026-10-07 16:00Z schema audit 基线归因
+
+父解析修复前70bd准确归档与修复后的canonical JSON，结构完全相等：885字段结果、731未豁免stub、119allowlisted、0allowlistIssues。实际脚本用绝对路径运行test/spec过滤，工作树名test-storage匹配test-，使生产源码被误排除；同一probe-lifecycle.ts相对路径不匹配而绝对路径匹配。已登记YUK-1375独立修复，不扩当前PR或allowlist。首次/tmp归档执行只有Command行而无audit输出，不计通过；/private/tmp规范路径运行取得真实失败JSON。证据 /tmp/yuk1364-v1-compat-audit-schema-current-json.log 与 /tmp/yuk1364-v1-compat-audit-schema-base-canonical.log。本项不能称为schema audit绿色。
+
+
+## 2026-10-07 16:02Z V1 修复交回
+
+代码faf2e66b012e3725df533189e58ad2dab31de188仅改变共享validator及两测试文件。通过schema-owned V2 safeParse区分V1和V2；V1/无spec沿用原始sequence的冻结prompt/reference，任一侧含V2仍要求完整契约相等。21项新V1 DB覆盖两个sequence、真实publisher/issuance、scripted executor作答、正常edit后的native及历史结果、ack幂等、report、recurrence与correction fold、错误参考/题面、V1/V2交换及坏proposal拒绝。修正测试fixture SQL数组错误后的RED为7个实际兼容性失败，另两个坏proposal控制通过；保留初始失败日志。
+
+最终281 DB、82 unit、typecheck/lint/build及10项audit通过。父核对23日志hash与20构建时源码hash；schema audit限制见上节YUK-1375。writer已释放。父重点两文件100 DB已通过，日志/tmp/yuk1364-v1-parent-db.log；新head CI/镜像HTTP仍待完成，不把旧镜像验收延伸到本修复。完整证据/tmp/yuk1364-v1-compat-evidence.md、manifest.json、final.patch。

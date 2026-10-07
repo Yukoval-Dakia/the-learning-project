@@ -1,3 +1,19 @@
+# 当前交付 — 2026-10-07 16:02Z YUK-1364
+
+V1修复faf2e66b012e3725df533189e58ad2dab31de188已交回，源码writer释放。281DB/82unit/typecheck/lint/build及10audit通过；schema audit在准确base相同失败，父已核实绝对路径test-storage误杀并登记YUK-1375、通知主线。父核对23日志与20build源码hash，新V1/V2两文件重点100 DB已通过。尚未push新head/CI/HTTP/merge/deploy。父现在唯一writer。
+
+V1 HTTP scratch /tmp/yuk1364-v1-http-runtime-fixture.ts已准备但未绑定，执行会在import前拒绝；待准确最终head归档后替换HEAD和所有9a路径，必须重新bundle。真实HTTP只做V1 seq1/2可见及坏reference409，不POST有效答案。旧9a/70b运行证据不覆盖新修复。任何runtime动作先重新核验并原子取锁通知两owner，Agent TEST ONLY，不清库、不私人R2、不DLQ重放。
+
+以下为历史记录。
+
+# 当前交付 — 2026-10-07 15:50Z YUK-1364
+
+PR1591 head70bd102bd CI37645299169已绿且CLEAN，但P1 4208871927确认历史V1 probe spec被误按V2要求criterion.probe_spec，禁止合并当前head。T3唯一源码writer yuk1364-v1-provenance-compat-repair-20261008-v1仍在运行，先做absent/V1/V2契约矩阵再修复；父仅处理disjoint文档/协调。新P2列表LIMIT先于provenance过滤已登记YUK-1374，未修。主线和1365已通知当前无runtime操作/持锁，下一次仍重新核验锁并原子获取。9a隔离HTTP和70b制品等价证明只覆盖旧代码，不能覆盖待完成V1修复。
+
+父已准备 /tmp/yuk1364-v1-http-runtime-fixture.ts 和对应 notes.md。仅旧归档编译通过，并实测未绑定新候选时在导入应用前拒绝执行。待writer完成后绑定准确源码和镜像，再做V1 seq1/2可见、漂移409/22表无写的真实HTTP；当前未启动任何服务。
+
+以下为历史记录。
+
 # 当前交付 — 2026-10-07 15:35Z YUK-1364
 
 9a43085a0/image d4c166346ad7隔离HTTP已通过native seq1/2漂移409、合法seq2显示、22表无写及legacy历史/ack。15:18:17Z清理自有容器/volume/network并核owner释放锁，主fd8四服务healthy未变。证据runtimeRoot/yuk1364-preflight-9a43085a0/evidence/acceptance-summary.json与lock-release.json，65证据hash核对。
