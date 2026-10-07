@@ -1,6 +1,6 @@
 # YUK-1365 writer handoff — 2026-10-07
 
-本树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1365-copilot-stream`，实际分支 `fix/yuk-1365-copilot-stream-without-content-gate`，HEAD/fetched origin/main 均 `a86d4e633a67f802554ae114387ab06b7110c135`，启动时落后计数 0。全部实现与文档未提交；父线程独占独立 review、真实验收、Linear capture/status、commit/push/PR/exact-head CI/发布。没有外部通信、子代理、真实 provider、生产操作或完整本机 pnpm test。
+本树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1365-copilot-stream`，实际分支 `fix/yuk-1365-copilot-stream-without-content-gate`，HEAD/fetched origin/main 均 `a86d4e633a67f802554ae114387ab06b7110c135`，启动时落后计数 0。实现已提交为 99f0143dc；合入 main 42987dfd7 仅在本文件和 PLAN 发生叙事冲突，保留两条 lane 证据；父线程独占独立 review、真实验收、Linear capture/status、commit/push/PR/exact-head CI/发布。没有外部通信、子代理、真实 provider、生产操作或完整本机 pnpm test。
 
 Owner 完整删除决定已实现：删除 Copilot 聊天 question/solution keyword detector、独立 learning review、强制 `copilot_learning_content` prompt/manifest 和关联 dead code/tests。没有 greeting whitelist、替代 classifier 或主动结构化出题行为。实际出题工具的 domain validation/authorization 保留；correction/proposal truth、presentation trace/security、retention 与 causal/history filtering 保留。
 
@@ -18,9 +18,22 @@ Owner 完整删除决定已实现：删除 Copilot 聊天 question/solution keyw
 
 ---
 
-# PR1580 接续 — 2026-10-07（历史）
+# 当前交接 — 2026-10-07 YUK-1338 Pi + DBOS 隔离 gate
+
+owner 指示本线程负责 epic YUK-1351 的第一道 gate。工作树 `/Users/yuqi/.t3/worktrees/the-learning-project/feat-yuk-1338-pi-dbos-gate`，branch `feat/yuk-1338-pi-dbos-gate`，base `8841ce68a69e30bacf20e8241f28cd1669b38a1f`。本线程是原树唯一 writer；57961995 父线程负责主线迁移协调与 PR watch/最终 merge。非 UI、不合并、不部署、不碰生产数据或 provider 配置。
+
+Pi 1.0.2 + DBOS 5.2.11 exact devDependency。仅 testing capability / Testcontainers 领域与独立 DBOS schema。真实 SIGKILL/restart 验证响应检查点、业务提交和工具回执；状态版本与过期拒绝、三入口共享 arrangeNext。未知外部结果窗口记录替身第二次调用，不宣称 provider exactly-once 或零重复付费。锁等待前读取 clock_timestamp 的缺陷已复现并改为锁取得后再读。
+
+本机2 unit/10 DB通过，typecheck/lint/build通过；lint基线297 warnings，partition无P0。证据与模块说明见 `docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md` 与相邻 evidence JSON。源码 hash/app version 单独封存；独立 review由 T3 Codex/gpt-6.1-sol xhigh 完成，无P0/P1；P2首次并发证据创建及provider请求身份要求已归入YUK1356。PR #1590：https://github.com/Yukoval-Dakia/the-learning-project/pull/1590 已T3登记；YUK1338 In Review。最终复验源码提交 a3078179ad0c7ea8e713060a5e896225466c57b0，source hash 已逐项验证。run37612250074 Typecheck成功，lint ratchet因最终evidence JSON格式失败，本机已复现并修复格式，2 unit/10 DB + typecheck/build复验通过；最终证据落盘后再次lint/ratchet再push。最终CI未通过前不宣称最终gate。owner指示本线程只修PR1590、不watch不merge，不置Done；P0通过后57961995父线程立即推进P1/P5，不被1363/1364串行阻塞。
+
+已正常合入 origin/main a86d4e633（PR #1580/#1589），重新核验合并后的依赖与 gate。2026-10-07 11:01Z 的生产停写/backup.py 不属于本线程，已回报 57961995-70c3-4121-a9dd-97d90471be1a；不接管 tlp1346 候选（365/18987, PG18985）或重投未知请求。本轮没有核验或操作生产。既有生产指针与义务保留在下面的上一轮交接中，不能把旧记录称为本次新验收。
+
+---
+# PR1580 接续 — 2026-10-07
 
 父线程唯一 writer。6787c423b 的 CI 已绿，但新 P1 discussion4205696120 确认：R2_SECRET_ACCESS_KEY、DB_PASSWORD、CLAUDE_CODE_OAUTH_TOKEN 等文本及部分结构字段仍泄露。扩大10类回归先RED，现文本和结构字段共用credentialNamePattern后73 scoped tests通过，保留普通正文和wrapped assignment覆盖。修复后须新exact CI及17分钟等待；最终SQL/browser验收仍待完成，不启动第三审、不部署。
+
+---
 
 # 当前交接 — 2026-10-07 会话入口生产发布完成
 
