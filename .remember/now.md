@@ -1,3 +1,7 @@
+# PR1592 dependency integration
+
+Normal main26f101581 merge and Start transitive high vulnerability repair by parent. Local checks sealed in1352deliverydoc. New exactheadCI pending. No runtime changes.
+
 # 当前交接 — 2026-10-07 YUK-1352 PR1592 normal-main integration
 
 唯一 writer 工作树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor`，

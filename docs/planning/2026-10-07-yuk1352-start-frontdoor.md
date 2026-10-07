@@ -181,3 +181,24 @@ client/server 与三个 CJS entry，保留既有大 chunk/bundle warning。没�
 或委派；仅为 T3 登记既有 PR1592 关联。没有新增 substantive P0/P1 或 actionable follow-up，
 未新建票，既有 YUK-1356/P7 义务保留；用户禁止本 writer 操作 Linear，父线程负责 tracker。
 正常 merge commit 完成后 writer 在 terminal 释放，不因通知自动恢复写入。
+
+
+## Dependency main integration and CI audit repair
+
+Parent integrated main `26f1015810cc3d902f6229b615d9630f05982eef` into `110f22ce88c70dfa22cdb7bddee00479053b969b` using a normal merge. PLAN/now retain the frontdoor handoff; main dependency and fixture changes are preserved. Package scripts retain Start builds and runtime entry. Start/router exact pins remain. Final lock comparison verified every main direct resolved version unchanged, with only `js-yaml@4.3.2` and `source-map-js@1.2.2` package versions absent from both parents. Mem0 patch and existing security overrides remain.
+
+CI job 112811910457 failed dependency audit, not a route contract assertion. Start brought three high js-yaml advisories and one high source-map-js advisory. Narrow version overrides in canonical pnpm-workspace.yaml select patched versions. An initial package.json override attempt was ineffective under pnpm11 and was removed; its failed audit log is retained. Final production audit passes with 0 high/critical, 8 moderate and 2 low. No audit baseline or suppression changed.
+
+51 scoped frontdoor/auth/SPA tests and typecheck passed with merged dependency versions. Final patched graph passed offline frozen install, lint and complete application build under Node24.19.0. No application source changed relative to the prior frontdoor implementation; new exact-head CI remains required. These are local/source checks, not authenticated business, Docker rollback or runtime acceptance. No services, database, provider or private data touched. Agent TEST ONLY purpose and disabled automation remain.
+
+Logs in `/tmp/yuk1360-dependency-repair-20261007`:
+
+- `start-main-install.log` SHA256 `ba2abda1c24498a1f434fad271a980804bd815188c4006cbfbc779b4fc9fefbe`
+- `start-main-audit.log` SHA256 `c4c11117a5cdb625a391c69233655768b6134e696507e9330702c907ae5c914f`
+- `start-main-unit.log` SHA256 `b51e20537b79ca2439d773a41e21fe6d46491370f3d762f690bb23f2a4506d65`
+- `start-main-typecheck.log` SHA256 `408d32ee530bbaddc206990b7edef2b022ea717012cc652b3a2e6d21487fa363`
+- `start-main-install2.log` SHA256 `3b8b62bbbde81b34da57aefea1e550dfe24428cf3f4d605afc25c960384c7940`
+- `start-main-audit2.log` SHA256 `618da6bca75803969f255ad3335ef752b04ffaef3344d34e3f8671d05bb3d18c`
+- `start-main-build.log` SHA256 `b0587d0cf27612a41781052d83a6d509eda9e2545395be81c491293b9da6826a`
+- `start-main-frozen2.log` SHA256 `a720d2354f86aa164a430019ded3b7ec7cbd3f4b478621e92ed3e1b94f08d21d`
+- `start-main-lint.log` SHA256 `4e15f428c495287f24033c3e957a2caf3d21b9d878087cca73dc0064724348a7`

@@ -4,6 +4,8 @@
 
 ## NOW
 
+- **PR1592 main/dependency integration**：合入26f101581，修Start传递依赖js-yaml/source-map-js高危告警，51scoped/typecheck/lint/build和最终audit/frozen通过；新head CI待push。原运行验收仍待完成，无部署。
+
 - **YUK-1352 非 UI 前门 / PR #1592**：Start 1.168.60 / Router 1.170.41 与原 Hono/SPA 回落源码保留；旧 head `5deb26cca` 的 scoped/static/build、隔离传输与页面证据保留，初次独立 review NONE P0/P1。正常 merge main `42987dfd7` 后的新 head CI 尚未运行，父线程负责 push、exact CI 及隔离业务/image drill；不置 Done。Hono/SPA 是过渡方案，P7/YUK-1359 负责退出。1355/1356/1364/PR1591 ownership 未触及。
 
 - **YUK-1338 / YUK-1351 P0 gate**：PR #1590 已 squash 合入 main `42987dfd7d456ca187e716509d11ea100e7353b9`。该 main tree 与原 `a6d89037b` tree 相同；Pi 1.0.2 / DBOS 5.2.11 的源码及版本化证据完整保留。原 2 unit / 10 DB、静态/build、独立 review NONE P0/P1 属于 P0 原 revision，不代替 PR #1592 新 head CI。P2 首次并发证据创建与 provider 请求身份要求已归 YUK-1356。此合入未发布 runtime。
