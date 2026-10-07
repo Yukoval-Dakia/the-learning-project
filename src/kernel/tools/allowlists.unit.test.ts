@@ -17,7 +17,6 @@ describe('DomainTool allowlist policy', () => {
 
   it('keeps Wave 3 propose/write inventory explicit', () => {
     expect(PROPOSE_WRITE_TOOLS).toEqual([
-      'submit_review_answer',
       'propose_knowledge_edge',
       'propose_knowledge_mutation',
       'attribute_mistake',

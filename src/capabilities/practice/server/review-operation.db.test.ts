@@ -22,7 +22,6 @@ import {
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { CreateAttemptBodySchema } from '../api/contracts';
 import { createAttempt } from '../api/submit';
-import { submitReviewAnswerTool } from '../tools/submit-review-answer';
 import { dispatchNativeAttempt, executeNativeAttempt } from './assessment/durable-attempt';
 import { activateSubmissionCandidate, evaluateSubmission } from './judge/evaluate-submission';
 import { submitReviewAnswer } from './review-operation';
@@ -252,41 +251,5 @@ describe('request independent review operation on business tables', () => {
     ).rejects.toMatchObject({ name: 'AbortError' });
     expect(await testDb().select().from(assessment_submission)).toHaveLength(0);
     expect((await effects()).fsrs).toHaveLength(0);
-  });
-
-  it('rejects model authority, generated answers and cross-original pointers without learning writes', async () => {
-    const f = await nativeSoloHttpFixture(testDb());
-    await submitReviewAnswer(testDb(), CreateAttemptBodySchema.parse(f.body()));
-    const [original] = await testDb().select().from(assessment_submission);
-    const pointer = {
-      submission_id: original.submission_id,
-      issuance_id: original.issuance_id,
-      evaluation_group_id: original.evaluation_group_id,
-    };
-    const before = await effects();
-    const ctx = {
-      db: testDb(),
-      taskRunId: 'untrusted-tool-call',
-      callerActor: { kind: 'user' as const, ref: 'self' },
-      sessionId: 'unrelated-session',
-      causedByEventId: `evt_assessment_${original.submission_id}`,
-    };
-    for (const input of [
-      { ...pointer, actor_kind: 'user', actor_ref: 'self', independent: true },
-      { ...pointer, response_md: 'model generated answer', assessment: f.issued.assessment('B') },
-    ])
-      await expect(submitReviewAnswerTool.execute(ctx, input)).rejects.toThrow();
-    for (const input of [
-      pointer,
-      { ...pointer, submission_id: 'invented-model-original' },
-      { ...pointer, issuance_id: 'other-original-issuance' },
-      { ...pointer, evaluation_group_id: 'other-original-group' },
-    ])
-      await expect(submitReviewAnswerTool.execute(ctx, input)).rejects.toMatchObject({
-        code: 'user_submission_required',
-      });
-    expect(await effects()).toEqual(before);
-    expect(await testDb().select().from(assessment_submission)).toEqual([original]);
-    expect(f.execute).not.toHaveBeenCalled();
   });
 });
