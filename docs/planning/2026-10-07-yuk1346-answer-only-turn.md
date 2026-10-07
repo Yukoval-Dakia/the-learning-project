@@ -162,3 +162,33 @@ focused seam tests 从实际 answer_only system prompt 注入正文提取 marker
 运行证据在私有candidate answer-only-preflight-20261007-236a5a47b/evidence与/tmp/yuk1346-acceptance-driver/run-236a5a4-01。旧R、失败回执与旧bundle均封存；两次Copilot已知费用合计estimatedUSD0.003367364，整体Mem0内部wire/cost观测缺口仍未解决，本pair未启动Mem0。父保持原$2保守预留，不声明供应商硬cap。
 
 只读离线诊断任务yuk1346-real-candidate-contract-diagnosis-20261007-v1核对本次实际终文、prompt和拒绝分支；无模型/DB/网络或新review，不把f570未知候选的原因追认为相同。需依据免费复现再修复，不删校验、不修改公开结果或盲目重试。当前PR不合并，生产仍f3，无生产写入或发布。该失败归现有YUK1346，无新独立产品问题，Linear保持InProgress。
+
+## 2026-10-07 05:36Z 完整可见答案绑定修复与本地证据
+
+本轮唯一实施子线程从 clean `580773c09085a8415a1d0c37e5297023142c316b` 开始；该HEAD只比产品 `236a5a47b21e0b40f9be7fbac8eb69dda147fc39` 多文档。父已独立重放原extractor/reviewer/finalizer，8个控制及12个历史receipt字段相符。精确R2 marker有效，题干在当前用户上下文，隐藏reference的prose不包含于实际LaTeX正文，因此旧 `contentMatchesReply` 在0次独立validator之前拒绝。重复题干又会提前返回true，复制正确摘要仍可能掩盖错误解释。要求模型逐字复制不能充当正确性边界。
+
+### 服务端绑定与最小Practice改动
+
+`content-validation.ts` 保留原题目数量、subject解析、完整prompt/choices对应与容量约束，并拒绝重复题id。单道既有题的完整prompt和每项choice必须绑定eligible用户上下文；即使回复重述该题，服务端仍将marker-stripped完整可见正文设为 `reference_md`，移除整个不可信 `rubric_json`。有已呈现HTML时也包含其现有可见文本提取结果。空正文或超过既有12000字符答案容量直接拒绝，绝不截断成可通过摘要。隐藏reference与正文的表示可不同；它不再成为单题既有题的验证答案。
+
+仅把完整正文转送原seam仍不足。Practice原exact路径可选reference首行/首句，且rubric.reference_solution答案优先；原semantic方向把独立solver当submission，会丢弃实际解释。最小修复在既有 `LearningContentValidationDeps` / `SolveCheckOptions` 增加仅服务端选择的 `answerScope: 'full_response'`，不新增task或路由。该模式保持reference-free `release_strict`独立求解，然后始终使用既有SemanticJudge，不走首行normalize捷径。独立最终答案及完整解作为reference，实际完整正文作为submission；服务端rubric由独立expected_signals与全文正确/一致要求构成，包含Rubric契约必需的criteria，marker的final_answer/answer_equivalents/acceptable_answers/required_points均不能替换正文。无法确认、partial、低置信、unsupported、error、cancel、deadline都不能释放内容。题面QuizVerify和教学质量检查也收到实际全文，准入仍要求三轴明确通过。
+
+没有完整答案与各题的可信分段协议，多道既有题或既有题/新题混合时一律fail closed，不把整条回复重复作各题reference。全部新题仍走原各题prompt/choices绑定和标准答案路径。detector、普通question供应/教学路径、独立任务model pin、六只读工具与answer_only禁止写入/物化/提案/研究/Exa的边界保持；共享SKILL只说明服务端真实规则，不把逐字copy作为协议。现有5000字符技能容量gate保留。普通exact question供应仍可用原normalize路径；既有单题全文模式可能多一次既有semantic比较调用，本轮没有执行真实模型调用。
+
+### 免费精确重放与验证范围
+
+所有新scratch在 `/tmp/yuk1346-visible-answer-repair`，没有覆盖旧diagnosis、acceptance driver、candidate或receipt。candidate SHA `fa99d3707c983101245d0aac8b75bec5d05c5cc112945af963354c173ce8f56a`；marker-stripped实际答案SHA `8b6ba9ab93a56b4f028e53fff863e5588facc1b640cf3bf5aad925ceba3a2529`。原题prompt SHA `0f2202d89608ea74daa1ef150a9e8ff287166933845bfaf34d9c4cf081c9f020`。private正文未提交，也未写到新结果文件；结果仅含摘要、任务名称与明确fixture provenance。
+
+- `results.json` / `replay-final.log`：真实extractor/reviewer/finalizer，Practice seam为mock。10个控制通过，精确R2以原题和实际全文digest到达validator；重述题干、追加正确copy与rubric override仍传全文。fail/needs_repair/unsupported/error/cancel/deadline拒绝。5个finalizer控制中fail/error/cancel/deadline的12个旧blocked receipt字段逐一不变，candidate/reply hash和absent primary view相符。mock pass仅证明对应关系，不证明数学正确。
+- `exact-practice-results.json` / `exact-practice-replay.log`：精确私有R2通过实际Practice pipeline，7项离线测试通过。QuizVerify、TeachingQuality与SemanticJudge输入绑定实际全文digest；独立SolutionGenerate输入只含原题，没有reference/rubric答案hint。task输出为手工synthetic的完整fixture，不是新provider结果。pass fixture可收口；semantic fail/unsupported/error/cancel/deadline必须关闭。所有fetch与DB访问均由guard禁止。
+- `unit-passed.log`：5文件256 scoped unit通过，覆盖真实Practice生产接线的prose/LaTeX、错误最终答案、矛盾解释、正确copy旁错误解释、重述题干、rubric替换、选项未绑定、无效/缺失/重复manifest、重复id、遗漏可见问题、多题/混合歧义、oversized答案、已呈现HTML、各外部validator失败，以及finalizer hash/无primary view。answer_only执行seam确认完整协议、隐藏summary不替代实际全文、六读限制及禁止写入；多道新题保持各自reference。
+- `typecheck-final.log`、`lint.log`、`build-final.log`：Node24.19.0下 `pnpm typecheck`、`CODEX_FULL_GATE=1 pnpm lint`、`CODEX_FULL_GATE=1 pnpm build` exit0，lint297 warnings/0 errors，不放宽baseline，bundle size警告保留。
+- `audit-*.log`：partition、capability-boundaries、architecture-deepening、provider-lanes、provider-attempt-truth、structured-judge、skill-mirrors、task-census、agent-control-plane九项全部exit0。
+
+没有运行完整本机pnpm test、DB测试、container、browser、生产操作、网络/paidmodel/外部tracker或第三review。没有table/schema/migration/API变更，无需新DB写入recipe。保留策略源码未改；这些unit不能代替真实R/A上下文/记忆链验收，也不能证明真实SemanticJudge会正确识别每种错误解释。本轮未对实际R2执行真实独立validator，不宣称数学准入、runtime acceptance或deployment。原R/R2不再执行或重付，A仍未发送。
+
+### 父线程capture与剩余边界
+
+当前修复属于已验证YUK1346阻断，不另开票，Linear状态/capture由父负责。另一个独立检测缺口仍有证据：只去掉精确R2 marker的可见正文SHA `8b6ba9ab93a56b4f028e53fff863e5588facc1b640cf3bf5aad925ceba3a2529` 被旧detector判无需验证，review直接通过且0次validator。`results.json.marker_free_gap`为观察控制，本次不把它当修复、不扩regex。已写PLAN PARKED供父去重，需另行界定权威现有题上下文/缺标记的拒绝契约；未推断所有marker-free内容或所有新题都存在同样缺口。
+
+父线程独占整合、push、PR1588/Linear、新exact-head CI、真实validator判决、R/A剩余预算及发布。旧exact236a CI不覆盖此修复，初审+唯一验证审预算仍耗尽，不启动第三审。PR未合并，生产版本与费用保护证据保持历史原义。源码+文档commit后本子线程终止写入，terminal/PR通知不续权。

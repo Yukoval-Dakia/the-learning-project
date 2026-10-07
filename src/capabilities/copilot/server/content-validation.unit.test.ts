@@ -1,14 +1,345 @@
+import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY,
+  type CopilotLearningContent,
+  type CopilotLearningContentValidationDeps,
   containsLearningQuestion,
   copilotLearningContentRequiresValidation,
   extractCopilotLearningContent,
   reviewCopilotLearningContent,
 } from './content-validation';
 import { validateLearningContent as validatePreparedLearningContent } from './practice-port';
+import { createCopilotReplyFinalizer } from './reply-finalization';
+
+// Synthetic fixtures reproduce the worked-answer structure, not the private R2 transcript.
+const syntheticPrompt = '椭圆 x²/25+y²/9=1 的焦点坐标是什么？请说明计算过程。';
+const syntheticSummary = '半焦距为 4，焦点为 (-4,0) 和 (4,0)。';
+const syntheticLatexAnswer = String.raw`先比较分母，长轴在 x 轴上，所以 a²=25，b²=9。
+
+\[
+c^2=a^2-b^2=25-9=16,\qquad c=4.
+\]
+
+焦点在长轴上，坐标为 \((-4,0)\) 与 \((4,0)\)。`;
+
+function syntheticMarker(questions = [syntheticQuestion], subject_id = 'math'): string {
+  return `<!--copilot_learning_content:${JSON.stringify({ subject_id, questions })}-->`;
+}
+
+const syntheticQuestion: CopilotLearningContent['questions'][number] = {
+  id: 'synthetic-visible-ellipse',
+  kind: 'fill_blank',
+  prompt_md: syntheticPrompt,
+  reference_md: syntheticSummary,
+  choices_md: null,
+  rubric_json: {
+    reference_solution: { final_answer: syntheticSummary, answer_equivalents: ['c=4'] },
+    required_points: ['只检查隐藏摘要'],
+    acceptable_answers: ['任何可见答案'],
+  },
+};
+
+function syntheticValidationTasks(
+  semantic: 'correct' | 'partial' | 'incorrect' = 'correct',
+  failure?: { kind: string; mode: 'unsupported' | 'error' | 'cancel' | 'deadline' },
+) {
+  return vi.fn<CopilotLearningContentValidationDeps['runTaskFn']>(async (kind) => {
+    if (kind === failure?.kind) {
+      if (failure.mode === 'unsupported') return { text: '{"unsupported":true}' };
+      if (failure.mode === 'error') throw new Error('synthetic unavailable validator');
+      throw new DOMException(`synthetic ${failure.mode}`, 'AbortError');
+    }
+    const outputs = {
+      QuizVerifyTask: {
+        grounding: { verdict: 'pass', basis: 'closed_world_givens', note: '完整椭圆方程给定' },
+        copy_safety: { verdict: 'original', max_overlap: 0 },
+        knowledge_hit: { verdict: 'pass', note: '长轴方向与半焦距' },
+        overall: 'pass',
+        summary_md: '合成题面结构有效',
+        confidence: 0.97,
+      },
+      SolutionGenerateTask: {
+        reference_solution: {
+          final_answer: syntheticSummary,
+          expected_signals: ['长轴沿 x 轴', 'c²=25-9=16，c=4', '焦点为 (±4,0)'],
+          answer_equivalents: ['(-4,0), (4,0)'],
+        },
+        worked_solution_md: 'a²=25，b²=9；c²=a²-b²=16，c=4。焦点位于 x 轴的 (±4,0)。',
+        confidence: 0.98,
+      },
+      SemanticJudgeTask: {
+        score: semantic === 'correct' ? 1 : semantic === 'partial' ? 0.5 : 0,
+        coarse_outcome: semantic,
+        confidence: 0.98,
+        feedback_md: semantic === 'correct' ? '完整推导与独立解一致' : '合成记录判定可见推导不通过',
+        evidence_json: { matched_points: ['长轴方向'], missing_points: [] },
+      },
+      TeachingQualityTask: {
+        clarity: { verdict: 'pass', reason: '方程与求解目标明确' },
+        unique_answer: { verdict: 'pass', reason: '焦点唯一确定' },
+        summary: '合成教学题面通过',
+      },
+    };
+    switch (kind) {
+      case 'QuizVerifyTask':
+      case 'SolutionGenerateTask':
+      case 'SemanticJudgeTask':
+      case 'TeachingQualityTask':
+        return { task_run_id: `synthetic-${kind}`, text: JSON.stringify(outputs[kind]) };
+      default:
+        throw new Error(`unexpected synthetic task ${kind}`);
+    }
+  });
+}
+
+describe('server-bound full visible answer', () => {
+  it.each([
+    ['LaTeX', syntheticLatexAnswer, 'correct'],
+    ['prose', '长轴沿 x 轴，25-9=16，所以半焦距为 4，焦点是 (±4,0)。', 'correct'],
+    ['wrong final answer', '答案：c=5，焦点为 (±5,0)。因为 25-9=25。', 'incorrect'],
+    ['contradictory explanation', `${syntheticSummary}\n推导：25-9=25，所以 c=5。`, 'incorrect'],
+    ['repeated prompt', `${syntheticPrompt}\n答案：c=5，焦点为 (±5,0)。`, 'incorrect'],
+    ['copied correct span', `推导：c²=25+9=34。\n${syntheticSummary}`, 'incorrect'],
+  ] as const)(
+    'validates the complete %s with actual Practice inputs',
+    async (_name, visible, verdict) => {
+      // Recorded synthetic task verdicts exercise wiring/admission, not model math quality.
+      const runTaskFn = syntheticValidationTasks(verdict);
+      const result = await reviewCopilotLearningContent(
+        `${visible}\n${syntheticMarker()}`,
+        `本次用户题目：\n${syntheticPrompt}`,
+        'synthetic-visible-answer',
+        { db: {} as never, runTaskFn },
+      );
+      expect(result.passed).toBe(verdict === 'correct');
+      const inputs = new Map(runTaskFn.mock.calls.map(([kind, input]) => [kind, input]));
+      expect(inputs.get('QuizVerifyTask')).toMatchObject({
+        question: { prompt_md: syntheticPrompt, reference_md: visible },
+        validation_mode: 'release_strict',
+        validation_purpose: 'learning_content',
+      });
+      expect(inputs.get('TeachingQualityTask')).toMatchObject({
+        prompt_md: syntheticPrompt,
+        reference_md: visible,
+        rubric_json: null,
+      });
+      expect(inputs.get('SolutionGenerateTask')).toMatchObject({ prompt_md: syntheticPrompt });
+      const solverInput = JSON.stringify(inputs.get('SolutionGenerateTask'));
+      expect(solverInput).not.toContain('reference_md');
+      expect(solverInput).not.toContain('reference_solution');
+      expect(solverInput).not.toContain('rubric_json');
+      expect(inputs.get('SemanticJudgeTask')).toMatchObject({
+        answer: { content: visible },
+        question: {
+          prompt_md: syntheticPrompt,
+          reference_md: expect.stringContaining('c²=a²-b²=16'),
+          required_points: expect.arrayContaining([expect.stringContaining('全部推导、解释')]),
+          acceptable_answers: [],
+        },
+      });
+      expect(JSON.stringify(inputs.get('SemanticJudgeTask'))).not.toContain('只检查隐藏摘要');
+      if (verdict !== 'correct')
+        expect(result.replyText).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
+    },
+  );
+
+  it.each(
+    ['QuizVerifyTask', 'SolutionGenerateTask', 'SemanticJudgeTask', 'TeachingQualityTask'].flatMap(
+      (kind) => ['unsupported', 'error', 'cancel', 'deadline'].map((mode) => ({ kind, mode })),
+    ),
+  )('withholds the answer when $kind returns $mode', async ({ kind, mode }) => {
+    if (mode !== 'unsupported' && mode !== 'error' && mode !== 'cancel' && mode !== 'deadline')
+      throw new Error('invalid synthetic failure mode');
+    const runTaskFn = syntheticValidationTasks('correct', { kind, mode });
+    const result = await reviewCopilotLearningContent(
+      `${syntheticLatexAnswer}\n${syntheticMarker()}`,
+      syntheticPrompt,
+      'synthetic-validation-failure',
+      { db: {} as never, runTaskFn },
+    );
+    expect(result).toEqual({ replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY, passed: false });
+  });
+
+  it('rejects a partial full-answer assessment even if the other checks pass', async () => {
+    const result = await reviewCopilotLearningContent(
+      `${syntheticLatexAnswer}\n${syntheticMarker()}`,
+      syntheticPrompt,
+      'synthetic-partial',
+      { db: {} as never, runTaskFn: syntheticValidationTasks('partial') },
+    );
+    expect(result.passed).toBe(false);
+  });
+
+  it.each([
+    ['unbound prompt', '用户没有给出这道题。', syntheticMarker()],
+    [
+      'unbound options',
+      syntheticPrompt,
+      syntheticMarker([{ ...syntheticQuestion, choices_md: ['A. (±4,0)', 'B. (0,±4)'] }]),
+    ],
+    [
+      'ambiguous existing questions',
+      `${syntheticPrompt}\n求 2+2？`,
+      syntheticMarker([
+        syntheticQuestion,
+        { ...syntheticQuestion, id: 'synthetic-second', prompt_md: '求 2+2？', reference_md: '4' },
+      ]),
+    ],
+    [
+      'mixed existing and new questions',
+      syntheticPrompt,
+      syntheticMarker([
+        syntheticQuestion,
+        { ...syntheticQuestion, id: 'synthetic-new', prompt_md: '求 3+3？', reference_md: '6' },
+      ]),
+    ],
+    ['duplicate ids', '', syntheticMarker([syntheticQuestion, syntheticQuestion])],
+    ['duplicate manifests', syntheticPrompt, `${syntheticMarker()}\n${syntheticMarker()}`],
+    ['invalid manifest', syntheticPrompt, '<!--copilot_learning_content:{bad json}-->'],
+    ['missing manifest', syntheticPrompt, ''],
+  ])('keeps %s closed before any validator call', async (_name, context, marker) => {
+    const runTaskFn = syntheticValidationTasks();
+    const result = await reviewCopilotLearningContent(
+      `答案：\n${syntheticLatexAnswer}\n${marker}`,
+      context,
+      'synthetic-invalid-binding',
+      { db: {} as never, runTaskFn },
+    );
+    expect(result.passed).toBe(false);
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  it('retains the visible-question inventory check for an omitted question', async () => {
+    const runTaskFn = syntheticValidationTasks();
+    const result = await reviewCopilotLearningContent(
+      `1. 求 2+2？\n2. 求 3+3？\n${syntheticMarker()}`,
+      syntheticPrompt,
+      'synthetic-omitted-question',
+      { db: {} as never, runTaskFn },
+    );
+    expect(result.passed).toBe(false);
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  it('also forwards the rendered teaching content in the full visible answer', async () => {
+    const runTaskFn = syntheticValidationTasks('incorrect');
+    const result = await reviewCopilotLearningContent(
+      `${syntheticLatexAnswer}\n${syntheticMarker()}`,
+      syntheticPrompt,
+      'synthetic-visible-teaching',
+      { db: {} as never, runTaskFn, additionalVisibleText: '<p>额外解释：25-9=25。</p>' },
+    );
+    expect(result.passed).toBe(false);
+    expect(runTaskFn.mock.calls.find(([kind]) => kind === 'SemanticJudgeTask')?.[1]).toMatchObject({
+      answer: { content: `${syntheticLatexAnswer}\n额外解释：25-9=25。` },
+    });
+  });
+
+  it('preserves separate references for multiple new questions', async () => {
+    const questions = [
+      { ...syntheticQuestion, id: 'synthetic-new-one', prompt_md: '求 2+2？', reference_md: '4' },
+      { ...syntheticQuestion, id: 'synthetic-new-two', prompt_md: '求 3+3？', reference_md: '6' },
+    ];
+    const runTaskFn = syntheticValidationTasks();
+    const result = await reviewCopilotLearningContent(
+      `1. 求 2+2？\n答案：4。\n2. 求 3+3？\n答案：6。\n${syntheticMarker(questions)}`,
+      '',
+      'synthetic-separate-new-questions',
+      { db: {} as never, runTaskFn },
+    );
+    expect(result.passed).toBe(true);
+    const contentInputs = runTaskFn.mock.calls
+      .filter(([kind]) => kind === 'QuizVerifyTask')
+      .map(([, input]) => input);
+    expect(contentInputs).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          question: expect.objectContaining({ id: 'synthetic-new-one', reference_md: '4' }),
+        }),
+        expect.objectContaining({
+          question: expect.objectContaining({ id: 'synthetic-new-two', reference_md: '6' }),
+        }),
+      ]),
+    );
+  });
+
+  it('requires every choice in the eligible context even when repeated in the reply', async () => {
+    const choices_md = ['A. (±4,0)', 'B. (0,±4)'];
+    const visible = `${syntheticPrompt}\n${choices_md.join('\n')}\n${syntheticLatexAnswer}`;
+    const marker = syntheticMarker([{ ...syntheticQuestion, choices_md }]);
+    const unbound = syntheticValidationTasks();
+    expect(
+      (
+        await reviewCopilotLearningContent(
+          `${visible}\n${marker}`,
+          syntheticPrompt,
+          'choices-unbound',
+          { db: {} as never, runTaskFn: unbound },
+        )
+      ).passed,
+    ).toBe(false);
+    expect(unbound).not.toHaveBeenCalled();
+    const bound = syntheticValidationTasks();
+    expect(
+      (
+        await reviewCopilotLearningContent(
+          `${visible}\n${marker}`,
+          `${syntheticPrompt}\n${choices_md.join('\n')}`,
+          'choices-bound',
+          { db: {} as never, runTaskFn: bound },
+        )
+      ).passed,
+    ).toBe(true);
+    expect(bound.mock.calls.find(([kind]) => kind === 'SemanticJudgeTask')?.[1]).toMatchObject({
+      answer: { content: visible },
+      question: { choices_md },
+    });
+  });
+
+  it('does not truncate an oversized visible response into a passing answer', async () => {
+    const runTaskFn = syntheticValidationTasks();
+    const result = await reviewCopilotLearningContent(
+      `${'x'.repeat(12_001)}\n${syntheticMarker()}`,
+      syntheticPrompt,
+      'oversized-answer',
+      { db: {} as never, runTaskFn },
+    );
+    expect(result.passed).toBe(false);
+    expect(runTaskFn).not.toHaveBeenCalled();
+  });
+
+  it.each(['correct', 'incorrect'] as const)(
+    'seals the %s result with original candidate and published reply hashes',
+    async (verdict) => {
+      const candidate = `${syntheticLatexAnswer}\n${syntheticMarker()}`;
+      const runTaskFn = syntheticValidationTasks(verdict);
+      const finalizer = createCopilotReplyFinalizer({
+        rootTaskRunId: 'synthetic-finalization',
+        correctionContract: {
+          available_prior_turn_ids: [],
+          required_fields: ['prior_turn_id', 'changed', 'retained', 'uncertain'],
+        },
+        userContextText: syntheticPrompt,
+        validateLearningContent: (text, context, id) =>
+          reviewCopilotLearningContent(text, context, id, { db: {} as never, runTaskFn }),
+        resolveArtifactReference: () => {
+          throw new Error('synthetic test must not access artifacts');
+        },
+      });
+      const result = await finalizer.finalizeTerminal(candidate);
+      const hash = (text: string) => createHash('sha256').update(text).digest('hex');
+      expect(result.receipt.candidate_sha256).toBe(hash(candidate));
+      expect(result.receipt.reply_sha256).toBe(hash(result.replyText));
+      expect(result.receipt.learning_content).toBe(verdict === 'correct' ? 'passed' : 'blocked');
+      expect(result.receipt.primary_view).toBe('absent');
+      if (verdict === 'incorrect')
+        expect(result.preparedReply).toEqual({ text: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY });
+    },
+  );
+});
 
 describe('validatePreparedLearningContent', () => {
   it('removes the machine-readable validation manifest from a direct reply', () => {

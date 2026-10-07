@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-07：YUK-1346/PR1588 exact236a CI通过，但05:15Z真实新R2仍被校验拦截，A未发送，禁止合并/发布。实际终文已私有封存，数学答案正确；正在免费离线定位对应关系失败。旧数据保护摘要未变，生产仍f3。
+> Linear 是权威 tracker。2026-10-07 05:36Z：YUK-1346/PR1588 真实R2答案绑定阻断已有本地源码修复；256 scoped unit、7项实际Practice离线重放及静态gates通过，仅证明接线/拒绝策略。R2未重付，A未发送，无新CI或实际验收，不合并/发布；生产仍f3。
 
 ## NOW
 
-- **YUK-1346 In Progress**：隔离树 `tlp-yuk-1346-turn-retention` / PR1588。236a新候选真实浏览器受理R2、MiMo执行success/end_turn，但公开答案仍blocked，未通过验收。终文SHA `fa99d3707c983101245d0aac8b75bec5d05c5cc112945af963354c173ce8f56a`；父核对数学正确，不能绕过独立校验展示。R2费用estimated $0.001444664；原R费用$0.0019227，两次均不重付。保护业务表、旧事件/向量/协调日志、保留队列和原R完整job摘要均未变。新R2 durable DONE但physical job心跳超时变retry/retry_count0，无full worker且不重投。只读离线诊断已有任务运行；A未发送、不标Done。详见[方案](docs/planning/2026-10-07-yuk1346-answer-only-turn.md)。
+- **YUK-1346 In Progress**：隔离树 `tlp-yuk-1346-turn-retention` / PR1588。从 clean580773c 修复单道既有题：题干/选项绑定eligible上下文后，校验实际完整可见回复，丢弃marker rubric；既有独立solver不接答案，完整回复必须经semantic judge明确通过。多道既有题/混合映射不明时关闭。256 unit与精确R2实际Practice离线7项通过，但task输出为synthetic，不是数学或运行准入。原236a R2真实blocked、durable DONE/physical retry0不重投，A未发送；旧保护摘要未变是历史父证据。详见[方案](docs/planning/2026-10-07-yuk1346-answer-only-turn.md)。
 - **YUK-1103 自主交付**：本机 http://localhost:8787；远程 https://loom-mac-mini.tail2ee344.ts.net/（同一 tailnet，沿用 Loom 令牌）。app/worker `f3bfff2cf` healthy，115项迁移、readiness active。已备份及恢复验证；不要重复发布旧 `5d738dbc0`。
 - **YUK-1341 产品 AI**：PR #1585 已通过 exact-head CI、独立初审和等待窗并合并。app/worker 都固定 `opencode-go/mimo-v2.6-pro`；54聊天任务和 Mem0 接线已落地。生产两轮 Copilot 成功，原会话及 Pi cursor 连续、刷新回放一致；后台 MemoryBrief 也已实际成功。未宣称所有任务质量或评分切片均获准入。
 - **YUK-1340 会话入口已交付**：PR #1583 满足 exact-head CI、审查和等待窗后合并。准确 ARM64 镜像完成副本迁移、旧镜像读取兼容、停写备份恢复及生产页面验收。默认续接、历史只读、新建、重开、刷新保持会话均通过；没有发送 AI 消息。YUK-1343 两条 P2 仍延期。
@@ -13,12 +13,13 @@
 
 ## NEXT
 
-- 接收已有真实候选离线诊断任务结果，核对确定性拒绝分支后修复契约并验证。不得重执行原R/R2或为凑绿再次生成；A和新的实际场景须在修复明确后重新裁定剩余预算。审查预算两轮已用完，不开启第三审。PR1588 exact236a CI37574277449已绿，但实际验收失败，不因CI绿而合并。发布仍须停全部写入者、新worker先于app；写入受限数据后禁止回退旧f3。
+- 父线程整合本地完整可见答案修复并负责PR/Linear capture、新exact-head CI及剩余真实验收。原R/R2不重执行、不为凑绿再生成；新的实际场景/预算须由父裁定。初审+唯一验证审预算已用完，不开第三审。旧exact236a CI37574277449不能覆盖本次修复；无真实validator判决，不合并/发布。发布仍须停全部写入者、新worker先于app，受限数据写入后禁止直接回退旧f3。
 - YUK-1042：42 failed +42 DLQ 原义务保留；先查每项副作用和幂等身份再恢复，不清队列或重付未知结果。
 - YUK-1338 目标架构集成保持 Backlog，单独证明状态版本、过期结果拒绝与重启恢复；ADR-0066 的 TanStack Start/Pi/PostgreSQL/DBOS 方向尚非当前运行形态。
 
 ## PARKED
 
+- 待父线程去重归票：marker-free现有题检测缺口仍可免费重现。精确R2仅剥除标记后的SHA `8b6ba9ab93a56b4f028e53fff863e5588facc1b640cf3bf5aad925ceba3a2529` 被既有detector判为无需校验并直接通过，0次validator；证据 `/tmp/yuk1346-visible-answer-repair/results.json`。本次不扩regex、不删marker或弱化准入；需另行明确权威题目上下文/标记缺失契约。
 - YUK-1343：失败创建提前标为显式来源、50条历史截断隐藏可续接会话均未修；已成组登记，不阻塞此次已裁决发布。
 
 - YUK-1342：付费探针开关、不可覆盖封存及 OpenAI4 node-fetch 绕过 global-fetch 观测。副本记忆功能通过，但整体探针仍 FALSE；SDK wire/count/cost 不完整，不重复付费刷绿。
@@ -30,6 +31,7 @@
 
 ## BLOCKED-ON
 
+- YUK-1346 本地源码gates不能替代真实模型判决、准确新HEAD CI和R/A保留策略验收。原R2失败收据只读保留；本子线程无运行/付费/外部tracker权限，交父接续。
 - 无需 owner 追加日常授权。旧 Xiaomi402 不再阻塞新 Copilot；历史失败没有删除。
 - 默认会话入口已在生产修复；完整学习状态评估和自适应安排仍需逐条行为验收，不能以此次日用修复冒称产品完成。
 - 旧0f81整镜像读取新迁移副本兼容已验证；回退需刷新浏览器且恢复旧入口缺陷。数据库恢复仍须保护备份后新写入，不可自动覆盖。当前指针已更新且发布锁已释放。

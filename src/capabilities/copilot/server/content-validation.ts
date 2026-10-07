@@ -146,21 +146,52 @@ function normalizedLearningText(value: string): string {
     .toLocaleLowerCase();
 }
 
-function contentMatchesReply(
+function bindLearningContentToReply(
   content: CopilotLearningContent,
   replyText: string,
   contextText: string,
-): boolean {
+): { content: CopilotLearningContent; answerScope?: 'full_response' } | null {
   const normalizedReply = normalizedLearningText(replyText);
   const normalizedContext = normalizedLearningText(contextText);
   const visibleQuestionCount = [...replyText.matchAll(/(?:^|\n)\s*[^\n]{1,500}[？?](?=\n|$)/g)]
     .length;
-  if (visibleQuestionCount > 0 && visibleQuestionCount !== content.questions.length) return false;
-  return content.questions.every((question) => {
+  if (visibleQuestionCount > 0 && visibleQuestionCount !== content.questions.length) return null;
+  if (new Set(content.questions.map((question) => question.id)).size !== content.questions.length)
+    return null;
+  const existingQuestions = content.questions.filter((question) => {
+    const prompt = normalizedLearningText(question.prompt_md);
+    return prompt.length > 0 && normalizedContext.includes(prompt);
+  });
+  if (existingQuestions.length > 0) {
+    // Only one existing question has an unambiguous whole-response answer.
+    // Never assign the same response to several questions or fall back to a
+    // hidden summary merely because the question was repeated in the reply.
+    const question = existingQuestions[0];
+    if (
+      content.questions.length !== 1 ||
+      !question ||
+      replyText.trim().length === 0 ||
+      replyText.length > 12_000 ||
+      !(question.choices_md ?? []).every((choice) => {
+        const normalizedChoice = normalizedLearningText(choice);
+        return normalizedChoice.length > 0 && normalizedContext.includes(normalizedChoice);
+      })
+    )
+      return null;
+    const { rubric_json: _untrustedRubric, ...boundQuestion } = question;
+    return {
+      content: {
+        ...content,
+        questions: [{ ...boundQuestion, reference_md: replyText }],
+      },
+      answerScope: 'full_response',
+    };
+  }
+  const matches = content.questions.every((question) => {
     const prompt = normalizedLearningText(question.prompt_md);
     const promptInReply = normalizedReply.includes(prompt);
     const promptInContext = normalizedContext.includes(prompt);
-    if (!promptInReply && !promptInContext) return false;
+    if (prompt.length === 0 || (!promptInReply && !promptInContext)) return false;
     const choices = question.choices_md ?? [];
     const choicesVisible = choices.every((choice) => {
       const normalizedChoice = normalizedLearningText(choice);
@@ -173,6 +204,7 @@ function contentMatchesReply(
     const reference = normalizedLearningText(question.reference_md ?? '');
     return reference.length > 0 && normalizedReply.includes(reference);
   });
+  return matches ? { content } : null;
 }
 
 export interface CopilotLearningContentValidationDeps extends LearningContentValidationDeps {
@@ -233,16 +265,18 @@ export async function reviewCopilotLearningContent(
         : extracted.text,
       passed: true,
     };
-  if (!contentMatchesReply(extracted.content, validationSurface, contextText)) {
+  const bound = bindLearningContentToReply(extracted.content, validationSurface, contextText);
+  if (!bound) {
     console.error('[copilot-learning-content] manifest does not match visible content', {
       task_run_id: taskRunId,
     });
     return { replyText: COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY, passed: false };
   }
   try {
-    const validation = await validateLearningContent(extracted.content, {
+    const validation = await validateLearningContent(bound.content, {
       ...deps,
       observedQuestion: undefined,
+      answerScope: bound.answerScope,
     });
     if (validation.verdict !== 'pass') {
       console.error('[copilot-learning-content] validation rejected', {

@@ -394,6 +394,8 @@ export interface IndependentSolutionOptions {
 export interface SolveCheckOptions extends IndependentSolutionOptions {
   /** Learner-visible release needs affirmative agreement, not legacy non-disagreement. */
   validationMode?: 'release_strict';
+  /** Assess the whole supplied response against the independent solution. */
+  answerScope?: 'full_response';
 }
 
 // CONSERVATIVE threshold for the open-question semantic path (OF-4 / R2): only an
@@ -989,15 +991,17 @@ export async function runSolveCheck(
   question: SolveCheckQuestion,
   opts: SolveCheckOptions,
 ): Promise<SolveCheckResult> {
-  const releaseStrict = opts.validationMode === 'release_strict';
-  // F2: prefer the structured final answer (rubric_json.reference_solution) over the
-  // worked-solution prose in reference_md. referenceAnswer is the primary candidate
-  // used for human-readable reason strings + the semantic-path reference; the full
-  // list feeds the exact normalize-compare.
-  const referenceCandidates = referenceAnswerCandidates(question);
+  const fullResponse = opts.answerScope === 'full_response';
+  const releaseStrict = opts.validationMode === 'release_strict' || fullResponse;
+  // Ordinary question supply prefers a structured answer and permits exact
+  // candidates. A server-bound full response must preserve every visible byte
+  // and cannot substitute rubric answers or accept only its first line.
+  const referenceCandidates = fullResponse
+    ? [question.reference_md ?? '']
+    : referenceAnswerCandidates(question);
   const referenceAnswer = referenceCandidates[0] ?? '';
 
-  if (referenceAnswer.length === 0) {
+  if (referenceAnswer.trim().length === 0) {
     // No declared answer to compare against → nothing solve-check can assert.
     // EFF-3 (YUK-554 review) — hoisted BEFORE the solver call: with no reference the verdict
     // is 'unsupported' regardless of what the solver says, so don't spend the LLM call.
@@ -1073,7 +1077,7 @@ export async function runSolveCheck(
 
   // ----- exact path: normalize compare, then semantic fallback on mismatch -----
   let normalizedExactMismatch = false;
-  if (isExactQuestion(question)) {
+  if (!fullResponse && isExactQuestion(question)) {
     const choices = question.choices_md ?? [];
     const allowChoiceWrapper = question.kind === 'choice' || choices.length > 0;
     const refCandidates = referenceCandidates
@@ -1163,27 +1167,39 @@ export async function runSolveCheck(
   // → fail. Open questions keep the R2 conservative pass for softer outcomes. Exact
   // mismatches are stricter: only `correct` establishes equivalence; partial/unsupported/
   // low-confidence disagreement remains unresolved for provenance-aware consumers.
+  // Full-response validation reverses those roles: the independent solution is
+  // the reference, and the complete visible reply is the submission. Its rubric
+  // is server-owned and requires every explanation to be correct and consistent.
+  const independentAnswer = independentlySolved.worked_solution_md
+    ? `${solverFinalAnswer}\n\n${independentlySolved.worked_solution_md}`
+    : solverFinalAnswer;
   const semParams: JudgeAnswerParams = {
     db: opts.db,
     question: {
       id: question.id,
       kind: question.kind,
       prompt_md: question.prompt_md,
-      reference_md: referenceAnswer,
-      rubric_json: question.rubric_json ?? null,
+      reference_md: fullResponse ? independentAnswer : referenceAnswer,
+      rubric_json: fullResponse
+        ? {
+            criteria: [],
+            required_points: [
+              ...independentlySolved.expected_signals,
+              '完整作答的最终答案与全部推导、解释均正确且彼此一致。正确片段、重复题干或正确总结不能抵消未撤回的错误或矛盾解释；无法核验全部作答时不得判 correct。',
+            ],
+          }
+        : (question.rubric_json ?? null),
       choices_md: question.choices_md ?? null,
       // force the semantic route — solve-check is always a semantic comparison for
       // open kinds, regardless of the question's own judge route.
       judge_kind_override: 'semantic',
       knowledge_ids: question.knowledge_ids ?? null,
-      metadata: question.metadata ?? null,
+      metadata: fullResponse ? null : (question.metadata ?? null),
     },
     // Method/derivation questions must compare the independent worked solution,
     // not discard it and then penalize the solver for providing only a number.
     // Keep the final answer explicit, including for legacy answer-only outputs.
-    answer_md: independentlySolved.worked_solution_md
-      ? `${solverFinalAnswer}\n\n${independentlySolved.worked_solution_md}`
-      : solverFinalAnswer,
+    answer_md: fullResponse ? referenceAnswer : independentAnswer,
     subjectProfile: opts.profile.full,
     runTaskFn: recordingRunTaskFn,
   };
@@ -1220,7 +1236,7 @@ export async function runSolveCheck(
   let reason: string;
   if (confidentlyDisagrees) {
     verdict = 'fail';
-    reason = `${fallbackPrefix}SemanticJudge confidently scored the independent solver answer as incorrect (confidence ${judged.confidence.toFixed(2)} >= ${SOLVE_CHECK_SEMANTIC_THRESHOLD})`;
+    reason = `${fallbackPrefix}SemanticJudge confidently scored the ${fullResponse ? 'full supplied response' : 'independent solver answer'} as incorrect (confidence ${judged.confidence.toFixed(2)} >= ${SOLVE_CHECK_SEMANTIC_THRESHOLD})`;
   } else if (comparisonUnresolved) {
     verdict = 'unsupported';
     reason = `${fallbackPrefix}SemanticJudge could not establish equivalence (outcome=${judged.coarse_outcome}, confidence=${judged.confidence.toFixed(2)}) — hold provenance-anchored sources for review`;

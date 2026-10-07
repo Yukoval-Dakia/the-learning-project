@@ -40,6 +40,14 @@ function fixtureRoot(layout: Record<string, string[]>): string {
 const names = (docs: { name: string; body: string }[] | undefined) => docs?.map((d) => d.name);
 
 describe('restricted reply validation protocol', () => {
+  it('ships the server-owned full-answer rule and the multiple-existing-question boundary', async () => {
+    const protocol = await resolveCopilotLearningContentProtocol();
+    expect(protocol).toContain('完整可见回复作为待校验答案');
+    expect(protocol).toContain('不要求正文逐字复制 `reference_md`');
+    expect(protocol).toContain('不信任标记中的答案或 rubric 覆盖正文');
+    expect(protocol).toContain('多道现有题目或现有题目与新题混合');
+    expect(protocol).toContain('新题仍须在正文中绑定各自完整题干与选项');
+  });
   it.each(['\n', '\r\n'])(
     'reads only the shared validation section with %j newlines',
     async (newline) => {

@@ -160,6 +160,8 @@ describe('Copilot execution owner', () => {
         expect(prompt).toContain('给出用户现有题目的解答/标准答案');
         expect(prompt).toContain('把用户题干完整写入 `prompt_md`');
         expect(prompt).toContain('把本次最终答案写入 `reference_md`');
+        expect(prompt).toContain('完整可见回复作为待校验答案');
+        expect(prompt).toContain('不信任标记中的答案或 rubric 覆盖正文');
         expect(prompt).toContain('纯概念讲解或不涉及具体题目与答案的内容不要输出该标记');
         expect(prompt).toContain('且只输出一个机器标记');
         expect(prompt).toContain('最多 5 题');
@@ -236,9 +238,9 @@ describe('Copilot execution owner', () => {
               id: 'existing-rectangle',
               kind: 'computation',
               prompt_md: question,
-              reference_md: answer,
+              reference_md: '323 cm²',
               choices_md: null,
-              rubric_json: { units: 'cm²', checks: ['乘积正确', '面积单位正确'] },
+              rubric_json: { reference_solution: { final_answer: '999 cm²' } },
             },
           ];
           const candidate =

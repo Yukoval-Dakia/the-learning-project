@@ -23,6 +23,8 @@ export interface LearningContentValidationDeps {
   observedQuestion?: { input: unknown; output: unknown };
   /** Actually executed remote-MCP calls of this turn; forwarded only when present. */
   remoteToolEvidence?: unknown;
+  /** Server-bound full visible answer; never supplied by a model-authored manifest. */
+  answerScope?: 'full_response';
 }
 
 /** Practice owns assessment policy; transports only supply the content and task runtime. */
@@ -187,6 +189,7 @@ export async function validateLearningContent(
             db: deps.db,
             profile: { id: subjectProfile.id, full: subjectProfile },
             validationMode: 'release_strict',
+            answerScope: deps.answerScope,
           },
         ),
         runTeachingQualityCheck(

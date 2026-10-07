@@ -1,24 +1,16 @@
-# 2026-10-07 05:18Z 真实R2仍被拦截，未发布
+# 当前交接 — 2026-10-07 05:36Z YUK-1346 完整可见答案校验修复
 
-PR1588产品候选236a5a4 exactCI37574277449通过，隔离app/driver镜像82b08c218746；05:15真实R2终文已封存但public blocked，A未发送。父核对数学正确，独立校验仍未通过，不能合并/发布。费用estimated $0.001444664，原R $0.0019227独立保留不重付。新run `/tmp/yuk1346-acceptance-driver/run-236a5a4-01`，candidateSHA fa99d3707c983101245d0aac8b75bec5d05c5cc112945af963354c173ce8f56a。只读observer确认全部保护摘要未变；physical job f31c6f0e-b1d3-5f33-9729-84561d544cb0因心跳超时变retry0，durable DONE，绝不重新执行。无fullworker，旧112675job/57memory/原R均保留。
+唯一源码实施树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1346-turn-retention`，branch `feat/yuk-1346-turn-retention`，起点 clean `580773c09085a8415a1d0c37e5297023142c316b`。PR1588未合并，YUK1346仍待父整合和真实验收。本子线程独占源码写入、不委派；本地source+docs commit后写授权终止，terminal/PR通知不能续权。
 
-已有只读离线诊断 task `yuk1346-real-candidate-contract-diagnosis-20261007-v1` 运行，源码只读、无网络/DB/模型调用，不是第三review。父唯一源码/运行写入者，不开重复任务；接终态后核验拒绝分支和最小修复。生产f3健康、没有发布锁或版本变更。实际验收预算最多新两条但本pair已停止，不自动再次付费。
+已修复精确R2确定性错误分支：单道现有题的完整题干和选项绑定eligible用户上下文后，服务端用剥除marker后的完整可见回复作验证reference，丢弃marker rubric。重复题干不走隐藏摘要捷径。Practice新增仅服务端选择的full_response比较模式：reference-free solver保持release_strict；semantic judge以独立完整解为reference，以实际可见正文为submission，required_points含独立signals及全部解释正确/一致要求；不能靠正确首行normalize通过。题面、教学、limits和失败/取消/deadline关闭策略保留。新题/教学路径沿用原接线；多道现有题或混合映射不明时拒绝，不复制整条回复到每题。无新表/schema/migration/materialization、权限、provider路由或子系统。
 
-# 当前交接 — 2026-10-07 YUK-1346 最小验证协议修复
+本轮Node24.19.0：5文件256 scoped unit通过；精确私有R2实际Practice离线7项通过，但所有task输出都是明确synthetic，仅证明真实输入接线/拒绝策略。另有10个mocked Practice seam controls和5个real finalizer离线控制；fail/error/cancel/deadline的12个历史blocked receipt字段逐一一致。R2 candidate SHA fa99d3707c983101245d0aac8b75bec5d05c5cc112945af963354c173ce8f56a，实际visible-answer SHA 8b6ba9ab93a56b4f028e53fff863e5588facc1b640cf3bf5aad925ceba3a2529。typecheck、lint、CODEX_FULL_GATE build和9项相关静态审计通过，lint297 warnings/0 errors，无baseline放宽。证据和日志全在新 `/tmp/yuk1346-visible-answer-repair`；旧diagnosis/acceptance/运行收据只读，private transcript未入git。
 
-当前唯一实施线 YUK-1346 In Progress，PR1588。工作树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1346-turn-retention`，branch `feat/yuk-1346-turn-retention`。本轮从 clean `f5709896dd553a31ce73d128b2d72e8bcf03c5a3` 修复确认的源码缺口：answer_only 删除完整 piSkillDocs 时也丢失共享 SKILL.md 的独立校验 manifest 协议。现在只提取该节经 piSkillDocs 注入受限 system prompt，压缩后仍保留，普通模式和六读工具不变；完整技能包、写入/提案/agent note/子研究/Exa 仍禁用，服务端验证与 detector 未改。focused seam tests 核对实际 system prompt 注入正文的字段、题干/答案对应规则、纯 prose 无 marker 可收口，以及解答缺标记/验证不可用时仍拦截。
+没有新paid/model、网络、DB、browser/container、GitHub/Linear/watch/生产动作，不重执行R/R2，不发送A。不冒称真实数学输出质量、runtime acceptance或部署。生产仍f3、产品pin opencode-go/mimo-v2.6-pro是既有父证据，本轮未live核查。原236a R2费用estimated $0.001444664，原R $0.0019227；durable DONE但physical job retry0不重投。旧112675jobs/57memory和保护摘要保留；原f570受限ingest provider_delta/queue_delta/memory_count=0是历史父证据，不能代替本轮验收。
 
-父线程真实隔离证据：首个 R 模型执行成功，费用 $0.0019227，但公开 reply 的 learning_content 被 blocked；原始候选不可取得、仅有 hash，精确原因未知，本次源码缺口不能冒称其根因。父线程只读核对 `/tmp/yuk1346-acceptance-driver/run-f570-03/observed-R-after-stop.json`，所有受保护业务表、旧事件、vector、reconcile、保留队列内容摘要未变。确定性 learner header 属既有状态系统投影，无 R marker/causation，ingest opt-out。原 f570 driver 的 restricted-ingest 阶段已用真实 handler 对 R ask+reply 通过：provider_delta=0、queue_delta=0、memory_count=0，保护快照仍未变。A 尚未发送，发布待完成。这是父线程提供的运行证据，本子线程未访问生产或运行验收 driver。
+父独占整合、push、PR/Linear capture、新exact-head CI、实际validator判决、剩余R/A预算和发布。初审+唯一验证审预算已耗尽，不开第三审。当前阻断归既有1346；单独的marker-free检测缺口已带digest-only证据写PLAN PARKED，待父去重归票。精确可见R2正文不带marker时现有detector判无需校验且0次validator直接通过；本次未扩regex或改变此分支。详见方案末节。发布须停全部写入者、新worker先于app；受限数据写入后禁止直接回退旧f3。
 
-父线程独占整合、push、PR/Linear 更新、新 exact-head CI、剩余实际验收和生产发布。初审+唯一验证审查预算已用完，不启动第三轮。无新 paid/model/生产 DB/浏览器/container/网络服务调用，不重发 R，不触及 `/tmp` acceptance scripts 或生产。无新增独立 actionable follow-up；本次确认缺口归现有 YUK-1346，Linear capture/status 由父线程负责。源码 commit 后本子线程写授权终止，terminal/PR 通知不构成继续写授权。发布仍须停全部写入者，新 worker 先于 app 恢复写入；受限数据写入后不可直接回退旧 f3。
-
-本轮5文件120 unit、typecheck、lint（297 warnings/0 errors）、CODEX_FULL_GATE build、4项相关静态审计均通过，日志 `/tmp/yuk1346-validation-protocol-{unit,typecheck,lint,build}.log` 与 `/tmp/yuk1346-validation-protocol-audit-*.log`。scoped checks 与限制记入 `docs/planning/2026-10-07-yuk1346-answer-only-turn.md`。前轮 P1/CI fixture 的 142 unit / 29 DB、typecheck/lint/build 和14项审计为历史本地证据，不冒称本轮验收；原255 unit/235 DB同样保留在方案中。无 migration/table/cron/dependency/API 变化。
-
-PR1587 于03:05:42Z合并为上述 main，exact80369b155 CI37561726136及等待窗通过；已登记并结束watch。文档合并不需要重新部署 f3。README旧部署指针P2已明确延期并归YUK1329，不冒称修复。两条旧假设验收Mem0摘要继续保留。
-
-产品决定：输入区“日常学习/仅用于本次回答”，选择不因关抽屉或刷新静默恢复；每条受理独立冻结。聊天与必要运行记录可回看，受限轮不进入长期记忆、学情/计划或后续模型上下文，禁止写工具/教学物化。六个既有只读工具经审核后保留。不是完整临时清理/历史撤销功能。真实验收先用隔离副本、最多两条新Copilot及必要记忆处理；旧wire/cost观测缺口保持未知。
-
-以下生产版本和恢复证据继续有效。旧“下一条/Backlog”叙述已被上述当前实施状态取代。
+以下为历史运行交接；旧下一条/Backlog叙述不能覆盖上方YUK1346实施状态。
 
 # 2026-10-07 会话入口生产发布完成
 
