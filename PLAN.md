@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-07：会话入口 PR1583 已合并并在 02:17Z 部署 `f3bfff2cf`，真实生产浏览器验收通过。当前完成 YUK-1340 发布记录，下一产品线为 YUK-1346 的单次保留策略。见[本机入口发布记录](docs/planning/2026-10-07-session-entry-local-release-result.md)。
+> Linear 是权威 tracker。2026-10-07 本轮：PR1580 新 P1 前缀凭据泄露已复现并修复，等待新提交 CI；未部署。此前：会话入口 PR1583 已合并并在 02:17Z 部署 `f3bfff2cf`，真实生产浏览器验收通过。当前完成 YUK-1340 发布记录，下一产品线为 YUK-1346 的单次保留策略。见[本机入口发布记录](docs/planning/2026-10-07-session-entry-local-release-result.md)。
 
 ## NOW
 

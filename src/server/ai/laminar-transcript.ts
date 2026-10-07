@@ -6,6 +6,13 @@ export const TRANSCRIPT_MAX_SERIALIZED_CHARS = 65536;
 const TEXT_LIMIT = 8000;
 const ENTRY_LIMIT = 64;
 const TRUNCATED = '[TRUNCATED: transcript limit]';
+const credentialNamePattern =
+  '[a-z0-9_-]*(?:(?:api[-_]?key|key[-_]?auth|auth(?:orization|entication|headers)?|token|cookie|private[-_]?key|signing[-_]?key)|(?:credential|password|secret)[a-z0-9_-]*)';
+const credentialName = new RegExp(`^(?:${credentialNamePattern})$`, 'i');
+const credentialAssignment = new RegExp(
+  String.raw`\b(${credentialNamePattern})\b["']?\s*[:=]\s*(?:"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|[^\s,;"'}\]]+)`,
+  'gi',
+);
 const privateKey =
   /^(?:.*api[-_]?key|key[-_]?auth|auth(?:orization|entication|headers)?|.*credential.*|.*password.*|.*secret.*|(?:access|refresh|id|api|auth|oauth)?[-_]?token|cookie|set[-_]?cookie|headers|requestHeaders|env|environment|processEnv|bindings?|providerBindings?|modelBindings?|privateKey|signingKey|rawCot|cotContent|rawThinking|thinking|thinkingSignature|reasoning|reasoningContent|rawReasoning|chainOfThought|cot|textSignature|base64|binary)$/i;
 
@@ -30,10 +37,7 @@ function cleanText(value: string): string {
       /\b(?:sk-(?:ant-|proj-|or-)?[A-Za-z0-9_-]+|gh[pousr]_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+|AKIA[A-Z0-9]{16}|eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)\b/g,
       '[omitted: credential]',
     )
-    .replace(
-      /\b([a-z0-9_-]*api[-_]?key|password|secret|access[-_]?token|refresh[-_]?token|authorization|cookie)\b["']?\s*[:=]\s*(?:"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|[^\s,;"'}\]]+)/gi,
-      '$1=[omitted: credential]',
-    )
+    .replace(credentialAssignment, '$1=[omitted: credential]')
     .replace(/(?:https?:\/\/)[^\s<>"'；]+/gi, (url) => {
       try {
         const parsed = new URL(url);
@@ -130,7 +134,12 @@ function sanitizePayload(value: unknown, envelopeDepth: 0 | 2): TraceValue {
           entries.push(['_truncation', TRUNCATED]);
           break;
         }
-        if (privateKey.test(key.replace(/[-_\s]/g, '')) || key === 'toJSON') continue;
+        if (
+          credentialName.test(key) ||
+          privateKey.test(key.replace(/[-_\s]/g, '')) ||
+          key === 'toJSON'
+        )
+          continue;
         const descriptor = Object.getOwnPropertyDescriptor(item, key);
         const safeKey = text(key).slice(0, 100);
         entries.push([

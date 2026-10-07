@@ -333,27 +333,40 @@ it('shows truncation for large actual message collections without exporting medi
   expect(() => JSON.parse(input)).not.toThrow();
 });
 
-it.each(['XIAOMI_API_KEY', 'OPENAI_API_KEY', 'ZAI_CODING_CN_API_KEY', 'openaiApiKey'])(
-  'removes prefixed assignments and structured fields through the public sanitizer: %s',
-  (key) => {
-    const secret = 'SYNTHETIC_PREFIXED_CREDENTIAL';
-    const payload = {
-      plain: `${key}=${secret}; the learner answer is x=2.`,
-      quoted: `${key}="${secret} with spaces"; ordinary educational text`,
-      singleQuoted: `${key}='${secret} with spaces'; answer remains`,
-      nested: { [key]: secret, answer: 'intersection = {999}' },
-      encoded: JSON.stringify({ wrapper: { [key]: secret, final_answer: { text: 'x=2' } } }),
-      prose: 'An API key is a credential. The answer follows from the intersection.',
-    };
-    const serialized = JSON.stringify(sanitizeTracePayload(payload));
-    expect(serialized).not.toContain(secret);
-    expect(serialized).toContain('the learner answer is x=2.');
-    expect(serialized).toContain('ordinary educational text');
-    expect(serialized).toContain('answer remains');
-    expect(serialized).toContain('intersection = {999}');
-    expect(serialized).toContain('An API key is a credential.');
-  },
-);
+it.each([
+  'XIAOMI_API_KEY',
+  'OPENAI_API_KEY',
+  'ZAI_CODING_CN_API_KEY',
+  'openaiApiKey',
+  'R2_SECRET_ACCESS_KEY',
+  'DB_PASSWORD',
+  'CLAUDE_CODE_OAUTH_TOKEN',
+  'SERVICE_ACCESS_TOKEN',
+  'SERVICE_REFRESH_TOKEN',
+  'SERVICE_AUTHORIZATION',
+  'SERVICE_COOKIE',
+  'providerCredentials',
+  'servicePrivateKey',
+  'serviceSigningKey',
+])('removes prefixed assignments and structured fields through the public sanitizer: %s', (key) => {
+  const secret = 'SYNTHETIC_PREFIXED_CREDENTIAL';
+  const payload = {
+    plain: `${key}=${secret}; the learner answer is x=2.`,
+    quoted: `${key}="${secret} with spaces"; ordinary educational text`,
+    singleQuoted: `${key}='${secret} with spaces'; answer remains`,
+    wrapped: `config="${key}=${secret}"; answer remains`,
+    nested: { [key]: secret, answer: 'intersection = {999}' },
+    encoded: JSON.stringify({ wrapper: { [key]: secret, final_answer: { text: 'x=2' } } }),
+    prose: 'An API key is a credential. The answer follows from the intersection.',
+  };
+  const serialized = JSON.stringify(sanitizeTracePayload(payload));
+  expect(serialized).not.toContain(secret);
+  expect(serialized).toContain('the learner answer is x=2.');
+  expect(serialized).toContain('ordinary educational text');
+  expect(serialized).toContain('answer remains');
+  expect(serialized).toContain('intersection = {999}');
+  expect(serialized).toContain('An API key is a credential.');
+});
 
 // Sanitization canonicalizes encoded JSON. Compare the complete decoded data,
 // including every ordinary field, while checking final span bytes against the first projection.
