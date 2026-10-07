@@ -94,6 +94,13 @@ W4 CopilotDock/coach/profile → W5 admin-*。顺序依据：先做每日入口�
    对现有 Loom 资产（`docs/design/loom-refresh/project/tokens.css`、`src/ui/primitives/`）的复用成本。
 4. agent 在授权下选定并记录理由，Opus 5.5 独立视觉复核。原型不进生产 bundle。
 5. 定稿产物：决策文档（导航骨架、工作台布局规则、保留/替换的 token）是 P3 及之后每张 UI 票 pre-flight 的必引来源。
+6. 质感与交互基线（owner 2026-10-07 关注"高级感、顺畅感"，loft 评分表与每张 UI 票验收均适用）：
+   - 先 token 后组件：字号 5–6 级、4/8 间距、9–11 级中性灰 + 1 个强调色、圆角 2–3 档、动效时长与曲线入 token；组件禁止硬编码数值。
+   - 层级靠字号/字重/灰度与背景色差，少用边框和阴影；空、载入、出错三态必须设计；数字用 `tabular-nums`。
+   - 交互 100ms 内有反馈；写操作乐观更新并可回滚；路由 `preload="intent"`，下一题在作答时预取。
+   - 动效 150–250ms、只动 `transform`/`opacity`，列表与展开用布局过渡，尊重 `prefers-reduced-motion`。
+   - 键盘优先：高频操作有快捷键，提供 `⌘K` 命令面板；长列表虚拟化。
+   - 可量化门槛：INP < 200ms、CLS < 0.05、关键交互低端机 60fps，附真实操作录屏为证据。
 
 ## 7. 首个竖切：复习作答 → 判分 → 状态更新 → 下一项
 
