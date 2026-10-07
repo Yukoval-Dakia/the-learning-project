@@ -4,7 +4,7 @@ owner 指示本线程负责 epic YUK-1351 的第一道 gate。工作树 `/Users/
 
 Pi 1.0.2 + DBOS 5.2.11 exact devDependency。仅 testing capability / Testcontainers 领域与独立 DBOS schema。真实 SIGKILL/restart 验证响应检查点、业务提交和工具回执；状态版本与过期拒绝、三入口共享 arrangeNext。未知外部结果窗口记录替身第二次调用，不宣称 provider exactly-once 或零重复付费。锁等待前读取 clock_timestamp 的缺陷已复现并改为锁取得后再读。
 
-本机2 unit/10 DB通过，typecheck/lint/build通过；lint基线297 warnings，partition无P0。证据与模块说明见 `docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md` 与相邻 evidence JSON。源码 hash/app version 单独封存；独立 review由 T3 Codex/gpt-6.1-sol xhigh 完成，无P0/P1；P2首次并发证据创建及provider请求身份要求已归入YUK1356。PR #1590：https://github.com/Yukoval-Dakia/the-learning-project/pull/1590 已T3登记；YUK1338 In Review。代码提交 995cdc2a4272beafc698f1ff107a0fa5ef2f3dcd，source hash 已逐项验证。CI Gate待结果。完成后仅把YUK1338置In Review，不置Done，不启动P1/P4/P5。
+本机2 unit/10 DB通过，typecheck/lint/build通过；lint基线297 warnings，partition无P0。证据与模块说明见 `docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md` 与相邻 evidence JSON。源码 hash/app version 单独封存；独立 review由 T3 Codex/gpt-6.1-sol xhigh 完成，无P0/P1；P2首次并发证据创建及provider请求身份要求已归入YUK1356。PR #1590：https://github.com/Yukoval-Dakia/the-learning-project/pull/1590 已T3登记；YUK1338 In Review。最终复验源码提交 e6204eb8515d93e9c3b79ac479f9df374520c8ec，source hash 已逐项验证。CI Gate待结果。完成后仅把YUK1338置In Review，不置Done，不启动P1/P4/P5。
 
 已正常合入 origin/main a86d4e633（PR #1580/#1589），重新核验合并后的依赖与 gate。2026-10-07 11:01Z 的生产停写/backup.py 不属于本线程，已回报 57961995-70c3-4121-a9dd-97d90471be1a；不接管 tlp1346 候选（365/18987, PG18985）或重投未知请求。本轮没有核验或操作生产。既有生产指针与义务保留在下面的上一轮交接中，不能把旧记录称为本次新验收。
 

@@ -66,13 +66,15 @@ pnpm build
 
 不运行完整本机 `pnpm test`。DB 测试 setup 自带测试容器迁移，不使用生产迁移入口。原始合成输入、模型响应、工具回执、PID/信号、步骤与 input/output digest 封存在相邻 evidence JSON。`sourceHashes` 是各文件原始字节的 SHA-256，`codeDigest = SHA256(JSON.stringify(sourceHashes))`；测试输入/输出 digest 使用 SHA-256(JSON.stringify(value))。记录归属以同 PR 的源码 commit 和这些文件 hash 为准，文档提交不会改变 gate 的代码版本。
 
-验证源码固定为 `995cdc2a4272beafc698f1ff107a0fa5ef2f3dcd`；每个 `sourceHashes` 均已与该提交的 git blob 逐项核对。PR [#1590](https://github.com/Yukoval-Dakia/the-learning-project/pull/1590) 已登记 T3，YUK-1338 为 In Review；exact-head CI 尚待结果。
+main 的 PR #1580/#1589 已正常合入本分支，锁文件冲突按两边依赖合集解决，`pnpm install --frozen-lockfile` 通过；没有升级 main 既有依赖版本。合并后重新执行上述全部 scoped/static/build gate，10 DB 场景耗时 33.40 秒。
+
+验证源码固定为 `e6204eb8515d93e9c3b79ac479f9df374520c8ec`；每个 `sourceHashes` 均已与该提交的 git blob 逐项核对。PR [#1590](https://github.com/Yukoval-Dakia/the-learning-project/pull/1590) 已登记 T3，YUK-1338 为 In Review；exact-head CI 尚待结果。
 
 ## 结论与后续边界
 
 本机 gate 的五项验收通过：scoped unit **2 passed**，scoped DB **10 passed**；typecheck、lint、build 均 exit 0。lint 是已有 **297 warnings**，没有提高基线或关闭规则；partition audit 没有未分区测试或 unmocked DB unit。T3 Codex / gpt-6.1-sol xhigh 已读取真实源码 diff 和封存证据，独立审查 **P0/P1 NONE**；没有运行测试或服务。exact-head CI 状态在 PR 交接中单独记录。该 gate 只决定能否继续评估 ADR-0066 的步骤级执行方案；不等于当前产品迁移、上线或真实模型准入。
 
-封存结果见 [原始合成证据](2026-10-07-yuk1338-pi-dbos-gate.evidence.json)。两轮安排在输入 v1/v3 上分别生效为 v2/v4；提交确认至效果可读观测为约 **3511 / 1436 ms**。四个崩溃边界的最终效果均一条；未知模型窗口第一轮替身调用两次，其余保存后的第一轮响应只有一次调用。
+封存结果见 [原始合成证据](2026-10-07-yuk1338-pi-dbos-gate.evidence.json)。两轮安排在输入 v1/v3 上分别生效为 v2/v4；提交确认至效果可读观测为约 **713 / 486 ms**。四个崩溃边界的最终效果均一条；未知模型窗口第一轮替身调用两次，其余保存后的第一轮响应只有一次调用。
 
 独立审查保留一项 P2：`recordAnswer` 在 learner 尚不存在时不能锁住创建，两个同 learner/evidence 身份的首次并发提交可使第二个 evidence INSERT 返回 `23505`。不丢数据，不影响本 gate 的工具副作用恢复；当前 PR 不扩张修复该生产作答入口问题，也不把它称为已修。已归入现有 YUK-1356：生产化前序列化首次创建或复用现有事件幂等协议，并加入并发首次提交验收。
 
