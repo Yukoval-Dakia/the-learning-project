@@ -11,7 +11,7 @@
 
 - **YUK-1338 / YUK-1351 P0 gate**：PR #1590 已合入主线 42987dfd7，本分支同步集成。测试容器中验证 Pi + DBOS 状态版本、过期拒绝、四个进程终止边界、响应复用与单次业务效果；不等于整个迁移或真实 provider 重复付费问题已解决。证据见[gate 记录](docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md)。
 
-- **YUK-1363 / YUK-1364**：测试附件存储已验收。PR1591完整spec P1修复为 `9d962371f`，原始proposal与冻结评分契约按sequence全字段绑定。270 DB/136 unit及静态构建通过，父核对38项hash并独立113 DB通过。待新head CI、隔离镜像HTTP和发布门禁；旧66e运行证据不覆盖新修复，不启动第三轮独立review。见[证据](docs/planning/2026-10-07-yuk1364-probe-issuance.md)。
+- **YUK-1363 / YUK-1364**：测试附件存储已验收。PR1591完整spec P1修复为 `9d962371f`，原始proposal与冻结评分契约按sequence全字段绑定。270 DB/136 unit及静态构建通过，父核对38项hash并独立113 DB通过。9a准确镜像已通过native双sequence漂移拒绝/合法seq2和legacy历史HTTP；手动完整CI全绿，但普通merge被base policy拒绝，正以验收文档提交重触发PR gate；待合并发布，不启动第三轮独立review。见[证据](docs/planning/2026-10-07-yuk1364-probe-issuance.md)。
 - **YUK-1356 业务操作迁移**：接口与消费者调查已交付[实施输入](docs/planning/2026-10-07-yuk1356-operation-seams.md)。主线57961995已接手独立树唯一实施writer，与1352/1355协调；本线程不重复实施。Pi可信作答来源、队列诊断投影与coverage语义必须保留，三入口统一尚未验收。
 
 - **YUK-1362 / 当前部署用途**：仅供 Agent 开发测试，禁止再次清库或恢复私人数据。14:30Z实读 current-release 为1365发布 `6e54da8df` / image `fd8c046b97fe`，锁不存在；即时SSE已有1365证据，正文/取消验收仍受provider限额阻碍，1366负责现存DLQ。本线程未操作服务。此处是带时间的观察，后续发布仍须重新核验并原子取锁；日用须owner明确要求。

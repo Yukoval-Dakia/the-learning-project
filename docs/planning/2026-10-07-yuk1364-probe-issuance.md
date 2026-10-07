@@ -98,3 +98,18 @@ GitHub comment `4208030193` 指出冻结 `probe_spec` 只比较 prompt/reference
 writer最终270 DB、136 unit、typecheck/lint/build及boundary/API/partition audits通过。父核对9项源码、21份日志和8项封存材料的SHA256，并重新运行 complete-spec、probe-answer、prep-desk 三个DB文件，113/113通过，exit0。父日志 `/tmp/yuk1364-complete-spec-parent-db.log`；完整清单 `/tmp/yuk1364-complete-spec-manifest.json`。新测试使用真实隔离Postgres和Request/Response处理函数，模型执行端为脚本替身，没有付费调用。这不等于监听HTTP、镜像或真实模型质量验收。
 
 先前66e候选的隔离监听HTTP已验证错误reference拒绝、冻结题面、正常编辑后的合成历史结果及幂等ack，14:18Z清理自有服务并释放锁；该旧证据不覆盖本次完整spec修复。当前新head仍待exact-head CI、镜像隔离HTTP及发布门禁，不启动第三轮独立review。旧66e发布脚本已加拒绝执行保护，未执行。当前actionable finding归既有YUK-1364，无需另建重复票。
+
+
+## 9a43085a0 准确镜像隔离 HTTP 验收
+
+从干净git archive构建ARM64镜像 `sha256:d4c166346ad796c18635a216a1d6c1ced6c9d021caebb89e60053320002f1f0a`，revision label与 `9a43085a07672608d3acc3f6e7a28c3adb14df79`一致。15:09:10Z实际核验并原子取得部署锁后，启动独立internal网络、PG与app，没有发布宿主端口、配置provider凭据或启动worker。候选migrator通过，既有epoch CLI激活assessment-contract-v1。真实HTTP readiness200、缺token401。
+
+同一镜像验证legacy未发题不展示且answer409；正式发题后显示冻结题面；正常编辑当前题面后prepared_action不变，读取前后九表快照相同。通过业务函数写入的合成历史结果在后续正常编辑后保持outcome_retired；ack首次201、重复200，仅一条确认事件。该历史fixture没有原生assessment refs，不是成功原生评分证据。
+
+native fixture通过正式publication在首次issuance前只改target_error_response_signature，保留原proposal、question metadata、prompt/reference；父逐字段核对初次和复验两个sequence确实只有该评分字段漂移。两者均被真实brief/probes排除，answer返回409 probe_spec_mismatch。未发题native返回409 probe_not_issued。合法原spec的sequence2仍显示正确冻结题面。各HTTP窗口的22张相关表全量快照完全相同；judge-started事件、submission/evaluation/task-run/provider-attempt/cost记录为空。没有调用合法native作答的provider路径；合成package/admission不构成真实模型质量或原生评分完成验收。
+
+15:18:17Z停止并移除自有app、PG及匿名volume、internal网络，重新核对owner后释放deployment.lock，显式通知1365与主线。主release仍为6e54da8df/imagefd8，四服务healthy，没有修改主库。证据根为runtimeRoot/yuk1364-preflight-9a43085a0/evidence，acceptance-summary.json、lock-release.json及evidence-sha256.json封存实际结果。
+
+合并前发现CI Gate 37642044307整体failure，已生成16个job均success或合法skip，最后汇总gate未生成，无failed-step日志。GitHub拒绝一次failed-only retry；改用现有workflow_dispatch在相同head触发37643395029完整gate。根因尚未确定，不能以部分绿色代替完整gate；此记录不代表已合并或部署。
+
+手动完整CI `37643395029` 随后在准确9a43085a0全部通过，包含最后汇总job；本地与镜像证据未变。然而普通expected-head squash仍被base policy拒绝。规则要求GitHub Actions汇总context；REST核对head上该context为success，PR临时merge commit `598d76c545ed186e5ac77acd5021c5d52ddd2338`无check-runs。未使用admin或修改规则。将本次实际验收文档提交到PR，以新的pull_request事件重新取得规则认可的CI，旧工作流失败记录保留。

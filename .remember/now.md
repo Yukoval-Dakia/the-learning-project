@@ -1,3 +1,11 @@
+# 当前交付 — 2026-10-07 15:35Z YUK-1364
+
+9a43085a0/image d4c166346ad7隔离HTTP已通过native seq1/2漂移409、合法seq2显示、22表无写及legacy历史/ack。15:18:17Z清理自有容器/volume/network并核owner释放锁，主fd8四服务healthy未变。证据runtimeRoot/yuk1364-preflight-9a43085a0/evidence/acceptance-summary.json与lock-release.json，65证据hash核对。
+
+原PR CI37642044307各job成功但汇总job未生成，整体failure且GitHub拒绝retry。手动完整CI37643395029在9a准确head全绿。普通expected-head squash仍被base policy拒绝；未admin绕过。现提交真实运行验收文档重触发PR gate，源码未变；下次核最终head/CI/image对应关系。部署脚本deployment-yuk1364-9a43085a0只准备未执行，缺release-gates-verified.json且要求release phase的本线程锁。
+
+以下为历史记录。
+
 # 当前交接 — 2026-10-08 JST YUK-1364
 
 完整spec P1修复已交回，代码9d962371f，唯一writer已释放。父核对9 source/21 log/8 artifact哈希和实际diff，独立三文件113 DB通过；writer270 DB/136 unit/typecheck/lint/build及scoped audits通过。原proposal的完整sequence-specific契约参与active/list/answer/completed校验，不能只匹配prompt/reference。PR1591待推送本次文档与代码、回复4208030193、新exact CI和隔离监听HTTP。现无自有runtime服务/部署锁；下一次runtime操作前必须实际复核并原子取锁、通知1365与主线。
