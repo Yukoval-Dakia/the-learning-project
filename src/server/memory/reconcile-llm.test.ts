@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import type {
   DirectProviderLifecycleFactory,
   DirectProviderOperationContext,
@@ -26,20 +27,31 @@ const MOCK_ENV = {
 function attemptContext(
   records: unknown[],
   externalRequestIds: string[] = [],
+  delays: { acquireMs?: number; reserveMs?: number } = {},
 ): DirectProviderOperationContext {
   const createLifecycle: DirectProviderLifecycleFactory = (input) => ({
     identity: input.identity,
-    acquire: async () => ({
-      admission: 'acquired',
-      reserveProviderStart: async () => undefined,
-      recordExternalRequestId: async (id) => {
-        externalRequestIds.push(id);
-      },
-      finish: async (evidence) => {
-        records.push({ identity: input.identity, evidence });
-        return 'settled';
-      },
-    }),
+    acquire: async () => {
+      if (delays.acquireMs) await new Promise((resolve) => setTimeout(resolve, delays.acquireMs));
+      return {
+        admission: 'acquired',
+        reserveProviderStart: async () => {
+          if (delays.reserveMs)
+            await new Promise((resolve) => setTimeout(resolve, delays.reserveMs));
+        },
+        recordExternalRequestId: async (id) => {
+          externalRequestIds.push(id);
+        },
+        finish: async (evidence) => {
+          records.push({
+            identity: input.identity,
+            providerStartFence: input.providerStartFence,
+            evidence,
+          });
+          return 'settled';
+        },
+      };
+    },
   });
   return {
     caller: 'worker',
@@ -508,6 +520,221 @@ describe('judgeReconciliation', () => {
       }),
     ).rejects.toThrow(ReconcileParseError);
   });
+});
+
+const MIMO_ENV = {
+  ...MOCK_ENV,
+  AI_PROVIDER_OVERRIDE: 'opencode-go',
+  AI_PROVIDER_MODEL: 'mimo-v2.6-pro',
+  OPENCODE_API_KEY: 'synthetic-mimo-key',
+};
+
+function abortError() {
+  return new DOMException('Synthetic transport aborted', 'AbortError');
+}
+
+function stalledBodyFetch(status: number) {
+  let signal: AbortSignal | null | undefined;
+  let releaseBody = () => {};
+  const fetchImpl = vi.fn<typeof fetch>(async (_url, init) => {
+    signal = init?.signal;
+    if (!signal) throw new Error('Expected the transport abort signal');
+    const transportSignal = signal;
+    const stream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        const onAbort = () => controller.error(abortError());
+        transportSignal.addEventListener('abort', onAbort, { once: true });
+        controller.enqueue(new TextEncoder().encode('{"id":"partial-response",'));
+        releaseBody = () => {
+          transportSignal.removeEventListener('abort', onAbort);
+          if (transportSignal.aborted) return;
+          controller.enqueue(new TextEncoder().encode('"error":{"message":"synthetic error"}}'));
+          controller.close();
+        };
+      },
+    });
+    return new Response(stream, { status, headers: { 'x-request-id': 'mimo-body-request-id' } });
+  });
+  return { fetchImpl, release: () => releaseBody(), wasAborted: () => signal?.aborted };
+}
+
+describe('judgeReconciliation transport deadline', () => {
+  afterEach(() => vi.useRealTimers());
+
+  function expectAbortEvidence(attempts: unknown[], wireCount = 1) {
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        providerStartFence: 'operation_kind',
+        identity: expect.objectContaining({ provider: 'opencode-go', model: 'mimo-v2.6-pro' }),
+        evidence: expect.objectContaining({
+          terminal: 'aborted',
+          reason: 'provider_request_aborted',
+          wireCount,
+          usage: expect.objectContaining({
+            basis: 'unknown',
+            input: null,
+            output: null,
+            total: null,
+          }),
+          cost: expect.objectContaining({ basis: 'unknown', amount: null, currency: 'USD' }),
+        }),
+      }),
+    ]);
+  }
+
+  it('aborts a request stalled before response headers without inventing usage or cost', async () => {
+    vi.useFakeTimers();
+    const attempts: unknown[] = [];
+    const fetchImpl = vi.fn<typeof fetch>(async (_url, init) => {
+      const signal = init?.signal;
+      if (!signal) throw new Error('Expected the transport abort signal');
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener('abort', () => reject(abortError()), { once: true });
+      });
+    });
+    const outcome = judgeReconciliation(mockNewMems(), mockCandidates(), {
+      env: MIMO_ENV,
+      timeoutMs: 25,
+      fetchImpl,
+      providerAttempt: attemptContext(attempts),
+    }).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(25);
+    expect(await outcome).toBeInstanceOf(RetryableError);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expectAbortEvidence(attempts);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it.each([200, 401, 503])(
+    'aborts a stalled HTTP %i body and preserves its header request ID',
+    async (status) => {
+      vi.useFakeTimers();
+      const attempts: unknown[] = [];
+      const ids: string[] = [];
+      const transport = stalledBodyFetch(status);
+      const outcome = judgeReconciliation(mockNewMems(), mockCandidates(), {
+        env: MIMO_ENV,
+        timeoutMs: 25,
+        fetchImpl: transport.fetchImpl,
+        providerAttempt: attemptContext(attempts, ids),
+      }).catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(25);
+      const wasAborted = transport.wasAborted();
+      transport.release();
+      const error = await outcome;
+      expect(wasAborted).toBe(true);
+      expect(error).toBeInstanceOf(RetryableError);
+      expect(ids).toEqual(['mimo-body-request-id']);
+      expectAbortEvidence(attempts);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it('uses only the deadline remaining after acquisition and provider-start reservation', async () => {
+    vi.useFakeTimers();
+    const attempts: unknown[] = [];
+    const transport = stalledBodyFetch(200);
+    const outcome = judgeReconciliation(mockNewMems(), mockCandidates(), {
+      env: MIMO_ENV,
+      timeoutMs: 60,
+      fetchImpl: transport.fetchImpl,
+      providerAttempt: {
+        ...attemptContext(attempts, [], { acquireMs: 70, reserveMs: 20 }),
+        deadlineAt: new Date(Date.now() + 100),
+      },
+    }).catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(89);
+    expect(transport.fetchImpl).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(10);
+    expect(transport.fetchImpl).toHaveBeenCalledOnce();
+    expect(transport.wasAborted()).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    const wasAborted = transport.wasAborted();
+    transport.release();
+    expect(wasAborted).toBe(true);
+    expect(await outcome).toBeInstanceOf(RetryableError);
+    expectAbortEvidence(attempts);
+  });
+
+  it.each([0, 30])(
+    'rejects an expired operation with zero fetches after %ims admission delay',
+    async (acquireMs) => {
+      vi.useFakeTimers();
+      const attempts: unknown[] = [];
+      const fetchImpl = vi.fn<typeof fetch>(async () => new Response('{}'));
+      const outcome = judgeReconciliation(mockNewMems(), mockCandidates(), {
+        env: MIMO_ENV,
+        fetchImpl,
+        providerAttempt: {
+          ...attemptContext(attempts, [], { acquireMs }),
+          deadlineAt: new Date(Date.now() + (acquireMs === 0 ? -1 : 20)),
+        },
+      }).catch((error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(acquireMs);
+      expect(await outcome).toBeInstanceOf(RetryableError);
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expectAbortEvidence(attempts, 0);
+      expect(vi.getTimerCount()).toBe(0);
+    },
+  );
+
+  it('keeps a genuine invalid JSON body permanent with unknown usage and cost', async () => {
+    const attempts: unknown[] = [];
+    const ids: string[] = [];
+    await expect(
+      judgeReconciliation(mockNewMems(), mockCandidates(), {
+        env: MIMO_ENV,
+        fetchImpl: async () =>
+          new Response('{"incomplete":', { headers: { 'x-request-id': 'malformed-id' } }),
+        providerAttempt: attemptContext(attempts, ids),
+      }),
+    ).rejects.toBeInstanceOf(PermanentError);
+    expect(ids).toEqual(['malformed-id']);
+    expect(attempts).toEqual([
+      expect.objectContaining({
+        evidence: expect.objectContaining({
+          terminal: 'failed',
+          reason: 'provider_response_malformed',
+          wireCount: 1,
+          usage: expect.objectContaining({ basis: 'unknown', input: null, output: null }),
+          cost: expect.objectContaining({ basis: 'unknown', amount: null }),
+        }),
+      }),
+    ]);
+  });
+
+  it.each([401, 403, 429, 503, 422])(
+    'preserves parsed HTTP %i error classification and body request ID',
+    async (status) => {
+      const attempts: unknown[] = [];
+      const ids: string[] = [];
+      const outcome = await judgeReconciliation(mockNewMems(), mockCandidates(), {
+        env: MIMO_ENV,
+        fetchImpl: async () =>
+          new Response(
+            JSON.stringify({
+              id: 'error-body-id',
+              error: { code: 'synthetic-code', message: 'synthetic upstream failure' },
+            }),
+            { status },
+          ),
+        providerAttempt: attemptContext(attempts, ids),
+      }).catch((error: unknown) => error);
+      expect(outcome).toBeInstanceOf(
+        status === 429 || status >= 500 ? RetryableError : PermanentError,
+      );
+      expect(outcome).toMatchObject({ message: expect.stringContaining('code synthetic-code') });
+      expect(ids).toEqual(['error-body-id']);
+      expect(attempts).toEqual([
+        expect.objectContaining({
+          evidence: expect.objectContaining({
+            terminal: 'failed',
+            reason: `provider_http_${status}`,
+          }),
+        }),
+      ]);
+    },
+  );
 });
 
 // YUK-557 (Q1) — second, non-LLM structural corroboration gate.

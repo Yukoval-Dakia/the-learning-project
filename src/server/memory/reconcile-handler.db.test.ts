@@ -10,7 +10,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PermanentError, RetryableError } from '@/core/schema/structured_question';
 import { cost_ledger, provider_attempt } from '@/db/schema';
 import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
-import { providerOperationIdForInvocation } from '@/server/ai/provider-attempt-runtime';
+import {
+  createDirectProviderOperationContext,
+  providerOperationIdForInvocation,
+} from '@/server/ai/provider-attempt-runtime';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
 beforeEach(() => {
@@ -29,7 +32,10 @@ beforeEach(() => {
     }),
   );
 });
-afterEach(() => vi.unstubAllEnvs());
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+});
 
 import { createMem0Collection } from '../../../tests/helpers/mem0-collection';
 import { memoryClientMock } from '../../../tests/helpers/memory-client-mock';
@@ -219,6 +225,188 @@ describe('reconcile handler — authoritative provider attempt cost truth', () =
       .where(sql`${cost_ledger.task_kind} = 'memory_reconcile'`);
     expect(legacyRows).toHaveLength(0);
   });
+});
+
+describe('reconcile handler — direct provider-start fence after abort', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await createTestCollection();
+    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'opencode-go');
+    vi.stubEnv('AI_PROVIDER_MODEL', 'mimo-v2.6-pro');
+    vi.stubEnv('OPENCODE_API_KEY', 'synthetic-mimo-key');
+  });
+
+  it('records zero-wire deadline rejection with the real direct lifecycle in observe mode', async () => {
+    const db = testDb();
+    const fetchImpl = vi.fn<typeof fetch>(async () => new Response('{}'));
+    await expect(
+      judgeReconciliation(
+        [
+          {
+            index: 0,
+            kind: 'event',
+            text: 'Synthetic completed proof with independent supporting work.',
+            memory_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            created_ms: 2000,
+          },
+        ],
+        new Map(),
+        {
+          fetchImpl,
+          providerAttempt: createDirectProviderOperationContext({
+            db,
+            caller: 'worker',
+            mode: 'observe',
+            deadlineAt: new Date(Date.now() - 1),
+            operationAnchor: 'synthetic-expired-memory-reconciliation',
+          }),
+        },
+      ),
+    ).rejects.toBeInstanceOf(RetryableError);
+    expect(fetchImpl).not.toHaveBeenCalled();
+    expect(await db.select().from(provider_attempt)).toEqual([
+      expect.objectContaining({
+        terminal_status: 'aborted',
+        terminal_reason: 'provider_request_aborted',
+        wire_count: 0,
+        usage_json: expect.objectContaining({
+          basis: 'unknown',
+          input: null,
+          output: null,
+          total: null,
+        }),
+        cost_basis: 'unknown',
+        cost_amount: null,
+      }),
+    ]);
+    expect(await db.execute(sql`SELECT * FROM memory_reconciliation_log`)).toHaveLength(0);
+  });
+
+  it.each([
+    { mode: 'off', phase: 'headers' },
+    { mode: 'observe', phase: 'headers' },
+    { mode: 'enforce', phase: 'headers' },
+    { mode: 'observe', phase: 'success_body' },
+    { mode: 'observe', phase: 'error_body' },
+  ])(
+    'keeps total fetch=1 on same-job redelivery after $phase abort in $mode mode',
+    async ({ mode, phase }) => {
+      vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', mode);
+      const db = testDb();
+      const newId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+      const oldId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+      const text =
+        'After reviewing a long geometry proof, the learner now prefers explicit intermediate steps and a final check of exceptional cases, while keeping earlier work recoverable.';
+      await db.execute(sql`
+      INSERT INTO ${sql.raw(`"${COLLECTION}"`)} (id, payload) VALUES
+        (${newId}::uuid, ${JSON.stringify({ data: text, user_id: 'self', metadata: { kind: 'preference', created_ms: 2000, evidence: { source: 'synthetic', topics: ['geometry', 'proof'] } } })}::jsonb),
+        (${oldId}::uuid, ${JSON.stringify({ data: 'Earlier preference: concise answers with little intermediate reasoning.', user_id: 'self', metadata: { kind: 'preference', created_ms: 1000 } })}::jsonb)
+    `);
+      const readMemories = () =>
+        db.execute(sql`SELECT id::text, payload FROM ${sql.raw(`"${COLLECTION}"`)} ORDER BY id`);
+      const beforeMemories = await readMemories();
+      const client = mockMemoryClient([
+        {
+          id: oldId,
+          memory: 'Earlier preference: concise answers with little intermediate reasoning.',
+          metadata: { kind: 'preference', created_ms: 1000 },
+          score: 0.91,
+        },
+      ]);
+      const fetchImpl = vi.fn<typeof fetch>(async () => {
+        if (fetchImpl.mock.calls.length === 1) {
+          const aborted = new DOMException('Synthetic transport aborted', 'AbortError');
+          if (phase === 'headers') throw aborted;
+          const stream = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.error(aborted);
+            },
+          });
+          return new Response(stream, {
+            status: phase === 'success_body' ? 200 : 503,
+            headers: { 'x-request-id': 'aborted-body-id' },
+          });
+        }
+        // A redelivery would get a valid response if it reached transport. The real
+        // lifecycle fence must reject it before this second synthetic wire.
+        return new Response(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    decisions: [
+                      {
+                        new_index: 0,
+                        action: 'SUPERSEDE',
+                        old_index: 0,
+                        confidence: 0.95,
+                        reason: 'The newer preference explicitly replaces the earlier one.',
+                      },
+                    ],
+                  }),
+                },
+              },
+            ],
+            usage: { prompt_tokens: 127, completion_tokens: 31, total_tokens: 158 },
+          }),
+        );
+      });
+      vi.stubGlobal('fetch', fetchImpl);
+      const handler = buildMemoryReconcileHandler(db, { memoryClient: client });
+      const jobs = makeJob({ memories: [mem(newId, text, 'preference', 2000)], user_id: 'self' });
+
+      await expect(handler(jobs)).rejects.toBeInstanceOf(RetryableError);
+      const firstAttempts = await db.select().from(provider_attempt);
+      expect(firstAttempts).toHaveLength(1);
+      const firstAttempt = firstAttempts[0];
+      expect(firstAttempt).toMatchObject({
+        operation_id: providerOperationIdForInvocation(jobs[0].id),
+        provider: 'opencode-go',
+        model: 'mimo-v2.6-pro',
+        lane_id: 'glm.memory-reconcile',
+        operation_kind: 'memory_reconcile',
+        provider_start_reserved_at: expect.any(Date),
+        terminal_status: 'aborted',
+        terminal_reason: 'provider_request_aborted',
+        wire_count: 1,
+        external_request_id: phase === 'headers' ? null : 'aborted-body-id',
+        usage_json: {
+          basis: 'unknown',
+          unit: 'tokens',
+          input: null,
+          output: null,
+          total: null,
+          source: 'provider_response_absent',
+        },
+        cost_basis: 'unknown',
+        cost_amount: null,
+        cost_currency: 'USD',
+        cost_source: 'provider_cost_absent',
+      });
+      const retryOutcome = await handler(jobs).catch((error: unknown) => error);
+      expect(fetchImpl).toHaveBeenCalledOnce();
+      expect(retryOutcome).toBeInstanceOf(ProviderAttemptLifecycleError);
+      expect(retryOutcome).toMatchObject({ reason: 'recovery_required' });
+      const attempts = await db.select().from(provider_attempt);
+      expect(attempts).toHaveLength(2);
+      expect(attempts.find((attempt) => attempt.attempt_id === firstAttempt.attempt_id)).toEqual(
+        firstAttempt,
+      );
+      const retry = attempts.find((attempt) => attempt.attempt_id !== firstAttempt.attempt_id);
+      expect(retry).toMatchObject({
+        operation_id: firstAttempt.operation_id,
+        provider_start_reserved_at: null,
+        terminal_status: null,
+        wire_count: null,
+      });
+      expect(await db.execute(sql`SELECT * FROM memory_reconciliation_log`)).toHaveLength(0);
+      expect(await readMemories()).toEqual(beforeMemories);
+      expect(client.hardDelete).not.toHaveBeenCalled();
+      expect(client.restoreVerbatim).not.toHaveBeenCalled();
+      expect(await db.select().from(cost_ledger)).toEqual([]);
+    },
+  );
 });
 
 describe('reconcile handler — failure mode 2: idempotent resume via loadUnappliedLog', () => {
