@@ -11,7 +11,7 @@
 ## NEXT
 
 - agent 在持续委托下采用行为稿为基线，负责设计细化、实现与验收；无需 owner 逐项审阅。本机部署及恢复演练已完成，下一步恢复真实 AI 帮助和学习行为验收。
-- **YUK-1338** 的技术集成验证保留 Backlog、未启动；行为稿不视为该验证已完成或新的迁移授权。
+- **TS 迁移 + UI 重写（epic YUK-1351）已准备、未实施**：[准备计划](docs/planning/2026-10-07-ts-migration-and-ui-rewrite-prep.md) 决定按路由合并交付（每条 TanStack 路由同时上线新 UI）。第一道 gate 为 **YUK-1338**（Pi + DBOS 竖切，Backlog）；不过 gate 不动生产。P2 视觉 loft YUK-1353 可并行。UI 票（YUK-1353/1354/1357 及 P6 UI 子票）只交 Claude Opus 5.5；非 UI 票按授权默认模型。当前 active 线仍为上一条。
 
 ## PARKED
 
