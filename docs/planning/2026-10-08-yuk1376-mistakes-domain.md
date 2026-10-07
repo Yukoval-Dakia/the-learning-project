@@ -73,3 +73,12 @@ PR1599已合入7bc216509，tree与CI head6ab98ed8c一致；CI Gate37677610975成
 浏览器经真实token入口访问原SPA，刷新后四条冻结题面且无mutable/private标记；八个附件缩略图和Lightbox图片均实际解码。语文筛选显示零行。归因中状态对应隔离环境未启动worker，不能冒称归因执行完成。
 
 本轮三图片在不同证据角色复用，不能代替完整独立图片角色矩阵；纯整组图片评分仍需合法模型准入与actual-output证据。确定性跨part fixture只证明投影范围，不证明图片理解。reference继续null、figure仅公开caption/alt，完整媒体呈现、Start迁移与旧入口删除未完成。保留在1376/1359，不另建重复follow-up。
+
+
+## 2026-10-08 公开材料读取验收进展
+
+冻结公开材料读取已交回，source head `b86bd05dc20f4ad3dd57e40a91e7f6e9d06a4664`，tree `b68f60c8d2b9df3a7e5d08c9d9350f0b23f066b3`。七类公开材料通过既有 PublicMaterialView 投影，区分 inline/available/missing/unavailable，reference 保持 null；未改 UI。子任务31单测、typecheck/lint/build和六项audit通过，父核139项文件与日志哈希全部匹配。父实际执行两个scoped DB suite，127/127通过、退出0。独立初审 `yuk1376-materials-independent-review-20261008-v1` 正在进行。20:51:18Z核owner后释放部署锁并通知主线与runtime owner，原四服务健康。准确版本CI与新增媒体真实HTTP/blob验收仍待，旧PR1599证据不代表新实现。
+
+本轮代码差异为 `4e2f8918e..b86bd05dc`，独立初审与PR1599既有审查分开。实现清单及日志见 `/tmp/yuk1376-materials-implementation-evidence.md`，父DB日志 `/tmp/yuk1376-materials-parent-db.log`，锁释放证据 `/tmp/yuk1376-materials-parent-lock-release.json`。DB使用 tests/global-setup.ts 创建的 Testcontainers及独立fork数据库，没有连接主数据库。available 只证明资产元数据与冻结digest相符，真实blob交付仍需新版本HTTP验收。
+
+本次未发现需另开票的独立问题；剩余验收由既有YUK-1376与YUK-1359承接，不能标Done。

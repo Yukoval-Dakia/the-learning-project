@@ -4,7 +4,7 @@
 
 ## NOW
 
-- **YUK-1376**：当前接续：冻结公开媒体读取。只读调查已交回，父核projectPracticeIssuance/PublicMaterialView与native reader后启动唯一writer `yuk1376-public-material-read-implementation-20261008-v1`，codex/gpt-6.1-sol/xhigh，分支 `feat/yuk-1376-frozen-public-materials`。主线已实查四树授权读取路径无WIP并确认边界。范围仅records/ingestion的prompt_materials与scoped测试；覆盖现有公开材料类型、失败face范围、digest及缺失/损坏，reference保持null。UI/Start/kernel/评分/表/全局配置不改，无服务或provider操作。新实现尚未交回，旧验收不能代表新head。 已合入与上一轮隔离验收见[1376证据](docs/planning/2026-10-08-yuk1376-mistakes-domain.md)。
+- **YUK-1376**：冻结公开材料读取已交回，source head `b86bd05dc20f4ad3dd57e40a91e7f6e9d06a4664`，tree `b68f60c8d2b9df3a7e5d08c9d9350f0b23f066b3`。七类公开材料通过既有 PublicMaterialView 投影，区分 inline/available/missing/unavailable，reference 保持 null；未改 UI。子任务31单测、typecheck/lint/build和六项audit通过，父核139项文件与日志哈希全部匹配。父实际执行两个scoped DB suite，127/127通过、退出0。独立初审 `yuk1376-materials-independent-review-20261008-v1` 正在进行。20:51:18Z核owner后释放部署锁并通知主线与runtime owner，原四服务健康。准确版本CI与新增媒体真实HTTP/blob验收仍待，旧PR1599证据不代表新实现。
 
 - **YUK-1376（1358 W1 /mistakes）**：YUK1375已随PR1597合入36f719675，exact CI与独立review通过；本线程从最新main承接错题页非UI领域/API消费者迁移，保留视觉与现有行为；不改全局路由/manifest/package/lock或1352组合根，挂载交主线。1359退出清单继续由本线程维护。1352/1355/1356唯一集成与writer归主线57961995，不写其三树。
 
