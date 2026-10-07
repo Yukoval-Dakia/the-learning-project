@@ -132,7 +132,7 @@
     "@hono/node-server": "^2.0.12",
     "@hyzyla/pdfium": "^2.1.13",
     "@lmnr-ai/lmnr": "0.8.49",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.32.1",
     "@paralleldrive/cuid2": "^3.3.0",
     "@t3-oss/env-core": "^0.13.11",
     "@tanstack/react-query": "^5.101.4",

@@ -16,7 +16,7 @@
 | 数据库 | Postgres（`pgvector/pgvector:pg16`）+ Drizzle ORM（`postgresql` dialect, `postgres` driver） |
 | Blob 存储 | R2 / S3-compatible storage via `@aws-sdk/client-s3` |
 | AI runtime | Pi agent runtime（`@earendil-works/pi-agent-core` in-process agentLoop，`src/server/ai/pi-agent-adapter.ts`）；默认 provider 走 Mimo / 小米（`XIAOMI_API_KEY`，pi 原生 OpenAI Completions），另有 anthropic-sub OAuth / opencode-go / zai-coding-cn lane（`ZAI_CODING_CN_API_KEY`）（`src/server/ai/providers.ts`）。opt-in `openai` lane（`OPENAI_API_KEY`）经 pi builtin provider 走 OpenAI Responses API 服务 gpt-6-astra（YUK-1027，仅显式 binding 可用，生产默认不变） |
-| 记忆 / 事实层 | Mem0 (`mem0ai`) + pgvector store；embedder 默认 OpenAI `text-embedding-3-small`（ADR-0017） |
+| 记忆 / 事实层 | Mem0 (`mem0ai`) + pgvector store；LLM 随产品全局 pin；embedding 为 DashScope `text-embedding-v4`，保留既有维度（ADR-0017） |
 | 富文本编辑 | Tiptap（block-tree note 编辑器，slash / cross-link suggestion） |
 | 数学渲染 | KaTeX + mathjs + `react-markdown` / `remark-math` / `rehype-katex` |
 | 知识图谱 | Cytoscape + `cytoscape-fcose` 布局 |
@@ -173,7 +173,7 @@ pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / di
 
 Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[授权记录](docs/planning/2026-10-07-autonomous-delivery-charter.md)。本机生产入口是 <http://localhost:8787>，沿用独立 app、worker 和 PostgreSQL。完整行为设计见[连续学习系统](docs/design/2026-10-06-continuous-learning-system-behavior.md)，设计基线不等于当前实现。
 
-当前发布准备与已验证结果见 [PLAN](PLAN.md)。不要从脏开发目录或过期 `/tmp` 覆盖文件直接重建生产。实际部署必须固定镜像提交、保存当前配置和数据、通过隔离恢复与完整迁移预演，再停止 writer、取最终备份、执行迁移，并按 worker / app 顺序恢复。
+已部署版本与证据见 [MiMo 本机发布记录](docs/planning/2026-10-07-mimo-local-release-result.md)，后续工作见 [PLAN](PLAN.md)。远程入口为 <https://loom-mac-mini.tail2ee344.ts.net/>：访问设备须登录同一 Tailscale 网络，Loom 仍使用原访问令牌。Mac 需开机且用户会话内的 Tailscale daemon 在运行；没有开启公网 Funnel。不要从脏开发目录或过期 `/tmp` 覆盖文件直接重建生产。实际部署必须固定镜像提交、保存当前配置和数据、通过隔离恢复与完整迁移预演，再停止 writer、取最终备份、执行迁移，并按 worker / app 顺序恢复。
 
 下面的 NAS / Cloudflare Tunnel 指南保留为可选方式，不是当前 Mac 的默认操作入口。
 
@@ -204,16 +204,24 @@ Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[�
    # MEM0_* keys are optional — see .env.example for defaults
    ```
 
-   `DASHSCOPE_API_KEY`（+ `ZHIPU_API_KEY`）is required as soon as the worker
+   `DASHSCOPE_API_KEY` is required as soon as the worker
    processes its first `memory_event_ingest` job (every `writeEvent` enqueues
-   one, per ADR-0017 §"Write triggers" #1). The fact layer runs on Mem0 with
-   the 阿里百炼 `text-embedding-v4` embedder + 智谱 GLM LLM per ADR-0017 and the
-   current `src/server/memory/client.ts` defaults — `OPENAI_API_KEY` is NOT on
-   that path anymore; it only gates the opt-in `openai`/`gpt-6-astra` Responses
-   lane (YUK-1027). The `MEM0_*` overrides (embedding model / dims, LLM model,
-   pgvector collection + index toggles, Anthropic base URL) all have sensible
-   defaults baked into `src/server/memory/client.ts` and only need to be set if
-   you are diverging from those.
+   one, per ADR-0017 §"Write triggers" #1). Pinned memory extraction requires
+   `OPENCODE_API_KEY`; `ZHIPU_API_KEY` is needed only for the unpinned GLM
+   path or a configured dedicated GLM OCR path. The fact layer runs on Mem0 with
+   the 阿里百炼 `text-embedding-v4` embedder. Product generative AI uses
+   `AI_PROVIDER_OVERRIDE=opencode-go` + `AI_PROVIDER_MODEL=mimo-v2.6-pro` with
+   `OPENCODE_API_KEY` in **both app and worker**. This pair covers chat task
+   overrides, Copilot children, Mem0 fact extraction and memory/knowledge-edge
+   reconciliation. `MEM0_LLM_*` cannot override the pair. Mem0 runs inside these
+   two processes, with app reads and worker writes; there is no separate Mem0
+   container. Keep `DASHSCOPE_API_KEY`, existing embedding model/dimensions,
+   pgvector collection and history volume unchanged. Without a global pin,
+   legacy task registry Xiaomi and Mem0 GLM configuration remains available for
+   explicit rollback; the known Xiaomi 402 is still a failure. Dedicated Jev
+   typed scoring and layout OCR keep their protocol-specific services.
+   See [product AI migration and runtime checklist](docs/planning/2026-10-07-yuk1341-product-mimo-routing.md)
+   for source, actual-output and deployment boundaries.
 
 3. **Database migrations run automatically.** A dedicated `migrate` init container
    (YUK-65) applies the bundled drizzle migrations before `app` / `worker` start on

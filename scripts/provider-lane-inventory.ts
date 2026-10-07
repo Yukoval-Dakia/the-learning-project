@@ -329,27 +329,33 @@ export const PROVIDER_LANES = [
       { path: 'src/capabilities/knowledge/server/propose_edge.ts', kind: 'runtime' },
     ],
     roles: ['api', 'worker'],
-    provider: 'GLM OpenAI-compatible endpoint via env-configurable Mem0 LLM configuration',
+    provider: 'Product-pinned OpenAI completions endpoint via shared memory LLM configuration',
     model: 'env-resolved MEM0_LLM_MODEL through resolveGlmConfig',
     endpointClass: 'OpenAI-compatible chat completions POST /chat/completions',
     configuration: {
       endpoint: {
-        summary: 'MEM0_LLM_BASE_URL env override; defaults to GLM coding-plan compatible endpoint',
+        summary:
+          'Global product pin selects native completions baseUrl; legacy unpinned MEM0_LLM_BASE_URL rollback',
         source: {
-          path: 'src/server/memory/client.ts',
-          envReads: ['MEM0_LLM_BASE_URL'],
+          path: 'src/server/memory/llm-config.ts',
+          contains: ['env.MEM0_LLM_BASE_URL', 'baseURL: native.baseUrl'],
+          calls: ['resolveGlobalProviderSwitch', 'nativePiModel'],
           literals: ['https://open.bigmodel.cn/api/coding/paas/v4'],
         },
       },
       credential: {
-        summary: 'GLM credential from ZHIPU_API_KEY through createMem0Config',
-        source: { path: 'src/server/memory/client.ts', envReads: ['ZHIPU_API_KEY'] },
+        summary: 'Global provider credential env; ZHIPU_API_KEY only for unpinned GLM rollback',
+        source: {
+          path: 'src/server/memory/llm-config.ts',
+          contains: ['env.ZHIPU_API_KEY', 'env[credentialEnv]'],
+          calls: ['providerCredentialEnvName'],
+        },
       },
       model: {
-        summary: 'MEM0_LLM_MODEL env override; defaults to glm-5.2',
+        summary: 'Global provider model; unpinned MEM0_LLM_MODEL defaults to glm-5.2',
         source: {
-          path: 'src/server/memory/client.ts',
-          envReads: ['MEM0_LLM_MODEL'],
+          path: 'src/server/memory/llm-config.ts',
+          contains: ['env.MEM0_LLM_MODEL', 'model: pin.model'],
           literals: ['glm-5.2'],
         },
       },
@@ -477,27 +483,33 @@ export const PROVIDER_LANES = [
     ],
     directImporters: [{ path: 'src/server/memory/triggers.ts', kind: 'runtime' }],
     roles: ['worker'],
-    provider: 'GLM OpenAI-compatible endpoint via env-configurable Mem0 LLM configuration',
+    provider: 'Product-pinned OpenAI completions endpoint via shared memory LLM configuration',
     model: 'env-resolved MEM0_LLM_MODEL; hardcoded ledger text is not model truth',
     endpointClass: 'OpenAI-compatible chat completions POST /chat/completions',
     configuration: {
       endpoint: {
-        summary: 'MEM0_LLM_BASE_URL env override; defaults to GLM coding-plan compatible endpoint',
+        summary:
+          'Global product pin selects native completions baseUrl; legacy unpinned MEM0_LLM_BASE_URL rollback',
         source: {
-          path: 'src/server/memory/client.ts',
-          envReads: ['MEM0_LLM_BASE_URL'],
+          path: 'src/server/memory/llm-config.ts',
+          contains: ['env.MEM0_LLM_BASE_URL', 'baseURL: native.baseUrl'],
+          calls: ['resolveGlobalProviderSwitch', 'nativePiModel'],
           literals: ['https://open.bigmodel.cn/api/coding/paas/v4'],
         },
       },
       credential: {
-        summary: 'GLM credential from ZHIPU_API_KEY through createMem0Config',
-        source: { path: 'src/server/memory/client.ts', envReads: ['ZHIPU_API_KEY'] },
+        summary: 'Global provider credential env; ZHIPU_API_KEY only for unpinned GLM rollback',
+        source: {
+          path: 'src/server/memory/llm-config.ts',
+          contains: ['env.ZHIPU_API_KEY', 'env[credentialEnv]'],
+          calls: ['providerCredentialEnvName'],
+        },
       },
       model: {
-        summary: 'MEM0_LLM_MODEL env override; defaults to glm-5.2',
+        summary: 'Global provider model; unpinned MEM0_LLM_MODEL defaults to glm-5.2',
         source: {
-          path: 'src/server/memory/client.ts',
-          envReads: ['MEM0_LLM_MODEL'],
+          path: 'src/server/memory/llm-config.ts',
+          contains: ['env.MEM0_LLM_MODEL', 'model: pin.model'],
           literals: ['glm-5.2'],
         },
       },
@@ -665,36 +677,34 @@ export const PROVIDER_LANES = [
       { path: 'src/server/memory/triggers.ts', kind: 'runtime' },
     ],
     roles: ['api', 'worker'],
-    provider: 'Mem0 OSS with env-configurable OpenAI-compatible GLM and DashScope endpoints',
+    provider: 'Mem0 OSS with product-pinned completions LLM and dedicated DashScope embeddings',
     model: 'opaque model-bearing memory.add and memory.search operations',
     endpointClass: 'Mem0 SDK add/search, including infer:false embedding writes',
     configuration: {
       endpoint: {
         summary:
-          'MEM0_LLM_BASE_URL and MEM0_EMBEDDING_BASE_URL env overrides with GLM and DashScope defaults',
+          'Mem0 LLM uses resolveMemoryLlmConfig; embedding baseURL remains independently configured',
         source: {
           path: 'src/server/memory/client.ts',
-          envReads: ['MEM0_LLM_BASE_URL', 'MEM0_EMBEDDING_BASE_URL'],
-          literals: [
-            'https://open.bigmodel.cn/api/coding/paas/v4',
-            'https://dashscope.aliyuncs.com/compatible-mode/v1',
-          ],
+          envReads: ['MEM0_EMBEDDING_BASE_URL'],
+          literals: ['https://dashscope.aliyuncs.com/compatible-mode/v1'],
         },
       },
       credential: {
-        summary: 'Mem0 delegated credentials from ZHIPU_API_KEY and DASHSCOPE_API_KEY',
+        summary:
+          'Mem0 LLM credential uses resolveMemoryLlmConfig; dedicated embedding uses DASHSCOPE_API_KEY',
         source: {
           path: 'src/server/memory/client.ts',
-          envReads: ['ZHIPU_API_KEY', 'DASHSCOPE_API_KEY'],
+          envReads: ['DASHSCOPE_API_KEY'],
         },
       },
       model: {
         summary:
-          'MEM0_LLM_MODEL and MEM0_EMBEDDING_MODEL env overrides with GLM and DashScope defaults',
+          'Mem0 LLM uses global product model; dedicated embedding uses MEM0_EMBEDDING_MODEL',
         source: {
           path: 'src/server/memory/client.ts',
-          envReads: ['MEM0_LLM_MODEL', 'MEM0_EMBEDDING_MODEL'],
-          literals: ['glm-5.2', 'text-embedding-v4'],
+          envReads: ['MEM0_EMBEDDING_MODEL'],
+          literals: ['text-embedding-v4'],
         },
       },
     },

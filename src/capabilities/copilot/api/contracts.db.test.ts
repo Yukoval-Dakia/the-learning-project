@@ -260,9 +260,15 @@ describe('Copilot declared route response contracts', () => {
     expect(createdResponse.status).toBe(201);
     const created = CopilotCreateSessionResponseSchema.parse(await createdResponse.json());
 
+    const requestedAt = Date.now();
     const listedResponse = await getCopilotSessions();
     expect(listedResponse.status).toBe(200);
-    const listed = CopilotSessionsResponseSchema.parse(await listedResponse.json());
+    const body = await listedResponse.json();
+    expect(body.server_time).toEqual(expect.any(String));
+    expect(new Date(body.server_time).toISOString()).toBe(body.server_time);
+    expect(Date.parse(body.server_time)).toBeGreaterThanOrEqual(requestedAt);
+    expect(Date.parse(body.server_time)).toBeLessThanOrEqual(Date.now());
+    const listed = CopilotSessionsResponseSchema.parse(body);
     expect(listed.sessions).toContainEqual(created.session);
   });
 

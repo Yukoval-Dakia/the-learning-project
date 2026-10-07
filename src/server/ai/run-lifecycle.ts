@@ -219,7 +219,7 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
     this.kind = config.kind;
     // YUK-1013 — the binding's provider/model merge in here (escape-hatch
     // override wins per-field) so EVERY lifecycle caller gets the same
-    // explicit > env > registry layering, not just the runner's three sites.
+    // env chat pin > explicit > DB global > task/default layering, not just the runner's three sites.
     this.resolved = resolveTaskProvider(config.kind, explicitProviderRouting(config));
     // YUK-924 P2 — fail-closed capability gate at task resolution: a task that
     // declares needsToolCall / isMultimodal may only run on a lane whose

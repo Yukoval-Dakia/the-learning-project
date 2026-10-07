@@ -11244,6 +11244,8 @@ export interface operations {
                 };
                 content: {
                     "application/json": {
+                        /** Format: date-time */
+                        server_time: string;
                         sessions: {
                             /** Format: date-time */
                             created_at: string;

@@ -194,6 +194,28 @@ describe('resolveModelProfile — the four active models (acceptance)', () => {
     expect(profile.limits).toEqual({});
     expect(profile.execution.meteredUsd).toBe(false);
   });
+
+  // YUK-1341 — the product tool-calling lane after the xiaomi 402 incident.
+  // toolCalling comes from the evidence-gated per-model binding; vision /
+  // reasoning / limits come from the native pi catalog override, which is
+  // authoritative over the binding (mimo-v2.6-pro is text+image there).
+  it('opencode-go/mimo-v2.6-pro: toolCalling from the binding, vision from the native catalog', () => {
+    const profile = resolveModelProfile('opencode-go', 'mimo-v2.6-pro');
+    expect(profile.capabilities).toEqual({
+      toolCalling: true, // per-model binding (YUK-1341, evidence-gated)
+      vision: true, // native pi catalog: input text+image
+      reasoning: true,
+      structuredOutput: false, // opencode-go modelDefaults
+    });
+    expect(profile.limits).toEqual({ contextWindowTokens: 1_048_576, maxOutputTokens: 131_072 });
+    expect(profile.execution).toEqual({
+      timeoutClass: 'standard',
+      budgetClass: 'standard',
+      meteredUsd: false,
+      localPricebook: false,
+    });
+    expect(profile.source).toBe('binding');
+  });
 });
 
 describe('parseCatalogModelEntry — narrow fail-closed parse', () => {
@@ -332,6 +354,21 @@ describe('assertModelProfileCapabilityFit — P2 fail-closed gate', () => {
     expect(() =>
       assertModelProfileCapabilityFit(multimodalTask, 'xiaomi', 'mimo-v2.5'),
     ).not.toThrow();
+  });
+
+  it('admits tool and multimodal kinds on opencode-go/mimo-v2.6-pro, keeps unknown ids fail-closed', () => {
+    // YUK-1341 — the evidence-gated binding opens BOTH gates for this id…
+    expect(() =>
+      assertModelProfileCapabilityFit(toolTask, 'opencode-go', 'mimo-v2.6-pro'),
+    ).not.toThrow();
+    expect(() =>
+      assertModelProfileCapabilityFit(multimodalTask, 'opencode-go', 'mimo-v2.6-pro'),
+    ).not.toThrow();
+    // …while the generic default stays false: an undeclared id on the same
+    // lane still fails the tool gate (modelDefaults.capabilities.toolCalling).
+    expect(() =>
+      assertModelProfileCapabilityFit(toolTask, 'opencode-go', 'undeclared-model'),
+    ).toThrow(/requires tool calling.*undeclared-model.*does not support/i);
   });
 
   it('rejects a multimodal task on an unknown-vision lane', () => {

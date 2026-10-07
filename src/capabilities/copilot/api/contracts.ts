@@ -103,6 +103,7 @@ export const CopilotSessionSchema = z.object({
 });
 
 export const CopilotSessionsResponseSchema = z.object({
+  server_time: z.string().datetime(),
   sessions: z.array(CopilotSessionSchema),
 });
 

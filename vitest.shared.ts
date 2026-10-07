@@ -505,6 +505,7 @@ export const fastTestInclude = [
   // falls through to the DB partition.
   'src/server/memory/brief-writer.test.ts',
   'src/server/memory/client.test.ts',
+  'src/server/memory/product-routing.unit.test.ts',
   'src/server/memory/mem0-sdk-failure.unit.test.ts',
   'src/server/memory/provider-operation.test.ts',
   'src/server/memory/provider-operation-invariant.test.ts',
@@ -548,6 +549,10 @@ export const fastTestInclude = [
   'tests/integration/audit-docs-invariant.test.ts',
   'tests/integration/step12-docs-invariant.test.ts',
   'tests/integration/step9-invariant-audit.test.ts',
+  // YUK-1341 evidence-metadata correction — pure no-network unit over
+  // tests/helpers/synthetic-evidence-meta.ts (string builders only; no DB/AI).
+  'tests/helpers/synthetic-evidence-meta.test.ts',
+  'tests/helpers/yuk1341-product-evidence.test.ts',
 ];
 
 export const migrationSmokeInclude = ['tests/integration/migration-smoke.test.ts'];
