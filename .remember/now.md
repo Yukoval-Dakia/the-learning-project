@@ -1,3 +1,9 @@
+# 当前集成 — 2026-10-07 14:04Z YUK-1364
+
+ac4b0f265 CI全绿，但新P1 comment4207603575要求active frozen rubric/proposal一致性；唯一源码writer task yuk1364-frozen-basis-repair-20261007-v1实施中，不第三审。main df08399ff预检冲突仅PLAN/本文件，须writer释放后正常merge。父只做ops与非重叠docs。ac4独立容器业务HTTP基线已完成：未发题不答题/POST409，issued冻结面、GET8表无写、suspend排除、合成历史结果正常edit后保留、ack404/201/200且1事件；没有原生assessment refs/provider调用。fixture首次user actor_ref错误的部分写入保留，新run ac4c成功；不存在主库清空。14:03:33Z清理自有app/PG/migrator/internal network并核对owner释放锁，已通知1365和主线；主runtime仍df083/image28f。证据在yuk1364-preflight-ac4b0f265/evidence/baseline-summary.json和lock-release.json。新P1修复未完成，后续只源码/docs，PR1594由1365重新取锁发布。不要把本状态当作未来实际锁/运行状态。
+
+以下为历史记录。
+
 # 当前集成 — 2026-10-07 YUK-1364 / YUK-1359
 
 PR1591 a6da290a7 exact CI全绿、无未解决review thread，但main26f101581合入PR1584产生文档冲突。已正常merge b62c01dc6，保留依赖变化及双方有效状态。合并后冻结安装、309 DB/74 unit/typecheck/lint/build通过，待新CI；未部署。1359首轮调查提交1ffe53c12，父抽查并纠正旧ADR状态和路径笔误。独立1364镜像构建成功，runtime验收未启动：deployment.lock属于thread bed93b71 / YUK1365，不能接管。T3通知请求回执不可确认，线程读取仍等待。

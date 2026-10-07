@@ -53,3 +53,23 @@ Linear1359已登记1352候选 `server/start/routes/$.ts`、`server/frontdoor.ts`
 只读子任务提供消费者线索；父直接核对SPA挂载、静态回落、build入口、worker注册顺序、verify恢复、judge/Copilot sweeper和Pi适配实例。已修正子任务中的 `web/router.tsx` 路径笔误，应为 `web/src/router.tsx`。子任务沿用旧ADR称Pi步骤恢复“未验证”，该说法过时：基线已含PR1590的隔离P0 gate；但P0不是所有真实业务族迁移和provider窗口验收，不能扩大结论。
 
 本轮没有执行服务、测试、删除代码或依赖修改。全部可执行退出工作已归入现有1352/1355/1356/1358/1359；未发现需另开票的已证实新缺陷，不为清单条目重复建票。
+
+
+## 注册面静态基数补充
+
+基线仍为 `26f1015810cc3d902f6229b615d9630f05982eef`。从 `git show` 的 TypeScript AST 读取9个顶层 capability manifest 的 `jobs.handlers`，得到53个有 `load` 的 handler，其中18个显式声明 `schedule`。这不是运行中的队列数、AI任务数或完整恢复义务数；名称含 nightly 不代表 manifest 中有 schedule，调度策略还需逐族核验。
+
+| capability | handler 数 |
+| --- | ---: |
+| agency | 8 |
+| copilot | 3 |
+| ingestion | 3 |
+| knowledge | 7 |
+| notes | 6 |
+| observability | 2 |
+| practice | 24 |
+| onboarding、shell | 0 |
+
+`COPILOT_NUDGE_EVALUATE_QUEUE` 的值由 `src/server/boss/queue-names.ts` 定义为 `copilot_nudge_evaluate`。上述53项不包含6个基础设施 housekeeping schedule，也不能覆盖 manifest 之外的 memory handoff/recovery。README 中“52 registered / 51 static / 1 compatibility”是 AI task census，不能拿来与此队列注册数比较。
+
+同基线 `UI_SURFACES` 有28项（27个 page、1个根路径 redirect），包含 `/admin/config` 设置页。页面存在的静态证据不等于导航可达或浏览器行为已验收。迁移台账应逐页核对保留行为及旧入口退出条件。完整静态提取保存在 `/tmp/yuk1359-static-registries.json`；这些数量仅用于发现漏项，不作为整个迁移完成的证明。

@@ -52,3 +52,25 @@ PR comment `4206851930` 指出，已完成结果投影只冻结题面，仍从�
 合并后的冻结安装、15文件309 DB（299相关回归 + 10项P0进程恢复）、6文件74 unit、typecheck/lint/build和diff检查全部通过；日志 `/tmp/yuk1364-deps-main-{install,db,unit,typecheck,lint,build}.log`。新提交仍需重新通过exact-head CI及合并条件。
 
 旧a6da290a7的ARM64候选镜像已构建并核对revision，image ID `sha256:968e3c3861727ff51eab7319ba51116b100280f2e2e46d6909379bad762c9544`；它不含这次依赖集成，不能冒称当前head的发布镜像。运行验收尚未启动：部署互斥锁归YUK-1365其他线程，本线程mkdir被拒绝，没有删除锁或启动服务。
+
+
+## ac4 候选的隔离运行基线与新 P1
+
+`ac4b0f265` exact-head CI 全绿，但 GitHub comment `4207603575` 新指出 active brief 缺少冻结评分依据与原 proposal 的一致性校验。旧 probe 若在首次正式发题前改写 reference，可能展示并消耗判题调用，完成后才被 `probe_reference_mismatch` 拒绝。父已核对 active 与 completed 校验差异，implementation writer 正在补完整复现与共享 Agency 准入修复；不能合并此 head，不启动第三轮独立 review。与 main `df08399ff` 的预检冲突仅为 PLAN 和交接文档，尚未在 writer 工作中执行合并。
+
+1365 owner 显式释放后，13:51Z 重新核对锁不存在并原子获取；同时实读 current-release 为 `df08399ff` / `sha256:28f89c8b2b9db63eeb311f92b9cef68528fab25232bbf0f596c6e4cd4fc1e214`，用途 Agent TEST ONLY。主服务未改。候选 `sha256:fbe24bc65bba8b9c975de976da286a6b1d026c3d64d209707daba641925b5963` 的 revision 为 ac4、ARM64。
+
+独立 `yuk1364_acceptance` PG 使用已在本机的 `sha256:00ba258a66dac104fd5171074a0084462a64a1369d8513f3d0a634e2f24d15bc`，通过候选镜像 migrator 和既有 epoch CLI 激活；不恢复主库数据。Docker internal 网络阻断外网，不配置付费模型或启动 worker。该网络下端口未发布，HTTP 通过容器内 Node fetch 访问真实监听端口。首次测试 app URL 未指定 sslmode=disable，DB client 要求 TLS 而得到 ready503；仅重建自有 app 补上参数后 ready200/epoch active、缺 token401、空 brief200。
+
+证据目录：`/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1364-preflight-ac4b0f265/evidence/`，文件 `acceptance-migrate.log`、`acceptance-epoch.log`、`http-initial.json`、`http-ready.json`。这是旧候选的隔离基线，不是新 P1 的修复或最终运行验收，也不是主环境部署。
+
+
+### ac4 隔离业务基线完成，14:03Z 释放锁
+
+真实候选 HTTP 已验证：未发题探针不成为 `answer_probe`，直接提交返回409 `probe_not_issued`；正式 issuance 后 `probe_ready`。修改当前题面与发布新 revision 后仍返回原冻结题面；暂停 lifecycle 后退回其他 finding。正式发题后的 GET 前后，question/event/issuance/revision/lifecycle/knowledge/submission/evaluation 八表快照 digest 一致。
+
+通过业务函数写入的**合成历史完成结果**（没有原生 assessment refs、未调用模型）在正常 `editQuestion` 修改 KC/draft/kind/choices/内容后仍为 `outcome_retired`。真实 ack HTTP 对缺失结果404、首次确认201、重试200，SQL快照只有一条对应确认事件。不能据此宣称真实模型输出、原生评分链或新 rubric P1 已通过。
+
+一次性 fixture 由现有测试业务步骤整理，父核对后从准确 ac4 源码归档打包，避免读入并行修复。初次 fixture 的 user actor_ref 错误导致写入在 proposal 后中断；改为既有事件契约要求的 self 后，使用新 run ID 继续，失败数据未被清空。残留 proposal 因而产生合法 finding fallback，原“brief必须null”的断言不适用，实际验收条件是未发题不能成为可答题，已核对返回体。首次bundle目录没有依赖解析入口也已修正；以上均为验收脚本问题，未修改产品约束。
+
+最终证据为上述目录内 `baseline-summary.json`、`http-unissued.json`、`http-issued.json`、`http-frozen.json`、`http-suspended.json`、`http-edited-completed.json`、`http-ack.json` 和 `fixture-ac4c-*.json`。14:03:33Z 停止并删除自有 app/PG/migrator、匿名测试存储和internal网络后，核对主release仍为28f、四个主服务健康，再仅删除本线程owner.json并rmdir释放锁；`lock-release.json`留证。已明确通知1365与主线线程，后续发布需它们重新核验取锁。新的 P1 修复仍在进行，此后本线程只做源码/文档。
