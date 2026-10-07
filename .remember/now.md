@@ -1,4 +1,14 @@
-# 当前交接 — 2026-10-07 会话入口生产发布完成
+# 当前交接 — 2026-10-07 YUK-1346 单轮用途控制
+
+当前唯一实施线 YUK-1346 In Progress。工作树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1346-turn-retention`，branch `feat/yuk-1346-turn-retention`，base main `8841ce68a69e30bacf20e8241f28cd1669b38a1f`。父线程已完成只读架构与验收咨询，并冻结 `docs/planning/2026-10-07-yuk1346-answer-only-turn.md` 中 UI preflight/产品与持久策略。现在尚无源码实现或实际验收，勿标完成。接下来的单一实施 writer 由父 T3 委派，子线程不得 push/watch/部署或自行续写。
+
+PR1587 于03:05:42Z合并为上述 main，exact80369b155 CI37561726136及等待窗通过；已登记并结束watch。文档合并不需要重新部署 f3。README旧部署指针P2已明确延期并归YUK1329，不冒称修复。两条旧假设验收Mem0摘要继续保留。
+
+产品决定：输入区“日常学习/仅用于本次回答”，选择不因关抽屉或刷新静默恢复；每条受理独立冻结。聊天与必要运行记录可回看，受限轮不进入长期记忆、学情/计划或后续模型上下文，禁止写工具/教学物化。六个既有只读工具经审核后保留。不是完整临时清理/历史撤销功能。真实验收先用隔离副本、最多两条新Copilot及必要记忆处理；旧wire/cost观测缺口保持未知。
+
+以下生产版本和恢复证据继续有效。旧“下一条/Backlog”叙述已被上述当前实施状态取代。
+
+# 2026-10-07 会话入口生产发布完成
 
 生产 `f3bfff2cfe2aea0efbf7d11ead8a84ebfab497ef`，02:17Z app/worker 同准确镜像 e681a7b502aa；MiMo 产品 pin 保持不变。PR1583 在 exact d3906a7 CI37556260516成功、P0/P1裁决及17分钟窗后，于02:05:19Z合并，watch已结束。真实生产 Chromium 通过 fresh sessions/server_time、默认续接、结束历史只读、新建空会话、重开及刷新一致；无模型调用，SQL task runs仍2712。完整记录见 `docs/planning/2026-10-07-session-entry-local-release-result.md`。
 
