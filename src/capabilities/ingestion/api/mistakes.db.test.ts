@@ -1,7 +1,9 @@
 // POST /api/mistakes writes question + attempt event + learning_record(kind='mistake').
 
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { loadAttemptQuestionSnapshot } from '@/capabilities/practice/public';
+import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import {
   event,
   knowledge,
@@ -11,7 +13,9 @@ import {
   source_asset,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { nativeAppealFixture } from '../../../../tests/fixtures/native-appeal';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { readMistakes } from '../public';
 import { CreateMistakeResponseSchema, MistakeListResponseSchema } from './contracts';
 import { GET, POST } from './mistakes';
 
@@ -226,6 +230,30 @@ describe('POST /api/mistakes', () => {
         parent_question: null,
       },
     });
+    const list = await (await getMistakes(`question_id=${body.question_id}`)).json();
+    expect(list.rows).toHaveLength(1);
+    expect(list.rows[0].wrong_answer_image_refs).toEqual(['asset_w']);
+  });
+
+  it('reads the frozen historical question after the mutable question is edited', async () => {
+    const prompt = '原题：解释主谓之间的「之」，并分析上下文。'.repeat(20);
+    const reference = '原答案：取消句子独立性，结合上下文说明。'.repeat(20);
+    const response = await postMistake(validBody({ prompt_md: prompt, reference_md: reference }));
+    expect(response.status).toBe(201);
+    const created = CreateMistakeResponseSchema.parse(await response.json());
+    await testDb()
+      .update(question)
+      .set({
+        prompt_md: '修改后的另一道题',
+        reference_md: '修改后的答案',
+        updated_at: new Date(Date.now() + 1000),
+      })
+      .where(eq(question.id, created.question_id));
+    const responseBody = await (await getMistakes(`question_id=${created.question_id}`)).json();
+    expect(responseBody.rows).toHaveLength(1);
+    expect(responseBody.rows[0].prompt_md).toBe(prompt.slice(0, 200));
+    expect(responseBody.rows[0].reference_md).toBe(reference.slice(0, 200));
+    expect(responseBody.rows[0].cause).toMatchObject({ source: 'user', user_notes: '没记牢' });
   });
 
   // Lane D (YUK-482): a failed attempt with no user-supplied cause remains a
@@ -575,6 +603,227 @@ async function getMistakes(qs = ''): Promise<Response> {
 describe('GET /api/mistakes', () => {
   beforeEach(async () => {
     await resetDb();
+  });
+
+  it('keeps frozen parent context and a null reference when both live questions change', async () => {
+    const db = testDb();
+    await seedQuestion('parent', '冻结共享题干：阅读材料，并区分句子中各虚词的语法功能。');
+    await seedQuestion('part', '子题：解释「之」。', new Date(), null);
+    await db.update(question).set({ parent_question_id: 'parent' }).where(eq(question.id, 'part'));
+    const snapshot = await loadAttemptQuestionSnapshot(db, 'part');
+    await seedAttempt({
+      id: 'a_part',
+      question_id: 'part',
+      answer_md: '原答：代词\n未结合主谓关系。',
+    });
+    await db
+      .update(event)
+      .set({
+        payload: {
+          answer_md: '原答：代词\n未结合主谓关系。',
+          answer_image_refs: ['original_answer_image'],
+          referenced_knowledge_ids: ['k1'],
+          question_snapshot: snapshot,
+        },
+      })
+      .where(eq(event.id, 'a_part'));
+    await db.update(question).set({
+      prompt_md: '当前新题面',
+      reference_md: '当前新答案',
+      updated_at: new Date(Date.now() + 1000),
+    });
+    const result = MistakeListResponseSchema.parse(await (await getMistakes()).json());
+    expect(result.rows[0]).toMatchObject({
+      id: 'a_part',
+      prompt_md: `${snapshot.parent_question?.prompt_md}\n\n${snapshot.question.prompt_md}`,
+      reference_md: null,
+      wrong_answer_md: '原答：代词\n未结合主谓关系。',
+      wrong_answer_image_refs: ['original_answer_image'],
+    });
+  });
+
+  it.each(['null', 'corrupt', 'unsupported', 'wrong_subject', 'missing_parent'])(
+    'retains %s snapshot records without substituting live text',
+    async (kind) => {
+      const db = testDb();
+      await seedQuestion('q1', '当前题面不属于这份可验证的历史证据', new Date(), '当前答案');
+      const snapshot = await loadAttemptQuestionSnapshot(db, 'q1');
+      const snapshotByKind: Record<string, unknown> = {
+        null: null,
+        corrupt: { schema_version: 1, question: { prompt_md: '不完整快照' } },
+        unsupported: { ...snapshot, schema_version: 2 },
+        wrong_subject: {
+          ...snapshot,
+          question: { ...snapshot.question, question_id: 'other_question' },
+        },
+        missing_parent: {
+          ...snapshot,
+          question: { ...snapshot.question, parent_question_id: 'missing' },
+        },
+      };
+      await seedAttempt({ id: 'a1', question_id: 'q1' });
+      await seedUserCause({ id: 'cause_a1', attempt_event_id: 'a1', user_notes: '原始人工归因' });
+      await db
+        .update(event)
+        .set({
+          payload: {
+            answer_md: '历史原答',
+            answer_image_refs: ['answer_page_1', 'answer_page_2'],
+            referenced_knowledge_ids: ['k1'],
+            question_snapshot: snapshotByKind[kind],
+          },
+        })
+        .where(eq(event.id, 'a1'));
+      const result = MistakeListResponseSchema.parse(await (await getMistakes()).json());
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0]).toMatchObject({
+        id: 'a1',
+        record_id: 'lr_a1',
+        prompt_md: '',
+        reference_md: null,
+        wrong_answer_md: '历史原答',
+        wrong_answer_image_refs: ['answer_page_1', 'answer_page_2'],
+        cause: { source: 'user', user_notes: '原始人工归因' },
+        correction_state: { terminal_state: 'active' },
+      });
+    },
+  );
+
+  it.each(['timestamp', 'edit_event', 'parent_timestamp', 'parent_edit_event'])(
+    'retains legacy records after %s evidence of a later edit',
+    async (kind) => {
+      const db = testDb();
+      const created = new Date('2026-10-01T00:00:00Z');
+      const attempted = new Date('2026-10-02T00:00:00Z');
+      await seedQuestion('parent', '共享旧题干', created);
+      await seedQuestion('q1', '子题当前题面', created, '子题当前答案');
+      await db.update(question).set({ parent_question_id: 'parent' }).where(eq(question.id, 'q1'));
+      await seedAttempt({ id: 'legacy', question_id: 'q1', created_at: attempted });
+      const target = kind.startsWith('parent_') ? 'parent' : 'q1';
+      if (kind.endsWith('timestamp')) {
+        await db.update(question).set({ updated_at: attempted }).where(eq(question.id, target));
+      } else {
+        // An edit event proves mutation even if a legacy writer retained the old updated_at.
+        await db.insert(event).values({
+          id: 'edit',
+          action: QUESTION_EDIT_ACTION,
+          actor_kind: 'user',
+          actor_ref: 'self',
+          subject_kind: 'question',
+          subject_id: target,
+          payload: { previous: { prompt_md: '旧题' }, next: { prompt_md: '新题' } },
+          created_at: attempted,
+        });
+      }
+      const result = MistakeListResponseSchema.parse(await (await getMistakes()).json());
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0]).toMatchObject({
+        id: 'legacy',
+        prompt_md: '',
+        reference_md: null,
+        wrong_answer_md: 'wrong',
+      });
+    },
+  );
+
+  it('uses legacy child and parent text when edits predate the attempt', async () => {
+    const db = testDb();
+    const created = new Date('2026-10-01T00:00:00Z');
+    const edited = new Date('2026-10-02T00:00:00Z');
+    await seedQuestion('parent', '作答时已存在的共享题干', created);
+    await seedQuestion('part', '作答时已存在的子题', created, '作答时答案');
+    await db
+      .update(question)
+      .set({ parent_question_id: 'parent', updated_at: edited })
+      .where(eq(question.id, 'part'));
+    await db.insert(event).values({
+      id: 'old_edit',
+      action: QUESTION_EDIT_ACTION,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      subject_kind: 'question',
+      subject_id: 'part',
+      payload: {},
+      created_at: edited,
+    });
+    await seedAttempt({
+      id: 'legacy',
+      question_id: 'part',
+      created_at: new Date('2026-10-03T00:00:00Z'),
+    });
+    const result = await readMistakes(db, { question_id: 'part', limit: '1' });
+    expect(result.rows[0]).toMatchObject({
+      prompt_md: '作答时已存在的共享题干\n\n作答时已存在的子题',
+      reference_md: '作答时答案',
+      wrong_answer_image_refs: [],
+    });
+    expect(result.data).toEqual(result.rows);
+    expect(result.page).toEqual({ limit: 1, next_cursor: null });
+  });
+
+  it.each(['missing_question', 'missing_parent', 'created_after_attempt'])(
+    'keeps a legacy record with %s visible with unavailable text',
+    async (kind) => {
+      const db = testDb();
+      const attempted = new Date('2026-10-02T00:00:00Z');
+      if (kind !== 'missing_question') {
+        await seedQuestion(
+          'q1',
+          '不可证明的现值',
+          kind === 'created_after_attempt'
+            ? new Date('2026-10-03T00:00:00Z')
+            : new Date('2026-10-01T00:00:00Z'),
+          '不可证明的答案',
+        );
+        if (kind === 'missing_parent')
+          await db
+            .update(question)
+            .set({ parent_question_id: 'absent_parent' })
+            .where(eq(question.id, 'q1'));
+      }
+      await seedAttempt({ id: 'legacy', question_id: 'q1', created_at: attempted });
+      const result = await readMistakes(db);
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0]).toMatchObject({
+        id: 'legacy',
+        prompt_md: '',
+        reference_md: null,
+        wrong_answer_md: 'wrong',
+      });
+    },
+  );
+
+  it('keeps a real native failure visible without rebuilding its question from mutable rows', async () => {
+    const db = testDb();
+    try {
+      // Deterministic rules only; the fixture's model executor must never be called.
+      const native = await nativeAppealFixture(db, { model: false });
+      expect(native.execute).not.toHaveBeenCalled();
+      await db.insert(learning_record).values({
+        id: 'lr_native',
+        kind: 'mistake',
+        content_md: '原生原答',
+        source: 'manual',
+        capture_mode: 'text',
+        activity_kind: 'attempt',
+        processing_status: 'raw',
+        origin_event_id: native.attemptId,
+        question_id: native.questionId,
+        attempt_event_id: native.attemptId,
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
+      const result = MistakeListResponseSchema.parse(await (await getMistakes()).json());
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0]).toMatchObject({
+        id: native.attemptId,
+        question_id: native.questionId,
+        prompt_md: '',
+        reference_md: null,
+      });
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 
   it('returns failure attempts projected to legacy mistake-shape JSON', async () => {
@@ -945,6 +1194,70 @@ describe('GET /api/mistakes', () => {
 
   it('400s on an invalid cursor', async () => {
     expect((await getMistakes('cursor=not-a-cursor')).status).toBe(400);
+  });
+
+  it.each([
+    ['0', 1],
+    ['1', 1],
+    ['200', 200],
+    ['999999', 200],
+    [undefined, 50],
+  ])(
+    'shares limit normalization for %s across HTTP and the public read operation',
+    async (rawLimit, expectedLimit) => {
+      const query = rawLimit === undefined ? {} : { limit: rawLimit };
+      const domain = await readMistakes(testDb(), query);
+      const http = MistakeListResponseSchema.parse(
+        await (await getMistakes(rawLimit === undefined ? '' : `limit=${rawLimit}`)).json(),
+      );
+      expect(domain).toEqual(http);
+      expect(domain.page.limit).toBe(expectedLimit);
+    },
+  );
+
+  it('keeps old same-question records visible beyond the failure reader recency window', async () => {
+    const createdAt = new Date('2026-05-01T00:00:00Z');
+    await seedQuestion('q1', '历史题面', createdAt, '历史答案');
+    for (let index = 0; index < 101; index++) {
+      await seedAttempt({
+        id: `a_${String(index).padStart(3, '0')}`,
+        question_id: 'q1',
+        created_at: createdAt,
+      });
+    }
+    const cursor = Buffer.from(
+      JSON.stringify({ created_at: createdAt.toISOString(), id: 'lr_a_001' }),
+    ).toString('base64url');
+    const page = MistakeListResponseSchema.parse(
+      await (await getMistakes(`limit=1&cursor=${cursor}`)).json(),
+    );
+    expect(page.rows).toHaveLength(1);
+    expect(page.rows[0]).toMatchObject({
+      id: 'a_000',
+      prompt_md: '历史题面',
+      reference_md: '历史答案',
+    });
+    expect(page.next_cursor).toBeNull();
+  });
+
+  it('does not use identity supplementation to bypass the attempt since filter', async () => {
+    const older = new Date('2026-05-01T00:00:00Z');
+    const newer = new Date('2026-05-03T00:00:00Z');
+    await seedQuestion('q1', '历史题面', older);
+    await seedAttempt({ id: 'old', question_id: 'q1', created_at: older });
+    await testDb()
+      .update(learning_record)
+      .set({ created_at: newer })
+      .where(eq(learning_record.id, 'lr_old'));
+    const page = await readMistakes(testDb(), { since: '2026-05-02T00:00:00Z' });
+    expect(page.rows).toEqual([]);
+  });
+
+  it('does not add review failures through identity supplementation', async () => {
+    await seedQuestion('q1', '历史题面');
+    await seedAttempt({ id: 'review_only', question_id: 'q1' });
+    await testDb().update(event).set({ action: 'review' }).where(eq(event.id, 'review_only'));
+    expect((await readMistakes(testDb())).rows).toEqual([]);
   });
 
   it('400s on invalid since', async () => {

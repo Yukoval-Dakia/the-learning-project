@@ -18971,6 +18971,8 @@ export interface operations {
                             question_id: string;
                             record_id: string;
                             reference_md: string | null;
+                            /** @default [] */
+                            wrong_answer_image_refs: string[];
                             wrong_answer_md: string;
                         }[];
                         next_cursor: string | null;
@@ -19015,6 +19017,8 @@ export interface operations {
                             question_id: string;
                             record_id: string;
                             reference_md: string | null;
+                            /** @default [] */
+                            wrong_answer_image_refs: string[];
                             wrong_answer_md: string;
                         }[];
                     };

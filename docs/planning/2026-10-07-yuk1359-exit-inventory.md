@@ -106,3 +106,21 @@ Linear1359已登记1352候选 `server/start/routes/$.ts`、`server/frontdoor.ts`
 当前源码消费者为 `web/src/routes/MistakesPage.tsx` 的 `GET /api/mistakes?limit=200&subject=...`，由 ingestion GET 调用 `listMistakeProjectionPage`；还依赖 knowledge tree 和 subject 配置。后端已支持cursor/next_cursor，页面旧注释称无cursor已过时；迁移保留现有200+截断提示，不借此扩展分页视觉功能。须保留科目/纠错/归因筛选、冻结历史和附件证据、pending时间、record/practice/event/knowledge导航，以及原API校验与科目派生。
 
 1376交付typed领域读取与真实消费者，Start组合根、全局路由/manifest/package/lock由主线负责。领域层单测通过不能核销本表的/mistakes行：仍需主线挂载、真实浏览器/API/DB保留行为证明，以及旧SPA消费者退出证据。没有新增恢复机制，也不接管practice/评分或视觉设计。
+
+## YUK1376 挂载与退出验收矩阵
+
+基线 `36f719675`（PR1597已合入）。下表从现有 `MistakesPage.tsx` 和 `ingestion/api/mistakes.db.test.ts` 核对，供领域实现与主线挂载分别验收。当前各行均未核销；已有测试名称仅定位行为，不代表新实现已通过。
+
+| 必须保留的行为 | 领域/API证据 | 新入口浏览器及退出证据 |
+| --- | --- | --- |
+| 错题事实读取与只读性 | 真实POST失败记录后GET，核对attempt/record/question身份；GET前后持久表无写入；无provider调用 | Start直达、刷新与录入后跳转均显示同一记录 |
+| 历史题面与参考答案 | 记录后正常编辑题目仍返回当时有效snapshot；父题、旧无snapshot、损坏/null分别验证；不能把当前题面冒充历史 | 卡片呈现真实历史或诚实缺失，不静默丢掉旧记录 |
+| 答题图片 | POST保存image refs后GET投影保留顺序与身份，缺席/空值及异常引用按契约处理 | 原AttachmentStrip与Lightbox可读取同一附件，关闭/重新打开正常 |
+| 科目与知识关联 | builtin alias/custom/unknown科目及首knowledge派生与现行契约一致 | 科目、状态、归因三筛选组合及清除正常；知识名缺失保留短ID |
+| 纠错及归因优先级 | 现有GET排除retracted attempts、跟随judge替代、user cause优先；不能把页面有“已纠正”标签当成所有撤回记录均须返回 | 对实际返回的correction state使用原标签；user/agent/pending及misc标签不变 |
+| 查询边界和截断 | 默认50、最大200、since/question_id/subject、非法输入400、等时间cursor稳定 | 页面仍请求200并保留200+提示；本轮不新增分页视觉 |
+| 加载与时间行为 | typed客户端保留HTTP错误而非转换成空列表 | loading/error/retry/empty分别可达；pending跨30秒阈值在原15秒tick内更新 |
+| 导航与权限 | 真实装配入口无内部token被拒绝，合法请求成功；直接handler测试不代替鉴权 | /record、/practice、/events/$id、/knowledge/$id深链与返回正常；鉴权续接和刷新通过 |
+| 单一业务读取与旧入口退出 | GET和主线Start适配调用同一typed operation；浏览器依赖图无server-only泄漏 | 主线实际挂载证据、旧SPA消费者替换diff、构建与镜像入口核对后才核销旧路径 |
+
+现有UI的“已纠正”分支与API的retracted排除是不同证据层，验收不能只凭页面标签推断领域语义。typed领域层交回后，本线程核源码与隔离DB，主线负责组合根挂载；最终浏览器和旧路径退出仍归1358/1359共同交付。设置面板 `/admin/config` 保持在W5范围，本lane不修改或删除。
