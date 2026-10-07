@@ -147,13 +147,14 @@ test('Copilot accepts consecutive messages and restores each run without cancell
     if (path === '/api/copilot/sessions')
       return route.fulfill({
         json: {
+          server_time: new Date().toISOString(),
           sessions: [
             {
               id: sessionId,
               status: 'active',
               title: '连续消息恢复验收',
-              created_at: '2026-09-07T08:00:00.000Z',
-              updated_at: '2026-09-07T08:00:00.000Z',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
             },
           ],
         },
@@ -273,13 +274,14 @@ test('Copilot recovers ambiguous acceptance after reload with the original key a
     if (path === '/api/copilot/sessions')
       return route.fulfill({
         json: {
+          server_time: new Date().toISOString(),
           sessions: [
             {
               id: 'ambiguous-session',
               status: 'active',
               title: '受理恢复',
-              created_at: '2026-09-07T08:00:00.000Z',
-              updated_at: '2026-09-07T08:00:00.000Z',
+              created_at: new Date().toISOString(),
+              updated_at: new Date().toISOString(),
             },
           ],
         },
@@ -399,13 +401,14 @@ for (const transport of ['persistent'] as const) {
         if (path === '/api/copilot/sessions')
           return route.fulfill({
             json: {
+              server_time: new Date().toISOString(),
               sessions: [
                 {
                   id: 'session-42',
                   status: 'active',
                   title: '展示验收',
-                  created_at: '2026-09-06T06:00:00Z',
-                  updated_at: '2026-09-06T06:00:00Z',
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
                 },
               ],
             },
@@ -528,13 +531,14 @@ for (const transport of ['persistent'] as const) {
       if (path === '/api/copilot/sessions')
         return route.fulfill({
           json: {
+            server_time: new Date().toISOString(),
             sessions: [
               {
                 id: 'session-42',
                 status: 'active',
                 title: '边界条件复盘',
-                created_at: '2026-09-06T06:00:00Z',
-                updated_at: '2026-09-06T06:00:00Z',
+                created_at: new Date().toISOString(),
+                updated_at: new Date().toISOString(),
               },
             ],
           },

@@ -42,3 +42,21 @@ export const REASONING_TRACE_MAX_LEN = 4000;
 // embedded inside an under-cap .docx can't create a source_asset that diverges
 // from the limit every other image path honours (codex-4).
 export const MAX_IMAGE_UPLOAD_BYTES = 8_000_000;
+
+// YUK-1340 P1 — Copilot conversation auto-reuse age ceiling. The most recent
+// `learning_session(type='conversation', entrypoint='copilot')` is auto-resumed
+// only when `updated_at >= now - COPILOT_REUSE_WINDOW_MS`. Single source of truth
+// for BOTH the server predicate (`findReusableCopilotConversation` in
+// src/server/session/conversation.ts — its `gte(updated_at, cutoff)` clause) and the
+// Copilot UI bootstrap auto-select (`isWithinCopilotReuseWindow` in
+// src/capabilities/copilot/session-reuse.ts), so the two surfaces cannot drift.
+//
+// Lives HERE (pure leaf) rather than in the copilot capability for the same reason
+// REASONING_TRACE_MAX_LEN does: the server predicate must not deep-import
+// `@/capabilities/copilot/session-reuse` (server→capability-deep is an architecture
+// regression both the boundary + deepening audits reject), and routing through
+// `@/capabilities/copilot/public` would introduce a module-eval cycle
+// (public → legacy-drain-readiness → subagent-mailbox → copilot-run-outcome →
+// turns → conversation). A pure-leaf bound lets server + capability + browser share
+// one number with no deep import, no cycle, and no server module in the SPA graph.
+export const COPILOT_REUSE_WINDOW_MS = 24 * 60 * 60 * 1000;

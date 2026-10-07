@@ -29,33 +29,39 @@ vi.mock('@/ui/lib/api', () => ({
   apiJson: apiJsonMock,
 }));
 
-vi.mock('@tanstack/react-query', () => ({
-  useQuery: ({ queryKey }: { queryKey: string[] }) =>
-    queryKey[0] === 'copilot-sessions'
-      ? {
-          data: {
-            sessions: [
-              {
-                id: 'copilot-session-test',
-                status: 'active',
-                title: '跨章节迁移核对',
-                created_at: '2026-09-07T08:00:00.000Z',
-                updated_at: '2026-09-07T08:00:00.000Z',
-              },
-              {
-                id: 'copilot-session-old',
-                status: 'active',
-                title: '旧对话：定义域复盘',
-                created_at: '2026-09-06T08:00:00.000Z',
-                updated_at: '2026-09-06T08:00:00.000Z',
-              },
-            ],
-          },
-          isLoading: false,
-          refetch: vi.fn(),
-        }
-      : { data: null, isLoading: false, refetch: vi.fn() },
-}));
+vi.mock('@tanstack/react-query', () => {
+  const data = {
+    server_time: new Date().toISOString(),
+    sessions: [
+      {
+        id: 'copilot-session-test',
+        status: 'active',
+        title: '跨章节迁移核对',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      },
+      {
+        id: 'copilot-session-old',
+        status: 'active',
+        title: '旧对话：定义域复盘',
+        created_at: new Date(Date.now() - 3600_000).toISOString(),
+        updated_at: new Date(Date.now() - 3600_000).toISOString(),
+      },
+    ],
+  };
+  return {
+    useQuery: ({ queryKey }: { queryKey: string[] }) =>
+      queryKey[0] === 'copilot-sessions'
+        ? {
+            isFetchedAfterMount: true,
+            isSuccess: true,
+            data,
+            isLoading: false,
+            refetch: vi.fn(),
+          }
+        : { data: null, isLoading: false, refetch: vi.fn() },
+  };
+});
 
 vi.mock('@/ui/lib/use-copilot-dwell', () => {
   const signalState = { request: null, clearRequest: vi.fn() };
