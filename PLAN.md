@@ -4,7 +4,7 @@
 
 ## NOW
 
-- **YUK-1376**：PR1598已合入c7c2482ca，独立review NONE、exact CI全绿、tree一致；typed读取及三项历史证据缺口已修。接续native冻结读取，native实现002712b79已交回，父127hash/95DB通过；初审发现整组/联合评分图片两项P1，修复f20134123已交回，父262hash/102DB通过，最后验证审P0/P1 NONE，待exact CI，旧候选不验收。[证据](docs/planning/2026-10-08-yuk1376-mistakes-domain.md)。Start挂载、native完整投影、浏览器及旧入口退出未核销。
+- **YUK-1376**：PR1599已合入7bc216509，tree与CI head6ab98ed8c一致；CI Gate37677610975成功、独立验证审P0/P1 NONE。隔离真实HTTP四行冻结错题、附件字节及负例通过；原页面刷新四行、语文筛选空列表、八张缩略图与Lightbox解码通过。20:26:50Z停止自有隔离容器并核owner释放锁，保留独立卷；主四服务healthy，release未变。整组图片真实模型评分、完整媒体/参考答案策略、Start挂载及旧入口退出仍未核销。[证据](docs/planning/2026-10-08-yuk1376-mistakes-domain.md)。
 
 - **YUK-1376（1358 W1 /mistakes）**：YUK1375已随PR1597合入36f719675，exact CI与独立review通过；本线程从最新main承接错题页非UI领域/API消费者迁移，保留视觉与现有行为；不改全局路由/manifest/package/lock或1352组合根，挂载交主线。1359退出清单继续由本线程维护。1352/1355/1356唯一集成与writer归主线57961995，不写其三树。
 
