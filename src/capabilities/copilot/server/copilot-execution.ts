@@ -1,3 +1,4 @@
+import { observeTaskOperation } from '@/ai/task-observation';
 import { readDerivationPolicy } from '@/core/schema/derivation-policy';
 import type { Db } from '@/db/client';
 import {
@@ -513,7 +514,14 @@ export function createCopilotExecutionOwner(
       if (resumeSessionId && partial) {
         throw new Error('resumed agent session returned partial output');
       }
-      const finalization = await finalizer.finalizeTerminal(terminalText);
+      const finalization = await observeTaskOperation(
+        { operation: 'finalize', taskKind: 'CopilotTask', taskRunId: result.task_run_id },
+        async (reportOutcome) => {
+          const finalized = await finalizer.finalizeTerminal(terminalText);
+          reportOutcome(finalized.accepted ? 'accepted' : 'rejected');
+          return finalized;
+        },
+      );
       retainSdkSession = !answerOnly && !partial && finalization.accepted && nativeChildrenComplete;
       return {
         taskRunId: result.task_run_id,

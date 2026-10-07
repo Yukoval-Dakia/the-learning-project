@@ -29,6 +29,79 @@
 
 设计原则：用成熟 OSS 解成熟问题；AI 调用按 task 抽象，不做聊天框；破坏性 AI 动作走 proposal + 用户确认。
 
+## Optional Laminar application tracing
+
+Set `LMNR_PROJECT_API_KEY` in the API and worker environment to enable application
+traces with `@lmnr-ai/lmnr` 0.8.49. API startup and both worker modes initialize it
+idempotently after environment loading. An empty key skips SDK loading and export.
+Restart the relevant processes after changing this environment setting.
+
+The default export contains allowlisted IDs, task/tool/model names, execution and
+business outcomes, and usage evidence. It excludes prompts, tool arguments/results,
+provider credentials, headers, history, images, raw reasoning, and exception text.
+`instrumentModules: {}` disables broad SDK capture. `LMNR_DEBUG`,
+`LMNR_TRACE_METADATA`, and `LMNR_SPAN_CONTEXT` disable this integration when set;
+those SDK modes exceed its application capture policy.
+
+A capability may opt one run into sanitized business text through `RunTaskCtx`:
+
+```ts
+await runTask(kind, businessInput, {
+  ...context,
+  laminarContent: {
+    input: { summary: 'Synthetic fixture: compare two supplied statements' },
+    output: (result) => ({ summary: sanitizeFinalBusinessAnswer(result.text) }),
+  },
+});
+```
+
+The capability owns sanitization. Each summary is capped at 4,000 characters;
+this summary option remains independent of development transcripts. Returning a provider result does not
+establish business acceptance: attempt spans remain `business_outcome=unassessed`.
+Native assessment validation and Copilot finalization/settlement add their own verdicts.
+
+For the development-stage transcript capture authorized by the owner, configure
+`LMNR_PROJECT_API_KEY` through the existing local environment, then start both API
+and worker with:
+
+```bash
+NODE_ENV=development LMNR_DEV_TRANSCRIPTS=1 pnpm dev:local
+```
+
+`dev:local` inherits these variables into both processes. Restart an existing dev
+session after changing them. The switch accepts only `1` and requires exactly
+`NODE_ENV=development`; production, test, or an unset environment cannot enable it.
+An empty project key still prevents SDK loading and export. Omit the switch or set
+`LMNR_DEV_TRANSCRIPTS=0` to keep metadata-only tracing.
+
+This opt-in captures the Pi system/user/assistant/tool conversation as message
+arrays on `llm.call`, visible final assistant text and correlated tool calls, and
+sanitized structured arguments/results on tool spans. It preserves normal
+educational content. It excludes reasoning blocks/signatures, credentials, auth
+headers, environment/provider binding objects, images/binary/base64, and URLs
+with query parameters or embedded credentials. It never reads credentials to
+redact them and never fetches assets. Tool error objects become a fixed omission
+marker, without their messages or stacks. Streaming observes the existing final
+result once; it does not consume the stream again.
+
+Payloads allow 64 messages/entries per collection, 8 nesting levels, 1,000 visited
+nodes, 8,000 characters per text and a 24,000-character text budget. Final JSON is
+at most 65,536 characters. Truncation and omitted binary/circular/accessor values
+have visible markers. Structured JSON text over 65,536 characters is omitted with
+a truncation marker rather than exporting an unchecked prefix. Existing capability
+summaries and usage/cost semantics remain in place. No evaluator configuration
+changes are required by this switch.
+
+Only `llm.call` leaves carry additive token/cost attributes. Attempt aggregates are
+reconciliation metadata and include child usage, so do not add them to leaf totals.
+Pi catalog costs are estimates, not invoices; absent usage remains unknown.
+Worker pickup starts a new `job.run` root, with logical-run correlation on Copilot;
+queue trace headers and payloads are unchanged. Flush runs only after shutdown drain
+and waits at most 500 ms. Trace export is best effort and cannot retry application work.
+
+See [YUK-1325 design and verification](docs/planning/2026-10-06-yuk1325-laminar.md)
+for exact boundaries and current limits.
+
 ## 开发
 
 Prerequisites: **Node.js >=24.0.0**（`.node-version` 固定最低支持版本）与

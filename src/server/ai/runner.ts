@@ -24,6 +24,7 @@
 
 import { createHash } from 'node:crypto';
 import type { ContentBlock } from '@anthropic-ai/sdk/resources/messages';
+import { installTaskOperationObserver } from '@/ai/task-observation';
 import type { TaskBudget, TaskDefinition } from '@/ai/task-spec';
 import {
   type TaskBudgetOverride,
@@ -51,6 +52,7 @@ import {
   type RunnerMessage,
   resolveExecutionAdapter,
 } from './execution-adapter';
+import { type TraceContent, traceMetadata, traceOperation } from './laminar-tracing';
 import { logMissingToolMountsWarning } from './log';
 import type { PiHookBridge } from './pi-hooks';
 import { PROVIDER_SESSION_SDK_STARTUP_TIMEOUT_MS } from './provider-session-admission';
@@ -77,6 +79,24 @@ import type {
 import { isSpawnToolName } from './spawn-contract';
 import type { PiSubagentSpec } from './tools/pi-subagent';
 import type { PiToolMount } from './tools/pi-tools';
+
+// The runner is loaded before capability execution. Keep the shared observation
+// contract backend-free while using the same async trace context as task/model spans.
+installTaskOperationObserver((observation, execute) =>
+  traceOperation(
+    observation.taskKind === 'CopilotTask'
+      ? observation.operation === 'run'
+        ? 'copilot.run'
+        : 'copilot.finalize'
+      : 'task.run',
+    {
+      task_kind: observation.taskKind,
+      task_run_id: observation.taskRunId,
+      logical_run_id: observation.logicalRunId,
+    },
+    () => execute((business_outcome) => traceMetadata({ business_outcome })),
+  ),
+);
 
 // ============================================================================
 // Public surface
@@ -144,6 +164,8 @@ export interface TaskMiddleware {
 
 export interface RunTaskCtx {
   db: Db;
+  /** Per-run capability-owned sanitized content; omitted runs export metadata only. */
+  laminarContent?: TraceContent<RunTaskResult>;
   /** Caller-owned cancellation propagated into the SDK run lifecycle. */
   signal?: AbortSignal;
   /**
@@ -794,6 +816,13 @@ export async function runTask(
   initialCtx: RunTaskCtx,
 ): Promise<RunTaskResult> {
   const ctx = { ...initialCtx, learnerLocale: initialCtx.learnerLocale ?? getLearnerLocale() };
+  return traceOperation('task.run', { task_kind: kind }, () => runTaskImpl(kind, input, ctx), {
+    signal: ctx.signal,
+    content: ctx.laminarContent,
+  });
+}
+
+async function runTaskImpl(kind: string, input: unknown, ctx: RunTaskCtx): Promise<RunTaskResult> {
   if (!isKnownTask(kind)) {
     throw new Error(`Unknown task kind: ${kind}`);
   }
@@ -854,22 +883,24 @@ export async function runTask(
         : undefined,
     });
     try {
-      return await runTaskAttempt({
-        kind,
-        actualInput,
-        budget,
-        ctx,
-        lifecycle,
-        modelBinding,
-        // needsToolCall with no pi-visible mounts runs tool-less — warn once.
-        warnMissingMcp: attempt === 1 && def.needsToolCall && !ctx.piToolMounts?.length,
-        onProviderQueryStarted: retrySource
-          ? async () => {
-              await retrySource?.markRetried();
-              retrySource = undefined;
-            }
-          : undefined,
-      });
+      return await lifecycle.withTracing(() =>
+        runTaskAttempt({
+          kind,
+          actualInput,
+          budget,
+          ctx,
+          lifecycle,
+          modelBinding,
+          // needsToolCall with no pi-visible mounts runs tool-less — warn once.
+          warnMissingMcp: attempt === 1 && def.needsToolCall && !ctx.piToolMounts?.length,
+          onProviderQueryStarted: retrySource
+            ? async () => {
+                await retrySource?.markRetried();
+                retrySource = undefined;
+              }
+            : undefined,
+        }),
+      );
     } catch (err) {
       // Admission timeout/rejection happens before durable model-attempt start.
       // It has an admission row but no YUK-841 cost attempt and is never retried
@@ -961,90 +992,110 @@ export function streamTask(kind: string, input: unknown, initialCtx: StreamTaskC
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
-      const encoder = new TextEncoder();
-      let resultText = '';
-      let shouldClose = true;
+      await traceOperation(
+        'task.run',
+        { task_kind: kind },
+        () =>
+          lifecycle.withTracing(async () => {
+            const encoder = new TextEncoder();
+            let resultText = '';
+            let shouldClose = true;
 
-      try {
-        const actualInput = ctx.middleware?.beforeRun
-          ? await ctx.middleware.beforeRun(kind, input, ctx)
-          : input;
-        const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
-        const callOptions = buildQueryOptions(
-          kind,
-          ctx,
-          lifecycle.abortController,
-          lifecycle.resolved,
-          budget,
-        );
-        const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
-          await consumeProviderAttempt({
-            query: q,
-            kind,
-            ctx,
-            lifecycle,
-            shouldRecordToolCall: () => ctx.autoLogToolCalls !== false,
-            onAssistant: (msg) => {
-              const text = extractAssistantText(msg);
-              if (text) {
-                controller.enqueue(encoder.encode(text));
-                resultText += text;
+            try {
+              const actualInput = ctx.middleware?.beforeRun
+                ? await ctx.middleware.beforeRun(kind, input, ctx)
+                : input;
+              const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
+              const callOptions = buildQueryOptions(
+                kind,
+                ctx,
+                lifecycle.abortController,
+                lifecycle.resolved,
+                budget,
+              );
+              const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
+                await consumeProviderAttempt({
+                  query: q,
+                  kind,
+                  ctx,
+                  lifecycle,
+                  shouldRecordToolCall: () => ctx.autoLogToolCalls !== false,
+                  onAssistant: (msg) => {
+                    const text = extractAssistantText(msg);
+                    if (text) {
+                      controller.enqueue(encoder.encode(text));
+                      resultText += text;
+                    }
+                  },
+                  abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted with no terminal result`,
+                });
+              };
+              await withPreparedExecutionQuery(
+                lifecycle,
+                modelBinding,
+                actualInput,
+                promptText,
+                callOptions,
+                consumePreparedQuery,
+                ctx.beforeProviderQuery,
+                ctx,
+              );
+
+              const result: RunTaskResult = {
+                task_run_id: lifecycle.taskRunId,
+                text: resultText,
+                finishReason: lifecycle.finishReason,
+                usage: lifecycle.usage,
+                cost_usd: lifecycle.costUsd,
+                cost_basis: lifecycle.costBasis,
+                cost_ref: lifecycle.costRef,
+              };
+              await lifecycle.finishSuccess(result);
+              return result;
+            } catch (error) {
+              if (lifecycle.started) {
+                const boundError = bindAgentRunError({
+                  error,
+                  kind,
+                  taskRunId: lifecycle.taskRunId,
+                  aborted: lifecycle.aborted,
+                  costUsd: lifecycle.costUsd,
+                });
+                const settled = await lifecycle.finishFailure(boundError);
+                if (!settled) {
+                  // Assistant bytes may already have reached a live reader and cannot be
+                  // retracted. Error the stream so the protocol cannot still complete
+                  // cleanly while its durable attempt truth remains unsettled.
+                  shouldClose = false;
+                  if (!clientCancelled) controller.error(boundError);
+                  return;
+                }
               }
-            },
-            abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted with no terminal result`,
-          });
-        };
-        await withPreparedExecutionQuery(
-          lifecycle,
-          modelBinding,
-          actualInput,
-          promptText,
-          callOptions,
-          consumePreparedQuery,
-          ctx.beforeProviderQuery,
-          ctx,
-        );
-
-        const result: RunTaskResult = {
-          task_run_id: lifecycle.taskRunId,
-          text: resultText,
-          finishReason: lifecycle.finishReason,
-          usage: lifecycle.usage,
-          cost_usd: lifecycle.costUsd,
-          cost_basis: lifecycle.costBasis,
-          cost_ref: lifecycle.costRef,
-        };
-        await lifecycle.finishSuccess(result);
-      } catch (error) {
-        if (lifecycle.started) {
-          const boundError = bindAgentRunError({
-            error,
-            kind,
-            taskRunId: lifecycle.taskRunId,
-            aborted: lifecycle.aborted,
-            costUsd: lifecycle.costUsd,
-          });
-          const settled = await lifecycle.finishFailure(boundError);
-          if (!settled) {
-            // Assistant bytes may already have reached a live reader and cannot be
-            // retracted. Error the stream so the protocol cannot still complete
-            // cleanly while its durable attempt truth remains unsettled.
-            shouldClose = false;
-            if (!clientCancelled) controller.error(boundError);
-            return;
-          }
-        }
-        if (clientCancelled) {
-          shouldClose = false;
-          return;
-        }
-        const message =
-          error instanceof Error ? `[streamTask] ${error.message}` : '[streamTask] unknown error';
-        controller.enqueue(encoder.encode(`\n\n${message}\n`));
-      } finally {
-        lifecycle.dispose();
-        if (shouldClose && !clientCancelled) controller.close();
-      }
+              if (clientCancelled) {
+                shouldClose = false;
+                return;
+              }
+              const message =
+                error instanceof Error
+                  ? `[streamTask] ${error.message}`
+                  : '[streamTask] unknown error';
+              controller.enqueue(encoder.encode(`\n\n${message}\n`));
+            } finally {
+              lifecycle.dispose();
+              if (shouldClose && !clientCancelled) controller.close();
+            }
+          }),
+        {
+          signal: lifecycle.abortController.signal,
+          outcome: (result) => (result ? 'success' : 'error'),
+          content: ctx.laminarContent
+            ? {
+                input: ctx.laminarContent.input,
+                output: (result) => (result ? ctx.laminarContent?.output?.(result) : undefined),
+              }
+            : undefined,
+        },
+      );
     },
     cancel() {
       clientCancelled = true;
@@ -1104,6 +1155,24 @@ export async function streamTaskCollecting(
   onDelta: (text: string) => void,
 ): Promise<StreamCollectResult> {
   const ctx = { ...initialCtx, learnerLocale: initialCtx.learnerLocale ?? getLearnerLocale() };
+  return traceOperation(
+    'task.run',
+    { task_kind: kind },
+    () => streamTaskCollectingImpl(kind, input, ctx, onDelta),
+    {
+      signal: ctx.signal,
+      content: ctx.laminarContent,
+      outcome: (result) => (result.partial ? 'error' : 'success'),
+    },
+  );
+}
+
+async function streamTaskCollectingImpl(
+  kind: string,
+  input: unknown,
+  ctx: StreamTaskCtx,
+  onDelta: (text: string) => void,
+): Promise<StreamCollectResult> {
   if (!isKnownTask(kind)) {
     throw new Error(`Unknown task kind: ${kind}`);
   }
@@ -1130,111 +1199,113 @@ export async function streamTaskCollecting(
   let resultText = '';
   let terminalText: string | undefined;
 
-  try {
-    const actualInput = ctx.middleware?.beforeRun
-      ? await ctx.middleware.beforeRun(kind, input, ctx)
-      : input;
-    const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
-    const callOptions = buildQueryOptions(
-      kind,
-      ctx,
-      lifecycle.abortController,
-      lifecycle.resolved,
-      budget,
-    );
-    const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
-      await consumeProviderAttempt({
-        query: q,
+  return lifecycle.withTracing(async () => {
+    try {
+      const actualInput = ctx.middleware?.beforeRun
+        ? await ctx.middleware.beforeRun(kind, input, ctx)
+        : input;
+      const promptText = ctx.compiledModelPrompt?.text ?? promptFromInput(actualInput);
+      const callOptions = buildQueryOptions(
         kind,
         ctx,
-        lifecycle,
-        notifySessionId: true,
-        shouldRecordToolCall: () => ctx.autoLogToolCalls !== false,
-        onAssistant: (msg) => {
-          const text = extractAssistantText(msg);
-          if (text) {
-            onDelta(text);
-            resultText += text;
-          }
-        },
-        onSuccess: (msg) => {
-          terminalText = msg.result;
-        },
-        onToolUse: ctx.onToolUse
-          ? (block) => {
-              ctx.onToolUse?.({
-                toolName: block.name,
-                input: (block.input ?? {}) as Record<string, unknown>,
-                toolUseId: block.id,
-              });
+        lifecycle.abortController,
+        lifecycle.resolved,
+        budget,
+      );
+      const consumePreparedQuery = async (q: AsyncIterable<RunnerMessage>) => {
+        await consumeProviderAttempt({
+          query: q,
+          kind,
+          ctx,
+          lifecycle,
+          notifySessionId: true,
+          shouldRecordToolCall: () => ctx.autoLogToolCalls !== false,
+          onAssistant: (msg) => {
+            const text = extractAssistantText(msg);
+            if (text) {
+              onDelta(text);
+              resultText += text;
             }
-          : undefined,
-        onApiError: (msg) => {
-          console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {
-            event: 'task_run_success_with_error_flag',
-            task_run_id: lifecycle.taskRunId,
-            kind,
-            api_error_status: msg.api_error_status ?? null,
-          });
-        },
-        apiErrorMessages: (msg) => (msg.result ? [msg.result] : []),
-        abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted with no terminal result`,
-      });
-    };
-    await withPreparedExecutionQuery(
-      lifecycle,
-      modelBinding,
-      actualInput,
-      promptText,
-      callOptions,
-      consumePreparedQuery,
-      ctx.beforeProviderQuery,
-      ctx,
-    );
+          },
+          onSuccess: (msg) => {
+            terminalText = msg.result;
+          },
+          onToolUse: ctx.onToolUse
+            ? (block) => {
+                ctx.onToolUse?.({
+                  toolName: block.name,
+                  input: (block.input ?? {}) as Record<string, unknown>,
+                  toolUseId: block.id,
+                });
+              }
+            : undefined,
+          onApiError: (msg) => {
+            console.warn('[streamTaskCollecting] task_run_success_with_error_flag', {
+              event: 'task_run_success_with_error_flag',
+              task_run_id: lifecycle.taskRunId,
+              kind,
+              api_error_status: msg.api_error_status ?? null,
+            });
+          },
+          apiErrorMessages: (msg) => (msg.result ? [msg.result] : []),
+          abortedWithoutTerminalMessage: `[${kind}] Agent SDK run aborted with no terminal result`,
+        });
+      };
+      await withPreparedExecutionQuery(
+        lifecycle,
+        modelBinding,
+        actualInput,
+        promptText,
+        callOptions,
+        consumePreparedQuery,
+        ctx.beforeProviderQuery,
+        ctx,
+      );
 
-    const result: StreamCollectResult = {
-      task_run_id: lifecycle.taskRunId,
-      text: resultText,
-      ...(terminalText !== undefined ? { terminalText } : {}),
-      finishReason: lifecycle.finishReason,
-      usage: lifecycle.usage,
-      cost_usd: lifecycle.costUsd,
-      cost_basis: lifecycle.costBasis,
-      cost_ref: lifecycle.costRef,
-    };
-    await lifecycle.finishSuccess(result);
-    return result;
-  } catch (error) {
-    if (!lifecycle.started) throw error;
-    const successSettlementFailed = error instanceof AttemptSettlementError;
-    const boundError = bindAgentRunError({
-      error,
-      kind,
-      taskRunId: lifecycle.taskRunId,
-      aborted: lifecycle.aborted,
-      costUsd: lifecycle.costUsd,
-    });
-    const settled = await lifecycle.finishFailure(boundError);
-    // A provider-success payload whose success projection failed must never be
-    // returned as graceful partial text, even if the bounded fallback records
-    // the application attempt as failure successfully. Admission fencing is
-    // likewise a fail-closed control-plane verdict, not an SDK stream failure
-    // that Copilot may persist and present as a graceful partial reply.
-    if (!settled || successSettlementFailed || boundError.subtype === 'provider_admission') {
-      throw boundError;
+      const result: StreamCollectResult = {
+        task_run_id: lifecycle.taskRunId,
+        text: resultText,
+        ...(terminalText !== undefined ? { terminalText } : {}),
+        finishReason: lifecycle.finishReason,
+        usage: lifecycle.usage,
+        cost_usd: lifecycle.costUsd,
+        cost_basis: lifecycle.costBasis,
+        cost_ref: lifecycle.costRef,
+      };
+      await lifecycle.finishSuccess(result);
+      return result;
+    } catch (error) {
+      if (!lifecycle.started) throw error;
+      const successSettlementFailed = error instanceof AttemptSettlementError;
+      const boundError = bindAgentRunError({
+        error,
+        kind,
+        taskRunId: lifecycle.taskRunId,
+        aborted: lifecycle.aborted,
+        costUsd: lifecycle.costUsd,
+      });
+      const settled = await lifecycle.finishFailure(boundError);
+      // A provider-success payload whose success projection failed must never be
+      // returned as graceful partial text, even if the bounded fallback records
+      // the application attempt as failure successfully. Admission fencing is
+      // likewise a fail-closed control-plane verdict, not an SDK stream failure
+      // that Copilot may persist and present as a graceful partial reply.
+      if (!settled || successSettlementFailed || boundError.subtype === 'provider_admission') {
+        throw boundError;
+      }
+      return {
+        task_run_id: lifecycle.taskRunId,
+        text: resultText,
+        finishReason: 'error',
+        usage: lifecycle.usage,
+        cost_usd: lifecycle.costUsd,
+        cost_basis: lifecycle.costBasis,
+        cost_ref: lifecycle.costRef,
+        partial: true,
+        error: error instanceof Error ? error.message : String(error),
+      };
+    } finally {
+      lifecycle.dispose();
     }
-    return {
-      task_run_id: lifecycle.taskRunId,
-      text: resultText,
-      finishReason: 'error',
-      usage: lifecycle.usage,
-      cost_usd: lifecycle.costUsd,
-      cost_basis: lifecycle.costBasis,
-      cost_ref: lifecycle.costRef,
-      partial: true,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  } finally {
-    lifecycle.dispose();
-  }
+  });
 }

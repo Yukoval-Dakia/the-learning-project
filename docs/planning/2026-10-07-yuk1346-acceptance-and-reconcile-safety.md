@@ -29,3 +29,19 @@
 新修复的exact-head CI、候选运行及剩余全局brief/原key幂等/重投/最终数据保护验收。旧R4/A实际结果不能冒称新镜像全量验收。新发布仍需新镜像、停写后新鲜备份与恢复验证。生产42 failed/42 DLQ保留。
 
 已知累计模型估算USD0.020229617；SDK add/search/embedding及超时整理成本未知，继续占用既有保守$2预留。YUK1348记录普通回复错误否认记忆能力，YUK1349记录LaTeX显示问题，均未修。用户数据和历史失败不为得到绿色检查而删改。
+
+
+## Main integration after Laminar merge
+
+Normal merge of main a86d4e633a67f802554ae114387ab06b7110c135 retains both observeTaskOperation finalization spans and the !answerOnly guard on SDK session retention. Parent inspected the auto-merged durable run wrapper.93scoped unit tests,typecheck,lint and full build passed; scoped Copilot teaching/run-input DB checks passed. No full local test suite,model call,production change,or new review round. Exact-head CI and fresh runtime acceptance remain pending. Previous365871dab/fea545a actual evidence stays tied to those versions.
+
+/tmp/pr1588-main-unit.log SHA256 93f4fe955ad365ebeff3f07052e98d8816d6b71a241f7d3ee2b044f0a641196c
+
+/tmp/pr1588-main-db.log SHA256 683660412f406c39975e9b5c048d3e2b4a7ec8e438e5ebf1aeb1830d034162e3
+
+/tmp/pr1588-main-typecheck.log SHA256 8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92
+
+/tmp/pr1588-main-lint.log SHA256 5476a9cd5b84878be843e8ef7ef4076323e33523bec3698d431fed4c43872784
+
+/tmp/pr1588-main-build.log SHA256 da87233c1a5cee741da788f596da031009205b7ddde2be3cc70d29b794ae0ed3
+

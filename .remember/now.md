@@ -1,3 +1,7 @@
+# main integration 2026-10-07
+
+父正常merge main a86d4e633a67f802554ae114387ab06b7110c135，保留 observeTaskOperation finalization 和 !answerOnly SDK retention。生产f3不动，旧候选365及fea原始实际证据均保持原版本标签；新集成后须新CI/候选验收。93相关unit、Copilot教学/输入DB、typecheck/lint/build均通过；待新CI。
+
 # 当前交接 — 2026-10-07 YUK-1346 / YUK-1350
 
 父线程是 /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1346-reconcile-safety 的唯一 writer；分支 fix/yuk-1346-reconcile-safety，源码324381a3bb94486155d865d24e5ab504c97cafee。实施子任务已 completed/noPending，写权结束。父负责PR1588/CI/watch/Linear/验收/发布。旧 tlp-yuk-1346-turn-retention 保持 fea545aa1 封存，不在旧树继续写。

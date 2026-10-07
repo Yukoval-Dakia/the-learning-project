@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-07：R4/A 已完成真实回答及记忆边界验证；整理调用超时暴露的 YUK-1350 重投保护已提交 324381a3b，父线程42 unit/6 DB复验通过，PR1588整合中，生产仍 f3。
+> Linear 是权威 tracker。2026-10-07 本轮合入最新 main，保留 Laminar finalization tracing 与 answer-only SDK 隔离。此前：R4/A 已完成真实回答及记忆边界验证；整理调用超时暴露的 YUK-1350 重投保护已提交 324381a3b，父线程42 unit/6 DB复验通过，PR1588整合中，生产仍 f3。
 
 ## NOW
 
@@ -15,7 +15,8 @@
 
 - 整合安全修复及最新记录，推 PR1588，等待新 exact-head CI 与17分钟窗；不启第三轮审查。完成剩余整理/全局摘要、原key幂等、重投及最终数据保护验收后，再做新镜像、停写备份/恢复验证和发布。旧 R/R2/R3、成功 R4/A/提取及未知整理请求均不重发。
 - YUK-1042：42 failed +42 DLQ 原义务保留；先查每项副作用和幂等身份再恢复，不清队列或重付未知结果。
-- YUK-1338 目标架构集成保持 Backlog，单独证明状态版本、过期结果拒绝与重启恢复；ADR-0066 的 TanStack Start/Pi/PostgreSQL/DBOS 方向尚非当前运行形态。
+- **TS 迁移 + UI 重写（epic YUK-1351）2026-10-07 owner 指示开工**：[准备计划](docs/planning/2026-10-07-ts-migration-and-ui-rewrite-prep.md) 按路由合并交付（每条 TanStack 路由同时上线新 UI）。首批并行：**YUK-1338**（Pi + DBOS 状态版本/过期拒绝/重启恢复竖切，第一道 gate，不过 gate 不动生产）与 **YUK-1353**（视觉方向 loft）。UI 票（YUK-1353/1354/1357 及 P6 UI 子票）只交 Claude Opus 5.5；非 UI 开发按 AGENTS 常规选择。ADR 以 main 的 0066 为准。
+- **早期单收口（2026-10-07）**：YUK-100..500 的 20 张已在 Linear 逐张裁定——147/213/295/310/406/443/464 转 Todo，369 Canceled（被 1038 取代），其余设触发条件与 10-21 / 11-07 复查截止，到期未触发即取消；406 验收裁定连带 405/418/419。
 
 ## PARKED
 
@@ -29,11 +30,11 @@
 - YUK-1344：Tailscale 本机 HTTPS/鉴权和既有独立 peer 已验证，离家实体设备验证尚缺。
 - YUK-1329：通用发布与回退演练仍未完成。旧备份 helper 的 auto-purge 文案/清单不适用当前保留策略；此前 MiMo 发布的 R2 时序补证保留。本次入口发布全部最终备份在停写后，101表计数恢复一致、63附件完整。
 - YUK-1235：镜像外部 MCP/sharp 版本与 lock 漂移已有票；本轮无已证实可达 P0/P1，不扩张成依赖整治。
-- 其他线程 YUK-1325 / PR #1580 独立推进；不接管其工作树或批量标 Done。旧完成线程被 PR 通知唤醒后越界写入的风险继续由父线程独占 watch 约束，平台跟进仍待去重登记。
+- YUK-1325 / PR #1580：保留 `1be38edbc`、`1af72b427`、`3940d61f9`，正常合入 main `8841ce68a` 为 `e484efa60`；359 scoped tests、21 audits、typecheck/lint/build 与 lint ratchet 通过，无 high/critical 依赖告警。开发 transcript 与产品 MiMo/自主交付指导同时保留。writer 已释放，父线程负责最终 SDK/SQL/browser 回放、push、exact-head CI、review replies、Linear 与发布；P2 typed tracing 留 YUK-1339，不启动第三审。详情见 [Laminar 记录](docs/planning/2026-10-06-yuk1325-laminar.md)。旧完成线程越界写入风险仍由父线程独占 watch 约束，平台跟进待去重登记。
 
 ## BLOCKED-ON
 
-- 新安全修复尚未完成 exact-head CI/运行验收。先前真实超时没有判决行，global brief/幂等/最终保护检查未完成；旧验收脚本未ACK导致的 ingest failed/DLQ 保留。CI绿色不替代这些证据。
+- 365871dab 的 CI 与候选 HTTP 原key幂等、只读页面验收已通过；合入 main 后需新 exact-head CI/运行验收。先前真实超时没有判决行，global brief/幂等/最终保护检查未完成；旧验收脚本未ACK导致的 ingest failed/DLQ 保留。CI绿色不替代这些证据。
 - 无需 owner 追加日常授权。旧 Xiaomi402 不再阻塞新 Copilot；历史失败没有删除。
 - 默认会话入口已在生产修复；完整学习状态评估和自适应安排仍需逐条行为验收，不能以此次日用修复冒称产品完成。
 - 旧0f81整镜像读取新迁移副本兼容已验证；回退需刷新浏览器且恢复旧入口缺陷。数据库恢复仍须保护备份后新写入，不可自动覆盖。当前指针已更新且发布锁已释放。
