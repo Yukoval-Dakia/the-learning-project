@@ -1,6 +1,6 @@
 # 接续补充 — 1375 writer active / 1376 Todo
 
-T3子任务 yuk1375-relative-source-path-repair-20261008-v1（完整ID前缀node:delegated-task:command%3Amcp%3A8abc7d36-c3c9-4544-adaf-b15a177e2fab%3Adelegate-task%3A），codex gpt-6.1-sol high唯一代码writer，17:40Z task_status仍running/working，父不并发代码或测试。负责scripts/audit-schema-writes.ts及对应test，父仅docs/tracker。
+T3子任务 yuk1375-relative-source-path-repair-20261008-v1（完整ID前缀node:delegated-task:command%3Amcp%3A8abc7d36-c3c9-4544-adaf-b15a177e2fab%3Adelegate-task%3A），codex gpt-6.1-sol high唯一代码writer，本轮task_status实查仍running/working，父不并发代码或测试。负责scripts/audit-schema-writes.ts及对应test，父仅docs/tracker。
 
 Linear首次创建/mistakes子票transport失败；恢复后确认1358子票为空才重试，现已真实创建YUK-1376 Todo。范围/验收及ownership见票和1359退出文档。此前/tmp/yuk1358-mistakes-ticket-pending.md仅历史不确定记录，现在已消歧。
 
