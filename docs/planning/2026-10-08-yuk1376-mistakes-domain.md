@@ -47,3 +47,12 @@ native参考答案继续null：该读取路径没有持久化的可信reveal-pol
 初审固定002712b79，P0 NONE、两项P1。`anchorUnits`要求slot交集，遗漏合法仅依赖group evidence的unit；按单submission issued范围投影评分依据，又遗漏联合评估跨part unit及依赖完整范围的聚合器，导致本submission自己的合法图片消失。父已核scoring schema和assessment-verdict的冻结成员并集解析。唯一writer `yuk1376-native-p1-evidence-scope-repair-20261008-v1`在原四文件修复，先通过真实GET/DB复现。原95DB不能证明这两项通过，旧候选不进入runtime验收；修后只安排剩余一次验证审。
 
 隔离预检仅确认当前Agent TEST主release仍5aa2/9b76、四服务健康及当时未见部署锁。已保存002的源码archive用于准备，尚未构建镜像或启动服务。实际服务验收前仍须重新核锁、原子获取并通知owner。
+
+
+### P1修复及父复跑
+
+修复提交 `f2013412370d7dc802dcf84dc70db6b96068a90e` 仅改四个授权文件。group-only unit保留整组证据关联；联合评分范围从已验证effective evaluation的冻结input_snapshot读取，回答与附件仍限本submission。两项均有正常发布、提交、评估激活和GET读取的有效RED；新增七项覆盖targeted/all_units、三种聚合器、跨成员隔离及未发unit排除。
+
+作者102 DB、107 unit、typecheck/lint/build及四项audit通过。父独立检查262项hash全部匹配，并复跑两份scoped DB文件，102 passed、exit0，耗时11.52s。证据 `/tmp/yuk1376-native-p1-implementation-evidence.md`，父日志 `/tmp/yuk1376-native-p1-parent-db.log` 与 `-parent-hash-check.log`。DB由测试框架隔离，GET仍是进程内handler调用；未证明网络HTTP、真实图片字节或浏览器显示。
+
+最后一轮独立验证审 `yuk1376-native-p1-verification-review-20261008-v1` 已启动，codex/gpt-6.1-sol/xhigh，只读固定f201对e4a。准确head CI及运行验收待完成。没有两项既有P1之外的新actionable follow-up；其余边界保留在1376/1359，不另建重复票。

@@ -1,6 +1,6 @@
-# 当前交付 — native初审两项P1修复中
+# 当前交付 — native P1修复已验证，等待最后审查
 
-PR1599 head9dc2ad0ce。初审task yuk1376-native-independent-review-20261008-v1 completed/noPending，P0 NONE、P1两项：group-only unit无slot交集丢图；联合评分用单成员issued范围丢cross-part/聚合器图片。父已核源码分支，唯一writer yuk1376-native-p1-evidence-scope-repair-20261008-v1 running（codex/gpt6.1sol xhigh），只原四文件，先RED再修。原95DB/48unit不证明新finding已修。剩余一次验证审，禁止第三轮。候选002只做source archive到runtimeRoot/yuk1376-preflight-002712b79/source，未build镜像/启动服务。实际主环境5aa2/9b76四服务healthy、锁owner未见，仅只读，runtime owner已收到未来隔离窗口预告。父不并发代码/测试。
+修复f2013412370d7dc802dcf84dc70db6b96068a90e已提交，writer completed/noPending，四文件、树clean。两项有效RED与GREEN封存于/tmp/yuk1376-native-p1-implementation-evidence.md；作者102DB/107unit/typecheck/lint/build/四audit通过。父独立262项hash全匹配，102DB exit0，日志/tmp/yuk1376-native-p1-parent-db.log。唯一剩余验证审 task yuk1376-native-p1-verification-review-20261008-v1，codex/gpt-6.1-sol/xhigh，只读固定f201对e4a，已running，禁止第三轮。PR1599等待新head CI与审查裁决。未启动隔离服务、未持部署锁；旧002源码archive不能用于修复后验收。reference/full media/Start/browser及旧入口退出仍待核销。
 
 # 当前交付 — native读取实现交回
 
