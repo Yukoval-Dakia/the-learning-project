@@ -1,7 +1,9 @@
+import { createHash } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MistakeListResponseSchema } from '@/capabilities/ingestion/api/contracts';
 import { GET } from '@/capabilities/ingestion/api/mistakes';
+import { ingestionCapability } from '@/capabilities/ingestion/manifest';
 import { readMistakes } from '@/capabilities/ingestion/public';
 import {
   commitFormalAttempt,
@@ -24,6 +26,7 @@ import type { Db } from '@/db/client';
 import {
   assessment_issuance,
   assessment_submission,
+  evaluation,
   evaluation_effective_head,
   evaluation_group,
   event,
@@ -40,6 +43,7 @@ import {
   normalizeQuestionGroupToContract,
 } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
+import { buildHonoApp } from '../../../server/app';
 import { correctPaperFixture } from '../../../tests/fixtures/assessment-paper';
 import { handwritingFixture } from '../../../tests/fixtures/native-solo-http';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -95,6 +99,7 @@ async function publication(
   slots: ResponseSlotT[] = [OPEN, TEXT],
   materials: SharedMaterialT[] = [],
   scoringBasis?: (basis: ScoringBasisT) => ScoringBasisT,
+  materialParts?: Readonly<Record<string, readonly string[]>>,
 ) {
   const now = new Date();
   await db
@@ -131,9 +136,14 @@ async function publication(
     rows.filter((row) => row.parent_question_id === 'root'),
   );
   contract.structure.materials.push(...materials);
-  contract.structure.parts
-    .find((part) => part.part_id === 'p1')
-    ?.material_ids.push(...materials.map((material) => material.material_id));
+  for (const part of contract.structure.parts) {
+    part.material_ids.push(
+      ...(materialParts?.[part.part_id] ??
+        (materialParts === undefined && part.part_id === 'p1'
+          ? materials.map((material) => material.material_id)
+          : [])),
+    );
+  }
   contract.structure.materials.push({
     material_id: 'private',
     kind: 'plaintext',
@@ -282,6 +292,51 @@ async function row(db: Db) {
   return (await readMistakes(db)).rows[0];
 }
 
+async function publicMaterialRead(db: Db) {
+  vi.stubEnv('INTERNAL_TOKEN', 'synthetic-material-test-token');
+  const app = buildHonoApp([ingestionCapability], { epochGate: async () => ({ runnable: true }) });
+  const response = await app.request('/api/mistakes', {
+    headers: { 'x-internal-token': 'synthetic-material-test-token' },
+  });
+  expect(response.status).toBe(200);
+  const wire = MistakeListResponseSchema.parse(await response.json());
+  expect(await readMistakes(db)).toEqual(wire);
+  return wire.rows;
+}
+
+const materialKinds = [
+  { kind: 'figure', assetKind: 'image', mime: 'image/png' },
+  { kind: 'passage', assetKind: 'plaintext', mime: 'text/markdown' },
+  { kind: 'table', assetKind: 'plaintext', mime: 'text/markdown' },
+  { kind: 'audio', assetKind: 'audio', mime: 'audio/mpeg' },
+  { kind: 'video', assetKind: 'video', mime: 'video/mp4' },
+  { kind: 'pdf', assetKind: 'pdf', mime: 'application/pdf' },
+  { kind: 'plaintext', assetKind: 'plaintext', mime: 'text/plain' },
+] satisfies { kind: SharedMaterialT['kind']; assetKind: string; mime: string }[];
+
+async function binaryMaterial(db: Db, fixture: (typeof materialKinds)[number]) {
+  const bytes = Buffer.from(`synthetic frozen ${fixture.kind} bytes\n`);
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const asset_id = `source_${fixture.kind}`;
+  await db.insert(source_asset).values({
+    id: asset_id,
+    kind: fixture.assetKind,
+    storage_key: `PRIVATE_STORAGE/${asset_id}`,
+    mime_type: fixture.mime,
+    byte_size: bytes.length,
+    sha256,
+    provenance: { source: 'PRIVATE_PROVENANCE' },
+    created_at: new Date(),
+  });
+  return {
+    material_id: `material_${fixture.kind}`,
+    kind: fixture.kind,
+    asset: { asset_id, digest: `sha256:${sha256}` },
+    caption: `冻结${fixture.kind}标题`,
+    alt_text: '保持原有换行\n与公开替代说明 $v+c=18$。',
+  } satisfies SharedMaterialT;
+}
+
 async function jointAttempt(db: Db, images: GroupEvidenceT[][]) {
   const submissions = [];
   for (const [index, partId] of ['p1', 'p2'].entries()) {
@@ -389,7 +444,278 @@ async function cloneEvidence(
 
 describe('native mistake immutable evidence DB projection', () => {
   beforeEach(resetDb);
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  it.each(materialKinds)(
+    'reads complete frozen $kind public material through authenticated GET and readMistakes',
+    async (kind) => {
+      const db = testDb();
+      const material = await binaryMaterial(db, kind);
+      const fixture = await publication(db, [OPEN, TEXT], [material]);
+      await attempt(db, { anchor: 'p1' });
+      await db.update(question).set({
+        prompt_md: 'MUTABLE_PROMPT',
+        reference_md: 'MUTABLE_PRIVATE_SOLUTION',
+        image_refs: ['mutable_image'],
+        metadata: { passage: 'MUTABLE_MATERIAL' },
+        updated_at: new Date(Date.now() + 1000),
+      });
+      const before = await Promise.all([
+        db.select().from(event),
+        db.select().from(assessment_submission),
+        db.select().from(evaluation),
+        db.select().from(question_revision),
+        db.select().from(assessment_issuance),
+        db.select().from(source_asset),
+        db.select().from(learning_record),
+        db.select().from(question),
+      ]);
+      const calls = fixture.execute.mock.calls.length;
+      const cards = await publicMaterialRead(db);
+      expect(cards).toHaveLength(1);
+      expect(cards[0].prompt_materials).toContainEqual({
+        material_id: material.material_id,
+        kind: material.kind,
+        asset_id: material.asset.asset_id,
+        caption: material.caption,
+        alt_text: material.alt_text,
+        availability: 'available',
+      });
+      expect(cards[0].reference_md).toBeNull();
+      expect(cards[0].wrong_answer_image_refs).toEqual([]);
+      expect(JSON.stringify(cards)).not.toMatch(/PRIVATE|SECRET|MUTABLE/);
+      expect(
+        await Promise.all([
+          db.select().from(event),
+          db.select().from(assessment_submission),
+          db.select().from(evaluation),
+          db.select().from(question_revision),
+          db.select().from(assessment_issuance),
+          db.select().from(source_asset),
+          db.select().from(learning_record),
+          db.select().from(question),
+        ]),
+      ).toEqual(before);
+      expect(fixture.execute).toHaveBeenCalledTimes(calls);
+    },
+  );
+
+  it.each(['passage', 'table', 'plaintext'] satisfies SharedMaterialT['kind'][])(
+    'keeps full inline %s bytes when there is no source asset row or its metadata has changed',
+    async (kind) => {
+      const db = testDb();
+      const content_md =
+        '阅读材料：雨水流速与坡度并非单向因果。\n\n' +
+        '- 控制水量\n  - 重复三次，排除单位歧义\n$ v = \\sqrt{2gh} $\n|坡度|流速|备注|\n|5°|0.4|边界 0|\n'.repeat(
+          80,
+        );
+      const material: SharedMaterialT = {
+        material_id: 'long_inline',
+        kind,
+        asset: { asset_id: 'inline_text', digest: 'frozen-inline' },
+        caption: '长材料，全文保持',
+        alt_text: '说明与正文均公开',
+        content_md,
+      };
+      await publication(db, [OPEN, TEXT], [material]);
+      await attempt(db, { anchor: 'p1' });
+      const before = await publicMaterialRead(db);
+      expect(before[0].prompt_md).toHaveLength(200);
+      expect(before[0].prompt_materials).toContainEqual({
+        material_id: material.material_id,
+        kind,
+        caption: material.caption,
+        alt_text: material.alt_text,
+        content_md,
+        availability: 'inline',
+      });
+      await db.insert(source_asset).values({
+        id: 'inline_text',
+        kind: 'image',
+        mime_type: 'image/png',
+        storage_key: 'MUTABLE',
+        byte_size: 20,
+        sha256: 'a'.repeat(64),
+        created_at: new Date(),
+      });
+      await db.update(question).set({ prompt_md: 'MUTABLE', updated_at: new Date() });
+      expect(await publicMaterialRead(db)).toEqual(before);
+    },
+  );
+
+  it('isolates selected failed faces, unissued parts and all existing private material namespaces', async () => {
+    const db = testDb();
+    const materials: SharedMaterialT[] = [
+      {
+        material_id: 'p1_only',
+        kind: 'plaintext',
+        asset: { asset_id: 'txt_p1', digest: 'one' },
+        content_md: 'P1_PUBLIC',
+      },
+      {
+        material_id: 'p2_only',
+        kind: 'table',
+        asset: { asset_id: 'txt_p2', digest: 'two' },
+        content_md: 'P2_PUBLIC',
+      },
+      {
+        material_id: 'p3_only',
+        kind: 'passage',
+        asset: { asset_id: 'txt_p3', digest: 'three' },
+        content_md: 'UNISSUED',
+      },
+      {
+        material_id: 'explicit_private',
+        kind: 'audio',
+        asset: { asset_id: 'custom_private', digest: 'private' },
+        visibility: 'private',
+        caption: 'PRIVATE_CAPTION',
+        alt_text: 'PRIVATE_ALT',
+        content_md: 'PRIVATE_BYTES',
+      },
+      {
+        material_id: 'solution',
+        kind: 'plaintext',
+        asset: { asset_id: 'sol_0123456789ab', digest: 'solution' },
+        visibility: 'public',
+        content_md: 'SECRET_SOLUTION',
+      },
+    ];
+    await publication(db, [OPEN, TEXT], materials, undefined, {
+      p1: ['p1_only', 'explicit_private', 'solution'],
+      p2: ['p2_only'],
+      p3: ['p3_only'],
+    });
+    await attempt(db, { anchor: 'p1', key: 'first' });
+    await attempt(db, { anchor: 'root', key: 'group' });
+    await attempt(db, { anchor: 'p2', partIds: ['p2'], entries: [TEXT_ENTRY], key: 'second' });
+    const cards = await publicMaterialRead(db);
+    const ids = (questionId: string) =>
+      cards
+        .find((card) => card.question_id === questionId)
+        ?.prompt_materials.map((material) => material.material_id);
+    // Normalized public parent material is shared by all issued parts.
+    expect(ids('p1')).toContain('p1_only');
+    expect(ids('p1')).not.toContain('p2_only');
+    expect(ids('p2')).toContain('p2_only');
+    expect(ids('p2')).not.toContain('p1_only');
+    expect(ids('root')).toEqual(expect.arrayContaining(['p1_only', 'p2_only']));
+    expect(JSON.stringify(cards)).not.toMatch(
+      /UNISSUED|PRIVATE|SECRET|explicit_private|custom_private|sol_0123456789ab|rub_123456789abc/,
+    );
+  });
+
+  it.each(['missing', 'digest', 'malformed_digest', 'kind', 'mime', 'size'])(
+    'preserves binary descriptions and frozen text but removes downloadable identity for %s material metadata',
+    async (damage) => {
+      const db = testDb();
+      const material = await binaryMaterial(db, materialKinds[0]);
+      const withText = { ...material, content_md: 'FROZEN_PUBLIC_TRANSCRIPT\n'.repeat(50) };
+      const fixture = await publication(db, [OPEN, TEXT], [withText]);
+      const answerImage = await handwritingFixture(db);
+      await attempt(db, { anchor: 'p1', images: [answerImage] });
+      if (damage === 'missing')
+        await db.delete(source_asset).where(eq(source_asset.id, material.asset.asset_id));
+      else
+        await db
+          .update(source_asset)
+          .set(
+            damage === 'digest'
+              ? { sha256: 'f'.repeat(64) }
+              : damage === 'malformed_digest'
+                ? { sha256: 'invalid' }
+                : damage === 'kind'
+                  ? { kind: 'pdf' }
+                  : damage === 'mime'
+                    ? { mime_type: 'text/html' }
+                    : { byte_size: 0 },
+          )
+          .where(eq(source_asset.id, material.asset.asset_id));
+      const calls = fixture.execute.mock.calls.length;
+      const cards = await publicMaterialRead(db);
+      const projected = cards[0].prompt_materials.find(
+        (item) => item.material_id === material.material_id,
+      );
+      expect(projected).toEqual({
+        material_id: material.material_id,
+        kind: material.kind,
+        caption: material.caption,
+        alt_text: material.alt_text,
+        content_md: withText.content_md,
+        availability: damage === 'missing' ? 'missing' : 'unavailable',
+      });
+      expect(projected).not.toHaveProperty('asset_id');
+      expect(cards[0].wrong_answer_image_refs).toEqual([answerImage.evidence.asset.asset_id]);
+      expect(cards[0].wrong_answer_md).toContain('原答一');
+      expect(cards[0].reference_md).toBeNull();
+      expect(fixture.execute).toHaveBeenCalledTimes(calls);
+    },
+  );
+
+  it.each(materialKinds)(
+    'distinguishes missing and mismatched external $kind assets through both public readers',
+    async (kind) => {
+      const db = testDb();
+      const material = await binaryMaterial(db, kind);
+      await publication(db, [OPEN, TEXT], [material]);
+      await attempt(db, { anchor: 'p1' });
+      for (const patch of [
+        { kind: 'unknown', mime_type: kind.mime, sha256: material.asset.digest.slice(7) },
+        {
+          kind: kind.assetKind,
+          mime_type: 'application/octet-stream',
+          sha256: material.asset.digest.slice(7),
+        },
+        { kind: kind.assetKind, mime_type: kind.mime, sha256: 'f'.repeat(64) },
+      ]) {
+        await db
+          .update(source_asset)
+          .set(patch)
+          .where(eq(source_asset.id, material.asset.asset_id));
+        const card = (await publicMaterialRead(db))[0];
+        expect(card.prompt_materials).toContainEqual({
+          material_id: material.material_id,
+          kind: material.kind,
+          caption: material.caption,
+          alt_text: material.alt_text,
+          availability: 'unavailable',
+        });
+        expect(JSON.stringify(card.prompt_materials)).not.toContain(material.asset.asset_id);
+      }
+      await db.delete(source_asset).where(eq(source_asset.id, material.asset.asset_id));
+      const card = (await publicMaterialRead(db))[0];
+      expect(card.prompt_materials).toContainEqual({
+        material_id: material.material_id,
+        kind: material.kind,
+        caption: material.caption,
+        alt_text: material.alt_text,
+        availability: 'missing',
+      });
+      expect(card.wrong_answer_md).toContain('原答一');
+    },
+  );
+
+  it('rejects unauthenticated material reads before exposing frozen content', async () => {
+    const db = testDb();
+    const material = await binaryMaterial(db, materialKinds[0]);
+    await publication(db, [OPEN, TEXT], [material]);
+    await attempt(db, { anchor: 'p1' });
+    vi.stubEnv('INTERNAL_TOKEN', 'synthetic-material-test-token');
+    const app = buildHonoApp([ingestionCapability], {
+      epochGate: async () => ({ runnable: true }),
+    });
+    for (const headers of [new Headers(), new Headers({ 'x-internal-token': 'wrong-token' })]) {
+      const response = await app.request('/api/mistakes', { headers });
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual({ error: 'unauthorized' });
+    }
+    expect((await publicMaterialRead(db))[0].prompt_materials).toContainEqual(
+      expect.objectContaining({ availability: 'available' }),
+    );
+  });
 
   it('P1 preserves all_units images when the frozen basis has only a group-evidence unit through GET and readMistakes', async () => {
     const db = testDb();
@@ -914,6 +1240,7 @@ describe('native mistake immutable evidence DB projection', () => {
       );
       expect(card).toEqual({
         prompt_md: '',
+        prompt_materials: [],
         reference_md: null,
         wrong_answer_md: '',
         wrong_answer_image_refs: [],
@@ -953,7 +1280,8 @@ describe('native mistake immutable evidence DB projection', () => {
 
   it('projects the page through a real read-only database transaction', async () => {
     const db = testDb();
-    await publication(db);
+    const material = await binaryMaterial(db, materialKinds[0]);
+    await publication(db, [OPEN, TEXT], [material]);
     const image = await handwritingFixture(db);
     const original = await attempt(db, { images: [image] });
     const projected = await db.transaction(async (tx) => {
@@ -963,6 +1291,9 @@ describe('native mistake immutable evidence DB projection', () => {
     expect(projected.get(original.failure.attempt_event_id)?.wrong_answer_image_refs).toEqual([
       image.evidence.asset.asset_id,
     ]);
+    expect(projected.get(original.failure.attempt_event_id)?.prompt_materials).toContainEqual(
+      expect.objectContaining({ material_id: material.material_id, availability: 'available' }),
+    );
   });
 
   it('handles absent submissions and bad anchors without falling back to mutable questions', async () => {
@@ -980,6 +1311,7 @@ describe('native mistake immutable evidence DB projection', () => {
         (await readNativeMistakeEvidence(db, [failure])).get(failure.attempt_event_id),
       ).toEqual({
         prompt_md: '',
+        prompt_materials: [],
         reference_md: null,
         wrong_answer_md: '',
         wrong_answer_image_refs: [],

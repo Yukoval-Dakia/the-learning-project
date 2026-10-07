@@ -7,10 +7,12 @@ import {
   EvaluationInputSnapshot,
   type EvidenceAttachmentT,
   GroupEvidence,
+  type PublicMaterialViewT,
   PublishedQuestionRevision,
   ResponseSet,
   type ResponseSlotT,
   type ScoringUnitT,
+  type SharedMaterialT,
   type SlotResponseT,
   isBlankSlotResponse,
   projectIssuedScoringBasis,
@@ -33,15 +35,46 @@ import { issuanceRowToContract, revisionRowToContract } from '@/kernel/records/a
 
 type NativeMistakeEvidence = Pick<
   MistakeProjection,
-  'prompt_md' | 'reference_md' | 'wrong_answer_md' | 'wrong_answer_image_refs'
+  'prompt_md' | 'prompt_materials' | 'reference_md' | 'wrong_answer_md' | 'wrong_answer_image_refs'
 >;
 
 const unavailable = (): NativeMistakeEvidence => ({
   prompt_md: '',
+  prompt_materials: [],
   reference_md: null,
   wrong_answer_md: '',
   wrong_answer_image_refs: [],
 });
+
+function materialAssetMatches(
+  kind: PublicMaterialViewT['kind'],
+  asset: typeof source_asset.$inferSelect,
+) {
+  if (asset.byte_size <= 0 || !/^[0-9a-f]{64}$/.test(asset.sha256)) return false;
+  switch (kind) {
+    case 'figure':
+      return (
+        asset.kind === 'image' &&
+        ['image/png', 'image/jpeg', 'image/webp'].includes(asset.mime_type)
+      );
+    case 'audio':
+      return asset.kind === 'audio' && /^audio\/[a-z0-9.+-]+$/.test(asset.mime_type);
+    case 'video':
+      return asset.kind === 'video' && /^video\/[a-z0-9.+-]+$/.test(asset.mime_type);
+    case 'pdf':
+      return asset.kind === 'pdf' && asset.mime_type === 'application/pdf';
+    case 'passage':
+    case 'table':
+    case 'plaintext':
+      return (
+        asset.kind === 'plaintext' && ['text/plain', 'text/markdown'].includes(asset.mime_type)
+      );
+    default: {
+      const exhaustive: never = kind;
+      return exhaustive;
+    }
+  }
+}
 
 function optionText(option: { label: string; text: string; option_id: string }): string {
   return `${option.label} [${option.option_id}] ${option.text}`;
@@ -190,6 +223,10 @@ export async function readNativeMistakeEvidence(db: Db | Tx, failures: readonly 
       : [];
   const evaluationById = new Map(evaluations.map((row) => [row.evaluation_id, row]));
   const imagesByAttempt = new Map<string, EvidenceAttachmentT[]>();
+  const materialsByAttempt = new Map<
+    string,
+    { view: PublicMaterialViewT; asset: SharedMaterialT['asset'] }[]
+  >();
 
   for (const failure of native) {
     const evidence = unavailable();
@@ -227,14 +264,24 @@ export async function readNativeMistakeEvidence(db: Db | Tx, failures: readonly 
     const parts = new Set(faces.map((face) => face.part_id));
     const slots = dto.response_spec.slots.filter((slot) => parts.has(slot.part_id));
     const materialIds = new Set(faces.flatMap((face) => face.material_ids));
+    const selectedMaterials = dto.materials.filter((material) =>
+      materialIds.has(material.material_id),
+    );
+    materialsByAttempt.set(
+      failure.attempt_event_id,
+      selectedMaterials.flatMap((view) => {
+        const frozen = revision.structure.materials.find(
+          (material) => material.material_id === view.material_id,
+        );
+        return frozen ? [{ view, asset: frozen.asset }] : [];
+      }),
+    );
     const multipleParts = revision.structure.parts.length > 1;
     evidence.prompt_md = [
-      ...dto.materials
-        .filter((material) => materialIds.has(material.material_id))
-        .map(
-          (material) =>
-            material.content_md ?? [material.caption, material.alt_text].filter(Boolean).join('\n'),
-        ),
+      ...selectedMaterials.map(
+        (material) =>
+          material.content_md ?? [material.caption, material.alt_text].filter(Boolean).join('\n'),
+      ),
       ...faces.map((face) =>
         [
           multipleParts ? `${face.question_no ?? ''} [${face.part_id}]` : '',
@@ -328,9 +375,13 @@ export async function readNativeMistakeEvidence(db: Db | Tx, failures: readonly 
 
   const assetIds = [
     ...new Set(
-      [...imagesByAttempt.values()].flatMap((images) =>
-        images.map((image) => image.asset.asset_id),
-      ),
+      [...imagesByAttempt.values()]
+        .flatMap((images) => images.map((image) => image.asset.asset_id))
+        .concat(
+          [...materialsByAttempt.values()].flatMap((materials) =>
+            materials.map(({ asset }) => asset.asset_id),
+          ),
+        ),
     ),
   ];
   const assets =
@@ -338,6 +389,27 @@ export async function readNativeMistakeEvidence(db: Db | Tx, failures: readonly 
       ? await db.select().from(source_asset).where(inArray(source_asset.id, assetIds))
       : [];
   const assetsById = new Map(assets.map((asset) => [asset.id, asset]));
+  for (const [attemptId, materials] of materialsByAttempt) {
+    const evidence = result.get(attemptId);
+    if (!evidence) continue;
+    evidence.prompt_materials = materials.map(({ view, asset: frozenAsset }) => {
+      const { asset_id, ...text } = view;
+      if (
+        (text.kind === 'passage' || text.kind === 'table' || text.kind === 'plaintext') &&
+        text.content_md !== undefined
+      ) {
+        return { ...text, kind: text.kind, content_md: text.content_md, availability: 'inline' };
+      }
+      const asset = assetsById.get(asset_id);
+      if (!asset) return { ...text, availability: 'missing' };
+      if (
+        !materialAssetMatches(view.kind, asset) ||
+        frozenAsset.digest !== `sha256:${asset.sha256}`
+      )
+        return { ...text, availability: 'unavailable' };
+      return { ...view, availability: 'available' };
+    });
+  }
   for (const [attemptId, images] of imagesByAttempt) {
     const evidence = result.get(attemptId);
     if (!evidence) continue;
