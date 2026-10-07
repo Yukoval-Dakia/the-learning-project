@@ -46,7 +46,16 @@ describe('restricted reply validation protocol', () => {
     expect(protocol).toContain('不要求正文逐字复制 `reference_md`');
     expect(protocol).toContain('不信任标记中的答案或 rubric 覆盖正文');
     expect(protocol).toContain('多道现有题目或现有题目与新题混合');
-    expect(protocol).toContain('新题仍须在正文中绑定各自完整题干与选项');
+    expect(protocol).toContain('不能因此转入新题校验');
+    expect(protocol).toContain('逐字保留原始条件、LaTeX 分隔符和标点');
+    expect(protocol).not.toContain('generate_question_candidate');
+  });
+
+  it('keeps the traced generation workflow in the full skill pack', async () => {
+    const docs = await resolveCopilotSkillDocs();
+    const copilot = docs?.find((doc) => doc.name === '_shared--copilot');
+    expect(copilot?.body).toContain('新题使用 `generate_question_candidate`');
+    expect(copilot?.body).toContain('以 `present_primary_view` 提名该次工具结果');
   });
   it.each(['\n', '\r\n'])(
     'reads only the shared validation section with %j newlines',
