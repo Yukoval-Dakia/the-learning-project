@@ -178,3 +178,9 @@ The parent also ran `audit:schema`, `audit:partition`, `audit:api-client`,
 `audit:profile`, `audit:task-census`, `audit:draft-status`, and
 `audit:draft-status-reads`; every command exited zero. `git diff --check` passed.
 These remain local scripted-provider checks, not live-provider acceptance.
+
+After merging `origin/main 42987dfd7` into `196360b27`, frozen install,
+typecheck, lint (297 warnings, zero errors), full build and the two streaming DB
+tests passed again. The merge resolved only PLAN/handoff prose conflicts;
+upstream added the isolated DBOS test dependency and gate. Logs:
+`/tmp/yuk1365-main-{install,typecheck,lint,build,stream-db}.log`.
