@@ -1179,3 +1179,72 @@ describe('task budget configuration snapshots', () => {
     },
   );
 });
+
+it('observes capability scopes through the shared port with the runner trace context', async () => {
+  const { observeTaskOperation } = await import('@/ai/task-observation');
+  const { __setTraceExporterForTests, traceOperation } = await import('./laminar-tracing');
+  const { memoryTraceExporter, traceField } = await import('./laminar-tracing.test-support');
+  const { records, exporter } = memoryTraceExporter();
+  __setTraceExporterForTests(exporter);
+  try {
+    const businessResult = { accepted: false, reply: 'ordinary learner explanation' };
+    const finalize = vi.fn(async (reportOutcome: (outcome: 'rejected') => void) => {
+      reportOutcome('rejected');
+      return businessResult;
+    });
+    expect(
+      await observeTaskOperation(
+        { operation: 'run', taskKind: 'CopilotTask', logicalRunId: 'logical-synthetic' },
+        async (reportOutcome) => {
+          await traceOperation('task.run', { task_kind: 'CopilotTask' }, async () => undefined);
+          const result = await observeTaskOperation(
+            { operation: 'finalize', taskKind: 'CopilotTask', taskRunId: 'task-synthetic' },
+            finalize,
+          );
+          reportOutcome('rejected');
+          return result;
+        },
+      ),
+    ).toBe(businessResult);
+    expect(finalize).toHaveBeenCalledOnce();
+    expect(records.map((record) => record.name)).toEqual([
+      'copilot.run',
+      'task.run',
+      'copilot.finalize',
+    ]);
+    expect(records[1].parent).toBe(records[0].context);
+    expect(records[2].parent).toBe(records[0].context);
+    expect(records[0].attributes[traceField('logical_run_id')]).toBe('logical-synthetic');
+    expect(records[2].attributes[traceField('task_run_id')]).toBe('task-synthetic');
+    expect(records[2].attributes[traceField('business_outcome')]).toBe('rejected');
+    expect(records.every((record) => record.ends === 1)).toBe(true);
+  } finally {
+    __setTraceExporterForTests();
+  }
+});
+
+it('preserves exactly-once business execution and errors when capability telemetry is disabled or fails', async () => {
+  const { observeTaskOperation } = await import('@/ai/task-observation');
+  const { __setTraceExporterForTests } = await import('./laminar-tracing');
+  const { memoryTraceExporter } = await import('./laminar-tracing.test-support');
+  for (const exporter of [
+    undefined,
+    {
+      ...memoryTraceExporter().exporter,
+      start: () => {
+        throw new Error('telemetry unavailable');
+      },
+    },
+  ]) {
+    __setTraceExporterForTests(exporter);
+    const failure = new Error('business failure');
+    const execute = vi.fn(async () => {
+      throw failure;
+    });
+    await expect(
+      observeTaskOperation({ operation: 'run', taskKind: 'CopilotTask' }, execute),
+    ).rejects.toBe(failure);
+    expect(execute).toHaveBeenCalledOnce();
+  }
+  __setTraceExporterForTests();
+});

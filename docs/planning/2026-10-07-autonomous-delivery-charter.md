@@ -22,7 +22,7 @@
 
 - Linear 是任务、缺陷和跟进真相源；先去重，状态与实际结果一致。
 - GitHub 保存可审查的代码与交付记录；保留独立 review、真实检查和仓库合并门禁，不以授权跳过正确性。
-- 使用 T3 编排与已安装工具。owner 已纠正：“我指的就是产品内的ai工作，不是开发工作。”统一目标为 Loom 的判题/评分、辅导/Copilot、记忆整理/压缩、规划及其他生成式多模态调用。产品 provider/model 为 `opencode-go / mimo-v2.6-pro`，通过现有全局配置接线；T3 的 `providerInstanceId=opencode` 是开发编排标识，不能混作产品 provider。开发代理沿用 AGENTS 的 `gpt-6.1-sol high` 常规选择。旧“只统一开发模型、产品路由未授权”范围解释已作废。产品路由接线与运行验证见 [YUK-1341 迁移说明](2026-10-07-yuk1341-product-mimo-routing.md)。角色与浏览器按任务选择。
+- 使用 T3 编排与已安装工具。owner 已纠正：“我指的就是产品内的ai工作，不是开发工作。”统一目标为 Loom 的判题/评分、辅导/Copilot、记忆整理/压缩、规划及其他生成式多模态调用。产品 provider/model 为 `opencode-go / mimo-v2.6-pro`，通过现有全局配置接线；T3 的 `providerInstanceId=opencode` 是开发编排标识，不能混作产品 provider。开发代理沿用 AGENTS 的 `gpt-6.1-sol high` 常规选择；例外（owner 2026-10-07）：UI 交互与视觉开发（含 UI 重写的设计、实施与视觉复核）只交给 Claude Opus 5.5，不交给 GPT/Codex 或 MiMo。旧“只统一开发模型、产品路由未授权”范围解释已作废。产品路由接线与运行验证见 [YUK-1341 迁移说明](2026-10-07-yuk1341-product-mimo-routing.md)。角色与浏览器按任务选择。
 - 一个工作树仅一个代码写入者；先识别现有工作与资源占用，避免抢写、重复部署和重复计费。并行写入使用隔离工作树。
 - 本机只跑匹配改动的 scoped tests 与适用静态检查、构建；完整测试门禁交给 exact-head GitHub CI。
 - 用户可见的交付需要实际浏览器/接口/数据效果证据；模型质量需要实际输出证据，不能用工具调用成功或替身测试代替。

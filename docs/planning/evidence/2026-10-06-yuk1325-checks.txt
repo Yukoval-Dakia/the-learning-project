@@ -1,0 +1,81 @@
+YUK-1325 local verification evidence — 2026-10-06
+Worktree: /tmp/tlp-laminar-yuk1325
+Branch: feat/yuk-1325-laminar
+Base: fb5ee31d8fabdea15b60a80c10738786de675529
+Node: v26.10.0; pnpm: 11.13.1; Vitest: 4.1.10
+All final gate commands returned exit code 0.
+No full pnpm test, Laminar upload, real provider call, SQL acceptance, browser acceptance, independent review, push, PR, or deployment.
+
+Install commands (completed before implementation gates):
+pnpm install --frozen-lockfile --store-dir /tmp/yuk1325-pnpm-store
+pnpm add -w @lmnr-ai/lmnr@0.8.49 --save-exact --store-dir /tmp/yuk1325-pnpm-store
+Frozen install completed in 1m 35.9s; dependency add completed in 3m 5.9s.
+
+Gate environment:
+cwd=/tmp/tlp-laminar-yuk1325
+NODE_ENV=test
+npm_config_store_dir=/tmp/yuk1325-pnpm-store
+PATH starts with repository-pinned pnpm executable directory:
+/Users/yuqi/Library/pnpm/package-manager-store/v11/links/@pnpm/exe/11.13.1/7ed4c987d91254c958e70391e5855a23d5c67eb363ae7c283336ac9927a681a0/bin
+
+Reproduction commands for the verified target sets:
+pnpm vitest run --config vitest.unit.config.ts src/server/ai/laminar-tracing.test.ts src/server/ai/pi-agent-adapter.tracing.test.ts src/server/ai/pi-agent-adapter.test.ts src/server/ai/runner.stream-collect.test.ts src/server/ai/run-lifecycle.test.ts src/server/ai/pi-usage-evidence.test.ts src/server/ai/runner.seam.test.ts src/server/ai/runner.provider-admission.test.ts src/server/ai/run-lifecycle.admission.test.ts
+pnpm vitest run --config vitest.unit.config.ts server/shutdown.unit.test.ts src/server/boss/shutdown.test.ts src/server/boss/start-worker.test.ts src/capabilities/copilot/server/copilot-execution.unit.test.ts
+pnpm vitest run --config vitest.unit.config.ts src/capabilities/practice/server/judge/pi-model-executor.unit.test.ts
+pnpm typecheck
+pnpm lint
+pnpm build
+git diff --check
+Local socket permission was granted for the shutdown fixture suite; no production services were contacted.
+
+AI unit suite
+Raw final log SHA256: 69bb0e3409c90c4a286b76244c5ef7f383e101263f8f00fcaa329033807b87d9
+Test Files  9 passed (9)
+      Tests  169 passed (169)
+   Start at  22:09:40
+   Duration  3.38s (transform 7.47s, setup 0ms, import 22.26s, tests 764ms, environment 1ms)
+
+Shutdown/worker/Copilot unit suite
+Raw final log SHA256: 9b298f7b3a66963d2aa5278a5406583847277fdcc31db364193d9d0c2f8710b3
+Test Files  4 passed (4)
+      Tests  55 passed (55)
+   Start at  22:09:44
+   Duration  10.02s (transform 8.53s, setup 0ms, import 15.03s, tests 8.28s, environment 0ms)
+
+Native assessment unit suite
+Raw final log SHA256: 2fee876829057485849763e379c0f7930dac9be2f558f904baa496822400bbbc
+Test Files  1 passed (1)
+      Tests  34 passed (34)
+   Start at  22:11:03
+   Duration  1.50s (transform 571ms, setup 0ms, import 1.30s, tests 27ms, environment 0ms)
+
+Typecheck
+Raw final log SHA256: 8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92
+$ tsc --noEmit
+
+Lint
+Raw final log SHA256: 8d96f8a1b8a029a58176e4949908a156663ebb5c37077a1ec54c0e56f670a711
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 277.
+Checked 2881 files in 2s. No fixes applied.
+Found 297 warnings.
+
+Build
+Raw final log SHA256: 4c256eaacbaf6363650b03b24938ae44d377d985ca36da08c2d545fdaf83acc7
+$ pnpm rw:web:build && pnpm build:server && pnpm build:worker && pnpm build:migrate
+$ vite build --config web/vite.config.ts
+✓ built in 752ms
+$ esbuild server/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/server.cjs --external:pg-native --external:sharp --external:better-sqlite3 --external:bufferutil --external:utf-8-validate --external:@hyzyla/pdfium --define:process.env.NODE_ENV=\"production\"
+  dist/server.cjs  40.7mb ⚠️
+⚡ Done in 1527ms
+$ esbuild scripts/worker.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/worker.cjs --external:pg-native --external:sharp --external:better-sqlite3 --external:bufferutil --external:utf-8-validate --define:process.env.NODE_ENV=\"production\"
+  dist/worker.cjs  40.8mb ⚠️
+⚡ Done in 877ms
+$ esbuild scripts/migrate.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/migrate.cjs --external:pg-native --external:bufferutil --external:utf-8-validate --external:@earendil-works/* --external:@modelcontextprotocol/sdk --external:@lmnr-ai/lmnr --define:process.env.NODE_ENV=\"production\"
+  dist/migrate.cjs  5.1mb ⚠️
+⚡ Done in 457ms
+
+Total: 14 files, 258 tests passed (169 + 55 + 34).
+Lint: 297 warnings, no errors. Build: web/server/worker/migration passed.
+Migration bundle inspection: no bundled @lmnr-ai/lmnr implementation/debug runtime found.
+git diff --check passed before commit preparation.

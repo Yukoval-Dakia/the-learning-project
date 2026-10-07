@@ -1,5 +1,7 @@
 # YUK-1360 dependency integration evidence
 
+The latest section below covers main Laminar source integration. Earlier counts and revision hashes are historical receipts. Owner's current override limits the main runtime to Agent TEST ONLY and excludes all runtime operations from this writer.
+
 This lane repairs the fixture contract blocker in [PR #1584](https://github.com/Yukoval-Dakia/the-learning-project/pull/1584) and tests the integrated dependency artifact. The parent owns independent review, PR updates, push, exact-head CI, merge, live SPA/API acceptance, Linear, and production. This document is implementation evidence, not independent review or release approval.
 
 ## Artifact and repair
@@ -64,3 +66,32 @@ Limits: the probe disables automatic supervision and scheduling timers to preser
 Parent work remains independent review of the actual diff and evidence, integrated SPA/API behavior, exact resulting-head CI, PR adjudication, and any production decision. Green Drizzle smoke does not establish populated pg-boss startup migration, and local queue proof does not establish production acceptance.
 
 Linear access and updates are assigned exclusively to the parent. Any actionable findings from this lane are recorded in this lane's PLAN and returned for parent deduplication/capture. This writer does not mark YUK-1360 Done. Completion ends this writer's authority; later notifications do not authorize further writes, pushes, or watches.
+
+## Main Laminar integration, source verification only
+
+Normal merge in progress from `784b80ac023df71de88309ab118fdcc06155fdad` with `MERGE_HEAD a86d4e633a67f802554ae114387ab06b7110c135` was resolved in the same owned worktree. The conflict paths were `.remember/now.md`, `PLAN.md`, and `pnpm-lock.yaml`. Both document handoffs survive, with the newer Agent TEST ONLY purpose taking precedence. No YUK-1362 commit was cherry-picked; its purpose record at `57fbc95fc` was read as source documentation only.
+
+The lock seed combined both parent package/snapshot inventories and retained the upgraded importers plus main's new Laminar dependency. Offline pnpm peer resolution produced the combined graph; compatible Laminar Zod resolution was aligned to the already selected `4.6.5`. Parent package metadata was retained, including `hasBin` fields omitted by the pnpm11 resolver. Neither parent's entire lockfile was selected. The final frozen install, including an offline frozen install, passed without lock regeneration. The [new manifest](evidence/2026-10-07-yuk1360-main-laminar-merge.json) records hashes, exact file selections, logs, and semantic assertions.
+
+All 26 production and three development type specifier upgrades and their direct resolved versions remain. Mem0 patch hash remains `858dc62f5cb028767f44e081b4e6713f302c6a47e760f21c403b62a43ec969e7`. Laminar is `0.8.49`; main's gRPC override is `1.14.5`. Laminar, Mem0 and Traceloop share one LangChain `1.1.48` snapshot with OpenTelemetry exporter/trace-base peers, OpenAI `7.19.0`, Smithy `5.7.4`, and Zod `4.6.5`. Laminar's direct Zod and zod-to-json-schema peer also resolve `4.6.5`. All 2,174 importer and snapshot dependency references resolve; all 1,108 package entries have snapshots. Every package version, integrity and metadata value comes from a parent; no registry version update was introduced. Debug/supports-color optional peer identities were recomputed by pnpm; this does not change those package versions.
+
+`pnpm peers check` reports four inherited incompatibilities: OpenAI7/Undici8 versus the existing override-derived `<7` peer range, and Mem0's old Anthropic/pg/@types-pg ranges versus the integrated versions. The semantic check confirms each range is identical in both parents. TypeScript aliases were normalized before checking peer ranges. No new Laminar/LangChain/OpenAI/Zod mismatch, peer-policy weakening, override relaxation or audit-baseline edit was made.
+
+| New source check | Result | New log prefix |
+| --- | --- | --- |
+| Frozen install, final offline frozen | Passed | main-merge-offline-frozen-final |
+| Scoped units, 20 files including offline installed Laminar SDK cases | 355 passed | main-merge-unit |
+| Judge Laminar trace unit, 1 file | 7 passed | main-merge-judge-trace-unit |
+| Scoped queue/memory DB, 15 files | 98 passed | main-merge-db |
+| Typecheck | Passed | main-merge-typecheck |
+| Lint | Passed, 297 warnings | main-merge-lint |
+| Build | Passed, SPA/server/worker/migrate | main-merge-build |
+| Workflow audits: schema, partition, api-client, api-client-usage, capability-boundaries, provider-lanes, profile, task-census, draft-status, draft-status-reads | All ten passed | main-merge-audit-* |
+
+Commands use the existing clean-run environment allowlist and Node24. The DB suite starts and stops its own new disposable testcontainer, without an inherited DB URL. The judge trace file is in the unit partition; its inclusion in the DB command was filtered out, so it was run separately under the correct config. Formatting/probe assertion failures and all install attempts remain in the new-prefix logs. No repository test fixture or production source repair was needed.
+
+The parent reports the initial `yuk1360-dependency-review-r1` found no P0/P1 at `784b80ac`, full CI passed there, and its 19 DB checks passed. No review report was found in this owned tree or the lane temporary directory; those statements remain parent-reported. This writer did not start another review. Those review/CI results and the earlier 97 DB, 146 unit, 82 migration and populated pg-boss37→44 receipts remain historical and do not establish the resulting merge's exact-head CI, new independent review, migration rerun, full app/worker behavior, or runtime acceptance.
+
+Owner override: thread7631 reset the main runtime at f3 for Agent development tests only, not personal daily use. This writer did not access runtime containers, app, worker, existing databases, private backup/restore material, R2 or candidate1346 PG/apps; their stopped/unknown-request state was not changed and no requests were replayed. No model/provider/telemetry call, subscription, UI rewrite, deployment, push, PR/watch/comment, Linear update or delegation occurred. Only source integration and the owned disposable tests were performed.
+
+Capture handoff: no new actionable defect was found. The four peer warnings are inherited, and runtime/BAM/mixed-version limits remain the existing YUK-1360/YUK-1329 obligations. The parent owns deduplication/capture, resulting-head CI, artifact inspection, and any separately authorized Agent-test runtime acceptance. Personal daily-use deployment remains subject to the owner's later explicit instruction. This lane commits the normal merge only and releases authority on return.

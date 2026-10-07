@@ -1,4 +1,16 @@
-# 当前 lane — 2026-10-07 YUK-1360 依赖集成
+# 当前 lane handoff — YUK-1360 main Laminar source integration
+
+Owned tree `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1360-dependency-integration`，branch `fix/yuk-1360-dependency-integration`。正常 merge parents `784b80ac023df71de88309ab118fdcc06155fdad` + `a86d4e633a67f802554ae114387ab06b7110c135`。保留26 production/3 type upgrades、Mem0 patch858dc与main Laminar0.8.49/gRPC1.14.5；锁语义2174refs、1108packages/snapshots通过。新frozen install、362unit、98DB、typecheck/lint/build/10audits通过；297warnings未上调。四个peer warnings继承parents，无新增actionable issue。
+
+本轮证据见 `docs/planning/evidence/2026-10-07-yuk1360-main-laminar-merge.json`。旧97DB/146unit/82migration/pgboss37→44、父线程reported初审noP0/P1/CI at784b80ac/19DB为历史，不等于新head CI或runtime验收。本writer不新review、不push；正常merge commit交回父线程检视。
+
+Owner override优先：thread7631已将主f3 runtime重置为Agent TEST ONLY，非personal；1362 purpose doc57fbc95fc仅只读，未cherry-pick。无runtime/container/app/worker/existingDB/R2/private backup/restore/deploy权限。仅自有disposabletestcontainer；1346candidate PG/apps stopped/unknown状态未触及，unknown requests不replay。无provider/model/telemetry calls、subscription、UIrewrite、PR/watch/comment、Linear、delegation。父线程独占delivery/capture及后续另行授权的test runtime/BAM/API/SPA；日用切换须owner后续明确指示。return后authority结束，后续PR通知不得重启写入。
+
+下方所有旧source counts/hashes与产品release描述均为历史，不能覆盖上述用途/权限/新source-verification limits。
+
+---
+
+# 历史 lane — 2026-10-07 YUK-1360 依赖集成
 
 唯一 writer 位于 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1360-dependency-integration`，branch `fix/yuk-1360-dependency-integration`，base `c54f5ddd3`。正常 merge `8841ce68a` 已提交 `574106ae9`，保留所有26项升级及 Mem0 hash `858dc62f5cb028767f44e081b4e6713f302c6a47e760f21c403b62a43ec969e7`。只修改七个 test fixture，未知 queue observation 为 null，初始 retryCount 为0；没有 production source repair。
 
@@ -7,6 +19,10 @@
 父线程拥有 PR1584、watch/replies/push/merge、Linear、独立审查和生产。此 lane 不委派、不 push、不读凭据/原env、不操作现有服务或数据库、不调用真实provider。完成后 authority 结束，通知不恢复写入权。
 
 下方为 main 继承的历史产品交接，不是本 lane 的实施范围。
+
+# 历史 PR1580 接续 — 2026-10-07
+
+父线程唯一 writer。6787c423b 的 CI 已绿，但新 P1 discussion4205696120 确认：R2_SECRET_ACCESS_KEY、DB_PASSWORD、CLAUDE_CODE_OAUTH_TOKEN 等文本及部分结构字段仍泄露。扩大10类回归先RED，现文本和结构字段共用credentialNamePattern后73 scoped tests通过，保留普通正文和wrapped assignment覆盖。修复后须新exact CI及17分钟等待；最终SQL/browser验收仍待完成，不启动第三审、不部署。
 
 ---
 
@@ -23,6 +39,12 @@
 以下为历史交接，旧授权、版本和模型选择不覆盖上述当前状态。
 
 ---
+
+# 当前交接 — 2026-10-07 YUK-1325 Laminar writer released
+
+工作树 `/private/tmp/tlp-laminar-yuk1325`，分支 `feat/yuk-1325-laminar`。保留既有修复 `1be38edbc`、sharp `1af72b427` 和 main merge `3940d61f9`；正常 merge main `8841ce68a` 为 `e484efa60`，保留产品 MiMo/autonomous delivery 指导与 Laminar。359 unit、全部19 CI audit加provider-lanes/agent-control-plane、typecheck/lint/build/lint-ratchet通过；297既有warnings、零high/critical依赖告警。P1 #4196957316 的4种prefixed API-key控制在a529全部RED、当前全部GREEN，未重写既有修复。完整命令/日志digest见 `docs/planning/evidence/2026-10-07-yuk1325-babysit-checks.txt`，本地日志 `.cache/yuk1325-babysit-20261007/`。
+
+源码/backend/sanitizer/audit baseline完整保留，无prod/HTTP-worker/model/DB/export/full-test/push/第三审。历史真实调用及OFFLINE REPLAY仅适用于原记录revision，最终development transcript SDK→SQL/browser验收仍待父线程。父线程独占PR watch/push/replies/merge/Linear/deploy；P2 typed primitive tracing仍延期YUK-1339；无新增actionable follow-up。提交此交接后writer释放，不因PR通知重启写入。
 
 # 当前交接 — 2026-10-06 YUK-1224/1226/1196/1236（SCF-141/143/109/161）
 

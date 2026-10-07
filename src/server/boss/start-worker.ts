@@ -5,10 +5,10 @@
 // exit(1)）是独立 worker 进程的纪律，留在 scripts/worker.ts，不属于这里。
 
 import type { PgBoss } from 'pg-boss';
-
 import { capabilities } from '@/capabilities';
 import type { Db } from '@/db/client';
 import { recoverToolOperationsOnBoot } from '@/kernel/tools/tool-operations';
+import { initializeLaminarTracing } from '@/server/ai/laminar-tracing';
 import { resolveTaskProvider } from '@/server/ai/providers';
 import { createBoss, isQueueCreateRace, markBossStarted } from '@/server/boss/client';
 import { registerHandlers } from '@/server/boss/handlers';
@@ -30,6 +30,7 @@ export async function startBossWorker(
   db: Db,
   options: StartBossWorkerOptions = {},
 ): Promise<PgBoss> {
+  await initializeLaminarTracing();
   // YUK-1055 — DB epoch guard 必须排在 recovery/handlers/cron 之前（grounding §15）。
   // marker 'preparing'/'ready'（维护窗）或 epoch 不匹配时本 worker 停在闸门内
   // 轮询，不启动 boss、不挂消费者 —— fenced 不 crash-loop，operator 推到

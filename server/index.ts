@@ -7,6 +7,7 @@
 import { serve } from '@hono/node-server';
 import { serveStatic } from '@hono/node-server/serve-static';
 import { capabilities } from '@/capabilities';
+import { initializeLaminarTracing } from '@/server/ai/laminar-tracing';
 import { resolveApiPort } from '@/server/env';
 import { warnFlipOrder } from '@/server/projections/sot-flag';
 import { buildHonoApp } from './app';
@@ -133,6 +134,7 @@ async function startInProcessWorker(): Promise<void> {
 // 请求可能观测到半空 registry。RW_WORKER 同样只在注册完成后启动。
 // 工具声明/load 错误 fail-fast，不暴露缺工具的残缺 API 面。
 void (async () => {
+  await initializeLaminarTracing();
   await hydrateSubjectsBeforeServe();
   await hydrateConfigBeforeServe();
   await registerToolsBeforeServe();
