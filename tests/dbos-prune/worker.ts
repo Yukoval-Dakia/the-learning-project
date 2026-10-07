@@ -1,11 +1,11 @@
 import { DBOS } from '@dbos-inc/dbos-sdk';
 import { PgBoss } from 'pg-boss';
 import { z } from 'zod';
-import dbosPackage from '../../node_modules/@dbos-inc/dbos-sdk/package.json';
-import pgBossPackage from '../../node_modules/pg-boss/package.json';
 import { db } from '@/db/client';
 import { changePrunePhase, retireFailedPrune } from '@/server/durable/prune-family';
 import { startPruneWorker, stopDurableWorker } from '@/server/durable/prune-worker';
+import dbosPackage from '../../node_modules/@dbos-inc/dbos-sdk/package.json';
+import pgBossPackage from '../../node_modules/pg-boss/package.json';
 
 async function main() {
   const url = new URL(z.url().parse(process.env.DATABASE_URL));
