@@ -9,7 +9,7 @@ import {
 } from '@/capabilities/agency/public';
 import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
-import type { RuleReferenceCriterionT } from '@/core/schema/assessment';
+import type { PublishedQuestionRevisionT, RuleReferenceCriterionT } from '@/core/schema/assessment';
 import { ConjectureProbeSpecV2, type ConjectureProbeSpecV2T } from '@/core/schema/business';
 import { PROBE_QUESTION_INITIAL_VERSION } from '@/core/schema/conjecture';
 import { ConjectureProposalChange } from '@/core/schema/proposal';
@@ -31,6 +31,8 @@ import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
+import * as jevExecutor from '@/server/assessment/jev-model-executor';
+import * as piExecutor from '@/server/assessment/pi-model-executor';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { editQuestion } from '@/server/questions/write';
 import { loadTeachingBriefReportInput } from '../../../../scripts/report-teaching-brief';
@@ -221,6 +223,164 @@ const CRITERION_CASES = ([1, 2] as const).flatMap((sequence) =>
   CRITERION_MUTATIONS.map((mutation) => ({ sequence, ...mutation })),
 );
 
+type ExecutionContract = Pick<
+  PublishedQuestionRevisionT,
+  'execution_plan' | 'scoring_basis' | 'response_spec' | 'structure'
+>;
+type ExecutionMutation = {
+  name: string;
+  mutate: (contract: ExecutionContract) => void;
+};
+const EXECUTION_MUTATIONS: ExecutionMutation[] = [
+  {
+    name: 'foreign Jev task',
+    mutate: (c) => {
+      const executor = c.execution_plan.assignments[0].executor;
+      if (executor.kind !== 'model_executor') throw new Error('expected model executor');
+      executor.task_kind = 'JevScoringDecisionTask';
+    },
+  },
+  {
+    name: 'unknown model task',
+    mutate: (c) => {
+      const executor = c.execution_plan.assignments[0].executor;
+      if (executor.kind !== 'model_executor') throw new Error('expected model executor');
+      executor.task_kind = 'UnknownProbeTask';
+    },
+  },
+  {
+    name: 'human executor',
+    mutate: (c) => {
+      c.execution_plan.assignments[0].executor = { kind: 'human_review' };
+    },
+  },
+  {
+    name: 'zero points',
+    mutate: (c) => {
+      c.scoring_basis.units[0].points = 0;
+    },
+  },
+  {
+    name: 'two points',
+    mutate: (c) => {
+      c.scoring_basis.units[0].points = 2;
+    },
+  },
+  {
+    name: 'missing response binding',
+    mutate: (c) => {
+      c.scoring_basis.units[0].slot_refs = [];
+    },
+  },
+  {
+    name: 'missing evidence binding',
+    mutate: (c) => {
+      c.scoring_basis.units[0].evidence_slot_refs = [];
+    },
+  },
+  {
+    name: 'group evidence requirement',
+    mutate: (c) => {
+      c.scoring_basis.units[0].requires_group_evidence = true;
+    },
+  },
+  {
+    name: 'additional model material',
+    mutate: (c) => {
+      c.scoring_basis.units[0].material_refs = [c.structure.materials[0].material_id];
+    },
+  },
+  {
+    name: 'blank scoring bypass',
+    mutate: (c) => {
+      c.scoring_basis.blank_scores_zero = true;
+    },
+  },
+  {
+    name: 'capped aggregation',
+    mutate: (c) => {
+      c.scoring_basis.aggregation = { kind: 'capped_sum', cap: 0 };
+    },
+  },
+  {
+    name: 'low confidence acceptance',
+    mutate: (c) => {
+      c.execution_plan.escalation.on_low_confidence = 'accept';
+    },
+  },
+  {
+    name: 'unadmitted escalation',
+    mutate: (c) => {
+      c.execution_plan.escalation.on_unadmitted_model = 'human_review';
+    },
+  },
+];
+const EXECUTION_CASES = ([1, 2] as const).flatMap((sequence) =>
+  EXECUTION_MUTATIONS.map((mutation) => ({ sequence, ...mutation })),
+);
+const INVALID_ASSIGNMENTS: ExecutionMutation[] = [
+  {
+    name: 'deterministic rule comparator',
+    mutate: (c) => {
+      c.execution_plan.assignments[0].executor = {
+        kind: 'deterministic',
+        comparator: 'exact_text',
+      };
+    },
+  },
+  {
+    name: 'unknown assignment unit',
+    mutate: (c) => {
+      c.execution_plan.assignments[0].scoring_unit_ids = ['foreign-unit'];
+    },
+  },
+  {
+    name: 'duplicate assignment unit',
+    mutate: (c) => {
+      c.execution_plan.assignments[0].scoring_unit_ids.push(
+        c.scoring_basis.units[0].scoring_unit_id,
+      );
+    },
+  },
+  {
+    name: 'duplicate assignment',
+    mutate: (c) => {
+      c.execution_plan.assignments.push(structuredClone(c.execution_plan.assignments[0]));
+    },
+  },
+];
+
+/** Restore/import corruption only; normal publication cannot create invalid assignment bindings. */
+async function replaceFrozenExecution(probeId: string, mutate: ExecutionMutation['mutate']) {
+  const db = testDb();
+  const [issuance] = await db
+    .select()
+    .from(assessment_issuance)
+    .where(eq(assessment_issuance.issuance_id, `iss_probe_${probeId}`));
+  const [revision] = await db
+    .select()
+    .from(question_revision)
+    .where(eq(question_revision.revision_id, issuance.revision_id));
+  mutate(revision);
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SET LOCAL app.assessment_restore_mode = 'on'`);
+    await tx
+      .update(question_revision)
+      .set({
+        scoring_basis: revision.scoring_basis,
+        execution_plan: revision.execution_plan,
+        integrity_digest: contractIntegrityDigest(revision),
+      })
+      .where(eq(question_revision.revision_id, revision.revision_id));
+  });
+  await expect(
+    db
+      .update(question_revision)
+      .set({ execution_plan: revision.execution_plan })
+      .where(eq(question_revision.revision_id, revision.revision_id)),
+  ).rejects.toMatchObject({ cause: { code: 'P0001' } });
+}
+
 /** Model corrupted imported/restore bindings without weakening production immutability. */
 async function replaceFrozenCriterion(probeId: string, patch: Record<string, unknown>) {
   const db = testDb();
@@ -269,6 +429,7 @@ async function seed(
   nativeProposal = true,
   pair = { primary: PRIMARY, followup: FOLLOWUP },
   mutateCriterion?: CriterionMutation['mutate'],
+  mutateExecution?: ExecutionMutation['mutate'],
 ) {
   const db = testDb();
   const original = sequence === 1 ? pair.primary : pair.followup;
@@ -317,6 +478,7 @@ async function seed(
   if (frozenSpec) criterion.probe_spec = frozenSpec;
   else delete criterion.probe_spec;
   mutateCriterion?.(criterion);
+  mutateExecution?.(contract);
   contract.integrity_digest = contractIntegrityDigest(contract);
   const [lifecycle] = await db
     .select()
@@ -414,8 +576,12 @@ function snapshot() {
     db.select().from(cost_ledger),
   ]);
 }
-async function expectRejected(probeId: string, reason = 'probe_spec_mismatch') {
-  const { execute, factory } = offlineJudge();
+async function expectRejected(
+  probeId: string,
+  reason = 'probe_spec_mismatch',
+  judge = offlineJudge(),
+) {
+  const { execute, factory } = judge;
   const before = await snapshot();
   expect
     .soft((await loadTeachingBrief(testDb(), NOW)).brief?.prepared_action)
@@ -448,6 +614,8 @@ async function expectRejected(probeId: string, reason = 'probe_spec_mismatch') {
     JSON.stringify({
       http_status: response.status,
       response: body,
+      executed_descriptor: execute.mock.calls[0]?.[0].executor,
+      persisted_units: (await testDb().select().from(evaluation)).map((row) => row.unit_results),
       executed_criterion: execute.mock.calls[0]?.[0].unit.criterion,
       factory: factory.mock.calls.length,
       executor: execute.mock.calls.length,
@@ -464,6 +632,31 @@ async function expectRejected(probeId: string, reason = 'probe_spec_mismatch') {
   );
 }
 
+/** Keep production dispatch/receipts; replace only the foreign executor with an offline script. */
+function foreignDispatchJudge() {
+  const execute = vi.fn<Parameters<typeof createRecordedModelExecutor>[1]>(async (input) => ({
+    kind: 'scored',
+    points_awarded: 1,
+    matched: {
+      rule_id: input.unit.criterion.kind === 'rule_reference' ? input.unit.criterion.rule_id : '',
+      option_ids: [],
+    },
+    confidence: 0.9,
+    feedback_md: 'Offline foreign score without native probe signature.',
+    evidence_citations: [],
+    run_refs: [],
+    cost_usd_micros: 0,
+  }));
+  vi.spyOn(jevExecutor, 'createJevModelExecutor').mockImplementation(
+    (options) => (input, signal) => execute(input, signal, options.taskRunId ?? 'missing-claim'),
+  );
+  vi.spyOn(piExecutor, 'createPiModelExecutor').mockImplementation(() => {
+    throw new Error('foreign task must reach Jev, not Pi');
+  });
+  const factory = vi.spyOn(evaluationService, 'createFormalModelExecutor');
+  return { execute, factory };
+}
+
 describe('YUK-1364 complete original probe-spec binding', () => {
   beforeEach(async () => {
     vi.restoreAllMocks();
@@ -477,6 +670,117 @@ describe('YUK-1364 complete original probe-spec binding', () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
   afterEach(() => vi.useRealTimers());
+
+  it.each(EXECUTION_CASES)(
+    'rejects pre-issuance execution $name in sequence $sequence',
+    async ({ sequence, name, mutate }) => {
+      const spec = sequence === 1 ? PRIMARY : FOLLOWUP;
+      const probeId = await seed(sequence, spec, true, undefined, undefined, (contract) => {
+        const criterion = structuredClone(contract.scoring_basis.units[0].criterion);
+        mutate(contract);
+        expect(contract.scoring_basis.units[0].criterion).toEqual(criterion);
+      });
+      const [authored] = await testDb().select().from(question).where(eq(question.id, probeId));
+      expect(authored).toMatchObject({
+        version: PROBE_QUESTION_INITIAL_VERSION,
+        prompt_md: spec.prompt_md,
+        reference_md: spec.reference_md,
+        metadata: { probe_spec: spec },
+      });
+      await expectRejected(
+        probeId,
+        'probe_execution_contract_mismatch',
+        name === 'foreign Jev task' ? foreignDispatchJudge() : offlineJudge(),
+      );
+    },
+  );
+
+  it.each(
+    ([1, 2] as const).flatMap((sequence) =>
+      INVALID_ASSIGNMENTS.map((entry) => ({ ...entry, sequence })),
+    ),
+  )(
+    'normal publication rejects $name sequence $sequence and restored bindings fail before evaluation',
+    async ({ sequence, mutate }) => {
+      await expect(
+        seed(sequence, sequence === 1 ? PRIMARY : FOLLOWUP, true, undefined, undefined, mutate),
+      ).rejects.toThrow('execution_plan invalid');
+      const [probe] = await testDb().select().from(question);
+      expect(await testDb().select().from(assessment_issuance)).toHaveLength(0);
+      expect(await servePublishedProbe(testDb(), probe.id)).toMatchObject({ status: 'issued' });
+      await replaceFrozenExecution(probe.id, mutate);
+      await expectRejected(probe.id, 'probe_execution_contract_mismatch');
+    },
+  );
+
+  it.each([1, 2] as const)(
+    'accepts dynamic admission and cost caps in sequence %s',
+    async (sequence) => {
+      const probeId = await seed(
+        sequence,
+        sequence === 1 ? PRIMARY : FOLLOWUP,
+        true,
+        undefined,
+        undefined,
+        (c) => {
+          const executor = c.execution_plan.assignments[0].executor;
+          if (executor.kind !== 'model_executor') throw new Error('model expected');
+          executor.admitted_slice_id = `independently-admitted-sequence-${sequence}`;
+          executor.max_cost_usd_micros = 4321;
+          c.execution_plan.max_total_cost_usd_micros = 8765;
+        },
+      );
+      const { execute } = offlineJudge();
+      expect((await answer(probeId)).status).toBe(200);
+      expect(execute.mock.calls[0][0].executor).toMatchObject({
+        admitted_slice_id: `independently-admitted-sequence-${sequence}`,
+        max_cost_usd_micros: 4321,
+      });
+    },
+  );
+
+  it.each(EXECUTION_CASES)(
+    'rejects completed execution $name in sequence $sequence across evidence report and ack',
+    async ({ sequence, mutate }) => {
+      const probeId = await seed(sequence, sequence === 1 ? PRIMARY : FOLLOWUP);
+      offlineJudge();
+      const response = await answer(probeId);
+      expect(response.status).toBe(200);
+      const result = ProbeAnswerResponseSchema.parse(await response.json());
+      const [row] = await testDb()
+        .select()
+        .from(event)
+        .where(eq(event.id, result.probe_result_event_id));
+      await replaceFrozenExecution(probeId, mutate);
+      const before = await snapshot();
+      expect(await validateAckableOutcome(testDb(), row, NOW)).toEqual({
+        reason: 'probe_execution_contract_mismatch',
+      });
+      expect(
+        (
+          await getEffectiveProbeResultStatuses(testDb(), [row.id], { validateDirectChain: true })
+        ).get(row.id),
+      ).toBe('dependency_inactive');
+      expect((await loadTeachingBrief(testDb(), NOW)).brief?.current_outcome).not.toMatchObject({
+        probe_result_event_id: row.id,
+      });
+      const report = await loadTeachingBriefReportInput(testDb(), '2026-10-07', '2026-10-07');
+      expect(report.probeResults).toEqual([]);
+      expect(report.skippedCorruptOutcomes).toBe(1);
+      expect(
+        (
+          await ACK(
+            new Request('http://test.invalid/ack', {
+              method: 'POST',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify({ probe_result_event_id: row.id }),
+            }),
+          )
+        ).status,
+      ).toBe(409);
+      expect(await snapshot()).toEqual(before);
+    },
+  );
 
   it.each(CRITERION_CASES)(
     'rejects pre-issuance V2 criterion $name drift in sequence $sequence',
@@ -667,6 +971,16 @@ describe('YUK-1364 complete original probe-spec binding', () => {
       expect(await status()).toBe('dependency_inactive');
       expect(await validateAckableOutcome(testDb(), terminalRow, NOW)).toHaveProperty('reason');
       await replaceFrozenCriterion(initial, originalCriterion);
+      expect(await status()).toBe('active');
+    }
+    for (const { mutate } of EXECUTION_MUTATIONS) {
+      await replaceFrozenExecution(initial, mutate);
+      expect(await status()).toBe('dependency_inactive');
+      expect(await validateAckableOutcome(testDb(), terminalRow, NOW)).toHaveProperty('reason');
+      await replaceFrozenExecution(initial, (contract) => {
+        contract.execution_plan = structuredClone(initialRevision.execution_plan);
+        contract.scoring_basis = structuredClone(initialRevision.scoring_basis);
+      });
       expect(await status()).toBe('active');
     }
     for (const subjectId of [first.probe_result_event_id, 'original_proposal']) {

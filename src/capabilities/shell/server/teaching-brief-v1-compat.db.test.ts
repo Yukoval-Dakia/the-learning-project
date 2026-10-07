@@ -10,6 +10,7 @@ import {
 } from '@/capabilities/agency/public';
 import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
+import type { PublishedQuestionRevisionT } from '@/core/schema/assessment';
 import {
   ConjectureProbePackageV1,
   ConjectureProbeSpecV1,
@@ -21,9 +22,12 @@ import {
   ai_task_runs,
   assessment_issuance,
   assessment_submission,
+  cost_ledger,
   evaluation,
   event,
   knowledge,
+  provider_attempt,
+  provider_attempt_admission,
   question,
   question_group_lifecycle,
   question_revision,
@@ -33,6 +37,8 @@ import { writeAiProposal } from '@/kernel/proposals/writer';
 import { revisionRowToContract } from '@/kernel/records/assessment-issuance';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
+import * as jevExecutor from '@/server/assessment/jev-model-executor';
+import * as piExecutor from '@/server/assessment/pi-model-executor';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { editQuestion } from '@/server/questions/write';
 import { computeTeachingBriefReport } from '../../../../scripts/lib/teaching-brief-report';
@@ -86,6 +92,7 @@ const CHANGE = withProbeSpecs(
 );
 const SEQUENCES = [1, 2] as const;
 const CORRUPTIONS = [
+  { kind: 'execution', reason: 'probe_execution_contract_mismatch' },
   { kind: 'reference', reason: 'probe_reference_mismatch' },
   { kind: 'prompt', reason: 'probe_prompt_mismatch' },
   { kind: 'V1 proposal with V2 frozen spec', reason: 'probe_spec_mismatch' },
@@ -95,7 +102,7 @@ const CORRUPTION_CASES = SEQUENCES.flatMap((sequence) =>
   CORRUPTIONS.map((corruption) => ({ sequence, ...corruption })),
 );
 
-async function seed(sequence: 1 | 2) {
+async function seed(sequence: 1 | 2, specPresent = true) {
   const db = testDb();
   await writeAiProposal(db, {
     id: 'v1_proposal',
@@ -107,7 +114,15 @@ async function seed(sequence: 1 | 2) {
       reason_md: '两次嵌套求导出错，另一次独立练习正确；历史 V1 包含独立复验与完整审核来源。',
       evidence_refs: [{ kind: 'event', id: 'offline-evidence' }],
       cooldown_key: 'v1-compat',
-      proposed_change: CHANGE,
+      proposed_change: specPresent
+        ? CHANGE
+        : ConjectureProposalChange.parse({
+            ...CHANGE,
+            diagnostic_spec: undefined,
+            probe_spec: undefined,
+            followup_probe_spec: undefined,
+            probe_quality: undefined,
+          }),
     },
   });
   await writeEvent(db, {
@@ -132,7 +147,7 @@ async function seed(sequence: 1 | 2) {
     knowledgeId: CHANGE.knowledge_id,
     probeMd: spec.prompt_md,
     referenceMd: spec.reference_md,
-    probeSpec: spec,
+    ...(specPresent ? { probeSpec: spec } : {}),
     probeSequence: sequence,
     now: new Date(NOW.getTime() - 600_000),
   });
@@ -141,7 +156,10 @@ async function seed(sequence: 1 | 2) {
 }
 
 /** Admit the real publisher's contract without replacing its legacy scoring criterion. */
-async function admitAndIssue(probeId: string) {
+async function admitAndIssue(
+  probeId: string,
+  mutate?: (contract: PublishedQuestionRevisionT) => void,
+) {
   const db = testDb();
   const [lifecycle] = await db
     .select()
@@ -161,6 +179,7 @@ async function admitAndIssue(probeId: string) {
       max_cost_usd_micros: 1000,
     };
   }
+  mutate?.(contract);
   contract.integrity_digest = contractIntegrityDigest(contract);
   expect(
     await publishQuestionGroup(db, {
@@ -237,6 +256,9 @@ function snapshot() {
     db.select().from(assessment_submission),
     db.select().from(evaluation),
     db.select().from(ai_task_runs),
+    db.select().from(provider_attempt),
+    db.select().from(provider_attempt_admission),
+    db.select().from(cost_ledger),
   ]);
 }
 async function resultRow(id: string) {
@@ -291,7 +313,11 @@ async function corruptFrozen(probeId: string, sequence: 1 | 2, kind: Corruption)
   if (kind === 'reference') criterion.statement_md = '错误的导入参考，漏掉内层导数。';
   else if (kind === 'prompt')
     contract.structure.parts[0].prompt_md = '错误导入的题干，求 sin(x⁴) 的导数。';
-  else {
+  else if (kind === 'execution') {
+    const executor = contract.execution_plan.assignments[0].executor;
+    if (executor.kind !== 'model_executor') throw new Error('expected admitted model');
+    executor.task_kind = 'JevScoringDecisionTask';
+  } else {
     const spec = sequence === 1 ? PRIMARY : FOLLOWUP;
     criterion.probe_spec = ConjectureProbeSpecV2.parse({
       ...spec,
@@ -312,6 +338,7 @@ async function corruptFrozen(probeId: string, sequence: 1 | 2, kind: Corruption)
       .set({
         structure: contract.structure,
         scoring_basis: contract.scoring_basis,
+        execution_plan: contract.execution_plan,
         integrity_digest: contract.integrity_digest,
       })
       .where(eq(question_revision.revision_id, revision.revision_id));
@@ -338,10 +365,120 @@ describe('YUK-1364 historical V1 issued probe compatibility', () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  it.each(SEQUENCES)(
-    'shows and grades valid V1 sequence %s, preserving native completion after normal edits',
-    async (sequence) => {
-      const probeId = await seed(sequence);
+  it.each(
+    SEQUENCES.flatMap((sequence) =>
+      [true, false].map((specPresent) => ({ sequence, specPresent })),
+    ),
+  )(
+    'rejects foreign execution before dispatch for legacy spec=$specPresent sequence=$sequence',
+    async ({ sequence, specPresent }) => {
+      const probeId = await seed(sequence, specPresent);
+      await admitAndIssue(probeId, (c) => {
+        const originalCriterion = structuredClone(c.scoring_basis.units[0].criterion);
+        const executor = c.execution_plan.assignments[0].executor;
+        if (executor.kind !== 'model_executor') throw new Error('model expected');
+        executor.task_kind = 'JevScoringDecisionTask';
+        expect(c.scoring_basis.units[0].criterion).toEqual(originalCriterion);
+      });
+      const execute = vi.fn<Parameters<typeof createRecordedModelExecutor>[1]>(async (input) => ({
+        kind: 'scored',
+        points_awarded: 1,
+        matched: {
+          rule_id:
+            input.unit.criterion.kind === 'rule_reference' ? input.unit.criterion.rule_id : '',
+          option_ids: [],
+        },
+        confidence: 0.9,
+        feedback_md: 'Offline foreign score, no provider invocation.',
+        evidence_citations: [],
+        run_refs: [],
+        cost_usd_micros: 0,
+      }));
+      const jev = vi
+        .spyOn(jevExecutor, 'createJevModelExecutor')
+        .mockImplementation(
+          (options) => (input, signal) =>
+            execute(input, signal, options.taskRunId ?? 'missing-claim'),
+        );
+      const pi = vi.spyOn(piExecutor, 'createPiModelExecutor').mockImplementation(() => {
+        throw new Error('foreign task must reach Jev, not Pi');
+      });
+      const factory = vi.spyOn(evaluationService, 'createFormalModelExecutor');
+      const before = await snapshot();
+      expect.soft((await loadTeachingBrief(testDb(), NOW)).brief).toBeNull();
+      expect.soft((await loadActiveProbes(testDb())).probes).toEqual([]);
+      const response = await answer(probeId);
+      const body = await response.json();
+      const evaluations = await testDb().select().from(evaluation);
+      const events = await testDb().select().from(event);
+      console.info(
+        '[legacy execution rejection]',
+        JSON.stringify({
+          sequence,
+          specPresent,
+          status: response.status,
+          body,
+          executed_descriptor: execute.mock.calls[0]?.[0].executor,
+          jev_dispatch: jev.mock.calls.length,
+          pi_dispatch: pi.mock.calls.length,
+          submission: (await testDb().select().from(assessment_submission)).length,
+          evaluations: evaluations.map((row) => ({
+            aggregate: row.aggregate,
+            unit_results: row.unit_results,
+          })),
+          probe_results: events
+            .filter((row) => row.action === 'experimental:probe_result')
+            .map((row) => row.payload),
+        }),
+      );
+      expect.soft(response.status).toBe(409);
+      expect.soft(body).toMatchObject({ error: 'probe_execution_contract_mismatch' });
+      expect.soft(factory).not.toHaveBeenCalled();
+      expect.soft(jev).not.toHaveBeenCalled();
+      expect.soft(pi).not.toHaveBeenCalled();
+      expect.soft(execute).not.toHaveBeenCalled();
+      expect.soft(await snapshot()).toEqual(before);
+    },
+  );
+
+  it.each(
+    SEQUENCES.flatMap((sequence) =>
+      [true, false].map((specPresent) => ({ sequence, specPresent })),
+    ),
+  )(
+    'keeps canonical legacy human execution spec=$specPresent sequence=$sequence',
+    async ({ sequence, specPresent }) => {
+      const probeId = await seed(sequence, specPresent);
+      await admitAndIssue(probeId, (c) => {
+        c.execution_plan.assignments[0].executor = { kind: 'human_review' };
+      });
+      const completed = await answerProbe({
+        db: testDb(),
+        probeQuestionId: probeId,
+        outcome: 1,
+        now: NOW,
+      });
+      expect(
+        await validateAckableOutcome(
+          testDb(),
+          await resultRow(completed.probe_result_event_id),
+          NOW,
+        ),
+      ).not.toHaveProperty('reason');
+      // Immutable historical human-review publication remains readable after ordinary edits.
+      await editCompleted(probeId);
+      expect(await status(completed.probe_result_event_id)).toBe('active');
+    },
+  );
+
+  it.each(
+    SEQUENCES.flatMap((sequence) =>
+      [true, false].map((specPresent) => ({ sequence, specPresent })),
+    ),
+  )(
+    'shows and grades valid legacy spec=$specPresent sequence=$sequence, preserving native completion after normal edits',
+    async ({ sequence, specPresent }) => {
+      const probeId = await seed(sequence, specPresent);
       await admitAndIssue(probeId);
       const spec = sequence === 1 ? PRIMARY : FOLLOWUP;
       const { execute } = scriptedJudge();
@@ -545,10 +682,14 @@ describe('YUK-1364 historical V1 issued probe compatibility', () => {
     },
   );
 
-  it.each(CORRUPTION_CASES)(
-    'rejects completed V1 $kind in sequence $sequence across evidence, report and ack',
-    async ({ sequence, kind, reason }) => {
-      const probeId = await seed(sequence);
+  it.each(
+    CORRUPTION_CASES.flatMap((entry) =>
+      [true, false].map((specPresent) => ({ ...entry, specPresent })),
+    ),
+  )(
+    'rejects completed legacy spec=$specPresent $kind in sequence $sequence across evidence, report and ack',
+    async ({ sequence, specPresent, kind, reason }) => {
+      const probeId = await seed(sequence, specPresent);
       await admitAndIssue(probeId);
       const completed = await answerProbe({
         db: testDb(),

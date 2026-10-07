@@ -148,7 +148,6 @@ export function validateIssuedProbeProvenance({
       frozen.response_spec.slots.length !== 1 ||
       slot.kind !== 'open_response' ||
       published.scoring_basis.units.length !== 1 ||
-      !unit.slot_refs.includes(slot.slot_id) ||
       unit.criterion.kind !== 'rule_reference'
     ) {
       return { reason: 'unsupported_probe_contract' };
@@ -184,6 +183,38 @@ export function validateIssuedProbeProvenance({
       criterion.statement_md !== `${expectedReference}\n\n（判分意图：multimodal_direct）`
     ) {
       return { reason: 'probe_reference_mismatch' };
+    }
+    const basis = published.scoring_basis;
+    const plan = published.execution_plan;
+    const assignment = plan.assignments[0];
+    // Bind the evaluator's inputs and binary scoring, including paths that run
+    // before model dispatch. These are fixed by the native probe publisher.
+    // Slice IDs and cost caps remain admission-time parameters, not identity.
+    if (
+      unit.slot_refs.length !== 1 ||
+      unit.slot_refs[0] !== slot.slot_id ||
+      unit.evidence_slot_refs.length !== 1 ||
+      unit.evidence_slot_refs[0] !== slot.slot_id ||
+      unit.material_refs.length !== 0 ||
+      unit.requires_group_evidence ||
+      unit.points !== 1 ||
+      unit.level_points !== undefined ||
+      basis.aggregation.kind !== 'sum' ||
+      basis.blank_scores_zero ||
+      plan.assignments.length !== 1 ||
+      assignment.scoring_unit_ids.length !== 1 ||
+      assignment.scoring_unit_ids[0] !== unit.scoring_unit_id ||
+      plan.escalation.on_unadmitted_model !== 'withhold' ||
+      plan.escalation.on_low_confidence !== 'human_review' ||
+      !(
+        (assignment.executor.kind === 'model_executor' &&
+          assignment.executor.task_kind === 'AssessmentRuleJudgeTask') ||
+        // The original V1/absent-spec emitter used human_review. Keep those
+        // historical records readable; that executor cannot generate a score.
+        (!expectedNativeSpec.success && assignment.executor.kind === 'human_review')
+      )
+    ) {
+      return { reason: 'probe_execution_contract_mismatch' };
     }
     return {
       value: {
