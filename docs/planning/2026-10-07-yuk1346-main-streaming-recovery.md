@@ -208,3 +208,16 @@ Normal merge of main `c7c2482ca` into `07eb76cad`; conflicts only PLAN/handoff. 
 - build: exit 0; `.cache/yuk1346-main1376/build.log`; SHA256 `9362066e9490a35f54de610bd881ba7cfece988ac816bb1570c3696b7ba6df9b`.
 - api-client: exit 0; `.cache/yuk1346-main1376/api-client.log`; SHA256 `f26bc904f865f0cc5a1a1613ea5d4017d46fdab55aceaf8eb0a831aedd0cea7c`.
 - postman: exit 0; `.cache/yuk1346-main1376/postman.log`; SHA256 `3aaa19807ed6f0270b0c336b21a857618af66e696d351ca7ae870f0bd2f66a25`.
+
+
+## Integration of PR1599 native frozen mistake reads
+
+Normal merge of main `7bc216509` into `532f818a0`. Conflicts only PLAN/handoff. All four incoming source/test files equal main; Copilot and memory source is unchanged against the first parent. Typecheck, lint and build passed. No DB suite or container was launched while YUK1376 held the runtime window. Upstream DB/runtime evidence remains upstream evidence, not a new integrated-head run; exact-head CI is required. Native reference/reveal, complete media, Start/browser and old-entry exit limitations remain open. No provider, replay, deployment or shared runtime operation occurred.
+
+- `src/server/records/mistakes.ts`: SHA256 `8970982e9a5e62b0d98f73e88d1362adb13799406648d808eb68ff39591db79f`.
+- `src/server/records/native-mistake-evidence.ts`: SHA256 `094f2d773bee0d8ee3b99dd12b17fff7fe62abe8f8facdcf5eff2c44bb570161`.
+- `src/server/records/native-mistake-evidence.db.test.ts`: SHA256 `b47711667765afd265be15ca6eaffbeae8befce7c55a398a86d986ce4f2c8fec`.
+- `src/capabilities/ingestion/api/mistakes.db.test.ts`: SHA256 `157bb46c23be1cbd3a51d1c2da66d0f06c33b9ec7298ccd0a080574970347020`.
+- typecheck: exit 0; `.cache/yuk1346-main1599/typecheck.log`; SHA256 `8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92`.
+- lint: exit 0; `.cache/yuk1346-main1599/lint.log`; SHA256 `e71926fed8b65405ddc8521683e9c66391999206908f30a55d04a2b5d3f811f8`.
+- build: exit 0; `.cache/yuk1346-main1599/build.log`; SHA256 `258ca803b8f965b97bf4cb5e0ccd253d6f4b50caae6c8ab5a1c92f74760f810e`.

@@ -4,6 +4,8 @@
 
 ## NOW
 
+- PR1599 native冻结读取已随main7bc216509合入；实现与main逐字一致，readMistakes接口不变。1376仍由7631独占隔离runtime验收；本轮不启动DB/容器，完整媒体/Start/browser/旧入口退出仍开放。
+
 - YUK1376 typed readMistakes已随main c7c2482ca合入；保留其领域/API/SPA消费者，Start挂载仍待1352主线。Native冻结证据缺口归7631独立四文件lane，不在1346补写。
 
 - **最新集成**：合入main36f719675的YUK1375相对路径audit修复，allowlist不改；相关audit重新验证。1364已由7631发布为5aa2/build853/image9b76（owner报告）。1376 /mistakes与1359归7631，1352/55/56归主线；不交叉写入。

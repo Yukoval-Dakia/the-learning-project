@@ -1,3 +1,7 @@
+## main1599 integration
+
+PR1599 native冻结读取已随main7bc216509合入；实现与main逐字一致，readMistakes接口不变。1376仍由7631独占隔离runtime验收；本轮不启动DB/容器，完整媒体/Start/browser/旧入口退出仍开放。
+
 ## main1376 integration
 
 YUK1376 typed readMistakes已随main c7c2482ca合入；保留其领域/API/SPA消费者，Start挂载仍待1352主线。Native冻结证据缺口归7631独立四文件lane，不在1346补写。

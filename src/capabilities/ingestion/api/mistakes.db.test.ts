@@ -3,8 +3,11 @@
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { loadAttemptQuestionSnapshot } from '@/capabilities/practice/public';
+import { commitFormalAttempt } from '@/capabilities/practice/server/assessment/attempt';
 import { QUESTION_EDIT_ACTION } from '@/core/schema/event/experimental';
 import {
+  assessment_submission,
+  evaluation,
   event,
   knowledge,
   learning_record,
@@ -13,7 +16,9 @@ import {
   source_asset,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { issueSoloFixture } from '../../../../tests/fixtures/assessment-solo';
 import { nativeAppealFixture } from '../../../../tests/fixtures/native-appeal';
+import { handwritingFixture } from '../../../../tests/fixtures/native-solo-http';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { readMistakes } from '../public';
 import { CreateMistakeResponseSchema, MistakeListResponseSchema } from './contracts';
@@ -818,9 +823,58 @@ describe('GET /api/mistakes', () => {
       expect(result.rows[0]).toMatchObject({
         id: native.attemptId,
         question_id: native.questionId,
-        prompt_md: '',
+        prompt_md: '顺流18 km/h、逆流12 km/h。列方程求静水船速，并解释相加消元。',
         reference_md: null,
+        wrong_answer_md: expect.stringContaining('错误'),
       });
+    } finally {
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('reads frozen native group image evidence through GET and readMistakes without writes', async () => {
+    const db = testDb();
+    try {
+      const native = await nativeAppealFixture(db);
+      const issued = await issueSoloFixture(db, native.questionId, true);
+      const image = await handwritingFixture(db);
+      const request = { ...issued.assessment('v=15 km/h'), group_evidence: [image] };
+      const committed = await commitFormalAttempt(db, 'solo_submit', native.questionId, request);
+      await db.insert(learning_record).values({
+        id: 'lr_native_image',
+        kind: 'mistake',
+        content_md: '原件',
+        source: 'manual',
+        capture_mode: 'text',
+        activity_kind: 'attempt',
+        processing_status: 'raw',
+        origin_event_id: committed.attempt_id,
+        question_id: native.questionId,
+        attempt_event_id: committed.attempt_id,
+        created_at: new Date(),
+        updated_at: new Date(),
+      });
+      await db
+        .update(question)
+        .set({ prompt_md: '现在已编辑', reference_md: '现在的私有答案' })
+        .where(eq(question.id, native.questionId));
+      const before = await db.select().from(event);
+      const submissionsBefore = await db.select().from(assessment_submission);
+      const evaluationsBefore = await db.select().from(evaluation);
+      const calls = native.execute.mock.calls.length;
+      const result = MistakeListResponseSchema.parse(await (await getMistakes()).json());
+      expect(result.rows).toHaveLength(1);
+      expect(result.rows[0]).toMatchObject({
+        prompt_md: '顺流18 km/h、逆流12 km/h。列方程求静水船速，并解释相加消元。',
+        reference_md: null,
+        wrong_answer_image_refs: [image.evidence.asset.asset_id],
+        wrong_answer_md: expect.stringContaining('v=15 km/h'),
+      });
+      expect((await readMistakes(db)).rows).toEqual(result.rows);
+      expect(await db.select().from(event)).toEqual(before);
+      expect(await db.select().from(assessment_submission)).toEqual(submissionsBefore);
+      expect(await db.select().from(evaluation)).toEqual(evaluationsBefore);
+      expect(native.execute).toHaveBeenCalledTimes(calls);
     } finally {
       vi.restoreAllMocks();
     }
