@@ -1,21 +1,36 @@
-# 当前交接 — 2026-10-07 YUK-1338 Pi + DBOS 隔离 gate
+# 当前父线程整合 — PR1584
 
-owner 指示本线程负责 epic YUK-1351 的第一道 gate。工作树 `/Users/yuqi/.t3/worktrees/the-learning-project/feat-yuk-1338-pi-dbos-gate`，branch `feat/yuk-1338-pi-dbos-gate`，base `8841ce68a69e30bacf20e8241f28cd1669b38a1f`。本线程是原树唯一 writer；57961995 父线程负责主线迁移协调与 PR watch/最终 merge。非 UI、不合并、不部署、不碰生产数据或 provider 配置。
+正常合入 main42987dfd7，保留依赖升级与DBOS gate；本轮检查待完成，旧证据为历史。父线程唯一writer，无runtime或provider操作。
 
-Pi 1.0.2 + DBOS 5.2.11 exact devDependency。仅 testing capability / Testcontainers 领域与独立 DBOS schema。真实 SIGKILL/restart 验证响应检查点、业务提交和工具回执；状态版本与过期拒绝、三入口共享 arrangeNext。未知外部结果窗口记录替身第二次调用，不宣称 provider exactly-once 或零重复付费。锁等待前读取 clock_timestamp 的缺陷已复现并改为锁取得后再读。
+# 当前 lane handoff — YUK-1360 main Laminar source integration
 
-本机2 unit/10 DB通过，typecheck/lint/build通过；lint基线297 warnings，partition无P0。证据与模块说明见 `docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md` 与相邻 evidence JSON。源码 hash/app version 单独封存；独立 review由 T3 Codex/gpt-6.1-sol xhigh 完成，无P0/P1；P2首次并发证据创建及provider请求身份要求已归入YUK1356。PR #1590：https://github.com/Yukoval-Dakia/the-learning-project/pull/1590 已T3登记；YUK1338 In Review。最终复验源码提交 a3078179ad0c7ea8e713060a5e896225466c57b0，source hash 已逐项验证。run37612250074 Typecheck成功，lint ratchet因最终evidence JSON格式失败，本机已复现并修复格式，2 unit/10 DB + typecheck/build复验通过；最终证据落盘后再次lint/ratchet再push。最终CI未通过前不宣称最终gate。owner指示本线程只修PR1590、不watch不merge，不置Done；P0通过后57961995父线程立即推进P1/P5，不被1363/1364串行阻塞。
+Owned tree `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1360-dependency-integration`，branch `fix/yuk-1360-dependency-integration`。正常 merge parents `784b80ac023df71de88309ab118fdcc06155fdad` + `a86d4e633a67f802554ae114387ab06b7110c135`。保留26 production/3 type upgrades、Mem0 patch858dc与main Laminar0.8.49/gRPC1.14.5；锁语义2174refs、1108packages/snapshots通过。新frozen install、362unit、98DB、typecheck/lint/build/10audits通过；297warnings未上调。四个peer warnings继承parents，无新增actionable issue。
 
-已正常合入 origin/main a86d4e633（PR #1580/#1589），重新核验合并后的依赖与 gate。2026-10-07 11:01Z 的生产停写/backup.py 不属于本线程，已回报 57961995-70c3-4121-a9dd-97d90471be1a；不接管 tlp1346 候选（365/18987, PG18985）或重投未知请求。本轮没有核验或操作生产。既有生产指针与义务保留在下面的上一轮交接中，不能把旧记录称为本次新验收。
+本轮证据见 `docs/planning/evidence/2026-10-07-yuk1360-main-laminar-merge.json`。旧97DB/146unit/82migration/pgboss37→44、父线程reported初审noP0/P1/CI at784b80ac/19DB为历史，不等于新head CI或runtime验收。本writer不新review、不push；正常merge commit交回父线程检视。
+
+Owner override优先：thread7631已将主f3 runtime重置为Agent TEST ONLY，非personal；1362 purpose doc57fbc95fc仅只读，未cherry-pick。无runtime/container/app/worker/existingDB/R2/private backup/restore/deploy权限。仅自有disposabletestcontainer；1346candidate PG/apps stopped/unknown状态未触及，unknown requests不replay。无provider/model/telemetry calls、subscription、UIrewrite、PR/watch/comment、Linear、delegation。父线程独占delivery/capture及后续另行授权的test runtime/BAM/API/SPA；日用切换须owner后续明确指示。return后authority结束，后续PR通知不得重启写入。
+
+下方所有旧source counts/hashes与产品release描述均为历史，不能覆盖上述用途/权限/新source-verification limits。
 
 ---
-# PR1580 接续 — 2026-10-07
+
+# 历史 lane — 2026-10-07 YUK-1360 依赖集成
+
+唯一 writer 位于 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1360-dependency-integration`，branch `fix/yuk-1360-dependency-integration`，base `c54f5ddd3`。正常 merge `8841ce68a` 已提交 `574106ae9`，保留所有26项升级及 Mem0 hash `858dc62f5cb028767f44e081b4e6713f302c6a47e760f21c403b62a43ec969e7`。只修改七个 test fixture，未知 queue observation 为 null，初始 retryCount 为0；没有 production source repair。
+
+本 lane 的97 DB、146 unit、82 migration、typecheck/lint/build均通过。populated queue37→44验证通过：12个原job/data/state/output/计数完整保持，7项BAM全部完成，retry/lost-claim signal及settlement fence、真实Drizzle enqueue rollback/commit、graceful/forced shutdown与restart通过。旧版仅在disposable schema44副本验证一次send/fetch/complete；严格schema检查拒绝44，没有downgrade。所有容器已停止。完整命令/输出位于 `/tmp/yuk1360-dependency-repair-20261007`，结果封存于 `docs/planning/2026-10-07-yuk1360-dependency-integration-evidence.md` 及两个 versioned JSON。父线程需核验真实SPA/API与生产BAM gate，不能将本证据称为独立审查或发布通过。
+
+父线程拥有 PR1584、watch/replies/push/merge、Linear、独立审查和生产。此 lane 不委派、不 push、不读凭据/原env、不操作现有服务或数据库、不调用真实provider。完成后 authority 结束，通知不恢复写入权。
+
+下方为 main 继承的历史产品交接，不是本 lane 的实施范围。
+
+# 历史 PR1580 接续 — 2026-10-07
 
 父线程唯一 writer。6787c423b 的 CI 已绿，但新 P1 discussion4205696120 确认：R2_SECRET_ACCESS_KEY、DB_PASSWORD、CLAUDE_CODE_OAUTH_TOKEN 等文本及部分结构字段仍泄露。扩大10类回归先RED，现文本和结构字段共用credentialNamePattern后73 scoped tests通过，保留普通正文和wrapped assignment覆盖。修复后须新exact CI及17分钟等待；最终SQL/browser验收仍待完成，不启动第三审、不部署。
 
 ---
 
-# 当前交接 — 2026-10-07 会话入口生产发布完成
+# 历史交接 — 2026-10-07 会话入口生产发布完成
 
 生产 `f3bfff2cfe2aea0efbf7d11ead8a84ebfab497ef`，02:17Z app/worker 同准确镜像 e681a7b502aa；MiMo 产品 pin 保持不变。PR1583 在 exact d3906a7 CI37556260516成功、P0/P1裁决及17分钟窗后，于02:05:19Z合并，watch已结束。真实生产 Chromium 通过 fresh sessions/server_time、默认续接、结束历史只读、新建空会话、重开及刷新一致；无模型调用，SQL task runs仍2712。完整记录见 `docs/planning/2026-10-07-session-entry-local-release-result.md`。
 
