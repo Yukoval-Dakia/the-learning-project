@@ -1,11 +1,11 @@
-import type { ConjectureProbeSpecV2T } from '@/core/schema/business';
+import { type ConjectureProbeSpecT, ConjectureProbeSpecV2 } from '@/core/schema/business';
 import { ConjectureProposalChange, type ConjectureProposalChangeT } from '@/core/schema/proposal';
 
 /** Freeze the complete original package and its audit, using the real proposal schema. */
 export function withProbeSpecs(
   change: ConjectureProposalChangeT,
-  primary: ConjectureProbeSpecV2T,
-  followup: ConjectureProbeSpecV2T,
+  primary: ConjectureProbeSpecT,
+  followup: ConjectureProbeSpecT,
 ): ConjectureProposalChangeT {
   const diagnostic = {
     schema_version: 1 as const,
@@ -24,7 +24,7 @@ export function withProbeSpecs(
     probe_spec: primary,
     followup_probe_spec: followup,
     probe_quality: {
-      schema_version: 3,
+      schema_version: ConjectureProbeSpecV2.safeParse(primary).success ? 3 : 2,
       passed: true,
       attempts: [
         {

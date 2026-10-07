@@ -2,7 +2,7 @@ import { eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { stableStringify } from '@/core/migration/canonical';
 import { PublishedQuestionRevision, projectPracticeIssuance } from '@/core/schema/assessment';
-import type { ConjectureProbeSpecT } from '@/core/schema/business';
+import { type ConjectureProbeSpecT, ConjectureProbeSpecV2 } from '@/core/schema/business';
 import { PROBE_QUESTION_SOURCE } from '@/core/schema/conjecture';
 import type { Db, Tx } from '@/db/client';
 import {
@@ -155,15 +155,17 @@ export function validateIssuedProbeProvenance({
     const promptMd = frozen.faces.map((part) => part.prompt_md).join('\n\n');
     if (promptMd !== expectedPrompt) return { reason: 'probe_prompt_mismatch' };
     const criterion = unit.criterion;
+    const expectedNativeSpec = ConjectureProbeSpecV2.safeParse(expectedSpec);
     // Proposal loaders parse the complete original spec; the published schema
     // parses the frozen counterpart. Compare every typed field, including nested
     // signatures, without depending on editable question metadata or key order.
-    // Either-side presence prevents a native spec from becoming legacy scoring.
-    if (expectedSpec !== null || criterion.probe_spec !== undefined) {
+    // Only V2 publishes a native spec. V1 retains the legacy frozen reference.
+    // Either-side V2 presence prevents a native spec from becoming legacy scoring.
+    if (expectedNativeSpec.success || criterion.probe_spec !== undefined) {
       if (
-        expectedSpec === null ||
+        !expectedNativeSpec.success ||
         criterion.probe_spec === undefined ||
-        stableStringify(criterion.probe_spec) !== stableStringify(expectedSpec)
+        stableStringify(criterion.probe_spec) !== stableStringify(expectedNativeSpec.data)
       ) {
         return { reason: 'probe_spec_mismatch' };
       }
