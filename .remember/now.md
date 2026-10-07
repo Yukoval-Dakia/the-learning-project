@@ -1,3 +1,17 @@
+# 当前交接 — 2026-10-07 MiMo 产品发布完成
+
+生产 `0f81e198f2b2cf51bdc5df231e3b7e5fbba06ad4`，app/worker 同为 OpenCode Go `mimo-v2.6-pro`；PR1585已合并，父watch已取消。两轮真实 Copilot、同会话 Pi cursor 和刷新回放通过；MemoryBrief 生产实际成功。完整证据与限制见 `docs/planning/2026-10-07-mimo-local-release-result.md` 和 `PLAN.md`。旧5d738dbc0不再是当前版本，勿重复部署。
+
+私有 runtime `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/deployment-mimo-20261007-0f81e198`；当前指针为其上级 `current-release.json`。42failed+42DLQ保留，不自动重放。旧镜像单独回退未验证；DB恢复不可覆盖新写入。记忆副本探针整体FALSE，功能成功但 SDK wire/count/cost 未观测完整，勿改称PASS或付费重跑。
+
+唯一活动代码 writer：YUK1340 `tlp-yuk-1340-session-entry`，task `yuk1340-retained-session-p1-recovery-20261007-v2`（CodexSol6.1 xhigh；旧writer已停止归档，排队turn已取消），修自动会话P1与main冲突。禁止父线程抢写、重复任务、第三审或子线程watch。交回后父验收再push。1583由父线程watch。
+
+同原线程hourlyautomation启用；scope已纠正为产品AI而非开发。远程 https://loom-mac-mini.tail2ee344.ts.net/ 已配置；真实外部设备仍待1344。下一步先完成会话入口，然后推进椭圆学习证据与复验路径；模型切换不等于完整产品完成。
+
+以下为历史交接，旧授权、版本和模型选择不覆盖上述当前状态。
+
+---
+
 # 当前交接 — 2026-10-06 YUK-1224/1226/1196/1236（SCF-141/143/109/161）
 
 工作树 /Users/yuqi/.t3/worktrees/the-learning-project/feat-yuk-588-today-cost-ui，分支 fix/yuk-1224-parser-assets-batch（upstream 已改为同名远端分支），base origin/main 9f1e0945c，含父线程文档提交 d2d5cff80。本 writer 提交 2364d4306，PR #1579（base main，四个 Closes 各自一行）。
