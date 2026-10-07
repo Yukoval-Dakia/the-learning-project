@@ -4,7 +4,7 @@ import {
   executeDirectProviderAttempt,
 } from '@/server/ai/direct-provider-attempt';
 import { glmChatCostCny } from '@/server/ai/pricing';
-import { type Env, createMem0Config } from './client';
+import { type Env, memoryLlmHeaders, resolveMemoryLlmConfig } from './client';
 import type {
   CandidatesByNew,
   NewMemoryEntry,
@@ -12,16 +12,9 @@ import type {
   ReconcileDecision,
 } from './reconcile-decisions';
 
-// P2 (YUK-342): GLM reconciliation judgment layer.
-//
-// After mem0 add() inserts new memories, this module calls GLM (via the same
-// openai-compat endpoint as mem0's own LLM — coding-plan /api/coding/paas/v4)
-// to decide how each new memory relates to existing candidates. The fetch
-// pattern mirrors glm_ocr.ts (AbortController timeout + Retryable/Permanent
-// error classification), but the endpoint is /chat/completions.
-//
-// This is NOT runTask/resolveTaskProvider (Anthropic-protocol-only). GLM is
-// openai-compat and physically unreachable through the Anthropic SDK.
+// Memory reconciliation uses the same LLM configuration as Mem0 extraction.
+// Direct request lifecycle, error taxonomy and guarded decisions remain intact.
+// The product pin replaces the historical GLM endpoint without a second runner.
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 const VALID_ACTIONS = new Set(['KEEP_BOTH', 'SUPERSEDE', 'MERGE', 'RETRACT_NEW']);
@@ -60,24 +53,8 @@ type GlmChatResponse = {
   error?: { code?: string | number; message?: string };
 };
 
-type GlmConfig = {
-  baseURL: string;
-  apiKey: string;
-  model: string;
-};
-
-function resolveGlmConfig(env: Env): GlmConfig {
-  const mem0Config = createMem0Config(env);
-  const llmConfig = mem0Config.llm.config;
-  return {
-    baseURL: llmConfig.baseURL ?? '',
-    apiKey: llmConfig.apiKey ?? '',
-    model: String(llmConfig.model ?? 'glm-5.2'),
-  };
-}
-
 /**
- * Build the GLM reconcile prompt. Per-kind rules follow owner directive:
+ * Build the Memory reconcile prompt. Per-kind rules follow owner directive:
  *   - preference / habit → single latest truth: SUPERSEDE on contradiction,
  *     MERGE on overlap (recency assumption).
  *   - weakness / event → KEEP_BOTH: episodic facts coexist; only RETRACT_NEW
@@ -191,12 +168,12 @@ export function parseReconcileResponse(raw: string): ReconcileDecision[] {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new ReconcileParseError('GLM reconcile response is not valid JSON', raw);
+    throw new ReconcileParseError('Memory reconcile response is not valid JSON', raw);
   }
 
   const obj = parsed as { decisions?: unknown };
   if (!obj || !Array.isArray(obj.decisions)) {
-    throw new ReconcileParseError('GLM reconcile response missing decisions array', raw);
+    throw new ReconcileParseError('Memory reconcile response missing decisions array', raw);
   }
 
   const decisions: ReconcileDecision[] = [];
@@ -246,7 +223,7 @@ export function parseReconcileResponse(raw: string): ReconcileDecision[] {
   }
 
   if (decisions.length === 0) {
-    throw new ReconcileParseError('GLM reconcile response has empty decisions array', raw);
+    throw new ReconcileParseError('Memory reconcile response has empty decisions array', raw);
   }
 
   return decisions;
@@ -303,11 +280,7 @@ export async function judgeReconciliation(
   } = {},
 ): Promise<ReconcileDecision[]> {
   const env = opts.env ?? process.env;
-  const glmConfig = resolveGlmConfig(env);
-  if (!glmConfig.apiKey) {
-    throw new PermanentError('GLM reconcile requires ZHIPU_API_KEY (via mem0 config)');
-  }
-
+  const glmConfig = resolveMemoryLlmConfig(env);
   const { system, user } = buildReconcilePrompt(newMems, candidatesByNew);
   const body: GlmChatBody = {
     model: glmConfig.model,
@@ -327,13 +300,13 @@ export async function judgeReconciliation(
   const result = await executeDirectProviderAttempt(
     opts.providerAttempt,
     {
-      provider: 'glm',
+      provider: glmConfig.provider,
       model: glmConfig.model,
       lane: 'glm.memory-reconcile',
       protocol: 'http',
       endpointClass: 'openai-compatible.chat-completions',
       operationKind: 'memory_reconcile',
-      unknownCostCurrency: 'CNY',
+      unknownCostCurrency: glmConfig.provider === 'glm' ? 'CNY' : 'USD',
     },
     async (attempt) => {
       const controller = new AbortController();
@@ -345,6 +318,7 @@ export async function judgeReconciliation(
           headers: {
             'Content-Type': 'application/json',
             Authorization: `Bearer ${glmConfig.apiKey}`,
+            ...memoryLlmHeaders(glmConfig, attempt.attemptId),
           },
           body: JSON.stringify(body),
           signal: controller.signal,
@@ -356,11 +330,14 @@ export async function judgeReconciliation(
           aborted ? 'provider_request_aborted' : 'provider_network_error',
         );
         if (aborted) {
-          throw new RetryableError(`GLM reconcile request aborted/timed out after ${timeoutMs}ms`, {
-            cause: err,
-          });
+          throw new RetryableError(
+            `Memory reconcile request aborted/timed out after ${timeoutMs}ms`,
+            {
+              cause: err,
+            },
+          );
         }
-        throw new RetryableError(`GLM reconcile network error: ${String(err)}`, {
+        throw new RetryableError(`Memory reconcile network error: ${String(err)}`, {
           cause: err,
         });
       } finally {
@@ -382,7 +359,7 @@ export async function judgeReconciliation(
           await attempt.recordExternalRequestId(bodyRequestId);
         }
         const code = errBody?.error?.code ?? '';
-        const message = `GLM reconcile error [http ${resp.status}${code ? ` code ${code}` : ''}]: ${errBody?.error?.message ?? 'no message'}`;
+        const message = `Memory reconcile error [http ${resp.status}${code ? ` code ${code}` : ''}]: ${errBody?.error?.message ?? 'no message'}`;
         if (resp.status === 401 || resp.status === 403) throw new PermanentError(message);
         if (resp.status === 429 || resp.status >= 500) throw new RetryableError(message);
         throw new PermanentError(message);
@@ -393,7 +370,7 @@ export async function judgeReconciliation(
         json = (await resp.json()) as GlmChatResponse;
       } catch (err) {
         attempt.markTerminal('failed', 'provider_response_malformed');
-        throw new PermanentError('GLM reconcile returned a non-JSON 2xx body', { cause: err });
+        throw new PermanentError('Memory reconcile returned a non-JSON 2xx body', { cause: err });
       }
       if (!headerRequestId && json.id) await attempt.recordExternalRequestId(json.id);
 
@@ -413,7 +390,7 @@ export async function judgeReconciliation(
           total: typeof totalTokens === 'number' ? totalTokens : null,
         });
       }
-      if (hasPricedTokens) {
+      if (hasPricedTokens && glmConfig.provider === 'glm') {
         const estimatedCostCny = glmChatCostCny(promptTokens ?? 0, completionTokens ?? 0);
         attempt.estimateCost({
           amount: estimatedCostCny,
@@ -426,7 +403,7 @@ export async function judgeReconciliation(
       if (typeof content !== 'string' || content.trim().length === 0) {
         attempt.markTerminal('failed', 'provider_response_malformed');
         throw new ReconcileParseError(
-          'GLM reconcile response has no message content',
+          'Memory reconcile response has no message content',
           JSON.stringify(json),
         );
       }

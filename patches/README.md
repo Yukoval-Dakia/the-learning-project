@@ -23,3 +23,15 @@ and PG/ingestion-owner DB suite are the behavioral acceptance, not patch text ha
 invalid outputs, valid empty extraction and stored result identity.
 `src/server/memory/mem0-sdk-failure.db.test.ts` covers atomic writes and failed
 attempt/no-completion/no-reburn versus legitimate empty completion.
+
+
+## mem0ai 3.0.13 — YUK-1341 product routing
+
+The existing correction also preserves `llm.config.defaultHeaders`, `maxRetries`
+and `timeout` through ConfigManager and its schema in ESM/CJS, and forwards them
+to the OpenAI client. Go needs `x-opencode-session`; its Mem0 client uses a unique
+SDK session UUID, not a fabricated `ai_task_run` id. The product Go config disables
+SDK HTTP retries and uses a 60 second request timeout. Local 503 acceptance checks
+both exports, the chosen model, JSON mode, the header and exactly one request.
+Opaque memory operations retain unknown usage/cost; no new usage estimate is
+attributed to the SDK. Existing extraction/write failure and atomicity fixes remain.

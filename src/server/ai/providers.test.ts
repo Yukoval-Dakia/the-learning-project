@@ -99,12 +99,12 @@ describe('resolveTaskProvider — AI_PROVIDER_OVERRIDE=anthropic-sub (subscripti
     expect(resolved.model).toBe('claude-opus-4-8-custom');
   });
 
-  it('an explicit per-call override arg still beats the env switch', () => {
+  it('the process env pin beats an explicit chat override', () => {
     vi.stubEnv('XIAOMI_API_KEY', 'sk-test-key');
     const resolved = resolveTaskProvider(KIND, { provider: 'xiaomi', model: 'mimo-v2.5' });
-    expect(resolved.provider).toBe('xiaomi');
-    expect(resolved.authMode).toBe('key');
-    expect(resolved.model).toBe('mimo-v2.5');
+    expect(resolved.provider).toBe('anthropic-sub');
+    expect(resolved.authMode).toBe('oauth');
+    expect(resolved.model).toBe('claude-opus-4-8');
   });
 });
 

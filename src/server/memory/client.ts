@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import type { MemoryConfig, MemoryItem, SearchResult } from 'mem0ai/oss';
 import {
   type Mem0OpaqueOperationContext,
@@ -8,20 +9,16 @@ import {
 // default so a backup restores to the exact table the client reads from (Cursor OCR
 // minor, PR #491: the literal was duplicated in both files).
 import { MEM0_COLLECTION_DEFAULT } from '@/server/export/constants';
+import { memoryLlmHeaders, resolveMemoryLlmConfig } from './llm-config';
 
-// P1 (YUK-341)：mem0 个性化半边换血到 GLM 5.2 + 百炼 v4，LLM/embedder 全走
-// openai-compat provider——mem0ai 3.0.6 的 openai provider 转发 config.baseURL
-// （anthropic 不转发，故弃 anthropic provider + 整套 withXiaomiBaseUrl env-dance）。
-// 详见 docs/design/2026-06-13-memory-architecture.md §8.3。
+export { memoryLlmHeaders, resolveMemoryLlmConfig } from './llm-config';
+
+// The global product pin selects the extraction LLM; embeddings keep their
+// independent model/dimensions and existing pgvector collection (ADR-0017).
 const DEFAULT_COLLECTION = MEM0_COLLECTION_DEFAULT;
 const DEFAULT_EMBEDDING_MODEL = 'text-embedding-v4'; // 阿里百炼 DashScope
 const DEFAULT_EMBEDDING_BASE_URL = 'https://dashscope.aliyuncs.com/compatible-mode/v1'; // 含 /v1
 const DEFAULT_EMBEDDING_DIMS = 1024; // 百炼 v4 推荐性价比维度；embedder 与 vectorStore 必须同值
-const DEFAULT_LLM_MODEL = 'glm-5.2'; // 智谱 GLM coding plan；可经 MEM0_LLM_MODEL 切 glm-5/glm-4.6
-// coding plan 专用端点（owner 的 glm-5.2 access 在 coding plan）。**勿加 /v1**——
-// 标准开放平台端点 /api/paas/v4 对 coding-plan 模型返 403，必须走 /api/coding/paas/v4。
-// global 版是 https://api.z.ai/api/coding/paas/v4（经 MEM0_LLM_BASE_URL 切）。
-const DEFAULT_LLM_BASE_URL = 'https://open.bigmodel.cn/api/coding/paas/v4';
 const DEFAULT_HISTORY_DB_PATH = '/var/lib/mem0/history.db'; // 绝对路径（默认相对 cwd 多进程踩坑）；prod compose 挂载卷，dev 经 MEM0_HISTORY_DB_PATH 覆盖
 
 export type Env = Record<string, string | undefined>;
@@ -181,7 +178,7 @@ function parseDatabaseUrl(raw: string) {
 
 export function createMem0Config(env: Env = process.env): MemoryConfig {
   const databaseUrl = requireEnv(env, 'DATABASE_URL');
-  const zhipuApiKey = requireEnv(env, 'ZHIPU_API_KEY'); // 智谱 GLM（openai-compat）
+  const llm = resolveMemoryLlmConfig(env);
   const dashscopeApiKey = requireEnv(env, 'DASHSCOPE_API_KEY'); // 阿里百炼 embedding
   const db = parseDatabaseUrl(databaseUrl);
   // embedder.embeddingDims（把 dimensions 传百炼 v4）与 vectorStore.embeddingModelDims
@@ -220,11 +217,19 @@ export function createMem0Config(env: Env = process.env): MemoryConfig {
       },
     },
     llm: {
-      provider: 'openai', // openai-compat：转发 baseURL → 接智谱 GLM（弃 anthropic env-dance）
+      provider: 'openai', // Mem0 protocol adapter; llm-config selects the actual provider
       config: {
-        apiKey: zhipuApiKey,
-        model: optionalEnv(env, 'MEM0_LLM_MODEL', DEFAULT_LLM_MODEL),
-        baseURL: optionalEnv(env, 'MEM0_LLM_BASE_URL', DEFAULT_LLM_BASE_URL),
+        apiKey: llm.apiKey,
+        model: llm.model,
+        baseURL: llm.baseURL,
+        ...(llm.provider === 'opencode-go'
+          ? {
+              // Mem0 is opaque: one SDK client session, not an ai_task_run id.
+              defaultHeaders: memoryLlmHeaders(llm, randomUUID()),
+              maxRetries: 0,
+              timeout: 60_000,
+            }
+          : {}),
       },
     },
     // disableHistory:false（owner 拍板 2026-06-14，§3.1/§8.3）——唯一收益是让抽取
