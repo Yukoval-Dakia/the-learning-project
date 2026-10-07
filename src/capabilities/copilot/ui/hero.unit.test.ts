@@ -30,29 +30,39 @@ describe('resolveArtifactHero', () => {
     });
   });
 
-  it('routes quiz / paper → /practice/{id} (paper artifact)', () => {
+  it('routes quiz / paper → /practice?paper={id} (paper artifact)', () => {
     expect(resolveArtifactHero({ kind: 'quiz', id: 'art_paper' })).toEqual({
       label: '练习',
       icon: 'layers',
-      href: '/practice/art_paper',
+      href: '/practice?paper=art_paper',
     });
     expect(resolveArtifactHero({ kind: 'paper', id: 'art_paper' })?.href).toBe(
-      '/practice/art_paper',
+      '/practice?paper=art_paper',
     );
   });
 
   it('routes Chinese kind synonyms (题 / 卷 / 笔记 / 互动)', () => {
     expect(resolveArtifactHero({ kind: '题', id: 'q_1' })?.href).toBe('/questions/q_1');
     expect(resolveArtifactHero({ kind: '题目', id: 'q_1' })?.href).toBe('/questions/q_1');
-    expect(resolveArtifactHero({ kind: '卷', id: 'art_1' })?.href).toBe('/practice/art_1');
-    expect(resolveArtifactHero({ kind: '试卷', id: 'art_1' })?.href).toBe('/practice/art_1');
+    expect(resolveArtifactHero({ kind: '卷', id: 'art_1' })?.href).toBe('/practice?paper=art_1');
+    expect(resolveArtifactHero({ kind: '试卷', id: 'art_1' })?.href).toBe('/practice?paper=art_1');
     expect(resolveArtifactHero({ kind: '笔记', id: 'n_1' })?.href).toBe('/notes/n_1');
     expect(resolveArtifactHero({ kind: '互动', id: 'n_1' })?.label).toBe('互动内容');
   });
 
   it('is case-insensitive and trims surrounding whitespace on kind', () => {
     expect(resolveArtifactHero({ kind: 'NOTE', id: 'n' })?.href).toBe('/notes/n');
-    expect(resolveArtifactHero({ kind: '  Quiz  ', id: 'a' })?.href).toBe('/practice/a');
+    expect(resolveArtifactHero({ kind: '  Quiz  ', id: 'a' })?.href).toBe('/practice?paper=a');
+  });
+
+  it.each(['quiz', 'paper', '卷', '试卷'])('encodes %s paper IDs as one query value', (kind) => {
+    const id = '卷 A/../B?kc=other&paper=evil#fragment';
+    const href = resolveArtifactHero({ kind, id })?.href;
+    expect(href).toBe(`/practice?paper=${encodeURIComponent(id)}`);
+    const url = new URL(href ?? '', 'https://learning.example');
+    expect(url.pathname).toBe('/practice');
+    expect([...url.searchParams.entries()]).toEqual([['paper', id]]);
+    expect(url.hash).toBe('');
   });
 
   it('returns null for an unrecognised kind (card renders link-less)', () => {

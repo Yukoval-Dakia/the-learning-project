@@ -24,8 +24,7 @@ export interface ArtifactHero {
 // are grounded in existing test fixtures + UI links, NOT guessed:
 //   • note / interactive → /notes/{id}    — generic artifact viewer (D UI page)
 //   • question (题)       → /questions/{id} — read-only question detail (id = q_*)
-//   • quiz / paper (卷)   → /practice/{id}  — paper artifact (id = art_*; chat.ts
-//                            already links 「去练习」→ /practice/art_*)
+//   • quiz / paper (卷)   → /practice?paper={id} — existing practice-page selection
 interface KindRoute {
   label: string;
   icon: LoomIconName;
@@ -49,10 +48,22 @@ const KIND_ROUTES: Record<string, KindRoute> = {
   question: { label: '题目', icon: 'quiz', path: (id) => `/questions/${encodeURIComponent(id)}` },
   题: { label: '题目', icon: 'quiz', path: (id) => `/questions/${encodeURIComponent(id)}` },
   题目: { label: '题目', icon: 'quiz', path: (id) => `/questions/${encodeURIComponent(id)}` },
-  quiz: { label: '练习', icon: 'layers', path: (id) => `/practice/${encodeURIComponent(id)}` },
-  paper: { label: '练习', icon: 'layers', path: (id) => `/practice/${encodeURIComponent(id)}` },
-  卷: { label: '练习', icon: 'layers', path: (id) => `/practice/${encodeURIComponent(id)}` },
-  试卷: { label: '练习', icon: 'layers', path: (id) => `/practice/${encodeURIComponent(id)}` },
+  quiz: {
+    label: '练习',
+    icon: 'layers',
+    path: (id) => `/practice?paper=${encodeURIComponent(id)}`,
+  },
+  paper: {
+    label: '练习',
+    icon: 'layers',
+    path: (id) => `/practice?paper=${encodeURIComponent(id)}`,
+  },
+  卷: { label: '练习', icon: 'layers', path: (id) => `/practice?paper=${encodeURIComponent(id)}` },
+  试卷: {
+    label: '练习',
+    icon: 'layers',
+    path: (id) => `/practice?paper=${encodeURIComponent(id)}`,
+  },
 };
 
 /**

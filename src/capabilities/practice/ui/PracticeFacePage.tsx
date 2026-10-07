@@ -6,7 +6,9 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useLayoutEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { ApiError } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
+import { EmptyState } from '@/ui/primitives/EmptyState';
 import { ErrorState } from '@/ui/primitives/ErrorState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import './practice-face.css';
@@ -21,6 +23,7 @@ import {
   type StreamStatus,
   type StreamView,
   advanceStreamItem,
+  getPaperDetail,
   getStream,
 } from './practice-api';
 
@@ -41,6 +44,7 @@ type Mode =
   | { kind: 'list' }
   | { kind: 'solo'; item: StreamItem }
   | { kind: 'paper'; artifactId: string }
+  | { kind: 'linked-paper'; artifactId: string }
   | { kind: 'retro'; artifactId: string };
 
 interface StreamActionFailure {
@@ -80,6 +84,49 @@ function streamForRequestedScope(
   return stream.scope ? undefined : stream;
 }
 
+// Resolve a deep link before mounting the answering component, which can open a session.
+function PfLinkedPaper({
+  artifactId,
+  onReady,
+  onCancel,
+}: {
+  artifactId: string;
+  onReady: (completed: boolean) => void;
+  onCancel: () => void;
+}) {
+  const detailQ = useQuery({
+    queryKey: ['paper', artifactId],
+    queryFn: () => getPaperDetail(artifactId),
+    refetchOnMount: 'always',
+  });
+  useLayoutEffect(() => {
+    if (detailQ.isFetchedAfterMount && detailQ.isSuccess) {
+      onReady(detailQ.data.session?.status === 'completed');
+    }
+  }, [detailQ.isFetchedAfterMount, detailQ.isSuccess, detailQ.data, onReady]);
+  // A cached unfinished session must not bypass the fresh completion check.
+  if (!detailQ.isFetchedAfterMount || detailQ.isLoading)
+    return <p className="quiet-empty">取卷中…</p>;
+  const isNotFound = detailQ.error instanceof ApiError && detailQ.error.status === 404;
+  const back = (
+    <Btn size="sm" variant="ghost" icon="arrowL" onClick={onCancel}>
+      返回练习
+    </Btn>
+  );
+  if (detailQ.isError && !isNotFound) {
+    return (
+      <div className="pfp">
+        {back}
+        <ErrorState text="试卷加载失败。" onRetry={() => void detailQ.refetch()} />
+      </div>
+    );
+  }
+  if (isNotFound) {
+    return <EmptyState icon="doc" title="试卷不存在" text="这张卷不存在或已删除。" action={back} />;
+  }
+  return <p className="quiet-empty">取卷中…</p>;
+}
+
 // navigate 暂未消费（M3 知识面挂上后，复盘 trace 的知识点链接会用它跳转）。
 export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePageProps) {
   const qc = useQueryClient();
@@ -99,7 +146,10 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
     },
     [setQuery],
   );
-  const [mode, setMode] = useState<Mode>({ kind: 'list' });
+  const [mode, setMode] = useState<Mode>(() => {
+    const artifactId = getQuery('paper');
+    return artifactId ? { kind: 'linked-paper', artifactId } : { kind: 'list' };
+  });
   const [toasts, setToasts] = useState<PfToast[]>([]);
   const [actionFailure, setActionFailure] = useState<StreamActionFailure | null>(null);
 
@@ -112,7 +162,8 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
     if (!nextScope && getQuery('view') === 'shelf') nextView = 'shelf';
     setScopeKnowledgeId(nextScope);
     setView(nextView);
-    setMode({ kind: 'list' });
+    const artifactId = getQuery('paper');
+    setMode(artifactId ? { kind: 'linked-paper', artifactId } : { kind: 'list' });
     setActionFailure(null);
   }, [getQuery]);
 
@@ -186,6 +237,16 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
     },
     [qc, recordFailure, streamQueryKey],
   );
+
+  const clearPaperSelection = useCallback(() => {
+    setMode({ kind: 'list' });
+    setQuery('paper', null);
+  }, [setQuery]);
+
+  const backFromRetro = useCallback(() => {
+    clearPaperSelection();
+    switchView('shelf');
+  }, [clearPaperSelection, switchView]);
 
   const clearScope = useCallback(() => {
     setScopeKnowledgeId(null);
@@ -297,12 +358,24 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
         addToast={addToast}
       />
     );
+  } else if (mode.kind === 'linked-paper') {
+    body = (
+      <PfLinkedPaper
+        key={mode.artifactId}
+        artifactId={mode.artifactId}
+        onReady={(completed) =>
+          setMode({ kind: completed ? 'retro' : 'paper', artifactId: mode.artifactId })
+        }
+        onCancel={clearPaperSelection}
+      />
+    );
   } else if (mode.kind === 'paper') {
     body = (
       <PfPaper
+        key={mode.artifactId}
         artifactId={mode.artifactId}
         onExit={(info) => {
-          setMode({ kind: 'list' });
+          clearPaperSelection();
           void refreshStream();
           const n = info?.unsavedFailures ?? 0;
           addToast(
@@ -319,15 +392,7 @@ export default function PracticeFacePage({ getQuery, setQuery }: PracticeFacePag
       />
     );
   } else if (mode.kind === 'retro') {
-    body = (
-      <PfRetro
-        artifactId={mode.artifactId}
-        onBack={() => {
-          setMode({ kind: 'list' });
-          switchView('shelf');
-        }}
-      />
-    );
+    body = <PfRetro key={mode.artifactId} artifactId={mode.artifactId} onBack={backFromRetro} />;
   } else {
     let eyebrowText = '今日练习 · 按当前学习状态编排';
     if (scopeKnowledgeId) {
