@@ -3,7 +3,7 @@ import { join, relative } from 'node:path';
 import ts from 'typescript';
 
 const SOURCE_FILE = /\.(?:ts|tsx|mts|cts)$/u;
-const TEST_FILE = /(?:\.(?:test|spec)|\.unit|\.db)\.(?:ts|tsx|mts|cts)$/u;
+const TEST_FILE = /(?:\.(?:test|spec)(?:-support)?|\.unit|\.db)\.(?:ts|tsx|mts|cts)$/u;
 const EXCLUDED_DIRECTORIES = new Set(['.git', '.cache', 'dist', 'node_modules']);
 const ENV_KEY = /^[A-Z][A-Z0-9_]*$/u;
 

@@ -403,40 +403,99 @@ function hasSchemaTaskKindColumn(sourceRoot: string): boolean {
 function hasRunnerCatalogGuard(sourceRoot: string): boolean {
   const sourceFile = sourceFileFor(sourceRoot, 'src/server/ai/runner.ts');
   if (!sourceFile) return false;
-  let guarded = false;
-  let catalogRead = false;
-  let lifecycleKind = false;
-  const visit = (node: ts.Node): void => {
-    if (ts.isIfStatement(node) && ts.isPrefixUnaryExpression(node.expression)) {
-      const guardCall = node.expression.operand;
-      guarded ||=
-        node.expression.operator === ts.SyntaxKind.ExclamationToken &&
-        isCallTo(guardCall, 'isKnownTask') &&
-        isIdentifierText(guardCall.arguments[0], 'kind');
-    } else if (isElementAccess(node, 'tasks', 'kind')) {
-      catalogRead = true;
-    } else if (
-      ts.isCallExpression(node) &&
-      isIdentifierText(node.expression, 'createRunLifecycle')
-    ) {
-      const config = node.arguments[0];
-      lifecycleKind ||=
-        config !== undefined &&
-        ts.isObjectLiteralExpression(config) &&
-        namedProperty(config, 'kind')?.getText(sourceFile) === 'kind';
-    }
-    ts.forEachChild(node, visit);
-  };
+  const functions = new Map<string, ts.FunctionDeclaration>();
+  let importedTracingWrapper = false;
   for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name) {
+      functions.set(statement.name.text, statement);
+    }
     if (
-      ts.isFunctionDeclaration(statement) &&
-      isIdentifierText(statement.name, 'runTask') &&
-      statement.body
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteralLike(statement.moduleSpecifier) &&
+      statement.moduleSpecifier.text === './laminar-tracing' &&
+      statement.importClause?.namedBindings &&
+      ts.isNamedImports(statement.importClause.namedBindings)
     ) {
-      visit(statement.body);
+      importedTracingWrapper = statement.importClause.namedBindings.elements.some(
+        (binding) =>
+          binding.name.text === 'traceOperation' &&
+          (binding.propertyName === undefined || binding.propertyName.text === 'traceOperation'),
+      );
     }
   }
-  return guarded && catalogRead && lifecycleKind;
+  const visited = new Set<ts.FunctionDeclaration>();
+  const inspect = (fn: ts.FunctionDeclaration): boolean => {
+    if (!fn.body || visited.has(fn) || !isIdentifierText(fn.parameters[0]?.name, 'kind'))
+      return false;
+    visited.add(fn);
+    const guard = fn.body.statements.find((statement) => {
+      if (
+        !ts.isIfStatement(statement) ||
+        statement.elseStatement ||
+        !ts.isPrefixUnaryExpression(statement.expression) ||
+        statement.expression.operator !== ts.SyntaxKind.ExclamationToken ||
+        !isCallTo(statement.expression.operand, 'isKnownTask') ||
+        !isIdentifierText(statement.expression.operand.arguments[0], 'kind')
+      )
+        return false;
+      const branch = statement.thenStatement;
+      return (
+        ts.isThrowStatement(branch) ||
+        (ts.isBlock(branch) && branch.statements.some(ts.isThrowStatement))
+      );
+    });
+    const catalogReads: ts.Node[] = [];
+    const lifecycleCalls: ts.CallExpression[] = [];
+    // A declaration or unused callback is not evidence of the executed path.
+    const visit = (node: ts.Node): void => {
+      if (ts.isFunctionLike(node)) return;
+      if (isElementAccess(node, 'tasks', 'kind')) catalogReads.push(node);
+      if (isCallTo(node, 'createRunLifecycle')) lifecycleCalls.push(node);
+      ts.forEachChild(node, visit);
+    };
+    visit(fn.body);
+    if (guard) {
+      return (
+        catalogReads.length > 0 &&
+        lifecycleCalls.length > 0 &&
+        catalogReads.every((read) => read.getStart(sourceFile) > guard.end) &&
+        lifecycleCalls.every((call) => {
+          const config = call.arguments[0];
+          if (
+            call.getStart(sourceFile) <= guard.end ||
+            !config ||
+            !ts.isObjectLiteralExpression(config)
+          )
+            return false;
+          const kind = namedProperty(config, 'kind');
+          return (
+            kind !== undefined &&
+            ((ts.isShorthandPropertyAssignment(kind) && isIdentifierText(kind.name, 'kind')) ||
+              (ts.isPropertyAssignment(kind) && isIdentifierText(kind.initializer, 'kind')))
+          );
+        })
+      );
+    }
+    if (catalogReads.length > 0 || lifecycleCalls.length > 0) return false;
+    const returned = fn.body.statements.find(ts.isReturnStatement)?.expression;
+    const call = returned && ts.isAwaitExpression(returned) ? returned.expression : returned;
+    if (!importedTracingWrapper || !isCallTo(call, 'traceOperation')) return false;
+    const callback = call.arguments[2];
+    if (!callback || !ts.isArrowFunction(callback) || callback.parameters.length > 0) return false;
+    const delegated = ts.isAwaitExpression(callback.body)
+      ? callback.body.expression
+      : callback.body;
+    if (
+      !ts.isCallExpression(delegated) ||
+      !ts.isIdentifier(delegated.expression) ||
+      !isIdentifierText(delegated.arguments[0], 'kind')
+    )
+      return false;
+    const owner = functions.get(delegated.expression.text);
+    return owner !== undefined && inspect(owner);
+  };
+  const entry = functions.get('runTask');
+  return entry !== undefined && inspect(entry);
 }
 
 function hasLifecycleTaskKind(sourceRoot: string): boolean {

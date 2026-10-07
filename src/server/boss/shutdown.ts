@@ -1,4 +1,5 @@
 import type { PgBoss } from 'pg-boss';
+import { flushLaminarTracing } from '@/server/ai/laminar-tracing';
 
 const SHUTDOWN_TIMEOUT_MS = 30_000;
 
@@ -83,8 +84,10 @@ export function installShutdownHandler(boss: PgBoss): void {
     shuttingDown = true;
     try {
       await stopBossGracefully(boss, signal);
+      await flushLaminarTracing();
       process.exit(0);
     } catch {
+      await flushLaminarTracing();
       process.exit(1);
     }
   };
@@ -191,8 +194,10 @@ export function installBootShutdownHandler(
     }
     try {
       await stopBossGracefully(boss, signal);
+      await flushLaminarTracing();
       process.exit(0);
     } catch {
+      await flushLaminarTracing();
       process.exit(1);
     }
   };

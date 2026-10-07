@@ -6,7 +6,12 @@ Pi 1.0.2 + DBOS 5.2.11 exact devDependency。仅 testing capability / Testcontai
 
 本机2 unit/10 DB通过，typecheck/lint/build通过；lint基线297 warnings，partition无P0。证据与模块说明见 `docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md` 与相邻 evidence JSON。源码 hash/app version 单独封存；独立 review由 T3 Codex/gpt-6.1-sol xhigh 完成，无P0/P1；P2首次并发证据创建及provider请求身份要求已归入YUK1356。PR #1590：https://github.com/Yukoval-Dakia/the-learning-project/pull/1590 已T3登记；YUK1338 In Review。代码提交 995cdc2a4272beafc698f1ff107a0fa5ef2f3dcd，source hash 已逐项验证。CI Gate待结果。完成后仅把YUK1338置In Review，不置Done，不启动P1/P4/P5。
 
-本轮没有核验或操作生产。既有生产指针与义务保留在下面的上一轮交接中，不能把旧记录称为本次新验收。
+已正常合入 origin/main a86d4e633（PR #1580/#1589），重新核验合并后的依赖与 gate。2026-10-07 11:01Z 的生产停写/backup.py 不属于本线程，已回报 57961995-70c3-4121-a9dd-97d90471be1a；不接管 tlp1346 候选（365/18987, PG18985）或重投未知请求。本轮没有核验或操作生产。既有生产指针与义务保留在下面的上一轮交接中，不能把旧记录称为本次新验收。
+
+---
+# PR1580 接续 — 2026-10-07
+
+父线程唯一 writer。6787c423b 的 CI 已绿，但新 P1 discussion4205696120 确认：R2_SECRET_ACCESS_KEY、DB_PASSWORD、CLAUDE_CODE_OAUTH_TOKEN 等文本及部分结构字段仍泄露。扩大10类回归先RED，现文本和结构字段共用credentialNamePattern后73 scoped tests通过，保留普通正文和wrapped assignment覆盖。修复后须新exact CI及17分钟等待；最终SQL/browser验收仍待完成，不启动第三审、不部署。
 
 ---
 
@@ -23,6 +28,12 @@ Pi 1.0.2 + DBOS 5.2.11 exact devDependency。仅 testing capability / Testcontai
 以下为历史交接，旧授权、版本和模型选择不覆盖上述当前状态。
 
 ---
+
+# 当前交接 — 2026-10-07 YUK-1325 Laminar writer released
+
+工作树 `/private/tmp/tlp-laminar-yuk1325`，分支 `feat/yuk-1325-laminar`。保留既有修复 `1be38edbc`、sharp `1af72b427` 和 main merge `3940d61f9`；正常 merge main `8841ce68a` 为 `e484efa60`，保留产品 MiMo/autonomous delivery 指导与 Laminar。359 unit、全部19 CI audit加provider-lanes/agent-control-plane、typecheck/lint/build/lint-ratchet通过；297既有warnings、零high/critical依赖告警。P1 #4196957316 的4种prefixed API-key控制在a529全部RED、当前全部GREEN，未重写既有修复。完整命令/日志digest见 `docs/planning/evidence/2026-10-07-yuk1325-babysit-checks.txt`，本地日志 `.cache/yuk1325-babysit-20261007/`。
+
+源码/backend/sanitizer/audit baseline完整保留，无prod/HTTP-worker/model/DB/export/full-test/push/第三审。历史真实调用及OFFLINE REPLAY仅适用于原记录revision，最终development transcript SDK→SQL/browser验收仍待父线程。父线程独占PR watch/push/replies/merge/Linear/deploy；P2 typed primitive tracing仍延期YUK-1339；无新增actionable follow-up。提交此交接后writer释放，不因PR通知重启写入。
 
 # 当前交接 — 2026-10-06 YUK-1224/1226/1196/1236（SCF-141/143/109/161）
 

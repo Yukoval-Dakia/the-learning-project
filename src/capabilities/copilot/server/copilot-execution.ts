@@ -1,3 +1,4 @@
+import { observeTaskOperation } from '@/ai/task-observation';
 import type { Db } from '@/db/client';
 import {
   DOMAIN_TOOL_MCP_SERVER_NAME,
@@ -496,7 +497,14 @@ export function createCopilotExecutionOwner(
       if (resumeSessionId && partial) {
         throw new Error('resumed agent session returned partial output');
       }
-      const finalization = await finalizer.finalizeTerminal(terminalText);
+      const finalization = await observeTaskOperation(
+        { operation: 'finalize', taskKind: 'CopilotTask', taskRunId: result.task_run_id },
+        async (reportOutcome) => {
+          const finalized = await finalizer.finalizeTerminal(terminalText);
+          reportOutcome(finalized.accepted ? 'accepted' : 'rejected');
+          return finalized;
+        },
+      );
       retainSdkSession = !partial && finalization.accepted && nativeChildrenComplete;
       return {
         taskRunId: result.task_run_id,

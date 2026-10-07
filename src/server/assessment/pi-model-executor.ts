@@ -10,6 +10,11 @@ import { isOriginalEvidenceQuote } from '@/core/schema/assessment/evidence-quote
 import { AssessmentRuleDecision } from '@/core/schema/assessment/model-decision';
 import type { Db } from '@/db/client';
 import { AgentRunError } from '@/server/ai/agent-run-error';
+import {
+  isLaminarTracingEnabled,
+  traceMetadata,
+  traceOperation,
+} from '@/server/ai/laminar-tracing';
 import type { RunTaskCtx, RunTaskResult } from '@/server/ai/runner';
 import {
   type AssessmentAssetLoader,
@@ -17,6 +22,13 @@ import {
   prepareAssessmentModelInput,
   withinAssessmentSignal,
 } from './assessment-model-assets';
+import {
+  assessmentExecutionOutcome,
+  assessmentParseTraceOutput,
+  assessmentTaskTraceOutput,
+  assessmentTraceInput,
+  assessmentTraceOutput,
+} from './assessment-trace-content';
 
 export interface PiModelExecutorOptions {
   db: Db;
@@ -81,7 +93,7 @@ function citationProblem(
 
 /** Standalone native pi lane, selected only by an explicit published task and descriptor. */
 export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUnitExecutorPort {
-  return async (request, callerSignal) => {
+  const execute: ModelUnitExecutorPort = async (request, callerSignal) => {
     if (
       request.executor.task_kind !== 'AssessmentRuleJudgeTask' ||
       request.executor.admitted_slice_id === null
@@ -151,6 +163,9 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
             db: options.db,
             taskRunId,
             signal,
+            laminarContent: isLaminarTracingEnabled()
+              ? { input: assessmentTraceInput(request), output: assessmentTaskTraceOutput }
+              : undefined,
             providerSessionDeadlineAt: options.deadlineAt,
             budgetOverride: {
               maxIterations: budget.maxIterations,
@@ -175,8 +190,19 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
           [result.task_run_id],
           cost,
         );
-      const decision = AssessmentRuleDecision.parse(
-        result.structured_output ?? JSON.parse(result.text.trim()),
+      const modelResult = result;
+      const decision = await traceOperation(
+        'assessment.parse',
+        { task_run_id: result.task_run_id },
+        async () =>
+          AssessmentRuleDecision.parse(
+            modelResult.structured_output ?? JSON.parse(modelResult.text.trim()),
+          ),
+        {
+          content: isLaminarTracingEnabled()
+            ? { input: assessmentTraceInput(request), output: assessmentParseTraceOutput }
+            : undefined,
+        },
       );
       // Pending citations are validated by the model schema but cannot supply a score.
       // The domain pending outcome retains only its reason and paid run provenance.
@@ -272,4 +298,21 @@ export function createPiModelExecutor(options: PiModelExecutorOptions): ModelUni
       );
     }
   };
+  return (request, callerSignal) =>
+    traceOperation(
+      'assessment.execute',
+      { task_kind: 'AssessmentRuleJudgeTask' },
+      async () => {
+        const outcome = await execute(request, callerSignal);
+        traceMetadata({ business_outcome: outcome.kind === 'scored' ? 'accepted' : 'pending' });
+        return outcome;
+      },
+      {
+        signal: callerSignal ?? options.signal,
+        content: isLaminarTracingEnabled()
+          ? { input: assessmentTraceInput(request), output: assessmentTraceOutput }
+          : undefined,
+        outcome: assessmentExecutionOutcome,
+      },
+    );
 }

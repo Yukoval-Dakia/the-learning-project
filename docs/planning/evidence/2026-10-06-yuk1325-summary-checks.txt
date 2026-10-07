@@ -1,0 +1,62 @@
+YUK-1325 production assessment summary verification, 2026-10-06
+Workspace: /tmp/tlp-laminar-yuk1325; branch: feat/yuk-1325-laminar
+Starting head: a668c37ba4f1fcddf6c23d49454df1a5569a8abb
+Normal merge: db624a173b7c8da0500e602a3926c73a46ee66b9
+Merged main: 9f1e0945cf1eb4219d261ba8b94f727d0857a7c1
+YUK-1323 PR #1577 merge: 704decc02
+Node v26.10.0; pinned pnpm 11.13.1; Vitest 4.1.10; Laminar SDK 0.8.49
+
+Authorization: production fixed assessment summary consumer, tests, doc, normal main merge, local unit/typecheck/lint/build and release commit only.
+No credentials, model calls, DB access, Laminar upload, push, PR, review, delegation or full pnpm test.
+Parent owns tracker/status capture, the one final integrated-diff verification review, runtime and external-agent confirmation.
+
+Runtime evidence is supplied by the parent, not newly verified by this lane.
+Trace: 2bc268ef-0c7e-e22a-4902-8edd86764d86
+Parent observation SHA-256: 18345794da06437bded952222c251c5bae6bacc1dc4869eeeba0da794d94a232
+The external detector attributed a synthetic learner response / awarded zero to the grader.
+Production summaries clarify role and observable execution/schema/domain outcome; they do not assert expected answers or grading correctness.
+
+Integration: git fetch origin; git merge origin/main, no force/rebase/reset.
+The first merge was blocked by the existing modified Serena file and made no merge commit.
+Its exact bytes were saved to /tmp/yuk1325-serena-project-preserved.yml.
+Only .serena/project.yml was path-stashed; the recovery stash is retained.
+Normal merge completed automatically. Restored ignored .serena/project.yml SHA-256:
+922f74785b417d114a6ba0b8969f0de7f96306ea6ff1d485eef9f27a3648e913
+Executor still imports isOriginalEvidenceQuote, accepts typed pending citations, and retains assessment.execute / assessment.parse wrappers.
+
+Command environment:
+NODE_ENV=test; PATH prefix=/Users/yuqi/Library/pnpm/package-manager-store/v11/links/@pnpm/exe/11.13.1/7ed4c987d91254c958e70391e5855a23d5c67eb363ae7c283336ac9927a681a0/bin
+The host pnpm selector stalled without output; its two lane-owned invocations were interrupted.
+The existing pinned executable was used thereafter; no package installation.
+
+Causal RED before production edit:
+pnpm vitest run --config vitest.unit.config.ts src/capabilities/practice/server/judge/pi-model-executor.trace.unit.test.ts
+3 failed / 1 passed. Scored/pending spans lacked lmnr.span input/output; malformed output incorrectly ended assessment.execute with execution_outcome=success.
+An initial colocated test path was outside the unit include list; it was moved to the existing assessment executor unit owner directory without changing test config.
+
+Integrated scoped unit command:
+pnpm vitest run --config vitest.unit.config.ts src/capabilities/practice/server/judge/pi-model-executor.trace.unit.test.ts src/capabilities/practice/server/judge/pi-model-executor.unit.test.ts src/server/ai/laminar-tracing.test.ts src/server/ai/pi-agent-adapter.tracing.test.ts src/server/ai/pi-usage-evidence.test.ts src/server/ai/run-lifecycle.test.ts src/server/ai/runner.stream-collect.test.ts
+Exit 0: 7 files / 184 distinct tests passed.
+After correcting a required cost_ref in the new test fixture, the 7 changed summary tests were rerun: exit 0, all passed.
+Production code did not change after the 184-test run.
+
+Final local gates:
+pnpm typecheck: exit 0. Initial attempt found a missing cost_ref in the new test fixture, fixed before the final run.
+CODEX_FULL_GATE=1 pnpm lint: exit 0, 297 warnings, no errors.
+The ordinary-work lint hook requested the explicit final-gate marker; the final run used its documented entrypoint.
+CODEX_FULL_GATE=1 pnpm build: exit 0; web/server/worker/migration stages passed.
+pnpm exec biome check --write <three task-owned TS files>: exit 0; final changed fixture recheck passed.
+git diff --check: exit 0.
+
+Raw local check log digests:
+causal RED: 160116501a0f99700e159d5bb4ced51cd851bb6b8493f9e5d5c8581d2abca67e  /tmp/yuk1325-summary-red-pinned.log
+integrated scoped unit: 7f1eeb3adac9dc28a5359557da5bbf42a51bf60b241c120b3ba683cede5aaea2  /tmp/yuk1325-summary-unit.log
+final changed fixture unit: f9fb2d7f7c1d43e8c16db6a8c8049d5eb147d77ec3ecd993e815f14fa1fbf60e  /tmp/yuk1325-summary-final-unit.log
+typecheck: 8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92  /tmp/yuk1325-summary-typecheck.log
+lint: 4ce5ee69b3a51dd36d3a2a88a6ff24983fed27ff8637110e0c026eaea5817382  /tmp/yuk1325-summary-lint.log
+build: d1f392ad6b43bde931857ea92d0847de20db750e983d1a0e458a2ee560670de2  /tmp/yuk1325-summary-build.log
+
+Task-owned production and test source digests:
+4dd2e140b4eea0ffaa3b07ef169107a4ff78d6cf9118d0e15f12958dd0c495d6  src/server/assessment/assessment-trace-content.ts
+979bb8b940e7a5107264f40f3961b411cf49e5a6f3ce12f73dc3e1e783c6c9be  src/server/assessment/pi-model-executor.ts
+6b16ac85994e733b49cbd354506fb64701adb6dfc9bff46a49cc76d17f7a2c3c  src/capabilities/practice/server/judge/pi-model-executor.trace.unit.test.ts
