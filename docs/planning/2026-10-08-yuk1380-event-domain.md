@@ -120,3 +120,9 @@ independent review, or exact-head CI success.
 Parent inspected the actual domain and HTTP diff, verified all seven handoff hashes, and normally merged docs-only main f3351ea3 to candidate `0e21a034f`. The three scoped DB files passed **23 tests**, including all 11 new cases, with exit 0. Log: `/tmp/yuk1380-parent-db.log`. All eight protected baseline files still match.
 
 The deployment mutex was acquired at 2026-10-08 11:15:33Z and owner-checked/released at 11:16:28Z. Temporary test Postgres exited; the original four container IDs, images, start times and healthy states, plus the release digest, were unchanged. Evidence: `/tmp/yuk1380-db-before.json` and `/tmp/yuk1380-db-cleanup.json`. Main and runtime owners were notified. No provider, replay or deployment occurred. Independent review and exact-head CI remain required.
+
+## Delivery
+
+PR1607 merged at 2026-10-08 11:35:32Z as `4a3d797dd9033314e092d9b995c89490e1486194`. CI Gate `37769126069` passed on exact head `812a0bf08fed1488ebd0d997bb4743484a94a421`; independent R1 found no P0/P1, review threads were zero, and the 17-minute window elapsed. Bots reported quota/skip, not completed code reviews.
+
+Merge tree `868b7e37413053dfe6ed73a7e259b9b3ddf62b5f` matched the precomputed merge with newer main31b68eaa, preserving PR1596. The six event product/test blobs matched the tested head. YUK1380 is Done for this domain slice; Start consumers and page/runtime acceptance remain under1358/1359. The PR was unwatched and main integration notified. No deployment occurred.

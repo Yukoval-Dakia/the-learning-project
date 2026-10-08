@@ -1,11 +1,13 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：1356已在4cccb候选完成真实MiMo/Pi验收；正常整合main4a3d（1596 Copilot与1607事件领域）后重跑针对性验证，139unit/110DB/typecheck/lint/build通过，旧模型证据不冒称新源验收。1380领域已交付，Today/Inbox Start源码已交回且R1进行；1358/1359继续，未部署。
+> Linear 是权威 tracker。2026-10-08：1356已完成4cccb真实MiMo/Pi验收及main4a3d集成139unit/110DB/typecheck/lint/build；本次正常合入fadcb的W3/W4文档，产品源码完全不变，等新CI后合并。Start Today/Inbox唯一writer正修R1时间戳P1；1358/1359继续，未部署。
 
 
 ## NOW
 
-- **YUK-1380 / 事件领域接口**：readEventDetail(db,eventId)和createEventCorrection(db,eventId,input,now?)经observability/public导出，HTTP继续消费，kernel和纠错语义不改。28unit/父23DB/static/build通过，独立R1运行；Start尚未挂载。[证据](docs/planning/2026-10-08-yuk1380-event-domain.md)。
+- **YUK-1359 / W3-W4退出证据**：[W3](docs/planning/2026-10-08-yuk1359-w3-consumers.md)与[W4](docs/planning/2026-10-08-yuk1359-w4-consumers.md)已核真实消费者，补齐知识可见性/边事务、笔记presence及Copilot恢复边界。仅源码清单，Start和运行矩阵待，W5管理页仍待核查。
+
+- **YUK-1380 / 已合入**：PR1607于11:35:32Z合入main4a3d797dd；exact812a0bf08的CI37769126069全绿，独立R1 NONE、threads0、17分钟窗满。28unit/父23DB/static/build通过，observability/public共享详情与纠错接口交主线Start挂载。未部署。[证据](docs/planning/2026-10-08-yuk1380-event-domain.md)。
 
 - **YUK-1359 / W2消费者清单**：本线程独占退出证据；从main6150f01a9调查/record、/events/$id、/drafts和入门流程的读取、写入、恢复及共享子树。六页只读调查及父抽查已完成，见[W2清单](docs/planning/2026-10-08-yuk1359-w2-consumers.md)；新入口和运行验收未完成，Start/1356归主线。
 
