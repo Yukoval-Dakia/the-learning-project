@@ -1,3 +1,11 @@
+# Local preparation after PR1621 repair push
+
+PR1621 remote head3be966000, watch active, exact CI pending. New1394 design document is a separate local-only commit prepared for the next branch; do not push it merely to refresh CI. Once1393 merges, fetch freshmain and normally carry this documentation commit to feat/yuk-1394-session-orphans-dbos. No implementation writer yet. Parent-approved scope and genuine predecessor artifacts are in docs/planning/2026-10-09-yuk1394-session-orphans-dbos.md. The design task is completed/noPending.
+
+5796 reports token3593776b held since19:07:14Z for Start18954 built acceptance; no release received. No DB/runtime work here until actual lock recheck and acquisition. The prior1393 test-only repair completed29DB/static/build and safely released22c at19:04:58Z.
+
+Earlier revision-specific records follow.
+
 # 当前交接 — PR1621 CI fixture修复
 
 远端53f CI37826255809已终态：DB2唯一admin-config.db.test:301仍期望review orphan在infra。父仅test修改归属，新增全response唯一manifest行+原cron/tz断言。独立整份29DB通过，typecheck通过；lint修正新1359 JSON格式后通过，build重验exit0。新push将包含此前本地纯docs2e6，不为文档单独重置CI。R1 NONE仍覆盖原产品，未启动额外review。
