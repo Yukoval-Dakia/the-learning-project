@@ -234,10 +234,17 @@ for (const family of families)
       await startSession(family, 'retained');
       const request = native(family);
       await runSessionOrphanTick(testDb(), request);
-      await expect(testDb().delete(session_orphan_receipt)).rejects.toThrow('immutable');
-      await expect(testDb().update(session_orphan_tick).set({ candidates: [] })).rejects.toThrow(
-        'immutable',
-      );
+      const receipts = await testDb().select().from(session_orphan_receipt);
+      const ticks = await testDb().select().from(session_orphan_tick);
+      const immutableError = {
+        cause: { code: 'P0001', message: 'session orphan execution evidence is immutable' },
+      };
+      await expect(testDb().delete(session_orphan_receipt)).rejects.toMatchObject(immutableError);
+      expect(await testDb().select().from(session_orphan_receipt)).toEqual(receipts);
+      await expect(
+        testDb().update(session_orphan_tick).set({ candidates: [] }),
+      ).rejects.toMatchObject(immutableError);
+      expect(await testDb().select().from(session_orphan_tick)).toEqual(ticks);
       await testDb().delete(learning_session).where(eq(learning_session.id, 'retained'));
       const key = sessionOrphanKey(request);
       expect(

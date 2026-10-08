@@ -20,13 +20,17 @@ import { runSessionOrphanTick } from './session-orphan-family';
 
 let boss: PgBoss;
 const schedules = { getSchedule: async () => null, pauseSchedule: async () => {} };
-beforeAll(async () => {
+function disposableForkUrl() {
   const url = new URL(z.url().parse(process.env.TEST_DATABASE_URL));
   if (
     !/^\/test_fork_\d+$/.test(url.pathname) ||
     !['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname)
   )
     throw new Error('Disposable fork required');
+  return url;
+}
+beforeAll(async () => {
+  const url = disposableForkUrl();
   boss = new PgBoss({
     connectionString: url.toString(),
     max: 2,
@@ -42,8 +46,10 @@ beforeAll(async () => {
   await boss.createQueue('__pgboss__send-it');
   await installSessionOrphanProducerFence(testDb());
 });
-beforeEach(() => resetOrphans('pg-boss'));
-afterEach(async () => {
+async function resetBackendFixture() {
+  const url = disposableForkUrl();
+  const [database] = await testDb().execute(sql`select current_database() as name`);
+  if (database?.name !== url.pathname.slice(1)) throw new Error('Disposable fork target mismatch');
   await testDb().execute(
     sql`delete from pgboss.job where name in (${families[0]},${families[1]},${`${families[0]}_dlq`},${`${families[1]}_dlq`},'__pgboss__send-it')`,
   );
@@ -51,7 +57,9 @@ afterEach(async () => {
     sql`delete from pgboss.schedule where name in (${families[0]},${families[1]})`,
   );
   await resetOrphans('pg-boss');
-});
+}
+beforeEach(resetBackendFixture);
+afterEach(resetBackendFixture);
 afterAll(async () => {
   await boss.stop();
 });
