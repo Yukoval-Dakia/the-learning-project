@@ -4,10 +4,24 @@
  * - YUK-1007: the admin config read face's runtime-facts injection seam. The
  *   composition root (server layer) aggregates server-side truth sources
  *   (provider registry, infra cron declarations, runtime constants) and each
- *   capability's consumer-effective facts, then injects the factory here —
- *   observability never imports src/server/* or other capabilities directly
- *   (capability-boundary ratchet stays exact).
+ *   capability's consumer-effective facts, then injects the factory here.
+ *   The config read face receives runtime facts through that factory.
  */
+
+// Shared subject/trait reads retain DB rows and live assembly facts as separate fields.
+export {
+  type AdminSubjectListRow,
+  type AdminSubjectTraits,
+  type AdminTraitBindingRow,
+  type AdminTraitCatalogRow,
+  type TraitJournalPage,
+  type TraitJournalPageOptions,
+  type TraitJournalRow,
+  getAdminSubjectTraits,
+  getTraitJournalPage,
+  listAdminSubjects,
+  listAdminTraits,
+} from '@/server/subjects/admin-read';
 
 export {
   AdminCostQuerySchema,

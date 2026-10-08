@@ -14,7 +14,7 @@
   },
   "debts": {
     "capabilityToServer": {
-      "total": 438,
+      "total": 435,
       "byOwnerPair": {
         "agency -> ai": 28,
         "agency -> boss": 10,
@@ -71,7 +71,7 @@
         "observability -> events": 2,
         "observability -> export": 2,
         "observability -> r2": 2,
-        "observability -> subjects": 14,
+        "observability -> subjects": 11,
         "practice -> advisory-locks": 5,
         "practice -> ai": 64,
         "practice -> assessment": 1,

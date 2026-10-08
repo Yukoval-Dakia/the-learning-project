@@ -4,6 +4,29 @@ Implemented on `feat/yuk-1386-diagnostics-domain-reads`, based on
 `origin/main a6faded0729fd77789a05d4a07a706d5ff6b612a` and parent documentation
 commit `cf8867b4bf1b8729b9c2de1ad7a54caa7bec4917`.
 
+## Parent acceptance and delivery — 2026-10-08
+
+PR1611 merged at 12:48:38Z as `6c6905fad01a3e7f7ea376afdad9d07d3a413d65`.
+Fetched main tree `7a6e28abca853638976201fb1ecaad453bd5d5a5` equals exact
+candidate `f7b84efc7b405fc774e23d5156694386e15fd468`. CI Gate `37778323336`
+passed; independent R1 found P0/P1 NONE on the unchanged ten source/test blobs;
+review threads were zero. CodeRabbit skipped and Codex hit its review quota;
+neither result is represented as a code-review pass. The PR is unwatched.
+
+The parent ran the three DB suites below: **24/24 passed**, exit 0, under an
+atomic deployment lock. Evidence: `/tmp/yuk1386-parent-db.log` and
+`/tmp/yuk1386-db-cleanup.json`. Owner/token verification preceded release at
+12:43:53.390892Z. Original four containers and release hash were unchanged;
+no new running containers remained. This verifies transaction visibility,
+rollback, public-table row-content snapshots, time boundaries and HTTP parity.
+It does not establish sequence or non-public-schema immutability.
+
+YUK-1386 is Done for this domain slice. Main owner received the public APIs and
+merge SHA; Start consumption and page acceptance remain under YUK-1358, exit
+under YUK-1359. No deployment occurred. No new actionable finding was identified.
+The implementation receipt below preserves what its author ran; its pending
+parent checks were subsequently completed as recorded above.
+
 ## Public contract and scope
 
 `src/capabilities/observability/public.ts` now exports the existing readers and

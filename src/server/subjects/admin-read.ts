@@ -3,7 +3,7 @@
 //   listAdminSubjects        → GET /api/admin/subjects（既有 slim 面扩容）
 //   getAdminSubjectTraits    → GET /api/admin/subjects/:id/traits
 //   listAdminTraits          → GET /api/admin/traits?kind=
-//   getTraitJournal          → GET /api/admin/traits/:id/journal
+//   getTraitJournalPage      → GET /api/admin/traits/:id/journal
 //
 // 读面纪律：
 // - 枚举全量走 DB（含 general 与 retired——编辑器选科数据源，GET /api/subjects
@@ -17,7 +17,7 @@
 //   live revision + degraded:null，不臆造降级态。
 
 import { and, asc, desc, eq, inArray, lt } from 'drizzle-orm';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { subject, subject_trait, subject_trait_binding, subject_trait_journal } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import {
@@ -45,7 +45,7 @@ export interface AdminSubjectListRow {
   capabilityCount: number;
 }
 
-export async function listAdminSubjects(db: Db): Promise<AdminSubjectListRow[]> {
+export async function listAdminSubjects(db: Db | Tx): Promise<AdminSubjectListRow[]> {
   const registry = getDefaultSubjectRegistry();
   const rows = await db.select().from(subject).orderBy(asc(subject.created_at), asc(subject.id));
   return rows.map((row) => {
@@ -87,7 +87,7 @@ export interface AdminSubjectTraits {
 
 /** null = subject 不存在（route 映射 404）。 */
 export async function getAdminSubjectTraits(
-  db: Db,
+  db: Db | Tx,
   subjectId: string,
 ): Promise<AdminSubjectTraits | null> {
   const subjectRows = await db
@@ -169,7 +169,7 @@ export interface AdminTraitCatalogRow {
 
 /** 跨科 trait 目录（换绑选择器数据源）。kind 由 route 校验后传入。 */
 export async function listAdminTraits(
-  db: Db,
+  db: Db | Tx,
   kind: SubjectTraitKind,
 ): Promise<AdminTraitCatalogRow[]> {
   const traits = await db
@@ -268,11 +268,21 @@ function decodeTraitJournalCursor(cursor: string, traitId: string): TraitJournal
   }
 }
 
+export interface TraitJournalPageOptions {
+  limit: number;
+  cursor?: string;
+}
+
+export interface TraitJournalPage {
+  rows: TraitJournalRow[];
+  next_cursor: string | null;
+}
+
 export async function getTraitJournalPage(
-  db: Db,
+  db: Db | Tx,
   traitId: string,
-  options: { limit: number; cursor?: string },
-): Promise<{ rows: TraitJournalRow[]; next_cursor: string | null } | null> {
+  options: TraitJournalPageOptions,
+): Promise<TraitJournalPage | null> {
   const exists = await db
     .select({ id: subject_trait.id })
     .from(subject_trait)
