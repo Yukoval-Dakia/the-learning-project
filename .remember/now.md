@@ -1,3 +1,11 @@
+# Current lane — YUK1394 implementation
+
+PR1621 merged main e1f2ef6bb7af15fc633ffea5c9909f0968ad99cd, exact3be CI37829575046 all green, tree cad230a5ad56548d61c48b6c62fb00d66a56dfb6 equal, R1 NONE/threads0/unwatched/1393Done. No runtime cutover. Fresh branch feat/yuk-1394-session-orphans-dbos; carried approved design commit619b as9774cf321. Actual77worktrees have no dirty authorized shared paths and no0117 files; main stops0116. Reserve0117 for this lane. Sole T3 implementation writer will use Codex gpt-6.1-sol xhigh, source/scopedunit/static/build only; parent owns DB/process/cron acceptance under mutex. No other code writer here.
+
+5796 explicitly released3593776b at19:15:34.481635Z after PR1622 built acceptance; this is an owner report, recheck actual lock before runtime. PR1622 final275628534 remains its owner review/CI/merge; do not update main route counts before merge. Parent owns PLAN/Linear/merge receipts; child owns1394 design implementation details.
+
+Earlier revision-specific records follow.
+
 # Local preparation after PR1621 repair push
 
 PR1621 remote head3be966000, watch active, exact CI pending. New1394 design document is a separate local-only commit prepared for the next branch; do not push it merely to refresh CI. Once1393 merges, fetch freshmain and normally carry this documentation commit to feat/yuk-1394-session-orphans-dbos. No implementation writer yet. Parent-approved scope and genuine predecessor artifacts are in docs/planning/2026-10-09-yuk1394-session-orphans-dbos.md. The design task is completed/noPending.

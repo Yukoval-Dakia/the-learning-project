@@ -12,6 +12,10 @@ Each family retains independent phase, schedule, producer fence, receipts, dispo
 
 The detailed report below is retained as the architecture input. Its request for parent adjudication has been satisfied by this section. All implementation and runtime acceptance remains pending; design approval is not permission to bypass runtime locking or deploy an unverified candidate.
 
+## Implementation start
+
+PR1621 is now merged as `e1f2ef6bb7af15fc633ffea5c9909f0968ad99cd`, tree equal to exact3be after all CI gates passed. This lane starts from that freshly fetched main. Parent inspected77worktrees: authorized shared paths have no dirty files, and no0117 migration exists; main ends0116. Migration0117 is reserved for this lane, subject to a fresh check immediately before generation. No runtime operation is authorized for the author; parent owns locked acceptance.
+
 ## Prepared genuine predecessor artifacts
 
 Only offline compilation was performed. Before actual use, compare these source digests with the eventual1393 merge tree. If product source changes, archive the actual accepted predecessor again rather than relabeling these artifacts.
