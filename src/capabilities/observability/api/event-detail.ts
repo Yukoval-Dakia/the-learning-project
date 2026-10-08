@@ -3,8 +3,8 @@
 // 继续复用 event single-owner reader，避免在 API 层重写 event 查询语义。
 
 import { db } from '@/db/client';
-import { getEventById, getEventChain } from '@/kernel/events';
 import { ApiError, errorResponse } from '@/kernel/http';
+import { readEventDetail } from '../server/event-detail';
 import { EventParamsSchema } from './event-contracts';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
@@ -14,14 +14,7 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
       throw new ApiError('validation_error', 'event id is required', 400);
     }
 
-    const { id } = parsed.data;
-    const focal = await getEventById(db, id);
-    if (!focal) {
-      throw new ApiError('not_found', `event ${id} not found`, 404);
-    }
-
-    const chain = await getEventChain(db, id);
-    return Response.json({ event: focal, correction_status: focal.correction_status, chain });
+    return Response.json(await readEventDetail(db, parsed.data.id));
   } catch (error) {
     return errorResponse(error);
   }

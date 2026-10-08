@@ -98,7 +98,7 @@ vi.mock('@/server/ai/log', () => ({
   writeToolCallLog: logMock.tool,
 }));
 
-import { LEARNER_LOCALE_PIN, getTaskSystemPrompt, tasks } from '@/capabilities/task-registry';
+import { LEARNER_LOCALE_PIN, getTaskSystemPrompt } from '@/capabilities/task-registry';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import {
   type ExecutionAdapterStartupArgs,
@@ -107,7 +107,6 @@ import {
   __setPiAdapterForTests,
 } from './execution-adapter';
 import { runTask, streamTask, streamTaskCollecting } from './runner';
-import type { Options } from './sdk-types';
 import { taskInputHash } from './task-input-hash';
 
 // Minimal db stub — never dereferenced because every ai/log writer is mocked.
@@ -685,6 +684,16 @@ describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () =>
     expect('budgetOverride' in opts).toBe(false);
   });
 
+  it("budgetOverride.maxIterations='unbounded' → Options.maxTurns undefined (no pi shouldStopAfterTurn)", async () => {
+    await runTask(
+      COPILOT,
+      { user_message: 'hi', triggered_by: 'chat' },
+      { db: fakeDb, budgetOverride: { maxIterations: 'unbounded' } },
+    );
+    const opts = capturedOptions() as Record<string, unknown>;
+    expect(opts.maxTurns).toBeUndefined();
+  });
+
   it('empty budgetOverride object → registry maxTurns (|| 1 fallback preserved)', async () => {
     await runTask(
       COPILOT,
@@ -732,6 +741,21 @@ describe('runTask / streamTaskCollecting — YUK-575 budgetOverride seam', () =>
       () => {},
     );
     expect(setTimeoutSpy).toHaveBeenCalledWith(expect.any(Function), 90_000);
+  });
+
+  // YUK-1373 — the shared budget resolver (src/ai/task-budget.ts) rejects a
+  // non-finite timeoutMs before the runner can arm setTimeout(Infinity) (Node
+  // would collapse it to ~1ms and abort instantly). 'unbounded' uncapping is
+  // limited to maxIterations; timeout stays finite by construction.
+  it('streamTaskCollecting: non-finite timeoutMs is rejected by the shared budget resolver', async () => {
+    await expect(
+      streamTaskCollecting(
+        COPILOT,
+        { user_message: 'hi', triggered_by: 'chat' },
+        { db: fakeDb, budgetOverride: { timeoutMs: Number.POSITIVE_INFINITY } },
+        () => {},
+      ),
+    ).rejects.toThrow(RangeError);
   });
 });
 

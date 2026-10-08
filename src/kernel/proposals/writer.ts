@@ -55,6 +55,11 @@ function eventShapeForProposal(payload: AiProposalPayloadT): {
         event_payload: {
           name: payload.proposed_change.name,
           parent_id: payload.proposed_change.parent_id,
+          // Root proposals (parent_id=null) carry the domain they anchor; the
+          // node fold projects it onto the accepted row.
+          ...(payload.proposed_change.domain !== undefined
+            ? { domain: payload.proposed_change.domain }
+            : {}),
           reasoning: payload.reason_md,
           ai_proposal: payload,
         },

@@ -4,9 +4,10 @@
 // the finally block — the ai_task_runs row then sticks at status='running'
 // forever. The sweeper converges OBSERVATION STATE ONLY: no domain writes, no
 // job re-emission, no LLM re-run (design doc §5.2). Threshold 1h vs the largest
-// effective per-call timeout (12min) = 5× margin — a >1h 'running' row cannot
-// be a live run (cooperative abort bounds real run lifetime), so false
-// convergence of a live run is structurally excluded.
+// effective per-call timeout (45min durable copilot after the uncapped-budget
+// change) ≈ 1.3× margin — a >1h 'running' row cannot be a live run (cooperative
+// abort bounds real run lifetime), so false convergence of a live run is
+// structurally excluded.
 
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';

@@ -78,6 +78,18 @@ describe('buildCopilotSubagents', () => {
     expect(researcher.prompt).toContain('不得直接修改');
   });
 
+  it('carries no maxTurns when the parent run is uncapped', () => {
+    const agents = buildCopilotSubagents({
+      parentAllowedTools: ['mcp__loom__query_events'],
+      parentMaxTurns: undefined,
+    });
+    const researcher = agents[COPILOT_SUBAGENT_NAME];
+    expect(researcher).not.toHaveProperty('maxTurns');
+    expect(researcher.prompt).toContain('只把结论交还给 Copilot');
+    expect(researcher.prompt).toContain('不得调用 Task');
+    expect(researcher.prompt).toContain('不得直接修改');
+  });
+
   it('does not invent tools or MCP servers when the parent has only a narrow local read surface', () => {
     const agents = buildCopilotSubagents({
       parentAllowedTools: ['mcp__loom__query_events', 'mcp__loom__propose_learning_item_archive'],

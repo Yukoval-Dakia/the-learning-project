@@ -1,8 +1,11 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：1356 PR1605准确4cccb1a62 CI全绿、R2 NONE，父真实MiMo/Pi提交原件与单次效果验收完成（费用估算$0.002818771）；HTTP重放201断言误写200已以源码/19类快照裁决，无重付。证据封存后等新CI合并，未部署。Today/Inbox源码已交回，独立R1进行；1358/1359继续。
+> Linear 是权威 tracker。2026-10-08：1356已在4cccb候选完成真实MiMo/Pi验收；正常整合main4a3d（1596 Copilot与1607事件领域）后重跑针对性验证，旧模型证据不冒称新源验收。1380领域已交付，Today/Inbox Start源码已交回且R1进行；1358/1359继续，未部署。
+
 
 ## NOW
+
+- **YUK-1380 / 事件领域接口**：readEventDetail(db,eventId)和createEventCorrection(db,eventId,input,now?)经observability/public导出，HTTP继续消费，kernel和纠错语义不改。28unit/父23DB/static/build通过，独立R1运行；Start尚未挂载。[证据](docs/planning/2026-10-08-yuk1380-event-domain.md)。
 
 - **YUK-1359 / W2消费者清单**：本线程独占退出证据；从main6150f01a9调查/record、/events/$id、/drafts和入门流程的读取、写入、恢复及共享子树。六页只读调查及父抽查已完成，见[W2清单](docs/planning/2026-10-08-yuk1359-w2-consumers.md)；新入口和运行验收未完成，Start/1356归主线。
 

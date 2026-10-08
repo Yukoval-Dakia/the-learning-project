@@ -21,7 +21,9 @@ export type ModelId = string;
 export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export interface TaskBudget {
-  readonly maxIterations: number;
+  // 'unbounded' is reachable only via a caller TaskBudgetOverride (durable
+  // copilot); registry defaults and config overrides are always finite.
+  readonly maxIterations: number | 'unbounded';
   readonly maxCost: number;
   readonly transientRetries: number;
   readonly timeout: number;

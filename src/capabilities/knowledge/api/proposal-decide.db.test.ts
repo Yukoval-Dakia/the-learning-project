@@ -33,6 +33,7 @@ async function seedProposeEvent(opts: {
   id: string;
   name: string;
   parent_id: string | null;
+  domain?: string;
   reasoning?: string;
 }) {
   const db = testDb();
@@ -48,6 +49,7 @@ async function seedProposeEvent(opts: {
     payload: {
       name: opts.name,
       parent_id: opts.parent_id,
+      ...(opts.domain !== undefined ? { domain: opts.domain } : {}),
       reasoning: opts.reasoning ?? 'r',
     },
     caused_by_event_id: null,
@@ -135,6 +137,35 @@ describe('POST /api/knowledge/proposals/[id]', () => {
       .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p1')));
     expect(rateRows).toHaveLength(1);
     expect((rateRows[0].payload as Record<string, unknown>).rating).toBe('accept');
+  });
+
+  it('accepts a root proposal (parent_id=null + domain) and projects a root row with that domain', async () => {
+    await seedProposeEvent({
+      id: 'p_root',
+      name: 'English',
+      parent_id: null,
+      domain: 'english',
+      reasoning: 'new subject root',
+    });
+
+    const res = await decide('p_root', { decision: 'accept' });
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    const body = json as { kind: string };
+    expect(body.kind).toBe('propose_new_applied');
+
+    const db = testDb();
+    const rows = await db.select().from(knowledge).where(eq(knowledge.name, 'English'));
+    expect(rows).toHaveLength(1);
+    expect(rows[0].parent_id).toBeNull();
+    expect(rows[0].domain).toBe('english');
+  });
+
+  it('rejects a root proposal missing domain', async () => {
+    await seedProposeEvent({ id: 'p_norootdomain', name: 'English', parent_id: null });
+
+    const res = await decide('p_norootdomain', { decision: 'accept' });
+    expect(res.status).toBe(500);
   });
 
   it('dismisses a pending proposal when decision=reject', async () => {

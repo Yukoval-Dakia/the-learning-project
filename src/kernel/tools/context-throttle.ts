@@ -1,8 +1,9 @@
 // P5.1 Context Budget Policy (YUK-143) — per-message throttle.
 // Spec: `docs/superpowers/specs/2026-05-31-p5.1-context-budget-design.md` §3.2 / §3.4.
 //
-// The NEW runtime piece. Copilot has no per-message budget today (it inherits
-// only maxIterations:6 from the task registry). This tracker measures the SUM
+// The NEW runtime piece. Copilot's per-message ceilings were lifted by
+// YUK-1373 (uncapped durable execution; hard thresholds sit at
+// MAX_SAFE_INTEGER). This tracker measures the SUM
 // of nodes+edges / event-rows / tool-calls a single user message contributes to
 // the agent's context, across all tool calls (§3.4 "tracked"). YUK-290 splits
 // each dimension into an advisory warning and a materially higher hard ceiling.
