@@ -12,7 +12,7 @@
     "log_sha256": "139a408297540b6e6394a7972c96a13961dfd9bdaf8269035f76bca009cbc8de",
     "compressed_log_sha256": "8779a533a941e2cb6d155fd2c3a65899d0c448e2adfc4f2fb2bac5f95f27065b"
   },
-  "review": "R1 running",
+  "review": "R1 completed/noPending NONE P0/P1; parent verified diff SHA 6c92b188de317273c04de816123936fb4e36d0c62f6d674ed1017512c9896336",
   "actual_built_rpc": "not yet run",
   "browser": "not yet run",
   "deployment": false
