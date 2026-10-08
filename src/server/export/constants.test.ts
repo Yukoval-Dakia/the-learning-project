@@ -349,6 +349,10 @@ describe('export constants', () => {
       'migration_apply_run',
       'provider_attempt_admission',
       'provider_session_admission',
+      // Prune recovery state belongs with the full PostgreSQL queue backup.
+      'prune_job_events_control',
+      'prune_job_events_disposition',
+      'prune_job_events_receipt',
       'subagent_run',
       'tool_operation',
     ]);
