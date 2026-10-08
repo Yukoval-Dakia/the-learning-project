@@ -10,6 +10,7 @@ import { writeJobEvent } from '@/server/events/writer';
 import { writeCopilotInputEvent } from './conversation-writes';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
+import type { ReviewAnswerAttachment } from './practice-port';
 
 export const COPILOT_IDEMPOTENCY_KEY_MAX_LENGTH = 200;
 export const COPILOT_SESSION_QUEUE_PROTOCOL_VERSION = 2;
@@ -210,6 +211,7 @@ export async function reserveCopilotDurableAcceptance(
   input: {
     sessionId: string;
     userMessage: string;
+    reviewAnswer?: ReviewAnswerAttachment;
     inputHash: string;
     idempotencyKey?: string;
     queuedPayload: Record<string, unknown>;
@@ -253,6 +255,7 @@ export async function reserveCopilotDurableAcceptance(
       userMessage: input.userMessage,
       triggeredBy: input.jobData?.triggered_by,
       chipKind: input.jobData?.chip_kind,
+      reviewAnswer: input.reviewAnswer,
       now: new Date(),
       ...(deterministicRunId ? { eventId: deterministicRunId } : {}),
     });

@@ -57,6 +57,7 @@ import {
   primaryViewLearningContent,
   primaryViewLearningQuestions,
 } from './reply-finalization';
+import { resolveCopilotReviewAnswer } from './review-answer-consumer';
 import { bindSubagentParentCancellation, handleNativeSubagentTaskEvent } from './subagent-mailbox';
 import {
   type CopilotSubtaskEvent,
@@ -140,6 +141,7 @@ type StreamResult = Pick<
 
 /** Process-level adapters. Product callers use ExecuteCopilotTurn, never this seam. */
 export interface CopilotExecutionAdapters {
+  resolveReviewAnswerFn: typeof resolveCopilotReviewAnswer;
   runAgentTaskFn: (
     kind: string,
     input: unknown,
@@ -157,6 +159,7 @@ export interface CopilotExecutionAdapters {
 }
 
 const defaultAdapters: CopilotExecutionAdapters = {
+  resolveReviewAnswerFn: resolveCopilotReviewAnswer,
   runAgentTaskFn: runAgentTask,
   streamTaskCollectingFn: streamTaskCollecting,
   buildExaMcpServerFn: buildExaMcpServer,
@@ -200,10 +203,21 @@ export function createCopilotExecutionOwner(
       turn.input.user_message,
       turn.input.correction_contract,
     );
+    const reviewAnswer = turn.sourceEventId
+      ? await adapters.resolveReviewAnswerFn(db, {
+          sessionId: turn.sessionId,
+          sourceEventId: turn.sourceEventId,
+          signal: validationSignal,
+        })
+      : undefined;
+    const boundInput: CopilotRunInput = {
+      ...turn.input,
+      review_answer: reviewAnswer ? { original_ref: reviewAnswer.originalRef } : undefined,
+    };
     const input: CopilotRunInput =
       correctionResolution.kind === 'clarify'
-        ? turn.input
-        : { ...turn.input, correction_contract: correctionResolution.contract };
+        ? boundInput
+        : { ...boundInput, correction_contract: correctionResolution.contract };
     const authoritativeReply =
       correctionResolution.kind === 'clarify'
         ? { reply: correctionResolution.reply, correction: 'clarify' as const }
@@ -287,6 +301,7 @@ export function createCopilotExecutionOwner(
     const domainMountOptions = {
       ctx: {
         db,
+        ...(reviewAnswer ? { reviewAnswer } : {}),
         sessionId: turn.sessionId,
         taskRunId: turn.taskRunId,
         providerAttemptCaller: 'worker',

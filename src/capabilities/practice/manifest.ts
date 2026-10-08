@@ -1297,6 +1297,11 @@ export const practiceCapability = defineCapability({
   copilotTools: {
     tools: [
       {
+        name: 'submit_review_answer',
+        load: () =>
+          import('./server/tools/submit-review-answer').then((m) => m.submitReviewAnswerTool),
+      },
+      {
         name: 'get_question_context',
         load: () => import('./server/tools/question-context').then((m) => m.getQuestionContextTool),
       },

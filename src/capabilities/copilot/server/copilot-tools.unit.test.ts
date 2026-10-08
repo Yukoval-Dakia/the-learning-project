@@ -62,7 +62,7 @@ describe('copilotTools 贡献制 ↔ COPILOT_TOOLS allowlist 对账', () => {
     const fullInventory = [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS, ...CONTROL_TOOLS];
     expect(new Set(declared)).toEqual(new Set(fullInventory));
     expect(declared).toHaveLength(fullInventory.length);
-    expect(fullInventory).toHaveLength(45);
+    expect(fullInventory).toHaveLength(46);
     for (const name of LEGACY_MODEL_CONTROL_NAMES) {
       expect(declared, name).not.toContain(name);
       expect(fullInventory, name).not.toContain(name);
@@ -75,7 +75,7 @@ describe('copilotTools 贡献制 ↔ COPILOT_TOOLS allowlist 对账', () => {
     );
     expect(COPILOT_TOOLS.every((name) => declared.has(name))).toBe(true);
     expect(new Set(COPILOT_TOOLS).size).toBe(COPILOT_TOOLS.length);
-    expect(COPILOT_TOOLS).toHaveLength(31);
+    expect(COPILOT_TOOLS).toHaveLength(32);
     expect(COPILOT_TOOLS).toContain('author_question');
     expect(COPILOT_TOOLS).toEqual(
       expect.arrayContaining(['generate_goal_outline', 'generate_question_candidate']),

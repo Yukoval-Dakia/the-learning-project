@@ -15,6 +15,7 @@ import { event } from '@/db/schema';
 // event the cascade handles. The teaching ask_check materializer is handled separately via
 // skill_turn.structured_question (chat.ts / turns.ts).
 export const MATERIALIZING_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
+  'submit_review_answer',
   'author_question',
   'author_artifact',
   'update_artifact',
@@ -45,5 +46,19 @@ export async function selectAsksWithMaterializingToolCall(
         sql`${event.payload}->>'tool_name' in (${toolNameList})`,
       ),
     );
-  return new Set(rows.map((row) => row.askId).filter((id): id is string => id !== null));
+  // Authenticated answer attachments already materialize an immutable original at acceptance.
+  const attachments = await db
+    .select({ id: event.id })
+    .from(event)
+    .where(
+      and(
+        inArray(event.id, [...askEventIds]),
+        eq(event.action, 'experimental:copilot_user_ask'),
+        sql`${event.payload} ? 'review_answer'`,
+      ),
+    );
+  return new Set([
+    ...rows.map((row) => row.askId).filter((id): id is string => id !== null),
+    ...attachments.map((row) => row.id),
+  ]);
 }

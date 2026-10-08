@@ -17,6 +17,7 @@ describe('DomainTool allowlist policy', () => {
 
   it('keeps Wave 3 propose/write inventory explicit', () => {
     expect(PROPOSE_WRITE_TOOLS).toEqual([
+      'submit_review_answer',
       'propose_knowledge_edge',
       'propose_knowledge_mutation',
       'attribute_mistake',
@@ -120,6 +121,7 @@ describe('DomainTool allowlist policy', () => {
     // This assertion now locks the post-YUK-949 exact set; the presentation
     // control is unrelated to the teaching/solve skill merge.
     expect(DOMAIN_TOOL_ALLOWLISTS.copilot).toEqual([
+      'submit_review_answer',
       'present_primary_view',
       'query_memory_brief',
       // YUK-939 — capability-owned generation-only tools; unrelated to U6.

@@ -7,6 +7,12 @@ export {
   activeEffectiveTruth,
   getEffectiveTruths,
 } from '@/kernel/events';
+export {
+  type BoundReviewAnswer,
+  BoundReviewAnswerSchema,
+  type ReviewAnswerAttachment,
+  ReviewAnswerAttachmentSchema,
+} from '@/kernel/tools/review-answer';
 export type { QuizGenJobData } from './jobs/quiz_gen';
 export { runSourceVerify } from './jobs/source_verify';
 // YUK-1057 — 隔离演练的 post-cutover writer seam：发题/草稿/提交统一经
@@ -42,6 +48,7 @@ export {
   runSolveCheck,
   runTeachingQualityCheck,
 } from './server/quiz/verify-framework';
+export { captureReviewAnswerBinding, consumeReviewAnswerBinding } from './server/review-operation';
 export {
   SolveError,
   buildSolveHintInput,

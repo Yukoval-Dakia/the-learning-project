@@ -55,6 +55,7 @@ function ownerWith(
     if (mount?.type === 'domain') captureMcp(mount.options as BuildMcpServerOptions);
   };
   return createCopilotExecutionOwner({
+    resolveReviewAnswerFn: async () => undefined,
     runAgentTaskFn: async (kind, value, ctx) => {
       captureCtx(ctx);
       return run(kind, value, ctx);
@@ -356,6 +357,7 @@ describe('Copilot execution owner', () => {
   it('owns optional web grounding and skill resolution', async () => {
     let runnerContext: Parameters<CopilotExecutionAdapters['runAgentTaskFn']>[2] | undefined;
     const execute = createCopilotExecutionOwner({
+      resolveReviewAnswerFn: async () => undefined,
       streamTaskCollectingFn: async (_kind, _input, ctx) => {
         runnerContext = ctx;
         return {
