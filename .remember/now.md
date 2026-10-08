@@ -4,9 +4,9 @@ HEAD1aeec5e366af2624c31ffe759780b63f24b92144, sole implementation completed/noPe
 
 Parent actual29DB across three files passed (six cross-family waiting pairs, three42883 rollback cases plus existing producers). Isolated archive removed only session commonlock: deterministicRED1fail/8unselected, second-bypassed-lock. First pnpm refused auto-purge and second unquoted name filter selected0; retained as driver failures, not accepted testresults. Fullsession/review/prune process files34/34passed, session21/75children16SIGKILL2expectedERROR, review35children,prune8children, all exited. Evidence /tmp/yuk1394-parent-fence-regression and versioned shared-fence-verification/green/red JSON.
 
-Deployment token833eaa33 safelyreleased21:57:31.631242Z; original4 ID/image/start/health/running/release unchanged. No liveownservices or runtime lock. Parenttypecheck/lint/build and sixpostbuildaudits allpassed. No activeexec or otherwriter. PR1624 remote remainsfebDraft/watched; do notmergeuntil finalpush/exactCI. Freshfetch origin/main6212 still,0incoming. Pending docs/JSON evidence edits parentowned.
+Deployment token833eaa33 safelyreleased21:57:31.631242Z; original4 ID/image/start/health/running/release unchanged. No liveownservices or runtime lock. Parenttypecheck/lint/build and sixpostbuildaudits allpassed. No activeexec or otherwriter. PR1624 final b9b019a3a0bfd655a618a0dc302796fadcaf1b6e was pushed and isReady/watched. ExactCI37850732224 was directly confirmed in_progress; headmatches,mergeable,reviewThreads0. Do notmergeuntil exactCI succeeds. Freshfetch origin/main6212 still,0incoming. Pending docs/JSON evidence edits parentowned.
 
-Next: commit/pushwholefix+evidenceonce, exactCI/no-unresolvedfinding thenmerge. Notify5796formalmainfor1623. Wholemigration remainsactive. Judge next usesexisting1356 (comment83aa9179), Start/boot/shutdown5796; nojudgeimplementation/migrationnumberyet.
+Next: awaitT3 exactCI notification, adjudicate any actual failure/finding thenmerge. No independent polling. Local handoff-only receipt changes after b9b are not pushed merely to resetCI. Notify5796formalmainfor1623. Wholemigration remainsactive. Judge next usesexisting1356 (comment83aa9179), Start/boot/shutdown5796; nojudgeimplementation/migrationnumberyet.
 
 Earlier handoff, superseded only where this update differs:
 
