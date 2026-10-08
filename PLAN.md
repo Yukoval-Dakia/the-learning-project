@@ -1,10 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：1378 Today费用共享读取603c9674e已由父实际11DB验证，8unit/static/build通过，独立R1 NONE；CI分区问题已修、8unit/partition/static/build重验通过，验证审及新CI待。1359退出状态已更新且保持In Progress。未部署，主线独占1356与Start挂载。
+> Linear 是权威 tracker。2026-10-08：PR1604已合入main6150f01a9，1378费用领域读取完成，8unit/11DB/static/build、独立R1/R2 NONE及exact CI37765137606通过。主线接Start；1358/1359/1377继续In Progress。本线程转1359 W2消费者清单，未部署。
 
 ## NOW
 
-- **YUK-1378 / Today费用读取**：`loadTodayCost(db: Db | Tx, now?: Date)`及TodayCost经observability/public导出，HTTP复用。既有币种/truth/unknown/legacy口径保留，单次时钟确定BJT窗口。603c9674e的8unit、11DB、typecheck/lint/build通过；独立审查与PR准确CI待。源码交付不等于Start整页验收。[证据](docs/planning/2026-10-08-yuk1378-today-cost-read.md)。
+- **YUK-1359 / W2消费者清单**：本线程独占退出证据；从main6150f01a9调查/record、/events/$id、/drafts和入门流程的读取、写入、恢复及共享子树。六页只读调查及父抽查已完成，见[W2清单](docs/planning/2026-10-08-yuk1359-w2-consumers.md)；新入口和运行验收未完成，Start/1356归主线。
+
+- **YUK-1378 / 领域slice已完成**：PR1604合入6150f01a9；准确head463aadec与合并tree一致，CI37765137606全绿，独立R1/R2 NONE、threads0。8unit/父实际11DB/static/build通过；public导出loadTodayCost与TodayCost，HTTP已复用，Start挂载交主线。未部署。[证据](docs/planning/2026-10-08-yuk1378-today-cost-read.md)。
 
 - **YUK-1355 / PR1595**：默认 pg-boss，仅 prune_job_events 可切 DBOS；60s cached-cron receipt fence、unknown rollback hold、单 recovery owner 均保留。新 main 的业务变更原样合入，Node24.19 212 unit、typecheck/lint/ratchet/build 与8 static audits通过；源/fixture字节保持，新增bundle的DB验收交父。历史4 cron/recovery、28 worker DB、77 unit、26 migration 只代表旧源/旧bundle。R1/R2 NONE适用于48ead，预算已用，不新审。
 
