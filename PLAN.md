@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：PR1609正常整合1386/main6c6905为2118；428unit+7协议/static/build及新构建真实RPC通过，Start client/SPA与已验收1af5字节一致。13:01:19Z自有隔离资源清理释放锁，主runtime不变；封存最终证据并推准确CI。1387 subjects读取由7631唯一writer推进。
+> Linear 是权威 tracker。2026-10-08：PR1609 head8ce80c557的CI37781384415 DB4单例失败（1537通过）：Stop旧夹具在发delta后直接写cancel并禁止全部历史正文。test-only修复a5c9867fe已交回，改用真实取消入口/确定性barrier；父整合main后接DB复验，不merge。428unit/真实RPC证据保留，runtime未动；1387仍7631独占。
 
 
 ## NOW
