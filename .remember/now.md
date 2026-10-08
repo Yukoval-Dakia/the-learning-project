@@ -1,6 +1,8 @@
-# Current Start admin closeout — 2026-10-09
+# Current closeout and next audit lane — 2026-10-09
 
-PR1615 fc021 passed 96 real RPC calls and five-page T3 browser acceptance; 88 public table counts/content unchanged. Isolated server/PG and Ryuk exited; original four services/release unchanged. Lock7109b3c7 released2026-10-08T15:12:46.541288Z. Evidence runtime/yuk1358-admin-fc021bca5/evidence and docs/planning/evidence/2026-10-09-yuk1358-admin-built-acceptance.json. No provider/worker/replay/deployment. Review R1 completed NONE. Parent normally merged main7b890 (1390) asf48f04690, only PLAN/now conflicts; integrated295unit/8protocol/typecheck/lint/build passed; final CI pending. 7631 exclusively owns1391 six trait operations; parent owns Start. Remaining configuration/subjects Start, canonical boot and full runtime/SPA retirement remain open under1358/1359.
+PR1615 merged2026-10-08T15:28:28Z as fe48497123f92429eac6383cf7ccc839ade4142f. Exact547a8061e CI37799854523 all green, R1 NONE, threads0; merge/head tree both ed73a410857a62033f25b7b51d1107d96bf1721a and diff empty. Unwatched. 295unit/8protocol/static/build and fc021 96RPC/T3browser/88-table no-write evidence remain revision-specific. No deployment; runtime lock released15:12:46Z, no owned resources.
+
+Main owner5796 now bound branch fix/yuk-1359-audit-boundaries from freshmain fe4849712. Two shared audit failures captured in1359 comment e34017ea:18 expired951 retained-history allowances and dist/start generated-output provider census. Do not renew deadlines, delete historical data, fake writers or weaken production source scanning. Owner7631 exclusively owns1391 trait six operations, draftPR1617/head18bc0ec62, source7199aa3fc,154unit/55parentDB/R1NONE; its lock released15:25:38Z. Parent must not change trait/public scope. Config/subjects Start and full migration remain open under1358/1359.
 
 Earlier records below are historical, not current task or runtime state.
 

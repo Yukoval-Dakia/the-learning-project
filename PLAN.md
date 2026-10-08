@@ -1,12 +1,14 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09：Start五管理页fc021完成96真实RPC/T3浏览器验收，88表无写；15:12:46Z释放锁。已整合main7b890并通过295unit/8协议/static/build，PR1615待最终准确CI与合并，未部署。
+> Linear 是权威 tracker。2026-10-09：PR1615已合main fe4849712，与准确CI 547a8061e树一致；五管理页RPC/browser证据已封存，未部署。主线接管1359历史保留期限与构建产物误扫两项audit，1391独立trait线保持原ownership。
 
 ## NOW
 
+- **YUK-1359 / 共享audit修复**：主线独占fix/yuk-1359-audit-boundaries；18条951历史保留期限于JST10-09过期，architecture provider census误扫dist/start产物。既有Linear comment e34017ea捕获；不延豁免、不删历史表、不减弱真实源码检查。1391 R1 NONE/55DB证据独立，仍归7631。
+
 - **YUK-1390 / 已合入**：PR1616合main7b8904179，exact bec86e4e5 CI/R1 NONE/tree一致；60unit与父42DB通过。五科目控制操作包含提交后hydrate，Start待接；7631独占下一1391六trait操作。
 
-- **YUK-1358 / Start管理只读页**：feat/yuk-1358-start-admin-reads接runs/detail、cost、failures、coverage、conjectures五路由原页面。父332unit/8协议/static/build与48+2DB通过；独立R1 NONE；fc021已通过96实际RPC与五页浏览器验收，88表无写，证据分revision封存。整合1390后295unit/8协议/static/build通过，最终CI待，PR1615尚未合并。7631独占1391六trait操作；配置/subjects Start尚未接。
+- **YUK-1358 / Start管理只读页**：feat/yuk-1358-start-admin-reads接runs/detail、cost、failures、coverage、conjectures五路由原页面。父332unit/8协议/static/build与48+2DB通过；独立R1 NONE；fc021已通过96实际RPC与五页浏览器验收，88表无写，证据分revision封存。整合1390后295unit/8协议/static/build通过；准确547a8061e CI37799854523全绿，15:28:28Z合main fe4849712/tree一致，已unwatch。7631独占1391六trait操作；配置/subjects Start尚未接。
 - **YUK-1389 / 已合入**：PR1614合main0b925feaa，exact e1f385f5e CI37786605158绿、R1 NONE、tree一致；176unit与父48DB。公共config builder/schema/既有注入writer操作已共享，Start canonical注入仍待，未部署。
 - **YUK-1358 / Today与Inbox已合入**：PR1609/main7682618与exact d19bd52 tree一致，CI37784537687绿、R2 NONE。73父DB/497unit/7协议及分revision的RPC/browser证据保留。父票保持In Progress，完整迁移未完成。
 
@@ -55,7 +57,7 @@
 
 ## NEXT
 
-- 父完成1358最终准确CI与合并（实际RPC/browser已按revision封存），再继续剩余W1消费者和1356 Start提交/任务族；不将原件提交切片或两个页面主读取迁移当全部迁移完成。
+- 父收口1359两项共享audit，再继续配置/subjects Start与1356 Start提交/任务族；不将原件提交切片或两个页面主读取迁移当全部迁移完成。
 
 - **YUK-1352 / PR1592**：已合入main eae963377，CI37758570995与合并tree一致；隔离错题入口已验收，未部署。剩余路由与canonical boot继续。
 
