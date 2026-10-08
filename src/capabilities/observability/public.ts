@@ -10,6 +10,17 @@
  */
 
 export {
+  AdminCostQuerySchema,
+  AdminCostResponseSchema,
+  AdminFailuresQuerySchema,
+  AdminFailuresResponseSchema,
+  AdminRunDetailResponseSchema,
+  AdminRunParamsSchema,
+  AdminRunStatusSchema,
+  AdminRunsQuerySchema,
+  AdminRunsResponseSchema,
+} from './api/admin-observability-contracts';
+export {
   EventCorrectionBodySchema,
   EventCorrectionResponseSchema,
   EventDetailResponseSchema,
@@ -29,6 +40,30 @@ export {
 } from './server/admin-config-facts';
 export type { AdminConfigWriteResult, AdminConfigWriter } from './server/admin-config-writer';
 export { setAdminConfigWriter } from './server/admin-config-writer';
+export {
+  type AdminCostDto,
+  type AdminCostOptions,
+  AdminCostOptionsSchema,
+  type AdminFailureClusterDto,
+  type AdminFailuresDto,
+  type AdminFailuresOptions,
+  AdminFailuresOptionsSchema,
+  type AdminRunDetailDto,
+  type AdminRunDetailOptions,
+  type AdminRunDto,
+  type AdminRunTimelineEventDto,
+  type AdminRunsDto,
+  type AdminRunsOptions,
+  AdminRunsOptionsSchema,
+  type AdminRunsPageDto,
+  loadAdminCost,
+  loadAdminFailures,
+  loadAdminRunDetail,
+  loadAdminRuns,
+  parseAdminCostQuery,
+  parseAdminFailuresQuery,
+  parseAdminRunsQuery,
+} from './server/ai-observability';
 export { observabilityConfigEffectiveFacts } from './server/config-effective-facts';
 export {
   type EventCorrectionInput,

@@ -1,11 +1,15 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：PR1605已合入main a3691f572，exact CI/tree核验完成；Start Today/Inbox已正常整合该main，R2 NONE、父53DB通过，当前重验构建并准备隔离built RPC/browser。1381独立读取lane及1359退出清单由7631负责；无部署。
+> Linear 是权威 tracker。2026-10-08：PR1605已合入main a3691f572，exact CI/tree核验完成；Start Today/Inbox已正常整合该main，R2 NONE、父53DB通过，CI usability因旧SPA夹具失败，c7a254e27已适配Start，父接手Node24复验及built RPC/browser。1381已合main a6faded072；1386/1359由7631负责；无部署。
 
 
 ## NOW
 
 - **YUK-1358 / Start Today与Inbox**：候选babac8e08正常合入main a3691f572，95项main变更与本slice无重叠。R1知识时间戳P1修复053e9b511，唯一R2无P0/P1；父53DB通过。现由父重验整合构建并执行隔离RPC/browser，剩余ProfileBand、学习意图、TeachingBrief、probe、agent notes及共享Copilot等消费者继续保留退出义务。[交付边界](docs/planning/2026-10-08-yuk1358-start-workbench-handoff.md)。
+
+- **YUK-1356 / 主线交付**：PR1605于11:58:08Z合入a3691f572，主线核tree与exact e260bdb98一致、CI37772055452绿/threads0。保留真实MiMo一次工具验收及main4a3d 139unit/110DB证据；1356仍InProgress，未部署。1358 Start Today/Inbox由主线独占PR1609及RPC/browser验收，不在此树修改。
+
+- **YUK-1381 / W5领域读取**：feat/yuk-1381-admin-domain-reads从main fadcb0c87建立；唯一子writer已交回66aa43a18并释放；父核9hash及8保护文件不变，作者Node24的74unit/static/build/audits通过。父级接验收/文档，不改Start/UI/practice/config writer；父在整合main后的a35c759ff实跑3文件24DB通过，核原4服务/release不变并12:07:55Z释放锁；独立源码R1/CI尚待。coverage/conjecture仅给主线准确增量路径，未启动实施。
 
 - **YUK-1359 / W3-W4退出证据**：[W3](docs/planning/2026-10-08-yuk1359-w3-consumers.md)与[W4](docs/planning/2026-10-08-yuk1359-w4-consumers.md)已核真实消费者，补齐知识可见性/边事务、笔记presence及Copilot恢复边界。仅源码清单，Start和运行矩阵待，W5管理页仍待核查。
 
@@ -58,6 +62,8 @@
 - **早期单收口（2026-10-07）**：YUK-100..500 的 20 张已在 Linear 逐张裁定——147/213/295/310/406/443/464 转 Todo，369 Canceled（被 1038 取代），其余设触发条件与 10-21 / 11-07 复查截止，到期未触发即取消；406 验收裁定连带 405/418/419。
 
 ## PARKED
+
+- **YUK-1382 / Admin runs未知费用显示**：源码基线fadcb0c87中，observability/ui/admin-runs.tsx:207将nullable cost_usd累加；observability-shared.tsx:11以(value ?? 0).toFixed(4)将未知显示为$0.0000，列表/详情/合计均受影响。已查重并登记Backlog，待验证真实零、全未知、已知+未知；不在1381改UI。此条是源码发现，尚无浏览器验收。
 
 - YUK-1355 P2 comment4208022050：cron权威目录仍将 prune 注册点写为 ../handlers.ts。最小范围为目录说明及一行注册点/phase ownership 文档；不需要新 scheduler/catalog 子系统。已报告父线程裁决，本轮未改该 P2。
 

@@ -29,6 +29,14 @@ W3不能遗漏HTTP里的learner可见性、edge端点锁/事务/wake、question�
 
 YUK1380事件领域PR1607已合入main4a3d797dd，本docs分支正常整合并保留该代码。公共读取/纠错和原HTTP消费者已交付；Start挂载与整页运行验收仍待，见[事件领域证据](2026-10-08-yuk1380-event-domain.md)。1358/1359仍In Progress。本次只增退出证据，没有删除旧入口、修改产品或执行runtime。
 
+## W5清单与路由覆盖复核，2026-10-08
+
+[W5消费者清单](2026-10-08-yuk1359-w5-consumers.md)已列八个管理页的实际读取/写入与验收边界，独立文档审查中。1381领域实现66aa43a18已交回，尚待父DB与独立代码审查/CI；Start没有因公共出口存在而完成挂载。
+
+父在66aa43a185fa45c5a201c77e32197f215be82237静态提取UI_SURFACES的id/route与SPA router的surfacePath调用，均为28项，集合相等；分配为W1 4、W2 6、W3 7、W4 2、W5 8、1356 practice 1，无遗漏、额外或重复分配。提取收据在/tmp/yuk1359-w5-route-coverage.json。这只证明路由清单范围，不证明全部页面消费者、运行矩阵或退出完成；CopilotDock等共享子树仍按专属矩阵验收。
+
+YUK1382捕获runs费用未知值显示零的既有UI缺陷，未混入1381领域读取；设置入口仍有route/search/AdminLinks但无sidebar nav。coverage调用链内部Db与时钟、配置注入、subject/trait post-commit水合均有剩余接线义务，不据本清单删除旧运行路径。
+
 ## 历史基线26f101581：准备计划冲突及精确修订建议
 
 下表行号均指上述 main 基线的 `docs/planning/2026-10-07-ts-migration-and-ui-rewrite-prep.md`，不是动态 main。此处给出建议，不修改正在由其他线程使用的原计划。
