@@ -1,8 +1,11 @@
 # 2026-10-08 YUK-1356 trusted Pi handoff
 
-Current lane: feat/yuk-1356-review-operation. Source 0d9360487, main caeb959fd normally integrated. Parent verified35 source hashes/13 logs. Scoped DB first158/159; corrected new test to assert knowledge and ability_global partitions each evidence_count1, then20/20 passed. Other139 already passed on identical product source. R2 final review NONE. PR1605 first CI37765828244 failed two exact inventory/input-shape contracts; parent repairing, no third review. Real provider, Start submit consumer, CI and release unproven. Locks safely released10:43:33Z and10:45:39Z; original4containers/release unchanged. No paid call/replay/deploy. See trusted-pi-handoff and parent evidence.
+Current lane: feat/yuk-1356-review-operation. Source 0d9360487, main caeb959fd normally integrated. Parent verified35 source hashes/13 logs. Scoped DB first158/159; corrected new test to assert knowledge and ability_global partitions each evidence_count1, then20/20 passed. Other139 already passed on identical product source. R2 final review NONE. PR1605 first CI37765828244 failed two exact inventory/input-shape contracts; repaired7b50a3f4d with103DB/unit/static/build passed, no third review. Normally integrating main6150f01a9/PR1604. Real provider, Start submit consumer, CI and release unproven. Locks safely released10:43:33Z and10:45:39Z; original4containers/release unchanged. No paid call/replay/deploy. See trusted-pi-handoff and parent evidence.
 
 Prior records below are historical, not current completion claims.
+# 当前交接 — 2026-10-08 YUK1378费用读取验收
+
+分支feat/yuk-1378-today-cost-read，基线main caeb959fd，携带1359文档db191745a及实施603c9674e。唯一实施writer已completed/noPending、树clean。父核7哈希并实际2文件11DB通过；8unit/static/build已过。10:34:07Z核owner释放部署锁，原四服务及release不变。R1 NONE，PR1604已link/watch；首CI的单测DB直接import分区问题已修05e1965bf，8unit/partition/static/build通过，唯一R2与新CI待；主线独占Start/1356，1377/1358/1359仍In Progress。下文为历史交接。
 
 # 2026-10-08 current PR1595
 

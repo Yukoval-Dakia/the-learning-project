@@ -1,14 +1,16 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：1356 PR1605独立R2 P0/P1 NONE；首轮CI定位两处工具清单/普通输入形状断言，父最小修复并复验中。139+20DB已过；真实MiMo、Start提交/判分DBOS族仍待，未部署。
+> Linear 是权威 tracker。2026-10-08：1356 PR1605独立R2 NONE，CI两处工具清单/输入形状修复后103DB与静态构建通过；已正常整合1378费用读取/main6150f01a9。最终CI/真实MiMo及Start/判分DBOS族待，未部署。1358/1359保持In Progress。
 
 ## NOW
+
+- **YUK-1378 / Today费用读取**：`loadTodayCost(db: Db | Tx, now?: Date)`及TodayCost经observability/public导出，HTTP复用。既有币种/truth/unknown/legacy口径保留，单次时钟确定BJT窗口。603c9674e的8unit、11DB、typecheck/lint/build通过；独立审查与PR准确CI待。源码交付不等于Start整页验收。[证据](docs/planning/2026-10-08-yuk1378-today-cost-read.md)。
 
 - **YUK-1355 / PR1595**：默认 pg-boss，仅 prune_job_events 可切 DBOS；60s cached-cron receipt fence、unknown rollback hold、单 recovery owner 均保留。新 main 的业务变更原样合入，Node24.19 212 unit、typecheck/lint/ratchet/build 与8 static audits通过；源/fixture字节保持，新增bundle的DB验收交父。历史4 cron/recovery、28 worker DB、77 unit、26 migration 只代表旧源/旧bundle。R1/R2 NONE适用于48ead，预算已用，不新审。
 
 
 
-- **YUK-1377 / Today 读取迁移**：从main `1bbd82795` 接续，主线已明确本线程独占shell公共读取/HTTP契约范围。复用现有summary和overnight facade，公共出口实现 `1aa3fd892` 已交回，35unit/父独立6DB/static/build通过；不改UI/Start/组合根。已正常集成main5b11f3edb，79eb7980d接入queryReviewDue(db,{limit:200})；新增回归已RED→GREEN，父8DB/35unit/static/build通过。独立review NONE、原head61e41e319 CI全绿；现整合main eae963377后的新HEAD待CI。Start消费者接续归主线。详情见[1377记录](docs/planning/2026-10-08-yuk1377-today-domain-reads.md)。
+- **YUK-1377 / Today 读取迁移**：PR1603已合入 `90f499126`；准确head53a70bf4a的CI37760493515全绿、独立review NONE，candidate/merge tree一致。summary公共读取与queryReviewDue注入DB已8DB、整合后42unit/typecheck/lint/build验证。1377/1358保持In Progress，主线继续Start鉴权/epoch/消费者及实际入口验收；不等于Today整页完成。[证据](docs/planning/2026-10-08-yuk1377-today-domain-reads.md)。
 
 - **YUK-1352 Start /mistakes**：唯一1352 writer已接好 authenticated server function、旧页面注入及共享原shell；保留1364/1365/1375/1376 main源码，PR1600合入main后正常merge保留7631的public materials源码。98 scoped tests、typecheck/lint/build与边界audit通过；准确3d6273a14隔离RPC/浏览器/图片与失败重试已验收；全导航仅既有practice初始化增1行，后续错题读取86表无变化。[交付](docs/planning/2026-10-07-yuk1352-start-frontdoor.md)。
 

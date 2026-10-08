@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest';
+import { loadTodayCost } from '@/capabilities/observability/public';
 import { ai_task_runs, cost_ledger, provider_attempt, tool_call_log } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET as getAdminCost } from './admin-cost';
@@ -103,6 +104,7 @@ describe('AI observability route contracts', () => {
     const todayResponse = await getTodayCost(new Request('http://localhost/api/cost/today'));
     expect(todayResponse.status).toBe(200);
     const today = CostTodayResponseSchema.parse(await todayResponse.json());
+    expect(await loadTodayCost(db, new Date(today.window.to * 1000))).toEqual(today);
     expect(today.today.by_currency).toEqual([
       {
         currency: 'USD',
