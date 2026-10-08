@@ -1,8 +1,10 @@
-# Current update — final CI and bounded judge design work
+# Current handoff — PR1624 merged; judge branch prepared
 
-PR1624 remote a8800730b3c67667574bc44ec02edb7ed7800f78, exactCI37852269707. Last actual check found no failures, DB1/DB2 stillrunning. T3watchactive; do notduplicatepoller/rerun. Parentlocal docs aftera880 include1359 restorecoverage and an offline falseverified repro, plus two postbuildauditPASS; carryaftermerge, do notpushjusttodisruptCI. No runtime services/lock/writer.
+PR1624 merged2026-10-08T22:32:03Z as96077db1905ebab6a522b0ae36f9f22e26be5895. Exact a8800730b3c67667574bc44ec02edb7ed7800f78 CI37852269707 all green including4DB and aggregate; threads0. Fetch verified both trees a8bcf299050ed76c6cbd91ac4e98d266c395bf46 and empty diff. Unwatched;5796 notified formal main. Linear1394 Done; actual1355/1356/1358/1359 all In Progress. No deployment/runtime/lock.
 
-One readonly design child isrunning: node:delegated-task:command%3Amcp%3Ae4c5132f-3c05-4ce6-aa2d-e5b525fe3bf6%3Adelegate-task%3Ayuk1356-judge-operational-contract-details-20261009-v1, Codex/gpt-6-astra high. Only three unresolved decisions from existingdesign: exact operational receipts, lateworker/manualdisposition atomicity, Tx status reads. Output /tmp/yuk1356-judge-operational-contract-details-20261009.md and sourcehashJSON. No repoedits/test/DB/network/childdelegation. This isnewjudgepreparation, not1394R3. Waitcompletionnotification; judgeimplementationstillrequires1394formalmain.
+Fresh-fetch1incoming; switched this bound worktree to feat/yuk-1356-durable-judge from origin/main96077. Preserved four local docs commits as3a8d047f2/5bd42fe54/45872ceaf/645a69252. No code writer. Existing readonly child node:delegated-task:command%3Amcp%3Ae4c5132f-3c05-4ce6-aa2d-e5b525fe3bf6%3Adelegate-task%3Ayuk1356-judge-operational-contract-details-20261009-v1 was actually running/working at turn entry. Await completion notification; no duplicate child/poller. Output /tmp/yuk1356-judge-operational-contract-details-20261009.md plus hashes; three decisions only. Read and verify before unique judge writer. Judge scope in implementation-entry doc and1712199f5 ownership document; no migration number reserved. Shared producer lock mandatory. Start/boot/shutdown remain5796.
+
+Earlier receipts below retain their original revisions and superseded states.
 
 # Current update — YUK1394 CI cron collision repaired
 

@@ -109,3 +109,7 @@ The [declaration catalog](evidence/2026-10-09-yuk1394-cron-collision-catalog.jso
 Parent final3-file scoped unit run passed32 tests; typecheck, lint and build exited0. Logs are `/tmp/yuk1394-cron-collision-{green-final,typecheck,lint,build}.log`. This was a source-only repair with no DB/container/provider/runtime operation. Prior recovery evidence remains tied to its original revisions; this does not claim an actual04:26 audit firing or another independent review round. A new exact-head CI is required before merge.
 
 After pushing `a8800730b`, the parent also reran the two manifest-relevant post-build audits. `audit:capability-boundaries` and `audit:architecture-deepening` both exited0. Logs are `/tmp/yuk1394-cron-collision-audit-capability.log` and `/tmp/yuk1394-cron-collision-audit-architecture.log`. No new finding or tracker follow-up resulted, and no DB test was repeated.
+
+## Final merge receipt
+
+PR1624 was squash-merged at2026-10-08T22:32:03Z as `96077db1905ebab6a522b0ae36f9f22e26be5895`. Exact head `a8800730b3c67667574bc44ec02edb7ed7800f78` passed CI37852269707, including all four DB shards and the aggregate gate. Final review threads were empty; advisory skip/quota comments are not counted as reviews. Fetch confirmed merge and tested head share tree `a8bcf299050ed76c6cbd91ac4e98d266c395bf46`, with no diff. The PR is unwatched and the Start owner has the formal main SHA. Linear1394 is Done;1355/1356/1358/1359 remain In Progress. This is source and isolated acceptance delivery, not runtime deployment or whole-migration completion.
