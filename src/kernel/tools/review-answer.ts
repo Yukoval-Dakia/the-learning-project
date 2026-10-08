@@ -19,6 +19,9 @@ export const ReviewAnswerAttachmentSchema = z
   .strict();
 export type ReviewAnswerAttachment = z.infer<typeof ReviewAnswerAttachmentSchema>;
 
+// FIFO waiting does not extend a user's permission to submit an attached original.
+export const REVIEW_ANSWER_AUTHORIZATION_TTL_MS = 30 * 60 * 1000;
+
 export const BoundReviewAnswerSchema = z
   .object({
     version: z.literal(1),
@@ -27,6 +30,7 @@ export const BoundReviewAnswerSchema = z
     revision_id: z.string().min(1),
     submission_id: z.string().min(1),
     original_sha256: z.string().length(64),
+    expires_at: z.iso.datetime(),
     original: ReviewAnswerAttachmentSchema.extend({
       assessment: OriginalSubmission.omit({ response_set: true, group_evidence: true }).strict(),
     }).strict(),

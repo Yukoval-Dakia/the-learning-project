@@ -19,6 +19,7 @@ import { ApiError } from '@/kernel/http';
 import {
   type BoundReviewAnswer,
   BoundReviewAnswerSchema,
+  REVIEW_ANSWER_AUTHORIZATION_TTL_MS,
   type ReviewAnswerAttachment,
   ReviewAnswerAttachmentSchema,
 } from '@/kernel/tools/review-answer';
@@ -235,6 +236,8 @@ export interface ReviewAnswerContext {
   durableEnabled?: boolean;
   /** YUK-1355 owns the transport selection and recovery behind this existing port. */
   dispatchNativeAttempt?: NativeAttemptDispatchPort;
+  /** Server capability check, serialized with revocation before dispatch or activation. */
+  authorize?: (tx: Tx) => Promise<void>;
 }
 
 export type ReviewAnswerResult =
@@ -273,20 +276,32 @@ export async function submitReviewAnswer(
       const dispatch =
         context.dispatchNativeAttempt ??
         (await import('./assessment/durable-attempt')).dispatchNativeAttempt;
-      const runId = await dispatch(
-        database,
-        validated.questionId,
-        { ...assessment, now: validated.now },
-        {
-          enabled:
-            (context.durableEnabled ?? (judgeDurableEnabled() && shouldEnqueueBackgroundJobs())) &&
-            (await sessionAdmitsDurableDivert(database, body.session_id ?? null)),
-          capture: body,
-          userRating: body.auto_rate ? undefined : body.rating,
-          requireUnassistedModelEvidence:
-            validated.q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-        },
-      );
+      const dispatchOptions = {
+        enabled:
+          (context.durableEnabled ?? (judgeDurableEnabled() && shouldEnqueueBackgroundJobs())) &&
+          (await sessionAdmitsDurableDivert(database, body.session_id ?? null)),
+        capture: body,
+        userRating: body.auto_rate ? undefined : body.rating,
+        requireUnassistedModelEvidence:
+          validated.q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+      };
+      const dispatchOriginal = () =>
+        dispatch(
+          database,
+          validated.questionId,
+          { ...assessment, now: validated.now },
+          dispatchOptions,
+        );
+      const authorize = context.authorize;
+      // Dispatch makes an accepted durable obligation. Stop/retraction wait for this
+      // bounded admission, while the existing worker keeps ownership after acceptance.
+      const runId = authorize
+        ? await database.transaction(async (tx) => {
+            await authorize(tx);
+            context.signal?.throwIfAborted();
+            return dispatchOriginal();
+          })
+        : await dispatchOriginal();
       if (runId !== null) {
         retainDiagnosticClaim = true;
         return { kind: 'pending', run_id: runId };
@@ -304,6 +319,7 @@ export async function submitReviewAnswer(
         userRating: body.auto_rate ? undefined : body.rating,
         capture: body,
         signal: context.signal,
+        beforeActivate: context.authorize,
         requireUnassistedModelEvidence:
           validated.q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
       },
@@ -358,7 +374,8 @@ async function reviewBindingCoordinates(
     const [session] = await database
       .select()
       .from(learning_session)
-      .where(eq(learning_session.id, original.review_session_id));
+      .where(eq(learning_session.id, original.review_session_id))
+      .for('share');
     if (session?.type !== 'review' || session.status !== 'started') {
       throw new ApiError('coordinate_mismatch', 'review session is not active', 409);
     }
@@ -426,6 +443,11 @@ export async function captureReviewAnswerBinding(
     original.question_id,
     original.assessment,
   );
+  const [clock] = await database.execute<{ now_ms: number }>(
+    sql`SELECT (extract(epoch FROM clock_timestamp()) * 1000)::double precision AS now_ms`,
+  );
+  if (typeof clock?.now_ms !== 'number' || !Number.isFinite(clock.now_ms))
+    throw new ApiError('corrupt_state', 'missing server clock', 500);
   const {
     response_set: _responses,
     group_evidence: _evidence,
@@ -438,6 +460,7 @@ export async function captureReviewAnswerBinding(
     session_id: input.sessionId,
     revision_id: issued.revision_id,
     original_sha256: canonicalHash(original),
+    expires_at: new Date(clock.now_ms + REVIEW_ANSWER_AUTHORIZATION_TTL_MS).toISOString(),
     original: { ...original, assessment: coordinates },
   };
 }

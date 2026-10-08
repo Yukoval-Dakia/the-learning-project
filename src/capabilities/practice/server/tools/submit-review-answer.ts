@@ -37,7 +37,7 @@ export const submitReviewAnswerTool: DomainTool<z.infer<typeof Input>, ReviewAns
     ) {
       throw new ApiError('review_answer_unbound', 'no authorized original for this turn', 403);
     }
-    return ReviewAnswerReceiptSchema.parse(await ctx.reviewAnswer.submit());
+    return ReviewAnswerReceiptSchema.parse(await ctx.reviewAnswer.submit(ctx.signal));
   },
   summarize(_input, result) {
     return result.kind === 'pending'

@@ -89,7 +89,7 @@ export interface ToolContext {
   reviewAnswer?: {
     readonly originalRef: string;
     readonly sessionId: string;
-    submit(): Promise<
+    submit(signal?: AbortSignal): Promise<
       | { kind: 'pending'; run_id: string }
       | {
           kind: 'committed';

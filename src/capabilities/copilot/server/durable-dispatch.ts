@@ -4,8 +4,9 @@ import { and, eq, sql } from 'drizzle-orm';
 import type { ConnectionOptions, JobWithMetadata, SendOptions } from 'pg-boss';
 
 import { PICKUP_TIMEOUT_MS } from '@/capabilities/copilot/durable-pickup';
+import { canonicalHash } from '@/core/migration/canonical';
 import type { Db, Tx } from '@/db/client';
-import { job_events } from '@/db/schema';
+import { event, job_events } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';
 import { writeCopilotInputEvent } from './conversation-writes';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
@@ -261,6 +262,9 @@ export async function reserveCopilotDurableAcceptance(
     });
     input.assertActive?.();
     const bossJobId = copilotBossJobId(runId);
+    const [acceptedAsk] = input.reviewAnswer
+      ? await tx.select({ payload: event.payload }).from(event).where(eq(event.id, runId))
+      : [];
     const persistedJobData: CopilotRunJobData | undefined = input.jobData
       ? { ...input.jobData, run_id: runId, session_id: input.sessionId }
       : undefined;
@@ -270,6 +274,9 @@ export async function reserveCopilotDurableAcceptance(
       event_type: COPILOT_RUN_EVENTS.QUEUED,
       payload: {
         ...input.queuedPayload,
+        ...(acceptedAsk
+          ? { review_answer_binding_sha256: canonicalHash(acceptedAsk.payload.review_answer) }
+          : {}),
         run_id: runId,
         input_hash: input.inputHash,
         boss_job_id: bossJobId,

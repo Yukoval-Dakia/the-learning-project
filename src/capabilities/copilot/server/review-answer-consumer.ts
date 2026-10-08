@@ -1,6 +1,7 @@
 import { and, eq, sql } from 'drizzle-orm';
+import { canonicalHash } from '@/core/migration/canonical';
 import type { Db, Tx } from '@/db/client';
-import { event, job_events } from '@/db/schema';
+import { event, job_events, learning_session } from '@/db/schema';
 import { eventCorrectionLockKey, getCorrectionStatus } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
 import type { ToolContext } from '@/kernel/tools/types';
@@ -39,7 +40,7 @@ export async function resolveCopilotReviewAnswer(
   if (binding.original_ref !== ask.id || binding.session_id !== input.sessionId) {
     throw new ApiError('review_answer_unbound', 'original belongs to another turn/session', 403);
   }
-  const authorize = async (tx: Tx) => {
+  const authorize = async (tx: Tx, signal: AbortSignal) => {
     // Stop uses this same lock. Correct writers use the same target lock.
     await acquireCopilotExecutionSettlementLock(tx, input.sourceEventId);
     await tx.execute(
@@ -60,6 +61,28 @@ export async function resolveCopilotReviewAnswer(
     if ((await getCorrectionStatus(tx, ask.id)).state !== 'active') {
       throw new ApiError('review_authorization_revoked', 'accepted ask is no longer active', 409);
     }
+    const [session] = await tx
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, input.sessionId))
+      .for('share');
+    if (session?.type !== 'conversation' || !['active', 'idle'].includes(session.status)) {
+      throw new ApiError('review_authorization_revoked', 'conversation is no longer open', 409);
+    }
+    if (binding.original.review_session_id) {
+      const [review] = await tx
+        .select()
+        .from(learning_session)
+        .where(eq(learning_session.id, binding.original.review_session_id))
+        .for('share');
+      if (review?.type !== 'review' || review.status !== 'started') {
+        throw new ApiError(
+          'review_authorization_revoked',
+          'review session is no longer active',
+          409,
+        );
+      }
+    }
     const events = await tx
       .select({ event_type: job_events.event_type, payload: job_events.payload })
       .from(job_events)
@@ -71,7 +94,8 @@ export async function resolveCopilotReviewAnswer(
         (e) =>
           e.event_type === COPILOT_RUN_EVENTS.QUEUED &&
           e.payload.session_id === input.sessionId &&
-          e.payload.review_answer_sha256 === binding.original_sha256,
+          e.payload.review_answer_sha256 === binding.original_sha256 &&
+          e.payload.review_answer_binding_sha256 === canonicalHash(binding),
       )
     ) {
       throw new ApiError('review_answer_unbound', 'original has no accepted chat run', 403);
@@ -79,12 +103,27 @@ export async function resolveCopilotReviewAnswer(
     if (hasCancelRequest(events) || events.some(isCopilotRunTerminalEvent)) {
       throw new ApiError('review_authorization_revoked', 'chat run was cancelled or settled', 409);
     }
-    input.signal.throwIfAborted();
+    const [clock] = await tx.execute<{ now_ms: number }>(
+      sql`SELECT (extract(epoch FROM clock_timestamp()) * 1000)::double precision AS now_ms`,
+    );
+    if (
+      typeof clock?.now_ms !== 'number' ||
+      !Number.isFinite(clock.now_ms) ||
+      clock.now_ms >= Date.parse(binding.expires_at)
+    ) {
+      throw new ApiError('review_authorization_expired', 'submission permission has expired', 409);
+    }
+    signal.throwIfAborted();
   };
   return {
     originalRef: binding.original_ref,
     sessionId: input.sessionId,
-    submit: () =>
-      consumeReviewAnswerBinding(database, binding, { authorize, signal: input.signal }),
+    submit: (toolSignal) => {
+      const signal = toolSignal ? AbortSignal.any([input.signal, toolSignal]) : input.signal;
+      return consumeReviewAnswerBinding(database, binding, {
+        authorize: (tx) => authorize(tx, signal),
+        signal,
+      });
+    },
   };
 }

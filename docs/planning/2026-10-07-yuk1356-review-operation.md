@@ -1,5 +1,7 @@
 # YUK-1356 review operation delivery
 
+Current implementation handoff: [2026-10-08 trusted Pi consumer](2026-10-08-yuk1356-trusted-pi-handoff.md). The earlier missing-consumer statements and check counts below are historical. Current DB/runtime/independent acceptance remains unproven.
+
 2026-10-07. Writer scope is `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1356-review-operation`, branch `feat/yuk-1356-review-operation`. Original implementation is `b191ea714747eb468e1a55d88928a3f882470ac6`, based on `a6d89037b56f5b0c690137a1354186e0ea07e216`. This document supersedes the tool/inventory claims in the ignored `.cache/yuk1356/handoff.md`. The adjacent evidence JSON seals source and check-log SHA256 values; the original handoff and verification digests remain historical provenance.
 
 ## Delivered behavior

@@ -1,4 +1,4 @@
-import { eq, sql } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createAttempt } from '@/capabilities/practice/api/submit';
 import { practiceCapability } from '@/capabilities/practice/manifest';
@@ -9,6 +9,7 @@ import {
   assessment_submission,
   evaluation,
   event,
+  job_events,
   learning_session,
   mastery_state,
   material_fsrs_state,
@@ -22,6 +23,7 @@ import {
 import type { ToolContext } from '@/kernel/tools/types';
 import { buildPiDomainAgentTools } from '@/server/ai/tools/pi-tools';
 import { registerTool } from '@/server/ai/tools/registry';
+import { writeJobEvent } from '@/server/events/writer';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { buildHonoApp } from '../../../../server/app';
 import {
@@ -37,6 +39,7 @@ import {
 } from '../server/copilot-execution';
 import { createCopilotRunCancellationControl } from '../server/copilot-run-cancellation';
 import type { CopilotRunInput } from '../server/copilot-run-input';
+import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from '../server/copilot-run-status';
 import { selectAsksWithMaterializingToolCall } from '../server/materializing-tools';
 import { resolveCopilotReviewAnswer } from '../server/review-answer-consumer';
 
@@ -61,7 +64,6 @@ const input: CopilotRunInput = {
   user_message: '核对附上的原件。',
   proposal_feedback: [],
   conversation_history: [],
-  validator_context_history: [],
   correction_contract: {
     available_prior_turn_ids: [],
     prior_turn_summaries: {},
@@ -489,3 +491,137 @@ it('grades an original captured by the existing authenticated submissions owner 
   expect(await counts()).toEqual(before);
   expect(f.execute).not.toHaveBeenCalled();
 });
+
+it.each([
+  'expired',
+  'forged-binding',
+  'missing-acceptance',
+  'settled',
+  'ended-conversation',
+] as const)(
+  'fails closed on %s capability, even when the model knows the original reference',
+  async (mode) => {
+    const a = await accepted();
+    const [ask] = await testDb().select().from(event).where(eq(event.id, a.runId));
+    const binding = BoundReviewAnswerSchema.parse(ask.payload.review_answer);
+    const queued = and(
+      eq(job_events.business_table, COPILOT_RUN_TABLE),
+      eq(job_events.business_id, a.runId),
+      eq(job_events.event_type, COPILOT_RUN_EVENTS.QUEUED),
+    );
+    if (mode === 'expired' || mode === 'forged-binding') {
+      const modified = {
+        ...binding,
+        expires_at: mode === 'expired' ? '2020-01-01T00:00:00.000Z' : '2099-01-01T00:00:00.000Z',
+      };
+      await testDb()
+        .update(event)
+        .set({ payload: { ...ask.payload, review_answer: modified } })
+        .where(eq(event.id, a.runId));
+      if (mode === 'expired') {
+        // A previously minted, intact capability whose deadline has elapsed.
+        const [marker] = await testDb().select().from(job_events).where(queued);
+        await testDb()
+          .update(job_events)
+          .set({
+            payload: { ...marker.payload, review_answer_binding_sha256: canonicalHash(modified) },
+          })
+          .where(queued);
+      }
+    }
+    if (mode === 'missing-acceptance') await testDb().delete(job_events).where(queued);
+    if (mode === 'settled')
+      await writeJobEvent(testDb(), {
+        business_table: COPILOT_RUN_TABLE,
+        business_id: a.runId,
+        event_type: COPILOT_RUN_EVENTS.DONE,
+        payload: {},
+      });
+    if (mode === 'ended-conversation')
+      await testDb()
+        .update(learning_session)
+        .set({ status: 'ended' })
+        .where(eq(learning_session.id, a.sessionId));
+    const ctx = await context(a.runId, a.sessionId);
+    await expect(submitReviewAnswerTool.execute(ctx, { original_ref: a.runId })).rejects.toThrow();
+    expect((await counts()).activations).toHaveLength(0);
+    expect((await counts()).mastery).toHaveLength(0);
+    expect((await counts()).fsrs).toHaveLength(0);
+    expect(await testDb().select().from(evaluation)).toHaveLength(0);
+  },
+);
+
+it.each(['cancelled', 'revoked', 'closed-review'] as const)(
+  'rechecks %s permission after grading before the original can activate learning',
+  async (mode) => {
+    const f = await nativeSoloHttpFixture(testDb(), { model: true });
+    const reviewId = 'review-after-grading';
+    await testDb()
+      .insert(learning_session)
+      .values({ id: reviewId, type: 'review', status: 'started' });
+    const a = await accepted(
+      {
+        review_answer: {
+          authorize_submission: true,
+          question_id: f.id,
+          assessment: f.assessment,
+          review_session_id: reviewId,
+        },
+      },
+      f,
+    );
+    const ctx = await context(a.runId, a.sessionId);
+    const entered = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<void>();
+    const realExecutor = f.execute.getMockImplementation();
+    if (!realExecutor) throw new Error('missing offline recorded executor');
+    f.execute.mockImplementationOnce(async (...args) => {
+      entered.resolve();
+      await release.promise;
+      return realExecutor(...args);
+    });
+    const running = submitReviewAnswerTool.execute(ctx, { original_ref: a.runId });
+    const rejected = expect(running).rejects.toThrow();
+    try {
+      await entered.promise;
+      if (mode === 'cancelled')
+        expect(
+          (
+            await app.request(`/api/copilot/runs/${a.runId}/cancel`, {
+              method: 'POST',
+              headers: { 'x-internal-token': token },
+            })
+          ).status,
+        ).toBe(200);
+      if (mode === 'revoked')
+        await writeEvent(testDb(), {
+          id: 'revoke-during-grading',
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'correct',
+          subject_kind: 'event',
+          subject_id: a.runId,
+          outcome: 'success',
+          payload: {
+            target_event_id: a.runId,
+            correction_kind: 'retract',
+            reason_md: 'withdraw permission',
+            affected_refs: [{ kind: 'question', id: f.id }],
+          },
+        });
+      if (mode === 'closed-review')
+        await testDb()
+          .update(learning_session)
+          .set({ status: 'completed' })
+          .where(eq(learning_session.id, reviewId));
+    } finally {
+      release.resolve();
+    }
+    await rejected;
+    expect(f.execute).toHaveBeenCalledTimes(1);
+    expect((await counts()).submissions).toHaveLength(1);
+    expect((await counts()).activations).toHaveLength(0);
+    expect((await counts()).mastery).toHaveLength(0);
+    expect((await counts()).fsrs).toHaveLength(0);
+  },
+);

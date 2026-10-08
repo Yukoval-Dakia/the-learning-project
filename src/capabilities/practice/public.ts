@@ -78,8 +78,6 @@ export type {
 } from './server/assessment/native-attempt-dispatch-port';
 export type { CollectedSignal } from './server/candidate-signals';
 export { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './server/cause-overlay';
-// YUK-1356: request-independent review ports. Lazy values keep migration consumers lightweight.
-export type { ReviewDueQuery, ReviewDueRow } from './server/due-list';
 export type {
   ProposeFailureVariantInput,
   VariantProposalResult,
@@ -337,7 +335,5 @@ export { executeGetReviewDue } from './server/tools/question-context';
 export { storeSourcedQuestionTool } from './server/tools/store-sourced-question';
 // YUK-1062 — task composition uses the narrow task-public entry directly.
 export { practiceTaskSpecs } from './task-public';
-export const queryReviewDue: typeof import('./server/due-list').queryReviewDue = async (...args) =>
-  (await import('./server/due-list')).queryReviewDue(...args);
 export const submitReviewAnswer: typeof import('./server/review-operation').submitReviewAnswer =
   async (...args) => (await import('./server/review-operation')).submitReviewAnswer(...args);
