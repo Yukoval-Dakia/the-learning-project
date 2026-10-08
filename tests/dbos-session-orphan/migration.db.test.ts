@@ -6,10 +6,23 @@ import { type Socket, createConnection, createServer } from 'node:net';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { DBOSClient } from '@dbos-inc/dbos-sdk';
+import { sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/postgres-js';
 import { PgBoss } from 'pg-boss';
 import postgres from 'postgres';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import {
+  type ChildExit,
+  assertFixtureCanReset,
+  cleanupOwnedChildren,
+  errorDiagnostic,
+  fixtureErrorMessage,
+  fixtureMessageSchema,
+  nonterminalDurableWork,
+  sanitizeDiagnostic,
+  waitForFixtureMessage,
+} from '../dbos-review-orphan/fixture-process';
 
 const OLD_BASE = '6aaf8ca89eaf5feb5af5c00b7c5b3bd90cd953ea';
 const REVIEW_BASE = '3be966000e53842dc9592df60c367b5af14660fb';
@@ -21,13 +34,15 @@ const nextId = () =>
 let serial = 0;
 const exec = promisify(execFile);
 const bundle = resolve(`.cache/yuk1394-session-${process.pid}.cjs`);
-const children = new Set<ChildProcess>();
+const children = new Map<ChildProcess, Promise<ChildExit>>();
 const logs: unknown[] = [];
 const evidence: unknown[] = [];
+let caseLogStart = 0;
+let suiteBlocked: string | undefined = 'Session fixture setup has not completed';
+let hadCaseFailure = false;
 let db: ReturnType<typeof postgres>;
-const messageSchema = z
-  .object({ kind: z.string(), boundary: z.string().optional(), error: z.string().optional() })
-  .passthrough();
+const messageSchema = fixtureMessageSchema;
+const diagnosticSecrets: string[] = [];
 const buildArgs = [
   '--bundle',
   '--platform=node',
@@ -63,13 +78,24 @@ function worker(
     scheduledAt?: string;
   } = {},
 ) {
+  assertFixtureCanReset([], suiteBlocked);
+  const url = safeUrl();
+  const requestId = options.id ?? options.reviewId ?? options.pruneId ?? randomUUID();
+  const secrets = [
+    url.toString(),
+    url.password,
+    decodeURIComponent(url.password),
+    options.appUrl ?? '',
+  ];
+  diagnosticSecrets.push(...secrets);
   const child = spawn(process.execPath, [options.oldBundle ?? bundle], {
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
     env: {
       PATH: process.env.PATH,
       NODE_PATH: resolve('node_modules'),
       NODE_ENV: 'test',
-      DATABASE_URL: safeUrl().toString(),
+      DATABASE_URL: url.toString(),
+      TLP_SESSION_REQUEST_ID: requestId,
       TLP_SESSION_TEST_PROCESS: '1',
       TLP_SESSION_FAMILY: selectedFamily,
       TLP_SESSION_SCHEDULED_AT:
@@ -90,15 +116,35 @@ function worker(
       TLP_PRUNE_PAUSE_AT: options.oldBundle ? 'business-committed' : undefined,
     },
   });
-  children.add(child);
-  const exited = once(child, 'exit');
+  const exited = new Promise<ChildExit>((resolveExit) => {
+    child.once('exit', (code, signal) => resolveExit([code, signal]));
+  });
+  children.set(child, exited);
   const messages: z.infer<typeof messageSchema>[] = [];
-  const record = {
+  const record: {
+    pid: number | undefined;
+    database: string;
+    family: (typeof families)[number];
+    requestId: string;
+    bundle: string;
+    pauseAt: string | undefined;
+    recover: boolean;
+    stdout: string;
+    stderr: string;
+    messages: unknown[];
+    exit: { code: ChildExit[0]; signal: ChildExit[1] } | null;
+  } = {
     pid: child.pid,
+    database: url.pathname.slice(1),
+    family: selectedFamily,
+    requestId,
+    bundle: options.oldBundle ?? bundle,
+    pauseAt: options.pauseAt,
+    recover: options.recover ?? false,
     stdout: '',
     stderr: '',
-    messages: [] as unknown[],
-    exit: null as unknown,
+    messages: [],
+    exit: null,
   };
   logs.push(record);
   child.stdout?.on('data', (c) => {
@@ -108,31 +154,52 @@ function worker(
     record.stderr += String(c);
   });
   child.on('message', (m) => {
-    messages.push(messageSchema.parse(m));
     record.messages.push(m);
+    const parsed = messageSchema.safeParse(m);
+    messages.push(
+      parsed.success
+        ? parsed.data
+        : fixtureErrorMessage({
+            kind: 'failure',
+            error: parsed.error,
+            pid: child.pid ?? process.pid,
+            database: record.database,
+            stage: 'invalid-worker-ipc',
+            requestId,
+            secrets,
+          }),
+    );
+  });
+  child.on('error', (error) => {
+    const failure = fixtureErrorMessage({
+      kind: 'failure',
+      error,
+      pid: child.pid ?? process.pid,
+      database: record.database,
+      stage: 'child-process-error',
+      requestId,
+      secrets,
+    });
+    record.messages.push(failure);
+    messages.push(failure);
   });
   child.on('exit', (code, signal) => {
     children.delete(child);
     record.exit = { code, signal };
   });
   async function wait(kind: string) {
-    let found: z.infer<typeof messageSchema> | undefined;
-    await expect
-      .poll(
-        () => {
-          const index = messages.findIndex((m) => m.kind === kind);
-          if (index >= 0) found = messages.splice(index, 1)[0];
-          if (found) return true;
-          const error = messages.find((m) => m.kind === 'failure');
-          if (error) throw new Error(`${error.error}\n${record.stderr}`);
-          if (!found && (child.exitCode !== null || child.signalCode !== null))
-            throw new Error(`Child exited: ${record.stderr}`);
-          return !!found;
-        },
-        { timeout: 30000, interval: 25 },
-      )
-      .toBe(true);
-    return messageSchema.parse(found);
+    return waitForFixtureMessage({
+      messages,
+      expected: kind,
+      exited: () => record.exit !== null,
+      evidence: () => record,
+      timeoutMs: 30000,
+      accept: (message) =>
+        kind !== 'boundary' ||
+        !options.id ||
+        message.workflowId === options.id ||
+        (!message.workflowId && message.requestId === options.id),
+    });
   }
   async function kill() {
     child.kill('SIGKILL');
@@ -145,11 +212,101 @@ function worker(
   return { child, exited, wait, kill, stop };
 }
 async function reset() {
-  await db`truncate session_orphan_disposition, session_orphan_receipt, session_orphan_tick, learning_session, job_events cascade`;
+  assertFixtureCanReset(children.keys(), suiteBlocked);
+  assertSettledCaseState(await observeCaseState(false));
+  // Retain admissions, receipts and dispositions, including explicitly retired ERRORs.
+  await db`truncate learning_session, job_events cascade`;
   await db`update session_orphan_control set phase = 'dbos', legacy_not_before = null, phase_changed_at = clock_timestamp()`;
   await db`update prune_job_events_control set phase = 'pg-boss'`;
   await db`update review_orphan_control set phase = 'pg-boss'`;
-  await db`delete from pgboss.job where name in (${families[0]},${families[1]},'__pgboss__send-it')`;
+}
+async function observeCaseState(includeApp: boolean) {
+  const [{ sessionOrphanObligations }, { reviewOrphanObligations }, { pruneObligations }] =
+    await Promise.all([
+      import('@/server/durable/session-orphan-backend'),
+      import('@/server/durable/review-orphan-family'),
+      import('@/server/durable/prune-family'),
+    ]);
+  return drizzle(db).transaction(
+    async (tx) => {
+      await tx.execute(sql`set local statement_timeout = '3s'`);
+      await tx.execute(sql`set local lock_timeout = '1s'`);
+      const [relations] =
+        await tx.execute(sql`select to_regclass('tlp_dbos.workflow_status') as workflows,
+      to_regclass('pgboss.job') as jobs`);
+      const workflows = z
+        .array(z.object({ workflow_uuid: z.string(), status: z.string() }).passthrough())
+        .parse(
+          relations.workflows
+            ? await tx.execute(
+                sql`select workflow_uuid,name,status,recovery_attempts from tlp_dbos.workflow_status order by workflow_uuid`,
+              )
+            : [],
+        );
+      const obligations: unknown[] = [];
+      for (const backend of ['dbos', 'pg-boss'] as const) {
+        if (!(backend === 'dbos' ? relations.workflows : relations.jobs)) continue;
+        for (const family of families)
+          obligations.push(...(await sessionOrphanObligations(tx, { family, backend })));
+        obligations.push(
+          ...(await reviewOrphanObligations(tx, backend)).map((row) => ({
+            family: 'prune_orphan_review_sessions',
+            backend,
+            ...row,
+          })),
+          ...(await pruneObligations(tx, backend)).map((row) => ({
+            family: 'prune_job_events',
+            backend,
+            ...row,
+          })),
+        );
+      }
+      return {
+        workflows,
+        obligations,
+        ...(includeApp
+          ? {
+              ticks: await tx.execute(
+                sql`select * from session_orphan_tick order by family,tick_id`,
+              ),
+              receipts: await tx.execute(
+                sql`select * from session_orphan_receipt order by family,tick_id,session_id`,
+              ),
+              dispositions: await tx.execute(sql`select * from session_orphan_disposition`),
+              reviewTicks: await tx.execute(sql`select * from review_orphan_tick order by tick_id`),
+              reviewReceipts: await tx.execute(
+                sql`select * from review_orphan_receipt order by tick_id,session_id`,
+              ),
+              reviewDispositions: await tx.execute(sql`select * from review_orphan_disposition`),
+              pruneReceipts: await tx.execute(
+                sql`select * from prune_job_events_receipt order by workflow_id`,
+              ),
+              pruneDispositions: await tx.execute(sql`select * from prune_job_events_disposition`),
+              sessions: await tx.execute(
+                sql`select id,type,status,version,started_at::text from learning_session order by id`,
+              ),
+              events: await tx.execute(
+                sql`select business_id,event_type from job_events order by business_id,event_type`,
+              ),
+              control: await tx.execute(sql`select * from session_orphan_control order by family`),
+              legacyJobs: relations.jobs
+                ? await tx.execute(
+                    sql`select id::text,name,state::text from pgboss.job where name in (${families[0]},${families[1]},'prune_orphan_review_sessions','prune_job_events','__pgboss__send-it') order by id`,
+                  )
+                : [],
+            }
+          : {}),
+      };
+    },
+    { accessMode: 'read only' },
+  );
+}
+function assertSettledCaseState(state: Awaited<ReturnType<typeof observeCaseState>>) {
+  const nonterminal = nonterminalDurableWork(state.workflows);
+  if (nonterminal.length || state.obligations.length)
+    throw new Error(
+      `Unsettled fixture state; evidence preserved: ${JSON.stringify({ nonterminal, obligations: state.obligations })}`,
+    );
 }
 async function sessions() {
   for (const id of ['crash-a', 'crash-b', 'crash-c'])
@@ -288,41 +445,101 @@ beforeAll(async () => {
   // Fail before opening any pool/worker when the required immutable source is absent.
   await exec('git', ['cat-file', '-e', `${OLD_BASE}^{commit}`]);
   await exec('git', ['cat-file', '-e', `${REVIEW_BASE}^{commit}`]);
-  db = postgres(safeUrl().toString(), { max: 3 });
+  db = postgres(safeUrl().toString(), { max: 3, connect_timeout: 2 });
   await exec(resolve('node_modules/.bin/esbuild'), [
     'tests/dbos-session-orphan/worker.ts',
     ...buildArgs,
     `--outfile=${bundle}`,
   ]);
   await db`delete from contract_epoch`;
+  suiteBlocked = undefined;
 }, 60000);
+beforeEach(() => {
+  caseLogStart = logs.length;
+  assertFixtureCanReset(children.keys(), suiteBlocked);
+});
+afterEach(async (context) => {
+  if (suiteBlocked && logs.length === caseLogStart) return;
+  const failed = context.task.result?.state === 'fail';
+  hadCaseFailure ||= failed;
+  if (failed) {
+    suiteBlocked = `Failed case ${context.task.name}; durable evidence is retained`;
+    evidence.push({
+      case: context.task.name,
+      preCleanupLogs: structuredClone(logs.slice(caseLogStart)),
+    });
+    try {
+      evidence.push({ case: context.task.name, preCleanupState: await observeCaseState(true) });
+    } catch (error) {
+      evidence.push({ case: context.task.name, observationFailure: errorDiagnostic(error) });
+    }
+  }
+  try {
+    await cleanupOwnedChildren(children);
+    assertFixtureCanReset(children.keys());
+  } catch (error) {
+    suiteBlocked = 'Owned child cleanup did not establish process exit';
+    evidence.push({ case: context.task.name, cleanupFailure: errorDiagnostic(error) });
+    throw error;
+  }
+  try {
+    const afterCleanup = await observeCaseState(false);
+    evidence.push({ case: context.task.name, afterCleanup });
+    assertSettledCaseState(afterCleanup);
+  } catch (error) {
+    suiteBlocked ??= `Unresolved post-cleanup state after ${context.task.name}`;
+    evidence.push({
+      case: context.task.name,
+      observationOrSettlementFailure: errorDiagnostic(error),
+    });
+  }
+  assertFixtureCanReset(children.keys(), suiteBlocked);
+});
 afterAll(async () => {
-  for (const child of children) {
-    const exited = once(child, 'exit');
-    child.kill('SIGKILL');
-    await exited;
+  let cleanupError: unknown;
+  try {
+    await cleanupOwnedChildren(children);
+  } catch (error) {
+    cleanupError = error;
+    suiteBlocked = 'Final owned child cleanup did not establish process exit';
+    evidence.push({ finalCleanupFailure: errorDiagnostic(error) });
   }
-  if (process.env.TLP_SESSION_EVIDENCE_PATH)
-    await writeFile(
-      process.env.TLP_SESSION_EVIDENCE_PATH,
-      JSON.stringify(
-        {
-          capturedAt: new Date().toISOString(),
-          node: process.version,
-          execPath: process.execPath,
-          bundle,
-          bundleSha256: sha(await readFile(bundle)),
-          logs,
-          evidence,
-        },
-        null,
-        2,
-      ),
-    );
-  if (db) {
-    await db`update session_orphan_control set phase = 'pg-boss', legacy_not_before = null`;
-    await db.end();
+  try {
+    if (process.env.TLP_SESSION_EVIDENCE_PATH)
+      await writeFile(
+        process.env.TLP_SESSION_EVIDENCE_PATH,
+        sanitizeDiagnostic(
+          JSON.stringify(
+            {
+              capturedAt: new Date().toISOString(),
+              node: process.version,
+              execPath: process.execPath,
+              bundle,
+              bundleSha256: await readFile(bundle)
+                .then(sha)
+                .catch(() => null),
+              logs,
+              evidence,
+              suiteBlocked,
+              hadCaseFailure,
+            },
+            null,
+            2,
+          ),
+          diagnosticSecrets,
+        ),
+      );
+  } finally {
+    if (db) {
+      try {
+        if (!hadCaseFailure && !suiteBlocked)
+          await db`update session_orphan_control set phase = 'pg-boss', legacy_not_before = null`;
+      } finally {
+        await db.end({ timeout: 2 });
+      }
+    }
   }
+  if (cleanupError) throw cleanupError;
 });
 
 for (const family of families)
@@ -415,7 +632,7 @@ for (const family of families)
       const first = worker({ id, appUrl: proxy.url });
       try {
         await first.wait('ready');
-        // Unlike ordinary wait(), this fixture expects the failure message itself.
+        // This fixture expects the failure message itself, after the workflow becomes ERROR.
         await expect
           .poll(
             async () =>
@@ -808,7 +1025,6 @@ it('recovers genuine old prune and review partial ledgers before and after both 
         await db`update prune_job_events_control set phase = 'dbos'`;
         await db`insert into job_events (business_table,business_id,event_type,payload,occurred_at) values ('echo_jobs','old','echo.queued','{}','2026-01-01T00:00:00Z')`;
       } else {
-        await db`truncate review_orphan_disposition, review_orphan_receipt, review_orphan_tick`;
         await db`update review_orphan_control set phase = 'dbos'`;
         for (const sessionId of ['review-old-a', 'review-old-b'])
           await db`insert into learning_session (id,type,status,started_at) values (${sessionId},'review','started','2026-10-08T12:00:00Z')`;
