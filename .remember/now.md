@@ -1,6 +1,6 @@
-# 当前交接 — 2026-10-08 1359退出核对
+# 当前交接 — 2026-10-08 YUK1378费用读取验收
 
-PR1592/1603/1595已合入main caeb959fd。本线程从最新main建立docs/yuk-1359-exit-current-main，仅维护1359退出与W1消费者证据；主线独占1356及Start消费者。1359实际未退役旧SPA/pg-boss，已将Linear误关Done恢复In Progress。1377/1358仍待Start实际验收。只读调查已completed/noPending，父已抽查Start路由、构建、typed due和prune注册/phase路径。当前仅父文档writer，无runtime锁或服务动作。下文保留历史交接，不作为最新状态。
+分支feat/yuk-1378-today-cost-read，基线main caeb959fd，携带1359文档db191745a及实施603c9674e。唯一实施writer已completed/noPending、树clean。父核7哈希并实际2文件11DB通过；8unit/static/build已过。10:34:07Z核owner释放部署锁，原四服务及release不变。R1独立审查运行，PR/CI待；主线独占Start/1356，1377/1358/1359仍In Progress。下文为历史交接。
 
 # 2026-10-08 current PR1595
 

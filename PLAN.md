@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：main caeb959fd 已包含PR1592/1603/1595。1359按当前源码更新退出清单并纠正误关状态；Today领域读取已合并，Start整页与旧入口退出仍待。1356由主线独占，未部署。
+> Linear 是权威 tracker。2026-10-08：1378 Today费用共享读取603c9674e已由父实际11DB验证，8unit/static/build通过，独立review/PR门禁进行中。1359退出状态已更新且保持In Progress。未部署，主线独占1356与Start挂载。
 
 ## NOW
+
+- **YUK-1378 / Today费用读取**：`loadTodayCost(db: Db | Tx, now?: Date)`及TodayCost经observability/public导出，HTTP复用。既有币种/truth/unknown/legacy口径保留，单次时钟确定BJT窗口。603c9674e的8unit、11DB、typecheck/lint/build通过；独立审查与PR准确CI待。源码交付不等于Start整页验收。[证据](docs/planning/2026-10-08-yuk1378-today-cost-read.md)。
 
 - **YUK-1355 / PR1595**：默认 pg-boss，仅 prune_job_events 可切 DBOS；60s cached-cron receipt fence、unknown rollback hold、单 recovery owner 均保留。新 main 的业务变更原样合入，Node24.19 212 unit、typecheck/lint/ratchet/build 与8 static audits通过；源/fixture字节保持，新增bundle的DB验收交父。历史4 cron/recovery、28 worker DB、77 unit、26 migration 只代表旧源/旧bundle。R1/R2 NONE适用于48ead，预算已用，不新审。
 

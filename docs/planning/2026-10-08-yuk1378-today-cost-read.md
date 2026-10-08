@@ -2,7 +2,7 @@
 
 ## Scope and public contract
 
-This bounded YUK-1358 child extracts today's existing cost read for the main owner's Start integration. Workspace: `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage`. Branch: `feat/yuk-1378-today-cost-read`. Base main: `caeb959fd726e34b2e8554bd0e95b54778cbff41`, with the parent's documentation commit `db191745af967b6169a1ee81b56f6d1e35f0212b`. The lane uses one writer and no delegation.
+This bounded YUK-1358 child extracts today's existing cost read for the main owner's Start integration. Workspace: `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage`. Branch: `feat/yuk-1378-today-cost-read`. Base main: `caeb959fd726e34b2e8554bd0e95b54778cbff41`, with the parent's documentation commit `db191745af967b6169a1ee81b56f6d1e35f0212b`. Implementation used one delegated writer; the parent owns acceptance and delivery.
 
 Public entry: `src/capabilities/observability/public.ts` exports `loadTodayCost` and `TodayCost`. Implementation: `src/capabilities/observability/server/today-cost.ts`.
 
@@ -62,3 +62,11 @@ SHA-256 for the six owned TypeScript files:
 | `server/today-cost.db.test.ts` | `656c3d3de62c7fe7b17daa4c7173c58209006f20e977bd2bad60532707dca656` |
 
 The final handoff reports the commit and this document's hash separately. Parent owns DB execution, independent review, Start/compose integration, issue state, push, PR, CI and any deployment. No Start/UI/manifest/package/lock/practice/copilot/YUK-1356 files or parent documentation were modified. No new actionable follow-up was found beyond the assigned YUK-1378 validation and existing YUK-1358 integration obligations; Linear and global board edits are explicitly excluded from this lane. Sole writer ownership is released after the terminal local commit.
+
+## Parent database acceptance
+
+Parent verified all six source/test SHA-256 values and the handoff document on exact implementation `603c9674e79f12811ebcb77852d138accd25b4eb`. The writer completed with no pending runs and a clean tree. Parent then ran the two-file DB command above under the deployment mutex: **11 tests passed in 2 files, exit 0**. This covers the five new injected-DB cases and six existing observability contract cases, including populated public/HTTP parity. Log: `/tmp/yuk1378-parent-db.log`.
+
+The lock was atomically acquired at 2026-10-08 10:32:57Z and owner-checked/released at 10:34:07Z. The temporary test Postgres exited. Original four running container IDs, images, start times and healthy states were unchanged; the release-file digest was unchanged. Evidence: `/tmp/yuk1378-db-before.json` and `/tmp/yuk1378-db-cleanup.json`. The main and runtime owners were notified. No retained database, deployment, provider call, worker replay or queue change occurred.
+
+Independent R1 review is running against the immutable implementation and preceding documentation diff. PR exact-head CI and final review remain pending. Start integration and whole-page acceptance remain with 1358; this source delivery does not complete the migration.
