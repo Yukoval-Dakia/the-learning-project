@@ -27,7 +27,7 @@ Owner 的后续指令是先完成整个非 UI 迁移，UI 暂缓，再完成 Lin
 
 W3不能遗漏HTTP里的learner可见性、edge端点锁/事务/wake、question删除确认顺序、note编辑presence和最后会话flush；W4不能把未知202恢复、已接受turns快照、断流、Stop与revert刷新混成一个重试。KnowledgeDetail主查询现有错误分态限制已记录为迁移验收项。W5八个管理页含设置/admin/config仍须逐消费者核查，未在本轮标为完成。
 
-YUK1380事件领域PR1607在独立分支等待交付，不能把它计入本docs基线的已合入代码。1358/1359仍In Progress。本次只增退出证据，没有删除旧入口、修改产品或执行runtime。
+YUK1380事件领域PR1607已合入main4a3d797dd，本docs分支正常整合并保留该代码。公共读取/纠错和原HTTP消费者已交付；Start挂载与整页运行验收仍待，见[事件领域证据](2026-10-08-yuk1380-event-domain.md)。1358/1359仍In Progress。本次只增退出证据，没有删除旧入口、修改产品或执行runtime。
 
 ## 历史基线26f101581：准备计划冲突及精确修订建议
 

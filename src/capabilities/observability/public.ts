@@ -8,6 +8,13 @@
  *   observability never imports src/server/* or other capabilities directly
  *   (capability-boundary ratchet stays exact).
  */
+
+export {
+  EventCorrectionBodySchema,
+  EventCorrectionResponseSchema,
+  EventDetailResponseSchema,
+  EventParamsSchema,
+} from './api/event-contracts';
 export type {
   AdminConfigProviderRow,
   AdminConfigRuntimeFacts,
@@ -23,9 +30,13 @@ export {
 export type { AdminConfigWriteResult, AdminConfigWriter } from './server/admin-config-writer';
 export { setAdminConfigWriter } from './server/admin-config-writer';
 export { observabilityConfigEffectiveFacts } from './server/config-effective-facts';
-
+export {
+  type EventCorrectionInput,
+  type EventCorrectionResult,
+  type EventDetail,
+  createEventCorrection,
+  readEventDetail,
+} from './server/event-detail';
 export { readHubSyncHealth } from './server/hub-sync';
-
 export { readProviderCostWindow } from './server/provider-cost-projection';
-
 export { type TodayCost, loadTodayCost } from './server/today-cost';
