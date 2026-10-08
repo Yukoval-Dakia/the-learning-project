@@ -21,7 +21,11 @@ import {
 } from './tools/present-primary-view';
 import type { CopilotPrimaryView } from './turns';
 
-export const COPILOT_REPLY_TRACE_MAX_CALLS = 60;
+// Uncapped by owner directive (durable Copilot carries no tool-call ceiling).
+// Kept as a named bound because the receipt schema derives its `.max()` from it
+// and the beforeToolCall gate reads it — MAX_SAFE_INTEGER makes both inert while
+// keeping the receipt shape finite and JSON-serializable.
+export const COPILOT_REPLY_TRACE_MAX_CALLS = Number.MAX_SAFE_INTEGER;
 
 const MAX_REPLY_CHARS = 64_000;
 const FINALIZATION_FAILURE_REPLY = '这次回复没有完成可验证的收口，暂不展示未封存的草稿。请重试。';
@@ -168,8 +172,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /** pi tool errors surface as content-block arrays; reduce to the text the SDK
  *  `PostToolUseFailure.error` string would have carried. */
-function piToolErrorText(error: unknown): string {
+export function piToolErrorText(error: unknown): string {
   if (typeof error === 'string') return error;
+  if (error instanceof Error) return error.message;
   if (Array.isArray(error)) {
     const text = error
       .map((block) =>

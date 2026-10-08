@@ -21,8 +21,11 @@
 //   - threshold 1h is shared with config validation and the task-budget reader.
 //     Persisted budgets >= the threshold are rejected at write/hydration; caller
 //     overrides are checked by the reader too. Registry defaults currently max
-//     at 300s; the durable copilot override is 12min. The timer remains cooperative.
-//     (copilot_run.test.ts also asserts the durable lifetime bound.)
+//     at 300s; the durable copilot override is 45min after the uncapped-budget
+//     change (YUK-1373) → ~1.3× margin. Still safe but the headroom is thin —
+//     LOAD-BEARING invariant: every per-call budget MUST stay below
+//     STUCK_RUN_THRESHOLD_MS or this sweeper could converge a LIVE run.
+//     (copilot_run.test.ts asserts the durable lifetime bound.)
 //
 // Triggers (design doc §5.4):
 //   - PRIMARY: one boot-time sweep in start-worker.ts (process crash is the

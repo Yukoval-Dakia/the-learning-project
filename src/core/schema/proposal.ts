@@ -300,7 +300,13 @@ const BaseProposal = z.object({
 export const KnowledgeNodeProposalChange = z.object({
   mutation: z.literal('propose_new'),
   name: z.string().min(1).max(120),
-  parent_id: z.string().min(1),
+  // null = propose a NEW subject/domain ROOT (requires `domain`); a string id =
+  // propose a child under that existing node (domain inherited, omit `domain`).
+  parent_id: z.string().min(1).nullable(),
+  // Domain the root anchors (e.g. 'english'). Required iff parent_id is null —
+  // enforced at the tool/accept layer, optional here so legacy child payloads
+  // parse unchanged.
+  domain: z.string().min(1).optional(),
 });
 export type KnowledgeNodeProposalChangeT = z.infer<typeof KnowledgeNodeProposalChange>;
 

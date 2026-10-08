@@ -1,253 +1,15 @@
-// Solo submissions require the original issued assessment. Candidate activation
-// is the only learning writer; durable work uses the same immutable original.
-import { and, eq, exists, notExists } from 'drizzle-orm';
-import { isBlankSlotResponse } from '@/core/schema/assessment/response';
-import {
-  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-  InterventionDiagnosticQuestionMetadata,
-} from '@/core/schema/intervention';
-import { type Db, db } from '@/db/client';
-import {
-  assessment_issuance,
-  assessment_submission,
-  learning_session,
-  question,
-  question_group_lifecycle,
-  question_revision,
-} from '@/db/schema';
+// Compatibility HTTP adapter; domain admission and submission live in review-operation.
+import { db } from '@/db/client';
 import {
   ApiError,
   canonicalResourceResponse,
   deprecatedRouteResponse,
   errorResponse,
 } from '@/kernel/http';
-import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
-import { normalizeReviewSubmitActivityRef } from '../server/activity-ref';
-import { commitFormalAttempt } from '../server/assessment/attempt';
-import { judgeDurableEnabled } from '../server/judge-durable-config';
 import { ratingFromCoarseOutcome } from '../server/judge-rating';
 import { JUDGE_RUN_TABLE } from '../server/judge-run-status';
-import { validatePlacementSubmission } from '../server/placement-assessment';
-import { type CreateAttemptBody, CreateAttemptBodySchema } from './contracts';
-
-type SubmitBodyT = CreateAttemptBody;
-type QuestionRow = typeof question.$inferSelect;
-
-export interface ValidatedSubmit {
-  body: SubmitBodyT;
-  now: Date;
-  questionId: string;
-  activityRef: ReturnType<typeof normalizeReviewSubmitActivityRef>['activity_ref'];
-  q: QuestionRow;
-}
-
-async function validateSubmit(req: Request): Promise<ValidatedSubmit> {
-  const raw = await req.json().catch(() => null);
-  const parsed = CreateAttemptBodySchema.safeParse(raw);
-  if (!parsed.success) {
-    const message = parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; ');
-    throw new ApiError('validation_error', message, 400);
-  }
-  const body = parsed.data;
-  const now = new Date();
-  const identity = normalizeReviewSubmitActivityRef(body);
-  const questionId = identity.question_id;
-
-  // Confirm the question exists + load full row for judge (YUK-56). The
-  // judge needs kind / prompt_md / reference_md / rubric_json / choices_md /
-  // judge_kind_override / knowledge_ids / metadata / figures / image_refs /
-  // structured — i.e. everything in the question table.
-  const qRows = await db.select().from(question).where(eq(question.id, questionId)).limit(1);
-  const q = qRows[0];
-  if (!q) {
-    throw new ApiError('not_found', `question ${questionId} not found`, 404);
-  }
-  if (q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) {
-    const diagnostic = InterventionDiagnosticQuestionMetadata.safeParse(
-      q.metadata?.intervention_diagnostic,
-    );
-    if (!diagnostic.success) {
-      throw new ApiError(
-        'corrupt_state',
-        `intervention diagnostic ${questionId} has invalid scheduling metadata`,
-        500,
-      );
-    }
-    if (q.judge_kind_override !== 'multimodal_direct') {
-      throw new ApiError(
-        'corrupt_state',
-        `intervention diagnostic ${questionId} is missing its response-aware judge contract`,
-        500,
-      );
-    }
-    if (now.getTime() < new Date(diagnostic.data.due_at).getTime()) {
-      throw new ApiError(
-        'conflict',
-        `intervention diagnostic ${questionId} is not due until ${diagnostic.data.due_at}`,
-        409,
-      );
-    }
-    if (
-      body.assessment &&
-      body.assessment.response_set.entries.every(isBlankSlotResponse) &&
-      (body.assessment.group_evidence?.length ?? 0) === 0
-    ) {
-      throw new ApiError(
-        'validation_error',
-        `intervention diagnostic ${questionId} requires an answer`,
-        400,
-      );
-    }
-  }
-
-  if (body.assessment) {
-    await validatePlacementSubmission(db, questionId, body.session_id, body.assessment);
-    const [issued] = await db
-      .select({ container: assessment_issuance.container_occurrence_ref })
-      .from(assessment_issuance)
-      .where(eq(assessment_issuance.issuance_id, body.assessment.issuance_id));
-    if (issued?.container?.startsWith('placement:')) {
-      if (issued.container !== `placement:${body.session_id ?? ''}`)
-        throw new ApiError(
-          'coordinate_mismatch',
-          'placement issuance belongs to another session',
-          409,
-        );
-      const [session] = await db
-        .select({ status: learning_session.status })
-        .from(learning_session)
-        .where(
-          and(
-            eq(learning_session.id, body.session_id ?? ''),
-            eq(learning_session.type, 'placement'),
-          ),
-        );
-      if (session?.status !== 'started')
-        throw new ApiError('conflict', 'placement session is no longer active', 409);
-    }
-  }
-  return { body, now, questionId, activityRef: identity.activity_ref, q };
-}
-
-async function claimInterventionDiagnosticSubmission(validated: ValidatedSubmit): Promise<boolean> {
-  if (validated.q.source !== INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE) return false;
-
-  const [claimed] = await db
-    .update(question)
-    .set({ draft_status: 'draft', updated_at: validated.now })
-    .where(
-      and(
-        eq(question.id, validated.questionId),
-        eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
-        eq(question.draft_status, 'active'),
-      ),
-    )
-    .returning({ id: question.id });
-  if (!claimed) {
-    // The claim protects the original, not its transport retries. The formal
-    // writer still compares every accepted byte and rejects changed coordinates.
-    const original = validated.body.assessment;
-    if (original) {
-      const [accepted] = await db
-        .select({ id: assessment_submission.submission_id })
-        .from(assessment_submission)
-        .where(
-          and(
-            eq(assessment_submission.issuance_id, original.issuance_id),
-            eq(assessment_submission.evaluation_group_id, original.evaluation_group_id),
-            eq(assessment_submission.idempotency_key, original.idempotency_key),
-          ),
-        )
-        .limit(1);
-      if (accepted) return false;
-    }
-    throw new ApiError(
-      'conflict',
-      `intervention diagnostic ${validated.questionId} has already been submitted`,
-      409,
-    );
-  }
-  return true;
-}
-
-export async function releaseInterventionDiagnosticSubmissionClaim(
-  input: { questionId: string; claimedAt: Date },
-  database: Db = db,
-): Promise<void> {
-  await database
-    .update(question)
-    .set({ draft_status: 'active', updated_at: new Date() })
-    .where(
-      and(
-        eq(question.id, input.questionId),
-        eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
-        eq(question.draft_status, 'draft'),
-        eq(question.updated_at, input.claimedAt),
-        exists(
-          database
-            .select({ id: question_group_lifecycle.group_id })
-            .from(question_group_lifecycle)
-            .where(
-              and(
-                eq(question_group_lifecycle.group_id, input.questionId),
-                eq(question_group_lifecycle.scoring_admission_state, 'admitted'),
-                eq(question_group_lifecycle.suspended, false),
-                eq(question_group_lifecycle.withdrawn, false),
-              ),
-            ),
-        ),
-        notExists(
-          database
-            .select({ id: assessment_submission.submission_id })
-            .from(assessment_submission)
-            .innerJoin(
-              question_revision,
-              eq(question_revision.revision_id, assessment_submission.revision_id),
-            )
-            .where(eq(question_revision.group_id, input.questionId)),
-        ),
-      ),
-    );
-}
-
-/**
- * W4 #TtWh_ (codex P1) — may a submit from THIS session be answered with a 202-pending?
- *
- * `/api/attempts` is shared. The placement probe posts through it with `auto_rate:true`
- * (`onboarding/ui/placement-api.ts` submitProbeAnswer) and then — `ScreenPlacement.tsx:192-194`
- * — immediately calls `/question-selections` for the next item. `placement-next.ts` computes
- * the answered set from PERSISTED review/attempt events keyed by `session_id`, so under a 202
- * the current question is not yet in the exclusion set: answeredCount stalls, the termination
- * check keeps the old value, and the probe can re-serve the question it just answered. The
- * W2 divert was written for the practice face and this shared entry point was the leak.
- *
- * The gate is an ALLOWLIST, not a placement deny-list: any session type that is not explicitly
- * admitted stays synchronous. A future caller mounting on this route therefore cannot silently
- * inherit the async contract — it has to opt in here, which is the point at which someone has
- * to check that its client actually tolerates a pending verdict.
- *
- * A submit with NO session_id is ad-hoc solo practice (the practice face's own shape) → admitted.
- */
-export async function sessionAdmitsDurableDivert(sessionId: string | null): Promise<boolean> {
-  if (sessionId === null) return true;
-  const rows = await db
-    .select({ type: learning_session.type })
-    .from(learning_session)
-    .where(eq(learning_session.id, sessionId))
-    .limit(1);
-  const type = rows[0]?.type ?? null;
-  // Unknown session id → treat as NOT admitted. The synchronous path is always correct; it is
-  // only slower, so an unresolvable session must fail closed.
-  if (type === null) return false;
-  return DURABLE_DIVERT_SESSION_TYPES.has(type);
-}
-
-/**
- * The session types whose clients are known to tolerate the 202-pending contract. W2 =
- * practice review only. W3 admits the remaining faces as each one's client learns to wait for
- * the backfill (design §4/§5, YUK-777).
- */
-const DURABLE_DIVERT_SESSION_TYPES: ReadonlySet<string> = new Set(['review']);
+import { submitReviewAnswer } from '../server/review-operation';
+import { CreateAttemptBodySchema } from './contracts';
 
 /**
  * #8 — EXPLICIT marker for "this response is a durable-judge divert". `createAttemptResource`
@@ -287,94 +49,45 @@ function durablePendingResponse(runId: string): Response {
 }
 
 export async function createAttempt(req: Request): Promise<Response> {
-  let claimedDiagnostic: ValidatedSubmit | null = null;
-  let retainDiagnosticClaim = false;
   try {
-    const validated = await validateSubmit(req);
-    const assessment = validated.body.assessment;
-    if (!assessment) {
-      throw new ApiError(
-        'historical_unknown',
-        'solo submission requires its original issued assessment',
-        409,
-      );
+    const parsed = CreateAttemptBodySchema.safeParse(await req.json().catch(() => null));
+    if (!parsed.success) {
+      const message = parsed.error.issues
+        .map((i) => `${i.path.join('.')}: ${i.message}`)
+        .join('; ');
+      throw new ApiError('validation_error', message, 400);
     }
-    if (await claimInterventionDiagnosticSubmission(validated)) {
-      claimedDiagnostic = validated;
-    }
-    {
-      const { body, questionId } = validated;
-      if (!body.self_report && !body.activation_intent) {
-        const { dispatchNativeAttempt } = await import('../server/assessment/durable-attempt');
-        const runId = await dispatchNativeAttempt(
-          db,
-          questionId,
-          { ...assessment, now: validated.now },
-          {
-            enabled:
-              judgeDurableEnabled() &&
-              shouldEnqueueBackgroundJobs() &&
-              (await sessionAdmitsDurableDivert(body.session_id ?? null)),
-            capture: body,
-            userRating: body.auto_rate ? undefined : body.rating,
-            requireUnassistedModelEvidence:
-              validated.q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+    const body = parsed.data;
+    const result = await submitReviewAnswer(db, body, { signal: req.signal });
+    if (result.kind === 'pending') return durablePendingResponse(result.run_id);
+    const committed = result.committed;
+    const judged = committed.candidate.result;
+    return Response.json({
+      status: committed.status,
+      assessment: {
+        submission_id: committed.submission.submission_id,
+        evaluation_group_id: committed.submission.evaluation_group_id,
+        candidate_id: committed.candidate.evaluation.record.evaluation_id,
+        activation_intent: committed.activation_intent,
+        effect: committed.status === 'effective' ? committed.activation.effect : null,
+      },
+      review_event: { id: committed.attempt_id },
+      judge: body.self_report
+        ? null
+        : {
+            route: 'evaluate_submission',
+            score: judged.score,
+            coarse_outcome: judged.coarse_outcome,
+            confidence: judged.confidence,
+            feedback_md: judged.feedback_md,
+            evidence_json: judged.evidence_json,
+            capability_ref: judged.capability_ref,
+            suggested_rating: ratingFromCoarseOutcome(judged.coarse_outcome),
+            auto_rated: body.auto_rate,
+            judge_event_id: null,
           },
-        );
-        if (runId) {
-          retainDiagnosticClaim = true;
-          return durablePendingResponse(runId);
-        }
-      }
-      const committed = await commitFormalAttempt(db, 'solo_submit', questionId, assessment, {
-        activationIntent: body.activation_intent,
-        selfReport: body.self_report,
-        userRating: body.auto_rate ? undefined : body.rating,
-        capture: body,
-        signal: req.signal,
-        requireUnassistedModelEvidence:
-          validated.q.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-      });
-      retainDiagnosticClaim = true;
-      const judged = committed.candidate.result;
-      return Response.json({
-        status: committed.status,
-        assessment: {
-          submission_id: committed.submission.submission_id,
-          evaluation_group_id: committed.submission.evaluation_group_id,
-          candidate_id: committed.candidate.evaluation.record.evaluation_id,
-          activation_intent: committed.activation_intent,
-          effect: committed.status === 'effective' ? committed.activation.effect : null,
-        },
-        review_event: { id: committed.attempt_id },
-        judge: body.self_report
-          ? null
-          : {
-              route: 'evaluate_submission',
-              score: judged.score,
-              coarse_outcome: judged.coarse_outcome,
-              confidence: judged.confidence,
-              feedback_md: judged.feedback_md,
-              evidence_json: judged.evidence_json,
-              capability_ref: judged.capability_ref,
-              suggested_rating: ratingFromCoarseOutcome(judged.coarse_outcome),
-              auto_rated: body.auto_rate,
-              judge_event_id: null,
-            },
-      });
-    }
+    });
   } catch (err) {
-    if (claimedDiagnostic !== null && !retainDiagnosticClaim) {
-      await releaseInterventionDiagnosticSubmissionClaim({
-        questionId: claimedDiagnostic.questionId,
-        claimedAt: claimedDiagnostic.now,
-      }).catch((releaseError) => {
-        console.error(
-          `failed to release intervention diagnostic submission claim for ${claimedDiagnostic?.questionId}:`,
-          releaseError,
-        );
-      });
-    }
     return errorResponse(err);
   }
 }

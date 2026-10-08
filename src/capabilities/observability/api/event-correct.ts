@@ -2,16 +2,15 @@
 // keep 行的唯一撤回 HTTP 面；裸查/rate 面退役见 Task 9「/api/events 面处置」）。
 // [id] 由 toHonoPath 转 :id 捕获后以 Record 透传。
 
-import { newId } from '@/core/ids';
 import { db } from '@/db/client';
-import { getEventById, writeEvent } from '@/kernel/events';
 import {
   ApiError,
   canonicalResourceResponse,
   deprecatedRouteResponse,
   errorResponse,
 } from '@/kernel/http';
-import { EventCorrectionBodySchema, EventParamsSchema } from './event-contracts';
+import { createEventCorrection } from '../server/event-detail';
+import { EventCorrectionResponseSchema, EventParamsSchema } from './event-contracts';
 
 export async function createCorrection(
   req: Request,
@@ -22,39 +21,8 @@ export async function createCorrection(
     if (!parsedParams.success) {
       throw new ApiError('validation_error', 'event id is required', 400);
     }
-    const targetEventId = parsedParams.data.id;
-
     const raw = await req.json().catch(() => null);
-    const parsed = EventCorrectionBodySchema.safeParse(raw);
-    if (!parsed.success) {
-      throw new ApiError(
-        'validation_error',
-        parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
-        400,
-      );
-    }
-
-    const target = await getEventById(db, targetEventId);
-    if (!target) {
-      throw new ApiError('not_found', `event ${targetEventId} not found`, 404);
-    }
-
-    const payload = parsed.data;
-    const correctionEventId = newId();
-    await writeEvent(db, {
-      id: correctionEventId,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'correct',
-      subject_kind: 'event',
-      subject_id: targetEventId,
-      outcome: 'success',
-      payload,
-      caused_by_event_id: targetEventId,
-      created_at: new Date(),
-    });
-
-    return Response.json({ correction_event_id: correctionEventId });
+    return Response.json(await createEventCorrection(db, parsedParams.data.id, raw));
   } catch (err) {
     return errorResponse(err);
   }
@@ -68,7 +36,7 @@ export async function createCorrectionResource(
     outcome: 'created',
     location: (body) =>
       `/api/events/${encodeURIComponent(
-        (body as { correction_event_id: string }).correction_event_id,
+        EventCorrectionResponseSchema.parse(body).correction_event_id,
       )}`,
   });
 }

@@ -6,17 +6,28 @@ Owner 的后续指令是先完成整个非 UI 迁移，UI 暂缓，再完成 Lin
 
 ## 当前退出状态，2026-10-08
 
-本节核对 main `caeb959fd726e34b2e8554bd0e95b54778cbff41`，覆盖下文历史基线的进展陈述。历史调查保留用于追踪职责；不能把其中“未合入”的候选描述当作当前状态。YUK-1359 的退出条件尚未满足，Linear 的 Done 已校正为 In Progress。
+本节核对 main `6150f01a949c3d1357f8b44f0d8ed6807cd74179`，覆盖下文历史基线的进展陈述。历史调查保留用于追踪职责；不能把其中“未合入”的候选描述当作当前状态。YUK-1359 的退出条件尚未满足，Linear 的 Done 已校正为 In Progress。
 
 | 范围 | 已有证据 | 尚需完成 |
 | --- | --- | --- |
 | Start 前门与 `/mistakes` | PR1592 已合入 `eae963377`。`server/start/routes/mistakes.tsx` 注入 `listStartMistakes`；`server/frontdoor.ts` 提供 `readStartMistakes`。候选 `3d6273a14` 的隔离运行证据见[验收索引](evidence/2026-10-08-yuk1352-start-runtime.json)。 | 已验证的 RPC、图片、鉴权、筛选和重试不覆盖整页所有退出条件，也不证明 canonical boot、发布或 SSE。旧 SPA 仍在服务其他页面。完整导航曾由既有 practice 初始化增加一行；仅后续错题读取阶段证明 86 表不变。 |
 | Today 共享读取 | PR1603 已合入 `90f499126`。`shell/public.ts` 导出已有 summary loader；`countDue(db)` 调用 `queryReviewDue(db, { limit: 200 })`。原先 Request/global DB 耦合已修复，3 与 205 条事务内题目分别计为 3 与 200。 | 主线负责 Start 鉴权、epoch、消费者注入及实际入口验收。仍须迁移 Today 子组件的读取与命令；不能将两个读取接口视为整页完成。1377/1358 保持 In Progress。 |
-| `/`、`/today`、`/inbox` 及其他页面 | 当前 Start route tree 显式业务页只有 `/mistakes`；`server/start/routes/$.ts` 仍转交 `context.legacySpa.fetch(request)`。 | 依照[W1消费者清单](2026-10-08-yuk1359-w1-consumers.md)及下文逐波清单迁移、验收，再移除回落。Inbox adapter 必须保持 HTTP 默认 limit 200、上限 500、lane/kind/status/cursor 校验，不能把空 options 传到不限页 domain 分支。 |
+| Today 费用共享读取 | PR1604 已合入 `6150f01a9`。`observability/public.ts` 导出 `loadTodayCost(db: Db \| Tx, now?: Date)` 和 `TodayCost`；HTTP GET 复用该读取，单次时钟定义 BJT 窗口，保留原费用投影。8 unit、父实际11 DB、static/build、独立R1/R2 NONE及准确CI通过。 | 1378限定领域slice已完成；主线仍须接Start鉴权/epoch与实际页面消费。没有部署，不扩大成Today整页或旧SPA退出证明。 |
+| `/`、`/today`、`/inbox` 及其他页面 | 当前 Start route tree 显式业务页只有 `/mistakes`；`server/start/routes/$.ts` 仍转交 `context.legacySpa.fetch(request)`。 | 依照[W1消费者清单](2026-10-08-yuk1359-w1-consumers.md)、[W2消费者清单](2026-10-08-yuk1359-w2-consumers.md)及下文逐波清单迁移、验收，再移除回落。Inbox adapter 必须保持 HTTP 默认 limit 200、上限 500、lane/kind/status/cursor 校验，不能把空 options 传到不限页 domain 分支。 |
 | 构建与镜像入口 | `package.json` 的 build 同时构建旧 web SPA 与 Start；`server/frontdoor.ts` 仍调用 `buildLegacySpa`；Dockerfile 仍设置 `RW_STATIC_DIR=/app/web/dist`。 | 所有页面的实际消费者切换后，统一开发、构建和镜像入口，删除旧挂载与静态回落。仍被保留页面使用的组件、样式不能按目录名删除。 |
 | 持久任务恢复 | PR1595 已合入 `caeb959fd`。`observability/manifest.ts:515` 声明 prune 的 DBOS backend，`boss/register-capability-jobs.ts:51` 仅准入此族，`durable/prune-worker.ts:115` 按 phase 协调新旧调度。pg-boss 仍是依赖，worker 及其他任务族仍存活。 | 1355/1356及各业务族保留唯一执行和恢复职责；完成逐族切换、排空、未知结果与恢复验收后，1359 才能删除旧机制。该 PR 的合并不是部署或所有 cron 已切换的证明。 |
 
+在6150f01a9重新核对，`server/start/routes/`仍仅有mistakes业务页及基础/catch-all路由，build仍串行产出旧SPA和Start，Dockerfile仍设置RW_STATIC_DIR；README所引通用备份恢复手册仍未在跟踪文件中找到。这些已有退出义务未因费用读取合并而满足。
+
 本轮未启动服务、删除旧路径或修改主线的 Start/1356 实施。上述余项均归现有1358/1359/1377及任务族票，没有新增独立缺陷，不重复建票。设置面板 `/admin/config` 仍在 W5 范围。
+
+## W3/W4 消费者核查补充，2026-10-08
+
+[W3清单](2026-10-08-yuk1359-w3-consumers.md)覆盖题库、笔记、知识图谱和agent-notes七条路由；[W4清单](2026-10-08-yuk1359-w4-consumers.md)覆盖coach/profile及跨页CopilotDock。源码基线、父级抽查和后续main31b68eaa的变化边界分别写在清单内，所有运行矩阵仍待执行。
+
+W3不能遗漏HTTP里的learner可见性、edge端点锁/事务/wake、question删除确认顺序、note编辑presence和最后会话flush；W4不能把未知202恢复、已接受turns快照、断流、Stop与revert刷新混成一个重试。KnowledgeDetail主查询现有错误分态限制已记录为迁移验收项。W5八个管理页含设置/admin/config仍须逐消费者核查，未在本轮标为完成。
+
+YUK1380事件领域PR1607已合入main4a3d797dd，本docs分支正常整合并保留该代码。公共读取/纠错和原HTTP消费者已交付；Start挂载与整页运行验收仍待，见[事件领域证据](2026-10-08-yuk1380-event-domain.md)。1358/1359仍In Progress。本次只增退出证据，没有删除旧入口、修改产品或执行runtime。
 
 ## 历史基线26f101581：准备计划冲突及精确修订建议
 

@@ -264,6 +264,9 @@ export interface RunTaskCtx {
    * Overrides the configured task budget per field. Each entry point snapshots
    * the budget before middleware/admission/startup; retries retain that snapshot.
    * Tool-call limits remain owned by ContextBudgetTracker, not this seam.
+   * `maxIterations: 'unbounded'` removes the agentic-turn ceiling entirely —
+   * the pi lane then mounts no `shouldStopAfterTurn` (durable copilot runs are
+   * turn-uncapped; only Stop/cancellation/timeoutMs still end the loop).
    */
   budgetOverride?: TaskBudgetOverride;
   /**
@@ -508,8 +511,9 @@ function buildQueryOptions(
     systemPrompt: getTaskSystemPrompt(kind, ctx.subjectProfile, ctx.learnerLocale),
     abortController,
     tools: ctx.allowedTools ?? def.allowedTools,
-    // YUK-575 (N5) — durable copilot run overrides the turn ceiling per-call.
-    maxTurns: budget.maxIterations || 1,
+    // YUK-575 (N5) — durable copilot run overrides the turn ceiling per-call;
+    // 'unbounded' removes it entirely (pi mounts no shouldStopAfterTurn).
+    maxTurns: budget.maxIterations === 'unbounded' ? undefined : budget.maxIterations || 1,
   };
   // YUK-923 — reasoning effort tier: per-run modelBinding wins over the
   // task-kind declaration; unset → the provider default applies.

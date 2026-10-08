@@ -23,7 +23,7 @@
   将晚于后续输入到达的前轮回复归回前轮；不要另建第三套 reader/projection。
 - `server/durable-dispatch.ts` 拥有 FIFO 接纳和派发：只有最早未终结消息有物理 `copilot_run` job。
   终态提交后才能唤醒后继；合法等待消息没有 pickup 超时，DISPATCHED 才启动 pickup 计时。
-- `server/copilot-execution.ts` 拥有公共模型/工具/读取预算与发布校验；持续运行不意味着抬高默认预算。
+- `server/copilot-execution.ts` 拥有公共模型/工具/读取预算与发布校验；Copilot 执行层无数量 cap（turns / tool calls / context rows 均无硬顶，warning 仅 advisory），唯一执行边界是 owner 的 45 分钟有限时限（恢复上限 < 1h stuck 阈值）。
   SDK id 只有本进程确实持有且实际提交文本匹配时才可复用；异进程从产品历史冷启，不重烧已执行消息。
   `agent_sdk_session_id` 槽承载 pi lane 的 `pi:<uuid>` 标记（YUK-1022）：`pi:` cursor 只在下一次
   attempt 续用——pi 的「会话文件」等价物是 durable turns 经 `piSessionReplay` 回放进 `context.messages`。

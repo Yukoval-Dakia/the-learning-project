@@ -1,6 +1,33 @@
-# 当前交接 — 2026-10-08 YUK1378费用读取验收
+# 2026-10-08 YUK-1356 actual Pi acceptance
 
-分支feat/yuk-1378-today-cost-read，基线main caeb959fd，携带1359文档db191745a及实施603c9674e。唯一实施writer已completed/noPending、树clean。父核7哈希并实际2文件11DB通过；8unit/static/build已过。10:34:07Z核owner释放部署锁，原四服务及release不变。R1 NONE，PR1604已link/watch；首CI的单测DB直接import分区问题已修05e1965bf，8unit/partition/static/build通过，唯一R2与新CI待；主线独占Start/1356，1377/1358/1359仍In Progress。下文为历史交接。
+PR1605 product candidate4cccb1a62 exact CI37768767757 green, R2 NONE. Real MiMo/Pi task yuk1356_root_cae13940-054a-4d82-9cda-a262a921027a succeeded: one registered submit tool/evaluation/activation, immutable original, unknown assistance, zero mastery/FSRS. Estimated $0.002818771. Script exit1 was final HTTP replay expected200 vs canonical201; parent source and all19 after/final relations verified unchanged, original failure preserved, no model rerun. Three prior setup failures all0model calls. See real-pi-acceptance evidence. Lock released11:29:22Z, four original services/release unchanged. No deployment. New evidence-only head CI pending then merge under owner no-wait waiver;1356 remainsInProgress for broader migration. Start Today/Inbox bc43bf89c delivered source; R1 timestamp P1 confirmed, sole repair writer running; runtime acceptance next; no duplicate writer.
+
+# 合入的 YUK1359 W2消费者交接
+
+
+## 最新 main 集成
+
+正常合入4a3d797dd，保留1596 Copilot运行行为与1607事件领域；仅PLAN/now人工冲突。产品自动合并后父139unit/110DB/typecheck/lint/build通过，11:40:36Z核owner释放锁，主4服务/release不变；新源不沿用旧actual-output完整覆盖声明；既有验收证据保留，禁止盲目重付。
+
+本次正常合入fadcb0c87（PR1608），仅六份文档变化，产品/测试/依赖/构建源码与d2cc0cddf完全一致。不重跑已通过的本机检查/模型调用；推送后仍要求新head CI。
+
+# 当前交接 — PR1608整合事件领域main，2026-10-08
+
+1380 PR1607已11:35:32Z合入4a3d797dd，CI37769126069 exact812a0bf08全绿、R1 NONE、threads0，17min窗满。预计算与merge tree868b7e37一致，六个产品/测试blob保持；1380限定领域slice Done且unwatch，Start挂载交主线，未部署。当前docs/yuk-1359-w3-w4-consumers正常合入该main，仅PLAN/now冲突，保留两侧记录与产品字节。PR1608原f13289939 CI37770818294是docs fast-path成功，独立R1仍审查该精确文档diff；整合后须新head CI/build。1358/1359仍InProgress，W5待；当前无runtime/代码writer。
+
+以下为历史验收记录。
+
+
+# 当前交接 — YUK1380父DB验收，2026-10-08
+
+分支feat/yuk-1380-event-domain，实现8fde3e462，正常合入docs mainf335为0e21a034f。作者writer已completed/noPending，父核7hash、保护8文件不变及实际3文件23DB通过；28unit/static/build/partition通过。11:16:28Z核owner/token释放锁，临时PG退出，原4服务/release未变。独立R1任务yuk1380-event-domain-review-r1-20261008运行；PR/CI待。PR1606已合入f335、unwatch，1359保持In Progress。W3只读子任务completed/noPending，结果待父抽查落盘；W4部分只读笔记在/tmp。主线拥有Start/1356，本线程未部署。
+
+以下为历史记录。
+
+# 当前交接 — 2026-10-08 YUK1359 W2消费者清单
+
+
+当前分支docs/yuk-1359-w2-consumer-inventory，从最新origin/main6150f01a9建立。PR1604已10:55:10Z合入6150f01a949c3d1357f8b44f0d8ed6807cd74179，tree c9e440e5edd1dd62e7cd4f5cdd018e4d9ee93886与CI head463aadec一致；CI37765137606全绿、R1/R2 NONE、threads0，已unwatch。1378限定领域slice已Done，公共loadTodayCost/TodayCost交主线Start消费；1358/1359/1377仍In Progress。8unit、父实际11DB及静态/build通过，无部署。1359 W2只读研究子任务yuk1359-w2-consumer-readonly-completion-20261008-v1已completed/noPending（Codex gpt-6-luna high），父抽查并落盘W2清单，纠正学段URL/typed客户端混称；主线独占1356与Start。本线程无锁/服务，后续runtime须重新核验锁。下文为历史交接。
 
 # 2026-10-08 current PR1595
 

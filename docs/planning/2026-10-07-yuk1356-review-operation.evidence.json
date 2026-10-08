@@ -1,0 +1,131 @@
+{
+  "scope": "YUK-1356 placeholder removal and versioned operation handoff",
+  "base_revision": "b191ea714747eb468e1a55d88928a3f882470ac6",
+  "implementation_base": "a6d89037b56f5b0c690137a1354186e0ea07e216",
+  "artifact_identity": "source_sha256 identifies the checked source content; this JSON is committed with the correction",
+  "branch": "feat/yuk-1356-review-operation",
+  "historical_only": {
+    "revision": "b191ea714747eb468e1a55d88928a3f882470ac6",
+    "unit_files": 3,
+    "unit_tests": 31,
+    "db_files": 15,
+    "db_tests": 171,
+    "includes_removed_placeholder_tests": true,
+    "handoff_sha256": "600b501c95749c91778a0ecd00da82b394ac4b4b9e88fbf0085e0cbe5585408b",
+    "verification_sha256": "b454602f102e4f2adfe231bf2e23d55a53ec79f63c092db57059fef8968e8cde",
+    "original_log_hashes_verified": true,
+    "log_sha256": {
+      "unit.log": "9a9c3b5e9ac782ece8abd615855f23ace75c650bb1b2839c44491c85fba82523",
+      "db-final.log": "b8d8ab23f1f5cfb9f62da91cd3169cb7d3cdd3daf0efc563d8650352b442bb2b",
+      "typecheck.log": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92",
+      "lint.log": "26741b1162f5aec9305ee862b8f78c2bbda2e705350d8ca4b32768317c890742",
+      "lint-ratchet.log": "9c8c216ee07c0cdf3943287542b9847b77e5f58166388c1cd936bfba5820f9b0",
+      "build.log": "9f2fb588cee1a6ee45fca9f090daa1e5b5c27f4bb4d58dcda2611812fba3c04e",
+      "boundaries.log": "42a7d0cb9f8f9a7948bd6aeb552b2b64b70d98953edea22293a755a32000bba1",
+      "agent-control-plane.log": "1f81346486a3c2faf1abb93d683d02efd8e196f1af34605bc3756da0cdbe4b61",
+      "api-contracts.log": "2fcb1d9cd8395bc3661f8e35135444ec73a34d0ca7a0320f1507c9429782ce2b",
+      "draft-status.log": "de3569839d7a890654a591c9c6b77334b1031fa56e3ecedef457f132dd24eb8d",
+      "draft-status-reads.log": "86a80e68cc74d3fabcb77722417c3918c09a4fda20b841f73ce0c7fd6c2f3932",
+      "schema.log": "05a3ab08a62f521bbf905b6a0df1a2e252b54bc05786ea4437e4fdd4c2d6d256",
+      "partition.log": "5d447308680e3713c8ea804a10be726748acc928e17d00abe83d6132468f9c55"
+    }
+  },
+  "current_checks": {
+    "unit": {
+      "command": "pnpm vitest run --config vitest.unit.config.ts src/kernel/tools/allowlists.unit.test.ts src/capabilities/composition.unit.test.ts src/capabilities/practice/manifest.unit.test.ts src/capabilities/practice/server/activity-ref.unit.test.ts",
+      "files": 4,
+      "tests": 53,
+      "status": "passed",
+      "exit_code": 0,
+      "log_path": ".cache/yuk1356-correction/unit.log",
+      "log_sha256": "5c77f973c4dc4f1bcd8720262561a7f87cb4cd33cf42028bfa10708d0045f22b"
+    },
+    "db": {
+      "command": "pnpm vitest run --config vitest.db.config.ts src/capabilities/practice/server/review-operation.db.test.ts src/capabilities/practice/server/due-list-query.db.test.ts src/capabilities/practice/api/submit-durable.db.test.ts src/capabilities/practice/api/submit-native-diagnostic.db.test.ts src/capabilities/practice/api/submit-late-arrival.db.test.ts src/capabilities/practice/jobs/judge_run.db.test.ts src/capabilities/practice/jobs/judge_run-terminal.db.test.ts src/capabilities/practice/server/assessment/submission-persistence.db.test.ts",
+      "files": 8,
+      "tests": 119,
+      "status": "passed",
+      "exit_code": 0,
+      "log_path": ".cache/yuk1356-correction/db.log",
+      "log_sha256": "3145ac1c04a6cc290ed307d037932a5d309d4c30e88d75b94647d044e8acb7ea"
+    },
+    "typecheck": {
+      "command": "pnpm typecheck",
+      "status": "passed",
+      "exit_code": 0,
+      "log_path": ".cache/yuk1356-correction/typecheck.log",
+      "log_sha256": "8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92"
+    },
+    "lint": {
+      "command": "pnpm lint",
+      "warnings": 296,
+      "status": "passed",
+      "exit_code": 0,
+      "log_path": ".cache/yuk1356-correction/lint.log",
+      "log_sha256": "30fd5808722710ae44431efd28dfa4d84d70d4de3aea1f2c580b8a7ec98fd825"
+    },
+    "build": {
+      "command": "pnpm build",
+      "status": "passed",
+      "exit_code": 0,
+      "log_path": ".cache/yuk1356-correction/build.log",
+      "log_sha256": "214624938cb488df5d71ab0d09560266cf3905b380668c0844800605a728325c"
+    },
+    "agent-control-plane": {
+      "command": "pnpm audit:agent-control-plane",
+      "status": "passed",
+      "exit_code": 0,
+      "log_path": ".cache/yuk1356-correction/agent-control-plane.log",
+      "log_sha256": "1f81346486a3c2faf1abb93d683d02efd8e196f1af34605bc3756da0cdbe4b61"
+    },
+    "boundaries": {
+      "command": "pnpm audit:capability-boundaries",
+      "status": "passed",
+      "exit_code": 0,
+      "log_path": ".cache/yuk1356-correction/boundaries.log",
+      "log_sha256": "42a7d0cb9f8f9a7948bd6aeb552b2b64b70d98953edea22293a755a32000bba1"
+    },
+    "partition": {
+      "command": "pnpm audit:partition",
+      "unmatched_files": 0,
+      "p0_errors": 0,
+      "existing_partition_warnings": 6,
+      "status": "passed",
+      "exit_code": 0,
+      "log_path": ".cache/yuk1356-correction/partition.log",
+      "log_sha256": "6875f348f824015a6297da56ec5c50d244be654015186183bd108597b160f544"
+    }
+  },
+  "db_storage": "fresh disposable pgvector/pgvector:pg16 Testcontainer; real business tables, offline judge substitutes",
+  "source_sha256": {
+    "src/capabilities/practice/api/submit-durable.db.test.ts": "bd9c65b615beb64cbc2e20db3b416067bc826e68d2bcf18cc1f9265ef79e43e3",
+    "src/capabilities/practice/api/submit.ts": "100803b9dffdffd39126e2111a557187c3a66435902f1790501e73c97c651305",
+    "src/capabilities/practice/jobs/judge_run.ts": "ee2d89d344892335828773e7b7b2bc30b26ac2c5112569c9ae9d4a7b157155c9",
+    "src/capabilities/practice/manifest.ts": "57ab11071cf110ac948ed217234098888bafa35158ec15db89af2932cc3e41d7",
+    "src/capabilities/practice/public.ts": "f571deee948c293dba1040d6d68bdacd038463872169d7cea885227632e186a6",
+    "src/capabilities/practice/server/assessment/native-attempt-dispatch-port.ts": "d1aee6d3602635ec15a197dc520486d169e0424fce5a587c8c226948915d92b5",
+    "src/capabilities/practice/server/due-list-query.db.test.ts": "85271d767c60a2fe0d07ddbefda01bef5e193b5a97c061d3ebea7ff23e991db1",
+    "src/capabilities/practice/server/due-list.ts": "e03382f36ea88a45f0c5ec9762d0dbeb152dbdba613abf189daf935ae9093059",
+    "src/capabilities/practice/server/review-operation.db.test.ts": "74f2aa1c9d83578b740d3d6593bcde94458edd4e3b35d8d49da53f18d3209794",
+    "src/capabilities/practice/server/review-operation.ts": "745dfdb76409e2df24f8bbf55c80a47e63bf5eb1306a5d874a85ebbfaca10502",
+    "src/kernel/tools/allowlists.ts": "3aa9d2b740839d96816f36c2a6814b496d4216aa9ffa66e5da79b6a6009a162b",
+    "src/kernel/tools/allowlists.unit.test.ts": "a6f2a0a868093aee65131321744b71cc675833b7833b0f470f88686b189b288a",
+    "docs/planning/2026-10-07-yuk1356-review-operation.md": "f7c1a49b7dcc3c7720ad461f15b591051cfeffd61b58aa4399731dd5d4dc066a"
+  },
+  "removed_files": [
+    "src/capabilities/practice/tools/submit-review-answer.ts",
+    "src/capabilities/practice/tools/submit-review-answer.unit.test.ts"
+  ],
+  "not_proven": [
+    "three-entry positive Pi acceptance",
+    "trusted Pi original authorization consumer",
+    "server-function integration",
+    "independent review",
+    "exact-head CI",
+    "runtime acceptance",
+    "real provider actual output",
+    "DBOS recovery"
+  ],
+  "scope_limits": "No full pnpm test, application runtime/provider calls, push/PR/watch/merge/delegation or changes to 1352/1355/1364 trees.",
+  "requirement_status": "Placeholder removed; YUK-1356 requirement remains open and issue remains In Progress. Parent owns integration and global tracker/handoff coordination."
+}

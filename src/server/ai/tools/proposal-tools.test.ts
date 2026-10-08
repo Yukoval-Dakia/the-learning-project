@@ -313,6 +313,7 @@ describe('Wave 3 proposal/action DomainTools', () => {
       'split_stem',
       // YUK-986 — 外部题源唯一入库缝（E1 仅注册入 registry，无 surface 授予）。
       'store_sourced_question',
+      'submit_review_answer',
       // ADR-0033 D6 (YUK-306 lane D) — interactive artifact iterate (full-html
       // replace, version bump + history append).
       'update_artifact',
@@ -563,6 +564,107 @@ describe('Wave 3 proposal/action DomainTools', () => {
       actor_ref: 'agent:maintenance',
       caused_by_event_id: null,
     });
+  });
+
+  it('propose_knowledge_mutation proposes a domain root with parent_id=null + domain', async () => {
+    await seedKnowledgeGraph();
+
+    const out = await proposeKnowledgeMutationTool.execute(ctx(), {
+      mutation: 'propose_new',
+      payload: { name: 'English', parent_id: null, domain: 'english' },
+      reasoning: '教材大纲需要一个英文根节点。',
+    });
+
+    expect(out.status).toBe('proposed');
+    const rows = await listProposalInboxRows(testDb(), { status: 'pending' });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      id: out.proposal_id,
+      kind: 'knowledge_node',
+      payload: {
+        proposed_change: { name: 'English', parent_id: null, domain: 'english' },
+      },
+    });
+  });
+
+  it('propose_knowledge_mutation rejects a root proposal without domain', async () => {
+    await seedKnowledgeGraph();
+
+    const out = await proposeKnowledgeMutationTool.execute(ctx(), {
+      mutation: 'propose_new',
+      payload: { name: 'English', parent_id: null },
+      reasoning: '缺 domain 的根提案。',
+    });
+
+    expect(out).toMatchObject({
+      status: 'skipped:invalid_payload',
+      reason: expect.stringContaining('domain'),
+    });
+    await expect(listProposalInboxRows(testDb(), { status: 'pending' })).resolves.toHaveLength(0);
+  });
+
+  it.each(['general', 'General', '  '])(
+    'propose_knowledge_mutation rejects a root proposal anchored on %j',
+    async (domain) => {
+      await seedKnowledgeGraph();
+
+      const out = await proposeKnowledgeMutationTool.execute(ctx(), {
+        mutation: 'propose_new',
+        payload: { name: 'English', parent_id: null, domain },
+        reasoning: 'fallback identity is not a node domain。',
+      });
+
+      expect(out).toMatchObject({
+        status: 'skipped:invalid_payload',
+        reason: expect.stringContaining('domain'),
+      });
+      await expect(listProposalInboxRows(testDb(), { status: 'pending' })).resolves.toHaveLength(0);
+    },
+  );
+
+  it('propose_knowledge_mutation rejects a child proposal carrying an explicit domain', async () => {
+    await seedKnowledgeGraph();
+
+    const out = await proposeKnowledgeMutationTool.execute(ctx(), {
+      mutation: 'propose_new',
+      payload: { name: '判断句', parent_id: 'k_yuwen', domain: 'math' },
+      reasoning: '子节点不应声明 domain。',
+    });
+
+    expect(out).toMatchObject({
+      status: 'skipped:invalid_payload',
+      reason: expect.stringContaining('inherit'),
+    });
+    await expect(listProposalInboxRows(testDb(), { status: 'pending' })).resolves.toHaveLength(0);
+  });
+
+  it('propose_knowledge_mutation dedupes root proposals by domain + name', async () => {
+    await seedKnowledgeGraph();
+
+    const first = await proposeKnowledgeMutationTool.execute(ctx(), {
+      mutation: 'propose_new',
+      payload: { name: 'English', parent_id: null, domain: 'english' },
+      reasoning: '第一次提根。',
+    });
+    expect(first.status).toBe('proposed');
+
+    const duplicate = await proposeKnowledgeMutationTool.execute(ctx(), {
+      mutation: 'propose_new',
+      payload: { name: 'English', parent_id: null, domain: 'english' },
+      reasoning: '重复根提案应命中冷却。',
+    });
+    expect(duplicate).toMatchObject({
+      status: 'skipped:duplicate_pending',
+      reason: expect.stringContaining('root:english'),
+    });
+
+    // A same-named root under a DIFFERENT domain is a distinct cooldown slot.
+    const otherDomain = await proposeKnowledgeMutationTool.execute(ctx(), {
+      mutation: 'propose_new',
+      payload: { name: 'English', parent_id: null, domain: 'math' },
+      reasoning: '同名不同域不冲突。',
+    });
+    expect(otherDomain.status).toBe('proposed');
   });
 
   it('propose_knowledge_mutation rejects merge proposals missing expected_versions entries', async () => {
