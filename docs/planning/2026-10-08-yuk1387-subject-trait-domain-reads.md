@@ -2,6 +2,24 @@
 
 Implementation lane in `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage`, branch `feat/yuk-1387-subject-trait-domain-reads`. Implementation parent is `9dffa49d90799ea8742f9d5dff4418ac386b3270`, supplied by the parent owner on latest-main ancestry `6c6905fad`. No fetch or branch switch occurred.
 
+## Parent acceptance, 2026-10-08
+
+Parent verified all 11 SHA256 entries against implementation commit
+`56a9baf8e6acceb9a11a75567f589b885ddd2ce0` and confirmed the protected manifest,
+package, lockfile and resolution-cache files are unchanged. The baseline diff is
+exactly the authorized 14 to 11 and 438 to 435 reductions.
+
+At that fixed commit, the parent ran the three DB files below: **15/15 passed**,
+exit 0. Log: `/tmp/yuk1387-parent-db.log`. The atomic deployment lock was acquired
+at 13:05:18.705171Z and released at 13:06:15.936348Z after checking owner/token.
+`/tmp/yuk1387-db-before.json` and `/tmp/yuk1387-db-cleanup.json` record that the
+running container set, original four IDs/images/start times/health, and release
+hash were unchanged. No additional running containers remained.
+
+Independent R1 is in progress; exact-head CI and merge remain required. This
+record verifies domain/HTTP reads under real Postgres. Start/browser and deployment
+acceptance are separate and not claimed here. YUK-1358/YUK-1359 remain in progress.
+
 ## Implemented contract
 
 `src/capabilities/observability/public.ts` directly re-exports the existing readers from `src/server/subjects/admin-read.ts`. There is no duplicate selector or wrapper. All queries in these readers use the supplied `Db | Tx` handle. Public signatures are:

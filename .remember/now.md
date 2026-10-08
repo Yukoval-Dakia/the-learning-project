@@ -1,6 +1,8 @@
 # 当前活动 — YUK1387 subjects/traits公共读取，2026-10-08
 
-主线已授权且实核无重叠，父从最新origin/main6c6905fad建立feat/yuk-1387-subject-trait-domain-reads，携带1386交付记录073a580de。1358子票查重无重复；全局关键词两次传输错误如实记录，1387 UUID d85cc05a-8c4d-4033-a496-03ea2baba95c为InProgress。唯一writer将拥有admin-read.ts、四HTTP、observability/public与scoped tests及本lane文档；父拥有PLAN/now/Linear/PR/验收。无runtime动作，DB前重核锁并通知主线。基线/tmp/yuk1387-parent-baseline.json。Start/配置/写者/hydration不改。
+YUK1387实现56a9baf8e6acceb9a11a75567f589b885ddd2ce0，parent9dffa49d9，唯一writer completed/noPending并释放。父核11SHA与保护文件；116unit/static/build/audits通过，唯一scope扩充baseline14→11/438→435已owner确认，初始失败日志保留。1358子票与全局subjects/trait全部分页查重完成，无重复活动票；601/666旧读面/HTTP契约Done不等于此迁移。Linear1387 d85cc05a-8c4d-4033-a496-03ea2baba95c InProgress。
+
+父实际3文件15DB通过，/tmp/yuk1387-parent-db.log。13:05:18Z取得锁token8ea58ea3，13:06:15.936348Z核owner释放；原运行集合/4容器ID/image/start/health/releaseSHA不变，/tmp/yuk1387-db-cleanup.json。独立R1 yuk1387-subject-trait-read-review-r1-20261008（command b0c41f6b-955b-4620-8875-2b8031cb5dfe，Codex gpt-6.1-sol xhigh）仍running只读。父接PR/CI/merge。无provider/worker/replay/deploy，Start归主线57961995，config只读。
 
 # 当前交接 — YUK1386已合入 / YUK1359退出证据，2026-10-08
 

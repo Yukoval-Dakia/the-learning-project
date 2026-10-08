@@ -4,7 +4,7 @@
 
 ## NOW
 
-- **YUK-1387 / W5 subjects与traits读取**：主线确认独占src/server/subjects/admin-read、四HTTP/public与scoped tests。从main6c6905fad建立feat/yuk-1387-subject-trait-domain-reads；复用四reader与ISO DTO、Db|Tx注入，保留journal100/200/trait绑定cursor/双形态和400/404及registry事实。单writer实施，父锁下DB、review/CI待；Start归主线，config只读。
+- **YUK-1387 / W5 subjects与traits读取**：实现56a9baf8e已交回，父核11hash与保护文件；116unit/static/build/audits通过，baseline精确下调14→11/438→435。父真实3文件15DB通过，13:06:15Z核owner释放锁，原四服务/release不变。独立R1进行，PR/exact CI待。四HTTP消费public，保留journal100/200/trait绑定cursor/双形态与registry事实；Start归主线，config只读。
 
 - **YUK-1386 / 领域slice已完成**：PR1611合入main6c6905fad；exact f7b84efc7的CI37778323336全绿、独立R1 P0/P1 NONE、threads0，merge tree一致且已unwatch。99unit/父24DB/static/build通过。public coverage/conjecture与原HTTP共享显式Db|Tx读取；Start挂载交主线。12:43:53Z核owner释放隔离DB锁，原四服务/release不变。subjects/config保持只读准备，未启动新writer。
 
