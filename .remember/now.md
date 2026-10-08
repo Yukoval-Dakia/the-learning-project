@@ -1,3 +1,13 @@
+# Current parent handoff — YUK1394 final review accepted, CI next
+
+Source is64d9f2eb62cec3cdb9ffbb7e3c189796e3b5cd30. PR1624 is linked and watched; final evidence is being committed with the already committed timezone-only repair for one final push. No local exec, DB, owned service or lock remains. Full old prune/review four files16/16 passed. Complete session cron at1ff5 had two real scenarios pass and the third timezone assertion fail. The test-only64d9 fix passed that case under Tokyo and UTC in separate disposable PGs. It did not rerun the unchanged two long scenarios. Typecheck, scoped Biome and earlier parent19unit/build/three audits passed. Last lock released21:13:51.836181Z with the original four containers, full running set and release unchanged.
+
+Sole R2 task yuk1394-session-orphans-verification-r2-20261009 completed/noPending. Both original fixture P1 findings are RESOLVED; remaining P0/P1 NONE. Parent independently matched full patch SHA b30800065725c50df59740e4a1a7ba510920dfaca52125fa668760ed7312d25a. Report is versioned in docs/planning/2026-10-09-yuk1394-review-r2.md. No R3. Exact-head CI remains required. Original old1393 first PostgreSQL cause remains unknown despite earliest-case and full-suite passes. No deployment or full migration acceptance.
+
+Judge design task completed/noPending with76 source hashes matched.5796 confirmed the proposed A/B/C/D judge scope and committed ownership handoff1712199f5, docs/planning/2026-10-09-judge-start-ownership.md. Parent read that exact Git object. Start, UI, canonical boot/shutdown and generic SSE stay outside the judge lane.1394 must deliver first; then fetch fresh main, inventory the migration number and start one writer. Existing1355 comment75be48f8 captures the design. No judge implementation or migration number yet.
+
+Earlier records are version-specific and do not override this status.
+
 # Current parent handoff — YUK1394 repaired fixture runtime
 
 Sole author completed/noPending and released clean1ff5ef70bf85c5091bd7035a81f8f3529f8506a2. Test-only repair3cec03813 adds nested SQL diagnostics and per-case worker cleanup;6d5d782c3 settles accepted legacy cron tasks and preserves all native/ledger history;1ff5 only checkpoints prior parent docs. Parent five-source/three-doc/log hashes match. Parent offline helper19/19, fullbuild exit0, earliest review selection-committed1pass/9unselected with real SIGKILL+concurrent recovery all children exited. Original first CI SQL cause remains unknown; no product fix claimed.
