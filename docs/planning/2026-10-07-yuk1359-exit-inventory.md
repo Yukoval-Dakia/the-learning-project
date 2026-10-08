@@ -30,6 +30,8 @@ YUK1394的两个六小时清理族已实现，PR1624最终候选为 `b9b019a3a`�
 
 Linear捕获：路由清点 `01c035d9-4603-484f-b542-ad37a495c50e`，任务清单 `a85667b1-7fc7-4f44-95bf-f43d3f95893a`，后续housekeeping `cb362f85-e98f-4936-b809-de70ed8983fe`。共享audit修复PR1618及各lane证据仍有效，但不关闭整迁移。本次仅更新文档，无runtime、provider、队列或数据操作。
 
+DBOS恢复缺口已核到[具体helper与历史证据](2026-10-09-yuk1359-dbos-restore-evidence-gap.md)：全库dump没有排除DBOS，但仓库drill只统计三个旧schema；当前部署所附102表恢复清单没有DBOS表。完整恢复演练仍须覆盖实际DBOS状态、领域receipt和唯一恢复owner，归既有1359/1329，不以旧备份成功核销。
+
 ## 历史调查记录
 
 下列章节均保留标题或正文指定的旧基线；其中“当前”“待接入”等措辞不是最新交付状态，以本节和相应lane交接为准。
