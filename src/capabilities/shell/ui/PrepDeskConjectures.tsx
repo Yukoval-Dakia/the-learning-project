@@ -1,3 +1,4 @@
+import { useWorkbenchClient } from './workbench-client';
 // YUK-567 slice-1 (教研团 Phase 0 / U4 备课台) — the felt 备课台 conjecture card panel.
 // Consumes GET /api/prep-desk/conjectures (≤3 pending conjectures, salience-ranked)
 // and surfaces them as the "为你而备" feed: each is the team's hypothesis about a
@@ -31,13 +32,8 @@ import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
-import {
-  type ProposalEvidenceRefWire,
-  decideProposal,
-  dedupeEvidence,
-  evidenceReadable,
-} from './inbox-api';
-import { type PrepDeskConjectureWire, getPrepDeskConjectures } from './prep-desk-api';
+import { type ProposalEvidenceRefWire, dedupeEvidence, evidenceReadable } from './inbox-api';
+import type { PrepDeskConjectureWire } from './prep-desk-api';
 
 function statefulStatus(loading: boolean, error: boolean): StatefulStatus {
   return loading ? 'loading' : error ? 'error' : 'ok';
@@ -58,10 +54,11 @@ function decideErrorMessage(err: unknown): string {
 }
 
 export function PrepDeskConjectures() {
+  const client = useWorkbenchClient();
   const qc = useQueryClient();
   const q = useQuery({
     queryKey: ['prep-desk-conjectures'],
-    queryFn: getPrepDeskConjectures,
+    queryFn: client.getPrepDeskConjectures,
   });
   const [deciding, setDeciding] = useState<Record<string, boolean>>({});
   // Per-card inline error message (empty ⇒ no error). YUK-711: distinguishes the
@@ -77,7 +74,7 @@ export function PrepDeskConjectures() {
       return next;
     });
     try {
-      await decideProposal(id, decision);
+      await client.decideProposal(id, decision);
       // The conjecture leaves the pending set; refresh both the panel and the
       // /today 备课猜想 count chip that gates this panel's entry point.
       await qc.invalidateQueries({ queryKey: ['prep-desk-conjectures'] });
