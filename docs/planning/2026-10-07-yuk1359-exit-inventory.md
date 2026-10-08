@@ -6,23 +6,29 @@ Owner 的后续指令是先完成整个非 UI 迁移，UI 暂缓，再完成 Lin
 
 ## 当前退出状态，2026-10-09 JST
 
-本节更新至main `f80d47703ffbcb6f8db488a10dd0a705a6fee601`。已实核相对原fe484清点，Start routes、UI_SURFACES、frontdoor、package与Dockerfile无diff；原路由清点仍适用这些未变文件，不将其转述为新runtime验收。本节覆盖下文历史状态；历史行号与验收只适用于各自版本。1358/1359仍未完成，未部署。
+本节基线为已合入的 main `10df1a47179fe2e368f5df1a538e1dd11cf9e6da`。父从固定 Git 对象提取任务声明，并核对当前候选 `53f05b572` 的路由文件与该 main 一致。下文历史行号和验收仍只适用于各自版本。1355、1356、1358、1359均未完成；源码合并不代表部署或旧消费者退出。
 
 | 范围 | 已有证据 | 尚需完成 |
 | --- | --- | --- |
-| Start 前门与 `/mistakes` | PR1592已合入。候选3d6273a14的RPC、图片、鉴权、筛选及重试证据见[验收索引](evidence/2026-10-08-yuk1352-start-runtime.json)。 | canonical boot、完整消费者和旧入口退出不能由这次局部验收代替。完整导航曾由既有practice初始化增加一行，后续错题读取才是86表无变。 |
-| `/today`、`/inbox` 与根跳转 | PR1609已合入7682618。Start工作台客户端接主读取、费用及已交付decision/undo操作；真实RPC/browser与整合证据见[工作台交接](2026-10-08-yuk1358-start-workbench-handoff.md)。 | Today仍直接调用agent-notes HTTP；TeachingBrief及其他共享子树仍须按[W1清单](2026-10-08-yuk1359-w1-consumers.md)逐项退出。不能将主读取迁移等同整页完成。 |
-| 五个管理只读页 | PR1615已合入fe4849712，接runs/detail、cost、failures、coverage、conjectures；主线fc021的96RPC、五页浏览器、88表无写证据及后续整合分别保存在[管理页交接](2026-10-08-yuk1358-start-admin-handoff.md)。 | 此证据不覆盖配置、科目/trait写面、完整boot或部署。不同revision的源码与运行证据不合并称为单次验收。 |
-| W5领域出口 | 1381/1386/1387/1389/1390已合入，分别覆盖管理读取、诊断读取、subjects/traits读取、配置、科目控制。1391六trait操作已由PR1617合main f80d47703，exact2fb CI全绿、R1 NONE、父55DB及整合450unit/static/build/四audit通过。 | `/admin/config`、`/admin/subjects`、`/admin/subjects/$id`仍走旧SPA及HTTP；公共出口存在不代表Start消费者完成。见[W5清单](2026-10-08-yuk1359-w5-consumers.md)。 |
-| W2/W3/W4与practice | 事件详情/纠错领域1380已合入；agent-note board读取已查重建YUK1392并从f80d main启动唯一作者，尚未交付或验收。 | 下列19个页面尚无显式Start路由，仍需领域/消费者与真实验收。Start配置/subjects由5796唯一作者实施；1355后续任务族目前没有实施writer。7631在1392完成前仅调查下一族，之后协调精确文件；不能复制评分或恢复机制。 |
-| 构建与镜像入口 | `server/start/routes/$.ts`仍调用legacySpa；frontdoor仍构造buildLegacySpa，package build同时产出旧web SPA与Start，Dockerfile仍设RW_STATIC_DIR。 | 所有实际消费者迁移后统一dev/build/镜像入口，再删旧挂载。仍服务保留UI的组件和样式不能按目录名删除。 |
-| 持久任务恢复 | PR1595已合入；`register-capability-jobs.ts`仍只准入prune_job_events的DBOS backend，其他pg-boss生产者与恢复路径存活。1356已交付共享review操作与单次真实Pi原件效果，范围另见其交接。 | 逐族切换、排空、未知结果、唯一恢复owner与故障恢复验收尚未齐全。不能因测试库重置或一个族成功而删除旧队列机制。 |
+| Start 前门与 `/mistakes` | PR1592已合入；RPC、图片、鉴权、筛选及重试见[验收索引](evidence/2026-10-08-yuk1352-start-runtime.json)。 | canonical boot、完整消费者与旧入口退出。完整导航曾由practice初始化增加一行，不能将后续错题读取的86表无变扩大为整个导航无写。 |
+| `/today`、`/inbox` 与根跳转 | PR1609已合入；主读取、费用、decision/undo及真实验收见[工作台交接](2026-10-08-yuk1358-start-workbench-handoff.md)。 | main中的Today仍调用agent-notes HTTP。PR1622接此读取及独立board页，协作线程持有其review/CI/built验收，尚未计入已合入覆盖。TeachingBrief等按[W1清单](2026-10-08-yuk1359-w1-consumers.md)继续退出。 |
+| 五个管理只读页 | PR1615已合入；fc021的96RPC、五页浏览器、88表无写及后续整合证据见[管理页交接](2026-10-08-yuk1358-start-admin-handoff.md)。 | 完整boot与部署；各revision证据不能拼成一次运行验收。 |
+| 配置与科目三个页面 | PR1620已合main10df，复用1389/1390/1391公共操作。18操作、122RPC、35窗口和三页浏览器证据见[父验收](2026-10-09-yuk1358-start-admin-controls-parent.md)。 | canonical自动启动与全SPA退出仍未完成。配置提交成功但刷新失败不得重写；catalog/journal只读首屏与RPC完整分页的证据分开保留。 |
+| W2/W3/W4与practice | 1380事件详情/纠错、1392 board公共读取已合入；1356共享review操作及真实Pi原件效果已有证据。 | 16个页面仍无显式Start入口；领域出口不等于消费者完成。practice实际提交、判分DBOS及共享子树继续验收。 |
+| 构建与镜像入口 | `server/start/routes/$.ts`调用legacySpa；frontdoor、package build及Dockerfile仍服务旧web产物。 | 全部实际消费者迁移后统一dev/build/镜像入口，再删旧挂载。保留UI使用的组件、样式不能按目录名删除。 |
+| 持久任务恢复 | main仅prune_job_events声明DBOS backend。PR1621候选接review orphan至共享host，本机故障/真实cron与独立R1证据见[1393父验收](2026-10-09-yuk1393-parent-acceptance.md)。 | PR1621 exact CI/合并，以及最终逐族运行切换、旧义务分类排空、回退和唯一恢复owner。默认phase仍pg-boss，声明DBOS不代表运行切换。 |
 
-静态比对UI_SURFACES的28个id/route与Start文件路由，8页面加根跳转显式匹配，19页面仍由旧SPA回落承载。[清点收据](evidence/2026-10-09-yuk1359-route-coverage.json)保留源commit及路由文件hash。这是入口覆盖，不是完成率，也不证明匹配页面的嵌套消费者全部迁移。
+[路由收据](evidence/2026-10-09-yuk1359-route-coverage-main10df.json)逐项对应UI_SURFACES的28项：11页面加根跳转，共12项有显式Start路由；16页面仍走旧SPA回落。这是入口覆盖，不是完成率，不证明页面的嵌套消费者全部迁移。旧f80d基线的9/19收据继续保留为历史。
 
-仍需迁移的页面为 `/welcome`、`/onboarding/upload`、`/placement`、`/profile`、`/agent-notes`、`/events/$id`、`/record`、`/practice`、`/drafts`、`/questions`、`/questions/$id`、`/knowledge`、`/knowledge/$id`、`/notes`、`/notes/$id`、`/coach`、`/admin/config`、`/admin/subjects`、`/admin/subjects/$id`。
+16页面为 `/welcome`、`/onboarding/upload`、`/placement`、`/profile`、`/agent-notes`、`/events/$id`、`/record`、`/practice`、`/drafts`、`/questions`、`/questions/$id`、`/knowledge`、`/knowledge/$id`、`/notes`、`/notes/$id`、`/coach`。PR1622正式合入后才更新agent-notes覆盖；候选测试中的handoff页数不包含根跳转，不能直接和这里的12项比较。
 
-两项共享audit问题已在1359 comment `e34017ea-c07a-4166-93c9-0e9b53950bab`由主线接管：18条历史保留字段豁免过期与生成dist/start误扫。该修复已由PR1618合main ec9a9ed5e，并由1391本树450unit/static/build及保留dist的四audit实际复验通过；未扩trait范围或延豁免。清点更新登记在comment `ebbe0ce9-5732-4ccb-8f5f-08105729fc6f`。本次仅更新退出证据，无runtime、provider、队列或数据操作。1359曾被标为Done，已纠正In Progress；共享audit修复不完成整条退出任务。
+[任务声明收据](evidence/2026-10-09-yuk1359-job-declarations-main10df.json)只解析 `jobs.handlers`，排除event handlers，静态解析队列常量并检查名称唯一性。main有54个manifest声明，其中53个pg-boss load入口和1个DBOS声明；manifest schedule19、infra schedule5、memory schedule3。两个注册器有12处direct work，其中infra6、memory6。53个load入口分属agency8、copilot3、ingestion3、knowledge7、notes6、observability2、practice24。
+
+1393候选有55个manifest声明、2个DBOS声明；53个pg-boss load入口不变。manifest schedule20、infra schedule4、memory schedule3，direct work11处。review orphan仅改变注册归属，兼容adapter仍由phase控制。以上不是运行队列或未完成义务数，也不包含对实际producer/SEND_IT/retry/DLQ的运行盘点；不能简单相加为迁移完成比例。
+
+下一组两个六小时清理族由本线程独占YUK1394，已与5796协调共享文件；当前只读设计进行中，尚无实现writer。保留conversation active/idle、placement started和started_at六小时规则；新的用户输入不重置该清理年龄。复用原事务写者、固定tick/candidates、效果与receipt同Tx；每族phase、producer fence、旧义务和回退须独立。`promote_conversation_idle`的五分钟用户事件时钟及选择后插入竞态另记1355，尚未真实DB重现，不冒称已验证P1。1393收口后从fresh main实施，不占用未核定的migration编号。
+
+Linear捕获：路由清点 `01c035d9-4603-484f-b542-ad37a495c50e`，任务清单 `a85667b1-7fc7-4f44-95bf-f43d3f95893a`，后续housekeeping `cb362f85-e98f-4936-b809-de70ed8983fe`。共享audit修复PR1618及各lane证据仍有效，但不关闭整迁移。本次仅更新文档，无runtime、provider、队列或数据操作。
 
 ## 历史调查记录
 

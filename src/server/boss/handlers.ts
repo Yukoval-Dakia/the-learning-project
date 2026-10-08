@@ -9,7 +9,6 @@ import { buildEchoHandler } from './handlers/echo';
 import { buildPromoteConversationIdleHandler } from './handlers/promote_conversation_idle';
 import { buildPruneOrphanConversationSessionsHandler } from './handlers/prune_orphan_conversation_sessions';
 import { buildPruneOrphanPlacementSessionsHandler } from './handlers/prune_orphan_placement_sessions';
-import { buildPruneOrphanReviewSessionsHandler } from './handlers/prune_orphan_review_sessions';
 import {
   VERIFY_DISPATCH_RECOVERY_QUEUE,
   buildVerifyDispatchRecoveryHandler,
@@ -43,13 +42,6 @@ export interface InfraScheduleDeclaration {
 }
 
 export const INFRA_HOUSEKEEPING_SCHEDULES: readonly InfraScheduleDeclaration[] = [
-  {
-    name: 'prune_orphan_review_sessions',
-    cron: '15 4 * * *',
-    tz: 'Asia/Shanghai',
-    queue: 'fast',
-    note: 'ADR-0013: abandon review sessions stuck in started >6h（BJT 04:15 after prune_job_events）',
-  },
   {
     name: 'prune_orphan_placement_sessions',
     cron: '35 4 * * *',
@@ -111,18 +103,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   // wiring is YUK-185 / T-37. 队列内的 per-delivery epoch fence 在
   // registerMemoryHandlers 内部挂（triggers.ts，与本簿同约定）。
   await registerMemoryHandlers(boss, db, { generateBrief: buildBriefGenerator({ db }) });
-
-  // ADR-0013: abandon review sessions stuck in 'started' >6h (sendBeacon
-  // fallback when normal close didn't fire). BJT 04:15 after prune_job_events.
-  await createOrUpdateQueue(boss, 'prune_orphan_review_sessions', FAST_QUEUE_OPTS); // FAST — cheap SELECT + per-row transition
-  await boss.work(
-    'prune_orphan_review_sessions',
-    fenceAwareJobHandler(
-      db,
-      'prune_orphan_review_sessions',
-      buildPruneOrphanReviewSessionsHandler(db),
-    ),
-  );
 
   // YUK-470 (orphan-sweep leg): abandon placement probes stuck in 'started' >6h
   // (sibling of the review sweep; placement has no 'paused'). BJT 04:35 — the three
