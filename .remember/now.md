@@ -1,6 +1,6 @@
-# Parallel readonly future-family preparation
+# Future idle design returned; judge writer remains active
 
-While sole judge implementation remains active, one bounded readonly Astra high task is now running: node:delegated-task:command%3Amcp%3Ae4c5132f-3c05-4ce6-aa2d-e5b525fe3bf6%3Adelegate-task%3Ayuk1355-idle-clock-boundary-design-20261009-v1. It reads only immutable main96077 Git objects and priorhousekeeping reports, writes /tmp/yuk1355-idle-clock-boundary-design-20261009.md plus sourcehashJSON. It must resolve actual user-event writer/lock linearization and minimal idle fixed-tick/receipt contract, not repeat inventory. No repo edits/tests/DB/runtime/network/communication or children. This is future work under existing1355, not another activecodewriter or1356review.0118 remainsjudge; noidle migrationreserved. Any proposedCopilot/boot extension needs parentownershipcheck afterreport. Total children2: judgewriter + readonlyidlearchitect.
+Readonly idle task completed/noPending. Parent verified45 fixedmain96077 source blobs+3reports and separately inspected the three event writers. Report/sourcehashes versioned as2026-10-09-yuk1355-idle-clock-boundary.md and evidence JSON. Parent accepts original userclock/firstcommittedadmission semantics, noresumegrace; strictchip noresume and existingproposal/event failurewindow remain. Ownership extension request sent5796 with preciseCopilot3files/session/practice/sharedledger paths. Noidlewriter/migrationnumber; waitjudge fullyreleased and rechecknew lock/order/writeredges frommergedsource. Only activechild is judge implementation; noDB/runtime.5796 reportsmain7472f4395 PR1623merged; parent has not fetched/merged whilewriteractive, integrate afterrelease.
 
 # Active judge writer
 
