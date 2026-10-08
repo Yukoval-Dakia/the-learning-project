@@ -14,66 +14,18 @@
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CSSProperties, ReactNode } from 'react';
-import { apiJson } from '@/ui/lib/api';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { Stateful } from '@/ui/primitives/Stateful';
+import { type AdminReadClient, httpAdminClient } from './admin-client';
 
-// 字段对齐 server/coverage-lattice.ts 的读模型输出。
-interface GapActivity {
-  lastActivityAt: string | null;
-  lastStatus: string | null;
-  lastDispatchedAt: string | null;
-  inCooldown: boolean;
-  cooldownUntil: string | null;
-}
-interface LatticeGap {
-  gapKind: string;
-  kind: string;
-  difficultyBand: string;
-  minSourceTier: 1 | 2 | 3;
-  desiredCount: number;
-  priority: number;
-  reason: string;
-  fingerprint: string;
-  routePreference: string[];
-  scaffold: boolean;
-  lastActivity: GapActivity | null;
-}
-interface KcCoverageRow {
-  knowledgeId: string;
-  thetaHat: number;
-  evidenceCount: number;
-  usableCount: number;
-  depthMet: boolean;
-  hasHighTier: boolean | null;
-  hasNearThetaAnchor: boolean | null;
-  formatDiverse: boolean | null;
-  gapKinds: string[];
-  gaps: LatticeGap[];
-}
-interface SubjectCoverage {
-  subjectId: string;
-  displayName: string | null;
-  kcs: KcCoverageRow[];
-}
-interface CoverageLatticeResponse {
-  generated_at: string;
-  scan_ms: number;
-  coverage_depth_threshold: number;
-  near_window: number;
-  cooldown_days: number;
-  scope_note: string;
-  subjects: SubjectCoverage[];
-  totals: {
-    activeKcs: number;
-    kcsWithGaps: number;
-    totalGaps: number;
-    gapsByKind: Record<string, number>;
-  };
-}
+type CoverageLatticeResponse = Awaited<ReturnType<AdminReadClient['getCoverage']>>;
+type SubjectCoverage = CoverageLatticeResponse['subjects'][number];
+type KcCoverageRow = SubjectCoverage['kcs'][number];
+type LatticeGap = KcCoverageRow['gaps'][number];
+type GapActivity = NonNullable<LatticeGap['lastActivity']>;
 
 export type CoverageScanState = 'scanning' | 'failed' | 'unscanned' | 'healthy' | 'degraded';
 
@@ -208,12 +160,18 @@ function GapRow({ gap, cooldownDays }: { gap: LatticeGap; cooldownDays: number }
   );
 }
 
-export function AdminCoverageLatticeSurface({ navigate }: { navigate: (to: string) => void }) {
+export function AdminCoverageLatticeSurface({
+  navigate,
+  client = httpAdminClient,
+}: {
+  navigate: (to: string) => void;
+  client?: AdminReadClient;
+}) {
   const queryClient = useQueryClient();
   // MF2：无 refetchInterval（刻意）。owner 用「重新扫描」按钮手动刷。
   const q = useQuery({
     queryKey: ['admin-coverage-lattice'],
-    queryFn: () => apiJson<CoverageLatticeResponse>('/api/admin/coverage-lattice'),
+    queryFn: () => client.getCoverage(),
   });
   const data = q.data;
   const scanState = classifyCoverageScanState({

@@ -421,7 +421,9 @@ const adminConfigRoute = createRoute({
   component: AdminConfigRoute,
 });
 
-const AdminRunsRoute = lazyNavigableRoute(loadAdminRunsSurface);
+const AdminRunsRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadAdminRunsSurface);
 
 const adminRunsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -429,7 +431,9 @@ const adminRunsRoute = createRoute({
   component: AdminRunsRoute,
 });
 
-const AdminCostRoute = lazyNavigableRoute(loadAdminCostSurface);
+const AdminCostRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadAdminCostSurface);
 
 const adminCostRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -437,7 +441,9 @@ const adminCostRoute = createRoute({
   component: AdminCostRoute,
 });
 
-const AdminFailuresRoute = lazyNavigableRoute(loadAdminFailuresSurface);
+const AdminFailuresRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadAdminFailuresSurface);
 
 const adminFailuresRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -474,7 +480,9 @@ const adminSubjectTraitsRoute = createRoute({
 });
 
 // YUK-579 — 供题治理覆盖细目表（admin 第五页）。同四页套主 chrome（rootRoute → RootShell）。
-const AdminCoverageLatticeRoute = lazyNavigableRoute(loadAdminCoverageLatticeSurface);
+const AdminCoverageLatticeRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadAdminCoverageLatticeSurface);
 
 const adminCoverageLatticeRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -482,7 +490,9 @@ const adminCoverageLatticeRoute = createRoute({
   component: AdminCoverageLatticeRoute,
 });
 
-const AdminConjectureScoresRoute = lazyNavigableRoute(loadAdminConjectureScoresSurface);
+const AdminConjectureScoresRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadAdminConjectureScoresSurface);
 const adminConjectureScoresRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('admin-conjecture-scores'),
