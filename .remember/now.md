@@ -1,6 +1,10 @@
-# 当前交接 — YUK1391整合共享审计修复
+# 当前交接 — YUK1392 agent-note board公共读取
 
-原8a1dbf94b CI37802024691全绿、R1 NONE/父55DB证据保留。三份退出docs WIP已提交a64cdac2b；正常merge主线已交付ec9a9ed5e，仅PLAN/now冲突。父450unit/typecheck/lint/build及四post-build audit均exit0，原两失败在本树消除，等待新exact CI并收口1617。无DB/runtime/provider操作。1391收口后独占已授权agent-note board读取lane，Start仍由主线负责。1358/1359未完。
+1391/PR1617已于16:32:22Z合main f80d47703ffbcb6f8db488a10dd0a705a6fee601，tree fda2bfe86b3755a9de935210f8c298e7fa7643d8与exact2fb相同，CI37808241557全绿、R1 NONE、threads0；已unwatch/1391Done，无部署。450unit/static/build/四audit与原55DB证据分层保留。
+
+本线程承担用户整个迁移交付责任；57961995是Start集成/发布协作线程。1358/1359仍未完成；本轮实查1359误为Done已纠正In Progress。新票1392 UUID371ea7d0-4cee-45c4-9f87-407c5270e0ab，freshmain分支feat/yuk-1392-agent-note-board-read，原树clean后切换。范围agency/api/notes.ts、public.ts、必要ISO DTO seam/tests/docs，原selector/contracts默认只读。唯一作者仅source/scopedunit/static/build；父负责独立review/持锁DB/PR。无runtime锁或服务操作。
+
+1392当前源码1f012c62d，作者completed/noPending且writer释放。父8source/14log SHA一致，13unit/22DB实跑通过；16:53:28.070847Z已核tokend8d6释放锁，原4容器/release完全不变。R1 task yuk1392-board-read-review-r1-20261009 completed/noPending，P0/P1 NONE，父核diff SHA一致。父1359文档与证据已提交6e82ab104，剩余provider-lanes/profile/task-census也已实跑通过，准备PR/exact CI。下一DBOS族只读调查已交，推荐prune_orphan_review_sessions，固定tick/锁内资格/reopen和唯一lifecycle待1392收口后精确定界，不已实施。
 
 以下为保留的历史交接。
 

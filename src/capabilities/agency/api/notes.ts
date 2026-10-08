@@ -1,27 +1,18 @@
-// GET /api/agents/notes — 「AI 观察」只读 feed 的 handler 本体（YUK-311 P1 迁入包）。
-// 外壳 app/api/agents/notes/route.ts 仅 re-export；行为与迁移前完全等价
-//（原 app/api/agents/notes/route.ts @ YUK-294）。
+// GET /api/agents/notes — learner observation board, mounted by the agency manifest.
 
 import { db } from '@/db/client';
-import { ApiError, errorResponse } from '@/kernel/http';
-import { readAgentNoteBoardRows } from '../server/notes';
-import { AgentNotesQuerySchema } from './contracts';
+import { errorResponse } from '@/kernel/http';
+import { loadAgentNoteBoard } from '../server/note-board-read';
 
 export async function GET(req: Request): Promise<Response> {
   try {
     const url = new URL(req.url);
-    const parsed = AgentNotesQuerySchema.safeParse({
-      limit: url.searchParams.get('limit') ?? undefined,
-    });
-    if (!parsed.success) {
-      throw new ApiError(
-        'validation_error',
-        parsed.error.issues.map((i) => `${i.path.join('.')}: ${i.message}`).join('; '),
-        400,
-      );
-    }
-    const rows = await readAgentNoteBoardRows(db, { now: new Date(), limit: parsed.data.limit });
-    return Response.json({ rows });
+    const board = await loadAgentNoteBoard(
+      db,
+      { limit: url.searchParams.get('limit') ?? undefined },
+      new Date(),
+    );
+    return Response.json(board);
   } catch (err) {
     return errorResponse(err);
   }

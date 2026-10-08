@@ -1,0 +1,37 @@
+{
+  "releaseSha256": "d2b8a2392c082072d084b2fcf8006939e6d8b5a5fc1ff8f49c53cd8505377d34",
+  "containers": [
+    {
+      "id": "11b2b10855062f57e8cf35743428d371de2b726e12edff6a063ace53e6dc844a",
+      "name": "/the-learning-project-app-1",
+      "image": "sha256:9b76e7cb746dc51f1f661adba65041d514502f041e20111ae91defe3679be25c",
+      "startedAt": "2026-10-08T14:28:33.51469675Z",
+      "health": "healthy",
+      "running": true
+    },
+    {
+      "id": "483a2694e53b7ed177961ab70a2507a21a9759e32aa73bb8e11742a686f4b93d",
+      "name": "/the-learning-project-worker-1",
+      "image": "sha256:9b76e7cb746dc51f1f661adba65041d514502f041e20111ae91defe3679be25c",
+      "startedAt": "2026-10-08T14:28:33.518103084Z",
+      "health": "healthy",
+      "running": true
+    },
+    {
+      "id": "90bcf69f997c7ef1147bd202e9d688797af44e02370684fc5e9d6e0bb0795c85",
+      "name": "/the-learning-project-test-storage-1",
+      "image": "sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d",
+      "startedAt": "2026-10-08T14:28:33.5086185Z",
+      "health": "healthy",
+      "running": true
+    },
+    {
+      "id": "ab776c3b4acb3fd1fb687c6679601c143b6736ecb7cee73b081c98b9caf34d80",
+      "name": "/the-learning-project-postgres-1",
+      "image": "sha256:00ba258a66dac104fd5171074a0084462a64a1369d8513f3d0a634e2f24d15bc",
+      "startedAt": "2026-10-08T14:28:33.520946959Z",
+      "health": "healthy",
+      "running": true
+    }
+  ]
+}

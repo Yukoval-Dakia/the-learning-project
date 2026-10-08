@@ -1,12 +1,14 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：1391正常整合共享audit修复main ec9a9ed5e；保留原8a1准确CI/55DB/R1证据，整合450unit/static/build及四post-build audit通过，等待新exact CI。1358/1359仍未完成，未部署。
+> Linear 是权威 tracker。2026-10-09 JST：1391/PR1617已合main f80d47703，exact CI/R1/本地门禁通过；1392公共读取已交1f012c62d，父13unit/22DB通过，R1 NONE，exact CI待。1358/1359未完成，未部署。
 
 ## NOW
 
 - **YUK-1359 / 共享审计修复已合入**：PR1618合main ec9a9ed5e，父报告与exact b9a4caf87树一致，CI37805707992全绿、R1 NONE。历史retention合同与generated dist扫描修复已交付；1391本树四post-build audit已独立复验通过；历史失败记录保留。
 
-- **YUK-1391 / W5 trait六操作**：源码7199aa3fc、父55DB/R1 NONE与8a1 CI37802024691全绿已封存。PR1617 Ready；已保存三份1359 docs为a64cdac2b，正常整合ec9a9ed5e，仅PLAN/now冲突。整合450unit/static/build及四post-build audit通过，新exact CI待，Start仍归主线。
+- **YUK-1391 / 已合入**：PR1617于16:32:22Z合main f80d47703，tree与exact 2fb1f4c4e一致；CI37808241557全绿、R1 NONE、threads0。450unit/static/build/四post-build audit与55实际DB证据保留，已unwatch/Linear Done，无部署。
+
+- **YUK-1392 / agent-note board读取**：已查重建1358子票，从fresh main f80d47703单writer实施。已交1f012c62d，作者static/build/audits与父13unit/22DB通过，16:53:28Z核owner释放DB锁，原runtime不变。R1 NONE，exact CI待；仅agency notes API/public/ISO DTO与scopedtests，Start消费仍归5796。
 
 - **YUK-1390 / 已合入**：PR1616于14:55:48Z合main7b8904179，tree与exact bec86e4e5一致；CI37794964900全绿、独立R1 NONE、threads0，60unit/父42DB/static/build通过。已unwatch/Linear Done/通知主线；未部署。
 
