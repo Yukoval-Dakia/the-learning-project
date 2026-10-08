@@ -1,3 +1,9 @@
+# 当前交接 — YUK1380父DB验收，2026-10-08
+
+分支feat/yuk-1380-event-domain，实现8fde3e462，正常合入docs mainf335为0e21a034f。作者writer已completed/noPending，父核7hash、保护8文件不变及实际3文件23DB通过；28unit/static/build/partition通过。11:16:28Z核owner/token释放锁，临时PG退出，原4服务/release未变。独立R1任务yuk1380-event-domain-review-r1-20261008运行；PR/CI待。PR1606已合入f335、unwatch，1359保持In Progress。W3只读子任务completed/noPending，结果待父抽查落盘；W4部分只读笔记在/tmp。主线拥有Start/1356，本线程未部署。
+
+以下为历史记录。
+
 # 当前交接 — 2026-10-08 YUK1359 W2消费者清单
 
 当前分支docs/yuk-1359-w2-consumer-inventory，从最新origin/main6150f01a9建立。PR1604已10:55:10Z合入6150f01a949c3d1357f8b44f0d8ed6807cd74179，tree c9e440e5edd1dd62e7cd4f5cdd018e4d9ee93886与CI head463aadec一致；CI37765137606全绿、R1/R2 NONE、threads0，已unwatch。1378限定领域slice已Done，公共loadTodayCost/TodayCost交主线Start消费；1358/1359/1377仍In Progress。8unit、父实际11DB及静态/build通过，无部署。1359 W2只读研究子任务yuk1359-w2-consumer-readonly-completion-20261008-v1已completed/noPending（Codex gpt-6-luna high），父抽查并落盘W2清单，纠正学段URL/typed客户端混称；主线独占1356与Start。本线程无锁/服务，后续runtime须重新核验锁。下文为历史交接。
