@@ -1,11 +1,9 @@
 import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
 // Phase 1c.1 Step 9.B — `/api/review/due` handler over `material_fsrs_state`.
 //
-// Extracted out of app/api/review/due/route.ts so it can be deps-injectable and
-// unit/DB-tested: Next App Router route modules may ONLY export route handlers
-// (GET/POST/...) + recognized config (runtime/dynamic/...), so an injectable
-// helper or a `Deps` interface cannot live in route.ts (Next's generated
-// tsc route validator rejects any extra export — see YUK-67 / YUK-167).
+// queryReviewDue is the typed actionable queue. get_review_due separately
+// reports schedule projections and bounded diagnostic coverage; its result
+// must not be replaced with this question-face queue.
 //
 // Pre-Step-9 the route SELECTed mistake rows where fsrs_state.due <= now() OR
 // fsrs_state IS NULL. Post-Step-9 the legacy mistake table is gone; the FSRS
@@ -188,413 +186,428 @@ type ScheduledDueRow = {
   metadata?: Record<string, unknown> | null;
 };
 
-export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): Promise<Response> {
-  try {
-    const activeDb = deps.db ?? db;
-    // YUK-603 — resolved read: subject_live goals live-derive their scope for the re-rank.
-    const listGoals = deps.listActiveGoalsFn ?? listActiveGoalsWithResolvedScope;
-    const url = new URL(req.url);
-    const limitRaw = url.searchParams.get('limit');
-    const limitParsed = limitRaw ? Number.parseInt(limitRaw, 10) : 20;
-    const limit = Math.min(Math.max(Number.isNaN(limitParsed) ? 20 : limitParsed, 1), 200);
-    const now = new Date();
+export interface ReviewDueQuery {
+  limit?: number;
+  now?: Date;
+}
 
-    // Two slices, unioned:
-    //   1. Questions with material_fsrs_state where due_at <= now() — overdue
-    //      from prior reviews.
-    //   2. Questions with NO material_fsrs_state row but at least one failure
-    //      attempt — never-reviewed cards still owed a first pass.
-    //
-    // We keep them ordered: null-state cards first (legacy contract), then
-    // due-earliest first.
-    //
-    // T-CS / YUK-168: fetch a WIDER overdue candidate window than `limit` (same
-    // bounded window the never-reviewed slice uses) so the round-robin selection
-    // below can balance across subjects. With a plain `.limit(limit)` the SQL
-    // would pre-pick the `limit` most-due rows GLOBALLY — which can all be one
-    // subject — leaving round-robin nothing to balance. Every fetched row is
-    // still `due_at <= now`, so this widens the CANDIDATE window only, never the
-    // due-pool definition; the returned set is still capped at `limit`
-    // (round-robin selects exactly min(limit, pool) of these due rows). For a
-    // single subject this is a no-op: round-robin returns the `limit` most-due,
-    // identical to the old `.limit(limit)` slice.
-    // Gate-B defensive invariant (QuizGen Option B): an UNVERIFIED quiz draft
-    // (`draft_status='draft'`) must NEVER enter the review pool. quiz_verify only
-    // promotes draft→active + builds material_fsrs_state on pass, so a draft has
-    // neither an fsrs_state row nor an attempt — both slices already miss it
-    // implicitly. This predicate makes that an EXPLICIT, query-level invariant so
-    // a stray draft (e.g. a future write path that mis-attaches an attempt event)
-    // can still never surface. Only 'draft' is excluded: NULL (auto-enroll / legacy)
-    // and 'active' (variant / dreaming / promoted quiz) both stay in the pool. NULL
-    // handling is explicit (`draft_status != 'draft'` alone would drop NULL rows under
-    // SQL three-valued logic).
-    // YUK-350 (L2, RL2) — embedded/teaching checks are NO LONGER NULL-stays-in-pool:
-    // they now land draft_status='draft' (container-only by design), so this predicate
-    // already excludes them. NULL-stays-in-pool remains the truth ONLY for auto-enroll
-    // / legacy rows. Single definition: notDraftPredicate (@/db/predicates).
+export type ReviewDueRow = {
+  id: string;
+  activity_ref: ActivityRefT;
+  question_id: string;
+  fsrs_subject_kind: 'question' | 'knowledge';
+  fsrs_subject_id: string;
+  prompt_md: string;
+  reference_md: string | null;
+  knowledge_ids: string[];
+  cause: unknown;
+  fsrs_state: unknown;
+  created_at: Date;
+  last_failure_event: { id: string; correction_state: EffectiveTruth } | null;
+};
 
-    const candidateWindow = Math.min(Math.max(limit * 4, 100), 400);
-    const usedDueQuestionIds = new Set<string>();
-    const knowledgeStateRows = (
-      await activeDb
-        .select({
-          knowledge_id: material_fsrs_state.subject_id,
-          state: material_fsrs_state.state,
-          due_at: material_fsrs_state.due_at,
-          last_review_event_id: material_fsrs_state.last_review_event_id,
-        })
-        .from(material_fsrs_state)
-        .where(
-          and(
-            eq(material_fsrs_state.subject_kind, 'knowledge'),
-            lte(material_fsrs_state.due_at, now),
-          ),
-        )
-        .orderBy(material_fsrs_state.due_at, material_fsrs_state.subject_id)
-        .limit(candidateWindow)
-    ).filter(
-      // YUK-1037 — defense in depth: a 'seed:<subj>:root' FSRS subject is a
-      // structural anchor, never probeable content. Enroll sites no longer mint
-      // it, but a pre-fix row may still exist until ops remediation retires it —
-      // skipping it here keeps a stale anchor card from serving as a due probe
-      // (its questions stay reachable via other paths, never via this KC axis).
-      (stateRow) => !SYNTHETIC_SUBJECT_ROOT_RE.test(stateRow.knowledge_id),
-    );
+/** Actionable HTTP queue, retaining variant rotation, subject balance and goal ordering. */
+export async function queryReviewDue(
+  activeDb: DbLike,
+  input: ReviewDueQuery = {},
+  deps: Pick<ReviewDueDeps, 'listActiveGoalsFn'> = {},
+): Promise<{ rows: ReviewDueRow[] }> {
+  const listGoals = deps.listActiveGoalsFn ?? listActiveGoalsWithResolvedScope;
+  const requestedLimit = input.limit ?? 20;
+  const limit = Math.min(
+    Math.max(Number.isNaN(requestedLimit) ? 20 : Math.trunc(requestedLimit), 1),
+    200,
+  );
+  const now = input.now ?? new Date();
+  // Two slices, unioned:
+  //   1. Questions with material_fsrs_state where due_at <= now() — overdue
+  //      from prior reviews.
+  //   2. Questions with NO material_fsrs_state row but at least one failure
+  //      attempt — never-reviewed cards still owed a first pass.
+  //
+  // We keep them ordered: null-state cards first (legacy contract), then
+  // due-earliest first.
+  //
+  // T-CS / YUK-168: fetch a WIDER overdue candidate window than `limit` (same
+  // bounded window the never-reviewed slice uses) so the round-robin selection
+  // below can balance across subjects. With a plain `.limit(limit)` the SQL
+  // would pre-pick the `limit` most-due rows GLOBALLY — which can all be one
+  // subject — leaving round-robin nothing to balance. Every fetched row is
+  // still `due_at <= now`, so this widens the CANDIDATE window only, never the
+  // due-pool definition; the returned set is still capped at `limit`
+  // (round-robin selects exactly min(limit, pool) of these due rows). For a
+  // single subject this is a no-op: round-robin returns the `limit` most-due,
+  // identical to the old `.limit(limit)` slice.
+  // Gate-B defensive invariant (QuizGen Option B): an UNVERIFIED quiz draft
+  // (`draft_status='draft'`) must NEVER enter the review pool. quiz_verify only
+  // promotes draft→active + builds material_fsrs_state on pass, so a draft has
+  // neither an fsrs_state row nor an attempt — both slices already miss it
+  // implicitly. This predicate makes that an EXPLICIT, query-level invariant so
+  // a stray draft (e.g. a future write path that mis-attaches an attempt event)
+  // can still never surface. Only 'draft' is excluded: NULL (auto-enroll / legacy)
+  // and 'active' (variant / dreaming / promoted quiz) both stay in the pool. NULL
+  // handling is explicit (`draft_status != 'draft'` alone would drop NULL rows under
+  // SQL three-valued logic).
+  // YUK-350 (L2, RL2) — embedded/teaching checks are NO LONGER NULL-stays-in-pool:
+  // they now land draft_status='draft' (container-only by design), so this predicate
+  // already excludes them. NULL-stays-in-pool remains the truth ONLY for auto-enroll
+  // / legacy rows. Single definition: notDraftPredicate (@/db/predicates).
 
-    // YUK-716 — bulk-prefetch every probe-selection DB input for the whole due page in THREE
-    // reads (was up to ~3 serial round-trips PER due KC — the /api/review/due N+1). The per-KC
-    // selection below is then pure in-memory over the prefetch, and the shared usedDueQuestionIds
-    // set is threaded through the SAME sequential order → byte-identical probe picks.
-    const probePrefetch = await prefetchProbeSelection(
-      activeDb,
-      knowledgeStateRows.map((stateRow) => ({
-        knowledgeId: stateRow.knowledge_id,
-        lastReviewEventId: stateRow.last_review_event_id ?? null,
-      })),
-    );
-    const dueRows: ScheduledDueRow[] = [];
-    for (const stateRow of knowledgeStateRows) {
-      // YUK-282 / ADR-0030 — by-kind variant-rotation probe (recall repeat vs
-      // application family rotation). Returns the same projection the old inline
-      // pickQuestionForKnowledge did (question_id + source/metadata for tier
-      // derivation); mutates usedDueQuestionIds for cross-knowledge dedup.
-      const selected = selectProbeFromPrefetch(probePrefetch, {
-        knowledgeId: stateRow.knowledge_id,
-        lastReviewEventId: stateRow.last_review_event_id ?? null,
-        usedQuestionIds: usedDueQuestionIds,
-      });
-      if (!selected) continue;
-      dueRows.push({
-        ...selected,
-        state: stateRow.state,
-        due_at: stateRow.due_at,
-        fsrs_subject_kind: 'knowledge',
-        fsrs_subject_id: stateRow.knowledge_id,
-      });
-    }
-
-    const legacyQuestionStateRows = await activeDb
+  const candidateWindow = Math.min(Math.max(limit * 4, 100), 400);
+  const usedDueQuestionIds = new Set<string>();
+  const knowledgeStateRows = (
+    await activeDb
       .select({
-        question_id: material_fsrs_state.subject_id,
+        knowledge_id: material_fsrs_state.subject_id,
         state: material_fsrs_state.state,
         due_at: material_fsrs_state.due_at,
-        prompt_md: question.prompt_md,
-        reference_md: question.reference_md,
-        knowledge_ids: question.knowledge_ids,
-        created_at: question.created_at,
-        // YUK-226 S2-5a.0 (B1) — project source/metadata for tier derivation.
-        source: question.source,
-        metadata: question.metadata,
+        last_review_event_id: material_fsrs_state.last_review_event_id,
       })
       .from(material_fsrs_state)
-      .innerJoin(question, eq(question.id, material_fsrs_state.subject_id))
+      .where(
+        and(
+          eq(material_fsrs_state.subject_kind, 'knowledge'),
+          lte(material_fsrs_state.due_at, now),
+        ),
+      )
+      .orderBy(material_fsrs_state.due_at, material_fsrs_state.subject_id)
+      .limit(candidateWindow)
+  ).filter(
+    // YUK-1037 — defense in depth: a 'seed:<subj>:root' FSRS subject is a
+    // structural anchor, never probeable content. Enroll sites no longer mint
+    // it, but a pre-fix row may still exist until ops remediation retires it —
+    // skipping it here keeps a stale anchor card from serving as a due probe
+    // (its questions stay reachable via other paths, never via this KC axis).
+    (stateRow) => !SYNTHETIC_SUBJECT_ROOT_RE.test(stateRow.knowledge_id),
+  );
+
+  // YUK-716 — bulk-prefetch every probe-selection DB input for the whole due page in THREE
+  // reads (was up to ~3 serial round-trips PER due KC — the /api/review/due N+1). The per-KC
+  // selection below is then pure in-memory over the prefetch, and the shared usedDueQuestionIds
+  // set is threaded through the SAME sequential order → byte-identical probe picks.
+  const probePrefetch = await prefetchProbeSelection(
+    activeDb,
+    knowledgeStateRows.map((stateRow) => ({
+      knowledgeId: stateRow.knowledge_id,
+      lastReviewEventId: stateRow.last_review_event_id ?? null,
+    })),
+  );
+  const dueRows: ScheduledDueRow[] = [];
+  for (const stateRow of knowledgeStateRows) {
+    // YUK-282 / ADR-0030 — by-kind variant-rotation probe (recall repeat vs
+    // application family rotation). Returns the same projection the old inline
+    // pickQuestionForKnowledge did (question_id + source/metadata for tier
+    // derivation); mutates usedDueQuestionIds for cross-knowledge dedup.
+    const selected = selectProbeFromPrefetch(probePrefetch, {
+      knowledgeId: stateRow.knowledge_id,
+      lastReviewEventId: stateRow.last_review_event_id ?? null,
+      usedQuestionIds: usedDueQuestionIds,
+    });
+    if (!selected) continue;
+    dueRows.push({
+      ...selected,
+      state: stateRow.state,
+      due_at: stateRow.due_at,
+      fsrs_subject_kind: 'knowledge',
+      fsrs_subject_id: stateRow.knowledge_id,
+    });
+  }
+
+  const legacyQuestionStateRows = await activeDb
+    .select({
+      question_id: material_fsrs_state.subject_id,
+      state: material_fsrs_state.state,
+      due_at: material_fsrs_state.due_at,
+      prompt_md: question.prompt_md,
+      reference_md: question.reference_md,
+      knowledge_ids: question.knowledge_ids,
+      created_at: question.created_at,
+      // YUK-226 S2-5a.0 (B1) — project source/metadata for tier derivation.
+      source: question.source,
+      metadata: question.metadata,
+    })
+    .from(material_fsrs_state)
+    .innerJoin(question, eq(question.id, material_fsrs_state.subject_id))
+    .where(
+      and(
+        eq(material_fsrs_state.subject_kind, 'question'),
+        lte(material_fsrs_state.due_at, now),
+        notDraftPredicate(question.draft_status),
+        // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不出 due 页
+        // （挂起=暂停交付；复核通过翻转维度后自然恢复，学习状态不重建）。
+        questionSuspendedPredicate(question),
+      ),
+    )
+    .orderBy(material_fsrs_state.due_at, question.created_at)
+    .limit(candidateWindow);
+
+  for (const row of legacyQuestionStateRows) {
+    if (usedDueQuestionIds.has(row.question_id)) continue;
+    usedDueQuestionIds.add(row.question_id);
+    dueRows.push({
+      question_id: row.question_id,
+      prompt_md: row.prompt_md,
+      reference_md: row.reference_md,
+      knowledge_ids: row.knowledge_ids,
+      created_at: row.created_at,
+      state: row.state,
+      due_at: row.due_at,
+      fsrs_subject_kind: 'question',
+      fsrs_subject_id: row.question_id,
+      source: row.source,
+      metadata: row.metadata,
+    });
+  }
+  dueRows.sort((a, b) => {
+    const dueDelta = a.due_at.getTime() - b.due_at.getTime();
+    if (dueDelta !== 0) return dueDelta;
+    const createdDelta = a.created_at.getTime() - b.created_at.getTime();
+    if (createdDelta !== 0) return createdDelta;
+    return a.question_id.localeCompare(b.question_id);
+  });
+
+  // Build the "never reviewed" slice by finding failure attempts whose
+  // question has no FSRS state row yet. Use the existing event-stream read
+  // path (getFailureAttempts) and filter out already-projected ids.
+  const projectedQids = new Set(dueRows.map((r) => r.question_id));
+  const candidateQuestionIds = (
+    await loadLatestFailureQuestionIds(activeDb, candidateWindow)
+  ).filter((questionId) => !projectedQids.has(questionId));
+  const newAttempts = await getFailureAttemptsPerQuestion(activeDb, candidateQuestionIds, 4);
+  const newQuestionIds: string[] = [];
+  for (const a of newAttempts) {
+    if (!projectedQids.has(a.question_id) && !newQuestionIds.includes(a.question_id)) {
+      newQuestionIds.push(a.question_id);
+    }
+  }
+  const newRows: Array<{
+    question_id: string;
+    prompt_md: string;
+    reference_md: string | null;
+    knowledge_ids: string[];
+    created_at: Date;
+  }> = [];
+  if (newQuestionIds.length > 0) {
+    // Codex (PR #295) — knowledge-level "already reviewed" exclusion.
+    //
+    // ADR-0028 keys FSRS by knowledge point for labeled questions and DELETES
+    // the question-level row. So a knowledge point that was just reviewed (its
+    // knowledge-level projection has due_at in the future) but whose source
+    // question still carries a failure attempt would otherwise reappear here
+    // as a fresh `fsrs_state: null` never-reviewed card — re-queuing a card
+    // the user just finished. Mirror the orchestrator/review.ts read path: a
+    // candidate is "reviewed" if EITHER its own question-level projection
+    // exists OR any knowledge id it references (failure-attempt
+    // referenced_knowledge_ids ∪ the question's own knowledge_ids) already has
+    // a knowledge-level projection.
+    const failureKnowledgeIdsByQid = new Map<string, Set<string>>();
+    for (const a of newAttempts) {
+      if (!newQuestionIds.includes(a.question_id)) continue;
+      const set = failureKnowledgeIdsByQid.get(a.question_id) ?? new Set<string>();
+      for (const kid of a.referenced_knowledge_ids ?? []) set.add(kid);
+      failureKnowledgeIdsByQid.set(a.question_id, set);
+    }
+
+    // Question-level projection check (legacy unlabeled questions).
+    const existing = await activeDb
+      .select({ subject_id: material_fsrs_state.subject_id })
+      .from(material_fsrs_state)
       .where(
         and(
           eq(material_fsrs_state.subject_kind, 'question'),
-          lte(material_fsrs_state.due_at, now),
-          notDraftPredicate(question.draft_status),
-          // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不出 due 页
-          // （挂起=暂停交付；复核通过翻转维度后自然恢复，学习状态不重建）。
-          questionSuspendedPredicate(question),
+          inArray(material_fsrs_state.subject_id, newQuestionIds),
         ),
-      )
-      .orderBy(material_fsrs_state.due_at, question.created_at)
-      .limit(candidateWindow);
+      );
+    const reviewed = new Set(existing.map((r) => r.subject_id));
 
-    for (const row of legacyQuestionStateRows) {
-      if (usedDueQuestionIds.has(row.question_id)) continue;
-      usedDueQuestionIds.add(row.question_id);
-      dueRows.push({
-        question_id: row.question_id,
-        prompt_md: row.prompt_md,
-        reference_md: row.reference_md,
-        knowledge_ids: row.knowledge_ids,
-        created_at: row.created_at,
-        state: row.state,
-        due_at: row.due_at,
-        fsrs_subject_kind: 'question',
-        fsrs_subject_id: row.question_id,
-        source: row.source,
-        metadata: row.metadata,
-      });
+    // Knowledge-level projection check. Fold in each candidate question's own
+    // knowledge_ids (a labeled question's review schedules its knowledge node)
+    // plus the failure-attempt referenced ids.
+    const candidateQuestionRows = await activeDb
+      .select({ id: question.id, knowledge_ids: question.knowledge_ids })
+      .from(question)
+      .where(inArray(question.id, newQuestionIds));
+    const knowledgeIdsByQid = new Map<string, Set<string>>();
+    for (const qid of newQuestionIds) {
+      const set = new Set<string>(failureKnowledgeIdsByQid.get(qid) ?? []);
+      knowledgeIdsByQid.set(qid, set);
     }
-    dueRows.sort((a, b) => {
-      const dueDelta = a.due_at.getTime() - b.due_at.getTime();
-      if (dueDelta !== 0) return dueDelta;
-      const createdDelta = a.created_at.getTime() - b.created_at.getTime();
-      if (createdDelta !== 0) return createdDelta;
-      return a.question_id.localeCompare(b.question_id);
-    });
-
-    // Build the "never reviewed" slice by finding failure attempts whose
-    // question has no FSRS state row yet. Use the existing event-stream read
-    // path (getFailureAttempts) and filter out already-projected ids.
-    const projectedQids = new Set(dueRows.map((r) => r.question_id));
-    const candidateQuestionIds = (
-      await loadLatestFailureQuestionIds(activeDb, candidateWindow)
-    ).filter((questionId) => !projectedQids.has(questionId));
-    const newAttempts = await getFailureAttemptsPerQuestion(activeDb, candidateQuestionIds, 4);
-    const newQuestionIds: string[] = [];
-    for (const a of newAttempts) {
-      if (!projectedQids.has(a.question_id) && !newQuestionIds.includes(a.question_id)) {
-        newQuestionIds.push(a.question_id);
-      }
+    for (const qRow of candidateQuestionRows) {
+      const set = knowledgeIdsByQid.get(qRow.id) ?? new Set<string>();
+      for (const kid of qRow.knowledge_ids ?? []) set.add(kid);
+      knowledgeIdsByQid.set(qRow.id, set);
     }
-    const newRows: Array<{
-      question_id: string;
-      prompt_md: string;
-      reference_md: string | null;
-      knowledge_ids: string[];
-      created_at: Date;
-    }> = [];
-    if (newQuestionIds.length > 0) {
-      // Codex (PR #295) — knowledge-level "already reviewed" exclusion.
-      //
-      // ADR-0028 keys FSRS by knowledge point for labeled questions and DELETES
-      // the question-level row. So a knowledge point that was just reviewed (its
-      // knowledge-level projection has due_at in the future) but whose source
-      // question still carries a failure attempt would otherwise reappear here
-      // as a fresh `fsrs_state: null` never-reviewed card — re-queuing a card
-      // the user just finished. Mirror the orchestrator/review.ts read path: a
-      // candidate is "reviewed" if EITHER its own question-level projection
-      // exists OR any knowledge id it references (failure-attempt
-      // referenced_knowledge_ids ∪ the question's own knowledge_ids) already has
-      // a knowledge-level projection.
-      const failureKnowledgeIdsByQid = new Map<string, Set<string>>();
-      for (const a of newAttempts) {
-        if (!newQuestionIds.includes(a.question_id)) continue;
-        const set = failureKnowledgeIdsByQid.get(a.question_id) ?? new Set<string>();
-        for (const kid of a.referenced_knowledge_ids ?? []) set.add(kid);
-        failureKnowledgeIdsByQid.set(a.question_id, set);
-      }
-
-      // Question-level projection check (legacy unlabeled questions).
-      const existing = await activeDb
+    const allCandidateKnowledgeIds = Array.from(
+      new Set([...knowledgeIdsByQid.values()].flatMap((set) => [...set])),
+    );
+    const projectedKnowledgeIds = new Set<string>();
+    if (allCandidateKnowledgeIds.length > 0) {
+      const knowledgeProjections = await activeDb
         .select({ subject_id: material_fsrs_state.subject_id })
         .from(material_fsrs_state)
         .where(
           and(
-            eq(material_fsrs_state.subject_kind, 'question'),
-            inArray(material_fsrs_state.subject_id, newQuestionIds),
+            eq(material_fsrs_state.subject_kind, 'knowledge'),
+            inArray(material_fsrs_state.subject_id, allCandidateKnowledgeIds),
           ),
         );
-      const reviewed = new Set(existing.map((r) => r.subject_id));
+      for (const r of knowledgeProjections) projectedKnowledgeIds.add(r.subject_id);
+    }
 
-      // Knowledge-level projection check. Fold in each candidate question's own
-      // knowledge_ids (a labeled question's review schedules its knowledge node)
-      // plus the failure-attempt referenced ids.
-      const candidateQuestionRows = await activeDb
-        .select({ id: question.id, knowledge_ids: question.knowledge_ids })
-        .from(question)
-        .where(inArray(question.id, newQuestionIds));
-      const knowledgeIdsByQid = new Map<string, Set<string>>();
-      for (const qid of newQuestionIds) {
-        const set = new Set<string>(failureKnowledgeIdsByQid.get(qid) ?? []);
-        knowledgeIdsByQid.set(qid, set);
-      }
-      for (const qRow of candidateQuestionRows) {
-        const set = knowledgeIdsByQid.get(qRow.id) ?? new Set<string>();
-        for (const kid of qRow.knowledge_ids ?? []) set.add(kid);
-        knowledgeIdsByQid.set(qRow.id, set);
-      }
-      const allCandidateKnowledgeIds = Array.from(
-        new Set([...knowledgeIdsByQid.values()].flatMap((set) => [...set])),
-      );
-      const projectedKnowledgeIds = new Set<string>();
-      if (allCandidateKnowledgeIds.length > 0) {
-        const knowledgeProjections = await activeDb
-          .select({ subject_id: material_fsrs_state.subject_id })
-          .from(material_fsrs_state)
-          .where(
-            and(
-              eq(material_fsrs_state.subject_kind, 'knowledge'),
-              inArray(material_fsrs_state.subject_id, allCandidateKnowledgeIds),
-            ),
-          );
-        for (const r of knowledgeProjections) projectedKnowledgeIds.add(r.subject_id);
-      }
-
-      const trulyNew = newQuestionIds.filter((id) => {
-        if (reviewed.has(id)) return false;
-        const knowledgeIds = knowledgeIdsByQid.get(id);
-        if (knowledgeIds) {
-          for (const kid of knowledgeIds) {
-            if (projectedKnowledgeIds.has(kid)) return false;
-          }
+    const trulyNew = newQuestionIds.filter((id) => {
+      if (reviewed.has(id)) return false;
+      const knowledgeIds = knowledgeIdsByQid.get(id);
+      if (knowledgeIds) {
+        for (const kid of knowledgeIds) {
+          if (projectedKnowledgeIds.has(kid)) return false;
         }
-        return true;
-      });
-      if (trulyNew.length > 0) {
-        const qRows = await activeDb
-          .select({
-            id: question.id,
-            prompt_md: question.prompt_md,
-            reference_md: question.reference_md,
-            knowledge_ids: question.knowledge_ids,
-            created_at: question.created_at,
-          })
-          .from(question)
-          // Gate-B invariant: never surface an unverified quiz draft, even if it
-          // somehow carries a failure attempt (notDraftPredicate — see the Gate-B note above).
-          .where(
-            and(
-              inArray(question.id, trulyNew),
-              notDraftPredicate(question.draft_status),
-              // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不回炉选入。
-              questionSuspendedPredicate(question),
-            ),
-          );
-        const qById = new Map(qRows.map((q) => [q.id, q]));
-        // Preserve attempt order (newest-first from getFailureAttempts).
-        for (const qid of trulyNew) {
-          const q = qById.get(qid);
-          if (q) {
-            newRows.push({
-              question_id: qid,
-              prompt_md: q.prompt_md,
-              reference_md: q.reference_md,
-              knowledge_ids: q.knowledge_ids ?? [],
-              created_at: q.created_at,
-            });
-          }
+      }
+      return true;
+    });
+    if (trulyNew.length > 0) {
+      const qRows = await activeDb
+        .select({
+          id: question.id,
+          prompt_md: question.prompt_md,
+          reference_md: question.reference_md,
+          knowledge_ids: question.knowledge_ids,
+          created_at: question.created_at,
+        })
+        .from(question)
+        // Gate-B invariant: never surface an unverified quiz draft, even if it
+        // somehow carries a failure attempt (notDraftPredicate — see the Gate-B note above).
+        .where(
+          and(
+            inArray(question.id, trulyNew),
+            notDraftPredicate(question.draft_status),
+            // YUK-1045 — §3.3 契约准入门：suspended/withdrawn 组不回炉选入。
+            questionSuspendedPredicate(question),
+          ),
+        );
+      const qById = new Map(qRows.map((q) => [q.id, q]));
+      // Preserve attempt order (newest-first from getFailureAttempts).
+      for (const qid of trulyNew) {
+        const q = qById.get(qid);
+        if (q) {
+          newRows.push({
+            question_id: qid,
+            prompt_md: q.prompt_md,
+            reference_md: q.reference_md,
+            knowledge_ids: q.knowledge_ids ?? [],
+            created_at: q.created_at,
+          });
         }
       }
     }
-    const dueQuestionIds = dueRows.map((row) => row.question_id);
-    const dueAttempts = await getFailureAttemptsPerQuestion(activeDb, dueQuestionIds, 4);
-    const latestFailureByQid = pickLatestFailureByQuestion([...newAttempts, ...dueAttempts]);
+  }
+  const dueQuestionIds = dueRows.map((row) => row.question_id);
+  const dueAttempts = await getFailureAttemptsPerQuestion(activeDb, dueQuestionIds, 4);
+  const latestFailureByQid = pickLatestFailureByQuestion([...newAttempts, ...dueAttempts]);
 
-    type OutRow = {
-      id: string;
-      activity_ref: ActivityRefT;
-      question_id: string;
-      fsrs_subject_kind: 'question' | 'knowledge';
-      fsrs_subject_id: string;
-      prompt_md: string;
-      reference_md: string | null;
-      knowledge_ids: string[];
-      cause: unknown;
-      fsrs_state: unknown;
-      created_at: Date;
-      last_failure_event: { id: string; correction_state: EffectiveTruth } | null;
-    };
+  // Null-state (never reviewed) rows come first, then the already-due slice.
+  const combined: ReviewDueRow[] = [
+    ...newRows.map((n) => {
+      const latestFailure = latestFailureByQid.get(n.question_id) ?? null;
+      return {
+        id: n.question_id,
+        activity_ref: questionRef(n.question_id),
+        question_id: n.question_id,
+        fsrs_subject_kind:
+          n.knowledge_ids.length > 0 ? ('knowledge' as const) : ('question' as const),
+        fsrs_subject_id: n.knowledge_ids[0] ?? n.question_id,
+        prompt_md: n.prompt_md.slice(0, 1000),
+        reference_md: n.reference_md ? n.reference_md.slice(0, 1000) : null,
+        knowledge_ids: n.knowledge_ids,
+        cause: latestFailure?.cause ?? null,
+        fsrs_state: null,
+        created_at: n.created_at,
+        last_failure_event: latestFailure
+          ? { id: latestFailure.id, correction_state: latestFailure.correction_state }
+          : null,
+      };
+    }),
+    ...dueRows.map((r) => {
+      const latestFailure = latestFailureByQid.get(r.question_id) ?? null;
+      return {
+        id: r.question_id,
+        activity_ref: questionRef(r.question_id),
+        question_id: r.question_id,
+        fsrs_subject_kind: r.fsrs_subject_kind,
+        fsrs_subject_id: r.fsrs_subject_id,
+        prompt_md: r.prompt_md.slice(0, 1000),
+        reference_md:
+          r.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE
+            ? null
+            : r.reference_md
+              ? r.reference_md.slice(0, 1000)
+              : null,
+        knowledge_ids: (r.knowledge_ids as string[]) ?? [],
+        cause: latestFailure?.cause ?? null,
+        fsrs_state: r.state ?? null,
+        created_at: r.created_at,
+        last_failure_event: latestFailure
+          ? { id: latestFailure.id, correction_state: latestFailure.correction_state }
+          : null,
+      };
+    }),
+  ];
 
-    // Null-state (never reviewed) rows come first, then the already-due slice.
-    const combined: OutRow[] = [
-      ...newRows.map((n) => {
-        const latestFailure = latestFailureByQid.get(n.question_id) ?? null;
-        return {
-          id: n.question_id,
-          activity_ref: questionRef(n.question_id),
-          question_id: n.question_id,
-          fsrs_subject_kind:
-            n.knowledge_ids.length > 0 ? ('knowledge' as const) : ('question' as const),
-          fsrs_subject_id: n.knowledge_ids[0] ?? n.question_id,
-          prompt_md: n.prompt_md.slice(0, 1000),
-          reference_md: n.reference_md ? n.reference_md.slice(0, 1000) : null,
-          knowledge_ids: n.knowledge_ids,
-          cause: latestFailure?.cause ?? null,
-          fsrs_state: null,
-          created_at: n.created_at,
-          last_failure_event: latestFailure
-            ? { id: latestFailure.id, correction_state: latestFailure.correction_state }
-            : null,
-        };
-      }),
-      ...dueRows.map((r) => {
-        const latestFailure = latestFailureByQid.get(r.question_id) ?? null;
-        return {
-          id: r.question_id,
-          activity_ref: questionRef(r.question_id),
-          question_id: r.question_id,
-          fsrs_subject_kind: r.fsrs_subject_kind,
-          fsrs_subject_id: r.fsrs_subject_id,
-          prompt_md: r.prompt_md.slice(0, 1000),
-          reference_md:
-            r.source === INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE
-              ? null
-              : r.reference_md
-                ? r.reference_md.slice(0, 1000)
-                : null,
-          knowledge_ids: (r.knowledge_ids as string[]) ?? [],
-          cause: latestFailure?.cause ?? null,
-          fsrs_state: r.state ?? null,
-          created_at: r.created_at,
-          last_failure_event: latestFailure
-            ? { id: latestFailure.id, correction_state: latestFailure.correction_state }
-            : null,
-        };
-      }),
-    ];
+  // T-CS / YUK-168 — cross-subject scheduling v1 (ADR-0014 §5).
+  //
+  // Choose the returned page FIRST, before any goal soft-bias. Instead of a
+  // plain global-due `combined.slice(0, limit)` (which lets one busy subject
+  // dominate the page), we ROUND-ROBIN the selection across the learning-
+  // subjects that have due items: cycle the subjects taking the next most-due
+  // item from each in turn until `limit` is reached or the pool is exhausted.
+  //
+  // We round-robin WITHIN each segment and keep the never-reviewed segment
+  // ahead of the overdue segment, preserving the legacy null-state-first
+  // contract that rerankOverdueByGoals relies on (overdue items remain a
+  // contiguous tail). The never-reviewed block still wins the budget first,
+  // exactly as `combined.slice` did today.
+  //
+  // ND-5 命门: round-robin only changes the ORDER + which subjects share the
+  // budget — every returned row is still a member of the same due pool, never
+  // a non-due item, and the soft goal re-rank below runs on this ALREADY-
+  // SELECTED page (never the pre-limit pool) so it can only reorder, never
+  // expand or shrink the set.
+  //
+  // SINGLE-SUBJECT DEGENERATION: when only one subject has due items, each
+  // segment has a single round-robin bucket → emitted in its original order →
+  // byte-identical to the old `combined.slice(0, limit)`. This keeps the
+  // current single-subject-heavy usage (and every single-subject test) green.
+  const subjectIdByRow = await batchResolveSubjectIds(
+    activeDb,
+    combined.map((r) => ({ id: r.id, knowledge_ids: r.knowledge_ids })),
+  );
+  const newSegment = combined.slice(0, newRows.length);
+  const overdueSegment = combined.slice(newRows.length);
+  const selectedNew = roundRobinBySubject(newSegment, subjectIdByRow, limit);
+  const selectedOverdue = roundRobinBySubject(
+    overdueSegment,
+    subjectIdByRow,
+    limit - selectedNew.length,
+  );
+  const page = [...selectedNew, ...selectedOverdue];
 
-    // T-CS / YUK-168 — cross-subject scheduling v1 (ADR-0014 §5).
-    //
-    // Choose the returned page FIRST, before any goal soft-bias. Instead of a
-    // plain global-due `combined.slice(0, limit)` (which lets one busy subject
-    // dominate the page), we ROUND-ROBIN the selection across the learning-
-    // subjects that have due items: cycle the subjects taking the next most-due
-    // item from each in turn until `limit` is reached or the pool is exhausted.
-    //
-    // We round-robin WITHIN each segment and keep the never-reviewed segment
-    // ahead of the overdue segment, preserving the legacy null-state-first
-    // contract that rerankOverdueByGoals relies on (overdue items remain a
-    // contiguous tail). The never-reviewed block still wins the budget first,
-    // exactly as `combined.slice` did today.
-    //
-    // ND-5 命门: round-robin only changes the ORDER + which subjects share the
-    // budget — every returned row is still a member of the same due pool, never
-    // a non-due item, and the soft goal re-rank below runs on this ALREADY-
-    // SELECTED page (never the pre-limit pool) so it can only reorder, never
-    // expand or shrink the set.
-    //
-    // SINGLE-SUBJECT DEGENERATION: when only one subject has due items, each
-    // segment has a single round-robin bucket → emitted in its original order →
-    // byte-identical to the old `combined.slice(0, limit)`. This keeps the
-    // current single-subject-heavy usage (and every single-subject test) green.
-    const subjectIdByRow = await batchResolveSubjectIds(
-      activeDb,
-      combined.map((r) => ({ id: r.id, knowledge_ids: r.knowledge_ids })),
-    );
-    const newSegment = combined.slice(0, newRows.length);
-    const overdueSegment = combined.slice(newRows.length);
-    const selectedNew = roundRobinBySubject(newSegment, subjectIdByRow, limit);
-    const selectedOverdue = roundRobinBySubject(
-      overdueSegment,
-      subjectIdByRow,
-      limit - selectedNew.length,
-    );
-    const page = [...selectedNew, ...selectedOverdue];
+  // SOFT, goal-relevant re-rank of the OVERDUE segment of the returned page.
+  // Overdue items are exactly those carrying a non-null fsrs_state (the
+  // material_fsrs_state-backed dueRows); never-reviewed items (fsrs_state ===
+  // null) always precede them in `combined`, so the overdue items form a
+  // contiguous tail of `page`. We stable-partition ONLY that segment so
+  // goal-relevant overdue items come first, preserving the original relative
+  // order within each group. Items outside the overdue segment are untouched.
+  const reordered = await rerankOverdueByGoals(activeDb, page, listGoals);
 
-    // SOFT, goal-relevant re-rank of the OVERDUE segment of the returned page.
-    // Overdue items are exactly those carrying a non-null fsrs_state (the
-    // material_fsrs_state-backed dueRows); never-reviewed items (fsrs_state ===
-    // null) always precede them in `combined`, so the overdue items form a
-    // contiguous tail of `page`. We stable-partition ONLY that segment so
-    // goal-relevant overdue items come first, preserving the original relative
-    // order within each group. Items outside the overdue segment are untouched.
-    const reordered = await rerankOverdueByGoals(activeDb, page, listGoals);
+  return { rows: reordered };
+}
 
-    return Response.json({ rows: reordered });
+/** HTTP adapter preserving limit parsing and error responses. */
+export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): Promise<Response> {
+  try {
+    const raw = new URL(req.url).searchParams.get('limit');
+    const limit = raw ? Number.parseInt(raw, 10) : 20;
+    return Response.json(await queryReviewDue(deps.db ?? db, { limit }, deps));
   } catch (err) {
     return errorResponse(err);
   }

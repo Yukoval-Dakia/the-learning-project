@@ -145,3 +145,10 @@ Linear1359已登记1352候选 `server/start/routes/$.ts`、`server/frontdoor.ts`
 ## 1376运行证据补充，2026-10-07 20:26Z
 
 PR1599已合入7bc216509，tree与CI head6ab98ed8c一致；CI Gate37677610975成功、独立验证审P0/P1 NONE。隔离真实HTTP四行冻结错题、附件字节及负例通过；原页面刷新四行、语文筛选空列表、八张缩略图与Lightbox解码通过。20:26:50Z停止自有隔离容器并核owner释放锁，保留独立卷；主四服务healthy，release未变。整组图片真实模型评分、完整媒体/参考答案策略、Start挂载及旧入口退出仍未核销。 这是旧SPA上的保留行为证据，不是Start承载或旧SPA退出证据。领域接口与主线鉴权后挂载责任不变，详见[1376验收](2026-10-08-yuk1376-mistakes-domain.md)。
+
+
+## W1消费者补全与PR1600合入
+
+PR1600已于2026-10-07 21:18:58Z合入 `7100dfae4`，合并tree `743ee4d80617dc9b34c7533d724e052af5fd50c4` 与准确head `c40a18621` 一致；CI Gate `37686417034` 成功，独立初审P0/P1 NONE，无未裁决review threads，完整17分钟窗满足。未部署。Start挂载任务归主线，实际新入口行为及旧SPA退出尚未完成。
+
+[W1详细消费者清单](2026-10-08-yuk1359-w1-consumers.md)固定基线7bc216509，覆盖Today子组件与Inbox共享命令。新增确认ProfileBand的目标画像读取和LearningIntentComposer的待审提议提交；不新增恢复owner。后续新入口按[Start验收矩阵](2026-10-08-yuk1376-start-acceptance.md)取得实际证据，不能借用旧SPA的通过结论。既有1358/1359/1376覆盖剩余工作，本轮无新独立缺陷，不重复建票。
