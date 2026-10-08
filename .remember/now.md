@@ -1,3 +1,9 @@
+# 2026-10-08 current Start integration
+
+PR1605 merged a3691f572 at11:58:08Z, exact CI37772055452/e260bdb98 and full tree match, no review threads, unwatch complete. No deployment;1356 staysInProgress. Start branch feat/yuk-1358-start-workbench normally merged that main asbabac8e08; no overlap with reviewed slice. FinalR2 NONE, prior timestamp P1 resolved; parent53DB passed at053. Parent now owns scoped checks/build and isolated built RPC/browser. Child yuk1358-built-acceptance-preparation-20261008-v1 writes only ignored.cache offline fixture recipe, no source/runtime. No current runtime lock. 7631 owns1381 and1359; no duplicate code writer.
+
+Earlier records are revision-specific history.
+
 # 2026-10-08 YUK-1356 actual Pi acceptance
 
 PR1605 product candidate4cccb1a62 exact CI37768767757 green, R2 NONE. Real MiMo/Pi task yuk1356_root_cae13940-054a-4d82-9cda-a262a921027a succeeded: one registered submit tool/evaluation/activation, immutable original, unknown assistance, zero mastery/FSRS. Estimated $0.002818771. Script exit1 was final HTTP replay expected200 vs canonical201; parent source and all19 after/final relations verified unchanged, original failure preserved, no model rerun. Three prior setup failures all0model calls. See real-pi-acceptance evidence. Lock released11:29:22Z, four original services/release unchanged. No deployment. New evidence-only head CI pending then merge under owner no-wait waiver;1356 remainsInProgress for broader migration. Start Today/Inbox bc43bf89c delivered source; R1 timestamp P1 confirmed, sole repair writer running; runtime acceptance next; no duplicate writer.

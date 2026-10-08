@@ -1,9 +1,11 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：1356已完成4cccb真实MiMo/Pi验收及main4a3d集成139unit/110DB/typecheck/lint/build；本次正常合入fadcb的W3/W4文档，产品源码完全不变，等新CI后合并。Start Today/Inbox唯一writer正修R1时间戳P1；1358/1359继续，未部署。
+> Linear 是权威 tracker。2026-10-08：PR1605已合入main a3691f572，exact CI/tree核验完成；Start Today/Inbox已正常整合该main，R2 NONE、父53DB通过，当前重验构建并准备隔离built RPC/browser。1381独立读取lane及1359退出清单由7631负责；无部署。
 
 
 ## NOW
+
+- **YUK-1358 / Start Today与Inbox**：候选babac8e08正常合入main a3691f572，95项main变更与本slice无重叠。R1知识时间戳P1修复053e9b511，唯一R2无P0/P1；父53DB通过。现由父重验整合构建并执行隔离RPC/browser，剩余ProfileBand、学习意图、TeachingBrief、probe、agent notes及共享Copilot等消费者继续保留退出义务。[交付边界](docs/planning/2026-10-08-yuk1358-start-workbench-handoff.md)。
 
 - **YUK-1359 / W3-W4退出证据**：[W3](docs/planning/2026-10-08-yuk1359-w3-consumers.md)与[W4](docs/planning/2026-10-08-yuk1359-w4-consumers.md)已核真实消费者，补齐知识可见性/边事务、笔记presence及Copilot恢复边界。仅源码清单，Start和运行矩阵待，W5管理页仍待核查。
 
@@ -32,7 +34,7 @@
 
 - **YUK-1338 / YUK-1351 P0 gate**：PR #1590 已合入主线 42987dfd7，本分支同步集成。测试容器中验证 Pi + DBOS 状态版本、过期拒绝、四个进程终止边界、响应复用与单次业务效果；不等于整个迁移或真实 provider 重复付费问题已解决。证据见[gate 记录](docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md)。
 
-- **YUK-1356 业务操作迁移**：共享submitReviewAnswer已接HTTP/worker与真实Pi工具；鉴权chat保存明确授权的用户原件，工具只消费本turn/session绑定引用，新chat原件保守unknown assistance。父139+20 scoped DB通过，R2只读审查进行；真实模型/Start提交消费者、CI和最终交付仍待。[交接](docs/planning/2026-10-08-yuk1356-trusted-pi-handoff.md)。
+- **YUK-1356 业务操作迁移**：PR1605已合入a3691f572，tree与exact CI e260bdb98一致，CI37772055452成功、R2 NONE。共享submitReviewAnswer和可信Pi原件入口已交付；真实MiMo单次效果证据及后续main139unit/110DB验证分开封存。尚缺Start提交消费者及业务任务族整体迁移，保持In Progress。未部署。[交接](docs/planning/2026-10-08-yuk1356-trusted-pi-handoff.md)。
 
 - **YUK-1362 / 当前部署用途**：仅供 Agent 开发测试，禁止再次清库或恢复私人数据。14:30Z实读 current-release 为1365发布 `6e54da8df` / image `fd8c046b97fe`，锁不存在；即时SSE已有1365证据，正文/取消验收仍受provider限额阻碍，1366负责现存DLQ。本线程未操作服务。此处是带时间的观察，后续发布仍须重新核验并原子取锁；日用须owner明确要求。
 - **历史 YUK-1341 产品 AI 发布**：PR #1585 已通过 exact-head CI、独立初审和等待窗并合并。app/worker 都固定 `opencode-go/mimo-v2.6-pro`；54聊天任务和 Mem0 接线已落地。生产两轮 Copilot 成功，原会话及 Pi cursor 连续、刷新回放一致；后台 MemoryBrief 也已实际成功。未宣称所有任务质量或评分切片均获准入。
@@ -42,7 +44,7 @@
 
 ## NEXT
 
-- YUK-1356 完成独立审查/P0-P1修复、exact-head CI与真实Pi输出验收；沿1358继续Today/Inbox Start消费者，不将当前原件提交切片当全部迁移完成。
+- 父完成1358构建后真实RPC/browser、PR与准确CI交付，再继续剩余W1消费者和1356 Start提交/任务族；不将原件提交切片或两个页面主读取迁移当全部迁移完成。
 
 - **YUK-1352 / PR1592**：已合入main eae963377，CI37758570995与合并tree一致；隔离错题入口已验收，未部署。剩余路由与canonical boot继续。
 

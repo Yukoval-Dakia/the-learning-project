@@ -100,4 +100,8 @@ This repair writer performed no DB/container/service/provider/network/runtime op
 
 ## Parent DB verification — 2026-10-08
 
-Parent verified repair source/check hashes and executed seven scoped DB files against a new disposable testcontainer on exact053e9b511:53/53 passed, including the real postgres-js timestamp precision and HTTP parity regression, summary, overnight, inbox proposals/decisions, note undo and cost. The new timestamp case has no domain/driver mock. Built RPC/browser behavior still needs acceptance. At11:50:32Z parent verified owner/token and released the runtime lock; disposable PG exited, four existing container IDs/images/start/health and release SHA stayed identical. No provider/replay/deploy. [Parent evidence](evidence/2026-10-08-yuk1358-parent-db.json). Final R2 is running; no third review.
+Parent verified repair source/check hashes and executed seven scoped DB files against a new disposable testcontainer on exact053e9b511:53/53 passed, including the real postgres-js timestamp precision and HTTP parity regression, summary, overnight, inbox proposals/decisions, note undo and cost. The new timestamp case has no domain/driver mock. Built RPC/browser behavior still needs acceptance. At11:50:32Z parent verified owner/token and released the runtime lock; disposable PG exited, four existing container IDs/images/start/health and release SHA stayed identical. No provider/replay/deploy. [Parent evidence](evidence/2026-10-08-yuk1358-parent-db.json). Final R2 returned NONE with the original P1 resolved; no third review.
+
+## Latest-main integration
+
+Parent normally merged main a3691f572 as babac8e08 after PR1605 exact-head CI and tree verification. All95 files added/changed by main are disjoint from this slice; no manual product merge was needed. R2 remains the final source review. The new integration checks and built RPC/browser acceptance are tracked separately from the earlier53DB and source seals. No deployed service changed.
