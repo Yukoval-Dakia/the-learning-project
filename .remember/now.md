@@ -1,3 +1,7 @@
+# Judge optional logger build ownership — 2026-10-09
+
+Confirmed coordinator7631 sole judge writer may modify server/start/vite.config.ts server bundling and package.json build:migrate only for exact winston/winston-transport externals.75 accessible/77 registered trees showed no dirty paths/lockfile; this thread will not write them. Source-only author runtime restrictions remain. Parent must verify emitted default logger loading, not only build. Detailed scope: docs/planning/2026-10-09-judge-start-ownership.md. No runtime action here.
+
 # Idle ownership update — 2026-10-09
 
 Checked77 registered trees/75 accessible. Only active judge tree has named shared WIP; no Copilot/session changes observed. Coordinator7631 may take the bounded idle write-path extension after judge releases and delivers; no idle writer or migration number now. Start/boot/shutdown/generic SSE remain here. See docs/planning/2026-10-09-idle-start-ownership.md. No runtime action.
