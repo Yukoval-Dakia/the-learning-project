@@ -482,7 +482,18 @@ it('grades an original captured by the existing authenticated submissions owner 
   const before = await counts();
   expect(before.submissions).toHaveLength(1);
   expect(before.fsrs).toHaveLength(1);
-  expect(before.mastery).toHaveLength(1);
+  expect(
+    before.mastery
+      .map(({ subject_kind, subject_id, evidence_count }) => ({
+        subject_kind,
+        subject_id,
+        evidence_count,
+      }))
+      .sort((a, b) => a.subject_kind.localeCompare(b.subject_kind)),
+  ).toEqual([
+    { subject_kind: 'ability_global', subject_id: 'math', evidence_count: 1 },
+    { subject_kind: 'knowledge', subject_id: f.knowledgeIds[0], evidence_count: 1 },
+  ]);
   expect(before.activations).toHaveLength(1);
   const [candidate] = await testDb().select().from(evaluation);
   expect(candidate.provenance).toMatchObject({ source: 'automatic', assisted: false });
