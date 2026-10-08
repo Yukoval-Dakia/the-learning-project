@@ -961,5 +961,94 @@
       }
     },
     "dbCoverage": "Final exact-head CI required; no local DB/runtime operations."
+  },
+  "parentFinalSummaryIntegration": {
+    "main": "90f499126e81249f2f193ec69f1c6966a11ca127",
+    "summarySourceMatchesMain": true,
+    "tests": 88,
+    "files": 5,
+    "checks": {
+      "export-red": {
+        "command": [
+          "pnpm",
+          "vitest",
+          "run",
+          "--config",
+          "vitest.unit.config.ts",
+          "src/server/export/constants.test.ts"
+        ],
+        "logPath": "/tmp/yuk1355-main-20261008/export-red.log",
+        "logSha256": "ac3bab29c60c2a5c674f579144708840d8a8629d7a73da49d86543b745ddccb0",
+        "exit": 1,
+        "startedAt": "2026-10-08T10:04:55.899938+00:00",
+        "finishedAt": "2026-10-08T10:04:58.016581+00:00"
+      },
+      "export-green": {
+        "command": [
+          "pnpm",
+          "vitest",
+          "run",
+          "--config",
+          "vitest.unit.config.ts",
+          "src/server/export/constants.test.ts"
+        ],
+        "logPath": "/tmp/yuk1355-main-20261008/export-green.log",
+        "logSha256": "0f523817400a2480d66bc9acdff42958d6d94cf1d904cdfae861ad9641b21d4e",
+        "exit": 0,
+        "startedAt": "2026-10-08T10:05:06.538354+00:00",
+        "finishedAt": "2026-10-08T10:05:08.323220+00:00"
+      },
+      "export-biome": {
+        "command": ["pnpm", "exec", "biome", "check", "src/server/export/constants.test.ts"],
+        "logPath": "/tmp/yuk1355-main-20261008/export-biome.log",
+        "logSha256": "f5a1d92a8e3c58215fe7abb61f964c639b1870515a3ccf291d053bc8032ce06f",
+        "exit": 0,
+        "startedAt": "2026-10-08T10:05:16.558019+00:00",
+        "finishedAt": "2026-10-08T10:05:18.239633+00:00"
+      },
+      "summary-integration-unit": {
+        "command": [
+          "pnpm",
+          "vitest",
+          "run",
+          "--config",
+          "vitest.unit.config.ts",
+          "src/server/export/constants.test.ts",
+          "src/capabilities/shell/api/workbench-summary.unit.test.ts",
+          "src/server/boss/start-worker.test.ts",
+          "src/kernel/manifest.unit.test.ts",
+          "src/capabilities/observability/manifest.unit.test.ts"
+        ],
+        "logPath": "/tmp/yuk1355-main-20261008/summary-integration-unit.log",
+        "logSha256": "880f99ff9b63df34cf6767ad9059994add79f26b9f69a7c6c62678df20e8ae4e",
+        "exit": 0,
+        "startedAt": "2026-10-08T10:06:03.986704+00:00",
+        "finishedAt": "2026-10-08T10:06:07.287615+00:00"
+      },
+      "summary-integration-typecheck": {
+        "command": ["pnpm", "typecheck"],
+        "logPath": "/tmp/yuk1355-main-20261008/summary-integration-typecheck.log",
+        "logSha256": "2a8d6b78156915f67659b8b6a677490565f507f9a07d133820dc7bac12813ab7",
+        "exit": 0,
+        "startedAt": "2026-10-08T10:06:13.379552+00:00",
+        "finishedAt": "2026-10-08T10:06:19.351860+00:00"
+      },
+      "summary-integration-lint": {
+        "command": ["pnpm", "lint"],
+        "logPath": "/tmp/yuk1355-main-20261008/summary-integration-lint.log",
+        "logSha256": "3095c770baa7965cef6f8121195f4e4805175f9d452a19020a305b4b47f769d9",
+        "exit": 0,
+        "startedAt": "2026-10-08T10:06:19.385157+00:00",
+        "finishedAt": "2026-10-08T10:06:22.625728+00:00"
+      },
+      "summary-integration-build": {
+        "command": ["pnpm", "build"],
+        "logPath": "/tmp/yuk1355-main-20261008/summary-integration-build.log",
+        "logSha256": "20d74e9406487c2e84c920c5edc9b86f417f8ea3a735ca0baa39627ec9fe96e9",
+        "exit": 0,
+        "startedAt": "2026-10-08T10:06:22.654126+00:00",
+        "finishedAt": "2026-10-08T10:06:37.917239+00:00"
+      }
+    }
   }
 }

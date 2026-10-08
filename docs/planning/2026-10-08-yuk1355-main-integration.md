@@ -43,3 +43,7 @@ P2 catalog drift is intentionally deferred under the repository P2 policy and ca
 ## CI unit-shard correction
 
 CI37760645850 unit shard3 found one failure: export/constants.test.ts had not listed the three new prune runtime tables already excluded from the learner archive. These tables remain part of full PostgreSQL operational backup; the fix does not alter export, restore, queue or receipt behavior. Parent reproduced RED on the exact file and added the three expected table names. All35 export-constant tests now pass; focused Biome passes. Logs `/tmp/yuk1355-main-20261008/export-{red,green,biome}.log` retain evidence. Production sources/build remain unchanged by this correction.
+
+## Final summary integration
+
+Main `90f499126` (PR1603) was normally merged after the export test correction. Only PLAN/handoff conflicted; all six summary source/test files match main exactly. Parent reran five scoped unit files (88 tests), app/Start typecheck, lint and full build, all exit0. Logs `/tmp/yuk1355-main-20261008/summary-integration-{unit,typecheck,lint,build}.log` and receipt JSON preserve exact commands and hashes. No new DB/runtime/provider operations. YUK1377 and parent1358 remain In Progress: Start consumer and full route acceptance are not delivered by their source merge.
