@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：1356已在4cccb候选完成真实MiMo/Pi验收；正常整合main4a3d（1596 Copilot与1607事件领域）后重跑针对性验证，旧模型证据不冒称新源验收。1380领域已交付，Today/Inbox Start源码已交回且R1进行；1358/1359继续，未部署。
+> Linear 是权威 tracker。2026-10-08：1356已在4cccb候选完成真实MiMo/Pi验收；正常整合main4a3d（1596 Copilot与1607事件领域）后重跑针对性验证，139unit/110DB/typecheck/lint/build通过，旧模型证据不冒称新源验收。1380领域已交付，Today/Inbox Start源码已交回且R1进行；1358/1359继续，未部署。
 
 
 ## NOW

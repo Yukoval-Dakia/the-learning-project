@@ -15,3 +15,7 @@
 真实 Hono app.request 使用产品token/epoch与业务链，未测TCP/浏览器和后台worker取件。新chat原件保守assisted；合成出版准入不代表真实题目质量。仅该领域工具开放，不代表整套Copilot工具面验收。DBOS评分族、Start提交消费者和部署仍待1356/1358推进。
 
 11:29:22Z核owner后释放运行锁；临时PG退出，主四容器ID/image/start/health及release SHA完全一致。未部署、未重放主队列，用途保持Agent TEST ONLY。完整输入/输出/SQL保留在本机隔离证据目录；版本化[证据索引](2026-10-08-yuk1356-real-pi-acceptance.evidence.json)含23文件hash、模型/任务/费用、失败和父裁决。无新增产品缺陷需建票；剩余迁移范围仍归既有YUK1356/1358/1359，不能因PR合并关闭父票。
+
+## 最新 main 集成边界
+
+真实调用后正常合入 main4a3d（1596 Copilot数量预算/远程工具结束与finalization，以及1607事件领域）。仅PLAN/remember人工冲突；产品自动合并后父检查原件绑定改动和main改动同时保留，139unit、110DB、typecheck/lint/build通过，主服务/release不变。详细[集成证据](2026-10-08-yuk1356-main4a3d-integration.evidence.json)保留文件交集与日志hash。没有重复付费调用；原真实输出严格绑定4cccb，不称新整合源码、无约束Copilot全部行为或部署已经真实验收。本PR的新增可信原件提交行为已有真实输出，main交互另由集成回归覆盖。
