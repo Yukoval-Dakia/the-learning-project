@@ -862,5 +862,104 @@
     "Standalone prune fixture is rebuilt byte-identical; four historical cron/recovery tests need no source-driven rerun for this merge.",
     "Application server/worker/migrate bundles differ; parent coordinates remaining tests or exact-head CI.",
     "Upstream blank EOF in docs/planning/2026-10-07-linear-remaining-inventory.md retained; imported main diff --check exits 2."
-  ]
+  ],
+  "parentStartIntegration": {
+    "main": "eae963377d6b77988c815b10684afeb49f794cc1",
+    "commit": "0283e6bdc",
+    "conflicts": ["PLAN.md", ".remember/now.md", "package.json"],
+    "packageResolution": "Preserve Start build and artifact external plus DBOS Winston externals. Lockfile equals main.",
+    "mainSourceFilesCompared": 33,
+    "mainSourceMismatches": [],
+    "historicalHashMatches": [
+      ".cache/yuk1355-cron-worker.cjs",
+      ".cache/yuk1355-worker.cjs",
+      "drizzle/0115_yuk1355_prune_backend.sql",
+      "drizzle/meta/_journal.json",
+      "node_modules/@dbos-inc/dbos-sdk/dist/src/scheduler/scheduler.js",
+      "node_modules/@dbos-inc/dbos-sdk/package.json",
+      "node_modules/pg-boss/dist/timekeeper.js",
+      "node_modules/pg-boss/package.json",
+      "scripts/lint-baseline.json",
+      "src/capabilities/observability/manifest.ts",
+      "src/kernel/manifest.ts",
+      "src/server/boss/handlers.ts",
+      "src/server/boss/queue-config.ts",
+      "src/server/boss/register-capability-jobs.ts",
+      "src/server/boss/start-worker.ts",
+      "src/server/durable/prune-family.ts",
+      "src/server/durable/prune-worker.ts",
+      "tests/dbos-prune/cron.db.test.ts",
+      "tests/dbos-prune/migration.db.test.ts",
+      "tests/dbos-prune/worker.ts"
+    ],
+    "historicalHashChanges": ["package.json", "pnpm-lock.yaml"],
+    "scopedUnitTests": 240,
+    "scopedUnitFiles": 17,
+    "checks": {
+      "parent-install": {
+        "command": ["pnpm", "install", "--frozen-lockfile"],
+        "logPath": "/tmp/yuk1355-main-20261008/parent-install.log",
+        "logSha256": "0b160d9065677bac3d773e4d2141df52dd0fa35fd36456129a3ecf4d9b07fe26",
+        "exit": 0,
+        "startedAt": "2026-10-08T09:58:19.746308+00:00",
+        "finishedAt": "2026-10-08T09:58:23.893919+00:00"
+      },
+      "parent-unit": {
+        "command": [
+          "pnpm",
+          "vitest",
+          "run",
+          "--config",
+          "vitest.unit.config.ts",
+          "src/server/boss/start-worker.test.ts",
+          "src/server/boss/queue-config.test.ts",
+          "src/server/boss/job-yield.unit.test.ts",
+          "src/kernel/manifest.unit.test.ts",
+          "src/capabilities/observability/manifest.unit.test.ts",
+          "server/index.unit.test.ts",
+          "scripts/audit-schema-writes.test.ts",
+          "src/capabilities/ingestion/api/contracts.unit.test.ts",
+          "src/capabilities/ingestion/ui/mistakes-api.unit.test.ts",
+          "src/server/questions/contract-normalizer.test.ts",
+          "web/src/routes/MistakesPage.unit.test.tsx",
+          "server/frontdoor.unit.test.ts",
+          "server/start/auth.unit.test.ts",
+          "server/start/mistakes-read.unit.test.ts",
+          "server/start/mistakes-client.unit.test.ts",
+          "web/src/routes/MistakesPage.start.unit.test.tsx",
+          "src/ui/shell/AppTopbar.a11y.unit.test.tsx"
+        ],
+        "logPath": "/tmp/yuk1355-main-20261008/parent-unit.log",
+        "logSha256": "59483d470f6f7f32a22cdd8a880d7cefa997cfd4c645d3815191968735e1e868",
+        "exit": 0,
+        "startedAt": "2026-10-08T09:58:40.808964+00:00",
+        "finishedAt": "2026-10-08T09:58:45.052660+00:00"
+      },
+      "parent-typecheck": {
+        "command": ["pnpm", "typecheck"],
+        "logPath": "/tmp/yuk1355-main-20261008/parent-typecheck.log",
+        "logSha256": "963f9e074eb750f21f9ebbfddd5b3e8e3da9fa722254a26c25085218f13d23d0",
+        "exit": 0,
+        "startedAt": "2026-10-08T09:58:45.080306+00:00",
+        "finishedAt": "2026-10-08T09:59:02.233949+00:00"
+      },
+      "parent-lint": {
+        "command": ["pnpm", "lint"],
+        "logPath": "/tmp/yuk1355-main-20261008/parent-lint.log",
+        "logSha256": "9394965c4845d63405928642c95258df0959571c5bcd1283e00b144761b927de",
+        "exit": 0,
+        "startedAt": "2026-10-08T09:59:02.296322+00:00",
+        "finishedAt": "2026-10-08T09:59:06.679266+00:00"
+      },
+      "parent-build": {
+        "command": ["pnpm", "build"],
+        "logPath": "/tmp/yuk1355-main-20261008/parent-build.log",
+        "logSha256": "01d0d9f6835e7a7be203bbdbaaf1d6121efbc78868a0eabca30f22911231b2e5",
+        "exit": 0,
+        "startedAt": "2026-10-08T09:59:06.715255+00:00",
+        "finishedAt": "2026-10-08T09:59:23.786578+00:00"
+      }
+    },
+    "dbCoverage": "Final exact-head CI required; no local DB/runtime operations."
+  }
 }

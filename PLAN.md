@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：PR1595整合main eae963377（含已合并Start入口）；build链保留Start产物与DBOS Winston external。父线程验证中，Agent TEST ONLY，未部署。
+> Linear 是权威 tracker。2026-10-08：PR1595整合main eae963377（含已合并Start入口）；build链保留Start产物与DBOS Winston external。父240 scoped unit、typecheck/lint/build通过，准确CI待推送，Agent TEST ONLY，未部署。
 
 ## NOW
 
