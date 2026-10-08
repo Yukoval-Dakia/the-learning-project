@@ -27,3 +27,5 @@ export { observabilityConfigEffectiveFacts } from './server/config-effective-fac
 export { readHubSyncHealth } from './server/hub-sync';
 
 export { readProviderCostWindow } from './server/provider-cost-projection';
+
+export { type TodayCost, loadTodayCost } from './server/today-cost';
