@@ -1,3 +1,7 @@
+# Latest Start event delivery — 2026-10-09
+
+PR1623 merged at2026-10-08T22:52:00Z as7472f4395f4a12a5167e33034d5d8af8bf695049. Exact91f4687ed CI37854525406 passed all fourDB shards and aggregate. Merge/CI trees equal d6e9d69a5769f4634e49c201b90fae1422827831; git diff empty. R2 NONE, no unresolved threads, no third review. Real71RPC/browser evidence remains at4f36; incoming main96077 and event source blob comparisons preserve attribution. No deployment/runtime operation.1358/1359 verified In Progress after merge. Judge0118/implementation stays7631 sole writer; Start/boot remains5796. Below records are historical, not current PR status.
+
 # Current Start event detail lane
 
 PR1623 branch feat/yuk-1358-start-event-detail, runtime accepted at4f36d3fc5 (productf1e4). Independent R1 fixture P1 fixed; R2 NONE/noPending, max two rounds used. Parent15DB and actual71RPC/12windows/6writes; T3 browser correction/disabled pending controls, GET-only retry, committed-response loss without autoreplay, 2001char400, real401 re-gate, bad/missing records, legacy question link and deep reload verified. Technical-details snapshot truncated, not counted. Ignored recipe had two fixed setup/seed defects with preserved failures; no product changes. Runtime archive and full report: docs/planning/2026-10-09-yuk1358-start-event-detail-parent.md.
