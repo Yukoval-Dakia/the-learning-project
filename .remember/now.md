@@ -1,3 +1,13 @@
+# 当前交接 — PR1621 watch与YUK1394设计
+
+PR1621远端exact53f05b572，T3 linked/watch，父验收与独立R1已完成；尚未收到CI终态/merge证据。当前新增文档是独立本地交接提交，暂不push到1621。收到CI后仍核远端53f gate，不能拿本地后续docs HEAD冒称exact CI。1393产品/测试/制品保持53f。
+
+YUK1394 UUID75053a92-31c2-4c04-b101-f8277bb5be72，1355子票InProgress，仅设计阶段。唯一readonly设计task yuk1355-two-orphans-durable-design-20261009-v1由codex gpt-6-astra high运行，仅写/tmp；无代码writer。5796确认两orphan候选scope无WIP，不占0117。1393收口后从freshmain建新branch，将本次本地docs提交正常带入下一交付，不混入当前exact CI。
+
+main10df的路由12/28和任务注册清点已版本化于1359退出清单，静态覆盖不是完成比例。PR1622 agent-notes由5796独占，latest reported8bfc测试修复不改产品，R1/14DB已有，built/CI尚待；合入后才更新入口数。本线程无runtime锁/服务，最近1393锁18:39:51Z已释放；协作线程18:45:27Z释放其notes测试锁，下一动作仍须实际重核。
+
+以下均为此前revision的历史交接，不覆盖上文状态。
+
 1393更新：b33为两测试驱动修正，产品仍3bd受审源码；R1 NONE/hash父匹配。父33DB/10distinct进程/2cron/4旧prune/26selected migration+49unit/static/build/7audit通过；失败轮次封存docs/planning/evidence/yuk1393。18:39:51.511332Z核token bced释放锁，原4服务/运行集合/release不变，通知5796。准备PR/exact CI，无部署；1355/1358/1359未完成。
 
 1393源码a9d7c8322已completed/noPending，writer释放。父核26source SHA；正常整合PR1620/main10df1a471，仅PLAN/now冲突。PR1620已18:16:17Z合入，tree与755bdeebb相同、CI37821989407全绿，未部署。下列Start待合叙述为历史。父即接独立R1及持锁运行验收。
