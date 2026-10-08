@@ -21,19 +21,38 @@ describe('ContextBudgetTracker — two-tier tool-call budget', () => {
     );
   });
 
-  it('warns at the old watermark but only soft-stops at the hard ceiling', () => {
+  it('warns at the old watermark; the uncapped hard ceiling never soft-stops', () => {
     const tracker = new ContextBudgetTracker(COPILOT_CONTEXT_BUDGET);
-    for (let i = 0; i < COPILOT_CONTEXT_BUDGET.toolCalls.hard; i += 1) {
+    // YUK-1373 lifted Copilot's hard ceilings to MAX_SAFE_INTEGER — assert the
+    // sentinel instead of looping to it (the loop would never terminate).
+    expect(COPILOT_CONTEXT_BUDGET.toolCalls.hard).toBe(Number.MAX_SAFE_INTEGER);
+    const probes = COPILOT_CONTEXT_BUDGET.toolCalls.warning + 5;
+    for (let i = 0; i < probes; i += 1) {
       expect(tracker.beforeExecute({ name: 'query_knowledge', effect: 'read' })).toBeUndefined();
       const notice = tracker.currentNotice();
       if (i + 1 < COPILOT_CONTEXT_BUDGET.toolCalls.warning) expect(notice).toBeNull();
+      else expect(notice?.dimensions.toolCalls?.used).toBe(i + 1);
+    }
+    expect(tracker.snapshot().toolCalls).toBe(probes);
+  });
+
+  it('soft-stops at the hard ceiling when the budget is bounded', () => {
+    const budget: ContextBudget = {
+      ...COPILOT_CONTEXT_BUDGET,
+      toolCalls: { warning: 10, hard: 25 },
+    };
+    const tracker = new ContextBudgetTracker(budget);
+    for (let i = 0; i < budget.toolCalls.hard; i += 1) {
+      expect(tracker.beforeExecute({ name: 'query_knowledge', effect: 'read' })).toBeUndefined();
+      const notice = tracker.currentNotice();
+      if (i + 1 < budget.toolCalls.warning) expect(notice).toBeNull();
       else expect(notice?.dimensions.toolCalls?.used).toBe(i + 1);
     }
     // The 26th call is softly stopped; calls 11–25 remain available to heavy questions.
     const stop = tracker.beforeExecute({ name: 'query_knowledge', effect: 'read' });
     expect(typeof stop).toBe('string');
     expect(stop).toMatch(/hard context budget reached/);
-    expect(tracker.snapshot().toolCalls).toBe(COPILOT_CONTEXT_BUDGET.toolCalls.hard);
+    expect(tracker.snapshot().toolCalls).toBe(budget.toolCalls.hard);
   });
 
   it('counts every effect (read / propose / write) against the tool-call budget', () => {
