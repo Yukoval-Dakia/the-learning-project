@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：1391正常整合共享audit修复main ec9a9ed5e；保留原8a1准确CI/55DB/R1证据，整合450unit/static/build及四post-build audit通过，等待新exact CI。1358/1359仍未完成，未部署。
+> Linear 是权威 tracker。2026-10-09：1391已合main f80d47703；主线实际启动配置/subjects三页面Start迁移，复用已交付公共读写与canonical配置依赖。7631独占1392 board read；无runtime操作。
 
 ## NOW
+
+- **YUK-1358 / Start配置与科目控制**：feat/yuk-1358-start-admin-controls基于f80d47703，唯一writer实施三页面及嵌套catalog/journal数据接线；边界与验收见[本轮计划](docs/planning/2026-10-09-yuk1358-start-admin-controls.md)。父负责canonical模块身份、鉴权/epoch、真实DB/RPC/browser及PR交付；领域操作与agency不改。
 
 - **YUK-1359 / 共享审计修复已合入**：PR1618合main ec9a9ed5e，父报告与exact b9a4caf87树一致，CI37805707992全绿、R1 NONE。历史retention合同与generated dist扫描修复已交付；1391本树四post-build audit已独立复验通过；历史失败记录保留。
 
