@@ -125,3 +125,9 @@ Parent retains Linear capture and all delivery obligations.
 Parent verified all 64 source/log manifest entries and all 676 generated Start server files against the handed-off SHA256 manifests. At fixed source `739757dd9f7e6419e371efbafbfbd5e6a213ca56`, the parent independently ran all eight focused suites: 296/296 passed. With the generated output still present, all four real commands returned zero: schema, architecture-deepening, provider-lanes and provider-attempt-truth. Logs are `/tmp/yuk1359-parent-unit.log` and `/tmp/yuk1359-parent-audits/`; initial failures remain in the author evidence root.
 
 Independent R1 is running on the fixed source diff. This is not yet review approval, exact-head CI or merge. No database, service, provider or deployment operation was performed.
+
+## Independent review and CI fixture repair
+
+Initial independent R1 completed with no P0/P1 on `f69fb1bde..739757dd9`; parent matched diff SHA256 `eecb8b8d46003105ea3ce0ebc1c293ee3c2891be74b0eaca87fe23b0ed500fae`. The reviewer traced native launch/settlement/Stop/recovery, drain/read/export consumers and the provider import closure. No additional review round was opened.
+
+Exact CI `37804475263`, job `113405166468`, found one new fixture cleanup failure on Linux: `rmSync(server/artifacts)` reported that the symlink path was a directory. The preceding audit rejection assertion passed; 3017 other tests in that shard passed. Parent retained the downloaded job log at `/tmp/yuk1359-ci-unit3-gh.log` and changed only fixture cleanup to `unlinkSync`, with an assertion that its target file remains intact. Audit implementation is unchanged. Parent reran all 68 provider-lane tests, typecheck, lint and the complete build; all returned zero. Logs are in `/tmp/yuk1359-ci-repair/`. These Mac checks do not claim the pending new Linux CI result.

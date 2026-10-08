@@ -1,5 +1,13 @@
 /* SIZE_OK: the fixture-heavy audit matrix shares one temporary-project DSL and one census contract. */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
 import { buildSync } from 'esbuild';
@@ -1388,7 +1396,10 @@ void [staticText, requireText, dynamicText];
     symlinkSync('../dist', resolve(root, 'server/artifacts'));
     write(root, 'server/alias.ts', "import './artifacts/start/server/server.js';\n");
     expect(() => collectProviderWireFindings(root)).toThrow('symbolic link');
-    rmSync(resolve(root, 'server/artifacts'));
+    unlinkSync(resolve(root, 'server/artifacts'));
+    expect(readFileSync(resolve(root, 'dist/start/server/server.js'), 'utf8')).toBe(
+      'export const start = 1;\n',
+    );
     rmSync(resolve(root, 'server/alias.ts'));
     rmSync(resolve(root, 'dist/start/server/server.js'));
     write(root, 'dist/start/server/target.js', 'export const start = 1;\n');
