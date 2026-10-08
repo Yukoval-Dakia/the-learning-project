@@ -6,6 +6,12 @@ import type { JobDecl } from '@/kernel/manifest';
 import { FAST_QUEUE_OPTS, createOrUpdateQueue } from '@/server/boss/queue-config';
 import { waitForRunnableEpoch } from '@/server/contract-epoch';
 import {
+  type JudgeWorkerBoundary,
+  createJudgeBackend,
+  prepareJudgeBackend,
+  registerJudgeWorkflows,
+} from './judge-worker';
+import {
   PRUNE_DBOS_SCHEMA,
   PRUNE_FAMILY,
   commitPrune,
@@ -20,7 +26,6 @@ import {
   installReviewOrphanProducerFence,
 } from './review-orphan-family';
 import { createReviewOrphanBackend, registerReviewOrphanWorkflow } from './review-orphan-worker';
-
 import { installSessionOrphanProducerFence } from './session-orphan-backend';
 import type { SessionOrphanBoundaryHook } from './session-orphan-family';
 import {
@@ -67,10 +72,13 @@ export type DurableWorkerOptions = {
     reviewOrphans: JobDecl;
     conversationOrphans: JobDecl;
     placementOrphans: JobDecl;
+    judgeRun?: JobDecl;
+    judgeReconcile?: JobDecl;
   };
   boundary?: (name: PruneBoundary) => Promise<void>;
   reviewBoundary?: ReviewOrphanBoundaryHook;
   sessionBoundary?: SessionOrphanBoundaryHook;
+  judgeBoundary?: JudgeWorkerBoundary;
   reconcileIntervalMs?: number;
 };
 type HostOptions = PruneWorkerOptions & {
@@ -79,6 +87,9 @@ type HostOptions = PruneWorkerOptions & {
   placementDecl?: JobDecl;
   reviewBoundary?: ReviewOrphanBoundaryHook;
   sessionBoundary?: SessionOrphanBoundaryHook;
+  judgeDecl?: JobDecl;
+  judgeReconcileDecl?: JobDecl;
+  judgeBoundary?: JudgeWorkerBoundary;
 };
 type Host = {
   boss: PgBoss;
@@ -114,14 +125,20 @@ function declarationKey(options: HostOptions) {
   }
   // Preserve prune-only fixtures; any later expansion or changed contract is explicit failure.
   return JSON.stringify(
-    [options.decl, options.reviewDecl, options.conversationDecl, options.placementDecl].map(
-      (decl) =>
-        decl
-          ? {
-              name: decl.name,
-              schedule: decl.schedule ? { cron: decl.schedule.cron, tz: decl.schedule.tz } : null,
-            }
-          : null,
+    [
+      options.decl,
+      options.reviewDecl,
+      options.conversationDecl,
+      options.placementDecl,
+      options.judgeDecl,
+      options.judgeReconcileDecl,
+    ].map((decl) =>
+      decl
+        ? {
+            name: decl.name,
+            schedule: decl.schedule ? { cron: decl.schedule.cron, tz: decl.schedule.tz } : null,
+          }
+        : null,
     ),
   );
 }
@@ -188,6 +205,8 @@ export async function startDurableWorker(options: DurableWorkerOptions): Promise
     reviewDecl: options.declarations.reviewOrphans,
     conversationDecl: options.declarations.conversationOrphans,
     placementDecl: options.declarations.placementOrphans,
+    judgeDecl: options.declarations.judgeRun,
+    judgeReconcileDecl: options.declarations.judgeReconcile,
   });
 }
 
@@ -202,6 +221,9 @@ async function mountHost(
     conversationDecl,
     placementDecl,
     sessionBoundary,
+    judgeDecl,
+    judgeReconcileDecl,
+    judgeBoundary,
     reconcileIntervalMs = 15000,
   }: HostOptions,
   host: Host,
@@ -218,6 +240,21 @@ async function mountHost(
     await installSessionOrphanProducerFence(db);
   }
   const workflow = registerPruneWorkflow(db, boundary);
+  if (!!judgeDecl !== !!judgeReconcileDecl)
+    throw new Error('Judge execution and reconciliation must mount together');
+  if (judgeDecl && judgeReconcileDecl) await prepareJudgeBackend(boss, db);
+  const judgeWorkflows =
+    judgeDecl && judgeReconcileDecl ? registerJudgeWorkflows(db, judgeBoundary) : undefined;
+  const judgeBackend =
+    judgeDecl && judgeReconcileDecl && judgeWorkflows
+      ? createJudgeBackend({
+          boss,
+          db,
+          runDecl: judgeDecl,
+          reconcileDecl: judgeReconcileDecl,
+          workflows: judgeWorkflows,
+        })
+      : undefined;
   const reviewWorkflow = reviewDecl ? registerReviewOrphanWorkflow(db, reviewBoundary) : undefined;
   const reviewBackend =
     reviewDecl && reviewWorkflow
@@ -272,7 +309,11 @@ async function mountHost(
         clearInterval(timer);
         await pending;
         const errors: unknown[] = [];
-        for (const backend of [...(reviewBackend ? [reviewBackend] : []), ...sessionBackends]) {
+        for (const backend of [
+          ...(reviewBackend ? [reviewBackend] : []),
+          ...sessionBackends,
+          ...(judgeBackend ? [judgeBackend] : []),
+        ]) {
           try {
             await backend.stop();
           } catch (error) {
@@ -339,6 +380,7 @@ async function mountHost(
         reconcile,
         ...(reviewBackend ? [() => reviewBackend.reconcile()] : []),
         ...sessionBackends.map((backend) => () => backend.reconcile()),
+        ...(judgeBackend ? [() => judgeBackend.reconcile()] : []),
       ]) {
         try {
           await reconcileFamily();

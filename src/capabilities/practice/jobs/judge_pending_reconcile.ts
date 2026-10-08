@@ -1,110 +1,157 @@
-// YUK-777 (A3) — domain-state-scan reconcile sweeper for the durable judge lane.
-//
-// The recovery source of truth is the DOMAIN log, never `job_events`. Design §3.6b spells out
-// why: dispatch does several non-atomic things (write the pending-attempt evidence, `boss.send`,
-// write the QUEUED marker), so ANY recovery keyed on `job_events` is structurally blind to the
-// window it exists to cover — send-first ordering can leave a job with no marker, marker-first
-// can leave a marker with no job, and a crash between the evidence and the send leaves neither.
-// Scanning `experimental:judge_pending_attempt` rows for a missing `review` event asks the one
-// question that holds in every one of those shapes: **did this answer ever get judged?**
-//
-// This handler deliberately re-enqueues rather than judging inline. It runs on the `fast` tier
-// and does no LLM work itself; the paid call happens in `judge_run`, behind the same
-// rate-limited enqueue face the submit route uses (`enqueueJudgeRun`). A sweeper with its own
-// bespoke `boss.send` would be a producer of paid inference with no budget gate — the exact
-// hazard the ticket calls out, and the worst possible one to add while a provider is already
-// throttling us.
-//
-// Bounded on THREE axes, because an unbounded auto-recovery loop is how a stuck run turns into
-// a paid-inference treadmill:
-//   - per sweep: `RECONCILE_SCAN_LIMIT` runs, so a backlog drains over ticks;
-//   - per run:   `MAX_RECOVERY_ATTEMPTS` re-enqueues, counted from this run's own
-//                `judge_run.requeued` markers;
-//   - per age:   `RECOVERY_MAX_AGE_MS`, past which the row stays as permanent evidence and
-//                recovery becomes manual (RULED D6: manual-only, do not build auto-recovery
-//                out ahead of observed DLQ traffic).
-// Nothing is ever lost by hitting a bound — the answer is immutable evidence either way.
-
+import { randomUUID } from 'node:crypto';
+import { and, asc, desc, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
-import type { Db } from '@/db/client';
-import { writeJobEvent } from '@/server/events/writer';
+import { canonicalHash } from '@/core/migration/canonical';
 import {
-  JUDGE_MAX_RECOVERY_ATTEMPTS,
-  JUDGE_RECOVERY_MAX_AGE_MS,
+  JudgeOperationalEvent,
+  JudgeReconcileObservationPayload,
+} from '@/core/schema/event/judge-operational-events';
+import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
+import type { Db } from '@/db/client';
+import { event } from '@/db/schema';
+import { observeJudgeDelivery } from '@/server/durable/judge-client';
+import {
+  acceptJudgeDelivery,
+  authorizeJudgeSend,
+  disposeJudgeRun,
+  judgeOwner,
+  lockJudgeRun,
+  readJudgeControl,
+  reserveJudgeDelivery,
+  writeJudgeReceipt,
+} from '../server/judge-operational';
+import { judgeReceiptId, judgeRecoveryCapacity } from '../server/judge-operational-state';
+import {
+  type JudgeRunEnqueueDeps,
+  admitJudgeRun,
   enqueueJudgeRun,
-  findStalledJudgePendingAttempts,
-  getJudgeRecoveryMetadata,
-  inspectJudgeQueue,
-  judgeRecoveryJobId,
 } from '../server/judge-run-dispatch';
-import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
+import { projectJudgeRunNotification } from '../server/judge-run-notification';
+import { readJudgeRunPermanent } from '../server/judge-run-observation';
+import { JUDGE_RUN_EVENTS } from '../server/judge-run-status';
 
-/**
- * How long an unjudged attempt must sit before the sweeper considers it stalled.
- *
- * This is NOT the "longest a judge could legitimately take" threshold that a time-only sweeper
- * would need (`EXPIRE_LLM` is 1h and there are two redeliveries behind it, so that number would
- * be hours and the learner would wait them out). It does not need to be, because the queue
- * liveness check below is authoritative: a run whose job is still `created`/`retry`/`active` is
- * skipped no matter how old it is. The threshold only has to be comfortably longer than the
- * dispatch window itself, so a submit in flight right now is never mistaken for a stalled one.
- */
 export const RECONCILE_STALL_MS = 15 * 60_000;
-
-/**
- * Past this age the sweeper stops trying. `job_events` is pruned on a 7d retention, so beyond
- * that window the `judge_run.requeued` markers this sweeper counts to bound itself are gone —
- * without the age cap a very old row would have its recovery budget silently reset and start
- * over. Aligning the two windows keeps the bound real instead of nominal.
- */
-export const RECOVERY_MAX_AGE_MS = JUDGE_RECOVERY_MAX_AGE_MS;
-
-/** Runs re-enqueued per sweep. Bounds the burst a backlog can put on the paid queue. */
+export const RECOVERY_MAX_AGE_MS = 7 * 86400_000;
 export const RECONCILE_SCAN_LIMIT = 20;
-/** Raw pending rows inspected per sweep. Keeps pagination bounded when all candidates are manual. */
 export const RECONCILE_RAW_SCAN_LIMIT = 200;
-
-/**
- * Automatic re-enqueues per run. After this, the answer keeps sitting in the domain log as
- * permanent evidence and a human decides (YUK-800 A4). A run that has failed this many fresh
- * dispatches is failing for a reason no further retry will change.
- */
-export const MAX_RECOVERY_ATTEMPTS = JUDGE_MAX_RECOVERY_ATTEMPTS;
-
+export const MAX_RECOVERY_ATTEMPTS = 2;
 export interface JudgePendingReconcileReport {
   scanned: number;
   reenqueued: number;
-  /** Skipped because the queue says the run can still progress (or did not answer). */
   skippedLive: number;
-  /** Skipped because pg-boss recorded deliberate terminal/DLQ evidence (D6 manual-only). */
   skippedTerminal: number;
-  /** Skipped because this run has already used its automatic recovery budget. */
   skippedExhausted: number;
-  /** Re-enqueue attempted and threw (rate limit, pg-boss down). Retried next tick. */
   failed: number;
 }
-
-export interface JudgePendingReconcileDeps {
-  /** test seam — forwarded to `enqueueJudgeRun` / `resolveQueueLiveness`. */
-  boss?: {
-    send: (name: string, data: unknown, options?: { id?: string }) => Promise<string | null>;
+export interface JudgePendingReconcileDeps extends JudgeRunEnqueueDeps {
+  observe?: typeof observeJudgeDelivery;
+  boss?: NonNullable<JudgeRunEnqueueDeps['boss']> & {
     getJobById: (queue: string, id: string) => Promise<import('pg-boss').JobWithMetadata | null>;
   };
-  checkRateLimit?: () => number;
-  refundRateLimit?: (token: number) => void;
 }
-
-/**
- * One sweep. Pure of scheduling concerns (takes `now`), so it is directly callable from a test
- * and from a boot-time sweep without going through pg-boss — the `ai_task_run_reconcile` shape.
- */
+/** The cursor and frozen selection commit before work. Replays retain that selection; later ticks move past it. */
+async function selectSweep(
+  database: Db,
+  args: { now: Date; limit: number; tickId: string; backend?: 'pg-boss' | 'dbos' },
+) {
+  return database.transaction(async (tx) => {
+    const control = await readJudgeControl(tx, 'share');
+    await tx.execute(sql`select pg_advisory_xact_lock(1356,2)`);
+    const id = judgeReceiptId('sweep', [args.tickId]);
+    const [saved] = await tx.select().from(event).where(eq(event.id, id));
+    if (saved) {
+      const receipt = JudgeOperationalEvent.parse(saved);
+      if (
+        receipt.action !== 'experimental:judge_reconcile_observation' ||
+        receipt.payload.tick_id !== args.tickId ||
+        (args.backend && receipt.payload.ownership.backend !== args.backend)
+      )
+        throw new Error('Judge sweep identity conflict');
+      return receipt.payload;
+    }
+    const ownership = {
+      ...judgeOwner(control),
+      backend: args.backend ?? judgeOwner(control).backend,
+    };
+    const [prior] = await tx
+      .select({ payload: event.payload })
+      .from(event)
+      .where(
+        and(
+          eq(event.action, 'experimental:judge_reconcile_observation'),
+          sql`${event.payload}->'ownership'->>'incarnation' = ${control.incarnation}`,
+          sql`${event.payload}->'ownership'->>'backend' = ${ownership.backend}`,
+        ),
+      )
+      .orderBy(desc(sql`(${event.payload}->>'sequence')::bigint`))
+      .limit(1);
+    const last = prior ? JudgeReconcileObservationPayload.parse(prior.payload) : null;
+    const admitted = control.phase === ownership.backend;
+    const cursor = last?.cursor;
+    const rows = admitted
+      ? await tx
+          .select()
+          .from(event)
+          .where(
+            and(
+              eq(event.action, 'experimental:judge_pending_attempt'),
+              lt(event.created_at, new Date(args.now.getTime() - RECONCILE_STALL_MS)),
+              cursor
+                ? sql`(${event.created_at},${event.id}) > (${cursor.created_at}::timestamptz,${cursor.id})`
+                : undefined,
+              sql`not exists (select 1 from event d where d.action='experimental:judge_disposition' and
+        ((d.payload->>'coordinate'='native' and d.payload->>'pending_id'=${event.id}) or
+         (d.payload->>'coordinate'='legacy_task' and d.payload->>'task_id'=${event.id})))`,
+            ),
+          )
+          .orderBy(asc(event.created_at), asc(event.id))
+          .limit(args.limit)
+      : [];
+    const final = rows.at(-1);
+    const payload = JudgeReconcileObservationPayload.parse({
+      version: 1,
+      tick_id: args.tickId,
+      ownership,
+      sequence: (last?.sequence ?? 0) + 1,
+      admission: admitted ? 'admitted' : 'fenced',
+      pending_ids: rows.map((r) => r.id),
+      cursor:
+        rows.length === args.limit && final
+          ? { created_at: final.created_at.toISOString(), id: final.id }
+          : null,
+      recorded_at: args.now.toISOString(),
+    });
+    await writeJudgeReceipt(
+      tx,
+      id,
+      {
+        actor_kind: 'system',
+        actor_ref: 'judge:operational',
+        subject_kind: 'durable_family',
+        subject_id: 'judge_run',
+        caused_by_event_id: null,
+        outcome: null,
+        task_run_id: null,
+        cost_micro_usd: null,
+        action: 'experimental:judge_reconcile_observation',
+        payload,
+      },
+      args.now,
+    );
+    return payload;
+  });
+}
 export async function reconcileStalledJudgeAttempts(
-  db: Db,
-  args: { now?: Date; deps?: JudgePendingReconcileDeps; rawScanLimit?: number } = {},
-): Promise<JudgePendingReconcileReport> {
-  const now = args.now ?? new Date();
-  const deps = args.deps ?? {};
-  const rawScanLimit = args.rawScanLimit ?? RECONCILE_RAW_SCAN_LIMIT;
+  database: Db,
+  args: {
+    now?: Date;
+    deps?: JudgePendingReconcileDeps;
+    rawScanLimit?: number;
+    tick?: { backend: 'pg-boss' | 'dbos'; id: string };
+  } = {},
+) {
+  const now = args.now ?? new Date(),
+    deps = args.deps ?? {};
   const report: JudgePendingReconcileReport = {
     scanned: 0,
     reenqueued: 0,
@@ -113,169 +160,240 @@ export async function reconcileStalledJudgeAttempts(
     skippedExhausted: 0,
     failed: 0,
   };
-  // Persist these only after the paged scan. Removing rows from the query's eligible set while
-  // OFFSET is advancing would shift the remaining rows left and skip candidates in this sweep.
-  // Once stamped, the next hourly run excludes them in SQL, so even a >200 manual/exhausted
-  // prefix drains instead of permanently hiding later dispatch gaps.
-  const newlyTerminal: Array<{
-    runId: string;
-    pendingEventId: string;
-    reason: 'queue_terminal_manual_only' | 'recovery_budget_exhausted';
-  }> = [];
-
-  let offset = 0;
-  while (report.reenqueued < RECONCILE_SCAN_LIMIT && report.scanned < rawScanLimit) {
-    const page = await findStalledJudgePendingAttempts(db, {
-      stalledBefore: new Date(now.getTime() - RECONCILE_STALL_MS),
-      recordedAfter: new Date(now.getTime() - RECOVERY_MAX_AGE_MS),
-      limit: Math.min(RECONCILE_SCAN_LIMIT - report.reenqueued, rawScanLimit - report.scanned),
-      offset,
-    });
-    if (page.rowsRead === 0) break;
-    offset += page.rowsRead;
-    report.scanned += page.rowsRead;
-    for (const pending of page.attempts) {
-      const runId = pending.payload.run_id;
-
-      try {
-        const recovery = await getJudgeRecoveryMetadata(db, runId);
-
-        // A terminal FAILED is an explicit decision that no delivery remains. Whether it came from
-        // exhausted retries (DLQ) or a deterministic error, D6 makes recovery manual-only; queue
-        // absence/completion must not reinterpret it as a dispatch gap and buy more paid calls.
-        if (recovery.hasTerminalFailure) {
-          report.skippedTerminal += 1;
-          continue;
-        }
-
-        // Distinct attempts, not marker rows: an uncertain INSERT acknowledgement or overlapping
-        // sweep can duplicate a marker for the same deterministic delivery without buying another
-        // judge call.
-        const priorRequeues = recovery.attempts;
-        const recoveryJobId = judgeRecoveryJobId(runId, priorRequeues + 1);
-        let queue = await inspectJudgeQueue(runId, {
-          ...(deps.boss ? { boss: deps.boss } : {}),
-          ...(recovery.latestDeliveryId ? { jobId: recovery.latestDeliveryId } : {}),
-        });
-        if (recovery.latestDeliveryId === null && queue.eligibility === 'eligible') {
-          // A successful send can outlive a failed marker write. The deterministic next recovery
-          // id is therefore a second liveness source when no marker exists: inspect it before
-          // creating what would otherwise be a duplicate paid delivery.
-          queue = await inspectJudgeQueue(runId, {
-            ...(deps.boss ? { boss: deps.boss } : {}),
-            jobId: recoveryJobId,
-          });
-        }
-        if (queue.eligibility === 'manual') {
-          report.skippedTerminal += 1;
-          newlyTerminal.push({
-            runId,
-            pendingEventId: pending.pendingEventId,
-            reason: 'queue_terminal_manual_only',
-          });
-          continue;
-        }
-        if (queue.eligibility !== 'eligible') {
-          report.skippedLive += 1;
-          continue;
-        }
-
-        // The budget limits creation of another delivery; it does not revoke the final delivery
-        // while that job can still finish. Queue liveness above is authoritative, so only stamp a
-        // terminal manual decision after the latest recovery has actually stopped.
-        if (priorRequeues >= MAX_RECOVERY_ATTEMPTS) {
-          report.skippedExhausted += 1;
-          newlyTerminal.push({
-            runId,
-            pendingEventId: pending.pendingEventId,
-            reason: 'recovery_budget_exhausted',
-          });
-          console.warn(
-            `[judge_pending_reconcile] ${runId} has used its ${MAX_RECOVERY_ATTEMPTS} automatic recovery attempts — the answer stays recorded and unjudged, pending a manual re-enqueue`,
-            { pending_event_id: pending.pendingEventId },
-          );
-          continue;
-        }
-
-        const jobId = await enqueueJudgeRun(
-          pending.payload.caller === 'native_assessment'
-            ? { run_id: runId, caller: 'native_assessment', submit: pending.payload.submit }
-            : { run_id: runId, caller: 'submit', submit: pending.payload.submit },
-          deps,
-          { jobId: recoveryJobId, acceptExistingJobId: true },
-        );
-        // A successful dispatch is not complete until its liveness marker is durable. Retry the
-        // marker once immediately; if the DB remains unavailable, the deterministic job id keeps
-        // a later sweep from creating a second delivery for the same recovery attempt.
-        let markerError: unknown = null;
-        for (let markerAttempt = 0; markerAttempt < 2; markerAttempt++) {
-          try {
-            await writeJobEvent(db, {
-              business_table: JUDGE_RUN_TABLE,
-              business_id: runId,
-              event_type: JUDGE_RUN_EVENTS.REQUEUED,
-              payload: {
-                delivery_id: jobId,
-                attempt: priorRequeues + 1,
-                pending_event_id: pending.pendingEventId,
-                submitted_at: pending.submittedAt.toISOString(),
-              },
-            });
-            markerError = null;
-            break;
-          } catch (err) {
-            markerError = err;
-          }
-        }
-        if (markerError !== null) throw markerError;
-        report.reenqueued += 1;
-        console.info(
-          `[judge_pending_reconcile] re-enqueued ${runId} (recovery attempt ${priorRequeues + 1}/${MAX_RECOVERY_ATTEMPTS})`,
-        );
-      } catch (err) {
-        // One transient metadata query or dispatch failure must not strand the rest of the batch.
-        report.failed += 1;
-        console.error(
-          `[judge_pending_reconcile] recovery check or enqueue failed for ${runId}`,
-          err,
-        );
-      }
-    }
-  }
-
-  for (const terminal of newlyTerminal) {
+  const sweep = await selectSweep(database, {
+    now,
+    limit: Math.max(1, Math.min(200, args.rawScanLimit ?? 200)),
+    tickId: args.tick?.id ?? randomUUID(),
+    backend: args.tick?.backend,
+  });
+  if (sweep.admission === 'fenced') return report;
+  const rows = sweep.pending_ids.length
+    ? await database.select().from(event).where(inArray(event.id, sweep.pending_ids))
+    : [];
+  for (const row of rows) {
+    report.scanned++;
     try {
-      await writeJobEvent(db, {
-        business_table: JUDGE_RUN_TABLE,
-        business_id: terminal.runId,
-        event_type: JUDGE_RUN_EVENTS.FAILED,
+      const parsed = JudgePendingAttemptPayload.safeParse(row.payload);
+      if (!parsed.success) {
+        await database.transaction(async (tx) => {
+          await lockJudgeRun(tx, row.id);
+          await writeJudgeReceipt(
+            tx,
+            judgeReceiptId('legacy-disposition', ['pending', row.id]),
+            {
+              actor_kind: 'system',
+              actor_ref: 'judge:operational',
+              subject_kind: 'durable_family',
+              subject_id: 'judge_run',
+              caused_by_event_id: null,
+              outcome: null,
+              action: 'experimental:judge_disposition',
+              payload: {
+                coordinate: 'legacy_task',
+                version: 1,
+                backend: sweep.ownership.backend,
+                task_id: row.id,
+                payload_digest: canonicalHash(row.payload),
+                kind: 'manual',
+                reason: 'invalid_receipt',
+                actor_ref: 'judge:reconciler',
+                decided_at: now.toISOString(),
+                observed_ownership: sweep.ownership,
+                evidence_refs: [row.id],
+                evidence_digest: canonicalHash(row.payload),
+              },
+            },
+            now,
+          );
+        });
+        report.skippedTerminal++;
+        continue;
+      }
+      const runId = parsed.data.run_id;
+      const state = await readJudgeRunPermanent(database, runId);
+      if (state.kind === 'resolved' || state.kind === 'manual') {
+        await projectJudgeRunNotification(database, runId);
+        report.skippedTerminal++;
+        continue;
+      }
+      if (state.kind !== 'pending') {
+        await disposeAndProject(database, runId, {
+          reason:
+            parsed.data.caller === 'submit' ? 'historical_unknown' : 'recovery_history_unknown',
+          actorRef: 'judge:reconciler',
+          evidenceRefs: [row.id],
+          evidenceDigest: canonicalHash(row.payload),
+          at: now,
+        });
+        report.skippedTerminal++;
+        continue;
+      }
+      const latest = state.delivery;
+      if (!latest) {
+        report.skippedLive++;
+        continue;
+      }
+      const observation = await (deps.observe ?? observeJudgeDelivery)(latest.reservation);
+      if (observation.kind === 'unavailable') {
+        report.skippedLive++;
+        continue;
+      }
+      if (
+        observation.kind === 'present' &&
+        ['ERROR', 'CANCELLED', 'MAX_RECOVERY_ATTEMPTS_EXCEEDED'].includes(observation.state)
+      ) {
+        await disposeAndProject(database, runId, {
+          reason: 'terminal_delivery',
+          actorRef: 'judge:reconciler',
+          evidenceRefs: [latest.reservationId],
+          evidenceDigest: canonicalHash(observation),
+          at: now,
+        });
+        report.skippedTerminal++;
+        continue;
+      }
+      if (
+        observation.kind === 'present' &&
+        (latest.kind === 'send_unknown' ||
+          latest.kind === 'reserved_unsent' ||
+          latest.kind === 'rejected')
+      ) {
+        await database.transaction(async (tx) => {
+          await lockJudgeRun(tx, runId);
+          await acceptJudgeDelivery(tx, latest.reservation, null, 'authoritative_lookup', now);
+        });
+        report.skippedLive++;
+        continue;
+      }
+      if (observation.kind === 'present' && observation.state !== 'SUCCESS') {
+        report.skippedLive++;
+        continue;
+      }
+      if (
+        (latest.kind === 'accepted' || latest.kind === 'started') &&
+        observation.kind === 'absent'
+      ) {
+        await disposeAndProject(database, runId, {
+          reason: 'recovery_history_unknown',
+          actorRef: 'judge:reconciler',
+          evidenceRefs: [latest.reservationId],
+          evidenceDigest: canonicalHash(observation),
+          at: now,
+        });
+        report.skippedTerminal++;
+        continue;
+      }
+      if (report.reenqueued >= RECONCILE_SCAN_LIMIT) continue;
+      const admitted = await database.transaction(async (tx) => {
+        const control = await readJudgeControl(tx, 'share');
+        await lockJudgeRun(tx, runId);
+        const current = await readJudgeRunPermanent(tx, runId);
+        if (
+          control.phase !== sweep.ownership.backend ||
+          control.incarnation !== sweep.ownership.incarnation ||
+          control.epoch !== sweep.ownership.epoch ||
+          current.kind !== 'pending' ||
+          canonicalHash(current.delivery) !== canonicalHash(latest)
+        )
+          return null;
+        const fresh = latest.kind === 'accepted' || latest.kind === 'started';
+        const capacity = judgeRecoveryCapacity({
+          state: current.operational,
+          submittedAt: current.pending.submittedAt,
+          now,
+        });
+        if (fresh && capacity.kind !== 'available')
+          return {
+            kind: 'manual' as const,
+            reason:
+              capacity.kind === 'manual' ? capacity.reason : ('recovery_history_unknown' as const),
+          };
+        // Every new authorization is gated and stops exactly at seven days, even for a same-ID resend.
+        if (now.getTime() - current.pending.submittedAt.getTime() >= RECOVERY_MAX_AGE_MS)
+          return { kind: 'manual' as const, reason: 'recovery_exhausted' as const };
+        const token = admitJudgeRun(deps);
+        const reservation =
+          fresh && capacity.kind === 'available'
+            ? await reserveJudgeDelivery(
+                tx,
+                current.pending.id,
+                current.pending.payload,
+                current.operational.ownership.to,
+                capacity.slot,
+                now,
+              )
+            : latest.reservation;
+        const sendId = await authorizeJudgeSend(tx, reservation, now);
+        return { kind: 'send' as const, reservation, sendId, token, pending: current.pending };
+      });
+      if (!admitted) {
+        report.skippedLive++;
+        continue;
+      }
+      if (admitted.kind === 'manual') {
+        await disposeAndProject(database, runId, {
+          reason: admitted.reason,
+          actorRef: 'judge:reconciler',
+          evidenceRefs: [row.id, latest.reservationId],
+          evidenceDigest: canonicalHash(observation),
+          at: now,
+        });
+        report.skippedExhausted++;
+        continue;
+      }
+      if (admitted.pending.payload.caller !== 'native_assessment')
+        throw new Error('Non-native dispatch authority');
+      const deliveryId = await enqueueJudgeRun(
+        { run_id: runId, caller: 'native_assessment', submit: admitted.pending.payload.submit },
+        deps,
+        {
+          token: admitted.token,
+          authorization: { database, reservation: admitted.reservation, sendId: admitted.sendId },
+        },
+      );
+      await projectJudgeRunNotification(database, runId, {
+        eventType: admitted.reservation.slot ? JUDGE_RUN_EVENTS.REQUEUED : JUDGE_RUN_EVENTS.QUEUED,
         payload: {
-          reason: terminal.reason,
-          pending_event_id: terminal.pendingEventId,
-          observed_at: now.toISOString(),
+          delivery_id: deliveryId,
+          attempt: admitted.reservation.slot,
+          pending_event_id: row.id,
         },
       });
-    } catch (err) {
-      // Without the marker this row remains eligible and is retried next tick. Count the failed
-      // state transition explicitly instead of claiming the permanent manual decision landed.
-      report.failed += 1;
-      console.error(
-        `[judge_pending_reconcile] failed to persist terminal evidence for ${terminal.runId}`,
-        err,
-      );
+      report.reenqueued++;
+    } catch (error) {
+      report.failed++;
+      console.error('[judge_pending_reconcile] retained recovery failure', row.id, error);
     }
   }
   return report;
 }
-
-/**
- * pg-boss handler factory. Returns the report as the job `output` (YUK-779) so a sweep that
- * scanned rows but recovered none is visible in `/api/logs/jobs` instead of looking identical
- * to a sweep that had nothing to do.
- */
 export function buildJudgePendingReconcileHandler(
-  db: Db,
+  database: Db,
   deps: JudgePendingReconcileDeps = {},
-): (jobs: Job[]) => Promise<JudgePendingReconcileReport> {
-  return async () => await reconcileStalledJudgeAttempts(db, { deps });
+) {
+  return async (jobs: Job[]) => {
+    let report: JudgePendingReconcileReport = {
+      scanned: 0,
+      reenqueued: 0,
+      skippedLive: 0,
+      skippedTerminal: 0,
+      skippedExhausted: 0,
+      failed: 0,
+    };
+    for (const job of jobs)
+      report = await reconcileStalledJudgeAttempts(database, {
+        deps,
+        tick: { backend: 'pg-boss', id: job.id },
+      });
+    return report;
+  };
+}
+
+async function disposeAndProject(
+  database: Db,
+  runId: string,
+  options: Parameters<typeof disposeJudgeRun>[2],
+) {
+  await disposeJudgeRun(database, runId, options);
+  await projectJudgeRunNotification(database, runId);
 }

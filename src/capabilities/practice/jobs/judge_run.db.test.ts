@@ -2,6 +2,7 @@
 import { eq } from 'drizzle-orm';
 import type { JobWithMetadata } from 'pg-boss';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import {
   assessment_submission,
   evaluation,
@@ -17,6 +18,7 @@ import { computeReplay } from '@/server/events/sse_replay';
 import { nativeJudgeRunFixture } from '../../../../tests/fixtures/native-judge-run';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { executeNativeAttempt } from '../server/assessment/durable-attempt';
+import { EvaluateSubmissionError } from '../server/judge/evaluate-submission';
 import { deriveJudgeRunStatus, terminalJudgeRunResult } from '../server/judge-run-status';
 import { type JudgeRunJobData, buildJudgeRunHandler, runJudgeRun } from './judge_run';
 
@@ -27,7 +29,15 @@ async function replay(runId: string) {
   return computeReplay(testDb(), { businessTable: 'judge_run', businessId: runId, lastEventId: 0 });
 }
 function delivery(data: unknown): JobWithMetadata<JudgeRunJobData> {
-  return { id: `delivery_${Math.random()}`, data, ...first } as JobWithMetadata<JudgeRunJobData>;
+  const parsed = z
+    .object({ operational: z.object({ delivery_id: z.string() }).optional() })
+    .passthrough()
+    .parse(data);
+  return {
+    id: parsed.operational?.delivery_id ?? `delivery_${Math.random()}`,
+    data,
+    ...first,
+  } as JobWithMetadata<JudgeRunJobData>;
 }
 async function seedKc(id: string, domain = 'math') {
   const now = new Date();
@@ -92,22 +102,28 @@ describe('native judge worker', () => {
     expect(await db.select().from(material_fsrs_state)).toMatchObject([{ state: { reps: 1 } }]);
   });
 
-  it('retryable infrastructure failure leaves a nonterminal trace and rethrows', async () => {
-    const db = testDb();
-    const f = await nativeJudgeRunFixture(db);
-    await expect(
-      runJudgeRun(db, f.job, first, {
-        executeNativeAttemptFn: async () => {
-          throw new Error('database temporarily unavailable');
-        },
-      }),
-    ).rejects.toThrow('temporarily');
-    const events = await replay(f.runId);
-    expect(deriveJudgeRunStatus(events)).toBe('started');
-    expect(events.some((row) => row.event_type === 'judge_run.attempt_failed')).toBe(true);
-    expect(events.some((row) => row.event_type === 'judge_run.failed')).toBe(false);
-    expect(f.execute).not.toHaveBeenCalled();
-  });
+  it.each([
+    new Error('database temporarily unavailable'),
+    new EvaluateSubmissionError('evaluation_busy', 'evaluation group is temporarily busy'),
+  ])(
+    'retryable infrastructure failure leaves a nonterminal trace and rethrows (%s)',
+    async (error) => {
+      const db = testDb();
+      const f = await nativeJudgeRunFixture(db);
+      await expect(
+        runJudgeRun(db, f.job, first, {
+          executeNativeAttemptFn: async () => {
+            throw error;
+          },
+        }),
+      ).rejects.toThrow(error);
+      const events = await replay(f.runId);
+      expect(deriveJudgeRunStatus(events)).toBe('started');
+      expect(events.some((row) => row.event_type === 'judge_run.attempt_failed')).toBe(true);
+      expect(events.some((row) => row.event_type === 'judge_run.failed')).toBe(false);
+      expect(f.execute).not.toHaveBeenCalled();
+    },
+  );
 
   it('retains the diagnostic original claim after model failure and never redispatches on redelivery', async () => {
     const db = testDb();
@@ -190,7 +206,7 @@ describe('native judge worker', () => {
     const bad = { ...f.job, submit: { ...f.job.submit, submitted_at: 'invalid-date' } };
     expect((await runJudgeRun(db, bad, first)).status).toBe('failed');
     expect((await replay(f.runId)).at(-1)?.payload).toMatchObject({
-      error_code: 'invalid_payload',
+      error_code: 'terminal_delivery',
     });
     expect(f.execute).not.toHaveBeenCalled();
   });
@@ -225,7 +241,9 @@ describe('native judge worker', () => {
       ).rejects.toThrow();
       const events = await replay(f.runId);
       expect(JSON.stringify(events)).not.toContain('private-internal-path');
-      expect(events.at(-1)?.payload).toMatchObject({ error_code: 'judge_failed' });
+      expect(events.at(-1)?.payload).toMatchObject({
+        error_code: meta.retryCount < meta.retryLimit ? 'judge_failed' : 'terminal_delivery',
+      });
     },
   );
 
@@ -239,8 +257,8 @@ describe('native judge worker', () => {
       'failed',
     );
     expect((await replay(f.runId)).at(-1)?.payload).toMatchObject({
-      error_code: 'corrupt_state',
-      reason: 'non_retryable',
+      error_code: 'terminal_delivery',
+      reason: 'manual',
     });
     expect(execute).toHaveBeenCalledTimes(1);
   });

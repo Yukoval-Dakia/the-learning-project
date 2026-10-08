@@ -337,3 +337,45 @@ export { storeSourcedQuestionTool } from './server/tools/store-sourced-question'
 export { practiceTaskSpecs } from './task-public';
 export const submitReviewAnswer: typeof import('./server/review-operation').submitReviewAnswer =
   async (...args) => (await import('./server/review-operation')).submitReviewAnswer(...args);
+
+export type { JudgeStatusDto, JudgeStatusRead } from './server/judge-run-observation';
+export {
+  JudgeRunStatusResponseSchema,
+  JudgeRunTerminalResultSchema,
+} from './server/judge-run-status';
+export async function readJudgeRunStatus(database: import('@/db/client').Db, runId: string) {
+  return (await import('./server/judge-run-observation')).readJudgeRunStatus(database, runId);
+}
+export async function runJudgeDelivery(
+  ...args: Parameters<typeof import('./jobs/judge_run').runJudgeRun>
+) {
+  return (await import('./jobs/judge_run')).runJudgeRun(...args);
+}
+export async function reconcileJudgeAttempts(
+  ...args: Parameters<typeof import('./jobs/judge_pending_reconcile').reconcileStalledJudgeAttempts>
+) {
+  return (await import('./jobs/judge_pending_reconcile')).reconcileStalledJudgeAttempts(...args);
+}
+export async function buildLegacyJudgeHandler(
+  ...args: Parameters<typeof import('./jobs/judge_run').buildJudgeRunHandler>
+) {
+  return (await import('./jobs/judge_run')).buildJudgeRunHandler(...args);
+}
+export async function recordJudgeOperationalReceipt(
+  ...args: Parameters<typeof import('./server/judge-operational').writeJudgeReceipt>
+) {
+  return (await import('./server/judge-operational')).writeJudgeReceipt(...args);
+}
+export async function readPermanentJudgeRun(
+  ...args: Parameters<typeof import('./server/judge-run-observation').readJudgeRunPermanent>
+) {
+  return (await import('./server/judge-run-observation')).readJudgeRunPermanent(...args);
+}
+export async function executeJudgeWorkflow(
+  ...args: Parameters<typeof import('./jobs/judge_run').runJudgeWorkflowDelivery>
+) {
+  return (await import('./jobs/judge_run')).runJudgeWorkflowDelivery(...args);
+}
+
+export const reserveJudgeOperationalDelivery: typeof import('./server/judge-operational').reserveJudgeDelivery =
+  async (...args) => (await import('./server/judge-operational')).reserveJudgeDelivery(...args);

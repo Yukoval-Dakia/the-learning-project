@@ -5,6 +5,8 @@ import type { JobDecl } from '@/kernel/manifest';
 
 const state = vi.hoisted(() => ({
   order: [] as string[],
+  judgeReconcile: vi.fn(async () => {}),
+  judgeStop: vi.fn(async () => {}),
   failPrune: false,
   workflowId: '',
   reviewReconcile: vi.fn(async () => {}),
@@ -89,6 +91,15 @@ vi.mock('./session-orphan-worker', () => ({
       ? { reconcile: state.conversationReconcile, stop: state.conversationStop }
       : { reconcile: state.placementReconcile, stop: state.placementStop },
   ),
+}));
+
+vi.mock('./judge-worker', () => ({
+  prepareJudgeBackend: vi.fn(async () => {}),
+  registerJudgeWorkflows: vi.fn(() => {
+    state.order.push('register:judge-run-v1', 'register:judge-pending-reconcile-v1');
+    return { execute: async () => {}, reconcile: async () => {} };
+  }),
+  createJudgeBackend: vi.fn(() => ({ reconcile: state.judgeReconcile, stop: state.judgeStop })),
 }));
 
 function fixture() {
@@ -217,6 +228,36 @@ describe('one shared durable SDK lifecycle', () => {
     await stop;
     expect(state.shutdown).toHaveBeenCalledTimes(1);
   });
+  it('registers the paired judge workflows before the same launch and stops through the existing lifecycle', async () => {
+    const { startDurableWorker, stopDurableWorker } = await import('./prune-worker');
+    const options = fixture();
+    const judgeRun: JobDecl = { name: 'judge_run', backend: 'dbos', queue: 'llm' };
+    const judgeReconcile: JobDecl = {
+      name: 'judge_pending_reconcile',
+      backend: 'dbos',
+      queue: 'fast',
+      schedule: { cron: '50 * * * *', tz: 'Asia/Shanghai' },
+    };
+    await startDurableWorker({
+      ...options,
+      declarations: { ...options.declarations, judgeRun, judgeReconcile },
+    });
+    expect(state.order).toEqual([
+      'register:prune_job_events',
+      'register:judge-run-v1',
+      'register:judge-pending-reconcile-v1',
+      'register:prune_orphan_review_sessions',
+      'register:prune_orphan_conversation_sessions',
+      'register:prune_orphan_placement_sessions',
+      'launch',
+    ]);
+    expect(state.launch).toHaveBeenCalledTimes(1);
+    expect(state.judgeReconcile).toHaveBeenCalledTimes(1);
+    await stopDurableWorker();
+    expect(state.judgeStop).toHaveBeenCalledTimes(1);
+    expect(state.shutdown).toHaveBeenCalledTimes(1);
+  });
+
   it('rejects malformed declarations before launch', async () => {
     const { startDurableWorker } = await import('./prune-worker');
     const options = fixture();

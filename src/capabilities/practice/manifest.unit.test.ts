@@ -93,11 +93,10 @@ describe('practice manifest jobs', () => {
   // retryCount to drive the cross-provider lane decision), session_summary's
   // explicit 2s/1 parity row. The metadata is registration parity, not a
   // workflow DSL.
-  it('owns rejudge, judge_run and session_summary with exact queue tiers and worker metadata (YUK-870)', () => {
+  it('preserves ordinary rejudge and session_summary worker metadata', () => {
     const handlers = practiceCapability.jobs?.handlers ?? [];
     const expected = {
       rejudge: { queue: 'llm', pollingIntervalSeconds: 1, includeMetadata: undefined },
-      judge_run: { queue: 'llm', pollingIntervalSeconds: 2, includeMetadata: true },
       session_summary: { queue: 'llm', pollingIntervalSeconds: 2, includeMetadata: undefined },
     } as const;
 
@@ -112,6 +111,21 @@ describe('practice manifest jobs', () => {
       );
       expect(job?.schedule, name).toBeUndefined();
     }
+  });
+
+  it('hands judge execution and its scheduled reconcile to the single durable host', () => {
+    const handlers = practiceCapability.jobs?.handlers ?? [];
+    const run = handlers.find((d) => d.name === 'judge_run'),
+      sweep = handlers.find((d) => d.name === 'judge_pending_reconcile');
+    expect(run).toMatchObject({ backend: 'dbos', queue: 'llm' });
+    expect(run?.load).toBeUndefined();
+    expect(run?.schedule).toBeUndefined();
+    expect(sweep).toMatchObject({
+      backend: 'dbos',
+      queue: 'fast',
+      schedule: { cron: '50 * * * *', tz: 'Asia/Shanghai' },
+    });
+    expect(sweep?.load).toBeUndefined();
   });
 
   // YUK-758 — embed_backfill / answer_class_backfill are now orchestrated DAG members

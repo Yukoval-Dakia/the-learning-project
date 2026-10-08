@@ -1,7 +1,10 @@
 import { createId } from '@paralleldrive/cuid2';
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
+import { JudgeWorkflowInput } from '@/core/schema/event/judge-operational-events';
+import { NativeJudgePendingSubmitInput } from '@/core/schema/event/judge-pending-events';
 import {
   evaluation,
   event,
@@ -13,6 +16,7 @@ import {
 } from '@/db/schema';
 import * as domainEvents from '@/kernel/events';
 import { resolveVerdictsForNativeAttempts } from '@/kernel/read-models/assessment-verdict';
+import { judgeDeliveryInput } from '@/server/durable/judge-client';
 import * as jobEvents from '@/server/events/writer';
 import {
   contractIntegrityDigest,
@@ -31,6 +35,7 @@ import { issueAssessment } from './assessment/issue';
 import * as evaluationService from './judge/evaluate-submission';
 import { createRecordedModelExecutor } from './judge/recorded-model-executor';
 import * as durableConfig from './judge-durable-config';
+import { fenceJudgeUnitClaim } from './judge-operational';
 import * as dispatch from './judge-run-dispatch';
 import type { NativeJudgeRunJobData } from './judge-run-payload';
 import { reconstructDoneFromDomainEvents } from './judge-run-payload';
@@ -123,17 +128,31 @@ async function fixture(knowledgeIds: string[] = []) {
       cost_usd_micros: 120,
     }),
   );
-  vi.spyOn(evaluationService, 'createFormalModelExecutor').mockImplementation(() =>
-    createRecordedModelExecutor(db, execute),
+  vi.spyOn(evaluationService, 'createFormalModelExecutor').mockImplementation(
+    (_database, _signal, _admission, execution) =>
+      createRecordedModelExecutor(
+        db,
+        execute,
+        execution ? { fence: (tx, request) => fenceJudgeUnitClaim(tx, execution, request) } : {},
+      ),
   );
   const jobs: NativeJudgeRunJobData[] = [];
   const deps = {
     checkRateLimit: vi.fn(() => 7),
     refundRateLimit: vi.fn(),
     boss: {
-      send: vi.fn(async (_queue: string, data: unknown) => {
-        jobs.push(data as NativeJudgeRunJobData);
-        return createId();
+      send: vi.fn(async (_queue: string, data: unknown, sendOptions?: { id?: string }) => {
+        jobs.push(
+          z
+            .object({
+              run_id: z.string(),
+              caller: z.literal('native_assessment'),
+              submit: NativeJudgePendingSubmitInput,
+              operational: JudgeWorkflowInput,
+            })
+            .parse(data),
+        );
+        return sendOptions?.id ?? null;
       }),
     },
   };
@@ -149,7 +168,12 @@ async function fixture(knowledgeIds: string[] = []) {
 }
 
 const meta = { retryCount: 0, retryLimit: 2 };
-beforeEach(resetDb);
+beforeEach(async () => {
+  await resetDb();
+  await testDb().execute(
+    sql`update judge_run_control set phase='pg-boss',epoch=0,incarnation=gen_random_uuid(),transition_event_id=null`,
+  );
+});
 afterEach(() => vi.restoreAllMocks());
 
 describe('native durable assessment', () => {
@@ -357,7 +381,7 @@ describe('native durable assessment', () => {
     const run = await dispatchNativeAttempt(f.db, f.id, f.request, f.options, f.deps);
     expect(run).toBeTruthy();
     if (!run) throw new Error('expected durable run ID');
-    expect(f.deps.refundRateLimit).toHaveBeenCalledTimes(1);
+    expect(f.deps.refundRateLimit).not.toHaveBeenCalled();
     const [pending] = await f.db
       .select()
       .from(event)
@@ -478,10 +502,11 @@ describe('native durable assessment', () => {
     vi.spyOn(runtimeEnv, 'shouldEnqueueBackgroundJobs').mockReturnValue(true);
     vi.spyOn(durableConfig, 'judgeDurableEnabled').mockReturnValue(true);
     vi.spyOn(dispatch, 'admitJudgeRun').mockReturnValue(12);
-    vi.spyOn(dispatch, 'enqueueJudgeRun').mockImplementation(async (job) => {
+    vi.spyOn(dispatch, 'enqueueJudgeRun').mockImplementation(async (job, _deps, opts) => {
       if (job.caller !== 'native_assessment') throw new Error('unexpected legacy route');
-      f.jobs.push(job);
-      return createId();
+      if (!opts?.authorization) throw new Error('Missing durable authority');
+      f.jobs.push({ ...job, operational: judgeDeliveryInput(opts.authorization.reservation) });
+      return opts.authorization.reservation.delivery_id;
     });
     const response = await createAttempt(
       new Request('http://localhost/api/attempts', {

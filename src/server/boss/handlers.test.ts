@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { capabilities } from '@/capabilities';
 import type { Db } from '@/db/client';
 import type { CapabilityManifest } from '@/kernel/manifest';
+import { startDurableWorker } from '@/server/durable/prune-worker';
 import { registerHandlers } from './handlers';
 import { registerCapabilityJobs } from './register-capability-jobs';
 
@@ -280,7 +281,7 @@ describe('registerHandlers + registerCapabilityJobs', () => {
   // includeMetadata:true 读 retryCount 驱动跨 provider lane 决策；session_summary
   // 2s/1），且每条队列只挂一个 worker；中央簿本身不得再注册这三条队列
   // （deletion 证明——注册只存在于 manifest 声明）。
-  it('preserves the exact rejudge / judge_run / session_summary queue, DLQ, expiry, and worker options (YUK-870)', async () => {
+  it('preserves ordinary queue recipes and delegates the complete judge pair to the sole durable host', async () => {
     const boss = {
       createQueue: vi.fn(async () => undefined),
       updateQueue: vi.fn(async () => undefined),
@@ -298,7 +299,7 @@ describe('registerHandlers + registerCapabilityJobs', () => {
     const centralQueued = (boss.createQueue as ReturnType<typeof vi.fn>).mock.calls.map(
       (call) => call[0] as string,
     );
-    for (const name of ['rejudge', 'judge_run', 'session_summary']) {
+    for (const name of ['rejudge', 'session_summary']) {
       expect(centralWorked.filter((n) => n === name)).toHaveLength(0);
       expect(centralQueued.filter((n) => n === name || n === `${name}_dlq`)).toHaveLength(0);
     }
@@ -316,7 +317,7 @@ describe('registerHandlers + registerCapabilityJobs', () => {
       retryBackoff: true,
     });
     const dlqOpts = { expireInSeconds: 3_600, retentionSeconds: 604_800 };
-    for (const name of ['rejudge', 'judge_run', 'session_summary']) {
+    for (const name of ['rejudge', 'session_summary']) {
       expect(boss.createQueue).toHaveBeenCalledWith(`${name}_dlq`, dlqOpts);
       expect(boss.createQueue).toHaveBeenCalledWith(name, llmOpts(name));
       expect(boss.updateQueue).toHaveBeenCalledWith(name, llmOpts(name));
@@ -326,11 +327,6 @@ describe('registerHandlers + registerCapabilityJobs', () => {
     expect(boss.work).toHaveBeenCalledWith(
       'rejudge',
       { pollingIntervalSeconds: 1, batchSize: 1 },
-      expect.any(Function),
-    );
-    expect(boss.work).toHaveBeenCalledWith(
-      'judge_run',
-      { pollingIntervalSeconds: 2, batchSize: 1, includeMetadata: true },
       expect.any(Function),
     );
     expect(boss.work).toHaveBeenCalledWith(
@@ -344,9 +340,22 @@ describe('registerHandlers + registerCapabilityJobs', () => {
     const workedNames = (boss.work as ReturnType<typeof vi.fn>).mock.calls.map(
       (call) => call[0] as string,
     );
-    for (const name of ['rejudge', 'judge_run', 'session_summary']) {
+    for (const name of ['rejudge', 'session_summary']) {
       expect(workedNames.filter((n) => n === name)).toHaveLength(1);
     }
+    expect(boss.work).not.toHaveBeenCalledWith('judge_run', expect.anything(), expect.anything());
+    expect(startDurableWorker).toHaveBeenCalledWith(
+      expect.objectContaining({
+        boss,
+        declarations: expect.objectContaining({
+          judgeRun: expect.objectContaining({ name: 'judge_run', backend: 'dbos', queue: 'llm' }),
+          judgeReconcile: expect.objectContaining({
+            name: 'judge_pending_reconcile',
+            backend: 'dbos',
+          }),
+        }),
+      }),
+    );
   });
 
   // YUK-891 — deletion proof: registerHandlers alone must NOT fire the

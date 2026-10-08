@@ -14,6 +14,7 @@ import {
 } from './experimental';
 import { GenesisExperimental } from './genesis';
 import { GoalScopeUpdateExperimental, GoalStatusUpdateExperimental } from './goal-events';
+import { JudgeOperationalEvent } from './judge-operational-events';
 import { JudgePendingAttemptExperimental } from './judge-pending-events';
 import { SubjectRootNameUpdateExperimental } from './knowledge-node-events';
 import { KnownEvent } from './known';
@@ -43,6 +44,7 @@ export * from './blocks';
 export * from './experimental';
 export * from './genesis';
 export * from './goal-events';
+export * from './judge-operational-events';
 export * from './judge-pending-events';
 export * from './knowledge-node-events';
 export * from './known';
@@ -132,6 +134,7 @@ export const Event = z.union([
   QuestionBlockLifecycleExperimental,
   NudgeExperimental,
   JudgePendingAttemptExperimental,
+  JudgeOperationalEvent,
   SubagentRunStartedExperimental,
   SubagentRunSettledExperimental,
   ExperimentalEvent,

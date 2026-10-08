@@ -62,6 +62,14 @@ function setup(output: unknown = decision()) {
 }
 
 describe('native frozen rule execution', () => {
+  it('forwards per-call durable retry policy and leaves the next ordinary call unchanged', async () => {
+    const { options, runTask } = setup();
+    await createPiModelExecutor({ ...options, judgeRetryPolicy: 'none' })(fixture());
+    expect(runTask.mock.calls[0]?.[2].judgeRetryPolicy).toBe('none');
+    await createPiModelExecutor(options)(fixture());
+    expect(runTask.mock.calls[1]?.[2].judgeRetryPolicy).toBeUndefined();
+  });
+
   it('passes the appeal claim separately from the unchanged answer and uses its persisted run identity', async () => {
     const { options, runTask } = setup();
     const input = fixture();

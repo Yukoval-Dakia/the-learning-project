@@ -1,6 +1,7 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { canonicalHash } from '@/core/migration/canonical';
 import { EvaluationProvenance } from '@/core/schema/assessment';
+import type { JudgeReservation } from '@/core/schema/event/judge-operational-events';
 import {
   JudgePendingAttemptPayload,
   NativeJudgePendingSubmitInput,
@@ -9,7 +10,15 @@ import type { Db, Tx } from '@/db/client';
 import { assessment_submission, evaluation, evaluation_effective_head, event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { writeJobEvent } from '@/server/events/writer';
+import {
+  type JudgeExecution,
+  authorizeJudgeSend,
+  lockJudgeRun,
+  readJudgeControl,
+  requireJudgeRunOpen,
+  reserveInitialJudgeDelivery,
+  startJudgeDelivery,
+} from '../judge-operational';
 import { ratingFromCoarseOutcome } from '../judge-rating';
 import {
   JUDGE_PENDING_ATTEMPT_ACTION,
@@ -19,8 +28,11 @@ import {
   judgeRunJobId,
   refundJudgeRunAdmission,
 } from '../judge-run-dispatch';
+import { projectJudgeRunNotification } from '../judge-run-notification';
+import { readJudgeRunPermanent } from '../judge-run-observation';
 import type { NativeJudgeRunJobData } from '../judge-run-payload';
-import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../judge-run-status';
+import { NativeJudgeResolutionPayload } from '../judge-run-payload';
+import { JUDGE_RUN_EVENTS } from '../judge-run-status';
 import {
   type FormalAttemptCapture,
   commitFormalAttempt,
@@ -62,9 +74,12 @@ export async function dispatchNativeAttempt(
   let token: number | undefined;
   let job: NativeJudgeRunJobData | null;
   let fresh = false;
+  let reservation: JudgeReservation | undefined;
+  let sendId: string | undefined;
   try {
     job = await db.transaction(async (tx) => {
-      await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${runId}))`);
+      const control = await readJudgeControl(tx, 'share');
+      await lockJudgeRun(tx, runId);
       const [existing] = await tx.select().from(event).where(eq(event.id, pendingId));
       if (existing) {
         const payload = JudgePendingAttemptPayload.parse(existing.payload);
@@ -80,6 +95,8 @@ export async function dispatchNativeAttempt(
         return { run_id: runId, caller: payload.caller, submit: payload.submit };
       }
       if (!options.enabled || !hasModel) return null;
+      if (control.phase !== 'pg-boss' && control.phase !== 'dbos')
+        throw new ApiError('judge_draining', 'Judge admissions are temporarily draining', 503);
       token = admitJudgeRun(deps);
       const input = NativeJudgePendingSubmitInput.parse({
         question_id: questionId,
@@ -119,20 +136,40 @@ export async function dispatchNativeAttempt(
         created_at: new Date(submission.submitted_at),
         ingest_at: new Date(submission.submitted_at),
       });
+      reservation = await reserveInitialJudgeDelivery(tx, pendingId, payload, control, new Date());
+      sendId = await authorizeJudgeSend(tx, reservation, new Date());
       fresh = true;
       return { run_id: runId, caller: 'native_assessment' as const, submit: input };
     });
   } catch (error) {
+    // A lost COMMIT acknowledgement is not rollback. Inspect the deterministic intent under R.
+    const existing = await db.transaction(async (tx) => {
+      await lockJudgeRun(tx, runId);
+      const [row] = await tx.select().from(event).where(eq(event.id, pendingId));
+      return row;
+    });
+    if (existing) {
+      const payload = JudgePendingAttemptPayload.parse(existing.payload);
+      if (
+        payload.caller !== 'native_assessment' ||
+        payload.submit.submission_id !== submission.submission_id
+      )
+        throw error;
+      return runId;
+    }
     if (token !== undefined) refundJudgeRunAdmission(token, deps);
     throw error;
   }
   if (!job) return null;
   // Replays never create another delivery or consume another admission token.
   if (!fresh) return runId;
+  if (!reservation || !sendId)
+    throw new ApiError('corrupt_state', 'Accepted judge intent has no send receipt', 503);
   try {
     await enqueueJudgeRun(job, deps, {
       jobId: judgeRunJobId(runId),
       token,
+      authorization: { database: db, reservation, sendId },
     });
   } catch (error) {
     console.error(
@@ -143,11 +180,13 @@ export async function dispatchNativeAttempt(
     return runId;
   }
   try {
-    await writeJobEvent(db, {
-      business_table: JUDGE_RUN_TABLE,
-      business_id: runId,
-      event_type: JUDGE_RUN_EVENTS.QUEUED,
-      payload: { caller: job.caller, question_id: questionId },
+    await projectJudgeRunNotification(db, runId, {
+      eventType: JUDGE_RUN_EVENTS.QUEUED,
+      payload: {
+        caller: job.caller,
+        question_id: questionId,
+        delivery_id: reservation.delivery_id,
+      },
     });
   } catch (error) {
     console.error('[assessment] native queued marker failed after durable dispatch', runId, error);
@@ -156,7 +195,27 @@ export async function dispatchNativeAttempt(
 }
 
 /** Queue payload is only a pointer; immutable domain rows own the accepted response. */
-export async function executeNativeAttempt(db: Db, job: NativeJudgeRunJobData) {
+export async function executeNativeAttempt(
+  db: Db,
+  job: NativeJudgeRunJobData,
+  execution?: JudgeExecution,
+) {
+  const authority = execution ?? job.operational;
+  if (!authority)
+    throw new ApiError(
+      'judge_authorization_required',
+      'Native execution requires mapped permanent delivery authority',
+      409,
+    );
+  const entry = await startJudgeDelivery(db, authority);
+  if (entry === 'completed')
+    throw new ApiError(
+      'judge_already_completed',
+      'Native judge operation is already complete',
+      409,
+    );
+  if (entry !== 'open')
+    throw new ApiError('judge_disposed', 'Native judge operation cannot execute', 409);
   const input = NativeJudgePendingSubmitInput.parse(job.submit);
   const [pending] = await db
     .select()
@@ -210,12 +269,16 @@ export async function executeNativeAttempt(db: Db, job: NativeJudgeRunJobData) {
     prepared: Awaited<ReturnType<typeof previewFormalAttempt>>,
     status: 'effective' | 'review_required',
   ) => {
-    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${job.run_id}))`);
-    const [existing] = await tx
-      .select({ id: event.id })
-      .from(event)
-      .where(eq(event.id, job.run_id));
-    if (existing) return;
+    await lockJudgeRun(tx, job.run_id);
+    const state = await readJudgeRunPermanent(tx, job.run_id);
+    if (state.kind === 'resolved') {
+      if (
+        state.result.assessment?.candidate_id !== prepared.candidate.evaluation.record.evaluation_id
+      )
+        throw new ApiError('coordinate_mismatch', 'Resolution candidate differs', 409);
+      return;
+    }
+    await requireJudgeRunOpen(tx, authority);
     await writeEvent(tx, {
       id: job.run_id,
       session_id: input.capture.session_id ?? null,
@@ -226,7 +289,7 @@ export async function executeNativeAttempt(db: Db, job: NativeJudgeRunJobData) {
       subject_id: input.question_id,
       outcome: null,
       caused_by_event_id: `evt_assessment_${input.submission_id}`,
-      payload: {
+      payload: NativeJudgeResolutionPayload.parse({
         version: 1,
         status,
         attempt_event_id: `evt_assessment_${input.submission_id}`,
@@ -246,7 +309,7 @@ export async function executeNativeAttempt(db: Db, job: NativeJudgeRunJobData) {
           candidate_id: prepared.candidate.evaluation.record.evaluation_id,
           activation_intent: prepared.activation_intent,
         },
-      },
+      }),
     });
   };
   const committed = await commitFormalAttempt(
@@ -267,6 +330,7 @@ export async function executeNativeAttempt(db: Db, job: NativeJudgeRunJobData) {
       userRating: input.user_rating,
       capture: input.capture,
       modelAdmission: 'durable',
+      judgeExecution: authority,
       requireUnassistedModelEvidence: input.require_unassisted_model_evidence,
       onActivated: async (tx, prepared) => {
         await writeResolution(tx, prepared, 'effective');

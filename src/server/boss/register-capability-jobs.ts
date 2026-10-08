@@ -127,14 +127,16 @@ export async function registerCapabilityJobs(
         'prune_orphan_review_sessions',
         'prune_orphan_conversation_sessions',
         'prune_orphan_placement_sessions',
+        'judge_run',
+        'judge_pending_reconcile',
       ].includes(decl.name) ||
-      decl.queue !== 'fast' ||
-      !decl.schedule ||
+      decl.queue !== (decl.name === 'judge_run' ? 'llm' : 'fast') ||
+      (decl.name === 'judge_run' ? !!decl.schedule : !decl.schedule) ||
       decl.load ||
-      !decl.schedule.cron.trim() ||
-      !decl.schedule.tz.trim() ||
-      decl.schedule.singletonKey !== undefined ||
-      decl.schedule.singletonSeconds !== undefined
+      (decl.schedule && (!decl.schedule.cron.trim() || !decl.schedule.tz.trim())) ||
+      (decl.name !== 'judge_pending_reconcile' &&
+        (decl.schedule?.singletonKey !== undefined ||
+          decl.schedule?.singletonSeconds !== undefined))
     )
       throw new Error(`Invalid or duplicate admitted DBOS family ${decl.name}`);
     names.add(decl.name);
@@ -143,6 +145,10 @@ export async function registerCapabilityJobs(
   const reviewOrphans = durable.find((d) => d.name === 'prune_orphan_review_sessions');
   const conversationOrphans = durable.find((d) => d.name === 'prune_orphan_conversation_sessions');
   const placementOrphans = durable.find((d) => d.name === 'prune_orphan_placement_sessions');
+  const judgeRun = durable.find((d) => d.name === 'judge_run');
+  const judgeReconcile = durable.find((d) => d.name === 'judge_pending_reconcile');
+  if (!!judgeRun !== !!judgeReconcile)
+    throw new Error('Judge execution and reconciliation require paired ownership');
   if (
     durable.length &&
     (!pruneEvents || !reviewOrphans || !conversationOrphans || !placementOrphans)
@@ -155,7 +161,14 @@ export async function registerCapabilityJobs(
     await startDurableWorker({
       boss,
       db,
-      declarations: { pruneEvents, reviewOrphans, conversationOrphans, placementOrphans },
+      declarations: {
+        pruneEvents,
+        reviewOrphans,
+        conversationOrphans,
+        placementOrphans,
+        judgeRun,
+        judgeReconcile,
+      },
     });
   for (const decl of ordinary.filter((d) => d.schedule)) await mountJob(boss, db, decl);
 }

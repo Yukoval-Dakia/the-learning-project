@@ -263,6 +263,13 @@ describe('runTask — YUK-590 retry and cost-reporting lane budgets', () => {
     expect('maxRetries' in opts).toBe(false);
   });
 
+  it('forwards durable judge retry policy only on the requested call', async () => {
+    await runTask(UNMIGRATED_KIND, { q: 1 }, { db: fakeDb, judgeRetryPolicy: 'none' });
+    expect(capturedOptions().judgeRetryPolicy).toBe('none');
+    await runTask(UNMIGRATED_KIND, { q: 2 }, { db: fakeDb });
+    expect(capturedOptions().judgeRetryPolicy).toBeUndefined();
+  });
+
   it('runs the typed provider callback after durable start and before query submission', async () => {
     logMock.started.mockClear();
     mockPi.queryStarted.mockClear();

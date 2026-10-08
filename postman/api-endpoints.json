@@ -1696,5 +1696,17 @@
         "notes": "先恢复未完成的 issuance。pending/held 不推进、不重交；retry 仅重发已接收的相同原始 response_set、group_evidence、submission_id 和 idempotency_key。answeredCount 按不同 question ID 统计原生和历史参与。有效 head 且结算成功后才选择或结束。"
       }
     ]
+  },
+  {
+    "path": "/api/jobs/judge_run/:id/status",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "读取 durable native judge 的四态状态",
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "run_id 保持原始提交身份。永久 native 完成或人工处置优先于引擎与可清理通知；unknown 引擎证据不返回 404。已验证不存在返回 404，状态读取不可用返回 503。此读取不会写入、排队或判分。"
+      }
+    ]
   }
 ]

@@ -407,6 +407,20 @@ describe('runTask — YUK-576 transient retry loop', () => {
     );
   });
 
+  it('durable judge policy forbids lifecycle retry even with an opted-in transient task', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    mockPi.messageQueues = [[API_ERROR_CONN_RESULT], [successResult('must not execute')]];
+    await expect(
+      runTask(
+        JUDGE_KIND,
+        { q: 1 },
+        { db: fakeDb, enableTransientRetry: true, judgeRetryPolicy: 'none' },
+      ),
+    ).rejects.toThrow();
+    expect(mockPi.queryCalls).toBe(1);
+    expect(logMock.retried).not.toHaveBeenCalled();
+  });
+
   it('opt-in + connection-class api error (mid-drop fixture) → retries once, second attempt succeeds', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     mockPi.messageQueues = [[API_ERROR_CONN_RESULT], [successResult('recovered')]];
