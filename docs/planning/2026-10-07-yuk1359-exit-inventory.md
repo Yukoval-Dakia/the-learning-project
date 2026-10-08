@@ -24,7 +24,9 @@ Owner 的后续指令是先完成整个非 UI 迁移，UI 暂缓，再完成 Lin
 
 [任务声明收据](evidence/2026-10-09-yuk1359-job-declarations-main6212.json)只解析 `jobs.handlers`，排除event handlers。main有55个manifest声明，其中53个pg-boss load入口和2个DBOS声明；manifest schedule20、infra schedule4、memory schedule3。两个注册器有11处direct work。提取输入与已验证的53f05候选收据逐字节一致，因此复用其静态解析结果并记录新main及每份输入hash。这不是运行队列或未完成义务数，也不包含实际producer/SEND_IT/retry/DLQ盘点，不能简单相加为完成比例。
 
-YUK1394的两个六小时清理族已实现但尚未合入。父级DB、migration、进程恢复及静态证据见[父验收](2026-10-09-yuk1394-parent-acceptance.md)；真实cron首轮有失败，修复与独立审查继续。此候选不计入main的两族声明，更不代表已切换运行后端。`promote_conversation_idle`的五分钟用户事件时钟及选择后插入竞态仍归1355，尚未真实DB重现，不冒称已验证P1。其余任务族仍需独立核消费者、唯一恢复owner及退出条件。
+YUK1394的两个六小时清理族已实现，PR1624最终候选为 `b9b019a3a`，尚未合入。原cron测试的两项P1已修复并通过R2；后续CI另暴露共享producer fence安装死锁，修复源码为 `1aeec5e36`。父级29项DB测试、34项进程恢复测试及隔离删锁反例见[共享锁验收收据](evidence/2026-10-09-yuk1394-shared-fence-verification.json)。原DB、migration、cron和审查证据按各自revision保留在[父验收](2026-10-09-yuk1394-parent-acceptance.md)，不将原R2扩大为对新增锁修复的审查。最终exact-head CI仍须通过，旧binary仍须停写退出；候选不计入main的两族声明，也未切换运行后端。
+
+下一判分族沿既有YUK1356继续，包含 `judge_run` 与 `judge_pending_reconcile`；设计和ownership已交接，须在1394合入后的fresh main实施。Start消费者与boot仍归5796。`promote_conversation_idle`的五分钟用户事件时钟及选择后插入竞态仍归1355，尚未真实DB重现，不冒称已验证P1。其余任务族仍需独立核消费者、唯一恢复owner及退出条件。
 
 Linear捕获：路由清点 `01c035d9-4603-484f-b542-ad37a495c50e`，任务清单 `a85667b1-7fc7-4f44-95bf-f43d3f95893a`，后续housekeeping `cb362f85-e98f-4936-b809-de70ed8983fe`。共享audit修复PR1618及各lane证据仍有效，但不关闭整迁移。本次仅更新文档，无runtime、provider、队列或数据操作。
 
