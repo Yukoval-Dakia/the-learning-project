@@ -40,6 +40,7 @@ import {
   createOrUpdateQueue,
 } from '@/server/boss/queue-config';
 import { fenceAwareJobHandler } from '@/server/contract-epoch';
+import { startPruneWorker } from '@/server/durable/prune-worker';
 
 const EXPIRE_BY_QUEUE = {
   llm: EXPIRE_LLM,
@@ -49,6 +50,13 @@ const EXPIRE_BY_QUEUE = {
 
 async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
   // load 在调用点已被过滤非空；这里再守一道（TS 窄化）。
+  if (decl.backend === 'dbos') {
+    if (decl.name !== 'prune_job_events') {
+      throw new Error(`DBOS family ${decl.name} has no admitted recovery owner`);
+    }
+    await startPruneWorker({ boss, db, decl });
+    return;
+  }
   if (!decl.load) return;
 
   if (decl.queue === 'fast') {
@@ -113,7 +121,9 @@ export async function registerCapabilityJobs(
   db: Db,
   capabilities: CapabilityManifest[],
 ): Promise<void> {
-  const decls = capabilities.flatMap((cap) => cap.jobs?.handlers ?? []).filter((d) => d.load);
+  const decls = capabilities
+    .flatMap((cap) => cap.jobs?.handlers ?? [])
+    .filter((d) => d.load || d.backend === 'dbos');
   // 链式/按需（无 schedule）先注册，cron 后注册——见文件头「两遍遍历」。
   for (const decl of decls.filter((d) => !d.schedule)) {
     await mountJob(boss, db, decl);

@@ -1,0 +1,4355 @@
+{
+  "capturedAt": "2026-10-07T13:14:03.206Z",
+  "passed": false,
+  "dbos": "5.2.11",
+  "pgBoss": "12.26.3",
+  "strategy": {
+    "productionCron": "0 4 * * *",
+    "testCron": "* * * * *",
+    "timezone": "Asia/Shanghai",
+    "clocksChanged": false,
+    "pgMonitorSeconds": 1,
+    "pgForwardPollSeconds": 1,
+    "reconcileMilliseconds": 50,
+    "dbosScheduler": "unmodified SDK dynamic scheduler and internal queue",
+    "barriers": [
+      "real timekeeper target INSERT delayed before execution",
+      "legacy consumer explicitly offWork until new draining worker",
+      "business-committed callback delayed after receipt transaction"
+    ]
+  },
+  "observations": [
+    {
+      "stage": "fresh-container-database",
+      "database": "/test_fork_1791378767609",
+      "port": "32889",
+      "server": [
+        {
+          "version": "PostgreSQL 16.15 (Debian 16.15-1.pgdg12+2) on aarch64-unknown-linux-gnu, compiled by gcc (Debian 12.2.0-14+deb12u1) 12.2.0, 64-bit",
+          "current_database": "test_fork_1791378767609",
+          "fsync": "on",
+          "synchronous_commit": "on"
+        }
+      ]
+    },
+    {
+      "stage": "first-real-tick-held",
+      "at": "2026-10-07T13:12:51.547Z",
+      "phase": [
+        {
+          "phase": "pg-boss"
+        }
+      ],
+      "pgSchedule": [
+        {
+          "name": "prune_job_events",
+          "cron": "* * * * *",
+          "timezone": "Asia/Shanghai"
+        }
+      ],
+      "dbosSchedule": [],
+      "jobs": [
+        {
+          "id": "41a0bd09-11e4-42d5-8283-3928498e83a3",
+          "name": "yuk1355_unknown_external",
+          "state": "failed",
+          "data": {
+            "nested": {
+              "attempt": "uncheckpointed",
+              "replayAllowed": false
+            },
+            "outcome": "unknown"
+          },
+          "created_on": "2026-10-07T13:12:48.299Z",
+          "started_on": null,
+          "completed_on": null,
+          "singleton_on": null,
+          "singleton_key": null
+        },
+        {
+          "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "name": "__pgboss__send-it",
+          "state": "active",
+          "data": {
+            "data": {},
+            "name": "prune_job_events",
+            "options": {
+              "tz": "Asia/Shanghai"
+            }
+          },
+          "created_on": "2026-10-07T13:12:50.520Z",
+          "started_on": "2026-10-07T13:12:51.519Z",
+          "completed_on": null,
+          "singleton_on": "2026-10-07T04:12:00.000Z",
+          "singleton_key": "prune_job_events__"
+        }
+      ],
+      "workflows": [],
+      "receipts": [],
+      "audit": [
+        {
+          "sequence": "1",
+          "at": "2026-10-07T13:12:50.521Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1094",
+          "backend_pid": 308,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "2",
+          "at": "2026-10-07T13:12:51.520Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1136",
+          "backend_pid": 307,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": "2026-10-07T13:12:51.519401+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:12:51.519401+00:00",
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        }
+      ]
+    },
+    {
+      "stage": "second-real-tick-cached-before-drain",
+      "at": "2026-10-07T13:13:02.532Z",
+      "phase": [
+        {
+          "phase": "pg-boss"
+        }
+      ],
+      "pgSchedule": [
+        {
+          "name": "prune_job_events",
+          "cron": "* * * * *",
+          "timezone": "Asia/Shanghai"
+        }
+      ],
+      "dbosSchedule": [],
+      "jobs": [
+        {
+          "id": "41a0bd09-11e4-42d5-8283-3928498e83a3",
+          "name": "yuk1355_unknown_external",
+          "state": "failed",
+          "data": {
+            "nested": {
+              "attempt": "uncheckpointed",
+              "replayAllowed": false
+            },
+            "outcome": "unknown"
+          },
+          "created_on": "2026-10-07T13:12:48.299Z",
+          "started_on": null,
+          "completed_on": null,
+          "singleton_on": null,
+          "singleton_key": null
+        },
+        {
+          "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "name": "__pgboss__send-it",
+          "state": "completed",
+          "data": {
+            "data": {},
+            "name": "prune_job_events",
+            "options": {
+              "tz": "Asia/Shanghai"
+            }
+          },
+          "created_on": "2026-10-07T13:12:50.520Z",
+          "started_on": "2026-10-07T13:12:51.519Z",
+          "completed_on": "2026-10-07T13:12:51.604Z",
+          "singleton_on": "2026-10-07T04:12:00.000Z",
+          "singleton_key": "prune_job_events__"
+        },
+        {
+          "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "name": "prune_job_events",
+          "state": "created",
+          "data": {},
+          "created_on": "2026-10-07T13:12:51.604Z",
+          "started_on": null,
+          "completed_on": null,
+          "singleton_on": null,
+          "singleton_key": null
+        },
+        {
+          "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "name": "__pgboss__send-it",
+          "state": "active",
+          "data": {
+            "data": {},
+            "name": "prune_job_events",
+            "options": {
+              "tz": "Asia/Shanghai"
+            }
+          },
+          "created_on": "2026-10-07T13:13:01.524Z",
+          "started_on": "2026-10-07T13:13:02.521Z",
+          "completed_on": null,
+          "singleton_on": "2026-10-07T04:13:00.000Z",
+          "singleton_key": "prune_job_events__"
+        }
+      ],
+      "workflows": [],
+      "receipts": [],
+      "audit": [
+        {
+          "sequence": "1",
+          "at": "2026-10-07T13:12:50.521Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1094",
+          "backend_pid": 308,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "2",
+          "at": "2026-10-07T13:12:51.520Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1136",
+          "backend_pid": 307,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": "2026-10-07T13:12:51.519401+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:12:51.519401+00:00",
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "3",
+          "at": "2026-10-07T13:12:51.604Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "transaction_id": "1141",
+          "backend_pid": 308,
+          "detail": {
+            "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:51.604069+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:12:51.604069+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:51.604069+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "4",
+          "at": "2026-10-07T13:12:51.605Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1142",
+          "backend_pid": 308,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "completed",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": "2026-10-07T13:12:51.519401+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": "2026-10-07T13:12:51.60493+00:00",
+            "heartbeat_on": "2026-10-07T13:12:51.519401+00:00",
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "5",
+          "at": "2026-10-07T13:13:01.525Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "transaction_id": "1543",
+          "backend_pid": 308,
+          "detail": {
+            "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:13:01.524816+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:13:01.524816+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:13:01.524816+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": "2026-10-07T13:13:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "6",
+          "at": "2026-10-07T13:13:02.521Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "transaction_id": "1584",
+          "backend_pid": 308,
+          "detail": {
+            "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:13:01.524816+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:13:01.524816+00:00",
+            "started_on": "2026-10-07T13:13:02.521399+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:13:01.524816+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:13:02.521399+00:00",
+            "singleton_on": "2026-10-07T13:13:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        }
+      ]
+    },
+    {
+      "stage": "legacy-drain-blocks-cutover",
+      "at": "2026-10-07T13:13:02.639Z",
+      "phase": [
+        {
+          "phase": "draining-pg-boss"
+        }
+      ],
+      "pgSchedule": [],
+      "dbosSchedule": [],
+      "jobs": [
+        {
+          "id": "41a0bd09-11e4-42d5-8283-3928498e83a3",
+          "name": "yuk1355_unknown_external",
+          "state": "failed",
+          "data": {
+            "nested": {
+              "attempt": "uncheckpointed",
+              "replayAllowed": false
+            },
+            "outcome": "unknown"
+          },
+          "created_on": "2026-10-07T13:12:48.299Z",
+          "started_on": null,
+          "completed_on": null,
+          "singleton_on": null,
+          "singleton_key": null
+        },
+        {
+          "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "name": "__pgboss__send-it",
+          "state": "completed",
+          "data": {
+            "data": {},
+            "name": "prune_job_events",
+            "options": {
+              "tz": "Asia/Shanghai"
+            }
+          },
+          "created_on": "2026-10-07T13:12:50.520Z",
+          "started_on": "2026-10-07T13:12:51.519Z",
+          "completed_on": "2026-10-07T13:12:51.604Z",
+          "singleton_on": "2026-10-07T04:12:00.000Z",
+          "singleton_key": "prune_job_events__"
+        },
+        {
+          "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "name": "prune_job_events",
+          "state": "created",
+          "data": {},
+          "created_on": "2026-10-07T13:12:51.604Z",
+          "started_on": null,
+          "completed_on": null,
+          "singleton_on": null,
+          "singleton_key": null
+        },
+        {
+          "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "name": "__pgboss__send-it",
+          "state": "active",
+          "data": {
+            "data": {},
+            "name": "prune_job_events",
+            "options": {
+              "tz": "Asia/Shanghai"
+            }
+          },
+          "created_on": "2026-10-07T13:13:01.524Z",
+          "started_on": "2026-10-07T13:13:02.521Z",
+          "completed_on": null,
+          "singleton_on": "2026-10-07T04:13:00.000Z",
+          "singleton_key": "prune_job_events__"
+        }
+      ],
+      "workflows": [],
+      "receipts": [],
+      "audit": [
+        {
+          "sequence": "1",
+          "at": "2026-10-07T13:12:50.521Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1094",
+          "backend_pid": 308,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "2",
+          "at": "2026-10-07T13:12:51.520Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1136",
+          "backend_pid": 307,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": "2026-10-07T13:12:51.519401+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:12:51.519401+00:00",
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "3",
+          "at": "2026-10-07T13:12:51.604Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "transaction_id": "1141",
+          "backend_pid": 308,
+          "detail": {
+            "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:51.604069+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:12:51.604069+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:51.604069+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "4",
+          "at": "2026-10-07T13:12:51.605Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1142",
+          "backend_pid": 308,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "completed",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": "2026-10-07T13:12:51.519401+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": "2026-10-07T13:12:51.60493+00:00",
+            "heartbeat_on": "2026-10-07T13:12:51.519401+00:00",
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "5",
+          "at": "2026-10-07T13:13:01.525Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "transaction_id": "1543",
+          "backend_pid": 308,
+          "detail": {
+            "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:13:01.524816+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:13:01.524816+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:13:01.524816+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": "2026-10-07T13:13:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "6",
+          "at": "2026-10-07T13:13:02.521Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "transaction_id": "1584",
+          "backend_pid": 308,
+          "detail": {
+            "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:13:01.524816+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:13:01.524816+00:00",
+            "started_on": "2026-10-07T13:13:02.521399+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:13:01.524816+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:13:02.521399+00:00",
+            "singleton_on": "2026-10-07T13:13:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "7",
+          "at": "2026-10-07T13:13:02.543Z",
+          "kind": "prune_job_events_control:UPDATE",
+          "phase": "draining-pg-boss",
+          "task_id": null,
+          "transaction_id": "1586",
+          "backend_pid": 309,
+          "detail": {
+            "phase": "draining-pg-boss"
+          }
+        }
+      ]
+    },
+    {
+      "stage": "real-legacy-tick-drained",
+      "at": "2026-10-07T13:13:02.999Z",
+      "phase": [
+        {
+          "phase": "draining-pg-boss"
+        }
+      ],
+      "pgSchedule": [],
+      "dbosSchedule": [],
+      "jobs": [
+        {
+          "id": "41a0bd09-11e4-42d5-8283-3928498e83a3",
+          "name": "yuk1355_unknown_external",
+          "state": "failed",
+          "data": {
+            "nested": {
+              "attempt": "uncheckpointed",
+              "replayAllowed": false
+            },
+            "outcome": "unknown"
+          },
+          "created_on": "2026-10-07T13:12:48.299Z",
+          "started_on": null,
+          "completed_on": null,
+          "singleton_on": null,
+          "singleton_key": null
+        },
+        {
+          "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "name": "__pgboss__send-it",
+          "state": "completed",
+          "data": {
+            "data": {},
+            "name": "prune_job_events",
+            "options": {
+              "tz": "Asia/Shanghai"
+            }
+          },
+          "created_on": "2026-10-07T13:12:50.520Z",
+          "started_on": "2026-10-07T13:12:51.519Z",
+          "completed_on": "2026-10-07T13:12:51.604Z",
+          "singleton_on": "2026-10-07T04:12:00.000Z",
+          "singleton_key": "prune_job_events__"
+        },
+        {
+          "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "name": "prune_job_events",
+          "state": "completed",
+          "data": {},
+          "created_on": "2026-10-07T13:12:51.604Z",
+          "started_on": "2026-10-07T13:13:02.978Z",
+          "completed_on": "2026-10-07T13:13:02.984Z",
+          "singleton_on": null,
+          "singleton_key": null
+        },
+        {
+          "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "name": "__pgboss__send-it",
+          "state": "active",
+          "data": {
+            "data": {},
+            "name": "prune_job_events",
+            "options": {
+              "tz": "Asia/Shanghai"
+            }
+          },
+          "created_on": "2026-10-07T13:13:01.524Z",
+          "started_on": "2026-10-07T13:13:02.521Z",
+          "completed_on": null,
+          "singleton_on": "2026-10-07T04:13:00.000Z",
+          "singleton_key": "prune_job_events__"
+        }
+      ],
+      "workflows": [],
+      "receipts": [],
+      "audit": [
+        {
+          "sequence": "1",
+          "at": "2026-10-07T13:12:50.521Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1094",
+          "backend_pid": 308,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "2",
+          "at": "2026-10-07T13:12:51.520Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1136",
+          "backend_pid": 307,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": "2026-10-07T13:12:51.519401+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:12:51.519401+00:00",
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "3",
+          "at": "2026-10-07T13:12:51.604Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "transaction_id": "1141",
+          "backend_pid": 308,
+          "detail": {
+            "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:51.604069+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:12:51.604069+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:51.604069+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "4",
+          "at": "2026-10-07T13:12:51.605Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1142",
+          "backend_pid": 308,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "completed",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": "2026-10-07T13:12:51.519401+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": "2026-10-07T13:12:51.60493+00:00",
+            "heartbeat_on": "2026-10-07T13:12:51.519401+00:00",
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "5",
+          "at": "2026-10-07T13:13:01.525Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "transaction_id": "1543",
+          "backend_pid": 308,
+          "detail": {
+            "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:13:01.524816+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:13:01.524816+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:13:01.524816+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": "2026-10-07T13:13:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "6",
+          "at": "2026-10-07T13:13:02.521Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "transaction_id": "1584",
+          "backend_pid": 308,
+          "detail": {
+            "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:13:01.524816+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:13:01.524816+00:00",
+            "started_on": "2026-10-07T13:13:02.521399+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:13:01.524816+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:13:02.521399+00:00",
+            "singleton_on": "2026-10-07T13:13:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "7",
+          "at": "2026-10-07T13:13:02.543Z",
+          "kind": "prune_job_events_control:UPDATE",
+          "phase": "draining-pg-boss",
+          "task_id": null,
+          "transaction_id": "1586",
+          "backend_pid": 309,
+          "detail": {
+            "phase": "draining-pg-boss"
+          }
+        },
+        {
+          "sequence": "8",
+          "at": "2026-10-07T13:13:02.979Z",
+          "kind": "job:UPDATE",
+          "phase": "draining-pg-boss",
+          "task_id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "transaction_id": "1602",
+          "backend_pid": 667,
+          "detail": {
+            "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:51.604069+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:12:51.604069+00:00",
+            "started_on": "2026-10-07T13:13:02.978112+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:51.604069+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:13:02.978112+00:00",
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "9",
+          "at": "2026-10-07T13:13:02.983Z",
+          "kind": "job_events:DELETE",
+          "phase": "draining-pg-boss",
+          "task_id": null,
+          "transaction_id": "1603",
+          "backend_pid": 668,
+          "detail": {}
+        },
+        {
+          "sequence": "10",
+          "at": "2026-10-07T13:13:02.984Z",
+          "kind": "job:UPDATE",
+          "phase": "draining-pg-boss",
+          "task_id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "transaction_id": "1604",
+          "backend_pid": 667,
+          "detail": {
+            "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "completed",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:51.604069+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:12:51.604069+00:00",
+            "started_on": "2026-10-07T13:13:02.978112+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:51.604069+00:00",
+            "completed_on": "2026-10-07T13:13:02.98411+00:00",
+            "heartbeat_on": "2026-10-07T13:13:02.978112+00:00",
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        }
+      ]
+    },
+    {
+      "stage": "cached-forward-rejected-after-cutover",
+      "at": "2026-10-07T13:13:03.105Z",
+      "phase": [
+        {
+          "phase": "dbos"
+        }
+      ],
+      "pgSchedule": [],
+      "dbosSchedule": [
+        {
+          "schedule_name": "prune_job_events",
+          "schedule": "* * * * *",
+          "status": "ACTIVE",
+          "last_fired_at": null,
+          "cron_timezone": "Asia/Shanghai",
+          "automatic_backfill": false
+        }
+      ],
+      "jobs": [
+        {
+          "id": "41a0bd09-11e4-42d5-8283-3928498e83a3",
+          "name": "yuk1355_unknown_external",
+          "state": "failed",
+          "data": {
+            "nested": {
+              "attempt": "uncheckpointed",
+              "replayAllowed": false
+            },
+            "outcome": "unknown"
+          },
+          "created_on": "2026-10-07T13:12:48.299Z",
+          "started_on": null,
+          "completed_on": null,
+          "singleton_on": null,
+          "singleton_key": null
+        },
+        {
+          "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "name": "__pgboss__send-it",
+          "state": "completed",
+          "data": {
+            "data": {},
+            "name": "prune_job_events",
+            "options": {
+              "tz": "Asia/Shanghai"
+            }
+          },
+          "created_on": "2026-10-07T13:12:50.520Z",
+          "started_on": "2026-10-07T13:12:51.519Z",
+          "completed_on": "2026-10-07T13:12:51.604Z",
+          "singleton_on": "2026-10-07T04:12:00.000Z",
+          "singleton_key": "prune_job_events__"
+        },
+        {
+          "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "name": "prune_job_events",
+          "state": "completed",
+          "data": {},
+          "created_on": "2026-10-07T13:12:51.604Z",
+          "started_on": "2026-10-07T13:13:02.978Z",
+          "completed_on": "2026-10-07T13:13:02.984Z",
+          "singleton_on": null,
+          "singleton_key": null
+        },
+        {
+          "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "name": "__pgboss__send-it",
+          "state": "completed",
+          "data": {
+            "data": {},
+            "name": "prune_job_events",
+            "options": {
+              "tz": "Asia/Shanghai"
+            }
+          },
+          "created_on": "2026-10-07T13:13:01.524Z",
+          "started_on": "2026-10-07T13:13:02.521Z",
+          "completed_on": "2026-10-07T13:13:03.056Z",
+          "singleton_on": "2026-10-07T04:13:00.000Z",
+          "singleton_key": "prune_job_events__"
+        }
+      ],
+      "workflows": [],
+      "receipts": [],
+      "audit": [
+        {
+          "sequence": "1",
+          "at": "2026-10-07T13:12:50.521Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1094",
+          "backend_pid": 308,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "2",
+          "at": "2026-10-07T13:12:51.520Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1136",
+          "backend_pid": 307,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": "2026-10-07T13:12:51.519401+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:12:51.519401+00:00",
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "3",
+          "at": "2026-10-07T13:12:51.604Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "transaction_id": "1141",
+          "backend_pid": 308,
+          "detail": {
+            "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:51.604069+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:12:51.604069+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:51.604069+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "4",
+          "at": "2026-10-07T13:12:51.605Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1142",
+          "backend_pid": 308,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "completed",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": "2026-10-07T13:12:51.519401+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": "2026-10-07T13:12:51.60493+00:00",
+            "heartbeat_on": "2026-10-07T13:12:51.519401+00:00",
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "5",
+          "at": "2026-10-07T13:13:01.525Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "transaction_id": "1543",
+          "backend_pid": 308,
+          "detail": {
+            "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:13:01.524816+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:13:01.524816+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:13:01.524816+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": "2026-10-07T13:13:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "6",
+          "at": "2026-10-07T13:13:02.521Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "transaction_id": "1584",
+          "backend_pid": 308,
+          "detail": {
+            "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:13:01.524816+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:13:01.524816+00:00",
+            "started_on": "2026-10-07T13:13:02.521399+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:13:01.524816+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:13:02.521399+00:00",
+            "singleton_on": "2026-10-07T13:13:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "7",
+          "at": "2026-10-07T13:13:02.543Z",
+          "kind": "prune_job_events_control:UPDATE",
+          "phase": "draining-pg-boss",
+          "task_id": null,
+          "transaction_id": "1586",
+          "backend_pid": 309,
+          "detail": {
+            "phase": "draining-pg-boss"
+          }
+        },
+        {
+          "sequence": "8",
+          "at": "2026-10-07T13:13:02.979Z",
+          "kind": "job:UPDATE",
+          "phase": "draining-pg-boss",
+          "task_id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "transaction_id": "1602",
+          "backend_pid": 667,
+          "detail": {
+            "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:51.604069+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:12:51.604069+00:00",
+            "started_on": "2026-10-07T13:13:02.978112+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:51.604069+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:13:02.978112+00:00",
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "9",
+          "at": "2026-10-07T13:13:02.983Z",
+          "kind": "job_events:DELETE",
+          "phase": "draining-pg-boss",
+          "task_id": null,
+          "transaction_id": "1603",
+          "backend_pid": 668,
+          "detail": {}
+        },
+        {
+          "sequence": "10",
+          "at": "2026-10-07T13:13:02.984Z",
+          "kind": "job:UPDATE",
+          "phase": "draining-pg-boss",
+          "task_id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "transaction_id": "1604",
+          "backend_pid": 667,
+          "detail": {
+            "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "completed",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:51.604069+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:12:51.604069+00:00",
+            "started_on": "2026-10-07T13:13:02.978112+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:51.604069+00:00",
+            "completed_on": "2026-10-07T13:13:02.98411+00:00",
+            "heartbeat_on": "2026-10-07T13:13:02.978112+00:00",
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "11",
+          "at": "2026-10-07T13:13:03.004Z",
+          "kind": "prune_job_events_control:UPDATE",
+          "phase": "dbos",
+          "task_id": null,
+          "transaction_id": "1605",
+          "backend_pid": 309,
+          "detail": {
+            "phase": "dbos"
+          }
+        },
+        {
+          "sequence": "12",
+          "at": "2026-10-07T13:13:03.057Z",
+          "kind": "job:UPDATE",
+          "phase": "dbos",
+          "task_id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "transaction_id": "1613",
+          "backend_pid": 307,
+          "detail": {
+            "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "completed",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:13:01.524816+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:13:01.524816+00:00",
+            "started_on": "2026-10-07T13:13:02.521399+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:13:01.524816+00:00",
+            "completed_on": "2026-10-07T13:13:03.056944+00:00",
+            "heartbeat_on": "2026-10-07T13:13:02.521399+00:00",
+            "singleton_on": "2026-10-07T13:13:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        }
+      ]
+    },
+    {
+      "stage": "real-dbos-cron-receipt-before-checkpoint",
+      "at": "2026-10-07T13:14:00.812Z",
+      "phase": [
+        {
+          "phase": "dbos"
+        }
+      ],
+      "pgSchedule": [],
+      "dbosSchedule": [
+        {
+          "schedule_name": "prune_job_events",
+          "schedule": "* * * * *",
+          "status": "ACTIVE",
+          "last_fired_at": "2026-10-07T13:14:00.000Z",
+          "cron_timezone": "Asia/Shanghai",
+          "automatic_backfill": false
+        }
+      ],
+      "jobs": [
+        {
+          "id": "41a0bd09-11e4-42d5-8283-3928498e83a3",
+          "name": "yuk1355_unknown_external",
+          "state": "failed",
+          "data": {
+            "nested": {
+              "attempt": "uncheckpointed",
+              "replayAllowed": false
+            },
+            "outcome": "unknown"
+          },
+          "created_on": "2026-10-07T13:12:48.299Z",
+          "started_on": null,
+          "completed_on": null,
+          "singleton_on": null,
+          "singleton_key": null
+        },
+        {
+          "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "name": "__pgboss__send-it",
+          "state": "completed",
+          "data": {
+            "data": {},
+            "name": "prune_job_events",
+            "options": {
+              "tz": "Asia/Shanghai"
+            }
+          },
+          "created_on": "2026-10-07T13:12:50.520Z",
+          "started_on": "2026-10-07T13:12:51.519Z",
+          "completed_on": "2026-10-07T13:12:51.604Z",
+          "singleton_on": "2026-10-07T04:12:00.000Z",
+          "singleton_key": "prune_job_events__"
+        },
+        {
+          "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "name": "prune_job_events",
+          "state": "completed",
+          "data": {},
+          "created_on": "2026-10-07T13:12:51.604Z",
+          "started_on": "2026-10-07T13:13:02.978Z",
+          "completed_on": "2026-10-07T13:13:02.984Z",
+          "singleton_on": null,
+          "singleton_key": null
+        },
+        {
+          "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "name": "__pgboss__send-it",
+          "state": "completed",
+          "data": {
+            "data": {},
+            "name": "prune_job_events",
+            "options": {
+              "tz": "Asia/Shanghai"
+            }
+          },
+          "created_on": "2026-10-07T13:13:01.524Z",
+          "started_on": "2026-10-07T13:13:02.521Z",
+          "completed_on": "2026-10-07T13:13:03.056Z",
+          "singleton_on": "2026-10-07T04:13:00.000Z",
+          "singleton_key": "prune_job_events__"
+        }
+      ],
+      "workflows": [
+        {
+          "workflow_uuid": "sched-prune_job_events-2026-10-07T13:14:00.000Z",
+          "name": "prune_job_events",
+          "status": "PENDING",
+          "schedule_name": "prune_job_events",
+          "inputs": null
+        }
+      ],
+      "receipts": [
+        {
+          "workflow_id": "sched-prune_job_events-2026-10-07T13:14:00.000Z",
+          "cutoff": "2026-09-07T13:14:00.000Z",
+          "deleted": 1
+        }
+      ],
+      "audit": [
+        {
+          "sequence": "1",
+          "at": "2026-10-07T13:12:50.521Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1094",
+          "backend_pid": 308,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "2",
+          "at": "2026-10-07T13:12:51.520Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1136",
+          "backend_pid": 307,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": "2026-10-07T13:12:51.519401+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:12:51.519401+00:00",
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "3",
+          "at": "2026-10-07T13:12:51.604Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "transaction_id": "1141",
+          "backend_pid": 308,
+          "detail": {
+            "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:51.604069+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:12:51.604069+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:51.604069+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "4",
+          "at": "2026-10-07T13:12:51.605Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1142",
+          "backend_pid": 308,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "completed",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": "2026-10-07T13:12:51.519401+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": "2026-10-07T13:12:51.60493+00:00",
+            "heartbeat_on": "2026-10-07T13:12:51.519401+00:00",
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "5",
+          "at": "2026-10-07T13:13:01.525Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "transaction_id": "1543",
+          "backend_pid": 308,
+          "detail": {
+            "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:13:01.524816+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:13:01.524816+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:13:01.524816+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": "2026-10-07T13:13:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "6",
+          "at": "2026-10-07T13:13:02.521Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "transaction_id": "1584",
+          "backend_pid": 308,
+          "detail": {
+            "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:13:01.524816+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:13:01.524816+00:00",
+            "started_on": "2026-10-07T13:13:02.521399+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:13:01.524816+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:13:02.521399+00:00",
+            "singleton_on": "2026-10-07T13:13:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "7",
+          "at": "2026-10-07T13:13:02.543Z",
+          "kind": "prune_job_events_control:UPDATE",
+          "phase": "draining-pg-boss",
+          "task_id": null,
+          "transaction_id": "1586",
+          "backend_pid": 309,
+          "detail": {
+            "phase": "draining-pg-boss"
+          }
+        },
+        {
+          "sequence": "8",
+          "at": "2026-10-07T13:13:02.979Z",
+          "kind": "job:UPDATE",
+          "phase": "draining-pg-boss",
+          "task_id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "transaction_id": "1602",
+          "backend_pid": 667,
+          "detail": {
+            "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:51.604069+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:12:51.604069+00:00",
+            "started_on": "2026-10-07T13:13:02.978112+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:51.604069+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:13:02.978112+00:00",
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "9",
+          "at": "2026-10-07T13:13:02.983Z",
+          "kind": "job_events:DELETE",
+          "phase": "draining-pg-boss",
+          "task_id": null,
+          "transaction_id": "1603",
+          "backend_pid": 668,
+          "detail": {}
+        },
+        {
+          "sequence": "10",
+          "at": "2026-10-07T13:13:02.984Z",
+          "kind": "job:UPDATE",
+          "phase": "draining-pg-boss",
+          "task_id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "transaction_id": "1604",
+          "backend_pid": 667,
+          "detail": {
+            "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "completed",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:51.604069+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:12:51.604069+00:00",
+            "started_on": "2026-10-07T13:13:02.978112+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:51.604069+00:00",
+            "completed_on": "2026-10-07T13:13:02.98411+00:00",
+            "heartbeat_on": "2026-10-07T13:13:02.978112+00:00",
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "11",
+          "at": "2026-10-07T13:13:03.004Z",
+          "kind": "prune_job_events_control:UPDATE",
+          "phase": "dbos",
+          "task_id": null,
+          "transaction_id": "1605",
+          "backend_pid": 309,
+          "detail": {
+            "phase": "dbos"
+          }
+        },
+        {
+          "sequence": "12",
+          "at": "2026-10-07T13:13:03.057Z",
+          "kind": "job:UPDATE",
+          "phase": "dbos",
+          "task_id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "transaction_id": "1613",
+          "backend_pid": 307,
+          "detail": {
+            "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "completed",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:13:01.524816+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:13:01.524816+00:00",
+            "started_on": "2026-10-07T13:13:02.521399+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:13:01.524816+00:00",
+            "completed_on": "2026-10-07T13:13:03.056944+00:00",
+            "heartbeat_on": "2026-10-07T13:13:02.521399+00:00",
+            "singleton_on": "2026-10-07T13:13:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "13",
+          "at": "2026-10-07T13:14:00.788Z",
+          "kind": "job_events:DELETE",
+          "phase": "dbos",
+          "task_id": null,
+          "transaction_id": "8563",
+          "backend_pid": 309,
+          "detail": {}
+        },
+        {
+          "sequence": "14",
+          "at": "2026-10-07T13:14:00.788Z",
+          "kind": "prune_job_events_receipt:INSERT",
+          "phase": "dbos",
+          "task_id": "sched-prune_job_events-2026-10-07T13:14:00.000Z",
+          "transaction_id": "8563",
+          "backend_pid": 309,
+          "detail": {
+            "cutoff": "2026-09-07T13:14:00+00:00",
+            "deleted": 1,
+            "workflow_id": "sched-prune_job_events-2026-10-07T13:14:00.000Z"
+          }
+        }
+      ]
+    },
+    {
+      "stage": "dbos-receipt-pending-blocks-rollback",
+      "at": "2026-10-07T13:14:00.922Z",
+      "phase": [
+        {
+          "phase": "draining-dbos"
+        }
+      ],
+      "pgSchedule": [],
+      "dbosSchedule": [
+        {
+          "schedule_name": "prune_job_events",
+          "schedule": "* * * * *",
+          "status": "PAUSED",
+          "last_fired_at": "2026-10-07T13:14:00.000Z",
+          "cron_timezone": "Asia/Shanghai",
+          "automatic_backfill": false
+        }
+      ],
+      "jobs": [
+        {
+          "id": "41a0bd09-11e4-42d5-8283-3928498e83a3",
+          "name": "yuk1355_unknown_external",
+          "state": "failed",
+          "data": {
+            "nested": {
+              "attempt": "uncheckpointed",
+              "replayAllowed": false
+            },
+            "outcome": "unknown"
+          },
+          "created_on": "2026-10-07T13:12:48.299Z",
+          "started_on": null,
+          "completed_on": null,
+          "singleton_on": null,
+          "singleton_key": null
+        },
+        {
+          "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "name": "__pgboss__send-it",
+          "state": "completed",
+          "data": {
+            "data": {},
+            "name": "prune_job_events",
+            "options": {
+              "tz": "Asia/Shanghai"
+            }
+          },
+          "created_on": "2026-10-07T13:12:50.520Z",
+          "started_on": "2026-10-07T13:12:51.519Z",
+          "completed_on": "2026-10-07T13:12:51.604Z",
+          "singleton_on": "2026-10-07T04:12:00.000Z",
+          "singleton_key": "prune_job_events__"
+        },
+        {
+          "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "name": "prune_job_events",
+          "state": "completed",
+          "data": {},
+          "created_on": "2026-10-07T13:12:51.604Z",
+          "started_on": "2026-10-07T13:13:02.978Z",
+          "completed_on": "2026-10-07T13:13:02.984Z",
+          "singleton_on": null,
+          "singleton_key": null
+        },
+        {
+          "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "name": "__pgboss__send-it",
+          "state": "completed",
+          "data": {
+            "data": {},
+            "name": "prune_job_events",
+            "options": {
+              "tz": "Asia/Shanghai"
+            }
+          },
+          "created_on": "2026-10-07T13:13:01.524Z",
+          "started_on": "2026-10-07T13:13:02.521Z",
+          "completed_on": "2026-10-07T13:13:03.056Z",
+          "singleton_on": "2026-10-07T04:13:00.000Z",
+          "singleton_key": "prune_job_events__"
+        }
+      ],
+      "workflows": [
+        {
+          "workflow_uuid": "sched-prune_job_events-2026-10-07T13:14:00.000Z",
+          "name": "prune_job_events",
+          "status": "PENDING",
+          "schedule_name": "prune_job_events",
+          "inputs": null
+        }
+      ],
+      "receipts": [
+        {
+          "workflow_id": "sched-prune_job_events-2026-10-07T13:14:00.000Z",
+          "cutoff": "2026-09-07T13:14:00.000Z",
+          "deleted": 1
+        }
+      ],
+      "audit": [
+        {
+          "sequence": "1",
+          "at": "2026-10-07T13:12:50.521Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1094",
+          "backend_pid": 308,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "2",
+          "at": "2026-10-07T13:12:51.520Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1136",
+          "backend_pid": 307,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": "2026-10-07T13:12:51.519401+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:12:51.519401+00:00",
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "3",
+          "at": "2026-10-07T13:12:51.604Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "transaction_id": "1141",
+          "backend_pid": 308,
+          "detail": {
+            "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:51.604069+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:12:51.604069+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:51.604069+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "4",
+          "at": "2026-10-07T13:12:51.605Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1142",
+          "backend_pid": 308,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "completed",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": "2026-10-07T13:12:51.519401+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": "2026-10-07T13:12:51.60493+00:00",
+            "heartbeat_on": "2026-10-07T13:12:51.519401+00:00",
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "5",
+          "at": "2026-10-07T13:13:01.525Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "transaction_id": "1543",
+          "backend_pid": 308,
+          "detail": {
+            "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:13:01.524816+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:13:01.524816+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:13:01.524816+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": "2026-10-07T13:13:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "6",
+          "at": "2026-10-07T13:13:02.521Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "transaction_id": "1584",
+          "backend_pid": 308,
+          "detail": {
+            "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:13:01.524816+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:13:01.524816+00:00",
+            "started_on": "2026-10-07T13:13:02.521399+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:13:01.524816+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:13:02.521399+00:00",
+            "singleton_on": "2026-10-07T13:13:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "7",
+          "at": "2026-10-07T13:13:02.543Z",
+          "kind": "prune_job_events_control:UPDATE",
+          "phase": "draining-pg-boss",
+          "task_id": null,
+          "transaction_id": "1586",
+          "backend_pid": 309,
+          "detail": {
+            "phase": "draining-pg-boss"
+          }
+        },
+        {
+          "sequence": "8",
+          "at": "2026-10-07T13:13:02.979Z",
+          "kind": "job:UPDATE",
+          "phase": "draining-pg-boss",
+          "task_id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "transaction_id": "1602",
+          "backend_pid": 667,
+          "detail": {
+            "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:51.604069+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:12:51.604069+00:00",
+            "started_on": "2026-10-07T13:13:02.978112+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:51.604069+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:13:02.978112+00:00",
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "9",
+          "at": "2026-10-07T13:13:02.983Z",
+          "kind": "job_events:DELETE",
+          "phase": "draining-pg-boss",
+          "task_id": null,
+          "transaction_id": "1603",
+          "backend_pid": 668,
+          "detail": {}
+        },
+        {
+          "sequence": "10",
+          "at": "2026-10-07T13:13:02.984Z",
+          "kind": "job:UPDATE",
+          "phase": "draining-pg-boss",
+          "task_id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "transaction_id": "1604",
+          "backend_pid": 667,
+          "detail": {
+            "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "completed",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:51.604069+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:12:51.604069+00:00",
+            "started_on": "2026-10-07T13:13:02.978112+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:51.604069+00:00",
+            "completed_on": "2026-10-07T13:13:02.98411+00:00",
+            "heartbeat_on": "2026-10-07T13:13:02.978112+00:00",
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "11",
+          "at": "2026-10-07T13:13:03.004Z",
+          "kind": "prune_job_events_control:UPDATE",
+          "phase": "dbos",
+          "task_id": null,
+          "transaction_id": "1605",
+          "backend_pid": 309,
+          "detail": {
+            "phase": "dbos"
+          }
+        },
+        {
+          "sequence": "12",
+          "at": "2026-10-07T13:13:03.057Z",
+          "kind": "job:UPDATE",
+          "phase": "dbos",
+          "task_id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "transaction_id": "1613",
+          "backend_pid": 307,
+          "detail": {
+            "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "completed",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:13:01.524816+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:13:01.524816+00:00",
+            "started_on": "2026-10-07T13:13:02.521399+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:13:01.524816+00:00",
+            "completed_on": "2026-10-07T13:13:03.056944+00:00",
+            "heartbeat_on": "2026-10-07T13:13:02.521399+00:00",
+            "singleton_on": "2026-10-07T13:13:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "13",
+          "at": "2026-10-07T13:14:00.788Z",
+          "kind": "job_events:DELETE",
+          "phase": "dbos",
+          "task_id": null,
+          "transaction_id": "8563",
+          "backend_pid": 309,
+          "detail": {}
+        },
+        {
+          "sequence": "14",
+          "at": "2026-10-07T13:14:00.788Z",
+          "kind": "prune_job_events_receipt:INSERT",
+          "phase": "dbos",
+          "task_id": "sched-prune_job_events-2026-10-07T13:14:00.000Z",
+          "transaction_id": "8563",
+          "backend_pid": 309,
+          "detail": {
+            "cutoff": "2026-09-07T13:14:00+00:00",
+            "deleted": 1,
+            "workflow_id": "sched-prune_job_events-2026-10-07T13:14:00.000Z"
+          }
+        },
+        {
+          "sequence": "15",
+          "at": "2026-10-07T13:14:00.846Z",
+          "kind": "prune_job_events_control:UPDATE",
+          "phase": "draining-dbos",
+          "task_id": null,
+          "transaction_id": "8570",
+          "backend_pid": 2065,
+          "detail": {
+            "phase": "draining-dbos"
+          }
+        }
+      ]
+    },
+    {
+      "stage": "real-pg-cron-after-rollback",
+      "at": "2026-10-07T13:14:03.157Z",
+      "phase": [
+        {
+          "phase": "pg-boss"
+        }
+      ],
+      "pgSchedule": [
+        {
+          "name": "prune_job_events",
+          "cron": "* * * * *",
+          "timezone": "Asia/Shanghai"
+        }
+      ],
+      "dbosSchedule": [
+        {
+          "schedule_name": "prune_job_events",
+          "schedule": "* * * * *",
+          "status": "PAUSED",
+          "last_fired_at": "2026-10-07T13:14:00.000Z",
+          "cron_timezone": "Asia/Shanghai",
+          "automatic_backfill": false
+        }
+      ],
+      "jobs": [
+        {
+          "id": "41a0bd09-11e4-42d5-8283-3928498e83a3",
+          "name": "yuk1355_unknown_external",
+          "state": "failed",
+          "data": {
+            "nested": {
+              "attempt": "uncheckpointed",
+              "replayAllowed": false
+            },
+            "outcome": "unknown"
+          },
+          "created_on": "2026-10-07T13:12:48.299Z",
+          "started_on": null,
+          "completed_on": null,
+          "singleton_on": null,
+          "singleton_key": null
+        },
+        {
+          "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "name": "__pgboss__send-it",
+          "state": "completed",
+          "data": {
+            "data": {},
+            "name": "prune_job_events",
+            "options": {
+              "tz": "Asia/Shanghai"
+            }
+          },
+          "created_on": "2026-10-07T13:12:50.520Z",
+          "started_on": "2026-10-07T13:12:51.519Z",
+          "completed_on": "2026-10-07T13:12:51.604Z",
+          "singleton_on": "2026-10-07T04:12:00.000Z",
+          "singleton_key": "prune_job_events__"
+        },
+        {
+          "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "name": "prune_job_events",
+          "state": "completed",
+          "data": {},
+          "created_on": "2026-10-07T13:12:51.604Z",
+          "started_on": "2026-10-07T13:13:02.978Z",
+          "completed_on": "2026-10-07T13:13:02.984Z",
+          "singleton_on": null,
+          "singleton_key": null
+        },
+        {
+          "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "name": "__pgboss__send-it",
+          "state": "completed",
+          "data": {
+            "data": {},
+            "name": "prune_job_events",
+            "options": {
+              "tz": "Asia/Shanghai"
+            }
+          },
+          "created_on": "2026-10-07T13:13:01.524Z",
+          "started_on": "2026-10-07T13:13:02.521Z",
+          "completed_on": "2026-10-07T13:13:03.056Z",
+          "singleton_on": "2026-10-07T04:13:00.000Z",
+          "singleton_key": "prune_job_events__"
+        },
+        {
+          "id": "384798c1-6b7d-4778-97d2-232cbc8797d2",
+          "name": "__pgboss__send-it",
+          "state": "completed",
+          "data": {
+            "data": {},
+            "name": "prune_job_events",
+            "options": {
+              "tz": "Asia/Shanghai"
+            }
+          },
+          "created_on": "2026-10-07T13:14:01.850Z",
+          "started_on": "2026-10-07T13:14:02.546Z",
+          "completed_on": "2026-10-07T13:14:02.552Z",
+          "singleton_on": "2026-10-07T04:14:00.000Z",
+          "singleton_key": "prune_job_events__"
+        },
+        {
+          "id": "216c801c-2997-45d2-9667-482a9c3970b6",
+          "name": "prune_job_events",
+          "state": "completed",
+          "data": {},
+          "created_on": "2026-10-07T13:14:02.549Z",
+          "started_on": "2026-10-07T13:14:03.061Z",
+          "completed_on": "2026-10-07T13:14:03.070Z",
+          "singleton_on": null,
+          "singleton_key": null
+        }
+      ],
+      "workflows": [
+        {
+          "workflow_uuid": "sched-prune_job_events-2026-10-07T13:14:00.000Z",
+          "name": "prune_job_events",
+          "status": "SUCCESS",
+          "schedule_name": "prune_job_events",
+          "inputs": null
+        }
+      ],
+      "receipts": [
+        {
+          "workflow_id": "sched-prune_job_events-2026-10-07T13:14:00.000Z",
+          "cutoff": "2026-09-07T13:14:00.000Z",
+          "deleted": 1
+        }
+      ],
+      "audit": [
+        {
+          "sequence": "1",
+          "at": "2026-10-07T13:12:50.521Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1094",
+          "backend_pid": 308,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "2",
+          "at": "2026-10-07T13:12:51.520Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1136",
+          "backend_pid": 307,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": "2026-10-07T13:12:51.519401+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:12:51.519401+00:00",
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "3",
+          "at": "2026-10-07T13:12:51.604Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "transaction_id": "1141",
+          "backend_pid": 308,
+          "detail": {
+            "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:51.604069+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:12:51.604069+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:51.604069+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "4",
+          "at": "2026-10-07T13:12:51.605Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+          "transaction_id": "1142",
+          "backend_pid": 308,
+          "detail": {
+            "id": "10f2aa83-7f4e-4291-a916-4274d118b2df",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "completed",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:50.52036+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:12:50.52036+00:00",
+            "started_on": "2026-10-07T13:12:51.519401+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:50.52036+00:00",
+            "completed_on": "2026-10-07T13:12:51.60493+00:00",
+            "heartbeat_on": "2026-10-07T13:12:51.519401+00:00",
+            "singleton_on": "2026-10-07T13:12:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "5",
+          "at": "2026-10-07T13:13:01.525Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "transaction_id": "1543",
+          "backend_pid": 308,
+          "detail": {
+            "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:13:01.524816+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:13:01.524816+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:13:01.524816+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": "2026-10-07T13:13:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "6",
+          "at": "2026-10-07T13:13:02.521Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "transaction_id": "1584",
+          "backend_pid": 308,
+          "detail": {
+            "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:13:01.524816+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:13:01.524816+00:00",
+            "started_on": "2026-10-07T13:13:02.521399+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:13:01.524816+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:13:02.521399+00:00",
+            "singleton_on": "2026-10-07T13:13:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "7",
+          "at": "2026-10-07T13:13:02.543Z",
+          "kind": "prune_job_events_control:UPDATE",
+          "phase": "draining-pg-boss",
+          "task_id": null,
+          "transaction_id": "1586",
+          "backend_pid": 309,
+          "detail": {
+            "phase": "draining-pg-boss"
+          }
+        },
+        {
+          "sequence": "8",
+          "at": "2026-10-07T13:13:02.979Z",
+          "kind": "job:UPDATE",
+          "phase": "draining-pg-boss",
+          "task_id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "transaction_id": "1602",
+          "backend_pid": 667,
+          "detail": {
+            "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:51.604069+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:12:51.604069+00:00",
+            "started_on": "2026-10-07T13:13:02.978112+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:51.604069+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:13:02.978112+00:00",
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "9",
+          "at": "2026-10-07T13:13:02.983Z",
+          "kind": "job_events:DELETE",
+          "phase": "draining-pg-boss",
+          "task_id": null,
+          "transaction_id": "1603",
+          "backend_pid": 668,
+          "detail": {}
+        },
+        {
+          "sequence": "10",
+          "at": "2026-10-07T13:13:02.984Z",
+          "kind": "job:UPDATE",
+          "phase": "draining-pg-boss",
+          "task_id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "transaction_id": "1604",
+          "backend_pid": 667,
+          "detail": {
+            "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "completed",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:12:51.604069+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:12:51.604069+00:00",
+            "started_on": "2026-10-07T13:13:02.978112+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:12:51.604069+00:00",
+            "completed_on": "2026-10-07T13:13:02.98411+00:00",
+            "heartbeat_on": "2026-10-07T13:13:02.978112+00:00",
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "11",
+          "at": "2026-10-07T13:13:03.004Z",
+          "kind": "prune_job_events_control:UPDATE",
+          "phase": "dbos",
+          "task_id": null,
+          "transaction_id": "1605",
+          "backend_pid": 309,
+          "detail": {
+            "phase": "dbos"
+          }
+        },
+        {
+          "sequence": "12",
+          "at": "2026-10-07T13:13:03.057Z",
+          "kind": "job:UPDATE",
+          "phase": "dbos",
+          "task_id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+          "transaction_id": "1613",
+          "backend_pid": 307,
+          "detail": {
+            "id": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "completed",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:13:01.524816+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:13:01.524816+00:00",
+            "started_on": "2026-10-07T13:13:02.521399+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:13:01.524816+00:00",
+            "completed_on": "2026-10-07T13:13:03.056944+00:00",
+            "heartbeat_on": "2026-10-07T13:13:02.521399+00:00",
+            "singleton_on": "2026-10-07T13:13:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "13",
+          "at": "2026-10-07T13:14:00.788Z",
+          "kind": "job_events:DELETE",
+          "phase": "dbos",
+          "task_id": null,
+          "transaction_id": "8563",
+          "backend_pid": 309,
+          "detail": {}
+        },
+        {
+          "sequence": "14",
+          "at": "2026-10-07T13:14:00.788Z",
+          "kind": "prune_job_events_receipt:INSERT",
+          "phase": "dbos",
+          "task_id": "sched-prune_job_events-2026-10-07T13:14:00.000Z",
+          "transaction_id": "8563",
+          "backend_pid": 309,
+          "detail": {
+            "cutoff": "2026-09-07T13:14:00+00:00",
+            "deleted": 1,
+            "workflow_id": "sched-prune_job_events-2026-10-07T13:14:00.000Z"
+          }
+        },
+        {
+          "sequence": "15",
+          "at": "2026-10-07T13:14:00.846Z",
+          "kind": "prune_job_events_control:UPDATE",
+          "phase": "draining-dbos",
+          "task_id": null,
+          "transaction_id": "8570",
+          "backend_pid": 2065,
+          "detail": {
+            "phase": "draining-dbos"
+          }
+        },
+        {
+          "sequence": "16",
+          "at": "2026-10-07T13:14:01.031Z",
+          "kind": "prune_job_events_control:UPDATE",
+          "phase": "pg-boss",
+          "task_id": null,
+          "transaction_id": "8591",
+          "backend_pid": 2065,
+          "detail": {
+            "phase": "pg-boss"
+          }
+        },
+        {
+          "sequence": "17",
+          "at": "2026-10-07T13:14:01.853Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "384798c1-6b7d-4778-97d2-232cbc8797d2",
+          "transaction_id": "8691",
+          "backend_pid": 666,
+          "detail": {
+            "id": "384798c1-6b7d-4778-97d2-232cbc8797d2",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:14:01.850477+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:14:01.850477+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:14:01.850477+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": "2026-10-07T13:14:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "18",
+          "at": "2026-10-07T13:14:02.548Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "384798c1-6b7d-4778-97d2-232cbc8797d2",
+          "transaction_id": "8776",
+          "backend_pid": 716,
+          "detail": {
+            "id": "384798c1-6b7d-4778-97d2-232cbc8797d2",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:14:01.850477+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:14:01.850477+00:00",
+            "started_on": "2026-10-07T13:14:02.546952+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:14:01.850477+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:14:02.546952+00:00",
+            "singleton_on": "2026-10-07T13:14:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "19",
+          "at": "2026-10-07T13:14:02.550Z",
+          "kind": "job:INSERT",
+          "phase": "pg-boss",
+          "task_id": "216c801c-2997-45d2-9667-482a9c3970b6",
+          "transaction_id": "8777",
+          "backend_pid": 716,
+          "detail": {
+            "id": "216c801c-2997-45d2-9667-482a9c3970b6",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "created",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:14:02.549504+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:14:02.549504+00:00",
+            "started_on": null,
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:14:02.549504+00:00",
+            "completed_on": null,
+            "heartbeat_on": null,
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "20",
+          "at": "2026-10-07T13:14:02.553Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "384798c1-6b7d-4778-97d2-232cbc8797d2",
+          "transaction_id": "8778",
+          "backend_pid": 716,
+          "detail": {
+            "id": "384798c1-6b7d-4778-97d2-232cbc8797d2",
+            "data": {
+              "data": {},
+              "name": "prune_job_events",
+              "options": {
+                "tz": "Asia/Shanghai"
+              }
+            },
+            "name": "__pgboss__send-it",
+            "state": "completed",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:14:01.850477+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-21T13:14:01.850477+00:00",
+            "started_on": "2026-10-07T13:14:02.546952+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:14:01.850477+00:00",
+            "completed_on": "2026-10-07T13:14:02.552519+00:00",
+            "heartbeat_on": "2026-10-07T13:14:02.546952+00:00",
+            "singleton_on": "2026-10-07T13:14:00",
+            "retry_backoff": false,
+            "singleton_key": "prune_job_events__",
+            "expire_seconds": 900,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "21",
+          "at": "2026-10-07T13:14:03.062Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "216c801c-2997-45d2-9667-482a9c3970b6",
+          "transaction_id": "8840",
+          "backend_pid": 666,
+          "detail": {
+            "id": "216c801c-2997-45d2-9667-482a9c3970b6",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "active",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:14:02.549504+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:14:02.549504+00:00",
+            "started_on": "2026-10-07T13:14:03.061756+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:14:02.549504+00:00",
+            "completed_on": null,
+            "heartbeat_on": "2026-10-07T13:14:03.061756+00:00",
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        },
+        {
+          "sequence": "22",
+          "at": "2026-10-07T13:14:03.069Z",
+          "kind": "job_events:DELETE",
+          "phase": "pg-boss",
+          "task_id": null,
+          "transaction_id": "8841",
+          "backend_pid": 668,
+          "detail": {}
+        },
+        {
+          "sequence": "23",
+          "at": "2026-10-07T13:14:03.070Z",
+          "kind": "job:UPDATE",
+          "phase": "pg-boss",
+          "task_id": "216c801c-2997-45d2-9667-482a9c3970b6",
+          "transaction_id": "8842",
+          "backend_pid": 666,
+          "detail": {
+            "id": "216c801c-2997-45d2-9667-482a9c3970b6",
+            "data": {},
+            "name": "prune_job_events",
+            "state": "completed",
+            "output": null,
+            "policy": "standard",
+            "blocked": false,
+            "blocking": false,
+            "group_id": null,
+            "priority": 0,
+            "source_id": null,
+            "created_on": "2026-10-07T13:14:02.549504+00:00",
+            "group_tier": null,
+            "keep_until": "2026-10-14T13:14:02.549504+00:00",
+            "started_on": "2026-10-07T13:14:03.061756+00:00",
+            "dead_letter": null,
+            "retry_count": 0,
+            "retry_delay": 0,
+            "retry_limit": 2,
+            "source_name": null,
+            "start_after": "2026-10-07T13:14:02.549504+00:00",
+            "completed_on": "2026-10-07T13:14:03.070272+00:00",
+            "heartbeat_on": "2026-10-07T13:14:03.061756+00:00",
+            "singleton_on": null,
+            "retry_backoff": false,
+            "singleton_key": null,
+            "expire_seconds": 3600,
+            "retry_delay_max": null,
+            "deletion_seconds": 604800,
+            "heartbeat_seconds": null,
+            "source_created_on": null,
+            "source_retry_count": null,
+            "pending_dependencies": 0
+          }
+        }
+      ]
+    },
+    {
+      "stage": "observed-result",
+      "legacyId": "07fb7614-db46-4818-9320-1888ddc7de3b",
+      "cachedTickId": "75d7b6ae-c0fb-4beb-a6a0-6d087541b77e",
+      "dbosWorkflowId": "sched-prune_job_events-2026-10-07T13:14:00.000Z",
+      "admittedLegacyTasks": [
+        {
+          "id": "07fb7614-db46-4818-9320-1888ddc7de3b",
+          "state": "completed"
+        },
+        {
+          "id": "216c801c-2997-45d2-9667-482a9c3970b6",
+          "state": "completed"
+        }
+      ],
+      "receiptCount": 1,
+      "businessDeleteStatements": 3,
+      "forbiddenLegacyInserts": 0,
+      "summaries": [
+        {
+          "minute": "2026-10-07T13:12:00.000Z",
+          "executions": 0,
+          "effect_phases": null
+        },
+        {
+          "minute": "2026-10-07T13:13:00.000Z",
+          "executions": 1,
+          "effect_phases": ["draining-pg-boss"]
+        },
+        {
+          "minute": "2026-10-07T13:14:00.000Z",
+          "executions": 2,
+          "effect_phases": ["dbos", "pg-boss"]
+        }
+      ]
+    },
+    {
+      "stage": "failure-cleanup",
+      "pid": 53524,
+      "exit": [null, "SIGKILL"]
+    },
+    {
+      "stage": "failure-cleanup",
+      "pid": 53668,
+      "exit": [null, "SIGKILL"]
+    }
+  ],
+  "processLogs": [
+    {
+      "pid": 53524,
+      "messages": [
+        {
+          "kind": "ready",
+          "pid": 53524
+        },
+        {
+          "kind": "forward-held",
+          "payload": [
+            {
+              "data": {},
+              "id": null,
+              "name": "prune_job_events",
+              "priority": 0,
+              "singletonKey": null,
+              "singletonOffset": 0,
+              "groupId": null,
+              "groupTier": null,
+              "deadLetter": null
+            }
+          ],
+          "at": "2026-10-07T13:12:51.520Z"
+        },
+        {
+          "kind": "ack"
+        },
+        {
+          "kind": "ack"
+        },
+        {
+          "kind": "forwarded",
+          "rows": [
+            {
+              "id": "07fb7614-db46-4818-9320-1888ddc7de3b"
+            }
+          ],
+          "at": "2026-10-07T13:12:51.603Z"
+        },
+        {
+          "kind": "ack"
+        },
+        {
+          "kind": "forward-held",
+          "payload": [
+            {
+              "data": {},
+              "id": null,
+              "name": "prune_job_events",
+              "priority": 0,
+              "singletonKey": null,
+              "singletonOffset": 0,
+              "groupId": null,
+              "groupTier": null,
+              "deadLetter": null
+            }
+          ],
+          "at": "2026-10-07T13:13:02.521Z"
+        },
+        {
+          "kind": "ack"
+        },
+        {
+          "kind": "rejected",
+          "error": "Prune drain blocked: [{\"task_id\":\"07fb7614-db46-4818-9320-1888ddc7de3b\",\"state\":\"created\",\"name\":\"prune_job_events\"}]"
+        },
+        {
+          "kind": "ack"
+        },
+        {
+          "kind": "ack"
+        },
+        {
+          "kind": "forward-rejected",
+          "error": "error: prune_job_events pg-boss producer fenced: dbos",
+          "at": "2026-10-07T13:13:03.055Z"
+        },
+        {
+          "kind": "cron-error",
+          "error": "error: prune_job_events pg-boss producer fenced: dbos",
+          "at": "2026-10-07T13:13:03.055Z"
+        },
+        {
+          "kind": "cron-business-held",
+          "workflowId": "sched-prune_job_events-2026-10-07T13:14:00.000Z",
+          "at": "2026-10-07T13:14:00.788Z"
+        },
+        {
+          "kind": "ack"
+        },
+        {
+          "kind": "rejected",
+          "error": "Prune drain blocked: [{\"task_id\":\"sched-prune_job_events-2026-10-07T13:14:00.000Z\",\"state\":\"PENDING\"}]"
+        },
+        {
+          "kind": "ack"
+        },
+        {
+          "kind": "ack"
+        },
+        {
+          "kind": "forwarded",
+          "rows": [
+            {
+              "id": "216c801c-2997-45d2-9667-482a9c3970b6"
+            }
+          ],
+          "at": "2026-10-07T13:14:02.549Z"
+        }
+      ],
+      "stdout": "{\n  severity_local: 'NOTICE',\n  severity: 'NOTICE',\n  code: '00000',\n  message: 'trigger \"yuk1355_prune_producer\" for relation \"pgboss.job\" does not exist, skipping',\n  file: 'dropcmds.c',\n  line: '528',\n  routine: 'does_not_exist_skipping'\n}\n{\n  severity_local: 'NOTICE',\n  severity: 'NOTICE',\n  code: '00000',\n  message: 'trigger \"yuk1355_prune_producer\" for relation \"pgboss.schedule\" does not exist, skipping',\n  file: 'dropcmds.c',\n  line: '528',\n  routine: 'does_not_exist_skipping'\n}\nRunning DBOS system database migrations...\nInitializing DBOS (v0.0.0)\nSystem Database URL: postgres://test:***@localhost:32889/test_fork_1791378767609\nExecutor ID: local\nApplication version: prune-v1\nNo workflows to recover from application version prune-v1\nDBOS launched!\nListening to 0 queues:\n",
+      "stderr": "(node:53524) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n"
+    },
+    {
+      "pid": 53668,
+      "messages": [
+        {
+          "kind": "ready",
+          "pid": 53668
+        },
+        {
+          "kind": "ack"
+        },
+        {
+          "kind": "ack"
+        }
+      ],
+      "stdout": "Initializing DBOS (v0.0.0)\nSystem Database URL: postgres://test:***@localhost:32889/test_fork_1791378767609\nExecutor ID: local\nApplication version: prune-v1\nNo workflows to recover from application version prune-v1\nDBOS launched!\nListening to 0 queues:\n",
+      "stderr": "(node:53668) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n"
+    }
+  ],
+  "sourceHashes": [
+    {
+      "path": "src/server/durable/prune-worker.ts",
+      "sha256": "2b9e3f411f7f78585b6e87720fec707176a452d5b218d610804b7924260cd9ce"
+    },
+    {
+      "path": "src/server/durable/prune-family.ts",
+      "sha256": "763c334b82d108b8ece8689ad6d471c8dae1cca8b28e39f4bfed3067846acc85"
+    },
+    {
+      "path": "tests/dbos-prune/worker.ts",
+      "sha256": "cb82cef5b2ffbb1bd2428863f9f4828857f08027a38592833b3d2ba5ee9e2272"
+    },
+    {
+      "path": "tests/dbos-prune/cron.db.test.ts",
+      "sha256": "c8642ac8156a994a5adedc7624353e9d1658642008715abbc7975ea480634415"
+    },
+    {
+      "path": "drizzle/0115_yuk1355_prune_backend.sql",
+      "sha256": "2db23a045773f6c176f545f2af7576d5122a7a3b60a85b642af21164b3de7d76"
+    },
+    {
+      "path": ".cache/yuk1355-cron-worker.cjs",
+      "sha256": "fa68b4b3396cc8800855ff1d34bee6bdbc51c3a06a55b8eb4071bd73c50f2569"
+    },
+    {
+      "path": "node_modules/pg-boss/dist/timekeeper.js",
+      "sha256": "bf5edb0cf2162d831ab7897b68dd230f134846585cbcca2c3da43619bad33a34"
+    },
+    {
+      "path": "node_modules/@dbos-inc/dbos-sdk/dist/src/scheduler/scheduler.js",
+      "sha256": "25237d521a48295b5c97282c14a0dc0e41144a2d3c393d1096ae749cb3a2dbb5"
+    }
+  ],
+  "sourceBase": "066f427fff7dda4fbd679b92186c3fb7fdeb4573",
+  "sourceSnapshots": [
+    {
+      "path": "tests/dbos-prune/worker.ts",
+      "source": "import { DBOS } from '@dbos-inc/dbos-sdk';\nimport { PgBoss } from 'pg-boss';\nimport { z } from 'zod';\nimport { db } from '@/db/client';\nimport { changePrunePhase, retireFailedPrune } from '@/server/durable/prune-family';\nimport { startPruneWorker, stopDurableWorker } from '@/server/durable/prune-worker';\n\nasync function main() {\n  const url = new URL(z.url().parse(process.env.DATABASE_URL));\n  if (\n    process.env.TLP_PRUNE_TEST_PROCESS !== '1' ||\n    !/^\\/test_fork_\\d+$/.test(url.pathname) ||\n    !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)\n  )\n    throw new Error('Prune fixture requires a fresh scoped test database');\n  const cronTest = process.env.TLP_PRUNE_CRON_TEST === '1';\n  let holdForward = cronTest;\n  let releaseForward: (() => void) | undefined;\n  const releaseBusiness = new Set<() => void>();\n  const boss = new PgBoss({\n    connectionString: url.toString(),\n    max: 2,\n    supervise: false,\n    schedule: cronTest,\n    cronMonitorIntervalSeconds: 1,\n    cronWorkerIntervalSeconds: 1,\n  });\n  boss.on('error', (error) =>\n    process.send?.({\n      kind: cronTest && String(error).includes('producer fenced') ? 'cron-error' : 'failure',\n      error: String(error),\n      at: new Date().toISOString(),\n    }),\n  );\n  if (cronTest) {\n    // Observe and delay the real Timekeeper.onSendIt -> Manager.createJob SQL.\n    // No fabricated tick, direct send, scheduler replacement or clock change.\n    const adapter = boss.getDb();\n    const execute = adapter.executeSql.bind(adapter);\n    adapter.executeSql = async (text, values) => {\n      if (!text.includes('INSERT INTO pgboss.') || !text.includes(\"'prune_job_events' as name\"))\n        return execute(text, values);\n      const payload = z\n        .array(z.object({ data: z.unknown() }).passthrough())\n        .parse(JSON.parse(z.string().parse(values?.[0])));\n      if (holdForward) {\n        holdForward = false;\n        await new Promise<void>((resolve) => {\n          releaseForward = resolve;\n          process.send?.({ kind: 'forward-held', payload, at: new Date().toISOString() });\n        });\n      }\n      try {\n        const result = await execute(text, values);\n        process.send?.({ kind: 'forwarded', rows: result.rows, at: new Date().toISOString() });\n        return result;\n      } catch (error) {\n        process.send?.({\n          kind: 'forward-rejected',\n          error: String(error),\n          at: new Date().toISOString(),\n        });\n        throw error;\n      }\n    };\n  }\n  await boss.start();\n  try {\n    const options = {\n      boss,\n      db,\n      decl: {\n        name: 'prune_job_events',\n        backend: 'dbos',\n        queue: 'fast',\n        schedule: { cron: cronTest ? '* * * * *' : '0 4 * * *', tz: 'Asia/Shanghai' },\n      },\n      reconcileIntervalMs: 50,\n      boundary: async (boundary) => {\n        if (cronTest && boundary === 'business-committed') {\n          await new Promise<void>((resolve) => {\n            releaseBusiness.add(resolve);\n            process.send?.({\n              kind: 'cron-business-held',\n              workflowId: DBOS.workflowID,\n              at: new Date().toISOString(),\n            });\n          });\n          return;\n        }\n        if (process.env.TLP_PRUNE_PAUSE_AT !== boundary) return;\n        process.send?.({ kind: 'boundary', boundary, pid: process.pid });\n        await new Promise<void>(() => {});\n      },\n    } satisfies Parameters<typeof startPruneWorker>[0];\n    const [workflow, repeated] = await Promise.all([\n      startPruneWorker(options),\n      startPruneWorker(options),\n    ]);\n    if (workflow !== repeated)\n      throw new Error('Repeated same-process registration duplicated DBOS');\n    process.send?.({ kind: 'ready', pid: process.pid });\n    process.on('message', async (message) => {\n      try {\n        const command = z\n          .discriminatedUnion('kind', [\n            z.object({\n              kind: z.literal('transition'),\n              phase: z.enum(['pg-boss', 'draining-pg-boss', 'dbos', 'draining-dbos']),\n            }),\n            z.object({ kind: z.literal('retire'), id: z.string(), reason: z.string() }),\n            z.object({ kind: z.literal('stop') }),\n            z.object({ kind: z.literal('hold-legacy') }),\n            z.object({ kind: z.literal('arm-forward') }),\n            z.object({ kind: z.literal('release-forward') }),\n            z.object({ kind: z.literal('release-business') }),\n          ])\n          .parse(message);\n        if (command.kind === 'transition') await changePrunePhase(db, boss, command.phase);\n        else if (command.kind === 'retire')\n          await retireFailedPrune(db, 'pg-boss', command.id, command.reason);\n        else if (command.kind === 'hold-legacy')\n          await boss.offWork('prune_job_events', { wait: true });\n        else if (command.kind === 'arm-forward') holdForward = true;\n        else if (command.kind === 'release-forward') {\n          holdForward = false;\n          releaseForward?.();\n          releaseForward = undefined;\n        } else if (command.kind === 'release-business') {\n          for (const release of releaseBusiness) release();\n          releaseBusiness.clear();\n        } else {\n          await stopDurableWorker();\n          await boss.stop();\n          process.exit(0);\n        }\n        process.send?.({ kind: 'ack' });\n      } catch (error) {\n        process.send?.({\n          kind: 'rejected',\n          error: error instanceof Error ? error.message : String(error),\n        });\n      }\n    });\n    const workflowId = process.env.TLP_PRUNE_WORKFLOW_ID;\n    if (workflowId) {\n      const handle =\n        process.env.TLP_PRUNE_RECOVER === '1'\n          ? DBOS.retrieveWorkflow(workflowId)\n          : await DBOS.startWorkflow(workflow, { workflowID: workflowId })(\n              new Date('2026-10-07T00:00:00Z'),\n              {},\n            );\n      await handle.getResult();\n      process.send?.({\n        kind: 'done',\n        pid: process.pid,\n        status: await handle.getStatus(),\n        steps: await DBOS.listWorkflowSteps(workflowId),\n      });\n    }\n  } catch (error) {\n    process.send?.({\n      kind: 'failure',\n      error: error instanceof Error ? error.stack : String(error),\n    });\n    await stopDurableWorker();\n    await boss.stop();\n    process.exit(1);\n  }\n}\nmain().catch((error: unknown) => {\n  process.send?.({ kind: 'failure', error: error instanceof Error ? error.stack : String(error) });\n  process.exit(1);\n});\n"
+    },
+    {
+      "path": "tests/dbos-prune/cron.db.test.ts",
+      "source": "import { type ChildProcess, execFile, spawn } from 'node:child_process';\nimport { createHash, randomUUID } from 'node:crypto';\nimport { once } from 'node:events';\nimport { readFile, writeFile } from 'node:fs/promises';\nimport { resolve } from 'node:path';\nimport { promisify } from 'node:util';\nimport { PgBoss } from 'pg-boss';\nimport postgres from 'postgres';\nimport { afterAll, beforeAll, expect, it } from 'vitest';\nimport { z } from 'zod';\n\nconst messageSchema = z.object({ kind: z.string(), error: z.string().optional() }).passthrough();\nconst children = new Set<ChildProcess>();\nconst observations: unknown[] = [];\nconst processLogs: {\n  pid: number | undefined;\n  messages: unknown[];\n  stdout: string;\n  stderr: string;\n}[] = [];\nlet sql: ReturnType<typeof postgres>;\nlet boss: PgBoss;\nlet passed = false;\nlet databaseUrl: string;\nlet unrelatedJob: string | null;\n\nfunction startCronWorker() {\n  const child = spawn(process.execPath, [resolve('.cache/yuk1355-cron-worker.cjs')], {\n    stdio: ['ignore', 'pipe', 'pipe', 'ipc'],\n    env: {\n      PATH: process.env.PATH,\n      NODE_ENV: 'test',\n      DATABASE_URL: databaseUrl,\n      TLP_PRUNE_TEST_PROCESS: '1',\n      TLP_PRUNE_CRON_TEST: '1',\n    },\n  });\n  children.add(child);\n  const exited = once(child, 'exit');\n  const messages: z.infer<typeof messageSchema>[] = [];\n  const log: (typeof processLogs)[number] = {\n    pid: child.pid,\n    messages: [],\n    stdout: '',\n    stderr: '',\n  };\n  processLogs.push(log);\n  child.stdout?.on('data', (chunk) => {\n    log.stdout += String(chunk);\n  });\n  child.stderr?.on('data', (chunk) => {\n    log.stderr += String(chunk);\n  });\n  child.on('message', (value) => {\n    const message = messageSchema.parse(value);\n    messages.push(message);\n    log.messages.push(message);\n    process.stdout.write(`cron IPC pid=${child.pid} kind=${message.kind}\\n`);\n  });\n  child.on('exit', () => children.delete(child));\n  async function wait(kind: string, timeout = 20000) {\n    let found: z.infer<typeof messageSchema> | undefined;\n    await expect\n      .poll(\n        () => {\n          const failure = messages.find((message) => message.kind === 'failure');\n          if (failure) throw new Error(`${failure.error}\\n${log.stderr}\\n${log.stdout}`);\n          if (child.exitCode !== null || child.signalCode !== null)\n            throw new Error(`Cron worker exited: ${JSON.stringify(log)}`);\n          const index = messages.findIndex((message) => message.kind === kind);\n          if (index !== -1) found = messages.splice(index, 1)[0];\n          return found !== undefined;\n        },\n        { timeout, interval: 50 },\n      )\n      .toBe(true);\n    return messageSchema.parse(found);\n  }\n  async function command(command: { kind: string; phase?: string }, response = 'ack') {\n    child.send(command);\n    return wait(response);\n  }\n  async function stop() {\n    child.send({ kind: 'stop' });\n    const result = await exited;\n    expect(result).toEqual([0, null]);\n    observations.push({ stage: 'process-stopped', pid: child.pid, result });\n  }\n  return { child, wait, command, stop };\n}\n\nasync function snapshot(stage: string) {\n  const data = {\n    stage,\n    at: new Date().toISOString(),\n    phase: await sql`select phase from prune_job_events_control`,\n    pgSchedule: await sql`select name, cron, timezone from pgboss.schedule`,\n    dbosSchedule:\n      await sql`select schedule_name, schedule, status, last_fired_at, cron_timezone, automatic_backfill from tlp_dbos.workflow_schedules`,\n    jobs: await sql`select id, name, state, data, created_on, started_on, completed_on, singleton_on, singleton_key from pgboss.job order by created_on, id`,\n    workflows:\n      await sql`select workflow_uuid, name, status, schedule_name, inputs from tlp_dbos.workflow_status order by workflow_uuid`,\n    receipts: await sql`select * from prune_job_events_receipt order by workflow_id`,\n    audit: await sql`select * from yuk1355_cron_audit order by sequence`,\n  };\n  observations.push(data);\n  process.stdout.write(`cron observed stage=${stage} at=${data.at}\\n`);\n  return data;\n}\n\nasync function pollSchedules(backend: 'pg-boss' | 'dbos' | 'none') {\n  await expect\n    .poll(\n      async () => {\n        const pg = await sql`select name from pgboss.schedule where name = 'prune_job_events'`;\n        const dbos =\n          await sql`select status from tlp_dbos.workflow_schedules where schedule_name = 'prune_job_events'`;\n        return { pg: pg.length, dbos: dbos[0]?.status ?? 'PAUSED' };\n      },\n      { timeout: 10000, interval: 50 },\n    )\n    .toEqual({ pg: backend === 'pg-boss' ? 1 : 0, dbos: backend === 'dbos' ? 'ACTIVE' : 'PAUSED' });\n}\n\nbeforeAll(async () => {\n  // global-setup always creates a new Testcontainers Postgres; never accept a caller's DB.\n  const url = new URL(z.url().parse(process.env.TEST_DATABASE_URL));\n  expect(url.pathname).toMatch(/^\\/test_fork_\\d+$/);\n  expect(['localhost', '127.0.0.1', '[::1]']).toContain(url.hostname);\n  const adminUrl = new URL(url);\n  adminUrl.pathname = '/postgres';\n  const admin = postgres(adminUrl.toString(), { max: 1 });\n  const databaseName = `test_fork_${Date.now()}`;\n  try {\n    // Clone the freshly migrated template, not a possibly reused Vitest worker DB.\n    await admin.unsafe(`CREATE DATABASE \"${databaseName}\" TEMPLATE \"test\"`);\n  } finally {\n    await admin.end();\n  }\n  url.pathname = `/${databaseName}`;\n  databaseUrl = url.toString();\n  sql = postgres(url.toString(), { max: 3 });\n  await promisify(execFile)(resolve('node_modules/.bin/esbuild'), [\n    'tests/dbos-prune/worker.ts',\n    '--bundle',\n    '--platform=node',\n    '--target=node24',\n    '--format=cjs',\n    '--outfile=.cache/yuk1355-cron-worker.cjs',\n    '--external:pg-native',\n    '--external:sharp',\n    '--external:better-sqlite3',\n    '--external:bufferutil',\n    '--external:utf-8-validate',\n    '--external:winston',\n    '--external:winston-transport',\n  ]);\n  await sql`delete from contract_epoch`;\n  boss = new PgBoss({\n    connectionString: url.toString(),\n    max: 2,\n    supervise: false,\n    schedule: false,\n  });\n  boss.on('error', (error) => {\n    throw error;\n  });\n  await boss.start();\n  await boss.createQueue('yuk1355_unknown_external');\n  unrelatedJob = await boss.send('yuk1355_unknown_external', {\n    outcome: 'unknown',\n    nested: { attempt: 'uncheckpointed', replayAllowed: false },\n  });\n  await sql`update pgboss.job set state = 'failed' where id = ${unrelatedJob}::uuid`;\n  // Test-only statement/row audit: records actual SQL effects and phase in their transaction.\n  await sql.unsafe(`\n    CREATE TABLE yuk1355_cron_audit (\n      sequence bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,\n      at timestamptz NOT NULL DEFAULT clock_timestamp(),\n      kind text NOT NULL, phase text NOT NULL, task_id text,\n      transaction_id bigint NOT NULL DEFAULT txid_current(),\n      backend_pid integer NOT NULL DEFAULT pg_backend_pid(), detail jsonb NOT NULL\n    );\n    CREATE FUNCTION yuk1355_cron_observe() RETURNS trigger LANGUAGE plpgsql AS $$\n    BEGIN\n      INSERT INTO yuk1355_cron_audit(kind,phase,task_id,detail)\n      SELECT (CASE WHEN TG_TABLE_NAME IN ('job','job_common') THEN 'job' ELSE TG_TABLE_NAME END) || ':' || TG_OP, phase,\n        CASE WHEN TG_TABLE_NAME IN ('job','job_common') THEN to_jsonb(NEW)->>'id'\n             WHEN TG_TABLE_NAME = 'prune_job_events_receipt' THEN to_jsonb(NEW)->>'workflow_id' END,\n        coalesce(to_jsonb(NEW), '{}'::jsonb)\n      FROM prune_job_events_control;\n      RETURN NEW;\n    END; $$;\n    CREATE TRIGGER yuk1355_observe_job AFTER INSERT OR UPDATE OF state ON pgboss.job\n      FOR EACH ROW EXECUTE FUNCTION yuk1355_cron_observe();\n    CREATE TRIGGER yuk1355_observe_phase AFTER UPDATE ON prune_job_events_control\n      FOR EACH ROW EXECUTE FUNCTION yuk1355_cron_observe();\n    CREATE TRIGGER yuk1355_observe_receipt AFTER INSERT ON prune_job_events_receipt\n      FOR EACH ROW EXECUTE FUNCTION yuk1355_cron_observe();\n    CREATE TRIGGER yuk1355_observe_delete AFTER DELETE ON job_events\n      FOR EACH STATEMENT EXECUTE FUNCTION yuk1355_cron_observe();\n  `);\n  observations.push({\n    stage: 'fresh-container-database',\n    database: url.pathname,\n    port: url.port,\n    server:\n      await sql`select version(), current_database(), current_setting('fsync') as fsync, current_setting('synchronous_commit') as synchronous_commit`,\n  });\n});\n\nafterAll(async () => {\n  for (const child of children) {\n    const exited = once(child, 'exit');\n    child.kill('SIGKILL');\n    observations.push({ stage: 'failure-cleanup', pid: child.pid, exit: await exited });\n  }\n  await boss?.stop();\n  await sql?.end();\n  if (process.env.TLP_PRUNE_CRON_EVIDENCE_PATH)\n    await writeFile(\n      process.env.TLP_PRUNE_CRON_EVIDENCE_PATH,\n      `${JSON.stringify(\n        {\n          capturedAt: new Date().toISOString(),\n          passed,\n          dbos: '5.2.11',\n          pgBoss: '12.26.3',\n          strategy: {\n            productionCron: '0 4 * * *',\n            testCron: '* * * * *',\n            timezone: 'Asia/Shanghai',\n            clocksChanged: false,\n            pgMonitorSeconds: 1,\n            pgForwardPollSeconds: 1,\n            reconcileMilliseconds: 50,\n            dbosScheduler: 'unmodified SDK dynamic scheduler and internal queue',\n            barriers: [\n              'real timekeeper target INSERT delayed before execution',\n              'legacy consumer explicitly offWork until new draining worker',\n              'business-committed callback delayed after receipt transaction',\n            ],\n          },\n          observations,\n          processLogs,\n          sourceHashes: await Promise.all(\n            [\n              'src/server/durable/prune-worker.ts',\n              'src/server/durable/prune-family.ts',\n              'tests/dbos-prune/worker.ts',\n              'tests/dbos-prune/cron.db.test.ts',\n              'drizzle/0115_yuk1355_prune_backend.sql',\n              '.cache/yuk1355-cron-worker.cjs',\n              'node_modules/pg-boss/dist/timekeeper.js',\n              'node_modules/@dbos-inc/dbos-sdk/dist/src/scheduler/scheduler.js',\n            ].map(async (path) => ({\n              path,\n              sha256: createHash('sha256')\n                .update(await readFile(path))\n                .digest('hex'),\n            })),\n          ),\n        },\n        null,\n        2,\n      )}\\n`,\n    );\n});\n\nit('observes actual minute ticks, cached legacy forwarding, drain, two DBOS schedulers and rollback', async () => {\n  const marker = randomUUID();\n  await sql`insert into job_events (business_table,business_id,event_type,payload,occurred_at)\n    values ('yuk1355-cron',${marker},'legacy-old',${sql.json({ long: 'real cron synthetic telemetry '.repeat(100), nested: { outcomes: ['known', 'ambiguous'], error: null } })},now() - interval '31 days')`;\n  const worker = startCronWorker();\n  await worker.wait('ready');\n  await pollSchedules('pg-boss');\n  await worker.wait('forward-held', 75000);\n  const firstHeld = await snapshot('first-real-tick-held');\n  const [firstTick] = firstHeld.jobs.filter(\n    (job) => job.name === '__pgboss__send-it' && job.state === 'active',\n  );\n  expect(firstTick).toMatchObject({ data: { name: 'prune_job_events' } });\n  expect(firstHeld.jobs.filter((job) => job.name === 'prune_job_events')).toHaveLength(0);\n  await worker.command({ kind: 'hold-legacy' });\n  await worker.command({ kind: 'release-forward' });\n  const forwarded = z\n    .object({ rows: z.array(z.object({ id: z.string() })) })\n    .parse(await worker.wait('forwarded'));\n  const legacyId = forwarded.rows[0]?.id;\n  expect(legacyId).toBeTruthy();\n  await expect\n    .poll(\n      async () => (await sql`select state from pgboss.job where id = ${legacyId}::uuid`)[0]?.state,\n    )\n    .toBe('created');\n  await worker.command({ kind: 'arm-forward' });\n  await worker.wait('forward-held', 75000);\n  const beforeDrain = await snapshot('second-real-tick-cached-before-drain');\n  const [cached] = beforeDrain.jobs.filter(\n    (job) => job.name === '__pgboss__send-it' && job.state === 'active',\n  );\n  expect(cached.id).not.toBe(firstTick.id);\n  expect(beforeDrain.receipts).toHaveLength(0);\n  await worker.command({ kind: 'transition', phase: 'draining-pg-boss' });\n  await pollSchedules('none');\n  const blocked = await worker.command({ kind: 'transition', phase: 'dbos' }, 'rejected');\n  expect(blocked.error).toContain(String(legacyId));\n  await snapshot('legacy-drain-blocks-cutover');\n  const peer = startCronWorker();\n  await peer.wait('ready');\n  await expect\n    .poll(\n      async () => (await sql`select state from pgboss.job where id = ${legacyId}::uuid`)[0]?.state,\n      { timeout: 15000 },\n    )\n    .toBe('completed');\n  expect(await sql`select * from job_events where business_id = ${marker}`).toHaveLength(0);\n  const drained = await snapshot('real-legacy-tick-drained');\n  expect(drained.audit.filter((row) => row.kind === 'job_events:DELETE')).toHaveLength(1);\n  expect(drained.audit.find((row) => row.kind === 'job_events:DELETE')?.phase).toBe(\n    'draining-pg-boss',\n  );\n  await worker.command({ kind: 'transition', phase: 'dbos' });\n  await pollSchedules('dbos');\n  await worker.command({ kind: 'release-forward' });\n  const rejection = await worker.wait('forward-rejected');\n  expect(rejection.error).toContain('producer fenced: dbos');\n  await worker.wait('cron-error');\n  await expect\n    .poll(\n      async () => (await sql`select state from pgboss.job where id = ${cached.id}::uuid`)[0]?.state,\n      { timeout: 10000 },\n    )\n    .toBe('completed');\n  const fenced = await snapshot('cached-forward-rejected-after-cutover');\n  expect(fenced.jobs.filter((job) => job.name === 'prune_job_events')).toHaveLength(1);\n  expect(\n    fenced.audit.filter(\n      (row) =>\n        row.kind === 'job:INSERT' &&\n        row.detail.name === 'prune_job_events' &&\n        row.phase !== 'pg-boss',\n    ),\n  ).toHaveLength(0);\n  await sql`insert into job_events (business_table,business_id,event_type,payload,occurred_at)\n    values ('yuk1355-cron',${marker},'dbos-old','{}',now() - interval '31 days')`;\n  await expect\n    .poll(\n      async () =>\n        (await sql`select count(*)::int as count from prune_job_events_receipt`)[0]?.count,\n      { timeout: 75000, interval: 100 },\n    )\n    .toBe(1);\n  const native = await snapshot('real-dbos-cron-receipt-before-checkpoint');\n  const [receipt] = native.receipts;\n  expect(receipt.workflow_id).toMatch(\n    /^sched-prune_job_events-\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:00\\.000Z$/,\n  );\n  expect(native.workflows).toHaveLength(1);\n  expect(native.workflows[0]).toMatchObject({\n    workflow_uuid: receipt.workflow_id,\n    name: 'prune_job_events',\n    schedule_name: 'prune_job_events',\n    status: 'PENDING',\n  });\n  expect(new Date(receipt.cutoff).getTime()).toBe(\n    new Date(receipt.workflow_id.replace('sched-prune_job_events-', '')).getTime() - 30 * 86400000,\n  );\n  expect(receipt.deleted).toBe(1);\n  expect(\n    native.audit.filter((row) => row.kind === 'job_events:DELETE' && row.phase === 'dbos'),\n  ).toHaveLength(1);\n  await worker.command({ kind: 'transition', phase: 'draining-dbos' });\n  await pollSchedules('none');\n  expect(\n    (await worker.command({ kind: 'transition', phase: 'pg-boss' }, 'rejected')).error,\n  ).toContain(receipt.workflow_id);\n  await snapshot('dbos-receipt-pending-blocks-rollback');\n  await worker.command({ kind: 'release-business' });\n  await peer.command({ kind: 'release-business' });\n  await expect\n    .poll(\n      async () =>\n        (\n          await sql`select status from tlp_dbos.workflow_status where workflow_uuid = ${receipt.workflow_id}`\n        )[0]?.status,\n      { timeout: 15000 },\n    )\n    .toBe('SUCCESS');\n  await worker.command({ kind: 'transition', phase: 'pg-boss' });\n  await pollSchedules('pg-boss');\n  await peer.command({ kind: 'release-forward' });\n  await sql`insert into job_events (business_table,business_id,event_type,payload,occurred_at)\n    values ('yuk1355-cron',${marker},'rollback-old','{}',now() - interval '31 days')`;\n  await expect\n    .poll(\n      async () =>\n        (\n          await sql`select count(*)::int as count from pgboss.job where name = 'prune_job_events' and state = 'completed'`\n        )[0]?.count,\n      { timeout: 75000, interval: 100 },\n    )\n    .toBe(2);\n  const rollback = await snapshot('real-pg-cron-after-rollback');\n  expect(rollback.receipts).toHaveLength(1);\n  expect(rollback.audit.filter((row) => row.kind === 'job_events:DELETE')).toHaveLength(3);\n  expect(await sql`select * from job_events where business_id = ${marker}`).toHaveLength(0);\n  const forbiddenInserts = rollback.audit.filter(\n    (row) =>\n      row.kind === 'job:INSERT' &&\n      row.detail.name === 'prune_job_events' &&\n      row.phase !== 'pg-boss',\n  );\n  expect(forbiddenInserts).toHaveLength(0);\n  const summaries = await sql`select date_trunc('minute', at) as minute,\n    count(*) filter (where kind = 'job_events:DELETE')::int as executions,\n    array_agg(phase) filter (where kind = 'job_events:DELETE') as effect_phases\n    from yuk1355_cron_audit group by 1 order by 1`;\n  observations.push({\n    stage: 'observed-result',\n    legacyId,\n    cachedTickId: cached.id,\n    dbosWorkflowId: receipt.workflow_id,\n    admittedLegacyTasks: rollback.jobs\n      .filter((job) => job.name === 'prune_job_events')\n      .map((job) => ({ id: job.id, state: job.state })),\n    receiptCount: rollback.receipts.length,\n    businessDeleteStatements: rollback.audit.filter((row) => row.kind === 'job_events:DELETE')\n      .length,\n    forbiddenLegacyInserts: forbiddenInserts.length,\n    summaries,\n  });\n  expect(summaries.filter((row) => row.executions > 1)).toEqual([]);\n  expect(\n    (\n      await sql`select state, retry_count, data from pgboss.job where id = ${unrelatedJob}::uuid`\n    )[0],\n  ).toMatchObject({\n    state: 'failed',\n    retry_count: 0,\n    data: { outcome: 'unknown', nested: { replayAllowed: false } },\n  });\n  await worker.stop();\n  await peer.stop();\n  passed = true;\n}, 330000);\n"
+    }
+  ]
+}

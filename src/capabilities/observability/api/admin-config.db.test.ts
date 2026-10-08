@@ -294,12 +294,12 @@ describe('GET /api/admin/config — injected runtime facts over HTTP (real build
       .map((job) => job.name)
       .sort();
     expect(manifestRows.map((r) => r.name)).toEqual(expectedManifest);
+    expect(manifestRows.filter((r) => r.name === 'prune_job_events')).toHaveLength(1);
 
     const bossRows = body.schedules.rows.filter((r) => r.source === 'server-boss-infra');
     // 队列名取真实常量（verify_dispatch_recover——verify-dispatch-outbox 导出）。
     expect(bossRows.map((r) => r.name).sort()).toEqual(
       [
-        'prune_job_events',
         'prune_orphan_review_sessions',
         'prune_orphan_placement_sessions',
         'promote_conversation_idle',

@@ -514,6 +514,12 @@ export const observabilityCapability = defineCapability({
   },
   jobs: {
     handlers: [
+      {
+        name: 'prune_job_events',
+        backend: 'dbos',
+        queue: 'fast',
+        schedule: { cron: '0 4 * * *', tz: 'Asia/Shanghai' },
+      },
       // YUK-601 PR7 (v3.2 §7) — 夜间装配漂移审计（--strict：invalid → job failed
       // 可见）。'25 4' 避撞既有夜链排期；fast 档纯 DB 无 LLM。
       {

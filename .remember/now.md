@@ -1,3 +1,19 @@
+# 2026-10-08 current PR1595
+
+Integrated merged PR1603/main90f499126 after correcting export test expectations (35 GREEN). Only PLAN/handoff conflicted, no manual product changes. Parent owns final checks/push/CI. No runtime action. Historical records below do not override merged PR1592/1603 state.
+
+# 2026-10-08 parent integration
+
+PR1592 merged eae963377 after exact CI37758570995; same tree as95949e012. PR1595 now integrates that main, preserving Start build and DBOS Winston externals. Parent owns checks/push/CI/merge; no runtime changes. Earlier evidence below is revision-specific.
+
+# YUK-1355 latest-main integration handoff, 2026-10-08
+
+Sole writer in /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1355-dbos-migration, branch feat/yuk-1355-dbos-migration, starting clean 09f07d7430acee44b384b5a0ba7b79daecefaf55. Fresh fetch immediately preceded normal merge of main 5b11f3edbd8c8a418cea8815976786d177e332bc. Only PLAN and this handoff conflicted; main's current delivery entries and lane restrictions are preserved. Node24.19 scoped unit passed 212 tests in 11 files; typecheck/lint/ratchet/build and eight static audits exit 0. Historical 22 source/vendor hashes and rebuilt standalone prune fixture match. Integrated server/worker/migrate bundles differ; exact remaining DB commands are in the evidence receipt. No DB suite ran. Full non-UI migration remains the objective; this integration adds no job families. Default pg-boss, prune-only DBOS, 60s receipt fence, unknown rollback hold and single recovery owner remain unchanged.
+
+Parent owns PR1595 replies/watch/push/merge, Linear, exact-head CI and any DB/runtime acceptance. R1/R2 NONE at 48ead remain historical; no new review or child. No DB/container/provider/replay/runtime/deployment operations. PR1595 was registered with this thread as required by T3; no PR mutation or watch. P2 comment4208022050 is a stale documentation registration path; the minimal catalog correction and validation obligations are reported in docs/planning/2026-10-08-yuk1355-main-integration.md for parent disposition.
+
+Main's handoffs follow unchanged; their runtime observations are historical and were not refreshed by this lane.
+
 # 当前交付 — PR1603整合新main
 
 PR1592已09:56:19Z合入main eae963377。PR1603原head61e41e319准确CI37757563898全绿、独立R1 NONE、threads0，owner明确现在merge；正常整合main仅解决PLAN/交接冲突，保留双方源码与记录。新HEAD必须通过CI，尚未合并或部署。当前父唯一writer，无runtime锁。
@@ -419,3 +435,30 @@ Nativecost proof extended to realpi normalization: /tmp/yuk1047-native-adapter-r
 YUK-1047续：共享原生评分已拆为短事务读/事务外模型/短事务封存，同组session锁保留幂等与attempt串行；22+34 scoped DB、typecheck/build通过。ingestion原件捕获与消费者仍未完成。
 
 2026-10-05 续接：ingestion原件捕获/原revision重试/确定性收录/撤回重放；native归因与变式冻结内容+晚到有效判复核；失败统计/知识工具/待复习候选/关联计数/cache接线。12capture44diagnostic40attribution30variant80reporting4native（重叠）通过；typecheck/build/boundary437通过。余native复习次数/rating与CSV纯快照、registry准入census/最终gates/reviewPRCI。T3 occurrence-export-design任务完成已读，提出按evaluation_group存活FSRS效果去重，不将rating当correctness。CoachHub现有UI语义问题已PARKED待Linear去重。全部工作仍未部署/付费，主writer未动.serena。
+
+
+## Historical YUK-1355 lane evidence
+
+## YUK-1355 PR1595 已提交
+
+源码/证据98de7653e，父核验148项hash一致；PR1595待exact-head CI和17分钟窗，仅prune族，不代表全迁移。主环境发布归其他owner；最新1365报告PR1594已发布，但正文验收受provider429阻塞，memory DLQ不重放。无本lane运行变更。
+
+# YUK-1355 Node 24 integration handoff — 2026-10-07
+
+Sole writer /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1355-dbos-migration, feat/yuk-1355-dbos-migration. Normal merge of fetched main df08399ff179c5882b39da87e162237fd18246c7 is 3e04890bb72da34ebbe5df746eab64066b119782. Final source/evidence capture commit 71d2f0cfd3301823eeb858de9a22e546c0345467 preserves dependencies and YUK-1365 streaming. Prune remains the only DBOS admitted family. Actual Node 24.19.0 runner and all ten bundled fixture children report pg-boss 12.36.0 / DBOS 5.2.11. New cron/recovery artifacts are separate from historical 12.26.3 / Node 26 evidence; see docs/planning/2026-10-07-yuk1355-node24-integration-evidence.md for final gates and hashes.
+
+Owner latest scope is all non-UI migration first, Agent TEST ONLY, automation disabled. This lane did not touch runtime lock owner bed93b71 / YUK-1365, services, existing DB/private data, providers or deployment. No delegation, Linear, push, PR, watch, remote merge or new review. R1 NONE and P1 verification R2 NONE are parent-supplied at 48ead4da8; review budget spent. Local merge into this authorized lane is the only merge performed. Rollback means phase rollback on the fixed binary only; pre-fix/old-binary rollback is not admitted. Parent owns artifact acceptance, PR, CI, issue state and further delivery. Writer released at the final clean local commit.
+
+Static 68-family ledger crosschecked by name, not equated to physical queues or README's AI task count. Current branch: 53 manifest loaders + one DBOS declaration, six handler registrations, six memory registrations, one orchestration, one subscription dispatcher. 1359's 53 handlers /18 schedules +6 infra schedules are a subset; README52 is historical, current AI census55 remains a separate denominator. No new actionable finding beyond the corrected own inventory description and already-owned migration/recovery/exit obligations, so no new tracker item is requested.
+
+The following YUK-1355 snapshot is historical and retains its earlier-version evidence. Main's unrelated handoffs below are preserved.
+
+# YUK-1355 isolated lane handoff — 2026-10-07
+
+Only writer: /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1355-dbos-migration, feat/yuk-1355-dbos-migration, base a6d89037b. Parent owns final review/CI/acceptance and Linear status. TEST ONLY; no paid calls, main runtime, private data, delegation, push/PR/watch/merge/deploy. Writer releases ownership at terminal handoff.
+
+Implemented admitted manifest DBOS backend for prune_job_events, default database phase pg-boss, producer fences, old-queue retry drain and explicit terminal disposition, DBOS receipt/commit recovery, single native cron, blocked rollback until DBOS obligations settle, same-process registration reuse and bounded shutdown. Worker-only CLI controls this exact family through DBOSClient, never recovers or replays candidates. No new dependency/lockfile change; optional inactive Winston imports externalized in server/worker build command hunks.
+
+Ledger/runbook and evidence: docs/planning/2026-10-07-yuk1355-dbos-housekeeping.md and adjacent task-inventory/process-evidence JSON. Final local evidence: 69 scoped DB, 48 unit, 26 selected migration passed; typecheck/lint/ratchet/build and schema/partition/capability/task/provider audits passed. Existing297 warnings, baseline305 unchanged. Evidence source/bundle hashes checked. Independent review, exact-head CI, runtime/private-data acceptance remain parent-owned. No claim of business-family migration, review three-entry reuse, provider acceptance, restored private data, deployment or merge.
+
+YUK-1356 port: type NativeAttemptDispatchPort and NativeAttemptDispatchOptions from src/capabilities/practice/server/assessment/native-attempt-dispatch-port.ts; default dispatchNativeAttempt from assessment/durable-attempt.ts. Four args database/questionId/request/options return Promise<string|null>. Null permits sync formal commit; runId means durable intent exists, including enqueue failure recovery. Queue/budget deps remain inside1355. Did not touch review-operation, api/submit, due-list, practice/public, Pi tools/allowlist or judge_run diagnostic-helper import. Remaining family work already tracked in1356/1358, retirement in1359; no duplicate ticket.

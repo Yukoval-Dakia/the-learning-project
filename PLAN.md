@@ -1,8 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：PR1603正常整合已合并的PR1592/main eae963377；仅PLAN/交接冲突，保留双方记录。Today读取已8DB/35unit验证；独立审查NONE，整合后的准确CI待。未部署，Agent TEST ONLY。
+> Linear 是权威 tracker。2026-10-08：PR1595修正CI遗漏的导出分类测试（35项GREEN），正常整合main90f499126/PR1603；仅交接文档冲突，既有Start与DBOS行为保留。父88相关unit/typecheck/lint/build通过，准确CI待，未部署。
 
 ## NOW
+
+- **YUK-1355 / PR1595**：默认 pg-boss，仅 prune_job_events 可切 DBOS；60s cached-cron receipt fence、unknown rollback hold、单 recovery owner 均保留。新 main 的业务变更原样合入，Node24.19 212 unit、typecheck/lint/ratchet/build 与8 static audits通过；源/fixture字节保持，新增bundle的DB验收交父。历史4 cron/recovery、28 worker DB、77 unit、26 migration 只代表旧源/旧bundle。R1/R2 NONE适用于48ead，预算已用，不新审。
+
+
 
 - **YUK-1377 / Today 读取迁移**：从main `1bbd82795` 接续，主线已明确本线程独占shell公共读取/HTTP契约范围。复用现有summary和overnight facade，公共出口实现 `1aa3fd892` 已交回，35unit/父独立6DB/static/build通过；不改UI/Start/组合根。已正常集成main5b11f3edb，79eb7980d接入queryReviewDue(db,{limit:200})；新增回归已RED→GREEN，父8DB/35unit/static/build通过。独立review NONE、原head61e41e319 CI全绿；现整合main eae963377后的新HEAD待CI。Start消费者接续归主线。详情见[1377记录](docs/planning/2026-10-08-yuk1377-today-domain-reads.md)。
 
@@ -29,6 +33,10 @@
 
 ## NEXT
 
+- YUK-1355 父线程负责 push、PR1595 replies/watch/merge、exact-head CI、Linear 与必要 DB 验收。禁止本 child 操作容器/DB/provider/runtime/deploy；本轮不扩新任务族。
+
+- **YUK-1352 / PR1592**：已合入main eae963377，CI37758570995与合并tree一致；隔离错题入口已验收，未部署。剩余路由与canonical boot继续。
+
 - **YUK-1352主线接续**：PR1592已合入eae963377；Today/Inbox Start消费者、canonical启动与旧SPA退出仍由主线负责，不能将既有/mistakes局部验收当作整站完成。
 
 - **YUK-1364 已收口**：PR1591合入5aa2a9e98并发布准确853/image9b76至Agent TEST；102表/97文件/Mem0恢复、真实HTTP与队列核验通过，17:33:31Z释放锁。源码与运行证据详见[1364记录](docs/planning/2026-10-07-yuk1364-probe-issuance.md)。
@@ -40,11 +48,13 @@
 
 ## PARKED
 
+- YUK-1355 P2 comment4208022050：cron权威目录仍将 prune 注册点写为 ../handlers.ts。最小范围为目录说明及一行注册点/phase ownership 文档；不需要新 scheduler/catalog 子系统。已报告父线程裁决，本轮未改该 P2。
+
 - **YUK-1359临时挂载退出**：生产SPA的/mistakes改为document handoff，Vite-only dev暂留原HTTP consumer；全部路由及dev/build/镜像入口迁入Start且逐页验收后删除旧SPA回落与dev adapter。未宣称其他路由退役。
 
 
 - **YUK-1360 父线程发布验收义务**：真实 startup 返回 schema44 时仍有7项 BAM index 工作 pending；不能把 start/health/Drizzle smoke 当作 background migration 完成。本 lane 验证 disposable 完成与 index validity；生产需父线程在既有发布流程核验。旧12.26.3默认启动仅证明单个 synthetic queue 操作，`migrate:false`拒绝44；没有执行或批准 queue downgrade。归入既有 YUK-1360/YUK-1329 验收，不在此 lane 新建 Linear。
-- YUK-1346：单次“不写入记忆”的可信策略尚未实现，High/Backlog，选为下一条产品线；两条原假设验收摘要保留，不冒称已修。
+- YUK-1346：源码已有单次派生用途策略，本轮保持其边界，不重开记忆修复；真实运行验收仍由其 owner 核验。
 - YUK-1343：失败创建提前标为显式来源、50条历史截断隐藏可续接会话均未修；已成组登记，不阻塞此次已裁决发布。
 
 - YUK-1342：付费探针开关、不可覆盖封存及 OpenAI4 node-fetch 绕过 global-fetch 观测。副本记忆功能通过，但整体探针仍 FALSE；SDK wire/count/cost 不完整，不重复付费刷绿。
@@ -55,6 +65,8 @@
 - YUK-1325 / PR #1580：保留 `1be38edbc`、`1af72b427`、`3940d61f9`，正常合入 main `8841ce68a` 为 `e484efa60`；359 scoped tests、21 audits、typecheck/lint/build 与 lint ratchet 通过，无 high/critical 依赖告警。开发 transcript 与产品 MiMo/自主交付指导同时保留。writer 已释放，父线程负责最终 SDK/SQL/browser 回放、push、exact-head CI、review replies、Linear 与发布；P2 typed tracing 留 YUK-1339，不启动第三审。详情见 [Laminar 记录](docs/planning/2026-10-06-yuk1325-laminar.md)。旧完成线程越界写入风险仍由父线程独占 watch 约束，平台跟进待去重登记。 最新 main 的前缀 credential P1 修复及73tests记录一并保留；PR父线程仍负责后续验收，此lane无新review。
 
 ## BLOCKED-ON
+
+- YUK-1355 新 main 的真实 DB 行为、最终 exact-head CI 与部署均未验收。本轮只交付本地合并与限定静态/单位检查；源与bundle比较及必须复验清单见本轮证据。
 
 - YUK-1352隔离路由验收已通过；canonical boot/release/SSE及其他路由退出未验收；父线程拥有runtime lock、材料/R2证据、PR/Linear及发布权。本writer无新增领域follow-up，既有1359/1376退出义务保留。
 

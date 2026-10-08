@@ -1,0 +1,742 @@
+{
+  "issue": "YUK-1355",
+  "capturedAt": "2026-10-07T14:06:58.484964+00:00",
+  "sourceCommit": "71d2f0cfd3301823eeb858de9a22e546c0345467",
+  "startingHead": "48ead4da80c4d7c528d8e512077e9e13cc9943f2",
+  "mergedMain": "df08399ff179c5882b39da87e162237fd18246c7",
+  "mergeCommit": "3e04890bb72da34ebbe5df746eab64066b119782",
+  "runtime": {
+    "node": "v24.19.0",
+    "execPath": "/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin/node",
+    "pgBoss": "12.36.0",
+    "dbos": "5.2.11"
+  },
+  "scope": "prune_job_events only; disposable TEST ONLY; no runtime/private/provider/deploy/push/PR/Linear/delegation",
+  "review": "parent reports R1 NONE and sole P1 verification R2 NONE at startingHead; budget spent, no new review",
+  "checks": {
+    "install": {
+      "exit": 0,
+      "result": "frozen install passed; main lockfile unchanged",
+      "logPath": "/tmp/yuk1355-node24-main/install.log",
+      "logSha256": "3bdbbd9613714ef52dd4d68fe079fefce3dfb6f910856fd6b3e78b7131115c35",
+      "command": ["pnpm", "install", "--frozen-lockfile"]
+    },
+    "cron-recovery": {
+      "exit": 0,
+      "result": "4 passed, 2 files; actual minute cron and original recovery",
+      "logPath": "/tmp/yuk1355-node24-main/cron-recovery.log",
+      "logSha256": "005b3f1e93684889c315f6ed3b11b04f98bb6efd3cc916d6438ed2da308c1a83",
+      "command": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.db.config.ts",
+        "tests/dbos-prune/cron.db.test.ts",
+        "tests/dbos-prune/migration.db.test.ts"
+      ]
+    },
+    "worker-registrar-db": {
+      "exit": 0,
+      "result": "28 passed, 6 files",
+      "logPath": "/tmp/yuk1355-node24-main/worker-registrar-db.log",
+      "logSha256": "58f89c5d2902785c8871535aeebbcde5c94aa6de2565f063e0a18ce34dd1892c",
+      "command": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.db.config.ts",
+        "src/server/boss/handlers.test.ts",
+        "src/server/boss/worker-boot.db.test.ts",
+        "src/server/boss/verify-dispatch-startup-recovery.db.test.ts",
+        "src/server/boss/job-observation-boss-contract.db.test.ts",
+        "src/server/boss/handlers/prune_job_events.test.ts",
+        "src/server/boss/client.test.ts"
+      ]
+    },
+    "unit": {
+      "exit": 0,
+      "result": "77 passed, 5 files",
+      "logPath": "/tmp/yuk1355-node24-main/unit.log",
+      "logSha256": "c90e6fdf32b8110c02f7e8b82da2895c8eb2f70c6a057cbff627fb86bb01c815",
+      "command": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "src/server/boss/start-worker.test.ts",
+        "src/server/boss/queue-config.test.ts",
+        "src/server/boss/job-yield.unit.test.ts",
+        "src/kernel/manifest.unit.test.ts",
+        "src/capabilities/observability/manifest.unit.test.ts",
+        "tests/kernel/register-capability-jobs.unit.test.ts"
+      ]
+    },
+    "migration": {
+      "exit": 0,
+      "result": "26 passed, 56 unselected",
+      "logPath": "/tmp/yuk1355-node24-main/migration.log",
+      "logSha256": "ea4be573c2dec3fa549d4c4ce39b32e8f979cade76f51067cd25a15c61a3d3d5",
+      "command": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.migration.config.ts",
+        "tests/integration/migration-smoke.test.ts",
+        "-t",
+        "migration bundle|migration smoke \u2014 drizzle migrate from empty DB"
+      ]
+    },
+    "typecheck": {
+      "exit": 0,
+      "result": "passed",
+      "logPath": "/tmp/yuk1355-node24-main/typecheck.log",
+      "logSha256": "caf6dde74bce7134f914b2554fafc997d56511416995efa31c9bd5fc73757db6",
+      "command": ["pnpm", "typecheck"]
+    },
+    "typecheck-final": {
+      "exit": 0,
+      "result": "passed after fixture import fix",
+      "logPath": "/tmp/yuk1355-node24-main/typecheck-final.log",
+      "logSha256": "96a5585a4a4079a3eda728d4b277b17e36b1ee62665c7791e801309fa781729e",
+      "command": ["pnpm", "typecheck"]
+    },
+    "lint": {
+      "exit": 0,
+      "result": "zero errors; 297 existing warnings",
+      "logPath": "/tmp/yuk1355-node24-main/lint.log",
+      "logSha256": "35f15eaba36030fe4f68fc5fd1716684dede3c5114ea7704e4d9abb9296df2a5",
+      "command": ["pnpm", "lint"]
+    },
+    "ratchet": {
+      "exit": 0,
+      "result": "297 warnings within unchanged 305 ceiling",
+      "logPath": "/tmp/yuk1355-node24-main/ratchet.log",
+      "logSha256": "1521a0c6486406e83bf81d4e9e7add571b340fa71980a082428bc7c0acbf8553",
+      "command": ["pnpm", "lint:ratchet"]
+    },
+    "build": {
+      "exit": 0,
+      "result": "web/server/worker/migrate passed",
+      "logPath": "/tmp/yuk1355-node24-main/build.log",
+      "logSha256": "ec21958cd1ee3b741e36a98f873851fccba24027c4fd3ede00f39a2c43846c77",
+      "command": ["pnpm", "build"]
+    },
+    "dependency-audit": {
+      "exit": 0,
+      "result": "no high/critical; 2 low and 8 moderate remain",
+      "logPath": "/tmp/yuk1355-node24-main/dependency-audit.log",
+      "logSha256": "7dba1b6fb21f39768e4e2c4751645d918736450b3c0a2520892e41a06da1a69d",
+      "command": ["pnpm", "audit:dependencies"]
+    },
+    "schema": {
+      "exit": 0,
+      "result": "passed; baseline unchanged",
+      "logPath": "/tmp/yuk1355-node24-main/schema.log",
+      "logSha256": "48f10210082ee0e8caa65bfb221fe7fd27a7bd2015f92ff7812695ec84b8464e",
+      "command": ["pnpm", "audit:schema"]
+    },
+    "partition": {
+      "exit": 0,
+      "result": "passed; baseline unchanged",
+      "logPath": "/tmp/yuk1355-node24-main/partition.log",
+      "logSha256": "7389f5922c1d101654816d92b5c6ebcea4894f5fafce0389251731985b620093",
+      "command": ["pnpm", "audit:partition"]
+    },
+    "capability": {
+      "exit": 0,
+      "result": "passed; baseline unchanged",
+      "logPath": "/tmp/yuk1355-node24-main/capability.log",
+      "logSha256": "5f22264b2dddd732204cbade3c911270435ab1e54ca7bf6fc6cbe16e9919aabf",
+      "command": ["pnpm", "audit:capability-boundaries"]
+    },
+    "census": {
+      "exit": 0,
+      "result": "passed; baseline unchanged",
+      "logPath": "/tmp/yuk1355-node24-main/census.log",
+      "logSha256": "b4eb653a1d7b5e9bea6d591b7d102c3787bf5a7c0ac90d710ffaef9f3d807521",
+      "command": ["pnpm", "audit:task-census"]
+    },
+    "provider-lanes": {
+      "exit": 0,
+      "result": "passed; baseline unchanged",
+      "logPath": "/tmp/yuk1355-node24-main/provider-lanes.log",
+      "logSha256": "9dc567fe89533f1220f05cb8dffba7c0f453dd7acc222193f2eef76f791b1399",
+      "command": ["pnpm", "audit:provider-lanes"]
+    },
+    "provider-truth": {
+      "exit": 0,
+      "result": "passed; baseline unchanged",
+      "logPath": "/tmp/yuk1355-node24-main/provider-truth.log",
+      "logSha256": "9dbf41f35219084b47ed50d7b5816661bbd054f4bb35b4cb36e324831c67c966",
+      "command": ["pnpm", "audit:provider-attempt-truth"]
+    },
+    "lint-final-seal": {
+      "exit": 0,
+      "result": "passed after final artifact formatting; 297 warnings, unchanged 305 ceiling",
+      "logPath": "/tmp/yuk1355-node24-main/lint-final-seal.log",
+      "logSha256": "9ef9ffc8675134cc34977546ec659eb187a4ee2eb8ed076addeed93ffa6f29a6",
+      "command": ["pnpm", "lint"]
+    },
+    "ratchet-final-seal": {
+      "exit": 0,
+      "result": "passed after final artifact formatting; 297 warnings, unchanged 305 ceiling",
+      "logPath": "/tmp/yuk1355-node24-main/ratchet-final-seal.log",
+      "logSha256": "87eeb09c3e91bf00c8a8d157cc90aff1335f1427787ea76399501c099aee9a85",
+      "command": ["pnpm", "lint:ratchet"]
+    }
+  },
+  "effects": [
+    {
+      "at": "2026-10-07T14:04:00.807Z",
+      "phase": "draining-pg-boss",
+      "transactionId": "5844"
+    },
+    {
+      "at": "2026-10-07T14:05:02.618Z",
+      "phase": "dbos",
+      "transactionId": "13220"
+    },
+    {
+      "at": "2026-10-07T14:06:02.938Z",
+      "phase": "pg-boss",
+      "transactionId": "18180"
+    }
+  ],
+  "fixturePids": [54670, 57347, 54669, 54672, 54676, 54677, 54678, 54741, 54799, 54800],
+  "fixturePidsAliveAfterRun": [],
+  "sourceHashes": [
+    {
+      "path": ".cache/yuk1355-cron-worker.cjs",
+      "sha256": "4cb31a7d60a3659313cb0b035bcd1316d7b6be4e89b21b834270b4d986430313"
+    },
+    {
+      "path": ".cache/yuk1355-worker.cjs",
+      "sha256": "4cb31a7d60a3659313cb0b035bcd1316d7b6be4e89b21b834270b4d986430313"
+    },
+    {
+      "path": "drizzle/0115_yuk1355_prune_backend.sql",
+      "sha256": "2db23a045773f6c176f545f2af7576d5122a7a3b60a85b642af21164b3de7d76"
+    },
+    {
+      "path": "drizzle/meta/_journal.json",
+      "sha256": "f4aa0345f6a01e76813ae4e8b4b6d7902616bb08e8849996a581dc8cdfcfcd14"
+    },
+    {
+      "path": "node_modules/@dbos-inc/dbos-sdk/dist/src/scheduler/scheduler.js",
+      "sha256": "25237d521a48295b5c97282c14a0dc0e41144a2d3c393d1096ae749cb3a2dbb5"
+    },
+    {
+      "path": "node_modules/@dbos-inc/dbos-sdk/package.json",
+      "sha256": "ab2adaae81cd0e777af3877db6608cf909bdd351e25675fbcd2be4ac3361c823"
+    },
+    {
+      "path": "node_modules/pg-boss/dist/timekeeper.js",
+      "sha256": "98ad534acee8fa355b6eab67981f8521f32c963556e954cc7ccb98aff537d235"
+    },
+    {
+      "path": "node_modules/pg-boss/package.json",
+      "sha256": "d6935b5887a7b5ce970ceb79af714bedc5eff32167c4dca53953baccffa3021a"
+    },
+    {
+      "path": "package.json",
+      "sha256": "6b956881bd26afbff490886d874668563657e6c1423d7028fdd543d4d78eccdb"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "sha256": "7b1a3254d428b208c15ae5b86f831c76ae3d327018f47584cc84a7a6c27f9cf5"
+    },
+    {
+      "path": "scripts/lint-baseline.json",
+      "sha256": "6e35cc0c7122e094bb29a5d9dfed4227ead9d68a8e14d274b01279dcc09ff7e1"
+    },
+    {
+      "path": "src/capabilities/observability/manifest.ts",
+      "sha256": "837dda796f1b31bc42cd27dad82f39e1eb236599e516700861581a7a2bcbd45f"
+    },
+    {
+      "path": "src/kernel/manifest.ts",
+      "sha256": "0a136c05d43fc585cb84674233af6f934f7fcfc8bec5f0cd981e8de6f4ffb444"
+    },
+    {
+      "path": "src/server/boss/handlers.ts",
+      "sha256": "5369935608f4481ea69a9671bd057fb86efc8f9beb1f791b3071b3dfb17f7f92"
+    },
+    {
+      "path": "src/server/boss/queue-config.ts",
+      "sha256": "fa9b604531fa0766deed6cba801352bdf84972f4b2817a02b97e4b659da5e403"
+    },
+    {
+      "path": "src/server/boss/register-capability-jobs.ts",
+      "sha256": "b9c6e037f2676cfb330cb204c1817392c1e5b1b8405bd22a9db2cbd8a6b21b5d"
+    },
+    {
+      "path": "src/server/boss/start-worker.ts",
+      "sha256": "9493a1396e1915a33a091f46a6fe2c89c5cdfc8e84e05043f4e4d0ee0150d63e"
+    },
+    {
+      "path": "src/server/durable/prune-family.ts",
+      "sha256": "549f33bf2c0b7e71f1f21436430dc6c97152a4120785b8cb9a7230f1c5c096ac"
+    },
+    {
+      "path": "src/server/durable/prune-worker.ts",
+      "sha256": "7b12c39a86d4dac907f833443e891107bd754ccd4909e2418fbd0d78a343d2de"
+    },
+    {
+      "path": "tests/dbos-prune/cron.db.test.ts",
+      "sha256": "e344ef9d4241d3c7fb4cb98775480400f16ab7ab135c564b59a10441522987db"
+    },
+    {
+      "path": "tests/dbos-prune/migration.db.test.ts",
+      "sha256": "e95889476d0b61bfad354c07697ad143c9e861c96114eb0d7d3719b73d0936be"
+    },
+    {
+      "path": "tests/dbos-prune/worker.ts",
+      "sha256": "8c3a654081a42e277407383a39ba61fafde35b441854f043432414da1584ea77"
+    }
+  ],
+  "bundleHashes": [
+    {
+      "path": "dist/server.cjs",
+      "sha256": "22f2146bdb2fe7f69948a548b70b7c1c7f989f8702ccee335ddc7282928752c8"
+    },
+    {
+      "path": "dist/worker.cjs",
+      "sha256": "826f4b79339c4a711c59124f229c2409f50b18121f9611c168294059db24f727"
+    },
+    {
+      "path": "dist/migrate.cjs",
+      "sha256": "0c064a5dd29aef687fb38553b821ef9b5196f3036055ff9d41b36f7001c664d3"
+    },
+    {
+      "path": ".cache/yuk1355-cron-worker.cjs",
+      "sha256": "4cb31a7d60a3659313cb0b035bcd1316d7b6be4e89b21b834270b4d986430313"
+    },
+    {
+      "path": ".cache/yuk1355-worker.cjs",
+      "sha256": "4cb31a7d60a3659313cb0b035bcd1316d7b6be4e89b21b834270b4d986430313"
+    },
+    {
+      "path": "web/dist/assets/AttachmentStrip-2S3DYvzI.css",
+      "sha256": "f7fa21d139fcb9b25f5996e937ee12b976653781b316e05223bb7000c0d9a337"
+    },
+    {
+      "path": "web/dist/assets/AttachmentStrip-D-TgbLDc.js",
+      "sha256": "caf598ffaccb18ed1149a4ea3bfbcda618e340426ba252f21e2a9ce6dd168bd1"
+    },
+    {
+      "path": "web/dist/assets/Badge-PvazB99M.js",
+      "sha256": "1b505608f070f88258132f8949888b841e1ff065200612124f48cf24e1e8d50d"
+    },
+    {
+      "path": "web/dist/assets/BrandMark-vEGTWByA.js",
+      "sha256": "659db3e55bea105bdddddde7f216c195bd508cee35cfc560f48aba686ae2ab9d"
+    },
+    {
+      "path": "web/dist/assets/Btn-DwPUk69u.js",
+      "sha256": "38ddf674fea8dae8e70b2a61bfea5dad0dd2ac3e6bc6461b2c1888f97adcd568"
+    },
+    {
+      "path": "web/dist/assets/CoachHub-DIYpv0_Z.js",
+      "sha256": "f6ff9a6c677613444ebaf158c8655a556e8036e4112a7819d9e6935f7a140b35"
+    },
+    {
+      "path": "web/dist/assets/DraftReviewPage-DPLo5LLL.js",
+      "sha256": "0793a4f139f2458a51783651858bbd6049b523c46132dab356bd929a3c6c5cb5"
+    },
+    {
+      "path": "web/dist/assets/DraftReviewPage-LkZKXc7k.css",
+      "sha256": "de8375854ce0560766818f59731e95f622c9da9c37eff6da1785fa3e678ef24f"
+    },
+    {
+      "path": "web/dist/assets/EmptyState-BWI4N8U7.js",
+      "sha256": "380c4154eddb5acf59d5928ed60866a66b162e6a05d9034bf1cc9069d080249d"
+    },
+    {
+      "path": "web/dist/assets/ErrorState-_JtoagXg.js",
+      "sha256": "0823abb9554cdb61766239012112f5e812888aedec2661dac61e987de233b654"
+    },
+    {
+      "path": "web/dist/assets/EventDetailPage-dInEFbpS.js",
+      "sha256": "9c45d53ec564aafdafa6d23174c04a220964ff35242a93147fe057aa6e91d722"
+    },
+    {
+      "path": "web/dist/assets/EvidenceComposer-tbOq0Vm4.js",
+      "sha256": "bd66711620e431504e07e20b79a6839bf3f76ac1c365b53a4ab96800c1d598fc"
+    },
+    {
+      "path": "web/dist/assets/EvidenceLightbox-C1pf9f4I.js",
+      "sha256": "cf432c6848a04b0cf88a91010a430671a31f5d8b1d8cac79c5561884fcd23b77"
+    },
+    {
+      "path": "web/dist/assets/InboxPage-Cy-ZZvXr.js",
+      "sha256": "02d43d793cdfe9fccd23237ede877435a21e0b6e0f43aaf3cf8089aab8c6da84"
+    },
+    {
+      "path": "web/dist/assets/KnowledgeDetailPage-D6rN99Mc.js",
+      "sha256": "ae6333756d664a1c253101f56a57fe3e624fa118afe29a715e0210a8c20dfa3e"
+    },
+    {
+      "path": "web/dist/assets/KnowledgeDetailPage-JoSDxgag.css",
+      "sha256": "7c9eeb79c5fe8705b8efb3275a9d4e698040304b6355e104ce27eb6cc5497ddf"
+    },
+    {
+      "path": "web/dist/assets/KnowledgePage-CgX48rQH.js",
+      "sha256": "da3ea391ef73810993c43c46b580008384bf3a3cdfb64da435bc3d1f62c180d7"
+    },
+    {
+      "path": "web/dist/assets/LoomBadge-Xq8dYxUh.js",
+      "sha256": "0903a442b463b1d19afa6971d98f4af1b3e5536712abba5b7940fc8448bb8577"
+    },
+    {
+      "path": "web/dist/assets/LoomCard-BFAVwMh2.js",
+      "sha256": "265bf7bb61eb5ef5f264d194c73d2f5a2075dc506bce1de49dc3989462c1219e"
+    },
+    {
+      "path": "web/dist/assets/LoomIcon-B0Tp9m9c.js",
+      "sha256": "09af0b51096886230f1baa18f4e1ef4424235eff8e2e622ccf208642c705fcd1"
+    },
+    {
+      "path": "web/dist/assets/MeshGraph-RNtw140e.js",
+      "sha256": "1dcdd3fda5741319299cce9fb1a2f2a637bd0dc1762122a3cc7842bad65cf529"
+    },
+    {
+      "path": "web/dist/assets/MistakesPage-BsTFOkYm.js",
+      "sha256": "dad2d8f92e7b3194d0d00c2a5b425612f98468da16119dd4664eb37d81930b37"
+    },
+    {
+      "path": "web/dist/assets/NoteReaderPage-B5xANG8j.js",
+      "sha256": "6c8a9d6edb1c6f65fc6e96b8144646a630a8282e401e68d2ce6225bbe5d36ee3"
+    },
+    {
+      "path": "web/dist/assets/NoteReaderPage-sm-3Jh8v.css",
+      "sha256": "59c888e4df2f3ad6f13639385964347f486e2cd11094cc5997284d92a794c2cb"
+    },
+    {
+      "path": "web/dist/assets/NotesPage-D4eACav3.js",
+      "sha256": "b606fcb6038b999f79aee4cc8c9fe65cdd3bbbcc9d9570ac74cffd3c0baea186"
+    },
+    {
+      "path": "web/dist/assets/ObSteps-BSDlBH8r.js",
+      "sha256": "9f717339701e890da4e1b097a27a8a75ea9ac082fce5206305d10265b6cb9d45"
+    },
+    {
+      "path": "web/dist/assets/OnboardRecord-BqmAKd1c.js",
+      "sha256": "14240bd5c254547fd835be7747b65ad5059e1ae4ef8dcf2d488f181699ff7e4c"
+    },
+    {
+      "path": "web/dist/assets/PageHeader-4PS6k75x.js",
+      "sha256": "58a050557bfda0305d840c6b7e4b135959f1a3ae16f1a6943ed2814b251cc74c"
+    },
+    {
+      "path": "web/dist/assets/PracticeFacePage-BKEgiHk-.js",
+      "sha256": "ee12548fb15df0236c2828c1da5c1d76bcc77e93fa8152eef7e1cf55efa35212"
+    },
+    {
+      "path": "web/dist/assets/PracticeFacePage-BXAcy5TA.css",
+      "sha256": "76c32e13ab614375a6bc7ca602e223a787de44d5b3c06e0631cfbcbc2c8ec273"
+    },
+    {
+      "path": "web/dist/assets/QuestionDetailPage-Bgp7Ojv3.js",
+      "sha256": "dc2deb43055b09354e4a2d4f315575b7e1129aedc2000b99c7bdc541a01059ce"
+    },
+    {
+      "path": "web/dist/assets/QuestionsPage-BFbwVQbH.js",
+      "sha256": "0231c44c3344280dc74fd8c84f43e464a1368fae120778b2c2b578a796309988"
+    },
+    {
+      "path": "web/dist/assets/RecordPage-CfO-oiwP.js",
+      "sha256": "6193f237b7b18026939df8e5b95d0e638d503e381de3c5b652345439d08c8611"
+    },
+    {
+      "path": "web/dist/assets/ScreenPlacement-CeR3ZF81.js",
+      "sha256": "578042b542b206d7d72d06a567e39d7934a9c848130fc927945df4a9f2233146"
+    },
+    {
+      "path": "web/dist/assets/ScreenProfile-B590FU5P.js",
+      "sha256": "3d5dd7543770e1ee35204d959858fc30c5937c4cacdaec28d0649ee5c07deda3"
+    },
+    {
+      "path": "web/dist/assets/ScreenProfile-DKj7vizT.css",
+      "sha256": "f8fc7a48d664fde240f3d603e66d0dd4005e53f6accff9d797baa14c5251e69d"
+    },
+    {
+      "path": "web/dist/assets/SectionLabel-Iw4K2F7k.js",
+      "sha256": "46c41742a00b50df9fab3ee5e78324acb5b55daf866e9608ccba3cd4c935960e"
+    },
+    {
+      "path": "web/dist/assets/SkLines-DplxFjmV.js",
+      "sha256": "fc5c8fbd5cccea43343deda005de553f84e60a2311ae46de1c9fe72cb8b3c343"
+    },
+    {
+      "path": "web/dist/assets/Stateful-4KupaEY-.js",
+      "sha256": "f16bcc6d1c9a554dc411fafcc84329ce746e67041fde9482ba80705906a369b0"
+    },
+    {
+      "path": "web/dist/assets/SubjectFilterTabs-BZLJ5yEr.js",
+      "sha256": "c159bc5d1d9c48ad2c2d0c268982e2c9d9290a895389f7e75e34d8e8281841a3"
+    },
+    {
+      "path": "web/dist/assets/TabBar-Rn-d36Oc.js",
+      "sha256": "6a21aec5a620c11dee8e6b2f82a510adaf56fec8ee599a574c202a875b6268c6"
+    },
+    {
+      "path": "web/dist/assets/TodayPage-Dwyvn-o_.js",
+      "sha256": "6832ab240dbc168d297ef1be5122863fc4667fa983b28c75bbe93a74c3c190e0"
+    },
+    {
+      "path": "web/dist/assets/WelcomePage-NK8FuMLW.js",
+      "sha256": "1a6858b788dd637627c137bc61b843e32bc7f5cb608b08f1c1ffaede65b52ffe"
+    },
+    {
+      "path": "web/dist/assets/accelerator-FCcl3QDH.js",
+      "sha256": "877d5b3c58fc5327bdf8a8308868ef598aa52a2706bfceebeb6711babe0ab6a9"
+    },
+    {
+      "path": "web/dist/assets/admin-cost-CwnZxLPj.js",
+      "sha256": "da922045f4505987d509589dff7f6632295b398d642a515840310ed8249a12f4"
+    },
+    {
+      "path": "web/dist/assets/admin-failures-HLwVOzae.js",
+      "sha256": "5354ba79a748588f573bf06cf68c9992af742f983a2db3478c5cdc1346326ba4"
+    },
+    {
+      "path": "web/dist/assets/admin-runs-mJjureQv.js",
+      "sha256": "13740acb46c6678e30f6a09a08e2bcdb1a90215fe11293d4961bdb390596d734"
+    },
+    {
+      "path": "web/dist/assets/api-D-SPNEt4.js",
+      "sha256": "543e76878b5e6e6aa0adcc8ed1325c05eb4356a2a3bdf20105f3a46c26b0f2ed"
+    },
+    {
+      "path": "web/dist/assets/assets-BgyWPzNV.js",
+      "sha256": "0d006e53f559310348bfc7197e00b114f69689a79235c00ee4459f035c8c8688"
+    },
+    {
+      "path": "web/dist/assets/business-Dj2hhqrm.js",
+      "sha256": "d3d5b41e2009db88c824582408f40905afe3088b6acd707680e946d37861c129"
+    },
+    {
+      "path": "web/dist/assets/calibration-maturity-api-1xuAaLCo.js",
+      "sha256": "5e8a25b9c765f65b431b66201b9294f5dccf04e5f8ef7f9f81a25d2b1f63d0d6"
+    },
+    {
+      "path": "web/dist/assets/config-BwGsdfVV.js",
+      "sha256": "823fd8c4ced49764d92603775458dc925771cb05dbf30a49f6d4e6218fd8f589"
+    },
+    {
+      "path": "web/dist/assets/conjecture-scores-ToaCd2Bf.js",
+      "sha256": "1bacdd792b89316b2d2c8d88dfb543918a5207e4c8db269d86c92298559bdead"
+    },
+    {
+      "path": "web/dist/assets/cost-presentation-CcGKPk-r.js",
+      "sha256": "b303c53fba739175cb90a5d7002929e2ebf736941f1a3e5bf095fe405cfa9d21"
+    },
+    {
+      "path": "web/dist/assets/coverage-lattice-77ot6Blu.js",
+      "sha256": "83dcfefdd0ca4c6eb05a01165de1485ba4edd98091f402f7100b248819418b50"
+    },
+    {
+      "path": "web/dist/assets/favicon-C9LPG-gf.svg",
+      "sha256": "46a40e8337be97215b50a35f2b1934f76be0f2fffce890da82b9363d3e2170cd"
+    },
+    {
+      "path": "web/dist/assets/index-CaK2AAhq.css",
+      "sha256": "c184ca6da8f3e6221e691009163fd7c2d5beac9e232c5cebe5fcedd3568b5a47"
+    },
+    {
+      "path": "web/dist/assets/index-DZVMAxnR.js",
+      "sha256": "9d5607f3630568c32dade78e9a675350f5597266af5c7d0f1edabfb86c854097"
+    },
+    {
+      "path": "web/dist/assets/jsx-runtime-BNakU3Ej.js",
+      "sha256": "600d80338ace22d4dcc97a2788698c189811a8b54dad8cea58dfd8e7e4f35d34"
+    },
+    {
+      "path": "web/dist/assets/makeLookup-CQ4qbBBe.js",
+      "sha256": "710549d629f254237902dadc5f92e5fc5544d0c1dbf82dfb87e506f13d092c8f"
+    },
+    {
+      "path": "web/dist/assets/markdown-renderer-Brq_x-lM.js",
+      "sha256": "171579f56b62206be70a08feb5fddc9bd6f48a4b3001f75412e6b0ec71d6bbbf"
+    },
+    {
+      "path": "web/dist/assets/math-markdown-L4XqkvhV.js",
+      "sha256": "2705e5911ea38903cbef348ec9f1c07a5515e7bcc28ec625ace5a171733d73cf"
+    },
+    {
+      "path": "web/dist/assets/observability-shared-YK-4L-sG.js",
+      "sha256": "c937127890a59321aacbfc513c217f6417058e7cf107d6e942aebfd36676c16f"
+    },
+    {
+      "path": "web/dist/assets/onboarding-BUHhbkC2.css",
+      "sha256": "75bdabd6e7bde265b855c6460e59516c9ec0947ca039f9935c7dddfee3406291"
+    },
+    {
+      "path": "web/dist/assets/page-DnSuDb03.js",
+      "sha256": "5a827b306801168069e766bf5a7ba5eabb3df5e5de6c468d54150745cd024c41"
+    },
+    {
+      "path": "web/dist/assets/practice-api-qi_cgbvJ.js",
+      "sha256": "8335a23f0959eb74897cbaca76af7df46e09cc30f87a9635477fe1c3827828fc"
+    },
+    {
+      "path": "web/dist/assets/preload-helper-Czpn1I53.js",
+      "sha256": "aba87f2a53e45ecdc9113fc30387d16e449d1676428cf5f82dd624c1df97d152"
+    },
+    {
+      "path": "web/dist/assets/profile-2xp5tgHy.js",
+      "sha256": "04ac815b024e33afda9bed9d03647639bd44e3d98a6b1588f7a65c8df5770511"
+    },
+    {
+      "path": "web/dist/assets/profile-api-Byz2x_tD.js",
+      "sha256": "edb1c2d2d07461a6cb5a44da644d86cc71bb96a1f82b08e94e595e3a8c5896be"
+    },
+    {
+      "path": "web/dist/assets/questions-D_jvbV0r.css",
+      "sha256": "e2919a60b0e3a69f0603c3899d15511ed07920ced40bae1e74fc197dc8db02dd"
+    },
+    {
+      "path": "web/dist/assets/rehype-katex-Ded3VGY9.js",
+      "sha256": "e04a5856d18d36615fc050c7ce9ef5d009c2d6f4472a0f3b9cfb2d3422deade3"
+    },
+    {
+      "path": "web/dist/assets/relation-cue-NTlnANg0.js",
+      "sha256": "6607d86acac2c4a00a36c7adffe5409067e2015534288894d3e9ac877774bfd1"
+    },
+    {
+      "path": "web/dist/assets/remark-math-2plGdyiz.js",
+      "sha256": "c718ce4eafd788091d593d90d762a33f67da088b7015b320cc33b2465a5f8c35"
+    },
+    {
+      "path": "web/dist/assets/response-types-DM-ERjNI.js",
+      "sha256": "d31e026b85989f259026c0ec2881e1712656b48a56866a29e82bc5a20d81e96d"
+    },
+    {
+      "path": "web/dist/assets/rolldown-runtime-hePW80VL.js",
+      "sha256": "580ad8c58061a4dde99bde0a56905e382f0568516ee2f5b84dbfb52085709021"
+    },
+    {
+      "path": "web/dist/assets/routes-BUWoHriM.js",
+      "sha256": "e123c63b5a7e42f54e88c13286a6dbdd145c2a254eb22e87ddb12479490b883e"
+    },
+    {
+      "path": "web/dist/assets/shell-BTzrYHx0.js",
+      "sha256": "7fd5c44ae6dbdb1a032ce9259c0ab06982c3bca3799c9cc11737877d587d77c6"
+    },
+    {
+      "path": "web/dist/assets/shell-Dir504i5.css",
+      "sha256": "4e280b40fb6970a0aa8847212a10364c240e1ba71c422cc2ce05a6f7f845d913"
+    },
+    {
+      "path": "web/dist/assets/sse-C7kROzGO.js",
+      "sha256": "1373ea6859e4ab10f4925d625295fda00910d3ecad47ae09233b27f1b81ababb"
+    },
+    {
+      "path": "web/dist/assets/subject-qgdeBsTB.js",
+      "sha256": "e6ba575f6aef69f2647f2fb76b6421673e21f26dec0024db8669db8dc4549345"
+    },
+    {
+      "path": "web/dist/assets/subject-traits-D-dyMWYJ.js",
+      "sha256": "2e1bcf2086b1df74bdc6e8f27909d4d6a074fa930bfc9be9d6b1e6a79e3cf3e2"
+    },
+    {
+      "path": "web/dist/assets/subjects-C59AdpDk.js",
+      "sha256": "8d8ccda17a74ec62827b6da224b98d6329d413c7c822c227825156ee7b326180"
+    },
+    {
+      "path": "web/dist/assets/useAgentReads-CY8uZ63J.js",
+      "sha256": "0d9b584808a17dca43014e38b228af705e5d2cdaf8762bd36a64100f37880b1f"
+    },
+    {
+      "path": "web/dist/assets/useInfiniteQuery-CilhWTBT.js",
+      "sha256": "435b1c2b42ec1e50b8751074185a067a9266d3b10c2b8273cd236c53c03a8913"
+    },
+    {
+      "path": "web/dist/assets/useMutation-DOj_5zLe.js",
+      "sha256": "12a00975e3f14026ab0e543a81c6ea56474c292eb7e33225227b8e236379447a"
+    },
+    {
+      "path": "web/dist/assets/useQuery-il1f0CQg.js",
+      "sha256": "cf66b3cb97f393f93a428528cfdbd7ca4b14d03aecb0030dbae23723c09c459b"
+    },
+    {
+      "path": "web/dist/assets/useResponseDraftAutosave-BunwbIFS.js",
+      "sha256": "3c2dd564860832bdab8eebb8d9eed4d46d41a00f1906483694cdfc58f17023c3"
+    },
+    {
+      "path": "web/dist/assets/useSubjects-COD56A1G.js",
+      "sha256": "8b709e55ae452a7256e212f4e276403e975564c15f9fa4cd546665bc92836375"
+    },
+    {
+      "path": "web/dist/assets/utils-GtvbzWLn.js",
+      "sha256": "ef972a6e0aef417696915867c88b300a215161323ff23bfecfa1a77bc93ef4d3"
+    },
+    {
+      "path": "web/dist/index.html",
+      "sha256": "79396a44c693ed516ac5b7a9c0a3fd0ebb7c78e946ea70a7395115f8aa31e088"
+    }
+  ],
+  "artifactHashes": [
+    {
+      "path": "docs/planning/2026-10-07-yuk1355-node24-cron-evidence.json",
+      "sha256": "474d7f6974dedd4e14e0fcfdd919780b195b6aa189ba92ecadbf1d0b0299d94d"
+    },
+    {
+      "path": "docs/planning/2026-10-07-yuk1355-node24-inventory-crosscheck.json",
+      "sha256": "bbfb62ea058f7f8dc216e7a7e031d626e008356e64c5775c71b42181561596dc"
+    },
+    {
+      "path": "docs/planning/2026-10-07-yuk1355-node24-recovery-evidence.json",
+      "sha256": "31d2e9569eebbd31d7b2cd3765576fa2f2664428f02aad7b3318b7e717b050a0"
+    }
+  ],
+  "supportingFiles": [
+    {
+      "path": "/tmp/yuk1355-node24-main/run.py",
+      "sha256": "6ddc696fad501335fc9618b8b146ab37221f87d8423e655f017c20c32a807882"
+    },
+    {
+      "path": "/tmp/yuk1355-node24-main/seal.py",
+      "sha256": "0e2e37c979403d8b101803f8d92dc510f2640e2335963547158185f472170ed6"
+    },
+    {
+      "path": "/tmp/yuk1355-node24-main/cleanup.json",
+      "sha256": "2f33581a785a7a3ec43b25cb09ee05111f067c9b1c33bc0ce6f7ca1e47e88fdc"
+    },
+    {
+      "path": "/tmp/yuk1355-node24-main/runtime-final.log",
+      "sha256": "9bd5bd493c838ca7bbf65ead92ea2b1ab82e17fcf7a75b99e23a7317aa648ec8"
+    },
+    {
+      "path": "/tmp/yuk1355-node24-main/winston-probe.log",
+      "sha256": "9992d2d755791e8d599f935ac47124bd72a3d1531b9384e9c4cde84fc368c06b"
+    },
+    {
+      "path": "/tmp/yuk1355-node24-main/ratchet-before-import-format.log",
+      "sha256": "d4671bc20d65a4e1f1cd95ffb905521755aa9eba79fc1944415c796b013cde09"
+    },
+    {
+      "path": "/tmp/yuk1355-node24-main/cron-recovery-before-import-format.log",
+      "sha256": "c777683371dbd3c54bcd9430d7b90ca9d6e71c80219e0ab60b17fce263697ee1"
+    },
+    {
+      "path": "/tmp/yuk1355-node24-main/cron-before-import-format.json",
+      "sha256": "967c912623957a7d243a9926bb6c13b98943507784bd6eb500ca09ea0a14ef7d"
+    },
+    {
+      "path": "/tmp/yuk1355-node24-main/recovery-before-import-format.json",
+      "sha256": "bfa55355983a239add6c790a257cf5decf7d4a8a490499859fbc2d51bac4c236"
+    }
+  ],
+  "limits": [
+    "accelerated minute cron, not production daily cron",
+    "rollback phase on fixed binary only; no old binary or queue schema downgrade",
+    "other families, private runtime acceptance and exact-head CI are parent-owned",
+    "Winston negative probe intentionally exits 1; actual build passed with externals",
+    "initial fixture import-order lint failure fixed; final cron/recovery rerun after source change"
+  ]
+}

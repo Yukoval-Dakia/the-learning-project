@@ -6,6 +6,12 @@ import type { CapabilityManifest } from '@/kernel/manifest';
 import { registerHandlers } from './handlers';
 import { registerCapabilityJobs } from './register-capability-jobs';
 
+// This suite checks legacy registrar recipes. The admitted DBOS family has
+// separate real database/process coverage in tests/dbos-prune.
+vi.mock('@/server/durable/prune-worker', () => ({
+  startPruneWorker: async () => undefined,
+}));
+
 // M4-T3 (YUK-319)：注册分两段——registerHandlers（渐缩簿）+
 // registerCapabilityJobs（manifest jobs 声明）。测试驱动与 start-worker.ts
 // 相同的组合序列，断言对两段产生的全部队列生效（原语义不变）。
@@ -510,7 +516,10 @@ describe('registerHandlers + registerCapabilityJobs — concurrent create race (
     };
 
     const results = await Promise.allSettled([registerAll(makeBoss()), registerAll(makeBoss())]);
-    expect(results.every((r) => r.status === 'fulfilled')).toBe(true);
+    expect(results).toEqual([
+      { status: 'fulfilled', value: undefined },
+      { status: 'fulfilled', value: undefined },
+    ]);
   });
 
   it('repeated same-process registration is idempotent (trigger ③ — next dev HMR re-evaluates the boss module)', async () => {
