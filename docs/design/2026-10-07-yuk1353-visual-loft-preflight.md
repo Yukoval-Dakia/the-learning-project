@@ -108,7 +108,7 @@ modal（`⌘K` 命令面板）与多栏 pane；这些都是原型内的比较对
 
 ## 5. 将修改的文件
 
-- `biome.jsonc`：把 `docs/design/2026-10-07-visual-loft/prototype` 加入忽略列表，沿用 `loom-refresh`、
+- `biome.jsonc`：把 `docs/design/2026-10-07-visual-loft`（原型与生成的证据 JSON）加入忽略列表，沿用 `loom-refresh`、
   `2026-06-07-copilot-tool-use-cards` 等原型目录的既有先例。原型为 `.jsx`/`.mjs`，不在 `tsconfig.json` 的 `**/*.ts(x)` 范围内。
 - `PLAN.md`：在 NOW/NEXT 中对齐 YUK-1353 状态（交付收尾时）。
 

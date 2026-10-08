@@ -120,3 +120,5 @@
   - **修复**：原型 token 改名为 Loom 原有的 `--ls-tight` / `--ls-wide`。
   - **复测**：`web/dist` 全部 109 个文件、`dist/start` 全部 49 个文件，有无原型目录时逐字节一致（SHA-256）。
   - 规则写入决策 T9：新 token 不与 Tailwind 主题命名空间同名，除非有意映射。
+  - **变基后再测**：变基到 main `6c6905fad` 后重做同样的对照，两边产物依然逐字节一致。
+    新 main 的 Start CSS 自身带有 `--tracking-tight/-wide/-wider`，原型目录移出后仍然存在，与本 PR 无关。
