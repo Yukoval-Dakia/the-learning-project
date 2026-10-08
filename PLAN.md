@@ -1,11 +1,11 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：PR1609 head8ce80c557的CI37781384415 DB4单例失败（1537通过）：Stop旧夹具在发delta后直接写cancel并禁止全部历史正文。test-only修复a5c9867fe已交回，改用真实取消入口/确定性barrier；父已正常整合main d609c7b66、仅handoff冲突，接DB复验，不merge。428unit/真实RPC证据保留，runtime未动；1387已交付，config下一lane仍7631独占。
+> Linear 是权威 tracker。2026-10-08：PR1609 Stop CI旧夹具已test-only修复a5c9867fe，正常合入1387/main d609为4baeea837；父73DB、497unit+7协议/typecheck/lint/build通过。13:24:19Z测试容器退出并释放锁，主runtime不变；推新准确CI。1389配置领域由7631唯一writer推进。
 
 
 ## NOW
 
-- **YUK-1358 / Start Today与Inbox**：PR1609正常整合main6c6905，R2 NONE且原timestamp P1已修；父53DB历史证据保留，当前1af5真实RPC与浏览器通过，88表读无变/操作仅预期event+2与note更新；36 usability为1af5证据；2118另过428unit+7协议/static/build和真实RPC，等待最终head CI后合并。整个W1及残留HTTP消费者未完。[当前验收](docs/planning/2026-10-08-yuk1358-start-workbench-handoff.md)。
+- **YUK-1358 / Start Today与Inbox**：PR1609正常整合main d609，R2 NONE且原timestamp P1已修；父53DB历史证据保留，当前1af5真实RPC与浏览器通过，88表读无变/操作仅预期event+2与note更新；36 usability为1af5证据；2118另过428unit+7协议/static/build和真实RPC，Stop夹具修复后另过73DB/497unit/7协议与静态构建，等待最终head CI后合并。整个W1及残留HTTP消费者未完。[当前验收](docs/planning/2026-10-08-yuk1358-start-workbench-handoff.md)。
 
 - **YUK-1387 / 已合入**：PR1613合main d609c7b66，exact f8e832c66 CI/R1 NONE/tree一致；116unit与父15DB通过。subjects/traits四读取及分页journal已public共享，Start待主线。7631下一独占config领域出口，禁止重复writer。
 

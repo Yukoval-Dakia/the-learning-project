@@ -1,0 +1,174 @@
+{
+  "source": "4baeea837fe93f186810361114ce31800ceaa03e",
+  "repair": "a5c9867fef5e6e2e3dc77ea7cf14ba6e8db4ca1e",
+  "integrated_main": "d609c7b661f874f59441990ff3cd659c2c1c431c",
+  "failed_ci": {
+    "run": 37781384415,
+    "job": 113325221983,
+    "case": "Stop — pure-text long run aborts without leaking an unsealed partial candidate",
+    "passed": 1537,
+    "failed": 1,
+    "skipped": 18
+  },
+  "cause": "The fixture emitted permitted root prose before directly inserting cancel without the production settlement lock, then forbade that prose in every historical frame.",
+  "repair_scope": ["src/capabilities/copilot/jobs/copilot_run.test.ts"],
+  "product_behavior_changed_by_repair": false,
+  "assertions": [
+    "Canonical durable admission and actual cancel handler",
+    "Explicit observer commit/barrier ordering, no sleep-based race",
+    "Pre-Stop provisional delta visible",
+    "Queued delta after cancellation commits absent",
+    "Post-cancel delta absent and abort signal observed",
+    "One cancelled terminal replaces provisional draft",
+    "Durable reply/history/checkpoint exclude all unsealed candidates"
+  ],
+  "checks": [
+    {
+      "name": "unit",
+      "command": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "server/start/auth.unit.test.ts",
+        "server/start/mistakes-client.unit.test.ts",
+        "server/start/mistakes-read.unit.test.ts",
+        "server/start/workbench-client.unit.test.ts",
+        "server/start/workbench-read.unit.test.ts",
+        "src/capabilities/shell/ui/CoachHub.a11y.unit.test.tsx",
+        "src/capabilities/shell/ui/CoachHub.kpi.unit.test.tsx",
+        "src/capabilities/shell/ui/InboxPage.progressive.unit.test.tsx",
+        "src/capabilities/shell/ui/InboxPage.state.unit.test.ts",
+        "src/capabilities/shell/ui/OvernightCostSummary.unit.test.tsx",
+        "src/capabilities/shell/ui/PrepDeskConjectures.interaction.unit.test.tsx",
+        "src/capabilities/shell/ui/PrepDeskConjectures.unit.test.tsx",
+        "src/capabilities/shell/ui/ProbeAnswers.a11y.unit.test.tsx",
+        "src/capabilities/shell/ui/ProbeAnswers.interaction.unit.test.tsx",
+        "src/capabilities/shell/ui/ProbeAnswers.unit.test.tsx",
+        "src/capabilities/shell/ui/ProposalCard.block-merge.unit.test.tsx",
+        "src/capabilities/shell/ui/ProposalCard.evidence.unit.test.tsx",
+        "src/capabilities/shell/ui/ProposalCard.image-candidate.unit.test.tsx",
+        "src/capabilities/shell/ui/ProposalCard.learning-plan.unit.test.ts",
+        "src/capabilities/shell/ui/TeachingBrief.interaction.unit.test.tsx",
+        "src/capabilities/shell/ui/TeachingBrief.unit.test.ts",
+        "src/capabilities/shell/ui/TeachingBrief.unit.test.tsx",
+        "src/capabilities/shell/ui/TodayPage.learner-copy.unit.test.ts",
+        "src/capabilities/shell/ui/TodayPage.overnight-band.unit.test.tsx",
+        "src/capabilities/shell/ui/blocks/AiChangesStrip.interaction.unit.test.tsx",
+        "src/capabilities/shell/ui/blocks/KpiRow.interaction.unit.test.tsx",
+        "src/capabilities/shell/ui/blocks/ProfileBand.unit.test.tsx",
+        "src/capabilities/shell/ui/blocks/ProposalStrip.unit.test.tsx",
+        "src/capabilities/shell/ui/blocks/SessionsStrip.interaction.unit.test.tsx",
+        "src/capabilities/shell/ui/blocks/WeekHeat.a11y.unit.test.tsx",
+        "src/capabilities/shell/ui/calibration-view.unit.test.ts",
+        "src/capabilities/shell/ui/coach-hub-view.unit.test.ts",
+        "src/capabilities/shell/ui/coach-weekly.unit.test.ts",
+        "src/capabilities/shell/ui/effectiveness-trend-view.unit.test.ts",
+        "src/capabilities/shell/ui/inbox-api.unit.test.ts",
+        "src/capabilities/shell/ui/inbox-meta.unit.test.ts",
+        "src/capabilities/shell/ui/inbox-tier.unit.test.ts",
+        "src/capabilities/shell/ui/teaching-brief-interaction-api.unit.test.ts",
+        "web/src/routes/MistakesPage.start.unit.test.tsx",
+        "web/src/routes/WorkbenchPages.start.unit.test.tsx",
+        "src/capabilities/observability/server/diagnostics-domain-reads.unit.test.ts",
+        "src/capabilities/observability/server/coverage-lattice-core.unit.test.ts",
+        "src/capabilities/observability/server/admin-domain-reads.unit.test.ts",
+        "src/capabilities/observability/manifest.unit.test.ts",
+        "src/capabilities/composition.unit.test.ts",
+        "src/capabilities/observability/ui/observability-honesty.unit.test.ts",
+        "src/capabilities/observability/ui/conjecture-scores.unit.test.tsx",
+        "src/capabilities/observability/api/admin-subject-domain-reads.unit.test.ts",
+        "src/capabilities/copilot/ui/subtask-events.unit.test.ts",
+        "src/capabilities/copilot/server/copilot-run-status.unit.test.ts"
+      ],
+      "start": "2026-10-08T13:24:51.992166+00:00",
+      "exit": 0,
+      "log": "/tmp/yuk1358-stop-final/unit.log",
+      "sha256": "dffcd0d8709989c506a9debae1de9145c47b27d15f4ce81cd74f2157bd4f54a0"
+    },
+    {
+      "name": "typecheck",
+      "command": ["pnpm", "typecheck"],
+      "start": "2026-10-08T13:25:01.958477+00:00",
+      "exit": 0,
+      "log": "/tmp/yuk1358-stop-final/typecheck.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "name": "lint",
+      "command": ["pnpm", "lint"],
+      "start": "2026-10-08T13:25:08.294306+00:00",
+      "exit": 0,
+      "log": "/tmp/yuk1358-stop-final/lint.log",
+      "sha256": "0b76ca7eeb1670541fb157b6c00c554b9bc92bf5d1c3d412073251a7245ff0bb"
+    },
+    {
+      "name": "build",
+      "command": ["pnpm", "build"],
+      "start": "2026-10-08T13:25:11.523448+00:00",
+      "exit": 0,
+      "log": "/tmp/yuk1358-stop-final/build.log",
+      "sha256": "0aa07b4fd0b65eb8c549378ce09d9040f913047b5d81bd59834152d6777ff177"
+    },
+    {
+      "name": "fixture-unit",
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "--test",
+        "tests/usability/start-rpc-fixtures.unit.spec.ts"
+      ],
+      "start": "2026-10-08T13:25:29.412642+00:00",
+      "exit": 0,
+      "log": "/tmp/yuk1358-stop-final/fixture-unit.log",
+      "sha256": "9836a2e6badfd3e14b6bef169b06930fe5db4af5545a3b37c3144c7964613d43"
+    }
+  ],
+  "unit": {
+    "files": 50,
+    "passed": 497
+  },
+  "fixture_unit": 7,
+  "db": {
+    "at": "2026-10-08T13:24:19.202363+00:00",
+    "owner": {
+      "owner": "57961995-70c3-4121-a9dd-97d90471be1a",
+      "issue": "YUK-1358",
+      "phase": "isolated-stop-ci-repair-db",
+      "token": "7ed37bf3-8dfc-4e55-86f4-fee6696dc3ac",
+      "candidate": "4baeea837fe93f186810361114ce31800ceaa03e",
+      "createdAt": "2026-10-08T13:23:19.652525+00:00"
+    },
+    "original_containers_unchanged": true,
+    "release_sha256": "d2b8a2392c082072d084b2fcf8006939e6d8b5a5fc1ff8f49c53cd8505377d34",
+    "own_testcontainers_exited": true,
+    "lock_released": true,
+    "db_files": 4,
+    "db_passed": 73,
+    "db_exit": 0,
+    "db_log_sha256": "a5a69519ec4f4f628905738c0bb33e954515d438255c5334f19720ab0d389d1c"
+  },
+  "build_comparison": {
+    "baseline": "2118c2dd7",
+    "file_count": 796,
+    "equality": {
+      "dist/start/client/": true,
+      "dist/start/server/": false,
+      "web/dist/": true
+    }
+  },
+  "prior_runtime_scope": {
+    "built_rpc": "2118c2dd7: 2026-10-08-yuk1358-main1386-acceptance.json",
+    "browser_and_usability": "1af5a8fc8: 2026-10-08-yuk1358-built-acceptance.json",
+    "current_server_not_repeated": true,
+    "current_validation": "Integrated real source DB, static/build and installed RPC fixture tests; exact-head CI still required. Prior evidence is not relabeled as current server execution."
+  },
+  "review": "Final R2 NONE at053e9b511 remains on unchanged Start/shell source; test-only CI fix parent inspected; no third review",
+  "retained_evidence": "/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1358-stop-ci-4baeea837/evidence",
+  "retained_files": 11,
+  "retained_manifest_sha256": "d83cb9f15b3410b54f6a64c9b92e2d6cc6efc908351e14ae1c78af7c29ea0d13",
+  "deployed": false,
+  "paid_calls": 0
+}
