@@ -1,3 +1,9 @@
+# 当前交付 — PR1603整合新main
+
+PR1592已09:56:19Z合入main eae963377。PR1603原head61e41e319准确CI37757563898全绿、独立R1 NONE、threads0，owner明确现在merge；正常整合main仅解决PLAN/交接冲突，保留双方源码与记录。新HEAD必须通过CI，尚未合并或部署。当前父唯一writer，无runtime锁。
+
+以下为此前验收及历史交接。
+
 # 1352 parent acceptance — 2026-10-08
 
 3d6273a14 isolated Start RPC/browser/assets/retry evidence inspected;39 hashes and21 parent scoped tests passed. Full navigation changed one practice_stream_item via unchanged lazy-compose GET;85 other tables unchanged, separate retry86 tables unchanged.158 build artifacts unchanged.7631 stopped own services and released lock;1352 source/build ownership returned to parent. Canonical boot/release/SSE/full SPA exit still pending. Evidence docs/planning/evidence/2026-10-08-yuk1352-start-runtime.json. Parent now updates PR1592, no runtime operation.
@@ -19,11 +25,16 @@ Start `/mistakes`复用TokenGate、原shell及MistakesPage。客户端调用实�
 父线程独占PR1592后续、准确CI、既有review及runtime lock/T3浏览器；7631独占native/materials
 和1359inventory验收。writer在本次terminal commit后释放，不自动恢复写入。
 
-# 当前交付 — PR1600已合并，等待Start候选验收
 
-PR1600已于2026-10-07 21:18:58Z合入 `7100dfae4`，合并tree `743ee4d80617dc9b34c7533d724e052af5fd50c4` 与准确head `c40a18621` 一致；CI Gate `37686417034` 成功，独立初审P0/P1 NONE，无未裁决review threads，完整17分钟窗满足。未部署。Start挂载任务归主线，实际新入口行为及旧SPA退出尚未完成。
+# 当前交付 — YUK1377 Today领域读取验证与PR
 
-W1消费者清单见 docs/planning/2026-10-08-yuk1359-w1-consumers.md，Start验收矩阵见 docs/planning/2026-10-08-yuk1376-start-acceptance.md。无本线程活动代码writer或runtime锁；不写主线1352/55/56树。
+当前分支 feat/yuk-1358-w1-domain-reads 已正常merge main5b11f3edbd8c8a418cea8815976786d177e332bc（PR1602）。79eb7980d1c990ae8b66c5fdc7acebf13c649972完成summary countDue→queryReviewDue(db,{limit:200})，既有RED测试已提交，3/205→0修为3/200。父8DB/35unit/typecheck/lint/build通过，lint297既有warning。日志/tmp/yuk1377-due-green-db.log、/tmp/yuk1377-final-{unit,typecheck,lint,build}.log。
+
+09:32:05Z核owner释放部署锁，临时容器退出，主四服务healthy、release不变。锁路径 /Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/deployment-20261007/deployment.lock。无provider/worker/replay/私人恢复。
+
+独立初审task node:delegated-task:command%3Amcp%3Ab0c41f6b-955b-4620-8875-2b8031cb5dfe%3Adelegate-task%3Ayuk1377-today-read-review-r1-20261008 正在运行，review只读；父唯一writer。PR/CI待完成。主线57961995保留Start/组合根/页面/全局manifest/package/lock，当前不改UI/practice/其他树。未完成Start真实入口或整页迁移。
+
+1376真实Start候选3d6273a14的有限运行验收已交主线：RPC/auth/冻结记录/图片/filter/reload/retry通过；导航practice lazy-compose使practice_stream_item 0→1，不能声明整段DB不变。158构建文件未变。21:39:38Z已释放锁并停止自有18952/18995/18994，主runtime不动。证据 runtimeRoot/yuk1376-start-3d6273a14/RESULT.md，Linear1376保持InProgress。
 
 以下为历史记录，状态以顶部为准。
 

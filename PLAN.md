@@ -1,14 +1,16 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：PR1592父线程收口，正常合入最新main5b11f3edb；仅PLAN/交接冲突，保留已验收Start错题入口及main typed due。新准确CI待推送，未部署，Agent TEST ONLY。
+> Linear 是权威 tracker。2026-10-08：PR1603正常整合已合并的PR1592/main eae963377；仅PLAN/交接冲突，保留双方记录。Today读取已8DB/35unit验证；独立审查NONE，整合后的准确CI待。未部署，Agent TEST ONLY。
 
 ## NOW
+
+- **YUK-1377 / Today 读取迁移**：从main `1bbd82795` 接续，主线已明确本线程独占shell公共读取/HTTP契约范围。复用现有summary和overnight facade，公共出口实现 `1aa3fd892` 已交回，35unit/父独立6DB/static/build通过；不改UI/Start/组合根。已正常集成main5b11f3edb，79eb7980d接入queryReviewDue(db,{limit:200})；新增回归已RED→GREEN，父8DB/35unit/static/build通过。独立review NONE、原head61e41e319 CI全绿；现整合main eae963377后的新HEAD待CI。Start消费者接续归主线。详情见[1377记录](docs/planning/2026-10-08-yuk1377-today-domain-reads.md)。
 
 - **YUK-1352 Start /mistakes**：唯一1352 writer已接好 authenticated server function、旧页面注入及共享原shell；保留1364/1365/1375/1376 main源码，PR1600合入main后正常merge保留7631的public materials源码。98 scoped tests、typecheck/lint/build与边界audit通过；准确3d6273a14隔离RPC/浏览器/图片与失败重试已验收；全导航仅既有practice初始化增1行，后续错题读取86表无变化。[交付](docs/planning/2026-10-07-yuk1352-start-frontdoor.md)。
 
 - **YUK-1376**：PR1600已于2026-10-07 21:18:58Z合入 `7100dfae4`，合并tree `743ee4d80617dc9b34c7533d724e052af5fd50c4` 与准确head `c40a18621` 一致；CI Gate `37686417034` 成功，独立初审P0/P1 NONE，无未裁决review threads，完整17分钟窗满足。未部署。Start挂载任务归主线，实际新入口行为及旧SPA退出尚未完成。 [验收矩阵](docs/planning/2026-10-08-yuk1376-start-acceptance.md)。
 
-- **YUK-1376（1358 W1 /mistakes）**：YUK1375已随PR1597合入36f719675，exact CI与独立review通过；本线程从最新main承接错题页非UI领域/API消费者迁移，保留视觉与现有行为；不改全局路由/manifest/package/lock或1352组合根，挂载交主线。1359退出清单继续由本线程维护。1352/1355/1356唯一集成与writer归主线57961995，不写其三树。
+- **YUK-1376 / Start候选验收**：候选 `3d6273a14` 实际Start RPC、鉴权、冻结内容、图片bytes/Lightbox、筛选、刷新和重试通过。完整导航因旧practice GET首次初始化新增1行，其他85表不变；之后错题读取阶段86表不变，不能把整段称DB不变。158构建文件hash不变、源码树clean。21:39:38Z停自有服务并核owner释放锁，主四服务healthy/release未变；主线保留1352/PR1592集成发布。未关闭整个迁移或旧SPA退出。
 
 - **YUK-1365**：PR1593/1594已分别合入df08399ff/6e54da8df。主线恢复即时SSE listener接线；其发布负责人负责新镜像与真实流式验收，本线程不接管。1367另线负责正式练习出版/评分准入与paper深链。
 
@@ -27,7 +29,7 @@
 
 ## NEXT
 
-- **YUK-1352父线程接手**：核exact commit，push/CI及既有review预算；原子取得runtime lock后用loopback acceptance entry与7631提供的材料验收，禁止把本地gate当作运行交付。
+- **YUK-1352主线接续**：PR1592已合入eae963377；Today/Inbox Start消费者、canonical启动与旧SPA退出仍由主线负责，不能将既有/mistakes局部验收当作整站完成。
 
 - **YUK-1364 已收口**：PR1591合入5aa2a9e98并发布准确853/image9b76至Agent TEST；102表/97文件/Mem0恢复、真实HTTP与队列核验通过，17:33:31Z释放锁。源码与运行证据详见[1364记录](docs/planning/2026-10-07-yuk1364-probe-issuance.md)。
 
