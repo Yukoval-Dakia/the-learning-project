@@ -15,11 +15,11 @@
 
 import { useQuery } from '@tanstack/react-query';
 import type { CSSProperties } from 'react';
-import { apiJson } from '@/ui/lib/api';
 import { Badge } from '@/ui/primitives/Badge';
 import { Card } from '@/ui/primitives/Card';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { Stateful } from '@/ui/primitives/Stateful';
+import { type AdminControlClient, httpAdminControlClient } from './admin-control-client';
 
 // §3.5 管理枚举投影（字段对齐 api/admin-subjects.ts；R11 slim 红线不变）。
 export interface AdminSubjectRow {
@@ -34,10 +34,16 @@ export interface AdminSubjectRow {
   capabilityCount: number;
 }
 
-export function AdminSubjectsSurface({ navigate }: { navigate: (to: string) => void }) {
+export function AdminSubjectsSurface({
+  navigate,
+  client = httpAdminControlClient,
+}: {
+  navigate: (to: string) => void;
+  client?: AdminControlClient;
+}) {
   const q = useQuery({
     queryKey: ['admin-subjects'],
-    queryFn: () => apiJson<{ subjects: AdminSubjectRow[] }>('/api/admin/subjects'),
+    queryFn: () => client.getSubjects(),
     refetchInterval: 60_000,
   });
   const rows = q.data?.subjects ?? [];

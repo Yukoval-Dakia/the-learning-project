@@ -15,12 +15,15 @@ import { Route as InboxRouteImport } from './routes/inbox'
 import { Route as MistakesRouteImport } from './routes/mistakes'
 import { Route as TodayRouteImport } from './routes/today'
 import { Route as BuildSplatRouteImport } from './routes/[_]build.$'
+import { Route as AdminConfigRouteImport } from './routes/admin.config'
 import { Route as AdminConjectureScoresRouteImport } from './routes/admin.conjecture-scores'
 import { Route as AdminCostRouteImport } from './routes/admin.cost'
 import { Route as AdminCoverageLatticeRouteImport } from './routes/admin.coverage-lattice'
 import { Route as AdminFailuresRouteImport } from './routes/admin.failures'
 import { Route as AdminRunsRouteImport } from './routes/admin.runs'
+import { Route as AdminSubjectsRouteImport } from './routes/admin.subjects'
 import { Route as ApiSplatRouteImport } from './routes/api.$'
+import { Route as AdminSubjectsIdRouteImport } from './routes/admin.subjects.$id'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -52,6 +55,11 @@ const BuildSplatRoute = BuildSplatRouteImport.update({
   path: '/_build/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminConfigRoute = AdminConfigRouteImport.update({
+  id: '/admin/config',
+  path: '/admin/config',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminConjectureScoresRoute = AdminConjectureScoresRouteImport.update({
   id: '/admin/conjecture-scores',
   path: '/admin/conjecture-scores',
@@ -77,10 +85,20 @@ const AdminRunsRoute = AdminRunsRouteImport.update({
   path: '/admin/runs',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminSubjectsRoute = AdminSubjectsRouteImport.update({
+  id: '/admin/subjects',
+  path: '/admin/subjects',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiSplatRoute = ApiSplatRouteImport.update({
   id: '/api/$',
   path: '/api/$',
   getParentRoute: () => rootRouteImport,
+} as any)
+const AdminSubjectsIdRoute = AdminSubjectsIdRouteImport.update({
+  id: '/$id',
+  path: '/$id',
+  getParentRoute: () => AdminSubjectsRoute,
 } as any)
 
 export interface FileRoutesByFullPath {
@@ -90,12 +108,15 @@ export interface FileRoutesByFullPath {
   '/mistakes': typeof MistakesRoute
   '/today': typeof TodayRoute
   '/_build/$': typeof BuildSplatRoute
+  '/admin/config': typeof AdminConfigRoute
   '/admin/conjecture-scores': typeof AdminConjectureScoresRoute
   '/admin/cost': typeof AdminCostRoute
   '/admin/coverage-lattice': typeof AdminCoverageLatticeRoute
   '/admin/failures': typeof AdminFailuresRoute
   '/admin/runs': typeof AdminRunsRoute
+  '/admin/subjects': typeof AdminSubjectsRouteWithChildren
   '/api/$': typeof ApiSplatRoute
+  '/admin/subjects/$id': typeof AdminSubjectsIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
@@ -104,12 +125,15 @@ export interface FileRoutesByTo {
   '/mistakes': typeof MistakesRoute
   '/today': typeof TodayRoute
   '/_build/$': typeof BuildSplatRoute
+  '/admin/config': typeof AdminConfigRoute
   '/admin/conjecture-scores': typeof AdminConjectureScoresRoute
   '/admin/cost': typeof AdminCostRoute
   '/admin/coverage-lattice': typeof AdminCoverageLatticeRoute
   '/admin/failures': typeof AdminFailuresRoute
   '/admin/runs': typeof AdminRunsRoute
+  '/admin/subjects': typeof AdminSubjectsRouteWithChildren
   '/api/$': typeof ApiSplatRoute
+  '/admin/subjects/$id': typeof AdminSubjectsIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
@@ -119,12 +143,15 @@ export interface FileRoutesById {
   '/mistakes': typeof MistakesRoute
   '/today': typeof TodayRoute
   '/_build/$': typeof BuildSplatRoute
+  '/admin/config': typeof AdminConfigRoute
   '/admin/conjecture-scores': typeof AdminConjectureScoresRoute
   '/admin/cost': typeof AdminCostRoute
   '/admin/coverage-lattice': typeof AdminCoverageLatticeRoute
   '/admin/failures': typeof AdminFailuresRoute
   '/admin/runs': typeof AdminRunsRoute
+  '/admin/subjects': typeof AdminSubjectsRouteWithChildren
   '/api/$': typeof ApiSplatRoute
+  '/admin/subjects/$id': typeof AdminSubjectsIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -135,12 +162,15 @@ export interface FileRouteTypes {
     | '/mistakes'
     | '/today'
     | '/_build/$'
+    | '/admin/config'
     | '/admin/conjecture-scores'
     | '/admin/cost'
     | '/admin/coverage-lattice'
     | '/admin/failures'
     | '/admin/runs'
+    | '/admin/subjects'
     | '/api/$'
+    | '/admin/subjects/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
@@ -149,12 +179,15 @@ export interface FileRouteTypes {
     | '/mistakes'
     | '/today'
     | '/_build/$'
+    | '/admin/config'
     | '/admin/conjecture-scores'
     | '/admin/cost'
     | '/admin/coverage-lattice'
     | '/admin/failures'
     | '/admin/runs'
+    | '/admin/subjects'
     | '/api/$'
+    | '/admin/subjects/$id'
   id:
     | '__root__'
     | '/'
@@ -163,12 +196,15 @@ export interface FileRouteTypes {
     | '/mistakes'
     | '/today'
     | '/_build/$'
+    | '/admin/config'
     | '/admin/conjecture-scores'
     | '/admin/cost'
     | '/admin/coverage-lattice'
     | '/admin/failures'
     | '/admin/runs'
+    | '/admin/subjects'
     | '/api/$'
+    | '/admin/subjects/$id'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -178,11 +214,13 @@ export interface RootRouteChildren {
   MistakesRoute: typeof MistakesRoute
   TodayRoute: typeof TodayRoute
   BuildSplatRoute: typeof BuildSplatRoute
+  AdminConfigRoute: typeof AdminConfigRoute
   AdminConjectureScoresRoute: typeof AdminConjectureScoresRoute
   AdminCostRoute: typeof AdminCostRoute
   AdminCoverageLatticeRoute: typeof AdminCoverageLatticeRoute
   AdminFailuresRoute: typeof AdminFailuresRoute
   AdminRunsRoute: typeof AdminRunsRoute
+  AdminSubjectsRoute: typeof AdminSubjectsRouteWithChildren
   ApiSplatRoute: typeof ApiSplatRoute
 }
 
@@ -230,6 +268,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BuildSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/config': {
+      id: '/admin/config'
+      path: '/admin/config'
+      fullPath: '/admin/config'
+      preLoaderRoute: typeof AdminConfigRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/conjecture-scores': {
       id: '/admin/conjecture-scores'
       path: '/admin/conjecture-scores'
@@ -265,6 +310,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AdminRunsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/subjects': {
+      id: '/admin/subjects'
+      path: '/admin/subjects'
+      fullPath: '/admin/subjects'
+      preLoaderRoute: typeof AdminSubjectsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/$': {
       id: '/api/$'
       path: '/api/$'
@@ -272,8 +324,27 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/subjects/$id': {
+      id: '/admin/subjects/$id'
+      path: '/$id'
+      fullPath: '/admin/subjects/$id'
+      preLoaderRoute: typeof AdminSubjectsIdRouteImport
+      parentRoute: typeof AdminSubjectsRoute
+    }
   }
 }
+
+interface AdminSubjectsRouteChildren {
+  AdminSubjectsIdRoute: typeof AdminSubjectsIdRoute
+}
+
+const AdminSubjectsRouteChildren: AdminSubjectsRouteChildren = {
+  AdminSubjectsIdRoute: AdminSubjectsIdRoute,
+}
+
+const AdminSubjectsRouteWithChildren = AdminSubjectsRoute._addFileChildren(
+  AdminSubjectsRouteChildren,
+)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
@@ -282,11 +353,13 @@ const rootRouteChildren: RootRouteChildren = {
   MistakesRoute: MistakesRoute,
   TodayRoute: TodayRoute,
   BuildSplatRoute: BuildSplatRoute,
+  AdminConfigRoute: AdminConfigRoute,
   AdminConjectureScoresRoute: AdminConjectureScoresRoute,
   AdminCostRoute: AdminCostRoute,
   AdminCoverageLatticeRoute: AdminCoverageLatticeRoute,
   AdminFailuresRoute: AdminFailuresRoute,
   AdminRunsRoute: AdminRunsRoute,
+  AdminSubjectsRoute: AdminSubjectsRouteWithChildren,
   ApiSplatRoute: ApiSplatRoute,
 }
 export const routeTree = rootRouteImport

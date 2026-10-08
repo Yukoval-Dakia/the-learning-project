@@ -1,0 +1,772 @@
+{
+  "task": "YUK-1358 Start config and subject control migration implementation",
+  "workspace": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor",
+  "branch": "feat/yuk-1358-start-admin-controls",
+  "baseline": "fcfd7907ffe65f050bc51ae8acfc3f8b51b403dd",
+  "main_base": "f80d47703ffbcb6f8db488a10dd0a705a6fee601",
+  "node": "v24.19.0",
+  "pnpm": "11.13.1",
+  "environment_prefix": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH",
+  "evidence_layer": "source/unit/offline installed serializer/static build; no DB/live runtime/browser/provider/replay/CI/review/delivery acceptance",
+  "hash_algorithm": "SHA-256. Aggregate digests cover compact UTF-8 JSON arrays with sorted object keys and sorted paths. gzip archives use mtime 0. This seal excludes its own digest.",
+  "source_manifest_sha256": "4421b88609277622fd56227f9c6cf16b53ec404ae8a08b9297b4552f2ea94880",
+  "regression_test_manifest_sha256": "2465441b7e0d9cd932fd597fbea63220efe38696c3679bfc7427adc1ee972113",
+  "log_manifest_sha256": "68139d1196e4bc864211a99a6f25bccf5c2b56832043aa7bd779339e76c7fff1",
+  "build_manifest_sha256": "1b68696c7dd7374fb563ae4786a394c0455861dcf8106c60d2b9d691e7d0116b",
+  "build_file_count": 868,
+  "build_manifest_path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/build-manifest.json.gz",
+  "source_files": [
+    {
+      "path": "server/frontdoor.ts",
+      "sha256": "7f12d61b3975c6fd40ffa045ccc6f100ff03fb86839d7bf0021fc53fcf05902a"
+    },
+    {
+      "path": "server/start/admin-control-client.ts",
+      "sha256": "2d685d52b4feb2ac996f86569e9b684a19d1c295d1ec4c8570ab1dbf5257eef0"
+    },
+    {
+      "path": "server/start/admin-control-client.unit.test.ts",
+      "sha256": "922697dc155f9d885b0259cdf415b544f37daf1e474031ebd36442c2d3cd12d5"
+    },
+    {
+      "path": "server/start/admin-control-function.ts",
+      "sha256": "890d3053fdb8f53b8ce2f6c5c0cd8e6e954ee4540b4b7a787aba573fa4c526d2"
+    },
+    {
+      "path": "server/start/admin-control-identity.unit.test.ts",
+      "sha256": "5d6363b3706265d478ab4526f9fee26a29499941a4648abc6290d764e6fd48e5"
+    },
+    {
+      "path": "server/start/admin-control-read.ts",
+      "sha256": "a8c44295502e2229f9ae6966d7b7ca88f3433d9c7e3cc8c8a45d8441db671f0d"
+    },
+    {
+      "path": "server/start/admin-control-read.unit.test.ts",
+      "sha256": "53a01bbc36d279c83e3015316a3f71192f41acbf7421398248041d3f569f61dd"
+    },
+    {
+      "path": "server/start/admin-control-reader.db.test.ts",
+      "sha256": "37ddca7ee01022d82e9316f66463ab1734a6b1f6f5f006346a5dd93b8c0e2a8c"
+    },
+    {
+      "path": "server/start/admin-control-reader.ts",
+      "sha256": "65585a3dab990a1aaaecd536024bf0b628c7e9f33efdb30cabb077548aac539e"
+    },
+    {
+      "path": "server/start/admin-control-reader.unit.test.ts",
+      "sha256": "fce7e6f721ce90a7e9605f5dcca2a7b50abcaad15d89163a58b2812af969ef92"
+    },
+    {
+      "path": "server/start/admin-control-test-fixtures.ts",
+      "sha256": "957bd92ab5d32edf5cbc0a2836e3a94f3482076517e61090625363111d504906"
+    },
+    {
+      "path": "server/start/context.ts",
+      "sha256": "8b750449f12bb37132515048f291fd9708889557f5c600edc220da80293a7dde"
+    },
+    {
+      "path": "server/start/routeTree.gen.ts",
+      "sha256": "50ad3d5f83cf3c476bcf9fe4fe55e63c2cfcc0ec14589b7c50408c32e2fba868"
+    },
+    {
+      "path": "server/start/routes/admin.config.tsx",
+      "sha256": "2b5a2d3cf84d172e7b210bdcc0b4bc759a0231e0f5ab9f4aabfbd85b17a9050b"
+    },
+    {
+      "path": "server/start/routes/admin.subjects.$id.tsx",
+      "sha256": "3123e7848717453007fb8ffc30b5c5941d2a75b60fbc7e2d85bf344d9be4df4a"
+    },
+    {
+      "path": "server/start/routes/admin.subjects.tsx",
+      "sha256": "5fad59f9eed1db3bd574e909b8606b9743b3ea5eb6b5648149f7cc8c3e96a293"
+    },
+    {
+      "path": "src/capabilities/observability/ui-public.ts",
+      "sha256": "2d401f0d0e48458a5baad5008e4a5dc906f68340f8af53629b86144b93411d71"
+    },
+    {
+      "path": "src/capabilities/observability/ui/admin-control-client.ts",
+      "sha256": "9b10c3a2bc75fd01c035cdbb747b7c71378dea407f76c14c437962eecb96f81f"
+    },
+    {
+      "path": "src/capabilities/observability/ui/config.tsx",
+      "sha256": "6b04922da5ee5cea84fc1896141af09a4ea27feed8002deb908b691bded1e812"
+    },
+    {
+      "path": "src/capabilities/observability/ui/subject-traits.tsx",
+      "sha256": "bd9c9712d41a6daae26a8423d1bbbac23bb59ec1f482ff72397b4aeed5563fde"
+    },
+    {
+      "path": "src/capabilities/observability/ui/subjects.tsx",
+      "sha256": "ffb6a4de5a79c8f33fb58fc3fb27dd234c7cb41bb316fc1eb92628c265265491"
+    },
+    {
+      "path": "tests/usability/start-rpc-fixtures.ts",
+      "sha256": "b281138249128662524e2761b9e159e5c00570d5abc19305688ab44e6dc74a0c"
+    },
+    {
+      "path": "tests/usability/start-rpc-fixtures.unit.spec.ts",
+      "sha256": "2fc999301a3128e3fa4d6a100ba20cc06c83a702a3ae0e5605203154f8b62d0c"
+    },
+    {
+      "path": "web/src/router.tsx",
+      "sha256": "875c849fbd603b79ebae69cf16fd4a6c68558450d434179fbe63171e68dd2c48"
+    },
+    {
+      "path": "web/src/routes/AdminControls.start.unit.test.tsx",
+      "sha256": "db3eaaa5d7ad5695e62c83daf72b3a59102a4acc2763bc74da1b7b000ae51f98"
+    },
+    {
+      "path": "web/src/routes/AdminPages.start.unit.test.tsx",
+      "sha256": "c7ae4ff83a7162f99984f42806f1d8c3f8262430fa80bd68d6eb5d2f40aa88d3"
+    }
+  ],
+  "regression_test_inputs": [
+    {
+      "path": "server/frontdoor.unit.test.ts",
+      "sha256": "a3840f5de9f00f46fd6b25eb557a1ff2a5d48c849630da12d77610da2f52120b"
+    },
+    {
+      "path": "server/start/admin-client.unit.test.ts",
+      "sha256": "987acc6e13bc11227c0575fcd122ae5ea07da8e16bd2d57bbe0de961326596ea"
+    },
+    {
+      "path": "server/start/admin-control-client.unit.test.ts",
+      "sha256": "922697dc155f9d885b0259cdf415b544f37daf1e474031ebd36442c2d3cd12d5"
+    },
+    {
+      "path": "server/start/admin-control-identity.unit.test.ts",
+      "sha256": "5d6363b3706265d478ab4526f9fee26a29499941a4648abc6290d764e6fd48e5"
+    },
+    {
+      "path": "server/start/admin-control-read.unit.test.ts",
+      "sha256": "53a01bbc36d279c83e3015316a3f71192f41acbf7421398248041d3f569f61dd"
+    },
+    {
+      "path": "server/start/admin-control-reader.unit.test.ts",
+      "sha256": "fce7e6f721ce90a7e9605f5dcca2a7b50abcaad15d89163a58b2812af969ef92"
+    },
+    {
+      "path": "server/start/admin-read.unit.test.ts",
+      "sha256": "8baf7ea4db8e0dd9d16bbf56af9cb9a447400acfa9cc88adcf7cc093f55b346c"
+    },
+    {
+      "path": "server/start/auth.unit.test.ts",
+      "sha256": "69318d1ce074b43787341a5b7a3fa943f16f411853833b94d63f0b52f279de6e"
+    },
+    {
+      "path": "src/capabilities/observability/server/admin-config-operations.unit.test.ts",
+      "sha256": "1f97e0ae0b051b53bdeaff33517fa35a80ab6d1ddb86cd0ac2946ee77f4c79cc"
+    },
+    {
+      "path": "src/capabilities/observability/server/subject-control-operations.unit.test.ts",
+      "sha256": "e2e2e0710ff4bb83a7948a38f4d6e5b3d5628ad1ee3b9c1a643fe974697bc618"
+    },
+    {
+      "path": "src/capabilities/observability/server/trait-control-operations.unit.test.ts",
+      "sha256": "8346508de8c35e6ff7ccd0b0de0821bc79cb14725325f43b3e1212e08393455e"
+    },
+    {
+      "path": "src/capabilities/observability/ui/config-task-editor.unit.test.tsx",
+      "sha256": "d7d6d261d5966ef367d09f8cd6d9f7d5a968ab199c03b451d05810566ddadde3"
+    },
+    {
+      "path": "src/capabilities/observability/ui/config.render.unit.test.tsx",
+      "sha256": "64c5131f17bfe250b9bf616e2a29ad810717f331d686de87be0a1ad6d95d0d19"
+    },
+    {
+      "path": "src/capabilities/observability/ui/subject-traits.unit.test.tsx",
+      "sha256": "2f368370f71759bd8df29d7ca39d98878adac0d3b23a92e34926c071ce5b6277"
+    },
+    {
+      "path": "tests/usability/start-rpc-fixtures.unit.spec.ts",
+      "sha256": "2fc999301a3128e3fa4d6a100ba20cc06c83a702a3ae0e5605203154f8b62d0c"
+    },
+    {
+      "path": "web/src/router-lazy.unit.test.ts",
+      "sha256": "574d5e1836420e0cab436a5fe941b961afc0fe7e7475cebd37fe6a0ba25ad2d8"
+    },
+    {
+      "path": "web/src/routes/AdminControls.start.unit.test.tsx",
+      "sha256": "db3eaaa5d7ad5695e62c83daf72b3a59102a4acc2763bc74da1b7b000ae51f98"
+    },
+    {
+      "path": "web/src/routes/AdminPages.start.unit.test.tsx",
+      "sha256": "c7ae4ff83a7162f99984f42806f1d8c3f8262430fa80bd68d6eb5d2f40aa88d3"
+    },
+    {
+      "path": "web/src/surface-inventory.unit.test.ts",
+      "sha256": "89851aed909730c0425d2da5e28e4f81bb0e19e2156006db32a063b735925797"
+    }
+  ],
+  "final_logs": [
+    {
+      "original_path": "/tmp/yuk1358-controls-audit-agent-control-plane.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-agent-control-plane.txt.gz",
+      "original_sha256": "1f81346486a3c2faf1abb93d683d02efd8e196f1af34605bc3756da0cdbe4b61",
+      "archive_sha256": "8306c22eaa33704d5f6a1d0047211941b33ebaf4b85ae4bff9b9835c4d28683a",
+      "original_bytes": 77
+    },
+    {
+      "original_path": "/tmp/yuk1358-controls-audit-api-client-usage.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-api-client-usage.txt.gz",
+      "original_sha256": "71c2c93dd9e51bd4fc368e7845a5a34d42b2b56cf97e4dcf94a8556a99f45b46",
+      "archive_sha256": "32d1d6168396f3f90eb4b917f42a5796663abbad1f85b826931bf365c6269a52",
+      "original_bytes": 124
+    },
+    {
+      "original_path": "/tmp/yuk1358-controls-audit-api-client.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-api-client.txt.gz",
+      "original_sha256": "f26bc904f865f0cc5a1a1613ea5d4017d46fdab55aceaf8eb0a831aedd0cea7c",
+      "archive_sha256": "9b526fae4bd995ab0864e9a7d3d40fd934ddb7c27c0dbb64942f02f499926a4a",
+      "original_bytes": 292
+    },
+    {
+      "original_path": "/tmp/yuk1358-controls-audit-api-contracts.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-api-contracts.txt.gz",
+      "original_sha256": "2fcb1d9cd8395bc3661f8e35135444ec73a34d0ca7a0320f1507c9429782ce2b",
+      "archive_sha256": "7f04a5c3ffede816e47d5cc252787e0ae960c061922c08996f28c34bb81794f7",
+      "original_bytes": 110
+    },
+    {
+      "original_path": "/tmp/yuk1358-controls-audit-architecture.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-architecture.txt.gz",
+      "original_sha256": "d1a6f60f0f92a978a8563df20e2f32445018649c7253dcc8e78f3b1b6b7b161e",
+      "archive_sha256": "8d1400086939c12a7f9c03ab88a7362b70050c28163d7ea902da9c26c96751b6",
+      "original_bytes": 586
+    },
+    {
+      "original_path": "/tmp/yuk1358-controls-audit-boundaries-initial.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-boundaries-initial.txt.gz",
+      "original_sha256": "484405f1ec91a3f4ecfc833a00e772ba72da3c35e9ebef7b3ebcff730f89f21f",
+      "archive_sha256": "7bb5809be737060df3225d330701221c4d5a1eaa68f5d1c9812575e73acbee0d",
+      "original_bytes": 212
+    },
+    {
+      "original_path": "/tmp/yuk1358-controls-audit-draft-status-reads.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-draft-status-reads.txt.gz",
+      "original_sha256": "bcfd7ca37f8a3c3687c28c93eee8073cbaf173cc0d61b064232b0bf727f21dd1",
+      "archive_sha256": "624929df792b08f95a230cfddb879b427e20872e45c0d06795a0504ef09acd31",
+      "original_bytes": 766
+    },
+    {
+      "original_path": "/tmp/yuk1358-controls-audit-draft-status.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-draft-status.txt.gz",
+      "original_sha256": "de3569839d7a890654a591c9c6b77334b1031fa56e3ecedef457f132dd24eb8d",
+      "archive_sha256": "f57fb45a091b0207f47197a34438110c9cb4433c8a3c2b5e1459598b00a761f9",
+      "original_bytes": 223
+    },
+    {
+      "original_path": "/tmp/yuk1358-controls-audit-partition.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-partition.txt.gz",
+      "original_sha256": "78574fea3a7953002a80df960890af53cd8e9294a701e8aa85fb438dca6a9f68",
+      "archive_sha256": "ab9394c26228f65751af1e4464235151a89694a95bc40956c4ecdca23adca91e",
+      "original_bytes": 751
+    },
+    {
+      "original_path": "/tmp/yuk1358-controls-audit-profile.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-profile.txt.gz",
+      "original_sha256": "f2f14ec06808ef23b857f78b1f54fd2fb25ba55e75776644d2a00aef10981db4",
+      "archive_sha256": "993adf65934065cdd713e54652d14d2d1eecc52dffc925b76f5053b40c8357b3",
+      "original_bytes": 134
+    },
+    {
+      "original_path": "/tmp/yuk1358-controls-audit-provider-attempt-truth.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-provider-attempt-truth.txt.gz",
+      "original_sha256": "29bdbca513c3121fd6156e6dbabd3a720733d5e993340f0c32558835ec5cc81e",
+      "archive_sha256": "097e13adc8c13183a66082431e1ca5d0a69c034276ff33c4bdb4214acb569594",
+      "original_bytes": 90
+    },
+    {
+      "original_path": "/tmp/yuk1358-controls-audit-provider-lanes.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-provider-lanes.txt.gz",
+      "original_sha256": "4e94a5c1aa34213ec2cbb56a60b90e883fdcf6a7fd9c10daff833b754ea85b5c",
+      "archive_sha256": "6f6f1e5c1f2f89ee83f54396c38eee81d04af9ca488b01fd36943616b52a31e1",
+      "original_bytes": 1688
+    },
+    {
+      "original_path": "/tmp/yuk1358-controls-audit-schema.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-schema.txt.gz",
+      "original_sha256": "1da95684f16a66c4937d90ab408b2124b58bf3853a4a89bd1b7bf388b57a9715",
+      "archive_sha256": "d80368b4afea4189c0b7d570bab41e48dda4ff3233a62f4e99640c5e10e2ce81",
+      "original_bytes": 45128
+    },
+    {
+      "original_path": "/tmp/yuk1358-controls-audit-task-census.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-task-census.txt.gz",
+      "original_sha256": "ddf8d63319f242b650617ac0e743a24966ea2eb10c9c446a74b9d24f8c58df6a",
+      "archive_sha256": "870111b7e76ba62903b7503b755ed3366d62feeb8f43bd861c5c23633e10c378",
+      "original_bytes": 773
+    },
+    {
+      "original_path": "/tmp/yuk1358-controls-build-final.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/build-final.txt.gz",
+      "original_sha256": "2c071506af60e8d7fda0f6d237792b5f9023a65055abf7d02970d231c72aa4ff",
+      "archive_sha256": "8acda7b895a03c698d6736fd9f510818c6dc930dd24c8b980b15685507a86479",
+      "original_bytes": 113405
+    },
+    {
+      "original_path": "/tmp/yuk1358-controls-diff-check.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/diff-check.txt.gz",
+      "original_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "archive_sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64",
+      "original_bytes": 0
+    },
+    {
+      "original_path": "/tmp/yuk1358-controls-lint.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/lint.txt.gz",
+      "original_sha256": "b5263940a1c4d7df538f460fc414338d883ae8abe43eb170976058a2a458aafe",
+      "archive_sha256": "1a7cb9546f9e675040c89d2c49ec990d7da1bd9b836660ebf62f9a7a1f11684b",
+      "original_bytes": 13064
+    },
+    {
+      "original_path": "/tmp/yuk1358-controls-protocol.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/protocol.txt.gz",
+      "original_sha256": "f637a0472d16de1520d723b6e2619ac12501efe3b1bd646268b77a3fca39121b",
+      "archive_sha256": "9c58c8e40884ca5373a55b9e5112582e1a9e1f3aa3da0fafc91f638ce4da777f",
+      "original_bytes": 1040
+    },
+    {
+      "original_path": "/tmp/yuk1358-controls-typecheck-final.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/typecheck-final.txt.gz",
+      "original_sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+      "archive_sha256": "52806b9aefb5cc110e21defa775856243267445b9ce4ee181fc5102887269f03",
+      "original_bytes": 61
+    },
+    {
+      "original_path": "/tmp/yuk1358-controls-unit-final.log",
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/unit-final.txt.gz",
+      "original_sha256": "7928866e69e896dbcb8522239c93d45bcfb26f1439d5fa412e9b552184b128ce",
+      "archive_sha256": "f6510d54ec97b8779bafe2682cc92e5ed5e75b1a9aefad3e5564af72cedebaf4",
+      "original_bytes": 598
+    }
+  ],
+  "checks": [
+    {
+      "command": "pnpm typecheck",
+      "exit_code": 0,
+      "result": "root and Start typecheck, including unrun DB test source",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/typecheck-final.txt.gz"
+    },
+    {
+      "command": "pnpm lint",
+      "exit_code": 0,
+      "result": "exit 0, 290 warnings",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/lint.txt.gz"
+    },
+    {
+      "command": "pnpm build",
+      "exit_code": 0,
+      "result": "web, Start, server, worker and migration build; not executed",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/build-final.txt.gz"
+    },
+    {
+      "command": "pnpm vitest run --config vitest.unit.config.ts server/start/admin-control-read.unit.test.ts server/start/admin-control-reader.unit.test.ts server/start/admin-control-identity.unit.test.ts server/start/admin-control-client.unit.test.ts server/start/admin-read.unit.test.ts server/start/admin-client.unit.test.ts server/start/auth.unit.test.ts server/frontdoor.unit.test.ts web/src/routes/AdminControls.start.unit.test.tsx web/src/routes/AdminPages.start.unit.test.tsx web/src/router-lazy.unit.test.ts web/src/surface-inventory.unit.test.ts src/capabilities/observability/ui/config.render.unit.test.tsx src/capabilities/observability/ui/config-task-editor.unit.test.tsx src/capabilities/observability/ui/subject-traits.unit.test.tsx src/capabilities/observability/server/admin-config-operations.unit.test.ts src/capabilities/observability/server/subject-control-operations.unit.test.ts src/capabilities/observability/server/trait-control-operations.unit.test.ts",
+      "exit_code": 0,
+      "result": "406 tests passed, 18 files",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/unit-final.txt.gz"
+    },
+    {
+      "command": "pnpm exec tsx --test tests/usability/start-rpc-fixtures.unit.spec.ts",
+      "exit_code": 0,
+      "result": "9 offline serializer/function-map tests passed",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/protocol.txt.gz"
+    },
+    {
+      "command": "pnpm audit:capability-boundaries",
+      "exit_code": 0,
+      "result": "433/0/48 exact debt, zero deep cross-capability imports",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-boundaries-initial.txt.gz"
+    },
+    {
+      "command": "pnpm audit:partition",
+      "exit_code": 0,
+      "result": "zero unmatched, zero unmocked DB unit imports, six repository warnings",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-partition.txt.gz"
+    },
+    {
+      "command": "pnpm audit:api-client",
+      "exit_code": 0,
+      "result": "generated API schema unchanged",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-api-client.txt.gz"
+    },
+    {
+      "command": "pnpm audit:schema",
+      "exit_code": 0,
+      "result": "no unallowed schema stubs",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-schema.txt.gz"
+    },
+    {
+      "command": "pnpm audit:api-contracts",
+      "exit_code": 0,
+      "result": "173/173 contracts, 0 legacy, 163 OpenAPI paths",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-api-contracts.txt.gz"
+    },
+    {
+      "command": "pnpm audit:api-client-usage",
+      "exit_code": 0,
+      "result": "generated operations audit passed",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-api-client-usage.txt.gz"
+    },
+    {
+      "command": "pnpm audit:provider-lanes",
+      "exit_code": 0,
+      "result": "source audit, zero violations; no provider calls",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-provider-lanes.txt.gz"
+    },
+    {
+      "command": "pnpm audit:architecture-deepening",
+      "exit_code": 0,
+      "result": "source audit passed",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-architecture.txt.gz"
+    },
+    {
+      "command": "pnpm audit:agent-control-plane",
+      "exit_code": 0,
+      "result": "source audit passed",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-agent-control-plane.txt.gz"
+    },
+    {
+      "command": "pnpm audit:provider-attempt-truth",
+      "exit_code": 0,
+      "result": "source audit passed",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-provider-attempt-truth.txt.gz"
+    },
+    {
+      "command": "pnpm audit:profile",
+      "exit_code": 0,
+      "result": "4 profiles, zero invalid/warnings",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-profile.txt.gz"
+    },
+    {
+      "command": "pnpm audit:task-census",
+      "exit_code": 0,
+      "result": "55 kinds, 53 invoked, 2 compatibility",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-task-census.txt.gz"
+    },
+    {
+      "command": "pnpm audit:draft-status",
+      "exit_code": 0,
+      "result": "no missing unallowlisted draft_status",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-draft-status.txt.gz"
+    },
+    {
+      "command": "pnpm audit:draft-status-reads",
+      "exit_code": 0,
+      "result": "source audit passed; deferred Engine B notes retained",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-draft-status-reads.txt.gz"
+    },
+    {
+      "command": "git diff fcfd7907ffe65f050bc51ae8acfc3f8b51b403dd --check",
+      "exit_code": 0,
+      "result": "exit 0",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/diff-check.txt.gz"
+    },
+    {
+      "command": "python3 docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/bundle-identity.py",
+      "exit_code": 0,
+      "result": "12 static emitted-byte identity assertions passed; no runtime execution",
+      "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/bundle-identity.json"
+    }
+  ],
+  "canonical_boot_identity": {
+    "evidence_layer": "static emitted bytes; no built server, DB, browser or provider execution",
+    "checks": [
+      {
+        "check": "host control adapter, facts bootstrap and writer bootstrap resolve one domain export object",
+        "result": "PASS",
+        "aliases": [
+          [["init_public9()", "public_exports5"]],
+          [["init_public9()", "public_exports5"]],
+          [["init_public9()", "public_exports5"]]
+        ],
+        "locations": [
+          {
+            "path": "dist/server.cjs",
+            "line": 916299
+          },
+          {
+            "path": "dist/server.cjs",
+            "line": 916616
+          },
+          {
+            "path": "dist/server.cjs",
+            "line": 916627
+          }
+        ]
+      },
+      {
+        "check": "frontdoor binds canonical host operations and passes them through request context",
+        "result": "PASS",
+        "locations": [
+          {
+            "path": "dist/server.cjs",
+            "line": 916506
+          },
+          {
+            "path": "dist/server.cjs",
+            "line": 916525
+          }
+        ]
+      },
+      {
+        "check": "host awaits subject/config hydration and facts/writer injection before opening the frontdoor",
+        "result": "PASS",
+        "location": {
+          "path": "dist/server.cjs",
+          "line": 916655
+        }
+      },
+      {
+        "check": "host bootstrap and control adapter acquire the same owned database export",
+        "result": "PASS"
+      },
+      {
+        "check": "one host config store supplies both hydration and the read model",
+        "result": "PASS",
+        "locations": [
+          {
+            "path": "dist/server.cjs",
+            "line": 779446
+          },
+          {
+            "path": "dist/server.cjs",
+            "line": 777570
+          }
+        ]
+      },
+      {
+        "check": "exactly one emitted control handler chunk",
+        "result": "PASS"
+      },
+      {
+        "check": "all eighteen emitted handlers call the authenticated context adapter",
+        "result": "PASS",
+        "names": [
+          "getStartAdminConfig",
+          "patchStartAdminConfig",
+          "resetStartAdminConfig",
+          "getStartAdminSubjects",
+          "getStartAdminSubjectTraits",
+          "getStartAdminTraits",
+          "getStartAdminTraitJournal",
+          "renameStartAdminSubject",
+          "retireStartAdminSubject",
+          "restoreStartAdminSubject",
+          "resetStartAdminSubject",
+          "validateStartAdminSubject",
+          "editStartAdminSubjectTrait",
+          "forkStartAdminSubjectTrait",
+          "rebindStartAdminSubjectTrait",
+          "editStartAdminSharedTrait",
+          "rollbackStartAdminTrait",
+          "resetStartAdminTraitToSeed"
+        ],
+        "path": "dist/start/server/assets/admin-control-function-XxffScXr.js"
+      },
+      {
+        "check": "all sixteen parameter validators defer canonical parsing until after authorization",
+        "result": "PASS"
+      },
+      {
+        "check": "Start control handlers resolve host operations through context and have no local domain import",
+        "result": "PASS"
+      },
+      {
+        "check": "canonical operation factory is absent from emitted Start server and browser JavaScript",
+        "result": "PASS",
+        "server_files": 699,
+        "browser_files": 74
+      },
+      {
+        "check": "exactly one emitted function resolver",
+        "result": "PASS"
+      },
+      {
+        "check": "built resolver contains every control function exactly once",
+        "result": "PASS",
+        "path": "dist/start/server/assets/__23tanstack-start-server-fn-resolver-C0ewa1FK.js"
+      }
+    ],
+    "artifacts": [
+      {
+        "path": "dist/server.cjs",
+        "sha256": "6ded89ab642f3ac0654a1c215b2898a78fed9aca3d7c85829a386d03eddb5b77"
+      },
+      {
+        "path": "dist/start/server/assets/admin-control-function-XxffScXr.js",
+        "sha256": "a0617d8b35e33a016d5f371c10bf62ccfe7cdcc06ffbbe7848133d8657b3f1fc"
+      },
+      {
+        "path": "dist/start/server/assets/__23tanstack-start-server-fn-resolver-C0ewa1FK.js",
+        "sha256": "4a9f4ffbb88df6c615980600400036211058fd79ce6a492864eea20a42c6c73f"
+      }
+    ],
+    "limit": "Other existing Start consumers may contain duplicated domain modules. New control handlers consume only host context operations. Parent built-RPC and DB acceptance remains required."
+  },
+  "owned_evidence_files": [
+    {
+      "path": "docs/planning/2026-10-09-yuk1358-start-admin-controls-implementation.md",
+      "sha256": "dfc86a94182f18310fba5bdf667ffff265950d54659e1cc75bd51e452b89354f"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-agent-control-plane.txt.gz",
+      "sha256": "8306c22eaa33704d5f6a1d0047211941b33ebaf4b85ae4bff9b9835c4d28683a"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-api-client-usage.txt.gz",
+      "sha256": "32d1d6168396f3f90eb4b917f42a5796663abbad1f85b826931bf365c6269a52"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-api-client.txt.gz",
+      "sha256": "9b526fae4bd995ab0864e9a7d3d40fd934ddb7c27c0dbb64942f02f499926a4a"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-api-contracts.txt.gz",
+      "sha256": "7f04a5c3ffede816e47d5cc252787e0ae960c061922c08996f28c34bb81794f7"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-architecture.txt.gz",
+      "sha256": "8d1400086939c12a7f9c03ab88a7362b70050c28163d7ea902da9c26c96751b6"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-boundaries-initial.txt.gz",
+      "sha256": "7bb5809be737060df3225d330701221c4d5a1eaa68f5d1c9812575e73acbee0d"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-draft-status-reads.txt.gz",
+      "sha256": "624929df792b08f95a230cfddb879b427e20872e45c0d06795a0504ef09acd31"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-draft-status.txt.gz",
+      "sha256": "f57fb45a091b0207f47197a34438110c9cb4433c8a3c2b5e1459598b00a761f9"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-partition.txt.gz",
+      "sha256": "ab9394c26228f65751af1e4464235151a89694a95bc40956c4ecdca23adca91e"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-profile.txt.gz",
+      "sha256": "993adf65934065cdd713e54652d14d2d1eecc52dffc925b76f5053b40c8357b3"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-provider-attempt-truth.txt.gz",
+      "sha256": "097e13adc8c13183a66082431e1ca5d0a69c034276ff33c4bdb4214acb569594"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-provider-lanes.txt.gz",
+      "sha256": "6f6f1e5c1f2f89ee83f54396c38eee81d04af9ca488b01fd36943616b52a31e1"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-schema.txt.gz",
+      "sha256": "d80368b4afea4189c0b7d570bab41e48dda4ff3233a62f4e99640c5e10e2ce81"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-task-census.txt.gz",
+      "sha256": "870111b7e76ba62903b7503b755ed3366d62feeb8f43bd861c5c23633e10c378"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/build-final.txt.gz",
+      "sha256": "8acda7b895a03c698d6736fd9f510818c6dc930dd24c8b980b15685507a86479"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/build-manifest.json.gz",
+      "sha256": "d3705bf886ce172f1e2e3a7cb99b1d43eed640525c855c5fa0449af926d590f5"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/bundle-identity.json",
+      "sha256": "315816ffcf396e22d70df3deb87f421cb6c3469764e366c9d0c9ce74fabee5ca"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/bundle-identity.py",
+      "sha256": "64ad711c5da9e056759ce8d47da9ba886b26abc1f0c94f31746221178806766f"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/diff-check.txt.gz",
+      "sha256": "9ceffb7310338057cfe71a4ae1e2c98d2c485d81cdef906532a801f457a38d64"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/lint.txt.gz",
+      "sha256": "1a7cb9546f9e675040c89d2c49ec990d7da1bd9b836660ebf62f9a7a1f11684b"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/protocol.txt.gz",
+      "sha256": "9c58c8e40884ca5373a55b9e5112582e1a9e1f3aa3da0fafc91f638ce4da777f"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/typecheck-final.txt.gz",
+      "sha256": "52806b9aefb5cc110e21defa775856243267445b9ce4ee181fc5102887269f03"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/unit-final.txt.gz",
+      "sha256": "f6510d54ec97b8779bafe2682cc92e5ed5e75b1a9aefad3e5564af72cedebaf4"
+    }
+  ],
+  "owned_changed_paths": [
+    "docs/planning/2026-10-09-yuk1358-start-admin-controls-implementation.md",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-agent-control-plane.txt.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-api-client-usage.txt.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-api-client.txt.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-api-contracts.txt.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-architecture.txt.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-boundaries-initial.txt.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-draft-status-reads.txt.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-draft-status.txt.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-partition.txt.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-profile.txt.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-provider-attempt-truth.txt.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-provider-lanes.txt.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-schema.txt.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-task-census.txt.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/build-final.txt.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/build-manifest.json.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/bundle-identity.json",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/bundle-identity.py",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/diff-check.txt.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/lint.txt.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/protocol.txt.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/seal.json",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/typecheck-final.txt.gz",
+    "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/unit-final.txt.gz",
+    "server/frontdoor.ts",
+    "server/start/admin-control-client.ts",
+    "server/start/admin-control-client.unit.test.ts",
+    "server/start/admin-control-function.ts",
+    "server/start/admin-control-identity.unit.test.ts",
+    "server/start/admin-control-read.ts",
+    "server/start/admin-control-read.unit.test.ts",
+    "server/start/admin-control-reader.db.test.ts",
+    "server/start/admin-control-reader.ts",
+    "server/start/admin-control-reader.unit.test.ts",
+    "server/start/admin-control-test-fixtures.ts",
+    "server/start/context.ts",
+    "server/start/routeTree.gen.ts",
+    "server/start/routes/admin.config.tsx",
+    "server/start/routes/admin.subjects.$id.tsx",
+    "server/start/routes/admin.subjects.tsx",
+    "src/capabilities/observability/ui-public.ts",
+    "src/capabilities/observability/ui/admin-control-client.ts",
+    "src/capabilities/observability/ui/config.tsx",
+    "src/capabilities/observability/ui/subject-traits.tsx",
+    "src/capabilities/observability/ui/subjects.tsx",
+    "tests/usability/start-rpc-fixtures.ts",
+    "tests/usability/start-rpc-fixtures.unit.spec.ts",
+    "web/src/router.tsx",
+    "web/src/routes/AdminControls.start.unit.test.tsx",
+    "web/src/routes/AdminPages.start.unit.test.tsx"
+  ],
+  "parent_db_tests": {
+    "path": "server/start/admin-control-reader.db.test.ts",
+    "cases": 7,
+    "status": "AUTHORED_AND_TYPECHECKED_NOT_RUN",
+    "snapshot_scope": "12 explicitly named tables and subject_change_seq only"
+  },
+  "remaining_parent_acceptance": [
+    "independent diff review after writer release",
+    "locked isolated DB tests",
+    "exact-built authenticated RPC and browser acceptance",
+    "exact-head CI and authorized delivery"
+  ],
+  "ownership": "No observability/public, canonical domain/API operation, subject writer/hydrate, agency, kernel, package/lock, schema/worker, durable/boss/session-review, PLAN/.remember or parent plan edits. No push/PR/watch/merge.",
+  "verification_note": "Initial staged diff check returned 2 for an extra blank line in the proof JSON; implementation commit 608f36eb3 was created before that result was inspected. Evidence-only correction removes that newline, reruns 12 static assertions and verifies the full branch diff. Source/build/test inputs are unchanged."
+}

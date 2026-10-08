@@ -1,3 +1,5 @@
+1393源码a9d7c8322已completed/noPending，writer释放。父核26source SHA；正常整合PR1620/main10df1a471，仅PLAN/now冲突。PR1620已18:16:17Z合入，tree与755bdeebb相同、CI37821989407全绿，未部署。下列Start待合叙述为历史。父即接独立R1及持锁运行验收。
+
 # 当前交接 — YUK1393 review orphan DBOS
 
 1392/PR1619已17:11:43Z合main6aaf8ca89eaf5feb5af5c00b7c5b3bd90cd953ea；父fetch核tree5e8ab973与exact3883903相同，CI37812973662全绿/R1 NONE/threads0/已unwatch，1392Done。公共读取交5796 Start。
@@ -7,6 +9,11 @@
 1356实查误为Done，已恢复并读回In Progress，comment8b193549保留缺口；1355/1358/1359均In Progress。下一生命周期设计task已completed/noPending，仅设计无runtime证明。
 
 以下历史交接不覆盖当前状态。
+
+# Current parent handoff — 2026-10-09 Start controls
+
+PR1620 candidate75c0fa149: R1 completed/noPending NONE; CI37817401666 green. Parent integrated406unit/9protocol/static/build passed; DB evidence covers95distinct cases across original94pass+test-only7rerun, not101. Actual built resolver/installed client passed18operations/122calls/35windows plus refresh-only proof. T3 browser passed config receipt/failed-refresh/no-replay, two-tab stale CAS, COW and subject lifecycle. Nine browser DB comparisons assert expected effects across90tables/5sequences. Explicit T3host unavailable led to read-only Playwright fallback; journal UI first100 only, RPC206 pagination separate. No product change during acceptance. Runtime lock released2026-10-08T18:01:35.907845Z; original4/release unchanged, own app/PG removed, synthetic evidence/dump retained. See controls-parent.md and runtime-acceptance.json. Evidence docs pending commit/newexactCI; no newreview or runtime needed. Linear1358 falseDone restoredInProgress. DBOS1393/0116/sharedregistrar/DBjobfetch-depth0 reserved7631. Main remainsAgentTEST source5aa2/image9b76; no deploy/provider/replay. Remaining routes/canonicalboot/taskfamilies/legacyexit not complete.
+
 
 # 当前交接 — YUK1392 agent-note board公共读取
 

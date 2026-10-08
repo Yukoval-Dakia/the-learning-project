@@ -36,8 +36,41 @@ const reads = {
   getStartAdminFailures: '/api/admin/failures',
   getStartAdminCoverage: '/api/admin/coverage-lattice',
   getStartAdminConjectureScores: '/api/admin/conjecture-scores',
+  getStartAdminConfig: '/api/admin/config',
+  getStartAdminSubjects: '/api/admin/subjects',
 };
-const names = [...Object.keys(reads), 'decideStartProposal', 'undoStartArtifactAiChange'];
+const controls = {
+  patchStartAdminConfig: { scope: 'config', method: 'PATCH', suffix: '' },
+  resetStartAdminConfig: { scope: 'config', method: 'POST', suffix: '/reset' },
+  getStartAdminSubjectTraits: { scope: 'subject', method: 'GET', suffix: '/traits' },
+  getStartAdminTraits: { scope: 'catalog', method: 'GET', suffix: '' },
+  getStartAdminTraitJournal: { scope: 'trait', method: 'GET', suffix: '/journal' },
+  renameStartAdminSubject: { scope: 'subject', method: 'PATCH', suffix: '' },
+  retireStartAdminSubject: { scope: 'subject', method: 'POST', suffix: '/retire' },
+  restoreStartAdminSubject: { scope: 'subject', method: 'POST', suffix: '/restore' },
+  resetStartAdminSubject: { scope: 'subject', method: 'POST', suffix: '/reset' },
+  validateStartAdminSubject: { scope: 'subject', method: 'POST', suffix: '/validate' },
+  editStartAdminSubjectTrait: { scope: 'subject-trait', method: 'PUT', suffix: '' },
+  forkStartAdminSubjectTrait: { scope: 'subject-trait', method: 'POST', suffix: '/fork' },
+  rebindStartAdminSubjectTrait: { scope: 'subject-trait', method: 'PUT', suffix: '/binding' },
+  editStartAdminSharedTrait: { scope: 'trait', method: 'PUT', suffix: '' },
+  rollbackStartAdminTrait: { scope: 'trait', method: 'POST', suffix: '/rollback' },
+  resetStartAdminTraitToSeed: { scope: 'trait', method: 'POST', suffix: '/reset-to-seed' },
+} as const;
+const names = [
+  ...Object.keys(reads),
+  ...Object.keys(controls),
+  'decideStartProposal',
+  'undoStartArtifactAiChange',
+];
+const traitWrites = new Set([
+  'editStartAdminSubjectTrait',
+  'forkStartAdminSubjectTrait',
+  'rebindStartAdminSubjectTrait',
+  'editStartAdminSharedTrait',
+  'rollbackStartAdminTrait',
+  'resetStartAdminTraitToSeed',
+]);
 const queryNames = new Set([
   'getStartProposalInbox',
   'getStartMistakes',
@@ -45,7 +78,12 @@ const queryNames = new Set([
   'getStartAdminCost',
   'getStartAdminFailures',
 ]);
-const jsonStringNames = new Set(['getStartProposalInbox', 'decideStartProposal']);
+const jsonStringNames = new Set([
+  'getStartProposalInbox',
+  'decideStartProposal',
+  'getStartAdminConfig',
+  'getStartAdminSubjectTraits',
+]);
 const Payload = z
   .object({ data: z.unknown().optional(), context: z.record(z.string(), z.unknown()).optional() })
   .strict();
@@ -114,8 +152,13 @@ export async function decodeRpcRequest(request: FixtureRequest, map: Map<string,
   const id = url.pathname.match(/^\/_serverFn\/([a-f0-9]{64})$/)?.[1];
   const name = id ? map.get(id) : undefined;
   if (!name || !names.includes(name)) throw new Error(`Unknown built Start RPC ${url.pathname}`);
+  const control = Object.entries(controls).find(([key]) => key === name)?.[1];
   const method =
-    name === 'decideStartProposal' || name === 'undoStartArtifactAiChange' ? 'POST' : 'GET';
+    name === 'decideStartProposal' ||
+    name === 'undoStartArtifactAiChange' ||
+    (control && control.method !== 'GET')
+      ? 'POST'
+      : 'GET';
   if (request.method() !== method || request.headers()['x-tsr-serverfn'] !== 'true')
     throw new Error(`Invalid Start RPC method/header for ${name}`);
   const encoded = method === 'GET' ? url.searchParams.get('payload') : request.postData();
@@ -123,7 +166,32 @@ export async function decodeRpcRequest(request: FixtureRequest, map: Map<string,
     encoded ? (await serializer()).fromJSON(JSON.parse(encoded), plugins()) : {},
   );
   let body: unknown;
-  if (name === 'decideStartProposal') {
+  let httpMethod: string = method;
+  url.search = '';
+  if (control) {
+    const input = z.record(z.string(), z.unknown()).parse(payload.data ?? {});
+    const id = (key: string) => encodeURIComponent(z.string().trim().min(1).parse(input[key]));
+    httpMethod = control.method;
+    if (control.scope === 'config') url.pathname = `/api/admin/config${control.suffix}`;
+    else if (control.scope === 'catalog') url.pathname = '/api/admin/traits';
+    else if (control.scope === 'subject')
+      url.pathname = `/api/admin/subjects/${id('subjectId')}${control.suffix}`;
+    else if (control.scope === 'subject-trait')
+      url.pathname = `/api/admin/subjects/${id('subjectId')}/traits/${id('kind')}${control.suffix}`;
+    else url.pathname = `/api/admin/traits/${id('traitId')}${control.suffix}`;
+    if (control.method === 'GET') {
+      for (const key of control.scope === 'catalog'
+        ? ['kind']
+        : control.scope === 'trait'
+          ? ['limit', 'cursor']
+          : []) {
+        if (input[key] !== undefined) url.searchParams.set(key, z.string().parse(input[key]));
+      }
+    } else {
+      const { subjectId: _subject, traitId: _trait, kind: _kind, ...remaining } = input;
+      body = remaining;
+    }
+  } else if (name === 'decideStartProposal') {
     const decision = Decision.parse(payload.data);
     url.pathname = `/api/proposals/${encodeURIComponent(decision.id)}/decisions`;
     body = decision.input;
@@ -141,18 +209,22 @@ export async function decodeRpcRequest(request: FixtureRequest, map: Map<string,
     if (!path) throw new Error(`No fixture operation for ${name}`);
     url.pathname = path;
   }
-  url.search = '';
   if (queryNames.has(name)) {
     for (const [key, value] of Object.entries(Query.parse(payload.data ?? {})))
       if (value !== undefined) url.searchParams.set(key, value);
-  } else if (method === 'GET' && name !== 'getStartAdminRunDetail' && payload.data !== undefined) {
+  } else if (
+    !control &&
+    method === 'GET' &&
+    name !== 'getStartAdminRunDetail' &&
+    payload.data !== undefined
+  ) {
     throw new Error(`Unexpected input for ${name}`);
   }
   return {
     name,
     request: {
       url: () => url.toString(),
-      method: () => method,
+      method: () => httpMethod,
       headers: () => request.headers(),
       postData: () => (body === undefined ? null : JSON.stringify(body)),
       postDataJSON: () => body,
@@ -173,7 +245,12 @@ export async function rpcFulfillment(
         : undefined;
   if (status >= 400) return { ...options, headers: { ...options.headers, 'x-tss-raw': 'true' } };
   if (body === undefined) throw new Error(`Missing JSON fixture result for ${name}`);
-  const result = jsonStringNames.has(name) ? JSON.stringify(body) : body;
+  let result = jsonStringNames.has(name) ? JSON.stringify(body) : body;
+  if (traitWrites.has(name)) {
+    const receipt = z.record(z.string(), z.unknown()).parse(body);
+    const canonicalLocation = options.headers?.Location ?? options.headers?.location;
+    result = { ...receipt, status, ...(canonicalLocation ? { canonicalLocation } : {}) };
+  }
   const encoded = await (await serializer()).toCrossJSONAsync(
     { result, error: undefined, context: {} },
     plugins(),

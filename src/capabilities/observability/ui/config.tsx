@@ -1,10 +1,10 @@
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { apiOperationJson } from '@/ui/lib/api';
 import { Button } from '@/ui/primitives/Button';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { Stateful } from '@/ui/primitives/Stateful';
 import { TabBar } from '@/ui/primitives/TabBar';
+import { type AdminControlClient, httpAdminControlClient } from './admin-control-client';
 import {
   CONFIG_QUERY_KEY,
   SECTIONS,
@@ -19,14 +19,16 @@ export function AdminConfigSurface({
   navigate,
   getQuery,
   setQuery,
+  client = httpAdminControlClient,
 }: {
   navigate: (to: string) => void;
   getQuery: (key: string) => string | null;
   setQuery: (key: string, value: string | null) => void;
+  client?: AdminControlClient;
 }) {
   const query = useQuery({
     queryKey: CONFIG_QUERY_KEY,
-    queryFn: () => apiOperationJson('getAdminConfig', { url: '/api/admin/config', method: 'GET' }),
+    queryFn: () => client.getConfig(),
     refetchInterval: 15_000,
   });
   const [committedEpoch, setCommittedEpoch] = useState<number | null>(null);
@@ -34,16 +36,8 @@ export function AdminConfigSurface({
   const search = getQuery('q') ?? '';
   const save: SaveConfig = async (changes) => {
     const receipt = changes.every((change) => change.action === 'clear')
-      ? await apiOperationJson('resetAdminConfig', {
-          url: '/api/admin/config/reset',
-          method: 'POST',
-          body: { keys: changes.map((change) => change.key) },
-        })
-      : await apiOperationJson('writeAdminConfig', {
-          url: '/api/admin/config',
-          method: 'PATCH',
-          body: { changes },
-        });
+      ? await client.resetConfig({ keys: changes.map((change) => change.key) })
+      : await client.patchConfig({ changes });
     setCommittedEpoch(receipt.committed_epoch);
     // A refresh failure must not turn an acknowledged write into a reported write failure.
     await query.refetch();
