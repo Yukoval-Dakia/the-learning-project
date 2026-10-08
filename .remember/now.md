@@ -1,3 +1,7 @@
+# Active judge writer
+
+Sole T3 implementation task is running: node:delegated-task:command%3Amcp%3Ae4c5132f-3c05-4ce6-aa2d-e5b525fe3bf6%3Adelegate-task%3Ayuk1356-durable-judge-implementation-20261009-v1. Codex gpt-6.1-sol xhigh, base4ad4c58a5 on main96077, branch feat/yuk-1356-durable-judge. It owns the accepted complete bounded judge family and real read/dispatch consumers, migration0118 subject to recheck, scoped unit/static/build and prepared DB/process fixtures. No DB/runtime/provider/install/push/PR/Linear or further child delegation. Parent owns PLAN/now and1394/1359 docs, independent review and locked runtime acceptance. Await completion notification; do not poll, duplicate writer, or start tests that conflict with its build outputs. Prior design child completed/noPending and is no longer active. Main5796 retains Start/boot/shutdown. No own runtime lock or services.
+
 # Judge implementation preparation
 
 Prior readonly operational-contract task completed/noPending. Parent verified32 inputs plus report hash and inspected actual activation settlement/recorded claim/resolution code. Accepted detailed contract is versioned in2026-10-09-yuk1356-judge-operational-contract.md. Source preflight22:35Z:77 registered/75 accessible; only unrelated1367 practice/tools WIP, explicitly excluded. No0118 across accessible trees; main96077 ends0117, reserve0118 and recheck before generation. Sole implementation task will use Codex gpt-6.1-sol xhigh, no runtime/DB/provider/install/push. Parent retains PLAN/now/tracker/runtime/review. No duplicate design agent.

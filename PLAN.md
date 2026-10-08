@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：PR1624于22:32:03Z合main96077db19；exact a880 CI37852269707全绿、merge tree一致、threads0，已unwatch。fresh main已切judge分支，四份本地文档提交完整保留；只读设计已完成且32输入/报告hash匹配；准备唯一judge实施writer，无runtime操作。整迁移未完成。
+> Linear 是权威 tracker。2026-10-09 JST：PR1624于22:32:03Z合main96077db19；exact a880 CI37852269707全绿、merge tree一致、threads0，已unwatch。fresh main已切judge分支，四份本地文档提交完整保留；只读设计已完成且32输入/报告hash匹配；唯一judge实施writer已实际running，无runtime操作。整迁移未完成。
 
 ## NOW
 
@@ -14,7 +14,7 @@
 
 ## NEXT
 
-- YUK1356从main96077已起feat/yuk-1356-durable-judge；设计已由父核32输入与报告hash并实读关键事务源码，接唯一Sol6.1 xhigh实施writer。5796已确认A/B/C/D范围；Start/boot/shutdown仍归5796。迁移号生成前核最新main。设计与ownership不是实施验收。
+- YUK1356从main96077已起feat/yuk-1356-durable-judge；设计已由父核32输入与报告hash并实读关键事务源码，唯一T3任务yuk1356-durable-judge-implementation-20261009-v1已running（Codex gpt-6.1-sol xhigh）。5796已确认A/B/C/D范围；Start/boot/shutdown仍归5796。迁移号生成前核最新main。设计与ownership不是实施验收。
 
 - 1355已交prune_job_events与review orphan源码及隔离证据；1394接续两个session族。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。
 - 1358继续剩余路由/共享子树及三入口共用业务操作，保留现有确定性行为。1392公共board读取、1380事件读/纠错等已合接口由Start集成方接消费者，不复制领域规则。
