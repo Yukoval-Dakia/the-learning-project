@@ -133,4 +133,4 @@ report = {
     ],
     "limit": "Other existing Start consumers may contain duplicated domain modules. New control handlers consume only host context operations. Parent built-RPC and DB acceptance remains required.",
 }
-print(json.dumps(report, indent=2) + "\n")
+print(json.dumps(report, indent=2))

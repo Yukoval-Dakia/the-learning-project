@@ -457,7 +457,7 @@
       "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-draft-status-reads.txt.gz"
     },
     {
-      "command": "git diff --check",
+      "command": "git diff fcfd7907ffe65f050bc51ae8acfc3f8b51b403dd --check",
       "exit_code": 0,
       "result": "exit 0",
       "log": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/diff-check.txt.gz"
@@ -622,7 +622,7 @@
   "owned_evidence_files": [
     {
       "path": "docs/planning/2026-10-09-yuk1358-start-admin-controls-implementation.md",
-      "sha256": "bdf9a2cf40d414c939fab4e5be4bdb020aae1e73fdffe5f9b22a30a7b9402727"
+      "sha256": "dfc86a94182f18310fba5bdf667ffff265950d54659e1cc75bd51e452b89354f"
     },
     {
       "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/audit-agent-control-plane.txt.gz",
@@ -690,11 +690,11 @@
     },
     {
       "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/bundle-identity.json",
-      "sha256": "8a13fe3ece9952d407fdb5bf39671d0c86cfc9e06d8d9c660f0f271a8a5846fd"
+      "sha256": "8ba41ca5c23e4a17d758369c0d9cb0e2eaef840b63358f14e5eb36b9d5443812"
     },
     {
       "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/bundle-identity.py",
-      "sha256": "79e10c01b344601da55f6efa08749a57aa1622cd519aa9a1ddde5a0833b9d30c"
+      "sha256": "64ad711c5da9e056759ce8d47da9ba886b26abc1f0c94f31746221178806766f"
     },
     {
       "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/diff-check.txt.gz",
@@ -782,5 +782,6 @@
     "exact-built authenticated RPC and browser acceptance",
     "exact-head CI and authorized delivery"
   ],
-  "ownership": "No observability/public, canonical domain/API operation, subject writer/hydrate, agency, kernel, package/lock, schema/worker, durable/boss/session-review, PLAN/.remember or parent plan edits. No push/PR/watch/merge."
+  "ownership": "No observability/public, canonical domain/API operation, subject writer/hydrate, agency, kernel, package/lock, schema/worker, durable/boss/session-review, PLAN/.remember or parent plan edits. No push/PR/watch/merge.",
+  "verification_note": "Initial staged diff check returned 2 for an extra blank line in the proof JSON; implementation commit 608f36eb3 was created before that result was inspected. Evidence-only correction removes that newline, reruns 12 static assertions and verifies the full branch diff. Source/build/test inputs are unchanged."
 }

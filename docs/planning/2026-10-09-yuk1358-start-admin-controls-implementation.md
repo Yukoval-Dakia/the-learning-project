@@ -68,12 +68,14 @@ pnpm audit:task-census
 pnpm audit:draft-status
 pnpm audit:draft-status-reads
 python3 docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/bundle-identity.py
-git diff --check
+git diff fcfd7907ffe65f050bc51ae8acfc3f8b51b403dd --check
 ```
 
 The protocol fixture suite passed 9 tests using the installed Start serializer and the emitted function map, including all eighteen controls, Unicode/path encoding, nested payloads, query/cursor forwarding and retained HTTP 201/Location to RPC receipt mapping. It does not start a browser or server. Typecheck includes the new DB test source. The full build emits web, Start, server, worker and migration artifacts without running them. Lint exits 0 with 290 warnings. Partition audit reports zero unmatched tests and zero unmocked DB imports in unit tests, with six repository warnings. Capability debt stays exactly 433/0/48. The API generation audit leaves the generated client unchanged. SourceMap route gates now count eleven production document handoffs.
 
 The [seal](evidence/2026-10-09-yuk1358-start-admin-controls/seal.json) lists every owned source/test path with SHA-256, the exact check commands/results and compressed final logs with both original and archive digests. It also seals the regression test inputs and all 868 emitted build files through the compressed build manifest. The seal omits its own digest; its final digest is supplied in the terminal handoff. Evidence is source, unit, serializer and static build evidence only. No full `pnpm test`, DB test, Docker/Testcontainers, service/port, browser, provider, paid call, replay or deployment ran.
+
+The initial staged whitespace check detected an extra blank line at the end of the proof JSON. Commit `608f36eb3` was created before that result was inspected. The evidence-only correction removes the extra newline from the generator and report, reruns all twelve static assertions, reseals their digests and checks the complete diff from the working baseline. Product source and the successful unit/typecheck/lint/build/audit inputs are unchanged.
 
 ## Parent verification after lane release
 
