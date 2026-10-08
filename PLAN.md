@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：YUK1394作者已交777bd38c5，父核33源码/14日志/14制品SHA一致；正常整合main6212（PR1622），仅PLAN/now冲突。schema固定seed审计待父修复，独立review与DB/恢复/cron尚待；当前无本线程runtime锁或服务，整迁移未完成。
+> Linear 是权威 tracker。2026-10-09 JST：YUK1394候选823d5e09e，父245unit/static/build及8audits通过；0117 migration4与进程恢复21通过。真实cron首轮1pass/1fail待修，2文件DB复验34pass，独立R1/旧1393 CI故障调查进行；20:26:41Z已核owner释放ae66隔离锁，未部署，整迁移未完成。
 
 ## NOW
 
-- **YUK-1394 / conversation与placement orphan DBOS**：从main e1f2ef6bb新建feat/yuk-1394-session-orphans-dbos，承接已裁决[四表双family设计](docs/planning/2026-10-09-yuk1394-session-orphans-dbos.md)。实核77树共享路径无dirty、0117无占用。作者777bd38c5已completed/noPending释放，50unit/static/build与7audits通过；audit:schema仅固定family seed未识别，父接最小修复。父负责独立review、实际锁下DB/恢复/cron验收和交付，运行检查尚未执行。未启动运行切换。
+- **YUK-1394 / conversation与placement orphan DBOS**：作者777bd38c5正常合main6212，审计与测试修复823d5e09e已交。父245unit/static/build、8audits、migration4、真实进程恢复21通过；初轮DB164/167保留，两个fixture修复组合复验34/34通过。真实cron保留1pass/1fail，20:26:41Z锁已释放，R1和旧1393 CI故障只读调查进行。详见[父验收](docs/planning/2026-10-09-yuk1394-parent-acceptance.md)，没有运行切换。
 - **YUK-1393已合入**：PR1621 exact3be966000 CI37829575046全绿，R1 NONE/threads0；main e1f2ef6bb与CI树均cad230a5，已unwatch/Linear Done。父原33DB/10进程恢复/2cron/4旧prune/26migration、49unit及fixture修复29DB/static/build证据保留。默认仍pg-boss，无部署；实际旧consumer退出仍是整迁移验收义务。
 - **YUK-1358 / Start观察读取已合入**：PR1622已合main6212a4560，exact0fbeb1f3f CI37831807097全绿、R1 NONE；26真实RPC/10窗口、T3浏览器和88表/序列无写证据见[父验收](docs/planning/2026-10-09-yuk1358-start-agent-notes-parent.md)。28路由中13显式Start（含root redirect）/15 fallback，仅静态覆盖计数；完整迁移与canonical boot未完成。5796接续events/$id，未合候选不提前计入。
 - **YUK-1358 / Start配置与科目消费者已合入**：PR1620于18:16:17Z合main10df1a471，tree与exact755bdeebb一致，CI37821989407全绿/R1 NONE/threads0。18操作122RPC/35窗口与三页浏览器证据见[父验收](docs/planning/2026-10-09-yuk1358-start-admin-controls-parent.md)。未部署；1358保持In Progress。5796独占接续1392 board、剩余Start路由和实际提交，本线程不写其活跃树。
