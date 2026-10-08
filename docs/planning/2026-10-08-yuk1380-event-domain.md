@@ -114,3 +114,9 @@ or .remember operation was performed. No new material separate issue was found;
 the existing corruption policies and request retry semantics are preserved and
 documented above. This lane does not claim deployment, Start acceptance,
 independent review, or exact-head CI success.
+
+## Parent acceptance
+
+Parent inspected the actual domain and HTTP diff, verified all seven handoff hashes, and normally merged docs-only main f3351ea3 to candidate `0e21a034f`. The three scoped DB files passed **23 tests**, including all 11 new cases, with exit 0. Log: `/tmp/yuk1380-parent-db.log`. All eight protected baseline files still match.
+
+The deployment mutex was acquired at 2026-10-08 11:15:33Z and owner-checked/released at 11:16:28Z. Temporary test Postgres exited; the original four container IDs, images, start times and healthy states, plus the release digest, were unchanged. Evidence: `/tmp/yuk1380-db-before.json` and `/tmp/yuk1380-db-cleanup.json`. Main and runtime owners were notified. No provider, replay or deployment occurred. Independent review and exact-head CI remain required.

@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：PR1604已合入main6150f01a9，1378费用领域读取完成，8unit/11DB/static/build、独立R1/R2 NONE及exact CI37765137606通过。主线接Start；1358/1359/1377继续In Progress。本线程转1359 W2消费者清单，未部署。
+> Linear 是权威 tracker。2026-10-08：PR1606 W2消费者清单已合入f3351ea3；YUK1380事件领域候选0e21a034f父实际23DB通过，28unit/static/build通过，独立R1及PR/CI待。本线程独占事件领域与1359退出证据；Start/1356主线负责，未部署。
 
 ## NOW
+
+- **YUK-1380 / 事件领域接口**：readEventDetail(db,eventId)和createEventCorrection(db,eventId,input,now?)经observability/public导出，HTTP继续消费，kernel和纠错语义不改。28unit/父23DB/static/build通过，独立R1运行；Start尚未挂载。[证据](docs/planning/2026-10-08-yuk1380-event-domain.md)。
 
 - **YUK-1359 / W2消费者清单**：本线程独占退出证据；从main6150f01a9调查/record、/events/$id、/drafts和入门流程的读取、写入、恢复及共享子树。六页只读调查及父抽查已完成，见[W2清单](docs/planning/2026-10-08-yuk1359-w2-consumers.md)；新入口和运行验收未完成，Start/1356归主线。
 
