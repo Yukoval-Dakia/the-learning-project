@@ -1,0 +1,2794 @@
+{
+  "capturedAt": "2026-10-08T10:54:10.989Z",
+  "base": "http://localhost:5199/",
+  "chromium": "151.0.7922.34",
+  "note": "Local fixture prototype in headless Chromium on Apple silicon; measures layout and interaction cost only, not production data paths. cpuThrottle 4 is the low-end proxy.",
+  "summary": [
+    {
+      "variant": "a",
+      "device": "desktop",
+      "cpuThrottle": 1,
+      "runs": 3,
+      "clsMax": 0.0007,
+      "inpProxyMedianMs": 64,
+      "inpProxyMaxMs": 64,
+      "idleBaselineGapMs": 26,
+      "screenSwitchGapMs": 52,
+      "addStepGapMs": 27,
+      "worstFrameGapMedianMs": 52
+    },
+    {
+      "variant": "a",
+      "device": "mobile",
+      "cpuThrottle": 1,
+      "runs": 3,
+      "clsMax": 0.0133,
+      "inpProxyMedianMs": 56,
+      "inpProxyMaxMs": 56,
+      "idleBaselineGapMs": 27,
+      "screenSwitchGapMs": 39,
+      "addStepGapMs": 27,
+      "worstFrameGapMedianMs": 39
+    },
+    {
+      "variant": "b",
+      "device": "desktop",
+      "cpuThrottle": 1,
+      "runs": 3,
+      "clsMax": 0.0133,
+      "inpProxyMedianMs": 48,
+      "inpProxyMaxMs": 56,
+      "idleBaselineGapMs": 27,
+      "screenSwitchGapMs": 35,
+      "addStepGapMs": 27,
+      "worstFrameGapMedianMs": 40
+    },
+    {
+      "variant": "b",
+      "device": "mobile",
+      "cpuThrottle": 1,
+      "runs": 3,
+      "clsMax": 0.0134,
+      "inpProxyMedianMs": 48,
+      "inpProxyMaxMs": 48,
+      "idleBaselineGapMs": 27,
+      "screenSwitchGapMs": 30,
+      "addStepGapMs": 37,
+      "worstFrameGapMedianMs": 44
+    },
+    {
+      "variant": "c",
+      "device": "desktop",
+      "cpuThrottle": 1,
+      "runs": 3,
+      "clsMax": 0.0038,
+      "inpProxyMedianMs": 48,
+      "inpProxyMaxMs": 48,
+      "idleBaselineGapMs": 27,
+      "screenSwitchGapMs": 27,
+      "addStepGapMs": 27,
+      "worstFrameGapMedianMs": 36
+    },
+    {
+      "variant": "c",
+      "device": "mobile",
+      "cpuThrottle": 1,
+      "runs": 3,
+      "clsMax": 0.0066,
+      "inpProxyMedianMs": 48,
+      "inpProxyMaxMs": 56,
+      "idleBaselineGapMs": 27,
+      "screenSwitchGapMs": 45,
+      "addStepGapMs": 28,
+      "worstFrameGapMedianMs": 50
+    },
+    {
+      "variant": "a",
+      "device": "desktop",
+      "cpuThrottle": 4,
+      "runs": 3,
+      "clsMax": 0.0007,
+      "inpProxyMedianMs": 88,
+      "inpProxyMaxMs": 96,
+      "idleBaselineGapMs": 27,
+      "screenSwitchGapMs": 104,
+      "addStepGapMs": 114,
+      "worstFrameGapMedianMs": 114
+    },
+    {
+      "variant": "a",
+      "device": "mobile",
+      "cpuThrottle": 4,
+      "runs": 3,
+      "clsMax": 0.0126,
+      "inpProxyMedianMs": 72,
+      "inpProxyMaxMs": 72,
+      "idleBaselineGapMs": 27,
+      "screenSwitchGapMs": 101,
+      "addStepGapMs": 100,
+      "worstFrameGapMedianMs": 104
+    },
+    {
+      "variant": "b",
+      "device": "desktop",
+      "cpuThrottle": 4,
+      "runs": 3,
+      "clsMax": 0.0133,
+      "inpProxyMedianMs": 104,
+      "inpProxyMaxMs": 104,
+      "idleBaselineGapMs": 27,
+      "screenSwitchGapMs": 109,
+      "addStepGapMs": 104,
+      "worstFrameGapMedianMs": 109
+    },
+    {
+      "variant": "b",
+      "device": "mobile",
+      "cpuThrottle": 4,
+      "runs": 3,
+      "clsMax": 0.0127,
+      "inpProxyMedianMs": 72,
+      "inpProxyMaxMs": 80,
+      "idleBaselineGapMs": 27,
+      "screenSwitchGapMs": 109,
+      "addStepGapMs": 96,
+      "worstFrameGapMedianMs": 109
+    },
+    {
+      "variant": "c",
+      "device": "desktop",
+      "cpuThrottle": 4,
+      "runs": 3,
+      "clsMax": 0.0038,
+      "inpProxyMedianMs": 80,
+      "inpProxyMaxMs": 80,
+      "idleBaselineGapMs": 27,
+      "screenSwitchGapMs": 78,
+      "addStepGapMs": 94,
+      "worstFrameGapMedianMs": 94
+    },
+    {
+      "variant": "c",
+      "device": "mobile",
+      "cpuThrottle": 4,
+      "runs": 3,
+      "clsMax": 0.0066,
+      "inpProxyMedianMs": 72,
+      "inpProxyMaxMs": 72,
+      "idleBaselineGapMs": 27,
+      "screenSwitchGapMs": 92,
+      "addStepGapMs": 94,
+      "worstFrameGapMedianMs": 100
+    }
+  ],
+  "results": [
+    {
+      "run": 1,
+      "variant": "a",
+      "device": "desktop",
+      "cpuThrottle": 1,
+      "cls": 0.0007,
+      "interactions": 13,
+      "inpProxyMs": 64,
+      "medianInteractionMs": 40,
+      "worstFrameGapMs": 68,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 45,
+          "maxGapMs": 26,
+          "over20msShare": 0.111
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 34,
+          "maxGapMs": 21,
+          "over20msShare": 0.029
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 32,
+          "maxGapMs": 21,
+          "over20msShare": 0.031
+        },
+        {
+          "label": ".toast-action",
+          "frames": 30,
+          "maxGapMs": 22,
+          "over20msShare": 0.233
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 39,
+          "maxGapMs": 68,
+          "over20msShare": 0.128
+        },
+        {
+          "label": "add-step",
+          "frames": 44,
+          "maxGapMs": 26,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 44,
+          "maxGapMs": 34,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 45,
+          "maxGapMs": 26,
+          "over20msShare": 0.133
+        },
+        {
+          "label": "palette",
+          "frames": 47,
+          "maxGapMs": 30,
+          "over20msShare": 0.106
+        }
+      ]
+    },
+    {
+      "run": 1,
+      "variant": "a",
+      "device": "mobile",
+      "cpuThrottle": 1,
+      "cls": 0.0133,
+      "interactions": 10,
+      "inpProxyMs": 56,
+      "medianInteractionMs": 40,
+      "worstFrameGapMs": 53,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 44,
+          "maxGapMs": 26,
+          "over20msShare": 0.136
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 46,
+          "maxGapMs": 26,
+          "over20msShare": 0.109
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 38,
+          "maxGapMs": 39,
+          "over20msShare": 0.211
+        },
+        {
+          "label": ".toast-action",
+          "frames": 47,
+          "maxGapMs": 26,
+          "over20msShare": 0.064
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 44,
+          "maxGapMs": 48,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "add-step",
+          "frames": 46,
+          "maxGapMs": 53,
+          "over20msShare": 0.109
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 37,
+          "maxGapMs": 40,
+          "over20msShare": 0.027
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 36,
+          "maxGapMs": 19,
+          "over20msShare": 0
+        },
+        {
+          "label": "[data-act=\"back\"]",
+          "frames": 44,
+          "maxGapMs": 26,
+          "over20msShare": 0.114
+        }
+      ]
+    },
+    {
+      "run": 1,
+      "variant": "b",
+      "device": "desktop",
+      "cpuThrottle": 1,
+      "cls": 0.0133,
+      "interactions": 12,
+      "inpProxyMs": 48,
+      "medianInteractionMs": 32,
+      "worstFrameGapMs": 126,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 45,
+          "maxGapMs": 26,
+          "over20msShare": 0.111
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 43,
+          "maxGapMs": 34,
+          "over20msShare": 0.14
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 44,
+          "maxGapMs": 26,
+          "over20msShare": 0.136
+        },
+        {
+          "label": ".toast-action",
+          "frames": 39,
+          "maxGapMs": 34,
+          "over20msShare": 0.179
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 36,
+          "maxGapMs": 126,
+          "over20msShare": 0.167
+        },
+        {
+          "label": "add-step",
+          "frames": 41,
+          "maxGapMs": 25,
+          "over20msShare": 0.024
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 40,
+          "maxGapMs": 42,
+          "over20msShare": 0.075
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 43,
+          "maxGapMs": 34,
+          "over20msShare": 0.116
+        },
+        {
+          "label": "palette",
+          "frames": 43,
+          "maxGapMs": 30,
+          "over20msShare": 0.14
+        }
+      ]
+    },
+    {
+      "run": 1,
+      "variant": "b",
+      "device": "mobile",
+      "cpuThrottle": 1,
+      "cls": 0.0134,
+      "interactions": 14,
+      "inpProxyMs": 48,
+      "medianInteractionMs": 32,
+      "worstFrameGapMs": 52,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 44,
+          "maxGapMs": 26,
+          "over20msShare": 0.136
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 46,
+          "maxGapMs": 26,
+          "over20msShare": 0.087
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 40,
+          "maxGapMs": 28,
+          "over20msShare": 0.025
+        },
+        {
+          "label": ".toast-action",
+          "frames": 38,
+          "maxGapMs": 18,
+          "over20msShare": 0
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 33,
+          "maxGapMs": 52,
+          "over20msShare": 0.03
+        },
+        {
+          "label": "add-step",
+          "frames": 43,
+          "maxGapMs": 52,
+          "over20msShare": 0.116
+        },
+        {
+          "label": "[data-act=\"help\"]",
+          "frames": 42,
+          "maxGapMs": 26,
+          "over20msShare": 0.119
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 39,
+          "maxGapMs": 26,
+          "over20msShare": 0.205
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 47,
+          "maxGapMs": 26,
+          "over20msShare": 0.106
+        },
+        {
+          "label": "[data-act=\"help-close\"]",
+          "frames": 45,
+          "maxGapMs": 26,
+          "over20msShare": 0.089
+        },
+        {
+          "label": "[data-act=\"back\"]",
+          "frames": 41,
+          "maxGapMs": 32,
+          "over20msShare": 0.146
+        }
+      ]
+    },
+    {
+      "run": 1,
+      "variant": "c",
+      "device": "desktop",
+      "cpuThrottle": 1,
+      "cls": 0.0038,
+      "interactions": 14,
+      "inpProxyMs": 48,
+      "medianInteractionMs": 32,
+      "worstFrameGapMs": 38,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 46,
+          "maxGapMs": 26,
+          "over20msShare": 0.087
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 47,
+          "maxGapMs": 26,
+          "over20msShare": 0.106
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 45,
+          "maxGapMs": 26,
+          "over20msShare": 0.111
+        },
+        {
+          "label": ".toast-action",
+          "frames": 45,
+          "maxGapMs": 38,
+          "over20msShare": 0.111
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 44,
+          "maxGapMs": 26,
+          "over20msShare": 0.136
+        },
+        {
+          "label": "add-step",
+          "frames": 43,
+          "maxGapMs": 26,
+          "over20msShare": 0.14
+        },
+        {
+          "label": "[data-act=\"help\"]",
+          "frames": 44,
+          "maxGapMs": 34,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 44,
+          "maxGapMs": 26,
+          "over20msShare": 0.091
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 44,
+          "maxGapMs": 26,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"help-close\"]",
+          "frames": 44,
+          "maxGapMs": 26,
+          "over20msShare": 0.091
+        },
+        {
+          "label": "palette",
+          "frames": 44,
+          "maxGapMs": 30,
+          "over20msShare": 0.136
+        }
+      ]
+    },
+    {
+      "run": 1,
+      "variant": "c",
+      "device": "mobile",
+      "cpuThrottle": 1,
+      "cls": 0.0066,
+      "interactions": 13,
+      "inpProxyMs": 56,
+      "medianInteractionMs": 32,
+      "worstFrameGapMs": 60,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 40,
+          "maxGapMs": 27,
+          "over20msShare": 0.2
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 42,
+          "maxGapMs": 29,
+          "over20msShare": 0.167
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 48,
+          "maxGapMs": 26,
+          "over20msShare": 0.104
+        },
+        {
+          "label": ".toast-action",
+          "frames": 43,
+          "maxGapMs": 27,
+          "over20msShare": 0.163
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 39,
+          "maxGapMs": 60,
+          "over20msShare": 0.179
+        },
+        {
+          "label": "add-step",
+          "frames": 43,
+          "maxGapMs": 28,
+          "over20msShare": 0.14
+        },
+        {
+          "label": "[data-act=\"help\"]",
+          "frames": 42,
+          "maxGapMs": 47,
+          "over20msShare": 0.143
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 38,
+          "maxGapMs": 36,
+          "over20msShare": 0.184
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 44,
+          "maxGapMs": 26,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"help-close\"]",
+          "frames": 41,
+          "maxGapMs": 26,
+          "over20msShare": 0.146
+        },
+        {
+          "label": "[data-act=\"back\"]",
+          "frames": 44,
+          "maxGapMs": 43,
+          "over20msShare": 0.114
+        }
+      ]
+    },
+    {
+      "run": 1,
+      "variant": "a",
+      "device": "desktop",
+      "cpuThrottle": 4,
+      "cls": 0.0007,
+      "interactions": 10,
+      "inpProxyMs": 88,
+      "medianInteractionMs": 48,
+      "worstFrameGapMs": 105,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 47,
+          "maxGapMs": 26,
+          "over20msShare": 0.106
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 43,
+          "maxGapMs": 48,
+          "over20msShare": 0.14
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 42,
+          "maxGapMs": 60,
+          "over20msShare": 0.143
+        },
+        {
+          "label": ".toast-action",
+          "frames": 42,
+          "maxGapMs": 42,
+          "over20msShare": 0.143
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 37,
+          "maxGapMs": 105,
+          "over20msShare": 0.162
+        },
+        {
+          "label": "add-step",
+          "frames": 33,
+          "maxGapMs": 88,
+          "over20msShare": 0.212
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 39,
+          "maxGapMs": 79,
+          "over20msShare": 0.128
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 23,
+          "maxGapMs": 54,
+          "over20msShare": 0.522
+        },
+        {
+          "label": "palette",
+          "frames": 44,
+          "maxGapMs": 28,
+          "over20msShare": 0.159
+        }
+      ]
+    },
+    {
+      "run": 1,
+      "variant": "a",
+      "device": "mobile",
+      "cpuThrottle": 4,
+      "cls": 0.0126,
+      "interactions": 11,
+      "inpProxyMs": 64,
+      "medianInteractionMs": 40,
+      "worstFrameGapMs": 117,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 46,
+          "maxGapMs": 26,
+          "over20msShare": 0.109
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 45,
+          "maxGapMs": 43,
+          "over20msShare": 0.111
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 41,
+          "maxGapMs": 68,
+          "over20msShare": 0.146
+        },
+        {
+          "label": ".toast-action",
+          "frames": 44,
+          "maxGapMs": 59,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 39,
+          "maxGapMs": 117,
+          "over20msShare": 0.128
+        },
+        {
+          "label": "add-step",
+          "frames": 36,
+          "maxGapMs": 100,
+          "over20msShare": 0.167
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 38,
+          "maxGapMs": 75,
+          "over20msShare": 0.158
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 28,
+          "maxGapMs": 56,
+          "over20msShare": 0.5
+        },
+        {
+          "label": "[data-act=\"back\"]",
+          "frames": 40,
+          "maxGapMs": 43,
+          "over20msShare": 0.175
+        }
+      ]
+    },
+    {
+      "run": 1,
+      "variant": "b",
+      "device": "desktop",
+      "cpuThrottle": 4,
+      "cls": 0.0133,
+      "interactions": 16,
+      "inpProxyMs": 104,
+      "medianInteractionMs": 32,
+      "worstFrameGapMs": 113,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 43,
+          "maxGapMs": 26,
+          "over20msShare": 0.116
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 45,
+          "maxGapMs": 51,
+          "over20msShare": 0.133
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 39,
+          "maxGapMs": 65,
+          "over20msShare": 0.179
+        },
+        {
+          "label": ".toast-action",
+          "frames": 44,
+          "maxGapMs": 68,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 40,
+          "maxGapMs": 113,
+          "over20msShare": 0.1
+        },
+        {
+          "label": "add-step",
+          "frames": 32,
+          "maxGapMs": 104,
+          "over20msShare": 0.219
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 39,
+          "maxGapMs": 86,
+          "over20msShare": 0.128
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 24,
+          "maxGapMs": 54,
+          "over20msShare": 0.5
+        },
+        {
+          "label": "palette",
+          "frames": 44,
+          "maxGapMs": 42,
+          "over20msShare": 0.136
+        }
+      ]
+    },
+    {
+      "run": 1,
+      "variant": "b",
+      "device": "mobile",
+      "cpuThrottle": 4,
+      "cls": 0.0127,
+      "interactions": 12,
+      "inpProxyMs": 80,
+      "medianInteractionMs": 56,
+      "worstFrameGapMs": 109,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 45,
+          "maxGapMs": 26,
+          "over20msShare": 0.133
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 39,
+          "maxGapMs": 64,
+          "over20msShare": 0.179
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 43,
+          "maxGapMs": 90,
+          "over20msShare": 0.116
+        },
+        {
+          "label": ".toast-action",
+          "frames": 40,
+          "maxGapMs": 59,
+          "over20msShare": 0.15
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 42,
+          "maxGapMs": 109,
+          "over20msShare": 0.095
+        },
+        {
+          "label": "add-step",
+          "frames": 35,
+          "maxGapMs": 59,
+          "over20msShare": 0.229
+        },
+        {
+          "label": "[data-act=\"help\"]",
+          "frames": 48,
+          "maxGapMs": 26,
+          "over20msShare": 0.083
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 40,
+          "maxGapMs": 57,
+          "over20msShare": 0.125
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 39,
+          "maxGapMs": 42,
+          "over20msShare": 0.179
+        },
+        {
+          "label": "[data-act=\"help-close\"]",
+          "frames": 42,
+          "maxGapMs": 32,
+          "over20msShare": 0.143
+        },
+        {
+          "label": "[data-act=\"back\"]",
+          "frames": 42,
+          "maxGapMs": 62,
+          "over20msShare": 0.119
+        }
+      ]
+    },
+    {
+      "run": 1,
+      "variant": "c",
+      "device": "desktop",
+      "cpuThrottle": 4,
+      "cls": 0.0038,
+      "interactions": 16,
+      "inpProxyMs": 80,
+      "medianInteractionMs": 40,
+      "worstFrameGapMs": 94,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 45,
+          "maxGapMs": 26,
+          "over20msShare": 0.133
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 43,
+          "maxGapMs": 51,
+          "over20msShare": 0.116
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 40,
+          "maxGapMs": 68,
+          "over20msShare": 0.15
+        },
+        {
+          "label": ".toast-action",
+          "frames": 42,
+          "maxGapMs": 44,
+          "over20msShare": 0.143
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 40,
+          "maxGapMs": 73,
+          "over20msShare": 0.125
+        },
+        {
+          "label": "add-step",
+          "frames": 35,
+          "maxGapMs": 94,
+          "over20msShare": 0.171
+        },
+        {
+          "label": "[data-act=\"help\"]",
+          "frames": 41,
+          "maxGapMs": 55,
+          "over20msShare": 0.146
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 41,
+          "maxGapMs": 74,
+          "over20msShare": 0.146
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 26,
+          "maxGapMs": 54,
+          "over20msShare": 0.5
+        },
+        {
+          "label": "[data-act=\"help-close\"]",
+          "frames": 36,
+          "maxGapMs": 76,
+          "over20msShare": 0.139
+        },
+        {
+          "label": "palette",
+          "frames": 44,
+          "maxGapMs": 29,
+          "over20msShare": 0.136
+        }
+      ]
+    },
+    {
+      "run": 1,
+      "variant": "c",
+      "device": "mobile",
+      "cpuThrottle": 4,
+      "cls": 0.0059,
+      "interactions": 14,
+      "inpProxyMs": 72,
+      "medianInteractionMs": 48,
+      "worstFrameGapMs": 103,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 47,
+          "maxGapMs": 26,
+          "over20msShare": 0.106
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 43,
+          "maxGapMs": 45,
+          "over20msShare": 0.14
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 42,
+          "maxGapMs": 55,
+          "over20msShare": 0.119
+        },
+        {
+          "label": ".toast-action",
+          "frames": 44,
+          "maxGapMs": 42,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 38,
+          "maxGapMs": 103,
+          "over20msShare": 0.158
+        },
+        {
+          "label": "add-step",
+          "frames": 36,
+          "maxGapMs": 94,
+          "over20msShare": 0.194
+        },
+        {
+          "label": "[data-act=\"help\"]",
+          "frames": 38,
+          "maxGapMs": 85,
+          "over20msShare": 0.158
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 41,
+          "maxGapMs": 65,
+          "over20msShare": 0.146
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 32,
+          "maxGapMs": 43,
+          "over20msShare": 0.406
+        },
+        {
+          "label": "[data-act=\"help-close\"]",
+          "frames": 41,
+          "maxGapMs": 69,
+          "over20msShare": 0.146
+        },
+        {
+          "label": "[data-act=\"back\"]",
+          "frames": 44,
+          "maxGapMs": 49,
+          "over20msShare": 0.136
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "variant": "a",
+      "device": "desktop",
+      "cpuThrottle": 1,
+      "cls": 0.0007,
+      "interactions": 12,
+      "inpProxyMs": 56,
+      "medianInteractionMs": 40,
+      "worstFrameGapMs": 47,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 45,
+          "maxGapMs": 26,
+          "over20msShare": 0.111
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 44,
+          "maxGapMs": 26,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 45,
+          "maxGapMs": 26,
+          "over20msShare": 0.111
+        },
+        {
+          "label": ".toast-action",
+          "frames": 44,
+          "maxGapMs": 26,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 42,
+          "maxGapMs": 47,
+          "over20msShare": 0.119
+        },
+        {
+          "label": "add-step",
+          "frames": 42,
+          "maxGapMs": 37,
+          "over20msShare": 0.143
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 38,
+          "maxGapMs": 19,
+          "over20msShare": 0
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 35,
+          "maxGapMs": 21,
+          "over20msShare": 0.029
+        },
+        {
+          "label": "palette",
+          "frames": 47,
+          "maxGapMs": 35,
+          "over20msShare": 0.085
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "variant": "a",
+      "device": "mobile",
+      "cpuThrottle": 1,
+      "cls": 0.0132,
+      "interactions": 15,
+      "inpProxyMs": 56,
+      "medianInteractionMs": 32,
+      "worstFrameGapMs": 39,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 38,
+          "maxGapMs": 27,
+          "over20msShare": 0.053
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 37,
+          "maxGapMs": 21,
+          "over20msShare": 0.054
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 44,
+          "maxGapMs": 27,
+          "over20msShare": 0.114
+        },
+        {
+          "label": ".toast-action",
+          "frames": 45,
+          "maxGapMs": 28,
+          "over20msShare": 0.111
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 44,
+          "maxGapMs": 39,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "add-step",
+          "frames": 44,
+          "maxGapMs": 27,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 39,
+          "maxGapMs": 32,
+          "over20msShare": 0.179
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 45,
+          "maxGapMs": 27,
+          "over20msShare": 0.089
+        },
+        {
+          "label": "[data-act=\"back\"]",
+          "frames": 44,
+          "maxGapMs": 27,
+          "over20msShare": 0.114
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "variant": "b",
+      "device": "desktop",
+      "cpuThrottle": 1,
+      "cls": 0.0133,
+      "interactions": 15,
+      "inpProxyMs": 56,
+      "medianInteractionMs": 32,
+      "worstFrameGapMs": 40,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 42,
+          "maxGapMs": 27,
+          "over20msShare": 0.119
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 32,
+          "maxGapMs": 21,
+          "over20msShare": 0
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 43,
+          "maxGapMs": 15,
+          "over20msShare": 0
+        },
+        {
+          "label": ".toast-action",
+          "frames": 39,
+          "maxGapMs": 27,
+          "over20msShare": 0.154
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 46,
+          "maxGapMs": 35,
+          "over20msShare": 0.087
+        },
+        {
+          "label": "add-step",
+          "frames": 46,
+          "maxGapMs": 40,
+          "over20msShare": 0.087
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 46,
+          "maxGapMs": 31,
+          "over20msShare": 0.109
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 50,
+          "maxGapMs": 27,
+          "over20msShare": 0.06
+        },
+        {
+          "label": "palette",
+          "frames": 44,
+          "maxGapMs": 32,
+          "over20msShare": 0.114
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "variant": "b",
+      "device": "mobile",
+      "cpuThrottle": 1,
+      "cls": 0.0134,
+      "interactions": 14,
+      "inpProxyMs": 48,
+      "medianInteractionMs": 32,
+      "worstFrameGapMs": 44,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 45,
+          "maxGapMs": 27,
+          "over20msShare": 0.089
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 37,
+          "maxGapMs": 30,
+          "over20msShare": 0.027
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 40,
+          "maxGapMs": 27,
+          "over20msShare": 0.125
+        },
+        {
+          "label": ".toast-action",
+          "frames": 45,
+          "maxGapMs": 27,
+          "over20msShare": 0.133
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 46,
+          "maxGapMs": 27,
+          "over20msShare": 0.109
+        },
+        {
+          "label": "add-step",
+          "frames": 38,
+          "maxGapMs": 37,
+          "over20msShare": 0.184
+        },
+        {
+          "label": "[data-act=\"help\"]",
+          "frames": 42,
+          "maxGapMs": 27,
+          "over20msShare": 0.119
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 46,
+          "maxGapMs": 44,
+          "over20msShare": 0.087
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 44,
+          "maxGapMs": 28,
+          "over20msShare": 0.136
+        },
+        {
+          "label": "[data-act=\"help-close\"]",
+          "frames": 39,
+          "maxGapMs": 27,
+          "over20msShare": 0.179
+        },
+        {
+          "label": "[data-act=\"back\"]",
+          "frames": 45,
+          "maxGapMs": 35,
+          "over20msShare": 0.089
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "variant": "c",
+      "device": "desktop",
+      "cpuThrottle": 1,
+      "cls": 0.0038,
+      "interactions": 17,
+      "inpProxyMs": 48,
+      "medianInteractionMs": 32,
+      "worstFrameGapMs": 36,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 42,
+          "maxGapMs": 27,
+          "over20msShare": 0.119
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 42,
+          "maxGapMs": 27,
+          "over20msShare": 0.119
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 43,
+          "maxGapMs": 27,
+          "over20msShare": 0.116
+        },
+        {
+          "label": ".toast-action",
+          "frames": 47,
+          "maxGapMs": 27,
+          "over20msShare": 0.064
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 44,
+          "maxGapMs": 32,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "add-step",
+          "frames": 32,
+          "maxGapMs": 36,
+          "over20msShare": 0.063
+        },
+        {
+          "label": "[data-act=\"help\"]",
+          "frames": 32,
+          "maxGapMs": 21,
+          "over20msShare": 0.031
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 30,
+          "maxGapMs": 22,
+          "over20msShare": 0.133
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 42,
+          "maxGapMs": 17,
+          "over20msShare": 0
+        },
+        {
+          "label": "[data-act=\"help-close\"]",
+          "frames": 42,
+          "maxGapMs": 33,
+          "over20msShare": 0.095
+        },
+        {
+          "label": "palette",
+          "frames": 45,
+          "maxGapMs": 34,
+          "over20msShare": 0.089
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "variant": "c",
+      "device": "mobile",
+      "cpuThrottle": 1,
+      "cls": 0.0066,
+      "interactions": 12,
+      "inpProxyMs": 48,
+      "medianInteractionMs": 40,
+      "worstFrameGapMs": 50,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 43,
+          "maxGapMs": 27,
+          "over20msShare": 0.093
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 40,
+          "maxGapMs": 27,
+          "over20msShare": 0.075
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 45,
+          "maxGapMs": 27,
+          "over20msShare": 0.111
+        },
+        {
+          "label": ".toast-action",
+          "frames": 44,
+          "maxGapMs": 27,
+          "over20msShare": 0.068
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 39,
+          "maxGapMs": 45,
+          "over20msShare": 0.154
+        },
+        {
+          "label": "add-step",
+          "frames": 44,
+          "maxGapMs": 44,
+          "over20msShare": 0.091
+        },
+        {
+          "label": "[data-act=\"help\"]",
+          "frames": 47,
+          "maxGapMs": 30,
+          "over20msShare": 0.085
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 44,
+          "maxGapMs": 28,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 43,
+          "maxGapMs": 29,
+          "over20msShare": 0.116
+        },
+        {
+          "label": "[data-act=\"help-close\"]",
+          "frames": 45,
+          "maxGapMs": 27,
+          "over20msShare": 0.111
+        },
+        {
+          "label": "[data-act=\"back\"]",
+          "frames": 42,
+          "maxGapMs": 50,
+          "over20msShare": 0.095
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "variant": "a",
+      "device": "desktop",
+      "cpuThrottle": 4,
+      "cls": 0.0007,
+      "interactions": 11,
+      "inpProxyMs": 88,
+      "medianInteractionMs": 64,
+      "worstFrameGapMs": 114,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 45,
+          "maxGapMs": 27,
+          "over20msShare": 0.089
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 42,
+          "maxGapMs": 39,
+          "over20msShare": 0.143
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 42,
+          "maxGapMs": 52,
+          "over20msShare": 0.119
+        },
+        {
+          "label": ".toast-action",
+          "frames": 41,
+          "maxGapMs": 54,
+          "over20msShare": 0.146
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 39,
+          "maxGapMs": 104,
+          "over20msShare": 0.103
+        },
+        {
+          "label": "add-step",
+          "frames": 30,
+          "maxGapMs": 114,
+          "over20msShare": 0.233
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 39,
+          "maxGapMs": 79,
+          "over20msShare": 0.154
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 26,
+          "maxGapMs": 53,
+          "over20msShare": 0.5
+        },
+        {
+          "label": "palette",
+          "frames": 43,
+          "maxGapMs": 30,
+          "over20msShare": 0.163
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "variant": "a",
+      "device": "mobile",
+      "cpuThrottle": 4,
+      "cls": 0.0126,
+      "interactions": 12,
+      "inpProxyMs": 72,
+      "medianInteractionMs": 48,
+      "worstFrameGapMs": 104,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 45,
+          "maxGapMs": 27,
+          "over20msShare": 0.089
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 43,
+          "maxGapMs": 52,
+          "over20msShare": 0.14
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 40,
+          "maxGapMs": 71,
+          "over20msShare": 0.125
+        },
+        {
+          "label": ".toast-action",
+          "frames": 37,
+          "maxGapMs": 58,
+          "over20msShare": 0.189
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 36,
+          "maxGapMs": 101,
+          "over20msShare": 0.167
+        },
+        {
+          "label": "add-step",
+          "frames": 34,
+          "maxGapMs": 104,
+          "over20msShare": 0.176
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 37,
+          "maxGapMs": 77,
+          "over20msShare": 0.162
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 25,
+          "maxGapMs": 48,
+          "over20msShare": 0.56
+        },
+        {
+          "label": "[data-act=\"back\"]",
+          "frames": 36,
+          "maxGapMs": 81,
+          "over20msShare": 0.167
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "variant": "b",
+      "device": "desktop",
+      "cpuThrottle": 4,
+      "cls": 0.0133,
+      "interactions": 13,
+      "inpProxyMs": 96,
+      "medianInteractionMs": 48,
+      "worstFrameGapMs": 108,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 45,
+          "maxGapMs": 27,
+          "over20msShare": 0.111
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 44,
+          "maxGapMs": 46,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 37,
+          "maxGapMs": 78,
+          "over20msShare": 0.162
+        },
+        {
+          "label": ".toast-action",
+          "frames": 37,
+          "maxGapMs": 37,
+          "over20msShare": 0.216
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 36,
+          "maxGapMs": 100,
+          "over20msShare": 0.139
+        },
+        {
+          "label": "add-step",
+          "frames": 29,
+          "maxGapMs": 108,
+          "over20msShare": 0.207
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 36,
+          "maxGapMs": 103,
+          "over20msShare": 0.111
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 21,
+          "maxGapMs": 54,
+          "over20msShare": 0.667
+        },
+        {
+          "label": "palette",
+          "frames": 36,
+          "maxGapMs": 53,
+          "over20msShare": 0.222
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "variant": "b",
+      "device": "mobile",
+      "cpuThrottle": 4,
+      "cls": 0.0127,
+      "interactions": 13,
+      "inpProxyMs": 72,
+      "medianInteractionMs": 40,
+      "worstFrameGapMs": 116,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 45,
+          "maxGapMs": 28,
+          "over20msShare": 0.089
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 36,
+          "maxGapMs": 68,
+          "over20msShare": 0.194
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 42,
+          "maxGapMs": 44,
+          "over20msShare": 0.119
+        },
+        {
+          "label": ".toast-action",
+          "frames": 38,
+          "maxGapMs": 63,
+          "over20msShare": 0.158
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 36,
+          "maxGapMs": 116,
+          "over20msShare": 0.139
+        },
+        {
+          "label": "add-step",
+          "frames": 34,
+          "maxGapMs": 96,
+          "over20msShare": 0.206
+        },
+        {
+          "label": "[data-act=\"help\"]",
+          "frames": 44,
+          "maxGapMs": 27,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 39,
+          "maxGapMs": 51,
+          "over20msShare": 0.231
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 38,
+          "maxGapMs": 38,
+          "over20msShare": 0.211
+        },
+        {
+          "label": "[data-act=\"help-close\"]",
+          "frames": 43,
+          "maxGapMs": 27,
+          "over20msShare": 0.14
+        },
+        {
+          "label": "[data-act=\"back\"]",
+          "frames": 43,
+          "maxGapMs": 65,
+          "over20msShare": 0.116
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "variant": "c",
+      "device": "desktop",
+      "cpuThrottle": 4,
+      "cls": 0.0038,
+      "interactions": 12,
+      "inpProxyMs": 80,
+      "medianInteractionMs": 48,
+      "worstFrameGapMs": 108,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 42,
+          "maxGapMs": 28,
+          "over20msShare": 0.143
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 43,
+          "maxGapMs": 46,
+          "over20msShare": 0.093
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 37,
+          "maxGapMs": 57,
+          "over20msShare": 0.189
+        },
+        {
+          "label": ".toast-action",
+          "frames": 37,
+          "maxGapMs": 66,
+          "over20msShare": 0.162
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 35,
+          "maxGapMs": 90,
+          "over20msShare": 0.171
+        },
+        {
+          "label": "add-step",
+          "frames": 32,
+          "maxGapMs": 108,
+          "over20msShare": 0.219
+        },
+        {
+          "label": "[data-act=\"help\"]",
+          "frames": 40,
+          "maxGapMs": 55,
+          "over20msShare": 0.125
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 38,
+          "maxGapMs": 75,
+          "over20msShare": 0.158
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 27,
+          "maxGapMs": 53,
+          "over20msShare": 0.519
+        },
+        {
+          "label": "[data-act=\"help-close\"]",
+          "frames": 35,
+          "maxGapMs": 75,
+          "over20msShare": 0.2
+        },
+        {
+          "label": "palette",
+          "frames": 43,
+          "maxGapMs": 32,
+          "over20msShare": 0.116
+        }
+      ]
+    },
+    {
+      "run": 2,
+      "variant": "c",
+      "device": "mobile",
+      "cpuThrottle": 4,
+      "cls": 0.0066,
+      "interactions": 13,
+      "inpProxyMs": 72,
+      "medianInteractionMs": 40,
+      "worstFrameGapMs": 100,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 48,
+          "maxGapMs": 27,
+          "over20msShare": 0.083
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 43,
+          "maxGapMs": 42,
+          "over20msShare": 0.14
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 41,
+          "maxGapMs": 42,
+          "over20msShare": 0.171
+        },
+        {
+          "label": ".toast-action",
+          "frames": 42,
+          "maxGapMs": 44,
+          "over20msShare": 0.143
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 36,
+          "maxGapMs": 92,
+          "over20msShare": 0.167
+        },
+        {
+          "label": "add-step",
+          "frames": 36,
+          "maxGapMs": 100,
+          "over20msShare": 0.139
+        },
+        {
+          "label": "[data-act=\"help\"]",
+          "frames": 42,
+          "maxGapMs": 63,
+          "over20msShare": 0.143
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 40,
+          "maxGapMs": 86,
+          "over20msShare": 0.125
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 30,
+          "maxGapMs": 47,
+          "over20msShare": 0.4
+        },
+        {
+          "label": "[data-act=\"help-close\"]",
+          "frames": 42,
+          "maxGapMs": 48,
+          "over20msShare": 0.119
+        },
+        {
+          "label": "[data-act=\"back\"]",
+          "frames": 41,
+          "maxGapMs": 64,
+          "over20msShare": 0.146
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "variant": "a",
+      "device": "desktop",
+      "cpuThrottle": 1,
+      "cls": 0.0007,
+      "interactions": 14,
+      "inpProxyMs": 64,
+      "medianInteractionMs": 40,
+      "worstFrameGapMs": 52,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 42,
+          "maxGapMs": 27,
+          "over20msShare": 0.119
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 48,
+          "maxGapMs": 27,
+          "over20msShare": 0.083
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 42,
+          "maxGapMs": 27,
+          "over20msShare": 0.143
+        },
+        {
+          "label": ".toast-action",
+          "frames": 44,
+          "maxGapMs": 27,
+          "over20msShare": 0.068
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 32,
+          "maxGapMs": 52,
+          "over20msShare": 0.031
+        },
+        {
+          "label": "add-step",
+          "frames": 44,
+          "maxGapMs": 27,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 41,
+          "maxGapMs": 27,
+          "over20msShare": 0.122
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 47,
+          "maxGapMs": 27,
+          "over20msShare": 0.064
+        },
+        {
+          "label": "palette",
+          "frames": 39,
+          "maxGapMs": 36,
+          "over20msShare": 0.128
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "variant": "a",
+      "device": "mobile",
+      "cpuThrottle": 1,
+      "cls": 0.0133,
+      "interactions": 12,
+      "inpProxyMs": 40,
+      "medianInteractionMs": 32,
+      "worstFrameGapMs": 27,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 47,
+          "maxGapMs": 27,
+          "over20msShare": 0.085
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 42,
+          "maxGapMs": 27,
+          "over20msShare": 0.119
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 45,
+          "maxGapMs": 27,
+          "over20msShare": 0.133
+        },
+        {
+          "label": ".toast-action",
+          "frames": 44,
+          "maxGapMs": 27,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 46,
+          "maxGapMs": 27,
+          "over20msShare": 0.109
+        },
+        {
+          "label": "add-step",
+          "frames": 46,
+          "maxGapMs": 27,
+          "over20msShare": 0.087
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 46,
+          "maxGapMs": 27,
+          "over20msShare": 0.087
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 45,
+          "maxGapMs": 27,
+          "over20msShare": 0.089
+        },
+        {
+          "label": "[data-act=\"back\"]",
+          "frames": 43,
+          "maxGapMs": 27,
+          "over20msShare": 0.116
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "variant": "b",
+      "device": "desktop",
+      "cpuThrottle": 1,
+      "cls": 0.0133,
+      "interactions": 11,
+      "inpProxyMs": 48,
+      "medianInteractionMs": 32,
+      "worstFrameGapMs": 40,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 51,
+          "maxGapMs": 28,
+          "over20msShare": 0.059
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 40,
+          "maxGapMs": 27,
+          "over20msShare": 0.15
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 45,
+          "maxGapMs": 27,
+          "over20msShare": 0.089
+        },
+        {
+          "label": ".toast-action",
+          "frames": 48,
+          "maxGapMs": 27,
+          "over20msShare": 0.063
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 44,
+          "maxGapMs": 30,
+          "over20msShare": 0.091
+        },
+        {
+          "label": "add-step",
+          "frames": 40,
+          "maxGapMs": 27,
+          "over20msShare": 0.15
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 43,
+          "maxGapMs": 40,
+          "over20msShare": 0.093
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 45,
+          "maxGapMs": 27,
+          "over20msShare": 0.067
+        },
+        {
+          "label": "palette",
+          "frames": 42,
+          "maxGapMs": 31,
+          "over20msShare": 0.143
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "variant": "b",
+      "device": "mobile",
+      "cpuThrottle": 1,
+      "cls": 0.0134,
+      "interactions": 15,
+      "inpProxyMs": 40,
+      "medianInteractionMs": 24,
+      "worstFrameGapMs": 36,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 50,
+          "maxGapMs": 27,
+          "over20msShare": 0.06
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 41,
+          "maxGapMs": 27,
+          "over20msShare": 0.122
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 42,
+          "maxGapMs": 27,
+          "over20msShare": 0.119
+        },
+        {
+          "label": ".toast-action",
+          "frames": 47,
+          "maxGapMs": 36,
+          "over20msShare": 0.064
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 44,
+          "maxGapMs": 30,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "add-step",
+          "frames": 44,
+          "maxGapMs": 29,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"help\"]",
+          "frames": 45,
+          "maxGapMs": 27,
+          "over20msShare": 0.089
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 43,
+          "maxGapMs": 27,
+          "over20msShare": 0.116
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 48,
+          "maxGapMs": 27,
+          "over20msShare": 0.063
+        },
+        {
+          "label": "[data-act=\"help-close\"]",
+          "frames": 44,
+          "maxGapMs": 27,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"back\"]",
+          "frames": 49,
+          "maxGapMs": 27,
+          "over20msShare": 0.082
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "variant": "c",
+      "device": "desktop",
+      "cpuThrottle": 1,
+      "cls": 0.0038,
+      "interactions": 15,
+      "inpProxyMs": 32,
+      "medianInteractionMs": 24,
+      "worstFrameGapMs": 36,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 42,
+          "maxGapMs": 27,
+          "over20msShare": 0.095
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 53,
+          "maxGapMs": 27,
+          "over20msShare": 0.019
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 49,
+          "maxGapMs": 27,
+          "over20msShare": 0.061
+        },
+        {
+          "label": ".toast-action",
+          "frames": 46,
+          "maxGapMs": 27,
+          "over20msShare": 0.087
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 46,
+          "maxGapMs": 27,
+          "over20msShare": 0.087
+        },
+        {
+          "label": "add-step",
+          "frames": 51,
+          "maxGapMs": 27,
+          "over20msShare": 0.039
+        },
+        {
+          "label": "[data-act=\"help\"]",
+          "frames": 45,
+          "maxGapMs": 36,
+          "over20msShare": 0.111
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 44,
+          "maxGapMs": 27,
+          "over20msShare": 0.091
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 46,
+          "maxGapMs": 27,
+          "over20msShare": 0.087
+        },
+        {
+          "label": "[data-act=\"help-close\"]",
+          "frames": 46,
+          "maxGapMs": 27,
+          "over20msShare": 0.087
+        },
+        {
+          "label": "palette",
+          "frames": 46,
+          "maxGapMs": 30,
+          "over20msShare": 0.087
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "variant": "c",
+      "device": "mobile",
+      "cpuThrottle": 1,
+      "cls": 0.0066,
+      "interactions": 13,
+      "inpProxyMs": 40,
+      "medianInteractionMs": 32,
+      "worstFrameGapMs": 27,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 45,
+          "maxGapMs": 27,
+          "over20msShare": 0.089
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 41,
+          "maxGapMs": 27,
+          "over20msShare": 0.122
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 43,
+          "maxGapMs": 27,
+          "over20msShare": 0.116
+        },
+        {
+          "label": ".toast-action",
+          "frames": 44,
+          "maxGapMs": 27,
+          "over20msShare": 0.091
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 50,
+          "maxGapMs": 27,
+          "over20msShare": 0.06
+        },
+        {
+          "label": "add-step",
+          "frames": 44,
+          "maxGapMs": 27,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"help\"]",
+          "frames": 44,
+          "maxGapMs": 27,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 43,
+          "maxGapMs": 27,
+          "over20msShare": 0.116
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 52,
+          "maxGapMs": 27,
+          "over20msShare": 0.038
+        },
+        {
+          "label": "[data-act=\"help-close\"]",
+          "frames": 46,
+          "maxGapMs": 27,
+          "over20msShare": 0.087
+        },
+        {
+          "label": "[data-act=\"back\"]",
+          "frames": 50,
+          "maxGapMs": 27,
+          "over20msShare": 0.06
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "variant": "a",
+      "device": "desktop",
+      "cpuThrottle": 4,
+      "cls": 0.0007,
+      "interactions": 13,
+      "inpProxyMs": 96,
+      "medianInteractionMs": 48,
+      "worstFrameGapMs": 116,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 44,
+          "maxGapMs": 27,
+          "over20msShare": 0.136
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 40,
+          "maxGapMs": 42,
+          "over20msShare": 0.175
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 44,
+          "maxGapMs": 67,
+          "over20msShare": 0.091
+        },
+        {
+          "label": ".toast-action",
+          "frames": 41,
+          "maxGapMs": 61,
+          "over20msShare": 0.098
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 38,
+          "maxGapMs": 102,
+          "over20msShare": 0.132
+        },
+        {
+          "label": "add-step",
+          "frames": 31,
+          "maxGapMs": 116,
+          "over20msShare": 0.194
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 37,
+          "maxGapMs": 81,
+          "over20msShare": 0.162
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 23,
+          "maxGapMs": 57,
+          "over20msShare": 0.522
+        },
+        {
+          "label": "palette",
+          "frames": 43,
+          "maxGapMs": 36,
+          "over20msShare": 0.163
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "variant": "a",
+      "device": "mobile",
+      "cpuThrottle": 4,
+      "cls": 0.0126,
+      "interactions": 12,
+      "inpProxyMs": 72,
+      "medianInteractionMs": 40,
+      "worstFrameGapMs": 96,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 47,
+          "maxGapMs": 27,
+          "over20msShare": 0.106
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 40,
+          "maxGapMs": 54,
+          "over20msShare": 0.175
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 41,
+          "maxGapMs": 58,
+          "over20msShare": 0.171
+        },
+        {
+          "label": ".toast-action",
+          "frames": 41,
+          "maxGapMs": 51,
+          "over20msShare": 0.122
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 36,
+          "maxGapMs": 96,
+          "over20msShare": 0.194
+        },
+        {
+          "label": "add-step",
+          "frames": 36,
+          "maxGapMs": 88,
+          "over20msShare": 0.139
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 38,
+          "maxGapMs": 95,
+          "over20msShare": 0.158
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 27,
+          "maxGapMs": 50,
+          "over20msShare": 0.519
+        },
+        {
+          "label": "[data-act=\"back\"]",
+          "frames": 39,
+          "maxGapMs": 66,
+          "over20msShare": 0.128
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "variant": "b",
+      "device": "desktop",
+      "cpuThrottle": 4,
+      "cls": 0.0133,
+      "interactions": 11,
+      "inpProxyMs": 104,
+      "medianInteractionMs": 64,
+      "worstFrameGapMs": 109,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 44,
+          "maxGapMs": 27,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 42,
+          "maxGapMs": 51,
+          "over20msShare": 0.119
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 37,
+          "maxGapMs": 85,
+          "over20msShare": 0.162
+        },
+        {
+          "label": ".toast-action",
+          "frames": 39,
+          "maxGapMs": 73,
+          "over20msShare": 0.154
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 35,
+          "maxGapMs": 109,
+          "over20msShare": 0.143
+        },
+        {
+          "label": "add-step",
+          "frames": 31,
+          "maxGapMs": 70,
+          "over20msShare": 0.29
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 39,
+          "maxGapMs": 89,
+          "over20msShare": 0.128
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 24,
+          "maxGapMs": 52,
+          "over20msShare": 0.5
+        },
+        {
+          "label": "palette",
+          "frames": 40,
+          "maxGapMs": 30,
+          "over20msShare": 0.2
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "variant": "b",
+      "device": "mobile",
+      "cpuThrottle": 4,
+      "cls": 0.0127,
+      "interactions": 12,
+      "inpProxyMs": 72,
+      "medianInteractionMs": 64,
+      "worstFrameGapMs": 104,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 46,
+          "maxGapMs": 27,
+          "over20msShare": 0.109
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 37,
+          "maxGapMs": 64,
+          "over20msShare": 0.189
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 39,
+          "maxGapMs": 56,
+          "over20msShare": 0.154
+        },
+        {
+          "label": ".toast-action",
+          "frames": 39,
+          "maxGapMs": 71,
+          "over20msShare": 0.154
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 41,
+          "maxGapMs": 101,
+          "over20msShare": 0.122
+        },
+        {
+          "label": "add-step",
+          "frames": 37,
+          "maxGapMs": 104,
+          "over20msShare": 0.162
+        },
+        {
+          "label": "[data-act=\"help\"]",
+          "frames": 44,
+          "maxGapMs": 33,
+          "over20msShare": 0.114
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 40,
+          "maxGapMs": 58,
+          "over20msShare": 0.125
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 38,
+          "maxGapMs": 33,
+          "over20msShare": 0.237
+        },
+        {
+          "label": "[data-act=\"help-close\"]",
+          "frames": 41,
+          "maxGapMs": 27,
+          "over20msShare": 0.146
+        },
+        {
+          "label": "[data-act=\"back\"]",
+          "frames": 39,
+          "maxGapMs": 80,
+          "over20msShare": 0.128
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "variant": "c",
+      "device": "desktop",
+      "cpuThrottle": 4,
+      "cls": 0.0038,
+      "interactions": 17,
+      "inpProxyMs": 80,
+      "medianInteractionMs": 40,
+      "worstFrameGapMs": 87,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 45,
+          "maxGapMs": 27,
+          "over20msShare": 0.111
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 41,
+          "maxGapMs": 55,
+          "over20msShare": 0.146
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 42,
+          "maxGapMs": 71,
+          "over20msShare": 0.119
+        },
+        {
+          "label": ".toast-action",
+          "frames": 40,
+          "maxGapMs": 44,
+          "over20msShare": 0.15
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 41,
+          "maxGapMs": 78,
+          "over20msShare": 0.122
+        },
+        {
+          "label": "add-step",
+          "frames": 34,
+          "maxGapMs": 87,
+          "over20msShare": 0.176
+        },
+        {
+          "label": "[data-act=\"help\"]",
+          "frames": 37,
+          "maxGapMs": 66,
+          "over20msShare": 0.162
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 39,
+          "maxGapMs": 63,
+          "over20msShare": 0.128
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 25,
+          "maxGapMs": 49,
+          "over20msShare": 0.52
+        },
+        {
+          "label": "[data-act=\"help-close\"]",
+          "frames": 36,
+          "maxGapMs": 76,
+          "over20msShare": 0.194
+        },
+        {
+          "label": "palette",
+          "frames": 44,
+          "maxGapMs": 30,
+          "over20msShare": 0.136
+        }
+      ]
+    },
+    {
+      "run": 3,
+      "variant": "c",
+      "device": "mobile",
+      "cpuThrottle": 4,
+      "cls": 0.0066,
+      "interactions": 14,
+      "inpProxyMs": 72,
+      "medianInteractionMs": 48,
+      "worstFrameGapMs": 87,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 42,
+          "maxGapMs": 27,
+          "over20msShare": 0.143
+        },
+        {
+          "label": "[data-act=\"why\"]",
+          "frames": 43,
+          "maxGapMs": 52,
+          "over20msShare": 0.116
+        },
+        {
+          "label": "[data-act=\"snooze\"]",
+          "frames": 41,
+          "maxGapMs": 36,
+          "over20msShare": 0.171
+        },
+        {
+          "label": ".toast-action",
+          "frames": 42,
+          "maxGapMs": 46,
+          "over20msShare": 0.119
+        },
+        {
+          "label": "[data-act=\"continue\"]",
+          "frames": 40,
+          "maxGapMs": 86,
+          "over20msShare": 0.1
+        },
+        {
+          "label": "add-step",
+          "frames": 37,
+          "maxGapMs": 79,
+          "over20msShare": 0.162
+        },
+        {
+          "label": "[data-act=\"help\"]",
+          "frames": 36,
+          "maxGapMs": 87,
+          "over20msShare": 0.167
+        },
+        {
+          "label": "[data-act=\"hint2\"]",
+          "frames": 41,
+          "maxGapMs": 79,
+          "over20msShare": 0.146
+        },
+        {
+          "label": "[data-act=\"explain\"]",
+          "frames": 27,
+          "maxGapMs": 51,
+          "over20msShare": 0.519
+        },
+        {
+          "label": "[data-act=\"help-close\"]",
+          "frames": 40,
+          "maxGapMs": 74,
+          "over20msShare": 0.125
+        },
+        {
+          "label": "[data-act=\"back\"]",
+          "frames": 43,
+          "maxGapMs": 61,
+          "over20msShare": 0.116
+        }
+      ]
+    }
+  ]
+}

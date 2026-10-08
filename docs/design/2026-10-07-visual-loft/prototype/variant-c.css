@@ -1,0 +1,738 @@
+/* Variant C · 学习线 — no persistent nav, bottom command dock, thread home, stage + sheet. */
+
+.c-app {
+  min-height: 100dvh;
+}
+
+.c-top {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: var(--h-topbar);
+  padding: 0 var(--sp-5);
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  backdrop-filter: saturate(1.4) blur(12px);
+}
+
+.c-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: var(--h-control);
+  padding: 0 var(--sp-2);
+  margin-left: calc(var(--sp-2) * -1);
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  font-family: var(--font-serif);
+  font-size: var(--fs-4);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.c-crumbs {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--text-3);
+}
+
+.c-main {
+  padding: var(--sp-5) var(--sp-5) calc(var(--sp-8) + var(--sp-7));
+}
+
+.c-dim {
+  color: var(--text-3);
+  font-size: var(--fs-1);
+}
+
+/* ── Command dock ─────────────────────────────────────── */
+.c-dock {
+  position: fixed;
+  left: 50%;
+  bottom: calc(var(--sp-5) + env(safe-area-inset-bottom));
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  width: min(600px, calc(100% - var(--sp-6)));
+  padding: var(--sp-1);
+  border-radius: var(--r-3);
+  background: color-mix(in srgb, var(--bg-raised) 94%, transparent);
+  backdrop-filter: blur(16px);
+  box-shadow: var(--shadow-float);
+  transform: translateX(-50%);
+}
+
+.c-dock-btn {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: var(--r-3);
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition: background-color var(--dur-feedback) linear;
+}
+
+.c-dock-btn:hover {
+  background: var(--bg-hover);
+}
+
+.c-dock-input {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  gap: var(--sp-2);
+  height: 40px;
+  padding: 0 var(--sp-3);
+  border: 0;
+  border-radius: var(--r-3);
+  background: var(--bg-sunk);
+  color: var(--text-4);
+  text-align: left;
+  cursor: text;
+}
+
+.c-dock-input .kbd {
+  margin-left: auto;
+}
+
+/* ── Home ─────────────────────────────────────────────── */
+.c-home {
+  display: grid;
+  gap: var(--sp-7);
+  max-width: var(--w-page);
+  margin: 0 auto;
+}
+
+.c-now {
+  display: grid;
+  gap: var(--sp-3);
+  padding-top: var(--sp-3);
+}
+
+.c-now-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--text-3);
+  font-size: var(--fs-1);
+}
+
+.c-now-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--r-3);
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.c-now-head {
+  max-width: 28em;
+  font-family: var(--font-serif);
+  font-size: var(--fs-5);
+  font-weight: var(--fw-regular);
+  line-height: var(--lh-tight);
+  letter-spacing: var(--tracking-tight);
+  text-wrap: balance;
+}
+
+.c-now-body {
+  max-width: 40em;
+  color: var(--text-2);
+  font-size: var(--fs-3);
+  line-height: var(--lh-prose);
+}
+
+.c-forks {
+  display: grid;
+  grid-template-columns: 1.15fr 1.15fr 0.8fr;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+}
+
+.c-fork {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding: var(--sp-4) var(--sp-5) var(--sp-5);
+  border: 0;
+  border-radius: var(--r-2);
+  background: var(--bg-raised);
+  box-shadow: var(--ring-raised);
+  text-align: left;
+  color: var(--text);
+}
+
+.c-fork > .btn,
+.c-fork-actions {
+  margin-top: auto;
+}
+
+.c-fork-actions {
+  display: flex;
+  gap: var(--sp-1);
+  padding-top: var(--sp-2);
+}
+
+.c-fork > .btn {
+  margin-top: auto;
+}
+
+.c-fork-mine {
+  position: relative;
+}
+
+.c-fork-mine::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: var(--sp-4);
+  bottom: var(--sp-4);
+  width: 3px;
+  border-radius: var(--r-3);
+  background: var(--accent);
+}
+
+.c-fork-stop {
+  background: var(--bg-sunk);
+  box-shadow: none;
+}
+
+.c-fork-empty {
+  cursor: pointer;
+  color: var(--text-3);
+}
+
+.c-fork-label {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--text-3);
+  font-size: var(--fs-1);
+}
+
+.c-fork-title {
+  font-size: var(--fs-4);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+  color: var(--text);
+}
+
+.c-fork-note {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp-1) var(--sp-2);
+  color: var(--text-2);
+  padding-bottom: var(--sp-2);
+}
+
+.c-why {
+  padding: var(--sp-2) var(--sp-5) var(--sp-4);
+  border-radius: var(--r-2);
+  background: var(--bg-sunk);
+  animation: rise var(--dur-2) var(--ease-out) both;
+}
+
+.c-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: var(--sp-7);
+  align-items: start;
+}
+
+.c-sec-head {
+  display: grid;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-4);
+}
+
+.c-sec-head h2,
+.c-side-title {
+  font-size: var(--fs-2);
+  font-weight: var(--fw-semibold);
+  color: var(--text-2);
+}
+
+.c-timeline {
+  position: relative;
+  display: grid;
+  gap: var(--sp-1);
+}
+
+.c-timeline::before {
+  content: "";
+  position: absolute;
+  left: 13px;
+  top: var(--sp-3);
+  bottom: var(--sp-3);
+  width: var(--hairline);
+  background: var(--line-strong);
+}
+
+.c-event {
+  position: relative;
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: var(--sp-3);
+  padding: var(--sp-2) 0;
+}
+
+.c-event-node {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--r-3);
+  background: var(--bg-sunk);
+  box-shadow: 0 0 0 4px var(--bg);
+  color: var(--text-3);
+}
+
+.c-event:first-child .c-event-node {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.c-event-body {
+  display: grid;
+  gap: 2px;
+  padding-top: 3px;
+}
+
+.c-event-at {
+  color: var(--text-4);
+  font-size: var(--fs-1);
+}
+
+.c-event-body p {
+  color: var(--text);
+  line-height: var(--lh-prose);
+}
+
+.c-side {
+  display: grid;
+  gap: var(--sp-4);
+}
+
+.c-side-block {
+  display: grid;
+  gap: var(--sp-2);
+  padding: var(--sp-4) var(--sp-5);
+  border-radius: var(--r-2);
+  background: var(--bg-sunk);
+}
+
+.c-others {
+  max-width: calc(var(--w-page) - 340px - var(--sp-7));
+}
+
+.c-other-list {
+  display: grid;
+}
+
+.c-other {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  gap: var(--sp-3);
+  align-items: center;
+  padding: var(--sp-3) 0;
+}
+
+.c-other > .icon,
+.c-other > .status-glyph {
+  justify-self: center;
+  color: var(--text-3);
+}
+
+.c-other + .c-other {
+  box-shadow: inset 0 var(--hairline) 0 var(--line);
+}
+
+.c-other-main {
+  display: grid;
+  gap: 2px;
+}
+
+.c-other-title {
+  font-weight: var(--fw-medium);
+}
+
+.c-home .backlog {
+  max-width: calc(var(--w-page) - 340px - var(--sp-7));
+}
+
+/* ── Workbench ────────────────────────────────────────── */
+.c-on-work .c-main {
+  padding-bottom: calc(56px + var(--sp-6));
+}
+
+.c-work {
+  max-width: var(--w-wide);
+  margin: 0 auto;
+}
+
+.c-work.is-help-open {
+  padding-bottom: 46vh;
+}
+
+.c-work-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-4);
+  margin-bottom: var(--sp-5);
+}
+
+.c-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  height: 28px;
+  padding: 0 var(--sp-2) 0 var(--sp-1);
+  border: 0;
+  border-radius: var(--r-1);
+  background: transparent;
+  color: var(--text-3);
+  font-size: var(--fs-1);
+  cursor: pointer;
+}
+
+.c-back:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.c-work-title {
+  display: grid;
+  min-width: 0;
+}
+
+.c-work-title h1 {
+  font-size: var(--fs-4);
+  font-weight: var(--fw-semibold);
+  line-height: var(--lh-tight);
+}
+
+.c-stage {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  gap: var(--sp-5);
+  align-items: start;
+}
+
+.c-stage-problem {
+  position: sticky;
+  top: calc(var(--h-topbar) + var(--sp-3));
+  display: grid;
+  gap: var(--sp-4);
+  padding: var(--sp-5);
+  border-radius: var(--r-2);
+  background: var(--bg-sunk);
+}
+
+.c-stage-problem .stem-figure {
+  width: 40%;
+}
+
+.c-photo summary {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  cursor: pointer;
+  list-style: none;
+}
+
+.c-photo summary::-webkit-details-marker {
+  display: none;
+}
+
+.c-photo[open] .photo {
+  margin-top: var(--sp-3);
+  max-width: 340px;
+  animation: rise var(--dur-2) var(--ease-out) both;
+}
+
+.c-stage-draft {
+  display: grid;
+  gap: var(--sp-4);
+  padding: var(--sp-5) var(--sp-6);
+  border-radius: var(--r-2);
+  background: var(--bg-raised);
+  box-shadow: var(--ring-raised);
+}
+
+.c-draft-head {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-3);
+}
+
+.c-draft-head h2 {
+  font-size: var(--fs-2);
+  font-weight: var(--fw-semibold);
+}
+
+.c-steps {
+  display: grid;
+}
+
+.c-step {
+  display: grid;
+  grid-template-columns: var(--sp-5) minmax(0, 1fr);
+  gap: var(--sp-2);
+  padding: var(--sp-3) 0;
+}
+
+.c-step + .c-step {
+  box-shadow: inset 0 var(--hairline) 0 var(--line);
+}
+
+.c-step-n {
+  padding-top: var(--sp-1);
+  color: var(--text-4);
+  font-size: var(--fs-1);
+  line-height: var(--lh-prose);
+}
+
+.c-step-body {
+  display: grid;
+  justify-items: start;
+  gap: var(--sp-1);
+}
+
+.c-draft-actions {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+/* Help sheet: a peek bar when closed; rises to 46vh and the stage gains the same bottom
+   padding, so the draft scrolls above it instead of being covered. */
+.c-sheet {
+  position: fixed;
+  left: 50%;
+  bottom: 0;
+  z-index: 25;
+  width: min(var(--w-wide), calc(100% - var(--sp-6)));
+  border-radius: var(--r-2) var(--r-2) 0 0;
+  background: var(--bg-raised);
+  box-shadow: var(--shadow-float);
+  transform: translateX(-50%);
+}
+
+.c-grip {
+  display: block;
+  width: 36px;
+  height: 4px;
+  border-radius: var(--r-3);
+  background: var(--line-strong);
+}
+
+.c-peek {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  width: 100%;
+  height: 56px;
+  padding: 0 var(--sp-5);
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.c-peek .c-grip {
+  position: absolute;
+  top: var(--sp-2);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.c-peek-label {
+  color: var(--text);
+  font-weight: var(--fw-medium);
+}
+
+.c-peek-note {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: var(--fs-1);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.c-sheet-open {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 46vh;
+}
+
+.c-sheet-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5) var(--sp-2);
+}
+
+.c-sheet-head .c-grip {
+  position: absolute;
+  top: var(--sp-2);
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.c-sheet-head h2 {
+  font-size: var(--fs-2);
+  font-weight: var(--fw-semibold);
+}
+
+.c-sheet-grid {
+  display: grid;
+  align-content: start;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: var(--sp-6);
+  min-height: 0;
+  overflow: auto;
+  padding: var(--sp-3) var(--sp-5) var(--sp-5);
+}
+
+.c-sheet-col {
+  display: grid;
+  align-content: start;
+  gap: var(--sp-5);
+}
+
+.c-ask {
+  display: flex;
+  gap: var(--sp-2);
+}
+
+.c-ask input {
+  flex: 1;
+  min-width: 0;
+  height: var(--h-control);
+  padding: 0 var(--sp-3);
+  border: 0;
+  border-radius: var(--r-1);
+  background: var(--bg-sunk);
+  color: var(--text);
+  font: inherit;
+  outline: none;
+}
+
+@media (max-width: 1100px) {
+  .c-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .c-others,
+  .c-home .backlog {
+    max-width: none;
+  }
+  .c-stage {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .c-stage-problem {
+    position: static;
+  }
+  .c-sheet-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+@media (max-width: 720px) {
+  .c-top {
+    padding: 0 var(--sp-2) 0 var(--sp-4);
+  }
+  .c-crumbs {
+    display: none;
+  }
+  .c-main {
+    padding: var(--sp-3) var(--sp-4) calc(var(--sp-8) + var(--sp-7));
+  }
+  .c-home {
+    gap: var(--sp-6);
+  }
+  .c-now-head {
+    font-size: var(--fs-4);
+  }
+  .c-now-body {
+    font-size: var(--fs-2);
+  }
+  .c-forks {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .c-fork {
+    padding: var(--sp-4);
+  }
+  .c-dock {
+    left: var(--sp-3);
+    right: var(--sp-3);
+    bottom: calc(var(--sp-3) + env(safe-area-inset-bottom));
+    width: auto;
+    transform: none;
+  }
+  .c-dock-input .kbd {
+    display: none;
+  }
+  .c-work-head {
+    gap: var(--sp-2);
+    margin-bottom: var(--sp-3);
+  }
+  .c-back span,
+  .c-work-head .next-up,
+  .c-work-title .c-dim {
+    display: none;
+  }
+  .c-work-title h1 {
+    font-size: var(--fs-2);
+  }
+  .c-stage-problem {
+    padding: var(--sp-4);
+  }
+  .c-stage-problem .stem-figure {
+    float: none;
+    width: 100%;
+    max-width: 300px;
+    margin: 0 auto var(--sp-3);
+  }
+  .c-stage-draft {
+    padding: var(--sp-4);
+  }
+  .c-draft-head .c-dim {
+    display: none;
+  }
+  .c-sheet {
+    left: 0;
+    width: 100%;
+    transform: none;
+  }
+  .c-sheet-open {
+    height: 62vh;
+  }
+  .c-work.is-help-open {
+    padding-bottom: 62vh;
+  }
+  .c-sheet-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--sp-5);
+    padding: var(--sp-2) var(--sp-4) calc(var(--sp-5) + env(safe-area-inset-bottom));
+  }
+  .c-peek {
+    padding: 0 var(--sp-4) env(safe-area-inset-bottom);
+  }
+  .c-peek .kbd {
+    display: none;
+  }
+  .c-sheet-head .kbd {
+    display: none;
+  }
+}
