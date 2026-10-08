@@ -77,3 +77,23 @@ This is a recipe, not an executed command. The entry binds `127.0.0.1:18952`; bu
 8. Snapshot the permitted tables before and after the read-only stage and classify any pre-existing navigation initialization separately. Never describe a whole navigation session as no-write if an old linked page initializes state. Capture source/revision, input/output digests, network evidence, DB deltas and log hashes. Stop only the parent-started acceptance process, verify unchanged release/services, then release the lock. Parent performs independent review, exact-head CI and tracker/global-exit reconciliation before any delivery claim.
 
 Whole W1, old SPA/HTTP retirement, real business/runtime acceptance and deployment remain open. This handoff completes the authorized primary consumer source slice.
+
+## R1 P1 timestamp repair, 2026-10-08
+
+The repair starts at assigned revision `bc43bf89cb5703a49c11cd4335ac81e0447e8900` on this same branch/worktree. R1 identified that `loadTreeSnapshot` uses undecoded `sql<Date>` for `last_active_at`; the installed Drizzle postgres-js driver retains timestamp strings. Calling `.toISOString()` on a nonempty visible row therefore failed. Only the Start reader now normalizes its three timestamp fields. Driver strings remain byte-for-byte unchanged, including PostgreSQL microseconds and offsets. Decoded Dates retain ISO output. Nullable archive/evidence values remain null; invalid Dates and a missing required active timestamp retain the existing logged 500 error. Snapshot errors still propagate through the existing HTTP error shaping. There is no parsing, epoch substitution or empty-graph fallback.
+
+The final regression tests against the baseline reader are RED with 5 failures and 49 passes. The raw timestamp case records `row.last_active_at.toISOString is not a function`. The repaired reader is GREEN with 90 tests across five scoped Start files, including 54 workbench-read tests. Both TypeScript programs, lint and the full build passed under Node 24.19.0; lint retains 297 warnings. The static partition audit passed with no unmatched test or unit DB-import error. Source hashes, final command/log hashes and the build artifact manifest hash are sealed in [the repair receipt](evidence/2026-10-08-yuk1358-r1-timestamp-repair.json). Logs and the artifact manifest are under `/tmp/yuk1358-r1-timestamp-*` on this host.
+
+`server/start/workbench-reader.db.test.ts` is prepared and statically typechecked, but has not run. It injects only the isolated test connection; the canonical snapshot, retained HTTP handler, SQL and Drizzle/postgres-js driver are real. Its parent/child/synthetic/archived fixture includes a six-digit fractional timestamp inserted via SQL and a decoded mastery-evidence Date. It must observe an actual raw timestamp string, preserve its instant and all fractional digits, and compare the authenticated Start adapter with retained HTTP JSON.
+
+Parent runtime recipe, after resolving the existing lock and isolated test DB boundary:
+
+```bash
+cd /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor
+PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH \
+  pnpm vitest run --config vitest.db.config.ts server/start/workbench-reader.db.test.ts
+```
+
+That command invokes the normal isolated testcontainer/fork setup and resets its synthetic DB. It is a recipe, not an executed command. Parent must then use the existing built-frontdoor acceptance procedure above with a nonempty visible graph and capture the actual `getStartKnowledgeTree` RPC from Inbox. Compare its raw timestamp strings and decoded ISO Dates with `/api/knowledge`, verify visible labels and hidden-ID fallback, and retain token/epoch denials. The prepared DB test calls the authenticated adapter, not the built framework RPC; its eventual success alone cannot establish live RPC/browser acceptance.
+
+This repair writer performed no DB/container/service/provider/network/runtime operation and no fetch/merge/push/PR/watch/Linear/review/delegation. No further actionable finding was discovered; parent retains tracker capture, the single R2 and runtime validation. Changes are limited to the reader, scoped Start unit/DB tests and this task-local handoff/receipt.

@@ -211,6 +211,121 @@ describe('canonical workbench projection adapters', () => {
       },
     ]);
   });
+  it('preserves raw postgres-js timestamps and decoded Dates with the HTTP JSON semantics', async () => {
+    const rows = [
+      {
+        id: 'kc-parent',
+        name: '时间与证据边界'.repeat(40),
+        domain: 'math',
+        effective_domain: 'math',
+        parent_id: null,
+        mastery: 0.7,
+        mastery_lo: 0.4,
+        mastery_hi: 0.9,
+        low_confidence: true,
+        evidence_count: 3,
+        archived_at: null,
+        last_evidence_at: new Date('2026-10-07T23:45:06.789+08:00'),
+        last_active_at: '2026-10-08 01:02:03.123456+00',
+      },
+      {
+        id: 'kc-child',
+        name: '保留原始精度',
+        domain: null,
+        effective_domain: 'math',
+        parent_id: 'kc-parent',
+        mastery: null,
+        evidence_count: 0,
+        archived_at: '2026-10-07 23:45:06.654321+08',
+        last_evidence_at: null,
+        last_active_at: new Date('2026-10-08T01:02:03.123Z'),
+      },
+      {
+        id: 'synthetic:seed',
+        archived_at: null,
+        last_evidence_at: null,
+        last_active_at: '2026-10-08 01:02:03.123456+00',
+      },
+    ];
+    seams.tree.mockResolvedValueOnce(rows);
+    const result = await runAuthenticatedStartWorkbench(
+      allowed(),
+      request('unit-token'),
+      readStartKnowledgeTree,
+    );
+    expect(result).toEqual(await Response.json({ rows: rows.slice(0, 2) }).json());
+    expect(result.rows[0]?.last_active_at).toBe('2026-10-08 01:02:03.123456+00');
+    expect(result.rows[0]?.last_evidence_at).toBe('2026-10-07T15:45:06.789Z');
+    expect(result.rows[1]?.archived_at).toBe('2026-10-07 23:45:06.654321+08');
+  });
+  it.each(['infinity', 'not-a-timestamp'])(
+    'preserves HTTP JSON timestamp string %s without parsing or inventing an epoch',
+    async (timestamp) => {
+      const rows = [
+        {
+          id: 'kc-visible',
+          archived_at: timestamp,
+          last_evidence_at: timestamp,
+          last_active_at: timestamp,
+        },
+      ];
+      seams.tree.mockResolvedValueOnce(rows);
+      expect(await readStartKnowledgeTree()).toEqual(await Response.json({ rows }).json());
+    },
+  );
+  it.each([null, undefined])('keeps nullable timestamp %s as null', async (timestamp) => {
+    seams.tree.mockResolvedValueOnce([
+      {
+        id: 'kc-visible',
+        archived_at: timestamp,
+        last_evidence_at: timestamp,
+        last_active_at: '2026-10-08 01:02:03.123456+00',
+      },
+    ]);
+    expect((await readStartKnowledgeTree()).rows[0]).toEqual({
+      id: 'kc-visible',
+      archived_at: null,
+      last_evidence_at: null,
+      last_active_at: '2026-10-08 01:02:03.123456+00',
+    });
+  });
+  it.each([
+    { archived_at: new Date(Number.NaN) },
+    { last_evidence_at: new Date(Number.NaN) },
+    { last_active_at: new Date(Number.NaN) },
+    { last_active_at: null },
+    { last_active_at: undefined },
+  ])('retains invalid Date/missing required timestamp errors for %j', async (invalid) => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      seams.tree.mockResolvedValueOnce([
+        {
+          id: 'kc-visible',
+          archived_at: null,
+          last_evidence_at: null,
+          last_active_at: new Date('2026-10-08T01:02:03.123Z'),
+          ...invalid,
+        },
+      ]);
+      const denied = await readStartKnowledgeTree().catch((error) => error);
+      if (!(denied instanceof Response)) throw new Error('expected an HTTP error');
+      expect(denied.status).toBe(500);
+      expect(await denied.json()).toEqual({
+        error: 'internal_error',
+        message: 'Internal Server Error',
+      });
+      expect(logged).toHaveBeenCalledExactlyOnceWith('unhandled error', expect.any(Object));
+    } finally {
+      logged.mockRestore();
+    }
+  });
+  it('keeps knowledge snapshot failures as errors rather than returning an empty graph', async () => {
+    seams.tree.mockRejectedValueOnce(new ApiError('snapshot_unavailable', 'read failed', 503));
+    const denied = await readStartKnowledgeTree().catch((error) => error);
+    if (!(denied instanceof Response)) throw new Error('expected an HTTP error');
+    expect(denied.status).toBe(503);
+    expect(await denied.json()).toEqual({ error: 'snapshot_unavailable', message: 'read failed' });
+  });
 });
 
 describe('shared HTTP/Start inbox query contract', () => {

@@ -38,6 +38,13 @@ export const readStartAutoApplied = () =>
     const { getAutoAppliedDigest } = await import('@/server/proposals/auto-applied-read');
     return getAutoAppliedDigest(db);
   });
+
+function knowledgeTimestampJson(value: Date | string): string {
+  // Raw SQL timestamps lack a Drizzle decoder. Preserve their precision and
+  // keep decoded Dates in ISO form without suppressing invalid-value errors.
+  return typeof value === 'string' ? value : value.toISOString();
+}
+
 export const readStartKnowledgeTree = () =>
   withStartDb(async (db) => {
     const { loadTreeSnapshot } = await import('@/capabilities/knowledge/public');
@@ -50,9 +57,10 @@ export const readStartKnowledgeTree = () =>
         .filter((row) => isLearnerVisibleKnowledgeId(row.id))
         .map((row) => ({
           ...row,
-          archived_at: row.archived_at?.toISOString() ?? null,
-          last_evidence_at: row.last_evidence_at?.toISOString() ?? null,
-          last_active_at: row.last_active_at.toISOString(),
+          archived_at: row.archived_at == null ? null : knowledgeTimestampJson(row.archived_at),
+          last_evidence_at:
+            row.last_evidence_at == null ? null : knowledgeTimestampJson(row.last_evidence_at),
+          last_active_at: knowledgeTimestampJson(row.last_active_at),
         })),
     };
   });
