@@ -229,6 +229,8 @@ export const fastTestInclude = [
   // subjects/hydrate, ai_task_run_reconcile) is vi.mock'd. Same explicit-listing reason
   // as client.globalthis.test.ts (src/server/boss/** has no unit glob).
   'src/server/boss/start-worker.test.ts',
+  // YUK-1393: mocked shared SDK lifecycle; no DB or child process execution.
+  'src/server/durable/prune-worker.unit.test.ts',
   // YUK-361 Phase 5 (Task 10) — 家族级 b_personalized 纯函数单测（shrinkage /
   // family_key / 客观路由分类 / 隐含难度残差 / effectiveFamilyB）。Pure no-DB: imports
   // 仅 ./personalized-difficulty（其 @/db/client import 是 type-only/erased，@/db/schema

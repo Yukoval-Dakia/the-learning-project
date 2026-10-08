@@ -36,13 +36,46 @@ const SESSION_TABLE = 'learning_session' as const;
 async function loadReviewSessionForUpdate(
   tx: Db | Tx,
   sessionId: string,
-): Promise<{ status: string; started_at: string | Date } | null> {
-  const rows = await tx.execute<{ status: string; started_at: string | Date }>(
-    sql`SELECT status, started_at FROM learning_session WHERE id = ${sessionId} AND type = 'review' FOR UPDATE`,
+): Promise<{ status: string; started_at: string | Date; version: number } | null> {
+  const rows = await tx.execute<{ status: string; started_at: string | Date; version: number }>(
+    sql`SELECT status, started_at, version FROM learning_session WHERE id = ${sessionId} AND type = 'review' FOR UPDATE`,
   );
   const row = rows[0];
   if (!row) return null;
-  return { status: row.status, started_at: row.started_at };
+  return { status: row.status, started_at: row.started_at, version: row.version };
+}
+
+export type OrphanReviewCandidate = {
+  sessionId: string;
+  selectedStartedAt: string;
+  selectedVersion: number;
+};
+export type OrphanReviewResult =
+  | { kind: 'abandoned'; fromVersion: number; toVersion: number }
+  | { kind: 'skipped'; reason: 'missing' | 'terminal' | 'reopened' | 'not-old' };
+
+/** Caller retains the row lock through its receipt commit. Version is evidence, not a CAS. */
+export async function abandonOrphanReviewSession(
+  tx: Tx,
+  input: { candidate: OrphanReviewCandidate; cutoff: Date | string },
+): Promise<OrphanReviewResult> {
+  const { candidate, cutoff } = input;
+  const current = await loadReviewSessionForUpdate(tx, candidate.sessionId);
+  if (!current) return { kind: 'skipped', reason: 'missing' };
+  if (current.status !== 'started' && current.status !== 'paused')
+    return { kind: 'skipped', reason: 'terminal' };
+  const [eligibility] = await tx.execute<{ same_incarnation: boolean; old: boolean }>(sql`
+    select started_at = ${candidate.selectedStartedAt}::timestamptz as same_incarnation,
+      started_at < ${cutoff instanceof Date ? cutoff.toISOString() : cutoff}::timestamptz as old
+    from learning_session where id = ${candidate.sessionId}
+  `);
+  if (!eligibility.same_incarnation) return { kind: 'skipped', reason: 'reopened' };
+  if (!eligibility.old) return { kind: 'skipped', reason: 'not-old' };
+  await applyReviewSessionTransition(tx, candidate.sessionId, 'abandoned', {
+    allowedFrom: ['started', 'paused'],
+    idempotent: false,
+  });
+  return { kind: 'abandoned', fromVersion: current.version, toVersion: current.version + 1 };
 }
 
 export type ReviewSessionStatus = 'started' | 'paused' | 'completed' | 'abandoned';
