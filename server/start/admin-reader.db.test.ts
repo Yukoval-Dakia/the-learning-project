@@ -82,7 +82,7 @@ async function seed(database: Db | Tx) {
       currency: 'USD',
       entry_kind: 'attempt',
       cost_basis: 'unknown',
-      cost_ref: null,
+      cost_ref: 'unpriced:fixture',
       tokens_in: 12000,
       tokens_out: 987,
       outcome: 'failure',
