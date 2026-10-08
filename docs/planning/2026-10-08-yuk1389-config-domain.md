@@ -82,3 +82,7 @@ resetAdminConfig(input: unknown): Promise<AdminConfigWriteResult>;
 随后fetch并正常整合main7682618，仅PLAN/now冲突，保留主线Start/Stop改动和本lane源码。R1只读进行；整合验证及exact-head CI仍待。
 
 整合提交b1450ae4a后，父重新执行6文件176unit、typecheck、lint和build，全部exit0。日志/tmp/yuk1389-integrated-{unit,typecheck,lint,build}.log。55个incoming main文件与main7682618、7个本lane源码/测试与b107113da逐blob相同，证据/tmp/yuk1389-integration-blobs.json。DB48项覆盖的是b107源码；整合未改该源码，CI还须在最终head运行全门禁。R1仍进行，未宣称通过。
+
+### 交付结果
+
+PR1614于2026-10-08 13:54:47Z合入main `0b925feaaf9a7d79c2236835990122958fab5689`，父fetch实核tree `6c602bd9a286e07bdbe989a63c2da800cd73368e`与exact `e1f385f5e`完全一致。CI Gate37786605158全绿；独立R1针对b107源码，P0/P1 NONE，七源码文件在集成后字节一致。reviewThreads为零，bot已终止，按既有规则免等待；CodeRabbit跳过/Codex额度不计代码审查通过。已unwatch、Linear Done并交主线公共接口。未部署，Start消费者及整页退出仍待主线。
