@@ -476,24 +476,9 @@
         "check": "host control adapter, facts bootstrap and writer bootstrap resolve one domain export object",
         "result": "PASS",
         "aliases": [
-          [
-            [
-              "init_public9()",
-              "public_exports5"
-            ]
-          ],
-          [
-            [
-              "init_public9()",
-              "public_exports5"
-            ]
-          ],
-          [
-            [
-              "init_public9()",
-              "public_exports5"
-            ]
-          ]
+          [["init_public9()", "public_exports5"]],
+          [["init_public9()", "public_exports5"]],
+          [["init_public9()", "public_exports5"]]
         ],
         "locations": [
           {
@@ -690,7 +675,7 @@
     },
     {
       "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/bundle-identity.json",
-      "sha256": "8ba41ca5c23e4a17d758369c0d9cb0e2eaef840b63358f14e5eb36b9d5443812"
+      "sha256": "315816ffcf396e22d70df3deb87f421cb6c3469764e366c9d0c9ce74fabee5ca"
     },
     {
       "path": "docs/planning/evidence/2026-10-09-yuk1358-start-admin-controls/bundle-identity.py",

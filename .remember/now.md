@@ -1,3 +1,7 @@
+# Current parent handoff — 2026-10-09 Start controls
+
+Source608f36eb3/evidenceeeb1ddbc4 released; parent70source/evidence/log +868build hashes matched. Six DB suites94pass/1newfixturefail; test-only57e6fe670 corrects epoch gap assumption,7newcases rerun pass. Final DB lock released17:29:51.224642Z, original4/release/running unchanged. Normal merge b827f6d9a includesmain6aaf8ca89 (onlyPLAN conflict). Parent integrated406unit/typecheck/lint/fullbuild/9protocol passed; two final evidence JSON formatting errors were corrected without changing product. R1 yuk1358-start-admin-controls-review-r1-20261009-v1 and ignored offline recipe yuk1358-controls-built-acceptance-preparation-20261009-v1 (mcp49eafe5d) running; no product writer, parentowns integration. DBOS1393/0116/sharedregistrar reserved7631, unchanged. No runtime/provider/deploy. Pending builtRPC/browser/exactCI/review beforedelivery.
+
 # 当前交接 — YUK1392 agent-note board公共读取
 
 1391/PR1617已于16:32:22Z合main f80d47703ffbcb6f8db488a10dd0a705a6fee601，tree fda2bfe86b3755a9de935210f8c298e7fa7643d8与exact2fb相同，CI37808241557全绿、R1 NONE、threads0；已unwatch/1391Done，无部署。450unit/static/build/四audit与原55DB证据分层保留。

@@ -5,24 +5,9 @@
       "check": "host control adapter, facts bootstrap and writer bootstrap resolve one domain export object",
       "result": "PASS",
       "aliases": [
-        [
-          [
-            "init_public9()",
-            "public_exports5"
-          ]
-        ],
-        [
-          [
-            "init_public9()",
-            "public_exports5"
-          ]
-        ],
-        [
-          [
-            "init_public9()",
-            "public_exports5"
-          ]
-        ]
+        [["init_public9()", "public_exports5"]],
+        [["init_public9()", "public_exports5"]],
+        [["init_public9()", "public_exports5"]]
       ],
       "locations": [
         {

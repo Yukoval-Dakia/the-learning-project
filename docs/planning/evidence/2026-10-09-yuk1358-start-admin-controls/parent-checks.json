@@ -1,0 +1,52 @@
+{
+  "source": "608f36eb3a1f6c79bb13ee4d6ccef924132384cb",
+  "integration": "b827f6d9a",
+  "testRepair": "57e6fe670",
+  "checks": {
+    "unit": 0,
+    "typecheck": 0,
+    "lint_before_evidence_format": 1,
+    "lint": 0,
+    "build": 0,
+    "protocol": 0
+  },
+  "db": {
+    "originalPassed": 94,
+    "originalFailed": 1,
+    "changedFileRetestPassed": 7,
+    "distinctCases": 95
+  },
+  "logs": [
+    {
+      "path": "/tmp/yuk1358-controls-integrated/unit.log",
+      "sha256": "96efe1dccff4116283087036633a98edb670d2c8cc887b72962e8ae36328ceb8"
+    },
+    {
+      "path": "/tmp/yuk1358-controls-integrated/typecheck.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "path": "/tmp/yuk1358-controls-integrated/lint-final.log",
+      "sha256": "c1fdc0b11ebdf175dbf65fe9d6e32b77ab5b82588ca25a2be1b44cf3ecd98535"
+    },
+    {
+      "path": "/tmp/yuk1358-controls-integrated/build-final.log",
+      "sha256": "cfb0425437cb874652dbeb79a389d769c740c45d8d0c09c76242035c41e71c55"
+    },
+    {
+      "path": "/tmp/yuk1358-controls-integrated/protocol-final.log",
+      "sha256": "2322279fac16d14f41fcb1eae41d05940bbebf553dc4486be062c9e31f307b07"
+    },
+    {
+      "path": "/tmp/yuk1358-controls-parent-db/tests.log",
+      "sha256": "2f8d2611e67dda79c7f0a1157edef2dc0c9428d46c9e272e4d3f57bdbb01840d"
+    },
+    {
+      "path": "/tmp/yuk1358-controls-parent-db-r2/tests.log",
+      "sha256": "f9b83c807e7fe3dd7c0ba7f04a8eb5574b4a7e7bf4af4fde161c52c62311c996"
+    }
+  ],
+  "runtimeAcceptance": "pending",
+  "review": "pending",
+  "deployment": false
+}
