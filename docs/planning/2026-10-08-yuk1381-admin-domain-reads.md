@@ -17,7 +17,7 @@ This slice does not complete the admin pages, Start integration or YUK1358/1359.
 The four HTTP handlers consumed `listAdminRunsPage`, `getAdminRunTimeline`,
 `getAdminCost` and `getAdminFailureClusters` directly. Existing
 `server/ai-observability.db.test.ts` also consumes these raw readers; its Date
-contracts remain intact. Admin UI consumes generated HTTP operation types.
+contracts remain intact. Admin Cost UI consumes generated HTTP operation types; the other admin pages retain local response interfaces.
 No Start consumer was added. HTTP now consumes the public loaders below.
 
 The loaders accept only the caller's `Db | Tx`. They never construct a Request
@@ -178,3 +178,34 @@ Parent-owned PLAN, .remember/now.md and a new YUK1359 W5 document changed
 independently while this lane ran; they are left intact and excluded from staging. No other worktree was
 accessed. This lane performed no Linear capture, because the parent owns tracking;
 the only newly discovered contract discrepancy is recorded above with the parent's baseline-preserving adjudication.
+
+## Parent acceptance after main integration
+
+The parent verified all nine handoff SHA-256 values and eight protected baseline
+files, then normally merged main `a3691f572579289d33448be6ecd5dfaa795cb17b`
+(PR1605) as `a35c759ff0e7b4ccfaffcb9e3197c19e7a2e4f96`. Only PLAN and the
+handoff conflicted. All nine implementation artifacts remained identical after
+merge; unrelated main evidence was preserved, including whitespace in its
+archived original patch. The PR-relative diff has no whitespace errors.
+
+At this integrated candidate the parent ran the three scoped DB files above on
+Node24.19.0: **24/24 tests passed**, including all five new cases. The disposable
+Postgres migration and fork setup ran successfully. This proves the tested
+public-table content snapshots stayed identical during the read fixture, not
+that every possible database or production read is globally write-free.
+
+Runtime mutex owner7631/YUK1381 token ceacc8e5-2d63-4e99-b8c1-4d395cce38c5
+was acquired at12:06:55.762959Z and released after owner verification at
+12:07:55.392504Z. Original four container IDs/images/start times/status/health
+and current-release SHA were unchanged; all temporary containers exited. The
+release purpose remained agent-development-test, personalDailyUse=false. No
+provider, paid call, worker, replay, deployment or private-data action occurred.
+Receipts: `/tmp/yuk1381-db-before.json`, `/tmp/yuk1381-parent-db.log`,
+`/tmp/yuk1381-db-cleanup.json`.
+
+Independent product R1 is running as task
+`yuk1381-admin-domain-review-r1-20261008` (Codex gpt-6.1-sol xhigh), reviewing
+actual immutable product diff. Integrated Node24 typecheck/lint/build passed (293 existing lint warnings);
+logs are /tmp/yuk1381-integrated-{typecheck,lint,build}.log. Exact-head CI is
+still pending. Start consumer/browser acceptance is still main-owned; these
+results do not complete W5 pages, YUK1358, or YUK1359.

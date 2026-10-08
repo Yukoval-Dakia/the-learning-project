@@ -6,7 +6,7 @@
 
 - **YUK-1356 / 主线交付**：PR1605于11:58:08Z合入a3691f572，主线核tree与exact e260bdb98一致、CI37772055452绿/threads0。保留真实MiMo一次工具验收及main4a3d 139unit/110DB证据；1356仍InProgress，未部署。1358 Start Today/Inbox由主线独占PR1609及RPC/browser验收，不在此树修改。
 
-- **YUK-1381 / W5领域读取**：feat/yuk-1381-admin-domain-reads从main fadcb0c87建立；唯一子writer已交回66aa43a18并释放；父核9hash及8保护文件不变，作者Node24的74unit/static/build/audits通过。父级接验收/文档，不改Start/UI/practice/config writer；DB运行及独立review/CI尚待。coverage/conjecture仅给主线准确增量路径，未启动实施。
+- **YUK-1381 / W5领域读取**：feat/yuk-1381-admin-domain-reads从main fadcb0c87建立；唯一子writer已交回66aa43a18并释放；父核9hash及8保护文件不变，作者Node24的74unit/static/build/audits通过。父级接验收/文档，不改Start/UI/practice/config writer；父在整合main后的a35c759ff实跑3文件24DB通过，核原4服务/release不变并12:07:55Z释放锁；独立源码R1/CI尚待。coverage/conjecture仅给主线准确增量路径，未启动实施。
 
 - **YUK-1359 / W3-W4退出证据**：[W3](docs/planning/2026-10-08-yuk1359-w3-consumers.md)与[W4](docs/planning/2026-10-08-yuk1359-w4-consumers.md)已核真实消费者，补齐知识可见性/边事务、笔记presence及Copilot恢复边界。仅源码清单，Start和运行矩阵待，W5管理页仍待核查。
 
