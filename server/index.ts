@@ -5,13 +5,13 @@
 // 仍可独立运行（两者共用 startBossWorker 配方，队列层面共存无冲突）。
 
 import { serve } from '@hono/node-server';
-import { serveStatic } from '@hono/node-server/serve-static';
 import { capabilities } from '@/capabilities';
 import { initializeLaminarTracing } from '@/server/ai/laminar-tracing';
 import { resolveApiPort } from '@/server/env';
 import { warnFlipOrder } from '@/server/projections/sot-flag';
 import { buildHonoApp } from './app';
 import { loadApiEnv } from './env';
+import { createFrontdoor } from './frontdoor';
 import { installApiShutdown } from './shutdown';
 
 const env = loadApiEnv();
@@ -61,16 +61,6 @@ async function hydrateConfigBeforeServe(): Promise<void> {
   } catch (err) {
     console.warn('[rw:api] config hydration failed — serving with env/code-default floor', err);
   }
-}
-
-// M5-T5b (YUK-321) — prod 静态面：RW_STATIC_DIR 指向 vite build 产物（web/dist）。
-// dev 不设此变量（Vite dev server 承担静态 + /api proxy）。serveStatic 未命中
-// 文件时 next() 放行 /api/*；catch-all GET 回 index.html（TanStack Router
-// 客户端路由 fallback），注册在 manifest 路由之后所以不抢任何 API 端点。
-if (env.RW_STATIC_DIR) {
-  const root = env.RW_STATIC_DIR;
-  app.use('*', serveStatic({ root }));
-  app.get('*', serveStatic({ root, path: 'index.html' }));
 }
 
 async function registerToolsBeforeServe(): Promise<void> {
@@ -143,7 +133,10 @@ void (async () => {
   await injectAdminConfigWriterBeforeServe();
   const { startListenLoop, stopListenLoop } = await import('@/server/events/listen_loop');
   await startListenLoop();
-  const server = serve({ fetch: app.fetch, port }, (info) => {
+  // Start owns the Web front door whenever a built SPA is configured. Startup,
+  // DB hydration, tool recovery and shutdown keep their existing single owner.
+  const fetch = env.RW_STATIC_DIR ? await createFrontdoor(app, env.RW_STATIC_DIR) : app.fetch;
+  const server = serve({ fetch, port }, (info) => {
     const mounted = capabilities.flatMap((c) =>
       (c.api?.routes ?? []).filter((r) => r.load).map((r) => `${r.method} ${r.path}`),
     );
