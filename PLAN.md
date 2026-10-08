@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09：PR1622已于2026-10-08T19:35:25Z squash合main6212a4560c68c294245dc3f3e10e4f774c6ff6f8，tree a99b6bc67301aafa1b705f81f14aaca71c567c8a与exact0fbeb1f3f相同、diff空；CI37831807097全绿，R1 NONE/threads0，已unwatch。整合90unit/static/build/11audits与原DB/RPC/browser证据分层保留，未部署；1358/1359继续InProgress，1394/0117仍7631独占。
+> Linear 是权威 tracker。2026-10-09：PR1622已合main6212a4560；从freshmain接Start事件详情/纠错，复用1380领域入口，保留页面。1394/0117归7631。
 
 ## NOW
+
+- **YUK-1358 / Start事件详情与纠错**：分支feat/yuk-1358-start-event-detail，source-only单writer，复用readEventDetail/createEventCorrection，范围与验收见[计划](docs/planning/2026-10-09-yuk1358-start-event-detail.md)。父负责独立审查/隔离DB和真实RPC/browser；尚未实施验收。
 
 - **YUK-1358 / Start观察读取**：freshmain10df、分支feat/yuk-1358-start-agent-notes。复用1392领域入口，保留Today20/全页50与本地已读，无数据库写操作。[范围与验收](docs/planning/2026-10-09-yuk1358-start-agent-notes.md)。作者127unit/10协议/static/build/10audits通过；父14DB通过且清理/释放锁。R1 NONE；CI两处陈旧数量断言已修，59unit通过。实际26RPC/10窗口与T3浏览器20/50、错误恢复、已读/深链/旧SPA跳转通过；3浏览器窗口88表/序列无写，已释放锁。[父验收](docs/planning/2026-10-09-yuk1358-start-agent-notes-parent.md)。源码已合main6212a4560，最终CI全绿，未部署。
 
