@@ -19,7 +19,7 @@ Only conversation and placement orphan housekeeping are in this delivery. Their 
 | Changed DB fixtures together | 823d5e09 | 2 files, 34 passed | `/tmp/yuk1394-parent-db-recheck/tests.log` |
 | Parent scoped unit | 823d5e09 | 8 files, 245 passed | `/tmp/yuk1394-parent-static/unit.log` |
 | Parent static/build | 823d5e09 | typecheck, lint, full build and eight post-build audits passed | `/tmp/yuk1394-parent-static/results.json` |
-| Independent review | 823d5e09 | R1 running; no review conclusion yet | T3 task `yuk1394-session-orphans-review-r1-20261009` |
+| Independent review | 823d5e09 | R1 found two cron fixture P1s; no production P0/P1 established. R2 pending repair runtime evidence | `/tmp/yuk1394-r1-review.md` |
 | PR exact-head CI | None | Not run; PR not created | Parent-owned delivery gate |
 
 The initial immutable-evidence assertions matched the outer Drizzle error instead of its PostgreSQL cause. The repair checks exact P0001/message and unchanged receipts/ticks. The first backend case also inherited two real created queue jobs from the preceding family fixture. The repair validates the disposable fork and clears the selected test queues/schedules before and after each case. Product drain rules were not loosened. The parent reran both files together: 34/34 passed. With the initial nine unaffected files, all 167 distinct scoped cases now have passing evidence; repeated cases are not added to that count.
@@ -40,10 +40,18 @@ The first real cron run passed the conversation scenario and failed the placemen
 
 ## Existing review-orphan CI failure
 
-Start PR1623 CI37836413386 DB3 failed in the existing review-orphan process suite. Its first reported query is producer-fence trigger installation; later cases fail or time out. The Start owner retained `/tmp/yuk1358-event-ci-db3-failed.log`. Parent owns a separate read-only cause/isolation investigation. No flaky classification, blind rerun or product repair is claimed from that outer query message alone.
+Start PR1623 CI37836413386 DB3 failed in the existing review-orphan process suite. Its first reported query is producer-fence trigger installation; later cases fail or time out. The Start owner retained `/tmp/yuk1358-event-ci-db3-failed.log`. The completed read-only investigation found that failed cases could leave worker processes alive across resets; the nested PostgreSQL cause of the first concurrent-startup failure remains unknown. No flaky classification or production repair is claimed from the outer query message alone.
 
 ## Remaining delivery and migration obligations
 
-Finish cron, recheck the two repaired DB files, validate retained prune/review process and cron behavior, complete integrated build/audits, adjudicate independent findings and obtain exact-head CI before merge. Record source and runtime revisions separately.
+Finish repaired cron and retained prune/review process and cron behavior, complete integrated build/audits, perform the single R2 verification, adjudicate independent findings and obtain exact-head CI before merge. The earlier two-file DB recheck is already 34/34 passed. Record source and runtime revisions separately.
 
 The whole migration also requires the remaining task families, Start consumers, canonical startup and old SPA/pg-boss exit. Full stopped-writer restore verification must include DBOS execution state under the existing YUK-1359/YUK-1329 obligation. No whole-migration issue is closed by this slice.
+
+## Fixture repair acceptance in progress
+
+The sole author released clean HEAD `1ff5ef70bf85c5091bd7035a81f8f3529f8506a2`. Commit `3cec03813a41abbf0397d97e4e711736d3ad58f2` adds bounded nested PostgreSQL diagnostics and per-case captured process cleanup. Commit `6d5d782c318eb9b0ea2125063815051312f75f70` waits accepted legacy tasks and retains native workflow/admission/receipt history across cron scenarios. Product code did not change. The final commit only checkpoints the prior parent documentation unchanged.
+
+Parent verified five source and three document hashes plus the delivered log manifest, then independently ran the diagnostic helper's 19 tests successfully. Its official CI placement is the existing DB partition through `tests/**/*.test.ts`; the isolated offline config was used only for no-DB local verification. Author final typecheck/lint exited zero; lint reported 290 warnings. Earlier failed author typecheck logs remain in the capture directory.
+
+At 20:48:30.277989Z parent atomically acquired token `d6bc5144-e93c-466c-ad77-da14e947822c`, after the Start owner had explicitly released its event window. The first repaired selection-committed case passed in fresh disposable PG, with one SIGKILL and two concurrent recovery workers; all four children exited and no unresolved durable work was reported. It selected one case, leaving nine unselected. This does not identify the old CI's first SQL cause or establish full-suite success. Full retained-family verification then passed all four files and16 cases in577.02s. The review suite recorded35 exited children and no unresolved suite state. Parent checked the complete running set back to the original four and unchanged IDs/images/StartedAt/health/release before starting complete session cron verification in a new PG. That three-case run is pending. New-build partition/provider/schema audits also exited zero. Evidence directory: `/tmp/yuk1394-parent-fixture-recheck/`.
