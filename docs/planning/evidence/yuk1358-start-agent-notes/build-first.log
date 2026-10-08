@@ -1,0 +1,996 @@
+$ pnpm rw:web:build && pnpm build:start && pnpm build:server && pnpm build:worker && pnpm build:migrate
+$ vite build --config web/vite.config.ts
+vite v8.2.1 building client environment for production...
+[2Ktransforming...[plugin rolldown:vite-resolve] Module "node:crypto" has been externalized for browser compatibility, imported by "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/src/core/migration/canonical.ts". See https://vite.dev/guide/troubleshooting.html#module-externalized-for-browser-compatibility for more details.
+✓ 3838 modules transformed.
+rendering chunks...
+computing gzip size...
+web/dist/assets/favicon-C9LPG-gf.svg                       0.21 kB │ gzip:   0.18 kB
+web/dist/index.html                                        2.82 kB │ gzip:   0.77 kB
+web/dist/assets/NoteReaderPage-sm-3Jh8v.css                4.10 kB │ gzip:   1.00 kB
+web/dist/assets/ScreenProfile-DKj7vizT.css                 8.32 kB │ gzip:   1.85 kB
+web/dist/assets/AttachmentStrip-2S3DYvzI.css              11.00 kB │ gzip:   2.15 kB
+web/dist/assets/KnowledgeDetailPage-JoSDxgag.css          12.11 kB │ gzip:   2.45 kB
+web/dist/assets/onboarding-BUHhbkC2.css                   17.35 kB │ gzip:   3.24 kB
+web/dist/assets/DraftReviewPage-LkZKXc7k.css              19.22 kB │ gzip:   3.63 kB
+web/dist/assets/questions-D_jvbV0r.css                    22.90 kB │ gzip:   4.26 kB
+web/dist/assets/PracticeFacePage-BXAcy5TA.css             30.86 kB │ gzip:   5.17 kB
+web/dist/assets/index-CaK2AAhq.css                       279.94 kB │ gzip:  42.61 kB
+web/dist/assets/limits-BV5fMxFA.js                         0.03 kB │ gzip:   0.05 kB
+web/dist/assets/makeLookup-CQ4qbBBe.js                     0.04 kB │ gzip:   0.06 kB
+web/dist/assets/knowledge-node-kind-Bcv_p8CD.js            0.10 kB │ gzip:   0.10 kB
+web/dist/assets/calibration-maturity-api-1xuAaLCo.js       0.14 kB │ gzip:   0.14 kB
+web/dist/assets/SectionLabel-Iw4K2F7k.js                   0.30 kB │ gzip:   0.20 kB
+web/dist/assets/Stateful-4KupaEY-.js                       0.33 kB │ gzip:   0.24 kB
+web/dist/assets/relation-cue-NTlnANg0.js                   0.39 kB │ gzip:   0.27 kB
+web/dist/assets/LoomCard-BFAVwMh2.js                       0.40 kB │ gzip:   0.29 kB
+web/dist/assets/LoomBadge-Xq8dYxUh.js                      0.41 kB │ gzip:   0.29 kB
+web/dist/assets/IconBtn-DTIHehU6.js                        0.43 kB │ gzip:   0.31 kB
+web/dist/assets/EmptyState-BWI4N8U7.js                     0.48 kB │ gzip:   0.27 kB
+web/dist/assets/SkLines-DplxFjmV.js                        0.53 kB │ gzip:   0.30 kB
+web/dist/assets/ErrorState-_JtoagXg.js                     0.54 kB │ gzip:   0.35 kB
+web/dist/assets/Card-1CgLBZOR.js                           0.57 kB │ gzip:   0.39 kB
+web/dist/assets/Btn-DwPUk69u.js                            0.57 kB │ gzip:   0.38 kB
+web/dist/assets/SubjectFilterTabs-CSVsuPrK.js              0.59 kB │ gzip:   0.35 kB
+web/dist/assets/BrandMark-vEGTWByA.js                      0.65 kB │ gzip:   0.36 kB
+web/dist/assets/micromark-factory-space-gjIKSJg0.js        0.66 kB │ gzip:   0.37 kB
+web/dist/assets/rolldown-runtime-hePW80VL.js               0.71 kB │ gzip:   0.42 kB
+web/dist/assets/utils-GtvbzWLn.js                          0.74 kB │ gzip:   0.38 kB
+web/dist/assets/ObSteps-BSDlBH8r.js                        0.76 kB │ gzip:   0.47 kB
+web/dist/assets/useSubjects-S4RwNKHG.js                    0.80 kB │ gzip:   0.47 kB
+web/dist/assets/useFocusTrap-CzPTLxHq.js                   1.06 kB │ gzip:   0.59 kB
+web/dist/assets/Badge-PvazB99M.js                          1.10 kB │ gzip:   0.54 kB
+web/dist/assets/preload-helper-Czpn1I53.js                 1.19 kB │ gzip:   0.67 kB
+web/dist/assets/use-copilot-dwell-Be8TEDkz.js              1.30 kB │ gzip:   0.63 kB
+web/dist/assets/assets-BgyWPzNV.js                         1.66 kB │ gzip:   0.68 kB
+web/dist/assets/notes-api-D_1yY2n2.js                      1.69 kB │ gzip:   0.81 kB
+web/dist/assets/api-D-SPNEt4.js                            1.75 kB │ gzip:   0.91 kB
+web/dist/assets/ui-public-Bn0YEDcK.js                      2.14 kB │ gzip:   0.95 kB
+web/dist/assets/ui-public-BIIIYz6J.js                      2.21 kB │ gzip:   0.99 kB
+web/dist/assets/subject-ClE7EIR3.js                        2.21 kB │ gzip:   0.97 kB
+web/dist/assets/InteractiveArtifactRenderer-CxK0jA0p.js    2.29 kB │ gzip:   1.09 kB
+web/dist/assets/ui-public-t61HXmCk.js                      2.79 kB │ gzip:   1.14 kB
+web/dist/assets/NotesPage-BFnVvJnp.js                      3.16 kB │ gzip:   1.57 kB
+web/dist/assets/sse-C7kROzGO.js                            3.28 kB │ gzip:   1.68 kB
+web/dist/assets/AttachmentStrip-D-TgbLDc.js                3.31 kB │ gzip:   1.46 kB
+web/dist/assets/react-dom-CIbEZVyW.js                      3.91 kB │ gzip:   1.42 kB
+web/dist/assets/response-types-DM-ERjNI.js                 4.13 kB │ gzip:   1.79 kB
+web/dist/assets/useMutation-DOj_5zLe.js                    5.76 kB │ gzip:   1.85 kB
+web/dist/assets/remark-math-Cm8OReVF.js                    5.92 kB │ gzip:   2.22 kB
+web/dist/assets/LoomIcon-B0Tp9m9c.js                       6.71 kB │ gzip:   2.43 kB
+web/dist/assets/ScreenProfile-F260bfdH.js                  7.44 kB │ gzip:   3.24 kB
+web/dist/assets/OnboardRecord-BqmAKd1c.js                  7.49 kB │ gzip:   3.07 kB
+web/dist/assets/jsx-runtime-BNakU3Ej.js                    8.24 kB │ gzip:   3.11 kB
+web/dist/assets/math-markdown-DbfzhMpG.js                  8.73 kB │ gzip:   3.18 kB
+web/dist/assets/EventDetailPage-dInEFbpS.js                9.45 kB │ gzip:   3.69 kB
+web/dist/assets/WelcomePage-CeMPQoim.js                    9.46 kB │ gzip:   3.58 kB
+web/dist/assets/RecomputeComponents-C6i9Br7N.js           11.05 kB │ gzip:   3.78 kB
+web/dist/assets/ScreenPlacement-CnUX3jkV.js               13.29 kB │ gzip:   5.24 kB
+web/dist/assets/useResponseDraftAutosave-DeeslxC7.js      14.54 kB │ gzip:   5.57 kB
+web/dist/assets/QuestionsPage-FtQMqOhq.js                 14.99 kB │ gzip:   5.30 kB
+web/dist/assets/Button-C8oS-0YH.js                        15.43 kB │ gzip:   5.89 kB
+web/dist/assets/KnowledgePage-Bbf7sJMC.js                 16.92 kB │ gzip:   5.55 kB
+web/dist/assets/lib-CbEB-_e1.js                           19.89 kB │ gzip:   6.87 kB
+web/dist/assets/DraftReviewPage-Da_CkBls.js               20.73 kB │ gzip:   6.86 kB
+web/dist/assets/KnowledgeDetailPage-BeOHQcTL.js           22.40 kB │ gzip:   7.65 kB
+web/dist/assets/useQuery-il1f0CQg.js                      22.88 kB │ gzip:   7.61 kB
+web/dist/assets/QuestionDetailPage-CGgFUMCp.js            23.30 kB │ gzip:   7.11 kB
+web/dist/assets/CoachHub-a4WwSRrr.js                      34.50 kB │ gzip:  10.65 kB
+web/dist/assets/profile-DK0HVhvO.js                       35.60 kB │ gzip:  10.67 kB
+web/dist/assets/RecordPage-CWv20sEW.js                    47.94 kB │ gzip:  14.12 kB
+web/dist/assets/PracticeFacePage-Cl45ktSx.js              74.66 kB │ gzip:  23.46 kB
+web/dist/assets/markdown-renderer-CI0C6l1y.js             95.72 kB │ gzip:  28.52 kB
+web/dist/assets/judge-routing-BFhOdrfU.js                159.76 kB │ gzip:  46.52 kB
+web/dist/assets/accelerator-FCcl3QDH.js                  219.02 kB │ gzip:  64.51 kB
+web/dist/assets/rehype-katex-DGrPtBPx.js                 267.80 kB │ gzip:  80.86 kB
+web/dist/assets/NoteReaderPage-jsWrXj17.js               418.21 kB │ gzip: 132.47 kB
+web/dist/assets/MeshGraph-C2voJM-m.js                    566.75 kB │ gzip: 174.30 kB
+web/dist/assets/index-CudaQTQh.js                        883.12 kB │ gzip: 233.24 kB
+
+✓ built in 929ms
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+$ vite build --config server/start/vite.config.ts
+vite v8.2.1 building client environment for production...
+[2Ktransforming...[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-function.ts:11:34 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-function.ts:16:39 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-function.ts:21:34 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-function.ts:26:38 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/mistakes-function.ts:6:33 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:12:38 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:19:38 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:29:43 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:36:36 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:43:42 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:50:40 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:57:40 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:64:41 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:71:39 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:78:42 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:85:43 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:92:43 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:99:45 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:106:42 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:113:40 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:120:43 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/agent-note-function.ts:7:39 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/workbench-function.ts:41:38 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/workbench-function.ts:48:36 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:client] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/workbench-function.ts:55:42 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin rolldown:vite-resolve] Module "node:crypto" has been externalized for browser compatibility, imported by "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/src/core/migration/canonical.ts". See https://vite.dev/guide/troubleshooting.html#module-externalized-for-browser-compatibility for more details.
+✓ 3926 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/start/client/assets/BrandMark-BE52Hg7k.css                    1.72 kB │ gzip:   0.57 kB
+dist/start/client/assets/AttachmentStrip-2S3DYvzI.css             11.00 kB │ gzip:   2.15 kB
+dist/start/client/assets/KnowledgeDetailPage-JoSDxgag.css         12.11 kB │ gzip:   2.45 kB
+dist/start/client/assets/TodayPage-BUHhbkC2.css                   17.35 kB │ gzip:   3.24 kB
+dist/start/client/assets/shell-Dir504i5.css                       20.84 kB │ gzip:   3.67 kB
+dist/start/client/assets/workbench-shell-CLY5Kq7m.css            292.84 kB │ gzip:  45.12 kB
+dist/start/client/assets/routes-BUWoHriM.js                        0.07 kB │ gzip:   0.09 kB
+dist/start/client/assets/knowledge-node-kind-Bcv_p8CD.js           0.10 kB │ gzip:   0.10 kB
+dist/start/client/assets/useRouterState-Dp3rwKBS.js                0.17 kB │ gzip:   0.15 kB
+dist/start/client/assets/Stateful-ZP19CvnN.js                      0.30 kB │ gzip:   0.23 kB
+dist/start/client/assets/SectionLabel-Iw4K2F7k.js                  0.30 kB │ gzip:   0.20 kB
+dist/start/client/assets/ClientOnly-Pazrm_KN.js                    0.35 kB │ gzip:   0.26 kB
+dist/start/client/assets/inbox-Byjn1HG6.js                         0.36 kB │ gzip:   0.26 kB
+dist/start/client/assets/today-dTCvuOEY.js                         0.36 kB │ gzip:   0.26 kB
+dist/start/client/assets/http-contracts-DRqfFYXu.js                0.37 kB │ gzip:   0.24 kB
+dist/start/client/assets/relation-cue-NTlnANg0.js                  0.39 kB │ gzip:   0.27 kB
+dist/start/client/assets/agent-notes-Cr7gyojy.js                   0.40 kB │ gzip:   0.28 kB
+dist/start/client/assets/LoomCard-BFAVwMh2.js                      0.40 kB │ gzip:   0.29 kB
+dist/start/client/assets/admin.failures-CHlIikMy.js                0.45 kB │ gzip:   0.31 kB
+dist/start/client/assets/admin.cost-DC9RDuSX.js                    0.46 kB │ gzip:   0.30 kB
+dist/start/client/assets/admin.runs-B5CyBvOq.js                    0.46 kB │ gzip:   0.30 kB
+dist/start/client/assets/admin.coverage-lattice-fE3nWc1o.js        0.47 kB │ gzip:   0.31 kB
+dist/start/client/assets/admin.conjecture-scores-CnIdDgeB.js       0.47 kB │ gzip:   0.31 kB
+dist/start/client/assets/EmptyState-iS65GJK6.js                    0.48 kB │ gzip:   0.27 kB
+dist/start/client/assets/admin-client-DCZjczLH.js                  0.50 kB │ gzip:   0.31 kB
+dist/start/client/assets/PageHeader-4PS6k75x.js                    0.50 kB │ gzip:   0.27 kB
+dist/start/client/assets/admin.subjects._id-CUKr0aUv.js            0.56 kB │ gzip:   0.36 kB
+dist/start/client/assets/Card-1CgLBZOR.js                          0.57 kB │ gzip:   0.39 kB
+dist/start/client/assets/admin.subjects-CermfczA.js                0.65 kB │ gzip:   0.40 kB
+dist/start/client/assets/micromark-factory-space-gjIKSJg0.js       0.66 kB │ gzip:   0.37 kB
+dist/start/client/assets/rolldown-runtime-hePW80VL.js              0.71 kB │ gzip:   0.42 kB
+dist/start/client/assets/conjecture-probe-response-BvcuT3YX.js     0.85 kB │ gzip:   0.41 kB
+dist/start/client/assets/admin.config-DVgJtZ1V.js                  0.88 kB │ gzip:   0.52 kB
+dist/start/client/assets/shell-BV9jneJc.js                         0.93 kB │ gzip:   0.68 kB
+dist/start/client/assets/SkLines-BFxrUaSD.js                       0.98 kB │ gzip:   0.51 kB
+dist/start/client/assets/deferred-markdown-renderer--AJM7GlE.js    1.07 kB │ gzip:   0.57 kB
+dist/start/client/assets/Badge-PvazB99M.js                         1.10 kB │ gzip:   0.54 kB
+dist/start/client/assets/use-copilot-dwell-Be8TEDkz.js             1.30 kB │ gzip:   0.63 kB
+dist/start/client/assets/useSubjects-BnuDX5Eo.js                   1.31 kB │ gzip:   0.70 kB
+dist/start/client/assets/useFocusTrap-Bz5Bthei.js                  1.37 kB │ gzip:   0.76 kB
+dist/start/client/assets/trait-schemas-CCeqNzV9.js                 1.49 kB │ gzip:   0.65 kB
+dist/start/client/assets/ui-public-BEgK1XzR.js                     1.61 kB │ gzip:   0.62 kB
+dist/start/client/assets/cost-presentation-CcGKPk-r.js             1.76 kB │ gzip:   0.75 kB
+dist/start/client/assets/ui-public-SNwJ_MDk.js                     2.18 kB │ gzip:   0.83 kB
+dist/start/client/assets/observability-shared-C7jFwTKl.js          2.22 kB │ gzip:   0.99 kB
+dist/start/client/assets/profile-schema-Y07QaE0A.js                2.32 kB │ gzip:   1.05 kB
+dist/start/client/assets/admin-failures-hR6W9put.js                2.53 kB │ gzip:   1.23 kB
+dist/start/client/assets/subjects-BRM5olp6.js                      3.20 kB │ gzip:   1.44 kB
+dist/start/client/assets/page-CiYCJqFQ.js                          3.95 kB │ gzip:   1.94 kB
+dist/start/client/assets/admin-cost-rqpmFmIp.js                    3.97 kB │ gzip:   1.71 kB
+dist/start/client/assets/admin-control-client-DIIW6b_W.js          4.45 kB │ gzip:   1.59 kB
+dist/start/client/assets/AttachmentStrip-Ci3GpgQ1.js               4.72 kB │ gzip:   1.95 kB
+dist/start/client/assets/useMatch-Cm2ymwQU.js                      5.70 kB │ gzip:   2.48 kB
+dist/start/client/assets/useMutation-BDlQvi_k.js                   5.76 kB │ gzip:   1.85 kB
+dist/start/client/assets/remark-math-Cm8OReVF.js                   5.92 kB │ gzip:   2.22 kB
+dist/start/client/assets/admin-control-client-8SsdAsJk.js          6.57 kB │ gzip:   2.61 kB
+dist/start/client/assets/Btn-c3QmJjm3.js                           7.18 kB │ gzip:   2.69 kB
+dist/start/client/assets/coverage-lattice-Bkv_PBgr.js              7.98 kB │ gzip:   3.18 kB
+dist/start/client/assets/conjecture-scores-qx8gRVbe.js             8.11 kB │ gzip:   3.08 kB
+dist/start/client/assets/admin-runs-KrUdGnmq.js                    8.16 kB │ gzip:   3.30 kB
+dist/start/client/assets/jsx-runtime-BNakU3Ej.js                   8.24 kB │ gzip:   3.11 kB
+dist/start/client/assets/admin-client-vrw_47_3.js                  9.28 kB │ gzip:   3.03 kB
+dist/start/client/assets/agent-note-client-C_euMI8H.js             9.94 kB │ gzip:   3.92 kB
+dist/start/client/assets/Button-8xxNjiYd.js                       15.43 kB │ gzip:   5.89 kB
+dist/start/client/assets/subject-traits-DAOrtawC.js               15.69 kB │ gzip:   4.81 kB
+dist/start/client/assets/KnowledgePage-Dhm18Eng.js                16.92 kB │ gzip:   5.57 kB
+dist/start/client/assets/lib-CbEB-_e1.js                          19.89 kB │ gzip:   6.87 kB
+dist/start/client/assets/config-BNpcr3Y5.js                       19.91 kB │ gzip:   6.64 kB
+dist/start/client/assets/KnowledgeDetailPage-DObWwPZk.js          22.35 kB │ gzip:   7.63 kB
+dist/start/client/assets/useQuery-wXl7SJ37.js                     24.67 kB │ gzip:   8.45 kB
+dist/start/client/assets/InboxPage-D13Hqkby.js                    27.39 kB │ gzip:   9.53 kB
+dist/start/client/assets/mistakes-BURgzXdP.js                     28.42 kB │ gzip:   9.24 kB
+dist/start/client/assets/workbench-client-CAv4bN5w.js             29.54 kB │ gzip:   8.33 kB
+dist/start/client/assets/createClientRpc-BUTzDx8K.js              33.66 kB │ gzip:  10.72 kB
+dist/start/client/assets/subject-ik1D-6Dt.js                      39.68 kB │ gzip:  12.20 kB
+dist/start/client/assets/TodayPage-kBrBjQo5.js                    49.35 kB │ gzip:  15.46 kB
+dist/start/client/assets/markdown-renderer-CI0C6l1y.js            95.72 kB │ gzip:  28.52 kB
+dist/start/client/assets/workbench-shell-kAKUPCCl.js             107.92 kB │ gzip:  34.89 kB
+dist/start/client/assets/business-ue8kDu-E.js                    154.60 kB │ gzip:  44.58 kB
+dist/start/client/assets/accelerator-FCcl3QDH.js                 219.02 kB │ gzip:  64.51 kB
+dist/start/client/assets/rehype-katex-DGrPtBPx.js                267.80 kB │ gzip:  80.86 kB
+dist/start/client/assets/index-Yp0rHQji.js                       298.34 kB │ gzip:  95.64 kB
+dist/start/client/assets/BrandMark-DWt_8dim.js                   454.05 kB │ gzip: 101.28 kB
+dist/start/client/assets/MeshGraph-CyItfRQS.js                   566.71 kB │ gzip: 174.28 kB
+
+✓ built in 1.23s
+[plugin builtin:vite-reporter] 
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rolldownOptions.output.codeSplitting to improve chunking: https://rolldown.rs/reference/OutputOptions.codeSplitting
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+vite v8.2.1 building ssr environment for production...
+[2Ktransforming...[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/agent-note-function.ts?tss-serverfn-split:7:39 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-function.ts?tss-serverfn-split:11:34 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-function.ts?tss-serverfn-split:16:39 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-function.ts?tss-serverfn-split:21:34 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-function.ts?tss-serverfn-split:26:38 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/workbench-function.ts?tss-serverfn-split:41:38 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/workbench-function.ts?tss-serverfn-split:48:36 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/workbench-function.ts?tss-serverfn-split:55:42 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts?tss-serverfn-split:12:38 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts?tss-serverfn-split:19:38 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts?tss-serverfn-split:29:43 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts?tss-serverfn-split:36:36 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts?tss-serverfn-split:43:42 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts?tss-serverfn-split:50:40 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts?tss-serverfn-split:57:40 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts?tss-serverfn-split:64:41 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts?tss-serverfn-split:71:39 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts?tss-serverfn-split:78:42 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts?tss-serverfn-split:85:43 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts?tss-serverfn-split:92:43 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts?tss-serverfn-split:99:45 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts?tss-serverfn-split:106:42 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts?tss-serverfn-split:113:40 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts?tss-serverfn-split:120:43 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/mistakes-function.ts?tss-serverfn-split:6:33 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/mistakes-function.ts:6:33 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-function.ts:11:34 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-function.ts:16:39 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-function.ts:21:34 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-function.ts:26:38 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:12:38 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:19:38 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:29:43 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:36:36 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:43:42 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:50:40 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:57:40 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:64:41 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:71:39 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:78:42 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:85:43 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:92:43 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:99:45 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:106:42 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:113:40 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/admin-control-function.ts:120:43 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/workbench-function.ts:41:38 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/workbench-function.ts:48:36 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/workbench-function.ts:55:42 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+[plugin tanstack-start-core::server-fn:ssr] /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/server/start/agent-note-function.ts:7:39 createServerFn().inputValidator() is deprecated. Use createServerFn().validator() instead.
+✓ 11485 modules transformed.
+rendering chunks...
+computing gzip size...
+dist/start/server/assets/judge-Bk5Zmg-U.js                                      0.04 kB │ gzip:     0.06 kB
+dist/start/server/assets/client-BW9SfvVu.js                                     0.06 kB │ gzip:     0.07 kB
+dist/start/server/assets/esm-bFsIif4E.js                                        0.06 kB │ gzip:     0.07 kB
+dist/start/server/assets/papers-list-D75uRcLK.js                                0.07 kB │ gzip:     0.08 kB
+dist/start/server/assets/solve-hint-DcnRM5EP.js                                 0.07 kB │ gzip:     0.08 kB
+dist/start/server/assets/session-end-DJxNm06z.js                                0.07 kB │ gzip:     0.08 kB
+dist/start/server/assets/solve-start-iLdl0zWf.js                                0.07 kB │ gzip:     0.08 kB
+dist/start/server/assets/runner-DFupnUUn.js                                     0.07 kB │ gzip:     0.08 kB
+dist/start/server/assets/solve-submit-ofKMj1p3.js                               0.07 kB │ gzip:     0.08 kB
+dist/start/server/assets/backup-import-BTTxMxwp.js                              0.07 kB │ gzip:     0.08 kB
+dist/start/server/assets/dist-es-BPRyU_wr.js                                    0.07 kB │ gzip:     0.07 kB
+dist/start/server/assets/placement-D55mk-3R.js                                  0.07 kB │ gzip:     0.08 kB
+dist/start/server/assets/review-sessions-mmUZ8LEF.js                            0.07 kB │ gzip:     0.08 kB
+dist/start/server/assets/paper-detail-route-BCnyiaTd.js                         0.07 kB │ gzip:     0.08 kB
+dist/start/server/assets/node--gBHb0k5.js                                       0.07 kB │ gzip:     0.08 kB
+dist/start/server/assets/node-9ok1Xpt_.js                                       0.07 kB │ gzip:     0.08 kB
+dist/start/server/assets/paper-submit-route-DOMnpkv0.js                         0.07 kB │ gzip:     0.09 kB
+dist/start/server/assets/dist-Du6pDzTn.js                                       0.09 kB │ gzip:     0.08 kB
+dist/start/server/assets/paper-answer-route-D1GdsVTT.js                         0.09 kB │ gzip:     0.10 kB
+dist/start/server/assets/dist-DapKMkpt.js                                       0.09 kB │ gzip:     0.09 kB
+dist/start/server/assets/markdown-renderer-Do2FCKTH.js                          0.10 kB │ gzip:     0.09 kB
+dist/start/server/assets/r2-4ReUyOGg.js                                         0.10 kB │ gzip:     0.09 kB
+dist/start/server/assets/memory-brief-DIjmrRAa.js                               0.10 kB │ gzip:     0.09 kB
+dist/start/server/assets/coach_daily-VTley1LC.js                                0.10 kB │ gzip:     0.09 kB
+dist/start/server/assets/schema-CMz4blkE.js                                     0.10 kB │ gzip:     0.10 kB
+dist/start/server/assets/unit_dimension-CNsviTsN.js                             0.10 kB │ gzip:     0.09 kB
+dist/start/server/assets/auto-applied-read-CtjGKgzL.js                          0.11 kB │ gzip:     0.10 kB
+dist/start/server/assets/hub-sync-wake-4wmLp0PQ.js                              0.11 kB │ gzip:     0.10 kB
+dist/start/server/assets/invoker-BZKgywpZ.js                                    0.11 kB │ gzip:     0.09 kB
+dist/start/server/assets/jyeoo-fetch-candidates-B5OVB_HZ.js                     0.11 kB │ gzip:     0.10 kB
+dist/start/server/assets/source_verify-DTU-Bclw.js                              0.11 kB │ gzip:     0.10 kB
+dist/start/server/assets/store-sourced-question-DShn0BjQ.js                     0.11 kB │ gzip:     0.10 kB
+dist/start/server/assets/decision-resource-keTOa5Mp.js                          0.11 kB │ gzip:     0.10 kB
+dist/start/server/assets/fewshot-retrieve-C2rrXtNW.js                           0.11 kB │ gzip:     0.10 kB
+dist/start/server/assets/overnight-digest-DDFhF1ab.js                           0.11 kB │ gzip:     0.09 kB
+dist/start/server/assets/present-primary-view-Did_MKRV.js                       0.11 kB │ gzip:     0.10 kB
+dist/start/server/assets/web-fetch-candidates-D9kwh2lH.js                       0.11 kB │ gzip:     0.10 kB
+dist/start/server/assets/paper-issuance-MM_QLDw4.js                             0.11 kB │ gzip:     0.10 kB
+dist/start/server/assets/KnowledgeDetailPage-CWHOPe2h.js                        0.12 kB │ gzip:     0.10 kB
+dist/start/server/assets/multimodal-direct-judge-DF5nDq4p.js                    0.12 kB │ gzip:     0.10 kB
+dist/start/server/assets/due-list-Cx9R3OgP.js                                   0.12 kB │ gzip:     0.10 kB
+dist/start/server/assets/steps-judge-CXwlt6w5.js                                0.13 kB │ gzip:     0.11 kB
+dist/start/server/assets/learner-knowledge-visibility-CPlVmh91.js               0.13 kB │ gzip:     0.11 kB
+dist/start/server/assets/ids-EICnRpf9.js                                        0.13 kB │ gzip:     0.13 kB
+dist/start/server/assets/generate-question-candidate-bnBsxukT.js                0.13 kB │ gzip:     0.10 kB
+dist/start/server/assets/knowledge_edge_propose_nightly-Bs-SDpHW.js             0.13 kB │ gzip:     0.11 kB
+dist/start/server/assets/quiz_verify-B5fEIPAl.js                                0.14 kB │ gzip:     0.12 kB
+dist/start/server/assets/proposals-yUQdiuQQ.js                                  0.14 kB │ gzip:     0.12 kB
+dist/start/server/assets/question-context-C4lHGnmN.js                           0.14 kB │ gzip:     0.11 kB
+dist/start/server/assets/skill-namespace-Bqu62vsY.js                            0.15 kB │ gzip:     0.13 kB
+dist/start/server/assets/probe-result-subscription-BjVPFutS.js                  0.15 kB │ gzip:     0.12 kB
+dist/start/server/assets/probe-lifecycle-CrmB_PIO.js                            0.16 kB │ gzip:     0.13 kB
+dist/start/server/assets/start--zu1VhZO.js                                      0.17 kB │ gzip:     0.12 kB
+dist/start/server/assets/default-Cr87Ng7w.js                                    0.17 kB │ gzip:     0.14 kB
+dist/start/server/assets/event-streams-DlfblRRE.js                              0.18 kB │ gzip:     0.12 kB
+dist/start/server/assets/review-operation-BfgaBazz.js                           0.19 kB │ gzip:     0.14 kB
+dist/start/server/assets/due-PQbFPHM2.js                                        0.19 kB │ gzip:     0.17 kB
+dist/start/server/assets/read-2qg4C4bA.js                                       0.21 kB │ gzip:     0.15 kB
+dist/start/server/assets/public-BjE5tMiX.js                                     0.22 kB │ gzip:     0.17 kB
+dist/start/server/assets/openai-prompt-cache-Bc6qNWt0.js                        0.24 kB │ gzip:     0.18 kB
+dist/start/server/assets/knowledge-node-kind-yGfd6UrD.js                        0.24 kB │ gzip:     0.18 kB
+dist/start/server/assets/empty-plugin-adapters-D_0twvAa.js                      0.28 kB │ gzip:     0.18 kB
+dist/start/server/assets/public-Djp3h6m4.js                                     0.28 kB │ gzip:     0.19 kB
+dist/start/server/assets/capability-contract-schemas-CHr7xwby.js                0.30 kB │ gzip:     0.20 kB
+dist/start/server/assets/limits-CIpy1qar.js                                     0.30 kB │ gzip:     0.19 kB
+dist/start/server/assets/client-yKy8YEJ1.js                                     0.32 kB │ gzip:     0.18 kB
+dist/start/server/assets/coach_weekly-DSN9GbLq.js                               0.34 kB │ gzip:     0.24 kB
+dist/start/server/assets/setCredentialFeature-DcEf6j6B.js                       0.35 kB │ gzip:     0.21 kB
+dist/start/server/assets/paper-intent-sources-D4eeR-rm.js                       0.35 kB │ gzip:     0.25 kB
+dist/start/server/assets/workbench-read-CUtmkvOV.js                             0.36 kB │ gzip:     0.23 kB
+dist/start/server/assets/dist-DOT_arqm.js                                       0.38 kB │ gzip:     0.23 kB
+dist/start/server/assets/cost-today-C61Vme9l.js                                 0.38 kB │ gzip:     0.26 kB
+dist/start/server/assets/legacy-paper-detail-DLaI_Cmw.js                        0.39 kB │ gzip:     0.27 kB
+dist/start/server/assets/prep-desk-brief-DwJqstku.js                            0.39 kB │ gzip:     0.26 kB
+dist/start/server/assets/workbench-summary-BZ3vCcnL.js                          0.39 kB │ gzip:     0.26 kB
+dist/start/server/assets/alias-BxrYCcse.js                                      0.40 kB │ gzip:     0.29 kB
+dist/start/server/assets/copilot-summary-Dfv_QTgL.js                            0.40 kB │ gzip:     0.25 kB
+dist/start/server/assets/prep-desk-conjectures-Bx-r4K6I.js                      0.40 kB │ gzip:     0.26 kB
+dist/start/server/assets/queue-runtime-DKFrFAdM.js                              0.40 kB │ gzip:     0.25 kB
+dist/start/server/assets/proposals-auto-applied-BXHeLC_N.js                     0.41 kB │ gzip:     0.27 kB
+dist/start/server/assets/overnight-digest-BRoA6Rq1.js                           0.41 kB │ gzip:     0.26 kB
+dist/start/server/assets/admin-hub-sync-DKt9WWhd.js                             0.42 kB │ gzip:     0.28 kB
+dist/start/server/assets/coverage-lattice-CPj44YsT.js                           0.42 kB │ gzip:     0.28 kB
+dist/start/server/assets/admin-config-DYMI7KX-.js                               0.42 kB │ gzip:     0.27 kB
+dist/start/server/assets/conjecture-scores-B2O5URjd.js                          0.42 kB │ gzip:     0.28 kB
+dist/start/server/assets/public-CTxPv3z-.js                                     0.42 kB │ gzip:     0.25 kB
+dist/start/server/assets/legacy-practice-BBxPbOB3.js                            0.42 kB │ gzip:     0.26 kB
+dist/start/server/assets/boss-port-C4mrUg60.js                                  0.44 kB │ gzip:     0.24 kB
+dist/start/server/assets/learner-knowledge-visibility-CMbVeYbA.js               0.45 kB │ gzip:     0.27 kB
+dist/start/server/assets/axis_state_nightly-Db2O6e_W.js                         0.45 kB │ gzip:     0.28 kB
+dist/start/server/assets/createServerRpc-clVF8hjL.js                            0.45 kB │ gzip:     0.29 kB
+dist/start/server/assets/learner-day-Bh8Ldyox.js                                0.46 kB │ gzip:     0.33 kB
+dist/start/server/assets/public-yxVUj-6N.js                                     0.47 kB │ gzip:     0.26 kB
+dist/start/server/assets/notes-Bx_sT2ry.js                                      0.52 kB │ gzip:     0.34 kB
+dist/start/server/assets/aggregate-_PEPZ3KK.js                                  0.53 kB │ gzip:     0.35 kB
+dist/start/server/assets/queue-names-DYGBe73O.js                                0.54 kB │ gzip:     0.35 kB
+dist/start/server/assets/legacy-review-sessions-CQjQU5AA.js                     0.54 kB │ gzip:     0.31 kB
+dist/start/server/assets/assessment-probe-criterion-CWuWr1Dj.js                 0.54 kB │ gzip:     0.43 kB
+dist/start/server/assets/ai-changes-recent-CZDQO5TA.js                          0.55 kB │ gzip:     0.36 kB
+dist/start/server/assets/public-Iyk-5E8G.js                                     0.56 kB │ gzip:     0.31 kB
+dist/start/server/assets/admin-cost-DGO7-JuM.js                                 0.56 kB │ gzip:     0.34 kB
+dist/start/server/assets/admin-failures-av0zT325.js                             0.56 kB │ gzip:     0.34 kB
+dist/start/server/assets/goal-contracts-CIbh3kkj.js                             0.56 kB │ gzip:     0.32 kB
+dist/start/server/assets/chain-DGmVuBI1.js                                      0.57 kB │ gzip:     0.34 kB
+dist/start/server/assets/asset-delete-CKMoskh4.js                               0.60 kB │ gzip:     0.37 kB
+dist/start/server/assets/session-pause-0shZIkfB.js                              0.60 kB │ gzip:     0.36 kB
+dist/start/server/assets/resolution-cache-C_X0gj2p.js                           0.61 kB │ gzip:     0.31 kB
+dist/start/server/assets/session-resume-Crg5GhUq.js                             0.61 kB │ gzip:     0.36 kB
+dist/start/server/assets/advisory-locks-DY_arW2u.js                             0.62 kB │ gzip:     0.41 kB
+dist/start/server/assets/externalDataInterceptor-Dh6I6SCq.js                    0.62 kB │ gzip:     0.34 kB
+dist/start/server/assets/routes-BFSbqf8D.js                                     0.63 kB │ gzip:     0.40 kB
+dist/start/server/assets/ai-changes-2xREUj4E.js                                 0.64 kB │ gzip:     0.39 kB
+dist/start/server/assets/Stateful-Bvx92OSf.js                                   0.65 kB │ gzip:     0.35 kB
+dist/start/server/assets/proposals-list-BoAilpkf.js                             0.65 kB │ gzip:     0.37 kB
+dist/start/server/assets/event-detail-Dtwasitx.js                               0.65 kB │ gzip:     0.39 kB
+dist/start/server/assets/review-draft-detail-wfBv-3fZ.js                        0.66 kB │ gzip:     0.39 kB
+dist/start/server/assets/vision-ConYdfha.js                                     0.66 kB │ gzip:     0.40 kB
+dist/start/server/assets/SectionLabel-BAiAx-dk.js                               0.67 kB │ gzip:     0.32 kB
+dist/start/server/assets/proposals-list-CHCjR-dW.js                             0.68 kB │ gzip:     0.38 kB
+dist/start/server/assets/admin-run-detail-BtVIifpW.js                           0.68 kB │ gzip:     0.40 kB
+dist/start/server/assets/node-7bLK5wd9.js                                       0.69 kB │ gzip:     0.37 kB
+dist/start/server/assets/node-DLexHBHt.js                                       0.69 kB │ gzip:     0.37 kB
+dist/start/server/assets/admin-runs-gjhmqkF9.js                                 0.71 kB │ gzip:     0.38 kB
+dist/start/server/assets/supply-dispatch-web-search-BusffOJH.js                 0.72 kB │ gzip:     0.47 kB
+dist/start/server/assets/admin-traits-DaUnC0Sn.js                               0.72 kB │ gzip:     0.44 kB
+dist/start/server/assets/assessment-settlement-liveness-BWs-_dwu.js             0.73 kB │ gzip:     0.35 kB
+dist/start/server/assets/sessions-BD5wfxmJ.js                                   0.73 kB │ gzip:     0.37 kB
+dist/start/server/assets/provenance-FTSW9T6a.js                                 0.74 kB │ gzip:     0.42 kB
+dist/start/server/assets/cost-DhA24t5b.js                                       0.74 kB │ gzip:     0.35 kB
+dist/start/server/assets/hash-B1Xbnfqj.js                                       0.75 kB │ gzip:     0.45 kB
+dist/start/server/assets/copilot_run-DV0zS3lq.js                                0.75 kB │ gzip:     0.33 kB
+dist/start/server/assets/session-reopen-XYnaLWUj.js                             0.75 kB │ gzip:     0.42 kB
+dist/start/server/assets/relation-cue-DOr_bc5P.js                               0.75 kB │ gzip:     0.40 kB
+dist/start/server/assets/admin-config-write-BRSm07cB.js                         0.76 kB │ gzip:     0.36 kB
+dist/start/server/assets/sse_router-D3rcUkm1.js                                 0.76 kB │ gzip:     0.31 kB
+dist/start/server/assets/admin-subjects-DZZ9SkNT.js                             0.77 kB │ gzip:     0.39 kB
+dist/start/server/assets/LoomCard-BVpMkf61.js                                   0.77 kB │ gzip:     0.43 kB
+dist/start/server/assets/node-domexception-lzbAU21e.js                          0.77 kB │ gzip:     0.45 kB
+dist/start/server/assets/types-ms7w9PyB.js                                      0.78 kB │ gzip:     0.38 kB
+dist/start/server/assets/copilot-run-terminal-sql-CbtxXv-e.js                   0.81 kB │ gzip:     0.50 kB
+dist/start/server/assets/markdown-renderer-h-W39K1p.js                          0.81 kB │ gzip:     0.45 kB
+dist/start/server/assets/note-board-read-CyMIDcT7.js                            0.81 kB │ gzip:     0.48 kB
+dist/start/server/assets/headers-A752pXR0.js                                    0.83 kB │ gzip:     0.47 kB
+dist/start/server/assets/admin-client-DlXyGppY.js                               0.83 kB │ gzip:     0.43 kB
+dist/start/server/assets/admin-subject-traits-DFJFZ99_.js                       0.84 kB │ gzip:     0.47 kB
+dist/start/server/assets/parseKnownFiles-DKh9IzKo.js                            0.85 kB │ gzip:     0.38 kB
+dist/start/server/assets/turns-D93RqHsC.js                                      0.85 kB │ gzip:     0.45 kB
+dist/start/server/assets/editing-blur-6fhRbXP9.js                               0.86 kB │ gzip:     0.49 kB
+dist/start/server/assets/nudge-config-BqzEoJxY.js                               0.87 kB │ gzip:     0.39 kB
+dist/start/server/assets/placement-scope-BQqQfrSW.js                            0.88 kB │ gzip:     0.43 kB
+dist/start/server/assets/inbox-Bk8IL5Vn.js                                      0.88 kB │ gzip:     0.42 kB
+dist/start/server/assets/today-_qvGfvD5.js                                      0.88 kB │ gzip:     0.42 kB
+dist/start/server/assets/backup-export-DwT011tM.js                              0.89 kB │ gzip:     0.51 kB
+dist/start/server/assets/live-artifact-reference-DpALXPmo.js                    0.90 kB │ gzip:     0.50 kB
+dist/start/server/assets/addressable-structure-DLJJ49tK.js                      0.91 kB │ gzip:     0.42 kB
+dist/start/server/assets/Card-bhcpQV7X.js                                       0.92 kB │ gzip:     0.52 kB
+dist/start/server/assets/tree-Cly-zKBB.js                                       0.93 kB │ gzip:     0.52 kB
+dist/start/server/assets/iso-B9KZCd3g.js                                        0.94 kB │ gzip:     0.39 kB
+dist/start/server/assets/agent-notes-BIv3wpNz.js                                0.95 kB │ gzip:     0.45 kB
+dist/start/server/assets/sse_replay-tJjsXwWo.js                                 0.95 kB │ gzip:     0.55 kB
+dist/start/server/assets/notes-list-D9bHIHow.js                                 0.97 kB │ gzip:     0.50 kB
+dist/start/server/assets/calibration-anchors-BATR-lVS.js                        0.97 kB │ gzip:     0.53 kB
+dist/start/server/assets/ai-change-undo-AsvtJaA1.js                             0.97 kB │ gzip:     0.51 kB
+dist/start/server/assets/judge-rating-B3Z8GieE.js                               0.99 kB │ gzip:     0.60 kB
+dist/start/server/assets/mistake_enroll-DTRvNkQa.js                             0.99 kB │ gzip:     0.48 kB
+dist/start/server/assets/node-page-route-CaRmrvau.js                            0.99 kB │ gzip:     0.50 kB
+dist/start/server/assets/review-draft-enable-C-MNQ7ox.js                        1.00 kB │ gzip:     0.55 kB
+dist/start/server/assets/EmptyState-C_ZVVYpi.js                                 1.00 kB │ gzip:     0.40 kB
+dist/start/server/assets/durable-dispatch-B5RY9lz8.js                           1.00 kB │ gzip:     0.36 kB
+dist/start/server/assets/PageHeader-DIG5tOsE.js                                 1.01 kB │ gzip:     0.39 kB
+dist/start/server/assets/import-aicX5aiT.js                                     1.02 kB │ gzip:     0.53 kB
+dist/start/server/assets/github-copilot-headers-OGy1q8J2.js                     1.02 kB │ gzip:     0.53 kB
+dist/start/server/assets/getSSOTokenFromFile-1h28UwZg.js                        1.03 kB │ gzip:     0.45 kB
+dist/start/server/assets/typesafe-system-one-BeX5xu9I.js                        1.03 kB │ gzip:     0.63 kB
+dist/start/server/assets/admin.cost-lNl3rGpm.js                                 1.05 kB │ gzip:     0.49 kB
+dist/start/server/assets/admin.runs-Cfm0tcPo.js                                 1.05 kB │ gzip:     0.49 kB
+dist/start/server/assets/editing-heartbeat-CCiYnAx9.js                          1.06 kB │ gzip:     0.54 kB
+dist/start/server/assets/useRouterState-41Kl3tEV.js                             1.06 kB │ gzip:     0.57 kB
+dist/start/server/assets/admin.failures-Brs297ed.js                             1.06 kB │ gzip:     0.49 kB
+dist/start/server/assets/admin.coverage-lattice-BRTlwQQl.js                     1.09 kB │ gzip:     0.50 kB
+dist/start/server/assets/admin.conjecture-scores-Dq6nYMtL.js                    1.10 kB │ gzip:     0.50 kB
+dist/start/server/assets/mistakes-function-BzQf937S.js                          1.14 kB │ gzip:     0.52 kB
+dist/start/server/assets/note-skills-DqLw8mvn.js                                1.17 kB │ gzip:     0.66 kB
+dist/start/server/assets/practice_stream_compose_nightly-BTaCKCmT.js            1.18 kB │ gzip:     0.66 kB
+dist/start/server/assets/proposal-retract-GrXV73l0.js                           1.19 kB │ gzip:     0.59 kB
+dist/start/server/assets/diagnostics-CH-spUDt.js                                1.19 kB │ gzip:     0.54 kB
+dist/start/server/assets/proposal-decisions-CT_WmNDM.js                         1.20 kB │ gzip:     0.62 kB
+dist/start/server/assets/sanitize-unicode-B9NIkKpK.js                           1.22 kB │ gzip:     0.67 kB
+dist/start/server/assets/admin.subjects._id-mhFjJybx.js                         1.23 kB │ gzip:     0.58 kB
+dist/start/server/assets/solve-session-detail-CjOeWA7p.js                       1.25 kB │ gzip:     0.60 kB
+dist/start/server/assets/materializing-tools-fvY0p1po.js                        1.26 kB │ gzip:     0.64 kB
+dist/start/server/assets/readFile-Dd6BGqwc.js                                   1.27 kB │ gzip:     0.52 kB
+dist/start/server/assets/session-detail-DmPwObNx.js                             1.28 kB │ gzip:     0.59 kB
+dist/start/server/assets/assessment-evidence-CsuxxSrx.js                        1.28 kB │ gzip:     0.69 kB
+dist/start/server/assets/judge_calibration_sample-DTID5Cye.js                   1.28 kB │ gzip:     0.60 kB
+dist/start/server/assets/failure-learning-jobs-DxyGeA9j.js                      1.28 kB │ gzip:     0.58 kB
+dist/start/server/assets/paper-session-transition-Uk4KwffR.js                   1.30 kB │ gzip:     0.59 kB
+dist/start/server/assets/writer-DA8LLGFa.js                                     1.30 kB │ gzip:     0.81 kB
+dist/start/server/assets/runner-fn-DHsCMpIO.js                                  1.30 kB │ gzip:     0.47 kB
+dist/start/server/assets/edge-proposal-decide-ipi-897d.js                       1.32 kB │ gzip:     0.65 kB
+dist/start/server/assets/extract-BuLfdhYn.js                                    1.32 kB │ gzip:     0.77 kB
+dist/start/server/assets/review-sessions-Dn6GuCPF.js                            1.32 kB │ gzip:     0.64 kB
+dist/start/server/assets/event-correct-DM2QMuVD.js                              1.33 kB │ gzip:     0.59 kB
+dist/start/server/assets/prep-desk-tEPAYaVs.js                                  1.33 kB │ gzip:     0.69 kB
+dist/start/server/assets/CredentialsProviderError-CMRw6nCK.js                   1.34 kB │ gzip:     0.49 kB
+dist/start/server/assets/assets-HwM8gX9T.js                                     1.35 kB │ gzip:     0.70 kB
+dist/start/server/assets/question_block-lifecycle-event-BDEx4Zmy.js             1.36 kB │ gzip:     0.64 kB
+dist/start/server/assets/ui-public-CZklu9EM.js                                  1.36 kB │ gzip:     0.43 kB
+dist/start/server/assets/answer_class_backfill-BvMi_ks8.js                      1.37 kB │ gzip:     0.64 kB
+dist/start/server/assets/misconception-veto-B5BFyJTD.js                         1.37 kB │ gzip:     0.66 kB
+dist/start/server/assets/admin-trait-journal-Db30HSBx.js                        1.39 kB │ gzip:     0.67 kB
+dist/start/server/assets/subject-control-contracts-j7WpTFFl.js                  1.39 kB │ gzip:     0.52 kB
+dist/start/server/assets/admin.subjects-HV4RK1lN.js                             1.40 kB │ gzip:     0.62 kB
+dist/start/server/assets/review-draft-force-enable-Y3ck8W68.js                  1.40 kB │ gzip:     0.71 kB
+dist/start/server/assets/variant_gen-Bpi7DhUV.js                                1.41 kB │ gzip:     0.68 kB
+dist/start/server/assets/learning-state-lock-DDpnlsAT.js                        1.42 kB │ gzip:     0.82 kB
+dist/start/server/assets/review-drafts-list-D7pZvIjZ.js                         1.42 kB │ gzip:     0.70 kB
+dist/start/server/assets/Badge-CVBUKMC2.js                                      1.42 kB │ gzip:     0.68 kB
+dist/start/server/assets/operation-schema-CI42RQOJ.js                           1.42 kB │ gzip:     0.82 kB
+dist/start/server/assets/backup-contracts-HFJk_HEs.js                           1.48 kB │ gzip:     0.66 kB
+dist/start/server/assets/solve-start-Bx3u7LI0.js                                1.48 kB │ gzip:     0.68 kB
+dist/start/server/assets/placement-end-AfF4L8sq.js                              1.48 kB │ gzip:     0.69 kB
+dist/start/server/assets/useMatch-CoD1H-Wg.js                                   1.49 kB │ gzip:     0.70 kB
+dist/start/server/assets/quiz-gen-trigger-contracts-ePwLpzYe.js                 1.50 kB │ gzip:     0.80 kB
+dist/start/server/assets/exa-Bu2EQoiP.js                                        1.51 kB │ gzip:     0.88 kB
+dist/start/server/assets/review-answer-B6N2jX31.js                              1.53 kB │ gzip:     0.67 kB
+dist/start/server/assets/http-contracts-BFt2mESw.js                             1.56 kB │ gzip:     0.64 kB
+dist/start/server/assets/subject-control-operations-CUtns31H.js                 1.57 kB │ gzip:     0.58 kB
+dist/start/server/assets/review-due-summary-B-gbgOuy.js                         1.58 kB │ gzip:     0.71 kB
+dist/start/server/assets/judge-calibration-config-xCLIKjcX.js                   1.59 kB │ gzip:     0.66 kB
+dist/start/server/assets/asset-content-0avKHf0W.js                              1.59 kB │ gzip:     0.79 kB
+dist/start/server/assets/dist-es-CDBIPWuT.js                                    1.59 kB │ gzip:     0.65 kB
+dist/start/server/assets/httpRequest-Bya_lBq4.js                                1.60 kB │ gzip:     0.67 kB
+dist/start/server/assets/papers-list-K_y8j-Jq.js                                1.61 kB │ gzip:     0.72 kB
+dist/start/server/assets/artifacts-search-pF0wai5S.js                           1.63 kB │ gzip:     0.84 kB
+dist/start/server/assets/proposal-decide-CBQ2y5QB.js                            1.64 kB │ gzip:     0.70 kB
+dist/start/server/assets/ClientOnly-DUo6yWXR.js                                 1.65 kB │ gzip:     0.77 kB
+dist/start/server/assets/submit-review-answer-j8ZjOz8H.js                       1.67 kB │ gzip:     0.84 kB
+dist/start/server/assets/provider-env-Bu24xHCI.js                               1.70 kB │ gzip:     0.95 kB
+dist/start/server/assets/task-input-hash-BAGM5eIL.js                            1.73 kB │ gzip:     0.69 kB
+dist/start/server/assets/question-restore-CS58Ehid.js                           1.75 kB │ gzip:     0.75 kB
+dist/start/server/assets/redirect-BDbpra0T.js                                   1.75 kB │ gzip:     0.85 kB
+dist/start/server/assets/admin.config-Drrq79t5.js                               1.77 kB │ gzip:     0.77 kB
+dist/start/server/assets/pdf-CUUu8_yj.js                                        1.78 kB │ gzip:     0.90 kB
+dist/start/server/assets/runtime-env-BWbCBOUp.js                                1.78 kB │ gzip:     1.00 kB
+dist/start/server/assets/answer-class-write-CnIAjcQh.js                         1.79 kB │ gzip:     0.82 kB
+dist/start/server/assets/deferred-markdown-renderer-B-APj3cf.js                 1.80 kB │ gzip:     0.74 kB
+dist/start/server/assets/solve-submit-DPYOjD91.js                               1.83 kB │ gzip:     0.82 kB
+dist/start/server/assets/env-api-keys-BzCj_pZ4.js                               1.86 kB │ gzip:     0.79 kB
+dist/start/server/assets/judge-output-parse-D7e03MTh.js                         1.88 kB │ gzip:     0.88 kB
+dist/start/server/assets/proposal-decide-C7pAS66o.js                            1.91 kB │ gzip:     0.76 kB
+dist/start/server/assets/agent-note-function-i7lJMU3f.js                        1.92 kB │ gzip:     0.82 kB
+dist/start/server/assets/rolldown-runtime-BMI-E3GI.js                           1.92 kB │ gzip:     0.87 kB
+dist/start/server/assets/start-Drm5j007.js                                      1.93 kB │ gzip:     0.77 kB
+dist/start/server/assets/rejudge-Dy-eM3o2.js                                    1.93 kB │ gzip:     0.84 kB
+dist/start/server/assets/placement-session-detail-BSdGeqxf.js                   1.95 kB │ gzip:     0.82 kB
+dist/start/server/assets/SkLines-BDdtoZK9.js                                    1.96 kB │ gzip:     0.72 kB
+dist/start/server/assets/session-end-CxYuL7Cp.js                                1.98 kB │ gzip:     0.87 kB
+dist/start/server/assets/coerce-BHuSIAI3.js                                     1.99 kB │ gzip:     0.80 kB
+dist/start/server/assets/proposal-inbox-read-DS3HV5vF.js                        1.99 kB │ gzip:     0.83 kB
+dist/start/server/assets/question-block-structure-HaI6py2L.js                   2.02 kB │ gzip:     0.85 kB
+dist/start/server/assets/subjects-write-http-BkKlp_mZ.js                        2.03 kB │ gzip:     0.53 kB
+dist/start/server/assets/paper-submit-route-CrsKBYMi.js                         2.05 kB │ gzip:     0.92 kB
+dist/start/server/assets/note-patch-Czelo9w5.js                                 2.06 kB │ gzip:     0.85 kB
+dist/start/server/assets/overnight-digest-BoPJGUi7.js                           2.06 kB │ gzip:     1.15 kB
+dist/start/server/assets/subject-profile-B-t4L3XX.js                            2.07 kB │ gzip:     0.82 kB
+dist/start/server/assets/accelerator-Cr2sC69R.js                                2.10 kB │ gzip:     0.74 kB
+dist/start/server/assets/hub-sync-wake-DM2zTpVl.js                              2.11 kB │ gzip:     1.09 kB
+dist/start/server/assets/solve-hint-CanTocVl.js                                 2.14 kB │ gzip:     0.91 kB
+dist/start/server/assets/goal-create-B3oiPiBQ.js                                2.14 kB │ gzip:     0.96 kB
+dist/start/server/assets/budgets-Xc-Enxri.js                                    2.15 kB │ gzip:     0.75 kB
+dist/start/server/assets/attribution_followup-C_CwRpfY.js                       2.16 kB │ gzip:     0.90 kB
+dist/start/server/assets/event-stream-B4v8cbrP.js                               2.16 kB │ gzip:     0.83 kB
+dist/start/server/assets/trait-write-contracts-BAXXsbR6.js                      2.19 kB │ gzip:     0.67 kB
+dist/start/server/assets/review-session-detail-Cecf_C7v.js                      2.23 kB │ gzip:     0.95 kB
+dist/start/server/assets/import-schema-BhLxhmIa.js                              2.24 kB │ gzip:     1.14 kB
+dist/start/server/assets/failure-learning-subscription-Dz-YHC9E.js              2.26 kB │ gzip:     1.01 kB
+dist/start/server/assets/event-detail-Co4VGvKF.js                               2.28 kB │ gzip:     0.94 kB
+dist/start/server/assets/paper-session-create-BTPPgf09.js                       2.29 kB │ gzip:     0.92 kB
+dist/start/server/assets/hex-encoding-BfxCzOZo.js                               2.29 kB │ gzip:     0.83 kB
+dist/start/server/assets/backup-import-ujgznNuU.js                              2.31 kB │ gzip:     1.02 kB
+dist/start/server/assets/useSubjects-BgG2KxPE.js                                2.33 kB │ gzip:     1.00 kB
+dist/start/server/assets/draft-moderation-contracts-BcnnrFdz.js                 2.33 kB │ gzip:     0.73 kB
+dist/start/server/assets/cloudflare-workers-ai-system-one-BWdA_BCR.js           2.34 kB │ gzip:     1.08 kB
+dist/start/server/assets/learning-intent-create-BSzCijeR.js                     2.37 kB │ gzip:     1.00 kB
+dist/start/server/assets/durable-pickup-D_6-PGM2.js                             2.38 kB │ gzip:     1.09 kB
+dist/start/server/assets/question_block-CGUHkVK3.js                             2.40 kB │ gzip:     1.00 kB
+dist/start/server/assets/quiz-gen-trigger-CmdAhvtT.js                           2.41 kB │ gzip:     1.09 kB
+dist/start/server/assets/mastery-band-DSK1_E7z.js                               2.42 kB │ gzip:     1.25 kB
+dist/start/server/assets/rate-limit-wyrc4Gl4.js                                 2.46 kB │ gzip:     1.24 kB
+dist/start/server/assets/generate-goal-outline-BcmshvnT.js                      2.50 kB │ gzip:     1.11 kB
+dist/start/server/assets/useFocusTrap-DhamTRNO.js                               2.51 kB │ gzip:     1.08 kB
+dist/start/server/assets/lifecycle-BVZrT0eQ.js                                  2.53 kB │ gzip:     1.44 kB
+dist/start/server/assets/subjects-list-BPa1TKwy.js                              2.59 kB │ gzip:     1.08 kB
+dist/start/server/assets/appeal-PvQ0AsF6.js                                     2.59 kB │ gzip:     1.29 kB
+dist/start/server/assets/shell-CfjTtFfN.js                                      2.60 kB │ gzip:     1.57 kB
+dist/start/server/assets/artifacts-Eml46H8t.js                                  2.61 kB │ gzip:     1.23 kB
+dist/start/server/assets/extend-CrQe9d--.js                                     2.65 kB │ gzip:     1.00 kB
+dist/start/server/assets/admin-client-Cdj_PNz1.js                               2.68 kB │ gzip:     0.88 kB
+dist/start/server/assets/ui-public-1hnmY2Qu.js                                  2.69 kB │ gzip:     0.87 kB
+dist/start/server/assets/chat-contracts-CuaUmoje.js                             2.70 kB │ gzip:     1.09 kB
+dist/start/server/assets/admin-trait-write-CHmIQixh.js                          2.71 kB │ gzip:     0.74 kB
+dist/start/server/assets/jyeoo_staged_asset_reap-Ww18_Igr.js                    2.71 kB │ gzip:     1.09 kB
+dist/start/server/assets/attempt-cost-IWm9ukkL.js                               2.74 kB │ gzip:     0.93 kB
+dist/start/server/assets/dist-es-TxaIbm-U.js                                    2.74 kB │ gzip:     0.95 kB
+dist/start/server/assets/hub_auto_sync_nightly-CTZacZ9f.js                      2.76 kB │ gzip:     1.06 kB
+dist/start/server/assets/mutation-events-CMpK1YpR.js                            2.81 kB │ gzip:     0.95 kB
+dist/start/server/assets/primary-view-contract-DCGC2vwB.js                      2.82 kB │ gzip:     1.18 kB
+dist/start/server/assets/ai_task_run_reconcile-1cpntnO4.js                      2.83 kB │ gzip:     1.28 kB
+dist/start/server/assets/verify-contract-AD5A2Frf.js                            2.83 kB │ gzip:     0.90 kB
+dist/start/server/assets/cost-presentation-CnSB1gAT.js                          2.85 kB │ gzip:     1.08 kB
+dist/start/server/assets/assessment-learning-scope-CdVFUIvf.js                  2.87 kB │ gzip:     1.12 kB
+dist/start/server/assets/question-block-structural-edits--4nw6Kzk.js            2.96 kB │ gzip:     1.02 kB
+dist/start/server/assets/query-questions-CZbxMqHH.js                            2.97 kB │ gzip:     1.24 kB
+dist/start/server/assets/questions-list-DI4Ou-S-.js                             3.00 kB │ gzip:     1.17 kB
+dist/start/server/assets/backlinks-BWA2xqUV.js                                  3.00 kB │ gzip:     1.14 kB
+dist/start/server/assets/present-primary-view-C1qoj-jC.js                       3.01 kB │ gzip:     1.21 kB
+dist/start/server/assets/difficulty-evidence-dkEBxzF4.js                        3.02 kB │ gzip:     1.12 kB
+dist/start/server/assets/artifact-CovYFhjK.js                                   3.03 kB │ gzip:     0.99 kB
+dist/start/server/assets/propose-variant-De10yyAd.js                            3.07 kB │ gzip:     1.14 kB
+dist/start/server/assets/search-memory-facts-Bk5ckcHP.js                        3.07 kB │ gzip:     1.39 kB
+dist/start/server/assets/copilot_nudge_evaluate-Di-puuQf.js                     3.07 kB │ gzip:     1.56 kB
+dist/start/server/assets/subject-resolution-CgepQqzh.js                         3.08 kB │ gzip:     1.10 kB
+dist/start/server/assets/applier-helpers-C797YnlB.js                            3.08 kB │ gzip:     1.23 kB
+dist/start/server/assets/correct-C2BBYcGq.js                                    3.12 kB │ gzip:     1.11 kB
+dist/start/server/assets/trait-schemas-B-YNOWW6.js                              3.21 kB │ gzip:     1.09 kB
+dist/start/server/assets/event-contracts-BRR2Ok63.js                            3.26 kB │ gzip:     1.07 kB
+dist/start/server/assets/admin-subject-control-De66lpDM.js                      3.27 kB │ gzip:     1.01 kB
+dist/start/server/assets/embed_backfill-CLO46OOd.js                             3.27 kB │ gzip:     1.34 kB
+dist/start/server/assets/prep-desk-probes-Cx8ErYB7.js                           3.33 kB │ gzip:     1.30 kB
+dist/start/server/assets/scope-DUKuMD6m.js                                      3.36 kB │ gzip:     1.31 kB
+dist/start/server/assets/constants-CKImh1Hs.js                                  3.37 kB │ gzip:     1.27 kB
+dist/start/server/assets/quiz-gen-skills-DTiGj2I3.js                            3.39 kB │ gzip:     1.34 kB
+dist/start/server/assets/dist-es-CGJTbvXN.js                                    3.45 kB │ gzip:     1.09 kB
+dist/start/server/assets/hub-sync-NEAF9_wI.js                                   3.46 kB │ gzip:     1.12 kB
+dist/start/server/assets/persist-image-asset-B8bfOEEV.js                        3.49 kB │ gzip:     1.42 kB
+dist/start/server/assets/edges-DZ0TF3xK.js                                      3.51 kB │ gzip:     1.29 kB
+dist/start/server/assets/pricing-XxM45r9e.js                                    3.53 kB │ gzip:     1.59 kB
+dist/start/server/assets/memory-brief-Cx7I4b0R.js                               3.54 kB │ gzip:     1.34 kB
+dist/start/server/assets/admin-control-client-CDF9GC5v.js                       3.55 kB │ gzip:     1.17 kB
+dist/start/server/assets/http-8AiMpHy3.js                                       3.60 kB │ gzip:     1.45 kB
+dist/start/server/assets/nudges-SmGsvzp9.js                                     3.60 kB │ gzip:     1.69 kB
+dist/start/server/assets/use-copilot-dwell-DAz_NN2m.js                          3.61 kB │ gzip:     1.28 kB
+dist/start/server/assets/ingestion_operation-WISrlZyI.js                        3.61 kB │ gzip:     1.26 kB
+dist/start/server/assets/submit-BZRB2dIE.js                                     3.61 kB │ gzip:     1.55 kB
+dist/start/server/assets/notes-read-BPrhZyTc.js                                 3.62 kB │ gzip:     1.49 kB
+dist/start/server/assets/provider-retry-Bp6uGFDp.js                             3.63 kB │ gzip:     1.46 kB
+dist/start/server/assets/stream-contracts-DFThkNqY.js                           3.66 kB │ gzip:     1.03 kB
+dist/start/server/assets/admin-subject-trait-write-B9SeF5qV.js                  3.68 kB │ gzip:     0.96 kB
+dist/start/server/assets/toUtf8-DD-8lM_f.js                                     3.68 kB │ gzip:     1.27 kB
+dist/start/server/assets/events-HVSGRpjp.js                                     3.69 kB │ gzip:     1.80 kB
+dist/start/server/assets/subject_profile_audit_nightly-D1cEriKt.js              3.70 kB │ gzip:     1.51 kB
+dist/start/server/assets/misconceptions-DtvupRK2.js                             3.71 kB │ gzip:     1.60 kB
+dist/start/server/assets/stream-Cq9yLWmL.js                                     3.73 kB │ gzip:     1.50 kB
+dist/start/server/assets/record-tool-support-CzFIIEHC.js                        3.82 kB │ gzip:     1.40 kB
+dist/start/server/assets/read-r9k57OFv.js                                       3.87 kB │ gzip:     1.86 kB
+dist/start/server/assets/contracts-CeUj7ufZ.js                                  3.89 kB │ gzip:     1.27 kB
+dist/start/server/assets/paper-answer-route-D6SonulJ.js                         3.92 kB │ gzip:     1.46 kB
+dist/start/server/assets/body-blocks-route-DBGj8z2O.js                          3.92 kB │ gzip:     1.49 kB
+dist/start/server/assets/recalibration_nightly-DzzaSO7T.js                      3.93 kB │ gzip:     1.80 kB
+dist/start/server/assets/vision-C-4_vsnZ.js                                     4.00 kB │ gzip:     1.65 kB
+dist/start/server/assets/fileFromPath-DKi95hRt.js                               4.01 kB │ gzip:     1.35 kB
+dist/start/server/assets/copilot-run-status-CLnkTAvv.js                         4.06 kB │ gzip:     1.96 kB
+dist/start/server/assets/blocks-zrU9ghKi.js                                     4.07 kB │ gzip:     1.40 kB
+dist/start/server/assets/calibration-maturity-eIEPdG0G.js                       4.08 kB │ gzip:     1.68 kB
+dist/start/server/assets/apply-note-patch-CsaCA1RR.js                           4.10 kB │ gzip:     1.31 kB
+dist/start/server/assets/resource-routes-RVNEo6aO.js                            4.10 kB │ gzip:     1.05 kB
+dist/start/server/assets/artifact-corrections-BDT-nyY9.js                       4.11 kB │ gzip:     1.47 kB
+dist/start/server/assets/allowlists-CWeuicFU.js                                 4.13 kB │ gzip:     1.03 kB
+dist/start/server/assets/observability-shared-Wl3TIyiU.js                       4.17 kB │ gzip:     1.35 kB
+dist/start/server/assets/fewshot-retrieve-DVws-suz.js                           4.17 kB │ gzip:     2.10 kB
+dist/start/server/assets/public-DW8vrHkY.js                                     4.17 kB │ gzip:     1.03 kB
+dist/start/server/assets/provider-attempt-runtime-Bc9Pf9Xr.js                   4.19 kB │ gzip:     1.39 kB
+dist/start/server/assets/subject-D_xA3nd8.js                                    4.20 kB │ gzip:     1.44 kB
+dist/start/server/assets/proposal-accept-applier-D30MJILa.js                    4.21 kB │ gzip:     1.47 kB
+dist/start/server/assets/pfa-C5rY9pZn.js                                        4.22 kB │ gzip:     2.65 kB
+dist/start/server/assets/accept-chip-Cb5hbI2F.js                                4.23 kB │ gzip:     1.71 kB
+dist/start/server/assets/attribute-mistake-C90J7CHp.js                          4.26 kB │ gzip:     1.61 kB
+dist/start/server/assets/assessment-review-occurrences-A-a_gN9e.js              4.29 kB │ gzip:     1.60 kB
+dist/start/server/assets/note-refine-triggers-BcyRq5Bv.js                       4.33 kB │ gzip:     1.65 kB
+dist/start/server/assets/subject-contracts-Ba5YV4an.js                          4.40 kB │ gzip:     1.20 kB
+dist/start/server/assets/package-COYMny62.js                                    4.46 kB │ gzip:     1.29 kB
+dist/start/server/assets/loadSharedConfigFiles-pMWsXiaA.js                      4.50 kB │ gzip:     1.52 kB
+dist/start/server/assets/predicates-ClHuz6x9.js                                 4.54 kB │ gzip:     2.15 kB
+dist/start/server/assets/settlement-subscription-x0iB_YHd.js                    4.55 kB │ gzip:     1.37 kB
+dist/start/server/assets/openrouter-images-ChcVAarQ.js                          4.61 kB │ gzip:     1.76 kB
+dist/start/server/assets/error-body-B6gO86Pd.js                                 4.71 kB │ gzip:     1.89 kB
+dist/start/server/assets/rescue-CWp0nj7d.js                                     4.74 kB │ gzip:     2.21 kB
+dist/start/server/assets/answer-class-DRRiTsjs.js                               4.75 kB │ gzip:     1.97 kB
+dist/start/server/assets/conjecture-probe-response-C3HjJZ5s.js                  4.76 kB │ gzip:     1.27 kB
+dist/start/server/assets/judge-routing-CgVR5RsD.js                              4.76 kB │ gzip:     2.30 kB
+dist/start/server/assets/proposal-appliers-B2W5HsL1.js                          4.77 kB │ gzip:     1.50 kB
+dist/start/server/assets/revert-checkpoint-ZQw8chyy.js                          4.82 kB │ gzip:     1.71 kB
+dist/start/server/assets/judge-run-status-route-ByuQffaY.js                     4.83 kB │ gzip:     1.55 kB
+dist/start/server/assets/confusable_contrast_nightly-T8tGyp5O.js                4.83 kB │ gzip:     2.14 kB
+dist/start/server/assets/placement-start-CdgWV1_r.js                            4.86 kB │ gzip:     1.64 kB
+dist/start/server/assets/assessment-contracts-lj6lAZzi.js                       4.87 kB │ gzip:     1.81 kB
+dist/start/server/assets/judge-calibration-DBrFY-Bi.js                          4.89 kB │ gzip:     1.99 kB
+dist/start/server/assets/question-block-node-edits-vyNXdHgU.js                  4.91 kB │ gzip:     1.12 kB
+dist/start/server/assets/decision-resource-JsIw5Pgx.js                          4.92 kB │ gzip:     1.50 kB
+dist/start/server/assets/teaching-brief-ack-BREPaNpw.js                         4.95 kB │ gzip:     2.06 kB
+dist/start/server/assets/embed-CJQNsGtW.js                                      4.98 kB │ gzip:     2.01 kB
+dist/start/server/assets/placement-next-bJ6g5Vhf.js                             5.03 kB │ gzip:     1.99 kB
+dist/start/server/assets/placement-contracts-BKHzxVgg.js                        5.06 kB │ gzip:     1.36 kB
+dist/start/server/assets/section-edit-DX5aIZg6.js                               5.09 kB │ gzip:     1.67 kB
+dist/start/server/assets/agent-note-tools-aEXlHGcW.js                           5.12 kB │ gzip:     1.90 kB
+dist/start/server/assets/placement-profile-ZVGRSWZL.js                          5.14 kB │ gzip:     2.22 kB
+dist/start/server/assets/copilot-summary-CRDkhhhG.js                            5.21 kB │ gzip:     2.04 kB
+dist/start/server/assets/admin-failures-BEk8SUYM.js                             5.22 kB │ gzip:     1.65 kB
+dist/start/server/assets/auto-applied-read-C0oZZebu.js                          5.29 kB │ gzip:     2.43 kB
+dist/start/server/assets/query-records-DEfm0kBc.js                              5.39 kB │ gzip:     1.82 kB
+dist/start/server/assets/configLoader-DCHLCzmf.js                               5.41 kB │ gzip:     1.59 kB
+dist/start/server/assets/utils-FXm3jlwL.js                                      5.49 kB │ gzip:     2.15 kB
+dist/start/server/assets/teaching-brief-interaction-Cx8slkS2.js                 5.49 kB │ gzip:     1.96 kB
+dist/start/server/assets/workflow-judge-config-DRDIz-vR.js                      5.50 kB │ gzip:     2.32 kB
+dist/start/server/assets/reference_answer_backfill-TO2d-NvN.js                  5.52 kB │ gzip:     2.12 kB
+dist/start/server/assets/log-BrNsGWA2.js                                        5.56 kB │ gzip:     1.77 kB
+dist/start/server/assets/control-plane-lock-BTtxLLgn.js                         5.57 kB │ gzip:     1.58 kB
+dist/start/server/assets/question-kind-hKGvZCZL.js                              5.65 kB │ gzip:     2.64 kB
+dist/start/server/assets/revert-D1mYPtaw.js                                     5.66 kB │ gzip:     2.18 kB
+dist/start/server/assets/conjecture-Cf-kls-n.js                                 5.70 kB │ gzip:     2.31 kB
+dist/start/server/assets/enroll-WL4iNSCi.js                                     5.83 kB │ gzip:     2.05 kB
+dist/start/server/assets/copilot-run-cancellation-DvHQWvPI.js                   5.84 kB │ gzip:     2.16 kB
+dist/start/server/assets/appeal-B0__6dS6.js                                     5.93 kB │ gzip:     1.82 kB
+dist/start/server/assets/mistakes-BdAXwuHh.js                                   5.93 kB │ gzip:     1.99 kB
+dist/start/server/assets/admin-config-write-contracts-DH4QrYnz.js               5.95 kB │ gzip:     2.07 kB
+dist/start/server/assets/admin-subjects-create-DRSxzkuB.js                      6.01 kB │ gzip:     1.98 kB
+dist/start/server/assets/sdk-stream-mixin-vn-WYe1g.js                           6.04 kB │ gzip:     1.86 kB
+dist/start/server/assets/admin-function-Dh4UkaJ_.js                             6.05 kB │ gzip:     1.56 kB
+dist/start/server/assets/profile-schema-C7JtBW4z.js                             6.05 kB │ gzip:     2.41 kB
+dist/start/server/assets/advice-OQLt1vPe.js                                     6.14 kB │ gzip:     2.39 kB
+dist/start/server/assets/job-events-MU3npIXb.js                                 6.14 kB │ gzip:     2.66 kB
+dist/start/server/assets/learning-item-context-DfK1UwIC.js                      6.17 kB │ gzip:     1.83 kB
+dist/start/server/assets/cancel-run-C96RerDV.js                                 6.25 kB │ gzip:     2.08 kB
+dist/start/server/assets/context-throttle-BKGh0pQc.js                           6.27 kB │ gzip:     2.05 kB
+dist/start/server/assets/structured_question-DGFeqCoy.js                        6.28 kB │ gzip:     2.59 kB
+dist/start/server/assets/subjects-CJX4jpoe.js                                   6.31 kB │ gzip:     1.85 kB
+dist/start/server/assets/contracts-v_EZ_RiW.js                                  6.32 kB │ gzip:     1.71 kB
+dist/start/server/assets/kc_dedup_nightly-0Kp18rZ3.js                           6.44 kB │ gzip:     2.45 kB
+dist/start/server/assets/workbench-summary-BqPXbu0J.js                          6.44 kB │ gzip:     2.25 kB
+dist/start/server/assets/goal_scope_propose_nightly-BCmSg5H6.js                 6.45 kB │ gzip:     2.57 kB
+dist/start/server/assets/contracts-B4Jud6yK.js                                  6.53 kB │ gzip:     1.88 kB
+dist/start/server/assets/proposal-accept-applier-Cf9RJHVh.js                    6.56 kB │ gzip:     1.90 kB
+dist/start/server/assets/system-one-shared-CEQYvh5y.js                          6.56 kB │ gzip:     2.24 kB
+dist/start/server/assets/judge_pending_reconcile-CR1VA6fY.js                    6.57 kB │ gzip:     2.53 kB
+dist/start/server/assets/assessment-route-IfdUXi4f.js                           6.61 kB │ gzip:     1.82 kB
+dist/start/server/assets/paper-detail-CIf98JRG.js                               6.64 kB │ gzip:     2.23 kB
+dist/start/server/assets/ui-surfaces-Cj9nELtc.js                                6.65 kB │ gzip:     1.70 kB
+dist/start/server/assets/method-library-DEibns8X.js                             6.68 kB │ gzip:     2.39 kB
+dist/start/server/assets/_tanstack-start-manifest_v-DaDToVx-.js                 6.75 kB │ gzip:     1.21 kB
+dist/start/server/assets/session_summary-DCUYC2To.js                            6.75 kB │ gzip:     2.30 kB
+dist/start/server/assets/hydrate-CZhTRg55.js                                    6.77 kB │ gzip:     2.32 kB
+dist/start/server/assets/paper-contracts-CN-K7wZC.js                            6.92 kB │ gzip:     1.73 kB
+dist/start/server/assets/get-record-context-ClxNYxV9.js                         6.94 kB │ gzip:     2.08 kB
+dist/start/server/assets/dist-es-CmST9nOe.js                                    6.94 kB │ gzip:     2.19 kB
+dist/start/server/assets/frontier_fill_nightly-CMpZIoiO.js                      6.95 kB │ gzip:     2.67 kB
+dist/start/server/assets/hub-dismiss-link-D62kx7Mo.js                           6.98 kB │ gzip:     2.61 kB
+dist/start/server/assets/copilot_run_reconcile-COYIXdMd.js                      6.99 kB │ gzip:     2.30 kB
+dist/start/server/assets/proposal-tools-CkAcSZoI.js                             7.02 kB │ gzip:     1.94 kB
+dist/start/server/assets/reconcile-BLcfcxak.js                                  7.11 kB │ gzip:     2.35 kB
+dist/start/server/assets/block-refs-CW8zJiqw.js                                 7.12 kB │ gzip:     2.69 kB
+dist/start/server/assets/note-page-route-CmmN6PIg.js                            7.12 kB │ gzip:     2.43 kB
+dist/start/server/assets/react-dom-DtIN-aw7.js                                  7.23 kB │ gzip:     2.08 kB
+dist/start/server/assets/operation-store-B8jXNayJ.js                            7.28 kB │ gzip:     2.30 kB
+dist/start/server/assets/private-host-lwaBbLFW.js                               7.43 kB │ gzip:     2.64 kB
+dist/start/server/assets/public-rVHtipG8.js                                     7.45 kB │ gzip:     3.28 kB
+dist/start/server/assets/kt_estimate_nightly-LCD1GCJc.js                        7.57 kB │ gzip:     3.84 kB
+dist/start/server/assets/editing-session-C23S8KRc.js                            7.58 kB │ gzip:     2.08 kB
+dist/start/server/assets/operations-BoLfZdkx.js                                 7.61 kB │ gzip:     2.49 kB
+dist/start/server/assets/review-planning-contracts-j94Q2sZR.js                  7.61 kB │ gzip:     3.25 kB
+dist/start/server/assets/multimodal-direct-judge-oO2GuKdH.js                    7.70 kB │ gzip:     2.56 kB
+dist/start/server/assets/producers-7k8UvtmF.js                                  7.70 kB │ gzip:     1.63 kB
+dist/start/server/assets/body-blocks-Ci-DzAir.js                                7.79 kB │ gzip:     2.42 kB
+dist/start/server/assets/admin-control-client-Dtr3zTJ0.js                       7.82 kB │ gzip:     1.87 kB
+dist/start/server/assets/page-DmEzlUpG.js                                       7.82 kB │ gzip:     2.56 kB
+dist/start/server/assets/__23tanstack-start-server-fn-resolver-4ZRtg2Vt.js      7.89 kB │ gzip:     2.25 kB
+dist/start/server/assets/weekly-BHMrcFH_.js                                     7.96 kB │ gzip:     2.83 kB
+dist/start/server/assets/frontier-DDu6886a.js                                   7.99 kB │ gzip:     3.16 kB
+dist/start/server/assets/sessions-gyVVRevY.js                                   8.06 kB │ gzip:     3.10 kB
+dist/start/server/assets/judge-run-status-eKVdyjhL.js                           8.14 kB │ gzip:     3.79 kB
+dist/start/server/assets/contracts-CGAWORa_.js                                  8.20 kB │ gzip:     2.06 kB
+dist/start/server/assets/admin-cost-B3tMJ091.js                                 8.21 kB │ gzip:     2.26 kB
+dist/start/server/assets/micromark-factory-space-Cci7cbSF.js                    8.36 kB │ gzip:     2.57 kB
+dist/start/server/assets/durable-attempt-BvjDVUvd.js                            8.51 kB │ gzip:     2.68 kB
+dist/start/server/assets/Btn-ClwMUXoA.js                                        8.58 kB │ gzip:     2.94 kB
+dist/start/server/assets/knowledge-tree-B3BwkWmT.js                             8.72 kB │ gzip:     3.44 kB
+dist/start/server/assets/notes-BQSPRu8O.js                                      8.83 kB │ gzip:     3.16 kB
+dist/start/server/assets/multipart-parser-62gszyeP.js                           8.83 kB │ gzip:     2.60 kB
+dist/start/server/assets/contracts-BIutC5Pj.js                                  8.85 kB │ gzip:     2.44 kB
+dist/start/server/assets/transcript-xGJmJWOB.js                                 8.87 kB │ gzip:     2.83 kB
+dist/start/server/assets/note-refine-apply-DbJ58gZV.js                          8.90 kB │ gzip:     2.66 kB
+dist/start/server/assets/env-a9LupXXK.js                                        8.93 kB │ gzip:     2.74 kB
+dist/start/server/assets/verify-and-promote-BSL14xrM.js                         8.94 kB │ gzip:     3.10 kB
+dist/start/server/assets/variant_verify-DYMf1my1.js                             9.12 kB │ gzip:     3.01 kB
+dist/start/server/assets/paper-issuance-Wq0ShV2i.js                             9.22 kB │ gzip:     3.02 kB
+dist/start/server/assets/contracts-DMb5b01E.js                                  9.29 kB │ gzip:     2.15 kB
+dist/start/server/assets/adaptive-bias-DulJxMsE.js                              9.29 kB │ gzip:     3.28 kB
+dist/start/server/assets/draft-review-DU95adfA.js                               9.32 kB │ gzip:     3.23 kB
+dist/start/server/assets/kg_borrow_shadow_sweep-I57oCz4B.js                     9.53 kB │ gzip:     3.67 kB
+dist/start/server/assets/make-paper-CWhNz-50.js                                 9.56 kB │ gzip:     3.58 kB
+dist/start/server/assets/probe-answer-CODVbYwY.js                               9.78 kB │ gzip:     3.06 kB
+dist/start/server/assets/conversation-CxcFPLsh.js                               9.83 kB │ gzip:     3.01 kB
+dist/start/server/assets/dreaming_nightly--gP_VTL2.js                           9.91 kB │ gzip:     3.32 kB
+dist/start/server/assets/unit_dimension-CJt55Nfi.js                             9.92 kB │ gzip:     3.14 kB
+dist/start/server/assets/query-mistakes-2Y41jU6m.js                             9.93 kB │ gzip:     3.22 kB
+dist/start/server/assets/actions-BHik7i86.js                                    9.98 kB │ gzip:     2.61 kB
+dist/start/server/assets/judge-run-payload-BXTLElNe.js                         10.00 kB │ gzip:     4.28 kB
+dist/start/server/assets/workbench-function-BpoPgct7.js                        10.03 kB │ gzip:     2.48 kB
+dist/start/server/assets/workbench-client-Bwh8xWFY.js                          10.09 kB │ gzip:     3.61 kB
+dist/start/server/assets/chat-_-iHUu9h.js                                      10.11 kB │ gzip:     3.12 kB
+dist/start/server/assets/pi-messages-KsLs2qRu.js                               10.12 kB │ gzip:     3.21 kB
+dist/start/server/assets/azure-openai-responses-DusV7Leq.js                    10.17 kB │ gzip:     3.20 kB
+dist/start/server/assets/client-B1RKIGan.js                                    10.21 kB │ gzip:     3.39 kB
+dist/start/server/assets/subject-control-write-guaM2NHb.js                     10.36 kB │ gzip:     2.68 kB
+dist/start/server/assets/write-quiz-DRJPpEI9.js                                10.38 kB │ gzip:     3.77 kB
+dist/start/server/assets/AttachmentStrip-DfreBXGc.js                           10.41 kB │ gzip:     3.28 kB
+dist/start/server/assets/esm-D7q0iWMB.js                                       10.45 kB │ gzip:     3.95 kB
+dist/start/server/assets/dist-es-BGil-dr4.js                                   10.45 kB │ gzip:     3.36 kB
+dist/start/server/assets/practice-read-ClKJNDh3.js                             10.59 kB │ gzip:     3.66 kB
+dist/start/server/assets/mastery-progress-subscription-DB84uLCV.js             10.60 kB │ gzip:     3.44 kB
+dist/start/server/assets/proposal-tools-DtlHdgZ3.js                            10.70 kB │ gzip:     2.18 kB
+dist/start/server/assets/note-handoff-gycXsy85.js                              10.72 kB │ gzip:     2.79 kB
+dist/start/server/assets/effectiveness-trend-f-_qcNDc.js                       10.75 kB │ gzip:     4.38 kB
+dist/start/server/assets/public-T4h_TPAk.js                                    10.91 kB │ gzip:     3.20 kB
+dist/start/server/assets/paper-detail-route-GEpUEMg8.js                        11.04 kB │ gzip:     3.51 kB
+dist/start/server/assets/note-refine-BEZUxBhY.js                               11.21 kB │ gzip:     4.12 kB
+dist/start/server/assets/schema-DBW5F0-G.js                                    11.50 kB │ gzip:     2.84 kB
+dist/start/server/assets/question-solve-contracts-mBQFKM3_.js                  11.71 kB │ gzip:     2.74 kB
+dist/start/server/assets/judge-calibration-sample-core-K4gk_W05.js             11.76 kB │ gzip:     4.02 kB
+dist/start/server/assets/admin-control-function-XxffScXr.js                    11.79 kB │ gzip:     1.89 kB
+dist/start/server/assets/item_prior_backfill-DW_IVm6F.js                       11.84 kB │ gzip:     4.72 kB
+dist/start/server/assets/question-contract-C1NPOo3r.js                         11.91 kB │ gzip:     4.06 kB
+dist/start/server/assets/from-BtNtxFnx.js                                      11.91 kB │ gzip:     3.97 kB
+dist/start/server/assets/dist-es-ke7c1TgT.js                                   11.97 kB │ gzip:     2.69 kB
+dist/start/server/assets/google-generative-ai-Bs8pTUvK.js                      12.27 kB │ gzip:     3.27 kB
+dist/start/server/assets/assessment-issuance-CxTQIYa5.js                       12.27 kB │ gzip:     3.99 kB
+dist/start/server/assets/createServerFn-LbQwuMn2.js                            12.37 kB │ gzip:     3.65 kB
+dist/start/server/assets/openai-responses-DCP8CPSa.js                          12.53 kB │ gzip:     3.82 kB
+dist/start/server/assets/json-parse-DE6QPr84.js                                12.54 kB │ gzip:     3.66 kB
+dist/start/server/assets/judge_run-BKNnYtPy.js                                 12.67 kB │ gzip:     5.28 kB
+dist/start/server/assets/axis-writer-DSJexXwn.js                               12.73 kB │ gzip:     5.10 kB
+dist/start/server/assets/note_generate-CGErKBr0.js                             12.81 kB │ gzip:     3.57 kB
+dist/start/server/assets/nudge-triggers-KRi6wLU1.js                            13.44 kB │ gzip:     3.96 kB
+dist/start/server/assets/BrandMark-DZH--IES.js                                 13.50 kB │ gzip:     3.73 kB
+dist/start/server/assets/due-list-D7LLml9-.js                                  13.72 kB │ gzip:     3.92 kB
+dist/start/server/assets/diagnostic-contracts-B6IIDWA7.js                      13.73 kB │ gzip:     3.27 kB
+dist/start/server/assets/dist-es-D714xSIR.js                                   14.03 kB │ gzip:     3.52 kB
+dist/start/server/assets/google-vertex-BaAP55i_.js                             14.32 kB │ gzip:     3.91 kB
+dist/start/server/assets/invoker-0Fy_9i3n.js                                   14.40 kB │ gzip:     4.83 kB
+dist/start/server/assets/coach_daily-Bz7bH8Ua.js                               14.53 kB │ gzip:     5.30 kB
+dist/start/server/assets/Match-BKshXFPJ.js                                     14.55 kB │ gzip:     3.89 kB
+dist/start/server/assets/dist-es-CJu14BSk.js                                   14.63 kB │ gzip:     3.90 kB
+dist/start/server/assets/web-fetch-candidates-0hCb1iMs.js                      14.66 kB │ gzip:     5.47 kB
+dist/start/server/assets/coverage-lattice-RaoB8M3n.js                          14.93 kB │ gzip:     4.00 kB
+dist/start/server/assets/query-events-D4O4eDap.js                              15.04 kB │ gzip:     4.01 kB
+dist/start/server/assets/question-detail-CHQ5iYFd.js                           15.11 kB │ gzip:     4.44 kB
+dist/start/server/assets/contracts-BArpZLJg.js                                 15.24 kB │ gzip:     3.49 kB
+dist/start/server/assets/dist-DC3ZkFPb.js                                      15.48 kB │ gzip:     4.24 kB
+dist/start/server/assets/open-BEk-YstJ.js                                      15.58 kB │ gzip:     4.77 kB
+dist/start/server/assets/import-completion-CeqPVp05.js                         15.73 kB │ gzip:     4.70 kB
+dist/start/server/assets/proposal-Du6N9_qD.js                                  15.75 kB │ gzip:     3.46 kB
+dist/start/server/assets/HttpInterceptingShapeSerializer-BSE4DWnT.js           15.82 kB │ gzip:     4.02 kB
+dist/start/server/assets/supply_planner-QtQZzu_g.js                            15.90 kB │ gzip:     5.63 kB
+dist/start/server/assets/conjecture-scores-BBAR8pd0.js                         16.01 kB │ gzip:     3.82 kB
+dist/start/server/assets/admin-runs-HzmWYYf42.js                               16.14 kB │ gzip:     4.32 kB
+dist/start/server/assets/judge-run-dispatch-R3ycm0-H.js                        16.16 kB │ gzip:     7.05 kB
+dist/start/server/assets/events-DOzW7ssS.js                                    16.25 kB │ gzip:     4.59 kB
+dist/start/server/assets/proposal-tools-J3tqFUWN.js                            16.28 kB │ gzip:     4.54 kB
+dist/start/server/assets/providers-bAC8P1q6.js                                 16.33 kB │ gzip:     6.09 kB
+dist/start/server/assets/questions-DztHTV3y.js                                 16.33 kB │ gzip:     4.87 kB
+dist/start/server/assets/useSelector-3DD3onjN.js                               16.37 kB │ gzip:     5.53 kB
+dist/start/server/assets/merge_attribution_sweep-CV8Y-LXW.js                   16.56 kB │ gzip:     5.43 kB
+dist/start/server/assets/sql-BotpukYw.js                                       16.70 kB │ gzip:     4.26 kB
+dist/start/server/assets/block-structured-edit-C0bx88EY.js                     16.77 kB │ gzip:     4.21 kB
+dist/start/server/assets/steps-judge-2JrAgjr2.js                               16.89 kB │ gzip:     5.69 kB
+dist/start/server/assets/promise-BjcqErT8.js                                   17.21 kB │ gzip:     5.54 kB
+dist/start/server/assets/promise-C3kuuIBa.js                                   17.21 kB │ gzip:     5.54 kB
+dist/start/server/assets/knowledge_maintenance_nightly-BhmcfKen.js             17.58 kB │ gzip:     5.30 kB
+dist/start/server/assets/agent-note-client-WcUzdIYo.js                         17.69 kB │ gzip:     5.38 kB
+dist/start/server/assets/jsx-runtime-CRti7cbR.js                               17.96 kB │ gzip:     4.66 kB
+dist/start/server/assets/writer-D4riBQbf.js                                    18.26 kB │ gzip:     4.85 kB
+dist/start/server/assets/write-BY02djKW.js                                     18.76 kB │ gzip:     5.61 kB
+dist/start/server/assets/proposal-tools-B-7BHgAO.js                            18.83 kB │ gzip:     4.59 kB
+dist/start/server/assets/loadSso-B95D33J7.js                                   19.04 kB │ gzip:     4.74 kB
+dist/start/server/assets/mistakes-B6uNREj0.js                                  19.12 kB │ gzip:     5.55 kB
+dist/start/server/assets/remark-math-BZcmgCwm.js                               19.25 kB │ gzip:     4.57 kB
+dist/start/server/assets/admin.subjects._id-BKKwyYtL.js                        19.44 kB │ gzip:     5.23 kB
+dist/start/server/assets/durable-dispatch-U3rtkLvK.js                          19.44 kB │ gzip:     6.04 kB
+dist/start/server/assets/turns-vkfF9sNx.js                                     19.47 kB │ gzip:     5.49 kB
+dist/start/server/assets/theta-CkpJtbKX.js                                     19.52 kB │ gzip:     9.19 kB
+dist/start/server/assets/SignatureV4MultiRegion-ClZ5uJTO.js                    19.63 kB │ gzip:     5.31 kB
+dist/start/server/assets/projection_oracle_sweep-aikB1x5w.js                   20.38 kB │ gzip:     6.36 kB
+dist/start/server/assets/trait-control-operations-xhAHJah_.js                  20.53 kB │ gzip:     3.75 kB
+dist/start/server/assets/transform-messages-CcoT-dV0.js                        21.37 kB │ gzip:     5.75 kB
+dist/start/server/assets/useMutation-uS1AxVj5.js                               21.46 kB │ gzip:     5.97 kB
+dist/start/server/assets/signin-8k0QU86F.js                                    21.54 kB │ gzip:     5.34 kB
+dist/start/server/assets/store-Bi5QDtlw.js                                     21.88 kB │ gzip:     5.97 kB
+dist/start/server/assets/dist-CSHTWj-X.js                                      22.08 kB │ gzip:     6.03 kB
+dist/start/server/assets/createMiddleware-B_DhSIos.js                          22.22 kB │ gzip:     6.00 kB
+dist/start/server/assets/src-CN1JeU9k.js                                       23.05 kB │ gzip:     7.18 kB
+dist/start/server/assets/learning-intent-540gOS_m.js                           23.14 kB │ gzip:     6.39 kB
+dist/start/server/assets/openai-responses-shared-MH3ohS_s.js                   23.29 kB │ gzip:     5.57 kB
+dist/start/server/assets/prepare_intervention-CmGlgcVy.js                      23.84 kB │ gzip:     5.29 kB
+dist/start/server/assets/assessment-Dxm3caQn.js                                24.12 kB │ gzip:     7.95 kB
+dist/start/server/assets/known-BjXXilxF.js                                     24.20 kB │ gzip:     5.45 kB
+dist/start/server/assets/router-CPWlUDMp.js                                    24.22 kB │ gzip:     6.00 kB
+dist/start/server/assets/supply_execute-t5i44ma1.js                            24.24 kB │ gzip:     8.06 kB
+dist/start/server/assets/sso-oidc-TFbAWZx8.js                                  24.28 kB │ gzip:     5.20 kB
+dist/start/server/assets/mistral-conversations-CbXFXMS8.js                     24.67 kB │ gzip:     6.90 kB
+dist/start/server/assets/subagent-mailbox-UkhUtsvR.js                          24.71 kB │ gzip:     7.55 kB
+dist/start/server/assets/knowledge-readers-B_QJ061V.js                         25.65 kB │ gzip:     6.53 kB
+dist/start/server/assets/quiz_verify-BAF0p4bu.js                               27.17 kB │ gzip:     7.07 kB
+dist/start/server/assets/generate-question-candidate-Djvz7bTl.js               27.19 kB │ gzip:     7.52 kB
+dist/start/server/assets/json-extract-D4shUOoB.js                              28.62 kB │ gzip:     7.66 kB
+dist/start/server/assets/runner-DeF2izVu.js                                    29.36 kB │ gzip:     8.10 kB
+dist/start/server/assets/node-http-handler-BPw5dQMY.js                         29.47 kB │ gzip:     7.66 kB
+dist/start/server/assets/reply-finalization-36arqKwj.js                        29.49 kB │ gzip:     9.50 kB
+dist/start/server/assets/subject-traits-CZWeg4P8.js                            29.55 kB │ gzip:     6.09 kB
+dist/start/server/assets/event-streams-iv53SZFd.js                             29.74 kB │ gzip:     6.90 kB
+dist/start/server/assets/question_supply_nightly-By_6TWRO.js                   31.23 kB │ gzip:     9.59 kB
+dist/start/server/assets/proposal-accept-applier-FQNCVPkV.js                   31.80 kB │ gzip:     6.76 kB
+dist/start/server/assets/AwsRestJsonProtocol-CKvWwLNu.js                       32.02 kB │ gzip:     7.91 kB
+dist/start/server/assets/business-GyWj-HWr.js                                  32.52 kB │ gzip:     8.72 kB
+dist/start/server/assets/KnowledgePage-BYEWrwMI.js                             32.92 kB │ gzip:     7.26 kB
+dist/start/server/assets/session-BHyHyjrO.js                                   34.13 kB │ gzip:     8.79 kB
+dist/start/server/assets/direct-provider-attempt-Dv9p0vog.js                   34.58 kB │ gzip:     7.12 kB
+dist/start/server/assets/assessment-verdict-CKcFdEwF.js                        34.80 kB │ gzip:     9.84 kB
+dist/start/server/assets/evaluation-d0GvCx40.js                                35.38 kB │ gzip:    10.07 kB
+dist/start/server/assets/teaching-brief-CoIEtY7B.js                            36.68 kB │ gzip:     9.85 kB
+dist/start/server/assets/config-CHjpiAks.js                                    37.22 kB │ gzip:     8.37 kB
+dist/start/server/assets/get-attempt-context-Bttr7PE5.js                       39.44 kB │ gzip:     9.10 kB
+dist/start/server/assets/models-DKiZtUo7.js                                    39.72 kB │ gzip:     9.16 kB
+dist/start/server/assets/event-pwn_YeR2.js                                     40.39 kB │ gzip:     8.10 kB
+dist/start/server/assets/note_verify-BjW7C_BG.js                               41.35 kB │ gzip:     7.51 kB
+dist/start/server/assets/Button-CaUmEPAU.js                                    41.58 kB │ gzip:     7.76 kB
+dist/start/server/assets/src-CpWkQFp3.js                                       42.97 kB │ gzip:    11.39 kB
+dist/start/server/assets/model-profiles-BCZhJkAX.js                            43.33 kB │ gzip:     5.55 kB
+dist/start/server/assets/KnowledgeDetailPage-DQyiHtyG.js                       44.19 kB │ gzip:    11.26 kB
+dist/start/server/assets/openai-completions-BC-E786G.js                        45.43 kB │ gzip:    10.39 kB
+dist/start/server/assets/profile-Cf_SeKSN.js                                   48.06 kB │ gzip:    12.61 kB
+dist/start/server/assets/sts-DmPloG3W.js                                       48.72 kB │ gzip:    11.24 kB
+dist/start/server/assets/json-bigint-HqKw5FFo.js                               48.76 kB │ gzip:    13.70 kB
+dist/start/server/assets/quiz_gen-85j-oTmP.js                                  48.92 kB │ gzip:    12.85 kB
+dist/start/server/assets/probe-result-subscription-BMTQaias.js                 49.32 kB │ gzip:    11.24 kB
+dist/start/server/assets/auto_enroll-CVhEZFDR.js                               49.57 kB │ gzip:    15.50 kB
+dist/start/server/assets/agent-run-error-g6c-eXxy.js                           49.63 kB │ gzip:    11.34 kB
+dist/start/server/assets/openai-codex-responses-hgSOOUol.js                    49.89 kB │ gzip:    12.80 kB
+dist/start/server/assets/InboxPage-yhRRFdE0.js                                 49.96 kB │ gzip:    11.85 kB
+dist/start/server/assets/judgment-CXaT4xNW.js                                  52.22 kB │ gzip:    16.08 kB
+dist/start/server/assets/semver-CQkWq12r.js                                    53.34 kB │ gzip:    10.59 kB
+dist/start/server/assets/inbox-CFXLSK-0.js                                     53.37 kB │ gzip:    13.06 kB
+dist/start/server/assets/cuid2-B9yuQHLo.js                                     53.63 kB │ gzip:    16.72 kB
+dist/start/server/assets/research_meeting_agent_nightly-nle4sqro.js            61.04 kB │ gzip:    18.32 kB
+dist/start/server/assets/public-DKDQ8oeb.js                                    62.11 kB │ gzip:    17.58 kB
+dist/start/server/assets/types-CVykyPzj.js                                     64.61 kB │ gzip:    14.60 kB
+dist/start/server/assets/research_meeting_nightly-BfS4Nuev.js                  68.53 kB │ gzip:    18.61 kB
+dist/start/server/assets/content-fingerprint-IvZlPdn_.js                       70.75 kB │ gzip:    17.87 kB
+dist/start/server/assets/archive-QNXEgAgp.js                                   70.97 kB │ gzip:    21.87 kB
+dist/start/server/assets/probe-lifecycle-CMCXhGeq.js                           74.51 kB │ gzip:    21.02 kB
+dist/start/server/assets/intervention-0hx6gnp2.js                              77.24 kB │ gzip:    16.01 kB
+dist/start/server/assets/useQuery-B041O-Lo.js                                  77.53 kB │ gzip:    20.57 kB
+dist/start/server/assets/File-BCUVckNM.js                                      81.23 kB │ gzip:    17.03 kB
+dist/start/server/assets/streamableHttp-B5cROfoT.js                            81.71 kB │ gzip:    21.30 kB
+dist/start/server/assets/lib-CjnwD31d.js                                       81.78 kB │ gzip:    18.53 kB
+dist/start/server/assets/copilot_run-D1whc_ZL.js                               89.36 kB │ gzip:    24.76 kB
+dist/start/server/assets/TodayPage-RzWcxBDb.js                                 93.91 kB │ gzip:    22.03 kB
+dist/start/server/assets/parity-DF32nljQ.js                                    95.15 kB │ gzip:    21.31 kB
+dist/start/server/assets/stream-store-EnFFe1Uy.js                             103.09 kB │ gzip:    33.85 kB
+dist/start/server/assets/node-D37zUzAk.js                                     106.18 kB │ gzip:    28.09 kB
+dist/start/server/assets/node-DufN5SIW.js                                     106.18 kB │ gzip:    28.09 kB
+dist/start/server/assets/client-B6HHBG0G.js                                   107.66 kB │ gzip:    27.01 kB
+dist/start/server/assets/manifest-D7l50sqQ.js                                 109.56 kB │ gzip:    26.65 kB
+dist/start/server/assets/capabilities-Cxl7UrEJ.js                             110.24 kB │ gzip:    17.60 kB
+dist/start/server/assets/run-lifecycle-DtrNv6yw.js                            129.80 kB │ gzip:    35.69 kB
+dist/start/server/assets/esm-BzSw0Vt4.js                                      151.44 kB │ gzip:    35.06 kB
+dist/start/server/assets/dist-76yDjebD.js                                     157.79 kB │ gzip:    25.71 kB
+dist/start/server/assets/ponyfill.es2018-DzXcpupL.js                          159.22 kB │ gzip:    26.05 kB
+dist/start/server/assets/docx-C8nmoDkW.js                                     166.35 kB │ gzip:    47.17 kB
+dist/start/server/assets/r2-CtRwpqEh.js                                       167.07 kB │ gzip:    38.16 kB
+dist/start/server/assets/workbench-shell-CSOv3bqu.js                          195.01 kB │ gzip:    49.32 kB
+dist/start/server/assets/Sha256Node-4aQwvnFW.js                               198.50 kB │ gzip:    48.06 kB
+dist/start/server/assets/pdf-render-D_pN98IQ.js                               223.55 kB │ gzip:    46.55 kB
+dist/start/server/assets/dist-DhMCbCJJ.js                                     235.74 kB │ gzip:    38.55 kB
+dist/start/server/assets/author-artifact-BXX55Gjt.js                          259.79 kB │ gzip:    62.09 kB
+dist/start/server/assets/schema-K7D5Jd5T.js                                   261.15 kB │ gzip:    48.83 kB
+dist/start/server/assets/task-registry-nqt_kRBA.js                            267.32 kB │ gzip:    91.83 kB
+dist/start/server/assets/dist-CZxG0vg1.js                                     272.64 kB │ gzip:    65.82 kB
+dist/start/server/assets/schemas-CQCgfBLS.js                                  275.25 kB │ gzip:    58.97 kB
+dist/start/server/assets/client-ClA5ysBx.js                                   315.00 kB │ gzip:    67.61 kB
+dist/start/server/assets/tencent_ocr_extract-DIkmHzbe.js                      341.10 kB │ gzip:    65.58 kB
+dist/start/server/assets/lib-CB98y1sP.js                                      363.48 kB │ gzip:    79.22 kB
+dist/start/server/assets/lib-BHg7Hr_r.js                                      367.97 kB │ gzip:    85.85 kB
+dist/start/server/assets/drizzle-zod-Cu-QVx7D.js                              400.22 kB │ gzip:    70.56 kB
+dist/start/server/assets/wrapper-DkadZuOw.js                                  458.93 kB │ gzip:   103.56 kB
+dist/start/server/assets/anthropic-messages-D0HKH9u2.js                       522.19 kB │ gzip:   105.90 kB
+dist/start/server/assets/esm-8ERABVst.js                                      542.33 kB │ gzip:   122.03 kB
+dist/start/server/server.js                                                   709.97 kB │ gzip:   145.93 kB
+dist/start/server/assets/openai-B_UjF07s.js                                   713.31 kB │ gzip:   132.90 kB
+dist/start/server/assets/rehype-katex-TYXi4M9f.js                             794.42 kB │ gzip:   181.92 kB
+dist/start/server/assets/google-shared-DPhCOwM9.js                            867.45 kB │ gzip:   122.75 kB
+dist/start/server/assets/commands-BaB2vPHn.js                               1,037.73 kB │ gzip:   293.13 kB
+dist/start/server/assets/proposal-accept-applier-BL6ju_AD.js                1,054.46 kB │ gzip:   240.55 kB
+dist/start/server/assets/all-CJqT0dnH.js                                    1,136.65 kB │ gzip:    70.32 kB
+dist/start/server/assets/MeshGraph-DbJa0ygt.js                              1,163.27 kB │ gzip:   256.72 kB
+dist/start/server/assets/client-2xYirRht.js                                 1,167.08 kB │ gzip:   256.83 kB
+dist/start/server/assets/oss-CpCbn0-_.js                                    9,042.39 kB │ gzip: 1,387.01 kB
+
+[33m[INEFFECTIVE_DYNAMIC_IMPORT] [0msrc/capabilities/practice/server/review-operation.ts is dynamically imported by src/capabilities/practice/jobs/judge_run.ts, src/capabilities/practice/public.ts but also statically imported by src/capabilities/practice/api/submit.ts, src/capabilities/practice/public.ts, dynamic import will not move module into another chunk.
+
+✓ built in 2.54s
+$ esbuild server/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/server.cjs --external:winston --external:winston-transport --external:pg-native --external:sharp --external:better-sqlite3 --external:bufferutil --external:utf-8-validate --external:@hyzyla/pdfium --define:process.env.NODE_ENV=\"production\" --external:../dist/start/server/server.js
+
+  dist/server.cjs  42.3mb ⚠️
+
+⚡ Done in 835ms
+$ esbuild scripts/worker.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/worker.cjs --external:winston --external:winston-transport --external:pg-native --external:sharp --external:better-sqlite3 --external:bufferutil --external:utf-8-validate --define:process.env.NODE_ENV=\"production\"
+
+  dist/worker.cjs  42.4mb ⚠️
+
+⚡ Done in 743ms
+$ esbuild scripts/migrate.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/migrate.cjs --external:pg-native --external:bufferutil --external:utf-8-validate --external:@earendil-works/* --external:@modelcontextprotocol/sdk --external:@lmnr-ai/lmnr --define:process.env.NODE_ENV=\"production\"
+
+  dist/migrate.cjs  5.7mb ⚠️
+
+⚡ Done in 342ms

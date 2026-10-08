@@ -20,6 +20,7 @@ import {
   adminFailures,
   adminRuns,
 } from '../../server/start/admin-test-fixtures';
+import { agentNoteBoard } from '../../server/start/agent-note-test-fixtures';
 import {
   AdminCostResponseSchema,
   AdminFailuresResponseSchema,
@@ -744,5 +745,49 @@ test('all eighteen control RPCs map to retained HTTP fixtures with real serializ
         ...(canonical ? { canonicalLocation: `${traitPath}/journal` } : {}),
       });
     else assert.deepEqual(envelope.result, entry.fixture);
+  }
+});
+
+test('agent-note20/50/default RPC uses installed serializer and keeps ISO/unknown nested refs', async () => {
+  const map = await loadBuiltFunctionMap();
+  const fetcher = await client();
+  const id = [...map].find(([, name]) => name === 'getStartAgentNoteBoard')?.[0];
+  assert(id);
+  for (const limit of [undefined, 20, 50, 200]) {
+    const transport = async (url: string, init: unknown) => {
+      const options = Init.parse(init);
+      const decoded = await decodeRpcRequest(
+        {
+          url: () => url,
+          method: () => options.method,
+          headers: () => Object.fromEntries(options.headers),
+          postData: () => options.body ?? null,
+          postDataJSON: () => (options.body ? JSON.parse(options.body) : null),
+        },
+        map,
+      );
+      assert.equal(decoded.name, 'getStartAgentNoteBoard');
+      const endpoint = new URL(decoded.request.url());
+      assert.equal(endpoint.pathname, '/api/agents/notes');
+      assert.equal(endpoint.searchParams.get('limit'), limit === undefined ? null : String(limit));
+      const encoded = await rpcFulfillment(decoded.name, { json: agentNoteBoard });
+      return new Response(z.string().parse(encoded.body), {
+        status: encoded.status,
+        headers: { ...encoded.headers, 'content-type': 'application/json' },
+      });
+    };
+    const envelope = Envelope.parse(
+      await fetcher(
+        `http://fixture.test/_serverFn/${id}`,
+        [{ method: 'GET', data: { limit }, fetch: transport }],
+        transport,
+      ),
+    );
+    assert.equal(envelope.error, undefined);
+    assert.deepEqual(envelope.result, agentNoteBoard);
+    const dto = z
+      .object({ rows: z.array(z.object({ created_at: z.string() }).passthrough()) })
+      .parse(envelope.result);
+    assert.equal(dto.rows[0].created_at, '2026-10-09T12:34:56.001Z');
   }
 });

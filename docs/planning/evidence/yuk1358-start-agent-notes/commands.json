@@ -1,0 +1,134 @@
+[
+  {
+    "command": "/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin/node --version",
+    "exit": 0,
+    "result": "v24.19.0"
+  },
+  {
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm exec node --version",
+    "exit": 0,
+    "result": "v24.19.0"
+  },
+  {
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm vitest run --config vitest.unit.config.ts server/start/agent-note-read.unit.test.ts server/start/agent-note-client.unit.test.ts web/src/routes/WorkbenchPages.start.unit.test.tsx",
+    "exit": 0,
+    "result": "29 tests, 3 files",
+    "log": "unit-first.log"
+  },
+  {
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm build",
+    "exit": 0,
+    "log": "build-first.log"
+  },
+  {
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm typecheck",
+    "exit": 0,
+    "log": "typecheck-first.log"
+  },
+  {
+    "command": "/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin/node --import tsx --test tests/usability/start-rpc-fixtures.unit.spec.ts",
+    "exit": 0,
+    "result": "10 tests",
+    "log": "protocol-first.log"
+  },
+  {
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm lint",
+    "exit": 0,
+    "result": "290 warnings",
+    "log": "lint-first.log"
+  },
+  {
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm vitest run --config vitest.unit.config.ts server/start/agent-note-read.unit.test.ts server/start/agent-note-client.unit.test.ts server/start/auth.unit.test.ts server/start/workbench-read.unit.test.ts server/start/workbench-client.unit.test.ts web/src/routes/WorkbenchPages.start.unit.test.tsx web/src/surface-inventory.unit.test.ts src/capabilities/agency/server/note-board-read.unit.test.ts",
+    "exit": 0,
+    "result": "127 tests, 8 files",
+    "log": "unit-final.log"
+  },
+  {
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm typecheck",
+    "exit": 0,
+    "log": "typecheck-final.log"
+  },
+  {
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm exec biome check server/start/agent-note-*.ts server/start/workbench-shell.tsx server/start/routes/agent-notes.tsx src/capabilities/agency/ui/agent-note-client.tsx src/capabilities/agency/ui/page.tsx src/capabilities/agency/ui-public.ts src/capabilities/shell/ui/TodayPage.tsx web/src/routes/WorkbenchPages.start.unit.test.tsx web/src/router.tsx tests/usability/start-rpc-fixtures.ts tests/usability/start-rpc-fixtures.unit.spec.ts",
+    "exit": 0,
+    "result": "18 files, no warnings",
+    "log": "scoped-biome.log"
+  },
+  {
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm lint",
+    "exit": 0,
+    "result": "290 warnings",
+    "log": "lint-final.log"
+  },
+  {
+    "command": "git diff --check",
+    "exit": 0
+  },
+  {
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:schema",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-schema.log"
+  },
+  {
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:partition",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-partition.log"
+  },
+  {
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:api-client",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-api-client.log"
+  },
+  {
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:api-client-usage",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-api-client-usage.log"
+  },
+  {
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:capability-boundaries",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-capability-boundaries.log"
+  },
+  {
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:provider-lanes",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-provider-lanes.log"
+  },
+  {
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:profile",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-profile.log"
+  },
+  {
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:task-census",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-task-census.log"
+  },
+  {
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:draft-status",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-draft-status.log"
+  },
+  {
+    "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:draft-status-reads",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-draft-status-reads.log"
+  },
+  {
+    "command": "git diff --check HEAD^ HEAD",
+    "exit": 2,
+    "result": "Preserved raw CLI log trailing spaces and blank EOF; no source findings",
+    "log": "raw-log-whitespace.txt",
+    "revision": "3ac84e80e"
+  },
+  {
+    "command": "git diff --check HEAD^ HEAD -- server/start src/capabilities/agency/ui src/capabilities/agency/ui-public.ts src/capabilities/shell/ui/TodayPage.tsx web/src tests/usability/start-rpc-fixtures.ts tests/usability/start-rpc-fixtures.unit.spec.ts",
+    "exit": 0,
+    "revision": "3ac84e80e"
+  },
+  {
+    "command": "git commit -m 'YUK-1358: migrate agent-note consumers to authenticated Start reads'",
+    "exit": 0,
+    "revision": "3ac84e80e"
+  }
+]

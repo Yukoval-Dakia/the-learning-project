@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：main10df已含PR1620；PR1621 exact53f CI仅旧admin-config调度归属断言失败，父test修正29DB通过，准备新exactCI。YUK1394设计已裁决；当前无本线程runtime锁或服务。整迁移尚未完成，过往记录见[归档](docs/planning/2026-10-09-pre-1393-board-archive.md)。
+> Linear 是权威 tracker。2026-10-09：PR1621已合main e1f2ef6bb，正常整合至PR1622；仅PLAN/now冲突。Start观察已26RPC/T3浏览器验收，锁释放，整合后90unit/static/build及11audit通过，最终exact CI待。
 
 ## NOW
+
+- **YUK-1358 / Start观察读取**：freshmain10df、分支feat/yuk-1358-start-agent-notes。复用1392领域入口，保留Today20/全页50与本地已读，无数据库写操作。[范围与验收](docs/planning/2026-10-09-yuk1358-start-agent-notes.md)。作者127unit/10协议/static/build/10audits通过；父14DB通过且清理/释放锁。R1 NONE；CI两处陈旧数量断言已修，59unit通过。实际26RPC/10窗口与T3浏览器20/50、错误恢复、已读/深链/旧SPA跳转通过；3浏览器窗口88表/序列无写，已释放锁。[父验收](docs/planning/2026-10-09-yuk1358-start-agent-notes-parent.md)。封存后最终CI待。
 
 - **YUK-1393 / review orphan DBOS**：从main6aaf8ca89建独立branch，scope/设计提交c0870b0eb。唯一T3作者已completed/noPending并释放，提交a9d7c8322；父已核26源码SHA。实现家族、Review锁内helper、共享DBOS host/注册、schema0116与scopedtests。5796已核75树无冲突并预留0116。父33DB/10进程恢复/2cron/4旧prune/26migration与49unit/static/build/7audits通过，R1 NONE；驱动修正b33仅tests，原失败保留；源码授权不代表运行切换。见[实施设计](docs/planning/2026-10-09-yuk1393-review-orphan-dbos.md)。
 - **YUK-1358 / Start配置与科目消费者已合入**：PR1620于18:16:17Z合main10df1a471，tree与exact755bdeebb一致，CI37821989407全绿/R1 NONE/threads0。18操作122RPC/35窗口与三页浏览器证据见[父验收](docs/planning/2026-10-09-yuk1358-start-admin-controls-parent.md)。未部署；1358保持In Progress。5796独占接续1392 board、剩余Start路由和实际提交，本线程不写其活跃树。
@@ -12,7 +14,7 @@
 
 ## NEXT
 
-- PR1621本机验收及R1已完成；exact53f CI单例旧归属断言失败，父修正后29DB通过，准备新exactCI。父18:39:51Z核owner释放锁，原4服务/release不变；默认仍pg-boss，未部署。
+- PR1621已合main e1f2ef6bb，tree与exact3be966000一致、CI37829575046绿；原失败和29DB修复证据保留。父18:39:51Z核owner释放锁，原4服务/release不变；默认仍pg-boss，未部署。
 - YUK1394已查重建1355子票，独占conversation/placement六小时清理族；只读设计已完成并裁决共享family-keyed四表，1393收口后freshmain实施。共享scope已与5796确认；idle五分钟事件时钟另行处理。
 - 1355逐族迁移仍仅prune_job_events已交首族，1393是下一族。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。
 - 1358继续剩余路由/共享子树及三入口共用业务操作，保留现有确定性行为。1392公共board读取、1380事件读/纠错等已合接口由Start集成方接消费者，不复制领域规则。
@@ -42,6 +44,6 @@
 
 ## BLOCKED-ON
 
-- 当前没有需要owner追加许可才能推进的已知阻塞。PR1621正在收口CI fixture修复，1394设计已裁决；子任务/CI仍运行属于等待，不把整迁移挂blocked。
+- 当前没有需要owner追加许可才能推进的已知阻塞。PR1621已合入；1394作者已启动且独占0117；子任务/CI仍运行属于等待，不把整迁移挂blocked。
 - runtime测试/发布在执行前必须实际核锁并原子获取，核owner/token清理释放；其他线程持锁时只推不冲突的源码工作。历史锁记录不能代表当前ownership。
 - 部署用途保持Agent开发测试，禁止再次清库、恢复私人数据或盲重放队列；日用部署须owner明确要求“为我日常使用的部署”。旧运行验收限制和未完成产品能力保存在归档及各原票，未被本次整理核销。
