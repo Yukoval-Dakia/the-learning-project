@@ -27,3 +27,10 @@ Generic job-event SSE retains its existing listener/replay/Last-Event-ID/abort b
 ## Delivery evidence
 
 One recovery owner covers dispatch, reconcile, status and dependent placement/diagnostic consumers. Stable pre-candidate execution binding and scoped wire retry policy must be demonstrated. Preserve old paid claims/results, queue/DLQ obligations and unknown outcomes. Controlled crash tests, real transport counts, coherent full-schema restore, old-binary exit and compatible rollback are distinct gates. Any bounded real model case keeps model/task/cost evidence and never repays an unknown result merely for a green test. Keep the existing1355/1356/1358/1359 work open until its whole stated outcome is true.
+
+
+## Confirmed shared-fence repair extension
+
+After the cb984 PostgreSQL40P01 evidence, coordinator7631 proposed a separate minimal1394 repair covering `src/server/durable/prune-family.ts`, `review-orphan-family.ts`, `session-orphan-backend.ts` and a necessary small installer-lock helper with scoped database regression tests. This Start thread rechecked all77 registered worktrees:75 accessible had no dirty changes in the three named production files; two unavailable historical trees remain excluded. Its own tree is clean with no active writer or planned edits there. The shared-fence repair therefore belongs to7631 after its current test-only writer hands back. No Start, boot, shutdown or schema ownership is transferred.
+
+The proposed fix synchronizes the actual shared trigger-installation boundary rather than all host startup or retrying deadlocks. This ownership confirmation does not replace reproduction/lock evidence and mixed-family concurrency regression. Old binaries do not acquire a new installer lock, so explicit old-process quiescence remains required; no mixed-version safety is claimed. Inspection receipt: `/tmp/yuk1358-fence-lock-scope-20261009.json`.
