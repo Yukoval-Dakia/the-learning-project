@@ -1,13 +1,13 @@
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
 
-import { getAdminCost } from '../server/ai-observability';
+import { loadAdminCost, parseAdminCostQuery } from '../public';
 
 export async function GET(req: Request): Promise<Response> {
   try {
     const url = new URL(req.url);
-    const days = Number.parseInt(url.searchParams.get('days') ?? '30', 10);
-    const cost = await getAdminCost(db, { days });
+    const options = parseAdminCostQuery({ days: url.searchParams.get('days') ?? undefined });
+    const cost = await loadAdminCost(db, options);
     return Response.json(cost);
   } catch (err) {
     return errorResponse(err);

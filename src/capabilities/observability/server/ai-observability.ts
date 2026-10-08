@@ -1,7 +1,14 @@
 import { and, asc, desc, eq, inArray, lt, or, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
 import { ai_task_runs, cost_ledger, tool_call_log } from '@/db/schema';
-import { ApiError } from '@/kernel/http';
+import { ApiError, collectionPayload } from '@/kernel/http';
+import {
+  type AdminCostQuerySchema,
+  type AdminFailuresQuerySchema,
+  AdminRunParamsSchema,
+  AdminRunStatusSchema,
+} from '../api/admin-observability-contracts';
 import { readProviderCostAggregates } from './provider-cost-projection';
 
 type DbLike = Db | Tx;
@@ -476,9 +483,10 @@ export async function getAdminRunTimeline(
 export async function getAdminCost(
   db: DbLike,
   opts: { days?: number } = {},
+  now: Date = new Date(),
 ): Promise<AdminCostResponse> {
   const days = normalizeDays(opts.days);
-  const from = new Date(Date.now() - days * 86_400_000);
+  const from = new Date(now.getTime() - days * 86_400_000);
   const rows = await readProviderCostAggregates(db, from);
   const daily: AdminCostDayRow[] = rows.flatMap((row) =>
     row.dimension === 'day' && row.day !== null && row.currency !== null
@@ -607,4 +615,179 @@ export async function getAdminFailureClusters(
   return [...byKey.values()].sort(
     (a, b) => b.count - a.count || b.latest_at.getTime() - a.latest_at.getTime(),
   );
+}
+
+/** Validated domain options; HTTP query coercion stays in the parsers below. */
+export const AdminRunsOptionsSchema = z.object({
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .default(50)
+    .transform((limit) => normalizeLimit(limit)),
+  status: AdminRunStatusSchema.optional(),
+  taskKind: z.string().optional(),
+  cursor: z.string().optional(),
+});
+export const AdminCostOptionsSchema = z.object({
+  // Keep the raw reader's numeric normalization, including non-finite inputs,
+  // authoritative. Validating here must not normalize a fractional value twice.
+  days: z.custom<number>((value) => typeof value === 'number').optional(),
+});
+export const AdminFailuresOptionsSchema = z.object({
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .default(200)
+    .transform((limit) => normalizeLimit(limit)),
+});
+export type AdminRunsOptions = z.input<typeof AdminRunsOptionsSchema>;
+export type AdminCostOptions = z.input<typeof AdminCostOptionsSchema>;
+export type AdminFailuresOptions = z.input<typeof AdminFailuresOptionsSchema>;
+export type AdminRunDetailOptions = z.infer<typeof AdminRunParamsSchema>;
+
+export function parseAdminRunsQuery(
+  query: { limit?: string; status?: string; task_kind?: string; cursor?: string } = {},
+): z.output<typeof AdminRunsOptionsSchema> {
+  const limit = query.limit === undefined ? 50 : Number(query.limit);
+  if (!Number.isInteger(limit) || limit <= 0) {
+    throw new ApiError('validation_error', `invalid limit: ${query.limit}`, 400);
+  }
+  const status = AdminRunStatusSchema.optional().safeParse(query.status);
+  if (!status.success) {
+    throw new ApiError('validation_error', `invalid run status: ${query.status}`, 400);
+  }
+  return AdminRunsOptionsSchema.parse({
+    limit,
+    status: status.data,
+    taskKind: query.task_kind,
+    cursor: query.cursor,
+  });
+}
+
+export function parseAdminCostQuery(
+  query: z.infer<typeof AdminCostQuerySchema> = {},
+): z.output<typeof AdminCostOptionsSchema> {
+  return AdminCostOptionsSchema.parse({
+    days: normalizeDays(Number.parseInt(query.days ?? '30', 10)),
+  });
+}
+
+export function parseAdminFailuresQuery(
+  query: z.infer<typeof AdminFailuresQuerySchema> = {},
+): z.output<typeof AdminFailuresOptionsSchema> {
+  return AdminFailuresOptionsSchema.parse({
+    limit: normalizeLimit(Number.parseInt(query.limit ?? '200', 10)),
+  });
+}
+
+// Derive from complete raw projections, not response-schema parsing: ledger
+// fields and nulls must remain byte-compatible with the existing HTTP JSON.
+export type AdminRunDto = Omit<AdminRunListRow, 'started_at' | 'finished_at'> & {
+  started_at: string;
+  finished_at: string | null;
+};
+export type AdminRunsPageDto = Omit<AdminRunListPage, 'rows'> & { rows: AdminRunDto[] };
+export type AdminRunsDto = AdminRunsPageDto & {
+  data: AdminRunDto[];
+  page: { limit: number; next_cursor: string | null };
+};
+export type AdminRunTimelineEventDto = Omit<AdminRunTimelineEvent, 'at'> & { at: string };
+export type AdminRunDetailDto = {
+  run: AdminRunDto;
+  ledger: Array<Omit<AdminRunTimeline['ledger'][number], 'occurred_at'> & { occurred_at: string }>;
+  tool_calls: Array<Omit<AdminToolCallProjection, 'occurred_at'> & { occurred_at: string }>;
+  timeline: AdminRunTimelineEventDto[];
+};
+export type AdminCostDto = AdminCostResponse;
+export type AdminFailureClusterDto = Omit<AdminFailureCluster, 'latest_at' | 'samples'> & {
+  latest_at: string;
+  samples: Array<Omit<AdminFailureSample, 'started_at'> & { started_at: string }>;
+};
+export type AdminFailuresDto = { clusters: AdminFailureClusterDto[]; limit: number };
+
+function adminRunDto(row: AdminRunListRow): AdminRunDto {
+  return {
+    ...row,
+    started_at: row.started_at.toISOString(),
+    finished_at: row.finished_at?.toISOString() ?? null,
+  };
+}
+
+function adminTimelineEventDto(event: AdminRunTimelineEvent): AdminRunTimelineEventDto {
+  const dto = { ...event, at: event.at.toISOString() };
+  // Optional timeline values used to disappear during HTTP JSON serialization.
+  // Omit them in the shared DTO too, so RPC callers receive that same shape.
+  for (const key of [
+    'id',
+    'tool_name',
+    'iteration',
+    'latency_ms',
+    'cost',
+    'cost_basis',
+    'cost_ref',
+    'tokens_in',
+    'tokens_out',
+    'outcome',
+    'pgboss_job_id',
+  ] satisfies Array<keyof Omit<AdminRunTimelineEvent, 'type' | 'at' | 'label'>>) {
+    if (dto[key] === undefined) delete dto[key];
+  }
+  return dto;
+}
+
+/** Complete collection envelope shared by HTTP and authenticated RPC consumers. */
+export async function loadAdminRuns(
+  db: DbLike,
+  opts: AdminRunsOptions = {},
+): Promise<AdminRunsDto> {
+  const raw = await listAdminRunsPage(db, AdminRunsOptionsSchema.parse(opts));
+  const page = { ...raw, rows: raw.rows.map(adminRunDto) };
+  return collectionPayload(page.rows, { limit: page.limit, next_cursor: page.next_cursor }, page);
+}
+
+export async function loadAdminRunDetail(
+  db: DbLike,
+  opts: AdminRunDetailOptions,
+): Promise<AdminRunDetailDto | null> {
+  const { id } = AdminRunParamsSchema.parse(opts);
+  const detail = await getAdminRunTimeline(db, id);
+  if (!detail) return null;
+  return {
+    run: adminRunDto(detail.run),
+    ledger: detail.ledger.map((row) => ({ ...row, occurred_at: row.occurred_at.toISOString() })),
+    tool_calls: detail.tool_calls.map((row) => ({
+      ...row,
+      occurred_at: row.occurred_at.toISOString(),
+    })),
+    timeline: detail.timeline.map(adminTimelineEventDto),
+  };
+}
+
+export async function loadAdminCost(
+  db: DbLike,
+  opts: AdminCostOptions = {},
+  now: Date = new Date(),
+): Promise<AdminCostDto> {
+  return getAdminCost(db, AdminCostOptionsSchema.parse(opts), now);
+}
+
+export async function loadAdminFailures(
+  db: DbLike,
+  opts: AdminFailuresOptions = {},
+): Promise<AdminFailuresDto> {
+  const { limit } = AdminFailuresOptionsSchema.parse(opts);
+  const clusters = await getAdminFailureClusters(db, { limit });
+  return {
+    clusters: clusters.map((cluster) => ({
+      ...cluster,
+      latest_at: cluster.latest_at.toISOString(),
+      samples: cluster.samples.map((sample) => ({
+        ...sample,
+        started_at: sample.started_at.toISOString(),
+      })),
+    })),
+    limit,
+  };
 }
