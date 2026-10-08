@@ -1,3 +1,9 @@
+# Current update — final CI and bounded judge design work
+
+PR1624 remote a8800730b3c67667574bc44ec02edb7ed7800f78, exactCI37852269707. Last actual check found no failures, DB1/DB2 stillrunning. T3watchactive; do notduplicatepoller/rerun. Parentlocal docs aftera880 include1359 restorecoverage and an offline falseverified repro, plus two postbuildauditPASS; carryaftermerge, do notpushjusttodisruptCI. No runtime services/lock/writer.
+
+One readonly design child isrunning: node:delegated-task:command%3Amcp%3Ae4c5132f-3c05-4ce6-aa2d-e5b525fe3bf6%3Adelegate-task%3Ayuk1356-judge-operational-contract-details-20261009-v1, Codex/gpt-6-astra high. Only three unresolved decisions from existingdesign: exact operational receipts, lateworker/manualdisposition atomicity, Tx status reads. Output /tmp/yuk1356-judge-operational-contract-details-20261009.md and sourcehashJSON. No repoedits/test/DB/network/childdelegation. This isnewjudgepreparation, not1394R3. Waitcompletionnotification; judgeimplementationstillrequires1394formalmain.
+
 # Current update — YUK1394 CI cron collision repaired
 
 Exact b9b CI37850732224 unit2 failed only composition cron duplicate04:25,2409 passed. Parent local1RED/10passed reproduced. Historical main6212 infra conversation and manifest audit both04:25; moving the former revealed collision.5796 confirmed scope and no fixed-time dependency. Parent changed only audit to04:26, preserved orphan04:25/04:35 and unchanged collision guard. Added manifest contract test;3files32unit/typecheck/lint/build allpassed.27-row declaration catalog verified9sources,2knownchanged; frequent jobs still overlap minute26, noexclusive-runtime claim. No runtime/DB/provider, noR3. Prepare one newpush with existing local docs and evidence, then exactheadCI. Judge implementation entry680dc retained; nojudge writer beforeformal1394main. Earlier evidence remainsrevision-specific.
