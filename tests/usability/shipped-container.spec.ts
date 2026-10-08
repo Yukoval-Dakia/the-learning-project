@@ -2,13 +2,18 @@ import { createHash } from 'node:crypto';
 import { type Page, expect, test } from '@playwright/test';
 import { configFixture } from '../../src/capabilities/observability/ui/config-test-fixture';
 import { costTruthFixture, installApiFixtures } from './api-fixtures';
+import {
+  isProposalDecisionResponse,
+  readProposalDecisionResponse,
+  routeFixtureApi,
+} from './start-rpc-fixtures';
 
 for (const path of ['/today', '/admin/cost']) {
   for (const mode of ['unknown', 'mixed', 'zero', 'zero-unknown', 'empty'] as const) {
     test(`cost truth ${path} ${mode}`, async ({ page }) => {
       const fixture = await installApiFixtures(page, 'existing-evidence');
       const data = costTruthFixture(mode);
-      await page.route('**/api/**', async (route) => {
+      await routeFixtureApi(page, '**/api/**', async (route) => {
         const url = new URL(route.request().url()).pathname;
         if (url === '/api/cost/today') return route.fulfill({ json: data.today });
         if (url === '/api/admin/cost') return route.fulfill({ json: data.admin });
@@ -68,7 +73,8 @@ for (const path of ['/today', '/admin/cost']) {
     const pending = new Promise<void>((resolve) => {
       finish = resolve;
     });
-    await page.route(
+    await routeFixtureApi(
+      page,
       path === '/today' ? '**/api/cost/today' : '**/api/admin/cost**',
       async (route) => {
         await pending;
@@ -142,7 +148,7 @@ test('Copilot accepts consecutive messages and restores each run without cancell
       frames.map((frame) => `event: job_event\ndata: ${JSON.stringify(frame)}\n\n`).join(''),
     );
   };
-  await page.route('**/api/**', async (route) => {
+  await routeFixtureApi(page, '**/api/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/copilot/sessions')
       return route.fulfill({
@@ -269,7 +275,7 @@ test('Copilot recovers ambiguous acceptance after reload with the original key a
   const turns: Array<Record<string, unknown>> = [];
   const answer = '零是已观察值，null 仍表示未知；更正尚未获准。';
   const question = '区分零与未知，并保留更正的批准状态。';
-  await page.route('**/api/**', async (route) => {
+  await routeFixtureApi(page, '**/api/**', async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path === '/api/copilot/sessions')
       return route.fulfill({
@@ -396,7 +402,7 @@ for (const transport of ['persistent'] as const) {
               };
       const content = '已整理本轮资料。';
       const turns: Array<Record<string, unknown>> = [];
-      await page.route('**/api/**', async (route) => {
+      await routeFixtureApi(page, '**/api/**', async (route) => {
         const path = new URL(route.request().url()).pathname;
         if (path === '/api/copilot/sessions')
           return route.fulfill({
@@ -526,7 +532,7 @@ for (const transport of ['persistent'] as const) {
     ];
     const posts: Array<Record<string, unknown>> = [];
     const terminal = { reply: content, skill_context: context, skill_turn: { kind: 'end' } };
-    await page.route('**/api/**', async (route) => {
+    await routeFixtureApi(page, '**/api/**', async (route) => {
       const path = new URL(route.request().url()).pathname;
       if (path === '/api/copilot/sessions')
         return route.fulfill({
@@ -772,16 +778,16 @@ test.describe('shipped-container usability regression', () => {
 
     await test.step('route=/inbox control="接受" records a real B-bucket decision', async () => {
       const [decisionResponse] = await Promise.all([
-        page.waitForResponse(
-          (response) =>
-            response.request().method() === 'POST' &&
-            new URL(response.url()).pathname ===
-              '/api/proposals/proposal-learning-plan-1/decisions',
+        page.waitForResponse((response) =>
+          isProposalDecisionResponse(response, 'proposal-learning-plan-1'),
         ),
         page.getByRole('button', { name: '接受', exact: true }).click(),
       ]);
-      expect(decisionResponse.status()).toBe(201);
-      expect(decisionResponse.headers().location).toBe('/api/events/event-decision-1');
+      expect(await readProposalDecisionResponse(decisionResponse)).toMatchObject({
+        created: true,
+        idempotent: false,
+        decision_event_id: 'event-decision-1',
+      });
       await expect(page.getByText('已接受', { exact: true })).toBeVisible();
       expect(fixture.proposalDecisions()).toEqual([
         { id: 'proposal-learning-plan-1', decision: 'accept' },
@@ -792,15 +798,16 @@ test.describe('shipped-container usability regression', () => {
       await expect(page.getByText('《岳阳楼记》背诵检查')).toBeVisible();
       await expect(page.getByText(/分钟内可撤销/)).toBeVisible();
       const [retractResponse] = await Promise.all([
-        page.waitForResponse(
-          (response) =>
-            response.request().method() === 'POST' &&
-            new URL(response.url()).pathname === '/api/proposals/proposal-completion-1/decisions',
+        page.waitForResponse((response) =>
+          isProposalDecisionResponse(response, 'proposal-completion-1'),
         ),
         page.getByRole('button', { name: '撤销', exact: true }).click(),
       ]);
-      expect(retractResponse.status()).toBe(201);
-      expect(retractResponse.headers().location).toBe('/api/events/event-retract-1');
+      expect(await readProposalDecisionResponse(retractResponse)).toMatchObject({
+        created: true,
+        idempotent: false,
+        decision_event_id: 'event-retract-1',
+      });
       await expect(page.getByText('已撤销 · 恢复到应用前')).toBeVisible();
       await expect(page.getByRole('button', { name: '撤销', exact: true })).toHaveCount(0);
       expect(fixture.proposalDecisions()).toEqual([
@@ -826,16 +833,16 @@ test.describe('shipped-container usability regression', () => {
     await expect(page.getByText('确认学习项已完成', { exact: true })).toBeVisible();
     await expect(page.getByText('标记学习项已完成', { exact: true })).toBeVisible();
     const [decisionResponse] = await Promise.all([
-      page.waitForResponse(
-        (response) =>
-          response.request().method() === 'POST' &&
-          new URL(response.url()).pathname ===
-            '/api/proposals/proposal-breaker-completion-1/decisions',
+      page.waitForResponse((response) =>
+        isProposalDecisionResponse(response, 'proposal-breaker-completion-1'),
       ),
       page.getByRole('button', { name: '接受', exact: true }).click(),
     ]);
-    expect(decisionResponse.status()).toBe(201);
-    expect(decisionResponse.headers().location).toBe('/api/events/event-breaker-decision-1');
+    expect(await readProposalDecisionResponse(decisionResponse)).toMatchObject({
+      created: true,
+      idempotent: false,
+      decision_event_id: 'event-breaker-decision-1',
+    });
     await expect(page.getByText('已接受', { exact: true })).toBeVisible();
     expect(fixture.proposalDecisions()).toEqual([
       { id: 'proposal-breaker-completion-1', decision: 'accept' },
@@ -851,17 +858,18 @@ test.describe('shipped-container usability regression', () => {
     await page.goto('/inbox');
 
     const [decisionResponse] = await Promise.all([
-      page.waitForResponse(
-        (response) =>
-          response.request().method() === 'POST' &&
-          new URL(response.url()).pathname === '/api/proposals/proposal-learning-plan-1/decisions',
+      page.waitForResponse((response) =>
+        isProposalDecisionResponse(response, 'proposal-learning-plan-1'),
       ),
       page.getByRole('button', { name: '忽略', exact: true }).click(),
     ]);
 
-    expect(decisionResponse.status()).toBe(201);
-    expect(decisionResponse.headers().location).toBe('/api/events/event-decision-1');
-    expect(await decisionResponse.json()).toMatchObject({
+    expect(await readProposalDecisionResponse(decisionResponse)).toMatchObject({
+      created: true,
+      idempotent: false,
+      decision_event_id: 'event-decision-1',
+    });
+    expect(await readProposalDecisionResponse(decisionResponse)).toMatchObject({
       decision: 'dismiss',
       result: { kind: 'dismissed', rate_event_id: 'event-decision-1' },
     });
@@ -879,18 +887,17 @@ test.describe('shipped-container usability regression', () => {
     await page.goto('/inbox');
 
     const [decisionResponse] = await Promise.all([
-      page.waitForResponse(
-        (response) =>
-          response.request().method() === 'POST' &&
-          new URL(response.url()).pathname ===
-            '/api/proposals/proposal-breaker-completion-1/decisions',
+      page.waitForResponse((response) =>
+        isProposalDecisionResponse(response, 'proposal-breaker-completion-1'),
       ),
       page.getByRole('button', { name: '忽略', exact: true }).click(),
     ]);
 
-    expect(decisionResponse.status()).toBe(201);
-    expect(await decisionResponse.json()).toMatchObject({
+    expect(await readProposalDecisionResponse(decisionResponse)).toMatchObject({
       decision: 'dismiss',
+      created: true,
+      idempotent: false,
+      decision_event_id: 'event-breaker-decision-1',
       result: { kind: 'dismissed', rate_event_id: 'event-breaker-decision-1' },
     });
     await expect(page.getByText('已忽略', { exact: true })).toBeVisible();
@@ -1046,14 +1053,16 @@ test.describe('shipped-container usability regression', () => {
     // the probe_ready state the server re-projects (contract §5/§6 forward-only advance).
     await test.step('route=/today control="就按这个方向验证" hits the decision mutation and advances to probe_ready', async () => {
       const [decisionResponse] = await Promise.all([
-        page.waitForResponse(
-          (response) =>
-            response.request().method() === 'POST' &&
-            response.url().endsWith('/api/proposals/evt_conjecture_wy1/decisions'),
+        page.waitForResponse((response) =>
+          isProposalDecisionResponse(response, 'evt_conjecture_wy1'),
         ),
         page.getByRole('button', { name: '就按这个方向验证' }).click(),
       ]);
-      expect(decisionResponse.headers().location).toBe('/api/events/evt_rate_wy1');
+      expect(await readProposalDecisionResponse(decisionResponse)).toMatchObject({
+        created: true,
+        idempotent: false,
+        decision_event_id: 'evt_rate_wy1',
+      });
 
       // The probe_ready prepared_action replaces the review_finding CTAs in place.
       const answerCta = page.getByRole('button', { name: '现在就试做这道题' });
@@ -1121,7 +1130,7 @@ for (const width of [1280, 390]) {
     const fixture = await installApiFixtures(page, 'existing-evidence');
     const data = configFixture();
     const writes: unknown[] = [];
-    await page.route('**/api/admin/config', async (route) => {
+    await routeFixtureApi(page, '**/api/admin/config', async (route) => {
       if (route.request().method() === 'PATCH') {
         writes.push(route.request().postDataJSON());
         data.snapshot.epoch += 1;
@@ -1175,7 +1184,7 @@ for (const width of [1440, 390]) {
   test(`yesterday cost evidence and keyboard disclosure at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     const fixture = await installApiFixtures(page, 'existing-evidence');
-    await page.route('**/api/workbench/overnight-digest', (route) =>
+    await routeFixtureApi(page, '**/api/workbench/overnight-digest', (route) =>
       route.fulfill({
         json: {
           window: { from: '2026-10-04T16:00:00.000Z', to: '2026-10-05T16:00:00.000Z' },

@@ -1,4 +1,4 @@
-import type { Page, Request as PlaywrightRequest, Route } from '@playwright/test';
+import type { Page } from '@playwright/test';
 import {
   buildCalendarReportWindow,
   resolveReportTimeZone,
@@ -9,6 +9,7 @@ import {
   proposalDisplayTitle,
 } from '../../src/kernel/proposals/presentation';
 import type { ApiOperationJsonResponse } from '../../src/ui/lib/api';
+import { type FixtureRoute, routeFixtureApi } from './start-rpc-fixtures';
 
 const TOKEN_STORAGE_KEY = 'loom_internal_token';
 const TOKEN = 'usability-fixture-token';
@@ -496,6 +497,15 @@ function inboxProposal(id: string, kind: 'learning_item' | 'completion' | 'defer
   };
 }
 
+function proposalPage(
+  url: URL,
+  page: { rows: ReturnType<typeof inboxProposal>[]; next_cursor: string | null },
+) {
+  const limit = Math.min(Number.parseInt(url.searchParams.get('limit') ?? '200', 10), 500);
+  if (!Number.isInteger(limit) || limit < 1) throw new Error('Invalid proposal fixture limit');
+  return { ...page, data: page.rows, page: { limit, next_cursor: page.next_cursor } };
+}
+
 function stream(status: 'pending' | 'skipped') {
   return {
     date: '2026-07-13',
@@ -546,7 +556,7 @@ function question(index: number) {
 }
 
 async function fulfill(
-  route: Route,
+  route: FixtureRoute,
   body: unknown,
   status = 200,
   headers?: Record<string, string>,
@@ -568,8 +578,8 @@ interface ProposalDecisionFixtureOptions {
 }
 
 async function fulfillProposalDecision(
-  route: Route,
-  request: PlaywrightRequest,
+  route: FixtureRoute,
+  request: ReturnType<FixtureRoute['request']>,
   decisions: Array<{ id: string; decision: string }>,
   options: ProposalDecisionFixtureOptions,
 ): Promise<void> {
@@ -586,10 +596,7 @@ async function fulfillProposalDecision(
   await fulfill(route, response, 201, { Location: location });
 }
 
-export async function installApiFixtures(
-  page: Page,
-  scenario: UsabilityScenario,
-): Promise<FixtureController> {
+export function createApiFixtureScenario(scenario: UsabilityScenario) {
   const unexpectedRequests: string[] = [];
   const briefCalls: string[] = [];
   const briefInteractions: Array<Record<string, unknown>> = [];
@@ -602,12 +609,7 @@ export async function installApiFixtures(
   // YUK-789 — the brief's server-side lifecycle, driven by the accept mutation.
   let briefState: 'finding' | 'probe_ready' = 'finding';
 
-  await page.addInitScript(({ key, token }) => window.localStorage.setItem(key, token), {
-    key: TOKEN_STORAGE_KEY,
-    token: TOKEN,
-  });
-
-  await page.route('**/api/**', async (route) => {
+  const handleRequest = async (route: FixtureRoute) => {
     const request = route.request();
     const method = request.method();
     const url = new URL(request.url());
@@ -737,33 +739,39 @@ export async function installApiFixtures(
     if (key === 'GET /api/proposals' && isInboxScenario) {
       const lane = url.searchParams.get('lane');
       if (lane === 'decision') {
-        return fulfill(route, {
-          rows:
-            scenario === 'inbox-breaker-tripped'
-              ? [
-                  inboxProposal(
-                    'proposal-breaker-completion-1',
-                    'completion',
-                    '自动通道暂停后退回人工裁决。',
-                  ),
-                ]
-              : [
-                  inboxProposal(
-                    'proposal-learning-plan-1',
-                    'learning_item',
-                    '建议先复习二次函数。',
-                  ),
-                ],
-          next_cursor: null,
-        });
+        return fulfill(
+          route,
+          proposalPage(url, {
+            rows:
+              scenario === 'inbox-breaker-tripped'
+                ? [
+                    inboxProposal(
+                      'proposal-breaker-completion-1',
+                      'completion',
+                      '自动通道暂停后退回人工裁决。',
+                    ),
+                  ]
+                : [
+                    inboxProposal(
+                      'proposal-learning-plan-1',
+                      'learning_item',
+                      '建议先复习二次函数。',
+                    ),
+                  ],
+            next_cursor: null,
+          }),
+        );
       }
       if (lane === 'observation') {
-        return fulfill(route, {
-          rows: [inboxProposal('proposal-observation-1', 'defer', '等待更多作答证据后再判断。')],
-          next_cursor: null,
-        });
+        return fulfill(
+          route,
+          proposalPage(url, {
+            rows: [inboxProposal('proposal-observation-1', 'defer', '等待更多作答证据后再判断。')],
+            next_cursor: null,
+          }),
+        );
       }
-      return fulfill(route, { rows: [], next_cursor: null });
+      return fulfill(route, proposalPage(url, { rows: [], next_cursor: null }));
     }
     if (key === 'GET /api/knowledge' && isInboxScenario) {
       return fulfill(route, { rows: [] });
@@ -988,13 +996,29 @@ export async function installApiFixtures(
       { message: `No usability fixture for ${method} ${url.pathname}${url.search}` },
       501,
     );
-  });
+  };
 
   return {
+    handleRequest,
     unexpectedRequests,
     mutationAttempts: () => mutationAttempts,
     briefCalls: () => [...briefCalls],
     briefInteractions: () => [...briefInteractions],
     proposalDecisions: () => [...proposalDecisions],
   };
+}
+
+export async function installApiFixtures(
+  page: Page,
+  scenario: UsabilityScenario,
+): Promise<FixtureController> {
+  const fixture = createApiFixtureScenario(scenario);
+  await page.addInitScript(({ key, token }) => window.localStorage.setItem(key, token), {
+    key: TOKEN_STORAGE_KEY,
+    token: TOKEN,
+  });
+  await routeFixtureApi(page, '**/api/**', fixture.handleRequest, (message) =>
+    fixture.unexpectedRequests.push(message),
+  );
+  return fixture;
 }
