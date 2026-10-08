@@ -416,3 +416,14 @@ No runtime operation or new model call occurred. Exact-head CI remains required.
 | `/tmp/yuk1352-closeout-typecheck.log` | `36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6` |
 | `/tmp/yuk1352-closeout-lint.log` | `3435080431d7a03f092431164a8b8126bb75dadc5ba904dbf04a12af4a52508b` |
 | `/tmp/yuk1352-closeout-build.log` | `8ea5b2d8e8dc2e94f31b75c7eff78ad2da368487e396c1b68148f9c1dcde7044` |
+
+### CI unit shard correction
+
+CI37758051366 job113247515111 failed only the AppTopbar source-contract
+assertion: it searched the old router for the Copilot nudge callback after the
+shell extraction. Parent reproduced the failure locally, then pointed the same
+assertion at RootShell, where the unchanged callback actually lives. The two
+AppTopbar tests plus Start page/read regressions pass (11 tests). Focused Biome
+and diff checks pass. No product code or runtime artifact changed; prior build
+and browser evidence remain applicable. Logs: /tmp/yuk1352-topbar-red.log and
+/tmp/yuk1352-topbar-green.log. New exact CI is still required.
