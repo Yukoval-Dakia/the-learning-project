@@ -1,12 +1,10 @@
-# 当前交付 — YUK1377 Today领域读取实施
+# 当前交付 — YUK1377 Today领域读取验证与PR
 
-PR1601已于2026-10-07 21:40:32Z合入 `1bbd82795`，tree与39c4 head一致，准确CI37688816252 success、独立review NONE、等待窗满足。当前分支feat/yuk-1358-w1-domain-reads从该main创建。
+当前分支 feat/yuk-1358-w1-domain-reads 已正常merge main5b11f3edbd8c8a418cea8815976786d177e332bc（PR1602）。79eb7980d1c990ae8b66c5fdc7acebf13c649972完成summary countDue→queryReviewDue(db,{limit:200})，既有RED测试已提交，3/205→0修为3/200。父8DB/35unit/typecheck/lint/build通过，lint297既有warning。日志/tmp/yuk1377-due-green-db.log、/tmp/yuk1377-final-{unit,typecheck,lint,build}.log。
 
-主线确认本线程独占Today公共读取/HTTP契约；T3任务yuk1377-today-public-read-implementation-20261008-v1已completed/noPending，源码1aa3fd892，35unit/父独立6DB/static/build通过。21:52:13Z已释放DB测试锁，主环境不变。父独占docs/tracker/验收。不写1352/55/56三树，不动Start/全局组合/manifest/package/lock/UI；Inbox仅调查。1356负责queryReviewDue输出，尚未消除summary全局DB依赖。
+09:32:05Z核owner释放部署锁，临时容器退出，主四服务healthy、release不变。锁路径 /Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/deployment-20261007/deployment.lock。无provider/worker/replay/私人恢复。
 
-1377回归准备任务 yuk1377-summary-due-regression-prep-20261008-v1 已 completed/noPending、writer释放。仅新增未跟踪 src/capabilities/shell/api/workbench-summary-due.db.test.ts，尚未commit；不要丢弃。父真实DB两例已RED：应3/200而读0，review_due=false，其他隔离/rollback断言未失败。证据74b182ba2、/tmp/yuk1377-due-red-db.log。22:00:49Z核owner释放运行根deployment-20261007/deployment.lock，临时容器退出，主四服务healthy/release不变。注意锁绝对路径不含额外runtime层：/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/deployment-20261007/deployment.lock。
-
-主线PR1602候选fe139d5b4，独立R1 NONE；CI37692994770父只读核全部success。主线明确22:14:36Z后才复核merge，当前不得当作已交付。收到准确mainSHA后先核无writer，正常集成主线，保留未跟踪测试，替换shell countDue为queryReviewDue(db,{limit:200})，核锁跑green与原6DB，完成静态/build、独立review和exact-head CI。未接Start、未完成Today整页或迁移。当前本线程无active child、无runtime锁。
+独立初审task node:delegated-task:command%3Amcp%3Ab0c41f6b-955b-4620-8875-2b8031cb5dfe%3Adelegate-task%3Ayuk1377-today-read-review-r1-20261008 正在运行，review只读；父唯一writer。PR/CI待完成。主线57961995保留Start/组合根/页面/全局manifest/package/lock，当前不改UI/practice/其他树。未完成Start真实入口或整页迁移。
 
 1376真实Start候选3d6273a14的有限运行验收已交主线：RPC/auth/冻结记录/图片/filter/reload/retry通过；导航practice lazy-compose使practice_stream_item 0→1，不能声明整段DB不变。158构建文件未变。21:39:38Z已释放锁并停止自有18952/18995/18994，主runtime不动。证据 runtimeRoot/yuk1376-start-3d6273a14/RESULT.md，Linear1376保持InProgress。
 
