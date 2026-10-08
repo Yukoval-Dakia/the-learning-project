@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import AgentNotesPage from '@/capabilities/agency/ui/page';
+import { AN_LS_OPEN, AN_LS_READ } from '@/capabilities/agency/ui/useAgentReads';
+import { type AgentNoteClient, AgentNoteClientProvider } from '@/capabilities/agency/ui-public';
 import TodayPage from '@/capabilities/shell/ui/TodayPage';
 import type { WorkbenchSummary } from '@/capabilities/shell/ui/workbench-api';
 import {
@@ -9,6 +12,7 @@ import {
   httpWorkbenchClient,
 } from '@/capabilities/shell/ui/workbench-client';
 import { TOKEN_STORAGE_KEY } from '@/ui/lib/api';
+import { agentNoteBoard } from '../../../server/start/agent-note-test-fixtures';
 import { RootShell } from '../RootShell';
 
 // External Copilot stream behavior has its own tests; this slice leaves it intact.
@@ -109,7 +113,7 @@ const responses = new Map<string, unknown>([
   ['/api/prep-desk/probes', { probes: [] }],
 ]);
 const clients: QueryClient[] = [];
-function mount(client?: typeof httpWorkbenchClient) {
+function mount(client?: typeof httpWorkbenchClient, notes?: AgentNoteClient) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
   clients.push(qc);
   const page = (
@@ -119,13 +123,16 @@ function mount(client?: typeof httpWorkbenchClient) {
   );
   return render(
     <QueryClientProvider client={qc}>
-      {client ? <WorkbenchClientProvider value={client}>{page}</WorkbenchClientProvider> : page}
+      <AgentNoteClientProvider value={notes}>
+        {client ? <WorkbenchClientProvider value={client}>{page}</WorkbenchClientProvider> : page}
+      </AgentNoteClientProvider>
     </QueryClientProvider>,
   );
 }
 beforeEach(() => {
+  responses.set('/api/agents/notes', { rows: [] });
   vi.useFakeTimers({ toFake: ['Date'] });
-  vi.setSystemTime(new Date('2026-10-08T00:00:00Z'));
+  vi.setSystemTime(new Date('2026-10-09T12:34:56.789Z'));
   window.localStorage.setItem(TOKEN_STORAGE_KEY, 'fixture-token');
   vi.stubGlobal(
     'fetch',
@@ -160,32 +167,134 @@ describe('Today and original RootShell Start ports', () => {
     const readOvernight = vi.fn(async () => overnight);
     const readCost = vi.fn(async () => cost);
     const readChanges = vi.fn(async () => ({ rows: [], window_hours: 24 as const }));
-    const start = mount({
-      ...httpWorkbenchClient,
-      getWorkbenchSummary: readSummary,
-      getOvernightDigest: readOvernight,
-      getTodayCost: readCost,
-      getRecentAiChanges: readChanges,
-    });
+    const readNotes = vi.fn(async () => ({ rows: [] }));
+    const start = mount(
+      {
+        ...httpWorkbenchClient,
+        getWorkbenchSummary: readSummary,
+        getOvernightDigest: readOvernight,
+        getTodayCost: readCost,
+        getRecentAiChanges: readChanges,
+      },
+      { getAgentNoteBoard: readNotes },
+    );
     await screen.findByRole('button', { name: '昨日 AI 用量与费用' });
     await waitFor(() => expect(normalizeIds(start.container.innerHTML)).toBe(markup));
     expect(readSummary).toHaveBeenCalledOnce();
     expect(readOvernight).toHaveBeenCalledOnce();
     expect(readCost).toHaveBeenCalledOnce();
     expect(readChanges).toHaveBeenCalledOnce();
+    expect(readNotes).toHaveBeenCalledExactlyOnceWith(20);
     expect(
       vi
         .mocked(fetch)
         .mock.calls.map(([url]) => new URL(String(url), 'http://isolated.test').pathname)
         .sort(),
-    ).toEqual(['/api/agents/notes', '/api/prep-desk/brief', '/api/prep-desk/probes']);
+    ).toEqual(['/api/prep-desk/brief', '/api/prep-desk/probes']);
   });
   it('keeps the cold-start gate, including the notes-board read gate, under the canonical summary', async () => {
     const empty = { ...summary, cold_start: { ...summary.cold_start, is_empty: true } };
     const readSummary = vi.fn(async () => empty);
-    mount({ ...httpWorkbenchClient, getWorkbenchSummary: readSummary });
+    const readNotes = vi.fn(async () => agentNoteBoard);
+    mount(
+      { ...httpWorkbenchClient, getWorkbenchSummary: readSummary },
+      { getAgentNoteBoard: readNotes },
+    );
     expect(await screen.findByText('先告诉我你想学什么')).toBeTruthy();
     expect(readSummary).toHaveBeenCalledOnce();
+    expect(readNotes).not.toHaveBeenCalled();
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+function mountFull(notes?: AgentNoteClient) {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  clients.push(qc);
+  const navigate = vi.fn();
+  const view = render(
+    <QueryClientProvider client={qc}>
+      <AgentNoteClientProvider value={notes}>
+        <AgentNotesPage navigate={navigate} />
+      </AgentNoteClientProvider>
+    </QueryClientProvider>,
+  );
+  return { ...view, qc, navigate };
+}
+
+describe('Full agent-note page preserves the observation board', () => {
+  it('renders identical rich grouped/ref/unknown markup using50, keeps full query key and local-only marks', async () => {
+    responses.set('/api/agents/notes', agentNoteBoard);
+    const legacy = mountFull();
+    await screen.findByText('活跃观察', { exact: false });
+    const markup = legacy.container.innerHTML.replaceAll(/_r_\d+_/g, '_react-id_');
+    cleanup();
+    clients.at(-1)?.clear();
+    vi.mocked(fetch).mockClear();
+    const read = vi.fn(async () => agentNoteBoard);
+    const start = mountFull({ getAgentNoteBoard: read });
+    await waitFor(() =>
+      expect(start.container.innerHTML.replaceAll(/_r_\d+_/g, '_react-id_')).toBe(markup),
+    );
+    expect(read).toHaveBeenCalledExactlyOnceWith(50);
+    expect(start.qc.getQueryData(['agent-notes', 'full'])).toEqual(agentNoteBoard);
+    expect(start.qc.getQueryData(['agent-notes', 'board'])).toBeUndefined();
+    fireEvent.click(screen.getAllByRole('button', { name: /其他信号/ })[0]);
+    expect(screen.queryByText('永久观察，不是已接受事实。')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: /^全部 2$/ }));
+    expect(screen.getByText('永久观察，不是已接受事实。')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: /全部标为已读/ }));
+    expect(JSON.parse(window.localStorage.getItem(AN_LS_READ) ?? '[]')).toEqual(
+      agentNoteBoard.rows.map((row) => row.id),
+    );
+    expect(fetch).not.toHaveBeenCalled();
+    cleanup();
+    const restored = mountFull({ getAgentNoteBoard: read });
+    await screen.findByText('活跃观察', { exact: false });
+    expect(screen.queryByRole('button', { name: /全部标为已读/ })).toBeNull();
+    expect(restored.qc.getQueryData(['agent-notes', 'full'])).toEqual(agentNoteBoard);
+    responses.set('/api/agents/notes', { rows: [] });
+  });
+  it('keeps visible error/retry and then the empty state', async () => {
+    const read = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('temporarily fenced'))
+      .mockResolvedValueOnce({ rows: [] });
+    mountFull({ getAgentNoteBoard: read });
+    await screen.findByText('无法读取 AI 观察信号。');
+    fireEvent.click(screen.getByRole('button', { name: /重试/ }));
+    await screen.findByText('暂无观察信号');
+    expect(read).toHaveBeenCalledTimes(2);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('shares read marks and collapsed state with the Today board without writes', async () => {
+    window.localStorage.setItem(AN_LS_READ, JSON.stringify(['rich-note']));
+    window.localStorage.setItem(AN_LS_OPEN, '1');
+    responses.set('/api/agents/notes', agentNoteBoard);
+    const legacy = mount();
+    await screen.findByRole('button', { name: '收起' });
+    await screen.findByRole('button', { name: '昨日 AI 用量与费用' });
+    const markup = legacy.container.innerHTML.replaceAll(/_r_\d+_/g, '_react-id_');
+    cleanup();
+    clients.at(-1)?.clear();
+    vi.mocked(fetch).mockClear();
+    const read = vi.fn(async () => agentNoteBoard);
+    const start = mount(
+      { ...httpWorkbenchClient, getWorkbenchSummary: async () => summary },
+      { getAgentNoteBoard: read },
+    );
+    await screen.findByRole('button', { name: '收起' });
+    await waitFor(() =>
+      expect(start.container.innerHTML.replaceAll(/_r_\d+_/g, '_react-id_')).toBe(markup),
+    );
+    expect(read).toHaveBeenCalledExactlyOnceWith(20);
+    expect(clients.at(-1)?.getQueryData(['agent-notes', 'board'])).toEqual(agentNoteBoard);
+    expect(clients.at(-1)?.getQueryData(['agent-notes', 'full'])).toBeUndefined();
+    expect(window.localStorage.getItem(AN_LS_READ)).toBe('["rich-note"]');
+    expect(
+      vi.mocked(fetch).mock.calls.every(([, init]) => !init?.method || init.method === 'GET'),
+    ).toBe(true);
+    expect(
+      vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/api/agents/notes')),
+    ).toBe(false);
   });
 });
