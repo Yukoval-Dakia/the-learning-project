@@ -292,7 +292,7 @@ describe('existing admin page DOM with optional injected clients', () => {
       expect(route).toContain('client={startAdminClient}');
       expect(route).toContain('<StartWorkbenchShell');
       const router = readFileSync('web/src/router.tsx', 'utf8');
-      expect(router.match(/import.meta.env.PROD\s*\? StartPageEntry/g)?.length).toBe(8);
+      expect(router.match(/import.meta.env.PROD\s*\? StartPageEntry/g)?.length).toBe(11);
     },
   );
 });

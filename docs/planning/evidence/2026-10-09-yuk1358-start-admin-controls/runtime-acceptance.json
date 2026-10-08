@@ -1,0 +1,3340 @@
+{
+  "candidate": "75c0fa149d903b757f6487e3105e3bfea11c7359",
+  "scope": "isolated emitted host and actual built Start resolver; representative browser controls",
+  "source_manifest_sha256": "8ec0cab2f4ef163484af3e235fd1ff6481f665666c38463c42741dd901e3bf6c",
+  "build_manifest_sha256": "92af8ea6d2392345647c2a7d7c9d87cb2c0ed194e23ea13f958bb6abfbb16801",
+  "rpc": {
+    "operations": [
+      "editStartAdminSharedTrait",
+      "editStartAdminSubjectTrait",
+      "forkStartAdminSubjectTrait",
+      "getStartAdminConfig",
+      "getStartAdminSubjectTraits",
+      "getStartAdminSubjects",
+      "getStartAdminTraitJournal",
+      "getStartAdminTraits",
+      "patchStartAdminConfig",
+      "rebindStartAdminSubjectTrait",
+      "renameStartAdminSubject",
+      "resetStartAdminConfig",
+      "resetStartAdminSubject",
+      "resetStartAdminTraitToSeed",
+      "restoreStartAdminSubject",
+      "retireStartAdminSubject",
+      "rollbackStartAdminTrait",
+      "validateStartAdminSubject"
+    ],
+    "calls": 122,
+    "windows": 35,
+    "wire": "installed serverFnFetcher and installed Seroval, actual built frontdoor fetch",
+    "global_no_write_claim": false,
+    "config_epoch_contract": "monotonic, DB epoch and journal revision/action match receipt; no +1 assumption",
+    "refresh_failure": "committed once, last-good retained, explicit read refresh only, mutation never replayed"
+  },
+  "host_transform": {
+    "original_sha256": "bbfd829499da7077ebe8dfc798f172afbdae7ee3fae67aad0033a9354218a3bb",
+    "retained_prefix_sha256": "9d9b63fe3d0c4d911f017cc17548ff217eef4094a6e509d7a62a72eaae124db8",
+    "retained_helpers_sha256": "ab7c4b4d176042cc454694d6a228c0506c73d51cb914521389c95edf92b917dc",
+    "removed_tail_sha256": "84d7ae87c34ff7d3fd64b297c9550155213d6f2ae1b196087859e64d5d71c500",
+    "controller_sha256": "8a435019e500d17ab83e3485b0696710eea4a763b2425cc1ec095bcdb85f29e6",
+    "transformed_sha256": "9842a730e97bc4c79ebd8913f7c11086f276c333ea71bce9e8817afc71e8791a",
+    "same_emitted_graph": true,
+    "env_file_load_removed": true,
+    "omitted_calls": [
+      "initializeLaminarTracing",
+      "startConfigRefresh",
+      "registerToolsBeforeServe",
+      "recoverToolOperationsBeforeServe",
+      "startListenLoop",
+      "startInProcessWorker",
+      "serve"
+    ]
+  },
+  "rpc_effects": [
+    {
+      "name": "begin-prepare",
+      "classification": "write_expected",
+      "allowed_tables": ["public.contract_epoch"],
+      "changed_tables": ["public.contract_epoch"],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "238",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "238",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "rename-with-receipt",
+      "classification": "write_expected",
+      "allowed_tables": [
+        "public.subject",
+        "public.subject_control_journal",
+        "public.subject_name_claim",
+        "public.subject_trait_binding",
+        "public.event",
+        "public.knowledge",
+        "public.materialized_id_index"
+      ],
+      "changed_tables": [
+        "public.event",
+        "public.knowledge",
+        "public.subject",
+        "public.subject_control_journal"
+      ],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "238",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "239",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "stale-subject-cas",
+      "classification": "rows_unchanged_expected",
+      "allowed_tables": [],
+      "changed_tables": [],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "239",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "239",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "name-conflict-no-write",
+      "classification": "rows_unchanged_expected",
+      "allowed_tables": [],
+      "changed_tables": [],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "239",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "239",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "rename-noop",
+      "classification": "rows_unchanged_expected",
+      "allowed_tables": [],
+      "changed_tables": [],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "239",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "239",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "retire",
+      "classification": "write_expected",
+      "allowed_tables": [
+        "public.subject",
+        "public.subject_control_journal",
+        "public.subject_name_claim",
+        "public.subject_trait_binding"
+      ],
+      "changed_tables": ["public.subject", "public.subject_control_journal"],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "239",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "240",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "retire-noop",
+      "classification": "rows_unchanged_expected",
+      "allowed_tables": [],
+      "changed_tables": [],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "240",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "240",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "restore",
+      "classification": "write_expected",
+      "allowed_tables": [
+        "public.subject",
+        "public.subject_control_journal",
+        "public.subject_name_claim",
+        "public.subject_trait_binding"
+      ],
+      "changed_tables": ["public.subject", "public.subject_control_journal"],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "240",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "241",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "validate-partial-overrides-existing-contract",
+      "classification": "rows_unchanged_expected",
+      "allowed_tables": [],
+      "changed_tables": [],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "241",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "241",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "validate-complete-overrides",
+      "classification": "rows_unchanged_expected",
+      "allowed_tables": [],
+      "changed_tables": [],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "241",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "241",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "cow-commit",
+      "classification": "write_expected",
+      "allowed_tables": [
+        "public.subject",
+        "public.subject_control_journal",
+        "public.subject_name_claim",
+        "public.subject_trait_binding",
+        "public.subject_trait",
+        "public.subject_trait_journal"
+      ],
+      "changed_tables": [
+        "public.subject",
+        "public.subject_control_journal",
+        "public.subject_trait",
+        "public.subject_trait_binding",
+        "public.subject_trait_journal"
+      ],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "241",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "244",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "auth-before-input-and-epoch",
+      "classification": "rows_unchanged_expected",
+      "allowed_tables": [],
+      "changed_tables": [],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "238",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "238",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "cow-repeat-noop",
+      "classification": "rows_unchanged_expected",
+      "allowed_tables": [],
+      "changed_tables": [],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "244",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "244",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "trait-cas-conflict",
+      "classification": "rows_unchanged_expected",
+      "allowed_tables": [],
+      "changed_tables": [],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "244",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "244",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "explicit-fork",
+      "classification": "write_expected",
+      "allowed_tables": [
+        "public.subject",
+        "public.subject_control_journal",
+        "public.subject_name_claim",
+        "public.subject_trait_binding",
+        "public.subject_trait",
+        "public.subject_trait_journal"
+      ],
+      "changed_tables": [
+        "public.subject",
+        "public.subject_control_journal",
+        "public.subject_trait",
+        "public.subject_trait_binding",
+        "public.subject_trait_journal"
+      ],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "244",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "246",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "subject-reset-bindings",
+      "classification": "write_expected",
+      "allowed_tables": [
+        "public.subject",
+        "public.subject_control_journal",
+        "public.subject_name_claim",
+        "public.subject_trait_binding"
+      ],
+      "changed_tables": [
+        "public.subject",
+        "public.subject_control_journal",
+        "public.subject_trait_binding"
+      ],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "246",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "247",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "rebind-to-owned-fork",
+      "classification": "write_expected",
+      "allowed_tables": [
+        "public.subject",
+        "public.subject_control_journal",
+        "public.subject_name_claim",
+        "public.subject_trait_binding"
+      ],
+      "changed_tables": [
+        "public.subject",
+        "public.subject_control_journal",
+        "public.subject_trait_binding"
+      ],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "247",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "248",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "rebind-noop",
+      "classification": "rows_unchanged_expected",
+      "allowed_tables": [],
+      "changed_tables": [],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "248",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "248",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "shared-fanout",
+      "classification": "write_expected",
+      "allowed_tables": [
+        "public.subject",
+        "public.subject_control_journal",
+        "public.subject_name_claim",
+        "public.subject_trait_binding",
+        "public.subject_trait",
+        "public.subject_trait_journal"
+      ],
+      "changed_tables": ["public.subject_trait", "public.subject_trait_journal"],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "248",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "249",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "shared-noop",
+      "classification": "rows_unchanged_expected",
+      "allowed_tables": [],
+      "changed_tables": [],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "249",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "249",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "rollback-forward",
+      "classification": "write_expected",
+      "allowed_tables": [
+        "public.subject",
+        "public.subject_control_journal",
+        "public.subject_name_claim",
+        "public.subject_trait_binding",
+        "public.subject_trait",
+        "public.subject_trait_journal"
+      ],
+      "changed_tables": ["public.subject_trait", "public.subject_trait_journal"],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "249",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "250",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "shared-edit-before-seed-reset",
+      "classification": "write_expected",
+      "allowed_tables": [
+        "public.subject",
+        "public.subject_control_journal",
+        "public.subject_name_claim",
+        "public.subject_trait_binding",
+        "public.subject_trait",
+        "public.subject_trait_journal"
+      ],
+      "changed_tables": ["public.subject_trait", "public.subject_trait_journal"],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "250",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "251",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "preparing-before-validation",
+      "classification": "rows_unchanged_expected",
+      "allowed_tables": [],
+      "changed_tables": [],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "238",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "238",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "reset-to-code-seed",
+      "classification": "write_expected",
+      "allowed_tables": [
+        "public.subject",
+        "public.subject_control_journal",
+        "public.subject_name_claim",
+        "public.subject_trait_binding",
+        "public.subject_trait",
+        "public.subject_trait_journal"
+      ],
+      "changed_tables": ["public.subject_trait", "public.subject_trait_journal"],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "251",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "252",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "config-secret-batch-atomic-rejection",
+      "classification": "rows_unchanged_expected",
+      "allowed_tables": [],
+      "changed_tables": [],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "252",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "252",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "config-invalid-value",
+      "classification": "rows_unchanged_expected",
+      "allowed_tables": [],
+      "changed_tables": [],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "252",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "252",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "config-set-commit",
+      "classification": "write_expected",
+      "allowed_tables": [
+        "public.system_config",
+        "public.system_config_journal",
+        "public.system_config_epoch"
+      ],
+      "changed_tables": [
+        "public.system_config",
+        "public.system_config_epoch",
+        "public.system_config_journal"
+      ],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "252",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "252",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "config-reset-commit",
+      "classification": "write_expected",
+      "allowed_tables": [
+        "public.system_config",
+        "public.system_config_journal",
+        "public.system_config_epoch"
+      ],
+      "changed_tables": [
+        "public.system_config",
+        "public.system_config_epoch",
+        "public.system_config_journal"
+      ],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "252",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "8",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "252",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "config-commit-refresh-failure",
+      "classification": "write_expected",
+      "allowed_tables": [
+        "public.system_config",
+        "public.system_config_journal",
+        "public.system_config_epoch"
+      ],
+      "changed_tables": [
+        "public.system_config",
+        "public.system_config_epoch",
+        "public.system_config_journal"
+      ],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "8",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "252",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "11",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "6",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "252",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "mark-ready",
+      "classification": "write_expected",
+      "allowed_tables": ["public.contract_epoch"],
+      "changed_tables": ["public.contract_epoch"],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "238",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "238",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "ready-before-validation",
+      "classification": "rows_unchanged_expected",
+      "allowed_tables": [],
+      "changed_tables": [],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "238",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "238",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "activate",
+      "classification": "write_expected",
+      "allowed_tables": ["public.contract_epoch"],
+      "changed_tables": ["public.contract_epoch"],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "238",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "238",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "full-read-dtos-and-catalog",
+      "classification": "rows_unchanged_expected",
+      "allowed_tables": [],
+      "changed_tables": [],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "238",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "238",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "journal-keyset-paging-and-cap",
+      "classification": "rows_unchanged_expected",
+      "allowed_tables": [],
+      "changed_tables": [],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "238",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "238",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "name": "forbidden-general-and-invalid-trait",
+      "classification": "rows_unchanged_expected",
+      "allowed_tables": [],
+      "changed_tables": [],
+      "sequences_before": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "238",
+            "is_called": true
+          }
+        ]
+      },
+      "sequences_after": {
+        "drizzle.__drizzle_migrations_id_seq": [
+          {
+            "last_value": "116",
+            "is_called": true
+          }
+        ],
+        "public.config_change_seq": [
+          {
+            "last_value": "2",
+            "is_called": true
+          }
+        ],
+        "public.event_dispatch_seq": [
+          {
+            "last_value": "5",
+            "is_called": true
+          }
+        ],
+        "public.job_events_id_seq": [
+          {
+            "last_value": "1",
+            "is_called": false
+          }
+        ],
+        "public.subject_change_seq": [
+          {
+            "last_value": "238",
+            "is_called": true
+          }
+        ]
+      },
+      "sequence_contract": "gaps permitted; sequence observation alone is not a committed write"
+    },
+    {
+      "classification": "memory_refresh_expected_persisted_rows_unchanged",
+      "mutation_replayed": false
+    }
+  ],
+  "browser_windows": [
+    {
+      "before": "browser-navigation-before.json",
+      "after": "browser-navigation-after.json",
+      "tables_compared": 90,
+      "changed_tables": [],
+      "changed_sequences": [],
+      "passed": true
+    },
+    {
+      "before": "browser-config-before.json",
+      "after": "browser-config-committed.json",
+      "tables_compared": 90,
+      "changed_tables": [
+        "public.system_config",
+        "public.system_config_epoch",
+        "public.system_config_journal"
+      ],
+      "changed_sequences": ["public.config_change_seq"],
+      "passed": true
+    },
+    {
+      "before": "browser-config-committed.json",
+      "after": "browser-config-reset-before-refresh.json",
+      "tables_compared": 90,
+      "changed_tables": [
+        "public.system_config",
+        "public.system_config_epoch",
+        "public.system_config_journal"
+      ],
+      "changed_sequences": ["public.config_change_seq"],
+      "passed": true
+    },
+    {
+      "before": "browser-config-reset-before-refresh.json",
+      "after": "browser-config-after-refresh.json",
+      "tables_compared": 90,
+      "changed_tables": [],
+      "changed_sequences": [],
+      "passed": true
+    },
+    {
+      "before": "browser-subject-before.json",
+      "after": "browser-subject-competing.json",
+      "tables_compared": 90,
+      "changed_tables": [
+        "public.event",
+        "public.knowledge",
+        "public.subject",
+        "public.subject_control_journal"
+      ],
+      "changed_sequences": ["public.event_dispatch_seq", "public.subject_change_seq"],
+      "passed": true
+    },
+    {
+      "before": "browser-subject-competing.json",
+      "after": "browser-subject-cas-after.json",
+      "tables_compared": 90,
+      "changed_tables": [],
+      "changed_sequences": [],
+      "passed": true
+    },
+    {
+      "before": "browser-subject-cas-after.json",
+      "after": "browser-subject-cow-after.json",
+      "tables_compared": 90,
+      "changed_tables": [
+        "public.subject",
+        "public.subject_control_journal",
+        "public.subject_trait",
+        "public.subject_trait_binding",
+        "public.subject_trait_journal"
+      ],
+      "changed_sequences": ["public.subject_change_seq"],
+      "passed": true
+    },
+    {
+      "before": "browser-subject-cow-after.json",
+      "after": "browser-subject-lifecycle-after.json",
+      "tables_compared": 90,
+      "changed_tables": [
+        "public.subject",
+        "public.subject_control_journal",
+        "public.subject_trait_binding"
+      ],
+      "changed_sequences": ["public.subject_change_seq"],
+      "passed": true
+    },
+    {
+      "before": "browser-final.json",
+      "after": "fallback-readonly-after.json",
+      "tables_compared": 90,
+      "changed_tables": [],
+      "changed_sequences": [],
+      "passed": true
+    }
+  ],
+  "browser_passed": [
+    "missing/wrong token and reauthentication",
+    "config navigation and locale deep link",
+    "subject catalog and first 100 journal rows",
+    "config write followed by failed refresh and explicit read recovery without mutation replay",
+    "two independent tabs: competing rename accepted, stale CAS rejected with current revision message",
+    "subject trait copy-on-write preserves shared source",
+    "retire, restore and reset confirmations"
+  ],
+  "not_claimed": [
+    "automatic canonical bootstrap",
+    "background config refresh timer",
+    "event listener or worker startup",
+    "worker configuration acknowledgment",
+    "provider output quality",
+    "deployment",
+    "all six trait UI controls",
+    "browser journal pagination beyond first page",
+    "complete SPA retirement"
+  ],
+  "recipe_failures_preserved": [
+    {
+      "run": "parent-controls-r1",
+      "reason": "partial override fixture wrongly expected valid=true; existing enum-record semantics retained",
+      "fix": "assert partial false, then supply all six bound payloads for valid=true"
+    },
+    {
+      "run": "parent-controls-r2",
+      "reason": "temporary PostgreSQL startup socket passed readiness before final TCP server",
+      "fix": "pg_isready against 127.0.0.1"
+    },
+    {
+      "run": "parent-controls-r3",
+      "reason": "synthetic restricted role lacked sequence UPDATE needed by setval",
+      "fix": "grant UPDATE on isolated sequences"
+    }
+  ],
+  "browser_tool_boundary": "T3 preview handled writes; after explicit automation-host unavailable, standalone Playwright performed read-only checks. T3 tabs could not be closed through unavailable host; isolated server and DB were removed.",
+  "provider_calls": 0,
+  "cleanup": {
+    "owner": {
+      "owner": "57961995-70c3-4121-a9dd-97d90471be1a",
+      "issue": "YUK-1358",
+      "phase": "isolated-controls-built-rpc-browser",
+      "token": "21e5a86a-406e-4f92-8c8f-1e1a0294ec21",
+      "candidate": "75c0fa149d903b757f6487e3105e3bfea11c7359",
+      "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "createdAt": "2026-10-08T17:50:03.820026+00:00"
+    },
+    "releasedAt": "2026-10-08T18:01:35.907845+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "retained_local_artifacts": [
+    {
+      "path": "/private/tmp/yuk1358-controls-built-parent/browser-evidence.json",
+      "sha256": "ba4ac8f7ca81d10e2fd3fba42665fda91c7221b03b1b8ed1de64a7ddc63d030a"
+    },
+    {
+      "path": "/private/tmp/yuk1358-controls-built-parent/config-locale.png",
+      "sha256": "014ad87bf18a4a267477096f80a1c7c54d364d4aa0a1ee6a4df5b21563942fa2"
+    },
+    {
+      "path": "/private/tmp/yuk1358-controls-built-parent/fallback-browser.json",
+      "sha256": "3d5b50377678cb54101be0212e1f568d2140b3bfd6bef8041912c43121a990a0"
+    },
+    {
+      "path": "/private/tmp/yuk1358-controls-built-parent/lock-release.json",
+      "sha256": "5fbd7ed13dbceaefb3e94637baac29a61ebadbf6e974808db25b298283c032bd"
+    },
+    {
+      "path": "/private/tmp/yuk1358-controls-built-parent/math-history.png",
+      "sha256": "c945fed4f3128ddfd24c698b4c999805ab6e2a7e0ce343cad3dec27ad99c30e9"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/1-begin-prepare-after.json",
+      "sha256": "e6c7a76d7796dca011b3914f9579ca68005af4a24a07f106979d0ec26b8e04dd"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/1-begin-prepare-before.json",
+      "sha256": "ed232aa89b66f998b085786a38f305fab769d5eaf2e58dab45fcdd2f1dd21aa8"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/1-begin-prepare-effect.json",
+      "sha256": "40155574255c4bbc96bc9b66d46c0e5c3562e39012fcb26b1ab2bdf1f452d3bb"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/10-rename-with-receipt-after.json",
+      "sha256": "19a9b8aac3c51920d82ebcf2650af1c24f120df7b9f480912eb2a31e6d4da536"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/10-rename-with-receipt-before.json",
+      "sha256": "ada4437112a78d26ca354081fb2b9c399aeba75ff12d26dc7477e56c72923e23"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/10-rename-with-receipt-effect.json",
+      "sha256": "c009e16e0159477c501b1faaf534aee83cf427a1b42676917bc2b81a93d478f8"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/11-stale-subject-cas-after.json",
+      "sha256": "6d4e6448b93d472c95672333b957108ca1c6e9a289c35df3f82883e6444d64bc"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/11-stale-subject-cas-before.json",
+      "sha256": "20cdd6d05b9f715839e1be40df3fa492e3556a3f3059de2d6613e30e9988ba0d"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/11-stale-subject-cas-effect.json",
+      "sha256": "6abe8cb8779678b9731ddf4892cdc70b4a87fc0ca089129370e81f956c682fc8"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/12-name-conflict-no-write-after.json",
+      "sha256": "374308f6c4f50a2eba77df4af45f50788ca719b23cfe273a91bdabbe29ad7dc4"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/12-name-conflict-no-write-before.json",
+      "sha256": "0f325bca209dc717dddeeae44034159a90c47d828abfb3957cd79bfb1f376eed"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/12-name-conflict-no-write-effect.json",
+      "sha256": "f2f40b3394d756825eb2b83f8ac37b3d05466934e580317c86507caa519dd2c4"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/13-rename-noop-after.json",
+      "sha256": "211462cb750a3c86ad4cfe69c071139b085ee2a9ee92ea2f22a3ad0f588950db"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/13-rename-noop-before.json",
+      "sha256": "4a8f2e950fc7b5fed279834148cdd9924b4573089f0f3a60d2812be9de30ee64"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/13-rename-noop-effect.json",
+      "sha256": "8263c33552895d186407069f08b263a88836a2c0bafc0a894c45bee2c1b0dc44"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/14-retire-after.json",
+      "sha256": "aab88727c362849070dca1f3b156647467d9bd24bac9824e24b1382c2fd682f5"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/14-retire-before.json",
+      "sha256": "30c741df12ce1b78ca9b569bba23af8b52d52416d0fa25dc69b9be39a9568667"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/14-retire-effect.json",
+      "sha256": "152ba4c4c6afe3c4bb74c2619d0e3b7f4d4b196f955bf94a7f90ee82e1e6a86a"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/15-retire-noop-after.json",
+      "sha256": "6dc4f5fbe975629ba16f18e71609eb5d040d2e28f05b04bccc99fc3e0e4da33a"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/15-retire-noop-before.json",
+      "sha256": "929ee562c4826f04f878bdb889e684e3c8c6100819c37c8bb62aec1ff9794fd6"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/15-retire-noop-effect.json",
+      "sha256": "8172974902e9c1d1481a33ab9162ed81e88eb49d885b272d2d365d448175bf61"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/16-restore-after.json",
+      "sha256": "cd21aba0862f5f82d3f505ce288fc8c3fa068ef5a9957b7c559ba1d6fe9ab196"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/16-restore-before.json",
+      "sha256": "2c30e7cdfe6a35e5f8d72cb5a75a33be6a0b3b987333a3224cc6c1b8e93440ec"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/16-restore-effect.json",
+      "sha256": "d97596a7df9a4a8a6b10784171b853d1666904d3e6e432be4b3aabd605e51546"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/17-validate-partial-overrides-existing-contract-after.json",
+      "sha256": "9268109614afca17c347ce30b72d071aa8d667157c898e2ac26b3f4d53508796"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/17-validate-partial-overrides-existing-contract-before.json",
+      "sha256": "483282d6da833dc747bb3d06e66ba591457e4a390b54fc91a2b3d3e235b980cf"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/17-validate-partial-overrides-existing-contract-effect.json",
+      "sha256": "e2e8adfa8bb895261cf6f34014fb5b840b44023d328af1e3540e69e2216ba279"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/18-validate-complete-overrides-after.json",
+      "sha256": "1b604d4f3bcb73b9c92371ce31eee58fd48c483d0dca97b363259024f5d5f3da"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/18-validate-complete-overrides-before.json",
+      "sha256": "a46d09725bd81cb68bd811fcc4d6f6a79860dcdbe322c5cdc28a09a65518201c"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/18-validate-complete-overrides-effect.json",
+      "sha256": "91db4c031aed3b8ff088efe67449584cc783eb2ecbfc21bb31559fdaca79f0b0"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/19-cow-commit-after.json",
+      "sha256": "95409c1427035aa7b0ba771f6e091904d6271eb07f87dfd26f8dff1965695a06"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/19-cow-commit-before.json",
+      "sha256": "1924ec6f0653941f8e7198387dca8831a9522c43450a63f72e45261952bdcc10"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/19-cow-commit-effect.json",
+      "sha256": "a582a9643a3b52e263530c56c85c9df1cc8a05d433bcc10648eb37d0178ca013"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/2-auth-before-input-and-epoch-after.json",
+      "sha256": "b40079df2f95dea61b92b0fef4355697e5c972ab1e184432fb6e470ce1632b40"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/2-auth-before-input-and-epoch-before.json",
+      "sha256": "d71b08ab7a991ca0392b1732cd98cf61a62bf9cced6d812be9cce81c13498f58"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/2-auth-before-input-and-epoch-effect.json",
+      "sha256": "9d5f6bb29a8ed55fa442a984c82760bda02835f4d0a68136f02c24d8efeb995f"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/20-cow-repeat-noop-after.json",
+      "sha256": "9de96ce799dea6a992b6925448c782f8a4ba892723dd462f6ced3dee0dabba98"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/20-cow-repeat-noop-before.json",
+      "sha256": "98ea26aea9484c708b63427a9857e782162981afd5d4a0f58b93cdffeb22a533"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/20-cow-repeat-noop-effect.json",
+      "sha256": "f1101dbea3aeaf3ce6481468cffc8dd0e98a2ce998b4fb1b2dae8b5391b99380"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/21-trait-cas-conflict-after.json",
+      "sha256": "c01b6ccfde4a4b7ed8817037cb68522868ec7952e120af2292638344e8cb04eb"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/21-trait-cas-conflict-before.json",
+      "sha256": "dad192060fb339146c58d8a31bdae88cc0c136acc1d1a08b8ab7961316e7c93e"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/21-trait-cas-conflict-effect.json",
+      "sha256": "ec8e72a7aaa024a2e63001c0b3ac40a987f948c7b672969eb852c9c3665b3417"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/22-explicit-fork-after.json",
+      "sha256": "e98e033bb1f81e6bfad5c9cc08b9e26e3f2f36898ac73cf3274295f2a200884b"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/22-explicit-fork-before.json",
+      "sha256": "ebe71e0817d1f0127c873bdc30f5f51de368ef8eddddb45defc8b50b9c7ee618"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/22-explicit-fork-effect.json",
+      "sha256": "408e8daa9f46af5301ce68824ab557b46276c0111164d667489bd26a048a188f"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/23-subject-reset-bindings-after.json",
+      "sha256": "5cf0cbbe6c87c7952533d1ef695f0e36c4cfc74a4ea7c3c777b621f1177e917a"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/23-subject-reset-bindings-before.json",
+      "sha256": "5971b2271f22800a51e01a612893e493c00b5ee782c0652b1d25f5658d1201ae"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/23-subject-reset-bindings-effect.json",
+      "sha256": "c081210da9583766285035aa055509da7fd817583184c24a4469c2dcd2fcb39a"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/24-rebind-to-owned-fork-after.json",
+      "sha256": "3e8fcb4b0d905106a04e3b5034cf2772331caea18f487b7698317a1e544914c6"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/24-rebind-to-owned-fork-before.json",
+      "sha256": "57f4be01fd0d5c98ffd2d65342a2d6af380569a49a96a5420461d8369cf9fe29"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/24-rebind-to-owned-fork-effect.json",
+      "sha256": "31d29f07ed476e8730b84038b23607135d3fa23b6e2f6431057ebe85048b9222"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/25-rebind-noop-after.json",
+      "sha256": "dce06a9b4c161c774c6cf19a1b44c834f887bfb8cad51a06f2e859231028dbff"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/25-rebind-noop-before.json",
+      "sha256": "f88eaef62414518ab2578ff6a42356930e0c931e6ae9ed4e54b27ef2c663c88b"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/25-rebind-noop-effect.json",
+      "sha256": "6ae85cb7b9d16656c2aed8bcf2d34b7cdceff34d4f0529c34a0f5c0bd5039a44"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/26-shared-fanout-after.json",
+      "sha256": "9306633bc6ccf38f45e70564ade05dc7623474d1ee6f0c99edb339afe0514a16"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/26-shared-fanout-before.json",
+      "sha256": "03d78dc086a9155e2ca01c68735d37264744339b1c1762b582fa4beeadbe614e"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/26-shared-fanout-effect.json",
+      "sha256": "984ddf668de728673aebba7807dea7e6b3df683b80cd23ac00dbffe82cdbbee9"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/27-shared-noop-after.json",
+      "sha256": "ba9152753d616b8cc5afc565c6b71217a49078886792b362098315835c8781d4"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/27-shared-noop-before.json",
+      "sha256": "5b0a51a62e4fd9ea554ff6dbb7044e812ef98268087535cbf06b85dcf462f7b3"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/27-shared-noop-effect.json",
+      "sha256": "bf832ee88ea4ff0cb8fe590e1f623056bfed5ae75facdfab2008d16e7d366b66"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/28-rollback-forward-after.json",
+      "sha256": "b0d2e7ee1dd7cec61356cd061937b6e46ad95f5e1650422a70c6b9e4f4d847ac"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/28-rollback-forward-before.json",
+      "sha256": "34d6705281e83fa1b46eeb086375ae30714b7f814413e6ef0e7fe4bf740a0dd2"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/28-rollback-forward-effect.json",
+      "sha256": "66198b42c82421a39e0569e30fe3cadd3fa18011755ee018e9f4619b0f0ff018"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/29-shared-edit-before-seed-reset-after.json",
+      "sha256": "023d2ade7b52af14b17a80839af699b5e7c8577eec20eab3adb43e40f7685688"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/29-shared-edit-before-seed-reset-before.json",
+      "sha256": "99c1ea44d4ae224a69589030926278183a338e29a6b076cb3b2e5063b2b3329c"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/29-shared-edit-before-seed-reset-effect.json",
+      "sha256": "09d8333171ce671f4d20d2b744eae75209d77eaef1b628b657e5dc6bd87cf4d6"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/3-preparing-before-validation-after.json",
+      "sha256": "e517ab54e5bd49c6f6b5039c5394a1e74aa17fc2d26cffd5ed1326c4d27e5e75"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/3-preparing-before-validation-before.json",
+      "sha256": "b5366854191ff3044095cbc784ac96f0e498f843936ebb1177ed680a11ec7548"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/3-preparing-before-validation-effect.json",
+      "sha256": "0cdfe6e9db0e92ff7ac21a86e8ecb76aa6915b7ec14daa112927f75d5f80c046"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/30-reset-to-code-seed-after.json",
+      "sha256": "9e598a1993c690aab621335878eb7623b139f5f4f6581b2b9a039ac9b9e43bc2"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/30-reset-to-code-seed-before.json",
+      "sha256": "3d0a06eb9e5c088a005b761745fa23978301c7e240d8eb671acbd6c426adf50b"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/30-reset-to-code-seed-effect.json",
+      "sha256": "104d328cac53fd29a826793e9b3cace0bc755723eec1b0192f1415671ebc764b"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/31-config-secret-batch-atomic-rejection-after.json",
+      "sha256": "237bed9fe7e585a7b113edb6134fca157866b2d845dac48f17680a4519f6091e"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/31-config-secret-batch-atomic-rejection-before.json",
+      "sha256": "acd6fb371220b564435084797b3a519a8105a26c3984f02b881824e5aae9205e"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/31-config-secret-batch-atomic-rejection-effect.json",
+      "sha256": "3d03900f5c36d363e94021fcf0861914f2d8a485b5c2dab724f49dbf1380391a"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/32-config-invalid-value-after.json",
+      "sha256": "dbb6fffbca3ab8c367c4bae2101bb855cee88a64f8e8c6550b7b7419b8434bfe"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/32-config-invalid-value-before.json",
+      "sha256": "fdaad41d0f10015f140611bc5b09921ea32424110ea34ae4ca170e40ce43ca2c"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/32-config-invalid-value-effect.json",
+      "sha256": "e35d2c1cf0b3472a806b7e1c765b33d172543aa69024602466103cff2370cc6b"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/33-config-set-commit-after.json",
+      "sha256": "56d71201c7ec117d5c56b98e89747357168192cc503d7272b9931303ceef170b"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/33-config-set-commit-before.json",
+      "sha256": "3f5d48322a4a90cf9643f2a97674fc2311bcbaa063012c4d31bd6e341d567d3c"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/33-config-set-commit-effect.json",
+      "sha256": "63a90378451168bbbe167d6e541ff2318b96f1469c5d867c66a71b917f970cb0"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/34-config-reset-commit-after.json",
+      "sha256": "ddeb52d75871074d8348ee7a945910cfb1e3bb68880a507860d20ed16623f73c"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/34-config-reset-commit-before.json",
+      "sha256": "d7810a092c72334939aa7ff915c541291640e66e9d785bb232cb700ca2cc8aa6"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/34-config-reset-commit-effect.json",
+      "sha256": "6542e222011e6eb98b9a5984ffc891b4fd95d9ad79bae4fa554d77253524b293"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/35-config-commit-refresh-failure-after.json",
+      "sha256": "50517b151a54ae368a538e788cf74c140e762bdff2f536e8d855a982c300232c"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/35-config-commit-refresh-failure-before.json",
+      "sha256": "0bbd58b377dfb2fed32b596953242e790211181370082a7b4954cb862406f42d"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/35-config-commit-refresh-failure-effect.json",
+      "sha256": "0e5a5afa59f19a7d062d44754875cd209786f2de34833a5c0f81064f3c1354fa"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/4-mark-ready-after.json",
+      "sha256": "84c4e726bfd229a0ab0d2eb0f625cb8c4103ed61d5d0d254b9bdbe343e260310"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/4-mark-ready-before.json",
+      "sha256": "9d8180004f8f6fc01e8f3587d761e8ce5b1673d1aaac03b00f908ff2d89850c8"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/4-mark-ready-effect.json",
+      "sha256": "45631708e3f99360726215b5df7e423796928b61cae5148c76f9655a0fdf95ec"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/5-ready-before-validation-after.json",
+      "sha256": "90388310f04854d4741910de31b565268b8183490bc18db9e26327ecd9408603"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/5-ready-before-validation-before.json",
+      "sha256": "f7ead7a642d3be7e7dd0d43854421e70c4236f049a8a77973ed9884651e69133"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/5-ready-before-validation-effect.json",
+      "sha256": "ab8ceda768f004496066a229f4e8d2f5e8f869f7f60421f5dc06626a39bb4a3b"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/6-activate-after.json",
+      "sha256": "3b3af940937d809484a1ff0d9cedc8d7d5b3e9afd16853f1b4b46a8a1877ef28"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/6-activate-before.json",
+      "sha256": "0465787188a3df5602405bd374875dcda92e16a767b9e0db0ab187fc46df5cfa"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/6-activate-effect.json",
+      "sha256": "44b06cb51ff8e0e02d99f1a511ca23997fb1e0a2cfedc286d6a75ac5d4defe92"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/7-full-read-dtos-and-catalog-after.json",
+      "sha256": "be23143db8abf767715e69677a44f6718744bb3cf88b7f610ce47ca2052c7c1f"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/7-full-read-dtos-and-catalog-before.json",
+      "sha256": "cd9b6545d5190dcc1f1e33a526b2faa0533224a679e2a935ebef6ce7a7429ccc"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/7-full-read-dtos-and-catalog-effect.json",
+      "sha256": "b4c7f4980d805c9cfa0edce012fe770965cd891e0d7de166f3b21953966f3189"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/8-journal-keyset-paging-and-cap-after.json",
+      "sha256": "50f2d6cf0c6409860ac3030f442660183e3f2cbbc974e71af9bcde7fadd988b4"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/8-journal-keyset-paging-and-cap-before.json",
+      "sha256": "f46f3a2d73c18d1406f9e72e1218c80e001cff4604de4df4e5703516cda2c748"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/8-journal-keyset-paging-and-cap-effect.json",
+      "sha256": "b3939959d8acf0e43b5c1521b1488323b5f6d9ce306cacb19f8ebe02cc740e22"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/9-forbidden-general-and-invalid-trait-after.json",
+      "sha256": "90f8452667e99b9a6ff19bfc0418590ae7c357f22dc95df93bee90eff1f5a3a3"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/9-forbidden-general-and-invalid-trait-before.json",
+      "sha256": "6098a15a3599626af3480c4dc6c4287bb2a82f9d649a5fca18e43d3a0c690411"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/9-forbidden-general-and-invalid-trait-effect.json",
+      "sha256": "59e7f709b873fccc10e1319633e863c3fd40f7248c734d192aefe1fefb36150d"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/browser-config-after-refresh.json",
+      "sha256": "af411023ac2453e3c37c48322836742d96f1ca891a0882c711bf446b974ebc5a"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/browser-config-before.json",
+      "sha256": "dfb40218897c5f27c28c1da22e5e6021442b4f68ad1613a64eaba5ff9e896bc9"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/browser-config-committed.json",
+      "sha256": "9e7dc11447ab86ff778ef934693a840be0f837a258d280446be7501d98bb11d3"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/browser-config-reset-before-refresh.json",
+      "sha256": "ebbbcdcc0cfc0df23a6a4e4f8e1f47c28c2c74960d2fcd0a58e48399e23a96e8"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/browser-final.json",
+      "sha256": "0f36d53ec6f145c272a1f555ae99a28d2a1fef2e94d1d7d39384e48bc3d55afc"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/browser-navigation-after.json",
+      "sha256": "ec960a85c5466df523c7a531550a2ab3328f6b7d3efad635ce476775019add4d"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/browser-navigation-before.json",
+      "sha256": "fee60417a6ed1ec9a566202b77b24893f1735510333ac5ff9546f6360ff9562c"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/browser-subject-before.json",
+      "sha256": "8d7ffbf2408ef177f4eb194b3372610d9f73b78697a1f6b0e687e658fcafcf4a"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/browser-subject-cas-after.json",
+      "sha256": "572b424ea2863fba73c1194087652a0f98f458dc67633ac774d605585d1e17f7"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/browser-subject-competing.json",
+      "sha256": "526190de89d41acc3b785c06b49c5eebe158f9afa1e6f083eb6e40abc060b1fd"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/browser-subject-cow-after.json",
+      "sha256": "fe5c2e2fa06386532b21c6c7926b86a52ae5175621d30db6b2725df12fcaeec4"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/browser-subject-lifecycle-after.json",
+      "sha256": "9914dc33426bc9675171e9be56e15cb13a38e66efb7efd9fc84205770b06ef16"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/cleanup.json",
+      "sha256": "a2194fd66284cbb738e6144fce8b8443bab745d7845a792454811f9e2c17b176"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/coverage.json",
+      "sha256": "5f87002b3a8782068a36e07c01a0ceab03668c04b297ebcec7c571e06a7a1abb"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/fallback-readonly-after.json",
+      "sha256": "8faa55c98a5a88b38725882bab85722be5a988994a690387221ae002297deaa2"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/host-rpc-proof.json",
+      "sha256": "c962487227dcbc222d59ee350319d5b6db0bf070ad1a7ed4b6e964e127b589ff"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/host-serve-proof.json",
+      "sha256": "c962487227dcbc222d59ee350319d5b6db0bf070ad1a7ed4b6e964e127b589ff"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/refresh-no-replay-after.json",
+      "sha256": "8c3adea5a6c2005503ad1c63646869433e141468d240f299a67909b0634a22f8"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/refresh-no-replay-before.json",
+      "sha256": "b78edd5e9c9f66d3f3ea206c727f4a997d620bb21ec0a3ea58d56b1c9ae5fc3b"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/refresh-no-replay-effect.json",
+      "sha256": "78b469f697ce8b9fcea8aed6748da37e02ce91e51bdb639c0029522c8b4e8582"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor/.cache/yuk1358-controls-built-acceptance/runs/parent-controls-r4/rpc-pass.json",
+      "sha256": "feb66df9db0b96d48ca68208c4bf8d28fa9e85794602413e147770f3d6de3e57"
+    }
+  ]
+}

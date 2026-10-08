@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：1391/PR1617已合main f80d47703，exact CI/R1/本地门禁通过；1392公共读取已交1f012c62d，父13unit/22DB通过，R1 NONE，exact CI待。1358/1359未完成，未部署。
+> Linear 是权威 tracker。2026-10-09：PR1620准确75c源码已通过R1 NONE、CI、122实际RPC与三页浏览器验收，18:01:35Z释放锁、主runtime不变；封存证据后待新exact CI合并。1393由7631独占，完整迁移未完成。
 
 ## NOW
+
+- **YUK-1358 / PR1620 Start配置与科目控制**：三页面、嵌套catalog/journal与18操作已接入Start。R1 NONE、95 distinct父DB、406unit/9协议/static/build、75c exact CI通过；实际122RPC/35窗口及浏览器配置刷新失败不重写、双tab CAS、COW/生命周期通过。[父验收](docs/planning/2026-10-09-yuk1358-start-admin-controls-parent.md)。隔离资源已清理，未部署；待证据提交的exact CI。父票误Done已恢复In Progress。
 
 - **YUK-1359 / 共享审计修复已合入**：PR1618合main ec9a9ed5e，父报告与exact b9a4caf87树一致，CI37805707992全绿、R1 NONE。历史retention合同与generated dist扫描修复已交付；1391本树四post-build audit已独立复验通过；历史失败记录保留。
 
@@ -65,7 +67,7 @@
 
 ## NEXT
 
-- 父收口1359两项共享audit，再继续配置/subjects Start与1356 Start提交/任务族；不将原件提交切片或两个页面主读取迁移当全部迁移完成。
+- 合并PR1620后继续1356 Start提交及剩余路由消费者；1393任务族由7631独占。1359共享audit已交付，不重复修复；canonical boot与旧路径删除仍须验收。
 
 - **YUK-1352 / PR1592**：已合入main eae963377，CI37758570995与合并tree一致；隔离错题入口已验收，未部署。剩余路由与canonical boot继续。
 

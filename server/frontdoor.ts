@@ -1,6 +1,7 @@
 import { serveStatic } from '@hono/node-server/serve-static';
 import { Hono } from 'hono';
 import { SECURITY_HEADERS } from './app';
+import { createStartAdminControlReader } from './start/admin-control-reader';
 import type { FrontdoorContext } from './start/context';
 import { readStartMistakes } from './start/mistakes-reader';
 
@@ -15,8 +16,11 @@ export function buildLegacySpa(root: string): Hono {
   return spa;
 }
 
-export async function createFrontdoor(api: Hono, spaRoot: string) {
-  const entry = await import('../dist/start/server/server.js');
+export function createFrontdoorContext(api: Hono, spaRoot: string): FrontdoorContext {
+  // Cache only the canonical operation bindings. Every call still reads the
+  // current facts/store/writer; no configuration snapshot or second writer.
+  // The first resolution is requested only after the Start auth/epoch gate.
+  let controls: ReturnType<FrontdoorContext['adminControls']> | undefined;
   const startAssets = new Hono();
   startAssets.use(
     '/_build/*',
@@ -27,10 +31,17 @@ export async function createFrontdoor(api: Hono, spaRoot: string) {
   );
   const context: FrontdoorContext = {
     api,
+    adminControls: () => (controls ??= createStartAdminControlReader()),
     readMistakes: readStartMistakes,
     legacySpa: buildLegacySpa(spaRoot),
     startAssets,
   };
+  return context;
+}
+
+export async function createFrontdoor(api: Hono, spaRoot: string) {
+  const entry = await import('../dist/start/server/server.js');
+  const context = createFrontdoorContext(api, spaRoot);
   const frontdoor = new Hono();
   frontdoor.use('*', SECURITY_HEADERS);
   frontdoor.all('*', (c) => entry.default.fetch(c.req.raw, { context }));

@@ -1,3 +1,7 @@
+# Current parent handoff — 2026-10-09 Start controls
+
+PR1620 candidate75c0fa149: R1 completed/noPending NONE; CI37817401666 green. Parent integrated406unit/9protocol/static/build passed; DB evidence covers95distinct cases across original94pass+test-only7rerun, not101. Actual built resolver/installed client passed18operations/122calls/35windows plus refresh-only proof. T3 browser passed config receipt/failed-refresh/no-replay, two-tab stale CAS, COW and subject lifecycle. Nine browser DB comparisons assert expected effects across90tables/5sequences. Explicit T3host unavailable led to read-only Playwright fallback; journal UI first100 only, RPC206 pagination separate. No product change during acceptance. Runtime lock released2026-10-08T18:01:35.907845Z; original4/release unchanged, own app/PG removed, synthetic evidence/dump retained. See controls-parent.md and runtime-acceptance.json. Evidence docs pending commit/newexactCI; no newreview or runtime needed. Linear1358 falseDone restoredInProgress. DBOS1393/0116/sharedregistrar/DBjobfetch-depth0 reserved7631. Main remainsAgentTEST source5aa2/image9b76; no deploy/provider/replay. Remaining routes/canonicalboot/taskfamilies/legacyexit not complete.
+
 # 当前交接 — YUK1392 agent-note board公共读取
 
 1391/PR1617已于16:32:22Z合main f80d47703ffbcb6f8db488a10dd0a705a6fee601，tree fda2bfe86b3755a9de935210f8c298e7fa7643d8与exact2fb相同，CI37808241557全绿、R1 NONE、threads0；已unwatch/1391Done，无部署。450unit/static/build/四audit与原55DB证据分层保留。
