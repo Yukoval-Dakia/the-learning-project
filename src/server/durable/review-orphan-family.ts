@@ -18,6 +18,7 @@ import {
   waitForRunnableEpoch,
 } from '@/server/contract-epoch';
 import { abandonOrphanReviewSession } from '@/server/session/review';
+import { lockProducerFenceInstaller } from './producer-fence-lock';
 
 export const REVIEW_ORPHAN_FAMILY = 'prune_orphan_review_sessions';
 export const reviewOrphanPhaseSchema = z.enum([
@@ -332,6 +333,7 @@ export async function runReviewOrphanTick(
 
 export async function installReviewOrphanProducerFence(db: Db): Promise<void> {
   await db.transaction(async (tx) => {
+    await lockProducerFenceInstaller(tx);
     await tx.execute(sql`select pg_advisory_xact_lock(1393, 1)`);
     for (const table of ['job', 'schedule']) {
       await tx.execute(

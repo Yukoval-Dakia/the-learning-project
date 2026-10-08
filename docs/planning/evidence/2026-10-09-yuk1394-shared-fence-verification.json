@@ -1,0 +1,173 @@
+{
+  "candidate": "1aeec5e366af2624c31ffe759780b63f24b92144",
+  "green": {
+    "files": 3,
+    "tests": 29,
+    "installerCases": 9,
+    "pairCases": 6,
+    "ddlRollbackCases": 3
+  },
+  "red": {
+    "files": 1,
+    "failed": 1,
+    "unselected": 8,
+    "onlyChange": "session installer common-lock call removed in an isolated archive",
+    "failure": "second-bypassed-lock; only legacy family lock granted",
+    "setupFailuresRetained": [
+      "pnpm auto-install refused module purge",
+      "unquoted display-name filter selected zero tests"
+    ]
+  },
+  "process": {
+    "files": 3,
+    "tests": 34,
+    "session": {
+      "tests": 21,
+      "children": 75,
+      "sigkill": 16,
+      "expectedErrorExit": 2
+    },
+    "review": {
+      "children": 35
+    },
+    "prune": {
+      "children": 8,
+      "providerCalls": 0
+    }
+  },
+  "release": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1394",
+      "phase": "isolated-shared-fence-regression",
+      "token": "833eaa33-31e7-4546-a567-137bf49a64e9",
+      "candidate": "1aeec5e366af2624c31ffe759780b63f24b92144",
+      "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "createdAt": "2026-10-08T21:53:12.320144+00:00"
+    },
+    "releasedAt": "2026-10-08T21:57:31.631242+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "files": [
+    {
+      "path": "/tmp/yuk1394-parent-fence-regression/green.log",
+      "sha256": "a55d990e5ea85bdc3caf6c5746204c535199042e1e49c0134de262077b7245e1"
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fence-regression/green-evidence.json",
+      "sha256": "edc06b4223dc8d7c10af03895fbe35aa902d51eb92823651a42806a0991c72ab"
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fence-regression/red.log",
+      "sha256": "320b70c3802f4f36136fd778a65b5781fadb65bca6a9485d83edd72824506aaa"
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fence-regression/red-no-install.log",
+      "sha256": "75b53987a79dbed7e4f4d7d00ac7729765f7c49e7d127c7db04bba70d5a480a6"
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fence-regression/red-test-names.log",
+      "sha256": "91aa69255b1037a1efb95b17488c4e9d8556c074fe02fbfe13ad016d968ad5ab"
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fence-regression/red-selected.log",
+      "sha256": "2edc52501f3c5b7260c06b45529639776349b3940838d8c08586fa8680f71068"
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fence-regression/red-source.json",
+      "sha256": "fe2f38405c28954c2a9faa389fd27723ec9a86e2aa5f0116ffbd4b40ea5e0436"
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fence-regression/red-evidence.json",
+      "sha256": "ccb2be2141f403332fbebf426645ba6bf03ee34164264ec7892320a21a42d377"
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fence-regression/process.log",
+      "sha256": "20ce1f8880fb89f94efe4a8f4f0db22ce9b9c97255f965754cc332fae313483a"
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fence-regression/session-process-evidence.json",
+      "sha256": "4ec2564b6a437383a3927b983e0eec0a7c78b550a6e28e7f12af0f825b124210"
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fence-regression/review-process-evidence.json",
+      "sha256": "cbed07fbee97e649d84805df4d3b00dcc4c4634860f62f5cdeba22b9201057d2"
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fence-regression/prune-process-evidence.json",
+      "sha256": "893389eccc836f9f5f693623ddddd17f951052da5026b1183fe1a3f1e180a789"
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fence-regression/before.json",
+      "sha256": "cfd631df8b4e6c3520eace476ecb861da097062722032a04bdf4d83787520ed0"
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fence-regression/lock-release.json",
+      "sha256": "6f4eadeab462a0bf0286e08fdcbaf27f960eeb1c81678ebdf96bc6e57fe33a81"
+    }
+  ],
+  "limits": [
+    "No historical CI relation OID mapping reconstructed",
+    "No conclusion about earlier4f36 firstcause",
+    "No mixed-old-binary safety or old consumer exit claim",
+    "No deployment; full migration remains in progress"
+  ],
+  "parentOfflineChecks": [
+    {
+      "command": "pnpm typecheck",
+      "exit": 0,
+      "path": "/tmp/yuk1394-parent-fence-regression/typecheck.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "command": "pnpm build",
+      "exit": 0,
+      "path": "/tmp/yuk1394-parent-fence-regression/build.log",
+      "sha256": "3802548992ecbc480f39c81cae30591f829ae10771ab25cd9b7948dde35a0433"
+    },
+    {
+      "command": "pnpm lint",
+      "exit": 0,
+      "path": "/tmp/yuk1394-parent-fence-regression/lint.log",
+      "sha256": "6d63f22ac59e97bcc01159b8db020dd9933111d291bd57e3769609da54bcf369"
+    },
+    {
+      "command": "pnpm audit:schema",
+      "exit": 0,
+      "path": "/tmp/yuk1394-parent-fence-regression/audit-schema.log",
+      "sha256": "0882e724983a0072fef2a1f516355f56291111fadd4b951b85bcfab4bfc730ed"
+    },
+    {
+      "command": "pnpm audit:capability-boundaries",
+      "exit": 0,
+      "path": "/tmp/yuk1394-parent-fence-regression/audit-capability-boundaries.log",
+      "sha256": "484405f1ec91a3f4ecfc833a00e772ba72da3c35e9ebef7b3ebcff730f89f21f"
+    },
+    {
+      "command": "pnpm audit:architecture-deepening",
+      "exit": 0,
+      "path": "/tmp/yuk1394-parent-fence-regression/audit-architecture-deepening.log",
+      "sha256": "ea93a17dd471767c18587edf1e7f613eafad3b6d42bd7e3f9483ebabbf408ea8"
+    },
+    {
+      "command": "pnpm audit:provider-lanes",
+      "exit": 0,
+      "path": "/tmp/yuk1394-parent-fence-regression/audit-provider-lanes.log",
+      "sha256": "4e94a5c1aa34213ec2cbb56a60b90e883fdcf6a7fd9c10daff833b754ea85b5c"
+    },
+    {
+      "command": "pnpm audit:provider-attempt-truth",
+      "exit": 0,
+      "path": "/tmp/yuk1394-parent-fence-regression/audit-provider-attempt-truth.log",
+      "sha256": "29bdbca513c3121fd6156e6dbabd3a720733d5e993340f0c32558835ec5cc81e"
+    },
+    {
+      "command": "pnpm audit:partition",
+      "exit": 0,
+      "path": "/tmp/yuk1394-parent-fence-regression/audit-partition.log",
+      "sha256": "109441d8e241b7949c3bd28ee5859a692ebcb97dc8668beb198653be4adb304a"
+    }
+  ]
+}

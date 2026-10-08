@@ -1,0 +1,247 @@
+{
+  "scope": "Declared schedule catalog, not observed runtime scheduling",
+  "base": "6212a4560c68c294245dc3f3e10e4f774c6ff6f8",
+  "method": "Reuse sealed base catalog after verifying unchanged sources; parent inspected the full two-file diff for orphan relocation and sole audit timing change. Existing manifest collision test independently passes.",
+  "schedules": [
+    {
+      "name": "coach_weekly",
+      "cron": "30 4 * * 0",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/agency/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "intervention_prepare_recovery",
+      "cron": "1-59/2 * * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/agency/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "copilot_run_reconcile",
+      "cron": "0-58/2 * * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/copilot/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "merge_attribution_sweep",
+      "cron": "0 4 * * 1",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/knowledge/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "projection_oracle_sweep",
+      "cron": "30 4 * * 1",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/knowledge/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "kg_borrow_shadow_sweep",
+      "cron": "0 5 * * 1",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/knowledge/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "hub_auto_sync_nightly",
+      "cron": "45 2 * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/notes/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "hub_sync_recovery",
+      "cron": "* * * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/notes/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "prune_job_events",
+      "cron": "0 4 * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/observability/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "prune_orphan_review_sessions",
+      "cron": "15 4 * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/observability/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "subject_profile_audit_nightly",
+      "cron": "26 4 * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/observability/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "ai_task_run_reconcile_nightly",
+      "cron": "40 6 * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/observability/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "judge_pending_reconcile",
+      "cron": "50 * * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/practice/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "jyeoo_staged_asset_reap",
+      "cron": "40 3 * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/practice/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "supply_planner",
+      "cron": "50 5 * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/practice/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "confusable_contrast_nightly",
+      "cron": "20 6 * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/practice/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "reference_answer_backfill",
+      "cron": "20 5 * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/practice/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "kt_estimate_nightly",
+      "cron": "10 5 * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/practice/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "axis_state_nightly",
+      "cron": "40 5 * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/practice/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "judge_calibration_sample",
+      "cron": "10 6 * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/practice/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "prune_orphan_placement_sessions",
+      "cron": "35 4 * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/observability/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "promote_conversation_idle",
+      "cron": "* * * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/server/boss/handlers.ts",
+      "source": "infraSchedules"
+    },
+    {
+      "name": "prune_orphan_conversation_sessions",
+      "cron": "25 4 * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/capabilities/observability/manifest.ts",
+      "source": "manifest"
+    },
+    {
+      "name": "verify_dispatch_recover",
+      "cron": "10 4 * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/server/boss/handlers.ts",
+      "source": "infraSchedules"
+    },
+    {
+      "name": "memory_brief_sweep",
+      "cron": "0 3 * * *",
+      "tz": "Asia/Shanghai",
+      "file": "src/server/memory/triggers.ts",
+      "source": "memorySchedules"
+    },
+    {
+      "name": "memory_ingest_outbox_poll",
+      "cron": "* * * * *",
+      "tz": "UTC",
+      "file": "src/server/memory/triggers.ts",
+      "source": "memorySchedules"
+    },
+    {
+      "name": "memory_ingest_outbox_recover",
+      "cron": "0 * * * *",
+      "tz": "UTC",
+      "file": "src/server/memory/triggers.ts",
+      "source": "memorySchedules"
+    }
+  ],
+  "sourceHashes": [
+    {
+      "path": "src/capabilities/agency/manifest.ts",
+      "sha256": "95c117dc99871c6d2bfdb903ecec84593a650f59c99c611b92724fdb6b8d9030",
+      "unchangedFromMain6212": true
+    },
+    {
+      "path": "src/capabilities/copilot/manifest.ts",
+      "sha256": "45283bc83047489289c0ed63ba269c20806c7e1eadd00be82d7e8b5b1bb6cd25",
+      "unchangedFromMain6212": true
+    },
+    {
+      "path": "src/capabilities/ingestion/manifest.ts",
+      "sha256": "bf36ffdbb7616066e5836ddd65e4bf54df6bc97d23a0117c6d75c94e0073569b",
+      "unchangedFromMain6212": true
+    },
+    {
+      "path": "src/capabilities/knowledge/manifest.ts",
+      "sha256": "ad6451ac567cd6bebc022b7ee9e3a84822b0213040d9af4903ef5732de54bf24",
+      "unchangedFromMain6212": true
+    },
+    {
+      "path": "src/capabilities/notes/manifest.ts",
+      "sha256": "958572f83241cccaf3ad553e7c27ed2cb2352cab1bf946088781abfe822274a5",
+      "unchangedFromMain6212": true
+    },
+    {
+      "path": "src/capabilities/observability/manifest.ts",
+      "sha256": "75220783df9b24786a69a20533917015dd274a3486446a5c99a24d56ff78ac64",
+      "unchangedFromMain6212": false
+    },
+    {
+      "path": "src/capabilities/practice/manifest.ts",
+      "sha256": "d30414b9b2ab6f05a0c4fff2e5e6cb970253a06e796e16af15221c531318e640",
+      "unchangedFromMain6212": true
+    },
+    {
+      "path": "src/server/boss/handlers.ts",
+      "sha256": "78a7ac9e307e8954e6a2899dc995ccc72f29f1284c8f33ed7ed756a5c990892c",
+      "unchangedFromMain6212": false
+    },
+    {
+      "path": "src/server/memory/triggers.ts",
+      "sha256": "c29149bd1bedd7cf1114b0a5e6fcb64f4a5216b8682ec5a11cb969ba8d391c0e",
+      "unchangedFromMain6212": true
+    }
+  ],
+  "limits": [
+    "04:26 has no other fixed daily declaration. Frequent cron jobs still run at this minute; this is not a claim of exclusive runtime occupancy.",
+    "No runtime schedule was changed or executed. Historical evidence remains unchanged."
+  ]
+}

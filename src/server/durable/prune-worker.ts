@@ -21,6 +21,13 @@ import {
 } from './review-orphan-family';
 import { createReviewOrphanBackend, registerReviewOrphanWorkflow } from './review-orphan-worker';
 
+import { installSessionOrphanProducerFence } from './session-orphan-backend';
+import type { SessionOrphanBoundaryHook } from './session-orphan-family';
+import {
+  createSessionOrphanBackend,
+  registerSessionOrphanWorkflows,
+} from './session-orphan-worker';
+
 export type PruneBoundary = 'business-committed' | 'checkpoint-saved';
 export function registerPruneWorkflow(
   db: Db,
@@ -55,14 +62,23 @@ type PruneWorkerOptions = {
 export type DurableWorkerOptions = {
   boss: PgBoss;
   db: Db;
-  declarations: { pruneEvents: JobDecl; reviewOrphans: JobDecl };
+  declarations: {
+    pruneEvents: JobDecl;
+    reviewOrphans: JobDecl;
+    conversationOrphans: JobDecl;
+    placementOrphans: JobDecl;
+  };
   boundary?: (name: PruneBoundary) => Promise<void>;
   reviewBoundary?: ReviewOrphanBoundaryHook;
+  sessionBoundary?: SessionOrphanBoundaryHook;
   reconcileIntervalMs?: number;
 };
 type HostOptions = PruneWorkerOptions & {
   reviewDecl?: JobDecl;
+  conversationDecl?: JobDecl;
+  placementDecl?: JobDecl;
   reviewBoundary?: ReviewOrphanBoundaryHook;
+  sessionBoundary?: SessionOrphanBoundaryHook;
 };
 type Host = {
   boss: PgBoss;
@@ -78,8 +94,10 @@ function declarationKey(options: HostOptions) {
   for (const [decl, name] of [
     [options.decl, PRUNE_FAMILY],
     [options.reviewDecl, REVIEW_ORPHAN_FAMILY],
+    [options.conversationDecl, 'prune_orphan_conversation_sessions'],
+    [options.placementDecl, 'prune_orphan_placement_sessions'],
   ] as const) {
-    if (!decl && name === REVIEW_ORPHAN_FAMILY) continue;
+    if (!decl && name !== PRUNE_FAMILY) continue;
     if (
       !decl ||
       decl.name !== name ||
@@ -96,13 +114,14 @@ function declarationKey(options: HostOptions) {
   }
   // Preserve prune-only fixtures; any later expansion or changed contract is explicit failure.
   return JSON.stringify(
-    [options.decl, options.reviewDecl].map((decl) =>
-      decl
-        ? {
-            name: decl.name,
-            schedule: decl.schedule ? { cron: decl.schedule.cron, tz: decl.schedule.tz } : null,
-          }
-        : null,
+    [options.decl, options.reviewDecl, options.conversationDecl, options.placementDecl].map(
+      (decl) =>
+        decl
+          ? {
+              name: decl.name,
+              schedule: decl.schedule ? { cron: decl.schedule.cron, tz: decl.schedule.tz } : null,
+            }
+          : null,
     ),
   );
 }
@@ -155,12 +174,20 @@ function startHost(options: HostOptions) {
 export async function startPruneWorker(options: PruneWorkerOptions) {
   return startHost(options);
 }
-/** Production collects both families before registering either workflow or launching the SDK. */
+/** Production collects all four families before registering either workflow or launching the SDK. */
 export async function startDurableWorker(options: DurableWorkerOptions): Promise<void> {
+  if (
+    !options.declarations.reviewOrphans ||
+    !options.declarations.conversationOrphans ||
+    !options.declarations.placementOrphans
+  )
+    throw new Error('Production DBOS admission requires all four families');
   await startHost({
     ...options,
     decl: options.declarations.pruneEvents,
     reviewDecl: options.declarations.reviewOrphans,
+    conversationDecl: options.declarations.conversationOrphans,
+    placementDecl: options.declarations.placementOrphans,
   });
 }
 
@@ -172,6 +199,9 @@ async function mountHost(
     boundary,
     reviewDecl,
     reviewBoundary,
+    conversationDecl,
+    placementDecl,
+    sessionBoundary,
     reconcileIntervalMs = 15000,
   }: HostOptions,
   host: Host,
@@ -182,12 +212,44 @@ async function mountHost(
     await createOrUpdateQueue(boss, REVIEW_ORPHAN_FAMILY, FAST_QUEUE_OPTS);
     await installReviewOrphanProducerFence(db);
   }
+  if (conversationDecl && placementDecl) {
+    await createOrUpdateQueue(boss, 'prune_orphan_conversation_sessions', FAST_QUEUE_OPTS);
+    await createOrUpdateQueue(boss, 'prune_orphan_placement_sessions', FAST_QUEUE_OPTS);
+    await installSessionOrphanProducerFence(db);
+  }
   const workflow = registerPruneWorkflow(db, boundary);
   const reviewWorkflow = reviewDecl ? registerReviewOrphanWorkflow(db, reviewBoundary) : undefined;
   const reviewBackend =
     reviewDecl && reviewWorkflow
       ? createReviewOrphanBackend({ boss, db, decl: reviewDecl, workflow: reviewWorkflow })
       : undefined;
+  const sessionWorkflows =
+    conversationDecl && placementDecl
+      ? registerSessionOrphanWorkflows(db, sessionBoundary)
+      : undefined;
+  const sessionBackends =
+    conversationDecl && placementDecl && sessionWorkflows
+      ? [
+          createSessionOrphanBackend({
+            boss,
+            db,
+            binding: {
+              family: 'prune_orphan_conversation_sessions',
+              decl: conversationDecl,
+              workflow: sessionWorkflows.conversationOrphans,
+            },
+          }),
+          createSessionOrphanBackend({
+            boss,
+            db,
+            binding: {
+              family: 'prune_orphan_placement_sessions',
+              decl: placementDecl,
+              workflow: sessionWorkflows.placementOrphans,
+            },
+          }),
+        ]
+      : [];
   DBOS.setConfig({
     name: 'tlp-housekeeping',
     systemDatabaseUrl: process.env.DATABASE_URL,
@@ -209,11 +271,20 @@ async function mountHost(
         stopping = true;
         clearInterval(timer);
         await pending;
-        try {
-          await reviewBackend?.stop();
-        } finally {
-          await DBOS.shutdown({ workflowCompletionTimeoutMS: 3000 });
+        const errors: unknown[] = [];
+        for (const backend of [...(reviewBackend ? [reviewBackend] : []), ...sessionBackends]) {
+          try {
+            await backend.stop();
+          } catch (error) {
+            errors.push(error);
+          }
         }
+        try {
+          await DBOS.shutdown({ workflowCompletionTimeoutMS: 3000 });
+        } catch (error) {
+          errors.push(error);
+        }
+        if (errors.length) throw new AggregateError(errors, 'Durable shutdown failed');
       })();
     return shutdownPromise;
   };
@@ -267,6 +338,7 @@ async function mountHost(
       for (const reconcileFamily of [
         reconcile,
         ...(reviewBackend ? [() => reviewBackend.reconcile()] : []),
+        ...sessionBackends.map((backend) => () => backend.reconcile()),
       ]) {
         try {
           await reconcileFamily();
@@ -285,7 +357,11 @@ async function mountHost(
     timer.unref();
     return workflow;
   } catch (error) {
-    await host.shutdown();
+    try {
+      await host.shutdown();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Durable startup and cleanup failed');
+    }
     throw error;
   }
 }
