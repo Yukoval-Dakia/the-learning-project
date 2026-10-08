@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：PR1604已合入main6150f01a9，1378费用领域读取完成，8unit/11DB/static/build、独立R1/R2 NONE及exact CI37765137606通过。主线接Start；1358/1359/1377继续In Progress。本线程转1359 W2消费者清单，未部署。
+> Linear 是权威 tracker。2026-10-08：1359 W3/W4消费者清单已完成源码核查，文档从main31b68eaa独立交付；运行验收和旧路径退出仍待。1380 PR1607独立R1 NONE、父23DB与28unit/static/build通过，CI监听中。主线保留Start/1356，未部署。
 
 ## NOW
+
+- **YUK-1359 / W3-W4退出证据**：[W3](docs/planning/2026-10-08-yuk1359-w3-consumers.md)与[W4](docs/planning/2026-10-08-yuk1359-w4-consumers.md)已核真实消费者，补齐知识可见性/边事务、笔记presence及Copilot恢复边界。仅源码清单，Start和运行矩阵待，W5管理页仍待核查。
 
 - **YUK-1359 / W2消费者清单**：本线程独占退出证据；从main6150f01a9调查/record、/events/$id、/drafts和入门流程的读取、写入、恢复及共享子树。六页只读调查及父抽查已完成，见[W2清单](docs/planning/2026-10-08-yuk1359-w2-consumers.md)；新入口和运行验收未完成，Start/1356归主线。
 

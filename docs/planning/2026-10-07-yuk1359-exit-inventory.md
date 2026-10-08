@@ -21,6 +21,14 @@ Owner 的后续指令是先完成整个非 UI 迁移，UI 暂缓，再完成 Lin
 
 本轮未启动服务、删除旧路径或修改主线的 Start/1356 实施。上述余项均归现有1358/1359/1377及任务族票，没有新增独立缺陷，不重复建票。设置面板 `/admin/config` 仍在 W5 范围。
 
+## W3/W4 消费者核查补充，2026-10-08
+
+[W3清单](2026-10-08-yuk1359-w3-consumers.md)覆盖题库、笔记、知识图谱和agent-notes七条路由；[W4清单](2026-10-08-yuk1359-w4-consumers.md)覆盖coach/profile及跨页CopilotDock。源码基线、父级抽查和后续main31b68eaa的变化边界分别写在清单内，所有运行矩阵仍待执行。
+
+W3不能遗漏HTTP里的learner可见性、edge端点锁/事务/wake、question删除确认顺序、note编辑presence和最后会话flush；W4不能把未知202恢复、已接受turns快照、断流、Stop与revert刷新混成一个重试。KnowledgeDetail主查询现有错误分态限制已记录为迁移验收项。W5八个管理页含设置/admin/config仍须逐消费者核查，未在本轮标为完成。
+
+YUK1380事件领域PR1607在独立分支等待交付，不能把它计入本docs基线的已合入代码。1358/1359仍In Progress。本次只增退出证据，没有删除旧入口、修改产品或执行runtime。
+
 ## 历史基线26f101581：准备计划冲突及精确修订建议
 
 下表行号均指上述 main 基线的 `docs/planning/2026-10-07-ts-migration-and-ui-rewrite-prep.md`，不是动态 main。此处给出建议，不修改正在由其他线程使用的原计划。

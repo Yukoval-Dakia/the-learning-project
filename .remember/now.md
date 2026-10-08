@@ -1,3 +1,9 @@
+# 当前交接 — YUK1359 W3/W4文档，2026-10-08
+
+分支docs/yuk-1359-w3-w4-consumers从最新origin/main31b68eaa建立，代码未改。W3父核查与W4只读任务completed/noPending，现将消费链和退出矩阵版本化；1358/1359保持In Progress，W5管理页尚待。1380分支仍保存exact812a0bf08，PR1607独立R1 NONE、父23DB/28unit/static/build通过，T3监听CI，尚未合并。主线持有Start/1356；11:29报告已释放其独立Pi验收锁，本线程没有runtime操作，未来使用仍须实核锁。文档review/build/PR待收口。
+
+以下为历史交接。
+
 # 当前交接 — 2026-10-08 YUK1359 W2消费者清单
 
 当前分支docs/yuk-1359-w2-consumer-inventory，从最新origin/main6150f01a9建立。PR1604已10:55:10Z合入6150f01a949c3d1357f8b44f0d8ed6807cd74179，tree c9e440e5edd1dd62e7cd4f5cdd018e4d9ee93886与CI head463aadec一致；CI37765137606全绿、R1/R2 NONE、threads0，已unwatch。1378限定领域slice已Done，公共loadTodayCost/TodayCost交主线Start消费；1358/1359/1377仍In Progress。8unit、父实际11DB及静态/build通过，无部署。1359 W2只读研究子任务yuk1359-w2-consumer-readonly-completion-20261008-v1已completed/noPending（Codex gpt-6-luna high），父抽查并落盘W2清单，纠正学段URL/typed客户端混称；主线独占1356与Start。本线程无锁/服务，后续runtime须重新核验锁。下文为历史交接。
