@@ -7,19 +7,30 @@ import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { DBOSClient } from '@dbos-inc/dbos-sdk';
 import postgres from 'postgres';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import {
+  type ChildExit,
+  assertFixtureCanReset,
+  cleanupOwnedChildren,
+  errorDiagnostic,
+  fixtureMessageSchema,
+  nonterminalDurableWork,
+  sanitizeDiagnostic,
+  waitForFixtureMessage,
+} from './fixture-process';
 
 const OLD_BASE = '6aaf8ca89eaf5feb5af5c00b7c5b3bd90cd953ea';
 const exec = promisify(execFile);
 const bundle = resolve(`.cache/yuk1393-review-${process.pid}.cjs`);
-const children = new Set<ChildProcess>();
+const children = new Map<ChildProcess, Promise<ChildExit>>();
 const logs: unknown[] = [];
 const evidence: unknown[] = [];
+let caseLogStart = 0;
+let suiteBlocked: string | undefined = 'Review fixture setup has not completed';
+let hadCaseFailure = false;
 let db: ReturnType<typeof postgres>;
-const messageSchema = z
-  .object({ kind: z.string(), boundary: z.string().optional(), error: z.string().optional() })
-  .passthrough();
+const messageSchema = fixtureMessageSchema;
 const buildArgs = [
   '--bundle',
   '--platform=node',
@@ -71,11 +82,14 @@ function worker(
       TLP_PRUNE_PAUSE_AT: options.oldBundle ? 'business-committed' : undefined,
     },
   });
-  children.add(child);
-  const exited = once(child, 'exit');
+  const exited = new Promise<ChildExit>((resolveExit) => {
+    child.once('exit', (code, signal) => resolveExit([code, signal]));
+  });
+  children.set(child, exited);
   const messages: z.infer<typeof messageSchema>[] = [];
   const record = {
     pid: child.pid,
+    requestId: options.id ?? options.pruneId,
     stdout: '',
     stderr: '',
     messages: [] as unknown[],
@@ -89,31 +103,34 @@ function worker(
     record.stderr += String(c);
   });
   child.on('message', (m) => {
-    messages.push(messageSchema.parse(m));
     record.messages.push(m);
+    const parsed = messageSchema.safeParse(m);
+    messages.push(
+      parsed.success
+        ? parsed.data
+        : { kind: 'failure', error: `Invalid fixture IPC: ${parsed.error.message}` },
+    );
+  });
+  child.on('error', (error) => {
+    messages.push({ kind: 'failure', error: JSON.stringify(errorDiagnostic(error)) });
   });
   child.on('exit', (code, signal) => {
     children.delete(child);
     record.exit = { code, signal };
   });
   async function wait(kind: string) {
-    let found: z.infer<typeof messageSchema> | undefined;
-    await expect
-      .poll(
-        () => {
-          const index = messages.findIndex((m) => m.kind === kind);
-          if (index >= 0) found = messages.splice(index, 1)[0];
-          if (found) return true;
-          const error = messages.find((m) => m.kind === 'failure');
-          if (error) throw new Error(`${error.error}\n${record.stderr}`);
-          if (!found && (child.exitCode !== null || child.signalCode !== null))
-            throw new Error(`Child exited: ${record.stderr}`);
-          return !!found;
-        },
-        { timeout: 30000, interval: 25 },
-      )
-      .toBe(true);
-    return messageSchema.parse(found);
+    return waitForFixtureMessage({
+      messages,
+      expected: kind,
+      exited: () => record.exit !== null,
+      evidence: () => record,
+      timeoutMs: 30000,
+      accept: (message) =>
+        kind !== 'boundary' ||
+        !options.id ||
+        message.workflowId === options.id ||
+        (!message.workflowId && message.requestId === options.id),
+    });
   }
   async function kill() {
     child.kill('SIGKILL');
@@ -126,9 +143,40 @@ function worker(
   return { child, exited, wait, kill, stop };
 }
 async function reset() {
+  assertFixtureCanReset(children.keys(), suiteBlocked);
   await db`truncate review_orphan_disposition, review_orphan_receipt, review_orphan_tick, learning_session, job_events cascade`;
   await db`update review_orphan_control set phase = 'dbos', legacy_not_before = null, phase_changed_at = clock_timestamp()`;
   await db`update prune_job_events_control set phase = 'pg-boss'`;
+}
+async function durableWorkflows(tx: postgres.TransactionSql) {
+  const [schema] = await tx`select to_regclass('tlp_dbos.workflow_status') as relation`;
+  if (!schema.relation) return [];
+  return z
+    .array(z.object({ workflow_uuid: z.string(), status: z.string() }).passthrough())
+    .parse(
+      await tx`select workflow_uuid,status,recovery_attempts from tlp_dbos.workflow_status order by workflow_uuid`,
+    );
+}
+async function observeCaseState(includeApp: boolean) {
+  return db.begin('read only', async (tx) => {
+    await tx`set local statement_timeout = '3s'`;
+    await tx`set local lock_timeout = '1s'`;
+    return {
+      workflows: await durableWorkflows(tx),
+      ...(includeApp
+        ? {
+            ticks: await tx`select * from review_orphan_tick order by tick_id`,
+            receipts: await tx`select * from review_orphan_receipt order by tick_id,session_id`,
+            dispositions: await tx`select * from review_orphan_disposition`,
+            sessions:
+              await tx`select id,type,status,version,started_at::text from learning_session order by id`,
+            events:
+              await tx`select business_id,event_type from job_events where event_type = 'review.abandoned' order by business_id`,
+            control: await tx`select * from review_orphan_control`,
+          }
+        : {}),
+    };
+  });
 }
 async function sessions() {
   for (const id of ['crash-a', 'crash-b', 'crash-c'])
@@ -345,41 +393,94 @@ beforeAll(async () => {
   // CI must provide full checkout history or the separately verified old artifact.
   // Fail before opening any pool/worker when the required immutable source is absent.
   await exec('git', ['cat-file', '-e', `${OLD_BASE}^{commit}`]);
-  db = postgres(safeUrl().toString(), { max: 3 });
+  db = postgres(safeUrl().toString(), { max: 3, connect_timeout: 2 });
   await exec(resolve('node_modules/.bin/esbuild'), [
     'tests/dbos-review-orphan/worker.ts',
     ...buildArgs,
     `--outfile=${bundle}`,
   ]);
   await db`delete from contract_epoch`;
+  suiteBlocked = undefined;
 }, 60000);
+beforeEach(() => {
+  caseLogStart = logs.length;
+  assertFixtureCanReset(children.keys(), suiteBlocked);
+});
+afterEach(async (context) => {
+  if (suiteBlocked && logs.length === caseLogStart) return;
+  const failed = context.task.result?.state === 'fail';
+  hadCaseFailure ||= failed;
+  if (failed) {
+    const failure = {
+      case: context.task.name,
+      preCleanupLogs: structuredClone(logs.slice(caseLogStart)),
+    };
+    evidence.push(failure);
+    try {
+      evidence.push({ case: context.task.name, preCleanupState: await observeCaseState(true) });
+    } catch (error) {
+      suiteBlocked = 'Failed case durable state could not be observed';
+      evidence.push({ case: context.task.name, observationFailure: errorDiagnostic(error) });
+    }
+  }
+  try {
+    // These are the exit promises registered at spawn, including paused/failed children.
+    await cleanupOwnedChildren(children);
+    assertFixtureCanReset(children.keys());
+  } catch (error) {
+    suiteBlocked = 'Owned child cleanup did not establish process exit';
+    evidence.push({ case: context.task.name, cleanupFailure: errorDiagnostic(error) });
+    throw error;
+  }
+  try {
+    const afterCleanup = await observeCaseState(false);
+    evidence.push({ case: context.task.name, afterCleanup });
+    const nonterminal = nonterminalDurableWork(afterCleanup.workflows);
+    if (nonterminal.length)
+      suiteBlocked = `Nonterminal workflows after ${context.task.name}: ${JSON.stringify(nonterminal)}`;
+  } catch (error) {
+    suiteBlocked = 'Post-cleanup durable state could not be observed';
+    evidence.push({ case: context.task.name, observationFailure: errorDiagnostic(error) });
+  }
+  assertFixtureCanReset(children.keys(), suiteBlocked);
+});
 afterAll(async () => {
-  for (const child of children) {
-    const exited = once(child, 'exit');
-    child.kill('SIGKILL');
-    await exited;
+  let cleanupError: unknown;
+  try {
+    await cleanupOwnedChildren(children);
+  } catch (error) {
+    cleanupError = error;
+    suiteBlocked = 'Final owned child cleanup did not establish process exit';
+    evidence.push({ finalCleanupFailure: errorDiagnostic(error) });
   }
   if (process.env.TLP_REVIEW_EVIDENCE_PATH)
     await writeFile(
       process.env.TLP_REVIEW_EVIDENCE_PATH,
-      JSON.stringify(
-        {
-          capturedAt: new Date().toISOString(),
-          node: process.version,
-          execPath: process.execPath,
-          bundle,
-          bundleSha256: sha(await readFile(bundle)),
-          logs,
-          evidence,
-        },
-        null,
-        2,
+      sanitizeDiagnostic(
+        JSON.stringify(
+          {
+            capturedAt: new Date().toISOString(),
+            node: process.version,
+            execPath: process.execPath,
+            bundle,
+            bundleSha256: await readFile(bundle)
+              .then(sha)
+              .catch(() => null),
+            logs,
+            evidence,
+            suiteBlocked,
+          },
+          null,
+          2,
+        ),
       ),
     );
   if (db) {
-    await db`update review_orphan_control set phase = 'pg-boss', legacy_not_before = null`;
+    if (!hadCaseFailure && !suiteBlocked)
+      await db`update review_orphan_control set phase = 'pg-boss', legacy_not_before = null`;
     await db.end();
   }
+  if (cleanupError) throw cleanupError;
 });
 
 describe('actual review orphan crash and recovery', () => {
@@ -511,9 +612,7 @@ describe('actual review orphan crash and recovery', () => {
       evidence.push({ unknownId: id, before, after, terminalErrorWasNotRetried: true });
       expect(await retry.exited).toEqual([1, null]);
     } finally {
-      if (first.child.exitCode === null && first.child.signalCode === null)
-        first.child.kill('SIGKILL');
-      await first.exited;
+      // afterEach captures failure state and reaps every child using its recorded exit.
       await proxy.stop();
     }
   }, 120000);
