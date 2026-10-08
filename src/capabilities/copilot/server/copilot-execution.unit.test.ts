@@ -132,6 +132,7 @@ describe('Copilot execution owner', () => {
     expect(mounted?.ctx.causedByEventId).toBe('current-accepted-ask');
     expect(mounted?.ctx.reviewAnswer).toBeUndefined();
     expect(JSON.stringify(modelInput)).not.toContain('model-forged-reference');
+    expect(modelInput).not.toHaveProperty('review_answer');
   });
 
   it('preserves the paid reply but discards the SDK cursor when native projection persistence fails', async () => {

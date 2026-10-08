@@ -1,0 +1,74 @@
+{
+  "ci_failed_run": 37765828244,
+  "ci_head": "83d7727f3331b350c6a708e1437276f8e4694771",
+  "ci_failures": [
+    "proposal-tools exact write inventory omitted submit_review_answer",
+    "ordinary copilot input added undefined review_answer property"
+  ],
+  "db": {
+    "command": [
+      "pnpm",
+      "vitest",
+      "run",
+      "--config",
+      "vitest.db.config.ts",
+      "src/server/ai/tools/proposal-tools.test.ts",
+      "src/capabilities/copilot/jobs/copilot_run.test.ts",
+      "src/capabilities/copilot/api/review-answer.db.test.ts"
+    ],
+    "exitCode": 0,
+    "finishedAt": "2026-10-08T10:55:42.354609+00:00"
+  },
+  "db_tests": 103,
+  "checks": {
+    "unit": {
+      "command": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "src/capabilities/copilot/server/copilot-execution.unit.test.ts",
+        "src/capabilities/practice/server/tools/submit-review-answer.unit.test.ts"
+      ],
+      "exitCode": 0
+    },
+    "typecheck": {
+      "command": ["pnpm", "typecheck"],
+      "exitCode": 0
+    },
+    "lint": {
+      "command": ["pnpm", "lint"],
+      "exitCode": 0
+    },
+    "build": {
+      "command": ["pnpm", "build"],
+      "exitCode": 0
+    }
+  },
+  "cleanup": {
+    "releasedAt": "2026-10-08T10:56:11.850738+00:00",
+    "owner": {
+      "threadId": "57961995-70c3-4121-a9dd-97d90471be1a",
+      "issue": "YUK-1356",
+      "phase": "isolated-ci-repair-db",
+      "token": "94d82aa4-b95f-47a3-938f-878768c2481a",
+      "createdAt": "2026-10-08T10:55:03.439603+00:00",
+      "candidate": "83d7727f3+ci-fix",
+      "expectedMinutes": 5
+    },
+    "containersUnchanged": true,
+    "releaseUnchanged": true
+  },
+  "hashes": {
+    "/tmp/yuk1605-ci-repair/before.json": "de6fb7e6b5fb1af890fb27e89bc2758c5a6011d46451b5645a878effdf8e2d51",
+    "/tmp/yuk1605-ci-repair/result.json": "ae8d7ccb19883108789e6c6d460a61e27671db989dd98f0ef182ad30cc5d681a",
+    "/tmp/yuk1605-ci-repair/lint.log": "fd871adc8ede09220fb3f33d5bd8a9de954e11052e161359a6f41d6710e5651d",
+    "/tmp/yuk1605-ci-repair/db.log": "059065cdc05b13e8ec2794eaa090d17a6e9da603773c5f6d80c7654abeef0ea3",
+    "/tmp/yuk1605-ci-repair/typecheck.log": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+    "/tmp/yuk1605-ci-repair/checks.json": "9918793b379c0470322b5de32a4fd43a4decdc8cdab4c66c1022774aeff0e99c",
+    "/tmp/yuk1605-ci-repair/cleanup.json": "68d771afde188705635dc52bdbc5fcdb973d1912265cbcf6ecb7ca0880559b51",
+    "/tmp/yuk1605-ci-repair/unit.log": "13b6147bef9c13cef1db4a27ea91e624a497970bbe6d8e815f253c1fa5ea35f2",
+    "/tmp/yuk1605-ci-repair/build.log": "3351c31e22a0b46cbdb6528d1f10988f11d46696c941debd2202d3627a8d1639"
+  }
+}

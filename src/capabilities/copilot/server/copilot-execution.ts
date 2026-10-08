@@ -208,9 +208,10 @@ export function createCopilotExecutionOwner(
           signal: validationSignal,
         })
       : undefined;
+    const { review_answer: _untrustedReviewAnswer, ...unboundInput } = turn.input;
     const boundInput: CopilotRunInput = {
-      ...turn.input,
-      review_answer: reviewAnswer ? { original_ref: reviewAnswer.originalRef } : undefined,
+      ...unboundInput,
+      ...(reviewAnswer ? { review_answer: { original_ref: reviewAnswer.originalRef } } : {}),
     };
     const input: CopilotRunInput =
       correctionResolution.kind === 'clarify'
