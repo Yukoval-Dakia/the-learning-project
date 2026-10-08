@@ -2,11 +2,11 @@
 
 PR1610于12:21:24Z合入main a6faded0729fd77789a05d4a07a706d5ff6b612a。父fetch确认tree834dc8b90bda148206346bfc6f530666321ad7e8与准确head946038637完全一致；CI37775009264全绿、产品独立R1 NONE/noPending、reviewThreads0，已unwatch。CodeRabbit跳过与Codex额度拒绝均已结束，不能称其完成审查。74unit/父24DB/整合typecheck、lint、build通过；1381仅领域slice Done，主线57961995已收到准确main SHA及public接口。
 
-本树从新origin/main建立docs/yuk-1359-w5-delivery，父独占收口文档，无代码writer。loadAdminRuns、loadAdminRunDetail、loadAdminCost、loadAdminFailures经observability/public出口，HTTP已真实消费；Start鉴权、页面与浏览器仍归主线PR1609。1358/1359保持InProgress，全部迁移与后续功能目标未完成。
+本树现feat/yuk-1386-diagnostics-domain-reads，从最新origin/main a6faded072建立，携带已提交1359收口docs cf8867b4b。唯一T3 writer yuk1386-diagnostics-domain-implementation-20261008-v1（command b0c41f6b-955b-4620-8875-2b8031cb5dfe，Codex gpt-6.1-sol high）running，拥有观测api/server coverage/conjecture、public及tests；practice只准target-discovery type import及3个Db|Tx签名。父只改非重叠PLAN/交接，DB容器与review/PR仍父接。loadAdminRuns、loadAdminRunDetail、loadAdminCost、loadAdminFailures经observability/public出口，HTTP已真实消费；Start鉴权、页面与浏览器仍归主线PR1609。1358/1359保持InProgress，全部迁移与后续功能目标未完成。
 
 12:07:55.392504Z已核owner/token ceacc8e5释放本线程DB验收锁，临时PG退出、原四服务/release不变；之后未操作runtime。后续仍实际核锁并原子获取，不依据历史快照启动服务。无provider、paid、worker、replay、部署或私人数据操作。
 
-W5源码清单与独立R1勘误完成；28路由静态覆盖不等于实际迁移退出。YUK1382未知费用显示问题已去重登记Backlog，不在本lane改UI。coverage/conjecture尚只读，精确增量路径已交主线协调；跨practice仅Db|Tx类型传递，内部Date.now生成的deadline不进入公开coverage DTO，不因此扩大时钟改造。下一writer待范围无重叠确认，不写主线Start/practice树。
+W5源码清单与独立R1勘误完成；28路由静态覆盖不等于实际迁移退出。YUK1382未知费用显示问题已去重登记Backlog，不在本lane改UI。coverage/conjecture尚只读，精确增量路径已交主线协调；跨practice仅Db|Tx类型传递，内部Date.now生成的deadline不进入公开coverage DTO，不因此扩大时钟改造。主线已明确确认无重叠并授权该范围，1386子票已去重建立；不写主线Start/practice树。Linear1358曾实读为Done，已恢复InProgress。父基线hash见/tmp/yuk1386-parent-baseline.json。
 
 以下为历史验收记录。
 
