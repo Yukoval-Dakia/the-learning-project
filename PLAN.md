@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09：PR1620已合main10df且完整tree/CI/本轮运行证据一致；本线接Today及/agent-notes Start读取消费者，1393持锁期间仅源码。全迁移与运行部署未完成。
+> Linear 是权威 tracker。2026-10-09：Start观察读取3ac/c10已交回，父19source/878artifact及14DB通过，18:45:27Z释放锁。R1与实际入口配方准备并行，draft PR待CI；1393独占DBOS线，未部署。
 
 ## NOW
 
-- **YUK-1358 / Start观察读取**：freshmain10df、分支feat/yuk-1358-start-agent-notes。复用1392领域入口，保留Today20/全页50与本地已读，无数据库写操作。[范围与验收](docs/planning/2026-10-09-yuk1358-start-agent-notes.md)。1393独占runtime，作者仅unit/static/build；父后续独立审查和锁下实际验收。
+- **YUK-1358 / Start观察读取**：freshmain10df、分支feat/yuk-1358-start-agent-notes。复用1392领域入口，保留Today20/全页50与本地已读，无数据库写操作。[范围与验收](docs/planning/2026-10-09-yuk1358-start-agent-notes.md)。作者127unit/10协议/static/build/10audits通过；父14DB通过且清理/释放锁。R1进行、实际RPC/browser未验，draft PR等待门禁。
 
 - **YUK-1358 / PR1620 Start配置与科目控制**：三页面、嵌套catalog/journal与18操作已接入Start。R1 NONE、95 distinct父DB、406unit/9协议/static/build、75c exact CI通过；实际122RPC/35窗口及浏览器配置刷新失败不重写、双tab CAS、COW/生命周期通过。[父验收](docs/planning/2026-10-09-yuk1358-start-admin-controls-parent.md)。隔离资源已清理，未部署；exact755bdeebb CI37821989407全绿，18:16:17Z合main10df1a471且tree一致，已unwatch。父票保持In Progress。
 

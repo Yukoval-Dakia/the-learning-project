@@ -1,0 +1,14 @@
+{
+  "owner": {
+    "owner": "57961995-70c3-4121-a9dd-97d90471be1a",
+    "issue": "YUK-1358",
+    "phase": "isolated-agent-notes-scoped-db",
+    "token": "ae362e45-fd24-4ce0-926c-e6db83f850e0",
+    "candidate": "c10e1188528a04c789d6aff1dac2eafee4db6cba",
+    "createdAt": "2026-10-08T18:44:55.449293+00:00"
+  },
+  "releasedAt": "2026-10-08T18:45:27.211772+00:00",
+  "containersUnchanged": true,
+  "releaseUnchanged": true,
+  "runningUnchanged": true
+}
