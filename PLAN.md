@@ -1,11 +1,13 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：PR1609 Stop CI旧夹具已test-only修复a5c9867fe，正常合入1387/main d609为4baeea837；父73DB、497unit+7协议/typecheck/lint/build通过。13:24:19Z测试容器退出并释放锁，主runtime不变；推新准确CI。1389配置领域由7631唯一writer推进。
-
+> Linear 是权威 tracker。2026-10-08：YUK-1389候选b107113da父48DB通过，13:40:30Z核owner释放锁；正常整合PR1609/main7682618。整合176unit/static/build通过，R1与exact CI待，未部署。
 
 ## NOW
 
-- **YUK-1358 / Start Today与Inbox**：PR1609正常整合main d609，R2 NONE且原timestamp P1已修；父53DB历史证据保留，当前1af5真实RPC与浏览器通过，88表读无变/操作仅预期event+2与note更新；36 usability为1af5证据；2118另过428unit+7协议/static/build和真实RPC，Stop夹具修复后另过73DB/497unit/7协议与静态构建，等待最终head CI后合并。整个W1及残留HTTP消费者未完。[当前验收](docs/planning/2026-10-08-yuk1358-start-workbench-handoff.md)。
+- **YUK-1389 / 父验收与审查**：既有配置builder/schema/注入writer已共享public入口，原GET/PATCH/RESET实际消费。176 scoped unit/static/build/audits通过，父两份真实DB48/48；8文件hash与关键保护文件已核。R1只读进行，正常合入main7682618后176unit/static/build亦通过；Start消费归主线，1358/1359保持In Progress。
+
+- **YUK-1358 / Start Today与Inbox**：PR1609已合入main7682618，主线报告exact d19bd52 CI37784537687全绿、R2 NONE、threads0，合并tree一致。Stop修复仅test，父73DB/497unit/7协议/static/build通过；先前1af5真实RPC/browser与2118新构建RPC证据保留各自范围。整个W1及残留HTTP消费者未完，主线接管理只读页；本线程不改其Start树。
+
 
 - **YUK-1387 / 已合入**：PR1613合main d609c7b66，exact f8e832c66 CI/R1 NONE/tree一致；116unit与父15DB通过。subjects/traits四读取及分页journal已public共享，Start待主线。7631下一独占config领域出口，禁止重复writer。
 

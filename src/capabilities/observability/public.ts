@@ -8,7 +8,6 @@
  *   The config read face receives runtime facts through that factory.
  */
 
-// Shared subject/trait reads retain DB rows and live assembly facts as separate fields.
 export {
   type AdminSubjectListRow,
   type AdminSubjectTraits,
@@ -22,6 +21,13 @@ export {
   listAdminSubjects,
   listAdminTraits,
 } from '@/server/subjects/admin-read';
+// Config consumers share the snapshot builder and the existing injected mutation writer.
+export { type AdminConfigResponse, AdminConfigResponseSchema } from './api/admin-config-contracts';
+export {
+  AdminConfigResetBodySchema,
+  AdminConfigWriteBodySchema,
+  AdminConfigWriteResponseSchema,
+} from './api/admin-config-write-contracts';
 
 export {
   AdminCostQuerySchema,
@@ -52,6 +58,12 @@ export {
   getAdminConfigRuntimeFacts,
   setAdminConfigRuntimeFacts,
 } from './server/admin-config-facts';
+export {
+  type AdminConfigResetInput,
+  type AdminConfigWriteInput,
+  patchAdminConfig,
+  resetAdminConfig,
+} from './server/admin-config-operations';
 export type { AdminConfigWriteResult, AdminConfigWriter } from './server/admin-config-writer';
 export { setAdminConfigWriter } from './server/admin-config-writer';
 export {
@@ -79,6 +91,13 @@ export {
   parseAdminRunsQuery,
 } from './server/ai-observability';
 export { observabilityConfigEffectiveFacts } from './server/config-effective-facts';
+export {
+  type AdminConfigKeyRow,
+  type AdminConfigReadModel,
+  type AdminConfigTaskRow,
+  type AdminConfigValue,
+  buildAdminConfigReadModel,
+} from './server/config-read-model';
 export {
   type ConjecturePredictionScoreRow,
   type ConjectureScanDiagnostics,

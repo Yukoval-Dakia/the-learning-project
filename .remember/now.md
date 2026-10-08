@@ -1,3 +1,10 @@
+# 当前交接 — YUK1389候选验收，2026-10-08
+
+候选b107113daff5b46ae0d40bf808c2b969a8b45371已交回，作者completed/noPending且释放writer。父核8hash/关键11保护文件无变化，176unit与static/build/audits日志；父13:39:27Z原子取锁tokenbfee2b87跑两份原config DB，48/48exit0。13:40:30.283142Z核owner清理并释放锁，原运行集合/4容器ID/image/start/health/releaseSHA不变。证据/tmp/yuk1389-parent-db.log及/tmp/yuk1389-db-cleanup.json。无provider/worker/replay/deploy。
+
+R1任务yuk1389-config-domain-review-r1-20261008只读运行；当前正常merge最新origin/main7682618，仅PLAN/now冲突，双方产品源码保留。整合b1450ae4a的176unit/typecheck/lint/build均exit0；PR/exactCI与R1仍待。主线已报告1609合并，独占后续Start admin消费者；本线程仅1389/1359。以下是按revision保留的历史记录，不覆盖当前状态。
+
+
 # 2026-10-08 current Start closeout
 
 CI repair delivered: a5c9867fe tests only, sole child completed/noPending/released. Parent inspected actual streaming/settlement/cancel paths and normalmerged main d609 as4baeea837, onlyPLAN/now conflicts. Four real DB files73pass include wholeCopilotRun/cancel/Start/subject reads;497unit/50files+7protocol/typecheck/lint/build passed. Test uses real cancel API and deterministic barriers, preserves no-post-cancel emission and safe durable terminal/history. No product stream change/noR3. At13:24:19.202Z ownTestcontainers exited, owner7ed37bf3 lock released; original4containers/releaseSHA unchanged. Receipt docs/planning/evidence/2026-10-08-yuk1358-stop-ci-repair.json. Push final docs then exact CI; do notmerge failed8ce. Prior2118 builtRPC and1af5 browser remain scoped previous evidence; client/SPA bytes match, server chunk graph changed aftersubjectexports, no fresh4ba browser claim. 7631 now owns YUK1389 config domain exports; no overlap. Current no runtime lock or active child writer.
@@ -20,9 +27,22 @@ Earlier records are revision-specific history.
 
 已由7631确认PR1613于13:15:49Z合main d609c7b66，CI/R1 NONE/tree一致；以下是该lane先前的revision记录，不覆盖当前交付。
 
-YUK1387实现56a9baf8e6acceb9a11a75567f589b885ddd2ce0，parent9dffa49d9，唯一writer completed/noPending并释放。父核11SHA与保护文件；116unit/static/build/audits通过，唯一scope扩充baseline14→11/438→435已owner确认，初始失败日志保留。1358子票与全局subjects/trait全部分页查重完成，无重复活动票；601/666旧读面/HTTP契约Done不等于此迁移。Linear1387 d85cc05a-8c4d-4033-a496-03ea2baba95c InProgress。
+## YUK1389启动记录
 
-父实际3文件15DB通过，/tmp/yuk1387-parent-db.log。13:05:18Z取得锁token8ea58ea3，13:06:15.936348Z核owner释放；原运行集合/4容器ID/image/start/health/releaseSHA不变，/tmp/yuk1387-db-cleanup.json。独立R1 yuk1387-subject-trait-read-review-r1-20261008（command b0c41f6b-955b-4620-8875-2b8031cb5dfe，Codex gpt-6.1-sol xhigh）仍running只读。父接PR/CI/merge。无provider/worker/replay/deploy，Start归主线57961995，config只读。
+
+从fetch后的main d609c7b66建立feat/yuk-1389-config-domain，带入已提交1387交付记录。主线确认独占observability配置读写领域出口，1389已查重创建In Progress，1358/1359不关闭。唯一实施子任务待启动；不改Start/boot/kernel/持久化/hydration/UI。主线13:23:19Z持deployment.lock，token7ed37bf3，本线程仅源码/unit/static，无runtime操作。
+
+# 当前交接 — YUK1387已合入 / YUK1359退出证据，2026-10-08
+
+PR1613于13:15:49Z合入main d609c7b661f874f59441990ff3cd659c2c1c431c。父fetch确认tree19aaa21d0f6f1ee9e6a904eed2211e0cc5805bf2与exact f8e832c6626435757de69f1c78ca75efda69f578相同；CI37781922519全绿，独立R1 P0/P1 NONE/noPending，reviewThreads0，已unwatch。两个advisory bot均已结束：CodeRabbit跳过、Codex额度拒绝，不能称代码审查PASS。
+
+116unit/父15DB/static/build/audits通过。实施56a9baf8e的11SHA已父核，产品/测试/baseline到发布head字节不变。baseline仅owner批准的14→11/438→435。四既有reader经observability/public导出Db|Tx和完整DTO，四HTTP已消费；public不导出unbounded journal，getTraitJournalPage仍需显式limit。主线57961995已收到准确mainSHA和接口。
+
+父13:05:18Z获取token8ea58ea3，13:06:15.936348Z核owner释放锁，原运行容器集合/4容器ID/image/start/health/releaseSHA不变。日志/tmp/yuk1387-parent-db.log和/tmp/yuk1387-db-cleanup.json。之后无runtime操作、provider/worker/replay/deploy。
+
+本树从fetch最新main d609c7b66建立docs/yuk-1359-subject-read-delivery，仅提交交付记录。作者和R1均completed，无活动writer。1387限定slice Done，1358/1359仍InProgress，主线负责Start/PR1609及其Stop fixture修复，不改其树或CI。config只读材料/tmp/yuk1359-w5-config-subject-next-seams.md已补builder/schema/writer/错误顺序，尚未分配实施；后续scope由主线协调。总体非UI迁移和其后Linear功能目标尚未完成。
+
+以下是历史交付记录。
 
 # 当前交接 — YUK1386已合入 / YUK1359退出证据，2026-10-08
 

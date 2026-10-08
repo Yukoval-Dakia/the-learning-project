@@ -1,9 +1,5 @@
 import { ApiError, errorResponse } from '@/kernel/http';
-import { getAdminConfigWriter } from '../server/admin-config-writer';
-import {
-  AdminConfigResetBodySchema,
-  AdminConfigWriteBodySchema,
-} from './admin-config-write-contracts';
+import { patchAdminConfig, resetAdminConfig } from '../public';
 
 async function jsonBody(request: Request): Promise<unknown> {
   try {
@@ -15,13 +11,7 @@ async function jsonBody(request: Request): Promise<unknown> {
 
 export async function PATCH(request: Request): Promise<Response> {
   try {
-    const body = AdminConfigWriteBodySchema.safeParse(await jsonBody(request));
-    if (!body.success)
-      throw new ApiError('invalid_config_request', 'Expected changes and an optional note', 400);
-    const writer = getAdminConfigWriter();
-    if (!writer)
-      throw new ApiError('config_writer_unavailable', 'Configuration writer is unavailable', 503);
-    return Response.json(await writer(body.data.changes, body.data.note));
+    return Response.json(await patchAdminConfig(await jsonBody(request)));
   } catch (error) {
     return errorResponse(error);
   }
@@ -29,18 +19,7 @@ export async function PATCH(request: Request): Promise<Response> {
 
 export async function RESET(request: Request): Promise<Response> {
   try {
-    const body = AdminConfigResetBodySchema.safeParse(await jsonBody(request));
-    if (!body.success)
-      throw new ApiError('invalid_config_request', 'Expected keys and an optional note', 400);
-    const writer = getAdminConfigWriter();
-    if (!writer)
-      throw new ApiError('config_writer_unavailable', 'Configuration writer is unavailable', 503);
-    return Response.json(
-      await writer(
-        body.data.keys.map((key) => ({ action: 'clear', key })),
-        body.data.note,
-      ),
-    );
+    return Response.json(await resetAdminConfig(await jsonBody(request)));
   } catch (error) {
     return errorResponse(error);
   }
