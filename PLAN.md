@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09：PR1623事件页R2 NONE、实际71RPC/T3浏览器验收已完成；20:40:09Z释放隔离锁。旧review-orphan CI失败由7631修复，等待正式交付再整合。
+> Linear 是权威 tracker。2026-10-09：PR1623事件页R2 NONE、实际71RPC/T3浏览器验收已完成；20:40:09Z释放隔离锁。后续cb984诊断确认共享host 40P01死锁，7631负责最小修复；4f36历史首因仍未知，等待正式交付再整合。
 
 ## NOW
 
-- **YUK-1358 / Start事件详情与纠错**：分支feat/yuk-1358-start-event-detail，source-only单writer，复用readEventDetail/createEventCorrection，范围与验收见[计划](docs/planning/2026-10-09-yuk1358-start-event-detail.md)。作者f1e4已交，父15DB/R2 NONE及4f36实际71RPC/浏览器通过，原4服务与release未变、锁已释放；PR1623因旧review-orphan DB3失败暂不可合，7631唯一测试修复中。详见[父验收](docs/planning/2026-10-09-yuk1358-start-event-detail-parent.md)，未部署。
+- **YUK-1358 / Start事件详情与纠错**：分支feat/yuk-1358-start-event-detail，source-only单writer，复用readEventDetail/createEventCorrection，范围与验收见[计划](docs/planning/2026-10-09-yuk1358-start-event-detail.md)。作者f1e4已交，父15DB/R2 NONE及4f36实际71RPC/浏览器通过，原4服务与release未变、锁已释放；PR1623因旧review-orphan DB3失败暂不可合，7631负责后续cb984确认的共享fence/host死锁修复，历史首因不倒推。详见[父验收](docs/planning/2026-10-09-yuk1358-start-event-detail-parent.md)，未部署。
 
 - **YUK-1358 / Start观察读取**：freshmain10df、分支feat/yuk-1358-start-agent-notes。复用1392领域入口，保留Today20/全页50与本地已读，无数据库写操作。[范围与验收](docs/planning/2026-10-09-yuk1358-start-agent-notes.md)。作者127unit/10协议/static/build/10audits通过；父14DB通过且清理/释放锁。R1 NONE；CI两处陈旧数量断言已修，59unit通过。实际26RPC/10窗口与T3浏览器20/50、错误恢复、已读/深链/旧SPA跳转通过；3浏览器窗口88表/序列无写，已释放锁。[父验收](docs/planning/2026-10-09-yuk1358-start-agent-notes-parent.md)。源码已合main6212a4560，最终CI全绿，未部署。
 
