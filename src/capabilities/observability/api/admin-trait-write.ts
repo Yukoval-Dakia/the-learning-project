@@ -2,16 +2,20 @@
 //   PUT           /api/admin/traits/:id                → editSharedTrait（显式共享写，影响全部绑定者）
 //   ROLLBACK      /api/admin/traits/:id/rollback       → rollbackTrait（rollback-forward）
 //   RESET_TO_SEED /api/admin/traits/:id/reset-to-seed  → resetTraitToSeed（恢复出厂，全局显式）
-// 业务在 src/server/subjects/trait-write.ts；写成功后 post-commit 重水合上架。
+// Shared operations own post-commit hydration; JSON and Response stay in this adapter.
 
-import { z } from 'zod';
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
-import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
-import { editSharedTrait, resetTraitToSeed, rollbackTrait } from '@/server/subjects/trait-write';
+import {
+  EditSharedTraitInputSchema as EditBody,
+  AdminTraitWriteParamsSchema as ParamsSchema,
+  ResetAdminTraitBodySchema as ResetToSeedBody,
+  RollbackAdminTraitBodySchema as RollbackBody,
+  editSharedTrait,
+  resetTraitToSeed,
+  rollbackTrait,
+} from '../server/trait-control-operations';
 import { readJsonBody, traitResultResponse } from './subjects-write-http';
-
-const ParamsSchema = z.object({ id: z.string().trim().min(1) });
 
 function parseTraitId(
   params: Record<string, string>,
@@ -25,11 +29,6 @@ function parseTraitId(
   }
   return { ok: true, id: parsed.data.id };
 }
-
-const EditBody = z.object({
-  expectedRevision: z.number().int().min(0),
-  payload: z.unknown().optional(),
-});
 
 export async function PUT(req: Request, params: Record<string, string>): Promise<Response> {
   try {
@@ -46,17 +45,11 @@ export async function PUT(req: Request, params: Record<string, string>): Promise
       expectedRevision: parsed.data.expectedRevision,
       payload: parsed.data.payload,
     });
-    if (result.kind === 'ok') await hydrateSubjectRegistryFromDb(db);
     return traitResultResponse(result);
   } catch (err) {
     return errorResponse(err);
   }
 }
-
-const RollbackBody = z.object({
-  expectedRevision: z.number().int().min(0),
-  targetRevision: z.number().int().min(0),
-});
 
 export async function ROLLBACK(req: Request, params: Record<string, string>): Promise<Response> {
   try {
@@ -76,14 +69,11 @@ export async function ROLLBACK(req: Request, params: Record<string, string>): Pr
       expectedRevision: parsed.data.expectedRevision,
       targetRevision: parsed.data.targetRevision,
     });
-    if (result.kind === 'ok') await hydrateSubjectRegistryFromDb(db);
     return traitResultResponse(result);
   } catch (err) {
     return errorResponse(err);
   }
 }
-
-const ResetToSeedBody = z.object({ expectedRevision: z.number().int().min(0) });
 
 export async function RESET_TO_SEED(
   req: Request,
@@ -102,7 +92,6 @@ export async function RESET_TO_SEED(
       traitId: p.id,
       expectedRevision: parsed.data.expectedRevision,
     });
-    if (result.kind === 'ok') await hydrateSubjectRegistryFromDb(db);
     return traitResultResponse(result);
   } catch (err) {
     return errorResponse(err);

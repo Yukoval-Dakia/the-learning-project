@@ -2,24 +2,21 @@
 //   PUT     /api/admin/subjects/:id/traits/:kind          → editSubjectTrait（主写面，自动 COW）
 //   FORK    /api/admin/subjects/:id/traits/:kind/fork     → forkSubjectTrait（显式剥离）
 //   BINDING /api/admin/subjects/:id/traits/:kind/binding  → rebindSubjectTrait（换绑）
-// 业务在 src/server/subjects/trait-write.ts；写成功后 post-commit 重水合上架。
+// Shared operations own post-commit hydration; JSON and Response stay in this adapter.
 
-import { z } from 'zod';
 import { db } from '@/db/client';
 import { canonicalResourceResponse, errorResponse } from '@/kernel/http';
-import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
+import { SUBJECT_TRAIT_KINDS, type SubjectTraitKind } from '@/subjects/trait-schemas';
 import {
+  RebindSubjectTraitBodySchema as BindingBody,
+  EditSubjectTraitInputSchema as EditBody,
+  ForkSubjectTraitBodySchema as ForkBody,
+  AdminSubjectTraitParamsSchema as ParamsSchema,
   editSubjectTrait,
   forkSubjectTrait,
   rebindSubjectTrait,
-} from '@/server/subjects/trait-write';
-import { SUBJECT_TRAIT_KINDS, type SubjectTraitKind } from '@/subjects/trait-schemas';
+} from '../server/trait-control-operations';
 import { readJsonBody, traitResultResponse } from './subjects-write-http';
-
-const ParamsSchema = z.object({
-  id: z.string().trim().min(1),
-  kind: z.enum(SUBJECT_TRAIT_KINDS),
-});
 
 function parseParams(
   params: Record<string, string>,
@@ -36,12 +33,6 @@ function parseParams(
   }
   return { ok: true, id: parsed.data.id, kind: parsed.data.kind };
 }
-
-const EditBody = z.object({
-  expectedSubjectRevision: z.number().int().min(0),
-  expectedTraitRevision: z.number().int().min(0),
-  payload: z.unknown().optional(),
-});
 
 export async function PUT(req: Request, params: Record<string, string>): Promise<Response> {
   try {
@@ -63,7 +54,6 @@ export async function PUT(req: Request, params: Record<string, string>): Promise
       expectedTraitRevision: parsed.data.expectedTraitRevision,
       payload: parsed.data.payload,
     });
-    if (result.kind === 'ok') await hydrateSubjectRegistryFromDb(db);
     const response = traitResultResponse(result);
     if (result.kind !== 'ok' && result.kind !== 'noop') return response;
     return canonicalResourceResponse(response, {
@@ -74,8 +64,6 @@ export async function PUT(req: Request, params: Record<string, string>): Promise
     return errorResponse(err);
   }
 }
-
-const ForkBody = z.object({ expectedSubjectRevision: z.number().int().min(0) });
 
 export async function FORK(req: Request, params: Record<string, string>): Promise<Response> {
   try {
@@ -92,7 +80,6 @@ export async function FORK(req: Request, params: Record<string, string>): Promis
       kind: p.kind,
       expectedSubjectRevision: parsed.data.expectedSubjectRevision,
     });
-    if (result.kind === 'ok') await hydrateSubjectRegistryFromDb(db);
     const response = traitResultResponse(result);
     if (result.kind !== 'ok' && result.kind !== 'noop') return response;
     return canonicalResourceResponse(response, {
@@ -103,11 +90,6 @@ export async function FORK(req: Request, params: Record<string, string>): Promis
     return errorResponse(err);
   }
 }
-
-const BindingBody = z.object({
-  targetTraitId: z.string().trim().min(1),
-  expectedSubjectRevision: z.number().int().min(0),
-});
 
 export async function BINDING(req: Request, params: Record<string, string>): Promise<Response> {
   try {
@@ -128,7 +110,6 @@ export async function BINDING(req: Request, params: Record<string, string>): Pro
       targetTraitId: parsed.data.targetTraitId,
       expectedSubjectRevision: parsed.data.expectedSubjectRevision,
     });
-    if (result.kind === 'ok') await hydrateSubjectRegistryFromDb(db);
     return traitResultResponse(result);
   } catch (err) {
     return errorResponse(err);

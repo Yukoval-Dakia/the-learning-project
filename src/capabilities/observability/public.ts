@@ -139,3 +139,28 @@ export {
   validateAdminSubject,
 } from './server/subject-control-operations';
 export { type TodayCost, loadTodayCost } from './server/today-cost';
+
+export {
+  AdminSubjectTraitParamsSchema,
+  AdminTraitWriteParamsSchema,
+  type EditSharedTraitInput,
+  EditSharedTraitInputSchema,
+  type EditSubjectTraitInput,
+  EditSubjectTraitInputSchema,
+  type FanoutIssue,
+  ForkSubjectTraitBodySchema,
+  type ForkSubjectTraitInput,
+  RebindSubjectTraitBodySchema,
+  type RebindSubjectTraitInput,
+  ResetAdminTraitBodySchema,
+  type ResetTraitToSeedInput,
+  RollbackAdminTraitBodySchema,
+  type RollbackTraitInput,
+  type TraitWriteResult,
+  editSharedTrait,
+  editSubjectTrait,
+  forkSubjectTrait,
+  rebindSubjectTrait,
+  resetTraitToSeed,
+  rollbackTrait,
+} from './server/trait-control-operations';
