@@ -1,6 +1,10 @@
-# 2026-10-08 current Start integration
+# 2026-10-08 current Start closeout
 
-PR1605 merged a3691f572 at11:58:08Z, exact CI37772055452/e260bdb98 and full tree match, no review threads, unwatch complete. No deployment;1356 staysInProgress. Start branch feat/yuk-1358-start-workbench normally merged that main asbabac8e08; no overlap with reviewed slice. FinalR2 NONE, prior timestamp P1 resolved; parent53DB passed at053. Parent now owns scoped checks/build and isolated built RPC/browser. Child yuk1358-built-acceptance-preparation-20261008-v1 writes only ignored.cache offline fixture recipe, no source/runtime. No current runtime lock. 7631 owns1381 and1359; no duplicate code writer.
+PR1609 candidate1af5a8fc8 normally integrates main a6faded072. Sole child completed/released; parent owns branch feat/yuk-1358-start-workbench. CI failure was SPA-only preflight/RPC fixture incompatibility; repairc7a254e27 changes six usability files only. Node24 parent329unit+7protocol/typecheck/lint/build and36 actual built usability all passed. IndependentR2 NONE remains final; noR3.
+
+Parent real isolated Start RPC and T3 Today/Inbox acceptance passed. 88public tables unchanged for denial/read stages; actual browser dismiss+undo produced exactly2events and1note body/version, remaining86 relations unchanged. Reload499/two undone; no additional writes. Snapshot/core/raw timestamp/cost/cursor/replay evidence sealed in docs/planning/evidence/2026-10-08-yuk1358-built-acceptance.json and runtime yuk1358-start-1af5a8fc8/evidence. No provider/worker/replay/deploy. OwnPG/Start cleaned;12:41:52.939Z owner27377b37 lock released, original4containers/release identical. 7631 informed, owns1386/1359 and may now acquire its own DB window; do not assume lock still free.
+
+Next: commit/push evidence+repair/main, update PR1609 body/ready and watch exact-head CI, then autonomous merge if gates satisfied. No new review window after repaired R2 NONE. Keep1358/1359InProgress; wholeW1/remainingHTTP/DBOS families/canonicalboot/release/SPAexit open. Existing sidebar count invalidation/fontCSP observations captured inPLAN and1358, not fixed. Rootcheckout is anotherowner; do notwrite. Current live remainsAgentTEST5aa2/build853/image9b76.
 
 Earlier records are revision-specific history.
 

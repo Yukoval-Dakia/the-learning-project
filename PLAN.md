@@ -1,17 +1,17 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：PR1605已合入main a3691f572，exact CI/tree核验完成；Start Today/Inbox已正常整合该main，R2 NONE、父53DB通过，CI usability因旧SPA夹具失败，c7a254e27已适配Start，父接手Node24复验及built RPC/browser。1381已合main a6faded072；1386/1359由7631负责；无部署。
+> Linear 是权威 tracker。2026-10-08：PR1609候选1af5a8fc8已通过真实Start RPC/T3浏览器、88表写入核验及36 usability；Node24的329unit+7协议测试/typecheck/lint/build全过，父封证推新CI。12:41:52Z隔离资源清理并释放锁，原runtime不变；1386/1359由7631负责。
 
 
 ## NOW
 
-- **YUK-1358 / Start Today与Inbox**：候选babac8e08正常合入main a3691f572，95项main变更与本slice无重叠。R1知识时间戳P1修复053e9b511，唯一R2无P0/P1；父53DB通过。现由父重验整合构建并执行隔离RPC/browser，剩余ProfileBand、学习意图、TeachingBrief、probe、agent notes及共享Copilot等消费者继续保留退出义务。[交付边界](docs/planning/2026-10-08-yuk1358-start-workbench-handoff.md)。
+- **YUK-1358 / Start Today与Inbox**：PR1609正常整合main a6faded，R2 NONE且原timestamp P1已修；父53DB历史证据保留，当前1af5真实RPC与浏览器通过，88表读无变/操作仅预期event+2与note更新；36 usability及Node24静态构建通过，等待新head CI后合并。整个W1及残留HTTP消费者未完。[当前验收](docs/planning/2026-10-08-yuk1358-start-workbench-handoff.md)。
 
 - **YUK-1356 / 主线交付**：PR1605于11:58:08Z合入a3691f572，主线核tree与exact e260bdb98一致、CI37772055452绿/threads0。保留真实MiMo一次工具验收及main4a3d 139unit/110DB证据；1356仍InProgress，未部署。1358 Start Today/Inbox由主线独占PR1609及RPC/browser验收，不在此树修改。
 
-- **YUK-1381 / W5领域读取**：feat/yuk-1381-admin-domain-reads从main fadcb0c87建立；唯一子writer已交回66aa43a18并释放；父核9hash及8保护文件不变，作者Node24的74unit/static/build/audits通过。父级接验收/文档，不改Start/UI/practice/config writer；父在整合main后的a35c759ff实跑3文件24DB通过，核原4服务/release不变并12:07:55Z释放锁；独立源码R1/CI尚待。coverage/conjecture仅给主线准确增量路径，未启动实施。
+- **YUK-1381 / W5领域读取**：PR1610已合main a6faded072，exact CI/tree一致、R1 NONE，74unit/父24DB/static/build通过；observability/public导出四Admin ISO DTO读取，Start消费者待主线接入。7631现独占YUK1386诊断读取、仅批准practice三个Db|Tx签名；无重复writer。
 
-- **YUK-1359 / W3-W4退出证据**：[W3](docs/planning/2026-10-08-yuk1359-w3-consumers.md)与[W4](docs/planning/2026-10-08-yuk1359-w4-consumers.md)已核真实消费者，补齐知识可见性/边事务、笔记presence及Copilot恢复边界。仅源码清单，Start和运行矩阵待，W5管理页仍待核查。
+- **YUK-1359 / 退出证据**：W1–W5源码消费者清单已版本化，7631独占；Start逐页及任务族恢复/旧路径删除尚未完成，保持In Progress。
 
 - **YUK-1380 / 已合入**：PR1607于11:35:32Z合入main4a3d797dd；exact812a0bf08的CI37769126069全绿，独立R1 NONE、threads0、17分钟窗满。28unit/父23DB/static/build通过，observability/public共享详情与纠错接口交主线Start挂载。未部署。[证据](docs/planning/2026-10-08-yuk1380-event-domain.md)。
 
@@ -63,6 +63,7 @@
 
 ## PARKED
 
+- **YUK-1358/1359已有UI观察**：真实Inbox dismiss后本页499但侧栏500，document reload恢复一致；原onResolve仅本地resolved更新。Google Fonts原import受CSP拦截；fallback可用。记录在现有迁移验收/后续UI边界，不放宽CSP、不冒称本PR修复。
 - **YUK-1382 / Admin runs未知费用显示**：源码基线fadcb0c87中，observability/ui/admin-runs.tsx:207将nullable cost_usd累加；observability-shared.tsx:11以(value ?? 0).toFixed(4)将未知显示为$0.0000，列表/详情/合计均受影响。已查重并登记Backlog，待验证真实零、全未知、已知+未知；不在1381改UI。此条是源码发现，尚无浏览器验收。
 
 - YUK-1355 P2 comment4208022050：cron权威目录仍将 prune 注册点写为 ../handlers.ts。最小范围为目录说明及一行注册点/phase ownership 文档；不需要新 scheduler/catalog 子系统。已报告父线程裁决，本轮未改该 P2。

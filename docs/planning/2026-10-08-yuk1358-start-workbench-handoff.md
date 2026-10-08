@@ -1,6 +1,20 @@
 # YUK-1358 Start Today and Inbox consumer handoff
 
-This is a source-only, non-UI slice in `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor`, branch `feat/yuk-1358-start-workbench`, based on clean main `6150f01a949c3d1357f8b44f0d8ed6807cd74179`. The parent owns integration, independent review, DB and browser acceptance, trackers, PR, CI and release. This writer changed no other worktree, started no service, accessed no database, called no provider, changed no queue or recovery process, and performed no external delivery action.
+The initial implementation was a source-only, non-UI slice in `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor`, branch `feat/yuk-1358-start-workbench`, based on clean main `6150f01a949c3d1357f8b44f0d8ed6807cd74179`. The parent owns integration, independent review, DB and browser acceptance, trackers, PR, CI and release. This writer changed no other worktree, started no service, accessed no database, called no provider, changed no queue or recovery process, and performed no external delivery action.
+
+## Current parent acceptance — 2026-10-08
+
+Candidate `1af5a8fc8` normally integrates main `a6faded072`. The parent fixed the CI failure caused by the old SPA-only usability fixture with commit `c7a254e27`: preflight checks emitted Start assets and their exact served bytes, retains separate SPA checks, and adapts the existing stateful API scenarios to the installed framework RPC protocol. No product behavior, test scenario, assertion or CI gate was removed.
+
+Node24 verification passed: 329 scoped units, seven fixture/protocol tests, application/Start typecheck, lint and full build. All36 shipped usability scenarios then passed against the built acceptance server. These scenarios use synthetic API/RPC responses; the following evidence separately exercises real PostgreSQL and actual application operations.
+
+Built RPC acceptance used a fresh isolated database and real framework transport. Missing/wrong tokens returned401 and preparing/ready epochs returned503 with all88 public tables unchanged. Active reads matched canonical readers and retained HTTP: real raw PostgreSQL microsecond timestamps, visible/hidden knowledge labels, mixed-currency/unknown costs, Inbox default200/cap500 and501 equal-rank proposals without cursor duplication. Reads changed no table. Dismiss/replay/conflict and note undo/replay/wrong membership produced only their expected immutable effects. Successful worker wake is not claimed: the app role lacked schema-creation rights and pgboss remained absent.
+
+The T3 browser followed `/` to `/today`, entered the normal TokenGate, opened/refreshed Today and Inbox, showed visible names plus short-ID fallback, and retained separate USD/CNY/unknown cost labels. Actual clicks dismissed one proposal and undid one note. The88-table comparison found exactly two new events and the expected note body/version change; the other86 relations stayed identical. Refresh showed499 pending and two undone markers without further writes. Primary reads and commands used emitted `/_serverFn/` endpoints and `/_build/` assets.
+
+Two nonblocking existing UI observations are retained for follow-up: the sidebar count stayed500 immediately after Inbox locally showed499, then agreed after document reload; the Google Fonts import was blocked by the retained CSP and fallback fonts rendered. Neither is claimed fixed or used to justify weakening security. Remaining descendants and whole-route exit obligations below stay open. No model/provider, worker, replay or live deployment ran. Parent stopped only its own PG/Start resources and released the lock at12:41:52.939Z after checking original four containers and release bytes unchanged.
+
+[Versioned receipt](evidence/2026-10-08-yuk1358-built-acceptance.json) records hashes, exact scope and local retained evidence. PR1609 still needs the pushed head's CI;1358 remains In Progress. The earlier sections below are revision-specific source and acceptance history, not current claims that runtime work has never happened.
 
 ## Implemented behavior
 
