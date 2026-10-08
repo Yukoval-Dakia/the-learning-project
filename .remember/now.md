@@ -1,6 +1,6 @@
-# 2026-10-08 YUK-1356 trusted Pi handoff
+# 2026-10-08 YUK-1356 actual Pi acceptance
 
-PR1605: source 0d9360487, CI repair 7b50a3f4d. Exact 541acce CI37767129880 all green; independent R2 NONE. Normally merged main f3351ea37 (PR1606 W2 docs only), resolving PLAN/now without product source changes. New merge-head CI and bounded real MiMo/Pi acceptance remain; preparation task owns only ignored .cache/yuk1356-real-pi. Start Today/Inbox implementation continues separately in tlp-yuk1352-start-frontdoor. No third review, paid call, replay, deployment or runtime operation in this merge. Parent DB 139+20 and CI-repair103 passed; static/build proof retained in task evidence. YUK1356/1358/1359 remain In Progress.
+PR1605 product candidate4cccb1a62 exact CI37768767757 green, R2 NONE. Real MiMo/Pi task yuk1356_root_cae13940-054a-4d82-9cda-a262a921027a succeeded: one registered submit tool/evaluation/activation, immutable original, unknown assistance, zero mastery/FSRS. Estimated $0.002818771. Script exit1 was final HTTP replay expected200 vs canonical201; parent source and all19 after/final relations verified unchanged, original failure preserved, no model rerun. Three prior setup failures all0model calls. See real-pi-acceptance evidence. Lock released11:29:22Z, four original services/release unchanged. No deployment. New evidence-only head CI pending then merge under owner no-wait waiver;1356 remainsInProgress for broader migration. Start Today/Inbox bc43bf89c delivered source; independent R1 running, runtime acceptance next; no duplicate writer.
 
 # 合入的 YUK1359 W2消费者交接
 
