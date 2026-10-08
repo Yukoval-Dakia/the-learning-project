@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09：PR1615已合main fe4849712，与准确CI 547a8061e树一致；五管理页RPC/browser证据已封存，未部署。主线接管1359历史保留期限与构建产物误扫两项audit，1391独立trait线保持原ownership。
+> Linear 是权威 tracker。2026-10-09：1359共享audit源码739757dd9已交回，父296tests/四真实audit/64源码日志及676产物hash通过，独立R1进行；PR1615已合main fe484，未部署。1391仍7631独占。
 
 ## NOW
 
-- **YUK-1359 / 共享audit修复**：主线独占fix/yuk-1359-audit-boundaries；18条951历史保留期限于JST10-09过期，architecture provider census误扫dist/start产物。既有Linear comment e34017ea捕获；不延豁免、不删历史表、不减弱真实源码检查。1391 R1 NONE/55DB证据独立，仍归7631。
+- **YUK-1359 / 共享audit修复**：主线独占fix/yuk-1359-audit-boundaries；18条951历史保留期限于JST10-09过期，architecture provider census误扫dist/start产物。源码739757dd9以保留合同及generated import边界修复；父296tests/四audit绿，独立R1进行。既有Linear comment e34017ea捕获；未延豁免、未删历史表。1391 R1 NONE/55DB证据独立，仍归7631。
 
 - **YUK-1390 / 已合入**：PR1616合main7b8904179，exact bec86e4e5 CI/R1 NONE/tree一致；60unit与父42DB通过。五科目控制操作包含提交后hydrate，Start待接；7631独占下一1391六trait操作。
 

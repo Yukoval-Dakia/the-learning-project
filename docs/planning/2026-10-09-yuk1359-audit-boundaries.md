@@ -119,3 +119,9 @@ triggers, arbitrary wrappers or dynamic identifiers. New native construction
 forms need explicit audit evidence rather than an allowance. The two confirmed
 failures are repaired; no additional actionable follow-up was found in scope.
 Parent retains Linear capture and all delivery obligations.
+
+## Parent verification — 2026-10-09 JST
+
+Parent verified all 64 source/log manifest entries and all 676 generated Start server files against the handed-off SHA256 manifests. At fixed source `739757dd9f7e6419e371efbafbfbd5e6a213ca56`, the parent independently ran all eight focused suites: 296/296 passed. With the generated output still present, all four real commands returned zero: schema, architecture-deepening, provider-lanes and provider-attempt-truth. Logs are `/tmp/yuk1359-parent-unit.log` and `/tmp/yuk1359-parent-audits/`; initial failures remain in the author evidence root.
+
+Independent R1 is running on the fixed source diff. This is not yet review approval, exact-head CI or merge. No database, service, provider or deployment operation was performed.
