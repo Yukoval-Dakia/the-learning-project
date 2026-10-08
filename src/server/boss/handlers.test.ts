@@ -9,7 +9,7 @@ import { registerCapabilityJobs } from './register-capability-jobs';
 // This suite checks legacy registrar recipes. The admitted DBOS family has
 // separate real database/process coverage in tests/dbos-prune.
 vi.mock('@/server/durable/prune-worker', () => ({
-  startPruneWorker: async () => undefined,
+  startDurableWorker: vi.fn(async () => undefined),
 }));
 
 // M4-T3 (YUK-319)：注册分两段——registerHandlers（渐缩簿）+

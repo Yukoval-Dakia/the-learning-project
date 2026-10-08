@@ -340,6 +340,12 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   'prune_job_events_control',
   'prune_job_events_receipt',
   'prune_job_events_disposition',
+  // YUK-1393: immutable admission/receipts and phase/dispositions travel with
+  // both execution engines in a full PostgreSQL backup, never a learner archive.
+  'review_orphan_control',
+  'review_orphan_tick',
+  'review_orphan_receipt',
+  'review_orphan_disposition',
   // Sub-0c golden E2E health-check fixture (HTTP enqueue → worker → SSE). Transient
   // echo-job state, not business data.
   'echo_jobs',

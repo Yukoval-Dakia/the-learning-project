@@ -2,6 +2,34 @@
 
 PR1620 merged main10df1a471, exact755bdeebb tree/CI proof complete; receipt54aa893f2 carried as76924d8ee on fresh branchfeat/yuk-1358-start-agent-notes. Next only Today+agent-notes Start read consumers of delivered1392 public loadAgentNoteBoard. Scope in2026-10-09-yuk1358-start-agent-notes.md. Implementation3ac84e80e/evidencec10e11885 completed/noPending; parent19source/878artifact hashes matched. Author127unit/10protocol/static/build/10audits passed. After1393 released, parent3files14DB passed and released own tokenae362 at18:45:27.211772Z; original4/running/release unchanged. R1 completed/noPending NONE, parent diff SHA matched. Ignored recipe yuk1358-agent-notes-built-preparation-20261009-v1 remains independent. CI37826987461 failed eight tests only from two stale admin handoff counts; parent reproduced8RED and changed11 to12, then4files59GREEN/Biome0. Product19source/878artifact hashes unchanged. Exact8bfc CI37827927759 green. Parent actual26RPC/10windows and T3browser passed,3browserwindows all88public table/sequence unchanged; lock3593776b released19:15:34.481635Z, original4/running/release identical. Failed setup expected90vs88 preserved; migration-derived exact88-name inventory corrected in ignored recipe only. Canonicalboot/provider/deployment not covered. Full evidence start-agent-notes-parent.md; final docs CI pending. Parent owns docs/PR; no active product writer. Domain/jobs/schema/workflow/registrar untouched; no new competing selector or local-read DBwrite. Independent source review and future parent locked runtime acceptance required. Whole1358/1359 still InProgress.
 
+
+PR1621已正式合main e1f2ef6bb，接续1394仍归7631。以下incoming交接保留各revision历史，Start新验收以上文/父报告为准。
+
+# 当前交接 — PR1621 CI fixture修复
+
+远端53f CI37826255809已终态：DB2唯一admin-config.db.test:301仍期望review orphan在infra。父仅test修改归属，新增全response唯一manifest行+原cron/tz断言。独立整份29DB通过，typecheck通过；lint修正新1359 JSON格式后通过，build重验exit0。新push将包含此前本地纯docs2e6，不为文档单独重置CI。R1 NONE仍覆盖原产品，未启动额外review。
+
+19:04:58.895678Z已核token22c45280释放runtime锁，临时PG退出，原4/running/release完全不变，已通知5796。日志/tmp/yuk1393-ci-repair-admin-config；版本化ci-repair seal保留失败与成功。
+
+YUK1394设计task已completed/noPending，父裁决已落Linear comment3d73a982。报告/tmp/yuk1355-two-orphans-durable-design-20261009.md，sha256ec38464080677d7fb335b77534c7026e4b59984acee32e5971be8cc7ce5cc115。两个family共四表，独立phase/回执/回退，保留旧workflow身份。原无身份sweep调用只在factory/tests，实施迁移全部调用至可核job/tick。下一writer待1393收口freshmain，migration编号未预留。5796 PR1622 exact8bfc CI全绿但built验收尚待，其scope仍独占。
+
+以下均为此前revision的历史交接，不覆盖上文状态。
+
+1393更新：b33为两测试驱动修正，产品仍3bd受审源码；R1 NONE/hash父匹配。父33DB/10distinct进程/2cron/4旧prune/26selected migration+49unit/static/build/7audit通过；失败轮次封存docs/planning/evidence/yuk1393。18:39:51.511332Z核token bced释放锁，原4服务/运行集合/release不变，通知5796。准备PR/exact CI，无部署；1355/1358/1359未完成。
+
+1393源码a9d7c8322已completed/noPending，writer释放。父核26source SHA；正常整合PR1620/main10df1a471，仅PLAN/now冲突。PR1620已18:16:17Z合入，tree与755bdeebb相同、CI37821989407全绿，未部署。下列Start待合叙述为历史。父即接独立R1及持锁运行验收。
+
+# 当前交接 — YUK1393 review orphan DBOS
+
+1392/PR1619已17:11:43Z合main6aaf8ca89eaf5feb5af5c00b7c5b3bd90cd953ea；父fetch核tree5e8ab973与exact3883903相同，CI37812973662全绿/R1 NONE/threads0/已unwatch，1392Done。公共读取交5796 Start。
+
+1393新独立branch feat/yuk-1393-review-orphan-dbos从该freshmain建立。5796实核75树并独占授权family/handler/Review helper/共享host+注册/observability manifest/schema0116+journal/export与scopedtests/docs，Start和start-worker/shutdown/prune-family/prune-backend/config/subjectboot只读。设计见docs/planning/2026-10-09-yuk1393-review-orphan-dbos.md。作者只源码unit/static/build，父DB/进程/故障注入先锁协调，无主环境切换。
+
+1356实查误为Done，已恢复并读回In Progress，comment8b193549保留缺口；1355/1358/1359均In Progress。下一生命周期设计task已completed/noPending，仅设计无runtime证明。
+
+以下历史交接不覆盖当前状态。
+
+
 # Current parent handoff — 2026-10-09 Start controls
 
 PR1620 candidate75c0fa149: R1 completed/noPending NONE; CI37817401666 green. Parent integrated406unit/9protocol/static/build passed; DB evidence covers95distinct cases across original94pass+test-only7rerun, not101. Actual built resolver/installed client passed18operations/122calls/35windows plus refresh-only proof. T3 browser passed config receipt/failed-refresh/no-replay, two-tab stale CAS, COW and subject lifecycle. Nine browser DB comparisons assert expected effects across90tables/5sequences. Explicit T3host unavailable led to read-only Playwright fallback; journal UI first100 only, RPC206 pagination separate. No product change during acceptance. Runtime lock released2026-10-08T18:01:35.907845Z; original4/release unchanged, own app/PG removed, synthetic evidence/dump retained. See controls-parent.md and runtime-acceptance.json. Evidence755bdeebb CI37821989407全部成功；PR1620于2026-10-08T18:16:17Z squash合main10df1a47179fe2e368f5df1a538e1dd11cf9e6da，父fetch核tree一致，threads0，已unwatch。独立R1 NONE；bot均终止但skip/quota不计实际review。无部署。 Linear1358 falseDone restoredInProgress. DBOS1393/0116/sharedregistrar/DBjobfetch-depth0 reserved7631. Main remainsAgentTEST source5aa2/image9b76; no deploy/provider/replay. Remaining routes/canonicalboot/taskfamilies/legacyexit not complete.

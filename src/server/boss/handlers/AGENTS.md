@@ -33,9 +33,9 @@
 | `nightly_orchestrator` | `30 2` | orchestration/register.ts | **DAG 单锚点**（见上节）——建当夜 run + enqueue 根节点，随后 60s 自调度 tick。整夜单点，故按 `createJobQueue` 配方建队（retryDelay 30s + backoff + `nightly_orchestrator_dlq`），不再继承 pg-boss 的 retry_delay 0 / 无 DLQ 默认（YUK-778）|
 | `hub_auto_sync_nightly` | `45 2` | notes/manifest | hub auto-zone 重算。**与 `knowledge_edge_propose_nightly` 无运行期依赖**——旧表曾写「真 barrier：edge_propose 夜批 SUPERSEDE 自主写 live 边，此处是唯一消费路径」，该说法**已被代码证伪**（YUK-758 review ToTt717）：`runEdgeProposeAndWrite` 的 SUPERSEDE 分支只 `writeAiProposal` 落**待接受提议**，`propose_edge.ts:614-616` 自述「leaves both live accumulators unchanged **until the user accepts it**」，夜批从不自主改 live 边；本 job 侧也只是推进自己的 reconciliation cursor。故二者是各自独立的 sweep，02:45 与锚点 02:30 的先后是**时钟巧合**，不需要编边 |
 | `memory_brief_sweep` | `0 3` | memory/triggers.ts | stale brief 扫描 → enqueueBriefRegen（6min singleton；subject 腿事件化 = YUK-581）|
-| `prune_job_events` | `0 4` | ../handlers.ts | 30d bulk DELETE（其它 prune 错开避锁）|
+| `prune_job_events` | `0 4` | observability/manifest.ts → shared durable host | 默认 pg-boss；独立 phase、原 prune-v1 recovery 合同保持 |
 | `verify_dispatch_recover` | `10 4` | ../handlers.ts | durable intent 恢复；只补发 source/quiz verify（另在 worker startup 单次触发）|
-| `prune_orphan_review_sessions` | `15 4` | ../handlers.ts | 弃置 >6h stuck review session（sendBeacon-miss 安全网）|
+| `prune_orphan_review_sessions` | `15 4` | observability/manifest.ts → shared durable host | 默认 pg-boss；固定 cutoff、冻结 candidates、锁内 Review writer + 同事务 receipt；started/paused 严格 started_at < tick cutoff 安全网 |
 | `prune_orphan_conversation_sessions` | `25 4` | ../handlers.ts | 弃置 stuck conversation（错峰避 learning_session 锁）|
 | `prune_orphan_placement_sessions` | `35 4` | ../handlers.ts | 弃置 stuck placement；dark-ship（placement flag off）|
 | `kt_estimate_nightly` | `10 5` | practice/manifest | BKT kt_json（零下游消费者；owner 拍 2026-07-06 保持每日）|
@@ -68,6 +68,14 @@
 - `tencent_ocr_extract` —— 生产 OCR async（R2 creds 缺失不应破坏 test worker：lazy `get r2()`）
 - `session_summary` —— review session end 后 enqueue
 - `note_refine` —— 5 trigger 之一触发；NotePatch `≤3 ops AND ≤2 new blocks → mutator`，否则 propose
+
+## YUK-1393 review orphan recovery
+
+- One process owns one DBOS SDK host. Production collects both admitted declarations before launch. The prune-only fixture entry remains compatible; it cannot be expanded after launch.
+- Review has independent control, immutable tick/row receipt and append-only disposition tables. Native timestamp provenance is scheduled; legacy provenance is first admission of the actual job ID.
+- Draining finishes admitted lists and fences unadmitted ticks from either backend, including already queued legacy deliveries. An uncertain COMMIT requires the writable primary's tick lock and receipt, never current-state convergence or a blind retry.
+- Phase finish requires task/receipt/SEND_IT obligations to settle and recorded old-consumer/producer quiescence. The 60-second rollback horizon is an additional minimum, not proof that suspended senders disappeared. Old selected-row handlers have no business fence; stop them before cutover.
+- DB/process/cron acceptance for this implementation is pending. Unit/static/build evidence does not establish runtime migration or full-DB restore safety. Full recovery includes both family ledgers, pg-boss and tlp_dbos together.
 
 ## CONVENTIONS
 - handler 是工厂 `build*(db, opts?)`，返回 pg-boss work fn；测试旁置 `*.test.ts`。

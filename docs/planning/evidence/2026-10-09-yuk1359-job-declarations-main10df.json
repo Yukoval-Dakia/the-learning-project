@@ -1,0 +1,1455 @@
+[
+  {
+    "ref": "10df1a47179fe2e368f5df1a538e1dd11cf9e6da",
+    "evidence": "Static declarations only. backend dbos denotes host admission, not live phase or deployed cutover.",
+    "manifest": [
+      {
+        "name": "dreaming_nightly",
+        "file": "src/capabilities/agency/manifest.ts",
+        "line": 138,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "coach_daily",
+        "file": "src/capabilities/agency/manifest.ts",
+        "line": 153,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "coach_weekly",
+        "file": "src/capabilities/agency/manifest.ts",
+        "line": 161,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "30 4 * * 0",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "prepare_intervention",
+        "file": "src/capabilities/agency/manifest.ts",
+        "line": 167,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "intervention_prepare_recovery",
+        "file": "src/capabilities/agency/manifest.ts",
+        "line": 177,
+        "queue": "fast",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "1-59/2 * * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "goal_scope_propose_nightly",
+        "file": "src/capabilities/agency/manifest.ts",
+        "line": 189,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "research_meeting_nightly",
+        "file": "src/capabilities/agency/manifest.ts",
+        "line": 206,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "research_meeting_agent_nightly",
+        "file": "src/capabilities/agency/manifest.ts",
+        "line": 241,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "copilot_run",
+        "file": "src/capabilities/copilot/manifest.ts",
+        "line": 191,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "copilot_nudge_evaluate",
+        "file": "src/capabilities/copilot/manifest.ts",
+        "line": 220,
+        "queue": "fast",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "copilot_run_reconcile",
+        "file": "src/capabilities/copilot/manifest.ts",
+        "line": 226,
+        "queue": "fast",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "0-58/2 * * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "ingestion_operation",
+        "file": "src/capabilities/ingestion/manifest.ts",
+        "line": 289,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "tencent_ocr_extract",
+        "file": "src/capabilities/ingestion/manifest.ts",
+        "line": 300,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "auto_enroll",
+        "file": "src/capabilities/ingestion/manifest.ts",
+        "line": 323,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "knowledge_edge_propose_nightly",
+        "file": "src/capabilities/knowledge/manifest.ts",
+        "line": 204,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "frontier_fill_nightly",
+        "file": "src/capabilities/knowledge/manifest.ts",
+        "line": 217,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "knowledge_maintenance_nightly",
+        "file": "src/capabilities/knowledge/manifest.ts",
+        "line": 231,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "kc_dedup_nightly",
+        "file": "src/capabilities/knowledge/manifest.ts",
+        "line": 245,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "merge_attribution_sweep",
+        "file": "src/capabilities/knowledge/manifest.ts",
+        "line": 272,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "0 4 * * 1",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "projection_oracle_sweep",
+        "file": "src/capabilities/knowledge/manifest.ts",
+        "line": 291,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "30 4 * * 1",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "kg_borrow_shadow_sweep",
+        "file": "src/capabilities/knowledge/manifest.ts",
+        "line": 305,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "0 5 * * 1",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "hub_auto_sync_nightly",
+        "file": "src/capabilities/notes/manifest.ts",
+        "line": 209,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "45 2 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "hub_sync_recovery",
+        "file": "src/capabilities/notes/manifest.ts",
+        "line": 218,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "* * * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "hub_sync_mutation_wake",
+        "file": "src/capabilities/notes/manifest.ts",
+        "line": 225,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "note_refine",
+        "file": "src/capabilities/notes/manifest.ts",
+        "line": 236,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "note_generate",
+        "file": "src/capabilities/notes/manifest.ts",
+        "line": 242,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "note_verify",
+        "file": "src/capabilities/notes/manifest.ts",
+        "line": 247,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "prune_job_events",
+        "file": "src/capabilities/observability/manifest.ts",
+        "line": 517,
+        "queue": "fast",
+        "backend": "dbos",
+        "load": false,
+        "cron": "0 4 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "subject_profile_audit_nightly",
+        "file": "src/capabilities/observability/manifest.ts",
+        "line": 525,
+        "queue": "fast",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "25 4 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "ai_task_run_reconcile_nightly",
+        "file": "src/capabilities/observability/manifest.ts",
+        "line": 540,
+        "queue": "fast",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "40 6 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "supply_execute",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 881,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "quiz_gen",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 886,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "quiz_verify",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 897,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "source_verify",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 902,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "variant_verify",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 907,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "attribution_followup",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 915,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "variant_gen",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 923,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "rejudge",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 932,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "judge_run",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 942,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "session_summary",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 954,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "judge_pending_reconcile",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 964,
+        "queue": "fast",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "50 * * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "jyeoo_staged_asset_reap",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 979,
+        "queue": "fast",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "40 3 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "item_prior_backfill",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 994,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "practice_stream_compose_nightly",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1010,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "question_supply_nightly",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1031,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "supply_planner",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1061,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "50 5 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "confusable_contrast_nightly",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1074,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "20 6 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "recalibration_nightly",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1090,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "embed_backfill",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1104,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "reference_answer_backfill",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1126,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "20 5 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "answer_class_backfill",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1141,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "kt_estimate_nightly",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1166,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "10 5 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "axis_state_nightly",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1182,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "40 5 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "judge_calibration_sample",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1197,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "10 6 * * *",
+        "tz": "Asia/Shanghai"
+      }
+    ],
+    "infraSchedules": [
+      {
+        "name": "prune_orphan_review_sessions",
+        "cron": "15 4 * * *",
+        "tz": "Asia/Shanghai",
+        "file": "src/server/boss/handlers.ts"
+      },
+      {
+        "name": "prune_orphan_placement_sessions",
+        "cron": "35 4 * * *",
+        "tz": "Asia/Shanghai",
+        "file": "src/server/boss/handlers.ts"
+      },
+      {
+        "name": "promote_conversation_idle",
+        "cron": "* * * * *",
+        "tz": "Asia/Shanghai",
+        "file": "src/server/boss/handlers.ts"
+      },
+      {
+        "name": "prune_orphan_conversation_sessions",
+        "cron": "25 4 * * *",
+        "tz": "Asia/Shanghai",
+        "file": "src/server/boss/handlers.ts"
+      },
+      {
+        "name": "verify_dispatch_recover",
+        "cron": "10 4 * * *",
+        "tz": "Asia/Shanghai",
+        "file": "src/server/boss/handlers.ts"
+      }
+    ],
+    "memorySchedules": [
+      {
+        "name": "memory_brief_sweep",
+        "cron": "0 3 * * *",
+        "tz": "Asia/Shanghai",
+        "file": "src/server/memory/triggers.ts"
+      },
+      {
+        "name": "memory_ingest_outbox_poll",
+        "cron": "* * * * *",
+        "tz": "UTC",
+        "file": "src/server/memory/triggers.ts"
+      },
+      {
+        "name": "memory_ingest_outbox_recover",
+        "cron": "0 * * * *",
+        "tz": "UTC",
+        "file": "src/server/memory/triggers.ts"
+      }
+    ],
+    "directWorkers": [
+      {
+        "name": "echo",
+        "file": "src/server/boss/handlers.ts",
+        "line": 99
+      },
+      {
+        "name": "prune_orphan_review_sessions",
+        "file": "src/server/boss/handlers.ts",
+        "line": 118
+      },
+      {
+        "name": "prune_orphan_placement_sessions",
+        "file": "src/server/boss/handlers.ts",
+        "line": 133
+      },
+      {
+        "name": "promote_conversation_idle",
+        "file": "src/server/boss/handlers.ts",
+        "line": 146
+      },
+      {
+        "name": "prune_orphan_conversation_sessions",
+        "file": "src/server/boss/handlers.ts",
+        "line": 155
+      },
+      {
+        "name": "verify_dispatch_recover",
+        "file": "src/server/boss/handlers.ts",
+        "line": 193
+      },
+      {
+        "name": "memory_event_ingest",
+        "file": "src/server/memory/triggers.ts",
+        "line": 1096
+      },
+      {
+        "name": "memory_brief_regen",
+        "file": "src/server/memory/triggers.ts",
+        "line": 1108
+      },
+      {
+        "name": "memory_brief_sweep",
+        "file": "src/server/memory/triggers.ts",
+        "line": 1119
+      },
+      {
+        "name": "memory_ingest_outbox_poll",
+        "file": "src/server/memory/triggers.ts",
+        "line": 1124
+      },
+      {
+        "name": "memory_ingest_outbox_recover",
+        "file": "src/server/memory/triggers.ts",
+        "line": 1133
+      },
+      {
+        "name": "memory_reconcile",
+        "file": "src/server/memory/triggers.ts",
+        "line": 1153
+      }
+    ],
+    "hashes": [
+      {
+        "path": "src/capabilities/agency/manifest.ts",
+        "sha256": "95c117dc99871c6d2bfdb903ecec84593a650f59c99c611b92724fdb6b8d9030"
+      },
+      {
+        "path": "src/capabilities/copilot/manifest.ts",
+        "sha256": "45283bc83047489289c0ed63ba269c20806c7e1eadd00be82d7e8b5b1bb6cd25"
+      },
+      {
+        "path": "src/capabilities/ingestion/manifest.ts",
+        "sha256": "bf36ffdbb7616066e5836ddd65e4bf54df6bc97d23a0117c6d75c94e0073569b"
+      },
+      {
+        "path": "src/capabilities/knowledge/manifest.ts",
+        "sha256": "ad6451ac567cd6bebc022b7ee9e3a84822b0213040d9af4903ef5732de54bf24"
+      },
+      {
+        "path": "src/capabilities/notes/manifest.ts",
+        "sha256": "958572f83241cccaf3ad553e7c27ed2cb2352cab1bf946088781abfe822274a5"
+      },
+      {
+        "path": "src/capabilities/observability/manifest.ts",
+        "sha256": "837dda796f1b31bc42cd27dad82f39e1eb236599e516700861581a7a2bcbd45f"
+      },
+      {
+        "path": "src/capabilities/onboarding/manifest.ts",
+        "sha256": "aefa0e8cd81fc5f8b3536b2b020932cdb0fdbc74567ef980d1e30610a7825d1f"
+      },
+      {
+        "path": "src/capabilities/practice/manifest.ts",
+        "sha256": "d30414b9b2ab6f05a0c4fff2e5e6cb970253a06e796e16af15221c531318e640"
+      },
+      {
+        "path": "src/capabilities/shell/manifest.ts",
+        "sha256": "4f570bf52460d77932543c864507e6ce495af22df4afa214f7f93aeebe39ac1c"
+      },
+      {
+        "path": "src/server/boss/handlers.ts",
+        "sha256": "5369935608f4481ea69a9671bd057fb86efc8f9beb1f791b3071b3dfb17f7f92"
+      },
+      {
+        "path": "src/server/memory/triggers.ts",
+        "sha256": "c29149bd1bedd7cf1114b0a5e6fcb64f4a5216b8682ec5a11cb969ba8d391c0e"
+      },
+      {
+        "path": "src/server/boss/queue-names.ts",
+        "sha256": "9f9a43a71c71a2670fe0c86ba9bfd9f7ce74e394101a556bf2b8178eacda7838"
+      },
+      {
+        "path": "src/server/memory/memory-reconcile-handoff.ts",
+        "sha256": "3887d2758d4b6701bd5098f16780565f536ecea794ed84221568a6ce38566c41"
+      },
+      {
+        "path": "src/server/boss/verify-dispatch-outbox.ts",
+        "sha256": "003d107310825dd0864e1846ab32999232edaf070d38bf3cc0683c4394a52d79"
+      }
+    ],
+    "counts": {
+      "manifest": 54,
+      "manifestScheduled": 19,
+      "dbosDeclared": ["prune_job_events"],
+      "pgBossLoaded": 53,
+      "infraSchedules": 5,
+      "memorySchedules": 3,
+      "directWorkers": 12
+    }
+  },
+  {
+    "ref": "53f05b572e33440886b1a7e6ab1f084308ceef77",
+    "evidence": "Static declarations only. backend dbos denotes host admission, not live phase or deployed cutover.",
+    "manifest": [
+      {
+        "name": "dreaming_nightly",
+        "file": "src/capabilities/agency/manifest.ts",
+        "line": 138,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "coach_daily",
+        "file": "src/capabilities/agency/manifest.ts",
+        "line": 153,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "coach_weekly",
+        "file": "src/capabilities/agency/manifest.ts",
+        "line": 161,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "30 4 * * 0",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "prepare_intervention",
+        "file": "src/capabilities/agency/manifest.ts",
+        "line": 167,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "intervention_prepare_recovery",
+        "file": "src/capabilities/agency/manifest.ts",
+        "line": 177,
+        "queue": "fast",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "1-59/2 * * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "goal_scope_propose_nightly",
+        "file": "src/capabilities/agency/manifest.ts",
+        "line": 189,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "research_meeting_nightly",
+        "file": "src/capabilities/agency/manifest.ts",
+        "line": 206,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "research_meeting_agent_nightly",
+        "file": "src/capabilities/agency/manifest.ts",
+        "line": 241,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "copilot_run",
+        "file": "src/capabilities/copilot/manifest.ts",
+        "line": 191,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "copilot_nudge_evaluate",
+        "file": "src/capabilities/copilot/manifest.ts",
+        "line": 220,
+        "queue": "fast",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "copilot_run_reconcile",
+        "file": "src/capabilities/copilot/manifest.ts",
+        "line": 226,
+        "queue": "fast",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "0-58/2 * * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "ingestion_operation",
+        "file": "src/capabilities/ingestion/manifest.ts",
+        "line": 289,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "tencent_ocr_extract",
+        "file": "src/capabilities/ingestion/manifest.ts",
+        "line": 300,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "auto_enroll",
+        "file": "src/capabilities/ingestion/manifest.ts",
+        "line": 323,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "knowledge_edge_propose_nightly",
+        "file": "src/capabilities/knowledge/manifest.ts",
+        "line": 204,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "frontier_fill_nightly",
+        "file": "src/capabilities/knowledge/manifest.ts",
+        "line": 217,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "knowledge_maintenance_nightly",
+        "file": "src/capabilities/knowledge/manifest.ts",
+        "line": 231,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "kc_dedup_nightly",
+        "file": "src/capabilities/knowledge/manifest.ts",
+        "line": 245,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "merge_attribution_sweep",
+        "file": "src/capabilities/knowledge/manifest.ts",
+        "line": 272,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "0 4 * * 1",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "projection_oracle_sweep",
+        "file": "src/capabilities/knowledge/manifest.ts",
+        "line": 291,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "30 4 * * 1",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "kg_borrow_shadow_sweep",
+        "file": "src/capabilities/knowledge/manifest.ts",
+        "line": 305,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "0 5 * * 1",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "hub_auto_sync_nightly",
+        "file": "src/capabilities/notes/manifest.ts",
+        "line": 209,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "45 2 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "hub_sync_recovery",
+        "file": "src/capabilities/notes/manifest.ts",
+        "line": 218,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "* * * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "hub_sync_mutation_wake",
+        "file": "src/capabilities/notes/manifest.ts",
+        "line": 225,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "note_refine",
+        "file": "src/capabilities/notes/manifest.ts",
+        "line": 236,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "note_generate",
+        "file": "src/capabilities/notes/manifest.ts",
+        "line": 242,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "note_verify",
+        "file": "src/capabilities/notes/manifest.ts",
+        "line": 247,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "prune_job_events",
+        "file": "src/capabilities/observability/manifest.ts",
+        "line": 517,
+        "queue": "fast",
+        "backend": "dbos",
+        "load": false,
+        "cron": "0 4 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "prune_orphan_review_sessions",
+        "file": "src/capabilities/observability/manifest.ts",
+        "line": 523,
+        "queue": "fast",
+        "backend": "dbos",
+        "load": false,
+        "cron": "15 4 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "subject_profile_audit_nightly",
+        "file": "src/capabilities/observability/manifest.ts",
+        "line": 531,
+        "queue": "fast",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "25 4 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "ai_task_run_reconcile_nightly",
+        "file": "src/capabilities/observability/manifest.ts",
+        "line": 546,
+        "queue": "fast",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "40 6 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "supply_execute",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 881,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "quiz_gen",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 886,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "quiz_verify",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 897,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "source_verify",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 902,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "variant_verify",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 907,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "attribution_followup",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 915,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "variant_gen",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 923,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "rejudge",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 932,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "judge_run",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 942,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "session_summary",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 954,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "judge_pending_reconcile",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 964,
+        "queue": "fast",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "50 * * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "jyeoo_staged_asset_reap",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 979,
+        "queue": "fast",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "40 3 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "item_prior_backfill",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 994,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "practice_stream_compose_nightly",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1010,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "question_supply_nightly",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1031,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "supply_planner",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1061,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "50 5 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "confusable_contrast_nightly",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1074,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "20 6 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "recalibration_nightly",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1090,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "embed_backfill",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1104,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "reference_answer_backfill",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1126,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "20 5 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "answer_class_backfill",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1141,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": null,
+        "tz": null
+      },
+      {
+        "name": "kt_estimate_nightly",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1166,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "10 5 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "axis_state_nightly",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1182,
+        "queue": "llm",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "40 5 * * *",
+        "tz": "Asia/Shanghai"
+      },
+      {
+        "name": "judge_calibration_sample",
+        "file": "src/capabilities/practice/manifest.ts",
+        "line": 1197,
+        "queue": "agent",
+        "backend": "pg-boss-default",
+        "load": true,
+        "cron": "10 6 * * *",
+        "tz": "Asia/Shanghai"
+      }
+    ],
+    "infraSchedules": [
+      {
+        "name": "prune_orphan_placement_sessions",
+        "cron": "35 4 * * *",
+        "tz": "Asia/Shanghai",
+        "file": "src/server/boss/handlers.ts"
+      },
+      {
+        "name": "promote_conversation_idle",
+        "cron": "* * * * *",
+        "tz": "Asia/Shanghai",
+        "file": "src/server/boss/handlers.ts"
+      },
+      {
+        "name": "prune_orphan_conversation_sessions",
+        "cron": "25 4 * * *",
+        "tz": "Asia/Shanghai",
+        "file": "src/server/boss/handlers.ts"
+      },
+      {
+        "name": "verify_dispatch_recover",
+        "cron": "10 4 * * *",
+        "tz": "Asia/Shanghai",
+        "file": "src/server/boss/handlers.ts"
+      }
+    ],
+    "memorySchedules": [
+      {
+        "name": "memory_brief_sweep",
+        "cron": "0 3 * * *",
+        "tz": "Asia/Shanghai",
+        "file": "src/server/memory/triggers.ts"
+      },
+      {
+        "name": "memory_ingest_outbox_poll",
+        "cron": "* * * * *",
+        "tz": "UTC",
+        "file": "src/server/memory/triggers.ts"
+      },
+      {
+        "name": "memory_ingest_outbox_recover",
+        "cron": "0 * * * *",
+        "tz": "UTC",
+        "file": "src/server/memory/triggers.ts"
+      }
+    ],
+    "directWorkers": [
+      {
+        "name": "echo",
+        "file": "src/server/boss/handlers.ts",
+        "line": 91
+      },
+      {
+        "name": "prune_orphan_placement_sessions",
+        "file": "src/server/boss/handlers.ts",
+        "line": 113
+      },
+      {
+        "name": "promote_conversation_idle",
+        "file": "src/server/boss/handlers.ts",
+        "line": 126
+      },
+      {
+        "name": "prune_orphan_conversation_sessions",
+        "file": "src/server/boss/handlers.ts",
+        "line": 135
+      },
+      {
+        "name": "verify_dispatch_recover",
+        "file": "src/server/boss/handlers.ts",
+        "line": 173
+      },
+      {
+        "name": "memory_event_ingest",
+        "file": "src/server/memory/triggers.ts",
+        "line": 1096
+      },
+      {
+        "name": "memory_brief_regen",
+        "file": "src/server/memory/triggers.ts",
+        "line": 1108
+      },
+      {
+        "name": "memory_brief_sweep",
+        "file": "src/server/memory/triggers.ts",
+        "line": 1119
+      },
+      {
+        "name": "memory_ingest_outbox_poll",
+        "file": "src/server/memory/triggers.ts",
+        "line": 1124
+      },
+      {
+        "name": "memory_ingest_outbox_recover",
+        "file": "src/server/memory/triggers.ts",
+        "line": 1133
+      },
+      {
+        "name": "memory_reconcile",
+        "file": "src/server/memory/triggers.ts",
+        "line": 1153
+      }
+    ],
+    "hashes": [
+      {
+        "path": "src/capabilities/agency/manifest.ts",
+        "sha256": "95c117dc99871c6d2bfdb903ecec84593a650f59c99c611b92724fdb6b8d9030"
+      },
+      {
+        "path": "src/capabilities/copilot/manifest.ts",
+        "sha256": "45283bc83047489289c0ed63ba269c20806c7e1eadd00be82d7e8b5b1bb6cd25"
+      },
+      {
+        "path": "src/capabilities/ingestion/manifest.ts",
+        "sha256": "bf36ffdbb7616066e5836ddd65e4bf54df6bc97d23a0117c6d75c94e0073569b"
+      },
+      {
+        "path": "src/capabilities/knowledge/manifest.ts",
+        "sha256": "ad6451ac567cd6bebc022b7ee9e3a84822b0213040d9af4903ef5732de54bf24"
+      },
+      {
+        "path": "src/capabilities/notes/manifest.ts",
+        "sha256": "958572f83241cccaf3ad553e7c27ed2cb2352cab1bf946088781abfe822274a5"
+      },
+      {
+        "path": "src/capabilities/observability/manifest.ts",
+        "sha256": "f15a993c305c2c44b2feb915fc7b5ff446721627d1a1634ad4387b66310fb850"
+      },
+      {
+        "path": "src/capabilities/onboarding/manifest.ts",
+        "sha256": "aefa0e8cd81fc5f8b3536b2b020932cdb0fdbc74567ef980d1e30610a7825d1f"
+      },
+      {
+        "path": "src/capabilities/practice/manifest.ts",
+        "sha256": "d30414b9b2ab6f05a0c4fff2e5e6cb970253a06e796e16af15221c531318e640"
+      },
+      {
+        "path": "src/capabilities/shell/manifest.ts",
+        "sha256": "4f570bf52460d77932543c864507e6ce495af22df4afa214f7f93aeebe39ac1c"
+      },
+      {
+        "path": "src/server/boss/handlers.ts",
+        "sha256": "ca8f47a8f2c54920f2ac33c150ac4e6d11d6a5cf9264c87d27784ce9e525b27a"
+      },
+      {
+        "path": "src/server/memory/triggers.ts",
+        "sha256": "c29149bd1bedd7cf1114b0a5e6fcb64f4a5216b8682ec5a11cb969ba8d391c0e"
+      },
+      {
+        "path": "src/server/boss/queue-names.ts",
+        "sha256": "9f9a43a71c71a2670fe0c86ba9bfd9f7ce74e394101a556bf2b8178eacda7838"
+      },
+      {
+        "path": "src/server/memory/memory-reconcile-handoff.ts",
+        "sha256": "3887d2758d4b6701bd5098f16780565f536ecea794ed84221568a6ce38566c41"
+      },
+      {
+        "path": "src/server/boss/verify-dispatch-outbox.ts",
+        "sha256": "003d107310825dd0864e1846ab32999232edaf070d38bf3cc0683c4394a52d79"
+      }
+    ],
+    "counts": {
+      "manifest": 55,
+      "manifestScheduled": 20,
+      "dbosDeclared": ["prune_job_events", "prune_orphan_review_sessions"],
+      "pgBossLoaded": 53,
+      "infraSchedules": 4,
+      "memorySchedules": 3,
+      "directWorkers": 11
+    }
+  }
+]
