@@ -113,5 +113,22 @@
     "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:draft-status-reads",
     "exit": 0,
     "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-draft-status-reads.log"
+  },
+  {
+    "command": "git diff --check HEAD^ HEAD",
+    "exit": 2,
+    "result": "Preserved raw CLI log trailing spaces and blank EOF; no source findings",
+    "log": "raw-log-whitespace.txt",
+    "revision": "3ac84e80e"
+  },
+  {
+    "command": "git diff --check HEAD^ HEAD -- server/start src/capabilities/agency/ui src/capabilities/agency/ui-public.ts src/capabilities/shell/ui/TodayPage.tsx web/src tests/usability/start-rpc-fixtures.ts tests/usability/start-rpc-fixtures.unit.spec.ts",
+    "exit": 0,
+    "revision": "3ac84e80e"
+  },
+  {
+    "command": "git commit -m 'YUK-1358: migrate agent-note consumers to authenticated Start reads'",
+    "exit": 0,
+    "revision": "3ac84e80e"
   }
 ]
