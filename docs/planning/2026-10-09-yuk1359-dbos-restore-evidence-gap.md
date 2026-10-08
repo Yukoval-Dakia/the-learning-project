@@ -12,6 +12,12 @@ The current-release pointer was read as source `5aa2a9e989984dfa065b3ba400b67b6b
 
 These are source and stored-receipt observations. The current live database's contents were not queried, and no conclusion about a missing table in the live database follows from an older backup inventory.
 
+## Offline error-handling reproduction
+
+The parent subsequently sourced the unchanged repository drill in a Bash subprocess with every `docker` call intercepted by a function. The function has no real CLI fallback. It supplied synthetic successful readiness/restore responses, then returned17 for the table-inventory query. No Docker daemon, database or network was accessed; the39-byte input is explicitly not a real dump.
+
+The actual script exited0 and wrote `table_counts: {}`, `verified: true`, and `errors: "OFFLINE_INJECTED_COUNT_QUERY_FAILURE|"`. The [reproduction receipt](evidence/2026-10-09-yuk1359-restore-count-failure.json) seals the original script, offline driver and outputs. The driver is `/tmp/yuk1359-restore-count-failure-20261009.sh`; outputs are `/tmp/yuk1359-restore-count-failure.thPFED/`. This proves the shell verification-error path, not a failed database restore. The repair must make the same injected path exit nonzero and refuse a verified receipt.
+
 ## Bounded completion work
 
 Extend the existing restoration verification rather than create a parallel helper. Determine the complete non-system schema/table/sequence inventory from the stopped source or a coherent snapshot, bind it to the dump identity, and compare the restored copy. Failed inspection must make verification fail. A DBOS candidate requires evidence from its actual configured system schema, including workflow/checkpoint state and family controls, not merely a hardcoded schema name added to the list.
