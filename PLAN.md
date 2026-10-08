@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：PR1620已合main10df1a471；1393源码a9d7c8322已交回，父开始整合/审查/验收。整个迁移尚未完成，当前无本线程持有的runtime锁或服务。过往交付与旧阻塞叙述见[归档](docs/planning/2026-10-09-pre-1393-board-archive.md)。
+> Linear 是权威 tracker。2026-10-09 JST：PR1620已合main10df1a471；1393源码a9d7c8322已交回，父验收和R1完成，准备PR/exact CI。整个迁移尚未完成，当前无本线程持有的runtime锁或服务。过往交付与旧阻塞叙述见[归档](docs/planning/2026-10-09-pre-1393-board-archive.md)。
 
 ## NOW
 
-- **YUK-1393 / review orphan DBOS**：从main6aaf8ca89建独立branch，scope/设计提交c0870b0eb。唯一T3作者已completed/noPending并释放，提交a9d7c8322；父已核26源码SHA。实现家族、Review锁内helper、共享DBOS host/注册、schema0116与scopedtests。5796已核75树无冲突并预留0116。固定tick/candidate、事务效果与receipt、未知提交结果核实及旧prune恢复均须验收；源码授权不代表运行切换。见[实施设计](docs/planning/2026-10-09-yuk1393-review-orphan-dbos.md)。
+- **YUK-1393 / review orphan DBOS**：从main6aaf8ca89建独立branch，scope/设计提交c0870b0eb。唯一T3作者已completed/noPending并释放，提交a9d7c8322；父已核26源码SHA。实现家族、Review锁内helper、共享DBOS host/注册、schema0116与scopedtests。5796已核75树无冲突并预留0116。父33DB/10进程恢复/2cron/4旧prune/26migration与49unit/static/build/7audits通过，R1 NONE；驱动修正b33仅tests，原失败保留；源码授权不代表运行切换。见[实施设计](docs/planning/2026-10-09-yuk1393-review-orphan-dbos.md)。
 - **YUK-1358 / Start配置与科目消费者已合入**：PR1620于18:16:17Z合main10df1a471，tree与exact755bdeebb一致，CI37821989407全绿/R1 NONE/threads0。18操作122RPC/35窗口与三页浏览器证据见[父验收](docs/planning/2026-10-09-yuk1358-start-admin-controls-parent.md)。未部署；1358保持In Progress。5796独占接续1392 board、剩余Start路由和实际提交，本线程不写其活跃树。
 - **YUK-1359 / 整体退出证据**：7631对用户负责迁移协调和最终交付，维护W1–W5消费者清单。当前已交前门、错题、Today/Inbox主读取和五管理只读页；嵌套HTTP消费者、其余路由、任务族、旧SPA/pg-boss退出尚未齐备。按[退出清单](docs/planning/2026-10-07-yuk1359-exit-inventory.md)逐项验收，不能把公共出口或源码slice当整页完成。
 - **YUK-1356 / 复习竖切未完**：PR1605共享review操作/可信Pi原件入口及单次MiMo效果证据有效，但Start提交与判分DBOS族仍缺。17:02Z后直接读回Linear已恢复In Progress；未启动重复writer，不宣称judge_run已迁移。
@@ -12,7 +12,7 @@
 
 ## NEXT
 
-- 1393作者已交回，父核实际diff与制品，独立审查；先核部署锁并协调再执行隔离DB/实际SIGKILL、commit响应故障、cron/timezone及旧prune恢复。错误修复/验证后走exact-head CI；未通过不切主运行环境。
+- 1393父验收已完成且18:39:51Z核owner释放锁，原4服务/release不变。封存[父证据](docs/planning/2026-10-09-yuk1393-parent-acceptance.md)后走PR/exact-head CI；默认仍pg-boss，未部署。
 - 1355逐族迁移仍仅prune_job_events已交首族，1393是下一族。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。
 - 1358继续剩余路由/共享子树及三入口共用业务操作，保留现有确定性行为。1392公共board读取、1380事件读/纠错等已合接口由Start集成方接消费者，不复制领域规则。
 - 1359最终收口核对dev/build/Compose/镜像、全部旧消费者、任务/worker/依赖、配置与文档；Hono去留按ADR裁决，旧SPA回落不得永久保留。完成整迁移后再按实际缺口与查重结果交付Linear残留功能。
@@ -41,6 +41,6 @@
 
 ## BLOCKED-ON
 
-- 当前没有需要owner追加许可才能推进的已知阻塞。1393源码已交回，正在整合与验收；子任务/CI仍运行属于等待，不把整迁移挂blocked。
+- 当前没有需要owner追加许可才能推进的已知阻塞。1393源码已交回，准备PR与exact CI；子任务/CI仍运行属于等待，不把整迁移挂blocked。
 - runtime测试/发布在执行前必须实际核锁并原子获取，核owner/token清理释放；其他线程持锁时只推不冲突的源码工作。历史锁记录不能代表当前ownership。
 - 部署用途保持Agent开发测试，禁止再次清库、恢复私人数据或盲重放队列；日用部署须owner明确要求“为我日常使用的部署”。旧运行验收限制和未完成产品能力保存在归档及各原票，未被本次整理核销。
