@@ -16,6 +16,18 @@ The detailed report below is retained as the architecture input. Its request for
 
 PR1621 is now merged as `e1f2ef6bb7af15fc633ffea5c9909f0968ad99cd`, tree equal to exact3be after all CI gates passed. This lane starts from that freshly fetched main. Parent inspected77worktrees: authorized shared paths have no dirty files, and no0117 migration exists; main ends0116. Migration0117 is reserved for this lane, subject to a fresh check immediately before generation. No runtime operation is authorized for the author; parent owns locked acceptance.
 
+## Author implementation and evidence handoff
+
+The authorized implementation is now present on `feat/yuk-1394-session-orphans-dbos`, from clean `b259598348f014b4eb8959305cb45136d17c335d`. Immediately before creating migration0117, the author fetched origin, confirmed `HEAD..origin/main` was zero, confirmed main still ended at0116, and found no0117 file. The four-table ledger, precise domain transaction helpers, identity-required legacy handlers, two workflow adapters, client-only operator and fixed four-family host are implemented. Both runtime controls are seeded to `pg-boss`; no cutover was performed.
+
+The original domain writers remain the effect owners. Conversation retains selection advisory lock before row lock. Placement retains its transaction wrapper, errors and idempotency. Every row effect, original job event and immutable receipt shares one transaction. Selection freezes the whole sorted candidate set with admission, preserving original timestamp text and current version as evidence. Primary reconciliation uses the same family control/tick locks under READ COMMITTED. Contract errors and boundary hook errors fail the task; unavailable primary remains unknown.
+
+Author evidence: 50 official scoped unit tests, typecheck, lint, build and seven source audits pass. Lint has290 warnings against a305 baseline, with zero infos. `audit:schema` exits1 for `session_orphan_control.family`: its two immutable keys are initialized by migration0117, while this audit scans TypeScript writers. Audit scripts/tests/allowlist are outside author ownership and were left untouched. The parent acknowledged the fixed-seed false positive, captured the existing Linear follow-up, confirmed no overlapping audit WIP, and owns the minimal audit fix before source acceptance.
+
+DB, migration, process, cron, rollback, mixed-binary exit, full restore, independent review and exact-head CI acceptance are **NOT RUN by this author**. No DB, Testcontainers, Docker, OrbStack, service, browser, provider, model, replay or runtime operation was performed. Prepared fixtures use actual transitions and genuine archived predecessor source; compiling them is only source evidence.
+
+The implementation runbook, acceptance commands, artifact hashes, dependency versions, evidence paths and protected-file handoff are in [the lane runbook](2026-10-09-yuk1355-two-orphans-durable.md). The original architecture report below remains historical source evidence; its approval requests are superseded by the parent decision and implementation assignment.
+
 ## Prepared genuine predecessor artifacts
 
 Only offline compilation was performed. Before actual use, compare these source digests with the eventual1393 merge tree. If product source changes, archive the actual accepted predecessor again rather than relabeling these artifacts.

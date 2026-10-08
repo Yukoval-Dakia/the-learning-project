@@ -4,31 +4,38 @@ import { PgBoss } from 'pg-boss';
 import postgres from 'postgres';
 import { z } from 'zod';
 import * as schema from '@/db/schema';
-import type { ReviewOrphanBoundaryHook } from '@/server/durable/review-orphan-family';
-import type { ReviewOrphanWorkflow } from '@/server/durable/review-orphan-worker';
+import type {
+  SessionOrphanBoundaryHook,
+  SessionOrphanFamily,
+} from '@/server/durable/session-orphan-family';
+import type { SessionOrphanWorkflows } from '@/server/durable/session-orphan-worker';
 import dbosPackage from '../../node_modules/@dbos-inc/dbos-sdk/package.json';
 import pgBossPackage from '../../node_modules/pg-boss/package.json';
 
 async function main() {
   const url = new URL(z.url().parse(process.env.DATABASE_URL));
   if (
-    process.env.TLP_REVIEW_TEST_PROCESS !== '1' ||
+    process.env.TLP_SESSION_TEST_PROCESS !== '1' ||
     !/^\/test_fork_\d+$/.test(url.pathname) ||
     !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
   )
-    throw new Error('Review orphan fixture requires an isolated disposable fork DB');
-  const appUrl = new URL(process.env.TLP_REVIEW_APP_DATABASE_URL ?? url.toString());
+    throw new Error('Session orphan fixture requires an isolated disposable fork DB');
+  const appUrl = new URL(process.env.TLP_SESSION_APP_DATABASE_URL ?? url.toString());
   if (
     appUrl.pathname !== url.pathname ||
     !['localhost', '127.0.0.1', '[::1]'].includes(appUrl.hostname) ||
-    (appUrl.toString() !== url.toString() && process.env.TLP_REVIEW_APP_PROXY !== '1')
+    (appUrl.toString() !== url.toString() && process.env.TLP_SESSION_APP_PROXY !== '1')
   )
     throw new Error('Application proxy must target the same disposable DB');
   const appClient = postgres(appUrl.toString(), { max: 2, ssl: false, connect_timeout: 2 });
   const db = drizzle(appClient, { schema });
-  const family = await import('@/server/durable/review-orphan-family');
+  const family = await import('@/server/durable/session-orphan-family');
+  const backend = await import('@/server/durable/session-orphan-backend');
+  const selectedFamily: SessionOrphanFamily = family.sessionOrphanFamilySchema.parse(
+    process.env.TLP_SESSION_FAMILY,
+  );
   const host = await import('@/server/durable/prune-worker');
-  const cron = process.env.TLP_REVIEW_CRON_TEST === '1';
+  const cron = process.env.TLP_SESSION_CRON_TEST === '1';
   let holdForward = cron;
   let releaseForward: (() => void) | undefined;
   const heldRows = new Set<() => void>();
@@ -50,10 +57,7 @@ async function main() {
     const adapter = boss.getDb();
     const execute = adapter.executeSql.bind(adapter);
     adapter.executeSql = async (text, values) => {
-      if (
-        !text.includes('INSERT INTO pgboss.') ||
-        !text.includes("'prune_orphan_review_sessions' as name")
-      )
+      if (!text.includes('INSERT INTO pgboss.') || !text.includes(`'${selectedFamily}' as name`))
         return execute(text, values);
       if (holdForward) {
         holdForward = false;
@@ -76,10 +80,10 @@ async function main() {
       }
     };
   }
-  const reviewBoundary: ReviewOrphanBoundaryHook = async (event) => {
+  const sessionBoundary: SessionOrphanBoundaryHook = async (event) => {
     if (
-      process.env.TLP_REVIEW_PAUSE_AT === event.kind ||
-      (cron && event.kind === 'row-committed' && process.env.TLP_REVIEW_HOLD_ROWS === '1')
+      (event.family === selectedFamily && process.env.TLP_SESSION_PAUSE_AT === event.kind) ||
+      (cron && event.kind === 'row-committed' && process.env.TLP_SESSION_HOLD_ROWS === '1')
     ) {
       process.send?.({
         ...event,
@@ -95,20 +99,20 @@ async function main() {
   };
   // Stop at the receipt query after the original transition/event writes in this transaction.
   if (
-    ['row-uncommitted', 'admission-uncommitted'].includes(process.env.TLP_REVIEW_PAUSE_AT ?? '')
+    ['row-uncommitted', 'admission-uncommitted'].includes(process.env.TLP_SESSION_PAUSE_AT ?? '')
   ) {
     const send = appClient.options.debug;
     appClient.options.debug = (connection, query, parameters, types) => {
       if (typeof send === 'function') send(connection, query, parameters, types);
       if (
-        (process.env.TLP_REVIEW_PAUSE_AT === 'row-uncommitted' &&
-          query.startsWith('insert into "review_orphan_receipt"')) ||
-        (process.env.TLP_REVIEW_PAUSE_AT === 'admission-uncommitted' &&
-          query.startsWith('insert into "review_orphan_tick"'))
+        (process.env.TLP_SESSION_PAUSE_AT === 'row-uncommitted' &&
+          query.startsWith('insert into "session_orphan_receipt"')) ||
+        (process.env.TLP_SESSION_PAUSE_AT === 'admission-uncommitted' &&
+          query.startsWith('insert into "session_orphan_tick"'))
       ) {
         process.send?.({
           kind: 'boundary',
-          boundary: process.env.TLP_REVIEW_PAUSE_AT,
+          boundary: process.env.TLP_SESSION_PAUSE_AT,
           pid: process.pid,
         });
         // The driver's debug callback runs before dispatch. Earlier row/event writes
@@ -128,19 +132,19 @@ async function main() {
       name: 'prune_orphan_conversation_sessions',
       backend: 'dbos',
       queue: 'fast',
-      schedule: { cron: '25 4 * * *', tz: 'Asia/Shanghai' },
+      schedule: { cron: cron ? '* * * * *' : '25 4 * * *', tz: 'Asia/Shanghai' },
     },
     placementOrphans: {
       name: 'prune_orphan_placement_sessions',
       backend: 'dbos',
       queue: 'fast',
-      schedule: { cron: '35 4 * * *', tz: 'Asia/Shanghai' },
+      schedule: { cron: cron ? '* * * * *' : '35 4 * * *', tz: 'Asia/Shanghai' },
     },
     reviewOrphans: {
-      name: family.REVIEW_ORPHAN_FAMILY,
+      name: 'prune_orphan_review_sessions',
       backend: 'dbos',
       queue: 'fast',
-      schedule: { cron: cron ? '* * * * *' : '15 4 * * *', tz: 'Asia/Shanghai' },
+      schedule: { cron: '15 4 * * *', tz: 'Asia/Shanghai' },
     },
   } satisfies Parameters<typeof host.startDurableWorker>[0]['declarations'];
   try {
@@ -149,7 +153,7 @@ async function main() {
       boss,
       db,
       declarations,
-      reviewBoundary,
+      sessionBoundary,
       reconcileIntervalMs: 100,
     });
     process.send?.({
@@ -166,8 +170,16 @@ async function main() {
       try {
         const command = z
           .discriminatedUnion('kind', [
-            z.object({ kind: z.literal('transition'), phase: family.reviewOrphanPhaseSchema }),
-            z.object({ kind: z.literal('quiesce'), reason: z.string() }),
+            z.object({
+              kind: z.literal('transition'),
+              family: family.sessionOrphanFamilySchema,
+              phase: family.sessionOrphanPhaseSchema,
+            }),
+            z.object({
+              kind: z.literal('quiesce'),
+              family: family.sessionOrphanFamilySchema,
+              reason: z.string(),
+            }),
             z.object({ kind: z.literal('release-forward') }),
             z.object({ kind: z.literal('arm-forward') }),
             z.object({ kind: z.literal('release-rows') }),
@@ -175,9 +187,15 @@ async function main() {
           ])
           .parse(raw);
         if (command.kind === 'transition')
-          await family.changeReviewOrphanPhase(db, boss, command.phase);
+          await backend.changeSessionOrphanPhase(db, boss, {
+            family: command.family,
+            target: command.phase,
+          });
         else if (command.kind === 'quiesce')
-          await family.attestReviewOrphanQuiescence(db, command.reason);
+          await backend.attestSessionOrphanQuiescence(db, {
+            family: command.family,
+            reason: command.reason,
+          });
         else if (command.kind === 'release-forward') {
           holdForward = false;
           releaseForward?.();
@@ -197,7 +215,7 @@ async function main() {
         process.send?.({ kind: 'rejected', error: String(error) });
       }
     });
-    const workflowId = process.env.TLP_REVIEW_WORKFLOW_ID;
+    const workflowId = process.env.TLP_SESSION_WORKFLOW_ID;
     if (workflowId) {
       // The host owns registration. The client enqueues by the already registered name.
       const { DBOSClient } = await import('@dbos-inc/dbos-sdk');
@@ -208,13 +226,15 @@ async function main() {
         applicationName: 'tlp-housekeeping',
       });
       try {
-        const scheduledAt = new Date(process.env.TLP_REVIEW_SCHEDULED_AT ?? '2026-10-09T00:00:00Z');
+        const scheduledAt = new Date(
+          process.env.TLP_SESSION_SCHEDULED_AT ?? '2026-10-09T00:00:00Z',
+        );
         const handle =
-          process.env.TLP_REVIEW_RECOVER === '1'
+          process.env.TLP_SESSION_RECOVER === '1'
             ? DBOS.retrieveWorkflow(workflowId)
-            : await client.enqueue<ReviewOrphanWorkflow>(
+            : await client.enqueue<SessionOrphanWorkflows['conversationOrphans']>(
                 {
-                  workflowName: family.REVIEW_ORPHAN_FAMILY,
+                  workflowName: selectedFamily,
                   workflowID: workflowId,
                   queueName: '_dbos_internal_queue',
                   appVersion: 'prune-v1',

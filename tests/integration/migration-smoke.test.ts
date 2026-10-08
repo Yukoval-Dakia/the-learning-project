@@ -3730,3 +3730,87 @@ describe('migration smoke — YUK-1097 assessment truth guards', () => {
     expect(restored?.run_refs).toEqual(['run_restored']);
   });
 });
+
+for (const populated of [false, true])
+  describe(`migration smoke — YUK-1394 ${populated ? 'populated post-1393' : 'empty post-1393'} ledger`, () => {
+    let container: StartedPostgreSqlContainer;
+    let client: ReturnType<typeof postgres>;
+    let before: unknown;
+    beforeAll(async () => {
+      ensureDockerHost();
+      container = await migrationContainer().start();
+      client = postgres(container.getConnectionUri(), { max: 1 });
+      const migrations = orderedMigrations();
+      expect(migrations.at(-1)?.tag).toBe('0117_yuk1394_session_orphan_backend');
+      for (const migration of migrations) {
+        if (migration.tag === '0117_yuk1394_session_orphan_backend') break;
+        await applyMigrationFile(client, migration.sql);
+      }
+      if (populated) {
+        await client`insert into learning_session (id,type,status,started_at,version,summary_md,warnings) values ('migration-conversation','conversation','idle','2026-01-01T00:00:00.123456Z',33,${'保留原始记录\n'.repeat(300)},'[]'), ('migration-placement','placement','started','2026-01-01T00:00:00.654321Z',19,'placement summary','[]')`;
+        await client`insert into prune_job_events_receipt (workflow_id,cutoff,deleted) values ('old-prune','2026-01-01T00:00:00Z',17)`;
+        await client`insert into review_orphan_tick (tick_id,backend,provenance,tick_at,cutoff,admission,candidates,contract_version) values ('legacy:00000000-0000-4000-8000-000000000001','pg-boss','legacy-first-admission','2026-10-09T00:00:00Z','2026-10-08T18:00:00Z','admitted','[{"sessionId":"missing-history","selectedStartedAt":"2026-10-08T12:00:00Z","selectedVersion":4}]',1)`;
+        await client`insert into review_orphan_receipt (tick_id,session_id,outcome) values ('legacy:00000000-0000-4000-8000-000000000001','missing-history','{"kind":"skipped","reason":"missing"}')`;
+      }
+      before = await snapshot();
+      const migration = migrations.find((m) => m.tag === '0117_yuk1394_session_orphan_backend');
+      if (!migration) throw new Error('Reserved migration missing');
+      await applyMigrationFile(client, migration.sql);
+    }, 120000);
+    async function snapshot() {
+      const output: Record<string, unknown> = {};
+      for (const table of [
+        'learning_session',
+        'prune_job_events_control',
+        'prune_job_events_receipt',
+        'prune_job_events_disposition',
+        'review_orphan_control',
+        'review_orphan_tick',
+        'review_orphan_receipt',
+        'review_orphan_disposition',
+      ])
+        output[table] = await client.unsafe(
+          `select to_jsonb(t) as row from "${table}" t order by to_jsonb(t)::text`,
+        );
+      return output;
+    }
+    afterAll(async () => {
+      await client?.end();
+      await container?.stop();
+    });
+    it('preserves domain and predecessor ledger bytes, seeds exactly two independent legacy owners', async () => {
+      expect(await snapshot()).toEqual(before);
+      expect(await client`select family,phase from session_orphan_control order by family`).toEqual(
+        [
+          { family: 'prune_orphan_conversation_sessions', phase: 'pg-boss' },
+          { family: 'prune_orphan_placement_sessions', phase: 'pg-boss' },
+        ],
+      );
+    });
+    it('enforces exact-family composite identity, concrete dispositions and immutable evidence', async () => {
+      const family = 'prune_orphan_conversation_sessions';
+      const tick = 'legacy:00000000-0000-4000-8000-000000000002';
+      await expect(
+        client`insert into session_orphan_control (family,phase) values ('unknown','pg-boss')`,
+      ).rejects.toThrow();
+      await client`insert into session_orphan_tick (family,tick_id,backend,provenance,tick_at,cutoff,admission,candidates,contract_version) values (${family},${tick},'pg-boss','legacy-first-admission','2026-10-09T00:00:00Z','2026-10-08T18:00:00Z','admitted','[{"sessionId":"missing","selectedStartedAt":"2026-10-08T12:00:00Z","selectedVersion":0}]',1)`;
+      await expect(
+        client`insert into session_orphan_receipt (family,tick_id,session_id,outcome) values ('prune_orphan_placement_sessions',${tick},'missing','{"kind":"skipped","reason":"missing"}')`,
+      ).rejects.toThrow();
+      await client`insert into session_orphan_receipt (family,tick_id,session_id,outcome) values (${family},${tick},'missing','{"kind":"skipped","reason":"missing"}')`;
+      await expect(
+        client`insert into session_orphan_disposition (family,id,backend,kind,observed_state,reason) values (${family},'bad','pg-boss','terminal-task','failed','missing target')`,
+      ).rejects.toThrow();
+      await client`insert into session_orphan_disposition (family,id,backend,kind,observed_state,reason,barrier_at) values (${family},'proof','pg-boss','quiescence','draining-pg-boss','test evidence','2026-10-09T00:00:00.000001Z')`;
+      for (const table of [
+        'session_orphan_tick',
+        'session_orphan_receipt',
+        'session_orphan_disposition',
+      ]) {
+        await expect(client.unsafe(`delete from ${table}`)).rejects.toThrow('immutable');
+        await expect(client.unsafe(`update ${table} set family = family`)).rejects.toThrow(
+          'immutable',
+        );
+      }
+    });
+  });

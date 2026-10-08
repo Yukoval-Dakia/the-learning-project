@@ -1,9 +1,28 @@
 import { eq } from 'drizzle-orm';
+import { PgBoss } from 'pg-boss';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { learning_session } from '@/db/schema';
 import { Placement, Review } from '@/server/session';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runPruneOrphanPlacementSessions } from './prune_orphan_placement_sessions';
+
+async function legacyTask() {
+  const boss = new PgBoss({
+    connectionString: process.env.TEST_DATABASE_URL,
+    schedule: false,
+    supervise: false,
+  });
+  boss.on('error', () => {});
+  await boss.start();
+  try {
+    await boss.createQueue('prune_orphan_placement_sessions');
+    const jobId = await boss.send('prune_orphan_placement_sessions', {});
+    if (!jobId) throw new Error('Missing real task UUID');
+    return { jobId };
+  } finally {
+    await boss.stop();
+  }
+}
 
 async function ageSession(sessionId: string, ageMs: number) {
   const db = testDb();
@@ -26,7 +45,7 @@ describe('runPruneOrphanPlacementSessions', () => {
     await ageSession(old1, 7 * 60 * 60 * 1000);
     await ageSession(old2, 12 * 60 * 60 * 1000);
 
-    const result = await runPruneOrphanPlacementSessions(db);
+    const result = await runPruneOrphanPlacementSessions(db, await legacyTask());
     expect(result.abandoned).toBe(2);
 
     const byId = new Map((await db.select().from(learning_session)).map((r) => [r.id, r.status]));
@@ -41,7 +60,7 @@ describe('runPruneOrphanPlacementSessions', () => {
     await Placement.completePlacementSession(db, sessionId);
     await ageSession(sessionId, 24 * 60 * 60 * 1000);
 
-    const result = await runPruneOrphanPlacementSessions(db);
+    const result = await runPruneOrphanPlacementSessions(db, await legacyTask());
     expect(result.abandoned).toBe(0);
 
     const rows = await db
@@ -60,7 +79,7 @@ describe('runPruneOrphanPlacementSessions', () => {
     await ageSession(placement, 9 * 60 * 60 * 1000);
     await ageSession(review, 9 * 60 * 60 * 1000);
 
-    const result = await runPruneOrphanPlacementSessions(db);
+    const result = await runPruneOrphanPlacementSessions(db, await legacyTask());
     expect(result.abandoned).toBe(1); // only the placement probe
 
     const byId = new Map((await db.select().from(learning_session)).map((r) => [r.id, r.status]));
@@ -70,7 +89,7 @@ describe('runPruneOrphanPlacementSessions', () => {
 
   it('returns abandoned=0 when no orphans', async () => {
     const db = testDb();
-    const result = await runPruneOrphanPlacementSessions(db);
+    const result = await runPruneOrphanPlacementSessions(db, await legacyTask());
     expect(result.abandoned).toBe(0);
   });
 });

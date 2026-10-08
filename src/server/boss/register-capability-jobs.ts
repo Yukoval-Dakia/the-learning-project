@@ -122,12 +122,17 @@ export async function registerCapabilityJobs(
   for (const decl of durable) {
     if (
       names.has(decl.name) ||
-      !['prune_job_events', 'prune_orphan_review_sessions'].includes(decl.name) ||
+      ![
+        'prune_job_events',
+        'prune_orphan_review_sessions',
+        'prune_orphan_conversation_sessions',
+        'prune_orphan_placement_sessions',
+      ].includes(decl.name) ||
       decl.queue !== 'fast' ||
       !decl.schedule ||
       decl.load ||
-      !decl.schedule.cron ||
-      !decl.schedule.tz ||
+      !decl.schedule.cron.trim() ||
+      !decl.schedule.tz.trim() ||
       decl.schedule.singletonKey !== undefined ||
       decl.schedule.singletonSeconds !== undefined
     )
@@ -136,12 +141,21 @@ export async function registerCapabilityJobs(
   }
   const pruneEvents = durable.find((d) => d.name === 'prune_job_events');
   const reviewOrphans = durable.find((d) => d.name === 'prune_orphan_review_sessions');
-  if (durable.length && (!pruneEvents || !reviewOrphans))
-    throw new Error('Production DBOS admission requires the complete family pair');
+  const conversationOrphans = durable.find((d) => d.name === 'prune_orphan_conversation_sessions');
+  const placementOrphans = durable.find((d) => d.name === 'prune_orphan_placement_sessions');
+  if (
+    durable.length &&
+    (!pruneEvents || !reviewOrphans || !conversationOrphans || !placementOrphans)
+  )
+    throw new Error('Production DBOS admission requires the complete four-family set');
   const ordinary = decls.filter((d) => d.backend !== 'dbos');
   // Chain targets retain their existing order; complete admission was validated before any mounting.
   for (const decl of ordinary.filter((d) => !d.schedule)) await mountJob(boss, db, decl);
-  if (pruneEvents && reviewOrphans)
-    await startDurableWorker({ boss, db, declarations: { pruneEvents, reviewOrphans } });
+  if (pruneEvents && reviewOrphans && conversationOrphans && placementOrphans)
+    await startDurableWorker({
+      boss,
+      db,
+      declarations: { pruneEvents, reviewOrphans, conversationOrphans, placementOrphans },
+    });
   for (const decl of ordinary.filter((d) => d.schedule)) await mountJob(boss, db, decl);
 }
