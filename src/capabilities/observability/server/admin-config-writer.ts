@@ -1,12 +1,9 @@
-import type { ConfigMutation, ConfigMutationResult } from '@/core/config/mutations';
+import type { z } from 'zod';
+import type { ConfigMutation } from '@/core/config/mutations';
+import type { AdminConfigWriteResponseSchema } from '../api/admin-config-write-contracts';
 
-export interface AdminConfigWriteResult {
-  committed_epoch: number;
-  snapshot_epoch: number;
-  /** This process has observed the commit or a later version; not a worker acknowledgement. */
-  snapshot_current: boolean;
-  changes: ConfigMutationResult[];
-}
+/** snapshot_current means this process has observed the commit or later, not a worker acknowledgement. */
+export type AdminConfigWriteResult = z.infer<typeof AdminConfigWriteResponseSchema>;
 
 export type AdminConfigWriter = (
   mutations: readonly ConfigMutation[],

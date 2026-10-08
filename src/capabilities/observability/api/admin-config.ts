@@ -5,8 +5,7 @@
 // 本壳只做 HTTP 边界。/api/* token 校验由组合根中间件统一施加（server/app.ts）。
 import { errorResponse } from '@/kernel/http';
 
-import { getAdminConfigRuntimeFacts } from '../server/admin-config-facts';
-import { buildAdminConfigReadModel } from '../server/config-read-model';
+import { buildAdminConfigReadModel, getAdminConfigRuntimeFacts } from '../public';
 
 export async function GET(): Promise<Response> {
   try {

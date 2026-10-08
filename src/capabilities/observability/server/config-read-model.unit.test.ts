@@ -34,22 +34,124 @@ import { tasks } from '@/capabilities/task-registry';
 import { CONFIG_REGISTRY, replaceConfigSnapshot, resetTestConfig } from '@/core/config/store';
 import { projectDagMembers } from '@/kernel/manifest';
 import { hasGlobalProviderOverride, resolveTaskProvider } from '@/server/ai/providers';
-
+import { GET } from '../api/admin-config';
 import { AdminConfigResponseSchema } from '../api/admin-config-contracts';
-import type { AdminConfigRuntimeFacts } from './admin-config-facts';
-import { observabilityConfigEffectiveFacts } from './config-effective-facts';
 import {
   type AdminConfigKeyRow,
-  KEY_CONSUMERS,
+  type AdminConfigReadModel,
+  type AdminConfigRuntimeFacts,
+  __resetAdminConfigRuntimeFactsForTests,
   buildAdminConfigReadModel,
-} from './config-read-model';
+  setAdminConfigRuntimeFacts,
+} from '../public';
+import { observabilityConfigEffectiveFacts } from './config-effective-facts';
+import { KEY_CONSUMERS } from './config-read-model';
 
 const EMPTY_SNAPSHOT = { epoch: 0, entries: new Map(), hydratedAt: '' };
 
 afterEach(() => {
+  __resetAdminConfigRuntimeFactsForTests();
   resetTestConfig();
   replaceConfigSnapshot(EMPTY_SNAPSHOT);
   vi.unstubAllEnvs();
+  vi.restoreAllMocks();
+});
+
+describe('public config read builder and real HTTP adapter', () => {
+  it('returns the complete wire DTO from the existing snapshot and injected facts', async () => {
+    replaceConfigSnapshot({
+      epoch: 71,
+      hydratedAt: '2026-10-08T13:20:00Z',
+      entries: new Map([
+        ['JUDGE_DURABLE_ENABLED', { value: true, revision: 6, updatedAt: '2026-10-08T13:19:59Z' }],
+        [
+          'task.AttributionTask.budget',
+          {
+            value: { timeout: 60000, nested: { evidence: '保留条件。'.repeat(100) } },
+            revision: 9,
+            updatedAt: null,
+          },
+        ],
+      ]),
+    });
+    const facts: AdminConfigRuntimeFacts = {
+      ...FACTS,
+      global_pin: null,
+      task_bindings: {
+        AttributionTask: { provider: 'xiaomi', model: 'mimo-v2.5-pro', error: null },
+      },
+      providers: FACTS.providers.map((provider) => ({
+        ...provider,
+        implemented_for: { chat: provider.implemented, typed: true },
+        pi_provider: provider.name,
+        models: [{ id: 'native-model', api: 'openai-completions', input: ['text', 'image'] }],
+      })),
+    };
+    const source = vi.fn(() => facts);
+    setAdminConfigRuntimeFacts(source);
+    vi.stubEnv('XIAOMI_API_KEY', 'yuk1389-secret-canary');
+    vi.stubEnv('UNREGISTERED_CONFIG', 'yuk1389-unregistered-canary');
+    const expected: AdminConfigReadModel = buildAdminConfigReadModel(process.env, facts);
+    const response = await GET();
+    expect(response.status).toBe(200);
+    const text = await response.text();
+    const wire: unknown = JSON.parse(text);
+    expect(wire).toEqual(JSON.parse(JSON.stringify(expected)));
+    expect(AdminConfigResponseSchema.parse(wire)).toEqual(wire);
+    expect(source).toHaveBeenCalledTimes(1);
+    expect(expected.snapshot).toEqual({ epoch: 71, hydrated_at: '2026-10-08T13:20:00Z' });
+    expect(expected.keys.map((row) => row.key).sort()).toEqual(Object.keys(CONFIG_REGISTRY).sort());
+    expect(expected.tasks.length).toBe(Object.keys(tasks).length);
+    expect(expected.providers).toEqual(
+      [...facts.providers].sort((a, b) => a.name.localeCompare(b.name)),
+    );
+    expect(expected.runtime).toEqual(facts.runtime);
+    expect(expected.schedules.rows).toEqual(expect.arrayContaining([...facts.infra_schedules]));
+    expect(text).not.toContain('yuk1389-secret-canary');
+    expect(text).not.toContain('yuk1389-unregistered-canary');
+    expect(expected.keys.some((row) => row.key === 'XIAOMI_API_KEY')).toBe(false);
+  });
+
+  it('keeps absent facts honest through HTTP', async () => {
+    __resetAdminConfigRuntimeFactsForTests();
+    const response = await GET();
+    expect(response.status).toBe(200);
+    const body = AdminConfigResponseSchema.parse(await response.json());
+    expect(body).toEqual(JSON.parse(JSON.stringify(buildAdminConfigReadModel(process.env, null))));
+    expect(body.facts_injected).toBe(false);
+    expect(body.providers).toEqual([]);
+    expect(body.runtime).toBeNull();
+    expect(body.schedules.rows.every((row) => row.source === 'capability-manifest')).toBe(true);
+    expect(
+      body.keys.every((row) => row.effective === undefined && row.effective_note === undefined),
+    ).toBe(true);
+  });
+
+  it('recomputes injected facts for each request rather than freezing them at injection', async () => {
+    const source = vi.fn(() => FACTS).mockReturnValueOnce({ ...FACTS, providers: [] });
+    setAdminConfigRuntimeFacts(source);
+    const first = AdminConfigResponseSchema.parse(await (await GET()).json());
+    const second = AdminConfigResponseSchema.parse(await (await GET()).json());
+    expect(first.providers).toEqual([]);
+    expect(second.providers).toEqual(
+      [...FACTS.providers].sort((a, b) => a.name.localeCompare(b.name)),
+    );
+    expect(source).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains the HTTP unknown-error response when the injected facts source fails', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => {});
+    setAdminConfigRuntimeFacts(() => {
+      throw new Error('private facts failure');
+    });
+    const response = await GET();
+    expect(response.status).toBe(500);
+    expect(await response.json()).toEqual({
+      error: 'internal_error',
+      message: 'Internal Server Error',
+    });
+    expect(log).toHaveBeenCalledTimes(1);
+  });
 });
 
 function keyRow(
