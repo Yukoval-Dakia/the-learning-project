@@ -1,0 +1,6 @@
+a9fc584bfb9b930cb316ebfa63e69a1be533c7508565c20a0ec03d3bb3e61cbc  src/capabilities/observability/api/admin-subject-control.ts
+a7045af8dcdea4b2d853dae5107b03c06cd1e57f52b3146b1cb5bcbdc62a7b90  src/capabilities/observability/server/subject-control-operations.ts
+ec8c85362f6e6379fda268edd9870a3bb1374972ff3b26c4e5bf88c9f304298b  src/capabilities/observability/public.ts
+e2e2e0710ff4bb83a7948a38f4d6e5b3d5628ad1ee3b9c1a643fe974697bc618  src/capabilities/observability/server/subject-control-operations.unit.test.ts
+e0293869242df81fd8d1a161d46264b4d781e9787e6c3042e48da091cfad4d9b  src/capabilities/observability/server/subject-control-operations.db.test.ts
+e701d4de25afb5c80eaf787b7a6a21e0d013edba2f075014a42176ad5fb1b1bc  docs/planning/2026-10-08-yuk1390-subject-control-domain.md

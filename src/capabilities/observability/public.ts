@@ -122,4 +122,20 @@ export {
 } from './server/event-detail';
 export { readHubSyncHealth } from './server/hub-sync';
 export { readProviderCostWindow } from './server/provider-cost-projection';
+export {
+  AdminSubjectCasBodySchema,
+  type AdminSubjectCasInput,
+  AdminSubjectControlParamsSchema,
+  type AdminSubjectControlResult,
+  type AdminSubjectValidationResult,
+  RenameAdminSubjectBodySchema,
+  type RenameAdminSubjectInput,
+  type ValidateAdminSubjectInput,
+  ValidateAdminSubjectInputSchema,
+  renameAdminSubject,
+  resetAdminSubject,
+  restoreAdminSubject,
+  retireAdminSubject,
+  validateAdminSubject,
+} from './server/subject-control-operations';
 export { type TodayCost, loadTodayCost } from './server/today-cost';
