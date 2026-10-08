@@ -96,4 +96,6 @@ bc58e2d41f98ec7733ed6c5a8d84d69a8366135cf6f23aed3064fe7e9a5b8050  src/capabiliti
 
 作者已交1f012c62d并completed/noPending释放writer。父核8份源码与14份日志SHA全部一致，实际独立复跑13unit及3文件22DB（新4、原18）通过。DB使用新Testcontainers与真实pool/Tx，验证外部连接不可见、完整HTTP handler DTO parity、全部public表count/digest读取前后不变、rollback后恢复原快照。此为真实DB和handler验收，不是Start页面或live网络证明。
 
-16:52:40.772995Z原子取锁，16:53:28.070847Z核owner/tokend8d6释放。临时PG/Ryuk退出，原运行集合及四容器ID/image/StartedAt/health、releaseSHA全部不变；无provider/worker/replay/deploy。证据见[evidence/yuk1392/cleanup.json](evidence/yuk1392/cleanup.json)、[DB日志](evidence/yuk1392/parent-db.txt)与[作者检查](evidence/yuk1392/author-checks.json)。独立R1及exact CI待，1392/1358/1359尚未标完成。
+16:52:40.772995Z原子取锁，16:53:28.070847Z核owner/tokend8d6释放。临时PG/Ryuk退出，原运行集合及四容器ID/image/StartedAt/health、releaseSHA全部不变；无provider/worker/replay/deploy。证据见[evidence/yuk1392/cleanup.json](evidence/yuk1392/cleanup.json)、[DB日志](evidence/yuk1392/parent-db.txt)与[作者检查](evidence/yuk1392/author-checks.json)。独立R1已完成，P0/P1 NONE；exact CI待，1392/1358/1359尚未标完成。
+
+独立R1审查1f012c62d相对5fa9d1891的六文件diff，父核diff SHA-256 `bf09abcb26e619105c8032b643e9ba4ca31bb31c969e50569247b04bbe2912f0`一致。审查实际Today20/board50消费者、输入错误、完整DTO及真实Tx fixture，completed/noPending，无需R2。父另实跑provider-lanes、profile、task-census，全部exit0，日志摘要及SHA见[evidence/yuk1392/parent-audits.json](evidence/yuk1392/parent-audits.json)。
