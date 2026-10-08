@@ -1,3 +1,11 @@
+# Current migration lane — 2026-10-08
+
+PR1609 merged at13:35:22Z as7682618cc47abc57a59c72eb589c360325c59895. Parent fetched and confirmed exact same treef7dcd2544c0257a12abeeefff5776f8b7424beb0 asgreenheadd19bd527d;CI37784537687 success acrossallgates,threads0,R2NONE,owner no-wait waiver used. Unwatched. Linear1358 autoDone correctedInProgress. No deployment;runtimeAgentTEST remains5aa2/build853/image9b76.73parentDB/497unit/7protocol/static/build and earlier actualRPC/T3 evidence retain their documented revisions.
+
+From fresh origin/main7682618cc, active branch feat/yuk-1358-start-admin-reads in /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor. Next bounded lane: connectfive existingreadonly admin surfaces (runs+detail,cost,failures,coverage,conjectures) toauthenticated/epoch-gatedStartpublicreaders,retain original layout/queries/polling/error/nullable truth. No config/subjectswrite/runtime implementation;7631 ownsYUK1389 configdomain separately. Parentowns integration/DB/browser/review/PR/watch,onecodewriter. No runtime lock or activeownedcontainers.
+
+Earlier records below are revision-specific history.
+
 # 2026-10-08 current Start closeout
 
 CI repair delivered: a5c9867fe tests only, sole child completed/noPending/released. Parent inspected actual streaming/settlement/cancel paths and normalmerged main d609 as4baeea837, onlyPLAN/now conflicts. Four real DB files73pass include wholeCopilotRun/cancel/Start/subject reads;497unit/50files+7protocol/typecheck/lint/build passed. Test uses real cancel API and deterministic barriers, preserves no-post-cancel emission and safe durable terminal/history. No product stream change/noR3. At13:24:19.202Z ownTestcontainers exited, owner7ed37bf3 lock released; original4containers/releaseSHA unchanged. Receipt docs/planning/evidence/2026-10-08-yuk1358-stop-ci-repair.json. Push final docs then exact CI; do notmerge failed8ce. Prior2118 builtRPC and1af5 browser remain scoped previous evidence; client/SPA bytes match, server chunk graph changed aftersubjectexports, no fresh4ba browser claim. 7631 now owns YUK1389 config domain exports; no overlap. Current no runtime lock or active child writer.

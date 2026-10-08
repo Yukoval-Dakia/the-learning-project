@@ -1,11 +1,11 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：PR1609 Stop CI旧夹具已test-only修复a5c9867fe，正常合入1387/main d609为4baeea837；父73DB、497unit+7协议/typecheck/lint/build通过。13:24:19Z测试容器退出并释放锁，主runtime不变；推新准确CI。1389配置领域由7631唯一writer推进。
+> Linear 是权威 tracker。2026-10-08：PR1609于13:35:22Z合入main7682618cc，exact d19bd52 CI37784537687全绿且tree相同，R2 NONE、已unwatch；未部署。1358被自动Done后已纠正InProgress。主线接五个Start管理只读页，1389配置领域仍7631独占。
 
 
 ## NOW
 
-- **YUK-1358 / Start Today与Inbox**：PR1609正常整合main d609，R2 NONE且原timestamp P1已修；父53DB历史证据保留，当前1af5真实RPC与浏览器通过，88表读无变/操作仅预期event+2与note更新；36 usability为1af5证据；2118另过428unit+7协议/static/build和真实RPC，Stop夹具修复后另过73DB/497unit/7协议与静态构建，等待最终head CI后合并。整个W1及残留HTTP消费者未完。[当前验收](docs/planning/2026-10-08-yuk1358-start-workbench-handoff.md)。
+- **YUK-1358 / Start管理只读页**：当前分支feat/yuk-1358-start-admin-reads基于main7682618cc，主线接runs/detail、cost、failures、coverage、conjectures五路由现有页面的数据注入及Start鉴权/epoch/公共领域接口。只替换调用入口，视觉和确定性行为保持；不写7631配置/subject领域。Today/Inbox PR1609已交付，W1剩余HTTP、其它路由及任务族仍待。
 
 - **YUK-1387 / 已合入**：PR1613合main d609c7b66，exact f8e832c66 CI/R1 NONE/tree一致；116unit与父15DB通过。subjects/traits四读取及分页journal已public共享，Start待主线。7631下一独占config领域出口，禁止重复writer。
 
