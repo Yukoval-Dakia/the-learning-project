@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：PR1610于12:21:24Z合入a6faded072，准确946038637 CI全绿、独立R1 NONE、merge tree一致；1381限定领域slice完成。1358/1359继续，Start及运行验收归主线，未部署。
+> Linear 是权威 tracker。2026-10-08：PR1611于12:48:38Z合入6c6905fad，exact f7b84efc7 CI全绿、独立R1 NONE、父24DB通过且merge tree一致。1386领域slice完成；1358/1359继续，未部署。
 
 ## NOW
 
-- **YUK-1386 / W5诊断领域读取**：实现3789c0f9a已交回并释放writer，父核11hash、5保护文件不变及practice仅批准类型差异；99unit/static/build/audits通过。独立R1进行；父24DB待主线1358实际释放运行锁后执行。两HTTP共用public coverage/conjecture，保留deadline、筛选、评分、恢复与missing历史兼容，Start挂载归主线。
+- **YUK-1386 / 领域slice已完成**：PR1611合入main6c6905fad；exact f7b84efc7的CI37778323336全绿、独立R1 P0/P1 NONE、threads0，merge tree一致且已unwatch。99unit/父24DB/static/build通过。public coverage/conjecture与原HTTP共享显式Db|Tx读取；Start挂载交主线。12:43:53Z核owner释放隔离DB锁，原四服务/release不变。subjects/config保持只读准备，未启动新writer。
 
 - **YUK-1356 / 主线交付**：PR1605于11:58:08Z合入a3691f572，主线核tree与exact e260bdb98一致、CI37772055452绿/threads0。保留真实MiMo一次工具验收及main4a3d 139unit/110DB证据；1356仍InProgress，未部署。1358 Start Today/Inbox由主线独占PR1609及RPC/browser验收，不在此树修改。
 

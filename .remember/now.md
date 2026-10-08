@@ -1,12 +1,12 @@
-# 当前交接 — YUK1381已合入 / YUK1359退出证据，2026-10-08
+# 当前交接 — YUK1386已合入 / YUK1359退出证据，2026-10-08
 
-PR1610于12:21:24Z合入main a6faded0729fd77789a05d4a07a706d5ff6b612a。父fetch确认tree834dc8b90bda148206346bfc6f530666321ad7e8与准确head946038637完全一致；CI37775009264全绿、产品独立R1 NONE/noPending、reviewThreads0，已unwatch。CodeRabbit跳过与Codex额度拒绝均已结束，不能称其完成审查。74unit/父24DB/整合typecheck、lint、build通过；1381仅领域slice Done，主线57961995已收到准确main SHA及public接口。
+PR1611于12:48:38Z合入main6c6905fad01a3e7f7ea376afdad9d07d3a413d65。父fetch核tree7a6e28abca853638976201fb1ecaad453bd5d5a5与exact f7b84efc7相同；CI37778323336全绿、独立R1 P0/P1 NONE/noPending、reviewThreads0，已unwatch。两个advisory bot均已结束（CodeRabbit跳过、Codex额度拒绝），不是审查PASS。99unit/父24DB/static/build通过；1386限定领域slice Done。主线57961995已收到准确main SHA和observability/public中的loadCoverageLattice(Db|Tx,now?)与loadConjectureScores(Db|Tx)。Start挂载归主线。
 
-本树现feat/yuk-1386-diagnostics-domain-reads，从最新origin/main a6faded072建立，携带已提交1359收口docs cf8867b4b。实施task yuk1386-diagnostics-domain-implementation-20261008-v1（command b0c41f6b-955b-4620-8875-2b8031cb5dfe，Codex gpt-6.1-sol high）completed/noPending，commit3789c0f9aabbb0ef4a077e6be0fe56ce3e906701 clean并释放writer。父实核11SHA匹配、5保护文件不变、practice只批准类型差异。99unit/static/build/audits通过。独立R1 task yuk1386-diagnostics-domain-review-r1-20261008（同command，Sol6.1 xhigh）running只读。主线57961995/YUK1358持锁phase isolated-built-start-acceptance，父不跑runtime；其释放后重核锁运行3文件24DB。父接PR/CI与最终验收。loadAdminRuns、loadAdminRunDetail、loadAdminCost、loadAdminFailures经observability/public出口，HTTP已真实消费；Start鉴权、页面与浏览器仍归主线PR1609。1358/1359保持InProgress，全部迁移与后续功能目标未完成。
+本树从fetch后的origin/main6c6905fad建立docs/yuk-1359-diagnostics-delivery，仅记录交付。唯一实施及R1均completed/noPending，没有活跃writer。subjects/config只有/tmp/yuk1359-w5-config-subject-next-seams.md只读调查材料，未开新实施lane。1358/1359保持InProgress；全部迁移及后续功能仍未完成。
 
-12:07:55.392504Z已核owner/token ceacc8e5释放本线程DB验收锁，临时PG退出、原四服务/release不变；之后未操作runtime。后续仍实际核锁并原子获取，不依据历史快照启动服务。无provider、paid、worker、replay、部署或私人数据操作。
+父于12:42:57Z取得隔离DB锁，exact f7b84的3文件24测试通过；12:43:53.390892Z核owner/token d642931e释放，临时容器退出、原四容器与release不变。证据/tmp/yuk1386-parent-db.log和/tmp/yuk1386-db-cleanup.json。随后未操作runtime；后续仍须实际核锁并原子获取。无provider、paid、worker、replay、部署或私人数据操作。
 
-W5源码清单与独立R1勘误完成；28路由静态覆盖不等于实际迁移退出。YUK1382未知费用显示问题已去重登记Backlog，不在本lane改UI。coverage/conjecture尚只读，精确增量路径已交主线协调；跨practice仅Db|Tx类型传递，内部Date.now生成的deadline不进入公开coverage DTO，不因此扩大时钟改造。主线已明确确认无重叠并授权该范围，1386子票已去重建立；不写主线Start/practice树。Linear1358曾实读为Done，已恢复InProgress。父基线hash见/tmp/yuk1386-parent-baseline.json。
+1386无新增actionable follow-up；Start与迁移退出已分别归1358/1359。1382未知费用UI缺陷仍Backlog，不在本lane修UI。
 
 以下为历史验收记录。
 
