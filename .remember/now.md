@@ -1,6 +1,10 @@
 # Current Start event detail lane
 
-Freshmain6212a4560 branch feat/yuk-1358-start-event-detail; carried1622 merge receipt as1f808d258. Next source-only event read/correction consumer implementation scoped in2026-10-09-yuk1358-start-event-detail.md. Authorf1e4 completed/noPending, parent23source/28log/888artifact hashes matched. Parent15DB passed after test-only raw-versus-projection correction; two14pass/1fail runs retained. Runtime lock released19:59:59.877971Z, original4/release identical. R1 task yuk1358-start-event-detail-review-r1-20261009-v1 running; realRPC/browser/PRpending. No active codewriter or runtime lock. 1394 and0117 remain7631-owned, do not touch shared DBOS/session paths.
+PR1623 branch feat/yuk-1358-start-event-detail, runtime accepted at4f36d3fc5 (productf1e4). Independent R1 fixture P1 fixed; R2 NONE/noPending, max two rounds used. Parent15DB and actual71RPC/12windows/6writes; T3 browser correction/disabled pending controls, GET-only retry, committed-response loss without autoreplay, 2001char400, real401 re-gate, bad/missing records, legacy question link and deep reload verified. Technical-details snapshot truncated, not counted. Ignored recipe had two fixed setup/seed defects with preserved failures; no product changes. Runtime archive and full report: docs/planning/2026-10-09-yuk1358-start-event-detail-parent.md.
+
+All owned Start/PG resources cleaned. Owner/token d3f35015 lock released2026-10-08T20:40:09.702920Z, exact original4/running/release equality verified and7631 notified. No current runtime lock/writer; no provider/worker/paid/deploy. Private dump stays ignored. Sealed309-file public runtime archive excludes secrets.
+
+CI37836413386 exact4f36 failed old tests/dbos-review-orphan/migration.db.test.ts DB3 then aggregate. Coordinator7631 owns test-only PG-cause diagnostics/per-case cleanup and1394 cron fixtures; do not edit shared DBOS/test paths or blindly rerun CI. Wait formal repair, integrate, then exact-head CI. PR stays draft;1358/1359 stay InProgress. Current own work is evidence/docs only; entire migration not complete.
 
 # PR1622 merge receipt
 
