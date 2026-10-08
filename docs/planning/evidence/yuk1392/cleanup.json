@@ -1,0 +1,18 @@
+{
+  "releasedAt": "2026-10-08T16:53:28.070847+00:00",
+  "owner": {
+    "threadId": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+    "issue": "YUK-1392",
+    "token": "d8d6f478-0fae-4c20-8305-287f804784f1",
+    "phase": "isolated-board-read-db",
+    "candidate": "1f012c62d09dfbebb260e75d5fc1d10f13415f03",
+    "acquiredAt": "2026-10-08T16:52:40.772995+00:00",
+    "expectedMinutes": 5
+  },
+  "originalRuntimeUnchanged": true,
+  "runningContainerCount": 4,
+  "dbExit": 0,
+  "dbTests": 22,
+  "dbFiles": 3,
+  "dbLogSha256": "14827e4a9fadcba2fdd1f4cd08d106081ee56099bed63d257a8b6c43732d0d09"
+}

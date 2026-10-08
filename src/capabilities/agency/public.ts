@@ -1,5 +1,6 @@
 // Stable server contract for consumers outside the agency capability.
 
+export { AgentNotesQuerySchema } from './api/contracts';
 // YUK-885 — conjecture evidence ports repointed from central deep imports.
 export type { CompletedProbeProposal } from './server/conjecture/completed-probe-provenance';
 export {
@@ -65,6 +66,12 @@ export {
   planLearningIntent,
 } from './server/learning-intent';
 export { misconceptionHardConfirmEnabled } from './server/misconception-promote';
+export {
+  type AgentNoteBoardDto,
+  type AgentNoteBoardQuery,
+  type AgentNoteBoardRowDto,
+  loadAgentNoteBoard,
+} from './server/note-board-read';
 export { readAgentNotes, recordQuestionPoolGap, writeAgentNote } from './server/notes';
 export type {
   CompletionAcceptResult,
