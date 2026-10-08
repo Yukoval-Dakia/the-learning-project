@@ -400,3 +400,19 @@ The main release was unchanged. Canonical boot, custom-subject hydration, releas
 SSE, all media rendering and full SPA retirement remain unverified by this run.
 No provider, worker or replay ran. The runtime evidence seal is
 [evidence/2026-10-08-yuk1352-start-runtime.json](evidence/2026-10-08-yuk1352-start-runtime.json).
+
+### Parent closeout integration (2026-10-08)
+
+Normal merge `b70823b42` integrates main `5b11f3edb`. Only PLAN/now conflicted.
+Start, web, Dockerfile and package/lock files are byte-identical to accepted
+`5346f7ad0` (same executable source as the isolated route candidate). Incoming
+practice typed due source is retained from main. Parent reran five focused
+frontdoor/auth/read/client/page files, typecheck, lint and build: all exit0.
+No runtime operation or new model call occurred. Exact-head CI remains required.
+
+| Parent log | SHA256 |
+| --- | --- |
+| `/tmp/yuk1352-closeout-unit.log` | `e2b3cbb47a59a110693fe6aeb2faf0ef62f0dd85fc7eb67009108bb140b12825` |
+| `/tmp/yuk1352-closeout-typecheck.log` | `36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6` |
+| `/tmp/yuk1352-closeout-lint.log` | `3435080431d7a03f092431164a8b8126bb75dadc5ba904dbf04a12af4a52508b` |
+| `/tmp/yuk1352-closeout-build.log` | `8ea5b2d8e8dc2e94f31b75c7eff78ad2da368487e396c1b68148f9c1dcde7044` |
