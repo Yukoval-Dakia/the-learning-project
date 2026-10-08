@@ -2,6 +2,7 @@
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, resolve } from 'node:path';
+import { buildSync } from 'esbuild';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   auditProviderLanes,
@@ -1314,6 +1315,85 @@ void [staticText, requireText, dynamicText];
         path: 'src/server/ai/embed.ts',
       },
     ]);
+  });
+
+  it('keeps a built Start duplicate outside the import closure while scanning genuine source JS', () => {
+    const root = makeFixture();
+    const beforeBuild = auditProviderLanes(root, [fixtureLane()]);
+    write(
+      root,
+      'server/frontdoor.ts',
+      "export const start = () => import('../dist/start/server/server.js');\n",
+    );
+    buildSync({
+      entryPoints: [resolve(root, 'src/server/ai/embed.ts')],
+      outfile: resolve(root, 'dist/start/server/assets/provider.js'),
+      bundle: true,
+      platform: 'node',
+      format: 'esm',
+    });
+    write(
+      root,
+      'dist/start/server/server.js',
+      "export * from './assets/provider.js';\nexport const load = (name) => import(name);\n",
+    );
+    expect(readFileSync(resolve(root, 'dist/start/server/assets/provider.js'), 'utf8')).toContain(
+      'fetch(',
+    );
+    expect(auditProviderLanes(root, [fixtureLane()])).toEqual(beforeBuild);
+    expect(collectProjectImportEdges(root)).toContainEqual(
+      expect.objectContaining({
+        path: 'server/frontdoor.ts',
+        source: '../dist/start/server/server.js',
+      }),
+    );
+    expect(collectProjectImportEdges(root).some((edge) => edge.path.startsWith('dist/'))).toBe(
+      false,
+    );
+    write(
+      root,
+      'src/server/direct.js',
+      "export const call = () => fetch('https://real-provider.example');\n",
+    );
+    write(
+      root,
+      'scripts/imported-wire.js',
+      "export const call = () => fetch('https://closure-provider.example');\n",
+    );
+    write(root, 'server/consumer.ts', "import '../scripts/imported-wire.js';\n");
+    write(
+      root,
+      'src/server/dist/real.js',
+      "export const call = () => fetch('https://nested-source.example');\n",
+    );
+    const findings = collectProviderWireFindings(root);
+    for (const path of [
+      'src/server/direct.js',
+      'scripts/imported-wire.js',
+      'src/server/dist/real.js',
+    ]) {
+      expect(findings).toContainEqual(
+        expect.objectContaining({ path, kind: 'unclassified-provider-fetch' }),
+      );
+      expect(auditProviderLanes(root, [fixtureLane()]).violations).toContainEqual(
+        expect.objectContaining({ path }),
+      );
+    }
+  });
+
+  it('fails closed on imported file and directory symlinks, including the build boundary', () => {
+    const root = makeFixture();
+    write(root, 'dist/start/server/server.js', 'export const start = 1;\n');
+    write(root, 'server/frontdoor.ts', "import '../dist/start/server/server.js';\n");
+    symlinkSync('../dist', resolve(root, 'server/artifacts'));
+    write(root, 'server/alias.ts', "import './artifacts/start/server/server.js';\n");
+    expect(() => collectProviderWireFindings(root)).toThrow('symbolic link');
+    rmSync(resolve(root, 'server/artifacts'));
+    rmSync(resolve(root, 'server/alias.ts'));
+    rmSync(resolve(root, 'dist/start/server/server.js'));
+    write(root, 'dist/start/server/target.js', 'export const start = 1;\n');
+    symlinkSync('target.js', resolve(root, 'dist/start/server/server.js'));
+    expect(() => collectProviderWireFindings(root)).toThrow('symbolic link');
   });
 
   it('fails closed when a source tree contains a symbolic link', () => {
