@@ -66,6 +66,21 @@ export {
 } from './server/ai-observability';
 export { observabilityConfigEffectiveFacts } from './server/config-effective-facts';
 export {
+  type ConjecturePredictionScoreRow,
+  type ConjectureScanDiagnostics,
+  type ConjectureScoresRead,
+  type ConjectureTypedStateRow,
+  loadConjectureScores,
+} from './server/conjecture-scores';
+export {
+  type CoverageLatticeRead,
+  type GapActivity,
+  type KcCoverageRow,
+  type LatticeGap,
+  type SubjectCoverage,
+  loadCoverageLattice,
+} from './server/coverage-lattice';
+export {
   type EventCorrectionInput,
   type EventCorrectionResult,
   type EventDetail,
