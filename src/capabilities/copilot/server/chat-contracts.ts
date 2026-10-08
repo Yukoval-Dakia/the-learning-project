@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ReviewAnswerAttachmentSchema } from '@/kernel/tools/review-answer';
 
 export const COPILOT_CHAT_TRIGGER_KINDS = ['chat', 'chip'] as const;
 export type CopilotChatTriggerKind = (typeof COPILOT_CHAT_TRIGGER_KINDS)[number];
@@ -91,9 +92,22 @@ export const CopilotChatRequest = z
       })
       .optional(),
     durable: z.boolean().optional(),
+    review_answer: ReviewAnswerAttachmentSchema.optional(),
     correction_target_turn_id: z.string().min(1).max(160).optional(),
   })
   .superRefine((request, ctx) => {
+    if (
+      request.review_answer &&
+      (request.triggered_by !== 'chat' ||
+        request.skill_context ||
+        request.correction_target_turn_id)
+    ) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['review_answer'],
+        message: 'review_answer requires an ordinary chat turn',
+      });
+    }
     if (
       request.correction_target_turn_id !== undefined &&
       request.skill_context?.skill === 'teaching'

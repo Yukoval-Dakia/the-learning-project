@@ -7,6 +7,12 @@ export {
   activeEffectiveTruth,
   getEffectiveTruths,
 } from '@/kernel/events';
+export {
+  type BoundReviewAnswer,
+  BoundReviewAnswerSchema,
+  type ReviewAnswerAttachment,
+  ReviewAnswerAttachmentSchema,
+} from '@/kernel/tools/review-answer';
 export type { QuizGenJobData } from './jobs/quiz_gen';
 export { runSourceVerify } from './jobs/source_verify';
 // YUK-1057 — 隔离演练的 post-cutover writer seam：发题/草稿/提交统一经
@@ -43,6 +49,7 @@ export {
   runSolveCheck,
   runTeachingQualityCheck,
 } from './server/quiz/verify-framework';
+export { captureReviewAnswerBinding, consumeReviewAnswerBinding } from './server/review-operation';
 export {
   SolveError,
   buildSolveHintInput,
@@ -57,6 +64,7 @@ export const handleReviewDue: HandleReviewDue = async (...args) => {
   return dueList.handleReviewDue(...args);
 };
 
+export { type CreateAttemptBody, CreateAttemptBodySchema } from './api/contracts';
 // YUK-1064 — explicit operations used by scripts and integration consumers.
 export type { FailureLearningBossSend } from './jobs/failure-learning-jobs';
 export {
@@ -64,6 +72,10 @@ export {
   previewFormalAttempt,
   recordFormalAttemptCapture,
 } from './server/assessment/attempt';
+export type {
+  NativeAttemptDispatchOptions,
+  NativeAttemptDispatchPort,
+} from './server/assessment/native-attempt-dispatch-port';
 export type { CollectedSignal } from './server/candidate-signals';
 export { CAUSE_OVERLAY_ID_PREFIX, getCauseCategoryOverlaysByIds } from './server/cause-overlay';
 export type {
@@ -310,6 +322,7 @@ export {
   seedRoutePreference,
   targetFingerprint,
 } from './server/question-supply/target-discovery';
+export type { ReviewAnswerContext, ReviewAnswerResult } from './server/review-operation';
 export {
   MEM0_PRIOR_BLOCK_CHAR_CAP,
   MEM0_PRIOR_CAP,
@@ -322,3 +335,5 @@ export { executeGetReviewDue } from './server/tools/question-context';
 export { storeSourcedQuestionTool } from './server/tools/store-sourced-question';
 // YUK-1062 — task composition uses the narrow task-public entry directly.
 export { practiceTaskSpecs } from './task-public';
+export const submitReviewAnswer: typeof import('./server/review-operation').submitReviewAnswer =
+  async (...args) => (await import('./server/review-operation')).submitReviewAnswer(...args);

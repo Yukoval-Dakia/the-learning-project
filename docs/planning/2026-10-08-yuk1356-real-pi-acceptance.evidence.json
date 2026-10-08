@@ -1,0 +1,185 @@
+{
+  "candidate": "4cccb1a628ce8d1c47a7a4096da1008e6849bada",
+  "ci_run": 37768767757,
+  "provider": "opencode-go",
+  "model": "mimo-v2.6-pro",
+  "adapter": "pi",
+  "task_run_id": "yuk1356_root_cae13940-054a-4d82-9cda-a262a921027a",
+  "parent_conclusion": "bounded synthetic behavior accepted after offline correction of HTTP replay status assertion",
+  "original_terminal": {
+    "status": "failed-or-unknown",
+    "stage": "offline-replay",
+    "failure_stage": "offline-replay",
+    "root_invocations": 1,
+    "failure": {
+      "name": "AssertionError",
+      "code": "ERR_ASSERTION",
+      "message": "Expected values to be strictly equal:\n\n201 !== 200\n"
+    },
+    "cleanup": [],
+    "interruptions": [],
+    "cost_proof_requires_cost_truth_json": true,
+    "worker_pickup": "not exercised",
+    "deployed": false,
+    "ended_at": "2026-10-08T11:29:04.678Z"
+  },
+  "adjudication": {
+    "expected_http_status": 201,
+    "script_expected_in_error": 200,
+    "source": "src/capabilities/practice/api/submit.ts createAttemptResource outcome=created",
+    "all_19_captured_relations_unchanged_after_replay": true,
+    "no_second_paid_call": true,
+    "script_failure_preserved": true
+  },
+  "checks": {
+    "real_registered_domain_tool": {
+      "id": "iw5q2lten3ooc005cwqoca7a",
+      "task_run_id": "yuk1356_root_cae13940-054a-4d82-9cda-a262a921027a",
+      "task_kind": "CopilotTask",
+      "tool_name": "submit_review_answer",
+      "input_json": {
+        "original_ref": "copilot_user_ask_108aaadd05b7130021ab6cfb511eb416d27d746aa064aaf565509782433f9437"
+      },
+      "output_json": {
+        "kind": "committed",
+        "status": "effective",
+        "attempt_id": "evt_assessment_sub_iax6bnvw8e4olpwkl2ouqsoc",
+        "candidate_id": "eva_2412793bf5d284c2857790fdb879191ce073a01853589be7",
+        "submission_id": "sub_iax6bnvw8e4olpwkl2ouqsoc"
+      },
+      "iteration": 0,
+      "latency_ms": 95,
+      "cost": 0,
+      "occurred_at": "2026-10-08T11:28:52.731+00:00",
+      "effect": "write",
+      "error_reason": null,
+      "mirrored_event_id": "tool_use_x1jc54bbwkaqdu92c5nrcty3"
+    },
+    "root_success": true,
+    "unchanged_original": true,
+    "completed_evaluation": 1,
+    "activation": 1,
+    "mastery_rows": 0,
+    "fsrs_rows": 0,
+    "unknown_assistance_preserved": true,
+    "deterministic_grading_provider_refs": [],
+    "negative_guards": {
+      "unauthenticated": 401,
+      "missing_permission": 400,
+      "unbound": "review_answer_unbound",
+      "expired": "review_authorization_expired",
+      "effects_unchanged": true,
+      "provider_calls": 0
+    }
+  },
+  "cost": {
+    "usd": 0.002818771,
+    "basis": "estimated",
+    "ref": "pi-catalog:opencode-go/mimo-v2.6-pro",
+    "usage": {
+      "inputTokens": 11635,
+      "outputTokens": 215,
+      "thinkingBlocks": 2,
+      "thinkingCharacters": 136
+    },
+    "reserve_usd": 1,
+    "provider_wire_or_invoice_proof": false,
+    "provider_attempt_rows": 0
+  },
+  "bounds": {
+    "root_invocations": 1,
+    "max_pi_turns": 2,
+    "deadline_ms": 90000,
+    "automatic_retries": 0
+  },
+  "limits": [
+    "in-process real Hono token/epoch HTTP request adapter; no TCP/browser UI acceptance",
+    "domain mount constrained to registered submit tool via original execution-owner seam",
+    "no worker pickup/redelivery, DBOS judge-family cutover or deployment",
+    "synthetic official-admission fixture does not prove official content quality",
+    "catalog cost estimate is not invoice; no transport dollar ceiling"
+  ],
+  "evidence_root": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1356-review-operation/.cache/yuk1356-real-pi/evidence/4cccb1a628ce8d1c47a7a4096da1008e6849bada-local-preflight-repair-3",
+  "evidence_sha256": {
+    "ATTEMPT_STARTED.json": "9fc4dac324f177f7daa996fc29bbc04ffa19e107d21e4e08178c5b1dc10b50f2",
+    "after-provider-rows.json": "6f957e5ae1898e8b11407001a3bd8fe1fed91464c4373c654399c0b8f5d90d1c",
+    "before-provider-rows.json": "c37f0fdba0bb5d2f472179e9dc73dfcdf050302c4c2ba657499b895e9135443c",
+    "chat-acceptance.json": "4065733e79547e40cdc2738e867d12cda9d7d8cf3ba7bd6a6ba25281269eb002",
+    "cost-truth.json": "8c902571826a3ce0921002915d1c908f527cda4f1449d84150b2675b5ebe026c",
+    "docker-version.txt": "b35573325ffc8ed4f12d23b18375f6d011fcdba3a0b5e1e23d8a56be7a08cd8e",
+    "execution-owner-result.json": "b8e12ef36392e8a5cf9fde412bc2cfbf0422e6475c43246e7fb318e2bcc150df",
+    "failure.json": "2e60773b023efe59297bec4b1bf71c5c3c53fbef4adb87e73dcd9bcea04524e2",
+    "final-db-rows.json": "6f957e5ae1898e8b11407001a3bd8fe1fed91464c4373c654399c0b8f5d90d1c",
+    "image.json": "962e6d4c9fc31e4b7732bb71b29e28a89edad5546347d8e87758bed1ce94adae",
+    "immutable-original.json": "e0ff2c1bc57ff3d5b42be2f23b7fe25ffb3055a6899a450fe07e22760366287f",
+    "model-deltas.redacted.txt": "cf158ed9370b852a844aee79ffb149b429f2446f739912962aff141bde973f56",
+    "negative-guards.json": "f0f28b9195af40bf686baaaa7529edcfa93b48d7c32ec8c5c5d59c63d205f80f",
+    "observed-tool-use.jsonl": "8c9005c798a3bb77d307fdedbae77ab393d712ef72af5d9e21e4f89427fef5e1",
+    "owned-container.json": "28e4ce8fa46bedee808e491c114a7e741aac3df15279c104a6b50db2c3e4e506",
+    "paid-preflight.json": "a354d516a44afa706aedb4f0baa7de0d3e5f07cb42d83999ecb7bc6d8b627176",
+    "production-run-input.json": "8645c1c9487d276604762158e238cadc003ed6484006d8d07a00619110845414",
+    "raw-model-output.json": "1d1ea1ea0d7fdb70927162dc88a608a9c971ee44a7e9029e290aac76c9ab5275",
+    "reservation.json": "1018df1e0d5d4a37c34f2b961dce0492478b826b9ab961a78dc188ad5732da05",
+    "source-proof.json": "31ea2cc5c9d49c71bb80c5df34e2164d446bb9981037b249e8049b0573c44ad6",
+    "submitted-input.json": "17a67729155f35be275bc43a96cf4b0e792eaa98dc92775c61c7c515ca45bf33",
+    "synthetic-db.sql": "13d4fd7c51b0df70d9b251098db649538474deb92dcc064326e565a6756f2499",
+    "terminal.json": "1e6b4457373a65021f77a31693fae38c9f9b57e9264a59b2bb33821feb740202"
+  },
+  "parent_cleanup": {
+    "released_at": "2026-10-08T11:29:22.957752+00:00",
+    "owner": {
+      "threadId": "57961995-70c3-4121-a9dd-97d90471be1a",
+      "issue": "YUK-1356",
+      "phase": "isolated-real-pi-acceptance",
+      "token": "e3edb1a8-d82a-4551-bb24-45a973a119a6",
+      "at": "2026-10-08T11:26:06.255579+00:00",
+      "expectedMinutes": 8
+    },
+    "original_containers_unchanged": true,
+    "release_unchanged": true
+  },
+  "prepayment_setup_failures": [
+    {
+      "attempt": "4cccb1a628ce8d1c47a7a4096da1008e6849bada",
+      "failure": {
+        "stage": "local-runtime-preflight",
+        "error": {
+          "name": "AssertionError",
+          "code": "ERR_ASSERTION",
+          "message": "docker failed; output intentionally withheld\n\nnull !== 0\n"
+        },
+        "result_present": false,
+        "root_invocations": 0,
+        "unknown_outcome_must_not_retry": true
+      }
+    },
+    {
+      "attempt": "4cccb1a628ce8d1c47a7a4096da1008e6849bada-local-preflight-repair-1",
+      "failure": {
+        "stage": "migrate-isolated-db",
+        "error": {
+          "name": "Error",
+          "code": "UNSAFE_TRANSACTION",
+          "message": "UNSAFE_TRANSACTION: Only use sql.begin, sql.reserved or max: 1"
+        },
+        "result_present": false,
+        "root_invocations": 0,
+        "unknown_outcome_must_not_retry": true
+      }
+    },
+    {
+      "attempt": "4cccb1a628ce8d1c47a7a4096da1008e6849bada-local-preflight-repair-2",
+      "failure": {
+        "stage": "publish-issue-synthetic-choice",
+        "error": {
+          "name": "AssertionError",
+          "code": "ERR_ASSERTION",
+          "message": "Expected values to be strictly equal:\n\n503 !== 400\n"
+        },
+        "result_present": false,
+        "root_invocations": 0,
+        "unknown_outcome_must_not_retry": true
+      }
+    }
+  ]
+}

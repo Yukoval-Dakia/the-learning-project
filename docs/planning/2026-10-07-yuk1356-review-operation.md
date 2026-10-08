@@ -1,0 +1,53 @@
+# YUK-1356 review operation delivery
+
+Current implementation handoff: [2026-10-08 trusted Pi consumer](2026-10-08-yuk1356-trusted-pi-handoff.md). The earlier missing-consumer statements and check counts below are historical. Current DB/runtime/independent acceptance remains unproven.
+
+2026-10-07. Writer scope is `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1356-review-operation`, branch `feat/yuk-1356-review-operation`. Original implementation is `b191ea714747eb468e1a55d88928a3f882470ac6`, based on `a6d89037b56f5b0c690137a1354186e0ea07e216`. This document supersedes the tool/inventory claims in the ignored `.cache/yuk1356/handoff.md`. The adjacent evidence JSON seals source and check-log SHA256 values; the original handoff and verification digests remain historical provenance.
+
+## Delivered behavior
+
+`src/capabilities/practice/server/review-operation.ts:submitReviewAnswer(database, CreateAttemptBody, ReviewAnswerContext)` owns question/placement/diagnostic admission, diagnostic claim/release, durable dispatch and synchronous formal commit. Its result is `{ kind: 'pending', run_id }` or `{ kind: 'committed', committed }`. ApiError rejection/conflict, cancellation and execution failures remain errors. Cancellation before original acceptance releases a diagnostic claim. Accepted immutable originals retain their claim on downstream failure.
+
+`api/submit.ts` parses JSON and maps the existing HTTP response. Canonical and deprecated HTTP statuses, pending headers and backfill URLs remain. `jobs/judge_run.ts` imports claim release from the operation rather than the HTTP adapter. Worker execution still uses `executeNativeAttempt` over the accepted original and the shared `commitFormalAttempt` chain. HTTP/direct replay and worker replay use the same submission and final learning effects. This does not mean the worker calls `submitReviewAnswer` again.
+
+`saveSubmission` and `commitFormalAttempt` remain the original/final learning commit owners. Solve tutor retains its dedicated `onActivated`, `Tutor.markSubmittedTx` and mistake effects. The implementation did not change assessment/attempt.ts or solve-session.ts, use YUK-1338 testing tables, or copy the PR1591/YUK1364 supporting-question fix.
+
+The public interface exports CreateAttemptBodySchema/type, submitReviewAnswer, ReviewAnswerContext/Result, queryReviewDue and ReviewDueQuery/Row. A network adapter owns authentication and parsing. Map a committed result to the existing HTTP DTO; the server-only committed object includes pinned grading context and must not be serialized wholesale.
+
+The NativeAttemptDispatchPort/Options file matches sealed YUK-1355 revision `066f427fff7dda4fbd679b92186c3fb7fdeb4573`, SHA256 `d1aee6d3602635ec15a197dc520486d169e0424fce5a587c8c226948915d92b5`. Parent integration should deduplicate the identical file. Its four arguments are database, questionId, SaveSubmissionRequest and options `{ enabled, capture, userRating?, requireUnassistedModelEvidence? }`. It derives from dispatchNativeAttempt and returns Promise<string|null>; JudgeRunEnqueueDeps is outside this port. Only null selects synchronous commit. A run id means durable acceptance even after delivery failure and never permits a synchronous recommit. No second recovery owner was added. Current judge recovery remains pg-boss.
+
+## Removed placeholder and unmet acceptance
+
+The always-rejecting `submit-review-answer` tool had outputSchema `never`, no granted caller and no live consumer. This correction removes the tool, its input/no-grant unit suite, its manifest/allowlist inventory entries and the DB case that only checked its unconditional rejection. Real operation, HTTP, worker and due-query tests remain. No model answer gains learner identity, submission permission or independent-evidence status.
+
+**The positive Pi path and positive acceptance across all three entries are not implemented.** Removing the placeholder does not cancel YUK-1356's requirement for the page/server function, Copilot and background paths to share the authorized business operation. The backend extraction is partial delivery; the server-function integration, trusted Pi original consumer and actual runtime acceptance remain parent-owned.
+
+A pointer to assessment_submission does not authorize submission. ToolContext currently supplies no server-bound original ownership/submission-permission consumer. `callerActor`, `sessionId` and `causedByEventId` do not prove permission for the referenced original. `recordFormalAttemptCapture` fixes actor_kind=user and actor_ref=self; `saveSubmission` snapshots recorded issuance help events. Neither fact proves that a model-generated answer is an independent learner answer. Absence of recorded assistance must not manufacture authority.
+
+Future Pi acceptance requires a real trusted server consumer that binds authenticated user/source, immutable learner original, issuance/revision/evaluation-group coordinates and explicit submission permission. Model arguments may select an authorized reference; they cannot provide answers or self-assert user/self/independent status. Missing, changed, cross-original, unowned, revoked or cancelled authorization must fail without learning effects. Positive replay must preserve the original bytes, idempotency and single final effect. These tests belong to that real consumer, not an always-rejecting placeholder.
+
+## Existing consumer trace and minimum integration advice
+
+This is a read-only source investigation, not live acceptance or a new subsystem design.
+
+- `src/capabilities/practice/api/assessment-route.ts:createIssuance` calls the shared issuance owner in `src/kernel/records/assessment-issuance.ts`; `api/submit.ts` accepts the learner's parsed CreateAttemptBody. Reuse their frozen coordinates and existing original/commit chain after server authentication. Issuance existence alone is not submission permission.
+- `src/capabilities/ingestion/server/assessment-capture.ts` calls `issueCapturedAssessment`, freezes image evidence and saves the extracted learner original. `issueCapturedAssessment` checks the ingestion session, draft block and block version and binds the ingestion occurrence. This is an existing source-binding example; it is an ingestion grading entry, not an authorization bypass into solo_submit. `assessment/attempt.ts` rejects an ingestion occurrence at another entry.
+- `src/capabilities/copilot/server/chat-contracts.ts:CopilotChatRequest` accepts user_message and context; it has no typed answer-attachment authorization field. `conversation-writes.ts:writeCopilotInputEvent` persists the accepted ask and causal session identity, not an assessment response-slot binding or submission permission. The inspected Copilot contract does not establish a review-original attachment consumer. User prose, an ask event or model extraction cannot substitute for one.
+- Minimum next step: add the source/permission binding at the existing authenticated review or chat adapter that actually receives the user's original, then pass the validated original to submitReviewAnswer through a server-owned context. Reuse the existing capture/issuance owners and assistance evidence. Do not create a parallel capture table, duplicate writer, permanent bypass flag or fabricated actor. If chat has no real user-original binding, leave Pi submission absent until that consumer exists.
+
+## Due query and compatibility exits
+
+queryReviewDue is the typed actionable HTTP queue. It retains kind rotation, FSRS eligibility, never-reviewed-first order, subject round-robin and set-preserving goal soft ordering. Pi executeGetReviewDue remains a distinct typed diagnostic query with knowledgeIds filtering, future projections/coverage, queue assertions and unknown-zero claims. Their candidate selections differ; shared failure readers and eligibility predicates remain shared.
+
+- Keep api/submit.ts while canonical /api/attempts, deprecated /api/review/submit and existing practice UI clients consume it. YUK-1352/P6 own migration; delete only after consumers move and status/error/pending mapping passes. The adapter is not a parallel domain writer.
+- Keep due-list.ts:handleReviewDue and the public lazy handler while /api/review/due or internal callers consume them. Move callers to queryReviewDue/the new front door, verify equivalent ordering/limit/error behavior, then delete the wrapper.
+- YUK-1355 owns transport migration, drain, restart and recovery evidence. This lane makes no DBOS migration or process-restart acceptance claim. Integration of the identical dispatch port remains parent-owned.
+- No endpoint contract changed in this correction. Front-door/Postman changes remain outside this writer scope; the parent runs their gate with front-door integration.
+
+## Verification and handoff
+
+The original sealed local run reported 31 unit tests in 3 files and 171 DB tests in 15 files, plus 29 worker/durable tests in a separate run. Those historical counts include the removed placeholder tests and are not current acceptance. Original typecheck, lint, build, capability/agent-control-plane/API/draft/schema/partition checks passed. Historical lint reported 296 warnings with a 305-warning baseline. The first issuance fixture and formatting failures were repaired before the sealed final logs.
+
+The correction's current scoped unit/DB and typecheck/lint/build results, commands, source hashes and log digests are recorded in the adjacent evidence JSON. DB checks use disposable Testcontainers against real business tables and offline judge substitutes. They cover deterministic commit, direct/HTTP identity replay, pending/background replay, changed-original conflict, stale effective-head rejection, durable postcommit delivery failure, cancellation/claim release, due-query semantics, immutable submission persistence and worker behavior. No full pnpm test, application runtime, paid provider, push, PR, watch, merge or delegation is part of this lane.
+
+Independent review, exact-head CI, server-function/Pi positive acceptance, real provider actual output and DBOS/runtime recovery are not proven by these local checks. YUK-1356 remains In Progress. Its live issue already tracks the three-entry integration and trusted learner-original constraint; this correction does not require a duplicate follow-up issue. Parent owns global PLAN/.remember/Linear coordination; this writer only seals this versioned handoff and evidence. The 1352/1355/1364 file trees remain untouched. Writer ownership ends with the submitted correction commit and final handoff.
