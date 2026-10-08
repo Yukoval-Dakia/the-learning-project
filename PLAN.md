@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：五个Start管理只读页源码2d5ec84ef已交回，父25源码/8日志/836制品hash全部匹配；R1只读运行。正常合入1389/main0b925feaa，父DB与整合检查待，未部署。
+> Linear 是权威 tracker。2026-10-08：Start五管理读源码2d5，整合main0b925/修fixture1f898；父332unit/8协议/static/build、48既有DB及新增2DB通过。原R1中断后接续，built RPC/browser待；未部署，无锁。
 
 ## NOW
 
-- **YUK-1358 / Start管理只读页**：feat/yuk-1358-start-admin-reads接runs/detail、cost、failures、coverage、conjectures五路由原页面。235作者unit/8协议/static/build通过；真实DB/RPC/browser与独立R1仍待。父负责集成，7631独占1390 subject-control，配置Start尚未接。
+- **YUK-1358 / Start管理只读页**：feat/yuk-1358-start-admin-reads接runs/detail、cost、failures、coverage、conjectures五路由原页面。父332unit/8协议/static/build与48+2DB通过；真实built RPC/browser与独立R1仍待。父负责集成，7631独占1390 subject-control，配置Start尚未接。
 - **YUK-1389 / 已合入**：PR1614合main0b925feaa，exact e1f385f5e CI37786605158绿、R1 NONE、tree一致；176unit与父48DB。公共config builder/schema/既有注入writer操作已共享，Start canonical注入仍待，未部署。
 - **YUK-1358 / Today与Inbox已合入**：PR1609/main7682618与exact d19bd52 tree一致，CI37784537687绿、R2 NONE。73父DB/497unit/7协议及分revision的RPC/browser证据保留。父票保持In Progress，完整迁移未完成。
 

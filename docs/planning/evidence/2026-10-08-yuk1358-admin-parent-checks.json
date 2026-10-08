@@ -1,0 +1,73 @@
+{
+  "revision": "1f898bfb4971864648c1f8f278b40237fed13c13",
+  "implementation": "2d5ec84ef522da3587eb5beb79dae0ef8885c48f",
+  "main": "0b925feaaf9a7d79c2236835990122958fab5689",
+  "parentChecks": {
+    "unit": 332,
+    "protocol": 8,
+    "typecheck": 0,
+    "lint": 0,
+    "build": 0,
+    "dbInitial": {
+      "passed": 48,
+      "failed": 2
+    },
+    "dbFixtureRepair": {
+      "passed": 2,
+      "failed": 0
+    }
+  },
+  "review": "R1 cancelled without verdict; original round resumed as yuk1358-start-admin-review-r1-resume-20261008-v2",
+  "runtime": "isolated DB only; built RPC/browser pending; not deployed",
+  "incident": "OrbStack stopped on signal14:03:51Z,shutdown14:03:58Z,caller unknown. After orbctl status/list/doctor diagnostics engine booted14:28:33Z; no explicit start/restart command, diagnostic autostart possible. Four existing containers restarted; no rebuild/config change, release unchanged. Green DB comparison uses new postrestart snapshot.",
+  "artifacts": [
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1358-admin-1f898bfb4/evidence/yuk1358-admin-parent-before.json",
+      "sha256": "30ee8c87b00004328b40d440e5480868666189e8e559fd9d3af4a5f6f286f335"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1358-admin-1f898bfb4/evidence/yuk1358-admin-parent-db.log",
+      "sha256": "100e31e816118cc37713838548ad8f8d3b8d0459573246ed9f2216432c71561f"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1358-admin-1f898bfb4/evidence/yuk1358-admin-parent-lock-release.json",
+      "sha256": "5eab623f58f3d92365f6650d2f823d8e78a771a28053d11ddbeb0f19141d71a5"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1358-admin-1f898bfb4/evidence/yuk1358-admin-green-before.json",
+      "sha256": "72c744f0636a8abcfb27efa390ceb5dbb642ff82c27067defa511969f9e058a6"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1358-admin-1f898bfb4/evidence/yuk1358-admin-green-db.log",
+      "sha256": "995bdb806c9ec69ff859180b9cb9e4138632a4bf0c794d1c12f75769b0c187a3"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1358-admin-1f898bfb4/evidence/yuk1358-admin-green-lock-release.json",
+      "sha256": "aa84bbbcdb00f39139eb24b6458eab7eec8b6e3f75be79e7b8b62c4203b1e69d"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1358-admin-1f898bfb4/evidence/yuk1358-admin-integrated-lint.log",
+      "sha256": "e3ac78ca1674edf39b6a059f1890b2d14f1ae016c2a1d1600e140050f28399f0"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1358-admin-1f898bfb4/evidence/yuk1358-admin-integrated-typecheck.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1358-admin-1f898bfb4/evidence/yuk1358-admin-integrated-unit.log",
+      "sha256": "c4062a4734600eb6f0d63124b9c631b11159acd2a3c1bf619d8f33a4235c3712"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1358-admin-1f898bfb4/evidence/yuk1358-admin-integrated-protocol.log",
+      "sha256": "5b5d43d61702aee764268c26fa078a61e1f7a62ecef5666f6e09bc6807bebd24"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1358-admin-1f898bfb4/evidence/yuk1358-admin-integrated-build.log",
+      "sha256": "45b7a0a41059a90c02fb0e7ab5dc2e22db3f0fb281c340c4ca96f3aebe635358"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1358-admin-1f898bfb4/evidence/yuk1358-admin-integrated-checks.json",
+      "sha256": "07b374ab4e6fc8fa91fed79eb0ea62bb74d937dff3d9ecec63dfec0cf3507e07"
+    }
+  ]
+}

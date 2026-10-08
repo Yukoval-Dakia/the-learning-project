@@ -1,3 +1,7 @@
+# Current Start admin acceptance — 2026-10-08
+
+Candidate1f898bfb4 = source2d5 + main0b925 integration773 + one-line cost_ref DB fixture repair. Parent332unit/8protocol/typecheck/lint/build all0. First DB48pass/2fixturefails retained; fixednew2DBpass. Initial R1 cancelled/noPending withoutverdict; sameR1 resumed task yuk1358-start-admin-review-r1-resume-20261008-v2 (mcp49eafe5d-44e1-4ad4-99e9-d8ea36771da2),notR2. BuiltRPC/browser stillpending, no deployment. Lock released14:29:57.323Z; original4 unchanged relative postrestart14:29 snapshot. OrbStacksignalshutdown14:03 thenboot14:28 afterdiagnosticcommands recorded; senderunknown,possible orbctl diagnostic autostart; no explicitstart/restart issued.1390 writer7631 separatepublic/domain scope.
+
 # Active Start admin integration — 2026-10-08
 
 Source2d5ec84ef completed/released. Parent verified25source/8log/836built hashes; R1 task yuk1358-start-admin-review-r1-20261008-v1 running read-only on fixed diff ea0e3813f..2d5ec84ef. Integrating origin/main0b925feaa (1389) with only PLAN/now conflicts; both histories retained. Parent DB/built acceptance and integrated checks pending. No deployment. 7631 owns1390 subject-control, no overlapping writer. Product generation remains MiMo; development uses AGENTS models.

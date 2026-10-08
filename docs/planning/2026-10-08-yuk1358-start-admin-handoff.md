@@ -193,3 +193,11 @@ duplicate issue. Configuration/settings/subjects/writers remain HTTP and outside
 this lane. Full route validation is still required before legacy deletion;
 this source slice does not retire the old SPA or close all YUK-1358/YUK-1359 work.
 Writer releases ownership after the task-owned source/tests/handoff commit.
+
+## Parent integration and first DB acceptance
+
+Main0b925feaa integrated as773066d30; only PLAN/now conflicted. Product admin source is unchanged from2d5ec84ef. Parent independently matched25 source,8 logs and836 initial build hashes. Integrated Node24 checks passed332 unit,8 actual serializer protocol tests,typecheck,lint and full build.
+
+First isolated DB run passed48 existing domain tests and failed both new reader cases during seed: an unknown attempt ledger lacked mandatory cost_ref. The fixture-only1f898bfb4 supplies the existing unpriced provenance reference, preserving null cost. Both new cases then passed in a fresh container, including all-public-table digests,uncommitted Tx isolation,HTTP parity and rollback. No schema/business constraint changed. Original failed logs remain. Parent released both runtime locks after cleanup; the second compared against a new post-OrbStack-restart baseline. The engine shutdown/start observations and exact artifacts are in [parent receipt](evidence/2026-10-08-yuk1358-admin-parent-checks.json).
+
+Independent R1 was cancelled before a verdict and resumed under a distinct task for the same initial review. No completed review or built RPC/browser/deployment acceptance is claimed yet.
