@@ -1,3 +1,4 @@
+import { WorkbenchClientProvider, httpWorkbenchClient } from './workbench-client';
 // @vitest-environment jsdom
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -280,5 +281,49 @@ describe('InboxPage progressive decision loading', () => {
       true,
     );
     expect(archiveCard.getByRole('button', { name: '保留关系' })).toBeTruthy();
+  });
+});
+
+describe('Inbox Start client injection', () => {
+  it('keeps progressive decisions actionable through the injected command and retained diagnostics', async () => {
+    const continuation = deferred<ProposalPageWire>();
+    const list = vi.fn((cursor: string | null | undefined) =>
+      cursor
+        ? continuation.promise
+        : Promise.resolve(page([proposal('start_1', 'Start 中保持原卡片')], 'next-start')),
+    );
+    const decide = vi.fn(async () => ({ ok: true }));
+    const preview = vi.fn(async () => page([], null));
+    const digest = vi.fn(async () => ({
+      rows: [],
+      breaker: { tripped: false, level: 'ok', applied: 0, cap: 20, window: 3_600_000 },
+    }));
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+    render(
+      <QueryClientProvider client={qc}>
+        <WorkbenchClientProvider
+          value={{
+            ...httpWorkbenchClient,
+            listDecisionProposalPage: list,
+            listObservationProposalPreview: preview,
+            listAutoApplied: digest,
+            decideProposal: decide,
+          }}
+        >
+          <InboxPage navigate={() => {}} />
+        </WorkbenchClientProvider>
+      </QueryClientProvider>,
+    );
+    await screen.findByText('Start 中保持原卡片');
+    expect(screen.getByText(/正在继续加载待裁决提议；已显示 1 条，可以先处理/)).toBeTruthy();
+    await userEvent.setup().click(screen.getByRole('button', { name: '接受' }));
+    expect(await screen.findByText('已接受')).toBeTruthy();
+    expect(decide).toHaveBeenCalledWith('start_1', 'accept', {});
+    expect(list.mock.calls.map(([cursor]) => cursor)).toEqual([null, 'next-start']);
+    expect(mocks.listDecisionProposalPage).not.toHaveBeenCalled();
+    expect(mocks.decideProposal).not.toHaveBeenCalled();
+    continuation.resolve(page([proposal('start_2', 'Start 的第二页')], null));
+    expect(await screen.findByText('Start 的第二页')).toBeTruthy();
+    expect(screen.getByText('已接受')).toBeTruthy();
   });
 });

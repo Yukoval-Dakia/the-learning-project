@@ -9,19 +9,37 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
+import { Route as IndexRouteImport } from './routes/index'
 import { Route as SplatRouteImport } from './routes/$'
+import { Route as InboxRouteImport } from './routes/inbox'
 import { Route as MistakesRouteImport } from './routes/mistakes'
+import { Route as TodayRouteImport } from './routes/today'
 import { Route as BuildSplatRouteImport } from './routes/[_]build.$'
 import { Route as ApiSplatRouteImport } from './routes/api.$'
 
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const SplatRoute = SplatRouteImport.update({
   id: '/$',
   path: '/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const InboxRoute = InboxRouteImport.update({
+  id: '/inbox',
+  path: '/inbox',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const MistakesRoute = MistakesRouteImport.update({
   id: '/mistakes',
   path: '/mistakes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TodayRoute = TodayRouteImport.update({
+  id: '/today',
+  path: '/today',
   getParentRoute: () => rootRouteImport,
 } as any)
 const BuildSplatRoute = BuildSplatRouteImport.update({
@@ -36,41 +54,69 @@ const ApiSplatRoute = ApiSplatRouteImport.update({
 } as any)
 
 export interface FileRoutesByFullPath {
+  '/': typeof IndexRoute
   '/$': typeof SplatRoute
+  '/inbox': typeof InboxRoute
   '/mistakes': typeof MistakesRoute
+  '/today': typeof TodayRoute
   '/_build/$': typeof BuildSplatRoute
   '/api/$': typeof ApiSplatRoute
 }
 export interface FileRoutesByTo {
+  '/': typeof IndexRoute
   '/$': typeof SplatRoute
+  '/inbox': typeof InboxRoute
   '/mistakes': typeof MistakesRoute
+  '/today': typeof TodayRoute
   '/_build/$': typeof BuildSplatRoute
   '/api/$': typeof ApiSplatRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
+  '/': typeof IndexRoute
   '/$': typeof SplatRoute
+  '/inbox': typeof InboxRoute
   '/mistakes': typeof MistakesRoute
+  '/today': typeof TodayRoute
   '/_build/$': typeof BuildSplatRoute
   '/api/$': typeof ApiSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/$' | '/mistakes' | '/_build/$' | '/api/$'
+  fullPaths:
+    '/' | '/$' | '/inbox' | '/mistakes' | '/today' | '/_build/$' | '/api/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/$' | '/mistakes' | '/_build/$' | '/api/$'
-  id: '__root__' | '/$' | '/mistakes' | '/_build/$' | '/api/$'
+  to: '/' | '/$' | '/inbox' | '/mistakes' | '/today' | '/_build/$' | '/api/$'
+  id:
+    | '__root__'
+    | '/'
+    | '/$'
+    | '/inbox'
+    | '/mistakes'
+    | '/today'
+    | '/_build/$'
+    | '/api/$'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
+  IndexRoute: typeof IndexRoute
   SplatRoute: typeof SplatRoute
+  InboxRoute: typeof InboxRoute
   MistakesRoute: typeof MistakesRoute
+  TodayRoute: typeof TodayRoute
   BuildSplatRoute: typeof BuildSplatRoute
   ApiSplatRoute: typeof ApiSplatRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/$': {
       id: '/$'
       path: '/$'
@@ -78,11 +124,25 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/inbox': {
+      id: '/inbox'
+      path: '/inbox'
+      fullPath: '/inbox'
+      preLoaderRoute: typeof InboxRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/mistakes': {
       id: '/mistakes'
       path: '/mistakes'
       fullPath: '/mistakes'
       preLoaderRoute: typeof MistakesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/today': {
+      id: '/today'
+      path: '/today'
+      fullPath: '/today'
+      preLoaderRoute: typeof TodayRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/_build/$': {
@@ -103,8 +163,11 @@ declare module '@tanstack/react-router' {
 }
 
 const rootRouteChildren: RootRouteChildren = {
+  IndexRoute: IndexRoute,
   SplatRoute: SplatRoute,
+  InboxRoute: InboxRoute,
   MistakesRoute: MistakesRoute,
+  TodayRoute: TodayRoute,
   BuildSplatRoute: BuildSplatRoute,
   ApiSplatRoute: ApiSplatRoute,
 }

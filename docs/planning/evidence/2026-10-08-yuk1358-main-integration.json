@@ -1,0 +1,228 @@
+{
+  "source": "babac8e08f121c3b2c6bf4bb5c9389e8508fa79b",
+  "integrated_main": "a3691f572579289d33448be6ecd5dfaa795cb17b",
+  "source_review": "R2 NONE at053e9b511; main changed95 files disjoint from slice",
+  "checks": [
+    {
+      "name": "unit",
+      "command": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "server/start/auth.unit.test.ts",
+        "server/start/mistakes-client.unit.test.ts",
+        "server/start/mistakes-read.unit.test.ts",
+        "server/start/workbench-client.unit.test.ts",
+        "server/start/workbench-read.unit.test.ts",
+        "src/capabilities/shell/ui/CoachHub.a11y.unit.test.tsx",
+        "src/capabilities/shell/ui/CoachHub.kpi.unit.test.tsx",
+        "src/capabilities/shell/ui/InboxPage.progressive.unit.test.tsx",
+        "src/capabilities/shell/ui/InboxPage.state.unit.test.ts",
+        "src/capabilities/shell/ui/OvernightCostSummary.unit.test.tsx",
+        "src/capabilities/shell/ui/PrepDeskConjectures.interaction.unit.test.tsx",
+        "src/capabilities/shell/ui/PrepDeskConjectures.unit.test.tsx",
+        "src/capabilities/shell/ui/ProbeAnswers.a11y.unit.test.tsx",
+        "src/capabilities/shell/ui/ProbeAnswers.interaction.unit.test.tsx",
+        "src/capabilities/shell/ui/ProbeAnswers.unit.test.tsx",
+        "src/capabilities/shell/ui/ProposalCard.block-merge.unit.test.tsx",
+        "src/capabilities/shell/ui/ProposalCard.evidence.unit.test.tsx",
+        "src/capabilities/shell/ui/ProposalCard.image-candidate.unit.test.tsx",
+        "src/capabilities/shell/ui/ProposalCard.learning-plan.unit.test.ts",
+        "src/capabilities/shell/ui/TeachingBrief.interaction.unit.test.tsx",
+        "src/capabilities/shell/ui/TeachingBrief.unit.test.ts",
+        "src/capabilities/shell/ui/TeachingBrief.unit.test.tsx",
+        "src/capabilities/shell/ui/TodayPage.learner-copy.unit.test.ts",
+        "src/capabilities/shell/ui/TodayPage.overnight-band.unit.test.tsx",
+        "src/capabilities/shell/ui/blocks/AiChangesStrip.interaction.unit.test.tsx",
+        "src/capabilities/shell/ui/blocks/KpiRow.interaction.unit.test.tsx",
+        "src/capabilities/shell/ui/blocks/ProfileBand.unit.test.tsx",
+        "src/capabilities/shell/ui/blocks/ProposalStrip.unit.test.tsx",
+        "src/capabilities/shell/ui/blocks/SessionsStrip.interaction.unit.test.tsx",
+        "src/capabilities/shell/ui/blocks/WeekHeat.a11y.unit.test.tsx",
+        "src/capabilities/shell/ui/calibration-view.unit.test.ts",
+        "src/capabilities/shell/ui/coach-hub-view.unit.test.ts",
+        "src/capabilities/shell/ui/coach-weekly.unit.test.ts",
+        "src/capabilities/shell/ui/effectiveness-trend-view.unit.test.ts",
+        "src/capabilities/shell/ui/inbox-api.unit.test.ts",
+        "src/capabilities/shell/ui/inbox-meta.unit.test.ts",
+        "src/capabilities/shell/ui/inbox-tier.unit.test.ts",
+        "src/capabilities/shell/ui/teaching-brief-interaction-api.unit.test.ts",
+        "web/src/routes/MistakesPage.start.unit.test.tsx",
+        "web/src/routes/WorkbenchPages.start.unit.test.tsx"
+      ],
+      "start": "2026-10-08T11:59:38.210474+00:00",
+      "exit": 0,
+      "log": "/tmp/yuk1358-main-integration/unit.log",
+      "sha256": "2a0b4140a8a05a0a00ebd369d78ad54b0f226fc6ec7373b9be0aa29118c68383"
+    },
+    {
+      "name": "typecheck",
+      "command": ["pnpm", "typecheck"],
+      "start": "2026-10-08T11:59:45.727997+00:00",
+      "exit": 0,
+      "log": "/tmp/yuk1358-main-integration/typecheck.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "name": "lint",
+      "command": ["pnpm", "lint"],
+      "start": "2026-10-08T11:59:59.586299+00:00",
+      "exit": 0,
+      "log": "/tmp/yuk1358-main-integration/lint.log",
+      "sha256": "faf13083309ab3edf98c9783c96e38b45dd5742e02b527b5e569149b3c8b0ab1"
+    },
+    {
+      "name": "build",
+      "command": ["pnpm", "build"],
+      "start": "2026-10-08T12:00:03.055320+00:00",
+      "exit": 0,
+      "log": "/tmp/yuk1358-main-integration/build.log",
+      "sha256": "7433154def5c6e23a440de6460873443204d3e40ae42daf22d912758c4187f47"
+    }
+  ],
+  "unit": {
+    "files": 40,
+    "passed": 329
+  },
+  "prior_db": {
+    "revision": "053e9b511",
+    "passed": 53,
+    "receipt": "2026-10-08-yuk1358-parent-db.json",
+    "not_new_revision_runtime": true
+  },
+  "source_files": [
+    {
+      "path": "server/start/authenticated-fetch.ts",
+      "sha256": "4cd3054636ef1aef998a04dacaf775c40794f41f6c70af0ed78bd240c0e20fd4"
+    },
+    {
+      "path": "server/start/mistakes-client.ts",
+      "sha256": "19c88c2f3a38ffe070e913b5a0f57638e4059a7a8cd4bdc0b635ad3a66c25915"
+    },
+    {
+      "path": "server/start/routeTree.gen.ts",
+      "sha256": "7c02338a59cb9dcc3592d871b8aa5de5de0004c8fc346d712ff2b6b8f7dc6b90"
+    },
+    {
+      "path": "server/start/routes/inbox.tsx",
+      "sha256": "d33bc02db5c385c43c84bc8ccef2639741554e377850e56f6b6c6d213d3b40df"
+    },
+    {
+      "path": "server/start/routes/index.tsx",
+      "sha256": "b1f15eb367fa611c429ed9844ccd3ec8db9f092d542d012ca4c2f8c9073d1913"
+    },
+    {
+      "path": "server/start/routes/mistakes.tsx",
+      "sha256": "d9657cbc3316663915a4d49240e94b6580a437851d421083d4200f379d964c02"
+    },
+    {
+      "path": "server/start/routes/today.tsx",
+      "sha256": "b7bb06e99f0bdac0d91a9177da347deb8c674ad5371099996ce8fc9f2a58593e"
+    },
+    {
+      "path": "server/start/workbench-client.ts",
+      "sha256": "d18416a7b408c1e1bcf0111eb595489665a5580bc5b1699371bbc40b9576388e"
+    },
+    {
+      "path": "server/start/workbench-client.unit.test.ts",
+      "sha256": "6a4a0a898a2db487699f9a29abbadb1098c95550c91821c4273fd5195020cb5b"
+    },
+    {
+      "path": "server/start/workbench-function.ts",
+      "sha256": "bf85b772cf2e3e63128eb87acec4f06265ed4ed7bc719e02f372ae6244c3ff9d"
+    },
+    {
+      "path": "server/start/workbench-read.ts",
+      "sha256": "62788f75789bc5bf8e9a7db2ce06bf98b79dd50eade7c019fb230ba1a0207b06"
+    },
+    {
+      "path": "server/start/workbench-read.unit.test.ts",
+      "sha256": "6b2fefb1813d9d73a9c5844dab880b01ef462850e292a5cbde7a313cc2432a2a"
+    },
+    {
+      "path": "server/start/workbench-reader.db.test.ts",
+      "sha256": "a1ab499b897f18a1d864a5fe7e4accc35771140badf6e084bbfc3b5c62e8a854"
+    },
+    {
+      "path": "server/start/workbench-reader.ts",
+      "sha256": "18b429d5a3ffc322e834700b3a59a0e4366786f42207f23a65b32576a7183e75"
+    },
+    {
+      "path": "server/start/workbench-shell.tsx",
+      "sha256": "9d3f443e70f4ed5c76f61e9abfb9fcad25c6026f12ebe3e953b5eb0a2da02e2a"
+    },
+    {
+      "path": "src/capabilities/shell/api/proposals-list.ts",
+      "sha256": "22e30f81ddd9163e10e83c79acca356dc7c68dbc6cb6542aed848cbe9068949f"
+    },
+    {
+      "path": "src/capabilities/shell/public.ts",
+      "sha256": "04c0cc02cd3a01e40b8908b264cac9bea0a18866df129ffc4180ab6127a9b206"
+    },
+    {
+      "path": "src/capabilities/shell/server/proposal-inbox-read.ts",
+      "sha256": "2cf94785a973652d9ca7a793958b29c136fad8594a286ee7692394e63d062b58"
+    },
+    {
+      "path": "src/capabilities/shell/ui-public.ts",
+      "sha256": "060506e2c1804d041328a655caa5e8b448a33754319f8f949e0d9c7f9aa412e5"
+    },
+    {
+      "path": "src/capabilities/shell/ui/InboxPage.progressive.unit.test.tsx",
+      "sha256": "4cfa1b6471603ad343fd216380e3259aa21b9082a4b6631be3a3d27b7f5b1e36"
+    },
+    {
+      "path": "src/capabilities/shell/ui/InboxPage.tsx",
+      "sha256": "e82c2bf3392d02741f9679db0b8cce4352c0fb19531f92766b0f991dfeba96c5"
+    },
+    {
+      "path": "src/capabilities/shell/ui/PrepDeskConjectures.tsx",
+      "sha256": "2a4452a15cd12e69e26a08acc709042c7194a337dd3e2c6374512f4011575240"
+    },
+    {
+      "path": "src/capabilities/shell/ui/ProposalCard.tsx",
+      "sha256": "d66bdfd5bf1be8c2dd15d981ce231b32500fcb788cab98bc988fdf8d0be20918"
+    },
+    {
+      "path": "src/capabilities/shell/ui/TeachingBrief.tsx",
+      "sha256": "3c1c3a224ca3d5ea41c2e0216c5a1dfcfbe48e1d4f152661a972ef2bc5f532e5"
+    },
+    {
+      "path": "src/capabilities/shell/ui/TodayPage.tsx",
+      "sha256": "7e94e5cdd41133e440349f7f10d5ffd751f9d88506b68e44b5b12898cf2132d2"
+    },
+    {
+      "path": "src/capabilities/shell/ui/blocks/AiChangesStrip.tsx",
+      "sha256": "db7c0769ff3acfdef8e38eaaaa84fa75316ceb25ce8f503fc03c1f3248b969f9"
+    },
+    {
+      "path": "src/capabilities/shell/ui/inbox-api.ts",
+      "sha256": "cd628fb7921a19566127172bcf9f14f2a91cd8f8a4106505bd66f5bd6e9e1c42"
+    },
+    {
+      "path": "src/capabilities/shell/ui/workbench-client.tsx",
+      "sha256": "2089fc9330f41e469cd42676febda458577a196e01a75b27d8853052ad57181d"
+    },
+    {
+      "path": "web/src/RootShell.tsx",
+      "sha256": "6d4eab96acc29b76ff5c84d62ef18609189605692e9304298fc17f24392f0930"
+    },
+    {
+      "path": "web/src/router.tsx",
+      "sha256": "7b78827a074a0dfda815527e12cba5ceef074d75c00b4fc37909b229236142da"
+    },
+    {
+      "path": "web/src/routes/WorkbenchPages.start.unit.test.tsx",
+      "sha256": "855e4121b5a9bc96b04c0482909a53587ad0a0cd91506cd1d614738ee4e3666b"
+    }
+  ],
+  "build_files": 802,
+  "build_manifest": {
+    "path": "/tmp/yuk1358-main-integration/build-manifest.json",
+    "sha256": "01af2b882abafaf22b05def2b5534d05440c151761522014ac23cd35476ce7d3"
+  },
+  "runtime_acceptance": "pending built RPC/browser, no services started",
+  "deployment": false
+}

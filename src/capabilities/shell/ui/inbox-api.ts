@@ -201,24 +201,30 @@ export function decisionPaginationDiagnostics(
 
 export type ProposalDecision = 'accept' | 'reverse' | 'change_type' | 'dismiss';
 
+export function proposalDecisionBody(
+  decision: ProposalDecision,
+  opts: { newRelationType?: string; userNote?: string; correctedClaimMd?: string } = {},
+): ApiOperationRequestBody<'createProposalDecision'> {
+  return {
+    decision,
+    ...(opts.newRelationType ? { new_relation_type: opts.newRelationType } : {}),
+    ...(opts.userNote ? { user_note: opts.userNote } : {}),
+    // Empty edits reach validation instead of degrading to an uncorrected accept.
+    ...(opts.correctedClaimMd !== undefined
+      ? { corrected_payload: { claim_md: opts.correctedClaimMd } }
+      : {}),
+  };
+}
+
 export const decideProposal = (
   id: string,
   decision: ProposalDecision,
-  opts: { newRelationType?: string; userNote?: string; correctedClaimMd?: string } = {},
+  opts: Parameters<typeof proposalDecisionBody>[1] = {},
 ) =>
   apiOperationJson('createProposalDecision', {
     url: `/api/proposals/${encodeURIComponent(id)}/decisions`,
     method: 'POST',
-    body: {
-      decision,
-      ...(opts.newRelationType ? { new_relation_type: opts.newRelationType } : {}),
-      ...(opts.userNote ? { user_note: opts.userNote } : {}),
-      // Only omit when absent: an empty-string edit must reach the server and 400 per the
-      // contract (a truthiness check would silently degrade it to a plain accept).
-      ...(opts.correctedClaimMd !== undefined
-        ? { corrected_payload: { claim_md: opts.correctedClaimMd } }
-        : {}),
-    } satisfies ApiOperationRequestBody<'createProposalDecision'>,
+    body: proposalDecisionBody(decision, opts),
   }).then((resource) => resource.result);
 
 export const retractProposal = (id: string) =>

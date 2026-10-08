@@ -74,3 +74,9 @@ resetAdminConfig(input: unknown): Promise<AdminConfigWriteResult>;
 本 lane 未运行 DB/testcontainer/docker、服务、浏览器、provider、worker 或 replay，未触碰 deployment.lock，也未执行 install、完整 `pnpm test`、push/PR/CI/merge/Linear 或他树操作。Start/boot/index/manifest/package/lock/kernel/持久化/subject/hydration/UI 源码与 PLAN/.remember 由父保护。没有新增需另建 issue 的 actionable follow-up；既有 Start 集成和迁移退出继续归 YUK-1358/YUK-1359，父已完成 YUK-1389 查重与建票。
 
 完成本地 task-owned commit 后 writer 释放。父负责独立 review、上述 DB/运行验收、PR/CI/合并与接口交接；本记录不代表设置整页、迁移或部署完成。
+
+### 父实测补充
+
+2026-10-08 exact b107113da父执行原config读写两份scoped DB，48/48通过exit0，日志/tmp/yuk1389-parent-db.log。13:39:27.892078Z原子取得隔离锁，13:40:30.283142Z核owner/token释放；临时PG退出，原运行集合及4容器ID/image/start/status/health、releaseSHA全同。证据/tmp/yuk1389-db-before.json与/tmp/yuk1389-db-cleanup.json。未操作主数据、provider、worker、replay或部署。
+
+随后fetch并正常整合main7682618，仅PLAN/now冲突，保留主线Start/Stop改动和本lane源码。R1只读进行；整合验证及exact-head CI仍待。

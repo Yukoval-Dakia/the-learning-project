@@ -1,20 +1,23 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：YUK-1389配置公共领域出口已查重并获主线独占授权，从main d609c7b66建分支。先源码/unit/static；主线持runtime锁，不并发DB。
+> Linear 是权威 tracker。2026-10-08：YUK-1389候选b107113da父48DB通过，13:40:30Z核owner释放锁；正常整合PR1609/main7682618。R1进行，整合验证与exact CI待，未部署。
 
 ## NOW
 
-- **YUK-1389 / 实施**：配置既有builder与注入writer共享公共typed入口，原HTTP真实消费；保留JSON/schema/writer不可用顺序及完整epoch receipt。只改授权observability路径，不改持久化/Start/UI/runtime。父负责review/CI/合并，详见本lane文档。
+- **YUK-1389 / 父验收与审查**：既有配置builder/schema/注入writer已共享public入口，原GET/PATCH/RESET实际消费。176 scoped unit/static/build/audits通过，父两份真实DB48/48；8文件hash与关键保护文件已核。R1只读进行，正常合入main7682618后重验；Start消费归主线，1358/1359保持In Progress。
 
-- **YUK-1387 / 领域slice已完成**：PR1613合入main d609c7b66；exact f8e832c66的CI37781922519全绿、独立R1 NONE、threads0，tree一致且已unwatch。116unit/父15DB/static/build/audits通过，baseline仅14→11/438→435。四HTTP消费public既有reader，journal仍显式limit/paged；Start挂载交主线。13:06:15Z释放锁后无runtime操作。config只读材料已补齐，未启动新writer。
+- **YUK-1358 / Start Today与Inbox**：PR1609已合入main7682618，主线报告exact d19bd52 CI37784537687全绿、R2 NONE、threads0，合并tree一致。Stop修复仅test，父73DB/497unit/7协议/static/build通过；先前1af5真实RPC/browser与2118新构建RPC证据保留各自范围。整个W1及残留HTTP消费者未完，主线接管理只读页；本线程不改其Start树。
 
-- **YUK-1386 / 领域slice已完成**：PR1611合入main6c6905fad；exact f7b84efc7的CI37778323336全绿、独立R1 P0/P1 NONE、threads0，merge tree一致且已unwatch。99unit/父24DB/static/build通过。public coverage/conjecture与原HTTP共享显式Db|Tx读取；Start挂载交主线。12:43:53Z核owner释放隔离DB锁，原四服务/release不变。subjects/config保持只读准备，未启动新writer。
+
+- **YUK-1387 / 已合入**：PR1613合main d609c7b66，exact f8e832c66 CI/R1 NONE/tree一致；116unit与父15DB通过。subjects/traits四读取及分页journal已public共享，Start待主线。7631下一独占config领域出口，禁止重复writer。
 
 - **YUK-1356 / 主线交付**：PR1605于11:58:08Z合入a3691f572，主线核tree与exact e260bdb98一致、CI37772055452绿/threads0。保留真实MiMo一次工具验收及main4a3d 139unit/110DB证据；1356仍InProgress，未部署。1358 Start Today/Inbox由主线独占PR1609及RPC/browser验收，不在此树修改。
 
-- **YUK-1381 / 领域slice已完成**：PR1610合入a6faded072；exact946038637的CI37775009264全绿、独立R1 NONE、threads0、merge tree一致，已unwatch。74unit/父24DB/整合typecheck、lint、build通过，四Admin HTTP消费者共用public typed reads；Start挂载及浏览器验收交主线。coverage/conjecture仅给准确增量路径，尚未启动实施。
+- **YUK-1386 / 已合入**：PR1611合main6c6905fad，exact f7b84efc7 CI全绿、R1 NONE/tree一致；99unit与父24DB通过，observability/public导出coverage/conjecture既有读取，practice仅3个Db|Tx签名。Start待主线挂载；7631下一独占subjects四读取/public/HTTP，配置写者不动。
 
-- **YUK-1359 / W3-W4退出证据**：[W3](docs/planning/2026-10-08-yuk1359-w3-consumers.md)与[W4](docs/planning/2026-10-08-yuk1359-w4-consumers.md)已核真实消费者，补齐知识可见性/边事务、笔记presence及Copilot恢复边界。[W5清单](docs/planning/2026-10-08-yuk1359-w5-consumers.md)也已完成源码核对与R1勘误；28路由静态覆盖无遗漏，不代表Start或运行验收。
+- **YUK-1381 / W5领域读取**：PR1610已合main a6faded072，exact CI/tree一致、R1 NONE，74unit/父24DB/static/build通过；observability/public导出四Admin ISO DTO读取，Start消费者待主线接入。1386亦已合入，下一subjects读取由7631独占；无重复writer。
+
+- **YUK-1359 / 退出证据**：W1–W5源码消费者清单已版本化，7631独占；Start逐页及任务族恢复/旧路径删除尚未完成，保持In Progress。
 
 - **YUK-1380 / 已合入**：PR1607于11:35:32Z合入main4a3d797dd；exact812a0bf08的CI37769126069全绿，独立R1 NONE、threads0、17分钟窗满。28unit/父23DB/static/build通过，observability/public共享详情与纠错接口交主线Start挂载。未部署。[证据](docs/planning/2026-10-08-yuk1380-event-domain.md)。
 
@@ -41,7 +44,7 @@
 
 - **YUK-1338 / YUK-1351 P0 gate**：PR #1590 已合入主线 42987dfd7，本分支同步集成。测试容器中验证 Pi + DBOS 状态版本、过期拒绝、四个进程终止边界、响应复用与单次业务效果；不等于整个迁移或真实 provider 重复付费问题已解决。证据见[gate 记录](docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md)。
 
-- **YUK-1356 业务操作迁移**：共享submitReviewAnswer已接HTTP/worker与真实Pi工具；鉴权chat保存明确授权的用户原件，工具只消费本turn/session绑定引用，新chat原件保守unknown assistance。父139+20 scoped DB通过，R2只读审查进行；真实模型/Start提交消费者、CI和最终交付仍待。[交接](docs/planning/2026-10-08-yuk1356-trusted-pi-handoff.md)。
+- **YUK-1356 业务操作迁移**：PR1605已合入a3691f572，tree与exact CI e260bdb98一致，CI37772055452成功、R2 NONE。共享submitReviewAnswer和可信Pi原件入口已交付；真实MiMo单次效果证据及后续main139unit/110DB验证分开封存。尚缺Start提交消费者及业务任务族整体迁移，保持In Progress。未部署。[交接](docs/planning/2026-10-08-yuk1356-trusted-pi-handoff.md)。
 
 - **YUK-1362 / 当前部署用途**：仅供 Agent 开发测试，禁止再次清库或恢复私人数据。14:30Z实读 current-release 为1365发布 `6e54da8df` / image `fd8c046b97fe`，锁不存在；即时SSE已有1365证据，正文/取消验收仍受provider限额阻碍，1366负责现存DLQ。本线程未操作服务。此处是带时间的观察，后续发布仍须重新核验并原子取锁；日用须owner明确要求。
 - **历史 YUK-1341 产品 AI 发布**：PR #1585 已通过 exact-head CI、独立初审和等待窗并合并。app/worker 都固定 `opencode-go/mimo-v2.6-pro`；54聊天任务和 Mem0 接线已落地。生产两轮 Copilot 成功，原会话及 Pi cursor 连续、刷新回放一致；后台 MemoryBrief 也已实际成功。未宣称所有任务质量或评分切片均获准入。
@@ -51,7 +54,7 @@
 
 ## NEXT
 
-- YUK-1356 完成独立审查/P0-P1修复、exact-head CI与真实Pi输出验收；沿1358继续Today/Inbox Start消费者，不将当前原件提交切片当全部迁移完成。
+- 父完成1358最终准确CI与合并（实际RPC/browser已按revision封存），再继续剩余W1消费者和1356 Start提交/任务族；不将原件提交切片或两个页面主读取迁移当全部迁移完成。
 
 - **YUK-1352 / PR1592**：已合入main eae963377，CI37758570995与合并tree一致；隔离错题入口已验收，未部署。剩余路由与canonical boot继续。
 
@@ -66,6 +69,7 @@
 
 ## PARKED
 
+- **YUK-1358/1359已有UI观察**：真实Inbox dismiss后本页499但侧栏500，document reload恢复一致；原onResolve仅本地resolved更新。Google Fonts原import受CSP拦截；fallback可用。记录在现有迁移验收/后续UI边界，不放宽CSP、不冒称本PR修复。
 - **YUK-1382 / Admin runs未知费用显示**：源码基线fadcb0c87中，observability/ui/admin-runs.tsx:207将nullable cost_usd累加；observability-shared.tsx:11以(value ?? 0).toFixed(4)将未知显示为$0.0000，列表/详情/合计均受影响。已查重并登记Backlog，待验证真实零、全未知、已知+未知；不在1381改UI。此条是源码发现，尚无浏览器验收。
 
 - YUK-1355 P2 comment4208022050：cron权威目录仍将 prune 注册点写为 ../handlers.ts。最小范围为目录说明及一行注册点/phase ownership 文档；不需要新 scheduler/catalog 子系统。已报告父线程裁决，本轮未改该 P2。

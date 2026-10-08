@@ -17,7 +17,7 @@ import {
   LearningIntentComposer,
 } from '@/capabilities/agency/ui-public';
 import { ColdStart } from '@/capabilities/onboarding/ui-public';
-import { type ApiOperationJsonResponse, apiJson } from '@/ui/lib/api';
+import { apiJson } from '@/ui/lib/api';
 import { describeCosts } from '@/ui/lib/cost-presentation';
 import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
@@ -39,12 +39,8 @@ import { PrepDeskConjectures } from './PrepDeskConjectures';
 import { ProbeAnswers } from './ProbeAnswers';
 import { getActiveProbes } from './probe-answer-api';
 import { TeachingBriefBand } from './TeachingBrief';
-import {
-  type OvernightDigest,
-  type WorkbenchSummary,
-  getOvernightDigest,
-  getWorkbenchSummary,
-} from './workbench-api';
+import type { OvernightDigest, WorkbenchSummary } from './workbench-api';
+import { useWorkbenchClient } from './workbench-client';
 import './shell.css';
 
 export interface TodayPageProps {
@@ -114,7 +110,6 @@ export function deriveThreads(s: WorkbenchSummary): Thread[] {
 // memory reconcile) — never a single cross-currency sum.
 // YUK-330: the per-currency amount key is `cost` (unified with /api/_/admin/cost
 // and the cost_ledger.cost source column); cost-today previously sent `spend`.
-type CostTodayResponse = ApiOperationJsonResponse<'getTodayCost'>;
 
 export function aiTaskLabel(taskKind: string): string {
   const kind = taskKind.toLowerCase();
@@ -171,9 +166,10 @@ export function learnerFailureSummary(messages: readonly string[]): string {
 }
 
 function CostRibbon() {
+  const client = useWorkbenchClient();
   const q = useQuery({
     queryKey: ['cost-today'],
-    queryFn: () => apiJson<CostTodayResponse>('/api/cost/today'),
+    queryFn: client.getTodayCost,
   });
   const t = q.data?.today;
   const cost = describeCosts(t?.by_currency ?? []);
@@ -280,6 +276,7 @@ function buildDigestChips(d: OvernightDigest): DigestChip[] {
 // OvernightDigestBand both read it; react-query dedupes the shared key (zero extra
 // network) and this hook keeps their queryFn/key from drifting apart.
 function useOvernightDigest() {
+  const { getOvernightDigest } = useWorkbenchClient();
   return useQuery({ queryKey: ['overnight-digest'], queryFn: getOvernightDigest });
 }
 
@@ -479,6 +476,7 @@ function ThreadCard({ th, navigate }: { th: Thread; navigate: (to: string) => vo
 }
 
 export default function TodayPage({ navigate }: TodayPageProps) {
+  const { getWorkbenchSummary } = useWorkbenchClient();
   const now = new Date();
 
   const summaryQ = useQuery({ queryKey: ['workbench-summary'], queryFn: getWorkbenchSummary });

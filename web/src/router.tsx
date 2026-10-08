@@ -97,7 +97,7 @@ const indexRoute = createRoute({
 });
 
 // M4-T6 (YUK-319/YUK-318) — 工作台 + 提议收件箱。
-const TodayRoute = lazyNavigableRoute(loadTodayPage);
+const TodayRoute = import.meta.env.PROD ? StartPageEntry : lazyNavigableRoute(loadTodayPage);
 
 const todayRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -144,7 +144,7 @@ const profileRoute = createRoute({
   component: ProfileRoute,
 });
 
-const InboxRoute = lazyNavigableRoute(loadInboxPage);
+const InboxRoute = import.meta.env.PROD ? StartPageEntry : lazyNavigableRoute(loadInboxPage);
 
 const inboxRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -155,7 +155,8 @@ const inboxRoute = createRoute({
 // Usability Step1 (YUK-354) — 错题本面（loom screen-mistakes ScreenMistakes）。闭合
 // record→see→practice 死链：RecordPage onSuccess navigate('/mistakes') 此前 404。导航走
 // 壳层 prop 注入（同 InboxRoute），page 自持 list query + 客户端 3 轴筛选（科目/状态/归因）。
-function StartMistakesEntry() {
+// Vite development fallback only. YUK-1359 owns its final removal.
+function StartPageEntry() {
   useEffect(() => {
     window.location.replace(window.location.href);
   }, []);
@@ -163,7 +164,7 @@ function StartMistakesEntry() {
 }
 
 const MistakesRoute = import.meta.env.PROD
-  ? StartMistakesEntry
+  ? StartPageEntry
   : lazyNavigableRoute(() => import('./routes/MistakesPage').then((module) => module.default));
 
 const mistakesRoute = createRoute({
