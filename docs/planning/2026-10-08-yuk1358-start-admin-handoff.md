@@ -203,3 +203,21 @@ First isolated DB run passed48 existing domain tests and failed both new reader 
 Independent R1 was cancelled before a verdict and resumed under a distinct task for the same initial review. No completed review or built RPC/browser/deployment acceptance is claimed yet.
 
 Resumed initial review completed with P0/P1 NONE on fixed ea0e3813f..2d5ec84ef; no pending review work. Product files remain identical after main integration and the separate DB fixture repair. PR1615 is draft until built RPC/browser acceptance and exact-head CI complete. Parent retained R2 only if a consequential repair requires it.
+
+## Parent built acceptance, completed 2026-10-09 JST
+
+At fixed head `fc021bca565057f71c766a6693a094994b6c789e`, the parent ran the built Start server with a fresh isolated PostgreSQL database, no provider credentials and no worker. The installed framework serializer made 96 actual HTTP calls. All six operation auth/epoch denials, query defaults and bounds, cursor walk, complete nested ISO/null DTOs, 400/404 errors and canonical/retained HTTP parity passed.
+
+T3 preview loaded all five admin pages with nonempty data. Wrong token returned 401; a real RPC 401 after successful data cleared the page and returned TokenGate. Reentering the token recovered. Runs showed independent selected detail, ledger/tool timeline and refresh. Foreground runs, cost and failures issued requests at approximately 60-second intervals. Cost retained mixed currencies and unknown provenance. Coverage showed disabled scanning during a controlled delay, a browser-injected error and successful real retry. Coverage/conjectures did not poll; conjectures showed the score basis, null values and 400 scanned/399 discarded diagnostic window. Existing AdminLinks traversed retained config SPA and returned to Start runs. Clearing the token and reloading restored the gate.
+
+Browser-only 500 injection proves rendered error/retry behavior, not real DB failure. Selected-run disappearance and conjecture retry retain scoped DOM evidence only. An attempted visibility event did not trigger a conjecture retry; it is not recorded as passed. No repeated-reload matrix for every page or deployment claim is made. Existing font CSP and YUK-1382 display limitations remain unchanged.
+
+All 88 public tables retained identical row counts and content hashes across admin/browser/config navigation, including rejected requests. This excludes sequence/non-public-schema state and separates explicit setup/epoch transitions. The pgboss schema remained absent. No provider calls, worker, replay or paid operations ran.
+
+The parent stopped its own server and Testcontainers database. The first release check caught Ryuk still exiting and retained the lock; after teardown, only the original four containers remained, with identical IDs, images, StartedAt and health. Release bytes matched. Owner/token-checked release completed at `2026-10-08T15:12:46.541288Z`.
+
+145 sanitized evidence/recipe files and a screenshot are preserved under `yuk1358-admin-fc021bca5/evidence` in the local runtime root. Exact synthetic token, database URLs and passwords were checked absent; private state/token files were excluded. See [the versioned receipt](evidence/2026-10-09-yuk1358-admin-built-acceptance.json). The source/runtime evidence stays tied to this revision. Main's later subject-control integration does not retroactively change the tested bundle.
+
+## Integration of main 7b8904179
+
+Normal merge `f48f04690` retained both PLAN/remember histories. All 24 files changed by the reviewed admin implementation are byte-identical to the runtime candidate, and all five incoming subject-control product/test files match main. No new review round was opened. Parent Node24 verification passed 295 scoped unit tests in 14 files, 8 installed-framework protocol tests, both typecheck programs, lint and the complete build. One initial lint error was formatting of this new evidence JSON; the original failed log is retained and the corrected final lint passed. Exact pushed-head CI remains required. Runtime acceptance above remains tied to fc021, not relabeled as a run of the integrated bundle.

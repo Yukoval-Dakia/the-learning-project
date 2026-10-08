@@ -1,0 +1,97 @@
+{
+  "candidate": "fc021bca565057f71c766a6693a094994b6c789e",
+  "sourceImplementation": "2d5ec84ef522da3587eb5beb79dae0ef8885c48f",
+  "buildSha256": "27f5989d900f476aea3058e32e52b48527b419997e3140999a2ac867ce40f919",
+  "evidenceRoot": "/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1358-admin-fc021bca5/evidence",
+  "manifestSha256": "38ff2162b6d175db0ff93533a82436f955d37d319f18dd50b7520a8bdab37dac",
+  "rpc": {
+    "status": "parent-runtime-rpc-assertions-completed",
+    "head": "fc021bca565057f71c766a6693a094994b6c789e",
+    "build_sha256": "27f5989d900f476aea3058e32e52b48527b419997e3140999a2ac867ce40f919",
+    "calls": 96,
+    "public_tables_unchanged": true,
+    "epoch_setup_mutations_excluded_by_stage": true,
+    "normalized_paths": ["getStartAdminCoverage.generated_at", "getStartAdminCoverage.scan_ms"],
+    "browser": "pending parent T3 preview",
+    "deployment": "not performed"
+  },
+  "browser": {
+    "engine": "T3 preview",
+    "routes": [
+      "/admin/runs",
+      "/admin/cost",
+      "/admin/failures",
+      "/admin/coverage-lattice",
+      "/admin/conjecture-scores"
+    ],
+    "realData": true,
+    "runsListAndDetail": true,
+    "pollingObserved": ["runs", "cost", "failures"],
+    "manualCoverageDelayAndRetry": true,
+    "diagnosticNullsAndTruncation": true,
+    "actual401Regate": true,
+    "tokenRemovedReload": true,
+    "retainedConfigToStartRuns": true,
+    "injectedFailure": "browser-only 500 for detail and coverage, not a database failure",
+    "limits": [
+      "Selected-run disappearance only has scoped DOM evidence.",
+      "Conjecture retry only has scoped DOM evidence; attempted visibility event did not trigger it.",
+      "No all-route repeated reload claim.",
+      "No real DB reader 500 was induced."
+    ]
+  },
+  "database": {
+    "publicTableCount": 88,
+    "countAndContentUnchanged": true,
+    "sha256": "3d5785a333c81b0c3e9baf53978100a8a776345b40d714414c7563bd186b8037",
+    "excludes": "Non-public schemas and sequences; explicit setup/epoch transitions precede each baseline.",
+    "pgbossAbsent": true
+  },
+  "lockRelease": {
+    "owner": {
+      "owner": "57961995-70c3-4121-a9dd-97d90471be1a",
+      "issue": "YUK-1358",
+      "phase": "isolated-admin-built-rpc-browser",
+      "token": "7109b3c7-0ff7-410b-98d8-b1017d619d8c",
+      "candidate": "fc021bca565057f71c766a6693a094994b6c789e",
+      "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "createdAt": "2026-10-08T14:52:12.033935+00:00"
+    },
+    "releasedAt": "2026-10-08T15:12:46.541288+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "deployment": false,
+  "providerCalls": 0,
+  "integration": {
+    "commit": "f48f04690",
+    "main": "7b89041799881249bbe89344deae8942cc867f70",
+    "adminProductAndTestBlobsUnchanged": 24,
+    "incomingSubjectBlobsMatchMain": 5,
+    "unit": {
+      "files": 14,
+      "tests": 295,
+      "exit": 0
+    },
+    "installedFrameworkProtocol": {
+      "tests": 8,
+      "exit": 0
+    },
+    "typecheck": 0,
+    "lint": 0,
+    "build": 0,
+    "initialLintFailure": "Only new evidence JSON formatting. Preserved initial log; formatted file and final lint passed.",
+    "logs": "/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1358-admin-fc021bca5/integration-main1390",
+    "logSha256": {
+      "lint.log": "0936ac752504ad18f059752fff55e575dec34b88b5e79b54e9ba0ce2a389bfe8",
+      "typecheck.log": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+      "checks.json": "77e35033b2dad1436d2b7c32a17eeaf7e9d18997c9e77f01187e882812d26bbe",
+      "unit.log": "8ebb22b65aa91fc19175061a47dc10362e6113683c8fb99e769afaed5c636a74",
+      "lint-final.log": "82e92a827e6897fe6b2c3a743e09e72835cdb271d9eebee3e8f80c4a61d0334b",
+      "protocol.log": "bbcffcb6c9a5a4c7e297023c7ee45a921daa8adaee3fb69ba09c1468609a58fa",
+      "build.log": "e6f0845ee11742232bb73fcded7f9b74d4477e5dfeebf38e11c71e0220183af8"
+    },
+    "runtimeBoundary": "Runtime acceptance is fc021 build. Integration checks are source/static/build evidence, not a new runtime run."
+  }
+}

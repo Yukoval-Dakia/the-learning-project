@@ -1,3 +1,9 @@
+# Current Start admin closeout — 2026-10-09
+
+PR1615 fc021 passed 96 real RPC calls and five-page T3 browser acceptance; 88 public table counts/content unchanged. Isolated server/PG and Ryuk exited; original four services/release unchanged. Lock7109b3c7 released2026-10-08T15:12:46.541288Z. Evidence runtime/yuk1358-admin-fc021bca5/evidence and docs/planning/evidence/2026-10-09-yuk1358-admin-built-acceptance.json. No provider/worker/replay/deployment. Review R1 completed NONE. Parent normally merged main7b890 (1390) asf48f04690, only PLAN/now conflicts; integrated295unit/8protocol/typecheck/lint/build passed; final CI pending. 7631 exclusively owns1391 six trait operations; parent owns Start. Remaining configuration/subjects Start, canonical boot and full runtime/SPA retirement remain open under1358/1359.
+
+Earlier records below are historical, not current task or runtime state.
+
 # Start admin PR1615 — 2026-10-08
 
 DraftPR1615 linked, head dbdd00e02 before this record. Resumed original R1 completed/noPending with P0/P1 NONE on fixed ea0..2d5 productdiff; parent test-onlyfixture and mainintegration do not change those productblobs. Parent332unit/8protocol/static/build and48+2DB evidence retained. Builtacceptancepreparation task yuk1358-admin-built-acceptance-preparation-20261008-v1 (mcp49eafe5d-44e1-4ad4-99e9-d8ea36771da2) running solely ignored .cache/yuk1358-admin-built-acceptance; no runtimeallowed. Mainproduct/build frozen while it prepares. Parent still owns realRPC/T3browser/CI/delivery. Linear1358 comment06cb37c4-d643-4f41-8e64-b8f19455a3a8 records evidence andOrbStackincident. No currentlock/selfresources.
