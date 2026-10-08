@@ -1,11 +1,11 @@
 # 2026-10-08 YUK-1356 trusted Pi handoff
 
-Current lane: feat/yuk-1356-review-operation. Source 0d9360487, main caeb959fd normally integrated. Parent verified35 source hashes/13 logs. Scoped DB first158/159; corrected new test to assert knowledge and ability_global partitions each evidence_count1, then20/20 passed. Other139 already passed on identical product source. R2 final review NONE. PR1605 first CI37765828244 failed two exact inventory/input-shape contracts; repaired7b50a3f4d with103DB/unit/static/build passed, no third review. Normally integrating main6150f01a9/PR1604. Real provider, Start submit consumer, CI and release unproven. Locks safely released10:43:33Z and10:45:39Z; original4containers/release unchanged. No paid call/replay/deploy. See trusted-pi-handoff and parent evidence.
+PR1605: source 0d9360487, CI repair 7b50a3f4d. Exact 541acce CI37767129880 all green; independent R2 NONE. Normally merged main f3351ea37 (PR1606 W2 docs only), resolving PLAN/now without product source changes. New merge-head CI and bounded real MiMo/Pi acceptance remain; preparation task owns only ignored .cache/yuk1356-real-pi. Start Today/Inbox implementation continues separately in tlp-yuk1352-start-frontdoor. No third review, paid call, replay, deployment or runtime operation in this merge. Parent DB 139+20 and CI-repair103 passed; static/build proof retained in task evidence. YUK1356/1358/1359 remain In Progress.
 
-Prior records below are historical, not current completion claims.
-# 当前交接 — 2026-10-08 YUK1378费用读取验收
+# 合入的 YUK1359 W2消费者交接
 
-分支feat/yuk-1378-today-cost-read，基线main caeb959fd，携带1359文档db191745a及实施603c9674e。唯一实施writer已completed/noPending、树clean。父核7哈希并实际2文件11DB通过；8unit/static/build已过。10:34:07Z核owner释放部署锁，原四服务及release不变。R1 NONE，PR1604已link/watch；首CI的单测DB直接import分区问题已修05e1965bf，8unit/partition/static/build通过，唯一R2与新CI待；主线独占Start/1356，1377/1358/1359仍In Progress。下文为历史交接。
+
+当前分支docs/yuk-1359-w2-consumer-inventory，从最新origin/main6150f01a9建立。PR1604已10:55:10Z合入6150f01a949c3d1357f8b44f0d8ed6807cd74179，tree c9e440e5edd1dd62e7cd4f5cdd018e4d9ee93886与CI head463aadec一致；CI37765137606全绿、R1/R2 NONE、threads0，已unwatch。1378限定领域slice已Done，公共loadTodayCost/TodayCost交主线Start消费；1358/1359/1377仍In Progress。8unit、父实际11DB及静态/build通过，无部署。1359 W2只读研究子任务yuk1359-w2-consumer-readonly-completion-20261008-v1已completed/noPending（Codex gpt-6-luna high），父抽查并落盘W2清单，纠正学段URL/typed客户端混称；主线独占1356与Start。本线程无锁/服务，后续runtime须重新核验锁。下文为历史交接。
 
 # 2026-10-08 current PR1595
 
