@@ -1,3 +1,11 @@
+# Current update — new session process CI evidence
+
+Final PR1624 headfeb42087b75013b53d619a23f669db4dc0d2f9df is pushed and Ready. Exact CI37846555798 was confirmed in_progress; T3watch active. Parent fetched old cb984 CI37843803109 failed logs into /tmp/yuk1394-ci-cb984-failed.log. Session migration21cases13pass8fail, first placement row-uncommitted duplicate startup failed review producer DROP TRIGGER, no nested PGcause; seven later failures. These session fixture files are unchanged atfeb. Original R2 conclusions stand only for their reviewed evidence, not this newly retrieved failure. Do not merge on incidental green without diagnosis.
+
+Sole source writer task yuk1394-session-ci-diagnostics-cleanup-20261009-v1, codex gpt-6.1-sol xhigh, owns tests/dbos-session-orphan/migration.db.test.ts and worker.ts, necessary reuse of existing review fixture helper. No product edits or runtime authorized to child. Parent owns docs/tracker, SQL cause decision and future locked actual reproduction. This is implementation, not third review. No current owned runtime/lock. Judge scope confirmed, but implementation awaits1394 delivery.
+
+Earlier handoff, superseded only where this update differs:
+
 # Current parent handoff — YUK1394 final review accepted, CI next
 
 Source is64d9f2eb62cec3cdb9ffbb7e3c189796e3b5cd30. PR1624 is linked and watched; final evidence is being committed with the already committed timezone-only repair for one final push. No local exec, DB, owned service or lock remains. Full old prune/review four files16/16 passed. Complete session cron at1ff5 had two real scenarios pass and the third timezone assertion fail. The test-only64d9 fix passed that case under Tokyo and UTC in separate disposable PGs. It did not rerun the unchanged two long scenarios. Typecheck, scoped Biome and earlier parent19unit/build/three audits passed. Last lock released21:13:51.836181Z with the original four containers, full running set and release unchanged.
