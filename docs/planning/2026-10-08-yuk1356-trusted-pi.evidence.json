@@ -1,0 +1,173 @@
+{
+  "checked_source_commit": "0d9360487c168dab42d6fa58b69003677adf5863",
+  "source_check_timing": "Tests and local gates ran on working-tree bytes identical to this source commit; generated-client drift audit also ran after commit. This is not GitHub exact-head CI.",
+  "main": "caeb959fd726e34b2e8554bd0e95b54778cbff41",
+  "normal_merge_commit": "78a046bb3",
+  "preserved_wip_commit": "6c96ea236",
+  "node": "24.19.0",
+  "pnpm": "11.13.1",
+  "command_path_prefix": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH",
+  "worktree": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1356-review-operation",
+  "branch": "feat/yuk-1356-review-operation",
+  "created_at": "2026-10-08T10:39:22.116169+00:00",
+  "checks": {
+    "unit": {
+      "command": "pnpm vitest run --config vitest.unit.config.ts src/capabilities/practice/server/tools/submit-review-answer.unit.test.ts src/kernel/tools/allowlists.unit.test.ts src/capabilities/copilot/server/copilot-execution.unit.test.ts src/capabilities/copilot/server/copilot-tools.unit.test.ts src/capabilities/practice/manifest.unit.test.ts src/capabilities/composition.unit.test.ts src/capabilities/copilot/server/live-turn-context.unit.test.ts",
+      "exit_code": 0,
+      "status": "passed",
+      "log_path": ".cache/yuk1356-resume-unit.log",
+      "log_sha256": "b13b90c5f5c68ae2a2a561a697feba4fb0395ed68f3dc37f521c7731e33e14a5",
+      "files": 7,
+      "tests": 72
+    },
+    "typecheck": {
+      "command": "pnpm typecheck",
+      "exit_code": 0,
+      "status": "passed",
+      "log_path": ".cache/yuk1356-resume-typecheck.log",
+      "log_sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    "lint": {
+      "command": "pnpm lint",
+      "exit_code": 0,
+      "status": "passed",
+      "log_path": ".cache/yuk1356-resume-lint.log",
+      "log_sha256": "0a2891f5eec3d42d03a80e4f7d27822cd1048d597f79e1237498f87a004b4bc8",
+      "warnings": 296
+    },
+    "lint-ratchet": {
+      "command": "pnpm lint:ratchet",
+      "exit_code": 0,
+      "status": "passed",
+      "log_path": ".cache/yuk1356-resume-lint-ratchet.log",
+      "log_sha256": "9c8c216ee07c0cdf3943287542b9847b77e5f58166388c1cd936bfba5820f9b0",
+      "warnings": 296,
+      "baseline": 305
+    },
+    "build": {
+      "command": "pnpm build",
+      "exit_code": 0,
+      "status": "passed",
+      "log_path": ".cache/yuk1356-resume-build.log",
+      "log_sha256": "4bc41508a41a6c1fa418260cbb909af8829393b9fbea85da22176569d1f8ce47"
+    },
+    "postman": {
+      "command": "pnpm gen:postman",
+      "exit_code": 0,
+      "status": "passed",
+      "log_path": ".cache/yuk1356-resume-postman.log",
+      "log_sha256": "3aaa19807ed6f0270b0c336b21a857618af66e696d351ca7ae870f0bd2f66a25"
+    },
+    "api-client": {
+      "command": "pnpm gen:api-client",
+      "exit_code": 0,
+      "status": "passed",
+      "log_path": ".cache/yuk1356-resume-api-client.log",
+      "log_sha256": "c3aca9ce455d9eb6c384ab7d2088775dd06ac7d7580dc9f9b68b06a577287912"
+    },
+    "api-client-audit": {
+      "command": "pnpm audit:api-client",
+      "exit_code": 0,
+      "status": "passed",
+      "log_path": ".cache/yuk1356-resume-api-client-audit.log",
+      "log_sha256": "f26bc904f865f0cc5a1a1613ea5d4017d46fdab55aceaf8eb0a831aedd0cea7c"
+    },
+    "api-client-usage": {
+      "command": "pnpm audit:api-client-usage",
+      "exit_code": 0,
+      "status": "passed",
+      "log_path": ".cache/yuk1356-resume-api-client-usage.log",
+      "log_sha256": "71c2c93dd9e51bd4fc368e7845a5a34d42b2b56cf97e4dcf94a8556a99f45b46"
+    },
+    "boundaries": {
+      "command": "pnpm audit:capability-boundaries",
+      "exit_code": 0,
+      "status": "passed",
+      "log_path": ".cache/yuk1356-resume-boundaries.log",
+      "log_sha256": "42a7d0cb9f8f9a7948bd6aeb552b2b64b70d98953edea22293a755a32000bba1"
+    },
+    "api-contracts": {
+      "command": "pnpm audit:api-contracts",
+      "exit_code": 0,
+      "status": "passed",
+      "log_path": ".cache/yuk1356-resume-api-contracts.log",
+      "log_sha256": "2fcb1d9cd8395bc3661f8e35135444ec73a34d0ca7a0320f1507c9429782ce2b"
+    },
+    "agent-control-plane": {
+      "command": "pnpm audit:agent-control-plane",
+      "exit_code": 0,
+      "status": "passed",
+      "log_path": ".cache/yuk1356-resume-agent-control-plane.log",
+      "log_sha256": "1f81346486a3c2faf1abb93d683d02efd8e196f1af34605bc3756da0cdbe4b61"
+    },
+    "partition": {
+      "command": "pnpm audit:partition",
+      "exit_code": 0,
+      "status": "passed",
+      "log_path": ".cache/yuk1356-resume-partition.log",
+      "log_sha256": "0d8f9cb87bde883aaacfaef011219b5915e1b8669a5f0bf8282663d4a751ec0f"
+    }
+  },
+  "source_sha256": {
+    "AGENTS.md": "b263205c607fd8d8abff000fe35e0c98234abed4ce47387460653c10692b20df",
+    "package.json": "fd26ce6afc4ba78df25b9484f5f5f96a934b85f76502edd7d984838bdb11370c",
+    "pnpm-lock.yaml": "10c6a3c0eef15b85fb2273b8600b523f23036fbb68744f5bb07c90fa00136d65",
+    "postman/api-endpoints.json": "b076e9a778c46408dc96850e8fa54ea7739daf497e97e8326bf65c0dffb9902f",
+    "postman/learning-api.postman_collection.json": "9b165c08635d81aa0cd141c503166205e3296a8c73fe04cf59c4d623efb933f3",
+    "src/capabilities/copilot/api/chat.ts": "bc289a77b4ebbc57555130b604c97b2041af13d0ac73e281f2133a34b23d86d5",
+    "src/capabilities/copilot/api/review-answer.db.test.ts": "16a79d7776051db55ff7b17aed6db5876f2c5bad4e0cada86735f302d862b4de",
+    "src/capabilities/copilot/server/chat-contracts.ts": "395ad5eb1b9f80b7ee0dc1af5fad040625e154e694e632a685fc824956c76920",
+    "src/capabilities/copilot/server/conversation-writes.ts": "91050e068aded6ed1cbf7ec429c3e09484343b27bcdca917c574c81b9913e3cb",
+    "src/capabilities/copilot/server/copilot-execution.ts": "144db48d7527c499844a65a6545abd4e37dfc27df80c887ba4f539bb897cb6fc",
+    "src/capabilities/copilot/server/copilot-execution.unit.test.ts": "8117d647b00b39e40e8bdba9560f75faee23947f8f90908eb2d7b0589de465af",
+    "src/capabilities/copilot/server/copilot-run-input.ts": "e4cb6be75bbaf6dd7729ce3f5ced767e44a38c5619d6307e565627f5df42a411",
+    "src/capabilities/copilot/server/copilot-tools.unit.test.ts": "6ec401fad9ae58b5ecd8bfca3bdc0833e723c98069899d09b126d5b07e1da840",
+    "src/capabilities/copilot/server/durable-dispatch.ts": "9661248b9c337613d48444ad6b43ba412ba4b2d3c2e7c9f759b0766a023559d6",
+    "src/capabilities/copilot/server/live-turn-context.ts": "889efc6bead680dbf0efbf3fbdad5b04ea22f0a033556983af43b95ab8b4d619",
+    "src/capabilities/copilot/server/live-turn-context.unit.test.ts": "353ca01cd96ef750266ab367ba79c839d1d78783e64b7e38d713c8cf77c499ac",
+    "src/capabilities/copilot/server/materializing-tools.ts": "d1bf8f2aaaebf5047647988c8eac39a18ace39e08fdaaa042884157ad8cc33d9",
+    "src/capabilities/copilot/server/practice-port.ts": "108af8d89bf971ec462070ad649d99a7a744a81a235ce903704b2e4e4b4f5b36",
+    "src/capabilities/copilot/server/review-answer-consumer.ts": "86d716f8eb87ef31348411e79f34e48d5573324f6c5c0ae7c8b345c41945b95f",
+    "src/capabilities/copilot/server/tool-result-snapshot.ts": "757234cd9bbac7e576a64d816ad62800d716cd97a0291c69757ffc125789c5b1",
+    "src/capabilities/practice/api/submit-durable.db.test.ts": "bd9c65b615beb64cbc2e20db3b416067bc826e68d2bcf18cc1f9265ef79e43e3",
+    "src/capabilities/practice/api/submit.ts": "100803b9dffdffd39126e2111a557187c3a66435902f1790501e73c97c651305",
+    "src/capabilities/practice/jobs/judge_run.ts": "ee2d89d344892335828773e7b7b2bc30b26ac2c5112569c9ae9d4a7b157155c9",
+    "src/capabilities/practice/manifest.ts": "d30414b9b2ab6f05a0c4fff2e5e6cb970253a06e796e16af15221c531318e640",
+    "src/capabilities/practice/public.ts": "d3287b26c0a277de6b35ac52752564424a3fd3b4d3e9c03af49ce8d145f183de",
+    "src/capabilities/practice/server/assessment/assistance.ts": "80cc049e97bdad7ff9634e9b194d6004e7d15965624e7b7d7ae5889ee79ea84b",
+    "src/capabilities/practice/server/review-operation.db.test.ts": "74f2aa1c9d83578b740d3d6593bcde94458edd4e3b35d8d49da53f18d3209794",
+    "src/capabilities/practice/server/review-operation.ts": "888c55639960d8e5a39d08b15dea8469cbd23c408bc94ccf5248bf7ae25a60d9",
+    "src/capabilities/practice/server/tools/submit-review-answer.ts": "c2abe199ba0c5a5defab304eea826f6dbf20cf387108328c19907a83935de37e",
+    "src/capabilities/practice/server/tools/submit-review-answer.unit.test.ts": "191e9dd8486b300101421a99755a680d677ff5d8df6765b5ae425261e28cca72",
+    "src/kernel/tools/allowlists.ts": "717fc18c42b92ca6e085f2c1a833cb1423f145c1652ab189e4af4f5d040e1c09",
+    "src/kernel/tools/allowlists.unit.test.ts": "2faa65ff5dff212b9f7ae108d6d0dcfd57c65c611b3508d0cc9d0c1f99c5fba9",
+    "src/kernel/tools/review-answer.ts": "2202a35e01054ed8f5b883901c016cce3ff0d6cfe568084c036622ae88f975dd",
+    "src/kernel/tools/types.ts": "ee6b24649ec65b01d1042b695669f5d60048399e25318edcfd5d99cd9b3faa7c",
+    "src/ui/lib/api-schema.generated.ts": "8573bb60ed0cbc03d82c2873655fdb7634637f8081c00795a61dbfb24ea791b1"
+  },
+  "source_tree_sha256": "e08cd0257897d43a6e3620d73b9a375354093610d81e54e7f8ecdf538ca2cc06",
+  "log_archive": {
+    "path": "docs/planning/evidence/yuk1356-resume-20261008/check-logs.tar.gz",
+    "sha256": "236da32ce3fffe38b546196bd3f3fd1630a731f77747c07362f23b73a9f36fe0"
+  },
+  "preserved_wip": {
+    "directory": "docs/planning/evidence/yuk1356-resume-20261008",
+    "verified_file_count": 26,
+    "archive_sha256": "6996d319a1dd7c3bd18fb1d763796b363177848c059cd531dac4e606c28f2488",
+    "binary_diff_sha256": "04bf9753fc62e9080c27949bc5e03612f5560e95a291bd27ea82782ebf87c2f3",
+    "status_sha256": "e0754f27554db7bf01e76dcd74444d23054cbb22f666ce0a1375c128f96dad14",
+    "all_initial_file_and_archive_hashes_verified": true
+  },
+  "not_proven": [
+    "real business-table DB acceptance",
+    "live Pi/provider actual output",
+    "browser/runtime acceptance",
+    "independent review",
+    "exact-head GitHub CI",
+    "DBOS recovery/restart/drain acceptance",
+    "YUK-1356 as a whole",
+    "non-UI migration as a whole"
+  ],
+  "authorization_limits": "No full pnpm test; no DB/container/runtime/provider/paid calls, replay jobs, deploy, push/PR/watch/Linear/review/new child. Parent owns coordinated acceptance.",
+  "handoff": "docs/planning/2026-10-08-yuk1356-trusted-pi-handoff.md"
+}
