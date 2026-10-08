@@ -1,3 +1,18 @@
+# Current Start event detail lane
+
+PR1623 branch feat/yuk-1358-start-event-detail, runtime accepted at4f36d3fc5 (productf1e4). Independent R1 fixture P1 fixed; R2 NONE/noPending, max two rounds used. Parent15DB and actual71RPC/12windows/6writes; T3 browser correction/disabled pending controls, GET-only retry, committed-response loss without autoreplay, 2001char400, real401 re-gate, bad/missing records, legacy question link and deep reload verified. Technical-details snapshot truncated, not counted. Ignored recipe had two fixed setup/seed defects with preserved failures; no product changes. Runtime archive and full report: docs/planning/2026-10-09-yuk1358-start-event-detail-parent.md.
+
+All owned Start/PG resources cleaned. Owner/token d3f35015 lock released2026-10-08T20:40:09.702920Z, exact original4/running/release equality verified and7631 notified. No current runtime lock/writer; no provider/worker/paid/deploy. Private dump stays ignored. Sealed309-file public runtime archive excludes secrets.
+
+CI37836413386 exact4f36 failed old tests/dbos-review-orphan/migration.db.test.ts DB3 then aggregate. Later CI37843803109/cb984 has confirmed40P01 shared-host trigger-DDL deadlock; original4f36 firstcause staysunknown. Coordinator7631 owns minimal shared-fence/host repair after its sole fixture writer releases; do not edit shared DBOS/test paths or blindly rerun CI. PR1624 formally merged96077db19 after exacta880 CI and scoped concurrency proof. This branch now normally integrates that main; event source equals4f36 and incoming source equalsmain. Normal integrationccbcc9b7b verified57 incoming and20 accepted-event file bytes. Integrated193unit/11protocol/typecheck/lint/build/11audits allpassed. One requested fixture-process test is DB-partitioned and not counted as unit. No localDB/runtime rerun. Evidence main96077 manifest sealed; newexactCI pending. PR stays draft;1358/1359 stay InProgress. Current own work is evidence/docs only; entire migration not complete.
+
+Judge future ownership checked:75 accessible/77 registered trees have no dirty named shared paths;2 unavailable excluded. After1394 delivery7631 owns the bounded judge family and listed shared practice/AI/durable paths. This thread retains Start/UI/boot and receives practice/public readJudgeRunStatus with unchanged dispatch/202/status contract. No migration number reserved or judge writer started. See docs/planning/2026-10-09-judge-start-ownership.md.
+
+
+# Incoming1394 handoff at main96077db19
+
+The source below records earlier candidate-stage evidence. The final merge receipt above supersedes its pending-CI status.
+
 # Current update — YUK1394 CI cron collision repaired
 
 Exact b9b CI37850732224 unit2 failed only composition cron duplicate04:25,2409 passed. Parent local1RED/10passed reproduced. Historical main6212 infra conversation and manifest audit both04:25; moving the former revealed collision.5796 confirmed scope and no fixed-time dependency. Parent changed only audit to04:26, preserved orphan04:25/04:35 and unchanged collision guard. Added manifest contract test;3files32unit/typecheck/lint/build allpassed.27-row declaration catalog verified9sources,2knownchanged; frequent jobs still overlap minute26, noexclusive-runtime claim. No runtime/DB/provider, noR3. Prepare one newpush with existing local docs and evidence, then exactheadCI. Judge implementation entry680dc retained; nojudge writer beforeformal1394main. Earlier evidence remainsrevision-specific.

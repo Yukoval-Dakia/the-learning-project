@@ -1,0 +1,12 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.shared" without a file extension (vitest.unit.config.ts:2:74). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.10 /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor
+
+
+ Test Files  9 passed (9)
+      Tests  110 passed (110)
+   Start at  04:48:34
+   Duration  2.54s (transform 3.46s, setup 0ms, import 6.73s, tests 2.98s, environment 3.33s)
+

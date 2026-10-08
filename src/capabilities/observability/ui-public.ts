@@ -21,3 +21,6 @@ export const loadAdminConjectureScoresSurface = () =>
 
 export const loadAdminConfigSurface = () =>
   import('./ui/config').then((module) => module.AdminConfigSurface);
+
+export { EventCorrectionResponseSchema, EventDetailResponseSchema } from './api/event-contracts';
+export type { EventCorrectionReceipt, EventDetailClient } from './ui/event-detail-client';

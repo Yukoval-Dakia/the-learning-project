@@ -183,23 +183,25 @@ const agentNotesRoute = createRoute({
   component: AgentNotesRoute,
 });
 
-const EventDetailRouteC = lazyRouteComponent(async () => {
-  const EventDetailPage = await loadEventDetailPage();
+const EventDetailRouteC = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyRouteComponent(async () => {
+      const EventDetailPage = await loadEventDetailPage();
 
-  function EventDetailRouteComponent() {
-    const router = useRouter();
-    const { id } = eventDetailRoute.useParams();
-    return (
-      <EventDetailPage
-        id={id}
-        navigate={(to) => router.history.push(to)}
-        onBack={() => router.history.back()}
-      />
-    );
-  }
+      function EventDetailRouteComponent() {
+        const router = useRouter();
+        const { id } = eventDetailRoute.useParams();
+        return (
+          <EventDetailPage
+            id={id}
+            navigate={(to) => router.history.push(to)}
+            onBack={() => router.history.back()}
+          />
+        );
+      }
 
-  return { default: EventDetailRouteComponent };
-});
+      return { default: EventDetailRouteComponent };
+    });
 
 const eventDetailRoute = createRoute({
   getParentRoute: () => rootRoute,

@@ -1,0 +1,26 @@
+{
+  "source": "/tmp/yuk1394-ci-cb984-deadlock.json",
+  "sourceSha256": "cc38b6a557e9e936537e71fd022aff591557b106614bec904631ae3a6122f06a",
+  "ciRun": "37843803109",
+  "candidate": "cb98497a1",
+  "observedStage": "durable-host-start",
+  "observedInstaller": "installSessionOrphanProducerFence",
+  "observedQuery": "DROP TRIGGER IF EXISTS yuk1394_session_orphan_producer ON pgboss.job",
+  "postgresDiagnostics": [
+    {
+      "code": "40P01",
+      "message": "deadlock detected",
+      "detail": "Process 1677 waits for AccessExclusiveLock on relation 348366 of database 18322; blocked by process 1678.\nProcess 1678 waits for AccessExclusiveLock on relation 348339 of database 18322; blocked by process 1677.",
+      "routine": "DeadLockReport"
+    },
+    {
+      "code": "40P01",
+      "message": "deadlock detected",
+      "detail": "Process 1677 waits for AccessExclusiveLock on relation 348366 of database 18322; blocked by process 1678.\nProcess 1678 waits for AccessExclusiveLock on relation 348339 of database 18322; blocked by process 1677.",
+      "routine": "DeadLockReport"
+    }
+  ],
+  "historical1623Cause": "unknown; cannot infer original 4f36 cause from this later checkout",
+  "repairOwner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+  "runtimeByThisThread": false
+}

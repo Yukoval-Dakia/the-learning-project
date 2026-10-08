@@ -1,39 +1,12 @@
+import type { z } from 'zod';
 import type { LoomBadgeTone } from '@/ui/primitives/LoomBadge';
 import type { LoomIconName } from '@/ui/primitives/LoomIcon';
+import type { EventDetailResponseSchema } from '../api/event-contracts';
 
-export type CorrectionState = 'active' | 'retracted' | 'marked_wrong' | 'superseded';
-
-export interface EventCorrectionStatus {
-  state: CorrectionState;
-  correction_event_id: string | null;
-  replacement_event_id: string | null;
-}
-
-export interface EventDetailRow {
-  id: string;
-  actor_kind: string;
-  actor_ref: string;
-  action: string;
-  subject_kind: string;
-  subject_id: string;
-  outcome?: string | null;
-  payload: unknown;
-  caused_by_event_id?: string;
-  task_run_id?: string;
-  cost_micro_usd?: number;
-  created_at: string;
-  correction_status: EventCorrectionStatus;
-}
-
-export interface EventDetailResponse {
-  event: EventDetailRow;
-  correction_status: EventCorrectionStatus;
-  chain: {
-    caused_by: EventDetailRow | null;
-    caused_events: EventDetailRow[];
-    corrections: EventDetailRow[];
-  };
-}
+export type EventDetailResponse = z.infer<typeof EventDetailResponseSchema>;
+export type EventDetailRow = EventDetailResponse['event'];
+export type EventCorrectionStatus = EventDetailResponse['correction_status'];
+export type CorrectionState = EventCorrectionStatus['state'];
 
 const ACTION_LABELS: Record<string, string> = {
   attempt: '作答',

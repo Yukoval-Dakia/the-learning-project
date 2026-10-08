@@ -292,7 +292,19 @@ describe('existing admin page DOM with optional injected clients', () => {
       expect(route).toContain('client={startAdminClient}');
       expect(route).toContain('<StartWorkbenchShell');
       const router = readFileSync('web/src/router.tsx', 'utf8');
-      expect(router.match(/import.meta.env.PROD\s*\? StartPageEntry/g)?.length).toBe(12);
+      const name =
+        path === 'runs'
+          ? 'AdminRunsRoute'
+          : path === 'cost'
+            ? 'AdminCostRoute'
+            : path === 'failures'
+              ? 'AdminFailuresRoute'
+              : path === 'coverage-lattice'
+                ? 'AdminCoverageLatticeRoute'
+                : 'AdminConjectureScoresRoute';
+      expect(router).toMatch(
+        new RegExp(`const ${name} = import\\.meta\\.env\\.PROD\\s*\\? StartPageEntry`),
+      );
     },
   );
 });

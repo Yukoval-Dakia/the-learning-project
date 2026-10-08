@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useState } from 'react';
-import { ApiError, apiJson } from '@/ui/lib/api';
+import { ApiError } from '@/ui/lib/api';
 import { affectedRefsForCorrection } from '@/ui/lib/event-corrections';
 import { formatRelTime } from '@/ui/lib/utils';
 import { Btn } from '@/ui/primitives/Btn';
@@ -11,6 +11,7 @@ import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
+import { type EventDetailClient, httpEventDetailClient } from './event-detail-client';
 import {
   type EventDetailResponse,
   type EventDetailRow,
@@ -27,12 +28,18 @@ export interface EventDetailPageProps {
   id: string;
   navigate: (to: string) => void;
   onBack: () => void;
+  client?: EventDetailClient;
 }
 
-export default function EventDetailPage({ id, navigate, onBack }: EventDetailPageProps) {
+export default function EventDetailPage({
+  id,
+  navigate,
+  onBack,
+  client = httpEventDetailClient,
+}: EventDetailPageProps) {
   const query = useQuery({
     queryKey: ['event-detail', id],
-    queryFn: () => apiJson<EventDetailResponse>(`/api/events/${encodeURIComponent(id)}`),
+    queryFn: () => client.getEventDetail(id),
     retry: false,
   });
 
@@ -90,7 +97,7 @@ export default function EventDetailPage({ id, navigate, onBack }: EventDetailPag
         <ErrorState text="事件证据暂时加载失败。" onRetry={() => query.refetch()} />
       )}
 
-      {query.data && <EventChainView data={query.data} navigate={navigate} />}
+      {query.data && <EventChainView data={query.data} navigate={navigate} client={client} />}
     </main>
   );
 }
@@ -98,7 +105,9 @@ export default function EventDetailPage({ id, navigate, onBack }: EventDetailPag
 function EventChainView({
   data,
   navigate,
+  client,
 }: {
+  client: EventDetailClient;
   data: EventDetailResponse;
   navigate: (to: string) => void;
 }) {
@@ -119,6 +128,7 @@ function EventChainView({
 
       <FocalEvent event={event} navigate={navigate} />
       <CorrectionControls
+        client={client}
         event={event}
         onChanged={() => queryClient.invalidateQueries({ queryKey: ['event-detail', event.id] })}
       />
@@ -248,27 +258,24 @@ function FocalEvent({
 }
 
 function CorrectionControls({
+  client,
   event,
   onChanged,
 }: {
   event: EventDetailRow;
   onChanged: () => Promise<unknown>;
+  client: EventDetailClient;
 }) {
   const [reason, setReason] = useState('');
   const affectedRefs = affectedRefsForCorrection(event);
   const mutation = useMutation({
     mutationFn: (correctionKind: 'retract' | 'mark_wrong' | 'restore') =>
-      apiJson<{ correction_event_id: string }>(
-        `/api/events/${encodeURIComponent(event.id)}/corrections`,
-        {
-          method: 'POST',
-          body: JSON.stringify({
-            correction_kind: correctionKind,
-            reason_md: reason.trim(),
-            affected_refs: affectedRefs,
-          }),
-        },
-      ),
+      client.createEventCorrection(event.id, {
+        correction_kind: correctionKind,
+        reason_md: reason.trim(),
+        affected_refs: affectedRefs,
+      }),
+    retry: false,
     onSuccess: async () => {
       setReason('');
       await onChanged();
