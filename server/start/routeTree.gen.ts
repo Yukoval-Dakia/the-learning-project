@@ -15,6 +15,11 @@ import { Route as InboxRouteImport } from './routes/inbox'
 import { Route as MistakesRouteImport } from './routes/mistakes'
 import { Route as TodayRouteImport } from './routes/today'
 import { Route as BuildSplatRouteImport } from './routes/[_]build.$'
+import { Route as AdminConjectureScoresRouteImport } from './routes/admin.conjecture-scores'
+import { Route as AdminCostRouteImport } from './routes/admin.cost'
+import { Route as AdminCoverageLatticeRouteImport } from './routes/admin.coverage-lattice'
+import { Route as AdminFailuresRouteImport } from './routes/admin.failures'
+import { Route as AdminRunsRouteImport } from './routes/admin.runs'
 import { Route as ApiSplatRouteImport } from './routes/api.$'
 
 const IndexRoute = IndexRouteImport.update({
@@ -47,6 +52,31 @@ const BuildSplatRoute = BuildSplatRouteImport.update({
   path: '/_build/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const AdminConjectureScoresRoute = AdminConjectureScoresRouteImport.update({
+  id: '/admin/conjecture-scores',
+  path: '/admin/conjecture-scores',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminCostRoute = AdminCostRouteImport.update({
+  id: '/admin/cost',
+  path: '/admin/cost',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminCoverageLatticeRoute = AdminCoverageLatticeRouteImport.update({
+  id: '/admin/coverage-lattice',
+  path: '/admin/coverage-lattice',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminFailuresRoute = AdminFailuresRouteImport.update({
+  id: '/admin/failures',
+  path: '/admin/failures',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminRunsRoute = AdminRunsRouteImport.update({
+  id: '/admin/runs',
+  path: '/admin/runs',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const ApiSplatRoute = ApiSplatRouteImport.update({
   id: '/api/$',
   path: '/api/$',
@@ -60,6 +90,11 @@ export interface FileRoutesByFullPath {
   '/mistakes': typeof MistakesRoute
   '/today': typeof TodayRoute
   '/_build/$': typeof BuildSplatRoute
+  '/admin/conjecture-scores': typeof AdminConjectureScoresRoute
+  '/admin/cost': typeof AdminCostRoute
+  '/admin/coverage-lattice': typeof AdminCoverageLatticeRoute
+  '/admin/failures': typeof AdminFailuresRoute
+  '/admin/runs': typeof AdminRunsRoute
   '/api/$': typeof ApiSplatRoute
 }
 export interface FileRoutesByTo {
@@ -69,6 +104,11 @@ export interface FileRoutesByTo {
   '/mistakes': typeof MistakesRoute
   '/today': typeof TodayRoute
   '/_build/$': typeof BuildSplatRoute
+  '/admin/conjecture-scores': typeof AdminConjectureScoresRoute
+  '/admin/cost': typeof AdminCostRoute
+  '/admin/coverage-lattice': typeof AdminCoverageLatticeRoute
+  '/admin/failures': typeof AdminFailuresRoute
+  '/admin/runs': typeof AdminRunsRoute
   '/api/$': typeof ApiSplatRoute
 }
 export interface FileRoutesById {
@@ -79,14 +119,42 @@ export interface FileRoutesById {
   '/mistakes': typeof MistakesRoute
   '/today': typeof TodayRoute
   '/_build/$': typeof BuildSplatRoute
+  '/admin/conjecture-scores': typeof AdminConjectureScoresRoute
+  '/admin/cost': typeof AdminCostRoute
+  '/admin/coverage-lattice': typeof AdminCoverageLatticeRoute
+  '/admin/failures': typeof AdminFailuresRoute
+  '/admin/runs': typeof AdminRunsRoute
   '/api/$': typeof ApiSplatRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
-    '/' | '/$' | '/inbox' | '/mistakes' | '/today' | '/_build/$' | '/api/$'
+    | '/'
+    | '/$'
+    | '/inbox'
+    | '/mistakes'
+    | '/today'
+    | '/_build/$'
+    | '/admin/conjecture-scores'
+    | '/admin/cost'
+    | '/admin/coverage-lattice'
+    | '/admin/failures'
+    | '/admin/runs'
+    | '/api/$'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/$' | '/inbox' | '/mistakes' | '/today' | '/_build/$' | '/api/$'
+  to:
+    | '/'
+    | '/$'
+    | '/inbox'
+    | '/mistakes'
+    | '/today'
+    | '/_build/$'
+    | '/admin/conjecture-scores'
+    | '/admin/cost'
+    | '/admin/coverage-lattice'
+    | '/admin/failures'
+    | '/admin/runs'
+    | '/api/$'
   id:
     | '__root__'
     | '/'
@@ -95,6 +163,11 @@ export interface FileRouteTypes {
     | '/mistakes'
     | '/today'
     | '/_build/$'
+    | '/admin/conjecture-scores'
+    | '/admin/cost'
+    | '/admin/coverage-lattice'
+    | '/admin/failures'
+    | '/admin/runs'
     | '/api/$'
   fileRoutesById: FileRoutesById
 }
@@ -105,6 +178,11 @@ export interface RootRouteChildren {
   MistakesRoute: typeof MistakesRoute
   TodayRoute: typeof TodayRoute
   BuildSplatRoute: typeof BuildSplatRoute
+  AdminConjectureScoresRoute: typeof AdminConjectureScoresRoute
+  AdminCostRoute: typeof AdminCostRoute
+  AdminCoverageLatticeRoute: typeof AdminCoverageLatticeRoute
+  AdminFailuresRoute: typeof AdminFailuresRoute
+  AdminRunsRoute: typeof AdminRunsRoute
   ApiSplatRoute: typeof ApiSplatRoute
 }
 
@@ -152,6 +230,41 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof BuildSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/admin/conjecture-scores': {
+      id: '/admin/conjecture-scores'
+      path: '/admin/conjecture-scores'
+      fullPath: '/admin/conjecture-scores'
+      preLoaderRoute: typeof AdminConjectureScoresRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/cost': {
+      id: '/admin/cost'
+      path: '/admin/cost'
+      fullPath: '/admin/cost'
+      preLoaderRoute: typeof AdminCostRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/coverage-lattice': {
+      id: '/admin/coverage-lattice'
+      path: '/admin/coverage-lattice'
+      fullPath: '/admin/coverage-lattice'
+      preLoaderRoute: typeof AdminCoverageLatticeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/failures': {
+      id: '/admin/failures'
+      path: '/admin/failures'
+      fullPath: '/admin/failures'
+      preLoaderRoute: typeof AdminFailuresRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin/runs': {
+      id: '/admin/runs'
+      path: '/admin/runs'
+      fullPath: '/admin/runs'
+      preLoaderRoute: typeof AdminRunsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/api/$': {
       id: '/api/$'
       path: '/api/$'
@@ -169,6 +282,11 @@ const rootRouteChildren: RootRouteChildren = {
   MistakesRoute: MistakesRoute,
   TodayRoute: TodayRoute,
   BuildSplatRoute: BuildSplatRoute,
+  AdminConjectureScoresRoute: AdminConjectureScoresRoute,
+  AdminCostRoute: AdminCostRoute,
+  AdminCoverageLatticeRoute: AdminCoverageLatticeRoute,
+  AdminFailuresRoute: AdminFailuresRoute,
+  AdminRunsRoute: AdminRunsRoute,
   ApiSplatRoute: ApiSplatRoute,
 }
 export const routeTree = rootRouteImport

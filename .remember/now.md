@@ -1,3 +1,33 @@
+# Current Start admin closeout — 2026-10-09
+
+PR1615 fc021 passed 96 real RPC calls and five-page T3 browser acceptance; 88 public table counts/content unchanged. Isolated server/PG and Ryuk exited; original four services/release unchanged. Lock7109b3c7 released2026-10-08T15:12:46.541288Z. Evidence runtime/yuk1358-admin-fc021bca5/evidence and docs/planning/evidence/2026-10-09-yuk1358-admin-built-acceptance.json. No provider/worker/replay/deployment. Review R1 completed NONE. Parent normally merged main7b890 (1390) asf48f04690, only PLAN/now conflicts; integrated295unit/8protocol/typecheck/lint/build passed; final CI pending. 7631 exclusively owns1391 six trait operations; parent owns Start. Remaining configuration/subjects Start, canonical boot and full runtime/SPA retirement remain open under1358/1359.
+
+Earlier records below are historical, not current task or runtime state.
+
+# Start admin PR1615 — 2026-10-08
+
+DraftPR1615 linked, head dbdd00e02 before this record. Resumed original R1 completed/noPending with P0/P1 NONE on fixed ea0..2d5 productdiff; parent test-onlyfixture and mainintegration do not change those productblobs. Parent332unit/8protocol/static/build and48+2DB evidence retained. Builtacceptancepreparation task yuk1358-admin-built-acceptance-preparation-20261008-v1 (mcp49eafe5d-44e1-4ad4-99e9-d8ea36771da2) running solely ignored .cache/yuk1358-admin-built-acceptance; no runtimeallowed. Mainproduct/build frozen while it prepares. Parent still owns realRPC/T3browser/CI/delivery. Linear1358 comment06cb37c4-d643-4f41-8e64-b8f19455a3a8 records evidence andOrbStackincident. No currentlock/selfresources.
+
+# Current Start admin acceptance — 2026-10-08
+
+Candidate1f898bfb4 = source2d5 + main0b925 integration773 + one-line cost_ref DB fixture repair. Parent332unit/8protocol/typecheck/lint/build all0. First DB48pass/2fixturefails retained; fixednew2DBpass. Initial R1 cancelled/noPending withoutverdict; sameR1 resumed task yuk1358-start-admin-review-r1-resume-20261008-v2 (mcp49eafe5d-44e1-4ad4-99e9-d8ea36771da2),notR2. BuiltRPC/browser stillpending, no deployment. Lock released14:29:57.323Z; original4 unchanged relative postrestart14:29 snapshot. OrbStacksignalshutdown14:03 thenboot14:28 afterdiagnosticcommands recorded; senderunknown,possible orbctl diagnostic autostart; no explicitstart/restart issued.1390 writer7631 separatepublic/domain scope.
+
+# Active Start admin integration — 2026-10-08
+
+Source2d5ec84ef completed/released. Parent verified25source/8log/836built hashes; R1 task yuk1358-start-admin-review-r1-20261008-v1 running read-only on fixed diff ea0e3813f..2d5ec84ef. Integrating origin/main0b925feaa (1389) with only PLAN/now conflicts; both histories retained. Parent DB/built acceptance and integrated checks pending. No deployment. 7631 owns1390 subject-control, no overlapping writer. Product generation remains MiMo; development uses AGENTS models.
+
+# Current migration lane — 2026-10-08
+
+PR1609 merged at13:35:22Z as7682618cc47abc57a59c72eb589c360325c59895. Parent fetched and confirmed exact same treef7dcd2544c0257a12abeeefff5776f8b7424beb0 asgreenheadd19bd527d;CI37784537687 success acrossallgates,threads0,R2NONE,owner no-wait waiver used. Unwatched. Linear1358 autoDone correctedInProgress. No deployment;runtimeAgentTEST remains5aa2/build853/image9b76.73parentDB/497unit/7protocol/static/build and earlier actualRPC/T3 evidence retain their documented revisions.
+
+From fresh origin/main7682618cc, active branch feat/yuk-1358-start-admin-reads in /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor. Next bounded lane: connectfive existingreadonly admin surfaces (runs+detail,cost,failures,coverage,conjectures) toauthenticated/epoch-gatedStartpublicreaders,retain original layout/queries/polling/error/nullable truth. No config/subjectswrite/runtime implementation;7631 ownsYUK1389 configdomain separately. Parentowns integration/DB/browser/review/PR/watch,onecodewriter. No runtime lock or activeownedcontainers.
+
+Earlier records below are revision-specific history.
+
+## Integrated configuration lane historical receipt
+# 当前交接 — YUK1389候选验收，2026-10-08
+
+## Incoming YUK1390 historical handoff
 # 当前交接 — YUK1390科目控制领域操作，2026-10-08
 
 1389 PR1614于13:54:47Z合main0b925feaaf9a7d79c2236835990122958fab5689。父fetch核tree6c602bd9a286e07bdbe989a63c2da800cd73368e与exact e1f385f5e一致，CI37786605158全绿/R1 NONE/threads0，按bots均终止无finding免时间窗，skip/quota不计review通过。176unit/48DB/static/build证据保留，已unwatch/Linear Done/通知主线。无runtime操作。
