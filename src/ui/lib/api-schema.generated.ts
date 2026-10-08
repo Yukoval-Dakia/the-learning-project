@@ -18967,10 +18967,42 @@ export interface operations {
                             created_at: number;
                             id: string;
                             knowledge_ids: string[];
+                            /** @default [] */
+                            prompt_materials: ({
+                                alt_text?: string;
+                                /** @enum {string} */
+                                availability: "inline";
+                                caption?: string;
+                                content_md: string;
+                                /** @enum {string} */
+                                kind: "passage" | "table" | "plaintext";
+                                material_id: string;
+                            } | {
+                                alt_text?: string;
+                                asset_id: string;
+                                /** @enum {string} */
+                                availability: "available";
+                                caption?: string;
+                                content_md?: string;
+                                /** @enum {string} */
+                                kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
+                                material_id: string;
+                            } | {
+                                alt_text?: string;
+                                /** @enum {string} */
+                                availability: "missing" | "unavailable";
+                                caption?: string;
+                                content_md?: string;
+                                /** @enum {string} */
+                                kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
+                                material_id: string;
+                            })[];
                             prompt_md: string;
                             question_id: string;
                             record_id: string;
                             reference_md: string | null;
+                            /** @default [] */
+                            wrong_answer_image_refs: string[];
                             wrong_answer_md: string;
                         }[];
                         next_cursor: string | null;
@@ -19011,10 +19043,42 @@ export interface operations {
                             created_at: number;
                             id: string;
                             knowledge_ids: string[];
+                            /** @default [] */
+                            prompt_materials: ({
+                                alt_text?: string;
+                                /** @enum {string} */
+                                availability: "inline";
+                                caption?: string;
+                                content_md: string;
+                                /** @enum {string} */
+                                kind: "passage" | "table" | "plaintext";
+                                material_id: string;
+                            } | {
+                                alt_text?: string;
+                                asset_id: string;
+                                /** @enum {string} */
+                                availability: "available";
+                                caption?: string;
+                                content_md?: string;
+                                /** @enum {string} */
+                                kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
+                                material_id: string;
+                            } | {
+                                alt_text?: string;
+                                /** @enum {string} */
+                                availability: "missing" | "unavailable";
+                                caption?: string;
+                                content_md?: string;
+                                /** @enum {string} */
+                                kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
+                                material_id: string;
+                            })[];
                             prompt_md: string;
                             question_id: string;
                             record_id: string;
                             reference_md: string | null;
+                            /** @default [] */
+                            wrong_answer_image_refs: string[];
                             wrong_answer_md: string;
                         }[];
                     };

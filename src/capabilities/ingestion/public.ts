@@ -1,5 +1,6 @@
 // Stable server contract for consumers outside the ingestion capability.
 
+export type { MistakeListResponse, MistakeProjection } from './api/contracts';
 export type { ColdStartBridgeRunTaskFn } from './server/cold-start-bridge';
 export {
   ColdStartBridgeError,
@@ -16,6 +17,8 @@ export type {
   RecordLinksAcceptResult,
   RecordPromotionAcceptResult,
 } from './server/legacy-record-appliers';
+export type { MistakeListQuery } from './server/mistakes-read';
+export { readMistakes } from './server/mistakes-read';
 export type { SourceAssetRow } from './server/persist-image-asset';
 export {
   lockImageStorageKey,

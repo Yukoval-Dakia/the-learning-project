@@ -26,13 +26,13 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { type MistakeProjection, listMistakes } from '@/capabilities/ingestion/ui-public';
 import { getTree } from '@/capabilities/knowledge/ui-public';
 import { resolveKnownSubjectId } from '@/subjects/profile';
 import { AttachmentStrip } from '@/ui/components/response/AttachmentStrip';
 import { EvidenceLightbox } from '@/ui/components/response/EvidenceLightbox';
 import { SubjectFilterTabs } from '@/ui/components/SubjectFilterTabs';
 import { useSubjects } from '@/ui/hooks/useSubjects';
-import { apiJson } from '@/ui/lib/api';
 import { type SubjectRowLike, subjectDisplayName, subjectIdentityKey } from '@/ui/lib/subject';
 import { Btn } from '@/ui/primitives/Btn';
 import { CauseBadge, type CausePrimary } from '@/ui/primitives/CauseBadge';
@@ -41,49 +41,11 @@ import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
 
-// ── wire 类型（GET /api/mistakes 投影行；listMistakeProjectionRows） ──
-interface MistakeCause {
-  source: 'user' | 'agent';
-  primary_category: string;
-  /** YUK-1018 — misc_ id 的显示回填（misconception title）；非 misc → null。 */
-  primary_label?: string | null;
-  secondary_categories?: string[] | null;
-  /** YUK-1020 — secondary 里 misc_ id 的显示回填（id→title map；缺席→裸 id）。 */
-  secondary_labels?: Record<string, string> | null;
-  user_notes: string | null;
-  confidence: number | null;
-}
+export type MistakeRow = MistakeProjection;
+type MistakeCause = NonNullable<MistakeRow['cause']>;
 
-// correction_state 是 EffectiveTruth；本页只消费 terminal_state（active|retracted|
-// marked_wrong|missing|cycle）派生「纠错状态」。其余字段（chain 等）本页不渲。
-interface MistakeCorrectionState {
-  terminal_state: 'active' | 'retracted' | 'marked_wrong' | 'missing' | 'cycle';
-}
-
-export interface MistakeRow {
-  id: string;
-  record_id: string;
-  question_id: string;
-  prompt_md: string;
-  reference_md: string | null;
-  wrong_answer_md: string;
-  knowledge_ids: string[];
-  cause: MistakeCause | null;
-  correction_state: MistakeCorrectionState;
-  created_at: number;
-  // YUK-1051 — 真实错答图证据。投影字段待服务端补上（见 YUK-1052 缝）；UI 先支持：
-  // 缺席/空数组 → 纯文本对照（现状不变），有了就展示原图。
-  wrong_answer_image_refs?: string[];
-}
-
-// 投影 limit-based（后端 listMistakeProjectionRows 只有 limit，无 total/cursor）。limit 取
-// 200 给余量；rows 触顶时 eyebrow 显「N+」诚实标记可能截断，不把截断计数当真 total 呈现。
-// 真分页 / 无限滚 + 后端 total 是 YUK-456 follow-up（错题本长大后；owner day-one 不触及）。
+// The page shows at most 200 rows and keeps the existing N+ truncation indicator.
 const MISTAKES_LIMIT = 200;
-const listMistakes = (subject?: string) =>
-  apiJson<{ rows: MistakeRow[] }>(
-    `/api/mistakes?limit=${MISTAKES_LIMIT}${subject ? `&subject=${encodeURIComponent(subject)}` : ''}`,
-  );
 
 // ── 科目派生（effective_domain → label/tone）；同 QuestionsPage subjMeta 先例。 ──
 // Label 从注册表派生（subjectDisplayName，alias-aware：旧 wenyan → yuwen），不再硬编码；
@@ -315,7 +277,8 @@ export default function MistakesPage({ navigate }: MistakesPageProps) {
 
   const q = useQuery({
     queryKey: ['mistakes', subject === 'all' ? undefined : subject],
-    queryFn: () => listMistakes(subject === 'all' ? undefined : subject),
+    queryFn: () =>
+      listMistakes({ limit: MISTAKES_LIMIT, subject: subject === 'all' ? undefined : subject }),
   });
   const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: getTree });
 
@@ -363,7 +326,7 @@ export default function MistakesPage({ navigate }: MistakesPageProps) {
   const corrected = derived.filter((d) => d.ui === '已纠正').length;
 
   // rows 可能在 MISTAKES_LIMIT 处被截断（投影 limit-based）。eyebrow「共 N 条」据此显「N+」
-  // 诚实标记，避免把截断计数当真 total 呈现（真 total 待后端 count，见 listMistakes 注释）。
+  // 诚实标记，避免把截断计数当真 total 呈现（真 total 待后端 count）。
   const totalLabel = rows.length >= MISTAKES_LIMIT ? `${rows.length}+` : String(rows.length);
 
   // pending 行的 CauseBadge 文案随 Date.now() 派生（<30s「归因中...」/ ≥30s「待归因」）。
