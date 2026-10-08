@@ -1,8 +1,8 @@
-# 当前交接 — YUK1390科目控制领域操作，2026-10-08
+# 当前交接 — YUK1391 trait六操作，2026-10-09 JST
 
-1389 PR1614于13:54:47Z合main0b925feaaf9a7d79c2236835990122958fab5689。父fetch核tree6c602bd9a286e07bdbe989a63c2da800cd73368e与exact e1f385f5e一致，CI37786605158全绿/R1 NONE/threads0，按bots均终止无finding免时间窗，skip/quota不计review通过。176unit/48DB/static/build证据保留，已unwatch/Linear Done/通知主线。无runtime操作。
+YUK1390 PR1616于2026-10-08T14:55:48Z合main7b89041799881249bbe89344deae8942cc867f70；tree0eda775c32c2f47ed74ab4c3bb99ec5bfeba3006与exact bec86e4e5一致。CI37794964900全绿、独立R1 NONE/noPending、threads0，60unit/父42DB/static/build证据已版本化。已unwatch、Linear Done、通知主线，无部署。
 
-当前feat/yuk-1390-subject-control-domain，源码76383a4a5714df89c10a0c24feff65aaa0006c4f。作者completed/noPending并释放writer，父核六SHA，60unit/static/build与父4文件42DB通过。14:42:16.233660Z核token1155c3a3释放测试锁，原四容器/release相对14:41新快照全同。R1任务yuk1390-subject-control-review-r1-20261008只读运行，PR/exactCI尚待。证据docs/planning/evidence/yuk1390。原持久化/hydrate只读，Start归主线，trait六写排除；1390/1358/1359仍In Progress。以下历史记录不覆盖当前状态。
+fresh fetch后原分支behind1且clean，从origin/main建立feat/yuk-1391-trait-control-domain。YUK1391（457e4ef4-bc79-4291-9bbe-a524e9f505f3）已查重创建In Progress，1390 writer/review均完成。下一唯一writer只拥有两个trait API、共享operation/public、scopedtests及1391文档；原trait-write/hydrate只读，Start/组合根归主线。主线报告14:52:12Z持token7109b3c7，未收到释放前不运行DB/容器/服务。1358/1359保持In Progress。以下历史记录不覆盖当前状态。
 
 ## 合入1381的交接记录
 

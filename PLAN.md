@@ -1,10 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：YUK-1390源码76383a4a5已交回，60unit/父42DB/static/build通过，R1与PR/CI待；1358/1359仍未完成。未部署。
+> Linear 是权威 tracker。2026-10-09 JST：YUK-1390已合PR1616/main7b8904179；YUK-1391接续trait六操作共享领域出口，1358/1359仍未完成。未部署。
 
 ## NOW
 
-- **YUK-1390 / W5控制操作**：源码76383a4a5，作者释放，父核六SHA/4文件42DB通过；14:42:16Z核owner释放测试锁，原四服务/release未变。独立R1进行，PR/CI待；保留Db自有事务与提交后hydrate。Start归主线，trait六写排除。见1390交付文档。
+- **YUK-1391 / W5 trait六操作**：从fresh main7b8904179建立独立branch，唯一实施writer待启动；复用原Db事务与ok提交后hydrate，两个HTTP适配器实际消费公共入口。原trait-write/hydrate只读，Start归主线。主线14:52Z持测试锁，本lane仅源码/unit/static；DB另核锁。见1391交付文档。
+
+- **YUK-1390 / 已合入**：PR1616于14:55:48Z合main7b8904179，tree与exact bec86e4e5一致；CI37794964900全绿、独立R1 NONE、threads0，60unit/父42DB/static/build通过。已unwatch/Linear Done/通知主线；未部署。
 
 - **YUK-1389 / 已合入**：PR1614于13:54:47Z合main0b925feaa，tree与exact e1f385f5e一致；CI37786605158全绿、R1 NONE、threads0。176unit/48DB/static/build通过，已unwatch；Start配置消费归主线。
 
