@@ -70,5 +70,44 @@
     "/tmp/yuk1605-ci-repair/cleanup.json": "68d771afde188705635dc52bdbc5fcdb973d1912265cbcf6ecb7ca0880559b51",
     "/tmp/yuk1605-ci-repair/unit.log": "13b6147bef9c13cef1db4a27ea91e624a497970bbe6d8e815f253c1fa5ea35f2",
     "/tmp/yuk1605-ci-repair/build.log": "3351c31e22a0b46cbdb6528d1f10988f11d46696c941debd2202d3627a8d1639"
+  },
+  "main_integration": {
+    "main": "6150f01a949c3d1357f8b44f0d8ed6807cd74179",
+    "merge": "fe79495ea",
+    "conflicts": "PLAN.md and .remember/now.md only; both lanes retained",
+    "main_source_test_blobs_verified": 6,
+    "checks": {
+      "unit": {
+        "command": [
+          "pnpm",
+          "vitest",
+          "run",
+          "--config",
+          "vitest.unit.config.ts",
+          "src/capabilities/copilot/server/copilot-execution.unit.test.ts",
+          "src/capabilities/practice/server/tools/submit-review-answer.unit.test.ts",
+          "src/capabilities/observability/server/today-cost.unit.test.ts"
+        ],
+        "exitCode": 0
+      },
+      "typecheck": {
+        "command": ["pnpm", "typecheck"],
+        "exitCode": 0
+      },
+      "lint": {
+        "command": ["pnpm", "lint"],
+        "exitCode": 0
+      },
+      "build": {
+        "command": ["pnpm", "build"],
+        "exitCode": 0
+      }
+    },
+    "log_sha256": {
+      "/tmp/yuk1605-ci-repair/integrated-typecheck.log": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+      "/tmp/yuk1605-ci-repair/integrated-unit.log": "d55a4d8547192db818538773169ce25e2e9f5b7fcbf0104c1fe68c64b87a7cd6",
+      "/tmp/yuk1605-ci-repair/integrated-lint.log": "8b340a935ad72405ab5e70a4b6dac43e2eb2ce058097ac2930aae4ae9d847949",
+      "/tmp/yuk1605-ci-repair/integrated-build.log": "0347541292ed1baf9bc67e1e58e943ada75441717a42b08da830abaa03e5407d"
+    }
   }
 }
