@@ -1,6 +1,6 @@
 # 当前交接 — 2026-10-08 YUK1378费用读取验收
 
-分支feat/yuk-1378-today-cost-read，基线main caeb959fd，携带1359文档db191745a及实施603c9674e。唯一实施writer已completed/noPending、树clean。父核7哈希并实际2文件11DB通过；8unit/static/build已过。10:34:07Z核owner释放部署锁，原四服务及release不变。R1独立审查运行，PR/CI待；主线独占Start/1356，1377/1358/1359仍In Progress。下文为历史交接。
+分支feat/yuk-1378-today-cost-read，基线main caeb959fd，携带1359文档db191745a及实施603c9674e。唯一实施writer已completed/noPending、树clean。父核7哈希并实际2文件11DB通过；8unit/static/build已过。10:34:07Z核owner释放部署锁，原四服务及release不变。R1 NONE，PR1604已link/watch；首CI的单测DB直接import分区问题已修05e1965bf，8unit/partition/static/build通过，唯一R2与新CI待；主线独占Start/1356，1377/1358/1359仍In Progress。下文为历史交接。
 
 # 2026-10-08 current PR1595
 

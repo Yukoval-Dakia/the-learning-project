@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：1378 Today费用共享读取603c9674e已由父实际11DB验证，8unit/static/build通过，独立review/PR门禁进行中。1359退出状态已更新且保持In Progress。未部署，主线独占1356与Start挂载。
+> Linear 是权威 tracker。2026-10-08：1378 Today费用共享读取603c9674e已由父实际11DB验证，8unit/static/build通过，独立R1 NONE；CI分区问题已修、8unit/partition/static/build重验通过，验证审及新CI待。1359退出状态已更新且保持In Progress。未部署，主线独占1356与Start挂载。
 
 ## NOW
 
