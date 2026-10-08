@@ -101,7 +101,7 @@ Every original HTTP fixture also compares its complete response with the public
 reader. Coverage freezes only Date for this comparison and explicitly normalizes
 `scan_ms`; conjecture compares exact response bytes.
 
-New real-DB test source proves nonzero uncommitted caller-Tx data, absence on both
+New real-DB test source asserts nonzero uncommitted caller-Tx data, absence on both
 the singleton and the outside test handle, full public-table content snapshots
 before/after reads, and restoration to the baseline on intentional rollback.
 Coverage exercises inherited KC domain, mastery, active goal, thin/covered pools,

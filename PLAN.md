@@ -4,7 +4,7 @@
 
 ## NOW
 
-- **YUK-1386 / W5诊断领域读取**：主线已确认精确范围无重叠，从main a6faded072建立feat/yuk-1386-diagnostics-domain-reads；唯一T3 writer实施public coverage/conjecture与Db|Tx传递。practice仅target-discovery三个签名，保留deadline/筛选/评分/恢复。父接真实Tx/HTTP验收和review/CI，无runtime动作，Start挂载归主线。
+- **YUK-1386 / W5诊断领域读取**：实现3789c0f9a已交回并释放writer，父核11hash、5保护文件不变及practice仅批准类型差异；99unit/static/build/audits通过。独立R1进行；父24DB待主线1358实际释放运行锁后执行。两HTTP共用public coverage/conjecture，保留deadline、筛选、评分、恢复与missing历史兼容，Start挂载归主线。
 
 - **YUK-1356 / 主线交付**：PR1605于11:58:08Z合入a3691f572，主线核tree与exact e260bdb98一致、CI37772055452绿/threads0。保留真实MiMo一次工具验收及main4a3d 139unit/110DB证据；1356仍InProgress，未部署。1358 Start Today/Inbox由主线独占PR1609及RPC/browser验收，不在此树修改。
 
