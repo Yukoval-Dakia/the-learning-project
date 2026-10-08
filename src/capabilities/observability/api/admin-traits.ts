@@ -4,8 +4,8 @@
 
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
-import { listAdminTraits } from '@/server/subjects/admin-read';
 import { SUBJECT_TRAIT_KINDS, type SubjectTraitKind } from '@/subjects/trait-schemas';
+import { listAdminTraits } from '../public';
 
 export async function GET(req: Request): Promise<Response> {
   try {

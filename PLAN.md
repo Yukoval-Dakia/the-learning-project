@@ -1,11 +1,13 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：PR1609 head8ce80c557的CI37781384415 DB4单例失败（1537通过）：Stop旧夹具在发delta后直接写cancel并禁止全部历史正文。test-only修复a5c9867fe已交回，改用真实取消入口/确定性barrier；父整合main后接DB复验，不merge。428unit/真实RPC证据保留，runtime未动；1387仍7631独占。
+> Linear 是权威 tracker。2026-10-08：PR1609 head8ce80c557的CI37781384415 DB4单例失败（1537通过）：Stop旧夹具在发delta后直接写cancel并禁止全部历史正文。test-only修复a5c9867fe已交回，改用真实取消入口/确定性barrier；父已正常整合main d609c7b66、仅handoff冲突，接DB复验，不merge。428unit/真实RPC证据保留，runtime未动；1387已交付，config下一lane仍7631独占。
 
 
 ## NOW
 
 - **YUK-1358 / Start Today与Inbox**：PR1609正常整合main6c6905，R2 NONE且原timestamp P1已修；父53DB历史证据保留，当前1af5真实RPC与浏览器通过，88表读无变/操作仅预期event+2与note更新；36 usability为1af5证据；2118另过428unit+7协议/static/build和真实RPC，等待最终head CI后合并。整个W1及残留HTTP消费者未完。[当前验收](docs/planning/2026-10-08-yuk1358-start-workbench-handoff.md)。
+
+- **YUK-1387 / 已合入**：PR1613合main d609c7b66，exact f8e832c66 CI/R1 NONE/tree一致；116unit与父15DB通过。subjects/traits四读取及分页journal已public共享，Start待主线。7631下一独占config领域出口，禁止重复writer。
 
 - **YUK-1356 / 主线交付**：PR1605于11:58:08Z合入a3691f572，主线核tree与exact e260bdb98一致、CI37772055452绿/threads0。保留真实MiMo一次工具验收及main4a3d 139unit/110DB证据；1356仍InProgress，未部署。1358 Start Today/Inbox由主线独占PR1609及RPC/browser验收，不在此树修改。
 
