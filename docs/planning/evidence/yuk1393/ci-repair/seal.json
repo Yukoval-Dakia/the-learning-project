@@ -1,0 +1,55 @@
+{
+  "ciRun": "37826255809",
+  "failedHead": "53f05b572e33440886b1a7e6ab1f084308ceef77",
+  "files": [
+    {
+      "source": "/tmp/yuk1393-ci-db2-37826255809.log",
+      "file": "yuk1393-ci-db2-37826255809.log.gz",
+      "sha256": "34d761a36b154d92df2c838be3e721006dd722f877094a4e198e3aed97c5d576"
+    },
+    {
+      "source": "/tmp/yuk1393-ci-repair-admin-config/tests.log",
+      "file": "tests.log.gz",
+      "sha256": "97108228a51a04c94b15071c75c6e89d4587585ebe8c4843e9f8070bc7fa585d"
+    },
+    {
+      "source": "/tmp/yuk1393-ci-repair-admin-config/typecheck.log",
+      "file": "typecheck.log.gz",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "source": "/tmp/yuk1393-ci-repair-admin-config/lint.log",
+      "file": "lint.log.gz",
+      "sha256": "5fef1677bef37d5203ff9962ef1075b2393ebe3518fdc19e0895f5979721628f"
+    },
+    {
+      "source": "/tmp/yuk1393-ci-repair-admin-config/lint-green.log",
+      "file": "lint-green.log.gz",
+      "sha256": "0fe5035b122762d1378869233f561f2b1359fd66413cf4f32f3fd7d7e4a1e745"
+    },
+    {
+      "source": "/tmp/yuk1393-ci-repair-admin-config/before.json",
+      "file": "before.json.gz",
+      "sha256": "a1dd40d5debd37a7f9868f594543d792451eedb5d7dbac5a6ed466be7fc6887f"
+    },
+    {
+      "source": "/tmp/yuk1393-ci-repair-admin-config/lock-release.json",
+      "file": "lock-release.json.gz",
+      "sha256": "7c1b3230396efae91deff6bffa5dd9bef774d281609b4cc330561ac5e1f5e56f"
+    },
+    {
+      "source": "/tmp/yuk1393-ci-repair-admin-config/build.log",
+      "file": "build.log.gz",
+      "sha256": "96ac5eee694928c206e463f15a5f5e7f1e06fc384b39d16800a7fef30db1abd6"
+    }
+  ],
+  "results": {
+    "adminConfigDb": {
+      "passed": 29,
+      "exitCode": 0
+    },
+    "typecheck": 0,
+    "lintAfterFormat": 0,
+    "build": 0
+  }
+}

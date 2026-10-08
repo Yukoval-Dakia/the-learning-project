@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：main10df已含PR1620；PR1621 exact53f由T3 watch，父验收/R1已完成。YUK1394两个六小时清理族仅设计进行中；当前无本线程runtime锁或服务。整迁移尚未完成，过往记录见[归档](docs/planning/2026-10-09-pre-1393-board-archive.md)。
+> Linear 是权威 tracker。2026-10-09 JST：main10df已含PR1620；PR1621 exact53f CI仅旧admin-config调度归属断言失败，父test修正29DB通过，准备新exactCI。YUK1394设计已裁决；当前无本线程runtime锁或服务。整迁移尚未完成，过往记录见[归档](docs/planning/2026-10-09-pre-1393-board-archive.md)。
 
 ## NOW
 
@@ -12,8 +12,8 @@
 
 ## NEXT
 
-- PR1621 exact53f的本机验收及R1已完成，T3 watch等待exact CI。父18:39:51Z核owner释放锁，原4服务/release不变；默认仍pg-boss，未部署。
-- YUK1394已查重建1355子票，独占conversation/placement六小时清理族；只读设计运行中，1393收口后freshmain实施。共享scope已与5796确认；idle五分钟事件时钟另行处理。
+- PR1621本机验收及R1已完成；exact53f CI单例旧归属断言失败，父修正后29DB通过，准备新exactCI。父18:39:51Z核owner释放锁，原4服务/release不变；默认仍pg-boss，未部署。
+- YUK1394已查重建1355子票，独占conversation/placement六小时清理族；只读设计已完成并裁决共享family-keyed四表，1393收口后freshmain实施。共享scope已与5796确认；idle五分钟事件时钟另行处理。
 - 1355逐族迁移仍仅prune_job_events已交首族，1393是下一族。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。
 - 1358继续剩余路由/共享子树及三入口共用业务操作，保留现有确定性行为。1392公共board读取、1380事件读/纠错等已合接口由Start集成方接消费者，不复制领域规则。
 - 1359最终收口核对dev/build/Compose/镜像、全部旧消费者、任务/worker/依赖、配置与文档；Hono去留按ADR裁决，旧SPA回落不得永久保留。完成整迁移后再按实际缺口与查重结果交付Linear残留功能。
@@ -42,6 +42,6 @@
 
 ## BLOCKED-ON
 
-- 当前没有需要owner追加许可才能推进的已知阻塞。PR1621在watch，1394设计任务正在运行；子任务/CI仍运行属于等待，不把整迁移挂blocked。
+- 当前没有需要owner追加许可才能推进的已知阻塞。PR1621正在收口CI fixture修复，1394设计已裁决；子任务/CI仍运行属于等待，不把整迁移挂blocked。
 - runtime测试/发布在执行前必须实际核锁并原子获取，核owner/token清理释放；其他线程持锁时只推不冲突的源码工作。历史锁记录不能代表当前ownership。
 - 部署用途保持Agent开发测试，禁止再次清库、恢复私人数据或盲重放队列；日用部署须owner明确要求“为我日常使用的部署”。旧运行验收限制和未完成产品能力保存在归档及各原票，未被本次整理核销。

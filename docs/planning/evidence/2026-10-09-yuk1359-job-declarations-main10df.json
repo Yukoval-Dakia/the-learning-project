@@ -719,9 +719,7 @@
     "counts": {
       "manifest": 54,
       "manifestScheduled": 19,
-      "dbosDeclared": [
-        "prune_job_events"
-      ],
+      "dbosDeclared": ["prune_job_events"],
       "pgBossLoaded": 53,
       "infraSchedules": 5,
       "memorySchedules": 3,
@@ -1447,10 +1445,7 @@
     "counts": {
       "manifest": 55,
       "manifestScheduled": 20,
-      "dbosDeclared": [
-        "prune_job_events",
-        "prune_orphan_review_sessions"
-      ],
+      "dbosDeclared": ["prune_job_events", "prune_orphan_review_sessions"],
       "pgBossLoaded": 53,
       "infraSchedules": 4,
       "memorySchedules": 3,
