@@ -1,6 +1,6 @@
-# 当前交接 — 2026-10-08 YUK1378费用读取验收
+# 当前交接 — 2026-10-08 YUK1359 W2消费者清单
 
-分支feat/yuk-1378-today-cost-read，基线main caeb959fd，携带1359文档db191745a及实施603c9674e。唯一实施writer已completed/noPending、树clean。父核7哈希并实际2文件11DB通过；8unit/static/build已过。10:34:07Z核owner释放部署锁，原四服务及release不变。R1 NONE，PR1604已link/watch；首CI的单测DB直接import分区问题已修05e1965bf，8unit/partition/static/build通过，唯一R2与新CI待；主线独占Start/1356，1377/1358/1359仍In Progress。下文为历史交接。
+当前分支docs/yuk-1359-w2-consumer-inventory，从最新origin/main6150f01a9建立。PR1604已10:55:10Z合入6150f01a949c3d1357f8b44f0d8ed6807cd74179，tree c9e440e5edd1dd62e7cd4f5cdd018e4d9ee93886与CI head463aadec一致；CI37765137606全绿、R1/R2 NONE、threads0，已unwatch。1378限定领域slice已Done，公共loadTodayCost/TodayCost交主线Start消费；1358/1359/1377仍In Progress。8unit、父实际11DB及静态/build通过，无部署。1359 W2只读研究子任务yuk1359-w2-consumer-readonly-completion-20261008-v1已completed/noPending（Codex gpt-6-luna high），父抽查并落盘W2清单，纠正学段URL/typed客户端混称；主线独占1356与Start。本线程无锁/服务，后续runtime须重新核验锁。下文为历史交接。
 
 # 2026-10-08 current PR1595
 
