@@ -33,11 +33,11 @@ describe('AppTopbar Copilot launcher', () => {
       'utf8',
     );
     const cssSource = readFileSync(join(process.cwd(), 'web/src/globals.css'), 'utf8');
-    const routerSource = readFileSync(join(process.cwd(), 'web/src/router.tsx'), 'utf8');
+    const shellSource = readFileSync(join(process.cwd(), 'web/src/RootShell.tsx'), 'utf8');
 
     expect(dockSource).toContain('className="copilot-launcher relative inline-flex"');
     expect(dockSource).toContain('onNudgeCountChange?.(nudges.length)');
-    expect(routerSource).toContain('onNudgeCountChange={setCopilotNudgeCount}');
+    expect(shellSource).toContain('onNudgeCountChange={setCopilotNudgeCount}');
     expect(cssSource).toContain('.shell-copilot-mount > .copilot-launcher');
     expect(cssSource).not.toContain(
       '.shell-copilot-mount > [data-testid="copilot-drawer-trigger"]',

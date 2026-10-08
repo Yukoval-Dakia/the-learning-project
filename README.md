@@ -160,7 +160,7 @@ pnpm test             # CI 全量门禁（含 audit:task-census + unit/db/migrat
 pnpm audit:schema     # schema write-path 审计（新表/字段必须有 write path）
 pnpm audit:partition  # 测试分区审计（依赖 DB 的测试不得进 unit config）
 pnpm audit:task-census # 52 registered / 51 static / 1 compatibility + wiring/run-log contract
-pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / dist/worker.cjs / dist/migrate.cjs）
+pnpm build            # SPA + TanStack Start + 三 esbuild 产物（dist/server.cjs / dist/worker.cjs / dist/migrate.cjs）
 ```
 
 快速迭代用 watch 模式：`pnpm test:unit:watch`（无 DB，覆盖 UI / core / schema / parser）、
@@ -286,9 +286,14 @@ The compose stack starts `migrate` (one-shot init that applies migrations), `pos
 `node dist/worker.cjs`），and `cloudflared`. The app is reachable through the Cloudflare
 Tunnel; port 8787 is bound only inside the compose network，不暴露到 host。
 
-Dockerfile（node:24-slim 多阶段）build 出 4 件产物：`web/dist`（Vite build）+ `dist/server.cjs`
-+ `dist/worker.cjs` + `dist/migrate.cjs`。app 容器 `CMD ["node", "dist/server.cjs"]` 并经
-`RW_STATIC_DIR=/app/web/dist` 用 `@hono/node-server/serve-static` 托管 SPA；worker 容器同镜像，
+Dockerfile（node:24-slim 多阶段）build 产物为 `web/dist`（原 SPA）、
+`dist/start`（固定 TanStack Start 1.168.60 / Router 1.170.41）和 `dist/server.cjs`、
+`dist/worker.cjs`、`dist/migrate.cjs`。app 容器 `CMD ["node", "dist/server.cjs"]`，
+`RW_STATIC_DIR=/app/web/dist` 启用 Start 前门：`/api/*` 直接交给原 Hono app，
+`/_build/*` 提供 Start 客户端资产，其余页面回落到原 SPA。API hydration、tool recovery、
+shutdown 和独立 worker 的 owner 保持不变。源码已接线，不代表已部署到当前日用镜像。
+切换/回退及 P7 清理条件见[前门 runbook](docs/planning/2026-10-07-yuk1352-start-frontdoor.md)。
+worker 容器同镜像，
 compose 层 `command: ["node", "dist/worker.cjs"]` 覆盖。**无 Redis 服务**——editing presence 走
 PG 表 `editing_presence`（PgPresenceStore，YUK-321 M5 gate 选项 b）。
 

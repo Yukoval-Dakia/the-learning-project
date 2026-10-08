@@ -1,0 +1,21 @@
+{
+  "candidate": "3d6273a146c40ccffc8b7677f42048bfb2e98ccf",
+  "evidence_root": "/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1376-start-3d6273a14/evidence",
+  "sha256": {
+    "http-result.json": "a420c1f3be3929af7506440e30f577d902995a3301e37253b2d9e32e69559d77",
+    "db-invariance.json": "b7efcc62c7d1bf70d76305f1e4274681b1fc6988b52e05dc0155e04250e7f596",
+    "artifacts-after.json": "e77c778f37e1ddd55b4dcafeea9ed2096c7131addb7a1170d6bc89bd0593a2f5",
+    "cleanup.json": "92f8f95a481d5590e37cc3fcfd7ae7cf29d1ea6dd157f807cd09c8aac722ac08",
+    "browser-navigation-retry.json": "71b8c37d3a371efaccc141371c6baaf9dabf65617d5a3bdff67a8f182ced74a9",
+    "browser-regate.json": "7bd55cb34b30542829864694eb38129a7cfc39a217f8f3906e8dbb18730358c1",
+    "browser-controls.json": "19023a99075005e5eac84532e4cd7ac27b049e6afac3c20fe015de05ac10a4f5",
+    "db-before.json": "a6c4dcf924e93a9c3986ec746c96cf7efa48a37559415b81b695bb0e9e0ea5e2",
+    "db-intermediate.json": "c4cd98bee8d33e7151bff7c2a3e6d2a5c7d09d291dae85b70d9e750d8ddf48c7",
+    "db-after.json": "c4cd98bee8d33e7151bff7c2a3e6d2a5c7d09d291dae85b70d9e750d8ddf48c7"
+  },
+  "parent_scoped_tests": 21,
+  "parent_source_and_log_hashes_verified": 39,
+  "full_navigation_db_invariance": false,
+  "mistakes_retry_db_invariance": true,
+  "deployment": false
+}

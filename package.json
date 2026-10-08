@@ -10,13 +10,13 @@
   "scripts": {
     "dev": "tsx scripts/dev-local.ts",
     "dev:local": "tsx scripts/dev-local.ts",
-    "build": "pnpm rw:web:build && pnpm build:server && pnpm build:worker && pnpm build:migrate",
+    "build": "pnpm rw:web:build && pnpm build:start && pnpm build:server && pnpm build:worker && pnpm build:migrate",
     "build:worker": "esbuild scripts/worker.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/worker.cjs --external:pg-native --external:sharp --external:better-sqlite3 --external:bufferutil --external:utf-8-validate --define:process.env.NODE_ENV=\\\"production\\\"",
     "build:migrate": "esbuild scripts/migrate.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/migrate.cjs --external:pg-native --external:bufferutil --external:utf-8-validate --external:@earendil-works/* --external:@modelcontextprotocol/sdk --external:@lmnr-ai/lmnr --define:process.env.NODE_ENV=\\\"production\\\"",
     "build:native": "cd crates/calibration-native && pnpm --package=@napi-rs/cli@3.7.2 dlx napi build --release",
     "build:native:wasm": "cd crates/calibration-native && pnpm install --ignore-workspace --prefer-offline && pnpm --package=@napi-rs/cli@3.7.2 dlx napi build --release --target wasm32-wasip1-threads --platform && rm -f calibration-native.wasm32-wasi.debug.wasm",
-    "start": "node dist/server.cjs",
-    "typecheck": "tsc --noEmit",
+    "start": "RW_STATIC_DIR=\"${RW_STATIC_DIR:-web/dist}\" node dist/server.cjs",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p server/start/tsconfig.json",
     "typecheck:watch": "tsc --noEmit --watch",
     "typecheck:legacy": "tsc6 --noEmit --incremental false --stableTypeOrdering",
     "lint": "biome check .",
@@ -118,11 +118,13 @@
     "rw:api": "RW_WORKER=1 tsx watch server/index.ts",
     "rw:web": "vite --config web/vite.config.ts",
     "rw:web:build": "vite build --config web/vite.config.ts",
-    "build:server": "esbuild server/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/server.cjs --external:pg-native --external:sharp --external:better-sqlite3 --external:bufferutil --external:utf-8-validate --external:@hyzyla/pdfium --define:process.env.NODE_ENV=\\\"production\\\"",
-    "rw:build": "pnpm rw:web:build && pnpm build:server",
+    "build:server": "esbuild server/index.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/server.cjs --external:pg-native --external:sharp --external:better-sqlite3 --external:bufferutil --external:utf-8-validate --external:@hyzyla/pdfium --define:process.env.NODE_ENV=\\\"production\\\" --external:../dist/start/server/server.js",
+    "rw:build": "pnpm rw:web:build && pnpm build:start && pnpm build:server",
     "quiz:reverify": "tsx scripts/quiz-reverify.ts",
     "delivery:evidence": "tsx scripts/delivery-evidence.ts",
-    "delivery:note": "tsx scripts/delivery-note.ts"
+    "delivery:note": "tsx scripts/delivery-note.ts",
+    "build:start": "vite build --config server/start/vite.config.ts",
+    "acceptance:start-frontdoor": "tsx tests/start-frontdoor/acceptance.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.131.0",
@@ -136,7 +138,7 @@
     "@paralleldrive/cuid2": "^3.3.0",
     "@t3-oss/env-core": "^0.13.11",
     "@tanstack/react-query": "^5.104.1",
-    "@tanstack/react-router": "^1.170.41",
+    "@tanstack/react-router": "1.170.41",
     "@tiptap/core": "^3.31.4",
     "@tiptap/extension-link": "^3.31.4",
     "@tiptap/pm": "^3.31.4",
@@ -171,7 +173,8 @@
     "ts-fsrs": "^5.4.2",
     "undici": "^8.10.2",
     "zod": "^4.6.5",
-    "zustand": "^5.0.15"
+    "zustand": "^5.0.15",
+    "@tanstack/react-start": "1.168.60"
   },
   "devDependencies": {
     "@babel/parser": "^7.29.7",
