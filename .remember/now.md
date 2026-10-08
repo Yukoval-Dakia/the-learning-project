@@ -1,3 +1,13 @@
+# 当前交接 — YUK1393 review orphan DBOS
+
+1392/PR1619已17:11:43Z合main6aaf8ca89eaf5feb5af5c00b7c5b3bd90cd953ea；父fetch核tree5e8ab973与exact3883903相同，CI37812973662全绿/R1 NONE/threads0/已unwatch，1392Done。公共读取交5796 Start。
+
+1393新独立branch feat/yuk-1393-review-orphan-dbos从该freshmain建立。5796实核75树并独占授权family/handler/Review helper/共享host+注册/observability manifest/schema0116+journal/export与scopedtests/docs，Start和start-worker/shutdown/prune-family/prune-backend/config/subjectboot只读。设计见docs/planning/2026-10-09-yuk1393-review-orphan-dbos.md。作者只源码unit/static/build，父DB/进程/故障注入先锁协调，无主环境切换。
+
+1356实查误为Done，已恢复并读回In Progress，comment8b193549保留缺口；1355/1358/1359均In Progress。下一生命周期设计task已completed/noPending，仅设计无runtime证明。
+
+以下历史交接不覆盖当前状态。
+
 # 当前交接 — YUK1392 agent-note board公共读取
 
 1391/PR1617已于16:32:22Z合main f80d47703ffbcb6f8db488a10dd0a705a6fee601，tree fda2bfe86b3755a9de935210f8c298e7fa7643d8与exact2fb相同，CI37808241557全绿、R1 NONE、threads0；已unwatch/1391Done，无部署。450unit/static/build/四audit与原55DB证据分层保留。
