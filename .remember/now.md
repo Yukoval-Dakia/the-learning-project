@@ -1,4 +1,16 @@
-# 当前交接 — PR1608整合事件领域main，2026-10-08
+# 当前交接 — YUK1381唯一writer / W5文档审查，2026-10-08
+
+分支feat/yuk-1381-admin-domain-reads基线fadcb0c87（PR1608已11:43:12Z合入，准确7578b046 CI37771389555 docs fast-path绿、W3/W4独立R1 NONE，已unwatch）。当前唯一代码writer task yuk1381-admin-domain-implementation-20261008-v1，T3 command b0c41f6b-955b-4620-8875-2b8031cb5dfe，Codex6.1Sol high，现completed/noPending并明确释放writer，提交66aa43a185fa45c5a201c77e32197f215be82237；拥有四Admin API、ai-observability/public、两scoped tests和1381文档。父仅写PLAN/本handoff/W5清单，不并发commit/git整合；等writer明确释放。主线已报告1605合入a3691f572579289d33448be6ecd5dfaa795cb17b，交回后fetch正常合最新main。
+
+父核四HTTP真实接public与嵌套DTO草稿；Node24.19.0位于/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin，默认PATH是Node26，已通知writer固定24重验。父已核九文件SHA全匹配、八保护hash不变；作者Node24的74unit/static/build/audits通过。父DB尚未执行，三文件命令在/tmp/yuk1381-parent-acceptance.md，保护hash在/tmp/yuk1381-parent-baseline.json。无runtime锁。后续必须实际核deployment-20261007/deployment.lock再原子mkdir；通知主线57961995并封原四服务/release前后快照。
+
+W5新文档docs/planning/2026-10-08-yuk1359-w5-consumers.md由父写，独立只读R1 task yuk1359-w5-docs-review-r1-20261008仍running，同T3 command，Sol6.1 xhigh。文档已完成事先告知reviewer的唯一params事实勘误，其余保持待审。已知勘误：文中run详情params400错误，实际direct handler ZodError经kernel返回generic500；父已实核并裁决1381保持原parse/error路径，要求writer补unit，告知reviewer与主线。此句已纠正，不扩kernel政策。正常[id]路由可达性与直接调用分开，不能称已证实live漏洞。
+
+YUK1382已成功登记Backlog（uuid6b747bde-b6c2-4df0-886c-caf6f22407f1）：runs UI未知cost被formatMoney显示零、合计无未知标识。此前Linear创建失败已用createdAt全查询确认未落库后重试，勿重复建票。不在1381改UI。coverage/conjecture准确增量已交主线定界，现仅只读：coverage跨practice assembleScanInput的Db类型及内部Date.now需协调，不擅改practice。1358/1359继续InProgress，整体非UI迁移和后续Linear功能目标未完成。
+
+以下为历史验收记录。
+
+# 历史交接 — PR1608整合事件领域main，2026-10-08
 
 1380 PR1607已11:35:32Z合入4a3d797dd，CI37769126069 exact812a0bf08全绿、R1 NONE、threads0，17min窗满。预计算与merge tree868b7e37一致，六个产品/测试blob保持；1380限定领域slice Done且unwatch，Start挂载交主线，未部署。当前docs/yuk-1359-w3-w4-consumers正常合入该main，仅PLAN/now冲突，保留两侧记录与产品字节。PR1608原f13289939 CI37770818294是docs fast-path成功，独立R1仍审查该精确文档diff；整合后须新head CI/build。1358/1359仍InProgress，W5待；当前无runtime/代码writer。
 
