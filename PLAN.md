@@ -1,14 +1,14 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：1381实现66aa43a18已交回，正常整合1356主线a3691f572（PR1605），仅看板/交接冲突；父验收与代码review待。W5源码清单R1无P0/P1，事实勘误收敛；1358/1359继续，未部署。
+> Linear 是权威 tracker。2026-10-08：PR1610于12:21:24Z合入a6faded072，准确946038637 CI全绿、独立R1 NONE、merge tree一致；1381限定领域slice完成。1358/1359继续，Start及运行验收归主线，未部署。
 
 ## NOW
 
 - **YUK-1356 / 主线交付**：PR1605于11:58:08Z合入a3691f572，主线核tree与exact e260bdb98一致、CI37772055452绿/threads0。保留真实MiMo一次工具验收及main4a3d 139unit/110DB证据；1356仍InProgress，未部署。1358 Start Today/Inbox由主线独占PR1609及RPC/browser验收，不在此树修改。
 
-- **YUK-1381 / W5领域读取**：feat/yuk-1381-admin-domain-reads从main fadcb0c87建立；唯一子writer已交回66aa43a18并释放；父核9hash及8保护文件不变，作者Node24的74unit/static/build/audits通过。父级接验收/文档，不改Start/UI/practice/config writer；父在整合main后的a35c759ff实跑3文件24DB通过，核原4服务/release不变并12:07:55Z释放锁；独立源码R1/CI尚待。coverage/conjecture仅给主线准确增量路径，未启动实施。
+- **YUK-1381 / 领域slice已完成**：PR1610合入a6faded072；exact946038637的CI37775009264全绿、独立R1 NONE、threads0、merge tree一致，已unwatch。74unit/父24DB/整合typecheck、lint、build通过，四Admin HTTP消费者共用public typed reads；Start挂载及浏览器验收交主线。coverage/conjecture仅给准确增量路径，尚未启动实施。
 
-- **YUK-1359 / W3-W4退出证据**：[W3](docs/planning/2026-10-08-yuk1359-w3-consumers.md)与[W4](docs/planning/2026-10-08-yuk1359-w4-consumers.md)已核真实消费者，补齐知识可见性/边事务、笔记presence及Copilot恢复边界。仅源码清单，Start和运行矩阵待，W5管理页仍待核查。
+- **YUK-1359 / W3-W4退出证据**：[W3](docs/planning/2026-10-08-yuk1359-w3-consumers.md)与[W4](docs/planning/2026-10-08-yuk1359-w4-consumers.md)已核真实消费者，补齐知识可见性/边事务、笔记presence及Copilot恢复边界。[W5清单](docs/planning/2026-10-08-yuk1359-w5-consumers.md)也已完成源码核对与R1勘误；28路由静态覆盖无遗漏，不代表Start或运行验收。
 
 - **YUK-1380 / 已合入**：PR1607于11:35:32Z合入main4a3d797dd；exact812a0bf08的CI37769126069全绿，独立R1 NONE、threads0、17分钟窗满。28unit/父23DB/static/build通过，observability/public共享详情与纠错接口交主线Start挂载。未部署。[证据](docs/planning/2026-10-08-yuk1380-event-domain.md)。
 
