@@ -10,7 +10,7 @@
  *   pnpm audit:schema --json   # JSON 输出
  *   pnpm audit:schema --list   # 只列字段健康表，不 enforce
  *
- * 实现：纯 TS file-walk（无 shell exec），扫描 src/ + app/ 内所有 .ts/.tsx。
+ * 实现：扫描 src/ + app/ 内所有 .ts/.tsx；另核对 0117 注册 seed 的固定初始化契约。
  */
 
 import { execFileSync } from 'node:child_process';
@@ -74,7 +74,130 @@ type WriteHit = {
   insert_files: number;
   update_files: number;
   status: 'live' | 'init-only' | 'update-only' | 'stub' | 'historical-retained';
+  initialization?: { migration: string; values: readonly string[] };
 };
+
+const SESSION_ORPHAN_MIGRATION_TAG = '0117_yuk1394_session_orphan_backend';
+const SESSION_ORPHAN_MIGRATION = `drizzle/${SESSION_ORPHAN_MIGRATION_TAG}.sql`;
+const MIGRATION_JOURNAL = 'drizzle/meta/_journal.json';
+const SESSION_ORPHAN_FAMILIES = [
+  'prune_orphan_conversation_sessions',
+  'prune_orphan_placement_sessions',
+];
+// This is an initialization contract for one immutable field, not a migration
+// write scanner. Require the complete first executable batch, including its
+// closed domain and both seed rows. Comments, function bodies and other SQL
+// shapes deliberately fail closed instead of supplying substitute evidence.
+const SESSION_ORPHAN_INITIAL_BATCH = `
+CREATE TABLE session_orphan_control (
+  family text PRIMARY KEY CHECK (family IN ('prune_orphan_conversation_sessions','prune_orphan_placement_sessions')),
+  phase text NOT NULL CHECK (phase IN ('pg-boss','draining-pg-boss','dbos','draining-dbos')),
+  phase_changed_at timestamptz NOT NULL DEFAULT now(),
+  legacy_not_before timestamptz
+);
+INSERT INTO session_orphan_control (family,phase) VALUES
+  ('prune_orphan_conversation_sessions','pg-boss'), ('prune_orphan_placement_sessions','pg-boss');
+`;
+
+function sessionOrphanFamilyInitialization(
+  schema: string,
+  files: ReadonlyMap<string, string>,
+): WriteHit['initialization'] {
+  const migration = files.get(SESSION_ORPHAN_MIGRATION);
+  const journalText = files.get(MIGRATION_JOURNAL);
+  if (!migration || !journalText) return undefined;
+  let journal: unknown;
+  try {
+    journal = JSON.parse(journalText);
+  } catch {
+    return undefined;
+  }
+  if (
+    !isRecord(journal) ||
+    journal.version !== '7' ||
+    journal.dialect !== 'postgresql' ||
+    !Array.isArray(journal.entries)
+  )
+    return undefined;
+  const registrations = journal.entries.filter(
+    (entry: unknown) =>
+      isRecord(entry) && (entry.idx === 117 || entry.tag === SESSION_ORPHAN_MIGRATION_TAG),
+  );
+  const registration: unknown = registrations[0];
+  if (
+    registrations.length !== 1 ||
+    !isRecord(registration) ||
+    registration.idx !== 117 ||
+    registration.tag !== SESSION_ORPHAN_MIGRATION_TAG ||
+    registration.version !== '7' ||
+    registration.when !== 1791504000001 ||
+    registration.breakpoints !== true
+  )
+    return undefined;
+  const firstBatch = migration.split('--> statement-breakpoint')[0];
+  const normalizeSql = (text: string) => text.trim().replace(/\s+/g, ' ');
+  if (normalizeSql(firstBatch) !== normalizeSql(SESSION_ORPHAN_INITIAL_BATCH)) return undefined;
+
+  const file = ts.createSourceFile('schema.ts', schema, ts.ScriptTarget.Latest, true);
+  const declarations = file.statements.flatMap((statement) =>
+    ts.isVariableStatement(statement) &&
+    statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+      ? [...statement.declarationList.declarations].filter(
+          (declaration) =>
+            ts.isIdentifier(declaration.name) && declaration.name.text === 'session_orphan_control',
+        )
+      : [],
+  );
+  const table = declarations[0]?.initializer;
+  if (
+    declarations.length !== 1 ||
+    !table ||
+    !ts.isCallExpression(table) ||
+    !ts.isIdentifier(table.expression) ||
+    table.expression.text !== 'pgTable'
+  )
+    return undefined;
+  const [name, columns] = table.arguments;
+  if (
+    !name ||
+    !ts.isStringLiteral(name) ||
+    name.text !== 'session_orphan_control' ||
+    !columns ||
+    !ts.isObjectLiteralExpression(columns) ||
+    !columns.properties.every(ts.isPropertyAssignment)
+  )
+    return undefined;
+  const family = columns.properties.filter(
+    (property) =>
+      ts.isPropertyAssignment(property) &&
+      ts.isIdentifier(property.name) &&
+      property.name.text === 'family',
+  );
+  const column = family[0];
+  // Ignore layout without erasing whitespace inside the declared string values.
+  const columnTokens = (source: string) => {
+    const scanner = ts.createScanner(
+      ts.ScriptTarget.Latest,
+      true,
+      ts.LanguageVariant.Standard,
+      source,
+    );
+    const tokens: string[] = [];
+    while (scanner.scan() !== ts.SyntaxKind.EndOfFileToken) tokens.push(scanner.getTokenText());
+    return tokens.join('\n');
+  };
+  if (
+    family.length !== 1 ||
+    !column ||
+    !ts.isPropertyAssignment(column) ||
+    columnTokens(column.initializer.getText(file)) !==
+      columnTokens(
+        "text('family',{enum:['prune_orphan_conversation_sessions','prune_orphan_placement_sessions'],}).primaryKey()",
+      )
+  )
+    return undefined;
+  return { migration: SESSION_ORPHAN_MIGRATION, values: SESSION_ORPHAN_FAMILIES };
+}
 
 // ADR-0058 / YUK-939 intentionally retired this writer, not its historical
 // schema. This fixed inventory is a retention contract, never a dated allowance.
@@ -646,8 +769,13 @@ export function countWriteHits(
   return { insert_files: insertFiles, update_files: updateFiles };
 }
 
-export function auditSchemaWrites(schema: string, sources: ReadonlyMap<string, string>) {
+export function auditSchemaWrites(
+  schema: string,
+  sources: ReadonlyMap<string, string>,
+  initializationFiles: ReadonlyMap<string, string> = new Map(),
+) {
   const index = buildProductionWriteIndex(sources);
+  const familyInitialization = sessionOrphanFamilyInitialization(schema, initializationFiles);
   const retention = historicalRetention(schema, index);
   const retainedSchemas = [
     retention,
@@ -686,12 +814,23 @@ export function auditSchemaWrites(schema: string, sources: ReadonlyMap<string, s
     )
       continue;
     const { insert_files, update_files } = countWriteHits(f.table, f.field, index);
+    const initialization =
+      f.table === 'session_orphan_control' && f.field === 'family'
+        ? familyInitialization
+        : undefined;
     let status: WriteHit['status'];
     if (insert_files > 0 && update_files > 0) status = 'live';
     else if (insert_files > 0) status = 'init-only';
     else if (update_files > 0) status = 'update-only';
+    else if (initialization) status = 'init-only';
     else status = 'stub';
-    results.push({ ...f, insert_files, update_files, status });
+    results.push({
+      ...f,
+      insert_files,
+      update_files,
+      status,
+      ...(initialization ? { initialization } : {}),
+    });
   }
   for (const field of retainedHits) {
     // Report retained columns including trivial identifiers and timestamps.
@@ -711,6 +850,12 @@ export function audit(repoRoot = REPO_ROOT) {
         relative(repoRoot, path).replaceAll('\\', '/'),
         readFileSync(path, 'utf8'),
       ]),
+    ),
+    new Map(
+      [MIGRATION_JOURNAL, SESSION_ORPHAN_MIGRATION].flatMap((path) => {
+        const absolute = resolve(repoRoot, path);
+        return existsSync(absolute) ? [[path, readFileSync(absolute, 'utf8')]] : [];
+      }),
     ),
   );
 }
@@ -757,13 +902,13 @@ function main() {
   }
 
   console.log('\n=== Schema 字段健康表（仅显示非 live）===\n');
-  console.log('| Table.Field | Type | INSERT files | UPDATE files | Status |');
-  console.log('|---|---|---|---|---|');
+  console.log('| Table.Field | Type | INSERT files | UPDATE files | Status | Initialization |');
+  console.log('|---|---|---|---|---|---|');
   for (const r of results) {
     if (r.status === 'live') continue;
     const allowed = allowlist[`${r.table}.${r.field}`] ? ' (allowed)' : '';
     console.log(
-      `| ${r.table}.${r.field} | ${r.type} | ${r.insert_files} | ${r.update_files} | ${r.status}${allowed} |`,
+      `| ${r.table}.${r.field} | ${r.type} | ${r.insert_files} | ${r.update_files} | ${r.status}${allowed} | ${r.initialization?.migration ?? ''} |`,
     );
   }
 
