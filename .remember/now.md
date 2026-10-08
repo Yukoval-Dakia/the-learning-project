@@ -2,7 +2,7 @@
 
 YUK1390 PR1616于2026-10-08T14:55:48Z合main7b89041799881249bbe89344deae8942cc867f70；tree0eda775c32c2f47ed74ab4c3bb99ec5bfeba3006与exact bec86e4e5一致。CI37794964900全绿、独立R1 NONE/noPending、threads0，60unit/父42DB/static/build证据已版本化。已unwatch、Linear Done、通知主线，无部署。
 
-fresh fetch后原分支behind1且clean，从origin/main建立feat/yuk-1391-trait-control-domain。YUK1391（457e4ef4-bc79-4291-9bbe-a524e9f505f3）已查重创建In Progress，1390 writer/review均完成。下一唯一writer只拥有两个trait API、共享operation/public、scopedtests及1391文档；原trait-write/hydrate只读，Start/组合根归主线。主线报告14:52:12Z持token7109b3c7，未收到释放前不运行DB/容器/服务。1358/1359保持In Progress。以下历史记录不覆盖当前状态。
+fresh fetch后原分支behind1且clean，从origin/main建立feat/yuk-1391-trait-control-domain。YUK1391（457e4ef4-bc79-4291-9bbe-a524e9f505f3）已查重创建In Progress，1390 writer/review均完成。下一唯一writer只拥有两个trait API、共享operation/public、scopedtests及1391文档；原trait-write/hydrate只读，Start/组合根归主线。主线报告14:52:12Z持token7109b3c7，未收到释放前不运行DB/容器/服务。1358/1359保持In Progress。1391已交源码7199aa3fc，作者completed/noPending释放writer，父八SHA全匹配。154unit/static/build、父4文件55DB通过；R1 NONE/completed/noPending。父15:22Z持token36e8839c，15:25:38.377Z核owner释放锁，原运行集合/四服务/release不变。证据docs/planning/evidence/yuk1391。两项audit失败由主线明确接管：YUK951 B3历史豁免18条过期与dist/start provider误扫；不在1391扩scope或延豁免。PR/exactCI尚待，保持1391/1358/1359 In Progress。以下历史记录不覆盖当前状态。
 
 ## 合入1381的交接记录
 

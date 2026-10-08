@@ -100,3 +100,11 @@ pnpm vitest run --config vitest.db.config.ts src/capabilities/observability/serv
 ```
 
 仍需父的独立review、真实DB验收与exact-head CI。Start consumer/boot/composition、产品运行验收与delivery不属于本实现任务。按用户明确禁令没有执行Linear capture；新slice未发现额外产品follow-up，audit外部owner缺口已在本文与父handoff记录，tracker处理由父决定。作者最终提交、SHA256 manifest与check command/exit/log清单将位于`/tmp/yuk1391-*`并在handoff引用。作者在最终clean本地提交后明确释放writer。
+
+## 父验收与独立审查
+
+父实核实现commit `7199aa3fc4c0f7f04e356defcb1d4a37af1ca324` clean、作者completed/noPending，并逐一验证八份SHA。独立R1（Codex gpt-6.1-sol xhigh，task yuk1391-trait-control-review-r1-20261009）已completed/noPending，P0/P1 NONE，覆盖全部八文件diff、实际HTTP调用与原writer/hydrate。它只提供源码审查，不作为运行证明。
+
+父在15:22:15.919Z实际核空并原子获取部署锁token36e8839c，按上述scoped命令实际运行4文件55/55 DB通过（新26，原回归29），exit0。使用新Testcontainers PG，无provider/worker/replay/主服务变更。15:25:38.377Z核owner/token释放锁；临时资源退出，原运行集合、四服务ID/image/StartedAt/health及release SHA与本窗口前完全一致。[DB日志](evidence/yuk1391/parent-db.txt)、[清理证明](evidence/yuk1391/cleanup.json)。这证明领域与HTTP handler DB行为，不是Start/browser/部署验收。
+
+两项外部audit失败已由主线57961995明确接管调查、去重capture与修复：18项YUK951 B3历史字段豁免expected_by过期；provider census误扫描dist/start构建产物。去重capture已归YUK1359 comment `e34017ea-c07a-4166-93c9-0e9b53950bab`，不另建票。1391不延长豁免、不删历史schema、不扩大修复范围；capability引用基线精确下降已修且绿。PR/exact CI与这些失败的最终裁决尚待，不能宣称全部门禁通过。1358/1359仍In Progress。

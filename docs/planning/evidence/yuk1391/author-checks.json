@@ -1,0 +1,129 @@
+{
+  "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage",
+  "branch": "feat/yuk-1391-trait-control-domain",
+  "initial_head": "e401dcc3d6f2f4d5e48ef77d7d31cc2f8905a47e",
+  "PATH_prefix": "/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin",
+  "node": "v24.19.0",
+  "pnpm": "11.13.1",
+  "checks": [
+    {
+      "command": "pnpm vitest run --config vitest.unit.config.ts src/capabilities/observability/server/trait-control-operations.unit.test.ts",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-unit-initial.log",
+      "note": "75 passed"
+    },
+    {
+      "command": "pnpm vitest run --config vitest.unit.config.ts src/capabilities/observability/server/trait-control-operations.unit.test.ts src/capabilities/observability/server/subject-control-operations.unit.test.ts src/subjects/trait-compose.test.ts",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-unit.log",
+      "note": "154 passed; Vite native config warning"
+    },
+    {
+      "command": "pnpm typecheck",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-typecheck-initial.log",
+      "note": "before new DB test"
+    },
+    {
+      "command": "pnpm typecheck",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-typecheck.log",
+      "note": "includes DB test compilation, no DB execution"
+    },
+    {
+      "command": "pnpm lint",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-lint.log",
+      "note": "290 existing warnings"
+    },
+    {
+      "command": "pnpm exec biome check src/capabilities/observability/server/trait-control-operations.ts src/capabilities/observability/server/trait-control-operations.unit.test.ts src/capabilities/observability/server/trait-control-operations.db.test.ts src/capabilities/observability/api/admin-subject-trait-write.ts src/capabilities/observability/api/admin-trait-write.ts src/capabilities/observability/public.ts scripts/capability-boundary-baseline.json",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-scoped-biome.log",
+      "note": "7 files; zero diagnostics"
+    },
+    {
+      "command": "pnpm build",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-build.log",
+      "note": "build only; node:crypto externalization / large chunks / ineffective dynamic import warnings"
+    },
+    {
+      "command": "pnpm audit:schema",
+      "exit_code": 1,
+      "log": "/tmp/yuk1391-audit-schema.log",
+      "note": "893 fields; 18 unchanged allowlist entries expired on 2026-10-09"
+    },
+    {
+      "command": "pnpm audit:partition",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-audit-partition.log",
+      "note": "0 unmatched/unmocked unit DB imports; six existing warnings"
+    },
+    {
+      "command": "pnpm audit:api-contracts",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-audit-api-contracts.log",
+      "note": "173/173 declared; zero legacy"
+    },
+    {
+      "command": "pnpm audit:api-client",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-audit-api-client.log",
+      "note": "no generated tracked diff"
+    },
+    {
+      "command": "pnpm audit:api-client-usage",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-audit-api-client-usage.log",
+      "note": ""
+    },
+    {
+      "command": "pnpm gen:postman",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-postman.log",
+      "note": "33 folders / 87 paths / 94 requests; no tracked diff"
+    },
+    {
+      "command": "pnpm audit:capability-boundaries",
+      "exit_code": 1,
+      "log": "/tmp/yuk1391-audit-capability-boundaries.log",
+      "note": "initial decrease 11->9 / 435->433; reported to parent before baseline edit"
+    },
+    {
+      "command": "pnpm audit:capability-boundaries:snapshot",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-audit-capability-boundaries-snapshot.log",
+      "note": "read-only canonical snapshot"
+    },
+    {
+      "command": "pnpm audit:capability-boundaries",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-audit-capability-boundaries-final.log",
+      "note": "after parent authorized exact two-value tightening; exact 433/0/48"
+    },
+    {
+      "command": "pnpm audit:architecture-deepening",
+      "exit_code": 1,
+      "log": "/tmp/yuk1391-audit-architecture-deepening.log",
+      "note": "initial 54 violations incl two baseline decreases plus generated dist/start provider-wire findings"
+    },
+    {
+      "command": "pnpm audit:architecture-deepening",
+      "exit_code": 1,
+      "log": "/tmp/yuk1391-audit-architecture-deepening-final.log",
+      "note": "52 generated dist/start provider-wire findings; 15 unclassified wires; zero baseline findings"
+    }
+  ],
+  "db_tests_executed": false,
+  "new_db_cases_prepared": 26,
+  "remaining_acceptance": [
+    "Parent independent review",
+    "Parent lock-coordinated new trait operations DB suite and three existing regression files",
+    "Parent triage of unrelated schema expiry / generated dist provider audit failures",
+    "Exact-head CI and delivery owned by parent"
+  ],
+  "commit": "7199aa3fc4c0f7f04e356defcb1d4a37af1ca324",
+  "worktree_clean": true,
+  "writer_released": true
+}

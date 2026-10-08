@@ -4,7 +4,7 @@
 
 ## NOW
 
-- **YUK-1391 / W5 trait六操作**：从fresh main7b8904179建立独立branch，唯一实施writer待启动；复用原Db事务与ok提交后hydrate，两个HTTP适配器实际消费公共入口。原trait-write/hydrate只读，Start归主线。主线14:52Z持测试锁，本lane仅源码/unit/static；DB另核锁。见1391交付文档。
+- **YUK-1391 / W5 trait六操作**：源码7199aa3fc，作者154unit/static/build、父4文件55DB通过，独立R1 NONE；15:25:38Z核owner释放测试锁，原四服务/release不变。PR/exactCI待。18项历史schema豁免过期与dist/start provider误扫由主线接管capture/修复；不延豁免。Start归主线，1358/1359仍未完。
 
 - **YUK-1390 / 已合入**：PR1616于14:55:48Z合main7b8904179，tree与exact bec86e4e5一致；CI37794964900全绿、独立R1 NONE、threads0，60unit/父42DB/static/build通过。已unwatch/Linear Done/通知主线；未部署。
 
