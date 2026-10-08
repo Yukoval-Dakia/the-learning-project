@@ -1,0 +1,91 @@
+{
+  "task": "YUK-1358 R1 P1 knowledge timestamp boundary repair",
+  "recorded_at_utc": "2026-10-08T11:47:09.095586+00:00",
+  "worktree": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor",
+  "branch": "feat/yuk-1358-start-workbench",
+  "base_revision": "bc43bf89cb5703a49c11cd4335ac81e0447e8900",
+  "environment": {
+    "node": "24.19.0",
+    "pnpm": "11.13.1",
+    "path_prefix": "/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin",
+    "log": "/tmp/yuk1358-r1-timestamp-tools.log",
+    "sha256": "f3f16ffafc5d97c53265bb99f21340b9c4e80e30233b38eb7da0295bf4f6af53"
+  },
+  "source_sha256": {
+    "server/start/workbench-reader.ts": "18b429d5a3ffc322e834700b3a59a0e4366786f42207f23a65b32576a7183e75",
+    "server/start/workbench-read.unit.test.ts": "6b2fefb1813d9d73a9c5844dab880b01ef462850e292a5cbde7a313cc2432a2a",
+    "server/start/workbench-reader.db.test.ts": "a1ab499b897f18a1d864a5fe7e4accc35771140badf6e084bbfc3b5c62e8a854"
+  },
+  "checks": [
+    {
+      "name": "red_unit",
+      "command": "pnpm vitest run --config vitest.unit.config.ts server/start/workbench-read.unit.test.ts",
+      "log": "/tmp/yuk1358-r1-timestamp-red-unit.log",
+      "log_sha256": "9942eb194b29054d2eeff6368e0d73dbe184bc0ee1e11a67f667bb68b028f91a",
+      "exit_code": 1,
+      "result": "Baseline reader at bc43bf89cb5703a49c11cd4335ac81e0447e8900, final regression tests: 5 failed, 49 passed. Raw last_active_at string causes TypeError."
+    },
+    {
+      "name": "green_unit",
+      "command": "pnpm vitest run --config vitest.unit.config.ts server/start/auth.unit.test.ts server/start/mistakes-read.unit.test.ts server/start/mistakes-client.unit.test.ts server/start/workbench-read.unit.test.ts server/start/workbench-client.unit.test.ts",
+      "log": "/tmp/yuk1358-r1-timestamp-scoped-unit.log",
+      "log_sha256": "9b61ea3db0b74d0ea0beba17dc82752b65d672ddd0868cc48d49a5f38b54de56",
+      "exit_code": 0,
+      "result": "5 files, 90 passed; workbench-read has 54 tests."
+    },
+    {
+      "name": "typecheck",
+      "command": "pnpm typecheck",
+      "log": "/tmp/yuk1358-r1-timestamp-typecheck.log",
+      "log_sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+      "exit_code": 0,
+      "result": "Application and Start programs passed; includes prepared DB test static typing."
+    },
+    {
+      "name": "lint",
+      "command": "pnpm lint",
+      "log": "/tmp/yuk1358-r1-timestamp-lint.log",
+      "log_sha256": "81b600f65d525c4e0c84d56f1d71c8c8275fdd1b0199a3bbc3ef215286a7950f",
+      "exit_code": 0,
+      "result": "297 warnings, no fixes applied."
+    },
+    {
+      "name": "build",
+      "command": "pnpm build",
+      "log": "/tmp/yuk1358-r1-timestamp-build.log",
+      "log_sha256": "2e5516fef182aba3ec100b45f6a3485b4845a7a0154d5cd7ce66589d6209a829",
+      "exit_code": 0,
+      "result": "SPA, Start client/server, app, worker and migrate bundles built. No bundle started."
+    },
+    {
+      "name": "partition",
+      "command": "pnpm audit:partition",
+      "log": "/tmp/yuk1358-r1-timestamp-partition.log",
+      "log_sha256": "2cff6e108125861f10980f496138cc10146ba630c7823f653a3d546693a71bef",
+      "exit_code": 0,
+      "result": "0 unmatched tests, no unit unmocked DB import errors. 6 existing DB partition warnings."
+    }
+  ],
+  "build_artifacts": {
+    "manifest": "/tmp/yuk1358-r1-timestamp-build.sha256",
+    "manifest_sha256": "cd7ee3d9f4c3517a6497e68ddc7c465a57d44a6b2b3bec28776ae1dd7fb2fb53",
+    "file_count": 804,
+    "start_workbench_chunk_sha256": {
+      "dist/start/server/assets/workbench-function-iH9XQW1_.js": "79478c1ce17a106189d96173b954d3adb004ed36784a47c609011b754aa95809"
+    }
+  },
+  "runtime_validation": {
+    "status": "NOT_RUN_PARENT_OWNED",
+    "db_test": "server/start/workbench-reader.db.test.ts",
+    "command": "pnpm vitest run --config vitest.db.config.ts server/start/workbench-reader.db.test.ts",
+    "requires": "Parent authorization and normal isolated testcontainer/fork setup; never run against user/runtime DB.",
+    "scope": "Prepared test uses real Drizzle/postgres-js SQL and canonical tree; only connection ownership is injected. It asserts raw string with six fractional digits, decoded evidence Date, authenticated adapter/HTTP JSON parity and hidden/archived filtering. It does not exercise built Start RPC."
+  },
+  "restrictions_honored": [
+    "No DB or Docker execution",
+    "No services or runtime access",
+    "No providers, network or paid calls",
+    "No fetch, merge, push, PR, watch, Linear, review or delegation",
+    "No underlying knowledge/domain/public/manifest/package/lock/global planning/other-lane changes"
+  ]
+}

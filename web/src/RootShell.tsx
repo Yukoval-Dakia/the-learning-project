@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import { CopilotDock } from '@/capabilities/copilot/ui-public';
-import { getWorkbenchSummary } from '@/capabilities/shell/ui-public';
+import { useWorkbenchClient } from '@/capabilities/shell/ui-public';
 import { AppSidebar } from '@/ui/shell/AppSidebar';
 import { AppTopbar } from '@/ui/shell/AppTopbar';
 import { CommandPalette } from '@/ui/shell/CommandPalette';
@@ -90,6 +90,7 @@ export function RootShell({
   // 收件箱待办 count：复用 workbench summary proposals.decision_total（与 TodayPage 同 query
   // key ['workbench-summary'] → React Query 去重，不增请求）。无数据时 undefined
   // → 侧栏不渲 count（不 fabricate 假数字）。
+  const { getWorkbenchSummary } = useWorkbenchClient();
   const summaryQ = useQuery({ queryKey: ['workbench-summary'], queryFn: getWorkbenchSummary });
   const inboxCount = summaryQ.data?.proposals.decision_total;
   const inboxCountUncertain = summaryQ.data?.proposals.has_more === true;

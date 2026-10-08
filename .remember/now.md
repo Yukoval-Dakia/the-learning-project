@@ -1,4 +1,24 @@
-# 当前活动 — YUK1387 subjects/traits公共读取，2026-10-08
+# 2026-10-08 current Start closeout
+
+CI repair delivered: a5c9867fe tests only, sole child completed/noPending/released. Parent inspected actual streaming/settlement/cancel paths and normalmerged main d609 as4baeea837, onlyPLAN/now conflicts. Four real DB files73pass include wholeCopilotRun/cancel/Start/subject reads;497unit/50files+7protocol/typecheck/lint/build passed. Test uses real cancel API and deterministic barriers, preserves no-post-cancel emission and safe durable terminal/history. No product stream change/noR3. At13:24:19.202Z ownTestcontainers exited, owner7ed37bf3 lock released; original4containers/releaseSHA unchanged. Receipt docs/planning/evidence/2026-10-08-yuk1358-stop-ci-repair.json. Push final docs then exact CI; do notmerge failed8ce. Prior2118 builtRPC and1af5 browser remain scoped previous evidence; client/SPA bytes match, server chunk graph changed aftersubjectexports, no fresh4ba browser claim. 7631 now owns YUK1389 config domain exports; no overlap. Current no runtime lock or active child writer.
+
+PR1609 candidate1af5a8fc8 normally integrates main a6faded072. Sole child completed/released; parent owns branch feat/yuk-1358-start-workbench. CI failure was SPA-only preflight/RPC fixture incompatibility; repairc7a254e27 changes six usability files only. Node24 parent329unit+7protocol/typecheck/lint/build and36 actual built usability all passed. IndependentR2 NONE remains final; noR3.
+
+Parent real isolated Start RPC and T3 Today/Inbox acceptance passed. 88public tables unchanged for denial/read stages; actual browser dismiss+undo produced exactly2events and1note body/version, remaining86 relations unchanged. Reload499/two undone; no additional writes. Snapshot/core/raw timestamp/cost/cursor/replay evidence sealed in docs/planning/evidence/2026-10-08-yuk1358-built-acceptance.json and runtime yuk1358-start-1af5a8fc8/evidence. No provider/worker/replay/deploy. OwnPG/Start cleaned;12:41:52.939Z owner27377b37 lock released, original4containers/release identical. 7631 informed, owns1386/1359 and may now acquire its own DB window; do not assume lock still free.
+
+PR1609 normally integrated main6c6905 as2118c2dd7. Parent428unit/7protocol/typecheck/lint/build and fresh real built RPC passed. Start client/SPA byte-identical to1af5; server split changed, freshly tested against new isolated PG; original T3 browser and36usability remain1af5-specific. New receipt docs/planning/evidence/2026-10-08-yuk1358-main1386-acceptance.json. 13:01:19.597Z ownPG/Start stopped and owner56907e86 lock released; four live containers and release unchanged. Final docs push/accurate CI then merge, no extra review/window under owner waiver. Keep1358/1359InProgress; wholeW1/remainingHTTP/DBOS families/canonicalboot/release/SPAexit open. Rootcheckout belongs to another owner. AgentTEST live5aa2/build853/image9b76 unchanged.
+
+1386/main6c6905 exact CI/tree及24DB/R1 NONE由7631交回；12:43:53Z其锁已释放。下一subjects typed reads独占交7631，范围admin-read.ts/四HTTP/public/tests，配置写者/Start不动。当前无主线runtime动作。
+
+Earlier records are revision-specific history.
+
+## 合入1381的交接记录
+
+# 当前交接 — YUK1381唯一writer / W5文档审查，2026-10-08
+
+## 合入1387的历史交接
+
+已由7631确认PR1613于13:15:49Z合main d609c7b66，CI/R1 NONE/tree一致；以下是该lane先前的revision记录，不覆盖当前交付。
 
 YUK1387实现56a9baf8e6acceb9a11a75567f589b885ddd2ce0，parent9dffa49d9，唯一writer completed/noPending并释放。父核11SHA与保护文件；116unit/static/build/audits通过，唯一scope扩充baseline14→11/438→435已owner确认，初始失败日志保留。1358子票与全局subjects/trait全部分页查重完成，无重复活动票；601/666旧读面/HTTP契约Done不等于此迁移。Linear1387 d85cc05a-8c4d-4033-a496-03ea2baba95c InProgress。
 

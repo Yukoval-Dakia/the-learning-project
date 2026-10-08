@@ -1,3 +1,4 @@
+import { useWorkbenchClient } from './workbench-client';
 // M4-T6 (YUK-319/YUK-318)：提议卡（设计稿 screen-mistakes.jsx ProposalCard
 // L60-124）。偏差（真 wire 适配，design pre-flight 预批）：
 // ①SubjectTag 不渲——科目轴 M5 随 effective_domain 派生收编；
@@ -22,7 +23,6 @@ import {
   type ProposalEvidenceRefWire,
   type ProposalInboxRow,
   REL_LABEL,
-  decideProposal,
   dedupeEvidence,
   evidenceReadable,
   isAcceptSupported,
@@ -254,6 +254,7 @@ export function ProposalCard({
   onError,
 }: ProposalCardProps) {
   const meta = kindMeta(p.kind);
+  const client = useWorkbenchClient();
   const [busy, setBusy] = useState(false);
   const [pickingRel, setPickingRel] = useState(false);
   // codex 验证轮 P3：裁决留痕后按钮组整体锁定——卡片留在列表里，再点会
@@ -267,7 +268,7 @@ export function ProposalCard({
   ) => {
     setBusy(true);
     try {
-      const result = await decideProposal(p.id, decision, opts);
+      const result = await client.decideProposal(p.id, decision, opts);
       // YUK-271（codex 验证轮 P2）：stale 的 block_merge accept 没写 rate
       // event，提议仍 pending——不标已裁决，经页级 toast 说明后保持可操作。
       if (isBlockMergeStale(result)) {
