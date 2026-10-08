@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：PR1613于13:15:49Z合入d609c7b66，exact f8e832c66 CI全绿、独立R1 NONE、父15DB通过且merge tree一致。1387领域slice完成；1358/1359继续，未部署。
+> Linear 是权威 tracker。2026-10-08：YUK-1389配置公共领域出口已查重并获主线独占授权，从main d609c7b66建分支。先源码/unit/static；主线持runtime锁，不并发DB。
 
 ## NOW
+
+- **YUK-1389 / 实施**：配置既有builder与注入writer共享公共typed入口，原HTTP真实消费；保留JSON/schema/writer不可用顺序及完整epoch receipt。只改授权observability路径，不改持久化/Start/UI/runtime。父负责review/CI/合并，详见本lane文档。
 
 - **YUK-1387 / 领域slice已完成**：PR1613合入main d609c7b66；exact f8e832c66的CI37781922519全绿、独立R1 NONE、threads0，tree一致且已unwatch。116unit/父15DB/static/build/audits通过，baseline仅14→11/438→435。四HTTP消费public既有reader，journal仍显式limit/paged；Start挂载交主线。13:06:15Z释放锁后无runtime操作。config只读材料已补齐，未启动新writer。
 
