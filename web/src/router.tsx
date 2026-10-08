@@ -387,34 +387,36 @@ const coachRoute = createRoute({
   component: CoachRoute,
 });
 
-const AdminConfigRoute = lazyRouteComponent(async () => {
-  const AdminConfigSurface = await loadAdminConfigSurface();
-  function AdminConfigRouteComponent() {
-    const router = useRouter();
-    const searchStr = useRouterState({ select: (state) => state.location.searchStr });
-    const getQuery = useCallback(
-      (key: string) => new URLSearchParams(searchStr).get(key),
-      [searchStr],
-    );
-    const setQuery = useCallback(
-      (key: string, value: string | null) => {
-        const params = new URLSearchParams(window.location.search);
-        if (value === null) params.delete(key);
-        else params.set(key, value);
-        router.history.replace(`${window.location.pathname}${params.size ? `?${params}` : ''}`);
-      },
-      [router],
-    );
-    return (
-      <AdminConfigSurface
-        navigate={(to) => router.history.push(to)}
-        getQuery={getQuery}
-        setQuery={setQuery}
-      />
-    );
-  }
-  return { default: AdminConfigRouteComponent };
-});
+const AdminConfigRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyRouteComponent(async () => {
+      const AdminConfigSurface = await loadAdminConfigSurface();
+      function AdminConfigRouteComponent() {
+        const router = useRouter();
+        const searchStr = useRouterState({ select: (state) => state.location.searchStr });
+        const getQuery = useCallback(
+          (key: string) => new URLSearchParams(searchStr).get(key),
+          [searchStr],
+        );
+        const setQuery = useCallback(
+          (key: string, value: string | null) => {
+            const params = new URLSearchParams(window.location.search);
+            if (value === null) params.delete(key);
+            else params.set(key, value);
+            router.history.replace(`${window.location.pathname}${params.size ? `?${params}` : ''}`);
+          },
+          [router],
+        );
+        return (
+          <AdminConfigSurface
+            navigate={(to) => router.history.push(to)}
+            getQuery={getQuery}
+            setQuery={setQuery}
+          />
+        );
+      }
+      return { default: AdminConfigRouteComponent };
+    });
 const adminConfigRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('admin-config'),
@@ -451,7 +453,9 @@ const adminFailuresRoute = createRoute({
   component: AdminFailuresRoute,
 });
 
-const AdminSubjectsRoute = lazyNavigableRoute(loadAdminSubjectsSurface);
+const AdminSubjectsRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadAdminSubjectsSurface);
 
 const adminSubjectsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -461,17 +465,21 @@ const adminSubjectsRoute = createRoute({
 
 // YUK-601 — trait 编辑面 detail（TanStack $id 语法；capability 组件零路由库
 // import，param 由本 wrapper 读出后以 subjectId prop 注入——design doc v1.1 §0.3）。
-const AdminSubjectTraitsRoute = lazyRouteComponent(async () => {
-  const AdminSubjectTraitsSurface = await loadAdminSubjectTraitsSurface();
+const AdminSubjectTraitsRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyRouteComponent(async () => {
+      const AdminSubjectTraitsSurface = await loadAdminSubjectTraitsSurface();
 
-  function AdminSubjectTraitsRouteComponent() {
-    const router = useRouter();
-    const { id } = adminSubjectTraitsRoute.useParams();
-    return <AdminSubjectTraitsSurface subjectId={id} navigate={(to) => router.history.push(to)} />;
-  }
+      function AdminSubjectTraitsRouteComponent() {
+        const router = useRouter();
+        const { id } = adminSubjectTraitsRoute.useParams();
+        return (
+          <AdminSubjectTraitsSurface subjectId={id} navigate={(to) => router.history.push(to)} />
+        );
+      }
 
-  return { default: AdminSubjectTraitsRouteComponent };
-});
+      return { default: AdminSubjectTraitsRouteComponent };
+    });
 
 const adminSubjectTraitsRoute = createRoute({
   getParentRoute: () => rootRoute,

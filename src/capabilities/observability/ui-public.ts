@@ -1,4 +1,7 @@
 // Client-only public contribution surface.
+
+export type { AdminControlClient } from './ui/admin-control-client';
+export { SubjectTraitsWireSchema } from './ui/admin-control-client';
 export const loadEventDetailPage = () =>
   import('./ui/EventDetailPage').then((module) => module.default);
 export const loadAdminRunsSurface = () =>

@@ -6,6 +6,13 @@ import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { z } from 'zod';
 import {
+  controlConfig,
+  controlJournal,
+  controlReceipt,
+  controlSubjects,
+  controlTraits,
+} from '../../server/start/admin-control-test-fixtures';
+import {
   adminConjectures,
   adminCost,
   adminCoverage,
@@ -519,5 +526,223 @@ test('six admin reads use the installed RPC serializer with complete ISO/nullabl
     assert.equal(envelope.error, undefined);
     entry.schema.parse(envelope.result);
     assert.deepEqual(envelope.result, entry.fixture);
+  }
+});
+
+test('all eighteen control RPCs map to retained HTTP fixtures with real serializer and resource semantics', async () => {
+  const map = await loadBuiltFunctionMap();
+  const fetcher = await client();
+  const subjectId = '科目 / 原始';
+  const traitId = 'trait / 原始';
+  const subjectPath = `/api/admin/subjects/${encodeURIComponent(subjectId)}`;
+  const traitPath = `/api/admin/traits/${encodeURIComponent(traitId)}`;
+  const cases = [
+    {
+      name: 'getStartAdminConfig',
+      rpc: 'GET',
+      http: 'GET',
+      path: '/api/admin/config',
+      data: undefined,
+      fixture: controlConfig(),
+    },
+    {
+      name: 'getStartAdminSubjects',
+      rpc: 'GET',
+      http: 'GET',
+      path: '/api/admin/subjects',
+      data: undefined,
+      fixture: controlSubjects,
+    },
+    {
+      name: 'getStartAdminSubjectTraits',
+      rpc: 'GET',
+      http: 'GET',
+      path: `${subjectPath}/traits`,
+      data: { subjectId },
+      fixture: controlTraits,
+    },
+    {
+      name: 'getStartAdminTraits',
+      rpc: 'GET',
+      http: 'GET',
+      path: '/api/admin/traits',
+      data: { kind: 'charter' },
+      fixture: { traits: [] },
+    },
+    {
+      name: 'getStartAdminTraitJournal',
+      rpc: 'GET',
+      http: 'GET',
+      path: `${traitPath}/journal`,
+      data: { traitId, limit: '200', cursor: 'opaque:+/=?多层' },
+      fixture: controlJournal,
+    },
+    {
+      name: 'patchStartAdminConfig',
+      rpc: 'POST',
+      http: 'PATCH',
+      path: '/api/admin/config',
+      data: {
+        changes: [{ action: 'set', key: 'locale.learner', value: 'en' }],
+        note: '保留条件\n和歧义',
+      },
+      fixture: controlReceipt,
+    },
+    {
+      name: 'resetStartAdminConfig',
+      rpc: 'POST',
+      http: 'POST',
+      path: '/api/admin/config/reset',
+      data: { keys: ['locale.learner'] },
+      fixture: controlReceipt,
+    },
+    {
+      name: 'renameStartAdminSubject',
+      rpc: 'POST',
+      http: 'PATCH',
+      path: subjectPath,
+      data: { subjectId, expectedRevision: 8, displayName: '新名称' },
+      fixture: { subjectRevision: 9 },
+    },
+    ...(['retire', 'restore', 'reset'] as const).map((action) => ({
+      name: `${action}StartAdminSubject`,
+      rpc: 'POST',
+      http: 'POST',
+      path: `${subjectPath}/${action}`,
+      data: { subjectId, expectedRevision: 8 },
+      fixture: { subjectRevision: 9 },
+    })),
+    {
+      name: 'validateStartAdminSubject',
+      rpc: 'POST',
+      http: 'POST',
+      path: `${subjectPath}/validate`,
+      data: { subjectId, traitPayloadOverrides: { charter: controlTraits.bindings[0].payload } },
+      fixture: { valid: false, errors: ['保留不兼容'], warnings: [] },
+    },
+    {
+      name: 'editStartAdminSubjectTrait',
+      rpc: 'POST',
+      http: 'PUT',
+      path: `${subjectPath}/traits/charter`,
+      data: {
+        subjectId,
+        kind: 'charter',
+        expectedSubjectRevision: 8,
+        expectedTraitRevision: 3,
+        payload: controlTraits.bindings[0].payload,
+      },
+      fixture: { traitId, revision: 4, forked: true },
+      resource: 201,
+    },
+    {
+      name: 'forkStartAdminSubjectTrait',
+      rpc: 'POST',
+      http: 'POST',
+      path: `${subjectPath}/traits/charter/fork`,
+      data: { subjectId, kind: 'charter', expectedSubjectRevision: 8 },
+      fixture: { traitId, revision: 0, forked: true },
+      resource: 201,
+    },
+    {
+      name: 'rebindStartAdminSubjectTrait',
+      rpc: 'POST',
+      http: 'PUT',
+      path: `${subjectPath}/traits/charter/binding`,
+      data: { subjectId, kind: 'charter', expectedSubjectRevision: 8, targetTraitId: traitId },
+      fixture: { traitId, revision: 4, noop: true },
+      resource: 200,
+    },
+    {
+      name: 'editStartAdminSharedTrait',
+      rpc: 'POST',
+      http: 'PUT',
+      path: traitPath,
+      data: { traitId, expectedRevision: 3, payload: controlTraits.bindings[0].payload },
+      fixture: { traitId, revision: 4, forked: false },
+      resource: 200,
+    },
+    {
+      name: 'rollbackStartAdminTrait',
+      rpc: 'POST',
+      http: 'POST',
+      path: `${traitPath}/rollback`,
+      data: { traitId, expectedRevision: 4, targetRevision: 2 },
+      fixture: { traitId, revision: 5, forked: false },
+      resource: 200,
+    },
+    {
+      name: 'resetStartAdminTraitToSeed',
+      rpc: 'POST',
+      http: 'POST',
+      path: `${traitPath}/reset-to-seed`,
+      data: { traitId, expectedRevision: 5 },
+      fixture: { traitId, revision: 6, forked: false },
+      resource: 200,
+    },
+  ];
+  assert.equal(cases.length, 18);
+  for (const entry of cases) {
+    const id = [...map].find(([, name]) => name === entry.name)?.[0];
+    assert(id);
+    const canonical =
+      entry.name === 'editStartAdminSubjectTrait' || entry.name === 'forkStartAdminSubjectTrait';
+    const resource = 'resource' in entry ? entry.resource : undefined;
+    const transport = async (url: string, init: unknown) => {
+      const options = Init.parse(init);
+      const decoded = await decodeRpcRequest(
+        {
+          url: () => url,
+          method: () => options.method,
+          headers: () => Object.fromEntries(options.headers),
+          postData: () => options.body ?? null,
+          postDataJSON: () => (options.body ? JSON.parse(options.body) : null),
+        },
+        map,
+      );
+      const requestUrl = new URL(decoded.request.url());
+      assert.equal(requestUrl.pathname, entry.path);
+      assert.equal(decoded.request.method(), entry.http);
+      if (entry.name === 'getStartAdminTraitJournal')
+        assert.deepEqual(Object.fromEntries(requestUrl.searchParams), {
+          limit: '200',
+          cursor: 'opaque:+/=?多层',
+        });
+      if (entry.name === 'getStartAdminTraits')
+        assert.equal(requestUrl.searchParams.get('kind'), 'charter');
+      if (entry.rpc === 'POST') {
+        const input = z.record(z.string(), z.unknown()).parse(entry.data);
+        const { subjectId: _s, traitId: _t, kind: _k, ...body } = input;
+        assert.deepEqual(decoded.request.postDataJSON(), body);
+      }
+      const encoded = await rpcFulfillment(entry.name, {
+        status: resource ?? 200,
+        json: entry.fixture,
+        ...(canonical ? { headers: { Location: `${traitPath}/journal` } } : {}),
+      });
+      assert.equal(encoded.status, 200);
+      assert.equal(encoded.headers?.Location, undefined);
+      return new Response(z.string().parse(encoded.body), {
+        status: encoded.status,
+        headers: { ...encoded.headers, 'content-type': 'application/json' },
+      });
+    };
+    const envelope = Envelope.parse(
+      await fetcher(
+        `http://fixture.test/_serverFn/${id}`,
+        [{ method: entry.rpc, data: entry.data, fetch: transport }],
+        transport,
+      ),
+    );
+    assert.equal(envelope.error, undefined);
+    if (entry.name === 'getStartAdminConfig' || entry.name === 'getStartAdminSubjectTraits')
+      assert.deepEqual(JSON.parse(z.string().parse(envelope.result)), entry.fixture);
+    else if (resource !== undefined)
+      assert.deepEqual(envelope.result, {
+        ...entry.fixture,
+        status: resource,
+        ...(canonical ? { canonicalLocation: `${traitPath}/journal` } : {}),
+      });
+    else assert.deepEqual(envelope.result, entry.fixture);
   }
 });
