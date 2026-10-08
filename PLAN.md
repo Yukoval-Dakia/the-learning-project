@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09：PR1622 R1 NONE；旧管理页两处handoff数量断言11→12修复，59 scoped unit通过，产品19source/878artifact不变。14DB已过且锁释放；真实RPC/browser与新CI待。
+> Linear 是权威 tracker。2026-10-09：PR1622 exact8bfc CI全绿、R1 NONE；父26真实RPC/10窗口与T3浏览器通过，88表/序列无写，19:15:34Z释放锁，主runtime不变。证据封存后待最终CI/合并，未部署。
 
 ## NOW
 
-- **YUK-1358 / Start观察读取**：freshmain10df、分支feat/yuk-1358-start-agent-notes。复用1392领域入口，保留Today20/全页50与本地已读，无数据库写操作。[范围与验收](docs/planning/2026-10-09-yuk1358-start-agent-notes.md)。作者127unit/10协议/static/build/10audits通过；父14DB通过且清理/释放锁。R1 NONE；CI两处陈旧数量断言已修，59unit通过。实际RPC/browser未验，draft PR等待新exact CI。
+- **YUK-1358 / Start观察读取**：freshmain10df、分支feat/yuk-1358-start-agent-notes。复用1392领域入口，保留Today20/全页50与本地已读，无数据库写操作。[范围与验收](docs/planning/2026-10-09-yuk1358-start-agent-notes.md)。作者127unit/10协议/static/build/10audits通过；父14DB通过且清理/释放锁。R1 NONE；CI两处陈旧数量断言已修，59unit通过。实际26RPC/10窗口与T3浏览器20/50、错误恢复、已读/深链/旧SPA跳转通过；3浏览器窗口88表/序列无写，已释放锁。[父验收](docs/planning/2026-10-09-yuk1358-start-agent-notes-parent.md)。封存后最终CI待。
 
 - **YUK-1358 / PR1620 Start配置与科目控制**：三页面、嵌套catalog/journal与18操作已接入Start。R1 NONE、95 distinct父DB、406unit/9协议/static/build、75c exact CI通过；实际122RPC/35窗口及浏览器配置刷新失败不重写、双tab CAS、COW/生命周期通过。[父验收](docs/planning/2026-10-09-yuk1358-start-admin-controls-parent.md)。隔离资源已清理，未部署；exact755bdeebb CI37821989407全绿，18:16:17Z合main10df1a471且tree一致，已unwatch。父票保持In Progress。
 

@@ -27,3 +27,7 @@ Status: source3ac84e80e / evidencec10e11885 delivered, writer completed/noPendin
 ## CI assertion repair
 
 CI37826987461 at3a9b09291 failed eight tests in two old admin suites: the production handoff total remained asserted as11 after `/agent-notes` raised it to12. Parent reproduced8 failures/39passes, changed only the two counts, and reran four scoped files:59/59 pass; focused Biome exit0. All19 recorded source files and878 build artifacts still match. No product logic or runtime change, no repeat DB/build or independent review needed for this mechanical assertion repair. New exact-head CI and real built RPC/browser acceptance remain required. Logs and hashes: `evidence/yuk1358-start-agent-notes/parent/ci-handoff-repair.json`. Task-caused failure belongs to existing YUK1358; no separate defect ticket.
+
+## Parent runtime acceptance
+
+Exact8bfc CI37827927759 passed. Parent completed26 actual built RPC/10 no-write windows and real T3 browser acceptance, then released mutex19:15:34.481635Z with original4/running/release unchanged. See [parent report](2026-10-09-yuk1358-start-agent-notes-parent.md) for scope,88-table inventory correction,3 browser comparisons and limits. No deployment or whole-migration completion.
