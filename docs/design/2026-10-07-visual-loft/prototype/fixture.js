@@ -7,6 +7,7 @@ export const now = {
   clock: '20:10',
   availableMinutes: 40,
   availableSource: '你下午说的',
+  absentSource: '还没说',
 };
 
 export const goals = [
@@ -253,3 +254,18 @@ export const absence = {
 };
 
 export const nextUp = { title: '短对比例子', minutes: 12 };
+
+// Long absence (H5): no "tonight" reasons, an actionable 5-minute check instead.
+export const absenceSuggestion = {
+  id: 'g-recheck',
+  status: 'ready',
+  title: '5 分钟确认：哪些还记得',
+  what: '3 个短问题，覆盖离开前正在学的设直线方式与椭圆方程。',
+  purpose: '用很少时间确认离开前的状态，再决定从哪里接上。',
+  whyNow: '你有 12 天没有新的记录；没有新记录不代表退步，只是需要重新看一眼。',
+  minutes: 5,
+  needs: '无',
+  stop: '3 题做完或随时停下；结果只用来决定从哪里接上。',
+  alternatives: ['直接从断点继续', '今天先不确认'],
+  goals: ['midterm'],
+};

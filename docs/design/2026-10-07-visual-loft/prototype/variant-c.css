@@ -7,7 +7,7 @@
 .c-top {
   position: sticky;
   top: 0;
-  z-index: 20;
+  z-index: var(--z-header);
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -54,7 +54,7 @@
   position: fixed;
   left: 50%;
   bottom: calc(var(--sp-5) + env(safe-area-inset-bottom));
-  z-index: 30;
+  z-index: var(--z-dock);
   display: flex;
   align-items: center;
   gap: var(--sp-1);
@@ -519,7 +519,7 @@
   position: fixed;
   left: 50%;
   bottom: 0;
-  z-index: 25;
+  z-index: var(--z-sheet);
   width: min(var(--w-wide), calc(100% - var(--sp-6)));
   border-radius: var(--r-2) var(--r-2) 0 0;
   background: var(--bg-raised);

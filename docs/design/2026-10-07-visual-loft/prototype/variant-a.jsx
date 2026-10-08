@@ -2,8 +2,8 @@
 // Navigation: top bar + ⌘K, no sidebar. Home: one reading column, a narrative lead and an
 // equal "continue / suggestion" pair. Workbench: a single document — stem, my draft steps —
 // with help as margin notes anchored to the step they concern (inline on narrow screens).
-import { useState } from 'react';
-import { absence, continueItems, lead, now, problem, suggestions } from './fixture.js';
+import { useEffect, useState } from 'react';
+import { absence, absenceSuggestion, continueItems, lead, now, problem } from './fixture.js';
 import {
   Backlog,
   Btn,
@@ -49,7 +49,7 @@ export function Shell({ children }) {
   const { params, setPalette, go, toast } = useLoft();
   const nav = (id) => (id === 'home' ? go('home') : toast({ text: '该区域不在本次 loft 范围内。' }));
   return (
-    <div className={`a-app a-on-${params.screen}`}>
+    <div className={`a-app a-on-${params.screen} ${params.round === '1' ? 'a-round1' : ''}`}>
       <header className="a-top">
         <button type="button" className="a-brand" onClick={() => go('home')}>
           <Mark />
@@ -111,13 +111,17 @@ export function Shell({ children }) {
 
 /* ── Home ─────────────────────────────────────────────── */
 export function Home() {
-  const { params } = useLoft();
+  const { params, suggestions: live } = useLoft();
   useEnterToContinue();
   const state = params.state;
   if (state === 'loading') return <HomeLoading />;
   if (state === 'empty') return <HomeEmpty />;
   const primary = continueItems[0];
-  const s0 = suggestions.find((s) => s.id === 'g-contrast');
+  const absent = state === 'absent';
+  // Live list: hiding a suggestion is an optimistic write that must visibly take effect (M5).
+  const s0 = absent ? absenceSuggestion : live.find((s) => s.id === 'g-contrast');
+  // When AI suggestions fail, deterministic items (due review) still stand (H6, H7).
+  const rest = live.filter((s) => s.id !== 'g-contrast' && (state !== 'error' || s.deterministic));
   return (
     <div className="a-home">
       <p className="eyebrow num">
@@ -139,12 +143,21 @@ export function Home() {
           <MathText as="p" className="a-lead-body" text={lead.body} />
         </div>
       )}
-      <p className="a-budget">
-        今晚约 <span className="num">{now.availableMinutes}</span> 分钟 <span className="a-dim">· {now.availableSource}</span>
-        <button type="button" className="a-link">
-          修改
-        </button>
-      </p>
+      {absent ? (
+        <p className="a-budget">
+          今晚可用时间 <span className="a-dim">· {now.absentSource}</span>
+          <button type="button" className="a-link">
+            设一下
+          </button>
+        </p>
+      ) : (
+        <p className="a-budget">
+          今晚约 <span className="num">{now.availableMinutes}</span> 分钟 <span className="a-dim">· {now.availableSource}</span>
+          <button type="button" className="a-link">
+            修改
+          </button>
+        </p>
+      )}
 
       <div className="a-pair">
         <ContinueCard item={primary} />
@@ -180,11 +193,11 @@ export function Home() {
               </Btn>
             </li>
           ))}
-          {state !== 'error' &&
-            suggestions
-              .filter((s) => s.id !== 'g-contrast')
-              .map((s) => <SuggestRow key={s.id} s={s} />)}
+          {rest.map((s) => (
+            <SuggestRow key={s.id} s={s} />
+          ))}
         </ul>
+        {state === 'error' && <p className="a-dim a-loading-note">AI 建议暂时取不到；按复习间隔排定的项目不受影响。</p>}
       </section>
 
       <section className="a-section">
@@ -237,11 +250,11 @@ function SuggestCard({ s }) {
       </p>
       <p className="a-card-meta">
         <Minutes n={s.minutes} />
-        <span className="a-dim">纸笔</span>
+        {s.needs !== '无' && <span className="a-dim">纸笔</span>}
       </p>
       {open && <SuggestionWhy s={s} />}
       <div className="a-card-actions">
-        <Btn kind="secondary" onClick={() => toast({ text: '短对比例子已打开（原型未实现该页）。' })}>
+        <Btn kind="secondary" onClick={() => toast({ text: `${s.title}（原型未实现该页）。` })}>
           开始
         </Btn>
         <Btn kind="quiet" aria-expanded={open} data-act="why" onClick={() => toggleExpanded(s.id)}>
@@ -350,12 +363,12 @@ function HomeEmpty() {
 /* ── Workbench ────────────────────────────────────────── */
 export function Workbench() {
   const { go, steps, part2, submitPart2, revealHint, startExplain, toast } = useLoft();
+  const [peek, setPeek] = useState(false);
   useSubmitShortcut();
-  const last = steps[steps.length - 1]?.id;
   return (
     <div className="a-work">
       <div className="a-context">
-        <button type="button" className="a-back" data-act="back" onClick={() => go('home')}>
+        <button type="button" className="a-back" data-act="back" aria-label="回来时" onClick={() => go('home')}>
           <Icon name="back" size={16} />
           <span>回来时</span>
         </button>
@@ -364,9 +377,18 @@ export function Workbench() {
           <MathText className="a-context-part" text={problem.parts[1].text} />
         </div>
         <span className="spacer" />
+        <button type="button" className="a-peek-btn" data-act="peek" aria-expanded={peek} onClick={() => setPeek((v) => !v)}>
+          <Icon name={peek ? 'x' : 'book'} size={14} />
+          题干
+        </button>
         <NextUp />
         <SaveState />
       </div>
+      {peek && (
+        <div className="a-peek" role="region" aria-label="题干">
+          <Stem />
+        </div>
+      )}
 
       <div className="a-doc">
         <section className="a-problem">
@@ -385,8 +407,8 @@ export function Workbench() {
           </header>
           <ol className="a-steps">
             {steps.map((s, i) => (
-              <li key={s.id} className={`a-step ${s.fresh ? 'enter' : ''}`}>
-                <MarginNote stepId={s.id} isLast={s.id === last} />
+              <li key={s.id} className={`a-step ${s.fresh ? 'enter' : ''}`} data-step={s.id}>
+                <MarginNote stepId={s.id} n={i + 1} />
                 <span className="a-step-n num">{i + 1}</span>
                 <div className="a-step-body" style={{ viewTransitionName: `step-${s.id}` }}>
                   <StepText step={s} />
@@ -411,7 +433,7 @@ export function Workbench() {
               讲解
             </Btn>
             <span className="spacer" />
-            <Btn kind="quiet" icon="pause" onClick={() => toast({ text: '断点已保存：第 5 步。回来时从这里接上。' })}>
+            <Btn kind="quiet" icon="pause" label="停在这里" onClick={() => toast({ text: '断点已保存：第 5 步。回来时从这里接上。' })}>
               <span className="a-hide-sm">停在这里</span>
             </Btn>
           </div>
@@ -421,23 +443,35 @@ export function Workbench() {
   );
 }
 
-// Help requested from the bottom bar lands in the last step's note; keep it in view.
+// Help requested from the bar opens under the step it concerns (s5). Scroll so that step's
+// top sits just below the sticky bars: the attempt stays on screen with the help under it.
 function bringNote() {
   window.setTimeout(() => {
-    document.querySelector('[data-note-last]')?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    const step = document.querySelector('[data-step="s5"]');
+    const bar = document.querySelector('.a-context');
+    if (!step || !bar) return;
+    const top = step.getBoundingClientRect().top + window.scrollY - bar.getBoundingClientRect().bottom - 8;
+    const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    window.scrollTo({ top, behavior: reduce ? 'auto' : 'smooth' });
   }, 260);
 }
 
-function MarginNote({ stepId, isLast }) {
+function MarginNote({ stepId, n }) {
   const { hintsSeen, explain } = useLoft();
   const [manual, setManual] = useState(null);
-  // On narrow screens notes are collapsed; asking for help opens the note it lands in.
-  const asked = isLast && (hintsSeen.h2 || explain.phase !== 'closed');
+  // Notes anchor by step id, not by "the last step". Asking for help opens the note it lands in.
+  const asked = stepId === 's5' && (hintsSeen.h2 || explain.phase !== 'closed');
   const open = manual ?? asked;
   const setOpen = (fn) => setManual(fn(open));
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => e.key === 'Escape' && setManual(false);
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [open]);
   let label = null;
   let body = null;
-  if (stepId === 's3') {
+  if (stepId === 's1') {
     label = '学校草稿照片 · 10/5';
     body = (
       <div className="a-note-photo">
@@ -447,8 +481,8 @@ function MarginNote({ stepId, isLast }) {
     );
   } else if (stepId === 's4') {
     label = '提示 1 · 19:42 已看';
-    body = <HintCard id="h1" />;
-  } else if (isLast) {
+    body = <HintCard id="h1" compact />;
+  } else if (stepId === 's5') {
     label = '关于这一步 · 提示 2 · 讲解';
     body = (
       <div className="a-note-stack">
@@ -460,12 +494,15 @@ function MarginNote({ stepId, isLast }) {
   }
   if (!body) return null;
   return (
-    <aside className={`a-note ${open ? 'is-open' : ''}`} data-note-last={isLast ? '' : undefined}>
+    <aside className={`a-note ${open ? 'is-open' : ''}`} data-note-for={stepId}>
       <button type="button" className="a-note-toggle" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
         <Icon name="down" size={14} className={open ? 'rot' : ''} />
         {label}
       </button>
-      <div className="a-note-body">{body}</div>
+      <div className="a-note-body">
+        <span className="a-note-anchor num">{stepId === 's1' ? '第 1–3 步' : `第 ${n} 步`}</span>
+        {body}
+      </div>
     </aside>
   );
 }

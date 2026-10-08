@@ -5,7 +5,7 @@ import { flushSync } from 'react-dom';
 import { draftSteps, explanation, hints, judgement, problem, readiness, suggestions } from './fixture.js';
 import { warmMath } from './shared.jsx';
 
-const DEFAULTS = { v: 'a', screen: 'home', theme: 'light', state: 'normal', device: 'desktop', chrome: '1', help: '0' };
+const DEFAULTS = { v: 'a', screen: 'home', theme: 'light', state: 'normal', device: 'desktop', chrome: '1', help: '0', round: '2' };
 
 function readParams() {
   const q = new URLSearchParams(window.location.search);
@@ -120,8 +120,12 @@ export function LoftProvider({ children }) {
     window.clearInterval(streamTimer.current);
     streamTimer.current = window.setInterval(() => {
       shown = Math.min(total, shown + 6);
-      setExplain({ phase: shown >= total ? 'done' : 'streaming', shown });
-      if (shown >= total) window.clearInterval(streamTimer.current);
+      setExplain({ phase: shown >= total ? 'recording' : 'streaming', shown });
+      if (shown >= total) {
+        window.clearInterval(streamTimer.current);
+        // Stream end is not commitment: the label flips only after the committed state is re-read.
+        window.setTimeout(() => setExplain({ phase: 'done', shown }), 500);
+      }
     }, 45);
   }, [explain.phase]);
 

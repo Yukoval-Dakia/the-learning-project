@@ -3,7 +3,7 @@
 // panel — "your work" beside "system suggestions" — under a strip of real constraints.
 // Workbench: three panes (problem / my draft / help); on a phone, a segmented switch.
 import { useState } from 'react';
-import { absence, continueItems, goals, lead, now, problem, suggestions } from './fixture.js';
+import { absence, absenceSuggestion, continueItems, goals, lead, now, problem } from './fixture.js';
 import {
   Backlog,
   Btn,
@@ -146,6 +146,7 @@ export function Home() {
   useEnterToContinue();
   const state = params.state;
   const loading = state === 'loading';
+  const shown = state === 'absent' ? [absenceSuggestion, ...live.filter((s) => s.id !== 'g-contrast')] : live;
   return (
     <div className="b-home">
       <header className="b-home-head">
@@ -205,15 +206,24 @@ export function Home() {
           <header className="b-panel-head">
             <h2>建议</h2>
             <span className="b-panel-sub">系统的 · 都可以不接受</span>
-            <span className="b-count num">{state === 'error' || loading ? '–' : live.length}</span>
+            <span className="b-count num">{state === 'error' || loading ? '–' : shown.length}</span>
           </header>
           {loading ? (
             <Skeleton lines={4} block />
           ) : state === 'error' ? (
-            <RegionError what="系统建议" />
+            <>
+              <RegionError what="AI 建议" />
+              <ul className="b-list">
+                {live
+                  .filter((s) => s.deterministic)
+                  .map((s) => (
+                    <SuggestRow key={s.id} s={s} />
+                  ))}
+              </ul>
+            </>
           ) : (
             <ul className="b-list">
-              {live.map((s) => (
+              {shown.map((s) => (
                 <SuggestRow key={s.id} s={s} />
               ))}
             </ul>

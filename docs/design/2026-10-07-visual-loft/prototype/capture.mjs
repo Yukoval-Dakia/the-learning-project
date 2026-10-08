@@ -79,6 +79,15 @@ async function states(browser) {
           await page.locator('[data-act="hint2"]').filter({ visible: true }).first().click();
         },
       });
+    await shoot(browser, 'desktop', { v, screen: 'work', theme: 'light', help: '1' }, join(dir, `${v}-work-explain-streaming-desktop.webp`), {
+      full: false,
+      before: async (page) => {
+        const opener = page.locator('[data-act="help"]').filter({ visible: true });
+        if (await opener.count()) await opener.first().click();
+        await page.locator('[data-act="explain"]').filter({ visible: true }).first().click();
+        await page.waitForTimeout(350);
+      },
+    });
     await shoot(browser, 'desktop', { v, screen: 'home', theme: 'dark' }, join(dir, `${v}-palette-dark.webp`), {
       full: false,
       before: async (page) => {
@@ -146,7 +155,7 @@ async function video(browser) {
   for (const v of VARIANTS)
     for (const device of Object.keys(DEVICES)) {
       const raw = join(dir, `raw-${v}-${device}`);
-      const size = device === 'desktop' ? { width: 1280, height: 800 } : { width: 390, height: 844 };
+      const size = device === 'desktop' ? { width: 1440, height: 900 } : { width: 390, height: 844 };
       const ctx = await browser.newContext({
         ...DEVICES[device],
         ...(device === 'desktop' ? { viewport: size } : {}),
@@ -270,6 +279,100 @@ async function metrics(browser) {
   );
 }
 
+// Checks for the claims the independent review challenged; written to evidence/probes.json.
+async function probes(browser) {
+  const out = {};
+  const open = async (device, q, viewport) => {
+    const ctx = await browser.newContext({ ...DEVICES[device], ...(viewport ? { viewport } : {}), reducedMotion: 'reduce' });
+    const page = await ctx.newPage();
+    await page.goto(url(q));
+    await settle(page);
+    return { ctx, page };
+  };
+  // 1. Optimistic hide actually removes the item in every variant (M5).
+  out.optimistic = {};
+  for (const v of VARIANTS) {
+    const { ctx, page } = await open('desktop', { v, screen: 'home' });
+    const count = () => page.locator('[data-act="snooze"]').count();
+    const before = await count();
+    await page.locator('[data-act="snooze"]').first().click();
+    await page.waitForTimeout(400);
+    const after = await count();
+    await page.locator('.toast-action').first().click();
+    await page.waitForTimeout(400);
+    out.optimistic[v] = { before, afterHide: after, afterUndo: await count() };
+    await ctx.close();
+  }
+  // 2. Phone: asking for help from the bar keeps the concerned step on screen (W1, W2).
+  {
+    const { ctx, page } = await open('mobile', { v: 'a', screen: 'work' });
+    await page.locator('[data-act="hint2"]').filter({ visible: true }).first().click();
+    await page.waitForTimeout(800);
+    const r = await page.evaluate(() => {
+      const box = (sel) => document.querySelector(sel)?.getBoundingClientRect();
+      const step = box('[data-step="s5"] .a-step-body');
+      const bar = box('.a-context');
+      const actions = box('.a-actions');
+      const hint = box('[data-note-for="s5"] .a-note-body');
+      return { stepTop: Math.round(step.top), stepBottom: Math.round(step.bottom), contextBarBottom: Math.round(bar.bottom), actionsTop: Math.round(actions.top), helpTop: Math.round(hint.top), viewport: innerHeight };
+    });
+    r.stepFullyVisible = r.stepTop >= r.contextBarBottom && r.stepBottom <= r.actionsTop;
+    r.helpStartsOnScreen = r.helpTop < r.actionsTop;
+    out.phoneHelp = r;
+    await page.screenshot({ path: join(OUT, 'states', 'a-work-help-open-mobile.webp.png') });
+    toWebp(await page.screenshot(), join(OUT, 'states', 'a-work-help-open-mobile.webp'));
+    rmSync(join(OUT, 'states', 'a-work-help-open-mobile.webp.png'), { force: true });
+    await ctx.close();
+  }
+  // 3. Margin-note anchoring at 1440: note top vs its step top (W3).
+  {
+    const { ctx, page } = await open('desktop', { v: 'a', screen: 'work' });
+    out.anchors1440 = await page.evaluate(() =>
+      ['s1', 's4', 's5'].map((id) => {
+        const step = document.querySelector(`[data-step="${id}"] .a-step-body`).getBoundingClientRect();
+        const note = document.querySelector(`[data-note-for="${id}"]`).getBoundingClientRect();
+        return { step: id, offsetPx: Math.round(note.top - step.top) };
+      }),
+    );
+    await ctx.close();
+  }
+  // 4. Laptop width keeps the stem pinned and notes inline (W2).
+  out.layout = {};
+  for (const width of [1280, 1024, 1023]) {
+    const { ctx, page } = await open('desktop', { v: 'a', screen: 'work' }, { width, height: 800 });
+    out.layout[width] = await page.evaluate(() => ({
+      stemPosition: getComputedStyle(document.querySelector('.a-problem')).position,
+      noteToggleVisible: getComputedStyle(document.querySelector('.a-note-toggle')).display !== 'none',
+      stemPeekButton: getComputedStyle(document.querySelector('.a-peek-btn')).display !== 'none',
+    }));
+    await ctx.close();
+  }
+  // 5. Explanation label follows the committed state, not the stream (W6).
+  {
+    const { ctx, page } = await open('desktop', { v: 'a', screen: 'work' });
+    await page.locator('[data-act="explain"]').first().click();
+    const seen = [];
+    for (let i = 0; i < 40; i++) {
+      const label = await page.locator('.explain .tmp-badge, .explain .hint-at').first().textContent().catch(() => null);
+      if (label && seen[seen.length - 1] !== label) seen.push(label);
+      if (label?.startsWith('已记为')) break;
+      await page.waitForTimeout(100);
+    }
+    out.explainLabels = seen;
+    toWebp(await page.screenshot(), join(OUT, 'states', 'a-work-explain-recorded-desktop.webp'));
+    await ctx.close();
+  }
+  // 6. AI suggestions failing leaves deterministic items in place (H6, H7).
+  out.errorStateDeterministic = {};
+  for (const v of VARIANTS) {
+    const { ctx, page } = await open('desktop', { v, screen: 'home', state: 'error' });
+    out.errorStateDeterministic[v] = await page.getByText('到期复习 · 4 项').count();
+    await ctx.close();
+  }
+  writeFileSync(join(OUT, 'probes.json'), `${JSON.stringify(out, null, 2)}\n`);
+  console.log(JSON.stringify(out, null, 2));
+}
+
 const [mode = 'all', ...rest] = process.argv.slice(2);
 const browser = await chromium.launch();
 try {
@@ -300,6 +403,19 @@ try {
   if (mode === 'shots' || mode === 'all') await shots(browser);
   if (mode === 'states' || mode === 'all') await states(browser);
   if (mode === 'video' || mode === 'all') await video(browser);
+  if (mode === 'round1') {
+    // Approximate structural reconstruction of A before the in-loft revision (no top-bar
+    // destinations, no phone tab bar, no pinned stem). It shares later fixes, so it is NOT the
+    // original record: the original round-1 captures live in round-1/original and are never touched.
+    const dir = join(OUT, 'round-1', 'reconstructed');
+    rmSync(dir, { recursive: true, force: true });
+    mkdirSync(dir, { recursive: true });
+    for (const screen of ['home', 'work'])
+      for (const device of Object.keys(DEVICES))
+        for (const theme of ['light', 'dark'])
+          await shoot(browser, device, { v: 'a', round: '1', screen, theme }, join(dir, `a-${screen}-${device}-${theme}.webp`), { full: device === 'mobile' });
+  }
+  if (mode === 'probes' || mode === 'all') await probes(browser);
   if (mode === 'metrics' || mode === 'all') await metrics(browser);
 } finally {
   await browser.close();

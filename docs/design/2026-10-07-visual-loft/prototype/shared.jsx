@@ -98,9 +98,9 @@ export function Icon({ name, size, className }) {
 }
 
 /* ── Controls ─────────────────────────────────────────── */
-export function Btn({ kind = 'secondary', size, icon, kbd, children, className, ...rest }) {
+export function Btn({ kind = 'secondary', size, icon, kbd, children, className, label, ...rest }) {
   return (
-    <button type="button" className={`btn btn-${kind} ${size ? `btn-${size}` : ''} ${className ?? ''}`} {...rest}>
+    <button type="button" aria-label={label} className={`btn btn-${kind} ${size ? `btn-${size}` : ''} ${className ?? ''}`} {...rest}>
       {icon && <Icon name={icon} />}
       {children && <span>{children}</span>}
       {kbd && <Kbd>{kbd}</Kbd>}
@@ -253,12 +253,20 @@ export function Judgement({ compact }) {
 }
 
 /* ── Hints & explanation ─────────────────────────────── */
-export function HintCard({ id, inline }) {
+export function HintCard({ id, inline, compact }) {
   const { hintsSeen, revealHint } = useLoft();
+  const [more, setMore] = useState(false);
   const h = hints.find((x) => x.id === id);
   const seen = hintsSeen[id];
   return (
-    <div className={`hint ${seen ? 'hint-seen' : 'hint-locked'} ${inline ? 'hint-inline' : ''}`} style={{ viewTransitionName: `hint-${id}` }}>
+    <div
+      className={`hint ${seen ? 'hint-seen' : 'hint-locked'} ${inline ? 'hint-inline' : ''} ${compact && !more ? 'hint-compact' : ''}`}
+      style={{ viewTransitionName: `hint-${id}` }}
+      onClick={compact && !more ? () => setMore(true) : undefined}
+      onKeyDown={compact && !more ? (e) => e.key === 'Enter' && setMore(true) : undefined}
+      role={compact && !more ? 'button' : undefined}
+      tabIndex={compact && !more ? 0 : undefined}
+    >
       <div className="hint-head">
         <Icon name="bulb" size={16} />
         <span className="hint-level">{h.level}</span>
@@ -309,11 +317,9 @@ export function ExplainBlock() {
       <div className="hint-head">
         <Icon name="eye" size={16} />
         <span className="hint-level">完整讲解</span>
-        {explain.phase === 'streaming' ? (
-          <span className="tmp-badge">生成中 · 未生效</span>
-        ) : (
-          <span className="hint-at">已记为“看过完整讲解”</span>
-        )}
+        {explain.phase === 'streaming' && <span className="tmp-badge">生成中 · 未生效</span>}
+        {explain.phase === 'recording' && <span className="tmp-badge">生成完毕 · 正在确认记录</span>}
+        {explain.phase === 'done' && <span className="hint-at">已记为“看过完整讲解”</span>}
       </div>
       {shownParas.map((p, i) => (
         <MathText key={i} as="p" className="explain-text" text={p} />
@@ -434,6 +440,7 @@ export function StepText({ step }) {
 }
 
 export function StepMeta({ step }) {
+  const { hintsSeen } = useLoft();
   return (
     <span className="step-meta">
       {step.origin === 'photo' ? (
@@ -445,6 +452,7 @@ export function StepMeta({ step }) {
         <span className="prov prov-tonight">今晚</span>
       )}
       {step.help === 'h1' && <span className="prov prov-help">看提示 1 后</span>}
+      {step.id === 's5' && hintsSeen.h2 && <span className="prov prov-help">看提示 2 后</span>}
       {step.current && <span className="prov prov-current">正在写</span>}
     </span>
   );
@@ -471,6 +479,8 @@ export function Composer({ placeholder = '写下一步…  $公式$ · 回车添
         if (!text.trim()) return;
         addStep(text.trim());
         setText('');
+        const input = e.currentTarget.querySelector('textarea');
+        window.setTimeout(() => input?.scrollIntoView({ block: 'nearest' }), 280);
       }}
     >
       <textarea
@@ -480,6 +490,10 @@ export function Composer({ placeholder = '写下一步…  $公式$ · 回车添
         value={text}
         placeholder={placeholder}
         onChange={(e) => setText(e.target.value)}
+        onFocus={(e) => {
+          const el = e.currentTarget;
+          window.setTimeout(() => el.scrollIntoView({ block: 'nearest' }), 60);
+        }}
         onKeyDown={(e) => {
           if (e.key === 'Enter' && !e.shiftKey) {
             e.preventDefault();

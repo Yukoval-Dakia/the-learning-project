@@ -1,0 +1,70 @@
+{
+  "optimistic": {
+    "a": {
+      "before": 1,
+      "afterHide": 0,
+      "afterUndo": 1
+    },
+    "b": {
+      "before": 1,
+      "afterHide": 0,
+      "afterUndo": 1
+    },
+    "c": {
+      "before": 1,
+      "afterHide": 0,
+      "afterUndo": 1
+    }
+  },
+  "phoneHelp": {
+    "stepTop": 132,
+    "stepBottom": 282,
+    "contextBarBottom": 124,
+    "actionsTop": 784,
+    "helpTop": 318,
+    "viewport": 844,
+    "stepFullyVisible": true,
+    "helpStartsOnScreen": true
+  },
+  "anchors1440": [
+    {
+      "step": "s1",
+      "offsetPx": 0
+    },
+    {
+      "step": "s4",
+      "offsetPx": 0
+    },
+    {
+      "step": "s5",
+      "offsetPx": 11
+    }
+  ],
+  "layout": {
+    "1023": {
+      "stemPosition": "static",
+      "noteToggleVisible": true,
+      "stemPeekButton": true
+    },
+    "1024": {
+      "stemPosition": "sticky",
+      "noteToggleVisible": true,
+      "stemPeekButton": false
+    },
+    "1280": {
+      "stemPosition": "sticky",
+      "noteToggleVisible": true,
+      "stemPeekButton": false
+    }
+  },
+  "explainLabels": [
+    "生成中 · 未生效",
+    "生成完毕 · 正在确认记录",
+    "已记为“看过完整讲解”"
+  ],
+  "errorStateDeterministic": {
+    "a": 1,
+    "b": 1,
+    "c": 1
+  }
+}

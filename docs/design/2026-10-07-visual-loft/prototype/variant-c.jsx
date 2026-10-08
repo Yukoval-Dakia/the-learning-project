@@ -4,7 +4,7 @@
 // with the thread's history below. Workbench: a two-column stage (problem | my draft) and a
 // help sheet that rises from the bottom and pushes the stage instead of covering the draft.
 import { useEffect } from 'react';
-import { absence, continueItems, lead, now, otherThreads, problem, suggestions, thread } from './fixture.js';
+import { absence, absenceSuggestion, continueItems, lead, now, otherThreads, problem, suggestions, thread } from './fixture.js';
 import {
   Backlog,
   Btn,
@@ -86,7 +86,7 @@ export function Home() {
   const state = params.state;
   if (state === 'loading') return <HomeLoading />;
   if (state === 'empty') return <HomeEmpty />;
-  const later = live.filter((s) => s.id !== 'g-contrast');
+  const later = live.filter((s) => s.id !== 'g-contrast' && (state !== 'error' || s.deterministic));
   return (
     <div className="c-home">
       <section className="c-now" aria-label="现在">
@@ -113,7 +113,7 @@ export function Home() {
             <MathText as="p" className="c-now-body" text={lead.body} />
           </>
         )}
-        <Forks error={state === 'error'} />
+        <Forks error={state === 'error'} absent={state === 'absent'} />
       </section>
 
       <div className="c-body">
@@ -161,8 +161,7 @@ export function Home() {
             </div>
             <span className="c-dim num">{otherThreads[0].at}</span>
           </li>
-          {state !== 'error' &&
-            later.map((s) => (
+          {later.map((s) => (
               <li key={s.id} className="c-other" style={{ viewTransitionName: `crow-${s.id}` }}>
                 <StatusGlyph state={s.status} />
                 <div className="c-other-main">
@@ -188,10 +187,10 @@ function SnoozeBtn({ s }) {
   );
 }
 
-function Forks({ error }) {
+function Forks({ error, absent }) {
   const { go, preload, expanded, toggleExpanded, toast, suggestions: live } = useLoft();
   const c = continueItems[0];
-  const s = live.find((x) => x.id === 'g-contrast') ?? suggestions[0];
+  const s = absent ? absenceSuggestion : (live.find((x) => x.id === 'g-contrast') ?? suggestions[0]);
   const open = expanded === s.id;
   return (
     <>
@@ -216,12 +215,12 @@ function Forks({ error }) {
             <p className="c-fork-label">
               系统建议 <StatusGlyph state="ready" /> 准备好了
             </p>
-            <h2 className="c-fork-title">短对比例子</h2>
+            <h2 className="c-fork-title">{s.id === 'g-contrast' ? '短对比例子' : s.title}</h2>
             <p className="c-fork-note">
               <Minutes n={s.minutes} /> <MathText text={`为了${s.purpose.replace('确认', '确认：')}`} />
             </p>
             <div className="c-fork-actions">
-              <Btn kind="secondary" onClick={() => toast({ text: '短对比例子已打开（原型未实现该页）。' })}>
+              <Btn kind="secondary" onClick={() => toast({ text: `${s.title}（原型未实现该页）。` })}>
                 开始
               </Btn>
               <Btn kind="quiet" aria-expanded={open} data-act="why" onClick={() => toggleExpanded(s.id)}>

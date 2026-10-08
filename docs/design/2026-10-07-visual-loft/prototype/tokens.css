@@ -25,7 +25,7 @@
   --gray-200: #e3dfd5;
   --gray-300: #cdc8bc;
   --gray-400: #a6a194;
-  --gray-500: #716d65;
+  --gray-500: #6b675f;
   --gray-600: #5e5b54;
   --gray-700: #45433e;
   --gray-800: #2e2d2a;
@@ -90,7 +90,7 @@
   --gray-200: #312f2c;
   --gray-300: #403e3a;
   --gray-400: #5c5953;
-  --gray-500: #8c887f;
+  --gray-500: #959188;
   --gray-600: #aba79e;
   --gray-700: #c8c4bb;
   --gray-800: #dedad2;
@@ -184,8 +184,22 @@
   --w-margin: 300px;
   --w-stem: 360px;
   --w-pane-side: 360px;
+  --h-stream: 340px; /* reserved height for a streaming explanation */
   --h-topbar: 56px;
   --h-tabbar: 64px;
+
+  /* Stacking · named layers instead of ad-hoc numbers */
+  --z-sticky: 10;
+  --z-tabs: 15;
+  --z-header: 20;
+  --z-sheet: 25;
+  --z-dock: 30;
+  --z-overlay: 50;
+  --z-toast: 60;
+
+  /* Breakpoints (documented constants; CSS media queries cannot read custom properties,
+     so production exposes them as shared TS constants / custom media):
+     phone ≤ 720 · tablet 721–1023 · laptop 1024–1359 · wide ≥ 1360 */
 }
 
 @media (prefers-reduced-motion: reduce) {

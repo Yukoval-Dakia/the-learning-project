@@ -103,7 +103,7 @@
 .b-top {
   position: sticky;
   top: 0;
-  z-index: 20;
+  z-index: var(--z-header);
   display: flex;
   align-items: center;
   gap: var(--sp-2);
@@ -685,7 +685,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    z-index: 20;
+    z-index: var(--z-header);
     display: grid;
     grid-template-columns: repeat(5, 1fr);
     height: calc(var(--h-tabbar) + env(safe-area-inset-bottom));
@@ -774,7 +774,7 @@
   .b-mtabs {
     position: sticky;
     top: var(--h-topbar);
-    z-index: 15;
+    z-index: var(--z-tabs);
     display: flex;
     gap: 2px;
     margin: var(--sp-2) var(--sp-4);
@@ -826,7 +826,7 @@
     left: 0;
     right: 0;
     bottom: 0;
-    z-index: 20;
+    z-index: var(--z-header);
     display: flex;
     gap: var(--sp-2);
     padding: var(--sp-2) var(--sp-4) calc(var(--sp-2) + env(safe-area-inset-bottom));

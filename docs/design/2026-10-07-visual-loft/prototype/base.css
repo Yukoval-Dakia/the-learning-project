@@ -48,7 +48,7 @@ button {
 }
 
 :focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--accent-strong);
   outline-offset: 2px;
   border-radius: var(--r-1);
 }
@@ -71,6 +71,20 @@ button {
 
 .tex .katex {
   font-size: 1.06em;
+}
+
+/* Inline formulas in prose never break mid-expression; long derivation steps may. */
+.tex {
+  white-space: nowrap;
+}
+
+.step-text .tex {
+  white-space: normal;
+}
+
+/* KaTeX 0.19 struts give wrapped lines no leading, so tall fractions on adjacent lines touch. */
+.step-text .katex-strut {
+  margin-block: 0.2em;
 }
 
 .icon {
@@ -469,6 +483,22 @@ button {
   font-size: var(--fs-1);
 }
 
+/* An already-read hint for an earlier step folds to two lines in the margin. */
+.hint-compact {
+  cursor: pointer;
+}
+
+.hint-compact .hint-text {
+  display: -webkit-box;
+  overflow: hidden;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.hint-compact .hint-record {
+  display: none;
+}
+
 .hint-reveal,
 .explain-closed {
   justify-items: start;
@@ -486,8 +516,18 @@ button {
   color: var(--text-3);
 }
 
-.explain-streaming .explain-text {
+.explain-streaming .explain-text,
+.explain-recording .explain-text {
   color: var(--text-3);
+}
+
+/* Streaming text must not push content below it: the region reserves its height when it
+   opens (inside the click's input window), then fills in place. */
+.explain-streaming,
+.explain-recording,
+.explain-done {
+  min-height: var(--h-stream);
+  align-content: start; /* rows must not re-share the reserved height as text arrives */
 }
 
 /* ── Problem ──────────────────────────────────────────── */
@@ -614,6 +654,10 @@ button {
 }
 
 /* ── Photo ────────────────────────────────────────────── */
+[data-theme="dark"] .photo {
+  filter: brightness(0.82) contrast(0.95);
+}
+
 .photo {
   display: block;
   width: 100%;
@@ -629,7 +673,7 @@ button {
 
 .photo-unclear {
   fill: none;
-  stroke: var(--caution);
+  stroke: var(--text-3);
   stroke-width: 1.4;
   stroke-dasharray: 4 3;
 }
@@ -685,6 +729,7 @@ button {
 
 .composer-input {
   font-family: var(--font-sans);
+  scroll-margin-bottom: calc(var(--h-control-touch) + var(--sp-6));
 }
 
 .composer-input::placeholder {
@@ -938,7 +983,7 @@ button {
 .palette-scrim {
   position: fixed;
   inset: 0;
-  z-index: 50;
+  z-index: var(--z-overlay);
   display: grid;
   justify-items: center;
   align-items: start;
@@ -1029,12 +1074,18 @@ button {
   position: fixed;
   left: 50%;
   bottom: calc(var(--sp-5) + env(safe-area-inset-bottom));
-  z-index: 60;
+  z-index: var(--z-toast);
   display: grid;
   gap: var(--sp-2);
   justify-items: center;
   transform: translateX(-50%);
   pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  .toasts {
+    bottom: calc(var(--h-tabbar) + var(--sp-3) + env(safe-area-inset-bottom));
+  }
 }
 
 .toast {
@@ -1111,6 +1162,36 @@ button {
   height: 100%;
   object-fit: none;
   object-position: top left;
+}
+
+/* Persistent bars transition as their own layers above content, so named content groups
+   never paint over the sticky header or the fixed bottom bars mid-transition. */
+.a-top,
+.b-top,
+.c-top {
+  view-transition-name: chrome-top;
+}
+
+.a-context {
+  view-transition-name: chrome-context;
+}
+
+.a-tabbar,
+.b-tabbar {
+  view-transition-name: chrome-tabbar;
+}
+
+.a-actions,
+.b-pane-actions {
+  view-transition-name: chrome-actions;
+}
+
+::view-transition-group(chrome-top),
+::view-transition-group(chrome-context),
+::view-transition-group(chrome-tabbar),
+::view-transition-group(chrome-actions),
+::view-transition-group(help-sheet) {
+  z-index: 2;
 }
 
 ::view-transition-old(root) {
