@@ -53,6 +53,7 @@ export const READ_TOOLS = [
 ] as const;
 
 export const PROPOSE_WRITE_TOOLS = [
+  'submit_review_answer',
   'propose_knowledge_edge',
   'propose_knowledge_mutation',
   'attribute_mistake',
@@ -144,6 +145,7 @@ const KNOWLEDGE_REVIEW_TOOLS = [
 // @/capabilities 拉进 web bundle（plan 裁决 h）。完整 inventory 与 Copilot 子集的
 // 集合对账均由 src/capabilities/copilot/server/copilot-tools.unit.test.ts 强制。
 export const COPILOT_TOOLS = [
+  'submit_review_answer',
   'present_primary_view',
   'query_memory_brief',
   'generate_goal_outline',

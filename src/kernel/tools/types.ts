@@ -85,6 +85,21 @@ export type ValidateLearningContentFn = (
 
 export interface ToolContext {
   db: Db;
+  /** Server-bound current-turn original; never populated from model arguments. */
+  reviewAnswer?: {
+    readonly originalRef: string;
+    readonly sessionId: string;
+    submit(signal?: AbortSignal): Promise<
+      | { kind: 'pending'; run_id: string }
+      | {
+          kind: 'committed';
+          status: 'effective' | 'review_required';
+          submission_id: string;
+          attempt_id: string;
+          candidate_id: string;
+        }
+    >;
+  };
   sessionId?: string;
   validateLearningContent?: ValidateLearningContentFn;
   /** Caller-owned cancellation propagated into any nested AI work. */

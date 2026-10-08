@@ -1,0 +1,120 @@
+{
+  "integration_source": "e2012c7592ea40ea768d7069d6b73f2e71b7bbd0",
+  "main": "4a3d797dd9033314e092d9b995c89490e1486194",
+  "manual_conflicts": ["PLAN.md", ".remember/now.md"],
+  "automatic_source_overlap": [
+    "src/capabilities/copilot/server/copilot-execution.ts",
+    "src/capabilities/copilot/server/copilot-execution.unit.test.ts",
+    "src/server/ai/tools/proposal-tools.test.ts",
+    "src/ui/lib/api-schema.generated.ts"
+  ],
+  "main_only_blobs_identical": [
+    "scripts/capability-boundary-baseline.json",
+    "src/ai/task-budget.ts",
+    "src/ai/task-spec.ts",
+    "src/capabilities/copilot/AGENTS.md",
+    "src/capabilities/copilot/jobs/copilot_run.test.ts",
+    "src/capabilities/copilot/jobs/copilot_run.ts",
+    "src/capabilities/copilot/server/proposal-flow-gate.ts",
+    "src/capabilities/copilot/server/proposal-flow-gate.unit.test.ts",
+    "src/capabilities/copilot/server/reply-finalization.ts",
+    "src/capabilities/copilot/server/subagents.ts",
+    "src/capabilities/copilot/server/subagents.unit.test.ts",
+    "src/capabilities/copilot/tasks/agent.ts",
+    "src/capabilities/knowledge/api/proposal-decide.db.test.ts",
+    "src/capabilities/knowledge/server/proposals.db.test.ts",
+    "src/capabilities/knowledge/server/proposals.ts",
+    "src/capabilities/knowledge/server/tools/proposal-tools.ts",
+    "src/capabilities/observability/api/event-correct.ts",
+    "src/capabilities/observability/api/event-detail.ts",
+    "src/capabilities/observability/public.ts",
+    "src/capabilities/observability/server/event-detail.db.test.ts",
+    "src/capabilities/observability/server/event-detail.ts",
+    "src/capabilities/observability/server/event-detail.unit.test.ts",
+    "src/core/projections/knowledge.ts",
+    "src/core/schema/event/known.ts",
+    "src/core/schema/proposal.ts",
+    "src/kernel/proposals/inbox.ts",
+    "src/kernel/proposals/writer.ts",
+    "src/kernel/tools/budgets.ts",
+    "src/kernel/tools/budgets.unit.test.ts",
+    "src/kernel/tools/context-throttle.ts",
+    "src/kernel/tools/context-throttle.unit.test.ts",
+    "src/server/ai/run-lifecycle.ts",
+    "src/server/ai/runner.seam.test.ts",
+    "src/server/ai/runner.ts",
+    "src/server/boss/handlers/AGENTS.md",
+    "src/server/boss/handlers/ai_task_run_reconcile.db.test.ts",
+    "src/server/boss/handlers/ai_task_run_reconcile.ts"
+  ],
+  "unit_count": 139,
+  "db_count": 110,
+  "checks": {
+    "unit": {
+      "command": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "src/capabilities/copilot/server/copilot-execution.unit.test.ts",
+        "src/capabilities/copilot/server/proposal-flow-gate.unit.test.ts",
+        "src/capabilities/copilot/server/subagents.unit.test.ts",
+        "src/capabilities/practice/server/tools/submit-review-answer.unit.test.ts",
+        "src/kernel/tools/budgets.unit.test.ts",
+        "src/kernel/tools/context-throttle.unit.test.ts",
+        "src/server/ai/runner.seam.test.ts",
+        "src/capabilities/observability/server/event-detail.unit.test.ts"
+      ],
+      "exitCode": 0
+    },
+    "typecheck": {
+      "command": ["pnpm", "typecheck"],
+      "exitCode": 0
+    },
+    "lint": {
+      "command": ["pnpm", "lint"],
+      "exitCode": 0
+    },
+    "build": {
+      "command": ["pnpm", "build"],
+      "exitCode": 0
+    }
+  },
+  "db_check": {
+    "command": [
+      "pnpm",
+      "vitest",
+      "run",
+      "--config",
+      "vitest.db.config.ts",
+      "src/server/ai/tools/proposal-tools.test.ts",
+      "src/capabilities/copilot/jobs/copilot_run.test.ts",
+      "src/capabilities/copilot/api/review-answer.db.test.ts"
+    ],
+    "exitCode": 0
+  },
+  "cleanup": {
+    "released_at": "2026-10-08T11:40:36.504445+00:00",
+    "owner": {
+      "threadId": "57961995-70c3-4121-a9dd-97d90471be1a",
+      "issue": "YUK-1356",
+      "phase": "main4a3d-scoped-db",
+      "token": "59d65b7e-a3d6-4aed-8e52-5d15d00ad8bd",
+      "at": "2026-10-08T11:39:33.799303+00:00",
+      "expectedMinutes": 5
+    },
+    "original_containers_unchanged": true,
+    "release_unchanged": true
+  },
+  "logs": {
+    "/tmp/yuk1605-main4a3d/build.log": "2f79ce6d82a278429129a9ddcb4f7827c6f9cf841301e57ec65032b68d133c11",
+    "/tmp/yuk1605-main4a3d/db.log": "404cdd5127cf252b4307b8f42896bf94c92cdb76aa33310cd0f64ae000761128",
+    "/tmp/yuk1605-main4a3d/lint.log": "9158d0cb678c80ec4ff623facca2354915fa7a0dd133cfe2afb9edc93a938f85",
+    "/tmp/yuk1605-main4a3d/typecheck.log": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+    "/tmp/yuk1605-main4a3d/unit.log": "d225e55c87600fd2f975e844605e9a4b13aa77aa48a60abc48fd85e8428a37e6"
+  },
+  "actual_output_candidate": "4cccb1a628ce8d1c47a7a4096da1008e6849bada",
+  "actual_output_not_rerun": true,
+  "integration_limits": "new main changes durable quantity budgets, remote-MCP completion and finalization; prior constrained paid run proves original candidate only. Integrated source has scoped owner/runner/tool/trust/replay DB regression coverage; not new exact-source provider, full unconstrained Copilot or deployment proof."
+}

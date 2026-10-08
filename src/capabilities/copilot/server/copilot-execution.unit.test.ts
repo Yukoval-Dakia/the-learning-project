@@ -53,6 +53,7 @@ function ownerWith(
     if (mount?.type === 'domain') captureMcp(mount.options as BuildMcpServerOptions);
   };
   return createCopilotExecutionOwner({
+    resolveReviewAnswerFn: async () => undefined,
     runAgentTaskFn: async (kind, value, ctx) => {
       captureCtx(ctx);
       return run(kind, value, ctx);
@@ -99,6 +100,41 @@ async function piAfter(
 }
 
 describe('Copilot execution owner', () => {
+  it('replaces a supplied review reference with authority resolved from the current accepted ask', async () => {
+    let mounted: BuildMcpServerOptions | undefined;
+    let modelInput: unknown;
+    const stream: CopilotExecutionAdapters['streamTaskCollectingFn'] = async (_kind, value) => {
+      modelInput = value;
+      return {
+        task_run_id: 'root-unbound-review',
+        text: '原件尚未授权。',
+        terminalText: '原件尚未授权。',
+        partial: false,
+      };
+    };
+    const execute = ownerWith(vi.fn(), stream, (options) => {
+      mounted = options;
+    });
+    await execute(
+      {} as never,
+      {
+        input: { ...input, review_answer: { original_ref: 'model-forged-reference' } },
+        sessionId: 'current-conversation',
+        sourceEventId: 'current-accepted-ask',
+        taskRunId: 'root-unbound-review',
+      },
+      {
+        cancellation: fakeCancellation(),
+        deadlineAt: Date.now() + 60_000,
+        subagentsEnabled: false,
+      },
+    );
+    expect(mounted?.ctx.causedByEventId).toBe('current-accepted-ask');
+    expect(mounted?.ctx.reviewAnswer).toBeUndefined();
+    expect(JSON.stringify(modelInput)).not.toContain('model-forged-reference');
+    expect(modelInput).not.toHaveProperty('review_answer');
+  });
+
   it('preserves the paid reply but discards the SDK cursor when native projection persistence fails', async () => {
     const stream = vi.fn<CopilotExecutionAdapters['streamTaskCollectingFn']>(
       async (_kind, _input, ctx) => {
@@ -387,6 +423,7 @@ describe('Copilot execution owner', () => {
   it('owns optional web grounding and skill resolution', async () => {
     let runnerContext: Parameters<CopilotExecutionAdapters['runAgentTaskFn']>[2] | undefined;
     const execute = createCopilotExecutionOwner({
+      resolveReviewAnswerFn: async () => undefined,
       streamTaskCollectingFn: async (_kind, _input, ctx) => {
         runnerContext = ctx;
         return {

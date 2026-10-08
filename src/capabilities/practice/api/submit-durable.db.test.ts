@@ -19,7 +19,8 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { dispatchNativeAttempt } from '../server/assessment/durable-attempt';
 import { JUDGE_PENDING_ATTEMPT_ACTION, judgeRunJobId } from '../server/judge-run-dispatch';
 import { deriveJudgeRunStatus } from '../server/judge-run-status';
-import { createAttempt, sessionAdmitsDurableDivert } from './submit';
+import { sessionAdmitsDurableDivert } from '../server/review-operation';
+import { createAttempt } from './submit';
 
 async function fixture(model = true) {
   const db = testDb();
@@ -222,17 +223,19 @@ describe('native submit durable dispatch', () => {
   });
 
   it('PLACEMENT sessions stay synchronous so next-item reads have a persisted verdict', async () => {
-    expect(await sessionAdmitsDurableDivert(await seedSession('placement'))).toBe(false);
+    expect(await sessionAdmitsDurableDivert(testDb(), await seedSession('placement'))).toBe(false);
   });
   it('REVIEW sessions admit the pending protocol', async () => {
-    expect(await sessionAdmitsDurableDivert(await seedSession('review'))).toBe(true);
+    expect(await sessionAdmitsDurableDivert(testDb(), await seedSession('review'))).toBe(true);
   });
   it('ad-hoc solo practice admits the pending protocol', async () => {
-    expect(await sessionAdmitsDurableDivert(null)).toBe(true);
+    expect(await sessionAdmitsDurableDivert(testDb(), null)).toBe(true);
   });
   it('unadmitted and unknown sessions fail closed to synchronous execution', async () => {
-    expect(await sessionAdmitsDurableDivert(await seedSession('conversation'))).toBe(false);
-    expect(await sessionAdmitsDurableDivert(`unknown_${newId()}`)).toBe(false);
+    expect(await sessionAdmitsDurableDivert(testDb(), await seedSession('conversation'))).toBe(
+      false,
+    );
+    expect(await sessionAdmitsDurableDivert(testDb(), `unknown_${newId()}`)).toBe(false);
   });
 
   it('a new issuance with identical response text remains a distinct practice occurrence', async () => {

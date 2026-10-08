@@ -29,6 +29,7 @@ type ResultPolicy =
   | 'generated'
   | readonly string[];
 const POLICIES: Record<string, ResultPolicy> = {
+  submit_review_answer: ['kind', 'status', 'submission_id', 'attempt_id', 'candidate_id', 'run_id'],
   query_memory_brief: 'reader',
   get_subject_graph_overview: 'reader',
   query_knowledge: 'reader',

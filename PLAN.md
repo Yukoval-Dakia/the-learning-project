@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：1380 PR1607与1359 W3/W4文档PR1608已合入main fadcb0c87。当前唯一实施线为1381管理页领域读取；1359继续W5只读核查。Start运行矩阵及旧路径退出仍待，未部署。
+> Linear 是权威 tracker。2026-10-08：1381实现66aa43a18已交回，正常整合1356主线a3691f572（PR1605），仅看板/交接冲突；父验收与代码review待。W5源码清单R1无P0/P1，事实勘误收敛；1358/1359继续，未部署。
 
 ## NOW
+
+- **YUK-1356 / 主线交付**：PR1605于11:58:08Z合入a3691f572，主线核tree与exact e260bdb98一致、CI37772055452绿/threads0。保留真实MiMo一次工具验收及main4a3d 139unit/110DB证据；1356仍InProgress，未部署。1358 Start Today/Inbox由主线独占PR1609及RPC/browser验收，不在此树修改。
 
 - **YUK-1381 / W5领域读取**：feat/yuk-1381-admin-domain-reads从main fadcb0c87建立；唯一子writer已交回66aa43a18并释放；父核9hash及8保护文件不变，作者Node24的74unit/static/build/audits通过。父级接验收/文档，不改Start/UI/practice/config writer；DB运行及独立review/CI尚待。coverage/conjecture仅给主线准确增量路径，未启动实施。
 
@@ -33,7 +35,7 @@
 
 - **YUK-1338 / YUK-1351 P0 gate**：PR #1590 已合入主线 42987dfd7，本分支同步集成。测试容器中验证 Pi + DBOS 状态版本、过期拒绝、四个进程终止边界、响应复用与单次业务效果；不等于整个迁移或真实 provider 重复付费问题已解决。证据见[gate 记录](docs/planning/2026-10-07-yuk1338-pi-dbos-gate.md)。
 
-- **YUK-1356 业务操作迁移**：接口与消费者调查已交付[实施输入](docs/planning/2026-10-07-yuk1356-operation-seams.md)。主线57961995已接手独立树唯一实施writer，与1352/1355协调；本线程不重复实施。Pi可信作答来源、队列诊断投影与coverage语义必须保留，三入口统一尚未验收。
+- **YUK-1356 业务操作迁移**：共享submitReviewAnswer已接HTTP/worker与真实Pi工具；鉴权chat保存明确授权的用户原件，工具只消费本turn/session绑定引用，新chat原件保守unknown assistance。父139+20 scoped DB通过，R2只读审查进行；真实模型/Start提交消费者、CI和最终交付仍待。[交接](docs/planning/2026-10-08-yuk1356-trusted-pi-handoff.md)。
 
 - **YUK-1362 / 当前部署用途**：仅供 Agent 开发测试，禁止再次清库或恢复私人数据。14:30Z实读 current-release 为1365发布 `6e54da8df` / image `fd8c046b97fe`，锁不存在；即时SSE已有1365证据，正文/取消验收仍受provider限额阻碍，1366负责现存DLQ。本线程未操作服务。此处是带时间的观察，后续发布仍须重新核验并原子取锁；日用须owner明确要求。
 - **历史 YUK-1341 产品 AI 发布**：PR #1585 已通过 exact-head CI、独立初审和等待窗并合并。app/worker 都固定 `opencode-go/mimo-v2.6-pro`；54聊天任务和 Mem0 接线已落地。生产两轮 Copilot 成功，原会话及 Pi cursor 连续、刷新回放一致；后台 MemoryBrief 也已实际成功。未宣称所有任务质量或评分切片均获准入。
@@ -43,7 +45,7 @@
 
 ## NEXT
 
-- YUK-1355 父线程负责 push、PR1595 replies/watch/merge、exact-head CI、Linear 与必要 DB 验收。禁止本 child 操作容器/DB/provider/runtime/deploy；本轮不扩新任务族。
+- YUK-1356 完成独立审查/P0-P1修复、exact-head CI与真实Pi输出验收；沿1358继续Today/Inbox Start消费者，不将当前原件提交切片当全部迁移完成。
 
 - **YUK-1352 / PR1592**：已合入main eae963377，CI37758570995与合并tree一致；隔离错题入口已验收，未部署。剩余路由与canonical boot继续。
 
@@ -78,7 +80,7 @@
 
 ## BLOCKED-ON
 
-- YUK-1355 新 main 的真实 DB 行为、最终 exact-head CI 与部署均未验收。本轮只交付本地合并与限定静态/单位检查；源与bundle比较及必须复验清单见本轮证据。
+- YUK-1355 PR1595已合入caeb959fd，tree与准确CI a9663e8一致；仅prune任务族迁移，其他DBOS任务族和最终测试部署仍待。
 
 - YUK-1352隔离路由验收已通过；canonical boot/release/SSE及其他路由退出未验收；父线程拥有runtime lock、材料/R2证据、PR/Linear及发布权。本writer无新增领域follow-up，既有1359/1376退出义务保留。
 

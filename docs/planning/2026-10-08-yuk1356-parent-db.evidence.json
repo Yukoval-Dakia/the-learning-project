@@ -1,0 +1,164 @@
+{
+  "candidate": "7db36350c plus test-only correction",
+  "product_source": "0d9360487c168dab42d6fa58b69003677adf5863",
+  "verified_author_source_hashes": 35,
+  "verified_author_logs": 13,
+  "runs": [
+    {
+      "label": "first158-of159",
+      "result": {
+        "command": [
+          "pnpm",
+          "vitest",
+          "run",
+          "--config",
+          "vitest.db.config.ts",
+          "src/capabilities/copilot/api/review-answer.db.test.ts",
+          "src/capabilities/practice/server/review-operation.db.test.ts",
+          "src/capabilities/practice/api/submit-durable.db.test.ts",
+          "src/capabilities/practice/api/submit-native-diagnostic.db.test.ts",
+          "src/capabilities/practice/api/submit-late-arrival.db.test.ts",
+          "src/capabilities/practice/server/assessment/submission-persistence.db.test.ts",
+          "src/capabilities/practice/jobs/judge_run.db.test.ts",
+          "src/capabilities/practice/jobs/judge_run-terminal.db.test.ts",
+          "src/capabilities/copilot/server/durable-session-queue.db.test.ts",
+          "src/capabilities/copilot/server/subagent-mailbox.db.test.ts",
+          "src/capabilities/practice/server/due-list-query.db.test.ts"
+        ],
+        "exitCode": 1,
+        "finishedAt": "2026-10-08T10:43:16.802021+00:00"
+      },
+      "cleanup": {
+        "releasedAt": "2026-10-08T10:43:33.643973+00:00",
+        "owner": {
+          "threadId": "57961995-70c3-4121-a9dd-97d90471be1a",
+          "issue": "YUK-1356",
+          "phase": "isolated-scoped-db",
+          "token": "9372c895-8b96-4743-917a-d2deed628815",
+          "createdAt": "2026-10-08T10:42:35.127611+00:00",
+          "candidate": "7db36350c",
+          "expectedMinutes": 10
+        },
+        "containersUnchanged": true,
+        "releaseUnchanged": true,
+        "containers": [
+          {
+            "Id": "483a2694e53b7ed177961ab70a2507a21a9759e32aa73bb8e11742a686f4b93d",
+            "Name": "/the-learning-project-worker-1",
+            "Image": "sha256:9b76e7cb746dc51f1f661adba65041d514502f041e20111ae91defe3679be25c",
+            "StartedAt": "2026-10-07T17:30:14.145816005Z",
+            "Status": "running",
+            "Health": "healthy"
+          },
+          {
+            "Id": "11b2b10855062f57e8cf35743428d371de2b726e12edff6a063ace53e6dc844a",
+            "Name": "/the-learning-project-app-1",
+            "Image": "sha256:9b76e7cb746dc51f1f661adba65041d514502f041e20111ae91defe3679be25c",
+            "StartedAt": "2026-10-07T17:30:14.149079637Z",
+            "Status": "running",
+            "Health": "healthy"
+          },
+          {
+            "Id": "90bcf69f997c7ef1147bd202e9d688797af44e02370684fc5e9d6e0bb0795c85",
+            "Name": "/the-learning-project-test-storage-1",
+            "Image": "sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d",
+            "StartedAt": "2026-10-07T17:29:53.558618302Z",
+            "Status": "running",
+            "Health": "healthy"
+          },
+          {
+            "Id": "ab776c3b4acb3fd1fb687c6679601c143b6736ecb7cee73b081c98b9caf34d80",
+            "Name": "/the-learning-project-postgres-1",
+            "Image": "sha256:00ba258a66dac104fd5171074a0084462a64a1369d8513f3d0a634e2f24d15bc",
+            "StartedAt": "2026-10-07T11:00:14.011571917Z",
+            "Status": "running",
+            "Health": "healthy"
+          }
+        ]
+      },
+      "files": {
+        "/tmp/yuk1356-parent-db-20261008/before.json": "ae14871f7275b4b6deb0956d2d7d2b1e6858941f34d37fa0fe648dc428b57a8f",
+        "/tmp/yuk1356-parent-db-20261008/result.json": "407caf65108ba4d7783d109ca2c81556718aa5b317fedb49e3b34023e8cee697",
+        "/tmp/yuk1356-parent-db-20261008/db.log": "b50c121a057ebc08a303a6105449062a76f70ef7dd012e0ab45d3ea9b30bca4e",
+        "/tmp/yuk1356-parent-db-20261008/cleanup.json": "de0e5de45a527bd5dfe026dbd4497144388f6066645c709607d31690038fea3c"
+      }
+    },
+    {
+      "label": "corrected20-of20",
+      "result": {
+        "command": [
+          "pnpm",
+          "vitest",
+          "run",
+          "--config",
+          "vitest.db.config.ts",
+          "src/capabilities/copilot/api/review-answer.db.test.ts"
+        ],
+        "exitCode": 0,
+        "finishedAt": "2026-10-08T10:45:22.137584+00:00"
+      },
+      "cleanup": {
+        "releasedAt": "2026-10-08T10:45:39.389874+00:00",
+        "owner": {
+          "threadId": "57961995-70c3-4121-a9dd-97d90471be1a",
+          "issue": "YUK-1356",
+          "phase": "isolated-scoped-db-green",
+          "token": "220f772c-4e1c-496b-b8ba-e9c466824623",
+          "createdAt": "2026-10-08T10:44:55.222653+00:00",
+          "candidate": "7db36350c+test-only",
+          "expectedMinutes": 3
+        },
+        "containersUnchanged": true,
+        "releaseUnchanged": true,
+        "containers": [
+          {
+            "Id": "483a2694e53b7ed177961ab70a2507a21a9759e32aa73bb8e11742a686f4b93d",
+            "Name": "/the-learning-project-worker-1",
+            "Image": "sha256:9b76e7cb746dc51f1f661adba65041d514502f041e20111ae91defe3679be25c",
+            "StartedAt": "2026-10-07T17:30:14.145816005Z",
+            "Status": "running",
+            "Health": "healthy"
+          },
+          {
+            "Id": "11b2b10855062f57e8cf35743428d371de2b726e12edff6a063ace53e6dc844a",
+            "Name": "/the-learning-project-app-1",
+            "Image": "sha256:9b76e7cb746dc51f1f661adba65041d514502f041e20111ae91defe3679be25c",
+            "StartedAt": "2026-10-07T17:30:14.149079637Z",
+            "Status": "running",
+            "Health": "healthy"
+          },
+          {
+            "Id": "90bcf69f997c7ef1147bd202e9d688797af44e02370684fc5e9d6e0bb0795c85",
+            "Name": "/the-learning-project-test-storage-1",
+            "Image": "sha256:4e61d15fd35994cb1e43e1e553dff106794841fd9a99ade2fc8c8bfce4d7872d",
+            "StartedAt": "2026-10-07T17:29:53.558618302Z",
+            "Status": "running",
+            "Health": "healthy"
+          },
+          {
+            "Id": "ab776c3b4acb3fd1fb687c6679601c143b6736ecb7cee73b081c98b9caf34d80",
+            "Name": "/the-learning-project-postgres-1",
+            "Image": "sha256:00ba258a66dac104fd5171074a0084462a64a1369d8513f3d0a634e2f24d15bc",
+            "StartedAt": "2026-10-07T11:00:14.011571917Z",
+            "Status": "running",
+            "Health": "healthy"
+          }
+        ]
+      },
+      "files": {
+        "/tmp/yuk1356-parent-db-green-20261008/before.json": "4693bebcea0f77cefab668ae6b7c7404a1d2d63e7278099d9733cdf60174f93f",
+        "/tmp/yuk1356-parent-db-green-20261008/result.json": "45908aa5228a5bb82241c5f51b775db17e4f6e042a7c1e97f2c16515c10f2a69",
+        "/tmp/yuk1356-parent-db-green-20261008/db.log": "4436c0cfe2f0db1f2139bf2145919e63be88cd51b16a69102ea86249ca3cb38c",
+        "/tmp/yuk1356-parent-db-green-20261008/cleanup.json": "69290f9f3fae4505760b086ea3ab8b6bcf9dbad63570f8088f8d5d899a87dbc8"
+      }
+    }
+  ],
+  "not_proven": [
+    "independent final review",
+    "GitHub exact-head CI",
+    "real MiMo output",
+    "Start submission consumer",
+    "deployment"
+  ],
+  "corrected_test_sha256": "52334c1a9e988a3a3c46f5ff3894de130467d448392a2f552e90a8cc2dff40f0"
+}
