@@ -7,7 +7,7 @@
 import { z } from 'zod';
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
-import { getAdminSubjectTraits } from '@/server/subjects/admin-read';
+import { getAdminSubjectTraits } from '../public';
 
 const ParamsSchema = z.object({ id: z.string().trim().min(1) });
 
