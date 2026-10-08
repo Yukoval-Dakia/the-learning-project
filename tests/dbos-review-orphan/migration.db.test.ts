@@ -101,10 +101,11 @@ function worker(
     await expect
       .poll(
         () => {
-          const error = messages.find((m) => m.kind === 'failure');
-          if (error) throw new Error(`${error.error}\n${record.stderr}`);
           const index = messages.findIndex((m) => m.kind === kind);
           if (index >= 0) found = messages.splice(index, 1)[0];
+          if (found) return true;
+          const error = messages.find((m) => m.kind === 'failure');
+          if (error) throw new Error(`${error.error}\n${record.stderr}`);
           if (!found && (child.exitCode !== null || child.signalCode !== null))
             throw new Error(`Child exited: ${record.stderr}`);
           return !!found;
@@ -122,7 +123,7 @@ function worker(
     child.send({ kind: 'stop' });
     expect(await exited).toEqual([0, null]);
   }
-  return { child, wait, kill, stop };
+  return { child, exited, wait, kill, stop };
 }
 async function reset() {
   await db`truncate review_orphan_disposition, review_orphan_receipt, review_orphan_tick, learning_session, job_events cascade`;
@@ -494,6 +495,9 @@ describe('actual review orphan crash and recovery', () => {
 
       const retry = worker({ id, recover: true });
       await retry.wait('ready');
+      expect((await retry.wait('failure')).error).toContain(
+        `Review orphan outcome unknown: ${id}/crash-a`,
+      );
       await expect
         .poll(
           async () =>
@@ -505,9 +509,11 @@ describe('actual review orphan crash and recovery', () => {
       expect(after.receipts).toEqual(before.receipts);
       expect(after.events).toEqual(before.events);
       evidence.push({ unknownId: id, before, after, terminalErrorWasNotRetried: true });
-      if (retry.child.exitCode === null && retry.child.signalCode === null) await retry.kill();
+      expect(await retry.exited).toEqual([1, null]);
     } finally {
-      if (first.child.exitCode === null && first.child.signalCode === null) await first.kill();
+      if (first.child.exitCode === null && first.child.signalCode === null)
+        first.child.kill('SIGKILL');
+      await first.exited;
       await proxy.stop();
     }
   }, 120000);

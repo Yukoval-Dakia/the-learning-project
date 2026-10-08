@@ -149,7 +149,9 @@ it('observes real Timekeeper forwarding, native two-scheduler ticks/restart and 
   observations.push({ held });
   await first.command({ kind: 'transition', phase: 'draining-pg-boss' });
   const noProof = await first.command({ kind: 'transition', phase: 'dbos' }, 'rejected');
-  expect(noProof.error).toContain('quiescence');
+  expect(noProof.error).toContain('drain blocked');
+  expect(noProof.error).toContain('"kind":"forwarder"');
+  expect(noProof.error).toContain('"state":"active"');
   // Keep a real forwarder suspended longer than the 60-second source lookback.
   const barrier = Date.now();
   await expect
@@ -169,6 +171,9 @@ it('observes real Timekeeper forwarding, native two-scheduler ticks/restart and 
       { timeout: 10000 },
     )
     .toBe(0);
+  expect((await first.command({ kind: 'transition', phase: 'dbos' }, 'rejected')).error).toContain(
+    'quiescence',
+  );
   await first.command({
     kind: 'quiesce',
     reason:
