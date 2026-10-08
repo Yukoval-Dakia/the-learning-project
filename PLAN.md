@@ -4,6 +4,8 @@
 
 ## NOW
 
+- **YUK-1390 / 已合入**：PR1616合main7b8904179，exact bec86e4e5 CI/R1 NONE/tree一致；60unit与父42DB通过。五科目控制操作包含提交后hydrate，Start待接；7631独占下一1391六trait操作。
+
 - **YUK-1358 / Start管理只读页**：feat/yuk-1358-start-admin-reads接runs/detail、cost、failures、coverage、conjectures五路由原页面。父332unit/8协议/static/build与48+2DB通过；独立R1 NONE，真实built RPC/browser仍待，PR1615草稿。父负责集成，7631独占1390 subject-control，配置Start尚未接。
 - **YUK-1389 / 已合入**：PR1614合main0b925feaa，exact e1f385f5e CI37786605158绿、R1 NONE、tree一致；176unit与父48DB。公共config builder/schema/既有注入writer操作已共享，Start canonical注入仍待，未部署。
 - **YUK-1358 / Today与Inbox已合入**：PR1609/main7682618与exact d19bd52 tree一致，CI37784537687绿、R2 NONE。73父DB/497unit/7协议及分revision的RPC/browser证据保留。父票保持In Progress，完整迁移未完成。
