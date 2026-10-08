@@ -5,6 +5,7 @@ import type { PgBoss } from 'pg-boss';
 import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
 import { session_orphan_control, session_orphan_disposition } from '@/db/schema';
+import { lockProducerFenceInstaller } from './producer-fence-lock';
 import {
   SessionOrphanContractError,
   type SessionOrphanFamily,
@@ -332,6 +333,7 @@ export async function changeSessionOrphanPhase(
 }
 export async function installSessionOrphanProducerFence(db: Db): Promise<void> {
   await db.transaction(async (tx) => {
+    await lockProducerFenceInstaller(tx);
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtextextended('session-orphan:v1:install', 0))`,
     );
