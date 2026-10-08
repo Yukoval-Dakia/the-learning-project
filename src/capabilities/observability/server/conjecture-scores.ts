@@ -35,7 +35,7 @@
 import { and, desc, eq } from 'drizzle-orm';
 import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
 import { type ProbeResolution, isProbeResolution } from '@/core/schema/conjecture';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { event, kc_typed_state } from '@/db/schema';
 
 /** One calibration/accountability score row (mapped from prediction_score). */
@@ -228,7 +228,7 @@ function collectBoundedRows<Raw, Mapped>(
  * query returns zero rows until YUK-794 lands; ADR-0050 §(a)). Never writes. Never flips flags.
  * Never touches FSRS/θ̂ (ND-5).
  */
-export async function loadConjectureScores(db: Db): Promise<ConjectureScoresRead> {
+export async function loadConjectureScores(db: Db | Tx): Promise<ConjectureScoresRead> {
   const scoreRows = await db
     .select()
     .from(event)
