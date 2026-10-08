@@ -19,7 +19,7 @@ The original mapping and wire keys are preserved, including per-currency known s
 
 ## Prepared tests
 
-- `server/today-cost.unit.test.ts`: eight cases cover before/at/after BJT midnight, injected database forwarding, exact lower-bound tool SQL, a default-clock read crossing midnight, the actual HTTP/public consumer, raw projection/tool-query rejection, safe HTTP 500 and preserved ApiError headers/status.
+- `server/today-cost.unit.test.ts`: eight cases cover before/at/after BJT midnight, injected database forwarding, a default-clock read crossing midnight, the actual HTTP/public consumer, raw projection/tool-query rejection, safe HTTP 500 and preserved ApiError headers/status.
 - `server/today-cost.db.test.ts`: five prepared cases use existing `testDb`, `beginTestTransaction` and rollback helpers. A nested real Tx has nonzero uncommitted USD/CNY reported, estimated, unknown, known-zero and legacy fixtures, provider-linked duplicate exclusion, task/token/call counts and tool rows. Separate singleton-domain and HTTP reads cannot see those fixtures. Boundary cases retain future cost/tool rows. An injected Db empty case checks the complete DTO; rollback leaves no fixture cost.
 - `api/admin-observability.db.test.ts`: the existing populated HTTP contract fixture now asserts exact public-domain DTO parity using its sampled HTTP timestamp. Its existing projection/zero-cost/unknown/legacy tests remain available unchanged.
 
@@ -69,4 +69,10 @@ Parent verified all six source/test SHA-256 values and the handoff document on e
 
 The lock was atomically acquired at 2026-10-08 10:32:57Z and owner-checked/released at 10:34:07Z. The temporary test Postgres exited. Original four running container IDs, images, start times and healthy states were unchanged; the release-file digest was unchanged. Evidence: `/tmp/yuk1378-db-before.json` and `/tmp/yuk1378-db-cleanup.json`. The main and runtime owners were notified. No retained database, deployment, provider call, worker replay or queue change occurred.
 
-Independent R1 review is running against the immutable implementation and preceding documentation diff. PR exact-head CI and final review remain pending. Start integration and whole-page acceptance remain with 1358; this source delivery does not complete the migration.
+Independent R1 review of 603c9674e against caeb959fd completed with no P0/P1 findings. The first exact-head CI found a test-partition violation described below; corrected-head CI remains required. Start integration and whole-page acceptance remain with 1358; this source delivery does not complete the migration.
+
+## CI test-partition correction
+
+CI run `37764472650` rejected `today-cost.unit.test.ts` because it directly imported unmocked Drizzle SQL compilation and schema modules. The parent removed that duplicate SQL-string assertion from the unit file. The unchanged DB suite already verifies actual cost and tool-call rows immediately before, at and after BJT midnight, including future-row behavior. The test-partition policy and allowlist were not changed.
+
+The corrected unit suite passes all eight tests and `pnpm audit:partition` reports no P0 errors. Logs: `/tmp/yuk1378-partition-fix-unit.log` and `/tmp/yuk1378-partition-fix-audit.log`. Production TypeScript and both accepted DB suites are unchanged, so the 11-test database evidence still applies. The earlier source-hash table describes implementation603c9674e; the corrected unit-file SHA-256 is `1e425e68548f734cf8989a9d8bdcaf4db83bd3baec5977b864e45d971a0c6ed5`. Typecheck, lint and build are being rechecked before push; their exit codes will be recorded in `/tmp/yuk1378-partition-fix-checks.json`.

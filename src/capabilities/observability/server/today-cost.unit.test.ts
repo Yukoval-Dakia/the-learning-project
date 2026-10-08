@@ -1,7 +1,5 @@
-import { PgDialect } from 'drizzle-orm/pg-core';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { db } from '@/db/client';
-import { tool_call_log } from '@/db/schema';
 import { ApiError } from '@/kernel/http';
 import { CostTodayResponseSchema } from '../api/admin-observability-contracts';
 import { GET } from '../api/cost-today';
@@ -77,13 +75,6 @@ describe('public Today cost loader and HTTP consumer', () => {
     expect(result).toEqual(emptyCost(now, from));
     expect(CostTodayResponseSchema.parse(result)).toEqual(result);
     expect(mocks.read).toHaveBeenCalledExactlyOnceWith(suppliedDb, from);
-    expect(mocks.from).toHaveBeenCalledExactlyOnceWith(tool_call_log);
-    const condition = mocks.where.mock.calls[0]?.[0];
-    expect(condition).toBeDefined();
-    if (!condition) throw new Error('Missing tool-call lower bound');
-    const query = new PgDialect().sqlToQuery(condition);
-    expect(query.sql).toBe('"tool_call_log"."occurred_at" >= $1');
-    expect(query.params).toEqual([from.toISOString()]);
   });
 
   it('samples the default clock once even when the read crosses BJT midnight', async () => {
