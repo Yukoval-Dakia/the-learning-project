@@ -1,0 +1,62 @@
+$ tsx scripts/audit-provider-lanes.ts --root .
+{
+  "ok": true,
+  "findings": [
+    {
+      "kind": "dashscope-embedding-fetch",
+      "call": "fetch",
+      "path": "src/server/ai/embed.ts"
+    },
+    {
+      "kind": "glm-edge-reconcile-fetch",
+      "call": "fetchImpl",
+      "path": "src/capabilities/knowledge/server/edge-reconcile.ts"
+    },
+    {
+      "kind": "glm-memory-reconcile-fetch",
+      "call": "fetchImpl",
+      "path": "src/server/memory/reconcile-llm.ts"
+    },
+    {
+      "kind": "glm-ocr-layout-parsing-fetch",
+      "call": "fetch",
+      "path": "src/capabilities/ingestion/server/glm_ocr.ts"
+    },
+    {
+      "kind": "mem0-model-bearing-operation",
+      "call": "memory.add",
+      "path": "src/server/memory/client.ts"
+    },
+    {
+      "kind": "mem0-model-bearing-operation",
+      "call": "memory.add",
+      "path": "src/server/memory/client.ts"
+    },
+    {
+      "kind": "mem0-model-bearing-operation",
+      "call": "memory.add",
+      "path": "src/server/memory/client.ts"
+    },
+    {
+      "kind": "mem0-model-bearing-operation",
+      "call": "memory.search",
+      "path": "src/server/memory/client.ts"
+    },
+    {
+      "kind": "tencent-question-mark-agent-sdk",
+      "call": "client.DescribeQuestionMarkAgentJob",
+      "path": "src/capabilities/ingestion/server/tencent_mark.ts"
+    },
+    {
+      "kind": "tencent-question-mark-agent-sdk",
+      "call": "client.SubmitQuestionMarkAgentJob",
+      "path": "src/capabilities/ingestion/server/tencent_mark.ts"
+    },
+    {
+      "kind": "xiaomi-vision-preflight-sdk",
+      "call": "client.messages.create",
+      "path": "scripts/preflight-vision-one-shot.ts"
+    }
+  ],
+  "violations": []
+}

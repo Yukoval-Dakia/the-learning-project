@@ -1,0 +1,7 @@
+$ tsx scripts/audit-profile.ts
+SubjectProfile audit
+profiles: 4
+invalid: 0
+warnings: 0
+
+OK: all SubjectProfile declarations are valid

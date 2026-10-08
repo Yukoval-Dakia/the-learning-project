@@ -24,6 +24,7 @@ import { Route as AdminFailuresRouteImport } from './routes/admin.failures'
 import { Route as AdminRunsRouteImport } from './routes/admin.runs'
 import { Route as AdminSubjectsRouteImport } from './routes/admin.subjects'
 import { Route as ApiSplatRouteImport } from './routes/api.$'
+import { Route as EventsIdRouteImport } from './routes/events.$id'
 import { Route as AdminSubjectsIdRouteImport } from './routes/admin.subjects.$id'
 
 const IndexRoute = IndexRouteImport.update({
@@ -101,6 +102,11 @@ const ApiSplatRoute = ApiSplatRouteImport.update({
   path: '/api/$',
   getParentRoute: () => rootRouteImport,
 } as any)
+const EventsIdRoute = EventsIdRouteImport.update({
+  id: '/events/$id',
+  path: '/events/$id',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AdminSubjectsIdRoute = AdminSubjectsIdRouteImport.update({
   id: '/$id',
   path: '/$id',
@@ -123,6 +129,7 @@ export interface FileRoutesByFullPath {
   '/admin/runs': typeof AdminRunsRoute
   '/admin/subjects': typeof AdminSubjectsRouteWithChildren
   '/api/$': typeof ApiSplatRoute
+  '/events/$id': typeof EventsIdRoute
   '/admin/subjects/$id': typeof AdminSubjectsIdRoute
 }
 export interface FileRoutesByTo {
@@ -141,6 +148,7 @@ export interface FileRoutesByTo {
   '/admin/runs': typeof AdminRunsRoute
   '/admin/subjects': typeof AdminSubjectsRouteWithChildren
   '/api/$': typeof ApiSplatRoute
+  '/events/$id': typeof EventsIdRoute
   '/admin/subjects/$id': typeof AdminSubjectsIdRoute
 }
 export interface FileRoutesById {
@@ -160,6 +168,7 @@ export interface FileRoutesById {
   '/admin/runs': typeof AdminRunsRoute
   '/admin/subjects': typeof AdminSubjectsRouteWithChildren
   '/api/$': typeof ApiSplatRoute
+  '/events/$id': typeof EventsIdRoute
   '/admin/subjects/$id': typeof AdminSubjectsIdRoute
 }
 export interface FileRouteTypes {
@@ -180,6 +189,7 @@ export interface FileRouteTypes {
     | '/admin/runs'
     | '/admin/subjects'
     | '/api/$'
+    | '/events/$id'
     | '/admin/subjects/$id'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -198,6 +208,7 @@ export interface FileRouteTypes {
     | '/admin/runs'
     | '/admin/subjects'
     | '/api/$'
+    | '/events/$id'
     | '/admin/subjects/$id'
   id:
     | '__root__'
@@ -216,6 +227,7 @@ export interface FileRouteTypes {
     | '/admin/runs'
     | '/admin/subjects'
     | '/api/$'
+    | '/events/$id'
     | '/admin/subjects/$id'
   fileRoutesById: FileRoutesById
 }
@@ -235,6 +247,7 @@ export interface RootRouteChildren {
   AdminRunsRoute: typeof AdminRunsRoute
   AdminSubjectsRoute: typeof AdminSubjectsRouteWithChildren
   ApiSplatRoute: typeof ApiSplatRoute
+  EventsIdRoute: typeof EventsIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -344,6 +357,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ApiSplatRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/events/$id': {
+      id: '/events/$id'
+      path: '/events/$id'
+      fullPath: '/events/$id'
+      preLoaderRoute: typeof EventsIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/admin/subjects/$id': {
       id: '/admin/subjects/$id'
       path: '/$id'
@@ -382,6 +402,7 @@ const rootRouteChildren: RootRouteChildren = {
   AdminRunsRoute: AdminRunsRoute,
   AdminSubjectsRoute: AdminSubjectsRouteWithChildren,
   ApiSplatRoute: ApiSplatRoute,
+  EventsIdRoute: EventsIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

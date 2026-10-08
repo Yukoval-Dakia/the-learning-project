@@ -22,6 +22,7 @@ type FixtureHandler = (route: FixtureRoute) => Promise<void> | void;
 type Fulfillment = NonNullable<Parameters<Route['fulfill']>[0]>;
 
 const reads = {
+  getStartEventDetail: '/api/events',
   getStartAgentNoteBoard: '/api/agents/notes',
   getStartWorkbenchSummary: '/api/workbench/summary',
   getStartOvernightDigest: '/api/workbench/overnight-digest',
@@ -64,6 +65,7 @@ const names = [
   ...Object.keys(controls),
   'decideStartProposal',
   'undoStartArtifactAiChange',
+  'postStartEventCorrection',
 ];
 const traitWrites = new Set([
   'editStartAdminSubjectTrait',
@@ -85,6 +87,7 @@ const jsonStringNames = new Set([
   'decideStartProposal',
   'getStartAdminConfig',
   'getStartAdminSubjectTraits',
+  'getStartEventDetail',
 ]);
 const Payload = z
   .object({ data: z.unknown().optional(), context: z.record(z.string(), z.unknown()).optional() })
@@ -158,6 +161,7 @@ export async function decodeRpcRequest(request: FixtureRequest, map: Map<string,
   const method =
     name === 'decideStartProposal' ||
     name === 'undoStartArtifactAiChange' ||
+    name === 'postStartEventCorrection' ||
     (control && control.method !== 'GET')
       ? 'POST'
       : 'GET';
@@ -170,7 +174,13 @@ export async function decodeRpcRequest(request: FixtureRequest, map: Map<string,
   let body: unknown;
   let httpMethod: string = method;
   url.search = '';
-  if (control) {
+  if (name === 'getStartEventDetail' || name === 'postStartEventCorrection') {
+    const event = z
+      .object({ id: z.string().trim().min(1), input: z.unknown().optional() })
+      .parse(payload.data);
+    url.pathname = `/api/events/${encodeURIComponent(event.id)}${name === 'postStartEventCorrection' ? '/corrections' : ''}`;
+    if (name === 'postStartEventCorrection') body = event.input;
+  } else if (control) {
     const input = z.record(z.string(), z.unknown()).parse(payload.data ?? {});
     const id = (key: string) => encodeURIComponent(z.string().trim().min(1).parse(input[key]));
     httpMethod = control.method;
@@ -221,6 +231,7 @@ export async function decodeRpcRequest(request: FixtureRequest, map: Map<string,
     !control &&
     method === 'GET' &&
     name !== 'getStartAdminRunDetail' &&
+    name !== 'getStartEventDetail' &&
     payload.data !== undefined
   ) {
     throw new Error(`Unexpected input for ${name}`);
@@ -251,7 +262,7 @@ export async function rpcFulfillment(
   if (status >= 400) return { ...options, headers: { ...options.headers, 'x-tss-raw': 'true' } };
   if (body === undefined) throw new Error(`Missing JSON fixture result for ${name}`);
   let result = jsonStringNames.has(name) ? JSON.stringify(body) : body;
-  if (traitWrites.has(name)) {
+  if (traitWrites.has(name) || name === 'postStartEventCorrection') {
     const receipt = z.record(z.string(), z.unknown()).parse(body);
     const canonicalLocation = options.headers?.Location ?? options.headers?.location;
     result = { ...receipt, status, ...(canonicalLocation ? { canonicalLocation } : {}) };
