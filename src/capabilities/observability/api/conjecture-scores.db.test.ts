@@ -2,7 +2,7 @@
 //
 // Asserts the reader's three contracts:
 //   1. BOTH halves render (A4 fix): prediction_score LOG events + kc_typed_state
-//      confused-with-X rows (the structural state reconcile auto-mints).
+//      confused-with-X rows (a directly seeded structural fixture; its producer is pending).
 //   2. HONEST render: score fields are brier_model / brier_baseline / log_loss_model /
 //      skill_score_point + score_basis='single_point' (NOT «accuracy», NOT a window mean).
 //   3. READ-ONLY: the route writes nothing (ND-5 — no FSRS, no attempt, no state mutation).
@@ -13,12 +13,16 @@
 
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-
-import { newId } from '@/core/ids';
+import { getEffectiveProbeResultStatuses } from '@/capabilities/agency/public';
+import { PROBE_RESOLUTION_RULE_VERSION } from '@/core/schema/conjecture';
+import { type Db, type Tx, db as singletonDb } from '@/db/client';
 import { event, kc_typed_state, knowledge, material_fsrs_state } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { loadConjectureScores } from '../public';
+import { diagnosticsPublicSnapshot } from '../server/diagnostics-read-test-helpers';
 import { GET } from './conjecture-scores';
+import { ConjectureScoresResponseSchema } from './diagnostic-contracts';
 
 const KC_ID = 'kn_chain_rule';
 const RIVAL_KC = 'kn_product_rule';
@@ -35,20 +39,23 @@ async function seedKnowledge(): Promise<void> {
   }
 }
 
-async function seedPredictionScore(opts: {
-  eventId: string;
-  knowledgeId: string;
-  predicted_p: number;
-  baseline_p: number;
-  outcome: 0 | 1;
-  resolution: 'evidence_for' | 'confirmed' | 'retired';
-  brier_model: number;
-  brier_baseline: number;
-  log_loss_model: number;
-  skill_score_point: number;
-  createdAt: Date;
-}): Promise<void> {
-  await writeEvent(testDb(), {
+async function seedPredictionScore(
+  opts: {
+    eventId: string;
+    knowledgeId: string;
+    predicted_p: number;
+    baseline_p: number;
+    outcome: 0 | 1;
+    resolution: 'evidence_for' | 'confirmed' | 'retired';
+    brier_model: number;
+    brier_baseline: number;
+    log_loss_model: number;
+    skill_score_point: number;
+    createdAt: Date;
+  },
+  database: Db | Tx = testDb(),
+): Promise<void> {
+  await writeEvent(database, {
     id: opts.eventId,
     actor_kind: 'system',
     actor_ref: 'reconcile',
@@ -77,14 +84,17 @@ async function seedPredictionScore(opts: {
   });
 }
 
-async function seedTypedState(opts: {
-  id: string;
-  knowledgeId: string;
-  confusedWithKcId: string | null;
-  lifecycle: 'open' | 'resolved';
-  evidenceEventIds: string[];
-}): Promise<void> {
-  await testDb()
+async function seedTypedState(
+  opts: {
+    id: string;
+    knowledgeId: string;
+    confusedWithKcId: string | null;
+    lifecycle: 'open' | 'resolved';
+    evidenceEventIds: string[];
+  },
+  database: Db | Tx = testDb(),
+): Promise<void> {
+  await database
     .insert(kc_typed_state)
     .values({
       id: opts.id,
@@ -107,6 +117,15 @@ async function fsrsRowCount(): Promise<number> {
 async function predictionScoreCount(): Promise<number> {
   const rows = await testDb().select().from(event).where(eq(event.action, PREDICTION_SCORE_ACTION));
   return rows.length;
+}
+
+async function getWithPublicParity(): Promise<Response> {
+  const read = await loadConjectureScores(testDb());
+  expect(ConjectureScoresResponseSchema.parse(read)).toEqual(read);
+  const response = await GET();
+  expect(response.status).toBe(200);
+  expect(await response.clone().text()).toBe(JSON.stringify(read));
+  return response;
 }
 
 describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
@@ -138,7 +157,7 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
       evidenceEventIds: ['probe_result_1', 'conjecture_1'],
     });
 
-    const res = await GET();
+    const res = await getWithPublicParity();
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
 
@@ -193,7 +212,7 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
       createdAt: new Date(),
     });
 
-    const res = await GET();
+    const res = await getWithPublicParity();
     const body = (await res.json()) as Record<string, unknown>;
     const scores = body.prediction_scores as Array<Record<string, unknown>>;
     expect(scores).toHaveLength(1);
@@ -239,7 +258,7 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
       createdAt: fresh,
     });
 
-    const res = await GET();
+    const res = await getWithPublicParity();
     const body = (await res.json()) as Record<string, unknown>;
     const scores = body.prediction_scores as Array<Record<string, unknown>>;
     expect(scores).toHaveLength(2);
@@ -275,7 +294,7 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
       ingest_at: new Date(),
     });
 
-    const res = await GET();
+    const res = await getWithPublicParity();
     const body = (await res.json()) as Record<string, unknown>;
     const scores = body.prediction_scores as Array<Record<string, unknown>>;
     expect(scores).toHaveLength(0);
@@ -324,7 +343,7 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
       ingest_at: now,
     });
 
-    const res = await GET();
+    const res = await getWithPublicParity();
     const body = (await res.json()) as Record<string, unknown>;
     const scores = body.prediction_scores as Array<Record<string, unknown>>;
     expect(scores).toHaveLength(1);
@@ -369,7 +388,7 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
         },
       ]);
 
-    const res = await GET();
+    const res = await getWithPublicParity();
     const body = (await res.json()) as Record<string, unknown>;
     const typed = body.typed_states as Array<Record<string, unknown>>;
     expect(typed).toHaveLength(1);
@@ -459,7 +478,7 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
         updated_at: new Date(base.getTime() + 201),
       });
 
-    const res = await GET();
+    const res = await getWithPublicParity();
     const body = (await res.json()) as Record<string, unknown>;
     const scores = body.prediction_scores as Array<Record<string, unknown>>;
     const typed = body.typed_states as Array<Record<string, unknown>>;
@@ -509,7 +528,7 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
       }
     });
 
-    const res = await GET();
+    const res = await getWithPublicParity();
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.prediction_scores).toHaveLength(200);
     expect(body.diagnostics).toMatchObject({
@@ -547,7 +566,7 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
         }),
       ]);
 
-    const res = await GET();
+    const res = await getWithPublicParity();
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.typed_states).toHaveLength(199);
     expect(body.diagnostics).toMatchObject({
@@ -642,7 +661,7 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
         }),
       ]);
 
-    const res = await GET();
+    const res = await getWithPublicParity();
     const body = (await res.json()) as Record<string, unknown>;
     const scores = body.prediction_scores as Array<Record<string, unknown>>;
     const typed = body.typed_states as Array<Record<string, unknown>>;
@@ -688,7 +707,7 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
         }),
       ]);
 
-    const res = await GET();
+    const res = await getWithPublicParity();
     const body = (await res.json()) as Record<string, unknown>;
     const typed = body.typed_states as Array<Record<string, unknown>>;
     expect(typed).toHaveLength(1);
@@ -702,7 +721,7 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
     const beforeScores = await predictionScoreCount();
     const beforeFsrs = await fsrsRowCount();
 
-    const res = await GET();
+    const res = await getWithPublicParity();
     expect(res.status).toBe(200);
 
     // No new events, no FSRS rows — the reader is pure projection.
@@ -710,8 +729,153 @@ describe('GET /api/admin/conjecture-scores (conjecture-wire #13 S4)', () => {
     expect(await fsrsRowCount()).toBe(beforeFsrs);
   });
 
+  it('public reader sees nonzero legacy scores and typed states only inside the supplied Tx, writes nothing and rolls back', async () => {
+    const baseline = await diagnosticsPublicSnapshot(testDb());
+    const rollback = new Error('intentional conjecture rollback');
+    await expect(
+      testDb().transaction(async (tx) => {
+        await seedPredictionScore(
+          {
+            eventId: 'score_tx_missing_source',
+            knowledgeId: KC_ID,
+            predicted_p: 0.3,
+            baseline_p: 0.6,
+            outcome: 0,
+            resolution: 'confirmed',
+            brier_model: 0.09,
+            brier_baseline: 0.36,
+            log_loss_model: 0.356,
+            skill_score_point: 0.75,
+            createdAt: new Date('2026-10-08T23:59:59.123Z'),
+          },
+          tx,
+        );
+        await seedTypedState(
+          {
+            id: 'typed_tx',
+            knowledgeId: KC_ID,
+            confusedWithKcId: RIVAL_KC,
+            lifecycle: 'resolved',
+            evidenceEventIds: [
+              'probe_result_score_tx_missing_source',
+              'conjecture_score_tx_missing_source',
+              '原始复杂条件'.repeat(100),
+            ],
+          },
+          tx,
+        );
+        const at = new Date('2026-10-08T23:59:59.123Z');
+        for (const suffix of ['corrected', 'inactive']) {
+          await seedPredictionScore(
+            {
+              eventId: `score_tx_${suffix}`,
+              knowledgeId: KC_ID,
+              predicted_p: 0.3,
+              baseline_p: 0.6,
+              outcome: 0,
+              resolution: 'confirmed',
+              brier_model: 0.09,
+              brier_baseline: 0.36,
+              log_loss_model: 0.356,
+              skill_score_point: 0.75,
+              createdAt: at,
+            },
+            tx,
+          );
+          await tx.insert(event).values({
+            id: `probe_result_score_tx_${suffix}`,
+            actor_kind: 'system',
+            actor_ref: 'probe_answer',
+            action: 'experimental:probe_result',
+            subject_kind: 'question',
+            subject_id: `q_tx_${suffix}`,
+            caused_by_event_id: `conjecture_score_tx_${suffix}`,
+            outcome: 'success',
+            payload: {
+              conjecture_event_id: `conjecture_score_tx_${suffix}`,
+              outcome: 0,
+              resolution: suffix === 'inactive' ? 'confirmed' : 'evidence_for',
+              resolution_rule_version: PROBE_RESOLUTION_RULE_VERSION,
+              independent_probe_question_ids: [`q_tx_${suffix}`],
+            },
+            created_at: at,
+            ingest_at: at,
+          });
+        }
+        await writeEvent(tx, {
+          id: 'correct_tx_probe',
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'correct',
+          subject_kind: 'event',
+          subject_id: 'probe_result_score_tx_corrected',
+          outcome: 'success',
+          payload: {
+            correction_kind: 'mark_wrong',
+            reason_md: '原始证据被撤回，不能用于评分'.repeat(100),
+            affected_refs: [{ kind: 'open_inquiry', id: 'probe_result_score_tx_corrected' }],
+          },
+          created_at: new Date(at.getTime() + 1),
+          ingest_at: at,
+        });
+        await tx.insert(event).values({
+          id: 'score_tx_corrupt',
+          actor_kind: 'system',
+          actor_ref: 'reconcile',
+          action: PREDICTION_SCORE_ACTION,
+          subject_kind: 'event',
+          subject_id: 'probe_tx_corrupt',
+          outcome: 'success',
+          payload: {
+            conjecture_event_id: 'conjecture_tx_corrupt',
+            probe_result_event_id: 'probe_tx_corrupt',
+            knowledge_id: KC_ID,
+            predicted_p: 'invalid',
+            baseline_p: 0.6,
+            outcome: 0,
+            resolution: 'confirmed',
+          },
+          created_at: at,
+          ingest_at: at,
+        });
+        const statuses = await getEffectiveProbeResultStatuses(tx, [
+          'probe_result_score_tx_missing_source',
+          'probe_result_score_tx_corrected',
+          'probe_result_score_tx_inactive',
+        ]);
+        expect(statuses.get('probe_result_score_tx_missing_source')).toBe('missing');
+        expect(statuses.get('probe_result_score_tx_corrected')).toBe('corrected');
+        expect(statuses.get('probe_result_score_tx_inactive')).toBe('dependency_inactive');
+        const before = await diagnosticsPublicSnapshot(tx);
+        expect(before).not.toEqual(baseline);
+        const read = await loadConjectureScores(tx);
+        expect(ConjectureScoresResponseSchema.parse(read)).toEqual(read);
+        // Missing source status remains displayable for historical score rows.
+        expect(read.prediction_scores.map((r) => r.event_id)).toEqual(['score_tx_missing_source']);
+        expect(read.typed_states).toHaveLength(1);
+        expect(read.typed_states[0].evidence_event_ids).toHaveLength(3);
+        expect(read.diagnostics).toEqual({
+          prediction_scores: { scanned_count: 4, dropped_count: 3, scan_truncated: false },
+          typed_states: { scanned_count: 1, dropped_count: 0, scan_truncated: false },
+        });
+        for (const database of [singletonDb, testDb()]) {
+          const outside = await loadConjectureScores(database);
+          expect(outside.prediction_scores).toEqual([]);
+          expect(outside.typed_states).toEqual([]);
+        }
+        expect(await diagnosticsPublicSnapshot(singletonDb)).toEqual(baseline);
+        expect(await diagnosticsPublicSnapshot(tx)).toEqual(before);
+        throw rollback;
+      }),
+    ).rejects.toBe(rollback);
+    const after = await loadConjectureScores(testDb());
+    expect(after.prediction_scores).toEqual([]);
+    expect(after.typed_states).toEqual([]);
+    expect(await diagnosticsPublicSnapshot(testDb())).toEqual(baseline);
+  });
+
   it('empty state — both halves render as [] (no crash on zero data)', async () => {
-    const res = await GET();
+    const res = await getWithPublicParity();
     expect(res.status).toBe(200);
     const body = (await res.json()) as Record<string, unknown>;
     expect(body.prediction_scores).toEqual([]);

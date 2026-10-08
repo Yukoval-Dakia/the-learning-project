@@ -14,7 +14,7 @@ import {
   assembleScanInput,
   scanCoverageGaps,
 } from '@/capabilities/practice/public';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { getDefaultSubjectRegistry } from '@/subjects/profile';
 import {
@@ -60,7 +60,7 @@ function displayNameMap(): Record<string, string | null> {
  * → 一条 fingerprint 聚合活动查询 → buildCoverageLattice（纯）。零写、零 LLM、零新查询子系统。
  */
 export async function loadCoverageLattice(
-  db: Db,
+  db: Db | Tx,
   now: Date = new Date(),
 ): Promise<CoverageLatticeRead> {
   const t0 = Date.now();

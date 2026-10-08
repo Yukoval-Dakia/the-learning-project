@@ -4,7 +4,7 @@
 // 组合根中间件统一施加。
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
-import { loadCoverageLattice } from '../server/coverage-lattice';
+import { loadCoverageLattice } from '../public';
 
 export async function GET(): Promise<Response> {
   try {

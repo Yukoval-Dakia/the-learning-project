@@ -4,7 +4,9 @@ PR1609 candidate1af5a8fc8 normally integrates main a6faded072. Sole child comple
 
 Parent real isolated Start RPC and T3 Today/Inbox acceptance passed. 88public tables unchanged for denial/read stages; actual browser dismiss+undo produced exactly2events and1note body/version, remaining86 relations unchanged. Reload499/two undone; no additional writes. Snapshot/core/raw timestamp/cost/cursor/replay evidence sealed in docs/planning/evidence/2026-10-08-yuk1358-built-acceptance.json and runtime yuk1358-start-1af5a8fc8/evidence. No provider/worker/replay/deploy. OwnPG/Start cleaned;12:41:52.939Z owner27377b37 lock released, original4containers/release identical. 7631 informed, owns1386/1359 and may now acquire its own DB window; do not assume lock still free.
 
-Next: commit/push evidence+repair/main, update PR1609 body/ready and watch exact-head CI, then autonomous merge if gates satisfied. No new review window after repaired R2 NONE. Keep1358/1359InProgress; wholeW1/remainingHTTP/DBOS families/canonicalboot/release/SPAexit open. Existing sidebar count invalidation/fontCSP observations captured inPLAN and1358, not fixed. Rootcheckout is anotherowner; do notwrite. Current live remainsAgentTEST5aa2/build853/image9b76.
+PR1609 d8950e7d1已push/ready、旧CI37779328375进行中；现正常整合main6c6905fad（1386已合入），仅PLAN/now冲突，产品自动合并。父核变更并跑匹配集成检查后push新head CI，门禁满足即合并。 No new review window after repaired R2 NONE. Keep1358/1359InProgress; wholeW1/remainingHTTP/DBOS families/canonicalboot/release/SPAexit open. Existing sidebar count invalidation/fontCSP observations captured inPLAN and1358, not fixed. Rootcheckout is anotherowner; do notwrite. Current live remainsAgentTEST5aa2/build853/image9b76.
+
+1386/main6c6905 exact CI/tree及24DB/R1 NONE由7631交回；12:43:53Z其锁已释放。下一subjects typed reads独占交7631，范围admin-read.ts/四HTTP/public/tests，配置写者/Start不动。当前无主线runtime动作。
 
 Earlier records are revision-specific history.
 
@@ -12,13 +14,13 @@ Earlier records are revision-specific history.
 
 # 当前交接 — YUK1381唯一writer / W5文档审查，2026-10-08
 
-分支feat/yuk-1381-admin-domain-reads基线fadcb0c87（PR1608已11:43:12Z合入，准确7578b046 CI37771389555 docs fast-path绿、W3/W4独立R1 NONE，已unwatch）。当前唯一代码writer task yuk1381-admin-domain-implementation-20261008-v1，T3 command b0c41f6b-955b-4620-8875-2b8031cb5dfe，Codex6.1Sol high，现completed/noPending并明确释放writer，提交66aa43a185fa45c5a201c77e32197f215be82237；拥有四Admin API、ai-observability/public、两scoped tests和1381文档。父已接管验收，fetch确认并正常整合a3691f572579289d33448be6ecd5dfaa795cb17b，仅PLAN/本handoff冲突，保留双方证据。
+PR1610于12:21:24Z合入main a6faded0729fd77789a05d4a07a706d5ff6b612a。父fetch确认tree834dc8b90bda148206346bfc6f530666321ad7e8与准确head946038637完全一致；CI37775009264全绿、产品独立R1 NONE/noPending、reviewThreads0，已unwatch。CodeRabbit跳过与Codex额度拒绝均已结束，不能称其完成审查。74unit/父24DB/整合typecheck、lint、build通过；1381仅领域slice Done，主线57961995已收到准确main SHA及public接口。
 
-父核四HTTP真实接public与嵌套DTO草稿；Node24.19.0位于/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin，默认PATH是Node26，已通知writer固定24重验。父已核九文件SHA全匹配、八保护hash不变；作者Node24的74unit/static/build/audits通过。父在整合a369后的a35c759ff实跑3文件24DB通过，证据/tmp/yuk1381-parent-db.log与/tmp/yuk1381-db-{before,cleanup}.json；12:07:55.392504Z核owner/token ceacc8e5释放锁，临时PG退出，原4服务/release不变。独立源码R1 task yuk1381-admin-domain-review-r1-20261008运行，未交付Start/runtime。后续必须实际核deployment-20261007/deployment.lock再原子mkdir；通知主线57961995并封原四服务/release前后快照。
+本树现feat/yuk-1386-diagnostics-domain-reads，从最新origin/main a6faded072建立，携带已提交1359收口docs cf8867b4b。实施task yuk1386-diagnostics-domain-implementation-20261008-v1（command b0c41f6b-955b-4620-8875-2b8031cb5dfe，Codex gpt-6.1-sol high）completed/noPending，commit3789c0f9aabbb0ef4a077e6be0fe56ce3e906701 clean并释放writer。父实核11SHA匹配、5保护文件不变、practice只批准类型差异。99unit/static/build/audits通过。独立R1 task yuk1386-diagnostics-domain-review-r1-20261008（同command，Sol6.1 xhigh）running只读。主线57961995/YUK1358持锁phase isolated-built-start-acceptance，父不跑runtime；其释放后重核锁运行3文件24DB。父接PR/CI与最终验收。loadAdminRuns、loadAdminRunDetail、loadAdminCost、loadAdminFailures经observability/public出口，HTTP已真实消费；Start鉴权、页面与浏览器仍归主线PR1609。1358/1359保持InProgress，全部迁移与后续功能目标未完成。
 
-W5新文档docs/planning/2026-10-08-yuk1359-w5-consumers.md由父写，独立只读R1 task yuk1359-w5-docs-review-r1-20261008已completed/noPending，P0/P1 NONE；四项非阻塞事实勘误已由父核原源后修正，同T3 command，Sol6.1 xhigh。文档已完成事先告知reviewer的唯一params事实勘误，其余保持待审。已知勘误：文中run详情params400错误，实际direct handler ZodError经kernel返回generic500；父已实核并裁决1381保持原parse/error路径，要求writer补unit，告知reviewer与主线。此句已纠正，不扩kernel政策。正常[id]路由可达性与直接调用分开，不能称已证实live漏洞。
+12:07:55.392504Z已核owner/token ceacc8e5释放本线程DB验收锁，临时PG退出、原四服务/release不变；之后未操作runtime。后续仍实际核锁并原子获取，不依据历史快照启动服务。无provider、paid、worker、replay、部署或私人数据操作。
 
-YUK1382已成功登记Backlog（uuid6b747bde-b6c2-4df0-886c-caf6f22407f1）：runs UI未知cost被formatMoney显示零、合计无未知标识。此前Linear创建失败已用createdAt全查询确认未落库后重试，勿重复建票。不在1381改UI。coverage/conjecture准确增量已交主线定界，现仅只读：coverage跨practice assembleScanInput的Db类型及内部Date.now需协调，不擅改practice。1358/1359继续InProgress，整体非UI迁移和后续Linear功能目标未完成。
+W5源码清单与独立R1勘误完成；28路由静态覆盖不等于实际迁移退出。YUK1382未知费用显示问题已去重登记Backlog，不在本lane改UI。coverage/conjecture尚只读，精确增量路径已交主线协调；跨practice仅Db|Tx类型传递，内部Date.now生成的deadline不进入公开coverage DTO，不因此扩大时钟改造。主线已明确确认无重叠并授权该范围，1386子票已去重建立；不写主线Start/practice树。Linear1358曾实读为Done，已恢复InProgress。父基线hash见/tmp/yuk1386-parent-baseline.json。
 
 以下为历史验收记录。
 

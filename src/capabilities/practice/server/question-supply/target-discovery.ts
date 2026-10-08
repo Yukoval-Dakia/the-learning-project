@@ -37,7 +37,7 @@ import {
 } from '@/core/schema/difficulty-evidence';
 import type { QuestionKindT } from '@/core/schema/judge-routing';
 import { deriveSourceTier } from '@/core/schema/provenance';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { notDraftPredicate, questionSuspendedPredicate } from '@/db/predicates';
 import { item_calibration, learning_item, question } from '@/db/schema';
 import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
@@ -613,7 +613,7 @@ export function seedGenerationMethod(
  * 每个 KC 配上 mastery_state 的 θ̂/precision/evidence（冷启兜底）+ 经 getEffectiveDomain 派生的
  * subjectId（科目是视角，派生轴，不给 KC 加 subject 列）。
  */
-async function loadFrontierKnowledge(db: Db): Promise<FrontierKnowledgeInput[]> {
+async function loadFrontierKnowledge(db: Db | Tx): Promise<FrontierKnowledgeInput[]> {
   const items = await db
     .select({ knowledge_ids: learning_item.knowledge_ids })
     .from(learning_item)
@@ -667,7 +667,7 @@ async function loadFrontierKnowledge(db: Db): Promise<FrontierKnowledgeInput[]> 
  * mastery/selection 同一 b 解析，src/server/mastery/recalibration effectiveB）。无 item_calibration
  * 行 → effectiveB=null（纯 difficulty proxy，R3 不当可靠锚）。
  */
-async function loadQuestionPool(db: Db, frontierKids: string[]): Promise<PoolQuestion[]> {
+async function loadQuestionPool(db: Db | Tx, frontierKids: string[]): Promise<PoolQuestion[]> {
   if (frontierKids.length === 0) return [];
   // JSONB 包含：question.knowledge_ids 与 frontierKids 有交集。逐 KC OR（mirror stream-store 的
   // @> 包含查询，避免全表 jsonb 解析）。
@@ -739,7 +739,7 @@ async function loadQuestionPool(db: Db, frontierKids: string[]): Promise<PoolQue
  *   - coverage-lattice 读模型（YUK-579 只读观测面）：assembleScanInput 拿 frontier+pool 算池级事实
  *     + scanCoverageGaps 拿缺口 targets，单次 DB 遍历出完整覆盖蓝图。
  */
-export async function assembleScanInput(db: Db): Promise<ScanInput> {
+export async function assembleScanInput(db: Db | Tx): Promise<ScanInput> {
   const frontier = await loadFrontierKnowledge(db);
   const frontierKids = frontier.map((f) => f.knowledgeId);
   const questions = await loadQuestionPool(db, frontierKids);

@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：PR1609候选1af5a8fc8已通过真实Start RPC/T3浏览器、88表写入核验及36 usability；Node24的329unit+7协议测试/typecheck/lint/build全过，父封证推新CI。12:41:52Z隔离资源清理并释放锁，原runtime不变；1386/1359由7631负责。
+> Linear 是权威 tracker。2026-10-08：PR1609候选1af5a8fc8已通过真实Start RPC/T3浏览器、88表写入核验及36 usability；Node24的329unit+7协议测试/typecheck/lint/build全过，新证据d8950已推；现正常合入1386/main6c6905，仅handoff冲突。12:41:52Z隔离资源清理并释放锁，原runtime不变；1386/1359由7631负责。
 
 
 ## NOW
@@ -9,7 +9,9 @@
 
 - **YUK-1356 / 主线交付**：PR1605于11:58:08Z合入a3691f572，主线核tree与exact e260bdb98一致、CI37772055452绿/threads0。保留真实MiMo一次工具验收及main4a3d 139unit/110DB证据；1356仍InProgress，未部署。1358 Start Today/Inbox由主线独占PR1609及RPC/browser验收，不在此树修改。
 
-- **YUK-1381 / W5领域读取**：PR1610已合main a6faded072，exact CI/tree一致、R1 NONE，74unit/父24DB/static/build通过；observability/public导出四Admin ISO DTO读取，Start消费者待主线接入。7631现独占YUK1386诊断读取、仅批准practice三个Db|Tx签名；无重复writer。
+- **YUK-1386 / 已合入**：PR1611合main6c6905fad，exact f7b84efc7 CI全绿、R1 NONE/tree一致；99unit与父24DB通过，observability/public导出coverage/conjecture既有读取，practice仅3个Db|Tx签名。Start待主线挂载；7631下一独占subjects四读取/public/HTTP，配置写者不动。
+
+- **YUK-1381 / W5领域读取**：PR1610已合main a6faded072，exact CI/tree一致、R1 NONE，74unit/父24DB/static/build通过；observability/public导出四Admin ISO DTO读取，Start消费者待主线接入。1386亦已合入，下一subjects读取由7631独占；无重复writer。
 
 - **YUK-1359 / 退出证据**：W1–W5源码消费者清单已版本化，7631独占；Start逐页及任务族恢复/旧路径删除尚未完成，保持In Progress。
 
