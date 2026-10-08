@@ -1,6 +1,7 @@
 import { eq, inArray, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventCorrectionBodySchema, readEventDetail } from '@/capabilities/observability/public';
+import { parseEvent } from '@/core/schema/event';
 import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
@@ -114,9 +115,20 @@ describe('authenticated Start event operations on real Db/Tx', () => {
         expect(await denied(detail(database, 'focus'), 404)).toMatchObject({ error: 'not_found' });
         const result = await detail(tx, ' focus ');
         expect(result).toEqual(await readEventDetail(tx, 'focus'));
-        expect(result.event.payload).toEqual(eventPayload);
+        const [stored] = await tx
+          .select({ payload: event.payload, cost: event.cost_micro_usd, task: event.task_run_id })
+          .from(event)
+          .where(eq(event.id, 'focus'));
+        expect(stored.payload).toEqual(eventPayload);
+        expect(result.event.payload).toEqual(
+          parseEvent({ action: 'experimental:event_detail_fixture', payload: eventPayload })
+            .payload,
+        );
         expect(result.event.created_at).toBe(eventNow.toISOString());
-        expect(result.event.cost_micro_usd).toBe(0);
+        expect(stored.cost).toBe(0);
+        expect(stored.task).toBe('task_original');
+        expect(result.event.cost_micro_usd).toBeUndefined();
+        expect(result.event.task_run_id).toBeUndefined();
         expect(result.event.dispatch_seq).toBeGreaterThan(0);
         expect(result.chain.caused_by?.id).toBe('cause');
         expect(result.chain.caused_events.map((row) => row.id).sort()).toEqual([

@@ -4,7 +4,7 @@
 
 ## NOW
 
-- **YUK-1358 / Start事件详情与纠错**：分支feat/yuk-1358-start-event-detail，source-only单writer，复用readEventDetail/createEventCorrection，范围与验收见[计划](docs/planning/2026-10-09-yuk1358-start-event-detail.md)。父负责独立审查/隔离DB和真实RPC/browser；尚未实施验收。
+- **YUK-1358 / Start事件详情与纠错**：分支feat/yuk-1358-start-event-detail，source-only单writer，复用readEventDetail/createEventCorrection，范围与验收见[计划](docs/planning/2026-10-09-yuk1358-start-event-detail.md)。作者f1e4已交并释放，父核源码/制品hash及15DB通过；两次fixture断言失败已定位基线投影并保留。R1进行，真实RPC/browser尚待，未部署。
 
 - **YUK-1358 / Start观察读取**：freshmain10df、分支feat/yuk-1358-start-agent-notes。复用1392领域入口，保留Today20/全页50与本地已读，无数据库写操作。[范围与验收](docs/planning/2026-10-09-yuk1358-start-agent-notes.md)。作者127unit/10协议/static/build/10audits通过；父14DB通过且清理/释放锁。R1 NONE；CI两处陈旧数量断言已修，59unit通过。实际26RPC/10窗口与T3浏览器20/50、错误恢复、已读/深链/旧SPA跳转通过；3浏览器窗口88表/序列无写，已释放锁。[父验收](docs/planning/2026-10-09-yuk1358-start-agent-notes-parent.md)。源码已合main6212a4560，最终CI全绿，未部署。
 

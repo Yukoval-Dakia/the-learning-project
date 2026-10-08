@@ -1,6 +1,6 @@
 # Current Start event detail lane
 
-Freshmain6212a4560 branch feat/yuk-1358-start-event-detail; carried1622 merge receipt as1f808d258. Next source-only event read/correction consumer implementation scoped in2026-10-09-yuk1358-start-event-detail.md. No runtime lock, no active child yet. 1394 and0117 remain7631-owned, do not touch shared DBOS/session paths.
+Freshmain6212a4560 branch feat/yuk-1358-start-event-detail; carried1622 merge receipt as1f808d258. Next source-only event read/correction consumer implementation scoped in2026-10-09-yuk1358-start-event-detail.md. Authorf1e4 completed/noPending, parent23source/28log/888artifact hashes matched. Parent15DB passed after test-only raw-versus-projection correction; two14pass/1fail runs retained. Runtime lock released19:59:59.877971Z, original4/release identical. R1 task yuk1358-start-event-detail-review-r1-20261009-v1 running; realRPC/browser/PRpending. No active codewriter or runtime lock. 1394 and0117 remain7631-owned, do not touch shared DBOS/session paths.
 
 # PR1622 merge receipt
 
