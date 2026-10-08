@@ -137,8 +137,8 @@
   --lh-ui: 1.5;
   --lh-prose: 1.75;
 
-  --tracking-tight: -0.012em;
-  --tracking-wide: 0.04em;
+  --ls-tight: -0.012em;
+  --ls-wide: 0.04em;
 
   --font-sans: "PingFang SC", "MiSans", "Noto Sans SC", "Hiragino Sans GB", -apple-system,
     BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;

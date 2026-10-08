@@ -113,4 +113,10 @@
 - 生产构建中没有原型代码：`dist/` 和 `web/dist/` 中都搜不到 `2026-10-07-visual-loft`、`LoftProvider`、`短对比例子`、`YUK-1353`。
   唯一的匹配是 Start manifest 里路由文件的绝对路径，其中带有工作树目录名 `design-yuk-1353-visual-loft`。
 
-CSS_SCAN_PLACEHOLDER
+- **Tailwind 扫描核验**（回应初审“未能验证”的一项）。Start 前门的构建以仓库根为 Vite 根，Tailwind v4 会扫描 `docs/**`。做了两次对照构建：
+  先保留原型目录构建一次，再把原型目录暂时移出仓库构建一次，比较产物。
+  - **发现泄漏**：初次对比时，`dist/start/client` 的入口 CSS 多出 48 字节，是 Tailwind 主题变量 `--tracking-tight` 和 `--tracking-wide`。
+    原因是原型 token 用了与 Tailwind 主题命名空间相同的名字。没有泄漏任何样式规则。
+  - **修复**：原型 token 改名为 Loom 原有的 `--ls-tight` / `--ls-wide`。
+  - **复测**：`web/dist` 全部 109 个文件、`dist/start` 全部 49 个文件，有无原型目录时逐字节一致（SHA-256）。
+  - 规则写入决策 T9：新 token 不与 Tailwind 主题命名空间同名，除非有意映射。

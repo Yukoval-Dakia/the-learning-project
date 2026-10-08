@@ -19,8 +19,12 @@
 
 ## 运行
 
-原型位于 `prototype/`，直接使用仓库已安装的 React、Vite、KaTeX 与 Playwright；**不进 `pnpm build`**（生产 SPA 根是 `web/`），
-`tsconfig.json` 只包含 `*.ts(x)`，Biome 忽略本目录。
+原型位于 `prototype/`，直接使用仓库已安装的 React、Vite、KaTeX 与 Playwright。**它不进生产构建**：
+
+- 生产 SPA 的根是 `web/`；
+- `tsconfig.json` 只包含 `*.ts(x)`；
+- Biome 忽略本目录；
+- 对照构建证明，有无本目录时，`web/dist` 与 `dist/start` 的产物逐字节一致（review.md §5）。
 
 ```bash
 pnpm exec vite --config docs/design/2026-10-07-visual-loft/prototype/vite.config.mjs   # http://localhost:5199/

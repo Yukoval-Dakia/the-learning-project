@@ -512,7 +512,7 @@
   font-size: var(--fs-1);
   font-weight: var(--fw-semibold);
   color: var(--text-2);
-  letter-spacing: var(--tracking-wide);
+  letter-spacing: var(--ls-wide);
 }
 
 .b-pane-head .b-dim,
