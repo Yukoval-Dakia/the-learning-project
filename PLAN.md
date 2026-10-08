@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09：PR1621已合main e1f2ef6bb，正常整合至PR1622；仅PLAN/now冲突。Start观察已26RPC/T3浏览器验收，锁释放，整合后scoped/static/build待复验。
+> Linear 是权威 tracker。2026-10-09：PR1621已合main e1f2ef6bb，正常整合至PR1622；仅PLAN/now冲突。Start观察已26RPC/T3浏览器验收，锁释放，整合后90unit/static/build及11audit通过，最终exact CI待。
 
 ## NOW
 
@@ -44,6 +44,6 @@
 
 ## BLOCKED-ON
 
-- 当前没有需要owner追加许可才能推进的已知阻塞。PR1621正在收口CI fixture修复，1394设计已裁决；子任务/CI仍运行属于等待，不把整迁移挂blocked。
+- 当前没有需要owner追加许可才能推进的已知阻塞。PR1621已合入；1394作者已启动且独占0117；子任务/CI仍运行属于等待，不把整迁移挂blocked。
 - runtime测试/发布在执行前必须实际核锁并原子获取，核owner/token清理释放；其他线程持锁时只推不冲突的源码工作。历史锁记录不能代表当前ownership。
 - 部署用途保持Agent开发测试，禁止再次清库、恢复私人数据或盲重放队列；日用部署须owner明确要求“为我日常使用的部署”。旧运行验收限制和未完成产品能力保存在归档及各原票，未被本次整理核销。

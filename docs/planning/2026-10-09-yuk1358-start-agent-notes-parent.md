@@ -25,3 +25,11 @@ Runtime mutex owner5796/token3593776b was held from `2026-10-08T19:07:14.406031Z
 Sanitized receipts, failure, corrected recipe, source/build seal, all RPC wire records, full snapshots and browser observations are archived in [runtime evidence](evidence/yuk1358-start-agent-notes/runtime/summary.json); manifest pins each archived file and archive digest. The archive excludes tokens, database credentials and generated executable copies. [Today screenshot](evidence/yuk1358-start-agent-notes/runtime/today.png) and [unknown-filter screenshot](evidence/yuk1358-start-agent-notes/runtime/unknown-filter.png) are separate artifacts.
 
 Canonical boot/listener/worker behavior, personal deployment, full SPA retirement and remaining task families are not established by this slice. Task-local assertion/preparation failures were repaired and preserved under YUK1358; no new unrelated product issue was found. YUK1358/1359 remain In Progress.
+
+## Integration with review-orphan main
+
+Normal merge `f34e00328` includes main `e1f2ef6bb` from PR1621. Only PLAN and handoff text conflicted. Parent verified all19 recorded Start source files against the original digest and all26 incoming non-document files against main. No product conflict resolution changed either lane.
+
+Integrated verification passed7 files/90 scoped unit tests, typecheck, lint, full build and11 post-build audits, including schema, partition, client generation/usage, capability/provider boundaries and architecture deepening. [Integration receipts and compressed logs](evidence/yuk1358-start-agent-notes/integration/checks.json) pin the tested revision. Original DB, independent review and built RPC/browser evidence retain their recorded revisions; this merge did not rerun runtime acceptance or change the shared deployment. Final pushed head still requires its own CI Gate.
+
+Linear1358 was found Done during closeout and restored to In Progress. Remaining routes, canonical boot, task families and legacy retirement still prevent overall completion. No new product defect was found in this integration.
