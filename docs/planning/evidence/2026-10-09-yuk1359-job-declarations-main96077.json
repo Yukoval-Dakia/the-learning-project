@@ -731,10 +731,7 @@
     "previous_counts": {
       "manifest": 55,
       "manifestScheduled": 20,
-      "dbosDeclared": [
-        "prune_job_events",
-        "prune_orphan_review_sessions"
-      ],
+      "dbosDeclared": ["prune_job_events", "prune_orphan_review_sessions"],
       "pgBossLoaded": 53,
       "infraSchedules": 4,
       "memorySchedules": 3,
@@ -742,10 +739,7 @@
     },
     "previous_extraction_reproduced": true,
     "extractor_sha256": "3e862e39ad27f66fcd825ffa0b7c4aca25844d497e652cb3149e9b15af6ffff4",
-    "changed_inputs": [
-      "src/capabilities/observability/manifest.ts",
-      "src/server/boss/handlers.ts"
-    ]
+    "changed_inputs": ["src/capabilities/observability/manifest.ts", "src/server/boss/handlers.ts"]
   },
   "limits": [
     "DirectWorkers counts work call sites in handlers.ts and memory/triggers.ts only; excludes phase-dependent compatibility registrations in durable hosts.",
