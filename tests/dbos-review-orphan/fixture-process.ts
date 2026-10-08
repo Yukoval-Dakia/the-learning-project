@@ -178,3 +178,62 @@ export function nonterminalDurableWork(
       !['SUCCESS', 'ERROR', 'CANCELLED', 'MAX_RECOVERY_ATTEMPTS_EXCEEDED'].includes(row.status),
   );
 }
+
+// This checks the retained cron fixture ledger before either scenario can reset phases.
+const cronFamilySchema = z.enum([
+  'prune_orphan_conversation_sessions',
+  'prune_orphan_placement_sessions',
+]);
+const cronLedgerSchema = z.object({
+  workflows: z.array(
+    z.object({ workflow_uuid: z.string(), name: cronFamilySchema, status: z.string() }),
+  ),
+  ticks: z.array(
+    z.object({
+      family: cronFamilySchema,
+      tick_id: z.string(),
+      backend: z.enum(['pg-boss', 'dbos']),
+      candidates: z.array(z.object({ sessionId: z.string() })),
+    }),
+  ),
+  receipts: z.array(
+    z.object({ family: cronFamilySchema, tick_id: z.string(), session_id: z.string() }),
+  ),
+});
+export function assertSettledCronLedger(raw: unknown) {
+  const ledger = cronLedgerSchema.parse(raw);
+  for (const workflow of ledger.workflows) {
+    if (workflow.status !== 'SUCCESS')
+      throw new Error(`Unsettled native workflow ${workflow.workflow_uuid}: ${workflow.status}`);
+    if (
+      !ledger.ticks.some(
+        (tick) =>
+          tick.family === workflow.name &&
+          tick.tick_id === workflow.workflow_uuid &&
+          tick.backend === 'dbos',
+      )
+    )
+      throw new Error(`SUCCESS without admission ${workflow.name}/${workflow.workflow_uuid}`);
+  }
+  for (const tick of ledger.ticks) {
+    if (
+      tick.backend === 'dbos' &&
+      !ledger.workflows.some(
+        (workflow) => workflow.name === tick.family && workflow.workflow_uuid === tick.tick_id,
+      )
+    )
+      throw new Error(`Native admission without workflow ${tick.family}/${tick.tick_id}`);
+    for (const candidate of tick.candidates)
+      if (
+        !ledger.receipts.some(
+          (receipt) =>
+            receipt.family === tick.family &&
+            receipt.tick_id === tick.tick_id &&
+            receipt.session_id === candidate.sessionId,
+        )
+      )
+        throw new Error(
+          `Frozen candidate without receipt ${tick.family}/${tick.tick_id}/${candidate.sessionId}`,
+        );
+  }
+}

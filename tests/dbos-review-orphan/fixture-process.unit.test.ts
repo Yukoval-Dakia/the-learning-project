@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   type ChildExit,
   assertFixtureCanReset,
+  assertSettledCronLedger,
   cleanupOwnedChildren,
   errorDiagnostic,
   fixtureErrorMessage,
@@ -255,5 +256,84 @@ describe('per-case child cleanup', () => {
     }).toThrow(/evidence preserved.*owned-PENDING/);
     expect(reset).not.toHaveBeenCalled();
     expect(workflows).toHaveLength(8);
+  });
+});
+
+describe('retained two-scenario cron ledger', () => {
+  function ledger() {
+    return {
+      workflows: ['prune_orphan_conversation_sessions', 'prune_orphan_placement_sessions'].map(
+        (name) => ({ name, workflow_uuid: `sched-${name}-point`, status: 'SUCCESS' }),
+      ),
+      ticks: ['prune_orphan_conversation_sessions', 'prune_orphan_placement_sessions'].map(
+        (family) => ({
+          family,
+          tick_id: `sched-${family}-point`,
+          backend: 'dbos',
+          admission: 'admitted',
+          candidates: [
+            {
+              sessionId: `${family}-a`,
+              selectedVersion: 12,
+              selectedStartedAt: '2026-10-08 13:14:41.268340+00',
+            },
+            {
+              sessionId: `${family}-b`,
+              selectedVersion: 0,
+              selectedStartedAt: '2026-10-08 13:14:41.268341+00',
+            },
+          ],
+        }),
+      ),
+      receipts: ['prune_orphan_conversation_sessions', 'prune_orphan_placement_sessions'].flatMap(
+        (family) =>
+          ['a', 'b'].map((suffix) => ({
+            family,
+            tick_id: `sched-${family}-point`,
+            session_id: `${family}-${suffix}`,
+            outcome: {
+              kind: 'abandoned',
+              fromVersion: suffix === 'a' ? 12 : 0,
+              toVersion: suffix === 'a' ? 13 : 1,
+            },
+          })),
+      ),
+    };
+  }
+  it('accepts both families retained with exact native headers and every frozen receipt, without mutating history', () => {
+    const before = ledger();
+    const after = structuredClone(before);
+    after.workflows.push({
+      name: before.workflows[0].name,
+      workflow_uuid: 'new-empty-point',
+      status: 'SUCCESS',
+    });
+    after.ticks.push({ ...before.ticks[0], tick_id: 'new-empty-point', candidates: [] });
+    expect(() => assertSettledCronLedger(before)).not.toThrow();
+    expect(() => assertSettledCronLedger(after)).not.toThrow();
+    expect(after.receipts).toEqual(before.receipts);
+    expect(before.workflows).toHaveLength(2);
+    expect(before.ticks).toHaveLength(2);
+  });
+  it.each([
+    'missing-header',
+    'wrong-family-header',
+    'missing-workflow',
+    'missing-receipt',
+    'pending',
+    'unknown-error',
+  ])('rejects %s before a later scenario can change phases', (defect) => {
+    const state = ledger();
+    if (defect === 'missing-header') state.ticks.shift();
+    else if (defect === 'wrong-family-header') state.ticks[0].family = state.ticks[1].family;
+    else if (defect === 'missing-workflow') state.workflows.shift();
+    else if (defect === 'missing-receipt') state.receipts.pop();
+    else state.workflows[0].status = defect === 'pending' ? 'PENDING' : 'ERROR';
+    const phaseReset = vi.fn();
+    expect(() => {
+      assertSettledCronLedger(state);
+      phaseReset();
+    }).toThrow();
+    expect(phaseReset).not.toHaveBeenCalled();
   });
 });

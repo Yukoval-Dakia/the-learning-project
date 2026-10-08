@@ -1,22 +1,32 @@
 import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { once } from 'node:events';
 import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
 import postgres from 'postgres';
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import { z } from 'zod';
+import {
+  type ChildExit,
+  assertFixtureCanReset,
+  assertSettledCronLedger,
+  cleanupOwnedChildren,
+  errorDiagnostic,
+  waitForFixtureMessage,
+} from '../dbos-review-orphan/fixture-process';
 
 const exec = promisify(execFile);
 const bundle = resolve(`.cache/yuk1394-session-cron-${process.pid}.cjs`);
-const children = new Set<ChildProcess>();
+const children = new Map<ChildProcess, Promise<ChildExit>>();
 const observations: unknown[] = [];
 const families = ['prune_orphan_conversation_sessions', 'prune_orphan_placement_sessions'] as const;
 let family: (typeof families)[number] = families[0];
 const logs: unknown[] = [];
 let db: ReturnType<typeof postgres>;
 let url: string;
+let suiteBlocked: string | undefined =
+  'Cron fixture setup has not established settled durable state';
+let nativeBaseline: Awaited<ReturnType<typeof nativeLedger>>;
 const schema = z.object({ kind: z.string(), error: z.string().optional() }).passthrough();
 function start() {
   const child = spawn(process.execPath, [bundle], {
@@ -31,8 +41,10 @@ function start() {
       TLP_SESSION_CRON_TEST: '1',
     },
   });
-  children.add(child);
-  const exit = once(child, 'exit');
+  const exit = new Promise<ChildExit>((resolveExit) => {
+    child.once('exit', (code, signal) => resolveExit([code, signal]));
+  });
+  children.set(child, exit);
   const messages: z.infer<typeof schema>[] = [];
   const log = { pid: child.pid, messages: [] as unknown[], stdout: '', stderr: '' };
   logs.push(log);
@@ -48,22 +60,13 @@ function start() {
   });
   child.on('exit', () => children.delete(child));
   async function wait(kind: string, timeout = 90000) {
-    let message: z.infer<typeof schema> | undefined;
-    await expect
-      .poll(
-        () => {
-          const failure = messages.find((m) => m.kind === 'failure');
-          if (failure) throw new Error(`${failure.error}\n${log.stderr}`);
-          const index = messages.findIndex((m) =>
-            kind === 'ack-or-rejected' ? ['ack', 'rejected'].includes(m.kind) : m.kind === kind,
-          );
-          if (index >= 0) message = messages.splice(index, 1)[0];
-          return !!message;
-        },
-        { timeout, interval: 50 },
-      )
-      .toBe(true);
-    return schema.parse(message);
+    return waitForFixtureMessage({
+      messages,
+      expected: kind,
+      exited: () => child.exitCode !== null || child.signalCode !== null,
+      evidence: () => log,
+      timeoutMs: timeout,
+    });
   }
   async function command(
     command: { kind: string; phase?: string; reason?: string },
@@ -83,6 +86,45 @@ async function oldSession(id: string) {
 }
 async function receiptFor(id: string) {
   return db`select t.*, r.session_id,r.outcome from session_orphan_tick t join session_orphan_receipt r using (family,tick_id) where t.family = ${family} and r.session_id = ${id}`;
+}
+async function observeLegacySettled(selected: (typeof families)[number]) {
+  let pending: readonly unknown[] = [];
+  try {
+    await expect
+      .poll(
+        async () => {
+          pending = await db`select id::text,name,state::text from pgboss.job
+        where (name in (${selected}, ${`${selected}_dlq`}) and (state <> 'completed' or name = ${`${selected}_dlq`}))
+          or (name = '__pgboss__send-it' and state <> 'completed' and data->>'name' = ${selected})
+        order by id`;
+          return pending.length;
+        },
+        { timeout: 10000, interval: 50 },
+      )
+      .toBe(0);
+  } finally {
+    observations.push({
+      legacySettlement: { family: selected, pending, observedAt: new Date().toISOString() },
+    });
+  }
+}
+async function nativeLedger() {
+  return db.begin('read only', async (tx) => {
+    await tx`set local statement_timeout = '3s'`;
+    const [schema] = await tx`select to_regclass('tlp_dbos.workflow_status') as relation`;
+    const workflows = schema.relation
+      ? await tx`select workflow_uuid,name,status from tlp_dbos.workflow_status where name in (${families[0]},${families[1]}) order by workflow_uuid`
+      : [];
+    const ticks = await tx`select * from session_orphan_tick order by family,tick_id`;
+    const receipts =
+      await tx`select * from session_orphan_receipt order by family,tick_id,session_id`;
+    const dispositions =
+      await tx`select * from session_orphan_disposition order by family,backend,kind,task_id,tick_id,session_id`;
+    const gaps = await tx`select t.family,t.tick_id,c->>'sessionId' as session_id
+      from session_orphan_tick t cross join lateral jsonb_array_elements(t.candidates) c
+      where not exists (select 1 from session_orphan_receipt r where r.family = t.family and r.tick_id = t.tick_id and r.session_id = c->>'sessionId')`;
+    return { workflows, ticks, receipts, dispositions, gaps };
+  });
 }
 beforeAll(async () => {
   const target = new URL(z.url().parse(process.env.TEST_DATABASE_URL));
@@ -108,16 +150,58 @@ beforeAll(async () => {
     '--external:winston',
     '--external:winston-transport',
   ]);
+  const initialLedger = await nativeLedger();
+  observations.push({ initialLedger });
+  assertSettledCronLedger(initialLedger);
   await db`delete from contract_epoch`;
-  await db`truncate session_orphan_disposition, session_orphan_receipt, session_orphan_tick, learning_session, job_events cascade`;
   await db`update session_orphan_control set phase = 'pg-boss', phase_changed_at = clock_timestamp(), legacy_not_before = null`;
   await db`update prune_job_events_control set phase = 'pg-boss'`;
+  suiteBlocked = undefined;
 }, 60000);
+beforeEach(async () => {
+  assertFixtureCanReset(children.keys(), suiteBlocked);
+  nativeBaseline = await nativeLedger();
+  assertSettledCronLedger(nativeBaseline);
+  observations.push({ scenario: expect.getState().currentTestName, nativeBaseline });
+});
+afterEach(async (context) => {
+  if (suiteBlocked) return;
+  const failed = context.task.result?.state === 'fail';
+  if (failed) {
+    suiteBlocked = `Failed scenario ${context.task.name}; prior durable evidence is retained`;
+    observations.push({ failedScenario: context.task.name, preCleanupLogs: structuredClone(logs) });
+    try {
+      observations.push({ preCleanupLedger: await nativeLedger() });
+    } catch (error) {
+      observations.push({ observationFailure: errorDiagnostic(error) });
+    }
+  }
+  try {
+    await cleanupOwnedChildren(children);
+    assertFixtureCanReset(children.keys());
+    const after = await nativeLedger();
+    observations.push({ scenario: context.task.name, afterCleanupLedger: after });
+    if (!failed) assertSettledCronLedger(after);
+    if (nativeBaseline)
+      for (const table of ['workflows', 'ticks', 'receipts', 'dispositions'] as const)
+        for (const row of nativeBaseline[table])
+          expect(after[table], `Historical ${table} row must survive the scenario`).toContainEqual(
+            row,
+          );
+  } catch (error) {
+    suiteBlocked = `Scenario ${context.task.name} cleanup or ledger consistency failed`;
+    observations.push({ cleanupOrConsistencyFailure: errorDiagnostic(error) });
+    throw error;
+  }
+});
 afterAll(async () => {
-  for (const child of children) {
-    const exit = once(child, 'exit');
-    child.kill('SIGKILL');
-    await exit;
+  let cleanupError: unknown;
+  try {
+    await cleanupOwnedChildren(children);
+  } catch (error) {
+    cleanupError = error;
+    suiteBlocked = 'Final owned child cleanup did not establish process exit';
+    observations.push({ finalCleanupFailure: errorDiagnostic(error) });
   }
   if (process.env.TLP_SESSION_CRON_EVIDENCE_PATH)
     await writeFile(
@@ -128,25 +212,27 @@ afterAll(async () => {
           node: process.version,
           execPath: process.execPath,
           bundle,
-          bundleSha256: createHash('sha256')
-            .update(await readFile(bundle))
-            .digest('hex'),
+          bundleSha256: await readFile(bundle)
+            .then((data) => createHash('sha256').update(data).digest('hex'))
+            .catch(() => null),
           observations,
           logs,
+          suiteBlocked,
         },
         null,
         2,
       ),
     );
   if (db) {
-    await db`update session_orphan_control set phase = 'pg-boss', legacy_not_before = null`;
+    if (!suiteBlocked)
+      await db`update session_orphan_control set phase = 'pg-boss', legacy_not_before = null`;
     await db.end();
   }
+  if (cleanupError) throw cleanupError;
 });
 for (const selected of families)
   it(`observes real ${selected} Timekeeper, mixed phases, native two-scheduler ticks/restart and independent rollback`, async () => {
     family = selected;
-    await db`truncate session_orphan_disposition, session_orphan_receipt, session_orphan_tick, learning_session, job_events cascade`;
     await db`update session_orphan_control set phase = 'pg-boss', phase_changed_at = clock_timestamp(), legacy_not_before = null`;
     const other = family === families[0] ? families[1] : families[0];
     const otherBefore = await db`select * from session_orphan_control where family = ${other}`;
@@ -171,15 +257,7 @@ for (const selected of families)
     const rejected = await first.wait('forward-rejected');
     observations.push({ lateForwardRejected: rejected });
     expect(rejected.error).toContain('producer fenced');
-    await expect
-      .poll(
-        async () =>
-          (
-            await db`select count(*)::int as n from pgboss.job where name = '__pgboss__send-it' and state <> 'completed' and data::text like ${`%${family}%`}`
-          )[0].n,
-        { timeout: 10000 },
-      )
-      .toBe(0);
+    await observeLegacySettled(family);
     expect(
       (await first.command({ kind: 'transition', phase: 'dbos' }, 'rejected')).error,
     ).toContain('quiescence');
@@ -228,22 +306,19 @@ for (const selected of families)
       .poll(
         async () =>
           (
-            await db`select count(*)::int as n from session_orphan_tick where family = ${family} and backend = 'dbos'`
-          )[0].n,
+            await db`select tick_id from session_orphan_tick where family = ${family} and backend = 'dbos'`
+          ).filter(
+            (tick) =>
+              !nativeBaseline.ticks.some(
+                (prior) => prior.family === family && prior.tick_id === tick.tick_id,
+              ),
+          ).length,
         { timeout: 120000, interval: 100 },
       )
       .toBeGreaterThanOrEqual(3);
     second.child.send({ kind: 'transition', family: other, phase: 'draining-pg-boss' });
     await second.wait('ack');
-    await expect
-      .poll(
-        async () =>
-          (
-            await db`select count(*)::int as n from pgboss.job where name = '__pgboss__send-it' and state <> 'completed' and data->>'name' = ${other}`
-          )[0].n,
-        { timeout: 10000 },
-      )
-      .toBe(0);
+    await observeLegacySettled(other);
     second.child.send({
       kind: 'quiesce',
       family: other,
@@ -268,6 +343,7 @@ for (const selected of families)
     const otherReceipts =
       await db`select * from session_orphan_receipt where family = ${other} order by tick_id,session_id`;
     await second.command({ kind: 'transition', phase: 'draining-dbos' });
+    await observeLegacySettled(family);
     await second.command({
       kind: 'quiesce',
       reason:
