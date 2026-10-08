@@ -8,7 +8,7 @@
 // （page.tsx L362-366），此处补上服务端实现。
 
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { handleReviewDue } from '@/capabilities/practice/public';
+import { queryReviewDue } from '@/capabilities/practice/public';
 import type { Db } from '@/db/client';
 import {
   artifact,
@@ -63,18 +63,9 @@ export interface WorkbenchSummary {
   week_heat: WorkbenchHeatDay[];
 }
 
-async function countDue(): Promise<number> {
-  // due 读模型仍是 handler 形态（handleReviewDue 内嵌 round-robin / Gate-B
-  // 选择逻辑，M5 提炼出 read 函数后再换直调）；此处构造内部 Request 解析
-  // rows——handler 使用全局 db（与本聚合同一连接配置），无跨库风险。
-  const res = await handleReviewDue(
-    new Request(`http://internal/api/review/due?limit=${KPI_SAMPLE_LIMIT}`),
-  );
-  if (!res.ok) {
-    throw new Error(`due-list handler failed: ${res.status}`);
-  }
-  const body = (await res.json()) as { rows: unknown[] };
-  return body.rows.length;
+async function countDue(db: Db): Promise<number> {
+  const { rows } = await queryReviewDue(db, { limit: KPI_SAMPLE_LIMIT });
+  return rows.length;
 }
 
 async function countPendingAttribution(db: Db): Promise<number> {
@@ -222,7 +213,7 @@ export async function loadWorkbenchSummary(db: Db): Promise<WorkbenchSummary> {
     persistedPresence,
   ] = await Promise.all([
     loadTodayProposalKpi(db),
-    countDue(),
+    countDue(db),
     countPendingAttribution(db),
     countKnowledge(db),
     loadActiveGoalState(db),

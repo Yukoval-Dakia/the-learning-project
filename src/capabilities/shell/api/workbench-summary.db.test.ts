@@ -3,6 +3,7 @@
 // reviewed_count / week_heat 今日计数）。
 
 import { beforeEach, describe, expect, it } from 'vitest';
+import { type WorkbenchSummary, loadWorkbenchSummary } from '@/capabilities/shell/public';
 import { event, goal, knowledge, learning_session } from '@/db/schema';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -18,55 +19,13 @@ const KNOWLEDGE_BASE = {
   version: 0,
 };
 
-interface SummaryBody {
-  proposals: {
-    total: number;
-    decision_total: number;
-    by_kind: Record<string, number>;
-    status: string;
-  };
-  kpi: {
-    due_count: number;
-    pending_attribution_count: number;
-    knowledge_count: number;
-    goal_count: number;
-  };
-  cold_start: {
-    is_empty: boolean;
-    evidence: {
-      active_goal: boolean;
-      goal_history: boolean;
-      knowledge: boolean;
-      question: boolean;
-      source_material: boolean;
-      artifact: boolean;
-      review_due: boolean;
-      pending_attribution: boolean;
-      practice_stream: boolean;
-      proposal: boolean;
-      learning_session: boolean;
-      user_event: boolean;
-    };
-  };
-  active_goal: { id: string; title: string } | null;
-  active_sessions: Array<{
-    id: string;
-    status: string;
-    summary_md: string | null;
-    started_at: number;
-    ended_at: number | null;
-    duration_ms: number | null;
-    reviewed_count: number;
-  }>;
-  week_heat: Array<{ day: string; count: number }>;
-}
-
-async function fetchSummary(): Promise<SummaryBody> {
+async function fetchSummary(): Promise<WorkbenchSummary> {
+  const summary = await loadWorkbenchSummary(testDb());
+  expect(WorkbenchSummaryResponseSchema.parse(summary)).toEqual(summary);
   const res = await getWorkbenchSummary();
   expect(res.status).toBe(200);
-  const body = (await res.json()) as SummaryBody;
-  expect(() => WorkbenchSummaryResponseSchema.parse(body)).not.toThrow();
-  return body;
+  expect(WorkbenchSummaryResponseSchema.parse(await res.json())).toEqual(summary);
+  return summary;
 }
 
 describe('GET /api/workbench/summary (shell)', () => {

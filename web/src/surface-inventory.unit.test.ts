@@ -13,6 +13,7 @@ import {
 } from '@/ui/shell/nav-config';
 
 const routerSource = readFileSync(join(process.cwd(), 'web/src/router.tsx'), 'utf8');
+const shellSource = readFileSync(join(process.cwd(), 'web/src/RootShell.tsx'), 'utf8');
 const routerSurfaceIds = [...routerSource.matchAll(/path:\s*surfacePath\('([^']+)'\)/g)].map(
   (match) => match[1] ?? '',
 );
@@ -97,10 +98,14 @@ describe('shipped UI surface inventory', () => {
 
   it('keeps page surfaces lazy while the shared shell remains eager', () => {
     const capabilityImports = [
-      ...routerSource.matchAll(/from\s+['"](@\/capabilities\/[^'"]+)['"]/g),
-    ]
-      .map((match) => match[1])
-      .sort();
+      ...new Set(
+        [
+          ...`${routerSource}\n${shellSource}`.matchAll(
+            /from\s+['"](@\/capabilities\/[^'"]+)['"]/g,
+          ),
+        ].map((match) => match[1]),
+      ),
+    ].sort();
 
     expect(capabilityImports).toEqual([
       '@/capabilities/agency/ui-public',
@@ -113,6 +118,8 @@ describe('shipped UI surface inventory', () => {
       '@/capabilities/practice/ui-public',
       '@/capabilities/shell/ui-public',
     ]);
+    expect(routerSource).toContain("import { RootShell as SharedRootShell } from './RootShell'");
+    expect(shellSource).toContain('import { CopilotDock }');
     expect(routerSource).toContain("import('./routes/MistakesPage')");
     expect(routerSource).not.toMatch(/@\/capabilities\/[^'"]+\/ui\//);
     expect(routerSource).toContain('loadAdminRunsSurface');

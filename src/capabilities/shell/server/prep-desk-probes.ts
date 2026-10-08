@@ -14,7 +14,6 @@
 // "we think you're wrong about X" primer.
 
 import { and, desc, eq, sql } from 'drizzle-orm';
-import { projectPracticeIssuance } from '@/core/schema/assessment';
 import {
   MAX_CONCURRENT_ACTIVE_PROBES,
   PROBE_QUESTION_SOURCE,
@@ -28,8 +27,7 @@ import {
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
-
-import { issuanceRowToContract, revisionRowToContract } from '@/kernel/records/assessment-issuance';
+import { validateIssuedProbeFromProposal } from './teaching-brief';
 
 // Single-source the persisted probe contract from core without reaching into the
 // agency capability's server implementation.
@@ -54,12 +52,13 @@ export interface ActiveProbesResult {
 export async function loadActiveProbes(db: Db): Promise<ActiveProbesResult> {
   const rows = await db
     .select({
-      id: question.id,
-      knowledge_ids: question.knowledge_ids,
+      probe: question,
+      proposal: event,
       issuance: assessment_issuance,
       revision: question_revision,
     })
     .from(question)
+    .leftJoin(event, eq(event.id, question.source_ref))
     .innerJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
     .innerJoin(
       assessment_issuance,
@@ -83,7 +82,8 @@ export async function loadActiveProbes(db: Db): Promise<ActiveProbesResult> {
         )`,
         // Mirror getCorrectionStatuses' latest-write-wins fold in SQL so stale,
         // unanswered probes are removed before the three-row window is applied.
-        // Missing provenance stays visible for repair rather than freeing a slot.
+        // Capacity accounting remains in countActiveProbes; only valid issued
+        // provenance may be advertised as answerable here.
         sql`(
           COALESCE(${question.metadata}->>'conjecture_proposal_id', '') = ''
           OR COALESCE((
@@ -110,14 +110,17 @@ export async function loadActiveProbes(db: Db): Promise<ActiveProbesResult> {
     .limit(ACTIVE_PROBES_MAX);
   const probes: ActiveProbe[] = [];
   for (const row of rows) {
-    const frozen = projectPracticeIssuance(
-      revisionRowToContract(row.revision),
-      issuanceRowToContract(row.issuance),
-    );
+    const issued = validateIssuedProbeFromProposal({
+      probe: row.probe,
+      issuance: row.issuance,
+      revision: row.revision,
+      proposalRow: row.proposal,
+    });
+    if ('reason' in issued) continue;
     probes.push({
-      probe_question_id: row.id,
-      prompt_md: frozen.faces.map((part) => part.prompt_md).join('\n\n'),
-      knowledge_id: row.knowledge_ids?.[0] ?? null,
+      probe_question_id: row.probe.id,
+      prompt_md: issued.value.promptMd,
+      knowledge_id: issued.value.knowledgeId,
     });
   }
   return { probes };

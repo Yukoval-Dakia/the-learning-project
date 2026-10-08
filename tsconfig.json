@@ -18,5 +18,11 @@
     }
   },
   "include": ["**/*.ts", "**/*.tsx", "src/**/*.ts"],
-  "exclude": ["node_modules", ".opencode"]
+  "exclude": [
+    "node_modules",
+    ".opencode",
+    "server/start/router.tsx",
+    "server/start/routes",
+    "server/start/routeTree.gen.ts"
+  ]
 }

@@ -1,6 +1,9 @@
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { queryReviewDue as publicQueryReviewDue } from '@/capabilities/practice/public';
+import type { Db, Tx } from '@/db/client';
 import { knowledge, material_fsrs_state, question } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { ApiError } from '@/kernel/http';
 import type { ToolContext } from '@/kernel/tools/types';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { handleReviewDue, queryReviewDue } from './due-list';
@@ -16,8 +19,7 @@ function context(): ToolContext {
   };
 }
 
-async function mixedPool() {
-  const db = testDb();
+async function mixedPool(db: Db | Tx = testDb()) {
   const now = new Date();
   await db.insert(knowledge).values([
     { id: 'k_math', name: '数学推断', domain: 'math', created_at: now, updated_at: now },
@@ -90,6 +92,143 @@ async function mixedPool() {
 }
 
 describe('HTTP actionable queue and Pi diagnostic query contracts', () => {
+  it('reads uncommitted rows and goals through the injected transaction', async () => {
+    const db = testDb();
+    const rollback = new Error('discard injected transaction fixtures');
+    await expect(
+      db.transaction(async (tx) => {
+        await mixedPool(tx);
+        const listActiveGoalsFn = vi.fn(async (activeDb: Db | Tx) => {
+          expect(activeDb).toBe(tx);
+          return [
+            {
+              id: 'transaction_goal',
+              title: '控制变量',
+              subject_id: null,
+              scope_knowledge_ids: ['k_physics'],
+              scope_mode: 'explicit' as const,
+              sequence_hint: 0,
+            },
+          ];
+        });
+        // The singleton uses another connection and cannot see these rows.
+        const result = await publicQueryReviewDue(tx, { limit: 200 }, { listActiveGoalsFn });
+        expect(result.rows.map((row) => row.id)).toEqual([
+          'never_reviewed',
+          'physics_due',
+          'math_first',
+          'math_second',
+        ]);
+        expect(result.rows[0]).toMatchObject({
+          activity_ref: { kind: 'question', id: 'never_reviewed' },
+          fsrs_subject_kind: 'knowledge',
+          fsrs_subject_id: 'k_new',
+          fsrs_state: null,
+          last_failure_event: {
+            id: 'failure_original',
+            correction_state: { state: 'active', effective_event_id: 'failure_original' },
+          },
+        });
+        expect(result.rows.every((row) => row.created_at instanceof Date)).toBe(true);
+        expect(listActiveGoalsFn).toHaveBeenCalledExactlyOnceWith(tx);
+        throw rollback;
+      }),
+    ).rejects.toBe(rollback);
+    expect((await queryReviewDue(db)).rows).toEqual([]);
+  });
+
+  it('applies typed default, integer and bounded limits without a Request', async () => {
+    const db = testDb();
+    const now = new Date();
+    const due = new Date(now.getTime() - 1000);
+    const entries = Array.from({ length: 205 }, (_, index) => ({
+      id: `limit_${String(index).padStart(3, '0')}`,
+      kind: 'short_answer',
+      prompt_md: '逐步说明证据、假设与反例。'.repeat(110),
+      reference_md: '核对每一步推论的适用范围。'.repeat(110),
+      knowledge_ids: [],
+      source: 'manual',
+      created_at: new Date(now.getTime() + index),
+      updated_at: now,
+    }));
+    await db.insert(question).values(entries);
+    await db.insert(material_fsrs_state).values(
+      entries.map((entry) => ({
+        id: `state_${entry.id}`,
+        subject_kind: 'question',
+        subject_id: entry.id,
+        due_at: due,
+        state: {
+          due,
+          stability: 1.5,
+          difficulty: 5,
+          scheduled_days: 1,
+          learning_steps: 0,
+          reps: 1,
+          lapses: 0,
+          state: 'review' as const,
+          last_review: null,
+        },
+        updated_at: now,
+      })),
+    );
+    for (const [limit, expected] of [
+      [undefined, 20],
+      [Number.NaN, 20],
+      [0, 1],
+      [-5, 1],
+      [2.9, 2],
+      [200, 200],
+      [1000, 200],
+      [Number.POSITIVE_INFINITY, 200],
+      [Number.NEGATIVE_INFINITY, 1],
+    ] as const) {
+      const result = await queryReviewDue(db, { limit, now });
+      expect(result.rows, `limit=${limit}`).toHaveLength(expected);
+      expect(result.rows[0]).toMatchObject({
+        id: 'limit_000',
+        prompt_md: entries[0].prompt_md.slice(0, 1000),
+        reference_md: entries[0].reference_md.slice(0, 1000),
+      });
+    }
+    expect((await queryReviewDue(db, { now: new Date(due.getTime() - 1) })).rows).toEqual([]);
+    expect((await queryReviewDue(db, { limit: 1, now: due })).rows).toHaveLength(1);
+    for (const [raw, expected] of [
+      ['', 20],
+      ['abc', 20],
+      ['0', 1],
+      ['1e2', 1],
+      ['2.9', 2],
+      ['999', 200],
+    ] as const) {
+      const response = await handleReviewDue(
+        new Request(`http://local/api/review/due?limit=${raw}`),
+        { db },
+      );
+      expect(response.status).toBe(200);
+      expect((await response.json()).rows, `HTTP limit=${raw}`).toHaveLength(expected);
+    }
+  });
+
+  it('propagates typed errors and preserves HTTP error mapping', async () => {
+    await mixedPool();
+    const error = new ApiError('due_read_unavailable', 'Review read unavailable', 409);
+    const deps = {
+      listActiveGoalsFn: async () => {
+        throw error;
+      },
+    };
+    await expect(queryReviewDue(testDb(), {}, deps)).rejects.toBe(error);
+    const response = await handleReviewDue(new Request('http://local/api/review/due'), {
+      db: testDb(),
+      ...deps,
+    });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: 'due_read_unavailable',
+      message: 'Review read unavailable',
+    });
+  });
   it('retains subject balancing and goal ordering in the typed HTTP query', async () => {
     await mixedPool();
     const deps = {

@@ -1,8 +1,6 @@
 export {
   type BoundReviewAnswer,
   BoundReviewAnswerSchema,
-  LEARNING_CONTENT_MAX_QUESTIONS,
-  type LearningContentValidationDeps,
   type ReviewAnswerAttachment,
   ReviewAnswerAttachmentSchema,
   SolveError,

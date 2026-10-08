@@ -15,7 +15,7 @@
 
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { extractDrizzleWriteIndex, payloadColumns } from './schema-drizzle-producers';
@@ -25,7 +25,7 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(__dirname, '..');
 const SCHEMA_PATH = resolve(REPO_ROOT, 'src/db/schema.ts');
 const ALLOWLIST_PATH = resolve(__dirname, 'audit-schema-allowlist.json');
-const SEARCH_DIRS = ['src', 'app'].map((d) => resolve(REPO_ROOT, d));
+const SEARCH_DIRS = ['src', 'app'];
 const EXCLUDE_DIRS = new Set(['node_modules', '.next', 'dist', '.git']);
 
 type Field = { table: string; field: string; type: string };
@@ -571,7 +571,7 @@ function walkFiles(dir: string, out: string[] = []): string[] {
 // `mistake_variant.parent_question_id` satisfy `question.parent_question_id`).
 export type WriteStatement = { kind: 'insert' | 'update'; table: string; payload: string };
 
-/** Historical fixture/rehearsal writes cannot satisfy a production column. */
+/** Paths are repository-relative; fixture/rehearsal writes cannot satisfy a production column. */
 export function isProductionSource(path: string): boolean {
   const normalized = path.replaceAll('\\', '/');
   return (
@@ -658,12 +658,17 @@ export function auditSchemaWrites(schema: string, sources: ReadonlyMap<string, s
   return { results, historicalRetention: retention };
 }
 
-function audit() {
+export function audit(repoRoot = REPO_ROOT) {
   const files: string[] = [];
-  for (const d of SEARCH_DIRS) walkFiles(d, files);
+  for (const d of SEARCH_DIRS) walkFiles(resolve(repoRoot, d), files);
   return auditSchemaWrites(
-    readFileSync(SCHEMA_PATH, 'utf8'),
-    new Map(files.map((path) => [path, readFileSync(path, 'utf8')])),
+    readFileSync(resolve(repoRoot, 'src/db/schema.ts'), 'utf8'),
+    new Map(
+      files.map((path) => [
+        relative(repoRoot, path).replaceAll('\\', '/'),
+        readFileSync(path, 'utf8'),
+      ]),
+    ),
   );
 }
 

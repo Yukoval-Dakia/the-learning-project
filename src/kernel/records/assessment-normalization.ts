@@ -64,6 +64,8 @@ import { ConjectureProbeSpec, ConjectureProbeSpecV2 } from '@/core/schema/busine
 import { extractAnswerHead, isExactCapableReference } from '@/core/schema/judge-routing';
 import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
 
+import { createProbeV2Criterion } from './assessment-probe-criterion';
+
 type JsonObject = Record<string, unknown>;
 
 /** rule_reference.source 合法值（YUK-1046 scoring.ts）。 */
@@ -737,13 +739,10 @@ export function normalizeQuestionRowToContract(row: NormalizableQuestionRow): No
     throw new Error('response-aware probe requires one published scoring unit');
   }
   const unit = contract.scoring_basis.units[0];
-  unit.criterion = {
-    kind: 'rule_reference',
-    rule_id: `${unit.scoring_unit_id}:probe-v2`,
-    source: 'system_proposed',
-    statement_md: `${probe.reference_md}\n\n完整正确作答得1分，否则0分；签名匹配独立判断，不以得分推断目标错误。`,
-    probe_spec: probe,
-  };
+  unit.criterion = createProbeV2Criterion({
+    scoringUnitId: unit.scoring_unit_id,
+    probeSpec: probe,
+  });
   unit.points = 1;
   contract.scoring_basis.blank_scores_zero = false;
   contract.execution_plan.assignments = [

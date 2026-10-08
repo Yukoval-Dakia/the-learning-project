@@ -602,7 +602,7 @@ export async function queryReviewDue(
   return { rows: reordered };
 }
 
-/** Legacy API transport retained until YUK-1352 migrates its HTTP consumers. */
+/** HTTP adapter preserving limit parsing and error responses. */
 export async function handleReviewDue(req: Request, deps: ReviewDueDeps = {}): Promise<Response> {
   try {
     const raw = new URL(req.url).searchParams.get('limit');

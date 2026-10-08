@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { BuildMcpServerOptions } from '@/server/ai/tools/mcp-bridge';
-import { COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY } from './content-validation';
 import {
   type CopilotExecutionAdapters,
   DURABLE_COPILOT_EXECUTION_BUDGET,
@@ -21,7 +20,6 @@ const input: CopilotRunInput = {
   user_message: '核对我的学习状态。',
   proposal_feedback: [],
   conversation_history: [],
-  validator_context_history: [],
   correction_contract: {
     available_prior_turn_ids: [],
     prior_turn_summaries: {},
@@ -393,64 +391,47 @@ describe('Copilot execution owner', () => {
     );
   });
 
-  it('rejects unmarked learning content through the persistent root', async () => {
-    const unsafe = '题目\n1. 求 17×19？\n解：答案是 324。';
-    const execute = ownerWith(
-      vi.fn(async () => ({ task_run_id: 'foreground_bad', text: unsafe })),
-      vi.fn(async () => ({
-        task_run_id: 'durable_bad',
-        text: unsafe,
-        terminalText: unsafe,
-      })),
-    );
-    const durable = await execute(
-      {} as never,
-      { input, sessionId: 'session_4', taskRunId: 'root_4' },
-      {
-        cancellation: fakeCancellation(),
-        deadlineAt: 900_000,
-        subagentsEnabled: false,
-      },
-    );
-
-    expect(durable.finalization.replyText).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
-    expect(durable.finalization.receipt.learning_content).toBe('blocked');
-  });
-
-  it.each([
-    new Error('provider secret diagnostic'),
-    new DOMException('validation deadline exceeded', 'AbortError'),
-  ])('settles a rejecting validator into a bounded public fallback: %s', async (failure) => {
-    const candidate =
-      '题目\n1. 求 17×19？\n<!--copilot_learning_content:{"subject_id":"math","questions":[{"id":"q1","kind":"computation","prompt_md":"求 17×19？","reference_md":"323","choices_md":null,"rubric_json":{}}]}-->';
-    const validator = vi.fn(async () => {
-      throw failure;
+  it('streams generated learning prose before the unresolved terminal without review or marker JSON', async () => {
+    const prose = '题目\n1. 求 17×19？\n解：17×20−17=323。';
+    let finish!: () => void;
+    let started!: () => void;
+    const blocked = new Promise<void>((resolve) => {
+      finish = resolve;
     });
-    const stream = vi.fn(async () => ({
-      task_run_id: 'root_validator_failure',
-      text: candidate,
-      terminalText: candidate,
-    }));
-    const execute = ownerWith(validator, stream);
-    const result = await execute(
+    const ready = new Promise<void>((resolve) => {
+      started = resolve;
+    });
+    const reviewer = vi.fn<CopilotExecutionAdapters['runAgentTaskFn']>();
+    const events: unknown[] = [];
+    const execute = ownerWith(reviewer, async (_kind, _input, _ctx, onDelta) => {
+      onDelta('题目\n1. 求 ');
+      onDelta('17×19？\n解：17×20−17=323。<!--copilot_');
+      onDelta('learning_content:{"private":"hidden"}-->');
+      started();
+      await blocked;
+      return { task_run_id: 'root_prose', text: prose, terminalText: prose };
+    });
+    const running = execute(
       {} as never,
-      {
-        input,
-        sessionId: 'session_validator_failure',
-        taskRunId: 'root_validator_failure',
-      },
+      { input, sessionId: 'session_prose', taskRunId: 'root_prose' },
       {
         cancellation: fakeCancellation(),
         deadlineAt: Date.now() + 60_000,
         subagentsEnabled: false,
+        observe: (activity) => {
+          events.push(activity);
+        },
       },
     );
-    expect(result.finalization.replyText).toBe(COPILOT_UNVERIFIED_LEARNING_CONTENT_REPLY);
-    expect(result.finalization.replyText).not.toContain(failure.message);
-    expect(result.finalization.receipt.learning_content).toBe('blocked');
-    expect(validator.mock.calls.length).toBeGreaterThan(0);
-    expect(validator.mock.calls.length).toBeLessThanOrEqual(3);
-    expect(stream).toHaveBeenCalledTimes(1);
+    await ready;
+    expect(events).toEqual([
+      { kind: 'prose_delta', text: '题目\n1. 求 ' },
+      { kind: 'prose_delta', text: '17×19？\n解：17×20−17=323。' },
+    ]);
+    expect(reviewer).not.toHaveBeenCalled();
+    finish();
+    expect((await running).finalization.preparedReply).toEqual({ text: prose });
+    expect(reviewer).not.toHaveBeenCalled();
   });
 
   it('binds root and child tool trace while correlating the root MCP call id', async () => {

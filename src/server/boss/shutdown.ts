@@ -1,5 +1,6 @@
 import type { PgBoss } from 'pg-boss';
 import { flushLaminarTracing } from '@/server/ai/laminar-tracing';
+import { stopDurableWorker } from '@/server/durable/prune-worker';
 
 const SHUTDOWN_TIMEOUT_MS = 30_000;
 
@@ -53,7 +54,8 @@ export async function stopBossGracefully(boss: PgBoss, reason: string): Promise<
     before.length > 0 ? { inFlight: before } : '(no in-flight jobs)',
   );
   try {
-    await boss.stop({ graceful: true, timeout: SHUTDOWN_TIMEOUT_MS });
+    const durableStopMs = await stopDurableWorker();
+    await boss.stop({ graceful: true, timeout: Math.max(1, SHUTDOWN_TIMEOUT_MS - durableStopMs) });
     // After a graceful stop resolves, any worker STILL active means the 30s
     // timeout fired and cut its job off mid-run. Log it loudly so the
     // interrupted work is traceable (it will be retried / dead-lettered on the

@@ -4257,3 +4257,27 @@ export const system_config_epoch = pgTable('system_config_epoch', {
   epoch: bigint('epoch', { mode: 'number' }).notNull(),
   updated_at: timestamp('updated_at', { withTimezone: true }).notNull(),
 });
+
+// YUK-1355: only the admitted housekeeping family can change recovery owner.
+export const prune_job_events_control = pgTable(
+  'prune_job_events_control',
+  {
+    phase: text('phase').notNull(),
+  },
+  () => [uniqueIndex('prune_job_events_control_singleton').on(sql`(true)`)],
+);
+export const prune_job_events_receipt = pgTable('prune_job_events_receipt', {
+  workflow_id: text('workflow_id').primaryKey(),
+  cutoff: timestamp('cutoff', { withTimezone: true }).notNull(),
+  deleted: integer('deleted').notNull(),
+});
+export const prune_job_events_disposition = pgTable(
+  'prune_job_events_disposition',
+  {
+    backend: text('backend').notNull(),
+    task_id: text('task_id').notNull(),
+    observed_state: text('observed_state').notNull(),
+    reason: text('reason').notNull(),
+  },
+  (t) => [primaryKey({ columns: [t.backend, t.task_id] })],
+);

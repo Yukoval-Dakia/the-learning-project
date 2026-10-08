@@ -51,9 +51,10 @@ USABILITY_BASE_URL=http://127.0.0.1:18787 pnpm test:usability
 起同一个构建产物 → 轮询 `/api/health` → `USABILITY_BASE_URL=http://127.0.0.1:18787 pnpm
 test:usability:container`。docs-only PR 与主 gate 用同一套 merge-base 判定跳过。
 
-CI 里**不起 Postgres**：浏览器侧 `/api/*` 全量被 fixture 拦截，server 只服务静态面 +
-`/api/health`（subject hydrate 内部 never-throws，DB 不可达时走代码种子地板）。失败时
-`test-results/usability` 作为 artifact 上传。
+CI 提供独立空 PostgreSQL，供 API 启动真实 LISTEN 订阅；不连接现有 runtime。
+浏览器侧 `/api/*` 仍由 fixture 拦截，测试内容是生产静态面与 UI 交互，不作为真实业务
+DB 验收。空库缺少领域表时 hydration 沿用代码种子。失败时 `test-results/usability`
+作为 artifact 上传。
 
 ## 覆盖场景
 

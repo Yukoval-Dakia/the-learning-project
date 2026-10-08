@@ -160,7 +160,7 @@ pnpm test             # CI 全量门禁（含 audit:task-census + unit/db/migrat
 pnpm audit:schema     # schema write-path 审计（新表/字段必须有 write path）
 pnpm audit:partition  # 测试分区审计（依赖 DB 的测试不得进 unit config）
 pnpm audit:task-census # 52 registered / 51 static / 1 compatibility + wiring/run-log contract
-pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / dist/worker.cjs / dist/migrate.cjs）
+pnpm build            # SPA + TanStack Start + 三 esbuild 产物（dist/server.cjs / dist/worker.cjs / dist/migrate.cjs）
 ```
 
 快速迭代用 watch 模式：`pnpm test:unit:watch`（无 DB，覆盖 UI / core / schema / parser）、
@@ -169,11 +169,11 @@ pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / di
 `pnpm test` 的 db / migration 分区用 `@testcontainers/postgresql` 启动真实 Postgres，
 运行前需要 Docker Desktop 或 OrbStack。
 
-## 当前部署目标：这台 Mac
+## 当前部署目标：Mac 上的 Agent 开发测试环境
 
-Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[授权记录](docs/planning/2026-10-07-autonomous-delivery-charter.md)。本机生产入口是 <http://localhost:8787>，沿用独立 app、worker 和 PostgreSQL。完整行为设计见[连续学习系统](docs/design/2026-10-06-continuous-learning-system-behavior.md)，设计基线不等于当前实现。
+Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[授权记录](docs/planning/2026-10-07-autonomous-delivery-charter.md)。本机入口 <http://localhost:8787> 只供 Agent 开发测试，沿用独立 app、worker 和 PostgreSQL。2026-10-07 已按 owner 要求清空并重建当前业务库；只有 owner 后续明确要求“为我日常使用的部署”才切换日用。完整行为设计见[连续学习系统](docs/design/2026-10-06-continuous-learning-system-behavior.md)，设计基线不等于当前实现。
 
-已部署版本与证据见 [MiMo 本机发布记录](docs/planning/2026-10-07-mimo-local-release-result.md)，后续工作见 [PLAN](PLAN.md)。远程入口为 <https://loom-mac-mini.tail2ee344.ts.net/>：访问设备须登录同一 Tailscale 网络，Loom 仍使用原访问令牌。Mac 需开机且用户会话内的 Tailscale daemon 在运行；没有开启公网 Funnel。不要从脏开发目录或过期 `/tmp` 覆盖文件直接重建生产。实际部署必须固定镜像提交、保存当前配置和数据、通过隔离恢复与完整迁移预演，再停止 writer、取最终备份、执行迁移，并按 worker / app 顺序恢复。
+当前独立附件存储及真实 CRUD 验收见[测试存储记录](docs/planning/2026-10-07-agent-test-storage.md)。当前用途与重置证据见[Agent 测试环境记录](docs/planning/2026-10-07-agent-test-environment-reset.md)，后续工作见 [PLAN](PLAN.md)。此前发布验收不代表新空库已完成业务或模型验收。远程入口为 <https://loom-mac-mini.tail2ee344.ts.net/>：访问设备须登录同一 Tailscale 网络，Loom 仍使用原访问令牌。Mac 需开机且用户会话内的 Tailscale daemon 在运行；没有开启公网 Funnel。不要从脏开发目录或过期 `/tmp` 覆盖文件直接重建生产。实际部署必须固定镜像提交、保存当前配置和数据、通过隔离恢复与完整迁移预演，再停止 writer、取最终备份、执行迁移，并按 worker / app 顺序恢复。
 
 下面的 NAS / Cloudflare Tunnel 指南保留为可选方式，不是当前 Mac 的默认操作入口。
 
@@ -286,9 +286,14 @@ The compose stack starts `migrate` (one-shot init that applies migrations), `pos
 `node dist/worker.cjs`），and `cloudflared`. The app is reachable through the Cloudflare
 Tunnel; port 8787 is bound only inside the compose network，不暴露到 host。
 
-Dockerfile（node:24-slim 多阶段）build 出 4 件产物：`web/dist`（Vite build）+ `dist/server.cjs`
-+ `dist/worker.cjs` + `dist/migrate.cjs`。app 容器 `CMD ["node", "dist/server.cjs"]` 并经
-`RW_STATIC_DIR=/app/web/dist` 用 `@hono/node-server/serve-static` 托管 SPA；worker 容器同镜像，
+Dockerfile（node:24-slim 多阶段）build 产物为 `web/dist`（原 SPA）、
+`dist/start`（固定 TanStack Start 1.168.60 / Router 1.170.41）和 `dist/server.cjs`、
+`dist/worker.cjs`、`dist/migrate.cjs`。app 容器 `CMD ["node", "dist/server.cjs"]`，
+`RW_STATIC_DIR=/app/web/dist` 启用 Start 前门：`/api/*` 直接交给原 Hono app，
+`/_build/*` 提供 Start 客户端资产，其余页面回落到原 SPA。API hydration、tool recovery、
+shutdown 和独立 worker 的 owner 保持不变。源码已接线，不代表已部署到当前日用镜像。
+切换/回退及 P7 清理条件见[前门 runbook](docs/planning/2026-10-07-yuk1352-start-frontdoor.md)。
+worker 容器同镜像，
 compose 层 `command: ["node", "dist/worker.cjs"]` 覆盖。**无 Redis 服务**——editing presence 走
 PG 表 `editing_presence`（PgPresenceStore，YUK-321 M5 gate 选项 b）。
 

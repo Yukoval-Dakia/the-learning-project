@@ -1,0 +1,126 @@
+{
+  "capturedAt": "2026-10-07T12:40:06.508Z",
+  "dbos": "5.2.11",
+  "providerCalls": 0,
+  "evidence": [
+    {
+      "scenario": "cutover-drain-rollback-two-workers",
+      "legacyRetryCompleted": "71345286-c798-4f56-85b1-1ef6de5b7628",
+      "retiredFailure": "cb97b799-1a0d-4eff-8ce4-fdd48538e4ec",
+      "unknownUntouched": "aa3b0f25-594b-4bf5-8cfe-4f3ce74a3410",
+      "scheduleRegistrationProjectionChecked": true,
+      "cronTickExecutionObserved": false
+    },
+    {
+      "scenario": "business-committed",
+      "workflowId": "e77d5248-3425-42cb-aed2-3f5928ef1860",
+      "killedPid": 33405,
+      "recoveredPid": 33406,
+      "signal": "SIGKILL",
+      "status": {
+        "status": "SUCCESS",
+        "recoveryAttempts": 2,
+        "workflowID": "e77d5248-3425-42cb-aed2-3f5928ef1860",
+        "workflowName": "prune_job_events",
+        "workflowClassName": "",
+        "workflowConfigName": "",
+        "queueName": "_dbos_internal_queue",
+        "authenticatedUser": "",
+        "assumedRole": "",
+        "authenticatedRoles": [],
+        "input": ["2026-10-07T00:00:00.000Z", {}],
+        "executorId": "local",
+        "applicationVersion": "prune-v1",
+        "createdAt": 1791376799049,
+        "updatedAt": 1791376800566,
+        "priority": 0,
+        "dequeuedAt": 1791376800540,
+        "wasForkedFrom": false,
+        "completedAt": 1791376800566,
+        "applicationName": "tlp-housekeeping"
+      },
+      "lateOldPreserved": true,
+      "checkpoints": [
+        {
+          "name": "prune-business-commit",
+          "functionID": 0,
+          "error": null,
+          "childWorkflowID": null,
+          "startedAtEpochMs": 1791376800548,
+          "completedAtEpochMs": 1791376800561
+        }
+      ]
+    },
+    {
+      "scenario": "checkpoint-saved",
+      "workflowId": "84bdabf4-1057-4e2e-a9f7-d322e95bde13",
+      "killedPid": 33438,
+      "recoveredPid": 33439,
+      "signal": "SIGKILL",
+      "status": {
+        "status": "SUCCESS",
+        "recoveryAttempts": 2,
+        "workflowID": "84bdabf4-1057-4e2e-a9f7-d322e95bde13",
+        "workflowName": "prune_job_events",
+        "workflowClassName": "",
+        "workflowConfigName": "",
+        "queueName": "_dbos_internal_queue",
+        "authenticatedUser": "",
+        "assumedRole": "",
+        "authenticatedRoles": [],
+        "input": ["2026-10-07T00:00:00.000Z", {}],
+        "executorId": "local",
+        "applicationVersion": "prune-v1",
+        "createdAt": 1791376803054,
+        "updatedAt": 1791376804368,
+        "priority": 0,
+        "dequeuedAt": 1791376804360,
+        "wasForkedFrom": false,
+        "completedAt": 1791376804368,
+        "applicationName": "tlp-housekeeping"
+      },
+      "lateOldPreserved": true,
+      "checkpoints": [
+        {
+          "name": "prune-business-commit",
+          "functionID": 0,
+          "error": null,
+          "childWorkflowID": null,
+          "startedAtEpochMs": 1791376803054,
+          "completedAtEpochMs": 1791376803059
+        }
+      ]
+    }
+  ],
+  "sourceHashes": [
+    {
+      "path": "src/server/durable/prune-family.ts",
+      "sha256": "763c334b82d108b8ece8689ad6d471c8dae1cca8b28e39f4bfed3067846acc85"
+    },
+    {
+      "path": "src/server/durable/prune-worker.ts",
+      "sha256": "2b9e3f411f7f78585b6e87720fec707176a452d5b218d610804b7924260cd9ce"
+    },
+    {
+      "path": "tests/dbos-prune/worker.ts",
+      "sha256": "eeaf7ed42fb2aeab2378f6b4e187bfa177728a9be3a006eb28d4c4bb42385acf"
+    },
+    {
+      "path": "tests/dbos-prune/migration.db.test.ts",
+      "sha256": "158cd37a8d90ea9bd3919ee32cc069bf69bb331333849da3e7da63894dfda568"
+    },
+    {
+      "path": "drizzle/0115_yuk1355_prune_backend.sql",
+      "sha256": "2db23a045773f6c176f545f2af7576d5122a7a3b60a85b642af21164b3de7d76"
+    },
+    {
+      "path": "package.json",
+      "sha256": "954f4abf42e728ef7a34b6695b9407a7ff7a262bf8cf14321ea4a2d8e7245c8a"
+    },
+    {
+      "path": ".cache/yuk1355-worker.cjs",
+      "sha256": "fd5e95ec4d9a5f25b4912c3d7a447ddc81afc99cf9fb5ee5f4ddc56ac57881fe"
+    }
+  ],
+  "scope": "Historical recovery and schedule-registration projection only; cron tick execution was not observed in this artifact."
+}

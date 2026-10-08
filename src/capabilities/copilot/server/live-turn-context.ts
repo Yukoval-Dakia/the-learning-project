@@ -23,11 +23,7 @@ export function compileCopilotModelInput(
   options: { includeProposalFeedback?: boolean } = {},
 ): string {
   if (mode === 'cold') {
-    const {
-      learner_state_header: _learnerStateHeader,
-      validator_context_history: _validatorContextHistory,
-      ...boundedEnvelope
-    } = input;
+    const { learner_state_header: _learnerStateHeader, ...boundedEnvelope } = input;
     return JSON.stringify(boundedEnvelope);
   }
 

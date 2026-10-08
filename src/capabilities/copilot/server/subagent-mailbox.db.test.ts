@@ -176,7 +176,6 @@ describe('Copilot subagent mailbox', () => {
             user_message: '核对三份材料的矛盾与证据边界。',
             proposal_feedback: [],
             conversation_history: [],
-            validator_context_history: [],
             correction_contract: {
               available_prior_turn_ids: [],
               prior_turn_summaries: {},
@@ -302,7 +301,6 @@ describe('Copilot subagent mailbox', () => {
           user_message: '核对三份材料的矛盾与证据边界。',
           proposal_feedback: [],
           conversation_history: [],
-          validator_context_history: [],
           correction_contract: {
             available_prior_turn_ids: [],
             prior_turn_summaries: {},

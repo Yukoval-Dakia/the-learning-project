@@ -97,7 +97,14 @@ describe('normalizeQuestionRowToContract — 契约四层可发布', () => {
       metadata: { probe_spec: probe },
     });
     const original = normalizeQuestionRowToContract(row);
-    expect(original.scoring_basis.units[0].criterion).toMatchObject({ probe_spec: probe });
+    // Preserve the historical publisher's complete model-facing contract.
+    expect(original.scoring_basis.units[0].criterion).toEqual({
+      kind: 'rule_reference',
+      rule_id: `${original.scoring_basis.units[0].scoring_unit_id}:probe-v2`,
+      source: 'system_proposed',
+      statement_md: `${probe.reference_md}\n\n完整正确作答得1分，否则0分；签名匹配独立判断，不以得分推断目标错误。`,
+      probe_spec: probe,
+    });
     expect(original.scoring_basis.blank_scores_zero).toBe(false);
     expect(original.execution_plan.assignments[0].executor).toEqual({
       kind: 'model_executor',
