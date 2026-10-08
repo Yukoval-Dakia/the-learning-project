@@ -23,6 +23,8 @@
 
 ## PARKED
 
+- **YUK-1356 judge审计修复待验**：父实读audit-capability-boundaries.log，practice→durable新增4、events4→1、总434对基线433；development-workflow:104禁止上调基线。固定候选后收敛judge专属client的领域归属与public调用，不能隐藏依赖或放宽allowlist。audit-schema.log将0118生成的judge_run_control.incarnation报stub；需精确迁移初始化合同与反例测试，保留0117合同。脚本ownership已向5796核对，原writer未释放前不并发改代码。
+
 - **YUK-1356 judge打包阻塞**：父实读作者build-first.log:979，Start自包含打包无法解析DBOS5.2.11可选winston-transport；build-migrate.log同报winston/transport。server/worker已有两项external，Start和migrate尚未一致。5796已核77树/75可访问并明确将两文件交原judge writer：仅Start服务端及build:migrate external精确winston/winston-transport，保留其余自包含配置及依赖/lock。已转交作者，完整build仍待修复结果；父须安全验证真实ESM/CJS默认logger加载、不直接执行连接库/迁移/服务入口，OTLP分支不在本证明范围。父已格式化1359证据JSON并核语义完全相同。
 
 - **YUK-1358/1359已有UI观察**：真实Inbox dismiss后本页499但侧栏500，document reload恢复一致；原onResolve仅本地resolved更新。Google Fonts原import受CSP拦截；fallback可用。记录在现有迁移验收/后续UI边界，不放宽CSP、不冒称本PR修复。
