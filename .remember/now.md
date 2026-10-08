@@ -1,3 +1,7 @@
+# 2026-10-08 parent integration
+
+PR1592 merged eae963377 after exact CI37758570995; same tree as95949e012. PR1595 now integrates that main, preserving Start build and DBOS Winston externals. Parent owns checks/push/CI/merge; no runtime changes. Earlier evidence below is revision-specific.
+
 # YUK-1355 latest-main integration handoff, 2026-10-08
 
 Sole writer in /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1355-dbos-migration, branch feat/yuk-1355-dbos-migration, starting clean 09f07d7430acee44b384b5a0ba7b79daecefaf55. Fresh fetch immediately preceded normal merge of main 5b11f3edbd8c8a418cea8815976786d177e332bc. Only PLAN and this handoff conflicted; main's current delivery entries and lane restrictions are preserved. Node24.19 scoped unit passed 212 tests in 11 files; typecheck/lint/ratchet/build and eight static audits exit 0. Historical 22 source/vendor hashes and rebuilt standalone prune fixture match. Integrated server/worker/migrate bundles differ; exact remaining DB commands are in the evidence receipt. No DB suite ran. Full non-UI migration remains the objective; this integration adds no job families. Default pg-boss, prune-only DBOS, 60s receipt fence, unknown rollback hold and single recovery owner remain unchanged.
@@ -5,6 +9,27 @@ Sole writer in /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1355-dbos-migration,
 Parent owns PR1595 replies/watch/push/merge, Linear, exact-head CI and any DB/runtime acceptance. R1/R2 NONE at 48ead remain historical; no new review or child. No DB/container/provider/replay/runtime/deployment operations. PR1595 was registered with this thread as required by T3; no PR mutation or watch. P2 comment4208022050 is a stale documentation registration path; the minimal catalog correction and validation obligations are reported in docs/planning/2026-10-08-yuk1355-main-integration.md for parent disposition.
 
 Main's handoffs follow unchanged; their runtime observations are historical and were not refreshed by this lane.
+
+# 1352 parent acceptance — 2026-10-08
+
+3d6273a14 isolated Start RPC/browser/assets/retry evidence inspected;39 hashes and21 parent scoped tests passed. Full navigation changed one practice_stream_item via unchanged lazy-compose GET;85 other tables unchanged, separate retry86 tables unchanged.158 build artifacts unchanged.7631 stopped own services and released lock;1352 source/build ownership returned to parent. Canonical boot/release/SSE/full SPA exit still pending. Evidence docs/planning/evidence/2026-10-08-yuk1352-start-runtime.json. Parent now updates PR1592, no runtime operation.
+
+# 当前交接 — 2026-10-08 YUK-1352 authenticated Start /mistakes
+
+唯一writer树 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor`，
+branch `feat/yuk-1352-start-frontdoor`。从clean4a7f81541正常merge最新main7bc216509为
+d98d965aa，保留即时SSE listener及1364/1365/1375/1376修复；PR1600随后合入main7100dfae4，本树正常merge该已发布提交，没有cherry-pick未合入源码。
+Start `/mistakes`复用TokenGate、原shell及MistakesPage。客户端调用实际GET server function，
+经原Hono token/epoch门后，host惰性调用ingestion/public readMistakes(db,input)。过滤与cursor
+透传；400/401/503不变。生产旧SPA的/mistakes只做document handoff；其他路由及dev fallback
+尚未退出。shell render/effects与merged baseline一致，仅Outlet改children。
+98 scoped tests、Node24.19.0 typecheck/lint/build、lint ratchet及capability audit通过。
+编译产物用无listener/DB的受控适配检查了RPC与静态文件，不能冒称runtime/browser通过。
+证据、命令及parent loopback启动见1352交付doc和evidence/2026-10-08-yuk1352-start-mistakes.json。
+没有持persistent server、container、runtime lock；没有.env、私人数据、provider/paidcall/replay，
+没有push/hostmerge/Linear/新review/委派；取消的1356 dirtytree未接触。
+父线程独占PR1592后续、准确CI、既有review及runtime lock/T3浏览器；7631独占native/materials
+和1359inventory验收。writer在本次terminal commit后释放，不自动恢复写入。
 
 # 当前交付 — PR1600已合并，等待Start候选验收
 
@@ -21,6 +46,16 @@ PR1599已合入7bc216509，tree与CI head6ab98ed8c一致；CI Gate37677610975成
 证据根 `/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1376-preflight-6ab98ed8c/evidence`。主线与runtime owner已收到释放通知。本线程没有活动writer；后续只推进本线程1376/1359，不接管1352/55/56。
 
 以下为历史记录，状态以顶部为准。
+
+
+源码集成commit `7d26e2403610c1d5a7617557078fb6a17476ac46` 已clean；最终handoff文档
+对照7631的 `/tmp/yuk1376-start-acceptance-matrix-20261008.md`，接口/loopback18952/
+原TokenGate鉴权说明齐备，全部真实browser/DB invariance/image观察留父核验后交7631。
+`/tmp/yuk1359-w1-remaining-consumers-20261008.md` 只作未来上下文，ProfileBand goal读、
+learning-intents pending proposal与best-effort wake等不扩入当前/mistakes writer。
+没有再次merge7100、启动服务或push；最终terminal doc commit后writer释放。
+
+以下为合入main的历史交接，不表示当前服务或PR状态。
 
 # 当前交付 — native P1修复已验证，最后审查通过，等待准确CI
 

@@ -1,10 +1,13 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08 YUK-1355 正常合入 fetched main `5b11f3edbd8c8a418cea8815976786d177e332bc`，仅 PLAN/handoff 冲突；Node24.19 212 scoped unit、typecheck/lint/build 与8 static audits全通过。非 UI 全迁移仍是目标，本轮仅集成现有 prune slice；Agent TEST ONLY、automation disabled。详见[本轮证据](docs/planning/2026-10-08-yuk1355-main-integration.md)。
+> Linear 是权威 tracker。2026-10-08：PR1595整合main eae963377（含已合并Start入口）；build链保留Start产物与DBOS Winston external。父线程验证中，Agent TEST ONLY，未部署。
 
 ## NOW
 
 - **YUK-1355 / PR1595**：默认 pg-boss，仅 prune_job_events 可切 DBOS；60s cached-cron receipt fence、unknown rollback hold、单 recovery owner 均保留。新 main 的业务变更原样合入，Node24.19 212 unit、typecheck/lint/ratchet/build 与8 static audits通过；源/fixture字节保持，新增bundle的DB验收交父。历史4 cron/recovery、28 worker DB、77 unit、26 migration 只代表旧源/旧bundle。R1/R2 NONE适用于48ead，预算已用，不新审。
+
+
+- **YUK-1352 Start /mistakes**：唯一1352 writer已接好 authenticated server function、旧页面注入及共享原shell；保留1364/1365/1375/1376 main源码，PR1600合入main后正常merge保留7631的public materials源码。98 scoped tests、typecheck/lint/build与边界audit通过；准确3d6273a14隔离RPC/浏览器/图片与失败重试已验收；全导航仅既有practice初始化增1行，后续错题读取86表无变化。[交付](docs/planning/2026-10-07-yuk1352-start-frontdoor.md)。
 
 - **YUK-1376**：PR1600已于2026-10-07 21:18:58Z合入 `7100dfae4`，合并tree `743ee4d80617dc9b34c7533d724e052af5fd50c4` 与准确head `c40a18621` 一致；CI Gate `37686417034` 成功，独立初审P0/P1 NONE，无未裁决review threads，完整17分钟窗满足。未部署。Start挂载任务归主线，实际新入口行为及旧SPA退出尚未完成。 [验收矩阵](docs/planning/2026-10-08-yuk1376-start-acceptance.md)。
 
@@ -29,6 +32,8 @@
 
 - YUK-1355 父线程负责 push、PR1595 replies/watch/merge、exact-head CI、Linear 与必要 DB 验收。禁止本 child 操作容器/DB/provider/runtime/deploy；本轮不扩新任务族。
 
+- **YUK-1352 / PR1592**：已合入main eae963377，CI37758570995与合并tree一致；隔离错题入口已验收，未部署。剩余路由与canonical boot继续。
+
 - **YUK-1364 已收口**：PR1591合入5aa2a9e98并发布准确853/image9b76至Agent TEST；102表/97文件/Mem0恢复、真实HTTP与队列核验通过，17:33:31Z释放锁。源码与运行证据详见[1364记录](docs/planning/2026-10-07-yuk1364-probe-issuance.md)。
 
 - 先落实 YUK-1346 的可信单次记忆/派生用途策略，再沿“椭圆难题 → 记录过程与帮助程度 → 区分暂时理解和独立迁移 → 后续验证安排”的真实学习路径推进。短回答成功不等于可靠评估已经兑现。
@@ -39,6 +44,8 @@
 ## PARKED
 
 - YUK-1355 P2 comment4208022050：cron权威目录仍将 prune 注册点写为 ../handlers.ts。最小范围为目录说明及一行注册点/phase ownership 文档；不需要新 scheduler/catalog 子系统。已报告父线程裁决，本轮未改该 P2。
+
+- **YUK-1359临时挂载退出**：生产SPA的/mistakes改为document handoff，Vite-only dev暂留原HTTP consumer；全部路由及dev/build/镜像入口迁入Start且逐页验收后删除旧SPA回落与dev adapter。未宣称其他路由退役。
 
 
 - **YUK-1360 父线程发布验收义务**：真实 startup 返回 schema44 时仍有7项 BAM index 工作 pending；不能把 start/health/Drizzle smoke 当作 background migration 完成。本 lane 验证 disposable 完成与 index validity；生产需父线程在既有发布流程核验。旧12.26.3默认启动仅证明单个 synthetic queue 操作，`migrate:false`拒绝44；没有执行或批准 queue downgrade。归入既有 YUK-1360/YUK-1329 验收，不在此 lane 新建 Linear。
@@ -55,6 +62,8 @@
 ## BLOCKED-ON
 
 - YUK-1355 新 main 的真实 DB 行为、最终 exact-head CI 与部署均未验收。本轮只交付本地合并与限定静态/单位检查；源与bundle比较及必须复验清单见本轮证据。
+
+- YUK-1352隔离路由验收已通过；canonical boot/release/SSE及其他路由退出未验收；父线程拥有runtime lock、材料/R2证据、PR/Linear及发布权。本writer无新增领域follow-up，既有1359/1376退出义务保留。
 
 - YUK-1360新source checks不构成最终head CI/review或runtime acceptance。无新增actionable follow-up；四个peer warnings继承两parent，runtime/BAM/rollback限制仍属1360/1329。Linear capture归父线程。主runtime仅Agent TEST ONLY；切日用需owner后续明确要求。
 - 无需 owner 追加日常授权。旧 Xiaomi402 不再阻塞新 Copilot；历史失败没有删除。
