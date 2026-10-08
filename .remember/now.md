@@ -1,3 +1,7 @@
+# Current update — YUK1394 CI cron collision repaired
+
+Exact b9b CI37850732224 unit2 failed only composition cron duplicate04:25,2409 passed. Parent local1RED/10passed reproduced. Historical main6212 infra conversation and manifest audit both04:25; moving the former revealed collision.5796 confirmed scope and no fixed-time dependency. Parent changed only audit to04:26, preserved orphan04:25/04:35 and unchanged collision guard. Added manifest contract test;3files32unit/typecheck/lint/build allpassed.27-row declaration catalog verified9sources,2knownchanged; frequent jobs still overlap minute26, noexclusive-runtime claim. No runtime/DB/provider, noR3. Prepare one newpush with existing local docs and evidence, then exactheadCI. Judge implementation entry680dc retained; nojudge writer beforeformal1394main. Earlier evidence remainsrevision-specific.
+
 # Current update — shared installer lock passed parent runtime checks
 
 HEAD1aeec5e366af2624c31ffe759780b63f24b92144, sole implementation completed/noPending, writer released. Parent25 hashes matched and inspected actual diff. Three installers use common short transaction advisory lock before family locks/DDL; business/host/schema unchanged. Oldbinaryquiescence remains mandatory. No R3; prior R2 only covers its original revision.

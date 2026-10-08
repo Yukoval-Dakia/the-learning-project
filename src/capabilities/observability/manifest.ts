@@ -539,10 +539,10 @@ export const observabilityCapability = defineCapability({
         schedule: { cron: '35 4 * * *', tz: 'Asia/Shanghai' },
       },
       // YUK-601 PR7 (v3.2 §7) — 夜间装配漂移审计（--strict：invalid → job failed
-      // 可见）。'25 4' 避撞既有夜链排期；fast 档纯 DB 无 LLM。
+      // 可见）。04:26 避开 04:25 conversation 清理；fast 档纯 DB 无 LLM。
       {
         name: 'subject_profile_audit_nightly',
-        schedule: { cron: '25 4 * * *', tz: 'Asia/Shanghai' },
+        schedule: { cron: '26 4 * * *', tz: 'Asia/Shanghai' },
         queue: 'fast',
         load: () =>
           import('./jobs/subject_profile_audit_nightly').then(
