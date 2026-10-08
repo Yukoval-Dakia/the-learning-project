@@ -1,3 +1,7 @@
+# Idle ownership update — 2026-10-09
+
+Checked77 registered trees/75 accessible. Only active judge tree has named shared WIP; no Copilot/session changes observed. Coordinator7631 may take the bounded idle write-path extension after judge releases and delivers; no idle writer or migration number now. Start/boot/shutdown/generic SSE remain here. See docs/planning/2026-10-09-idle-start-ownership.md. No runtime action.
+
 # Latest Start event delivery — 2026-10-09
 
 PR1623 merged at2026-10-08T22:52:00Z as7472f4395f4a12a5167e33034d5d8af8bf695049. Exact91f4687ed CI37854525406 passed all fourDB shards and aggregate. Merge/CI trees equal d6e9d69a5769f4634e49c201b90fae1422827831; git diff empty. R2 NONE, no unresolved threads, no third review. Real71RPC/browser evidence remains at4f36; incoming main96077 and event source blob comparisons preserve attribution. No deployment/runtime operation.1358/1359 verified In Progress after merge. Judge0118/implementation stays7631 sole writer; Start/boot remains5796. Below records are historical, not current PR status.

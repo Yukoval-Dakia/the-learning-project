@@ -16,6 +16,8 @@
 
 ## NEXT
 
+- idle future ownership is confirmed in [idle/Start handoff](docs/planning/2026-10-09-idle-start-ownership.md). Three Copilot writes and Conversation coordination belong to7631 only after judge releases and delivers;0118 stays judge. This thread has no competing writer there. Original user-event clock and strict chip/replay behavior remain; runtime proof is outstanding.
+
 - Start/judge共享文件边界见[交接](docs/planning/2026-10-09-judge-start-ownership.md)，Start/boot/shutdown由5796独占；judge A/B/C/D由7631接续，迁移号后核。
 
 - 1394已正式交付，7631从fresh main沿既有YUK1356接judge_run与judge_pending_reconcile同族。5796已确认A/B/C/D精确scope无其writer冲突，Start/boot/shutdown仍归5796；迁移号届时核实。设计与ownership不是实施验收。
