@@ -436,7 +436,21 @@ describe('Start controls with committed pool writes and an independent observer'
     );
     expect(await snapshot()).toEqual(before);
     const reset = await run((c) => c.resetConfig({ keys: ['locale.learner'] }));
-    expect(reset.committed_epoch).toBe(receipt.committed_epoch + 1);
+    expect(reset.committed_epoch).toBeGreaterThan(receipt.committed_epoch);
+    const [storedEpoch] = await observer
+      .select()
+      .from(schema.system_config_epoch)
+      .where(eq(schema.system_config_epoch.id, 'global'));
+    expect(storedEpoch?.epoch).toBe(reset.committed_epoch);
+    expect(reset.changes).toHaveLength(1);
+    expect(reset.changes[0].epoch).toBe(reset.committed_epoch);
+    const journals = await observer
+      .select()
+      .from(schema.system_config_journal)
+      .where(eq(schema.system_config_journal.key, 'locale.learner'))
+      .orderBy(schema.system_config_journal.revision);
+    expect(journals.map(({ action }) => action)).toEqual(['set', 'clear']);
+    expect(journals[1].revision).toBe(reset.changes[0].revision);
     expect(writer).toHaveBeenCalledTimes(3);
     expect(
       (await run((c) => c.getConfig())).keys.find((k) => k.key === 'locale.learner')?.value,
