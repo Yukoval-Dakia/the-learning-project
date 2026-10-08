@@ -1,3 +1,7 @@
+# 当前交接 — 2026-10-08 1359退出核对
+
+PR1592/1603/1595已合入main caeb959fd。本线程从最新main建立docs/yuk-1359-exit-current-main，仅维护1359退出与W1消费者证据；主线独占1356及Start消费者。1359实际未退役旧SPA/pg-boss，已将Linear误关Done恢复In Progress。1377/1358仍待Start实际验收。只读调查已completed/noPending，父已抽查Start路由、构建、typed due和prune注册/phase路径。当前仅父文档writer，无runtime锁或服务动作。下文保留历史交接，不作为最新状态。
+
 # 2026-10-08 current PR1595
 
 Integrated merged PR1603/main90f499126 after correcting export test expectations (35 GREEN). Only PLAN/handoff conflicted, no manual product changes. Parent owns final checks/push/CI. No runtime action. Historical records below do not override merged PR1592/1603 state.

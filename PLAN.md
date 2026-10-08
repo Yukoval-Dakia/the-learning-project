@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：PR1595修正CI遗漏的导出分类测试（35项GREEN），正常整合main90f499126/PR1603；仅交接文档冲突，既有Start与DBOS行为保留。父88相关unit/typecheck/lint/build通过，准确CI待，未部署。
+> Linear 是权威 tracker。2026-10-08：main caeb959fd 已包含PR1592/1603/1595。1359按当前源码更新退出清单并纠正误关状态；Today领域读取已合并，Start整页与旧入口退出仍待。1356由主线独占，未部署。
 
 ## NOW
 
@@ -8,7 +8,7 @@
 
 
 
-- **YUK-1377 / Today 读取迁移**：从main `1bbd82795` 接续，主线已明确本线程独占shell公共读取/HTTP契约范围。复用现有summary和overnight facade，公共出口实现 `1aa3fd892` 已交回，35unit/父独立6DB/static/build通过；不改UI/Start/组合根。已正常集成main5b11f3edb，79eb7980d接入queryReviewDue(db,{limit:200})；新增回归已RED→GREEN，父8DB/35unit/static/build通过。独立review NONE、原head61e41e319 CI全绿；现整合main eae963377后的新HEAD待CI。Start消费者接续归主线。详情见[1377记录](docs/planning/2026-10-08-yuk1377-today-domain-reads.md)。
+- **YUK-1377 / Today 读取迁移**：PR1603已合入 `90f499126`；准确head53a70bf4a的CI37760493515全绿、独立review NONE，candidate/merge tree一致。summary公共读取与queryReviewDue注入DB已8DB、整合后42unit/typecheck/lint/build验证。1377/1358保持In Progress，主线继续Start鉴权/epoch/消费者及实际入口验收；不等于Today整页完成。[证据](docs/planning/2026-10-08-yuk1377-today-domain-reads.md)。
 
 - **YUK-1352 Start /mistakes**：唯一1352 writer已接好 authenticated server function、旧页面注入及共享原shell；保留1364/1365/1375/1376 main源码，PR1600合入main后正常merge保留7631的public materials源码。98 scoped tests、typecheck/lint/build与边界audit通过；准确3d6273a14隔离RPC/浏览器/图片与失败重试已验收；全导航仅既有practice初始化增1行，后续错题读取86表无变化。[交付](docs/planning/2026-10-07-yuk1352-start-frontdoor.md)。
 

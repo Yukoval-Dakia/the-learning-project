@@ -4,7 +4,21 @@
 
 Owner 的后续指令是先完成整个非 UI 迁移，UI 暂缓，再完成 Linear 残留功能；见[当前优先级](2026-10-07-non-ui-migration-priority.md)。保留现有 UI 行为不等于永久保留旧 SPA 运行路径。最终删除必须以实际消费者切换和行为证据为条件。
 
-## 准备计划中的冲突及精确修订建议
+## 当前退出状态，2026-10-08
+
+本节核对 main `caeb959fd726e34b2e8554bd0e95b54778cbff41`，覆盖下文历史基线的进展陈述。历史调查保留用于追踪职责；不能把其中“未合入”的候选描述当作当前状态。YUK-1359 的退出条件尚未满足，Linear 的 Done 已校正为 In Progress。
+
+| 范围 | 已有证据 | 尚需完成 |
+| --- | --- | --- |
+| Start 前门与 `/mistakes` | PR1592 已合入 `eae963377`。`server/start/routes/mistakes.tsx` 注入 `listStartMistakes`；`server/frontdoor.ts` 提供 `readStartMistakes`。候选 `3d6273a14` 的隔离运行证据见[验收索引](evidence/2026-10-08-yuk1352-start-runtime.json)。 | 已验证的 RPC、图片、鉴权、筛选和重试不覆盖整页所有退出条件，也不证明 canonical boot、发布或 SSE。旧 SPA 仍在服务其他页面。完整导航曾由既有 practice 初始化增加一行；仅后续错题读取阶段证明 86 表不变。 |
+| Today 共享读取 | PR1603 已合入 `90f499126`。`shell/public.ts` 导出已有 summary loader；`countDue(db)` 调用 `queryReviewDue(db, { limit: 200 })`。原先 Request/global DB 耦合已修复，3 与 205 条事务内题目分别计为 3 与 200。 | 主线负责 Start 鉴权、epoch、消费者注入及实际入口验收。仍须迁移 Today 子组件的读取与命令；不能将两个读取接口视为整页完成。1377/1358 保持 In Progress。 |
+| `/`、`/today`、`/inbox` 及其他页面 | 当前 Start route tree 显式业务页只有 `/mistakes`；`server/start/routes/$.ts` 仍转交 `context.legacySpa.fetch(request)`。 | 依照[W1消费者清单](2026-10-08-yuk1359-w1-consumers.md)及下文逐波清单迁移、验收，再移除回落。Inbox adapter 必须保持 HTTP 默认 limit 200、上限 500、lane/kind/status/cursor 校验，不能把空 options 传到不限页 domain 分支。 |
+| 构建与镜像入口 | `package.json` 的 build 同时构建旧 web SPA 与 Start；`server/frontdoor.ts` 仍调用 `buildLegacySpa`；Dockerfile 仍设置 `RW_STATIC_DIR=/app/web/dist`。 | 所有页面的实际消费者切换后，统一开发、构建和镜像入口，删除旧挂载与静态回落。仍被保留页面使用的组件、样式不能按目录名删除。 |
+| 持久任务恢复 | PR1595 已合入 `caeb959fd`。`observability/manifest.ts:515` 声明 prune 的 DBOS backend，`boss/register-capability-jobs.ts:51` 仅准入此族，`durable/prune-worker.ts:115` 按 phase 协调新旧调度。pg-boss 仍是依赖，worker 及其他任务族仍存活。 | 1355/1356及各业务族保留唯一执行和恢复职责；完成逐族切换、排空、未知结果与恢复验收后，1359 才能删除旧机制。该 PR 的合并不是部署或所有 cron 已切换的证明。 |
+
+本轮未启动服务、删除旧路径或修改主线的 Start/1356 实施。上述余项均归现有1358/1359/1377及任务族票，没有新增独立缺陷，不重复建票。设置面板 `/admin/config` 仍在 W5 范围。
+
+## 历史基线26f101581：准备计划冲突及精确修订建议
 
 下表行号均指上述 main 基线的 `docs/planning/2026-10-07-ts-migration-and-ui-rewrite-prep.md`，不是动态 main。此处给出建议，不修改正在由其他线程使用的原计划。
 
@@ -44,7 +58,7 @@ ADR-0066 的业务边界仍适用：页面命令、Pi工具和后台任务共用
 
 README中的注册任务数量只是基线文档陈述，本调查未执行全量注册器 census，不能据此证明全部任务族已覆盖。完整生产者/cron/DLQ/恢复台账继续由1355维护，本表突出不能在清理中丢失的职责。
 
-### 未合入基线的候选路径
+### 历史基线26f101581中尚未合入的候选路径
 
 Linear1359已登记1352候选 `server/start/routes/$.ts`、`server/frontdoor.ts` 的 `buildLegacySpa`、`FrontdoorContext.legacySpa` 和双router清理归属。父核对 `git ls-tree -r 26f101581 server/`：该精确基线尚无这些文件。它们是候选实施的退出目标，不能据此把当前main描述成已运行Start；本轮未读取其活跃工作树。
 
