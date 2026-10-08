@@ -1,3 +1,7 @@
+# Start admin PR1615 — 2026-10-08
+
+DraftPR1615 linked, head dbdd00e02 before this record. Resumed original R1 completed/noPending with P0/P1 NONE on fixed ea0..2d5 productdiff; parent test-onlyfixture and mainintegration do not change those productblobs. Parent332unit/8protocol/static/build and48+2DB evidence retained. Builtacceptancepreparation task yuk1358-admin-built-acceptance-preparation-20261008-v1 (mcp49eafe5d-44e1-4ad4-99e9-d8ea36771da2) running solely ignored .cache/yuk1358-admin-built-acceptance; no runtimeallowed. Mainproduct/build frozen while it prepares. Parent still owns realRPC/T3browser/CI/delivery. Linear1358 comment06cb37c4-d643-4f41-8e64-b8f19455a3a8 records evidence andOrbStackincident. No currentlock/selfresources.
+
 # Current Start admin acceptance — 2026-10-08
 
 Candidate1f898bfb4 = source2d5 + main0b925 integration773 + one-line cost_ref DB fixture repair. Parent332unit/8protocol/typecheck/lint/build all0. First DB48pass/2fixturefails retained; fixednew2DBpass. Initial R1 cancelled/noPending withoutverdict; sameR1 resumed task yuk1358-start-admin-review-r1-resume-20261008-v2 (mcp49eafe5d-44e1-4ad4-99e9-d8ea36771da2),notR2. BuiltRPC/browser stillpending, no deployment. Lock released14:29:57.323Z; original4 unchanged relative postrestart14:29 snapshot. OrbStacksignalshutdown14:03 thenboot14:28 afterdiagnosticcommands recorded; senderunknown,possible orbctl diagnostic autostart; no explicitstart/restart issued.1390 writer7631 separatepublic/domain scope.
