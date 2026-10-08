@@ -91,3 +91,9 @@ f70012a0810ee668e50799c215c37d7c1c44ac9c47b91be6e73e9d0a8158f6fb  src/capabiliti
 bc58e2d41f98ec7733ed6c5a8d84d69a8366135cf6f23aed3064fe7e9a5b8050  src/capabilities/agency/server/notes.ts
 100e56de412b9182bfa210b6662b2844c24951e9813c98483be34f1597e7d199  src/capabilities/agency/api/contracts.ts
 ```
+
+## 父级验收，2026-10-09 JST
+
+作者已交1f012c62d并completed/noPending释放writer。父核8份源码与14份日志SHA全部一致，实际独立复跑13unit及3文件22DB（新4、原18）通过。DB使用新Testcontainers与真实pool/Tx，验证外部连接不可见、完整HTTP handler DTO parity、全部public表count/digest读取前后不变、rollback后恢复原快照。此为真实DB和handler验收，不是Start页面或live网络证明。
+
+16:52:40.772995Z原子取锁，16:53:28.070847Z核owner/tokend8d6释放。临时PG/Ryuk退出，原运行集合及四容器ID/image/StartedAt/health、releaseSHA全部不变；无provider/worker/replay/deploy。证据见[evidence/yuk1392/cleanup.json](evidence/yuk1392/cleanup.json)、[DB日志](evidence/yuk1392/parent-db.txt)与[作者检查](evidence/yuk1392/author-checks.json)。独立R1及exact CI待，1392/1358/1359尚未标完成。

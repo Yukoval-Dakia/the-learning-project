@@ -1,20 +1,20 @@
 # YUK-1359 旧路径退出与文档一致性调查
 
-状态：首轮调查及父级源码抽查完成；这是退出工作的输入，不是完整逐族迁移台账，未删除代码、未完成迁移。源码基线为 main `26f1015810cc3d902f6229b615d9630f05982eef`；通过 `git show` 读取，未切换或修改其他实施工作树。主线线程 57961995 负责整体集成；本线程负责只读消费者调查与此文档，1352/1355/1356 的实现归原 writer。
+状态：首轮调查及父级源码抽查完成；这是退出工作的输入，不是完整逐族迁移台账，未删除代码、未完成迁移。源码基线为 main `26f1015810cc3d902f6229b615d9630f05982eef`；通过 `git show` 读取，未切换或修改其他实施工作树。该历史阶段由57961995承担集成，本线程维护消费者调查。当前本线程7631承担用户整个迁移的协调交付责任；57961995承担Start集成/发布，具体writer与文件ownership按各lane交接执行。
 
 Owner 的后续指令是先完成整个非 UI 迁移，UI 暂缓，再完成 Linear 残留功能；见[当前优先级](2026-10-07-non-ui-migration-priority.md)。保留现有 UI 行为不等于永久保留旧 SPA 运行路径。最终删除必须以实际消费者切换和行为证据为条件。
 
 ## 当前退出状态，2026-10-09 JST
 
-本节核对 main `fe48497123f92429eac6383cf7ccc839ade4142f`，读取工作树为已整合该 main 的1391候选 `8a1dbf94bce1434e7c144a76a05bbf483c43fedd`。本节覆盖下文历史状态；历史行号与验收只适用于各自版本。1358/1359仍未完成，未部署。
+本节更新至main `f80d47703ffbcb6f8db488a10dd0a705a6fee601`。已实核相对原fe484清点，Start routes、UI_SURFACES、frontdoor、package与Dockerfile无diff；原路由清点仍适用这些未变文件，不将其转述为新runtime验收。本节覆盖下文历史状态；历史行号与验收只适用于各自版本。1358/1359仍未完成，未部署。
 
 | 范围 | 已有证据 | 尚需完成 |
 | --- | --- | --- |
 | Start 前门与 `/mistakes` | PR1592已合入。候选3d6273a14的RPC、图片、鉴权、筛选及重试证据见[验收索引](evidence/2026-10-08-yuk1352-start-runtime.json)。 | canonical boot、完整消费者和旧入口退出不能由这次局部验收代替。完整导航曾由既有practice初始化增加一行，后续错题读取才是86表无变。 |
 | `/today`、`/inbox` 与根跳转 | PR1609已合入7682618。Start工作台客户端接主读取、费用及已交付decision/undo操作；真实RPC/browser与整合证据见[工作台交接](2026-10-08-yuk1358-start-workbench-handoff.md)。 | Today仍直接调用agent-notes HTTP；TeachingBrief及其他共享子树仍须按[W1清单](2026-10-08-yuk1359-w1-consumers.md)逐项退出。不能将主读取迁移等同整页完成。 |
 | 五个管理只读页 | PR1615已合入fe4849712，接runs/detail、cost、failures、coverage、conjectures；主线fc021的96RPC、五页浏览器、88表无写证据及后续整合分别保存在[管理页交接](2026-10-08-yuk1358-start-admin-handoff.md)。 | 此证据不覆盖配置、科目/trait写面、完整boot或部署。不同revision的源码与运行证据不合并称为单次验收。 |
-| W5领域出口 | 1381/1386/1387/1389/1390已合入，分别覆盖管理读取、诊断读取、subjects/traits读取、配置、科目控制。1391六trait操作候选已通过R1及父55DB，PR1617尚待收口。 | `/admin/config`、`/admin/subjects`、`/admin/subjects/$id`仍走旧SPA及HTTP；公共出口存在不代表Start消费者完成。见[W5清单](2026-10-08-yuk1359-w5-consumers.md)。 |
-| W2/W3/W4与practice | 事件详情/纠错领域1380已合入；1391之后的agent-note board读取lane已获独占授权，尚未实施。 | 下列19个页面尚无显式Start路由，仍需领域/消费者与真实验收。Practice和任务族由主线协调，不能复制评分或恢复机制。 |
+| W5领域出口 | 1381/1386/1387/1389/1390已合入，分别覆盖管理读取、诊断读取、subjects/traits读取、配置、科目控制。1391六trait操作已由PR1617合main f80d47703，exact2fb CI全绿、R1 NONE、父55DB及整合450unit/static/build/四audit通过。 | `/admin/config`、`/admin/subjects`、`/admin/subjects/$id`仍走旧SPA及HTTP；公共出口存在不代表Start消费者完成。见[W5清单](2026-10-08-yuk1359-w5-consumers.md)。 |
+| W2/W3/W4与practice | 事件详情/纠错领域1380已合入；agent-note board读取已查重建YUK1392并从f80d main启动唯一作者，尚未交付或验收。 | 下列19个页面尚无显式Start路由，仍需领域/消费者与真实验收。Start配置/subjects由5796唯一作者实施；1355后续任务族目前没有实施writer。7631在1392完成前仅调查下一族，之后协调精确文件；不能复制评分或恢复机制。 |
 | 构建与镜像入口 | `server/start/routes/$.ts`仍调用legacySpa；frontdoor仍构造buildLegacySpa，package build同时产出旧web SPA与Start，Dockerfile仍设RW_STATIC_DIR。 | 所有实际消费者迁移后统一dev/build/镜像入口，再删旧挂载。仍服务保留UI的组件和样式不能按目录名删除。 |
 | 持久任务恢复 | PR1595已合入；`register-capability-jobs.ts`仍只准入prune_job_events的DBOS backend，其他pg-boss生产者与恢复路径存活。1356已交付共享review操作与单次真实Pi原件效果，范围另见其交接。 | 逐族切换、排空、未知结果、唯一恢复owner与故障恢复验收尚未齐全。不能因测试库重置或一个族成功而删除旧队列机制。 |
 
@@ -22,7 +22,7 @@ Owner 的后续指令是先完成整个非 UI 迁移，UI 暂缓，再完成 Lin
 
 仍需迁移的页面为 `/welcome`、`/onboarding/upload`、`/placement`、`/profile`、`/agent-notes`、`/events/$id`、`/record`、`/practice`、`/drafts`、`/questions`、`/questions/$id`、`/knowledge`、`/knowledge/$id`、`/notes`、`/notes/$id`、`/coach`、`/admin/config`、`/admin/subjects`、`/admin/subjects/$id`。
 
-两项共享audit问题已在1359 comment `e34017ea-c07a-4166-93c9-0e9b53950bab`由主线接管：18条历史保留字段豁免过期与生成dist/start误扫。该修复已由PR1618合main ec9a9ed5e，1391本树整合复验尚待；不扩trait范围、不延豁免。清点更新登记在comment `ebbe0ce9-5732-4ccb-8f5f-08105729fc6f`。本次仅更新退出证据，无runtime、provider、队列或数据操作。
+两项共享audit问题已在1359 comment `e34017ea-c07a-4166-93c9-0e9b53950bab`由主线接管：18条历史保留字段豁免过期与生成dist/start误扫。该修复已由PR1618合main ec9a9ed5e，并由1391本树450unit/static/build及保留dist的四audit实际复验通过；未扩trait范围或延豁免。清点更新登记在comment `ebbe0ce9-5732-4ccb-8f5f-08105729fc6f`。本次仅更新退出证据，无runtime、provider、队列或数据操作。1359曾被标为Done，已纠正In Progress；共享audit修复不完成整条退出任务。
 
 ## 历史调查记录
 

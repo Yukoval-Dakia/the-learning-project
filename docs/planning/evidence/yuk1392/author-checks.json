@@ -1,0 +1,127 @@
+{
+  "base_head": "5fa9d189117c5db3dc41023867012fa8a615cd40",
+  "main_base": "f80d47703ffbcb6f8db488a10dd0a705a6fee601",
+  "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage",
+  "node": "24.19.0",
+  "pnpm": "11.13.1",
+  "source_sha256": {
+    "src/capabilities/agency/api/notes.ts": "ff2369b7f3d110e33078afd12b943445f4aee99905fba39ffbffbc7b51f5dc83",
+    "src/capabilities/agency/public.ts": "96436421a081bada6ec0332607041c5fd1ffbc0f2411dcf9d8e517d2124970c4",
+    "src/capabilities/agency/server/note-board-read.ts": "afc5e2c2010c5f3bad8bec52be3cf6835b80f7bf4c77acdb34426b17cd5b14e8",
+    "src/capabilities/agency/server/note-board-read.unit.test.ts": "48ecf97c70ae455b45e332737d1306e485b51f5d4296d0eb06cd0417ab764591",
+    "src/capabilities/agency/server/note-board-read.db.test.ts": "f70012a0810ee668e50799c215c37d7c1c44ac9c47b91be6e73e9d0a8158f6fb",
+    "src/capabilities/agency/server/notes.ts": "bc58e2d41f98ec7733ed6c5a8d84d69a8366135cf6f23aed3064fe7e9a5b8050",
+    "src/capabilities/agency/api/contracts.ts": "100e56de412b9182bfa210b6662b2844c24951e9813c98483be34f1597e7d199",
+    "docs/planning/2026-10-09-yuk1392-agent-note-board-read.md": "080ada6816d0a0b07e9a8396b13c904623150426f7fb6f522a8202b8cce7059d"
+  },
+  "commands": [
+    {
+      "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm vitest run --config vitest.unit.config.ts src/capabilities/agency/server/note-board-read.unit.test.ts",
+      "exit": 0,
+      "log": "/tmp/yuk1392-evidence/scoped-unit-final.log",
+      "log_sha256": "b76b9b999716a52e5fa017d82fb4e0e50c0aa65ea2bf5b490f9ed856d6ba4538"
+    },
+    {
+      "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm typecheck",
+      "exit": 0,
+      "log": "/tmp/yuk1392-evidence/typecheck-final.log",
+      "log_sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm lint",
+      "exit": 0,
+      "log": "/tmp/yuk1392-evidence/lint-final.log",
+      "log_sha256": "8bc7545cf11992c0fbaf91f8fdf8c7fb963fd7377345b8b6eb694f9a63b4b2e1"
+    },
+    {
+      "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm build",
+      "exit": 0,
+      "log": "/tmp/yuk1392-evidence/build.log",
+      "log_sha256": "81da48555d2faa0c64aa21b37b4d3d73f2938e0c73843f67ce061d0939400751"
+    },
+    {
+      "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:api-contracts",
+      "exit": 0,
+      "log": "/tmp/yuk1392-evidence/api-contracts.log",
+      "log_sha256": "2fcb1d9cd8395bc3661f8e35135444ec73a34d0ca7a0320f1507c9429782ce2b"
+    },
+    {
+      "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:api-client",
+      "exit": 0,
+      "log": "/tmp/yuk1392-evidence/api-client.log",
+      "log_sha256": "f26bc904f865f0cc5a1a1613ea5d4017d46fdab55aceaf8eb0a831aedd0cea7c"
+    },
+    {
+      "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:api-client-usage",
+      "exit": 0,
+      "log": "/tmp/yuk1392-evidence/api-client-usage.log",
+      "log_sha256": "71c2c93dd9e51bd4fc368e7845a5a34d42b2b56cf97e4dcf94a8556a99f45b46"
+    },
+    {
+      "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:partition",
+      "exit": 0,
+      "log": "/tmp/yuk1392-evidence/partition.log",
+      "log_sha256": "6c358a831dccaec9713f10272e0e3ce22b8ba468a0adb2d68797bb951486a213"
+    },
+    {
+      "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:capability-boundaries",
+      "exit": 0,
+      "log": "/tmp/yuk1392-evidence/capability-boundaries.log",
+      "log_sha256": "484405f1ec91a3f4ecfc833a00e772ba72da3c35e9ebef7b3ebcff730f89f21f"
+    },
+    {
+      "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:architecture-deepening",
+      "exit": 0,
+      "log": "/tmp/yuk1392-evidence/architecture-deepening.log",
+      "log_sha256": "d1a6f60f0f92a978a8563df20e2f32445018649c7253dcc8e78f3b1b6b7b161e"
+    },
+    {
+      "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:schema",
+      "exit": 0,
+      "log": "/tmp/yuk1392-evidence/schema.log",
+      "log_sha256": "1da95684f16a66c4937d90ab408b2124b58bf3853a4a89bd1b7bf388b57a9715"
+    },
+    {
+      "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:draft-status",
+      "exit": 0,
+      "log": "/tmp/yuk1392-evidence/draft-status.log",
+      "log_sha256": "de3569839d7a890654a591c9c6b77334b1031fa56e3ecedef457f132dd24eb8d"
+    },
+    {
+      "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm audit:draft-status-reads --strict",
+      "exit": 0,
+      "log": "/tmp/yuk1392-evidence/draft-status-reads.log",
+      "log_sha256": "e66de1dec9301b12b7a7c565b4a465e9ab023874b0e43e15d6b031dfdf875ae2"
+    },
+    {
+      "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm gen:postman",
+      "exit": 0,
+      "log": "/tmp/yuk1392-evidence/postman.log",
+      "log_sha256": "3aaa19807ed6f0270b0c336b21a857618af66e696d351ca7ae870f0bd2f66a25"
+    }
+  ],
+  "earlier_failures": [
+    {
+      "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm typecheck",
+      "exit": 1,
+      "log": "/tmp/yuk1392-evidence/typecheck.log",
+      "reason": "unit fixture unknown extension type corrected"
+    },
+    {
+      "command": "PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm lint",
+      "exit": 1,
+      "log": "/tmp/yuk1392-evidence/lint.log",
+      "reason": "owned DB fixture formatting corrected"
+    }
+  ],
+  "db_tests_executed": false,
+  "live_network_acceptance": false,
+  "parent_acceptance_pending": true,
+  "commit": "1f012c62d09dfbebb260e75d5fc1d10f13415f03",
+  "commit_command": "git commit --only -m \"feat(YUK-1392): expose shared agent-note board read\" -- src/capabilities/agency/api/notes.ts src/capabilities/agency/public.ts src/capabilities/agency/server/note-board-read.ts src/capabilities/agency/server/note-board-read.unit.test.ts src/capabilities/agency/server/note-board-read.db.test.ts docs/planning/2026-10-09-yuk1392-agent-note-board-read.md",
+  "commit_exit": 0,
+  "commit_log": "/tmp/yuk1392-evidence/commit.log",
+  "final_status": " M docs/planning/2026-10-07-non-ui-migration-priority.md\n M docs/planning/2026-10-07-yuk1359-exit-inventory.md\n?? docs/planning/2026-10-09-yuk1359-next-dbos-family.md\n",
+  "owned_files_clean": true,
+  "writer_released": true
+}

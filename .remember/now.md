@@ -4,6 +4,8 @@
 
 本线程承担用户整个迁移交付责任；57961995是Start集成/发布协作线程。1358/1359仍未完成；本轮实查1359误为Done已纠正In Progress。新票1392 UUID371ea7d0-4cee-45c4-9f87-407c5270e0ab，freshmain分支feat/yuk-1392-agent-note-board-read，原树clean后切换。范围agency/api/notes.ts、public.ts、必要ISO DTO seam/tests/docs，原selector/contracts默认只读。唯一作者仅source/scopedunit/static/build；父负责独立review/持锁DB/PR。无runtime锁或服务操作。
 
+1392当前源码1f012c62d，作者completed/noPending且writer释放。父8source/14log SHA一致，13unit/22DB实跑通过；16:53:28.070847Z已核tokend8d6释放锁，原4容器/release完全不变。R1 task yuk1392-board-read-review-r1-20261009 running，只读。父3份1359 docs WIP和证据待提交，准备draft PR/exact CI。下一DBOS族只读调查已交，推荐prune_orphan_review_sessions，固定tick/锁内资格/reopen和唯一lifecycle待1392收口后精确定界，不已实施。
+
 以下为保留的历史交接。
 
 # 当前交接 — YUK1391 trait六操作，2026-10-09 JST

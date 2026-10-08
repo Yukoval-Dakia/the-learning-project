@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：1391/PR1617已合main f80d47703，exact CI/R1/本地门禁通过；1392接agent-note board公共读取。1358/1359未完成，未部署。
+> Linear 是权威 tracker。2026-10-09 JST：1391/PR1617已合main f80d47703，exact CI/R1/本地门禁通过；1392公共读取已交1f012c62d，父13unit/22DB通过，R1/exact CI待。1358/1359未完成，未部署。
 
 ## NOW
 
@@ -8,7 +8,7 @@
 
 - **YUK-1391 / 已合入**：PR1617于16:32:22Z合main f80d47703，tree与exact 2fb1f4c4e一致；CI37808241557全绿、R1 NONE、threads0。450unit/static/build/四post-build audit与55实际DB证据保留，已unwatch/Linear Done，无部署。
 
-- **YUK-1392 / agent-note board读取**：已查重建1358子票，从fresh main f80d47703单writer实施。仅agency notes API/public/ISO DTO与scopedtests；复用unfiltered readAgentNoteBoardRows，默认20/>200拒绝、Tx/时钟和完整HTTP合同保持。Start集成线程5796负责页面调用，本线程负责领域交付及整体退出证据。
+- **YUK-1392 / agent-note board读取**：已查重建1358子票，从fresh main f80d47703单writer实施。已交1f012c62d，作者static/build/audits与父13unit/22DB通过，16:53:28Z核owner释放DB锁，原runtime不变。R1/exact CI待；仅agency notes API/public/ISO DTO与scopedtests，Start消费仍归5796。
 
 - **YUK-1390 / 已合入**：PR1616于14:55:48Z合main7b8904179，tree与exact bec86e4e5一致；CI37794964900全绿、独立R1 NONE、threads0，60unit/父42DB/static/build通过。已unwatch/Linear Done/通知主线；未部署。
 
