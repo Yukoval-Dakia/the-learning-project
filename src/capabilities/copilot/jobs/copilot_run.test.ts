@@ -90,7 +90,7 @@ type AgentCtx = {
   signal?: AbortSignal;
   lifecycleAbortController?: AbortController;
   allowedTools?: string[];
-  budgetOverride?: { maxIterations?: number; timeoutMs?: number };
+  budgetOverride?: { maxIterations?: number | 'unbounded'; timeoutMs?: number };
   sdkSession?: { persist: boolean; resume?: string };
   providerSessionDeadlineAt?: number;
   piToolMounts?: PiToolMount[];
@@ -874,9 +874,8 @@ describe('runCopilotRun', () => {
     ]) {
       expect(ctx.allowedTools).not.toContain(`mcp__loom__${legacyControl}`);
     }
-    expect(ctx.piAgents?.['copilot-researcher']).toMatchObject({
-      maxTurns: DURABLE_BUDGET.maxIterations,
-    });
+    // Uncapped root turns → the nested researcher carries no maxTurns either.
+    expect(ctx.piAgents?.['copilot-researcher']).not.toHaveProperty('maxTurns');
     const researcherTools = ctx.piAgents?.['copilot-researcher']?.tools ?? [];
     expect(researcherTools).toContain('mcp__loom__query_events');
     expect(researcherTools).not.toContain('Task');

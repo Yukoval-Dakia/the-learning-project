@@ -279,7 +279,7 @@ describe('writeKnowledgeProposeEvent', () => {
     expect(rows[0]?.action).toBe('propose');
     expect(rows[0]?.subject_kind).toBe('knowledge');
     expect(rows[0]?.outcome).toBe('partial');
-    expect((rows[0]?.payload as Record<string, unknown>).name).toBe('通假字');
+    expect((rows[0]?.payload as Record<string, unknown> | undefined)?.name).toBe('通假字');
   });
 
   it('writes archive proposals through the shared ai_proposal envelope', async () => {
@@ -297,15 +297,46 @@ describe('writeKnowledgeProposeEvent', () => {
     expect((payload.ai_proposal as { kind?: string }).kind).toBe('archive');
   });
 
-  it('rejects propose_new with parent_id=null', async () => {
+  it('writes a root propose event when parent_id=null carries a domain', async () => {
+    const db = testDb();
+    const id = await writeKnowledgeProposeEvent(db, {
+      payload: {
+        mutation: 'propose_new',
+        name: 'English',
+        parent_id: null,
+        domain: 'english',
+      },
+      reasoning: 'new subject root',
+    });
+    const rows = await db.select().from(event).where(eq(event.id, id));
+    expect(rows[0]?.action).toBe('propose');
+    const payload = rows[0]?.payload as Record<string, unknown>;
+    expect(payload.parent_id).toBeNull();
+    expect(payload.domain).toBe('english');
+  });
+
+  it('rejects propose_new with parent_id=null and no domain', async () => {
     const db = testDb();
     await expect(
       writeKnowledgeProposeEvent(db, {
         payload: { mutation: 'propose_new', name: 'x', parent_id: null },
         reasoning: 'r',
       }),
-    ).rejects.toThrow(/parent_id=null/i);
+    ).rejects.toThrow(/domain/i);
   });
+
+  it.each(['general', '  '])(
+    'rejects a root proposal anchored on %j (fallback identity is not a node domain)',
+    async (domain) => {
+      const db = testDb();
+      await expect(
+        writeKnowledgeProposeEvent(db, {
+          payload: { mutation: 'propose_new', name: 'x', parent_id: null, domain },
+          reasoning: 'r',
+        }),
+      ).rejects.toThrow(/domain/i);
+    },
+  );
 });
 
 describe('prepareProposedKnowledgeId', () => {
@@ -327,11 +358,35 @@ describe('prepareProposedKnowledgeId', () => {
     expect(await db.select().from(event)).toEqual([]);
   });
 
-  it('rejects propose_new with parent_id=null (PR A single-domain scope)', async () => {
+  it('mints a root id for parent_id=null when a domain anchors it', async () => {
+    const db = testDb();
+    const id = await prepareProposedKnowledgeId(db, {
+      mutation: 'propose_new',
+      name: 'English',
+      parent_id: null,
+      domain: 'english',
+    });
+    expect(id).toMatch(/^[a-z0-9]+$/);
+    expect(await db.select().from(knowledge).where(eq(knowledge.id, id))).toEqual([]);
+  });
+
+  it('rejects propose_new root creation without a domain', async () => {
     const db = testDb();
     await expect(
       prepareProposedKnowledgeId(db, { mutation: 'propose_new', name: 'x', parent_id: null }),
-    ).rejects.toThrow(/root creation.*not supported/i);
+    ).rejects.toThrow(/domain/i);
+  });
+
+  it('rejects propose_new root creation on the fallback identity (general)', async () => {
+    const db = testDb();
+    await expect(
+      prepareProposedKnowledgeId(db, {
+        mutation: 'propose_new',
+        name: 'x',
+        parent_id: null,
+        domain: 'general',
+      }),
+    ).rejects.toThrow(/domain/i);
   });
 
   it('rejects propose_new when parent_id does not exist in knowledge', async () => {

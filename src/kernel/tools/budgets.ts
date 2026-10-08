@@ -41,10 +41,18 @@ export interface ContextBudget {
 // CB-2 / YUK-290 — the original limits are advisory warning watermarks. The
 // higher hard limits exist only to stop accidental context bloat/runaway loops;
 // crossing warning never rewrites tool args or stops execution.
+//
+// Owner directive (root-node/uncapped-budget work): Copilot carries NO spend
+// ceilings — hard thresholds are set to the largest safe integer so the tracker's
+// clamp/soft-stop machinery still runs but can never bite. The warning watermarks
+// stay: they still surface `context_budget` notices that let the model see its
+// usage. MAX_SAFE_INTEGER (not Infinity) keeps the values JSON-serializable in
+// tool outputs and tool_call_log.
+const UNCAPPED_HARD_LIMIT = Number.MAX_SAFE_INTEGER;
 export const COPILOT_CONTEXT_BUDGET: ContextBudget = {
-  toolCalls: { warning: 10, hard: 25 },
-  nodesPlusEdges: { warning: 250, hard: 1000 },
-  eventRows: { warning: 1000, hard: 4000 },
+  toolCalls: { warning: 10, hard: UNCAPPED_HARD_LIMIT },
+  nodesPlusEdges: { warning: 250, hard: UNCAPPED_HARD_LIMIT },
+  eventRows: { warning: 1000, hard: UNCAPPED_HARD_LIMIT },
   maxExcerptChars: 180,
 };
 

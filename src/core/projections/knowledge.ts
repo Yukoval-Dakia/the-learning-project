@@ -289,7 +289,7 @@ export function foldKnowledgeNode(
       const name = payload.name;
       const parent_id = typeof payload.parent_id === 'string' ? payload.parent_id : null;
       if (parent_id === null) continue;
-      row = createRow(fe.subject_id, name, parent_id, fe.created_at);
+      row = createRow(fe.subject_id, name, parent_id, null, fe.created_at);
       continue;
     }
 
@@ -303,7 +303,13 @@ export function foldKnowledgeNode(
       }
       const createdId = materializedKnowledgeByProposeId.get(fe.id)?.[0];
       if (!createdId || createdId !== nodeId) continue;
-      row = createRow(createdId, p.data.payload.name, p.data.payload.parent_id, at);
+      row = createRow(
+        createdId,
+        p.data.payload.name,
+        p.data.payload.parent_id,
+        p.data.payload.domain ?? null,
+        at,
+      );
       continue;
     }
 
@@ -405,7 +411,7 @@ export function foldKnowledgeNode(
               if (minted[i] !== nodeId) continue;
               const entry = change.into[i];
               if (entry.parent_id === null) continue;
-              row = createRow(nodeId, entry.name, entry.parent_id, at);
+              row = createRow(nodeId, entry.name, entry.parent_id, null, at);
             }
           }
           break;
@@ -419,14 +425,22 @@ export function foldKnowledgeNode(
 
 // createRow — the canonical projected shape an applyProposeNew / applySplit /
 // auto_tag create produces. approval_status is ALWAYS 'approved' (the only value
-// the appliers write). domain null, merged_from [], proposed_by_ai true, version
+// the appliers write). merged_from [], proposed_by_ai true, version
 // 0, created_at === updated_at === the event time. EXCLUDES embed_* (derived
 // maintenance state, not structural truth — KnowledgeRowSnapshot omits them).
-function createRow(id: string, name: string, parent_id: string, at: Date): KnowledgeRowSnapshotT {
+// `domain` is the root anchor: null for child rows (effective domain resolves
+// root-ward), the declared domain string for parent_id=null root proposals.
+function createRow(
+  id: string,
+  name: string,
+  parent_id: string | null,
+  domain: string | null,
+  at: Date,
+): KnowledgeRowSnapshotT {
   return {
     id,
     name,
-    domain: null,
+    domain,
     parent_id,
     merged_from: [],
     archived_at: null,

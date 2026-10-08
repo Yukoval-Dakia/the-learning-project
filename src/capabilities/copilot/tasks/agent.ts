@@ -24,9 +24,11 @@ export const copilotTaskSpec = {
     description:
       'AF S4 / YUK-203 — the single user-facing conversational agent (teach / solve / explain / critique / plan / inspect). The chat endpoint resolves the per-request DomainTool allowlist surface (`copilot` for free-form chat, `copilot_user_suggested_mistake_action` for chip-direct-trigger); teaching/solve skills compose TeachingTurnTask at the service layer, never adding tools to this surface.',
     // YUK-944: use the existing 90s inline request envelope instead of a hidden
-    // 60s task cliff. Startup still consumes the route's absolute deadline;
-    // six turns, foreground ownership and authoritative SDK completion remain.
-    // Durable execution supplies its own bounded override via the shared owner.
+    // 60s task cliff. Startup still consumes the route's absolute deadline.
+    // The durable owner overrides this registry budget entirely — Copilot turns
+    // are uncapped ('unbounded' iterations; the 45-minute owner timeout is the
+    // only execution bound). The 6/90s values here are the inert registry
+    // contract fallback: no caller invokes CopilotTask without the override.
     defaultProvider: 'xiaomi',
     defaultModel: 'mimo-v2.5-pro',
     budget: { ...DEFAULT_BUDGET, maxIterations: 6, timeout: 90_000 },

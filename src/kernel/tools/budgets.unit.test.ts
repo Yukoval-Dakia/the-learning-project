@@ -17,11 +17,14 @@ import {
 // P5.1 / YUK-143 — budget-constant snapshot test (spec §7). Locks the numbers
 // so any future tuning is a deliberate, reviewed change rather than an accident.
 describe('context budgets — locked constants', () => {
-  it('COPILOT_CONTEXT_BUDGET matches the spec CB-2 numbers', () => {
+  // YUK-1373 — owner directive removed Copilot spend ceilings: hard thresholds
+  // are pinned at MAX_SAFE_INTEGER (inert but JSON-serializable); the warning
+  // watermarks stay as advisory telemetry.
+  it('COPILOT_CONTEXT_BUDGET is uncapped (advisory warnings only)', () => {
     expect(COPILOT_CONTEXT_BUDGET).toEqual({
-      toolCalls: { warning: 10, hard: 25 },
-      nodesPlusEdges: { warning: 250, hard: 1000 },
-      eventRows: { warning: 1000, hard: 4000 },
+      toolCalls: { warning: 10, hard: Number.MAX_SAFE_INTEGER },
+      nodesPlusEdges: { warning: 250, hard: Number.MAX_SAFE_INTEGER },
+      eventRows: { warning: 1000, hard: Number.MAX_SAFE_INTEGER },
       maxExcerptChars: 180,
     });
   });

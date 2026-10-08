@@ -5,7 +5,12 @@ import type { TaskBudget, TaskDefinition } from './task-spec';
 
 /** Caller-owned durable limits take precedence over the hot task configuration. */
 export interface TaskBudgetOverride {
-  readonly maxIterations?: number;
+  /**
+   * `'unbounded'` (durable copilot only) removes the agentic-turn ceiling: the
+   * pi lane then mounts no `shouldStopAfterTurn`, so only Stop/cancellation/
+   * timeoutMs end the loop. Configured/default budgets stay finite numbers.
+   */
+  readonly maxIterations?: number | 'unbounded';
   readonly timeoutMs?: number;
 }
 

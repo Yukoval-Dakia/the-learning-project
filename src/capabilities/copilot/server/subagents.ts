@@ -44,8 +44,9 @@ const COPILOT_RESEARCHER_PROMPT = `你是 Copilot 在后台派出的聚焦研究
 export interface BuildCopilotSubagentsOptions {
   /** The exact top-level SDK allowlist. The nested tools are filtered from it, never widened. */
   parentAllowedTools: readonly string[];
-  /** Native child uses the enclosing live/Mission CopilotTask maxTurns ceiling. */
-  parentMaxTurns: number;
+  /** Native child inherits the enclosing CopilotTask turn ceiling; undefined =
+   *  parent is uncapped so the child's own loop carries no maxTurns either. */
+  parentMaxTurns: number | undefined;
 }
 
 /**
@@ -74,7 +75,7 @@ export function buildCopilotSubagents(
       prompt: COPILOT_RESEARCHER_PROMPT,
       tools,
       disallowedTools: [...new Set(disallowedTools)],
-      maxTurns: opts.parentMaxTurns,
+      ...(opts.parentMaxTurns !== undefined ? { maxTurns: opts.parentMaxTurns } : {}),
       // The parent needs the conclusion before it speaks in its single user-facing voice.
       background: false,
     },
@@ -84,7 +85,8 @@ export function buildCopilotSubagents(
 export interface BuildCopilotNativeResearchOptions {
   baseAllowedTools: readonly string[];
   enabled: boolean;
-  parentMaxTurns: number;
+  /** undefined = the root run is turn-uncapped; the researcher inherits that. */
+  parentMaxTurns: number | undefined;
   onBudgetObservation?: (observation: SpawnBudgetObservation) => void;
 }
 
