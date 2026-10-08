@@ -1,3 +1,7 @@
+# Judge implementation preparation
+
+Prior readonly operational-contract task completed/noPending. Parent verified32 inputs plus report hash and inspected actual activation settlement/recorded claim/resolution code. Accepted detailed contract is versioned in2026-10-09-yuk1356-judge-operational-contract.md. Source preflight22:35Z:77 registered/75 accessible; only unrelated1367 practice/tools WIP, explicitly excluded. No0118 across accessible trees; main96077 ends0117, reserve0118 and recheck before generation. Sole implementation task will use Codex gpt-6.1-sol xhigh, no runtime/DB/provider/install/push. Parent retains PLAN/now/tracker/runtime/review. No duplicate design agent.
+
 # Current handoff — PR1624 merged; judge branch prepared
 
 PR1624 merged2026-10-08T22:32:03Z as96077db1905ebab6a522b0ae36f9f22e26be5895. Exact a8800730b3c67667574bc44ec02edb7ed7800f78 CI37852269707 all green including4DB and aggregate; threads0. Fetch verified both trees a8bcf299050ed76c6cbd91ac4e98d266c395bf46 and empty diff. Unwatched;5796 notified formal main. Linear1394 Done; actual1355/1356/1358/1359 all In Progress. No deployment/runtime/lock.
