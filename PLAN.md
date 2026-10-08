@@ -1,12 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09：PR1621已合main e1f2ef6bb，正常整合至PR1622；仅PLAN/now冲突。Start观察已26RPC/T3浏览器验收，锁释放，整合后90unit/static/build及11audit通过，最终exact CI待。
+> Linear 是权威 tracker。2026-10-09 JST：YUK1394 final b9b CI暴露既有04:25排期冲突；父复现后将只读audit错峰04:26，保留两个orphan原时间及collision门禁。32unit/typecheck/lint/build通过，准备新exact CI；共享锁29DB/34进程证据保留，未部署，整迁移未完成。
 
 ## NOW
 
-- **YUK-1358 / Start观察读取**：freshmain10df、分支feat/yuk-1358-start-agent-notes。复用1392领域入口，保留Today20/全页50与本地已读，无数据库写操作。[范围与验收](docs/planning/2026-10-09-yuk1358-start-agent-notes.md)。作者127unit/10协议/static/build/10audits通过；父14DB通过且清理/释放锁。R1 NONE；CI两处陈旧数量断言已修，59unit通过。实际26RPC/10窗口与T3浏览器20/50、错误恢复、已读/深链/旧SPA跳转通过；3浏览器窗口88表/序列无写，已释放锁。[父验收](docs/planning/2026-10-09-yuk1358-start-agent-notes-parent.md)。封存后最终CI待。
-
-- **YUK-1393 / review orphan DBOS**：从main6aaf8ca89建独立branch，scope/设计提交c0870b0eb。唯一T3作者已completed/noPending并释放，提交a9d7c8322；父已核26源码SHA。实现家族、Review锁内helper、共享DBOS host/注册、schema0116与scopedtests。5796已核75树无冲突并预留0116。父33DB/10进程恢复/2cron/4旧prune/26migration与49unit/static/build/7audits通过，R1 NONE；驱动修正b33仅tests，原失败保留；源码授权不代表运行切换。见[实施设计](docs/planning/2026-10-09-yuk1393-review-orphan-dbos.md)。
+- **YUK-1394 / conversation与placement orphan DBOS**：PR1624 final b9b的unit2唯一失败为既有audit/conversation同04:25；父原断言复现，现仅audit改04:26及补声明测试，32unit/static/build通过。新exact CI待推。共享锁1aeec父29DB/34进程、隔离删锁RED和旧cron/migration证据按revision保留；不冒称旧R2覆盖后续修复，无R3。旧binary仍须quiesce，当前无runtime锁。详见[父验收](docs/planning/2026-10-09-yuk1394-parent-acceptance.md)。
+- **YUK-1393已合入**：PR1621 exact3be966000 CI37829575046全绿，R1 NONE/threads0；main e1f2ef6bb与CI树均cad230a5，已unwatch/Linear Done。父原33DB/10进程恢复/2cron/4旧prune/26migration、49unit及fixture修复29DB/static/build证据保留。默认仍pg-boss，无部署；实际旧consumer退出仍是整迁移验收义务。
+- **YUK-1358 / Start观察读取已合入**：PR1622已合main6212a4560，exact0fbeb1f3f CI37831807097全绿、R1 NONE；26真实RPC/10窗口、T3浏览器和88表/序列无写证据见[父验收](docs/planning/2026-10-09-yuk1358-start-agent-notes-parent.md)。28路由中13显式Start（含root redirect）/15 fallback，仅静态覆盖计数；完整迁移与canonical boot未完成。5796接续events/$id，未合候选不提前计入。
 - **YUK-1358 / Start配置与科目消费者已合入**：PR1620于18:16:17Z合main10df1a471，tree与exact755bdeebb一致，CI37821989407全绿/R1 NONE/threads0。18操作122RPC/35窗口与三页浏览器证据见[父验收](docs/planning/2026-10-09-yuk1358-start-admin-controls-parent.md)。未部署；1358保持In Progress。5796独占接续1392 board、剩余Start路由和实际提交，本线程不写其活跃树。
 - **YUK-1359 / 整体退出证据**：7631对用户负责迁移协调和最终交付，维护W1–W5消费者清单。当前已交前门、错题、Today/Inbox主读取和五管理只读页；嵌套HTTP消费者、其余路由、任务族、旧SPA/pg-boss退出尚未齐备。按[退出清单](docs/planning/2026-10-07-yuk1359-exit-inventory.md)逐项验收，不能把公共出口或源码slice当整页完成。
 - **YUK-1356 / 复习竖切未完**：PR1605共享review操作/可信Pi原件入口及单次MiMo效果证据有效，但Start提交与判分DBOS族仍缺。17:02Z后直接读回Linear已恢复In Progress；未启动重复writer，不宣称judge_run已迁移。
@@ -14,9 +14,9 @@
 
 ## NEXT
 
-- PR1621已合main e1f2ef6bb，tree与exact3be966000一致、CI37829575046绿；原失败和29DB修复证据保留。父18:39:51Z核owner释放锁，原4服务/release不变；默认仍pg-boss，未部署。
-- YUK1394已查重建1355子票，独占conversation/placement六小时清理族；只读设计已完成并裁决共享family-keyed四表，1393收口后freshmain实施。共享scope已与5796确认；idle五分钟事件时钟另行处理。
-- 1355逐族迁移仍仅prune_job_events已交首族，1393是下一族。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。
+- YUK1394收口PR1624 exact CI并合并；随后fresh main沿既有YUK1356接judge_run与judge_pending_reconcile同族。5796已确认A/B/C/D精确scope无其writer冲突，Start/boot/shutdown仍归5796；迁移号届时核实。设计与ownership不是实施验收。
+
+- 1355已交prune_job_events与review orphan源码及隔离证据；1394接续两个session族。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。
 - 1358继续剩余路由/共享子树及三入口共用业务操作，保留现有确定性行为。1392公共board读取、1380事件读/纠错等已合接口由Start集成方接消费者，不复制领域规则。
 - 1359最终收口核对dev/build/Compose/镜像、全部旧消费者、任务/worker/依赖、配置与文档；Hono去留按ADR裁决，旧SPA回落不得永久保留。完成整迁移后再按实际缺口与查重结果交付Linear残留功能。
 - UI视觉重写暂缓；必要路由/数据接线仍是本轮迁移。UI恢复时沿owner模型限制；非UI按AGENTS选模，产品MiMo路由不因开发代理改变。
@@ -44,6 +44,6 @@
 
 ## BLOCKED-ON
 
-- 当前没有需要owner追加许可才能推进的已知阻塞。PR1621已合入；1394作者已启动且独占0117；子任务/CI仍运行属于等待，不把整迁移挂blocked。
+- 当前没有需要owner追加许可才能推进的已知阻塞。1393已合入，1394进入父级验收；子任务/CI仍运行属于等待，不把整迁移挂blocked。
 - runtime测试/发布在执行前必须实际核锁并原子获取，核owner/token清理释放；其他线程持锁时只推不冲突的源码工作。历史锁记录不能代表当前ownership。
 - 部署用途保持Agent开发测试，禁止再次清库、恢复私人数据或盲重放队列；日用部署须owner明确要求“为我日常使用的部署”。旧运行验收限制和未完成产品能力保存在归档及各原票，未被本次整理核销。

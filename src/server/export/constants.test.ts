@@ -69,6 +69,10 @@ describe('export constants', () => {
       'review_orphan_tick',
       'review_orphan_receipt',
       'review_orphan_disposition',
+      'session_orphan_control',
+      'session_orphan_disposition',
+      'session_orphan_receipt',
+      'session_orphan_tick',
     ]) {
       expect(BACKUP_EXCLUDED_TABLES.has(table)).toBe(true);
       expect(FK_ORDER).not.toContain(table);
@@ -370,6 +374,10 @@ describe('export constants', () => {
       'review_orphan_disposition',
       'review_orphan_receipt',
       'review_orphan_tick',
+      'session_orphan_control',
+      'session_orphan_disposition',
+      'session_orphan_receipt',
+      'session_orphan_tick',
       'subagent_run',
       'tool_operation',
     ]);

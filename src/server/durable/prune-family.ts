@@ -4,6 +4,7 @@ import type { PgBoss } from 'pg-boss';
 import { z } from 'zod';
 import type { Db } from '@/db/client';
 import { runPruneJobEvents } from '@/server/boss/handlers/prune_job_events';
+import { lockProducerFenceInstaller } from './producer-fence-lock';
 
 export const PRUNE_FAMILY = 'prune_job_events';
 export const PRUNE_DBOS_SCHEMA = 'tlp_dbos';
@@ -27,8 +28,9 @@ export async function hasRecentDbosPruneReceipt(db: Executor): Promise<boolean> 
 }
 
 export async function installPruneProducerFence(db: Db): Promise<void> {
-  // Transactional DDL. A separate advisory lock serializes concurrent worker boots.
+  // All families replace triggers on the same relations; retain the family lock too.
   await db.transaction(async (tx) => {
+    await lockProducerFenceInstaller(tx);
     await tx.execute(sql`select pg_advisory_xact_lock(1355, 1)`);
     for (const table of ['job', 'schedule']) {
       await tx.execute(sql.raw(`DROP TRIGGER IF EXISTS yuk1355_prune_producer ON pgboss.${table}`));

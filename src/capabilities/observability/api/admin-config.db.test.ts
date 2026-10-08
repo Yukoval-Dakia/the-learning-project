@@ -303,15 +303,18 @@ describe('GET /api/admin/config — injected runtime facts over HTTP (real build
       }),
     ]);
 
+    for (const [name, cron] of [
+      ['prune_orphan_conversation_sessions', '25 4 * * *'],
+      ['prune_orphan_placement_sessions', '35 4 * * *'],
+    ])
+      expect(body.schedules.rows.filter((r) => r.name === name)).toEqual([
+        expect.objectContaining({ source: 'capability-manifest', cron, tz: 'Asia/Shanghai' }),
+      ]);
+
     const bossRows = body.schedules.rows.filter((r) => r.source === 'server-boss-infra');
     // 队列名取真实常量（verify_dispatch_recover——verify-dispatch-outbox 导出）。
     expect(bossRows.map((r) => r.name).sort()).toEqual(
-      [
-        'prune_orphan_placement_sessions',
-        'promote_conversation_idle',
-        'prune_orphan_conversation_sessions',
-        VERIFY_DISPATCH_RECOVERY_QUEUE,
-      ].sort(),
+      ['promote_conversation_idle', VERIFY_DISPATCH_RECOVERY_QUEUE].sort(),
     );
     const memoryRows = body.schedules.rows.filter((r) => r.source === 'server-memory-infra');
     expect(memoryRows.map((r) => r.name).sort()).toEqual(

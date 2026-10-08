@@ -346,6 +346,11 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   'review_orphan_tick',
   'review_orphan_receipt',
   'review_orphan_disposition',
+  // Restore these with domain state, pg-boss and tlp_dbos in a consistent full-DB backup.
+  'session_orphan_control',
+  'session_orphan_tick',
+  'session_orphan_receipt',
+  'session_orphan_disposition',
   // Sub-0c golden E2E health-check fixture (HTTP enqueue → worker → SSE). Transient
   // echo-job state, not business data.
   'echo_jobs',

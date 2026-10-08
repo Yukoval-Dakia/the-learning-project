@@ -1,0 +1,124 @@
+{
+  "candidate": "1aeec5e366af2624c31ffe759780b63f24b92144",
+  "kind": "red-evidence.json",
+  "evidence": [
+    {
+      "first": "prune",
+      "second": "session",
+      "failDdl": false,
+      "pids": {
+        "first": 272,
+        "second": 273
+      },
+      "stage": "first-drop",
+      "advisory": [
+        {
+          "pid": 272,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 272,
+          "classid": "1355",
+          "objid": "1",
+          "objsubid": 2,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 272,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(1355, 1)"
+        },
+        {
+          "pid": 273,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_backend_pid() as pid"
+        }
+      ]
+    },
+    {
+      "first": "prune",
+      "second": "session",
+      "failDdl": false,
+      "pids": {
+        "first": 272,
+        "second": 273
+      },
+      "stage": "second-bypassed-lock",
+      "queries": {
+        "a": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1355, 1)",
+          "DROP TRIGGER IF EXISTS yuk1355_prune_producer ON pgboss.job"
+        ],
+        "b": [
+          "select pg_advisory_xact_lock(hashtextextended('session-orphan:v1:install', 0))",
+          "DROP TRIGGER IF EXISTS yuk1394_session_orphan_producer ON pgboss.job"
+        ]
+      },
+      "advisory": [
+        {
+          "pid": 272,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 272,
+          "classid": "1355",
+          "objid": "1",
+          "objsubid": 2,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        },
+        {
+          "pid": 273,
+          "classid": "694802182",
+          "objid": "3566495808",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 272,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(1355, 1)"
+        },
+        {
+          "pid": 273,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(hashtextextended('session-orphan:v1:install', 0))"
+        }
+      ]
+    }
+  ]
+}

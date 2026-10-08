@@ -1,3 +1,65 @@
+# Current update — YUK1394 CI cron collision repaired
+
+Exact b9b CI37850732224 unit2 failed only composition cron duplicate04:25,2409 passed. Parent local1RED/10passed reproduced. Historical main6212 infra conversation and manifest audit both04:25; moving the former revealed collision.5796 confirmed scope and no fixed-time dependency. Parent changed only audit to04:26, preserved orphan04:25/04:35 and unchanged collision guard. Added manifest contract test;3files32unit/typecheck/lint/build allpassed.27-row declaration catalog verified9sources,2knownchanged; frequent jobs still overlap minute26, noexclusive-runtime claim. No runtime/DB/provider, noR3. Prepare one newpush with existing local docs and evidence, then exactheadCI. Judge implementation entry680dc retained; nojudge writer beforeformal1394main. Earlier evidence remainsrevision-specific.
+
+# Current update — shared installer lock passed parent runtime checks
+
+HEAD1aeec5e366af2624c31ffe759780b63f24b92144, sole implementation completed/noPending, writer released. Parent25 hashes matched and inspected actual diff. Three installers use common short transaction advisory lock before family locks/DDL; business/host/schema unchanged. Oldbinaryquiescence remains mandatory. No R3; prior R2 only covers its original revision.
+
+Parent actual29DB across three files passed (six cross-family waiting pairs, three42883 rollback cases plus existing producers). Isolated archive removed only session commonlock: deterministicRED1fail/8unselected, second-bypassed-lock. First pnpm refused auto-purge and second unquoted name filter selected0; retained as driver failures, not accepted testresults. Fullsession/review/prune process files34/34passed, session21/75children16SIGKILL2expectedERROR, review35children,prune8children, all exited. Evidence /tmp/yuk1394-parent-fence-regression and versioned shared-fence-verification/green/red JSON.
+
+Deployment token833eaa33 safelyreleased21:57:31.631242Z; original4 ID/image/start/health/running/release unchanged. No liveownservices or runtime lock. Parenttypecheck/lint/build and sixpostbuildaudits allpassed. No activeexec or otherwriter. PR1624 final b9b019a3a0bfd655a618a0dc302796fadcaf1b6e was pushed and isReady/watched. ExactCI37850732224 was directly confirmed in_progress; headmatches,mergeable,reviewThreads0. Do notmergeuntil exactCI succeeds. Freshfetch origin/main6212 still,0incoming. Pending docs/JSON evidence edits parentowned.
+
+Next: awaitT3 exactCI notification, adjudicate any actual failure/finding thenmerge. No independent polling. Local handoff-only receipt changes after b9b are not pushed merely to resetCI. Notify5796formalmainfor1623. Wholemigration remainsactive. Judge next usesexisting1356 (comment83aa9179), Start/boot/shutdown5796; nojudgeimplementation/migrationnumberyet.
+
+Earlier handoff, superseded only where this update differs:
+
+# Current parent handoff — YUK1394 final review accepted, CI next
+
+Source is64d9f2eb62cec3cdb9ffbb7e3c189796e3b5cd30. PR1624 is linked and watched; final evidence is being committed with the already committed timezone-only repair for one final push. No local exec, DB, owned service or lock remains. Full old prune/review four files16/16 passed. Complete session cron at1ff5 had two real scenarios pass and the third timezone assertion fail. The test-only64d9 fix passed that case under Tokyo and UTC in separate disposable PGs. It did not rerun the unchanged two long scenarios. Typecheck, scoped Biome and earlier parent19unit/build/three audits passed. Last lock released21:13:51.836181Z with the original four containers, full running set and release unchanged.
+
+Sole R2 task yuk1394-session-orphans-verification-r2-20261009 completed/noPending. Both original fixture P1 findings are RESOLVED; remaining P0/P1 NONE. Parent independently matched full patch SHA b30800065725c50df59740e4a1a7ba510920dfaca52125fa668760ed7312d25a. Report is versioned in docs/planning/2026-10-09-yuk1394-review-r2.md. No R3. Exact-head CI remains required. Original old1393 first PostgreSQL cause remains unknown despite earliest-case and full-suite passes. No deployment or full migration acceptance.
+
+Judge design task completed/noPending with76 source hashes matched.5796 confirmed the proposed A/B/C/D judge scope and committed ownership handoff1712199f5, docs/planning/2026-10-09-judge-start-ownership.md. Parent read that exact Git object. Start, UI, canonical boot/shutdown and generic SSE stay outside the judge lane.1394 must deliver first; then fetch fresh main, inventory the migration number and start one writer. Existing1355 comment75be48f8 captures the design. No judge implementation or migration number yet.
+
+Earlier records are version-specific and do not override this status.
+
+# Current parent handoff — YUK1394 repaired fixture runtime
+
+Sole author completed/noPending and released clean1ff5ef70bf85c5091bd7035a81f8f3529f8506a2. Test-only repair3cec03813 adds nested SQL diagnostics and per-case worker cleanup;6d5d782c3 settles accepted legacy cron tasks and preserves all native/ledger history;1ff5 only checkpoints prior parent docs. Parent five-source/three-doc/log hashes match. Parent offline helper19/19, fullbuild exit0, earliest review selection-committed1pass/9unselected with real SIGKILL+concurrent recovery all children exited. Original first CI SQL cause remains unknown; no product fix claimed.
+
+Runtime mutex acquired20:48:30.277989Z by7631/YUK1394 token d6bc5144-e93c-466c-ad77-da14e947822c. Existing four healthy containers/release snapshot in /tmp/yuk1394-parent-fixture-recheck/before.json. Full retained prune/review four-file DB run completed16/16 exit0 in577s; all own resources exited and original4/release rechecked unchanged. Full session cron3case now running in freshPG, session24193, log session-cron.log; wait same live handle, never restart from timeout. On first failure preserve evidence then stop further runs and clean own resources; release helper verifies exact owner/token, original four and full running set/release. Session cron full three cases and sole R2 pending. No main deployment/provider/replay.
+
+Parent tracked docs WIP now includes updated1359 exit inventory and two main6212 evidence JSON files. Do not miscount unmerged1394/1623 as main coverage. R2 draft /tmp/yuk1394-parent-fixture-recheck/r2-brief-pending-runtime.md is not delegated; attach actual results first.5796 owns Start1623, cleanlocal95cf816b1 evidence, draft/unwatched old failedCI; expects exact formal fixSHA after validation. Wholemigration1355/1356/1358/1359 staysInProgress.
+
+Earlier records are revision-specific and do not override this status.
+
+# Current parent handoff — YUK1394 acceptance in progress
+
+Candidate823d5e09edbfdf1886d04625c89763a1bfe67242 on main6212. Implementation777bd38c5 plus normalmerge7e29, exact-seed audit6c934 and DBfixture repairs823. Writer completed/noPending; parent verified33author source/14logs/14artifacts and32repair hashes. Parent245unit/typecheck/lint/build/8postbuild audits pass. Initial11filesDB164/167 retained; repaired2files parent combined rerun34/34PASS. Scoped0117 migration4pass, actualprocess21pass with16SIGKILL/COMMIT ambiguity and genuinepredecessor recovery. Realcron first run1pass/1fail, placement other-family acceptedcreated task caused correctdrain rejection, fixture ack-only wait hidrejection. Original evidence retained; no rerun. Tokenae66c067 released20:26:41.040753Z after34DBrecheck, original4/release/running unchanged.5796 notified to takeeventwindow. R1 readonly task yuk1394-session-orphans-review-r1-20261009 running. Separate readonly yuk1394-review-orphan-ci-readonly-20261009-v1 investigates PR1623 CI37836413386 unchangedreview-orphan suite failure, no flaky assumption. Parentreport docs/planning/2026-10-09-yuk1394-parent-acceptance.md. No PR/CI/merge/deploy yet.5796 ownsStart eventPR1623 and awaits release for builtRPC/browser. Wholemigration remainsinprogress.
+
+# Current parent handoff — YUK1394 source received
+
+777bd38c58a68776a0e2d426764b6855d37a447d completed/noPending, writer released, clean. Parent verified33 source/14 log/14 artifact hashes. Normal merge main6212a4560 (PR1622 exact0fbeb1f3f tree a99b6bc6/CI37831807097 green); only PLAN/now conflicts, retain both histories below. Source50unit/static/build/7audits pass; audit:schema fixed migration-seed classification fails, parent owns minimal repair with scripts scope confirmed free by5796. DB/migration/process/cron and independent R1 NOT RUN. No runtime lock/resources here.5796 reports event DB15/15 and token e8d36e25 released19:59:59.877971Z; recheck actual lock before runtime. Event candidate PR1623 remains5796-owned and unmerged.
+
+Prior revision-specific handoffs follow; they do not override this status.
+
+# Current lane — YUK1394 implementation
+
+PR1621 merged main e1f2ef6bb7af15fc633ffea5c9909f0968ad99cd, exact3be CI37829575046 all green, tree cad230a5ad56548d61c48b6c62fb00d66a56dfb6 equal, R1 NONE/threads0/unwatched/1393Done. No runtime cutover. Fresh branch feat/yuk-1394-session-orphans-dbos; carried approved design commit619b as9774cf321. Actual77worktrees have no dirty authorized shared paths and no0117 files; main stops0116. Reserve0117 for this lane. Sole T3 implementation writer will use Codex gpt-6.1-sol xhigh, source/scopedunit/static/build only; parent owns DB/process/cron acceptance under mutex. No other code writer here.
+
+5796 explicitly released3593776b at19:15:34.481635Z after PR1622 built acceptance; this is an owner report, recheck actual lock before runtime. PR1622 final275628534 remains its owner review/CI/merge; do not update main route counts before merge. Parent owns PLAN/Linear/merge receipts; child owns1394 design implementation details.
+
+Earlier revision-specific records follow.
+
+# Local preparation after PR1621 repair push
+
+PR1621 remote head3be966000, watch active, exact CI pending. New1394 design document is a separate local-only commit prepared for the next branch; do not push it merely to refresh CI. Once1393 merges, fetch freshmain and normally carry this documentation commit to feat/yuk-1394-session-orphans-dbos. No implementation writer yet. Parent-approved scope and genuine predecessor artifacts are in docs/planning/2026-10-09-yuk1394-session-orphans-dbos.md. The design task is completed/noPending.
+
+5796 reports token3593776b held since19:07:14Z for Start18954 built acceptance; no release received. No DB/runtime work here until actual lock recheck and acquisition. The prior1393 test-only repair completed29DB/static/build and safely released22c at19:04:58Z.
+
+Earlier revision-specific records follow.
+
 # Current parent handoff — Start agent-note consumers
 
 PR1620 merged main10df1a471, exact755bdeebb tree/CI proof complete; receipt54aa893f2 carried as76924d8ee on fresh branchfeat/yuk-1358-start-agent-notes. Next only Today+agent-notes Start read consumers of delivered1392 public loadAgentNoteBoard. Scope in2026-10-09-yuk1358-start-agent-notes.md. Implementation3ac84e80e/evidencec10e11885 completed/noPending; parent19source/878artifact hashes matched. Author127unit/10protocol/static/build/10audits passed. After1393 released, parent3files14DB passed and released own tokenae362 at18:45:27.211772Z; original4/running/release unchanged. R1 completed/noPending NONE, parent diff SHA matched. Ignored recipe yuk1358-agent-notes-built-preparation-20261009-v1 remains independent. CI37826987461 failed eight tests only from two stale admin handoff counts; parent reproduced8RED and changed11 to12, then4files59GREEN/Biome0. Product19source/878artifact hashes unchanged. Exact8bfc CI37827927759 green. Parent actual26RPC/10windows and T3browser passed,3browserwindows all88public table/sequence unchanged; lock3593776b released19:15:34.481635Z, original4/running/release identical. Failed setup expected90vs88 preserved; migration-derived exact88-name inventory corrected in ignored recipe only. Canonicalboot/provider/deployment not covered. Full evidence start-agent-notes-parent.md; Normal merge f34e00328 includes main e1f2: only PLAN/now conflicts; all19 Start source and26 incoming non-doc files unchanged. Integrated90unit/typecheck/lint/build/11audits passed. Final pushed CI pending. Linear1358 found Done and restoredInProgress. 1394 writer owns0117 and session-orphan shared scope; no overlap. Parent owns docs/PR; no active product writer. Domain/jobs/schema/workflow/registrar untouched; no new competing selector or local-read DBwrite. Independent source review and future parent locked runtime acceptance required. Whole1358/1359 still InProgress.
@@ -29,10 +91,10 @@ YUK1394设计task已completed/noPending，父裁决已落Linear comment3d73a982�
 
 以下历史交接不覆盖当前状态。
 
-
 # Current parent handoff — 2026-10-09 Start controls
 
-PR1620 candidate75c0fa149: R1 completed/noPending NONE; CI37817401666 green. Parent integrated406unit/9protocol/static/build passed; DB evidence covers95distinct cases across original94pass+test-only7rerun, not101. Actual built resolver/installed client passed18operations/122calls/35windows plus refresh-only proof. T3 browser passed config receipt/failed-refresh/no-replay, two-tab stale CAS, COW and subject lifecycle. Nine browser DB comparisons assert expected effects across90tables/5sequences. Explicit T3host unavailable led to read-only Playwright fallback; journal UI first100 only, RPC206 pagination separate. No product change during acceptance. Runtime lock released2026-10-08T18:01:35.907845Z; original4/release unchanged, own app/PG removed, synthetic evidence/dump retained. See controls-parent.md and runtime-acceptance.json. Evidence755bdeebb CI37821989407全部成功；PR1620于2026-10-08T18:16:17Z squash合main10df1a47179fe2e368f5df1a538e1dd11cf9e6da，父fetch核tree一致，threads0，已unwatch。独立R1 NONE；bot均终止但skip/quota不计实际review。无部署。 Linear1358 falseDone restoredInProgress. DBOS1393/0116/sharedregistrar/DBjobfetch-depth0 reserved7631. Main remainsAgentTEST source5aa2/image9b76; no deploy/provider/replay. Remaining routes/canonicalboot/taskfamilies/legacyexit not complete.
+PR1620 candidate75c0fa149: R1 completed/noPending NONE; CI37817401666 green. Parent integrated406unit/9protocol/static/build passed; DB evidence covers95distinct cases across original94pass+test-only7rerun, not101. Actual built resolver/installed client passed18operations/122calls/35windows plus refresh-only proof. T3 browser passed config receipt/failed-refresh/no-replay, two-tab stale CAS, COW and subject lifecycle. Nine browser DB comparisons assert expected effects across90tables/5sequences. Explicit T3host unavailable led to read-only Playwright fallback; journal UI first100 only, RPC206 pagination separate. No product change during acceptance. Runtime lock released2026-10-08T18:01:35.907845Z; original4/release unchanged, own app/PG removed, synthetic evidence/dump retained. See controls-parent.md and runtime-acceptance.json. Evidence docs pending commit/newexactCI; no newreview or runtime needed. Linear1358 falseDone restoredInProgress. DBOS1393/0116/sharedregistrar/DBjobfetch-depth0 reserved7631. Main remainsAgentTEST source5aa2/image9b76; no deploy/provider/replay. Remaining routes/canonicalboot/taskfamilies/legacyexit not complete.
+
 
 # 当前交接 — YUK1392 agent-note board公共读取
 

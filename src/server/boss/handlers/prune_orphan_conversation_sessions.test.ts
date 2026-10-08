@@ -1,4 +1,5 @@
 import { eq } from 'drizzle-orm';
+import { PgBoss } from 'pg-boss';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { learning_session } from '@/db/schema';
@@ -6,6 +7,24 @@ import { Conversation } from '@/server/session';
 
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runPruneOrphanConversationSessions } from './prune_orphan_conversation_sessions';
+
+async function legacyTask() {
+  const boss = new PgBoss({
+    connectionString: process.env.TEST_DATABASE_URL,
+    schedule: false,
+    supervise: false,
+  });
+  boss.on('error', () => {});
+  await boss.start();
+  try {
+    await boss.createQueue('prune_orphan_conversation_sessions');
+    const jobId = await boss.send('prune_orphan_conversation_sessions', {});
+    if (!jobId) throw new Error('Missing real task UUID');
+    return { jobId };
+  } finally {
+    await boss.stop();
+  }
+}
 
 async function ageSession(sessionId: string, ageMs: number) {
   const db = testDb();
@@ -35,7 +54,7 @@ describe('runPruneOrphanConversationSessions', () => {
     await ageSession(old1, 7 * 60 * 60 * 1000);
     await ageSession(old2, 12 * 60 * 60 * 1000);
 
-    const result = await runPruneOrphanConversationSessions(db);
+    const result = await runPruneOrphanConversationSessions(db, await legacyTask());
     expect(result.abandoned).toBe(2);
 
     const rows = await db.select().from(learning_session);
@@ -51,7 +70,7 @@ describe('runPruneOrphanConversationSessions', () => {
     await Conversation.idleConversation(db, sessionId);
     await ageSession(sessionId, 7 * 60 * 60 * 1000);
 
-    const result = await runPruneOrphanConversationSessions(db);
+    const result = await runPruneOrphanConversationSessions(db, await legacyTask());
     expect(result.abandoned).toBe(1);
 
     const rows = await db
@@ -75,7 +94,7 @@ describe('runPruneOrphanConversationSessions', () => {
     await Conversation.abandonConversation(db, abandonedId, 'pagehide_explicit');
     await ageSession(abandonedId, 24 * 60 * 60 * 1000);
 
-    const result = await runPruneOrphanConversationSessions(db);
+    const result = await runPruneOrphanConversationSessions(db, await legacyTask());
     expect(result.abandoned).toBe(0);
 
     const ended = await db
@@ -91,7 +110,7 @@ describe('runPruneOrphanConversationSessions', () => {
     const { sessionId } = await Review.startReviewSession(db);
     await ageSession(sessionId, 7 * 60 * 60 * 1000);
 
-    const result = await runPruneOrphanConversationSessions(db);
+    const result = await runPruneOrphanConversationSessions(db, await legacyTask());
     expect(result.abandoned).toBe(0);
 
     const rows = await db
@@ -103,7 +122,7 @@ describe('runPruneOrphanConversationSessions', () => {
 
   it('returns abandoned=0 when no orphans', async () => {
     const db = testDb();
-    const result = await runPruneOrphanConversationSessions(db);
+    const result = await runPruneOrphanConversationSessions(db, await legacyTask());
     expect(result.abandoned).toBe(0);
     expect(result.skipped).toBe(0);
   });
