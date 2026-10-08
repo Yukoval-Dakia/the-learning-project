@@ -1,3 +1,7 @@
+# 当前活动 — YUK1387 subjects/traits公共读取，2026-10-08
+
+主线已授权且实核无重叠，父从最新origin/main6c6905fad建立feat/yuk-1387-subject-trait-domain-reads，携带1386交付记录073a580de。1358子票查重无重复；全局关键词两次传输错误如实记录，1387 UUID d85cc05a-8c4d-4033-a496-03ea2baba95c为InProgress。唯一writer将拥有admin-read.ts、四HTTP、observability/public与scoped tests及本lane文档；父拥有PLAN/now/Linear/PR/验收。无runtime动作，DB前重核锁并通知主线。基线/tmp/yuk1387-parent-baseline.json。Start/配置/写者/hydration不改。
+
 # 当前交接 — YUK1386已合入 / YUK1359退出证据，2026-10-08
 
 PR1611于12:48:38Z合入main6c6905fad01a3e7f7ea376afdad9d07d3a413d65。父fetch核tree7a6e28abca853638976201fb1ecaad453bd5d5a5与exact f7b84efc7相同；CI37778323336全绿、独立R1 P0/P1 NONE/noPending、reviewThreads0，已unwatch。两个advisory bot均已结束（CodeRabbit跳过、Codex额度拒绝），不是审查PASS。99unit/父24DB/static/build通过；1386限定领域slice Done。主线57961995已收到准确main SHA和observability/public中的loadCoverageLattice(Db|Tx,now?)与loadConjectureScores(Db|Tx)。Start挂载归主线。
