@@ -1,3 +1,9 @@
+# 当前交接 — PR1608整合事件领域main，2026-10-08
+
+1380 PR1607已11:35:32Z合入4a3d797dd，CI37769126069 exact812a0bf08全绿、R1 NONE、threads0，17min窗满。预计算与merge tree868b7e37一致，六个产品/测试blob保持；1380限定领域slice Done且unwatch，Start挂载交主线，未部署。当前docs/yuk-1359-w3-w4-consumers正常合入该main，仅PLAN/now冲突，保留两侧记录与产品字节。PR1608原f13289939 CI37770818294是docs fast-path成功，独立R1仍审查该精确文档diff；整合后须新head CI/build。1358/1359仍InProgress，W5待；当前无runtime/代码writer。
+
+以下为历史验收记录。
+
 # 当前交接 — YUK1380父DB验收，2026-10-08
 
 分支feat/yuk-1380-event-domain，实现8fde3e462，正常合入docs mainf335为0e21a034f。作者writer已completed/noPending，父核7hash、保护8文件不变及实际3文件23DB通过；28unit/static/build/partition通过。11:16:28Z核owner/token释放锁，临时PG退出，原4服务/release未变。独立R1任务yuk1380-event-domain-review-r1-20261008运行；PR/CI待。PR1606已合入f335、unwatch，1359保持In Progress。W3只读子任务completed/noPending，结果待父抽查落盘；W4部分只读笔记在/tmp。主线拥有Start/1356，本线程未部署。
