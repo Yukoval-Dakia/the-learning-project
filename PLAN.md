@@ -16,6 +16,8 @@
 
 ## NEXT
 
+- Judge后续共享文件归7631，在1394正式交付后freshmain单writer实施；Start路由/UI/boot仍5796独占。已核75可访问树所列路径无dirty、不占迁移号，见[交接边界](docs/planning/2026-10-09-judge-start-ownership.md)。
+
 - PR1621已合main e1f2ef6bb，tree与exact3be966000一致、CI37829575046绿；原失败和29DB修复证据保留。父18:39:51Z核owner释放锁，原4服务/release不变；默认仍pg-boss，未部署。
 - YUK1394已查重建1355子票，独占conversation/placement六小时清理族；只读设计已完成并裁决共享family-keyed四表，1393收口后freshmain实施。共享scope已与5796确认；idle五分钟事件时钟另行处理。
 - 1355逐族迁移仍仅prune_job_events已交首族，1393是下一族。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。

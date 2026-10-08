@@ -6,6 +6,8 @@ All owned Start/PG resources cleaned. Owner/token d3f35015 lock released2026-10-
 
 CI37836413386 exact4f36 failed old tests/dbos-review-orphan/migration.db.test.ts DB3 then aggregate. Coordinator7631 owns test-only PG-cause diagnostics/per-case cleanup and1394 cron fixtures; do not edit shared DBOS/test paths or blindly rerun CI. Wait formal repair, integrate, then exact-head CI. PR stays draft;1358/1359 stay InProgress. Current own work is evidence/docs only; entire migration not complete.
 
+Judge future ownership checked:75 accessible/77 registered trees have no dirty named shared paths;2 unavailable excluded. After1394 delivery7631 owns the bounded judge family and listed shared practice/AI/durable paths. This thread retains Start/UI/boot and receives practice/public readJudgeRunStatus with unchanged dispatch/202/status contract. No migration number reserved or judge writer started. See docs/planning/2026-10-09-judge-start-ownership.md.
+
 # PR1622 merge receipt
 
 PR1622已于2026-10-08T19:35:25Z squash合main6212a4560c68c294245dc3f3e10e4f774c6ff6f8，tree a99b6bc67301aafa1b705f81f14aaca71c567c8a与exact0fbeb1f3f相同、diff空；CI37831807097全绿，R1 NONE/threads0，已unwatch。整合90unit/static/build/11audits与原DB/RPC/browser证据分层保留，未部署；1358/1359继续InProgress，1394/0117仍7631独占。
