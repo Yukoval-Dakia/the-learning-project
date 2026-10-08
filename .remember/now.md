@@ -2,7 +2,7 @@
 
 候选b107113daff5b46ae0d40bf808c2b969a8b45371已交回，作者completed/noPending且释放writer。父核8hash/关键11保护文件无变化，176unit与static/build/audits日志；父13:39:27Z原子取锁tokenbfee2b87跑两份原config DB，48/48exit0。13:40:30.283142Z核owner清理并释放锁，原运行集合/4容器ID/image/start/health/releaseSHA不变。证据/tmp/yuk1389-parent-db.log及/tmp/yuk1389-db-cleanup.json。无provider/worker/replay/deploy。
 
-R1任务yuk1389-config-domain-review-r1-20261008只读运行；当前正常merge最新origin/main7682618，仅PLAN/now冲突，双方产品源码保留。整合验证与PR/exactCI未完成。主线已报告1609合并，独占后续Start admin消费者；本线程仅1389/1359。以下是按revision保留的历史记录，不覆盖当前状态。
+R1任务yuk1389-config-domain-review-r1-20261008只读运行；当前正常merge最新origin/main7682618，仅PLAN/now冲突，双方产品源码保留。整合b1450ae4a的176unit/typecheck/lint/build均exit0；PR/exactCI与R1仍待。主线已报告1609合并，独占后续Start admin消费者；本线程仅1389/1359。以下是按revision保留的历史记录，不覆盖当前状态。
 
 
 # 2026-10-08 current Start closeout

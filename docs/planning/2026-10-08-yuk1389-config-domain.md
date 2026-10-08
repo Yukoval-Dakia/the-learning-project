@@ -80,3 +80,5 @@ resetAdminConfig(input: unknown): Promise<AdminConfigWriteResult>;
 2026-10-08 exact b107113da父执行原config读写两份scoped DB，48/48通过exit0，日志/tmp/yuk1389-parent-db.log。13:39:27.892078Z原子取得隔离锁，13:40:30.283142Z核owner/token释放；临时PG退出，原运行集合及4容器ID/image/start/status/health、releaseSHA全同。证据/tmp/yuk1389-db-before.json与/tmp/yuk1389-db-cleanup.json。未操作主数据、provider、worker、replay或部署。
 
 随后fetch并正常整合main7682618，仅PLAN/now冲突，保留主线Start/Stop改动和本lane源码。R1只读进行；整合验证及exact-head CI仍待。
+
+整合提交b1450ae4a后，父重新执行6文件176unit、typecheck、lint和build，全部exit0。日志/tmp/yuk1389-integrated-{unit,typecheck,lint,build}.log。55个incoming main文件与main7682618、7个本lane源码/测试与b107113da逐blob相同，证据/tmp/yuk1389-integration-blobs.json。DB48项覆盖的是b107源码；整合未改该源码，CI还须在最终head运行全门禁。R1仍进行，未宣称通过。

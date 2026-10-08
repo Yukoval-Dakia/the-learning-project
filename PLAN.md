@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：YUK-1389候选b107113da父48DB通过，13:40:30Z核owner释放锁；正常整合PR1609/main7682618。R1进行，整合验证与exact CI待，未部署。
+> Linear 是权威 tracker。2026-10-08：YUK-1389候选b107113da父48DB通过，13:40:30Z核owner释放锁；正常整合PR1609/main7682618。整合176unit/static/build通过，R1与exact CI待，未部署。
 
 ## NOW
 
-- **YUK-1389 / 父验收与审查**：既有配置builder/schema/注入writer已共享public入口，原GET/PATCH/RESET实际消费。176 scoped unit/static/build/audits通过，父两份真实DB48/48；8文件hash与关键保护文件已核。R1只读进行，正常合入main7682618后重验；Start消费归主线，1358/1359保持In Progress。
+- **YUK-1389 / 父验收与审查**：既有配置builder/schema/注入writer已共享public入口，原GET/PATCH/RESET实际消费。176 scoped unit/static/build/audits通过，父两份真实DB48/48；8文件hash与关键保护文件已核。R1只读进行，正常合入main7682618后176unit/static/build亦通过；Start消费归主线，1358/1359保持In Progress。
 
 - **YUK-1358 / Start Today与Inbox**：PR1609已合入main7682618，主线报告exact d19bd52 CI37784537687全绿、R2 NONE、threads0，合并tree一致。Stop修复仅test，父73DB/497unit/7协议/static/build通过；先前1af5真实RPC/browser与2118新构建RPC证据保留各自范围。整个W1及残留HTTP消费者未完，主线接管理只读页；本线程不改其Start树。
 
