@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：YUK1394最终候选feb42087已推，R2原两项P1已解决；父取回旧CI37843803109发现session进程fixture另8项失败，DB3诊断已确认producer trigger启动40P01死锁，session仅afterAll清理。诊断1c999父单例通过但未复现，唯一产品writer正修共享短锁与确定性并发回归；不因新CI偶然绿跳过。未部署，整迁移未完成。
+> Linear 是权威 tracker。2026-10-09 JST：YUK1394共享installer锁修复1aeec父29DB/34进程回归通过，隔离删锁RED准确失败；21:57:31Z已释放锁且原四/release不变。正封证据、最终static/build与新exact CI；未部署，整迁移未完成。
 
 ## NOW
 
-- **YUK-1394 / conversation与placement orphan DBOS**：PR1624候选feb42087已恢复Draft，不能以偶然CI绿跳过死锁。原R2受审64d9剩余P0/P1 NONE；新取回旧CI中session migration21例13pass8fail，DB1首个并发startup DROP TRIGGER错误后续连带；DB3已捕40P01双向AccessExclusive锁等待，待实际关系映射/生产修复。诊断1c999父1case通过但未复现，不否定40P01。唯一实施task yuk1394-shared-producer-fence-lock-repair-20261009-v1修三个installer共同短事务锁及确定性DB回归，非第三审；父负责锁下验证。原167不同DB/migration4/process21/旧族16/双cron与双TZ证据按revision保留，不代替新失败裁决。无runtime锁/后端切换。详见[父验收](docs/planning/2026-10-09-yuk1394-parent-acceptance.md)。
+- **YUK-1394 / conversation与placement orphan DBOS**：PR1624仍Draft待最终push/CI。1aeec三个installer共同短事务锁经父29DB（含6并发顺序/3真实DDLrollback）及34进程回归通过；隔离删session锁RED拒绝second-bypassed-lock。诊断1c999已保留失败/逐例cleanup。旧R2两cron测试P1已解决，不冒称覆盖新增产品diff；父已实读新diff，无R3。原cron/migration证据按revision保留，旧binary仍须quiesce。当前无runtime锁，详见[父验收](docs/planning/2026-10-09-yuk1394-parent-acceptance.md)。
 - **YUK-1393已合入**：PR1621 exact3be966000 CI37829575046全绿，R1 NONE/threads0；main e1f2ef6bb与CI树均cad230a5，已unwatch/Linear Done。父原33DB/10进程恢复/2cron/4旧prune/26migration、49unit及fixture修复29DB/static/build证据保留。默认仍pg-boss，无部署；实际旧consumer退出仍是整迁移验收义务。
 - **YUK-1358 / Start观察读取已合入**：PR1622已合main6212a4560，exact0fbeb1f3f CI37831807097全绿、R1 NONE；26真实RPC/10窗口、T3浏览器和88表/序列无写证据见[父验收](docs/planning/2026-10-09-yuk1358-start-agent-notes-parent.md)。28路由中13显式Start（含root redirect）/15 fallback，仅静态覆盖计数；完整迁移与canonical boot未完成。5796接续events/$id，未合候选不提前计入。
 - **YUK-1358 / Start配置与科目消费者已合入**：PR1620于18:16:17Z合main10df1a471，tree与exact755bdeebb一致，CI37821989407全绿/R1 NONE/threads0。18操作122RPC/35窗口与三页浏览器证据见[父验收](docs/planning/2026-10-09-yuk1358-start-admin-controls-parent.md)。未部署；1358保持In Progress。5796独占接续1392 board、剩余Start路由和实际提交，本线程不写其活跃树。

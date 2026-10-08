@@ -1,0 +1,1530 @@
+{
+  "candidate": "1aeec5e366af2624c31ffe759780b63f24b92144",
+  "kind": "green-evidence.json",
+  "evidence": [
+    {
+      "first": "prune",
+      "second": "review",
+      "failDdl": false,
+      "pids": {
+        "first": 303,
+        "second": 304
+      },
+      "stage": "first-drop",
+      "advisory": [
+        {
+          "pid": 303,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 303,
+          "classid": "1355",
+          "objid": "1",
+          "objsubid": 2,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 303,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(1355, 1)"
+        },
+        {
+          "pid": 304,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_backend_pid() as pid"
+        }
+      ]
+    },
+    {
+      "first": "prune",
+      "second": "review",
+      "failDdl": false,
+      "pids": {
+        "first": 303,
+        "second": 304
+      },
+      "stage": "second-waits",
+      "queries": {
+        "a": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1355, 1)",
+          "DROP TRIGGER IF EXISTS yuk1355_prune_producer ON pgboss.job"
+        ],
+        "b": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))"
+        ]
+      },
+      "advisory": [
+        {
+          "pid": 303,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 303,
+          "classid": "1355",
+          "objid": "1",
+          "objsubid": 2,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        },
+        {
+          "pid": 304,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": false,
+          "common": true
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 303,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(1355, 1)"
+        },
+        {
+          "pid": 304,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "blockers": [303],
+          "query": "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))"
+        }
+      ]
+    },
+    {
+      "first": "prune",
+      "second": "review",
+      "failDdl": false,
+      "pids": {
+        "first": 303,
+        "second": 304
+      },
+      "stage": "released",
+      "status": "fulfilled",
+      "ddlFailure": null,
+      "queries": {
+        "a": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1355, 1)",
+          "DROP TRIGGER IF EXISTS yuk1355_prune_producer ON pgboss.job",
+          "CREATE TRIGGER yuk1355_prune_producer BEFORE INSERT OR UPDATE OF name ON pgboss.job FOR EACH ROW EXECUTE FUNCTION fence_prune_job_events_producer()",
+          "DROP TRIGGER IF EXISTS yuk1355_prune_producer ON pgboss.schedule",
+          "CREATE TRIGGER yuk1355_prune_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_prune_job_events_producer()"
+        ],
+        "b": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1393, 1)",
+          "DROP TRIGGER IF EXISTS yuk1393_review_orphan_producer ON pgboss.job",
+          "CREATE TRIGGER yuk1393_review_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.job FOR EACH ROW EXECUTE FUNCTION fence_review_orphan_producer()",
+          "DROP TRIGGER IF EXISTS yuk1393_review_orphan_producer ON pgboss.schedule",
+          "CREATE TRIGGER yuk1393_review_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_review_orphan_producer()"
+        ]
+      },
+      "advisory": [],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 303,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "commit"
+        },
+        {
+          "pid": 304,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "commit"
+        }
+      ]
+    },
+    {
+      "first": "prune",
+      "second": "session",
+      "failDdl": false,
+      "pids": {
+        "first": 313,
+        "second": 314
+      },
+      "stage": "first-drop",
+      "advisory": [
+        {
+          "pid": 313,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 313,
+          "classid": "1355",
+          "objid": "1",
+          "objsubid": 2,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 313,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(1355, 1)"
+        },
+        {
+          "pid": 314,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_backend_pid() as pid"
+        }
+      ]
+    },
+    {
+      "first": "prune",
+      "second": "session",
+      "failDdl": false,
+      "pids": {
+        "first": 313,
+        "second": 314
+      },
+      "stage": "second-waits",
+      "queries": {
+        "a": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1355, 1)",
+          "DROP TRIGGER IF EXISTS yuk1355_prune_producer ON pgboss.job"
+        ],
+        "b": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))"
+        ]
+      },
+      "advisory": [
+        {
+          "pid": 313,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 313,
+          "classid": "1355",
+          "objid": "1",
+          "objsubid": 2,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        },
+        {
+          "pid": 314,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": false,
+          "common": true
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 313,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(1355, 1)"
+        },
+        {
+          "pid": 314,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "blockers": [313],
+          "query": "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))"
+        }
+      ]
+    },
+    {
+      "first": "prune",
+      "second": "session",
+      "failDdl": false,
+      "pids": {
+        "first": 313,
+        "second": 314
+      },
+      "stage": "released",
+      "status": "fulfilled",
+      "ddlFailure": null,
+      "queries": {
+        "a": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1355, 1)",
+          "DROP TRIGGER IF EXISTS yuk1355_prune_producer ON pgboss.job",
+          "CREATE TRIGGER yuk1355_prune_producer BEFORE INSERT OR UPDATE OF name ON pgboss.job FOR EACH ROW EXECUTE FUNCTION fence_prune_job_events_producer()",
+          "DROP TRIGGER IF EXISTS yuk1355_prune_producer ON pgboss.schedule",
+          "CREATE TRIGGER yuk1355_prune_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_prune_job_events_producer()"
+        ],
+        "b": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(hashtextextended('session-orphan:v1:install', 0))",
+          "DROP TRIGGER IF EXISTS yuk1394_session_orphan_producer ON pgboss.job",
+          "CREATE TRIGGER yuk1394_session_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.job FOR EACH ROW EXECUTE FUNCTION fence_session_orphan_producer()",
+          "DROP TRIGGER IF EXISTS yuk1394_session_orphan_producer ON pgboss.schedule",
+          "CREATE TRIGGER yuk1394_session_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_session_orphan_producer()"
+        ]
+      },
+      "advisory": [],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 313,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "commit"
+        },
+        {
+          "pid": 314,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "commit"
+        }
+      ]
+    },
+    {
+      "first": "review",
+      "second": "prune",
+      "failDdl": false,
+      "pids": {
+        "first": 315,
+        "second": 316
+      },
+      "stage": "first-drop",
+      "advisory": [
+        {
+          "pid": 315,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 315,
+          "classid": "1393",
+          "objid": "1",
+          "objsubid": 2,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 315,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(1393, 1)"
+        },
+        {
+          "pid": 316,
+          "state": "idle",
+          "wait_event_type": null,
+          "wait_event": null,
+          "blockers": [],
+          "query": "select pg_backend_pid() as pid"
+        }
+      ]
+    },
+    {
+      "first": "review",
+      "second": "prune",
+      "failDdl": false,
+      "pids": {
+        "first": 315,
+        "second": 316
+      },
+      "stage": "second-waits",
+      "queries": {
+        "a": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1393, 1)",
+          "DROP TRIGGER IF EXISTS yuk1393_review_orphan_producer ON pgboss.job"
+        ],
+        "b": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))"
+        ]
+      },
+      "advisory": [
+        {
+          "pid": 315,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 315,
+          "classid": "1393",
+          "objid": "1",
+          "objsubid": 2,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        },
+        {
+          "pid": 316,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": false,
+          "common": true
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 315,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(1393, 1)"
+        },
+        {
+          "pid": 316,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "blockers": [315],
+          "query": "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))"
+        }
+      ]
+    },
+    {
+      "first": "review",
+      "second": "prune",
+      "failDdl": false,
+      "pids": {
+        "first": 315,
+        "second": 316
+      },
+      "stage": "released",
+      "status": "fulfilled",
+      "ddlFailure": null,
+      "queries": {
+        "a": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1393, 1)",
+          "DROP TRIGGER IF EXISTS yuk1393_review_orphan_producer ON pgboss.job",
+          "CREATE TRIGGER yuk1393_review_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.job FOR EACH ROW EXECUTE FUNCTION fence_review_orphan_producer()",
+          "DROP TRIGGER IF EXISTS yuk1393_review_orphan_producer ON pgboss.schedule",
+          "CREATE TRIGGER yuk1393_review_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_review_orphan_producer()"
+        ],
+        "b": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1355, 1)",
+          "DROP TRIGGER IF EXISTS yuk1355_prune_producer ON pgboss.job",
+          "CREATE TRIGGER yuk1355_prune_producer BEFORE INSERT OR UPDATE OF name ON pgboss.job FOR EACH ROW EXECUTE FUNCTION fence_prune_job_events_producer()",
+          "DROP TRIGGER IF EXISTS yuk1355_prune_producer ON pgboss.schedule",
+          "CREATE TRIGGER yuk1355_prune_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_prune_job_events_producer()"
+        ]
+      },
+      "advisory": [],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 315,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "commit"
+        },
+        {
+          "pid": 316,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "commit"
+        }
+      ]
+    },
+    {
+      "first": "review",
+      "second": "session",
+      "failDdl": false,
+      "pids": {
+        "first": 328,
+        "second": 330
+      },
+      "stage": "first-drop",
+      "advisory": [
+        {
+          "pid": 328,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 328,
+          "classid": "1393",
+          "objid": "1",
+          "objsubid": 2,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 328,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(1393, 1)"
+        },
+        {
+          "pid": 330,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_backend_pid() as pid"
+        }
+      ]
+    },
+    {
+      "first": "review",
+      "second": "session",
+      "failDdl": false,
+      "pids": {
+        "first": 328,
+        "second": 330
+      },
+      "stage": "second-waits",
+      "queries": {
+        "a": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1393, 1)",
+          "DROP TRIGGER IF EXISTS yuk1393_review_orphan_producer ON pgboss.job"
+        ],
+        "b": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))"
+        ]
+      },
+      "advisory": [
+        {
+          "pid": 328,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 328,
+          "classid": "1393",
+          "objid": "1",
+          "objsubid": 2,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        },
+        {
+          "pid": 330,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": false,
+          "common": true
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 328,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(1393, 1)"
+        },
+        {
+          "pid": 330,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "blockers": [328],
+          "query": "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))"
+        }
+      ]
+    },
+    {
+      "first": "review",
+      "second": "session",
+      "failDdl": false,
+      "pids": {
+        "first": 328,
+        "second": 330
+      },
+      "stage": "released",
+      "status": "fulfilled",
+      "ddlFailure": null,
+      "queries": {
+        "a": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1393, 1)",
+          "DROP TRIGGER IF EXISTS yuk1393_review_orphan_producer ON pgboss.job",
+          "CREATE TRIGGER yuk1393_review_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.job FOR EACH ROW EXECUTE FUNCTION fence_review_orphan_producer()",
+          "DROP TRIGGER IF EXISTS yuk1393_review_orphan_producer ON pgboss.schedule",
+          "CREATE TRIGGER yuk1393_review_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_review_orphan_producer()"
+        ],
+        "b": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(hashtextextended('session-orphan:v1:install', 0))",
+          "DROP TRIGGER IF EXISTS yuk1394_session_orphan_producer ON pgboss.job",
+          "CREATE TRIGGER yuk1394_session_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.job FOR EACH ROW EXECUTE FUNCTION fence_session_orphan_producer()",
+          "DROP TRIGGER IF EXISTS yuk1394_session_orphan_producer ON pgboss.schedule",
+          "CREATE TRIGGER yuk1394_session_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_session_orphan_producer()"
+        ]
+      },
+      "advisory": [],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 328,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "commit"
+        },
+        {
+          "pid": 330,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "commit"
+        }
+      ]
+    },
+    {
+      "first": "session",
+      "second": "prune",
+      "failDdl": false,
+      "pids": {
+        "first": 338,
+        "second": 340
+      },
+      "stage": "first-drop",
+      "advisory": [
+        {
+          "pid": 338,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 338,
+          "classid": "694802182",
+          "objid": "3566495808",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 338,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(hashtextextended('session-orphan:v1:install', 0))"
+        },
+        {
+          "pid": 340,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_backend_pid() as pid"
+        }
+      ]
+    },
+    {
+      "first": "session",
+      "second": "prune",
+      "failDdl": false,
+      "pids": {
+        "first": 338,
+        "second": 340
+      },
+      "stage": "second-waits",
+      "queries": {
+        "a": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(hashtextextended('session-orphan:v1:install', 0))",
+          "DROP TRIGGER IF EXISTS yuk1394_session_orphan_producer ON pgboss.job"
+        ],
+        "b": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))"
+        ]
+      },
+      "advisory": [
+        {
+          "pid": 338,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 338,
+          "classid": "694802182",
+          "objid": "3566495808",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        },
+        {
+          "pid": 340,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": false,
+          "common": true
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 338,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(hashtextextended('session-orphan:v1:install', 0))"
+        },
+        {
+          "pid": 340,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "blockers": [338],
+          "query": "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))"
+        }
+      ]
+    },
+    {
+      "first": "session",
+      "second": "prune",
+      "failDdl": false,
+      "pids": {
+        "first": 338,
+        "second": 340
+      },
+      "stage": "released",
+      "status": "fulfilled",
+      "ddlFailure": null,
+      "queries": {
+        "a": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(hashtextextended('session-orphan:v1:install', 0))",
+          "DROP TRIGGER IF EXISTS yuk1394_session_orphan_producer ON pgboss.job",
+          "CREATE TRIGGER yuk1394_session_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.job FOR EACH ROW EXECUTE FUNCTION fence_session_orphan_producer()",
+          "DROP TRIGGER IF EXISTS yuk1394_session_orphan_producer ON pgboss.schedule",
+          "CREATE TRIGGER yuk1394_session_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_session_orphan_producer()"
+        ],
+        "b": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1355, 1)",
+          "DROP TRIGGER IF EXISTS yuk1355_prune_producer ON pgboss.job",
+          "CREATE TRIGGER yuk1355_prune_producer BEFORE INSERT OR UPDATE OF name ON pgboss.job FOR EACH ROW EXECUTE FUNCTION fence_prune_job_events_producer()",
+          "DROP TRIGGER IF EXISTS yuk1355_prune_producer ON pgboss.schedule",
+          "CREATE TRIGGER yuk1355_prune_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_prune_job_events_producer()"
+        ]
+      },
+      "advisory": [],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 338,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "commit"
+        },
+        {
+          "pid": 340,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "commit"
+        }
+      ]
+    },
+    {
+      "first": "session",
+      "second": "review",
+      "failDdl": false,
+      "pids": {
+        "first": 342,
+        "second": 343
+      },
+      "stage": "first-drop",
+      "advisory": [
+        {
+          "pid": 342,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 342,
+          "classid": "694802182",
+          "objid": "3566495808",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 342,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(hashtextextended('session-orphan:v1:install', 0))"
+        },
+        {
+          "pid": 343,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_backend_pid() as pid"
+        }
+      ]
+    },
+    {
+      "first": "session",
+      "second": "review",
+      "failDdl": false,
+      "pids": {
+        "first": 342,
+        "second": 343
+      },
+      "stage": "second-waits",
+      "queries": {
+        "a": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(hashtextextended('session-orphan:v1:install', 0))",
+          "DROP TRIGGER IF EXISTS yuk1394_session_orphan_producer ON pgboss.job"
+        ],
+        "b": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))"
+        ]
+      },
+      "advisory": [
+        {
+          "pid": 342,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 342,
+          "classid": "694802182",
+          "objid": "3566495808",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        },
+        {
+          "pid": 343,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": false,
+          "common": true
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 342,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(hashtextextended('session-orphan:v1:install', 0))"
+        },
+        {
+          "pid": 343,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "blockers": [342],
+          "query": "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))"
+        }
+      ]
+    },
+    {
+      "first": "session",
+      "second": "review",
+      "failDdl": false,
+      "pids": {
+        "first": 342,
+        "second": 343
+      },
+      "stage": "released",
+      "status": "fulfilled",
+      "ddlFailure": null,
+      "queries": {
+        "a": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(hashtextextended('session-orphan:v1:install', 0))",
+          "DROP TRIGGER IF EXISTS yuk1394_session_orphan_producer ON pgboss.job",
+          "CREATE TRIGGER yuk1394_session_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.job FOR EACH ROW EXECUTE FUNCTION fence_session_orphan_producer()",
+          "DROP TRIGGER IF EXISTS yuk1394_session_orphan_producer ON pgboss.schedule",
+          "CREATE TRIGGER yuk1394_session_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_session_orphan_producer()"
+        ],
+        "b": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1393, 1)",
+          "DROP TRIGGER IF EXISTS yuk1393_review_orphan_producer ON pgboss.job",
+          "CREATE TRIGGER yuk1393_review_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.job FOR EACH ROW EXECUTE FUNCTION fence_review_orphan_producer()",
+          "DROP TRIGGER IF EXISTS yuk1393_review_orphan_producer ON pgboss.schedule",
+          "CREATE TRIGGER yuk1393_review_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_review_orphan_producer()"
+        ]
+      },
+      "advisory": [],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 342,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "commit"
+        },
+        {
+          "pid": 343,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "commit"
+        }
+      ]
+    },
+    {
+      "first": "prune",
+      "second": "review",
+      "failDdl": true,
+      "pids": {
+        "first": 351,
+        "second": 352
+      },
+      "stage": "first-drop",
+      "advisory": [
+        {
+          "pid": 351,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 351,
+          "classid": "1355",
+          "objid": "1",
+          "objsubid": 2,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 351,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(1355, 1)"
+        },
+        {
+          "pid": 352,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_backend_pid() as pid"
+        }
+      ]
+    },
+    {
+      "first": "prune",
+      "second": "review",
+      "failDdl": true,
+      "pids": {
+        "first": 351,
+        "second": 352
+      },
+      "stage": "second-waits",
+      "queries": {
+        "a": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1355, 1)",
+          "DROP TRIGGER IF EXISTS yuk1355_prune_producer ON pgboss.job"
+        ],
+        "b": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))"
+        ]
+      },
+      "advisory": [
+        {
+          "pid": 351,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 351,
+          "classid": "1355",
+          "objid": "1",
+          "objsubid": 2,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        },
+        {
+          "pid": 352,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": false,
+          "common": true
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 351,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(1355, 1)"
+        },
+        {
+          "pid": 352,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "blockers": [351],
+          "query": "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))"
+        }
+      ]
+    },
+    {
+      "first": "prune",
+      "second": "review",
+      "failDdl": true,
+      "pids": {
+        "first": 351,
+        "second": 352
+      },
+      "stage": "released",
+      "status": "rejected",
+      "ddlFailure": {
+        "message": "Failed query: CREATE TRIGGER yuk1355_prune_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_prune_job_events_producer()\nparams: ",
+        "cause": {
+          "code": "42883",
+          "message": "function fence_prune_job_events_producer() does not exist"
+        }
+      },
+      "queries": {
+        "a": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1355, 1)",
+          "DROP TRIGGER IF EXISTS yuk1355_prune_producer ON pgboss.job",
+          "CREATE TRIGGER yuk1355_prune_producer BEFORE INSERT OR UPDATE OF name ON pgboss.job FOR EACH ROW EXECUTE FUNCTION fence_prune_job_events_producer()",
+          "DROP TRIGGER IF EXISTS yuk1355_prune_producer ON pgboss.schedule",
+          "CREATE TRIGGER yuk1355_prune_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_prune_job_events_producer()",
+          "set local search_path = pg_catalog"
+        ],
+        "b": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1393, 1)",
+          "DROP TRIGGER IF EXISTS yuk1393_review_orphan_producer ON pgboss.job",
+          "CREATE TRIGGER yuk1393_review_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.job FOR EACH ROW EXECUTE FUNCTION fence_review_orphan_producer()",
+          "DROP TRIGGER IF EXISTS yuk1393_review_orphan_producer ON pgboss.schedule",
+          "CREATE TRIGGER yuk1393_review_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_review_orphan_producer()"
+        ]
+      },
+      "advisory": [],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 351,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "rollback"
+        },
+        {
+          "pid": 352,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "commit"
+        }
+      ]
+    },
+    {
+      "first": "review",
+      "second": "prune",
+      "failDdl": true,
+      "pids": {
+        "first": 353,
+        "second": 354
+      },
+      "stage": "first-drop",
+      "advisory": [
+        {
+          "pid": 353,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 353,
+          "classid": "1393",
+          "objid": "1",
+          "objsubid": 2,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 353,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(1393, 1)"
+        },
+        {
+          "pid": 354,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_backend_pid() as pid"
+        }
+      ]
+    },
+    {
+      "first": "review",
+      "second": "prune",
+      "failDdl": true,
+      "pids": {
+        "first": 353,
+        "second": 354
+      },
+      "stage": "second-waits",
+      "queries": {
+        "a": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1393, 1)",
+          "DROP TRIGGER IF EXISTS yuk1393_review_orphan_producer ON pgboss.job"
+        ],
+        "b": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))"
+        ]
+      },
+      "advisory": [
+        {
+          "pid": 353,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 353,
+          "classid": "1393",
+          "objid": "1",
+          "objsubid": 2,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        },
+        {
+          "pid": 354,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": false,
+          "common": true
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 353,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(1393, 1)"
+        },
+        {
+          "pid": 354,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "blockers": [353],
+          "query": "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))"
+        }
+      ]
+    },
+    {
+      "first": "review",
+      "second": "prune",
+      "failDdl": true,
+      "pids": {
+        "first": 353,
+        "second": 354
+      },
+      "stage": "released",
+      "status": "rejected",
+      "ddlFailure": {
+        "message": "Failed query: CREATE TRIGGER yuk1393_review_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_review_orphan_producer()\nparams: ",
+        "cause": {
+          "code": "42883",
+          "message": "function fence_review_orphan_producer() does not exist"
+        }
+      },
+      "queries": {
+        "a": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1393, 1)",
+          "DROP TRIGGER IF EXISTS yuk1393_review_orphan_producer ON pgboss.job",
+          "CREATE TRIGGER yuk1393_review_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.job FOR EACH ROW EXECUTE FUNCTION fence_review_orphan_producer()",
+          "DROP TRIGGER IF EXISTS yuk1393_review_orphan_producer ON pgboss.schedule",
+          "CREATE TRIGGER yuk1393_review_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_review_orphan_producer()",
+          "set local search_path = pg_catalog"
+        ],
+        "b": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1355, 1)",
+          "DROP TRIGGER IF EXISTS yuk1355_prune_producer ON pgboss.job",
+          "CREATE TRIGGER yuk1355_prune_producer BEFORE INSERT OR UPDATE OF name ON pgboss.job FOR EACH ROW EXECUTE FUNCTION fence_prune_job_events_producer()",
+          "DROP TRIGGER IF EXISTS yuk1355_prune_producer ON pgboss.schedule",
+          "CREATE TRIGGER yuk1355_prune_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_prune_job_events_producer()"
+        ]
+      },
+      "advisory": [],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 353,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "rollback"
+        },
+        {
+          "pid": 354,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "commit"
+        }
+      ]
+    },
+    {
+      "first": "session",
+      "second": "prune",
+      "failDdl": true,
+      "pids": {
+        "first": 362,
+        "second": 363
+      },
+      "stage": "first-drop",
+      "advisory": [
+        {
+          "pid": 362,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 362,
+          "classid": "694802182",
+          "objid": "3566495808",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 362,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(hashtextextended('session-orphan:v1:install', 0))"
+        },
+        {
+          "pid": 363,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_backend_pid() as pid"
+        }
+      ]
+    },
+    {
+      "first": "session",
+      "second": "prune",
+      "failDdl": true,
+      "pids": {
+        "first": 362,
+        "second": 363
+      },
+      "stage": "second-waits",
+      "queries": {
+        "a": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(hashtextextended('session-orphan:v1:install', 0))",
+          "DROP TRIGGER IF EXISTS yuk1394_session_orphan_producer ON pgboss.job"
+        ],
+        "b": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))"
+        ]
+      },
+      "advisory": [
+        {
+          "pid": 362,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": true
+        },
+        {
+          "pid": 362,
+          "classid": "694802182",
+          "objid": "3566495808",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": true,
+          "common": false
+        },
+        {
+          "pid": 363,
+          "classid": "1263452940",
+          "objid": "2232004631",
+          "objsubid": 1,
+          "mode": "ExclusiveLock",
+          "granted": false,
+          "common": true
+        }
+      ],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 362,
+          "state": "idle in transaction",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "select pg_advisory_xact_lock(hashtextextended('session-orphan:v1:install', 0))"
+        },
+        {
+          "pid": 363,
+          "state": "active",
+          "wait_event_type": "Lock",
+          "wait_event": "advisory",
+          "blockers": [362],
+          "query": "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))"
+        }
+      ]
+    },
+    {
+      "first": "session",
+      "second": "prune",
+      "failDdl": true,
+      "pids": {
+        "first": 362,
+        "second": 363
+      },
+      "stage": "released",
+      "status": "rejected",
+      "ddlFailure": {
+        "message": "Failed query: CREATE TRIGGER yuk1394_session_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_session_orphan_producer()\nparams: ",
+        "cause": {
+          "code": "42883",
+          "message": "function fence_session_orphan_producer() does not exist"
+        }
+      },
+      "queries": {
+        "a": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(hashtextextended('session-orphan:v1:install', 0))",
+          "DROP TRIGGER IF EXISTS yuk1394_session_orphan_producer ON pgboss.job",
+          "CREATE TRIGGER yuk1394_session_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.job FOR EACH ROW EXECUTE FUNCTION fence_session_orphan_producer()",
+          "DROP TRIGGER IF EXISTS yuk1394_session_orphan_producer ON pgboss.schedule",
+          "CREATE TRIGGER yuk1394_session_orphan_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_session_orphan_producer()",
+          "set local search_path = pg_catalog"
+        ],
+        "b": [
+          "select pg_advisory_xact_lock(hashtextextended('pgboss:producer-fence:install:v1', 0))",
+          "select pg_advisory_xact_lock(1355, 1)",
+          "DROP TRIGGER IF EXISTS yuk1355_prune_producer ON pgboss.job",
+          "CREATE TRIGGER yuk1355_prune_producer BEFORE INSERT OR UPDATE OF name ON pgboss.job FOR EACH ROW EXECUTE FUNCTION fence_prune_job_events_producer()",
+          "DROP TRIGGER IF EXISTS yuk1355_prune_producer ON pgboss.schedule",
+          "CREATE TRIGGER yuk1355_prune_producer BEFORE INSERT OR UPDATE OF name ON pgboss.schedule FOR EACH ROW EXECUTE FUNCTION fence_prune_job_events_producer()"
+        ]
+      },
+      "advisory": [],
+      "relations": [],
+      "activity": [
+        {
+          "pid": 362,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "rollback"
+        },
+        {
+          "pid": 363,
+          "state": "idle",
+          "wait_event_type": "Client",
+          "wait_event": "ClientRead",
+          "blockers": [],
+          "query": "commit"
+        }
+      ]
+    }
+  ]
+}
