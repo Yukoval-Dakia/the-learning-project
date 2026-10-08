@@ -1,11 +1,11 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：PR1609候选1af5a8fc8已通过真实Start RPC/T3浏览器、88表写入核验及36 usability；Node24的329unit+7协议测试/typecheck/lint/build全过，新证据d8950已推；现正常合入1386/main6c6905，仅handoff冲突。12:41:52Z隔离资源清理并释放锁，原runtime不变；1386/1359由7631负责。
+> Linear 是权威 tracker。2026-10-08：PR1609正常整合1386/main6c6905为2118；428unit+7协议/static/build及新构建真实RPC通过，Start client/SPA与已验收1af5字节一致。13:01:19Z自有隔离资源清理释放锁，主runtime不变；封存最终证据并推准确CI。1387 subjects读取由7631唯一writer推进。
 
 
 ## NOW
 
-- **YUK-1358 / Start Today与Inbox**：PR1609正常整合main a6faded，R2 NONE且原timestamp P1已修；父53DB历史证据保留，当前1af5真实RPC与浏览器通过，88表读无变/操作仅预期event+2与note更新；36 usability及Node24静态构建通过，等待新head CI后合并。整个W1及残留HTTP消费者未完。[当前验收](docs/planning/2026-10-08-yuk1358-start-workbench-handoff.md)。
+- **YUK-1358 / Start Today与Inbox**：PR1609正常整合main6c6905，R2 NONE且原timestamp P1已修；父53DB历史证据保留，当前1af5真实RPC与浏览器通过，88表读无变/操作仅预期event+2与note更新；36 usability为1af5证据；2118另过428unit+7协议/static/build和真实RPC，等待最终head CI后合并。整个W1及残留HTTP消费者未完。[当前验收](docs/planning/2026-10-08-yuk1358-start-workbench-handoff.md)。
 
 - **YUK-1356 / 主线交付**：PR1605于11:58:08Z合入a3691f572，主线核tree与exact e260bdb98一致、CI37772055452绿/threads0。保留真实MiMo一次工具验收及main4a3d 139unit/110DB证据；1356仍InProgress，未部署。1358 Start Today/Inbox由主线独占PR1609及RPC/browser验收，不在此树修改。
 
@@ -50,7 +50,7 @@
 
 ## NEXT
 
-- 父完成1358构建后真实RPC/browser、PR与准确CI交付，再继续剩余W1消费者和1356 Start提交/任务族；不将原件提交切片或两个页面主读取迁移当全部迁移完成。
+- 父完成1358最终准确CI与合并（实际RPC/browser已按revision封存），再继续剩余W1消费者和1356 Start提交/任务族；不将原件提交切片或两个页面主读取迁移当全部迁移完成。
 
 - **YUK-1352 / PR1592**：已合入main eae963377，CI37758570995与合并tree一致；隔离错题入口已验收，未部署。剩余路由与canonical boot继续。
 

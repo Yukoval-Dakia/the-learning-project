@@ -4,6 +4,11 @@ The initial implementation was a source-only, non-UI slice in `/Volumes/YukovalS
 
 ## Current parent acceptance — 2026-10-08
 
+Final integration `2118c2dd7` normally merges main `6c6905fad` (YUK-1386). Node24 checks passed428 units across47 files, seven protocol tests, typecheck, lint and build. All Start client and SPA files match the accepted `1af5a8fc8` build byte-for-byte. Server chunks changed after the public exports, so the parent ran fresh real built RPC acceptance on2118 with a new isolated database: authentication/epoch fences, all88-table read invariance, domain/HTTP parity, pagination, timestamp/cost data, decision replay/conflict and note undo/membership all passed. Browser interactions and36 usability remain the earlier1af5 evidence; this does not label them a new2118 browser run.
+
+Only the new owned PG and Start server were stopped. The deployment lock was owner-checked and released at13:01:19.597Z; original four container identities, images, start times, health and release bytes were unchanged. No provider, worker, replay or deployment. [Integration receipt](evidence/2026-10-08-yuk1358-main1386-acceptance.json) records the fresh server evidence and exact earlier-client scope. The subsequent evidence commit changes documentation only; exact-head CI remains required before merge.
+
+
 Candidate `1af5a8fc8` normally integrates main `a6faded072`. The parent fixed the CI failure caused by the old SPA-only usability fixture with commit `c7a254e27`: preflight checks emitted Start assets and their exact served bytes, retains separate SPA checks, and adapts the existing stateful API scenarios to the installed framework RPC protocol. No product behavior, test scenario, assertion or CI gate was removed.
 
 Node24 verification passed: 329 scoped units, seven fixture/protocol tests, application/Start typecheck, lint and full build. All36 shipped usability scenarios then passed against the built acceptance server. These scenarios use synthetic API/RPC responses; the following evidence separately exercises real PostgreSQL and actual application operations.
