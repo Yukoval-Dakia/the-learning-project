@@ -115,3 +115,12 @@ pnpm vitest run --config vitest.db.config.ts src/capabilities/observability/serv
 PR1617以18bc0ec62开为draft后，正常合入origin/main `fe48497123f92429eac6383cf7ccc839ade4142f`。该main是PR1615五个Start管理读取页，仅PLAN与now交接冲突，保留双方记录。父逐路径比较确认1391七个产品/测试/基线文件与7199aa3fc字节一致；incoming Start、observability UI、web及usability路径与main一致。
 
 整合后父实际运行6文件227项scoped unit通过，typecheck、lint、build均exit0，lint仍290项既有warning。日志`/tmp/yuk1391-main-fe484-{unit,typecheck,lint,build}.log`。命令中附带的`tests/usability/start-rpc-fixtures.unit.spec.ts`不在Vitest unit分区内，不把它计为执行通过。此次未运行DB或服务；此前55 DB与R1保留其准确7199源码范围，不把主线页面的运行证明转为本线新制品验收。两个共享audit仍按1359 comment e34017ea由主线修复，PR的新exact CI及最终门禁尚待。
+
+
+## 共享审计修复整合验收
+
+三份1359退出清点WIP先提交为a64cdac2b，再正常合入PR1618的main `ec9a9ed5e859598f8ca1462f733eba1a458633c6`。父实核main与exact b9a4caf87的tree均为b7552d6cb5486b7aa2ea91fcb23346aecff56e7b。仅PLAN/now冲突；1391产品、测试、依赖与8a1保持字节一致，七份incoming audit脚本/测试与main一致。
+
+本树父实际跑11文件450项scoped unit、typecheck、lint、build，均exit0；lint仍290既有warning。保留新构建dist后，schema、architecture-deepening、provider-lanes、provider-attempt-truth四项真实audit均exit0。schema896字段、40historical-retained、0unallowed stub；architecture11已分类provider lanes/0未分类，依赖433/0/48。原过期和产物误扫失败已在本树复验消除，历史red日志不删除。[检查收据](evidence/yuk1391/ec9-integration-checks.json)记录准确输入和日志hash。
+
+此轮没有DB/runtime/provider/部署操作，原55DB及trait R1证据适用于未变产品源码；incoming audit已有主线独立R1，无新审查轮次。整合后仍要求新exact-head CI，不沿用8a1全绿宣称最终提交已通过。

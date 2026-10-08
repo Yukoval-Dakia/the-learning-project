@@ -22,7 +22,7 @@ Owner 的后续指令是先完成整个非 UI 迁移，UI 暂缓，再完成 Lin
 
 仍需迁移的页面为 `/welcome`、`/onboarding/upload`、`/placement`、`/profile`、`/agent-notes`、`/events/$id`、`/record`、`/practice`、`/drafts`、`/questions`、`/questions/$id`、`/knowledge`、`/knowledge/$id`、`/notes`、`/notes/$id`、`/coach`、`/admin/config`、`/admin/subjects`、`/admin/subjects/$id`。
 
-两项共享audit问题已在1359 comment `e34017ea-c07a-4166-93c9-0e9b53950bab`由主线接管：18条历史保留字段豁免过期与生成dist/start误扫。修复尚未交付，不扩1391范围、不延豁免。清点更新登记在comment `ebbe0ce9-5732-4ccb-8f5f-08105729fc6f`。本次仅更新退出证据，无runtime、provider、队列或数据操作。
+两项共享audit问题已在1359 comment `e34017ea-c07a-4166-93c9-0e9b53950bab`由主线接管：18条历史保留字段豁免过期与生成dist/start误扫。该修复已由PR1618合main ec9a9ed5e，1391本树整合复验尚待；不扩trait范围、不延豁免。清点更新登记在comment `ebbe0ce9-5732-4ccb-8f5f-08105729fc6f`。本次仅更新退出证据，无runtime、provider、队列或数据操作。
 
 ## 历史调查记录
 

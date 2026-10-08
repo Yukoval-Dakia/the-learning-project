@@ -1,3 +1,9 @@
+# 当前交接 — YUK1391整合共享审计修复
+
+原8a1dbf94b CI37802024691全绿、R1 NONE/父55DB证据保留。三份退出docs WIP已提交a64cdac2b；正常merge主线已交付ec9a9ed5e，仅PLAN/now冲突。父450unit/typecheck/lint/build及四post-build audit均exit0，原两失败在本树消除，等待新exact CI并收口1617。无DB/runtime/provider操作。1391收口后独占已授权agent-note board读取lane，Start仍由主线负责。1358/1359未完。
+
+以下为保留的历史交接。
+
 # 当前交接 — YUK1391 trait六操作，2026-10-09 JST
 
 YUK1390 PR1616于2026-10-08T14:55:48Z合main7b89041799881249bbe89344deae8942cc867f70；tree0eda775c32c2f47ed74ab4c3bb99ec5bfeba3006与exact bec86e4e5一致。CI37794964900全绿、独立R1 NONE/noPending、threads0，60unit/父42DB/static/build证据已版本化。已unwatch、Linear Done、通知主线，无部署。
@@ -9,7 +15,17 @@ fresh fetch后原分支behind1且clean，从origin/main建立feat/yuk-1391-trait
 
 # Current Start admin closeout — 2026-10-09
 
-PR1615 fc021 passed 96 real RPC calls and five-page T3 browser acceptance; 88 public table counts/content unchanged. Isolated server/PG and Ryuk exited; original four services/release unchanged. Lock7109b3c7 released2026-10-08T15:12:46.541288Z. Evidence runtime/yuk1358-admin-fc021bca5/evidence and docs/planning/evidence/2026-10-09-yuk1358-admin-built-acceptance.json. No provider/worker/replay/deployment. Review R1 completed NONE. Parent normally merged main7b890 (1390) asf48f04690, only PLAN/now conflicts; integrated295unit/8protocol/typecheck/lint/build passed; final CI pending. 7631 exclusively owns1391 six trait operations; parent owns Start. Remaining configuration/subjects Start, canonical boot and full runtime/SPA retirement remain open under1358/1359.
+## 合入共享审计修复的记录
+
+# Audit repair source verification — 2026-10-09
+
+Implementation task yuk1359-audit-boundary-repair-20261009-v1 completed/noPending; exact739757dd9f7e6419e371efbafbfbd5e6a213ca56, clean. Parent verified64 source/log and676generatedserver SHA256 entries, independently296tests and four real post-build audits all exit0. Source R1 task yuk1359-audit-boundaries-review-r1-20261009-v1 (mcp49eafe5d-44e1-4ad4-99e9-d8ea36771da2) completed/noPending P0/P1 NONE; diff SHA eecb8b8d46003105ea3ce0ebc1c293ee3c2891be74b0eaca87fe23b0ed500fae matched. PR1618 CI37804475263 unit3 failed only new directory-symlink cleanup on Linux (rmSync EISDIR), preceding audit assertion passed. Parent changed fixture to unlinkSync with target preservation check; 68scopedtests/typecheck/lint/build all0. Audit implementation unchanged, no R2 required. New exact CI pending; no Linux PASS claim yet. No DB/runtime/provider/deploy. 1391 PR1617/head8a1 CI green remains7631-owned and awaits shared repair integration; no overlaps. Logs/tmp/yuk1359-parent-unit.log and /tmp/yuk1359-parent-audits. Detailed handoff docs/planning/2026-10-09-yuk1359-audit-boundaries.md.
+
+# Current closeout and next audit lane — 2026-10-09
+
+PR1615 merged2026-10-08T15:28:28Z as fe48497123f92429eac6383cf7ccc839ade4142f. Exact547a8061e CI37799854523 all green, R1 NONE, threads0; merge/head tree both ed73a410857a62033f25b7b51d1107d96bf1721a and diff empty. Unwatched. 295unit/8protocol/static/build and fc021 96RPC/T3browser/88-table no-write evidence remain revision-specific. No deployment; runtime lock released15:12:46Z, no owned resources.
+
+Main owner5796 now bound branch fix/yuk-1359-audit-boundaries from freshmain fe4849712. Two shared audit failures captured in1359 comment e34017ea:18 expired951 retained-history allowances and dist/start generated-output provider census. Do not renew deadlines, delete historical data, fake writers or weaken production source scanning. Owner7631 exclusively owns1391 trait six operations, draftPR1617/head18bc0ec62, source7199aa3fc,154unit/55parentDB/R1NONE; its lock released15:25:38Z. Parent must not change trait/public scope. Config/subjects Start and full migration remain open under1358/1359.
 
 Earlier records below are historical, not current task or runtime state.
 

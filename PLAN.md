@@ -1,10 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：YUK-1390已合PR1616/main7b8904179；YUK-1391接续trait六操作共享领域出口，1358/1359仍未完成。未部署。
+> Linear 是权威 tracker。2026-10-09 JST：1391正常整合共享audit修复main ec9a9ed5e；保留原8a1准确CI/55DB/R1证据，整合450unit/static/build及四post-build audit通过，等待新exact CI。1358/1359仍未完成，未部署。
 
 ## NOW
 
-- **YUK-1391 / W5 trait六操作**：源码7199aa3fc，作者154unit/static/build、父4文件55DB通过，独立R1 NONE；15:25:38Z核owner释放测试锁，原四服务/release不变。PR1617 draft已开，正常整合main fe4849712；整合6文件227unit/typecheck/lint/build通过，新exact CI待。18项历史schema豁免过期与dist/start provider误扫由主线接管capture/修复；不延豁免。Start归主线，1358/1359仍未完。
+- **YUK-1359 / 共享审计修复已合入**：PR1618合main ec9a9ed5e，父报告与exact b9a4caf87树一致，CI37805707992全绿、R1 NONE。历史retention合同与generated dist扫描修复已交付；1391本树四post-build audit已独立复验通过；历史失败记录保留。
+
+- **YUK-1391 / W5 trait六操作**：源码7199aa3fc、父55DB/R1 NONE与8a1 CI37802024691全绿已封存。PR1617 Ready；已保存三份1359 docs为a64cdac2b，正常整合ec9a9ed5e，仅PLAN/now冲突。整合450unit/static/build及四post-build audit通过，新exact CI待，Start仍归主线。
 
 - **YUK-1390 / 已合入**：PR1616于14:55:48Z合main7b8904179，tree与exact bec86e4e5一致；CI37794964900全绿、独立R1 NONE、threads0，60unit/父42DB/static/build通过。已unwatch/Linear Done/通知主线；未部署。
 
@@ -61,7 +63,7 @@
 
 ## NEXT
 
-- 父完成1358最终准确CI与合并（实际RPC/browser已按revision封存），再继续剩余W1消费者和1356 Start提交/任务族；不将原件提交切片或两个页面主读取迁移当全部迁移完成。
+- 父收口1359两项共享audit，再继续配置/subjects Start与1356 Start提交/任务族；不将原件提交切片或两个页面主读取迁移当全部迁移完成。
 
 - **YUK-1352 / PR1592**：已合入main eae963377，CI37758570995与合并tree一致；隔离错题入口已验收，未部署。剩余路由与canonical boot继续。
 
