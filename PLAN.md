@@ -23,7 +23,7 @@
 
 ## PARKED
 
-- **YUK-1356 judge打包阻塞**：父实读作者build-first.log:979，Start自包含打包无法解析DBOS5.2.11可选winston-transport；build-migrate.log同报winston/transport。server/worker已有两项external，Start和migrate尚未一致。已向5796协调精确vite.config.ts/build:migrate脚本ownership，作者继续原scope、不装依赖、不改lock。完整build保持失败，后续须验证emitted loader，不能用backend-only build替代。父已格式化1359证据JSON并核语义完全相同。
+- **YUK-1356 judge打包阻塞**：父实读作者build-first.log:979，Start自包含打包无法解析DBOS5.2.11可选winston-transport；build-migrate.log同报winston/transport。server/worker已有两项external，Start和migrate尚未一致。5796已核77树/75可访问并明确将两文件交原judge writer：仅Start服务端及build:migrate external精确winston/winston-transport，保留其余自包含配置及依赖/lock。已转交作者，完整build仍待修复结果；父须安全验证真实ESM/CJS默认logger加载、不直接执行连接库/迁移/服务入口，OTLP分支不在本证明范围。父已格式化1359证据JSON并核语义完全相同。
 
 - **YUK-1358/1359已有UI观察**：真实Inbox dismiss后本页499但侧栏500，document reload恢复一致；原onResolve仅本地resolved更新。Google Fonts原import受CSP拦截；fallback可用。记录在现有迁移验收/后续UI边界，不放宽CSP、不冒称本PR修复。
 - **YUK-1382 / Admin runs未知费用显示**：源码基线fadcb0c87中，observability/ui/admin-runs.tsx:207将nullable cost_usd累加；observability-shared.tsx:11以(value ?? 0).toFixed(4)将未知显示为$0.0000，列表/详情/合计均受影响。已查重并登记Backlog，待验证真实零、全未知、已知+未知；不在1381改UI。此条是源码发现，尚无浏览器验收。
@@ -46,6 +46,6 @@
 
 ## BLOCKED-ON
 
-- 1393/1394均已合入。judge唯一writer仍实施，新增Start/migrate可选logger打包问题正在跨lane核ownership；不需用户重复授权。子任务/CI仍运行属于等待，不把整迁移挂blocked。
+- 1393/1394均已合入。judge唯一writer仍实施，Start/migrate可选logger打包修复ownership已确认并交同一作者；不需用户重复授权。子任务/CI仍运行属于等待，不把整迁移挂blocked。
 - runtime测试/发布在执行前必须实际核锁并原子获取，核owner/token清理释放；其他线程持锁时只推不冲突的源码工作。历史锁记录不能代表当前ownership。
 - 部署用途保持Agent开发测试，禁止再次清库、恢复私人数据或盲重放队列；日用部署须owner明确要求“为我日常使用的部署”。旧运行验收限制和未完成产品能力保存在归档及各原票，未被本次整理核销。
