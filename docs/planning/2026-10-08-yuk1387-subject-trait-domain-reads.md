@@ -16,9 +16,19 @@ at 13:05:18.705171Z and released at 13:06:15.936348Z after checking owner/token.
 running container set, original four IDs/images/start times/health, and release
 hash were unchanged. No additional running containers remained.
 
-Independent R1 is in progress; exact-head CI and merge remain required. This
-record verifies domain/HTTP reads under real Postgres. Start/browser and deployment
-acceptance are separate and not claimed here. YUK-1358/YUK-1359 remain in progress.
+Independent R1 completed with P0/P1 NONE. Six-runtime-file diff SHA256 is
+`e3b07e9ef2dc3404dd766f63ece8c2753a1bbe8468651c5abd43a59556c6e2bf`.
+Product, tests and baseline are unchanged in exact PR head
+`f8e832c6626435757de69f1c78ca75efda69f578`; CI Gate `37781922519` passed.
+Review threads were zero. CodeRabbit skipped and Codex reached its review quota;
+these are ended advisory runs, not code-review passes.
+
+PR1613 merged at 13:15:49Z as `d609c7b661f874f59441990ff3cd659c2c1c431c`.
+Fetched merge tree `19aaa21d0f6f1ee9e6a904eed2211e0cc5805bf2` equals the exact
+validated head. Watch is removed, YUK-1387 is Done for this domain slice, and main
+owner received the public interfaces and merge SHA. YUK-1358/YUK-1359 remain in
+progress. Start/browser and deployment acceptance are separate and not claimed.
+No new actionable follow-up was found beyond those existing migration obligations.
 
 ## Implemented contract
 

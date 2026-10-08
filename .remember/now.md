@@ -1,8 +1,14 @@
-# 当前活动 — YUK1387 subjects/traits公共读取，2026-10-08
+# 当前交接 — YUK1387已合入 / YUK1359退出证据，2026-10-08
 
-YUK1387实现56a9baf8e6acceb9a11a75567f589b885ddd2ce0，parent9dffa49d9，唯一writer completed/noPending并释放。父核11SHA与保护文件；116unit/static/build/audits通过，唯一scope扩充baseline14→11/438→435已owner确认，初始失败日志保留。1358子票与全局subjects/trait全部分页查重完成，无重复活动票；601/666旧读面/HTTP契约Done不等于此迁移。Linear1387 d85cc05a-8c4d-4033-a496-03ea2baba95c InProgress。
+PR1613于13:15:49Z合入main d609c7b661f874f59441990ff3cd659c2c1c431c。父fetch确认tree19aaa21d0f6f1ee9e6a904eed2211e0cc5805bf2与exact f8e832c6626435757de69f1c78ca75efda69f578相同；CI37781922519全绿，独立R1 P0/P1 NONE/noPending，reviewThreads0，已unwatch。两个advisory bot均已结束：CodeRabbit跳过、Codex额度拒绝，不能称代码审查PASS。
 
-父实际3文件15DB通过，/tmp/yuk1387-parent-db.log。13:05:18Z取得锁token8ea58ea3，13:06:15.936348Z核owner释放；原运行集合/4容器ID/image/start/health/releaseSHA不变，/tmp/yuk1387-db-cleanup.json。独立R1 yuk1387-subject-trait-read-review-r1-20261008（command b0c41f6b-955b-4620-8875-2b8031cb5dfe，Codex gpt-6.1-sol xhigh）仍running只读。父接PR/CI/merge。无provider/worker/replay/deploy，Start归主线57961995，config只读。
+116unit/父15DB/static/build/audits通过。实施56a9baf8e的11SHA已父核，产品/测试/baseline到发布head字节不变。baseline仅owner批准的14→11/438→435。四既有reader经observability/public导出Db|Tx和完整DTO，四HTTP已消费；public不导出unbounded journal，getTraitJournalPage仍需显式limit。主线57961995已收到准确mainSHA和接口。
+
+父13:05:18Z获取token8ea58ea3，13:06:15.936348Z核owner释放锁，原运行容器集合/4容器ID/image/start/health/releaseSHA不变。日志/tmp/yuk1387-parent-db.log和/tmp/yuk1387-db-cleanup.json。之后无runtime操作、provider/worker/replay/deploy。
+
+本树从fetch最新main d609c7b66建立docs/yuk-1359-subject-read-delivery，仅提交交付记录。作者和R1均completed，无活动writer。1387限定slice Done，1358/1359仍InProgress，主线负责Start/PR1609及其Stop fixture修复，不改其树或CI。config只读材料/tmp/yuk1359-w5-config-subject-next-seams.md已补builder/schema/writer/错误顺序，尚未分配实施；后续scope由主线协调。总体非UI迁移和其后Linear功能目标尚未完成。
+
+以下是历史交付记录。
 
 # 当前交接 — YUK1386已合入 / YUK1359退出证据，2026-10-08
 
