@@ -1,11 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：PR1621 已合 main e1f2ef6bb，exact3be CI全绿/R1 NONE，review orphan源码与隔离恢复交付。YUK1394从freshmain接续conversation/placement两个六小时清理族，0117实核未占用。当前无本线程runtime锁或服务；整迁移尚未完成。
+> Linear 是权威 tracker。2026-10-09 JST：YUK1394作者已交777bd38c5，父核33源码/14日志/14制品SHA一致；正常整合main6212（PR1622），仅PLAN/now冲突。schema固定seed审计待父修复，独立review与DB/恢复/cron尚待；当前无本线程runtime锁或服务，整迁移未完成。
 
 ## NOW
 
-- **YUK-1394 / conversation与placement orphan DBOS**：从main e1f2ef6bb新建feat/yuk-1394-session-orphans-dbos，承接已裁决[四表双family设计](docs/planning/2026-10-09-yuk1394-session-orphans-dbos.md)。实核77树共享路径无dirty、0117无占用。唯一作者只实施已授权family/worker/operator、原handler与session Tx helper、共享host/注册/manifest/schema及scopedtests；父负责独立review、实际锁下DB/恢复/cron验收和交付。未启动运行切换。
+- **YUK-1394 / conversation与placement orphan DBOS**：从main e1f2ef6bb新建feat/yuk-1394-session-orphans-dbos，承接已裁决[四表双family设计](docs/planning/2026-10-09-yuk1394-session-orphans-dbos.md)。实核77树共享路径无dirty、0117无占用。作者777bd38c5已completed/noPending释放，50unit/static/build与7audits通过；audit:schema仅固定family seed未识别，父接最小修复。父负责独立review、实际锁下DB/恢复/cron验收和交付，运行检查尚未执行。未启动运行切换。
 - **YUK-1393已合入**：PR1621 exact3be966000 CI37829575046全绿，R1 NONE/threads0；main e1f2ef6bb与CI树均cad230a5，已unwatch/Linear Done。父原33DB/10进程恢复/2cron/4旧prune/26migration、49unit及fixture修复29DB/static/build证据保留。默认仍pg-boss，无部署；实际旧consumer退出仍是整迁移验收义务。
+- **YUK-1358 / Start观察读取已合入**：PR1622已合main6212a4560，exact0fbeb1f3f CI37831807097全绿、R1 NONE；26真实RPC/10窗口、T3浏览器和88表/序列无写证据见[父验收](docs/planning/2026-10-09-yuk1358-start-agent-notes-parent.md)。28路由中13显式Start（含root redirect）/15 fallback，仅静态覆盖计数；完整迁移与canonical boot未完成。5796接续events/$id，未合候选不提前计入。
 - **YUK-1358 / Start配置与科目消费者已合入**：PR1620于18:16:17Z合main10df1a471，tree与exact755bdeebb一致，CI37821989407全绿/R1 NONE/threads0。18操作122RPC/35窗口与三页浏览器证据见[父验收](docs/planning/2026-10-09-yuk1358-start-admin-controls-parent.md)。未部署；1358保持In Progress。5796独占接续1392 board、剩余Start路由和实际提交，本线程不写其活跃树。
 - **YUK-1359 / 整体退出证据**：7631对用户负责迁移协调和最终交付，维护W1–W5消费者清单。当前已交前门、错题、Today/Inbox主读取和五管理只读页；嵌套HTTP消费者、其余路由、任务族、旧SPA/pg-boss退出尚未齐备。按[退出清单](docs/planning/2026-10-07-yuk1359-exit-inventory.md)逐项验收，不能把公共出口或源码slice当整页完成。
 - **YUK-1356 / 复习竖切未完**：PR1605共享review操作/可信Pi原件入口及单次MiMo效果证据有效，但Start提交与判分DBOS族仍缺。17:02Z后直接读回Linear已恢复In Progress；未启动重复writer，不宣称judge_run已迁移。
@@ -43,6 +44,6 @@
 
 ## BLOCKED-ON
 
-- 当前没有需要owner追加许可才能推进的已知阻塞。1393已合入，1394进入实施；子任务/CI仍运行属于等待，不把整迁移挂blocked。
+- 当前没有需要owner追加许可才能推进的已知阻塞。1393已合入，1394进入父级验收；子任务/CI仍运行属于等待，不把整迁移挂blocked。
 - runtime测试/发布在执行前必须实际核锁并原子获取，核owner/token清理释放；其他线程持锁时只推不冲突的源码工作。历史锁记录不能代表当前ownership。
 - 部署用途保持Agent开发测试，禁止再次清库、恢复私人数据或盲重放队列；日用部署须owner明确要求“为我日常使用的部署”。旧运行验收限制和未完成产品能力保存在归档及各原票，未被本次整理核销。

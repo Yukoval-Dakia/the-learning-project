@@ -1,0 +1,19 @@
+{
+  "reader_only_type_imports_db_and_agency": true,
+  "reader_samples_clock_once": true,
+  "canonical_domain_call_injected_database_input_now": true,
+  "canonical_schema_no_selector": true,
+  "explicit_function_guard_before_reader": true,
+  "function_identity_validator": true,
+  "shared_actual_start_shell_provider": true,
+  "today_cold_gate_20_board_key": true,
+  "full_50_full_key": true,
+  "pages_no_direct_http_notes": true,
+  "production_agent_notes_handoff": true,
+  "emitted_reader_no_eager_domain_db_import": true,
+  "emitted_guard_and_dynamic_domain": true,
+  "emitted_agent_notes_route": true,
+  "jsx_unchanged_src/capabilities/shell/ui/TodayPage.tsx": true,
+  "jsx_unchanged_src/capabilities/agency/ui/page.tsx": true,
+  "readonly_domain_unmodified": true
+}

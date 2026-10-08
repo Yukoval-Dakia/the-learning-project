@@ -13,11 +13,10 @@ import { useQuery } from '@tanstack/react-query';
 import { useEffect, useState } from 'react';
 import {
   AgentNotesBoard,
-  type AgentNotesResponse,
   LearningIntentComposer,
+  useAgentNoteClient,
 } from '@/capabilities/agency/ui-public';
 import { ColdStart } from '@/capabilities/onboarding/ui-public';
-import { apiJson } from '@/ui/lib/api';
 import { describeCosts } from '@/ui/lib/cost-presentation';
 import { openCopilot } from '@/ui/lib/use-copilot-dwell';
 import { Btn } from '@/ui/primitives/Btn';
@@ -476,6 +475,7 @@ function ThreadCard({ th, navigate }: { th: Thread; navigate: (to: string) => vo
 }
 
 export default function TodayPage({ navigate }: TodayPageProps) {
+  const { getAgentNoteBoard } = useAgentNoteClient();
   const { getWorkbenchSummary } = useWorkbenchClient();
   const now = new Date();
 
@@ -484,7 +484,7 @@ export default function TodayPage({ navigate }: TodayPageProps) {
   // 避免互相覆盖缓存。
   const notesQ = useQuery({
     queryKey: ['agent-notes', 'board'],
-    queryFn: () => apiJson<AgentNotesResponse>('/api/agents/notes?limit=20'),
+    queryFn: () => getAgentNoteBoard(20),
     // ColdStart 不渲染 notes；与服务端 cold_start 合同共用一个门，避免 UI 再推导空态。
     enabled: summaryQ.data?.cold_start.is_empty === false,
   });

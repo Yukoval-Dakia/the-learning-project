@@ -173,7 +173,9 @@ const mistakesRoute = createRoute({
   component: MistakesRoute,
 });
 
-const AgentNotesRoute = lazyNavigableRoute(loadAgentNotesPage);
+const AgentNotesRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadAgentNotesPage);
 
 const agentNotesRoute = createRoute({
   getParentRoute: () => rootRoute,

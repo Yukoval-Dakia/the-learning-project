@@ -300,7 +300,7 @@ describe('existing admin visuals and behavior through injected Start clients', (
       expect(source).toContain('client={startAdminControlClient}');
       expect(source).toContain('StartWorkbenchShell');
       const router = readFileSync('web/src/router.tsx', 'utf8');
-      expect(router.match(/import.meta.env.PROD\s*\? StartPageEntry/g)?.length).toBe(11);
+      expect(router.match(/import.meta.env.PROD\s*\? StartPageEntry/g)?.length).toBe(12);
     },
   );
 });

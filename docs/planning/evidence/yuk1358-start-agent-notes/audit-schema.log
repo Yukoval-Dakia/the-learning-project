@@ -1,0 +1,695 @@
+$ tsx scripts/audit-schema-writes.ts
+
+=== Schema 字段健康表（仅显示非 live）===
+
+| Table.Field | Type | INSERT files | UPDATE files | Status |
+|---|---|---|---|---|
+| knowledge.embedding | vector | 0 | 2 | update-only |
+| knowledge.embed_model | text | 0 | 1 | update-only |
+| knowledge.embed_version | integer | 0 | 1 | update-only |
+| knowledge.embed_content_hash | text | 0 | 2 | update-only |
+| misconception.created_by | jsonb | 1 | 0 | init-only |
+| misconception.proposed_by_ai | boolean | 1 | 0 | init-only |
+| misconception_edge.from_kind | text | 1 | 0 | init-only |
+| misconception_edge.from_id | text | 1 | 0 | init-only |
+| misconception_edge.to_kind | text | 1 | 0 | init-only |
+| misconception_edge.to_id | text | 1 | 0 | init-only |
+| misconception_edge.relation_type | text | 1 | 0 | init-only |
+| misconception_edge.created_by | jsonb | 1 | 0 | init-only |
+| misconception_edge.proposed_by_ai | boolean | 1 | 0 | init-only |
+| source_asset.kind | text | 1 | 0 | init-only |
+| source_asset.storage_key | text | 1 | 0 | init-only |
+| source_asset.mime_type | text | 1 | 0 | init-only |
+| source_asset.byte_size | integer | 1 | 0 | init-only |
+| source_asset.sha256 | text | 1 | 0 | init-only |
+| source_asset.width | integer | 1 | 0 | init-only |
+| source_asset.height | integer | 1 | 0 | init-only |
+| source_asset.provenance | jsonb | 1 | 0 | init-only |
+| source_document.title | text | 3 | 0 | init-only |
+| source_document.source_asset_ids | jsonb | 3 | 0 | init-only |
+| source_document.body_md | text | 3 | 0 | init-only |
+| source_document.provenance | jsonb | 3 | 0 | init-only |
+| question_answer_anchor.schema_version | integer | 1 | 0 | init-only |
+| question_answer_anchor.source_artifact_kind | text | 1 | 0 | init-only |
+| question_answer_anchor.source_artifact_id | text | 1 | 0 | init-only |
+| question_answer_anchor.source_version | integer | 1 | 0 | init-only |
+| question_answer_anchor.source_content_hash | text | 1 | 0 | init-only |
+| question_answer_anchor.source_locator | jsonb | 1 | 0 | init-only |
+| question_answer_anchor.canonical_answer | jsonb | 1 | 0 | init-only |
+| question_answer_anchor.provenance | jsonb | 1 | 0 | init-only |
+| question_answer_anchor.content_hash | text | 1 | 0 | init-only |
+| question_generation_plan.schema_version | integer | 1 | 0 | init-only |
+| question_generation_plan.demand | jsonb | 1 | 0 | init-only |
+| question_generation_plan.knowledge_ids | jsonb | 1 | 0 | init-only |
+| question_generation_plan.requested_kind | text | 1 | 0 | init-only |
+| question_generation_plan.requested_answer_class | text | 1 | 0 | init-only |
+| question_generation_plan.answer_anchor_id | text | 1 | 0 | init-only |
+| question_generation_plan.answer_anchor_version | integer | 1 | 0 | init-only |
+| question_generation_plan.answer_anchor_hash | text | 1 | 0 | init-only |
+| question_generation_plan.constraints | jsonb | 1 | 0 | init-only |
+| question_generation_plan.provenance | jsonb | 1 | 0 | init-only |
+| question_generation_plan.content_hash | text | 1 | 0 | init-only |
+| question_generation_binding.question_id | text | 1 | 0 | init-only |
+| question_generation_binding.plan_id | text | 1 | 0 | init-only |
+| question_generation_binding.plan_version | integer | 1 | 0 | init-only |
+| question_generation_binding.plan_hash | text | 1 | 0 | init-only |
+| question_generation_binding.answer_anchor_id | text | 1 | 0 | init-only |
+| question_generation_binding.answer_anchor_version | integer | 1 | 0 | init-only |
+| question_generation_binding.answer_anchor_hash | text | 1 | 0 | init-only |
+| question_generation_binding.comparator_policy_id | text | 1 | 0 | init-only |
+| question_generation_binding.comparator_policy_version | integer | 1 | 0 | init-only |
+| question_generation_binding.comparator_policy_hash | text | 1 | 0 | init-only |
+| question_generation_binding.validation_status | text | 1 | 0 | init-only |
+| question_generation_binding.structural_status | text | 1 | 0 | init-only |
+| question_generation_binding.objective_correctness | text | 1 | 0 | init-only |
+| question_block.ordinal | integer | 3 | 0 | init-only |
+| question_block.extracted_prompt_md | text | 3 | 0 | init-only |
+| question.kind | text | 14 | 0 | init-only |
+| question.prompt_md | text | 14 | 0 | init-only |
+| question.choices_md | jsonb | 5 | 0 | init-only |
+| question.visual_complexity | text | 1 | 0 | init-only |
+| question.difficulty | integer | 14 | 0 | init-only |
+| question.source | text | 14 | 0 | init-only |
+| question.source_ref | text | 8 | 0 | init-only (allowed) |
+| question.variant_depth | integer | 6 | 0 | init-only |
+| question.root_question_id | text | 1 | 0 | init-only |
+| question.parent_variant_id | text | 1 | 0 | init-only |
+| question.parent_question_id | text | 1 | 0 | init-only |
+| question.part_index | integer | 1 | 0 | init-only |
+| question.created_by | jsonb | 6 | 0 | init-only (allowed) |
+| question.embedding | vector | 0 | 1 | update-only |
+| question.embed_model | text | 0 | 1 | update-only |
+| question.embed_version | integer | 0 | 1 | update-only |
+| question.embed_content_hash | text | 0 | 1 | update-only |
+| question_revision.revision_id | text | 1 | 0 | init-only (allowed) |
+| question_revision.group_id | text | 1 | 0 | init-only (allowed) |
+| question_revision.revision_ordinal | integer | 1 | 0 | init-only (allowed) |
+| question_revision.integrity_digest | text | 1 | 0 | init-only (allowed) |
+| question_revision.structure | jsonb | 1 | 0 | init-only (allowed) |
+| question_revision.response_spec | jsonb | 1 | 0 | init-only (allowed) |
+| question_revision.scoring_basis | jsonb | 1 | 0 | init-only (allowed) |
+| question_revision.execution_plan | jsonb | 1 | 0 | init-only (allowed) |
+| question_revision.supersedes_revision_id | text | 1 | 0 | init-only (allowed) |
+| question_revision.availability | text | 1 | 0 | init-only (allowed) |
+| question_revision.published_by | jsonb | 1 | 0 | init-only (allowed) |
+| question_revision.published_at | timestamp | 1 | 0 | init-only (allowed) |
+| question_group_lifecycle.group_id | text | 1 | 0 | init-only (allowed) |
+| question_admission_verification.revision_id | text | 1 | 0 | init-only (allowed) |
+| question_admission_verification.revision_digest | text | 1 | 0 | init-only (allowed) |
+| question_admission_verification.policy_id | text | 1 | 0 | init-only (allowed) |
+| question_admission_verification.generation | integer | 1 | 0 | init-only (allowed) |
+| question_admission_verification.outcome | text | 1 | 0 | init-only (allowed) |
+| question_admission_verification.evidence | jsonb | 1 | 0 | init-only (allowed) |
+| question_admission_verification.recorded_at | timestamp | 1 | 0 | init-only (allowed) |
+| assessment_issuance.issuance_id | text | 2 | 0 | init-only |
+| assessment_issuance.revision_id | text | 2 | 0 | init-only |
+| assessment_issuance.part_ids | jsonb | 2 | 0 | init-only |
+| assessment_issuance.material_bindings | jsonb | 2 | 0 | init-only |
+| assessment_issuance.option_order | jsonb | 2 | 0 | init-only |
+| assessment_issuance.container_occurrence_ref | text | 2 | 0 | init-only |
+| assessment_issuance.claim_policy | text | 2 | 0 | init-only |
+| assessment_issuance.issued_at | timestamp | 2 | 0 | init-only |
+| evaluation_group.evaluation_group_id | text | 2 | 0 | init-only |
+| assessment_submission.submission_id | text | 2 | 0 | init-only |
+| assessment_submission.issuance_id | text | 2 | 0 | init-only |
+| assessment_submission.revision_id | text | 2 | 0 | init-only |
+| assessment_submission.evaluation_group_id | text | 2 | 0 | init-only |
+| assessment_submission.response_set | jsonb | 2 | 0 | init-only |
+| assessment_submission.group_evidence | jsonb | 2 | 0 | init-only |
+| assessment_submission.idempotency_key | text | 2 | 0 | init-only |
+| assessment_submission.submitted_at | timestamp | 2 | 0 | init-only |
+| assessment_response_draft.issuance_id | text | 1 | 0 | init-only |
+| evaluation.evaluation_id | text | 2 | 0 | init-only |
+| evaluation.evaluation_group_id | text | 2 | 0 | init-only |
+| evaluation.submission_id | text | 2 | 0 | init-only |
+| evaluation.attempt | integer | 2 | 0 | init-only |
+| evaluation.status | text | 2 | 0 | init-only |
+| evaluation.unit_results | jsonb | 2 | 0 | init-only |
+| evaluation.aggregate | jsonb | 2 | 0 | init-only |
+| evaluation.plan_digest | text | 2 | 0 | init-only |
+| evaluation.run_refs | jsonb | 2 | 0 | init-only |
+| evaluation.provenance | jsonb | 2 | 0 | init-only |
+| evaluation_effective_head.evaluation_group_id | text | 4 | 0 | init-only |
+| evaluation_effective_head.submission_id | text | 4 | 0 | init-only |
+| assessment_identity_mapping.mapping_id | text | 1 | 0 | init-only |
+| assessment_identity_mapping.source_kind | text | 1 | 0 | init-only |
+| assessment_identity_mapping.source_id | text | 1 | 0 | init-only |
+| assessment_identity_mapping.source_locator | text | 1 | 0 | init-only |
+| assessment_identity_mapping.original_question_id | text | 1 | 0 | init-only |
+| assessment_identity_mapping.legacy_part_ref | text | 1 | 0 | init-only |
+| assessment_identity_mapping.snapshot_digest | text | 1 | 0 | init-only |
+| assessment_identity_mapping.target_revision_id | text | 1 | 0 | init-only |
+| assessment_identity_mapping.target_part_id | text | 1 | 0 | init-only |
+| assessment_identity_mapping.target_slot_id | text | 1 | 0 | init-only |
+| assessment_identity_mapping.status | text | 1 | 0 | init-only |
+| assessment_identity_mapping.supersedes_mapping_id | text | 1 | 0 | init-only |
+| migration_apply_run.run_id | text | 1 | 0 | init-only |
+| migration_apply_run.checkpoint_hash | text | 1 | 0 | init-only |
+| migration_apply_run.classification_hash | text | 1 | 0 | init-only |
+| migration_apply_run.classification_version | text | 1 | 0 | init-only |
+| migration_apply_run.registry_digest | text | 1 | 0 | init-only |
+| migration_apply_run.plan_digest | text | 1 | 0 | init-only |
+| migration_apply_run.started_at | timestamp | 1 | 0 | init-only |
+| migration_apply_run.finished_at | timestamp | 0 | 1 | update-only |
+| migration_apply_run.wal_lsn_start | text | 1 | 0 | init-only |
+| migration_apply_run.wal_lsn_end | text | 0 | 1 | update-only |
+| migration_apply_run.error | text | 0 | 1 | update-only |
+| migration_apply_phase.run_id | text | 1 | 0 | init-only |
+| migration_apply_phase.phase | text | 1 | 0 | init-only |
+| migration_apply_phase.started_at | timestamp | 1 | 0 | init-only |
+| migration_apply_phase.finished_at | timestamp | 0 | 1 | update-only |
+| migration_apply_phase.duration_ms | integer | 0 | 1 | update-only |
+| migration_apply_phase.wal_lsn_start | text | 1 | 0 | init-only |
+| migration_apply_phase.wal_lsn_end | text | 0 | 1 | update-only |
+| migration_apply_phase.rows_written | integer | 0 | 1 | update-only |
+| migration_apply_phase.rows_already_present | integer | 0 | 1 | update-only |
+| migration_apply_phase.error | text | 0 | 1 | update-only |
+| contract_epoch.seq | integer | 1 | 0 | init-only |
+| contract_epoch.epoch | text | 1 | 0 | init-only |
+| contract_epoch.state | text | 1 | 0 | init-only |
+| contract_epoch.entered_at | timestamp | 1 | 0 | init-only |
+| contract_epoch.entered_by | text | 1 | 0 | init-only |
+| contract_epoch.note | text | 1 | 0 | init-only |
+| learning_item.child_learning_item_ids | jsonb | 0 | 0 | stub (allowed) |
+| learning_item.ai_score | real | 0 | 0 | stub (allowed) |
+| learning_item.due_at | timestamp | 0 | 0 | stub (allowed) |
+| learning_item.reviewed_at | timestamp | 0 | 0 | stub (allowed) |
+| learning_record.kind | text | 1 | 0 | init-only |
+| learning_record.source | text | 1 | 0 | init-only |
+| learning_record.capture_mode | text | 1 | 0 | init-only |
+| learning_record.activity_kind | text | 1 | 0 | init-only |
+| learning_record.origin_event_id | text | 1 | 0 | init-only |
+| learning_record.subject_id | text | 1 | 0 | init-only |
+| learning_record.attempt_event_id | text | 1 | 0 | init-only |
+| learning_record.source_document_id | text | 1 | 0 | init-only |
+| learning_record.asset_refs | jsonb | 1 | 0 | init-only |
+| memory_brief_note.scope_key | text | 1 | 0 | init-only |
+| memory_brief_note.recent_week_md | text | 0 | 1 | update-only |
+| memory_brief_note.recent_months_md | text | 0 | 1 | update-only |
+| memory_brief_note.long_term_md | text | 0 | 1 | update-only |
+| memory_brief_note.recent_week_evidence_ids | jsonb | 0 | 1 | update-only |
+| memory_brief_note.recent_months_evidence_ids | jsonb | 0 | 1 | update-only |
+| memory_brief_note.long_term_evidence_ids | jsonb | 0 | 1 | update-only |
+| note_verification_claim.artifact_id | text | 1 | 0 | init-only |
+| note_verification_claim.fence | integer | 0 | 2 | update-only |
+| note_verification_claim.claim_token | uuid | 0 | 3 | update-only |
+| note_verification_claim.task_run_id | text | 0 | 3 | update-only |
+| note_verification_claim.result_json | jsonb | 0 | 3 | update-only |
+| note_verification_claim.result_attempts | integer | 0 | 3 | update-only |
+| note_verification_claim.provider_attempts | integer | 0 | 2 | update-only |
+| note_verification_claim.error_message | text | 0 | 3 | update-only |
+| note_verification_claim.lease_expires_at | timestamp | 0 | 3 | update-only |
+| note_verification_claim.claimed_at | timestamp | 0 | 3 | update-only |
+| note_verification_claim.provider_started_at | timestamp | 0 | 3 | update-only |
+| note_verification_claim.result_ready_at | timestamp | 0 | 3 | update-only |
+| note_verification_claim.completed_at | timestamp | 0 | 3 | update-only |
+| artifact_block_ref.from_artifact_id | text | 1 | 0 | init-only |
+| artifact_block_ref.from_block_id | text | 1 | 0 | init-only |
+| artifact_block_ref.to_artifact_id | text | 1 | 0 | init-only |
+| artifact_block_ref.to_block_id | text | 1 | 0 | init-only |
+| artifact_block_ref.ref_kind | text | 1 | 0 | init-only |
+| hub_sync_reconciliation.artifact_id | text | 1 | 0 | init-only (allowed) |
+| hub_sync_reconciliation.actor_ref | text | 0 | 0 | stub (allowed) |
+| hub_sync_reconciliation.acknowledged_generation | bigint | 0 | 1 | update-only (allowed) |
+| hub_sync_reconciliation.claim_owner | text | 0 | 1 | update-only (allowed) |
+| hub_sync_reconciliation.claim_token | text | 0 | 1 | update-only (allowed) |
+| hub_sync_reconciliation.lease_expires_at | timestamp | 0 | 1 | update-only (allowed) |
+| hub_sync_reconciliation.claim_count | integer | 0 | 1 | update-only (allowed) |
+| hub_sync_reconciliation.consecutive_failure_count | integer | 0 | 1 | update-only (allowed) |
+| hub_sync_reconciliation.last_dirty_at | timestamp | 2 | 0 | init-only (allowed) |
+| hub_sync_reconciliation.last_claimed_at | timestamp | 0 | 1 | update-only (allowed) |
+| hub_sync_reconciliation.last_error_at | timestamp | 0 | 1 | update-only (allowed) |
+| hub_sync_reconciliation.acknowledged_at | timestamp | 0 | 1 | update-only (allowed) |
+| hub_sync_reconciliation.last_outcome | text | 0 | 1 | update-only (allowed) |
+| hub_sync_reconciliation.last_error_class | text | 0 | 1 | update-only (allowed) |
+| hub_sync_reconciliation.last_error_code | text | 0 | 1 | update-only (allowed) |
+| hub_sync_reconciliation.last_error | text | 0 | 1 | update-only (allowed) |
+| hub_sync_reconciliation.last_desired_hash | text | 0 | 1 | update-only (allowed) |
+| hub_sync_reconciliation.last_observed_artifact_version | integer | 0 | 1 | update-only (allowed) |
+| hub_sync_reconciliation.last_applied_artifact_version | integer | 0 | 1 | update-only (allowed) |
+| artifact_edit_session.artifact_id | text | 1 | 0 | init-only (allowed) |
+| artifact_edit_session.session_id | text | 1 | 0 | init-only (allowed) |
+| artifact_edit_session.started_at | timestamp | 2 | 0 | init-only (allowed) |
+| artifact_edit_session.last_heartbeat_at | timestamp | 2 | 0 | init-only (allowed) |
+| answer.question_id | text | 1 | 0 | init-only |
+| answer.learning_item_id | text | 1 | 0 | init-only |
+| answer.vision_extracted | text | 0 | 0 | stub (allowed) |
+| answer.tags | jsonb | 1 | 0 | init-only |
+| answer.session_id | text | 1 | 0 | init-only |
+| answer.part_ref | text | 1 | 0 | init-only |
+| completion_evidence.learning_item_id | text | 1 | 0 | init-only |
+| completion_evidence.path | text | 1 | 0 | init-only |
+| completion_evidence.evidence_json | jsonb | 1 | 0 | init-only |
+| completion_evidence.decided_at | timestamp | 1 | 0 | init-only |
+| ai_task_runs.task_kind | text | 2 | 0 | init-only |
+| ai_task_runs.provider | text | 2 | 0 | init-only |
+| ai_task_runs.model | text | 2 | 0 | init-only |
+| ai_task_runs.input_hash | text | 2 | 0 | init-only |
+| ai_task_runs.prompt_fingerprint | text | 0 | 2 | update-only |
+| ai_task_runs.compiled_prompt_hash | text | 1 | 0 | init-only |
+| ai_task_runs.prompt_codec_version | text | 1 | 0 | init-only |
+| ai_task_runs.prompt_codec_mode | text | 1 | 0 | init-only |
+| ai_task_runs.prompt_context_digest | text | 1 | 0 | init-only |
+| ai_task_runs.started_at | timestamp | 2 | 0 | init-only |
+| provider_attempt.attempt_id | uuid | 1 | 0 | init-only |
+| provider_attempt.operation_id | uuid | 1 | 0 | init-only |
+| provider_attempt.attempt_kind | text | 1 | 0 | init-only |
+| provider_attempt.provider | text | 1 | 0 | init-only |
+| provider_attempt.model | text | 1 | 0 | init-only |
+| provider_attempt.lane_id | text | 1 | 0 | init-only |
+| provider_attempt.protocol | text | 1 | 0 | init-only |
+| provider_attempt.endpoint_class | text | 1 | 0 | init-only |
+| provider_attempt.caller | text | 1 | 0 | init-only |
+| provider_attempt.operation_kind | text | 1 | 0 | init-only |
+| provider_attempt.terminal_status | text | 0 | 1 | update-only |
+| provider_attempt.terminal_reason | text | 0 | 1 | update-only |
+| provider_attempt.wire_count | integer | 0 | 1 | update-only |
+| provider_attempt.usage_json | jsonb | 0 | 1 | update-only |
+| provider_attempt.cost_basis | text | 0 | 1 | update-only |
+| provider_attempt.cost_amount | doublePrecision | 0 | 1 | update-only |
+| provider_attempt.cost_currency | text | 0 | 1 | update-only |
+| provider_attempt.cost_source | text | 0 | 1 | update-only |
+| provider_attempt.started_at | timestamp | 1 | 0 | init-only |
+| provider_attempt.provider_start_reserved_at | timestamp | 0 | 1 | update-only |
+| provider_attempt.finished_at | timestamp | 0 | 1 | update-only |
+| provider_attempt_admission.attempt_id | uuid | 1 | 0 | init-only |
+| provider_session_admission.task_run_id | text | 1 | 0 | init-only |
+| provider_session_admission.lane_id | text | 1 | 0 | init-only |
+| provider_session_admission.policy_fingerprint | text | 1 | 0 | init-only |
+| provider_session_admission.mode | text | 1 | 0 | init-only |
+| provider_session_admission.requested_at | timestamp | 1 | 0 | init-only |
+| provider_session_admission.wait_deadline_at | timestamp | 1 | 0 | init-only |
+| tool_call_log.task_run_id | text | 1 | 0 | init-only |
+| tool_call_log.task_kind | text | 1 | 0 | init-only |
+| tool_call_log.tool_name | text | 1 | 0 | init-only |
+| tool_call_log.effect | text | 1 | 0 | init-only |
+| tool_call_log.input_json | jsonb | 1 | 0 | init-only |
+| tool_call_log.output_json | jsonb | 1 | 0 | init-only |
+| tool_call_log.error_reason | text | 1 | 0 | init-only |
+| tool_call_log.iteration | integer | 1 | 0 | init-only |
+| tool_call_log.latency_ms | real | 1 | 0 | init-only |
+| tool_call_log.cost | real | 1 | 0 | init-only |
+| tool_call_log.occurred_at | timestamp | 1 | 0 | init-only |
+| tool_operation.session_id | text | 1 | 0 | init-only |
+| tool_operation.task_run_id | text | 1 | 0 | init-only |
+| tool_operation.tool_name | text | 1 | 0 | init-only |
+| tool_operation.effect | text | 1 | 0 | init-only |
+| tool_operation.process_id | text | 1 | 0 | init-only |
+| tool_operation.input_hash | text | 1 | 0 | init-only |
+| tool_operation.input_json | jsonb | 1 | 0 | init-only |
+| tool_operation.result_json | jsonb | 0 | 1 | update-only |
+| tool_operation.error_json | jsonb | 0 | 1 | update-only |
+| tool_operation.side_effect_risk | text | 0 | 1 | update-only |
+| tool_operation.cancelled_by | text | 0 | 1 | update-only |
+| tool_operation.terminal_tool_call_log_id | text | 0 | 1 | update-only |
+| tool_operation.hard_deadline_at | timestamp | 1 | 0 | init-only |
+| tool_operation.started_at | timestamp | 2 | 0 | init-only |
+| tool_operation.settled_at | timestamp | 0 | 1 | update-only |
+| subagent_run.session_id | text | 1 | 0 | init-only |
+| subagent_run.parent_turn_event_id | text | 1 | 0 | init-only |
+| subagent_run.launch_key | text | 1 | 0 | init-only |
+| subagent_run.parent_task_run_id | text | 1 | 0 | init-only |
+| subagent_run.objective_hash | text | 1 | 0 | init-only |
+| subagent_run.objective | text | 1 | 0 | init-only |
+| subagent_run.cancel_requested_by | text | 0 | 1 | update-only |
+| subagent_run.cancel_requested_at | timestamp | 0 | 1 | update-only |
+| subagent_run.lease_expires_at | timestamp | 0 | 1 | update-only |
+| subagent_run.started_event_id | text | 1 | 0 | init-only |
+| subagent_run.settled_event_id | text | 0 | 1 | update-only |
+| subagent_run.result_md | text | 0 | 1 | update-only |
+| subagent_run.error_code | text | 0 | 1 | update-only |
+| subagent_run.error_message | text | 0 | 1 | update-only |
+| subagent_run.started_at | timestamp | 1 | 0 | init-only |
+| subagent_run.settled_at | timestamp | 0 | 1 | update-only |
+| cost_ledger.task_run_id | text | 1 | 0 | init-only |
+| cost_ledger.task_kind | text | 1 | 0 | init-only |
+| cost_ledger.provider | text | 1 | 0 | init-only |
+| cost_ledger.model | text | 1 | 0 | init-only |
+| cost_ledger.cost | real | 1 | 0 | init-only |
+| cost_ledger.currency | text | 1 | 0 | init-only |
+| cost_ledger.entry_kind | text | 1 | 0 | init-only |
+| cost_ledger.cost_basis | text | 1 | 0 | init-only |
+| cost_ledger.cost_ref | text | 1 | 0 | init-only |
+| cost_ledger.tokens_in | integer | 1 | 0 | init-only |
+| cost_ledger.tokens_out | integer | 1 | 0 | init-only |
+| cost_ledger.outcome | text | 1 | 0 | init-only |
+| cost_ledger.pgboss_job_id | text | 1 | 0 | init-only |
+| cost_ledger.occurred_at | timestamp | 1 | 0 | init-only |
+| job_events.business_table | text | 2 | 0 | init-only |
+| job_events.business_id | text | 2 | 0 | init-only |
+| job_events.event_type | text | 2 | 0 | init-only |
+| job_events.payload | jsonb | 2 | 0 | init-only |
+| job_events.occurred_at | timestamp | 3 | 0 | init-only |
+| echo_jobs.input | text | 0 | 0 | stub (allowed) |
+| echo_jobs.output | text | 0 | 1 | update-only |
+| echo_jobs.status | text | 0 | 1 | update-only |
+| echo_jobs.error_md | text | 0 | 0 | stub (allowed) |
+| learning_session.type | text | 6 | 0 | init-only |
+| learning_session.source_document_id | text | 6 | 0 | init-only |
+| learning_session.source_asset_ids | jsonb | 6 | 0 | init-only |
+| learning_session.entrypoint | text | 6 | 0 | init-only |
+| learning_session.agent_sdk_session_id | text | 0 | 1 | update-only |
+| learning_session.goal_id | text | 4 | 0 | init-only (allowed) |
+| learning_session.artifact_id | text | 2 | 0 | init-only |
+| learning_session.scope_knowledge_ids | jsonb | 2 | 0 | init-only |
+| learning_session.placement_leanings | jsonb | 1 | 0 | init-only |
+| learning_session.placement_pace | text | 1 | 0 | init-only |
+| learning_session.ended_at | timestamp | 0 | 5 | update-only |
+| event.dispatch_seq | bigint | 1 | 0 | init-only |
+| event.session_id | text | 1 | 0 | init-only |
+| event.actor_kind | text | 1 | 0 | init-only |
+| event.actor_ref | text | 1 | 0 | init-only |
+| event.action | text | 1 | 0 | init-only |
+| event.subject_kind | text | 1 | 0 | init-only |
+| event.subject_id | text | 1 | 0 | init-only |
+| event.outcome | text | 1 | 0 | init-only |
+| event.payload | jsonb | 1 | 0 | init-only |
+| event.caused_by_event_id | text | 1 | 0 | init-only |
+| event.affected_scopes | text | 1 | 0 | init-only |
+| event.task_run_id | text | 1 | 0 | init-only |
+| event.cost_micro_usd | integer | 1 | 0 | init-only |
+| event_subscription_checkpoint.subscriber_id | text | 1 | 0 | init-only |
+| event_subscription_checkpoint.subscriber_version | integer | 1 | 0 | init-only |
+| event_subscription_checkpoint.declaration_hash | text | 1 | 0 | init-only |
+| event_subscription_checkpoint.status | text | 1 | 0 | init-only |
+| event_subscription_checkpoint.next_delivery_seq | bigint | 0 | 1 | update-only |
+| event_subscription_checkpoint.claim_owner | text | 0 | 2 | update-only |
+| event_subscription_checkpoint.claim_token | uuid | 0 | 2 | update-only |
+| event_subscription_checkpoint.claim_lease_until | timestamp | 0 | 2 | update-only |
+| event_subscription_checkpoint.bootstrapped_at | timestamp | 1 | 0 | init-only |
+| event_subscription_checkpoint.activated_at | timestamp | 1 | 0 | init-only |
+| event_subscription_checkpoint.paused_at | timestamp | 0 | 0 | stub (allowed) |
+| event_subscription_delivery.subscriber_id | text | 1 | 0 | init-only |
+| event_subscription_delivery.subscriber_version | integer | 1 | 0 | init-only |
+| event_subscription_delivery.source_event_id | text | 1 | 0 | init-only |
+| event_subscription_delivery.source_dispatch_seq | bigint | 1 | 0 | init-only |
+| event_subscription_delivery.delivery_seq | bigint | 1 | 0 | init-only |
+| event_subscription_delivery.claim_owner | text | 0 | 2 | update-only |
+| event_subscription_delivery.claim_token | uuid | 0 | 2 | update-only |
+| event_subscription_delivery.claim_lease_until | timestamp | 0 | 2 | update-only |
+| event_subscription_delivery.outcome | jsonb | 0 | 1 | update-only |
+| event_subscription_delivery.discovered_at | timestamp | 1 | 0 | init-only |
+| event_subscription_delivery.claimed_at | timestamp | 0 | 2 | update-only |
+| event_subscription_effect.attempt_event_id | text | 1 | 0 | init-only |
+| event_subscription_effect.artifact_id | text | 1 | 0 | init-only |
+| event_subscription_effect.effect_kind | text | 1 | 0 | init-only |
+| event_subscription_effect.subscriber_id | text | 1 | 0 | init-only |
+| event_subscription_effect.subscriber_version | integer | 1 | 0 | init-only |
+| event_subscription_effect.source_event_id | text | 1 | 0 | init-only |
+| event_subscription_effect.mastery_event_ids | text | 1 | 0 | init-only |
+| event_subscription_effect.evidence_ids | text | 1 | 0 | init-only |
+| event_subscription_effect.question_id | text | 1 | 0 | init-only |
+| event_subscription_effect.status | text | 1 | 0 | init-only |
+| event_subscription_effect.stable_job_key | text | 1 | 0 | init-only |
+| event_subscription_effect.downstream_job_id | text | 1 | 0 | init-only |
+| event_subscription_effect.reserved_at | timestamp | 2 | 0 | init-only |
+| event_subscription_effect.enqueued_at | timestamp | 1 | 0 | init-only |
+| event_subscription_effect.completed_at | timestamp | 1 | 0 | init-only |
+| event_subscription_effect.outcome | jsonb | 1 | 0 | init-only |
+| materialized_id_index.materialized_id | text | 1 | 0 | init-only |
+| materialized_id_index.anchor_event_id | text | 1 | 0 | init-only |
+| materialized_id_index.subject_kind | text | 1 | 0 | init-only |
+| proposal_signals.kind | text | 2 | 0 | init-only |
+| proposal_signals.cooldown_key | text | 2 | 0 | init-only |
+| proposal_signals.accept_count | integer | 2 | 0 | init-only |
+| proposal_signals.dismiss_count | integer | 2 | 0 | init-only |
+| proposal_signals.acceptance_rate | real | 2 | 0 | init-only |
+| proposal_signals.dismiss_reason | text | 1 | 0 | init-only |
+| proposal_signals.cooldown_until | timestamp | 1 | 0 | init-only |
+| material_fsrs_state.subject_kind | text | 1 | 0 | init-only |
+| mastery_state.subject_kind | text | 1 | 0 | init-only |
+| mastery_state.calibration_residual | real | 0 | 0 | stub (allowed) |
+| mastery_state.fluency_illusion_flag | boolean | 0 | 0 | stub (allowed) |
+| kc_typed_state.subject_kind | text | 1 | 0 | init-only |
+| intervention.revision | integer | 0 | 1 | update-only |
+| intervention.source_probe_result_event_id | text | 1 | 0 | init-only |
+| intervention.conjecture_event_id | text | 1 | 0 | init-only |
+| intervention.delivery_mode | text | 1 | 0 | init-only |
+| intervention.outcome | text | 0 | 1 | update-only (allowed) |
+| intervention.idempotency_key | text | 1 | 0 | init-only |
+| intervention.snapshot_json | jsonb | 1 | 0 | init-only |
+| intervention.recommendation_json | jsonb | 0 | 1 | update-only |
+| intervention.package_json | jsonb | 0 | 1 | update-only |
+| intervention.settlement_json | jsonb | 0 | 1 | update-only |
+| intervention.failure_code | text | 0 | 1 | update-only |
+| intervention.activated_at | timestamp | 0 | 1 | update-only |
+| learner_axis_state.subject_kind | text | 1 | 0 | init-only |
+| item_family_calibration.family_key | text | 1 | 0 | init-only |
+| difficulty_calibration_label.question_id | text | 1 | 0 | init-only |
+| difficulty_calibration_label.attempt_event_id | text | 1 | 0 | init-only |
+| difficulty_calibration_label.theta_snapshot | real | 1 | 0 | init-only |
+| difficulty_calibration_label.outcome | integer | 1 | 0 | init-only |
+| difficulty_calibration_label.b_label | real | 1 | 0 | init-only |
+| difficulty_calibration_label.inclusion_probability | real | 1 | 0 | init-only |
+| cause_category_overlay.subject_id | text | 1 | 0 | init-only |
+| cause_category_overlay.label | text | 1 | 0 | init-only |
+| cause_category_overlay.description | text | 1 | 0 | init-only |
+| cause_category_overlay.source | text | 1 | 0 | init-only |
+| cause_category_overlay.status | text | 1 | 0 | init-only |
+| cause_category_overlay.proposal_event_id | text | 1 | 0 | init-only |
+| cause_category_overlay.evidence_event_ids | jsonb | 1 | 0 | init-only |
+| placement_starter_claim.fingerprint | text | 1 | 0 | init-only |
+| placement_starter_claim.goal_id | text | 1 | 0 | init-only |
+| placement_starter_claim.semantic_goal_revision_id | text | 1 | 0 | init-only |
+| placement_starter_claim.subject_id | text | 1 | 0 | init-only |
+| placement_starter_claim.knowledge_id | text | 1 | 0 | init-only |
+| placement_starter_claim.demand_id | text | 1 | 0 | init-only |
+| placement_starter_claim.target_id | text | 1 | 0 | init-only |
+| placement_starter_claim.pg_boss_job_id | text | 0 | 1 | update-only |
+| placement_starter_claim.max_paid_attempts | integer | 1 | 0 | init-only |
+| placement_starter_claim.budget_limit_micro_usd | integer | 1 | 0 | init-only |
+| placement_starter_claim.satisfied_at | timestamp | 0 | 1 | update-only |
+| placement_starter_claim.exhausted_at | timestamp | 0 | 1 | update-only |
+| placement_starter_claim.last_error_class | text | 0 | 1 | update-only |
+| placement_starter_claim.last_error_code | text | 0 | 1 | update-only |
+| placement_starter_claim.last_error | text | 0 | 1 | update-only |
+| placement_starter_attempt.claim_id | text | 2 | 0 | init-only |
+| placement_starter_attempt.pg_boss_job_id | text | 2 | 0 | init-only |
+| placement_starter_attempt.delivery_no | integer | 2 | 0 | init-only |
+| placement_starter_attempt_question.attempt_id | text | 2 | 0 | init-only |
+| placement_starter_attempt_question.claim_id | text | 2 | 0 | init-only |
+| placement_starter_attempt_question.question_id | text | 2 | 0 | init-only |
+| placement_starter_attempt_question.canonical_hash | text | 2 | 0 | init-only |
+| placement_starter_attempt_question.verification_authority_epoch | uuid | 2 | 0 | init-only |
+| placement_starter_cost_component.claim_id | text | 2 | 0 | init-only |
+| placement_starter_cost_component.attempt_id | text | 2 | 0 | init-only |
+| placement_starter_cost_component.component_kind | text | 2 | 0 | init-only |
+| placement_starter_cost_component.question_id | text | 2 | 0 | init-only |
+| practice_stream_item.session_id | text | 2 | 0 | init-only |
+| practice_stream_item.item_kind | text | 2 | 0 | init-only |
+| practice_stream_item.ref_id | text | 2 | 0 | init-only |
+| practice_stream_item.source | text | 2 | 0 | init-only |
+| practice_stream_item.reasoning | text | 2 | 0 | init-only |
+| practice_stream_item.added_by | text | 2 | 0 | init-only |
+| practice_stream_item.signals | jsonb | 2 | 0 | init-only |
+| editing_presence.artifact_id | text | 1 | 0 | init-only |
+| memory_reconciliation_log.user_id | text | 1 | 0 | init-only |
+| memory_reconciliation_log.new_memory_id | text | 1 | 0 | init-only |
+| memory_reconciliation_log.old_memory_id | text | 1 | 0 | init-only |
+| memory_reconciliation_log.action | text | 1 | 0 | init-only |
+| memory_reconciliation_log.reason | text | 1 | 0 | init-only |
+| memory_reconciliation_log.llm_raw | jsonb | 1 | 0 | init-only |
+| memory_reconciliation_log.planned_at | timestamp | 1 | 0 | init-only |
+| memory_reconciliation_log.applied_at | timestamp | 0 | 1 | update-only |
+| memory_reconciliation_log.prev_text | text | 1 | 0 | init-only |
+| memory_reconciliation_log.prev_metadata | jsonb | 1 | 0 | init-only |
+| edge_reconciliation_log.candidate_from_knowledge_id | text | 1 | 0 | init-only |
+| edge_reconciliation_log.candidate_to_knowledge_id | text | 1 | 0 | init-only |
+| edge_reconciliation_log.candidate_relation_type | text | 1 | 0 | init-only |
+| edge_reconciliation_log.action | text | 1 | 0 | init-only |
+| edge_reconciliation_log.superseded_edge_id | text | 1 | 0 | init-only |
+| edge_reconciliation_log.confidence | real | 1 | 0 | init-only |
+| edge_reconciliation_log.reason | text | 1 | 0 | init-only |
+| edge_reconciliation_log.llm_raw | jsonb | 1 | 0 | init-only |
+| edge_reconciliation_log.planned_at | timestamp | 1 | 0 | init-only |
+| edge_reconciliation_log.applied_at | timestamp | 0 | 1 | update-only |
+| misconception_reconciliation_log.candidate_from_kind | text | 0 | 0 | stub (allowed) |
+| misconception_reconciliation_log.candidate_from_id | text | 0 | 0 | stub (allowed) |
+| misconception_reconciliation_log.candidate_to_kind | text | 0 | 0 | stub (allowed) |
+| misconception_reconciliation_log.candidate_to_id | text | 0 | 0 | stub (allowed) |
+| misconception_reconciliation_log.candidate_relation_type | text | 0 | 0 | stub (allowed) |
+| misconception_reconciliation_log.action | text | 0 | 0 | stub (allowed) |
+| misconception_reconciliation_log.superseded_edge_id | text | 0 | 0 | stub (allowed) |
+| misconception_reconciliation_log.confidence | real | 0 | 0 | stub (allowed) |
+| misconception_reconciliation_log.reason | text | 0 | 0 | stub (allowed) |
+| misconception_reconciliation_log.llm_raw | jsonb | 0 | 0 | stub (allowed) |
+| misconception_reconciliation_log.planned_at | timestamp | 0 | 0 | stub (allowed) |
+| misconception_reconciliation_log.applied_at | timestamp | 0 | 0 | stub (allowed) |
+| selection_observation.date | text | 1 | 0 | init-only |
+| selection_observation.stream_item_id | text | 1 | 0 | init-only |
+| selection_observation.ref_kind | text | 1 | 0 | init-only |
+| selection_observation.ref_id | text | 1 | 0 | init-only |
+| selection_observation.policy | text | 1 | 0 | init-only |
+| selection_observation.selected | boolean | 1 | 0 | init-only |
+| selection_observation.inclusion_probability | real | 1 | 0 | init-only |
+| selection_observation.signals | jsonb | 1 | 0 | init-only |
+| subject.origin | text | 2 | 0 | init-only |
+| subject.is_selectable | boolean | 2 | 0 | init-only |
+| subject_trait.trait_kind | text | 2 | 0 | init-only |
+| subject_trait.origin | text | 2 | 0 | init-only |
+| subject_trait.owner_subject_id | text | 2 | 0 | init-only |
+| subject_trait_journal.trait_id | text | 2 | 0 | init-only |
+| subject_trait_journal.revision | integer | 2 | 0 | init-only |
+| subject_trait_journal.payload | jsonb | 2 | 0 | init-only |
+| subject_trait_journal.payload_schema_version | integer | 2 | 0 | init-only |
+| subject_trait_journal.seed_version | text | 2 | 0 | init-only |
+| subject_trait_journal.action | text | 2 | 0 | init-only |
+| subject_trait_journal.actor | text | 2 | 0 | init-only |
+| subject_trait_journal.source_trait_id | text | 1 | 0 | init-only |
+| subject_trait_journal.source_revision | integer | 1 | 0 | init-only |
+| subject_trait_journal.rolled_back_from | integer | 1 | 0 | init-only |
+| subject_trait_journal.change_seq | bigint | 1 | 0 | init-only (allowed) |
+| subject_trait_binding.subject_id | text | 2 | 0 | init-only |
+| subject_trait_binding.trait_kind | text | 2 | 0 | init-only |
+| subject_control_journal.subject_id | text | 4 | 0 | init-only |
+| subject_control_journal.revision | integer | 4 | 0 | init-only |
+| subject_control_journal.action | text | 4 | 0 | init-only |
+| subject_control_journal.detail | jsonb | 4 | 0 | init-only |
+| subject_control_journal.actor | text | 4 | 0 | init-only |
+| subject_control_journal.change_seq | bigint | 1 | 0 | init-only (allowed) |
+| subject_name_claim.name_norm | text | 2 | 0 | init-only |
+| subject_name_claim.subject_id | text | 2 | 0 | init-only |
+| subject_name_claim.kind | text | 2 | 0 | init-only |
+| dag_orchestration_run.run_date | text | 1 | 0 | init-only |
+| dag_orchestration_run.trigger | text | 1 | 0 | init-only |
+| dag_orchestration_run.started_at | timestamp | 1 | 0 | init-only |
+| dag_orchestration_run.finished_at | timestamp | 0 | 1 | update-only |
+| dag_orchestration_node.run_id | text | 1 | 0 | init-only |
+| dag_orchestration_node.job_name | text | 1 | 0 | init-only |
+| dag_orchestration_node.boss_job_id | text | 0 | 1 | update-only |
+| dag_orchestration_node.detail | text | 0 | 1 | update-only |
+| dag_orchestration_node.enqueued_at | timestamp | 0 | 1 | update-only |
+| dag_orchestration_node.finished_at | timestamp | 0 | 1 | update-only |
+| system_config.key | text | 1 | 0 | init-only |
+| system_config_journal.key | text | 1 | 0 | init-only |
+| system_config_journal.revision | integer | 1 | 0 | init-only |
+| system_config_journal.payload | jsonb | 1 | 0 | init-only |
+| system_config_journal.action | text | 1 | 0 | init-only |
+| system_config_journal.actor | text | 1 | 0 | init-only |
+| system_config_journal.change_seq | bigint | 1 | 0 | init-only (allowed) |
+| system_config_epoch.epoch | bigint | 2 | 0 | init-only (allowed) |
+| prune_job_events_control.phase | text | 0 | 1 | update-only |
+| prune_job_events_receipt.workflow_id | text | 1 | 0 | init-only |
+| prune_job_events_receipt.cutoff | timestamp | 1 | 0 | init-only |
+| prune_job_events_receipt.deleted | integer | 1 | 0 | init-only |
+| prune_job_events_disposition.backend | text | 1 | 0 | init-only |
+| prune_job_events_disposition.task_id | text | 1 | 0 | init-only |
+| prune_job_events_disposition.observed_state | text | 1 | 0 | init-only |
+| prune_job_events_disposition.reason | text | 1 | 0 | init-only |
+| copilot_evidence_checkpoint.id | text | 0 | 0 | historical-retained |
+| copilot_evidence_checkpoint.task_kind | text | 0 | 0 | historical-retained |
+| copilot_evidence_checkpoint.slot | text | 0 | 0 | historical-retained |
+| copilot_evidence_checkpoint.protocol_version | integer | 0 | 0 | historical-retained |
+| copilot_evidence_checkpoint.prompt_fingerprint | text | 0 | 0 | historical-retained |
+| copilot_evidence_checkpoint.base_input_sha256 | text | 0 | 0 | historical-retained |
+| copilot_evidence_checkpoint.source_catalog_sha256 | text | 0 | 0 | historical-retained |
+| copilot_evidence_checkpoint.binding_extras | jsonb | 0 | 0 | historical-retained |
+| copilot_evidence_checkpoint.status | text | 0 | 0 | historical-retained |
+| copilot_evidence_checkpoint.revision | integer | 0 | 0 | historical-retained |
+| copilot_evidence_checkpoint.records_json | jsonb | 0 | 0 | historical-retained |
+| copilot_evidence_checkpoint.record_digests_json | jsonb | 0 | 0 | historical-retained |
+| copilot_evidence_checkpoint.attempts_json | jsonb | 0 | 0 | historical-retained |
+| copilot_evidence_checkpoint.sealed_output_json | jsonb | 0 | 0 | historical-retained |
+| copilot_evidence_checkpoint.sealed_digest_sha256 | text | 0 | 0 | historical-retained |
+| copilot_evidence_checkpoint.sealed_task_run_id | text | 0 | 0 | historical-retained |
+| copilot_evidence_checkpoint.created_at | timestamp with time zone | 0 | 0 | historical-retained |
+| copilot_evidence_checkpoint.updated_at | timestamp with time zone | 0 | 0 | historical-retained |
+| copilot_evidence_checkpoint.expires_at | timestamp with time zone | 0 | 0 | historical-retained |
+| copilot_continuation.id | text | 0 | 0 | historical-retained |
+| copilot_continuation.subagent_run_id | text | 0 | 0 | historical-retained |
+| copilot_continuation.session_id | text | 0 | 0 | historical-retained |
+| copilot_continuation.parent_turn_event_id | text | 0 | 0 | historical-retained |
+| copilot_continuation.result_event_id | text | 0 | 0 | historical-retained |
+| copilot_continuation.status | text | 0 | 0 | historical-retained |
+| copilot_continuation.claim_token | text | 0 | 0 | historical-retained |
+| copilot_continuation.lease_expires_at | timestamp with time zone | 0 | 0 | historical-retained |
+| copilot_continuation.task_run_id | text | 0 | 0 | historical-retained |
+| copilot_continuation.reply_event_id | text | 0 | 0 | historical-retained |
+| copilot_continuation.pg_boss_job_id | text | 0 | 0 | historical-retained |
+| copilot_continuation.error_code | text | 0 | 0 | historical-retained |
+| copilot_continuation.error_message | text | 0 | 0 | historical-retained |
+| copilot_continuation.created_at | timestamp with time zone | 0 | 0 | historical-retained |
+| copilot_continuation.started_at | timestamp with time zone | 0 | 0 | historical-retained |
+| copilot_continuation.settled_at | timestamp with time zone | 0 | 0 | historical-retained |
+| copilot_continuation.updated_at | timestamp with time zone | 0 | 0 | historical-retained |
+| subagent_run.claim_token | text | 0 | 0 | historical-retained |
+| subagent_run.hard_deadline_at | timestamp with time zone | 0 | 0 | historical-retained |
+| subagent_run.child_task_run_id | text | 0 | 0 | historical-retained |
+| subagent_run.pg_boss_job_id | text | 0 | 0 | historical-retained |
+
+Historical retention: copilot_evidence_checkpoint (19 columns)
+ADR-0058 / YUK-939 retired Copilot evidence checkpoint writers; retain historical rows/schema and export/restore compatibility. Production INSERT/UPDATE is forbidden.
+  copilot_evidence_checkpoint.id: text
+  copilot_evidence_checkpoint.task_kind: text
+  copilot_evidence_checkpoint.slot: text
+  copilot_evidence_checkpoint.protocol_version: integer
+  copilot_evidence_checkpoint.prompt_fingerprint: text
+  copilot_evidence_checkpoint.base_input_sha256: text
+  copilot_evidence_checkpoint.source_catalog_sha256: text
+  copilot_evidence_checkpoint.binding_extras: jsonb
+  copilot_evidence_checkpoint.status: text
+  copilot_evidence_checkpoint.revision: integer
+  copilot_evidence_checkpoint.records_json: jsonb
+  copilot_evidence_checkpoint.record_digests_json: jsonb
+  copilot_evidence_checkpoint.attempts_json: jsonb
+  copilot_evidence_checkpoint.sealed_output_json: jsonb
+  copilot_evidence_checkpoint.sealed_digest_sha256: text
+  copilot_evidence_checkpoint.sealed_task_run_id: text
+  copilot_evidence_checkpoint.created_at: timestamp with time zone
+  copilot_evidence_checkpoint.updated_at: timestamp with time zone
+  copilot_evidence_checkpoint.expires_at: timestamp with time zone
+
+Historical retention: copilot_continuation (17 columns)
+ADR-0063 / YUK-951 B3 retains continuation schema and installation drain history. Production INSERT/UPDATE is forbidden; no current producer or worker.
+  copilot_continuation.id: text
+  copilot_continuation.subagent_run_id: text
+  copilot_continuation.session_id: text
+  copilot_continuation.parent_turn_event_id: text
+  copilot_continuation.result_event_id: text
+  copilot_continuation.status: text
+  copilot_continuation.claim_token: text
+  copilot_continuation.lease_expires_at: timestamp with time zone
+  copilot_continuation.task_run_id: text
+  copilot_continuation.reply_event_id: text
+  copilot_continuation.pg_boss_job_id: text
+  copilot_continuation.error_code: text
+  copilot_continuation.error_message: text
+  copilot_continuation.created_at: timestamp with time zone
+  copilot_continuation.started_at: timestamp with time zone
+  copilot_continuation.settled_at: timestamp with time zone
+  copilot_continuation.updated_at: timestamp with time zone
+
+Historical retention: subagent_run (24 columns)
+ADR-0063 / ADR-0065 retains the native child projection and historical mailbox fields. Retired ownership writes are forbidden; explicit native lifecycle writes and null lease cleanup remain permitted.
+  subagent_run.id: text
+  subagent_run.session_id: text
+  subagent_run.parent_turn_event_id: text
+  subagent_run.launch_key: text
+  subagent_run.parent_task_run_id: text
+  subagent_run.objective_hash: text
+  subagent_run.objective: text
+  subagent_run.status: text
+  subagent_run.cancel_requested_by: text
+  subagent_run.cancel_requested_at: timestamp with time zone
+  subagent_run.claim_token: text
+  subagent_run.lease_expires_at: timestamp with time zone
+  subagent_run.hard_deadline_at: timestamp with time zone
+  subagent_run.child_task_run_id: text
+  subagent_run.started_event_id: text
+  subagent_run.settled_event_id: text
+  subagent_run.pg_boss_job_id: text
+  subagent_run.result_md: text
+  subagent_run.error_code: text
+  subagent_run.error_message: text
+  subagent_run.created_at: timestamp with time zone
+  subagent_run.started_at: timestamp with time zone
+  subagent_run.settled_at: timestamp with time zone
+  subagent_run.updated_at: timestamp with time zone
+
+Total fields audited: 896
+  historical-retained: 40
+  live: 284
+  init-only: 439
+  update-only: 110
+  stub (allowed): 23
+  stub (unallowed): 0

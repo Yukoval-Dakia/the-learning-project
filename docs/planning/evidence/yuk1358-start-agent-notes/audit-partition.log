@@ -1,0 +1,19 @@
+$ tsx scripts/audit-test-partition.ts
+test partition audit (file-level)
+
+  unit:       754 files
+  db:         523 files
+  migration:  1 file(s)
+  unmatched:  0 files
+
+P0 ERROR (unit + unmocked DB import):  (none)
+P1 WARN  (db + no file-level DB import):  6
+  - src/capabilities/copilot/server/copilot-tools.db.test.ts
+  - src/capabilities/practice/jobs/variant_verify.parse.test.ts
+  - src/capabilities/practice/server/frozen-snapshot-parity.db.test.ts
+  - src/server/ai/mcp/exa.test.ts
+  - src/server/ai/pi-synthetic-tool-actual.db.test.ts
+  - src/server/revert/cascade-revert.unit.test.ts
+
+Note: file-level detection only. transitive imports may still be DB-tainted.
+For full coverage see docs/design/2026-05-21-test-partition-audit.md (方案 B).

@@ -1,0 +1,38 @@
+{
+  "failed_head": "3a9b09291",
+  "ci_run": 37826987461,
+  "cause": "Two existing admin handoff assertions expected 11 after agent-notes added the twelfth handoff. All eight failures originated at these assertions.",
+  "fix": "Only two assertion values changed from 11 to 12; product source and built artifacts unchanged.",
+  "red": {
+    "files": 2,
+    "failed": 8,
+    "passed": 39,
+    "exit": 1
+  },
+  "green": {
+    "files": 4,
+    "passed": 59,
+    "exit": 0
+  },
+  "biome_exit": 0,
+  "verified_source_files": 19,
+  "verified_artifact_files": 878,
+  "logs": {
+    "handoff-red": {
+      "raw_sha256": "f3762feeb5d2022287c8007c8d2f1a036925d03de03c8e6ad5f06d52dd5c98ea",
+      "gzip_sha256": "1831229b64c52907dbc79ad5e7313a54aef3f6e3e219cefe985ff98ddc92013c"
+    },
+    "handoff-green": {
+      "raw_sha256": "d8b984a1c6a22c455ff0ae5883f9e0b488743d75cfd280ec93d53d5daa48ac86",
+      "gzip_sha256": "c703c61baa21a7f4d1d530e2fe753febe1a178b06d430a91e9a38edaeed03a6a"
+    },
+    "ci-unit1": {
+      "raw_sha256": "513e6cbc4ed6ed8a38c48c80b0eb6598a678293e55c0e8f0922a4c6ef3491e17",
+      "gzip_sha256": "a98e2d30618c5b7a29f79be39b5fb63f12274a7189896116487799fc72367eea"
+    },
+    "ci-unit2": {
+      "raw_sha256": "02ac66bb77a699958553f0f3001bc86870a6d0342c28358fbe81ce64d632fa98",
+      "gzip_sha256": "e4c9202b97c1a6e6d549d208aa2e22cb09c1aaf04e86d9d707ffbb353f8f623e"
+    }
+  }
+}

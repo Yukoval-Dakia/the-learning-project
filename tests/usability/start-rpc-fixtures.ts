@@ -10,6 +10,7 @@ import type {
 } from '@playwright/test';
 import { createDefaultSerovalPlugins } from '@tanstack/react-router/ssr/client';
 import { z } from 'zod';
+import { AgentNotesQuerySchema } from '../../src/capabilities/agency/api/contracts';
 import { ProposalDecisionInput, ProposalDecisionResource } from '../../src/core/schema/proposal';
 
 type FixtureRequest = Pick<
@@ -21,6 +22,7 @@ type FixtureHandler = (route: FixtureRoute) => Promise<void> | void;
 type Fulfillment = NonNullable<Parameters<Route['fulfill']>[0]>;
 
 const reads = {
+  getStartAgentNoteBoard: '/api/agents/notes',
   getStartWorkbenchSummary: '/api/workbench/summary',
   getStartOvernightDigest: '/api/workbench/overnight-digest',
   getStartTodayCost: '/api/cost/today',
@@ -209,7 +211,10 @@ export async function decodeRpcRequest(request: FixtureRequest, map: Map<string,
     if (!path) throw new Error(`No fixture operation for ${name}`);
     url.pathname = path;
   }
-  if (queryNames.has(name)) {
+  if (name === 'getStartAgentNoteBoard') {
+    const input = AgentNotesQuerySchema.parse(payload.data ?? {});
+    if (input.limit !== undefined) url.searchParams.set('limit', String(input.limit));
+  } else if (queryNames.has(name)) {
     for (const [key, value] of Object.entries(Query.parse(payload.data ?? {})))
       if (value !== undefined) url.searchParams.set(key, value);
   } else if (

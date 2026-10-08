@@ -11,7 +11,6 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { useState } from 'react';
-import { apiJson } from '@/ui/lib/api';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -20,19 +19,21 @@ import { SectionLabel } from '@/ui/primitives/SectionLabel';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
 import { AgentNoteGroupCard } from './AgentNoteGroupCard';
+import { useAgentNoteClient } from './agent-note-client';
 import { type AgentNoteGroup, dayGroupOf, groupAgentNotes } from './derive';
 import { SIGNAL_META, signalMeta } from './meta';
-import type { AgentNotesResponse, BoardAgentNote } from './types';
+import type { BoardAgentNote } from './types';
 import { useAgentReads } from './useAgentReads';
 
 export default function AgentNotesPage({ navigate }: { navigate: (to: string) => void }) {
+  const { getAgentNoteBoard } = useAgentNoteClient();
   const now = new Date();
   const [filter, setFilter] = useState<string>('all');
   const { isUnread, markAllRead, unreadCount } = useAgentReads(now);
 
   const q = useQuery({
     queryKey: ['agent-notes', 'full'],
-    queryFn: () => apiJson<AgentNotesResponse>('/api/agents/notes?limit=50'),
+    queryFn: () => getAgentNoteBoard(50),
   });
 
   const all: BoardAgentNote[] = q.data?.rows ?? [];
