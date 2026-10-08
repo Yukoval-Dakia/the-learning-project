@@ -5,6 +5,24 @@ import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { z } from 'zod';
+import {
+  adminConjectures,
+  adminCost,
+  adminCoverage,
+  adminDetail,
+  adminFailures,
+  adminRuns,
+} from '../../server/start/admin-test-fixtures';
+import {
+  AdminCostResponseSchema,
+  AdminFailuresResponseSchema,
+  AdminRunDetailResponseSchema,
+  AdminRunsResponseSchema,
+} from '../../src/capabilities/observability/api/admin-observability-contracts';
+import {
+  ConjectureScoresResponseSchema,
+  CoverageLatticeResponseSchema,
+} from '../../src/capabilities/observability/api/diagnostic-contracts';
 import { ProposalPageResponseSchema } from '../../src/capabilities/shell/api/contracts';
 import { ProposalDecisionResource } from '../../src/core/schema/proposal';
 import { createApiFixtureScenario } from './api-fixtures';
@@ -417,4 +435,89 @@ test('retained HTTP201/Location and serialized RPC200 preserve the same immutabl
   };
   assert.deepEqual(await readProposalDecisionResponse(rpc), resource);
   await assert.rejects(readProposalDecisionResponse({ ...rpc, status: () => 201 }), /RPC200/);
+});
+
+test('six admin reads use the installed RPC serializer with complete ISO/nullable DTOs', async () => {
+  const map = await loadBuiltFunctionMap();
+  const fetcher = await client();
+  const cases = [
+    {
+      name: 'getStartAdminRuns',
+      data: { limit: '100', status: 'failure', cursor: 'opaque:+/=?多层' },
+      path: '/api/admin/runs',
+      fixture: adminRuns,
+      schema: AdminRunsResponseSchema,
+    },
+    {
+      name: 'getStartAdminRunDetail',
+      data: { id: 'run id/多层' },
+      path: '/api/admin/runs/run%20id%2F%E5%A4%9A%E5%B1%82',
+      fixture: adminDetail,
+      schema: AdminRunDetailResponseSchema,
+    },
+    {
+      name: 'getStartAdminCost',
+      data: { days: '30' },
+      path: '/api/admin/cost',
+      fixture: adminCost,
+      schema: AdminCostResponseSchema,
+    },
+    {
+      name: 'getStartAdminFailures',
+      data: { limit: '200' },
+      path: '/api/admin/failures',
+      fixture: adminFailures,
+      schema: AdminFailuresResponseSchema,
+    },
+    {
+      name: 'getStartAdminCoverage',
+      data: undefined,
+      path: '/api/admin/coverage-lattice',
+      fixture: adminCoverage,
+      schema: CoverageLatticeResponseSchema,
+    },
+    {
+      name: 'getStartAdminConjectureScores',
+      data: undefined,
+      path: '/api/admin/conjecture-scores',
+      fixture: adminConjectures,
+      schema: ConjectureScoresResponseSchema,
+    },
+  ];
+  for (const entry of cases) {
+    const id = [...map].find(([, value]) => value === entry.name)?.[0];
+    assert(id);
+    const transport = async (url: string, init: unknown) => {
+      const options = Init.parse(init);
+      const decoded = await decodeRpcRequest(
+        {
+          url: () => url,
+          method: () => options.method,
+          headers: () => Object.fromEntries(options.headers),
+          postData: () => null,
+          postDataJSON: () => null,
+        },
+        map,
+      );
+      const fixtureUrl = new URL(decoded.request.url());
+      assert.equal(fixtureUrl.pathname, entry.path);
+      if (entry.data && !('id' in entry.data))
+        assert.deepEqual(Object.fromEntries(fixtureUrl.searchParams), entry.data);
+      const result = await rpcFulfillment(decoded.name, { json: entry.fixture });
+      return new Response(z.string().parse(result.body), {
+        status: result.status,
+        headers: { ...result.headers, 'content-type': 'application/json' },
+      });
+    };
+    const envelope = Envelope.parse(
+      await fetcher(
+        `http://fixture.test/_serverFn/${id}`,
+        [{ method: 'GET', data: entry.data, fetch: transport }],
+        transport,
+      ),
+    );
+    assert.equal(envelope.error, undefined);
+    entry.schema.parse(envelope.result);
+    assert.deepEqual(envelope.result, entry.fixture);
+  }
 });

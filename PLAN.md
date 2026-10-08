@@ -4,7 +4,7 @@
 
 ## NOW
 
-- **YUK-1391 / W5 trait六操作**：源码7199aa3fc，作者154unit/static/build、父4文件55DB通过，独立R1 NONE；15:25:38Z核owner释放测试锁，原四服务/release不变。PR/exactCI待。18项历史schema豁免过期与dist/start provider误扫由主线接管capture/修复；不延豁免。Start归主线，1358/1359仍未完。
+- **YUK-1391 / W5 trait六操作**：源码7199aa3fc，作者154unit/static/build、父4文件55DB通过，独立R1 NONE；15:25:38Z核owner释放测试锁，原四服务/release不变。PR1617 draft已开，正常整合main fe4849712；整合6文件227unit/typecheck/lint/build通过，新exact CI待。18项历史schema豁免过期与dist/start provider误扫由主线接管capture/修复；不延豁免。Start归主线，1358/1359仍未完。
 
 - **YUK-1390 / 已合入**：PR1616于14:55:48Z合main7b8904179，tree与exact bec86e4e5一致；CI37794964900全绿、独立R1 NONE、threads0，60unit/父42DB/static/build通过。已unwatch/Linear Done/通知主线；未部署。
 
@@ -12,6 +12,9 @@
 
 - **YUK-1358 / Start Today与Inbox**：PR1609已合入main7682618，主线报告exact d19bd52 CI37784537687全绿、R2 NONE、threads0，合并tree一致。Stop修复仅test，父73DB/497unit/7协议/static/build通过；先前1af5真实RPC/browser与2118新构建RPC证据保留各自范围。整个W1及残留HTTP消费者未完，主线接管理只读页；本线程不改其Start树。
 
+- **YUK-1358 / Start管理只读页**：feat/yuk-1358-start-admin-reads接runs/detail、cost、failures、coverage、conjectures五路由原页面。父332unit/8协议/static/build与48+2DB通过；独立R1 NONE；fc021已通过96实际RPC与五页浏览器验收，88表无写，证据分revision封存。整合1390后295unit/8协议/static/build通过，PR1615已于15:28:28Z合main fe4849712，准确547a8061e CI全绿，父报告merge tree一致。7631独占1391六trait操作；配置/subjects Start尚未接。
+- **YUK-1389 / 已合入**：PR1614合main0b925feaa，exact e1f385f5e CI37786605158绿、R1 NONE、tree一致；176unit与父48DB。公共config builder/schema/既有注入writer操作已共享，Start canonical注入仍待，未部署。
+- **YUK-1358 / Today与Inbox已合入**：PR1609/main7682618与exact d19bd52 tree一致，CI37784537687绿、R2 NONE。73父DB/497unit/7协议及分revision的RPC/browser证据保留。父票保持In Progress，完整迁移未完成。
 
 - **YUK-1387 / 已合入**：PR1613合main d609c7b66，exact f8e832c66 CI/R1 NONE/tree一致；116unit与父15DB通过。subjects/traits四读取及分页journal已public共享，Start待主线。7631下一独占config领域出口，禁止重复writer。
 

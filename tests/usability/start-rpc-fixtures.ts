@@ -30,9 +30,21 @@ const reads = {
   getStartRecentAiChanges: '/api/artifacts/ai-changes/recent',
   getStartProposalInbox: '/api/proposals',
   getStartMistakes: '/api/mistakes',
+  getStartAdminRuns: '/api/admin/runs',
+  getStartAdminRunDetail: '/api/admin/runs',
+  getStartAdminCost: '/api/admin/cost',
+  getStartAdminFailures: '/api/admin/failures',
+  getStartAdminCoverage: '/api/admin/coverage-lattice',
+  getStartAdminConjectureScores: '/api/admin/conjecture-scores',
 };
 const names = [...Object.keys(reads), 'decideStartProposal', 'undoStartArtifactAiChange'];
-const queryNames = new Set(['getStartProposalInbox', 'getStartMistakes']);
+const queryNames = new Set([
+  'getStartProposalInbox',
+  'getStartMistakes',
+  'getStartAdminRuns',
+  'getStartAdminCost',
+  'getStartAdminFailures',
+]);
 const jsonStringNames = new Set(['getStartProposalInbox', 'decideStartProposal']);
 const Payload = z
   .object({ data: z.unknown().optional(), context: z.record(z.string(), z.unknown()).optional() })
@@ -118,6 +130,12 @@ export async function decodeRpcRequest(request: FixtureRequest, map: Map<string,
   } else if (name === 'undoStartArtifactAiChange') {
     const undo = Undo.parse(payload.data);
     url.pathname = `/api/artifacts/${encodeURIComponent(undo.artifactId)}/ai-changes/${encodeURIComponent(undo.eventId)}/undo`;
+  } else if (name === 'getStartAdminRunDetail') {
+    const detail = z
+      .object({ id: z.string().min(1) })
+      .strict()
+      .parse(payload.data);
+    url.pathname = `/api/admin/runs/${encodeURIComponent(detail.id)}`;
   } else {
     const path = Object.entries(reads).find(([key]) => key === name)?.[1];
     if (!path) throw new Error(`No fixture operation for ${name}`);
@@ -127,7 +145,7 @@ export async function decodeRpcRequest(request: FixtureRequest, map: Map<string,
   if (queryNames.has(name)) {
     for (const [key, value] of Object.entries(Query.parse(payload.data ?? {})))
       if (value !== undefined) url.searchParams.set(key, value);
-  } else if (method === 'GET' && payload.data !== undefined) {
+  } else if (method === 'GET' && name !== 'getStartAdminRunDetail' && payload.data !== undefined) {
     throw new Error(`Unexpected input for ${name}`);
   }
   return {

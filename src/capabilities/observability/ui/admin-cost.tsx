@@ -1,10 +1,10 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CSSProperties } from 'react';
-import { type ApiOperationJsonResponse, apiJson } from '@/ui/lib/api';
 import { describeCosts } from '@/ui/lib/cost-presentation';
 import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
 import { PageHeader } from '@/ui/primitives/PageHeader';
+import { type AdminReadClient, httpAdminClient } from './admin-client';
 import {
   AdminLinks,
   type AdminSurfaceProps,
@@ -14,8 +14,6 @@ import {
   mutedTextStyle,
   sectionTitleStyle,
 } from './observability-shared';
-
-type CostResponse = ApiOperationJsonResponse<'getAdminCost'>;
 
 function maxByCurrency(rows: Array<{ currency: string; cost: number }>): Map<string, number> {
   const maxima = new Map<string, number>();
@@ -36,11 +34,14 @@ function formatTokens(value: number): string {
   return `${value}`;
 }
 
-export function AdminCostSurface({ navigate }: AdminSurfaceProps) {
+export function AdminCostSurface({
+  navigate,
+  client = httpAdminClient,
+}: AdminSurfaceProps & { client?: AdminReadClient }) {
   const queryClient = useQueryClient();
   const costQ = useQuery({
     queryKey: ['admin-cost'],
-    queryFn: () => apiJson<CostResponse>('/api/admin/cost?days=30'),
+    queryFn: () => client.getCost({ days: '30' }),
     refetchInterval: 60_000,
   });
   const days = costQ.data?.days ?? [];

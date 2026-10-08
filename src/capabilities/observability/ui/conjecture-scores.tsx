@@ -15,29 +15,15 @@
 
 import { useQuery } from '@tanstack/react-query';
 import type { CSSProperties } from 'react';
-import { apiJson } from '@/ui/lib/api';
 import { Badge } from '@/ui/primitives/Badge';
 import { Card } from '@/ui/primitives/Card';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { Stateful } from '@/ui/primitives/Stateful';
+import { type AdminReadClient, httpAdminClient } from './admin-client';
 
-// 字段对齐 server/conjecture-scores.ts 的 ConjectureScoresRead。
-interface PredictionScoreRow {
-  event_id: string;
-  conjecture_event_id: string;
-  probe_result_event_id: string;
-  knowledge_id: string;
-  predicted_p: number;
-  baseline_p: number;
-  outcome: 0 | 1;
-  resolution: 'evidence_for' | 'confirmed' | 'retired';
-  brier_model: number | null;
-  brier_baseline: number | null;
-  log_loss_model: number | null;
-  skill_score_point: number | null;
-  retrievability_at_judge: number | null;
-  created_at: string;
-}
+type PredictionScoreRow = Awaited<
+  ReturnType<AdminReadClient['getConjectureScores']>
+>['prediction_scores'][number];
 
 function resolutionTone(
   resolution: PredictionScoreRow['resolution'],
@@ -46,31 +32,6 @@ function resolutionTone(
   if (resolution === 'evidence_for') return 'again';
   return 'neutral';
 }
-interface TypedStateRow {
-  id: string;
-  knowledge_id: string;
-  typed_state: 'confused-with-X';
-  confused_with_kc_id: string;
-  lifecycle: 'open' | 'resolved';
-  evidence_event_ids: string[];
-  last_evidence_at: string | null;
-  updated_at: string;
-}
-interface ConjectureScoresResponse {
-  score_basis: 'single_point';
-  prediction_scores: PredictionScoreRow[];
-  typed_states: TypedStateRow[];
-  diagnostics: {
-    prediction_scores: ScanDiagnostics;
-    typed_states: ScanDiagnostics;
-  };
-}
-interface ScanDiagnostics {
-  scanned_count: number;
-  dropped_count: number;
-  scan_truncated: boolean;
-}
-
 const NAV: Array<{ to: string; label: string }> = [
   { to: '/admin/runs', label: 'runs' },
   { to: '/admin/cost', label: 'cost' },
@@ -96,10 +57,16 @@ const fmt = (n: number | null) => (n === null ? '—' : n.toFixed(3));
 const mean = (xs: number[]): number | null =>
   xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : null;
 
-export function AdminConjectureScoresSurface({ navigate }: { navigate: (to: string) => void }) {
+export function AdminConjectureScoresSurface({
+  navigate,
+  client = httpAdminClient,
+}: {
+  navigate: (to: string) => void;
+  client?: AdminReadClient;
+}) {
   const q = useQuery({
     queryKey: ['admin-conjecture-scores'],
-    queryFn: () => apiJson<ConjectureScoresResponse>('/api/admin/conjecture-scores'),
+    queryFn: () => client.getConjectureScores(),
   });
   const data = q.data;
 

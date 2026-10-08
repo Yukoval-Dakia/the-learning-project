@@ -108,3 +108,10 @@ pnpm vitest run --config vitest.db.config.ts src/capabilities/observability/serv
 父在15:22:15.919Z实际核空并原子获取部署锁token36e8839c，按上述scoped命令实际运行4文件55/55 DB通过（新26，原回归29），exit0。使用新Testcontainers PG，无provider/worker/replay/主服务变更。15:25:38.377Z核owner/token释放锁；临时资源退出，原运行集合、四服务ID/image/StartedAt/health及release SHA与本窗口前完全一致。[DB日志](evidence/yuk1391/parent-db.txt)、[清理证明](evidence/yuk1391/cleanup.json)。这证明领域与HTTP handler DB行为，不是Start/browser/部署验收。
 
 两项外部audit失败已由主线57961995明确接管调查、去重capture与修复：18项YUK951 B3历史字段豁免expected_by过期；provider census误扫描dist/start构建产物。去重capture已归YUK1359 comment `e34017ea-c07a-4166-93c9-0e9b53950bab`，不另建票。1391不延长豁免、不删历史schema、不扩大修复范围；capability引用基线精确下降已修且绿。PR/exact CI与这些失败的最终裁决尚待，不能宣称全部门禁通过。1358/1359仍In Progress。
+
+
+## PR1615 main 集成
+
+PR1617以18bc0ec62开为draft后，正常合入origin/main `fe48497123f92429eac6383cf7ccc839ade4142f`。该main是PR1615五个Start管理读取页，仅PLAN与now交接冲突，保留双方记录。父逐路径比较确认1391七个产品/测试/基线文件与7199aa3fc字节一致；incoming Start、observability UI、web及usability路径与main一致。
+
+整合后父实际运行6文件227项scoped unit通过，typecheck、lint、build均exit0，lint仍290项既有warning。日志`/tmp/yuk1391-main-fe484-{unit,typecheck,lint,build}.log`。命令中附带的`tests/usability/start-rpc-fixtures.unit.spec.ts`不在Vitest unit分区内，不把它计为执行通过。此次未运行DB或服务；此前55 DB与R1保留其准确7199源码范围，不把主线页面的运行证明转为本线新制品验收。两个共享audit仍按1359 comment e34017ea由主线修复，PR的新exact CI及最终门禁尚待。
