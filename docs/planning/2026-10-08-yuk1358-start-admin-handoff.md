@@ -221,3 +221,7 @@ The parent stopped its own server and Testcontainers database. The first release
 ## Integration of main 7b8904179
 
 Normal merge `f48f04690` retained both PLAN/remember histories. All 24 files changed by the reviewed admin implementation are byte-identical to the runtime candidate, and all five incoming subject-control product/test files match main. No new review round was opened. Parent Node24 verification passed 295 scoped unit tests in 14 files, 8 installed-framework protocol tests, both typecheck programs, lint and the complete build. One initial lint error was formatting of this new evidence JSON; the original failed log is retained and the corrected final lint passed. Exact pushed-head CI remains required. Runtime acceptance above remains tied to fc021, not relabeled as a run of the integrated bundle.
+
+## Merge receipt — 2026-10-09 JST
+
+PR1615 merged at `2026-10-08T15:28:28Z` as `fe48497123f92429eac6383cf7ccc839ade4142f`. Parent fetched and compared its tree with exact CI head `547a8061e048dc47d1a16d22cca45bdb98395ebf`: both are `ed73a410857a62033f25b7b51d1107d96bf1721a`, with no diff. CI Gate `37799854523` succeeded, including four DB shards and the aggregate gate. Independent R1 found no P0/P1; there were no review threads. Advisory bots ended with skip/quota outcomes, which are not counted as source reviews. The PR watch was removed. No deployment occurred. YUK1358 remains In Progress for remaining route/task migration and retirement work.
