@@ -70,3 +70,13 @@ PATH=/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin:$PATH pnpm vitest r
 ```
 
 The parent retains independent review, any DB-driven repairs, PR, exact-head CI, Linear capture and delivery. No DB, testcontainer, Docker, service, provider, worker, replay, runtime action or lock acquisition was performed here. No additional actionable follow-up was found; Start consumption is already parent-owned work under YUK-1358/YUK-1359. This lane does not close those tasks.
+
+## Parent verification — 2026-10-08 14:42Z
+
+The parent checked all six author SHA-256 values against implementation commit `76383a4a5714df89c10a0c24feff65aaa0006c4f`. The author task is completed with no pending runs and released its writer. A fresh fetch found no incoming main commits.
+
+The parent ran the four scoped DB files listed above against a new isolated Testcontainers database: **4 files, 42/42 tests passed**, including the 13 new operation cases. This executes real committed writes and observes their visibility through a separate connection before registry hydration. It covers the actual hydrate `42P01` catch path and HTTP handler parity, not a deployed Start endpoint or browser. No-write assertions cover nine named relevant tables and `subject_change_seq`; they do not prove database-wide immutability.
+
+The lock was acquired atomically at 14:41:23.522195Z and released after owner/token verification at 14:42:16.233660Z. The testcontainer exited. The running container set, original four IDs/images/StartedAt/health and current-release SHA-256 were unchanged relative to the fresh pre-test snapshot. This baseline is after the 14:28 OrbStack restart, not before it. No provider, worker, replay or deployment ran.
+
+Evidence: [DB log](evidence/yuk1390/parent-db.log), [pre-test snapshot](evidence/yuk1390/before.json), [cleanup](evidence/yuk1390/cleanup.json), [author file digests](evidence/yuk1390/source-files.sha256). The document digest in the author manifest records the pre-parent-verification version; the five source/test digests remain unchanged. Independent R1 and exact-head CI are pending; YUK-1390, YUK-1358 and YUK-1359 remain In Progress.

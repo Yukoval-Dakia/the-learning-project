@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-08：PR1614 已合 main0b925feaa，准确CI/R1通过；YUK-1390接科目控制五操作公共出口，1358/1359仍未完成。未部署。
+> Linear 是权威 tracker。2026-10-08：YUK-1390源码76383a4a5已交回，60unit/父42DB/static/build通过，R1与PR/CI待；1358/1359仍未完成。未部署。
 
 ## NOW
 
-- **YUK-1390 / W5控制操作**：从最新main0b925feaa独占subject-control五操作及public/scoped tests。保留Db自有事务和成功提交后的registry hydrate；旧写者/hydrate只读。主线接Start，trait六写另行迁移。范围见W5消费者清单。
+- **YUK-1390 / W5控制操作**：源码76383a4a5，作者释放，父核六SHA/4文件42DB通过；14:42:16Z核owner释放测试锁，原四服务/release未变。独立R1进行，PR/CI待；保留Db自有事务与提交后hydrate。Start归主线，trait六写排除。见1390交付文档。
 
 - **YUK-1389 / 已合入**：PR1614于13:54:47Z合main0b925feaa，tree与exact e1f385f5e一致；CI37786605158全绿、R1 NONE、threads0。176unit/48DB/static/build通过，已unwatch；Start配置消费归主线。
 

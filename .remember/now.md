@@ -2,7 +2,7 @@
 
 1389 PR1614于13:54:47Z合main0b925feaaf9a7d79c2236835990122958fab5689。父fetch核tree6c602bd9a286e07bdbe989a63c2da800cd73368e与exact e1f385f5e一致，CI37786605158全绿/R1 NONE/threads0，按bots均终止无finding免时间窗，skip/quota不计review通过。176unit/48DB/static/build证据保留，已unwatch/Linear Done/通知主线。无runtime操作。
 
-新branch feat/yuk-1390-subject-control-domain从fresh main建立，YUK1390已查重建票In Progress，单writer待启动。范围与验收见W5文档；原持久化/hydrate只读，Start归主线，trait六写排除。父负责DB锁/审查/CI/合并。以下历史记录不覆盖当前状态。
+当前feat/yuk-1390-subject-control-domain，源码76383a4a5714df89c10a0c24feff65aaa0006c4f。作者completed/noPending并释放writer，父核六SHA，60unit/static/build与父4文件42DB通过。14:42:16.233660Z核token1155c3a3释放测试锁，原四容器/release相对14:41新快照全同。R1任务yuk1390-subject-control-review-r1-20261008只读运行，PR/exactCI尚待。证据docs/planning/evidence/yuk1390。原持久化/hydrate只读，Start归主线，trait六写排除；1390/1358/1359仍In Progress。以下历史记录不覆盖当前状态。
 
 ## 合入1381的交接记录
 
