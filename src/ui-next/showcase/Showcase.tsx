@@ -178,6 +178,7 @@ export function Showcase({ theme }: ShowcaseProps) {
                   icon: <Plus size={18} />,
                   primary: true,
                   badge: <RollNumber value={count} />,
+                  badgeLabel: `${count} 条待整理`,
                   onSelect: () => setCount((n) => n + 1),
                 },
                 {
