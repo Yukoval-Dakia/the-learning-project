@@ -1,0 +1,18 @@
+{
+  "dump_sha256": "ca6d871b7a2a950009e649c008606def42c7e6683ccd8084f4e77c3f66b4eb18",
+  "method": "offline read-only zlib block inspection; no restore or database access",
+  "decoded_blocks": 97,
+  "findings": [
+    {
+      "compressed_offset": 300332,
+      "decoded_sha256": "317463ca8c32e0ca8830ddbb12f13aa21edbf9b24a57862671a4ec35265d4975",
+      "usage_limit": true,
+      "wait_seconds": [],
+      "429": true
+    }
+  ],
+  "no_provider_request": true,
+  "observed_provider_error": "Go usage limit exceeded",
+  "retry_after_or_reset_time_found": false,
+  "conclusion": "No evidence of provider quota restoration. Do not infer a retry time or successful output; no new request sent."
+}

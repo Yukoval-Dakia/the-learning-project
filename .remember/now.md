@@ -1,3 +1,11 @@
+# Judge transmission failure cases are the sole active test lane
+
+PR1625 exacta336ab630 pushed andwatching, sourcecoldfix06ecea, treeclean before thisdocs. Parent controlledHono24HTTP/27readwindows/98tables5sequences remainsPASS, lockcfb66 released04:24:35.394871Z withoriginal4/releaseunchanged. No currentruntime resources orlock.
+
+New sole T3 testwriter node:delegated-task:command%3Amcp%3Ae4c5132f-3c05-4ce6-aa2d-e5b525fe3bf6%3Adelegate-task%3Ayuk1356-transport-failure-process-fixtures-20261009-v1, provider codex/modelgpt-6.1-sol/reasoningxhigh, running on a336. Owned ONLY tests/dbos-judge/process.db.test.ts, worker.ts, transport-fixture.unit.test.ts ifneeded, ignored/tmp/yuk1356-transport-failure-prep. Adds actualinstalledPi controlledpartialSSE/completebadpayload failure cases and actualreopen no repurchase/laterclaims, preserves firstsaved. No product/support/Start/sharedboot/doc edits; no DB/Docker/network/runtime/provider/browser/git/tracker/PR. Sourcepureunit/typecheck/lint/build allowed. Parent doesnot overlap builds/tests. HANDOFF.md+patch/input/artifact/loghashes expected. This is missing acceptance implementation, notR3. Await async completion; no duplicatechild/polling.
+
+Parent offline read-only zlib inspection of sealed synthetic429dump SHAca6d proves stored Go usage limit exceeded has no usable retry/resettime. No restore/DB/network/privatebackup;97compressedblocks inspected, relevantblockSHA317463ca. Versioned provider-limit-offline.json. No evidencequota resolved, no newpaid request. Startowner5796 notifiedscope. Existing1356/1359/1329 ticketsretainobligations. Successfuloutput/nativeStart/fullcohort/restore/deploy/fullmigrationunproved.
+
 # Judge controlled Hono completed; no owned runtime remains
 
 HEAD06ecea821 contains the exact two-file cold observer repair. Sole child completed/noPending. Parent verified3102 inputs/6scripts/884artifacts/2source/15logs and14paid files, reran32unit/9pure. Author configured typecheck/lint/build pass; parent inspected actual diff. Old R2 is3fb only; noR3.

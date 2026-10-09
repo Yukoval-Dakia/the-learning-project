@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：judge06ecea821冷读副作用已修，父真实Hono三阶段24HTTP/27只读窗口通过，98表/5序列不变；04:24:35Z核owner释放锁，原4/release不变。真实MiMo429仍未通过，无重试；PR1625准备新exact CI，整迁移继续。
+> Linear 是权威 tracker。2026-10-09 JST：judge PR1625已push a336ab630并watch。Hono实测通过、无runtime遗留；原429离线核查无恢复时间。唯一测试writer补partial/malformed传输后恢复用例，父接实际验收；整迁移继续。
 
 ## NOW
 
@@ -16,7 +16,7 @@
 
 ## NEXT
 
-- YUK1356产品2db修复，父128 scoped DB、12实际SIGKILL/reopen与8旧producer/cutover通过。诊断writer已释放，父fixture修正不改产品；86migration与62既有consumer、最终static/build/audits/产物闭包通过，R2已NONE；真实provider首请求429、wire1且无重试。父已完成受控Hono/SSE及真实epoch验收，所有writer均释放；新两文件冷读修复不冒称旧R2覆盖，按[27项验收矩阵](docs/planning/2026-10-09-yuk1356-current-acceptance-matrix.md)保持全部退出义务。
+- YUK1356产品2db修复，父128 scoped DB、12实际SIGKILL/reopen与8旧producer/cutover通过。诊断writer已释放，父fixture修正不改产品；86migration与62既有consumer、最终static/build/audits/产物闭包通过，R2已NONE；真实provider首请求429、wire1且无重试。父已完成受控Hono/SSE及真实epoch验收；现唯一test writer仅补tests/dbos-judge的partial SSE/完整坏payload后reopen证据，禁runtime/provider，新两文件冷读修复不冒称旧R2覆盖，按[27项验收矩阵](docs/planning/2026-10-09-yuk1356-current-acceptance-matrix.md)保持全部退出义务。
 
 - 1355已交四个housekeeping族源码及隔离证据。下一idle族只读设计已交回，父核45源码+3报告；保留原userclock，5796已以13d317da8明确交接精确Copilot/session/practice写路径。未起idle writer或分配编号，judge交回后再核最终锁序。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。
 - 1358继续剩余路由/共享子树及三入口共用业务操作，保留现有确定性行为。1392公共board读取、1380事件读/纠错等已合接口由Start集成方接消费者，不复制领域规则。
@@ -27,7 +27,7 @@
 
 - **YUK-1356 cold status read副作用已修**：06ecea821两个observer只peek已运行client；无client返回unavailable，enqueue仍可启动。父32unit/9pure和真实default冷态queued200/unknown503及98表/5序列无写通过，见[parent Hono evidence](docs/planning/evidence/2026-10-09-yuk1356-parent-hono.json)。旧R2不覆盖新diff，不开R3；下一门禁是新exact CI和仍未通过的真实模型输出。
 
-- **YUK-1356 judge打包阻塞**：父实读作者build-first.log:979，Start自包含打包无法解析DBOS5.2.11可选winston-transport；build-migrate.log同报winston/transport。server/worker已有两项external，Start和migrate尚未一致。5796已核77树/75可访问并明确将两文件交原judge writer：仅Start服务端及build:migrate external精确winston/winston-transport，保留其余自包含配置及依赖/lock。作者完整build已通过且产物hash父核一致；父仍须安全验证真实ESM/CJS默认logger加载、不直接执行连接库/迁移/服务入口，OTLP分支不在本证明范围。父已格式化1359证据JSON并核语义完全相同。
+- **YUK-1356 judge默认logger打包已验**：两项精确external修复后，父已核最终ESM/CJS默认logger闭包及86项migration真实CJS启动；证据见[final gates](docs/planning/evidence/2026-10-09-yuk1356-final-gates.json)。OTLP启用分支未被此默认路径证明覆盖，完整Start/worker入口仍分开验收。
 
 - **YUK-1358/1359已有UI观察**：真实Inbox dismiss后本页499但侧栏500，document reload恢复一致；原onResolve仅本地resolved更新。Google Fonts原import受CSP拦截；fallback可用。记录在现有迁移验收/后续UI边界，不放宽CSP、不冒称本PR修复。
 - **YUK-1382 / Admin runs未知费用显示**：源码基线fadcb0c87中，observability/ui/admin-runs.tsx:207将nullable cost_usd累加；observability-shared.tsx:11以(value ?? 0).toFixed(4)将未知显示为$0.0000，列表/详情/合计均受影响。已查重并登记Backlog，待验证真实零、全未知、已知+未知；不在1381改UI。此条是源码发现，尚无浏览器验收。
@@ -50,6 +50,6 @@
 
 ## BLOCKED-ON
 
-- 1393/1394均已合入。judge现有consumer修复已交回且父完整复验通过，无活动writer，不需用户重复授权。子任务/CI仍运行属于等待，不把整迁移挂blocked。
+- 1393/1394均已合入。judge当前唯一传输fixture writer和PR1625 CI由异步事件接续。原429没有可用reset时间，成功模型输出仍缺证据；可继续传输失败与恢复验收，不把整迁移挂blocked。
 - runtime测试/发布在执行前必须实际核锁并原子获取，核owner/token清理释放；其他线程持锁时只推不冲突的源码工作。历史锁记录不能代表当前ownership。
 - 部署用途保持Agent开发测试，禁止再次清库、恢复私人数据或盲重放队列；日用部署须owner明确要求“为我日常使用的部署”。旧运行验收限制和未完成产品能力保存在归档及各原票，未被本次整理核销。
