@@ -1,12 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09：restore认证修复887012c2f已交回且writer释放，父152unit/991项哈希通过，R2 NONE；run02真实118迁移通过，prep误将运行表检查前置而未启动worker；已停止副本释放锁，初始化顺序修复父311离线/完整seal匹配，接新run03。judge PR1625仍草稿。
+> Linear 是权威 tracker。2026-10-09：restore helper887012 R2 NONE；prep311离线/固定seal匹配。run03真实118迁移和worker ready通过，快照Drizzle事务适配失败；副本停止保留、13:41:43Z锁已释放，唯一prep writer修复。judge PR1625仍草稿。
 
 ## NOW
 
 - **YUK-1358 / Start notes列表**：独占范围和验收见[notes计划](docs/planning/2026-10-09-yuk1358-start-notes-list.md)。保留查询校验、科目知识点解析、空集合语义及现有搜索/导航/视觉；不改note详情/presence/AI写，不把本切片当Notes整族完成。父50unit/18DB、R1 NONE和49RPC/原页面浏览器通过；98表/5序列窗口不变，PR1626已合main04232aaf10（exact9889 CI全绿）；父已fetch核main；[父证据](docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md)。useSubjects仍HTTP，完整迁移未完成。
 
-- **YUK-1359 / 恢复后重开验收**：固定helper887012、父152unit/991hash、[R2 NONE](docs/planning/2026-10-09-yuk1359-restore-r2.md)，两轮审查已用完。prep路径修复后父254pure/8437evidence+5634source seal匹配；run02真实118迁移与canonical epoch active通过，source-setup把`pgboss.schedule`要求放在现有worker初始化之前而退出64，无worker/capture/restore。两份失败副本均停止保留；12:52:29.045Z核ownerfb4855ac释放锁，原4/running/release未变；[run02证据](docs/planning/evidence/2026-10-09-yuk1359-parent-restore-attempt02.json)，[run01证据](docs/planning/evidence/2026-10-09-yuk1359-parent-restore-attempt01.json)。`yuk1359-prep-bootstrap-order-repair-20261009-v1`已completed/noPending；父311离线、5634source/8465evidence及旧失败记录匹配，复用固定worker内PgBoss/DBOS初始化，接全新run03，禁止新建writer或重试旧source。完整恢复与重开仍未通过。
+- **YUK-1359 / 恢复后重开验收**：固定helper887012、父152unit/991hash、[R2 NONE](docs/planning/2026-10-09-yuk1359-restore-r2.md)，两轮审查已用完。初始化顺序修复父311离线/5634source/8465evidence匹配；run03真实118迁移、固定worker ready和DBOS launch通过，快照`drizzle(tx)`遇parsers TypeError而退出64，无capture/restore/reopen。worker已退出、第三份失败副本停止保留，13:41:43.042Z核owner467367d6释放锁，原4/running/release不变；[run03证据](docs/planning/evidence/2026-10-09-yuk1359-parent-restore-attempt03.json)。唯一`yuk1359-prep-transaction-snapshot-repair-20261009-v1`只修/tmp事务适配及完整读取链回归，必须保留同一只读快照与全部失败记录；不重试旧source、不改固定worker/helper。完整恢复与重开仍未通过。
 
 - **YUK-1359 / 完整恢复证明**：按5796提交0015授权，不等judge merge/配额；四现有helper/receipt类型+scopedtests/runbook范围见[恢复缺口](docs/planning/2026-10-09-yuk1359-dbos-restore-evidence-gap.md)。设计已完成并核对7源/test/driver哈希，见[实施契约](docs/planning/2026-10-09-yuk1359-restore-coherence-design.md)。作者已释放固定75d4a4c87，父匹配12源/33日志/888制品并独立76unit通过；真实13DB初验揭露catalog缺括号，最小产品修复后13/13通过，两RED保留；父负责独立审查、锁内真实恢复及DBOS重开验收。无judge代码带入，无恢复主库授权。
 

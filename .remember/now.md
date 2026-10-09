@@ -1,3 +1,13 @@
+# Restore run03 failed in snapshot adapter; ownership released
+
+HEAD ef79d109b parent docs. Actual newsource393c5829e77e6662c916d5abda8ebc61813014eed83c38c4753bce354c7b1c25 port32783/test_fork_20261009133813 completed118Drizzle and fixedworker PID67152 ready, DBOS5.2.11 launch. Snapshot failed TypeError parsers; parent inspected snapshot drizzle(tx) while installed Drizzle construct needs client.options absent on postgres transaction client. No capture/restore/reopen. Worker SIGTERM exit recorded and PID absent; source stopped retained. Never restart any failedrun01/02/03.
+
+Lock467367d6-f304-4c01-9def-7f97c1004eeb released13:41:43.042266Z after original4/running/release exact checks. No ownrunningservice/lock. Evidence docs/planning/evidence/2026-10-09-yuk1359-parent-restore-attempt03.json plus /tmp/yuk1359-restore-reopen-parent03.
+
+Unique T3 task node:delegated-task:command%3Amcp%3A6636c2a8-faa6-445b-bad3-e84032e9ac15%3Adelegate-task%3Ayuk1359-prep-transaction-snapshot-repair-20261009-v1 running, Codexgpt6.1Solxhigh/test. Only /tmp/yuk1359-dbos-restore-offline-prep-v2 writer, parent docs only. Must preserve all actualpermanent/runtime/inputs, source/worker/helper/dependency bytes, fix supported same read-only repeatableread transaction integration, realinstalledlibrary offline regression and full reader trace; no runtime or new harness. On terminal, independently verify then NEWsource/run, actual lock. Product R2 budget exhausted; no R3.
+
+UI schedule agreed in coordinator reply; isolatedfoundation and laterfunctionalwaves. Start5796 ownsroute mounts. Versioned2026-10-09-ui-migration-sequencing.md. No UI source change. Judge1625 remainsretaineddraft/watch, do not crossbranchwrite. Wholemigration active/incomplete.
+
 # Restore prep order verified; fresh run03 next
 
 Parent independently ran311 offline checks and matched5634 immutable source/8465 evidence files,11441 preserved entries and21 earlier failed inputs. Both offline processes exited0 with zero connection/listener/child attempts. Helper887012/worker7472 remain fixed. Bootstrap repair completed/noPending; no code writer active. New parent03/run03 directories prepared, no runtime lock yet. Run01/run02 stay stopped and must never restart. Full restore/reopen remains unverified.
