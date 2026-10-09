@@ -251,6 +251,57 @@ test -s "$DUMP"
 docker compose exec -T postgres pg_restore -l < "$DUMP" >/dev/null
 ```
 
+The existing full helpers add a source-bound parity gate to this manual dump path:
+
+```bash
+# The maintenance owner supplies a held boundary; these helpers never stop/restart writers.
+bash scripts/cutover-final-backup.sh --target=<pg-url> \
+  --quiescence-evidence=<maintenance.json> --out=<capture-root> --strict
+# Read the returned unique capture directory. After successful sealing, the owner may release it.
+bash scripts/restore-drill.sh --dump=<capture>/database.dump \
+  --source-manifest=<capture>/source-manifest.json --out=<capture>/restore-evidence.json
+pnpm exec tsx scripts/cutover-backup.ts --capture-dir=<capture>/migration \
+  --dump=<capture>/database.dump --dlq=<capture>/dlq-tombstones.json \
+  --source-manifest=<capture>/source-manifest.json --restore-evidence=<capture>/restore-evidence.json \
+  --out=<capture> --strict --require-restore-parity
+```
+
+`--strict` retains the required migration manifest/dump/DLQ presence rule. The independent
+`--require-restore-parity` gate requires a current successful version-2 receipt. It rehashes the
+selected artifacts, checks dump/source/quiescence links and phase outcomes, and recomputes comparison.
+No success boolean alone satisfies the gate. Legacy unversioned receipts are preserved unchanged:
+`reported_verified` records their historical claim; normalized `verified` is false. For a legacy dump,
+explicit `--restore-only --image=<compatible-image>` proves SQL loading only. `--list-only` checks TOC
+and emits no parity receipt. Existing receipt paths are refused; `--overwrite` archives the previous
+receipt before attempting a replacement. Failed attempts exit nonzero and write failed JSON where writable.
+
+The source uses a live exported snapshot through dump and all source reads. Its logical algorithm is
+`pg16-column-text-sha256-multiset-v1`: fixed UTF-8/UTC PostgreSQL 16 text values, ordered column/type
+metadata, sorted full-row SHA-256 digests with duplicate multiplicity, streamed into a table digest.
+It covers every non-system schema (including empty schemas), physical table/partition/inheritance rows
+using `ONLY`, and all sequences with decimal-string `last_value` and boolean `is_called`. Supported
+value types include ordinary deterministic builtins, pgvector `vector`, enums with ordered labels,
+and recursively supported arrays/domains. Unknown output types, foreign tables, unpopulated materialized
+views, denied RLS reads, query/stream/TOC/restore failures and missing/extra inventories fail visibly.
+Host table/dump hashing is bounded; database sort work uses bounded work_mem/temp_file_limit and deadlines.
+
+The required `loom-maintenance-boundary` version-1 JSON identifies `owner`, `window`, `established_at`,
+`held_until_explicit_release:true`, source cluster/database identity, `source_revision`, immutable
+`app_image`/`worker_image`, and enforced `restart_admission_control`, `other_clients_control`, and
+`background_writers_control`. `writers` lists stopped container IDs or externally controlled host/remote
+writers. Its basis is `external-maintenance-boundary`. See the exported `quiescenceEvidenceSchema` in
+`src/core/migration/cutover-manifest.ts` for the exact shape. All writers, schedulers, admin/migration
+clients, replication/background writing jobs and sequence actors must be accounted for. A boolean
+“writers stopped”, unknown controls or requested controls are insufficient. The helper compares host
+and container cluster/database identity and observes sessions/prepared transactions/listed containers;
+those observations detect violations and do not enforce continuous exclusion or freeze sequences.
+Assurance is `operator-attested-with-observations`. Companion DLQ/migration captures remain inside the
+same externally held boundary; the existing migration CLI does not import the exported snapshot.
+
+Measure scratch parity before migrations, admission-row deletion or worker reopen. Database-content
+parity does not certify complete DDL/roles/privileges, R2 blobs, Mem0 or durable worker recovery. Parent
+acceptance separately restores nonempty completed/pending/held DBOS obligations and proves safe reopen.
+
 The repository also provides `pnpm db:dump` for a plain-SQL dump to `/tmp` and
 `pnpm db:restore < /tmp/<dump>.sql` for its matching restore path.
 

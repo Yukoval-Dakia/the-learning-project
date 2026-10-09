@@ -66,7 +66,12 @@ const BASE_INPUT = {
     file: '/x/evidence.json',
     sha256: 'cc'.repeat(32),
     bytes: 3000,
-    verified: true,
+    kind: 'legacy-limited',
+    level: 'legacy-limited',
+    verified: false,
+    reported_verified: true,
+    dump: { sha256: 'aa'.repeat(32) },
+    historical: { verified: true },
     container: 'loom-restore-drill-x',
     toc_entries: 498,
     table_counts: { 'public.event': 1297 },
@@ -106,7 +111,9 @@ describe('buildCutoverBackupManifest — §14 覆盖', () => {
     const m = buildCutoverBackupManifest(BASE_INPUT);
     expect(m.backup.dump?.sha256).toBe('aa'.repeat(32));
     expect(m.backup.dump?.toc_entries).toBe(498);
-    expect(m.backup.restore_evidence?.verified).toBe(true);
+    expect(m.backup.restore_evidence?.verified).toBe(false);
+    expect(m.backup.restore_evidence?.kind).toBe('legacy-limited');
+    expect(m.manifest_version).toBe(2);
     expect(m.queues.dlq_tombstones?.rows_exported).toBe(27);
     expect(m.owner_actions.length).toBeGreaterThanOrEqual(3);
     expect(m.contract_epochs.assessment_contract_epoch).toBe('assessment-contract-v1');
