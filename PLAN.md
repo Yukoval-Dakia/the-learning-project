@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：judge R2 NONE、原3P1均resolved；首次真实指定MiMo请求HTTP429，wire1/costunknown，无重试。03:46:31Z核owner释放锁，原4/release不变。PR1625仍draft，成功模型输出/Hono/Start与整迁移退出未完。
+> Linear 是权威 tracker。2026-10-09 JST：judge06ecea821冷读副作用已修，父真实Hono三阶段24HTTP/27只读窗口通过，98表/5序列不变；04:24:35Z核owner释放锁，原4/release不变。真实MiMo429仍未通过，无重试；PR1625准备新exact CI，整迁移继续。
 
 ## NOW
 
@@ -16,7 +16,7 @@
 
 ## NEXT
 
-- YUK1356产品2db修复，父128 scoped DB、12实际SIGKILL/reopen与8旧producer/cutover通过。诊断writer已释放，父fixture修正不改产品；86migration与62既有consumer、最终static/build/audits/产物闭包通过，R2已NONE；真实provider首请求429、wire1且无重试。独立Hono离线准备已起唯一test child，按[27项验收矩阵](docs/planning/2026-10-09-yuk1356-current-acceptance-matrix.md)保持全部退出义务。
+- YUK1356产品2db修复，父128 scoped DB、12实际SIGKILL/reopen与8旧producer/cutover通过。诊断writer已释放，父fixture修正不改产品；86migration与62既有consumer、最终static/build/audits/产物闭包通过，R2已NONE；真实provider首请求429、wire1且无重试。父已完成受控Hono/SSE及真实epoch验收，所有writer均释放；新两文件冷读修复不冒称旧R2覆盖，按[27项验收矩阵](docs/planning/2026-10-09-yuk1356-current-acceptance-matrix.md)保持全部退出义务。
 
 - 1355已交四个housekeeping族源码及隔离证据。下一idle族只读设计已交回，父核45源码+3报告；保留原userclock，5796已以13d317da8明确交接精确Copilot/session/practice写路径。未起idle writer或分配编号，judge交回后再核最终锁序。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。
 - 1358继续剩余路由/共享子树及三入口共用业务操作，保留现有确定性行为。1392公共board读取、1380事件读/纠错等已合接口由Start集成方接消费者，不复制领域规则。
@@ -25,7 +25,7 @@
 
 ## PARKED
 
-- **YUK-1356 cold status read副作用，修复中**：父确认两个judge engine observe调用getStartedBoss，installed pg-boss12.36 start会启动migration/timekeeper/BAM，违反GET只读边界。当前唯一Hono prep writer已精确扩到judge-engine-client.ts及unit；observation改peek已运行client，无client保持unavailable，enqueue仍允许启动。先RED/修复/scopedunit/static/build，再锁下真实cold503和全schema无写。不是R3，不以旧R2覆盖新diff；无Start/boot/sharedboss改动。
+- **YUK-1356 cold status read副作用已修**：06ecea821两个observer只peek已运行client；无client返回unavailable，enqueue仍可启动。父32unit/9pure和真实default冷态queued200/unknown503及98表/5序列无写通过，见[parent Hono evidence](docs/planning/evidence/2026-10-09-yuk1356-parent-hono.json)。旧R2不覆盖新diff，不开R3；下一门禁是新exact CI和仍未通过的真实模型输出。
 
 - **YUK-1356 judge打包阻塞**：父实读作者build-first.log:979，Start自包含打包无法解析DBOS5.2.11可选winston-transport；build-migrate.log同报winston/transport。server/worker已有两项external，Start和migrate尚未一致。5796已核77树/75可访问并明确将两文件交原judge writer：仅Start服务端及build:migrate external精确winston/winston-transport，保留其余自包含配置及依赖/lock。作者完整build已通过且产物hash父核一致；父仍须安全验证真实ESM/CJS默认logger加载、不直接执行连接库/迁移/服务入口，OTLP分支不在本证明范围。父已格式化1359证据JSON并核语义完全相同。
 

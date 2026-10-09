@@ -1,3 +1,13 @@
+# Judge controlled Hono completed; no owned runtime remains
+
+HEAD06ecea821 contains the exact two-file cold observer repair. Sole child completed/noPending. Parent verified3102 inputs/6scripts/884artifacts/2source/15logs and14paid files, reran32unit/9pure. Author configured typecheck/lint/build pass; parent inspected actual diff. Old R2 is3fb only; noR3.
+
+Actual clean isolated Hono controlled/maintenance/mismatch PASS:24HTTP/27read snapshot windows,98non-system tables/5sequences unchanged. Default cold mapped200queued/unknown503 withoutspies orbossstartup; SSEretained/reconnect/pruned/noGETbackfill; PGNOTIFY toDONE20.53ms afterpublish withinitialcatchupexcluded. Warmnegative casesexplicitly injected, scorercontrolled, zeroexternalprovider. OriginalVitestBASE_URL=/preflight failurepreserved; revisedguardallows onlyexactframeworkvalue,9purepass, freshsealedrecipe executedoncepermode. Evidence68files in parent-hono.json.gz.
+
+04:24:35.394871Z owner/token cfb66e39 verified andlockreleased, selfPGd6e5766 removed, original4containerID/image/start/health+running+releaseunchanged.5796notified. NoDB/worker/provider/replay/deploy resourcesremain. ActualMiMo429/wire1/costunknown remainsFAILED; no retry. PR1625 stilldraft pendingnewpush/exactCI; originalremote23ca. NativeStart/oldcohort/coherentrestore/fullmigrationopen. Restorefollowup exactscopeauthorized onlyafterjudge delivery andwriterrelease, freshmain. Do notstart secondactive lane now.
+
+Earlier checkpoints below are historical.
+
 # Restore follow-up ownership confirmed
 
 5796 confirmed exact existing restore helper scope, receipt /tmp/yuk1358-restore-scope-ownership-20261009.json. After judge delivery AND sole writer release, freshmain singlewriter may repair restore-drill.sh/cutover-final-backup.sh/cutover-backup.ts/core migration cutover-manifest receipt type, scopedtests/runbook/README. No main restore/Start/boot/private release scripts/family logic. Existing1359/1329, not newlane now. Fullcontract in dbos-restore-evidence-gap doc. Current judge/Hono task still running, typecheck underway; parent didnot overlap builds/runtime.
