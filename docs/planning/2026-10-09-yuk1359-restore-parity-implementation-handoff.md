@@ -18,7 +18,8 @@ The existing shell entry points dispatch named operations in `scripts/cutover-ba
 Imports do not load `.env`, connect or spawn. Capture owns the live exported snapshot
 through dump/source readers, checks host/container cluster/database/postmaster identity,
 requires externally held maintenance evidence, observes stopped containers and sessions/
-prepared transactions, and retains exact companion identities within that interval.
+prepared transactions, and retains exact companion identities within that interval. The exact supplied quiescence
+bytes are copied into the unique capture directory and referenced by their original hash.
 The existing migration CLI runs from the fresh capture directory with its explicit
 DB target and repository tsconfig; its cwd has no `.env` to load provider credentials.
 No ACL/configuration change or automatic source recovery was introduced.

@@ -730,10 +730,15 @@ export function parseRestoreReceipt(value: unknown): RestoreReceipt {
     historical: value,
   };
 }
-export function readJsonArtifact(file: string): { value: unknown; identity: ArtifactIdentity } {
+export function readJsonArtifact(file: string): {
+  value: unknown;
+  identity: ArtifactIdentity;
+  bytes: Buffer;
+} {
   const bytes = readFileSync(file);
   return {
     value: JSON.parse(bytes.toString('utf8')),
+    bytes,
     identity: {
       file: resolve(file),
       sha256: createHash('sha256').update(bytes).digest('hex'),
@@ -1426,7 +1431,9 @@ async function snapshotKeeper(connection: DatabaseConnection) {
   child.stderr.resume();
   let closed = false,
     controlled = false,
+    acknowledged = false,
     buffer = '';
+  const closeMarker = `loom_keeper_closed_${randomUUID()}`;
   let signalReady: ((value: { snapshot: string; pid: number }) => void) | undefined;
   let rejectReady: ((reason: unknown) => void) | undefined;
   const ready = new Promise<{ snapshot: string; pid: number }>((resolveReady, reject) => {
@@ -1454,6 +1461,11 @@ async function snapshotKeeper(connection: DatabaseConnection) {
   }, 30_000);
   child.stdout.on('data', (chunk: Buffer) => {
     buffer += chunk.toString('utf8');
+    if (controlled) {
+      if (buffer.trim() === closeMarker) acknowledged = true;
+      else if (buffer.length > 4096 || buffer.includes('\n')) child.kill('SIGKILL');
+      return;
+    }
     if (buffer.length > 4096) {
       rejectReady?.(failure('snapshot', 'invalid_snapshot', 'invalid snapshot response'));
       child.kill('SIGKILL');
@@ -1494,10 +1506,11 @@ async function snapshotKeeper(connection: DatabaseConnection) {
         if (closed)
           throw failure('snapshot', 'keeper_closed_early', 'snapshot keeper closed early');
         controlled = true;
-        child.stdin.end('ROLLBACK;\n');
+        buffer = '';
+        child.stdin.end(`ROLLBACK; SELECT ${quoteLiteral(closeMarker)};\n`);
         const cleanupTimer = setTimeout(() => child.kill('SIGKILL'), 10_000);
         try {
-          if ((await outcome) !== 0)
+          if ((await outcome) !== 0 || !acknowledged)
             throw failure(
               'snapshot',
               'keeper_cleanup_failed',
@@ -1534,6 +1547,10 @@ export async function captureParitySource(options: {
   try {
     const quiescenceArtifact = readJsonArtifact(options.quiescenceEvidence);
     const evidence = quiescenceEvidenceSchema.parse(quiescenceArtifact.value);
+    const retainedQuiescence = join(directory, 'quiescence-evidence.json');
+    writeFileSync(retainedQuiescence, quiescenceArtifact.bytes, { flag: 'wx' });
+    const quiescenceIdentity = { ...quiescenceArtifact.identity, file: retainedQuiescence };
+
     if (Date.parse(evidence.established_at) > Date.parse(started_at))
       throw failure(
         'quiescence',
@@ -1669,7 +1686,7 @@ export async function captureParitySource(options: {
       started_at,
       finished_at: new Date().toISOString(),
       quiescence: {
-        artifact: quiescenceArtifact.identity,
+        artifact: quiescenceIdentity,
         evidence,
         assurance: 'operator-attested-with-observations',
         observations: [first, last],
