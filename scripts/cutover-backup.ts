@@ -1095,7 +1095,7 @@ export const CATALOG_SQL = `SELECT json_build_object(
   'sequences',(SELECT coalesce(json_agg(json_build_object('schema',n.nspname,'name',c.relname,
     'type',json_build_object('schema',tn.nspname,'name',t.typname), 'start',s.seqstart::text,'increment',s.seqincrement::text,'min',s.seqmin::text,'max',s.seqmax::text,'cache',s.seqcache::text,'cycle',s.seqcycle,
     'owner',(SELECT json_build_object('schema',onsp.nspname,'name',oc.relname,'column',a.attname) FROM pg_depend d JOIN pg_class oc ON oc.oid=d.refobjid JOIN pg_namespace onsp ON onsp.oid=oc.relnamespace JOIN pg_attribute a ON a.attrelid=oc.oid AND a.attnum=d.refobjsubid WHERE d.classid='pg_class'::regclass AND d.objid=c.oid AND d.deptype IN ('a','i') LIMIT 1)
-    ) ORDER BY n.nspname COLLATE "C",c.relname COLLATE "C"),'[]'::json) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_sequence s ON s.seqrelid=c.oid JOIN pg_type t ON t.oid=s.seqtypid JOIN pg_namespace tn ON tn.oid=t.typnamespace WHERE ${NON_SYSTEM_SCHEMA});`;
+    ) ORDER BY n.nspname COLLATE "C",c.relname COLLATE "C"),'[]'::json) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace JOIN pg_sequence s ON s.seqrelid=c.oid JOIN pg_type t ON t.oid=s.seqtypid JOIN pg_namespace tn ON tn.oid=t.typnamespace WHERE ${NON_SYSTEM_SCHEMA}));`;
 const rawTypeSchema = z.object({
   oid: z.string(),
   schema: z.string(),

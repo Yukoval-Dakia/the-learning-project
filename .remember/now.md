@@ -1,5 +1,8 @@
 # Restore parent acceptance active
 
+Parent real canonical DB13/13 GREEN after preserving two failures: unquoted fixture binary column (13skipped), then product CATALOG_SQL missing outer json_build_object parenthesis (12pass/1fail). Parent corrected one quote/one parenthesis, scopedBiome2passed. Evidence docs/planning/evidence/2026-10-09-yuk1359-parent-canonical-db.json+gz. Mutex e089 safely released06:33:24.251Z, original4/running/release identical; first release attempt retained lock during transient testcontainer cleanup. No runtime remains. Full dump/restore/reopen still UNRUN.
+
+
 Author task completed/noPending and released fixed source75d4a4c8710e147c71590136d94856e2a1297802, handoff136ce2a06. Parent matched12source/doc+33log+888build hashes and independently ran3files76unit exit0. Author typecheck/scopedBiome/build/shell syntax pass; full lint failed only parent evidenceJSON formatting, now parent formatted that one file (full lint not yet rerun). No DB/fullrestore/DBOS-reopen PASS.
 
 Offline prep task completed/noPending. Parent verified artifacts and33 offline guards with zero connection/listener/child attempts. /tmp/yuk1359-restore-prep-parent-verification.json seals parent result. Actual helper creates retained random networknone loom scratch; prep assumed two preprovisioned loopback test_fork endpoints. This mismatch is captured in PLAN under existing1359/1329. Readonly Astrahigh task yuk1359-restore-reopen-target-integration-design-20261009-v1 owns only/tmp report and is running; no sourcewriter. Resolve same-restored-data parity and reopen target before runtime. No fake adapter/no second restore borrowing another target PASS.

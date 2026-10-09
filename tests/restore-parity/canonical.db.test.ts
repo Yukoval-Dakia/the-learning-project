@@ -69,7 +69,7 @@ beforeAll(async () => {
   });
   await client.unsafe(`CREATE SCHEMA ${quoteIdentifier(schema)};
     CREATE TYPE ${qualified('job_state')} AS ENUM ('created','retry','active','completed','cancelled','failed');
-    CREATE TABLE ${qualified('parent')} (payload json, state ${qualified('job_state')}, large_id bigint, binary bytea, embedding public.vector(3)) PARTITION BY LIST(state);
+    CREATE TABLE ${qualified('parent')} (payload json, state ${qualified('job_state')}, large_id bigint, "binary" bytea, embedding public.vector(3)) PARTITION BY LIST(state);
     CREATE TABLE ${qualified('leaf')} PARTITION OF ${qualified('parent')} FOR VALUES IN ('completed');
     CREATE TABLE ${qualified('plain')} (LIKE ${qualified('parent')});
     CREATE TABLE ${qualified('zero')} ();
