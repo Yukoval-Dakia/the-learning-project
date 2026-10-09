@@ -99,3 +99,56 @@ Mem0 or production-runtime certification is claimed.
 No new actionable follow-up outside the already owned YUK-1359/YUK-1329 acceptance
 obligations was created. Parent owns the Linear capture/status gate; author did not
 access or mutate Linear.
+
+## Final offline gate appendix
+
+Fixed source revision: `75d4a4c8710e147c71590136d94856e2a1297802`.
+Its author implementation commits, in order, are:
+
+- `ef0c7b01482f44b8cf0a2e00bd5e59c34c38e4cf`: coherent capture, logical parity,
+  fail-closed receipts/consumers, offline regressions and runbook consumers.
+- `b17efa25b8505e094764e14f6c4f8d810e636cdf`: retain supplied maintenance bytes
+  and require the keeper's post-ROLLBACK close acknowledgement.
+- `75d4a4c8710e147c71590136d94856e2a1297802`: resolve the restore launcher
+  independently of caller cwd and cover a missing close acknowledgement.
+
+All final source gates below ran at that fixed revision using existing Node
+`v24.19.0` and pinned pnpm `11.13.1`. The sanitized wrapper
+`/tmp/yuk1359-offline-env.sh` uses `env -i`, the pinned executable directory first
+in PATH, and disables package-manager management and dependency verification.
+The final handoff commit changes this document only; no source changes followed
+these gates.
+
+| Command through the sanitized wrapper | Result |
+| --- | --- |
+| `pnpm vitest run --config vitest.unit.config.ts scripts/cutover-backup.test.ts src/core/migration/cutover-manifest.test.ts scripts/restore-runbook-drift.unit.test.ts` | exit 0; 3 files, 76 tests passed |
+| `pnpm typecheck` | exit 0; both repository and Start TypeScript checks passed |
+| `pnpm exec biome check scripts/cutover-backup.ts scripts/cutover-backup.test.ts src/core/migration/cutover-manifest.ts src/core/migration/cutover-manifest.test.ts scripts/restore-runbook-drift.unit.test.ts tests/restore-parity/canonical.db.test.ts` | exit 0; 6 files checked |
+| `pnpm build` | exit 0; SPA, Start and server/worker/migrate bundles built; existing bundle-size/dynamic-import warnings remain |
+| `bash -n` for each owned shell entry point; `git diff --check` | exit 0 |
+
+Relevant intermediate WIP checks used the same sanitized wrapper:
+`pnpm audit:partition`, `pnpm audit:schema` and `pnpm audit:provider-lanes`
+returned exit 0. The full `pnpm lint` returned exit 1: the single error was the
+parent-owned evidence JSON formatting noted above (290 warnings also reported).
+That full lint is not a passing gate and was not blindly repeated. No local
+full `pnpm test` was run.
+
+Final gate logs are in
+`/tmp/yuk1359-restore-parity-author-evidence.tHucKt/final-75d4a4c87/`.
+This directory also retains the intermediate audit/full-lint logs, sanitized
+wrapper, original driver, repaired intercepted shell case and exact
+`commands.json` statuses. The shell regression runs from an external cwd, returns
+exit 1 for injected inventory exit 17, and records `verified:false` with failed
+inspection in valid JSON. Every transport command is intercepted; unknown commands
+fail without fallback. SHA-256 inventories `source.sha256`, `logs.sha256`,
+`build-output.sha256` and `evidence-manifest.json` seal exact source/test/doc,
+log/driver and generated build-output bytes. Build bytes belong to the source
+revision above, not a DB/runtime execution. The inventories are outside the
+repository and include the final handoff document without a self-referential hash.
+
+Remaining gates are the prepared DB SQL suite, real helper capture/dump/restore
+including failure injection, main housekeeping completed/pending/held DBOS
+restore/reopen acceptance, independent R1, integration/full lint and exact-head CI.
+All are UNRUN by this author. The parent's separately reported canonical SQL probe
+is supporting evidence for the design, not acceptance of this implementation.
