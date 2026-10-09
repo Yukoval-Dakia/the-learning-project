@@ -351,7 +351,7 @@ launchctl print gui/$(id -u)/studio.yukoval.loom-daily-dump | grep -E 'last exit
 scratch 容器内 `pg_restore` + 行数核验，产出 `verified` JSON 证据；
 **统一切换最终备份**：`scripts/cutover-final-backup.sh` 停 writer 后
 DLQ tombstone 导出 + pg_dump + TOC + migration:capture + cutover manifest。
-详见 `docs/runbooks/cutover-final-backup-and-restore.md`。
+详见[完整 Postgres 恢复流程](docs/sub5-restore-cli.md#full-postgres-disaster-recovery)。
 
 **手动 dump/restore**：`db:dump` streams a `pg_dump` from the running `postgres` container to a timestamped SQL file on the host:
 
