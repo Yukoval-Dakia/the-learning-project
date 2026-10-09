@@ -1,3 +1,11 @@
+# Active restore helper lane on fresh main7472
+
+Judge test task completed/noPending; parent actualnew2+full14process,4pure/typecheck/lint pass. All failures and hashes sealed in judge29a802f1a, pushedPR1625draft. Realprovider429/validresponse-before-save/Start/restore/retirement remain open. Last lock4d1637a5 released04:57:28.629372Z, original4/running/release identical; no currentresources.
+
+Freshfetch0behind and clean switch to fix/yuk-1359-restore-parity fromorigin/main7472. Only restore gap doc and offline regression receipt brought fromjudge; no unmergedproductcode. Authorization0015 allows this lane after scopedacceptancecommit, withoutwaitingjudgemerge/quota. Exact4source scope scripts/restore-drill.sh, cutover-final-backup.sh, cutover-backup.ts, src/core/migration/cutover-manifest.ts receipt type/explanation; scopedtests/runbook/README. Start/boot/private scripts/families/main/private restores excluded.
+
+One readonly T3 design task yuk1359-restore-coherence-design-20261009-v1 undermcp e4c5132f, codexgpt-6-astra high, output/tmp/yuk1359-restore-coherence-design.md+hashJSON. No sourcewriter/runtime/DB/network/build. Investigate exactsame-dump source binding, non-systeminventory/content/sequence/quiescence/legacyreceiptfailclosed. Parent retains implementation/integration and no secondwriter. Awaitasyncdelivery, noduplicate. /notesStart belongs5796. PR1625 remainslinked/watched; serializeanyjudgefixbeforechangingbranches whilefuturewriteractive.
+
 # Current Start event detail lane
 
 PR1623 branch feat/yuk-1358-start-event-detail, runtime accepted at4f36d3fc5 (productf1e4). Independent R1 fixture P1 fixed; R2 NONE/noPending, max two rounds used. Parent15DB and actual71RPC/12windows/6writes; T3 browser correction/disabled pending controls, GET-only retry, committed-response loss without autoreplay, 2001char400, real401 re-gate, bad/missing records, legacy question link and deep reload verified. Technical-details snapshot truncated, not counted. Ignored recipe had two fixed setup/seed defects with preserved failures; no product changes. Runtime archive and full report: docs/planning/2026-10-09-yuk1358-start-event-detail-parent.md.

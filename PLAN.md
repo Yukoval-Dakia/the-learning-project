@@ -1,10 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09：PR1624已合main96077db19，本线正常整合进PR1623；事件源码与已验4f36一致，incoming源码与main一致。整合193unit/11协议/typecheck/lint/build/11audits通过，新exactCI待完成，无runtime/部署。
+> Linear 是权威 tracker。2026-10-09：judge 传输验收已封存并push29a802f1a/PR1625草稿；本树fresh main7472切fix/yuk-1359-restore-parity，接既有1359/1329恢复helper修复。无runtime锁，Start notes由5796独占。
 
 ## NOW
 
-- **YUK-1358 / Start事件详情与纠错**：PR1623已完成15DB、R2 NONE及4f36真实71RPC/T3浏览器验收，证据封存；正常整合96077db19仅PLAN/now冲突，20个本lane产品/测试文件与已验head一致。整合193unit/11协议及全部静态构建审计通过，等待新exactCI，详见[父验收](docs/planning/2026-10-09-yuk1358-start-event-detail-parent.md)。旧4f36首因不倒推，未部署。
+- **YUK-1359 / 完整恢复证明**：按5796提交0015授权，不等judge merge/配额；四现有helper/receipt类型+scopedtests/runbook范围见[恢复缺口](docs/planning/2026-10-09-yuk1359-dbos-restore-evidence-gap.md)。当前唯一Astra high只读设计任务核同源dump绑定/全非system内容/序列与fail-closed契约，父负责实施和真实恢复验收。无judge代码带入，无恢复主库授权。
+
+- **YUK-1358 / Start事件详情与纠错**：PR1623已完成15DB、R2 NONE及4f36真实71RPC/T3浏览器验收，证据封存；正常整合96077db19仅PLAN/now冲突，20个本lane产品/测试文件与已验head一致。整合193unit/11协议及全部静态构建审计通过，已于22:52Z合main7472f4395（exact91f468 CI全绿），详见[父验收](docs/planning/2026-10-09-yuk1358-start-event-detail-parent.md)。旧4f36首因不倒推，未部署。
 
 - **YUK-1394已合入**：PR1624于22:32:03Z合main96077db19，与exacta880树一致，CI37852269707全绿；共享锁父29DB/确定性RED/34进程及排期32unit/static/build证据按revision保留。原R2两finding解决，后续修复不冒称R2覆盖，无R3；默认pg-boss、无部署。详见[父验收](docs/planning/2026-10-09-yuk1394-parent-acceptance.md)。
 - **YUK-1393已合入**：PR1621 exact3be966000 CI37829575046全绿，R1 NONE/threads0；main e1f2ef6bb与CI树均cad230a5，已unwatch/Linear Done。父原33DB/10进程恢复/2cron/4旧prune/26migration、49unit及fixture修复29DB/static/build证据保留。默认仍pg-boss，无部署；实际旧consumer退出仍是整迁移验收义务。
