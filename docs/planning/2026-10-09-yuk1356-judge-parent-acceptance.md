@@ -1,5 +1,7 @@
 # YUK-1356 judge parent acceptance
 
+Current execution status is maintained in the [27-scenario acceptance matrix](2026-10-09-yuk1356-current-acceptance-matrix.md). Sections below retain revision-specific history; earlier unrun statements are not the latest status.
+
 Status: source candidate received; migration acceptance remains open.
 
 ## Fixed candidate and integration
