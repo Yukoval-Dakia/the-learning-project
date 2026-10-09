@@ -1,3 +1,7 @@
+# Restore follow-up ownership confirmed
+
+5796 confirmed exact existing restore helper scope, receipt /tmp/yuk1358-restore-scope-ownership-20261009.json. After judge delivery AND sole writer release, freshmain singlewriter may repair restore-drill.sh/cutover-final-backup.sh/cutover-backup.ts/core migration cutover-manifest receipt type, scopedtests/runbook/README. No main restore/Start/boot/private release scripts/family logic. Existing1359/1329, not newlane now. Fullcontract in dbos-restore-evidence-gap doc. Current judge/Hono task still running, typecheck underway; parent didnot overlap builds/runtime.
+
 # Sole writer extended to cold observer side-effect repair
 
 Parent traced default GET observation to getStartedBoss and installed pg-boss12.36 startup migration/timekeeper/BAM writes. Same active Hono prep task now owns exactly practice/server/judge-engine-client.ts and its unit in addition to ignored preparation. Two observe methods must peek getRunningBoss, absent runtime means unavailable not absent; enqueue retains getStartedBoss. Child authorized RED/scopedunit/static/build, no DB/network/runtime/git mutation. This is parent finding/repair, not third independent review. Parent must inspect new diff and run real cold default503/no-write HTTP acceptance; old R2 does not cover new code. 5796 notified, no sharedboot/Start scope. Parent only writes docs meanwhile. Await task result, no duplicatewriter or builds.

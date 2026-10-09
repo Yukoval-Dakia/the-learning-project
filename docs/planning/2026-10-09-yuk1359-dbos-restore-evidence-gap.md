@@ -44,3 +44,9 @@ Required proof for the follow-up:
 - Use a disposable nonempty source containing completed, eligible pending and unknown/held judge obligations with actual DBOS records and family controls. Stop its compatible worker, perform the real backup/restore, verify parity before reopening, then prove the compatible restored worker completes only eligible work. Original saved outcomes and terminal effects remain unique; unknown/held work produces no new wire calls. This is separate from SQL restoration and cannot be claimed from unit tests.
 
 The whole-runtime release additionally retains its blob and Mem0 obligations. This database helper repair does not itself prove those or authorize running the current deployment. It remains captured under existing YUK-1359/YUK-1329, with no duplicate issue or concurrent writer.
+
+## Ownership confirmed
+
+Start/release owner5796 confirmed the exact follow-up scope after reading this document and checking 77 registered worktrees, of which75 were accessible. The four named source paths had no dirty changes in those accessible trees, and that thread has no assigned or planned writer for them. Two inaccessible historical trees were explicitly excluded from the claim. Receipt: `/tmp/yuk1358-restore-scope-ownership-20261009.json`.
+
+After judge delivery and complete writer release, this thread may start one writer from fresh main for the existing helpers, receipt type/necessary explanation, scoped tests and the existing runbook/README restore paragraph. No additional permission is needed within that scope. Capture strictness remains distinct from the restore gate, and older receipts retain their historical limits. Start, boot, shutdown, private runtime scripts, family execution and restoring the main database are not included. Broader required paths must be coordinated before editing. This ownership confirmation is not DB or restoration evidence.
