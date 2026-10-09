@@ -1,3 +1,7 @@
+# Active Start notes list — 2026-10-09
+
+Fresh branch feat/yuk-1358-start-notes-list from main7472 with six own documentation commits carried. Only notes list domain/read/route/client integration; full scope docs/planning/2026-10-09-yuk1358-start-notes-list.md. Judge and restore sources belong7631; no provider or runtime work here. Author source-only; parent later controls DB/browser acceptance. Older entries below remain revision-specific.
+
 # Restore helper ownership — 2026-10-09
 
 After the current judge test writer releases and the parent commits its current scoped acceptance/evidence,7631 may switch to fresh main for the four existing restore/cutover helpers and receipt-type scope, scoped tests and existing runbook/README. Judge merge is no longer a sequencing prerequisite; PR1625 stays draft with its real-model gate and watch.75 accessible/77 registered trees checked without dirty source paths; no competing Start writer. Full parity/failure rejection and realDBOS restore proof remain future work. Start/boot/private runtime/family logic excluded; no runtime action. See docs/planning/2026-10-09-restore-start-ownership.md.

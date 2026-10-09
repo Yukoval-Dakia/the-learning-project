@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09：PR1623于22:52:00Z合main7472f4395，与exact91f4687ed树d6e9d69a一致；CI37854525406全绿、R2 NONE、threads0。事件Start源码及真实RPC/浏览器证据已交，未部署，整迁移继续。
+> Linear 是权威 tracker。2026-10-09：5796接独立/notes列表Start迁移，freshmain7472，仅路由/领域读取/现页面数据接线；judge与restore仍7631单writer，不等待provider配额，无runtime。
 
 ## NOW
+
+- **YUK-1358 / Start notes列表**：独占范围和验收见[notes计划](docs/planning/2026-10-09-yuk1358-start-notes-list.md)。保留查询校验、科目知识点解析、空集合语义及现有搜索/导航/视觉；不改note详情/presence/AI写，不把本切片当Notes整族完成。作者只scopedunit/static/build，父DB/browser另协调锁。
 
 - **YUK-1358 / Start事件详情与纠错已交付**：PR1623合main7472f4395，exact91f4687ed CI37854525406全绿含四DB/aggregate，R2 NONE/threads0；merge tree与CI tree相同。15DB、4f36真实71RPC/T3浏览器和整合193unit/11协议/静态构建/11audits证据按revision保留，详见[父验收](docs/planning/2026-10-09-yuk1358-start-event-detail-parent.md)。旧4f36首因不倒推，未部署；1358/1359保持In Progress。
 
