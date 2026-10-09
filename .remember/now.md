@@ -1,5 +1,8 @@
 # Retained scratch implementation active
 
+Parent preflight: hostcommand psql absent; targetedHomebrewopt/Postgres.app/mise installedpaths yieldednone. Same activewriter steered via yuk1359-host-identity-no-psql-preflight-20261009-v1 to reuseinstalledpostgresdriver for explicit-target readonlyidentity only, lazyinertimports/boundedconnect-query-close/interruption/noenvfallback; noinstall/newdependency. No parentcodewrite or runtime.
+
+
 Readonly integration design completed/noPending; parent16hashes matched report98d3fcdf and committed2db11afbe. Sole sourcewriter T3 yuk1359-retained-scratch-reopen-implementation-20261009-v1 (mcp e4c5132f, codex gpt-6.1-sol xhigh) nowrunning from2db11afbe. Owns existinghelper/receipt modules andscopedtests/docs only, noDB/runtime/network/buildoutsideauthorized scope; usespinned offlinechecks. Implement pairedexplicitloopbackport/testdbname+keep onNEWrandomscratch, exactownership/container/observedidentityreceipt; defaultnetworknone. Preservev1quiescence, addtruthfulstrict hostworker/runtimeartifactvariant with actualbytes binding; nofakeimage. Parent read-onlyprep directory, latebindingadapter onlyafterfinalreceipt. No parallelcodewriter.
 
 13actualPG tests passed parent aftercatalogparen/fixturequotefix8ffc; fullcapture/restore/DBOSreopen unrun. Locke089released06:33:24.251Z original4/releaseunchanged. No ownruntime. IndependentrestoreR1 waitsfinaldelta, notstarted. WholemigrationandLinearfeatures remainactive.
