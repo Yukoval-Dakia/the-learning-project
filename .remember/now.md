@@ -1,3 +1,9 @@
+# Retained scratch implementation active
+
+Readonly integration design completed/noPending; parent16hashes matched report98d3fcdf and committed2db11afbe. Sole sourcewriter T3 yuk1359-retained-scratch-reopen-implementation-20261009-v1 (mcp e4c5132f, codex gpt-6.1-sol xhigh) nowrunning from2db11afbe. Owns existinghelper/receipt modules andscopedtests/docs only, noDB/runtime/network/buildoutsideauthorized scope; usespinned offlinechecks. Implement pairedexplicitloopbackport/testdbname+keep onNEWrandomscratch, exactownership/container/observedidentityreceipt; defaultnetworknone. Preservev1quiescence, addtruthfulstrict hostworker/runtimeartifactvariant with actualbytes binding; nofakeimage. Parent read-onlyprep directory, latebindingadapter onlyafterfinalreceipt. No parallelcodewriter.
+
+13actualPG tests passed parent aftercatalogparen/fixturequotefix8ffc; fullcapture/restore/DBOSreopen unrun. Locke089released06:33:24.251Z original4/releaseunchanged. No ownruntime. IndependentrestoreR1 waitsfinaldelta, notstarted. WholemigrationandLinearfeatures remainactive.
+
 # Restore parent acceptance active
 
 Parent real canonical DB13/13 GREEN after preserving two failures: unquoted fixture binary column (13skipped), then product CATALOG_SQL missing outer json_build_object parenthesis (12pass/1fail). Parent corrected one quote/one parenthesis, scopedBiome2passed. Evidence docs/planning/evidence/2026-10-09-yuk1359-parent-canonical-db.json+gz. Mutex e089 safely released06:33:24.251Z, original4/running/release identical; first release attempt retained lock during transient testcontainer cleanup. No runtime remains. Full dump/restore/reopen still UNRUN.
