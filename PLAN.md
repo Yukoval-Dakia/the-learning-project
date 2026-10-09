@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：judge父128 scoped DB、12 process、8 cutover及86 migration+62既有consumer全部通过；fixture失败保留，产品未改。02:57:49Z核owner释放锁，原4/release未变。继续真实provider/Hono、最终产物与R2。
+> Linear 是权威 tracker。2026-10-09 JST：judge父128 scoped DB、12 process、8 cutover及86 migration+62既有consumer全部通过；fixture失败保留，产品未改。02:57:49Z核owner释放锁，原4/release未变。最终static/build/10audit及emitted闭包通过；继续真实provider/Hono与R2。
 
 ## NOW
 
@@ -16,7 +16,7 @@
 
 ## NEXT
 
-- YUK1356产品2db修复，父128 scoped DB、12实际SIGKILL/reopen与8旧producer/cutover通过。诊断writer已释放，父fixture修正不改产品；继续migration smoke、既有consumer、最终产物及唯一R2，按[27项验收矩阵](docs/planning/2026-10-09-yuk1356-current-acceptance-matrix.md)保持全部退出义务。
+- YUK1356产品2db修复，父128 scoped DB、12实际SIGKILL/reopen与8旧producer/cutover通过。诊断writer已释放，父fixture修正不改产品；86migration与62既有consumer、最终static/build/audits/产物闭包通过，继续真实provider/Hono及唯一R2，按[27项验收矩阵](docs/planning/2026-10-09-yuk1356-current-acceptance-matrix.md)保持全部退出义务。
 
 - 1355已交四个housekeeping族源码及隔离证据。下一idle族只读设计已交回，父核45源码+3报告；保留原userclock，5796已以13d317da8明确交接精确Copilot/session/practice写路径。未起idle writer或分配编号，judge交回后再核最终锁序。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。
 - 1358继续剩余路由/共享子树及三入口共用业务操作，保留现有确定性行为。1392公共board读取、1380事件读/纠错等已合接口由Start集成方接消费者，不复制领域规则。

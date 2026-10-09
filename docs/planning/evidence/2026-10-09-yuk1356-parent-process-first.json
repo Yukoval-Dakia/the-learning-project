@@ -42,12 +42,5 @@
   },
   "nextTask": "yuk1356-process-wire-diagnostics-20261009-v1",
   "scope": "sole source-only test fixture diagnostics writer; production read-only; no runtime",
-  "notRun": [
-    "remaining11processcases",
-    "cutover",
-    "migrationSmoke",
-    "realProvider",
-    "R2",
-    "CI"
-  ]
+  "notRun": ["remaining11processcases", "cutover", "migrationSmoke", "realProvider", "R2", "CI"]
 }
