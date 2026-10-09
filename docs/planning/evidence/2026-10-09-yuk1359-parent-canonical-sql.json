@@ -12,12 +12,8 @@
     "physicalReorderStable": true,
     "sameCountMutationDetected": true,
     "partitionOnlyParentRows": 0,
-    "sequenceBefore": [
-      "9007199254741001|f"
-    ],
-    "sequenceAfter": [
-      "9007199254741001|f"
-    ],
+    "sequenceBefore": ["9007199254741001|f"],
+    "sequenceAfter": ["9007199254741001|f"],
     "digestBefore": "d314f6881638899dc6e55739bcfaa7463fa9218ab01a558f72a2c1a25e4b929a",
     "digestAfterMutation": "01b46a318b841e1eb86669c79f4a2b539bb0e77b6a5af95aa6bbd177106f8733",
     "serverVersion": "16.14 (Debian 16.14-1.pgdg12+1)",

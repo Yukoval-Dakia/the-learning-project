@@ -1,16 +1,10 @@
-# Restore implementation active
+# Restore parent acceptance active
 
-Design task completed/noPending; final report SHA 7df07b33b10b5a4bcb86680809925f2bfec72e304ee722f07751a9302a053280 and 7 source/test/driver inputs matched. Design committed 49ddae370; earlier fresh-main offline RED receipt37b2d07ff and runbook link93c036205 retained. Sole source writer is T3 task node:delegated-task:command%3Amcp%3Ae4c5132f-3c05-4ce6-aa2d-e5b525fe3bf6%3Adelegate-task%3Ayuk1359-restore-parity-implementation-20261009-v1, Codex gpt-6.1-sol xhigh, running on this branch. Four source files plus scoped tests/existing docs only. Parent owns PLAN/.remember; do not edit author files/build outputs while running. No Docker/DB/provider/browser/install allowed to author. Pinned pnpm11.13.1 and Node24.19.0 required. No current runtime lock/resources. Implementation, review, actual restore/reopen and exact CI remain pending; judge PR1625 gates unchanged.
+Author task completed/noPending and released fixed source75d4a4c8710e147c71590136d94856e2a1297802, handoff136ce2a06. Parent matched12source/doc+33log+888build hashes and independently ran3files76unit exit0. Author typecheck/scopedBiome/build/shell syntax pass; full lint failed only parent evidenceJSON formatting, now parent formatted that one file (full lint not yet rerun). No DB/fullrestore/DBOS-reopen PASS.
 
-Prior revision-specific context follows.
+Offline prep task completed/noPending. Parent verified artifacts and33 offline guards with zero connection/listener/child attempts. /tmp/yuk1359-restore-prep-parent-verification.json seals parent result. Actual helper creates retained random networknone loom scratch; prep assumed two preprovisioned loopback test_fork endpoints. This mismatch is captured in PLAN under existing1359/1329. Readonly Astrahigh task yuk1359-restore-reopen-target-integration-design-20261009-v1 owns only/tmp report and is running; no sourcewriter. Resolve same-restored-data parity and reopen target before runtime. No fake adapter/no second restore borrowing another target PASS.
 
-# Active restore helper lane on fresh main7472
-
-Judge test task completed/noPending; parent actualnew2+full14process,4pure/typecheck/lint pass. All failures and hashes sealed in judge29a802f1a, pushedPR1625draft. Realprovider429/validresponse-before-save/Start/restore/retirement remain open. Last lock4d1637a5 released04:57:28.629372Z, original4/running/release identical; no currentresources.
-
-Freshfetch0behind and clean switch to fix/yuk-1359-restore-parity fromorigin/main7472. Only restore gap doc and offline regression receipt brought fromjudge; no unmergedproductcode. Authorization0015 allows this lane after scopedacceptancecommit, withoutwaitingjudgemerge/quota. Exact4source scope scripts/restore-drill.sh, cutover-final-backup.sh, cutover-backup.ts, src/core/migration/cutover-manifest.ts receipt type/explanation; scopedtests/runbook/README. Start/boot/private scripts/families/main/private restores excluded.
-
-One readonly T3 design task yuk1359-restore-coherence-design-20261009-v1 undermcp e4c5132f, codexgpt-6-astra high, output/tmp/yuk1359-restore-coherence-design.md+hashJSON. No sourcewriter/runtime/DB/network/build. Investigate exactsame-dump source binding, non-systeminventory/content/sequence/quiescence/legacyreceiptfailclosed. Parent retains implementation/integration and no secondwriter. Awaitasyncdelivery, noduplicate. /notesStart belongs5796. PR1625 remainslinked/watched; serializeanyjudgefixbeforechangingbranches whilefuturewriteractive.
+5796 reports PR1626 merged main04232aaf10efe050458b8b96dbe1f678c17253d8, exactCI9889/tree71a4590 allgreen; notes list49RPC/18DB evidence, remaining detail/presence/writes/useSubjectsHTTP unchanged. Parent normalfetch/integration next. Current runtime lock absent only by collaborator report; recheck actual before acquisition. No own services. Judge PR1625 remains separate draft29a802f1a, realprovider429 and crash/provider/Start obligations remain open; no replay or paid retry. Whole1355/1356/1358/1359 migration incomplete.
 
 # Current Start event detail lane
 
