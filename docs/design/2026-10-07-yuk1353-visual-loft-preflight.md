@@ -123,3 +123,52 @@ modal（`⌘K` 命令面板）与多栏 pane；这些都是原型内的比较对
 - 评分：§1.3 第 3 条五项 + 第 6 条质感与交互基线。
 - 独立复核：另起 Claude Opus 5.5 只读复核截图、录屏与原型，结论与处置写入 `review.md`。
 - 本机检查：`pnpm typecheck`、`pnpm lint`、`pnpm build`，并确认构建产物不含原型文件；不运行完整 `pnpm test`。
+
+## 7. 第二轮补充记录（2026-10-08 至 10-09）
+
+状态：**开工前补记**。第一轮方案选定后，owner 要求重新探索；D/E/F 三个表现型方向被否决后，owner 与 agent 逐项讨论确定了范围。
+本节记录这些范围变更；第 1 节引用的设计原文不变，仍然适用。
+
+### 7.1 owner 确定的范围（讨论结论）
+
+- 动效只在变化时出现；参考 Linear 与 Apple Liquid Glass；一个三维标志物在切换时悄悄随动。
+- 结构与质感一起重来。真实场景是回顾、看题目、读笔记、与学习伙伴协作；手写暂不在内部做；首页要有快速记录入口。
+- 学习伙伴是内容旁边的常驻侧栏；吉祥物在不同页面单独设计大小与位置；导航做出来比较。
+- 页面：回来时 + 快速记录、题目 + 学习伙伴、笔记 + 学习伙伴、资料。
+- 吉祥物定为透明玻璃风车花（建模由 owner 指定交给 Astra agent），logo 单独设计；
+  靠近时朝向指针，任何状态都不过于侧对读者，状态之间是可打断的非线性过渡；学习伙伴展开时吉祥物留在页面 banner。
+- 手机：底部悬浮玻璃标签栏、可拖动的学习伙伴抽屉、吉祥物滚动时缩小停进顶栏。
+- 连续动画：卡片到页面的形变、引用双向联动、生成中到已生效的落定、记一下收进去与保持阅读位置。
+- 接入产品维持暂缓（与 PLAN 一致）。
+
+### 7.2 组件类型
+
+仍是 **page**：一个一次性原型页（dev-only 独立 Vite 入口），不是生产 route。原型内包含以下形态，都是方向的组成部分，
+生产形态在 YUK-1354 起的 UI 票 pre-flight 中再次声明：
+
+- 常驻侧面板（学习伙伴，桌面）；
+- drawer（手机上可拖动的学习伙伴底部抽屉）；
+- modal（`⌘K` 命令面板、手机记录表单）；
+- 浮层（选区气泡、提示条）。
+
+### 7.3 第二轮创建、修改与删除的文件
+
+原型目录 `docs/design/2026-10-07-visual-loft/prototype/`：
+
+- 创建：`app.jsx`、`app.css`、`data.js`、`kit.jsx`、`motion.js`、`mascot.jsx`、`mark-gl.js`、`marks.html`、`marks.jsx`、`marks.css`；
+  重写 `capture.mjs`。
+- 修改：`index.html`（入口改为 `app.jsx`）。
+- 删除：第一轮的 `main.jsx`、`shared.jsx`、`store.jsx`、`variant-{a,b,c}.{jsx,css}`；`evidence/` 全部替换为第二轮证据。
+
+文档：重写 `docs/design/2026-10-07-ui-visual-direction.md`、`2026-10-07-visual-loft/README.md`、`scorecard.md`，
+在 `review.md` 追加第二轮复核；更新 `PLAN.md` 中 YUK-1353 的状态。
+
+仍然不修改 `src/`、`web/`、`server/`、schema、依赖或 lockfile。three.js 只在原型运行时从 CDN 加载，不进依赖。
+
+### 7.4 第二轮验收方式
+
+- 截图：4 页 × 桌面 1440×900 / 手机 390×844 × 亮/暗，加关键状态与动画进行中的帧。
+- 录屏：桌面与手机各一段完整操作。
+- 探针：每条动效主张的实测（`evidence/probes.json`）；指标：CLS、INP 代理值、帧间隔（1× 与 4× CPU，各 3 次）。
+- 独立复核：另起 Claude Opus 5.5，读取真实 diff、截图、录屏与原型，结论与处置写入 `review.md`。
+- 本机检查：`pnpm typecheck`、`pnpm lint`、`pnpm build`，并证明构建产物与原型无关；不运行完整 `pnpm test`。

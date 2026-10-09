@@ -1,0 +1,562 @@
+/* 标志物小样 page. Palette comes from --m-* set by the page (per form × warm/cool × light/dark). */
+
+body {
+  background: var(--m-bg);
+  color: var(--m-ink);
+  transition: background-color var(--dur-2) linear;
+}
+
+.mk-app {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--sp-6) var(--sp-5) var(--sp-8);
+  display: grid;
+  gap: var(--sp-5);
+}
+
+.mk-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-5);
+}
+
+.mk-eyebrow {
+  color: var(--m-muted);
+  font-size: var(--fs-1);
+}
+
+.mk-h1 {
+  margin-top: var(--sp-1);
+  font-family: var(--font-serif);
+  font-size: var(--fs-5);
+  font-weight: var(--fw-regular);
+}
+
+.mk-h2 {
+  margin-top: var(--sp-4);
+  font-size: var(--fs-2);
+  font-weight: var(--fw-semibold);
+}
+
+.mk-sub {
+  margin-top: var(--sp-1);
+  color: var(--m-muted);
+}
+
+.mk-controls {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.mk-controls label {
+  display: grid;
+  grid-template-columns: 3em auto;
+  align-items: center;
+  gap: var(--sp-2);
+  color: var(--m-muted);
+  font-size: var(--fs-1);
+}
+
+.mk-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--r-1);
+  background: color-mix(in srgb, var(--m-ink) 6%, transparent);
+}
+
+.mk-seg button {
+  height: 28px;
+  padding: 0 var(--sp-3);
+  border: 0;
+  border-radius: calc(var(--r-1) - 2px);
+  background: transparent;
+  color: var(--m-muted);
+  font-size: var(--fs-1);
+  cursor: pointer;
+}
+
+.mk-seg button[aria-pressed="true"] {
+  background: var(--m-panel);
+  color: var(--m-ink);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.08);
+}
+
+/* Gallery */
+.mk-gallery {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--sp-4);
+}
+
+.mk-card {
+  display: grid;
+  justify-items: start;
+  gap: var(--sp-2);
+  padding: var(--sp-4) var(--sp-4) var(--sp-5);
+  border: 0;
+  border-radius: var(--r-2);
+  background: var(--m-panel);
+  box-shadow: 0 0 0 1px var(--m-line);
+  color: var(--m-ink);
+  text-align: left;
+  cursor: pointer;
+  transition: box-shadow var(--dur-1) linear;
+}
+
+.mk-card.is-selected {
+  box-shadow: 0 0 0 1.5px var(--m-accent);
+}
+
+.mk-card-stage {
+  display: grid;
+  place-items: center;
+  width: 100%;
+  height: 220px;
+  border-radius: calc(var(--r-2) - 4px);
+  background: var(--m-bg);
+}
+
+.mk-card-name {
+  font-size: var(--fs-3);
+  font-weight: var(--fw-semibold);
+}
+
+.mk-card-note,
+.mk-card-pal {
+  color: var(--m-muted);
+  font-size: var(--fs-1);
+  line-height: var(--lh-ui);
+}
+
+/* Light renderer (CSS 3D). Drawn at 168px; the stage scales it. */
+.lm {
+  width: 168px;
+  height: 168px;
+  perspective: 620px;
+}
+
+.lm-rot,
+.lm-spin {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+}
+
+.lm-rot {
+  transition: transform 900ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.lm-spin.is-thinking {
+  animation: lm-think 5.5s linear infinite;
+}
+
+@keyframes lm-think {
+  to {
+    transform: rotateY(360deg);
+  }
+}
+
+.lm-ring {
+  position: absolute;
+  inset: 16px;
+  border-radius: 50%;
+  border: 2.2px solid var(--m-ink);
+  opacity: 0.86;
+}
+
+.lm-ring-accent {
+  border-color: var(--m-accent);
+  opacity: 1;
+}
+
+.lm-ring-thin {
+  border-width: 1px;
+  opacity: 0.4;
+}
+
+.lm-petal {
+  position: absolute;
+  left: calc(50% - 24px);
+  bottom: 50%;
+  width: 48px;
+  height: 74px;
+  border-radius: 50% 50% 50% 50% / 64% 64% 36% 36%;
+  background: linear-gradient(to top, color-mix(in srgb, var(--m-soft) 70%, transparent), color-mix(in srgb, var(--m-soft) 95%, white 5%));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--m-accent) 35%, transparent);
+  transform-origin: 50% 100%;
+  opacity: 0.88;
+}
+
+.lm-petal-inner {
+  background: linear-gradient(to top, color-mix(in srgb, var(--m-accent) 50%, transparent), color-mix(in srgb, var(--m-accent) 80%, white 20%));
+  opacity: 0.85;
+}
+
+.lm-core {
+  position: absolute;
+  left: calc(50% - 7px);
+  top: calc(50% - 7px);
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--m-body);
+  box-shadow: 0 0 0 1px var(--m-ink);
+  transform: translateZ(18px);
+}
+
+.lm-level {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  border-radius: 50%;
+  border: 1px solid color-mix(in srgb, var(--m-ink) 55%, transparent);
+}
+
+.lm-level-waist {
+  border: 2px solid var(--m-accent);
+}
+
+/* Real-3D canvas */
+.glm,
+.glm-canvas {
+  width: 168px;
+  height: 168px;
+}
+
+.glm {
+  position: relative;
+}
+
+.glm-canvas {
+  display: block;
+}
+
+.glm-err {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--m-muted);
+  font-size: var(--fs-1);
+  text-align: center;
+}
+
+/* Stage */
+.mk-stage-wrap {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.mk-stage-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+}
+
+.mk-think {
+  height: 32px;
+  padding: 0 var(--sp-3);
+  border: 0;
+  border-radius: var(--r-1);
+  background: color-mix(in srgb, var(--m-ink) 6%, transparent);
+  color: var(--m-ink);
+  font-size: var(--fs-1);
+  cursor: pointer;
+}
+
+.mk-think.is-on {
+  background: var(--m-accent);
+  color: var(--m-panel);
+}
+
+.mk-spec {
+  color: var(--m-muted);
+  font-size: var(--fs-1);
+}
+
+.mk-stage {
+  position: relative;
+  display: grid;
+  grid-template-columns: 196px minmax(0, 1fr);
+  height: 560px;
+  overflow: hidden;
+  border-radius: var(--r-2);
+  background: var(--m-bg);
+  box-shadow: 0 0 0 1px var(--m-line), 0 24px 60px -30px rgb(0 0 0 / 0.25);
+}
+
+.mk-side {
+  display: grid;
+  align-content: start;
+  gap: 2px;
+  padding: var(--sp-3);
+  background: color-mix(in srgb, var(--m-ink) 3%, var(--m-bg));
+  box-shadow: inset -1px 0 0 var(--m-line);
+}
+
+.mk-side-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 36px;
+  padding: 0 var(--sp-2);
+  margin-bottom: var(--sp-3);
+  font-weight: var(--fw-semibold);
+}
+
+.mk-side-item {
+  height: 30px;
+  display: flex;
+  align-items: center;
+  padding: 0 var(--sp-2);
+  border-radius: 6px;
+  color: var(--m-muted);
+  font-size: var(--fs-1);
+}
+
+.mk-side-item.is-active {
+  background: color-mix(in srgb, var(--m-ink) 7%, transparent);
+  color: var(--m-ink);
+}
+
+.mk-slot {
+  display: inline-block;
+  flex: none;
+}
+
+.mk-slot-logo {
+  width: 20px;
+  height: 20px;
+}
+
+.mk-slot-copilot {
+  width: 22px;
+  height: 22px;
+}
+
+.mk-slot-hero {
+  width: 168px;
+  height: 168px;
+}
+
+.mk-main {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.mk-home {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 168px;
+  gap: var(--sp-6);
+  padding: var(--sp-7) var(--sp-7) 0;
+}
+
+.mk-home-lead {
+  display: grid;
+  gap: var(--sp-2);
+}
+
+.mk-hello {
+  font-family: var(--font-serif);
+  font-size: var(--fs-5);
+  font-weight: var(--fw-regular);
+  line-height: var(--lh-tight);
+}
+
+.mk-capture {
+  display: flex;
+  gap: var(--sp-2);
+  margin-top: var(--sp-3);
+}
+
+.mk-capture input {
+  flex: 1;
+  height: 40px;
+  padding: 0 var(--sp-3);
+  border: 0;
+  border-radius: var(--r-1);
+  background: var(--m-panel);
+  box-shadow: inset 0 0 0 1px var(--m-line);
+  color: var(--m-ink);
+  font: inherit;
+  outline: none;
+}
+
+.mk-capture button {
+  height: 40px;
+  padding: 0 var(--sp-4);
+  border: 0;
+  border-radius: var(--r-1);
+  background: var(--m-ink);
+  color: var(--m-bg);
+  cursor: pointer;
+}
+
+.mk-pair {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-3);
+}
+
+.mk-block {
+  display: grid;
+  gap: var(--sp-1);
+  padding: var(--sp-4);
+  border-radius: var(--r-2);
+  background: var(--m-panel);
+  box-shadow: 0 0 0 1px var(--m-line);
+}
+
+.mk-block b {
+  color: var(--m-muted);
+  font-size: var(--fs-1);
+  font-weight: var(--fw-regular);
+}
+
+.mk-read {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  height: 100%;
+}
+
+.mk-content {
+  display: grid;
+  align-content: start;
+  gap: var(--sp-3);
+  padding: var(--sp-6);
+}
+
+.mk-title {
+  font-size: var(--fs-4);
+  font-weight: var(--fw-semibold);
+}
+
+.mk-line {
+  display: block;
+  height: 10px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--m-ink) 9%, transparent);
+}
+
+.mk-figure {
+  width: 220px;
+  height: 140px;
+  border-radius: var(--r-1);
+  box-shadow: inset 0 0 0 1px var(--m-line);
+}
+
+.mk-copilot {
+  display: grid;
+  align-content: start;
+  gap: var(--sp-3);
+  padding: var(--sp-4);
+  background: var(--m-panel);
+  box-shadow: inset 1px 0 0 var(--m-line);
+}
+
+.mk-copilot-head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  height: 32px;
+  font-weight: var(--fw-semibold);
+}
+
+.mk-copilot-state {
+  margin-left: auto;
+  color: var(--m-muted);
+  font-size: var(--fs-1);
+  font-weight: var(--fw-regular);
+}
+
+.mk-msg {
+  padding: var(--sp-3);
+  border-radius: var(--r-1);
+  background: color-mix(in srgb, var(--m-ink) 4%, transparent);
+  font-size: var(--fs-1);
+  line-height: var(--lh-ui);
+}
+
+.mk-msg-me {
+  justify-self: end;
+  background: color-mix(in srgb, var(--m-accent) 14%, transparent);
+}
+
+.mk-msg.is-pending {
+  color: var(--m-muted);
+}
+
+.mk-list {
+  display: grid;
+  align-content: start;
+  gap: var(--sp-1);
+  padding: var(--sp-6);
+}
+
+.mk-row {
+  display: grid;
+  grid-template-columns: 12px 1fr 80px;
+  align-items: center;
+  gap: var(--sp-3);
+  height: 40px;
+  box-shadow: inset 0 -1px 0 var(--m-line);
+}
+
+.mk-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--m-ink) 30%, transparent);
+}
+
+.mk-row-meta {
+  height: 8px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--m-ink) 6%, transparent);
+}
+
+/* The single travelling mark. */
+.mk-mark {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 168px;
+  height: 168px;
+  transform-origin: 0 0;
+  transition: transform 720ms cubic-bezier(0.2, 0.85, 0.2, 1);
+  pointer-events: none;
+}
+
+.mk-toast {
+  position: absolute;
+  left: 50%;
+  bottom: var(--sp-5);
+  padding: var(--sp-2) var(--sp-4);
+  border-radius: var(--r-1);
+  background: var(--m-ink);
+  color: var(--m-bg);
+  font-size: var(--fs-1);
+  transform: translateX(-50%);
+  animation: rise var(--dur-2) var(--ease-out) both;
+}
+
+@media (max-width: 900px) {
+  .mk-gallery {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lm-rot,
+  .mk-mark {
+    transition: none;
+  }
+  .lm-spin.is-thinking {
+    animation: none;
+  }
+}

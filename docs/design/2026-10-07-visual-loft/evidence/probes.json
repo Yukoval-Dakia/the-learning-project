@@ -1,70 +1,82 @@
 {
-  "optimistic": {
-    "a": {
-      "before": 1,
-      "afterHide": 0,
-      "afterUndo": 1
-    },
-    "b": {
-      "before": 1,
-      "afterHide": 0,
-      "afterUndo": 1
-    },
-    "c": {
-      "before": 1,
-      "afterHide": 0,
-      "afterUndo": 1
-    }
+  "capturedAt": "2026-10-09T10:00:47.418Z",
+  "chromium": "151.0.7922.34",
+  "capture_desktop": {
+    "before": "3",
+    "chipsInFlight": 1,
+    "afterLanding": "4",
+    "afterUndo": "3",
+    "chipsLeft": 0
   },
-  "phoneHelp": {
-    "stepTop": 132,
-    "stepBottom": 282,
-    "contextBarBottom": 124,
-    "actionsTop": 784,
-    "helpTop": 318,
-    "viewport": 844,
-    "stepFullyVisible": true,
-    "helpStartsOnScreen": true
+  "capture_mobile": {
+    "before": "3",
+    "chipsInFlight": 1,
+    "afterLanding": "4",
+    "afterUndo": "3",
+    "chipsLeft": 0
   },
-  "anchors1440": [
-    {
-      "step": "s1",
-      "offsetPx": 0
-    },
-    {
-      "step": "s4",
-      "offsetPx": 0
-    },
-    {
-      "step": "s5",
-      "offsetPx": 11
-    }
-  ],
-  "layout": {
-    "1023": {
-      "stemPosition": "static",
-      "noteToggleVisible": true,
-      "stemPeekButton": true
-    },
-    "1024": {
-      "stemPosition": "sticky",
-      "noteToggleVisible": true,
-      "stemPeekButton": false
-    },
-    "1280": {
-      "stemPosition": "sticky",
-      "noteToggleVisible": true,
-      "stemPeekButton": false
-    }
+  "capture_undoMidFlight": {
+    "inbox": "3"
   },
-  "explainLabels": [
-    "生成中 · 未生效",
-    "生成完毕 · 正在确认记录",
-    "已记为“看过完整讲解”"
-  ],
-  "errorStateDeterministic": {
-    "a": 1,
-    "b": 1,
-    "c": 1
-  }
+  "morph_interrupted": {
+    "ghostsMidFlight": 2,
+    "ghostsAfter": 0,
+    "hiddenTargetsAfter": 0,
+    "endedOn": "question"
+  },
+  "morph_reducedMotion": {
+    "ghostsMidFlight": 0,
+    "ghostsAfter": 0,
+    "hiddenTargetsAfter": 0,
+    "endedOn": "question"
+  },
+  "settle": {
+    "sameElementFromFirstTokenToRecord": true,
+    "phases": [
+      "is-temp is-streaming",
+      "is-temp is-confirming",
+      "is-settled"
+    ],
+    "textColorTransition": "0.9s",
+    "receiptHeightAfterFold": 0
+  },
+  "refToStep": {
+    "scrolledPx": 547,
+    "glowing": "第 5 步"
+  },
+  "quote": {
+    "ghostMidFlight": 1,
+    "landedVisible": true,
+    "formulasRendered": 2,
+    "citeMarksBefore": 1,
+    "citeMarksAfter": 2
+  },
+  "markToMessage": {
+    "glowingMessages": 1
+  },
+  "quoteToPassage": {
+    "glowing": "直线怎么设"
+  },
+  "readingPosition": {
+    "viewport": "1180×760",
+    "anchor": ".step[data-anchor=\"第 3 步\"]",
+    "driftWithoutPinPx": -124,
+    "driftWhilePanelClosesPx": [
+      0,
+      1,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "phoneRef": {
+    "sheetBefore": "snap-half",
+    "sheetAfter": "snap-peek",
+    "stepGlowing": 1
+  },
+  "pageErrors": []
 }

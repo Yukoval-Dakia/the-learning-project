@@ -1,0 +1,1274 @@
+{
+  "capturedAt": "2026-10-09T10:51:34.183Z",
+  "chromium": "151.0.7922.34",
+  "webgl": "SwiftShader software WebGL",
+  "build": "vite production build (vite preview)",
+  "base": "http://localhost:5198/",
+  "note": "Local fixture prototype in headless Chromium on Apple silicon; measures layout and interaction cost only. cpuThrottle 4 is the low-end proxy. Headless rAF cannot prove 60fps.",
+  "summary": [
+    {
+      "device": "desktop",
+      "cpuThrottle": 1,
+      "runs": 3,
+      "clsMax": 0.0806,
+      "inpProxyMedianMs": 11536,
+      "inpProxyMaxMs": 15784,
+      "medianInteractionMs": 184,
+      "maxFrameGapMs": {
+        "idle-baseline": 313,
+        "capture": 101,
+        "why": 106,
+        "postpone": 81,
+        "undo": 38,
+        "screen-switch": 245,
+        "reveal": 100,
+        "panel-close": 68,
+        "panel-open": 79,
+        "ask": 42,
+        "proposal": 35,
+        "to-library": 11461,
+        "tab": 0,
+        "row-to-note": 302,
+        "quote": 78,
+        "cite-mark": 99,
+        "palette": 134
+      }
+    },
+    {
+      "device": "mobile",
+      "cpuThrottle": 1,
+      "runs": 3,
+      "clsMax": 0.0171,
+      "inpProxyMedianMs": 864,
+      "inpProxyMaxMs": 1008,
+      "medianInteractionMs": 576,
+      "maxFrameGapMs": {
+        "idle-baseline": 100,
+        "capture": 111,
+        "scroll-dock": 112,
+        "scroll-back": 26,
+        "screen-switch": 109,
+        "sheet-half": 109,
+        "reveal": 81,
+        "back": 103,
+        "row-to-question": 97,
+        "to-library": 122
+      }
+    },
+    {
+      "device": "desktop",
+      "cpuThrottle": 4,
+      "runs": 3,
+      "clsMax": 0.0818,
+      "inpProxyMedianMs": 11576,
+      "inpProxyMaxMs": 12640,
+      "medianInteractionMs": 288,
+      "maxFrameGapMs": {
+        "idle-baseline": 323,
+        "capture": 103,
+        "why": 103,
+        "postpone": 93,
+        "undo": 42,
+        "screen-switch": 158,
+        "reveal": 83,
+        "panel-close": 78,
+        "panel-open": 68,
+        "ask": 44,
+        "proposal": 37,
+        "to-library": 11500,
+        "tab": 0,
+        "row-to-note": 308,
+        "quote": 88,
+        "cite-mark": 87,
+        "palette": 115
+      }
+    },
+    {
+      "device": "mobile",
+      "cpuThrottle": 4,
+      "runs": 3,
+      "clsMax": 0.0187,
+      "inpProxyMedianMs": 856,
+      "inpProxyMaxMs": 992,
+      "medianInteractionMs": 632,
+      "maxFrameGapMs": {
+        "idle-baseline": 108,
+        "capture": 121,
+        "scroll-dock": 147,
+        "scroll-back": 26,
+        "screen-switch": 145,
+        "sheet-half": 103,
+        "reveal": 80,
+        "back": 120,
+        "row-to-question": 114,
+        "to-library": 109
+      }
+    }
+  ],
+  "results": [
+    {
+      "run": 1,
+      "device": "desktop",
+      "cpuThrottle": 1,
+      "cls": 0.0806,
+      "interactions": 21,
+      "inpProxyMs": 9336,
+      "medianInteractionMs": 312,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 9,
+          "maxGapMs": 283,
+          "over20msShare": 1
+        },
+        {
+          "label": "capture",
+          "frames": 6,
+          "maxGapMs": 416,
+          "over20msShare": 0.5
+        },
+        {
+          "label": "why",
+          "frames": 7,
+          "maxGapMs": 133,
+          "over20msShare": 1
+        },
+        {
+          "label": "postpone",
+          "frames": 22,
+          "maxGapMs": 88,
+          "over20msShare": 0.455
+        },
+        {
+          "label": "undo",
+          "frames": 48,
+          "maxGapMs": 36,
+          "over20msShare": 0.167
+        },
+        {
+          "label": "screen-switch",
+          "frames": 10,
+          "maxGapMs": 305,
+          "over20msShare": 0.6
+        },
+        {
+          "label": "reveal",
+          "frames": 8,
+          "maxGapMs": 232,
+          "over20msShare": 1
+        },
+        {
+          "label": "panel-close",
+          "frames": 19,
+          "maxGapMs": 65,
+          "over20msShare": 0.737
+        },
+        {
+          "label": "panel-open",
+          "frames": 19,
+          "maxGapMs": 121,
+          "over20msShare": 0.684
+        },
+        {
+          "label": "ask",
+          "frames": 37,
+          "maxGapMs": 42,
+          "over20msShare": 0.351
+        },
+        {
+          "label": "proposal",
+          "frames": 42,
+          "maxGapMs": 35,
+          "over20msShare": 0.238
+        },
+        {
+          "label": "to-library",
+          "frames": 6,
+          "maxGapMs": 9265,
+          "over20msShare": 0.167
+        },
+        {
+          "label": "tab",
+          "frames": 0,
+          "maxGapMs": 0,
+          "over20msShare": null
+        },
+        {
+          "label": "row-to-note",
+          "frames": 14,
+          "maxGapMs": 330,
+          "over20msShare": 0.857
+        },
+        {
+          "label": "quote",
+          "frames": 28,
+          "maxGapMs": 76,
+          "over20msShare": 0.357
+        },
+        {
+          "label": "cite-mark",
+          "frames": 15,
+          "maxGapMs": 111,
+          "over20msShare": 0.667
+        },
+        {
+          "label": "palette",
+          "frames": 8,
+          "maxGapMs": 292,
+          "over20msShare": 1
+        }
+      ],
+      "slowestInteraction": {
+        "ms": 9336,
+        "event": "pointerdown",
+        "step": "to-library"
+      }
+    },
+    {
+      "run": 1,
+      "device": "mobile",
+      "cpuThrottle": 1,
+      "cls": 0.0171,
+      "interactions": 8,
+      "inpProxyMs": 768,
+      "medianInteractionMs": 576,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 4,
+          "maxGapMs": 94,
+          "over20msShare": 1
+        },
+        {
+          "label": "capture",
+          "frames": 8,
+          "maxGapMs": 369,
+          "over20msShare": 1
+        },
+        {
+          "label": "scroll-dock",
+          "frames": 8,
+          "maxGapMs": 112,
+          "over20msShare": 1
+        },
+        {
+          "label": "scroll-back",
+          "frames": 49,
+          "maxGapMs": 27,
+          "over20msShare": 0.082
+        },
+        {
+          "label": "screen-switch",
+          "frames": 16,
+          "maxGapMs": 109,
+          "over20msShare": 0.5
+        },
+        {
+          "label": "sheet-half",
+          "frames": 8,
+          "maxGapMs": 109,
+          "over20msShare": 1
+        },
+        {
+          "label": "reveal",
+          "frames": 52,
+          "maxGapMs": 81,
+          "over20msShare": 0.077
+        },
+        {
+          "label": "back",
+          "frames": 16,
+          "maxGapMs": 101,
+          "over20msShare": 0.438
+        },
+        {
+          "label": "row-to-question",
+          "frames": 8,
+          "maxGapMs": 97,
+          "over20msShare": 1
+        },
+        {
+          "label": "to-library",
+          "frames": 8,
+          "maxGapMs": 103,
+          "over20msShare": 1
+        }
+      ],
+      "slowestInteraction": {
+        "ms": 768,
+        "event": "pointerdown",
+        "step": "capture"
+      }
+    },
+    {
+      "run": 1,
+      "device": "desktop",
+      "cpuThrottle": 4,
+      "cls": 0.0818,
+      "interactions": 21,
+      "inpProxyMs": 11032,
+      "medianInteractionMs": 272,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 8,
+          "maxGapMs": 323,
+          "over20msShare": 0.875
+        },
+        {
+          "label": "capture",
+          "frames": 14,
+          "maxGapMs": 103,
+          "over20msShare": 0.643
+        },
+        {
+          "label": "why",
+          "frames": 9,
+          "maxGapMs": 103,
+          "over20msShare": 1
+        },
+        {
+          "label": "postpone",
+          "frames": 25,
+          "maxGapMs": 93,
+          "over20msShare": 0.36
+        },
+        {
+          "label": "undo",
+          "frames": 50,
+          "maxGapMs": 42,
+          "over20msShare": 0.14
+        },
+        {
+          "label": "screen-switch",
+          "frames": 11,
+          "maxGapMs": 146,
+          "over20msShare": 0.727
+        },
+        {
+          "label": "reveal",
+          "frames": 15,
+          "maxGapMs": 91,
+          "over20msShare": 0.867
+        },
+        {
+          "label": "panel-close",
+          "frames": 18,
+          "maxGapMs": 88,
+          "over20msShare": 0.611
+        },
+        {
+          "label": "panel-open",
+          "frames": 22,
+          "maxGapMs": 70,
+          "over20msShare": 0.591
+        },
+        {
+          "label": "ask",
+          "frames": 36,
+          "maxGapMs": 44,
+          "over20msShare": 0.417
+        },
+        {
+          "label": "proposal",
+          "frames": 45,
+          "maxGapMs": 37,
+          "over20msShare": 0.244
+        },
+        {
+          "label": "to-library",
+          "frames": 6,
+          "maxGapMs": 10968,
+          "over20msShare": 0.167
+        },
+        {
+          "label": "tab",
+          "frames": 0,
+          "maxGapMs": 0,
+          "over20msShare": null
+        },
+        {
+          "label": "row-to-note",
+          "frames": 13,
+          "maxGapMs": 126,
+          "over20msShare": 0.923
+        },
+        {
+          "label": "quote",
+          "frames": 31,
+          "maxGapMs": 88,
+          "over20msShare": 0.258
+        },
+        {
+          "label": "cite-mark",
+          "frames": 14,
+          "maxGapMs": 86,
+          "over20msShare": 0.714
+        },
+        {
+          "label": "palette",
+          "frames": 13,
+          "maxGapMs": 115,
+          "over20msShare": 0.923
+        }
+      ],
+      "slowestInteraction": {
+        "ms": 11032,
+        "event": "pointerdown",
+        "step": "to-library"
+      }
+    },
+    {
+      "run": 1,
+      "device": "mobile",
+      "cpuThrottle": 4,
+      "cls": 0.0167,
+      "interactions": 8,
+      "inpProxyMs": 752,
+      "medianInteractionMs": 616,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 3,
+          "maxGapMs": 104,
+          "over20msShare": 1
+        },
+        {
+          "label": "capture",
+          "frames": 7,
+          "maxGapMs": 107,
+          "over20msShare": 1
+        },
+        {
+          "label": "scroll-dock",
+          "frames": 7,
+          "maxGapMs": 147,
+          "over20msShare": 1
+        },
+        {
+          "label": "scroll-back",
+          "frames": 45,
+          "maxGapMs": 27,
+          "over20msShare": 0.156
+        },
+        {
+          "label": "screen-switch",
+          "frames": 13,
+          "maxGapMs": 146,
+          "over20msShare": 0.538
+        },
+        {
+          "label": "sheet-half",
+          "frames": 7,
+          "maxGapMs": 103,
+          "over20msShare": 1
+        },
+        {
+          "label": "reveal",
+          "frames": 47,
+          "maxGapMs": 93,
+          "over20msShare": 0.149
+        },
+        {
+          "label": "back",
+          "frames": 16,
+          "maxGapMs": 137,
+          "over20msShare": 0.438
+        },
+        {
+          "label": "row-to-question",
+          "frames": 7,
+          "maxGapMs": 114,
+          "over20msShare": 1
+        },
+        {
+          "label": "to-library",
+          "frames": 7,
+          "maxGapMs": 127,
+          "over20msShare": 1
+        }
+      ],
+      "slowestInteraction": {
+        "ms": 752,
+        "event": "pointerdown",
+        "step": "to-library"
+      }
+    },
+    {
+      "run": 2,
+      "device": "desktop",
+      "cpuThrottle": 1,
+      "cls": 0.0639,
+      "interactions": 21,
+      "inpProxyMs": 15784,
+      "medianInteractionMs": 184,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 8,
+          "maxGapMs": 313,
+          "over20msShare": 0.875
+        },
+        {
+          "label": "capture",
+          "frames": 13,
+          "maxGapMs": 101,
+          "over20msShare": 0.692
+        },
+        {
+          "label": "why",
+          "frames": 8,
+          "maxGapMs": 106,
+          "over20msShare": 1
+        },
+        {
+          "label": "postpone",
+          "frames": 28,
+          "maxGapMs": 81,
+          "over20msShare": 0.393
+        },
+        {
+          "label": "undo",
+          "frames": 48,
+          "maxGapMs": 38,
+          "over20msShare": 0.146
+        },
+        {
+          "label": "screen-switch",
+          "frames": 11,
+          "maxGapMs": 133,
+          "over20msShare": 0.636
+        },
+        {
+          "label": "reveal",
+          "frames": 15,
+          "maxGapMs": 100,
+          "over20msShare": 0.933
+        },
+        {
+          "label": "panel-close",
+          "frames": 18,
+          "maxGapMs": 68,
+          "over20msShare": 0.778
+        },
+        {
+          "label": "panel-open",
+          "frames": 18,
+          "maxGapMs": 78,
+          "over20msShare": 0.667
+        },
+        {
+          "label": "ask",
+          "frames": 42,
+          "maxGapMs": 39,
+          "over20msShare": 0.31
+        },
+        {
+          "label": "proposal",
+          "frames": 23,
+          "maxGapMs": 97,
+          "over20msShare": 0.478
+        },
+        {
+          "label": "to-library",
+          "frames": 5,
+          "maxGapMs": 15708,
+          "over20msShare": 0.4
+        },
+        {
+          "label": "tab",
+          "frames": 0,
+          "maxGapMs": 0,
+          "over20msShare": null
+        },
+        {
+          "label": "row-to-note",
+          "frames": 7,
+          "maxGapMs": 201,
+          "over20msShare": 1
+        },
+        {
+          "label": "quote",
+          "frames": 28,
+          "maxGapMs": 100,
+          "over20msShare": 0.286
+        },
+        {
+          "label": "cite-mark",
+          "frames": 15,
+          "maxGapMs": 99,
+          "over20msShare": 0.667
+        },
+        {
+          "label": "palette",
+          "frames": 11,
+          "maxGapMs": 134,
+          "over20msShare": 1
+        }
+      ],
+      "slowestInteraction": {
+        "ms": 15784,
+        "event": "pointerdown",
+        "step": "to-library"
+      }
+    },
+    {
+      "run": 2,
+      "device": "mobile",
+      "cpuThrottle": 1,
+      "cls": 0.0164,
+      "interactions": 8,
+      "inpProxyMs": 1008,
+      "medianInteractionMs": 592,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 3,
+          "maxGapMs": 129,
+          "over20msShare": 1
+        },
+        {
+          "label": "capture",
+          "frames": 7,
+          "maxGapMs": 111,
+          "over20msShare": 1
+        },
+        {
+          "label": "scroll-dock",
+          "frames": 7,
+          "maxGapMs": 120,
+          "over20msShare": 1
+        },
+        {
+          "label": "scroll-back",
+          "frames": 62,
+          "maxGapMs": 26,
+          "over20msShare": 0.048
+        },
+        {
+          "label": "screen-switch",
+          "frames": 16,
+          "maxGapMs": 163,
+          "over20msShare": 0.438
+        },
+        {
+          "label": "sheet-half",
+          "frames": 7,
+          "maxGapMs": 139,
+          "over20msShare": 1
+        },
+        {
+          "label": "reveal",
+          "frames": 49,
+          "maxGapMs": 26,
+          "over20msShare": 0.122
+        },
+        {
+          "label": "back",
+          "frames": 15,
+          "maxGapMs": 103,
+          "over20msShare": 0.467
+        },
+        {
+          "label": "row-to-question",
+          "frames": 7,
+          "maxGapMs": 137,
+          "over20msShare": 1
+        },
+        {
+          "label": "to-library",
+          "frames": 7,
+          "maxGapMs": 124,
+          "over20msShare": 1
+        }
+      ],
+      "slowestInteraction": {
+        "ms": 1008,
+        "event": "pointerdown",
+        "step": "sheet-half"
+      }
+    },
+    {
+      "run": 2,
+      "device": "desktop",
+      "cpuThrottle": 4,
+      "cls": 0.066,
+      "interactions": 21,
+      "inpProxyMs": 12640,
+      "medianInteractionMs": 288,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 8,
+          "maxGapMs": 310,
+          "over20msShare": 0.875
+        },
+        {
+          "label": "capture",
+          "frames": 11,
+          "maxGapMs": 94,
+          "over20msShare": 0.818
+        },
+        {
+          "label": "why",
+          "frames": 9,
+          "maxGapMs": 99,
+          "over20msShare": 1
+        },
+        {
+          "label": "postpone",
+          "frames": 27,
+          "maxGapMs": 94,
+          "over20msShare": 0.296
+        },
+        {
+          "label": "undo",
+          "frames": 50,
+          "maxGapMs": 36,
+          "over20msShare": 0.14
+        },
+        {
+          "label": "screen-switch",
+          "frames": 10,
+          "maxGapMs": 158,
+          "over20msShare": 0.8
+        },
+        {
+          "label": "reveal",
+          "frames": 14,
+          "maxGapMs": 83,
+          "over20msShare": 0.857
+        },
+        {
+          "label": "panel-close",
+          "frames": 16,
+          "maxGapMs": 78,
+          "over20msShare": 0.813
+        },
+        {
+          "label": "panel-open",
+          "frames": 19,
+          "maxGapMs": 60,
+          "over20msShare": 0.684
+        },
+        {
+          "label": "ask",
+          "frames": 39,
+          "maxGapMs": 46,
+          "over20msShare": 0.41
+        },
+        {
+          "label": "proposal",
+          "frames": 42,
+          "maxGapMs": 34,
+          "over20msShare": 0.333
+        },
+        {
+          "label": "to-library",
+          "frames": 6,
+          "maxGapMs": 12559,
+          "over20msShare": 0.333
+        },
+        {
+          "label": "tab",
+          "frames": 0,
+          "maxGapMs": 0,
+          "over20msShare": null
+        },
+        {
+          "label": "row-to-note",
+          "frames": 14,
+          "maxGapMs": 388,
+          "over20msShare": 0.857
+        },
+        {
+          "label": "quote",
+          "frames": 29,
+          "maxGapMs": 100,
+          "over20msShare": 0.241
+        },
+        {
+          "label": "cite-mark",
+          "frames": 15,
+          "maxGapMs": 87,
+          "over20msShare": 0.667
+        },
+        {
+          "label": "palette",
+          "frames": 11,
+          "maxGapMs": 130,
+          "over20msShare": 1
+        }
+      ],
+      "slowestInteraction": {
+        "ms": 12640,
+        "event": "pointerdown",
+        "step": "to-library"
+      }
+    },
+    {
+      "run": 2,
+      "device": "mobile",
+      "cpuThrottle": 4,
+      "cls": 0.0187,
+      "interactions": 8,
+      "inpProxyMs": 856,
+      "medianInteractionMs": 728,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 2,
+          "maxGapMs": 119,
+          "over20msShare": 1
+        },
+        {
+          "label": "capture",
+          "frames": 7,
+          "maxGapMs": 121,
+          "over20msShare": 1
+        },
+        {
+          "label": "scroll-dock",
+          "frames": 7,
+          "maxGapMs": 164,
+          "over20msShare": 1
+        },
+        {
+          "label": "scroll-back",
+          "frames": 52,
+          "maxGapMs": 26,
+          "over20msShare": 0.135
+        },
+        {
+          "label": "screen-switch",
+          "frames": 14,
+          "maxGapMs": 144,
+          "over20msShare": 0.5
+        },
+        {
+          "label": "sheet-half",
+          "frames": 6,
+          "maxGapMs": 146,
+          "over20msShare": 1
+        },
+        {
+          "label": "reveal",
+          "frames": 48,
+          "maxGapMs": 66,
+          "over20msShare": 0.125
+        },
+        {
+          "label": "back",
+          "frames": 14,
+          "maxGapMs": 120,
+          "over20msShare": 0.5
+        },
+        {
+          "label": "row-to-question",
+          "frames": 7,
+          "maxGapMs": 122,
+          "over20msShare": 1
+        },
+        {
+          "label": "to-library",
+          "frames": 7,
+          "maxGapMs": 104,
+          "over20msShare": 1
+        }
+      ],
+      "slowestInteraction": {
+        "ms": 856,
+        "event": "pointerup",
+        "step": "capture"
+      }
+    },
+    {
+      "run": 3,
+      "device": "desktop",
+      "cpuThrottle": 1,
+      "cls": 0.0779,
+      "interactions": 21,
+      "inpProxyMs": 11536,
+      "medianInteractionMs": 152,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 8,
+          "maxGapMs": 317,
+          "over20msShare": 1
+        },
+        {
+          "label": "capture",
+          "frames": 14,
+          "maxGapMs": 92,
+          "over20msShare": 0.714
+        },
+        {
+          "label": "why",
+          "frames": 9,
+          "maxGapMs": 94,
+          "over20msShare": 1
+        },
+        {
+          "label": "postpone",
+          "frames": 31,
+          "maxGapMs": 81,
+          "over20msShare": 0.29
+        },
+        {
+          "label": "undo",
+          "frames": 48,
+          "maxGapMs": 43,
+          "over20msShare": 0.146
+        },
+        {
+          "label": "screen-switch",
+          "frames": 13,
+          "maxGapMs": 245,
+          "over20msShare": 0.692
+        },
+        {
+          "label": "reveal",
+          "frames": 17,
+          "maxGapMs": 92,
+          "over20msShare": 0.824
+        },
+        {
+          "label": "panel-close",
+          "frames": 22,
+          "maxGapMs": 69,
+          "over20msShare": 0.591
+        },
+        {
+          "label": "panel-open",
+          "frames": 21,
+          "maxGapMs": 79,
+          "over20msShare": 0.571
+        },
+        {
+          "label": "ask",
+          "frames": 43,
+          "maxGapMs": 46,
+          "over20msShare": 0.302
+        },
+        {
+          "label": "proposal",
+          "frames": 49,
+          "maxGapMs": 34,
+          "over20msShare": 0.204
+        },
+        {
+          "label": "to-library",
+          "frames": 6,
+          "maxGapMs": 11461,
+          "over20msShare": 0.167
+        },
+        {
+          "label": "tab",
+          "frames": 0,
+          "maxGapMs": 0,
+          "over20msShare": null
+        },
+        {
+          "label": "row-to-note",
+          "frames": 15,
+          "maxGapMs": 302,
+          "over20msShare": 0.8
+        },
+        {
+          "label": "quote",
+          "frames": 32,
+          "maxGapMs": 78,
+          "over20msShare": 0.25
+        },
+        {
+          "label": "cite-mark",
+          "frames": 16,
+          "maxGapMs": 78,
+          "over20msShare": 0.75
+        },
+        {
+          "label": "palette",
+          "frames": 16,
+          "maxGapMs": 99,
+          "over20msShare": 1
+        }
+      ],
+      "slowestInteraction": {
+        "ms": 11536,
+        "event": "pointerdown",
+        "step": "to-library"
+      }
+    },
+    {
+      "run": 3,
+      "device": "mobile",
+      "cpuThrottle": 1,
+      "cls": 0.0167,
+      "interactions": 8,
+      "inpProxyMs": 864,
+      "medianInteractionMs": 432,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 4,
+          "maxGapMs": 100,
+          "over20msShare": 1
+        },
+        {
+          "label": "capture",
+          "frames": 10,
+          "maxGapMs": 105,
+          "over20msShare": 0.7
+        },
+        {
+          "label": "scroll-dock",
+          "frames": 8,
+          "maxGapMs": 100,
+          "over20msShare": 0.875
+        },
+        {
+          "label": "scroll-back",
+          "frames": 50,
+          "maxGapMs": 26,
+          "over20msShare": 0.14
+        },
+        {
+          "label": "screen-switch",
+          "frames": 16,
+          "maxGapMs": 97,
+          "over20msShare": 0.5
+        },
+        {
+          "label": "sheet-half",
+          "frames": 8,
+          "maxGapMs": 98,
+          "over20msShare": 1
+        },
+        {
+          "label": "reveal",
+          "frames": 47,
+          "maxGapMs": 81,
+          "over20msShare": 0.128
+        },
+        {
+          "label": "back",
+          "frames": 16,
+          "maxGapMs": 120,
+          "over20msShare": 0.5
+        },
+        {
+          "label": "row-to-question",
+          "frames": 8,
+          "maxGapMs": 96,
+          "over20msShare": 1
+        },
+        {
+          "label": "to-library",
+          "frames": 8,
+          "maxGapMs": 122,
+          "over20msShare": 1
+        }
+      ],
+      "slowestInteraction": {
+        "ms": 864,
+        "event": "pointerdown",
+        "step": "sheet-half"
+      }
+    },
+    {
+      "run": 3,
+      "device": "desktop",
+      "cpuThrottle": 4,
+      "cls": 0.0802,
+      "interactions": 21,
+      "inpProxyMs": 11576,
+      "medianInteractionMs": 288,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 8,
+          "maxGapMs": 326,
+          "over20msShare": 0.875
+        },
+        {
+          "label": "capture",
+          "frames": 9,
+          "maxGapMs": 127,
+          "over20msShare": 0.778
+        },
+        {
+          "label": "why",
+          "frames": 9,
+          "maxGapMs": 111,
+          "over20msShare": 1
+        },
+        {
+          "label": "postpone",
+          "frames": 19,
+          "maxGapMs": 91,
+          "over20msShare": 0.526
+        },
+        {
+          "label": "undo",
+          "frames": 52,
+          "maxGapMs": 42,
+          "over20msShare": 0.135
+        },
+        {
+          "label": "screen-switch",
+          "frames": 10,
+          "maxGapMs": 162,
+          "over20msShare": 0.6
+        },
+        {
+          "label": "reveal",
+          "frames": 13,
+          "maxGapMs": 80,
+          "over20msShare": 1
+        },
+        {
+          "label": "panel-close",
+          "frames": 17,
+          "maxGapMs": 70,
+          "over20msShare": 0.765
+        },
+        {
+          "label": "panel-open",
+          "frames": 20,
+          "maxGapMs": 68,
+          "over20msShare": 0.65
+        },
+        {
+          "label": "ask",
+          "frames": 39,
+          "maxGapMs": 42,
+          "over20msShare": 0.333
+        },
+        {
+          "label": "proposal",
+          "frames": 43,
+          "maxGapMs": 50,
+          "over20msShare": 0.279
+        },
+        {
+          "label": "to-library",
+          "frames": 6,
+          "maxGapMs": 11500,
+          "over20msShare": 0.167
+        },
+        {
+          "label": "tab",
+          "frames": 0,
+          "maxGapMs": 0,
+          "over20msShare": null
+        },
+        {
+          "label": "row-to-note",
+          "frames": 14,
+          "maxGapMs": 308,
+          "over20msShare": 0.857
+        },
+        {
+          "label": "quote",
+          "frames": 31,
+          "maxGapMs": 78,
+          "over20msShare": 0.258
+        },
+        {
+          "label": "cite-mark",
+          "frames": 14,
+          "maxGapMs": 100,
+          "over20msShare": 0.643
+        },
+        {
+          "label": "palette",
+          "frames": 10,
+          "maxGapMs": 113,
+          "over20msShare": 1
+        }
+      ],
+      "slowestInteraction": {
+        "ms": 11576,
+        "event": "pointerdown",
+        "step": "to-library"
+      }
+    },
+    {
+      "run": 3,
+      "device": "mobile",
+      "cpuThrottle": 4,
+      "cls": 0.0178,
+      "interactions": 8,
+      "inpProxyMs": 992,
+      "medianInteractionMs": 632,
+      "windows": [
+        {
+          "label": "idle-baseline",
+          "frames": 3,
+          "maxGapMs": 108,
+          "over20msShare": 1
+        },
+        {
+          "label": "capture",
+          "frames": 6,
+          "maxGapMs": 126,
+          "over20msShare": 1
+        },
+        {
+          "label": "scroll-dock",
+          "frames": 6,
+          "maxGapMs": 140,
+          "over20msShare": 1
+        },
+        {
+          "label": "scroll-back",
+          "frames": 57,
+          "maxGapMs": 26,
+          "over20msShare": 0.07
+        },
+        {
+          "label": "screen-switch",
+          "frames": 15,
+          "maxGapMs": 145,
+          "over20msShare": 0.467
+        },
+        {
+          "label": "sheet-half",
+          "frames": 7,
+          "maxGapMs": 103,
+          "over20msShare": 1
+        },
+        {
+          "label": "reveal",
+          "frames": 46,
+          "maxGapMs": 80,
+          "over20msShare": 0.13
+        },
+        {
+          "label": "back",
+          "frames": 14,
+          "maxGapMs": 119,
+          "over20msShare": 0.429
+        },
+        {
+          "label": "row-to-question",
+          "frames": 7,
+          "maxGapMs": 112,
+          "over20msShare": 1
+        },
+        {
+          "label": "to-library",
+          "frames": 7,
+          "maxGapMs": 109,
+          "over20msShare": 1
+        }
+      ],
+      "slowestInteraction": {
+        "ms": 992,
+        "event": "pointerdown",
+        "step": "sheet-half"
+      }
+    }
+  ]
+}
