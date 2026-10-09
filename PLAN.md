@@ -1,12 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09：restore候选e9bb23816初审发现scratch TCP认证P1，唯一writer正在修复；原145离线测试/985项哈希证据保留，真实恢复及重开未验收。judge PR1625仍草稿。
+> Linear 是权威 tracker。2026-10-09：restore认证修复887012c2f已交回且writer释放，父991项哈希匹配；第二轮验证审与新版验收准备运行，真实恢复及重开未验收。judge PR1625仍草稿。
 
 ## NOW
 
 - **YUK-1358 / Start notes列表**：独占范围和验收见[notes计划](docs/planning/2026-10-09-yuk1358-start-notes-list.md)。保留查询校验、科目知识点解析、空集合语义及现有搜索/导航/视觉；不改note详情/presence/AI写，不把本切片当Notes整族完成。父50unit/18DB、R1 NONE和49RPC/原页面浏览器通过；98表/5序列窗口不变，PR1626已合main04232aaf10（exact9889 CI全绿）；父已fetch核main；[父证据](docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md)。useSubjects仍HTTP，完整迁移未完成。
 
-- **YUK-1359 / 恢复后重开验收**：retained scratch源码e9bb23816已交回且writer释放，显式loopback新目标、实际身份回执、host制品停写证明和postgres只读identity已实施。父3文件145离线测试及985项源/日志/制品哈希通过，见[父证据](docs/planning/evidence/2026-10-09-yuk1359-parent-retained-offline.json)。独立R1已完成：1项P1，scratch TCP psql缺libpq密码；这是源码发现，未运行复现。唯一writer `yuk1359-scratch-tcp-auth-repair-20261009-v1`只修helper与对应测试，随后验证审；[R1报告](docs/planning/2026-10-09-yuk1359-restore-r1.md)。离线准备v2只写/tmp，已告知新helper需重新绑定，不能混用e9bb证据。原13DB只证明canonical查询；完整capture/restore/reopen与exact CI尚未通过，无runtime操作。
+- **YUK-1359 / 恢复后重开验收**：retained scratch源码e9bb23816已交回且writer释放，显式loopback新目标、实际身份回执、host制品停写证明和postgres只读identity已实施。父3文件145离线测试及985项源/日志/制品哈希通过，见[父证据](docs/planning/evidence/2026-10-09-yuk1359-parent-retained-offline.json)。独立R1已完成：1项P1，scratch TCP psql缺libpq密码；这是源码发现，未运行复现。修复887012c2f仅helper与对应测试，writer已释放；父确认3行产品改动与991项哈希，独立3文件152unit通过。第二轮验证审 `yuk1359-restore-parity-verification-r2-20261009`运行；[R1报告](docs/planning/2026-10-09-yuk1359-restore-r1.md)。离线准备v2只写/tmp，已通知绑定887012实际helper，不能混用e9bb证据。原13DB只证明canonical查询；完整capture/restore/reopen与exact CI尚未通过，无runtime操作。
 
 - **YUK-1359 / 完整恢复证明**：按5796提交0015授权，不等judge merge/配额；四现有helper/receipt类型+scopedtests/runbook范围见[恢复缺口](docs/planning/2026-10-09-yuk1359-dbos-restore-evidence-gap.md)。设计已完成并核对7源/test/driver哈希，见[实施契约](docs/planning/2026-10-09-yuk1359-restore-coherence-design.md)。作者已释放固定75d4a4c87，父匹配12源/33日志/888制品并独立76unit通过；真实13DB初验揭露catalog缺括号，最小产品修复后13/13通过，两RED保留；父负责独立审查、锁内真实恢复及DBOS重开验收。无judge代码带入，无恢复主库授权。
 

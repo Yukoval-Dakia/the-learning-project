@@ -1,12 +1,10 @@
-# Restore R1 authentication repair active
+# Restore authentication fix under final review
 
-Fixed product e9bb23816be7dc5d3946ea057fe4e37e4660e984 has parent 145 offline unit passes and 985 source/input/artifact/log hash matches. These remain revision-specific; full capture/restore/DBOS reopen is unrun.
+Fixed candidate 887012c2f10f2812b88a600340ec6ae869983b23; sole repair writer completed/noPending and released. Exactly two owned files changed: three product lines supply scratch-only PGPASSWORD to psql and database pg_restore, plus realistic auth negative/source-boundary tests. Parent reviewed actual patch SHA 209cc4d60ae0e9de35c3a3e32181b1bb293ad2199b7dbad6161e2379d3134346 and independently matched991 files, including893 built artifacts. Author152offlineunit/typecheck/lint/build exit0; parent independently reran3files152unit exit0 (72.59s). Author static/build log and byte verification is not a separate parent rerun.
 
-Independent R1 completed/noPending: one P1, scratch TCP psql lacks libpq password. POSTGRES_PASSWORD initializes the server but does not authenticate its client. Parent read the affected paths and verified full diff SHA f139f8aa8b86b14574c5101339761d94c3b3095f552566f3fee1c33a3c5c6a0a. Source finding, not observed runtime failure. Report: docs/planning/2026-10-09-yuk1359-restore-r1.md.
+Independent R2 yuk1359-restore-parity-verification-r2-20261009 (T3 mcp6636c2a8, Codex gpt-6.1-sol xhigh) is running on fixed887012. Original R1 e9bb found only scratch TCP missing password; report docs/planning/2026-10-09-yuk1359-restore-r1.md. No third review. Source finding has not been reproduced on actual PG; full capture/restore/DBOS reopen unrun.
 
-T3 mcp6636c2a8 unique code writer yuk1359-scratch-tcp-auth-repair-20261009-v1 (Codex gpt-6.1-sol xhigh) owns only scripts/cutover-backup.ts and its test. Preserve scratch-only credential boundary, TCP readiness and fail-closed ownership. Parent owns docs and eventual real runtime verification. R2 remains available after repair; no third review.
-
-Offline prep yuk1359-restore-reopen-latebind-offline-prep-20261009-v2 only writes its new /tmp directory. Informed that e9bb is immutable evidence and final helper seal must be rebound to repaired revision. No runtime/lock or deployment this turn. Judge PR1625 remains separate 29a802 draft/watch, known CI failures and main conflict; real provider 429/acceptance gates preserved. Restore first, no cross-branch writes.
+Offline prep yuk1359-restore-reopen-latebind-offline-prep-20261009-v2 remains /tmp-only, notified to bind final helper887012 actual bytes and preserve original main worker. No repo codewriter or runtime/lock. JudgePR1625 remains separate29a802 draft/watch with failed CI/conflict and real provider429 gate; restore first, no crossbranch writes. Original parent145unit/985hash evidence is e9bb-only.
 
 # Restore parent acceptance active
 

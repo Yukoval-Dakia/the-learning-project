@@ -1,0 +1,29 @@
+{
+  "candidate": "887012c2f10f2812b88a600340ec6ae869983b23",
+  "manifest": "/tmp/yuk1359-scratch-auth-repair-20261009-cle5h9m_/hash-manifest.json",
+  "manifest_sha256": "067d81fb4a4abee4214a035cc4b9a1017399721ed997790735b22a72e79d90fe",
+  "checked_at": "2026-10-09T11:25:16.027971+00:00",
+  "counts": {
+    "build-artifact": 893,
+    "source": 7,
+    "input": 3,
+    "current-offline-shell-evidence": 18,
+    "preserved-prior-evidence": 20,
+    "repair-evidence": 49,
+    "current-offline-shell-pointer": 1
+  },
+  "total": 991,
+  "mismatches": [],
+  "scope": "parent file byte verification, not independently rerun author static/build checks",
+  "parent_unit": {
+    "command": "bash /tmp/yuk1359-offline-env.sh pnpm vitest run --config vitest.unit.config.ts scripts/cutover-backup.test.ts src/core/migration/cutover-manifest.test.ts scripts/restore-runbook-drift.unit.test.ts",
+    "exit_code": 0,
+    "files": 3,
+    "tests": 152,
+    "duration_seconds": 72.59,
+    "log": "/tmp/yuk1359-parent-887012-unit.log",
+    "log_sha256": "76371cae7100b9a04729945c694b93b2dd671bdc5f584c684e1a5eb351219756"
+  },
+  "review": "R2 running; R1-P1-001 has source repair, no final independent resolution yet",
+  "runtime": "No Docker/DB/provider/service/runtime action; full capture/restore and same-target DBOS reopen unrun"
+}
