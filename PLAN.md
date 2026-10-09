@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：judge71bd修复已交，原回执DB严格用例通过；后续reconcile暴露null因果字段schema边界不一致。唯一writer修该族schema；01:05:25Z锁安全释放，原4/release未变。R2及完整验收仍待，整迁移In Progress。
+> Linear 是权威 tracker。2026-10-09 JST：judge schema c9a已交，原reconcile DB通过；两项fixture精确修正后43DB通过、1项重复提交身份校验失败。唯一writer修lost-COMMIT catch吞错；01:21:16Z锁已释放，原4/release未变，整迁移In Progress。
 
 ## NOW
 
@@ -16,7 +16,7 @@
 
 ## NEXT
 
-- YUK1356固定5f09独立R1为3项P1/0P0；回执ff694与通知/时钟71bd已交。父核11文件/884制品/18日志，原回执严格DB用例1PASS、完整lint通过。后续reconcile写入在真实parseEvent失败，唯一writer `yuk1356-operational-envelope-repair-20261009-v1` 修本族null/undefined因果边界和正负例；kernel只读。父保留后续DB/迁移/进程/消费者验收与唯一R2，不启第三审。
+- YUK1356 R1三项P1已有ff694/71bd修复；c9a schema边界修复已交。父原receipt与reconcile单例通过；fixture6981981b7后3文件43PASS/1FAIL，重复提交改变userRating被lost-COMMIT catch吞错。唯一writer `yuk1356-dispatch-ack-identity-repair-20261009-v1` 修共用身份校验，保留真实丢回执恢复；父后续实际DB/迁移/进程/消费者验收与唯一R2。
 
 - 1355已交四个housekeeping族源码及隔离证据。下一idle族只读设计已交回，父核45源码+3报告；保留原userclock，5796已以13d317da8明确交接精确Copilot/session/practice写路径。未起idle writer或分配编号，judge交回后再核最终锁序。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。
 - 1358继续剩余路由/共享子树及三入口共用业务操作，保留现有确定性行为。1392公共board读取、1380事件读/纠错等已合接口由Start集成方接消费者，不复制领域规则。
