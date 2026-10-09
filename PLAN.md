@@ -1,12 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-10：v4父902项分层离线检查及完整绑定通过；run09真实目标COMMIT故障得到ERROR1+2missing，pending SIGKILL后即时PG客户端检查失败，未备份恢复。17:59:06Z释放锁，源停止保留、原4/release不变；唯一PREP writer修进程退出后的数据库连接消退边界。
+> Linear 是权威 tracker。2026-10-10：run10源三态/强杀连接消退与真实完整恢复parity通过（4schema/123表/5序列）；恢复端启动前PREP误比物理列序号空洞失败，未launch。18:31:15Z原4/release不变安全释放锁；唯一v6 PREP writer修跨库逻辑列比较，迁移保持In Progress。
 
 ## NOW
 
 - **YUK-1358 / Start notes列表**：独占范围和验收见[notes计划](docs/planning/2026-10-09-yuk1358-start-notes-list.md)。保留查询校验、科目知识点解析、空集合语义及现有搜索/导航/视觉；不改note详情/presence/AI写，不把本切片当Notes整族完成。父50unit/18DB、R1 NONE和49RPC/原页面浏览器通过；98表/5序列窗口不变，PR1626已合main04232aaf10（exact9889 CI全绿）；父已fetch核main；[父证据](docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md)。useSubjects仍HTTP，完整迁移未完成。
 
-- **YUK-1359 / 恢复后重开验收**：固定helper b52e/worker7472；[v4父验收](docs/planning/2026-10-10-yuk1359-v4-parent-acceptance.md)记录558既有+43协议组/299分片+2源码检查和完整依赖/制品核验。run09真实故障已证unknown ERROR1+2missing；pending SIGKILL后即时连接零检查见backend139而失败。后续只读clients0不追认为PASS，未capture/restore/reopen。[失败与清理](docs/planning/evidence/2026-10-10-yuk1359-parent-restore-attempt09.json)保留，17:59:06Z核原4/running/release后释放锁。唯一Sol xhigh writer仅修新v5已退出worker的PG连接消退观察，严格最终零连接、不终止未知连接、不改产品。run01–09不得重启，无R3或部署。
+- **YUK-1359 / 恢复后重开验收**：固定helper b52e/worker7472；[v5父验收](docs/planning/2026-10-10-yuk1359-v5-parent-acceptance.md)记录931项分层离线检查、真实源三态和强杀后严格零连接通过。run10 capture/restore真实完整parity verified：4schema/123表/5序列；same-target witness通过，随后PREP原始ordinal_position比较因drop列空洞失败，恢复worker未launch。父离线实核1469列仅31个物理序号差异，其他seal字段相同；不追认整轮PASS。[失败与清理](docs/planning/evidence/2026-10-10-yuk1359-parent-restore-attempt10.json)保留。18:31:15Z停止保留源/恢复端并核原4/running/release后释放锁。唯一Sol xhigh writer在新v6修跨库逻辑列比较，保持同端raw检查及全部真实语义负例。run01–10不得重启，无产品改动/R3/部署。
 
 - **YUK-1359 / 完整恢复证明**：按5796提交0015授权，不等judge merge/配额；四现有helper/receipt类型+scopedtests/runbook范围见[恢复缺口](docs/planning/2026-10-09-yuk1359-dbos-restore-evidence-gap.md)。设计已完成并核对7源/test/driver哈希，见[实施契约](docs/planning/2026-10-09-yuk1359-restore-coherence-design.md)。作者已释放固定75d4a4c87，父匹配12源/33日志/888制品并独立76unit通过；真实13DB初验揭露catalog缺括号，最小产品修复后13/13通过，两RED保留；父负责独立审查、锁内真实恢复及DBOS重开验收。无judge代码带入，无恢复主库授权。
 

@@ -1,3 +1,13 @@
+# Run10 full restore parity passed; PREP prelaunch physical-column comparison failed
+
+Parent931 layered offline checks and complete seals passed before runtime. Fixed worker7472/helperb52e unchanged. Versioned report docs/planning/2026-10-10-yuk1359-v5-parent-acceptance.md and evidence/2026-10-10-yuk1359-parent-restore-attempt10.json.
+
+Source7361d71f on32790/test_fork_20261009182310:118 migrations, complete547 SUCCESS3 exit0, unknown672 genuine COMMIT outage ERROR1+2missing SIGTERM, pending884 SIGKILL+8known PG identities disappeared all passed. Actual capture exited0; dump54cc18f6. Actual restore0127ceec on49988/test_fork_20261009182841 exited0, verified content parity4schemas123tables5sequences. Actual target witness passed. PREP restored-inspect failed before workerlaunch:31 ordinal_position differences among1469columns (artifact19/knowledge11/completion_evidence1); same visible order/otherattributes and allothersealfields equal. Source beforetargetseal unchanged. Not a restored-reopenPASS.
+
+Both owned PGs stopped retained; original4ID/image/start/health/running/release unchanged. Token d916ad37 released2026-10-09T18:31:15.707871Z;5796 notified. No owned runtime/lock. Never restart run01–10. Parent /tmp/yuk1359-restore-reopen-parent10; fixed prep /tmp/yuk1359-dbos-restore-offline-prep-v5.
+
+Only active writer: node:delegated-task:command%3Amcp%3A6636c2a8-faa6-445b-bad3-e84032e9ac15%3Adelegate-task%3Ayuk1359-logical-column-parity-prep-repair-20261010-v1 (Codex gpt-6.1-sol xhigh). Owns new /tmp/yuk1359-dbos-restore-offline-prep-v6 and report only. Fix crossdatabase logical visible-column comparison in all consumers inclreopen; keep sameendpoint rawschema immutability, strict order/type/default/nullability/membership, wholecanonical helper gate and rawsnapshots. Offline realfailure regression+negative cases, frozenworker/helper/deps/history. No product/runtime/R3. Parent owns docs/tracker and later independentverification/newsource/lock. Judge1625 unchanged separate branch/draft/model/CI gates. Wholemigration incomplete.
+
 # Restore run09 failed after pending SIGKILL; owned source stopped and lock released
 
 Parent v4 proof: 558 inherited checks +43 protocol groups +299 split cases +2 source checks all passed; 3011 source/3053 evidence and all121549 dependency files/3756 links matched. Fixed worker7472/helperb52e unchanged. Full source/evidence seals and detailed report in docs/planning/2026-10-10-yuk1359-v4-parent-acceptance.md.

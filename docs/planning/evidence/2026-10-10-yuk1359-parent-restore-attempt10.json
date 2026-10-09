@@ -1,0 +1,1254 @@
+{
+  "scope": "Run10 complete source scenarios and actual full restore parity; prelaunch fixture schema check failed, reopen unrun",
+  "status": "FAILED_BEFORE_REOPEN",
+  "candidate": "3a16662b15d8d962ae0e3d4e955e4a8ddc5549d1",
+  "fixedWorkerRevision": "7472f4395f4a12a5167e33034d5d8af8bf695049",
+  "fixedHelperRevision": "b52e255f746ebbf6a4f2f44ae06e7d1b672a4fff",
+  "actualCaptureReportedRevision": "3a16662b15d8d962ae0e3d4e955e4a8ddc5549d1",
+  "helperExecutableSha256": "f257a7c86e88dc78e9fa54afedf3e669ba38f55ed4bf953ea54c8ce826d66606",
+  "offlineParent": {
+    "scope": "Parent v5 offline acceptance before run10",
+    "at": "2026-10-09T18:22:54.290112+00:00",
+    "reports": {
+      "verify": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/static-tmp/parent-acceptance/verify.json",
+        "sha256": "3231cb3b6aabe6a849c4a738b5d02dc680dce2beb63d5bb484311aa9fb6d678e",
+        "status": "V5 SOURCE/EVIDENCE/DEPENDENCY/PRESERVATION VERIFIED; RUNTIME UNRUN",
+        "attempts": {
+          "connections": 0,
+          "listeners": 0,
+          "children": 0
+        }
+      },
+      "postkill": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/static-tmp/parent-acceptance/postkill.json",
+        "sha256": "e6865388c71782f1a7f653f24d701daf2c51f4a11932f9790958683096f4a156",
+        "status": "Offline post-exit settlement checks passed",
+        "attempts": {
+          "connections": 0,
+          "listeners": 0,
+          "children": 0
+        }
+      },
+      "protocol": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/static-tmp/parent-acceptance/protocol.json",
+        "sha256": "98f026a3a73023c25489fd5b3fe3f6464de6966d8f261ee483acc62a9bd80a08",
+        "status": "OFFLINE PROTOCOL REPAIR CHECKS PASSED; RUNTIME UNRUN",
+        "attempts": {
+          "connections": 0,
+          "listeners": 0,
+          "children": 0
+        }
+      },
+      "source": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/static-tmp/parent-acceptance/source.json",
+        "sha256": "1dcacd6a867f3720c38693c249bab729084b170f53ac0a72d08e695c7064eab3",
+        "status": "Offline lifecycle typecheck and fixed worker schema SQL verified",
+        "attempts": {
+          "connections": 0,
+          "listeners": 0,
+          "children": 0
+        }
+      },
+      "full558": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/static-tmp/parent-acceptance/full558.json",
+        "sha256": "a6bdff187bc6b4ceb7ab85726ff9decb99b5b59b8fa207d8c38ae1a5d5ee1b3b",
+        "status": "PURE OFFLINE CHECKS ONLY; runs01–08 FAILED; fresh capture/restore/DBOS reopen UNRUN",
+        "attempts": {
+          "connections": 0,
+          "listeners": 0,
+          "children": 0
+        }
+      },
+      "diff": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/static-tmp/parent-acceptance/diff.json",
+        "sha256": "2bd100eaa72848e3cfa135b37b897ac1678e0174673a368695450461501714fb",
+        "status": "Unified patch exactly reconstructs every changed text file",
+        "attempts": null
+      },
+      "original-causality": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/static-tmp/parent-acceptance/original-causality.json",
+        "sha256": "a1ee70def8789961ca0d4972eb75cf70862b31569938cd3396fc4f402a45e1fa",
+        "status": "Offline diagnostic counterexample; no repair or runtime acceptance",
+        "attempts": {
+          "connections": 0,
+          "listeners": 0,
+          "children": 0
+        }
+      }
+    },
+    "inheritedChecks": 902,
+    "newGroups": 29,
+    "sourceFiles": 3015,
+    "evidenceFiles": 3053,
+    "sourceSeal": "d139fb16c1bc958dc4da5d8b2b9f6057178fbf03818fe4f3c485c49be15b7e68",
+    "evidenceSeal": "ff574b3448857e5042b95045b863dd9aa4dd7a5246b6c244df89fced43c3c5f5",
+    "runtimeClaim": false
+  },
+  "source": {
+    "containerId": "7361d71f3fc3422fda92b05702fbb248cd3c1cf23d629b5c0dc5d76027fb3b41",
+    "host": "127.0.0.1",
+    "port": 32790,
+    "database": "test_fork_20261009182310",
+    "systemIdentifier": "7694735377922986027",
+    "databaseOid": "16384",
+    "serverVersion": "16.15 (Debian 16.15-1.pgdg12+2)",
+    "serverStartedAt": "2026-10-09T18:23:12.115617Z",
+    "inRecovery": false,
+    "serverAddress": "192.168.215.2/32",
+    "serverPort": 5432
+  },
+  "restored": {
+    "containerId": "0127ceec1507f5af8a6cc0e80752fe8e68a3d5d03f6973b4e9ee87290770f99a",
+    "host": "127.0.0.1",
+    "port": 49988,
+    "database": "test_fork_20261009182841",
+    "systemIdentifier": "7694736948124422186",
+    "databaseOid": "16384",
+    "serverVersion": "16.15 (Debian 16.15-1.pgdg12+2)",
+    "serverStartedAt": "2026-10-09T18:29:18.120719Z",
+    "inRecovery": false,
+    "serverAddress": "192.168.215.3/32",
+    "serverPort": 5432
+  },
+  "sourceStage": {
+    "stage": "awaiting-parent-backup-restore",
+    "cleanupComplete": true,
+    "lifecycleSha256": "3f6e73a7e5dc27ca25e478e99585726f62b39552cba6ab583c671ea1d36c3d25",
+    "workerSha256": "4e2ec8ace103cf535c3472f2f2c4611438d8cfe5a6f14a1c65abe272674824a9",
+    "bindingSha256": "f74829a436743b03eb29422bac39bd2e883a60112b5b9e7510f9ac87948c6e00"
+  },
+  "causalWitness": {
+    "causalWitness": {
+      "kind": "identity-bound-application-outage-v4",
+      "target": {
+        "workflowId": "restore-unknown-yuk1359-restore-run10",
+        "tickId": "restore-unknown-yuk1359-restore-run10",
+        "sessionId": "restore-unknown-yuk1359-restore-run10-a"
+      },
+      "pairId": 1,
+      "backendPid": 129,
+      "transactionId": 45,
+      "receiptExecutedSuccessfully": true,
+      "targetCommitSentUpstream": true,
+      "serverCommand": "COMMIT",
+      "suppressedDownstream": {
+        "commandComplete": true,
+        "followingReadyForQuery": true
+      },
+      "activePairCensus": [
+        {
+          "pairId": 1,
+          "backendPid": 129
+        },
+        {
+          "pairId": 2,
+          "backendPid": 136
+        }
+      ],
+      "destroyedPairs": [1, 2]
+    },
+    "acceptedPairs": [
+      {
+        "pairId": 1,
+        "backendPid": 129
+      },
+      {
+        "pairId": 2,
+        "backendPid": 136
+      }
+    ],
+    "laterRejectedPairs": [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17],
+    "protocolFailure": null,
+    "outage": true,
+    "activePairCount": 0
+  },
+  "ownedWorkers": [
+    {
+      "pid": 547,
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "pid": 672,
+      "exit": {
+        "code": null,
+        "signal": "SIGTERM"
+      }
+    },
+    {
+      "pid": 884,
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      }
+    }
+  ],
+  "postKillSettlementEvidence": [
+    {
+      "kind": "owned-fault-worker-settlement",
+      "pid": 672,
+      "requestedSignals": [
+        {
+          "signal": "SIGTERM",
+          "at": "2026-10-09T18:25:23.030Z",
+          "delivered": true
+        }
+      ],
+      "exit": {
+        "code": null,
+        "signal": "SIGTERM"
+      },
+      "completed": true,
+      "naturalExit": false
+    },
+    {
+      "kind": "owned-worker-postexit-backend-settlement-v1",
+      "workerPid": 884,
+      "sourceBindingSha256": "f74829a436743b03eb29422bac39bd2e883a60112b5b9e7510f9ac87948c6e00",
+      "deadlineMs": 5000,
+      "pollMs": 50,
+      "ownershipBasis": "exclusive-disposable-worker-interval-v1",
+      "samples": [
+        {
+          "stage": "before-exit",
+          "observedAt": "2026-10-09T18:25:24.581Z",
+          "monotonicMs": 39000.868667,
+          "observation": {
+            "at": "2026-10-09 18:25:24.581501+00",
+            "observer": {
+              "pid": 116,
+              "state": "active",
+              "datname": "test_fork_20261009182310",
+              "usename": "[redacted]",
+              "xact_start": "2026-10-09 18:25:24.581467+00",
+              "backend_xid": null,
+              "client_addr": "192.168.215.1/32",
+              "client_port": 60400,
+              "backend_type": "client backend",
+              "backend_xmin": "1514",
+              "backend_start": "2026-10-09 18:25:18.064326+00",
+              "application_name": "yuk1359-observer-yuk1359-restore-run10"
+            },
+            "clients": [
+              {
+                "pid": 138,
+                "state": "idle",
+                "datname": "test_fork_20261009182310",
+                "usename": "[redacted]",
+                "xact_start": null,
+                "backend_xid": null,
+                "client_addr": "192.168.215.1/32",
+                "client_port": 60578,
+                "backend_type": "client backend",
+                "backend_xmin": null,
+                "backend_start": "2026-10-09 18:25:23.178304+00",
+                "application_name": "pgboss:18d5ec48"
+              },
+              {
+                "pid": 139,
+                "state": "idle",
+                "datname": "test_fork_20261009182310",
+                "usename": "[redacted]",
+                "xact_start": null,
+                "backend_xid": null,
+                "client_addr": "192.168.215.1/32",
+                "client_port": 60580,
+                "backend_type": "client backend",
+                "backend_xmin": null,
+                "backend_start": "2026-10-09 18:25:23.19192+00",
+                "application_name": "pgboss:18d5ec48"
+              },
+              {
+                "pid": 140,
+                "state": "idle",
+                "datname": "test_fork_20261009182310",
+                "usename": "[redacted]",
+                "xact_start": null,
+                "backend_xid": null,
+                "client_addr": "192.168.215.1/32",
+                "client_port": 60592,
+                "backend_type": "client backend",
+                "backend_xmin": null,
+                "backend_start": "2026-10-09 18:25:23.219934+00",
+                "application_name": "postgres.js"
+              },
+              {
+                "pid": 143,
+                "state": "idle",
+                "datname": "test_fork_20261009182310",
+                "usename": "[redacted]",
+                "xact_start": null,
+                "backend_xid": null,
+                "client_addr": "192.168.215.1/32",
+                "client_port": 60618,
+                "backend_type": "client backend",
+                "backend_xmin": null,
+                "backend_start": "2026-10-09 18:25:23.291208+00",
+                "application_name": "dbos_transact_local_prune-v1"
+              },
+              {
+                "pid": 144,
+                "state": "idle",
+                "datname": "test_fork_20261009182310",
+                "usename": "[redacted]",
+                "xact_start": null,
+                "backend_xid": null,
+                "client_addr": "192.168.215.1/32",
+                "client_port": 60620,
+                "backend_type": "client backend",
+                "backend_xmin": null,
+                "backend_start": "2026-10-09 18:25:23.297574+00",
+                "application_name": "dbos_transact_local_prune-v1"
+              },
+              {
+                "pid": 145,
+                "state": "idle",
+                "datname": "test_fork_20261009182310",
+                "usename": "[redacted]",
+                "xact_start": null,
+                "backend_xid": null,
+                "client_addr": "192.168.215.1/32",
+                "client_port": 60632,
+                "backend_type": "client backend",
+                "backend_xmin": null,
+                "backend_start": "2026-10-09 18:25:23.417455+00",
+                "application_name": "dbos_transact_local_prune-v1"
+              },
+              {
+                "pid": 146,
+                "state": "idle",
+                "datname": "test_fork_20261009182310",
+                "usename": "[redacted]",
+                "xact_start": null,
+                "backend_xid": null,
+                "client_addr": "192.168.215.1/32",
+                "client_port": 60634,
+                "backend_type": "client backend",
+                "backend_xmin": null,
+                "backend_start": "2026-10-09 18:25:23.491841+00",
+                "application_name": "dbos_transact_local_prune-v1"
+              },
+              {
+                "pid": 147,
+                "state": "idle",
+                "datname": "test_fork_20261009182310",
+                "usename": "[redacted]",
+                "xact_start": null,
+                "backend_xid": null,
+                "client_addr": "192.168.215.1/32",
+                "client_port": 60636,
+                "backend_type": "client backend",
+                "backend_xmin": null,
+                "backend_start": "2026-10-09 18:25:24.444233+00",
+                "application_name": "postgres.js"
+              }
+            ]
+          }
+        },
+        {
+          "stage": "after-exit",
+          "observedAt": "2026-10-09T18:25:24.590Z",
+          "monotonicMs": 39009.307042,
+          "observation": {
+            "at": "2026-10-09 18:25:24.590034+00",
+            "observer": {
+              "pid": 116,
+              "state": "active",
+              "datname": "test_fork_20261009182310",
+              "usename": "[redacted]",
+              "xact_start": "2026-10-09 18:25:24.589999+00",
+              "backend_xid": null,
+              "client_addr": "192.168.215.1/32",
+              "client_port": 60400,
+              "backend_type": "client backend",
+              "backend_xmin": "1514",
+              "backend_start": "2026-10-09 18:25:18.064326+00",
+              "application_name": "yuk1359-observer-yuk1359-restore-run10"
+            },
+            "clients": []
+          }
+        }
+      ],
+      "exitBoundary": {
+        "at": "2026-10-09T18:25:24.586Z",
+        "monotonicMs": 39005.952583,
+        "deadlineMonotonicMs": 44005.952583,
+        "code": null,
+        "signal": "SIGKILL",
+        "pidAbsent": true,
+        "pidAbsentAt": "2026-10-09T18:25:24.587Z"
+      },
+      "completed": true,
+      "capturedIdentities": [
+        {
+          "pid": 138,
+          "backend_start": "2026-10-09 18:25:23.178304+00",
+          "backend_type": "client backend",
+          "datname": "test_fork_20261009182310",
+          "usename": "[redacted]",
+          "application_name": "pgboss:18d5ec48",
+          "client_addr": "192.168.215.1/32",
+          "client_port": 60578
+        },
+        {
+          "pid": 139,
+          "backend_start": "2026-10-09 18:25:23.19192+00",
+          "backend_type": "client backend",
+          "datname": "test_fork_20261009182310",
+          "usename": "[redacted]",
+          "application_name": "pgboss:18d5ec48",
+          "client_addr": "192.168.215.1/32",
+          "client_port": 60580
+        },
+        {
+          "pid": 140,
+          "backend_start": "2026-10-09 18:25:23.219934+00",
+          "backend_type": "client backend",
+          "datname": "test_fork_20261009182310",
+          "usename": "[redacted]",
+          "application_name": "postgres.js",
+          "client_addr": "192.168.215.1/32",
+          "client_port": 60592
+        },
+        {
+          "pid": 143,
+          "backend_start": "2026-10-09 18:25:23.291208+00",
+          "backend_type": "client backend",
+          "datname": "test_fork_20261009182310",
+          "usename": "[redacted]",
+          "application_name": "dbos_transact_local_prune-v1",
+          "client_addr": "192.168.215.1/32",
+          "client_port": 60618
+        },
+        {
+          "pid": 144,
+          "backend_start": "2026-10-09 18:25:23.297574+00",
+          "backend_type": "client backend",
+          "datname": "test_fork_20261009182310",
+          "usename": "[redacted]",
+          "application_name": "dbos_transact_local_prune-v1",
+          "client_addr": "192.168.215.1/32",
+          "client_port": 60620
+        },
+        {
+          "pid": 145,
+          "backend_start": "2026-10-09 18:25:23.417455+00",
+          "backend_type": "client backend",
+          "datname": "test_fork_20261009182310",
+          "usename": "[redacted]",
+          "application_name": "dbos_transact_local_prune-v1",
+          "client_addr": "192.168.215.1/32",
+          "client_port": 60632
+        },
+        {
+          "pid": 146,
+          "backend_start": "2026-10-09 18:25:23.491841+00",
+          "backend_type": "client backend",
+          "datname": "test_fork_20261009182310",
+          "usename": "[redacted]",
+          "application_name": "dbos_transact_local_prune-v1",
+          "client_addr": "192.168.215.1/32",
+          "client_port": 60634
+        },
+        {
+          "pid": 147,
+          "backend_start": "2026-10-09 18:25:24.444233+00",
+          "backend_type": "client backend",
+          "datname": "test_fork_20261009182310",
+          "usename": "[redacted]",
+          "application_name": "postgres.js",
+          "client_addr": "192.168.215.1/32",
+          "client_port": 60636
+        }
+      ],
+      "exitRequestedAt": "2026-10-09T18:25:24.583Z",
+      "finalPidAbsentAt": "2026-10-09T18:25:24.592Z",
+      "completedAt": "2026-10-09T18:25:24.592Z",
+      "completedMonotonicMs": 39011.042333
+    }
+  ],
+  "captureExit": {
+    "kind": "parent-observed-helper-exit-v1",
+    "operation": "capture",
+    "runId": "yuk1359-restore-run10",
+    "exitCode": 0,
+    "signal": null,
+    "spawnObserved": true,
+    "receiptAbsentBeforeSpawn": true,
+    "restoreRevision": "b52e255f746ebbf6a4f2f44ae06e7d1b672a4fff",
+    "helperExecutableSha256": "f257a7c86e88dc78e9fa54afedf3e669ba38f55ed4bf953ea54c8ce826d66606",
+    "helperClosureSha256": "5b7d41323cbb288c3e2119557bb6317058569045585c86094b6c57bc73f51ae8",
+    "receiptSha256": "f89a0915b3ec3dae8e181d17fa3ec997aaeeab893d26933b17699dea949a990d",
+    "captureRevision": "3a16662b15d8d962ae0e3d4e955e4a8ddc5549d1",
+    "sourceArtifactSha256": "f89a0915b3ec3dae8e181d17fa3ec997aaeeab893d26933b17699dea949a990d",
+    "sourceBindingSha256": "f74829a436743b03eb29422bac39bd2e883a60112b5b9e7510f9ac87948c6e00",
+    "sourceBeforeSha256": "866715f9a6588ef137cde3bd66e32eb32edfadbf780a957f74cb3715fa1280fb",
+    "dumpSha256": "54cc18f6628162728c25a795018cb56424abba3fd3a8de3cdefeae921a1a6cf8",
+    "quiescenceSha256": "f42f7972e2c0d4aea9b17877e47118de5708a24d69802dae95fb69a984d44415",
+    "fullMode": true,
+    "keep": false,
+    "startedAt": "2026-10-09T18:28:16.654Z",
+    "finishedAt": "2026-10-09T18:28:28.899Z",
+    "stdout": {
+      "file": "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/stdout.log",
+      "sha256": "2c307179631c424cfa70ec52f0d47e26c6337ca3a28825c634b03a372f7b1711",
+      "bytes": "402"
+    },
+    "stderr": {
+      "file": "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": "0"
+    }
+  },
+  "restoreExit": {
+    "kind": "parent-observed-helper-exit-v1",
+    "operation": "restore",
+    "runId": "yuk1359-restore-run10",
+    "exitCode": 0,
+    "signal": null,
+    "spawnObserved": true,
+    "receiptAbsentBeforeSpawn": true,
+    "restoreRevision": "b52e255f746ebbf6a4f2f44ae06e7d1b672a4fff",
+    "helperExecutableSha256": "f257a7c86e88dc78e9fa54afedf3e669ba38f55ed4bf953ea54c8ce826d66606",
+    "helperClosureSha256": "5b7d41323cbb288c3e2119557bb6317058569045585c86094b6c57bc73f51ae8",
+    "receiptSha256": "a70873bbd51cca987b89e6e9e5af49b71165e24fc03f92b11e16d701bde9b760",
+    "captureRevision": "3a16662b15d8d962ae0e3d4e955e4a8ddc5549d1",
+    "sourceArtifactSha256": "f89a0915b3ec3dae8e181d17fa3ec997aaeeab893d26933b17699dea949a990d",
+    "sourceBindingSha256": "f74829a436743b03eb29422bac39bd2e883a60112b5b9e7510f9ac87948c6e00",
+    "sourceBeforeSha256": "866715f9a6588ef137cde3bd66e32eb32edfadbf780a957f74cb3715fa1280fb",
+    "dumpSha256": "54cc18f6628162728c25a795018cb56424abba3fd3a8de3cdefeae921a1a6cf8",
+    "quiescenceSha256": "f42f7972e2c0d4aea9b17877e47118de5708a24d69802dae95fb69a984d44415",
+    "fullMode": true,
+    "keep": true,
+    "scratchPort": 49988,
+    "scratchDatabase": "test_fork_20261009182841",
+    "startedAt": "2026-10-09T18:29:15.452Z",
+    "finishedAt": "2026-10-09T18:29:34.114Z",
+    "stdout": {
+      "file": "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/restore/stdout.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": "0"
+    },
+    "stderr": {
+      "file": "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/restore/stderr.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": "0"
+    }
+  },
+  "restore": {
+    "kind": "verified",
+    "verified": true,
+    "level": "database-content-parity",
+    "comparison": {
+      "kind": "equal",
+      "missing_schemas": [],
+      "extra_schemas": [],
+      "missing_tables": [],
+      "extra_tables": [],
+      "mismatched_tables": [],
+      "missing_sequences": [],
+      "extra_sequences": [],
+      "mismatched_sequences": [],
+      "environment_mismatches": []
+    },
+    "phases": [
+      {
+        "kind": "ok",
+        "phase": "preflight"
+      },
+      {
+        "kind": "ok",
+        "phase": "staging"
+      },
+      {
+        "kind": "ok",
+        "phase": "bindings"
+      },
+      {
+        "kind": "ok",
+        "phase": "start"
+      },
+      {
+        "kind": "ok",
+        "phase": "toc"
+      },
+      {
+        "kind": "ok",
+        "phase": "restore"
+      },
+      {
+        "kind": "ok",
+        "phase": "inspection"
+      },
+      {
+        "kind": "ok",
+        "phase": "comparison"
+      },
+      {
+        "kind": "ok",
+        "phase": "cleanup"
+      }
+    ],
+    "dump": {
+      "file": "/private/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/capture-eT8JgM/database.dump",
+      "sha256": "54cc18f6628162728c25a795018cb56424abba3fd3a8de3cdefeae921a1a6cf8",
+      "bytes": "378402"
+    },
+    "errors": []
+  },
+  "restoredInventory": {
+    "algorithm": "pg16-column-text-sha256-multiset-v2",
+    "schemas": 4,
+    "tables": 123,
+    "sequences": 5
+  },
+  "sameTargetWitness": {
+    "kind": "parent-same-target-witness-v1",
+    "runId": "yuk1359-restore-run10",
+    "sourceBindingSha256": "f74829a436743b03eb29422bac39bd2e883a60112b5b9e7510f9ac87948c6e00",
+    "sourceBeforeSha256": "866715f9a6588ef137cde3bd66e32eb32edfadbf780a957f74cb3715fa1280fb",
+    "sourceBeforeArtifact": {
+      "file": "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/source-before-backup.json",
+      "sha256": "866715f9a6588ef137cde3bd66e32eb32edfadbf780a957f74cb3715fa1280fb",
+      "bytes": "438901"
+    },
+    "finalArtifactSeal": "d139fb16c1bc958dc4da5d8b2b9f6057178fbf03818fe4f3c485c49be15b7e68",
+    "dependencySeal": "1546534ced4df07dcaf7e2cab1e4f80f955bd08e8680f99135de37b71310fe2c",
+    "restoreRevision": "b52e255f746ebbf6a4f2f44ae06e7d1b672a4fff",
+    "captureRevision": "3a16662b15d8d962ae0e3d4e955e4a8ddc5549d1",
+    "captureExitSha256": "8cbf761c962309e324e1624c86ce63862d257aa7c8ae280c83fb0cca4d87c375",
+    "helperExecutableSha256": "f257a7c86e88dc78e9fa54afedf3e669ba38f55ed4bf953ea54c8ce826d66606",
+    "helperClosureSha256": "5b7d41323cbb288c3e2119557bb6317058569045585c86094b6c57bc73f51ae8",
+    "receiptSha256": "a70873bbd51cca987b89e6e9e5af49b71165e24fc03f92b11e16d701bde9b760",
+    "helperExitSha256": "94d69622c2ea995892dc80f21cd861c853e23f5666c48a985e4832ce985cb5a4",
+    "executionObservationSha256": "87b1466eaf6a51199cc53cdd66eaa222c22a14c2415c47717fe8c64a70930caf",
+    "capture": {
+      "dump": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/capture-eT8JgM/database.dump",
+        "sha256": "54cc18f6628162728c25a795018cb56424abba3fd3a8de3cdefeae921a1a6cf8"
+      },
+      "source": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/capture-eT8JgM/source-manifest.json",
+        "sha256": "f89a0915b3ec3dae8e181d17fa3ec997aaeeab893d26933b17699dea949a990d"
+      },
+      "quiescence": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/capture-eT8JgM/quiescence-evidence.json",
+        "sha256": "f42f7972e2c0d4aea9b17877e47118de5708a24d69802dae95fb69a984d44415"
+      },
+      "dlq": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/capture-eT8JgM/dlq-tombstones.json",
+        "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570"
+      },
+      "migration": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/capture-eT8JgM/migration/manifest-952ef13e5368.json",
+        "sha256": "b4cb0ce91a1e4d10eec3e59b174c3549ed9f03b93535b9830ed24b6315266570"
+      }
+    },
+    "continuousLock": {
+      "held": true,
+      "id": "d916ad37-f192-48f2-950f-a96474398874",
+      "holder": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "acquiredAt": "2026-10-09T18:22:54.559936+00:00",
+      "evidence": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/parent-inputs/run10/actual-lock-evidence.json",
+        "sha256": "14f074d84f148aa8577a1922f2a1dccc1b5ad5999964b56b5cf5cda039e4b054"
+      }
+    },
+    "inspectBefore": {
+      "Id": "0127ceec1507f5af8a6cc0e80752fe8e68a3d5d03f6973b4e9ee87290770f99a",
+      "Name": "/loom-restore-drill-128d195d-0ff1-442c-bedf-13fb4d060fd3",
+      "Image": "sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b",
+      "Config": {
+        "Labels": {
+          "loom.restore-drill.attempt": "84a83bd9-8797-419b-ac10-a93621138e49"
+        },
+        "database": "test_fork_20261009182841",
+        "user": "loom"
+      },
+      "HostConfig": {
+        "NetworkMode": "bridge",
+        "PortBindings": {
+          "5432/tcp": [
+            {
+              "HostIp": "127.0.0.1",
+              "HostPort": "49988"
+            }
+          ]
+        }
+      },
+      "NetworkSettings": {
+        "Ports": {
+          "5432/tcp": [
+            {
+              "HostIp": "127.0.0.1",
+              "HostPort": "49988"
+            }
+          ]
+        }
+      },
+      "Mounts": [
+        {
+          "Type": "volume",
+          "Name": "2b53d7d8e828ae9d7328f9bb4df6783759654deba78c8489185f53c0772780d6",
+          "Destination": "/var/lib/postgresql/data",
+          "RW": true
+        }
+      ],
+      "State": {
+        "Running": true,
+        "Restarting": false,
+        "StartedAt": "2026-10-09T18:29:16.10304623Z"
+      },
+      "RestartCount": 0
+    },
+    "inspectAfter": {
+      "Id": "0127ceec1507f5af8a6cc0e80752fe8e68a3d5d03f6973b4e9ee87290770f99a",
+      "Name": "/loom-restore-drill-128d195d-0ff1-442c-bedf-13fb4d060fd3",
+      "Image": "sha256:ccc6e83d6e35e931dc7c5def2022729d5a6c370318d099181995567ff1fb4d6b",
+      "Config": {
+        "Labels": {
+          "loom.restore-drill.attempt": "84a83bd9-8797-419b-ac10-a93621138e49"
+        },
+        "database": "test_fork_20261009182841",
+        "user": "loom"
+      },
+      "HostConfig": {
+        "NetworkMode": "bridge",
+        "PortBindings": {
+          "5432/tcp": [
+            {
+              "HostIp": "127.0.0.1",
+              "HostPort": "49988"
+            }
+          ]
+        }
+      },
+      "NetworkSettings": {
+        "Ports": {
+          "5432/tcp": [
+            {
+              "HostIp": "127.0.0.1",
+              "HostPort": "49988"
+            }
+          ]
+        }
+      },
+      "Mounts": [
+        {
+          "Type": "volume",
+          "Name": "2b53d7d8e828ae9d7328f9bb4df6783759654deba78c8489185f53c0772780d6",
+          "Destination": "/var/lib/postgresql/data",
+          "RW": true
+        }
+      ],
+      "State": {
+        "Running": true,
+        "Restarting": false,
+        "StartedAt": "2026-10-09T18:29:16.10304623Z"
+      },
+      "RestartCount": 0
+    },
+    "hostIdentityBefore": {
+      "cluster": "7694736948124422186",
+      "database_oid": "16384",
+      "database": "test_fork_20261009182841",
+      "server_version": "16.15 (Debian 16.15-1.pgdg12+2)",
+      "server_started_at": "2026-10-09T18:29:18.120719Z",
+      "in_recovery": false,
+      "server_address": "192.168.215.3/32",
+      "server_port": 5432
+    },
+    "hostIdentityAfter": {
+      "cluster": "7694736948124422186",
+      "database_oid": "16384",
+      "database": "test_fork_20261009182841",
+      "server_version": "16.15 (Debian 16.15-1.pgdg12+2)",
+      "server_started_at": "2026-10-09T18:29:18.120719Z",
+      "in_recovery": false,
+      "server_address": "192.168.215.3/32",
+      "server_port": 5432
+    },
+    "insideIdentityBefore": {
+      "cluster": "7694736948124422186",
+      "database_oid": "16384",
+      "database": "test_fork_20261009182841",
+      "server_version": "16.15 (Debian 16.15-1.pgdg12+2)",
+      "server_started_at": "2026-10-09T18:29:18.120719Z",
+      "in_recovery": false,
+      "server_address": "127.0.0.1/32",
+      "server_port": 5432
+    },
+    "insideIdentityAfter": {
+      "cluster": "7694736948124422186",
+      "database_oid": "16384",
+      "database": "test_fork_20261009182841",
+      "server_version": "16.15 (Debian 16.15-1.pgdg12+2)",
+      "server_started_at": "2026-10-09T18:29:18.120719Z",
+      "in_recovery": false,
+      "server_address": "127.0.0.1/32",
+      "server_port": 5432
+    },
+    "sourceIdentityAfter": {
+      "cluster": "7694735377922986027",
+      "database_oid": "16384",
+      "database": "test_fork_20261009182310",
+      "server_version": "16.15 (Debian 16.15-1.pgdg12+2)",
+      "server_started_at": "2026-10-09T18:23:12.115617Z",
+      "in_recovery": false,
+      "server_address": "192.168.215.2/32",
+      "server_port": 5432
+    },
+    "observedAt": "2026-10-09T18:30:21.803Z",
+    "noWorkerStarted": true,
+    "noWriters": true,
+    "noRestoreRenameMigrationSinceReceipt": true
+  },
+  "schemaDelta": {
+    "sourceRows": 1469,
+    "restoredRows": 1469,
+    "changes": [
+      {
+        "column": "public.artifact.parent_artifact_id",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 5,
+        "restoredOrdinal": 4
+      },
+      {
+        "column": "public.artifact.intent_source",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 7,
+        "restoredOrdinal": 5
+      },
+      {
+        "column": "public.artifact.source",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 8,
+        "restoredOrdinal": 6
+      },
+      {
+        "column": "public.artifact.source_ref",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 9,
+        "restoredOrdinal": 7
+      },
+      {
+        "column": "public.artifact.tool_kind",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 12,
+        "restoredOrdinal": 8
+      },
+      {
+        "column": "public.artifact.tool_state",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 13,
+        "restoredOrdinal": 9
+      },
+      {
+        "column": "public.artifact.generation_status",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 14,
+        "restoredOrdinal": 10
+      },
+      {
+        "column": "public.artifact.generated_by",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 15,
+        "restoredOrdinal": 11
+      },
+      {
+        "column": "public.artifact.history",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 16,
+        "restoredOrdinal": 12
+      },
+      {
+        "column": "public.artifact.archived_at",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 17,
+        "restoredOrdinal": 13
+      },
+      {
+        "column": "public.artifact.created_at",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 18,
+        "restoredOrdinal": 14
+      },
+      {
+        "column": "public.artifact.updated_at",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 19,
+        "restoredOrdinal": 15
+      },
+      {
+        "column": "public.artifact.version",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 20,
+        "restoredOrdinal": 16
+      },
+      {
+        "column": "public.artifact.verification_status",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 21,
+        "restoredOrdinal": 17
+      },
+      {
+        "column": "public.artifact.verification_summary",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 22,
+        "restoredOrdinal": 18
+      },
+      {
+        "column": "public.artifact.verified_by",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 23,
+        "restoredOrdinal": 19
+      },
+      {
+        "column": "public.artifact.knowledge_ids",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 25,
+        "restoredOrdinal": 20
+      },
+      {
+        "column": "public.artifact.body_blocks",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 26,
+        "restoredOrdinal": 21
+      },
+      {
+        "column": "public.artifact.attrs",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 27,
+        "restoredOrdinal": 22
+      },
+      {
+        "column": "public.completion_evidence.decided_at",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 6,
+        "restoredOrdinal": 5
+      },
+      {
+        "column": "public.knowledge.merged_from",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 8,
+        "restoredOrdinal": 5
+      },
+      {
+        "column": "public.knowledge.archived_at",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 9,
+        "restoredOrdinal": 6
+      },
+      {
+        "column": "public.knowledge.proposed_by_ai",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 10,
+        "restoredOrdinal": 7
+      },
+      {
+        "column": "public.knowledge.approval_status",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 11,
+        "restoredOrdinal": 8
+      },
+      {
+        "column": "public.knowledge.created_at",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 12,
+        "restoredOrdinal": 9
+      },
+      {
+        "column": "public.knowledge.updated_at",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 13,
+        "restoredOrdinal": 10
+      },
+      {
+        "column": "public.knowledge.version",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 14,
+        "restoredOrdinal": 11
+      },
+      {
+        "column": "public.knowledge.embedding",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 15,
+        "restoredOrdinal": 12
+      },
+      {
+        "column": "public.knowledge.embed_model",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 16,
+        "restoredOrdinal": 13
+      },
+      {
+        "column": "public.knowledge.embed_version",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 17,
+        "restoredOrdinal": 14
+      },
+      {
+        "column": "public.knowledge.embed_content_hash",
+        "keys": ["ordinal_position"],
+        "sourceOrdinal": 18,
+        "restoredOrdinal": 15
+      }
+    ],
+    "keysEqualExceptOrdinal": true
+  },
+  "sourceBeforeTargetUnchanged": true,
+  "allSealFieldsEqualExceptPhysicalOrdinal": true,
+  "fixtureSchemaFailure": "assertParity compared physical ordinal_position including dropped-column gaps; 31 positions differ across artifact(19), knowledge(11), completion_evidence(1). Visible column order and all other seal fields equal.",
+  "targetWorkersStarted": 0,
+  "captureExecuted": true,
+  "restoreExecuted": true,
+  "reopenExecuted": false,
+  "cleanup": {
+    "stoppedRetained": [
+      "7361d71f3fc3422fda92b05702fbb248cd3c1cf23d629b5c0dc5d76027fb3b41",
+      "0127ceec1507f5af8a6cc0e80752fe8e68a3d5d03f6973b4e9ee87290770f99a"
+    ],
+    "at": "2026-10-09T18:31:15.618190+00:00",
+    "neverRestart": true
+  },
+  "lockRelease": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1359",
+      "phase": "isolated-same-target-restore-reopen",
+      "token": "d916ad37-f192-48f2-950f-a96474398874",
+      "candidate": "3a16662b15d8d962ae0e3d4e955e4a8ddc5549d1",
+      "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "createdAt": "2026-10-09T18:22:54.559936+00:00"
+    },
+    "releasedAt": "2026-10-09T18:31:15.707871+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "evidenceFiles": {
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/capture-eT8JgM/OWNER-ACTIONS.txt": {
+      "sha256": "b002a9532dece0365225c54e5df7f597cada65934212938fdd7a3d5e843e2911",
+      "bytes": 497
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/capture-eT8JgM/cutover-latest.json": {
+      "sha256": "4ab4957890b9b5645fc5c5c833e9f4824e60150cc7776cb2ea37658df54a09f8",
+      "bytes": 117
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/capture-eT8JgM/cutover-manifest-2026-10-09T18-28-28-878Z.json": {
+      "sha256": "1f4a7315120a8cdec4e58192359f9630161832e2a11c9dbb6f283071b83985d3",
+      "bytes": 16647
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/capture-eT8JgM/database.dump": {
+      "sha256": "54cc18f6628162728c25a795018cb56424abba3fd3a8de3cdefeae921a1a6cf8",
+      "bytes": 378402
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/capture-eT8JgM/dlq-tombstones.json": {
+      "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+      "bytes": 3
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/capture-eT8JgM/migration/capture-952ef13e5368.json": {
+      "sha256": "a4b9a2bcdbcdbed861f5d287bc93748da7fa7e584e1d86c3d27a993627f611a9",
+      "bytes": 3015
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/capture-eT8JgM/migration/latest.json": {
+      "sha256": "bfb2a25dcb030d105fd50ba6ee6e2e800120db8223dfcb15ec3c0d093dbe8ec0",
+      "bytes": 233
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/capture-eT8JgM/migration/manifest-952ef13e5368.json": {
+      "sha256": "b4cb0ce91a1e4d10eec3e59b174c3549ed9f03b93535b9830ed24b6315266570",
+      "bytes": 6386
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/capture-eT8JgM/quiescence-evidence.json": {
+      "sha256": "f42f7972e2c0d4aea9b17877e47118de5708a24d69802dae95fb69a984d44415",
+      "bytes": 1640
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/capture-eT8JgM/source-manifest.json": {
+      "sha256": "f89a0915b3ec3dae8e181d17fa3ec997aaeeab893d26933b17699dea949a990d",
+      "bytes": 909628
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/exit.json": {
+      "sha256": "8cbf761c962309e324e1624c86ce63862d257aa7c8ae280c83fb0cca4d87c375",
+      "bytes": 1638
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/stderr.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/capture/stdout.log": {
+      "sha256": "2c307179631c424cfa70ec52f0d47e26c6337ca3a28825c634b03a372f7b1711",
+      "bytes": 402
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/complete-checkpoint.json": {
+      "sha256": "edd23cff37f33a4fe3925fb7a3fc1d21ba493d528a2aebcdd1a405bdd6d71ca1",
+      "bytes": 416438
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/failure-restored.json": {
+      "sha256": "eab9f52ce7d85a506163f190958167bdb34250c6bb05c1dc7f52cc771fa1c709",
+      "bytes": 438893
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/failure-source.json": {
+      "sha256": "53a45a519ba86ca7d80ac6c721eda136fb3ee311c8bde7429ff4e32cfdc447ee",
+      "bytes": 438898
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/lifecycle-restored-inspect.json": {
+      "sha256": "93a8d6e2ebca2f85b98d26a3392fa6e4eddd688f2f060d0c19e295457197cf79",
+      "bytes": 25724
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/lifecycle-source-setup.json": {
+      "sha256": "9963f77f56b06008cf52b880bed4562dca553a7a7bb864c31d51debbcf088de4",
+      "bytes": 3110
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/lifecycle-source-states.json": {
+      "sha256": "3f6e73a7e5dc27ca25e478e99585726f62b39552cba6ab583c671ea1d36c3d25",
+      "bytes": 36574
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/parent-backup-restore-required.json": {
+      "sha256": "9ecdd51abb6df59fd012b8fd3d2357a6b2b1079b20d250fad406206f2eaaef43",
+      "bytes": 390
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/pending-first-row-held.json": {
+      "sha256": "abf3039d180aab30769768d0c1283238e87a5914e7d84b466465bfa4f64c89a0",
+      "bytes": 438903
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/phase-source-setup-receipt.json": {
+      "sha256": "01bcf3919b8154a617e9b4700e1756a5103a867b3d8c04d15cc826122f1ccf0b",
+      "bytes": 319
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/phase-source-states-receipt.json": {
+      "sha256": "4a38595373984f7f5bfacdc8caedd5218020f236ae2fd45008ed7aa177d1dc23",
+      "bytes": 337
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/restore/exit.json": {
+      "sha256": "94d69622c2ea995892dc80f21cd861c853e23f5666c48a985e4832ce985cb5a4",
+      "bytes": 1708
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/restore/receipt.json": {
+      "sha256": "a70873bbd51cca987b89e6e9e5af49b71165e24fc03f92b11e16d701bde9b760",
+      "bytes": 1887082
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/restore/stderr.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/restore/stdout.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/source-before-backup.json": {
+      "sha256": "866715f9a6588ef137cde3bd66e32eb32edfadbf780a957f74cb3715fa1280fb",
+      "bytes": 438901
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/source-before-target-launch.json": {
+      "sha256": "8cf5dea3fe248edff9aa188220c276f0eff61b5fb22fd2a2dd7580fa2c6ab092",
+      "bytes": 438908
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/source-host-initialized.json": {
+      "sha256": "dad4530d7b428314f170de843d9db5c934d8f1874f797522ad2ac357c24b7cdb",
+      "bytes": 403941
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/source-ready.json": {
+      "sha256": "61c78bb902afc1a5e68cb38e499aea022c83decec0d2a882ea1957e447da750f",
+      "bytes": 404115
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/source-restart-forbidden.json": {
+      "sha256": "d4a09fa4adff806acbb3197305d54af00796356fc96fcb2aed24ce914437307a",
+      "bytes": 309
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/state.json": {
+      "sha256": "d440117525aa3fcfe3a024c7cdaf9d89e0c2cdc5b16e30932bc2a2549ecb927f",
+      "bytes": 376
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/unknown-before-settlement.json": {
+      "sha256": "a2413eb4f9bc12678ffd6643b24909a914a5d4a790c7eb6b9ad2dbc322bfe454",
+      "bytes": 430067
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/unknown-commit-causal-witness.json": {
+      "sha256": "21ed14a95650fdf920a2a8cce86cba8b4bc4be243fab4ef59a75532ffd4487f1",
+      "bytes": 1119
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/unknown-held.json": {
+      "sha256": "84b501cc1de8e82d47509465f321937ea9629c0af1904c8d5f969d9aa6636b03",
+      "bytes": 430054
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/unknown-settlement-clock-before.json": {
+      "sha256": "c7002a929240d392b9868e156252b655501948fbe7053ef56ebeac4d87a907fa",
+      "bytes": 391
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v5/runtime/yuk1359-restore-run10/unknown-settlement-clock-window.json": {
+      "sha256": "08a05fb186edbc47bb71e3f567c5a3a50a4dd50eee206301155db4b31dbed4d3",
+      "bytes": 435
+    },
+    "/tmp/yuk1359-restore-reopen-parent10/before.json": {
+      "sha256": "14f074d84f148aa8577a1922f2a1dccc1b5ad5999964b56b5cf5cda039e4b054",
+      "bytes": 1850
+    },
+    "/tmp/yuk1359-restore-reopen-parent10/capture.log": {
+      "sha256": "e6fabba5cfe8151bd504a3b988478995f3c964bd38a985d1e9f5f0f039d20b95",
+      "bytes": 274
+    },
+    "/tmp/yuk1359-restore-reopen-parent10/exclusive-interval-established.json": {
+      "sha256": "f7de0e4e472d66714b542bb28319b2afb07a75b1bc5e00ab618ead9676660098",
+      "bytes": 1182
+    },
+    "/tmp/yuk1359-restore-reopen-parent10/exclusive-interval-plan.json": {
+      "sha256": "5f413c4ff36170b6fbf2ee13e7f8b91eb64fb0bd92edc2c0bc0c6edafd0e5459",
+      "bytes": 1028
+    },
+    "/tmp/yuk1359-restore-reopen-parent10/lock-release.json": {
+      "sha256": "811ec6cbefa75232b7a247ca56898a6630b20dfaddfc27af7dfc9c13dc34e5a2",
+      "bytes": 547
+    },
+    "/tmp/yuk1359-restore-reopen-parent10/offline-acceptance.json": {
+      "sha256": "f0d09ac3a2494f994fb59a9ba900a9b5187b1ae9a49f255892d299f4fa1ac1e6",
+      "bytes": 3088
+    },
+    "/tmp/yuk1359-restore-reopen-parent10/provision.log": {
+      "sha256": "8caa1b29230daefc8e0261b757d62ed0630e9e757f3b61837e58994ce1d4a703",
+      "bytes": 190
+    },
+    "/tmp/yuk1359-restore-reopen-parent10/restore.log": {
+      "sha256": "3504998bafce8579724bca30e24e0532f457e1496cb907d3cdfa8c6a9772ff7d",
+      "bytes": 251
+    },
+    "/tmp/yuk1359-restore-reopen-parent10/restored-inspect.log": {
+      "sha256": "5e998bd4036da70d3e5a60d0e8ff95423b32219fe63a99d6220aa47f29fb6e0f",
+      "bytes": 104
+    },
+    "/tmp/yuk1359-restore-reopen-parent10/schema-delta.json": {
+      "sha256": "60e727a84800dcc1702af3c69745d107ecbbe5281ea02a354e99870c5494c66e",
+      "bytes": 5299
+    },
+    "/tmp/yuk1359-restore-reopen-parent10/source-create-intent.json": {
+      "sha256": "6b760229144811fd247c9f2a081ffd5d0d471c0d4d0e585b2edb1504bf65a937",
+      "bytes": 866
+    },
+    "/tmp/yuk1359-restore-reopen-parent10/source-created.json": {
+      "sha256": "5f64fe73705822473cd2423ff67fea3c4727f4d5620af96cbb81c922ddfa3b8d",
+      "bytes": 6288
+    },
+    "/tmp/yuk1359-restore-reopen-parent10/source-setup.log": {
+      "sha256": "0e993f46d14f91170b2ef7a4fab2ffdd0b4bafd3a74ab365c9a9b8918f20d239",
+      "bytes": 81
+    },
+    "/tmp/yuk1359-restore-reopen-parent10/source-states.log": {
+      "sha256": "3923e72d377732070752af5c3a5de9ad793735491c630517cd1df671e33d1c0f",
+      "bytes": 99
+    },
+    "/tmp/yuk1359-restore-reopen-parent10/stopped.json": {
+      "sha256": "5ef644b5d1182eeb168224a9ffdccc02121a22b67c0cb57d45e4bef298f3d607",
+      "bytes": 242
+    },
+    "/tmp/yuk1359-restore-reopen-parent10/target-request.json": {
+      "sha256": "111ec0cc6bbd337aec37ac5ffba8d61c4bae04731d7ef00aa31d288742602f1d",
+      "bytes": 56
+    },
+    "/tmp/yuk1359-restore-reopen-parent10/witness-initial.log": {
+      "sha256": "676a889d4cc7af464fbc19b429ff2cf8f77fbeb5b472a18800aec3a49d86531f",
+      "bytes": 632
+    }
+  }
+}
