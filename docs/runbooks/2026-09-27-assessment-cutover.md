@@ -22,7 +22,7 @@ epoch marker 是唯一开关；回滚边界只有两条（见 §5）。
 |---|---|---|
 | 0.1 确认 release 面 | `pnpm release:manifest --target=<pg-url> --out=<out>/pre-cutover-manifest.json` | 输出 lanes（contract ≥14、corrective ≤10、meta）、migrations series=0104–0111；断言面此时允许 info/skip（`contract_epoch` 表尚不存在） |
 | 0.2 生产只读 census 已做 | D19 工件（`yuk1038-census-20260924-223104`） | 已有；如需刷新跑 `pnpm migration:capture --out=<dir> --target=<pg>`（REPEATABLE READ READ ONLY，不写） |
-| 0.3 restore 演练 | `pnpm restore:drill --dump=<最新 loom-daily-*.dump> --out=<dir>/restore-evidence.json` | `verified: true`；**必须**在窗口前完成（1056 的 OWNER-ACTIONS 第 1 条） |
+| 0.3 restore 演练 | `pnpm restore:drill --dump=<capture>/database.dump --source-manifest=<capture>/source-manifest.json --out=<dir>/restore-evidence.json` | 当前 version-2 parity receipt，最终 manifest 另加 `--require-restore-parity`；旧 daily dump 仅 `--restore-only` 历史有限证明；**必须**在窗口前完成（1056 的 OWNER-ACTIONS 第 1 条） |
 | 0.4 daily dump 新鲜度 | `~/Library/Application Support/loom-daily-dump/mac-daily-dump.sh --check` | `exit 0`（fresh）；stale 则先手动补一份 dump |
 | 0.5 环境解析 | `docker compose ps`（Mac 本机或 NAS；确认 `the-learning-project-*` 容器面、pg 发布端口 5433、app/worker image tag 记录备查） | 明确 compose project、DB URL、当前 image tag（回滚用） |
 | 0.6 磁盘 | `df -h /` ≥10GB | 防 OrbStack 构建盘满事故（2026-09-12 教训） |
@@ -98,16 +98,25 @@ pnpm migration:epoch outstanding --target=<pg>
 ## 3. 最终备份 + manifest（停全部 writer 后）
 
 ```bash
-pnpm cutover:final-backup --out=<cutover-dir>
-# = scripts/cutover-final-backup.sh：DLQ tombstone 导出 → pg_dump -Fc →
-#   TOC 核验 → migration:capture → cutover manifest（--strict 形参在
-#   cutover-backup.ts 层，正式执行必备件缺失即 exit 1）
+pnpm cutover:final-backup --out=<cutover-dir> --target=<pg-url> --quiescence-evidence=<maintenance.json> --strict
+# = scripts/cutover-final-backup.sh：存活 exported snapshot 的 dump/source inventory，
+#   同外部 maintenance interval 的 DLQ/migration capture，TOC 与原子封存。
 ```
 
-产出 `<cutover-dir>/loom-cutover-<ts>.dump` + `dlq-tombstones-*.json` +
-`capture/manifest-*.json` + cutover manifest + `OWNER-ACTIONS.txt`。
-**这份 dump 是 rollback 边界 A 的唯一载体** —— TOC 核验不过或 capture
-失败都不进下一步。
+读取返回的唯一 `<capture>` 目录：`database.dump`、`source-manifest.json`、
+`dlq-tombstones.json`、`migration/manifest-*.json`、cutover manifest 与 `OWNER-ACTIONS.txt`。
+外部 owner 持续隔离全部 writer/客户端/序列写入直到 helper 完成，不由这些观察代替隔离。
+完整当前契约见 [Full Postgres disaster recovery](../sub5-restore-cli.md#full-postgres-disaster-recovery)。
+`--strict` 是 capture 必备件规则；随后对同一 dump/source 运行 drill，并重建 manifest：
+
+```bash
+pnpm restore:drill --dump=<capture>/database.dump --source-manifest=<capture>/source-manifest.json --out=<capture>/restore-evidence.json
+pnpm cutover:backup --capture-dir=<capture>/migration --dump=<capture>/database.dump --dlq=<capture>/dlq-tombstones.json --source-manifest=<capture>/source-manifest.json --restore-evidence=<capture>/restore-evidence.json --out=<capture> --strict --require-restore-parity
+```
+
+这份 dump 是 rollback 边界 A 的载体；失败 inspection/TOC/restore/comparison 都不进下一步。
+只认可当前 receipt 的完整 phases、artifact links 和重算 comparison，不认可单独 `verified:true`。
+旧 receipt 原件不改，归为 `legacy-limited/reported_verified`，不能通过当前 gate。
 
 ## 4. 迁移执行（窗内，fence 下单写者）
 
@@ -169,8 +178,8 @@ manifest 断言表（fail 即 exit 1）：
 
 ```bash
 # 恢复冻结快照（data/queues/subscriptions/assets 一致）
-pnpm restore:drill --dump=<cutover-dir>/loom-cutover-<ts>.dump --out=<evidence.json>
-# 生产路径等效：独立 target pg_restore → 核验表计数/迁移计数
+pnpm restore:drill --dump=<capture>/database.dump --source-manifest=<capture>/source-manifest.json --out=<evidence.json>
+# 生产路径等效：独立 scratch pg_restore → 完整 schema/table 内容与 sequence 比较；迁移前先证明 parity
 # （rehearsal step 04 实证：snapshotDbState 逐表比对 identical）
 
 # 旧镜像回起（回滚镜像，非新代码）：

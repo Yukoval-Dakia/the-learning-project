@@ -1,0 +1,333 @@
+{
+  "scope": "Parent offline verification of run08 fault diagnosis; no runtime acceptance",
+  "verifiedAt": "2026-10-09T17:27:14.363967+00:00",
+  "inputHashesVerified": 41,
+  "inputs": {
+    "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run04/lifecycle-source-states.json": {
+      "sha256": "346ee9143106d5703bcf8cf77474a32b5fed2aeffc19181b6380568155590f89",
+      "bytes": 17627
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run04/complete-checkpoint.json": {
+      "sha256": "13b382b8ae987a1562220c0e0d41de760bdbd8afb95cea45fab7aac49c19fa4c",
+      "bytes": 416442
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run04/failure-source.json": {
+      "sha256": "450f0c7d4fc6ff64e65d2442a89a50a39694a9484bfeefe416d10fecf4679080",
+      "bytes": 430063
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run05/lifecycle-source-states.json": {
+      "sha256": "49b7daf4745d2263e41aad177d8cd49e271550d2c68af4edbb2c7613e1f450c4",
+      "bytes": 22210
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run05/complete-checkpoint.json": {
+      "sha256": "ac5d01b3c403063db082889580e9429729d2b9f55c0fe1f837a848eb0b406bad",
+      "bytes": 416443
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run05/unknown-before-settlement.json": {
+      "sha256": "3968bed1ab3b7559874ab3b640ee77e55740e7942d314a65e6652b1b784c4980",
+      "bytes": 430073
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run05/failure-source.json": {
+      "sha256": "0a93550cfa5faeb4c867acc3ca3816f6b912af3dc819b104516d21af779a4872",
+      "bytes": 430066
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run07/lifecycle-source-states.json": {
+      "sha256": "765c25f7d5f86b4b75aca6a2a2f2df61be22a7562c2927275e4b6b8263e9ff3d",
+      "bytes": 19613
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run07/complete-checkpoint.json": {
+      "sha256": "100342f0572daa8ba20fcb8e2d2e7d39830faa41d2d072d3a9c811c3f61b5cb2",
+      "bytes": 416436
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run07/unknown-before-settlement.json": {
+      "sha256": "b20dc0f55104300d1c9fc3a0aa5e0fb9d66e3c5ccaede3a2e239dd4387dd3de2",
+      "bytes": 430064
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run07/unknown-held.json": {
+      "sha256": "4326bd958ed7b5e691c71305f13e2a6ef9cb979c29a736c68e9dea705e1253af",
+      "bytes": 430051
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run07/source-before-backup.json": {
+      "sha256": "6eb0679d81612700b33829eda9af4f4042a93c6601a52413a4d9289d217d04b7",
+      "bytes": 438897
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/runtime/yuk1359-restore-run08/lifecycle-source-states.json": {
+      "sha256": "f22d87abe87d4c6f884d2a1a3c0775909fc84d1fb214b6ff823c1e5865393487",
+      "bytes": 12337
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/runtime/yuk1359-restore-run08/complete-checkpoint.json": {
+      "sha256": "5011ab47cda062c9920e2b825aba2c67d0891dbbc562c5527e7c8da4817225de",
+      "bytes": 416443
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/runtime/yuk1359-restore-run08/failure-source.json": {
+      "sha256": "23904e2706461e212f6c5a34c775a0553e78bd748fa5b714fc60974a6fafc682",
+      "bytes": 428079
+    },
+    "/tmp/yuk1359-restore-reopen-parent08/failure-db-observation.stdout": {
+      "sha256": "2bbdbd80a3ea99f1e25153df6944e8c56c5e7f776233c75215e0a832cd40f802",
+      "bytes": 4796
+    },
+    "/tmp/yuk1359-restore-reopen-parent04/failure.json": {
+      "sha256": "269c0f594a36ffa30d1e4e276806db5a40fde0611f3ae2b75b46ca896020ed09",
+      "bytes": 1208
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v2/artifacts/worker.cjs": {
+      "sha256": "4e2ec8ace103cf535c3472f2f2c4611438d8cfe5a6f14a1c65abe272674824a9",
+      "bytes": 5399021
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/artifacts/worker.cjs": {
+      "sha256": "4e2ec8ace103cf535c3472f2f2c4611438d8cfe5a6f14a1c65abe272674824a9",
+      "bytes": 5399021
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v2/artifacts/lifecycle.cjs": {
+      "sha256": "82f7916e42ed0e99cbce15f99d8e7eaa8b2418e46cad5a0c0a0c42f5b43b2590",
+      "bytes": 777652
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/artifacts/lifecycle.cjs": {
+      "sha256": "82f7916e42ed0e99cbce15f99d8e7eaa8b2418e46cad5a0c0a0c42f5b43b2590",
+      "bytes": 777652
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v2/tools/lifecycle.ts": {
+      "sha256": "559971ccee3d7084de61276a7bb22dbf2eedef36d9a4afe937909d9ad32cd1a6",
+      "bytes": 9003
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/tools/lifecycle.ts": {
+      "sha256": "559971ccee3d7084de61276a7bb22dbf2eedef36d9a4afe937909d9ad32cd1a6",
+      "bytes": 9003
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v2/extracted/commit-fault.tsfrag": {
+      "sha256": "3193800f9c765eaf8b856928d1ae4832db827b5f35ca6d268c3776ac8eefecf6",
+      "bytes": 4201
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/extracted/commit-fault.tsfrag": {
+      "sha256": "3193800f9c765eaf8b856928d1ae4832db827b5f35ca6d268c3776ac8eefecf6",
+      "bytes": 4201
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v2/snapshot/tests/dbos-review-orphan/worker.ts": {
+      "sha256": "392578b2043d4be555bfd9f9b167a33b1b10d80f2a85e996922793d576e4d0f1",
+      "bytes": 10248
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/snapshot/tests/dbos-review-orphan/worker.ts": {
+      "sha256": "392578b2043d4be555bfd9f9b167a33b1b10d80f2a85e996922793d576e4d0f1",
+      "bytes": 10248
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v2/snapshot/tests/dbos-review-orphan/migration.db.test.ts": {
+      "sha256": "72242b41db096179e3e4bf7478bcb5bcf9d0a2fb8c3d1192c972d9553ac2809f",
+      "bytes": 29498
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/snapshot/tests/dbos-review-orphan/migration.db.test.ts": {
+      "sha256": "72242b41db096179e3e4bf7478bcb5bcf9d0a2fb8c3d1192c972d9553ac2809f",
+      "bytes": 29498
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v2/snapshot/src/server/durable/review-orphan-family.ts": {
+      "sha256": "37514c335e8d6ad270b296847ac898e0c677d3eee203c4cffc6016f25d578253",
+      "bytes": 23071
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/snapshot/src/server/durable/review-orphan-family.ts": {
+      "sha256": "37514c335e8d6ad270b296847ac898e0c677d3eee203c4cffc6016f25d578253",
+      "bytes": 23071
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/parent-driver.mjs": {
+      "sha256": "eef42302c2e75c3bf80bea54ad91a18c18231f455f42a7dfd058f18f18880164",
+      "bytes": 34709
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/snapshot/src/server/durable/prune-worker.ts": {
+      "sha256": "4955caa40d02bb0aa1f7df7bbf8c5486896b67f335e159972a2b49d46c0d9033",
+      "bytes": 12160
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/node_modules/postgres/src/index.js": {
+      "sha256": "4e21f5733e70d79cffc10d10d4ef01031de4a9ac862210e43f8870029fd103ed",
+      "bytes": 15428
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/node_modules/postgres/src/connection.js": {
+      "sha256": "ee3a218d9aa6a6f2887c1a19da50009335fe84c11a5431d5cab72d6bc528632f",
+      "bytes": 28690
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/sdk-source/@dbos-inc/dbos-sdk/dist/src/system_database.js": {
+      "sha256": "758950a04178c03f603f89be7c2504bd792aca56507a730da93165a5a6b0e58c",
+      "bytes": 266312
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/node_modules/drizzle-orm/postgres-js/session.js": {
+      "sha256": "d118fa954432ca3c4554cca14f26a1049ef04939a7cc7a0b96eaee0738bf6980",
+      "bytes": 5222
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/node_modules/.pnpm/pg@8.23.1/node_modules/pg/lib/client.js": {
+      "sha256": "ad6aa93c26b0bf26db1f2ebe74216212790a04c41af5585c63760f9fa8322a32",
+      "bytes": 25715
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/extraction-provenance.json": {
+      "sha256": "6d9e27fda3d8b91e9d697e7798f7ca71cd9d155b38b10feb8436b9a8ebb7f3bc",
+      "bytes": 2294
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/snapshot/tests/dbos-review-orphan/fixture-process.ts": {
+      "sha256": "1fac92d1cfef335347845189d7b7376b9a4f4639c7d34f6b8d2f107ed26fac66",
+      "bytes": 8564
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/runtime/yuk1359-restore-run08/state.json": {
+      "sha256": "9d8997e4a4976f3eb7998db4a41d0a356346917546d0374224bd49370645b95e",
+      "bytes": 214
+    }
+  },
+  "selectedByteEquivalence": [
+    {
+      "relativePath": "artifacts/worker.cjs",
+      "byteIdenticalV2V3": true,
+      "v2sha256": "4e2ec8ace103cf535c3472f2f2c4611438d8cfe5a6f14a1c65abe272674824a9",
+      "v3sha256": "4e2ec8ace103cf535c3472f2f2c4611438d8cfe5a6f14a1c65abe272674824a9"
+    },
+    {
+      "relativePath": "artifacts/lifecycle.cjs",
+      "byteIdenticalV2V3": true,
+      "v2sha256": "82f7916e42ed0e99cbce15f99d8e7eaa8b2418e46cad5a0c0a0c42f5b43b2590",
+      "v3sha256": "82f7916e42ed0e99cbce15f99d8e7eaa8b2418e46cad5a0c0a0c42f5b43b2590"
+    },
+    {
+      "relativePath": "tools/lifecycle.ts",
+      "byteIdenticalV2V3": true,
+      "v2sha256": "559971ccee3d7084de61276a7bb22dbf2eedef36d9a4afe937909d9ad32cd1a6",
+      "v3sha256": "559971ccee3d7084de61276a7bb22dbf2eedef36d9a4afe937909d9ad32cd1a6"
+    },
+    {
+      "relativePath": "extracted/commit-fault.tsfrag",
+      "byteIdenticalV2V3": true,
+      "v2sha256": "3193800f9c765eaf8b856928d1ae4832db827b5f35ca6d268c3776ac8eefecf6",
+      "v3sha256": "3193800f9c765eaf8b856928d1ae4832db827b5f35ca6d268c3776ac8eefecf6"
+    },
+    {
+      "relativePath": "snapshot/tests/dbos-review-orphan/worker.ts",
+      "byteIdenticalV2V3": true,
+      "v2sha256": "392578b2043d4be555bfd9f9b167a33b1b10d80f2a85e996922793d576e4d0f1",
+      "v3sha256": "392578b2043d4be555bfd9f9b167a33b1b10d80f2a85e996922793d576e4d0f1"
+    },
+    {
+      "relativePath": "snapshot/tests/dbos-review-orphan/migration.db.test.ts",
+      "byteIdenticalV2V3": true,
+      "v2sha256": "72242b41db096179e3e4bf7478bcb5bcf9d0a2fb8c3d1192c972d9553ac2809f",
+      "v3sha256": "72242b41db096179e3e4bf7478bcb5bcf9d0a2fb8c3d1192c972d9553ac2809f"
+    },
+    {
+      "relativePath": "snapshot/src/server/durable/review-orphan-family.ts",
+      "byteIdenticalV2V3": true,
+      "v2sha256": "37514c335e8d6ad270b296847ac898e0c677d3eee203c4cffc6016f25d578253",
+      "v3sha256": "37514c335e8d6ad270b296847ac898e0c677d3eee203c4cffc6016f25d578253"
+    }
+  ],
+  "probe": {
+    "scope": "Offline diagnostic counterexample; no repair or runtime acceptance",
+    "inputs": [
+      {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v3/artifacts/lifecycle.cjs",
+        "sha256": "82f7916e42ed0e99cbce15f99d8e7eaa8b2418e46cad5a0c0a0c42f5b43b2590"
+      },
+      {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v3/artifacts/worker.cjs",
+        "sha256": "4e2ec8ace103cf535c3472f2f2c4611438d8cfe5a6f14a1c65abe272674824a9"
+      },
+      {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v3/node_modules/postgres/src/index.js",
+        "sha256": "4e21f5733e70d79cffc10d10d4ef01031de4a9ac862210e43f8870029fd103ed"
+      },
+      {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v3/node_modules/postgres/src/connection.js",
+        "sha256": "ee3a218d9aa6a6f2887c1a19da50009335fe84c11a5431d5cab72d6bc528632f"
+      }
+    ],
+    "cases": [
+      {
+        "name": "Exact bundled proxy: surviving pair carries inspection and two later COMMIT responses",
+        "targetCommitFramesForwarded": 0,
+        "existingPairStillOpen": true,
+        "existingPairInspectionAndTwoLaterCommitResponsesForwarded": true,
+        "newConnectionRejected": true
+      },
+      {
+        "name": "All single split points for receipt Parse and coalesced COMMIT+ReadyForQuery",
+        "frontSplits": 95,
+        "backSplits": 17,
+        "passed": true
+      },
+      {
+        "name": "Single established pair has no surviving route after fault",
+        "passed": true
+      },
+      {
+        "name": "Parse-only receipt statement arms fault without Bind/Execute",
+        "passed": true,
+        "historicalRunClaim": false
+      },
+      {
+        "name": "Cached prepared Bind re-arms after rollback clears connection flag",
+        "passed": true
+      },
+      {
+        "name": "Exact postgres pool handler: idle survivor vs unavailable reserved survivor",
+        "idleSurvivor": {
+          "action": "use-existing",
+          "connection": "open-B"
+        },
+        "reservedSurvivor": {
+          "action": "connect",
+          "connection": "closed-A"
+        },
+        "historicalOrderingObserved": false
+      },
+      {
+        "name": "Exact postgres callbacks: COMMIT CommandComplete does not resolve query; ReadyForQuery does",
+        "passed": true
+      },
+      {
+        "name": "Exact product control flow with available receipt inspection",
+        "ioIsStubbed": true,
+        "realDatabaseOrDBOSRun": false,
+        "effectAttempts": ["a", "b", "c"],
+        "result": {
+          "tickId": "synthetic",
+          "candidates": 3,
+          "abandoned": 3,
+          "skipped": 0,
+          "deferred": 0,
+          "kind": "complete"
+        }
+      },
+      {
+        "name": "Exact product control flow with unavailable receipt inspection",
+        "ioIsStubbed": true,
+        "realDatabaseOrDBOSRun": false,
+        "effectAttempts": ["a"],
+        "result": "Error: unknown synthetic/a"
+      }
+    ],
+    "actualNetworkListenerChildAttempts": {
+      "connections": 0,
+      "listeners": 0,
+      "children": 0
+    },
+    "exactProxyFunctionReplayed": true,
+    "externalIO": "In-memory substitutes only; built-in network/subprocess traps installed before replay"
+  },
+  "historicalWireIdentity": "not recorded; exact run08 connection sequence remains unproven",
+  "runtimeExecuted": false,
+  "nextTask": "yuk1359-identity-bound-outage-prep-repair-20261010-v1",
+  "artifacts": {
+    "/tmp/yuk1359-run08-fault-causality.md": {
+      "sha256": "42591748d1cbe5ba2565141a9297c7cac6ccf1019a2ae5201a7515d1d38f07bd",
+      "bytes": 21382
+    },
+    "/tmp/yuk1359-run08-causality/census.py": {
+      "sha256": "8937425417cebc53c74eedbf16366065810b02009fff386d6834c7a8f489a79f",
+      "bytes": 8038
+    },
+    "/tmp/yuk1359-run08-causality/census.json": {
+      "sha256": "46a77f98c18c40a46c8a10cd05238b1d84be1cd2522078e3b8518e6aa79ae3ab",
+      "bytes": 92981
+    },
+    "/tmp/yuk1359-run08-causality/offline-probe.mjs": {
+      "sha256": "151cd4f9df18aeddcf083cb4b9d8f8e84ba4d54e358d70b6d5246af93897f016",
+      "bytes": 12091
+    },
+    "/tmp/yuk1359-run08-causality/offline-probe.json": {
+      "sha256": "b530025df05bc9520fcd6a99f24a81e6cad27c90645859d60e38c5aba6e8ac07",
+      "bytes": 3108
+    }
+  }
+}

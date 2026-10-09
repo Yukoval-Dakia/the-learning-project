@@ -1,0 +1,29 @@
+{
+  "failure": {
+    "runId": "yuk1359-restore-run06",
+    "phase": "parent-source-identity-preflight",
+    "cause": "Parent used container-loopback identity address instead of actual host connection address",
+    "expectedAddress": "192.168.215.2/32",
+    "suppliedAddress": "127.0.0.1/32",
+    "migrationsPassed": 118,
+    "workerStarted": false,
+    "sourceRetainedStopped": true,
+    "containerId": "56306e7a5b417cc898d11a480200018c924b5eaed4dbee02792d638894abc31b",
+    "at": "2026-10-09T16:03:27.762191+00:00"
+  },
+  "release": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1359",
+      "phase": "isolated-same-target-restore-reopen",
+      "token": "eb752269-9351-4fc5-a50b-ff84fd66d157",
+      "candidate": "acbaf05d34ce8f0e9c5835de213f8dc75888bddf",
+      "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "createdAt": "2026-10-09T16:01:48.121157+00:00"
+    },
+    "releasedAt": "2026-10-09T16:03:27.863323+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  }
+}

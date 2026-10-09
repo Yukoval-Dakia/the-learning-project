@@ -1,0 +1,195 @@
+{
+  "run": "yuk1359-restore-run07",
+  "helper": "887012c2f10f2812b88a600340ec6ae869983b23",
+  "workerSource": "7472f4395f4a12a5167e33034d5d8af8bf695049",
+  "sourceStatesPassed": true,
+  "pendingKilled": true,
+  "sourceRestartForbidden": true,
+  "capturePassed": true,
+  "restoreSqlPassed": true,
+  "restoreVerified": false,
+  "reopenExecuted": false,
+  "comparison": {
+    "kind": "different",
+    "missing_schemas": [],
+    "extra_schemas": [],
+    "missing_tables": [],
+    "extra_tables": [],
+    "mismatched_tables": [
+      {
+        "schema": "pgboss",
+        "name": "queue_stats_20261009"
+      },
+      {
+        "schema": "pgboss",
+        "name": "queue_stats_20261010"
+      }
+    ],
+    "missing_sequences": [],
+    "extra_sequences": [],
+    "mismatched_sequences": [],
+    "environment_mismatches": []
+  },
+  "errors": [
+    {
+      "phase": "comparison",
+      "code": "content_mismatch",
+      "message": "source and scratch inventories differ"
+    }
+  ],
+  "inventoryDifference": [
+    {
+      "path": "inventory/tables/8/columns/13/dimensions",
+      "before": 0,
+      "after": 1
+    },
+    {
+      "path": "inventory/tables/8/columns/14/dimensions",
+      "before": 0,
+      "after": 1
+    },
+    {
+      "path": "inventory/tables/8/sha256",
+      "before": "99232ecc5f25c97439d8bcd8e7a265fea032c4ae64efe1144b27ac1f56f6ab9e",
+      "after": "d1e83b8ae35da59ea06f8b629d8178421ea2e55264827b83eb3301e26802a09a"
+    },
+    {
+      "path": "inventory/tables/9/columns/13/dimensions",
+      "before": 0,
+      "after": 1
+    },
+    {
+      "path": "inventory/tables/9/columns/14/dimensions",
+      "before": 0,
+      "after": 1
+    },
+    {
+      "path": "inventory/tables/9/sha256",
+      "before": "99232ecc5f25c97439d8bcd8e7a265fea032c4ae64efe1144b27ac1f56f6ab9e",
+      "after": "d1e83b8ae35da59ea06f8b629d8178421ea2e55264827b83eb3301e26802a09a"
+    }
+  ],
+  "inventoryCounts": {
+    "schemas": 4,
+    "tables": 123,
+    "sequences": 5
+  },
+  "obligations": {
+    "dbos": [
+      {
+        "task_id": "restore-pending-yuk1359-restore-run07",
+        "state": "missing-receipt",
+        "kind": "receipt",
+        "session_id": "restore-pending-yuk1359-restore-run07-b"
+      },
+      {
+        "task_id": "restore-pending-yuk1359-restore-run07",
+        "state": "missing-receipt",
+        "kind": "receipt",
+        "session_id": "restore-pending-yuk1359-restore-run07-c"
+      },
+      {
+        "task_id": "restore-pending-yuk1359-restore-run07",
+        "state": "PENDING",
+        "kind": "task",
+        "session_id": null
+      },
+      {
+        "task_id": "restore-unknown-yuk1359-restore-run07",
+        "state": "ERROR",
+        "kind": "task",
+        "session_id": null
+      },
+      {
+        "task_id": "restore-unknown-yuk1359-restore-run07",
+        "state": "missing-receipt",
+        "kind": "receipt",
+        "session_id": "restore-unknown-yuk1359-restore-run07-b"
+      },
+      {
+        "task_id": "restore-unknown-yuk1359-restore-run07",
+        "state": "missing-receipt",
+        "kind": "receipt",
+        "session_id": "restore-unknown-yuk1359-restore-run07-c"
+      }
+    ],
+    "legacy": []
+  },
+  "cleanup": {
+    "containers": [
+      {
+        "id": "1fcd51594cccdbdeaa612ec32f789ecbe394009557b8e14533ac6b2734d820c0",
+        "retained": true,
+        "stopped": true
+      },
+      {
+        "id": "53b78dbfd14347b54c217cd8d5d1007b61f9132848aa35182ca4cf67115ee3e1",
+        "retained": true,
+        "stopped": true
+      }
+    ],
+    "at": "2026-10-09T16:08:50.373817+00:00"
+  },
+  "lockRelease": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1359",
+      "phase": "isolated-same-target-restore-reopen",
+      "token": "0be407fa-bb22-4820-9ccd-4c4f71d91afa",
+      "candidate": "acbaf05d34ce8f0e9c5835de213f8dc75888bddf",
+      "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "createdAt": "2026-10-09T16:03:44.002862+00:00"
+    },
+    "releasedAt": "2026-10-09T16:08:50.470573+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "files": [
+    {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run07/restore/receipt.json",
+      "sha256": "02a571cbf297c910cca6f214019165593844d0c2a80df212b69b4b2fb0dff9cc",
+      "bytes": 1886808
+    },
+    {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run07/restore/exit.json",
+      "sha256": "d15912498a10968a6dc093ebf2cc1ede3f463a614ee98a4407a78c814c31bf1f",
+      "bytes": 1708
+    },
+    {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run07/capture/exit.json",
+      "sha256": "3cddd4eab05887a2d59a8077d614054c203307cb49e4115b38332d9cd128ccab",
+      "bytes": 1638
+    },
+    {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run07/source-before-backup.json",
+      "sha256": "6eb0679d81612700b33829eda9af4f4042a93c6601a52413a4d9289d217d04b7",
+      "bytes": 438897
+    },
+    {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run07/lifecycle-source-states.json",
+      "sha256": "765c25f7d5f86b4b75aca6a2a2f2df61be22a7562c2927275e4b6b8263e9ff3d",
+      "bytes": 19613
+    },
+    {
+      "path": "/tmp/yuk1359-restore-reopen-parent07/restore-inventory-difference.json",
+      "sha256": "dcced49654641e816eea8c24d375e0454192b078573057548eef2885a3ff06db",
+      "bytes": 815
+    },
+    {
+      "path": "/tmp/yuk1359-restore-reopen-parent07/prepare-capture-attempt01-failure.json",
+      "sha256": "c27697a79b7b88c615a6558da072f9bda961b05edae3625d1a134afcb16b32a9",
+      "bytes": 272
+    },
+    {
+      "path": "/tmp/yuk1359-restore-reopen-parent07/lock-release.json",
+      "sha256": "4c98c128c18dde89de109cc0f87442365a88024a8e64675fae63980f829bf81f",
+      "bytes": 547
+    },
+    {
+      "path": "/tmp/yuk1359-restore-reopen-parent07/stopped.json",
+      "sha256": "0136205952c5e317283c3b6a2149553fe365fa37af38365796db752d944123b1",
+      "bytes": 347
+    }
+  ]
+}

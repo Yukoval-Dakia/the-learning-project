@@ -30,6 +30,39 @@ describe('createServerEnv', () => {
     expect(env).toMatchObject(runtimeEnv);
   });
 
+  it('preserves OS paths and an explicit cutover image without normalizing them', () => {
+    const runtimeEnv = {
+      ...REQUIRED_ENV,
+      HOME: '/Users/Restore Operator',
+      PATH: '/opt/Postgres Tools/bin:/usr/local/bin:/usr/bin:/bin',
+      TMPDIR: '/private/var/folders/restore workspace/',
+      LOOM_PG_IMAGE: `registry.example/pgvector@sha256:${'a'.repeat(64)}`,
+    };
+
+    expect(createServerEnv(runtimeEnv, false)).toMatchObject(runtimeEnv);
+  });
+
+  it('allows OS paths and the cutover image to be absent without supplying defaults', () => {
+    const env = createServerEnv(REQUIRED_ENV, false);
+
+    expect(env.HOME).toBeUndefined();
+    expect(env.PATH).toBeUndefined();
+    expect(env.TMPDIR).toBeUndefined();
+    expect(env.LOOM_PG_IMAGE).toBeUndefined();
+  });
+
+  it('treats empty OS paths and cutover image values as unset in the shared schema', () => {
+    const env = createServerEnv(
+      { ...REQUIRED_ENV, HOME: '', PATH: '', TMPDIR: '', LOOM_PG_IMAGE: '' },
+      false,
+    );
+
+    expect(env.HOME).toBeUndefined();
+    expect(env.PATH).toBeUndefined();
+    expect(env.TMPDIR).toBeUndefined();
+    expect(env.LOOM_PG_IMAGE).toBeUndefined();
+  });
+
   it('rejects startup when a required value is missing', () => {
     // Given
     const runtimeEnv = { INTERNAL_TOKEN: REQUIRED_ENV.INTERNAL_TOKEN };

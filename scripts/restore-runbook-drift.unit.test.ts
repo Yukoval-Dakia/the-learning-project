@@ -21,3 +21,34 @@ describe('backup and restore runbook drift guard', () => {
     expect(runbook).toContain('Postgres');
   });
 });
+
+describe('current full Postgres source binding', () => {
+  it('keeps source, maintenance and the independent restore gate in every current consumer', () => {
+    for (const text of [
+      runbook,
+      readFileSync(resolve(process.cwd(), 'README.md'), 'utf8'),
+      readFileSync(
+        resolve(process.cwd(), 'docs/runbooks/2026-09-27-assessment-cutover.md'),
+        'utf8',
+      ),
+    ]) {
+      expect(text).toContain('--source-manifest');
+      expect(text).toContain('--quiescence-evidence');
+      expect(text).toContain('--require-restore-parity');
+      expect(text).toContain('--strict');
+    }
+    expect(runbook).toContain('operator-attested-with-observations');
+    expect(runbook).toContain('--restore-only');
+    expect(runbook).toContain('reported_verified');
+    expect(runbook).toContain('before migrations');
+    for (const required of [
+      '--scratch-loopback-port',
+      '--scratch-database',
+      '--pull=never',
+      'scratch.ownership',
+      'scratch.reopen',
+      'host-node-v1',
+    ])
+      expect(runbook).toContain(required);
+  });
+});

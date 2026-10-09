@@ -347,11 +347,12 @@ launchctl print gui/$(id -u)/studio.yukoval.loom-daily-dump | grep -E 'last exit
 ~/Library/Application\ Support/loom-daily-dump/mac-daily-dump.sh --check  # fresh/stale 巡检
 ```
 
-**恢复演练（restore 证明，YUK-1056）**：`scripts/restore-drill.sh` 在隔离
-scratch 容器内 `pg_restore` + 行数核验，产出 `verified` JSON 证据；
-**统一切换最终备份**：`scripts/cutover-final-backup.sh` 停 writer 后
-DLQ tombstone 导出 + pg_dump + TOC + migration:capture + cutover manifest。
-详见 `docs/runbooks/cutover-final-backup-and-restore.md`。
+**完整 Postgres 恢复演练（YUK-1359/YUK-1329）**：外部 maintenance owner 先建立并持续持有全部 writer/客户端/序列写入的隔离边界，再运行
+`scripts/cutover-final-backup.sh --target=<pg-url> --quiescence-evidence=<file> --out=<dir> --strict`。
+它使用存活的 exported snapshot 捕获 dump 和完整非 system schema/table 内容及 sequence 状态。
+`scripts/restore-drill.sh --dump=<file> --source-manifest=<file> --out=<receipt>` 在隔离 scratch 容器比较同一份 staged dump；
+最终 manifest 必须另加 `--require-restore-parity`。`--strict` 仅检查 capture 工件；旧 `verified:true` 只保留为历史报告。
+详见[完整 Postgres 恢复流程](docs/sub5-restore-cli.md#full-postgres-disaster-recovery)。
 
 **手动 dump/restore**：`db:dump` streams a `pg_dump` from the running `postgres` container to a timestamped SQL file on the host:
 
