@@ -1,12 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-10：run08因果调查经父复跑9组离线检查/112分片、41输入哈希确认：代理漏断已有应用连接，且未绑定目标事务执行。唯一PREP writer修v4；产品与run01–08保留，真实恢复/重开仍未完成，本轮无runtime。
+> Linear 是权威 tracker。2026-10-10：v4父902项分层离线检查及完整绑定通过；run09真实目标COMMIT故障得到ERROR1+2missing，pending SIGKILL后即时PG客户端检查失败，未备份恢复。17:59:06Z释放锁，源停止保留、原4/release不变；唯一PREP writer修进程退出后的数据库连接消退边界。
 
 ## NOW
 
 - **YUK-1358 / Start notes列表**：独占范围和验收见[notes计划](docs/planning/2026-10-09-yuk1358-start-notes-list.md)。保留查询校验、科目知识点解析、空集合语义及现有搜索/导航/视觉；不改note详情/presence/AI写，不把本切片当Notes整族完成。父50unit/18DB、R1 NONE和49RPC/原页面浏览器通过；98表/5序列窗口不变，PR1626已合main04232aaf10（exact9889 CI全绿）；父已fetch核main；[父证据](docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md)。useSubjects仍HTTP，完整迁移未完成。
 
-- **YUK-1359 / 恢复后重开验收**：数组修复f325父194unit/14真实DB通过；v3固定helper b52e/worker7472，完整558offline和全量封存复核通过，[父报告](docs/planning/2026-10-10-yuk1359-v3-parent-offline.md)。run08通过118迁移/初始化/complete SUCCESS3；代理记录COMMIT故障却unknown也SUCCESS3，未形成要求的ERROR1+2missing，未进入capture/restore/reopen；[失败证据](docs/planning/evidence/2026-10-10-yuk1359-parent-restore-attempt08.json)。17:10:19Z原4/running/release核同后释放锁，源停止保留。父复核确认代理遗漏已有连接且目标执行证据不足；[因果裁决](docs/planning/2026-10-10-yuk1359-run08-fault-causality.md)区分已证缺口与历史连接未知。唯一Codex Sol xhigh writer仅修新v4代理/验收调用/离线测试；不改产品或放宽ERROR1+2missing。run01–08不得重启，旧R2仅887012，无R3，无部署。
+- **YUK-1359 / 恢复后重开验收**：固定helper b52e/worker7472；[v4父验收](docs/planning/2026-10-10-yuk1359-v4-parent-acceptance.md)记录558既有+43协议组/299分片+2源码检查和完整依赖/制品核验。run09真实故障已证unknown ERROR1+2missing；pending SIGKILL后即时连接零检查见backend139而失败。后续只读clients0不追认为PASS，未capture/restore/reopen。[失败与清理](docs/planning/evidence/2026-10-10-yuk1359-parent-restore-attempt09.json)保留，17:59:06Z核原4/running/release后释放锁。唯一Sol xhigh writer仅修新v5已退出worker的PG连接消退观察，严格最终零连接、不终止未知连接、不改产品。run01–09不得重启，无R3或部署。
 
 - **YUK-1359 / 完整恢复证明**：按5796提交0015授权，不等judge merge/配额；四现有helper/receipt类型+scopedtests/runbook范围见[恢复缺口](docs/planning/2026-10-09-yuk1359-dbos-restore-evidence-gap.md)。设计已完成并核对7源/test/driver哈希，见[实施契约](docs/planning/2026-10-09-yuk1359-restore-coherence-design.md)。作者已释放固定75d4a4c87，父匹配12源/33日志/888制品并独立76unit通过；真实13DB初验揭露catalog缺括号，最小产品修复后13/13通过，两RED保留；父负责独立审查、锁内真实恢复及DBOS重开验收。无judge代码带入，无恢复主库授权。
 
