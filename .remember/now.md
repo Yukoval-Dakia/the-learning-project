@@ -1,3 +1,27 @@
+# Active Start notes list — 2026-10-09
+
+Source c236 remains unchanged. PR1626 exact aa8dd CI37886224656 passed; R1 NONE and patch SHA verified. Parent50unit/18DB plus real49RPC/eightreadwindows and original NotesPage T3browser acceptance pass;98nonsystemtables/fivesequences unchanged in aggregate list and distinct navigation windows. Runtime lock released05:30:23.105409Z, ownPG/Start removed, original4/release unchanged. First rawDate seed failure retained and only ignored fixture corrected; report and184-file archive manifest at docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md. Final evidence-only push/CI/merge pending. Subjects HTTP and detail/presence remain migration scope; no deployment. Judge/restore remain7631-owned.
+
+# Restore helper ownership — 2026-10-09
+
+After the current judge test writer releases and the parent commits its current scoped acceptance/evidence,7631 may switch to fresh main for the four existing restore/cutover helpers and receipt-type scope, scoped tests and existing runbook/README. Judge merge is no longer a sequencing prerequisite; PR1625 stays draft with its real-model gate and watch.75 accessible/77 registered trees checked without dirty source paths; no competing Start writer. Full parity/failure rejection and realDBOS restore proof remain future work. Start/boot/private runtime/family logic excluded; no runtime action. See docs/planning/2026-10-09-restore-start-ownership.md.
+
+# Judge audit ownership — 2026-10-09
+
+Three audit/baseline paths checked clean across75 accessible/77 registered trees. After current judge author releases,7631 owns exact0118 singleton initialization recognition/negative tests and only measured baseline tightening. No broad SQL scanning, allowances or upward dependency baseline. Start has no competing writer. See judge-start-ownership.md. No runtime action.
+
+# Judge optional logger build ownership — 2026-10-09
+
+Confirmed coordinator7631 sole judge writer may modify server/start/vite.config.ts server bundling and package.json build:migrate only for exact winston/winston-transport externals.75 accessible/77 registered trees showed no dirty paths/lockfile; this thread will not write them. Source-only author runtime restrictions remain. Parent must verify emitted default logger loading, not only build. Detailed scope: docs/planning/2026-10-09-judge-start-ownership.md. No runtime action here.
+
+# Idle ownership update — 2026-10-09
+
+Checked77 registered trees/75 accessible. Only active judge tree has named shared WIP; no Copilot/session changes observed. Coordinator7631 may take the bounded idle write-path extension after judge releases and delivers; no idle writer or migration number now. Start/boot/shutdown/generic SSE remain here. See docs/planning/2026-10-09-idle-start-ownership.md. No runtime action.
+
+# Latest Start event delivery — 2026-10-09
+
+PR1623 merged at2026-10-08T22:52:00Z as7472f4395f4a12a5167e33034d5d8af8bf695049. Exact91f4687ed CI37854525406 passed all fourDB shards and aggregate. Merge/CI trees equal d6e9d69a5769f4634e49c201b90fae1422827831; git diff empty. R2 NONE, no unresolved threads, no third review. Real71RPC/browser evidence remains at4f36; incoming main96077 and event source blob comparisons preserve attribution. No deployment/runtime operation.1358/1359 verified In Progress after merge. Judge0118/implementation stays7631 sole writer; Start/boot remains5796. Below records are historical, not current PR status.
+
 # Current Start event detail lane
 
 PR1623 branch feat/yuk-1358-start-event-detail, runtime accepted at4f36d3fc5 (productf1e4). Independent R1 fixture P1 fixed; R2 NONE/noPending, max two rounds used. Parent15DB and actual71RPC/12windows/6writes; T3 browser correction/disabled pending controls, GET-only retry, committed-response loss without autoreplay, 2001char400, real401 re-gate, bad/missing records, legacy question link and deep reload verified. Technical-details snapshot truncated, not counted. Ignored recipe had two fixed setup/seed defects with preserved failures; no product changes. Runtime archive and full report: docs/planning/2026-10-09-yuk1358-start-event-detail-parent.md.

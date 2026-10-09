@@ -11,6 +11,7 @@ import type {
 import { createDefaultSerovalPlugins } from '@tanstack/react-router/ssr/client';
 import { z } from 'zod';
 import { AgentNotesQuerySchema } from '../../src/capabilities/agency/api/contracts';
+import { NoteListQuerySchema } from '../../src/capabilities/notes/api/contracts';
 import { ProposalDecisionInput, ProposalDecisionResource } from '../../src/core/schema/proposal';
 
 type FixtureRequest = Pick<
@@ -22,6 +23,7 @@ type FixtureHandler = (route: FixtureRoute) => Promise<void> | void;
 type Fulfillment = NonNullable<Parameters<Route['fulfill']>[0]>;
 
 const reads = {
+  getStartNoteList: '/api/notes',
   getStartEventDetail: '/api/events',
   getStartAgentNoteBoard: '/api/agents/notes',
   getStartWorkbenchSummary: '/api/workbench/summary',
@@ -224,6 +226,9 @@ export async function decodeRpcRequest(request: FixtureRequest, map: Map<string,
   if (name === 'getStartAgentNoteBoard') {
     const input = AgentNotesQuerySchema.parse(payload.data ?? {});
     if (input.limit !== undefined) url.searchParams.set('limit', String(input.limit));
+  } else if (name === 'getStartNoteList') {
+    for (const [key, value] of Object.entries(NoteListQuerySchema.parse(payload.data ?? {})))
+      if (value !== undefined) url.searchParams.set(key, value);
   } else if (queryNames.has(name)) {
     for (const [key, value] of Object.entries(Query.parse(payload.data ?? {})))
       if (value !== undefined) url.searchParams.set(key, value);

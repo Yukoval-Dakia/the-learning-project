@@ -1,10 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09：PR1624已合main96077db19，本线正常整合进PR1623；事件源码与已验4f36一致，incoming源码与main一致。整合193unit/11协议/typecheck/lint/build/11audits通过，新exactCI待完成，无runtime/部署。
+> Linear 是权威 tracker。2026-10-09：5796接独立/notes列表Start迁移，freshmain7472，源码c236交回，父50unit/18DB、R1 NONE及49真实RPC/浏览器验收通过；05:30锁已释放，judge/restore仍7631独占。
 
 ## NOW
 
-- **YUK-1358 / Start事件详情与纠错**：PR1623已完成15DB、R2 NONE及4f36真实71RPC/T3浏览器验收，证据封存；正常整合96077db19仅PLAN/now冲突，20个本lane产品/测试文件与已验head一致。整合193unit/11协议及全部静态构建审计通过，等待新exactCI，详见[父验收](docs/planning/2026-10-09-yuk1358-start-event-detail-parent.md)。旧4f36首因不倒推，未部署。
+- **YUK-1358 / Start notes列表**：独占范围和验收见[notes计划](docs/planning/2026-10-09-yuk1358-start-notes-list.md)。保留查询校验、科目知识点解析、空集合语义及现有搜索/导航/视觉；不改note详情/presence/AI写，不把本切片当Notes整族完成。父50unit/18DB、R1 NONE和49RPC/原页面浏览器通过；98表/5序列窗口不变，exact证据head CI待收口；[父证据](docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md)。useSubjects仍HTTP，完整迁移未完成。
+
+- **YUK-1358 / Start事件详情与纠错已交付**：PR1623合main7472f4395，exact91f4687ed CI37854525406全绿含四DB/aggregate，R2 NONE/threads0；merge tree与CI tree相同。15DB、4f36真实71RPC/T3浏览器和整合193unit/11协议/静态构建/11audits证据按revision保留，详见[父验收](docs/planning/2026-10-09-yuk1358-start-event-detail-parent.md)。旧4f36首因不倒推，未部署；1358/1359保持In Progress。
 
 - **YUK-1394已合入**：PR1624于22:32:03Z合main96077db19，与exacta880树一致，CI37852269707全绿；共享锁父29DB/确定性RED/34进程及排期32unit/static/build证据按revision保留。原R2两finding解决，后续修复不冒称R2覆盖，无R3；默认pg-boss、无部署。详见[父验收](docs/planning/2026-10-09-yuk1394-parent-acceptance.md)。
 - **YUK-1393已合入**：PR1621 exact3be966000 CI37829575046全绿，R1 NONE/threads0；main e1f2ef6bb与CI树均cad230a5，已unwatch/Linear Done。父原33DB/10进程恢复/2cron/4旧prune/26migration、49unit及fixture修复29DB/static/build证据保留。默认仍pg-boss，无部署；实际旧consumer退出仍是整迁移验收义务。
@@ -15,6 +17,10 @@
 - **本轮已交付 YUK-1392**：PR1619于17:11:43Z合main6aaf8ca89，tree5e8ab973与exact3883903相同；CI37812973662全绿、R1 NONE、threads0。父13unit/22DB、static/build/audits通过，已unwatch/Linear Done。无部署。
 
 ## NEXT
+
+- Restore helper源码不再等待judge实际模型配额或合并：当前judge test writer完全释放、父scoped验收/证据提交后，7631可保留draft1625/watch并从freshmain单writer接已定4文件scope；不带judge WIP。真实judge恢复证明仍单列未完成，详见[顺序更新](docs/planning/2026-10-09-restore-start-ownership.md)。
+
+- idle future ownership is confirmed in [idle/Start handoff](docs/planning/2026-10-09-idle-start-ownership.md). Three Copilot writes and Conversation coordination belong to7631 only after judge releases and delivers;0118 stays judge. This thread has no competing writer there. Original user-event clock and strict chip/replay behavior remain; runtime proof is outstanding.
 
 - Start/judge共享文件边界见[交接](docs/planning/2026-10-09-judge-start-ownership.md)，Start/boot/shutdown由5796独占；judge A/B/C/D由7631接续，迁移号后核。
 

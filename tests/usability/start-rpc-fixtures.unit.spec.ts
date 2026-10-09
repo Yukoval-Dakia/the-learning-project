@@ -26,6 +26,7 @@ import {
   eventDetail,
   eventNow,
 } from '../../server/start/event-test-fixtures';
+import { noteList } from '../../server/start/notes-list-test-fixtures';
 import {
   AdminCostResponseSchema,
   AdminFailuresResponseSchema,
@@ -885,5 +886,54 @@ test('event GET detail and POST correction use installed Start serializer with c
         status: 201,
         canonicalLocation: location,
       });
+  }
+});
+
+test('notes list native RPC preserves arbitrary strings and complete ISO DTO through installed serializer', async () => {
+  const map = await loadBuiltFunctionMap();
+  const fetcher = await client();
+  const id = [...map].find(([, name]) => name === 'getStartNoteList')?.[0];
+  assert(id);
+  for (const data of [
+    {},
+    { subject: 'wenyan', query: '%_\\ α🙂 <script>' },
+    { subject: 'custom-science', query: 'x'.repeat(200) },
+  ]) {
+    const transport = async (url: string, init: unknown) => {
+      const options = Init.parse(init);
+      const decoded = await decodeRpcRequest(
+        {
+          url: () => url,
+          method: () => options.method,
+          headers: () => Object.fromEntries(options.headers),
+          postData: () => options.body ?? null,
+          postDataJSON: () => (options.body ? JSON.parse(options.body) : null),
+        },
+        map,
+      );
+      assert.equal(decoded.name, 'getStartNoteList');
+      const endpoint = new URL(decoded.request.url());
+      assert.equal(endpoint.pathname, '/api/notes');
+      for (const [key, value] of Object.entries(data))
+        assert.equal(endpoint.searchParams.get(key), value);
+      const encoded = await rpcFulfillment(decoded.name, { json: noteList });
+      return new Response(z.string().parse(encoded.body), {
+        status: encoded.status,
+        headers: { ...encoded.headers, 'content-type': 'application/json' },
+      });
+    };
+    const envelope = Envelope.parse(
+      await fetcher(
+        `http://fixture.test/_serverFn/${id}`,
+        [{ method: 'GET', data, fetch: transport }],
+        transport,
+      ),
+    );
+    assert.equal(envelope.error, undefined);
+    assert.deepEqual(envelope.result, noteList);
+    const dto = z
+      .object({ rows: z.array(z.object({ updated_at: z.string() }).passthrough()) })
+      .parse(envelope.result);
+    assert.equal(dto.rows[0].updated_at, '2026-10-09T12:34:56.789Z');
   }
 });

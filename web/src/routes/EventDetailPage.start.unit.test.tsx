@@ -220,7 +220,7 @@ describe('original event page through the injected Start transport', () => {
     expect(rpc.getStartEventDetail).toHaveBeenCalledTimes(2);
     expect(rpc.postStartEventCorrection).not.toHaveBeenCalled();
   });
-  it('traces production handoff, real route and both transport consumers with13 named migrated entries', () => {
+  it('traces production handoff, real route and both transport consumers with14 named migrated entries', () => {
     const route = readFileSync('server/start/routes/events.$id.tsx', 'utf8');
     expect(route).toContain("createFileRoute('/events/$id')");
     expect(route).toContain('ssr: false');
@@ -240,6 +240,7 @@ describe('original event page through the injected Start transport', () => {
         'InboxRoute',
         'MistakesRoute',
         'AgentNotesRoute',
+        'NotesRoute',
         'EventDetailRouteC',
         'AdminConfigRoute',
         'AdminRunsRoute',
