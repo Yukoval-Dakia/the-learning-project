@@ -1,3 +1,9 @@
+# Sole independent R2 running on fixed candidate
+
+R2 task node:delegated-task:command%3Amcp%3Ae4c5132f-3c05-4ce6-aa2d-e5b525fe3bf6%3Adelegate-task%3Ayuk1356-durable-judge-verification-r2-20261009, Codexgpt6.1sol xhigh reviewrole. Readonly full114file gitdiff7472f4395..3fb999c86d57f6a826d26ed3a857a13ef42c0064, tree8369a3a660157202a96287c1e4852abb512f0a00, SHA4415313811f0e46256ff1859ea239b0592d714e29df0907b12daa8d6c39ac221. Inputs/tmp/yuk1356-r2-input; output/tmp/yuk1356-review-r2.md and.json. AllthreeR1P1 andadditionalidentity/operationalrepairs included. This consumes soleR2; noR3. No tests/build/runtime/provider/children permitted. Parent retains acceptance andfixes.
+
+Otheractivechild is existing real-provider-hono-offline-prep, ignoredfilesonly. Two independentdeliverables, no trackedcodewriters, no runtime/lock. Await async completion and continue parent nonoverlap. Current cleanbranch before this remember checkpoint; cachedorigin/main0behind, no freshfetch claim. No PR/CI/deploy yet.
+
 # Final local gates and offline live preparation
 
 Parent fd5d79ee2 typecheck/lint/build+10postbuild audits PASS. One historical parent evidence JSON format fixed with semantic equality, failed lint preserved. Final710 copied Start-server/migrate files independently hashed; actual ESM/CJS logger/utility/serialization closures pass, absent optionalpackages/default no network; OTLPnegativeonly. Evidence final-gates.json+archive. No wholeStart/worker runtime claim;86migration includes real CJS startup.
