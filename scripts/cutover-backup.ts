@@ -1102,6 +1102,7 @@ function psqlArgs(connection: DatabaseConnection): string[] {
   return [
     'exec',
     '-i',
+    ...(connection.scratchOwner ? ['-e', 'PGPASSWORD=loom'] : []),
     connection.container,
     'psql',
     '-U',
@@ -2319,6 +2320,8 @@ export async function runRestoreDrill(options: {
         args: [
           'exec',
           '-i',
+          '-e',
+          'PGPASSWORD=loom',
           connection.container,
           'pg_restore',
           '-U',

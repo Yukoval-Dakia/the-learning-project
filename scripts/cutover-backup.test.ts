@@ -721,6 +721,16 @@ if(args[0]==='inspect'||args[0]==='image') {if(args.includes('{{json .State}}'))
 if(args.includes('sh')&&args.some(a=>a.includes('df -Pk'))){out('Filesystem 1024-blocks Used Available Capacity Mounted on\\nfixture 1000000 1 999999 1% /data\\n');process.exit(0);}
 if(args[0]==='rm') {if(c.mode==='cleanup')bad();process.exit(0);}
 if(args[0]==='run'&&!args.includes('--rm')) {const env=args.filter(a=>a.startsWith('POSTGRES_')),port=args.includes('--publish')?args[args.indexOf('--publish')+1].split(':')[1]:null;const bindings=port?{'5432/tcp':[{HostIp:'127.0.0.1',HostPort:port}]}:{};const s={Id:'c'.repeat(64),Name:'/'+args[args.indexOf('--name')+1],Image:${JSON.stringify(IMAGE)},Config:{Env:env,Labels:{'loom.restore-drill.attempt':args[args.indexOf('--label')+1].split('=')[1]},Volumes:{'/var/lib/postgresql/data':{}}},State:{Running:true,Restarting:false},HostConfig:{NetworkMode:port?'bridge':'none',Binds:null,PortBindings:bindings},NetworkSettings:{Ports:bindings},Mounts:[{Type:'volume',Name:'offline-anonymous-volume',Destination:'/var/lib/postgresql/data'}]};fs.writeFileSync(${JSON.stringify(join(directory, 'scratch.json'))},JSON.stringify(s));if(c.mode==='ambiguous-create'||c.mode==='collision')bad();if(c.mode==='ambiguous-signal')process.kill(process.pid,'SIGTERM');out(c.mode==='unknown-id'?'offline-container':s.Id);process.exit(0);}
+if(args[0]==='exec') {
+let i=1;const env={};
+while(args[i]?.startsWith('-')) {if(args[i]==='-i')i++;else if(args[i]==='-e'){const value=args[i+1],separator=value.indexOf('=');if(separator<1)bad(97);env[value.slice(0,separator)]=value.slice(separator+1);i+=2;}else bad(97);}
+const scratch=args[i]==='c'.repeat(64),client=args[i+1],clientArgs=args.slice(i+2);
+if(!scratch&&Object.hasOwn(env,'PGPASSWORD'))bad(97);
+if(scratch&&((client==='psql'&&clientArgs.includes('-h'))||(client==='pg_restore'&&clientArgs.includes('-d')))) {
+const s=JSON.parse(fs.readFileSync(${JSON.stringify(join(directory, 'scratch.json'))})),password=s.Config.Env.find(value=>value.startsWith('POSTGRES_PASSWORD='))?.slice('POSTGRES_PASSWORD='.length);
+if(!password||env.PGPASSWORD!==password||(c.mode==='scratch-auth-restore'&&client==='pg_restore')){process.stderr.write('fe_sendauth: no password supplied or password authentication failed\\n');bad(18);}
+}
+}
 if(args.includes('--version')) {out('psql (PostgreSQL) 16.14\\n');process.exit(0);}
 if(args.includes('pg_dump')) {if(c.mode==='dump')bad();out('offline dump bytes');process.exit(0);}
 if(args.includes('pg_restore')) {input(b=>{fs.appendFileSync(${JSON.stringify(join(directory, 'bytes.jsonl'))},JSON.stringify({sha:crypto.createHash('sha256').update(b).digest('hex')})+'\\n');if(args.includes('-l')){if(c.mode==='toc')bad();out('1; 1 1 TABLE fixture offline\\n');}else if(c.mode==='restore')bad();});}
@@ -901,6 +911,12 @@ describe('real CLI through fully intercepted transport', () => {
     expect(
       parseSourceManifest(readJsonArtifact(resultJson.source_manifest).value).companions.basis,
     ).toBe('external-maintenance-boundary');
+    const sourceExecs = transportCommands(directory).filter((c) => c.args[0] === 'exec');
+    expect(sourceExecs.length).toBeGreaterThan(5);
+    for (const command of sourceExecs) {
+      expect(command.args).toContain('offline-source');
+      expect(command.args.some((arg) => arg.startsWith('PGPASSWORD='))).toBe(false);
+    }
   });
   it('missing source and malformed JSON fail before any transport; existing receipt requires explicit overwrite', () => {
     const directory = mkdtempSync(join(TMP, 'preflight-')),
@@ -1172,6 +1188,117 @@ function transportCommands(directory: string) {
         )
     : [];
 }
+
+describe('scratch client authentication through intercepted Docker exec', () => {
+  it.each(['default', 'retained-loopback', 'sql-only'])(
+    '%s supplies the isolated password to every connecting scratch client',
+    (mode) => {
+      const directory = mkdtempSync(join(TMP, 'scratch-auth-')),
+        transport = offlineTransport(directory, 'success'),
+        out = join(directory, 'receipt.json');
+      const args =
+        mode === 'sql-only'
+          ? [
+              '--operation=restore-drill',
+              `--dump=${transport.source.dump.file}`,
+              `--out=${out}`,
+              `--image=${IMAGE}`,
+              '--restore-only',
+            ]
+          : [...restoreArgs(transport, out), ...(mode === 'retained-loopback' ? loopbackArgs : [])];
+      const result = offlineCli(directory, transport, args);
+      expect(result.status, result.stderr).toBe(0);
+      expect(parseRestoreReceipt(readJsonArtifact(out).value)).toMatchObject({
+        kind: mode === 'sql-only' ? 'sql-restore-only' : 'verified',
+        verified: mode !== 'sql-only',
+      });
+      const clients = transportCommands(directory).filter(
+        (c) =>
+          c.args[0] === 'exec' &&
+          (c.args.includes('psql') || (c.args.includes('pg_restore') && c.args.includes('-d'))),
+      );
+      expect(clients.length).toBeGreaterThan(3);
+      expect(clients.filter((c) => c.args.includes('pg_restore'))).toHaveLength(1);
+      for (const client of clients) {
+        expect(client.args.slice(0, 5)).toEqual([
+          'exec',
+          '-i',
+          '-e',
+          'PGPASSWORD=loom',
+          'c'.repeat(64),
+        ]);
+        if (client.args.includes('psql')) {
+          expect(
+            client.args.slice(client.args.indexOf('-h'), client.args.indexOf('-h') + 2),
+          ).toEqual(['-h', '127.0.0.1']);
+        }
+      }
+      const commands = transportCommands(directory);
+      expect(commands.some((c) => c.args[0] === 'rm')).toBe(mode !== 'retained-loopback');
+      if (mode === 'retained-loopback')
+        expect(clients.at(-1)?.args.some((arg) => arg.includes('pg_control_system'))).toBe(true);
+    },
+  );
+  it.each(['psql', 'pg_restore'])(
+    'the fake rejects missing or wrong %s exec passwords despite inherited credentials',
+    (client) => {
+      const directory = mkdtempSync(join(TMP, 'scratch-auth-reject-')),
+        transport = offlineTransport(directory, 'success'),
+        out = join(directory, 'receipt.json');
+      expect(
+        offlineCli(directory, transport, [...restoreArgs(transport, out), ...loopbackArgs]).status,
+      ).toBe(0);
+      const clientArgs =
+        client === 'psql'
+          ? ['-U', 'loom', '-d', 'test_fork_20261009', '-h', '127.0.0.1', '-c', 'select 1']
+          : ['-U', 'loom', '-d', 'test_fork_20261009'];
+      for (const environment of [
+        [],
+        ['-e', 'PGPASSWORD=wrong'],
+        ['-e', 'POSTGRES_PASSWORD=loom'],
+      ]) {
+        const result = spawnSync(
+          join(transport.bin, 'docker'),
+          ['exec', '-i', ...environment, 'c'.repeat(64), client, ...clientArgs],
+          { encoding: 'utf8', timeout: 1000, input: '', env: { PGPASSWORD: 'loom' } },
+        );
+        expect(result.status, result.stderr).toBe(18);
+        expect(result.stderr).toContain('password authentication failed');
+      }
+      const source = spawnSync(
+        join(transport.bin, 'docker'),
+        ['exec', '-i', '-e', 'PGPASSWORD=loom', 'offline-source', client, ...clientArgs],
+        { encoding: 'utf8', timeout: 1000, input: '' },
+      );
+      expect(source.status, source.stderr).toBe(97);
+    },
+  );
+  it.each([false, true])(
+    'restore authentication failure remains fail-closed with keep=%s',
+    (keep) => {
+      const directory = mkdtempSync(join(TMP, 'scratch-auth-failure-')),
+        transport = offlineTransport(directory, 'scratch-auth-restore'),
+        out = join(directory, 'receipt.json');
+      const result = offlineCli(directory, transport, [
+        ...restoreArgs(transport, out),
+        ...(keep ? loopbackArgs : []),
+      ]);
+      expect(result.status, result.stderr).toBe(1);
+      const receipt = parseRestoreReceipt(readJsonArtifact(out).value);
+      expect(receipt).toMatchObject({
+        kind: 'failed',
+        verified: false,
+        scratch: { retained: keep },
+        errors: [expect.objectContaining({ phase: 'restore', exitCode: 18 })],
+      });
+      if (receipt.kind !== 'failed') throw new Error('expected failed receipt');
+      expect(receipt.scratch.reopen).toBeUndefined();
+      const commands = transportCommands(directory);
+      expect(commands.some((c) => c.args[0] === 'rm')).toBe(!keep);
+      if (!keep) expect(commands.at(-1)?.args).toEqual(['rm', '-f', '-v', 'c'.repeat(64)]);
+    },
+  );
+});
 
 describe('retained scratch public options and ownership', () => {
   it.each([
