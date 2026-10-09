@@ -1,3 +1,11 @@
+# Restore run05 failed; lock released; bounded prep repair running
+
+Parent385offline and full source/evidence seal verification passed. Run05 completed118 migrations, DBOS setup/snapshot and complete SUCCESS with3 receipts. Real COMMIT fault produced unknown ERROR,1 receipt and2 missing. Owned fault worker exited by requested SIGTERM; proxy closed. Full-seal settlement assertion failed. Parent recursively compared every sealed section: only conversation/placement pgboss_schedule.updated_on changed. No business effect, receipt, DBOS state or other field changed. This does not retroactively make run05 PASS. Pending/capture/restore/reopen were not reached.
+
+At2026-10-09T15:27:31.147842Z owner/token0ee72006 lock was released. Source2cd63c18 is stopped and retained; workers16254/17028/17037 absent; proxy51794 closed. Original4 ID/image/StartedAt/health/running/release SHA unchanged. Full parent evidence: docs/planning/evidence/2026-10-10-yuk1359-parent-restore-attempt05.json. Preserve all failed runs01–05; never restart/retry them.
+
+Sole prep writer task node:delegated-task:command%3Amcp%3A6636c2a8-faa6-445b-bad3-e84032e9ac15%3Adelegate-task%3Ayuk1359-prep-settlement-clock-contract-repair-20261010-v1 runs Codex gpt-6.1-sol xhigh/test. Only existing /tmp/yuk1359-dbos-restore-offline-prep-v2 lifecycle/assertions/offline tests/seals. Trace host actor and sample actual DB clock around settlement; allow only exact schedule timestamp changes with strict identity/definition bounds, preserve all other state and unknown checks. No DB/runtime/product/worker/dependency changes. Parent owns repo docs and real acceptance. On terminal independently verify, then fresh source/run06 under fresh lock. Product R2 NONE, no R3. Judge1625 draft/watch remains separate.
+
 # Restore run04 source setup passed; unknown-worker settlement failed
 
 Parent330offline/5634source/dependency and8509sealed evidence passed; one offline generatedreport overwritten by test command was explicitly rebound to parent output, originalseal failure preserved. Fullbinding docs/planning/evidence/2026-10-09-yuk1359-parent-prep-transaction-verification.json.

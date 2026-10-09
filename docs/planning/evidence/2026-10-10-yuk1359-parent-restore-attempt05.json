@@ -1,0 +1,154 @@
+{
+  "run": "yuk1359-restore-run05",
+  "helper": "887012c2f10f2812b88a600340ec6ae869983b23",
+  "workerSource": "7472f4395f4a12a5167e33034d5d8af8bf695049",
+  "failure": {
+    "phase": "source-states",
+    "exitCode": 64,
+    "sourceSetupPassed": true,
+    "completeWorkerDone": true,
+    "unknownFailureObserved": true,
+    "workerExits": [
+      {
+        "pid": 17028,
+        "exit": {
+          "code": 0,
+          "signal": null
+        }
+      },
+      {
+        "pid": 17037,
+        "exit": {
+          "code": null,
+          "signal": "SIGTERM"
+        }
+      }
+    ],
+    "failure": "Unknown snapshot changed during owned settlement",
+    "captureRestoreReopenExecuted": false,
+    "sourceRetainedStopped": true
+  },
+  "cleanup": {
+    "containerId": "2cd63c187eb9aba35194e8e914171f657b0f7dc25b95e64a9229773ed2ec8481",
+    "stopped": true,
+    "retained": true,
+    "workerPidsGone": [
+      16254,
+      17028,
+      17037
+    ],
+    "proxyClosed": true,
+    "at": "2026-10-09T15:27:31.036977+00:00"
+  },
+  "lockRelease": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1359",
+      "phase": "isolated-same-target-restore-reopen",
+      "token": "0ee72006-2a45-450b-87d4-ad071258e105",
+      "candidate": "170fb7efec00ae4bf302c966b916e2147a57cd74",
+      "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "createdAt": "2026-10-09T15:21:53.302386+00:00"
+    },
+    "releasedAt": "2026-10-09T15:27:31.147842+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "sealDifference": {
+    "premise": "Unknown workflow failure makes the entire host database immutable before owned process settlement.",
+    "sealedSections": [
+      "build",
+      "versions",
+      "schema",
+      "domain",
+      "dbos",
+      "obligations",
+      "fixture"
+    ],
+    "differences": [
+      {
+        "path": "domain/pgboss_schedule/1/json/updated_on",
+        "before": "2026-10-09T15:24:29.14755+00:00",
+        "after": "2026-10-09T15:24:29.236793+00:00"
+      },
+      {
+        "path": "domain/pgboss_schedule/2/json/updated_on",
+        "before": "2026-10-09T15:24:29.170338+00:00",
+        "after": "2026-10-09T15:24:29.248721+00:00"
+      }
+    ],
+    "sourceArtifacts": {
+      "unknown-before-settlement.json": "3968bed1ab3b7559874ab3b640ee77e55740e7942d314a65e6652b1b784c4980",
+      "failure-source.json": "0a93550cfa5faeb4c867acc3ca3816f6b912af3dc819b104516d21af779a4872",
+      "lifecycle-source-states.json": "49b7daf4745d2263e41aad177d8cd49e271550d2c68af4edbb2c7613e1f450c4"
+    }
+  },
+  "observedObligations": {
+    "dbos": [
+      {
+        "task_id": "restore-unknown-yuk1359-restore-run05",
+        "state": "ERROR",
+        "kind": "task",
+        "session_id": null
+      },
+      {
+        "task_id": "restore-unknown-yuk1359-restore-run05",
+        "state": "missing-receipt",
+        "kind": "receipt",
+        "session_id": "restore-unknown-yuk1359-restore-run05-b"
+      },
+      {
+        "task_id": "restore-unknown-yuk1359-restore-run05",
+        "state": "missing-receipt",
+        "kind": "receipt",
+        "session_id": "restore-unknown-yuk1359-restore-run05-c"
+      }
+    ],
+    "legacy": []
+  },
+  "files": [
+    {
+      "path": "/tmp/yuk1359-restore-reopen-parent05/failure.json",
+      "sha256": "23b6476efc1616d7d245ee9dd136731ec9f4f824c1aefe19d4c0af6302652c2a",
+      "bytes": 510
+    },
+    {
+      "path": "/tmp/yuk1359-restore-reopen-parent05/source-stopped.json",
+      "sha256": "fd854434f130dd9f73344224ab5414989d802d156935122f46cefbfb90c1ac0d",
+      "bytes": 253
+    },
+    {
+      "path": "/tmp/yuk1359-restore-reopen-parent05/lock-release.json",
+      "sha256": "78e2d3a15ed872ab5de5cead153bd7d9f428bcd88b4e9d072ff282faad24e994",
+      "bytes": 547
+    },
+    {
+      "path": "/tmp/yuk1359-restore-reopen-parent05/seal-difference.json",
+      "sha256": "d9f322ce66480c1d70c428988dbd46a557845b8eb6c71d8d52fd0db5b552e1dc",
+      "bytes": 947
+    },
+    {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run05/unknown-before-settlement.json",
+      "sha256": "3968bed1ab3b7559874ab3b640ee77e55740e7942d314a65e6652b1b784c4980",
+      "bytes": 430073
+    },
+    {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run05/failure-source.json",
+      "sha256": "0a93550cfa5faeb4c867acc3ca3816f6b912af3dc819b104516d21af779a4872",
+      "bytes": 430066
+    },
+    {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run05/lifecycle-source-states.json",
+      "sha256": "49b7daf4745d2263e41aad177d8cd49e271550d2c68af4edbb2c7613e1f450c4",
+      "bytes": 22210
+    },
+    {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run05/phase-source-setup-receipt.json",
+      "sha256": "8af0ebcbf4edeb86cb6c28d6c12f0d8ee3d52bda1d658ab84552a18f0aa95700",
+      "bytes": 319
+    }
+  ],
+  "scope": "Source setup and complete task passed; genuine unknown outcome held. Settlement full-seal assertion failed on two legacy schedule timestamps only. No pending/capture/restore/reopen.",
+  "next": "Trace actual fixed host schedule reconciliation; bound exact schedule timestamp updates by observed DB clock in a fresh run, preserving all other state checks. Never retry or relabel run05 as PASS."
+}
