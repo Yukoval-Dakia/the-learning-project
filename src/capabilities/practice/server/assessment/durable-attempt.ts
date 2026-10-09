@@ -5,6 +5,7 @@ import type { JudgeReservation } from '@/core/schema/event/judge-operational-eve
 import {
   JudgePendingAttemptPayload,
   NativeJudgePendingSubmitInput,
+  type NativeJudgePendingSubmitInputT,
 } from '@/core/schema/event/judge-pending-events';
 import type { Db, Tx } from '@/db/client';
 import { assessment_submission, evaluation, evaluation_effective_head, event } from '@/db/schema';
@@ -66,6 +67,42 @@ export async function dispatchNativeAttempt(
   const { submission } = prepared;
   const runId = `judge_native_${submission.submission_id}`;
   const pendingId = `evt_pending_${runId}`;
+  const identity = {
+    question_id: questionId,
+    submission_id: submission.submission_id,
+    evaluation_group_id: submission.evaluation_group_id,
+    submitted_at: submission.submitted_at,
+    expected_head: { expected_effective_id: null, expected_generation: 0 },
+    user_rating: options.userRating,
+    require_unassisted_model_evidence: !!options.requireUnassistedModelEvidence,
+  } satisfies Omit<NativeJudgePendingSubmitInputT, 'capture'>;
+  const readAccepted = (existing: typeof event.$inferSelect): NativeJudgeRunJobData => {
+    const payload = JudgePendingAttemptPayload.parse(existing.payload);
+    if (payload.caller !== 'native_assessment')
+      throw new ApiError('coordinate_mismatch', 'durable operation caller changed', 409);
+    // Capture is first-write-wins. Compare the frozen original and execution options,
+    // not a retry's capture, current question metadata or materialized effective head.
+    const { capture, ...acceptedIdentity } = payload.submit;
+    if (
+      payload.run_id !== runId ||
+      canonicalHash(acceptedIdentity) !== canonicalHash(identity) ||
+      existing.id !== pendingId ||
+      existing.action !== JUDGE_PENDING_ATTEMPT_ACTION ||
+      existing.actor_kind !== 'user' ||
+      existing.actor_ref !== 'self' ||
+      existing.subject_kind !== 'question' ||
+      existing.subject_id !== questionId ||
+      existing.session_id !== (capture.session_id ?? null) ||
+      existing.outcome !== null ||
+      existing.caused_by_event_id !== null ||
+      existing.task_run_id !== null ||
+      existing.cost_micro_usd !== null ||
+      existing.created_at.toISOString() !== identity.submitted_at
+    ) {
+      throw new ApiError('coordinate_mismatch', 'durable operation identity changed', 409);
+    }
+    return { run_id: runId, caller: payload.caller, submit: payload.submit };
+  };
   const hasModel = prepared.revision.execution_plan.assignments.some(
     (a) =>
       a.executor.kind === 'model_executor' &&
@@ -81,32 +118,14 @@ export async function dispatchNativeAttempt(
       const control = await readJudgeControl(tx, 'share');
       await lockJudgeRun(tx, runId);
       const [existing] = await tx.select().from(event).where(eq(event.id, pendingId));
-      if (existing) {
-        const payload = JudgePendingAttemptPayload.parse(existing.payload);
-        if (
-          payload.caller !== 'native_assessment' ||
-          payload.submit.question_id !== questionId ||
-          payload.submit.user_rating !== options.userRating ||
-          payload.submit.require_unassisted_model_evidence !==
-            !!options.requireUnassistedModelEvidence
-        ) {
-          throw new ApiError('coordinate_mismatch', 'durable operation options changed', 409);
-        }
-        return { run_id: runId, caller: payload.caller, submit: payload.submit };
-      }
+      if (existing) return readAccepted(existing);
       if (!options.enabled || !hasModel) return null;
       if (control.phase !== 'pg-boss' && control.phase !== 'dbos')
         throw new ApiError('judge_draining', 'Judge admissions are temporarily draining', 503);
       token = admitJudgeRun(deps);
       const input = NativeJudgePendingSubmitInput.parse({
-        question_id: questionId,
-        submission_id: submission.submission_id,
-        evaluation_group_id: submission.evaluation_group_id,
-        submitted_at: submission.submitted_at,
-        expected_head: { expected_effective_id: null, expected_generation: 0 },
-        user_rating: options.userRating,
+        ...identity,
         capture: options.capture,
-        require_unassisted_model_evidence: !!options.requireUnassistedModelEvidence,
       });
       const payload = JudgePendingAttemptPayload.parse({
         run_id: runId,
@@ -146,17 +165,9 @@ export async function dispatchNativeAttempt(
     const existing = await db.transaction(async (tx) => {
       await lockJudgeRun(tx, runId);
       const [row] = await tx.select().from(event).where(eq(event.id, pendingId));
-      return row;
+      return row ? readAccepted(row) : null;
     });
-    if (existing) {
-      const payload = JudgePendingAttemptPayload.parse(existing.payload);
-      if (
-        payload.caller !== 'native_assessment' ||
-        payload.submit.submission_id !== submission.submission_id
-      )
-        throw error;
-      return runId;
-    }
+    if (existing) return runId;
     if (token !== undefined) refundJudgeRunAdmission(token, deps);
     throw error;
   }

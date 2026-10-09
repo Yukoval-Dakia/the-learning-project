@@ -408,6 +408,7 @@ it('pending COMMIT acknowledgment loss preserves the same accepted original, tok
     write = domain.writeEvent;
   let lost = false,
     ack = false;
+  let committedRows: (typeof event.$inferSelect)[] | undefined;
   vi.spyOn(domain, 'writeEvent').mockImplementation(async (db, args) => {
     const row = await write(db, args);
     if (!lost && args.action === 'experimental:judge_pending_attempt') {
@@ -417,9 +418,11 @@ it('pending COMMIT acknowledgment loss preserves the same accepted original, tok
     return row;
   });
   database.transaction = (body, config) =>
-    transaction(body, config).then((result) => {
+    transaction(body, config).then(async (result) => {
       if (ack) {
         ack = false;
+        // The real transaction has committed. Preserve its exact rows before losing the ack.
+        committedRows = await database.select().from(event).orderBy(event.id);
         throw new Error('controlled pending COMMIT acknowledgment lost');
       }
       return result;
@@ -438,6 +441,47 @@ it('pending COMMIT acknowledgment loss preserves the same accepted original, tok
     database.transaction = transaction;
   }
   if (!runId) throw new Error('Lost acknowledgment fixture was not accepted');
+  expect(lost).toBe(true);
+  expect(committedRows).toBeDefined();
+  expect(deps.checkRateLimit).toHaveBeenCalledTimes(1);
+  expect(send).not.toHaveBeenCalled();
+  expect(refund).not.toHaveBeenCalled();
+  expect(await database.select().from(event).orderBy(event.id)).toEqual(committedRows);
+  const originals = await database
+    .select()
+    .from(event)
+    .where(eq(event.action, 'experimental:judge_pending_attempt'));
+  expect(originals).toHaveLength(1);
+  const original = JudgePendingAttemptPayload.parse(originals[0].payload);
+  if (original.caller !== 'native_assessment') throw new Error('Expected native original');
+  expect(original.run_id).toBe(runId);
+  expect(runId).toBe(`judge_native_${original.submit.submission_id}`);
+  expect(original.submit).toMatchObject({
+    question_id: f.id,
+    evaluation_group_id: f.request.evaluation_group_id,
+    expected_head: { expected_effective_id: null, expected_generation: 0 },
+    capture: f.options.capture,
+    require_unassisted_model_evidence: false,
+  });
+  expect(
+    await dispatchNativeAttempt(
+      database,
+      f.id,
+      f.request,
+      { ...f.options, enabled: false, capture: { latency_ms: 999, session_id: 'retry-session' } },
+      deps,
+    ),
+  ).toBe(runId);
+  for (const changedOptions of [
+    { ...f.options, userRating: 'again' as const },
+    { ...f.options, enabled: false, requireUnassistedModelEvidence: true },
+  ]) {
+    await expect(
+      dispatchNativeAttempt(database, f.id, f.request, changedOptions, deps),
+    ).rejects.toMatchObject({ code: 'coordinate_mismatch' });
+  }
+  expect(await database.select().from(event).orderBy(event.id)).toEqual(committedRows);
+  expect(deps.checkRateLimit).toHaveBeenCalledTimes(1);
   expect(send).not.toHaveBeenCalled();
   expect(refund).not.toHaveBeenCalled();
   const before = await readJudgeRunPermanent(database, runId);
@@ -447,10 +491,25 @@ it('pending COMMIT acknowledgment loss preserves the same accepted original, tok
   });
   expect(send).toHaveBeenCalledTimes(1);
   expect(send.mock.calls[0]?.[2]?.id).toBe(before.delivery.reservation.delivery_id);
+  expect(refund).not.toHaveBeenCalled();
+  expect(await database.select().from(event).where(eq(event.id, originals[0].id))).toEqual(
+    originals,
+  );
+  expect(
+    await database
+      .select()
+      .from(event)
+      .where(eq(event.action, 'experimental:assessment_model_claim')),
+  ).toHaveLength(0);
+  expect(await database.select().from(evaluation)).toHaveLength(0);
   expect(
     await database
       .select()
       .from(event)
       .where(and(eq(event.action, 'experimental:judge_delivery_reserved'))),
   ).toHaveLength(1);
+  const after = await readJudgeRunPermanent(database, runId);
+  if (after.kind !== 'pending' || !after.delivery)
+    throw new Error('Missing retained slot after sweep');
+  expect(after.delivery.reservation).toEqual(before.delivery.reservation);
 });

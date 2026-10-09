@@ -178,6 +178,43 @@ async function fixture(knowledgeIds: string[] = []) {
 }
 
 const meta = { retryCount: 0, retryLimit: 2 };
+function pendingOriginal(
+  questionId: string,
+  submission: Awaited<
+    ReturnType<typeof formalAttempts.prepareFormalAttemptSubmission>
+  >['submission'],
+) {
+  const runId = `judge_native_${submission.submission_id}`;
+  return {
+    id: `evt_pending_${runId}`,
+    action: dispatch.JUDGE_PENDING_ATTEMPT_ACTION,
+    session_id: null,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    subject_kind: 'question',
+    subject_id: questionId,
+    outcome: null,
+    caused_by_event_id: null,
+    task_run_id: null,
+    cost_micro_usd: null,
+    created_at: new Date(submission.submitted_at),
+    ingest_at: new Date(submission.submitted_at),
+    payload: {
+      run_id: runId,
+      caller: 'native_assessment',
+      knowledge_ids: [],
+      ability_global_ids: [],
+      submit: NativeJudgePendingSubmitInput.parse({
+        question_id: questionId,
+        submission_id: submission.submission_id,
+        evaluation_group_id: submission.evaluation_group_id,
+        submitted_at: submission.submitted_at,
+        expected_head: { expected_effective_id: null, expected_generation: 0 },
+        capture: { reasoning_trace: 'accepted original, not retry metadata', latency_ms: 321 },
+      }),
+    },
+  } satisfies typeof event.$inferInsert;
+}
 async function nativeEffects(db: Db, runId: string) {
   const [events, submissions, evaluations, heads, cards, mastery] = await Promise.all([
     db.select().from(event).where(ne(event.id, runId)).orderBy(event.id),
@@ -809,7 +846,186 @@ describe('native durable assessment', () => {
     await expect(
       dispatchNativeAttempt(f.db, f.id, f.request, { ...f.options, userRating: 'again' }, f.deps),
     ).rejects.toMatchObject({ code: 'coordinate_mismatch' });
+    await expect(
+      dispatchNativeAttempt(
+        f.db,
+        f.id,
+        f.request,
+        { ...f.options, enabled: false, requireUnassistedModelEvidence: true },
+        f.deps,
+      ),
+    ).rejects.toMatchObject({ code: 'coordinate_mismatch' });
+    expect(f.deps.checkRateLimit).toHaveBeenCalledTimes(1);
+    expect(f.deps.refundRateLimit).not.toHaveBeenCalled();
+    expect(f.jobs).toHaveLength(1);
+    expect(f.execute).toHaveBeenCalledTimes(1);
+    expect(await f.db.select().from(evaluation)).toHaveLength(1);
+    expect((await f.db.select().from(material_fsrs_state))[0].state.reps).toBe(1);
   });
+
+  it.each([
+    { name: 'changed rating', accepted: { userRating: 'hard' }, retry: { userRating: 'again' } },
+    { name: 'removed rating', accepted: { userRating: 'hard' }, retry: { userRating: undefined } },
+    {
+      name: 'relaxed unassisted policy',
+      accepted: { requireUnassistedModelEvidence: true },
+      retry: { requireUnassistedModelEvidence: false },
+    },
+    {
+      name: 'tightened unassisted policy',
+      accepted: { requireUnassistedModelEvidence: false },
+      retry: { requireUnassistedModelEvidence: true },
+    },
+  ] satisfies {
+    name: string;
+    accepted: Partial<Parameters<typeof dispatchNativeAttempt>[3]>;
+    retry: Partial<Parameters<typeof dispatchNativeAttempt>[3]>;
+  }[])(
+    'rejects $name against a committed pending original without swallowing it in recovery',
+    async ({ accepted, retry }) => {
+      const f = await fixture();
+      const options = { ...f.options, ...accepted };
+      const runId = await dispatchNativeAttempt(f.db, f.id, f.request, options, f.deps);
+      if (!runId) throw new Error('expected accepted original');
+      const before = await nativeEffects(f.db, runId);
+      for (const enabled of [true, false]) {
+        await expect(
+          dispatchNativeAttempt(f.db, f.id, f.request, { ...options, ...retry, enabled }, f.deps),
+        ).rejects.toMatchObject({ code: 'coordinate_mismatch' });
+      }
+      expect(
+        await dispatchNativeAttempt(
+          f.db,
+          f.id,
+          f.request,
+          { ...options, enabled: false, capture: { latency_ms: 999 } },
+          f.deps,
+        ),
+      ).toBe(runId);
+      expect(await nativeEffects(f.db, runId)).toEqual(before);
+      expect(f.deps.checkRateLimit).toHaveBeenCalledTimes(1);
+      expect(f.deps.refundRateLimit).not.toHaveBeenCalled();
+      expect(f.jobs).toHaveLength(1);
+      expect(f.execute).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    { name: 'run', mutate: (r) => ({ ...r, payload: { ...r.payload, run_id: 'other-run' } }) },
+    {
+      name: 'question',
+      mutate: (r) => ({
+        ...r,
+        payload: { ...r.payload, submit: { ...r.payload.submit, question_id: 'other-question' } },
+      }),
+    },
+    {
+      name: 'submission',
+      mutate: (r) => ({
+        ...r,
+        payload: {
+          ...r.payload,
+          submit: { ...r.payload.submit, submission_id: 'other-submission' },
+        },
+      }),
+    },
+    {
+      name: 'evaluation group',
+      mutate: (r) => ({
+        ...r,
+        payload: {
+          ...r.payload,
+          submit: { ...r.payload.submit, evaluation_group_id: 'other-group' },
+        },
+      }),
+    },
+    {
+      name: 'answer time',
+      mutate: (r) => ({
+        ...r,
+        payload: {
+          ...r.payload,
+          submit: {
+            ...r.payload.submit,
+            submitted_at: new Date(r.created_at.getTime() + 1000).toISOString(),
+          },
+        },
+      }),
+    },
+    {
+      name: 'initial effective head',
+      mutate: (r) => ({
+        ...r,
+        payload: {
+          ...r.payload,
+          submit: {
+            ...r.payload.submit,
+            expected_head: { expected_effective_id: 'other-candidate', expected_generation: 0 },
+          },
+        },
+      }),
+    },
+    {
+      name: 'initial head generation',
+      mutate: (r) => ({
+        ...r,
+        payload: {
+          ...r.payload,
+          submit: {
+            ...r.payload.submit,
+            expected_head: { expected_effective_id: null, expected_generation: 1 },
+          },
+        },
+      }),
+    },
+    { name: 'action', mutate: (r) => ({ ...r, action: 'experimental:other_pending' }) },
+    { name: 'actor kind', mutate: (r) => ({ ...r, actor_kind: 'agent' }) },
+    { name: 'actor reference', mutate: (r) => ({ ...r, actor_ref: 'other-writer' }) },
+    { name: 'question subject kind', mutate: (r) => ({ ...r, subject_kind: 'submission' }) },
+    { name: 'question subject', mutate: (r) => ({ ...r, subject_id: 'other-question' }) },
+    { name: 'session', mutate: (r) => ({ ...r, session_id: 'other-session' }) },
+    { name: 'outcome', mutate: (r) => ({ ...r, outcome: 'success' }) },
+    { name: 'causal envelope', mutate: (r) => ({ ...r, caused_by_event_id: 'other-cause' }) },
+    { name: 'task run', mutate: (r) => ({ ...r, task_run_id: 'other-task' }) },
+    { name: 'cost', mutate: (r) => ({ ...r, cost_micro_usd: 10 }) },
+    {
+      name: 'event time',
+      mutate: (r) => ({ ...r, created_at: new Date(r.created_at.getTime() + 1000) }),
+    },
+    {
+      name: 'malformed payload',
+      mutate: (r) => ({
+        ...r,
+        payload: { run_id: r.payload.run_id, caller: 'native_assessment', submit: {} },
+      }),
+    },
+  ] satisfies {
+    name: string;
+    mutate: (original: ReturnType<typeof pendingOriginal>) => typeof event.$inferInsert;
+  }[])(
+    'refuses a committed same-ID pending original with conflicting $name',
+    async ({ mutate }) => {
+      const f = await fixture();
+      const prepared = await formalAttempts.prepareFormalAttemptSubmission(
+        f.db,
+        'durable_judge_run',
+        f.id,
+        f.request,
+      );
+      const original = pendingOriginal(f.id, prepared.submission);
+      // Seed corrupt persisted truth directly. The live event parser must not hide the negative.
+      await f.db.insert(event).values(mutate(original));
+      const before = await nativeEffects(f.db, original.payload.run_id);
+      await expect(
+        dispatchNativeAttempt(f.db, f.id, f.request, f.options, f.deps),
+      ).rejects.toThrow();
+      expect(await nativeEffects(f.db, original.payload.run_id)).toEqual(before);
+      expect(f.deps.checkRateLimit).not.toHaveBeenCalled();
+      expect(f.deps.refundRateLimit).not.toHaveBeenCalled();
+      expect(f.jobs).toHaveLength(0);
+      expect(f.execute).not.toHaveBeenCalled();
+    },
+  );
 
   it('persists queue failure for reconciliation and refuses admission without a pending receipt', async () => {
     const f = await fixture();
