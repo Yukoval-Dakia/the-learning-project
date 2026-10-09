@@ -1,11 +1,13 @@
 # Judge migration acceptance matrix
 
-This is the current parent acceptance index after product `2dbb9eb3e` and parent test correction `1535cf60c`. It updates the execution status of the 27 scenarios enumerated in [R1](2026-10-09-yuk1356-review-r1.md). The historical R1 report remains unchanged. A passing DB test supports only its stated boundary; it does not establish the whole scenario or migration complete.
+This is the current parent acceptance index after product `2dbb9eb3e` and parent test correction `1535cf60c`. Latest update: twelve process and eight cutover cases now pass; see [process/cutover evidence](evidence/2026-10-09-yuk1356-parent-process-cutover.json). Earlier failures below are historical, not unresolved after this verified fixture repair.
+
+It updates the execution status of the 27 scenarios enumerated in [R1](2026-10-09-yuk1356-review-r1.md). The historical R1 report remains unchanged. A passing DB test supports only its stated boundary; it does not establish the whole scenario or migration complete.
 
 Evidence keys:
 
 - **DB:** [128 distinct passing cases across eight scoped suites](evidence/2026-10-09-yuk1356-parent-dispatch-ack-db.json). This includes real transactions with controlled model boundaries, not paid provider output.
-- **Process failure:** [first actual SIGKILL/reopen result](evidence/2026-10-09-yuk1356-parent-process-first.json). The workflow recovered, but zero wire requests and domain `infra_failure` contradict successful completion. No other process case was executed.
+- **Process failure:** [first actual SIGKILL/reopen result](evidence/2026-10-09-yuk1356-parent-process-first.json). The workflow recovered, but zero wire requests and domain `infra_failure` contradict successful completion. The repaired fixture subsequently passed all12 process cases; the original failure is retained.
 - **Prepared:** source exists, but no parent runtime pass is recorded.
 
 | # | Required scenario | Actual evidence and remaining obligation |
@@ -16,8 +18,8 @@ Evidence keys:
 | 4 | Enqueue committed, acknowledgement lost | DB covers authoritative lookup and same-identity resend. Old producer cutover is prepared, not executed. |
 | 5 | Accepted send before notification; late markers | DB covers permanent truth and notification precedence. Live SSE delivery remains open. |
 | 6 | Concurrent ticks, workers, submits and more than 200 candidates | DB covers keyset advancement, competing reservations, installer locks and duplicate effects. Real multi-process cases remain open. |
-| 7 | Native load, stale head and admission | DB guards pass. First actual native-load crash/reopen failed before wire execution; diagnostics active. |
-| 8 | Claim committed, process dies before wire | Process fixture prepared. Not executed after bail on scenario 7. |
+| 7 | Native load, stale head and admission | DB guards pass. The repaired fixture passed actual native-load crash/reopen with three real loopback wire calls. |
+| 8 | Claim committed, process dies before wire | Actual claim-before-wire SIGKILL/reopen passes without repurchase. |
 | 9 | Provider accepted, timeout, partial response and process death | Controlled process fixture prepared; no successful transport result yet. Real provider failure behavior is unverified. |
 | 10 | Global Pi retries preserved; judge retries disabled | Source/unit evidence exists. Real installed transport wire counts are unverified because scenario 7 failed. |
 | 11 | First result saved, second unknown, third unclaimed | DB proves no additional paid claim at its mocked boundary. Actual transport/process case remains open. |
@@ -35,9 +37,9 @@ Evidence keys:
 | 23 | Unavailable engine metadata and identity mismatch | Status/route DB cases pass. Real authenticated Start consumer acceptance remains separate. |
 | 24 | Placement and intervention retention | Existing consumer suites have not been run for this candidate. An old intervention fixture uses malformed pending truth; it requires evidence-based adjudication, not a weaker assertion. |
 | 25 | Cutover against producer, cron, provider and restart | Shared fence DB tests pass. Real cutover fixture and old producer/cron/provider quiescence remain open. |
-| 26 | Old binary, compatible rollback and coherent restore | Fixed old producer fixture is prepared but unrun. Complete DBOS/domain/control restore is not proven by archive counts or health checks. |
+| 26 | Old binary, compatible rollback and coherent restore | Fixed old producer and compatible rollback pass all eight cutover cases. Complete DBOS/domain/control restore is not proven by archive counts or health checks. |
 | 27 | Bounded real provider output | Unrun. Requires fixed revision, input/output digest, task run, provider/model, cost and actual wire count. Controlled loopback transport cannot satisfy this row. |
 
 Migration-entrypoint smoke, final emitted logger proof, the one remaining independent R2, exact-head CI and merge are also open. Default pg-boss compatibility is an intermediate state. Actual old consumer retirement, coherent restore and deployment must remain explicit exit requirements.
 
-Only the process diagnostic child writes code now. It may change the test fixture and diagnostics, while production files stay read-only pending the exact pre-wire failure. Parent owns the actual runtime lock and acceptance. The original four services and release were unchanged when the last mutex was released at 01:44:37.483Z.
+The diagnostic child is completed/noPending. Parent owns integration and actual acceptance. The original four services and release were unchanged when the last mutex was released at02:09:13.043Z.

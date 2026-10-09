@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：judge父128 scoped DB通过；真实SIGKILL恢复首例失败，DBOS成功但领域infra_failure且wire0/预期3。唯一source-only诊断writer已起，01:44:37Z锁释放原4/release不变；整迁移In Progress。
+> Linear 是权威 tracker。2026-10-09 JST：judge父128 scoped DB、12真实process和8旧producer/cutover通过；原失败完整保留。02:09:13Z核owner释放锁原4/release未变；待migration/consumer/final artifact/R2/CI和整体退出。
 
 ## NOW
 
@@ -16,7 +16,7 @@
 
 ## NEXT
 
-- YUK1356 ff694/71bd/c9a/2db产品修复已有128 scoped DB证据。真实process首例0/3 wire失败，保存SIGKILL、同workflow恢复和review_required结果；唯一 `yuk1356-process-wire-diagnostics-20261009-v1` 只写worker/process测试诊断，产品只读，禁runtime。交回后父核锁复验，再旧消费者/迁移/实际consumer及唯一R2；按[27项验收矩阵](docs/planning/2026-10-09-yuk1356-current-acceptance-matrix.md)保留全部退出义务。
+- YUK1356产品2db修复，父128 scoped DB、12实际SIGKILL/reopen与8旧producer/cutover通过。诊断writer已释放，父fixture修正不改产品；继续migration smoke、既有consumer、最终产物及唯一R2，按[27项验收矩阵](docs/planning/2026-10-09-yuk1356-current-acceptance-matrix.md)保持全部退出义务。
 
 - 1355已交四个housekeeping族源码及隔离证据。下一idle族只读设计已交回，父核45源码+3报告；保留原userclock，5796已以13d317da8明确交接精确Copilot/session/practice写路径。未起idle writer或分配编号，judge交回后再核最终锁序。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。
 - 1358继续剩余路由/共享子树及三入口共用业务操作，保留现有确定性行为。1392公共board读取、1380事件读/纠错等已合接口由Start集成方接消费者，不复制领域规则。

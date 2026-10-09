@@ -1,3 +1,11 @@
+# Judge process and cutover accepted
+
+Product2dbb9eb3e, fixtureed010 plus parent test fixes now128scoped DB+12actual process+8cutover pass. Original0wire failure preserved; realinstalled Pi completions registration and textblock parsing corrected onlyfixture. Old96077producer fixed matchingpg-boss12.36 JSONpayload interception; officialDBOSschema init; actualseal INSERT fault leaves3saved/0candidate. All sourcewriter tasks completed/noPending. Formalpnpm typecheck passes includingStart; extraJScompiler91diagnostics is nonconfigured compiler, not hidden gate failure.
+
+Last mutexa0ed released02:09:13.043Z, original4/release/running same. No self-owned processes/services remain. Full6window evidence versioned process-cutover.json.gz/index. Parent next migration smoke (rebuilds dist/migrate.cjs; preserve/hash final), existingplacement/intervention consumer DB, final logger proof, realprovider/SSE/Start, soleR2 thenPR/exactCI. No PR yet. Existing intervention fixture malformedpending expectsFAILED release, may need evidence-based fixture correction after actualtest. No child active or locks.
+
+Previous history follows.
+
 # Current judge process diagnostics
 
 HEAD1535cf60c before this parent docs checkpoint, product2dbb9eb3e. 128scoped DB pass retained. Actual process firstcase native-load-committed SIGKILL/reopen fails expected3wire got0; DBOS recovered sameworkflow SUCCESS but domainreview_required/infra_failure. Exact cause unknown. Evidence /tmp/yuk1356-parent-process-db/{process.log,process-evidence.json,lock-release.json}; lockf583 released01:44:37.483Z, original4/release/running same; no resources or provider cost.

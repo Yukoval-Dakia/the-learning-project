@@ -63,7 +63,15 @@ const server = createServer(async (req, res) => {
       .object({ messages: z.array(z.object({ content: z.unknown() }).passthrough()) })
       .parse(JSON.parse(body));
     const text = parsed.messages
-      .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)))
+      .flatMap((message) => {
+        if (typeof message.content === 'string') return [message.content];
+        const blocks = z
+          .array(z.object({ type: z.string(), text: z.string().optional() }).passthrough())
+          .parse(message.content);
+        return blocks.flatMap((block) =>
+          block.type === 'text' && block.text !== undefined ? [block.text] : [],
+        );
+      })
       .join('\n');
     const names = [...text.matchAll(/"rule_id"\s*:\s*"(equations|elimination|units)"/g)].map(
       (m) => m[1],

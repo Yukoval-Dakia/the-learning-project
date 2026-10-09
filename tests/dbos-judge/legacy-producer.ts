@@ -24,7 +24,11 @@ async function main() {
       if (
         !paused &&
         text.includes('INSERT INTO pgboss.') &&
-        values?.some((value) => value === 'judge_run')
+        text.includes('json_to_recordset($1::text::json)') &&
+        z
+          .array(z.object({ name: z.string() }))
+          .parse(JSON.parse(z.string().parse(values?.[0])))
+          .some((job) => job.name === 'judge_run')
       ) {
         paused = true;
         process.send?.({ kind: 'before-send', pid: process.pid, sql: text });

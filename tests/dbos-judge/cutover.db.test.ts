@@ -5,6 +5,7 @@ import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
+import { DBOS } from '@dbos-inc/dbos-sdk';
 import { eq, sql } from 'drizzle-orm';
 import { PgBoss } from 'pg-boss';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
@@ -21,7 +22,6 @@ import {
   fenceJudgeUnitClaim,
   startJudgeDelivery,
 } from '@/capabilities/practice/server/judge-operational';
-import { setJudgeProcessObserverForTests } from '@/capabilities/practice/server/judge-process-observer';
 import { readJudgeRunPermanent } from '@/capabilities/practice/server/judge-run-observation';
 import { canonicalHash } from '@/core/migration/canonical';
 import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
@@ -108,6 +108,22 @@ beforeAll(async () => {
     !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
   )
     throw new Error('Disposable old producer fixture required');
+  // The target engine must exist before its authoritative empty inventory can be read.
+  DBOS.setConfig({
+    name: 'tlp-housekeeping',
+    systemDatabaseUrl: url.toString(),
+    systemDatabaseSchemaName: 'tlp_dbos',
+    executorID: 'local',
+    applicationVersion: 'prune-v1',
+    systemDatabasePoolSize: 3,
+    enableOTLP: false,
+    tracingEnabled: false,
+  });
+  try {
+    await DBOS.launch();
+  } finally {
+    await DBOS.shutdown();
+  }
   oldTree = await mkdtemp(resolve(tmpdir(), 'yuk1356-old-judge-'));
   await mkdir('.cache', { recursive: true });
   const archive = resolve(oldTree, 'source.tar');
@@ -344,16 +360,12 @@ async function savedImportGap() {
     });
   const input = (await inspectJudgePendingImport(database, f.runId)).payload.submit;
   await startJudgeDelivery(database, f.input);
-  const transaction = database.transaction.bind(database);
-  let seal = false;
-  setJudgeProcessObserverForTests(async (observation) => {
-    if (observation.kind === 'result-committed' && observation.unitId?.endsWith('units'))
-      seal = true;
-  });
-  database.transaction = (body, config) => {
-    if (seal) return Promise.reject(new Error('controlled pre-seal interruption'));
-    return transaction(body, config);
-  };
+  // Sealing uses a reserved session connection. Fail the real insert on any connection,
+  // while allowing the independent model result transactions to commit first.
+  await database.execute(sql`create function test_judge_preseal_failure() returns trigger
+    language plpgsql as $$ begin raise exception 'controlled pre-seal interruption'; end $$`);
+  await database.execute(sql`create trigger test_judge_preseal_failure before insert on evaluation
+    for each row execute function test_judge_preseal_failure()`);
   try {
     await expect(
       evaluateSubmission(database, {
@@ -383,10 +395,12 @@ async function savedImportGap() {
           { fence: (tx, request) => fenceJudgeUnitClaim(tx, f.input, request) },
         ),
       }),
-    ).rejects.toThrow('controlled pre-seal');
+    ).rejects.toMatchObject({
+      cause: { code: 'P0001', message: 'controlled pre-seal interruption' },
+    });
   } finally {
-    database.transaction = transaction;
-    setJudgeProcessObserverForTests(undefined);
+    await database.execute(sql`drop trigger test_judge_preseal_failure on evaluation`);
+    await database.execute(sql`drop function test_judge_preseal_failure()`);
   }
   expect(await database.select().from(evaluation)).toHaveLength(0);
   const source = await inspectJudgePendingImport(database, f.runId),
