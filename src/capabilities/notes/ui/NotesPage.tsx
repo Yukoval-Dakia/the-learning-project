@@ -13,7 +13,13 @@ const NOTE_TYPE_LABEL: Record<string, string> = {
   note_long: '长文笔记',
 };
 
-export default function NotesPage({ navigate }: { navigate: (to: string) => void }) {
+export default function NotesPage({
+  navigate,
+  list = listNotes,
+}: {
+  navigate: (to: string) => void;
+  list?: typeof listNotes;
+}) {
   const [subject, setSubject] = useState('all');
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
@@ -28,7 +34,7 @@ export default function NotesPage({ navigate }: { navigate: (to: string) => void
 
   const notesQ = useQuery({
     queryKey: ['notes', subjectQuery, debouncedQuery],
-    queryFn: () => listNotes(subjectQuery, debouncedQuery || undefined),
+    queryFn: () => list(subjectQuery, debouncedQuery || undefined),
   });
   const rows = notesQ.data?.rows ?? [];
   const searching = debouncedQuery.length > 0;

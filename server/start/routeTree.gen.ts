@@ -14,6 +14,7 @@ import { Route as SplatRouteImport } from './routes/$'
 import { Route as AgentNotesRouteImport } from './routes/agent-notes'
 import { Route as InboxRouteImport } from './routes/inbox'
 import { Route as MistakesRouteImport } from './routes/mistakes'
+import { Route as NotesRouteImport } from './routes/notes'
 import { Route as TodayRouteImport } from './routes/today'
 import { Route as BuildSplatRouteImport } from './routes/[_]build.$'
 import { Route as AdminConfigRouteImport } from './routes/admin.config'
@@ -50,6 +51,11 @@ const InboxRoute = InboxRouteImport.update({
 const MistakesRoute = MistakesRouteImport.update({
   id: '/mistakes',
   path: '/mistakes',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NotesRoute = NotesRouteImport.update({
+  id: '/notes',
+  path: '/notes',
   getParentRoute: () => rootRouteImport,
 } as any)
 const TodayRoute = TodayRouteImport.update({
@@ -119,6 +125,7 @@ export interface FileRoutesByFullPath {
   '/agent-notes': typeof AgentNotesRoute
   '/inbox': typeof InboxRoute
   '/mistakes': typeof MistakesRoute
+  '/notes': typeof NotesRoute
   '/today': typeof TodayRoute
   '/_build/$': typeof BuildSplatRoute
   '/admin/config': typeof AdminConfigRoute
@@ -138,6 +145,7 @@ export interface FileRoutesByTo {
   '/agent-notes': typeof AgentNotesRoute
   '/inbox': typeof InboxRoute
   '/mistakes': typeof MistakesRoute
+  '/notes': typeof NotesRoute
   '/today': typeof TodayRoute
   '/_build/$': typeof BuildSplatRoute
   '/admin/config': typeof AdminConfigRoute
@@ -158,6 +166,7 @@ export interface FileRoutesById {
   '/agent-notes': typeof AgentNotesRoute
   '/inbox': typeof InboxRoute
   '/mistakes': typeof MistakesRoute
+  '/notes': typeof NotesRoute
   '/today': typeof TodayRoute
   '/_build/$': typeof BuildSplatRoute
   '/admin/config': typeof AdminConfigRoute
@@ -179,6 +188,7 @@ export interface FileRouteTypes {
     | '/agent-notes'
     | '/inbox'
     | '/mistakes'
+    | '/notes'
     | '/today'
     | '/_build/$'
     | '/admin/config'
@@ -198,6 +208,7 @@ export interface FileRouteTypes {
     | '/agent-notes'
     | '/inbox'
     | '/mistakes'
+    | '/notes'
     | '/today'
     | '/_build/$'
     | '/admin/config'
@@ -217,6 +228,7 @@ export interface FileRouteTypes {
     | '/agent-notes'
     | '/inbox'
     | '/mistakes'
+    | '/notes'
     | '/today'
     | '/_build/$'
     | '/admin/config'
@@ -237,6 +249,7 @@ export interface RootRouteChildren {
   AgentNotesRoute: typeof AgentNotesRoute
   InboxRoute: typeof InboxRoute
   MistakesRoute: typeof MistakesRoute
+  NotesRoute: typeof NotesRoute
   TodayRoute: typeof TodayRoute
   BuildSplatRoute: typeof BuildSplatRoute
   AdminConfigRoute: typeof AdminConfigRoute
@@ -285,6 +298,13 @@ declare module '@tanstack/react-router' {
       path: '/mistakes'
       fullPath: '/mistakes'
       preLoaderRoute: typeof MistakesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/notes': {
+      id: '/notes'
+      path: '/notes'
+      fullPath: '/notes'
+      preLoaderRoute: typeof NotesRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/today': {
@@ -392,6 +412,7 @@ const rootRouteChildren: RootRouteChildren = {
   AgentNotesRoute: AgentNotesRoute,
   InboxRoute: InboxRoute,
   MistakesRoute: MistakesRoute,
+  NotesRoute: NotesRoute,
   TodayRoute: TodayRoute,
   BuildSplatRoute: BuildSplatRoute,
   AdminConfigRoute: AdminConfigRoute,

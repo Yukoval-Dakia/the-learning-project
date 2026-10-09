@@ -1,12 +1,14 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09：judge 传输验收已封存并push29a802f1a/PR1625草稿；本树fresh main7472切fix/yuk-1359-restore-parity，接既有1359/1329恢复helper修复。无runtime锁，Start notes由5796独占。
+> Linear 是权威 tracker。2026-10-09：恢复源码75d4已交回并进入父验收；正常整合Start notes main04232，仅PLAN/now冲突。完整恢复与DBOS重开尚未运行，judge PR1625仍草稿。
 
 ## NOW
 
+- **YUK-1358 / Start notes列表**：独占范围和验收见[notes计划](docs/planning/2026-10-09-yuk1358-start-notes-list.md)。保留查询校验、科目知识点解析、空集合语义及现有搜索/导航/视觉；不改note详情/presence/AI写，不把本切片当Notes整族完成。父50unit/18DB、R1 NONE和49RPC/原页面浏览器通过；98表/5序列窗口不变，PR1626已合main04232aaf10（exact9889 CI全绿）；父已fetch核main；[父证据](docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md)。useSubjects仍HTTP，完整迁移未完成。
+
 - **YUK-1359 / 恢复后重开衔接待修**：父已独立复验离线准备包来源与33项guard检查，零连接/监听/子进程；这不证明真实恢复。实际helper自建随机、无网络的`loom` scratch并可`--keep`，而准备驱动要求预置两份loopback test_fork端点，现接口不兼容。只读设计任务`yuk1359-restore-reopen-target-integration-design-20261009-v1`正收敛同一恢复数据的完整parity→目标绑定→DBOS重开；不得另恢复一份却沿用前份PASS。既有1359/1329范围，不新建重复票。
 
-- **YUK-1359 / 完整恢复证明**：按5796提交0015授权，不等judge merge/配额；四现有helper/receipt类型+scopedtests/runbook范围见[恢复缺口](docs/planning/2026-10-09-yuk1359-dbos-restore-evidence-gap.md)。设计已完成并核对7源/test/driver哈希，见[实施契约](docs/planning/2026-10-09-yuk1359-restore-coherence-design.md)。唯一Codex gpt-6.1-sol xhigh writer实施既有helper与离线测试；父负责独立审查、锁内真实恢复及DBOS重开验收。无judge代码带入，无恢复主库授权。
+- **YUK-1359 / 完整恢复证明**：按5796提交0015授权，不等judge merge/配额；四现有helper/receipt类型+scopedtests/runbook范围见[恢复缺口](docs/planning/2026-10-09-yuk1359-dbos-restore-evidence-gap.md)。设计已完成并核对7源/test/driver哈希，见[实施契约](docs/planning/2026-10-09-yuk1359-restore-coherence-design.md)。作者已释放固定75d4a4c87，父匹配12源/33日志/888制品并独立76unit通过；父负责独立审查、锁内真实恢复及DBOS重开验收。无judge代码带入，无恢复主库授权。
 
 - **YUK-1358 / Start事件详情与纠错**：PR1623已完成15DB、R2 NONE及4f36真实71RPC/T3浏览器验收，证据封存；正常整合96077db19仅PLAN/now冲突，20个本lane产品/测试文件与已验head一致。整合193unit/11协议及全部静态构建审计通过，已于22:52Z合main7472f4395（exact91f468 CI全绿），详见[父验收](docs/planning/2026-10-09-yuk1358-start-event-detail-parent.md)。旧4f36首因不倒推，未部署。
 
