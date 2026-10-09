@@ -30,3 +30,11 @@ Therefore the default emitted Start ESM and migrate CJS loading requirement rema
 No parent DB, migration, child process, provider, browser, runtime service or deployment ran in this turn. No lock or self-owned service exists from this work. Prepared commands are in `/tmp/yuk1356-implementation/parent-runtime-commands.sh`; they are not execution evidence.
 
 After the source repair, acceptance still needs independent review, relevant DB and migration tests, real kill/reopen and cutover cases, existing-consumer behavior and the authorized provider output gate. Runtime work must acquire the existing atomic deployment lock and coordinate with thread 57961995. Full old cohort accounting, coherent restore, producer/cron quiescence and compatible rollback remain migration exit obligations.
+
+## Offline loading follow-up and process preflight
+
+Parent copied and independently rehashed 703 fixed Start-server/migrate files into `/tmp/yuk1356-parent-emitted-proof/snapshot`; snapshot.json binds each copy to the original source candidate. The separate T3 verification task `yuk1356-emitted-logger-offline-proof-20261009-v1` uses only that immutable copy and writes scratch evidence outside the repository. It cannot run DB, service, migration or worker entrypoints. This task is a loading-evidence investigation, not an independent product review or runtime gate.
+
+Parent read the process and cutover launchers. The worker receives an explicit environment, requires a loopback `test_fork_*` database and loopback observer URL, and installs the actual Pi adapter with its model endpoint redirected to that observer. Its fetch guard rejects other origins. This is controlled transport evidence, not real provider quality evidence. The cutover suite builds the fixed old revision `96077db19` from a git archive. Both suites create resources and therefore still require the runtime lock.
+
+Their child cleanup is in afterAll. Parent will run process and cutover files separately with Vitest `--bail 1`, preserve the failure/evidence before any rerun, and inspect remaining child processes as well as container cleanup before releasing the lock. Do not continue into a new fixture reset after the first failure or infer process exit from a test timeout. These are prepared execution precautions; no test was run here.

@@ -1,3 +1,7 @@
+# Offline verification running alongside sole source repair
+
+Second child yuk1356-emitted-logger-offline-proof-20261009-v1 is test-role Codex gpt-6.1-sol high, limited to /tmp/yuk1356-parent-emitted-proof and its703 fixed copied/rehashed Start-server/migrate files. It must not write repo/build or run service/DB/worker/migrator. This does not consume independent review budget. Sole codewriter remains judge-domain-and-init-audit-repair. Parent read process/cutover safety boundaries; future locked runs each use --bail 1 because child cleanup is afterAll, preserving first failure before another reset. No runtime/lock. Both tasks return async; do not poll or duplicate.
+
 # Active audit repair and parent evidence
 
 Normal merge e2fcaae9d preserves all63 judge source blobs and20 incoming main7472 non-docs. Sole active codewriter task yuk1356-judge-domain-and-init-audit-repair-20261009-v1 (T3 namespace mcp e4c5132f, Codex gpt-6.1-sol xhigh) owns two source audit corrections plus scoped unit/static/build; no DB/runtime/install/push. Do not overlap builds/tests. Parent acceptance report docs/planning/2026-10-09-yuk1356-judge-parent-acceptance.md records exact evidence and logger gap: author probe only extracted CJS factories, Start ESM loading remains unproved. Linear1356 actual In Progress; progress comment updated. Await async completion, no polling/duplicate writer. Parent independent review and locked runtime gates remain open.
