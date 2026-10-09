@@ -39,13 +39,20 @@ it('0118 retains one control row, exact unique receipt indexes and immutable ope
     checkRateLimit: () => 1,
     boss: { send: async (_n, _d, o) => o?.id ?? null },
   });
+  const before = await testDb().select().from(event).where(eq(event.id, f.input.reservation_id));
+  const immutableReceiptError = {
+    cause: { code: 'P0001', message: 'judge operational receipts are immutable' },
+  };
   await expect(
     testDb().execute(
       sql`update event set payload=payload||'{}'::jsonb where id=${f.input.reservation_id}`,
     ),
-  ).rejects.toThrow('immutable');
-  await expect(testDb().delete(event).where(eq(event.id, f.input.reservation_id))).rejects.toThrow(
-    'immutable',
+  ).rejects.toMatchObject(immutableReceiptError);
+  await expect(
+    testDb().delete(event).where(eq(event.id, f.input.reservation_id)),
+  ).rejects.toMatchObject(immutableReceiptError);
+  expect(await testDb().select().from(event).where(eq(event.id, f.input.reservation_id))).toEqual(
+    before,
   );
 });
 it('duplicate-ID writer reads, parses and compares immutable payload and replays its recorded timestamp', async () => {

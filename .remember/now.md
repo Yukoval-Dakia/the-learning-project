@@ -1,3 +1,9 @@
+# Current judge scoped DB handoff
+
+Product 2dbb9eb3e delivered, sole writer completed/noPending. Parent verified 5 source/4895 inputs/884 artifacts/13 logs. Eight scoped DB suites now pass 128 distinct cases: native53, reconcile+operational21, migration/worker/terminal/status/fence54. Parent fixture-only corrections use actual coordinator recovery authority and exact nested PostgreSQL immutability error plus unchanged rows. Earlier failures preserved. Latest lock86d1 released01:43:14.916Z, original4/release/running unchanged. No runtime resources remain. Next actual process/cutover/migration smoke/consumer acceptance, then sole R2. No PR/push/CI yet. Parent report and evidence2026-10-09-yuk1356-parent-dispatch-ack-db.json versioned.
+
+Previous handoff follows and may be superseded above.
+
 # Current judge dispatch identity repair
 
 HEAD6981981b7 adds only two parent fixture fixes atop c9a0aab8a9011c93ea21532b958cb52ef11f7c74: rawSQL Date binding→ISO+timestamptz, and terminal-notification assertions scoped to exact run/business_table because resetDb doesnotclearjob_events. All previous writers completed/noPending. Parent inspected c9a schema diff and verified3 owned sources,4892inputs,884fixed/currentproducts,14logs. Author48unit/static/build pass.

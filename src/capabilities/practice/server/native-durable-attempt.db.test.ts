@@ -31,6 +31,7 @@ import { resolveSubjectProfile } from '@/subjects/profile';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET as pollStatus } from '../api/judge-run-status-route';
 import { createAttempt } from '../api/submit';
+import { RECONCILE_STALL_MS, reconcileStalledJudgeAttempts } from '../jobs/judge_pending_reconcile';
 import { runJudgeRun } from '../jobs/judge_run';
 import * as formalAttempts from './assessment/attempt';
 import { commitFormalAttempt } from './assessment/attempt';
@@ -1053,7 +1054,31 @@ describe('native durable assessment', () => {
       caller: 'native_assessment' as const,
       submit: pending.payload.submit as NativeJudgeRunJobData['submit'],
     };
-    await runJudgeRun(f.db, job, meta);
+    await expect(executeNativeAttempt(f.db, job)).rejects.toMatchObject({
+      code: 'judge_authorization_required',
+    });
+    expect(f.execute).not.toHaveBeenCalled();
+    expect(f.deps.checkRateLimit).toHaveBeenCalledTimes(2);
+    const report = await reconcileStalledJudgeAttempts(f.db, {
+      now: new Date(Date.now() + RECONCILE_STALL_MS + 1_000),
+      deps: {
+        ...f.deps,
+        boss: { ...f.deps.boss, getJobById: vi.fn(async () => null) },
+        observe: async (reservation) => ({
+          kind: 'absent',
+          deliveryId: reservation.delivery_id,
+        }),
+      },
+    });
+    expect(report.reenqueued).toBe(1);
+    expect(f.jobs).toHaveLength(1);
+    expect(f.jobs[0].run_id).toBe(run);
+    // The resend reuses its reservation but requires a fresh rate-limit admission.
+    expect(f.deps.checkRateLimit).toHaveBeenCalledTimes(3);
+    expect(f.deps.refundRateLimit).not.toHaveBeenCalled();
+    expect(await f.db.select().from(event).where(eq(event.id, pending.id))).toEqual([pending]);
+    await runJudgeRun(f.db, f.jobs[0], meta);
+    await runJudgeRun(f.db, f.jobs[0], meta);
     expect(f.execute).toHaveBeenCalledTimes(1);
   });
 
