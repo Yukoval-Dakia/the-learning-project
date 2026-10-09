@@ -39,10 +39,15 @@ const engine = vi.hoisted(() => {
     destroy: vi.fn(async () => {}),
     create: vi.fn(async (_options: unknown) => engine),
     getBoss: vi.fn(async () => engine),
+    running: true,
+    getRunningBoss: vi.fn(() => (engine.running ? engine : null)),
   };
 });
 vi.mock('@dbos-inc/dbos-sdk', () => ({ DBOSClient: { create: engine.create } }));
-vi.mock('@/server/boss/client', () => ({ getStartedBoss: engine.getBoss }));
+vi.mock('@/server/boss/client', () => ({
+  getStartedBoss: engine.getBoss,
+  getRunningBoss: engine.getRunningBoss,
+}));
 vi.mock('./judge-durable-config', () => ({ JUDGE_RUN_QUEUE: 'judge_run' }));
 
 function reservation(backend: 'dbos' | 'pg-boss' = 'dbos', slot = 0) {
@@ -80,6 +85,7 @@ beforeEach(() => {
   vi.stubEnv('DATABASE_URL', 'postgres://unused-unit-only/db');
   engine.workflow = null;
   engine.job = null;
+  engine.running = true;
   engine.getWorkflow.mockImplementation(async () => engine.workflow);
   engine.getJobById.mockImplementation(async () => engine.job);
   engine.listWorkflows.mockResolvedValue([]);
@@ -114,6 +120,7 @@ describe('practice judge engine delivery contract', () => {
     const injected = { send: vi.fn(async () => null) };
     expect(await enqueueLegacyJudgeDelivery(job, input, injected)).toBeNull();
     expect(engine.getBoss).toHaveBeenCalledTimes(1);
+    expect(engine.getRunningBoss).not.toHaveBeenCalled();
     injected.send.mockRejectedValueOnce(new Error('acknowledgment unknown'));
     await expect(enqueueLegacyJudgeDelivery(job, input, injected)).rejects.toThrow(
       'acknowledgment unknown',
@@ -265,6 +272,45 @@ describe('practice judge engine delivery contract', () => {
     },
   );
 
+  it('keeps a cold mapped legacy observation unavailable without starting or looking up an engine', async () => {
+    engine.running = false;
+    expect(await observeJudgeDelivery(reservation('pg-boss', 2))).toEqual({
+      kind: 'unavailable',
+      reason: 'backend_unavailable',
+    });
+    expect(engine.getRunningBoss).toHaveBeenCalledTimes(1);
+    expect(engine.getBoss).not.toHaveBeenCalled();
+    expect(engine.getJobById).not.toHaveBeenCalled();
+    expect(engine.create).not.toHaveBeenCalled();
+    expect(engine.getWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('keeps a cold unmapped observation unavailable without starting or querying DBOS for absence', async () => {
+    engine.running = false;
+    expect(await observeUnmappedJudgeRun(reservation().run_id)).toEqual({
+      kind: 'unavailable',
+      reason: 'backend_unavailable',
+    });
+    expect(engine.getRunningBoss).toHaveBeenCalledTimes(1);
+    expect(engine.getBoss).not.toHaveBeenCalled();
+    expect(engine.getJobById).not.toHaveBeenCalled();
+    expect(engine.create).not.toHaveBeenCalled();
+    expect(engine.getWorkflow).not.toHaveBeenCalled();
+  });
+
+  it('retains warm mapped authoritative absence and lookup failure without starting the client', async () => {
+    const r = reservation('pg-boss', 1);
+    expect(await observeJudgeDelivery(r)).toEqual({ kind: 'absent', deliveryId: r.delivery_id });
+    engine.getJobById.mockRejectedValueOnce(new Error('running backend unavailable'));
+    expect(await observeJudgeDelivery(r)).toEqual({
+      kind: 'unavailable',
+      reason: 'backend_unavailable',
+    });
+    expect(engine.getRunningBoss).toHaveBeenCalledTimes(2);
+    expect(engine.getBoss).not.toHaveBeenCalled();
+    expect(engine.create).not.toHaveBeenCalled();
+  });
+
   it('queries all three deterministic IDs in both engines before an unmapped absence', async () => {
     const runId = reservation().run_id;
     expect(await observeUnmappedJudgeRun(runId)).toEqual({
@@ -277,6 +323,8 @@ describe('practice judge engine delivery contract', () => {
     expect(engine.getWorkflow.mock.calls).toEqual(
       [0, 1, 2].map((slot) => [`judge-run-v1:${runId}:delivery:${slot}`]),
     );
+    expect(engine.getRunningBoss).toHaveBeenCalledTimes(1);
+    expect(engine.getBoss).not.toHaveBeenCalled();
     engine.job = { data: { corrupt: true } };
     expect(await observeUnmappedJudgeRun(runId)).toEqual({
       kind: 'unavailable',

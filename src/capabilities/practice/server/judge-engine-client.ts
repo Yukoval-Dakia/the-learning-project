@@ -7,7 +7,7 @@ import {
   JudgeWorkflowInput,
   type JudgeWorkflowInputT,
 } from '@/core/schema/event/judge-operational-events';
-import { getStartedBoss } from '@/server/boss/client';
+import { getRunningBoss, getStartedBoss } from '@/server/boss/client';
 import { JUDGE_RUN_QUEUE } from './judge-durable-config';
 import type { JudgeRunJobData } from './judge-run-payload';
 
@@ -137,7 +137,8 @@ export async function observeJudgeDelivery(
           deliveryId: reservation.delivery_id,
         };
       });
-    const boss = await getStartedBoss();
+    const boss = getRunningBoss();
+    if (!boss) return { kind: 'unavailable', reason: 'backend_unavailable' };
     const job = await boss.getJobById(JUDGE_RUN_QUEUE, reservation.delivery_id);
     if (!job) return { kind: 'absent', deliveryId: reservation.delivery_id };
     const input = z.object({ operational: JudgeWorkflowInput }).safeParse(job.data);
@@ -161,7 +162,8 @@ export async function observeJudgeDelivery(
 /** With no domain pointer, all deterministic legacy IDs and the DBOS initial ID must answer. */
 export async function observeUnmappedJudgeRun(runId: string): Promise<JudgeWorkflowObservation> {
   try {
-    const boss = await getStartedBoss();
+    const boss = getRunningBoss();
+    if (!boss) return { kind: 'unavailable', reason: 'backend_unavailable' };
     for (const slot of [0, 1, 2]) {
       const job = await boss.getJobById(JUDGE_RUN_QUEUE, judgeLegacyJobId(runId, slot));
       if (job) return { kind: 'unavailable', reason: 'identity_unverified' };
