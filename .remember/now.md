@@ -1,3 +1,7 @@
+# Parallel readonly acceptance preparation
+
+Alongside the sole three-test fixture writer, one Codex gpt-6-luna high research task is running: node:delegated-task:command%3Amcp%3Ae4c5132f-3c05-4ce6-aa2d-e5b525fe3bf6%3Adelegate-task%3Ayuk1356-provider-sse-acceptance-readonly-20261009-v1. It only reads existing actual-provider/SSE/auth/status entrypoints and writes /tmp/yuk1356-provider-sse-readonly.md plus its input hash manifest. No repo writes, runtime, provider, credentials or review role. It prepares remaining matrix rows1/5/22/23/27; it is not R2. Sole source writer remains existing-consumer-fixture-repair. Both wake parent asynchronously.
+
 # Current migration and consumer fixture work
 
 HEAD306fee061 preserves128scoped DB+12process+8cutover PASS. New actual migration smoke82PASS/4unrun: historical0117 setup expects itself last but0118 exists. Placement5PASS/1FAIL at directrawjob noauthority; selectedinterventionFAIL malformedpending held despiteFAILED marker. Originallogs andcleanup versionedconsumer-first-failures.json(.gz). NoacceptancePASS for these suites yet.
