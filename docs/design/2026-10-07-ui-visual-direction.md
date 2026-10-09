@@ -239,15 +239,15 @@ YUK-1388 已预告会挑战的方向（待定层，届时裁决）：
 
 ### 8.1 保留与替换
 
-对照对象是 `docs/design/loom-refresh/project/tokens.css`；暗色一行对照现役 `web/src/globals.css`。
+对照对象是 `docs/design/loom-refresh/project/tokens.css`；暗色一行对照现役 `web/src/globals.css`。现役样式的逐节对账见 YUK-1388 第二批 X-style 报告（冻结基线 `6c6905fad`）。
 
 | Loom 现状 | 决定 | 新 token |
 | --- | --- | --- |
 | 暖纸 `--paper #FAF9F5`、暖墨 `--ink #1F1E1D` | **保留**为色阶两端 | `--gray-50` / `--gray-900` |
 | `--paper*` 4 个、`--ink*` 5 个、`--line*` 3 个，零散 | **替换**为 11 级暖中性色阶 + 语义别名 | `--gray-50…900`；`--bg` `--bg-raised` `--bg-sunk` `--bg-hover` `--line` `--line-strong` `--text…--text-4` |
-| `--ink-4 #8A8880`（在页面底上约 3.4:1，不达 AA） | **替换** | `--text-4` 亮 `#6B675F`（5.34:1），暗 `#959188` |
+| `--ink-4 #8A8880`（在页面底上约 3.4:1，不达 AA；现役 `globals.css` 已由 YUK-718 修为 `#63625c`，5.81:1） | **替换** | `--text-4` 亮 `#6B675F`（5.34:1），暗 `#959188` |
 | 珊瑚 `--coral #D97757`，唯一强调色 | **保留** | `--coral-500` → `--accent` |
-| `--coral-hover #C2553A` 作按钮底（白字 4.51:1） | **替换**，留出余量 | `--coral-600 #B04C2C` → `--accent-strong`（白字 5.36:1）；焦点环也用它 |
+| `--coral-hover #C2553A` 作按钮底（白字 4.51:1）；现役主按钮实际是白字压在 `--coral #d97757` 上，约 3.12:1，不达 AA | **替换**，留出余量 | `--coral-600 #B04C2C` → `--accent-strong`（白字 5.36:1）；焦点环也用它 |
 | FSRS `again/hard/good` 四件套 | **保留含义**，改名为状态色 | `--critical` `--caution` `--positive`（各带 `-soft`） |
 | `--info` 蓝（AI 归属色） | **移除**；AI 与系统归属改用标签与来源标记 | — |
 | 字号 11 档（13–48） | **替换**为 6 档 | `--fs-1…6` = 13 / 15 / 17 / 20 / 26 / 34 |
