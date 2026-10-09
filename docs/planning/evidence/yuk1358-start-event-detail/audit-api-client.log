@@ -1,0 +1,3 @@
+$ pnpm gen:api-client && git diff --exit-code -- src/ui/lib/api-schema.generated.ts
+$ mkdir -p .cache && pnpm gen:openapi > .cache/openapi.generated.json && node tools/api-codegen/generate.mjs .cache/openapi.generated.json src/ui/lib/api-schema.generated.ts
+$ tsx scripts/generate-openapi.ts

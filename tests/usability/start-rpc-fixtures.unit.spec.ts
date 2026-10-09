@@ -22,6 +22,11 @@ import {
 } from '../../server/start/admin-test-fixtures';
 import { agentNoteBoard } from '../../server/start/agent-note-test-fixtures';
 import {
+  eventCorrectionInput,
+  eventDetail,
+  eventNow,
+} from '../../server/start/event-test-fixtures';
+import {
   AdminCostResponseSchema,
   AdminFailuresResponseSchema,
   AdminRunDetailResponseSchema,
@@ -31,6 +36,7 @@ import {
   ConjectureScoresResponseSchema,
   CoverageLatticeResponseSchema,
 } from '../../src/capabilities/observability/api/diagnostic-contracts';
+import { EventDetailResponseSchema } from '../../src/capabilities/observability/api/event-contracts';
 import { ProposalPageResponseSchema } from '../../src/capabilities/shell/api/contracts';
 import { ProposalDecisionResource } from '../../src/core/schema/proposal';
 import { createApiFixtureScenario } from './api-fixtures';
@@ -789,5 +795,95 @@ test('agent-note20/50/default RPC uses installed serializer and keeps ISO/unknow
       .object({ rows: z.array(z.object({ created_at: z.string() }).passthrough()) })
       .parse(envelope.result);
     assert.equal(dto.rows[0].created_at, '2026-10-09T12:34:56.001Z');
+  }
+});
+
+test('event GET detail and POST correction use installed Start serializer with complete JSON keys, dates and canonical receipt', async () => {
+  const map = await loadBuiltFunctionMap();
+  const fetcher = await client();
+  const fixture = { ...eventDetail, event: { ...eventDetail.event, future_date: eventNow } };
+  const jsonFixture: unknown = JSON.parse(JSON.stringify(fixture));
+  const id = eventDetail.event.id;
+  const createdId = 'correction / 新原件';
+  const location = `/api/events/${encodeURIComponent(createdId)}`;
+  for (const name of ['getStartEventDetail', 'postStartEventCorrection']) {
+    const functionId = [...map].find(([, value]) => value === name)?.[0];
+    assert(functionId);
+    let calls = 0;
+    const transport = async (url: string, init: unknown) => {
+      calls++;
+      const options = Init.parse(init);
+      const decoded = await decodeRpcRequest(
+        {
+          url: () => url,
+          method: () => options.method,
+          headers: () => Object.fromEntries(options.headers),
+          postData: () => options.body ?? null,
+          postDataJSON: () => (options.body ? JSON.parse(options.body) : null),
+        },
+        map,
+      );
+      assert.equal(decoded.name, name);
+      assert.equal(decoded.request.method(), name === 'getStartEventDetail' ? 'GET' : 'POST');
+      assert.equal(
+        new URL(decoded.request.url()).pathname,
+        `/api/events/${encodeURIComponent(id)}${name === 'getStartEventDetail' ? '' : '/corrections'}`,
+      );
+      if (name === 'postStartEventCorrection')
+        assert.deepEqual(decoded.request.postDataJSON(), eventCorrectionInput);
+      const result = await rpcFulfillment(
+        name,
+        name === 'getStartEventDetail'
+          ? { json: fixture }
+          : {
+              json: { correction_event_id: createdId },
+              status: 201,
+              headers: { Location: location },
+            },
+      );
+      assert.equal(result.status, 200);
+      assert.equal(result.headers?.Location, undefined);
+      return new Response(z.string().parse(result.body), {
+        status: result.status,
+        headers: { ...result.headers, 'content-type': 'application/json' },
+      });
+    };
+    const result = Envelope.parse(
+      await fetcher(
+        `http://fixture.test/_serverFn/${functionId}`,
+        [
+          {
+            method: name === 'getStartEventDetail' ? 'GET' : 'POST',
+            data: {
+              id,
+              ...(name === 'postStartEventCorrection' ? { input: eventCorrectionInput } : {}),
+            },
+            fetch: transport,
+          },
+        ],
+        transport,
+      ),
+    );
+    assert.equal(result.error, undefined);
+    assert.equal(calls, 1);
+    if (name === 'getStartEventDetail') {
+      const decoded: unknown = JSON.parse(z.string().parse(result.result));
+      assert.deepEqual(decoded, jsonFixture);
+      const dto = EventDetailResponseSchema.parse(decoded);
+      assert.deepEqual(dto, jsonFixture);
+      assert(Object.hasOwn(Object(dto.event.payload), '__proto__'));
+      assert(Object.hasOwn(Object(dto.event.payload), 'constructor'));
+      assert(Object.hasOwn(Object(dto.event.future_envelope), '__proto__'));
+      assert.equal(dto.event.future_date, eventNow.toISOString());
+      assert.equal(Object.getPrototypeOf(dto.event.payload), Object.prototype);
+      assert.equal(dto.chain.caused_by?.created_at, eventNow.toISOString());
+      assert.equal(dto.chain.caused_events.length, 2);
+      assert.equal(dto.chain.corrections.length, 2);
+    } else
+      assert.deepEqual(result.result, {
+        correction_event_id: createdId,
+        status: 201,
+        canonicalLocation: location,
+      });
   }
 });

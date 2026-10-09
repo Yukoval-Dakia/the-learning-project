@@ -1,3 +1,7 @@
+# Current judge candidate and integration
+
+Author caa125504 completed/noPending, sole writer RELEASED and clean. Parent independently matched63 source git blobs/current bytes,877 products,70 logs and root SHA256SUMS digest43b8853b354d75c6f4e007a6d6d0701fdeb19b54943c682aecfd90ec471b4bfc. Original manifests retained /tmp/yuk1356-implementation. Normal fetch/merge origin/main7472f4395 (Start eventPR1623); onlyPLAN/now conflict, both records retained. Current work: two source audit failures, ownership explicitly confirmed by5796. Schema0118 exactregisteredseed/Drizzlefield/immutability negatives, noallowlist; domain-ownedjudgeengineclient/publicactualconsumers, no baseline increase. Original writer363unit/static/fullbuild reports are sealed, not parent runtimePASS. Independent review, DB/migration/process/provider/Start consumers remainUNRUN. No runtime/lock. Idle follows formaljudge delivery. Earlier notes below are revision-specific.
+
 # Judge audit follow-up before acceptance
 
 Author reports fullbuild passed after two optional-logger externals; parent has not accepted fixed source/artifacts. Actual audit logs show practice→durable4 new dependencies, practice→events4→1, total434vs433. development-workflow:104 forbids baseline increase. Domain-specific engine client should be scoped to practice with real public consumers; preserve boss edges rather than hide/move debt. Decide exact repair after sole writer release. Schema audit only recognizes0117 initialization; judge_run_control.incarnation needs precise0118 migration/schema/journal contract plus negatives, not allowlist/general SQL scanner. Requested5796 script/test/baseline ownership via yuk1356-schema-audit-contract-ownership-20261009-v1; reply pending. No runtime.
@@ -25,6 +29,23 @@ PR1624 merged2026-10-08T22:32:03Z as96077db1905ebab6a522b0ae36f9f22e26be5895. Ex
 Fresh-fetch1incoming; switched this bound worktree to feat/yuk-1356-durable-judge from origin/main96077. Preserved four local docs commits as3a8d047f2/5bd42fe54/45872ceaf/645a69252. No code writer. Existing readonly child node:delegated-task:command%3Amcp%3Ae4c5132f-3c05-4ce6-aa2d-e5b525fe3bf6%3Adelegate-task%3Ayuk1356-judge-operational-contract-details-20261009-v1 was actually running/working at turn entry. Await completion notification; no duplicate child/poller. Output /tmp/yuk1356-judge-operational-contract-details-20261009.md plus hashes; three decisions only. Read and verify before unique judge writer. Judge scope in implementation-entry doc and1712199f5 ownership document; no migration number reserved. Shared producer lock mandatory. Start/boot/shutdown remain5796.
 
 Earlier receipts below retain their original revisions and superseded states.
+
+# Incoming Start handoff (historical at merge)
+
+# Current Start event detail lane
+
+PR1623 branch feat/yuk-1358-start-event-detail, runtime accepted at4f36d3fc5 (productf1e4). Independent R1 fixture P1 fixed; R2 NONE/noPending, max two rounds used. Parent15DB and actual71RPC/12windows/6writes; T3 browser correction/disabled pending controls, GET-only retry, committed-response loss without autoreplay, 2001char400, real401 re-gate, bad/missing records, legacy question link and deep reload verified. Technical-details snapshot truncated, not counted. Ignored recipe had two fixed setup/seed defects with preserved failures; no product changes. Runtime archive and full report: docs/planning/2026-10-09-yuk1358-start-event-detail-parent.md.
+
+All owned Start/PG resources cleaned. Owner/token d3f35015 lock released2026-10-08T20:40:09.702920Z, exact original4/running/release equality verified and7631 notified. No current runtime lock/writer; no provider/worker/paid/deploy. Private dump stays ignored. Sealed309-file public runtime archive excludes secrets.
+
+CI37836413386 exact4f36 failed old tests/dbos-review-orphan/migration.db.test.ts DB3 then aggregate. Later CI37843803109/cb984 has confirmed40P01 shared-host trigger-DDL deadlock; original4f36 firstcause staysunknown. Coordinator7631 owns minimal shared-fence/host repair after its sole fixture writer releases; do not edit shared DBOS/test paths or blindly rerun CI. PR1624 formally merged96077db19 after exacta880 CI and scoped concurrency proof. This branch now normally integrates that main; event source equals4f36 and incoming source equalsmain. Normal integrationccbcc9b7b verified57 incoming and20 accepted-event file bytes. Integrated193unit/11protocol/typecheck/lint/build/11audits allpassed. One requested fixture-process test is DB-partitioned and not counted as unit. No localDB/runtime rerun. Evidence main96077 manifest sealed; newexactCI pending. PR stays draft;1358/1359 stay InProgress. Current own work is evidence/docs only; entire migration not complete.
+
+Judge future ownership checked:75 accessible/77 registered trees have no dirty named shared paths;2 unavailable excluded. After1394 delivery7631 owns the bounded judge family and listed shared practice/AI/durable paths. This thread retains Start/UI/boot and receives practice/public readJudgeRunStatus with unchanged dispatch/202/status contract. No migration number reserved or judge writer started. See docs/planning/2026-10-09-judge-start-ownership.md.
+
+
+# Incoming1394 handoff at main96077db19
+
+The source below records earlier candidate-stage evidence. The final merge receipt above supersedes its pending-CI status.
 
 # Current update — YUK1394 CI cron collision repaired
 

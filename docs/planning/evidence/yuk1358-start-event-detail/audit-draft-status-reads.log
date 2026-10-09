@@ -1,0 +1,17 @@
+$ tsx scripts/audit-draft-status-reads.ts
+draft-status READ-side pool-visibility audit (YUK-569)
+
+  source files scanned:            1437
+  hand-rolled F1 inline (flagged): 0
+  allowlisted F1 inline:           0
+  UNKNOWN-SHAPE (flagged):         0
+  allowlisted UNKNOWN-SHAPE:       0
+
+hand-rolled F1 inline predicates (not helper, not allowlisted):  (none)
+
+NOTE (Engine B deferred): 4 live isPoolVisible(...) JS-twin call site(s) are shape-uncovered by Engine A (JS twins route through isPoolVisible):
+  · src/capabilities/practice/server/question-supply/inventory-projection.ts:232
+  · src/capabilities/practice/server/quiz/matcher.ts:618
+  · src/capabilities/practice/server/quiz/matcher.ts:739
+  · src/capabilities/practice/server/variant-rotation.ts:325
+

@@ -1,0 +1,22 @@
+[
+  "server/start/event-client.ts",
+  "server/start/event-client.unit.test.ts",
+  "server/start/event-function.ts",
+  "server/start/event-operation.db.test.ts",
+  "server/start/event-operation.ts",
+  "server/start/event-read.ts",
+  "server/start/event-read.unit.test.ts",
+  "server/start/event-test-fixtures.ts",
+  "server/start/routeTree.gen.ts",
+  "server/start/routes/events.$id.tsx",
+  "src/capabilities/observability/ui-public.ts",
+  "src/capabilities/observability/ui/EventDetailPage.tsx",
+  "src/capabilities/observability/ui/event-detail-client.ts",
+  "src/capabilities/observability/ui/event-detail-model.ts",
+  "tests/usability/start-rpc-fixtures.ts",
+  "tests/usability/start-rpc-fixtures.unit.spec.ts",
+  "web/src/router.tsx",
+  "web/src/routes/AdminControls.start.unit.test.tsx",
+  "web/src/routes/AdminPages.start.unit.test.tsx",
+  "web/src/routes/EventDetailPage.start.unit.test.tsx"
+]
