@@ -270,16 +270,8 @@ export async function executeNativeAttempt(
     status: 'effective' | 'review_required',
   ) => {
     await lockJudgeRun(tx, job.run_id);
-    const state = await readJudgeRunPermanent(tx, job.run_id);
-    if (state.kind === 'resolved') {
-      if (
-        state.result.assessment?.candidate_id !== prepared.candidate.evaluation.record.evaluation_id
-      )
-        throw new ApiError('coordinate_mismatch', 'Resolution candidate differs', 409);
-      return;
-    }
-    await requireJudgeRunOpen(tx, authority);
-    await writeEvent(tx, {
+    const candidateId = prepared.candidate.evaluation.record.evaluation_id;
+    const wanted = {
       id: job.run_id,
       session_id: input.capture.session_id ?? null,
       actor_kind: 'agent',
@@ -306,11 +298,57 @@ export async function executeNativeAttempt(
         assessment: {
           submission_id: input.submission_id,
           evaluation_group_id: input.evaluation_group_id,
-          candidate_id: prepared.candidate.evaluation.record.evaluation_id,
-          activation_intent: prepared.activation_intent,
+          candidate_id: candidateId,
+          // The accepted CAS coordinates stay immutable after the native head advances.
+          activation_intent: { evaluation_id: candidateId, ...input.expected_head },
         },
       }),
-    });
+    } satisfies Parameters<typeof writeEvent>[1];
+    const validateReceipt = (receipt: typeof event.$inferSelect | undefined) => {
+      if (
+        !receipt ||
+        receipt.session_id !== wanted.session_id ||
+        receipt.actor_kind !== wanted.actor_kind ||
+        receipt.actor_ref !== wanted.actor_ref ||
+        receipt.action !== wanted.action ||
+        receipt.subject_kind !== wanted.subject_kind ||
+        receipt.subject_id !== wanted.subject_id ||
+        receipt.outcome !== wanted.outcome ||
+        receipt.caused_by_event_id !== wanted.caused_by_event_id ||
+        receipt.task_run_id !== null ||
+        receipt.cost_micro_usd !== null ||
+        !NativeJudgeResolutionPayload.safeParse(receipt.payload).success ||
+        canonicalHash(receipt.payload) !== canonicalHash(wanted.payload)
+      )
+        throw new ApiError('coordinate_mismatch', 'Immutable resolution receipt differs', 409);
+    };
+    const [receipt] = await tx.select().from(event).where(eq(event.id, job.run_id));
+    if (receipt) {
+      validateReceipt(receipt);
+      return;
+    }
+    const state = await readJudgeRunPermanent(tx, job.run_id);
+    if (state.kind === 'resolved') {
+      // With no run-id event, resolved means the selector proved exact native
+      // activation + settlement. Only that same completion may finish its receipt.
+      const completion = state.result.assessment;
+      if (
+        status !== 'effective' ||
+        state.result.status !== 'effective' ||
+        completion?.submission_id !== input.submission_id ||
+        completion.evaluation_group_id !== input.evaluation_group_id ||
+        completion.candidate_id !== candidateId ||
+        completion.original_evaluation_id !== candidateId ||
+        completion.effective_evaluation_id !== candidateId
+      )
+        throw new ApiError('coordinate_mismatch', 'Native completion differs from resolution', 409);
+    } else {
+      await requireJudgeRunOpen(tx, authority);
+    }
+    await writeEvent(tx, wanted);
+    // writeEvent is first-write-wins, so a returned id alone is not a receipt acknowledgement.
+    const [saved] = await tx.select().from(event).where(eq(event.id, job.run_id));
+    validateReceipt(saved);
   };
   const committed = await commitFormalAttempt(
     db,
