@@ -1,10 +1,10 @@
-# Restore access recovered and implementation resuming
+# Restore retained scratch in parent acceptance
 
-2026-10-09 parent actually read workspace and git: clean c211c0f923 on fix/yuk-1359-restore-parity. Fetch confirms HEAD contains latest origin/main04232aaf10, no missing main commits. Old retained-scratch v1 is completed/noPending with zero edits/checks/commit due EPERM. New sole T3 implementation yuk1359-retained-scratch-reopen-resume-20261009-v2 uses codex gpt-6.1-sol xhigh, helper/receipt/scopedtests/docs only. No DB/Docker/provider/runtime/push/branch actions. Parent owns PLAN/now and final acceptance.
+Candidate e9bb23816be7dc5d3946ea057fe4e37e4660e984 is clean; implementation v2 completed/noPending and released ownership. Parent independently ran3files145offlineunit exit0 and matched985 source/input/artifact/log hashes. Author typecheck/lint/build/shellsyntax exit0, lint290warnings; parent hash verification is not an independent static rerun. Evidence docs/planning/evidence/2026-10-09-yuk1359-parent-retained-offline.json.
 
-Restore remains first. Judge separate branch/draft1625 at29a802f has unit3/4 and DB1/3/4 plus aggregate failures and main conflict, recorded in Linear1356 comment6d6a2dc3. Realprovider429 and all earlier uncompleted gates preserved. No cross-branch fixes.
+T3 mcp6636c2a8: independent first review yuk1359-restore-parity-review-r1-20261009 read-only fullbase04232...e9bb; offline prep yuk1359-restore-reopen-latebind-offline-prep-20261009-v2 writesonlynew/tmpdirectory. Both Codexgpt6.1Solxhigh running. No sourcewriter or runtime/lock. Actual capture/restore/DBOSreopen unrun. Do not change helper source while fixedreview/preparation unless consequential failure requires coordination.
 
-Existing restore canonical13DB passed at8ffc after genuine catalog SQL repair; full capture/dump/restore/reopen still unrun. Retained target design2db11 and host-psql prerequisite correction apply. Use existing installed postgres driver lazily for explicit readonly identity. Parent will prepare late-binding offline driver after final receipt contract. No current owned runtime or lock.
+Judge1625 remains separate29a802draft/watch with knownCI failures and mainconflict,1356 recorded; real429 and acceptancegates preserved. Restorefirst, no crossbranch writes.
 
 # Restore parent acceptance active
 

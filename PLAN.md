@@ -1,12 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09：工作树访问已恢复，父实核clean c211c0f923并fetch确认已含最新main04232。接续retained scratch唯一实现；完整恢复与DBOS重开未验收，judge PR1625仍草稿。
+> Linear 是权威 tracker。2026-10-09：restore候选e9bb23816已交回，父145离线测试与985项哈希通过；独立R1及同副本重开验收准备运行，完整恢复未验收。judge PR1625仍草稿。
 
 ## NOW
 
 - **YUK-1358 / Start notes列表**：独占范围和验收见[notes计划](docs/planning/2026-10-09-yuk1358-start-notes-list.md)。保留查询校验、科目知识点解析、空集合语义及现有搜索/导航/视觉；不改note详情/presence/AI写，不把本切片当Notes整族完成。父50unit/18DB、R1 NONE和49RPC/原页面浏览器通过；98表/5序列窗口不变，PR1626已合main04232aaf10（exact9889 CI全绿）；父已fetch核main；[父证据](docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md)。useSubjects仍HTTP，完整迁移未完成。
 
-- **YUK-1359 / 恢复后重开衔接待修**：父已独立复验离线准备包来源与33项guard检查，零连接/监听/子进程；这不证明真实恢复。实际helper自建随机、无网络的`loom` scratch并可`--keep`，而准备驱动要求预置两份loopback test_fork端点，现接口不兼容。设计16源哈希已父核并提交2db11afbe；旧writer v1因文件访问故障终止且零编辑、completed/noPending。接续writer `yuk1359-retained-scratch-reopen-resume-20261009-v2`负责实施显式loopback新scratch/实际目标身份及严格host制品停写证明，再接late target绑定；不得另恢复一份却沿用前份PASS。 父preflight发现宿主`psql`不可用，已交同一writer复用已装postgres客户端做显式目标只读identity并有界清理，禁止新增依赖或回落全局DB。既有1359/1329范围，不新建重复票。
+- **YUK-1359 / 恢复后重开验收**：retained scratch源码e9bb23816已交回且writer释放，显式loopback新目标、实际身份回执、host制品停写证明和postgres只读identity已实施。父3文件145离线测试及985项源/日志/制品哈希通过，见[父证据](docs/planning/evidence/2026-10-09-yuk1359-parent-retained-offline.json)。唯一独立R1 `yuk1359-restore-parity-review-r1-20261009`只读审完整diff；离线准备v2只写/tmp，衔接同一恢复副本的late target绑定与DBOS重开。原13DB只证明canonical查询；完整capture/restore/reopen与exact CI尚未通过，无runtime操作。
 
 - **YUK-1359 / 完整恢复证明**：按5796提交0015授权，不等judge merge/配额；四现有helper/receipt类型+scopedtests/runbook范围见[恢复缺口](docs/planning/2026-10-09-yuk1359-dbos-restore-evidence-gap.md)。设计已完成并核对7源/test/driver哈希，见[实施契约](docs/planning/2026-10-09-yuk1359-restore-coherence-design.md)。作者已释放固定75d4a4c87，父匹配12源/33日志/888制品并独立76unit通过；真实13DB初验揭露catalog缺括号，最小产品修复后13/13通过，两RED保留；父负责独立审查、锁内真实恢复及DBOS重开验收。无judge代码带入，无恢复主库授权。
 
