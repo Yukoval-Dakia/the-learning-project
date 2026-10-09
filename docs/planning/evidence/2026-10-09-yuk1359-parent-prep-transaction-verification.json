@@ -1,0 +1,35 @@
+{
+  "status": "SOURCE/ARTIFACT AND 8509 SEALED EVIDENCE FILES MATCHED; ONE GENERATED REPORT BOUND TO PARENT RERUN; RESTORE/REOPEN UNVERIFIED",
+  "sourceSealSha256": "dbe6d34ffddda9738997773babc8fa2fa5ab0a8332d6f9c017bff243a04b087a",
+  "evidenceSealSha256": "2e660a86d01df9fbce2d0983b624ca1bc001026350e1d7882fe6cfa77aebaa17",
+  "immutableSourceFiles": 5634,
+  "evidenceFiles": 8510,
+  "preservedBeforeEntriesMatched": 8546,
+  "boundRepositoryFilesMatched": 21812,
+  "readonlyOriginalPrepFilesMatched": 2947,
+  "dependencyFiles": 121549,
+  "parentAttemptFiles": {
+    "/tmp/yuk1359-restore-reopen-parent03": 10,
+    "/tmp/yuk1359-restore-reopen-parent02": 11,
+    "/tmp/yuk1359-restore-reopen-parent": 9
+  },
+  "fixedPrepFiles": 5588,
+  "offlineChecks": 330,
+  "bootstrapChecks": 57,
+  "snapshotRegressionChecks": 19,
+  "attempts": {
+    "connections": 0,
+    "listeners": 0,
+    "children": 0
+  },
+  "taskState": "completed",
+  "noPending": true,
+  "writerReleased": true,
+  "generatedReportObservation": {
+    "path": "/tmp/yuk1359-dbos-restore-offline-prep-v2/logs/snapshot-transaction-offline-check.json",
+    "authorSealedSha256": "b071866a51761012a288936d73353f12c7ce8cb845a8aa6962d704d59b73a83c",
+    "parentRerunSha256": "fe031f344b3965a356571d3985e0f53d9b60c6c605bbca5844d9c0c9263f0df0",
+    "reason": "Existing offline-check command rewrites this generated report. Parent run exit0/330checks retained separately. Original author report bytes were overwritten by that command; its seal and separate regression evidence remain. This is not a source/artifact exception.",
+    "sourceSealUnchanged": true
+  }
+}

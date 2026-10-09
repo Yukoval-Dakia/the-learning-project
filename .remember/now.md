@@ -1,3 +1,19 @@
+# Restore run04 source setup passed; unknown-worker settlement failed
+
+Parent330offline/5634source/dependency and8509sealed evidence passed; one offline generatedreport overwritten by test command was explicitly rebound to parent output, originalseal failure preserved. Fullbinding docs/planning/evidence/2026-10-09-yuk1359-parent-prep-transaction-verification.json.
+
+Run04 sourcef448f524864a94dc9d16c85c8f2b3fa20ba43374cde69b9cc01beaf34d512cb8 port32784/test_fork_20261009142224:118migrations,source-setup snapshot/DBOS phaseACK passed. Completeworker70599 doneSUCCESS3receipts exit0. Unknownworker70603 realCOMMITfault/failureIPC,ERROR1receipt+2missing; prep awaited naturalexit1 for15s andfailed. ActualSIGTERM reaped,proxyclosed0sockets;source stoppedretained. Originalfixture migration.db.test.ts562-618 only requires healthy retryworkerexit1, notinitialfaultworker; no retry/resume allowed inrestoreprep. No pending/capture/restore/reopen PASS.
+
+Token c6eb3565 released14:25:21.819369Z, original4ID/image/start/health/running/release unchanged. No ownedrunningresources/lock. Parentdir/tmp/yuk1359-restore-reopen-parent04; allfailedruns01-04 mustneverrestart/retry.
+
+Unique T3task node:delegated-task:command%3Amcp%3A6636c2a8-faa6-445b-bad3-e84032e9ac15%3Adelegate-task%3Ayuk1359-prep-fault-worker-settlement-repair-20261009-v1 running Codexgpt6.1Solxhigh/test. Only/tmp existingprep writer; fix ownedfaultworker settlement preservingexactsignals/unknownstate and fullchain, repeatableoffline report output withoutselfinvalidatingseal; no product/helper/worker/dependency/runtime edits. Parentdocs only. Onterminalindependentlyverify thenfreshsource+lock. Judge1625draftwatch unchanged, noR3.
+
+# Restore run04 active under c6eb3565
+
+Sole prep writer completed/noPending. Parent actual330offline exit0. Parent source/artifacts5634/dependencies121549/oldfailures unchanged;8509sealed evidence match. Existing offline-check overwrote one generated report; original seal check failed as expected, parent preserved report and narrow exact generated-output binding separately, no source/worker/helper exemption. docs/planning/evidence/2026-10-09-yuk1359-parent-prep-transaction-verification.json.
+
+14:22:00.722127Z actualmutex acquired owner7631/YUK1359 tokenc6eb3565-d6b9-4413-b0f1-3a86711943cd; Start5796 notified. Parent /tmp/yuk1359-restore-reopen-parent04, inputs prep/parent-inputs/run04; newsource provisioning underway. Fixedworker7472/helper887012, productR2NONE. Firstfailure cleanup preserve then release; neverretryrun01/02/03. No main/provider/paid/deploy.
+
 # Restore run03 failed in snapshot adapter; ownership released
 
 HEAD ef79d109b parent docs. Actual newsource393c5829e77e6662c916d5abda8ebc61813014eed83c38c4753bce354c7b1c25 port32783/test_fork_20261009133813 completed118Drizzle and fixedworker PID67152 ready, DBOS5.2.11 launch. Snapshot failed TypeError parsers; parent inspected snapshot drizzle(tx) while installed Drizzle construct needs client.options absent on postgres transaction client. No capture/restore/reopen. Worker SIGTERM exit recorded and PID absent; source stopped retained. Never restart any failedrun01/02/03.
