@@ -970,10 +970,7 @@
       "id": "G1",
       "kind": "PARENT_EXECUTION_LIMIT",
       "detail": "父5f09 8-file scoped DB --bail1 在第一 worker completion case失败。日志仅可证明 migrations applied、该case evaluation1/receipt0；不能把8个套件或34 skipped升为PASS。独立reviewer未运行任何测试/DB/runtime。",
-      "evidence": [
-        "/tmp/yuk1356-parent-db/db.log",
-        "/tmp/yuk1356-parent-db/db-result.json"
-      ]
+      "evidence": ["/tmp/yuk1356-parent-db/db.log", "/tmp/yuk1356-parent-db/db-result.json"]
     },
     {
       "id": "G2",
@@ -1016,10 +1013,7 @@
     "network_provider": false,
     "install": false,
     "delegation": false,
-    "only_outputs": [
-      "/tmp/yuk1356-review-r1.md",
-      "/tmp/yuk1356-review-r1.json"
-    ]
+    "only_outputs": ["/tmp/yuk1356-review-r1.md", "/tmp/yuk1356-review-r1.json"]
   },
   "parent_evidence": {
     "exact_head_unit": "父提供12 files /337 unit PASS；不是reviewer执行结果。",
