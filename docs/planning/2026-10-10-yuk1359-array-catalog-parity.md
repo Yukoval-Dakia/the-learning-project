@@ -51,3 +51,20 @@ Linear capture: the blocker and remaining acceptance belong to existing YUK-1359
 | src/core/migration/cutover-manifest.ts | 3266eee6d5f0b663a823dec73bd9e83c9ff752fcf97ef33ad0ea28c9f01db070 |
 | src/core/migration/cutover-manifest.test.ts | 358d24565ce7b07921f6744808f822e384e330824a7eb690f7affcedc89e6a60 |
 | tests/restore-parity/canonical.db.test.ts | 9a677286703fccbfdbb5d2ac611cc9826e7cc01ee7624f5ccc651f415319e690 |
+
+## Test portability correction
+
+This correction starts from `f325d413957437c8fecfdfa6cd48840dd9b89dd2` and owns only `tests/restore-parity/canonical.db.test.ts` and this section. The parent reports that command-v and known Homebrew/Postgres.app paths contain no pg_dump/pg_restore, and that CI does not explicitly provision the required major. The new round-trip case therefore uses the already-installed `@testcontainers/postgresql` API and an owned `pgvector/pgvector:pg16` container with database `test_fork_1359`. This supersedes the host-binary/environment-override requirement in parent handoff item 3 above. No dependency or global setup changed.
+
+The actual client connects to `getConnectionUri()`. Both PG16 executable versions are checked through `container.exec()`, which also runs the real custom dump and restore against the container's own loopback database. The archive stays at `/tmp/restore-array-catalog.dump` inside that container. Dump retains `-Fc --no-owner --no-privileges --schema=restore_array_catalog -f`; restore retains `--single-transaction --exit-on-error --no-owner --no-privileges`. Only the fixture schema in the owned database is dropped. Password/SSL options belong to individual exec calls; the test reads no host CLI override and changes no global environment or shared client.
+
+Catalog/type queries and row digests explicitly use the owned client. The original 13-case describe body and array value fixtures are byte-for-byte unchanged. The new case retains inherited attndims=0/restored attndims=1 for empty and populated partitions, complete fixture catalog/type-chain comparison, duplicate populated rows, 2D/bounded/NULL/Unicode/domain/enum data, CHECK rejection and negative value/type mutations. Nested finally blocks attempt schema cleanup, close the owned client, and stop the owned container. A schema cleanup or client-close rejection still reaches container stop.
+
+Static validation used Node v24.19.0 and pnpm 11.13.1. The following commands passed, with logs in `/var/folders/bt/rcf5s7tx3s93g3dz0046y96w0000gn/T/yuk1359-container-test-static-7eifewgk`:
+
+- `pnpm exec tsc --noEmit --project /var/folders/bt/rcf5s7tx3s93g3dz0046y96w0000gn/T/yuk1359-container-test-static-7eifewgk/tsconfig.json`: scoped configuration extends the repository tsconfig, disables incremental output and includes only the owned test file plus its imported types/source.
+- `pnpm exec biome check tests/restore-parity/canonical.db.test.ts`: passed without fixes or diagnostics.
+- `pnpm vitest list --config vitest.db.config.ts tests/restore-parity/canonical.db.test.ts`: discovered the original 13 cases and the new round-trip case, 14 total. List mode disables DB global setup and fork setup. The existing Vite native-config import-extension warning remains.
+- Static comparison against the pinned base confirmed the original 13-case describe body and array value fixtures are unchanged; `git diff --check` passed.
+
+DB UNRUN. No DB/Docker/Testcontainers runtime, CLI installation, provider/browser, build, child delegation, R3, push or branch change was performed. Parent owns the locked scoped DB execution and any resulting runtime fixes, full lint/docs, Linear state, CI and delivery. No new follow-up was discovered outside the existing YUK-1359 acceptance obligation. The historical source-hash table above remains its earlier snapshot; the corrected test SHA-256 is `87d91a3bf94b843305430024be50a7ddfd734e06da6d3a9ede603a91678edae3`.
