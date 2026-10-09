@@ -1,3 +1,9 @@
+# Live acceptance research received
+
+provider-sse-acceptance-readonly task completed/noPending. Parent verified35inputhashes, versionedlive-acceptance-preparation report/index, sentpubliccontract andmissingStart same-key/response-loss cases to5796. Controlledloopback cannot satisfyrealprovider. No existingactualjudgerunnerfound; reuse executeJudgeWorkflow andfrozenfixture onisolatedDB. SSE replaycannot recreateprunednotifications; permanentstatus needsindependentcheck. Parent qualification: sumfixturecaps$0.003 is postcallaccountinglimit, notproven providerinvoiceceiling; constrainactualcalls/time/tokenandmeasurecost, no globalbilling subsystem.
+
+Onlyactivechild remains existing-consumer-fixture-repair withthree authorizedtests. NoDB/runtime/buildbyparent whilewriteractive. Awaititsasyncdeliverythenactualfixturetests. Originaltargetand27matrixretained.
+
 # Parallel readonly acceptance preparation
 
 Alongside the sole three-test fixture writer, one Codex gpt-6-luna high research task is running: node:delegated-task:command%3Amcp%3Ae4c5132f-3c05-4ce6-aa2d-e5b525fe3bf6%3Adelegate-task%3Ayuk1356-provider-sse-acceptance-readonly-20261009-v1. It only reads existing actual-provider/SSE/auth/status entrypoints and writes /tmp/yuk1356-provider-sse-readonly.md plus its input hash manifest. No repo writes, runtime, provider, credentials or review role. It prepares remaining matrix rows1/5/22/23/27; it is not R2. Sole source writer remains existing-consumer-fixture-repair. Both wake parent asynchronously.
