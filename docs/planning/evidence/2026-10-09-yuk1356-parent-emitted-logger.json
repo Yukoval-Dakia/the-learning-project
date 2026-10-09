@@ -83,10 +83,7 @@
       "stderrUnchanged": true,
       "fullEntrypoint": "NOT_EXECUTED_NOT_ACCEPTED",
       "dbosVersion": "unknown",
-      "excludedOptionalOnlyBindings": [
-        "esm_exports$1",
-        "init_esm$1"
-      ]
+      "excludedOptionalOnlyBindings": ["esm_exports$1", "init_esm$1"]
     },
     {
       "kind": "cjs",
@@ -171,9 +168,7 @@
       "stderrUnchanged": true,
       "fullEntrypoint": "NOT_EXECUTED_NOT_ACCEPTED",
       "dbosVersion": "unknown",
-      "excludedOptionalOnlyBindings": [
-        "require_src6"
-      ]
+      "excludedOptionalOnlyBindings": ["require_src6"]
     }
   ],
   "proofFiles": [
