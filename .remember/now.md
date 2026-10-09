@@ -1,6 +1,6 @@
 # Active Start notes list — 2026-10-09
 
-Exact source c236a7160 is writer-released. Parent matched21source/29logs/893artifacts and ran50unit plus18realDB successfully. Mutex released04:54:37Z; original four/release unchanged. R1 and offline built RPC/browser preparation are running; no runtime resources remain. Full report docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md. useSubjects still HTTP and note detail/presence/write remain pending. Judge/restore ownership remains7631. Earlier records retain their revisions.
+Source c236 remains unchanged. PR1626 exact aa8dd CI37886224656 passed; R1 NONE and patch SHA verified. Parent50unit/18DB plus real49RPC/eightreadwindows and original NotesPage T3browser acceptance pass;98nonsystemtables/fivesequences unchanged in aggregate list and distinct navigation windows. Runtime lock released05:30:23.105409Z, ownPG/Start removed, original4/release unchanged. First rawDate seed failure retained and only ignored fixture corrected; report and184-file archive manifest at docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md. Final evidence-only push/CI/merge pending. Subjects HTTP and detail/presence remain migration scope; no deployment. Judge/restore remain7631-owned.
 
 # Restore helper ownership — 2026-10-09
 
