@@ -200,3 +200,12 @@ PR1599已合入7bc216509，tree与CI head6ab98ed8c一致；CI Gate37677610975成
 PR1600已于2026-10-07 21:18:58Z合入 `7100dfae4`，合并tree `743ee4d80617dc9b34c7533d724e052af5fd50c4` 与准确head `c40a18621` 一致；CI Gate `37686417034` 成功，独立初审P0/P1 NONE，无未裁决review threads，完整17分钟窗满足。未部署。Start挂载任务归主线，实际新入口行为及旧SPA退出尚未完成。
 
 [W1详细消费者清单](2026-10-08-yuk1359-w1-consumers.md)固定基线7bc216509，覆盖Today子组件与Inbox共享命令。新增确认ProfileBand的目标画像读取和LearningIntentComposer的待审提议提交；不新增恢复owner。后续新入口按[Start验收矩阵](2026-10-08-yuk1376-start-acceptance.md)取得实际证据，不能借用旧SPA的通过结论。既有1358/1359/1376覆盖剩余工作，本轮无新独立缺陷，不重复建票。
+
+
+## Main7472 route entry census
+
+After PR1623, parent re-read the exact committed `7472f4395f4a12a5167e33034d5d8af8bf695049` UI_SURFACES and every Start route through TypeScript AST literal extraction. [Sealed inputs and mapping](evidence/2026-10-09-yuk1359-start-route-census.json) show28 surfaces:14 explicit Start entries including the root redirect, and14 still served through the SPA fallback. API and build catchalls do not count as page migration. This supersedes the6212 entry count only, not its runtime evidence.
+
+Remaining entries are `/welcome`, `/onboarding/upload`, `/placement`, `/profile`, `/record`, `/practice`, `/drafts`, `/questions`, `/questions/$id`, `/knowledge`, `/knowledge/$id`, `/notes`, `/notes/$id`, `/coach`. Shared Copilot, nested consumers, build/dev/Compose, canonical boot and legacy deletion obligations remain beyond this entry count. No runtime or full-page PASS follows from it.
+
+A parent source check identifies `/notes` list as an independent candidate for the Start owner while judge actual output awaits provider availability. Existing `notes/public.ts` exports `listNotes` and ISO `NoteSummary`; `api/notes-list.ts` still validates NoteListQuerySchema and resolves subject knowledge IDs before the typed read. Preserve no-subject versus empty knowledge-set semantics and AND text filtering, with no invented pagination. This is proposed sequencing, not authorization to duplicate the owner's writer, a new aggregate, or completion of note detail/presence/AI commands. Parent sent these exact boundaries to5796; no notes or Start code changed.
