@@ -1,0 +1,32 @@
+# YUK-1356 judge parent acceptance
+
+Status: source candidate received; migration acceptance remains open.
+
+## Fixed candidate and integration
+
+Author commit `caa125504c04d6efcbd27e864a958bafeb303ddb` completed with no pending child runs and explicitly released the sole writer. Parent independently verified 63 changed source files against their git blobs and current bytes, 877 build/fixture artifacts, and 70 logs. All SHA-256 values matched. Root manifest digest: `43b8853b354d75c6f4e007a6d6d0701fdeb19b54943c682aecfd90ec471b4bfc`.
+
+Parent fetched and normally merged main `7472f4395f4a12a5167e33034d5d8af8bf695049` as `e2fcaae9d`. Only PLAN and remember handoff conflicted; both histories were preserved. All 63 judge source blobs remained equal to the author candidate; all 20 incoming non-documentation files equal main. Raw manifests and parent verification JSON remain in `/tmp/yuk1356-implementation/`.
+
+The author reports 363 scoped unit tests, root/Start typechecks, lint and full build passing. Parent inspected the sealed command records. Parent has not yet rerun those checks on the integrated candidate. The original failed build and audit logs remain preserved.
+
+## Current source corrections
+
+Only one repair writer is active: `yuk1356-judge-domain-and-init-audit-repair-20261009-v1`, Codex `gpt-6.1-sol`, xhigh. It owns the already authorized judge client/public dependency correction and the precise 0118 schema initialization audit with negative tests. Parent owns this report, PLAN/remember, acceptance and tracking.
+
+- Capability audit reports practice→durable 4 against baseline 0; practice→events fell from 4 to 1, total 434 against 433. Each actual dependency category must satisfy its limit. No offsetting increases, allowlist additions or import hiding. Judge-specific engine operations belong with their domain and retain actual callers; shared host consumes the public seam.
+- Schema audit classifies `judge_run_control.incarnation` as a stub. Its 0118 migration initialization needs a narrow contract bound to actual Drizzle schema, registered migration, exact singleton seed and immutability, with rejection tests. Existing 0117 evidence stays intact.
+
+Ownership confirmation: `/tmp/yuk1358-judge-audit-ownership-20261009.json`. This is authorization, not verification of the repair.
+
+## Logger evidence limit
+
+Parent read `verify-built-logger.cjs`. It extracts the emitted DBOS logger factory from server/worker/migrate CJS products and evaluates it with controlled utility/serialization modules. It checks default/custom logger paths do not request optional packages, plus an expected failure when OTLP needs the optional transport. It does not load the Start ESM graph, and cannot establish absence of every surrounding dynamic-require failure.
+
+Therefore the default emitted Start ESM and migrate CJS loading requirement remains open. Do not execute a production migrator or service entrypoint to fill this gap. Preserve the exact two-package optional external boundary and test the actual emitted loading path safely. OTLP-enabled behavior is outside the default-path claim.
+
+## Runtime gates not run
+
+No parent DB, migration, child process, provider, browser, runtime service or deployment ran in this turn. No lock or self-owned service exists from this work. Prepared commands are in `/tmp/yuk1356-implementation/parent-runtime-commands.sh`; they are not execution evidence.
+
+After the source repair, acceptance still needs independent review, relevant DB and migration tests, real kill/reopen and cutover cases, existing-consumer behavior and the authorized provider output gate. Runtime work must acquire the existing atomic deployment lock and coordinate with thread 57961995. Full old cohort accounting, coherent restore, producer/cron quiescence and compatible rollback remain migration exit obligations.

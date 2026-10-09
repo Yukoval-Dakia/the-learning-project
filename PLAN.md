@@ -16,7 +16,7 @@
 
 ## NEXT
 
-- YUK1356作者caa125504已completed/noPending；父核63源码/877产物/70日志全匹配。当前唯一代码线收敛judge领域client与0118精确初始化合同，脚本/test/baseline ownership已获5796确认；不增基线/allowlist。完成后独立review与锁下DB/迁移/进程验收。Start/boot/shutdown仍归5796。
+- YUK1356作者caa125504已completed/noPending；父核63源码/877产物/70日志全匹配。唯一任务yuk1356-judge-domain-and-init-audit-repair-20261009-v1已running，收敛judge领域client与0118精确初始化合同，脚本/test/baseline ownership已获5796确认；不增基线/allowlist。完成后独立review与锁下DB/迁移/进程验收。Start/boot/shutdown仍归5796。
 
 - 1355已交四个housekeeping族源码及隔离证据。下一idle族只读设计已交回，父核45源码+3报告；保留原userclock，5796已以13d317da8明确交接精确Copilot/session/practice写路径。未起idle writer或分配编号，judge交回后再核最终锁序。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。
 - 1358继续剩余路由/共享子树及三入口共用业务操作，保留现有确定性行为。1392公共board读取、1380事件读/纠错等已合接口由Start集成方接消费者，不复制领域规则。
