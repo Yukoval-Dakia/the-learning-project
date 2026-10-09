@@ -276,8 +276,12 @@ and emits no parity receipt. Existing receipt paths are refused; `--overwrite` a
 receipt before attempting a replacement. Failed attempts exit nonzero and write failed JSON where writable.
 
 The source uses a live exported snapshot through dump and all source reads. Its logical algorithm is
-`pg16-column-text-sha256-multiset-v1`: fixed UTF-8/UTC PostgreSQL 16 text values, ordered column/type
-metadata, sorted full-row SHA-256 digests with duplicate multiplicity, streamed into a table digest.
+`pg16-column-text-sha256-multiset-v2`: fixed UTF-8/UTC PostgreSQL 16 text values, ordered column/type
+metadata with array declaration dimensions canonicalized to zero, sorted full-row SHA-256 digests
+with duplicate multiplicity, streamed into a table digest.
+Actual array values retain their dimensions, bounds, order and NULL distinctions in the hashed text.
+The envelope remains version 2; v1, missing and unknown content algorithms are rejected. Historical
+v1 digests and receipts are not reinterpreted as v2 evidence. Fresh capture and restore are required.
 It covers every non-system schema (including empty schemas), physical table/partition/inheritance rows
 using `ONLY`, and all sequences with decimal-string `last_value` and boolean `is_called`. Supported
 value types include ordinary deterministic builtins, pgvector `vector`, enums with ordered labels,

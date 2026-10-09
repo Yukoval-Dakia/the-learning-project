@@ -32,11 +32,7 @@
     "containerId": "2cd63c187eb9aba35194e8e914171f657b0f7dc25b95e64a9229773ed2ec8481",
     "stopped": true,
     "retained": true,
-    "workerPidsGone": [
-      16254,
-      17028,
-      17037
-    ],
+    "workerPidsGone": [16254, 17028, 17037],
     "proxyClosed": true,
     "at": "2026-10-09T15:27:31.036977+00:00"
   },
@@ -57,15 +53,7 @@
   },
   "sealDifference": {
     "premise": "Unknown workflow failure makes the entire host database immutable before owned process settlement.",
-    "sealedSections": [
-      "build",
-      "versions",
-      "schema",
-      "domain",
-      "dbos",
-      "obligations",
-      "fixture"
-    ],
+    "sealedSections": ["build", "versions", "schema", "domain", "dbos", "obligations", "fixture"],
     "differences": [
       {
         "path": "domain/pgboss_schedule/1/json/updated_on",

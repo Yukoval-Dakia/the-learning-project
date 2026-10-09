@@ -68,3 +68,11 @@ Static validation used Node v24.19.0 and pnpm 11.13.1. The following commands pa
 - Static comparison against the pinned base confirmed the original 13-case describe body and array value fixtures are unchanged; `git diff --check` passed.
 
 DB UNRUN. No DB/Docker/Testcontainers runtime, CLI installation, provider/browser, build, child delegation, R3, push or branch change was performed. Parent owns the locked scoped DB execution and any resulting runtime fixes, full lint/docs, Linear state, CI and delivery. No new follow-up was discovered outside the existing YUK-1359 acceptance obligation. The historical source-hash table above remains its earlier snapshot; the corrected test SHA-256 is `87d91a3bf94b843305430024be50a7ddfd734e06da6d3a9ede603a91678edae3`.
+
+## Parent actual PG16 acceptance
+
+Parent independently ran 194 scoped unit tests and full lint successfully. The first actual 14-case DB run passed the original 13 cases and the new case's dump/restore parity and array-value mutations, then failed because PG16 disallows altering the domain used by an array column. The failed log remains preserved.
+
+The parent added an independent scalar domain and table for the NOT NULL metadata mutation. Array domains, enum values, multidimensional arrays, lower bounds, NULL distinctions, domain CHECK rejection and bigint-array type mutation remain tested. The corrected 14/14 DB suite passed against owned PG16 containers. Scoped typecheck and Biome passed. This is a test-only correction; the helper source remains f325d4139.
+
+Both runs released their mutex after exact baseline container/release comparison. The second release initially refused while Testcontainers cleanup was settling; the lock was retained until only the original four containers remained. Final release was 2026-10-09T16:34:06.063132Z. See [parent evidence](evidence/2026-10-10-yuk1359-parent-array-parity.json). No full fresh helper capture/restore or restored DBOS reopen has passed yet. Historical run07 remains failed.

@@ -1,12 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-10：父463offline/制品核对通过；run07真实三状态、停写capture及pg_restore已通过，完整比对拒绝两张pg-boss分区的数组声明维度差异，verified=false。16:08:50Z锁已释放、两副本停止保留、主4/release不变。接helper语义核验/修复，同目标重开未执行。
+> Linear 是权威 tracker。2026-10-10：数组目录维度修复已交f325，父194unit/14真实DB通过。首次domain fixture失败保留；16:34:06Z锁释放，原4/release不变。接新helper制品封存及完整capture/restore/同目标DBOS重开，run07仍失败。
 
 ## NOW
 
 - **YUK-1358 / Start notes列表**：独占范围和验收见[notes计划](docs/planning/2026-10-09-yuk1358-start-notes-list.md)。保留查询校验、科目知识点解析、空集合语义及现有搜索/导航/视觉；不改note详情/presence/AI写，不把本切片当Notes整族完成。父50unit/18DB、R1 NONE和49RPC/原页面浏览器通过；98表/5序列窗口不变，PR1626已合main04232aaf10（exact9889 CI全绿）；父已fetch核main；[父证据](docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md)。useSubjects仍HTTP，完整迁移未完成。
 
-- **YUK-1359 / 恢复后重开验收**：固定helper887012、worker7472；原[R2 NONE](docs/planning/2026-10-09-yuk1359-restore-r2.md)，不启动第三审。[父463offline/封存核验](docs/planning/evidence/2026-10-10-yuk1359-parent-prep-clock-verification.json)通过。run06父端点输入错误已停止保留。run07完成118迁移、DBOS准入、complete SUCCESS3回执、unknown ERROR1+2missing、pending首提交后SIGKILL保留PENDING1。实际停写capture与pg_restore通过，严格comparison失败，完整inventory差异仅pgboss两张queue_stats分区wait_bins/run_bins的dimensions0→1及派生摘要；[真实证据](docs/planning/evidence/2026-10-10-yuk1359-parent-restore-attempt07.json)。全部其他清单/序列一致，但verified=false且未重开。16:08:50.470573Z核token0be407fa释放锁，两副本停止保留，主4/running/release不变。核PG数组声明语义后在既有helper范围修复，不跳表、不改历史失败。
+- **YUK-1359 / 恢复后重开验收**：run07真实capture/restore比对因数组声明维度0→1失败，历史证据保留。修复f325只归一数组声明维度，真实数组值/类型链完整保留并升级digest v2，旧v1不得升级为新证明。父194unit及[14真实PG16 DB](docs/planning/evidence/2026-10-10-yuk1359-parent-array-parity.json)通过；第一次domain fixture失败13/14保留，测试修正后14/14。16:34:06Z锁释放，原4/running/release不变。下一步封存新helper和独立准备目录，再fresh source完整capture/restore及同恢复目标重开；固定worker7472不变。旧helper887012的R2不冒称覆盖新修复，无R3，无部署。
 
 - **YUK-1359 / 完整恢复证明**：按5796提交0015授权，不等judge merge/配额；四现有helper/receipt类型+scopedtests/runbook范围见[恢复缺口](docs/planning/2026-10-09-yuk1359-dbos-restore-evidence-gap.md)。设计已完成并核对7源/test/driver哈希，见[实施契约](docs/planning/2026-10-09-yuk1359-restore-coherence-design.md)。作者已释放固定75d4a4c87，父匹配12源/33日志/888制品并独立76unit通过；真实13DB初验揭露catalog缺括号，最小产品修复后13/13通过，两RED保留；父负责独立审查、锁内真实恢复及DBOS重开验收。无judge代码带入，无恢复主库授权。
 

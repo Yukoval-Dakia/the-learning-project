@@ -265,6 +265,9 @@ describe('real PG16 partition array pg_dump/pg_restore regression (UNRUN by auth
         SET DateStyle='ISO,YMD'; SET IntervalStyle='postgres'; SET extra_float_digits=3; SET bytea_output='hex';
         CREATE SCHEMA ${quoteIdentifier(arraySchema)};
         CREATE TYPE ${arrayRelation('phase')} AS ENUM ('created','检查','completed');
+        CREATE DOMAIN ${arrayRelation('scalar_checked_text')} AS text NOT NULL CHECK (length(VALUE)>0);
+        CREATE TABLE ${arrayRelation('scalar_domain')} (value ${arrayRelation('scalar_checked_text')});
+        INSERT INTO ${arrayRelation('scalar_domain')} VALUES ('检查 scalar');
         CREATE DOMAIN ${arrayRelation('checked_text')} AS text NOT NULL CHECK (length(VALUE)>0);
         CREATE DOMAIN ${arrayRelation('matrix')} AS text[] CHECK (array_ndims(VALUE)=2);
         CREATE DOMAIN ${arrayRelation('matrices')} AS ${arrayRelation('matrix')}[];
@@ -378,14 +381,18 @@ describe('real PG16 partition array pg_dump/pg_restore regression (UNRUN by auth
         await expect(
           arrayClient.unsafe(`SELECT '{a,b}'::${arrayRelation('matrix')}`),
         ).rejects.toThrow(/check constraint/);
-        await arrayClient.unsafe(`ALTER DOMAIN ${arrayRelation('checked_text')} DROP NOT NULL`);
+        await arrayClient.unsafe(
+          `ALTER DOMAIN ${arrayRelation('scalar_checked_text')} DROP NOT NULL`,
+        );
         expect(
           compareDatabaseManifests({
             source: source.inventory,
             restored: (await arrayCatalogInventory(arrayClient)).inventory,
           }).kind,
         ).toBe('different');
-        await arrayClient.unsafe(`ALTER DOMAIN ${arrayRelation('checked_text')} SET NOT NULL`);
+        await arrayClient.unsafe(
+          `ALTER DOMAIN ${arrayRelation('scalar_checked_text')} SET NOT NULL`,
+        );
         expect(
           compareDatabaseManifests({
             source: source.inventory,
