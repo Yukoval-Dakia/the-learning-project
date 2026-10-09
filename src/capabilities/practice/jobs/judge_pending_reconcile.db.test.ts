@@ -136,7 +136,7 @@ it('advances a permanent keyset cursor beyond 200 malformed or live originals', 
   const d = deps();
   for (let i = 0; i < 205; i++)
     await testDb().execute(sql`insert into event(id,actor_kind,actor_ref,action,subject_kind,subject_id,payload,outcome,created_at,ingest_at,affected_scopes)
- values(${`malformed-${i.toString().padStart(3, '0')}`},'system','test','experimental:judge_pending_attempt','question','legacy',${JSON.stringify({ invalid: 'old incomplete payload', nested: { answers: ['retain '.repeat(80)] } })}::jsonb,null,${stalled()},clock_timestamp(),'{}')`);
+ values(${`malformed-${i.toString().padStart(3, '0')}`},'system','test','experimental:judge_pending_attempt','question','legacy',${JSON.stringify({ invalid: 'old incomplete payload', nested: { answers: ['retain '.repeat(80)] } })}::jsonb,null,${stalled().toISOString()}::timestamptz,clock_timestamp(),'{}')`);
   const f = await dispatchFrozenJudge(testDb(), d, stalled());
   await disposeJudgeRun(testDb(), f.runId, {
     reason: 'explicit_disposal',

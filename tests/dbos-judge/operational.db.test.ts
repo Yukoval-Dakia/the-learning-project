@@ -270,7 +270,12 @@ it('worker manual disposition survives all three failed terminal writes; a new s
   expect(failedWrites).toBe(3);
   expect(execute).toHaveBeenCalledTimes(1);
   expect(
-    (await testDb().select().from(job_events)).some((m) => m.event_type === 'judge_run.failed'),
+    (
+      await testDb()
+        .select()
+        .from(job_events)
+        .where(and(eq(job_events.business_table, 'judge_run'), eq(job_events.business_id, f.runId)))
+    ).some((m) => m.event_type === 'judge_run.failed'),
   ).toBe(false);
   failure.mockRestore();
   const send = vi.fn(enqueue.boss.send),
@@ -279,7 +284,12 @@ it('worker manual disposition survives all three failed terminal writes; a new s
     deps: { checkRateLimit: gate, boss: { send, getJobById: async () => null } },
   });
   expect(
-    (await testDb().select().from(job_events)).filter((m) => m.event_type === 'judge_run.failed'),
+    (
+      await testDb()
+        .select()
+        .from(job_events)
+        .where(and(eq(job_events.business_table, 'judge_run'), eq(job_events.business_id, f.runId)))
+    ).filter((m) => m.event_type === 'judge_run.failed'),
   ).toHaveLength(1);
   expect(execute).toHaveBeenCalledTimes(1);
   expect(send).not.toHaveBeenCalled();
