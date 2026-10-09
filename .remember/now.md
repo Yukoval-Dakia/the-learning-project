@@ -1,3 +1,11 @@
+# Current judge process diagnostics
+
+HEAD1535cf60c before this parent docs checkpoint, product2dbb9eb3e. 128scoped DB pass retained. Actual process firstcase native-load-committed SIGKILL/reopen fails expected3wire got0; DBOS recovered sameworkflow SUCCESS but domainreview_required/infra_failure. Exact cause unknown. Evidence /tmp/yuk1356-parent-process-db/{process.log,process-evidence.json,lock-release.json}; lockf583 released01:44:37.483Z, original4/release/running same; no resources or provider cost.
+
+One active CODE writer task node:delegated-task:command%3Amcp%3Ae4c5132f-3c05-4ce6-aa2d-e5b525fe3bf6%3Adelegate-task%3Ayuk1356-process-wire-diagnostics-20261009-v1 (codex gpt6.1sol xhigh). Own tests/dbos-judge/worker.ts and process.db.test.ts, narrow tests and diagnostics lane doc only. All production read-only; if product defect report exact path to parent. No DB/docker/provider/runtime/install/merge/push. Parent owns PLAN/remember/report/tracker. Await async completion, no repeatedwriter/tests during childbuild. HANDOFF /tmp/yuk1356-process-wire-diagnostics/HANDOFF.md. R2 still not started. No PR/CI/deploy.
+
+Previous handoff follows.
+
 # Current judge scoped DB handoff
 
 Product 2dbb9eb3e delivered, sole writer completed/noPending. Parent verified 5 source/4895 inputs/884 artifacts/13 logs. Eight scoped DB suites now pass 128 distinct cases: native53, reconcile+operational21, migration/worker/terminal/status/fence54. Parent fixture-only corrections use actual coordinator recovery authority and exact nested PostgreSQL immutability error plus unchanged rows. Earlier failures preserved. Latest lock86d1 released01:43:14.916Z, original4/release/running unchanged. No runtime resources remain. Next actual process/cutover/migration smoke/consumer acceptance, then sole R2. No PR/push/CI yet. Parent report and evidence2026-10-09-yuk1356-parent-dispatch-ack-db.json versioned.
