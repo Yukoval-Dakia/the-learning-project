@@ -1,3 +1,7 @@
+# Restore helper ownership — 2026-10-09
+
+After judge delivery,7631 owns the four existing restore/cutover helpers and receipt-type scope, scoped tests and existing runbook/README.75 accessible/77 registered trees checked without dirty source paths; no competing Start writer. Full parity/failure rejection and realDBOS restore proof remain future work. Start/boot/private runtime/family logic excluded; no runtime action. See docs/planning/2026-10-09-restore-start-ownership.md.
+
 # Judge audit ownership — 2026-10-09
 
 Three audit/baseline paths checked clean across75 accessible/77 registered trees. After current judge author releases,7631 owns exact0118 singleton initialization recognition/negative tests and only measured baseline tightening. No broad SQL scanning, allowances or upward dependency baseline. Start has no competing writer. See judge-start-ownership.md. No runtime action.
