@@ -506,6 +506,9 @@ export async function mapJudgePendingOwnership(
         (c) =>
           !source.rows.some(
             (r) =>
+              r.action === 'experimental:assessment_model_result' &&
+              r.subject_kind === 'evaluation_group' &&
+              r.subject_id === c.subject_id &&
               r.id === c.id.replace('evt_model_claim_', 'evt_model_result_') &&
               r.caused_by_event_id === c.id &&
               r.payload.input_digest === c.payload.input_digest &&
@@ -617,9 +620,19 @@ export async function inspectJudgePendingImport(database: Db | Tx, runId: string
   const rows = await database
     .select()
     .from(event)
-    .where(sql`${event.payload}->>'run_id' = ${runId} or
-    (${event.action} in ('experimental:assessment_model_claim','experimental:assessment_model_result') and
-     ${event.payload}->>'submission_id' = ${p.submit.submission_id})`)
+    .where(sql`(${event.payload}->>'run_id' = ${runId} and
+      ${event.action} not in ('experimental:assessment_model_claim','experimental:assessment_model_result')) or
+    (${event.action}='experimental:assessment_model_claim' and
+      ${event.subject_kind}='evaluation_group' and ${event.subject_id}=${p.submit.evaluation_group_id} and
+      ${event.payload}->>'submission_id'=${p.submit.submission_id}) or
+    (${event.action}='experimental:assessment_model_result' and
+      ${event.subject_kind}='evaluation_group' and ${event.subject_id}=${p.submit.evaluation_group_id} and
+      exists (select 1 from event c where c.action='experimental:assessment_model_claim' and
+        c.subject_kind='evaluation_group' and c.subject_id=${p.submit.evaluation_group_id} and
+        c.payload->>'submission_id'=${p.submit.submission_id} and
+        ${event.caused_by_event_id}=c.id and
+        ${event.id}=replace(c.id,'evt_model_claim_','evt_model_result_') and
+        ${event.payload}->>'input_digest'=c.payload->>'input_digest'))`)
     .orderBy(event.id);
   return {
     pending: pending[0],

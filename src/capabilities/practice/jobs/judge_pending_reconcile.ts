@@ -28,7 +28,7 @@ import {
 } from '../server/judge-run-dispatch';
 import { projectJudgeRunNotification } from '../server/judge-run-notification';
 import { readJudgeRunPermanent } from '../server/judge-run-observation';
-import { JUDGE_RUN_EVENTS } from '../server/judge-run-status';
+import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from '../server/judge-run-status';
 
 export const RECONCILE_STALL_MS = 15 * 60_000;
 export const RECOVERY_MAX_AGE_MS = 7 * 86400_000;
@@ -45,6 +45,8 @@ export interface JudgePendingReconcileReport {
 }
 export interface JudgePendingReconcileDeps extends JudgeRunEnqueueDeps {
   observe?: typeof observeJudgeDelivery;
+  /** Sampled after the run lock and permanent re-read, separately for every fresh authorization. */
+  authorizationClock?: () => Date;
   boss?: NonNullable<JudgeRunEnqueueDeps['boss']> & {
     getJobById: (queue: string, id: string) => Promise<import('pg-boss').JobWithMetadata | null>;
   };
@@ -99,9 +101,15 @@ async function selectSweep(
               cursor
                 ? sql`(${event.created_at},${event.id}) > (${cursor.created_at}::timestamptz,${cursor.id})`
                 : undefined,
-              sql`not exists (select 1 from event d where d.action='experimental:judge_disposition' and
-        ((d.payload->>'coordinate'='native' and d.payload->>'pending_id'=${event.id}) or
-         (d.payload->>'coordinate'='legacy_task' and d.payload->>'task_id'=${event.id})))`,
+              sql`not exists (select 1 from event d where d.action='experimental:judge_disposition'
+                and d.payload->>'coordinate'='legacy_task' and d.payload->>'task_id'=${event.id})`,
+              sql`(not exists (select 1 from event d where d.action='experimental:judge_disposition'
+                and d.payload->>'coordinate'='native' and d.payload->>'pending_id'=${event.id})
+                or (${event.payload}->>'caller'='native_assessment' and
+                  coalesce((select j.event_type from job_events j
+                    where j.business_table=${JUDGE_RUN_TABLE}
+                    and j.business_id=${event.payload}->>'run_id'
+                    order by j.id desc limit 1),'') <> ${JUDGE_RUN_EVENTS.FAILED}))`,
             ),
           )
           .orderBy(asc(event.created_at), asc(event.id))
@@ -144,13 +152,14 @@ async function selectSweep(
 export async function reconcileStalledJudgeAttempts(
   database: Db,
   args: {
+    /** Immutable tick selection time. Never an authorization clock. */
     now?: Date;
     deps?: JudgePendingReconcileDeps;
     rawScanLimit?: number;
     tick?: { backend: 'pg-boss' | 'dbos'; id: string };
   } = {},
 ) {
-  const now = args.now ?? new Date(),
+  const selectionAt = args.now ?? new Date(),
     deps = args.deps ?? {};
   const report: JudgePendingReconcileReport = {
     scanned: 0,
@@ -161,14 +170,18 @@ export async function reconcileStalledJudgeAttempts(
     failed: 0,
   };
   const sweep = await selectSweep(database, {
-    now,
+    now: selectionAt,
     limit: Math.max(1, Math.min(200, args.rawScanLimit ?? 200)),
     tickId: args.tick?.id ?? randomUUID(),
     backend: args.tick?.backend,
   });
   if (sweep.admission === 'fenced') return report;
   const rows = sweep.pending_ids.length
-    ? await database.select().from(event).where(inArray(event.id, sweep.pending_ids))
+    ? await database
+        .select()
+        .from(event)
+        .where(inArray(event.id, sweep.pending_ids))
+        .orderBy(asc(event.created_at), asc(event.id))
     : [];
   for (const row of rows) {
     report.scanned++;
@@ -177,6 +190,7 @@ export async function reconcileStalledJudgeAttempts(
       if (!parsed.success) {
         await database.transaction(async (tx) => {
           await lockJudgeRun(tx, row.id);
+          const decidedAt = new Date();
           await writeJudgeReceipt(
             tx,
             judgeReceiptId('legacy-disposition', ['pending', row.id]),
@@ -197,13 +211,13 @@ export async function reconcileStalledJudgeAttempts(
                 kind: 'manual',
                 reason: 'invalid_receipt',
                 actor_ref: 'judge:reconciler',
-                decided_at: now.toISOString(),
+                decided_at: decidedAt.toISOString(),
                 observed_ownership: sweep.ownership,
                 evidence_refs: [row.id],
                 evidence_digest: canonicalHash(row.payload),
               },
             },
-            now,
+            decidedAt,
           );
         });
         report.skippedTerminal++;
@@ -223,7 +237,7 @@ export async function reconcileStalledJudgeAttempts(
           actorRef: 'judge:reconciler',
           evidenceRefs: [row.id],
           evidenceDigest: canonicalHash(row.payload),
-          at: now,
+          at: new Date(),
         });
         report.skippedTerminal++;
         continue;
@@ -247,7 +261,7 @@ export async function reconcileStalledJudgeAttempts(
           actorRef: 'judge:reconciler',
           evidenceRefs: [latest.reservationId],
           evidenceDigest: canonicalHash(observation),
-          at: now,
+          at: new Date(),
         });
         report.skippedTerminal++;
         continue;
@@ -260,7 +274,13 @@ export async function reconcileStalledJudgeAttempts(
       ) {
         await database.transaction(async (tx) => {
           await lockJudgeRun(tx, runId);
-          await acceptJudgeDelivery(tx, latest.reservation, null, 'authoritative_lookup', now);
+          await acceptJudgeDelivery(
+            tx,
+            latest.reservation,
+            null,
+            'authoritative_lookup',
+            new Date(),
+          );
         });
         report.skippedLive++;
         continue;
@@ -278,7 +298,7 @@ export async function reconcileStalledJudgeAttempts(
           actorRef: 'judge:reconciler',
           evidenceRefs: [latest.reservationId],
           evidenceDigest: canonicalHash(observation),
-          at: now,
+          at: new Date(),
         });
         report.skippedTerminal++;
         continue;
@@ -296,21 +316,32 @@ export async function reconcileStalledJudgeAttempts(
           canonicalHash(current.delivery) !== canonicalHash(latest)
         )
           return null;
+        const authorizationAt = deps.authorizationClock?.() ?? new Date();
+        if (!Number.isFinite(authorizationAt.getTime()))
+          throw new Error('Judge authorization clock invalid');
         const fresh = latest.kind === 'accepted' || latest.kind === 'started';
         const capacity = judgeRecoveryCapacity({
           state: current.operational,
           submittedAt: current.pending.submittedAt,
-          now,
+          now: authorizationAt,
         });
         if (fresh && capacity.kind !== 'available')
           return {
             kind: 'manual' as const,
             reason:
               capacity.kind === 'manual' ? capacity.reason : ('recovery_history_unknown' as const),
+            at: authorizationAt,
           };
         // Every new authorization is gated and stops exactly at seven days, even for a same-ID resend.
-        if (now.getTime() - current.pending.submittedAt.getTime() >= RECOVERY_MAX_AGE_MS)
-          return { kind: 'manual' as const, reason: 'recovery_exhausted' as const };
+        if (
+          authorizationAt.getTime() - current.pending.submittedAt.getTime() >=
+          RECOVERY_MAX_AGE_MS
+        )
+          return {
+            kind: 'manual' as const,
+            reason: 'recovery_exhausted' as const,
+            at: authorizationAt,
+          };
         const token = admitJudgeRun(deps);
         const reservation =
           fresh && capacity.kind === 'available'
@@ -320,10 +351,10 @@ export async function reconcileStalledJudgeAttempts(
                 current.pending.payload,
                 current.operational.ownership.to,
                 capacity.slot,
-                now,
+                authorizationAt,
               )
             : latest.reservation;
-        const sendId = await authorizeJudgeSend(tx, reservation, now);
+        const sendId = await authorizeJudgeSend(tx, reservation, authorizationAt);
         return { kind: 'send' as const, reservation, sendId, token, pending: current.pending };
       });
       if (!admitted) {
@@ -336,7 +367,7 @@ export async function reconcileStalledJudgeAttempts(
           actorRef: 'judge:reconciler',
           evidenceRefs: [row.id, latest.reservationId],
           evidenceDigest: canonicalHash(observation),
-          at: now,
+          at: admitted.at,
         });
         report.skippedExhausted++;
         continue;

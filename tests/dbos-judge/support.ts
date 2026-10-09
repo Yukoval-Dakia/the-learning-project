@@ -5,9 +5,9 @@ import { dispatchNativeAttempt } from '@/capabilities/practice/server/assessment
 import { issueAssessment } from '@/capabilities/practice/server/assessment/issue';
 import type { JudgeRunEnqueueDeps } from '@/capabilities/practice/server/judge-run-dispatch';
 import { readJudgeRunPermanent } from '@/capabilities/practice/server/judge-run-observation';
-import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
 import type { Db } from '@/db/client';
-import { event, question } from '@/db/schema';
+import { question } from '@/db/schema';
+import { inspectJudgePendingImport } from '@/server/durable/judge-family';
 import {
   contractIntegrityDigest,
   normalizeQuestionRowToContract,
@@ -131,14 +131,5 @@ export async function dispatchFrozenJudge(
   return { ...fixture, runId, input, delivery: state.delivery };
 }
 export async function judgeEvidence(database: Db, runId: string) {
-  const [pending] = await database
-    .select()
-    .from(event)
-    .where(
-      sql`${event.payload}->>'run_id'=${runId} and ${event.action}='experimental:judge_pending_attempt'`,
-    );
-  const p = JudgePendingAttemptPayload.parse(pending?.payload);
-  if (p.caller !== 'native_assessment') throw new Error('Non-native evidence');
-  return database.execute(sql`select id,action,payload,caused_by_event_id,created_at from event where
-  payload->>'run_id'=${runId} or (action in ('experimental:assessment_model_claim','experimental:assessment_model_result') and payload->>'submission_id'=${p.submit.submission_id}) order by created_at,id`);
+  return (await inspectJudgePendingImport(database, runId)).rows;
 }

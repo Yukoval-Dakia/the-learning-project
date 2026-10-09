@@ -77,7 +77,12 @@ const server = createServer(async (req, res) => {
 });
 function worker(
   input: JudgeWorkflowInputT,
-  options: { pause?: string; unit?: string; recover?: boolean } = {},
+  options: {
+    pause?: string;
+    unit?: string;
+    recover?: boolean;
+    reconcile?: { scheduledAt: Date; authorizationAt: Date };
+  } = {},
 ) {
   const child = spawn(process.execPath, [resolve('.cache/yuk1356-judge-worker.cjs')], {
     stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
@@ -91,6 +96,7 @@ function worker(
       TLP_JUDGE_PAUSE_AT: options.pause,
       TLP_JUDGE_PAUSE_UNIT: options.unit,
       TLP_JUDGE_RECOVER: options.recover ? '1' : '0',
+      TLP_JUDGE_RECONCILE: options.reconcile ? JSON.stringify(options.reconcile) : undefined,
       AI_PROVIDER_OVERRIDE: 'openai',
       AI_PROVIDER_MODEL: 'gpt-4.1-mini',
       OPENAI_API_KEY: 'controlled-local-fixture',
@@ -269,6 +275,11 @@ it('saved first, second wire unknown, third unclaimed survives SIGKILL and actua
   await first.wait('ready');
   await expect.poll(() => wire.length, { timeout: 30000, interval: 25 }).toBe(2);
   await capture(f.runId, 'second-wire-held');
+  const savedBeforeKill = (await judgeEvidence(testDb(), f.runId)).filter(
+    (r) => r.action === 'experimental:assessment_model_result',
+  );
+  expect(savedBeforeKill).toHaveLength(1);
+  expect(savedBeforeKill[0]?.payload.outcome).toMatchObject({ kind: 'scored' });
   await first.kill();
   holdUnit = undefined;
   for (const release of releases) release();
@@ -284,6 +295,10 @@ it('saved first, second wire unknown, third unclaimed survives SIGKILL and actua
       (r) => r.action === 'experimental:assessment_model_claim',
     ),
   ).toHaveLength(2);
+  const savedAfterReopen = (await judgeEvidence(testDb(), f.runId)).filter(
+    (r) => r.action === 'experimental:assessment_model_result',
+  );
+  expect(savedAfterReopen).toEqual(expect.arrayContaining(savedBeforeKill));
 }, 90000);
 it('binding crash plus an intervening unactivated candidate never reallocates max+1 or repurchases', async () => {
   const f = await accepted(),
@@ -338,7 +353,83 @@ it('manual after saved final outcome defeats a late seal and held capture; resul
   expect((await readJudgeRunPermanent(testDb(), f.runId)).kind).toBe('manual');
   expect(await testDb().select().from(evaluation)).toHaveLength(0);
   expect(wire).toHaveLength(3);
+  expect(
+    (await judgeEvidence(testDb(), f.runId)).filter(
+      (r) => r.action === 'experimental:assessment_model_result',
+    ),
+  ).toHaveLength(3);
 }, 90000);
+
+it.each([false, true])(
+  'registered old reconcile tick forbids >=7d authorization on delayed first run or uncheckpointed SIGKILL/reopen (reopen=%s)',
+  async (reopen) => {
+    const submittedAt = new Date(Date.now() - 7 * 86400_000),
+      scheduledAt = new Date(submittedAt.getTime() + 7 * 86400_000 - 3600_000),
+      authorizationAt = new Date(submittedAt.getTime() + 7 * 86400_000 + 1);
+    const f = await dispatchFrozenJudge(
+      testDb(),
+      {
+        checkRateLimit: () => 19,
+        enqueueDbos: async () => {
+          throw new Error('controlled unsent original');
+        },
+      },
+      submittedAt,
+    );
+    const sendsBefore = await testDb()
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:judge_delivery_send')),
+      reservationsBefore = await testDb()
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:judge_delivery_reserved'));
+    const options = { reconcile: { scheduledAt, authorizationAt } };
+    if (reopen) {
+      const first = worker(f.input, { ...options, pause: 'authorization-clock' });
+      await first.wait('ready');
+      await first.wait('boundary');
+      const [selection] = await testDb()
+        .select()
+        .from(event)
+        .where(
+          sql`${event.action}='experimental:judge_reconcile_observation' and ${event.payload}->>'tick_id'=${`sched-judge_pending_reconcile-${scheduledAt.toISOString()}`}`,
+        );
+      expect(selection?.payload.pending_ids).toEqual([f.input.pending_id]);
+      await capture(f.runId, 'old-tick-uncheckpointed');
+      await first.kill();
+    }
+    const last = worker(f.input, { ...options, recover: reopen });
+    await last.wait('ready');
+    const done = await last.wait('done');
+    expect(done.status).toMatchObject({ status: 'SUCCESS' });
+    await last.stop();
+    const state = await readJudgeRunPermanent(testDb(), f.runId);
+    expect(state.kind).toBe('manual');
+    if (state.kind === 'manual') expect(state.disposition.reason).toBe('recovery_exhausted');
+    expect(
+      await testDb()
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:judge_delivery_send')),
+    ).toEqual(sendsBefore);
+    expect(
+      await testDb()
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:judge_delivery_reserved')),
+    ).toEqual(reservationsBefore);
+    expect(
+      await testDb()
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:assessment_model_claim')),
+    ).toHaveLength(0);
+    expect(wire).toHaveLength(0);
+    await capture(f.runId, reopen ? 'old-tick-reopened' : 'old-tick-first-delayed');
+  },
+  90000,
+);
 it('SIGKILL before settlement COMMIT rolls back native activation and learning; reopen reuses candidate', async () => {
   const f = await accepted(),
     first = worker(f.input, { pause: 'settlement-uncommitted' });

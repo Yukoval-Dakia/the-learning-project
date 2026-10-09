@@ -28,7 +28,11 @@ export type JudgeWorkerBoundary = (event: {
   kind: 'worker-entry' | 'domain-committed' | 'checkpoint-saved';
   workflowId: string;
 }) => Promise<void>;
-export function registerJudgeWorkflows(db: Db, boundary: JudgeWorkerBoundary = async () => {}) {
+export function registerJudgeWorkflows(
+  db: Db,
+  boundary: JudgeWorkerBoundary = async () => {},
+  options: { authorizationClock?: () => Date } = {},
+) {
   const execute = DBOS.registerWorkflow(
     async (untrusted: unknown) => {
       const input = JudgeWorkflowInput.parse(untrusted),
@@ -62,6 +66,7 @@ export function registerJudgeWorkflows(db: Db, boundary: JudgeWorkerBoundary = a
         () =>
           reconcileJudgeAttempts(db, {
             now: scheduledAt,
+            deps: { authorizationClock: options.authorizationClock },
             tick: { backend: 'dbos', id: workflowId },
           }),
         { name: 'judge-pending-sweep-v1', retriesAllowed: false },

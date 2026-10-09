@@ -8,6 +8,7 @@ import { judgeDeliveryInput } from '../server/judge-engine-client';
 import {
   acceptJudgeDelivery,
   authorizeJudgeSend,
+  disposeJudgeRun,
   lockJudgeRun,
   reserveJudgeDelivery,
 } from '../server/judge-operational';
@@ -137,6 +138,13 @@ it('advances a permanent keyset cursor beyond 200 malformed or live originals', 
     await testDb().execute(sql`insert into event(id,actor_kind,actor_ref,action,subject_kind,subject_id,payload,outcome,created_at,ingest_at,affected_scopes)
  values(${`malformed-${i.toString().padStart(3, '0')}`},'system','test','experimental:judge_pending_attempt','question','legacy',${JSON.stringify({ invalid: 'old incomplete payload', nested: { answers: ['retain '.repeat(80)] } })}::jsonb,null,${stalled()},clock_timestamp(),'{}')`);
   const f = await dispatchFrozenJudge(testDb(), d, stalled());
+  await disposeJudgeRun(testDb(), f.runId, {
+    reason: 'explicit_disposal',
+    actorRef: 'test:manual-after-prefix',
+    evidenceRefs: [f.input.pending_id],
+    evidenceDigest: '0'.repeat(64),
+  });
+  await testDb().delete(job_events);
   d.boss?.send && vi.mocked(d.boss.send).mockClear();
   const first = await reconcileStalledJudgeAttempts(testDb(), {
     deps: d,
@@ -148,7 +156,18 @@ it('advances a permanent keyset cursor beyond 200 malformed or live originals', 
   });
   expect(first.scanned).toBe(200);
   expect(second.scanned).toBeGreaterThan(0);
-  expect((await readJudgeRunPermanent(testDb(), f.runId)).kind).toBe('manual'); // retained accepted delivery without engine evidence
+  expect((await readJudgeRunPermanent(testDb(), f.runId)).kind).toBe('manual');
+  expect((await testDb().select().from(job_events)).map((m) => m.event_type)).toEqual([
+    'judge_run.failed',
+  ]);
+  expect(d.boss?.send).not.toHaveBeenCalled();
+  expect(d.observe).not.toHaveBeenCalled();
+  expect(
+    await reconcileStalledJudgeAttempts(testDb(), {
+      deps: d,
+      tick: { backend: 'pg-boss', id: 'page-c' },
+    }),
+  ).toMatchObject({ scanned: 0 });
 });
 it('disposes unfinished legacy submit without invoking scorer and retains disposition after pruning', async () => {
   const id = 'legacy-long-answer',
@@ -176,4 +195,148 @@ it('disposes unfinished legacy submit without invoking scorer and retains dispos
   expect(state.kind).toBe('manual');
   if (state.kind === 'manual') expect(state.disposition.reason).toBe('historical_unknown');
   expect(d.boss?.send).not.toHaveBeenCalled();
+  expect(await reconcileStalledJudgeAttempts(testDb(), { deps: d })).toMatchObject({ scanned: 0 });
+});
+
+it.each(['send_unknown', 'reserved_unsent', 'accepted_success'] as const)(
+  'uses the locked fresh clock for %s at <7d, exact7d and >7d, independently of old selection time',
+  async (kind) => {
+    for (const offset of [-1, 0, 1]) {
+      await resetDb();
+      await resetJudgeControl(testDb());
+      const d = deps(),
+        submittedAt = new Date(Date.now() - RECOVERY_MAX_AGE_MS),
+        boundary = submittedAt.getTime() + RECOVERY_MAX_AGE_MS,
+        authorizationAt = new Date(boundary + offset);
+      if (kind === 'send_unknown')
+        d.boss?.send &&
+          vi.mocked(d.boss.send).mockRejectedValueOnce(new Error('controlled unknown enqueue'));
+      const f = await dispatchFrozenJudge(testDb(), d, submittedAt);
+      if (kind === 'reserved_unsent')
+        await testDb().transaction(async (tx) => {
+          await lockJudgeRun(tx, f.runId);
+          const [pending] = await tx.select().from(event).where(eq(event.id, f.input.pending_id));
+          await reserveJudgeDelivery(
+            tx,
+            f.input.pending_id,
+            JudgePendingAttemptPayload.parse(pending?.payload),
+            f.input.ownership,
+            1,
+            new Date(boundary - 60_000),
+          );
+        });
+      const before = await testDb()
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:judge_delivery_send'));
+      const clock = vi.fn(() => authorizationAt);
+      const report = await reconcileStalledJudgeAttempts(testDb(), {
+        now: new Date(boundary - 3600_000),
+        deps: {
+          ...d,
+          authorizationClock: clock,
+          observe:
+            kind === 'accepted_success'
+              ? async (r) => ({
+                  kind: 'present',
+                  state: 'SUCCESS',
+                  deliveryId: r.delivery_id,
+                  input: judgeDeliveryInput(r),
+                })
+              : d.observe,
+        },
+      });
+      expect(clock).toHaveBeenCalledTimes(1);
+      const after = await testDb()
+        .select()
+        .from(event)
+        .where(eq(event.action, 'experimental:judge_delivery_send'));
+      expect(after).toHaveLength(before.length + (offset < 0 ? 1 : 0));
+      expect(report).toMatchObject(
+        offset < 0 ? { reenqueued: 1 } : { reenqueued: 0, skippedExhausted: 1 },
+      );
+      if (offset < 0) {
+        const send = after.find((r) => !before.some((b) => b.id === r.id));
+        expect(send?.payload.gate_checked_at).toBe(authorizationAt.toISOString());
+        expect(send?.created_at).toEqual(authorizationAt);
+        const current = await readJudgeRunPermanent(testDb(), f.runId);
+        if (current.kind !== 'pending' || !current.delivery)
+          throw new Error('Expected authorized pending');
+        expect(current.delivery.reservation.slot).toBe(kind === 'send_unknown' ? 0 : 1);
+      } else {
+        const current = await readJudgeRunPermanent(testDb(), f.runId);
+        expect(current.kind).toBe('manual');
+        if (current.kind === 'manual')
+          expect(current.disposition.reason).toBe('recovery_exhausted');
+      }
+      expect(
+        await testDb()
+          .select()
+          .from(event)
+          .where(eq(event.action, 'experimental:assessment_model_claim')),
+      ).toHaveLength(0);
+      expect(d.boss?.send).toHaveBeenCalledTimes(offset < 0 ? 2 : 1);
+    }
+  },
+);
+
+it('samples every authorization after a mid-sweep boundary crossing instead of freezing the sweep clock', async () => {
+  const submittedAt = new Date(Date.now() - RECOVERY_MAX_AGE_MS),
+    boundary = submittedAt.getTime() + RECOVERY_MAX_AGE_MS,
+    d = deps();
+  d.boss?.send && vi.mocked(d.boss.send).mockRejectedValue(new Error('controlled unsent gap'));
+  const a = await dispatchFrozenJudge(testDb(), d, submittedAt),
+    b = await dispatchFrozenJudge(testDb(), d, submittedAt);
+  d.boss?.send &&
+    vi.mocked(d.boss.send).mockImplementation(async (_name, _data, options) => options?.id ?? null);
+  let authorizationAt = new Date(boundary - 1),
+    observed = 0;
+  const clock = vi.fn(() => authorizationAt);
+  const before = await testDb()
+    .select()
+    .from(event)
+    .where(eq(event.action, 'experimental:judge_delivery_send'));
+  const report = await reconcileStalledJudgeAttempts(testDb(), {
+    now: new Date(boundary - 3600_000),
+    deps: {
+      ...d,
+      authorizationClock: clock,
+      observe: async (r) => {
+        if (++observed === 2) authorizationAt = new Date(boundary);
+        return { kind: 'absent', deliveryId: r.delivery_id };
+      },
+    },
+  });
+  expect(clock).toHaveBeenCalledTimes(2);
+  expect(report).toMatchObject({ scanned: 2, reenqueued: 1, skippedExhausted: 1 });
+  const after = await testDb()
+    .select()
+    .from(event)
+    .where(eq(event.action, 'experimental:judge_delivery_send'));
+  expect(after).toHaveLength(before.length + 1);
+  expect(after.find((r) => !before.some((s) => s.id === r.id))?.payload.gate_checked_at).toBe(
+    new Date(boundary - 1).toISOString(),
+  );
+  expect(
+    [
+      (await readJudgeRunPermanent(testDb(), a.runId)).kind,
+      (await readJudgeRunPermanent(testDb(), b.runId)).kind,
+    ].sort(),
+  ).toEqual(['manual', 'pending']);
+});
+
+it('old args.now alone cannot backdate a same-ID fresh authorization past the real boundary', async () => {
+  const d = deps(),
+    submittedAt = new Date(Date.now() - RECOVERY_MAX_AGE_MS - 60_000);
+  d.boss?.send &&
+    vi.mocked(d.boss.send).mockRejectedValueOnce(new Error('controlled send unknown'));
+  const f = await dispatchFrozenJudge(testDb(), d, submittedAt);
+  expect(
+    await reconcileStalledJudgeAttempts(testDb(), {
+      deps: d,
+      now: new Date(submittedAt.getTime() + RECOVERY_MAX_AGE_MS - 3600_000),
+    }),
+  ).toMatchObject({ reenqueued: 0, skippedExhausted: 1 });
+  expect((await readJudgeRunPermanent(testDb(), f.runId)).kind).toBe('manual');
+  expect(d.boss?.send).toHaveBeenCalledTimes(1);
 });

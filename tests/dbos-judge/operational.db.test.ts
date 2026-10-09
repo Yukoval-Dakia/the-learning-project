@@ -5,9 +5,14 @@ import { runJudgeWorkflowDelivery } from '@/capabilities/practice/jobs/judge_run
 import { dispatchNativeAttempt } from '@/capabilities/practice/server/assessment/durable-attempt';
 import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
+import { judgeDeliveryInput } from '@/capabilities/practice/server/judge-engine-client';
 import {
+  acceptJudgeDelivery,
+  authorizeJudgeSend,
   disposeJudgeRun,
   fenceJudgeUnitClaim,
+  lockJudgeRun,
+  reserveJudgeDelivery,
 } from '@/capabilities/practice/server/judge-operational';
 import { projectJudgeRunNotification } from '@/capabilities/practice/server/judge-run-notification';
 import {
@@ -16,9 +21,11 @@ import {
 } from '@/capabilities/practice/server/judge-run-observation';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
+import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
 import { evaluation, event, job_events, mastery_state, material_fsrs_state } from '@/db/schema';
 import * as domain from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import * as notificationWriter from '@/server/events/writer';
 import { resetDb, testDb } from '../helpers/db';
 import { dispatchFrozenJudge, frozenJudge, judgeEvidence, resetJudgeControl } from './support';
 
@@ -90,6 +97,12 @@ it('saved first unit, second unknown, third unclaimed: no additional paid claim 
   const rows = await judgeEvidence(testDb(), f.runId);
   expect(execute).toHaveBeenCalledTimes(2);
   expect(rows.filter((r) => r.action === 'experimental:assessment_model_claim')).toHaveLength(2);
+  const saved = rows.filter((r) => r.action === 'experimental:assessment_model_result');
+  expect(saved).toHaveLength(2);
+  expect(saved.map((r) => r.payload.outcome)).toContainEqual(
+    expect.objectContaining({ kind: 'scored', feedback_md: '方程正确' }),
+  );
+  expect(saved.every((r) => rows.some((c) => c.id === r.caused_by_event_id))).toBe(true);
   await runJudgeWorkflowDelivery(testDb(), f.input);
   expect(execute).toHaveBeenCalledTimes(2);
   const state = await readJudgeRunPermanent(testDb(), f.runId);
@@ -196,12 +209,22 @@ it('permanent manual before FAILED projection is repaired by the sole reconciler
     evidenceDigest: canonicalHash('projection-crash'),
   });
   await testDb().delete(job_events);
+  const send = vi.fn(enqueue.boss.send),
+    gate = vi.fn(enqueue.checkRateLimit),
+    observe = vi.fn();
   await reconcileStalledJudgeAttempts(testDb(), {
     deps: {
       ...enqueue,
-      boss: { ...enqueue.boss, getJobById: async () => null },
+      checkRateLimit: gate,
+      observe,
+      boss: { send, getJobById: async () => null },
     },
   });
+  const repaired = await testDb().select().from(job_events);
+  expect(repaired.map((m) => m.event_type)).toEqual(['judge_run.failed']);
+  expect(send).not.toHaveBeenCalled();
+  expect(gate).not.toHaveBeenCalled();
+  expect(observe).not.toHaveBeenCalled();
   await projectJudgeRunNotification(testDb(), f.runId, {
     eventType: 'judge_run.requeued',
     payload: { delivery_id: 'causally-late-delivery', attempt: 2 },
@@ -209,6 +232,120 @@ it('permanent manual before FAILED projection is repaired by the sole reconciler
   const markers = await testDb().select().from(job_events);
   expect(markers.map((m) => m.event_type)).toEqual(['judge_run.failed']);
   expect((await readJudgeRunPermanent(testDb(), f.runId)).kind).toBe('manual');
+  await testDb().delete(job_events);
+  await reconcileStalledJudgeAttempts(testDb(), {
+    tick: { backend: 'pg-boss', id: 'manual-pruned-new-tick' },
+    deps: { checkRateLimit: gate, boss: { send, getJobById: async () => null }, observe },
+  });
+  expect((await testDb().select().from(job_events)).map((m) => m.event_type)).toEqual([
+    'judge_run.failed',
+  ]);
+  expect(send).not.toHaveBeenCalled();
+  expect(gate).not.toHaveBeenCalled();
+});
+
+it('worker manual disposition survives all three failed terminal writes; a new sole sweep repairs it without execution', async () => {
+  const f = await dispatchFrozenJudge(testDb(), enqueue, new Date(Date.now() - 20 * 60_000));
+  const execute = scorer(async () => {
+    await disposeJudgeRun(testDb(), f.runId, {
+      reason: 'provider_unknown',
+      actorRef: 'test:terminal-window',
+      evidenceRefs: [f.input.pending_id],
+      evidenceDigest: canonicalHash('terminal-window'),
+    });
+  });
+  const writer = notificationWriter.writeJobEvent;
+  let failedWrites = 0;
+  const failure = vi
+    .spyOn(notificationWriter, 'writeJobEvent')
+    .mockImplementation(async (tx, input) => {
+      if (input.event_type === 'judge_run.failed') {
+        failedWrites++;
+        expect((await readJudgeRunPermanent(testDb(), f.runId)).kind).toBe('manual');
+        throw new Error('controlled terminal notification persistence failure');
+      }
+      return writer(tx, input);
+    });
+  await expect(runJudgeWorkflowDelivery(testDb(), f.input)).rejects.toThrow('controlled terminal');
+  expect(failedWrites).toBe(3);
+  expect(execute).toHaveBeenCalledTimes(1);
+  expect(
+    (await testDb().select().from(job_events)).some((m) => m.event_type === 'judge_run.failed'),
+  ).toBe(false);
+  failure.mockRestore();
+  const send = vi.fn(enqueue.boss.send),
+    gate = vi.fn(enqueue.checkRateLimit);
+  await reconcileStalledJudgeAttempts(testDb(), {
+    deps: { checkRateLimit: gate, boss: { send, getJobById: async () => null } },
+  });
+  expect(
+    (await testDb().select().from(job_events)).filter((m) => m.event_type === 'judge_run.failed'),
+  ).toHaveLength(1);
+  expect(execute).toHaveBeenCalledTimes(1);
+  expect(send).not.toHaveBeenCalled();
+  expect(gate).not.toHaveBeenCalled();
+});
+
+it('a pre-boundary authorized and live final slot still completes after seven days with one original receipt', async () => {
+  const submittedAt = new Date(Date.now() - 7 * 86400_000 - 60_000),
+    admittedAt = new Date(submittedAt.getTime() + 7 * 86400_000 - 1),
+    f = await dispatchFrozenJudge(testDb(), enqueue, submittedAt),
+    execute = scorer();
+  let input = f.input;
+  for (const slot of [1, 2])
+    await testDb().transaction(async (tx) => {
+      await lockJudgeRun(tx, f.runId);
+      const [pending] = await tx.select().from(event).where(eq(event.id, f.input.pending_id));
+      const reservation = await reserveJudgeDelivery(
+        tx,
+        f.input.pending_id,
+        JudgePendingAttemptPayload.parse(pending?.payload),
+        f.input.ownership,
+        slot,
+        admittedAt,
+      );
+      const sendId = await authorizeJudgeSend(tx, reservation, admittedAt);
+      await acceptJudgeDelivery(tx, reservation, sendId, 'enqueue_ack', admittedAt);
+      input = judgeDeliveryInput(reservation);
+    });
+  const before = (await judgeEvidence(testDb(), f.runId)).filter((r) =>
+    ['experimental:judge_delivery_reserved', 'experimental:judge_delivery_send'].includes(r.action),
+  );
+  const clock = vi.fn(() => new Date()),
+    send = vi.fn(enqueue.boss.send),
+    gate = vi.fn(enqueue.checkRateLimit);
+  expect(
+    await reconcileStalledJudgeAttempts(testDb(), {
+      deps: {
+        checkRateLimit: gate,
+        authorizationClock: clock,
+        boss: { send, getJobById: async () => null },
+        observe: async (r) => ({
+          kind: 'present',
+          state: 'PENDING',
+          input: judgeDeliveryInput(r),
+          deliveryId: r.delivery_id,
+        }),
+      },
+    }),
+  ).toMatchObject({ reenqueued: 0, skippedLive: 1 });
+  expect(clock).not.toHaveBeenCalled();
+  expect(send).not.toHaveBeenCalled();
+  expect(gate).not.toHaveBeenCalled();
+  await runJudgeWorkflowDelivery(testDb(), input);
+  expect(execute).toHaveBeenCalledTimes(3);
+  expect(await testDb().select().from(event).where(eq(event.id, f.runId))).toHaveLength(1);
+  expect((await readJudgeRunPermanent(testDb(), f.runId)).kind).toBe('resolved');
+  expect(
+    (await judgeEvidence(testDb(), f.runId)).filter((r) =>
+      ['experimental:judge_delivery_reserved', 'experimental:judge_delivery_send'].includes(
+        r.action,
+      ),
+    ),
+  ).toEqual(before);
+  expect(
+    (await testDb().select().from(job_events)).filter((r) => r.event_type === 'judge_run.done'),
+  ).toHaveLength(1);
 });
 
 it.each(['rate-limit', 'pending-abort'])(

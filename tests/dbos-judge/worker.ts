@@ -15,6 +15,8 @@ import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-ev
 import * as schema from '@/db/schema';
 import { __setPiAdapterForTests } from '@/server/ai/execution-adapter';
 import { PiAgentAdapter } from '@/server/ai/pi-agent-adapter';
+import { registerJudgeWorkflows } from '@/server/durable/judge-worker';
+import { PRUNE_DBOS_SCHEMA } from '@/server/durable/prune-family';
 import { startDurableWorker, stopDurableWorker } from '@/server/durable/prune-worker';
 import { fixtureErrorMessage } from '../dbos-review-orphan/fixture-process';
 
@@ -34,6 +36,11 @@ async function main() {
     throw new Error('Disposable local judge fixture required');
   secrets.push(url.password, decodeURIComponent(url.password));
   const input = JudgeWorkflowInput.parse(JSON.parse(z.string().parse(process.env.TLP_JUDGE_INPUT)));
+  const reconcileInput = process.env.TLP_JUDGE_RECONCILE
+    ? z
+        .object({ scheduledAt: z.coerce.date(), authorizationAt: z.coerce.date() })
+        .parse(JSON.parse(process.env.TLP_JUDGE_RECONCILE))
+    : null;
   const models = builtinModels();
   const model: Model<'openai-completions'> = {
     id: 'gpt-4.1-mini',
@@ -159,8 +166,11 @@ async function main() {
     },
   } satisfies Parameters<typeof startDurableWorker>[0]['declarations'];
   const stop = async () => {
-    await stopDurableWorker();
-    await boss.stop();
+    if (reconcileInput) await DBOS.shutdown();
+    else {
+      await stopDurableWorker();
+      await boss.stop();
+    }
     await client.end();
     __setPiAdapterForTests(undefined);
   };
@@ -179,6 +189,54 @@ async function main() {
         });
   });
   try {
+    if (reconcileInput) {
+      stage = 'registered-reconcile-start';
+      const workflows = registerJudgeWorkflows(database, async (event) => pause(event.kind), {
+        authorizationClock: () => {
+          if (!paused && process.env.TLP_JUDGE_PAUSE_AT === 'authorization-clock') {
+            paused = true;
+            report({
+              kind: 'boundary',
+              boundary: 'authorization-clock',
+              pid: process.pid,
+              workflowId: DBOS.workflowID,
+              at: new Date().toISOString(),
+            });
+            // The immutable sweep is committed; R and the fresh permanent re-read precede this call.
+            // SIGKILL now rolls back this admission transaction without saving the DBOS step.
+            process.kill(process.pid, 'SIGSTOP');
+          }
+          return reconcileInput.authorizationAt;
+        },
+      });
+      DBOS.setConfig({
+        name: 'tlp-housekeeping',
+        systemDatabaseUrl: url.toString(),
+        systemDatabaseSchemaName: PRUNE_DBOS_SCHEMA,
+        executorID: 'local',
+        applicationVersion: 'prune-v1',
+        systemDatabasePoolSize: 3,
+        enableOTLP: false,
+        tracingEnabled: false,
+      });
+      await DBOS.launch();
+      const workflowId = `sched-judge_pending_reconcile-${reconcileInput.scheduledAt.toISOString()}`;
+      report({ kind: 'ready', pid: process.pid, workflowId, node: process.version });
+      if (process.env.TLP_JUDGE_RECOVER !== '1')
+        await DBOS.startWorkflow(workflows.reconcile, { workflowID: workflowId })(
+          reconcileInput.scheduledAt,
+          {},
+        );
+      const handle = DBOS.retrieveWorkflow(workflowId);
+      await handle.getResult();
+      report({
+        kind: 'done',
+        status: await handle.getStatus(),
+        steps: await DBOS.listWorkflowSteps(workflowId),
+        permanent: await readJudgeRunPermanent(database, input.run_id),
+      });
+      return;
+    }
     stage = 'host-start';
     await boss.start();
     await startDurableWorker({
