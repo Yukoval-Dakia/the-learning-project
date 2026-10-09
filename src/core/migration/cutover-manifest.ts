@@ -223,9 +223,8 @@ export const databaseManifestSchema = z.strictObject({
   tables: z.array(tableManifestSchema),
   sequences: z.array(sequenceManifestSchema),
 });
-export const quiescenceEvidenceSchema = z.strictObject({
+const maintenanceFields = {
   format: z.literal('loom-maintenance-boundary'),
-  version: z.literal(1),
   basis: z.literal('external-maintenance-boundary'),
   owner: identifier,
   window: identifier,
@@ -233,8 +232,6 @@ export const quiescenceEvidenceSchema = z.strictObject({
   held_until_explicit_release: z.literal(true),
   source: databaseIdentitySchema,
   source_revision: z.string().regex(/^[a-f0-9]{40}$/),
-  app_image: z.string().regex(/^(?:sha256:|[^\s]+@sha256:)[a-f0-9]{64}$/),
-  worker_image: z.string().regex(/^(?:sha256:|[^\s]+@sha256:)[a-f0-9]{64}$/),
   restart_admission_control: z.literal('enforced'),
   other_clients_control: z.literal('enforced'),
   background_writers_control: z.literal('enforced'),
@@ -254,7 +251,40 @@ export const quiescenceEvidenceSchema = z.strictObject({
       ]),
     )
     .min(1),
-});
+};
+export const quiescenceEvidenceSchema = z.discriminatedUnion('version', [
+  z.strictObject({
+    ...maintenanceFields,
+    version: z.literal(1),
+    app_image: z.string().regex(/^(?:sha256:|[^\s]+@sha256:)[a-f0-9]{64}$/),
+    worker_image: z.string().regex(/^(?:sha256:|[^\s]+@sha256:)[a-f0-9]{64}$/),
+  }),
+  z
+    .strictObject({
+      ...maintenanceFields,
+      version: z.literal(2),
+      execution: z.strictObject({
+        kind: z.literal('host-node-v1'),
+        app: z.strictObject({ kind: z.literal('absent') }),
+        runtime: z.strictObject({
+          kind: z.literal('node'),
+          version: z.string().regex(/^v[0-9]+\.[0-9]+\.[0-9]+$/),
+          artifact: artifactIdentitySchema.extend({ file: identifier }),
+        }),
+        worker: z.strictObject({
+          name: identifier,
+          artifact: artifactIdentitySchema.extend({ file: identifier }),
+        }),
+      }),
+    })
+    .refine(
+      (evidence) =>
+        evidence.writers.some(
+          (writer) => writer.kind === 'external' && writer.name === evidence.execution.worker.name,
+        ),
+      'host worker must have an enforced external writer control',
+    ),
+]);
 export const quiescenceBindingSchema = z.strictObject({
   artifact: artifactIdentitySchema,
   evidence: quiescenceEvidenceSchema,
@@ -340,31 +370,63 @@ const receiptFields = {
   source: sourceManifestSchema.nullable(),
   restored: databaseManifestSchema.nullable(),
   quiescence: quiescenceBindingSchema.nullable(),
-  scratch: z.strictObject({ image: z.string(), container: z.string(), retained: z.boolean() }),
+  scratch: z.strictObject({
+    image: z.string(),
+    container: z.string(),
+    retained: z.boolean(),
+    ownership: z
+      .strictObject({
+        container_id: z.string().regex(/^[a-f0-9]{64}$/),
+        attempt: z.uuid(),
+        volumes: z.array(z.strictObject({ name: identifier, destination: identifier })),
+      })
+      .optional(),
+    reopen: z
+      .strictObject({
+        kind: z.literal('retained-loopback-v1'),
+        container_id: z.string().regex(/^[a-f0-9]{64}$/),
+        host: z.literal('127.0.0.1'),
+        port: z.number().int().min(1024).max(65535),
+        identity: databaseIdentitySchema.extend({
+          database: z.string().regex(/^test_fork_[0-9]+$/),
+          in_recovery: z.literal(false),
+        }),
+      })
+      .optional(),
+  }),
   phases: z.array(phaseOutcomeSchema),
   comparison: comparisonSchema.nullable(),
   errors: z.array(restoreErrorSchema),
 };
-export const currentRestoreReceiptSchema = z.discriminatedUnion('kind', [
-  z.strictObject({
-    ...receiptFields,
-    kind: z.literal('verified'),
-    verified: z.literal(true),
-    level: z.literal('database-content-parity'),
-  }),
-  z.strictObject({
-    ...receiptFields,
-    kind: z.literal('failed'),
-    verified: z.literal(false),
-    level: z.literal('failed'),
-  }),
-  z.strictObject({
-    ...receiptFields,
-    kind: z.literal('sql-restore-only'),
-    verified: z.literal(false),
-    level: z.literal('sql-restore-only'),
-  }),
-]);
+export const currentRestoreReceiptSchema = z
+  .discriminatedUnion('kind', [
+    z.strictObject({
+      ...receiptFields,
+      kind: z.literal('verified'),
+      verified: z.literal(true),
+      level: z.literal('database-content-parity'),
+    }),
+    z.strictObject({
+      ...receiptFields,
+      kind: z.literal('failed'),
+      verified: z.literal(false),
+      level: z.literal('failed'),
+    }),
+    z.strictObject({
+      ...receiptFields,
+      kind: z.literal('sql-restore-only'),
+      verified: z.literal(false),
+      level: z.literal('sql-restore-only'),
+    }),
+  ])
+  .refine(
+    (receipt) =>
+      !receipt.scratch.reopen ||
+      (receipt.kind === 'verified' &&
+        receipt.scratch.retained &&
+        receipt.scratch.ownership?.container_id === receipt.scratch.reopen.container_id),
+    'reopen requires a verified retained owned container',
+  );
 export type DatabaseIdentity = z.infer<typeof databaseIdentitySchema>;
 export type ArtifactIdentity = z.infer<typeof artifactIdentitySchema>;
 export type DatabaseManifest = z.infer<typeof databaseManifestSchema>;

@@ -276,13 +276,15 @@ export function buildManifest(args: CutoverBackupArgs): {
         const quiescence = readJsonArtifact(
           args.quiescenceEvidence ?? source.quiescence.artifact.file,
         );
+        const evidence = quiescenceEvidenceSchema.parse(quiescence.value);
         validateArtifactBindings({
           dump: { ...dump, bytes: String(dump.bytes) },
           source,
           sourceArtifact: sourceArtifact.identity,
           receipt,
           quiescenceArtifact: quiescence.identity,
-          quiescence: quiescenceEvidenceSchema.parse(quiescence.value),
+          quiescence: evidence,
+          executionArtifacts: validateExecutionArtifacts(evidence),
         });
       }
     }
@@ -650,6 +652,15 @@ export function parseRestoreReceipt(value: unknown): RestoreReceipt {
     uniqueSet(receipt.phases, (v) => v.phase);
     if (receipt.source !== null) receipt.source = parseSourceManifest(receipt.source);
     if (receipt.restored !== null) receipt.restored = parseDatabaseManifest(receipt.restored);
+    if (receipt.scratch.reopen) {
+      const { reopen } = receipt.scratch;
+      if (
+        !/^loom-restore-drill-[a-f0-9-]{36}$/.test(receipt.scratch.container) ||
+        receipt.source?.source.cluster === reopen.identity.cluster ||
+        receipt.restored?.server_version !== reopen.identity.server_version
+      )
+        throw new Error('invalid retained reopen evidence');
+    }
     if (receipt.kind === 'verified') {
       if (
         receipt.source === null ||
@@ -663,7 +674,10 @@ export function parseRestoreReceipt(value: unknown): RestoreReceipt {
       for (const phase of REQUIRED_RESTORE_PHASES)
         if (!receipt.phases.some((p) => p.phase === phase && p.kind === 'ok'))
           throw new Error(`failed or missing phase: ${phase}`);
-      if (!/^sha256:[a-f0-9]{64}$/.test(receipt.scratch.image))
+      if (
+        !/^sha256:[a-f0-9]{64}$/.test(receipt.scratch.image) ||
+        receipt.scratch.image !== receipt.source.source_image
+      )
         throw new Error('scratch image is not immutable');
       const comparison = compareDatabaseManifests({
         source: receipt.source.inventory,
@@ -760,10 +774,31 @@ export function validateArtifactBindings(options: {
   receipt?: CurrentRestoreReceipt;
   quiescenceArtifact?: ArtifactIdentity;
   quiescence?: QuiescenceEvidence;
+  executionArtifacts?: {
+    runtime: { version: string; artifact: ArtifactIdentity };
+    worker: ArtifactIdentity;
+  };
 }): void {
   sameArtifact(options.dump, options.source.dump);
   if (options.quiescenceArtifact)
     sameArtifact(options.quiescenceArtifact, options.source.quiescence.artifact);
+  if (
+    options.receipt &&
+    options.source.quiescence.evidence.version === 2 &&
+    (!options.quiescence || !options.quiescenceArtifact)
+  )
+    throw new Error('host quiescence artifact observations required');
+  if (options.quiescence?.version === 2) {
+    if (!options.executionArtifacts)
+      throw new Error('host execution artifact observations required');
+    sameArtifact(
+      options.executionArtifacts.runtime.artifact,
+      options.quiescence.execution.runtime.artifact,
+    );
+    sameArtifact(options.executionArtifacts.worker, options.quiescence.execution.worker.artifact);
+    if (options.executionArtifacts.runtime.version !== options.quiescence.execution.runtime.version)
+      throw new Error('host runtime version mismatch');
+  }
   if (
     options.quiescence &&
     stableStringify(options.quiescence) !== stableStringify(options.source.quiescence.evidence)
@@ -783,6 +818,24 @@ export function validateArtifactBindings(options: {
       throw new Error('source receipt mismatch');
     parseRestoreReceipt(options.receipt);
   }
+}
+/** File validation stays in the helper; the core schemas/parity parsers remain pure. */
+export function validateExecutionArtifacts(
+  evidence: QuiescenceEvidence,
+): Parameters<typeof validateArtifactBindings>[0]['executionArtifacts'] {
+  if (evidence.version === 1) return;
+  const { runtime, worker } = evidence.execution;
+  sameArtifact(artifactIdentity(runtime.artifact.file), runtime.artifact);
+  const workerArtifact = artifactIdentity(worker.artifact.file);
+  sameArtifact(workerArtifact, worker.artifact);
+  // Host evidence is for the same pinned Node runtime used by capture and the parent worker.
+  const runtimeArtifact = artifactIdentity(process.execPath);
+  sameArtifact(runtimeArtifact, runtime.artifact);
+  if (runtime.version !== process.version) throw new Error('host runtime version mismatch');
+  return {
+    runtime: { version: process.version, artifact: runtimeArtifact },
+    worker: workerArtifact,
+  };
 }
 function requireSameDatabase(a: DatabaseIdentity, b: DatabaseIdentity): void {
   for (const k of [
@@ -1043,6 +1096,7 @@ export interface DatabaseConnection {
   user: string;
   database: string;
   host?: string;
+  scratchOwner?: ScratchOwner;
 }
 function psqlArgs(connection: DatabaseConnection): string[] {
   return [
@@ -1188,6 +1242,7 @@ async function databaseJson(
   phase: string,
   snapshot?: string,
 ): Promise<unknown> {
+  if (connection.scratchOwner) await verifyScratch(connection.scratchOwner, phase);
   const output = await runProcess({
     command: 'docker',
     args: [...psqlArgs(connection), '-c', inspectorTransaction(sql, snapshot)],
@@ -1224,6 +1279,7 @@ async function sequences(
   return result;
 }
 async function checkSortSpace(connection: DatabaseConnection): Promise<void> {
+  if (connection.scratchOwner) await verifyScratch(connection.scratchOwner, 'sort-space');
   const output = await runProcess({
     command: 'docker',
     args: ['exec', connection.container, 'sh', '-c', 'df -Pk "$PGDATA"'],
@@ -1284,6 +1340,8 @@ export async function inspectDatabase(options: {
     const digest = createTableDigest(table);
     if (table.kind !== 'p') {
       await checkSortSpace(options.connection);
+      if (options.connection.scratchOwner)
+        await verifyScratch(options.connection.scratchOwner, 'table-stream');
       await runProcess({
         command: 'docker',
         args: [
@@ -1311,7 +1369,7 @@ export async function inspectDatabase(options: {
 async function databaseIdentity(connection: DatabaseConnection): Promise<DatabaseIdentity> {
   return databaseIdentitySchema.parse(await databaseJson(connection, IDENTITY_SQL, 'identity'));
 }
-async function hostDatabaseIdentity(target: string): Promise<DatabaseIdentity> {
+export async function hostDatabaseIdentity(target: string): Promise<DatabaseIdentity> {
   let url: URL;
   try {
     url = new URL(target);
@@ -1321,24 +1379,124 @@ async function hostDatabaseIdentity(target: string): Promise<DatabaseIdentity> {
   if (
     !['postgres:', 'postgresql:'].includes(url.protocol) ||
     !url.hostname ||
-    url.pathname.length < 2
+    url.pathname.length < 2 ||
+    !url.username ||
+    url.hash ||
+    [...url.searchParams.keys()].some((key) => key !== 'sslmode') ||
+    url.searchParams.getAll('sslmode').length > 1 ||
+    (url.searchParams.has('sslmode') &&
+      !['disable', 'prefer', 'require', 'verify-full'].includes(
+        url.searchParams.get('sslmode') ?? '',
+      ))
   )
     throw failure('identity', 'invalid_target', 'explicit PostgreSQL host and database required');
-  const output = await runProcess({
-    command: 'psql',
-    args: ['-X', '-qAt', '-v', 'ON_ERROR_STOP=1', '-c', inspectorTransaction(IDENTITY_SQL)],
-    phase: 'host-identity',
-    env: {
-      PGHOST: url.hostname,
-      PGPORT: url.port || '5432',
-      PGDATABASE: decodeURIComponent(url.pathname.slice(1)),
-      PGUSER: decodeURIComponent(url.username),
-      PGPASSWORD: decodeURIComponent(url.password),
-      PGSSLMODE: url.searchParams.get('sslmode') ?? 'prefer',
-      PGCONNECT_TIMEOUT: '15',
-    },
-  });
-  return databaseIdentitySchema.parse(JSON.parse(output));
+  // No application database module or environment-derived connection is imported.
+  const { default: postgres } = await import('postgres');
+  const sslmode = url.searchParams.get('sslmode') ?? 'prefer';
+  let sql: ReturnType<typeof postgres>;
+  try {
+    sql = postgres({
+      host: url.hostname,
+      port: Number(url.port || '5432'),
+      database: decodeURIComponent(url.pathname.slice(1)),
+      user: decodeURIComponent(url.username),
+      password: () => decodeURIComponent(url.password),
+      ssl:
+        sslmode === 'disable'
+          ? false
+          : sslmode === 'prefer'
+            ? 'prefer'
+            : sslmode === 'require'
+              ? 'require'
+              : 'verify-full',
+      max: 1,
+      prepare: false,
+      fetch_types: false,
+      connect_timeout: 5,
+      idle_timeout: 1,
+      max_lifetime: 20,
+      keep_alive: 0,
+      backoff: () => 0,
+      target_session_attrs: 'primary',
+      debug: false,
+      onnotice: () => {},
+      connection: {
+        application_name: 'loom-cutover-readonly-identity',
+        default_transaction_read_only: true,
+        statement_timeout: 10_000,
+        lock_timeout: 5_000,
+      },
+    });
+  } catch {
+    throw failure('host-identity', 'driver_failed', 'explicit target identity client failed');
+  }
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  let identity: DatabaseIdentity | undefined;
+  const errors: RestoreError[] = [];
+  let abort: (signal: NodeJS.Signals) => void = () => {};
+  const onInt = () => abort('SIGINT'),
+    onTerm = () => abort('SIGTERM');
+  try {
+    const cancellation = new Promise<never>((_resolve, reject) => {
+      abort = (signal) =>
+        reject(
+          new OperationFailure({
+            phase: 'host-identity',
+            code: 'interrupted',
+            message: 'identity operation interrupted',
+            signal,
+          }),
+        );
+      timer = setTimeout(
+        () => reject(failure('host-identity', 'deadline_exceeded', 'identity deadline exceeded')),
+        15_000,
+      );
+    });
+    process.on('SIGINT', onInt);
+    process.on('SIGTERM', onTerm);
+    if (interruptedSignal) abort(interruptedSignal);
+    identity = await Promise.race([
+      sql.begin('isolation level repeatable read read only', async (transaction) => {
+        const rows = await transaction.unsafe(IDENTITY_SQL).values();
+        return z
+          .array(z.tuple([databaseIdentitySchema]))
+          .length(1)
+          .parse(rows)[0][0];
+      }),
+      cancellation,
+    ]);
+  } catch (error) {
+    errors.push(
+      ...errorDetails(
+        error instanceof OperationFailure
+          ? error
+          : failure('host-identity', 'driver_failed', 'explicit target identity query failed'),
+        'host-identity',
+      ),
+    );
+  } finally {
+    clearTimeout(timer);
+    process.off('SIGINT', onInt);
+    process.off('SIGTERM', onTerm);
+    let closeTimer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        sql.end({ timeout: 1 }),
+        new Promise<never>((_resolve, reject) => {
+          closeTimer = setTimeout(() => reject(new Error('close deadline')), 2_000);
+        }),
+      ]);
+    } catch {
+      errors.push(
+        failure('host-identity', 'driver_cleanup_failed', 'identity client close failed').detail,
+      );
+    } finally {
+      clearTimeout(closeTimer);
+    }
+  }
+  if (errors.length) throw new OperationFailure(errors[0], errors.slice(1));
+  if (!identity) throw failure('host-identity', 'driver_failed', 'identity result missing');
+  return identity;
 }
 async function immutableImage(container: string): Promise<string> {
   const value: unknown = JSON.parse(
@@ -1366,6 +1524,7 @@ async function observeBoundary(
   evidence: QuiescenceEvidence,
   keeperPid?: number,
 ) {
+  validateExecutionArtifacts(evidence);
   for (const writer of evidence.writers) {
     if (writer.kind === 'container') {
       if (writer.id === connection.container)
@@ -1422,6 +1581,7 @@ async function observeBoundary(
   } satisfies SourceManifest['quiescence']['observations'][number];
 }
 async function snapshotKeeper(connection: DatabaseConnection) {
+  if (connection.scratchOwner) await verifyScratch(connection.scratchOwner, 'inspection');
   const child = spawn('docker', psqlArgs(connection), {
     shell: false,
     env: subprocessEnvironment(),
@@ -1547,6 +1707,7 @@ export async function captureParitySource(options: {
   try {
     const quiescenceArtifact = readJsonArtifact(options.quiescenceEvidence);
     const evidence = quiescenceEvidenceSchema.parse(quiescenceArtifact.value);
+    validateExecutionArtifacts(evidence);
     const retainedQuiescence = join(directory, 'quiescence-evidence.json');
     writeFileSync(retainedQuiescence, quiescenceArtifact.bytes, { flag: 'wx' });
     const quiescenceIdentity = { ...quiescenceArtifact.identity, file: retainedQuiescence };
@@ -1790,6 +1951,7 @@ export function finalizeRestoreEvidence(options: {
       code: 'incomplete_phases',
       message: 'required phases did not complete',
     });
+  delete receipt.scratch.reopen;
   const failed = currentRestoreReceiptSchema.parse({
     ...receipt,
     kind: 'failed',
@@ -1798,6 +1960,137 @@ export function finalizeRestoreEvidence(options: {
   });
   atomicWrite(options.out, `${JSON.stringify(failed, null, 2)}\n`);
   return 1;
+}
+export const scratchAccessSchema = z.discriminatedUnion('kind', [
+  z.strictObject({ kind: z.literal('isolated') }),
+  z.strictObject({
+    kind: z.literal('retained-loopback'),
+    port: z.number().int().min(1024).max(65535),
+    database: z.string().regex(/^test_fork_[0-9]+$/),
+  }),
+]);
+type ScratchAccess = z.infer<typeof scratchAccessSchema>;
+const SCRATCH_ATTEMPT_LABEL = 'loom.restore-drill.attempt';
+interface ScratchOwner {
+  id: string;
+  attempt: string;
+  name: string;
+  image: string;
+  access: ScratchAccess;
+  database: string;
+  volumes: Array<{ name: string; destination: string }> | null;
+}
+async function verifyScratch(owner: ScratchOwner, phase: string) {
+  const binding = z.array(z.object({ HostIp: z.string(), HostPort: z.string() })).nullable();
+  const inspected = z
+    .array(
+      z.object({
+        Id: z.string(),
+        Name: z.string(),
+        Image: z.string(),
+        Config: z.object({
+          Env: z.array(z.string()),
+          Labels: z.record(z.string(), z.string()).nullable(),
+          Volumes: z.record(z.string(), z.unknown()).nullable(),
+        }),
+        State: z.object({ Running: z.boolean(), Restarting: z.boolean() }),
+        HostConfig: z.object({
+          NetworkMode: z.string(),
+          Binds: z.array(z.unknown()).nullable(),
+          Mounts: z.array(z.unknown()).optional(),
+          PortBindings: z.record(z.string(), binding).nullable(),
+        }),
+        NetworkSettings: z.object({ Ports: z.record(z.string(), binding) }),
+        Mounts: z.array(
+          z.object({ Type: z.string(), Name: z.string().optional(), Destination: z.string() }),
+        ),
+      }),
+    )
+    .length(1)
+    .parse(
+      JSON.parse(await runProcess({ command: 'docker', args: ['inspect', owner.id], phase })),
+    )[0];
+  const portBindings = (ports: Record<string, z.infer<typeof binding>> | null) => {
+    const published = Object.entries(ports ?? {}).filter(([, value]) => value?.length);
+    return owner.access.kind === 'isolated'
+      ? published.length === 0
+      : published.length === 1 &&
+          published[0][0] === '5432/tcp' &&
+          published[0][1]?.length === 1 &&
+          published[0][1][0].HostIp === '127.0.0.1' &&
+          published[0][1][0].HostPort === String(owner.access.port);
+  };
+  if (
+    inspected.Id !== owner.id ||
+    inspected.Name !== `/${owner.name}` ||
+    inspected.Image !== owner.image ||
+    inspected.Config.Labels?.[SCRATCH_ATTEMPT_LABEL] !== owner.attempt ||
+    (phase !== 'cleanup' && (!inspected.State.Running || inspected.State.Restarting)) ||
+    inspected.HostConfig.NetworkMode !== (owner.access.kind === 'isolated' ? 'none' : 'bridge') ||
+    !portBindings(inspected.HostConfig.PortBindings) ||
+    !portBindings(inspected.NetworkSettings.Ports) ||
+    (inspected.HostConfig.Binds?.length ?? 0) !== 0 ||
+    (inspected.HostConfig.Mounts?.length ?? 0) !== 0 ||
+    !['POSTGRES_USER=loom', 'POSTGRES_PASSWORD=loom', `POSTGRES_DB=${owner.database}`].every(
+      (env) =>
+        inspected.Config.Env.filter((value) => value.split('=')[0] === env.split('=')[0]).join() ===
+        env,
+    )
+  )
+    throw failure(
+      phase,
+      'scratch_identity_mismatch',
+      'scratch ownership, image, database or mapping changed',
+    );
+  const volumes = inspected.Mounts.map((mount) => {
+    if (
+      mount.Type !== 'volume' ||
+      !mount.Name ||
+      !(mount.Destination in (inspected.Config.Volumes ?? {}))
+    )
+      throw failure(phase, 'scratch_storage_mismatch', 'scratch has unexpected storage');
+    return { name: mount.Name, destination: mount.Destination };
+  }).sort((a, b) => a.destination.localeCompare(b.destination));
+  if (owner.volumes !== null && stableStringify(volumes) !== stableStringify(owner.volumes))
+    throw failure(phase, 'scratch_storage_mismatch', 'scratch storage identity changed');
+  owner.volumes = volumes;
+}
+export function parseScratchAccess(
+  argv: string[],
+  mode: { keep: boolean; listOnly: boolean; restoreOnly: boolean },
+): ScratchAccess {
+  const read = (key: string) => {
+    const matches = argv.filter((value) => value === `--${key}` || value.startsWith(`--${key}=`));
+    if (!matches.length) return null;
+    if (
+      matches.length !== 1 ||
+      !matches[0].startsWith(`--${key}=`) ||
+      !matches[0].slice(key.length + 3)
+    )
+      throw failure(
+        'preflight',
+        'invalid_scratch_options',
+        'scratch options require one nonempty --key=value each',
+      );
+    return matches[0].slice(key.length + 3);
+  };
+  const port = read('scratch-loopback-port'),
+    database = read('scratch-database');
+  if (port === null && database === null) return { kind: 'isolated' };
+  if (
+    !port ||
+    !database ||
+    !/^[1-9][0-9]{3,4}$/.test(port) ||
+    !mode.keep ||
+    mode.listOnly ||
+    mode.restoreOnly
+  )
+    throw failure(
+      'preflight',
+      'invalid_scratch_options',
+      'paired scratch options require full parity and --keep',
+    );
+  return scratchAccessSchema.parse({ kind: 'retained-loopback', port: Number(port), database });
 }
 export async function runRestoreDrill(options: {
   dump: string | null;
@@ -1809,10 +2102,12 @@ export async function runRestoreDrill(options: {
   listOnly: boolean;
   keep: boolean;
   overwrite: boolean;
+  scratchArgs?: string[];
 }): Promise<number> {
   let out = resolve(options.out),
     stage: string | undefined,
-    scratchAttempted = false;
+    owner: ScratchOwner | undefined;
+  const attempt = randomUUID();
   const receipt: CurrentRestoreReceipt = {
     format: 'loom-restore-drill',
     version: 2,
@@ -1854,6 +2149,8 @@ export async function runRestoreDrill(options: {
       }
     }
     if (!options.dump) throw failure('preflight', 'missing_dump', '--dump is required');
+    const access = parseScratchAccess(options.scratchArgs ?? [], options);
+    const database = access.kind === 'isolated' ? 'loom' : access.database;
     if (!options.restoreOnly && !options.listOnly && !options.sourceManifest)
       throw failure(
         'preflight',
@@ -1881,11 +2178,13 @@ export async function runRestoreDrill(options: {
       const quiescence = readJsonArtifact(
         options.quiescenceEvidence ?? source.quiescence.artifact.file,
       );
+      const evidence = quiescenceEvidenceSchema.parse(quiescence.value);
       validateArtifactBindings({
         source,
         dump: receipt.dump,
         quiescenceArtifact: quiescence.identity,
-        quiescence: quiescenceEvidenceSchema.parse(quiescence.value),
+        quiescence: evidence,
+        executionArtifacts: validateExecutionArtifacts(evidence),
       });
       ok('bindings');
     }
@@ -1915,7 +2214,7 @@ export async function runRestoreDrill(options: {
       phase = 'toc';
       const text = await runProcess({
         command: 'docker',
-        args: ['run', '--rm', '--network=none', '-i', image, 'pg_restore', '-l'],
+        args: ['run', '--pull=never', '--rm', '--network=none', '-i', image, 'pg_restore', '-l'],
         phase: 'toc',
         inputFile: stagedDump,
       });
@@ -1923,33 +2222,58 @@ export async function runRestoreDrill(options: {
       process.stdout.write(text);
       // A TOC listing is deliberately not a restore receipt.
     } else {
-      scratchAttempted = true;
-      await runProcess({
-        command: 'docker',
-        args: [
-          'run',
-          '-d',
-          '--network=none',
-          '--name',
-          receipt.scratch.container,
-          '-e',
-          'POSTGRES_USER=loom',
-          '-e',
-          'POSTGRES_PASSWORD=loom',
-          '-e',
-          'POSTGRES_DB=loom',
-          image,
-        ],
-        phase: 'start',
-      });
+      const id = z
+        .string()
+        .regex(/^[a-f0-9]{64}$/)
+        .parse(
+          (
+            await runProcess({
+              command: 'docker',
+              args: [
+                'run',
+                '--pull=never',
+                '-d',
+                ...(access.kind === 'isolated'
+                  ? ['--network=none']
+                  : ['--network=bridge', '--publish', `127.0.0.1:${access.port}:5432`]),
+                '--label',
+                `${SCRATCH_ATTEMPT_LABEL}=${attempt}`,
+                '--name',
+                receipt.scratch.container,
+                '-e',
+                'POSTGRES_USER=loom',
+                '-e',
+                'POSTGRES_PASSWORD=loom',
+                '-e',
+                `POSTGRES_DB=${database}`,
+                image,
+              ],
+              phase: 'start',
+            })
+          ).trim(),
+        );
+      const candidate: ScratchOwner = {
+        id,
+        attempt,
+        name: receipt.scratch.container,
+        image,
+        access,
+        database,
+        volumes: null,
+      };
+      await verifyScratch(candidate, 'start');
+      owner = candidate;
+      receipt.scratch.ownership = { container_id: id, attempt, volumes: candidate.volumes ?? [] };
       const connection = {
-        container: receipt.scratch.container,
+        container: id,
         user: 'loom',
-        database: 'loom',
+        database,
         host: '127.0.0.1',
+        scratchOwner: owner,
       };
       let ready = false;
       for (let i = 0; i < 90; i++) {
+        await verifyScratch(owner, 'start');
         try {
           await runProcess({
             command: 'docker',
@@ -1966,8 +2290,18 @@ export async function runRestoreDrill(options: {
       }
       if (!ready)
         throw failure('start', 'readiness_failed', 'scratch PostgreSQL did not become ready');
+      const initialIdentity = await databaseIdentity(connection);
+      if (
+        initialIdentity.database !== database ||
+        initialIdentity.in_recovery ||
+        (receipt.source &&
+          (initialIdentity.cluster === receipt.source.source.cluster ||
+            initialIdentity.server_version !== receipt.source.source.server_version))
+      )
+        throw failure('start', 'scratch_database_mismatch', 'scratch database identity is invalid');
       ok('start');
       phase = 'toc';
+      await verifyScratch(owner, 'toc');
       const toc = await runProcess({
         command: 'docker',
         args: ['exec', '-i', connection.container, 'pg_restore', '-l'],
@@ -1979,6 +2313,7 @@ export async function runRestoreDrill(options: {
         throw failure('toc', 'toc_mismatch', 'TOC entry count differs');
       ok('toc');
       phase = 'restore';
+      await verifyScratch(owner, 'restore');
       await runProcess({
         command: 'docker',
         args: [
@@ -1987,9 +2322,9 @@ export async function runRestoreDrill(options: {
           connection.container,
           'pg_restore',
           '-U',
-          'loom',
+          connection.user,
           '-d',
-          'loom',
+          database,
           '--clean',
           '--if-exists',
           '--no-owner',
@@ -1999,10 +2334,13 @@ export async function runRestoreDrill(options: {
         phase: 'restore',
         inputFile: stagedDump,
       });
+      requireSameDatabase(initialIdentity, await databaseIdentity(connection));
       ok('restore');
       if (!options.restoreOnly) {
         phase = 'inspection';
         receipt.restored = await inspectDatabase({ connection });
+        const finalIdentity = await databaseIdentity(connection);
+        requireSameDatabase(initialIdentity, finalIdentity);
         ok('inspection');
         phase = 'comparison';
         if (!receipt.source)
@@ -2014,6 +2352,14 @@ export async function runRestoreDrill(options: {
         if (receipt.comparison.kind !== 'equal')
           throw failure('comparison', 'content_mismatch', 'source and scratch inventories differ');
         ok('comparison');
+        if (access.kind === 'retained-loopback')
+          receipt.scratch.reopen = {
+            kind: 'retained-loopback-v1',
+            container_id: id,
+            host: '127.0.0.1',
+            port: access.port,
+            identity: { ...finalIdentity, in_recovery: false },
+          };
       }
     }
   } catch (error) {
@@ -2021,12 +2367,25 @@ export async function runRestoreDrill(options: {
     receipt.phases.push({ phase, kind: 'failed' });
   } finally {
     try {
-      if (scratchAttempted) {
-        if (options.keep) receipt.scratch.retained = true;
-        else
+      if (owner) {
+        await verifyScratch(owner, 'cleanup');
+        if (options.keep) {
+          receipt.scratch.retained = true;
+          if (receipt.scratch.reopen)
+            requireSameDatabase(
+              receipt.scratch.reopen.identity,
+              await databaseIdentity({
+                container: owner.id,
+                user: 'loom',
+                database: owner.database,
+                host: '127.0.0.1',
+                scratchOwner: owner,
+              }),
+            );
+        } else
           await runProcess({
             command: 'docker',
-            args: ['rm', '-f', receipt.scratch.container],
+            args: ['rm', '-f', '-v', owner.id],
             phase: 'cleanup',
             timeoutMs: 10_000,
           });
@@ -2037,6 +2396,7 @@ export async function runRestoreDrill(options: {
       receipt.errors.push(errorDetail(error, 'cleanup'));
       receipt.phases.push({ phase: 'cleanup', kind: 'failed' });
     }
+    if (receipt.errors.length) delete receipt.scratch.reopen;
   }
   receipt.finished_at = new Date().toISOString();
   if (options.listOnly && !receipt.errors.length) return 0;
@@ -2050,6 +2410,15 @@ function readOption(argv: string[], key: string): string | null {
 }
 async function main(argv: string[]): Promise<number> {
   const operation = readOption(argv, 'operation') ?? 'manifest';
+  if (
+    operation !== 'restore-drill' &&
+    argv.some((value) => /^--scratch-(loopback-port|database)(=|$)/.test(value))
+  )
+    throw failure(
+      'preflight',
+      'invalid_scratch_options',
+      'scratch options require restore-drill full parity',
+    );
   switch (operation) {
     case 'restore-drill':
       return runRestoreDrill({
@@ -2069,6 +2438,7 @@ async function main(argv: string[]): Promise<number> {
         listOnly: argv.includes('--list-only'),
         keep: argv.includes('--keep'),
         overwrite: argv.includes('--overwrite'),
+        scratchArgs: argv,
       });
     case 'capture-parity': {
       const out = readOption(argv, 'out'),

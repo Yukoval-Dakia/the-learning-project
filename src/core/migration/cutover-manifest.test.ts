@@ -1,11 +1,88 @@
 import { describe, expect, it } from 'vitest';
 
 import { classifyMigrationCapture } from './classify';
-import { SECTION14_COVERAGE, buildCutoverBackupManifest } from './cutover-manifest';
+import {
+  SECTION14_COVERAGE,
+  buildCutoverBackupManifest,
+  quiescenceEvidenceSchema,
+} from './cutover-manifest';
 import { DLQ_DISPOSITIONS, dlqCensusTotal } from './dispositions';
 import { type ManifestOptions, buildMigrationManifest } from './manifest';
 import { emptyCapture, ev, withEvents } from './test-fixtures';
 import type { MigrationManifest } from './types';
+
+describe('versioned maintenance execution evidence', () => {
+  const identity = {
+    cluster: '1234',
+    database_oid: '16384',
+    database: 'test_fork_1',
+    server_version: '16.14',
+    server_started_at: '2026-10-09T00:00:00Z',
+    in_recovery: false,
+    server_address: null,
+    server_port: null,
+  };
+  const common = {
+    format: 'loom-maintenance-boundary',
+    basis: 'external-maintenance-boundary',
+    owner: 'parent',
+    window: 'fixture',
+    established_at: '2026-10-09T00:00:00Z',
+    held_until_explicit_release: true,
+    source: identity,
+    source_revision: 'a'.repeat(40),
+    restart_admission_control: 'enforced',
+    other_clients_control: 'enforced',
+    background_writers_control: 'enforced',
+    writers: [{ kind: 'external', name: 'fixture-worker', control: 'enforced' }],
+  };
+  const artifact = { file: '/offline/worker.mjs', sha256: 'a'.repeat(64), bytes: '100' };
+  const execution = {
+    kind: 'host-node-v1',
+    app: { kind: 'absent' },
+    runtime: { kind: 'node', version: 'v24.19.0', artifact },
+    worker: { name: 'fixture-worker', artifact },
+  };
+  it('retains the mandatory v1 image contract and admits strict host evidence', () => {
+    expect(
+      quiescenceEvidenceSchema.parse({
+        ...common,
+        version: 1,
+        app_image: `sha256:${'a'.repeat(64)}`,
+        worker_image: `sha256:${'b'.repeat(64)}`,
+      }).version,
+    ).toBe(1);
+    expect(quiescenceEvidenceSchema.parse({ ...common, version: 2, execution }).version).toBe(2);
+    expect(() => quiescenceEvidenceSchema.parse({ ...common, version: 1 })).toThrow();
+  });
+  it.each([
+    { version: 2 },
+    { version: 3, execution },
+    {
+      version: 1,
+      execution,
+      app_image: `sha256:${'a'.repeat(64)}`,
+      worker_image: `sha256:${'a'.repeat(64)}`,
+    },
+    { version: 2, execution, app_image: `sha256:${'a'.repeat(64)}` },
+    { version: 2, execution: { ...execution, app: undefined } },
+    { version: 2, execution: { ...execution, app: { kind: 'absent', image: 'fake' } } },
+    {
+      version: 2,
+      execution: {
+        ...execution,
+        runtime: { ...execution.runtime, artifact: { ...artifact, sha256: 'fake' } },
+      },
+    },
+    {
+      version: 2,
+      execution: { ...execution, worker: { ...execution.worker, name: 'uncontrolled-worker' } },
+    },
+    { version: 2, execution, restart_admission_control: 'unknown' },
+  ])('rejects absent, mixed or forged execution provenance %j', (fields) => {
+    expect(() => quiescenceEvidenceSchema.parse({ ...common, ...fields })).toThrow();
+  });
+});
 
 // YUK-1056 — final backup manifest 单测（grounding §14–§15）：
 //   - §14 全条目落点核对表（coverage_map）与 migration manifest 原样嵌入；

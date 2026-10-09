@@ -41,5 +41,14 @@ describe('current full Postgres source binding', () => {
     expect(runbook).toContain('--restore-only');
     expect(runbook).toContain('reported_verified');
     expect(runbook).toContain('before migrations');
+    for (const required of [
+      '--scratch-loopback-port',
+      '--scratch-database',
+      '--pull=never',
+      'scratch.ownership',
+      'scratch.reopen',
+      'host-node-v1',
+    ])
+      expect(runbook).toContain(required);
   });
 });

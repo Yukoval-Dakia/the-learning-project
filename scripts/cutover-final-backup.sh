@@ -3,7 +3,7 @@
 # --strict is artifact presence. --require-restore-parity is the separate restore gate.
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
-TARGET="${LOOM_CUTOVER_TARGET:-${DATABASE_URL:-}}"
+TARGET=""
 OUT_DIR="cutover-backup-$(date +%Y%m%d-%H%M%S)"
 ARGS=()
 for arg in "$@"; do
