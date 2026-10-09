@@ -1,3 +1,9 @@
+# Restore sequencing dependency removed; notes Start assigned separately
+
+Parent read5796 completed thread run471 and exact0015de13dc062e6badaa9cbf74e5dcc81ec9bae4. After current transport writer releases AND parent commits actualacceptance evidence, may switch sameboundtree freshorigin/main to existing4file restorehelper scope. No longerwaitjudge merge/quota. Keep1625draft/watch/realmodelgate, nojudgeWIPonmain, onecodewriter/noautomaticruntime. Scopeunchanged, detailsdbos-restore-evidence-gap. Startowner run472 explicitly takes/notes LIST ONLY usingexistingseam+schema/subject semantics; noournoteswriter.
+
+Current soletransporttaskstillrunning, nowWIP onlyprocess.db.test.ts/worker.ts, parentdoesnotmodifythose. Parentroutecensus47e local14Start/14fallback recordedLinear1359comment672f1a5b. Noresources/lock. Awaitauthorhandoff, inspectactualdiff thenactualmutex+scopedprocess; preservetestfailures. Do notstartrestorebeforethisboundary.
+
 # Judge transmission failure cases are the sole active test lane
 
 PR1625 exacta336ab630 pushed andwatching, sourcecoldfix06ecea, treeclean before thisdocs. Parent controlledHono24HTTP/27readwindows/98tables5sequences remainsPASS, lockcfb66 released04:24:35.394871Z withoriginal4/releaseunchanged. No currentruntime resources orlock.
