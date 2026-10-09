@@ -542,6 +542,9 @@ export const fastTestInclude = [
   'src/subjects/serialize.test.ts',
   'src/ui/**/*.test.ts',
   'src/ui/**/*.test.tsx',
+  // YUK-1354 — the scoped design-system base; pure React/DOM, no DB.
+  'src/ui-next/**/*.test.ts',
+  'src/ui-next/**/*.test.tsx',
   'tests/core/**/*.test.ts',
   'tests/acceptance/deadline.test.ts',
   'tests/schema/**/*.test.ts',

@@ -1,0 +1,296 @@
+/* ui-next tokens (YUK-1354). Stable-layer design tokens from
+   docs/design/2026-10-07-ui-visual-direction.md §8 (T1–T10) and §9A (A1–A4).
+
+   Everything lives under [data-ui-next] and every variable is prefixed --un-:
+   - nothing here touches the root element, the page body, the global reset or global fonts (I4);
+   - Tailwind v4 emits its own theme variables when it sees their names referenced, so these names
+     stay out of its namespaces (T9).
+   Rules are not in a cascade layer: the app's global element rules are unlayered and would win
+   over anything layered. */
+
+/* Light (default). Contrast is checked by tokens.unit.test.ts. */
+[data-ui-next] {
+  color-scheme: light;
+
+  --un-bg: #faf9f5;
+  --un-bg-raised: #ffffff;
+  --un-bg-sunk: #f4f2ec;
+  --un-bg-hover: #ece9e1;
+  --un-line: #e3dfd5;
+  --un-line-strong: #cdc8bc;
+
+  --un-text-1: #1f1e1d;
+  --un-text-2: #45433e;
+  --un-text-3: #5e5b54;
+  --un-text-4: #6b675f;
+  --un-text-disabled: #a6a194;
+  --un-text-on-accent: #ffffff;
+
+  --un-accent: #d97757;
+  --un-accent-strong: #a44527;
+  --un-accent-soft: #faede5;
+  --un-accent-ink: #7a3218;
+
+  --un-positive: #376b46;
+  --un-positive-soft: #e5eee5;
+  --un-caution: #855a0e;
+  --un-caution-soft: #f6eedb;
+  --un-critical: #b5341b;
+  --un-critical-soft: #f7e3dc;
+
+  --un-focus: var(--un-accent-strong);
+  --un-scrim: rgb(31 30 29 / 0.28);
+  --un-shadow-float: 0 1px 2px rgb(40 32 24 / 0.06), 0 18px 44px -16px rgb(40 32 24 / 0.3);
+  --un-glass-alpha: 86%;
+  --un-glass-highlight:
+    inset 0 1px 0 rgb(255 255 255 / 0.55), inset 0 0 0 1px rgb(255 255 255 / 0.22);
+
+  /* Type: 6 sizes, nothing below 13px. */
+  --un-fs-1: 13px;
+  --un-fs-2: 15px;
+  --un-fs-3: 17px;
+  --un-fs-4: 20px;
+  --un-fs-5: 26px;
+  --un-fs-6: 34px;
+  --un-fw-regular: 400;
+  --un-fw-medium: 500;
+  --un-fw-semibold: 600;
+  --un-lh-tight: 1.3;
+  --un-lh-ui: 1.5;
+  --un-lh-prose: 1.75;
+  --un-ls-tight: -0.012em;
+  --un-font-sans:
+    "PingFang SC", "MiSans", "Noto Sans SC", "Hiragino Sans GB", -apple-system, BlinkMacSystemFont,
+    "Segoe UI", system-ui, sans-serif;
+  --un-font-serif: "Source Serif 4", "Songti SC", "Noto Serif SC", "STSong", ui-serif, serif;
+  --un-font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
+
+  /* Space (4/8 grid), radius (3 tiers), sizes. */
+  --un-sp-1: 4px;
+  --un-sp-2: 8px;
+  --un-sp-3: 12px;
+  --un-sp-4: 16px;
+  --un-sp-5: 24px;
+  --un-sp-6: 32px;
+  --un-sp-7: 48px;
+  --un-sp-8: 64px;
+  --un-r-1: 8px;
+  --un-r-2: 14px;
+  --un-r-3: 999px;
+  --un-h-control: 32px;
+  --un-h-control-sm: 28px;
+  --un-h-chip: 24px;
+  --un-hit-touch: 44px;
+  --un-hit-pointer: 24px;
+  --un-icon: 16px;
+  --un-hairline: 1px;
+  --un-w-sidebar: 248px;
+  --un-w-sidebar-min: 60px;
+  --un-w-panel: 384px;
+  --un-w-prose: 680px;
+  --un-h-topbar: 48px;
+  --un-h-tabbar: 62px;
+  --un-h-tabbar-compact: 48px;
+  --un-h-sheet-grip: 24px;
+
+  /* Motion (T4): feedback, small UI, interface, panel; two curves plus a soft spring for flights. */
+  --un-t-feedback: 90ms;
+  --un-t-small: 200ms;
+  --un-t-ui: 280ms;
+  --un-t-panel: 420ms;
+  --un-t-glow: 1600ms;
+  --un-ease-spring: cubic-bezier(0.32, 1.28, 0.48, 1);
+  --un-ease-spring-soft: cubic-bezier(0.32, 1.12, 0.48, 1);
+  --un-ease-glide: cubic-bezier(0.22, 1, 0.36, 1);
+  --un-press-scale: 0.97;
+
+  /* Stacking (T7). */
+  --un-z-mascot: 3;
+  --un-z-bubble: 4;
+  --un-z-sheet: 40;
+  --un-z-tabbar: 42;
+  --un-z-capture: 45;
+  --un-z-palette: 50;
+  --un-z-toast: 60;
+}
+
+/* Dark: explicit app theme or an explicit local override. */
+:root[data-theme="dark"] [data-ui-next]:not([data-un-theme="light"]),
+[data-ui-next][data-un-theme="dark"] {
+  color-scheme: dark;
+
+  --un-bg: #171614;
+  --un-bg-raised: #1f1e1b;
+  --un-bg-sunk: #121110;
+  --un-bg-hover: #282724;
+  --un-line: #312f2c;
+  --un-line-strong: #403e3a;
+
+  --un-text-1: #f2efe8;
+  --un-text-2: #c8c4bb;
+  --un-text-3: #aba79e;
+  --un-text-4: #959188;
+  --un-text-disabled: #5c5953;
+  --un-text-on-accent: #171614;
+
+  --un-accent: #e8916e;
+  --un-accent-strong: #f0a283;
+  --un-accent-soft: #3a2419;
+  --un-accent-ink: #f5c8b0;
+
+  --un-positive: #80b590;
+  --un-positive-soft: #1f2c23;
+  --un-caution: #d9aa52;
+  --un-caution-soft: #33291a;
+  --un-critical: #ec876f;
+  --un-critical-soft: #3a201a;
+
+  --un-scrim: rgb(0 0 0 / 0.5);
+  --un-shadow-float: 0 1px 2px rgb(0 0 0 / 0.4), 0 20px 48px -12px rgb(0 0 0 / 0.6);
+  --un-glass-highlight:
+    inset 0 1px 0 rgb(255 255 255 / 0.1), inset 0 0 0 1px rgb(255 255 255 / 0.06);
+}
+
+/* Dark by system preference when the app has no explicit theme (T6). */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]) [data-ui-next]:not([data-un-theme="light"]) {
+    color-scheme: dark;
+
+    --un-bg: #171614;
+    --un-bg-raised: #1f1e1b;
+    --un-bg-sunk: #121110;
+    --un-bg-hover: #282724;
+    --un-line: #312f2c;
+    --un-line-strong: #403e3a;
+
+    --un-text-1: #f2efe8;
+    --un-text-2: #c8c4bb;
+    --un-text-3: #aba79e;
+    --un-text-4: #959188;
+    --un-text-disabled: #5c5953;
+    --un-text-on-accent: #171614;
+
+    --un-accent: #e8916e;
+    --un-accent-strong: #f0a283;
+    --un-accent-soft: #3a2419;
+    --un-accent-ink: #f5c8b0;
+
+    --un-positive: #80b590;
+    --un-positive-soft: #1f2c23;
+    --un-caution: #d9aa52;
+    --un-caution-soft: #33291a;
+    --un-critical: #ec876f;
+    --un-critical-soft: #3a201a;
+
+    --un-scrim: rgb(0 0 0 / 0.5);
+    --un-shadow-float: 0 1px 2px rgb(0 0 0 / 0.4), 0 20px 48px -12px rgb(0 0 0 / 0.6);
+    --un-glass-highlight:
+      inset 0 1px 0 rgb(255 255 255 / 0.1), inset 0 0 0 1px rgb(255 255 255 / 0.06);
+  }
+}
+
+/* Reduced motion: every transition in this scope reads a duration token, so zeroing the tokens
+   stops all of them; keyframe animations are only declared under no-preference (M3). */
+@media (prefers-reduced-motion: reduce) {
+  [data-ui-next] {
+    --un-t-feedback: 1ms;
+    --un-t-small: 1ms;
+    --un-t-ui: 1ms;
+    --un-t-panel: 1ms;
+    --un-press-scale: 1;
+  }
+}
+
+/* Scope base: re-establish what the app's unlayered global element rules override. */
+[data-ui-next] {
+  color: var(--un-text-1);
+  font-family: var(--un-font-sans);
+  font-size: var(--un-fs-2);
+  line-height: var(--un-lh-ui);
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+
+  & :where(h1, h2, h3, h4, h5, h6, p, figure, blockquote, dl, dd) {
+    margin: 0;
+    color: inherit;
+    font: inherit;
+    letter-spacing: inherit;
+  }
+
+  & :where(ul, ol) {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+
+  & :where(a) {
+    color: inherit;
+    text-decoration: none;
+  }
+
+  & :where(button, input, textarea, select) {
+    font: inherit;
+    color: inherit;
+  }
+
+  & :where(button) {
+    border: 0;
+    background: none;
+    cursor: pointer;
+  }
+
+  & :focus-visible {
+    outline: 2px solid var(--un-focus);
+    outline-offset: 2px;
+    box-shadow: none;
+  }
+
+  & .un-sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  & .un-num {
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Glass is for floating layers only (T3). The alpha keeps secondary text at 4.5:1 or better
+     against the worst content that can sit behind it (A3). */
+  & .un-glass {
+    background: color-mix(in srgb, var(--un-bg-raised) var(--un-glass-alpha), transparent);
+    -webkit-backdrop-filter: blur(22px) saturate(1.8);
+    backdrop-filter: blur(22px) saturate(1.8);
+    box-shadow: var(--un-glass-highlight), var(--un-shadow-float);
+  }
+
+  @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+    & .un-glass {
+      background: var(--un-bg-raised);
+    }
+  }
+}
+
+/* Touch targets (A2): on coarse pointers every small control gets an invisible 44px hit area,
+   so visual density stays the same. Controls opt in with .un-hit. */
+@media (pointer: coarse) {
+  [data-ui-next] .un-hit {
+    position: relative;
+  }
+
+  [data-ui-next] .un-hit::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, var(--un-hit-touch));
+    height: max(100%, var(--un-hit-touch));
+    transform: translate(-50%, -50%);
+  }
+}
