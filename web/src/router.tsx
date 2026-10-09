@@ -352,7 +352,7 @@ const knowledgeDetailRoute = createRoute({
   component: KnowledgeDetailRouteC,
 });
 
-const NotesRoute = lazyNavigableRoute(loadNotesPage);
+const NotesRoute = import.meta.env.PROD ? StartPageEntry : lazyNavigableRoute(loadNotesPage);
 
 const notesRoute = createRoute({
   getParentRoute: () => rootRoute,

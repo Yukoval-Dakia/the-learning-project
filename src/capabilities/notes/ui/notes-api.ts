@@ -11,20 +11,12 @@ import {
   apiOperationJson,
 } from '@/ui/lib/api';
 
-export type NoteListRow = {
-  id: string;
-  type: string;
-  title: string;
-  knowledge_ids: string[];
-  generation_status: string;
-  verification_status: string;
-  version: number;
-  updated_at: string;
-};
+export type NoteListResponse = ApiOperationJsonResponse<'listNotes'>;
+export type NoteListRow = NoteListResponse['rows'][number];
 
 // YUK-919 — query：标题/正文文本搜索（服务端 listNotes 与科目过滤 AND 组合）；
 // 空串/空白不发送，保持既有列表行为。
-export const listNotes = (subject?: string, query?: string): Promise<{ rows: NoteListRow[] }> => {
+export const listNotes = (subject?: string, query?: string): Promise<NoteListResponse> => {
   const params = new URLSearchParams();
   if (subject) params.set('subject', subject);
   if (query?.trim()) params.set('query', query.trim());
