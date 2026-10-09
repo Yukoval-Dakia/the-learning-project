@@ -8,7 +8,10 @@ export interface TabBarItem {
   active?: boolean;
   /** The one solid action in the bar (e.g. capture). */
   primary?: boolean;
+  /** Visual badge (e.g. a count); hidden from assistive tech, so pair it with badgeLabel. */
   badge?: ReactNode;
+  /** Spoken form of the badge, e.g. "3 条待整理". */
+  badgeLabel?: string;
 }
 
 export interface TabBarProps {
@@ -43,8 +46,13 @@ export function TabBar({ label, items, compact = false, hidden = false }: TabBar
           <span className="un-tab-icon" aria-hidden="true">
             {item.icon}
           </span>
-          {item.badge !== undefined && <span className="un-tab-badge">{item.badge}</span>}
+          {item.badge !== undefined && (
+            <span className="un-tab-badge" aria-hidden="true">
+              {item.badge}
+            </span>
+          )}
           <span className="un-tab-label">{item.label}</span>
+          {item.badgeLabel && <span className="un-sr-only">（{item.badgeLabel}）</span>}
         </button>
       ))}
     </nav>

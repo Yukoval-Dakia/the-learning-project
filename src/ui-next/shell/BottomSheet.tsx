@@ -20,7 +20,7 @@ export interface BottomSheetProps {
   onSnapChange: (next: SheetSnap) => void;
   /** Whether the sheet may close entirely; otherwise peek is the lowest stop (C2). */
   canClose?: boolean;
-  /** Height that stays visible at peek (grip + header). */
+  /** Height that stays visible at peek; measured from the grip and header when omitted. */
   peekVisible?: number;
   /** Space kept clear below the peeking sheet, e.g. for a floating tab bar. */
   bottomInset?: number;
@@ -48,17 +48,25 @@ export function BottomSheet({
   snap,
   onSnapChange,
   canClose = false,
-  peekVisible = 92,
+  peekVisible,
   bottomInset = 0,
   header,
   children,
 }: BottomSheetProps) {
   const sheetRef = useRef<HTMLElement>(null);
+  const gripRef = useRef<HTMLButtonElement>(null);
+  const headRef = useRef<HTMLDivElement>(null);
   const springRef = useRef<SpringHandle | null>(null);
   const dragRef = useRef<Drag | null>(null);
   const suppressClick = useRef(false);
 
   const stops = canClose ? ORDER : ORDER.slice(1);
+
+  const visibleAtPeek = useCallback(() => {
+    if (peekVisible !== undefined) return peekVisible;
+    const measured = (gripRef.current?.offsetHeight ?? 0) + (headRef.current?.offsetHeight ?? 0);
+    return measured || 92;
+  }, [peekVisible]);
 
   const position = useCallback(
     (name: SheetSnap) => {
@@ -66,12 +74,12 @@ export function BottomSheet({
       const map: Record<SheetSnap, number> = {
         full: 0,
         half: Math.round(height * 0.5),
-        peek: height - peekVisible - bottomInset,
+        peek: height - visibleAtPeek() - bottomInset,
         closed: height + 32,
       };
       return map[name];
     },
-    [peekVisible, bottomInset],
+    [visibleAtPeek, bottomInset],
   );
 
   const write = (y: number) => {
@@ -95,14 +103,27 @@ export function BottomSheet({
     }
   }, [snap, position]);
 
+  // Publish how much of the screen bottom the sheet covers, so toasts sit above it and the
+  // reading column can scroll its last lines clear of it (M15, A2).
+  useLayoutEffect(() => {
+    const root = sheetRef.current?.closest<HTMLElement>('[data-ui-next]');
+    if (!root) return;
+    const covered = snap === 'closed' ? bottomInset : visibleAtPeek() + bottomInset;
+    root.style.setProperty('--un-chrome-bottom', `${covered}px`);
+    return () => {
+      root.style.removeProperty('--un-chrome-bottom');
+    };
+  }, [snap, bottomInset, visibleAtPeek]);
+
   useEffect(() => {
     const onResize = () => springRef.current?.to(position(snap));
     window.addEventListener('resize', onResize);
-    return () => {
-      window.removeEventListener('resize', onResize);
-      springRef.current?.stop();
-    };
+    return () => window.removeEventListener('resize', onResize);
   }, [snap, position]);
+
+  // Stop the spring only when the sheet goes away. Stopping it on every snap change would cancel
+  // the motion the layout effect just started.
+  useEffect(() => () => springRef.current?.stop(), []);
 
   const settleTo = (next: SheetSnap, velocity: number) => {
     if (next === snap) springRef.current?.to(position(next), velocity);
@@ -115,6 +136,8 @@ export function BottomSheet({
   const onPointerDown = (e: ReactPointerEvent<HTMLElement>) => {
     const spring = springRef.current;
     if (!spring) return;
+    // A touch drag ends without a click, so a stale suppression would swallow the next tap.
+    suppressClick.current = false;
     spring.stop();
     dragRef.current = {
       startY: spring.get(),
@@ -200,6 +223,7 @@ export function BottomSheet({
       inert={snap === 'closed'}
     >
       <button
+        ref={gripRef}
         type="button"
         className="un-sheet-grip"
         aria-label={`调整${label}的高度，当前${SNAP_LABEL[snap]}。上下方向键切换`}
@@ -209,7 +233,9 @@ export function BottomSheet({
       >
         <span className="un-sheet-grip-bar" aria-hidden="true" />
       </button>
-      <div className="un-sheet-head">{header}</div>
+      <div ref={headRef} className="un-sheet-head">
+        {header}
+      </div>
       <div className="un-sheet-body" inert={lowered}>
         {children}
       </div>

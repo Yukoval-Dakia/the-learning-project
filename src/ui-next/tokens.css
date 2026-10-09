@@ -280,6 +280,10 @@
 /* Touch targets (A2): on coarse pointers every small control gets an invisible 44px hit area,
    so visual density stays the same. Controls opt in with .un-hit. */
 @media (pointer: coarse) {
+  [data-ui-next] {
+    --un-h-sheet-grip: var(--un-hit-touch);
+  }
+
   [data-ui-next] .un-hit {
     position: relative;
   }

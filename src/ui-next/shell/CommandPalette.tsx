@@ -49,9 +49,32 @@ export function CommandPalette({
   }, [open]);
 
   const visible = useMemo(() => {
-    const q = query.trim();
-    return q ? commands.filter((c) => c.label.includes(q) || c.group.includes(q)) : commands;
+    const q = query.trim().toLocaleLowerCase();
+    if (!q) return commands;
+    return commands.filter(
+      (c) => c.label.toLocaleLowerCase().includes(q) || c.group.toLocaleLowerCase().includes(q),
+    );
   }, [commands, query]);
+
+  // Groups in first-seen order; each option keeps its index in `visible` for keyboard movement.
+  const groups = useMemo(() => {
+    const out: { name: string; items: { command: PaletteCommand; index: number }[] }[] = [];
+    visible.forEach((command, index) => {
+      let group = out.find((g) => g.name === command.group);
+      if (!group) {
+        group = { name: command.group, items: [] };
+        out.push(group);
+      }
+      group.items.push({ command, index });
+    });
+    return out;
+  }, [visible]);
+
+  // Keep the highlighted option in view as the arrow keys move it.
+  useEffect(() => {
+    if (!open) return;
+    document.getElementById(`${listId}-opt-${active}`)?.scrollIntoView?.({ block: 'nearest' });
+  }, [active, open, listId]);
 
   const run = (command: PaletteCommand | undefined) => {
     if (!command) return;
@@ -72,7 +95,6 @@ export function CommandPalette({
     }
   };
 
-  let lastGroup = '';
   return (
     <div className="un-palette-layer" data-open={open} inert={!open}>
       <button
@@ -106,18 +128,13 @@ export function CommandPalette({
         />
         <div id={listId} role="listbox" aria-label="命令" className="un-palette-list">
           {visible.length === 0 && <p className="un-palette-empty">{emptyText}</p>}
-          {visible.map((c, i) => {
-            const heading = c.group !== lastGroup ? c.group : null;
-            lastGroup = c.group;
-            return (
-              <div key={c.id} role="presentation">
-                {heading && (
-                  <p className="un-palette-group" aria-hidden="true">
-                    {heading}
-                  </p>
-                )}
-                {/* biome-ignore lint/a11y/useKeyWithClickEvents: options never take focus; the combobox input drives them with aria-activedescendant and handles Enter. */}
+          {groups.map((group) => (
+            <fieldset key={group.name} className="un-palette-group-box">
+              <legend className="un-palette-group">{group.name}</legend>
+              {group.items.map(({ command: c, index: i }) => (
+                // biome-ignore lint/a11y/useKeyWithClickEvents: options never take focus; the combobox input drives them with aria-activedescendant and handles Enter.
                 <div
+                  key={c.id}
                   id={optionId(i)}
                   role="option"
                   aria-selected={i === active}
@@ -134,9 +151,9 @@ export function CommandPalette({
                   <span className="un-palette-label">{c.label}</span>
                   {c.hint && <span className="un-palette-hint">{c.hint}</span>}
                 </div>
-              </div>
-            );
-          })}
+              ))}
+            </fieldset>
+          ))}
         </div>
       </div>
     </div>

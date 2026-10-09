@@ -20,6 +20,10 @@ const TEXT_PROPS = [
 function ghostOf(el: HTMLElement, rect: DOMRect, scale = 1): HTMLElement {
   const ghost = el.cloneNode(true) as HTMLElement;
   ghost.removeAttribute('data-morph');
+  // A clone must not duplicate ids (labels, aria references) in the document.
+  ghost.removeAttribute('id');
+  for (const child of ghost.querySelectorAll('[id]')) child.removeAttribute('id');
+  ghost.setAttribute('aria-hidden', 'true');
   const computed = getComputedStyle(el);
   for (const prop of TEXT_PROPS) ghost.style[prop] = computed[prop];
   Object.assign(ghost.style, {
@@ -92,8 +96,10 @@ export function playMorphs(root: ParentNode | null, snapshot: Map<string, MorphS
     const dy = from.rect.top - to.top;
     const incoming = ghostOf(target, to);
     const outgoing = from.ghost;
-    document.body.append(outgoing, incoming);
+    // Stay inside the ui-next scope so the ghosts keep the scoped styles.
+    (target.closest('[data-ui-next]') ?? document.body).append(outgoing, incoming);
     target.style.visibility = 'hidden';
+    target.dataset.unMorphOwner = key;
     const timing: KeyframeAnimationOptions = {
       duration: DURATION.flight,
       easing: EASE.springSoft,
@@ -123,7 +129,11 @@ export function playMorphs(root: ParentNode | null, snapshot: Map<string, MorphS
       fade.cancel();
       incoming.remove();
       outgoing.remove();
-      target.style.visibility = '';
+      // cancel/finish fire asynchronously: only un-hide the target if no newer flight owns it.
+      if (flying.get(key) === undefined && target.dataset.unMorphOwner === key) {
+        target.style.visibility = '';
+        delete target.dataset.unMorphOwner;
+      }
     };
     grow.onfinish = done;
     grow.oncancel = done;
@@ -172,7 +182,7 @@ export function flyTo({
     pointerEvents: 'none',
     transformOrigin: '0 0',
   });
-  document.body.append(node);
+  (to()?.closest('[data-ui-next]') ?? document.body).append(node);
   const w0 = node.offsetWidth || from.width;
   const h0 = node.offsetHeight || from.height;
   const start = performance.now();

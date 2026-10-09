@@ -52,9 +52,9 @@ const ON_SOFT: [string, string][] = [
 ];
 
 describe.each([
-  ['light', light, dark['--un-text-1']],
-  ['dark', dark, light['--un-text-1']],
-])('%s theme', (_name, t, oppositeInk) => {
+  ['light', light],
+  ['dark', dark],
+])('%s theme', (_name, t) => {
   const c = (fg: string, bg: string) => contrast(hex(t[fg]), hex(t[bg]));
 
   it('keeps every text and status colour at 4.5:1 on every surface (T5, A3)', () => {
@@ -72,10 +72,16 @@ describe.each([
   });
 
   it('keeps secondary text on glass at 4.5:1 over the worst content behind it (A3)', () => {
+    // The worst thing that can sit behind a floating layer is this theme's own ink (dense text
+    // or a dark figure in light mode, light text in dark mode) — the colour closest to the text.
     const alpha = Number.parseFloat(light['--un-glass-alpha']) / 100;
-    const glass = mix(hex(t['--un-bg-raised']), hex(oppositeInk), alpha);
-    for (const fg of ['--un-text-1', '--un-text-2', '--un-text-3']) {
-      expect(contrast(hex(t[fg]), glass), `${fg} on glass`).toBeGreaterThanOrEqual(4.5);
+    for (const behind of ['--un-text-1', '--un-accent-strong']) {
+      const glass = mix(hex(t['--un-bg-raised']), hex(t[behind]), alpha);
+      for (const fg of ['--un-text-1', '--un-text-2', '--un-text-3']) {
+        expect(contrast(hex(t[fg]), glass), `${fg} on glass over ${behind}`).toBeGreaterThanOrEqual(
+          4.5,
+        );
+      }
     }
   });
 });

@@ -25,7 +25,7 @@ export function useToaster(limit = 3) {
     (text: string, action?: ToastAction) => {
       seq += 1;
       const id = `un-toast-${seq}`;
-      setToasts((all) => [...all.slice(-(limit - 1)), { id, text, action }]);
+      setToasts((all) => [...all.slice(Math.max(0, all.length - limit + 1)), { id, text, action }]);
       return id;
     },
     [limit],

@@ -100,7 +100,6 @@
     font-family: var(--un-font-sans);
     font-size: var(--un-fs-1);
     line-height: 1;
-    opacity: 0.8;
   }
 
   /* ── Chips ───────────────────────────────────────────── */
@@ -230,7 +229,9 @@
 
   & .un-expand-inner {
     min-height: 0;
-    overflow: hidden;
+    /* clip (not hidden) so focus rings of the children are not cut off */
+    overflow: clip;
+    overflow-clip-margin: 4px;
     opacity: 0;
     transition: opacity var(--un-t-ui) var(--un-ease-glide);
   }
@@ -425,12 +426,23 @@
     border-bottom: var(--un-hairline) solid var(--un-line);
     background: transparent;
     font-size: var(--un-fs-3);
+  }
+
+  & .un-palette-input:focus-visible {
     outline: none;
+    box-shadow: inset 0 -2px 0 var(--un-focus);
   }
 
   & .un-palette-list {
     overflow: auto;
     padding: var(--un-sp-2);
+  }
+
+  & .un-palette-group-box {
+    min-width: 0;
+    margin: 0;
+    padding: 0;
+    border: 0;
   }
 
   & .un-palette-group {
@@ -499,7 +511,7 @@
     width: 36px;
     height: 5px;
     border-radius: var(--un-r-3);
-    background: var(--un-line-strong);
+    background: var(--un-text-4);
   }
 
   & .un-sheet-head {
@@ -628,9 +640,17 @@
       display: none;
     }
 
+    /* --un-chrome-bottom: how much of the screen bottom floating chrome covers. Defaults to the
+       tab bar; a bottom sheet publishes its own coverage on the root (M15, A2). */
+    --un-chrome-bottom: calc(var(--un-h-tabbar) + var(--un-sp-3));
+
     & .un-app-scroll {
-      padding-bottom: calc(var(--un-h-tabbar) + var(--un-sp-6));
-      scroll-padding-bottom: calc(var(--un-h-tabbar) + 92px + var(--un-sp-4));
+      padding-bottom: calc(var(--un-chrome-bottom) + var(--un-sp-4));
+      scroll-padding-bottom: calc(var(--un-chrome-bottom) + var(--un-sp-4));
+    }
+
+    & .un-toasts {
+      bottom: calc(var(--un-chrome-bottom) + var(--un-sp-3));
     }
 
     & .un-app-phone-chrome {

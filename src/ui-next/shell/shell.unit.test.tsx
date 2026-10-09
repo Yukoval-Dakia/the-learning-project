@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useState } from 'react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -114,6 +114,45 @@ function SheetHarness({ initial, canClose = false }: { initial: SheetSnap; canCl
 describe('BottomSheet', () => {
   const grip = () => screen.getByRole('button', { name: /调整学习伙伴的高度/ });
   const sheet = (container: HTMLElement) => container.querySelector('.un-sheet') as HTMLElement;
+  // jsdom has no layout: the sheet falls back to the window height for its stops.
+  const offsetOf = (container: HTMLElement) =>
+    Number(/translate3d\(0(?:px)?, (-?[\d.]+)px/.exec(sheet(container).style.transform)?.[1]);
+
+  it('actually moves to the new stop, not just its label (C2, M3)', () => {
+    vi.useFakeTimers({ toFake: ['requestAnimationFrame', 'cancelAnimationFrame', 'performance'] });
+    try {
+      const { container } = render(<SheetHarness initial="peek" />);
+      const half = Math.round(window.innerHeight * 0.5);
+      fireEvent.keyDown(grip(), { key: 'ArrowUp' });
+      expect(sheet(container).dataset.snap).toBe('half');
+      act(() => vi.advanceTimersByTime(3000));
+      expect(offsetOf(container)).toBe(half);
+      fireEvent.keyDown(grip(), { key: 'ArrowUp' });
+      act(() => vi.advanceTimersByTime(3000));
+      expect(offsetOf(container)).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('publishes how much of the screen bottom it covers for toasts and scroll padding (M15)', () => {
+    const { container } = render(
+      <div data-ui-next="">
+        <BottomSheet
+          label="学习伙伴"
+          snap="peek"
+          onSnapChange={vi.fn()}
+          peekVisible={100}
+          bottomInset={80}
+          header="学习伙伴"
+        >
+          正文
+        </BottomSheet>
+      </div>,
+    );
+    const root = container.querySelector('[data-ui-next]') as HTMLElement;
+    expect(root.style.getPropertyValue('--un-chrome-bottom')).toBe('180px');
+  });
 
   it('reaches every stop from the keyboard (A4, C2)', async () => {
     const { container } = render(<SheetHarness initial="peek" />);

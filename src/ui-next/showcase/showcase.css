@@ -1,6 +1,6 @@
 /* Showcase-only layout (YUK-1354). Not part of the component API. */
 [data-ui-next] {
-  & .un-showcase-root {
+  &.un-showcase-root {
     height: 100%;
   }
 

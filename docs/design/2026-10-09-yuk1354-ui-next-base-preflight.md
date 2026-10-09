@@ -176,7 +176,8 @@ package/lock/vite/build 入口、kernel、schema/drizzle、durable/boss/practice
   作用域选择器的特异性高于全局元素选择器，并在作用域内显式重置 `button`、`p`、`h*`、`a`、`ul/ol`、`:focus-visible`。
 - **主题**：沿用现有机制：`<html data-theme>`（`loom-theme`）为显式选择，缺省时跟随 `prefers-color-scheme`（T6）。展示组件可在自身根上局部覆盖，便于并排检查亮暗。
 - **对比度**：修正复核记录的三组不达标组合（A3）：状态色与其 soft 底、强调色与 hover 底、玻璃上的次级文字。由单元测试从 `tokens.css` 读取取值并计算对比度，亮暗两套都检查。
-- **字体**：不引入任何外部 URL（CSP 只允许同源字体）。本票只声明本地字体栈；自托管 Source Serif 4 需要许可证文件与 woff2 转换，作为字体方案的后续事项记入 YUK-1354 的评论。
+- **字体**：不引入任何外部 URL（CSP 只允许同源字体）。本票只声明本地字体栈；自托管需要许可证文件与 woff2 转换，单独开票 [YUK-1399](https://linear.app/yukoval-studios/issue/YUK-1399)。
+- **对 T3 的修订**：玻璃底色从原型的 64% 提高到 86%，否则次级文字在最不利背景上只有 3.05:1 / 2.28:1（A3）。T3 属稳定层，已回写决策文档（PR #1612 `b50330dbc`）。
 - **快捷键**：⌘K 由现有 `RootShell` 全局绑定，基座不做全局绑定；组件只暴露受控的打开状态与回调（N5 的绑定由页面或外壳的使用方决定）。
 - **焦点与弹层**：命令面板与抽屉复用 `src/ui/primitives/useFocusTrap`，与现有弹层共用同一个 Esc 堆栈；收起的区域用 `inert`（A1）。
 - **Tailwind 扫描**：`web/src/globals.css` 的 `@source "../../src"` 会扫描本目录。类名一律 `un-` 前缀，并用构建产物对比确认 `web/dist` 与 `dist/start` 不因本目录而变化。
