@@ -1,0 +1,1033 @@
+{
+  "schema_version": 1,
+  "review_round": "R1",
+  "status": "completed",
+  "noPending": true,
+  "verdict": "REQUEST_CHANGES",
+  "base": "7472f4395f4a12a5167e33034d5d8af8bf695049",
+  "head": "5f09c7bdc9837988a67a5b37209835bf6e1fe50d",
+  "diffSHA256": "c6513367117530ed040f61a9f7bd80f8dcd1880a1d14f0bdd7e42013a67bb869",
+  "diff_sha256": "c6513367117530ed040f61a9f7bd80f8dcd1880a1d14f0bdd7e42013a67bb869",
+  "patch": "/tmp/yuk1356-audit-repair/parent-full-review.patch",
+  "patch_sha256": "c6513367117530ed040f61a9f7bd80f8dcd1880a1d14f0bdd7e42013a67bb869",
+  "personally_verified_full_diff_hash": true,
+  "workspace": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage",
+  "date": "2026-10-09",
+  "file_count": 83,
+  "source_test_tooling_generated_file_count": 67,
+  "documentation_state_evidence_file_count": 16,
+  "p0_count": 0,
+  "p1_count": 3,
+  "findings": [
+    {
+      "id": "R1-P1-01",
+      "severity": "P1",
+      "title": "正常 effective activation 被 resolved 读状态短路，永久缺少 run resolution receipt",
+      "path": "src/capabilities/practice/server/assessment/durable-attempt.ts",
+      "line": 274,
+      "end_line": 279,
+      "evidence_level": "SOURCE_PROVEN_AND_PARENT_DB_REPRODUCED",
+      "scenario": "新 native durable run 正常完成 model/candidate；activateEvaluation 在原学习事务内先写入 settlement/head/activation，尚未 COMMIT，随后调用 onActivated -> writeResolution。该事务可读到自己刚写的 native completion。",
+      "proof": [
+        {
+          "path": "src/capabilities/practice/server/judge/evaluate-submission.ts",
+          "line": 740,
+          "detail": "activateEvaluation 返回 activated 后，750 行才调用 options.record(tx)。"
+        },
+        {
+          "path": "src/capabilities/practice/server/assessment/attempt.ts",
+          "line": 337,
+          "detail": "recordOriginal 是 capture；record 回调调用 onActivated。"
+        },
+        {
+          "path": "src/capabilities/practice/server/judge-run-observation.ts",
+          "line": 171,
+          "detail": "没有 runId resolution 时，exactActivation + reconstructDoneFromNativeCompletion 将状态归为 resolved（193 行）。"
+        },
+        {
+          "path": "src/capabilities/practice/server/assessment/durable-attempt.ts",
+          "line": 274,
+          "detail": "resolved 同 candidate 直接 return，跳过 282 行 writeEvent；341 行独立补写也命中同一 guard。"
+        },
+        {
+          "path": "/tmp/yuk1356-parent-db/db.log",
+          "line": 49,
+          "detail": "父 exact 5f09 的首例 DB：evaluation 数量1，event.id=f.runId 期望1、实际0；judge_run.db.test.ts:62 失败。db-result.json 明确绑定该 candidate、exitCode1。"
+        },
+        {
+          "path": "src/capabilities/practice/server/judge-run-payload.ts",
+          "line": 374,
+          "detail": "native completion fallback 的385-401 返回值缺 final_rating；有真实 resolution 的243-260 分支保留当前 rating。"
+        },
+        {
+          "path": "src/capabilities/practice/ui/PfSolo.tsx",
+          "line": 574,
+          "detail": "真实未改动消费者对缺失 final_rating 默认 hard，随后用它设置 suggested_rating 和 rating。"
+        }
+      ],
+      "consequence": "正常成功路径不再原子写入 runId completion receipt，receipt 写失败回滚学习效果的保留契约失效；状态和 DONE 被 fallback 掩盖，并缺失 final_rating，真实 practice 消费者可把 good/again 的已生效评级显示为 hard。父 DB 仅实测了 receipt 缺失；评级影响由源码链证明。未据此宣称 native score/settlement 自身错误。",
+      "minimal_correction": "区分真实 resolution receipt 已存在与 exact native completion 已知。selector 已 resolved 时，在 R 下仅凭同候选的真实 completion 补写缺失 receipt；新 activation 的补写仍在原 tx 内。已有 receipt 按原身份复用/校验，原 held/review_required 写入路径保留；manual 与 ownership fence 不降级，readonly selector 保持 native truth 优先。",
+      "focused_validation": [
+        "保留 judge_run.db.test.ts:62 严格 event 数量1，并核对一次学习效果及 DONE/status final_rating。",
+        "保留 native-durable-attempt.db.test.ts:417 receipt-failure 回滚断言，证明失败钩子实际触发。",
+        "复核 held、already-effective、native completion before checkpoint/COMMIT acknowledgment、manual 与晚到响应；不得新增 model 调用。"
+      ],
+      "proposed_fix_reviewed": false
+    },
+    {
+      "id": "R1-P1-02",
+      "severity": "P1",
+      "title": "扫描排除所有 disposition，唯一 reconciler 无法修复缺失 FAILED 通知",
+      "path": "src/capabilities/practice/jobs/judge_pending_reconcile.ts",
+      "line": 102,
+      "end_line": 104,
+      "evidence_level": "SOURCE_PROVEN_NOT_EXECUTED_BY_REVIEWER",
+      "scenario": "有效 native pending 已持久化 manual disposition，但 FAILED 投影尚未写入或已被删除。可由终态 job_event 写入连续失败、耗尽三次原进程重试并将 DBOS step 缓存为 error 产生；无需假设后续新 delivery 或人工 resume。",
+      "proof": [
+        {
+          "path": "src/capabilities/practice/jobs/judge_run.ts",
+          "line": 211,
+          "detail": "永久 disposition 在 FAILED 写之前提交；271 行才投影 FAILED；382-407 的三次写入失败后 throw。"
+        },
+        {
+          "path": "src/server/durable/judge-worker.ts",
+          "line": 45,
+          "detail": "native operation 是 retriesAllowed:false 的 DBOS step；终态 ERROR 不由 sweep 自动 resume。"
+        },
+        {
+          "path": "src/capabilities/practice/jobs/judge_pending_reconcile.ts",
+          "line": 102,
+          "detail": "selectSweep 的 not exists 在 LIMIT 前永久排除 native pending_id 或 legacy task_id 的 disposition。"
+        },
+        {
+          "path": "src/capabilities/practice/jobs/judge_pending_reconcile.ts",
+          "line": 214,
+          "detail": "resolved/manual -> projectJudgeRunNotification 分支对已在扫描前 disposed 的原件不可达；后续 tick 仍被排除。"
+        },
+        {
+          "path": "src/capabilities/observability/api/job-events.ts",
+          "line": 132,
+          "detail": "真实 generic SSE 仅重放/追赶 job_events，不从 practice disposition 合成 FAILED。"
+        },
+        {
+          "path": "tests/dbos-judge/operational.db.test.ts",
+          "line": 199,
+          "detail": "题为 sole reconciler repair 的测试在 reconcile 后205-208又直接调用 projectJudgeRunNotification；210 行才断言 FAILED，后一次调用掩盖了扫描无动作。"
+        }
+      ],
+      "consequence": "永久 poll 状态仍正确为 failed，但缺失 FAILED 的 SSE 投影无法靠唯一 recovery owner 收敛；重连/catch-up 也无法补出不存在的 job_event。这丢失了明确承诺的 terminal notification repair，并被当前替换 fixture 隐藏。不宣称 polling 或永久 manual truth 被改写。",
+      "minimal_correction": "在同一 bounded reconciler 中让缺少正确终态通知的 disposed 原件进入 notification-only 修复。保持 manual 不执行/不付费；选择与 keyset 仍需越过200前缀。可用独立的通知选择分支，但不增加恢复 timer/owner。",
+      "focused_validation": [
+        "在 operational.db.test.ts:199 reconcile 后、205 direct projection 前，独立断言已存在唯一 FAILED。",
+        "覆盖永久 disposition 成功但终态通知窗口失败、job_events pruning、后续新 tick；零 enqueue/model。",
+        "另测 delayed REQUEUED 不改写永久终态。"
+      ],
+      "proposed_fix_reviewed": false
+    },
+    {
+      "id": "R1-P1-03",
+      "severity": "P1",
+      "title": "DBOS scheduledAt 被用作 fresh recovery 授权时钟，延迟 tick 可越过七天边界",
+      "path": "src/server/durable/judge-worker.ts",
+      "line": 64,
+      "end_line": 65,
+      "evidence_level": "SOURCE_PROVEN_NOT_EXECUTED_BY_REVIEWER",
+      "scenario": "DBOS reconcile tick 的 scheduledAt 为原件提交后6天23小时，首次执行或未 checkpoint 的恢复实际发生在7天以后。有效原件仅有 reserved_unsent/send_unknown、engine 权威确认 absent，或已有 SUCCESS delivery 而无 domain completion；新的 send 尚未在边界前授权。",
+      "proof": [
+        {
+          "path": "src/server/durable/judge-worker.ts",
+          "line": 53,
+          "detail": "schedule 参数和 workflow ID 固定；63-65 将原 scheduledAt 作为 now 传入 reconcile；70 行容许该 workflow recovery。"
+        },
+        {
+          "path": "src/capabilities/practice/jobs/judge_pending_reconcile.ts",
+          "line": 153,
+          "detail": "now 在整次 sweep 固定为 args.now；300-326 的 capacity、七天 gate、reservation 和 send authorization 全部使用这个值。"
+        },
+        {
+          "path": "src/capabilities/practice/jobs/judge_pending_reconcile.ts",
+          "line": 312,
+          "detail": "用旧 scheduledAt 计算 age <7d，实际7d后的 transaction仍会 admitJudgeRun 并 authorizeJudgeSend。"
+        },
+        {
+          "path": "src/capabilities/practice/server/judge-operational.ts",
+          "line": 259,
+          "detail": "gate_checked_at 也持久化为传入的旧时间。"
+        },
+        {
+          "path": "src/capabilities/practice/server/judge-run-dispatch.ts",
+          "line": 230,
+          "detail": "最终 send gate 校验 owner/phase/epoch/authorization digest，没有实际时间的 age 复核。"
+        }
+      ],
+      "consequence": "允许七天以后产生新的自动恢复授权并排队可付费执行的 delivery，同时把授权证据时间回填为旧 tick 时间。这不属于边界前已经授权/接受的 final delivery 继续完成的许可。即便去掉 scheduledAt 参数，整次 sweep 开始时冻结 now 也不能证明每条后续授权发生在边界前。",
+      "minimal_correction": "scheduledAt 仅保留为 tick 身份/选择时刻；每次 fresh send authorization 在短 transaction 的 R 内读取当前服务端授权时钟，应用 <7d 规则并记录真实 gate_checked_at。测试可注入时钟。保留边界前已授权/接受 final delivery 的完成权。",
+      "focused_validation": [
+        "用真实 registered reconcile workflow 的旧 scheduledAt、当前>=7d 时钟，断言不新增 send receipt/enqueue/model。",
+        "覆盖首次延迟执行、未 checkpoint 重启，以及 sweep 中途跨过边界。",
+        "保留 <7d、恰好7d、两槽、unknown reservation 容量和 pre-boundary live final delivery 完成断言。"
+      ],
+      "proposed_fix_reviewed": false
+    }
+  ],
+  "files_covered": [
+    {
+      "path": ".remember/now.md",
+      "head_git_blob": "04d42220313c152a469e6751c881dc51f20abb5b",
+      "head_sha256": "34b37b731d28f81dc8e184eaba6510993b60e2f33860e79cd21321b2b001b853",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "PLAN.md",
+      "head_git_blob": "e7b12718811bad1ddd3f861d7e4e5afd106041a4",
+      "head_sha256": "652425048dc0cd8378b450628adfc316233f1dfaae3f3caf00dbbfc1c01ee98a",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "docs/planning/2026-10-07-yuk1359-exit-inventory.md",
+      "head_git_blob": "620d309bc358b7ba93bba2a0a2ddfc7c6dbdaf45",
+      "head_sha256": "a31a62522ab8ab3dfab5517a31248ef6d6af3d8e91c8891bd57ff6050c857eac",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1355-idle-clock-boundary.md",
+      "head_git_blob": "a5c75bf8eecb99feab052ba56790457829d42371",
+      "head_sha256": "fb136ba6ccffd91955e69576f636017a74cce61c29c5f685999d62abe25a7728",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-durable-judge-implementation.md",
+      "head_git_blob": "5f754a289ecee48a8ee55b08ee50774942dced0c",
+      "head_sha256": "e26796584d24097f62196f9c9d25466242688d85953088486744fffa1f1b5841",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-judge-audit-repair.md",
+      "head_git_blob": "89af41df822630e6f7e3af3f8ac20b685e77e5f6",
+      "head_sha256": "f797dcf2b97b46458616235d146c3295b5f16de20892c57acf212be6022fd973",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-judge-implementation-entry.md",
+      "head_git_blob": "4ae5018a44be2dff5cd204045b9242bf9e6ffc7d",
+      "head_sha256": "4aaed3d5cf38aa7ea26cf27cc87915f76b868b62402b3255bb008d1a64c0cf41",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-judge-operational-contract.md",
+      "head_git_blob": "e5c032ba750d43db3d457c5163ec09383c27b2a1",
+      "head_sha256": "0169a76864e1d9d1a14e9248ff8aedc7c5ff0595bf907b9b5f836b7d40d807f6",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-judge-parent-acceptance.md",
+      "head_git_blob": "29ac2829dc12485eca35500cbef2bb714253bb9a",
+      "head_sha256": "b47a60258843aa017c571a0e675eda2a79a26d95955025f81d7b3653b6c04329",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1359-dbos-restore-evidence-gap.md",
+      "head_git_blob": "2db177c13490ca31b7c459f5413880a7d7103159",
+      "head_sha256": "f7e486626c103e9ea0a11e2740b41d672b0a235cd11afbf42796a53cc88fe16b",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1394-parent-acceptance.md",
+      "head_git_blob": "097f42f27b56f2b74a3a92f5cf3287f1b7115278",
+      "head_sha256": "e85393cf0b7c7060242e7e1ad5b59f7310e04a713e444e532c33fae168fcb10e",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1355-idle-clock-boundary-sources.json",
+      "head_git_blob": "cc9b4eb4d215a80fa3074fa24e71d820504330f8",
+      "head_sha256": "7e48fd7c646e76a3b907f6b9b052e8dc998c9b09c2ad31eaf18f7879c3e339dc",
+      "coverage": "historical documentation/evidence semantics and inventory"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1356-judge-operational-contract-sources.json",
+      "head_git_blob": "3dad1353fec0e1cda3d2bd06e6c4239554c84e9b",
+      "head_sha256": "27153ba493d650c940dd490ea559ab9303ff3b85414e5013ae0b5fbdf83abb78",
+      "coverage": "historical documentation/evidence semantics and inventory"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1356-parent-emitted-logger.json",
+      "head_git_blob": "933d016a366fa66125351ba1d3765bc4afdecbb3",
+      "head_sha256": "2f3376548f7a46ace10997a30a4037ee129cf2828f4ca304e42c94c5b1b5a4ad",
+      "coverage": "historical documentation/evidence semantics and inventory"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1359-job-declarations-main96077.json",
+      "head_git_blob": "19506e6378ca2c2325d1c1a02313ab7a2366c48d",
+      "head_sha256": "3f3a49e67f31a192376b0fc3c937b005397d5669b086f4092fb4bc02733f7543",
+      "coverage": "historical documentation/evidence semantics and inventory"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1359-restore-count-failure.json",
+      "head_git_blob": "c009bf9ae3d81d24cec5fe270c527ef9ca299c75",
+      "head_sha256": "b4f21e9c558d6556d4a50be51e97e7c2b250570fda1f313d1bd5f4a908208927",
+      "coverage": "historical documentation/evidence semantics and inventory"
+    },
+    {
+      "path": "drizzle/0118_yuk1356_judge_durable.sql",
+      "head_git_blob": "ee4ad07809f11dc36d4ecda1a8d5ff930140927c",
+      "head_sha256": "6774258193b4b0a66ee2a58a341cea1ab55c78bbc0b925b12532a94e06546539",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "drizzle/meta/_journal.json",
+      "head_git_blob": "fa9d3802aabe9555ebc349550651ce60592025bb",
+      "head_sha256": "e1ebdb19e7a8c9da2b74734877aa90ddb3ae67a0964e350c6bde2821b0366296",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "package.json",
+      "head_git_blob": "9e443a4db423068ddd005bc238f626721696dea2",
+      "head_sha256": "e975a2ef1070c9a91feee4c748bdc05e8d56f91d9b9a52556487d9553a7dcd34",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "postman/api-endpoints.json",
+      "head_git_blob": "b1a67fe75b1d31ef387edfd001537e2d9ec37f05",
+      "head_sha256": "e7f0cf469d22ee2f555ede4bd1b209914b0076982fd01a8881ac69829fe02088",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "postman/learning-api.postman_collection.json",
+      "head_git_blob": "bb8ea1be3feeee419f35b9caf29c954d769a2892",
+      "head_sha256": "df3c2ee577ad880163a50de66c455b8be7216d18f41af3af6181dded81fe0cf6",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "scripts/audit-schema-writes.test.ts",
+      "head_git_blob": "44fc8d92c137661a0241806a4e2fb84ff5d5d5b7",
+      "head_sha256": "c1b609b8c0c5497e3ec798b554c0808a47fccc3c3a315dcfe057f03ecb628eaf",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "scripts/audit-schema-writes.ts",
+      "head_git_blob": "082fcdd1a17bde5d2e5480bf8de0c6c64fa2f31b",
+      "head_sha256": "d842b3b7782ab01b3d11191398bf8fb84f07a53f95b58ed2c16d7f742c8247ae",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "scripts/capability-boundary-baseline.json",
+      "head_git_blob": "ab7906c342f29c2993e704f568bcf18bf5a692e4",
+      "head_sha256": "dfe1916ce66fc23ca1afbe01adc32ceab2a788af6cfc09c081be05c9f57d6a70",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "scripts/schema-migration-initialization.unit.test.ts",
+      "head_git_blob": "b1d599cb50113e188d25b909c1af6d37ae2a3e8e",
+      "head_sha256": "c2d0e10d4bd90e0ff86eb12b8ea57625839829f29dd5c73b1addedfb278466b1",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "server/start/vite.config.ts",
+      "head_git_blob": "b07e87c357bc229800eac320278b2821ea797fd8",
+      "head_sha256": "2d7f9c21f9586e6de825644fea4b4f6ca78321ad825b486bec40ec8974e5a175",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/api/judge-run-status-route.db.test.ts",
+      "head_git_blob": "0aa28a7d3ec259a26f4c7ef198e59b86dfe4670f",
+      "head_sha256": "1b525332bb6ecf198dfd7936c45f8f9e3ea6fffab2fc64900ae2e84e0cb27518",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/api/judge-run-status-route.ts",
+      "head_git_blob": "3a8bfdd1a686e7dcefc96e402cd527dc6c54ca6a",
+      "head_sha256": "a9d91d7e7548db3597956123bf2a1bccd80aa27e61bf2a1c600a854f0e008667",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/jobs/judge_pending_reconcile.db.test.ts",
+      "head_git_blob": "829a99ff9688f56d6a32ce4e9171a74c6c48cdea",
+      "head_sha256": "aa8163294dff034316f77b93a8fcfbee7a28dcdeccd9a97c158f2551ebc31090",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/jobs/judge_pending_reconcile.ts",
+      "head_git_blob": "6cd43f9bbd39c0d22a08d24a4f48873632cd998b",
+      "head_sha256": "39cd86b643a3efa7da3f23bf5ccdd69151d71679a5616c4bb30b4b94c1802cf6",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/jobs/judge_run.db.test.ts",
+      "head_git_blob": "8c4acb490eacdb12594f5e9e6b6217d7a8cfb2f9",
+      "head_sha256": "af548c013ffcc835bfb3841f1a2711052da50d297a7e8278caa3aa91b987f534",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/jobs/judge_run.ts",
+      "head_git_blob": "2bfeed4b35fb56735b2806ce578854cbbc116a05",
+      "head_sha256": "7e25aa85368ea01b4aa342feb9a4995daf9943158861060d8389767bd1ed5adc",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/manifest.ts",
+      "head_git_blob": "66a1cde8d3dfffd69000eb7fada69d79e71836e6",
+      "head_sha256": "961f4c43bb84fe51392d41c4c5bd030e71fb29e02ae77b4297a45d568d445580",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/manifest.unit.test.ts",
+      "head_git_blob": "ed87bbe81803edd8ca6041104fd615b764d77b23",
+      "head_sha256": "c172435b06f5097c696bf42681f1c58ab1d588e4b5ec742419ef5bf98ad22be5",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/public.ts",
+      "head_git_blob": "c87e9020dfdbc4091bfa76816a11b5ff64bba9d1",
+      "head_sha256": "80b03306a69f66ad60842dc36553ed65c00feeba77e85913d4e133238c27aec5",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/attempt.ts",
+      "head_git_blob": "a483c9ff853c6be8f1977eff31789772e6f95e65",
+      "head_sha256": "6e49be637afe5b6d93001fab2278fcd928f1685722c9ec7b1f09070709598e23",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/durable-attempt.ts",
+      "head_git_blob": "5ac8945337259095bf34d8f59e1bfb4c4a6faa53",
+      "head_sha256": "f1420e26066777a57e74791cc6cf3bbbb3e91c0dd67fff7a428a1863372d5121",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/intervention-diagnostics.ts",
+      "head_git_blob": "0c8c1ee4c4a340b882cc6c7051d899bc9e972ec9",
+      "head_sha256": "c61774f4633e9abd3a73a7d24ac4ac252fd35d4396239951b02f5f7e6e964cc5",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-engine-client.ts",
+      "head_git_blob": "82334fa7333d60ae7a94d1cfcb7133f423367dde",
+      "head_sha256": "985365359c8cf84e51d7d4d977277c134f02de857563c2463db2c428d0490e84",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-engine-client.unit.test.ts",
+      "head_git_blob": "9c94de1684ce09afb091ac027c9f6b8d21e2a61c",
+      "head_sha256": "39df3a973483e8f921b3ecb1f2b24bbc894349f5ed29d8b4d6de0db320c146b5",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-operational-state.ts",
+      "head_git_blob": "d7478441046a764a8bc397eb9f3bf76cdc4bd0e7",
+      "head_sha256": "7941915a94d6f7a049adbd742760496da4781974cf9620244ee5f84bfe24db89",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-operational-state.unit.test.ts",
+      "head_git_blob": "b5534028c7af48b6abe5e395ddff34bf8f6ead2d",
+      "head_sha256": "524822ad75ac4e09ef16713a69defe33c1c73b8ff80d1dc0fd56eb601ab4ccd8",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-operational.ts",
+      "head_git_blob": "19cebadb877c2dbcb5534e432e398b244386c183",
+      "head_sha256": "119ea7ea85475633bf03c2a819cbf05da39a304a57b7efd9b8461b9d6e11e832",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-process-observer.ts",
+      "head_git_blob": "7d19504602d8e9ead633ed46c0aeb25ce08345c5",
+      "head_sha256": "bb9c2fe03d6aa94ba6898cd42648dd6582fce36a13dabb9ec4185c0d5e18a31e",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-run-dispatch.ts",
+      "head_git_blob": "02812f846329ae9b0d5093720b2cfc18a1b64096",
+      "head_sha256": "ab0ed6028f91a4e02fc3796ca9898111fdab201fa4eb34ebc01cc001eff6f366",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-run-notification.ts",
+      "head_git_blob": "2a1f7d6f05694aaa5cf296d037196ea5f868132f",
+      "head_sha256": "a11bfaab476a9f39fd4b8ff3e101eee70715afcb289d715f424b4840dc815c45",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-run-observation.ts",
+      "head_git_blob": "ea8683b1b2a56dd3ffc25711fe4d30da154ac16c",
+      "head_sha256": "749912102a32a8fe9e47ca4bb0c5205d63f6f7c787e1f60f616787d5f680ee7c",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-run-payload.ts",
+      "head_git_blob": "6f8462efab20d90bf3c60e8d1c2422ade607eb57",
+      "head_sha256": "c00117018ec983257be6d56340bb17afae2e11770478397c748458acf3c17da6",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge/evaluate-submission.ts",
+      "head_git_blob": "6c2723719668df2e5abc9fc921d41a847658753e",
+      "head_sha256": "31ff3ff5414a064dcb191675bd565ee4a38c03b33fa6c7bb081814b37b3ab2e4",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge/evaluation-authority.ts",
+      "head_git_blob": "86d08ab63580db4574bddec2c7cabee39ea385fa",
+      "head_sha256": "049ca93acdaeaf2b0ffe2b05c2a7d618bdc0ed4cfd5e69a13f13600d339b39f8",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge/judge-paid-retry.unit.test.ts",
+      "head_git_blob": "813ecf7e6505c3ca48595f816f0e03d1a40834aa",
+      "head_sha256": "ae0547a2c569e32b5a451fd9abc8f21eeef51eee187cab200743be381ff4e63a",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge/pi-model-executor.unit.test.ts",
+      "head_git_blob": "1273b2c014dbbb24ebb35f03b5438f6fc95e9115",
+      "head_sha256": "6127ae40071d6cbd9e14e44c2a650d95e5de174cf66d1f84a4cceaaa36c3f9f7",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge/recorded-model-executor.ts",
+      "head_git_blob": "3551bc8cea6e92e192dc6374d433e42544c0d029",
+      "head_sha256": "4bc96ab2dccd57b8573d0ef065293d2c415f1f3f8f2a4d754aec5207892815ad",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/native-durable-attempt.db.test.ts",
+      "head_git_blob": "d4a2e04b5f208c48c2e447ebeb7f2b6efb55c047",
+      "head_sha256": "b62eb4b4de946bfdc5bc329d4a05255d6301972cf9e94973b7296d947aacb569",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/capabilities/practice/server/placement-assessment.ts",
+      "head_git_blob": "1298014abffa936fec6ea42fe8e1a3ecf37a9359",
+      "head_sha256": "8e38f8441a3a97e14fd2fdde14efc7c99bb11c55c5355d9e75384f527eddb715",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/core/schema/event/experimental.ts",
+      "head_git_blob": "7d51e36b32459604a4b1c6e221cddd249a84aa8a",
+      "head_sha256": "3f25b7e012287f2b3408d53686451203db760fb49d8830b6bd04b88191b7332b",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/core/schema/event/index.ts",
+      "head_git_blob": "a67d9b16efbd0b2b475e6ac558f9d7807f8fb876",
+      "head_sha256": "17e383b8720ae0337a03e4ea6685fa288b1564c5526a84d7564ea3457bd0a6f0",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/core/schema/event/judge-operational-events.ts",
+      "head_git_blob": "9a183c2c164c3b0c888f333b8624a3a67e4e9666",
+      "head_sha256": "641196e162f77b406b604f4b19ef193c7e5f9a5e66fca9a1ce041d59137ac8ec",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/db/schema.ts",
+      "head_git_blob": "e2fb87181aa28c0acfe0db0895e0fa96c0e9be17",
+      "head_sha256": "9bfbc1d0bf766f29c3d04bc23754759d8a0ec9aca3af55996764edab15a59f57",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/server/ai/pi-agent-adapter.ts",
+      "head_git_blob": "d9892b44bc4468095b8bf6d98f453feb703aec00",
+      "head_sha256": "b726609e7951ef3765b958a6097b094cec9cd55499d82d445d9a4562f152ec68",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/server/ai/runner.fallback.test.ts",
+      "head_git_blob": "ca30e41a91fa013fa3712465d38b2bb91c1c9ccf",
+      "head_sha256": "a3192624850692b1213106e9c8dd403d1714f947106cc6d6e2e0d8fdc0393271",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/server/ai/runner.seam.test.ts",
+      "head_git_blob": "0038626ae4a04bf4ba9eb5c7482c6d532cd043f6",
+      "head_sha256": "35745289f2a51c2da9872dd3a38b10416540ca128d5c1dcebcd139f3e7345c2c",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/server/ai/runner.ts",
+      "head_git_blob": "dae8c188b8157c78a1860d0f4885233c6d27d8d5",
+      "head_sha256": "ade839b551910ff25233e5a34b3f47fa2aadfcfe50c21aa3c734d4a57409225a",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/server/ai/sdk-types.ts",
+      "head_git_blob": "b0c333f7c38758b90d75e3f32d8fec32afc09f21",
+      "head_sha256": "2788facb2d99db442f8cbfaec880f5b523dcc619fd4394bbb5ed391e33e77b5b",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/server/assessment/jev-model-executor.test.ts",
+      "head_git_blob": "e15c1b9ae77bd8d6a60ecd8dac073312ccc7c841",
+      "head_sha256": "6a891bf1ccf30d16efae2bc6bcc692499cfb61c80acb62adbd30b5cd590fc992",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/server/assessment/jev-model-executor.ts",
+      "head_git_blob": "cfd510bac7787bf4604027a3b8fe83a5ae2abfca",
+      "head_sha256": "1716d462468f2313e77c1c1c3776c4328952a7411cb0c6ef95129e7887684d9a",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/server/assessment/pi-model-executor.ts",
+      "head_git_blob": "bd93148030df746aafc96303de55ab8fd4dfdc78",
+      "head_sha256": "896bfa0654674b758ef6d3c704072b1529a6377163953ad4e2068fbfb956c9e0",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/server/boss/handlers.test.ts",
+      "head_git_blob": "251540af2ed32399712d4480c2be3156998c8633",
+      "head_sha256": "3fbb417218c385efd802356580812e3bcf89eb00fdd2cc78c3562cf0dbe1efe6",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/server/boss/register-capability-jobs.ts",
+      "head_git_blob": "67566f46fa6e254538aa1edd1f006580566c7107",
+      "head_sha256": "cdedea341453f3c0c8d5b3cc8e82939cb119a1ceb8d9d82a839556334258cbfe",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/server/durable/judge-family.ts",
+      "head_git_blob": "7a2821e2ff91eabd1ffe3a94e1dd25cd45c001f2",
+      "head_sha256": "79e6afaf6d4ef56d9594bad21336dca07a9578ba888eac08123d036ae2b99c53",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/server/durable/judge-worker.ts",
+      "head_git_blob": "19260e83bd19f4abd43b91cf892c738585f3d163",
+      "head_sha256": "47cac4cd7383d2444cc6fe998a30a1393cc38e12b1480cc57c38b757c9768cdd",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/server/durable/producer-fence-lock.db.test.ts",
+      "head_git_blob": "e686350e62f8b77e0be27cbfb824084d5a809d50",
+      "head_sha256": "cc1f5e74442c62952a25150eb03414ca50b48125596dacea6c7658be2d1bb431",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/server/durable/prune-worker.ts",
+      "head_git_blob": "b0c89e25fd71381fd13f99fefdc4308dce9f4365",
+      "head_sha256": "a762d1e48a9bda26aac2929aebb50cd35d5a380d0fc2c77d2ee828a0ba390742",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/server/durable/prune-worker.unit.test.ts",
+      "head_git_blob": "a03d8d82c1d706e6529a807011f203f4edc6a38c",
+      "head_sha256": "5208cd7fda1100e351387e8fae5f2038ee77ad689552c189aa803f87c2a5c685",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "src/server/export/constants.ts",
+      "head_git_blob": "08a054a2a2d1cf56d5f09c92e345ad356a156e5c",
+      "head_sha256": "ae89d240778a7900989d20c46932e3c4cf4fa530b14775faea5c485a8ae20aba",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "tests/dbos-judge/cutover.db.test.ts",
+      "head_git_blob": "4f47c8f8efa614ad0e1afc31ba4c8b56cc3f3bda",
+      "head_sha256": "bd68735feba1cec0e347caebbb9719158487f10e3661a357b9f97262473370f4",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "tests/dbos-judge/legacy-producer.ts",
+      "head_git_blob": "3ed9298f7c46e121338fdd6aae4fe17b43fe5b5d",
+      "head_sha256": "1f4bf2903683b6b484bc26aa5eec96ab09538a7119f84976e0dc4f363e0063c9",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "tests/dbos-judge/migration.db.test.ts",
+      "head_git_blob": "39cfa94e57fb9c5b6a33e50a5a09be4813c0c5c6",
+      "head_sha256": "2153774354b6b96b6298f00e546285ab3502173cdcb4b63d7d0ebb1202362cc9",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "tests/dbos-judge/operational.db.test.ts",
+      "head_git_blob": "0f7370a2e88d9c2e2c8018ff07d6e191c8f73f26",
+      "head_sha256": "5a809246f42733e13eec9fea95c4b455688030623a241c4cb1e7b606297f58e2",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "tests/dbos-judge/process.db.test.ts",
+      "head_git_blob": "15ab49f561654c80c98ce5c20a3fb28eb6a27006",
+      "head_sha256": "5c2e4d72423abdce31bf32298aca12eb6107fbf5e0f27b07b28bff993728e2c1",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "tests/dbos-judge/support.ts",
+      "head_git_blob": "fb9a36cd2ca55690b930e948f673f21a55567783",
+      "head_sha256": "400e8fb098e8cc5a23aa244b88a5b22aad541ff559d17a96241a22392641904a",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "tests/dbos-judge/worker.ts",
+      "head_git_blob": "111e8d3ebfb2276c6470a035f44fef94e0b005b2",
+      "head_sha256": "9740810dd417b7670d49389f891d085548bc1830657497d70af383dfa542c399",
+      "coverage": "complete candidate diff and applicable contract"
+    },
+    {
+      "path": "tests/fixtures/native-judge-run.ts",
+      "head_git_blob": "45d518aa10a363728c9f22ae4ed4f0d481984e16",
+      "head_sha256": "4ff90fdcb654f01fe1eeda81772b57a15a37cea25b9db12e3f2a1d6cd3cd6f4a",
+      "coverage": "complete candidate diff and applicable contract"
+    }
+  ],
+  "critical_paths_covered": [
+    {
+      "area": 1,
+      "scope": "stable binding / immutable receipts / atomic completion",
+      "paths": [
+        "src/capabilities/practice/server/assessment/durable-attempt.ts",
+        "src/capabilities/practice/server/judge/evaluate-submission.ts",
+        "src/capabilities/practice/server/judge-operational.ts",
+        "src/capabilities/practice/server/judge-operational-state.ts",
+        "src/capabilities/practice/server/judge/recorded-model-executor.ts"
+      ],
+      "result": "R1-P1-01；其余绑定复用、collision、receipt identity/timestamp 保留已逐路径核对，非 DB PASS。"
+    },
+    {
+      "area": 2,
+      "scope": "paid effect / installed retry policies / exact COMMIT truth",
+      "paths": [
+        "src/capabilities/practice/server/judge/recorded-model-executor.ts",
+        "src/capabilities/practice/server/judge/judge-paid-retry.unit.test.ts",
+        "src/server/ai/runner.ts",
+        "src/server/ai/pi-agent-adapter.ts",
+        "src/server/ai/sdk-types.ts",
+        "src/server/assessment/pi-model-executor.ts",
+        "src/server/assessment/jev-model-executor.ts"
+      ],
+      "result": "核对 typed none 到 installed Pi1.0.2 transport、Jev override、DBOS5.2.11 step recovery；prior result复用/unknown阻止fresh第三单元、lost result COMMIT ack exact read。未发现额外可证P0/P1；真实 provider 未验。"
+    },
+    {
+      "area": 3,
+      "scope": "installer/group/learning/run/claim locks and manual races",
+      "paths": [
+        "src/server/durable/judge-family.ts",
+        "src/server/durable/producer-fence-lock.ts",
+        "src/server/durable/prune-worker.ts",
+        "src/capabilities/practice/server/assessment/attempt.ts",
+        "src/capabilities/practice/server/judge/evaluate-submission.ts",
+        "src/server/assessment/activate.ts",
+        "src/capabilities/practice/server/judge-operational.ts"
+      ],
+      "result": "installer common→family→relations，既有G/L先于R；R先于C/seal/capture/activation；manual R-only，inference不在longTx。源码未找到新的G/L-after-R链；并发死锁/late response仍需父运行证明。"
+    },
+    {
+      "area": 4,
+      "scope": "shared Db|Tx permanent reader / real HTTP-public-placement-intervention consumers",
+      "paths": [
+        "src/capabilities/practice/server/judge-run-observation.ts",
+        "src/capabilities/practice/server/judge-run-payload.ts",
+        "src/capabilities/practice/server/placement-assessment.ts",
+        "src/capabilities/practice/server/intervention-diagnostics.ts",
+        "src/capabilities/practice/public.ts",
+        "src/capabilities/practice/api/judge-run-status-route.ts",
+        "src/capabilities/practice/server/assessment/native-attempt-dispatch-port.ts"
+      ],
+      "result": "注入Db/Tx；HTTP short readonly Tx→engine outside→bounded reread；unavailable不等于404；native original/effective、held、four-state/202/dispatch port 保留。R1-P1-01影响terminal payload。"
+    },
+    {
+      "area": 5,
+      "scope": "two slots / <7d / keyset / single host and recovery owner",
+      "paths": [
+        "src/capabilities/practice/jobs/judge_pending_reconcile.ts",
+        "src/capabilities/practice/server/judge-operational-state.ts",
+        "src/server/durable/judge-worker.ts",
+        "src/server/durable/prune-worker.ts",
+        "src/server/boss/register-capability-jobs.ts",
+        "src/capabilities/practice/manifest.ts"
+      ],
+      "result": "R1-P1-02/03；unknown槽保守占用、200 keyset推进、单host launch/timer和register-before-launch已核源码，既有prune/review/session identities与cron保留。"
+    },
+    {
+      "area": 6,
+      "scope": "phase/epoch/incarnation / source inventories / drain and compatible rollback",
+      "paths": [
+        "src/server/durable/judge-family.ts",
+        "src/capabilities/practice/server/judge-engine-client.ts",
+        "tests/dbos-judge/cutover.db.test.ts",
+        "tests/dbos-judge/legacy-producer.ts"
+      ],
+      "result": "旧jobs/ticks/DLQ/forwarders/schedules/pending/unknown claims、sealed freshness、drain fence、known budgets和pruned-history拒绝已查；旧binary/provider/cron quiescence仍明确外部要求。G3说明saved-result选择证据缺口；未声明cutover/rollback PASS。"
+    },
+    {
+      "area": 7,
+      "scope": "0118 / exact initialization audit / 0117 / export incarnation",
+      "paths": [
+        "drizzle/0118_yuk1356_judge_durable.sql",
+        "drizzle/meta/_journal.json",
+        "src/db/schema.ts",
+        "src/core/schema/event/judge-operational-events.ts",
+        "src/core/schema/event/index.ts",
+        "src/core/schema/event/experimental.ts",
+        "scripts/audit-schema-writes.ts",
+        "scripts/audit-schema-writes.test.ts",
+        "scripts/schema-migration-initialization.unit.test.ts",
+        "src/server/export/constants.ts"
+      ],
+      "result": "exact singleton fresh UUID seed、immutable operational trigger/index、registered journal、Drizzle/runtime mutation negatives、0117合同保留且no allowlist增加。普通archive excludes control并因incarnation held；coherent full restore 未验。"
+    },
+    {
+      "area": 8,
+      "scope": "real domain ownership / public host wiring / baseline and approved optional externals",
+      "paths": [
+        "src/capabilities/practice/server/judge-engine-client.ts",
+        "src/capabilities/practice/public.ts",
+        "src/capabilities/practice/server/judge-run-dispatch.ts",
+        "src/capabilities/practice/server/judge-run-observation.ts",
+        "src/server/durable/judge-worker.ts",
+        "src/server/durable/judge-family.ts",
+        "scripts/capability-boundary-baseline.json",
+        "server/start/vite.config.ts",
+        "package.json"
+      ],
+      "result": "real dispatch/observe/census消费者均在practice client；host经public；client无durable反向import，新循环未发现；practice→durable0，boss15不变，events4→1、total433→430。Start仅批准两个server externals，deps/lock无diff，未改UI/boot/genericSSE。"
+    },
+    {
+      "area": 9,
+      "scope": "meaningful retained/replaced tests / real process and old-binary fixtures",
+      "paths": [
+        "src/capabilities/practice/api/judge-run-status-route.db.test.ts",
+        "src/capabilities/practice/jobs/judge_pending_reconcile.db.test.ts",
+        "src/capabilities/practice/jobs/judge_run.db.test.ts",
+        "src/capabilities/practice/server/native-durable-attempt.db.test.ts",
+        "tests/dbos-judge/operational.db.test.ts",
+        "tests/dbos-judge/process.db.test.ts",
+        "tests/dbos-judge/worker.ts",
+        "tests/dbos-judge/cutover.db.test.ts",
+        "tests/dbos-judge/legacy-producer.ts",
+        "tests/dbos-judge/support.ts",
+        "tests/dbos-judge/migration.db.test.ts"
+      ],
+      "result": "检查删除/替换断言与新永久truth合同；保留strict completion/atomic rollback。controlled process使用真实host/Pi lower transport、SIGKILL/COMMIT边界；old producer从固定96077源码编译。R1-P1-02的direct投影使fixture可假绿；G3的evidence helper漏结果。其余执行证据不从代码存在推断。"
+    }
+  ],
+  "acceptance_matrix": [
+    {
+      "number": 1,
+      "scenario": "重复/同key/lost202",
+      "source_review_coverage": "native durable attempt + operational；Start/Pi外部入口待父验收",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 2,
+      "scenario": "429/pending Tx abort",
+      "source_review_coverage": "operational；严格无send/原件边界/refund",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 3,
+      "scenario": "pending/reservation后崩溃",
+      "source_review_coverage": "operational + actual old producer pre-insert SIGKILL",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 4,
+      "scenario": "enqueue COMMIT丢ack",
+      "source_review_coverage": "fixed lookup/reconcile + immutable slots",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 5,
+      "scenario": "accept先于通知/晚到markers",
+      "source_review_coverage": "notification reducer；P1-02通知修复缺口",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 6,
+      "scenario": "并发ticks/workers/submit及>200前缀",
+      "source_review_coverage": "reconcile/keyset + installer/producer DB suites",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 7,
+      "scenario": "native load前启动/stale head-admission",
+      "source_review_coverage": "native guards + production process boundaries",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 8,
+      "scenario": "claim commit后、wire前SIGKILL",
+      "source_review_coverage": "real process claim boundary；no repurchase",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 9,
+      "scenario": "provider accepted/timeout/partial/death",
+      "source_review_coverage": "controlled held second wire + installed transport；live failures未验",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 10,
+      "scenario": "global Pi retry2、judge none",
+      "source_review_coverage": "installed transport fetch fixture + typed runner/Jev seams",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 11,
+      "scenario": "first saved/second unknown/no third",
+      "source_review_coverage": "operational + process；G3结果快照选择缺口",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 12,
+      "scenario": "full response但parse/result未commit",
+      "source_review_coverage": "recorded executor held；额外outage分支需实测",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 13,
+      "scenario": "result COMMIT ack loss",
+      "source_review_coverage": "operational wraps real commit；exact result-ID read",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 14,
+      "scenario": "saved outcomes/alternate candidate before seal",
+      "source_review_coverage": "process binding collision；无max+1",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 15,
+      "scenario": "seal/settlement/commit crash",
+      "source_review_coverage": "process SIGSTOP/KILL + retained rollback；P1-01",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 16,
+      "scenario": "activation before checkpoint/DONE",
+      "source_review_coverage": "real process domain-committed boundary；P1-01",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 17,
+      "scenario": "held/already-effective before resolution",
+      "source_review_coverage": "native identity/held suites；P1-01须修并复验",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 18,
+      "scenario": "manual disposition before FAILED",
+      "source_review_coverage": "P1-02；当前测试额外direct投影掩盖扫描",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 19,
+      "scenario": "self-report/correction/withdrawal races",
+      "source_review_coverage": "native expected-head + manual process；完整correction/withdrawal待父",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 20,
+      "scenario": "2 admissions/7d/live final",
+      "source_review_coverage": "reducer/reconcile；P1-03缺真实stale scheduledAt gate",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 21,
+      "scenario": "FAILED/cancelled/DLQ/caller submit",
+      "source_review_coverage": "census/disposition + historical submit fixture",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 22,
+      "scenario": "SSE reconnect/order/cursor/pruning",
+      "source_review_coverage": "unchanged generic SSE replay；P1-01/02；live reconnect未验",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 23,
+      "scenario": "engine metadata unavailable/mismatch",
+      "source_review_coverage": "new reader/route DB fixtures；503与known pending distinct",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 24,
+      "scenario": "placement/intervention retention",
+      "source_review_coverage": "shared Tx fixture/observer/rollback + retained native consumers未实测",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 25,
+      "scenario": "cutover vs producer/cron/provider/restart",
+      "source_review_coverage": "common installer + real host/old producer；实际cron/provider quiescence未验",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 26,
+      "scenario": "real old binary / compatible rollback",
+      "source_review_coverage": "cutover fixture actual96077producer、retained slots；完整worker/cohort/restore未验",
+      "reviewer_execution": "NOT_RUN"
+    },
+    {
+      "number": 27,
+      "scenario": "bounded real provider output",
+      "source_review_coverage": "UNRUN；另需exact revision/input/output/task/provider/model/cost/wire",
+      "reviewer_execution": "NOT_RUN"
+    }
+  ],
+  "validation_gaps": [
+    {
+      "id": "G1",
+      "kind": "PARENT_EXECUTION_LIMIT",
+      "detail": "父5f09 8-file scoped DB --bail1 在第一 worker completion case失败。日志仅可证明 migrations applied、该case evaluation1/receipt0；不能把8个套件或34 skipped升为PASS。独立reviewer未运行任何测试/DB/runtime。",
+      "evidence": [
+        "/tmp/yuk1356-parent-db/db.log",
+        "/tmp/yuk1356-parent-db/db-result.json"
+      ]
+    },
+    {
+      "id": "G2",
+      "kind": "ACCEPTANCE_UNRUN",
+      "detail": "修复后完整scoped DB、migration smoke、真实kill/reopen、old binary cutover/rollback、coherent DBOS/domain/control restore、实际cron、Start真实消费者、SSE live和provider actual-output仍由父持有。原候选bounded logger ESM/CJS proof不覆盖5f09最终重复或完整entrypoint。单元/静态/build分层报告不替代这些验收。"
+    },
+    {
+      "id": "G3",
+      "kind": "CONCRETE_SOURCE_EVIDENCE_GAP_NON_BLOCKING",
+      "detail": "tests/dbos-judge/support.ts:142-143 的judgeEvidence用payload.submission_id/run_id选择model_result；真实recorded-model-executor.ts:157仅写version/input_digest/outcome，关联只在caused_by_event_id。故process保存的events不含真实model_result，不能用该snapshot证明saved outcomes完整保留。生产judge-family.ts:620-622有同一谓词，503-518匹配known result会保守误判unknown；未证明满足其它transfer前置条件的live cohort，未将该保守误拒升级为P1或宣称data loss/repurchase。最小证据修正是从精确claim IDs/caused_by关系加载结果并核action/group/digest，补真实saved-outcome import/evidence断言。"
+    },
+    {
+      "id": "G4",
+      "kind": "REVIEW_SCOPE_LIMIT",
+      "detail": "审查fixed Git对象的全base..head候选，不审父拟修复、后续源码或部署；全部67产品/测试/工具/生成文件diff及16文档/状态/证据文件纳入，历史JSON按semantic字段/清单/claims检查，不重新执行其中历史日志或校验全部历史来源哈希。源码锁顺序检查不是运行时deadlock证明；未作独立安全全仓扫描。"
+    }
+  ],
+  "rules_read": [
+    "AGENTS.md",
+    "server/AGENTS.md",
+    "src/capabilities/AGENTS.md",
+    "src/capabilities/practice/AGENTS.md",
+    "src/core/schema/AGENTS.md",
+    "src/server/AGENTS.md",
+    "src/server/ai/AGENTS.md"
+  ],
+  "required_contracts_read": [
+    "docs/planning/2026-10-09-yuk1356-judge-implementation-entry.md",
+    "docs/planning/2026-10-09-yuk1356-judge-operational-contract.md",
+    "docs/planning/2026-10-09-yuk1356-durable-judge-implementation.md",
+    "docs/planning/2026-10-09-yuk1356-judge-audit-repair.md",
+    "/tmp/yuk1355-judge-durable-design-20261009.md"
+  ],
+  "reviewer_actions": {
+    "repository_writes": false,
+    "tests": false,
+    "db": false,
+    "runtime_services": false,
+    "builds": false,
+    "network_provider": false,
+    "install": false,
+    "delegation": false,
+    "only_outputs": [
+      "/tmp/yuk1356-review-r1.md",
+      "/tmp/yuk1356-review-r1.json"
+    ]
+  },
+  "parent_evidence": {
+    "exact_head_unit": "父提供12 files /337 unit PASS；不是reviewer执行结果。",
+    "exact_head_scoped_db": "首例completion失败，exit1 --bail1，log/result已亲读。",
+    "original_author_handoff": "/tmp/yuk1356-implementation/HANDOFF.md",
+    "audit_author_handoff": "/tmp/yuk1356-audit-repair/HANDOFF.md"
+  },
+  "review_budget": "首轮R1已完成；最多一次P0/P1修复验证R2；未启动R2/第三轮。",
+  "proposed_parent_fix_credited_as_pass": false,
+  "diffSHA": "c6513367117530ed040f61a9f7bd80f8dcd1880a1d14f0bdd7e42013a67bb869"
+}

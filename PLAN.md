@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：judge审计修复5f09已交；父337unit全过，但首轮真实DB发现完成回执被resolved guard跳过。唯一修复writer与固定候选R1并行，原失败保留；00:22:54Z锁已安全释放，原4/release不变。整迁移未完成。
+> Linear 是权威 tracker。2026-10-09 JST：judge R1 已完成，父核接受3项P1；回执修复ff694已交但DB未验。唯一writer接通知修复、锁内授权时钟及saved-result证据纠正。当前无runtime锁/服务，整迁移继续In Progress。
 
 ## NOW
 
@@ -16,7 +16,7 @@
 
 ## NEXT
 
-- YUK1356作者caa125504已completed/noPending；父核63源码/877产物/70日志全匹配。审计修复5f09已交，父337unit通过。独立R1审完整diff；首轮DB完成回执缺失已定位，唯一yuk1356-native-resolution-receipt-repair-20261009-v1修复，保留严格断言，后续重跑DB/迁移/进程验收。Start/boot/shutdown仍归5796。
+- YUK1356固定5f09独立R1为3项P1/0P0。回执修复ff694已交，父核3文件/14输入/884制品；作者41unit/static/build通过，19新增DB仅prepared。唯一writer `yuk1356-r1-notification-clock-evidence-repair-20261009-v1` 接剩余通知与授权时钟修复，并纠正模型结果因果关联证据。父后续锁下DB/迁移/进程/消费者验收，再做唯一R2；不启第三审。Start/boot/shutdown归5796。
 
 - 1355已交四个housekeeping族源码及隔离证据。下一idle族只读设计已交回，父核45源码+3报告；保留原userclock，5796已以13d317da8明确交接精确Copilot/session/practice写路径。未起idle writer或分配编号，judge交回后再核最终锁序。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。
 - 1358继续剩余路由/共享子树及三入口共用业务操作，保留现有确定性行为。1392公共board读取、1380事件读/纠错等已合接口由Start集成方接消费者，不复制领域规则。
@@ -24,8 +24,6 @@
 - UI视觉重写暂缓；必要路由/数据接线仍是本轮迁移。UI恢复时沿owner模型限制；非UI按AGENTS选模，产品MiMo路由不因开发代理改变。
 
 ## PARKED
-
-- **YUK-1356 judge审计修复待验**：父实读audit-capability-boundaries.log，practice→durable新增4、events4→1、总434对基线433；development-workflow:104禁止上调基线。固定候选后收敛judge专属client的领域归属与public调用，不能隐藏依赖或放宽allowlist。audit-schema.log将0118生成的judge_run_control.incarnation报stub；需精确迁移初始化合同与反例测试，保留0117合同。5796已明确授权脚本/test/baseline，原writer已释放；下一单writer修复。
 
 - **YUK-1356 judge打包阻塞**：父实读作者build-first.log:979，Start自包含打包无法解析DBOS5.2.11可选winston-transport；build-migrate.log同报winston/transport。server/worker已有两项external，Start和migrate尚未一致。5796已核77树/75可访问并明确将两文件交原judge writer：仅Start服务端及build:migrate external精确winston/winston-transport，保留其余自包含配置及依赖/lock。作者完整build已通过且产物hash父核一致；父仍须安全验证真实ESM/CJS默认logger加载、不直接执行连接库/迁移/服务入口，OTLP分支不在本证明范围。父已格式化1359证据JSON并核语义完全相同。
 
@@ -50,6 +48,6 @@
 
 ## BLOCKED-ON
 
-- 1393/1394均已合入。judge作者已交回，当前有明确审计修复工作可推进；不需用户重复授权。子任务/CI仍运行属于等待，不把整迁移挂blocked。
+- 1393/1394均已合入。judge R1修复有唯一活动writer，不需用户重复授权。子任务/CI仍运行属于等待，不把整迁移挂blocked。
 - runtime测试/发布在执行前必须实际核锁并原子获取，核owner/token清理释放；其他线程持锁时只推不冲突的源码工作。历史锁记录不能代表当前ownership。
 - 部署用途保持Agent开发测试，禁止再次清库、恢复私人数据或盲重放队列；日用部署须owner明确要求“为我日常使用的部署”。旧运行验收限制和未完成产品能力保存在归档及各原票，未被本次整理核销。
