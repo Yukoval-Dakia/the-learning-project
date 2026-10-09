@@ -1,6 +1,6 @@
 # Active Start notes list — 2026-10-09
 
-Fresh branch feat/yuk-1358-start-notes-list from main7472 with six own documentation commits carried. Only notes list domain/read/route/client integration; full scope docs/planning/2026-10-09-yuk1358-start-notes-list.md. Judge and restore sources belong7631; no provider or runtime work here. Author source-only; parent later controls DB/browser acceptance. Older entries below remain revision-specific.
+Exact source c236a7160 is writer-released. Parent matched21source/29logs/893artifacts and ran50unit plus18realDB successfully. Mutex released04:54:37Z; original four/release unchanged. R1 and offline built RPC/browser preparation are running; no runtime resources remain. Full report docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md. useSubjects still HTTP and note detail/presence/write remain pending. Judge/restore ownership remains7631. Earlier records retain their revisions.
 
 # Restore helper ownership — 2026-10-09
 
