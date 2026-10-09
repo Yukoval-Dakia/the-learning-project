@@ -1,12 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-10：数组目录维度修复已交f325，父194unit/14真实DB通过。首次domain fixture失败保留；16:34:06Z锁释放，原4/release不变。接新helper制品封存及完整capture/restore/同目标DBOS重开，run07仍失败。
+> Linear 是权威 tracker。2026-10-10：父v3完整558offline及精确依赖/制品校验通过；run08真实118迁移/初始化/complete通过，unknown故障注入却得到SUCCESS3，验收失败保留。17:10:19Z锁释放、源停止保留、原4/release不变。接只读因果调查，不重试刷绿。
 
 ## NOW
 
 - **YUK-1358 / Start notes列表**：独占范围和验收见[notes计划](docs/planning/2026-10-09-yuk1358-start-notes-list.md)。保留查询校验、科目知识点解析、空集合语义及现有搜索/导航/视觉；不改note详情/presence/AI写，不把本切片当Notes整族完成。父50unit/18DB、R1 NONE和49RPC/原页面浏览器通过；98表/5序列窗口不变，PR1626已合main04232aaf10（exact9889 CI全绿）；父已fetch核main；[父证据](docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md)。useSubjects仍HTTP，完整迁移未完成。
 
-- **YUK-1359 / 恢复后重开验收**：run07真实capture/restore比对因数组声明维度0→1失败，历史证据保留。修复f325只归一数组声明维度，真实数组值/类型链完整保留并升级digest v2，旧v1不得升级为新证明。父194unit及[14真实PG16 DB](docs/planning/evidence/2026-10-10-yuk1359-parent-array-parity.json)通过；第一次domain fixture失败13/14保留，测试修正后14/14。16:34:06Z锁释放，原4/running/release不变。唯一离线子任务已启动，固定helper b52e并封存新独立准备目录；父验后再fresh source完整capture/restore及同恢复目标重开；固定worker7472不变。旧helper887012的R2不冒称覆盖新修复，无R3，无部署。
+- **YUK-1359 / 恢复后重开验收**：数组修复f325父194unit/14真实DB通过；v3固定helper b52e/worker7472，完整558offline和全量封存复核通过，[父报告](docs/planning/2026-10-10-yuk1359-v3-parent-offline.md)。run08通过118迁移/初始化/complete SUCCESS3；代理记录COMMIT故障却unknown也SUCCESS3，未形成要求的ERROR1+2missing，未进入capture/restore/reopen；[失败证据](docs/planning/evidence/2026-10-10-yuk1359-parent-restore-attempt08.json)。17:10:19Z原4/running/release核同后释放锁，源停止保留。唯一只读因果任务核代理/连接池/事务证据，再定最小修复，不以重试或放宽断言代替。run01–08不得重启，旧R2仅887012，无R3，无部署。
 
 - **YUK-1359 / 完整恢复证明**：按5796提交0015授权，不等judge merge/配额；四现有helper/receipt类型+scopedtests/runbook范围见[恢复缺口](docs/planning/2026-10-09-yuk1359-dbos-restore-evidence-gap.md)。设计已完成并核对7源/test/driver哈希，见[实施契约](docs/planning/2026-10-09-yuk1359-restore-coherence-design.md)。作者已释放固定75d4a4c87，父匹配12源/33日志/888制品并独立76unit通过；真实13DB初验揭露catalog缺括号，最小产品修复后13/13通过，两RED保留；父负责独立审查、锁内真实恢复及DBOS重开验收。无judge代码带入，无恢复主库授权。
 
