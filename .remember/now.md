@@ -1,11 +1,10 @@
-# Retained scratch implementation active
+# Restore access recovered and implementation resuming
 
-Parent preflight: hostcommand psql absent; targetedHomebrewopt/Postgres.app/mise installedpaths yieldednone. Same activewriter steered via yuk1359-host-identity-no-psql-preflight-20261009-v1 to reuseinstalledpostgresdriver for explicit-target readonlyidentity only, lazyinertimports/boundedconnect-query-close/interruption/noenvfallback; noinstall/newdependency. No parentcodewrite or runtime.
+2026-10-09 parent actually read workspace and git: clean c211c0f923 on fix/yuk-1359-restore-parity. Fetch confirms HEAD contains latest origin/main04232aaf10, no missing main commits. Old retained-scratch v1 is completed/noPending with zero edits/checks/commit due EPERM. New sole T3 implementation yuk1359-retained-scratch-reopen-resume-20261009-v2 uses codex gpt-6.1-sol xhigh, helper/receipt/scopedtests/docs only. No DB/Docker/provider/runtime/push/branch actions. Parent owns PLAN/now and final acceptance.
 
+Restore remains first. Judge separate branch/draft1625 at29a802f has unit3/4 and DB1/3/4 plus aggregate failures and main conflict, recorded in Linear1356 comment6d6a2dc3. Realprovider429 and all earlier uncompleted gates preserved. No cross-branch fixes.
 
-Readonly integration design completed/noPending; parent16hashes matched report98d3fcdf and committed2db11afbe. Sole sourcewriter T3 yuk1359-retained-scratch-reopen-implementation-20261009-v1 (mcp e4c5132f, codex gpt-6.1-sol xhigh) nowrunning from2db11afbe. Owns existinghelper/receipt modules andscopedtests/docs only, noDB/runtime/network/buildoutsideauthorized scope; usespinned offlinechecks. Implement pairedexplicitloopbackport/testdbname+keep onNEWrandomscratch, exactownership/container/observedidentityreceipt; defaultnetworknone. Preservev1quiescence, addtruthfulstrict hostworker/runtimeartifactvariant with actualbytes binding; nofakeimage. Parent read-onlyprep directory, latebindingadapter onlyafterfinalreceipt. No parallelcodewriter.
-
-13actualPG tests passed parent aftercatalogparen/fixturequotefix8ffc; fullcapture/restore/DBOSreopen unrun. Locke089released06:33:24.251Z original4/releaseunchanged. No ownruntime. IndependentrestoreR1 waitsfinaldelta, notstarted. WholemigrationandLinearfeatures remainactive.
+Existing restore canonical13DB passed at8ffc after genuine catalog SQL repair; full capture/dump/restore/reopen still unrun. Retained target design2db11 and host-psql prerequisite correction apply. Use existing installed postgres driver lazily for explicit readonly identity. Parent will prepare late-binding offline driver after final receipt contract. No current owned runtime or lock.
 
 # Restore parent acceptance active
 
