@@ -1,3 +1,11 @@
+# R2 accepted; first actual provider run stopped at HTTP429
+
+Both children completed/noPending. R2 fixed3fb binarySHA441531 matches; NONE/all3P1resolved, noR3. Prep3103inputs/6scripts matched and parent7offline tests passed. Parent found fresh migration legacyepoch prerequisite; child added real gate before dispatch/send, parent activated only fresh fork via existing CLI.
+
+03:43:57Z token744d7185 acquired; single actual workflow opencode-go/mimo-v2.6-pro sent one request, HTTP429 usage limit, taskfailure/costnullunknown, savedpending. No retry/fallback; Hono requires successful providerreceipt and was not executed. Failure scripts/wire/logs and R2 now versioned; local synthetic dump /tmp/yuk1356-parent-live-acceptance/isolated-synthetic-failure.dump. Ownerchecked release03:46:31.181210Z, original4/fullset/releaseunchanged, selfPGremoved.5796notified.
+
+Next capture tracker/PR status and scope remaining Hono acceptance independently of paidsuccess without falsifying successfixture. Actualprovider gate remains failed; no repeated paidattempt absent evidence of resolved providerlimit. Current PR1625 draft remote23ca; evidence/docs pendingcommit. Product2db unchanged; noactivechildren/runtime. Wholemigrationremainsactive.
+
 # Draft PR1625 opened and linked
 
 PR https://github.com/Yukoval-Dakia/the-learning-project/pull/1625 draft, exact remote23ca0abaf. Freshfetch origin/main had0incoming; noexistingPR forbranch. Normalpush succeeded, T3link succeeded. No merge/deploy. R2 immutable3fb stillvalid (23ca onlyremember). Existingactualprovider/Hono offlineprep active, no runtime. Parent ownsPRwatch/CI/merge;5796 notified noWIPintegration. Next wakehandleCI/findings or childcompletion; do notpollPR. This localreceipt is notpushed alone.

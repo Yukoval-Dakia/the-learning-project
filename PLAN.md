@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：judge父128 scoped DB、12 process、8 cutover及86 migration+62既有consumer全部通过；fixture失败保留，产品未改。02:57:49Z核owner释放锁，原4/release未变。最终static/build/10audit及emitted闭包通过；继续真实provider/Hono与R2。
+> Linear 是权威 tracker。2026-10-09 JST：judge R2 NONE、原3P1均resolved；首次真实指定MiMo请求HTTP429，wire1/costunknown，无重试。03:46:31Z核owner释放锁，原4/release不变。PR1625仍draft，成功模型输出/Hono/Start与整迁移退出未完。
 
 ## NOW
 
