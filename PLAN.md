@@ -16,6 +16,8 @@
 
 ## NEXT
 
+- Restore helper源码不再等待judge实际模型配额或合并：当前judge test writer完全释放、父scoped验收/证据提交后，7631可保留draft1625/watch并从freshmain单writer接已定4文件scope；不带judge WIP。真实judge恢复证明仍单列未完成，详见[顺序更新](docs/planning/2026-10-09-restore-start-ownership.md)。
+
 - idle future ownership is confirmed in [idle/Start handoff](docs/planning/2026-10-09-idle-start-ownership.md). Three Copilot writes and Conversation coordination belong to7631 only after judge releases and delivers;0118 stays judge. This thread has no competing writer there. Original user-event clock and strict chip/replay behavior remain; runtime proof is outstanding.
 
 - Start/judge共享文件边界见[交接](docs/planning/2026-10-09-judge-start-ownership.md)，Start/boot/shutdown由5796独占；judge A/B/C/D由7631接续，迁移号后核。
