@@ -1,0 +1,136 @@
+{
+  "candidate": "90e87cfa94e410ec5692f0debabe6d1fd5b3175a",
+  "parentPatchSha256": "6bac1e079db3fc2f0f27af0fdcdcd920c5d944ad07441270ee54d4d1df82cd55",
+  "productChanges": false,
+  "migration": {
+    "passed": 86,
+    "failed": 0
+  },
+  "consumers": {
+    "placementPassed": 13,
+    "interventionPassed": 49,
+    "failed": 0
+  },
+  "earlierRuns": [
+    {
+      "passed": 19,
+      "failed": 1,
+      "skipped": 40,
+      "cause": "another legacy placement fixture stripped operational authority and returned wrong delivery identity"
+    },
+    {
+      "passed": 21,
+      "failed": 1,
+      "skipped": 38,
+      "cause": "same fixture replayed completed internal executor instead of the queue consumer"
+    }
+  ],
+  "cleanup": [
+    {
+      "owner": {
+        "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+        "issue": "YUK-1356",
+        "phase": "isolated-judge-scoped-db",
+        "token": "4fed4229-939b-44db-8b51-370148a6e73e",
+        "candidate": "90e87cfa94e410ec5692f0debabe6d1fd5b3175a",
+        "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "createdAt": "2026-10-09T02:53:54.467063+00:00"
+      },
+      "releasedAt": "2026-10-09T02:55:05.184185+00:00",
+      "containersUnchanged": true,
+      "releaseUnchanged": true,
+      "runningUnchanged": true
+    },
+    {
+      "owner": {
+        "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+        "issue": "YUK-1356",
+        "phase": "isolated-judge-scoped-db",
+        "token": "37c76770-9f1b-4fa7-ba6d-6d8293db9b4a",
+        "candidate": "90e87cfa94e410ec5692f0debabe6d1fd5b3175a",
+        "dirtyDiffSha256": "3e2b9075208b29a4ee31e424d80740b7192f35e89c6767ccfd55d1888d8c1835",
+        "createdAt": "2026-10-09T02:55:43.500131+00:00"
+      },
+      "releasedAt": "2026-10-09T02:56:27.416483+00:00",
+      "containersUnchanged": true,
+      "releaseUnchanged": true,
+      "runningUnchanged": true
+    },
+    {
+      "owner": {
+        "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+        "issue": "YUK-1356",
+        "phase": "isolated-judge-scoped-db",
+        "token": "82fde3cc-5507-4355-9346-7bd622b26ad3",
+        "candidate": "90e87cfa94e410ec5692f0debabe6d1fd5b3175a",
+        "dirtyDiffSha256": "6bac1e079db3fc2f0f27af0fdcdcd920c5d944ad07441270ee54d4d1df82cd55",
+        "createdAt": "2026-10-09T02:57:05.653618+00:00"
+      },
+      "releasedAt": "2026-10-09T02:57:49.735956+00:00",
+      "containersUnchanged": true,
+      "releaseUnchanged": true,
+      "runningUnchanged": true
+    }
+  ],
+  "archive": {
+    "path": "docs/planning/evidence/2026-10-09-yuk1356-consumer-repair.json.gz",
+    "sha256": "bb47ef3af50169dba682a57fecd772b5216f75b43b05d9e969aee12754205fa8"
+  },
+  "files": [
+    {
+      "name": "yuk1356-parent-consumer-repair-db/before.json",
+      "sha256": "fc1642f255c45757cedfb3e72187bbe7e280ef1fbf627410e06f919a971c64f8"
+    },
+    {
+      "name": "yuk1356-parent-consumer-repair-db/consumers.log",
+      "sha256": "01baac914afc488ca1969f5b1bcc75e0ae84a514816f9b670044461378326eda"
+    },
+    {
+      "name": "yuk1356-parent-consumer-repair-db/lock-release.json",
+      "sha256": "0ac758ddd0aed7ee6985b6951e158fd00be667d37e9bf7e0b1e0eb9eda8deabe"
+    },
+    {
+      "name": "yuk1356-parent-consumer-repair-db/migration.log",
+      "sha256": "ea32096cd4735f75b3f9eefff6fe9247931510adc18a080fc8dbe268f9716109"
+    },
+    {
+      "name": "yuk1356-parent-consumer-repair-db-r2/before.json",
+      "sha256": "4853335eedd31e133202d247a4b30ca279d8247fc414571ce9cdb658834ffde3"
+    },
+    {
+      "name": "yuk1356-parent-consumer-repair-db-r2/consumers.log",
+      "sha256": "996b00fbfcc885f61b4000fa00581cf5b5b67da3c28c5b2e1143a2c524851e93"
+    },
+    {
+      "name": "yuk1356-parent-consumer-repair-db-r2/lock-release.json",
+      "sha256": "a4a330985dc255b021eff5e39b16d22ec9f8f88f67759abdf5c9495a2c2055f5"
+    },
+    {
+      "name": "yuk1356-parent-consumer-repair-db-r2/typecheck.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "name": "yuk1356-parent-consumer-repair-db-r3/before.json",
+      "sha256": "3879871be637bb81c0f3d703420e4fb9c20bed4e215452ef8175d357d4b71ce0"
+    },
+    {
+      "name": "yuk1356-parent-consumer-repair-db-r3/consumers.log",
+      "sha256": "4720ed395212869adfa9e8fef5e80f2d5fe90b43f6f6c630854b1e5be352454c"
+    },
+    {
+      "name": "yuk1356-parent-consumer-repair-db-r3/lock-release.json",
+      "sha256": "1e9cee9bab81d2c7ee1b721fa42d57868caa5b070279b952ff82dfe9ca623015"
+    },
+    {
+      "name": "parent-fixture.patch",
+      "sha256": "6bac1e079db3fc2f0f27af0fdcdcd920c5d944ad07441270ee54d4d1df82cd55"
+    }
+  ],
+  "limits": [
+    "no paid provider",
+    "no authenticated Hono/SSE",
+    "no native Start",
+    "no deployment or coherent restore",
+    "independent R2 and exact-head CI pending"
+  ]
+}

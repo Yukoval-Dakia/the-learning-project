@@ -619,17 +619,18 @@ describe('placement frozen native workflow', () => {
       {
         checkRateLimit: () => 1,
         boss: {
-          send: async (_queue, data) => {
-            jobs.push(
-              z
-                .object({
-                  run_id: z.string(),
-                  caller: z.literal('native_assessment'),
-                  submit: NativeJudgePendingSubmitInput,
-                })
-                .parse(data),
-            );
-            return 'offline-queue';
+          send: async (_queue, data, options) => {
+            const job = z
+              .object({
+                run_id: z.string(),
+                caller: z.literal('native_assessment'),
+                submit: NativeJudgePendingSubmitInput,
+                operational: JudgeWorkflowInput,
+              })
+              .parse(data);
+            expect(options?.id).toBe(job.operational.delivery_id);
+            jobs.push(job);
+            return job.operational.delivery_id;
           },
         },
       },
@@ -642,8 +643,13 @@ describe('placement frozen native workflow', () => {
         cost_usd_micros: 0,
       }),
     );
-    vi.spyOn(evaluationService, 'createFormalModelExecutor').mockImplementation(() =>
-      createRecordedModelExecutor(db, execute),
+    vi.spyOn(evaluationService, 'createFormalModelExecutor').mockImplementation(
+      (_database, _signal, _admission, execution) =>
+        createRecordedModelExecutor(
+          db,
+          execute,
+          execution ? { fence: (tx, request) => fenceJudgeUnitClaim(tx, execution, request) } : {},
+        ),
     );
     await executeNativeAttempt(db, jobs[0]);
     const recovered = await selection(session.sessionId, { cap: 1 });
@@ -652,7 +658,16 @@ describe('placement frozen native workflow', () => {
       answeredCount: 1,
       question: { assessment: { phase: 'held', pending_run: null } },
     });
-    await executeNativeAttempt(db, jobs[0]);
+    await expect(executeNativeAttempt(db, jobs[0])).rejects.toMatchObject({
+      code: 'judge_already_completed',
+    });
+    expect(
+      await runJudgeRun(db, jobs[0], {
+        retryCount: 1,
+        retryLimit: 2,
+        deliveryId: jobs[0].operational?.delivery_id,
+      }),
+    ).toMatchObject({ status: 'skipped', reason: 'already_persisted' });
     expect(execute).toHaveBeenCalledTimes(1);
     expect(await selection(session.sessionId, { cap: 1 })).toEqual(recovered);
     expect(await db.select().from(mastery_state)).toHaveLength(0);

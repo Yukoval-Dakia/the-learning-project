@@ -1,3 +1,9 @@
+# Consumer fixtures accepted; final judge gates remain
+
+Child90e87cfa9 completed/noPending. Parent verified exactpatch/4owned/27references/4907tracked/884artifacts/7logs. Actual migration86 and placement13+intervention49 all pass. Parent only repaired another legacy placement fixture: keep mapped operational/real delivery ID/claim fence, reject repeated direct executor, then replay actual runJudgeRun. Product unchanged; two intermediate19/1/40 and21/1/38 failures preserved. Evidence parent-consumer-repair.json plus gzip. Last lock82f released02:57:49.735956Z, original4/running/release identical; no self-owned runtime resources. No active children. Parent owns placement test WIP until evidence commit.
+
+Next final static/audits/build and emitted logger proof; real provider on owner opencode-go/mimo-v2.6-pro and authenticated Hono/SSE remain unrun. Native Start stays5796 after fixedmain. Sole R2 not started. No PR/push/CI/deploy yet. Wholemigration/oldconsumerexit/coherentrestore remain open; idle not started.
+
 # Owner-selected actual judge route
 
 5796 explicitly confirms actual judge acceptance must use existing opencode-go/mimo-v2.6-pro effective route, independently verified beforeoneboundedrun. Static taskdefaultxiaomi/mimo-v2.5 is not productselection. No providerswitch/subscription/fallback. Record actualprovider/model/cost_basis/independentwire. $0.003fixture accountingreservation is not paidcostproof. Startowner accepts formalmain later, samekey/firstresponseloss/202status, noWIPintegration. Permanentreadfound/not_found/unavailable; unknown503, authorityabsent404; GETnoeffects; SSEprunednotificationsnotrecreated.
