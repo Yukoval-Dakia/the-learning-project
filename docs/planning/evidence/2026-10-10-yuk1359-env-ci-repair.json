@@ -1,0 +1,86 @@
+{
+  "branch": "fix/yuk-1359-restore-parity",
+  "base": "721a0dbd2e0ec03a7764da38d6412d8abc66f012",
+  "commit": "6fcaf139a3f34b71d519df09b5c35f6705264e43",
+  "node": "24.19.0",
+  "pnpm": "11.13.1",
+  "wrapper": "/tmp/yuk1359-offline-env.sh",
+  "file_sha256": {
+    "src/server/env.ts": "d412adbd259d7c81a04a9b3adf53ad414a6cab3a6b8095de896efcfadbd06315",
+    "tests/core/server-env.test.ts": "baed2325bb4896ec996882d2ed1be155278313e513b80c9bbc34fef2e07427a6",
+    "tests/core/server-env-inventory.test.ts": "010a7dec9c0229370205959e37e74c29b68911a76b0e536d67d1facb99ae9c80",
+    "scripts/audit-env-inventory.ts": "67bc44df38aede816e53edce0f079f14e5a1980e57438ab8731759ec7ba3dc75",
+    "scripts/audit-env-inventory.unit.test.ts": "5f6d7695bcb50b583cb3d718df7523245156d029e576d176f5e4acfc14a5af49",
+    "scripts/cutover-backup.ts": "06ba974b7646faac67781dbdbdc3b70c23612d328f4a76f399403fd65db1d6d2",
+    "scripts/cutover-final-backup.sh": "e070bc2ef701eeb9a2e0204475308d638ef584bb3a5007f2d701fbe82f7ac876",
+    "scripts/restore-drill.sh": "8ba32d3a241ff2be7d3743f60bdcc7bdc047a50001fbbd7a4573c6af97347f89"
+  },
+  "checks": [
+    {
+      "check": "inventory_red",
+      "log": "/tmp/yuk1628-env-inventory-red.log",
+      "exit_status": 1,
+      "counts": {
+        "files_failed": 1,
+        "tests_failed": 1
+      },
+      "sha256": "6e2b432d5fa33f2d1ac8c59ff0bdd04576ee49b66260dd3bb522f4876c73ff85"
+    },
+    {
+      "check": "scoped_green",
+      "log": "/tmp/yuk1628-env-scoped-green.log",
+      "exit_status": 0,
+      "counts": {
+        "files_passed": 3,
+        "tests_passed": 14,
+        "env": 10,
+        "inventory": 1,
+        "audit_inventory": 3
+      },
+      "sha256": "c89bb7f6413a579c66e5b88319935a89373929dea13560bb870f9a1b9576535a"
+    },
+    {
+      "check": "typecheck",
+      "log": "/tmp/yuk1628-env-typecheck.log",
+      "exit_status": 0,
+      "counts": {},
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "check": "lint",
+      "log": "/tmp/yuk1628-env-lint.log",
+      "exit_status": 0,
+      "counts": {
+        "files_checked": 3221,
+        "warnings": 290
+      },
+      "sha256": "b6f67b26b16d3da2471e09d205fba7a76c110596e7afe0fe251b3beaa8150ee2"
+    },
+    {
+      "check": "build",
+      "log": "/tmp/yuk1628-env-build.log",
+      "exit_status": 0,
+      "counts": {},
+      "sha256": "35f2a4ba9a001465fbd59ea73cbec9611d63061554005740cdaa3e75b438f874"
+    }
+  ],
+  "write_scope": ["src/server/env.ts", "tests/core/server-env.test.ts"],
+  "working_tree": "clean",
+  "unowned_tracked_files_unchanged": true,
+  "writer": "released",
+  "follow_ups": "None found in the bounded schema repair; parent retains PR/CI/issue delivery.",
+  "runtime_acceptance": "Not run; source/run11 acceptance is parent-supplied and unchanged.",
+  "parent": {
+    "source_hashes_verified": 8,
+    "log_hashes_verified": 5,
+    "scoped_tests": 14,
+    "exit": 0,
+    "log": "/tmp/yuk1628-env-parent-scoped.log",
+    "sha256": "4143e1ad223781dcf4db4536ef18508e90bf9077952ad0aad394461cf5dc5712",
+    "ci_failure_job": 113987494755,
+    "ci_failure_log_sha256": "d0daa7a57dbf46f726ca0fa0632d652f197f1b783be4bab20b32e50ca151e838",
+    "unchanged_helper_and_audit_diff": true,
+    "origin_main": "04232aaf10efe050458b8b96dbe1f678c17253d8",
+    "head_behind_main": 0
+  }
+}

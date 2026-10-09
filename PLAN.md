@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-10：run11真实完整恢复parity及同一目标DBOS重开通过（4schema/123表/5序列；pending仅新增2效果，completed/unknown及源不变）。19:04:18Z核原4/release后释放锁；恢复工具PR1628已开并link，最终静态通过，exactCI待完成，整迁移仍In Progress。
+> Linear 是权威 tracker。2026-10-10：run11真实完整恢复parity及同一目标DBOS重开通过（4schema/123表/5序列；pending仅新增2效果，completed/unknown及源不变）。19:04:18Z核原4/release后释放锁；恢复工具PR1628已开并link，最终静态通过，原721 CI环境清单失败已由6fcaf139a补4项可选声明；父14unit通过，静态/build日志核验通过，待新exactCI，整迁移仍In Progress。
 
 ## NOW
 
