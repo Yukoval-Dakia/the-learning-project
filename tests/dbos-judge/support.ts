@@ -1,5 +1,6 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq, sql } from 'drizzle-orm';
+import { judgeDeliveryInput } from '@/capabilities/practice/public';
 import { dispatchNativeAttempt } from '@/capabilities/practice/server/assessment/durable-attempt';
 import { issueAssessment } from '@/capabilities/practice/server/assessment/issue';
 import type { JudgeRunEnqueueDeps } from '@/capabilities/practice/server/judge-run-dispatch';
@@ -7,7 +8,6 @@ import { readJudgeRunPermanent } from '@/capabilities/practice/server/judge-run-
 import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
 import type { Db } from '@/db/client';
 import { event, question } from '@/db/schema';
-import { judgeDeliveryInput } from '@/server/durable/judge-client';
 import {
   contractIntegrityDigest,
   normalizeQuestionRowToContract,

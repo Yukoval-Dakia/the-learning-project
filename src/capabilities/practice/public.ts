@@ -379,3 +379,15 @@ export async function executeJudgeWorkflow(
 
 export const reserveJudgeOperationalDelivery: typeof import('./server/judge-operational').reserveJudgeDelivery =
   async (...args) => (await import('./server/judge-operational')).reserveJudgeDelivery(...args);
+
+// Judge engine identity and census belong to practice; the shared host consumes this seam.
+export {
+  JUDGE_DBOS_QUEUE,
+  JUDGE_DBOS_WORKFLOW,
+  type JudgeEngineInventoryT,
+  inspectDbosJudgeInventory,
+  judgeDeliveryInput,
+  judgeLegacyJobId,
+  sealJudgeEngineInventory,
+  validateJudgeEngineInventory,
+} from './server/judge-engine-client';

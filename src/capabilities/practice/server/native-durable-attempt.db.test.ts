@@ -16,7 +16,6 @@ import {
 } from '@/db/schema';
 import * as domainEvents from '@/kernel/events';
 import { resolveVerdictsForNativeAttempts } from '@/kernel/read-models/assessment-verdict';
-import { judgeDeliveryInput } from '@/server/durable/judge-client';
 import * as jobEvents from '@/server/events/writer';
 import {
   contractIntegrityDigest,
@@ -35,6 +34,7 @@ import { issueAssessment } from './assessment/issue';
 import * as evaluationService from './judge/evaluate-submission';
 import { createRecordedModelExecutor } from './judge/recorded-model-executor';
 import * as durableConfig from './judge-durable-config';
+import { judgeDeliveryInput } from './judge-engine-client';
 import { fenceJudgeUnitClaim } from './judge-operational';
 import * as dispatch from './judge-run-dispatch';
 import type { NativeJudgeRunJobData } from './judge-run-payload';

@@ -13,7 +13,7 @@ import {
   type JudgeWorkflowObservation,
   observeJudgeDelivery,
   observeUnmappedJudgeRun,
-} from '@/server/durable/judge-client';
+} from './judge-engine-client';
 import {
   type JudgeDelivery,
   type JudgeOperationalState,

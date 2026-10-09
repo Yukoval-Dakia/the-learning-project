@@ -88,7 +88,10 @@ describe('YUK-1394 registered migration initialization evidence', () => {
       'duplicate registration',
       JSON.stringify({
         ...JSON.parse(journal),
-        entries: [...JSON.parse(journal).entries, JSON.parse(journal).entries.at(-1)],
+        entries: [
+          ...JSON.parse(journal).entries,
+          JSON.parse(journal).entries.find((entry: { idx: number }) => entry.idx === 117),
+        ],
       }),
     ],
   ])('rejects %s', (_label, changed) => {

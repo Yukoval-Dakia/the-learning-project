@@ -38,11 +38,15 @@ import type { Db, Tx } from '@/db/client';
 import { event, job_events } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
-import { getStartedBoss } from '@/server/boss/client';
 import { observeBossJob } from '@/server/boss/job-observation';
-import { enqueueDbosJudgeDelivery, judgeDeliveryInput } from '@/server/durable/judge-client';
 import { checkRateLimit, refundRateLimit } from '@/server/http/rate-limit';
 import { JUDGE_RUN_QUEUE } from './judge-durable-config';
+import {
+  type JudgeLegacySender,
+  enqueueDbosJudgeDelivery,
+  enqueueLegacyJudgeDelivery,
+  judgeDeliveryInput,
+} from './judge-engine-client';
 import {
   acceptJudgeDelivery,
   lockJudgeRun,
@@ -178,9 +182,7 @@ export async function recordJudgePendingAttempt(
 export interface JudgeRunEnqueueDeps {
   enqueueDbos?: typeof enqueueDbosJudgeDelivery;
   /** test seam — default `getStartedBoss()`. */
-  boss?: {
-    send: (name: string, data: unknown, options?: { id?: string }) => Promise<string | null>;
-  };
+  boss?: JudgeLegacySender;
   /** test seam — default the real process-wide paid-AI budget gate. */
   checkRateLimit?: () => number;
   /** test seam — paired refund for the failed-enqueue path. */
@@ -269,12 +271,7 @@ export async function enqueueJudgeRun(
       rateLimitToken = null;
       return deliveryId;
     }
-    const boss = deps.boss ?? (await getStartedBoss());
-    const jobId = await boss.send(
-      JUDGE_RUN_QUEUE,
-      { ...job, operational: input },
-      { id: reservation.delivery_id },
-    );
+    const jobId = await enqueueLegacyJudgeDelivery(job, input, deps.boss);
     if (!jobId) {
       throw new ApiError(
         'durable_enqueue_failed',

@@ -8,6 +8,8 @@ import {
   type JudgeWorkflowInputT,
 } from '@/core/schema/event/judge-operational-events';
 import { getStartedBoss } from '@/server/boss/client';
+import { JUDGE_RUN_QUEUE } from './judge-durable-config';
+import type { JudgeRunJobData } from './judge-run-payload';
 
 export const JUDGE_DBOS_WORKFLOW = 'judge-run-v1';
 export const JUDGE_DBOS_QUEUE = 'judge-run-v1';
@@ -68,6 +70,18 @@ async function withClient<T>(fn: (client: DBOSClient) => Promise<T>) {
     await client.destroy();
   }
 }
+export interface JudgeLegacySender {
+  send: (name: string, data: unknown, options?: { id?: string }) => Promise<string | null>;
+}
+/** The engine owns both legacy sending and lookup; dispatch retains authorization and receipts. */
+export async function enqueueLegacyJudgeDelivery(
+  job: JudgeRunJobData,
+  input: JudgeWorkflowInputT,
+  sender?: JudgeLegacySender,
+): Promise<string | null> {
+  const boss = sender ?? (await getStartedBoss());
+  return boss.send(JUDGE_RUN_QUEUE, { ...job, operational: input }, { id: input.delivery_id });
+}
 export async function enqueueDbosJudgeDelivery(input: JudgeWorkflowInputT): Promise<string> {
   const valid = JudgeWorkflowInput.parse(input);
   return withClient(async (client) => {
@@ -124,7 +138,7 @@ export async function observeJudgeDelivery(
         };
       });
     const boss = await getStartedBoss();
-    const job = await boss.getJobById('judge_run', reservation.delivery_id);
+    const job = await boss.getJobById(JUDGE_RUN_QUEUE, reservation.delivery_id);
     if (!job) return { kind: 'absent', deliveryId: reservation.delivery_id };
     const input = z.object({ operational: JudgeWorkflowInput }).safeParse(job.data);
     if (!input.success || canonicalHash(input.data.operational) !== canonicalHash(expected))
@@ -149,7 +163,7 @@ export async function observeUnmappedJudgeRun(runId: string): Promise<JudgeWorkf
   try {
     const boss = await getStartedBoss();
     for (const slot of [0, 1, 2]) {
-      const job = await boss.getJobById('judge_run', judgeLegacyJobId(runId, slot));
+      const job = await boss.getJobById(JUDGE_RUN_QUEUE, judgeLegacyJobId(runId, slot));
       if (job) return { kind: 'unavailable', reason: 'identity_unverified' };
     }
     return await withClient(async (client) => {

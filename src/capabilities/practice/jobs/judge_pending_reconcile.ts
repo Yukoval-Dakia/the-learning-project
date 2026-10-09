@@ -9,7 +9,7 @@ import {
 import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
 import type { Db } from '@/db/client';
 import { event } from '@/db/schema';
-import { observeJudgeDelivery } from '@/server/durable/judge-client';
+import { observeJudgeDelivery } from '../server/judge-engine-client';
 import {
   acceptJudgeDelivery,
   authorizeJudgeSend,

@@ -1,6 +1,8 @@
 import { DBOS } from '@dbos-inc/dbos-sdk';
 import type { PgBoss } from 'pg-boss';
 import {
+  JUDGE_DBOS_QUEUE,
+  JUDGE_DBOS_WORKFLOW,
   buildLegacyJudgeHandler,
   executeJudgeWorkflow,
   reconcileJudgeAttempts,
@@ -15,7 +17,6 @@ import {
   createOrUpdateQueue,
 } from '@/server/boss/queue-config';
 import { fenceAwareJobHandler, waitForRunnableEpoch } from '@/server/contract-epoch';
-import { JUDGE_DBOS_QUEUE, JUDGE_DBOS_WORKFLOW } from './judge-client';
 import {
   JUDGE_FAMILY,
   JUDGE_RECONCILE_FAMILY,

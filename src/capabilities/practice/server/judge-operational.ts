@@ -31,7 +31,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { judgeDeliveryInput, judgeLegacyJobId } from '@/server/durable/judge-client';
+import { judgeDeliveryInput, judgeLegacyJobId } from './judge-engine-client';
 import {
   judgeAcceptanceId,
   judgeBindingId,

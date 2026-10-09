@@ -832,3 +832,301 @@ describe('ADR-0058 / YUK-939 historical checkpoint retention', () => {
     );
   });
 });
+
+describe('YUK-1356 immutable judge incarnation initialization', () => {
+  const migrationPath = 'drizzle/0118_yuk1356_judge_durable.sql';
+  const journalPath = 'drizzle/meta/_journal.json';
+  const currentSchema = readFileSync('src/db/schema.ts', 'utf8');
+  const schema = currentSchema.slice(
+    currentSchema.indexOf('export const judge_run_control ='),
+    currentSchema.indexOf('export const prune_job_events_control ='),
+  );
+  const migration = readFileSync(migrationPath, 'utf8');
+  const journal = readFileSync(journalPath, 'utf8');
+  const firstBatch = migration.split('--> statement-breakpoint')[0];
+  const seed = firstBatch.slice(firstBatch.indexOf('INSERT INTO'));
+  const registration = {
+    idx: 118,
+    version: '7',
+    when: 1791504000002,
+    tag: '0118_yuk1356_judge_durable',
+    breakpoints: true,
+  };
+  const duplicate = (entry: typeof registration) =>
+    journal.replace('"entries": [', `"entries": [${JSON.stringify(entry)},`);
+
+  function fixture(
+    change: {
+      schema?: string;
+      migration?: string | null;
+      journal?: string | null;
+      source?: string;
+    } = {},
+  ) {
+    const root = mkdtempSync(join(tmpdir(), 'yuk1356-init-audit-'));
+    const write = (path: string, content: string) => {
+      mkdirSync(dirname(join(root, path)), { recursive: true });
+      writeFileSync(join(root, path), content);
+    };
+    try {
+      write('src/db/schema.ts', change.schema ?? schema);
+      if (change.migration !== null) write(migrationPath, change.migration ?? migration);
+      if (change.journal !== null) write(journalPath, change.journal ?? journal);
+      if (change.source) write('src/control.ts', change.source);
+      return audit(root);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  }
+  function expectRejected(report: ReturnType<typeof audit>) {
+    expect(report.judgeInitializationIssues.length).toBeGreaterThan(0);
+    const field = report.results.find(
+      (r) => r.table === 'judge_run_control' && r.field === 'incarnation',
+    );
+    expect(field?.initialization).toBeUndefined();
+    expect(field?.status).not.toBe('init-only');
+  }
+
+  it('binds the actual declaration and unique 0118 seed, with no production INSERT evidence', () => {
+    const report = fixture();
+    expect(report.judgeInitializationIssues).toEqual([]);
+    expect(report.results).toContainEqual({
+      table: 'judge_run_control',
+      field: 'incarnation',
+      type: 'uuid',
+      insert_files: 0,
+      update_files: 0,
+      status: 'init-only',
+      initialization: { migration: migrationPath, values: ['gen_random_uuid()'] },
+    });
+    expect(report.results).toContainEqual(
+      expect.objectContaining({ field: 'epoch', status: 'stub' }),
+    );
+  });
+
+  it.each([
+    ['missing migration', { migration: null }],
+    ['missing journal', { journal: null }],
+    ['missing schema', { schema: '' }],
+    ['unrelated SQL', { migration: 'CREATE TABLE other (incarnation uuid);' }],
+    ['malformed journal', { journal: '{' }],
+    ['missing entries', { journal: '{"version":"7","dialect":"postgresql"}' }],
+    ['empty entries', { journal: '{"version":"7","dialect":"postgresql","entries":[]}' }],
+    ['wrong tag', { journal: journal.replace(registration.tag, '0118_other') }],
+    ['wrong index', { journal: journal.replace('"idx": 118', '"idx": 119') }],
+    ['wrong version', { journal: journal.replaceAll('"version": "7"', '"version": "6"') }],
+    ['wrong dialect', { journal: journal.replace('postgresql', 'sqlite') }],
+    ['wrong timestamp', { journal: journal.replace('1791504000002', '1791504000003') }],
+    [
+      'disabled breakpoints',
+      {
+        journal: journal.replace(
+          /("tag": "0118_yuk1356_judge_durable",\s*"breakpoints": )true/,
+          '$1false',
+        ),
+      },
+    ],
+    ['duplicate registration', { journal: duplicate(registration) }],
+    ['colliding index', { journal: duplicate({ ...registration, tag: '0118_other' }) }],
+    ['colliding tag', { journal: duplicate({ ...registration, idx: 119 }) }],
+  ])('rejects %s', (_label, change) => expectRejected(fixture(change)));
+
+  it.each([
+    ['missing seed', migration.replace(seed, '')],
+    ['seed in later batch', `${migration.replace(seed, '')}\n${seed}`],
+    ['wrong insert table', migration.replace('INSERT INTO judge_run_control', 'INSERT INTO other')],
+    ['wrong singleton', migration.replace('VALUES (1,', 'VALUES (2,')],
+    ['second singleton row', migration.replace(seed, `${seed}${seed}`)],
+    [
+      'fixed UUID',
+      migration.replace('gen_random_uuid()', "'b5ae67a2-9976-4abd-a537-dbcfbbf3a8f8'"),
+    ],
+    ['different generator', migration.replace('gen_random_uuid()', 'uuid_generate_v4()')],
+    ['null incarnation', migration.replace('gen_random_uuid()', 'NULL')],
+    ['wrong epoch', migration.replace('gen_random_uuid(), 0,', 'gen_random_uuid(), 1,')],
+    ['wrong initial backend', migration.replace("0, 'pg-boss'", "0, 'dbos'")],
+    ['wrong timestamp', migration.replace('clock_timestamp()', 'now()')],
+    [
+      'non-null transition',
+      migration.replace('clock_timestamp(), NULL', "clock_timestamp(), 'fake'"),
+    ],
+    [
+      'wrong incarnation type',
+      migration.replace('incarnation uuid NOT NULL', 'incarnation text NOT NULL'),
+    ],
+    ['nullable incarnation', migration.replace('incarnation uuid NOT NULL', 'incarnation uuid')],
+    [
+      'mutable default',
+      migration.replace(
+        'incarnation uuid NOT NULL',
+        'incarnation uuid NOT NULL DEFAULT gen_random_uuid()',
+      ),
+    ],
+    ['singleton check', migration.replace('CHECK (id = 1)', 'CHECK (id > 0)')],
+    ['epoch check', migration.replace('CHECK (epoch >= 0)', 'CHECK (epoch > 0)')],
+    ['phase domain', migration.replace("'draining-dbos'", "'other'")],
+    ['commented seed', migration.replace(seed, `/* ${seed} */`)],
+    [
+      'line-commented seed',
+      migration.replace(
+        seed,
+        seed
+          .split('\n')
+          .map((line) => `-- ${line}`)
+          .join('\n'),
+      ),
+    ],
+    [
+      'function seed',
+      migration.replace(
+        seed,
+        `CREATE FUNCTION unused_seed() RETURNS void LANGUAGE SQL AS $$ ${seed} $$;`,
+      ),
+    ],
+    [
+      'unexecuted seed',
+      migration.replace(seed, `DO $seed$ BEGIN IF false THEN ${seed} END IF; END $seed$;`),
+    ],
+    ['quoted seed', migration.replace(seed, `SELECT '${seed.replaceAll("'", "''")}';`)],
+    ['commented batch', migration.replace(firstBatch, `/* ${firstBatch} */`)],
+    [
+      'appended incarnation change',
+      `${migration}\nUPDATE judge_run_control SET incarnation = gen_random_uuid();`,
+    ],
+    ['appended row replacement', `${migration}\nDELETE FROM judge_run_control;\n${seed}`],
+  ])('rejects SQL %s', (_label, changed) => {
+    expect(changed).not.toBe(migration);
+    expectRejected(fixture({ migration: changed }));
+  });
+
+  it.each([
+    ['export name', schema.replace('export const judge_run_control', 'export const renamed')],
+    ['SQL name', schema.replace("'judge_run_control',", "'other',")],
+    ['field name', schema.replace("uuid('incarnation')", "uuid('renamed')")],
+    ['property name', schema.replace('incarnation: uuid', 'renamed: uuid')],
+    ['field type', schema.replace("uuid('incarnation')", "text('incarnation')")],
+    ['nullable field', schema.replace("uuid('incarnation').notNull()", "uuid('incarnation')")],
+    [
+      'defaulted field',
+      schema.replace(
+        "uuid('incarnation').notNull()",
+        "uuid('incarnation').notNull().defaultRandom()",
+      ),
+    ],
+    ['singleton identity type', schema.replace("smallint('id')", "integer('id')")],
+    ['singleton primary key', schema.replace('.primaryKey()', '.notNull()')],
+    ['epoch type', schema.replace("bigint('epoch'", "integer('epoch'")],
+    ['epoch mode', schema.replace("mode: 'number'", "mode: 'bigint'")],
+    ['timestamp timezone', schema.replace('withTimezone: true', 'withTimezone: false')],
+    ['singleton check', schema.replace('${t.id} = 1', '${t.id} = 2')],
+    ['epoch check', schema.replace('${t.epoch} >= 0', '${t.epoch} > 0')],
+    ['phase domain', schema.replace("'draining-dbos'", "'other'")],
+    [
+      'opaque columns',
+      schema.replace('    id: smallint', '    ...unknownColumns,\n    id: smallint'),
+    ],
+    ['commented declaration', `/* ${schema} */`],
+    ['local declaration', `function unused() { ${schema.replace('export ', '')} }`],
+    ['duplicate declaration', `${schema}\n${schema}`],
+  ])('rejects Drizzle %s', (_label, changed) => {
+    expect(changed).not.toBe(schema);
+    expectRejected(fixture({ schema: changed }));
+  });
+
+  it.each([
+    [
+      'Drizzle UPDATE',
+      'await db.update(judge_run_control).set({ incarnation: crypto.randomUUID() });',
+    ],
+    [
+      'SQL UPDATE',
+      'await db.execute(sql`UPDATE judge_run_control SET incarnation = gen_random_uuid() WHERE id = 1`);',
+    ],
+    [
+      'Drizzle INSERT',
+      'await db.insert(judge_run_control).values({ id: 1, incarnation: crypto.randomUUID() });',
+    ],
+    [
+      'SQL INSERT',
+      "await db.execute(sql`INSERT INTO judge_run_control VALUES (1, gen_random_uuid(), 0, 'pg-boss', now(), NULL)`);",
+    ],
+    [
+      'upsert',
+      'await db.insert(judge_run_control).values({ id: 1 }).onConflictDoUpdate({ target: judge_run_control.id, set: { incarnation: crypto.randomUUID() } });',
+    ],
+    ['opaque UPDATE', 'await db.update(judge_run_control).set(patch);'],
+    ['spread UPDATE', 'await db.update(judge_run_control).set({ epoch: 2, ...patch });'],
+    ['identity UPDATE', 'await db.update(judge_run_control).set({ id: 2 });'],
+    [
+      'computed UPDATE',
+      'await db.update(judge_run_control).set({ epoch: 2, [column]: crypto.randomUUID() });',
+    ],
+    [
+      'computed literal UPDATE',
+      'await db.update(judge_run_control).set({ phase: "dbos", ["incarnation"]: crypto.randomUUID() });',
+    ],
+    [
+      'getter UPDATE',
+      'await db.update(judge_run_control).set({ epoch: 2, get incarnation() { return crypto.randomUUID(); } });',
+    ],
+  ])('rejects production %s independently of the valid migration', (_label, source) => {
+    const report = fixture({ source });
+    expectRejected(report);
+    expect(report.judgeInitializationIssues).toContainEqual(
+      expect.objectContaining({ code: 'production_write', path: 'src/control.ts' }),
+    );
+  });
+
+  it('retains the real operator transitions while preserving incarnation', () => {
+    const source = readFileSync('src/server/durable/judge-family.ts', 'utf8');
+    const report = fixture({ source });
+    expect(report.judgeInitializationIssues).toEqual([]);
+    expect(report.results).toContainEqual(
+      expect.objectContaining({
+        field: 'incarnation',
+        status: 'init-only',
+        insert_files: 0,
+        update_files: 0,
+      }),
+    );
+    expect(report.results).toContainEqual(
+      expect.objectContaining({ field: 'epoch', update_files: 1 }),
+    );
+  });
+
+  it('does not borrow unrelated migration, runtime documentation or test fixtures', () => {
+    expectRejected(
+      fixture({
+        migration: null,
+        source: `// ${seed}\nconst documentation = ${JSON.stringify(seed)};`,
+      }),
+    );
+    const report = auditSchemaWrites(
+      schema,
+      new Map([
+        [
+          'src/control.unit.test.ts',
+          'db.update(judge_run_control).set({ incarnation: "fixture" });',
+        ],
+      ]),
+      new Map([
+        [migrationPath, migration],
+        [journalPath, journal],
+      ]),
+    );
+    expect(report.judgeInitializationIssues).toEqual([]);
+    expect(report.results).toContainEqual(
+      expect.objectContaining({ field: 'incarnation', insert_files: 0, update_files: 0 }),
+    );
+    expectRejected(
+      auditSchemaWrites(
+        schema,
+        new Map(),
+        new Map([
+          ['drizzle/0119_unregistered.sql', migration],
+          [journalPath, journal],
+        ]),
+      ),
+    );
+  });
+});

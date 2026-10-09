@@ -1,9 +1,13 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import {
+  type JudgeEngineInventoryT,
+  judgeLegacyJobId,
   readPermanentJudgeRun,
   recordJudgeOperationalReceipt,
   reserveJudgeOperationalDelivery,
+  sealJudgeEngineInventory,
+  validateJudgeEngineInventory,
 } from '@/capabilities/practice/public';
 import { canonicalHash } from '@/core/migration/canonical';
 import { ModelUnitOutcome } from '@/core/schema/assessment';
@@ -17,12 +21,6 @@ import {
 import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
 import type { Db, Tx } from '@/db/client';
 import { event, judge_run_control } from '@/db/schema';
-import {
-  type JudgeEngineInventoryT,
-  judgeLegacyJobId,
-  sealJudgeEngineInventory,
-  validateJudgeEngineInventory,
-} from './judge-client';
 import { lockProducerFenceInstaller } from './producer-fence-lock';
 
 export const JUDGE_FAMILY = 'judge_run';
