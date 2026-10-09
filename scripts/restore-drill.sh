@@ -5,5 +5,5 @@
 # --list-only validates TOC only; --keep retains scratch; --overwrite archives old receipt.
 set -uo pipefail
 RESTORE_REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)" || exit 1
-node --import tsx "$RESTORE_REPO/scripts/cutover-backup.ts" --operation=restore-drill "$@"
+TSX_TSCONFIG_PATH="$RESTORE_REPO/tsconfig.json" node --import "$RESTORE_REPO/node_modules/tsx/dist/loader.mjs" "$RESTORE_REPO/scripts/cutover-backup.ts" --operation=restore-drill "$@"
 exit $?

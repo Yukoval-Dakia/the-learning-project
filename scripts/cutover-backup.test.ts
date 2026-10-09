@@ -722,7 +722,7 @@ if(args.includes('pg_dump')) {if(c.mode==='dump')bad();out('offline dump bytes')
 if(args.includes('pg_restore')) {input(b=>{fs.appendFileSync(${JSON.stringify(join(directory, 'bytes.jsonl'))},JSON.stringify({sha:crypto.createHash('sha256').update(b).digest('hex')})+'\\n');if(args.includes('-l')){if(c.mode==='toc')bad();out('1; 1 1 TABLE fixture offline\\n');}else if(c.mode==='restore')bad();});}
 else if(args.includes('psql')) {
 const sql=args.includes('-c')?args[args.indexOf('-c')+1]:undefined;
-if(!sql){let text='';process.stdin.on('data',b=>{text+=b;if(text.includes('pg_export_snapshot')){text='';if(c.mode==='keeper-export')bad();out({snapshot:c.source.snapshot,pid:123});if(c.mode==='keeper-closed')process.exit(0);}else if(text.includes('ROLLBACK')){const marker=text.match(/SELECT '(loom_keeper_closed_[a-f0-9-]+)'/);if(marker)out(marker[1]+'\\n');process.exit(0);}});}
+if(!sql){let text='';process.stdin.on('data',b=>{text+=b;if(text.includes('pg_export_snapshot')){text='';if(c.mode==='keeper-export')bad();out({snapshot:c.source.snapshot,pid:123});if(c.mode==='keeper-closed')process.exit(0);}else if(text.includes('ROLLBACK')){const marker=text.match(/SELECT '(loom_keeper_closed_[a-f0-9-]+)'/);if(marker&&c.mode!=='keeper-no-ack')out(marker[1]+'\\n');process.exit(0);}});}
 else if(sql==='select 1') {out('1\\n');}
 else if(sql.includes('pg_control_system')){out(c.source.source);}
 else if(sql.includes('pg_stat_activity')){out({visible:c.mode!=='visibility',prepared:c.mode==='prepared'?'1':'0',unowned:c.mode==='unknown-client'?'1':'0'});}
@@ -818,6 +818,7 @@ describe('real CLI through fully intercepted transport', () => {
     'unknown-client',
     'visibility',
     'writer-running',
+    'keeper-no-ack',
   ])('capture refuses %s and publishes no ready manifest', (mode) => {
     const directory = mkdtempSync(join(TMP, `capture-${mode}-`)),
       transport = offlineTransport(directory, mode),
@@ -920,6 +921,7 @@ it('preserves the original parent shell regression and records the repaired shel
     ],
     {
       encoding: 'utf8',
+      cwd: directory,
       timeout: 20000,
       env: {
         PATH: `${transport.bin}:${process.env.PATH}`,
