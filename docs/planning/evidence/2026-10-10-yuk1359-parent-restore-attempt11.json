@@ -1,0 +1,687 @@
+{
+  "scope": "Real full logical database restore parity and same retained target DBOS review-housekeeping reopen",
+  "status": "VERIFIED_SCOPED",
+  "workerRevision": "7472f4395f4a12a5167e33034d5d8af8bf695049",
+  "helperRevision": "b52e255f746ebbf6a4f2f44ae06e7d1b672a4fff",
+  "candidate": "fc2956efd6b3d497446c3a58b5ecf47afd4f61ee",
+  "actualCaptureReportedRevision": "fc2956efd6b3d497446c3a58b5ecf47afd4f61ee",
+  "source": {
+    "containerId": "3126274e993fd105391f6efb7ef41f34611bc2e4abe51a6ef221448bdbfc5e08",
+    "host": "127.0.0.1",
+    "port": 32791,
+    "database": "test_fork_20261009185632",
+    "systemIdentifier": "7694743977513648170",
+    "databaseOid": "16384",
+    "serverVersion": "16.15 (Debian 16.15-1.pgdg12+2)",
+    "serverStartedAt": "2026-10-09T18:56:34.728745Z",
+    "inRecovery": false,
+    "serverAddress": "192.168.215.2/32",
+    "serverPort": 5432
+  },
+  "restored": {
+    "containerId": "b95be584c29a11123208e677201fc4b3e92fc5f9b9aef7f78285514dbedc7316",
+    "host": "127.0.0.1",
+    "port": 57325,
+    "database": "test_fork_20261009190006",
+    "systemIdentifier": "7694745049440907301",
+    "databaseOid": "16384",
+    "serverVersion": "16.15 (Debian 16.15-1.pgdg12+2)",
+    "serverStartedAt": "2026-10-09T19:00:43.973121Z",
+    "inRecovery": false,
+    "serverAddress": "192.168.215.3/32",
+    "serverPort": 5432
+  },
+  "offline": {
+    "scope": "Parent v6 offline verification before run11",
+    "at": "2026-10-09T18:56:04.941338+00:00",
+    "reports": {
+      "logical": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/logical.json",
+        "sha256": "76a92cba0e36265bd512aff9254dafaf3f82cf68d99adb31e0a253c322b23be8",
+        "status": "LOGICAL COLUMN PREP OFFLINE PASS; RUNTIME UNRUN",
+        "attempts": {
+          "connections": 0,
+          "listeners": 0,
+          "children": 0
+        }
+      },
+      "full558": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/full558.json",
+        "sha256": "092a534139379f2bd224f36e58982a97574065d70845432eae534a2d097f5b1d",
+        "status": "PURE OFFLINE CHECKS ONLY; runs01–08 FAILED; fresh capture/restore/DBOS reopen UNRUN",
+        "attempts": {
+          "connections": 0,
+          "listeners": 0,
+          "children": 0
+        }
+      },
+      "verify": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/verify.json",
+        "sha256": "4a0a541f46b7a762acae2e94685278d029aa5764f8e99ff97f987fca4d3953de",
+        "status": "V6 SOURCE/EVIDENCE/DEPENDENCY/PRESERVATION VERIFIED; RUNTIME UNRUN",
+        "attempts": {
+          "connections": 0,
+          "listeners": 0,
+          "children": 0
+        }
+      },
+      "postkill": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/postkill.json",
+        "sha256": "33efd6714ae510f9246ad299787e275c9204e9679ffc8272a9cef77edbc4ff26",
+        "status": "Offline post-exit settlement checks passed",
+        "attempts": {
+          "connections": 0,
+          "listeners": 0,
+          "children": 0
+        }
+      },
+      "source": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/source.json",
+        "sha256": "1dcacd6a867f3720c38693c249bab729084b170f53ac0a72d08e695c7064eab3",
+        "status": "Offline lifecycle typecheck and fixed worker schema SQL verified",
+        "attempts": {
+          "connections": 0,
+          "listeners": 0,
+          "children": 0
+        }
+      },
+      "causality": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/causality.json",
+        "sha256": "a1ee70def8789961ca0d4972eb75cf70862b31569938cd3396fc4f402a45e1fa",
+        "status": null,
+        "attempts": null
+      },
+      "protocol": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/protocol.json",
+        "sha256": "31d763271429f18f615809231a8fa6e76e693d52cfaaca29f8ccc77696f74b2a",
+        "status": "OFFLINE PROTOCOL REPAIR CHECKS PASSED; RUNTIME UNRUN",
+        "attempts": {
+          "connections": 0,
+          "listeners": 0,
+          "children": 0
+        }
+      },
+      "preservation": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/preservation.json",
+        "sha256": "eee3316c7fa7ab54d17e88f92bd80934041e0e21d851d77ffe5a5ee4b6c70ab3",
+        "status": "All historical bytes, dependency bytes and links preserved"
+      },
+      "diff": {
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/diff.json",
+        "sha256": "5cde00cc4ca5867f12928ed0dec4afc1c0c5b61ff9b5ed620ee0dde4d1bbd56d",
+        "status": "Unified patch exactly reconstructs every changed text file"
+      }
+    },
+    "sourceSeal": "30242997a5cb79d6e7ec6ed6ff7023a2c33eef7e31475798f5b180a0b1ac43b6",
+    "evidenceSeal": "4a1173c2a6c6861f439d4f9fb3d691d33084d1e7117cb7cdf31d1db72aac2fad",
+    "sourceFiles": 3029,
+    "evidenceFiles": 3076,
+    "checks": {
+      "inherited": 558,
+      "protocolGroups": 43,
+      "protocolSplits": 299,
+      "postkillGroups": 29,
+      "logicalGroups": 114,
+      "sourceChecks": 2
+    },
+    "runtimeClaim": false,
+    "postSuiteBindingsMatched": true,
+    "actualNamespacesEmpty": true
+  },
+  "dump": {
+    "file": "/private/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/capture/capture-sjYFOQ/database.dump",
+    "sha256": "a093020948030f660066a03a11491eab4be0c2d448a93d108d20cd34bebfbbb6",
+    "bytes": "378389"
+  },
+  "restore": {
+    "kind": "verified",
+    "verified": true,
+    "level": "database-content-parity",
+    "comparison": {
+      "kind": "equal",
+      "missing_schemas": [],
+      "extra_schemas": [],
+      "missing_tables": [],
+      "extra_tables": [],
+      "mismatched_tables": [],
+      "missing_sequences": [],
+      "extra_sequences": [],
+      "mismatched_sequences": [],
+      "environment_mismatches": []
+    },
+    "phases": [
+      {
+        "kind": "ok",
+        "phase": "preflight"
+      },
+      {
+        "kind": "ok",
+        "phase": "staging"
+      },
+      {
+        "kind": "ok",
+        "phase": "bindings"
+      },
+      {
+        "kind": "ok",
+        "phase": "start"
+      },
+      {
+        "kind": "ok",
+        "phase": "toc"
+      },
+      {
+        "kind": "ok",
+        "phase": "restore"
+      },
+      {
+        "kind": "ok",
+        "phase": "inspection"
+      },
+      {
+        "kind": "ok",
+        "phase": "comparison"
+      },
+      {
+        "kind": "ok",
+        "phase": "cleanup"
+      }
+    ],
+    "errors": []
+  },
+  "inventoryCounts": {
+    "schemas": 4,
+    "tables": 123,
+    "sequences": 5
+  },
+  "phaseReceipts": {
+    "source-setup": {
+      "stage": "source-ready",
+      "cleanupComplete": true,
+      "lifecycleSha256": "1db15b49f074e8c51c971c13865977d8ea00489702085168c131f1fb26811899",
+      "workerSha256": "4e2ec8ace103cf535c3472f2f2c4611438d8cfe5a6f14a1c65abe272674824a9",
+      "bindingSha256": "e2f3c29dd91562a47d9bb5aa7ff34d1c5e59f4bd220aad1af7b66e7cd4453034"
+    },
+    "source-states": {
+      "stage": "awaiting-parent-backup-restore",
+      "cleanupComplete": true,
+      "lifecycleSha256": "771401d4763df235195f80ccf781f8c246c1b53ed72eb98e4a2bd6c1cc11fc49",
+      "workerSha256": "4e2ec8ace103cf535c3472f2f2c4611438d8cfe5a6f14a1c65abe272674824a9",
+      "bindingSha256": "e2f3c29dd91562a47d9bb5aa7ff34d1c5e59f4bd220aad1af7b66e7cd4453034"
+    },
+    "restored-inspect": {
+      "stage": "restored-prelaunch-sealed",
+      "cleanupComplete": true,
+      "lifecycleSha256": "b2eddd5295d853bf7a3c626cd276b72f214ebbb727833c06409510eecee7459f",
+      "workerSha256": "4e2ec8ace103cf535c3472f2f2c4611438d8cfe5a6f14a1c65abe272674824a9",
+      "bindingSha256": "e2f3c29dd91562a47d9bb5aa7ff34d1c5e59f4bd220aad1af7b66e7cd4453034"
+    },
+    "restored-reopen": {
+      "stage": "observed-fixture-reopen-verified",
+      "cleanupComplete": true,
+      "lifecycleSha256": "01920574eece20cbf892310ac5f00ce9bbe03b07a06c9c12bf54f6d6e72214b9",
+      "workerSha256": "4e2ec8ace103cf535c3472f2f2c4611438d8cfe5a6f14a1c65abe272674824a9",
+      "bindingSha256": "e2f3c29dd91562a47d9bb5aa7ff34d1c5e59f4bd220aad1af7b66e7cd4453034"
+    }
+  },
+  "fixtureResult": {
+    "status": "Observed fixture assertions verified by parent execution",
+    "rootScope": "fixed-main review housekeeping only",
+    "pendingEffectsBefore": 1,
+    "pendingEffectsAfter": 3,
+    "exactNewEffects": 2,
+    "completedAndUnknownUnchanged": true,
+    "unknownErrorAndTwoMissingReceiptsPersist": true,
+    "sourceAfterUnchanged": true,
+    "fullPrelaunchParityReceiptSha256": "33c6ac47d42a558691cefb603ce747d8a0799ff6e8ce4e588f51424bc5de4dae",
+    "workerSha256": "4e2ec8ace103cf535c3472f2f2c4611438d8cfe5a6f14a1c65abe272674824a9",
+    "sourceBeforeSha256": "ffaf67009da5ff6d1c12352d2e636312eddf0fbe47b05bc7b5e58968e0a064ab",
+    "restoredPrelaunchSha256": "8bd27bfdc1bb385ba4b96301a14ccdc37c0980f08dc3dc1bf5567ae0ff7b373b",
+    "restoredPostreopenSha256": "62f20522ebd5e263edf6392e6e83241483565aabfdef07642f995fcda37f30d5",
+    "sourcePostreopenSha256": "05d06626322527897268f6cf80d85153108bc5ef2f9f531cff5883bcb450d0ec",
+    "providerAcceptance": "unrun separate gate",
+    "judgeAcceptance": "unrun separate gate"
+  },
+  "reopenWorkers": [
+    {
+      "pid": 46623,
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    }
+  ],
+  "sourceUnchangedParentCheck": true,
+  "cleanup": {
+    "stoppedRetained": [
+      "3126274e993fd105391f6efb7ef41f34611bc2e4abe51a6ef221448bdbfc5e08",
+      "b95be584c29a11123208e677201fc4b3e92fc5f9b9aef7f78285514dbedc7316"
+    ],
+    "at": "2026-10-09T19:04:18.331570+00:00",
+    "neverRestart": true
+  },
+  "lockRelease": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1359",
+      "phase": "isolated-same-target-restore-reopen",
+      "token": "b3cfc9b3-4c72-4103-9876-8b4577bfe904",
+      "candidate": "fc2956efd6b3d497446c3a58b5ecf47afd4f61ee",
+      "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "createdAt": "2026-10-09T18:56:16.100290+00:00"
+    },
+    "releasedAt": "2026-10-09T19:04:18.417981+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "archive": {
+    "path": "docs/planning/evidence/2026-10-10-yuk1359-parent-restore-run11.tar.gz",
+    "sha256": "a99118ab180eaa4f450797845b5f55654dbc25afea26cc18b79a3bbd679cbe69",
+    "bytes": 487866,
+    "members": {
+      "accepted-helper-gate.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/accepted-helper-gate.json",
+        "sha256": "bb9c8c61a5dfc26ec71bfe8110230315c789f0039f6ce1edb544656e87013fc9",
+        "bytes": 3214
+      },
+      "capture/capture-sjYFOQ/OWNER-ACTIONS.txt": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/capture/capture-sjYFOQ/OWNER-ACTIONS.txt",
+        "sha256": "b002a9532dece0365225c54e5df7f597cada65934212938fdd7a3d5e843e2911",
+        "bytes": 497
+      },
+      "capture/capture-sjYFOQ/cutover-latest.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/capture/capture-sjYFOQ/cutover-latest.json",
+        "sha256": "168312dc18675fc65e75b239797c9bf1ede51e86a1de52c73b6039b944bb5ac9",
+        "bytes": 117
+      },
+      "capture/capture-sjYFOQ/cutover-manifest-2026-10-09T18-59-49-334Z.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/capture/capture-sjYFOQ/cutover-manifest-2026-10-09T18-59-49-334Z.json",
+        "sha256": "396a7450cb4669e51b0a51abc37c783692a1e95725f3428e66d0decddf480357",
+        "bytes": 16647
+      },
+      "capture/capture-sjYFOQ/database.dump": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/capture/capture-sjYFOQ/database.dump",
+        "sha256": "a093020948030f660066a03a11491eab4be0c2d448a93d108d20cd34bebfbbb6",
+        "bytes": 378389
+      },
+      "capture/capture-sjYFOQ/dlq-tombstones.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/capture/capture-sjYFOQ/dlq-tombstones.json",
+        "sha256": "37517e5f3dc66819f61f5a7bb8ace1921282415f10551d2defa5c3eb0985b570",
+        "bytes": 3
+      },
+      "capture/capture-sjYFOQ/migration/capture-f85009be37ba.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/capture/capture-sjYFOQ/migration/capture-f85009be37ba.json",
+        "sha256": "05b7908c08df317c53b5ce60038fb844553ea08e241b1e8bfc8e926e24915eec",
+        "bytes": 3015
+      },
+      "capture/capture-sjYFOQ/migration/latest.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/capture/capture-sjYFOQ/migration/latest.json",
+        "sha256": "c1bd787d3cf1b5ee876818ba0f303c008b0c470267c3896d0032832dbbcf8574",
+        "bytes": 233
+      },
+      "capture/capture-sjYFOQ/migration/manifest-f85009be37ba.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/capture/capture-sjYFOQ/migration/manifest-f85009be37ba.json",
+        "sha256": "05a84a82cf3c4918319155370d75a8addc86fa99132bbeeb8095d6daf5241a5c",
+        "bytes": 6386
+      },
+      "capture/capture-sjYFOQ/quiescence-evidence.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/capture/capture-sjYFOQ/quiescence-evidence.json",
+        "sha256": "2c2040d56637028df81fa1945b1d4a5fd75bc7d06e6f1de9a3295bb632b8e3db",
+        "bytes": 1640
+      },
+      "capture/capture-sjYFOQ/source-manifest.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/capture/capture-sjYFOQ/source-manifest.json",
+        "sha256": "3e93933e304812bf086eef8479d3eb64a6e047d181c593f7d913af71af3941fe",
+        "bytes": 909628
+      },
+      "capture/exit.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/capture/exit.json",
+        "sha256": "7c41fb4c934305fc3c2872af79cb3ace31af52a35c3642b173550a8c82258f07",
+        "bytes": 1638
+      },
+      "capture/stderr.log": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/capture/stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "capture/stdout.log": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/capture/stdout.log",
+        "sha256": "46c09b1771823a51c5650a8fa3c4721ca5d26389236ba1169f7554027513e158",
+        "bytes": 402
+      },
+      "complete-checkpoint.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/complete-checkpoint.json",
+        "sha256": "dad98d5869b87168eb2c31c1feef828715040e3d394bb2089752bf6c51dfd973",
+        "bytes": 416441
+      },
+      "fixture-result.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/fixture-result.json",
+        "sha256": "8e9bd06ba1645cf3f958dcd34a3f5c662d686b394df3cf0fea729489aaadcedb",
+        "bytes": 1000
+      },
+      "lifecycle-restored-inspect.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/lifecycle-restored-inspect.json",
+        "sha256": "b2eddd5295d853bf7a3c626cd276b72f214ebbb727833c06409510eecee7459f",
+        "bytes": 102
+      },
+      "lifecycle-restored-reopen.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/lifecycle-restored-reopen.json",
+        "sha256": "01920574eece20cbf892310ac5f00ce9bbe03b07a06c9c12bf54f6d6e72214b9",
+        "bytes": 2870
+      },
+      "lifecycle-source-setup.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/lifecycle-source-setup.json",
+        "sha256": "1db15b49f074e8c51c971c13865977d8ea00489702085168c131f1fb26811899",
+        "bytes": 3122
+      },
+      "lifecycle-source-states.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/lifecycle-source-states.json",
+        "sha256": "771401d4763df235195f80ccf781f8c246c1b53ed72eb98e4a2bd6c1cc11fc49",
+        "bytes": 35650
+      },
+      "offline/causality.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/causality.json",
+        "sha256": "a1ee70def8789961ca0d4972eb75cf70862b31569938cd3396fc4f402a45e1fa",
+        "bytes": 3189
+      },
+      "offline/causality.stderr": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/causality.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "offline/diff.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/diff.json",
+        "sha256": "5cde00cc4ca5867f12928ed0dec4afc1c0c5b61ff9b5ed620ee0dde4d1bbd56d",
+        "bytes": 998
+      },
+      "offline/diff.stderr": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/diff.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "offline/full558.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/full558.json",
+        "sha256": "092a534139379f2bd224f36e58982a97574065d70845432eae534a2d097f5b1d",
+        "bytes": 369399
+      },
+      "offline/full558.stderr": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/full558.stderr",
+        "sha256": "3e50e1ad27be7251da958bb27f1f5db18551a05d9c755b6dc95711570e5d7fd5",
+        "bytes": 107
+      },
+      "offline/logical.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/logical.json",
+        "sha256": "76a92cba0e36265bd512aff9254dafaf3f82cf68d99adb31e0a253c322b23be8",
+        "bytes": 63105
+      },
+      "offline/logical.stderr": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/logical.stderr",
+        "sha256": "3e50e1ad27be7251da958bb27f1f5db18551a05d9c755b6dc95711570e5d7fd5",
+        "bytes": 107
+      },
+      "offline/postkill.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/postkill.json",
+        "sha256": "33efd6714ae510f9246ad299787e275c9204e9679ffc8272a9cef77edbc4ff26",
+        "bytes": 24080
+      },
+      "offline/postkill.stderr": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/postkill.stderr",
+        "sha256": "3e50e1ad27be7251da958bb27f1f5db18551a05d9c755b6dc95711570e5d7fd5",
+        "bytes": 107
+      },
+      "offline/preservation.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/preservation.json",
+        "sha256": "eee3316c7fa7ab54d17e88f92bd80934041e0e21d851d77ffe5a5ee4b6c70ab3",
+        "bytes": 1183
+      },
+      "offline/preservation.stderr": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/preservation.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "offline/protocol.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/protocol.json",
+        "sha256": "31d763271429f18f615809231a8fa6e76e693d52cfaaca29f8ccc77696f74b2a",
+        "bytes": 4958
+      },
+      "offline/protocol.stderr": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/protocol.stderr",
+        "sha256": "3e50e1ad27be7251da958bb27f1f5db18551a05d9c755b6dc95711570e5d7fd5",
+        "bytes": 107
+      },
+      "offline/source.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/source.json",
+        "sha256": "1dcacd6a867f3720c38693c249bab729084b170f53ac0a72d08e695c7064eab3",
+        "bytes": 602
+      },
+      "offline/source.stderr": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/source.stderr",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "offline/verify.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/verify.json",
+        "sha256": "4a0a541f46b7a762acae2e94685278d029aa5764f8e99ff97f987fca4d3953de",
+        "bytes": 1834
+      },
+      "offline/verify.stderr": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/static-tmp/parent-acceptance/verify.stderr",
+        "sha256": "3e50e1ad27be7251da958bb27f1f5db18551a05d9c755b6dc95711570e5d7fd5",
+        "bytes": 107
+      },
+      "parent-backup-restore-required.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/parent-backup-restore-required.json",
+        "sha256": "5f3067607affd5e8f471bf33dd438a48f38273d037aa8d7f4cb5a3f9a2e6bc86",
+        "bytes": 390
+      },
+      "parent/capture.log": {
+        "sourcePath": "/tmp/yuk1359-restore-reopen-parent11/capture.log",
+        "sha256": "a183941a225d1a38be3edaaca755beda8c0e9be47c98ded18a1e6d5390074ab9",
+        "bytes": 274
+      },
+      "parent/exclusive-interval-established.json": {
+        "sourcePath": "/tmp/yuk1359-restore-reopen-parent11/exclusive-interval-established.json",
+        "sha256": "50ff31487751dc91dc677d7089eb27528e43cc10f07af0bc1ff1199b1ae203d8",
+        "bytes": 1182
+      },
+      "parent/lock-release.json": {
+        "sourcePath": "/tmp/yuk1359-restore-reopen-parent11/lock-release.json",
+        "sha256": "195e0d5b818e09820fb3dd2411e2cb1b68d9661cb2c452cd662822f31ce38541",
+        "bytes": 547
+      },
+      "parent/offline-acceptance.json": {
+        "sourcePath": "/tmp/yuk1359-restore-reopen-parent11/offline-acceptance.json",
+        "sha256": "01e11c92aa7a81c52ca2d7c362b2fe4f0cd2b0a2725b5ec236b7d1852c4fdcb1",
+        "bytes": 3771
+      },
+      "parent/provision.log": {
+        "sourcePath": "/tmp/yuk1359-restore-reopen-parent11/provision.log",
+        "sha256": "43c9a94fe9f9201b26d838d26f0be93f4e685bdd4f7cc631218809294949abc6",
+        "bytes": 190
+      },
+      "parent/restore.log": {
+        "sourcePath": "/tmp/yuk1359-restore-reopen-parent11/restore.log",
+        "sha256": "ebfb65327f2497bee697b0475ab7e842e5ec167551e264f1aa185e24f0bcc456",
+        "bytes": 251
+      },
+      "parent/restored-inspect.log": {
+        "sourcePath": "/tmp/yuk1359-restore-reopen-parent11/restored-inspect.log",
+        "sha256": "ee7bba8d94223d99de378b5b333700f8c89800e6ae884f2b26867d5fd6b24b25",
+        "bytes": 94
+      },
+      "parent/restored-reopen.log": {
+        "sourcePath": "/tmp/yuk1359-restore-reopen-parent11/restored-reopen.log",
+        "sha256": "28de03539edf52fa364cc0a8ed9984c0cdaa6d60e266b11eec57d414ee7848b9",
+        "bytes": 101
+      },
+      "parent/source-setup.log": {
+        "sourcePath": "/tmp/yuk1359-restore-reopen-parent11/source-setup.log",
+        "sha256": "1a1507df3866905413de156a583620b64cf817fa345648b37de31b247cee1602",
+        "bytes": 81
+      },
+      "parent/source-states.log": {
+        "sourcePath": "/tmp/yuk1359-restore-reopen-parent11/source-states.log",
+        "sha256": "e59d574b2332b926932cfd94f7def45bd78d954bd6fbe85d03e5e44616d0ca11",
+        "bytes": 99
+      },
+      "parent/stopped.json": {
+        "sourcePath": "/tmp/yuk1359-restore-reopen-parent11/stopped.json",
+        "sha256": "6afe911775ba3c34408e2850974f4ee4cefdab74f7a3a604f3932bea3f4cae60",
+        "bytes": 242
+      },
+      "parent/witness-initial.log": {
+        "sourcePath": "/tmp/yuk1359-restore-reopen-parent11/witness-initial.log",
+        "sha256": "68cf02ccb53a5ba41bab04c0c22606eccd04c25d1a7d40d61e8a2fdb3c793248",
+        "bytes": 632
+      },
+      "parent/witness-refresh.log": {
+        "sourcePath": "/tmp/yuk1359-restore-reopen-parent11/witness-refresh.log",
+        "sha256": "76f827ec43a902fdc099bfc2512d327f561a05aea81a50a69971b15e585b5b71",
+        "bytes": 200
+      },
+      "pending-first-row-held.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/pending-first-row-held.json",
+        "sha256": "44aa25c9f0107cfe1f7ccf11e6f13a30e9d34bbd946a0336ba5877612ebb05be",
+        "bytes": 438905
+      },
+      "phase-restored-inspect-receipt.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/phase-restored-inspect-receipt.json",
+        "sha256": "a5e6876b84f7e123ce3ba23fcb372e7ea0769cde1c158ee4c7ec38003e2ae3fe",
+        "bytes": 332
+      },
+      "phase-restored-reopen-receipt.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/phase-restored-reopen-receipt.json",
+        "sha256": "292bc9372c0d5a106784cbf8dee05e0153b98e681927bbaae7c7d820e6a7e196",
+        "bytes": 339
+      },
+      "phase-source-setup-receipt.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/phase-source-setup-receipt.json",
+        "sha256": "a8b799d93aeb4ec332d5c31d16c086b8f5c2e320fb25bce8a697b1606ebd56bd",
+        "bytes": 319
+      },
+      "phase-source-states-receipt.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/phase-source-states-receipt.json",
+        "sha256": "bd5b872573f77ae06d4a66c7225313a3e2535d53b5ae8066e59f8fd49c6760f5",
+        "bytes": 337
+      },
+      "restore/exit.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/restore/exit.json",
+        "sha256": "28933f3b454d48c83c771bc9bd0465aaaa0a3a1a1452182c203e8f24b49f92d5",
+        "bytes": 1708
+      },
+      "restore/receipt.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/restore/receipt.json",
+        "sha256": "33c6ac47d42a558691cefb603ce747d8a0799ff6e8ce4e588f51424bc5de4dae",
+        "bytes": 1887082
+      },
+      "restore/stderr.log": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/restore/stderr.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "restore/stdout.log": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/restore/stdout.log",
+        "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "bytes": 0
+      },
+      "restored-postreopen.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/restored-postreopen.json",
+        "sha256": "62f20522ebd5e263edf6392e6e83241483565aabfdef07642f995fcda37f30d5",
+        "bytes": 441710
+      },
+      "restored-prelaunch.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/restored-prelaunch.json",
+        "sha256": "8bd27bfdc1bb385ba4b96301a14ccdc37c0980f08dc3dc1bf5567ae0ff7b373b",
+        "bytes": 438895
+      },
+      "restored-reopen-clock-window.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/restored-reopen-clock-window.json",
+        "sha256": "7c38237ce1175a95114ec9ee7421387a6079fee37e5f06f1347428f858c1251d",
+        "bytes": 92
+      },
+      "source-before-backup.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/source-before-backup.json",
+        "sha256": "ffaf67009da5ff6d1c12352d2e636312eddf0fbe47b05bc7b5e58968e0a064ab",
+        "bytes": 438902
+      },
+      "source-before-target-launch.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/source-before-target-launch.json",
+        "sha256": "ee2aa9c3d0be1dd921498b2f10f38cabace576a4c468d3184d34497b8794e801",
+        "bytes": 438909
+      },
+      "source-host-initialized.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/source-host-initialized.json",
+        "sha256": "6d320a6b5827c1fb0be0f3cc5a9ddf095dfb407bf4316a7eb92ddfc01a5b604a",
+        "bytes": 403941
+      },
+      "source-postreopen.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/source-postreopen.json",
+        "sha256": "05d06626322527897268f6cf80d85153108bc5ef2f9f531cff5883bcb450d0ec",
+        "bytes": 438899
+      },
+      "source-ready.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/source-ready.json",
+        "sha256": "873427aa8e28ba4b964e06b167b38e76bf4253a277ec46c3d31dfb458e04d8f4",
+        "bytes": 404120
+      },
+      "source-restart-forbidden.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/source-restart-forbidden.json",
+        "sha256": "efe1f424fba59505b5c6775f38902d114427ededd78fd8deea2d9f5dd4ff0b78",
+        "bytes": 311
+      },
+      "state.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/state.json",
+        "sha256": "23dca0dc586145a47cc0d5389a4888232a48bb2f011feb3bacc6cdd7228199e9",
+        "bytes": 569
+      },
+      "unknown-before-settlement.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/unknown-before-settlement.json",
+        "sha256": "f0435703ed76442cc415d674dcb4b13bd9baa0f8e29dcd5b36338097e2f3fb65",
+        "bytes": 430070
+      },
+      "unknown-commit-causal-witness.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/unknown-commit-causal-witness.json",
+        "sha256": "b0ae5f91e1c862ad036ed600b7581ad77bed12426cfbf00e1dca27db933b7e82",
+        "bytes": 1054
+      },
+      "unknown-held.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/unknown-held.json",
+        "sha256": "734d788d15559512a0955b1972c775178ace632f8d4c282360c5d226d5f785ab",
+        "bytes": 430057
+      },
+      "unknown-settlement-clock-before.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/unknown-settlement-clock-before.json",
+        "sha256": "85aa070147efa9ca42dd9e1753d194b19910528e9930df8b17a7d96228eff79d",
+        "bytes": 393
+      },
+      "unknown-settlement-clock-window.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/runtime/yuk1359-restore-run11/unknown-settlement-clock-window.json",
+        "sha256": "644e6ca11ebe9dd98c5467b417fb5f0d43ceee448c54bcf59134bbfb7a73e507",
+        "bytes": 436
+      },
+      "witness/execution-observation.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/parent-inputs/run11/execution-observation.json",
+        "sha256": "e1e96a11557ac2b1436f9d1251e492e1c1c3e6459b3539f9f35914cc7294cc6b",
+        "bytes": 2251
+      },
+      "witness/witness-before-reopen.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/parent-inputs/run11/witness-before-reopen.json",
+        "sha256": "3c2bb608c556ff7e15496700878fc2f0d74c43c1d484e4b080aaa4b042cbe7bd",
+        "bytes": 2752
+      },
+      "witness/witness-initial.json": {
+        "sourcePath": "/tmp/yuk1359-dbos-restore-offline-prep-v6/parent-inputs/run11/witness-initial.json",
+        "sha256": "a73633c13845aa2e3a25e37ef04e4683ce80cf10c84bec33f4042ea5a0ea85fd",
+        "bytes": 7327
+      }
+    }
+  },
+  "limits": [
+    "Fixed review housekeeping only; no all-family migration claim",
+    "Judge-specific restore/reopen remains unrun",
+    "Provider acceptance remains separate; no paid call",
+    "Not a production restore/deployment",
+    "Failed attempts01–10 remain failed/stopped/read-only"
+  ]
+}

@@ -1,3 +1,11 @@
+# Run11 actual full restore and SAME retained target DBOS reopen PASSED
+
+Parent fixed worker7472/helperb52e; v6 logical column comparison correction independently accepted.1045 layered offlinechecks,3029source/3076evidence/121549deps/3756links matched. Real118migration freshsource3126274e:complete39902SUCCESS3/unknown39904ERROR1+2missing/pending39906SIGKILL+exactPGsettlement passed. Actualdumpa0930209 restored to b95be584/57325/test_fork_20261009190006 with4schemas123tables5sequences fullparityverified. Same-target inside/host/Docker witness, prelaunch seal, freshobserver then actualDBOSreopen passed:pending1→3exact2new effects/receipts,complete/unknownunchanged,unknownERROR+2gapsretained,source rawsealunchanged.
+
+Both ownedPG stoppedretained. Tokenb3cfc9b3 released2026-10-09T19:04:18.417981Z after original4ID/image/start/health/running/release matched;5796 notified. No ownruntime/lock/provider/paid/deploy. Never restart failedrun01–10. Parentdir/tmp/yuk1359-restore-reopen-parent11; fixedprep/tmp/yuk1359-dbos-restore-offline-prep-v6. Report docs/planning/2026-10-10-yuk1359-restore-parent-acceptance.md, evidence manifest attempt11.json and79file487866byte archive sha a99118ab180eaa4f450797845b5f55654dbc25afea26cc18b79a3bbd679cbe69. Source reviewR2at887012NONE doesnotcoverlaterarrayfix; parent194unit14DB+actualrestore do;noR3. Wholemigration/judge-specific/provideracceptance remainincomplete.
+
+No child writer. Freshfetch main04232 unchanged/revcount0. NewrestorePRnotyetcreated; exactCIpending. Parent final194unit/typecheck/build/full lint(290existingwarnings)/10postbuildaudits all exit0 at /tmp/yuk1359-final-local-gates. Gate bindings versioned. Next commit,push/open/link/watch exactCI. Judge1625 branch/draft/gates remain separate; do notcrossbranchwrite. YUK1359 staysInProgress.
+
 # Run10 full restore parity passed; PREP prelaunch physical-column comparison failed
 
 Parent931 layered offline checks and complete seals passed before runtime. Fixed worker7472/helperb52e unchanged. Versioned report docs/planning/2026-10-10-yuk1359-v5-parent-acceptance.md and evidence/2026-10-10-yuk1359-parent-restore-attempt10.json.

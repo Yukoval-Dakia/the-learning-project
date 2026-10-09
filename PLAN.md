@@ -1,14 +1,14 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-10：run10源三态/强杀连接消退与真实完整恢复parity通过（4schema/123表/5序列）；恢复端启动前PREP误比物理列序号空洞失败，未launch。18:31:15Z原4/release不变安全释放锁；唯一v6 PREP writer修跨库逻辑列比较，迁移保持In Progress。
+> Linear 是权威 tracker。2026-10-10：run11真实完整恢复parity及同一目标DBOS重开通过（4schema/123表/5序列；pending仅新增2效果，completed/unknown及源不变）。19:04:18Z核原4/release后释放锁；恢复工具进入最终静态/PR/CI交付，整迁移仍In Progress。
 
 ## NOW
 
 - **YUK-1358 / Start notes列表**：独占范围和验收见[notes计划](docs/planning/2026-10-09-yuk1358-start-notes-list.md)。保留查询校验、科目知识点解析、空集合语义及现有搜索/导航/视觉；不改note详情/presence/AI写，不把本切片当Notes整族完成。父50unit/18DB、R1 NONE和49RPC/原页面浏览器通过；98表/5序列窗口不变，PR1626已合main04232aaf10（exact9889 CI全绿）；父已fetch核main；[父证据](docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md)。useSubjects仍HTTP，完整迁移未完成。
 
-- **YUK-1359 / 恢复后重开验收**：固定helper b52e/worker7472；[v5父验收](docs/planning/2026-10-10-yuk1359-v5-parent-acceptance.md)记录931项分层离线检查、真实源三态和强杀后严格零连接通过。run10 capture/restore真实完整parity verified：4schema/123表/5序列；same-target witness通过，随后PREP原始ordinal_position比较因drop列空洞失败，恢复worker未launch。父离线实核1469列仅31个物理序号差异，其他seal字段相同；不追认整轮PASS。[失败与清理](docs/planning/evidence/2026-10-10-yuk1359-parent-restore-attempt10.json)保留。18:31:15Z停止保留源/恢复端并核原4/running/release后释放锁。唯一Sol xhigh writer在新v6修跨库逻辑列比较，保持同端raw检查及全部真实语义负例。run01–10不得重启，无产品改动/R3/部署。
+- **YUK-1359 / 恢复后重开验收**：run11固定helper b52e/worker7472真实capture→完整restore parity→同一target身份→prelaunch→DBOS reopen通过，见[父报告](docs/planning/2026-10-10-yuk1359-restore-parent-acceptance.md)。pending1→3恰好2新效果/receipt，completed/unknown与source rawseal不变；4schema/123表/5序列完整对等。父1045分层offline、3029source/3076evidence绑定通过；不外推judge/provider/全家族。源/恢复端停止保留，19:04:18Z核owner/原4/running/release后释放锁。run01–10失败保留不得重启；无运行锁/worker或代码writer，最终194unit/static/build/10audits通过，下一步PR/exactCI。
 
-- **YUK-1359 / 完整恢复证明**：按5796提交0015授权，不等judge merge/配额；四现有helper/receipt类型+scopedtests/runbook范围见[恢复缺口](docs/planning/2026-10-09-yuk1359-dbos-restore-evidence-gap.md)。设计已完成并核对7源/test/driver哈希，见[实施契约](docs/planning/2026-10-09-yuk1359-restore-coherence-design.md)。作者已释放固定75d4a4c87，父匹配12源/33日志/888制品并独立76unit通过；真实13DB初验揭露catalog缺括号，最小产品修复后13/13通过，两RED保留；父负责独立审查、锁内真实恢复及DBOS重开验收。无judge代码带入，无恢复主库授权。
+- **YUK-1359 / 完整恢复证明**：四现有helper/receipt类型+scopedtests/runbook范围已实施。独立R1 scratch TCP认证P1由887012/R2 NONE解决；后续array v2差异由父194unit/14真实DB与run11全量恢复证据覆盖，不冒称R2覆盖后续delta、不启R3。完整helper源码和runbook留本分支，父194unit/typecheck/lint/build及10postbuild audits全过，正提交新PR，不将helper交付等同YUK1359整票完成。
 
 - **YUK-1358 / Start事件详情与纠错**：PR1623已完成15DB、R2 NONE及4f36真实71RPC/T3浏览器验收，证据封存；正常整合96077db19仅PLAN/now冲突，20个本lane产品/测试文件与已验head一致。整合193unit/11协议及全部静态构建审计通过，已于22:52Z合main7472f4395（exact91f468 CI全绿），详见[父验收](docs/planning/2026-10-09-yuk1358-start-event-detail-parent.md)。旧4f36首因不倒推，未部署。
 
