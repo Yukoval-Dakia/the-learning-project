@@ -1,3 +1,9 @@
+# Restore implementation active
+
+Design task completed/noPending; final report SHA 7df07b33b10b5a4bcb86680809925f2bfec72e304ee722f07751a9302a053280 and 7 source/test/driver inputs matched. Design committed 49ddae370; earlier fresh-main offline RED receipt37b2d07ff and runbook link93c036205 retained. Sole source writer is T3 task node:delegated-task:command%3Amcp%3Ae4c5132f-3c05-4ce6-aa2d-e5b525fe3bf6%3Adelegate-task%3Ayuk1359-restore-parity-implementation-20261009-v1, Codex gpt-6.1-sol xhigh, running on this branch. Four source files plus scoped tests/existing docs only. Parent owns PLAN/.remember; do not edit author files/build outputs while running. No Docker/DB/provider/browser/install allowed to author. Pinned pnpm11.13.1 and Node24.19.0 required. No current runtime lock/resources. Implementation, review, actual restore/reopen and exact CI remain pending; judge PR1625 gates unchanged.
+
+Prior revision-specific context follows.
+
 # Active restore helper lane on fresh main7472
 
 Judge test task completed/noPending; parent actualnew2+full14process,4pure/typecheck/lint pass. All failures and hashes sealed in judge29a802f1a, pushedPR1625draft. Realprovider429/validresponse-before-save/Start/restore/retirement remain open. Last lock4d1637a5 released04:57:28.629372Z, original4/running/release identical; no currentresources.
