@@ -1,25 +1,38 @@
 # YUK-1359 旧路径退出与文档一致性调查
 
-状态：首轮调查及父级源码抽查完成；这是退出工作的输入，不是完整逐族迁移台账，未删除代码、未完成迁移。源码基线为 main `26f1015810cc3d902f6229b615d9630f05982eef`；通过 `git show` 读取，未切换或修改其他实施工作树。主线线程 57961995 负责整体集成；本线程负责只读消费者调查与此文档，1352/1355/1356 的实现归原 writer。
+状态：首轮调查及父级源码抽查完成；这是退出工作的输入，不是完整逐族迁移台账，未删除代码、未完成迁移。源码基线为 main `26f1015810cc3d902f6229b615d9630f05982eef`；通过 `git show` 读取，未切换或修改其他实施工作树。该历史阶段由57961995承担集成，本线程维护消费者调查。当前本线程7631承担用户整个迁移的协调交付责任；57961995承担Start集成/发布，具体writer与文件ownership按各lane交接执行。
 
 Owner 的后续指令是先完成整个非 UI 迁移，UI 暂缓，再完成 Linear 残留功能；见[当前优先级](2026-10-07-non-ui-migration-priority.md)。保留现有 UI 行为不等于永久保留旧 SPA 运行路径。最终删除必须以实际消费者切换和行为证据为条件。
 
-## 当前退出状态，2026-10-08
+## 当前退出状态，2026-10-09 JST
 
-本节核对 main `6150f01a949c3d1357f8b44f0d8ed6807cd74179`，覆盖下文历史基线的进展陈述。历史调查保留用于追踪职责；不能把其中“未合入”的候选描述当作当前状态。YUK-1359 的退出条件尚未满足，Linear 的 Done 已校正为 In Progress。
+本节基线为已合入的 main `6212a4560c68c294245dc3f3e10e4f774c6ff6f8`。父重新核对固定 Git 对象：14份任务提取输入与原53f05收据逐字节一致，18份路由输入与main6212收据一致。下文历史行号和验收仍只适用于各自版本。1355、1356、1358、1359均未完成；源码合并不代表部署或旧消费者退出。
 
 | 范围 | 已有证据 | 尚需完成 |
 | --- | --- | --- |
-| Start 前门与 `/mistakes` | PR1592 已合入 `eae963377`。`server/start/routes/mistakes.tsx` 注入 `listStartMistakes`；`server/frontdoor.ts` 提供 `readStartMistakes`。候选 `3d6273a14` 的隔离运行证据见[验收索引](evidence/2026-10-08-yuk1352-start-runtime.json)。 | 已验证的 RPC、图片、鉴权、筛选和重试不覆盖整页所有退出条件，也不证明 canonical boot、发布或 SSE。旧 SPA 仍在服务其他页面。完整导航曾由既有 practice 初始化增加一行；仅后续错题读取阶段证明 86 表不变。 |
-| Today 共享读取 | PR1603 已合入 `90f499126`。`shell/public.ts` 导出已有 summary loader；`countDue(db)` 调用 `queryReviewDue(db, { limit: 200 })`。原先 Request/global DB 耦合已修复，3 与 205 条事务内题目分别计为 3 与 200。 | 主线负责 Start 鉴权、epoch、消费者注入及实际入口验收。仍须迁移 Today 子组件的读取与命令；不能将两个读取接口视为整页完成。1377/1358 保持 In Progress。 |
-| Today 费用共享读取 | PR1604 已合入 `6150f01a9`。`observability/public.ts` 导出 `loadTodayCost(db: Db \| Tx, now?: Date)` 和 `TodayCost`；HTTP GET 复用该读取，单次时钟定义 BJT 窗口，保留原费用投影。8 unit、父实际11 DB、static/build、独立R1/R2 NONE及准确CI通过。 | 1378限定领域slice已完成；主线仍须接Start鉴权/epoch与实际页面消费。没有部署，不扩大成Today整页或旧SPA退出证明。 |
-| `/`、`/today`、`/inbox` 及其他页面 | 当前 Start route tree 显式业务页只有 `/mistakes`；`server/start/routes/$.ts` 仍转交 `context.legacySpa.fetch(request)`。 | 依照[W1消费者清单](2026-10-08-yuk1359-w1-consumers.md)、[W2消费者清单](2026-10-08-yuk1359-w2-consumers.md)及下文逐波清单迁移、验收，再移除回落。Inbox adapter 必须保持 HTTP 默认 limit 200、上限 500、lane/kind/status/cursor 校验，不能把空 options 传到不限页 domain 分支。 |
-| 构建与镜像入口 | `package.json` 的 build 同时构建旧 web SPA 与 Start；`server/frontdoor.ts` 仍调用 `buildLegacySpa`；Dockerfile 仍设置 `RW_STATIC_DIR=/app/web/dist`。 | 所有页面的实际消费者切换后，统一开发、构建和镜像入口，删除旧挂载与静态回落。仍被保留页面使用的组件、样式不能按目录名删除。 |
-| 持久任务恢复 | PR1595 已合入 `caeb959fd`。`observability/manifest.ts:515` 声明 prune 的 DBOS backend，`boss/register-capability-jobs.ts:51` 仅准入此族，`durable/prune-worker.ts:115` 按 phase 协调新旧调度。pg-boss 仍是依赖，worker 及其他任务族仍存活。 | 1355/1356及各业务族保留唯一执行和恢复职责；完成逐族切换、排空、未知结果与恢复验收后，1359 才能删除旧机制。该 PR 的合并不是部署或所有 cron 已切换的证明。 |
+| Start 前门与 `/mistakes` | PR1592已合入；RPC、图片、鉴权、筛选及重试见[验收索引](evidence/2026-10-08-yuk1352-start-runtime.json)。 | canonical boot、完整消费者与旧入口退出。完整导航曾由practice初始化增加一行，不能将后续错题读取的86表无变扩大为整个导航无写。 |
+| `/today`、`/inbox` 与根跳转 | PR1609已合入；主读取、费用、decision/undo及真实验收见[工作台交接](2026-10-08-yuk1358-start-workbench-handoff.md)。 | PR1622已合入main6212，Today20与board50实际Start读取、26RPC和浏览器验收见[父验收](2026-10-09-yuk1358-start-agent-notes-parent.md)。嵌套消费者仍有退出义务。TeachingBrief等按[W1清单](2026-10-08-yuk1359-w1-consumers.md)继续退出。 |
+| 五个管理只读页 | PR1615已合入；fc021的96RPC、五页浏览器、88表无写及后续整合证据见[管理页交接](2026-10-08-yuk1358-start-admin-handoff.md)。 | 完整boot与部署；各revision证据不能拼成一次运行验收。 |
+| 配置与科目三个页面 | PR1620已合main10df，复用1389/1390/1391公共操作。18操作、122RPC、35窗口和三页浏览器证据见[父验收](2026-10-09-yuk1358-start-admin-controls-parent.md)。 | canonical自动启动与全SPA退出仍未完成。配置提交成功但刷新失败不得重写；catalog/journal只读首屏与RPC完整分页的证据分开保留。 |
+| W2/W3/W4与practice | 1380事件详情/纠错、1392 board公共读取已合入；1356共享review操作及真实Pi原件效果已有证据。 | 15个页面仍无显式Start入口；领域出口不等于消费者完成。practice实际提交、判分DBOS及共享子树继续验收。 |
+| 构建与镜像入口 | `server/start/routes/$.ts`调用legacySpa；frontdoor、package build及Dockerfile仍服务旧web产物。 | 全部实际消费者迁移后统一dev/build/镜像入口，再删旧挂载。保留UI使用的组件、样式不能按目录名删除。 |
+| 持久任务恢复 | main的prune_job_events与review orphan均已声明DBOS backend；PR1621已合入e1f2。故障/真实cron与独立R1证据见[1393父验收](2026-10-09-yuk1393-parent-acceptance.md)。 | 最终逐族运行切换、旧义务分类排空、回退和唯一恢复owner。默认phase仍pg-boss，声明DBOS不代表运行切换。 |
 
-在6150f01a9重新核对，`server/start/routes/`仍仅有mistakes业务页及基础/catch-all路由，build仍串行产出旧SPA和Start，Dockerfile仍设置RW_STATIC_DIR；README所引通用备份恢复手册仍未在跟踪文件中找到。这些已有退出义务未因费用读取合并而满足。
+[路由收据](evidence/2026-10-09-yuk1359-route-coverage-main6212.json)逐项对应UI_SURFACES的28项：12页面加根跳转，共13项有显式Start路由；15页面仍走旧SPA回落。这是入口覆盖，不是完成率，不证明页面的嵌套消费者全部迁移。旧f80d基线的9/19收据继续保留为历史。
 
-本轮未启动服务、删除旧路径或修改主线的 Start/1356 实施。上述余项均归现有1358/1359/1377及任务族票，没有新增独立缺陷，不重复建票。设置面板 `/admin/config` 仍在 W5 范围。
+15页面为 `/welcome`、`/onboarding/upload`、`/placement`、`/profile`、`/events/$id`、`/record`、`/practice`、`/drafts`、`/questions`、`/questions/$id`、`/knowledge`、`/knowledge/$id`、`/notes`、`/notes/$id`、`/coach`。PR1623事件页尚未合入，不提前计入；handoff页数不包含根跳转，不能直接和这里的13项比较。
+
+[任务声明收据](evidence/2026-10-09-yuk1359-job-declarations-main6212.json)只解析 `jobs.handlers`，排除event handlers。main有55个manifest声明，其中53个pg-boss load入口和2个DBOS声明；manifest schedule20、infra schedule4、memory schedule3。两个注册器有11处direct work。提取输入与已验证的53f05候选收据逐字节一致，因此复用其静态解析结果并记录新main及每份输入hash。这不是运行队列或未完成义务数，也不包含实际producer/SEND_IT/retry/DLQ盘点，不能简单相加为完成比例。
+
+YUK1394的两个六小时清理族已实现，PR1624最终候选为 `b9b019a3a`，尚未合入。原cron测试的两项P1已修复并通过R2；后续CI另暴露共享producer fence安装死锁，修复源码为 `1aeec5e36`。父级29项DB测试、34项进程恢复测试及隔离删锁反例见[共享锁验收收据](evidence/2026-10-09-yuk1394-shared-fence-verification.json)。原DB、migration、cron和审查证据按各自revision保留在[父验收](2026-10-09-yuk1394-parent-acceptance.md)，不将原R2扩大为对新增锁修复的审查。最终exact-head CI仍须通过，旧binary仍须停写退出；候选不计入main的两族声明，也未切换运行后端。
+
+下一判分族沿既有YUK1356继续，包含 `judge_run` 与 `judge_pending_reconcile`；设计和ownership已交接，须在1394合入后的fresh main实施。Start消费者与boot仍归5796。`promote_conversation_idle`的五分钟用户事件时钟及选择后插入竞态仍归1355，尚未真实DB重现，不冒称已验证P1。其余任务族仍需独立核消费者、唯一恢复owner及退出条件。
+
+Linear捕获：路由清点 `01c035d9-4603-484f-b542-ad37a495c50e`，任务清单 `a85667b1-7fc7-4f44-95bf-f43d3f95893a`，后续housekeeping `cb362f85-e98f-4936-b809-de70ed8983fe`。共享audit修复PR1618及各lane证据仍有效，但不关闭整迁移。本次仅更新文档，无runtime、provider、队列或数据操作。
+
+## 历史调查记录
+
+下列章节均保留标题或正文指定的旧基线；其中“当前”“待接入”等措辞不是最新交付状态，以本节和相应lane交接为准。
 
 ## W3/W4 消费者核查补充，2026-10-08
 

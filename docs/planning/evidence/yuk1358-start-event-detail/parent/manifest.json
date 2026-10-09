@@ -1,0 +1,42 @@
+{
+  "before.json.gz": {
+    "sha256": "bb9e84a3e88143e7db45dfc50b7988d9ce8dd1bfca7a08782a764e0ce61991c4",
+    "sourceSha256": "6797aa3d2349c77f78c3eaf9772a3d19d7546c248d5c85e023b8cf424bdaaaa5"
+  },
+  "lock-release-recheck.json.gz": {
+    "sha256": "e73686f6f0cc15717e7757185193cb7e82ca12451f3447b1033c6ec7ca67d9a0",
+    "sourceSha256": "5502b2db1f8bf5ce5613e8e198f285d79bff6e7b9e4afdc9aabd1e0d8fc039ba"
+  },
+  "typecheck.log.gz": {
+    "sha256": "52806b9aefb5cc110e21defa775856243267445b9ce4ee181fc5102887269f03",
+    "sourceSha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+  },
+  "biome.log.gz": {
+    "sha256": "7da9558bff4bd850966a928b553e0bd5dbb37fda7785a1bd7deb69f447deab95",
+    "sourceSha256": "7bc07983f3567a395174fa3f3c10951f019da917bd160994c32cc1e102137996"
+  },
+  "tests-recheck.log.gz": {
+    "sha256": "2d7c595219c5f55aa047973ce81c685fb0c09035313301e15d0100a1b3ff4f34",
+    "sourceSha256": "a8bc582e9bdd6265dfeeacc805403e3d4eec756a12d299faa75f45ea40e7be08"
+  },
+  "lock-release.json.gz": {
+    "sha256": "5dc3a0647ed258839b28e845cc3c31a2e9539718587cef2840b0593b8dbec884",
+    "sourceSha256": "84c898492e71c6163999531c005d293fe613ce6caac3a5e59919b9183bedd01a"
+  },
+  "tests-final.log.gz": {
+    "sha256": "cb1c76ecd8ba14c76c1f0c953428e35defa410b0fdb14d07e481034dd870105a",
+    "sourceSha256": "88dcf5654ecb7e0cfeb7401b7547569071b02e9af2fbef740a2a47e9b865a2e8"
+  },
+  "tests.log.gz": {
+    "sha256": "0faeff3901d268bb2802b7d7adc128a9ebc2040c94b35621a609451b7a69fc79",
+    "sourceSha256": "e3d29c6d76c10edbb44d7f0cb2fc6cdc81778d461126907efe3772da0dcbc6f2"
+  },
+  "before-recheck.json.gz": {
+    "sha256": "29f686602f1e7f0d503b147d016c5b6d9106dfbaf3df2fda080931d4fc9fd74a",
+    "sourceSha256": "1205550ed015d1831bc080fa95eaedf89729ebd821958c42b2135fe2833fdd11"
+  },
+  "baseline-field-census.json.gz": {
+    "sha256": "058a16ed57968c8388fcacbdc8be88eb10e725b5e3c89088d8573ebd87dacbb9",
+    "sourceSha256": "468a54b061b635a8303c06b3e25e28e67af2ec809d684e2debb740a939ce7559"
+  }
+}

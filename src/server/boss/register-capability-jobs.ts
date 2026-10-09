@@ -40,7 +40,7 @@ import {
   createOrUpdateQueue,
 } from '@/server/boss/queue-config';
 import { fenceAwareJobHandler } from '@/server/contract-epoch';
-import { startPruneWorker } from '@/server/durable/prune-worker';
+import { startDurableWorker } from '@/server/durable/prune-worker';
 
 const EXPIRE_BY_QUEUE = {
   llm: EXPIRE_LLM,
@@ -50,13 +50,6 @@ const EXPIRE_BY_QUEUE = {
 
 async function mountJob(boss: PgBoss, db: Db, decl: JobDecl): Promise<void> {
   // load 在调用点已被过滤非空；这里再守一道（TS 窄化）。
-  if (decl.backend === 'dbos') {
-    if (decl.name !== 'prune_job_events') {
-      throw new Error(`DBOS family ${decl.name} has no admitted recovery owner`);
-    }
-    await startPruneWorker({ boss, db, decl });
-    return;
-  }
   if (!decl.load) return;
 
   if (decl.queue === 'fast') {
@@ -124,11 +117,45 @@ export async function registerCapabilityJobs(
   const decls = capabilities
     .flatMap((cap) => cap.jobs?.handlers ?? [])
     .filter((d) => d.load || d.backend === 'dbos');
-  // 链式/按需（无 schedule）先注册，cron 后注册——见文件头「两遍遍历」。
-  for (const decl of decls.filter((d) => !d.schedule)) {
-    await mountJob(boss, db, decl);
+  const durable = decls.filter((d) => d.backend === 'dbos');
+  const names = new Set<string>();
+  for (const decl of durable) {
+    if (
+      names.has(decl.name) ||
+      ![
+        'prune_job_events',
+        'prune_orphan_review_sessions',
+        'prune_orphan_conversation_sessions',
+        'prune_orphan_placement_sessions',
+      ].includes(decl.name) ||
+      decl.queue !== 'fast' ||
+      !decl.schedule ||
+      decl.load ||
+      !decl.schedule.cron.trim() ||
+      !decl.schedule.tz.trim() ||
+      decl.schedule.singletonKey !== undefined ||
+      decl.schedule.singletonSeconds !== undefined
+    )
+      throw new Error(`Invalid or duplicate admitted DBOS family ${decl.name}`);
+    names.add(decl.name);
   }
-  for (const decl of decls.filter((d) => d.schedule)) {
-    await mountJob(boss, db, decl);
-  }
+  const pruneEvents = durable.find((d) => d.name === 'prune_job_events');
+  const reviewOrphans = durable.find((d) => d.name === 'prune_orphan_review_sessions');
+  const conversationOrphans = durable.find((d) => d.name === 'prune_orphan_conversation_sessions');
+  const placementOrphans = durable.find((d) => d.name === 'prune_orphan_placement_sessions');
+  if (
+    durable.length &&
+    (!pruneEvents || !reviewOrphans || !conversationOrphans || !placementOrphans)
+  )
+    throw new Error('Production DBOS admission requires the complete four-family set');
+  const ordinary = decls.filter((d) => d.backend !== 'dbos');
+  // Chain targets retain their existing order; complete admission was validated before any mounting.
+  for (const decl of ordinary.filter((d) => !d.schedule)) await mountJob(boss, db, decl);
+  if (pruneEvents && reviewOrphans && conversationOrphans && placementOrphans)
+    await startDurableWorker({
+      boss,
+      db,
+      declarations: { pruneEvents, reviewOrphans, conversationOrphans, placementOrphans },
+    });
+  for (const decl of ordinary.filter((d) => d.schedule)) await mountJob(boss, db, decl);
 }

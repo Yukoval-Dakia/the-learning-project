@@ -14,6 +14,19 @@ import {
   installPruneProducerFence,
   readPrunePhase,
 } from './prune-family';
+import {
+  REVIEW_ORPHAN_FAMILY,
+  type ReviewOrphanBoundaryHook,
+  installReviewOrphanProducerFence,
+} from './review-orphan-family';
+import { createReviewOrphanBackend, registerReviewOrphanWorkflow } from './review-orphan-worker';
+
+import { installSessionOrphanProducerFence } from './session-orphan-backend';
+import type { SessionOrphanBoundaryHook } from './session-orphan-family';
+import {
+  createSessionOrphanBackend,
+  registerSessionOrphanWorkflows,
+} from './session-orphan-worker';
 
 export type PruneBoundary = 'business-committed' | 'checkpoint-saved';
 export function registerPruneWorkflow(
@@ -39,7 +52,6 @@ export function registerPruneWorkflow(
   );
 }
 
-let shutdown: (() => Promise<void>) | undefined;
 type PruneWorkerOptions = {
   boss: PgBoss;
   db: Db;
@@ -47,50 +59,197 @@ type PruneWorkerOptions = {
   boundary?: (name: PruneBoundary) => Promise<void>;
   reconcileIntervalMs?: number;
 };
-let registration:
-  | { boss: PgBoss; promise: Promise<ReturnType<typeof registerPruneWorkflow>> }
-  | undefined;
-export async function stopDurableWorker(): Promise<number> {
-  const stop = shutdown;
-  if (!stop) return 0;
-  shutdown = undefined;
-  const started = performance.now();
-  try {
-    await stop();
-  } finally {
-    registration = undefined;
+export type DurableWorkerOptions = {
+  boss: PgBoss;
+  db: Db;
+  declarations: {
+    pruneEvents: JobDecl;
+    reviewOrphans: JobDecl;
+    conversationOrphans: JobDecl;
+    placementOrphans: JobDecl;
+  };
+  boundary?: (name: PruneBoundary) => Promise<void>;
+  reviewBoundary?: ReviewOrphanBoundaryHook;
+  sessionBoundary?: SessionOrphanBoundaryHook;
+  reconcileIntervalMs?: number;
+};
+type HostOptions = PruneWorkerOptions & {
+  reviewDecl?: JobDecl;
+  conversationDecl?: JobDecl;
+  placementDecl?: JobDecl;
+  reviewBoundary?: ReviewOrphanBoundaryHook;
+  sessionBoundary?: SessionOrphanBoundaryHook;
+};
+type Host = {
+  boss: PgBoss;
+  db: Db;
+  key: string;
+  promise: Promise<ReturnType<typeof registerPruneWorkflow>>;
+  shutdown?: () => Promise<void>;
+  stopPromise?: Promise<number>;
+};
+let registration: Host | undefined;
+
+function declarationKey(options: HostOptions) {
+  for (const [decl, name] of [
+    [options.decl, PRUNE_FAMILY],
+    [options.reviewDecl, REVIEW_ORPHAN_FAMILY],
+    [options.conversationDecl, 'prune_orphan_conversation_sessions'],
+    [options.placementDecl, 'prune_orphan_placement_sessions'],
+  ] as const) {
+    if (!decl && name !== PRUNE_FAMILY) continue;
+    if (
+      !decl ||
+      decl.name !== name ||
+      decl.backend !== 'dbos' ||
+      decl.queue !== 'fast' ||
+      !decl.schedule ||
+      !decl.schedule.cron.trim() ||
+      !decl.schedule.tz.trim() ||
+      decl.load ||
+      decl.schedule.singletonKey !== undefined ||
+      decl.schedule.singletonSeconds !== undefined
+    )
+      throw new Error(`Invalid admitted declaration ${name}`);
   }
-  return Math.ceil(performance.now() - started);
-}
-export async function startPruneWorker(options: PruneWorkerOptions) {
-  if (registration) {
-    if (registration.boss !== options.boss)
-      throw new Error('One DBOS owner is allowed per process');
-    return registration.promise;
-  }
-  const promise = mountPruneWorker(options);
-  registration = { boss: options.boss, promise };
-  try {
-    return await promise;
-  } catch (error) {
-    registration = undefined;
-    throw error;
-  }
+  // Preserve prune-only fixtures; any later expansion or changed contract is explicit failure.
+  return JSON.stringify(
+    [options.decl, options.reviewDecl, options.conversationDecl, options.placementDecl].map(
+      (decl) =>
+        decl
+          ? {
+              name: decl.name,
+              schedule: decl.schedule ? { cron: decl.schedule.cron, tz: decl.schedule.tz } : null,
+            }
+          : null,
+    ),
+  );
 }
 
-async function mountPruneWorker({
-  boss,
-  db,
-  decl,
-  boundary,
-  reconcileIntervalMs = 15000,
-}: PruneWorkerOptions) {
-  if (!decl.schedule || decl.name !== PRUNE_FAMILY || decl.queue !== 'fast')
-    throw new Error('Invalid admitted prune declaration');
-  if (shutdown) throw new Error('DBOS prune worker is already mounted');
+export async function stopDurableWorker(): Promise<number> {
+  const host = registration;
+  if (!host) return 0;
+  if (!host.stopPromise)
+    host.stopPromise = (async () => {
+      const started = performance.now();
+      try {
+        await host.promise.catch(() => {});
+        await host.shutdown?.();
+      } finally {
+        if (registration === host) registration = undefined;
+      }
+      return Math.ceil(performance.now() - started);
+    })();
+  return host.stopPromise;
+}
+
+function startHost(options: HostOptions) {
+  const key = declarationKey(options);
+  if (registration) {
+    if (
+      registration.boss !== options.boss ||
+      registration.db !== options.db ||
+      registration.key !== key ||
+      registration.stopPromise
+    )
+      throw new Error(
+        'DBOS host cannot change boss, database or admitted declarations after startup',
+      );
+    return registration.promise;
+  }
+  const host: Host = {
+    boss: options.boss,
+    db: options.db,
+    key,
+    promise: Promise.resolve().then(() => mountHost(options, host)),
+  };
+  registration = host;
+  host.promise = host.promise.catch((error: unknown) => {
+    if (registration === host) registration = undefined;
+    throw error;
+  });
+  return host.promise;
+}
+/** Compatibility entry for the live prune-only process fixtures. */
+export async function startPruneWorker(options: PruneWorkerOptions) {
+  return startHost(options);
+}
+/** Production collects all four families before registering either workflow or launching the SDK. */
+export async function startDurableWorker(options: DurableWorkerOptions): Promise<void> {
+  if (
+    !options.declarations.reviewOrphans ||
+    !options.declarations.conversationOrphans ||
+    !options.declarations.placementOrphans
+  )
+    throw new Error('Production DBOS admission requires all four families');
+  await startHost({
+    ...options,
+    decl: options.declarations.pruneEvents,
+    reviewDecl: options.declarations.reviewOrphans,
+    conversationDecl: options.declarations.conversationOrphans,
+    placementDecl: options.declarations.placementOrphans,
+  });
+}
+
+async function mountHost(
+  {
+    boss,
+    db,
+    decl,
+    boundary,
+    reviewDecl,
+    reviewBoundary,
+    conversationDecl,
+    placementDecl,
+    sessionBoundary,
+    reconcileIntervalMs = 15000,
+  }: HostOptions,
+  host: Host,
+) {
   await createOrUpdateQueue(boss, PRUNE_FAMILY, FAST_QUEUE_OPTS);
   await installPruneProducerFence(db);
+  if (reviewDecl) {
+    await createOrUpdateQueue(boss, REVIEW_ORPHAN_FAMILY, FAST_QUEUE_OPTS);
+    await installReviewOrphanProducerFence(db);
+  }
+  if (conversationDecl && placementDecl) {
+    await createOrUpdateQueue(boss, 'prune_orphan_conversation_sessions', FAST_QUEUE_OPTS);
+    await createOrUpdateQueue(boss, 'prune_orphan_placement_sessions', FAST_QUEUE_OPTS);
+    await installSessionOrphanProducerFence(db);
+  }
   const workflow = registerPruneWorkflow(db, boundary);
+  const reviewWorkflow = reviewDecl ? registerReviewOrphanWorkflow(db, reviewBoundary) : undefined;
+  const reviewBackend =
+    reviewDecl && reviewWorkflow
+      ? createReviewOrphanBackend({ boss, db, decl: reviewDecl, workflow: reviewWorkflow })
+      : undefined;
+  const sessionWorkflows =
+    conversationDecl && placementDecl
+      ? registerSessionOrphanWorkflows(db, sessionBoundary)
+      : undefined;
+  const sessionBackends =
+    conversationDecl && placementDecl && sessionWorkflows
+      ? [
+          createSessionOrphanBackend({
+            boss,
+            db,
+            binding: {
+              family: 'prune_orphan_conversation_sessions',
+              decl: conversationDecl,
+              workflow: sessionWorkflows.conversationOrphans,
+            },
+          }),
+          createSessionOrphanBackend({
+            boss,
+            db,
+            binding: {
+              family: 'prune_orphan_placement_sessions',
+              decl: placementDecl,
+              workflow: sessionWorkflows.placementOrphans,
+            },
+          }),
+        ]
+      : [];
   DBOS.setConfig({
     name: 'tlp-housekeeping',
     systemDatabaseUrl: process.env.DATABASE_URL,
@@ -105,15 +264,34 @@ async function mountPruneWorker({
   let mounted = false;
   let stopping = false;
   let pending = Promise.resolve();
-  shutdown = async () => {
-    stopping = true;
-    clearInterval(timer);
-    await pending;
-    await DBOS.shutdown({ workflowCompletionTimeoutMS: 3000 });
+  let shutdownPromise: Promise<void> | undefined;
+  host.shutdown = () => {
+    if (!shutdownPromise)
+      shutdownPromise = (async () => {
+        stopping = true;
+        clearInterval(timer);
+        await pending;
+        const errors: unknown[] = [];
+        for (const backend of [...(reviewBackend ? [reviewBackend] : []), ...sessionBackends]) {
+          try {
+            await backend.stop();
+          } catch (error) {
+            errors.push(error);
+          }
+        }
+        try {
+          await DBOS.shutdown({ workflowCompletionTimeoutMS: 3000 });
+        } catch (error) {
+          errors.push(error);
+        }
+        if (errors.length) throw new AggregateError(errors, 'Durable shutdown failed');
+      })();
+    return shutdownPromise;
   };
   try {
     await DBOS.launch();
     const schedule = decl.schedule;
+    if (!schedule) throw new Error('Missing prune schedule');
     const reconcile = async () => {
       if (stopping) return;
       await db.transaction(async (tx) => {
@@ -153,16 +331,37 @@ async function mountPruneWorker({
         else await boss.unschedule(PRUNE_FAMILY);
       });
     };
-    await reconcile();
+    const reconcileAll = async () => {
+      if (stopping) return;
+      const errors: unknown[] = [];
+      // One family failing must not starve the other family on this same tick.
+      for (const reconcileFamily of [
+        reconcile,
+        ...(reviewBackend ? [() => reviewBackend.reconcile()] : []),
+        ...sessionBackends.map((backend) => () => backend.reconcile()),
+      ]) {
+        try {
+          await reconcileFamily();
+        } catch (error) {
+          errors.push(error);
+        }
+      }
+      if (errors.length) throw new AggregateError(errors, 'Durable backend reconciliation failed');
+    };
+    await reconcileAll();
     timer = setInterval(() => {
-      pending = pending.then(reconcile).catch((error: unknown) => {
-        console.error('[prune_job_events] backend reconciliation failed', error);
+      pending = pending.then(reconcileAll).catch((error: unknown) => {
+        console.error('[durable-worker] backend reconciliation failed', error);
       });
     }, reconcileIntervalMs);
     timer.unref();
     return workflow;
   } catch (error) {
-    await stopDurableWorker();
+    try {
+      await host.shutdown();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], 'Durable startup and cleanup failed');
+    }
     throw error;
   }
 }

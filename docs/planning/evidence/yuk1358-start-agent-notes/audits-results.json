@@ -1,0 +1,52 @@
+[
+  {
+    "command": "pnpm audit:schema",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-schema.log"
+  },
+  {
+    "command": "pnpm audit:partition",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-partition.log"
+  },
+  {
+    "command": "pnpm audit:api-client",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-api-client.log"
+  },
+  {
+    "command": "pnpm audit:api-client-usage",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-api-client-usage.log"
+  },
+  {
+    "command": "pnpm audit:capability-boundaries",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-capability-boundaries.log"
+  },
+  {
+    "command": "pnpm audit:provider-lanes",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-provider-lanes.log"
+  },
+  {
+    "command": "pnpm audit:profile",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-profile.log"
+  },
+  {
+    "command": "pnpm audit:task-census",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-task-census.log"
+  },
+  {
+    "command": "pnpm audit:draft-status",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-draft-status.log"
+  },
+  {
+    "command": "pnpm audit:draft-status-reads",
+    "exit": 0,
+    "log": "docs/planning/evidence/yuk1358-start-agent-notes/audit-draft-status-reads.log"
+  }
+]

@@ -1,0 +1,169 @@
+{
+  "source": "2118c2dd74c25bedbff5a8c6067b3c0376ad404a",
+  "integrated_main": "6c6905fad01a3e7f7ea376afdad9d07d3a413d65",
+  "checks": [
+    {
+      "name": "unit",
+      "command": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "server/start/auth.unit.test.ts",
+        "server/start/mistakes-client.unit.test.ts",
+        "server/start/mistakes-read.unit.test.ts",
+        "server/start/workbench-client.unit.test.ts",
+        "server/start/workbench-read.unit.test.ts",
+        "src/capabilities/shell/ui/CoachHub.a11y.unit.test.tsx",
+        "src/capabilities/shell/ui/CoachHub.kpi.unit.test.tsx",
+        "src/capabilities/shell/ui/InboxPage.progressive.unit.test.tsx",
+        "src/capabilities/shell/ui/InboxPage.state.unit.test.ts",
+        "src/capabilities/shell/ui/OvernightCostSummary.unit.test.tsx",
+        "src/capabilities/shell/ui/PrepDeskConjectures.interaction.unit.test.tsx",
+        "src/capabilities/shell/ui/PrepDeskConjectures.unit.test.tsx",
+        "src/capabilities/shell/ui/ProbeAnswers.a11y.unit.test.tsx",
+        "src/capabilities/shell/ui/ProbeAnswers.interaction.unit.test.tsx",
+        "src/capabilities/shell/ui/ProbeAnswers.unit.test.tsx",
+        "src/capabilities/shell/ui/ProposalCard.block-merge.unit.test.tsx",
+        "src/capabilities/shell/ui/ProposalCard.evidence.unit.test.tsx",
+        "src/capabilities/shell/ui/ProposalCard.image-candidate.unit.test.tsx",
+        "src/capabilities/shell/ui/ProposalCard.learning-plan.unit.test.ts",
+        "src/capabilities/shell/ui/TeachingBrief.interaction.unit.test.tsx",
+        "src/capabilities/shell/ui/TeachingBrief.unit.test.ts",
+        "src/capabilities/shell/ui/TeachingBrief.unit.test.tsx",
+        "src/capabilities/shell/ui/TodayPage.learner-copy.unit.test.ts",
+        "src/capabilities/shell/ui/TodayPage.overnight-band.unit.test.tsx",
+        "src/capabilities/shell/ui/blocks/AiChangesStrip.interaction.unit.test.tsx",
+        "src/capabilities/shell/ui/blocks/KpiRow.interaction.unit.test.tsx",
+        "src/capabilities/shell/ui/blocks/ProfileBand.unit.test.tsx",
+        "src/capabilities/shell/ui/blocks/ProposalStrip.unit.test.tsx",
+        "src/capabilities/shell/ui/blocks/SessionsStrip.interaction.unit.test.tsx",
+        "src/capabilities/shell/ui/blocks/WeekHeat.a11y.unit.test.tsx",
+        "src/capabilities/shell/ui/calibration-view.unit.test.ts",
+        "src/capabilities/shell/ui/coach-hub-view.unit.test.ts",
+        "src/capabilities/shell/ui/coach-weekly.unit.test.ts",
+        "src/capabilities/shell/ui/effectiveness-trend-view.unit.test.ts",
+        "src/capabilities/shell/ui/inbox-api.unit.test.ts",
+        "src/capabilities/shell/ui/inbox-meta.unit.test.ts",
+        "src/capabilities/shell/ui/inbox-tier.unit.test.ts",
+        "src/capabilities/shell/ui/teaching-brief-interaction-api.unit.test.ts",
+        "web/src/routes/MistakesPage.start.unit.test.tsx",
+        "web/src/routes/WorkbenchPages.start.unit.test.tsx",
+        "src/capabilities/observability/server/diagnostics-domain-reads.unit.test.ts",
+        "src/capabilities/observability/server/coverage-lattice-core.unit.test.ts",
+        "src/capabilities/observability/server/admin-domain-reads.unit.test.ts",
+        "src/capabilities/observability/manifest.unit.test.ts",
+        "src/capabilities/composition.unit.test.ts",
+        "src/capabilities/observability/ui/observability-honesty.unit.test.ts",
+        "src/capabilities/observability/ui/conjecture-scores.unit.test.tsx"
+      ],
+      "start": "2026-10-08T12:57:15.092663+00:00",
+      "exit": 0,
+      "log": "/tmp/yuk1358-main1386-integration/unit.log",
+      "sha256": "18040d0531553e2355896764fea82271f4109bc9dcb47386173bdd1d5d9163f5"
+    },
+    {
+      "name": "fixture-unit",
+      "command": [
+        "node",
+        "--import",
+        "tsx",
+        "--test",
+        "tests/usability/start-rpc-fixtures.unit.spec.ts"
+      ],
+      "start": "2026-10-08T12:57:30.317007+00:00",
+      "exit": 0,
+      "log": "/tmp/yuk1358-main1386-integration/fixture-unit.log",
+      "sha256": "3b27cdb4254613c44dd43880b83b24c61d31640ddacc72d941619df9a8c47e9c"
+    },
+    {
+      "name": "typecheck",
+      "command": ["pnpm", "typecheck"],
+      "start": "2026-10-08T12:57:30.986254+00:00",
+      "exit": 0,
+      "log": "/tmp/yuk1358-main1386-integration/typecheck.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "name": "lint",
+      "command": ["pnpm", "lint"],
+      "start": "2026-10-08T12:57:44.064408+00:00",
+      "exit": 0,
+      "log": "/tmp/yuk1358-main1386-integration/lint.log",
+      "sha256": "d303cf5fa08f8f2a5303992c30df36c986f7d1151a19f45e57d02675eb3bc193"
+    },
+    {
+      "name": "build",
+      "command": ["pnpm", "build"],
+      "start": "2026-10-08T12:57:47.650259+00:00",
+      "exit": 0,
+      "log": "/tmp/yuk1358-main1386-integration/build.log",
+      "sha256": "434144f8bd18dd3ec6e7d300317ca3233b2269f89122970e07be38dbff290824"
+    }
+  ],
+  "unit": {
+    "files": 47,
+    "passed": 428
+  },
+  "fixture_unit": 7,
+  "build_comparison": {
+    "previous_source": "1af5a8fc8d2d6ca1976d1981d429152608ae2836",
+    "files_before": 797,
+    "files_after": 797,
+    "start_client_identical": true,
+    "spa_identical": true,
+    "server_identical": false,
+    "reason": "Public reexports changed server chunk boundaries; fresh built RPC acceptance performed."
+  },
+  "built_rpc": {
+    "status": "built-rpc-accepted",
+    "head": "2118c2dd74c25bedbff5a8c6067b3c0376ad404a",
+    "source_sha256": "68196569510c98f1e1c15273706b85326874563ba18e6c8163c936315f316784",
+    "build_sha256": "b703458042c19f47363420dbb77263f49a7f71b4d585a046e706a8d812a15b25",
+    "read_only_all_public_tables": true,
+    "decision_delta": {
+      "public.event": 1
+    },
+    "undo_delta": {
+      "public.artifact": 0,
+      "public.event": 1
+    },
+    "immutable_decision_event": "c80bmllhfzcnfeji9hd19bjg",
+    "framework_transport": "installed serverFnFetcher; built resolver IDs; framework Seroval encoding/decoding",
+    "queue_wake": "real post-commit path attempted; app role denies schema creation; pgboss remains absent; no scheduler started",
+    "browser": "pending parent T3 acceptance",
+    "notes_version_conflict": "not exercised; requires a concurrent CAS race"
+  },
+  "browser": {
+    "revision": "1af5a8fc8d2d6ca1976d1981d429152608ae2836",
+    "receipt": "2026-10-08-yuk1358-built-acceptance.json",
+    "repeated_this_revision": false,
+    "scope": "Client/SPA files are byte-identical; previous real T3 interactions remain revision-specific. New server built RPC tested separately."
+  },
+  "runtime": {
+    "at": "2026-10-08T13:01:19.597169+00:00",
+    "owner": {
+      "owner": "57961995-70c3-4121-a9dd-97d90471be1a",
+      "issue": "YUK-1358",
+      "phase": "isolated-main1386-built-rpc",
+      "token": "56907e86-e0df-4b1f-8d82-a6e2373b3a32",
+      "candidate": "2118c2dd74c25bedbff5a8c6067b3c0376ad404a",
+      "createdAt": "2026-10-08T12:58:54.915463+00:00"
+    },
+    "original_containers_unchanged": true,
+    "release_sha256": "d2b8a2392c082072d084b2fcf8006939e6d8b5a5fc1ff8f49c53cd8505377d34",
+    "cleanup": {
+      "stopped_only_owned_resources": true,
+      "container_absent": "b1e4dd221566c88d54ce305823185d4df50c2c0d0e74206593b4d1405da36c5a",
+      "loopback_18952_free": true
+    },
+    "lock_released": true
+  },
+  "retained_evidence": "/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1358-start-2118c2dd7/evidence",
+  "retained_files": 62,
+  "retained_manifest_sha256": "7638285a793740febd93abb0ac3eed41db50a70135870e4075af0d1cc7287723",
+  "paid_calls": 0,
+  "worker_started": false,
+  "deployed": false
+}

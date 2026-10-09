@@ -1,10 +1,11 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { type CSSProperties, useEffect, useMemo, useState } from 'react';
-import { apiJson } from '@/ui/lib/api';
 import { Badge, type BadgeTone } from '@/ui/primitives/Badge';
 import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
 import { PageHeader } from '@/ui/primitives/PageHeader';
+import type { AdminRunDto, AdminRunTimelineEventDto } from '../public';
+import { type AdminReadClient, httpAdminClient } from './admin-client';
 import {
   AdminLinks,
   type AdminSurfaceProps,
@@ -20,54 +21,8 @@ import {
   statusTone,
 } from './observability-shared';
 
-export interface AdminRunRow {
-  id: string;
-  task_kind: string;
-  provider: string;
-  model: string;
-  input_hash: string;
-  status: 'running' | 'success' | 'failure' | string;
-  finish_reason: string | null;
-  usage_json: { inputTokens: number; outputTokens: number };
-  cost_usd: number;
-  error_message: string | null;
-  started_at: string;
-  finished_at: string | null;
-  duration_ms: number | null;
-  ledger_cost_usd: number;
-  ledger_rows: number;
-  tool_call_count: number;
-  pgboss_job_ids: string[];
-}
-
-interface AdminRunsResponse {
-  rows: AdminRunRow[];
-  limit: number;
-  total: number;
-  truncated: boolean;
-}
-
-export interface TimelineEvent {
-  type: 'run_started' | 'tool_call' | 'cost_ledger' | 'run_finished';
-  at: string;
-  label: string;
-  id?: string;
-  tool_name?: string;
-  iteration?: number;
-  latency_ms?: number;
-  cost?: number;
-  tokens_in?: number;
-  tokens_out?: number;
-  outcome?: string;
-  pgboss_job_id?: string | null;
-}
-
-interface RunDetail {
-  run: AdminRunRow;
-  timeline: TimelineEvent[];
-  ledger: Array<{ id: string; pgboss_job_id: string | null; cost: number; outcome: string }>;
-  tool_calls: Array<{ id: string; tool_name: string; latency_ms: number; iteration: number }>;
-}
+export type AdminRunRow = AdminRunDto;
+export type TimelineEvent = AdminRunTimelineEventDto;
 
 const RUN_STATUS_LABEL: Record<string, string> = {
   running: '运行中',
@@ -171,13 +126,16 @@ function RunOutcomeSummary({ run }: { run: AdminRunRow }) {
   );
 }
 
-export function AdminRunsSurface({ navigate }: AdminSurfaceProps) {
+export function AdminRunsSurface({
+  navigate,
+  client = httpAdminClient,
+}: AdminSurfaceProps & { client?: AdminReadClient }) {
   const queryClient = useQueryClient();
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [staleRunId, setStaleRunId] = useState<string | null>(null);
   const runsQ = useQuery({
     queryKey: ['admin-runs'],
-    queryFn: () => apiJson<AdminRunsResponse>('/api/admin/runs?limit=100'),
+    queryFn: () => client.getRuns({ limit: '100' }),
     refetchInterval: 60_000,
   });
   const runs = runsQ.data?.rows ?? [];
@@ -197,14 +155,14 @@ export function AdminRunsSurface({ navigate }: AdminSurfaceProps) {
 
   const detailQ = useQuery({
     queryKey: ['admin-run-detail', selectedRunId],
-    queryFn: () => apiJson<RunDetail>(`/api/admin/runs/${selectedRunId}`),
+    queryFn: () => client.getRunDetail({ id: selectedRunId ?? '' }),
     enabled: Boolean(selectedRunId),
   });
 
   const totals = useMemo(() => {
     const failed = runs.filter((run) => run.status === 'failure').length;
     const running = runs.filter((run) => run.status === 'running').length;
-    const spend = runs.reduce((sum, run) => sum + run.cost_usd, 0);
+    const spend = runs.reduce((sum, run) => sum + (run.cost_usd ?? 0), 0);
     const toolCalls = runs.reduce((sum, run) => sum + run.tool_call_count, 0);
     return { failed, running, spend, toolCalls };
   }, [runs]);

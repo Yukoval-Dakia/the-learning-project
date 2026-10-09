@@ -1,0 +1,53 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./tests/db-fork-constants" without a file extension (vitest.db.config.ts:2:31). Add the file extension
+  - import "./vitest.shared" without a file extension (vitest.db.config.ts:10:8). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.10 /Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage
+
+$ drizzle-kit migrate
+No config path provided, using default 'drizzle.config.ts'
+Reading config file '/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/drizzle.config.ts'
+◇ injected env (0) from .env.local
+Using 'pg' driver for database querying
+[⣷] applying migrations...[2K[1G[⣯] applying migrations...[2K[1G[✓] migrations applied successfully!{
+  severity_local: 'NOTICE',
+  severity: 'NOTICE',
+  code: '00000',
+  message: 'database "test_fork_1" does not exist, skipping',
+  file: 'dbcommands.c',
+  line: '1620',
+  routine: 'dropdb'
+}
+{
+  severity_local: 'NOTICE',
+  severity: 'NOTICE',
+  code: '00000',
+  message: 'database "test_fork_2" does not exist, skipping',
+  file: 'dbcommands.c',
+  line: '1620',
+  routine: 'dropdb'
+}
+{
+  severity_local: 'NOTICE',
+  severity: 'NOTICE',
+  code: '00000',
+  message: 'database "test_fork_3" does not exist, skipping',
+  file: 'dbcommands.c',
+  line: '1620',
+  routine: 'dropdb'
+}
+{
+  severity_local: 'NOTICE',
+  severity: 'NOTICE',
+  code: '00000',
+  message: 'database "test_fork_4" does not exist, skipping',
+  file: 'dbcommands.c',
+  line: '1620',
+  routine: 'dropdb'
+}
+
+ Test Files  4 passed (4)
+      Tests  55 passed (55)
+   Start at  00:24:51
+   Duration  9.57s (transform 4.43s, setup 36ms, import 7.76s, tests 5.24s, environment 0ms)

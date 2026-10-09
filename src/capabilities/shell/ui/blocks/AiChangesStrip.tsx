@@ -14,9 +14,10 @@ import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
 
-import { getRecentAiChanges, undoAiChange } from '../workbench-api';
+import { useWorkbenchClient } from '../workbench-client';
 
 export function AiChangesStrip({ now }: { now: Date }) {
+  const { getRecentAiChanges, undoAiChange } = useWorkbenchClient();
   const qc = useQueryClient();
   const q = useQuery({ queryKey: ['workbench-ai-changes'], queryFn: getRecentAiChanges });
   const rows = q.data?.rows ?? [];

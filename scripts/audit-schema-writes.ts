@@ -10,7 +10,7 @@
  *   pnpm audit:schema --json   # JSON 输出
  *   pnpm audit:schema --list   # 只列字段健康表，不 enforce
  *
- * 实现：纯 TS file-walk（无 shell exec），扫描 src/ + app/ 内所有 .ts/.tsx。
+ * 实现：扫描 src/ + app/ 内所有 .ts/.tsx；另核对 0117 注册 seed 的固定初始化契约。
  */
 
 import { execFileSync } from 'node:child_process';
@@ -18,6 +18,12 @@ import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
+import {
+  CONTINUATION_COLUMNS,
+  RETIRED_SUBAGENT_COLUMNS,
+  SUBAGENT_COLUMNS,
+  nativeSubagentWriteViolation,
+} from './schema-copilot-retention';
 import { extractDrizzleWriteIndex, payloadColumns } from './schema-drizzle-producers';
 import { extractDatabaseGeneratedWrites, extractExecutedSqlWrites } from './schema-write-producers';
 
@@ -68,7 +74,130 @@ type WriteHit = {
   insert_files: number;
   update_files: number;
   status: 'live' | 'init-only' | 'update-only' | 'stub' | 'historical-retained';
+  initialization?: { migration: string; values: readonly string[] };
 };
+
+const SESSION_ORPHAN_MIGRATION_TAG = '0117_yuk1394_session_orphan_backend';
+const SESSION_ORPHAN_MIGRATION = `drizzle/${SESSION_ORPHAN_MIGRATION_TAG}.sql`;
+const MIGRATION_JOURNAL = 'drizzle/meta/_journal.json';
+const SESSION_ORPHAN_FAMILIES = [
+  'prune_orphan_conversation_sessions',
+  'prune_orphan_placement_sessions',
+];
+// This is an initialization contract for one immutable field, not a migration
+// write scanner. Require the complete first executable batch, including its
+// closed domain and both seed rows. Comments, function bodies and other SQL
+// shapes deliberately fail closed instead of supplying substitute evidence.
+const SESSION_ORPHAN_INITIAL_BATCH = `
+CREATE TABLE session_orphan_control (
+  family text PRIMARY KEY CHECK (family IN ('prune_orphan_conversation_sessions','prune_orphan_placement_sessions')),
+  phase text NOT NULL CHECK (phase IN ('pg-boss','draining-pg-boss','dbos','draining-dbos')),
+  phase_changed_at timestamptz NOT NULL DEFAULT now(),
+  legacy_not_before timestamptz
+);
+INSERT INTO session_orphan_control (family,phase) VALUES
+  ('prune_orphan_conversation_sessions','pg-boss'), ('prune_orphan_placement_sessions','pg-boss');
+`;
+
+function sessionOrphanFamilyInitialization(
+  schema: string,
+  files: ReadonlyMap<string, string>,
+): WriteHit['initialization'] {
+  const migration = files.get(SESSION_ORPHAN_MIGRATION);
+  const journalText = files.get(MIGRATION_JOURNAL);
+  if (!migration || !journalText) return undefined;
+  let journal: unknown;
+  try {
+    journal = JSON.parse(journalText);
+  } catch {
+    return undefined;
+  }
+  if (
+    !isRecord(journal) ||
+    journal.version !== '7' ||
+    journal.dialect !== 'postgresql' ||
+    !Array.isArray(journal.entries)
+  )
+    return undefined;
+  const registrations = journal.entries.filter(
+    (entry: unknown) =>
+      isRecord(entry) && (entry.idx === 117 || entry.tag === SESSION_ORPHAN_MIGRATION_TAG),
+  );
+  const registration: unknown = registrations[0];
+  if (
+    registrations.length !== 1 ||
+    !isRecord(registration) ||
+    registration.idx !== 117 ||
+    registration.tag !== SESSION_ORPHAN_MIGRATION_TAG ||
+    registration.version !== '7' ||
+    registration.when !== 1791504000001 ||
+    registration.breakpoints !== true
+  )
+    return undefined;
+  const firstBatch = migration.split('--> statement-breakpoint')[0];
+  const normalizeSql = (text: string) => text.trim().replace(/\s+/g, ' ');
+  if (normalizeSql(firstBatch) !== normalizeSql(SESSION_ORPHAN_INITIAL_BATCH)) return undefined;
+
+  const file = ts.createSourceFile('schema.ts', schema, ts.ScriptTarget.Latest, true);
+  const declarations = file.statements.flatMap((statement) =>
+    ts.isVariableStatement(statement) &&
+    statement.modifiers?.some((modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword)
+      ? [...statement.declarationList.declarations].filter(
+          (declaration) =>
+            ts.isIdentifier(declaration.name) && declaration.name.text === 'session_orphan_control',
+        )
+      : [],
+  );
+  const table = declarations[0]?.initializer;
+  if (
+    declarations.length !== 1 ||
+    !table ||
+    !ts.isCallExpression(table) ||
+    !ts.isIdentifier(table.expression) ||
+    table.expression.text !== 'pgTable'
+  )
+    return undefined;
+  const [name, columns] = table.arguments;
+  if (
+    !name ||
+    !ts.isStringLiteral(name) ||
+    name.text !== 'session_orphan_control' ||
+    !columns ||
+    !ts.isObjectLiteralExpression(columns) ||
+    !columns.properties.every(ts.isPropertyAssignment)
+  )
+    return undefined;
+  const family = columns.properties.filter(
+    (property) =>
+      ts.isPropertyAssignment(property) &&
+      ts.isIdentifier(property.name) &&
+      property.name.text === 'family',
+  );
+  const column = family[0];
+  // Ignore layout without erasing whitespace inside the declared string values.
+  const columnTokens = (source: string) => {
+    const scanner = ts.createScanner(
+      ts.ScriptTarget.Latest,
+      true,
+      ts.LanguageVariant.Standard,
+      source,
+    );
+    const tokens: string[] = [];
+    while (scanner.scan() !== ts.SyntaxKind.EndOfFileToken) tokens.push(scanner.getTokenText());
+    return tokens.join('\n');
+  };
+  if (
+    family.length !== 1 ||
+    !column ||
+    !ts.isPropertyAssignment(column) ||
+    columnTokens(column.initializer.getText(file)) !==
+      columnTokens(
+        "text('family',{enum:['prune_orphan_conversation_sessions','prune_orphan_placement_sessions'],}).primaryKey()",
+      )
+  )
+    return undefined;
+  return { migration: SESSION_ORPHAN_MIGRATION, values: SESSION_ORPHAN_FAMILIES };
+}
 
 // ADR-0058 / YUK-939 intentionally retired this writer, not its historical
 // schema. This fixed inventory is a retention contract, never a dated allowance.
@@ -111,6 +240,9 @@ type HistoricalRetention = {
 function historicalRetention(
   schema: string,
   productionIndex: ReadonlyMap<string, WriteStatement[]>,
+  table = HISTORICAL_TABLE,
+  columns = HISTORICAL_COLUMNS,
+  reason = 'ADR-0058 / YUK-939 retired Copilot evidence checkpoint writers; retain historical rows/schema and export/restore compatibility. Production INSERT/UPDATE is forbidden.',
 ): HistoricalRetention {
   const fields: Field[] = [];
   const issues: HistoricalRetentionIssue[] = [];
@@ -123,7 +255,7 @@ function historicalRetention(
       node.expression.text === 'pgTable'
     ) {
       const [name, columns] = node.arguments;
-      if (name && ts.isStringLiteral(name) && name.text === HISTORICAL_TABLE) {
+      if (name && ts.isStringLiteral(name) && name.text === table) {
         found = true;
         if (columns && ts.isObjectLiteralExpression(columns)) {
           for (const column of columns.properties) {
@@ -170,7 +302,7 @@ function historicalRetention(
               )
                 type = 'timestamp with time zone';
             }
-            fields.push({ table: HISTORICAL_TABLE, field, type });
+            fields.push({ table, field, type });
           }
         }
       }
@@ -178,49 +310,50 @@ function historicalRetention(
     ts.forEachChild(node, visit);
   };
   visit(file);
-  if (!found)
-    issues.push({ code: 'missing_table', message: `${HISTORICAL_TABLE} must remain in schema` });
-  for (const [field, type] of Object.entries(HISTORICAL_COLUMNS)) {
+  if (!found) issues.push({ code: 'missing_table', message: `${table} must remain in schema` });
+  for (const [field, type] of Object.entries(columns)) {
     const actual = fields.filter((column) => column.field === field);
     if (!actual.length)
       issues.push({
         code: 'missing_column',
-        message: `${HISTORICAL_TABLE}.${field} (${type}) must remain`,
+        message: `${table}.${field} (${type}) must remain`,
       });
     for (const column of actual) {
       if (column.type !== type)
         issues.push({
           code: 'changed_column_type',
-          message: `${HISTORICAL_TABLE}.${field}: expected ${type}, found ${column.type}`,
+          message: `${table}.${field}: expected ${type}, found ${column.type}`,
         });
     }
     if (actual.length > 1)
-      issues.push({ code: 'added_column', message: `${HISTORICAL_TABLE}.${field} is duplicated` });
+      issues.push({ code: 'added_column', message: `${table}.${field} is duplicated` });
   }
   for (const column of fields) {
-    if (!Object.hasOwn(HISTORICAL_COLUMNS, column.field))
+    if (!Object.hasOwn(columns, column.field))
       issues.push({
         code: 'added_column',
-        message: `${HISTORICAL_TABLE}.${column.field} (${column.type}) is outside the retained inventory`,
+        message: `${table}.${column.field} (${column.type}) is outside the retained inventory`,
       });
   }
   // Count table targets before adding schema-generated defaults. A forbidden
   // write needs no recognized payload columns, including trivial-only writes.
   for (const [path, statements] of productionIndex) {
     for (const statement of statements) {
-      if (statement.table === HISTORICAL_TABLE)
+      if (statement.table !== table) continue;
+      const violation =
+        table === 'subagent_run' ? nativeSubagentWriteViolation(statement) : 'retired table';
+      if (violation)
         issues.push({
           code: 'production_write',
           kind: statement.kind,
           path,
-          message: `${path}: ${statement.kind.toUpperCase()} targets historical ${HISTORICAL_TABLE}`,
+          message: `${path}: ${statement.kind.toUpperCase()} targets ${table}: ${violation}`,
         });
     }
   }
   return {
-    table: HISTORICAL_TABLE,
-    reason:
-      'ADR-0058 / YUK-939 retired Copilot evidence checkpoint writers; retain historical rows/schema and export/restore compatibility. Production INSERT/UPDATE is forbidden.',
+    table,
+    reason,
     fields,
     issues,
   };
@@ -569,7 +702,14 @@ function walkFiles(dir: string, out: string[] = []): string[] {
 // Field matching reads top-level syntax keys only, confined to THIS statement
 // (YUK-166: the old file-level matcher ignored table identity and let a write to
 // `mistake_variant.parent_question_id` satisfy `question.parent_question_id`).
-export type WriteStatement = { kind: 'insert' | 'update'; table: string; payload: string };
+export type WriteStatement = {
+  kind: 'insert' | 'update';
+  table: string;
+  payload: string;
+  explicitPayload?: boolean;
+  statusValues?: readonly string[];
+  nativeStartedAt?: boolean;
+};
 
 /** Paths are repository-relative; fixture/rehearsal writes cannot satisfy a production column. */
 export function isProductionSource(path: string): boolean {
@@ -592,7 +732,7 @@ export function buildProductionWriteIndex(
   sources: ReadonlyMap<string, string>,
 ): Map<string, WriteStatement[]> {
   const production = new Map([...sources].filter(([path]) => isProductionSource(path)));
-  const index = extractDrizzleWriteIndex(production);
+  const index = extractDrizzleWriteIndex(production, new Set(['subagent_run']));
   for (const [path, source] of production) {
     index.set(path, [...(index.get(path) ?? []), ...extractExecutedSqlWrites(source)]);
   }
@@ -629,33 +769,75 @@ export function countWriteHits(
   return { insert_files: insertFiles, update_files: updateFiles };
 }
 
-export function auditSchemaWrites(schema: string, sources: ReadonlyMap<string, string>) {
+export function auditSchemaWrites(
+  schema: string,
+  sources: ReadonlyMap<string, string>,
+  initializationFiles: ReadonlyMap<string, string> = new Map(),
+) {
   const index = buildProductionWriteIndex(sources);
+  const familyInitialization = sessionOrphanFamilyInitialization(schema, initializationFiles);
   const retention = historicalRetention(schema, index);
-  const retainedHits = retention.fields.map((field) => ({
-    ...field,
-    ...countWriteHits(field.table, field.field, index),
-  }));
+  const retainedSchemas = [
+    retention,
+    historicalRetention(
+      schema,
+      index,
+      'copilot_continuation',
+      CONTINUATION_COLUMNS,
+      'ADR-0063 / YUK-951 B3 retains continuation schema and installation drain history. Production INSERT/UPDATE is forbidden; no current producer or worker.',
+    ),
+    historicalRetention(
+      schema,
+      index,
+      'subagent_run',
+      SUBAGENT_COLUMNS,
+      'ADR-0063 / ADR-0065 retains the native child projection and historical mailbox fields. Retired ownership writes are forbidden; explicit native lifecycle writes and null lease cleanup remain permitted.',
+    ),
+  ];
+  const retainedHits = retainedSchemas
+    .flatMap((contract) => contract.fields)
+    .filter((field) => field.table !== 'subagent_run' || RETIRED_SUBAGENT_COLUMNS.has(field.field))
+    .map((field) => ({
+      ...field,
+      ...countWriteHits(field.table, field.field, index),
+    }));
   // Defaults remain valid business-field evidence, but cannot resurrect a
   // retired production writer or violate historical retention.
   index.set(SCHEMA_PATH, extractDatabaseGeneratedWrites(schema));
   const results: WriteHit[] = [];
   for (const f of parseSchema(schema)) {
-    if (f.table === HISTORICAL_TABLE || TRIVIAL_FIELDS.has(f.field)) continue;
+    if (
+      f.table === HISTORICAL_TABLE ||
+      f.table === 'copilot_continuation' ||
+      (f.table === 'subagent_run' && RETIRED_SUBAGENT_COLUMNS.has(f.field)) ||
+      TRIVIAL_FIELDS.has(f.field)
+    )
+      continue;
     const { insert_files, update_files } = countWriteHits(f.table, f.field, index);
+    const initialization =
+      f.table === 'session_orphan_control' && f.field === 'family'
+        ? familyInitialization
+        : undefined;
     let status: WriteHit['status'];
     if (insert_files > 0 && update_files > 0) status = 'live';
     else if (insert_files > 0) status = 'init-only';
     else if (update_files > 0) status = 'update-only';
+    else if (initialization) status = 'init-only';
     else status = 'stub';
-    results.push({ ...f, insert_files, update_files, status });
+    results.push({
+      ...f,
+      insert_files,
+      update_files,
+      status,
+      ...(initialization ? { initialization } : {}),
+    });
   }
   for (const field of retainedHits) {
-    // Explicitly report all 19 columns, even id/timestamps. Their inventory and
-    // the table's production-write prohibition are enforced separately above.
+    // Report retained columns including trivial identifiers and timestamps.
+    // Mixed native columns retain their ordinary production classification.
     results.push({ ...field, status: 'historical-retained' });
   }
-  return { results, historicalRetention: retention };
+  return { results, historicalRetention: retention, retainedSchemas };
 }
 
 export function audit(repoRoot = REPO_ROOT) {
@@ -669,6 +851,12 @@ export function audit(repoRoot = REPO_ROOT) {
         readFileSync(path, 'utf8'),
       ]),
     ),
+    new Map(
+      [MIGRATION_JOURNAL, SESSION_ORPHAN_MIGRATION].flatMap((path) => {
+        const absolute = resolve(repoRoot, path);
+        return existsSync(absolute) ? [[path, readFileSync(absolute, 'utf8')]] : [];
+      }),
+    ),
   );
 }
 
@@ -677,7 +865,8 @@ function main() {
   const asJson = args.includes('--json');
   const listOnly = args.includes('--list');
 
-  const { results, historicalRetention: retention } = audit();
+  const { results, retainedSchemas } = audit();
+  const retentionIssues = retainedSchemas.flatMap((retention) => retention.issues);
   const hygiene = validateAllowlistHygiene(loadAllowlist(), {
     today: todayIso(),
     mergedPrRefs: readMergedPrRefs(),
@@ -693,7 +882,8 @@ function main() {
       JSON.stringify(
         {
           results,
-          historicalRetention: retention,
+          historicalRetention: retainedSchemas[0],
+          retainedSchemas,
           unallowedStubs,
           allowedStubs,
           allowlistIssues: hygiene.issues,
@@ -705,26 +895,28 @@ function main() {
     process.exit(
       listOnly
         ? 0
-        : unallowedStubs.length > 0 || hygiene.issues.length > 0 || retention.issues.length > 0
+        : unallowedStubs.length > 0 || hygiene.issues.length > 0 || retentionIssues.length > 0
           ? 1
           : 0,
     );
   }
 
   console.log('\n=== Schema 字段健康表（仅显示非 live）===\n');
-  console.log('| Table.Field | Type | INSERT files | UPDATE files | Status |');
-  console.log('|---|---|---|---|---|');
+  console.log('| Table.Field | Type | INSERT files | UPDATE files | Status | Initialization |');
+  console.log('|---|---|---|---|---|---|');
   for (const r of results) {
     if (r.status === 'live') continue;
     const allowed = allowlist[`${r.table}.${r.field}`] ? ' (allowed)' : '';
     console.log(
-      `| ${r.table}.${r.field} | ${r.type} | ${r.insert_files} | ${r.update_files} | ${r.status}${allowed} |`,
+      `| ${r.table}.${r.field} | ${r.type} | ${r.insert_files} | ${r.update_files} | ${r.status}${allowed} | ${r.initialization?.migration ?? ''} |`,
     );
   }
 
-  console.log(`\n${formatHistoricalRetention(retention)}`);
+  for (const retention of retainedSchemas) console.log(`\n${formatHistoricalRetention(retention)}`);
   console.log(`\nTotal fields audited: ${results.length}`);
-  console.log(`  historical-retained: ${retention.fields.length}`);
+  console.log(
+    `  historical-retained: ${results.filter((field) => field.status === 'historical-retained').length}`,
+  );
   console.log(`  live: ${results.filter((r) => r.status === 'live').length}`);
   console.log(`  init-only: ${results.filter((r) => r.status === 'init-only').length}`);
   console.log(`  update-only: ${results.filter((r) => r.status === 'update-only').length}`);
@@ -733,7 +925,7 @@ function main() {
     `  stub (unallowed): ${unallowedStubs.length}${unallowedStubs.length > 0 ? ' ⚠️' : ''}`,
   );
 
-  if (retention.issues.length > 0 && !listOnly) process.exit(1);
+  if (retentionIssues.length > 0 && !listOnly) process.exit(1);
 
   if (hygiene.issues.length > 0 && !listOnly) {
     console.log('\n⚠️  Allowlist hygiene issues found:\n');

@@ -2,6 +2,27 @@ import { describe, expect, it } from 'vitest';
 import { generateOpenApiDocument } from '@/kernel/openapi';
 import { observabilityCapability } from './manifest';
 
+describe('observability housekeeping schedule contracts', () => {
+  it('preserves both orphan cleanup times and staggers the profile audit', () => {
+    const expected = new Map([
+      ['prune_orphan_conversation_sessions', '25 4 * * *'],
+      ['subject_profile_audit_nightly', '26 4 * * *'],
+      ['prune_orphan_placement_sessions', '35 4 * * *'],
+    ]);
+    const jobs = (observabilityCapability.jobs?.handlers ?? []).filter((job) =>
+      expected.has(job.name),
+    );
+    expect(jobs).toHaveLength(expected.size);
+    for (const job of jobs) {
+      expect(job.schedule, job.name).toEqual({
+        cron: expected.get(job.name),
+        tz: 'Asia/Shanghai',
+      });
+      expect(job.queue, job.name).toBe('fast');
+    }
+  });
+});
+
 describe('observability event operation contracts', () => {
   it('publishes event detail, correction and generic job SSE contracts', () => {
     const routes = observabilityCapability.api?.routes ?? [];

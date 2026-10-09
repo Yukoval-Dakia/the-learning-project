@@ -1,0 +1,269 @@
+{
+  "runtimeSource": "1ff5ef70bf85c5091bd7035a81f8f3529f8506a2",
+  "timezoneFixSource": "64d9f2eb62cec3cdb9ffbb7e3c189796e3b5cd30",
+  "results": {
+    "parentHelperUnitPassed": 19,
+    "buildExit": 0,
+    "retainedFamilies": {
+      "files": 4,
+      "passed": 16,
+      "exit": 0
+    },
+    "completeSessionCron": {
+      "passed": 2,
+      "failed": 1,
+      "exit": 1,
+      "failure": "third timezone assertion only; original evidence retained"
+    },
+    "timezoneOnlyRechecks": {
+      "Tokyo": {
+        "passed": 1,
+        "unselected": 2,
+        "exit": 0
+      },
+      "UTC": {
+        "passed": 1,
+        "unselected": 2,
+        "exit": 0
+      }
+    },
+    "finalTypecheckExit": 0
+  },
+  "scenarios": [
+    {
+      "scenario": "observes real prune_orphan_conversation_sessions Timekeeper, mixed phases, native two-scheduler ticks/restart and independent rollback",
+      "phase": "nativeBaseline",
+      "counts": {
+        "workflows": 0,
+        "ticks": 0,
+        "receipts": 0,
+        "dispositions": 0,
+        "gaps": 0
+      },
+      "workflowStates": {}
+    },
+    {
+      "scenario": "observes real prune_orphan_conversation_sessions Timekeeper, mixed phases, native two-scheduler ticks/restart and independent rollback",
+      "phase": "afterCleanupLedger",
+      "counts": {
+        "workflows": 6,
+        "ticks": 12,
+        "receipts": 4,
+        "dispositions": 3,
+        "gaps": 0
+      },
+      "workflowStates": {
+        "SUCCESS": 6
+      }
+    },
+    {
+      "scenario": "observes real prune_orphan_placement_sessions Timekeeper, mixed phases, native two-scheduler ticks/restart and independent rollback",
+      "phase": "nativeBaseline",
+      "counts": {
+        "workflows": 6,
+        "ticks": 12,
+        "receipts": 4,
+        "dispositions": 3,
+        "gaps": 0
+      },
+      "workflowStates": {
+        "SUCCESS": 6
+      }
+    },
+    {
+      "scenario": "observes real prune_orphan_placement_sessions Timekeeper, mixed phases, native two-scheduler ticks/restart and independent rollback",
+      "phase": "afterCleanupLedger",
+      "counts": {
+        "workflows": 12,
+        "ticks": 22,
+        "receipts": 8,
+        "dispositions": 6,
+        "gaps": 0
+      },
+      "workflowStates": {
+        "SUCCESS": 12
+      }
+    },
+    {
+      "scenario": "retains production 04:25 and 04:35 Asia/Shanghai declarations and previous-date UTC mapping",
+      "phase": "nativeBaseline",
+      "counts": {
+        "workflows": 12,
+        "ticks": 22,
+        "receipts": 8,
+        "dispositions": 6,
+        "gaps": 0
+      },
+      "workflowStates": {
+        "SUCCESS": 12
+      }
+    },
+    {
+      "scenario": "retains production 04:25 and 04:35 Asia/Shanghai declarations and previous-date UTC mapping",
+      "phase": "afterCleanupLedger",
+      "counts": {
+        "workflows": 12,
+        "ticks": 22,
+        "receipts": 8,
+        "dispositions": 6,
+        "gaps": 0
+      },
+      "workflowStates": {
+        "SUCCESS": 12
+      }
+    }
+  ],
+  "cleanup": [
+    {
+      "owner": {
+        "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+        "issue": "YUK-1394",
+        "phase": "isolated-review-diagnostics-and-session-cron-recheck",
+        "token": "d6bc5144-e93c-466c-ad77-da14e947822c",
+        "candidate": "1ff5ef70bf85c5091bd7035a81f8f3529f8506a2",
+        "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "createdAt": "2026-10-08T20:48:30.277989+00:00"
+      },
+      "releasedAt": "2026-10-08T21:11:26.434834+00:00",
+      "containersUnchanged": true,
+      "releaseUnchanged": true,
+      "runningUnchanged": true
+    },
+    {
+      "owner": {
+        "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+        "issue": "YUK-1394",
+        "phase": "isolated-cron-timezone-fixture-recheck",
+        "token": "66cfd30d-0059-4167-b516-962ae3c1b6ff",
+        "candidate": "64d9f2eb62cec3cdb9ffbb7e3c189796e3b5cd30",
+        "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        "createdAt": "2026-10-08T21:12:45.649926+00:00"
+      },
+      "releasedAt": "2026-10-08T21:13:51.836181+00:00",
+      "containersUnchanged": true,
+      "releaseUnchanged": true,
+      "runningUnchanged": true
+    }
+  ],
+  "evidence": [
+    {
+      "path": "/tmp/yuk1394-parent-fixture-recheck/unit.log",
+      "sha256": "35c76dd69b9cc11cdcbd840ded5171885691add325ef5db19f04b9e8e39f7abc",
+      "bytes": 247
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fixture-recheck/build.log",
+      "sha256": "89cbade4dba292bf2fbfb5a50adda9e3a14e9e0de6137e94df22085c593d116b",
+      "bytes": 114991
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fixture-recheck/postbuild-audits.json",
+      "sha256": "709d3cfceed6be4bd7950f6a486cf681454f6d7521e4bc2eae9c6b7732161cba",
+      "bytes": 472
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fixture-recheck/earliest-review.log",
+      "sha256": "4022367862478cd995ba7ce190a8e5d9497cd15385ac210e0361a77eba2c55b3",
+      "bytes": 1854
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fixture-recheck/earliest-review-evidence.json",
+      "sha256": "9023544849abf157622bac6562d51fa74fe369bd38b30d191d96122c146c631f",
+      "bytes": 13732
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fixture-recheck/retained-families.log",
+      "sha256": "214d23089e170034ebfd9832a32bffb880e7c11377e1f60e8a5b78a679f01430",
+      "bytes": 3662
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fixture-recheck/review-evidence.json",
+      "sha256": "419e0056171ab4b9b560dc09b8685a0f73036e63a2770d86b5e62e6c12af95fa",
+      "bytes": 145840
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fixture-recheck/review-cron-evidence.json",
+      "sha256": "b05b5ab2f5dc66e9ccbcd008fd7e527f3956933a57beb6a532a97e206e3a2858",
+      "bytes": 398237
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fixture-recheck/prune-evidence.json",
+      "sha256": "d70e2628d15ef2dd2bea4418ce81dc8435e88f39f1fe2a97ab5a352f283662a1",
+      "bytes": 19545
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fixture-recheck/prune-cron-evidence.json",
+      "sha256": "9862e2d4f129a831bc4d020fc0fcfe7ca803c6bfbacc3a277a7114bd9bca6af2",
+      "bytes": 297358
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fixture-recheck/session-cron.log",
+      "sha256": "fea4931b7740c7b1786974d6c17bcbb6e369dd39c01711c7348e98607e26c65b",
+      "bytes": 2855
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fixture-recheck/session-cron-evidence.json",
+      "sha256": "e5878faf1046a4d4abda1bc32f8afbfaa7ebfa7d404ae2f9ab116fe339b46c20",
+      "bytes": 175845
+    },
+    {
+      "path": "/tmp/yuk1394-parent-fixture-recheck/lock-release.json",
+      "sha256": "fc9f512a3d03c0779700f5d9f80fe43fab98f340085a09f5ee8a00127ba70757",
+      "bytes": 564
+    },
+    {
+      "path": "/tmp/yuk1394-parent-timezone-recheck/tokyo.log",
+      "sha256": "5d737fb4744433e28614878a2db485e3952465ade32aced214d8e3eb212fd548",
+      "bytes": 1852
+    },
+    {
+      "path": "/tmp/yuk1394-parent-timezone-recheck/tokyo-evidence.json",
+      "sha256": "e214ddd91614cc555b391644a3ad3625d6e3b044168d0e641f14615c36ba1c36",
+      "bytes": 1108
+    },
+    {
+      "path": "/tmp/yuk1394-parent-timezone-recheck/utc.log",
+      "sha256": "e9bc7c185a1c8eb31207e21972df245149d9fc278630502948255f69206bc9dd",
+      "bytes": 1852
+    },
+    {
+      "path": "/tmp/yuk1394-parent-timezone-recheck/utc-evidence.json",
+      "sha256": "66a2ae39814aadc69a80aca238a578968c91c6fd9c3e00d6e3817fdcab07d97d",
+      "bytes": 1108
+    },
+    {
+      "path": "/tmp/yuk1394-parent-timezone-recheck/typecheck.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+      "bytes": 61
+    },
+    {
+      "path": "/tmp/yuk1394-parent-timezone-recheck/lock-release.json",
+      "sha256": "3f96f073b8bf9713809717830d183b855bcf3199c1838fd17bc696cc5874ac54",
+      "bytes": 550
+    }
+  ],
+  "limits": [
+    "No latest-head full cron rerun claimed",
+    "Original old1393 first SQL cause remains unknown",
+    "No main runtime cutover or deployment",
+    "No provider calls",
+    "Final exact-head CI pending; R2 complete with NONE remaining P0/P1"
+  ],
+  "timezoneRepairScope": {
+    "changedNonDocsFiles": ["tests/dbos-session-orphan/cron.db.test.ts"],
+    "longScenarioPrefixUnchanged": true,
+    "longScenarioPrefixSha256": "b5b4771961a05435d5fc42b6f69acec31a2c2cb1be7e78fa3f46bf5c5cd57ff9",
+    "marker": "it('retains production 04:25 and 04:35 Asia/Shanghai declarations and previous-date UTC mapping'",
+    "from": "1ff5ef70bf85c5091bd7035a81f8f3529f8506a2",
+    "to": "64d9f2eb62cec3cdb9ffbb7e3c189796e3b5cd30"
+  },
+  "review": {
+    "round": "R2",
+    "source": "64d9f2eb62cec3cdb9ffbb7e3c189796e3b5cd30",
+    "patchSha256": "b30800065725c50df59740e4a1a7ba510920dfaca52125fa668760ed7312d25a",
+    "result": "NONE remaining P0/P1",
+    "originalFindings": "both RESOLVED",
+    "report": "docs/planning/2026-10-09-yuk1394-review-r2.md",
+    "reportSha256": "d6c4773b43b116aae458736b4a1549859cac92586dc8c378125ded12daaf4347"
+  }
+}

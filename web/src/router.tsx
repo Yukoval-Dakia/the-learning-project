@@ -97,7 +97,7 @@ const indexRoute = createRoute({
 });
 
 // M4-T6 (YUK-319/YUK-318) — 工作台 + 提议收件箱。
-const TodayRoute = lazyNavigableRoute(loadTodayPage);
+const TodayRoute = import.meta.env.PROD ? StartPageEntry : lazyNavigableRoute(loadTodayPage);
 
 const todayRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -144,7 +144,7 @@ const profileRoute = createRoute({
   component: ProfileRoute,
 });
 
-const InboxRoute = lazyNavigableRoute(loadInboxPage);
+const InboxRoute = import.meta.env.PROD ? StartPageEntry : lazyNavigableRoute(loadInboxPage);
 
 const inboxRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -155,7 +155,8 @@ const inboxRoute = createRoute({
 // Usability Step1 (YUK-354) — 错题本面（loom screen-mistakes ScreenMistakes）。闭合
 // record→see→practice 死链：RecordPage onSuccess navigate('/mistakes') 此前 404。导航走
 // 壳层 prop 注入（同 InboxRoute），page 自持 list query + 客户端 3 轴筛选（科目/状态/归因）。
-function StartMistakesEntry() {
+// Vite development fallback only. YUK-1359 owns its final removal.
+function StartPageEntry() {
   useEffect(() => {
     window.location.replace(window.location.href);
   }, []);
@@ -163,7 +164,7 @@ function StartMistakesEntry() {
 }
 
 const MistakesRoute = import.meta.env.PROD
-  ? StartMistakesEntry
+  ? StartPageEntry
   : lazyNavigableRoute(() => import('./routes/MistakesPage').then((module) => module.default));
 
 const mistakesRoute = createRoute({
@@ -172,7 +173,9 @@ const mistakesRoute = createRoute({
   component: MistakesRoute,
 });
 
-const AgentNotesRoute = lazyNavigableRoute(loadAgentNotesPage);
+const AgentNotesRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadAgentNotesPage);
 
 const agentNotesRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -180,23 +183,25 @@ const agentNotesRoute = createRoute({
   component: AgentNotesRoute,
 });
 
-const EventDetailRouteC = lazyRouteComponent(async () => {
-  const EventDetailPage = await loadEventDetailPage();
+const EventDetailRouteC = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyRouteComponent(async () => {
+      const EventDetailPage = await loadEventDetailPage();
 
-  function EventDetailRouteComponent() {
-    const router = useRouter();
-    const { id } = eventDetailRoute.useParams();
-    return (
-      <EventDetailPage
-        id={id}
-        navigate={(to) => router.history.push(to)}
-        onBack={() => router.history.back()}
-      />
-    );
-  }
+      function EventDetailRouteComponent() {
+        const router = useRouter();
+        const { id } = eventDetailRoute.useParams();
+        return (
+          <EventDetailPage
+            id={id}
+            navigate={(to) => router.history.push(to)}
+            onBack={() => router.history.back()}
+          />
+        );
+      }
 
-  return { default: EventDetailRouteComponent };
-});
+      return { default: EventDetailRouteComponent };
+    });
 
 const eventDetailRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -347,7 +352,7 @@ const knowledgeDetailRoute = createRoute({
   component: KnowledgeDetailRouteC,
 });
 
-const NotesRoute = lazyNavigableRoute(loadNotesPage);
+const NotesRoute = import.meta.env.PROD ? StartPageEntry : lazyNavigableRoute(loadNotesPage);
 
 const notesRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -386,41 +391,45 @@ const coachRoute = createRoute({
   component: CoachRoute,
 });
 
-const AdminConfigRoute = lazyRouteComponent(async () => {
-  const AdminConfigSurface = await loadAdminConfigSurface();
-  function AdminConfigRouteComponent() {
-    const router = useRouter();
-    const searchStr = useRouterState({ select: (state) => state.location.searchStr });
-    const getQuery = useCallback(
-      (key: string) => new URLSearchParams(searchStr).get(key),
-      [searchStr],
-    );
-    const setQuery = useCallback(
-      (key: string, value: string | null) => {
-        const params = new URLSearchParams(window.location.search);
-        if (value === null) params.delete(key);
-        else params.set(key, value);
-        router.history.replace(`${window.location.pathname}${params.size ? `?${params}` : ''}`);
-      },
-      [router],
-    );
-    return (
-      <AdminConfigSurface
-        navigate={(to) => router.history.push(to)}
-        getQuery={getQuery}
-        setQuery={setQuery}
-      />
-    );
-  }
-  return { default: AdminConfigRouteComponent };
-});
+const AdminConfigRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyRouteComponent(async () => {
+      const AdminConfigSurface = await loadAdminConfigSurface();
+      function AdminConfigRouteComponent() {
+        const router = useRouter();
+        const searchStr = useRouterState({ select: (state) => state.location.searchStr });
+        const getQuery = useCallback(
+          (key: string) => new URLSearchParams(searchStr).get(key),
+          [searchStr],
+        );
+        const setQuery = useCallback(
+          (key: string, value: string | null) => {
+            const params = new URLSearchParams(window.location.search);
+            if (value === null) params.delete(key);
+            else params.set(key, value);
+            router.history.replace(`${window.location.pathname}${params.size ? `?${params}` : ''}`);
+          },
+          [router],
+        );
+        return (
+          <AdminConfigSurface
+            navigate={(to) => router.history.push(to)}
+            getQuery={getQuery}
+            setQuery={setQuery}
+          />
+        );
+      }
+      return { default: AdminConfigRouteComponent };
+    });
 const adminConfigRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('admin-config'),
   component: AdminConfigRoute,
 });
 
-const AdminRunsRoute = lazyNavigableRoute(loadAdminRunsSurface);
+const AdminRunsRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadAdminRunsSurface);
 
 const adminRunsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -428,7 +437,9 @@ const adminRunsRoute = createRoute({
   component: AdminRunsRoute,
 });
 
-const AdminCostRoute = lazyNavigableRoute(loadAdminCostSurface);
+const AdminCostRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadAdminCostSurface);
 
 const adminCostRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -436,7 +447,9 @@ const adminCostRoute = createRoute({
   component: AdminCostRoute,
 });
 
-const AdminFailuresRoute = lazyNavigableRoute(loadAdminFailuresSurface);
+const AdminFailuresRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadAdminFailuresSurface);
 
 const adminFailuresRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -444,7 +457,9 @@ const adminFailuresRoute = createRoute({
   component: AdminFailuresRoute,
 });
 
-const AdminSubjectsRoute = lazyNavigableRoute(loadAdminSubjectsSurface);
+const AdminSubjectsRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadAdminSubjectsSurface);
 
 const adminSubjectsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -454,17 +469,21 @@ const adminSubjectsRoute = createRoute({
 
 // YUK-601 — trait 编辑面 detail（TanStack $id 语法；capability 组件零路由库
 // import，param 由本 wrapper 读出后以 subjectId prop 注入——design doc v1.1 §0.3）。
-const AdminSubjectTraitsRoute = lazyRouteComponent(async () => {
-  const AdminSubjectTraitsSurface = await loadAdminSubjectTraitsSurface();
+const AdminSubjectTraitsRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyRouteComponent(async () => {
+      const AdminSubjectTraitsSurface = await loadAdminSubjectTraitsSurface();
 
-  function AdminSubjectTraitsRouteComponent() {
-    const router = useRouter();
-    const { id } = adminSubjectTraitsRoute.useParams();
-    return <AdminSubjectTraitsSurface subjectId={id} navigate={(to) => router.history.push(to)} />;
-  }
+      function AdminSubjectTraitsRouteComponent() {
+        const router = useRouter();
+        const { id } = adminSubjectTraitsRoute.useParams();
+        return (
+          <AdminSubjectTraitsSurface subjectId={id} navigate={(to) => router.history.push(to)} />
+        );
+      }
 
-  return { default: AdminSubjectTraitsRouteComponent };
-});
+      return { default: AdminSubjectTraitsRouteComponent };
+    });
 
 const adminSubjectTraitsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -473,7 +492,9 @@ const adminSubjectTraitsRoute = createRoute({
 });
 
 // YUK-579 — 供题治理覆盖细目表（admin 第五页）。同四页套主 chrome（rootRoute → RootShell）。
-const AdminCoverageLatticeRoute = lazyNavigableRoute(loadAdminCoverageLatticeSurface);
+const AdminCoverageLatticeRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadAdminCoverageLatticeSurface);
 
 const adminCoverageLatticeRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -481,7 +502,9 @@ const adminCoverageLatticeRoute = createRoute({
   component: AdminCoverageLatticeRoute,
 });
 
-const AdminConjectureScoresRoute = lazyNavigableRoute(loadAdminConjectureScoresSurface);
+const AdminConjectureScoresRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyNavigableRoute(loadAdminConjectureScoresSurface);
 const adminConjectureScoresRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: surfacePath('admin-conjecture-scores'),

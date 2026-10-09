@@ -12,11 +12,12 @@
 // Selection: type='review' AND status IN ('started','paused') AND started_at < now() - 6h.
 // Action: abandon via Review.abandonReviewSession (single-owner transition).
 
-import { and, eq, inArray, lt } from 'drizzle-orm';
+import { and, eq, inArray, lt, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 
 import type { Db } from '@/db/client';
 import { learning_session } from '@/db/schema';
+import { runReviewOrphanTick } from '@/server/durable/review-orphan-family';
 import { Review } from '@/server/session';
 
 const ORPHAN_AGE_MS = 6 * 60 * 60 * 1000;
@@ -24,7 +25,11 @@ const ORPHAN_AGE_MS = 6 * 60 * 60 * 1000;
 export async function runPruneOrphanReviewSessions(db: Db): Promise<{ abandoned: number }> {
   const cutoff = new Date(Date.now() - ORPHAN_AGE_MS);
   const rows = await db
-    .select({ id: learning_session.id })
+    .select({
+      sessionId: learning_session.id,
+      selectedStartedAt: sql<string>`${learning_session.started_at}::text`,
+      selectedVersion: learning_session.version,
+    })
     .from(learning_session)
     .where(
       and(
@@ -37,12 +42,14 @@ export async function runPruneOrphanReviewSessions(db: Db): Promise<{ abandoned:
   let abandoned = 0;
   for (const r of rows) {
     try {
-      await Review.abandonReviewSession(db, r.id);
-      abandoned += 1;
+      const result = await db.transaction((tx) =>
+        Review.abandonOrphanReviewSession(tx, { candidate: r, cutoff }),
+      );
+      if (result.kind === 'abandoned') abandoned += 1;
     } catch (err) {
       // Lost-race: another caller (sendBeacon end route) abandoned/completed it
       // between our SELECT and abandon. Skip — terminal states are fine.
-      console.warn(`[prune_orphan_review_sessions] skip ${r.id}:`, (err as Error).message);
+      console.warn(`[prune_orphan_review_sessions] skip ${r.sessionId}:`, String(err));
     }
   }
   return { abandoned };
@@ -51,8 +58,10 @@ export async function runPruneOrphanReviewSessions(db: Db): Promise<{ abandoned:
 export function buildPruneOrphanReviewSessionsHandler(
   db: Db,
 ): (jobs: Job<Record<string, never>>[]) => Promise<void> {
-  return async () => {
-    const result = await runPruneOrphanReviewSessions(db);
-    console.log('[prune_orphan_review_sessions] result', result);
+  return async (jobs) => {
+    for (const job of jobs) {
+      const result = await runReviewOrphanTick(db, { kind: 'pg-boss', jobId: job.id });
+      console.log('[prune_orphan_review_sessions] result', result);
+    }
   };
 }

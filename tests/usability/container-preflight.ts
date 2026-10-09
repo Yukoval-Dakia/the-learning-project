@@ -1,18 +1,13 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { FullConfig } from '@playwright/test';
-
-interface BuiltAssets {
-  js: string | undefined;
-  css: string | undefined;
-}
-
-function builtAssets(html: string): BuiltAssets {
-  return {
-    js: html.match(/\/assets\/index-[^"']+\.js/)?.[0],
-    css: html.match(/\/assets\/index-[^"']+\.css/)?.[0],
-  };
-}
+import {
+  documentAssets,
+  readStartAssetManifest,
+  startRouteAssets,
+  verifyServedAsset,
+} from './built-assets';
+import { loadBuiltFunctionMap } from './start-rpc-fixtures';
 
 function targetFrom(config: FullConfig): string {
   const value = config.projects[0]?.use.baseURL;
@@ -26,8 +21,13 @@ export default async function containerPreflight(config: FullConfig): Promise<vo
   const target = targetFrom(config);
   let health: Response;
   let page: Response;
+  let fallback: Response;
   try {
-    [health, page] = await Promise.all([fetch(`${target}/api/health`), fetch(`${target}/today`)]);
+    [health, page, fallback] = await Promise.all([
+      fetch(`${target}/api/health`),
+      fetch(`${target}/today`),
+      fetch(`${target}/practice`),
+    ]);
   } catch (error) {
     throw new Error(
       `[container preflight] target=${target} is unreachable; start the isolated built container first: ${String(error)}`,
@@ -45,36 +45,34 @@ export default async function containerPreflight(config: FullConfig): Promise<vo
     );
   }
 
-  const html = await page.text();
-  const actual = builtAssets(html);
-  if (!actual.js || !actual.css || html.includes('/src/main.tsx')) {
-    throw new Error(
-      `[container preflight] route=/today target=${target} is not serving hashed Vite JS+CSS assets; refuse to test a dev/stale checkout`,
-    );
-  }
-
-  const localHtml = await readFile(join(process.cwd(), 'web/dist/index.html'), 'utf8');
-  const expected = builtAssets(localHtml);
-  if (!expected.js || !expected.css) {
-    throw new Error(
-      '[container preflight] local web/dist has no hashed JS+CSS assets; run pnpm rw:web:build first',
-    );
-  }
-
-  for (const kind of ['js', 'css'] as const) {
-    if (actual[kind] !== expected[kind]) {
+  const actualStart = documentAssets(await page.text(), '/_build/assets/');
+  const expectedStart = startRouteAssets(await readStartAssetManifest());
+  for (const route of expectedStart)
+    if (!actualStart.includes(route))
       throw new Error(
-        `[container preflight] route=/today target=${target} serves a stale SPA ${kind.toUpperCase()} asset; expected=${expected[kind]} actual=${actual[kind]}`,
+        `[container preflight] route=/today target=${target} is missing current Start asset ${route}`,
       );
-    }
-  }
+  for (const route of actualStart)
+    await verifyServedAsset(
+      target,
+      route,
+      await readFile(join(process.cwd(), 'dist/start/client', route.replace(/^\/_build\//, ''))),
+    );
+  await loadBuiltFunctionMap();
 
-  for (const route of [actual.js, actual.css]) {
-    const asset = await fetch(new URL(route, `${target}/`).toString());
-    if (!asset.ok) {
-      throw new Error(
-        `[container preflight] route=${route} expected=2xx actual=${asset.status} target=${target}`,
-      );
-    }
-  }
+  if (!fallback.ok)
+    throw new Error(
+      `[container preflight] route=/practice expected=2xx actual=${fallback.status} target=${target}`,
+    );
+  const actualSpa = documentAssets(await fallback.text(), '/assets/');
+  const expectedSpa = documentAssets(
+    await readFile(join(process.cwd(), 'web/dist/index.html'), 'utf8'),
+    '/assets/',
+  );
+  if (JSON.stringify([...actualSpa].sort()) !== JSON.stringify([...expectedSpa].sort()))
+    throw new Error(
+      `[container preflight] route=/practice target=${target} serves stale fallback SPA asset references`,
+    );
+  for (const route of actualSpa)
+    await verifyServedAsset(target, route, await readFile(join(process.cwd(), 'web/dist', route)));
 }

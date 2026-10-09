@@ -12,14 +12,14 @@ import {
   AdminTraitJournalResponseSchema,
   AdminTraitsResponseSchema,
 } from '@/capabilities/observability/api/subject-contracts';
-import { SUBJECT_TRAIT_KINDS } from '@/subjects/trait-schemas';
-import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   getAdminSubjectTraits,
-  getTraitJournal,
   listAdminSubjects,
   listAdminTraits,
-} from './admin-read';
+} from '@/capabilities/observability/public';
+import { SUBJECT_TRAIT_KINDS } from '@/subjects/trait-schemas';
+import { resetDb, testDb } from '../../../tests/helpers/db';
+import { getTraitJournal } from './admin-read';
 import { hydrateSubjectRegistryFromDb } from './hydrate';
 import { reconcileBuiltinTraits } from './reconcile-builtin-traits';
 import { thinCreateSubject } from './thin-create';

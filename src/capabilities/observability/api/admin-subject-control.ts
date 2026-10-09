@@ -4,30 +4,30 @@
 //   RESTORE  /api/admin/subjects/:id/restore   → restoreSubject
 //   RESET    /api/admin/subjects/:id/reset     → resetSubject（只换绑）
 //   VALIDATE /api/admin/subjects/:id/validate  → validateSubject（无状态，零落库）
-// 业务在 src/server/subjects/subject-control-write.ts；写成功后重水合上架
+// 共享操作在 server/subject-control-operations.ts；写成功后重水合上架
 // （rename/reset 改 displayName/绑定拓扑，retire/restore 改三集合归属）。
 
-import { z } from 'zod';
 import { type Db, db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
-import { hydrateSubjectRegistryFromDb } from '@/server/subjects/hydrate';
 import {
-  type ControlWriteResult,
-  renameSubject,
-  resetSubject,
-  restoreSubject,
-  retireSubject,
-  validateSubject,
-} from '@/server/subjects/subject-control-write';
-import { SUBJECT_TRAIT_KINDS } from '@/subjects/trait-schemas';
+  AdminSubjectCasBodySchema,
+  type AdminSubjectCasInput,
+  AdminSubjectControlParamsSchema,
+  type AdminSubjectControlResult,
+  RenameAdminSubjectBodySchema,
+  ValidateAdminSubjectInputSchema,
+  renameAdminSubject,
+  resetAdminSubject,
+  restoreAdminSubject,
+  retireAdminSubject,
+  validateAdminSubject,
+} from '../server/subject-control-operations';
 import { controlResultResponse, readJsonBody } from './subjects-write-http';
-
-const ParamsSchema = z.object({ id: z.string().trim().min(1) });
 
 function parseSubjectId(
   params: Record<string, string>,
 ): { ok: true; id: string } | { ok: false; response: Response } {
-  const parsed = ParamsSchema.safeParse(params);
+  const parsed = AdminSubjectControlParamsSchema.safeParse(params);
   if (!parsed.success) {
     return {
       ok: false,
@@ -37,40 +37,29 @@ function parseSubjectId(
   return { ok: true, id: parsed.data.id };
 }
 
-const RenameBody = z.object({
-  expectedRevision: z.number().int().min(0),
-  displayName: z.string(),
-});
-
 export async function PATCH(req: Request, params: Record<string, string>): Promise<Response> {
   try {
     const p = parseSubjectId(params);
     if (!p.ok) return p.response;
     const body = await readJsonBody(req);
     if (!body.ok) return body.response;
-    const parsed = RenameBody.safeParse(body.value);
+    const parsed = RenameAdminSubjectBodySchema.safeParse(body.value);
     if (!parsed.success) {
       return Response.json({ error: 'expectedRevision + displayName required' }, { status: 400 });
     }
-    const result = await renameSubject(db, {
+    const result = await renameAdminSubject(db, {
       subjectId: p.id,
       expectedRevision: parsed.data.expectedRevision,
       displayName: parsed.data.displayName,
     });
-    if (result.kind === 'ok') await hydrateSubjectRegistryFromDb(db);
     return controlResultResponse(result);
   } catch (err) {
     return errorResponse(err);
   }
 }
 
-const CasBody = z.object({ expectedRevision: z.number().int().min(0) });
-
 function casHandler(
-  fn: (
-    db: Db,
-    args: { subjectId: string; expectedRevision: number },
-  ) => Promise<ControlWriteResult>,
+  fn: (db: Db, args: AdminSubjectCasInput) => Promise<AdminSubjectControlResult>,
 ) {
   return async (req: Request, params: Record<string, string>): Promise<Response> => {
     try {
@@ -78,7 +67,7 @@ function casHandler(
       if (!p.ok) return p.response;
       const body = await readJsonBody(req);
       if (!body.ok) return body.response;
-      const parsed = CasBody.safeParse(body.value);
+      const parsed = AdminSubjectCasBodySchema.safeParse(body.value);
       if (!parsed.success) {
         return Response.json({ error: 'expectedRevision required' }, { status: 400 });
       }
@@ -86,7 +75,6 @@ function casHandler(
         subjectId: p.id,
         expectedRevision: parsed.data.expectedRevision,
       });
-      if (result.kind === 'ok') await hydrateSubjectRegistryFromDb(db);
       return controlResultResponse(result);
     } catch (err) {
       return errorResponse(err);
@@ -94,13 +82,9 @@ function casHandler(
   };
 }
 
-export const RETIRE = casHandler(retireSubject);
-export const RESTORE = casHandler(restoreSubject);
-export const RESET = casHandler(resetSubject);
-
-const ValidateBody = z.object({
-  traitPayloadOverrides: z.record(z.enum(SUBJECT_TRAIT_KINDS), z.unknown()).optional(),
-});
+export const RETIRE = casHandler(retireAdminSubject);
+export const RESTORE = casHandler(restoreAdminSubject);
+export const RESET = casHandler(resetAdminSubject);
 
 export async function VALIDATE(req: Request, params: Record<string, string>): Promise<Response> {
   try {
@@ -117,7 +101,7 @@ export async function VALIDATE(req: Request, params: Record<string, string>): Pr
       } catch {
         return Response.json({ error: 'request body must be valid JSON' }, { status: 400 });
       }
-      const parsed = ValidateBody.safeParse(raw);
+      const parsed = ValidateAdminSubjectInputSchema.safeParse(raw);
       if (!parsed.success) {
         return Response.json(
           { error: 'traitPayloadOverrides must be keyed by trait kind' },
@@ -126,7 +110,10 @@ export async function VALIDATE(req: Request, params: Record<string, string>): Pr
       }
       overrides = parsed.data.traitPayloadOverrides;
     }
-    const result = await validateSubject(db, p.id, overrides);
+    const result = await validateAdminSubject(db, {
+      subjectId: p.id,
+      traitPayloadOverrides: overrides,
+    });
     if (result === null) {
       return Response.json({ error: `unknown subject "${p.id}"` }, { status: 404 });
     }

@@ -4281,3 +4281,138 @@ export const prune_job_events_disposition = pgTable(
   },
   (t) => [primaryKey({ columns: [t.backend, t.task_id] })],
 );
+
+// YUK-1393: execution evidence belongs to full-DB recovery, never learner archives.
+export const review_orphan_control = pgTable(
+  'review_orphan_control',
+  {
+    phase: text('phase', {
+      enum: ['pg-boss', 'draining-pg-boss', 'dbos', 'draining-dbos'],
+    }).notNull(),
+    phase_changed_at: timestamp('phase_changed_at', { withTimezone: true }).notNull().defaultNow(),
+    legacy_not_before: timestamp('legacy_not_before', { withTimezone: true }),
+  },
+  () => [uniqueIndex('review_orphan_control_singleton').on(sql`(true)`)],
+);
+export const review_orphan_tick = pgTable('review_orphan_tick', {
+  tick_id: text('tick_id').primaryKey(),
+  backend: text('backend', { enum: ['pg-boss', 'dbos'] }).notNull(),
+  provenance: text('provenance', { enum: ['scheduled', 'legacy-first-admission'] }).notNull(),
+  tick_at: timestamp('tick_at', { withTimezone: true }).notNull(),
+  cutoff: timestamp('cutoff', { withTimezone: true }).notNull(),
+  admission: text('admission', { enum: ['admitted', 'fenced'] }).notNull(),
+  candidates: jsonb('candidates')
+    .$type<{ sessionId: string; selectedStartedAt: string; selectedVersion: number }[]>()
+    .notNull(),
+  contract_version: integer('contract_version').notNull(),
+  recorded_at: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
+});
+export const review_orphan_receipt = pgTable(
+  'review_orphan_receipt',
+  {
+    tick_id: text('tick_id')
+      .notNull()
+      .references(() => review_orphan_tick.tick_id),
+    session_id: text('session_id').notNull(),
+    outcome: jsonb('outcome')
+      .$type<
+        | { kind: 'abandoned'; fromVersion: number; toVersion: number }
+        | { kind: 'skipped'; reason: 'missing' | 'terminal' | 'reopened' | 'not-old' }
+        | { kind: 'deferred-known-failure'; error: string }
+      >()
+      .notNull(),
+    recorded_at: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.tick_id, t.session_id] })],
+);
+export const review_orphan_disposition = pgTable('review_orphan_disposition', {
+  id: text('id').primaryKey(),
+  backend: text('backend', { enum: ['pg-boss', 'dbos'] }).notNull(),
+  task_id: text('task_id').notNull(),
+  kind: text('kind', { enum: ['terminal', 'quiescence'] }).notNull(),
+  observed_state: text('observed_state').notNull(),
+  reason: text('reason').notNull(),
+  recorded_at: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
+});
+
+// YUK-1394: family-scoped execution evidence, restored only with the full database.
+export const session_orphan_control = pgTable('session_orphan_control', {
+  family: text('family', {
+    enum: ['prune_orphan_conversation_sessions', 'prune_orphan_placement_sessions'],
+  }).primaryKey(),
+  phase: text('phase', {
+    enum: ['pg-boss', 'draining-pg-boss', 'dbos', 'draining-dbos'],
+  }).notNull(),
+  phase_changed_at: timestamp('phase_changed_at', { withTimezone: true }).notNull().defaultNow(),
+  legacy_not_before: timestamp('legacy_not_before', { withTimezone: true }),
+});
+export const session_orphan_tick = pgTable(
+  'session_orphan_tick',
+  {
+    family: text('family', {
+      enum: ['prune_orphan_conversation_sessions', 'prune_orphan_placement_sessions'],
+    })
+      .notNull()
+      .references(() => session_orphan_control.family),
+    tick_id: text('tick_id').notNull(),
+    backend: text('backend', { enum: ['pg-boss', 'dbos'] }).notNull(),
+    provenance: text('provenance', { enum: ['scheduled', 'legacy-first-admission'] }).notNull(),
+    tick_at: timestamp('tick_at', { withTimezone: true }).notNull(),
+    cutoff: timestamp('cutoff', { withTimezone: true }).notNull(),
+    admission: text('admission', { enum: ['admitted', 'fenced'] }).notNull(),
+    candidates: jsonb('candidates')
+      .$type<import('../server/durable/session-orphan-family').SessionOrphanTick['candidates']>()
+      .notNull(),
+    contract_version: integer('contract_version').notNull(),
+    recorded_at: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.family, t.tick_id] })],
+);
+export const session_orphan_receipt = pgTable(
+  'session_orphan_receipt',
+  {
+    family: text('family', {
+      enum: ['prune_orphan_conversation_sessions', 'prune_orphan_placement_sessions'],
+    }).notNull(),
+    tick_id: text('tick_id').notNull(),
+    session_id: text('session_id').notNull(),
+    outcome: jsonb('outcome')
+      .$type<import('../server/durable/session-orphan-family').SessionOrphanOutcome>()
+      .notNull(),
+    recorded_at: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.family, t.tick_id, t.session_id] }),
+    foreignKey({
+      columns: [t.family, t.tick_id],
+      foreignColumns: [session_orphan_tick.family, session_orphan_tick.tick_id],
+    }),
+  ],
+);
+export const session_orphan_disposition = pgTable(
+  'session_orphan_disposition',
+  {
+    family: text('family', {
+      enum: ['prune_orphan_conversation_sessions', 'prune_orphan_placement_sessions'],
+    })
+      .notNull()
+      .references(() => session_orphan_control.family),
+    id: text('id').notNull(),
+    backend: text('backend', { enum: ['pg-boss', 'dbos'] }).notNull(),
+    kind: text('kind', { enum: ['terminal-task', 'terminal-row', 'quiescence'] }).notNull(),
+    observed_state: text('observed_state').notNull(),
+    reason: text('reason').notNull(),
+    task_id: text('task_id'),
+    tick_id: text('tick_id'),
+    session_id: text('session_id'),
+    barrier_at: timestamp('barrier_at', { withTimezone: true }),
+    recorded_at: timestamp('recorded_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    primaryKey({ columns: [t.family, t.id] }),
+    foreignKey({
+      columns: [t.family, t.tick_id],
+      foreignColumns: [session_orphan_tick.family, session_orphan_tick.tick_id],
+    }),
+  ],
+);

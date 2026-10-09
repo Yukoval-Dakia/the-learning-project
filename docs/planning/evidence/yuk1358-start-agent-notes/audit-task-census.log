@@ -1,0 +1,5 @@
+$ tsx scripts/audit-task-census.ts
+Task census audit passed: 55 registered kinds, 53 statically invoked kinds, 2 compatibility kinds, 70 production call sites, 43 manifest-job reachability links, 0 legacy-handler reachability links
+  - run-log contract: ai_task_runs.task_kind -> catalog guard -> TaskKind lifecycle -> start writer
+  - AttributionTask: Retained as a registered compatibility task while production failure attribution invokes AttributionRerankTask after deterministic candidate retrieval.
+  - JevScoringDecisionTask: Typed-execution task served by runTypedPrimitiveTask (OpenRouter decisions endpoint); its kind is selected per frozen scoring unit via executor.task_kind in jev-model-executor.ts — a dynamic arg the runner-scan cannot resolve statically.

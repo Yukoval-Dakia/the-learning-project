@@ -1,0 +1,135 @@
+{
+  "evidence_layer": "static emitted bytes; no built server, DB, browser or provider execution",
+  "checks": [
+    {
+      "check": "host control adapter, facts bootstrap and writer bootstrap resolve one domain export object",
+      "result": "PASS",
+      "aliases": [
+        [["init_public9()", "public_exports5"]],
+        [["init_public9()", "public_exports5"]],
+        [["init_public9()", "public_exports5"]]
+      ],
+      "locations": [
+        {
+          "path": "dist/server.cjs",
+          "line": 916299
+        },
+        {
+          "path": "dist/server.cjs",
+          "line": 916616
+        },
+        {
+          "path": "dist/server.cjs",
+          "line": 916627
+        }
+      ]
+    },
+    {
+      "check": "frontdoor binds canonical host operations and passes them through request context",
+      "result": "PASS",
+      "locations": [
+        {
+          "path": "dist/server.cjs",
+          "line": 916506
+        },
+        {
+          "path": "dist/server.cjs",
+          "line": 916525
+        }
+      ]
+    },
+    {
+      "check": "host awaits subject/config hydration and facts/writer injection before opening the frontdoor",
+      "result": "PASS",
+      "location": {
+        "path": "dist/server.cjs",
+        "line": 916655
+      }
+    },
+    {
+      "check": "host bootstrap and control adapter acquire the same owned database export",
+      "result": "PASS"
+    },
+    {
+      "check": "one host config store supplies both hydration and the read model",
+      "result": "PASS",
+      "locations": [
+        {
+          "path": "dist/server.cjs",
+          "line": 779446
+        },
+        {
+          "path": "dist/server.cjs",
+          "line": 777570
+        }
+      ]
+    },
+    {
+      "check": "exactly one emitted control handler chunk",
+      "result": "PASS"
+    },
+    {
+      "check": "all eighteen emitted handlers call the authenticated context adapter",
+      "result": "PASS",
+      "names": [
+        "getStartAdminConfig",
+        "patchStartAdminConfig",
+        "resetStartAdminConfig",
+        "getStartAdminSubjects",
+        "getStartAdminSubjectTraits",
+        "getStartAdminTraits",
+        "getStartAdminTraitJournal",
+        "renameStartAdminSubject",
+        "retireStartAdminSubject",
+        "restoreStartAdminSubject",
+        "resetStartAdminSubject",
+        "validateStartAdminSubject",
+        "editStartAdminSubjectTrait",
+        "forkStartAdminSubjectTrait",
+        "rebindStartAdminSubjectTrait",
+        "editStartAdminSharedTrait",
+        "rollbackStartAdminTrait",
+        "resetStartAdminTraitToSeed"
+      ],
+      "path": "dist/start/server/assets/admin-control-function-XxffScXr.js"
+    },
+    {
+      "check": "all sixteen parameter validators defer canonical parsing until after authorization",
+      "result": "PASS"
+    },
+    {
+      "check": "Start control handlers resolve host operations through context and have no local domain import",
+      "result": "PASS"
+    },
+    {
+      "check": "canonical operation factory is absent from emitted Start server and browser JavaScript",
+      "result": "PASS",
+      "server_files": 699,
+      "browser_files": 74
+    },
+    {
+      "check": "exactly one emitted function resolver",
+      "result": "PASS"
+    },
+    {
+      "check": "built resolver contains every control function exactly once",
+      "result": "PASS",
+      "path": "dist/start/server/assets/__23tanstack-start-server-fn-resolver-C0ewa1FK.js"
+    }
+  ],
+  "artifacts": [
+    {
+      "path": "dist/server.cjs",
+      "sha256": "6ded89ab642f3ac0654a1c215b2898a78fed9aca3d7c85829a386d03eddb5b77"
+    },
+    {
+      "path": "dist/start/server/assets/admin-control-function-XxffScXr.js",
+      "sha256": "a0617d8b35e33a016d5f371c10bf62ccfe7cdcc06ffbbe7848133d8657b3f1fc"
+    },
+    {
+      "path": "dist/start/server/assets/__23tanstack-start-server-fn-resolver-C0ewa1FK.js",
+      "sha256": "4a9f4ffbb88df6c615980600400036211058fd79ce6a492864eea20a42c6c73f"
+    }
+  ],
+  "limit": "Other existing Start consumers may contain duplicated domain modules. New control handlers consume only host context operations. Parent built-RPC and DB acceptance remains required."
+}

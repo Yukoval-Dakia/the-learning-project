@@ -1,0 +1,18 @@
+✔ emitted map and real client transport retain nested scenario resources, decisions and retraction (29.761292ms)
+✔ decoded GET query preserves opaque cursor and unknown operations/methods fail closed (5.169625ms)
+✔ failure/loading override patterns match decoded Start reads and preserve raw 401/503 (0.190667ms)
+✔ all stateful brief calls still pass through the canonical scenario handlers (0.404375ms)
+✔ Start document manifest, fallback SPA and served bytes keep distinct provenance (1.97975ms)
+✔ missing or duplicate emitted RPC functions cannot silently select stale fixture IDs (0.714791ms)
+✔ retained HTTP201/Location and serialized RPC200 preserve the same immutable resource (0.557ms)
+✔ six admin reads use the installed RPC serializer with complete ISO/nullable DTOs (7.983667ms)
+✔ all eighteen control RPCs map to retained HTTP fixtures with real serializer and resource semantics (4.519083ms)
+✔ agent-note20/50/default RPC uses installed serializer and keeps ISO/unknown nested refs (4.084292ms)
+ℹ tests 10
+ℹ suites 0
+ℹ pass 10
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 700.768166

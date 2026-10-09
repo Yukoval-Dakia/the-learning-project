@@ -63,6 +63,23 @@ describe('export constants', () => {
     expect(SCHEMA_VERSION).toBe('4.25');
   });
 
+  it('keeps both durable families outside learner archives without changing their schema version', () => {
+    for (const table of [
+      'review_orphan_control',
+      'review_orphan_tick',
+      'review_orphan_receipt',
+      'review_orphan_disposition',
+      'session_orphan_control',
+      'session_orphan_disposition',
+      'session_orphan_receipt',
+      'session_orphan_tick',
+    ]) {
+      expect(BACKUP_EXCLUDED_TABLES.has(table)).toBe(true);
+      expect(FK_ORDER).not.toContain(table);
+    }
+    expect(SCHEMA_VERSION).toBe('4.25');
+  });
+
   it('MAX_INLINE_ASSETS is 45 (legacy CF Worker 50 sub-request guardrail)', () => {
     expect(MAX_INLINE_ASSETS).toBe(45);
   });
@@ -353,6 +370,14 @@ describe('export constants', () => {
       'prune_job_events_control',
       'prune_job_events_disposition',
       'prune_job_events_receipt',
+      'review_orphan_control',
+      'review_orphan_disposition',
+      'review_orphan_receipt',
+      'review_orphan_tick',
+      'session_orphan_control',
+      'session_orphan_disposition',
+      'session_orphan_receipt',
+      'session_orphan_tick',
       'subagent_run',
       'tool_operation',
     ]);

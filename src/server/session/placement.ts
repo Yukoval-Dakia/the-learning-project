@@ -211,57 +211,99 @@ async function applyPlacementSessionTransition(
   target: Exclude<PlacementSessionStatus, 'started'>,
   idempotent: boolean,
 ): Promise<PlacementSessionTransition> {
-  return db.transaction(async (tx) => {
-    const current = await loadPlacementSessionForUpdate(tx, sessionId);
-    if (!current) {
-      throw new ApiError(
-        'not_found',
-        `learning_session ${sessionId} (type=placement) not found`,
-        404,
-      );
-    }
+  return db.transaction((tx) =>
+    applyPlacementSessionTransitionTx(tx, { sessionId, target, idempotent }),
+  );
+}
 
-    const previousStatus = current.status as PlacementSessionStatus;
-    if (previousStatus === target && idempotent) {
-      return {
-        previousStatus,
-        status: target,
-        changed: false,
-        allowedStatuses: PLACEMENT_ALLOWED_TARGETS[target],
-      };
-    }
-    assertFromState(
-      current.status,
-      ['started'] as const,
-      sessionId,
-      `Placement.transitionPlacementSession(${target})`,
+async function applyPlacementSessionTransitionTx(
+  tx: Tx,
+  {
+    sessionId,
+    target,
+    idempotent,
+  }: {
+    sessionId: string;
+    target: Exclude<PlacementSessionStatus, 'started'>;
+    idempotent: boolean;
+  },
+): Promise<PlacementSessionTransition> {
+  const current = await loadPlacementSessionForUpdate(tx, sessionId);
+  if (!current) {
+    throw new ApiError(
+      'not_found',
+      `learning_session ${sessionId} (type=placement) not found`,
+      404,
     );
+  }
 
-    const now = new Date();
-    await tx
-      .update(learning_session)
-      .set({
-        status: target,
-        ended_at: now,
-        updated_at: now,
-        version: sql`${learning_session.version} + 1`,
-      })
-      .where(eq(learning_session.id, sessionId));
-
-    await writeJobEvent(tx, {
-      business_table: SESSION_TABLE,
-      business_id: sessionId,
-      event_type: `placement.${target}`,
-      payload: {},
-    });
-
+  const previousStatus = current.status as PlacementSessionStatus;
+  if (previousStatus === target && idempotent) {
     return {
       previousStatus,
       status: target,
-      changed: true,
+      changed: false,
       allowedStatuses: PLACEMENT_ALLOWED_TARGETS[target],
     };
+  }
+  assertFromState(
+    current.status,
+    ['started'] as const,
+    sessionId,
+    `Placement.transitionPlacementSession(${target})`,
+  );
+
+  const now = new Date();
+  await tx
+    .update(learning_session)
+    .set({
+      status: target,
+      ended_at: now,
+      updated_at: now,
+      version: sql`${learning_session.version} + 1`,
+    })
+    .where(eq(learning_session.id, sessionId));
+
+  await writeJobEvent(tx, {
+    business_table: SESSION_TABLE,
+    business_id: sessionId,
+    event_type: `placement.${target}`,
+    payload: {},
   });
+
+  return {
+    previousStatus,
+    status: target,
+    changed: true,
+    allowedStatuses: PLACEMENT_ALLOWED_TARGETS[target],
+  };
+}
+
+export class PlacementOrphanStateError extends Error {}
+export type OrphanPlacementResult =
+  | { kind: 'abandoned'; fromVersion: number; toVersion: number }
+  | { kind: 'skipped'; reason: 'missing' | 'terminal' | 'not-old' };
+
+export async function abandonOrphanPlacementTx(
+  tx: Tx,
+  input: { sessionId: string; cutoff: string },
+): Promise<OrphanPlacementResult> {
+  const current = await loadPlacementSessionForUpdate(tx, input.sessionId);
+  if (!current) return { kind: 'skipped', reason: 'missing' };
+  if (current.status === 'completed' || current.status === 'abandoned')
+    return { kind: 'skipped', reason: 'terminal' };
+  if (current.status !== 'started')
+    throw new PlacementOrphanStateError(`Corrupt placement status: ${current.status}`);
+  const [age] = await tx.execute<{ old: boolean; version: number }>(sql`select version,
+    started_at < ${input.cutoff}::timestamptz as old from learning_session
+    where id = ${input.sessionId} and type = 'placement'`);
+  if (age?.old !== true) return { kind: 'skipped', reason: 'not-old' };
+  await applyPlacementSessionTransitionTx(tx, {
+    sessionId: input.sessionId,
+    target: 'abandoned',
+    idempotent: false,
+  });
+  return { kind: 'abandoned', fromVersion: age.version, toVersion: age.version + 1 };
 }
 
 /** Idempotent target-state transition used by PATCH /api/placement-sessions/:id. */

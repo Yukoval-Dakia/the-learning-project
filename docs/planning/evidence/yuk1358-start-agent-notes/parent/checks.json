@@ -1,0 +1,19 @@
+{
+  "candidate": "c10e1188528a04c789d6aff1dac2eafee4db6cba",
+  "source_files_verified": 19,
+  "artifact_files_verified": 878,
+  "evidence_files_verified": 26,
+  "db": {
+    "files": 3,
+    "tests": 14,
+    "exit": 0,
+    "new_start_cases": 4,
+    "command": "pnpm vitest run --config vitest.db.config.ts server/start/agent-note-reader.db.test.ts src/capabilities/agency/server/note-board-read.db.test.ts src/capabilities/agency/api/notes.db.test.ts",
+    "log_sha256": "139a408297540b6e6394a7972c96a13961dfd9bdaf8269035f76bca009cbc8de",
+    "compressed_log_sha256": "8779a533a941e2cb6d155fd2c3a65899d0c448e2adfc4f2fb2bac5f95f27065b"
+  },
+  "review": "R1 completed/noPending NONE P0/P1; parent verified diff SHA 6c92b188de317273c04de816123936fb4e36d0c62f6d674ed1017512c9896336",
+  "actual_built_rpc": "not yet run",
+  "browser": "not yet run",
+  "deployment": false
+}

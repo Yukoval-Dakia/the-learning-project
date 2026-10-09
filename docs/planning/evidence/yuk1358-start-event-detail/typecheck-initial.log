@@ -1,0 +1,16 @@
+$ tsc --noEmit && tsc --noEmit -p server/start/tsconfig.json
+server/start/event-operation.db.test.ts(27,5): error TS2322: Type '() => Promise<{ runnable: false; reason: "preparing" | "ready"; } | { reason?: undefined; runnable: true; }>' is not assignable to type 'EpochGate'.
+  Type 'Promise<{ runnable: false; reason: "preparing" | "ready"; } | { reason?: undefined; runnable: true; }>' is not assignable to type 'Promise<EpochGateResult>'.
+    Type '{ runnable: false; reason: "preparing" | "ready"; } | { reason?: undefined; runnable: true; }' is not assignable to type 'EpochGateResult'.
+      Type '{ runnable: false; reason: "preparing" | "ready"; }' is not assignable to type 'EpochGateResult'.
+        Types of property 'reason' are incompatible.
+          Type '"preparing" | "ready"' is not assignable to type '"epoch_mismatch" | "maintenance" | "unavailable" | undefined'.
+            Type '"preparing"' is not assignable to type '"epoch_mismatch" | "maintenance" | "unavailable" | undefined'.
+server/start/event-read.unit.test.ts(50,5): error TS2322: Type '() => Promise<{ runnable: false; reason: "preparing" | "ready"; } | { reason?: undefined; runnable: true; }>' is not assignable to type 'EpochGate'.
+  Type 'Promise<{ runnable: false; reason: "preparing" | "ready"; } | { reason?: undefined; runnable: true; }>' is not assignable to type 'Promise<EpochGateResult>'.
+    Type '{ runnable: false; reason: "preparing" | "ready"; } | { reason?: undefined; runnable: true; }' is not assignable to type 'EpochGateResult'.
+      Type '{ runnable: false; reason: "preparing" | "ready"; }' is not assignable to type 'EpochGateResult'.
+        Types of property 'reason' are incompatible.
+          Type '"preparing" | "ready"' is not assignable to type '"epoch_mismatch" | "maintenance" | "unavailable" | undefined'.
+            Type '"preparing"' is not assignable to type '"epoch_mismatch" | "maintenance" | "unavailable" | undefined'.
+[ELIFECYCLE] Command failed with exit code 1.

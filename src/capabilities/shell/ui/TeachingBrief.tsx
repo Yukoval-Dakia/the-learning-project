@@ -1,3 +1,4 @@
+import { useWorkbenchClient } from './workbench-client';
 // YUK-707 (P0F/3) — the single "为你而备" teaching brief band on /today.
 //
 // Contract (LAW): docs/design/2026-07-19-teaching-brief-contract.md.
@@ -26,7 +27,7 @@ import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { Stateful, type StatefulStatus } from '@/ui/primitives/Stateful';
-import { decideProposal, dedupeEvidence, evidenceReadable } from './inbox-api';
+import { dedupeEvidence, evidenceReadable } from './inbox-api';
 import { ProbeAnswerCard } from './ProbeAnswers';
 import type { PrepDeskProbeWire } from './probe-answer-api';
 import {
@@ -90,6 +91,7 @@ export function nextBriefSeenState(
 
 export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void }) {
   const qc = useQueryClient();
+  const client = useWorkbenchClient();
   const q = useQuery({ queryKey: ['teaching-brief'], queryFn: getTeachingBrief });
   const brief = q.data?.brief ?? null;
   const status = statefulStatus(q.isLoading, q.isError);
@@ -237,9 +239,11 @@ export function TeachingBriefBand({ navigate }: { navigate: (to: string) => void
     setFailed(false);
     try {
       if (correctedClaimMd) {
-        await decideProposal(brief.prepared_action.proposal_id, decision, { correctedClaimMd });
+        await client.decideProposal(brief.prepared_action.proposal_id, decision, {
+          correctedClaimMd,
+        });
       } else {
-        await decideProposal(brief.prepared_action.proposal_id, decision);
+        await client.decideProposal(brief.prepared_action.proposal_id, decision);
       }
       // accept → re-project to probe_ready; dismiss → next candidate or null.
       await invalidateBriefSurfaces(qc);
