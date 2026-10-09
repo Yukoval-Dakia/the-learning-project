@@ -5,7 +5,7 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { eq, sql } from 'drizzle-orm';
+import { eq, inArray, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, expect, it } from 'vitest';
 import { z } from 'zod';
 import { evaluateSubmission } from '@/capabilities/practice/server/judge/evaluate-submission';
@@ -13,7 +13,8 @@ import { disposeJudgeRun } from '@/capabilities/practice/server/judge-operationa
 import { readJudgeRunPermanent } from '@/capabilities/practice/server/judge-run-observation';
 import { canonicalHash } from '@/core/migration/canonical';
 import type { JudgeWorkflowInputT } from '@/core/schema/event/judge-operational-events';
-import { evaluation, event, job_events, material_fsrs_state } from '@/db/schema';
+import { ai_task_runs, evaluation, event, job_events, material_fsrs_state } from '@/db/schema';
+import { sanitizeDiagnostic } from '../dbos-review-orphan/fixture-process';
 import { resetDb, testDb } from '../helpers/db';
 import { dispatchFrozenJudge, judgeEvidence, resetJudgeControl } from './support';
 
@@ -32,16 +33,35 @@ const logs: {
 const evidence: unknown[] = [];
 let wireUrl: string;
 const wire: { unit: string; bodyDigest: string; at: string }[] = [];
+const transport: {
+  route: 'chat-completions' | 'responses' | 'other';
+  method: string;
+  at: string;
+  bodyDigest?: string;
+  error?: string;
+}[] = [];
 let holdUnit: string | undefined;
 const releases = new Set<() => void>();
 const server = createServer(async (req, res) => {
+  const request: (typeof transport)[number] = {
+    route:
+      req.url === '/v1/chat/completions'
+        ? 'chat-completions'
+        : req.url === '/v1/responses'
+          ? 'responses'
+          : 'other',
+    method: req.method ?? 'unknown',
+    at: new Date().toISOString(),
+  };
+  transport.push(request);
   try {
     const chunks: Buffer[] = [];
     for await (const chunk of req) chunks.push(Buffer.from(chunk));
-    const body = Buffer.concat(chunks).toString('utf8'),
-      parsed = z
-        .object({ messages: z.array(z.object({ content: z.unknown() }).passthrough()) })
-        .parse(JSON.parse(body));
+    const body = Buffer.concat(chunks).toString('utf8');
+    request.bodyDigest = canonicalHash(JSON.parse(body));
+    const parsed = z
+      .object({ messages: z.array(z.object({ content: z.unknown() }).passthrough()) })
+      .parse(JSON.parse(body));
     const text = parsed.messages
       .map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content)))
       .join('\n');
@@ -71,6 +91,7 @@ const server = createServer(async (req, res) => {
     );
     res.end('data: [DONE]\n\n');
   } catch (error) {
+    request.error = sanitizeDiagnostic(String(error), ['controlled-local-fixture']).slice(0, 2048);
     res.writeHead(500, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: { message: String(error) } }));
   }
@@ -150,11 +171,43 @@ function worker(
   };
 }
 async function capture(runId: string, label: string) {
+  const receipts = await judgeEvidence(testDb(), runId);
+  const taskRunIds = receipts.flatMap((receipt) => {
+    const claim = z.object({ planned_task_run_id: z.string() }).safeParse(receipt.payload);
+    return claim.success ? [claim.data.planned_task_run_id] : [];
+  });
+  const taskRuns = taskRunIds.length
+    ? await testDb()
+        .select({
+          id: ai_task_runs.id,
+          task_kind: ai_task_runs.task_kind,
+          provider: ai_task_runs.provider,
+          model: ai_task_runs.model,
+          status: ai_task_runs.status,
+          finish_reason: ai_task_runs.finish_reason,
+          usage_json: ai_task_runs.usage_json,
+          cost_usd: ai_task_runs.cost_usd,
+          cost_basis: ai_task_runs.cost_basis,
+          error_message: ai_task_runs.error_message,
+          started_at: ai_task_runs.started_at,
+          finished_at: ai_task_runs.finished_at,
+        })
+        .from(ai_task_runs)
+        .where(inArray(ai_task_runs.id, taskRunIds))
+    : [];
   evidence.push({
     label,
     runId,
     wire: [...wire],
-    receipts: await judgeEvidence(testDb(), runId),
+    transport: [...transport],
+    receipts,
+    taskRuns: taskRuns.map((run) => ({
+      ...run,
+      error_message:
+        run.error_message === null
+          ? null
+          : sanitizeDiagnostic(run.error_message, ['controlled-local-fixture']).slice(0, 4096),
+    })),
     candidates: await testDb().select().from(evaluation),
     settlements: await testDb().select().from(material_fsrs_state),
     permanent: await readJudgeRunPermanent(testDb(), runId),
@@ -194,6 +247,7 @@ beforeEach(async () => {
   await resetJudgeControl(testDb(), 'dbos');
   await testDb().execute(sql`delete from contract_epoch`);
   wire.length = 0;
+  transport.length = 0;
   holdUnit = undefined;
 });
 afterAll(async () => {
@@ -207,6 +261,7 @@ afterAll(async () => {
   const paths = [
     'tests/dbos-judge/worker.ts',
     'tests/dbos-judge/process.db.test.ts',
+    'tests/dbos-judge/transport-fixture.unit.test.ts',
     '.cache/yuk1356-judge-worker.cjs',
     'src/server/durable/judge-worker.ts',
     'src/capabilities/practice/server/judge/evaluate-submission.ts',
@@ -221,8 +276,13 @@ afterAll(async () => {
       {
         node: process.version,
         evidence,
-        logs,
+        logs: logs.map((log) => ({
+          ...log,
+          stdout: sanitizeDiagnostic(log.stdout, ['controlled-local-fixture']),
+          stderr: sanitizeDiagnostic(log.stderr, ['controlled-local-fixture']),
+        })),
         wire,
+        transport,
         hashes: await Promise.all(
           paths.map(async (path) => ({
             path,

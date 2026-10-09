@@ -1,7 +1,8 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { DBOS } from '@dbos-inc/dbos-sdk';
 import { agentLoop } from '@earendil-works/pi-agent-core';
-import type { Model } from '@earendil-works/pi-ai';
+import { type Model, createProvider, envApiKeyAuth } from '@earendil-works/pi-ai';
+import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completions.lazy';
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { PgBoss } from 'pg-boss';
@@ -54,7 +55,16 @@ async function main() {
     maxTokens: 1000,
     cost: { input: 0.1, output: 0.2, cacheRead: 0, cacheWrite: 0 },
   };
-  models.getModel = () => model;
+  models.setProvider(
+    createProvider({
+      id: model.provider,
+      name: model.name,
+      baseUrl: model.baseUrl,
+      auth: { apiKey: envApiKeyAuth('OpenAI API key', ['OPENAI_API_KEY']) },
+      models: [model],
+      api: openAICompletionsApi(),
+    }),
+  );
   const fetch = globalThis.fetch;
   globalThis.fetch = (resource, init) => {
     const target = new URL(
@@ -67,7 +77,9 @@ async function main() {
     if (target.origin !== wire.origin) throw new Error('Fixture blocked non-observer egress');
     return fetch(resource, init);
   };
-  // Only model catalog endpoint routing is controlled. Production runner, installed Pi transport,
+  // Pi 1.0 dispatches through the registered provider, not model.api alone.
+  // Register the installed Completions transport for this loopback SSE fixture.
+  // Production runner, installed Pi transport,
   // unit claim/result, native scorer, activation, settlement, workflow and host remain real.
   __setPiAdapterForTests(new PiAgentAdapter({ models, agentLoop }));
   const actions = new AsyncLocalStorage<Set<string>>(),
