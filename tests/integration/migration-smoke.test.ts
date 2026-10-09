@@ -3741,11 +3741,31 @@ for (const populated of [false, true])
       container = await migrationContainer().start();
       client = postgres(container.getConnectionUri(), { max: 1 });
       const migrations = orderedMigrations();
-      expect(migrations.at(-1)?.tag).toBe('0117_yuk1394_session_orphan_backend');
-      for (const migration of migrations) {
-        if (migration.tag === '0117_yuk1394_session_orphan_backend') break;
+      const tag = '0117_yuk1394_session_orphan_backend';
+      const boundary = migrations.findIndex((migration) => migration.tag === tag);
+      expect(migrations.filter((migration) => migration.tag === tag)).toHaveLength(1);
+      expect(boundary).toBe(117);
+      expect(migrations[boundary - 1]?.tag).toBe('0116_yuk1393_review_orphan_backend');
+      expect(
+        migrations
+          .slice(0, boundary)
+          .every((migration, index) =>
+            migration.tag.startsWith(`${String(index).padStart(4, '0')}_`),
+          ),
+      ).toBe(true);
+      expect(
+        migrations
+          .slice(boundary + 1)
+          .every((migration, index) =>
+            migration.tag.startsWith(`${String(boundary + index + 1).padStart(4, '0')}_`),
+          ),
+      ).toBe(true);
+      for (const migration of migrations.slice(0, boundary)) {
         await applyMigrationFile(client, migration.sql);
       }
+      expect(
+        await client`select to_regclass('session_orphan_control') as current, to_regclass('judge_run_control') as later`,
+      ).toEqual([{ current: null, later: null }]);
       if (populated) {
         await client`insert into learning_session (id,type,status,started_at,version,summary_md,warnings) values ('migration-conversation','conversation','idle','2026-01-01T00:00:00.123456Z',33,${'保留原始记录\n'.repeat(300)},'[]'), ('migration-placement','placement','started','2026-01-01T00:00:00.654321Z',19,'placement summary','[]')`;
         await client`insert into prune_job_events_receipt (workflow_id,cutoff,deleted) values ('old-prune','2026-01-01T00:00:00Z',17)`;
@@ -3753,7 +3773,7 @@ for (const populated of [false, true])
         await client`insert into review_orphan_receipt (tick_id,session_id,outcome) values ('legacy:00000000-0000-4000-8000-000000000001','missing-history','{"kind":"skipped","reason":"missing"}')`;
       }
       before = await snapshot();
-      const migration = migrations.find((m) => m.tag === '0117_yuk1394_session_orphan_backend');
+      const migration = migrations[boundary];
       if (!migration) throw new Error('Reserved migration missing');
       await applyMigrationFile(client, migration.sql);
     }, 120000);
@@ -3780,6 +3800,9 @@ for (const populated of [false, true])
     });
     it('preserves domain and predecessor ledger bytes, seeds exactly two independent legacy owners', async () => {
       expect(await snapshot()).toEqual(before);
+      expect(
+        await client`select to_regclass('session_orphan_control')::text as current, to_regclass('judge_run_control') as later`,
+      ).toEqual([{ current: 'session_orphan_control', later: null }]);
       expect(await client`select family,phase from session_orphan_control order by family`).toEqual(
         [
           { family: 'prune_orphan_conversation_sessions', phase: 'pg-boss' },

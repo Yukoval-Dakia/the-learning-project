@@ -1,5 +1,6 @@
 import { and, count, eq, inArray, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { GET as getDiagnosticDetail } from '@/capabilities/practice/api/question-detail';
 import { QuestionDetailResponseSchema } from '@/capabilities/practice/api/question-solve-contracts';
 import { handleRejudge } from '@/capabilities/practice/jobs/rejudge';
@@ -12,9 +13,19 @@ import {
 } from '@/capabilities/practice/public';
 import { createNativeAppeal } from '@/capabilities/practice/server/assessment/appeal';
 import { commitFormalAttempt } from '@/capabilities/practice/server/assessment/attempt';
+import {
+  dispatchNativeAttempt,
+  executeNativeAttempt,
+} from '@/capabilities/practice/server/assessment/durable-attempt';
 import { issueAssessment } from '@/capabilities/practice/server/assessment/issue';
 import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
+import {
+  disposeJudgeRun,
+  fenceJudgeUnitClaim,
+} from '@/capabilities/practice/server/judge-operational';
+import { readJudgeQuestionActivity } from '@/capabilities/practice/server/judge-run-observation';
+import { freezeQuestionForJudge } from '@/capabilities/practice/server/judge-run-payload';
 import { getTaskSystemPrompt } from '@/capabilities/task-registry';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';
@@ -22,6 +33,11 @@ import { PEDAGOGY_METHOD_LIBRARY } from '@/core/pedagogy';
 import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
 import { PROBE_QUESTION_KIND, PROBE_QUESTION_SOURCE } from '@/core/schema/conjecture';
 import type { ConjectureProbeResponseJudgementT } from '@/core/schema/conjecture-probe-response';
+import { JudgeWorkflowInput } from '@/core/schema/event/judge-operational-events';
+import {
+  JudgePendingAttemptPayload,
+  NativeJudgePendingSubmitInput,
+} from '@/core/schema/event/judge-pending-events';
 import {
   CurrentInterventionPackageReviewAudit,
   INTERVENTION_CONTRACT_VERSION,
@@ -32,6 +48,7 @@ import {
 } from '@/core/schema/intervention';
 import {
   ai_task_runs,
+  evaluation,
   evaluation_effective_head,
   event,
   intervention,
@@ -50,6 +67,7 @@ import type { EventSubscriptionDelivery } from '@/kernel/manifest';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { AgentRunError } from '@/server/ai/agent-run-error';
 import { type TaskTextRunFn, taskPromptFingerprint } from '@/server/ai/provenance';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { publishPaperModelFixture } from '../../../../../tests/fixtures/assessment-paper';
 import { issueSoloFixture } from '../../../../../tests/fixtures/assessment-solo';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
@@ -645,6 +663,35 @@ function successfulRunTask(
     throw new Error(`unexpected task ${kind}`);
   };
   return { fn, calls, contexts };
+}
+
+async function prepareAdmittedDiagnosticFixture(label: string) {
+  const db = testDb();
+  const seeded = await seedEvidenceFor(label);
+  await handleProbeResultInterventionDelivery(db, delivery(seeded.probeResultId), {
+    env: { AUTO_INTERVENTION_EXPANSION_ENABLED: 'true' },
+    bossSend: async (_name, _data, options) => options.id,
+  });
+  const [opened] = await db.select().from(intervention);
+  const { fn } = successfulRunTask(db);
+  const now = new Date(Math.floor(Date.now() / 1000) * 1000);
+  await prepareInterventionWave(
+    db,
+    {
+      interventionId: opened.id,
+      version: opened.version,
+      idempotencyKey: opened.idempotency_key,
+      preparationJobId: preparationJobIdOf(opened),
+    },
+    { runTaskFn: fn, authorPackageFn: authorInterventionPackage, now: () => now },
+  );
+  const active = await loadInterventionVersion(db, opened.id, opened.version);
+  if (!active?.settlement) throw new Error('active diagnostics missing');
+  const questionId = active.settlement.diagnostics.immediate.question_id;
+  await publishPaperModelFixture(db, questionId);
+  await recoverEligibleInterventionDiagnostics(db, now);
+  const staleAt = new Date(now.getTime() - INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS - 1);
+  return { db, opened, active, questionId, now, staleAt };
 }
 
 describe('YUK-791 intervention preparation closed loop', () => {
@@ -2167,6 +2214,298 @@ describe('YUK-791 intervention preparation closed loop', () => {
     expect(execute).toHaveBeenCalledTimes(4);
   });
 
+  it.each(['malformed', 'historical'] as const)(
+    'holds a %s permanent pending diagnostic despite FAILED and REQUEUED notifications',
+    async (kind) => {
+      const f = await prepareAdmittedDiagnosticFixture(`pending_guard_${kind}`);
+      const runId = newId();
+      const [originalQuestion] = await f.db
+        .select()
+        .from(question)
+        .where(eq(question.id, f.questionId));
+      const payload =
+        kind === 'malformed'
+          ? { run_id: runId }
+          : JudgePendingAttemptPayload.parse({
+              run_id: runId,
+              caller: 'submit',
+              knowledge_ids: originalQuestion.knowledge_ids,
+              ability_global_ids: [],
+              submit: {
+                body: {
+                  question_id: f.questionId,
+                  rating: 'good',
+                  response_md: 'y′=2x exp(x²+1)，先求外层导数，再乘以内层导数。',
+                  latency_ms: 3456,
+                  referenced_knowledge_ids: [],
+                },
+                question_id: f.questionId,
+                subject_profile: resolveSubjectProfile('math'),
+                question_snapshot: freezeQuestionForJudge(originalQuestion),
+                submitted_at: f.staleAt.toISOString(),
+              },
+            });
+      await f.db
+        .update(question)
+        .set({ draft_status: 'draft', updated_at: f.staleAt })
+        .where(eq(question.id, f.questionId));
+      // Raw insertion deliberately retains the malformed historical row at the read boundary.
+      const [pending] = await f.db
+        .insert(event)
+        .values({
+          id: `evt_pending_${runId}`,
+          actor_kind: 'user',
+          actor_ref: 'self',
+          action: 'experimental:judge_pending_attempt',
+          subject_kind: 'question',
+          subject_id: f.questionId,
+          outcome: null,
+          payload,
+          created_at: f.staleAt,
+        })
+        .returning();
+      for (const notification of [null, JUDGE_RUN_EVENTS.FAILED, JUDGE_RUN_EVENTS.REQUEUED]) {
+        if (notification)
+          await f.db.insert(job_events).values({
+            business_table: JUDGE_RUN_TABLE,
+            business_id: runId,
+            event_type: notification,
+            payload: { reason: 'retries_exhausted', delivery_id: `historical:${runId}` },
+          });
+        expect(
+          (await readJudgeQuestionActivity(f.db, [f.questionId])).get(f.questionId),
+        ).toMatchObject([
+          {
+            kind: 'unmapped',
+            activity: 'held',
+            reason: kind === 'malformed' ? 'corrupt' : 'legacy',
+          },
+        ]);
+        await recoverEligibleInterventionDiagnostics(f.db, f.now);
+        expect(
+          (await f.db.select().from(question).where(eq(question.id, f.questionId)))[0],
+        ).toMatchObject({
+          draft_status: 'draft',
+          updated_at: f.staleAt,
+        });
+        expect(await f.db.select().from(event).where(eq(event.id, pending.id))).toEqual([pending]);
+        expect(
+          (await loadInterventionVersion(f.db, f.opened.id, f.opened.version))?.settlement,
+        ).toEqual(f.active.settlement);
+        expect(await f.db.select().from(evaluation)).toHaveLength(0);
+      }
+    },
+  );
+
+  it('reopens an unanswered stale diagnostic when only legacy notifications exist', async () => {
+    const f = await prepareAdmittedDiagnosticFixture('notification_only');
+    const runId = newId();
+    for (const notification of [JUDGE_RUN_EVENTS.FAILED, JUDGE_RUN_EVENTS.REQUEUED]) {
+      await f.db
+        .update(question)
+        .set({ draft_status: 'draft', updated_at: f.staleAt })
+        .where(eq(question.id, f.questionId));
+      await f.db.insert(job_events).values({
+        business_table: JUDGE_RUN_TABLE,
+        business_id: runId,
+        event_type: notification,
+        payload: { question_id: f.questionId, delivery_id: `historical:${runId}` },
+      });
+      expect(
+        (await readJudgeQuestionActivity(f.db, [f.questionId])).get(f.questionId),
+      ).toBeUndefined();
+      await recoverEligibleInterventionDiagnostics(f.db, f.now);
+      expect(
+        (await f.db.select().from(question).where(eq(question.id, f.questionId)))[0].draft_status,
+      ).toBe('active');
+      expect(await f.db.select().from(evaluation)).toHaveLength(0);
+      expect(
+        (await loadInterventionVersion(f.db, f.opened.id, f.opened.version))?.settlement,
+      ).toEqual(f.active.settlement);
+    }
+  });
+
+  it.each(['manual', 'resolved'] as const)(
+    'retains a valid %s permanent diagnostic disposition and its real settlement despite late notifications',
+    async (disposition) => {
+      const f = await prepareAdmittedDiagnosticFixture(`permanent_${disposition}`);
+      const issued = await issueSoloFixture(f.db, f.questionId, true);
+      await f.db
+        .update(question)
+        .set({ draft_status: 'draft', updated_at: f.staleAt })
+        .where(eq(question.id, f.questionId));
+      const jobSchema = z.object({
+        run_id: z.string(),
+        caller: z.literal('native_assessment'),
+        submit: NativeJudgePendingSubmitInput,
+        operational: JudgeWorkflowInput,
+      });
+      const send = vi.fn(async (_queue: string, data: unknown, options?: { id?: string }) => {
+        const job = jobSchema.parse(data);
+        expect(options?.id).toBe(job.operational.delivery_id);
+        return options?.id ?? null;
+      });
+      const runId = await dispatchNativeAttempt(
+        f.db,
+        f.questionId,
+        issued.assessment('y′=2x exp(x²+1)，外层导数与内层导数相乘。'),
+        { enabled: true, capture: {}, requireUnassistedModelEvidence: true },
+        { checkRateLimit: () => 1, boss: { send } },
+      );
+      if (!runId) throw new Error('missing permanent diagnostic run');
+      expect(send).toHaveBeenCalledTimes(1);
+      const job = jobSchema.parse(send.mock.calls[0][1]);
+      const [pending] = await f.db
+        .select()
+        .from(event)
+        .where(eq(event.id, `evt_pending_${runId}`));
+      expect(
+        (await readJudgeQuestionActivity(f.db, [f.questionId])).get(f.questionId),
+      ).toMatchObject([{ kind: 'pending', activity: 'pending', delivery: { kind: 'accepted' } }]);
+      await recoverEligibleInterventionDiagnostics(f.db, f.now);
+      expect(
+        (await f.db.select().from(question).where(eq(question.id, f.questionId)))[0].draft_status,
+      ).toBe('draft');
+      const execute = vi.fn(
+        async (
+          input: ModelExecutorRequest,
+          _signal: AbortSignal | undefined,
+          taskRunId: string,
+        ): Promise<ModelUnitOutcomeT> => ({
+          kind: 'scored',
+          points_awarded: input.unit.points,
+          probe_signature_match: {
+            match: 'gold',
+            explanation_md: '链式法则推导与冻结的正确答案签名一致。',
+          },
+          matched: {
+            rule_id:
+              input.unit.criterion.kind === 'rule_reference'
+                ? input.unit.criterion.rule_id
+                : 'fixture',
+            option_ids: [],
+          },
+          feedback_md: '外层导数与内层导数相乘。',
+          confidence: 0.95,
+          evidence_citations: [{ slot_id: input.response_slots[0].slot_id, quote: '2x exp(x²+1)' }],
+          run_refs: [taskRunId],
+          cost_usd_micros: 100,
+        }),
+      );
+      vi.spyOn(evaluationService, 'createFormalModelExecutor').mockImplementation(
+        (_database, _signal, _admission, execution) =>
+          createRecordedModelExecutor(
+            f.db,
+            execute,
+            execution
+              ? { fence: (tx, request) => fenceJudgeUnitClaim(tx, execution, request) }
+              : {},
+          ),
+      );
+      let activationId: string | undefined;
+      if (disposition === 'manual') {
+        expect(
+          await disposeJudgeRun(f.db, runId, {
+            reason: 'explicit_disposal',
+            actorRef: 'test:diagnostic-owner',
+            evidenceRefs: [pending.id],
+            evidenceDigest: sha256CanonicalJson(pending.payload),
+          }),
+        ).toMatchObject({ kind: 'disposed' });
+        await expect(executeNativeAttempt(f.db, job)).rejects.toMatchObject({
+          code: 'judge_disposed',
+        });
+      } else {
+        expect(await executeNativeAttempt(f.db, job)).toMatchObject({ status: 'effective' });
+        expect(
+          (await readJudgeQuestionActivity(f.db, [f.questionId])).get(f.questionId),
+        ).toMatchObject([{ kind: 'resolved', activity: 'terminal' }]);
+        // Domain completion closes the card even before its settlement subscriber arrives.
+        await recoverEligibleInterventionDiagnostics(f.db, f.now);
+        expect(
+          (await f.db.select().from(question).where(eq(question.id, f.questionId)))[0].draft_status,
+        ).toBe('draft');
+        expect(
+          (await loadInterventionVersion(f.db, f.opened.id, f.opened.version))?.settlement,
+        ).toEqual(f.active.settlement);
+        const [activation] = await f.db
+          .select()
+          .from(event)
+          .where(
+            and(
+              eq(event.action, 'experimental:assessment_activation'),
+              eq(event.subject_id, job.submit.evaluation_group_id),
+            ),
+          );
+        if (!activation) throw new Error('diagnostic activation missing');
+        activationId = activation.id;
+        expect(
+          await handleInterventionDiagnosticJudgeDelivery(f.db, {
+            subscriberId: 'agency.intervention-diagnostic-review-settlement',
+            subscriberVersion: 4,
+            deliverySeq: activation.id,
+            sourceEventId: activation.id,
+          }),
+        ).toMatchObject({ status: 'succeeded' });
+      }
+      const settled = await loadInterventionVersion(f.db, f.opened.id, f.opened.version);
+      expect(settled?.settlement?.diagnostics.immediate).toMatchObject(
+        disposition === 'manual'
+          ? { status: 'scheduled', review_event_id: null }
+          : {
+              status: 'passed',
+              review_event_id: `evt_assessment_${job.submit.submission_id}`,
+              verdict_event_id: activationId,
+            },
+      );
+      for (const notification of [JUDGE_RUN_EVENTS.FAILED, JUDGE_RUN_EVENTS.REQUEUED]) {
+        await f.db.insert(job_events).values({
+          business_table: JUDGE_RUN_TABLE,
+          business_id: runId,
+          event_type: notification,
+          payload: { delivery_id: job.operational.delivery_id, reason: 'late historical marker' },
+        });
+        expect(
+          (await readJudgeQuestionActivity(f.db, [f.questionId])).get(f.questionId),
+        ).toMatchObject([
+          { kind: disposition, activity: disposition === 'manual' ? 'held' : 'terminal' },
+        ]);
+        await recoverEligibleInterventionDiagnostics(f.db, f.now);
+        expect(
+          (await f.db.select().from(question).where(eq(question.id, f.questionId)))[0].draft_status,
+        ).toBe('draft');
+        expect(await f.db.select().from(event).where(eq(event.id, pending.id))).toEqual([pending]);
+        expect(
+          (await loadInterventionVersion(f.db, f.opened.id, f.opened.version))?.settlement,
+        ).toEqual(settled?.settlement);
+      }
+      expect(execute).toHaveBeenCalledTimes(disposition === 'manual' ? 0 : 1);
+      expect(await f.db.select().from(evaluation)).toHaveLength(disposition === 'manual' ? 0 : 1);
+      if (activationId) {
+        expect(
+          await handleInterventionDiagnosticJudgeDelivery(f.db, {
+            subscriberId: 'agency.intervention-diagnostic-review-settlement',
+            subscriberVersion: 4,
+            deliverySeq: `replay:${activationId}`,
+            sourceEventId: activationId,
+          }),
+        ).toMatchObject({ status: 'succeeded', detail: { idempotent: true } });
+        expect(
+          await f.db
+            .select()
+            .from(material_fsrs_state)
+            .where(eq(material_fsrs_state.subject_id, f.questionId)),
+        ).toHaveLength(0);
+        expect(
+          await f.db
+            .select()
+            .from(event)
+            .where(eq(event.action, 'experimental:assessment_settlement')),
+        ).toHaveLength(1);
+      }
+    },
+  );
+
   it('consumes one real review per window, retires one-shot cards, and settles deterministically', async () => {
     const db = testDb();
     const seeded = await seedEvidenceFor('settlement');
@@ -2345,64 +2684,6 @@ describe('YUK-791 intervention preparation closed loop', () => {
 
     const immediate = active.settlement.diagnostics.immediate;
     const delayed = active.settlement.diagnostics.delayed;
-    await db
-      .update(question)
-      .set({ draft_status: 'draft', updated_at: staleClaimedAt })
-      .where(eq(question.id, immediate.question_id));
-    await db.insert(event).values({
-      id: 'pending_durable_diagnostic_guard',
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'experimental:judge_pending_attempt',
-      subject_kind: 'question',
-      subject_id: immediate.question_id,
-      outcome: null,
-      payload: { run_id: 'pending_durable_diagnostic_run' },
-      created_at: staleClaimedAt,
-    });
-    await recoverEligibleInterventionDiagnostics(db, activationNow);
-    const [durableClaimStillFenced] = await db
-      .select({ draft_status: question.draft_status })
-      .from(question)
-      .where(eq(question.id, immediate.question_id));
-    expect(durableClaimStillFenced?.draft_status).toBe('draft');
-    await db.insert(job_events).values({
-      business_table: JUDGE_RUN_TABLE,
-      business_id: 'pending_durable_diagnostic_run',
-      event_type: JUDGE_RUN_EVENTS.FAILED,
-      payload: { reason: 'retries_exhausted' },
-    });
-    await recoverEligibleInterventionDiagnostics(db, activationNow);
-    const [terminalAttemptReleased] = await db
-      .select({ draft_status: question.draft_status })
-      .from(question)
-      .where(eq(question.id, immediate.question_id));
-    expect(terminalAttemptReleased?.draft_status).toBe('active');
-
-    await db
-      .update(question)
-      .set({ draft_status: 'draft', updated_at: staleClaimedAt })
-      .where(eq(question.id, immediate.question_id));
-    await db.insert(job_events).values({
-      business_table: JUDGE_RUN_TABLE,
-      business_id: 'pending_durable_diagnostic_run',
-      event_type: JUDGE_RUN_EVENTS.REQUEUED,
-      payload: { delivery_id: 'pending_durable_diagnostic_recovery' },
-    });
-    await recoverEligibleInterventionDiagnostics(db, activationNow);
-    const [reopenedAttemptStillFenced] = await db
-      .select({ draft_status: question.draft_status })
-      .from(question)
-      .where(eq(question.id, immediate.question_id));
-    expect(reopenedAttemptStillFenced?.draft_status).toBe('draft');
-
-    await db.delete(job_events).where(eq(job_events.business_id, 'pending_durable_diagnostic_run'));
-    await db.delete(event).where(eq(event.id, 'pending_durable_diagnostic_guard'));
-    await db
-      .update(question)
-      .set({ draft_status: 'active', updated_at: activationNow })
-      .where(eq(question.id, immediate.question_id));
-
     const [delayedCard] = await db
       .select({ state: material_fsrs_state.state })
       .from(material_fsrs_state)
