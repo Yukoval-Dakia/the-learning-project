@@ -155,7 +155,8 @@ export function buildCutoverBackupManifest(input: CutoverManifestInput) {
 export type CutoverBackupManifest = ReturnType<typeof buildCutoverBackupManifest>;
 
 // Logical bytes, not exhaustive DDL/roles/blob/Mem0 or worker-reopen acceptance.
-export const CONTENT_ALGORITHM = 'pg16-column-text-sha256-multiset-v1';
+// v2 canonicalizes array declaration dimensions; v1 digests must never be reinterpreted.
+export const CONTENT_ALGORITHM = 'pg16-column-text-sha256-multiset-v2';
 const decimal = z.string().regex(/^(0|[1-9][0-9]*)$/);
 const signedDecimal = z.string().regex(/^(0|-?[1-9][0-9]*)$/);
 const sha = z.string().regex(/^[a-f0-9]{64}$/);
@@ -215,7 +216,7 @@ export const sequenceManifestSchema = relationIdentitySchema.extend({
   is_called: z.boolean(),
 });
 export const databaseManifestSchema = z.strictObject({
-  algorithm: z.literal(CONTENT_ALGORITHM),
+  algorithm: z.literal(CONTENT_ALGORITHM, { error: 'unsupported content algorithm' }),
   encoding: z.literal('UTF8'),
   server_version: z.string().regex(/^16\./),
   extensions: z.array(z.strictObject({ name: identifier, version: identifier })),

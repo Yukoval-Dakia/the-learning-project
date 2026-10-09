@@ -1,15 +1,28 @@
 // Prepared only in the implementation lane. Runs in the DB partition; parent owns execution.
+import { spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import postgres from 'postgres';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import {
   CATALOG_SQL,
+  TYPES_SQL,
   boundarySessionSql,
+  canonicalTableMetadata,
+  compareDatabaseManifests,
   createTableDigest,
   quoteIdentifier,
+  resolveTypeChain,
   tableContentSql,
 } from '../../scripts/cutover-backup';
-import type { TableMetadata } from '../../src/core/migration/cutover-manifest';
+import {
+  CONTENT_ALGORITHM,
+  type DatabaseManifest,
+  type TableMetadata,
+  tableMetadataSchema,
+} from '../../src/core/migration/cutover-manifest';
 
 const schema = 'restore.检查"\nfixture';
 const qualified = (name: string) => `${quoteIdentifier(schema)}.${quoteIdentifier(name)}`;
@@ -166,4 +179,233 @@ describe('actual PG16 logical bytes (UNRUN by author)', () => {
         .json_build_object.unowned,
     ).toBe('1');
   });
+});
+
+const arraySchema = 'restore_array_catalog';
+const arrayRelation = (name: string) => `${quoteIdentifier(arraySchema)}.${quoteIdentifier(name)}`;
+const rawArrayTableSchema = tableMetadataSchema.omit({ columns: true }).extend({
+  populated: z.boolean(),
+  columns: z.array(
+    tableMetadataSchema.shape.columns.element
+      .omit({ type_chain: true })
+      .extend({ type_oid: z.string() }),
+  ),
+});
+async function arrayCatalogInventory() {
+  const [catalogRow] = await client.unsafe(CATALOG_SQL);
+  const raw = z
+    .object({
+      json_build_object: z.object({
+        encoding: z.literal('UTF8'),
+        server_version: z.string().regex(/^16\./),
+        extensions: z.array(z.object({ name: z.string(), version: z.string() })),
+        tables: z.array(rawArrayTableSchema),
+      }),
+    })
+    .parse(catalogRow).json_build_object;
+  const [typeRow] = await client.unsafe(TYPES_SQL);
+  const types = z.object({ coalesce: z.unknown() }).parse(typeRow).coalesce;
+  const tables = raw.tables
+    .filter((table) => table.schema === arraySchema)
+    .map(({ populated: _populated, ...table }) => ({
+      ...table,
+      columns: table.columns.map(({ type_oid, ...column }) => ({
+        ...column,
+        type_chain: resolveTypeChain(type_oid, types),
+      })),
+    }));
+  const manifests: DatabaseManifest['tables'] = [];
+  for (const table of tables)
+    manifests.push({ ...canonicalTableMetadata(table), ...(await digest(table)) });
+  return {
+    raw: tables,
+    inventory: {
+      algorithm: CONTENT_ALGORITHM,
+      encoding: raw.encoding,
+      server_version: raw.server_version,
+      extensions: raw.extensions,
+      schemas: [arraySchema],
+      tables: manifests,
+      sequences: [],
+    } satisfies DatabaseManifest,
+  };
+}
+const longArrayText = '检查🦆"\\\n'.repeat(4000);
+const arrayQuote = (value: string) => `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
+const arrayMatrix = `[0:1][-2:-1]={{${arrayQuote(longArrayText)},NULL},{"NULL",""}}`;
+
+describe('real PG16 partition array pg_dump/pg_restore regression (UNRUN by author)', () => {
+  it('round-trips empty and populated inherited arrays, then rejects value and type changes', async () => {
+    const target = new URL(z.string().parse(process.env.TEST_DATABASE_URL));
+    if (!/^\/test_fork_[0-9]+$/.test(target.pathname))
+      throw new Error('requires isolated DB-test fork');
+    const commands = {
+      dump: process.env.RESTORE_PARITY_PG_DUMP ?? 'pg_dump',
+      restore: process.env.RESTORE_PARITY_PG_RESTORE ?? 'pg_restore',
+    };
+    for (const command of Object.values(commands)) {
+      const version = spawnSync(command, ['--version'], { encoding: 'utf8', timeout: 5000 });
+      expect(version.status).toBe(0);
+      expect(version.stdout).toMatch(/\(PostgreSQL\) 16\./);
+    }
+    const directory = mkdtempSync(join(tmpdir(), 'restore-array-catalog-'));
+    const archive = join(directory, 'arrays.dump');
+    const connection = [
+      '-h',
+      target.hostname,
+      '-p',
+      target.port || '5432',
+      '-U',
+      decodeURIComponent(target.username),
+      '-d',
+      decodeURIComponent(target.pathname.slice(1)),
+    ];
+    const env = {
+      ...process.env,
+      PGPASSWORD: decodeURIComponent(target.password),
+      PGSSLMODE: 'disable',
+    };
+    try {
+      await client.unsafe(`SET search_path=pg_catalog; SET client_encoding='UTF8'; SET TimeZone='UTC';
+        SET DateStyle='ISO,YMD'; SET IntervalStyle='postgres'; SET extra_float_digits=3; SET bytea_output='hex';
+        CREATE SCHEMA ${quoteIdentifier(arraySchema)};
+        CREATE TYPE ${arrayRelation('phase')} AS ENUM ('created','检查','completed');
+        CREATE DOMAIN ${arrayRelation('checked_text')} AS text NOT NULL CHECK (length(VALUE)>0);
+        CREATE DOMAIN ${arrayRelation('matrix')} AS text[] CHECK (array_ndims(VALUE)=2);
+        CREATE DOMAIN ${arrayRelation('matrices')} AS ${arrayRelation('matrix')}[];
+        CREATE TABLE ${arrayRelation('parent')} (
+          key int, integer_values int[], text_values text[][], enum_values ${arrayRelation('phase')}[],
+          domain_values ${arrayRelation('checked_text')}[], matrix_values ${arrayRelation('matrix')},
+          nested_values ${arrayRelation('matrices')}) PARTITION BY LIST(key);
+        CREATE TABLE ${arrayRelation('populated')} PARTITION OF ${arrayRelation('parent')} FOR VALUES IN (1);
+        CREATE TABLE ${arrayRelation('empty')} PARTITION OF ${arrayRelation('parent')} FOR VALUES IN (2);`);
+      for (let i = 0; i < 2; i++)
+        await client.unsafe(
+          `INSERT INTO ${arrayRelation('parent')} VALUES
+        (1,'[0:1][-2:-1]={{1,NULL},{3,4}}',$1::text[],
+        '[0:1][-2:-1]={{created,NULL},{检查,completed}}',ARRAY['a','检查']::${arrayRelation('checked_text')}[],
+        $1::${arrayRelation('matrix')},$2::${arrayRelation('matrices')})`,
+          [arrayMatrix, `[0:0]={${arrayQuote(arrayMatrix)}}`],
+        );
+      await client.unsafe(
+        `INSERT INTO ${arrayRelation('parent')} VALUES (1,NULL,'{}','{}','{}',NULL,NULL)`,
+      );
+      const source = await arrayCatalogInventory();
+      expect(
+        source.raw
+          .find((table) => table.name === 'populated')
+          ?.columns.find((column) => column.name === 'integer_values')?.dimensions,
+      ).toBe(0);
+      expect(
+        source.raw
+          .find((table) => table.name === 'empty')
+          ?.columns.find((column) => column.name === 'integer_values')?.dimensions,
+      ).toBe(0);
+      const dumped = spawnSync(
+        commands.dump,
+        [
+          ...connection,
+          '-Fc',
+          '--no-owner',
+          '--no-privileges',
+          `--schema=${arraySchema}`,
+          '-f',
+          archive,
+        ],
+        { env, encoding: 'utf8', timeout: 30000 },
+      );
+      expect(dumped.status, dumped.stderr).toBe(0);
+      await client.unsafe(`DROP SCHEMA ${quoteIdentifier(arraySchema)} CASCADE`);
+      const restored = spawnSync(
+        commands.restore,
+        [
+          ...connection,
+          '--single-transaction',
+          '--exit-on-error',
+          '--no-owner',
+          '--no-privileges',
+          archive,
+        ],
+        { env, encoding: 'utf8', timeout: 30000 },
+      );
+      expect(restored.status, restored.stderr).toBe(0);
+      const targetInventory = await arrayCatalogInventory();
+      for (const name of ['populated', 'empty'])
+        expect(
+          targetInventory.raw
+            .find((table) => table.name === name)
+            ?.columns.find((column) => column.name === 'integer_values')?.dimensions,
+        ).toBe(1);
+      expect(
+        compareDatabaseManifests({ source: source.inventory, restored: targetInventory.inventory })
+          .kind,
+      ).toBe('equal');
+      expect(
+        targetInventory.inventory.tables.find((table) => table.name === 'populated')?.rows,
+      ).toBe('3');
+      for (const value of [
+        `{${arrayQuote(longArrayText)},NULL,"NULL",""}`,
+        arrayMatrix.replace('[0:1][-2:-1]', '[1:2][1:2]'),
+        `[0:1][-2:-1]={{NULL,${arrayQuote(longArrayText)}},{"NULL",""}}`,
+        arrayMatrix.replace('检查', '改变'),
+        arrayMatrix.replace(',NULL', ',"NULL"'),
+        '{}',
+        null,
+      ]) {
+        await client.unsafe(
+          `UPDATE ${arrayRelation('populated')} SET text_values=$1::text[] WHERE matrix_values IS NOT NULL`,
+          [value],
+        );
+        const changed = await arrayCatalogInventory();
+        expect(changed.inventory.tables.find((table) => table.name === 'populated')?.rows).toBe(
+          '3',
+        );
+        expect(
+          compareDatabaseManifests({ source: source.inventory, restored: changed.inventory }).kind,
+        ).toBe('different');
+      }
+      await client.unsafe(
+        `UPDATE ${arrayRelation('populated')} SET text_values=$1::text[] WHERE matrix_values IS NOT NULL`,
+        [arrayMatrix],
+      );
+      expect(
+        compareDatabaseManifests({
+          source: source.inventory,
+          restored: (await arrayCatalogInventory()).inventory,
+        }).kind,
+      ).toBe('equal');
+      await expect(client.unsafe(`SELECT ''::${arrayRelation('checked_text')}`)).rejects.toThrow(
+        /check constraint/,
+      );
+      await expect(client.unsafe(`SELECT '{a,b}'::${arrayRelation('matrix')}`)).rejects.toThrow(
+        /check constraint/,
+      );
+      await client.unsafe(`ALTER DOMAIN ${arrayRelation('checked_text')} DROP NOT NULL`);
+      expect(
+        compareDatabaseManifests({
+          source: source.inventory,
+          restored: (await arrayCatalogInventory()).inventory,
+        }).kind,
+      ).toBe('different');
+      await client.unsafe(`ALTER DOMAIN ${arrayRelation('checked_text')} SET NOT NULL`);
+      expect(
+        compareDatabaseManifests({
+          source: source.inventory,
+          restored: (await arrayCatalogInventory()).inventory,
+        }).kind,
+      ).toBe('equal');
+      await client.unsafe(
+        `ALTER TABLE ${arrayRelation('parent')} ALTER COLUMN integer_values TYPE bigint[] USING integer_values::bigint[]`,
+      );
+      expect(
+        compareDatabaseManifests({
+          source: source.inventory,
+          restored: (await arrayCatalogInventory()).inventory,
+        }).kind,
+      ).toBe('different');
+    } finally {
+      await client.unsafe(`DROP SCHEMA IF EXISTS ${quoteIdentifier(arraySchema)} CASCADE`);
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 120000);
 });

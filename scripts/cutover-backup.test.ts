@@ -13,6 +13,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import { stableStringify } from '@/core/migration/canonical';
 import { classifyMigrationCapture } from '@/core/migration/classify';
 import {
   CONTENT_ALGORITHM,
@@ -28,6 +29,7 @@ import { emptyCapture } from '@/core/migration/test-fixtures';
 import {
   artifactIdentity,
   buildManifest,
+  canonicalTableMetadata,
   compareDatabaseManifests,
   createTableDigest,
   finalizeRestoreEvidence,
@@ -574,6 +576,308 @@ describe('full logical parity boundaries', () => {
       ).toThrow();
     },
   );
+});
+
+function arrayCatalogFixture(shape: string): TableMetadata {
+  const labels: string[] = [];
+  const builtin = (oid: string, name: string, category: string) => ({
+    oid,
+    schema: 'pg_catalog',
+    name,
+    kind: 'b',
+    category,
+    base: '0',
+    element: '0',
+    modifier: -1,
+    not_null: false,
+    extension: null,
+    labels,
+    output: { schema: 'pg_catalog', name: `${name}out` },
+  });
+  const integer = {
+    ...builtin('23', 'int4', 'N'),
+    output: { schema: 'pg_catalog', name: 'int4out' },
+  };
+  const text = { ...builtin('25', 'text', 'S'), output: { schema: 'pg_catalog', name: 'textout' } };
+  const enumeration = {
+    ...text,
+    oid: '16384',
+    schema: 'restore_fixture',
+    name: 'phase',
+    kind: 'e',
+    category: 'E',
+    labels: ['created', '检查', 'completed'],
+    output: { schema: 'pg_catalog', name: 'enum_out' },
+  };
+  const array = (base: typeof text, oid: string, name: string) => ({
+    ...base,
+    oid,
+    name,
+    kind: 'b',
+    category: 'A',
+    base: '0',
+    element: base.oid,
+    labels: [],
+    output: { schema: 'pg_catalog', name: 'array_out' },
+  });
+  const domain = (base: typeof text, oid: string, name: string) => ({
+    ...base,
+    oid,
+    schema: 'restore_fixture',
+    name,
+    kind: 'd',
+    base: base.oid,
+    element: '0',
+    not_null: true,
+    labels: [],
+  });
+  const base = shape === 'integer' ? integer : shape === 'enum' ? enumeration : text;
+  const baseArray = array(
+    base,
+    shape === 'integer' ? '1007' : shape === 'enum' ? '16390' : '1009',
+    shape === 'integer' ? '_int4' : shape === 'enum' ? '_phase' : '_text',
+  );
+  const scalarDomain = domain(text, '16385', 'checked_text');
+  const domainArray = array(scalarDomain, '16386', '_checked_text');
+  const arrayDomain = domain(baseArray, '16387', 'text_matrix');
+  const nestedArray = array(arrayDomain, '16388', '_text_matrix');
+  const outerDomain = domain(nestedArray, '16389', 'matrices');
+  const root =
+    shape === 'domain over array'
+      ? arrayDomain
+      : shape === 'array of domain'
+        ? domainArray
+        : shape === 'nested'
+          ? outerDomain
+          : baseArray;
+  const chain = resolveTypeChain(root.oid, [
+    integer,
+    text,
+    enumeration,
+    baseArray,
+    scalarDomain,
+    domainArray,
+    arrayDomain,
+    nestedArray,
+    outerDomain,
+  ]);
+  return {
+    ...tableFixture(),
+    columns: [
+      {
+        ...tableFixture().columns[0],
+        type: { schema: root.schema, name: root.name },
+        type_chain: chain,
+      },
+    ],
+  };
+}
+function arrayValueDigest(table: TableMetadata, values: Array<string | null>) {
+  const digest = createTableDigest(table);
+  const rows = values
+    .map((value) =>
+      createHash('sha256')
+        .update(`[${JSON.stringify(value)}]`)
+        .digest('hex'),
+    )
+    .sort();
+  for (const row of rows) digest.update(`${row}\n`);
+  return digest.finish();
+}
+function arrayInventory(table: TableMetadata, values: Array<string | null>): DatabaseManifest {
+  return { ...inventoryFixture(), tables: [{ ...table, ...arrayValueDigest(table, values) }] };
+}
+const unicodeArrayElement = '检查🦆\\"\n'.repeat(3000);
+const quotedArrayElement = (value: string) =>
+  `"${value.replaceAll('\\', '\\\\').replaceAll('"', '\\"')}"`;
+const matrixValue = `[0:1][-2:-1]={{${quotedArrayElement(unicodeArrayElement)},NULL},{"NULL",""}}`;
+
+describe('v2 canonical array catalog and unchanged row bytes', () => {
+  it.each(['integer', 'text', 'enum', 'domain over array', 'array of domain', 'nested'])(
+    '%s ignores declaration dimension counts only after validating the actual catalog type chain',
+    (shape) => {
+      const source = arrayCatalogFixture(shape),
+        restored = structuredClone(source);
+      restored.columns[0].dimensions = 1;
+      const values =
+        shape === 'integer'
+          ? ['[0:1][-2:-1]={{1,NULL},{3,4}}', null, '{}']
+          : shape === 'enum'
+            ? ['[0:1][-2:-1]={{created,NULL},{检查,completed}}']
+            : shape === 'array of domain' || shape === 'domain over array'
+              ? [matrixValue.replace(',NULL', ',"present"')]
+              : shape === 'nested'
+                ? ['{"[0:1][-2:-1]={{a,b},{c,d}}"}']
+                : [matrixValue, null, '{}', '{"NULL"}'];
+      for (const declared of [0, 1, 2, 6]) {
+        restored.columns[0].dimensions = declared;
+        expect(canonicalTableMetadata(restored).columns[0].dimensions).toBe(0);
+        for (const rows of [[], values]) {
+          expect(arrayValueDigest(restored, rows)).toEqual(arrayValueDigest(source, rows));
+          expect(
+            compareDatabaseManifests({
+              source: arrayInventory(source, rows),
+              restored: arrayInventory(restored, rows),
+            }).kind,
+          ).toBe('equal');
+        }
+      }
+      expect(source.columns[0].dimensions).toBe(0);
+      expect(restored.columns[0].dimensions).toBe(6);
+      expect(canonicalTableMetadata(restored).columns[0].type_chain).toEqual(
+        source.columns[0].type_chain,
+      );
+      expect(tableContentSql(restored)).toContain('"checkpoint"::text');
+    },
+  );
+  it.each([
+    'dimensions',
+    'bounds',
+    'order',
+    'content',
+    'null element',
+    'null array',
+    'empty array',
+  ])('rejects changed actual value %s at the same row count', (change) => {
+    const source = arrayCatalogFixture('text');
+    const modified =
+      change === 'dimensions'
+        ? `{${quotedArrayElement(unicodeArrayElement)},NULL,"NULL",""}`
+        : change === 'bounds'
+          ? matrixValue.replace('[0:1][-2:-1]', '[1:2][1:2]')
+          : change === 'order'
+            ? `[0:1][-2:-1]={{NULL,${quotedArrayElement(unicodeArrayElement)}},{"NULL",""}}`
+            : change === 'content'
+              ? matrixValue.replace('检查', '改变')
+              : change === 'null element'
+                ? matrixValue.replace(',NULL', ',"NULL"')
+                : change === 'null array'
+                  ? null
+                  : '{}';
+    const before = arrayInventory(source, [matrixValue]),
+      after = arrayInventory(source, [modified]);
+    expect(after.tables[0].rows).toBe(before.tables[0].rows);
+    expect(after.tables[0].sha256).not.toBe(before.tables[0].sha256);
+    expect(compareDatabaseManifests({ source: before, restored: after }).kind).toBe('different');
+  });
+  it.each([
+    'element type',
+    'domain identity',
+    'domain not null',
+    'domain modifier',
+    'domain removal',
+    'enum labels',
+    'column modifier',
+    'collation',
+  ])('rejects %s changes even with identical row text', (change) => {
+    const source = arrayCatalogFixture(change === 'enum labels' ? 'enum' : 'domain over array');
+    const restored = structuredClone(source);
+    if (change === 'element type')
+      restored.columns[0].type_chain[2] = arrayCatalogFixture('integer').columns[0].type_chain[1];
+    if (change === 'domain identity') {
+      restored.columns[0].type.name = 'other_matrix';
+      restored.columns[0].type_chain[0].name = 'other_matrix';
+    }
+    if (change === 'domain not null') restored.columns[0].type_chain[0].domain_not_null = false;
+    if (change === 'domain modifier') restored.columns[0].type_chain[0].modifier = 64;
+    if (change === 'domain removal') {
+      restored.columns[0].type_chain.shift();
+      restored.columns[0].type = {
+        schema: restored.columns[0].type_chain[0].schema,
+        name: restored.columns[0].type_chain[0].name,
+      };
+    }
+    if (change === 'enum labels') restored.columns[0].type_chain[1].enum_labels.reverse();
+    if (change === 'column modifier') restored.columns[0].modifier = 64;
+    if (change === 'collation') restored.columns[0].collation = null;
+    expect(arrayValueDigest(restored, [])).not.toEqual(arrayValueDigest(source, []));
+    expect(
+      compareDatabaseManifests({
+        source: arrayInventory(source, []),
+        restored: arrayInventory(restored, []),
+      }).kind,
+    ).toBe('different');
+  });
+  it.each(['dimensions', 'modifier', 'collation', 'type'])(
+    'preserves scalar metadata %s in both comparison and digest',
+    (change) => {
+      const source = tableFixture(),
+        restored = structuredClone(source);
+      if (change === 'dimensions') restored.columns[0].dimensions = 1;
+      if (change === 'modifier') restored.columns[0].modifier = 64;
+      if (change === 'collation') restored.columns[0].collation = null;
+      if (change === 'type') {
+        restored.columns[0].type = { schema: 'pg_catalog', name: 'varchar' };
+        restored.columns[0].type_chain[0].name = 'varchar';
+      }
+      expect(arrayValueDigest(restored, [])).not.toEqual(arrayValueDigest(source, []));
+      expect(
+        compareDatabaseManifests({
+          source: arrayInventory(source, []),
+          restored: arrayInventory(restored, []),
+        }).kind,
+      ).toBe('different');
+    },
+  );
+  it.each(['mismatched root', 'incomplete', 'scalar prefix', 'recursive'])(
+    'refuses a malformed %s chain before discarding declaration metadata',
+    (change) => {
+      const table = arrayCatalogFixture('text');
+      if (change === 'mismatched root')
+        table.columns[0].type = { schema: 'pg_catalog', name: 'text' };
+      if (change === 'incomplete') table.columns[0].type_chain.pop();
+      if (change === 'scalar prefix') {
+        table.columns[0].type_chain.unshift(tableFixture().columns[0].type_chain[0]);
+        table.columns[0].type = { schema: 'pg_catalog', name: 'text' };
+      }
+      if (change === 'recursive')
+        table.columns[0].type_chain.splice(1, 0, table.columns[0].type_chain[0]);
+      expect(() => createTableDigest(table)).toThrow();
+      expect(() =>
+        parseDatabaseManifest({
+          ...inventoryFixture(),
+          tables: [{ ...table, rows: '0', sha256: HASH }],
+        }),
+      ).toThrow();
+    },
+  );
+  it('rejects v1 inventories, cross-algorithm comparisons and versioned receipts without reinterpreting them', () => {
+    const oldAlgorithm = 'pg16-column-text-sha256-multiset-v1';
+    const table = tableFixture();
+    const oldHash = createHash('sha256')
+      .update(`${oldAlgorithm}\n${stableStringify(table.columns)}\n`)
+      .digest('hex');
+    expect(createTableDigest(table).finish().sha256).not.toBe(oldHash);
+    const oldInventory = inventoryFixture();
+    Object.assign(oldInventory, { algorithm: oldAlgorithm });
+    expect(() => parseDatabaseManifest(oldInventory)).toThrow(/unsupported content algorithm/);
+    expect(() =>
+      compareDatabaseManifests({ source: oldInventory, restored: inventoryFixture() }),
+    ).toThrow();
+    const dir = mkdtempSync(join(TMP, 'v1-'));
+    const source = sourceFixture(dir),
+      path = join(dir, 'source.json');
+    writeFileSync(path, JSON.stringify(source));
+    const receipt = receiptFixture(source, path);
+    expect(() => parseSourceManifest({ ...source, inventory: oldInventory })).toThrow(
+      /unsupported content algorithm/,
+    );
+    for (const field of ['source', 'restored', 'both']) {
+      const oldReceipt = {
+        ...receipt,
+        source: field === 'restored' ? source : { ...source, inventory: oldInventory },
+        restored: field === 'source' ? receipt.restored : oldInventory,
+      };
+      const before = JSON.stringify(oldReceipt);
+      expect(() => parseRestoreReceipt(oldReceipt)).toThrow(/unsupported content algorithm/);
+      expect(JSON.stringify(oldReceipt)).toBe(before);
+    }
+    expect(parseRestoreReceipt({ verified: true })).toMatchObject({
+      verified: false,
+      reported_verified: true,
+      kind: 'legacy-limited',
+    });
+  });
 });
 
 describe('artifact and receipt consumer', () => {

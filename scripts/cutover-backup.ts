@@ -552,16 +552,18 @@ export function parseDatabaseManifest(value: unknown): DatabaseManifest {
     if (table.kind === 'f' || table.persistence === 't') throw new Error('unsupported relation');
     if (table.kind === 'p' && table.rows !== '0')
       throw new Error('partition parent has local rows');
-    for (const column of table.columns) {
-      validateTypeChain(column.type_chain);
-      if (relationKey(column.type) !== relationKey(column.type_chain[0]))
-        throw new Error('column type chain mismatch');
-    }
     for (const parent of table.parents)
       if (!m.tables.some((t) => relationKey(t) === relationKey(parent)))
         throw new Error('missing parent relation');
   }
-  return m;
+  return {
+    ...m,
+    tables: m.tables.map(({ rows, sha256, ...table }) => ({
+      ...canonicalTableMetadata(table),
+      rows,
+      sha256,
+    })),
+  };
 }
 export function parseSourceManifest(value: unknown): SourceManifest {
   const source = sourceManifestSchema.parse(value);
@@ -896,6 +898,9 @@ const BUILTIN_OUTPUTS: Record<string, string> = {
 const BUILTIN_TYPES = new Set(Object.keys(BUILTIN_OUTPUTS));
 
 function validateTypeChain(chain: TableMetadata['columns'][number]['type_chain']): void {
+  uniqueSet(chain, relationKey);
+  if (chain.slice(0, -1).some((type) => type.kind !== 'domain' && type.kind !== 'array'))
+    throw new Error('invalid value type chain');
   for (const type of chain) {
     if (type.kind === 'builtin' && (type.schema !== 'pg_catalog' || !BUILTIN_TYPES.has(type.name)))
       throw new Error('unsupported value type');
@@ -910,6 +915,23 @@ function validateTypeChain(chain: TableMetadata['columns'][number]['type_chain']
   if (!terminal || terminal.kind === 'domain' || terminal.kind === 'array')
     throw new Error('incomplete value type chain');
 }
+export function canonicalTableMetadata(value: TableMetadata): TableMetadata {
+  const table = tableMetadataSchema.parse(value);
+  return {
+    ...table,
+    columns: table.columns.map((column) => {
+      validateTypeChain(column.type_chain);
+      if (relationKey(column.type) !== relationKey(column.type_chain[0]))
+        throw new Error('column type chain mismatch');
+      // PG16 attndims describes declaration syntax, not the stored array value.
+      // Domains can wrap arrays; array elements can themselves be domains.
+      return {
+        ...column,
+        dimensions: column.type_chain.some((type) => type.kind === 'array') ? 0 : column.dimensions,
+      };
+    }),
+  };
+}
 export function tableContentSql(table: TableMetadata): string {
   if (table.kind === 'f') throw new Error('foreign table not in pg_dump');
   const row = `json_build_array(${table.columns.map((c) => `${quoteIdentifier(c.name)}::text`).join(',')})::text`;
@@ -917,7 +939,7 @@ export function tableContentSql(table: TableMetadata): string {
 }
 export function createTableDigest(table: TableMetadata) {
   const hash = createHash('sha256').update(
-    `${CONTENT_ALGORITHM}\n${stableStringify(table.columns)}\n`,
+    `${CONTENT_ALGORITHM}\n${stableStringify(canonicalTableMetadata(table).columns)}\n`,
   );
   let rows = 0n,
     pending = '',
@@ -1131,7 +1153,7 @@ export const IDENTITY_SQL = `SELECT json_build_object('cluster',(pg_control_syst
   'server_version',current_setting('server_version'),
   'server_started_at',to_char(pg_postmaster_start_time() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"'),
   'in_recovery',pg_is_in_recovery(), 'server_address',inet_server_addr()::text,'server_port',inet_server_port());`;
-const TYPES_SQL = `SELECT coalesce(json_agg(json_build_object('oid',t.oid::text,'schema',n.nspname,'name',t.typname,
+export const TYPES_SQL = `SELECT coalesce(json_agg(json_build_object('oid',t.oid::text,'schema',n.nspname,'name',t.typname,
   'kind',t.typtype,'category',t.typcategory,'base',t.typbasetype::text,'element',t.typelem::text,
   'modifier',t.typtypmod,'not_null',t.typnotnull,
   'extension',(SELECT e.extname FROM pg_depend d JOIN pg_extension e ON e.oid=d.refobjid WHERE d.classid='pg_type'::regclass AND d.objid=t.oid AND d.deptype='e' LIMIT 1),
@@ -1331,7 +1353,7 @@ export async function inspectDatabase(options: {
         `${qualified(entry)}: foreign, temporary or unpopulated materialized relation`,
       );
     const { populated: _populated, ...entryMetadata } = entry;
-    const table = tableMetadataSchema.parse({
+    const table = canonicalTableMetadata({
       ...entryMetadata,
       columns: entry.columns.map((c) => {
         const { type_oid, ...metadata } = c;

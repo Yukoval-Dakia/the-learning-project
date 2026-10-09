@@ -2,14 +2,40 @@ import { describe, expect, it } from 'vitest';
 
 import { classifyMigrationCapture } from './classify';
 import {
+  CONTENT_ALGORITHM,
   SECTION14_COVERAGE,
   buildCutoverBackupManifest,
+  databaseManifestSchema,
   quiescenceEvidenceSchema,
 } from './cutover-manifest';
 import { DLQ_DISPOSITIONS, dlqCensusTotal } from './dispositions';
 import { type ManifestOptions, buildMigrationManifest } from './manifest';
 import { emptyCapture, ev, withEvents } from './test-fixtures';
 import type { MigrationManifest } from './types';
+
+describe('content algorithm compatibility', () => {
+  const inventory = {
+    algorithm: CONTENT_ALGORITHM,
+    encoding: 'UTF8',
+    server_version: '16.14',
+    extensions: [],
+    schemas: [],
+    tables: [],
+    sequences: [],
+  };
+  it('uses v2 digest semantics within the existing manifest envelope', () => {
+    expect(CONTENT_ALGORITHM).toBe('pg16-column-text-sha256-multiset-v2');
+    expect(databaseManifestSchema.parse(inventory).algorithm).toBe(CONTENT_ALGORITHM);
+  });
+  it.each(['pg16-column-text-sha256-multiset-v1', 'future', undefined])(
+    'explicitly rejects unsupported algorithm %s',
+    (algorithm) => {
+      expect(() => databaseManifestSchema.parse({ ...inventory, algorithm })).toThrow(
+        /unsupported content algorithm/,
+      );
+    },
+  );
+});
 
 describe('versioned maintenance execution evidence', () => {
   const identity = {
