@@ -12,8 +12,16 @@ import { evaluateSubmission } from '@/capabilities/practice/server/judge/evaluat
 import { disposeJudgeRun } from '@/capabilities/practice/server/judge-operational';
 import { readJudgeRunPermanent } from '@/capabilities/practice/server/judge-run-observation';
 import { canonicalHash } from '@/core/migration/canonical';
+import { ModelUnitOutcome } from '@/core/schema/assessment';
 import type { JudgeWorkflowInputT } from '@/core/schema/event/judge-operational-events';
-import { ai_task_runs, evaluation, event, job_events, material_fsrs_state } from '@/db/schema';
+import {
+  ai_task_runs,
+  evaluation,
+  evaluation_effective_head,
+  event,
+  job_events,
+  material_fsrs_state,
+} from '@/db/schema';
 import { sanitizeDiagnostic } from '../dbos-review-orphan/fixture-process';
 import { resetDb, testDb } from '../helpers/db';
 import { dispatchFrozenJudge, judgeEvidence, resetJudgeControl } from './support';
@@ -32,7 +40,7 @@ const logs: {
 }[] = [];
 const evidence: unknown[] = [];
 let wireUrl: string;
-const wire: { unit: string; bodyDigest: string; at: string }[] = [];
+const wire: { unit: string; bodyDigest: string; at: string; body: unknown }[] = [];
 const transport: {
   route: 'chat-completions' | 'responses' | 'other';
   method: string;
@@ -42,6 +50,40 @@ const transport: {
 }[] = [];
 let holdUnit: string | undefined;
 const releases = new Set<() => void>();
+type ResponseMode = 'valid' | 'partial-break' | 'malformed-assessment';
+let failureMode: Exclude<ResponseMode, 'valid'> | undefined;
+const failureModes: Exclude<ResponseMode, 'valid'>[] = ['partial-break', 'malformed-assessment'];
+const transportBreaks = new Set<() => void>();
+function controlledCompletion(unit: string, slot: string, mode: ResponseMode) {
+  const answer = {
+    kind: 'rule',
+    rule_id: unit,
+    points_awarded:
+      mode === 'malformed-assessment'
+        ? 'two'
+        : ['equations', 'elimination', 'units'].indexOf(unit) + 1,
+    confidence: 0.98,
+    feedback_md: '真实原始证据包含方程、消元与单位。',
+    evidence_citations: [{ slot_id: slot, quote: '2v=30' }],
+  };
+  const content =
+    mode === 'partial-break' ? JSON.stringify(answer).slice(0, 60) : JSON.stringify(answer);
+  const frame = (choices: unknown[], usage?: unknown) =>
+    `data: ${JSON.stringify({ id: 'controlled-wire', object: 'chat.completion.chunk', created: 1, model: 'gpt-4.1-mini', choices, ...(usage ? { usage } : {}) })}\n\n`;
+  const frames = [
+    frame([{ index: 0, delta: { role: 'assistant', content }, finish_reason: null }]),
+  ];
+  if (mode !== 'partial-break')
+    frames.push(
+      frame([{ index: 0, delta: {}, finish_reason: 'stop' }], {
+        prompt_tokens: 10,
+        completion_tokens: 10,
+        total_tokens: 20,
+      }),
+      'data: [DONE]\n\n',
+    );
+  return { content, frames };
+}
 const server = createServer(async (req, res) => {
   const request: (typeof transport)[number] = {
     route:
@@ -80,24 +122,23 @@ const server = createServer(async (req, res) => {
     if (!unit) throw new Error('Controlled wire cannot locate frozen rule');
     const slot = [...text.matchAll(/"slot_id"\s*:\s*"([^"]+)"/g)].map((m) => m[1]).at(-1);
     if (!slot) throw new Error('Controlled wire cannot locate original response slot');
-    wire.push({ unit, bodyDigest: canonicalHash(JSON.parse(body)), at: new Date().toISOString() });
+    wire.push({
+      unit,
+      bodyDigest: canonicalHash(JSON.parse(body)),
+      body: JSON.parse(body),
+      at: new Date().toISOString(),
+    });
     if (holdUnit === unit) await new Promise<void>((resolve) => releases.add(resolve));
-    const answer = {
-      kind: 'rule',
-      rule_id: unit,
-      points_awarded: ['equations', 'elimination', 'units'].indexOf(unit) + 1,
-      confidence: 0.98,
-      feedback_md: '真实原始证据包含方程、消元与单位。',
-      evidence_citations: [{ slot_id: slot, quote: '2v=30' }],
-    };
-    res.writeHead(200, { 'content-type': 'text/event-stream' });
-    res.write(
-      `data: ${JSON.stringify({ id: 'controlled-wire', object: 'chat.completion.chunk', created: 1, model: 'gpt-4.1-mini', choices: [{ index: 0, delta: { role: 'assistant', content: JSON.stringify(answer) }, finish_reason: null }] })}\n\n`,
-    );
-    res.write(
-      `data: ${JSON.stringify({ id: 'controlled-wire', object: 'chat.completion.chunk', created: 1, model: 'gpt-4.1-mini', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage: { prompt_tokens: 10, completion_tokens: 10, total_tokens: 20 } })}\n\n`,
-    );
-    res.end('data: [DONE]\n\n');
+    const mode = unit === 'elimination' ? (failureMode ?? 'valid') : 'valid';
+    const completion = controlledCompletion(unit, slot, mode);
+    res.writeHead(200, { 'content-type': 'text/event-stream', 'x-controlled-mode': mode });
+    if (mode === 'partial-break') {
+      // The test waits for the child to read this frame before breaking this owned socket.
+      const breakTransport = () => res.destroy();
+      transportBreaks.add(breakTransport);
+      res.once('close', () => transportBreaks.delete(breakTransport));
+      res.write(completion.frames[0]);
+    } else res.end(completion.frames.join(''));
   } catch (error) {
     request.error = sanitizeDiagnostic(String(error), ['controlled-local-fixture']).slice(0, 2048);
     res.writeHead(500, { 'content-type': 'application/json' });
@@ -110,6 +151,7 @@ function worker(
     pause?: string;
     unit?: string;
     recover?: boolean;
+    observeTransport?: boolean;
     reconcile?: { scheduledAt: Date; authorizationAt: Date };
   } = {},
 ) {
@@ -125,6 +167,7 @@ function worker(
       TLP_JUDGE_PAUSE_AT: options.pause,
       TLP_JUDGE_PAUSE_UNIT: options.unit,
       TLP_JUDGE_RECOVER: options.recover ? '1' : '0',
+      TLP_JUDGE_OBSERVE_TRANSPORT: options.observeTransport ? '1' : '0',
       TLP_JUDGE_RECONCILE: options.reconcile ? JSON.stringify(options.reconcile) : undefined,
       AI_PROVIDER_OVERRIDE: 'openai',
       AI_PROVIDER_MODEL: 'gpt-4.1-mini',
@@ -133,7 +176,7 @@ function worker(
     },
   });
   children.add(child);
-  const exited = once(child, 'exit'),
+  const exited = once(child, 'close'),
     messages: z.infer<typeof ipc>[] = [];
   const log: (typeof logs)[number] = { pid: child.pid, stdout: '', stderr: '', messages: [] };
   logs.push(log);
@@ -145,6 +188,8 @@ function worker(
   });
   child.on('exit', (code, signal) => {
     log.exit = { code, signal };
+  });
+  child.on('close', () => {
     children.delete(child);
   });
   const wait = async (kind: string) => {
@@ -168,6 +213,7 @@ function worker(
   return {
     child,
     wait,
+    closed: () => exited,
     kill: async () => {
       child.kill('SIGKILL');
       expect(await exited).toEqual([null, 'SIGKILL']);
@@ -217,6 +263,7 @@ async function capture(runId: string, label: string) {
           : sanitizeDiagnostic(run.error_message, ['controlled-local-fixture']).slice(0, 4096),
     })),
     candidates: await testDb().select().from(evaluation),
+    heads: await testDb().select().from(evaluation_effective_head),
     settlements: await testDb().select().from(material_fsrs_state),
     permanent: await readJudgeRunPermanent(testDb(), runId),
   });
@@ -257,13 +304,16 @@ beforeEach(async () => {
   wire.length = 0;
   transport.length = 0;
   holdUnit = undefined;
+  failureMode = undefined;
 });
 afterAll(async () => {
   for (const child of children) {
-    child.kill('SIGKILL');
-    await once(child, 'exit');
+    const closed = once(child, 'close');
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await closed;
   }
   for (const release of releases) release();
+  for (const breakTransport of transportBreaks) breakTransport();
   server.closeAllConnections();
   await new Promise<void>((resolve) => server.close(() => resolve()));
   const paths = [
@@ -368,6 +418,228 @@ it('saved first, second wire unknown, third unclaimed survives SIGKILL and actua
   );
   expect(savedAfterReopen).toEqual(expect.arrayContaining(savedBeforeKill));
 }, 90000);
+it.each(failureModes)(
+  'controlled transport failure %s preserves first score and held second across SIGKILL/reopen without retry',
+  async (mode) => {
+    const f = await accepted();
+    failureMode = mode;
+    const first = worker(f.input, {
+      pause: 'result-committed',
+      unit: 'elimination',
+      observeTransport: true,
+    });
+    let second: ReturnType<typeof worker> | undefined;
+    try {
+      await first.wait('ready');
+      const slot = f.request.response_set.entries[0]?.slot_id;
+      if (!slot) throw new Error('Controlled original slot missing');
+      const completion = controlledCompletion('elimination', slot, mode);
+      const response = await first.wait(
+        mode === 'partial-break' ? 'transport-partial' : 'transport-complete',
+      );
+      expect(response).toMatchObject({ mode, status: 200, body: completion.frames.join('') });
+      if (mode === 'partial-break') {
+        expect(transportBreaks.size).toBe(1);
+        for (const breakTransport of transportBreaks) breakTransport();
+        expect(await first.wait('transport-error')).toMatchObject({
+          mode,
+          body: completion.frames[0],
+          error: expect.stringContaining('terminated'),
+        });
+      }
+      await first.wait('boundary');
+      await capture(f.runId, `${mode}:held-result-before-kill`);
+      const before = await judgeEvidence(testDb(), f.runId);
+      const claims = before.filter((r) => r.action === 'experimental:assessment_model_claim');
+      const results = before.filter((r) => r.action === 'experimental:assessment_model_result');
+      expect(claims).toHaveLength(2);
+      expect(results).toHaveLength(2);
+      expect(wire.map((w) => w.unit)).toEqual(['equations', 'elimination']);
+      expect(transport).toHaveLength(2);
+      expect(transport.map((t) => [t.method, t.route, t.error])).toEqual([
+        ['POST', 'chat-completions', undefined],
+        ['POST', 'chat-completions', undefined],
+      ]);
+      const taskIds: string[] = [];
+      expect(f.contract.structure.materials).toMatchObject([
+        {
+          kind: 'plaintext',
+          visibility: 'private',
+          caption: 'reference solution',
+          content_md: 'v=15 km/h; c=3 km/h',
+        },
+      ]);
+      for (const [index, unit] of ['equations', 'elimination'].entries()) {
+        const scoringUnit = f.contract.scoring_basis.units[index];
+        const claim = claims.find(
+          (r) => r.payload.scoring_unit_id === scoringUnit?.scoring_unit_id,
+        );
+        if (!claim || !scoringUnit) throw new Error(`Missing permanent claim for ${unit}`);
+        const payload = z
+          .object({ planned_task_run_id: z.string(), submission_id: z.string() })
+          .parse(claim.payload);
+        taskIds.push(payload.planned_task_run_id);
+        expect(payload.planned_task_run_id).toBe(
+          claim.id.replace('evt_model_claim_', 'assessment_'),
+        );
+        expect(claim.payload.reserved_cost_usd_micros).toBe(1000);
+        const result = results.find((r) => r.caused_by_event_id === claim.id);
+        expect(result?.id).toBe(claim.id.replace('evt_model_claim_', 'evt_model_result_'));
+        expect(result?.payload.input_digest).toBe(claim.payload.input_digest);
+        const outcome = ModelUnitOutcome.parse(result?.payload.outcome);
+        expect(outcome.run_refs).toEqual([payload.planned_task_run_id]);
+        expect(outcome).toMatchObject(
+          index === 0
+            ? { kind: 'scored', points_awarded: 1, matched: { rule_id: unit } }
+            : {
+                kind: 'pending',
+                pending: {
+                  reason: 'infra_failure',
+                  retryable: false,
+                  detail: 'native model asset, execution or output validation failed',
+                },
+              },
+        );
+        const request = z
+          .object({
+            model: z.literal('gpt-4.1-mini'),
+            stream: z.literal(true),
+            messages: z.array(
+              z.object({
+                role: z.string(),
+                content: z.union([
+                  z.string(),
+                  z.array(z.object({ type: z.literal('text'), text: z.string() })),
+                ]),
+              }),
+            ),
+          })
+          .parse(wire[index]?.body);
+        const user = request.messages.findLast((m) => m.role === 'user');
+        if (!user) throw new Error('Actual endpoint request has no user message');
+        const text =
+          typeof user.content === 'string'
+            ? user.content
+            : user.content.map((b) => b.text).join('\n');
+        expect(JSON.parse(text)).toMatchObject({
+          submission_id: payload.submission_id,
+          evaluation_group_id: f.request.evaluation_group_id,
+          scoring_unit: scoringUnit,
+          question_parts: f.contract.structure.parts,
+          response_slots: f.contract.response_spec.slots,
+          slot_responses: f.request.response_set.entries,
+          group_evidence: [],
+          materials: f.contract.structure.materials,
+        });
+        expect(wire[index]?.bodyDigest).toBe(canonicalHash(wire[index]?.body));
+        expect(transport[index]?.bodyDigest).toBe(wire[index]?.bodyDigest);
+      }
+      const tasksBefore = await testDb()
+        .select()
+        .from(ai_task_runs)
+        .where(inArray(ai_task_runs.id, taskIds))
+        .orderBy(ai_task_runs.id);
+      expect(tasksBefore).toHaveLength(2);
+      expect(await testDb().select({ id: ai_task_runs.id }).from(ai_task_runs)).toHaveLength(2);
+      expect(tasksBefore.find((r) => r.id === taskIds[0])).toMatchObject({
+        status: 'success',
+        finish_reason: 'end_turn',
+        error_message: null,
+      });
+      expect(tasksBefore.find((r) => r.id === taskIds[1])).toMatchObject(
+        mode === 'partial-break'
+          ? {
+              status: 'failure',
+              finish_reason: 'error',
+              error_message: expect.stringMatching(/subtype=error_during_execution.*terminated/),
+            }
+          : { status: 'success', finish_reason: 'end_turn', error_message: null },
+      );
+      expect(await testDb().select().from(evaluation)).toHaveLength(0);
+      const headsBefore = await testDb().select().from(evaluation_effective_head);
+      expect(headsBefore).toMatchObject([
+        {
+          evaluation_group_id: f.request.evaluation_group_id,
+          effective_evaluation_id: null,
+          generation: 0,
+        },
+      ]);
+      expect((await readJudgeRunPermanent(testDb(), f.runId)).kind).toBe('pending');
+      await first.kill();
+      second = worker(f.input, { recover: true });
+      await second.wait('ready');
+      expect((await second.wait('done')).status).toMatchObject({ status: 'SUCCESS' });
+      await second.stop();
+      await capture(f.runId, `${mode}:after-reopen`);
+      const after = await judgeEvidence(testDb(), f.runId);
+      expect(after.filter((r) => r.action === 'experimental:assessment_model_claim')).toEqual(
+        claims,
+      );
+      expect(after.filter((r) => r.action === 'experimental:assessment_model_result')).toEqual(
+        results,
+      );
+      expect(
+        await testDb()
+          .select()
+          .from(ai_task_runs)
+          .where(inArray(ai_task_runs.id, taskIds))
+          .orderBy(ai_task_runs.id),
+      ).toEqual(tasksBefore);
+      expect(wire.map((w) => w.unit)).toEqual(['equations', 'elimination']);
+      expect(transport).toHaveLength(2);
+      expect(await testDb().select({ id: ai_task_runs.id }).from(ai_task_runs)).toHaveLength(2);
+      const candidates = await testDb().select().from(evaluation);
+      expect(candidates).toHaveLength(1);
+      expect(candidates[0]?.unit_results.map((r) => r.scoring_unit_id)).toEqual(
+        f.contract.scoring_basis.units.map((u) => u.scoring_unit_id),
+      );
+      expect(candidates[0]?.unit_results).toMatchObject([
+        { status: 'scored', points_awarded: 1 },
+        {
+          status: 'pending',
+          pending: { reason: 'infra_failure', retryable: false },
+        },
+        {
+          status: 'pending',
+          pending: {
+            reason: 'infra_failure',
+            retryable: false,
+            detail:
+              'a prior unit has an unknown or held result; further fresh claims are forbidden',
+          },
+        },
+      ]);
+      expect(await testDb().select().from(evaluation_effective_head)).toEqual(headsBefore);
+      expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
+      expect(await readJudgeRunPermanent(testDb(), f.runId)).toMatchObject({
+        kind: 'resolved',
+        result: {
+          status: 'review_required',
+          assessment: { candidate_id: candidates[0]?.evaluation_id },
+        },
+      });
+    } finally {
+      for (const breakTransport of transportBreaks) breakTransport();
+      for (const running of [first, second]) {
+        if (!running) continue;
+        if (running.child.exitCode === null && running.child.signalCode === null)
+          await running.kill();
+        else await running.closed();
+      }
+      const state = await readJudgeRunPermanent(testDb(), f.runId);
+      if (state.kind === 'pending' || (state.kind === 'unmapped' && state.pending)) {
+        await capture(f.runId, `${mode}:failure-before-disposal`);
+        await disposeJudgeRun(testDb(), f.runId, {
+          reason: 'explicit_disposal',
+          actorRef: 'test:controlled-transport-cleanup',
+          evidenceRefs: [f.input.pending_id],
+          evidenceDigest: canonicalHash({ mode, cleanup: true }),
+        });
+      }
+    }
+  },
+  90000,
+);
 it('binding crash plus an intervening unactivated candidate never reallocates max+1 or repurchases', async () => {
   const f = await accepted(),
     first = worker(f.input, { pause: 'native-load-committed' });

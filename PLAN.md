@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：judge PR1625已push a336ab630并watch。Hono实测通过、无runtime遗留；原429离线核查无恢复时间。唯一测试writer补partial/malformed传输后恢复用例，父接实际验收；整迁移继续。
+> Linear 是权威 tracker。2026-10-09 JST：judge 新增2传输失败及整份14进程回归已实际通过，首轮fixture错误保留；04:57:28Z锁释放，原4/release不变。封存后接fresh main恢复helper，不等judge配额。
 
 ## NOW
 
@@ -16,7 +16,7 @@
 
 ## NEXT
 
-- YUK1356产品2db修复，父128 scoped DB、12实际SIGKILL/reopen与8旧producer/cutover通过。诊断writer已释放，父fixture修正不改产品；86migration与62既有consumer、最终static/build/audits/产物闭包通过，R2已NONE；真实provider首请求429、wire1且无重试。父已完成受控Hono/SSE及真实epoch验收；现唯一test writer仅补tests/dbos-judge的partial SSE/完整坏payload后reopen证据，禁runtime/provider，新两文件冷读修复不冒称旧R2覆盖，按[27项验收矩阵](docs/planning/2026-10-09-yuk1356-current-acceptance-matrix.md)保持全部退出义务。
+- YUK1356产品2db修复，父128 scoped DB、12实际SIGKILL/reopen与8旧producer/cutover通过。诊断writer已释放，父fixture修正不改产品；86migration与62既有consumer、最终static/build/audits/产物闭包通过，R2已NONE；真实provider首请求429、wire1且无重试。父已完成受控Hono/SSE及真实epoch验收；新test writer已释放，父实际partial SSE/完整坏payload后reopen及整份14进程回归通过，新两文件冷读修复不冒称旧R2覆盖，按[27项验收矩阵](docs/planning/2026-10-09-yuk1356-current-acceptance-matrix.md)保持全部退出义务。
 
 - 1355已交四个housekeeping族源码及隔离证据。下一idle族只读设计已交回，父核45源码+3报告；保留原userclock，5796已以13d317da8明确交接精确Copilot/session/practice写路径。未起idle writer或分配编号，judge交回后再核最终锁序。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。
 - 1358继续剩余路由/共享子树及三入口共用业务操作，保留现有确定性行为。1392公共board读取、1380事件读/纠错等已合接口由Start集成方接消费者，不复制领域规则。
@@ -50,6 +50,6 @@
 
 ## BLOCKED-ON
 
-- 1393/1394均已合入。judge当前唯一传输fixture writer和PR1625 CI由异步事件接续。原429没有可用reset时间，成功模型输出仍缺证据；可继续传输失败与恢复验收，不把整迁移挂blocked。
+- 1393/1394均已合入。judge传输fixture已完成实际验收；PR1625 CI由异步事件接续。原429没有可用reset时间，成功模型输出仍缺证据；可继续传输失败与恢复验收，不把整迁移挂blocked。
 - runtime测试/发布在执行前必须实际核锁并原子获取，核owner/token清理释放；其他线程持锁时只推不冲突的源码工作。历史锁记录不能代表当前ownership。
 - 部署用途保持Agent开发测试，禁止再次清库、恢复私人数据或盲重放队列；日用部署须owner明确要求“为我日常使用的部署”。旧运行验收限制和未完成产品能力保存在归档及各原票，未被本次整理核销。

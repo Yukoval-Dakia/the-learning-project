@@ -1,3 +1,9 @@
+# Judge controlled transport acceptance complete; seal then restore lane
+
+Test task completed/noPending. Parent verified exact31references/4919source-copy/884build/16logs and patch. First actual partial case failed only new materials=[] expectation; production freezes reference_md into private material. Parent test-only fix asserts frozen material and actual wire parity. Two new cases and full14 process cases now PASS; 4 pure unit/typecheck/lint also PASS. All failures retained. Lock4d1637a5 released04:57:28.629372Z, original4/running/release identical; no resources. Evidence parent-transport-failures.json(.gz).
+
+PR1625 stays draft/watch; actualprovider429 and full-valid-response-before-save crash remain open. NoR3. Parent next commit/push this tested slice and tracker, then freshfetch/sameboundtree newrestorebranch per0015authorization, nojudgeWIP. /notes Start belongs5796. Author pnpm12 bootstrap had real dependency check/esbuildpostinstall; exactlogs preserved, finalcached11 disablespre-runinstall. Parentfirstunitcommandfoundnofiles dueexistingpartition; scopedoverride4PASS. Do notclaim whollyoffline preparation.
+
 # Restore sequencing dependency removed; notes Start assigned separately
 
 Parent read5796 completed thread run471 and exact0015de13dc062e6badaa9cbf74e5dcc81ec9bae4. After current transport writer releases AND parent commits actualacceptance evidence, may switch sameboundtree freshorigin/main to existing4file restorehelper scope. No longerwaitjudge merge/quota. Keep1625draft/watch/realmodelgate, nojudgeWIPonmain, onecodewriter/noautomaticruntime. Scopeunchanged, detailsdbos-restore-evidence-gap. Startowner run472 explicitly takes/notes LIST ONLY usingexistingseam+schema/subject semantics; noournoteswriter.

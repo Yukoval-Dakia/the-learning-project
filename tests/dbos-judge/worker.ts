@@ -66,7 +66,8 @@ async function main() {
     }),
   );
   const fetch = globalThis.fetch;
-  globalThis.fetch = (resource, init) => {
+  const transportObservers = new Set<Promise<void>>();
+  globalThis.fetch = async (resource, init) => {
     const target = new URL(
       typeof resource === 'string'
         ? resource
@@ -75,7 +76,40 @@ async function main() {
           : resource.url,
     );
     if (target.origin !== wire.origin) throw new Error('Fixture blocked non-observer egress');
-    return fetch(resource, init);
+    const response = await fetch(resource, init);
+    const mode = response.headers.get('x-controlled-mode');
+    if (process.env.TLP_JUDGE_OBSERVE_TRANSPORT === '1' && mode && mode !== 'valid') {
+      // Observe a clone; the installed Pi driver consumes the original response unchanged.
+      const observation = (async () => {
+        let body = '';
+        try {
+          const reader = response.clone().body?.getReader();
+          if (!reader) throw new Error('Controlled response has no body');
+          const decoder = new TextDecoder();
+          let partialReported = false;
+          try {
+            for (;;) {
+              const chunk = await reader.read();
+              if (chunk.done) break;
+              body += decoder.decode(chunk.value, { stream: true });
+              if (mode === 'partial-break' && !partialReported && body.endsWith('\n\n')) {
+                partialReported = true;
+                report({ kind: 'transport-partial', mode, body, status: response.status });
+              }
+            }
+            body += decoder.decode();
+            report({ kind: 'transport-complete', mode, body, status: response.status });
+          } finally {
+            reader.releaseLock();
+          }
+        } catch (error) {
+          report({ kind: 'transport-error', mode, body, error: String(error) });
+        }
+      })();
+      transportObservers.add(observation);
+      void observation.finally(() => transportObservers.delete(observation));
+    }
+    return response;
   };
   // Pi 1.0 dispatches through the registered provider, not model.api alone.
   // Register the installed Completions transport for this loopback SSE fixture.
@@ -184,6 +218,7 @@ async function main() {
       await boss.stop();
     }
     await client.end();
+    await Promise.all(transportObservers);
     __setPiAdapterForTests(undefined);
   };
   process.on('message', (raw) => {

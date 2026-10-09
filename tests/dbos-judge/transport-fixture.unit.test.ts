@@ -6,6 +6,8 @@ import { openAICompletionsApi } from '@earendil-works/pi-ai/api/openai-completio
 import { builtinModels } from '@earendil-works/pi-ai/providers/all';
 import ts from 'typescript';
 import { test } from 'vitest';
+import { z } from 'zod';
+import { AssessmentRuleDecision } from '@/core/schema/assessment/model-decision';
 
 // Isolate the worker's catalog setup without importing its DB/service entrypoint.
 // Real installed catalog/provider factories run here; no stream or auth operation runs.
@@ -94,4 +96,55 @@ test('the registered provider uses the installed lazy Chat Completions API and n
   const untouched = native.getProvider('anthropic')?.getModels()[0];
   assert.ok(untouched);
   assert.deepEqual(models.getModel('anthropic', untouched.id), untouched);
+});
+
+function completion(mode: 'valid' | 'partial-break' | 'malformed-assessment') {
+  const source = ts.createSourceFile(
+    'process.db.test.ts',
+    readFileSync(new URL('./process.db.test.ts', import.meta.url), 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  const declaration = source.statements.find(
+    (statement) =>
+      ts.isFunctionDeclaration(statement) && statement.name?.text === 'controlledCompletion',
+  );
+  assert.ok(declaration && ts.isFunctionDeclaration(declaration));
+  const result: unknown = new Script(
+    ts.transpileModule(
+      `${declaration.getText(source)}\ncontrolledCompletion('elimination', 'original-slot', mode);`,
+      { compilerOptions: { target: ts.ScriptTarget.ES2022 } },
+    ).outputText,
+  ).runInNewContext({ mode });
+  return z.object({ content: z.string(), frames: z.array(z.string()).min(1) }).parse(result);
+}
+
+test('partial transport fixture emits an incomplete assessment and no terminal SSE frame', () => {
+  const partial = completion('partial-break');
+  assert.equal(partial.frames.length, 1);
+  assert.throws(() => JSON.parse(partial.content));
+  assert.ok(!partial.frames.join('').includes('[DONE]'));
+  assert.ok(!partial.frames.join('').includes('"finish_reason":"stop"'));
+  const frame = JSON.parse(partial.frames[0]?.slice('data: '.length).trim() ?? '');
+  assert.equal(frame.choices[0].delta.content, partial.content);
+  assert.equal(frame.choices[0].finish_reason, null);
+});
+
+test('complete malformed fixture reaches DONE but rejects the assessment numeric payload', () => {
+  const valid = completion('valid');
+  const malformed = completion('malformed-assessment');
+  assert.ok(AssessmentRuleDecision.safeParse(JSON.parse(valid.content)).success);
+  const parsed = AssessmentRuleDecision.safeParse(JSON.parse(malformed.content));
+  assert.ok(!parsed.success);
+  assert.deepEqual(
+    parsed.error.issues.map((issue) => issue.path),
+    [['points_awarded']],
+  );
+  for (const response of [valid, malformed]) {
+    assert.equal(response.frames.length, 3);
+    assert.equal(response.frames[2], 'data: [DONE]\n\n');
+    const terminal = JSON.parse(response.frames[1]?.slice('data: '.length).trim() ?? '');
+    assert.equal(terminal.choices[0].finish_reason, 'stop');
+    assert.equal(terminal.usage.total_tokens, 20);
+  }
 });
