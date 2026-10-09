@@ -572,6 +572,7 @@ function Copilot({ route, open, thread, setThread, thinking, setThinking, toast,
   const listRef = useRef(null);
   const timer = useRef({ wait: 0, tick: 0, done: 0 });
   const flight = useRef(null);
+  const active = useRef(null); // the reply currently being generated: { aid, ctx, answer }
   const ctx = route === 'library' ? 'home' : route;
   const msgs = thread[ctx] ?? [];
 
@@ -586,6 +587,10 @@ function Copilot({ route, open, thread, setThread, thinking, setThinking, toast,
       window.clearTimeout(t.wait);
       window.clearInterval(t.tick);
       window.clearTimeout(t.done);
+      // A new question while another reply is still coming (e.g. asked from a different page):
+      // the earlier reply is recorded in its own conversation instead of being dropped.
+      const pending = active.current;
+      if (pending) setThread((th) => ({ ...th, [pending.ctx]: [...(th[pending.ctx] ?? []), { id: pending.aid, role: 'ai', text: pending.answer }] }));
       const id = uid();
       if (quote && from) flight.current = { id, from, quote };
       setThread((th) => ({ ...th, [ctx]: [...(th[ctx] ?? []), { id, role: 'me', text, quote, cite }] }));
@@ -594,6 +599,7 @@ function Copilot({ route, open, thread, setThread, thinking, setThinking, toast,
       // The answer keeps one identity from the first token to the committed record, so the same
       // element settles in place instead of being swapped for a new one.
       const aid = uid();
+      active.current = { aid, ctx, answer };
       let shown = 0;
       setStream({ id: aid, ctx, text: answer, shown: 0, phase: 'thinking' });
       t.wait = window.setTimeout(() => {
@@ -604,6 +610,7 @@ function Copilot({ route, open, thread, setThread, thinking, setThinking, toast,
             window.clearInterval(t.tick);
             t.done = window.setTimeout(() => {
               setThread((th) => ({ ...th, [ctx]: [...(th[ctx] ?? []), { id: aid, role: 'ai', text: answer, settledAt: Date.now() }] }));
+              active.current = null;
               setStream(null);
               setThinking(false);
               onSettle?.();
