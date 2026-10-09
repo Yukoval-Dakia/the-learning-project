@@ -1,8 +1,8 @@
-# Restore authentication fix under final review
+# Restore final review complete; runtime preparation active
 
 Fixed candidate 887012c2f10f2812b88a600340ec6ae869983b23; sole repair writer completed/noPending and released. Exactly two owned files changed: three product lines supply scratch-only PGPASSWORD to psql and database pg_restore, plus realistic auth negative/source-boundary tests. Parent reviewed actual patch SHA 209cc4d60ae0e9de35c3a3e32181b1bb293ad2199b7dbad6161e2379d3134346 and independently matched991 files, including893 built artifacts. Author152offlineunit/typecheck/lint/build exit0; parent independently reran3files152unit exit0 (72.59s). Author static/build log and byte verification is not a separate parent rerun.
 
-Independent R2 yuk1359-restore-parity-verification-r2-20261009 (T3 mcp6636c2a8, Codex gpt-6.1-sol xhigh) is running on fixed887012. Original R1 e9bb found only scratch TCP missing password; report docs/planning/2026-10-09-yuk1359-restore-r1.md. No third review. Source finding has not been reproduced on actual PG; full capture/restore/DBOS reopen unrun.
+Independent R2 yuk1359-restore-parity-verification-r2-20261009 (T3 mcp6636c2a8, Codex gpt-6.1-sol xhigh) completed/noPending on fixed887012: P0/P1 NONE; R1-P1-001 resolved in source. Parent independently matched all four full diff hashes in the report and current helper/schema/test bytes. Report docs/planning/2026-10-09-yuk1359-restore-r2.md. Original R1 e9bb found only scratch TCP missing password; report docs/planning/2026-10-09-yuk1359-restore-r1.md. No third review. Source finding has not been reproduced on actual PG; full capture/restore/DBOS reopen unrun.
 
 Offline prep yuk1359-restore-reopen-latebind-offline-prep-20261009-v2 remains /tmp-only, notified to bind final helper887012 actual bytes and preserve original main worker. No repo codewriter or runtime/lock. JudgePR1625 remains separate29a802 draft/watch with failed CI/conflict and real provider429 gate; restore first, no crossbranch writes. Original parent145unit/985hash evidence is e9bb-only.
 

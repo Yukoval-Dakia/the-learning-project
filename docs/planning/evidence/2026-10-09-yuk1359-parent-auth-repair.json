@@ -24,6 +24,7 @@
     "log": "/tmp/yuk1359-parent-887012-unit.log",
     "log_sha256": "76371cae7100b9a04729945c694b93b2dd671bdc5f584c684e1a5eb351219756"
   },
-  "review": "R2 running; R1-P1-001 has source repair, no final independent resolution yet",
-  "runtime": "No Docker/DB/provider/service/runtime action; full capture/restore and same-target DBOS reopen unrun"
+  "review": "R2 completed/noPending: NONE; R1-P1-001 resolved in source. Parent independently matched four full comparison hashes; runtime remains unrun.",
+  "runtime": "No Docker/DB/provider/service/runtime action; full capture/restore and same-target DBOS reopen unrun",
+  "review_report_sha256": "66cc457be301a928a104428bd173d39024e389f5ae8255b5ad1c35e83f41152e"
 }
