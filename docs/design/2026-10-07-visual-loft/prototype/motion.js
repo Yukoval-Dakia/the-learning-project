@@ -14,7 +14,9 @@ function copyText(from, to) {
   for (const p of TEXT_PROPS) to.style[p] = cs[p];
 }
 
-function ghostOf(el, rect) {
+// `k` is the ghost's own visual scale: 1 for a resting title, the current in-flight scale for a
+// ghost that is itself still flying.
+function ghostOf(el, rect, k = 1) {
   const g = el.cloneNode(true);
   g.removeAttribute('data-morph');
   copyText(el, g);
@@ -22,7 +24,9 @@ function ghostOf(el, rect) {
     position: 'fixed',
     left: `${rect.left}px`,
     top: `${rect.top}px`,
-    width: `${rect.width}px`,
+    width: `${rect.width / k}px`,
+    visibility: 'visible',
+    transform: k === 1 ? '' : `scale(${k})`,
     margin: '0',
     padding: '0',
     zIndex: '60',
@@ -35,18 +39,24 @@ function ghostOf(el, rect) {
 
 /* ── Shared-element morph ─────────────────────────────── */
 // Before a route change, remember where every [data-morph] element sits and what it looks like.
+// If that title is still mid-flight from the previous change, start from where the flying copy
+// is right now, so an interrupted morph continues instead of jumping.
 export function snapshotMorphs(root) {
   const map = new Map();
   if (!root) return map;
   for (const el of root.querySelectorAll('[data-morph]')) {
-    const rect = el.getBoundingClientRect();
+    const flying = live.get(el.dataset.morph);
+    const src = flying?.isConnected ? flying : el;
+    const rect = src.getBoundingClientRect();
     if (!rect.width || rect.bottom < 0 || rect.top > window.innerHeight) continue;
-    map.set(el.dataset.morph, { rect, fs: Number.parseFloat(getComputedStyle(el).fontSize), ghost: ghostOf(el, rect) });
+    const k = src === flying ? rect.width / (flying.offsetWidth || rect.width) : 1;
+    map.set(el.dataset.morph, { rect, k, fs: Number.parseFloat(getComputedStyle(src).fontSize) * k, ghost: ghostOf(src, rect, k) });
   }
   return map;
 }
 
 const flights = new Set();
+const live = new Map(); // morph key → the incoming ghost currently flying
 
 // After the new page mounts, the matching element grows out of where the old one was;
 // the old one crossfades away along the same path.
@@ -79,15 +89,17 @@ export function playMorphs(root, snap) {
     );
     const b = outgoing.animate(
       [
-        { transform: 'none', opacity: 1 },
+        { transform: `scale(${from.k})`, opacity: 1 },
         { opacity: 0, offset: 0.4 },
-        { transform: `translate(${-dx}px, ${-dy}px) scale(${1 / s})`, opacity: 0 },
+        { transform: `translate(${-dx}px, ${-dy}px) scale(${from.k / s})`, opacity: 0 },
       ],
       opts,
     );
     flights.add(a);
+    live.set(target.dataset.morph, incoming);
     const done = () => {
       flights.delete(a);
+      if (live.get(target.dataset.morph) === incoming) live.delete(target.dataset.morph);
       b.cancel();
       incoming.remove();
       outgoing.remove();
@@ -130,8 +142,13 @@ export function flyTo({ from, to, node, shrink = false, scale = 1, duration = 62
     if (stopped) return;
     stopped = true;
     cancelAnimationFrame(raf);
-    g.remove();
-    if (landed) onLand?.();
+    if (landed) {
+      g.remove();
+      onLand?.();
+      return;
+    }
+    // Cancelled (e.g. undone mid-flight): the copy fades where it is instead of arriving.
+    g.animate([{ opacity: g.style.opacity || 1 }, { opacity: 0 }], { duration: 180, fill: 'forwards' }).onfinish = () => g.remove();
   };
   const tick = (now) => {
     const el = target();
@@ -177,14 +194,17 @@ export function bump(el) {
 
 /* ── Reveal ───────────────────────────────────────────── */
 // Bring a referenced passage into view and let it glow once.
+const glows = new WeakMap();
+
 export function reveal(scroller, el, { block = 'center' } = {}) {
   if (!scroller || !el) return;
   el.scrollIntoView({ behavior: reduced() ? 'auto' : 'smooth', block });
+  window.clearTimeout(glows.get(el));
   el.classList.remove('is-flash');
   // Restart the glow even if it is mid-way through a previous one.
   void el.offsetWidth;
   el.classList.add('is-flash');
-  window.setTimeout(() => el.classList.remove('is-flash'), 1800);
+  glows.set(el, window.setTimeout(() => el.classList.remove('is-flash'), 1800));
 }
 
 /* ── Reading position ─────────────────────────────────── */

@@ -242,7 +242,7 @@ export async function createGLMark(canvas, { kind, pal, warm }) {
   const frame = (t) => {
     const dt = Math.min(0.05, (t - (last || t)) / 1000);
     last = t;
-    if (thinking) spin += dt * 1.5; // turns like a pinwheel in a breeze
+    if (thinking && !reduce) spin += dt * 1.5; // turns like a pinwheel in a breeze; still under reduced motion
     const goal = target.clone();
     if (spin) goal.multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 0, 1), spin)); // spin about its own face normal
     if (reduce) root.quaternion.copy(goal);

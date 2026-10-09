@@ -16,7 +16,8 @@
 - 生产 SPA 的根是 `web/`，Start 前门在 `server/start/`，都不引用本目录；
 - `tsconfig.json` 只包含 `*.ts(x)`；
 - Biome 忽略本目录；
-- 对照构建证明，有无本目录时，`web/dist` 与 `dist/start` 的产物逐字节一致（review.md §5）。
+- 对照构建证明，有无本目录时，`web/dist` 与 `dist/start` 的产物逐字节一致（review.md 第二轮“作者核验”）。
+- Tailwind v4 会扫描 `docs/` 下的源码与 Markdown：本目录的文件里不要原样写 Tailwind 主题变量名或工具类名（决策 T9）。
 
 ```bash
 pnpm exec vite --config docs/design/2026-10-07-visual-loft/prototype/vite.config.mjs   # http://localhost:5199/
@@ -42,7 +43,8 @@ pnpm exec vite --config docs/design/2026-10-07-visual-loft/prototype/vite.config
 
 ## 证据
 
-由 `prototype/capture.mjs` 在真实 Chromium 中生成（需先启动上面的 dev server；吉祥物用 SwiftShader 绘制）：
+由 `prototype/capture.mjs` 在真实 Chromium 中生成（需先启动上面的 dev server）。macOS 上吉祥物默认用真实 GPU（ANGLE Metal）绘制；
+`LOFT_GL=swiftshader` 改用软件 WebGL，代表没有 GPU 加速的设备。`LOFT_URL` 可以指向原型的生产构建（`vite build` + `vite preview`），指标应以生产构建为准：
 
 ```bash
 node docs/design/2026-10-07-visual-loft/prototype/capture.mjs shots     # evidence/screens：4 页 × 桌面/手机 × 亮/暗
@@ -50,7 +52,7 @@ node docs/design/2026-10-07-visual-loft/prototype/capture.mjs states    # eviden
 node docs/design/2026-10-07-visual-loft/prototype/capture.mjs motion    # evidence/motion：动画进行中的帧
 node docs/design/2026-10-07-visual-loft/prototype/capture.mjs video     # evidence/video：桌面与手机完整操作录屏
 node docs/design/2026-10-07-visual-loft/prototype/capture.mjs probes    # evidence/probes.json：每条动效主张的实测
-node docs/design/2026-10-07-visual-loft/prototype/capture.mjs metrics   # evidence/metrics.json：CLS、交互时长、帧间隔（1× 与 4× CPU，各 3 次）
+node docs/design/2026-10-07-visual-loft/prototype/capture.mjs metrics   # evidence/metrics.json（GPU）或 metrics-swiftshader.json：CLS、交互时长、帧间隔（1× 与 4× CPU，各 3 次）
 ```
 
 - `evidence/screens/{home,question,note,library}-{desktop,mobile}-{light,dark}.webp`：桌面 1440×900，手机 390×844 @2x。

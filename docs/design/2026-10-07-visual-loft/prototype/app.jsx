@@ -226,7 +226,7 @@ function Home({ go, captures, onCapture, undoCapture, hidden, hide, preload }) {
                 {open === s0.id ? '收起' : '为什么 · 换一种'}
               </button>
             </span>
-            <div className={`why ${open === s0.id ? 'is-open' : ''}`}>
+            <div className={`why ${open === s0.id ? 'is-open' : ''}`} inert={open !== s0.id}>
               <div className="why-inner">
                 {[
                   ['为什么现在', s0.whyNow],
@@ -595,11 +595,11 @@ function Copilot({ route, open, thread, setThread, thinking, setThinking, toast,
       // element settles in place instead of being swapped for a new one.
       const aid = uid();
       let shown = 0;
-      setStream({ id: aid, text: answer, shown: 0, phase: 'thinking' });
+      setStream({ id: aid, ctx, text: answer, shown: 0, phase: 'thinking' });
       t.wait = window.setTimeout(() => {
         t.tick = window.setInterval(() => {
           shown = Math.min(answer.length, shown + 3);
-          setStream({ id: aid, text: answer, shown, phase: shown >= answer.length ? 'confirming' : 'streaming' });
+          setStream({ id: aid, ctx, text: answer, shown, phase: shown >= answer.length ? 'confirming' : 'streaming' });
           if (shown >= answer.length) {
             window.clearInterval(t.tick);
             t.done = window.setTimeout(() => {
@@ -653,8 +653,11 @@ function Copilot({ route, open, thread, setThread, thinking, setThinking, toast,
     });
   }, [msgs.length]);
 
+  // Collapsed or peeking content is out of reach for keyboard and assistive tech, not just invisible.
+  const peeking = sheet?.snap === 'peek';
   const items = msgs.map((m, i) => ({ ...m, key: m.id ?? `m${i}` }));
-  if (stream) items.push({ key: stream.id, role: 'ai', stream });
+  // A reply belongs to the conversation it was asked in; it never streams into another page's panel.
+  if (stream && stream.ctx === ctx) items.push({ key: stream.id, role: 'ai', stream });
   const badge = (m) => {
     if (m.stream) return m.stream.phase === 'thinking' ? '在想…' : m.stream.phase === 'confirming' ? '生成完毕 · 正在记录' : '生成中 · 还未生效';
     return (
@@ -665,7 +668,7 @@ function Copilot({ route, open, thread, setThread, thinking, setThinking, toast,
   };
 
   return (
-    <aside ref={sheet?.ref} className={`copilot ${open ? 'is-open' : ''} ${sheet ? `is-sheet snap-${sheet.snap}` : ''}`} aria-label="学习伙伴" aria-hidden={!open}>
+    <aside ref={sheet?.ref} className={`copilot ${open ? 'is-open' : ''} ${sheet ? `is-sheet snap-${sheet.snap}` : ''}`} aria-label="学习伙伴" inert={!open}>
       {sheet && <span className="sheet-grip" aria-hidden="true" {...sheet.handlers} />}
       <header className="copilot-head" {...(sheet?.handlers ?? {})}>
         <span className="copilot-name">学习伙伴</span>
@@ -675,10 +678,10 @@ function Copilot({ route, open, thread, setThread, thinking, setThinking, toast,
           <Icon name="panel_right" size={16} />
         </button>
       </header>
-      <p className="copilot-ctx">
+      <p className="copilot-ctx" inert={peeking}>
         <Icon name="eye" size={13} /> 正在看：{CONTEXT[route]}
       </p>
-      <div className="copilot-list" ref={listRef}>
+      <div className="copilot-list" ref={listRef} inert={peeking}>
         {items.length === 0 && (
           <div className="copilot-empty">
             <p>可以问我正在看的内容，或者让我帮你安排今晚。</p>
@@ -711,6 +714,7 @@ function Copilot({ route, open, thread, setThread, thinking, setThinking, toast,
       </div>
       <form
         className="copilot-compose"
+        inert={peeking}
         onSubmit={(e) => {
           e.preventDefault();
           if (!draft.trim() || thinking) return;
@@ -796,7 +800,7 @@ function Palette({ open, close, commands }) {
     }
   }, [open]);
   return (
-    <div className={`palette-layer ${open ? 'is-open' : ''}`} onPointerDown={close} aria-hidden={!open}>
+    <div className={`palette-layer ${open ? 'is-open' : ''}`} onPointerDown={close} inert={!open}>
       <div
         className="palette glass"
         role="dialog"
@@ -926,7 +930,11 @@ function useSheet(enabled, snap, setSnap, canClose) {
           cancelAnimationFrame(s.raf);
           s.raf = 0;
           s.drag = { y0: s.y, c0: e.clientY, last: e.clientY, t: performance.now(), v: 0, moved: 0 };
-          e.currentTarget.setPointerCapture(e.pointerId);
+          try {
+            e.currentTarget.setPointerCapture(e.pointerId);
+          } catch {
+            // The pointer is already gone (e.g. a cancelled touch); the drag ends on the next release.
+          }
         },
         onPointerMove: (e) => {
           const s = st.current;
@@ -941,24 +949,27 @@ function useSheet(enabled, snap, setSnap, canClose) {
           s.y = Math.max(-12, Math.min(pos('closed'), d.y0 + (e.clientY - d.c0)));
           write();
         },
-        onPointerUp: () => {
-          const s = st.current;
-          const d = s.drag;
-          if (!d) return;
-          s.drag = null;
-          let next;
-          if (d.moved < 5) next = snap === 'peek' || snap === 'closed' ? 'half' : 'peek';
-          else {
-            const projected = s.y + d.v * 0.2;
-            const names = canClose ? [...SNAPS, 'closed'] : SNAPS;
-            next = names.reduce((best, n) => (Math.abs(pos(n) - projected) < Math.abs(pos(best) - projected) ? n : best), names[0]);
-          }
-          s.v = d.moved < 5 ? 0 : d.v;
-          if (next === snap) animate(pos(next));
-          else setSnap(next);
-        },
+        onPointerUp: release,
+        // A cancelled drag (system gesture, interruption) settles like a release instead of freezing.
+        onPointerCancel: release,
       }
     : {};
+  function release() {
+    const s = st.current;
+    const d = s.drag;
+    if (!d) return;
+    s.drag = null;
+    let next;
+    if (d.moved < 5) next = snap === 'peek' || snap === 'closed' ? 'half' : 'peek';
+    else {
+      const projected = s.y + d.v * 0.2;
+      const names = canClose ? [...SNAPS, 'closed'] : SNAPS;
+      next = names.reduce((best, n) => (Math.abs(pos(n) - projected) < Math.abs(pos(best) - projected) ? n : best), names[0]);
+    }
+    s.v = d.moved < 5 ? 0 : d.v;
+    if (next === snap) animate(pos(next));
+    else setSnap(next);
+  }
   return { ref, handlers, snap };
 }
 
@@ -970,7 +981,7 @@ function TabBar({ route, go, compact, onCapture, onCopilot, copilotUp, hidden, i
     ['copilot', '学习伙伴', 'chat', onCopilot],
   ];
   return (
-    <nav className={`tabbar glass ${compact ? 'is-compact' : ''} ${hidden ? 'is-hidden' : ''}`} aria-label="主导航">
+    <nav className={`tabbar glass ${compact ? 'is-compact' : ''} ${hidden ? 'is-hidden' : ''}`} aria-label="主导航" inert={hidden}>
       {items.map(([id, label, icon, run]) => {
         const active = id === route || (id === 'library' && (route === 'question' || route === 'note')) || (id === 'copilot' && copilotUp);
         return (
@@ -989,19 +1000,20 @@ function TabBar({ route, go, compact, onCapture, onCopilot, copilotUp, hidden, i
 
 function CaptureSheet({ open, close, onSave }) {
   const [text, setText] = useState('');
+  const [intent, setIntent] = useState('save');
   const ref = useRef(null);
   useEffect(() => {
     if (open) requestAnimationFrame(() => ref.current?.focus());
   }, [open]);
   return (
-    <div className={`capture-layer ${open ? 'is-open' : ''}`} onPointerDown={close} aria-hidden={!open}>
+    <div className={`capture-layer ${open ? 'is-open' : ''}`} onPointerDown={close} inert={!open}>
       <form
         className="capture-sheet glass"
         onPointerDown={(e) => e.stopPropagation()}
         onSubmit={(e) => {
           e.preventDefault();
           if (!text.trim()) return;
-          onSave(text.trim(), 'save', ref.current?.getBoundingClientRect());
+          onSave(text.trim(), intent, ref.current?.getBoundingClientRect());
           setText('');
           close();
         }}
@@ -1015,6 +1027,13 @@ function CaptureSheet({ open, close, onSave }) {
           <button type="button" className="icon-btn" aria-label="说一段">
             <Icon name="mic" size={18} />
           </button>
+          <select className="capture-intent" value={intent} onChange={(e) => setIntent(e.target.value)} aria-label="记下之后">
+            {INTENTS.map(([v, l]) => (
+              <option key={v} value={v}>
+                {l}
+              </option>
+            ))}
+          </select>
           <span className="spacer" />
           <button type="button" className="btn btn-quiet btn-sm" onClick={close}>
             取消
@@ -1044,7 +1063,8 @@ function App() {
   const [hidden, setHidden] = useState([]);
   const [toasts, setToasts] = useState([]);
   const [inbox, setInbox] = useState(3); // things captured earlier, still waiting to be sorted
-  const inFlight = useRef(new Set());
+  const inFlight = useRef(new Map()); // capture id → cancel its flight
+  const undone = useRef(new Set());
   const landed = useRef(new Set());
   const morphSnap = useRef(null);
   const routeRef = useRef(route);
@@ -1180,6 +1200,8 @@ function App() {
   const pocket = useCallback(() => document.querySelector(phone ? '.tab-capture .tab-icon' : '[data-pocket]'), [phone]);
   const removeCapture = (id) => {
     setCaptures((c) => c.filter((x) => x.id !== id));
+    undone.current.add(id);
+    inFlight.current.get(id)?.();
     inFlight.current.delete(id);
     if (landed.current.delete(id)) setInbox((n) => n - 1);
   };
@@ -1187,23 +1209,24 @@ function App() {
     const id = Math.random().toString(36).slice(2);
     setCaptures((c) => [{ id, text, intent }, ...c].slice(0, 3));
     setPulseKey((k) => k + 1);
-    inFlight.current.add(id);
     const node = document.createElement('span');
     node.className = 'fly-chip';
     node.textContent = text;
-    flyTo({
+    const cancel = flyTo({
       from,
       to: pocket,
       node,
       shrink: true,
       duration: 660,
       onLand: () => {
-        if (!inFlight.current.delete(id)) return; // undone mid-flight
+        if (undone.current.has(id)) return; // undone mid-flight: never counted
+        inFlight.current.delete(id);
         landed.current.add(id);
         setInbox((n) => n + 1);
         bump(pocket());
       },
     });
+    if (!landed.current.has(id)) inFlight.current.set(id, cancel);
     toast('已收进来，稍后整理', '撤销', () => removeCapture(id));
   };
   const hide = (id, title) => {

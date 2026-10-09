@@ -1,5 +1,5 @@
 {
-  "capturedAt": "2026-10-09T10:00:47.418Z",
+  "capturedAt": "2026-10-09T11:23:14.864Z",
   "chromium": "151.0.7922.34",
   "capture_desktop": {
     "before": "3",
@@ -41,7 +41,7 @@
     "receiptHeightAfterFold": 0
   },
   "refToStep": {
-    "scrolledPx": 547,
+    "scrolledPx": 548,
     "glowing": "第 5 步"
   },
   "quote": {
@@ -63,7 +63,7 @@
     "driftWithoutPinPx": -124,
     "driftWhilePanelClosesPx": [
       0,
-      1,
+      0,
       0,
       0,
       0,
@@ -77,6 +77,37 @@
     "sheetBefore": "snap-half",
     "sheetAfter": "snap-peek",
     "stepGlowing": 1
+  },
+  "focusIntoHidden_home": [],
+  "focusIntoHidden_questionPanelClosed": [],
+  "touchTarget": [
+    {
+      "sel": ".row .link-btn",
+      "visualHeight": 20,
+      "hitsAt18pxAboveCentre": true
+    },
+    {
+      "sel": ".card .link-btn",
+      "visualHeight": 20,
+      "hitsAt18pxAboveCentre": true
+    }
+  ],
+  "reducedMotion": {
+    "flowerStillWhileThinking": true,
+    "messageInkTransition": "0.001s"
+  },
+  "morphRestart": {
+    "ghostVisibilityRightAfterInterrupt": [
+      "visible",
+      "visible",
+      "visible",
+      "visible"
+    ],
+    "ghostsAfter": 0,
+    "hiddenTargetsAfter": 0
+  },
+  "replyStaysInItsConversation": {
+    "temporaryMessagesOnNotePanel": 0
   },
   "pageErrors": []
 }

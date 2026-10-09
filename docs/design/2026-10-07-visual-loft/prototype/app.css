@@ -1778,10 +1778,54 @@ button.msg-ref:hover {
   box-shadow: 0 8px 22px -8px color-mix(in srgb, var(--accent) 55%, transparent);
 }
 
+/* Disabled actions look disabled. */
+.btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* Touch targets: on coarse pointers every small control gets a hit area of at least 44×44
+   through an invisible extension, so the visual density stays the same. */
+@media (pointer: coarse) {
+  .link-btn,
+  .icon-btn,
+  .cite-mark,
+  .msg-ref,
+  .seg button,
+  .chip-btn {
+    position: relative;
+  }
+  .link-btn::after,
+  .icon-btn::after,
+  .cite-mark::after,
+  .msg-ref::after,
+  .seg button::after,
+  .chip-btn::after {
+    content: "";
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: max(100%, 44px);
+    height: max(100%, 44px);
+    transform: translate(-50%, -50%);
+  }
+  .toast button {
+    min-height: 44px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   :root {
     --t-ui: 1ms;
     --t-panel: 1ms;
+  }
+  /* Literal durations too (message ink, segment ink, tab bar): every change is immediate. */
+  *,
+  *::before,
+  *::after {
+    transition-duration: 1ms !important;
+    scroll-behavior: auto !important;
   }
   .page-wrap,
   .captured-row,
@@ -1910,7 +1954,7 @@ button.msg-ref:hover {
     font-size: var(--fs-2);
   }
   .capture-tools .icon-btn:nth-child(2),
-  .capture-intent {
+  .capture-tools .capture-intent {
     display: none;
   }
   .pair,

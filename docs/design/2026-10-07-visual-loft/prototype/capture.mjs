@@ -436,6 +436,70 @@ async function probes(browser) {
     out.phoneRef = { sheetBefore: before, sheetAfter: (await page.locator('.copilot').getAttribute('class')).match(/snap-\w+/)[0], stepGlowing: await page.locator('.step.is-flash').count() };
     await ctx.close();
   }
+  // Review round two: everything collapsed is out of keyboard reach (rule A1).
+  for (const [q, label] of [[{ page: 'home' }, 'home'], [{ page: 'question' }, 'questionPanelClosed']]) {
+    const { ctx, page } = await go('desktop', q);
+    if (label === 'questionPanelClosed') await page.keyboard.press('Meta+j');
+    await page.waitForTimeout(600);
+    const into = [];
+    for (let i = 0; i < 60; i++) {
+      await page.keyboard.press('Tab');
+      const hit = await page.evaluate(() => {
+        const a = document.activeElement;
+        const box = a.closest('.copilot:not(.is-open), .why:not(.is-open), .palette-layer:not(.is-open), .capture-layer:not(.is-open), .tabbar.is-hidden');
+        return box ? `${a.tagName} in ${box.className}` : null;
+      });
+      if (hit) into.push(hit);
+    }
+    out[`focusIntoHidden_${label}`] = into;
+    await ctx.close();
+  }
+  // Touch targets on phone: a point 18px above a 20px-tall text button still hits it (rule A2).
+  {
+    const { ctx, page } = await go('mobile', { page: 'home' });
+    out.touchTarget = await page.evaluate(() =>
+      ['.row .link-btn', '.card .link-btn'].map((sel) => {
+        const el = document.querySelector(sel);
+        el.scrollIntoView({ block: 'center' });
+        const b = el.getBoundingClientRect();
+        const hit = document.elementFromPoint(b.left + b.width / 2, b.top + b.height / 2 - 18);
+        return { sel, visualHeight: Math.round(b.height), hitsAt18pxAboveCentre: hit === el || el.contains(hit) };
+      }),
+    );
+    await ctx.close();
+  }
+  // Reduced motion: the flower stays still while the companion thinks; literal durations are zeroed (M3).
+  {
+    const { ctx, page } = await go('desktop', { page: 'question' }, { motion: false });
+    await act(page, 'desktop').ask('x');
+    await page.waitForTimeout(400);
+    const frame = async () => (await page.locator('.mascot-canvas').screenshot()).toString('base64');
+    const a = await frame();
+    await page.waitForTimeout(500);
+    out.reducedMotion = { flowerStillWhileThinking: a === (await frame()), messageInkTransition: await page.evaluate(() => getComputedStyle(document.querySelector('.msg p')).transitionDuration) };
+    await ctx.close();
+  }
+  // Interrupting a morph restarts from the flying copy and leaves nothing behind (M3, M4).
+  {
+    const { ctx, page } = await go('desktop', { page: 'question' });
+    await page.locator('.side-item', { hasText: '回来时' }).first().click();
+    await page.waitForTimeout(150);
+    await page.locator('.card-continue').click();
+    const visible = await page.evaluate(() => [...document.body.children].filter((e) => e.style?.position === 'fixed').map((e) => getComputedStyle(e).visibility));
+    await page.waitForTimeout(900);
+    out.morphRestart = { ghostVisibilityRightAfterInterrupt: visible, ghostsAfter: await ghosts(page), hiddenTargetsAfter: await hidden(page) };
+    await ctx.close();
+  }
+  // A reply stays in the conversation it was asked in (C3).
+  {
+    const { ctx, page } = await go('desktop', { page: 'question' });
+    await act(page, 'desktop').ask('x');
+    await page.waitForTimeout(1300);
+    await page.locator('.side-chat', { hasText: '为什么设' }).click();
+    await page.waitForTimeout(500);
+    out.replyStaysInItsConversation = { temporaryMessagesOnNotePanel: await page.locator('.copilot-list .msg.is-temp').count() };
+    await ctx.close();
+  }
   out.pageErrors = errors;
   writeFileSync(join(OUT, 'probes.json'), `${JSON.stringify({ capturedAt: new Date().toISOString(), chromium: browser.version(), ...out }, null, 2)}\n`);
   console.log(JSON.stringify(out, null, 1));
