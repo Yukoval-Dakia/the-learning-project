@@ -6,7 +6,7 @@
 
 - **YUK-1358 / Start notes列表**：独占范围和验收见[notes计划](docs/planning/2026-10-09-yuk1358-start-notes-list.md)。保留查询校验、科目知识点解析、空集合语义及现有搜索/导航/视觉；不改note详情/presence/AI写，不把本切片当Notes整族完成。父50unit/18DB、R1 NONE和49RPC/原页面浏览器通过；98表/5序列窗口不变，PR1626已合main04232aaf10（exact9889 CI全绿）；父已fetch核main；[父证据](docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md)。useSubjects仍HTTP，完整迁移未完成。
 
-- **YUK-1359 / 恢复后重开验收**：run07真实capture/restore比对因数组声明维度0→1失败，历史证据保留。修复f325只归一数组声明维度，真实数组值/类型链完整保留并升级digest v2，旧v1不得升级为新证明。父194unit及[14真实PG16 DB](docs/planning/evidence/2026-10-10-yuk1359-parent-array-parity.json)通过；第一次domain fixture失败13/14保留，测试修正后14/14。16:34:06Z锁释放，原4/running/release不变。下一步封存新helper和独立准备目录，再fresh source完整capture/restore及同恢复目标重开；固定worker7472不变。旧helper887012的R2不冒称覆盖新修复，无R3，无部署。
+- **YUK-1359 / 恢复后重开验收**：run07真实capture/restore比对因数组声明维度0→1失败，历史证据保留。修复f325只归一数组声明维度，真实数组值/类型链完整保留并升级digest v2，旧v1不得升级为新证明。父194unit及[14真实PG16 DB](docs/planning/evidence/2026-10-10-yuk1359-parent-array-parity.json)通过；第一次domain fixture失败13/14保留，测试修正后14/14。16:34:06Z锁释放，原4/running/release不变。唯一离线子任务已启动，固定helper b52e并封存新独立准备目录；父验后再fresh source完整capture/restore及同恢复目标重开；固定worker7472不变。旧helper887012的R2不冒称覆盖新修复，无R3，无部署。
 
 - **YUK-1359 / 完整恢复证明**：按5796提交0015授权，不等judge merge/配额；四现有helper/receipt类型+scopedtests/runbook范围见[恢复缺口](docs/planning/2026-10-09-yuk1359-dbos-restore-evidence-gap.md)。设计已完成并核对7源/test/driver哈希，见[实施契约](docs/planning/2026-10-09-yuk1359-restore-coherence-design.md)。作者已释放固定75d4a4c87，父匹配12源/33日志/888制品并独立76unit通过；真实13DB初验揭露catalog缺括号，最小产品修复后13/13通过，两RED保留；父负责独立审查、锁内真实恢复及DBOS重开验收。无judge代码带入，无恢复主库授权。
 

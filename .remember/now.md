@@ -4,6 +4,8 @@ Source f325d4139 canonicalizes only array declaration dimensions and requires di
 
 Token482444b3 released2026-10-09T16:34:06.063132Z after original4 ID/image/start/health/running/release exact equality. First cleanup assertion retained lock while transient Ryuk settled. No running owned resources. Start5796 notified. Prior failed run01–07 sources and run07 restored target remain stopped, never restart. Run07 receipt stays verified=false.
 
+Active sole offline writer: node:delegated-task:command%3Amcp%3A6636c2a8-faa6-445b-bad3-e84032e9ac15%3Adelegate-task%3Ayuk1359-v2-helper-prep-rebind-20261010-v1, Codex gpt-6.1-sol xhigh/test. Owns only NEW /tmp/yuk1359-dbos-restore-offline-prep-v3; repository and old prep read-only. Binds fixed helper b52e255f7, runs trapped offline verification, no DB/runtime. Parent handles repo docs. Automatic completion will wake parent; do not duplicate or poll.
+
 Next: separately rebind helper artifact/prep to new immutable revision; preserve /tmp/yuk1359-dbos-restore-offline-prep-v2, all history/permanent/runtime/inputs/seals. Fixed worker7472 SHA4e2ec8ace103cf535c3472f2c4611438d8cfe5a6f14a1c65abe272674824a9 unchanged. New fresh capture required for v2; no reinterpretation of v1 receipt. Then actual same-restored-target DBOS reopen under fresh mutex. Original R2 applies887012 only; no R3. Judge1625 draft/real-provider gate retained, no crossbranch write. Whole migration incomplete.
 
 # Restore run04 source setup passed; unknown-worker settlement failed
