@@ -1,12 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09：restore认证修复887012c2f已交回且writer释放，父152unit/991项哈希通过，R2 NONE；run02真实118迁移通过，prep误将运行表检查前置而未启动worker；已停止副本释放锁，继续修正既有初始化顺序。judge PR1625仍草稿。
+> Linear 是权威 tracker。2026-10-09：restore认证修复887012c2f已交回且writer释放，父152unit/991项哈希通过，R2 NONE；run02真实118迁移通过，prep误将运行表检查前置而未启动worker；已停止副本释放锁，初始化顺序修复父311离线/完整seal匹配，接新run03。judge PR1625仍草稿。
 
 ## NOW
 
 - **YUK-1358 / Start notes列表**：独占范围和验收见[notes计划](docs/planning/2026-10-09-yuk1358-start-notes-list.md)。保留查询校验、科目知识点解析、空集合语义及现有搜索/导航/视觉；不改note详情/presence/AI写，不把本切片当Notes整族完成。父50unit/18DB、R1 NONE和49RPC/原页面浏览器通过；98表/5序列窗口不变，PR1626已合main04232aaf10（exact9889 CI全绿）；父已fetch核main；[父证据](docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md)。useSubjects仍HTTP，完整迁移未完成。
 
-- **YUK-1359 / 恢复后重开验收**：固定helper887012、父152unit/991hash、[R2 NONE](docs/planning/2026-10-09-yuk1359-restore-r2.md)，两轮审查已用完。prep路径修复后父254pure/8437evidence+5634source seal匹配；run02真实118迁移与canonical epoch active通过，source-setup把`pgboss.schedule`要求放在现有worker初始化之前而退出64，无worker/capture/restore。两份失败副本均停止保留；12:52:29.045Z核ownerfb4855ac释放锁，原4/running/release未变；[run02证据](docs/planning/evidence/2026-10-09-yuk1359-parent-restore-attempt02.json)，[run01证据](docs/planning/evidence/2026-10-09-yuk1359-parent-restore-attempt01.json)。唯一`yuk1359-prep-bootstrap-order-repair-20261009-v1`只修/tmp执行顺序和回归，复用固定worker内PgBoss/DBOS初始化，禁止新建writer或重试旧source。完整恢复与重开仍未通过。
+- **YUK-1359 / 恢复后重开验收**：固定helper887012、父152unit/991hash、[R2 NONE](docs/planning/2026-10-09-yuk1359-restore-r2.md)，两轮审查已用完。prep路径修复后父254pure/8437evidence+5634source seal匹配；run02真实118迁移与canonical epoch active通过，source-setup把`pgboss.schedule`要求放在现有worker初始化之前而退出64，无worker/capture/restore。两份失败副本均停止保留；12:52:29.045Z核ownerfb4855ac释放锁，原4/running/release未变；[run02证据](docs/planning/evidence/2026-10-09-yuk1359-parent-restore-attempt02.json)，[run01证据](docs/planning/evidence/2026-10-09-yuk1359-parent-restore-attempt01.json)。`yuk1359-prep-bootstrap-order-repair-20261009-v1`已completed/noPending；父311离线、5634source/8465evidence及旧失败记录匹配，复用固定worker内PgBoss/DBOS初始化，接全新run03，禁止新建writer或重试旧source。完整恢复与重开仍未通过。
 
 - **YUK-1359 / 完整恢复证明**：按5796提交0015授权，不等judge merge/配额；四现有helper/receipt类型+scopedtests/runbook范围见[恢复缺口](docs/planning/2026-10-09-yuk1359-dbos-restore-evidence-gap.md)。设计已完成并核对7源/test/driver哈希，见[实施契约](docs/planning/2026-10-09-yuk1359-restore-coherence-design.md)。作者已释放固定75d4a4c87，父匹配12源/33日志/888制品并独立76unit通过；真实13DB初验揭露catalog缺括号，最小产品修复后13/13通过，两RED保留；父负责独立审查、锁内真实恢复及DBOS重开验收。无judge代码带入，无恢复主库授权。
 
@@ -29,7 +29,7 @@
 - 1355已交prune_job_events与review orphan源码及隔离证据；1394接续两个session族。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。
 - 1358继续剩余路由/共享子树及三入口共用业务操作，保留现有确定性行为。1392公共board读取、1380事件读/纠错等已合接口由Start集成方接消费者，不复制领域规则。
 - 1359最终收口核对dev/build/Compose/镜像、全部旧消费者、任务/worker/依赖、配置与文档；Hono去留按ADR裁决，旧SPA回落不得永久保留。完成整迁移后再按实际缺口与查重结果交付Linear残留功能。
-- UI视觉重写暂缓；必要路由/数据接线仍是本轮迁移。UI恢复时沿owner模型限制；非UI按AGENTS选模，产品MiMo路由不因开发代理改变。
+- UI按owner新排期并入迁移后的功能波次：后端先交付、Opus5.5再改渲染；迁移期间保留旧视觉。1354仅隔离基座/展示组件可先行，展示路由仍5796挂载；同Start路由组件回退不保留旧SPA。完整协商及已有UI观察交接见[排期边界](docs/planning/2026-10-09-ui-migration-sequencing.md)。
 
 ## PARKED
 

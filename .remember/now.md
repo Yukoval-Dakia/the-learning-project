@@ -1,3 +1,9 @@
+# Restore prep order verified; fresh run03 next
+
+Parent independently ran311 offline checks and matched5634 immutable source/8465 evidence files,11441 preserved entries and21 earlier failed inputs. Both offline processes exited0 with zero connection/listener/child attempts. Helper887012/worker7472 remain fixed. Bootstrap repair completed/noPending; no code writer active. New parent03/run03 directories prepared, no runtime lock yet. Run01/run02 stay stopped and must never restart. Full restore/reopen remains unverified.
+
+UI schedule reply sent to visual thread mcp:a434b919-3159-4e36-8ad9-beacd5f430b6 and Start5796. Decision record docs/planning/2026-10-09-ui-migration-sequencing.md; existing page rewrites follow functional waves, foundation isolated, route mount belongs to5796. Exact24b7 thread not located; visual thread asked to relay. No UI or Start source changed.
+
 # Restore run02 migrated; source setup exposed prep ordering defect
 
 Product887012 R2 NONE unchanged. Parent path-repaired prep254offline exit0,8437evidence/5634source seal and21oldfailedinputs matched. Lockfb4855ac acquired12:49:58.466Z; newsource72632c5fdd27cf677439bce7d7bc78c6ef3e07cafefb717fa5d473f5b7b44642,32782/test_fork_20261009125000. Actual118Drizzle migrations passed, canonicalepochassessment-contract-v1 active, identity before/after identical.
