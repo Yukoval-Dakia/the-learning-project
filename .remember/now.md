@@ -1,3 +1,7 @@
+# Owner-selected actual judge route
+
+5796 explicitly confirms actual judge acceptance must use existing opencode-go/mimo-v2.6-pro effective route, independently verified beforeoneboundedrun. Static taskdefaultxiaomi/mimo-v2.5 is not productselection. No providerswitch/subscription/fallback. Record actualprovider/model/cost_basis/independentwire. $0.003fixture accountingreservation is not paidcostproof. Startowner accepts formalmain later, samekey/firstresponseloss/202status, noWIPintegration. Permanentreadfound/not_found/unavailable; unknown503, authorityabsent404; GETnoeffects; SSEprunednotificationsnotrecreated.
+
 # Live acceptance research received
 
 provider-sse-acceptance-readonly task completed/noPending. Parent verified35inputhashes, versionedlive-acceptance-preparation report/index, sentpubliccontract andmissingStart same-key/response-loss cases to5796. Controlledloopback cannot satisfyrealprovider. No existingactualjudgerunnerfound; reuse executeJudgeWorkflow andfrozenfixture onisolatedDB. SSE replaycannot recreateprunednotifications; permanentstatus needsindependentcheck. Parent qualification: sumfixturecaps$0.003 is postcallaccountinglimit, notproven providerinvoiceceiling; constrainactualcalls/time/tokenandmeasurecost, no globalbilling subsystem.
