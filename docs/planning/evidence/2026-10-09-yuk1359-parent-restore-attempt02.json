@@ -1,0 +1,69 @@
+{
+  "candidate": "887012c2f10f2812b88a600340ec6ae869983b23",
+  "parentReview": "R2 NONE source only",
+  "offlineParent": {
+    "checks": 254,
+    "evidenceSealFiles": 8437,
+    "sourceSealFiles": 5634,
+    "preservedPriorInputs": 21,
+    "exitCode": 0,
+    "logSha256": "e928e67f32b14bb7934655019e2ace207942702c76b0cec81bcea539bf76203f"
+  },
+  "failure": {
+    "phase": "source-setup",
+    "exitCode": 64,
+    "cause": "required pgboss.schedule before PgBoss initialization",
+    "observed": {
+      "pgbossSchedule": null,
+      "dbosStatus": null,
+      "migrationCount": 118,
+      "otherClients": 0
+    },
+    "workerStarted": false,
+    "captureRestoreStarted": false
+  },
+  "premiseCensus": {
+    "premise": "Drizzle-only provisioning was incorrectly assumed to include every relation required by the durable worker runtime",
+    "actors": [
+      {
+        "owner": "Drizzle migrator",
+        "relations": "public domain and drizzle migration ledger",
+        "observation": "118 migrated; active canonical epoch"
+      },
+      {
+        "owner": "PgBoss.start in fixed worker",
+        "relations": ["pgboss.schedule", "pgboss.job"],
+        "observation": "pgboss.schedule absent before worker; expected fresh state"
+      },
+      {
+        "owner": "startDurableWorker/DBOS SDK in fixed worker",
+        "relations": ["tlp_dbos.workflow_status"],
+        "observation": "absent before worker; expected fresh state"
+      }
+    ],
+    "fixed_worker_source": "snapshot/tests/dbos-review-orphan/worker.ts:172-182",
+    "failure_source": "parent-driver.mjs source-setup requireDomain precedes host(source)/ready",
+    "proposed_minimum": "Validate business domain before host; preserve all runtime relation checks after existing fixed worker ready; no alternate schema writer",
+    "runtime_result": "source-setup failed before any child; endpoints stopped; no acceptance"
+  },
+  "cleanup": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1359",
+      "phase": "isolated-same-target-restore-reopen",
+      "token": "fb4855ac-f7d8-47d8-8268-bc218cd5d30f",
+      "candidate": "1a5cfab2c2830b25005b798070e6930e19f7e107",
+      "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "createdAt": "2026-10-09T12:49:58.466836+00:00"
+    },
+    "releasedAt": "2026-10-09T12:52:29.045598+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "source": {
+    "containerId": "72632c5fdd27cf677439bce7d7bc78c6ef3e07cafefb717fa5d473f5b7b44642",
+    "status": "stopped and retained; failed run permanently closed; no restart/retry"
+  },
+  "result": "NOT ACCEPTED. 118 actual migrations and active epoch passed; source setup failed before worker, capture or restore."
+}
