@@ -1,0 +1,67 @@
+{
+  "candidate": "306fee0612de404f216aa7713c3074cf42aad43c",
+  "migration": {
+    "passed": 82,
+    "skipped": 4,
+    "suiteFailures": 2,
+    "cause": "historical0117 fixture asserts latest migration still0117 after0118 appended"
+  },
+  "placement": {
+    "passed": 5,
+    "failed": 1,
+    "discovered": 12,
+    "cause": "raw execution fixture lacks mapped permanent delivery authority"
+  },
+  "intervention": {
+    "passed": 0,
+    "failed": 1,
+    "skipped": 43,
+    "cause": "malformed permanent pending remains held despite FAILED notification; fixture expects active"
+  },
+  "acceptance": "FAIL preserved; source-only child investigates exact fixtures, no product change or waived assertions",
+  "cleanup": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1356",
+      "phase": "isolated-judge-scoped-db",
+      "token": "b6aee3b3-209b-4bc7-9e7b-946e66f18136",
+      "candidate": "306fee0612de404f216aa7713c3074cf42aad43c",
+      "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "createdAt": "2026-10-09T02:13:58.349249+00:00"
+    },
+    "releasedAt": "2026-10-09T02:19:06.610008+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "archive": {
+    "path": "docs/planning/evidence/2026-10-09-yuk1356-consumer-first-failures.json.gz",
+    "sha256": "ca7a1ccc8bc0de42cccb9145dbb849077ab2809f92aac857e826498ec5492537"
+  },
+  "files": [
+    {
+      "name": "before.json",
+      "sha256": "e11dcffd8392c000864096c4cec8ef208b844738298ec589a678d3c6cd7a9ab8"
+    },
+    {
+      "name": "intervention.log",
+      "sha256": "3c1b2c59880e4791ed7bfbb0f4f299c9c9ff6fcce0fc5ff15018b8c42ff7ef79"
+    },
+    {
+      "name": "lock-release.json",
+      "sha256": "0056b9362c789201a67c53d9229094e3935003adcc45639332917faf00131247"
+    },
+    {
+      "name": "migrate-before.sha256",
+      "sha256": "4b6813a0b1a255643bc838d710d90bb7b86563cf43c33f52a670220c0c14df51"
+    },
+    {
+      "name": "migration.log",
+      "sha256": "7bef7c41b5ff8b7537a9f23e47b7f3d6ed1b18cf0486791f8148245771ab647f"
+    },
+    {
+      "name": "placement.log",
+      "sha256": "5730de88a3c93dab741ab75da331954f065edc4511ece6e5bdb4e48d16a70e9c"
+    }
+  ]
+}

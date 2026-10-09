@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：judge父128 scoped DB、12真实process和8旧producer/cutover通过；原失败完整保留。02:09:13Z核owner释放锁原4/release未变；待migration/consumer/final artifact/R2/CI和整体退出。
+> Linear 是权威 tracker。2026-10-09 JST：judge父128 scoped DB、12 process、8 cutover通过；migration82通过但4未执行，placement/intervention旧fixture失败已保留，唯一source writer调查。02:19:06Z释放锁，原4/release未变。
 
 ## NOW
 
@@ -48,6 +48,6 @@
 
 ## BLOCKED-ON
 
-- 1393/1394均已合入。judge R1修复有唯一活动writer，不需用户重复授权。子任务/CI仍运行属于等待，不把整迁移挂blocked。
+- 1393/1394均已合入。judge现有consumer测试修复有唯一活动writer，不需用户重复授权。子任务/CI仍运行属于等待，不把整迁移挂blocked。
 - runtime测试/发布在执行前必须实际核锁并原子获取，核owner/token清理释放；其他线程持锁时只推不冲突的源码工作。历史锁记录不能代表当前ownership。
 - 部署用途保持Agent开发测试，禁止再次清库、恢复私人数据或盲重放队列；日用部署须owner明确要求“为我日常使用的部署”。旧运行验收限制和未完成产品能力保存在归档及各原票，未被本次整理核销。

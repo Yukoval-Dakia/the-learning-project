@@ -119,3 +119,11 @@ Each earlier fixture failure is preserved. Corrections register the proper insta
 The configured `pnpm typecheck` passes, including Start. The child had additionally run the JS TypeScript compiler and reported91 diagnostics; that result is retained separately from the configured native compiler gate, with no Start product change. Parent rechecked four source pairs,885 build pairs and916 artifacts.
 
 Last lock release was02:09:13.043Z, after owner/token, original4 containers, running set and release all matched. Full failed and successful logs/snapshots are versioned in `evidence/2026-10-09-yuk1356-process-cutover.json.gz`; its index and limits are in `evidence/2026-10-09-yuk1356-parent-process-cutover.json`. Migration smoke, actual consumers, final emitted loading proof, real provider/SSE/Start, R2, CI and deployment remain open.
+
+## Existing consumer and migration first run
+
+At candidate `306fee061`, the actual built-migrator smoke passed 82 cases. Two historical 0117 suite setups rejected the appended 0118 migration because they asserted that 0117 remained the final entry; four cases were not executed. Placement passed five cases before its direct worker fixture was rejected for lacking permanent execution authority. The selected intervention lifecycle case failed when a malformed pending record remained held despite a FAILED notification. These are failed acceptance results, pending source-based fixture adjudication.
+
+[Original logs, hashes and cleanup](evidence/2026-10-09-yuk1356-consumer-first-failures.json) preserve all three results. The parent released token `b6aee3b3-209b-4bc7-9e7b-946e66f18136` at `02:19:06.610008Z` after checking owner, original four containers, full running set and release equality. No provider, main worker, replay or deployment ran.
+
+One Codex gpt-6.1-sol xhigh child owns only the three affected test files and its lane document. It must preserve real consumer behavior and report any product regression rather than weaken authorization or permanent-state rules. It cannot run DB/runtime work. Parent will rerun the relevant suites after the writer releases. R2 has not begun.
