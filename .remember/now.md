@@ -1,3 +1,7 @@
+# Sole writer extended to cold observer side-effect repair
+
+Parent traced default GET observation to getStartedBoss and installed pg-boss12.36 startup migration/timekeeper/BAM writes. Same active Hono prep task now owns exactly practice/server/judge-engine-client.ts and its unit in addition to ignored preparation. Two observe methods must peek getRunningBoss, absent runtime means unavailable not absent; enqueue retains getStartedBoss. Child authorized RED/scopedunit/static/build, no DB/network/runtime/git mutation. This is parent finding/repair, not third independent review. Parent must inspect new diff and run real cold default503/no-write HTTP acceptance; old R2 does not cover new code. 5796 notified, no sharedboot/Start scope. Parent only writes docs meanwhile. Await task result, no duplicatewriter or builds.
+
 # Independent Hono acceptance preparation active
 
 HEAD 6b4ca0791 preserves R2 NONE and first actual provider HTTP429. YUK1356 restored In Progress and existing comment updated. PR1625 remains draft, remote23ca, local evidence not pushed alone. No runtime resources or mutex. Provider intent/failure remains immutable; no paid retry.

@@ -25,6 +25,8 @@
 
 ## PARKED
 
+- **YUK-1356 cold status read副作用，修复中**：父确认两个judge engine observe调用getStartedBoss，installed pg-boss12.36 start会启动migration/timekeeper/BAM，违反GET只读边界。当前唯一Hono prep writer已精确扩到judge-engine-client.ts及unit；observation改peek已运行client，无client保持unavailable，enqueue仍允许启动。先RED/修复/scopedunit/static/build，再锁下真实cold503和全schema无写。不是R3，不以旧R2覆盖新diff；无Start/boot/sharedboss改动。
+
 - **YUK-1356 judge打包阻塞**：父实读作者build-first.log:979，Start自包含打包无法解析DBOS5.2.11可选winston-transport；build-migrate.log同报winston/transport。server/worker已有两项external，Start和migrate尚未一致。5796已核77树/75可访问并明确将两文件交原judge writer：仅Start服务端及build:migrate external精确winston/winston-transport，保留其余自包含配置及依赖/lock。作者完整build已通过且产物hash父核一致；父仍须安全验证真实ESM/CJS默认logger加载、不直接执行连接库/迁移/服务入口，OTLP分支不在本证明范围。父已格式化1359证据JSON并核语义完全相同。
 
 - **YUK-1358/1359已有UI观察**：真实Inbox dismiss后本页499但侧栏500，document reload恢复一致；原onResolve仅本地resolved更新。Google Fonts原import受CSP拦截；fallback可用。记录在现有迁移验收/后续UI边界，不放宽CSP、不冒称本PR修复。
