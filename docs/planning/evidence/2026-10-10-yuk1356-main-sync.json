@@ -1,0 +1,50 @@
+{
+  "issue": "YUK-1356",
+  "stage": "第一天能用",
+  "purpose": "PR1625 main synchronization; durable judge migration audit root",
+  "parents": {
+    "judge": "4a08126137a194c274ed82f460af34cef35fd111",
+    "main": "7a433328052b45cac36759b0282ceb6429e0eec1"
+  },
+  "conflicts": ["PLAN.md", ".remember/now.md"],
+  "resolution": "Preserve main board, retain judge handoff and actual incomplete runtime acceptance; reconcile known owner auto-grading ruling. No manual source resolution.",
+  "validation": {
+    "install": {
+      "path": "/tmp/yuk1356-main-sync-install.log",
+      "sha256": "ccad1b145d964364ffef48ac66b2dbe15381d7a9912882a80d0dd294ab113179",
+      "exit": 0
+    },
+    "unit": {
+      "path": "/tmp/yuk1356-main-sync-unit.log",
+      "sha256": "a09632b18f47c99180e49924133003263f4fb7a5fe0987a09cd93ae0b49d47fd",
+      "exit": 0
+    },
+    "typecheck": {
+      "path": "/tmp/yuk1356-main-sync-typecheck.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+      "exit": 0
+    },
+    "lint": {
+      "path": "/tmp/yuk1356-main-sync-lint.log",
+      "sha256": "dfc3dabae0336b06e5646ca8c3ad91267be1ba5a437b59d58fff473842d8e051",
+      "exit": 0
+    },
+    "build": {
+      "path": "/tmp/yuk1356-main-sync-build.log",
+      "sha256": "4bfdfdb0ec2092791a75058108d71e03bfa977dd1cb80af1b7a4320d78ae5249",
+      "exit": 0
+    }
+  },
+  "unit": {
+    "files": 4,
+    "passed": 33
+  },
+  "limits": [
+    "No local DB/container/provider run",
+    "No new independent review round for documentation-only conflict resolution",
+    "New exact-head CI still required",
+    "No PR merge or deployment",
+    "Historical unknown paid results not replayed"
+  ],
+  "followup": "Existing YUK-1356 migration acceptance obligations remain; no new issue discovered."
+}

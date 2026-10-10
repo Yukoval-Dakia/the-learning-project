@@ -1,8 +1,18 @@
+# PR1625 main conflict resolution — 2026-10-10
+
+Normal merge of current origin/main into fixed judge head4a08126. Only PLAN.md and this handoff conflict; source auto-merges. Preserve main board and historical judge synchronization below. Prior exact-head green does not validate this composition. Real provider acceptance remains incomplete; no unknown-effect replay, no PR merge/deploy. Local gates and new exact-head CI required.
+
 # PR1625 main synchronization, invariant tests only — 2026-10-10
 
 Sole writer in tlp-yuk-1356-durable-judge / feat/yuk-1356-durable-judge. Original head29a802f1a; git merge origin/main87f66b3e2 includes #1630/#1631, no rebase or feature edits. Owner authorizes normal commit/push and exact-head CI repair only; never merge PR. Modify/delete defaults deleted except five status-route cases and one durable runner fallback case. New/modified tests retained only for irreversible data, deterministic scoring/settlement, concurrency/rollback/idempotency, or security. No crisis changes. All retained files explicitly assigned in vitest.shared.ts. Read-only Luna classification child, parent only writer, no new PR review round.
 
 Merge5856878204466fd93c7dfa5717a43b1bdcdcaa8c pushed normally. Partition60unit/205DB/1migration, retained scoped unit/DB/migration and typecheck/lint/build passed; process stale deleted evidence path repaired and exact14process rerun passed. Exact-head CI38016152473 failed only DB4: submit-durable-resource and review-operation fixtures returned fake queue delivery IDs, discarded operational input and omitted unit claim fencing. Both are genuine data-retention/idempotent-settlement invariants, retained. Test-only repair captures actual queued payload/ID, uses recorded model executor fence and checks worker duplicate skips already_persisted with original business effects unchanged. Reproduced RED2failed/2passed then GREEN4passed; partition/typecheck/lint/build pass, lint208 existing warnings. Evidence /tmp/yuk1356-ci-fixtures-{red,green}.log and /tmp/yuk1356-ci-repair-*.log. Next normal commit/push and T3 exact-head CI watch; never merge PR. Historical actual-provider429 remains separate. No new actionable follow-up: existing YUK1356/YUK1401 synchronization/test maintenance only, no issue status promotion, deployment or runtime service changes.
+
+# YUK-1388 stage 4 complete; coordinator still owns audit close-out (2026-10-10 17:10 JST)
+
+Final report tlp-audit-artifacts/yuk1388/stage4/final-report.md (O1–O7 plain page first). V01 Opus + V02 Sol reviews: 15 findings all ACCEPTED (stage4/V-adjudication.md); I03 corrections done (Sol, after Claude auth 403 killed Opus runs): P0 7 incl. new M100 -> YUK-1445 Urgent (7/8 admitted items human_review only), P1 50->34, hint denominator 21 (first-attempt fail 14.29%), W0 exit = empty-DB day-one journey + >=80% auto-gradable + KC guard + 5 friction metrics, C21/C24full/C26/C28-30 PARKED, T052 -> YUK-1355. Linear comment 1df07109 on YUK-1388 (stays In Progress: owner must read report + decide on deleting R03's 5 synthetic crisis memories in TEST Mem0).
+
+Migration work only was handed to thread 7631c12b (W0 backend 1404/1405/1445/981 first); the coordinator thread keeps YUK-1388 close-out, YUK-1403 remainder (32 migration-smoke cases after #1625; inventory yuk1403/case-inventory.jsonl), UI coordination, disk. #1635/#1636 merged. Claude new sessions fail 403: UI line blocked (#1633/#1634 not yet TEST-verified; YUK-1438 next). System disk hit 0.9 GB today (killed agents); caches + 7 merged worktrees removed -> ~9.4 GB free. Not removed: worktrees fix-yuk-1153, fix-yuk-1132 (dirty), feat-yuk-588-today-cost-ui (no PR).
 
 # Run11 actual full restore and SAME retained target DBOS reopen PASSED
 

@@ -19,7 +19,10 @@ import {
   errorDiagnostic,
   fixtureErrorMessage,
   fixtureMessageSchema,
+  metafileExternals,
   nonterminalDurableWork,
+  oldArtifactDependencyDrift,
+  requireSpecifiers,
   sanitizeDiagnostic,
   waitForFixtureMessage,
 } from '../dbos-review-orphan/fixture-process';
@@ -831,13 +834,16 @@ async function verifiedArtifact(kind: 'prune' | 'review' | 'conversation' | 'pla
       });
       expect(sha(original.stdout), path).toBe(digest);
     }
-    expect(sha(await readFile('pnpm-lock.yaml'))).toBe(
-      sha(
-        (await exec('git', ['show', `${base}:pnpm-lock.yaml`], { maxBuffer: 24 * 1024 * 1024 }))
-          .stdout,
-      ),
-    );
-    evidence.push({ kind, base, artifact, expected, manifest });
+    // The artifact digest pins everything bundled; only its runtime requires reach node_modules.
+    const { drift, runtimePackages } = oldArtifactDependencyDrift({
+      baseLock: (
+        await exec('git', ['show', `${base}:pnpm-lock.yaml`], { maxBuffer: 24 * 1024 * 1024 })
+      ).stdout,
+      currentLock: await readFile('pnpm-lock.yaml', 'utf8'),
+      runtimeSpecifiers: requireSpecifiers(await readFile(artifact, 'utf8')),
+    });
+    expect(drift).toEqual([]);
+    evidence.push({ kind, base, artifact, expected, manifest, runtimePackages });
     return artifact;
   }
   // CI with full history can compile the genuine predecessor, never reconstructed domain code.
@@ -866,9 +872,6 @@ async function verifiedArtifact(kind: 'prune' | 'review' | 'conversation' | 'pla
   await writeFile(`${archived}/source.tar`, archive.stdout);
   await exec('tar', ['-xf', `${archived}/source.tar`, '-C', archived]);
   await symlink(resolve('node_modules'), `${archived}/node_modules`, 'dir');
-  expect(sha(await readFile(`${archived}/pnpm-lock.yaml`))).toBe(
-    sha(await readFile('pnpm-lock.yaml')),
-  );
   const path = `${archived}/${name}`;
   await exec(
     resolve('node_modules/.bin/esbuild'),
@@ -876,9 +879,27 @@ async function verifiedArtifact(kind: 'prune' | 'review' | 'conversation' | 'pla
     { cwd: archived },
   );
   const inputs = z
-    .object({ inputs: z.record(z.string(), z.unknown()) })
+    .object({
+      inputs: z.record(
+        z.string(),
+        z
+          .object({
+            imports: z.array(
+              z.object({ path: z.string(), external: z.boolean().optional() }).passthrough(),
+            ),
+          })
+          .passthrough(),
+      ),
+    })
     .passthrough()
     .parse(JSON.parse(await readFile(`${archived}/metafile.json`, 'utf8')));
+  const { drift, bundledPackages, runtimePackages } = oldArtifactDependencyDrift({
+    baseLock: await readFile(`${archived}/pnpm-lock.yaml`, 'utf8'),
+    currentLock: await readFile('pnpm-lock.yaml', 'utf8'),
+    bundledFiles: Object.keys(inputs.inputs),
+    runtimeSpecifiers: metafileExternals(inputs.inputs),
+  });
+  expect(drift).toEqual([]);
   const sources: Record<string, string> = {};
   for (const file of Object.keys(inputs.inputs).filter((p) => !p.includes('node_modules'))) {
     sources[file] = sha(await readFile(`${archived}/${file}`));
@@ -892,6 +913,8 @@ async function verifiedArtifact(kind: 'prune' | 'review' | 'conversation' | 'pla
     artifact: path,
     artifactSha256: sha(await readFile(path)),
     archiveSha256: sha(archive.stdout),
+    bundledPackages,
+    runtimePackages,
     sources,
   });
   return path;

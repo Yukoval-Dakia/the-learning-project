@@ -1,6 +1,6 @@
 // Placement waits for native evaluation and settlement before the next adaptive selection.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { computeLatencyMs, saveResponseDraft } from '@/capabilities/practice/ui-public';
+import { computeLatencyMs } from '@/capabilities/practice/ui-public';
 import type { GroupEvidenceT, ResponseSetT, SlotResponseT } from '@/core/schema/assessment';
 import { AssetEvidencePreview } from '@/ui/components/response/AssetEvidencePreview';
 import { EvidenceComposer } from '@/ui/components/response/EvidenceComposer';
@@ -26,16 +26,12 @@ import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { ObSteps } from './ObSteps';
-import {
-  type PlacementQuestionRef,
-  type PlacementSelfReport,
-  type PlacementStartResult,
-  getPlacementSession,
-  placementEnd,
-  placementNext,
-  startPlacement,
-  submitProbeAnswer,
+import type {
+  PlacementQuestionRef,
+  PlacementSelfReport,
+  PlacementStartResult,
 } from './placement-api';
+import { type PlacementClient, usePlacementClient } from './placement-client';
 import './onboarding.css';
 
 const CAP = 8;
@@ -54,6 +50,7 @@ export interface ScreenPlacementProps {
 }
 
 export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
+  const client = usePlacementClient();
   const [phase, setPhase] = useState<Phase>('loading');
   const [qRef, setQRef] = useState<PlacementQuestionRef | null>(null);
   const [answeredCount, setAnsweredCount] = useState(0);
@@ -63,6 +60,8 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
   const [exitFailure, setExitFailure] = useState<{ destination: string; message: string } | null>(
     null,
   );
+  // Fixed for the screen's lifetime: re-running the start effect would open a second session.
+  const transport = useRef(client);
   const goalIdRef = useRef(new URLSearchParams(window.location.search).get('goal'));
   const sessionIdRef = useRef<string | null>(null);
   const sessionOpenRef = useRef(false);
@@ -76,13 +75,13 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
   const transition = useCallback(async (status: 'completed' | 'abandoned') => {
     const sid = sessionIdRef.current;
     if (!sid || !sessionOpenRef.current) return;
-    await placementEnd(sid, status, { keepalive: false });
+    await transport.current.placementEnd(sid, status, { keepalive: false });
     sessionOpenRef.current = false;
   }, []);
   const loadNext = useCallback(async () => {
     const sid = sessionIdRef.current;
     if (!sid || !sessionOpenRef.current) return;
-    const next = await placementNext(sid);
+    const next = await transport.current.placementNext(sid);
     setAnsweredCount(next.answeredCount);
     setRestoreVersion((v) => v + 1);
     if (next.done) {
@@ -104,12 +103,12 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
     initialRequest.current ??= (async () => {
       const existing = new URLSearchParams(window.location.search).get('session');
       if (existing) {
-        const session = await getPlacementSession(existing);
+        const session = await transport.current.getPlacementSession(existing);
         if (session.goal_id !== goal) throw new Error('定位练习与当前目标不一致。');
         sessionIdRef.current = existing;
         if (session.status !== 'started') return 'terminal';
         sessionOpenRef.current = true;
-        const next = await placementNext(existing);
+        const next = await transport.current.placementNext(existing);
         if (next.done)
           return {
             sessionId: existing,
@@ -120,7 +119,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
           };
         return { sessionId: existing, knowledgeIds: session.scope_knowledge_ids ?? [], ...next };
       }
-      return startPlacement(goal, readSelfReport(window.location.search));
+      return transport.current.startPlacement(goal, readSelfReport(window.location.search));
     })();
     void initialRequest.current
       .then((res) => {
@@ -293,6 +292,7 @@ export default function ScreenPlacement({ navigate }: ScreenPlacementProps) {
             onAccepted={loadNext}
             saveForExit={saveForExit}
             leaving={leaving}
+            client={transport.current}
           />
           <div className="ob-pl-reassure">
             <LoomIcon name="clock" size={14} />
@@ -361,6 +361,7 @@ function PlacementQuestionCard({
   onAccepted,
   saveForExit,
   leaving,
+  client,
 }: {
   sessionId: string;
   qRef: PlacementQuestionRef;
@@ -368,6 +369,7 @@ function PlacementQuestionCard({
   onAccepted: () => Promise<void>;
   saveForExit: React.MutableRefObject<ExitSave | null>;
   leaving: boolean;
+  client: PlacementClient;
 }) {
   const binding = qRef.assessment;
   const frozen = binding.state.practice_dto;
@@ -418,7 +420,7 @@ function PlacementQuestionCard({
       if (JSON.stringify(value) === savedBytes.current) return;
       const saving = (async () => {
         try {
-          const ack = await saveResponseDraft(
+          const ack = await client.saveResponseDraft(
             binding.issuance_id,
             {
               ...value,
@@ -441,7 +443,7 @@ function PlacementQuestionCard({
         if (inFlight.current === saving) inFlight.current = null;
       }
     },
-    [binding.issuance_id, binding.evaluation_group_id],
+    [binding.issuance_id, binding.evaluation_group_id, client],
   );
   const autosave = useResponseDraftAutosave({
     value: draftValue,
@@ -463,6 +465,7 @@ function PlacementQuestionCard({
   const poll = useJudgeRunPolling({
     runId: pendingRun?.run_id ?? null,
     pollUrl: pendingRun?.poll_url,
+    readStatus: client.readJudgeRunStatus,
     enabled: status === 'pending',
   });
   useEffect(() => {
@@ -523,7 +526,7 @@ function PlacementQuestionCard({
       const responseSet = accepted?.response_set ?? responses;
       const groupEvidence = accepted?.group_evidence ?? nativeEvidence;
       dispatched = true;
-      const result = await submitProbeAnswer({
+      const result = await client.submitProbeAnswer({
         sessionId,
         questionId: qRef.questionId,
         assessment: {
