@@ -2,6 +2,14 @@ import type { BBoxT, FigureRefT, StructuredQuestionT } from '@/core/schema/struc
 import type { PreAttachFigure } from './crop';
 import type { FigureAssignment } from './structure';
 
+export function figuresForQuestion(
+  question: StructuredQuestionT,
+  figures: FigureRefT[],
+): FigureRefT[] {
+  const questionIds = new Set(flattenQuestions([question]).map((node) => node.id));
+  return figures.filter((figure) => questionIds.has(figure.attached_to_index));
+}
+
 /**
  * Figure 归属启发式（spec § 1.7.1 (a)）:
  *
