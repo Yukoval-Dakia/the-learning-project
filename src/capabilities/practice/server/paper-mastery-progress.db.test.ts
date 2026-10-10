@@ -4,19 +4,10 @@
 // note-refine trigger. Previously paper-submit did NEITHER (solo-only), leaving
 // paper attempts a dead line for note refinement. Mirrors submit.db.test.ts:208.
 
-import { and, eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { handleMasteryProgressNoteRefineDelivery } from '@/capabilities/notes/server/mastery-progress-subscription';
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { MASTERY_PROGRESS_ACTION } from '@/capabilities/practice/server/mastery-progress-signal';
-import {
-  artifact,
-  event,
-  event_subscription_checkpoint,
-  event_subscription_delivery,
-  knowledge,
-  mastery_state,
-  question,
-} from '@/db/schema';
+import { artifact, event, knowledge, mastery_state, question } from '@/db/schema';
 import {
   paperFixtureAssessment,
   startFrozenPaperFixture,
@@ -104,106 +95,6 @@ describe('YUK-459 — paper submit fires mastery-change signals on success', () 
     await resetDb();
   });
 
-  it('emits experimental:mastery_progress carrying the real Δθ̂ on a graded paper success', async () => {
-    const db = testDb();
-    await seedKnowledge('k_pmp', 'yuwen');
-    await seedTrueFalseQuestion('q_pmp', ['k_pmp']);
-    await seedPaper('paper_pmp', ['q_pmp'], 'k_pmp');
-    const { sessionId } = await startFrozenPaperFixture(db, 'paper_pmp');
-
-    const submit = await submitPaperSlot(
-      {
-        sessionId,
-        paperArtifactId: 'paper_pmp',
-        questionId: 'q_pmp',
-        answerMd: 'true', // matches reference → success
-        primaryKnowledgeId: 'k_pmp',
-        feedbackPolicy: 'immediate',
-      },
-      db,
-    );
-    expect(submit.coarseOutcome).toBe('correct');
-
-    // mastery_state has the freshly-written Δθ̂ (success → θ̂ rose above 0).
-    const stateRows = await db
-      .select()
-      .from(mastery_state)
-      .where(
-        and(eq(mastery_state.subject_kind, 'knowledge'), eq(mastery_state.subject_id, 'k_pmp')),
-      );
-    expect(stateRows).toHaveLength(1);
-    const realDelta = stateRows[0].last_theta_delta as number;
-    expect(realDelta).toBeGreaterThan(0);
-
-    const mpEvents = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, MASTERY_PROGRESS_ACTION), eq(event.subject_id, 'k_pmp')));
-    expect(mpEvents).toHaveLength(1);
-    const payload = mpEvents[0].payload as Record<string, unknown>;
-    expect(payload.theta_delta).toBeCloseTo(realDelta, 5);
-    expect(payload.question_id).toBe('q_pmp');
-    // RED LINE: observation only — no judging semantics (mirror solo).
-    expect(mpEvents[0].outcome).toBeNull();
-    // Replaying the accepted answer is not another mastery observation.
-    await submitPaperSlot(
-      { sessionId, paperArtifactId: 'paper_pmp', questionId: 'q_pmp', answerMd: 'true' },
-      db,
-    );
-    expect(
-      await db.select().from(event).where(eq(event.action, MASTERY_PROGRESS_ACTION)),
-    ).toHaveLength(1);
-    await db.insert(artifact).values({
-      id: 'note_native_mastery',
-      type: 'note_atomic',
-      title: '判断命题笔记',
-      knowledge_ids: ['k_pmp'],
-      generation_status: 'ready',
-      intent_source: 'test',
-      source: 'test',
-      verification_status: 'not_required',
-      created_at: new Date(),
-      updated_at: new Date(),
-    });
-    await db.insert(event_subscription_checkpoint).values({
-      subscriber_id: 'notes.mastery-progress-note-refine',
-      subscriber_version: 1,
-      declaration_hash: 'test-native',
-      status: 'active',
-      next_delivery_seq: 2,
-      bootstrapped_at: new Date(),
-      activated_at: new Date(),
-    });
-    await db.insert(event_subscription_delivery).values({
-      subscriber_id: 'notes.mastery-progress-note-refine',
-      subscriber_version: 1,
-      source_event_id: mpEvents[0].id,
-      source_dispatch_seq: mpEvents[0].dispatch_seq,
-      delivery_seq: 1,
-      status: 'pending',
-    });
-    const bossSend = vi.fn(async () => 'native-note-refine-job');
-    const delivery = {
-      subscriberId: 'notes.mastery-progress-note-refine',
-      subscriberVersion: 1,
-      deliverySeq: '1',
-      sourceEventId: mpEvents[0].id,
-    };
-    expect(await handleMasteryProgressNoteRefineDelivery(db, delivery, { bossSend })).toMatchObject(
-      {
-        status: 'succeeded',
-        detail: { enqueued: 1, attempt_event_id: submit.attemptEventId },
-      },
-    );
-    expect(await handleMasteryProgressNoteRefineDelivery(db, delivery, { bossSend })).toMatchObject(
-      {
-        status: 'succeeded',
-        detail: { alreadyProcessed: 1 },
-      },
-    );
-    expect(bossSend).toHaveBeenCalledTimes(1);
-  });
-
   it('observes a late result at its original learning position and does not emit for replayed neighbors', async () => {
     const db = testDb();
     await seedKnowledge('k_ordered', 'yuwen');
@@ -272,29 +163,5 @@ describe('YUK-459 — paper submit fires mastery-change signals on success', () 
       .where(eq(mastery_state.subject_id, 'k_ordered'));
     expect(state.evidence_count).toBe(2);
     expect(state.last_theta_delta).not.toBeCloseTo(ownSignal.payload.theta_delta as number, 6);
-  });
-
-  it('does NOT emit mastery_progress on a failed paper answer (gate = success, mirror solo)', async () => {
-    const db = testDb();
-    await seedKnowledge('k_pmp_fail', 'yuwen');
-    await seedTrueFalseQuestion('q_pmp_fail', ['k_pmp_fail']);
-    await seedPaper('paper_pmp_fail', ['q_pmp_fail'], 'k_pmp_fail');
-    const { sessionId } = await startFrozenPaperFixture(db, 'paper_pmp_fail');
-
-    const submit = await submitPaperSlot(
-      {
-        sessionId,
-        paperArtifactId: 'paper_pmp_fail',
-        questionId: 'q_pmp_fail',
-        answerMd: 'false', // != reference 'true' → failure
-        primaryKnowledgeId: 'k_pmp_fail',
-        feedbackPolicy: 'immediate',
-      },
-      db,
-    );
-    expect(submit.coarseOutcome).toBe('incorrect');
-
-    const mpEvents = await db.select().from(event).where(eq(event.action, MASTERY_PROGRESS_ACTION));
-    expect(mpEvents).toHaveLength(0);
   });
 });

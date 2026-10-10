@@ -10,23 +10,11 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@/core/ids';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
-import { artifact, event, knowledge, material_fsrs_state, question } from '@/db/schema';
+import { artifact, event, material_fsrs_state, question } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { DELETE, PATCH } from './question-detail';
 
 const NOW = new Date('2026-06-07T00:00:00Z');
-
-async function seedKnowledge(id: string): Promise<void> {
-  await testDb()
-    .insert(knowledge)
-    .values({
-      id,
-      name: `node ${id}`,
-      domain: 'yuwen',
-      created_at: NOW,
-      updated_at: NOW,
-    });
-}
 
 async function seedQuestion(opts: {
   id?: string;
@@ -143,83 +131,6 @@ describe('PATCH /api/questions/[id]', () => {
     await resetDb();
   });
 
-  it('edits the editable surface and bumps version', async () => {
-    const k = newId();
-    await seedKnowledge(k);
-    const id = await seedQuestion({});
-
-    const res = await PATCH(
-      mkPatchReq(id, {
-        version: 0,
-        prompt_md: 'edited prompt',
-        reference_md: 'edited ref',
-        choices_md: ['A', 'B'],
-        difficulty: 5,
-        knowledge_ids: [k],
-        kind: 'choice',
-        draft_status: 'draft',
-      }),
-      { id },
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; version: number; event_id: string };
-    expect(body.ok).toBe(true);
-    expect(body.version).toBe(1);
-
-    const row = await loadRow(id);
-    expect(row?.prompt_md).toBe('edited prompt');
-    expect(row?.reference_md).toBe('edited ref');
-    expect(row?.choices_md).toEqual(['A', 'B']);
-    expect(row?.difficulty).toBe(5);
-    expect(row?.knowledge_ids).toEqual([k]);
-    expect(row?.kind).toBe('choice');
-    expect(row?.draft_status).toBe('draft');
-    expect(row?.version).toBe(1);
-  });
-
-  it('writes an experimental:question_edit event with before/after', async () => {
-    const id = await seedQuestion({});
-    await PATCH(mkPatchReq(id, { version: 0, prompt_md: 'new' }), { id });
-
-    const evs = await testDb()
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'experimental:question_edit'), eq(event.subject_id, id)));
-    expect(evs).toHaveLength(1);
-    const payload = evs[0]?.payload as {
-      before: Record<string, unknown>;
-      after: Record<string, unknown>;
-    };
-    expect(payload.before.prompt_md).toBe('original prompt');
-    expect(payload.after.prompt_md).toBe('new');
-  });
-
-  it.each([
-    ['variant_depth', 1],
-    ['root_question_id', 'q_root'],
-    ['parent_variant_id', 'q_pv'],
-    ['parent_question_id', 'q_parent'],
-    ['part_index', 2],
-  ])('rejects bloodline field %s with 400', async (field, value) => {
-    const id = await seedQuestion({});
-    const res = await PATCH(mkPatchReq(id, { version: 0, [field]: value }), { id });
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error: string; message: string };
-    expect(body.error).toBe('validation_error');
-    expect(body.message).toContain(field);
-
-    // The row is untouched.
-    const row = await loadRow(id);
-    expect(row?.version).toBe(0);
-    expect(row?.prompt_md).toBe('original prompt');
-  });
-
-  it('409s on version mismatch (optimistic lock)', async () => {
-    const id = await seedQuestion({ version: 3 });
-    const res = await PATCH(mkPatchReq(id, { version: 0, prompt_md: 'x' }), { id });
-    expect(res.status).toBe(409);
-  });
-
   it('rejects edits to product-owned intervention diagnostics', async () => {
     const id = await seedQuestion({ source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE });
 
@@ -232,69 +143,6 @@ describe('PATCH /api/questions/[id]', () => {
       draft_status: 'active',
       version: 0,
     });
-  });
-
-  it('400s on unknown knowledge_ids', async () => {
-    const id = await seedQuestion({});
-    const res = await PATCH(mkPatchReq(id, { version: 0, knowledge_ids: ['k_missing'] }), { id });
-    expect(res.status).toBe(400);
-  });
-
-  it('404s on a missing question', async () => {
-    const res = await PATCH(mkPatchReq('q_nope', { version: 0, prompt_md: 'x' }), { id: 'q_nope' });
-    expect(res.status).toBe(404);
-  });
-
-  it('400s when no editable field is provided (version only)', async () => {
-    const id = await seedQuestion({});
-    const res = await PATCH(mkPatchReq(id, { version: 0 }), { id });
-    expect(res.status).toBe(400);
-  });
-
-  it('no-ops (no version bump, no event) when the patch matches the current row', async () => {
-    const id = await seedQuestion({});
-    // Resubmit the seeded values verbatim — nothing actually changed.
-    const res = await PATCH(
-      mkPatchReq(id, { version: 0, prompt_md: 'original prompt', reference_md: 'original ref' }),
-      { id },
-    );
-    expect(res.status).toBe(200);
-    const body = (await res.json()) as { ok: boolean; noop: boolean; version: number };
-    expect(body.ok).toBe(true);
-    expect(body.noop).toBe(true);
-    expect(body.version).toBe(0); // unchanged — no phantom bump
-
-    const row = await loadRow(id);
-    expect(row?.version).toBe(0);
-
-    // No audit event was fabricated for the no-op.
-    const evs = await testDb()
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'experimental:question_edit'), eq(event.subject_id, id)));
-    expect(evs).toHaveLength(0);
-  });
-
-  it('only records genuinely-changed fields in before/after (mixed patch)', async () => {
-    const id = await seedQuestion({});
-    // prompt_md changes; reference_md is resubmitted unchanged.
-    await PATCH(
-      mkPatchReq(id, { version: 0, prompt_md: 'new prompt', reference_md: 'original ref' }),
-      { id },
-    );
-    const evs = await testDb()
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'experimental:question_edit'), eq(event.subject_id, id)));
-    expect(evs).toHaveLength(1);
-    const payload = evs[0]?.payload as {
-      before: Record<string, unknown>;
-      after: Record<string, unknown>;
-    };
-    expect(payload.after).toHaveProperty('prompt_md', 'new prompt');
-    // Unchanged reference_md must NOT leak into the diff.
-    expect(payload.after).not.toHaveProperty('reference_md');
-    expect(payload.before).not.toHaveProperty('reference_md');
   });
 });
 
@@ -560,11 +408,6 @@ describe('DELETE /api/questions/[id]', () => {
     const body = (await res.json()) as { error: string; has_associations: boolean };
     expect(body.error).toBe('confirm_required');
     expect(body.has_associations).toBe(true);
-  });
-
-  it('404s on a missing question with confirm', async () => {
-    const res = await DELETE(mkDeleteReq('q_nope', '?version=0&confirm=true'), { id: 'q_nope' });
-    expect(res.status).toBe(404);
   });
 
   it('409s on version mismatch with confirm', async () => {

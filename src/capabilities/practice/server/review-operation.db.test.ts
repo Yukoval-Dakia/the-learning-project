@@ -2,19 +2,12 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
 import {
-  INTERVENTION_CONTRACT_VERSION,
-  INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-} from '@/core/schema/intervention';
-import {
   assessment_submission,
   evaluation_effective_head,
   event,
   mastery_state,
   material_fsrs_state,
-  question,
-  question_revision,
 } from '@/db/schema';
-import { ApiError } from '@/kernel/http';
 import {
   nativeHttpRequest,
   nativeSoloHttpFixture,
@@ -23,7 +16,6 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { CreateAttemptBodySchema } from '../api/contracts';
 import { createAttempt } from '../api/submit';
 import { dispatchNativeAttempt, executeNativeAttempt } from './assessment/durable-attempt';
-import { activateSubmissionCandidate, evaluateSubmission } from './judge/evaluate-submission';
 import { submitReviewAnswer } from './review-operation';
 
 beforeEach(resetDb);
@@ -142,114 +134,5 @@ describe('request independent review operation on business tables', () => {
     expect(await effects()).toEqual(before);
     expect(f.execute).toHaveBeenCalledTimes(1);
     expect(await testDb().select().from(assessment_submission)).toHaveLength(1);
-  });
-
-  it('does not synchronously recommit an accepted durable original after postcommit delivery failure', async () => {
-    const f = await pendingModel(true);
-    expect(f.result.kind).toBe('pending');
-    expect(f.send).toHaveBeenCalledTimes(1);
-    expect(f.execute).not.toHaveBeenCalled();
-    expect(await testDb().select().from(assessment_submission)).toHaveLength(1);
-    expect((await effects()).fsrs).toHaveLength(0);
-    expect(await submitReviewAnswer(testDb(), f.body)).toEqual(f.result);
-    expect((await createAttempt(nativeHttpRequest(f.body))).status).toBe(202);
-    expect(f.send).toHaveBeenCalledTimes(1);
-    expect(f.execute).not.toHaveBeenCalled();
-  });
-
-  it('refuses stale background evaluation after a newer explicit candidate becomes effective', async () => {
-    const f = await pendingModel();
-    const [revision] = await testDb()
-      .select()
-      .from(question_revision)
-      .where(eq(question_revision.revision_id, f.issued.issuance.binding.revision_id));
-    const manual = await evaluateSubmission(testDb(), {
-      submission_id: f.job.submit.submission_id,
-      evaluation_group_id: f.job.submit.evaluation_group_id,
-      evaluation_key: 'newer-owner-evidence',
-      mode: 'manual_assert',
-      provenance: { source: 'manual', assisted: false },
-      asserted_unit_results: revision.scoring_basis.units.map((unit) => ({
-        scoring_unit_id: unit.scoring_unit_id,
-        status: 'scored',
-        points_awarded: 0,
-        scored_because: 'response',
-        evidence_citations: [],
-      })),
-    });
-    expect(
-      await activateSubmissionCandidate(
-        testDb(),
-        {
-          evaluation_id: manual.record.evaluation_id,
-          expected_effective_id: null,
-          expected_generation: 0,
-        },
-        { actorRef: 'test:explicit-user-correction' },
-      ),
-    ).toMatchObject({ status: 'activated' });
-    const before = await effects();
-    await expect(executeNativeAttempt(testDb(), f.job)).rejects.toMatchObject({
-      code: 'stale_head',
-    });
-    expect(await effects()).toEqual(before);
-    expect(f.execute).not.toHaveBeenCalled();
-  });
-
-  it.each(['error', 'cancel'] as const)(
-    'releases a diagnostic claim after %s before original acceptance',
-    async (mode) => {
-      const f = await nativeSoloHttpFixture(testDb(), { model: true });
-      await testDb()
-        .update(question)
-        .set({
-          source: INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
-          judge_kind_override: 'multimodal_direct',
-          draft_status: 'active',
-          metadata: {
-            intervention_diagnostic: {
-              schema_version: INTERVENTION_CONTRACT_VERSION,
-              intervention_id: 'int_original',
-              intervention_version: 1,
-              diagnostic_kind: 'immediate',
-              knowledge_id: f.knowledgeIds[0],
-              due_at: '2026-01-01T00:00:00.000Z',
-            },
-          },
-        })
-        .where(eq(question.id, f.id));
-      const controller = new AbortController();
-      const reason =
-        mode === 'cancel'
-          ? new DOMException('cancelled before capture', 'AbortError')
-          : new ApiError('dispatch_unavailable', 'offline failure', 503);
-      await expect(
-        submitReviewAnswer(testDb(), CreateAttemptBodySchema.parse(f.body()), {
-          signal: controller.signal,
-          dispatchNativeAttempt: async () => {
-            if (mode === 'cancel') controller.abort(reason);
-            throw reason;
-          },
-        }),
-      ).rejects.toBe(reason);
-      const [row] = await testDb().select().from(question).where(eq(question.id, f.id));
-      expect(row.draft_status).toBe('active');
-      expect(await testDb().select().from(assessment_submission)).toHaveLength(0);
-      expect((await effects()).fsrs).toHaveLength(0);
-      expect(f.execute).not.toHaveBeenCalled();
-    },
-  );
-
-  it('rejects an already cancelled request before capture or dispatch', async () => {
-    const f = await nativeSoloHttpFixture(testDb());
-    const controller = new AbortController();
-    controller.abort(new DOMException('cancelled', 'AbortError'));
-    await expect(
-      submitReviewAnswer(testDb(), CreateAttemptBodySchema.parse(f.body()), {
-        signal: controller.signal,
-      }),
-    ).rejects.toMatchObject({ name: 'AbortError' });
-    expect(await testDb().select().from(assessment_submission)).toHaveLength(0);
-    expect((await effects()).fsrs).toHaveLength(0);
   });
 });

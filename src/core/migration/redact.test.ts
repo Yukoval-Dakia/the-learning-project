@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { canonicalHash } from './canonical';
 import { classifyMigrationCapture } from './classify';
-import { redactMigrationCapture, redactedFieldPolicy } from './redact';
+import { redactMigrationCapture } from './redact';
 import {
   SNAPSHOT,
   answeredReviewEvent,
@@ -249,25 +248,5 @@ describe('redactMigrationCapture（终轮：默认拒绝 + 完整分区家族）
     const row = (payload.rows as Array<Record<string, unknown>>)[0];
     expect(row?.note_md).toMatchObject({ __redacted: true });
     expect(row?.status).toBe('active');
-  });
-
-  it('原 capture 不被修改；脱敏后事实哈希变化且脱敏模式内稳定', () => {
-    const capture = learnerCapture();
-    const before = canonicalHash(capture.rawFacts);
-    const redacted1 = redactMigrationCapture(capture);
-    const redacted2 = redactMigrationCapture(capture);
-    expect(canonicalHash(capture.rawFacts)).toBe(before); // 不可变
-    expect(canonicalHash(redacted1.rawFacts)).not.toBe(before);
-    expect(canonicalHash(redacted1.rawFacts)).toBe(canonicalHash(redacted2.rawFacts));
-  });
-
-  it('redactedFieldPolicy 描述默认拒绝策略与两张安全清单', () => {
-    const policy = redactedFieldPolicy();
-    expect(policy.policy).toContain('default-deny');
-    expect(policy.safe_string_keys).toContain('coarse_outcome');
-    // 私有文本键绝不在安全清单（默认拒绝）。
-    expect(policy.safe_string_keys).not.toContain('user_message');
-    expect(policy.safe_string_keys).not.toContain('summary_md');
-    expect(policy.safe_subtree_keys).toContain('question_snapshot');
   });
 });

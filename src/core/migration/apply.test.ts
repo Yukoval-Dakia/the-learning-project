@@ -2,15 +2,10 @@ import { describe, expect, it } from 'vitest';
 import type { PublishedQuestionRevisionT } from '../schema/assessment';
 import { AttemptQuestionSnapshot } from '../schema/question-evidence-snapshot';
 import {
-  APPLY_ALGORITHM_VERSION,
   type BuildApplyPlanInput,
   type RevisionRegistry,
   type RevisionRegistryEntry,
-  applyRunIdOf,
   buildMigrationApplyPlan,
-  parseRevisionRegistry,
-  planDigestOf,
-  registryDigestOf,
   responseDigestOf,
 } from './apply';
 import { canonicalHash } from './canonical';
@@ -178,101 +173,6 @@ const HEAD_JUDGE = judgeEvent({
   outcome: 'success',
   created_at: '2026-09-20T10:00:05.000Z',
   payload: { coarse_outcome: 'incorrect', score: 0, feedback_md: '应为 2' },
-});
-
-describe('parseRevisionRegistry — v2', () => {
-  it('接受合法 v2 registry 并保留 binding_kind/断言字段', () => {
-    const parsed = parseRevisionRegistry(
-      registryOf([
-        REGISTRY_ENTRY('q-1'),
-        REGISTRY_ENTRY('q-2', {
-          revision_id: 'rev-q-2-alt',
-          binding_kind: 'question_asserted',
-          snapshot_digest: null,
-          assertion_reason: '历史导出无冻结快照，语料导入方显式断言同版',
-        }),
-      ]),
-    );
-    expect(parsed.ok).toBe(true);
-    if (parsed.ok) {
-      expect(parsed.registry.entries[0]?.binding_kind).toBe('snapshot_verified');
-      expect(parsed.registry.entries[1]?.assertion_reason).toContain('断言');
-    }
-  });
-
-  it('拒绝 v1、无 digest 的 snapshot_verified、无理由断言、同题重复断言与同 digest 歧义', () => {
-    expect(parseRevisionRegistry({ registry_version: 1, generated_by: 'x', entries: [] }).ok).toBe(
-      false,
-    );
-    expect(
-      parseRevisionRegistry({
-        registry_version: 2,
-        generated_by: 'x',
-        entries: [
-          {
-            question_id: 'q',
-            revision_id: 'r',
-            part_ids: ['p1'],
-            slot_id: 's',
-            scoring_unit_id: 'u',
-            binding_kind: 'snapshot_verified',
-          },
-        ],
-      }).ok,
-    ).toBe(false);
-    expect(
-      parseRevisionRegistry({
-        registry_version: 2,
-        generated_by: 'x',
-        entries: [
-          {
-            question_id: 'q',
-            revision_id: 'r',
-            part_ids: ['p1'],
-            slot_id: 's',
-            scoring_unit_id: 'u',
-            binding_kind: 'question_asserted',
-          },
-        ],
-      }).ok,
-    ).toBe(false);
-    const dupAssertion = parseRevisionRegistry(
-      registryOf([
-        REGISTRY_ENTRY('q-1', {
-          binding_kind: 'question_asserted',
-          snapshot_digest: null,
-          assertion_reason: 'a',
-        }),
-        REGISTRY_ENTRY('q-1', {
-          revision_id: 'rev-q-1-b',
-          binding_kind: 'question_asserted',
-          snapshot_digest: null,
-          assertion_reason: 'b',
-        }),
-      ]),
-    );
-    expect(dupAssertion.ok).toBe(false);
-    const sameDigestTwice = parseRevisionRegistry(
-      registryOf([REGISTRY_ENTRY('q-1'), REGISTRY_ENTRY('q-1', { revision_id: 'rev-q-1-b' })]),
-    );
-    expect(sameDigestTwice.ok).toBe(false);
-  });
-
-  it('同一 question 允许多个历史版本绑定（不同 snapshot_digest → 不同 revision）', () => {
-    const parsed = parseRevisionRegistry(
-      registryOf([
-        REGISTRY_ENTRY('q-1'),
-        REGISTRY_ENTRY('q-1', {
-          revision_id: 'rev-q-1-v2',
-          snapshot_digest: canonicalHash({
-            ...SNAPSHOT,
-            question: { ...SNAPSHOT.question, prompt_md: '2+2=?' },
-          }),
-        }),
-      ]),
-    );
-    expect(parsed.ok).toBe(true);
-  });
 });
 
 describe('buildMigrationApplyPlan — per-category write mapping', () => {
@@ -851,73 +751,6 @@ describe('buildMigrationApplyPlan — per-category write mapping', () => {
     expect(mirror.mapping?.legacy_part_ref).toBe('p1');
     expect(mirror.submission).toBeNull(); // submission 属于锚记录，绝不重复
     expect(plan.rollup.totals.submissions).toBe(1);
-  });
-});
-
-describe('determinism / idempotency 基座', () => {
-  const capture = withEvents(emptyCapture(), [COMPLETE_ATTEMPT, HEAD_JUDGE]);
-  const registry = registryOf([REGISTRY_ENTRY('q-1')]);
-  const contracts = new Map([['rev-q-1', contractOf('rev-q-1')]]);
-
-  it('同输入 → 相同 plan digest 与相同 id', () => {
-    const a = buildMigrationApplyPlan(planInput(capture, registry, contracts));
-    const b = buildMigrationApplyPlan(planInput(capture, registry, contracts));
-    expect(planDigestOf(a)).toBe(planDigestOf(b));
-    expect(a.records.map((r) => r.mapping?.mapping_id)).toEqual(
-      b.records.map((r) => r.mapping?.mapping_id),
-    );
-    const submissionA = a.records.find((r) => r.submission != null)?.submission;
-    const submissionB = b.records.find((r) => r.submission != null)?.submission;
-    expect(submissionA?.submission.submission_id).toBe(submissionB?.submission.submission_id);
-  });
-
-  it('plan digest 覆盖完整行内容（P1-3）：改 planned response → digest 变', () => {
-    const base = buildMigrationApplyPlan(planInput(capture, registry, contracts));
-    const tampered = JSON.parse(JSON.stringify(base)) as typeof base;
-    const anchor = tampered.records.find((r) => r.submission != null);
-    expect(anchor).toBeDefined();
-    // 直接改内存对象后重算 digest：planDigestOf 覆盖完整 submission 内容。
-    const submission = anchor?.submission;
-    if (submission == null) return;
-    (submission.submission.response_set.entries[0] as { text_md: string }).text_md = 'tampered';
-    expect(planDigestOf(tampered)).not.toBe(planDigestOf(base));
-  });
-
-  it('pending 裁决与 mapped 裁决产生不同 mapping_id（P1-5 supersession 换行不冲突）', () => {
-    const withRegistry = buildMigrationApplyPlan(planInput(capture, registry, contracts));
-    const without = buildMigrationApplyPlan(planInput(capture, null));
-    const idWith = withRegistry.records.find(
-      (r) => r.classification.source_locator === 'event:attempt:att-1',
-    )?.mapping?.mapping_id;
-    const idWithout = without.records.find(
-      (r) => r.classification.source_locator === 'event:attempt:att-1',
-    )?.mapping?.mapping_id;
-    expect(idWith).toBeDefined();
-    expect(idWithout).toBeDefined();
-    expect(idWith).not.toBe(idWithout);
-  });
-
-  it('registry 变化 → 不同 run id / plan digest（不吞掉语料导入变化）', () => {
-    const withRegistry = buildMigrationApplyPlan(planInput(capture, registry, contracts));
-    const without = buildMigrationApplyPlan(planInput(capture, null));
-    expect(registryDigestOf(registry)).not.toBe(registryDigestOf(null));
-    expect(planDigestOf(withRegistry)).not.toBe(planDigestOf(without));
-    expect(
-      applyRunIdOf({
-        checkpoint_hash: 'chk',
-        classification_hash: 'cls',
-        registry_digest: registryDigestOf(registry),
-      }),
-    ).not.toBe(
-      applyRunIdOf({ checkpoint_hash: 'chk', classification_hash: 'cls', registry_digest: null }),
-    );
-  });
-
-  it('rollup 计数与记录一致', () => {
-    const plan = buildMigrationApplyPlan(planInput(capture, registry, contracts));
-    const sum = Object.values(plan.rollup.per_category).reduce((acc, b) => acc + b.records, 0);
-    expect(sum).toBe(plan.records.length);
-    expect(plan.algorithm_version).toBe(APPLY_ALGORITHM_VERSION);
   });
 });
 

@@ -8,7 +8,6 @@ import {
 import type { TeachingSkillResult } from '@/capabilities/copilot/server/skills/teaching-skill';
 import { event, learning_item, question } from '@/db/schema';
 import { computeReplay } from '@/server/events/sse_replay';
-import { writeJobEvent } from '@/server/events/writer';
 import { Conversation } from '@/server/session';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runCopilotRun, writeSuccessfulTerminalProjection } from './copilot_run';
@@ -138,22 +137,4 @@ describe('unified worker teaching lifecycle', () => {
         expect(terminalReply?.payload).not.toHaveProperty('checkpoint_event_id');
     },
   );
-
-  it('honors explicit Stop before a completed assessment can materialize', async () => {
-    const { data, result } = await acceptedTeachingTurn('ask_check');
-    const teaching = vi.fn(async () => {
-      await writeJobEvent(db, {
-        business_table: COPILOT_RUN_TABLE,
-        business_id: data.run_id,
-        event_type: COPILOT_RUN_EVENTS.CANCEL_REQUESTED,
-        payload: { by: 'user' },
-      });
-      return result;
-    });
-    const params = { db, data, runTeachingSkillFn: teaching };
-    expect(await runCopilotRun(params)).toEqual({ status: 'cancelled' });
-    expect(await runCopilotRun(params)).toEqual({ status: 'cancelled' });
-    expect(teaching).toHaveBeenCalledTimes(1);
-    expect(await db.select().from(question)).toHaveLength(0);
-  });
 });

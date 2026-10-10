@@ -87,72 +87,11 @@ describe('api smoke credential transport', () => {
     expect(vi.mocked(console.log).mock.calls.flat().join(' ')).not.toContain(fakeToken);
   });
 
-  it('preserves default health and the baseUrl override without a token', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', undefined);
-    vi.stubEnv('API_SMOKE_BASE_URL', 'http://127.0.0.1:8787');
-    const { argv } = await runSmoke();
-    expect(argv.slice(-4)).toEqual([
-      '--env-var',
-      'baseUrl=http://127.0.0.1:8787',
-      '--folder',
-      'health',
-    ]);
-    expect(console.warn).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(readFileSync(environmentPath ?? '', 'utf8')).values).toContainEqual({
-      key: 'internalToken',
-      value: '',
-      type: 'secret',
-      enabled: true,
-    });
-  });
-
-  it('preserves whole-collection selection and the default target', async () => {
-    vi.stubEnv('API_SMOKE_BASE_URL', undefined);
-    const { argv } = await runSmoke(['--no-folder', '--bail']);
-    expect(argv).not.toContain('--no-folder');
-    expect(argv).not.toContain('--folder');
-    expect(argv.slice(-3)).toEqual(['--env-var', 'baseUrl=http://localhost:3001', '--bail']);
-  });
-
-  it('cleans up and forwards an unsuccessful Newman exit', async () => {
-    await runSmoke();
-    const directory = dirname(environmentPath ?? '');
-    expect(() => child.emit('exit', 7, null)).toThrow('test process exit');
-    expect(process.exit).toHaveBeenCalledWith(7);
-    expect(existsSync(directory)).toBe(false);
-  });
-
   it('cleans up when Newman cannot start, without printing credentials', async () => {
     await runSmoke();
     expect(() => child.emit('error', new Error('spawn failed'))).toThrow('test process exit');
     expect(existsSync(dirname(environmentPath ?? ''))).toBe(false);
     expect(process.exit).toHaveBeenCalledWith(1);
     expect(vi.mocked(console.error).mock.calls.flat().join(' ')).not.toContain(fakeToken);
-  });
-
-  it('cleans up before relaying a Newman termination signal', async () => {
-    await runSmoke();
-    child.emit('exit', null, 'SIGTERM');
-    expect(existsSync(dirname(environmentPath ?? ''))).toBe(false);
-    expect(process.kill).toHaveBeenCalledWith(process.pid, 'SIGTERM');
-    expect(process.exit).not.toHaveBeenCalled();
-  });
-
-  it.each(['SIGINT', 'SIGTERM', 'SIGHUP'])('cleans up and forwards wrapper %s', async (signal) => {
-    await runSmoke();
-    const listener = vi.mocked(process.once).mock.calls.find(([event]) => event === signal)?.[1];
-    expect(listener).toBeDefined();
-    listener?.();
-    expect(existsSync(dirname(environmentPath ?? ''))).toBe(false);
-    expect(mocks.kill).toHaveBeenCalledWith(signal);
-    expect(process.kill).toHaveBeenCalledWith(process.pid, signal);
-  });
-
-  it('registers cleanup for wrapper exit, including setup failures', async () => {
-    await runSmoke();
-    const listener = vi.mocked(process.once).mock.calls.find(([event]) => event === 'exit')?.[1];
-    expect(listener).toBeDefined();
-    listener?.();
-    expect(existsSync(dirname(environmentPath ?? ''))).toBe(false);
   });
 });

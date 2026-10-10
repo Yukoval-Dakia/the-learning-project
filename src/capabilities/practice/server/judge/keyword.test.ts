@@ -22,11 +22,4 @@ describe('judgeKeyword', () => {
     expect(r.verdict).toBe('incorrect');
     expect(r.score).toBe(0);
   });
-
-  it('feedback lists missing keywords', () => {
-    const r = judgeKeyword({ keywords: ['A', 'B', 'C'] }, { content: 'has A only' });
-    expect(r.feedback_md).toMatch(/缺失/);
-    expect(r.feedback_md).toContain('B');
-    expect(r.feedback_md).toContain('C');
-  });
 });

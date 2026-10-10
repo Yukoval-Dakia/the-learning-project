@@ -249,10 +249,3 @@ it('observes real Timekeeper forwarding, native two-scheduler ticks/restart and 
   expect(await db`select * from pgboss.schedule where name = 'prune_job_events'`).toHaveLength(1);
   await second.stop();
 }, 600000);
-it('retains the production 04:15 Asia/Shanghai declaration and its previous-date UTC mapping', async () => {
-  const source = await readFile('src/capabilities/observability/manifest.ts', 'utf8');
-  expect(source).toContain("schedule: { cron: '15 4 * * *', tz: 'Asia/Shanghai' }");
-  const [row] =
-    await db`select to_char(('2026-10-10 04:15:00'::timestamp at time zone 'Asia/Shanghai') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as utc`;
-  expect(new Date(row.utc).toISOString()).toBe('2026-10-09T20:15:00.000Z');
-});

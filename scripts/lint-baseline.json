@@ -4,7 +4,7 @@
   "infoPolicy": "info diagnostics are counted: separate infos ratchet total and per-rule rows, decreasing only like warnings",
   "totals": {
     "errors": 0,
-    "warnings": 305,
+    "warnings": 210,
     "infos": 0
   },
   "byRule": {
@@ -12,7 +12,7 @@
       "warning": 3
     },
     "lint/a11y/useAriaPropsSupportedByRole": {
-      "warning": 12
+      "warning": 11
     },
     "lint/a11y/useSemanticElements": {
       "warning": 9
@@ -21,19 +21,19 @@
       "warning": 7
     },
     "lint/complexity/useOptionalChain": {
-      "warning": 36
+      "warning": 28
     },
     "lint/correctness/noUnsafeOptionalChaining": {
-      "warning": 39
+      "warning": 4
     },
     "lint/correctness/noUnusedFunctionParameters": {
-      "warning": 5
+      "warning": 3
     },
     "lint/correctness/noUnusedImports": {
-      "warning": 53
+      "warning": 26
     },
     "lint/correctness/noUnusedVariables": {
-      "warning": 8
+      "warning": 36
     },
     "lint/style/noDescendingSpecificity": {
       "warning": 53
@@ -44,17 +44,14 @@
     "lint/suspicious/noDuplicateProperties": {
       "warning": 1
     },
-    "lint/suspicious/noTemplateCurlyInString": {
-      "warning": 32
-    },
     "lint/suspicious/noUnknownAtRules": {
       "warning": 1
     },
     "lint/suspicious/useIterableCallbackReturn": {
-      "warning": 4
+      "warning": 3
     },
     "suppressions/unused": {
-      "warning": 40
+      "warning": 23
     }
   }
 }

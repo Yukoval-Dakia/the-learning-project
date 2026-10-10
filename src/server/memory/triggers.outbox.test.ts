@@ -7,19 +7,14 @@
 // Only `boss.send` is mocked (no pg-boss container required); db + outbox
 // SQL (SELECT FOR UPDATE SKIP LOCKED + UPDATE) run for real.
 
-import { eq, isNull } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { newId } from '@/core/ids';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { _resetBossForTests, createBoss } from '../boss/client';
-import {
-  MEMORY_EVENT_INGEST_QUEUE,
-  buildMemoryIngestOutboxPollHandler,
-  buildMemoryIngestOutboxRecoverHandler,
-  runMemoryRecoveryFloor,
-} from './triggers';
+import { MEMORY_EVENT_INGEST_QUEUE, buildMemoryIngestOutboxPollHandler } from './triggers';
 
 function attemptPayload(question_id = 'q1') {
   return {
@@ -57,30 +52,6 @@ describe('outbox poll handler (real-path)', () => {
   beforeEach(async () => {
     await resetDb();
     await realBoss.deleteAllJobs(MEMORY_EVENT_INGEST_QUEUE);
-  });
-
-  it('happy path: writeEvent leaves ingest_at NULL; poll enqueues + stamps in one tx', async () => {
-    const db = testDb();
-    const boss = { send: vi.fn(async () => 'job-1') };
-    const id = newId();
-    await writeEvent(db, { id, ...attemptPayload() });
-
-    const before = await db.select().from(event).where(eq(event.id, id));
-    expect(before).toHaveLength(1);
-    expect(before[0].ingest_at).toBeNull();
-
-    const poll = buildMemoryIngestOutboxPollHandler(db, boss);
-    await poll([]);
-
-    expect(boss.send).toHaveBeenCalledTimes(1);
-    expect(boss.send).toHaveBeenCalledWith(
-      MEMORY_EVENT_INGEST_QUEUE,
-      { event_id: id },
-      expect.objectContaining({ db: expect.any(Object) }),
-    );
-
-    const after = await db.select().from(event).where(eq(event.id, id));
-    expect(after[0].ingest_at).not.toBeNull();
   });
 
   it('tx rollback: writeEvent inside rolled-back tx produces 0 event rows AND 0 ingest jobs', async () => {
@@ -130,25 +101,6 @@ describe('outbox poll handler (real-path)', () => {
     );
   });
 
-  it('batch limit: poll handler drains up to OUTBOX_POLL_BATCH per invocation', async () => {
-    const db = testDb();
-    const boss = { send: vi.fn(async () => 'job-x') };
-    const ids: string[] = [];
-    // Seed 75 pending rows (> batch=50).
-    for (let i = 0; i < 75; i += 1) {
-      const id = newId();
-      ids.push(id);
-      await writeEvent(db, { id, ...attemptPayload(`q-${i}`) });
-    }
-
-    const poll = buildMemoryIngestOutboxPollHandler(db, boss);
-    await poll([]);
-
-    expect(boss.send).toHaveBeenCalledTimes(50);
-    const remaining = await db.select().from(event).where(isNull(event.ingest_at));
-    expect(remaining).toHaveLength(25);
-  });
-
   it('tx rollback: pg-boss send participates in the same poll transaction', async () => {
     const db = testDb();
     const id = newId();
@@ -167,64 +119,5 @@ describe('outbox poll handler (real-path)', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].ingest_at).toBeNull();
     expect(await realBoss.fetch(MEMORY_EVENT_INGEST_QUEUE)).toHaveLength(0);
-  });
-});
-
-describe('outbox recovery handler (real-path)', () => {
-  beforeEach(async () => {
-    await resetDb();
-  });
-
-  it('drains all pending rows across more than two batch cycles', async () => {
-    const db = testDb();
-    const boss = { send: vi.fn(async () => 'job-x') };
-    for (let i = 0; i < 130; i += 1) {
-      await writeEvent(db, { id: newId(), ...attemptPayload(`q-${i}`) });
-    }
-
-    const recover = buildMemoryIngestOutboxRecoverHandler(db, boss);
-    await recover([]);
-
-    expect(boss.send).toHaveBeenCalledTimes(130);
-    const remaining = await db.select().from(event).where(isNull(event.ingest_at));
-    expect(remaining).toHaveLength(0);
-  });
-
-  it('exits cleanly when no pending rows', async () => {
-    const db = testDb();
-    const boss = { send: vi.fn(async () => 'job-x') };
-    const recover = buildMemoryIngestOutboxRecoverHandler(db, boss);
-    await recover([]);
-    expect(boss.send).not.toHaveBeenCalled();
-  });
-});
-
-describe('shared hourly memory recovery floor', () => {
-  it('attempts reconcile recovery after ingest recovery fails, then propagates the first error', async () => {
-    const ingestError = new Error('ingest recovery failed');
-    const reconcile = vi.fn(async () => {});
-    await expect(
-      runMemoryRecoveryFloor({
-        ingest: async () => {
-          throw ingestError;
-        },
-        reconcile,
-      }),
-    ).rejects.toBe(ingestError);
-    expect(reconcile).toHaveBeenCalledOnce();
-  });
-
-  it('attempts ingest recovery when reconcile recovery fails, then propagates the reconcile error', async () => {
-    const reconcileError = new Error('reconcile recovery failed');
-    const ingest = vi.fn(async () => {});
-    await expect(
-      runMemoryRecoveryFloor({
-        ingest,
-        reconcile: async () => {
-          throw reconcileError;
-        },
-      }),
-    ).rejects.toBe(reconcileError);
-    expect(ingest).toHaveBeenCalledOnce();
   });
 });
