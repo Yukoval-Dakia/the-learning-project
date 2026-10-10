@@ -1,0 +1,121 @@
+{
+  "integration": {
+    "head": "0f58a8f374f773ddc48c774e1bd3d79739a796a7",
+    "candidate": "4faf64e399a118b20163c2e2b697a0309ff339cf",
+    "main": "b3706b5dd",
+    "owned_blobs": 44,
+    "incoming_paths": 57,
+    "overlap": [],
+    "identical": true,
+    "initial_check_failure": "rev-parse stdout comparison mishandled deleted path; corrected to exact ls-tree entries; no product changes"
+  },
+  "parent_checks": {
+    "head": "0f58a8f374f773ddc48c774e1bd3d79739a796a7",
+    "checks": [
+      {
+        "name": "unit",
+        "exit": 0,
+        "log": "/tmp/yuk1404-parent-b370-unit.log",
+        "sha256": "d1058aad315a0f7b27156b302009ee6c52471ada1c4493043addb6525fec8e05"
+      },
+      {
+        "name": "typecheck",
+        "exit": 0,
+        "log": "/tmp/yuk1404-parent-b370-typecheck.log",
+        "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+      },
+      {
+        "name": "lint",
+        "exit": 0,
+        "log": "/tmp/yuk1404-parent-b370-lint.log",
+        "sha256": "edb3106b6b5cb4b929807090514dcecfa3b2cd92ebaef148e565eae18e996a88"
+      },
+      {
+        "name": "build",
+        "exit": 0,
+        "log": "/tmp/yuk1404-parent-b370-build.log",
+        "sha256": "9606097f920703d6fd650c4f6d6a315307d93c86ed328b7ed7914e580b8d663c"
+      }
+    ]
+  },
+  "retention_repair": {
+    "base": "241fdf550250fa453ca62c414989503202bcef10",
+    "head": "abc1e010f22e92df9c232a4a7064949660ae8b18",
+    "clean": true,
+    "changed_files": [
+      "docs/planning/2026-10-10-yuk1404-assessment-review-continuation.md",
+      "src/server/boss/handlers/prune-assessment-review.db.test.ts"
+    ],
+    "patch": "/tmp/yuk1404-retention-fixture.patch",
+    "patch_sha256": "fd9e91d15ce95562a758f47afd24c1420f8764939a776d2e1021085f4aab7a32",
+    "checks": [
+      {
+        "command": "bash /tmp/yuk1359-offline-env.sh pnpm exec biome check src/server/boss/handlers/prune-assessment-review.db.test.ts > /tmp/yuk1404-retention-fixture-biome.log 2>&1",
+        "command_sha256": "7e73a440eaa909c2cd3dc47a8e1d87a64f6e2436f84555c0a813f3c213f95739",
+        "exit_code": 0,
+        "log": "/tmp/yuk1404-retention-fixture-biome.log",
+        "log_sha256": "7d22636a27e1fee6bce8c5ab4795371569ce76dfffc92b406eec1c9c22ba999f"
+      },
+      {
+        "command": "bash /tmp/yuk1359-offline-env.sh pnpm typecheck > /tmp/yuk1404-retention-fixture-typecheck.log 2>&1",
+        "command_sha256": "09285432ed9b1482d813e4a379d96acc0ba4216179c98bbdaecbdd6645ef4176",
+        "exit_code": 0,
+        "log": "/tmp/yuk1404-retention-fixture-typecheck.log",
+        "log_sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+      },
+      {
+        "command": "bash /tmp/yuk1359-offline-env.sh pnpm audit:partition > /tmp/yuk1404-retention-fixture-partition.log 2>&1",
+        "command_sha256": "e7dd1820077d5521f9b32b0296c2e5a6857b17581cbdb8092ce3454146bfc11c",
+        "exit_code": 0,
+        "log": "/tmp/yuk1404-retention-fixture-partition.log",
+        "log_sha256": "553feb56b148ac8f5438063b87c148264711480cc14cb5da8e8ba4a62d4115f8"
+      }
+    ],
+    "input_ci_log": "/tmp/yuk1637-241fdf-db3.log",
+    "input_ci_log_sha256": "75301416dcc898b88e68d59550a1f17eab38a17940a14b10c51f33f40c8bfd5e",
+    "db_test_executed_locally": false,
+    "production_changed": false,
+    "commit_log_sha256": "8f48aab2e09a9a506869c19ef0c2f56300dadb757281bf07eec1f6603f86aa80"
+  },
+  "assessment_fixture_repair": {
+    "base": "abc1e010f22e92df9c232a4a7064949660ae8b18",
+    "head": "4faf64e399a118b20163c2e2b697a0309ff339cf",
+    "clean": true,
+    "retention_commit_preserved": true,
+    "changed_files": [
+      "src/capabilities/ingestion/server/assessment-review.db.test.ts"
+    ],
+    "patch": "/tmp/yuk1404-review-fixture.patch",
+    "patch_sha256": "45dad269ecef8244e7c844e2162e868fd59a175d0a22e01cbcbfac4073d56647",
+    "checks": [
+      {
+        "command": "bash /tmp/yuk1359-offline-env.sh pnpm exec biome check --write src/capabilities/ingestion/server/assessment-review.db.test.ts > /tmp/yuk1404-review-fixture-biome.log 2>&1",
+        "command_sha256": "10b9c1e11a56693974858a3cbb4e9e401c6291395a525bdc59d046a3009e5843",
+        "exit_code": 0,
+        "log": "/tmp/yuk1404-review-fixture-biome.log",
+        "log_sha256": "fa427efe05470db9c300d748fc373029aa339366b2abee1807c2be17166cb87b"
+      },
+      {
+        "command": "bash /tmp/yuk1359-offline-env.sh pnpm typecheck > /tmp/yuk1404-review-fixture-typecheck.log 2>&1",
+        "command_sha256": "8f339173dbd8cfeae51b2f79e1cdcf32cec94bc7992af6984f3a62a8d41fcb41",
+        "exit_code": 0,
+        "log": "/tmp/yuk1404-review-fixture-typecheck.log",
+        "log_sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+      },
+      {
+        "command": "bash /tmp/yuk1359-offline-env.sh pnpm audit:partition > /tmp/yuk1404-review-fixture-partition.log 2>&1",
+        "command_sha256": "cac1e43bd822a7221c231002f7414da9778ccc5f1dcccae84657e399d3588237",
+        "exit_code": 0,
+        "log": "/tmp/yuk1404-review-fixture-partition.log",
+        "log_sha256": "553feb56b148ac8f5438063b87c148264711480cc14cb5da8e8ba4a62d4115f8"
+      }
+    ],
+    "input_ci_log": "/tmp/yuk1637-241fdf-db4.log",
+    "input_ci_log_sha256": "6e8fb9860c27e1b5d53570827cdb6587adf5698dba862dbc4beb829dc1ac478f",
+    "diagnosis": "Source-supported fixture alias mismatch: reused same session/key/hash survives resetDb, returns previous operation ID; fixture ignored reservation and called a new unaccepted ID. Matches CI early-return signatures; no local DB reproduction or repaired DB pass claimed.",
+    "db_test_executed_locally": false,
+    "production_changed": false,
+    "docs_changed": false,
+    "commit_log_sha256": "64f17a572a6afc5eaa89b278d2305a827a7c91b78269d2dc9bb0c5d2fb24bcc2"
+  }
+}
