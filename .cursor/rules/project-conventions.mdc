@@ -34,11 +34,11 @@ alwaysApply: true
   或 owner 明确要求。
 - S13 DELETE/SIMPLIFY 对象随 consumer 迁入新路径的 PR 删除，不做独立大扫除；
   新代码不得继续扩展这些对象。
-- 删除或替换 rewrite-prep §9 的 8 项 pre-AI 承重能力，须 owner 明确批准；
-  未获批准时只做 demote。
+- 删除、替换或降级 rewrite-prep §9 的 8 项 pre-AI 承重能力，须 owner 明确批准；
+  未获批准时保持原样并上报（与上文 pre-AI 承重规则一致）。
 - 开放想法与 PARKED 契约，只有真实使用达到预注册样本量后才开工。
-- 功能修复落在新架构路径（TanStack Start / DBOS / 同一路由的 ui-next）；
-  不在旧路径重复修复，除非 owner 在该页面迁移前实际遇到 P0。
+- 新旧路径共用的 domain/kernel 逻辑直接修；路由/页面入口的修复落在新架构路径
+  （TanStack Start / DBOS / 同一路由的 ui-next），不在旧路径重复修复，除非该页面迁移前发现新 P0。
 
 ## UI design pre-flight
 
