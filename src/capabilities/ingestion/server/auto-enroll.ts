@@ -84,6 +84,9 @@ import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { getKnownSubjects } from '@/subjects/profile';
 import { enrollNativeCapture } from './assessment-capture';
 import { capturedQuestionShape } from './captured-question-shape';
+import { pageScopedQuestionImageRefs } from './question-page-refs';
+
+export { pageScopedQuestionImageRefs } from './question-page-refs';
 
 export type AutoEnrollSkipReason = 'flag_off' | 'session_not_found' | 'wrong_status';
 
@@ -840,82 +843,4 @@ export function shouldGradeStudentWork(block: { structured: StructuredQuestionT 
   if (detectStudentWork(block)) return true;
   const source = block.structured?.source;
   return source != null && SCAN_SOURCES.has(source) && !extractionAssessedHandwriting(block);
-}
-
-/**
- * YUK-488 — page-scope the images fed to the whole-page student-answer judge.
- *
- * Before this, cut ④ fed EVERY session page (block.source_asset_ids = all assets, and the
- * judge's prompt image_refs = block.image_refs = all assets too) to every block's judge
- * call — so the judge grading question A also saw questions B/C/D's pages. On a MULTI-PAGE
- * upload that is the inter-page attribution bleed YUK-485 flagged. This narrows the fed
- * images to the page(s) THIS question actually spans.
- *
- * Page set = every `page_index` in the question's structured subtree (top node + all
- * sub_questions). The VLM StructureTask populates page_index per node — incl. subs —
- * (nodeToStructured copies it recursively, YUK-227 P1; a cross-page 大题 carries DIFFERENT
- * page_index across its subs), and the Tencent multi-page fallback stamps it per page. Each
- * index maps to source_asset_ids[idx] (asset ids are stored in page order by
- * tencent_ocr_extract). Returns the matched assets in ascending page order, deduped.
- *
- * FALLBACK to the full source_asset_ids (today's behavior, ZERO regression) UNLESS EVERY node
- * in the subtree carries a valid integer page_index. So it falls back on: NO page_index at all
- * (legacy single-page tree / a fallback path that omits it), PARTIAL population (some nodes have
- * it, some don't — trusting a partial set could DROP a page the answer is on), a non-integer
- * value (NaN/float from a bad edit), OR any derived index out of range. Deliberately
- * conservative: an incomplete/unreliable page signal must never narrow — better to over-feed
- * (today's bleed) than to silently starve the judge of the answer page.
- *
- * KNOWN LIMIT (accepted — narrow scope, owner-directed): scoping to the structured (prompt)
- * pages can drop a SEPARATE answer-sheet page (机读卡 / a continuation not in the prompt's
- * span). For the cold-start worked-paper upload (handwriting inline ON the question page)
- * the answer shares the prompt's page → kept. The separate-answer-sheet case degrades to the
- * judge seeing no answer → unsupported/low-confidence → the EXISTING needs-review gate routes
- * it to a human (never a silent wrong grade). SAME-PAGE dense attribution (the YUK-485
- * headline) is NOT addressed by page-scoping — it is a no-op when every question is on one
- * page; that needs whole-page holistic reasoning, deferred out of this cut.
- */
-export function pageScopedQuestionImageRefs(block: {
-  structured: StructuredQuestionT | null;
-  source_asset_ids: string[];
-}): string[] {
-  const all = block.source_asset_ids;
-  const root = block.structured;
-  if (!root || all.length === 0) return all;
-  const pages = new Set<number>();
-  let totalNodes = 0;
-  let nodesWithPage = 0;
-  const stack: StructuredQuestionT[] = [root];
-  while (stack.length > 0) {
-    const node = stack.pop();
-    if (!node) continue;
-    totalNodes += 1;
-    // Number.isInteger (not `typeof === 'number'`): the schema types page_index as int≥0, but
-    // structured is jsonb and an agent-edit / malformed VLM output could carry NaN or a float.
-    // typeof would admit those; then NaN slips the out-of-range guard below (NaN<0 and
-    // NaN>=len are both false) → all[NaN] = undefined fed to R2/judge. Integer-only entry keeps
-    // such a node OUT of the trusted set (and, via the complete-signal gate below, forces the
-    // feed-all fallback). (augment review #573 + independent reviewer #7.)
-    const pi = node.page_index;
-    if (typeof pi === 'number' && Number.isInteger(pi)) {
-      pages.add(pi);
-      nodesWithPage += 1;
-    }
-    if (node.sub_questions) {
-      for (const sub of node.sub_questions) stack.push(sub);
-    }
-  }
-  // COMPLETE-signal gate (concern #2 — both reviewers): scope ONLY when EVERY node in the subtree
-  // carries a valid integer page_index. PARTIAL population (some nodes have it, some don't) is NOT
-  // trusted: a sub on a page whose node omitted page_index would be DROPPED, starving the judge of
-  // the answer page (the VLM does not guarantee per-node page_index — figure_attach.ts:27 documents
-  // the same partial-population reality). Partial OR zero signal → feed all (today's behavior, ZERO
-  // regression — the conservative direction: never drop a page the answer might be on). The
-  // dominant win is preserved: a standalone question wholly on one page has its single node carry
-  // page_index → complete → scoped; a cross-page 大题 narrows only when the VLM stamped EVERY node.
-  if (pages.size === 0 || nodesWithPage < totalNodes) return all;
-  const sorted = [...pages].sort((a, b) => a - b);
-  // Belt-and-suspenders: any out-of-range index ⇒ the page map is untrustworthy → feed all.
-  if (sorted.some((p) => p < 0 || p >= all.length)) return all;
-  return sorted.map((p) => all[p]);
 }

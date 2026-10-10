@@ -31,6 +31,7 @@ import {
   executeTencentOcrSubmit,
   extractionPageOperationId,
 } from '@/capabilities/ingestion/server/provider-attempts';
+import { pageScopedQuestionImageRefs } from '@/capabilities/ingestion/server/question-page-refs';
 import {
   type StructureResult,
   StructureTaskError,
@@ -619,7 +620,7 @@ async function processOneOcrJob(
           },
         ],
         source_asset_ids: assetIds,
-        image_refs: assetIds,
+        image_refs: pageScopedQuestionImageRefs({ structured: q, source_asset_ids: assetIds }),
         // StructureTask emits a calibrated overall confidence. Missing values
         // (fallback engines / old test doubles) fail closed to human review.
         extraction_confidence: structure.extraction_confidence ?? 0,

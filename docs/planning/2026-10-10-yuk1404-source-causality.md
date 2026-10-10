@@ -36,3 +36,13 @@ VLM output now declares printed/student_work/unknown plus the reference page. Ma
 Seven new tests are limited to the grading invariant and registered in vitest.shared.ts. They execute the real extraction parser/mapping, canonical schema roundtrip and assessment normalization: nested learner/unknown/missing-origin/missing-page/out-of-range references yield missing_reference, a separately printed key on a page containing student work survives, and Tencent suggestions remain evidence without becoming keys. All seven passed. Parent typecheck, lint (exit 0, 210 warnings), partition audit and full build passed.
 
 This change covers new baseline VLM and Tencent fallback extraction, not historical data repair, all rescue/edit writers, actual model source recognition, verified-rule admission, or the full issue acceptance. No DB/provider/runtime was run. Real 14-page acceptance must test that the model does not falsely label handwriting as printed; no claim that an output enum proves visual correctness. T3 thread-send again failed parent_not_active, so the coordination update was not delivered.
+
+## Persisted page-image scope
+
+The existing page selector moved into a pure ingestion module and now serves both judging and extraction persistence. New blocks keep source_asset_ids as the immutable document page-index map, while image_refs uses the question subtree page set. A separately located printed reference page is included. Figure ownership remains the earlier subtree assignment fix.
+
+Parent executed the actual selector under Node24: distinct sibling exclusion, cross-page children, printed reference page, invalid/incomplete mapping fallback and input nonmutation passed. Typecheck and full build passed; changed-file Biome passed. No new test file for this projection-only change, no DB/model/runtime claim.
+
+Remaining boundary: incomplete node page metadata retains the existing all-originals fallback, rather than silently discarding possible learner evidence. This is not final proof that every source-page association is correct. VisionTab also uses image_refs-or-source_asset_ids and combines asset previews with page_spans; root-only page_spans and explicit unknown handling need further contract work before final gold acceptance. No UI file was modified.
+
+Next admission investigation found an existing practice verify-and-promote operation and enable endpoint; continue by checking its authorization, allowed source kinds, revision CAS and receipt before adding any ingestion continuation. Do not create a second publisher or invent a successful next action without a callable consumer.
