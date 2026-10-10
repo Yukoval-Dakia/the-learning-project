@@ -107,3 +107,7 @@ derived from `RW_WORKER`; the two flags are orthogonal.
 - `src/server/boss/client.unit.test.ts` — new focused unit test.
 - `vitest.shared.ts` — suite registration (one line).
 - `docs/planning/2026-10-10-yuk1359-isolated-queue-runtime.md` — this doc.
+
+## Parent real SDK verification
+
+Parent added isolated-runtime.db.test.ts and ran it against disposable per-fork PostgreSQL through the canonical getStartedBoss path. All pg-boss table snapshots were identical before/after start and across65seconds with an explicit pending job and scheduled entry. No instance row or asynchronous errors appeared. Explicit send/fetch/complete returned the intended job and persisted completed state. Result1/1, exit0, log /tmp/yuk1359-isolated-queue-db-01/tests.log. Parent typecheck and focused Biome passed. Global teardown returned; shared lock release verified original four runtime containers and release manifest unchanged. No restored target or provider use. This proves the queue-mode boundary with real SDK/DB, not whole-app restored model acceptance.

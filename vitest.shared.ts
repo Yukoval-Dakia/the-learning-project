@@ -82,6 +82,7 @@ export const fastTestInclude = [
 ];
 
 export const dbTestInclude = [
+  'src/server/boss/isolated-runtime.db.test.ts',
   'server/start/admin-control-reader.db.test.ts',
   'server/start/admin-reader.db.test.ts',
   'src/capabilities/agency/api/probe-answer.db.test.ts',
