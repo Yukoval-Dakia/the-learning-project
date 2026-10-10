@@ -33,19 +33,41 @@ pnpm build
 
 Do **not** run the complete `pnpm test` suite on the local machine. Push the
 candidate head and let the exact-head GitHub `CI Gate` run the complete suite.
-Local verification is intentionally scoped to the changed unit/DB/migration
-surface plus typecheck, lint, audits, and build.
+Local verification is typecheck, lint, audits, and build, plus the invariant
+tests your change touches (if any).
 
-Choose the narrowest loop while iterating:
+### When to write a test (YUK-1401, owner 2026-10-10)
 
-- UI, core, schema, prompt, or parser: `pnpm test:unit:watch <test-file>` plus
-  Biome on touched files.
-- API, DB, route, or job: `pnpm test:db:watch <test-file>`.
+Tests are **not written by default**. Write or update one only when the change
+touches one of these invariants, and only with assertions that fail when the
+invariant breaks:
+
+1. Irreversible data: migrations, backup/restore without dropped columns,
+   delete/merge without data loss.
+2. Deterministic scoring and settlement: same input, same score/state (numeric
+   cores and TS↔Rust parity included).
+3. Concurrency and locks: advisory locks, CAS/version conflicts, transaction
+   rollback, idempotent retry.
+4. Security boundaries: `/api/*` auth and exemptions, no provider key in the
+   browser, authorization, no third-party personal data leakage.
+5. Crisis referral (YUK-1398).
+
+The five invariants take precedence over the exclusions below: a helper, DTO,
+or UI behavior that carries one of them (deterministic scoring, idempotency,
+privacy isolation, …) still gets an invariant test. Otherwise do not write tests
+that only check UI/component rendering, DTO/schema shape,
+prompt/copy/snapshots/byte hashes, source-path or doc structure, or
+implementation details, or that only assert "was called"/"exists", and do not
+add tests for coverage. Agent/model
+output quality and learning effect are verified with real provider
+actual-output or learner-outcome reconciliation, sealed with exact revision,
+input/output digests, task-run ID, and provider/model/cost.
+
+Loops for invariant tests:
+
+- Pure logic: `pnpm vitest run --config vitest.unit.config.ts <file>`.
+- DB/API: `pnpm vitest run --config vitest.db.config.ts <file>`.
 - Migration SQL: `pnpm test:migration`.
-- Single unit test:
-  `pnpm vitest run --config vitest.unit.config.ts <file> -t '<name>'`.
-- Single DB/API test:
-  `pnpm vitest run --config vitest.db.config.ts <file> -t '<name>'`.
 
 DB tests use a real Postgres testcontainer and must reset state in `beforeEach`.
 Its disposable data directory uses a 2 GiB tmpfs. PostgreSQL durability settings,
@@ -114,7 +136,7 @@ CI static lane 用同一次 Biome 扫描检查 errors 与 warning/info 增长。
 
 Before a PR, run:
 
-First run the scoped tests that match the diff. Then run this local gate:
+First run any invariant tests the diff touches. Then run this local gate:
 
 ```bash
 pnpm typecheck

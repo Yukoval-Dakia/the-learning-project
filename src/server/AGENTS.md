@@ -30,7 +30,7 @@
 ## CONVENTIONS
 - 每个 service owns 自己的 write path（schema audit 要求）。AI tool 只能包装已有 owner service，不能传任意 mutation payload。
 - Service 写 `event` / `tool_call_log` / `cost_ledger` 留痕（evidence-first，可重放可审计）。
-- 测试就地：`*.test.ts` 旁置；依赖 DB/drizzle/PgBoss 的进 db config，纯逻辑进 unit config。
+- 测试（仅限 AGENTS.md 五类不变量，YUK-1401）就地：`*.test.ts` 旁置；依赖 DB/drizzle/PgBoss 的进 db config，纯逻辑进 unit config。
 
 ## ANTI-PATTERNS
 - 别把 subject-specific 逻辑漏进这里——学科特化属于 `src/subjects/<name>/`。

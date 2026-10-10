@@ -42,11 +42,11 @@ orchestration 状态工具按运行 harness 取用，其余内容对两个 harne
 ### 1. 拆 lane
 
 读用户指定的 phase spec。抽：
-- Lane 列表（每条 = 一个 deliverable + 一组 acceptance test）
+- Lane 列表（每条 = 一个 deliverable + 可验证的验收标准；测试只在触及 AGENTS.md 列出的五类不变量时才写，见 YUK-1401）
 - Lane 依赖（哪些必须 sequential，哪些可并行）
 - 共享约束（schema / migration 顺序 / 全局配置）
 
-**Lane 切分标准**：一条 lane = 一个 PR = 一个 worktree branch；文件不重叠；自带 acceptance test 集合。
+**Lane 切分标准**：一条 lane = 一个 PR = 一个 worktree branch；文件不重叠；自带验收标准（真实运行/行为验证为主）。
 
 **Lane status 取值**（单向推进）：`pending` → `implemented`（impl + review loop 完成）→ `local-verified`（pre-PR gate 通过）→ `ci-passed`（exact-head CI Gate 绿）→ `merged`；任一步失败标 `blocked` 并记原因。
 
@@ -57,7 +57,7 @@ orchestration 状态工具按运行 harness 取用，其余内容对两个 harne
 对每条 lane：
 
 1. **Worktree**：`superpowers:using-git-worktrees` 建独立 worktree。**Guard**：subagent prompt 必须显式约束所有 bash 操作只能在 worktree 路径内（见下方模板）。
-2. **Plan**：`superpowers:writing-plans` 把 lane spec + acceptance test 转成可执行 plan。
+2. **Plan**：`superpowers:writing-plans` 把 lane spec + 验收标准转成可执行 plan。
 3. **Impl**：`superpowers:subagent-driven-development` 跑 impl → 自审 → spec review → fix → quality review → fix。**不并行 dispatch implementation subagent**（superpowers 明确反对，会冲突）。
 4. **Pre-merge gate**：`superpowers:verification-before-completion` 执行
    `docs/agents/development-workflow.md` 的 **Pre-PR gate**。该文档是命令清单唯一真相源；
@@ -133,7 +133,7 @@ git-guard hook 会拦 `git branch -D` / `git push --force` / `git commit on main
 - ❌ 并行 dispatch implementation subagent（会冲突）
 - ❌ lane `merged` 前删 branch / worktree
 - ❌ 用 `git branch -D` / `git worktree remove --force`（git-guard 会拦）
-- ❌ 跳过 pre-PR scoped gate（typecheck / lint / audit / build / scoped tests）
+- ❌ 跳过 pre-PR gate（typecheck / lint / audit / build，以及改动触及的不变量测试）
 - ❌ 本机跑完整 `pnpm test`（完整 gate 只由 push 后 exact-head CI Gate 执行）
 - ❌ 本地 merge 进 main 或直接 push main（一律 PR + exact-head CI Gate）
 - ❌ CI 未绿就 merge，或 merge 前提前清理 worktree / branch
@@ -143,7 +143,7 @@ git-guard hook 会拦 `git branch -D` / `git push --force` / `git commit on main
 ## 边界场景
 
 - **共享 migration**：必须 sequential，按依赖顺序，不许并行。
-- **跨 lane integration test**：单独拆一条 "integration lane" 放最后。
+- **跨 lane 集成验收**：单独拆一条 "integration lane" 放最后，用真实运行验证。
 - **subagent 反复 BLOCKED**：≥ 2 次同因 BLOCKED 即 escalate 给用户，不无限 retry。
 - **PR 与 main 冲突或 CI 持续红**：沿上述非重写更新路径处理；未决产品取舍或反复失败交 owner 决定，不扩大范围或重写已发布历史。
-- **acceptance test 在 lane 内 flaky**：标 lane `blocked` 不 merge，写进报告，让用户决定 rerun / 修测试 / 改 spec。
+- **不变量测试在 lane 内 flaky**：标 lane `blocked` 不 merge，写进报告，让用户决定 rerun / 修测试 / 改 spec。
