@@ -64,10 +64,10 @@ export interface UseSubjectsResult {
 }
 
 export function useSubjects(): UseSubjectsResult {
-  const { listSubjects } = useSubjectClient();
+  const client = useSubjectClient();
   const q = useQuery({
     queryKey: SUBJECTS_QUERY_KEY,
-    queryFn: () => listSubjects().then((r) => r.subjects),
+    queryFn: () => client.listSubjects().then((r) => r.subjects),
     staleTime: 5 * 60_000,
     initialData: builtinProjection,
     initialDataUpdatedAt: 0, // 编译期投影立即视为 stale → 挂载即真拉

@@ -39,7 +39,8 @@ export function useCreateSubject() {
   const queryClient = useQueryClient();
   const client = useSubjectClient();
   return useMutation({
-    mutationFn: client.createSubject,
+    // Call through the client: React Query passes (variables, context) to mutationFn.
+    mutationFn: (displayName: string) => client.createSubject(displayName),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: SUBJECTS_QUERY_KEY });
     },
