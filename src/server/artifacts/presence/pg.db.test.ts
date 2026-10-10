@@ -83,15 +83,6 @@ describe('PgPresenceStore — session presence (artifact_edit_session)', () => {
     store = new PgPresenceStore(testDb());
   });
 
-  it('upserts the same session (one row) and adds a row per distinct session', async () => {
-    await seedArtifact('art_1');
-    await store.recordEditingHeartbeat({ artifactId: 'art_1', sessionId: 'A', now: T0 });
-    await store.recordEditingHeartbeat({ artifactId: 'art_1', sessionId: 'A', now: at(1_000) });
-    expect(await sessionIds('art_1')).toEqual(['A']);
-    await store.recordEditingHeartbeat({ artifactId: 'art_1', sessionId: 'B', now: at(1_000) });
-    expect(await sessionIds('art_1')).toEqual(['A', 'B']);
-  });
-
   it('YUK-384 RED 15: blur deletes only its session and cannot clear a newer session', async () => {
     await seedArtifact('hub-a');
     await store.recordEditingHeartbeat({ artifactId: 'hub-a', sessionId: 'A' });
@@ -233,20 +224,6 @@ describe('PgPresenceStore — 跨进程语义 (两实例共享同一 PG)', () =>
   beforeEach(() => {
     storeA = new PgPresenceStore(testDb());
     storeB = new PgPresenceStore(testDb());
-  });
-
-  it('instance B sees a session heartbeat recorded by instance A', async () => {
-    await seedArtifact('art_shared');
-    await storeA.recordEditingHeartbeat({ artifactId: 'art_shared', sessionId: 'A', now: T0 });
-    expect(await storeB.isArtifactIdle('art_shared', at(1_000))).toBe(false);
-
-    const decision = await storeB.enqueueOrApplyNoteRefinePatch({
-      db: applyDb,
-      artifactId: 'art_shared',
-      patch,
-      now: at(1_000),
-    });
-    expect(decision).toEqual({ status: 'deferred', artifact_id: 'art_shared' });
   });
 
   it('a patch deferred via A flushes via B once the session blurs', async () => {

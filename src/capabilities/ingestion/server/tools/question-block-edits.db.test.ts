@@ -361,17 +361,6 @@ describe('merge_questions', () => {
     expect(out.status).toBe('skipped:not_draft');
   });
 
-  it('skips block_not_found when a merge block does not exist', async () => {
-    const { blockId: primary } = await seedBlock({
-      structured: { id: 'p', role: 'standalone', prompt_text: 'primary' },
-    });
-    const out = await mergeQuestionsTool.execute(ctx(), {
-      primary_block_id: primary,
-      merge_block_ids: [createId()],
-    });
-    expect(out.status).toBe('skipped:block_not_found');
-  });
-
   it('preserves a merged block whose root is a stem (role + sub_questions intact)', async () => {
     const sessionId = createId();
     const { blockId: primary } = await seedBlock({

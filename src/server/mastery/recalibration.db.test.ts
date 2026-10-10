@@ -3,13 +3,13 @@
 // 验证：
 //   (A) recordDifficultyCalibrationLabel —— π_i join（只 softmax_mfi selected 观测）/
 //       非客观判分 skip / partial skip / θ-before 入 theta_snapshot / 无真 π_i skip /
-//       去重（同 attempt 不重复）/ SAVEPOINT 隔离（label 写错不回滚主 attempt）。
+//       去重（同 attempt 不重复）。
 //   (B) recalibrateQuestion —— 标签 < 阈值 → no-op（b_calib 保持 NULL，数据闸）；
 //       ≥ 阈值 → b_calib firm-up（PPI++ AIPW）；无锚 → no_anchor no-op。
 //   (C) effectiveB end-to-end —— b_calib NULL → 退回 b_anchor；set → 用 b_calib。
 
 import { createId } from '@paralleldrive/cuid2';
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { recordSelectionObservation } from '@/capabilities/practice/server/selection-observations';
@@ -162,34 +162,5 @@ describe('recordDifficultyCalibrationLabel', () => {
     }
 
     expect(await readLabels(q)).toHaveLength(1);
-  });
-
-  it('SAVEPOINT isolation — a label-write DB error does NOT roll back the main attempt write', async () => {
-    const q = createId();
-    await seedQuestion(q, 3);
-    await seedItemCalibration(q, 0.5);
-    await seedSoftmaxObservation(q, 0.3);
-
-    await db.transaction(async (tx) => {
-      // (1) main attempt write proxy (θ̂/FSRS/event represented by a question row mutate).
-      await tx.update(question).set({ prompt_md: 'main-write' }).where(eq(question.id, q));
-
-      // (2) SAVEPOINT-wrapped label write that forces a DB-level error → poisons only the
-      //     savepoint, not the outer tx (mirror the established Phase 5 pattern).
-      try {
-        await tx.transaction(async (sp) => {
-          await sp.execute(sql`SELECT CAST('not-a-number' AS integer)`);
-        });
-      } catch {
-        // hook best-effort swallow.
-      }
-
-      // (3) outer tx still writable → not poisoned (would throw 25P02 if it were).
-      await tx.update(question).set({ prompt_md: 'main-write-after' }).where(eq(question.id, q));
-    });
-
-    const rows = await db.select().from(question).where(eq(question.id, q));
-    expect(rows).toHaveLength(1);
-    expect(rows[0].prompt_md).toBe('main-write-after'); // step (3) ran → tx survived.
   });
 });

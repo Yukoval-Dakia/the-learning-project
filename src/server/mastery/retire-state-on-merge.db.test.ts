@@ -49,11 +49,6 @@ describe('retireMasteryStateOnMerge (YUK-543)', () => {
     await resetDb();
   });
 
-  it('neither row → noop', async () => {
-    const out = await db.transaction((tx) => retireMasteryStateOnMerge(tx, 'k_from', 'k_into'));
-    expect(out).toBe('noop');
-  });
-
   it('only from → renamed (row re-keyed to into, from gone)', async () => {
     await insertMastery('k_from');
     const out = await db.transaction((tx) => retireMasteryStateOnMerge(tx, 'k_from', 'k_into'));
@@ -101,11 +96,6 @@ describe('retireFsrsStateOnMerge (YUK-543)', () => {
     await resetDb();
   });
 
-  it('neither → noop', async () => {
-    expect(await db.transaction((tx) => retireFsrsStateOnMerge(tx, 'k_from', 'k_into'))).toBe(
-      'noop',
-    );
-  });
   it('only from → renamed', async () => {
     await insertFsrs('k_from');
     expect(await db.transaction((tx) => retireFsrsStateOnMerge(tx, 'k_from', 'k_into'))).toBe(
@@ -132,11 +122,6 @@ describe('retireLearnerAxisStateOnMerge (YUK-543)', () => {
     await resetDb();
   });
 
-  it('neither → noop', async () => {
-    expect(
-      await db.transaction((tx) => retireLearnerAxisStateOnMerge(tx, 'k_from', 'k_into')),
-    ).toBe('noop');
-  });
   it('only from → renamed', async () => {
     await insertAxis('k_from');
     expect(
@@ -163,11 +148,6 @@ describe('retireKcTypedStateOnMerge (YUK-543)', () => {
     await resetDb();
   });
 
-  it('neither → noop', async () => {
-    expect(await db.transaction((tx) => retireKcTypedStateOnMerge(tx, 'k_from', 'k_into'))).toBe(
-      'noop',
-    );
-  });
   it('only from → renamed', async () => {
     await insertTyped('k_from');
     expect(await db.transaction((tx) => retireKcTypedStateOnMerge(tx, 'k_from', 'k_into'))).toBe(

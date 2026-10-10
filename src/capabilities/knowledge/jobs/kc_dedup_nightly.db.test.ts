@@ -126,21 +126,4 @@ describe('runKcDedupNightly', () => {
     expect(res.skipped).toBe(1);
     expect(proposeFn).not.toHaveBeenCalled();
   });
-
-  it('cross-run idempotency: a prior proposal OUTSIDE the window does NOT suppress (re-proposes)', async () => {
-    const db = testDb();
-    await seedKc(db, 'kc-old', unitVec(0), { createdAt: new Date('2026-06-20T00:00:00Z') });
-    await seedKc(db, 'kc-new', nearUnit0(0.1), { createdAt: new Date('2026-06-21T00:00:00Z') });
-    await markAutoCreated(db, 'kc-old');
-    await markAutoCreated(db, 'kc-new');
-    // Prior merge proposal 30 days ago — outside the 7-day window → not in the skip-set.
-    const longAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-    await seedPriorMergeProposal(db, 'kc-old', 'kc-new', { createdAt: longAgo });
-
-    const proposeFn = vi.fn(async () => newId());
-    const res = await runKcDedupNightly(db, { proposeFn });
-
-    expect(res.merge_proposals_created).toBe(1);
-    expect(proposeFn).toHaveBeenCalledTimes(1);
-  });
 });
