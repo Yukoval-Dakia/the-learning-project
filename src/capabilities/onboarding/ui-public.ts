@@ -1,6 +1,8 @@
 // Client-only public contribution surface.
 export { default as ColdStart } from './ui/ColdStart';
 export {
+  type GoalClient,
+  GoalClientProvider,
   type PlacementClient,
   PlacementClientProvider,
   type PlacementProfileClient,

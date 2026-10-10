@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react';
 import type { ApiOperationJsonResponse, ApiOperationRequestBody } from '@/ui/lib/api';
 import type { SessionTransitionRequestOptions } from '@/ui/lib/session-transition';
+import { createGoal } from './onboarding-api';
 import {
   getPlacementSession,
   placementEnd,
@@ -58,4 +59,13 @@ const PlacementProfileClientContext = createContext<PlacementProfileClient | und
 export const PlacementProfileClientProvider = PlacementProfileClientContext.Provider;
 export function usePlacementProfileClient(): PlacementProfileClient {
   return useContext(PlacementProfileClientContext) ?? httpPlacementProfileClient;
+}
+
+// At-entry goal creation for Welcome; the Start shell provides its RPC client.
+export type GoalClient = { createGoal: typeof createGoal };
+export const httpGoalClient: GoalClient = { createGoal };
+const GoalClientContext = createContext<GoalClient | undefined>(undefined);
+export const GoalClientProvider = GoalClientContext.Provider;
+export function useGoalClient(): GoalClient {
+  return useContext(GoalClientContext) ?? httpGoalClient;
 }
