@@ -1,4 +1,3 @@
-import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
@@ -8,7 +7,7 @@ import { ApiError } from '@/kernel/http';
 import { type RunTaskCallCtx, makeRunTaskTextFn } from '@/server/ai/runner-fn';
 import type { R2Client } from '@/server/r2';
 import { Ingestion } from '@/server/session';
-import { type VisionBlock, runVisionExtract } from './vision';
+import { runVisionExtract, visionBlockToStructured } from './vision';
 
 export type RescueTier = 2 | 3;
 export type RescueStrategy = 'extract' | 'restructure_cloze' | 'restructure_compound';
@@ -34,9 +33,9 @@ export type RunRescueParams = {
  *
  * 流程：
  *   1. 验证 session 在 partial/extracted 状态、block 存在
- *   2. 下载 asset bytes（block.source_asset_ids[0] 假设单 asset）
+ *   2. 下载 asset bytes（block.source_asset_ids[page]）
  *   3. 调 VisionExtractTask（tier=2 → haiku）或 VisionExtractTaskHeavy（tier=3 → sonnet）
- *   4. 用第一块结果 → 合成 StructuredQuestion（standalone）
+ *   4. 仅接收唯一题块 → 合成 StructuredQuestion（standalone）
  *   5. 调 IngestionSession.applyRescue 写回（事务内 + version bump + writeJobEvent）
  */
 export async function runRescue(
@@ -50,7 +49,7 @@ export async function runRescue(
     );
   }
 
-  // Locate block + its first asset
+  // Locate the requested page in the block source document map.
   const blocks = await params.db
     .select()
     .from(question_block)
@@ -66,9 +65,16 @@ export async function runRescue(
       400,
     );
   }
-  const assetId = block.source_asset_ids[0];
+  const assetId =
+    Number.isInteger(params.page) && params.page >= 0
+      ? block.source_asset_ids[params.page]
+      : undefined;
   if (!assetId) {
-    throw new ApiError('validation_error', `block ${params.blockId} has no source_asset_ids`, 400);
+    throw new ApiError(
+      'validation_error',
+      `page ${params.page} is not mapped for block ${params.blockId}`,
+      400,
+    );
   }
   const assetRows = await params.db.select().from(source_asset).where(eq(source_asset.id, assetId));
   const asset = assetRows[0];
@@ -87,7 +93,7 @@ export async function runRescue(
   const visionResult = await runVisionExtract({
     assetId,
     mimeType: asset.mime_type,
-    imageBytes: imageBytes.buffer as ArrayBuffer,
+    imageBytes: Uint8Array.from(imageBytes).buffer,
     pageIndex: params.page,
     runTaskFn: async (kind, input, ctx) => {
       // route through the requested tier
@@ -97,6 +103,13 @@ export async function runRescue(
     },
   });
 
+  if (visionResult.blocks.length > 1) {
+    throw new ApiError(
+      'ambiguous_rescue',
+      'Rescue returned multiple questions; no block was replaced',
+      422,
+    );
+  }
   const first = visionResult.blocks[0];
   if (!first) {
     throw new ApiError('extraction_failed', 'Vision returned 0 blocks', 422);
@@ -112,24 +125,4 @@ export async function runRescue(
     }),
   );
   return { structured };
-}
-
-function visionBlockToStructured(b: VisionBlock): StructuredQuestionT {
-  return {
-    id: createId(),
-    role: 'standalone',
-    prompt_text: b.extracted_prompt_md,
-    answers: b.reference_md ? [b.reference_md] : undefined,
-    source: 'vision_rescue',
-    extraction_evidence: b.wrong_answer_md
-      ? {
-          handwriting: [
-            {
-              text: b.wrong_answer_md,
-              bbox: { x: 0, y: 0, width: 0, height: 0 }, // exact bbox unknown from old Vision format
-            },
-          ],
-        }
-      : undefined,
-  };
 }

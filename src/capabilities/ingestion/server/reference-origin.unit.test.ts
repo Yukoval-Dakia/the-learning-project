@@ -4,6 +4,7 @@ import { normalizeQuestionRowToContract } from '@/kernel/records/assessment-norm
 import type { StructureNodeT } from '../tasks/structure';
 import { runStructureTask } from './structure';
 import { parseMarkAgentResponse } from './tencent_mark_parser';
+import { runVisionExtract, visionBlockToStructured } from './vision';
 
 // Grading invariant: extraction observations must not become an answer key.
 function normalize(structured: StructuredQuestionT) {
@@ -137,4 +138,51 @@ describe('captured reference origin', () => {
       ]),
     );
   });
+});
+
+describe('manual rescue reference origin', () => {
+  it.each(['student_work', 'unknown', undefined, 'printed'] as const)(
+    'preserves learner evidence and binds %s reference to the supplied page',
+    async (reference_origin) => {
+      const result = await runVisionExtract({
+        assetId: 'page-three',
+        mimeType: 'image/png',
+        imageBytes: new ArrayBuffer(0),
+        pageIndex: 2,
+        runTaskFn: async () => ({
+          text: JSON.stringify({
+            blocks: [
+              {
+                extracted_prompt_md: 'x + 1 = 3，求 x。',
+                reference_md: reference_origin === 'printed' ? '2' : '4',
+                reference_origin,
+                wrong_answer_md: 'x = 3 + 1 = 4',
+                page_index: 99,
+                bbox: { x: 0, y: 0, width: 1, height: 1 },
+                role: 'prompt',
+                visual_complexity: 'low',
+                extraction_confidence: 0.99,
+                knowledge_hint: null,
+              },
+            ],
+          }),
+        }),
+      });
+      const structured = StructuredQuestion.parse(visionBlockToStructured(result.blocks[0]));
+      expect(structured.page_index).toBe(2);
+      expect(structured.extraction_evidence?.reference_extraction).toEqual({
+        origin: reference_origin ?? 'unknown',
+        page_index: 2,
+      });
+      expect(structured.extraction_evidence?.handwriting?.[0].text).toBe('x = 3 + 1 = 4');
+      if (reference_origin === 'printed') {
+        expect(structured.answers).toEqual(['2']);
+      } else {
+        expect(structured.answers).toBeUndefined();
+        expect(normalize(structured).conversion_issues).toEqual(
+          expect.arrayContaining([expect.objectContaining({ code: 'missing_reference' })]),
+        );
+      }
+    },
+  );
 });
