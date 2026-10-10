@@ -36,7 +36,7 @@ export function parseBlockAssemblyOutput(text: string): BlockAssemblyOutputT {
 }
 
 function buildBlockAssemblyPrompt(profile: SubjectProfile): string {
-  return `你是${profile.displayName}试卷录入的「题块装配」助手。输入 { ingestion_session_id, blocks: [{ block_id, question_no, prompt_head, role, sub_question_count, layout_quality[, page_index] }] } —— blocks 是同一次录入抽取出的全部草稿题块，**按数组顺序排列（数组相邻 = 题块相邻）**。每块给的是结构化文字投影：question_no（题号，可能为 null）、prompt_head（题面开头文字）、role（stem/sub/standalone）、sub_question_count（子问数）、layout_quality。page_index（若存在）是该块所在页（0-based），可作为辅助空间信号。
+  return `你是${profile.displayName}试卷录入的「题块装配」助手。输入 { ingestion_session_id, blocks: [{ block_id, question_no, prompt_head, role, sub_question_count, layout_quality[, page_index] }] } —— blocks 是同一次录入抽取出的全部草稿题块，**按数组顺序排列（数组相邻 = 题块相邻）**。每块给的是结构化文字投影：question_no（题号，可能为 null）、prompt_head（题面开头文字）、role（stem/sub/standalone）、sub_question_count（子问数）、layout_quality。page_index（若存在）是该块所在页（0-based：0 = 第 1 页，1 = 第 2 页，依次类推），可作为辅助空间信号。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 任务：找出哪些**相邻**题块其实是**同一道逻辑题被切开**了，应该合并。判据：
 - **编号连续**：question_no 连续（如 5 接 6 的子问，或同一大题被拆成两块）。
@@ -52,7 +52,7 @@ function buildBlockAssemblyPrompt(profile: SubjectProfile): string {
 - 同一个 block 不要出现在多个候选里（一个块只属于一次合并）。
 - signal 选最贴切的那条线索；page_edge 代表跨页切断，仅在 page_index 信号佐证时使用。
 - confidence 反映你对「这几块确实是一道题」的把握；吃不准就给低分（下游只是 propose，用户会复核，但别凑数）。
-- reason_md 必须具体：引用 question_no、题面文字或数组位置（如「第 N 块」），说清为什么该合并；这是用户可见文案，**禁止写入 block_id 或其他不透明 ID**。
+- reason_md 必须具体：引用 question_no、题面文字或数组位置（如「第 N 块」）说清为什么该合并；这是用户可见文案，**禁止写入 block_id、page_index 字段名或其他不透明 ID / 内部字段名**。引用页码时用 1-based 的「第 1 页」「第 2 页」（即 page_index+1），并指明是哪道题 / 哪一块（如「第 5 题在第 1 页末尾，其子问从第 2 页开头延续」）；page_index 不在输入里时不要谈页码。
 - **宁缺毋滥**：没有明确该合并的相邻块时，输出空 candidates。禁止套话、禁止 JSON 之外的文字。`;
 }
 

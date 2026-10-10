@@ -1,5 +1,6 @@
 import { inArray } from 'drizzle-orm';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
+import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
 import { question, question_block } from '@/db/schema';
 
@@ -8,11 +9,45 @@ type QuestionEditChange = Extract<AiProposalPayloadT, { kind: 'question_edit' }>
 
 const TITLE_DETAIL_CAP = 48;
 const BLOCK_EXCERPT_CAP = 120;
+// YUK-1404 — named bounds for the additive sub-question / option previews on
+// block previews. Lists carry at most these entries; the *_count fields keep
+// the TRUE structured totals, so a truncated list is always shorter than its
+// count — the UI never mistakes a preview list for the full set.
+const BLOCK_SUB_QUESTION_PREVIEW_MAX = 3;
+const BLOCK_OPTION_PREVIEW_MAX = 4;
+const SUB_QUESTION_EXCERPT_CAP = 80;
+const OPTION_TEXT_CAP = 60;
 
 export interface ProposalBlockPreview {
   id: string;
   label: string;
   excerpt: string;
+  /**
+   * YUK-1404 — TRUE structured totals (never the preview-list lengths). null
+   * when the block has no structured tree (legacy rows) — the UI must not
+   * guess a count it cannot know.
+   */
+  sub_question_count: number | null;
+  option_count: number | null;
+  /** Bounded learner-facing previews; may be shorter than the counts above. */
+  sub_questions: ProposalBlockSubQuestionPreview[];
+  options: ProposalBlockOptionPreview[];
+}
+
+/**
+ * YUK-1404 — bounded sub-question preview: learner label + text excerpt ONLY.
+ * No answers / analysis / student-work flags / figure ids ever enter this
+ * projection (learner-visible read surface).
+ */
+export interface ProposalBlockSubQuestionPreview {
+  label: string;
+  excerpt: string;
+}
+
+/** YUK-1404 — bounded option preview: the option's own label + text ONLY. */
+export interface ProposalBlockOptionPreview {
+  label: string;
+  text: string;
 }
 
 export interface ProposalSummaryItem {
@@ -57,6 +92,23 @@ function textOf(value: unknown): string | null {
 function truncate(value: string, cap: number): string {
   if (value.length <= cap) return value;
   return `${value.slice(0, cap - 1)}…`;
+}
+
+function subQuestionPreview(
+  sub: StructuredQuestionT,
+  index: number,
+): ProposalBlockSubQuestionPreview {
+  return {
+    label: textOf(sub.question_no) ?? `第 ${index + 1} 问`,
+    excerpt: truncate(textOf(sub.prompt_text) ?? '题面暂缺', SUB_QUESTION_EXCERPT_CAP),
+  };
+}
+
+function optionPreview(option: { label: string; text: string }): ProposalBlockOptionPreview {
+  return {
+    label: textOf(option.label) ?? '?',
+    text: truncate(textOf(option.text) ?? '选项暂缺', OPTION_TEXT_CAP),
+  };
 }
 
 function titled(base: string, detail: unknown): string {
@@ -572,10 +624,20 @@ function blockPreview(block: QuestionBlockPreviewRow): ProposalBlockPreview {
   if (questionNo) position.push(`题号 ${questionNo}`);
   if (pageIndex !== undefined) position.push(`第 ${pageIndex + 1} 页`);
   const prompt = textOf(block.structured?.prompt_text) ?? textOf(block.extracted_prompt_md);
+  const tree = block.structured ?? null;
   return {
     id: block.id,
     label: position.join(' · '),
     excerpt: truncate(prompt ?? '题面暂缺', BLOCK_EXCERPT_CAP),
+    // YUK-1404 — true totals; null when the block predates structured storage.
+    sub_question_count: tree ? (tree.sub_questions?.length ?? 0) : null,
+    option_count: tree ? (tree.options?.length ?? 0) : null,
+    sub_questions: (tree?.sub_questions ?? [])
+      .slice(0, BLOCK_SUB_QUESTION_PREVIEW_MAX)
+      .map((sub, index) => subQuestionPreview(sub, index)),
+    options: (tree?.options ?? [])
+      .slice(0, BLOCK_OPTION_PREVIEW_MAX)
+      .map((option) => optionPreview(option)),
   };
 }
 

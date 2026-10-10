@@ -27429,11 +27429,31 @@ export interface operations {
                                         excerpt: string;
                                         id: string;
                                         label: string;
+                                        option_count: number | null;
+                                        options: {
+                                            label: string;
+                                            text: string;
+                                        }[];
+                                        sub_question_count: number | null;
+                                        sub_questions: {
+                                            excerpt: string;
+                                            label: string;
+                                        }[];
                                     }[];
                                     primary: {
                                         excerpt: string;
                                         id: string;
                                         label: string;
+                                        option_count: number | null;
+                                        options: {
+                                            label: string;
+                                            text: string;
+                                        }[];
+                                        sub_question_count: number | null;
+                                        sub_questions: {
+                                            excerpt: string;
+                                            label: string;
+                                        }[];
                                     } | null;
                                 } | null;
                                 change_summary: {
@@ -28505,11 +28525,31 @@ export interface operations {
                                         excerpt: string;
                                         id: string;
                                         label: string;
+                                        option_count: number | null;
+                                        options: {
+                                            label: string;
+                                            text: string;
+                                        }[];
+                                        sub_question_count: number | null;
+                                        sub_questions: {
+                                            excerpt: string;
+                                            label: string;
+                                        }[];
                                     }[];
                                     primary: {
                                         excerpt: string;
                                         id: string;
                                         label: string;
+                                        option_count: number | null;
+                                        options: {
+                                            label: string;
+                                            text: string;
+                                        }[];
+                                        sub_question_count: number | null;
+                                        sub_questions: {
+                                            excerpt: string;
+                                            label: string;
+                                        }[];
                                     } | null;
                                 } | null;
                                 change_summary: {
