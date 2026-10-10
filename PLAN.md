@@ -1,8 +1,11 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-10：run11真实完整恢复parity及同一目标DBOS重开通过（4schema/123表/5序列；pending仅新增2效果，completed/unknown及源不变）。19:04:18Z核原4/release后释放锁；恢复工具PR1628已开并link，最终静态通过，原721 CI环境清单失败已由6fcaf139a补4项可选声明；父14unit通过，静态/build日志核验通过，待新exactCI，整迁移仍In Progress。
+> Linear 是权威 tracker。2026-10-10 17:10 JST：YUK-1388 第四批审查完成，最终报告见 `tlp-audit-artifacts/yuk1388/stage4/final-report.md`；功能波次 W0–W4 已登记 YUK-1404–1445（W0 优先 1404/1405/1445/981）。YUK-1402/1401 Done；YUK-1403 剩 32 个 migration-smoke 用例等 #1625。迁移线 run11 恢复重开状态见 NOW 的 YUK-1359。
 
 ## NOW
+
+- **YUK-1388 / 第四批审查完成（2026-10-10）**：O1–O7 裁决、7 个 P0 根（含新增 M100 出题前自动可判 → YUK-1445）、100 根 / 828 子主张、W0–W4 五波，见最终报告 `tlp-audit-artifacts/yuk1388/stage4/final-report.md`（仓库外 artifact 目录）。V01/V02 独立审查 15 条发现全部接受并由 I03 修正。票保持 In Progress，等 owner 读报告并裁决是否清理 R03 写入 TEST Mem0 的 5 条合成危机记忆。
+- **YUK-1403 / 测试第二轮清理**：#1635（Rust parity 进 CI Gate、残留引用、unused 36→0）与 #1636（26 例）已合 main；剩 `tests/integration/migration-smoke.test.ts` 32 例/1093 行等 #1625 合并后删，依据 `tlp-audit-artifacts/yuk1388/yuk1403/case-inventory.jsonl`。
 
 - **YUK-1358 / Start notes列表**：独占范围和验收见[notes计划](docs/planning/2026-10-09-yuk1358-start-notes-list.md)。保留查询校验、科目知识点解析、空集合语义及现有搜索/导航/视觉；不改note详情/presence/AI写，不把本切片当Notes整族完成。父50unit/18DB、R1 NONE和49RPC/原页面浏览器通过；98表/5序列窗口不变，PR1626已合main04232aaf10（exact9889 CI全绿）；父已fetch核main；[父证据](docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md)。useSubjects仍HTTP，完整迁移未完成。
 
@@ -30,6 +33,8 @@
 - 1358继续剩余路由/共享子树及三入口共用业务操作，保留现有确定性行为。1392公共board读取、1380事件读/纠错等已合接口由Start集成方接消费者，不复制领域规则。
 - 1359最终收口核对dev/build/Compose/镜像、全部旧消费者、任务/worker/依赖、配置与文档；Hono去留按ADR裁决，旧SPA回落不得永久保留。完成整迁移后再按实际缺口与查重结果交付Linear残留功能。
 - UI按owner新排期并入迁移后的功能波次：后端先交付、Opus5.5再改渲染；迁移期间保留旧视觉。1354仅隔离基座/展示组件可先行，展示路由仍5796挂载；同Start路由组件回退不保留旧SPA。完整协商及已有UI观察交接见[排期边界](docs/planning/2026-10-09-ui-migration-sequencing.md)。
+- **功能波次 W0（Urgent）**：后端 YUK-1404 照片导入、1405 定位与冷启动备题、1445 出题前自动可判、981 笔记解析交付、1407 判分语义、1408 隐私用途、1409 长任务业务回执、1398 危机；UI YUK-1438（Opus 5.5 only）。W0 出口含空库首日脚本旅程（墙钟上限 + 确定性兜底）、自动可判 ≥80%、KC 不自动批准、5 项摩擦指标；数值为建议默认值待 owner 确认。触及 §9 承重能力的删减须 owner 明确批准。
+- YUK-1353 视觉方向已定（#1612、#1627 已合）；#1633 KaTeX 与 #1634 F06 对比度已合 main，尚未部署到 TEST 做真实页面截图验收。
 
 ## PARKED
 
@@ -54,6 +59,9 @@
 
 ## BLOCKED-ON
 
-- 当前没有需要owner追加许可才能推进的已知阻塞。1393已合入，1394进入父级验收；子任务/CI仍运行属于等待，不把整迁移挂blocked。
+- **Claude 新会话认证 403**（2026-10-10 16:00 起）：T3 委派、本机子代理与新线程均失败；UI 只交 Opus 5.5，UI 线（#1633/#1634 TEST 验收、YUK-1438）等 owner 执行 `claude auth login`。
+- **owner 裁决**：W0 出口数值；TEST Mem0 中 5 条合成危机记忆是否清理（YUK-1388 关单条件）。
+
+- 迁移线当前没有需要owner追加许可才能推进的已知阻塞。1393已合入，1394进入父级验收；子任务/CI仍运行属于等待，不把整迁移挂blocked。
 - runtime测试/发布在执行前必须实际核锁并原子获取，核owner/token清理释放；其他线程持锁时只推不冲突的源码工作。历史锁记录不能代表当前ownership。
 - 部署用途保持Agent开发测试，禁止再次清库、恢复私人数据或盲重放队列；日用部署须owner明确要求“为我日常使用的部署”。旧运行验收限制和未完成产品能力保存在归档及各原票，未被本次整理核销。

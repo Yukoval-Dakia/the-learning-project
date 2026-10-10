@@ -12,7 +12,6 @@ import { db } from '@/db/client';
 import { ApiError, collectionPayload, errorResponse } from '@/kernel/http';
 import { DraftReviewListQuerySchema } from './draft-moderation-contracts';
 
-const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 
 export async function GET(req: Request): Promise<Response> {

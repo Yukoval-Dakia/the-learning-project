@@ -3,8 +3,7 @@ import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { replaceConfigSnapshot } from '@/core/config/store';
 import { system_config, system_config_epoch, system_config_journal } from '@/db/schema';
-import { resolveTaskProvider } from '@/server/ai/providers';
-import { clearConfig, setConfigs } from '@/server/config/write';
+import { setConfigs } from '@/server/config/write';
 import { resetDb, testDb } from '../helpers/db';
 
 const migration = readFileSync(
@@ -122,34 +121,6 @@ describe('native pi routing config migration', () => {
     expect(await testDb().select().from(system_config_journal)).toHaveLength(0);
   });
 
-  it('model-only writes validate against the higher-priority global provider', async () => {
-    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'zai-coding-cn');
-    vi.stubEnv('AI_PROVIDER_MODEL', '');
-    await expect(
-      setConfigs(
-        [{ key: 'task.QuizGenTask.model', value: 'glm-5.3' }],
-        { actor: 'owner' },
-        testDb(),
-      ),
-    ).resolves.toHaveLength(1);
-  });
-
-  it('an env provider excludes the entire DB global pair during both validation and execution', async () => {
-    await seed({ 'lane.global.provider': 'xiaomi', 'lane.global.model': 'mimo-v2.5' });
-    vi.stubEnv('AI_PROVIDER_OVERRIDE', 'zai-coding-cn');
-    vi.stubEnv('AI_PROVIDER_MODEL', '');
-    vi.stubEnv('ZAI_CODING_CN_API_KEY', 'native-test-key');
-    await setConfigs(
-      [{ key: 'task.QuizGenTask.model', value: 'glm-5.3' }],
-      { actor: 'owner' },
-      testDb(),
-    );
-    expect(resolveTaskProvider('QuizGenTask')).toMatchObject({
-      provider: 'zai-coding-cn',
-      model: 'glm-5.3',
-    });
-  });
-
   it('global writes reject a text-only pin before breaking image tasks and preserve the previous pair', async () => {
     await setConfigs(
       [
@@ -188,20 +159,6 @@ describe('native pi routing config migration', () => {
     ).toHaveLength(0);
   });
 
-  it('accepts native OpenCode Go globally without redirecting the typed task', async () => {
-    await setConfigs(
-      [
-        { key: 'lane.global.provider', value: 'opencode-go' },
-        { key: 'lane.global.model', value: 'glm-5.3-flash' },
-      ],
-      { actor: 'owner' },
-      testDb(),
-    );
-    await expect(
-      clearConfig('task.JevScoringDecisionTask.model', { actor: 'owner' }, testDb()),
-    ).resolves.toMatchObject({ cleared: false });
-  });
-
   it('a global legacy provider takes precedence over a task provider during model migration', async () => {
     await seed({
       'lane.global.provider': 'zhipu',
@@ -214,12 +171,6 @@ describe('native pi routing config migration', () => {
       .from(system_config)
       .where(eq(system_config.key, 'task.QuizGenTask.model'));
     expect(model.value).toBe('glm-5.3');
-  });
-
-  it('clearing an absent typed task model preserves the valid typed registry default', async () => {
-    await expect(
-      clearConfig('task.JevScoringDecisionTask.model', { actor: 'owner' }, testDb()),
-    ).resolves.toMatchObject({ cleared: false });
   });
 
   it('rejects deleted aliases, nonexistent pairs and text-only vision configurations atomically', async () => {

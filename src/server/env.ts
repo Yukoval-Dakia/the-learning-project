@@ -82,11 +82,6 @@ const server = {
   LOCAL_NEXT_PORT: optionalString,
   LOCAL_POSTGRES_HOST: optionalString,
   LOCAL_POSTGRES_PORT: optionalString,
-  // YUK-376 — scripts/llasa-prior-eval.ts 离线评测 knobs（script-only，不进运行时）：
-  // LIMIT=题数上限（默认 30）、REPS=每法重复次数（默认 3）、CONCURRENCY=并发（默认 4）。
-  LLASA_EVAL_CONCURRENCY: optionalString,
-  LLASA_EVAL_LIMIT: optionalString,
-  LLASA_EVAL_REPS: optionalString,
   LOOM_PG_IMAGE: optionalString,
   MEMORY_RECONCILE_HANDOFF_MODE: optionalString,
   MEM0_EMBEDDING_BASE_URL: optionalString,
@@ -112,13 +107,6 @@ const server = {
   POSTGRES_DB: optionalString,
   POSTGRES_PASSWORD: optionalString,
   POSTGRES_USER: optionalString,
-  // YUK-1034 — scripts/item-prior-reps-eval.ts 离线评测 knobs（script-only，不进
-  // 运行时）：LIMIT=题数上限（默认 30）、GROUPS=独立 median 组数（默认 3）、
-  // REPS=组内采样数（默认 3，= job 的 reps 参数）、CONCURRENCY=并发（默认 4）。
-  PRIOR_REPS_EVAL_CONCURRENCY: optionalString,
-  PRIOR_REPS_EVAL_GROUPS: optionalString,
-  PRIOR_REPS_EVAL_LIMIT: optionalString,
-  PRIOR_REPS_EVAL_REPS: optionalString,
   PROFILE_CRITIC_OK: optionalString,
   PROJECTION_IS_WRITER_ITEM_CALIBRATION: optionalString,
   QUESTION_SUPPLY_REFILL_ENABLED: optionalString,

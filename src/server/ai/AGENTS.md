@@ -61,13 +61,15 @@
 Token Plan `tp-` key 与按量 `XIAOMI_API_KEY` 不互通，旧 `xiaomi` lane 不变。
 
 `pi-models.ts` 从 Xiaomi 原生模型复制协议、thinking/tool-stream compat 与
-text+image 元数据，注册独立 pi provider；模型可用性仍待 TEST 实测，不能把
-按量或 OpenCode Go 同名模型证据当成 Token Plan 证据。
-`providers.ts` 的 `models['mimo-v2.6-pro'].capabilities.toolCalling=false`
-是单点翻转位置。TEST tool-loop actual-output 封存后才能在后续 commit 翻转，
-并在 PR 说明链接新证据。此前 needsToolCall kind 在 `run-lifecycle.ts` 的
-`assertModelProfileCapabilityFit` 拒绝，生产 Copilot / Sourcing 不能运行。
-其他模型继承 lane-wide `toolCalling:false`，不能一并开放。
+text+image 元数据，注册独立 pi provider；不能把按量或 OpenCode Go
+同名模型证据当成 Token Plan 证据。
+仅 `models['mimo-v2.6-pro'].capabilities.toolCalling=true` 已获本 lane 实测准入：
+[Sourcing actual-output](../../../docs/planning/evidence/2026-10-10-pi-tool-loop-xiaomi-token-plan-mimo-v2.6-pro-actual.json)
+封存真实生产入口、durable task run、工具执行与输出 schema 校验；
+[Copilot actual-output](../../../docs/planning/evidence/2026-10-10-pi-copilot-xiaomi-token-plan-mimo-v2.6-pro-actual.json)
+封存单轮 durable worker 成功、四次 domain tool 执行及四条成功 `tool_use` mirror。
+这不是内容质量、vision 或多轮 replay 准入。其他模型继承 lane-wide
+`toolCalling:false`，不能一并开放。
 
 生产视觉 rescue 与 vision judge 走同一 Token Plan `/v1` pi text+image 模型；
 `MIMO_VISION_*` 只供 `pnpm preflight:vision`，不改变生产 runner。

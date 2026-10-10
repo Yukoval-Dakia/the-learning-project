@@ -1,0 +1,113 @@
+{
+  "capturedAt": "2026-10-09T11:23:14.864Z",
+  "chromium": "151.0.7922.34",
+  "capture_desktop": {
+    "before": "3",
+    "chipsInFlight": 1,
+    "afterLanding": "4",
+    "afterUndo": "3",
+    "chipsLeft": 0
+  },
+  "capture_mobile": {
+    "before": "3",
+    "chipsInFlight": 1,
+    "afterLanding": "4",
+    "afterUndo": "3",
+    "chipsLeft": 0
+  },
+  "capture_undoMidFlight": {
+    "inbox": "3"
+  },
+  "morph_interrupted": {
+    "ghostsMidFlight": 2,
+    "ghostsAfter": 0,
+    "hiddenTargetsAfter": 0,
+    "endedOn": "question"
+  },
+  "morph_reducedMotion": {
+    "ghostsMidFlight": 0,
+    "ghostsAfter": 0,
+    "hiddenTargetsAfter": 0,
+    "endedOn": "question"
+  },
+  "settle": {
+    "sameElementFromFirstTokenToRecord": true,
+    "phases": [
+      "is-temp is-streaming",
+      "is-temp is-confirming",
+      "is-settled"
+    ],
+    "textColorTransition": "0.9s",
+    "receiptHeightAfterFold": 0
+  },
+  "refToStep": {
+    "scrolledPx": 548,
+    "glowing": "第 5 步"
+  },
+  "quote": {
+    "ghostMidFlight": 1,
+    "landedVisible": true,
+    "formulasRendered": 2,
+    "citeMarksBefore": 1,
+    "citeMarksAfter": 2
+  },
+  "markToMessage": {
+    "glowingMessages": 1
+  },
+  "quoteToPassage": {
+    "glowing": "直线怎么设"
+  },
+  "readingPosition": {
+    "viewport": "1180×760",
+    "anchor": ".step[data-anchor=\"第 3 步\"]",
+    "driftWithoutPinPx": -124,
+    "driftWhilePanelClosesPx": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ]
+  },
+  "phoneRef": {
+    "sheetBefore": "snap-half",
+    "sheetAfter": "snap-peek",
+    "stepGlowing": 1
+  },
+  "focusIntoHidden_home": [],
+  "focusIntoHidden_questionPanelClosed": [],
+  "touchTarget": [
+    {
+      "sel": ".row .link-btn",
+      "visualHeight": 20,
+      "hitsAt18pxAboveCentre": true
+    },
+    {
+      "sel": ".card .link-btn",
+      "visualHeight": 20,
+      "hitsAt18pxAboveCentre": true
+    }
+  ],
+  "reducedMotion": {
+    "flowerStillWhileThinking": true,
+    "messageInkTransition": "0.001s"
+  },
+  "morphRestart": {
+    "ghostVisibilityRightAfterInterrupt": [
+      "visible",
+      "visible",
+      "visible",
+      "visible"
+    ],
+    "ghostsAfter": 0,
+    "hiddenTargetsAfter": 0
+  },
+  "replyStaysInItsConversation": {
+    "temporaryMessagesOnNotePanel": 0
+  },
+  "pageErrors": []
+}

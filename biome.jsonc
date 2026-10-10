@@ -15,6 +15,7 @@
       "!**/docs/design/loom-refresh",
       "!**/docs/design/2026-06-07-copilot-tool-use-cards",
       "!**/docs/design/2026-06-08-question-bank-ui",
+      "!**/docs/design/2026-10-07-visual-loft",
       "!**/docs/audit/*.html",
       "!**/getting-started-with-browserbase",
       "!**/docling-docx-parse-output",

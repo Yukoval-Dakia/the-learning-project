@@ -38,9 +38,9 @@
   font-weight: 500;
 }
 .ob-step.is-on .ob-step-n {
-  background: var(--coral);
-  color: #fff;
-  border-color: var(--coral);
+  background: var(--coral-fill);
+  color: var(--on-coral-fill);
+  border-color: var(--coral-fill);
 }
 .ob-step.is-done .ob-step-n {
   background: var(--coral-soft);
@@ -277,9 +277,9 @@
   border: 1px solid var(--coral-line);
 }
 .ob-fork-card.is-primary .ob-fork-ic {
-  background: var(--coral);
-  color: #fff;
-  border-color: var(--coral);
+  background: var(--coral-fill);
+  color: var(--on-coral-fill);
+  border-color: var(--coral-fill);
 }
 .ob-fork-t {
   font-size: var(--fs-h5);
@@ -594,9 +594,9 @@
   border: 1px solid var(--line);
 }
 .ob-opt.is-sel .ob-opt-k {
-  background: var(--coral);
-  color: #fff;
-  border-color: var(--coral);
+  background: var(--coral-fill);
+  color: var(--on-coral-fill);
+  border-color: var(--coral-fill);
 }
 .ob-opt-t {
   font-size: var(--fs-body);

@@ -17,16 +17,6 @@ const db = testDb();
 
 beforeEach(() => resetDb());
 
-const now = new Date();
-const kBase = {
-  merged_from: [] as string[],
-  proposed_by_ai: false,
-  approval_status: 'approved' as const,
-  created_at: now,
-  updated_at: now,
-  version: 0,
-};
-
 describe('goal mutation command concurrency (YUK-952)', () => {
   it('orders mutations by ownership even when the later owner receives an older request timestamp', async () => {
     const start = new Date('2026-09-01T00:00:00Z');

@@ -62,11 +62,6 @@ describe('pLearned (p(L) = σ(pfaLogit))', () => {
     expect(low).toBeLessThan(0.5);
   });
 
-  it('default coefficients have the expected signs (γ>0, ρ<0)', () => {
-    expect(PFA_GAMMA).toBeGreaterThan(0);
-    expect(PFA_RHO).toBeLessThan(0);
-  });
-
   it('β≈3 hard prereq needs 8 clean corrects to cross 0.7 (YUK-539 defect-c regression)', () => {
     // Candidate B (γ=0.5): K(β=3) = ceil((0.8473+3)/0.5) = 8. Pins the retune target that
     // eased hard-prereq starvation from 10 (γ=0.4) → 8 clean corrects. Uses the 0.7

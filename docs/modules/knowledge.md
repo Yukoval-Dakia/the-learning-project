@@ -429,30 +429,11 @@ Before implementing graph reader tools, create fixed fixtures that force useful 
 
 These fixtures test whether the agent can understand context, not just whether SQL returns rows.
 
-> **Executable form (P5.5 Phase 1 / YUK-180).** All four fixtures above are gated
-> as code in `src/server/ai/tools/fixtures.test.ts` via the reusable
-> `assertAgentReadable` contract (`src/server/ai/tools/fixtures-assert.ts`), each
-> at its §5-named tool surface: `yuwen-zhi-confusion` → `query_knowledge`
-> (scenario v), `yuwen-translation-prereq` → `expand_knowledge_subgraph`
-> (scenario vi), `yuwen-zero-result` → a knowledge-filtered `query_mistakes`
-> (scenario ii), `edge-duplicate` → `propose_knowledge_edge` ×2 (scenario iii).
-> The same test file ALSO gates two ADDITIONAL multi-tool Layer-8 chains beyond
-> these four rows — the `query_mistakes → get_attempt_context → attribute_mistake
-> → propose_variant` diagnostic chain (scenario i, which also answers the
-> zhi-confusion user question) and the `get_learning_item_context →
-> propose_learning_item_completion` lifecycle chain (scenario iv) — so the test
-> gates a SUPERSET of these four §5 fixtures, not exactly four. The table above is
-> the spec; the test is the gate. When a tool's `Output` shape, status enum,
-> key-insight fields, or `costClass` changes, update the matching scenario in
-> `fixtures.test.ts` in the same change (LD-7 — process expectation, not new
-> automation). Phase 2 / YUK-181 is executable in
-> `src/server/ai/tools/fixtures-phase2.db.test.ts`: six scenarios cover due review,
-> record linking, standalone variants, memory briefs, learning intents and
-> prerequisite traversal. The corpus includes math, English, programming text
-> and reading notes; reading notes are a record category, not a new subject.
-> P5.8 / YUK-182 supplied the former prerequisite. Models remain stubbed: these
-> tests establish output shape, reference integrity and owner-service handoffs,
-> not actual model comprehension or new subject judge support.
+> **Executable form removed.** The Phase 1/2 agent-readability suites
+> (`src/server/ai/tools/fixtures*.test.ts`, `fixtures-assert.ts`) were removed in
+> YUK-1401 (#1631): they pinned tool output shape, not one of the five retained
+> invariant categories. The table above stays as the spec; check agent readability
+> with real actual-output runs.
 
 ---
 

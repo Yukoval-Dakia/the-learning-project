@@ -4,7 +4,6 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { streamLocalDate } from '@/capabilities/practice/server/stream-store';
 import { knowledge, learning_session, question } from '@/db/schema';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
@@ -23,8 +22,6 @@ vi.mock('@/server/ai/runner', () => ({
 
 import { GET, PATCH } from './stream';
 import { PracticeStreamResponseSchema } from './stream-contracts';
-
-const TODAY = streamLocalDate();
 
 async function seedScopedQuestion(input: {
   knowledgeId: string;

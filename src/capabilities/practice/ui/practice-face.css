@@ -1869,15 +1869,15 @@
   gap: 6px;
   border: 0;
   cursor: pointer;
-  background: var(--coral);
-  color: #fff;
+  background: var(--coral-fill);
+  color: var(--on-coral-fill);
   padding: 8px 15px;
   border-radius: var(--r-2);
   font: 600 var(--fs-caption) / 1 var(--font-sans);
   transition: background var(--dur-fast);
 }
 .ladder-advance:hover {
-  background: var(--coral-hover);
+  background: var(--coral-fill-hover);
 }
 
 /* 交还控制后的回执 */

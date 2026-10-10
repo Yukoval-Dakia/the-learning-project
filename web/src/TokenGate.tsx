@@ -113,7 +113,8 @@ export function TokenGate({ children }: { children: ReactNode }) {
           aria-invalid={error ? true : undefined}
           aria-describedby={error ? 'token-gate-error' : undefined}
           placeholder="粘贴访问令牌"
-          style={{ width: '100%', padding: 10, marginTop: 6, boxSizing: 'border-box' }}
+          className="field-input"
+          style={{ marginTop: 6, boxSizing: 'border-box' }}
         />
         {error && (
           <p id="token-gate-error" role="alert" style={{ color: 'var(--again)', marginTop: 8 }}>

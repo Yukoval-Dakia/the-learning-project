@@ -2,8 +2,6 @@
 // owned by the agency capability (YUK-821 response-aware probe quality gate).
 // Envelope schemas are the single source the probe-quality orchestrator
 // (../server/conjecture/probe-quality) parses samples against.
-// Prompt text is byte-identical to the former central quarry entries
-// (prompt-hash oracle pins them).
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 
 // Legacy quarry alias preserved verbatim inside the moved definitions.

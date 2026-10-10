@@ -117,11 +117,10 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
       execution: { meteredUsd: false },
     },
     models: {
-      // YUK-1402 single flip point: keep false until TEST Token Plan tool-loop
-      // actual-output evidence is sealed. OpenCode Go evidence does not admit
-      // this credential/endpoint lane. Link the new seal here in the follow-up
-      // commit and PR description before changing this binding to true.
-      'mimo-v2.6-pro': { capabilities: { toolCalling: false } },
+      // YUK-1402: Token Plan Sourcing tool-loop actual-output sealed in
+      // docs/planning/evidence/2026-10-10-pi-tool-loop-xiaomi-token-plan-mimo-v2.6-pro-actual.json.
+      // Copilot executions and tool_use mirrors are sealed in the companion evidence.
+      'mimo-v2.6-pro': { capabilities: { toolCalling: true } },
     },
   },
   'zai-coding-cn': {

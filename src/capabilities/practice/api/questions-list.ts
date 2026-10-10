@@ -22,7 +22,6 @@ import {
 } from '@/kernel/read-models/questions';
 import { QuestionListQuerySchema } from './question-solve-contracts';
 
-const DEFAULT_LIMIT = 50;
 const MAX_LIMIT = 200;
 
 function parseBool(raw: string | null): boolean {
