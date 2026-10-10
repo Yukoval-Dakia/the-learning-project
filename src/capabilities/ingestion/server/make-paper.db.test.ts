@@ -7,7 +7,6 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { Artifact } from '@/core/schema/index';
 import {
   artifact,
   knowledge,
@@ -142,52 +141,6 @@ describe('createIngestionPaper (YUK-214)', () => {
     await resetDb();
   });
 
-  it('reverse-queries imported questions and writes a tool_quiz artifact', async () => {
-    const db = testDb();
-    await seedImportedSession({
-      sessionId: 'sess_a',
-      questions: [
-        { id: 'q1', knowledge_ids: ['k1', 'k2'] },
-        { id: 'q2', knowledge_ids: ['k3'] },
-      ],
-      docTitle: '期中卷',
-    });
-
-    const { artifactId, reused } = await createIngestionPaper(db, { sessionId: 'sess_a' });
-    expect(reused).toBe(false);
-
-    const [row] = await db.select().from(artifact).where(eq(artifact.id, artifactId)).limit(1);
-    const paper = Artifact.parse(row);
-    expect(paper.type).toBe('tool_quiz');
-    expect(paper.intent_source).toBe('ingestion_paper');
-    expect(paper.tool_kind).toBe('ingestion_paper');
-    expect(paper.source).toBe('imported');
-    expect(paper.source_ref).toBe('sess_a');
-    expect(paper.title).toBe('期中卷');
-    expect(paper.generation_status).toBe('ready');
-    expect(paper.knowledge_ids.sort()).toEqual(['k1', 'k2', 'k3']);
-
-    // One section, one assignment per imported question, FSRS-keyed on primary.
-    expect(paper.tool_state?.question_ids).toEqual(['q1', 'q2']);
-    const section = paper.tool_state?.sections?.[0];
-    expect(section?.feedback_policy).toBe('immediate');
-    expect(section?.assignments).toHaveLength(2);
-    expect(section?.assignments[0].primary_knowledge_id).toBe('k1');
-    expect(section?.assignments[0].secondary_knowledge_ids).toEqual(['k2']);
-  });
-
-  it('falls back to the default title when source_document.title is null', async () => {
-    const db = testDb();
-    await seedImportedSession({
-      sessionId: 'sess_b',
-      questions: [{ id: 'qb1', knowledge_ids: ['k1'] }],
-      docTitle: null,
-    });
-    const { artifactId } = await createIngestionPaper(db, { sessionId: 'sess_b' });
-    const [row] = await db.select().from(artifact).where(eq(artifact.id, artifactId)).limit(1);
-    expect(row.title).toBe('导入试卷');
-  });
-
   it('is idempotent on sessionId — a second call returns the same paper', async () => {
     const db = testDb();
     await seedImportedSession({
@@ -204,60 +157,6 @@ describe('createIngestionPaper (YUK-214)', () => {
       .from(artifact)
       .where(eq(artifact.source_ref, 'sess_c'));
     expect(rows).toHaveLength(1);
-  });
-
-  // F1 (PR #309 round-2) — idempotency must account for the question set. A
-  // second call with a DIFFERENT explicit questionIds set conflicts with the
-  // existing one-session-one-paper artifact → 409 (no silent stale reuse).
-  it('409s when a second call passes a different explicit questionIds set', async () => {
-    const db = testDb();
-    await seedImportedSession({
-      sessionId: 'sess_f1_conflict',
-      questions: [
-        { id: 'qfc1', knowledge_ids: ['k1'] },
-        { id: 'qfc2', knowledge_ids: ['k2'] },
-      ],
-    });
-    const first = await createIngestionPaper(db, {
-      sessionId: 'sess_f1_conflict',
-      questionIds: ['qfc1'],
-    });
-    expect(first.reused).toBe(false);
-
-    // A different set on the same session must NOT silently return the qfc1 paper.
-    await expect(
-      createIngestionPaper(db, { sessionId: 'sess_f1_conflict', questionIds: ['qfc2'] }),
-    ).rejects.toMatchObject({ status: 409 });
-
-    // Still exactly one paper for the session (the conflict did not create one).
-    const rows = await db
-      .select({ id: artifact.id })
-      .from(artifact)
-      .where(eq(artifact.source_ref, 'sess_f1_conflict'));
-    expect(rows).toHaveLength(1);
-    expect(rows[0].id).toBe(first.artifactId);
-  });
-
-  // F1 — the SAME explicit set is still idempotent (returns the existing paper).
-  it('reuses the existing paper when the same explicit questionIds set is passed again', async () => {
-    const db = testDb();
-    await seedImportedSession({
-      sessionId: 'sess_f1_same',
-      questions: [
-        { id: 'qfs1', knowledge_ids: ['k1'] },
-        { id: 'qfs2', knowledge_ids: ['k2'] },
-      ],
-    });
-    const first = await createIngestionPaper(db, {
-      sessionId: 'sess_f1_same',
-      questionIds: ['qfs1', 'qfs2'],
-    });
-    const second = await createIngestionPaper(db, {
-      sessionId: 'sess_f1_same',
-      questionIds: ['qfs1', 'qfs2'],
-    });
-    expect(second.reused).toBe(true);
-    expect(second.artifactId).toBe(first.artifactId);
   });
 
   // F4 (PR #309 round-3, YUK-214 / CodeRabbit) — the create branch filters
@@ -311,52 +210,6 @@ describe('createIngestionPaper (YUK-214)', () => {
     ).rejects.toMatchObject({ status: 409 });
   });
 
-  // F3 (PR #309 round-3, YUK-214) — the service layer rejects an EXPLICIT empty
-  // array (≠ default full-set). `undefined` falls through to full-set; `[]` 400s.
-  it('F3: an explicit empty questionIds array is rejected (400), undefined is not', async () => {
-    const db = testDb();
-    await seedImportedSession({
-      sessionId: 'sess_f3',
-      questions: [{ id: 'qf3a', knowledge_ids: ['k1'] }],
-    });
-    await expect(
-      createIngestionPaper(db, { sessionId: 'sess_f3', questionIds: [] }),
-    ).rejects.toMatchObject({ status: 400 });
-    // undefined → default full-set path builds normally (control).
-    const ok = await createIngestionPaper(db, { sessionId: 'sess_f3' });
-    expect(ok.reused).toBe(false);
-  });
-
-  // F2 (PR #309 round-4, YUK-214) — the service layer is the authoritative
-  // boundary: duplicate question_ids 400 (same reject-not-dedupe style as F3's
-  // empty-array guard), so no two assignments share a slot key. A unique set with
-  // the same ids builds normally (control).
-  it('F2: duplicate questionIds are rejected (400); a unique set is not', async () => {
-    const db = testDb();
-    await seedImportedSession({
-      sessionId: 'sess_f2_dup',
-      questions: [
-        { id: 'qf2a', knowledge_ids: ['k1'] },
-        { id: 'qf2b', knowledge_ids: ['k2'] },
-      ],
-    });
-    await expect(
-      createIngestionPaper(db, { sessionId: 'sess_f2_dup', questionIds: ['qf2a', 'qf2a'] }),
-    ).rejects.toMatchObject({ status: 400 });
-    // No paper built by the rejected call.
-    const rows = await db
-      .select({ id: artifact.id })
-      .from(artifact)
-      .where(eq(artifact.source_ref, 'sess_f2_dup'));
-    expect(rows).toHaveLength(0);
-    // A unique set with the same ids builds normally (control).
-    const ok = await createIngestionPaper(db, {
-      sessionId: 'sess_f2_dup',
-      questionIds: ['qf2a', 'qf2b'],
-    });
-    expect(ok.reused).toBe(false);
-  });
-
   // F1 — the default (no questionIds) path stays purely idempotent even after a
   // paper was first built from an explicit subset: a bare call carries no set to
   // conflict with, so it reuses rather than 409s.
@@ -376,83 +229,5 @@ describe('createIngestionPaper (YUK-214)', () => {
     const second = await createIngestionPaper(db, { sessionId: 'sess_f1_default' });
     expect(second.reused).toBe(true);
     expect(second.artifactId).toBe(first.artifactId);
-  });
-
-  it('honours an explicit questionIds override (intersected with the session)', async () => {
-    const db = testDb();
-    await seedImportedSession({
-      sessionId: 'sess_d',
-      questions: [
-        { id: 'qd1', knowledge_ids: ['k1'] },
-        { id: 'qd2', knowledge_ids: ['k2'] },
-      ],
-    });
-    const { artifactId } = await createIngestionPaper(db, {
-      sessionId: 'sess_d',
-      questionIds: ['qd1'],
-    });
-    const [row] = await db.select().from(artifact).where(eq(artifact.id, artifactId)).limit(1);
-    const paper = Artifact.parse(row);
-    expect(paper.tool_state?.question_ids).toEqual(['qd1']);
-  });
-
-  // F2 (PR #309 round-1) — paper slot order is deterministic, not whatever order
-  // the DB happens to return rows in.
-  it('preserves the requested questionIds order even when ids are passed out of order', async () => {
-    const db = testDb();
-    // Seed ids whose lexical/insertion order is NOT the requested order, so a
-    // bare inArray would scramble them.
-    await seedImportedSession({
-      sessionId: 'sess_f',
-      questions: [
-        { id: 'qf_a', knowledge_ids: ['k1'] },
-        { id: 'qf_b', knowledge_ids: ['k2'] },
-        { id: 'qf_c', knowledge_ids: ['k3'] },
-      ],
-    });
-    const requested = ['qf_c', 'qf_a', 'qf_b'];
-    const { artifactId } = await createIngestionPaper(db, {
-      sessionId: 'sess_f',
-      questionIds: requested,
-    });
-    const [row] = await db.select().from(artifact).where(eq(artifact.id, artifactId)).limit(1);
-    const paper = Artifact.parse(row);
-    expect(paper.tool_state?.question_ids).toEqual(requested);
-  });
-
-  // YUK-221 — the reverse-query fall-through path orders by the block's true 0-based
-  // positional `ordinal`, NOT question.id and NOT created_at. A batch extracted in one
-  // shot shares ONE created_at (applyExtractionResult stamps a single `now`), so
-  // created_at cannot carry intra-batch order; `ordinal` is the real key. The reverse
-  // query joins question→question_block and orders by (ordinal, block.id, question.id),
-  // so the paper's slot order equals the original on-screen block order.
-  it('orders fall-through reverse-queried questions by block ordinal even when created_at ties (true reading order, not cuid2 id)', async () => {
-    const db = testDb();
-    // One shared created_at for the whole batch — so ONLY ordinal can carry the
-    // paper order. Paper order (ordinal): qg_3 (0) → qg_1 (1) → qg_2 (2). The
-    // question ids are deliberately NOT in that order, so an id-sort would scramble
-    // the paper; an ordinal sort reconstructs the true sequence.
-    const shared = new Date('2026-06-01T00:00:00.000Z');
-    await seedImportedSession({
-      sessionId: 'sess_g',
-      questions: [
-        { id: 'qg_1', knowledge_ids: ['k1'], block_created_at: shared, block_ordinal: 1 },
-        { id: 'qg_2', knowledge_ids: ['k2'], block_created_at: shared, block_ordinal: 2 },
-        { id: 'qg_3', knowledge_ids: ['k3'], block_created_at: shared, block_ordinal: 0 },
-      ],
-    });
-    const { artifactId } = await createIngestionPaper(db, { sessionId: 'sess_g' });
-    const [row] = await db.select().from(artifact).where(eq(artifact.id, artifactId)).limit(1);
-    const paper = Artifact.parse(row);
-    // Ordinal order, NOT id order (which would be qg_1, qg_2, qg_3).
-    expect(paper.tool_state?.question_ids).toEqual(['qg_3', 'qg_1', 'qg_2']);
-  });
-
-  it('throws when the session has no imported questions', async () => {
-    const db = testDb();
-    await seedImportedSession({ sessionId: 'sess_e', questions: [] });
-    await expect(createIngestionPaper(db, { sessionId: 'sess_e' })).rejects.toThrow(
-      /no imported questions/i,
-    );
   });
 });

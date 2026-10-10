@@ -7,6 +7,7 @@ on:
       - '.github/workflows/rust-parity.yml'
       - 'crates/calibration-native/**'
       - 'src/core/poly-exp*.ts'
+      - 'src/core/coldstart-solver*.ts'
       - 'src/server/calibration/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
@@ -16,6 +17,7 @@ on:
       - '.github/workflows/rust-parity.yml'
       - 'crates/calibration-native/**'
       - 'src/core/poly-exp*.ts'
+      - 'src/core/coldstart-solver*.ts'
       - 'src/server/calibration/**'
       - 'package.json'
       - 'pnpm-lock.yaml'
@@ -57,6 +59,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Rust numerical invariants
+        run: cargo test --manifest-path crates/calibration-native/Cargo.toml
+
       - name: Build native addon
         run: pnpm build:native
 
@@ -73,4 +78,5 @@ jobs:
           pnpm exec vitest run --config vitest.unit.config.ts \
             src/server/calibration/native-parity.unit.test.ts \
             src/server/calibration/wasm-parity.unit.test.ts \
-            src/core/poly-exp-parity.unit.test.ts
+            src/core/poly-exp-parity.unit.test.ts \
+            src/core/coldstart-solver-parity.unit.test.ts

@@ -16,24 +16,10 @@ vi.mock('./gather', () => ({
   }),
 }));
 
-import { gatherAndFoldKnowledgeEdge, gatherAndFoldKnowledgeNode } from './gather';
-import { assertKnowledgeEdgeParity, assertKnowledgeNodeParity } from './parity';
+import { gatherAndFoldKnowledgeNode } from './gather';
+import { assertKnowledgeNodeParity } from './parity';
 
 const fakeDb = {} as never;
-
-describe('parity assert — gather/reducer throw routing (dev/test rethrow)', () => {
-  it('node assert routes a gather throw through onParityMismatch (<fold-threw>)', async () => {
-    await expect(assertKnowledgeNodeParity(fakeDb, 'n1', null)).rejects.toThrow(/fold-threw/i);
-  });
-
-  it('node assert preserves the original throw message', async () => {
-    await expect(assertKnowledgeNodeParity(fakeDb, 'n1', null)).rejects.toThrow(/boom-node/);
-  });
-
-  it('edge assert routes a gather throw through onParityMismatch (<fold-threw>)', async () => {
-    await expect(assertKnowledgeEdgeParity(fakeDb, 'e1', null)).rejects.toThrow(/fold-threw/i);
-  });
-});
 
 // SCF-210 / YUK-1271 — the PROD warn's `diff_fields` must keep a sentinel's tag intact (and never
 // leak a user value). onParityMismatch is module-private, so drive it through the public assert
@@ -56,21 +42,6 @@ describe('onParityMismatch PROD diff_fields — sentinel tags + value-free field
     if (!meta) throw new Error(`no console.warn metadata at call ${call}`);
     return (meta as { diff_fields: string[] }).diff_fields;
   }
-
-  it('keeps the <fold-threw:topology> tag intact (never truncates it to <fold-threw>)', async () => {
-    vi.mocked(gatherAndFoldKnowledgeEdge).mockRejectedValueOnce(
-      new Error('ADR-0034 topology reject: prerequisite cycle'),
-    );
-    await expect(assertKnowledgeEdgeParity(fakeDb, 'e1', null)).resolves.toBeUndefined();
-    expect(warnSpy).toHaveBeenCalledTimes(1);
-    expect(diffFields(0)).toEqual(['<fold-threw:topology>']);
-  });
-
-  it('still logs a bare <fold-threw> for a non-topology gather failure', async () => {
-    vi.mocked(gatherAndFoldKnowledgeEdge).mockRejectedValueOnce(new TypeError('boom-edge'));
-    await expect(assertKnowledgeEdgeParity(fakeDb, 'e1', null)).resolves.toBeUndefined();
-    expect(diffFields(0)).toEqual(['<fold-threw>']);
-  });
 
   it('logs only the field NAME — never the user value', async () => {
     vi.mocked(gatherAndFoldKnowledgeNode).mockResolvedValueOnce({

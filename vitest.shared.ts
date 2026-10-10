@@ -21,546 +21,270 @@ export const sharedOxc = {
   jsx: { runtime: 'automatic' },
 } as const;
 
-// DEPRECATED (YUK-315)：vite 7 时代的 esbuild 形态，仅留作历史参照；新 config 用 sharedOxc。
-export const sharedEsbuild = {
-  jsx: 'automatic',
-} as const;
-
-// YUK-279 — every `.test.ts` AND `.test.tsx` glob must appear here. allTestInclude
-// is the *universe* of test files: the db config includes it directly, and the
-// audit walker treats anything matching it as "in some partition". A `.test.tsx`
-// file that matches NO entry here lands in NEITHER vitest config (db excludes
-// fastTestInclude, but a file the db config never `include`d is simply never
-// collected) and is invisible to the auditor → a silent green non-run. The `.tsx`
-// globs below are deliberately as broad as the `.ts` ones so component tests can
-// never fall through; fastTestInclude (the unit allowlist) still decides which of
-// them run no-DB, and any `.tsx` not on that allowlist falls through to the db
-// partition exactly like a `.test.ts` would.
-export const allTestInclude = [
-  '*.test.ts',
-  '*.test.tsx',
-  'src/**/*.test.ts',
-  'src/**/*.test.tsx',
-  'tests/**/*.test.ts',
-  'tests/**/*.test.tsx',
-  'scripts/**/*.test.ts',
-  'scripts/**/*.test.tsx',
-  // M0 (YUK-313) — 新栈两棵树（Hono server / Vite SPA）进测试宇宙。
-  'server/**/*.test.ts',
-  'web/**/*.test.ts',
-  'web/**/*.test.tsx',
-];
-
+// YUK-1401: reviewed invariant files only. New tests must be explicitly assigned.
 export const fastTestInclude = [
-  'tests/pi-dbos-gate/contract.unit.test.ts',
-  // ARCH-P1 (YUK-311) — 新 kernel/capabilities 树的约定式快分区：
-  // *.unit.test.ts 按【命名约定】跑 no-DB 车道，零逐文件登记；*.db.test.ts
-  // 落到 db 分区（匹配 allTestInclude 的 src/**/*.test.ts，又被下面这两个
-  // glob 排除出 fast）。audit:partition 的 P0 检查照常生效：约定树里
-  // *.unit.test.ts 若未 mock 就 import DB，审计直接报错。
-  'src/kernel/**/*.unit.test.ts',
-  'src/capabilities/**/*.unit.test.ts',
-  // ADR-0033 D5 (YUK-203) — capability UI component tests are JSX, so they need
-  // the .tsx extension; the *.unit.test.tsx naming runs them in the no-DB unit
-  // car (renderToString, node env) exactly like a *.unit.test.ts. Same P0 guard
-  // applies: a *.unit.test.tsx that imports DB unmocked fails audit:partition.
-  'src/capabilities/**/*.unit.test.tsx',
-  // M0 (YUK-313) — server/web 树同享命名约定分区。
-  // M1 (YUK-314) — ingestion 19 条 allowlist 条目已随簇迁入 capabilities，由约定 glob 接管。
-  'server/**/*.unit.test.ts',
-  'web/**/*.unit.test.ts',
-  // YUK-624：Vite 壳层同样有 React 交互测试；漏掉 .tsx 会让文件落入 DB
-  // 分区而非 unit car，定向 `vitest --config vitest.unit` 还会静默零收集。
-  'web/**/*.unit.test.tsx',
-  'scripts/**/*.test.ts',
-  // YUK-263 — pure (no-DB) unit for the globalThis pool-cache HMR guard in
-  // src/db/client.ts. `postgres` is vi.mock'd and the only @/db/client import is
-  // a dynamic `await import()`, so no live Postgres is touched → unit partition.
-  'src/db/client.test.ts',
-  // YUK-1005 — pure (no-DB) unit for the sourced-markup (MathJye→markdown/LaTeX)
-  // normalizer: a lenient tag tokenizer with zero imports → unit partition.
-  'src/server/questions/sourced-markup.test.ts',
-  // YUK-1043 — 纯（无 IO）contract-normalizer 单测：legacy 行 → 评估契约四层
-  // 的身份纪律与可发布性。不走 DB，进 unit 分区（sourced-markup 同先例）。
-  'src/server/questions/contract-normalizer.test.ts',
-  // YUK-383 Phase 0 — pure (no-DB) unit for the pgvector customType codec in
-  // src/db/vector.ts (string <-> number[] only; no Postgres touched) → unit partition.
-  'src/db/vector.test.ts',
-  // YUK-569 — pure (no-DB) unit for the isPoolVisible JS twin in src/db/predicates.ts
-  // (imports ONLY the connection-free predicate module relatively; no drizzle-orm, no
-  // Postgres). The Drizzle compiled-SQL shape assertion is the sibling
-  // src/db/predicates.db.test.ts (imports drizzle-orm → db partition, falls through the
-  // src/**/*.test.ts allTestInclude glob). src/db has no unit glob, so this MUST be listed.
-  'src/db/predicates.test.ts',
-  // YUK-383 Phase 0 — domain embedder + entity->embed-text are pure no-DB units
-  // (fetch is stubbed in embed.test.ts; embed-source.test.ts is string-join only).
-  'src/server/ai/embed.test.ts',
-  'src/server/ai/embed-source.test.ts',
-  'src/server/ai/sdk-terminal.test.ts',
-  // YUK-274 — pure (no-DB) unit for the globalThis singleton-cache HMR guard in
-  // src/server/boss/client.ts. `pg-boss` is vi.mock'd and the only ./client
-  // import is a dynamic `await import()`, so no live Postgres is touched → unit
-  // partition. The live-DB round-trip + SEND_IT race tests stay in the sibling
-  // client.test.ts (db partition).
-  'src/server/boss/client.globalthis.test.ts',
-  'src/__tests__/**/*.test.ts',
-  'src/ai/**/*.test.ts',
-  'src/core/**/*.test.ts',
-  'src/capabilities/practice/server/judge/**/*.test.ts',
-  // YUK-238 / YUK-240 — streamTask client-disconnect abort + stuck-run warn.
-  // Pure no-DB unit (post YUK-1025: the pi adapter is swapped via
-  // __setPiAdapterForTests, not a module mock) and @/server/ai/log is vi.mock'd;
-  // `db` is an untouched stub, so no live Postgres is needed.
-  // (The sibling runner.test.ts stays in the db partition because it drives the
-  // real ai/log writers against a container.)
-  'src/server/ai/stream-cancel.test.ts',
-  // YUK-266 (C1) — streamTaskCollecting collecting-stream unit. Same justification
-  // as stream-cancel: fake pi adapter + @/server/ai/log are vi.mock'd
-  // and `db` is an untouched stub, so no live Postgres is needed.
-  'src/server/ai/runner.stream-collect.test.ts',
-  // YUK-757 — pure spawn permission/depth contract. It imports vendored sdk-types only;
-  // no DB client, network, or subprocess is touched.
-  'src/server/ai/spawn-contract.unit.test.ts',
-  'src/server/ai/run-lifecycle.test.ts',
-  'src/server/ai/run-lifecycle.admission.test.ts',
-  // YUK-1049 — typed primitive runner (OpenRouter systemone): failure-fixture
-  // unit tests. fetchImpl stub replaces ONLY the wire; @/server/ai/log is
-  // vi.mock'd and `db` is an untouched stub → no live Postgres. Enumerate like
-  // every other src/server/ai/** file (no unit glob). The sibling
-  // typed-primitive-runner.db.test.ts exercises the real log writers.
-  'src/server/ai/typed-primitive-runner.test.ts',
-  // YUK-1092 — cumulative retry-cost unit tests. Same no-DB justification;
-  // split file because they mock @/ai/registry with a retry-2 budget clone.
-  'src/server/ai/typed-primitive-runner.cumulative-cost.test.ts',
-  // YUK-1049 — Jev ModelUnitExecutorPort adapter (escalation/admission/
-  // criterion mapping). Same no-DB justification as the runner test above.
-  'src/server/assessment/jev-model-executor.test.ts',
-  // YUK-1058 — D18 jev-openrouter EvalInvoker lane: `run` seam replaces the
-  // typed runner, `db` is an untouched stub → no live Postgres / no wire.
-  'src/server/eval/d18-jev-invoker.test.ts',
-  // YUK-842 — pure config/failure-policy unit. DB coordination lives in the
-  // sibling *.db.test.ts and remains in the container partition.
-  'src/server/ai/provider-session-admission.test.ts',
-  // YUK-299 — runner structured_output consume seam + options wiring.
-  // Same justification as stream-cancel: fake pi adapter + @/server/ai/log are
-  // vi.mock'd and `db` is an untouched stub → no live Postgres. src/server/ai/**
-  // has no unit glob, so this MUST be listed or the db config's src/**/*.test.ts
-  // glob would sweep it into the container.
-  'src/server/ai/runner.seam.test.ts',
-  'src/server/ai/runner.provider-admission.test.ts',
-  // YUK-750 — bound runner adapter contract. Pure no-DB: runner is mocked and
-  // the Db value is an untouched structural stub.
-  'src/server/ai/runner-fn.unit.test.ts',
-  // YUK-1013 — ExecutionAdapter seam (P0): resolveExecutionAdapter fail-closed
-  // pin + explicitProviderRouting precedence + modelBinding retry-pin. Pure
-  // no-DB: imports ./execution-adapter (vendored sdk-types + startup, not invoked) +
-  // ./run-lifecycle (transientRetryEnabled only). src/server/ai/** has no unit
-  // glob, so this MUST be listed (same enumeration requirement as above).
-  'src/server/ai/execution-adapter.test.ts',
-  // YUK-921 P1 — PiAgentAdapter event→SDK-frame normalization + startup gates.
-  // Pure no-DB: imports ./pi-agent-adapter (pi-ai/pi-agent-core types + a
-  // scripted in-memory agentLoop — deps are injectable, no network, no SDK)
-  // + ./providers types. Same enumeration requirement as above (no
-  // src/server/ai/** unit glob).
-  'src/server/ai/pi-agent-adapter.test.ts',
+  'scripts/api-smoke.test.ts',
+  'scripts/cutover-backup.test.ts',
+  'scripts/migration-apply.test.ts',
+  'scripts/migration-capture-ssl.test.ts',
+  'scripts/migration-capture.test.ts',
+  'server/app.unit.test.ts',
+  'server/start/auth.unit.test.ts',
+  'src/capabilities/agency/server/meeting/director-tools.unit.test.ts',
+  'src/capabilities/copilot/server/subagents.unit.test.ts',
+  'src/capabilities/copilot/server/tool-activity.unit.test.ts',
+  'src/capabilities/copilot/server/tool-result-snapshot.unit.test.ts',
+  'src/capabilities/observability/api/backup-import.unit.test.ts',
+  'src/capabilities/practice/server/fsrs.unit.test.ts',
+  'src/capabilities/practice/server/judge/evaluation-authority.unit.test.ts',
+  'src/capabilities/practice/server/judge/keyword.test.ts',
+  'src/capabilities/practice/server/judge/multimodal-direct-judge.test.ts',
+  'src/capabilities/practice/server/judge/preview-provenance-token.test.ts',
+  'src/capabilities/practice/server/judge/steps-judge.test.ts',
+  'src/capabilities/practice/server/question-supply/jyeoo-spawn.test.ts',
+  'src/capabilities/practice/server/quiz/verify-framework.test.ts',
+  'src/capabilities/practice/server/rating-advisor.unit.test.ts',
+  'src/capabilities/practice/tasks/evaluation-policy-routing.unit.test.ts',
+  'src/core/capability/judges/exact.test.ts',
+  'src/core/capability/judges/unit_dimension.test.ts',
+  'src/core/capability/judges/unit_dimension/accelerator.test.ts',
+  'src/core/capability/judges/unit_dimension/score.test.ts',
+  'src/core/coldstart-solver-parity.unit.test.ts',
+  'src/core/coldstart-solver.unit.test.ts',
+  'src/core/graph-laplacian.test.ts',
+  'src/core/migration/apply.test.ts',
+  'src/core/migration/classify.test.ts',
+  'src/core/migration/redact.test.ts',
+  'src/core/net/private-host.unit.test.ts',
+  'src/core/pfa.test.ts',
+  'src/core/poly-exp-parity.unit.test.ts',
+  'src/core/poly-exp.unit.test.ts',
+  'src/core/prereq-propagation.test.ts',
+  'src/core/schema/assessment/evaluation.test.ts',
+  'src/core/schema/assessment/scoring.test.ts',
+  'src/core/schema/assessment/settlement.test.ts',
+  'src/core/theta-grid.test.ts',
+  'src/core/theta.test.ts',
   'src/server/ai/laminar-tracing.test.ts',
   'src/server/ai/laminar-transcript.test.ts',
   'src/server/ai/pi-agent-adapter.tracing.test.ts',
-  // Real pi driver with offline SSE; no DB or paid provider calls.
-  'src/server/ai/pi-usage-evidence.test.ts',
-  // Installed pi engine with a scripted provider stream; no DB or paid requests.
-  'src/server/ai/pi-agent-loop.unit.test.ts',
-  'src/server/ai/pi-provider-catalog.test.ts',
-  // YUK-1027 — openai/gpt-6-astra Responses wire contract: real pi-ai driver +
-  // injected fake fetch (no network, no key, no DB). Imports ./pi-models whose
-  // pi-ai imports are all dynamic — enumerate like every other
-  // src/server/ai/** file (no unit glob).
-  'src/server/ai/astra-responses-contract.test.ts',
-  // YUK-607 — LLM JSON 修复带提取器。Pure no-DB: imports only ./json-extract (→ jsonrepair, pure JS).
-  'src/server/ai/json-extract.test.ts',
-  // YUK-359 — pure arithmetic cost fallback, no DB/SDK imports.
-  'src/server/ai/pricing.test.ts',
-  // YUK-924 — ModelProfile registry (config-over-catalog + capability gate).
-  // Pure no-DB: imports ./model-profiles (→ committed catalog snapshot +
-  // ./providers → @/ai/registry); no @/db / postgres / SDK.
-  'src/server/ai/model-profiles.test.ts',
-  'src/server/ai/attempt-cost.test.ts',
-  'src/server/ai/provider-attempt-lifecycle.test.ts',
-  'src/server/ai/provider-attempt-decisions.test.ts',
-  // YUK-365 — provider resolution (key vs oauth authMode, AI_PROVIDER_OVERRIDE
-  // switch). Pure no-DB: imports only ./providers (→ @/ai/registry) + stubs env;
-  // no @/db/client / postgres / SDK. src/server/ai/** has no unit glob, so this
-  // MUST be listed or the db config's src/**/*.test.ts glob sweeps it into the
-  // testcontainer partition (pricing.test.ts lesson).
-  'src/server/ai/providers.test.ts',
-  // YUK-482 / YUK-924 — vision-judge lane override reader. Pure no-DB: imports
-  // only ./vision-judge-config (→ ./model-profiles → ./providers →
-  // @/ai/registry + the committed catalog snapshot); no @/db / postgres / SDK.
-  // Previously swept into the db partition by the src/** glob for no DB reason.
-  'src/server/ai/vision-judge-config.test.ts',
-  // B1-W1 (ADR-0035) — ItemPriorTask output parse barrier. Pure no-DB: imports
-  // only ./item-prior (→ @/core/schema/item_prior, Zod) — no @/db/client /
-  // postgres / drizzle / PgBoss. src/server/ai/** has no unit glob, so this MUST
-  // be listed explicitly or the db config's src/**/*.test.ts glob sweeps it into
-  // the testcontainer partition (pricing.test.ts lesson).
-  'src/server/ai/item-prior.test.ts',
-  // YUK-576 — runner transient-retry loop + AgentRunError classification. Same
-  // justification as runner.seam.test.ts: fake pi adapter +
-  // @/server/ai/log are vi.mock'd and `db` is an untouched stub → no live
-  // Postgres. src/server/ai/** has no unit glob, so this MUST be listed.
-  'src/server/ai/runner.fallback.test.ts',
-  // YUK-576 (R6) — enableTransientRetry opt-in enforcement (grep-level pin over
-  // src/ via node:fs; zero DB / SDK imports). Same enumeration requirement.
-  'src/server/ai/retry-optin.test.ts',
-  // YUK-576 — queue-level explicit retry policy. Pure no-DB: pg-boss is
-  // vi.mock'd (queue-config → client.ts imports the PgBoss class at module top)
-  // and the boss handed in is a plain capture fake. src/server/boss/** has no
-  // unit glob (client.globalthis.test.ts precedent), so this MUST be listed.
-  'src/server/boss/queue-config.test.ts',
-  // YUK-779 — 夜链「静默空跑」判据（classifyJobYield / reportJobYield /
-  // readJobYieldReport）。Pure no-DB: job-yield.ts 是零 import 的纯函数模块（连
-  // type-only 依赖都没有），测试只 spy console。src/server/boss/** 无 unit glob
-  // （queue-config.test.ts / client.globalthis.test.ts 先例），故必须显式列出，
-  // 否则 db config 的 src/**/*.test.ts glob 会把它扫进 testcontainer 分区。
-  'src/server/boss/job-yield.unit.test.ts',
-  // YUK-384 — worker boss-start marks the running boss (getRunningBoss) so the FULL
-  // mutation-wake + continuation dispatch work in the worker. Pure no-DB: pg-boss AND
-  // every startBossWorker dependency (@/capabilities, handlers, register-capability-jobs,
-  // subjects/hydrate, ai_task_run_reconcile) is vi.mock'd. Same explicit-listing reason
-  // as client.globalthis.test.ts (src/server/boss/** has no unit glob).
-  'src/server/boss/start-worker.test.ts',
-  // YUK-1393: mocked shared SDK lifecycle; no DB or child process execution.
-  'src/server/durable/prune-worker.unit.test.ts',
-  // YUK-361 Phase 5 (Task 10) — 家族级 b_personalized 纯函数单测（shrinkage /
-  // family_key / 客观路由分类 / 隐含难度残差 / effectiveFamilyB）。Pure no-DB: imports
-  // 仅 ./personalized-difficulty（其 @/db/client import 是 type-only/erased，@/db/schema
-  // 是 table objects 不连库，@/capabilities/knowledge/server/domain 也 type-only Db），
-  // 不触 @/db/client 的 eager pool。门控 update 路径的 db 测在 personalized-difficulty.db.test.ts。
-  // src/server/mastery/** 无 unit glob，故必须显式列出，否则 db config 的 src/**/*.test.ts
-  // glob 会把它扫进 testcontainer 分区（item-prior.test.ts 同款）。
-  'src/server/mastery/personalized-difficulty.test.ts',
-  // YUK-361 Phase 6 (Task 11) — active-PPI 重标定纯函数单测（aipwMean §7 正确归一化 /
-  // effectiveB read-compat / impliedBLabel IRT 反推 / PPI++ λ* power-tuning）。Pure no-DB:
-  // imports 仅 ./recalibration（其 @/db/client 是 type-only/erased，@/db/schema 是 table
-  // objects 不连库）+ ./personalized-difficulty（同款）。label hook + recalibrateQuestion
-  // 的 db 测在 recalibration.db.test.ts。同 personalized-difficulty.test.ts 显式登记理由。
-  'src/server/mastery/recalibration.test.ts',
-  // YUK-372 L3 — family_key 解析 null-guard 纯逻辑单测（缺 primaryKnowledgeId/kind/source → null
-  // 在任何 DB 调用前早返）。Pure no-DB: imports 仅 ./family-key（其 @/db/client / domain.ts 都是
-  // type-only/erased，@/db/schema 是 table objects 不连库）。subject 派生/内存 walk 的 DB 测在
-  // candidate-signals.db.test.ts / state.db.test.ts。同 personalized-difficulty.test.ts 显式登记理由。
-  'src/server/mastery/family-key.test.ts',
-  // YUK-348 (B1 four-engine soft-track inc-1) — BKT forward estimator 纯函数单测（result shape /
-  // pLFinal 升降方向 / 空·极短序列 prior-echo 红线）。Pure no-DB: imports 仅 ./kt-estimator
-  // （纯算术 + 命名常量，零 IO，无 @/db/client / postgres / drizzle / PgBoss）。soft-track 写者
-  // 的 db 测在 kt-calibration.db.test.ts / kt_estimate_nightly.db.test.ts。src/server/mastery/**
-  // 无 unit glob，故必须显式列出，否则 db config 的 src/**/*.test.ts glob 会把它扫进 testcontainer
-  // 分区（personalized-difficulty.test.ts 同款）。
-  'src/server/mastery/kt-estimator.test.ts',
-  // YUK-461 (axis-2 Wave-0) — the calibration harness pure-math + replay-engine
-  // units. CONVENTION glob: every *.unit.test.ts under src/server/calibration/ runs
-  // no-DB (ECE / forward-AUC / ICC-deff / Cohen's κ / mulberry32 RNG / pure θ̂ replay /
-  // paired cluster bootstrap / V-A1-fwd gate — all pure functions importing only
-  // @/core/theta primitives + sibling pure modules; no @/db/client / postgres /
-  // drizzle / PgBoss). The ONE DB test (replay.fixture.db.test.ts — byte-identity vs
-  // the real updateThetaForAttempt under a testcontainer) is a *.db.test.ts, so it
-  // matches allTestInclude's src/**/*.test.ts and falls through to the db partition,
-  // NOT this fast allowlist. The P0 partition guard still applies: any calibration
-  // *.unit.test.ts that imports DB unmocked fails audit:partition.
-  'src/server/calibration/**/*.unit.test.ts',
-  // YUK-446 / YUK-447 (A14/A15 simulator infra) — the synthetic-learner forward-sampler
-  // unit. CONVENTION glob: every *.unit.test.ts under src/server/simulator/ runs no-DB
-  // (it imports ONLY @/core/theta + @/core/pfa primitives + sibling pure @/server/
-  // calibration/rng mulberry32 — no @/db/client / postgres / drizzle / PgBoss). The same
-  // P0 partition guard applies: any simulator *.unit.test.ts that imports DB unmocked
-  // fails audit:partition.
-  'src/server/simulator/**/*.unit.test.ts',
-  // YUK-361 Phase 3 Step B (Task 8 L2) — SelectionOrchestratorTask parse barrier +
-  // 分桶格式化器. Pure no-DB: imports only ./selection-orchestrator (→
-  // @/core/schema/selection-orchestrator Zod + `import type { CollectedSignal }`
-  // which is type-only / erased — no @/db/client / postgres / drizzle / PgBoss).
-  // src/server/ai/** has no unit glob, so this MUST be listed explicitly or the db
-  // config's src/**/*.test.ts glob sweeps it into the testcontainer partition.
-  'src/server/ai/selection-orchestrator.test.ts',
-  // YUK-361 Phase 8 (Task 13) — 供给目标发现纯扫描器 + 路由规划单测. Pure no-DB:
-  // imports 仅 ./target-discovery + ./route-planner——其 @/db/client 是 type-only/erased，
-  // @/db/schema 是 table objects 不连库，@/server/mastery/state / domain / provenance /
-  // selection-signals / theta / subjects/profile 全是纯函数或 type-only db。端到端的
-  // discoverSupplyTargets + dispatcher 派发 db 测在 target-discovery.db.test.ts。
-  // These moved tests keep their historical names, so list them explicitly instead of relying on
-  // the capability `*.unit.test.ts` convention; their DB-backed siblings remain in the DB partition.
-  // src/**/*.test.ts glob 会把它扫进 testcontainer 分区（item-prior.test.ts 同款）。
-  'src/capabilities/practice/server/question-supply/target-discovery.test.ts',
-  // YUK-699 — EvidenceDemand/trace contracts + pure scanner correlation. No DB access;
-  // the sibling end-to-end propagation assertions live in handler DB tests.
-  'src/capabilities/practice/server/question-supply/evidence-demand.test.ts',
-  'src/capabilities/practice/server/question-supply/inventory-projection.test.ts',
-  'src/capabilities/practice/server/quiz/selection-miss.test.ts',
-  'src/capabilities/practice/server/quiz/content-fingerprint.test.ts',
-  // YUK-474 — 动态供题 refill 决策逻辑单测. Pure no-DB: countActive/buildTarget/dispatch 全注入
-  // fake，db 是未触碰 stub；imports 仅 ./refill（其 @/db/client 是 type-only/erased、@/db/schema
-  // 是 table objects 不连库、demandToSupplyTarget/dispatchSupplyTarget/poolFetch 全 type-only db）。
-  // 真 fingerprint + 真池计数 + 真 event cooldown 的集成 db 测在 refill.db.test.ts。同 target-discovery
-  // 一样必须显式列出，否则 db config 的 src/**/*.test.ts glob 会把它扫进 testcontainer 分区。
-  'src/capabilities/practice/server/question-supply/refill.test.ts',
-  // YUK-697 — jyeoo deterministic supply: pure no-DB units. jyeoo-loom-adapter
-  // (NDJSON parse + exit classification + image detection, imports only Zod +
-  // SourcedQuestion schema), jyeoo-spawn (bounded subprocess against /bin/sh + node
-  // one-liners — spawns real child processes but touches NO DB), jyeoo-supply-config
-  // (dg mapping + profile-declared support + kill-switch env read + route-planner
-  // math cases). No @/db/client / postgres / drizzle / PgBoss. The handler end-to-end
-  // (jyeoo-fetch.db.test.ts) hits live Postgres → db partition. The Practice question-supply directory
-  // has no unit glob, so these MUST be listed (target-discovery.test.ts precedent).
-  'src/capabilities/practice/server/question-supply/jyeoo-loom-adapter.test.ts',
-  'src/capabilities/practice/server/question-supply/jyeoo-spawn.test.ts',
-  'src/capabilities/practice/server/question-supply/jyeoo-supply-config.test.ts',
-  'src/server/ai/tools/registry.test.ts',
+  'src/server/ai/runner.stream-collect.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
-  // YUK-1021 (921 P2) — pi tool-mount surface: DomainTool→AgentTool compile +
-  // remote-MCP bridge. Pure unit (registry + mocked MCP client), no DB.
-  'src/server/ai/tools/pi-tools.test.ts',
-  // YUK-1022 (921 P3) — pi spawn-contract gate + Task/Agent AgentTool surface
-  // over the shared SpawnDecider. Pure unit — no engine, no DB.
-  'src/server/ai/tools/pi-subagent.test.ts',
-  // YUK-1022 (921 P3) — pi hook bridge (ordered gates/observers, fail-open
-  // observers, field-wise merge). Pure unit — no engine, no DB.
-  'src/server/ai/pi-hooks.test.ts',
-  // M5-T3 (YUK-321) — copilotTools 组合根聚合器：纯 registry 操作，无 DB。
-  'src/server/ai/tools/register-capability-tools.unit.test.ts',
-  // YUK-203 U4 / L-memtool — search_memory_facts DomainTool. Pure DI unit: the
-  // MemoryClient factory is stubbed, so no live Mem0 / pgvector / OpenAI env is
-  // touched (the real createMemoryClient is never constructed in tests).
-  'src/server/ai/tools/search-memory-facts.test.ts',
-  // YUK-198 — pure (no-DB) Tavily remote MCP builder: reads TAVILY_API_KEY via
-  // vi.stubEnv, returns a static RemoteMcpHttpConfig. No live DB / AI / network.
-  'src/server/ai/mcp/tavily.test.ts',
-  // YUK-962 — pure no-DB provider admission config and provenance arithmetic.
-  // src/server/ai/** has no unit glob, so enumerate these fast tests explicitly.
-  'src/server/ai/provider-attempt-admission-config.test.ts',
-  'src/server/ai/provenance.test.ts',
-  // M3 (YUK-317) — body-blocks-snippet / hub-dismiss / note-refine-triggers 三条
-  // unit 条目已随 notes 域迁入 src/capabilities/notes/（重命名 *.unit.test.ts），
-  // 由约定 glob 接管。editing-session / presence 留旧位置（dwell ⚖️ 争议行未裁）。
-  // Editing-session state machine (heartbeat / idle timeout / force-apply /
-  // defer-and-flush). Both @/db/client and presence/pg are vi.mock'd (PgPresenceStore
-  // swapped for InMemoryPresenceStore), so no live DB is touched — fast unit. (YUK-97 P7)
-  'src/server/artifacts/editing-session.test.ts',
-  'src/server/events/cause-policy.test.ts',
-  // YUK-751 — pure loaded-subscription registry contract; no DB imports.
-  'src/server/event-subscriptions/registry.unit.test.ts',
-  // YUK-751 (review TcWGF) — subscription-dispatch mount wiring; queue-config (its only DB-tainted
-  // import) is vi.mock'd, so no live DB is touched — fast unit.
-  'src/server/event-subscriptions/dispatch-mount.unit.test.ts',
-  // YUK-1055 — contract-epoch 纯规则/分类表（rules.ts / jobs.ts 零 import），
-  // *.unit.test.ts 约定进 unit 分区；DB 面在 epoch.db.test.ts（db 分区）。
-  'src/server/contract-epoch/**/*.unit.test.ts',
-  // YUK-1059 — release manifest 纯函数（lane 分类 / assertions 表；零 import
-  // DB，仅 type-only）。*.unit.test.ts 约定进 unit 分区。
-  'src/server/release/**/*.unit.test.ts',
-  // YUK-406 Phase 0 (关系脑 conjecture engine) — the pure evidence aggregator moved to
-  // src/capabilities/agency/server/conjecture/evidence.unit.test.ts and is covered by
-  // the capability *.unit.test.ts convention above. Keep only the remaining legacy
-  // server-side pure files enumerated here; their DB siblings must still fall through.
-  'src/server/conjectures/scoring.unit.test.ts',
-  // YUK-440 U8 — reconcile loop unit test (fully injected deps, no DB). Enumerated
-  // per-file (not a glob) for the same reason as above: a `**/*.test.ts` glob would
-  // sweep reconcile.db.test.ts into the unit partition (audit:partition P0).
-  'src/server/conjectures/reconcile.unit.test.ts',
-  // YUK-531 Tier-1 — misconception HARD-confirm decision layer unit test (pure, no DB).
-  // Enumerated per-file for the same reason: a `**/*.test.ts` glob would sweep
-  // hard-confirm.db.test.ts (the gatherDissociationEvidence reader) into the unit
-  // partition (audit:partition P0). The .db.test.ts falls through to the db partition.
-  'src/server/conjectures/hard-confirm.unit.test.ts',
-  // YUK-795 — deterministic prediction-accountability fold and candidate ranking.
-  // The companion accountability.db.test.ts exercises the traceable DB reader and
-  // intentionally remains in the DB partition.
-  'src/server/conjectures/accountability.unit.test.ts',
-  'src/capabilities/agency/server/conjecture/induce.test.ts',
-  // YUK-814 — pure artifact schemas, deterministic sampling, blind/canary scoring.
-  // The sibling candidates.db.test.ts restores the real correction/lifecycle reader chain
-  // and intentionally falls through to the DB partition.
-  'src/server/grounding-gate/**/*.unit.test.ts',
-  // YUK-572 — shared scout primitives. CONVENTION glob: every *.unit.test.ts under
-  // src/capabilities/agency/server/scout/ runs no-DB (pure schema / AgentDefinition assembly /
-  // delimiter helpers importing only Zod + the SDK types). The evidence-mcp.db.test.ts
-  // (real testcontainer + seeded rows) is a *.db.test.ts, so it matches allTestInclude's
-  // src/**/*.test.ts and falls through to the db partition, NOT this fast allowlist. The
-  // P0 partition guard still applies: any scout *.unit.test.ts that imports DB unmocked
-  // fails audit:partition.
-  'src/capabilities/agency/server/scout/**/*.unit.test.ts',
-  // src/server/export — the no-DB units (constants / csv / readme) run fast. The
-  // wholesale `src/server/export/**/*.test.ts` glob was narrowed to plain
-  // `*.test.ts` so the ②d reverse-lockstep test (reverse_lockstep.db.test.ts —
-  // imports @/db/schema for table reflection) falls through to the db partition
-  // like every other `.db.test.ts`, instead of tripping the unit-partition P0.
-  'src/server/export/constants.test.ts',
-  'src/server/export/csv.test.ts',
-  'src/server/export/readme.test.ts',
-  'src/server/http/**/*.test.ts',
-  // YUK-258 — DOCX ingestion units. All three are pure no-DB: route-classify is
-  // zip-parse only (fflate), markdown-segment is pure string→struct, convert
-  // exercises the seam via an injected mock (NO real spawn / docker). The route
-  // db test (app/api/ingestion/docx/route.test.ts) hits live Postgres → db
-  // partition (NOT listed here). fastTestInclude is an explicit per-file allowlist
-  // with no ingestion/** glob, so these must be enumerated or the db config's
-  // src/**/*.test.ts glob would sweep them into the testcontainer partition.
-  // YUK-250 — pure PDFium page renderer unit. Imports only pdf-render.ts +
-  // sharp + @hyzyla/pdfium (WASM, no DB/R2/AI). Fixtures are static PDF bytes.
-  // YUK-250 — encrypted-PDF error mapping; fully mocks @hyzyla/pdfium + sharp.
-  // YUK-250 bot-review F1 — pure sha256Hex unit (crypto.subtle only, no DB/R2).
-  // Guards content-addressing against byteOffset/byteLength view bugs.
-  // YUK-214 (Strategy D · S1) — pure (no-DB) ingest→practice paper builder.
-  // buildIngestionPaperToolState imports only @/core/schema/business (Zod);
-  // @/db/* is type-only / pure table objects at this surface. The DB writer
-  // (createIngestionPaper) + idempotency are covered by make-paper.db.test.ts
-  // (db partition).
-  // T-OC slice 2 (YUK-145): VLM StructureTask runner. Pure DI unit — injected
-  // runTaskFn, no live DB / AI / R2. (sibling tencent_ocr_extract handler test
-  // hits Postgres → db partition.)
-  // YUK-227 S3 Slice A (F4): block-assembly spatial projection unit tests — pure
-  // functions (isAllPlaceholderPageIndex / projectBlock). DB-backed integration
-  // tests remain in block-assembly.test.ts (db partition).
-  // T-OC slice A1 (YUK-145): the MistakeEnrollTask invoker is a pure DI unit —
-  // injected runTaskFn, no live DB / AI. (sibling auto-enroll.test.ts hits
-  // Postgres → db partition.)
-  // T-OC slice 3 (YUK-145): the deterministic WorkflowJudge aggregator + the
-  // auto-enroll flag config readers are pure (no DB / no LLM). The sibling
-  // tagging.test.ts + auto-enroll.test.ts hit live Postgres → db partition.
-  // YUK-253 — GLM-OCR engine swap. Both pure no-DB units: the client test mocks
-  // global `fetch`, the parser test is pure (real fixtures). No @/db/client /
-  // postgres / drizzle / PgBoss import → unit partition. The handler test
-  // (tencent_ocr_extract.test.ts) hits live Postgres → db partition.
-  // YUK-239 (STB-5) — pure env-read guard for the background-job enqueue seam
-  // (shouldEnqueueBackgroundJobs). No DB / pg-boss touched (vi.stubEnv only).
-  // Lives at src/server/runtime-env.ts (NOT under src/server/boss/) precisely so
-  // it stays out of the partition auditor's DB_TAINTED_DIRS.
-  'src/server/runtime-env.test.ts',
-  // YUK-216 S2 slice 1 — pure (no-DB) verify-gate framework + solve-check unit.
-  // runSolveCheck takes an injected runTaskFn (mocks BOTH the SolutionGenerate
-  // solver and the SemanticJudge open-question compare), and `db` is a `{}` stub
-  // that the conservative semantic path only forwards — no live Postgres / AI. The
-  // transitive @/db/client import (via question-contract → runSemanticJudge) is
-  // type-only; same safe surface as the judges unit tests above.
-  'src/capabilities/practice/server/quiz/verify-framework.test.ts',
-  // YUK-608 (异源 solve/verify) — pure env-read resolver for the scoped solve_check
-  // provider/model override + fail-open pre-flight. Imports only providers.ts →
-  // registry.ts (type/zod-only surface), reads process.env; no DB / AI / pg-boss.
-  'src/capabilities/practice/server/quiz/solve-lane.test.ts',
-  // YUK-225 (S2 slice 4) — pure (no-DB) units: skill resolver (fs fixture root),
-  // few-shot block renderer (pure fn), profile thin-section schema parse.
-  'src/capabilities/practice/server/quiz/fewshot-retrieve.render.test.ts',
-  'src/subjects/quiz-gen-skills.test.ts',
-  // YUK-228 (S3 Slice B) — pure (no-DB) note skill resolver (fs fixture root),
-  // live SoT discovery, and double-sided cloze防御 (note vs quiz-gen-* prefix).
-  'src/subjects/note-skills.test.ts',
-  // YUK-284 (C2) — pure (no-DB) Copilot dialogue-methodology skill resolver
-  // (fs fixture root + live SoT discovery). Cross-subject shared pack under
-  // _shared/skills/copilot. MUST be listed here: the unit partition is an explicit
-  // allowlist, not an import sniff (漏列 → vitest.unit.config.ts silent 0-collect).
-  'src/subjects/copilot-skills.test.ts',
-  'src/subjects/question-kind.test.ts',
-  'src/subjects/profile-schema.thin-section.test.ts',
-  // YUK-288 — resolveKnownSubjectId (pure, no-DB): genuine alias/id hit vs the
-  // default-profile over-match fix for the derived ?subject= axis.
-  'src/subjects/resolve-known-subject-id.test.ts',
-  // YUK-610 — Dockerfile 运行时 skills COPY 覆盖断言（纯 fs：读 Dockerfile +
-  // 目录扫描，零 DB）。skill-doc resolver 走 fs 非 import，漏拷不进
-  // tsc/esbuild 视野，这条断言是唯一构建期防线（_shared 漏拷生产事故）。
-  'src/subjects/skills-image-coverage.test.ts',
-  // YUK-611 — skill 命名空间：rewrite helper unit + 真树静态撞名 audit（纯 fs，
-  // 零 DB）。audit 是构建期防线：跨科 basename 重复 / frontmatter name 漂移即红。
-  'src/subjects/skill-namespace.test.ts',
-
-  // YUK-599 — trait 分解/装配互逆 + 种子合法性 + strict 写门（纯函数零 IO）。
-  // v3 §8-13 零行为变化基线：assemble(decompose(p)) 与 4 个硬编码 profile
-  // 逐字段 deep-equal。
-  'src/subjects/trait-compose.test.ts',
-  // YUK-599 — SubjectRegistry 手术面（upsert/alias 抢占 throw/NFC/remove，
-  // 纯内存零 IO；v2-test-14 承接）。
-  'src/subjects/registry-upsert.test.ts',
-  // M3 (YUK-317) — hub-mesh / rubric-validator.unit / tree.unit 三条 knowledge
-  // unit 条目已随域迁入 src/capabilities/knowledge/（统一 *.unit.test.ts 命名），
-  // 由约定 glob 接管。
-  // P5.4-L2 / YUK-174 — pure (no-DB) adaptive-bias decision helpers
-  // (computeGateBump / relation parse / findFeedbackCell). The DB-touching
-  // getProposalFeedbackDigest is covered by adaptive-bias.test.ts (DB partition).
-  'src/server/proposals/adaptive-bias.unit.test.ts',
-  // YUK-521 (A4 强度轴) — pure off-by-one verdict-rate breaker math + dep-injected
-  // composite packing. Imports only ./decide-breaker (its @/db/client is type-only/
-  // erased, @/db/schema is table objects — no live Postgres). The DB-backed
-  // countRecentVerdicts is covered by the auto-apply DB tests (db partition).
-  'src/server/proposals/decide-breaker.unit.test.ts',
-  // YUK-471 W1 PR-A2b — parity assert throw-routing (mocks ./gather, no DB). The live
-  // gather→fold parity coverage is parity.db.test.ts (DB partition).
-  'src/server/projections/parity.unit.test.ts',
-  // YUK-548 — warnFlipOrder / trackedFlagVector (process.env only, no DB).
-  'src/server/projections/sot-flag.unit.test.ts',
-  // Memory tests are mostly unit-mocked. The outbox real-path integration
-  // test (triggers.outbox.test.ts, YUK-101 / ADR-0021) and the P5.2
-  // activity-gated brief test (active-subjects.db.test.ts, YUK-143) hit live
-  // Postgres and run in the DB partition — enumerate the unit tests here
-  // instead of globbing so those .db.test.ts files fall through.
-  'src/server/memory/active-subjects.test.ts',
-  'src/server/memory/brief.test.ts',
-  // Station 2A / YUK-185 — pure (no-DB) brief-writer unit (stubbed runTaskFn,
-  // brace-slice parse, D3 id-subset filter, 4A cold-scope, 3A now/projection).
-  // The end-to-end DB driver (brief-writer.db.test.ts) hits live Postgres and
-  // falls through to the DB partition.
-  'src/server/memory/brief-writer.test.ts',
+  'src/server/assessment/jev-model-executor.test.ts',
+  'src/server/calibration/native-parity.unit.test.ts',
+  'src/server/calibration/replay.unit.test.ts',
+  'src/server/calibration/wasm-parity.unit.test.ts',
+  'src/server/http/errors.test.ts',
   'src/server/memory/client.test.ts',
-  'src/server/memory/product-routing.unit.test.ts',
-  'src/server/memory/mem0-sdk-failure.unit.test.ts',
   'src/server/memory/provider-operation.test.ts',
-  'src/server/memory/provider-operation-invariant.test.ts',
-  'src/server/memory/provider-operation-untracked.test.ts',
-  'src/server/memory/triggers.test.ts',
-  'src/server/memory/memory-reconcile-handoff.unit.test.ts',
-  // P2 (YUK-342) — pure (no-DB) GLM reconcile LLM unit: mocks fetch, no live DB.
-  'src/server/memory/reconcile-llm.test.ts',
-  'src/server/memory/reconcile-decisions.test.ts',
-  // P3 (YUK-351) — pure (no-DB) mem0 READ wrapper: stubbed MemoryClient.search,
-  // asserts soft-superseded filtering + per-kind recency rerank. No live DB.
-  'src/server/memory/read.test.ts',
-  'src/server/memory/search-memories.test.ts',
-  'src/server/r2.test.ts',
-  // P2a (YUK-312) — review 域 5 条 unit 条目已随模块迁入 src/capabilities/practice/，
-  // 由约定 glob（src/capabilities/**/*.unit.test.ts）自动接管，无需再登记。
-  // YUK-203 U6 — pure (no-DB) state-machine JSON sanitizer + parseTurnOutput /
-  // parseHintTurn control-char resilience tests. Imports only ./json-sanitize,
-  // ./teaching, ./solve — no live DB / AI touches.
-  'src/server/orchestrator/json-sanitize.test.ts',
-  'src/server/session/guards.test.ts',
-  'src/server/session/index.test.ts',
-  'src/subjects/math/fixtures/index.test.ts',
-  'src/subjects/math/fixtures/derivation.test.ts',
-  'src/subjects/math/fixtures/derivation-with-images.test.ts',
-  'src/subjects/physics/fixtures/schema.test.ts',
-  'src/subjects/yuwen/fixtures/index.test.ts',
-  // U7 (YUK-203) — pure (no-DB) profile→TS-literal serializer round-trip. Imports
-  // only the three profile.ts fixtures + ./serialize (no @/db / pg-boss / drizzle);
-  // writes/imports a temp .ts under src/subjects/ then rm's it. → unit partition.
-  'src/subjects/serialize.test.ts',
-  'src/ui/**/*.test.ts',
-  'src/ui/**/*.test.tsx',
-  // YUK-1354 — the scoped design-system base; pure React/DOM, no DB.
-  'src/ui-next/**/*.test.ts',
-  'src/ui-next/**/*.test.tsx',
-  'tests/core/**/*.test.ts',
-  'tests/acceptance/deadline.test.ts',
-  'tests/schema/**/*.test.ts',
-  'tests/subjects/**/*.test.ts',
-  'tests/integration/judge-gap-audit.test.ts',
-  'tests/integration/session-single-owner.test.ts',
-  // Audit 2026-06-06 G8-docs — pure-fs doc invariants (YUK-242/243/244), no DB/AI.
-  'tests/integration/audit-docs-invariant.test.ts',
-  'tests/integration/step12-docs-invariant.test.ts',
-  'tests/integration/step9-invariant-audit.test.ts',
-  // YUK-1341 evidence-metadata correction — pure no-network unit over
-  // tests/helpers/synthetic-evidence-meta.ts (string builders only; no DB/AI).
-  'tests/helpers/synthetic-evidence-meta.test.ts',
-  'tests/helpers/yuk1341-product-evidence.test.ts',
+  'src/server/projections/parity.unit.test.ts',
+];
+
+export const dbTestInclude = [
+  'server/start/admin-control-reader.db.test.ts',
+  'server/start/admin-reader.db.test.ts',
+  'src/capabilities/agency/api/probe-answer.db.test.ts',
+  'src/capabilities/agency/jobs/research_meeting_closed_loop.db.test.ts',
+  'src/capabilities/agency/server/conjecture-accept.db.test.ts',
+  'src/capabilities/agency/server/conjecture/probe-lifecycle.db.test.ts',
+  'src/capabilities/agency/server/goals/queries.db.test.ts',
+  'src/capabilities/agency/server/goals/scope.db.test.ts',
+  'src/capabilities/agency/server/intervention/intervention-preparation.db.test.ts',
+  'src/capabilities/agency/server/meeting/director.db.test.ts',
+  'src/capabilities/agency/server/misconception-promote.db.test.ts',
+  'src/capabilities/agency/server/proposal-appliers.db.test.ts',
+  'src/capabilities/copilot/api/cancel-run.db.test.ts',
+  'src/capabilities/copilot/api/nudges.db.test.ts',
+  'src/capabilities/copilot/api/revert-checkpoint.db.test.ts',
+  'src/capabilities/copilot/api/review-answer.db.test.ts',
+  'src/capabilities/copilot/jobs/copilot_nudge_evaluate.db.test.ts',
+  'src/capabilities/copilot/jobs/copilot_run.streaming.db.test.ts',
+  'src/capabilities/copilot/jobs/copilot_run.teaching.db.test.ts',
+  'src/capabilities/copilot/jobs/copilot_run.test.ts',
+  'src/capabilities/copilot/jobs/copilot_run_reconcile.db.test.ts',
+  'src/capabilities/copilot/server/durable-dispatch.db.test.ts',
+  'src/capabilities/copilot/server/durable-session-queue.db.test.ts',
+  'src/capabilities/copilot/server/skills/teaching-skill.db.test.ts',
+  'src/capabilities/copilot/server/subagent-mailbox.db.test.ts',
+  'src/capabilities/copilot/server/tool-result-snapshot.db.test.ts',
+  'src/capabilities/copilot/server/turns.db.test.ts',
+  'src/capabilities/ingestion/api/asset-delete.db.test.ts',
+  'src/capabilities/ingestion/api/assets.db.test.ts',
+  'src/capabilities/ingestion/api/import.db.test.ts',
+  'src/capabilities/ingestion/jobs/tencent_ocr_extract.concurrency.db.test.ts',
+  'src/capabilities/ingestion/server/assessment-capture.db.test.ts',
+  'src/capabilities/ingestion/server/auto-enroll.db.test.ts',
+  'src/capabilities/ingestion/server/make-paper.db.test.ts',
+  'src/capabilities/ingestion/server/operation-store.db.test.ts',
+  'src/capabilities/ingestion/server/proposal-appliers.db.test.ts',
+  'src/capabilities/ingestion/server/provider-attempts.db.test.ts',
+  'src/capabilities/ingestion/server/revert-auto-enroll.db.test.ts',
+  'src/capabilities/ingestion/server/tools/question-block-edits.db.test.ts',
+  'src/capabilities/knowledge/api/misconception-veto.db.test.ts',
+  'src/capabilities/knowledge/jobs/kc_dedup_nightly.db.test.ts',
+  'src/capabilities/knowledge/jobs/knowledge_maintenance_nightly.db.test.ts',
+  'src/capabilities/knowledge/jobs/merge_attribution_sweep.db.test.ts',
+  'src/capabilities/knowledge/jobs/projection_oracle_sweep.db.test.ts',
+  'src/capabilities/knowledge/server/edges.db.test.ts',
+  'src/capabilities/knowledge/server/misconception-edges.db.test.ts',
+  'src/capabilities/knowledge/server/proposals.db.test.ts',
+  'src/capabilities/knowledge/server/seed.db.test.ts',
+  'src/capabilities/notes/api/hub-dismiss-link.db.test.ts',
+  'src/capabilities/notes/jobs/note_verify.db.test.ts',
+  'src/capabilities/notes/server/block-refs.db.test.ts',
+  'src/capabilities/notes/server/hub-sync-reconciliation.db.test.ts',
+  'src/capabilities/notes/server/mastery-progress-subscription.db.test.ts',
+  'src/capabilities/notes/server/note-handoff-boss-contract.db.test.ts',
+  'src/capabilities/notes/server/note-handoff.db.test.ts',
+  'src/capabilities/notes/server/sections.db.test.ts',
+  'src/capabilities/observability/api/_round_trip.db.test.ts',
+  'src/capabilities/observability/api/admin-config-write.db.test.ts',
+  'src/capabilities/observability/api/admin-config.db.test.ts',
+  'src/capabilities/observability/api/restore_column_allowlist.db.test.ts',
+  'src/capabilities/observability/server/subject-control-operations.db.test.ts',
+  'src/capabilities/observability/server/trait-control-operations.db.test.ts',
+  'src/capabilities/practice/api/placement-native.db.test.ts',
+  'src/capabilities/practice/api/question-detail-write.db.test.ts',
+  'src/capabilities/practice/api/question-detail.db.test.ts',
+  'src/capabilities/practice/api/review-sessions.db.test.ts',
+  'src/capabilities/practice/api/session-resources.db.test.ts',
+  'src/capabilities/practice/api/stream.db.test.ts',
+  'src/capabilities/practice/api/submit-durable-resource.db.test.ts',
+  'src/capabilities/practice/api/submit-late-arrival.db.test.ts',
+  'src/capabilities/practice/api/submit-native-calibration.db.test.ts',
+  'src/capabilities/practice/api/submit-native-diagnostic.db.test.ts',
+  'src/capabilities/practice/jobs/attribution_followup.db.test.ts',
+  'src/capabilities/practice/jobs/judge_pending_reconcile.db.test.ts',
+  'src/capabilities/practice/jobs/judge_run.db.test.ts',
+  'src/capabilities/practice/jobs/jyeoo_staged_asset_reap.db.test.ts',
+  'src/capabilities/practice/jobs/quiz_gen.test.ts',
+  'src/capabilities/practice/jobs/quiz_verify.test.ts',
+  'src/capabilities/practice/jobs/rejudge.db.test.ts',
+  'src/capabilities/practice/jobs/source_verify.test.ts',
+  'src/capabilities/practice/server/assessment/material-recovery.db.test.ts',
+  'src/capabilities/practice/server/assessment/submission-persistence.db.test.ts',
+  'src/capabilities/practice/server/cause-overlay.db.test.ts',
+  'src/capabilities/practice/server/compose-paid-work-lock.db.test.ts',
+  'src/capabilities/practice/server/evaluate-submission.db.test.ts',
+  'src/capabilities/practice/server/failure-learning-attribution.db.test.ts',
+  'src/capabilities/practice/server/failure-learning-subscription.db.test.ts',
+  'src/capabilities/practice/server/failure-learning-variant.db.test.ts',
+  'src/capabilities/practice/server/judge-calibration-sample.db.test.ts',
+  'src/capabilities/practice/server/mastery-progress-signal.db.test.ts',
+  'src/capabilities/practice/server/merge-attribution.db.test.ts',
+  'src/capabilities/practice/server/native-durable-attempt.db.test.ts',
+  'src/capabilities/practice/server/paper-adaptation.db.test.ts',
+  'src/capabilities/practice/server/paper-cycle.db.test.ts',
+  'src/capabilities/practice/server/paper-issuance.db.test.ts',
+  'src/capabilities/practice/server/paper-mastery-progress.db.test.ts',
+  'src/capabilities/practice/server/paper-submit-session-race.db.test.ts',
+  'src/capabilities/practice/server/placement-starter-recovery.db.test.ts',
+  'src/capabilities/practice/server/proposal-appliers.db.test.ts',
+  'src/capabilities/practice/server/question-supply/placement-starter-attempts.db.test.ts',
+  'src/capabilities/practice/server/question-supply/placement-starter-store.db.test.ts',
+  'src/capabilities/practice/server/quiz/content-fingerprint.db.test.ts',
+  'src/capabilities/practice/server/recorded-model-executor.db.test.ts',
+  'src/capabilities/practice/server/review-operation.db.test.ts',
+  'src/capabilities/practice/server/review-settlement.db.test.ts',
+  'src/capabilities/practice/server/solve-session-media.db.test.ts',
+  'src/capabilities/practice/server/stream-store-provider-lock.db.test.ts',
+  'src/capabilities/practice/server/stream-store-reserved-connection.db.test.ts',
+  'src/capabilities/practice/server/stream-store.db.test.ts',
+  'src/capabilities/practice/server/tools/get-attempt-context.test.ts',
+  'src/capabilities/practice/server/tools/store-sourced-question.db.test.ts',
+  'src/capabilities/practice/server/tools/write-quiz.test.ts',
+  'src/capabilities/shell/api/proposal-decisions.db.test.ts',
+  'src/capabilities/shell/api/teaching-brief-ack.db.test.ts',
+  'src/capabilities/shell/api/teaching-brief-interaction.db.test.ts',
+  'src/capabilities/shell/server/teaching-brief-issuance.db.test.ts',
+  'src/kernel/events/events.db.test.ts',
+  'src/kernel/tools/tool-operations.db.test.ts',
+  'src/server/advisory-locks.db.test.ts',
+  'src/server/ai/provider-attempt-lifecycle.db.test.ts',
+  'src/server/ai/provider-session-admission.db.test.ts',
+  'src/server/ai/solution-generate.test.ts',
+  'src/server/ai/tools/author-question.test.ts',
+  'src/server/ai/tools/propose-question-edit.db.test.ts',
+  'src/server/ai/tools/read-tools-m2.test.ts',
+  'src/server/artifacts/presence/pg.db.test.ts',
+  'src/server/assessment/activate.db.test.ts',
+  'src/server/assessment/admission.db.test.ts',
+  'src/server/assessment/joint-input.db.test.ts',
+  'src/server/assessment/settle.db.test.ts',
+  'src/server/boss/handlers/ai_task_run_reconcile.db.test.ts',
+  'src/server/boss/verify-dispatch-outbox.db.test.ts',
+  'src/server/calibration/replay.fixture.db.test.ts',
+  'src/server/conjectures/reconcile.db.test.ts',
+  'src/server/conjectures/typed-state.db.test.ts',
+  'src/server/contract-epoch/epoch.db.test.ts',
+  'src/server/durable/producer-fence-lock.db.test.ts',
+  'src/server/durable/review-orphan-family.db.test.ts',
+  'src/server/durable/session-orphan-family.db.test.ts',
+  'src/server/event-subscriptions/runtime.db.test.ts',
+  'src/server/export/assessment-contract-backup.db.test.ts',
+  'src/server/export/intervention-backup.db.test.ts',
+  'src/server/export/mem0-collection-backup.db.test.ts',
+  'src/server/export/provider-attempt-backup.db.test.ts',
+  'src/server/export/subscription-backup.db.test.ts',
+  'src/server/mastery/fixed-anchor.db.test.ts',
+  'src/server/mastery/item-calibration.db.test.ts',
+  'src/server/mastery/kt-calibration.db.test.ts',
+  'src/server/mastery/personalized-difficulty.db.test.ts',
+  'src/server/mastery/recalibration.db.test.ts',
+  'src/server/mastery/retire-state-on-merge.db.test.ts',
+  'src/server/mastery/state.db.test.ts',
+  'src/server/memory/conjecture-projection.db.test.ts',
+  'src/server/memory/mem0-sdk-failure.db.test.ts',
+  'src/server/memory/memory-ingest-recovery.db.test.ts',
+  'src/server/memory/memory-reconcile-handoff-handler.db.test.ts',
+  'src/server/memory/memory-reconcile-handoff.db.test.ts',
+  'src/server/memory/provider-operation-fence.db.test.ts',
+  'src/server/memory/reconcile-handler.db.test.ts',
+  'src/server/memory/triggers.outbox.test.ts',
+  'src/server/migration/apply.db.test.ts',
+  'src/server/migration/capture.db.test.ts',
+  'src/server/orchestration/orchestrator.db.test.ts',
+  'src/server/projections/canonical-migration.db.test.ts',
+  'src/server/projections/knowledge-history-migration.db.test.ts',
+  'src/server/projections/learning_item.db.test.ts',
+  'src/server/projections/materialized-id-index.db.test.ts',
+  'src/server/projections/normalize-edge-created-by.db.test.ts',
+  'src/server/projections/parity-writers-c3.db.test.ts',
+  'src/server/proposals/actions.test.ts',
+  'src/server/proposals/edge-decide-advisory-lock.db.test.ts',
+  'src/server/proposals/retract-clock.db.test.ts',
+  'src/server/proposals/signals.test.ts',
+  'src/server/questions/publisher.db.test.ts',
+  'src/server/questions/question-generation-grounding.db.test.ts',
+  'src/server/questions/write-restore.db.test.ts',
+  'src/server/records/native-mistake-evidence.db.test.ts',
+  'src/server/records/queries.test.ts',
+  'src/server/rehearsal/rehearsal.db.test.ts',
+  'src/server/revert/cascade-revert.db.test.ts',
+  'src/server/session/conversation-orphan.db.test.ts',
+  'src/server/session/placement-orphan.db.test.ts',
+  'src/server/session/review-orphan.db.test.ts',
+  'src/server/subjects/hydrate.db.test.ts',
+  'src/server/subjects/subject-control-write.db.test.ts',
+  'src/server/subjects/thin-create.db.test.ts',
+  'tests/dbos-prune/cron.db.test.ts',
+  'tests/dbos-prune/migration.db.test.ts',
+  'tests/dbos-review-orphan/cron.db.test.ts',
+  'tests/dbos-review-orphan/migration.db.test.ts',
+  'tests/dbos-session-orphan/cron.db.test.ts',
+  'tests/dbos-session-orphan/migration.db.test.ts',
+  'tests/integration/config-hot-reload.db.test.ts',
+  'tests/integration/config-restore-epoch.db.test.ts',
+  'tests/integration/config-write-boundaries.db.test.ts',
+  'tests/integration/item_prior_backfill.db.test.ts',
+  'tests/integration/native-pi-config-migration.db.test.ts',
+  'tests/integration/restore-snapshot.db.test.ts',
+  'tests/integration/scope-mode-0063-datafix.db.test.ts',
+  'tests/restore-parity/canonical.db.test.ts',
 ];
 
 export const migrationSmokeInclude = ['tests/integration/migration-smoke.test.ts'];
+
+export const allTestInclude = [...fastTestInclude, ...dbTestInclude, ...migrationSmokeInclude];
 
 export const sharedExclude = configDefaults.exclude;

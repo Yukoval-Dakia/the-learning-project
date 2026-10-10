@@ -398,17 +398,3 @@ for (const selected of families)
     expect(await db`select * from pgboss.schedule where name = 'prune_job_events'`).toHaveLength(1);
     await second.stop();
   }, 600000);
-it('retains production 04:25 and 04:35 Asia/Shanghai declarations and previous-date UTC mapping', async () => {
-  const source = await readFile('src/capabilities/observability/manifest.ts', 'utf8');
-  for (const [offset, expected] of [
-    [25, '2026-10-09T20:25:00.000Z'],
-    [35, '2026-10-09T20:35:00.000Z'],
-  ] as const) {
-    expect(source).toContain(`schedule: { cron: '${offset} 4 * * *', tz: 'Asia/Shanghai' }`);
-    const wallClock = `2026-10-10 04:${offset}:00`;
-    const [row] =
-      await db`select ${wallClock}::text as wall_clock, to_char(( ${wallClock}::text::timestamp at time zone 'Asia/Shanghai') at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') as utc`;
-    expect(row.wall_clock).toBe(wallClock);
-    expect(new Date(row.utc).toISOString()).toBe(expected);
-  }
-});

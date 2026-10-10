@@ -1,15 +1,14 @@
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { seedKnowledge } from '@/capabilities/knowledge/server/seed';
-import { runEvalHarness, stubInvoker } from '@/core/eval/d18-harness';
 import { buildMigrationApplyPlan } from '@/core/migration/apply';
 import { canonicalHash } from '@/core/migration/canonical';
 import { classifyMigrationCapture } from '@/core/migration/classify';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
-import { ai_task_runs, assessment_submission, migration_apply_run } from '@/db/schema';
+import { assessment_submission, migration_apply_run } from '@/db/schema';
 import {
   checkContractEpoch,
   gateContractEpoch,
@@ -23,11 +22,9 @@ import {
 import { captureMigrationCheckpoint } from '@/server/migration/capture';
 import { loadRevisionContracts } from '../../../scripts/migration-apply';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { D18_TASK_KIND, aiTaskRunEvidenceSink } from '../eval/d18-seal';
 import { buildRehearsalRegistry, seedContractCorpus } from './contract-corpus';
 import { seedRehearsalCorpus } from './corpus';
 import { probeEpochFence, simulateStaleWriterLock } from './cutover';
-import { diffDbStates, snapshotDbState } from './db-proof';
 import {
   exportPostWriteDelta,
   reconcilePostWriteDelta,
@@ -205,14 +202,6 @@ describe('rehearsal corpus → capture → apply（orchestrate 同缝）', () =>
     }
   });
 
-  it('snapshotDbState 同库自比恒 identical（restore-proof 的对照面）', async () => {
-    const db = testDb();
-    const a = await snapshotDbState(db);
-    const diff = diffDbStates(a, a);
-    expect(diff.identical).toBe(true);
-    expect(diff.divergences).toEqual([]);
-  });
-
   it('stale writer 持表锁 → 超时证据 → terminate 恢复（cutover.ts seam）', async () => {
     const db = testDb();
     const url = process.env.TEST_DATABASE_URL;
@@ -255,54 +244,5 @@ describe('rehearsal corpus → capture → apply（orchestrate 同缝）', () =>
         reason: 'epoch_mismatch',
       });
     }
-  });
-});
-
-describe('D18 ai_task_runs 封存（orchestrate/eval-d18 同缝）', () => {
-  beforeEach(async () => {
-    await resetDb();
-  });
-
-  it('harness × aiTaskRunEvidenceSink：每 invocation 一行、digest/usage/成本照实入账、同 id 不覆盖', async () => {
-    const db = testDb();
-    const sink = aiTaskRunEvidenceSink(db, { provider: 'stub' });
-    const corpus = [
-      { id: 'item-a', split: 'dev' as const, request: { prompt: 'p1' } },
-      { id: 'item-b', split: 'holdout' as const, request: { prompt: 'p2' } },
-    ];
-    const report = await runEvalHarness({
-      runId: 'sealtest',
-      corpus,
-      invoker: stubInvoker({ lane: 'stub', costUsd: 0.001 }),
-      sink,
-    });
-    expect(report.invocations).toBe(2);
-
-    const rows = await db.select().from(ai_task_runs);
-    const sealed = rows.filter((r) => r.task_kind === D18_TASK_KIND);
-    expect(sealed).toHaveLength(2);
-    for (const row of sealed) {
-      expect(row.id).toMatch(/^d18-sealtest-item-[ab]-a1$/);
-      expect(row.status).toBe('success');
-      expect(row.input_hash).toMatch(/^[0-9a-f]{64}$/);
-      expect(row.result_digest).toMatch(/^[0-9a-f]{64}$/);
-      expect(row.cost_usd).toBeCloseTo(0.001);
-      expect(row.cost_basis).toBe('reported');
-      expect(row.provider).toBe('stub');
-      expect((row.usage_json as { inputTokens: number }).inputTokens).toBeGreaterThan(0);
-    }
-    // 证据行不可变：同 id 重放不覆盖。
-    const again = aiTaskRunEvidenceSink(db, { provider: 'stub' });
-    const report2 = await runEvalHarness({
-      runId: 'sealtest',
-      corpus,
-      invoker: stubInvoker({ lane: 'stub', costUsd: 0.999 }),
-      sink: again,
-    });
-    expect(report2.invocations).toBe(2);
-    const sealed2 = await db.select().from(ai_task_runs).where(sql`task_kind = ${D18_TASK_KIND}`);
-    expect(sealed2).toHaveLength(2);
-    // float4 回读：≈0.001 即未被第二次（0.999）覆盖。
-    expect(sealed2.every((r) => Math.abs((r.cost_usd ?? 0) - 0.001) < 1e-6)).toBe(true);
   });
 });

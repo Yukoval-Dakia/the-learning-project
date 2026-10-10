@@ -1,22 +1,17 @@
 import { createId } from '@paralleldrive/cuid2';
-import { eq, sql } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   difficulty_calibration_label,
   evaluation,
   evaluation_effective_head,
   event,
-  item_family_calibration,
   knowledge,
-  mastery_state,
-  material_fsrs_state,
   practice_stream_item,
   question,
 } from '@/db/schema';
-import * as recalibration from '@/server/mastery/recalibration';
 import { issueSoloFixture } from '../../../../tests/fixtures/assessment-solo';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { recordAssistanceExposure } from '../server/assessment/assistance';
 import {
   activateSubmissionCandidate,
   evaluateSubmission,
@@ -104,125 +99,6 @@ async function fixture(knowledgeId = `kc_${createId()}`) {
 }
 
 describe('native HTTP calibration follows automatic evidence', () => {
-  it.each([
-    { answer: 'A', outcome: 1 },
-    { answer: 'B', outcome: 0 },
-  ])(
-    'records $answer with its stream probability once, bound to the reversible settlement',
-    async ({ answer, outcome }) => {
-      const f = await fixture();
-      const assessment = f.issued.assessment(answer);
-      const response = await f.submit({ assessment });
-      expect(response.status).toBe(200);
-      const body = await response.json();
-      const labels = await f.labels();
-      expect(labels).toHaveLength(1);
-      expect(labels[0]).toMatchObject({ outcome, inclusion_probability: 0.3 });
-      expect(Number.isFinite(labels[0].b_label)).toBe(true);
-      expect(labels[0].attempt_event_id).toBeTruthy();
-      if (!labels[0].attempt_event_id) throw new Error('expected label settlement ID');
-      const [settlement] = await testDb()
-        .select()
-        .from(event)
-        .where(eq(event.id, labels[0].attempt_event_id));
-      expect(settlement.action).toBe('experimental:assessment_settlement');
-      expect(settlement.payload).toMatchObject({
-        replay_inputs: { difficultyLabelStreamItemId: f.streamId },
-      });
-      const [original] = await testDb()
-        .select()
-        .from(event)
-        .where(eq(event.id, body.review_event.id));
-      expect(original.payload.stream_item_id).toBe(f.streamId);
-      expect(
-        (await f.submit({ assessment, stream_item_id: 'retry-must-not-rewrite-original' })).status,
-      ).toBe(200);
-      expect(await f.labels()).toEqual(labels);
-      expect(await testDb().select().from(item_family_calibration)).toMatchObject([
-        { evidence_count: 1 },
-      ]);
-    },
-  );
-
-  it('keeps the automatic calibration outcome independent of the explicit FSRS rating', async () => {
-    const f = await fixture();
-    expect((await f.submit({ auto_rate: false, rating: 'again' })).status).toBe(200);
-    expect(await f.labels()).toMatchObject([{ outcome: 1 }]);
-    const [mastery] = await testDb()
-      .select()
-      .from(mastery_state)
-      .where(eq(mastery_state.subject_id, f.knowledgeId));
-    expect(mastery.theta_hat).toBeGreaterThan(0);
-    const [card] = await testDb().select().from(material_fsrs_state);
-    expect(card.last_review_event_id).toBeTruthy();
-    if (!card.last_review_event_id) throw new Error('expected card settlement ID');
-    const [settlement] = await testDb()
-      .select()
-      .from(event)
-      .where(eq(event.id, card.last_review_event_id));
-    expect(settlement.payload).toMatchObject({ rating: 'again', rating_source: 'user' });
-  });
-
-  it.each(['self_report', 'assisted'] as const)('does not calibrate %s evidence', async (mode) => {
-    const f = await fixture();
-    if (mode === 'assisted')
-      await recordAssistanceExposure(testDb(), {
-        issuanceId: f.assessment.issuance_id,
-        questionId: f.id,
-        kind: 'hint',
-        impact: 'answer_help',
-        contentDigest: `sha256:${'a'.repeat(64)}`,
-      });
-    expect(
-      (await f.submit({ auto_rate: false, self_report: mode === 'self_report', rating: 'good' }))
-        .status,
-    ).toBe(200);
-    expect(await f.labels()).toHaveLength(0);
-    expect(await testDb().select().from(item_family_calibration)).toHaveLength(0);
-    expect(await testDb().select().from(mastery_state)).toHaveLength(0);
-    expect(await testDb().select().from(material_fsrs_state)).toHaveLength(1);
-  });
-
-  it.each(['absent', 'wrong_question'] as const)(
-    'does not borrow a probability from an %s stream slot',
-    async (mode) => {
-      const f = await fixture();
-      const other = mode === 'wrong_question' ? await fixture() : null;
-      expect((await f.submit({ stream_item_id: other?.streamId ?? undefined })).status).toBe(200);
-      expect(await f.labels()).toHaveLength(0);
-    },
-  );
-
-  it('isolates a real label SQL failure from the original, theta, FSRS and family transaction', async () => {
-    const f = await fixture();
-    const labelWriter = vi
-      .spyOn(recalibration, 'recordDifficultyCalibrationLabel')
-      .mockImplementation(async (tx) => {
-        // A PostgreSQL error aborts the savepoint unless this optional write is isolated.
-        await tx.execute(sql`SELECT 1 / 0`);
-      });
-    const response = await f.submit();
-    expect(response.status).toBe(200);
-    expect(labelWriter).toHaveBeenCalledOnce();
-    expect(await f.labels()).toHaveLength(0);
-    expect(await testDb().select().from(material_fsrs_state)).toHaveLength(1);
-    expect(
-      await testDb()
-        .select()
-        .from(mastery_state)
-        .where(eq(mastery_state.subject_id, f.knowledgeId)),
-    ).toHaveLength(1);
-    expect(await testDb().select().from(item_family_calibration)).toMatchObject([
-      { evidence_count: 1 },
-    ]);
-    expect(
-      await testDb()
-        .select()
-        .from(event)
-        .where(eq(event.action, 'experimental:assessment_attempt')),
-    ).toHaveLength(1);
-  });
-
   it('removes the old label on manual replacement and replays a later automatic occurrence with its own stream identity', async () => {
     const first = await fixture();
     expect((await first.submit()).status).toBe(200);

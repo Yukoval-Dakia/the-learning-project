@@ -16,7 +16,9 @@ Stable-layer base for the UI rewrite (YUK-1354). Source of truth for every rule:
 - Collapsed or hidden regions are `inert` (A1); small controls opt into `.un-hit` (A2).
   Transitions read `--un-t-*` tokens; keyframes live only under `prefers-reduced-motion:
   no-preference` (M3).
-- Tests are `*.unit.test.ts(x)` with `// @vitest-environment jsdom`, Testing Library and
-  `afterEach(cleanup)`; they run in the unit partition (`vitest.shared.ts`).
+- No tests by default (YUK-1401): this directory renders UI and carries none of the five
+  invariants in the root `AGENTS.md`. Verify changes with `pnpm typecheck`, `pnpm lint`,
+  `pnpm build` and a real browser run (the ignored `.cache/yuk1354-harness/` loads the app's
+  global stylesheet first). Add a test only if a change here starts carrying one of the five.
 - Pending-layer surfaces (page composition, sidebar entries, home layout) do not belong here
   until the feature-rework wave that settles them.

@@ -1,0 +1,91 @@
+{
+  "kind": "parent-actual-restore-attempt08-failed-source-state",
+  "helperRevision": "b52e255f746ebbf6a4f2f44ae06e7d1b672a4fff",
+  "workerRevision": "7472f4395f4a12a5167e33034d5d8af8bf695049",
+  "workerSha256": "4e2ec8ace103cf535c3472f2f2c4611438d8cfe5a6f14a1c65abe272674824a9",
+  "sourceSeal": "ae9d706fea8599efbbe37c4d28059d27008975ca31cb17187021353358ae12cb",
+  "evidenceSeal": "57e24c9773ad71e714a37be0cb77a3ce9f04777d2013fbfb51bb1b50cc1e06f0",
+  "source": {
+    "cluster": "7694715784870826026",
+    "database_oid": "16384",
+    "database": "test_fork_20261009170708",
+    "server_version": "16.15 (Debian 16.15-1.pgdg12+2)",
+    "server_started_at": "2026-10-09T17:07:10.857299Z",
+    "in_recovery": false,
+    "server_address": "192.168.215.2/32",
+    "server_port": 5432
+  },
+  "migrationsPassed": 118,
+  "sourceSetupPassed": true,
+  "sourceStatesPassed": false,
+  "observation": {
+    "fault": "after-server-commit-and-unavailable",
+    "actualStates": [
+      {
+        "id": "restore-complete-yuk1359-restore-run08",
+        "status": "SUCCESS"
+      },
+      {
+        "id": "restore-unknown-yuk1359-restore-run08",
+        "status": "SUCCESS"
+      }
+    ],
+    "receiptCount": 6,
+    "otherClients": 0,
+    "failure": "Unknown fixture expected failure IPC/ERROR with one receipt but received SUCCESS with three receipts; proxy fault event alone does not establish which transaction response was lost",
+    "causalRoot": "not yet established"
+  },
+  "workers": [
+    {
+      "pid": 12503,
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "pid": 12621,
+      "exit": {
+        "code": null,
+        "signal": "SIGTERM"
+      }
+    }
+  ],
+  "proxyListenerAbsent": 63387,
+  "cleanup": {
+    "stoppedRetained": ["b43a05e642b0f8e2e5bbab71d8213d8b1bbdc2c2c417e5e1957cb69ce30f5517"],
+    "at": "2026-10-09T17:10:19.270219+00:00",
+    "neverRestart": true
+  },
+  "release": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1359",
+      "phase": "isolated-same-target-restore-reopen",
+      "token": "44ffadab-ae62-47d5-9d9b-5da93bc11265",
+      "candidate": "68670c49fd104e6ff7e632628ca7ddeebc9f5d9b",
+      "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "createdAt": "2026-10-09T17:06:52.849421+00:00"
+    },
+    "releasedAt": "2026-10-09T17:10:19.368219+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "captureExecuted": false,
+  "restoreExecuted": false,
+  "reopenExecuted": false,
+  "providerCalls": 0,
+  "productionChanged": false,
+  "artifacts": {
+    "/tmp/yuk1359-restore-reopen-parent08/source-setup.log": "d815af1e9f81e1caef49844d8b5efe9c4b87d2e07d42516942999f01e39394e4",
+    "/tmp/yuk1359-restore-reopen-parent08/source-states.log": "5e998bd4036da70d3e5a60d0e8ff95423b32219fe63a99d6220aa47f29fb6e0f",
+    "/tmp/yuk1359-restore-reopen-parent08/failure-db-observation.stdout": "2bbdbd80a3ea99f1e25153df6944e8c56c5e7f776233c75215e0a832cd40f802",
+    "/tmp/yuk1359-restore-reopen-parent08/failure-db-observation-exit.json": "df50fb8e51580655496034a1f3c62111286df17db893cf78ef5692a1e49fba36",
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/runtime/yuk1359-restore-run08/lifecycle-source-states.json": "f22d87abe87d4c6f884d2a1a3c0775909fc84d1fb214b6ff823c1e5865393487",
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/runtime/yuk1359-restore-run08/complete-checkpoint.json": "5011ab47cda062c9920e2b825aba2c67d0891dbbc562c5527e7c8da4817225de",
+    "/tmp/yuk1359-dbos-restore-offline-prep-v3/runtime/yuk1359-restore-run08/state.json": "9d8997e4a4976f3eb7998db4a41d0a356346917546d0374224bd49370645b95e",
+    "/tmp/yuk1359-restore-reopen-parent08/stopped.json": "70106bb8d303ad3f3e396d73b835bdad3858ab0591db33a23c250643c4afea7f",
+    "/tmp/yuk1359-restore-reopen-parent08/lock-release.json": "db770d24be1a13ac71f527bd35ab6b58b94f2714595fe8fee7aa8f16be9ed7e8"
+  }
+}

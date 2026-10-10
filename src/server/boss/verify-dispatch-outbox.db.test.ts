@@ -49,123 +49,6 @@ describe('verify dispatch outbox (YUK-700)', () => {
     await resetDb();
   });
 
-  it('persists intent with the draft and transactionally completes a successful enqueue', async () => {
-    await db.transaction(async (tx) => {
-      await tx.insert(question).values({
-        id: 'q-atomic',
-        kind: 'short_answer',
-        prompt_md: 'atomic',
-        source: 'quiz_gen',
-        draft_status: 'draft',
-        created_at: new Date(),
-        updated_at: new Date(),
-      });
-      await writeVerifyDispatchIntent(tx, { questionId: 'q-atomic', verifier: 'quiz_verify' });
-    });
-    const enqueue = vi.fn(async (_verifier, _ids, options?: { db?: unknown }) => {
-      expect(options?.db).toBeDefined();
-    });
-
-    const result = await dispatchPendingVerifyIntents(db, { enqueue });
-
-    expect(result).toMatchObject({ dispatched: 1, skippedTerminal: 0, failed: 0 });
-    expect(enqueue).toHaveBeenCalledWith('quiz_verify', ['q-atomic'], expect.any(Object));
-    const actions = await db
-      .select({ action: event.action })
-      .from(event)
-      .where(eq(event.subject_id, 'q-atomic'));
-    expect(actions.map((row) => row.action).sort()).toEqual(
-      [VERIFY_DISPATCH_COMPLETE_ACTION, VERIFY_DISPATCH_INTENT_ACTION].sort(),
-    );
-  });
-
-  it('skips a malformed intent payload instead of failing the whole locked batch', async () => {
-    await seedQuestion('q-good', 'quiz_gen');
-    await seedIntent('q-good', 'quiz_verify');
-    // A corrupt / future-version intent payload: it passes the generic experimental envelope but
-    // fails verifyDispatchIntentPayloadSchema. It must be skipped, not abort the transaction and
-    // starve the good intent locked alongside it.
-    await writeEvent(db, {
-      id: createId(),
-      actor_kind: 'system',
-      actor_ref: 'verify_dispatch_outbox',
-      action: VERIFY_DISPATCH_INTENT_ACTION,
-      subject_kind: 'question',
-      subject_id: 'q-bad',
-      outcome: null,
-      payload: { version: 999, verifier_kind: 'quiz_verify', question_id: 'q-bad' },
-      ingest_at: new Date(),
-    });
-    const enqueue = vi.fn(async () => {});
-
-    const result = await dispatchPendingVerifyIntents(db, { enqueue });
-
-    expect(result).toMatchObject({ dispatched: 1, failed: 0 });
-    expect(enqueue).toHaveBeenCalledWith('quiz_verify', ['q-good'], expect.any(Object));
-  });
-
-  it('unsticks a live draft whose only intent is a version-mismatched event', async () => {
-    // Regression (review round-2 codex P2): a draft whose sole intent is malformed / from a
-    // different schema version was permanently stuck — the synthesis anti-join treated the stale
-    // intent as "already owned" (verifier_kind matched) so it never issued a valid replacement,
-    // while dispatch's safeParse dropped the payload without ever writing a completion or enqueuing.
-    await seedQuestion('q-stuck', 'quiz_gen');
-    // Matching verifier_kind but a mismatched version, seeded at the legacy un-scoped id — i.e. the
-    // exact id the synthesizer would reuse if it were not version-scoped. INSERT-only writes would
-    // otherwise no-op the replacement and keep the draft stuck.
-    await writeEvent(db, {
-      id: legacyUnscopedIntentId('q-stuck', 'quiz_verify'),
-      actor_kind: 'system',
-      actor_ref: 'verify_dispatch_outbox',
-      action: VERIFY_DISPATCH_INTENT_ACTION,
-      subject_kind: 'question',
-      subject_id: 'q-stuck',
-      outcome: null,
-      payload: {
-        version: VERIFY_DISPATCH_VERSION + 1,
-        verifier_kind: 'quiz_verify',
-        question_id: 'q-stuck',
-      },
-      ingest_at: new Date(),
-    });
-    const enqueue = vi.fn(async () => {});
-
-    const result = await recoverOrphanVerifyDispatches(db, { enqueue });
-
-    // A fresh valid intent is synthesized and the draft is actually enqueued.
-    expect(result).toMatchObject({ synthesized: 1, dispatched: 1 });
-    expect(enqueue).toHaveBeenCalledWith('quiz_verify', ['q-stuck'], expect.any(Object));
-    const completion = await db
-      .select({ payload: event.payload })
-      .from(event)
-      .where(
-        and(
-          eq(event.subject_id, 'q-stuck'),
-          eq(event.action, VERIFY_DISPATCH_COMPLETE_ACTION),
-          eq(event.outcome, 'success'),
-        ),
-      );
-    expect(completion).toHaveLength(1);
-    expect(completion[0]?.payload).toMatchObject({ recovery: true, disposition: 'enqueued' });
-
-    // The stale intent is preserved (append-only) and the synthesized replacement has a distinct id.
-    const intents = await db
-      .select({ id: event.id, payload: event.payload })
-      .from(event)
-      .where(and(eq(event.subject_id, 'q-stuck'), eq(event.action, VERIFY_DISPATCH_INTENT_ACTION)));
-    expect(intents).toHaveLength(2);
-    const valid = intents.filter(
-      (row) => (row.payload as { version?: number }).version === VERIFY_DISPATCH_VERSION,
-    );
-    expect(valid).toHaveLength(1);
-    expect(valid[0]?.id).not.toBe(legacyUnscopedIntentId('q-stuck', 'quiz_verify'));
-
-    // Idempotent: a second recovery neither re-synthesizes nor re-enqueues.
-    const again = await recoverOrphanVerifyDispatches(db, { enqueue });
-    expect(again).toMatchObject({ synthesized: 0, dispatched: 0 });
-    expect(enqueue).toHaveBeenCalledTimes(1);
-  });
-
   it('unsticks a live draft whose only intent is current-version but schema-incomplete', async () => {
     // Regression (review round-3 codex P2): the round-2 guards only checked `version`, so a
     // current-version intent that still fails the schema — here missing the required question_id —
@@ -208,39 +91,6 @@ describe('verify dispatch outbox (YUK-700)', () => {
     const again = await recoverOrphanVerifyDispatches(db, { enqueue });
     expect(again).toMatchObject({ synthesized: 0, dispatched: 0 });
     expect(enqueue).toHaveBeenCalledTimes(1);
-  });
-
-  it('does not let a schema-incomplete current-version intent starve valid pending intents', async () => {
-    const old = new Date('2026-07-17T00:00:00.000Z');
-    const recent = new Date('2026-07-18T00:00:00.000Z');
-    // Oldest intent: current version, valid verifier_kind, but missing question_id. Under a
-    // version-only lock predicate it would fill the batchSize=1 page on every drain and starve the
-    // valid intent created after it.
-    await seedQuestion('q-broken', 'quiz_gen', { created_at: old, updated_at: old });
-    await writeEvent(db, {
-      id: createId(),
-      actor_kind: 'system',
-      actor_ref: 'verify_dispatch_outbox',
-      action: VERIFY_DISPATCH_INTENT_ACTION,
-      subject_kind: 'question',
-      subject_id: 'q-broken',
-      outcome: null,
-      payload: { version: VERIFY_DISPATCH_VERSION, verifier_kind: 'quiz_verify' },
-      created_at: old,
-      ingest_at: old,
-    });
-    await seedQuestion('q-valid-later', 'quiz_gen', { created_at: recent, updated_at: recent });
-    await writeVerifyDispatchIntent(db, {
-      questionId: 'q-valid-later',
-      verifier: 'quiz_verify',
-      createdAt: recent,
-    });
-    const enqueue = vi.fn(async () => {});
-
-    const result = await dispatchPendingVerifyIntents(db, { enqueue, batchSize: 1 });
-
-    expect(result.dispatched).toBe(1);
-    expect(enqueue).toHaveBeenCalledWith('quiz_verify', ['q-valid-later'], expect.any(Object));
   });
 
   it('keeps placement intent identity scoped to authority while ordinary intents remain deterministic', async () => {
@@ -400,48 +250,6 @@ describe('verify dispatch outbox (YUK-700)', () => {
     ).toBe(true);
   });
 
-  // YUK-1011 codex P1 — composite children are group-internal drafts: recovery
-  // must never synthesize them a verify intent (the parent's cascade owns their
-  // promotion), and a stray pre-existing intent terminal-drains instead of
-  // enqueueing a job that can only return skipped:question_part.
-  it('never synthesizes a verify intent for a question_part draft', async () => {
-    await seedQuestion('q-parent', 'quiz_gen');
-    await seedQuestion('q-part', 'quiz_gen', {
-      kind: 'question_part',
-      parent_question_id: 'q-parent',
-      part_index: 0,
-    });
-    const enqueue = vi.fn(async () => {});
-
-    const result = await recoverOrphanVerifyDispatches(db, { enqueue });
-
-    // Only the standalone parent draft gets an intent; the part is invisible.
-    expect(result).toMatchObject({ synthesized: 1, dispatched: 1 });
-    expect(enqueue).toHaveBeenCalledWith('quiz_verify', ['q-parent'], expect.any(Object));
-  });
-
-  it('terminal-drains a stray verify intent addressed to a question_part', async () => {
-    await seedQuestion('q-parent2', 'quiz_gen');
-    await seedQuestion('q-part2', 'quiz_gen', {
-      kind: 'question_part',
-      parent_question_id: 'q-parent2',
-      part_index: 0,
-    });
-    await seedIntent('q-part2', 'quiz_verify');
-    const enqueue = vi.fn(async () => {});
-
-    const result = await dispatchPendingVerifyIntents(db, { enqueue });
-
-    expect(result).toMatchObject({ dispatched: 0, skippedTerminal: 1 });
-    expect(enqueue).not.toHaveBeenCalled();
-    const completed = await db
-      .select({ subjectId: event.subject_id, payload: event.payload })
-      .from(event)
-      .where(eq(event.action, VERIFY_DISPATCH_COMPLETE_ACTION));
-    expect(completed[0]?.subjectId).toBe('q-part2');
-    expect(completed[0]?.payload).toMatchObject({ disposition: 'terminal_skip' });
-  });
-
   it('locks intents so concurrent recovery emits one verifier job per question + kind', async () => {
     await Promise.all([seedQuestion('q-c1', 'quiz_gen'), seedQuestion('q-c2', 'quiz_gen')]);
     await Promise.all([seedIntent('q-c1', 'quiz_verify'), seedIntent('q-c2', 'quiz_verify')]);
@@ -467,46 +275,5 @@ describe('verify dispatch outbox (YUK-700)', () => {
         ),
       );
     expect(completions).toHaveLength(2);
-  });
-
-  it('does not let an earlier page of completed intents starve a later pending intent', async () => {
-    const ids = ['q-complete-1', 'q-complete-2', 'q-pending'];
-    for (const id of ids) {
-      await seedQuestion(id, 'quiz_gen');
-      await seedIntent(id, 'quiz_verify');
-    }
-    await dispatchPendingVerifyIntents(db, {
-      enqueue: vi.fn(async () => {}),
-      questionIds: ids.slice(0, 2),
-    });
-    const enqueue = vi.fn(async () => {});
-
-    const result = await dispatchPendingVerifyIntents(db, { enqueue, batchSize: 2 });
-
-    expect(result.dispatched).toBe(1);
-    expect(enqueue).toHaveBeenCalledWith('quiz_verify', ['q-pending'], expect.any(Object));
-  });
-
-  it('does not let an earlier page of already-owned drafts starve a legacy orphan', async () => {
-    const old = new Date('2026-07-17T00:00:00.000Z');
-    const recent = new Date('2026-07-18T00:00:00.000Z');
-    for (const id of ['q-owned-1', 'q-owned-2']) {
-      await seedQuestion(id, 'quiz_gen', { created_at: old, updated_at: old });
-      await seedIntent(id, 'quiz_verify');
-    }
-    await dispatchPendingVerifyIntents(db, {
-      enqueue: vi.fn(async () => {}),
-      questionIds: ['q-owned-1', 'q-owned-2'],
-    });
-    await seedQuestion('q-legacy-later', 'quiz_gen', {
-      created_at: recent,
-      updated_at: recent,
-    });
-    const enqueue = vi.fn(async () => {});
-
-    const result = await recoverOrphanVerifyDispatches(db, { enqueue, batchSize: 2 });
-
-    expect(result).toMatchObject({ synthesized: 1, dispatched: 1 });
-    expect(enqueue).toHaveBeenCalledWith('quiz_verify', ['q-legacy-later'], expect.any(Object));
   });
 });

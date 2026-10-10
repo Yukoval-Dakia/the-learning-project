@@ -29,6 +29,7 @@ import type { TaskDefinition } from '@/ai/task-spec';
 import { type Provider, type TaskKind, tasks } from '@/capabilities/task-registry';
 import { getLaneOverride, getTaskOverride } from '@/core/config/store';
 import type { ProviderModelBinding } from './model-profiles';
+import { xiaomiTokenPlanBaseUrl } from './xiaomi-token-plan';
 
 // YUK-608 — re-export the provider union so override consumers (solve-lane, verify-framework)
 // type `override.provider` as `Provider` (matching the runner's RunTaskCallCtx) without each
@@ -105,6 +106,22 @@ const PROVIDERS: Record<Provider, BoundProviderConfig> = {
       'mimo-v2.5': {
         execution: { localPricebook: true },
       },
+    },
+  },
+  'xiaomi-token-plan': {
+    authMode: 'key',
+    apiKeyEnv: 'XIAOMI_TOKEN_PLAN_API_KEY',
+    description: 'Xiaomi official Token Plan via native pi OpenAI Completions',
+    modelDefaults: {
+      capabilities: { structuredOutput: false, toolCalling: false },
+      execution: { meteredUsd: false },
+    },
+    models: {
+      // YUK-1402 single flip point: keep false until TEST Token Plan tool-loop
+      // actual-output evidence is sealed. OpenCode Go evidence does not admit
+      // this credential/endpoint lane. Link the new seal here in the follow-up
+      // commit and PR description before changing this binding to true.
+      'mimo-v2.6-pro': { capabilities: { toolCalling: false } },
     },
   },
   'zai-coding-cn': {
@@ -380,6 +397,7 @@ export function providerAuthSurface(): readonly ProviderAuthSurfaceRow[] {
 const IMPLEMENTED_KEY_PROVIDERS: ReadonlySet<Provider> = new Set([
   'anthropic',
   'xiaomi',
+  'xiaomi-token-plan',
   'zai-coding-cn',
   'opencode-go',
   'openai',
@@ -692,6 +710,6 @@ export function resolveTaskProvider(
     provider: providerName,
     model: modelId,
     apiKey,
-    baseUrl: config.baseUrl,
+    baseUrl: providerName === 'xiaomi-token-plan' ? xiaomiTokenPlanBaseUrl() : config.baseUrl,
   };
 }

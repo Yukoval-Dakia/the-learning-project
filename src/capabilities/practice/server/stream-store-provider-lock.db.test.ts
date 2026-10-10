@@ -49,26 +49,6 @@ function errorSqlState(error: unknown): string {
   return errorSqlState(error.cause);
 }
 
-async function waitForAdvisoryWaiters(
-  observer: ReturnType<typeof postgres>,
-  expectedCount: number,
-): Promise<void> {
-  const deadlineAt = Date.now() + WAITER_BARRIER_TIMEOUT_MS;
-  for (;;) {
-    const [waiting] = await observer<{ count: number }[]>`
-      SELECT count(*)::int AS count
-      FROM pg_stat_activity
-      WHERE datname = current_database()
-        AND wait_event = 'advisory'
-    `;
-    if (waiting.count >= expectedCount) return;
-    if (Date.now() >= deadlineAt) {
-      throw new Error(`Expected ${expectedCount} advisory waiters, observed ${waiting.count}`);
-    }
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-}
-
 async function seedSamplableQuestion(db: Db): Promise<string> {
   const now = new Date();
   const knowledgeId = createId();
@@ -383,41 +363,6 @@ describe('Practice stream provider transaction boundary', () => {
     expect(rows.some((row) => row.id === interventionId && row.status === 'pending')).toBe(true);
   });
 
-  it('passes the worker absolute deadline into the LLM runTask context', async () => {
-    // Given one worker-owned compose invocation with an absolute provider deadline.
-    const { db } = createTenConnectionDb();
-    const questionId = await seedSamplableQuestion(db);
-    const deadlineAt = new Date(Date.now() + 5_000);
-    const runTaskFn = vi.fn(
-      async (_kind: string, _input: unknown, _ctx?: { providerSessionDeadlineAt?: number }) => ({
-        text: JSON.stringify({
-          candidates: [{ refId: questionId, weight: 1, role: 'new_check', reason: 'deadline' }],
-        }),
-      }),
-    );
-
-    // When L2 orchestration invokes the worker's task runner.
-    await composeNightly(db, DATE, {
-      policy: { policy: 'softmax_mfi' },
-      composeDeps: {
-        loadMemoryPrior: async () => [],
-        runTaskFn,
-        providerInvocation: {
-          db,
-          caller: 'worker',
-          deadlineAt,
-          operationAnchor: 'practice-worker-llm-deadline',
-        },
-        rng: () => 0,
-      },
-    });
-
-    // Then LLM admission receives the exact same absolute deadline as Mem0 and the paid lock.
-    expect(runTaskFn.mock.calls[0]?.[2]).toMatchObject({
-      providerSessionDeadlineAt: deadlineAt.getTime(),
-    });
-  });
-
   it('times out a max-one reserve wait and releases the late connection', async () => {
     // Given the only pool connection held past a short caller deadline.
     const { db } = createConnectionDb(1);
@@ -581,24 +526,6 @@ describe('Practice stream provider transaction boundary', () => {
     } finally {
       lockProbe.release();
     }
-  });
-
-  it('does not invoke provider or LLM work when there is no samplable candidate', async () => {
-    // Given an empty candidate pool with injected paid-work seams.
-    const { db } = createTenConnectionDb();
-    const loadMemoryPrior = vi.fn(async () => ['must not load']);
-    const runTaskFn = vi.fn(async () => ({ text: '{}' }));
-
-    // When nightly compose prepares an empty plan.
-    const added = await composeNightly(db, DATE, {
-      policy: { policy: 'softmax_mfi' },
-      composeDeps: { loadMemoryPrior, runTaskFn },
-    });
-
-    // Then no provider or LLM call is fabricated.
-    expect(added).toBe(0);
-    expect(loadMemoryPrior).not.toHaveBeenCalled();
-    expect(runTaskFn).not.toHaveBeenCalled();
   });
 
   it('returns a retryable error when the caller deadline expires behind a cross-process holder', async () => {

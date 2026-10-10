@@ -1,0 +1,152 @@
+{
+  "run": "yuk1359-restore-run04",
+  "helper": "887012c2f10f2812b88a600340ec6ae869983b23",
+  "workerSource": "7472f4395f4a12a5167e33034d5d8af8bf695049",
+  "failure": {
+    "observedAt": "2026-10-09T14:25:21.717029+00:00",
+    "source": "f448f524864a94dc9d16c85c8f2b3fa20ba43374cde69b9cc01beaf34d512cb8",
+    "phase": "source-states",
+    "exitCode": 64,
+    "sourceSetupPassed": true,
+    "completeWorkerDone": true,
+    "unknownFailureObserved": true,
+    "workerExits": [
+      {
+        "pid": 70599,
+        "exit": {
+          "code": 0,
+          "signal": null
+        }
+      },
+      {
+        "pid": 70603,
+        "exit": {
+          "code": null,
+          "signal": "SIGTERM"
+        }
+      }
+    ],
+    "failure": [
+      {
+        "fault": "after-server-commit-and-unavailable",
+        "at": "2026-10-09T14:24:45.340Z",
+        "serverCommand": "COMMIT"
+      },
+      {
+        "failure": "Error: Unknown worker exit timed out; preserve evidence",
+        "failureStack": "Error: Unknown worker exit timed out; preserve evidence\n    at Timeout.<anonymous> (/private/tmp/yuk1359-dbos-restore-offline-prep-v2/artifacts/lifecycle.cjs:19835:39)\n    at listOnTimeout (node:internal/timers:635:17)\n    at process.processTimers (node:internal/timers:571:7)"
+      },
+      {
+        "proxyPort": 51718,
+        "closed": true,
+        "sockets": 0
+      }
+    ],
+    "captureRestoreReopenExecuted": false,
+    "sourceRetainedStopped": true
+  },
+  "lockRelease": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1359",
+      "phase": "isolated-same-target-restore-reopen",
+      "token": "c6eb3565-d6b9-4413-b0f1-3a86711943cd",
+      "candidate": "62f3c033ae5a387f5e3647c88577f8d896f426a0",
+      "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "createdAt": "2026-10-09T14:22:00.722127+00:00"
+    },
+    "releasedAt": "2026-10-09T14:25:21.819369+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "observedWorkflows": [
+    {
+      "id": "restore-unknown-yuk1359-restore-run04",
+      "status": "ERROR",
+      "receipts": 1
+    },
+    {
+      "id": "restore-complete-yuk1359-restore-run04",
+      "status": "SUCCESS",
+      "receipts": 3
+    }
+  ],
+  "observedObligations": {
+    "dbos": [
+      {
+        "task_id": "restore-unknown-yuk1359-restore-run04",
+        "state": "ERROR",
+        "kind": "task",
+        "session_id": null
+      },
+      {
+        "task_id": "restore-unknown-yuk1359-restore-run04",
+        "state": "missing-receipt",
+        "kind": "receipt",
+        "session_id": "restore-unknown-yuk1359-restore-run04-b"
+      },
+      {
+        "task_id": "restore-unknown-yuk1359-restore-run04",
+        "state": "missing-receipt",
+        "kind": "receipt",
+        "session_id": "restore-unknown-yuk1359-restore-run04-c"
+      }
+    ],
+    "legacy": []
+  },
+  "files": [
+    {
+      "path": "/tmp/yuk1359-restore-reopen-parent04/failure.json",
+      "sha256": "269c0f594a36ffa30d1e4e276806db5a40fde0611f3ae2b75b46ca896020ed09",
+      "bytes": 1208
+    },
+    {
+      "path": "/tmp/yuk1359-restore-reopen-parent04/lock-release.json",
+      "sha256": "62ab89a0562b0ba395927777ab9426ff890575671c4b23f7c70a893580265fa2",
+      "bytes": 547
+    },
+    {
+      "path": "/tmp/yuk1359-restore-reopen-parent04/provision.log",
+      "sha256": "cf22d208ff3530ab6cf0ba9a4d21b2b47f3d7256b4ea10eaf4be739bd4a9f2e6",
+      "bytes": 190
+    },
+    {
+      "path": "/tmp/yuk1359-restore-reopen-parent04/source-setup.log",
+      "sha256": "4da77c041f548f423ff3cb0a4e0447fae42f12603319c76c349b1b65dad3eea8",
+      "bytes": 81
+    },
+    {
+      "path": "/tmp/yuk1359-restore-reopen-parent04/source-states.log",
+      "sha256": "5e998bd4036da70d3e5a60d0e8ff95423b32219fe63a99d6220aa47f29fb6e0f",
+      "bytes": 104
+    },
+    {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run04/failure-source.json",
+      "sha256": "450f0c7d4fc6ff64e65d2442a89a50a39694a9484bfeefe416d10fecf4679080",
+      "bytes": 430063
+    },
+    {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run04/lifecycle-source-states.json",
+      "sha256": "346ee9143106d5703bcf8cf77474a32b5fed2aeffc19181b6380568155590f89",
+      "bytes": 17627
+    },
+    {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run04/phase-source-setup-receipt.json",
+      "sha256": "cc532459804b756130a62311259b7ffc3b338b38e2d944cac8c49b6280bbd3d2",
+      "bytes": 319
+    },
+    {
+      "path": "/tmp/yuk1359-restore-reopen-parent04/generated-report-observation.json",
+      "sha256": "13fbbc1d056582b872e43e7d2297681773ad90172be8a0dd668bfb84ef128824",
+      "bytes": 597
+    },
+    {
+      "path": "/tmp/yuk1359-restore-reopen-parent04/parent-generated-offline-check.json",
+      "sha256": "fe031f344b3965a356571d3985e0f53d9b60c6c605bbca5844d9c0c9263f0df0",
+      "bytes": 325524
+    }
+  ],
+  "scope": "118 migrations, source setup/snapshot and complete task passed. Real unknown outcome observed. Fault worker natural-exit assertion timed out. No pending/capture/restore/reopen acceptance.",
+  "next": "Align fixture fault-worker settlement with original test contract without replay/resume; use fresh source only."
+}

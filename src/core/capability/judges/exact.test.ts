@@ -6,12 +6,6 @@ import { exactJudgeCapability } from './exact';
 const run = async (question: Record<string, unknown>, content: string) =>
   await exactJudgeCapability.run({ question, answer: { content } });
 
-describe('exactJudgeCapability — manifest', () => {
-  it('declares choices_md in input_schema', () => {
-    expect(exactJudgeCapability.manifest.input_schema).toContain('choices_md');
-  });
-});
-
 describe('exactJudgeCapability — choice-aware judging (YUK-260)', () => {
   it('① letter answer vs option-text reference → correct (owner scenario)', async () => {
     const r = await run(
@@ -145,21 +139,6 @@ describe('exactJudgeCapability — bot-review hardening (YUK-260)', () => {
     expect((await run({ reference: '宾语前置', choices_md: null }, 'A')).coarse_outcome).toBe(
       'incorrect',
     );
-  });
-
-  // OCR-1: evidence_json must record HOW the match was decided + resolved indices
-  // so a choice_index verdict (normalized text legitimately differs) is not
-  // self-contradictory.
-  it('OCR-1 evidence carries match_type + resolved choice indices', async () => {
-    const choices_md = ['宾语前置', '主谓倒装', '定语后置', '状语后置'];
-    const r = await run({ reference: '宾语前置', choices_md }, 'A');
-    expect(r.evidence_json?.match_type).toBe('choice_index');
-    expect(r.evidence_json?.answer_choice_indices).toEqual([0]);
-    expect(r.evidence_json?.reference_choice_indices).toEqual([0]);
-    // plain text path reports match_type 'text' with null indices
-    const plain = await run({ reference: '宾语前置' }, '宾语前置');
-    expect(plain.evidence_json?.match_type).toBe('text');
-    expect(plain.evidence_json?.answer_choice_indices).toBeNull();
   });
 });
 

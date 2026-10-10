@@ -1,0 +1,116 @@
+{
+  "run": "yuk1359-restore-run03",
+  "candidate": "ef79d109bee3130ad63e2dcce05d75672be69f53",
+  "helper": "887012c2f10f2812b88a600340ec6ae869983b23",
+  "workerSource": "7472f4395f4a12a5167e33034d5d8af8bf695049",
+  "failure": {
+    "observedAt": "2026-10-09T13:41:42.939637+00:00",
+    "source": "393c5829e77e6662c916d5abda8ebc61813014eed83c38c4753bce354c7b1c25",
+    "phase": "source-setup",
+    "exitCode": 64,
+    "workerReady": true,
+    "workerExit": {
+      "code": null,
+      "signal": "SIGTERM"
+    },
+    "failure": [
+      {
+        "failure": "TypeError: Cannot read properties of undefined (reading 'parsers')"
+      },
+      {
+        "snapshotFailure": "TypeError: Cannot read properties of undefined (reading 'parsers')"
+      }
+    ],
+    "captureRestoreReopenExecuted": false,
+    "sourceRetainedStopped": true
+  },
+  "lockRelease": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1359",
+      "phase": "isolated-same-target-restore-reopen",
+      "token": "467367d6-f304-4c01-9def-7f97c1004eeb",
+      "candidate": "ef79d109bee3130ad63e2dcce05d75672be69f53",
+      "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "createdAt": "2026-10-09T13:37:38.050902+00:00"
+    },
+    "releasedAt": "2026-10-09T13:41:43.042266+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "lifecycle": {
+    "runId": "yuk1359-restore-run03",
+    "phase": "source-setup",
+    "logs": [
+      {
+        "pid": 67152,
+        "stdout": "{\n  severity_local: 'NOTICE',\n  severity: 'NOTICE',\n  code: '00000',\n  message: 'trigger \"yuk1355_prune_producer\" for relation \"pgboss.job\" does not exist, skipping',\n  file: 'dropcmds.c',\n  line: '528',\n  routine: 'does_not_exist_skipping'\n}\n{\n  severity_local: 'NOTICE',\n  severity: 'NOTICE',\n  code: '00000',\n  message: 'trigger \"yuk1355_prune_producer\" for relation \"pgboss.schedule\" does not exist, skipping',\n  file: 'dropcmds.c',\n  line: '528',\n  routine: 'does_not_exist_skipping'\n}\n{\n  severity_local: 'NOTICE',\n  severity: 'NOTICE',\n  code: '00000',\n  message: 'trigger \"yuk1393_review_orphan_producer\" for relation \"pgboss.job\" does not exist, skipping',\n  file: 'dropcmds.c',\n  line: '528',\n  routine: 'does_not_exist_skipping'\n}\n{\n  severity_local: 'NOTICE',\n  severity: 'NOTICE',\n  code: '00000',\n  message: 'trigger \"yuk1393_review_orphan_producer\" for relation \"pgboss.schedule\" does not exist, skipping',\n  file: 'dropcmds.c',\n  line: '528',\n  routine: 'does_not_exist_skipping'\n}\n{\n  severity_local: 'NOTICE',\n  severity: 'NOTICE',\n  code: '00000',\n  message: 'trigger \"yuk1394_session_orphan_producer\" for relation \"pgboss.job\" does not exist, skipping',\n  file: 'dropcmds.c',\n  line: '528',\n  routine: 'does_not_exist_skipping'\n}\n{\n  severity_local: 'NOTICE',\n  severity: 'NOTICE',\n  code: '00000',\n  message: 'trigger \"yuk1394_session_orphan_producer\" for relation \"pgboss.schedule\" does not exist, skipping',\n  file: 'dropcmds.c',\n  line: '528',\n  routine: 'does_not_exist_skipping'\n}\nRunning DBOS system database migrations...\nInitializing DBOS (vunknown)\nSystem Database URL: [redacted-url] ID: local\nApplication version: prune-v1\nNo workflows to recover from application version prune-v1\nDBOS launched!\nListening to 0 queues:\n",
+        "stderr": "(node:67152) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n",
+        "messages": [
+          {
+            "kind": "ready",
+            "pid": 67152,
+            "runtime": {
+              "node": "v24.19.0",
+              "execPath": "/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin/node",
+              "dbos": "5.2.11",
+              "pgBoss": "12.36.0"
+            }
+          }
+        ],
+        "exit": {
+          "code": null,
+          "signal": "SIGTERM"
+        }
+      }
+    ],
+    "evidence": [
+      {
+        "failure": "TypeError: Cannot read properties of undefined (reading 'parsers')"
+      },
+      {
+        "snapshotFailure": "TypeError: Cannot read properties of undefined (reading 'parsers')"
+      }
+    ]
+  },
+  "files": [
+    {
+      "path": "/tmp/yuk1359-restore-reopen-parent03/failure.json",
+      "sha256": "be6e111196af213833fc870df03ee765001a03104b022ec5a10cb88c70713458",
+      "bytes": 567
+    },
+    {
+      "path": "/tmp/yuk1359-restore-reopen-parent03/lock-release.json",
+      "sha256": "de97400190d310194532240c6def7c1066a55de83213b6af207187183cfee60a",
+      "bytes": 547
+    },
+    {
+      "path": "/tmp/yuk1359-restore-reopen-parent03/provision.log",
+      "sha256": "91f0a25ab88ed749a8961d3287b65d13e6713482a05374b143c9d384da105755",
+      "bytes": 190
+    },
+    {
+      "path": "/tmp/yuk1359-restore-reopen-parent03/source-setup.log",
+      "sha256": "5e998bd4036da70d3e5a60d0e8ff95423b32219fe63a99d6220aa47f29fb6e0f",
+      "bytes": 104
+    },
+    {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run03/lifecycle-source-setup.json",
+      "sha256": "64234bd177d7b0bbfbd832bdc4db043e2f8a9031450ea8507ae7c8f7644d7867",
+      "bytes": 2900
+    },
+    {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v2/runtime/yuk1359-restore-run03/state.json",
+      "sha256": "5739fd635c262284fa9eebefdab3912aee2152f1a14c9f3ea6422861acca105d",
+      "bytes": 120
+    },
+    {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v2/permanent/yuk1359-restore-run03.failure.json",
+      "sha256": "28c82453ecde19838dc5e1448ec621ec8dba8d4cfeb9e1c241b7d7022740af5d",
+      "bytes": 271
+    }
+  ],
+  "scope": "Independent source migration and fixed-worker initialization only. Capture, restore and reopen did not execute.",
+  "next": "Repair prep transaction adapter; preserve failed source stopped; new run required."
+}

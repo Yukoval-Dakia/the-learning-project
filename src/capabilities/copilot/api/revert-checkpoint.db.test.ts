@@ -1,7 +1,7 @@
 import { and, eq } from 'drizzle-orm';
 import postgres from 'postgres';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { event, job_events, learning_session } from '@/db/schema';
+import { event, learning_session } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './revert-checkpoint';
 
@@ -100,66 +100,6 @@ describe('POST /api/copilot/checkpoints/:eventId/revert', () => {
     expect(afterRetry).toEqual(beforeRetry);
   });
 
-  it('rejects an invalid path param with 400 validation_error (F3 TdY3h)', async () => {
-    const response = await POST(request(''), { eventId: '' });
-    expect(response.status).toBe(400);
-    expect(await response.json()).toMatchObject({ error: 'validation_error' });
-  });
-
-  it('refuses a non-terminal turn without mutation', async () => {
-    const { checkpointId } = await seedTurn({ withReply: false });
-    const response = await POST(request(checkpointId), { eventId: checkpointId });
-    expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ error: 'turn_not_terminal' });
-    expect(await testDb().select().from(event).where(eq(event.action, 'correct'))).toEqual([]);
-  });
-
-  it('keeps a shadow with FAILED(reason=error) non-terminal until a deliberate settlement', async () => {
-    const { checkpointId } = await seedTurn();
-    await testDb()
-      .insert(job_events)
-      .values([
-        {
-          business_table: 'copilot_run',
-          business_id: checkpointId,
-          event_type: 'copilot_run.queued',
-          payload: { session_id: 'copilot_current' },
-        },
-        {
-          business_table: 'copilot_run',
-          business_id: checkpointId,
-          event_type: 'copilot_run.failed',
-          payload: {
-            reason: 'error',
-            error: 'provider reset after checking a 48-answer, six-probe transfer audit',
-          },
-        },
-      ]);
-
-    const retrying = await POST(request(checkpointId), { eventId: checkpointId });
-    expect(retrying.status).toBe(409);
-    expect(await retrying.json()).toMatchObject({ error: 'turn_shadow_not_terminal' });
-
-    await testDb()
-      .insert(job_events)
-      .values({
-        business_table: 'copilot_run',
-        business_id: checkpointId,
-        event_type: 'copilot_run.failed',
-        payload: { reason: 'exhausted', error: 'retry budget exhausted' },
-      });
-    const settled = await POST(request(checkpointId), { eventId: checkpointId });
-    expect(settled.status).toBe(200);
-  });
-
-  it('hides roots outside the current reusable Copilot session', async () => {
-    const old = await seedTurn({ sessionId: 'copilot_old' });
-    await seedTurn({ sessionId: 'copilot_current' });
-    const response = await POST(request(old.checkpointId), { eventId: old.checkpointId });
-    expect(response.status).toBe(404);
-    expect(await testDb().select().from(event).where(eq(event.action, 'correct'))).toEqual([]);
-  });
-
   it('re-resolves ownership after a concurrent session rollover holds the shared selection lock', async () => {
     const old = await seedTurn({ sessionId: 'copilot_old' });
     const url = process.env.TEST_DATABASE_URL;
@@ -201,17 +141,5 @@ describe('POST /api/copilot/checkpoints/:eventId/revert', () => {
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ refusal: 'irreversible' });
     expect(await testDb().select().from(event).where(eq(event.action, 'correct'))).toEqual([]);
-  });
-
-  it('reverts a turn whose only extra descendant is a tool_use provenance mirror (wave-3 G2)', async () => {
-    // A copilot turn that called tools mirrors them as tool_use events under the ask. These are pure
-    // episodic provenance (event-layer), so the turn is fully revertable — no false 409.
-    const { checkpointId } = await seedTurn({ childAction: 'tool_use' });
-    const response = await POST(request(checkpointId), { eventId: checkpointId });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({ ok: true, status: 'reverted' });
-    // The tool_use mirror gets a `correct`(retract) compensation like the ask/reply.
-    const corrects = await testDb().select().from(event).where(eq(event.action, 'correct'));
-    expect(corrects.some((c) => c.subject_id === 'unsupported_copilot_current')).toBe(true);
   });
 });

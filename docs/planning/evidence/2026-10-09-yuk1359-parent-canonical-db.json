@@ -1,0 +1,45 @@
+{
+  "scope": "Actual PG catalog/content/sequence/backend predicate only; full helper restore and DBOS reopen UNRUN",
+  "baseRevision": "cd1f2b5f127c191098028af9b5bc532c79231f7d",
+  "sourceDiffSha256": "8fb0bc49b57f9e54a7ff7aa703ce9afcc026d4c1d627abcef699289104ec48a6",
+  "runs": [
+    {
+      "log": "/tmp/yuk1359-canonical-db-parent/db.log",
+      "exit": 1,
+      "result": "fixture DDL binary identifier syntax error;13 skipped"
+    },
+    {
+      "log": "/tmp/yuk1359-canonical-db-parent/db-quoted-fixture.log",
+      "exit": 1,
+      "result": "12 passed/1 failed: actual CATALOG_SQL missing outer closing parenthesis"
+    },
+    {
+      "log": "/tmp/yuk1359-canonical-db-parent-r2/db.log",
+      "exit": 0,
+      "result": "13 passed after one product parenthesis and one fixture identifier quote repair"
+    }
+  ],
+  "cleanup": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1359",
+      "phase": "isolated-restore-canonical-db",
+      "token": "e089b591-40a9-4548-b855-80f228f9592f",
+      "candidate": "cd1f2b5f127c191098028af9b5bc532c79231f7d",
+      "dirtyDiffSha256": "8fb0bc49b57f9e54a7ff7aa703ce9afcc026d4c1d627abcef699289104ec48a6",
+      "createdAt": "2026-10-09T06:32:49.201819+00:00"
+    },
+    "releasedAt": "2026-10-09T06:33:24.251245+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "archive": "2026-10-09-yuk1359-parent-canonical-db.json.gz",
+  "archiveSha256": "f9c19cf265d8b6c3a5aaa50cef914f232582ae240edd407607d0ae5bba7ad4d6",
+  "parentOffline": {
+    "scopedBiome": "2 files passed",
+    "diffCheck": "passed"
+  },
+  "actualModel": "unrun",
+  "deployment": "none"
+}

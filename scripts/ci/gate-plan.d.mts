@@ -1,12 +1,10 @@
-export type GateLane = 'static' | 'unit' | 'db' | 'migration' | 'build' | 'usability';
+export type GateLane = 'static' | 'unit' | 'db' | 'migration' | 'build';
 
 export interface GatePlan {
   schema_version: 1;
   code_changed: boolean;
   changed_files: string[];
   lanes: Record<GateLane, boolean>;
-  unit_selection: 'skip' | 'affected' | 'full';
-  db_selection: 'skip' | 'affected' | 'full';
   reasons: string[];
 }
 

@@ -160,11 +160,11 @@
 - `src/ui-next/shell/`：`AppFrame.tsx`、`CompanionPanel.tsx`、`BottomSheet.tsx`、`TabBar.tsx`、`CommandPalette.tsx`、`index.ts`。
 - `src/ui-next/showcase/Showcase.tsx`：展示组件（只用本地示例数据，不调用任何业务接口）。
 - `src/ui-next/public.ts`：对外入口，并引入两份样式表。
-- 单元测试：`src/ui-next/**/*.unit.test.ts(x)`（jsdom + Testing Library），包括 token 对比度检查。
+- 单元测试：起初写了 4 个文件（token 对比度、键盘路径、`inert`、抽屉位置等）。2026-10-10 按 YUK-1401 的新规则全部删除：它们都不触及五类不变量（数据不可逆、判分确定性、并发与锁、安全边界、危机转介）。
 
 ## 4. 将修改的文件
 
-- `vitest.shared.ts`：把 `src/ui-next/**/*.test.ts(x)` 加入快速（unit）分区。否则这些测试会落进 DB 分区，在只改 UI 的 PR 上被静默跳过。
+- `vitest.shared.ts`：起初把 `src/ui-next` 的测试加入 unit 分区；测试删除后，这项修改随之撤回，与 main 一致。
 - `scripts/audit-capability-boundaries.ts`：把 `src/ui-next` 加入浏览器根目录，让它与 `src/ui` 一样只能经 `ui-public` 使用 capability（守住 I1）。
 
 不修改：现役页面、`src/ui/`、`web/src/globals.css`、`:root`/`body`/全局 reset 与全局字体、`server/start/**`、`web/src/router*`、
@@ -184,8 +184,8 @@ package/lock/vite/build 入口、kernel、schema/drizzle、durable/boss/practice
 
 ## 6. 验收方式
 
-- 单元测试：键盘路径（分段、抽屉停靠点、命令面板、提示条撤销）、`inert`、减少动态效果、token 对比度。
+- 不写单元测试（YUK-1401）。键盘路径、`inert`、抽屉位置、提示条落点、减少动态效果与 token 对比度，都改用真实浏览器探针与截图核验；对比度按 `tokens.css` 的取值计算。
 - 浏览器截图：在一个只用于验收的本地 harness 中渲染展示组件（桌面 1440×900 / 手机 390×844 × 亮 / 暗），harness 不入库。
 - 生产产物：本 PR 前后 `web/dist` 与 `dist/start` 的产物对比。
-- 本机：`pnpm typecheck`、`pnpm lint`（含 lint ratchet）、`pnpm build`，以及匹配的 scoped unit 测试；不运行完整 `pnpm test`。
+- 本机：`pnpm audit:partition`、`pnpm typecheck`、`pnpm lint`（含 lint ratchet）、`pnpm build`；不运行完整 `pnpm test`。
 - 独立视觉复核：另起 Claude Opus 5.5。

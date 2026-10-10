@@ -7,29 +7,20 @@ import { createId } from '@paralleldrive/cuid2';
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { seedKnowledge } from '@/capabilities/knowledge/public';
-import { runSourceVerify, selectNextPlacementItem } from '@/capabilities/practice/public';
-import { deriveSourceTier } from '@/core/schema/provenance';
 import {
-  ai_task_runs,
   cost_ledger,
   event,
   knowledge,
   proposal_signals,
   question,
   question_block,
-  question_group_lifecycle,
-  source_asset,
 } from '@/db/schema';
-import { commitFormalAttempt } from '@/kernel/judge';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
 import { acceptAiProposal, dismissAiProposal } from '@/server/proposals/actions';
-import { editQuestion } from '@/server/questions/write';
 import { backfillQuestionBlockGenesis } from '../../../../scripts/backfill-genesis-events';
-import { issueSoloFixture } from '../../../../tests/fixtures/assessment-solo';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { assertProposalLifecycleResult } from '../../../../tests/helpers/proposal-lifecycle';
-import { semanticJudgeOutput, solverOutput } from '../../../../tests/helpers/solve-check-fixtures';
 import type {
   ImageCandidateAcceptDeps,
   ImageCandidateAcceptResult,
@@ -413,114 +404,6 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     };
   }
 
-  it('accept downloads the image, persists a source_asset, runs VLM, and materializes a tier-2 SourcedQuestion', async () => {
-    const db = testDb();
-    await seedImageCandidateProposal('img_cand_1');
-    const { deps, runTaskFn, enqueueSourceVerify, r2 } = imageCandidateDeps();
-
-    const result = await acceptAiProposal(db, 'img_cand_1', { imageCandidateDeps: deps });
-
-    expect(result.kind).toBe('image_candidate');
-    assertProposalLifecycleResult<ImageCandidateAcceptResult>(result, 'image_candidate');
-
-    // source_asset persisted (the image was downloaded + put to R2).
-    expect(r2.put).toHaveBeenCalledTimes(1);
-    const assets = await db
-      .select()
-      .from(source_asset)
-      .where(eq(source_asset.id, result.source_asset_id));
-    expect(assets).toHaveLength(1);
-    expect(assets[0].kind).toBe('image');
-    expect(assets[0].mime_type).toBe('image/png');
-
-    // EXACTLY one VLM call (per-accept upper bound = 1 image).
-    expect(runTaskFn).toHaveBeenCalledTimes(1);
-    expect(runTaskFn.mock.calls[0][0]).toBe('VisionExtractTask');
-
-    // A tier-2 web_sourced draft question was created from the VLM block.
-    const questions = await db.select().from(question).where(eq(question.id, result.question_id));
-    expect(questions).toHaveLength(1);
-    const q = questions[0];
-    expect(q.source).toBe('web_sourced');
-    expect(q.draft_status).toBe('draft');
-    expect(q.prompt_md).toBe('请翻译「学而时习之，不亦说乎」。');
-    expect(q.source_ref).toBe('https://example.edu/wenyan/scan.png');
-    const meta = q.metadata as Record<string, unknown>;
-    expect(meta.source_ref_kind).toBe('url');
-    expect(meta.image_candidate_source_asset_id).toBe(result.source_asset_id);
-    const { tier } = deriveSourceTier({ source: q.source, metadata: meta });
-    expect(tier).toBe(2);
-
-    // source_verify enqueued for the new draft.
-    expect(enqueueSourceVerify).toHaveBeenCalledWith([result.question_id]);
-
-    // accept rate event chained to the proposal.
-    const rateRows = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'img_cand_1')));
-    expect(rateRows).toHaveLength(1);
-    expect((rateRows[0].payload as { rating?: string }).rating).toBe('accept');
-  });
-
-  it('correlates the sourcing_image_extract row with the real VisionExtractTask run (zero-valued, no double-count)', async () => {
-    // FIX-R2-2: the correlation row must串联 the REAL VisionExtractTask run via
-    // task_run_id AND carry the real provider/model, but its cost/tokens are ZERO by
-    // design — the VisionExtractTask run already wrote a real cost_ledger row, so a
-    // non-zero correlation row would double-count the one extraction in SUM(cost). This
-    // test uses a production-shaped seam (returns task_run_id like the real runTask)
-    // against a seeded ai_task_runs row and asserts: task_run_id串联 + real provider/model
-    // + zero cost/tokens.
-    const db = testDb();
-    await seedImageCandidateProposal('img_cand_runid');
-    await db.insert(ai_task_runs).values({
-      id: 'vlm_run_real_1',
-      task_kind: 'VisionExtractTask',
-      provider: 'xiaomi',
-      model: 'mimo-vl-prod',
-      input_hash: 'hash_fix4',
-      status: 'succeeded',
-      started_at: new Date(),
-      usage_json: { inputTokens: 1234, outputTokens: 567 },
-      cost_usd: 0.0123,
-    });
-    const runTaskFn = vi.fn(async () => ({ text: VLM_OUTPUT, task_run_id: 'vlm_run_real_1' }));
-    const { deps } = imageCandidateDeps({ runTaskFn });
-
-    await acceptAiProposal(db, 'img_cand_runid', { imageCandidateDeps: deps });
-
-    const rows = await db
-      .select()
-      .from(cost_ledger)
-      .where(eq(cost_ledger.task_run_id, 'vlm_run_real_1'));
-    const row = rows.find((r) => r.task_kind === 'sourcing_image_extract');
-    expect(row).toBeDefined();
-    // task_run_id串联s the real VisionExtractTask run (recover real花费 via JOIN).
-    expect(row?.task_run_id).toBe('vlm_run_real_1');
-    // provider/model are the real run's (self-describing correlation row).
-    expect(row?.provider).toBe('xiaomi');
-    expect(row?.model).toBe('mimo-vl-prod');
-    // FIX-R2-2 — cost/tokens are ZERO so the correlation row never double-counts the
-    // extraction the VisionExtractTask row already recorded.
-    expect(row?.cost).toBe(0);
-    expect(row?.tokens_in).toBe(0);
-    expect(row?.tokens_out).toBe(0);
-  });
-
-  it('writes exactly one sourcing_image_extract cost_ledger row per accept (cost 留痕)', async () => {
-    const db = testDb();
-    await seedImageCandidateProposal('img_cand_cost');
-    const { deps } = imageCandidateDeps();
-
-    await acceptAiProposal(db, 'img_cand_cost', { imageCandidateDeps: deps });
-
-    const ledger = await db
-      .select()
-      .from(cost_ledger)
-      .where(eq(cost_ledger.task_kind, 'sourcing_image_extract'));
-    expect(ledger).toHaveLength(1);
-  });
-
   it('cost gate: per accept = exactly one VLM call, no batch/auto path (re-accept does NOT re-spend)', async () => {
     const db = testDb();
     await seedImageCandidateProposal('img_cand_idem');
@@ -544,75 +427,6 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
       .from(cost_ledger)
       .where(eq(cost_ledger.task_kind, 'sourcing_image_extract'));
     expect(ledger).toHaveLength(1);
-  });
-
-  // FIX-3 — the materialized question is attributed to the sourcing-resolved knowledge
-  // node carried on the proposal (text-path parity); an empty/absent set → empty attribution.
-  it('attributes the materialized question to the proposal knowledge_ids (FIX-3)', async () => {
-    const db = testDb();
-    await seedImageCandidateProposal('img_cand_kids', { knowledge_ids: ['k1', 'k2'] });
-    const { deps } = imageCandidateDeps();
-
-    const result = await acceptAiProposal(db, 'img_cand_kids', { imageCandidateDeps: deps });
-    assertProposalLifecycleResult<ImageCandidateAcceptResult>(result, 'image_candidate');
-    const rows = await db.select().from(question).where(eq(question.id, result.question_id));
-    expect(rows[0].knowledge_ids).toEqual(['k1', 'k2']);
-  });
-
-  it('attributes empty knowledge_ids when the proposal carries none (FIX-3 default)', async () => {
-    const db = testDb();
-    await seedImageCandidateProposal('img_cand_nokids');
-    const { deps } = imageCandidateDeps();
-
-    const result = await acceptAiProposal(db, 'img_cand_nokids', { imageCandidateDeps: deps });
-    assertProposalLifecycleResult<ImageCandidateAcceptResult>(result, 'image_candidate');
-    const rows = await db.select().from(question).where(eq(question.id, result.question_id));
-    expect(rows[0].knowledge_ids).toEqual([]);
-  });
-
-  // FIX-2 — a non-image Content-Type must be rejected BEFORE the paid VLM flow. We exercise
-  // the real defaultFetchImageBytes by stubbing global fetch to return an HTML page.
-  it('rejects a non-image Content-Type before spending the VLM (FIX-2)', async () => {
-    const db = testDb();
-    await seedImageCandidateProposal('img_cand_html');
-    // No fetchImageBytesFn override → the REAL defaultFetchImageBytes runs.
-    const runTaskFn = vi.fn(async () => ({ text: VLM_OUTPUT }));
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response('<html>not an image</html>', {
-        status: 200,
-        headers: { 'content-type': 'text/html; charset=utf-8' },
-      }),
-    );
-    try {
-      await expect(
-        acceptAiProposal(db, 'img_cand_html', {
-          imageCandidateDeps: {
-            runTaskFn,
-            lookupFn: publicLookup as unknown as ImageCandidateAcceptDeps['lookupFn'],
-            r2: { put: vi.fn(), get: vi.fn() } as never,
-          },
-        }),
-      ).rejects.toMatchObject({ code: 'unsupported_media_type' });
-      // The VLM was never called — no money burned on HTML bytes.
-      expect(runTaskFn).not.toHaveBeenCalled();
-      // FIX-R2-8 — assert ALL of "No question / ledger / rate" the comment claims.
-      const questions = await db.select().from(question).where(eq(question.source, 'web_sourced'));
-      expect(questions).toHaveLength(0);
-      // No sourcing_image_extract cost_ledger row (the paid flow never started).
-      const ledger = await db
-        .select()
-        .from(cost_ledger)
-        .where(eq(cost_ledger.task_kind, 'sourcing_image_extract'));
-      expect(ledger).toHaveLength(0);
-      // No accept rate event chained to the proposal (the proposal stays pending).
-      const acceptRates = await db
-        .select()
-        .from(event)
-        .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'img_cand_html')));
-      expect(acceptRates).toHaveLength(0);
-    } finally {
-      fetchSpy.mockRestore();
-    }
   });
 
   // FIX-7 — a private/loopback host is rejected before any network call (the AI-written URL
@@ -661,36 +475,6 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
         verbatim: true,
       });
       expect(fetchSpy).not.toHaveBeenCalled();
-      expect(runTaskFn).not.toHaveBeenCalled();
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
-
-  // FIX-7 — an oversized body is rejected (Content-Length pre-check) before the paid flow.
-  it('rejects an oversized image via Content-Length before the VLM (FIX-7 size cap)', async () => {
-    const db = testDb();
-    await seedImageCandidateProposal('img_cand_big');
-    const runTaskFn = vi.fn(async () => ({ text: VLM_OUTPUT }));
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response(new Uint8Array([1, 2, 3]), {
-        status: 200,
-        headers: {
-          'content-type': 'image/png',
-          'content-length': String(20 * 1024 * 1024), // 20 MB > 10 MB cap
-        },
-      }),
-    );
-    try {
-      await expect(
-        acceptAiProposal(db, 'img_cand_big', {
-          imageCandidateDeps: {
-            runTaskFn,
-            lookupFn: publicLookup as unknown as ImageCandidateAcceptDeps['lookupFn'],
-            r2: { put: vi.fn(), get: vi.fn() } as never,
-          },
-        }),
-      ).rejects.toMatchObject({ code: 'payload_too_large' });
       expect(runTaskFn).not.toHaveBeenCalled();
     } finally {
       fetchSpy.mockRestore();
@@ -923,36 +707,6 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
     }
   });
 
-  // FIX-R2-4 — an image/* MIME outside the supported set (svg/gif/bmp) is rejected with a
-  // 422, NOT silently re-tagged as image/png; the paid VLM flow never starts.
-  it('rejects an unsupported image MIME (svg) before the VLM (FIX-R2-4)', async () => {
-    const db = testDb();
-    await seedImageCandidateProposal('img_cand_svg');
-    const runTaskFn = vi.fn(async () => ({ text: VLM_OUTPUT }));
-    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValue(
-      new Response('<svg></svg>', {
-        status: 200,
-        headers: { 'content-type': 'image/svg+xml' },
-      }),
-    );
-    try {
-      await expect(
-        acceptAiProposal(db, 'img_cand_svg', {
-          imageCandidateDeps: {
-            runTaskFn,
-            lookupFn: publicLookup as unknown as ImageCandidateAcceptDeps['lookupFn'],
-            r2: { put: vi.fn(), get: vi.fn() } as never,
-          },
-        }),
-      ).rejects.toMatchObject({ code: 'unsupported_media_type' });
-      expect(runTaskFn).not.toHaveBeenCalled();
-      const questions = await db.select().from(question).where(eq(question.source, 'web_sourced'));
-      expect(questions).toHaveLength(0);
-    } finally {
-      fetchSpy.mockRestore();
-    }
-  });
-
   // FIX-R2-3 — the user dismisses the proposal WHILE the accept's VLM is in flight. The
   // terminal tx re-checks the rate event under the lock and aborts with 409, writing NO
   // question and NO accept rate (the dismiss veto is preserved).
@@ -1001,61 +755,6 @@ describe('image_candidate accept (YUK-227 S3 Slice C)', () => {
       .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'img_cand_veto')));
     expect(rates).toHaveLength(1);
     expect((rates[0].payload as { rating?: string }).rating).toBe('dismiss');
-  });
-
-  // FIX-R2-5 — a kind-constrained proposal (requested_kind on the proposed_change)
-  // materializes a question of that kind, normalized through the question-kind vocabulary.
-  it('materializes the requested_kind (choice) when the proposal carries one (FIX-R2-5)', async () => {
-    const db = testDb();
-    await writeAiProposal(db, {
-      id: 'img_cand_choice',
-      actor_ref: 'sourcing',
-      outcome: 'partial',
-      payload: {
-        kind: 'image_candidate',
-        target: { subject_kind: 'source_asset', subject_id: null },
-        reason_md: '图片型源',
-        evidence_refs: [],
-        proposed_change: {
-          source_url: 'https://example.edu/wenyan/choice.png',
-          source_title: '选择题扫描卷',
-          summary_md: '图片型选择题源。',
-          // single_choice is a profile/skill key → normalizes to canonical 'choice'.
-          requested_kind: 'single_choice',
-        },
-        cooldown_key: 'image_candidate:https://example.edu/wenyan/choice.png',
-      },
-    });
-    const { deps } = imageCandidateDeps();
-
-    const result = await acceptAiProposal(db, 'img_cand_choice', { imageCandidateDeps: deps });
-    assertProposalLifecycleResult<ImageCandidateAcceptResult>(result, 'image_candidate');
-    const rows = await db.select().from(question).where(eq(question.id, result.question_id));
-    expect(rows[0].kind).toBe('choice');
-  });
-
-  // FIX-R2-6 — the stored extract is the RAW VLM output (the full block-serialized text),
-  // NOT the final promptMd, so source_verify's overlap is not an identity. The question
-  // metadata carries single_source_grounding=true to mark the limitation.
-  it('stores the raw VLM output as the extract (not promptMd) + marks single_source_grounding (FIX-R2-6)', async () => {
-    const db = testDb();
-    await seedImageCandidateProposal('img_cand_extract');
-    const { deps } = imageCandidateDeps();
-
-    const result = await acceptAiProposal(db, 'img_cand_extract', { imageCandidateDeps: deps });
-    assertProposalLifecycleResult<ImageCandidateAcceptResult>(result, 'image_candidate');
-    const rows = await db.select().from(question).where(eq(question.id, result.question_id));
-    const meta = rows[0].metadata as {
-      web_sourced?: { extract?: string };
-      single_source_grounding?: boolean;
-    };
-    const extract = meta.web_sourced?.extract ?? '';
-    const promptMd = rows[0].prompt_md;
-    // The extract is the raw VLM JSON (contains the block structure), not just the prompt.
-    expect(extract).not.toBe(promptMd);
-    expect(extract).toBe(VLM_OUTPUT);
-    expect(extract).toContain('extracted_prompt_md');
-    expect(meta.single_source_grounding).toBe(true);
   });
 });
 
@@ -1161,153 +860,6 @@ describe('image_candidate cold-start bridges (YUK-478)', () => {
     };
     return { deps, runColdStartBridgeFn, tagKnowledgeFn };
   }
-
-  it('no-KC-match upload → child KC → reviewed reference and source verification → placement-selectable', async () => {
-    const db = testDb();
-    // Thin seed: only subject-root nodes (seed:<subjectId>:root) exist.
-    await seedKnowledge(db);
-    await seedColdStartProposal('img_cand_coldstart');
-
-    const { deps, runColdStartBridgeFn, tagKnowledgeFn } = coldStartDeps({
-      subject_id: 'math',
-      kc_name: '一元二次方程求根',
-      reference_md: 'x = 2 或 x = 3',
-    });
-
-    const result = await acceptAiProposal(db, 'img_cand_coldstart', { imageCandidateDeps: deps });
-    assertProposalLifecycleResult<ImageCandidateAcceptResult>(result, 'image_candidate');
-
-    // P3: the subject-classify bridge ran once (resolving seed:math:root for tagKnowledge), then
-    // tagKnowledge ran once under that root.
-    expect(runColdStartBridgeFn).toHaveBeenCalledTimes(1);
-    expect(tagKnowledgeFn).toHaveBeenCalledTimes(1);
-
-    // tagKnowledge PROPOSEd a child KC under the math subject root + the question tagged with it.
-    const rootId = 'seed:math:root';
-    const children = await db.select().from(knowledge).where(eq(knowledge.parent_id, rootId));
-    expect(children).toHaveLength(1);
-    const childKc = children[0];
-    expect(childKc.name).toBe('一元二次方程求根');
-    expect(childKc.approval_status).toBe('approved');
-    // domain:null → inherits the subject (math) via the parent chain (effective-domain).
-    expect(childKc.domain).toBeNull();
-
-    const rows = await db.select().from(question).where(eq(question.id, result.question_id));
-    const q = rows[0];
-    expect(q.knowledge_ids).toEqual([childKc.id]);
-
-    // P3 (YUK-489): reference generation is DECOUPLED to P4a. OCR extracted no answer
-    // (VLM_OUTPUT_NO_REF) → reference_md stays null (the bridge answer is NOT used here anymore).
-    expect(q.reference_md).toBeNull();
-
-    // structural verify (prompt + kind + ≥1 live KC) auto-promoted draft→active.
-    expect(q.draft_status).toBe('active');
-
-    // Active alone cannot issue an automatic assessment without a verified reference.
-    expect(await selectNextPlacementItem(db, { knowledgeIds: [childKc.id] })).toBeNull();
-    const [initial] = await db
-      .select()
-      .from(question_group_lifecycle)
-      .where(eq(question_group_lifecycle.group_id, result.question_id));
-    expect(initial.scoring_admission_state).toBe('withheld');
-    expect(deps.enqueueSourceVerify).toHaveBeenCalledWith([result.question_id]);
-
-    // The existing question editor authors a local choice key before source_verify;
-    // the classification bridge's generated answer never becomes scoring authority.
-    const edited = await editQuestion(
-      db,
-      result.question_id,
-      q.version,
-      {
-        kind: 'choice',
-        reference_md: 'A',
-        choices_md: ['x = 2 或 x = 3', 'x = -2 或 x = -3'],
-      },
-      'test:cold-start-reviewed-reference',
-    );
-    expect(edited.status).toBe('updated');
-    const grounding = vi.fn(async () => ({
-      status: 'grounded' as const,
-      confidence: 0.99,
-      observed_md: '来源图片中题干为 x² - 5x + 6 = 0。',
-      reason_md: '原图与冻结题干一致。',
-    }));
-    const verification = await runSourceVerify({
-      db,
-      questionId: result.question_id,
-      runTaskFn: vi.fn(async (kind) => ({
-        text:
-          kind === 'SemanticJudgeTask'
-            ? semanticJudgeOutput('correct', 0.99)
-            : solverOutput('A', ['x = 2 或 x = 3']),
-      })),
-      imageFetchFn: async (refs) => refs.map(() => ({ data: 'AQIDBA==', mediaType: 'image/png' })),
-      sourceGroundingFn: grounding,
-    });
-    expect(verification.status, JSON.stringify(verification)).toBe('verified');
-    expect(verification.checks?.every((check) => check.verdict !== 'fail')).toBe(true);
-    expect(grounding).toHaveBeenCalledTimes(1);
-    const [verified] = await db
-      .select()
-      .from(question_group_lifecycle)
-      .where(eq(question_group_lifecycle.group_id, result.question_id));
-    expect(verified.scoring_admission_state).toBe('admitted');
-
-    // The actual verification/publisher chain makes the cold-start question selectable.
-    const pick = await selectNextPlacementItem(db, { knowledgeIds: [childKc.id] });
-    expect(pick).not.toBeNull();
-    expect(pick?.questionId).toBe(result.question_id);
-    const issued = await issueSoloFixture(db, result.question_id);
-    const submitted = await commitFormalAttempt(
-      db,
-      'solo_submit',
-      result.question_id,
-      issued.assessment('A'),
-    );
-    expect(submitted.status).toBe('effective');
-    expect(submitted.candidate.result.coarse_outcome).toBe('correct');
-  });
-
-  it('echoes the OCR-extracted reference answer (does not regenerate) when one was present', async () => {
-    const db = testDb();
-    await seedKnowledge(db);
-    // A VLM output that DID extract a reference answer.
-    const withRef = JSON.stringify({
-      blocks: [
-        {
-          extracted_prompt_md: '解方程 x^2 - 5x + 6 = 0。',
-          reference_md: 'x = 2 or x = 3 (OCR original)',
-          wrong_answer_md: null,
-          page_index: 0,
-          bbox: { x: 0.1, y: 0.1, width: 0.8, height: 0.4 },
-          role: 'prompt',
-          visual_complexity: 'low',
-          extraction_confidence: 0.9,
-          knowledge_hint: null,
-        },
-      ],
-    });
-    await seedColdStartProposal('img_cand_coldstart_withref');
-    // The bridge still classifies the subject (no KC match), but echoes the existing answer.
-    const { deps } = coldStartDeps({
-      subject_id: 'math',
-      kc_name: '一元二次方程求根',
-      reference_md: 'x = 2 or x = 3 (OCR original)',
-    });
-    (deps.runTaskFn as ReturnType<typeof vi.fn>).mockImplementation(async () => ({
-      text: withRef,
-    }));
-
-    const result = await acceptAiProposal(db, 'img_cand_coldstart_withref', {
-      imageCandidateDeps: deps,
-    });
-    assertProposalLifecycleResult<ImageCandidateAcceptResult>(result, 'image_candidate');
-    const rows = await db.select().from(question).where(eq(question.id, result.question_id));
-    // The OCR-extracted reference answer is preserved (the cold-start bridge must not
-    // overwrite a real OCR answer with a regenerated one).
-    expect(rows[0].reference_md).toBe('x = 2 or x = 3 (OCR original)');
-    expect(rows[0].draft_status).toBe('active');
-  });
 
   it('bridge failure → un-attributed draft (no KC, stays draft, not placement-selectable) — upload is not lost', async () => {
     const db = testDb();

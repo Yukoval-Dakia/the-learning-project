@@ -251,6 +251,99 @@ test -s "$DUMP"
 docker compose exec -T postgres pg_restore -l < "$DUMP" >/dev/null
 ```
 
+The existing full helpers add a source-bound parity gate to this manual dump path:
+
+```bash
+# The maintenance owner supplies a held boundary; these helpers never stop/restart writers.
+bash scripts/cutover-final-backup.sh --target=<pg-url> \
+  --quiescence-evidence=<maintenance.json> --out=<capture-root> --strict
+# Read the returned unique capture directory. After successful sealing, the owner may release it.
+bash scripts/restore-drill.sh --dump=<capture>/database.dump \
+  --source-manifest=<capture>/source-manifest.json --out=<capture>/restore-evidence.json
+pnpm exec tsx scripts/cutover-backup.ts --capture-dir=<capture>/migration \
+  --dump=<capture>/database.dump --dlq=<capture>/dlq-tombstones.json \
+  --source-manifest=<capture>/source-manifest.json --restore-evidence=<capture>/restore-evidence.json \
+  --out=<capture> --strict --require-restore-parity
+```
+
+`--strict` retains the required migration manifest/dump/DLQ presence rule. The independent
+`--require-restore-parity` gate requires a current successful version-2 receipt. It rehashes the
+selected artifacts, checks dump/source/quiescence links and phase outcomes, and recomputes comparison.
+No success boolean alone satisfies the gate. Legacy unversioned receipts are preserved unchanged:
+`reported_verified` records their historical claim; normalized `verified` is false. For a legacy dump,
+explicit `--restore-only --image=<compatible-image>` proves SQL loading only. `--list-only` checks TOC
+and emits no parity receipt. Existing receipt paths are refused; `--overwrite` archives the previous
+receipt before attempting a replacement. Failed attempts exit nonzero and write failed JSON where writable.
+
+The source uses a live exported snapshot through dump and all source reads. Its logical algorithm is
+`pg16-column-text-sha256-multiset-v2`: fixed UTF-8/UTC PostgreSQL 16 text values, ordered column/type
+metadata with array declaration dimensions canonicalized to zero, sorted full-row SHA-256 digests
+with duplicate multiplicity, streamed into a table digest.
+Actual array values retain their dimensions, bounds, order and NULL distinctions in the hashed text.
+The envelope remains version 2; v1, missing and unknown content algorithms are rejected. Historical
+v1 digests and receipts are not reinterpreted as v2 evidence. Fresh capture and restore are required.
+It covers every non-system schema (including empty schemas), physical table/partition/inheritance rows
+using `ONLY`, and all sequences with decimal-string `last_value` and boolean `is_called`. Supported
+value types include ordinary deterministic builtins, pgvector `vector`, enums with ordered labels,
+and recursively supported arrays/domains. Unknown output types, foreign tables, unpopulated materialized
+views, denied RLS reads, query/stream/TOC/restore failures and missing/extra inventories fail visibly.
+Host table/dump hashing is bounded; database sort work uses bounded work_mem/temp_file_limit and deadlines.
+
+The required `loom-maintenance-boundary` JSON identifies `owner`, `window`, `established_at`,
+`held_until_explicit_release:true`, source cluster/database identity, `source_revision`, and
+enforced `restart_admission_control`, `other_clients_control`, and
+`background_writers_control`. `writers` lists stopped container IDs or externally controlled host/remote
+writers. Its basis is `external-maintenance-boundary`. See the exported `quiescenceEvidenceSchema` in
+`src/core/migration/cutover-manifest.ts` for the exact shape. All writers, schedulers, admin/migration
+clients, replication/background writing jobs and sequence actors must be accounted for. A boolean
+“writers stopped”, unknown controls or requested controls are insufficient. The helper compares host
+and container cluster/database identity and observes sessions/prepared transactions/listed containers;
+those observations detect violations and do not enforce continuous exclusion or freeze sequences.
+Assurance is `operator-attested-with-observations`. Companion DLQ/migration captures remain inside the
+same externally held boundary; the existing migration CLI does not import the exported snapshot.
+
+Version 1 retains mandatory immutable `app_image` and `worker_image`. A host Node worker with no app
+uses version 2 with `execution.kind="host-node-v1"`, `execution.app={"kind":"absent"}`,
+`execution.runtime={"kind":"node","version":<process.version>,"artifact":<file/sha256/bytes>}`,
+and `execution.worker={"name":<controlled-host-writer>,"artifact":<file/sha256/bytes>}`.
+The worker name must match an enforced external entry in `writers`. Capture, restoration and final
+artifact assembly rehash these exact files. The runtime bytes and version must also match the helper's
+pinned `process.execPath` and `process.version`. Mixed image/host evidence, missing provenance and
+changed artifacts fail. These digests bind artifacts; the external maintenance owner remains responsible
+for proving that this worker used them and was stopped. Explicit `--target` identity uses the installed
+`postgres` driver lazily, with a read-only transaction, one owned connection and bounded close. It does
+not require host `psql`, import the application DB, use an inherited database URL or log credentials.
+
+The default scratch has `--network=none`. For parent acceptance that must reopen the same restored
+database, full parity supports only this paired, explicit exception:
+
+```text
+bash scripts/restore-drill.sh --dump=<sealed-dump> --source-manifest=<capture-source-manifest> --quiescence-evidence=<maintenance.json> --out=<new-attempt-receipt> --keep --scratch-loopback-port=<1024..65535> --scratch-database=test_fork_<digits>
+```
+
+Both scratch options require `--key=value` once, full mode and `--keep`; bare, duplicated, malformed,
+unpaired or limited-mode options fail before Docker. The helper creates a new random container from
+the locally resolved immutable image with `--pull=never`, `--network=bridge` and exactly
+`127.0.0.1:<port>:5432`. A collision fails; it never chooses another port, stops another owner, restores
+to an existing target or attaches a caller's volume. It verifies ID/name/image/attempt label, environment,
+storage and actual mapping before every exec and cleanup, and reads database identity before/after
+restore and inspection. Unknown or ambiguous creation never permits name-based cleanup.
+
+The current receipt adds `scratch.ownership={container_id,attempt,volumes}` for an observed owned
+container. Only a successful retained loopback attempt adds `scratch.reopen` with
+`kind="retained-loopback-v1"`, full `container_id`, literal host, observed port and full database identity.
+A failed retained container has no reopen object and grants no launch authority. Ordinary current
+parity receipts without reopen remain valid parity evidence and cannot satisfy the parent's reopen
+gate. The parent must hash-bind the exact helper closure, new receipt, sealed capture/dump/quiescence
+inputs and target witness, recheck the actual ID/label/image/mapping and durable DB identity, and hold
+maintenance through launch. Host and container route addresses may differ; cluster/database OID/name,
+version/start time and recovery state must match. No second restore, migration or writer may intervene.
+The parent owns eventual cleanup of the recorded disposable volumes. The helper never launches a worker.
+
+Measure scratch parity before migrations, admission-row deletion or worker reopen. Database-content
+parity does not certify complete DDL/roles/privileges, R2 blobs, Mem0 or durable worker recovery. Parent
+acceptance separately restores nonempty completed/pending/held DBOS obligations and proves safe reopen.
+
 The repository also provides `pnpm db:dump` for a plain-SQL dump to `/tmp` and
 `pnpm db:restore < /tmp/<dump>.sql` for its matching restore path.
 

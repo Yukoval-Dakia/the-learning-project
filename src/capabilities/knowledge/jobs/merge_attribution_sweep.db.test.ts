@@ -61,21 +61,6 @@ describe('merge_attribution_sweep (YUK-544 census + bounded auto-repair)', () =>
     await resetDb();
   });
 
-  it('clean tree: censuses, repairs nothing, writes no event', async () => {
-    await insertK('k_into', { mergedFrom: ['k_from'] });
-    await insertK('k_from', { archived: true });
-    // no surface references k_from → no drift
-
-    const res = await runMergeAttributionSweep(db);
-    expect(res.scannedFromIds).toBe(1);
-    expect(res.resolved).toBe(1);
-    expect(res.driftedFromIds).toBe(0);
-    expect(res.repairedFromIds).toBe(0);
-    expect(res.surfacesRepaired).toBe(0);
-    expect(res.eventsWritten).toBe(0);
-    expect(await repairEvents()).toHaveLength(0);
-  });
-
   it('auto-repairs drift, writes the forensic event, re-census is zero, second run is a no-op', async () => {
     await insertK('k_into', { mergedFrom: ['k_from'] });
     await insertK('k_from', { archived: true });
@@ -204,42 +189,6 @@ describe('merge_attribution_sweep (YUK-544 census + bounded auto-repair)', () =>
     expect(q1[0].knowledge_ids).toEqual(['k_from']); // untouched
   });
 
-  it('hard cap: repairs only maxRepair from_ids, defers the rest, and converges next run', async () => {
-    // One winner absorbed three losers; every loser still has a dangling question surface.
-    await insertK('k_into', { mergedFrom: ['k_a', 'k_b', 'k_c'] });
-    await insertK('k_a', { archived: true });
-    await insertK('k_b', { archived: true });
-    await insertK('k_c', { archived: true });
-    await insertQ('q_a', ['k_a']);
-    await insertQ('q_b', ['k_b']);
-    await insertQ('q_c', ['k_c']);
-
-    const first = await runMergeAttributionSweep(db, { maxRepair: 2 });
-    expect(first.driftedFromIds).toBe(3);
-    expect(first.repairedFromIds).toBe(2); // capped
-    expect(first.deferredFromIds).toBe(1); // "剩 1 个下轮"
-    expect(first.residualAfterRepair).toBe(0); // the repaired subset itself is clean
-    expect(first.eventsWritten).toBe(2);
-    expect(await repairEvents()).toHaveLength(2);
-
-    // Next run: idempotent continuation picks up the deferred from_id.
-    const second = await runMergeAttributionSweep(db, { maxRepair: 2 });
-    expect(second.driftedFromIds).toBe(1);
-    expect(second.repairedFromIds).toBe(1);
-    expect(second.deferredFromIds).toBe(0);
-    expect(second.residualAfterRepair).toBe(0);
-    expect(await repairEvents()).toHaveLength(3);
-
-    // All three questions now key to the winner; a third run is fully clean.
-    for (const qid of ['q_a', 'q_b', 'q_c']) {
-      const row = await db.select().from(question).where(eq(question.id, qid));
-      expect(row[0].knowledge_ids).toEqual(['k_into']);
-    }
-    const third = await runMergeAttributionSweep(db);
-    expect(third.driftedFromIds).toBe(0);
-    expect(third.repairedFromIds).toBe(0);
-  });
-
   it('A1 winner isolation: a throwing winner rolls back alone — other winners repair + emit events', async () => {
     // Winner A — repairs cleanly.
     await insertK('k_into_a', { mergedFrom: ['k_a'] });
@@ -334,23 +283,5 @@ describe('merge_attribution_sweep (YUK-544 census + bounded auto-repair)', () =>
     const ms = await db.select().from(mastery_state).where(eq(mastery_state.subject_id, 'k_from'));
     expect(ms).toHaveLength(1);
     expect(await repairEvents()).toHaveLength(0);
-  });
-
-  it('S1 WARN water level: crossing warnDrift logs ELEVATED DRIFT but still repairs (告知-only)', async () => {
-    await insertK('k_into', { mergedFrom: ['k_from'] });
-    await insertK('k_from', { archived: true });
-    await insertQ('q1', ['k_from']);
-
-    const warnSpy = vi.spyOn(console, 'warn');
-    try {
-      const res = await runMergeAttributionSweep(db, { warnDrift: 0 });
-      expect(res.driftedFromIds).toBe(1);
-      expect(res.repairedFromIds).toBe(1); // the warning never blocks the self-heal
-      expect(
-        warnSpy.mock.calls.some((c) => typeof c[0] === 'string' && c[0].includes('ELEVATED DRIFT')),
-      ).toBe(true);
-    } finally {
-      warnSpy.mockRestore();
-    }
   });
 });

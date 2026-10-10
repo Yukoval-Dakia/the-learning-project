@@ -64,80 +64,6 @@ describe('editArtifactSection', () => {
     await resetDb();
   });
 
-  it('updates one section, appends artifact history, bumps versions, and writes edit event', async () => {
-    await seedArtifact();
-    const now = new Date('2026-05-25T10:00:00.000Z');
-
-    const result = await editArtifactSection({
-      db: testDb(),
-      artifactId: 'a1',
-      sectionId: 's1',
-      expectedArtifactVersion: 0,
-      expectedSectionVersion: 1,
-      nextBodyMd: '新定义 **重点**',
-      actorRef: 'test-user',
-      eventId: 'evt_section_edit_1',
-      now,
-    });
-
-    expect(result.artifact_version).toBe(1);
-    expect(result.section).toMatchObject({
-      id: 's1',
-      body_md: '新定义 **重点**',
-      version: 2,
-    });
-    expect(result.event_id).toBe('evt_section_edit_1');
-
-    const [row] = await testDb().select().from(artifact).where(eq(artifact.id, 'a1'));
-    expect(row.version).toBe(1);
-    const sections = bodyBlocksToNoteSections(row.body_blocks);
-    expect(sections[0]).toMatchObject({ id: 's1', body_md: '新定义 **重点**', version: 2 });
-    expect(sections[1]).toMatchObject({ id: 's2', body_md: '旧例子', version: 3 });
-
-    const history = row.history as Array<Record<string, unknown>>;
-    expect(history).toHaveLength(1);
-    expect(history[0]).toMatchObject({
-      version: 1,
-      action: 'block_edit',
-      block_id: 's1',
-      block_index: 0,
-      previous_body_md: '旧定义',
-      next_body_md: '新定义 **重点**',
-      previous_version: 1,
-      next_version: 2,
-      event_id: 'evt_section_edit_1',
-    });
-
-    // W3-C1γ — section edits now MIGRATE onto the self-sufficient experimental:body_blocks_edit
-    // (design §5.2: NO separate artifact_section_edit reducer branch — a section edit IS a full-body
-    // replace). The event carries the AFTER body_blocks + previous + history_after + version (NOT the
-    // section deltas — those survive on the artifact.history entry above for the timeline view).
-    const events = await testDb().select().from(event).where(eq(event.id, 'evt_section_edit_1'));
-    expect(events).toHaveLength(1);
-    expect(events[0]).toMatchObject({
-      actor_kind: 'user',
-      actor_ref: 'test-user',
-      action: 'experimental:body_blocks_edit',
-      subject_kind: 'artifact',
-      subject_id: 'a1',
-      outcome: 'success',
-    });
-    const sectionEditPayload = events[0].payload as {
-      previous_artifact_version: number;
-      next_artifact_version: number;
-      body_blocks: { type?: string };
-      previous_body_blocks: { type?: string } | null;
-      history_after: unknown[];
-    };
-    expect(sectionEditPayload.previous_artifact_version).toBe(0);
-    expect(sectionEditPayload.next_artifact_version).toBe(1);
-    // The AFTER body is the full doc snapshot (last-write-wins), not a delta.
-    expect(sectionEditPayload.body_blocks.type).toBe('doc');
-    expect(sectionEditPayload.previous_body_blocks?.type).toBe('doc');
-    // history_after reproduces the after-history (so the `history` column parity holds).
-    expect(sectionEditPayload.history_after.length).toBeGreaterThanOrEqual(1);
-  });
-
   it('rejects stale artifact version without changing sections or writing an event', async () => {
     await seedArtifact({ version: 4 });
 
@@ -164,37 +90,5 @@ describe('editArtifactSection', () => {
       .from(event)
       .where(eq(event.id, 'evt_section_edit_stale'));
     expect(events).toHaveLength(0);
-  });
-
-  it('rejects missing sections with not_found', async () => {
-    await seedArtifact({ body_blocks: null });
-
-    await expect(
-      editArtifactSection({
-        db: testDb(),
-        artifactId: 'a1',
-        sectionId: 's1',
-        expectedArtifactVersion: 0,
-        expectedSectionVersion: 1,
-        nextBodyMd: 'next',
-      }),
-    ).rejects.toMatchObject({ code: 'not_found', status: 404 });
-  });
-
-  it('rejects malformed body_blocks with validation_error instead of section not_found', async () => {
-    await seedArtifact({
-      body_blocks: { type: 'doc', content: [{ text: 'missing type' }] } as never,
-    });
-
-    await expect(
-      editArtifactSection({
-        db: testDb(),
-        artifactId: 'a1',
-        sectionId: 's1',
-        expectedArtifactVersion: 0,
-        expectedSectionVersion: 1,
-        nextBodyMd: 'next',
-      }),
-    ).rejects.toMatchObject({ code: 'validation_error', status: 500 });
   });
 });

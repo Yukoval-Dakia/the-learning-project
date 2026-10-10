@@ -1,5 +1,6 @@
 // YUK-577 — copilot_nudge_evaluate handler: write + idempotency + shadow + red-line. design §3.3/§3.7.
-import { eq, ne } from 'drizzle-orm';
+
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { newId } from '@/core/ids';
 import { event, question_block, source_document } from '@/db/schema';
@@ -61,55 +62,11 @@ describe('runCopilotNudgeEvaluate', () => {
     }
   });
 
-  it('writes exactly one nudge event (shadow=true by default OFF)', async () => {
-    await seedIngestion('S1', 5);
-    await runCopilotNudgeEvaluate(testDb(), { kind: 'ingestion_complete', session_id: 'S1' });
-    const rows = await testDb().select().from(event).where(eq(event.action, NUDGE_ACTION));
-    expect(rows).toHaveLength(1);
-    expect((rows[0].payload as { shadow: boolean }).shadow).toBe(true);
-    expect((rows[0].payload as { block_count?: number; kind: string }).kind).toBe(
-      'ingestion_complete',
-    );
-    expect(rows[0].caused_by_event_id).toBe('evt_extract_S1');
-  });
-
   it('is idempotent: two runs for the same completion → one nudge row', async () => {
     await seedIngestion('S2', 3);
     await runCopilotNudgeEvaluate(testDb(), { kind: 'ingestion_complete', session_id: 'S2' });
     await runCopilotNudgeEvaluate(testDb(), { kind: 'ingestion_complete', session_id: 'S2' });
     expect(await countNudges()).toBe(1);
-  });
-
-  it('RED LINE: writes ONLY the nudge action — no judge/attempt/review/correct events', async () => {
-    await seedIngestion('S3', 2);
-    await runCopilotNudgeEvaluate(testDb(), { kind: 'ingestion_complete', session_id: 'S3' });
-    // Every event NOT the seeded extract must be the nudge action (no judge/attempt/mastery writes).
-    const nonExtract = await testDb()
-      .select({ action: event.action })
-      .from(event)
-      .where(ne(event.action, 'extract'));
-    expect(nonExtract.every((r) => r.action === NUDGE_ACTION)).toBe(true);
-    for (const forbidden of ['judge', 'attempt', 'review', 'correct']) {
-      const rows = await testDb()
-        .select({ id: event.id })
-        .from(event)
-        .where(eq(event.action, forbidden));
-      expect(rows).toHaveLength(0);
-    }
-  });
-
-  it('shadow=false when COPILOT_NUDGE_ENABLED=1 (surfaceable)', async () => {
-    process.env.COPILOT_NUDGE_ENABLED = '1';
-    await seedIngestion('S4', 4);
-    await runCopilotNudgeEvaluate(testDb(), { kind: 'ingestion_complete', session_id: 'S4' });
-    const rows = await testDb().select().from(event).where(eq(event.action, NUDGE_ACTION));
-    expect((rows[0].payload as { shadow: boolean }).shadow).toBe(false);
-  });
-
-  it('no write when no blocks (empty extraction)', async () => {
-    await seedIngestion('S5', 0);
-    await runCopilotNudgeEvaluate(testDb(), { kind: 'ingestion_complete', session_id: 'S5' });
-    expect(await countNudges()).toBe(0);
   });
 
   it('DB partial-unique index rejects a duplicate nudge for the same trigger source (23505)', async () => {

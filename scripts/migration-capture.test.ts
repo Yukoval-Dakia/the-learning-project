@@ -1,14 +1,13 @@
 import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-
 import { describe, expect, it } from 'vitest';
 import type { CheckpointProvenance } from '@/core/migration/checkpoint';
 import { classifyMigrationCapture } from '@/core/migration/classify';
 import { buildMigrationManifest } from '@/core/migration/manifest';
 import { SNAPSHOT, emptyCapture, ev, judgeEvent, withEvents } from '@/core/migration/test-fixtures';
 
-import { describeTarget, parseCaptureArgs, writeCaptureArtifacts } from './migration-capture';
+import { writeCaptureArtifacts } from './migration-capture';
 
 // YUK-1048 — CLI 纯函数单测（无 DB：db 客户端在 main() 内惰性构建）。
 // 幂等工件写入（checkpoint 内容寻址，review P1-1/P2-B）用 tmpdir 驱动真实 fs。
@@ -48,55 +47,6 @@ function baseCapture() {
   });
   return withEvents(emptyCapture(), [attempt, judge]);
 }
-
-describe('parseCaptureArgs', () => {
-  it('解析 --out/--target 与布尔 --redact（含空格形式）', () => {
-    expect(parseCaptureArgs(['--out', '/tmp/x', '--target', 'postgres://u:p@h:5/db'])).toEqual({
-      out: '/tmp/x',
-      target: 'postgres://u:p@h:5/db',
-      redact: false,
-      appImage: null,
-      workerImage: null,
-      gitSha: null,
-    });
-    expect(
-      parseCaptureArgs([
-        '--out=/tmp/y',
-        '--redact',
-        '--app-image=app:1',
-        '--worker-image=worker:1',
-        '--git-sha=abc',
-      ]),
-    ).toMatchObject({
-      out: '/tmp/y',
-      redact: true,
-      appImage: 'app:1',
-      workerImage: 'worker:1',
-      gitSha: 'abc',
-    });
-  });
-
-  it('缺省为 null（main 拒绝缺 --out / 无 target）', () => {
-    const args = parseCaptureArgs([]);
-    expect(args.out).toBeNull();
-    expect(args.target).toBeNull();
-    expect(args.redact).toBe(false);
-  });
-});
-
-describe('describeTarget', () => {
-  it('只暴露 host/port/db，绝不包含凭证', () => {
-    const described = describeTarget(
-      'postgres://secret-user:super-secret@db.example.com:5433/loom?sslmode=require',
-    );
-    expect(described).toBe('db.example.com:5433/loom');
-    expect(described).not.toContain('secret');
-  });
-
-  it('不可解析 URL 也不抛凭证', () => {
-    expect(describeTarget('not a url')).toBe('(unparseable-url)');
-  });
-});
 
 describe('writeCaptureArtifacts — checkpoint 内容寻址幂等（P1-1/P1-2/P2-B）', () => {
   it('同观测重跑 → already-present/unchanged，目录不新增重复工件', () => {

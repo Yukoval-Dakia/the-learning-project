@@ -1,0 +1,30 @@
+{
+  "status": "COMPLETE SEALED OFFLINE PREPARATION; RUN05 FAILED; FRESH RESTORE/REOPEN UNVERIFIED",
+  "sourceSealSha256": "c899770a7366b70db737e35ed3f71c77c091a1284506ecd6001309619e68e94f",
+  "evidenceSealSha256": "4a80a0eb84f44bb96b71790c75cc6f797ef8710061238d7eedbf9f84585ea47f",
+  "verifierSha256": "37ba324be6aaa8c0ab8149ece0aff7a7a962a78a8658d3e50ab3ef38117c13fe",
+  "immutableSourceFiles": 5636,
+  "evidenceFiles": 8588,
+  "preservedEntriesMatched": 9254,
+  "readOnlyOriginalPrepEntriesMatched": 2947,
+  "dependencyFiles": 121549,
+  "parentAttemptEntries": {
+    "/tmp/yuk1359-restore-reopen-parent": 9,
+    "/tmp/yuk1359-restore-reopen-parent02": 11,
+    "/tmp/yuk1359-restore-reopen-parent03": 10,
+    "/tmp/yuk1359-restore-reopen-parent04": 17,
+    "/tmp/yuk1359-restore-reopen-parent05": 14
+  },
+  "offlineChecks": 463,
+  "priorChecks": 385,
+  "newChecks": 78,
+  "attempts": {
+    "connections": 0,
+    "listeners": 0,
+    "children": 0
+  },
+  "historicalAuthorReportAvailable": false,
+  "taskState": "completed",
+  "noPending": true,
+  "writerReleased": true
+}
