@@ -1,11 +1,11 @@
 import { createContext, useContext } from 'react';
-import { saveResponseDraft } from '@/capabilities/practice/ui-public';
 import type { ApiOperationJsonResponse, ApiOperationRequestBody } from '@/ui/lib/api';
 import type { SessionTransitionRequestOptions } from '@/ui/lib/session-transition';
 import {
   getPlacementSession,
   placementEnd,
   placementNext,
+  saveProbeResponseDraft,
   startPlacement,
   submitProbeAnswer,
 } from './placement-api';
@@ -38,7 +38,7 @@ export const httpPlacementClient: PlacementClient = {
   placementNext,
   placementEnd,
   submitProbeAnswer,
-  saveResponseDraft,
+  saveResponseDraft: saveProbeResponseDraft,
 };
 const PlacementClientContext = createContext<PlacementClient | undefined>(undefined);
 export const PlacementClientProvider = PlacementClientContext.Provider;
