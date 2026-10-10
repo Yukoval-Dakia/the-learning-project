@@ -31,6 +31,8 @@ function loadMathPlugins(): Promise<MathPlugins> {
   // The stylesheet travels with the plugins: rehype-katex emits MathML for screen readers next to
   // the visual HTML, and only katex.min.css hides the MathML and lays out the HTML. Rendering
   // before it lands shows every formula twice (YUK-1379). Its fonts are bundled same-origin.
+  // The root `katex` dependency exists only for this stylesheet and must stay on the version
+  // rehype-katex renders with: 0.19 renamed .inner/.fix, so \neq drew as "/ =" (YUK-1446).
   mathPluginsPromise ??= Promise.all([
     import('remark-math'),
     import('rehype-katex'),

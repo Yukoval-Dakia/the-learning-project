@@ -43,6 +43,12 @@ updates:
       # optional import bundle-safe (YUK-671).
       - dependency-name: "mem0ai"
         versions: [">=3.1.0"]
+      # The root katex dependency only supplies the stylesheet for markup that
+      # rehype-katex renders with its own katex (^0.16). 0.19 renamed the
+      # .inner/.fix classes, so a lone root bump breaks \neq (YUK-1446). Move
+      # both together once rehype-katex accepts a newer katex.
+      - dependency-name: "katex"
+        versions: [">=0.17.0"]
       # typescript: the manifest name is an alias to @typescript/typescript6
       # (the JS-API compat shim, pinned on the 6.x line); the real TS7 native
       # tsc lives behind @typescript/native below. Dependabot resolves the
