@@ -230,7 +230,7 @@ export const practiceCapability = defineCapability({
       {
         // YUK-594 (durable judge main path, W1) — poll-tier status snapshot for a
         // durable judge_run (D2 three-tier backfill: SSE + poll + replay). Read-only
-        // job_events replay → deriveJudgeRunStatus + terminal verdict. The 202-pending
+        // Permanent native completion/disposition precedes engine observation. The 202-pending
         // contract's poll_url points here (submit.ts enqueueDurableJudge).
         method: 'GET',
         path: '/api/jobs/judge_run/[id]/status',
@@ -941,11 +941,11 @@ export const practiceCapability = defineCapability({
       // retryCount 驱动跨 provider lane 决策（D9），2s polling 与原中央行等价。
       {
         name: 'judge_run',
+        backend: 'dbos',
         queue: 'llm',
         pollingIntervalSeconds: 2,
         batchSize: 1,
         includeMetadata: true,
-        load: () => import('./jobs/judge_run').then((m) => m.buildJudgeRunHandler),
       },
       // YUK-870 (F3.5b) — Phase 1d session_summary 注册自中央渐缩簿收编（等价
       // 平移红线：LLM 档 1h expire + DLQ、2s/1 worker 选项——与原中央行显式 opts
@@ -963,6 +963,7 @@ export const practiceCapability = defineCapability({
       // LLM 调用（付费发生在 judge_run），故 fast 层。
       {
         name: 'judge_pending_reconcile',
+        backend: 'dbos',
         schedule: {
           cron: '50 * * * *',
           tz: 'Asia/Shanghai',
@@ -970,8 +971,6 @@ export const practiceCapability = defineCapability({
           singletonSeconds: 60 * 60,
         },
         queue: 'fast',
-        load: () =>
-          import('./jobs/judge_pending_reconcile').then((m) => m.buildJudgePendingReconcileHandler),
       },
       // YUK-986 (Supply-Agent/1) — jyeoo staged 图片资产回收。jyeoo_fetch_candidates
       // 即期持久化候选图片（origin='jyeoo_staged'），未提交候选的孤儿资产每日回收

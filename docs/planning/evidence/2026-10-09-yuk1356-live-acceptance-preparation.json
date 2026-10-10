@@ -1,0 +1,154 @@
+{
+  "workspace": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage",
+  "branch": "feat/yuk-1356-durable-judge",
+  "requested_head": "34d1e06d4",
+  "observed_head": "041c19f53e54fe537381a545ae83fb2c39dcaa9d",
+  "files": [
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/docs/planning/2026-10-09-yuk1356-current-acceptance-matrix.md",
+      "sha256": "b59c04ba8feff4e59016eb3f4ebe87dec5b1b1025760fe89446f4ebe5ea89baf"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/docs/planning/2026-10-09-judge-start-ownership.md",
+      "sha256": "a60a54fb53147a142609261e30fa592ca2ea24bebb6e035db76f171a083317cd"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/docs/planning/2026-10-08-yuk1356-real-pi-acceptance.md",
+      "sha256": "eee2504058480a242c8d0430f31e98812efa947c4dc900475b754eae2bc4a93d"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/scripts/capture-judge-golden.ts",
+      "sha256": "6d609714372e674642296bf65015155ad0bba186e82d81d6968b45d3bba261c5"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/scripts/judge-golden-reaudit.ts",
+      "sha256": "4db96ffcc6ef4a3542a66e54f0b514a9bd31e5e30dde3d5acad869fd03368544"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/tests/dbos-judge/process.db.test.ts",
+      "sha256": "9909e34db114451eb2333085b3f646b04853c85490871115fa0dc3a00ce3ca56"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/tests/dbos-judge/support.ts",
+      "sha256": "b4c91a0cf68ffa28648bae081266d6136d6fbe25fa1ea8f3af40431f398bd357"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/tests/dbos-judge/worker.ts",
+      "sha256": "c4bd1514377bea301ec3b6e72cedb72ebd18e7abdff5b4b4501c8d74a2c8b54d"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/server/durable/judge-worker.ts",
+      "sha256": "4c6cb97c62eb7fb3a9c68d0d28c773f80a25625102cf46b821081f763c1047a0"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/capabilities/practice/jobs/judge_run.ts",
+      "sha256": "7e25aa85368ea01b4aa342feb9a4995daf9943158861060d8389767bd1ed5adc"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/capabilities/practice/public.ts",
+      "sha256": "80b03306a69f66ad60842dc36553ed65c00feeba77e85913d4e133238c27aec5"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/capabilities/practice/server/assessment/durable-attempt.ts",
+      "sha256": "8adef567bf182e7410aa7e4672b107b29f309dc4a800b486441cbd5aaafdcac0"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/capabilities/practice/server/judge/evaluate-submission.ts",
+      "sha256": "31ff3ff5414a064dcb191675bd565ee4a38c03b33fa6c7bb081814b37b3ab2e4"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/capabilities/practice/server/judge/recorded-model-executor.ts",
+      "sha256": "4bc96ab2dccd57b8573d0ef065293d2c415f1f3f8f2a4d754aec5207892815ad"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/capabilities/practice/server/judge-run-dispatch.ts",
+      "sha256": "ab0ed6028f91a4e02fc3796ca9898111fdab201fa4eb34ebc01cc001eff6f366"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/capabilities/practice/server/judge-run-notification.ts",
+      "sha256": "a11bfaab476a9f39fd4b8ff3e101eee70715afcb289d715f424b4840dc815c45"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/capabilities/practice/server/judge-run-observation.ts",
+      "sha256": "749912102a32a8fe9e47ca4bb0c5205d63f6f7c787e1f60f616787d5f680ee7c"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/capabilities/practice/server/judge-run-status.ts",
+      "sha256": "4c5e7b89f97dca120e78737fb21cc7be07a2950df87c244e905370a982d3e834"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/capabilities/practice/api/judge-run-status-route.ts",
+      "sha256": "a9d91d7e7548db3597956123bf2a1bccd80aa27e61bf2a1c600a854f0e008667"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/capabilities/practice/api/judge-run-status-route.db.test.ts",
+      "sha256": "1b525332bb6ecf198dfd7936c45f8f9e3ea6fffab2fc64900ae2e84e0cb27518"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/capabilities/practice/api/submit.ts",
+      "sha256": "100803b9dffdffd39126e2111a557187c3a66435902f1790501e73c97c651305"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/capabilities/practice/manifest.ts",
+      "sha256": "961f4c43bb84fe51392d41c4c5bd030e71fb29e02ae77b4297a45d568d445580"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/capabilities/observability/api/job-events.ts",
+      "sha256": "8fd0845cbe847260d82016adbf46c74fad8c78f176d37444fa264913fe30606c"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/capabilities/observability/api/job-events.test.ts",
+      "sha256": "1a5afa5221c2baa0a82afea4b99a08990c63079683cbec4f22c3a167b102021a"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/capabilities/observability/api/event-contracts.ts",
+      "sha256": "d90c6d5e44cc447d97ff0fb182f31fe67daaf8bf9b79003453b59a4c414d2385"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/capabilities/observability/manifest.ts",
+      "sha256": "75220783df9b24786a69a20533917015dd274a3486446a5c99a24d56ff78ac64"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/server/events/sse_replay.ts",
+      "sha256": "32b84157eeec19dcbd8e55ca91f322704d20aaaa7cc036a97d72899de8f16d78"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/server/app.ts",
+      "sha256": "53345b55fb8642ad7697fc5091c11580d6d931db6ed73186c37ca6ddff06927f"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/server/ai/providers.ts",
+      "sha256": "ef134359ef10b78a1d95dd9d3e814888e7de8c41eb3ad9155633c62743814577"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/server/ai/provider-attempt-admission-config.ts",
+      "sha256": "fc4c1bd44ffb10797dbb8728189e578ebd19586d08b615415113266318c1131b"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/server/ai/runner.ts",
+      "sha256": "ade839b551910ff25233e5a34b3f47fa2aadfcfe50c21aa3c734d4a57409225a"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/server/assessment/pi-model-executor.ts",
+      "sha256": "896bfa0654674b758ef6d3c704072b1529a6377163953ad4e2068fbfb956c9e0"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/server/http/rate-limit.ts",
+      "sha256": "11e4250840ce576429855d448b39e0f2f07975abea4a45a58ee0f453047ba6aa"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/capabilities/practice/tasks/assessment-rule.ts",
+      "sha256": "2b3551ba963320e54d403c9b067a38a3cc96afbd3b5a7f48427a11e392d217d7"
+    },
+    {
+      "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/src/db/schema.ts",
+      "sha256": "9bfbc1d0bf766f29c3d04bc23754759d8a0ec9aca3af55996764edab15a59f57"
+    }
+  ],
+  "parentVerification": {
+    "checked": 35,
+    "mismatches": [],
+    "reportSha256": "3a6a04fbef70cb63a04eccddfd4207c4ffb072b621c419781717dc164adbc13b",
+    "scope": "source preparation only; no live acceptance"
+  }
+}

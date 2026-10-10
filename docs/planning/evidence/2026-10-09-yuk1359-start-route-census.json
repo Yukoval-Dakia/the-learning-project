@@ -1,0 +1,354 @@
+{
+  "baseline": "7472f4395f4a12a5167e33034d5d8af8bf695049",
+  "method": "TypeScript AST literals from exact committed main; no product imports or runtime",
+  "surface_count": 28,
+  "explicit_start": 14,
+  "fallback": 14,
+  "surfaces": [
+    {
+      "id": "root",
+      "route": "/",
+      "owner": "shell",
+      "kind": "redirect",
+      "title": "今日",
+      "activeId": "today",
+      "start": "server/start/routes/index.tsx"
+    },
+    {
+      "id": "today",
+      "route": "/today",
+      "owner": "shell",
+      "kind": "page",
+      "title": "今日",
+      "activeId": "today",
+      "start": "server/start/routes/today.tsx"
+    },
+    {
+      "id": "welcome",
+      "route": "/welcome",
+      "owner": "onboarding",
+      "kind": "page",
+      "title": "开始设置",
+      "activeId": "welcome",
+      "start": null
+    },
+    {
+      "id": "onboarding-upload",
+      "route": "/onboarding/upload",
+      "owner": "onboarding",
+      "kind": "page",
+      "title": "上传学习材料",
+      "activeId": "onboarding-upload",
+      "start": null
+    },
+    {
+      "id": "placement",
+      "route": "/placement",
+      "owner": "onboarding",
+      "kind": "page",
+      "title": "起点探测",
+      "activeId": "placement",
+      "start": null
+    },
+    {
+      "id": "profile",
+      "route": "/profile",
+      "owner": "onboarding",
+      "kind": "page",
+      "title": "起始档案",
+      "activeId": "profile",
+      "start": null
+    },
+    {
+      "id": "inbox",
+      "route": "/inbox",
+      "owner": "shell",
+      "kind": "page",
+      "title": "收件箱",
+      "activeId": "inbox",
+      "start": "server/start/routes/inbox.tsx"
+    },
+    {
+      "id": "mistakes",
+      "route": "/mistakes",
+      "owner": "practice",
+      "kind": "page",
+      "title": "错题本",
+      "activeId": "mistakes",
+      "start": "server/start/routes/mistakes.tsx"
+    },
+    {
+      "id": "agent-notes",
+      "route": "/agent-notes",
+      "owner": "agency",
+      "kind": "page",
+      "title": "AI 观察",
+      "activeId": "agent-notes",
+      "start": "server/start/routes/agent-notes.tsx"
+    },
+    {
+      "id": "event-detail",
+      "route": "/events/$id",
+      "owner": "observability",
+      "kind": "page",
+      "title": "事件证据",
+      "activeId": "events",
+      "start": "server/start/routes/events.$id.tsx"
+    },
+    {
+      "id": "record",
+      "route": "/record",
+      "owner": "ingestion",
+      "kind": "page",
+      "title": "录入",
+      "activeId": "record",
+      "start": null
+    },
+    {
+      "id": "practice",
+      "route": "/practice",
+      "owner": "practice",
+      "kind": "page",
+      "title": "练习",
+      "activeId": "practice",
+      "start": null
+    },
+    {
+      "id": "drafts",
+      "route": "/drafts",
+      "owner": "practice",
+      "kind": "page",
+      "title": "草稿审核",
+      "activeId": "drafts",
+      "start": null
+    },
+    {
+      "id": "questions",
+      "route": "/questions",
+      "owner": "practice",
+      "kind": "page",
+      "title": "题库",
+      "activeId": "questions",
+      "start": null
+    },
+    {
+      "id": "question-detail",
+      "route": "/questions/$id",
+      "owner": "practice",
+      "kind": "page",
+      "title": "题目详情",
+      "activeId": "questions",
+      "start": null
+    },
+    {
+      "id": "knowledge",
+      "route": "/knowledge",
+      "owner": "knowledge",
+      "kind": "page",
+      "title": "知识",
+      "activeId": "knowledge",
+      "start": null
+    },
+    {
+      "id": "knowledge-detail",
+      "route": "/knowledge/$id",
+      "owner": "knowledge",
+      "kind": "page",
+      "title": "知识详情",
+      "activeId": "knowledge",
+      "start": null
+    },
+    {
+      "id": "notes",
+      "route": "/notes",
+      "owner": "notes",
+      "kind": "page",
+      "title": "笔记",
+      "activeId": "notes",
+      "start": null
+    },
+    {
+      "id": "note-detail",
+      "route": "/notes/$id",
+      "owner": "notes",
+      "kind": "page",
+      "title": "笔记",
+      "activeId": "notes",
+      "start": null
+    },
+    {
+      "id": "coach",
+      "route": "/coach",
+      "owner": "shell",
+      "kind": "page",
+      "title": "Coach",
+      "activeId": "coach",
+      "start": null
+    },
+    {
+      "id": "admin-config",
+      "route": "/admin/config",
+      "owner": "observability",
+      "kind": "page",
+      "title": "配置",
+      "activeId": "admin",
+      "start": "server/start/routes/admin.config.tsx"
+    },
+    {
+      "id": "admin-runs",
+      "route": "/admin/runs",
+      "owner": "observability",
+      "kind": "page",
+      "title": "运行记录",
+      "activeId": "admin",
+      "start": "server/start/routes/admin.runs.tsx"
+    },
+    {
+      "id": "admin-cost",
+      "route": "/admin/cost",
+      "owner": "observability",
+      "kind": "page",
+      "title": "成本",
+      "activeId": "admin",
+      "start": "server/start/routes/admin.cost.tsx"
+    },
+    {
+      "id": "admin-failures",
+      "route": "/admin/failures",
+      "owner": "observability",
+      "kind": "page",
+      "title": "失败记录",
+      "activeId": "admin",
+      "start": "server/start/routes/admin.failures.tsx"
+    },
+    {
+      "id": "admin-subjects",
+      "route": "/admin/subjects",
+      "owner": "observability",
+      "kind": "page",
+      "title": "学科配置",
+      "activeId": "admin",
+      "start": "server/start/routes/admin.subjects.tsx"
+    },
+    {
+      "id": "admin-subject-detail",
+      "route": "/admin/subjects/$id",
+      "owner": "observability",
+      "kind": "page",
+      "title": "学科特征",
+      "activeId": "admin",
+      "start": "server/start/routes/admin.subjects.$id.tsx"
+    },
+    {
+      "id": "admin-coverage-lattice",
+      "route": "/admin/coverage-lattice",
+      "owner": "observability",
+      "kind": "page",
+      "title": "供题覆盖",
+      "activeId": "admin",
+      "start": "server/start/routes/admin.coverage-lattice.tsx"
+    },
+    {
+      "id": "admin-conjecture-scores",
+      "route": "/admin/conjecture-scores",
+      "owner": "observability",
+      "kind": "page",
+      "title": "猜想评分",
+      "activeId": "admin",
+      "start": "server/start/routes/admin.conjecture-scores.tsx"
+    }
+  ],
+  "infrastructure_routes": [
+    {
+      "route": "/$",
+      "path": "server/start/routes/$.ts"
+    },
+    {
+      "route": "/_build/$",
+      "path": "server/start/routes/[_]build.$.ts"
+    },
+    {
+      "route": "/api/$",
+      "path": "server/start/routes/api.$.ts"
+    }
+  ],
+  "inputs": [
+    {
+      "path": "src/kernel/ui-surfaces.ts",
+      "sha256": "7a93492dee96f215ef6361fb80b1b463e7451d3844ed076ea695db0154527c0b"
+    },
+    {
+      "path": "server/start/routes/$.ts",
+      "sha256": "3b61fc6006eff69437f3822cb8d22357376292c9b73b7091dacc8126d69b2076"
+    },
+    {
+      "path": "server/start/routes/[_]build.$.ts",
+      "sha256": "c87bc39614f7680b0dead6965a7925c3c30aa14c33c69e1d7932d239f44422db"
+    },
+    {
+      "path": "server/start/routes/__root.tsx",
+      "sha256": "263aca7076b81d02b4d310aae4e4ce2ec8b51a06f3721c6f6e700670ca083d08"
+    },
+    {
+      "path": "server/start/routes/admin.config.tsx",
+      "sha256": "2b5a2d3cf84d172e7b210bdcc0b4bc759a0231e0f5ab9f4aabfbd85b17a9050b"
+    },
+    {
+      "path": "server/start/routes/admin.conjecture-scores.tsx",
+      "sha256": "3dd7be584b05aad228ea29ecb8e74d30b60a0ebbad392cdf6dbee84dbd39dd45"
+    },
+    {
+      "path": "server/start/routes/admin.cost.tsx",
+      "sha256": "cbb1cba85bbd1090c46204240d79ddd7193de8001bf1cf56967fd9299ef23703"
+    },
+    {
+      "path": "server/start/routes/admin.coverage-lattice.tsx",
+      "sha256": "3c97cb710cc509084007f503dfc0e1a447ce5773caa3d83b1915136ca5f7311b"
+    },
+    {
+      "path": "server/start/routes/admin.failures.tsx",
+      "sha256": "6453926d7d8b53cc3260e6bacec29fe58c7c7447659bfa005b794984d93fbfe9"
+    },
+    {
+      "path": "server/start/routes/admin.runs.tsx",
+      "sha256": "ec73d8899b29fe0f2831457a8e28f01d1fe46823723021b47dc58bf6d3c9b612"
+    },
+    {
+      "path": "server/start/routes/admin.subjects.$id.tsx",
+      "sha256": "3123e7848717453007fb8ffc30b5c5941d2a75b60fbc7e2d85bf344d9be4df4a"
+    },
+    {
+      "path": "server/start/routes/admin.subjects.tsx",
+      "sha256": "5fad59f9eed1db3bd574e909b8606b9743b3ea5eb6b5648149f7cc8c3e96a293"
+    },
+    {
+      "path": "server/start/routes/agent-notes.tsx",
+      "sha256": "4c366aa6b4146a7cf1c862b6873df7b1135a55f19b022391fe6f1733596f8685"
+    },
+    {
+      "path": "server/start/routes/api.$.ts",
+      "sha256": "c3f56e921d7a447cf07598ed39bf73c6a5de1a0c006995b09b5bd020a735a010"
+    },
+    {
+      "path": "server/start/routes/events.$id.tsx",
+      "sha256": "309c3f9ace64552e53fbb72c23fecb2f5909c0fc1d4f5942f22386feb82d7e92"
+    },
+    {
+      "path": "server/start/routes/inbox.tsx",
+      "sha256": "d33bc02db5c385c43c84bc8ccef2639741554e377850e56f6b6c6d213d3b40df"
+    },
+    {
+      "path": "server/start/routes/index.tsx",
+      "sha256": "b1f15eb367fa611c429ed9844ccd3ec8db9f092d542d012ca4c2f8c9073d1913"
+    },
+    {
+      "path": "server/start/routes/mistakes.tsx",
+      "sha256": "d9657cbc3316663915a4d49240e94b6580a437851d421083d4200f379d964c02"
+    },
+    {
+      "path": "server/start/routes/today.tsx",
+      "sha256": "b7bb06e99f0bdac0d91a9177da347deb8c674ad5371099996ce8fc9f2a58593e"
+    }
+  ],
+  "limits": "Static entry coverage only; not page behavior, nested HTTP retirement, current deployment or full migration completion"
+}

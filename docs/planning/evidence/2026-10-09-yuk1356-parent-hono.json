@@ -1,0 +1,878 @@
+{
+  "candidate": "06ecea821f3bc91254c5a89f5cb5b91301d7bf2a",
+  "status": "CONTROLLED_HONO_AND_REAL_EPOCH_PASS",
+  "HTTP_reads": 24,
+  "read_snapshot_windows": 27,
+  "tables_per_snapshot": 98,
+  "sequences_per_snapshot": 5,
+  "observed": [
+    {
+      "mode": "controlled",
+      "network": {
+        "db_socket_attempts": 5,
+        "hono_socket_attempts": 9,
+        "HTTP_reads": 16,
+        "denied": 0
+      },
+      "steps": [
+        {
+          "label": "requireRealEpoch before fixture setup; parent owns transition",
+          "verdict": {
+            "runnable": true,
+            "marker": {
+              "seq": 3,
+              "epoch": "assessment-contract-v1",
+              "state": "active",
+              "enteredAt": "2026-10-09T04:18:15.956Z",
+              "enteredBy": "test:parent-offline-hono",
+              "note": null
+            }
+          }
+        },
+        {
+          "label": "real pre-setup epoch read snapshot",
+          "kind": "real_PG_read",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "controlled pg-boss judge control initialization; no engine",
+          "kind": "explicit_controlled_fixture_write",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": false
+        },
+        {
+          "label": "controlled frozen publication/issuance/dispatch; local reserved-ID acknowledgement only",
+          "kind": "explicit_controlled_fixture_write",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": false
+        },
+        {
+          "label": "one public workflow; controlled unit scorer; real claims/results/native settlement",
+          "kind": "explicit_controlled_fixture_write",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": false
+        },
+        {
+          "label": "missing token real HTTP401",
+          "kind": "real_TCP_read",
+          "http_status": 401,
+          "status": null,
+          "error": "unauthorized",
+          "reason": null,
+          "body_sha256": "782eeaa7f1915f6783146f8180751785584f0f24bd4e503165c7fc4a597da600",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "default real active epoch readiness",
+          "kind": "real_TCP_read",
+          "http_status": 200,
+          "status": null,
+          "error": null,
+          "reason": null,
+          "body_sha256": "d0ecddb5c4d36af46153e558abdea64486ae14e81f087645316ea55ab43855b9",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "default permanent controlled success",
+          "kind": "real_TCP_read",
+          "http_status": 200,
+          "status": "done",
+          "error": null,
+          "reason": null,
+          "body_sha256": "09232224c9ca94930f3019ed5823ea3a32faf7a637bf07baae4dba463472a7f5",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "retained increasing cursors over actual TCP",
+          "kind": "real_TCP_SSE_read",
+          "cursor": 0,
+          "frames": [
+            {
+              "id": 1,
+              "type": "judge_run.queued"
+            },
+            {
+              "id": 2,
+              "type": "judge_run.started"
+            },
+            {
+              "id": 3,
+              "type": "judge_run.done"
+            }
+          ],
+          "observation_ms": "up-to-5000",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "reconnect only above retained Last-Event-ID",
+          "kind": "real_TCP_SSE_read",
+          "cursor": 1,
+          "frames": [
+            {
+              "id": 2,
+              "type": "judge_run.started"
+            },
+            {
+              "id": 3,
+              "type": "judge_run.done"
+            }
+          ],
+          "observation_ms": "up-to-5000",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "explicit late queued projection; must suppress duplicate/regression",
+          "kind": "explicit_controlled_fixture_write",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "explicit synthetic notification pruning only",
+          "kind": "explicit_controlled_fixture_write",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": false
+        },
+        {
+          "label": "pruned Last-Event-ID silence; GET creates no backfill",
+          "kind": "real_TCP_SSE_read",
+          "cursor": 1,
+          "frames": [],
+          "observation_ms": 1200,
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "default controlled permanent success survives pruning",
+          "kind": "real_TCP_read",
+          "http_status": 200,
+          "status": "done",
+          "error": null,
+          "reason": null,
+          "body_sha256": "09232224c9ca94930f3019ed5823ea3a32faf7a637bf07baae4dba463472a7f5",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "explicit controlled terminal projection after empty initial catchup",
+          "kind": "explicit_controlled_fixture_write",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": false
+        },
+        {
+          "label": "real PG LISTEN/NOTIFY TCP DONE before 10s polling; initial catchup excluded",
+          "kind": "real_TCP_SSE_read",
+          "frames": [
+            {
+              "id": 4,
+              "type": "judge_run.done"
+            }
+          ],
+          "notification_callbacks": 1,
+          "elapsed_after_publish_ms": 20.531042000000525,
+          "elapsed_since_subscribe_ms": 32.23095900000044,
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "explicit second pruning of synthetic success notifications",
+          "kind": "explicit_controlled_fixture_write",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": false
+        },
+        {
+          "label": "default permanent success after live notification pruning",
+          "kind": "real_TCP_read",
+          "http_status": 200,
+          "status": "done",
+          "error": null,
+          "reason": null,
+          "body_sha256": "09232224c9ca94930f3019ed5823ea3a32faf7a637bf07baae4dba463472a7f5",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "controlled separate frozen manual fixture dispatch",
+          "kind": "explicit_controlled_fixture_write",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": false
+        },
+        {
+          "label": "real product disposeJudgeRun; explicitly synthetic provider_unknown reason",
+          "kind": "explicit_controlled_fixture_write",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": false
+        },
+        {
+          "label": "default controlled manual before pruning",
+          "kind": "real_TCP_read",
+          "http_status": 200,
+          "status": "failed",
+          "error": null,
+          "reason": null,
+          "body_sha256": "391216ceaa7222d4df62a3bf967f56692b10aa785508a372d0412c67bf7e3be7",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "explicit controlled manual notification pruning",
+          "kind": "explicit_controlled_fixture_write",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": false
+        },
+        {
+          "label": "default permanent manual survives pruning",
+          "kind": "real_TCP_read",
+          "http_status": 200,
+          "status": "failed",
+          "error": null,
+          "reason": null,
+          "body_sha256": "391216ceaa7222d4df62a3bf967f56692b10aa785508a372d0412c67bf7e3be7",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "controlled mapped pg-boss pending fixture; local acknowledgement only",
+          "kind": "explicit_controlled_fixture_write",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": false
+        },
+        {
+          "label": "REAL default cold mapped observation retains own permanent queued",
+          "kind": "real_TCP_read",
+          "http_status": 200,
+          "status": "queued",
+          "error": null,
+          "reason": null,
+          "body_sha256": "34dbf69eb01a2a4e31f69031c16a97ad323766e1cb1ecddcc8d693b024e3a8d8",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "REAL default cold unmapped unavailable503; no reader/engine spy",
+          "kind": "real_TCP_read",
+          "http_status": 503,
+          "status": null,
+          "error": "judge_status_unavailable",
+          "reason": null,
+          "body_sha256": "ef0a7233e7a0a2d091ec64342612fefeaa4996ef992b4672e8439a5ba8152c63",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "injected unavailable observation503; no default engine proof",
+          "kind": "real_TCP_read",
+          "http_status": 503,
+          "status": null,
+          "error": "judge_status_unavailable",
+          "reason": null,
+          "body_sha256": "ef0a7233e7a0a2d091ec64342612fefeaa4996ef992b4672e8439a5ba8152c63",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "injected authoritative absence404; no default engine proof",
+          "kind": "real_TCP_read",
+          "http_status": 404,
+          "status": null,
+          "error": "not_found",
+          "reason": null,
+          "body_sha256": "c1ebd5bf5c16f990aaed78dbf7f0f81c7c08c9266494f10b3baf76901a070a3f",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "controlled pending fixture for injected identity mismatch only",
+          "kind": "explicit_controlled_fixture_write",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": false
+        },
+        {
+          "label": "injected identity mismatch retains real pending queued",
+          "kind": "real_TCP_read",
+          "http_status": 200,
+          "status": "queued",
+          "error": null,
+          "reason": null,
+          "body_sha256": "a5efb728e89bd4db8a337c5e9b09a24222333f4ea5e85bb895d00ab39ca75078",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "mode": "epoch-maintenance",
+      "network": {
+        "db_socket_attempts": 1,
+        "hono_socket_attempts": 1,
+        "HTTP_reads": 4,
+        "denied": 0
+      },
+      "steps": [
+        {
+          "label": "parent transitioned real marker; recipe performs no transition/setup",
+          "verdict": {
+            "runnable": false,
+            "marker": {
+              "seq": 4,
+              "epoch": "assessment-contract-v1",
+              "state": "preparing",
+              "enteredAt": "2026-10-09T04:21:38.376Z",
+              "enteredBy": "test:parent-offline-hono",
+              "note": null
+            },
+            "reason": "maintenance"
+          }
+        },
+        {
+          "label": "real negative epoch read snapshot",
+          "kind": "real_PG_read",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "missing token real HTTP401",
+          "kind": "real_TCP_read",
+          "http_status": 401,
+          "status": null,
+          "error": "unauthorized",
+          "reason": null,
+          "body_sha256": "782eeaa7f1915f6783146f8180751785584f0f24bd4e503165c7fc4a597da600",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "default real epoch readiness503",
+          "kind": "real_TCP_read",
+          "http_status": 503,
+          "status": null,
+          "error": null,
+          "reason": "maintenance",
+          "body_sha256": "479e0b2ef366e497d126979149a897b86ecabe19117fe4a92f3369aa6e596d31",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "default real epoch-maintenance503 before original handler",
+          "kind": "real_TCP_read",
+          "http_status": 503,
+          "status": null,
+          "error": "contract_epoch_fenced",
+          "reason": "maintenance",
+          "body_sha256": "6cee919a4b32a6e94037c58da26cdc2d385bfa38f7433042c999f4cac5a3b39e",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "default real epoch-maintenance503 before original handler",
+          "kind": "real_TCP_read",
+          "http_status": 503,
+          "status": null,
+          "error": "contract_epoch_fenced",
+          "reason": "maintenance",
+          "body_sha256": "6cee919a4b32a6e94037c58da26cdc2d385bfa38f7433042c999f4cac5a3b39e",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        }
+      ]
+    },
+    {
+      "mode": "epoch-mismatch",
+      "network": {
+        "db_socket_attempts": 1,
+        "hono_socket_attempts": 1,
+        "HTTP_reads": 4,
+        "denied": 0
+      },
+      "steps": [
+        {
+          "label": "parent transitioned real marker; recipe performs no transition/setup",
+          "verdict": {
+            "runnable": false,
+            "marker": {
+              "seq": 6,
+              "epoch": "offline-hono-mismatch-v1",
+              "state": "active",
+              "enteredAt": "2026-10-09T04:24:13.585Z",
+              "enteredBy": "test:parent-offline-hono",
+              "note": null
+            },
+            "reason": "epoch_mismatch"
+          }
+        },
+        {
+          "label": "real negative epoch read snapshot",
+          "kind": "real_PG_read",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "missing token real HTTP401",
+          "kind": "real_TCP_read",
+          "http_status": 401,
+          "status": null,
+          "error": "unauthorized",
+          "reason": null,
+          "body_sha256": "782eeaa7f1915f6783146f8180751785584f0f24bd4e503165c7fc4a597da600",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "default real epoch readiness503",
+          "kind": "real_TCP_read",
+          "http_status": 503,
+          "status": null,
+          "error": null,
+          "reason": "epoch_mismatch",
+          "body_sha256": "c76a9de378742be335e6d989faa8ae1b5a520295caf969a68700457e7da8f66d",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "default real epoch-mismatch503 before original handler",
+          "kind": "real_TCP_read",
+          "http_status": 503,
+          "status": null,
+          "error": "contract_epoch_fenced",
+          "reason": "epoch_mismatch",
+          "body_sha256": "4f1fe89369dfb62f3bb8a8390040db2a65eba69e6361371051bb604e47c4b909",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        },
+        {
+          "label": "default real epoch-mismatch503 before original handler",
+          "kind": "real_TCP_read",
+          "http_status": 503,
+          "status": null,
+          "error": "contract_epoch_fenced",
+          "reason": "epoch_mismatch",
+          "body_sha256": "4f1fe89369dfb62f3bb8a8390040db2a65eba69e6361371051bb604e47c4b909",
+          "table_count": 98,
+          "sequence_count": 5,
+          "unchanged": true
+        }
+      ]
+    }
+  ],
+  "provider_sends": 0,
+  "actual_output_gate_satisfied": false,
+  "cold_default_observation_spies": false,
+  "original_paid_recipe_files_unchanged": 14,
+  "cleanup": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1356",
+      "phase": "isolated-judge-controlled-hono",
+      "token": "cfb66e39-1bbe-4e59-b95c-b6fb51469224",
+      "candidate": "06ecea821f3bc91254c5a89f5cb5b91301d7bf2a",
+      "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "createdAt": "2026-10-09T04:17:19.594781+00:00"
+    },
+    "releasedAt": "2026-10-09T04:24:35.394871+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "review_limit": "R2 covers 3fb999c86 only; later two-file cold repair inspected and accepted by parent, no third independent review.",
+  "limits": [
+    "Controlled scorer, not real provider output. Earlier actual MiMo request remains HTTP429, one send and unknown cost.",
+    "Warm unavailable/authoritative absence/identity mismatch HTTP branches use injected observation; default cold paths do not.",
+    "Read snapshots compare persisted table contents and sequence metadata/values; not transient rolled-back writes.",
+    "No native Start, canonical boot, worker/DBOS host, deployed cohort retirement, coherent restore or deployment proof."
+  ],
+  "files": [
+    {
+      "path": "parent/before.json",
+      "bytes": 1845,
+      "sha256": "f26e3ab05f82559415d1b6dae48286f636c17d5db6141f38d293d094faa5356b"
+    },
+    {
+      "path": "parent/container-cleanup.json",
+      "bytes": 155,
+      "sha256": "3e41f2b5d5b2db36069fd6f341fd4c602302f7b8f4add45520c619d22049c12e"
+    },
+    {
+      "path": "parent/container.json",
+      "bytes": 701,
+      "sha256": "66920047e190cfb184a8d07f1dcb8b4be542ca1e9b2b11554e20738d1c57289a"
+    },
+    {
+      "path": "parent/controlled-r2-result.json",
+      "bytes": 16,
+      "sha256": "982b9e9bfb10ffe83cad665807abcfd3fa97b37822db5ab7831157a499548a9e"
+    },
+    {
+      "path": "parent/controlled-r2.log",
+      "bytes": 422,
+      "sha256": "37345334f060cbcf60e3e32227ee34bf1bca84cb5212695432c503d79e3aeb58"
+    },
+    {
+      "path": "parent/controlled-result.json",
+      "bytes": 20,
+      "sha256": "01614b0e7bf86220a2287c6fd76f9b3a5c06913c2e0762c9eb3958c397f0bbee"
+    },
+    {
+      "path": "parent/controlled.log",
+      "bytes": 1413,
+      "sha256": "2bfc7598ac7e4b89525a0b2ac1bde665dd0ad678201145c8bf7623297d250a57"
+    },
+    {
+      "path": "parent/env-diagnostic.log",
+      "bytes": 691,
+      "sha256": "4cb01b0b9fda54d65ee578e75e60cd37c25379c737e94dbc8528fd4bf0c64a60"
+    },
+    {
+      "path": "parent/epoch-active.log",
+      "bytes": 213,
+      "sha256": "fbe3ba1f27bbcc2f4fe5e0787c24bd3474f7f52a32172358d38455a324bc503e"
+    },
+    {
+      "path": "parent/epoch-maintenance-transition.log",
+      "bytes": 76,
+      "sha256": "79b24653bed910a4e970271094dd912c724d982539706eba00f4a3ca5e796b67"
+    },
+    {
+      "path": "parent/epoch-maintenance.log",
+      "bytes": 422,
+      "sha256": "c2a540eaa67d0b385e8654c7b3b5564bb1d5482fe5ad863d7377add0206ef202"
+    },
+    {
+      "path": "parent/epoch-mismatch-transition.log",
+      "bytes": 141,
+      "sha256": "6591f2db701108e00179c4104c3e61938113c061994de827cba438526699c00f"
+    },
+    {
+      "path": "parent/epoch-mismatch.log",
+      "bytes": 422,
+      "sha256": "b0cedece872c2d50a679f18af92ed2451add7dd7a46295d682e8fd282cc38bd0"
+    },
+    {
+      "path": "parent/lock-release.json",
+      "bytes": 542,
+      "sha256": "2335900feff217471135f7f32ca0e9389af4282ce7cd3912869338966cdc905b"
+    },
+    {
+      "path": "parent/lock.py",
+      "bytes": 2198,
+      "sha256": "eee342824ccc8af5653896f2358cdda2703f2930d71525509c23e779d6c70242"
+    },
+    {
+      "path": "parent/migrate.log",
+      "bytes": 408,
+      "sha256": "ea3317d97c95dbe732c4a85549bd24169ca304f86b12ae4cc32cfaa16baa78f6"
+    },
+    {
+      "path": "parent/observed-summary.json",
+      "bytes": 15149,
+      "sha256": "4ec37f0649c1aa7fc9e5b265ecdac4f7ef7e0985d2107141955d8c33799bd1f4"
+    },
+    {
+      "path": "parent/offline-r2.log",
+      "bytes": 1069,
+      "sha256": "65259637c0e2c501d1819f72755aae7d9eb86e652214097aa7230400632ab346"
+    },
+    {
+      "path": "parent/parent-offline.log",
+      "bytes": 1064,
+      "sha256": "2b4e02c1690604216d7d0722a8e90c0cc71ddb36f30d034f28c470cfa45aa83d"
+    },
+    {
+      "path": "parent/parent-preflight.json",
+      "bytes": 199,
+      "sha256": "c5b6a7ddb2a9fe81b321389d10a63a1e67ac499f3f5ca5f56167a0bc1aa2be1b"
+    },
+    {
+      "path": "parent/parent-unit.log",
+      "bytes": 881,
+      "sha256": "85c8730d712a6c3247679b19e72638a1507499e799696cbe101cb85608ea356f"
+    },
+    {
+      "path": "prep/build.log",
+      "bytes": 118196,
+      "sha256": "63dee560cfbc01dfa6e084feb17c835cc4c7dc644411371d03a76e34e3a240e5"
+    },
+    {
+      "path": "prep/deny-network.mjs",
+      "bytes": 357,
+      "sha256": "05b71d853678c89ddaad83b7f09baf91187914e7b1edf3aaa62f692f08ddb00f"
+    },
+    {
+      "path": "prep/draft-seal.log",
+      "bytes": 495,
+      "sha256": "de7aba023f9a5ce734ff0549da8c40209b60d477c76df532dc0ad0709af6ecf6"
+    },
+    {
+      "path": "prep/final-build-artifacts.json",
+      "bytes": 210609,
+      "sha256": "1ff2983fc308e74fdb7775757038a36abf7bbd53542f19c23aae0fa43e013058"
+    },
+    {
+      "path": "prep/final-seal.log",
+      "bytes": 494,
+      "sha256": "8e52d8b168c9c3547d690b5e65afea2753e3646d8ae94dd3e6bfc150d5600d7f"
+    },
+    {
+      "path": "prep/lint.log",
+      "bytes": 13068,
+      "sha256": "b4d1aa9b4e9a7124f6dfd1dd7e20c84922f2b6bfe1ace6dd1d9dffd5d7fc7394"
+    },
+    {
+      "path": "prep/offline-final.log",
+      "bytes": 1068,
+      "sha256": "cb11c1accdd3e543696772432f576b06f30d1f8fd81be44478aae0ec2a2a33e3"
+    },
+    {
+      "path": "prep/offline-fixed.log",
+      "bytes": 1068,
+      "sha256": "a97adbd4edb3b06e00fbcfc56fbe9ea3a7a68cee96a46f43d6afda316ae45738"
+    },
+    {
+      "path": "prep/offline.log",
+      "bytes": 2183,
+      "sha256": "659b2632fb9d2b1775d29a18abab54ab2cb6e7e77af12e05aa04911a7bf37e5b"
+    },
+    {
+      "path": "prep/pre-build-artifacts.json",
+      "bytes": 213961,
+      "sha256": "b3fe889134b39bccab578eb396cb68d5006ef5738a95c4a13673a1a79b6c6b1a"
+    },
+    {
+      "path": "prep/repair.patch",
+      "bytes": 6342,
+      "sha256": "f7ace6efe6e2e0b0def4c04ba2b265564781a4ed0df61811acab8fd453625bd5"
+    },
+    {
+      "path": "prep/syntax-final.log",
+      "bytes": 266,
+      "sha256": "6ba82108db654ebbfcb1898b142fec492292c1365a34ddf051b4bb72b448b814"
+    },
+    {
+      "path": "prep/syntax.log",
+      "bytes": 266,
+      "sha256": "6ba82108db654ebbfcb1898b142fec492292c1365a34ddf051b4bb72b448b814"
+    },
+    {
+      "path": "prep/typecheck.log",
+      "bytes": 61,
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "path": "prep/unit-green.log",
+      "bytes": 881,
+      "sha256": "601983280b9aacc8c46cd3c07e8758b9a02f0394d6e03e2e392955606302ea61"
+    },
+    {
+      "path": "prep/unit-red.log",
+      "bytes": 7034,
+      "sha256": "cc25d0c24f2902af36f82d284ad761f77ebc905b04bad00631a3199cbc1c2bf2"
+    },
+    {
+      "path": "original/FINAL.md",
+      "bytes": 2709,
+      "sha256": "853bd58760e5059708eb0e542c529c85b575637a7306305850c03676f5dc4ddd"
+    },
+    {
+      "path": "original/HANDOFF.md",
+      "bytes": 13983,
+      "sha256": "7793d4570f282ca04f97b3502eb148dc9409e2e848c5de987e418036ec732f90"
+    },
+    {
+      "path": "original/acceptance.config.mjs",
+      "bytes": 562,
+      "sha256": "4357198c448c6e0ed8922645249efeb929f926dd4b6dfd5b4c485bdbbf813993"
+    },
+    {
+      "path": "original/delivery-summary.json",
+      "bytes": 1617,
+      "sha256": "5b624f59987c68b6accf6dc44e1422698c6c82b5d1b13b777447a52b3e15cf6e"
+    },
+    {
+      "path": "original/inputs.json",
+      "bytes": 696366,
+      "sha256": "0d6942838f98a5784c3aab7413a88b68ce9744ea1f031c4d8e42f663d7160dc9"
+    },
+    {
+      "path": "original/offline.mjs",
+      "bytes": 5676,
+      "sha256": "35bbe7741c14080dc82986139963d35347504063fb7bb1506bb1c627c33e9c83"
+    },
+    {
+      "path": "original/offline.test.mjs",
+      "bytes": 6448,
+      "sha256": "610947939a5fd7f5b6e898d4e4621e5a3e60fd4a87e02e1b77c7b47d3dd96f3f"
+    },
+    {
+      "path": "original/parent.test.mjs",
+      "bytes": 28933,
+      "sha256": "678914f0d6c97c639cbcbc3b4e89e2e78e906fc3262394d62593966f39b660dd"
+    },
+    {
+      "path": "original/preflight-refusal-1791519508255-b4872500.json",
+      "bytes": 412,
+      "sha256": "add62c8dda8a7d848de037fbdff218f489a1ab723f281437d3e7bf27817a2507"
+    },
+    {
+      "path": "original/scripts.json",
+      "bytes": 1356,
+      "sha256": "b0abb722f6c4b85bcf4495064c3c245b44120ddefc4fb66880cb0ad5d9735126"
+    },
+    {
+      "path": "original/seal-summary.json",
+      "bytes": 552,
+      "sha256": "02c41e21a17a37215a8b0c3b8449124c182181b17c15ddef3c560409c3fe409b"
+    },
+    {
+      "path": "original/seal.mjs",
+      "bytes": 3636,
+      "sha256": "1288539828e87c3d1190df5f3c82c5f4b63e6a552a576cf105d04909d94611fe"
+    },
+    {
+      "path": "original/validation-summary.json",
+      "bytes": 783,
+      "sha256": "bad38f7de9a167d1604957330bf017a982b414e336b30df514a82b9421f2b403"
+    },
+    {
+      "path": "original/validation.json",
+      "bytes": 10230,
+      "sha256": "14b963ee7693b1b9fe8a45a04ee0433a40e5474a9ad98fd6ab1a6b288fc9afd8"
+    },
+    {
+      "path": "recipe-r2/HANDOFF.md",
+      "bytes": 14270,
+      "sha256": "47390da85e3f19c6c4ffdbe086987095194ed614310ed4b05fb1b0b60dd18915"
+    },
+    {
+      "path": "recipe-r2/acceptance.config.mjs",
+      "bytes": 568,
+      "sha256": "3b2ab805d7674730286fd81826c5f51a2bd474892595b19ba08d442d9c196e75"
+    },
+    {
+      "path": "recipe-r2/controlled-evidence.json",
+      "bytes": 1146402,
+      "sha256": "66cf733fabd57a6be18f80595c8cf8d211b723412086623f912a4da200dd11ac"
+    },
+    {
+      "path": "recipe-r2/controlled.intent.json",
+      "bytes": 322,
+      "sha256": "61e7799ebb92b7f0589ffb5d4b584cdf526e0201a46a23c00c7bd9df28c33152"
+    },
+    {
+      "path": "recipe-r2/epoch-maintenance-evidence.json",
+      "bytes": 197101,
+      "sha256": "cf8213c66f00aa4bf9075b3bc0b111ccfefe9a3d76c02e6df353d4279f8cb871"
+    },
+    {
+      "path": "recipe-r2/epoch-maintenance.intent.json",
+      "bytes": 322,
+      "sha256": "61e7799ebb92b7f0589ffb5d4b584cdf526e0201a46a23c00c7bd9df28c33152"
+    },
+    {
+      "path": "recipe-r2/epoch-mismatch-evidence.json",
+      "bytes": 197103,
+      "sha256": "b8ac2d7e9225af8aaab6e92bc434797d7647942b21f6e87cedc32d4022eab73e"
+    },
+    {
+      "path": "recipe-r2/epoch-mismatch.intent.json",
+      "bytes": 322,
+      "sha256": "61e7799ebb92b7f0589ffb5d4b584cdf526e0201a46a23c00c7bd9df28c33152"
+    },
+    {
+      "path": "recipe-r2/inputs.json",
+      "bytes": 696367,
+      "sha256": "0be63aa3ec81c9b9565d00e8b3343ca2f9bb2219d50c2a0eef2e7400f671b7f4"
+    },
+    {
+      "path": "recipe-r2/offline.mjs",
+      "bytes": 5732,
+      "sha256": "ded0aad38229393db2fde51904a71c05236d2919966a6653a5a384cb0efd056b"
+    },
+    {
+      "path": "recipe-r2/offline.test.mjs",
+      "bytes": 6475,
+      "sha256": "31947b851dd297085a4295b30847f4e383c856bc02e63a12b492ffdcbf3a5778"
+    },
+    {
+      "path": "recipe-r2/parent.test.mjs",
+      "bytes": 28933,
+      "sha256": "678914f0d6c97c639cbcbc3b4e89e2e78e906fc3262394d62593966f39b660dd"
+    },
+    {
+      "path": "recipe-r2/scripts.json",
+      "bytes": 1374,
+      "sha256": "6b937393e0f02a70056e091fe8b2e9ddd4b46b7a167d46a6ad8fa0a0a0cd07ed"
+    },
+    {
+      "path": "recipe-r2/seal-summary.json",
+      "bytes": 553,
+      "sha256": "1f908e092e23888f4a3bde8a3fb1f6a61e0a439b9be2f112584eac34c7195300"
+    },
+    {
+      "path": "recipe-r2/seal.mjs",
+      "bytes": 3636,
+      "sha256": "1288539828e87c3d1190df5f3c82c5f4b63e6a552a576cf105d04909d94611fe"
+    },
+    {
+      "path": "env-diagnostic/config.mjs",
+      "bytes": 227,
+      "sha256": "23e9e08375b9641c3752df88a741f981f76a2f9471668dbed2f266211eb3f9cc"
+    },
+    {
+      "path": "env-diagnostic/env.test.mjs",
+      "bytes": 382,
+      "sha256": "42a6bc0dc493c8eff083e79564e4c3836f2fc9801ffbb7bdcafc3e19bc9e86d7"
+    }
+  ],
+  "archive_sha256": "4e981ffb18164870a6cb7cb54ffeadc05e910913304a4b38b62bd181566e4856",
+  "archive_files": 68,
+  "credential_pattern_scan": "no matches; clean environment and generated internal token not serialized",
+  "final_parent_lint": {
+    "command": "pnpm lint",
+    "exit": 0,
+    "warnings": 287,
+    "sha256": "b15c20c4f639cc325659a6f88dbd55738b097c4c71490c68374fdf796e171053",
+    "local_log": "/tmp/yuk1356-parent-hono-acceptance/final-lint.log"
+  }
+}

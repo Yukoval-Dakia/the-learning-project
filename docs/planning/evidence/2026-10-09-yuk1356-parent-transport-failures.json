@@ -1,0 +1,63 @@
+{
+  "baseRevision": "b8a618716c5c1da3aab289174c729707dcc2c653",
+  "productRevision": "06ecea821f3bc91254c5a89f5cb5b91301d7bf2a",
+  "testPatchSha256": "ca72c072382d986c7dcd5da7ff0ab1b3a5d51be83bf6d4a6e5feb8716bea034f",
+  "status": "CONTROLLED_TRANSPORT_AND_SCOPED_PROCESS_PASS",
+  "firstFailure": {
+    "exit": 1,
+    "cause": "New fixture incorrectly expected no materials although the frozen contract contains a private reference solution.",
+    "productChanged": false
+  },
+  "verification": {
+    "newProcessCases": 2,
+    "fullScopedProcessCases": 14,
+    "pureUnitCases": 4,
+    "typecheckExit": 0,
+    "lintExit": 0,
+    "authorBuildExit": 0,
+    "authorBuildFiles": 884,
+    "parentValidatedReferences": 31,
+    "parentValidatedSourceCopyFiles": 4919,
+    "parentValidatedAuthorLogs": 16
+  },
+  "observations": [
+    "Actual partial SSE bytes then socket destruction; second task failure/error.",
+    "Complete malformed assessment response reaches DONE; task succeeds but assessment result is held.",
+    "Both cases retain first score, exact claims/results/task rows across SIGKILL and actual DBOS reopen.",
+    "Two endpoint requests only; no third claim or FSRS settlement."
+  ],
+  "cleanup": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1356",
+      "phase": "isolated-judge-transport-failures",
+      "token": "4d1637a5-81a8-4736-9d80-3187f97829ef",
+      "candidate": "b8a618716c5c1da3aab289174c729707dcc2c653",
+      "dirtyDiffSha256": "ca72c072382d986c7dcd5da7ff0ab1b3a5d51be83bf6d4a6e5feb8716bea034f",
+      "createdAt": "2026-10-09T04:55:37.678467+00:00"
+    },
+    "releasedAt": "2026-10-09T04:57:28.629372+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "limitations": [
+    "Complete valid response before result persistence crash remains untested.",
+    "Actual opencode-go/mimo-v2.6-pro output gate remains failed at prior HTTP429, no retry.",
+    "No native Start, coherent restore, cutover or deployment claim.",
+    "Initial author pnpm12 invoked dependency checks and esbuild postinstall; no clean-network claim. Final checks used cached pnpm11 with pre-run installation disabled.",
+    "Parent first plain unit command matched no tests due existing partition; scoped config override runs the pure file without DB.",
+    "Old R2 predates cold status repair and this test-only change; no third independent review."
+  ],
+  "archive": {
+    "file": "2026-10-09-yuk1356-parent-transport-failures.json.gz",
+    "sha256": "2970dcef57c9bf71f1b6e2b388dbb6d3c47105a629f02c538964bcb7ee55e9de",
+    "bytes": 544808,
+    "files": 57
+  },
+  "bundleHashes": {
+    "run-2/yuk1356-judge-worker.cjs": "41c39ef5ee51d11bb90affb07067a7810d78a07aac3648725f76bf6b9ee8b3a4",
+    "run-1/yuk1356-judge-worker.cjs": "41c39ef5ee51d11bb90affb07067a7810d78a07aac3648725f76bf6b9ee8b3a4",
+    "run-2/regression/yuk1356-judge-worker.cjs": "41c39ef5ee51d11bb90affb07067a7810d78a07aac3648725f76bf6b9ee8b3a4"
+  }
+}

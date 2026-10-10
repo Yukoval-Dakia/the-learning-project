@@ -8,11 +8,13 @@ import { z } from 'zod';
 import type { Db, Tx } from '@/db/client';
 import * as schema from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
+import { installJudgeProducerFence } from './judge-family';
 import { installPruneProducerFence } from './prune-family';
 import { installReviewOrphanProducerFence } from './review-orphan-family';
 import { installSessionOrphanProducerFence } from './session-orphan-backend';
 
 const installers = [
+  { name: 'judge', trigger: 'yuk1356_judge_producer', install: installJudgeProducerFence },
   { name: 'prune', trigger: 'yuk1355_prune_producer', install: installPruneProducerFence },
   {
     name: 'review',
@@ -46,6 +48,7 @@ function disposableForkUrl() {
 }
 
 async function resetControls() {
+  await testDb().execute(sql`update judge_run_control set phase='pg-boss'`);
   await testDb().execute(sql`update prune_job_events_control set phase = 'pg-boss'`);
   await testDb().execute(
     sql`update review_orphan_control set phase = 'pg-boss', legacy_not_before = null`,
@@ -64,6 +67,8 @@ beforeAll(async () => {
   await boss.start();
   await resetControls();
   for (const family of [
+    'judge_run',
+    'judge_pending_reconcile',
     'prune_job_events',
     'prune_orphan_review_sessions',
     'prune_orphan_conversation_sessions',
@@ -84,7 +89,7 @@ afterAll(async () => {
   } finally {
     await mkdir('.cache', { recursive: true });
     await writeFile(
-      '.cache/yuk1394-producer-fence-lock-evidence.json',
+      '.cache/yuk1356-producer-fence-lock-evidence.json',
       JSON.stringify({ node: process.version, evidence }, null, 2),
     );
   }

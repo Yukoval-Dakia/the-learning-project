@@ -1,8 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-10 17:10 JST：YUK-1388 第四批审查完成，最终报告见 `tlp-audit-artifacts/yuk1388/stage4/final-report.md`；功能波次 W0–W4 已登记 YUK-1404–1445（W0 优先 1404/1405/1445/981）。YUK-1402/1401 Done；YUK-1403 剩 32 个 migration-smoke 用例等 #1625。迁移线 run11 恢复重开状态见 NOW 的 YUK-1359。
+> Linear 是权威 tracker。2026-10-10：判分迁移 PR1625 同步最新 main，冲突仅为看板与交接文档；既有 4a08126 CI 绿色不代表新合成提交已验，真实 provider 与完整迁移退出仍待。当前阶段：第一天能用。
 
 ## NOW
+
+- **YUK-1356 / 判分迁移待验收**：PR1625 已有固定 4a08126137a194c274ed82f460af34cef35fd111；本轮正常合入 main，仅解决看板/交接冲突，不修改判分领域行为。新合成提交须重新通过本地静态构建与 exact-head CI；历史真实 provider 429、未知付费结果与整体迁移退出义务保留，不重放未知效果，不据绿色 CI 合并或部署。现有判分证据见 [验收矩阵](docs/planning/2026-10-09-yuk1356-current-acceptance-matrix.md)。
 
 - **YUK-1388 / 第四批审查完成（2026-10-10）**：O1–O7 裁决、7 个 P0 根（含新增 M100 出题前自动可判 → YUK-1445）、100 根 / 828 子主张、W0–W4 五波，见最终报告 `tlp-audit-artifacts/yuk1388/stage4/final-report.md`（仓库外 artifact 目录）。V01/V02 独立审查 15 条发现全部接受并由 I03 修正。票保持 In Progress，等 owner 读报告并裁决是否清理 R03 写入 TEST Mem0 的 5 条合成危机记忆。
 - **YUK-1403 / 测试第二轮清理**：#1635（Rust parity 进 CI Gate、残留引用、unused 36→0）与 #1636（26 例）已合 main；剩 `tests/integration/migration-smoke.test.ts` 32 例/1093 行等 #1625 合并后删，依据 `tlp-audit-artifacts/yuk1388/yuk1403/case-inventory.jsonl`。
@@ -20,20 +22,19 @@
 - **YUK-1358 / Start观察读取已合入**：PR1622已合main6212a4560，exact0fbeb1f3f CI37831807097全绿、R1 NONE；26真实RPC/10窗口、T3浏览器和88表/序列无写证据见[父验收](docs/planning/2026-10-09-yuk1358-start-agent-notes-parent.md)。28路由中13显式Start（含root redirect）/15 fallback，仅静态覆盖计数；完整迁移与canonical boot未完成。5796接续events/$id，未合候选不提前计入。
 - **YUK-1358 / Start配置与科目消费者已合入**：PR1620于18:16:17Z合main10df1a471，tree与exact755bdeebb一致，CI37821989407全绿/R1 NONE/threads0。18操作122RPC/35窗口与三页浏览器证据见[父验收](docs/planning/2026-10-09-yuk1358-start-admin-controls-parent.md)。未部署；1358保持In Progress。5796独占接续1392 board、剩余Start路由和实际提交，本线程不写其活跃树。
 - **YUK-1359 / 整体退出证据**：7631对用户负责迁移协调和最终交付，维护W1–W5消费者清单。当前已交前门、错题、Today/Inbox主读取和五管理只读页；嵌套HTTP消费者、其余路由、任务族、旧SPA/pg-boss退出尚未齐备。按[退出清单](docs/planning/2026-10-07-yuk1359-exit-inventory.md)逐项验收，不能把公共出口或源码slice当整页完成。
-- **YUK-1356 / 复习竖切未完**：PR1605共享review操作/可信Pi原件入口及单次MiMo效果证据有效，但Start提交与判分DBOS族仍缺。17:02Z后直接读回Linear已恢复In Progress；未启动重复writer，不宣称judge_run已迁移。
 - **本轮已交付 YUK-1392**：PR1619于17:11:43Z合main6aaf8ca89，tree5e8ab973与exact3883903相同；CI37812973662全绿、R1 NONE、threads0。父13unit/22DB、static/build/audits通过，已unwatch/Linear Done。无部署。
 
 ## NEXT
 
 - Start/judge共享文件边界见[交接](docs/planning/2026-10-09-judge-start-ownership.md)，Start/boot/shutdown由5796独占；judge A/B/C/D由7631接续，迁移号后核。
 
-- 1394已正式交付，7631从fresh main沿既有YUK1356接judge_run与judge_pending_reconcile同族。5796已确认A/B/C/D精确scope无其writer冲突，Start/boot/shutdown仍归5796；迁移号届时核实。设计与ownership不是实施验收。
+- PR1625 本轮仅同步 main 并恢复可合并状态；判分 DBOS 家族源码、进程恢复、真实模型和整体迁移退出分开验收。正常 push 后等待新 exact-head CI，不合并 PR。
 
 - 1355已交prune_job_events与review orphan源码及隔离证据；1394接续两个session族。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。
 - 1358继续剩余路由/共享子树及三入口共用业务操作，保留现有确定性行为。1392公共board读取、1380事件读/纠错等已合接口由Start集成方接消费者，不复制领域规则。
 - 1359最终收口核对dev/build/Compose/镜像、全部旧消费者、任务/worker/依赖、配置与文档；Hono去留按ADR裁决，旧SPA回落不得永久保留。完成整迁移后再按实际缺口与查重结果交付Linear残留功能。
 - UI按owner新排期并入迁移后的功能波次：后端先交付、Opus5.5再改渲染；迁移期间保留旧视觉。1354仅隔离基座/展示组件可先行，展示路由仍5796挂载；同Start路由组件回退不保留旧SPA。完整协商及已有UI观察交接见[排期边界](docs/planning/2026-10-09-ui-migration-sequencing.md)。
-- **功能波次 W0（Urgent）**：后端 YUK-1404 照片导入、1405 定位与冷启动备题、1445 出题前自动可判、981 笔记解析交付、1407 判分语义、1408 隐私用途、1409 长任务业务回执、1398 危机；UI YUK-1438（Opus 5.5 only）。W0 出口含空库首日脚本旅程（墙钟上限 + 确定性兜底）、自动可判 ≥80%、KC 不自动批准、5 项摩擦指标；数值为建议默认值待 owner 确认。触及 §9 承重能力的删减须 owner 明确批准。
+- **第一天能用（Urgent）**：后端 YUK-1404 照片导入、1405 定位与冷启动备题、1445 出题前自动可判、981 笔记解析交付、1407 判分语义、1408 隐私用途、1409 长任务业务回执、1398 危机；UI YUK-1438（Opus 5.5 only）。本阶段出口含空库首日脚本旅程（墙钟上限 + 确定性兜底）、所有实际出题 100% 自动可判、KC 不自动批准、5 项摩擦指标；AI 独立解题和判分，录入不要求页面答案；其余时限由协调线维护。触及 §9 承重能力的删减须 owner 明确批准。
 - UI 线：视觉方向已定（#1612、#1627）。#1633 KaTeX、#1634 F06 对比度与 #1642 ≠ 修复（YUK-1446）已于 2026-10-10 20:01 JST 部署到 TEST（main `515669863`），并完成真实页面截图验收。遗留 YUK-1447（等 rehype-katex 升级）。下一步 YUK-1438：等功能线各后端片落地后接入；placement/profile 的 UI 等迁移线给出 Start client 契约。
 
 ## PARKED
@@ -59,7 +60,7 @@
 
 ## BLOCKED-ON
 
-- **owner 裁决**：W0 出口数值；TEST Mem0 中 5 条合成危机记忆是否清理（YUK-1388 关单条件）。
+- **协调线验收**：第一天能用的时限与 TEST 危机数据清理状态由审计协调线维护；100% 实际出题自动可判已获 owner 确认，不再作为待裁决值。
 
 - 迁移线当前没有需要owner追加许可才能推进的已知阻塞。1393已合入，1394进入父级验收；子任务/CI仍运行属于等待，不把整迁移挂blocked。
 - runtime测试/发布在执行前必须实际核锁并原子获取，核owner/token清理释放；其他线程持锁时只推不冲突的源码工作。历史锁记录不能代表当前ownership。
