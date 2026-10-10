@@ -6,18 +6,26 @@
 //      proposal's declared session),
 //   2. every block shares ONE canonical source_document_id that resolves to a
 //      real source_document row,
-//   3. page facts are unambiguous: every block carries page_spans and the
-//      chain is not all-placeholder (the docx/Tencent fallback paths stamp
-//      page_index 0 on every block — an all-zero chain is provenance-less),
-//   4. ordered adjacent pages: sorted by (min page, ordinal) the PRIMARY is
-//      first and each next block starts within {prev.max, prev.max+1},
+//   3. page facts are unambiguous: every block carries page_spans forming a
+//      strictly +1 integer sequence in stored order (non-integer, duplicated,
+//      out-of-order or internally gapped spans cannot prove which pages the
+//      block covers), and the chain is not all-placeholder (the docx/Tencent
+//      fallback paths stamp page_index 0 on every block — an all-zero chain
+//      is provenance-less),
+//   4. ordered adjacent pages IN THE ORDER mergeQuestions WILL MUTATE: the
+//      primitive absorbs in caller mergeIds sequence (primary first, then
+//      each listed id), so the chain proven here is the effective payload
+//      order — never a re-sorted order — and each next block's first page
+//      must be exactly prev.max+1 (same page, overlap, backward order and
+//      gaps all fail closed as pages_not_adjacent),
 //   5. deterministic continuity evidence per adjacent pair: the next block
-//      carries no own question number, OR the previous block visibly ends
-//      mid-question, OR a same-style sub-numbering continues ((2) after (1)),
-//      OR an option letter sequence continues — and NEVER a conflicting
-//      question number for a different question (the decisive veto: any
-//      top-level number, or a sub number that does not continue the sequence,
-//      on the next block).
+//      carries no own question number, OR a same-style sub-numbering
+//      continues ((2) after (1)) — and NEVER an own question number that
+//      could belong to a different question (the decisive veto: any
+//      top-level number, or a sub number that does not continue the
+//      sequence, on the next block). An own number the parser cannot read
+//      (e.g. 百/两百, '5-6') is NOT "no number": it can neither conflict nor
+//      continue provably, so the pair fails closed as missing_continuity.
 //
 // Fail-closed on every unknown: missing rows, missing/mismatched source
 // documents, placeholder or missing page facts, ambiguous ordering, and any
@@ -60,7 +68,6 @@ export interface BlockMergeAdmissionFacts {
     bbox: { x: number; y: number; width: number; height: number };
     role?: string;
   }>;
-  ordinal: number;
   structured: StructuredQuestionT | null;
 }
 
@@ -261,41 +268,17 @@ function isSubContinuation(
   );
 }
 
-const MID_QUESTION_TAIL_RE = /[，、；：:;,—–~～…\-－（([【「『“‘'"]$/u;
-const MID_QUESTION_PHRASE_RE =
-  /(?:如下|如下图|如图所示|如下图所示|如图|见图|见下表|如下所示|包括|分别是|待续|未完待续|接上页|续下页)$/u;
-
-/** Does the block's trailing content visibly end mid-question? */
-function endsMidQuestion(facts: BlockMergeAdmissionFacts): boolean {
-  const root = facts.structured;
-  if (!root) return false;
-  const leaf = leavesOf(root).at(-1);
-  if (!leaf) return false;
-  const tail = (
-    leaf.options && leaf.options.length > 0 ? leaf.options.at(-1)?.text : leaf.prompt_text
-  )?.trimEnd();
-  if (!tail) return leaf.options !== undefined && leaf.options.length > 0;
-  if (MID_QUESTION_TAIL_RE.test(tail)) return true;
-  if (MID_QUESTION_PHRASE_RE.test(tail)) return true;
-  return false;
-}
-
-/** Prev ends with options …B and next's leading text starts with C. */
-function continuesOptionSequence(
-  prev: BlockMergeAdmissionFacts,
-  next: BlockMergeAdmissionFacts,
-): boolean {
-  const prevLeaf = prev.structured ? leavesOf(prev.structured).at(-1) : undefined;
-  const lastOption = prevLeaf?.options?.at(-1);
-  if (lastOption?.label.length !== 1) return false;
-  const lastCode = lastOption.label.toUpperCase().charCodeAt(0);
-  if (lastCode < 65 || lastCode >= 90) return false; // A..Y only; 'Z' has no next letter
-  const nextPrompt = next.structured ? leavesOf(next.structured)[0]?.prompt_text : undefined;
-  const m = /^\s*([A-ZＡ-Ｚ])\s*[.、．:：]/u.exec(nextPrompt ?? '');
-  if (!m) return false;
-  const nextCode =
-    m[1].charCodeAt(0) >= 0xff21 ? m[1].charCodeAt(0) - 0xff21 + 65 : m[1].charCodeAt(0);
-  return nextCode === lastCode + 1;
+/** A page_spans list proves a contiguous page range only when its stored
+ * order is a strict +1 integer sequence (single span included). Anything
+ * else — non-integer, duplicated, out-of-order, or internally gapped pages —
+ * cannot prove which pages the block covers. */
+function contiguousPages(facts: BlockMergeAdmissionFacts): number[] | null {
+  const pages = facts.page_spans.map((s) => s.page_index);
+  if (pages.length === 0) return null;
+  for (let i = 0; i < pages.length; i += 1) {
+    if (!Number.isInteger(pages[i]) || (i > 0 && pages[i] !== pages[i - 1] + 1)) return null;
+  }
+  return pages;
 }
 
 // ---------------------------------------------------------------------------
@@ -345,39 +328,41 @@ export function evaluateBlockMergeAdmission(
   const docId = [...docIds][0];
   if (!docId || !ctx.knownDocumentIds.has(docId)) return fail('unknown_source');
 
-  // Unambiguous page provenance: spans present on every block; the chain must
-  // not be entirely the page-0 placeholder stamped by the docx/Tencent fallbacks.
-  if (blocks.some((b) => b.page_spans.length === 0)) return fail('ambiguous_page_index');
-  const ranges = blocks.map((b) => {
-    const pages = b.page_spans.map((s) => s.page_index);
-    return { block: b, min: Math.min(...pages), max: Math.max(...pages) };
-  });
-  if (ranges.every((r) => r.min === 0)) return fail('ambiguous_page_index');
+  // Unambiguous page provenance: every block's stored page_spans must be a
+  // strictly +1 integer sequence (non-integer / duplicated / out-of-order /
+  // internally gapped spans cannot prove coverage), and the chain must not be
+  // entirely the page-0 placeholder stamped by the docx/Tencent fallbacks.
+  const provenRanges: Array<{ block: BlockMergeAdmissionFacts; min: number; max: number }> = [];
+  for (const b of blocks) {
+    const pages = contiguousPages(b);
+    if (pages === null) return fail('ambiguous_page_index');
+    provenRanges.push({ block: b, min: pages[0], max: pages[pages.length - 1] });
+  }
+  if (provenRanges.every((r) => r.min === 0)) return fail('ambiguous_page_index');
 
-  // Ordered adjacent pages: primary first by (min page, ordinal); each next
-  // block starts on the previous block's last page or the immediately next one.
-  const sorted = [...ranges].sort((a, b) => a.min - b.min || a.block.ordinal - b.block.ordinal);
-  if (sorted[0].block.id !== input.primaryBlockId) return fail('pages_not_adjacent');
-  for (let i = 1; i < sorted.length; i += 1) {
-    const gap = sorted[i].min - sorted[i - 1].max;
-    if (gap < 0 || gap > 1) return fail('pages_not_adjacent');
+  // Ordered adjacent pages in the order mergeQuestions WILL MUTATE: the
+  // primitive absorbs in caller mergeIds order (primary first, then each
+  // listed id), so the proven chain is [primary, ...effectiveMergeIds] as
+  // given — never re-sorted. Each next block must start exactly one page
+  // after the previous block ends: same-page (gap 0), overlap, backward
+  // order and real gaps all fail closed.
+  for (let i = 1; i < provenRanges.length; i += 1) {
+    if (provenRanges[i].min !== provenRanges[i - 1].max + 1) return fail('pages_not_adjacent');
   }
 
-  // Continuity per adjacent pair, with the conflicting-number veto first.
-  for (let i = 1; i < sorted.length; i += 1) {
-    const prev = sorted[i - 1].block;
-    const next = sorted[i].block;
+  // Continuity per adjacent pair in the same mutation order, with the
+  // own-number veto first. An own number that does not continue the running
+  // sub-sequence is a different question (conflicting). An own number the
+  // parser cannot read proves neither conflict nor continuity — the merge
+  // fails closed instead of treating unreadable as absent.
+  for (let i = 1; i < provenRanges.length; i += 1) {
+    const prev = provenRanges[i - 1].block;
+    const next = provenRanges[i].block;
     const lead = leadingQuestionNo(next);
+    if (lead === null) continue;
+    if (lead.kind === 'unknown') return fail('missing_continuity');
     const trail = trailingQuestionNo(prev);
-    if (lead !== null && lead.kind !== 'unknown' && !isSubContinuation(trail, lead)) {
-      return fail('conflicting_question_number');
-    }
-    const continuity =
-      lead === null ||
-      isSubContinuation(trail, lead) ||
-      endsMidQuestion(prev) ||
-      continuesOptionSequence(prev, next);
-    if (!continuity) return fail('missing_continuity');
+    if (!isSubContinuation(trail, lead)) return fail('conflicting_question_number');
   }
 
   return { eligible: true, reason: undefined, ...base };
@@ -402,7 +387,6 @@ export async function loadBlockMergeAdmissionContext(
             ingestion_session_id: question_block.ingestion_session_id,
             source_document_id: question_block.source_document_id,
             page_spans: question_block.page_spans,
-            ordinal: question_block.ordinal,
             structured: question_block.structured,
           })
           .from(question_block)

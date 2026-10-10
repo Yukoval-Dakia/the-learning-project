@@ -25,7 +25,6 @@ function facts(overrides: Partial<BlockMergeAdmissionFacts> = {}): BlockMergeAdm
     ingestion_session_id: SESSION,
     source_document_id: DOC,
     page_spans: [{ page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
-    ordinal: 0,
     structured: { id: `n${idSeq}`, role: 'standalone', prompt_text: '题目内容。' },
     ...overrides,
   };
@@ -72,12 +71,10 @@ describe('evaluateBlockMergeAdmission', () => {
   it('admits an adjacent unnumbered fragment continuing the question', () => {
     const primary = facts({
       id: 'p',
-      ordinal: 0,
       page_spans: [{ page_index: 2, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
     });
     const member = facts({
       id: 'm',
-      ordinal: 1,
       page_spans: [{ page_index: 3, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
     });
     const verdict = evaluateBlockMergeAdmission(
@@ -89,15 +86,96 @@ describe('evaluateBlockMergeAdmission', () => {
     expect(verdict.effectiveMergeIds).toEqual([member.id]);
   });
 
-  it('admits a fragment on the same page (adjacency includes same-page)', () => {
-    const primary = facts({ id: 'p', ordinal: 0 });
-    const member = facts({ id: 'm', ordinal: 1 });
-    // One non-zero page in the chain → not placeholder.
-    member.page_spans = [{ page_index: 4, bbox: { x: 0, y: 0, width: 1, height: 1 } }];
-    primary.page_spans = [{ page_index: 4, bbox: { x: 0, y: 0, width: 1, height: 1 } }];
-    expect(
-      evaluateBlockMergeAdmission(input(primary, [member]), ctxFor([primary, member])).eligible,
-    ).toBe(true);
+  it('admits a three-block chain listed in strict page order', () => {
+    const primary = facts({
+      id: 'p',
+      page_spans: [{ page_index: 1, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+    });
+    const m2 = facts({
+      id: 'm2',
+      page_spans: [{ page_index: 2, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+    });
+    const m3 = facts({
+      id: 'm3',
+      page_spans: [{ page_index: 3, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+    });
+    const verdict = evaluateBlockMergeAdmission(
+      input(primary, [m2, m3]),
+      ctxFor([primary, m2, m3]),
+    );
+    expect(verdict).toMatchObject({ eligible: true, affectedBlockCount: 3 });
+    expect(verdict.effectiveMergeIds).toEqual([m2.id, m3.id]);
+  });
+
+  it('rejects a same-page fragment (adjacency requires the immediately next page)', () => {
+    // Same-page AI proposals stay internal: gap 0 is not ordered adjacency.
+    const primary = facts({
+      id: 'p',
+      page_spans: [{ page_index: 4, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+    });
+    const member = facts({
+      id: 'm',
+      page_spans: [{ page_index: 4, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+    });
+    expectIneligible([primary, member], [member.id], 'pages_not_adjacent');
+  });
+
+  it('rejects a reversed payload chain (sorted adjacency cannot rescue mutation order)', () => {
+    // mergeQuestions absorbs in the payload's mergeIds order: a [page3, page2]
+    // payload would garble the absorbed sub-question order irreversibly, so
+    // the proof binds the given order — 1 → 3 is not adjacent.
+    const primary = facts({
+      id: 'p',
+      page_spans: [{ page_index: 1, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+    });
+    const m3 = facts({
+      id: 'm3',
+      page_spans: [{ page_index: 3, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+    });
+    const m2 = facts({
+      id: 'm2',
+      page_spans: [{ page_index: 2, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+    });
+    const verdict = evaluateBlockMergeAdmission(
+      input(primary, [m3, m2]),
+      ctxFor([primary, m3, m2]),
+    );
+    expect(verdict).toMatchObject({ eligible: false, reason: 'pages_not_adjacent' });
+    // The reported effective set preserves the payload order mergeQuestions
+    // would mutate (dedup + primary-strip only — never re-sorted).
+    expect(verdict.effectiveMergeIds).toEqual([m3.id, m2.id]);
+  });
+
+  it('rejects overlapping and backward page ranges', () => {
+    // The member's first page must be exactly prev.max+1 — starting inside or
+    // before the primary's span is not adjacency.
+    const primary = facts({
+      id: 'p',
+      page_spans: [
+        { page_index: 2, bbox: { x: 0, y: 0, width: 1, height: 1 } },
+        { page_index: 3, bbox: { x: 0, y: 0, width: 1, height: 1 } },
+      ],
+    });
+    const member = facts({
+      id: 'm',
+      page_spans: [{ page_index: 3, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
+    });
+    expectIneligible([primary, member], [member.id], 'pages_not_adjacent');
+  });
+
+  it('rejects ambiguous intra-block span sets', () => {
+    // Unprovable coverage: internal gap, out-of-order, duplicated and
+    // non-integer page indices all fail as ambiguous provenance.
+    const span = (page_index: number) => ({
+      page_index,
+      bbox: { x: 0, y: 0, width: 1, height: 1 },
+    });
+    const cases = [[span(1), span(3)], [span(3), span(1)], [span(2), span(2)], [span(1.5)]];
+    for (const spans of cases) {
+      const primary = facts({ id: 'p', page_spans: [span(1)] });
+      const member = facts({ id: 'm', page_spans: spans });
+      expectIneligible([primary, member], [member.id], 'ambiguous_page_index');
+    }
   });
 
   it('admits sub-numbering continuation (2) after (1) across pages', () => {
@@ -121,7 +199,9 @@ describe('evaluateBlockMergeAdmission', () => {
     ).toBe(true);
   });
 
-  it('admits when the primary visibly ends mid-question and the next number is unparseable', () => {
+  it('rejects an unparseable own number even when the primary visibly ends mid-question', () => {
+    // '5-6' is an OWN number the parser cannot read — not "no number": it can
+    // prove neither conflict nor continuity, so the pair fails closed.
     const primary = facts({
       id: 'p',
       page_spans: [{ page_index: 1, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
@@ -132,12 +212,10 @@ describe('evaluateBlockMergeAdmission', () => {
       page_spans: [{ page_index: 2, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
       structured: { id: 'n', role: 'standalone', question_no: '5-6', prompt_text: '……' },
     });
-    expect(
-      evaluateBlockMergeAdmission(input(primary, [member]), ctxFor([primary, member])).eligible,
-    ).toBe(true);
+    expectIneligible([primary, member], [member.id], 'missing_continuity');
   });
 
-  it('admits an option-letter sequence continuing (options split across blocks)', () => {
+  it('admits an options fragment carrying no own number (options split across blocks)', () => {
     const primary = facts({
       id: 'p',
       page_spans: [{ page_index: 1, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
@@ -154,11 +232,9 @@ describe('evaluateBlockMergeAdmission', () => {
     const member = facts({
       id: 'm',
       page_spans: [{ page_index: 2, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
-      // Unparseable own number → the option sequence is the deciding evidence.
       structured: {
         id: 'n',
         role: 'standalone',
-        question_no: '续',
         prompt_text: 'C. 丙\nD. 丁',
       },
     });
@@ -253,12 +329,10 @@ describe('evaluateBlockMergeAdmission', () => {
   it('rejects when a member precedes the primary in source order', () => {
     const primary = facts({
       id: 'p',
-      ordinal: 1,
       page_spans: [{ page_index: 3, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
     });
     const member = facts({
       id: 'm',
-      ordinal: 0,
       page_spans: [{ page_index: 1, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
     });
     expectIneligible([primary, member], [member.id], 'pages_not_adjacent');
