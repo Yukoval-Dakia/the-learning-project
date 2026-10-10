@@ -129,7 +129,7 @@
   --shadow-3:
     0 2px 4px rgba(60, 50, 30, 0.05), 0 14px 30px -10px rgba(60, 50, 30, 0.12),
     0 38px 64px -20px rgba(60, 50, 30, 0.16);
-  --shadow-focus: 0 0 0 3px rgba(217, 119, 87, 0.22);
+  --shadow-focus: 0 0 0 2px var(--paper), 0 0 0 4px var(--focus-ring);
   --shadow-inset: inset 0 1px 0 rgba(60, 50, 30, 0.04);
 
   /* ── Motion ────────────────────────────────────────────── */
@@ -178,6 +178,15 @@
   --coral-soft: #faede5;
   --coral-line: #edc3ae;
   --coral-ink: #6e2c18;
+  /* YUK-1429 (S08 F06): solid accent fills that carry text. White on --coral is 3.1:1, so
+     filled buttons, pills and steps use these instead; --coral stays for accents without text.
+     --focus-ring is the solid keyboard-focus colour, at least 5.4:1 on every paper surface. */
+  --coral-fill: #b04c2c;
+  --coral-fill-hover: #a93f26;
+  --coral-fill-press: #93361f;
+  --on-coral-fill: #ffffff;
+  --on-fill: #ffffff;
+  --focus-ring: #a93f26;
 
   --again: #b5341b;
   --again-soft: #f6e1d8;
@@ -261,7 +270,7 @@
   --shadow-3:
     0 2px 4px rgba(60, 50, 30, 0.05), 0 14px 30px -10px rgba(60, 50, 30, 0.12),
     0 38px 64px -20px rgba(60, 50, 30, 0.16);
-  --shadow-focus: 0 0 0 3px rgba(217, 119, 87, 0.22);
+  --shadow-focus: 0 0 0 2px var(--paper), 0 0 0 4px var(--focus-ring);
   --shadow-inset: inset 0 1px 0 rgba(60, 50, 30, 0.04);
 
   --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
@@ -343,6 +352,13 @@
     --coral-soft: #3a241a;
     --coral-line: #7a3f24;
     --coral-ink: #f5c8b0;
+    /* YUK-1429: dark fills are light, so their text is dark paper (5.9–9.1:1). */
+    --coral-fill: #e89572;
+    --coral-fill-hover: #f0a784;
+    --coral-fill-press: #d27e58;
+    --on-coral-fill: #1a1612;
+    --on-fill: #1a1612;
+    --focus-ring: #f0a784;
 
     --again: #e87a5a;
     --again-soft: #3a1f1a;
@@ -376,7 +392,7 @@
     --shadow-3:
       0 2px 4px rgba(0, 0, 0, 0.26), 0 16px 34px -10px rgba(0, 0, 0, 0.5),
       0 40px 70px -20px rgba(0, 0, 0, 0.55);
-    --shadow-focus: 0 0 0 3px rgba(232, 149, 114, 0.32);
+    --shadow-focus: 0 0 0 2px var(--paper), 0 0 0 4px var(--focus-ring);
     --shadow-inset: inset 0 1px 0 rgba(255, 245, 225, 0.04);
 
     /* Loom shell scrim + info-line, dark mirror (see :root light defaults). */
@@ -412,6 +428,13 @@
   --coral-soft: #3a241a;
   --coral-line: #7a3f24;
   --coral-ink: #f5c8b0;
+  /* YUK-1429: dark fills are light, so their text is dark paper (5.9–9.1:1). */
+  --coral-fill: #e89572;
+  --coral-fill-hover: #f0a784;
+  --coral-fill-press: #d27e58;
+  --on-coral-fill: #1a1612;
+  --on-fill: #1a1612;
+  --focus-ring: #f0a784;
 
   --again: #e87a5a;
   --again-soft: #3a1f1a;
@@ -445,7 +468,7 @@
   --shadow-3:
     0 2px 4px rgba(0, 0, 0, 0.26), 0 16px 34px -10px rgba(0, 0, 0, 0.5),
     0 40px 70px -20px rgba(0, 0, 0, 0.55);
-  --shadow-focus: 0 0 0 3px rgba(232, 149, 114, 0.32);
+  --shadow-focus: 0 0 0 2px var(--paper), 0 0 0 4px var(--focus-ring);
   --shadow-inset: inset 0 1px 0 rgba(255, 245, 225, 0.04);
 
   /* Loom shell scrim + info-line, dark mirror (see :root light defaults). */
@@ -634,30 +657,35 @@ hr {
   color: var(--coral-ink);
 }
 
+/* YUK-1429: a solid outline, not a box-shadow, so a component's own shadow cannot cover it. */
 :focus-visible {
-  outline: none;
-  box-shadow: var(--shadow-focus);
-  border-radius: var(--r-2);
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
 }
 
-button {
-  font: inherit;
-  cursor: pointer;
-  border: 0;
-  background: transparent;
-  color: inherit;
-}
+/* YUK-1429: form-control resets live in the base layer. Unlayered, they beat every Tailwind
+   utility, so the Button primitive painted with no fill, border or text colour; unlayered
+   component classes (.btn-primary and friends) still win over this layer as before. */
+@layer base {
+  button {
+    font: inherit;
+    cursor: pointer;
+    border: 0;
+    background: transparent;
+    color: inherit;
+  }
 
-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
-}
+  button:disabled {
+    cursor: not-allowed;
+    opacity: 0.55;
+  }
 
-input,
-textarea,
-select {
-  font: inherit;
-  color: inherit;
+  input,
+  textarea,
+  select {
+    font: inherit;
+    color: inherit;
+  }
 }
 
 ul,
@@ -1726,7 +1754,7 @@ ol {
   height: 32px;
   border-radius: var(--r-2);
   background: var(--good);
-  color: #fff;
+  color: var(--on-fill);
   display: grid;
   place-items: center;
   flex: none;
@@ -3519,7 +3547,7 @@ ol {
 }
 .btn-rating.again:hover:not(:disabled) {
   background: var(--again);
-  color: #fff;
+  color: var(--on-fill);
   border-color: var(--again);
 }
 .btn-rating.hard {
@@ -3529,7 +3557,7 @@ ol {
 }
 .btn-rating.hard:hover:not(:disabled) {
   background: var(--hard);
-  color: #fff;
+  color: var(--on-fill);
   border-color: var(--hard);
 }
 .btn-rating.good {
@@ -3539,7 +3567,7 @@ ol {
 }
 .btn-rating.good:hover:not(:disabled) {
   background: var(--good);
-  color: #fff;
+  color: var(--on-fill);
   border-color: var(--good);
 }
 .btn-rating.coral {
@@ -3548,9 +3576,9 @@ ol {
   border-color: var(--coral-line);
 }
 .btn-rating.coral:hover:not(:disabled) {
-  background: var(--coral);
-  color: #fff;
-  border-color: var(--coral);
+  background: var(--coral-fill);
+  color: var(--on-coral-fill);
+  border-color: var(--coral-fill);
 }
 
 @media (max-width: 759.98px) {
@@ -3767,15 +3795,15 @@ ol {
 }
 
 .knowledge-page .knowledge-btn-primary {
-  background: var(--coral);
-  border-color: var(--coral);
-  color: #fff;
+  background: var(--coral-fill);
+  border-color: var(--coral-fill);
+  color: var(--on-coral-fill);
 }
 
 .knowledge-page .knowledge-btn-primary:hover {
-  background: var(--coral-hover);
-  border-color: var(--coral-hover);
-  color: #fff;
+  background: var(--coral-fill-hover);
+  border-color: var(--coral-fill-hover);
+  color: var(--on-coral-fill);
 }
 
 .knowledge-page .knowledge-btn-secondary {
@@ -3798,7 +3826,7 @@ ol {
 .knowledge-page .knowledge-btn-good:hover {
   background: var(--good);
   border-color: var(--good);
-  color: #fff;
+  color: var(--on-fill);
 }
 
 .knowledge-page .knowledge-btn-ghost {
@@ -4409,9 +4437,9 @@ ol {
 }
 
 .kg-chip-diagnose:hover {
-  color: #fff;
-  background: var(--coral);
-  border-color: var(--coral);
+  color: var(--on-coral-fill);
+  background: var(--coral-fill);
+  border-color: var(--coral-fill);
 }
 
 /* "今天该复习" quick filter (Slice 2 / YUK-142). Mirrors the diagnose chip's
@@ -4519,7 +4547,7 @@ ol {
 }
 
 .kg-proposal-accept:hover {
-  color: #fff;
+  color: var(--on-fill);
   background: var(--good);
   border-color: var(--good);
 }
@@ -6112,8 +6140,8 @@ progress {
   width: 30px;
   height: 30px;
   border-radius: var(--r-pill);
-  background: linear-gradient(140deg, var(--coral), var(--coral-press));
-  color: #fff;
+  background: linear-gradient(140deg, var(--coral-fill), var(--coral-fill-press));
+  color: var(--on-coral-fill);
   display: grid;
   place-items: center;
   font-family: var(--font-serif);
@@ -6476,8 +6504,8 @@ progress {
   font-size: var(--fs-body-lg);
 }
 .btn-primary {
-  background: var(--coral);
-  color: #fff;
+  background: var(--coral-fill);
+  color: var(--on-coral-fill);
   /* YUK-297 R6: soft coral lift so the primary action carries its own warm
      elevation (hard-coded coral rgba — does NOT track the --coral token, so the
      dark-theme blocks below dial the opacity down to avoid an over-bright glow). */
@@ -6486,13 +6514,13 @@ progress {
     0 2px 8px -2px rgba(169, 63, 38, 0.2);
 }
 .btn-primary:hover {
-  background: var(--coral-hover);
+  background: var(--coral-fill-hover);
   box-shadow:
     0 1px 2px rgba(169, 63, 38, 0.26),
     0 4px 14px -3px rgba(169, 63, 38, 0.26);
 }
 .btn-primary:active {
-  background: var(--coral-press);
+  background: var(--coral-fill-press);
   box-shadow: 0 1px 2px rgba(169, 63, 38, 0.24);
 }
 .btn-secondary {
@@ -7698,12 +7726,12 @@ button.seg-sm {
   background: var(--coral-soft);
 }
 .entry-pill.is-here {
-  background: var(--coral);
-  border-color: var(--coral);
-  color: #fff;
+  background: var(--coral-fill);
+  border-color: var(--coral-fill);
+  color: var(--on-coral-fill);
 }
 .entry-pill.is-here:hover {
-  background: var(--coral-hover);
+  background: var(--coral-fill-hover);
 }
 
 /* ── read-mode body ───────────────────────────────────────── */
@@ -7909,8 +7937,8 @@ button.seg-sm {
 }
 .entry-tag {
   font-size: var(--fs-caption);
-  color: #fff;
-  background: var(--coral);
+  color: var(--on-coral-fill);
+  background: var(--coral-fill);
   border-radius: var(--r-1);
   padding: 1px 6px;
   flex: none;
@@ -12018,9 +12046,9 @@ div.copilot-tool-line.is-static {
   color: var(--ink-2);
 }
 .items-loom .status-step.on {
-  background: var(--coral);
-  border-color: var(--coral);
-  color: #fff;
+  background: var(--coral-fill);
+  border-color: var(--coral-fill);
+  color: var(--on-coral-fill);
 }
 .items-loom .child-row {
   display: flex;
@@ -13004,9 +13032,9 @@ div.copilot-tool-line.is-static {
   border-color: var(--coral-line);
 }
 .questions-loom .qf2-pip.on {
-  background: var(--coral);
-  border-color: var(--coral);
-  color: #fff;
+  background: var(--coral-fill);
+  border-color: var(--coral-fill);
+  color: var(--on-coral-fill);
 }
 .questions-loom .qf2-reset {
   display: inline-flex;
@@ -15759,8 +15787,8 @@ div.copilot-tool-line.is-static {
   margin-top: var(--s-2);
   border: 0;
   cursor: pointer;
-  background: var(--coral);
-  color: #fff;
+  background: var(--coral-fill);
+  color: var(--on-coral-fill);
   font: 600 var(--fs-caption) / 1 var(--font-sans);
   padding: 11px 18px;
   border-radius: var(--r-2);
@@ -15768,7 +15796,7 @@ div.copilot-tool-line.is-static {
   transition: background var(--dur-fast) var(--ease-out);
 }
 .eff-cta:hover {
-  background: var(--coral-hover);
+  background: var(--coral-fill-hover);
 }
 .eff-cta.secondary {
   background: var(--paper-raised);

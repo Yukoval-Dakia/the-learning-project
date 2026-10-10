@@ -23,7 +23,10 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const VARIANT_STYLES: Record<ButtonVariant, string> = {
-  primary: ['bg-[var(--coral)] text-white', 'hover:bg-[var(--coral-hover)]'].join(' '),
+  primary: [
+    'bg-[var(--coral-fill)] text-[var(--on-coral-fill)]',
+    'hover:bg-[var(--coral-fill-hover)]',
+  ].join(' '),
   secondary: [
     'bg-[var(--paper-raised)] text-[var(--ink)]',
     'border border-[var(--line)]',
@@ -36,19 +39,19 @@ const VARIANT_STYLES: Record<ButtonVariant, string> = {
   quiet: ['text-[var(--ink-3)] px-[8px] py-[4px] text-[13px]', 'hover:text-[var(--ink)]'].join(' '),
   good: [
     'bg-[var(--good-soft)] text-[var(--good-ink)] border border-[var(--good-line)]',
-    'hover:bg-[var(--good)] hover:text-white hover:border-[var(--good)]',
+    'hover:bg-[var(--good)] hover:text-[var(--on-fill)] hover:border-[var(--good)]',
   ].join(' '),
   hard: [
     'bg-[var(--hard-soft)] text-[var(--hard-ink)] border border-[var(--hard-line)]',
-    'hover:bg-[var(--hard)] hover:text-white hover:border-[var(--hard)]',
+    'hover:bg-[var(--hard)] hover:text-[var(--on-fill)] hover:border-[var(--hard)]',
   ].join(' '),
   coral: [
     'bg-[var(--coral-soft)] text-[var(--coral-ink)] border border-[var(--coral-line)]',
-    'hover:bg-[var(--coral)] hover:text-white hover:border-[var(--coral)]',
+    'hover:bg-[var(--coral-fill)] hover:text-[var(--on-coral-fill)] hover:border-[var(--coral-fill)]',
   ].join(' '),
   info: [
     'bg-[var(--info-soft)] text-[var(--info-ink)] border border-[rgba(79,110,142,0.3)]',
-    'hover:bg-[var(--info)] hover:text-white hover:border-[var(--info)]',
+    'hover:bg-[var(--info)] hover:text-[var(--on-fill)] hover:border-[var(--info)]',
   ].join(' '),
   danger: [
     'text-[var(--again-ink)] px-[8px] py-[4px] text-[13px]',
@@ -67,7 +70,6 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     'rounded-[var(--r-2)] border border-transparent',
     'transition-[background,color,border-color,transform] duration-[var(--dur-fast)]',
     'active:scale-[0.98]',
-    'focus-visible:outline-none focus-visible:shadow-[var(--shadow-focus)]',
     size === 'sm' ? 'px-[10px] py-[6px] text-[14px]' : 'px-[13px] py-[9px] text-[14px]',
     VARIANT_STYLES[variant],
     className ?? '',
