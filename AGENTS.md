@@ -90,17 +90,21 @@ pnpm build
 - 使用 pnpm；不要引入 npm/yarn lockfile。
 - **禁止在本机运行完整 `pnpm test`**；完整 test gate 只由 push 后的 exact-head
   GitHub `CI Gate` 执行。本机不以 full `pnpm test` 作为 pre-PR 条件。
-- 本机只运行与改动范围匹配的 scoped unit / DB / migration tests，以及
-  `pnpm typecheck`、`pnpm lint`、`pnpm build`。
-- scoped 测试可以 mock 外部依赖，但 fixture 不能退化成单字段 happy path：投入足够复杂、
-  接近生产且包含长文本、嵌套结构、边界、歧义与失败分支的数据；若使用脱敏数据，不得
-  因脱敏降低结构和问题难度。mock 可验证 seam / contract；涉及 agent/model 实际输出
-  质量的 gate 仍须跑真实 provider actual-output，并封存 exact revision、输入/输出
-  digest、task-run ID、provider/model/cost。
-- UI/core/schema/prompt/parser 使用 scoped unit loop；API/DB/route/job 使用 scoped DB
-  loop；migration SQL 使用 migration smoke。
-- watch loop 只用于 scoped file：unit 用 `pnpm test:unit:watch <test-file>`，DB 用
-  `pnpm test:db:watch <test-file>`。
+- **默认不写测试（owner 2026-10-10，YUK-1401）。** 只有改动触及下列不变量时才写或
+  更新测试，且断言必须在该不变量被破坏时真的失败：
+  1. 数据不可逆：迁移、备份恢复不丢列、删除/合并不丢数据；
+  2. 判分与结算的确定性：同输入同分数/同状态，含数值核心与 TS↔Rust parity；
+  3. 并发与锁：advisory lock、CAS/版本冲突、事务回滚与幂等重试；
+  4. 安全边界：`/api/*` 鉴权与豁免、浏览器不持 provider key、授权与第三方信息不外泄；
+  5. 危机转介（YUK-1398）。
+- 不写：UI/组件渲染、DTO/schema 形状、prompt/文案/快照/字节 hash、源码路径与文档
+  结构断言、只断言“被调用/存在”的 mock 测试、helper 自身的测试、为覆盖率补的测试。
+  修 bug 时若不触及上面五类，用 typecheck/build 和真实运行验证，不补回归测试。
+- 涉及 agent/model 实际输出或学习效果的验收，用真实 provider actual-output 或学习者
+  结果对账，并封存 exact revision、输入/输出 digest、task-run ID、provider/model/cost；
+  不用 mock 单元测试冒充。
+- 本机只运行改动触及的不变量测试（若有），以及 `pnpm typecheck`、`pnpm lint`、
+  `pnpm build`。
 - `pnpm build` 必须作为本机 pre-PR gate，负责捕获 tsc/Biome/Vitest 未覆盖的 bundle
   错误。
 - 修改 API route 时同步 `postman/api-endpoints.json` 并运行

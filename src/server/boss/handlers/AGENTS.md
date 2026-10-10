@@ -78,7 +78,7 @@
 - DB/process/cron acceptance for this implementation is pending. Unit/static/build evidence does not establish runtime migration or full-DB restore safety. Full recovery includes both family ledgers, pg-boss and tlp_dbos together.
 
 ## CONVENTIONS
-- handler 是工厂 `build*(db, opts?)`，返回 pg-boss work fn；测试旁置 `*.test.ts`。
+- handler 是工厂 `build*(db, opts?)`，返回 pg-boss work fn；若需不变量测试（YUK-1401），旁置 `*.test.ts`。
 - 默认 `localConcurrency 1, batchSize 1`，无 `singleton`——单 worker 串行，跨进程靠 DB version lock。
 - generic boss job 才加进 `../handlers.ts`；capability job 只经对应 manifest 声明。
 
