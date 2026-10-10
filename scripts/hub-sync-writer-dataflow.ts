@@ -1508,6 +1508,19 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
           throws: taken.throws,
         };
       }
+      case 'ImportExpression': {
+        const source = node(candidate.source);
+        const sourceValue = source?.type === 'StringLiteral' ? source.value : undefined;
+        const evaluated = source ? evalExpr(source, ctx, state) : { normal: { state, value: U } };
+        if (!evaluated.normal) return evaluated;
+        return {
+          normal: {
+            state: evaluated.normal.state,
+            value: typeof sourceValue === 'string' && isRepoDbModule(sourceValue, file) ? N : U,
+          },
+          throws: joinState(evaluated.throws, evaluated.normal.state),
+        };
+      }
       case 'AssignmentExpression':
         return evalAssignment(candidate, ctx, state);
       case 'UpdateExpression': {
