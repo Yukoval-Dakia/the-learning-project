@@ -115,8 +115,6 @@ pnpm audit:fold-writes
 pnpm audit:flags
 pnpm audit:projection
 pnpm audit:golden --kind=<kind>
-pnpm audit:judge-golden
-pnpm audit:judge-prompts
 ```
 
 `audit:capability-boundaries` 同时检查 public/ui-public access seam 与三张架构债
@@ -154,11 +152,18 @@ pnpm audit:draft-status-reads
 pnpm build
 ```
 
-After push, the exact-head GitHub `CI Gate` runs `pnpm test`, which includes the
+After push, the exact-head GitHub `CI Gate` runs separate static, audit, unit, DB,
+migration and build lanes. Every code change runs all retained invariant files;
+only docs-only changes skip those lanes. The exact include lists live in
+`vitest.shared.ts`, and `audit:partition` rejects missing, duplicate or unassigned
+files and direct unmocked DB imports in unit files. The audit lanes include the
 agent-control-plane, API-contract, API-client, API-client-usage,
 capability-boundary, provider-lane, profile, learner-copy, no-learning-styles,
 structured-judge, task-census, draft-status, strict draft-status-read, and hub-sync-writer
-audits before unit, DB, and migration tests. The explicit local audit commands
+audits. The build lane injects secret canaries into the build environment, scans
+both SPA and Start browser artifacts, and verifies frontdoor token/exemptions via
+an isolated listener. Rust numeric and native/WASM parity run separately in
+`rust-parity.yml`. The explicit local audit commands
 remain useful for clear attribution, but they do not replace the GitHub gate.
 
 ## Postman
