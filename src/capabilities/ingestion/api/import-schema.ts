@@ -43,14 +43,8 @@ export const ImportBlock = z
     // so empty is allowed; otherwise the answer markdown is required.
     final_wrong_answer_md: z.string(),
     outcome: EnrollOutcomeSchema.default('failure'),
-    // ≥1 required: /api/import carries no subject signal (the ingestion session has no subject
-    // column — subject is a derived view), so the unified `tagKnowledge` cannot resolve a PROPOSE
-    // parent / D1 subject filter for an empty array. Imported blocks stay ids-required; auto-tagging
-    // import is a YUK-489 follow-up that needs a request-level subject signal first.
-    knowledge_ids: z
-      .array(z.string().min(1))
-      .min(1, 'Array must contain at least 1 element(s)')
-      .max(MAX_KNOWLEDGE_IDS),
+    // Material-only capture does not fabricate subject attribution.
+    knowledge_ids: z.array(z.string().min(1)).max(MAX_KNOWLEDGE_IDS),
     cause: z
       .object({
         primary_category: CauseCategory,
@@ -61,6 +55,22 @@ export const ImportBlock = z
     question_kind: QuestionKind,
   })
   .superRefine((block, ctx) => {
+    if (block.knowledge_ids.length === 0) {
+      if (block.outcome !== 'unanswered') {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'at least one knowledge_id is required for an answered capture',
+          path: ['knowledge_ids'],
+        });
+      }
+      if (block.cause !== null) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'cause must be null for unclassified material',
+          path: ['cause'],
+        });
+      }
+    }
     if (block.outcome !== 'unanswered' && block.final_wrong_answer_md.length === 0) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

@@ -163,12 +163,19 @@ export async function completeIngestionImport(
       }
     }
 
-    // 4. Per-block knowledge_ids are client-supplied + authoritative (schema enforces ≥1).
-    //    /api/import carries no subject signal (the ingestion session has no subject column —
-    //    subject is a derived view), so the unified `tagKnowledge` cannot auto-attribute an
-    //    empty-ids block (it needs a subjectRootId for the PROPOSE parent + D1 filter). Imported
-    //    blocks therefore stay ids-required; auto-tagging import via tagKnowledge is a YUK-489
-    //    follow-up that needs a request-level subject signal first.
+    // Answered captures keep explicit attribution. Unanswered material may remain unclassified.
+    for (const block of body.blocks) {
+      if (
+        block.knowledge_ids.length === 0 &&
+        (block.outcome !== 'unanswered' || block.cause !== null)
+      ) {
+        throw new ApiError(
+          'validation_error',
+          'only unanswered material without a cause may omit knowledge_ids',
+          400,
+        );
+      }
+    }
     const effectiveKnowledgeIds: string[][] = body.blocks.map((b) => b.knowledge_ids);
 
     // Validate the batch's subject attribution before any materialization.
@@ -187,13 +194,16 @@ export async function completeIngestionImport(
       );
     }
     const blockSubjectProfiles = await Promise.all(
-      effectiveKnowledgeIds.map(async (ids) => resolveSubjectProfileForKnowledgeIds(tx, ids)),
+      effectiveKnowledgeIds.map(async (ids) =>
+        ids.length === 0 ? null : resolveSubjectProfileForKnowledgeIds(tx, ids),
+      ),
     );
     // YUK-1016 — 校验词表 = 声明 ∪ overlay.active（按 profile.id 缓存去重，
     // block 共享同一 subject 时不重复查 overlay 表）。
     const effectiveProfileCache = new Map<string, SubjectProfile>();
     for (const [index, block] of body.blocks.entries()) {
       const declared = blockSubjectProfiles[index];
+      if (declared === null) continue;
       let effective = effectiveProfileCache.get(declared.id);
       if (!effective) {
         effective = await withActiveCauseCategoryOverlays(tx, declared);

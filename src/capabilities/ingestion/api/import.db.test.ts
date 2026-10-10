@@ -20,6 +20,8 @@ import {
   knowledge,
   learning_record,
   learning_session,
+  mastery_state,
+  material_fsrs_state,
   question,
   question_block,
   source_asset,
@@ -192,6 +194,29 @@ describe('POST /api/ingestion/[id]/import', () => {
     r2._store.clear();
     await resetDb();
     vi.clearAllMocks();
+  });
+
+  it('saves unclassified unanswered material without inventing mastery or an attempt', async () => {
+    const db = testDb();
+    const { sessionId, sourceDocId } = await setupSession(db);
+    await insertBlock(db, { id: 'block_a', sessionId, docId: sourceDocId });
+    const body = ImportBody.parse(
+      makeImportBody({
+        outcome: 'unanswered',
+        knowledge_ids: [],
+        final_wrong_answer_md: '',
+      }),
+    );
+    const result = await completeIngestionImport(db, sessionId, body);
+    expect(result.question_ids).toHaveLength(1);
+    expect(await db.select().from(knowledge)).toHaveLength(0);
+    expect(await db.select().from(mastery_state)).toHaveLength(0);
+    expect(await db.select().from(material_fsrs_state)).toHaveLength(0);
+    expect(await db.select().from(event).where(eq(event.action, 'attempt'))).toHaveLength(0);
+    expect(await db.select().from(learning_record)).toMatchObject([
+      { kind: 'open_question', knowledge_ids: [], attempt_event_id: null },
+    ]);
+    expect(await db.select().from(question)).toMatchObject([{ knowledge_ids: [] }]);
   });
 
   it('durable import calls the owner once across concurrent delivery and replay', async () => {
