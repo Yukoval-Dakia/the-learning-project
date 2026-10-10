@@ -28,7 +28,14 @@ function cacheMathPlugins(
 
 function loadMathPlugins(): Promise<MathPlugins> {
   if (loadedMathPlugins) return Promise.resolve(loadedMathPlugins);
-  mathPluginsPromise ??= Promise.all([import('remark-math'), import('rehype-katex')])
+  // The stylesheet travels with the plugins: rehype-katex emits MathML for screen readers next to
+  // the visual HTML, and only katex.min.css hides the MathML and lays out the HTML. Rendering
+  // before it lands shows every formula twice (YUK-1379). Its fonts are bundled same-origin.
+  mathPluginsPromise ??= Promise.all([
+    import('remark-math'),
+    import('rehype-katex'),
+    import('katex/dist/katex.min.css'),
+  ])
     .then(([remarkMath, rehypeKatex]) => cacheMathPlugins(remarkMath.default, rehypeKatex.default))
     .catch((error: unknown) => {
       // Don't cache a rejected load (e.g. transient chunk-fetch failure) — clear
@@ -56,6 +63,25 @@ if (import.meta.env.SSR) {
 }
 
 const NO_MATH_PLUGINS: MathPlugins = { remarkPlugins: [], rehypePlugins: [] };
+
+// Ingested and model-written content also uses the LaTeX delimiters \( \) and \[ \]. remark-math
+// only knows dollar signs, and CommonMark treats `\(` as an escaped bracket, so those formulas
+// would show as source text. Code spans and fences are left untouched; a delimiter preceded by
+// another backslash is a LaTeX line break, not an opener.
+const LATEX_DELIMITED =
+  /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)|(?<!\\)\\\[([\s\S]+?)\\\]|(?<!\\)\\\(([\s\S]+?)\\\)/g;
+
+function normalizeMathDelimiters(source: string): string {
+  if (!source.includes('\\(') && !source.includes('\\[')) return source;
+  return source.replace(
+    LATEX_DELIMITED,
+    (match, code: string | undefined, display: string | undefined, inline: string | undefined) => {
+      if (code !== undefined) return match;
+      if (display !== undefined) return `$$${display}$$`;
+      return `$${(inline ?? '').trim()}$`;
+    },
+  );
+}
 
 export function assetIdFromContentUrl(src: string | undefined): string | null {
   if (!src) return null;
@@ -90,7 +116,7 @@ function MarkdownImage({ node: _node, src, alt, ...props }: MarkdownImageProps):
 }
 
 export interface MathMarkdownProps extends Omit<HTMLAttributes<HTMLDivElement>, 'children'> {
-  /** Markdown source. Supports inline `$...$` and block `$$...$$` math. */
+  /** Markdown source. Supports `$...$` / `\\(...\\)` inline and `$$...$$` / `\\[...\\]` block math. */
   children: string;
   /**
    * Subject's renderConfig.notation. KaTeX plugin chain only activates when
@@ -156,6 +182,7 @@ export function MathMarkdown({ children, notation, ...divProps }: MathMarkdownPr
   }, [isKatex, mathPlugins]);
 
   const active = isKatex && mathPlugins ? mathPlugins : NO_MATH_PLUGINS;
+  const source = active === NO_MATH_PLUGINS ? children : normalizeMathDelimiters(children);
   return (
     <MarkdownRenderer
       {...divProps}
@@ -163,7 +190,7 @@ export function MathMarkdown({ children, notation, ...divProps }: MathMarkdownPr
       rehypePlugins={active.rehypePlugins}
       components={{ img: MarkdownImage }}
     >
-      {children}
+      {source}
     </MarkdownRenderer>
   );
 }
