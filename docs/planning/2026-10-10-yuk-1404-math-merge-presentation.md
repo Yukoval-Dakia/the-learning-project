@@ -50,6 +50,40 @@ interface ProposalBlockPreview {
 
 `pnpm install --frozen-lockfile`（新工作树，无 lockfile 漂移）→ `pnpm typecheck` ✅ → `pnpm lint`（175 条均为存量 warning；本次 6 文件 0 error，新代码 1 warning 已修）✅ → `pnpm build` exit 0（web/start/server/worker/migrate 全部产出）✅ → `pnpm gen:api-client`（增量 40 行）✅ → `pnpm gen:postman`（no-op diff，未改路由/请求）✅ → `pnpm audit:api-client` 在提交前 diff 非空属预期（重生成为确定性同 blob，随本提交落库后即绿）。未跑 full `pnpm test`（按规约）；未新增测试（不触五类不变量；投影安全属读侧展示合同，由离线证据覆盖）。
 
+## P1 修复（第二轮）— 截断不打断公式定界
+
+UserUI 复查发现 P1：`truncate` 是裸 `slice`，excerpt 120 / sub_questions.excerpt 80 /
+options.text 60（及 evidence label / 摘要项的 48/120 同路）会把 cap 切在 `$...$` / `$$...$$`
+或遗留 `\(...\)` / `\[...\]` 内部，向学习者预览泄漏悬空定界符与裸 TeX。
+
+修复（仅 `kernel/proposals/presentation.ts`，渲染层不动，存储源不重写）：
+
+- `truncate` 改为经 `mathSafeCut(value, cap-1)`：维持原 cap（含 `…`）；若 cap 落点切进某个
+  公式 span，回退到该 span 并界符之前（不人为补闭合、不猜测）；cap 未触及任何 span 的
+  文本与旧裸 slice 逐字节一致（回归零差）。
+- span 识别沿用仓库已定 grammar（渲染层 `LATEX_DELIMITED` / 生产侧
+  `EXPLICIT_MATH_DELIMITED`）：code span/fence 优先且其中的 `$` 是字面量；反斜杠前置的
+  定界符是转义/换行；公式不跨空行、不含反引号；未闭合 fence 其余视为代码。`$`/`$$` 额外
+  采用 pandoc 行内规则（开符后非空白、闭符前非空白、闭符后非数字），使 `$3 … $5` 类
+  货币/散文美元不配对、不吞后续内容；裸反斜杠永不猜测为公式。
+- 计数/列表/字段形状不变（legacy 仍 null，不转 0）；只影响读侧预览截断。
+
+离线证据（同一脚本 `/tmp/yuk1404-offline-evidence/evidence.ts` 新增 D 节，真实
+`loadProposalPresentations` + stub DB，含 raw `prompt_md` 的 evidence-label 路径）：cap
+切进公式/切在开符字符之间/切在闭符附近 → 回退无残留定界符；完整公式在 cap 内则完整保留
+（含 `\(a+b\)` 恰好收尾）；超长公式降级为仅 `…`；相邻 `$a$$b$` 两段均完整；`\$5` 转义与
+两种货币模式逐字节等于旧 slice；跨空行 `$`、code span/fence 内 `$` 不触发回退；📐 代理对
+在回退边界完整；legacy 行 null 计数保持。日志 `run-p1fix.log` / 结果 `result.json`，
+`ALL YUK-1404 OFFLINE EVIDENCE ASSERTIONS PASSED`。
+
+复核门（本机）：`pnpm typecheck` ✅ exit 0；`pnpm lint` ✅ exit 0（174 条均为存量，
+presentation.ts 0 条）；`pnpm build` ✅ exit 0。未跑 full `pnpm test`（规约）。
+
+material limits：公式外的裸反斜杠命令（如未被定界的 `\frac`）不在保护范围（不猜测数学）；
+公式本身超过 cap 时摘要可能极短甚至仅 `…`（可接受，优于泄漏半截语法）；货币美元与同一
+段落内真公式的歧义（如 `花$三，收$五`）按 pandoc 规则判为公式，与渲染层实际行为一致；
+未闭合 fence 之后不再识别公式（与 markdown 语义一致，回退仅可能少不会错）。
+
 ## 边界与遗留
 
 - 无 UI/Start/manifest/DBOS/DB/容器/runtime/provider 调用；无 push/PR/deploy；无子委托。未跑迁移（确认无重叠）。

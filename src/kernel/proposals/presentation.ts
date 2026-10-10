@@ -89,9 +89,134 @@ function textOf(value: unknown): string | null {
   return text.length > 0 ? text : null;
 }
 
+// YUK-1404 P1 — a raw slice could cut inside a math span and leak a dangling
+// `$` / `$$` / `\(` opener or raw TeX into the learner preview. Truncation
+// backs off to just before the span the cap would split (never synthesizing a
+// closing delimiter), using the grammar the renderer and the producer
+// canonicalizer already settled (LATEX_DELIMITED in src/ui/lib/math-markdown.tsx,
+// EXPLICIT_MATH_DELIMITED in capabilities/ingestion/server/structure.ts): code
+// spans/fences win first; a delimiter preceded by a backslash is escaped; a
+// formula never crosses a blank line or a backtick. Dollar pairs additionally
+// follow the pandoc inline-math rules (opener not followed by whitespace,
+// closer not preceded by whitespace and not followed by a digit) so prose /
+// currency dollars like "$3 … $5" never pair up and swallow later text. Bare
+// backslashes are never guessed to be math. Preview read-side only: the
+// stored source is never rewritten.
+
+function isEscapedAt(value: string, index: number): boolean {
+  return index > 0 && value[index - 1] === '\\';
+}
+
+/** A formula span never crosses a blank line (`\n\s*\n`), mirroring LATEX_DELIMITED. */
+function crossesBlankLine(value: string, from: number, end: number): boolean {
+  for (let i = from; i < end; i++) {
+    if (value[i] !== '\n') continue;
+    let j = i + 1;
+    while (j < end && (value[j] === ' ' || value[j] === '\t' || value[j] === '\r')) j++;
+    if (value[j] === '\n') return true;
+  }
+  return false;
+}
+
+/**
+ * End index (exclusive) of the math span whose dollar opener starts at
+ * `openAt`, or -1 when the dollars do not open a bounded formula (currency,
+ * escaped, unclosed, or crossing a backtick / blank line).
+ */
+function dollarMathEnd(value: string, openAt: number, display: boolean): number {
+  const from = openAt + (display ? 2 : 1);
+  if (!display && (from >= value.length || /\s/.test(value[from]))) return -1;
+  for (let j = from; j < value.length; j++) {
+    const ch = value[j];
+    if (ch === '`') return -1;
+    if (ch === '\n' && isBlankThenNewline(value, j)) return -1;
+    if (ch !== '$' || isEscapedAt(value, j)) continue;
+    if (display) {
+      if (value[j + 1] === '$') return j + 2;
+      continue;
+    }
+    if (/\s/.test(value[j - 1])) continue;
+    if (/[0-9]/.test(value[j + 1] ?? '')) continue;
+    return j + 1;
+  }
+  return -1;
+}
+
+function isBlankThenNewline(value: string, newlineAt: number): boolean {
+  let j = newlineAt + 1;
+  while (j < value.length && (value[j] === ' ' || value[j] === '\t' || value[j] === '\r')) j++;
+  return value[j] === '\n';
+}
+
+/**
+ * End index (exclusive) of an explicit legacy `\(...\)` / `\[...\]` span, or
+ * -1. Mirrors EXPLICIT_MATH_DELIMITED: unescaped opener, non-empty content,
+ * no backtick, no blank line; no whitespace-adjacency rules (these forms are
+ * never currency).
+ */
+function latexMathEnd(value: string, openAt: number): number {
+  const closeToken = value[openAt + 1] === '(' ? '\\)' : '\\]';
+  const closeAt = value.indexOf(closeToken, openAt + 2);
+  if (closeAt <= openAt + 2) return -1;
+  if (value.slice(openAt + 2, closeAt).includes('`')) return -1;
+  if (crossesBlankLine(value, openAt + 2, closeAt)) return -1;
+  return closeAt + 2;
+}
+
+/**
+ * Largest cut index ≤ limit that does not split a math span. When the raw
+ * limit lands strictly inside a span, back off to the span's start; text with
+ * no intersecting span cuts exactly where the old raw slice did.
+ */
+function mathSafeCut(value: string, limit: number): number {
+  let i = 0;
+  while (i < value.length) {
+    const ch = value[i];
+    if ((ch === '`' || ch === '~') && value[i + 1] === ch && value[i + 2] === ch) {
+      const close = value.indexOf(ch === '`' ? '```' : '~~~', i + 3);
+      i = close === -1 ? value.length : close + 3; // unclosed fence: rest is code
+      continue;
+    }
+    if (ch === '`') {
+      let close = -1;
+      for (let j = i + 1; j < value.length && value[j] !== '\n'; j++) {
+        if (value[j] === '`') {
+          close = j;
+          break;
+        }
+      }
+      i = close === -1 ? i + 1 : close + 1;
+      continue;
+    }
+    if (ch === '$' && !isEscapedAt(value, i)) {
+      const display = value[i + 1] === '$';
+      const end = dollarMathEnd(value, i, display);
+      if (end === -1) {
+        i += display ? 2 : 1;
+        continue;
+      }
+      if (i < limit && limit < end) return i;
+      i = end;
+      continue;
+    }
+    if (ch === '\\' && (value[i + 1] === '(' || value[i + 1] === '[') && !isEscapedAt(value, i)) {
+      const end = latexMathEnd(value, i);
+      if (end === -1) {
+        i += 2;
+        continue;
+      }
+      if (i < limit && limit < end) return i;
+      i = end;
+      continue;
+    }
+    i += 1;
+  }
+  return limit;
+}
+
 function truncate(value: string, cap: number): string {
   if (value.length <= cap) return value;
-  return `${value.slice(0, cap - 1)}…`;
+  return `${value.slice(0, mathSafeCut(value, cap - 1))}…`;
 }
 
 function subQuestionPreview(
