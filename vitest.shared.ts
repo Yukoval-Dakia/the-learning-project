@@ -23,6 +23,7 @@ export const sharedOxc = {
 
 // YUK-1401: reviewed invariant files only. New tests must be explicitly assigned.
 export const fastTestInclude = [
+  'src/capabilities/ingestion/server/reference-origin.unit.test.ts',
   'scripts/api-smoke.test.ts',
   'scripts/cutover-backup.test.ts',
   'scripts/migration-apply.test.ts',

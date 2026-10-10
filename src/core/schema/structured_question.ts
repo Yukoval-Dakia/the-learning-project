@@ -49,7 +49,16 @@ export const TencentGrading = z.object({
   KnowledgePoints: z.array(z.string()).optional(),
 });
 
+export const ExtractedReferenceOrigin = z.enum(['printed', 'student_work', 'unknown']);
+
 export const ExtractionEvidence = z.object({
+  // Extraction observation, not verified grading admission.
+  reference_extraction: z
+    .object({
+      origin: ExtractedReferenceOrigin,
+      page_index: z.number().int().min(0).optional(),
+    })
+    .optional(),
   handwriting: z.array(HandwriteInfo).optional(),
   tencent_grading: TencentGrading.optional(),
 });

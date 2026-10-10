@@ -113,13 +113,14 @@ export function renderTencentHint(pages: TencentPageHint[]): string {
  */
 function nodeToStructured(
   node: StructureNodeT,
+  pageCount: number,
   assignmentsOut?: FigureAssignment[],
 ): StructuredQuestionT {
   const id = createId();
   const isStem = node.role === 'stem';
   const subs =
     isStem && node.sub_questions
-      ? node.sub_questions.map((s) => nodeToStructured(s, assignmentsOut))
+      ? node.sub_questions.map((s) => nodeToStructured(s, pageCount, assignmentsOut))
       : undefined;
   const out: StructuredQuestionT = {
     id,
@@ -130,8 +131,22 @@ function nodeToStructured(
   if (node.question_no) out.question_no = node.question_no;
   if (node.kind) out.kind = node.kind;
   if (node.options && node.options.length > 0) out.options = node.options;
-  if (node.answers && node.answers.length > 0) out.answers = node.answers;
-  if (node.analysis) out.analysis = node.analysis;
+  const referencePage = node.reference_page_index;
+  const validReferencePage = referencePage != null && referencePage < pageCount;
+  const origin =
+    node.reference_origin === 'printed' && !validReferencePage
+      ? 'unknown'
+      : (node.reference_origin ?? 'unknown');
+  out.extraction_evidence = {
+    reference_extraction: {
+      origin,
+      ...(validReferencePage ? { page_index: referencePage } : {}),
+    },
+  };
+  if (origin === 'printed') {
+    if (node.answers && node.answers.length > 0) out.answers = node.answers;
+    if (node.analysis) out.analysis = node.analysis;
+  }
   if (subs && subs.length > 0) out.sub_questions = subs;
   // YUK-227 S3 Slice A (P1 fix): copy VLM page_index to the output so
   // q.page_index in the handler is non-null on the VLM path and
@@ -270,7 +285,9 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
   // Only populate the collector when preFigures were supplied (no-op otherwise).
   const assignmentsOut: FigureAssignment[] | undefined =
     params.preFigures && params.preFigures.length > 0 ? [] : undefined;
-  const questions = parsed.questions.map((node) => nodeToStructured(node, assignmentsOut));
+  const questions = parsed.questions.map((node) =>
+    nodeToStructured(node, params.pageImages.length, assignmentsOut),
+  );
   return {
     questions,
     layout_quality: parsed.layout_quality,

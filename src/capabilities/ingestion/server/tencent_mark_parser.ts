@@ -259,10 +259,8 @@ function nodeToLeaf(
     bbox = flat8ToBBox(node.QuestionPositions, pageMeta.pageWidth, pageMeta.pageHeight);
   }
 
-  // AnswerInfos[0] 是主答案；多答案罕见
+  // Provider grading stays evidence-only; it is not a source answer key.
   const firstAnswer = node.AnswerInfos?.[0];
-  const answers = firstAnswer?.RightAnswer ? [firstAnswer.RightAnswer] : undefined;
-  const analysis = firstAnswer?.AnswerAnalysis;
 
   // extraction_evidence
   const evidence: StructuredQuestionT['extraction_evidence'] = {};
@@ -294,8 +292,6 @@ function nodeToLeaf(
     question_no,
     prompt_text,
     options,
-    answers,
-    analysis,
     bbox,
     page_index: pageIndex,
     extraction_evidence: evidence.handwriting || evidence.tencent_grading ? evidence : undefined,

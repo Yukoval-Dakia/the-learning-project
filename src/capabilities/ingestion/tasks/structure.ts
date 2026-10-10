@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 import { QuestionKind } from '@/core/schema/business';
+import { ExtractedReferenceOrigin } from '@/core/schema/structured_question';
 import type { SubjectProfile } from '@/subjects/profile';
 import { parseTaskJsonObject } from './parse-json';
 
@@ -15,6 +16,8 @@ export type StructureNodeT = {
   question_no?: string | null;
   prompt_text: string;
   options?: { label: string; text: string }[] | null;
+  reference_origin?: z.infer<typeof ExtractedReferenceOrigin> | null;
+  reference_page_index?: number | null;
   answers?: string[] | null;
   analysis?: string | null;
   page_index?: number | null;
@@ -30,6 +33,8 @@ const StructureNode: z.ZodType<StructureNodeT> = z.lazy(() =>
     question_no: z.string().nullable().optional(),
     prompt_text: z.string(),
     options: z.array(QuestionOptionOut).nullable().optional(),
+    reference_origin: ExtractedReferenceOrigin.nullable().optional(),
+    reference_page_index: z.number().int().min(0).nullable().optional(),
     answers: z.array(z.string()).nullable().optional(),
     analysis: z.string().nullable().optional(),
     page_index: z.number().int().min(0).nullable().optional(),
@@ -83,7 +88,7 @@ function buildStructurePrompt(profile: SubjectProfile): string {
 {"layout_quality":"structured"|"partial"|"text_only","extraction_confidence":0.0-1.0,"warnings":["..."],"questions":[StructureNode, ...]}
 
 StructureNode（递归，**不要**输出 id，运行时会补）：
-{"kind":"choice|true_false|fill_blank|short_answer|essay|computation|reading|translation|derivation 或原题题型","role":"stem"|"sub"|"standalone","question_no":"1"|null,"prompt_text":"...","options":[{"label":"A","text":"..."}]|null,"answers":["..."]|null,"analysis":"..."|null,"page_index":0,"sub_questions":[StructureNode, ...]|null,"figure_ids":[0,1]|null,"student_answer_present":true|false|null}
+{"kind":"choice|true_false|fill_blank|short_answer|essay|computation|reading|translation|derivation 或原题题型","role":"stem"|"sub"|"standalone","question_no":"1"|null,"prompt_text":"...","options":[{"label":"A","text":"..."}]|null,"reference_origin":"printed"|"student_work"|"unknown","reference_page_index":0|null,"answers":["..."]|null,"analysis":"..."|null,"page_index":0,"sub_questions":[StructureNode, ...]|null,"figure_ids":[0,1]|null,"student_answer_present":true|false|null}
 
 约束：
 - kind 是原题的题型标签，依据题面填写；选择题的选项必须进入 options，不能只拼进 prompt_text。题型标签不是评分准入，不据此生成参考答案。
@@ -94,6 +99,8 @@ StructureNode（递归，**不要**输出 id，运行时会补）：
 - 顶层 questions 至少 1 个；如果整页无法识别出任何题，questions 给空数组并把 layout_quality 设 "text_only"。
 - layout_quality：结构清晰完整 → "structured"；能出题但版式残缺/有疑点 → "partial"；几乎认不出结构 → "text_only"。
 - extraction_confidence：你对整棵结构树与原图一致性的置信度（0 到 1）。跨页归属、题号、选项或层级有疑点时必须降低；不要把字段固定写成 1。
+- reference_origin 标记参考答案的来源：只有页面上明确印刷的答案键/标准解析是 printed，并在 reference_page_index 填其实际页码；学生手写结论/解题过程是 student_work，不能因为有批改对勾或与推理一致就变成 printed；看不清、未提供答案、模型推导或腾讯批改建议都为 unknown。
+- answers / analysis 仅在 reference_origin=printed 时逐字摘录；否则必须为空。题目本身的已知条件不是答案键。允许同一页既有学生作答又有独立印刷答案，须分别判断。
 - options / answers / analysis 没有就给 null 或省略，不要编。
 - 禁止：输出 JSON 之外的文字、把跨页同一大题拆成多个顶层节点、把腾讯文字 hint 当成不可改的结构。`;
 }
