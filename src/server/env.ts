@@ -154,6 +154,9 @@ const server = {
   WORKFLOW_JUDGE_OBSERVE_ENABLED: optionalString,
   WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED: optionalString,
   XIAOMI_API_KEY: optionalString,
+  XIAOMI_TOKEN_PLAN_API_KEY: optionalString,
+  XIAOMI_TOKEN_PLAN_BASE_URL: optionalString,
+  XIAOMI_TOKEN_PLAN_REGION: z.enum(['cn', 'sgp', 'ams']).optional(),
   ZHIPU_API_KEY: optionalString,
   ZAI_CODING_CN_API_KEY: optionalString,
 };
