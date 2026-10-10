@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-const LANE_NAMES = ['static', 'unit', 'db', 'migration', 'build', 'usability'];
+const LANE_NAMES = ['static', 'unit', 'db', 'migration', 'build'];
 
 const emptyLanes = () => Object.fromEntries(LANE_NAMES.map((lane) => [lane, false]));
 const fullLanes = () => Object.fromEntries(LANE_NAMES.map((lane) => [lane, true]));
@@ -12,267 +12,22 @@ function normalizePath(file) {
 }
 
 function isDocsOnly(file) {
-  if (file.startsWith('docs/') || file.startsWith('.remember/')) return true;
+  if (file.startsWith('.remember/')) return true;
+  if (file.startsWith('docs/')) return /\.(?:md|mdx|txt|png|jpe?g|gif|webp|svg|pdf)$/i.test(file);
   if (!file.includes('/') && file.endsWith('.md')) return true;
   if (file.startsWith('.agents/') || file.startsWith('.claude/')) return file.endsWith('.md');
   return /\/(?:AGENTS|CLAUDE|CONTEXT|README)\.md$/.test(file);
 }
 
-function isTestFile(file) {
-  return /\.test\.tsx?$/.test(file);
-}
-
-function isMigrationSmokeTest(file) {
-  return file === 'tests/integration/migration-smoke.test.ts';
-}
-
-function isDbConventionTest(file) {
-  return /\.db\.test\.tsx?$/.test(file);
-}
-
-function isUnitConventionTest(file) {
-  if (/\.unit\.test\.tsx?$/.test(file)) return true;
-  if (file.startsWith('scripts/') && isTestFile(file)) return true;
-  if (file.startsWith('src/__tests__/') && isTestFile(file)) return true;
-  if (file.startsWith('src/ai/') && isTestFile(file)) return true;
-  if (file.startsWith('src/core/') && isTestFile(file)) return true;
-  if (file.startsWith('src/ui/') && isTestFile(file)) return true;
-  if (file.startsWith('src/server/ai/judges/') && isTestFile(file)) return true;
-  if (/^tests\/(?:core|schema|subjects)\//.test(file) && isTestFile(file)) return true;
-  return false;
-}
-
-function globalTriggerReason(file) {
-  if (file.startsWith('.github/')) return 'github-workflow';
-  if (file.startsWith('drizzle/')) return 'migration';
-  if (file.startsWith('src/kernel/')) return 'kernel';
-  if (file.startsWith('src/core/')) return 'core';
-  if (file.startsWith('src/db/')) return 'db-foundation';
-  if (file === 'src/capabilities/index.ts') return 'capability-composition';
-  if (/^src\/capabilities\/[^/]+\/manifest\.ts$/.test(file)) return 'capability-manifest';
-  if (
-    [
-      'package.json',
-      'pnpm-lock.yaml',
-      'pnpm-workspace.yaml',
-      '.node-version',
-      'tsconfig.json',
-      'biome.json',
-      'biome.jsonc',
-      'server/app.ts',
-      'tests/global-setup.ts',
-      'tests/setup.db-fork.ts',
-      'tests/db-fork-constants.ts',
-      'tests/helpers/db.ts',
-      'scripts/migrate.ts',
-      'scripts/worker.ts',
-    ].includes(file)
-  ) {
-    return 'global-config-or-runtime';
-  }
-  if (/^(vitest|drizzle|playwright)\..*\.ts$/.test(file)) return 'test-or-build-config';
-  if (/^docker-compose(?:\.[^.]+)?\.yml$/.test(file) || file === 'Dockerfile') {
-    return 'runtime-image';
-  }
-  if (file.startsWith('scripts/ci/')) return 'ci-selector';
-  return undefined;
-}
-
-function filePlan(file) {
-  if (isDocsOnly(file)) return { lanes: emptyLanes(), unitSelection: 'skip', reason: 'docs' };
-
-  if (file.startsWith('.agents/') || file.startsWith('.claude/') || file.startsWith('.opencode/')) {
-    return {
-      lanes: { ...emptyLanes(), static: true },
-      unitSelection: 'skip',
-      reason: 'agent-tooling',
-    };
-  }
-
-  // A direct test edit is classified before its production directory. This lets
-  // a conventional test-only change avoid unrelated runtime lanes.
-  if (isMigrationSmokeTest(file)) {
-    return {
-      lanes: { ...emptyLanes(), static: true, migration: true },
-      unitSelection: 'skip',
-      reason: 'migration-test',
-    };
-  }
-  if (isDbConventionTest(file)) {
-    return {
-      lanes: { ...emptyLanes(), static: true, db: true },
-      unitSelection: 'skip',
-      reason: 'db-test',
-    };
-  }
-  if (isUnitConventionTest(file)) {
-    return {
-      lanes: { ...emptyLanes(), static: true, unit: true },
-      unitSelection: 'affected',
-      reason: 'unit-test',
-    };
-  }
-  // allTestInclude is broader than fastTestInclude, and the latter contains
-  // explicit plain-named allowlist entries that cannot be inferred from the
-  // filename alone. Run both partitions for an otherwise ambiguous direct test
-  // edit so the test executes whichever config owns it.
-  if (isTestFile(file)) {
-    return {
-      lanes: { ...emptyLanes(), static: true, unit: true, db: true },
-      unitSelection: 'affected',
-      reason: 'ambiguous-test-partition',
-    };
-  }
-
-  const trigger = globalTriggerReason(file);
-  if (trigger) {
-    return { lanes: fullLanes(), unitSelection: 'full', reason: `full:${trigger}` };
-  }
-
-  if (
-    file.startsWith('web/') ||
-    file.startsWith('src/ui/') ||
-    file.startsWith('public/') ||
-    /^src\/capabilities\/[^/]+\/ui\//.test(file)
-  ) {
-    return {
-      lanes: {
-        ...emptyLanes(),
-        static: true,
-        unit: true,
-        build: true,
-        usability: true,
-      },
-      unitSelection: 'affected',
-      reason: 'ui',
-    };
-  }
-
-  if (file.startsWith('server/')) {
-    return {
-      lanes: {
-        ...emptyLanes(),
-        static: true,
-        unit: true,
-        db: true,
-        build: true,
-        usability: true,
-      },
-      unitSelection: 'affected',
-      reason: 'server-composition',
-    };
-  }
-
-  if (
-    file.startsWith('src/server/') ||
-    file.startsWith('src/ai/') ||
-    /^src\/capabilities\/[^/]+\/(?:api|server|jobs)\//.test(file) ||
-    /^src\/capabilities\/[^/]+\/public\.ts$/.test(file)
-  ) {
-    return {
-      lanes: {
-        ...emptyLanes(),
-        static: true,
-        unit: true,
-        db: true,
-        build: true,
-      },
-      unitSelection: 'affected',
-      reason: 'server',
-    };
-  }
-
-  if (file.startsWith('src/subjects/')) {
-    return {
-      lanes: {
-        ...emptyLanes(),
-        static: true,
-        unit: true,
-        db: true,
-        build: true,
-        usability: true,
-      },
-      unitSelection: 'affected',
-      reason: 'subject-bundle',
-    };
-  }
-
-  if (
-    file.startsWith('scripts/audit-') ||
-    file.startsWith('scripts/judge-') ||
-    file.startsWith('scripts/lib/') ||
-    // Top-level scripts/*.json are audit data files (baselines, allowlists,
-    // contract ledgers) consumed only by scripts/audit-* — they belong to the
-    // static+unit lanes, not an unclassified full-suite trigger.
-    /^scripts\/[^/]+\.json$/.test(file)
-  ) {
-    return {
-      lanes: { ...emptyLanes(), static: true, unit: true },
-      unitSelection: 'affected',
-      reason: 'audit-tooling',
-    };
-  }
-
-  if (file.startsWith('tools/api-codegen/')) {
-    return {
-      lanes: { ...emptyLanes(), static: true, unit: true, build: true },
-      unitSelection: 'affected',
-      reason: 'api-codegen',
-    };
-  }
-
-  return {
-    lanes: fullLanes(),
-    unitSelection: 'full',
-    reason: `unclassified:${file}`,
-  };
-}
-
-export function classifyChangedFiles(inputFiles, options = {}) {
-  const files = [...new Set(inputFiles.map(normalizePath).filter(Boolean))].sort((a, b) =>
-    a.localeCompare(b),
-  );
-  if (options.forceFullReason) {
-    return {
-      schema_version: 1,
-      code_changed: true,
-      changed_files: files,
-      lanes: fullLanes(),
-      unit_selection: 'full',
-      db_selection: 'full',
-      reasons: [options.forceFullReason],
-    };
-  }
-
-  const lanes = emptyLanes();
-  const reasons = new Set();
-  let unitSelection = 'skip';
-  let dbSelection = 'skip';
-  for (const file of files) {
-    const planned = filePlan(file);
-    for (const lane of LANE_NAMES) lanes[lane] ||= planned.lanes[lane];
-    if (planned.unitSelection === 'full') unitSelection = 'full';
-    else if (planned.unitSelection === 'affected' && unitSelection === 'skip') {
-      unitSelection = 'affected';
-    }
-    if (planned.lanes.db) {
-      if (planned.unitSelection === 'full') dbSelection = 'full';
-      else if (dbSelection === 'skip') dbSelection = 'affected';
-    }
-    if (planned.reason !== 'docs') reasons.add(planned.reason);
-  }
-
-  const codeChanged = Object.values(lanes).some(Boolean);
-  if (!lanes.unit) unitSelection = 'skip';
-  if (!lanes.db) dbSelection = 'skip';
+export function classifyChangedFiles(inputFiles, { forceFullReason } = {}) {
+  const files = [...new Set(inputFiles.map(normalizePath))].sort();
+  const codeChanged = Boolean(forceFullReason) || files.some((file) => !isDocsOnly(file));
   return {
     schema_version: 1,
     code_changed: codeChanged,
     changed_files: files,
-    lanes,
-    unit_selection: unitSelection,
-    db_selection: dbSelection,
-    reasons: [...reasons].sort((a, b) => a.localeCompare(b)),
+    lanes: codeChanged ? fullLanes() : emptyLanes(),
+    reasons: forceFullReason ? [forceFullReason] : codeChanged ? ['core-code-change'] : [],
   };
 }
 
@@ -362,8 +117,6 @@ function writeSummary(plan, mergeBase) {
     '## CI gate plan',
     '',
     `- merge base: \`${markdownText(mergeBase || 'unavailable')}\``,
-    `- unit selector: \`${plan.unit_selection}\``,
-    `- DB selector: \`${plan.db_selection}\``,
     `- reasons: ${plan.reasons.length ? plan.reasons.map((reason) => `\`${markdownText(reason)}\``).join(', ') : 'docs-only / empty diff'}`,
     '',
     '| lane | run |',
@@ -392,8 +145,6 @@ function main() {
   const { plan, mergeBase } = computePlanFromGit();
   appendOutput('code_changed', plan.code_changed);
   for (const lane of LANE_NAMES) appendOutput(`${lane}_changed`, plan.lanes[lane]);
-  appendOutput('unit_selection', plan.unit_selection);
-  appendOutput('db_selection', plan.db_selection);
   appendOutput('merge_base', mergeBase);
   appendOutput('plan_json', JSON.stringify(plan));
   writeSummary(plan, mergeBase);

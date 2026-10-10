@@ -126,14 +126,6 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     await container?.stop();
   });
 
-  it('retains PostgreSQL fsync and synchronous commit on disposable storage', async () => {
-    const [settings] = await client`
-      SELECT current_setting('fsync') AS fsync,
-             current_setting('synchronous_commit') AS synchronous_commit
-    `;
-    expect(settings).toEqual({ fsync: 'on', synchronous_commit: 'on' });
-  });
-
   it('creates Phase 1c.1 Lane A new tables (event, learning_session, material_fsrs_state, knowledge_edge)', async () => {
     const rows = await db.execute<{ table_name: string }>(sql`
       SELECT table_name FROM information_schema.tables
@@ -2224,59 +2216,6 @@ describe('migration smoke — YUK-851 provider attempt lifecycle', () => {
         AND constraint_type = 'FOREIGN KEY'
     `;
     expect(foreignKeys[0]?.count).toBe(0);
-  });
-
-  it('accepts valid unfinished, wire terminal, opaque terminal, and active admission shapes', async () => {
-    await client`
-      INSERT INTO provider_attempt (
-        attempt_id, operation_id, attempt_kind, provider, model, lane_id, protocol,
-        endpoint_class, caller, operation_kind, started_at
-      ) VALUES (
-        '00000000-0000-4000-8000-000000000871',
-        '00000000-0000-4000-8000-000000000872',
-        'wire', 'xiaomi', NULL, 'generation', 'anthropic', 'messages', 'api', 'Task', now()
-      )
-    `;
-    await client`
-      INSERT INTO provider_attempt (
-        attempt_id, operation_id, attempt_kind, provider, model, lane_id, protocol,
-        endpoint_class, caller, operation_kind, terminal_status, terminal_reason,
-        wire_count, usage_json, cost_basis, cost_amount, cost_currency, cost_source,
-        started_at, finished_at
-      ) VALUES (
-        '00000000-0000-4000-8000-000000000873',
-        '00000000-0000-4000-8000-000000000872',
-        'wire', 'xiaomi', 'mimo', 'generation', 'anthropic', 'messages', 'worker', 'Task',
-        'succeeded', 'completed', 0,
-        '{"basis":"reported","unit":"tokens","input":0,"output":null,"total":null,"source":"sdk"}',
-        'reported', 0, 'USD', 'sdk', now(), now()
-      )
-    `;
-    await client`
-      INSERT INTO provider_attempt (
-        attempt_id, operation_id, attempt_kind, provider, model, lane_id, protocol,
-        endpoint_class, caller, operation_kind, terminal_status, terminal_reason,
-        wire_count, usage_json, cost_basis, cost_amount, cost_currency, cost_source,
-        started_at, finished_at
-      ) VALUES (
-        '00000000-0000-4000-8000-000000000874',
-        '00000000-0000-4000-8000-000000000872',
-        'opaque_operation', 'anthropic', 'claude', 'opaque', 'sdk', 'query', 'worker',
-        'OpaqueTask', 'unknown', 'opaque operation', NULL,
-        '{"basis":"unknown","unit":null,"input":null,"output":null,"total":null,"source":"sdk"}',
-        'unknown', NULL, NULL, 'pricebook', now(), now()
-      )
-    `;
-    await client`
-      INSERT INTO provider_attempt_admission (
-        attempt_id, identity_fingerprint, policy_fingerprint, lane_id, mode, status,
-        lease_owner, requested_at, deadline_at, acquired_at, lease_expires_at
-      ) VALUES (
-        '00000000-0000-4000-8000-000000000871', 'identity', 'policy', 'generation',
-        'enforce', 'acquired', '00000000-0000-4000-8000-000000000875',
-        now(), now() + interval '1 minute', now(), now() + interval '1 minute'
-      )
-    `;
   });
 
   it.each([

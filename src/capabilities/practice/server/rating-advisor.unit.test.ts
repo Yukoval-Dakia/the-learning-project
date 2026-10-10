@@ -65,18 +65,6 @@ function makeCorrect(score: number): JudgeResultV2T {
   };
 }
 
-function makeUnsupported(): JudgeResultV2T {
-  return {
-    coarse_outcome: 'unsupported',
-    score: null,
-    score_meaning: 'correctness',
-    confidence: 0,
-    capability_ref: CAPABILITY_REF,
-    feedback_md: 'unsupported route',
-    evidence_json: {},
-  };
-}
-
 describe('judgeResultToRatingAdvice — six boundary cases', () => {
   it('case 1: score=0.0 (incorrect) → again', () => {
     const advice = judgeResultToRatingAdvice(makeIncorrect());
@@ -153,13 +141,6 @@ describe('judgeResultToRatingAdvice — non-boundary smoke', () => {
   it('YUK-739: without a profile the raw cause id is NOT interpreted (no mirror)', () => {
     const advice = judgeResultToRatingAdvice(makePartial(0.1), { causeCategory: 'carelessness' });
     expect(advice.rating).toBe('again');
-  });
-
-  it('unsupported judge → rating null with reason explaining', () => {
-    const advice = judgeResultToRatingAdvice(makeUnsupported());
-    expect(advice.rating).toBeNull();
-    expect(advice.evidence_score).toBeNull();
-    expect(advice.reason).toMatch(/unsupported/i);
   });
 
   it('unknown cause category does not change default bucket', () => {

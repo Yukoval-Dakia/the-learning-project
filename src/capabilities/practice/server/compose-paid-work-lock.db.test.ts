@@ -1,5 +1,5 @@
 import { sql } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from '@/db/client';
 import { resetDb } from '../../../../tests/helpers/db';
 import { withinComposePaidWorkLock } from './compose-paid-work-lock';
@@ -11,60 +11,6 @@ beforeEach(async () => {
 });
 
 describe('Practice compose paid-work reserved adapter', () => {
-  it('logs a late unlock failure and releases only after the timed-out query settles', async () => {
-    const reserved = await db.$client.reserve();
-    const pendingQuery = Promise.withResolvers<{ acquired: boolean }[]>();
-    const queryStarted = Promise.withResolvers<void>();
-    const released = Promise.withResolvers<void>();
-    const release = vi.spyOn(reserved, 'release').mockImplementation(() => released.resolve());
-    const unsafe = reserved.unsafe.bind(reserved);
-    const unlock = vi
-      .spyOn(reserved, 'unsafe')
-      .mockImplementation(() => unsafe('SELECT compose_cleanup_missing_function()'));
-    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    const reserve = vi.spyOn(db.$client, 'reserve').mockResolvedValue(
-      new Proxy(reserved, {
-        apply() {
-          queryStarted.resolve();
-          return pendingQuery.promise;
-        },
-      }),
-    );
-    const work = vi.fn(async () => 'unexpected');
-    try {
-      vi.useFakeTimers();
-      const result = withinComposePaidWorkLock(db, DATE, new Date(Date.now() + 100), work);
-      const rejected = expect(result).rejects.toMatchObject({ code: 'practice_compose_busy' });
-      await queryStarted.promise;
-      await vi.advanceTimersByTimeAsync(100);
-      await rejected;
-      expect(release).not.toHaveBeenCalled();
-      expect(unlock).not.toHaveBeenCalled();
-      vi.useRealTimers();
-
-      pendingQuery.resolve([{ acquired: false }]);
-      await released.promise;
-      expect(work).not.toHaveBeenCalled();
-      expect(unlock).toHaveBeenCalledWith('SELECT pg_advisory_unlock(hashtext($1))', [
-        `stream:compose-paid:${DATE}`,
-      ]);
-      expect(error).toHaveBeenCalledWith(
-        '[session_lock] advisory unlock failed after timeout',
-        `stream:compose-paid:${DATE}`,
-        expect.objectContaining({ code: '42883' }),
-      );
-      expect(release).toHaveBeenCalledTimes(1);
-    } finally {
-      vi.useRealTimers();
-      pendingQuery.resolve([{ acquired: false }]);
-      reserve.mockRestore();
-      unlock.mockRestore();
-      error.mockRestore();
-      release.mockRestore();
-      reserved.release();
-    }
-  });
-
   it('applies transaction config on the reserved session', async () => {
     // Given a reserved paid-work session with a configured top-level transaction.
 

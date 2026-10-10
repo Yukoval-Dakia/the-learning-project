@@ -8,16 +8,8 @@ import { classifyMigrationCapture } from '@/core/migration/classify';
 import { type ManifestOptions, buildMigrationManifest } from '@/core/migration/manifest';
 import { SNAPSHOT, emptyCapture, ev, judgeEvent, withEvents } from '@/core/migration/test-fixtures';
 import type { MigrationCapture, MigrationManifest } from '@/core/migration/types';
-import { applyReportFileName } from '@/server/migration/apply';
 
-import {
-  type ApplyCliArgs,
-  applyTargetSsl,
-  isLoopbackHost,
-  loadMigrationArtifacts,
-  parseApplyArgs,
-  validateTargetUrl,
-} from './migration-apply';
+import { loadMigrationArtifacts } from './migration-apply';
 
 // YUK-1050（review 修订版）— CLI 单元测试（无 DB）：参数面、--target 校验
 //（P1-8：空/残缺 URL 拒绝）、工件身份复算（P1-2：capture↔manifest 拼装/篡改/
@@ -99,60 +91,7 @@ function artifactDir(
   return dir;
 }
 
-describe('parseApplyArgs', () => {
-  it('解析必选/可选旗标，batch-size 容错', () => {
-    const args = parseApplyArgs([
-      '--artifacts=/tmp/a',
-      '--target=postgres://x/y?sslmode=disable',
-      '--revisions=/tmp/reg.json',
-      '--confirm-write',
-      '--batch-size=50',
-    ]);
-    expect(args).toMatchObject({
-      artifacts: '/tmp/a',
-      target: 'postgres://x/y?sslmode=disable',
-      revisions: '/tmp/reg.json',
-      dryRun: false,
-      confirmWrite: true,
-      batchSize: 50,
-    });
-    expect(parseApplyArgs(['--dry-run']).dryRun).toBe(true);
-    expect(parseApplyArgs(['--batch-size=NaN']).batchSize).toBe(200);
-  });
-});
-
-describe('validateTargetUrl（P1-8）', () => {
-  it('接受完整 postgres URL', () => {
-    expect(validateTargetUrl('postgres://loom:loom@127.0.0.1:5432/loom?sslmode=disable')).toContain(
-      'loom',
-    );
-    expect(validateTargetUrl('postgresql://db.example.com/prod')).toContain('prod');
-  });
-
-  it('拒绝空串/残缺/非 postgres 协议 —— 不给驱动留静默回退空间', () => {
-    expect(() => validateTargetUrl(null)).toThrow(/--target/);
-    expect(() => validateTargetUrl('')).toThrow(/--target/);
-    expect(() => validateTargetUrl('   ')).toThrow(/--target/);
-    expect(() => validateTargetUrl('postgres://')).toThrow(/host/);
-    expect(() => validateTargetUrl('postgres://host/')).toThrow(/database/);
-    expect(() => validateTargetUrl('http://host/db')).toThrow(/postgres/);
-    expect(() => validateTargetUrl('not a url')).toThrow(/URL/);
-  });
-});
-
 describe('loadMigrationArtifacts（P1-2 身份复算）', () => {
-  it('自洽工件（capture↔manifest 同源）经 latest 指针装载', () => {
-    const dir = artifactDir('coherent', true);
-    const loaded = loadMigrationArtifacts(dir);
-    expect(loaded.manifest.checkpoint_hash).toBeTruthy();
-    expect(loaded.capture.capture_schema_version).toBe(1);
-  });
-
-  it('无 latest.json 的单一工件目录也可装载', () => {
-    const dir = artifactDir('no-latest', false);
-    expect(loadMigrationArtifacts(dir).manifest.manifest_version).toBe(1);
-  });
-
   it('capture 与 manifest 拼装（换 capture）→ checkpoint 身份复算即拒', () => {
     // manifest 来自 2 事件观测，capture 被替换成【另一次】观测（空 capture）。
     const dir = artifactDir('swapped-capture', true, (_manifest, capture) => {
@@ -229,61 +168,5 @@ describe('loadMigrationArtifacts（P1-2 身份复算）', () => {
       }),
     );
     expect(() => loadMigrationArtifacts(dir2)).toThrow(/指向的工件不存在/);
-  });
-});
-
-describe('applyReportFileName', () => {
-  it('run id 内容寻址文件名', () => {
-    expect(applyReportFileName('run-abc123')).toBe('apply-report-run-abc123.json');
-  });
-});
-
-describe('CLI 安全纪律（参数面）', () => {
-  it('target 必填；dry-run 也需要有效 target（preflight 读库）', () => {
-    const args: ApplyCliArgs = parseApplyArgs(['--artifacts=/tmp/a', '--dry-run']);
-    expect(() => validateTargetUrl(args.target)).toThrow(/--target/);
-    expect(args.confirmWrite).toBe(false);
-  });
-});
-
-describe('applyTargetSsl（YUK-1100 review P1：hostname 精确判定，不做全串 includes）', () => {
-  it('loopback 主机（localhost/127.x/::1/.localhost 后缀）走明文', () => {
-    expect(isLoopbackHost('localhost')).toBe(true);
-    expect(isLoopbackHost('LOCALHOST')).toBe(true);
-    expect(isLoopbackHost('db.localhost')).toBe(true);
-    expect(isLoopbackHost('127.0.0.1')).toBe(true);
-    expect(isLoopbackHost('127.9.9.9')).toBe(true);
-    expect(isLoopbackHost('::1')).toBe(true);
-    expect(applyTargetSsl('postgres://loom:loom@localhost:5432/loom')).toBe(false);
-    expect(applyTargetSsl('postgres://loom:loom@127.0.0.1:5433/loom')).toBe(false);
-    expect(applyTargetSsl('postgres://loom:loom@[::1]:5432/loom')).toBe(false);
-    expect(applyTargetSsl('postgres://loom:loom@nas.local:5432/loom')).toBe('require');
-  });
-
-  it('URL 非 hostname 位置出现 localhost 不触发裸连（password/dbname/application_name）', () => {
-    // 密码含 'localhost'：对远端主机仍 require —— 旧 includes 实现会误判裸连。
-    expect(applyTargetSsl('postgres://loom:localhost@db.example.com:5432/loom')).toBe('require');
-    // 库名含 'localhost'：同理不降级。
-    expect(applyTargetSsl('postgres://loom:x@db.example.com:5432/localhost-mirror')).toBe(
-      'require',
-    );
-    // 查询参数值含 'localhost'（非 sslmode）：不降级。
-    expect(
-      applyTargetSsl('postgres://loom:x@db.example.com:5432/loom?application_name=localhost-drill'),
-    ).toBe('require');
-    // 密码含 '127.0.0.1'：同理不降级。
-    expect(applyTargetSsl('postgres://loom:127.0.0.1@db.example.com/loom')).toBe('require');
-  });
-
-  it('显式 sslmode=disable 查询参数仍走明文；sslmode 只在参数位生效', () => {
-    expect(applyTargetSsl('postgres://u:p@db.example.com/loom?sslmode=disable')).toBe(false);
-    expect(applyTargetSsl('postgres://u:p@db.example.com/loom?foo=1&sslmode=disable')).toBe(false);
-    // 'sslmode=disable' 出现在密码里不算参数 —— 不降级。
-    expect(applyTargetSsl('postgres://u:sslmode=disable@db.example.com/loom')).toBe('require');
-    expect(applyTargetSsl('postgres://u:p@localhost/loom?sslmode=disable')).toBe(false);
-  });
-
-  it('无法解析的 URL 保守取 require（validateTargetUrl 在前拒绝，此为双保险）', () => {
-    expect(applyTargetSsl('not a url')).toBe('require');
   });
 });

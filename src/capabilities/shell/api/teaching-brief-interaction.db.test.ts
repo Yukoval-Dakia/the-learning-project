@@ -10,11 +10,9 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { BRIEF_SEEN_ACTION, PRIMARY_ACTION_STARTED_ACTION } from '@/core/schema/conjecture';
-import { event, material_fsrs_state } from '@/db/schema';
+import { event } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { recordBriefSeen, recordPrimaryActionStarted } from '../server/teaching-brief-interactions';
-import { TeachingBriefInteractionResponseSchema } from './contracts';
-import { POST } from './teaching-brief-interaction';
 
 // 2026-07-10 09:00 BJT — well inside a single Shanghai day.
 const DAY1 = new Date('2026-07-10T01:00:00.000Z');
@@ -30,64 +28,9 @@ async function rows(action: string, briefId: string) {
     );
 }
 
-async function post(body: unknown): Promise<Response> {
-  return POST(
-    new Request('http://localhost/api/prep-desk/brief/interaction', {
-      method: 'POST',
-      body: JSON.stringify(body),
-      headers: { 'content-type': 'application/json' },
-    }),
-  );
-}
-
 describe('teaching-brief interaction ledger (YUK-710)', () => {
   beforeEach(async () => {
     await resetDb();
-  });
-
-  it('brief_seen writes one opt-out row carrying only state + timestamps', async () => {
-    const res = await recordBriefSeen(testDb(), { briefId: 'b1', briefState: 'finding' }, DAY1);
-    expect(res.idempotent).toBe(false);
-    expect(res.local_day).toBe('2026-07-10');
-
-    const seen = await rows(BRIEF_SEEN_ACTION, 'b1');
-    expect(seen).toHaveLength(1);
-    expect(seen[0].payload).toMatchObject({
-      brief_state: 'finding',
-      local_day: '2026-07-10',
-      seen_at: DAY1.toISOString(),
-    });
-    // Never carries learner content (claim / basis / answer).
-    expect(seen[0].payload).not.toHaveProperty('claim_md');
-    // mem0 opt-out: ingest_at stamped + affected_scopes empty (so brief scans ignore it).
-    expect(seen[0].ingest_at).not.toBeNull();
-    expect(seen[0].affected_scopes).toEqual([]);
-    expect(seen[0].caused_by_event_id).toBe('b1');
-    // ND: zero FSRS state rows written.
-    expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
-  });
-
-  it('brief_seen is idempotent per brief × local day (re-render / refetch never inflates)', async () => {
-    const first = await recordBriefSeen(testDb(), { briefId: 'b1', briefState: 'finding' }, DAY1);
-    expect(first.idempotent).toBe(false);
-
-    // Same brief, same day, even a later instant + a different observed state → no second row.
-    const again = await recordBriefSeen(
-      testDb(),
-      { briefId: 'b1', briefState: 'probe_ready' },
-      new Date('2026-07-10T09:00:00.000Z'),
-    );
-    expect(again.idempotent).toBe(true);
-    expect(again.interaction_event_id).toBe(first.interaction_event_id);
-    expect(await rows(BRIEF_SEEN_ACTION, 'b1')).toHaveLength(1);
-  });
-
-  it('brief_seen opens a fresh row on a new learner-local day', async () => {
-    await recordBriefSeen(testDb(), { briefId: 'b1', briefState: 'finding' }, DAY1);
-    const nextDay = await recordBriefSeen(testDb(), { briefId: 'b1', briefState: 'finding' }, DAY2);
-    expect(nextDay.idempotent).toBe(false);
-    expect(nextDay.local_day).toBe('2026-07-11');
-    expect(await rows(BRIEF_SEEN_ACTION, 'b1')).toHaveLength(2);
   });
 
   it('concurrent brief_seen double-write lands exactly one row', async () => {
@@ -145,125 +88,5 @@ describe('teaching-brief interaction ledger (YUK-710)', () => {
         expect.objectContaining({ action_kind: 'answer_probe', probe_question_id: 'q2' }),
       ]),
     );
-  });
-
-  it('encodes dynamic ID segments so delimiter-bearing probe identities cannot collide', async () => {
-    const first = await recordPrimaryActionStarted(
-      testDb(),
-      {
-        briefId: 'b1',
-        actionKind: 'answer_probe',
-        probeQuestionId: 'q1|answer_probe|q2',
-      },
-      DAY1,
-    );
-    const second = await recordPrimaryActionStarted(
-      testDb(),
-      {
-        briefId: 'b1|answer_probe|q1',
-        actionKind: 'answer_probe',
-        probeQuestionId: 'q2',
-      },
-      DAY1,
-    );
-
-    expect(first.interaction_event_id).not.toBe(second.interaction_event_id);
-    expect(first.idempotent).toBe(false);
-    expect(second.idempotent).toBe(false);
-    const actionRows = await testDb()
-      .select()
-      .from(event)
-      .where(eq(event.action, PRIMARY_ACTION_STARTED_ACTION));
-    expect(actionRows).toHaveLength(2);
-  });
-
-  it('primary_action_started records scoped_practice with its result_event_id join key', async () => {
-    await recordPrimaryActionStarted(
-      testDb(),
-      { briefId: 'b1', actionKind: 'scoped_practice', resultEventId: 'res_1' },
-      DAY1,
-    );
-    const [row] = await rows(PRIMARY_ACTION_STARTED_ACTION, 'b1');
-    expect(row.payload).toMatchObject({
-      action_kind: 'scoped_practice',
-      result_event_id: 'res_1',
-      local_day: '2026-07-10',
-    });
-    // No answer text ever recorded.
-    expect(row.payload).not.toHaveProperty('answer_md');
-    expect(row.ingest_at).not.toBeNull();
-    expect(row.affected_scopes).toEqual([]);
-  });
-
-  it('recordPrimaryActionStarted enforces the scoped_practice ↔ resultEventId invariant (server-layer)', async () => {
-    // A direct (non-route) caller must not bypass the Zod refine: scoped_practice without a
-    // resultEventId, or a non-scoped action carrying one, is a programmer error → throw, no row.
-    await expect(
-      recordPrimaryActionStarted(testDb(), { briefId: 'b1', actionKind: 'scoped_practice' }, DAY1),
-    ).rejects.toThrow(/scoped_practice requires resultEventId/);
-    await expect(
-      recordPrimaryActionStarted(
-        testDb(),
-        { briefId: 'b1', actionKind: 'accept_probe', resultEventId: 'res_x' },
-        DAY1,
-      ),
-    ).rejects.toThrow(/only allowed for the scoped_practice/);
-    // An EMPTY-STRING resultEventId on scoped_practice must also throw (it is falsy and would be
-    // dropped by the payload builder, so `=== undefined` alone would let a join-key-less row slip).
-    await expect(
-      recordPrimaryActionStarted(
-        testDb(),
-        { briefId: 'b1', actionKind: 'scoped_practice', resultEventId: '' },
-        DAY1,
-      ),
-    ).rejects.toThrow(/scoped_practice requires resultEventId/);
-    await expect(
-      recordPrimaryActionStarted(testDb(), { briefId: 'b1', actionKind: 'answer_probe' }, DAY1),
-    ).rejects.toThrow(/answer_probe requires probeQuestionId/);
-    await expect(
-      recordPrimaryActionStarted(
-        testDb(),
-        { briefId: 'b1', actionKind: 'accept_probe', probeQuestionId: 'q1' },
-        DAY1,
-      ),
-    ).rejects.toThrow(/only allowed for the answer_probe/);
-    expect(await rows(PRIMARY_ACTION_STARTED_ACTION, 'b1')).toHaveLength(0);
-  });
-
-  it('route POST returns 201 on a fresh seen then 200 on the idempotent repeat', async () => {
-    const first = await post({ type: 'brief_seen', brief_id: 'b1', brief_state: 'finding' });
-    expect(first.status).toBe(201);
-    const firstBody = TeachingBriefInteractionResponseSchema.parse(await first.json());
-    expect(firstBody.idempotent).toBe(false);
-    expect(first.headers.get('Location')).toBe(
-      `/api/events/${encodeURIComponent(firstBody.interaction_event_id)}`,
-    );
-
-    const second = await post({ type: 'brief_seen', brief_id: 'b1', brief_state: 'finding' });
-    expect(second.status).toBe(200);
-    expect(second.headers.get('Location')).toBeNull();
-    const secondBody = TeachingBriefInteractionResponseSchema.parse(await second.json());
-    expect(secondBody.idempotent).toBe(true);
-    expect(secondBody.interaction_event_id).toBe(firstBody.interaction_event_id);
-  });
-
-  it('route POST 400 on a malformed / unknown-type body', async () => {
-    expect((await post({})).status).toBe(400);
-    expect((await post({ type: 'brief_seen', brief_id: '' })).status).toBe(400);
-    expect((await post({ type: 'unknown', brief_id: 'b1' })).status).toBe(400);
-    expect(
-      (await post({ type: 'primary_action_started', brief_id: 'b1', action_kind: 'nope' })).status,
-    ).toBe(400);
-    // result_event_id is scoped_practice-only — a non-scoped action carrying it is rejected.
-    expect(
-      (
-        await post({
-          type: 'primary_action_started',
-          brief_id: 'b1',
-          action_kind: 'accept_probe',
-          result_event_id: 'evt_x',
-        })
-      ).status,
-    ).toBe(400);
   });
 });

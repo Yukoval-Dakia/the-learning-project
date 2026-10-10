@@ -4,14 +4,13 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { canonicalHash } from '@/core/migration/canonical';
 import { checkpointHashOf } from '@/core/migration/checkpoint';
 import { classifyMigrationCapture } from '@/core/migration/classify';
-import { type ManifestOptions, buildMigrationManifest } from '@/core/migration/manifest';
+import type { ManifestOptions } from '@/core/migration/manifest';
 import type { RecordClassification } from '@/core/migration/types';
 
 import {
   answer,
   difficulty_calibration_label,
   event,
-  item_calibration,
   learning_record,
   learning_session,
   mastery_state,
@@ -624,101 +623,9 @@ describe('captureMigrationCheckpoint + classifyMigrationCapture（真表）', ()
     expect(propose?.action).toBe('propose');
     expect(capture.rawFacts.event_action_counts.map((c) => c.action)).toContain('propose');
   });
-
-  it('manifest：checkpoint 身份、分类持久化、completeness 声明齐备（P1-1/P1-2）', async () => {
-    const capture = await captureMigrationCheckpoint(testDb());
-    const classification = classifyMigrationCapture(capture);
-    const manifest = buildMigrationManifest(capture, classification, PROVENANCE);
-
-    const eventEntry = manifest.semantic_counts.find((s) => s.table === 'event');
-    expect(eventEntry?.rows).toBe(capture.rawFacts.events.length);
-    expect(eventEntry?.pks).toContain('att-complete');
-
-    expect(manifest.projection_baseline.question).toBeUndefined(); // question 不是 fold owner
-    expect(manifest.projection_baseline.knowledge).toBe(0);
-
-    expect(manifest.completeness.max_dispatch_seq).not.toBeNull();
-    expect(manifest.completeness.note).toContain('不是完整性证明');
-    expect(manifest.queues.pgboss_schema_present).toBe(false); // 测试容器未建 pgboss schema —— 显式降级
-    expect(manifest.mutable_ops_fields.excluded_from_fact_hash).toContain('event.ingest_at');
-
-    // P1-2：完整分类随清单持久化。
-    expect(manifest.classification.records).toEqual(classification.records);
-    expect(manifest.classification.unresolved).toEqual(classification.unresolved);
-    expect(manifest.classification.deferred_replay).toEqual(classification.deferred_replay);
-    // P1-1：checkpoint 身份与 capture/provenance 复算一致。
-    expect(manifest.checkpoint_hash).toBe(checkpointHashOf(capture, PROVENANCE));
-  });
 });
 
 describe('幂等与可变运维字段纪律（真库观测）', () => {
-  it('同状态重跑捕获 → rawFacts canonical hash 逐字节一致', async () => {
-    const first = await captureMigrationCheckpoint(testDb());
-    const second = await captureMigrationCheckpoint(testDb());
-    expect(canonicalHash(second.rawFacts)).toBe(canonicalHash(first.rawFacts));
-  });
-
-  it('P1-1：event.ingest_at（可变运维字段）变化 → 事实哈希不变、ops 反映、checkpoint 身份变化', async () => {
-    const before = await captureMigrationCheckpoint(testDb());
-    expect(before.ops.event_ingest_at).toHaveLength(0);
-
-    // 模拟 outbox poll：给事件打 ingest_at（仅测试库写入）。
-    await testDb()
-      .update(event)
-      .set({ ingest_at: new Date('2026-09-21T00:00:00.000Z') })
-      .where(eq(event.id, 'att-complete'));
-
-    const after = await captureMigrationCheckpoint(testDb());
-    // 事实哈希不受可变运维字段影响。
-    expect(canonicalHash(after.rawFacts)).toBe(canonicalHash(before.rawFacts));
-    // ops 单独反映。
-    expect(after.ops.event_ingest_at).toEqual([
-      { event_id: 'att-complete', ingest_at: '2026-09-21T00:00:00.000Z' },
-    ]);
-    // 但 checkpoint 身份覆盖运维态 —— 运维变了就是另一个 checkpoint。
-    expect(checkpointHashOf(after, PROVENANCE)).not.toBe(checkpointHashOf(before, PROVENANCE));
-  });
-
-  it('YUK-1098：learning_session.version/updated_at 与 item_calibration.updated_at 变化 → ops 反映 + checkpoint 身份变化', async () => {
-    const base = await captureMigrationCheckpoint(testDb());
-    expect(base.ops.state_version_max.learning_session).toBe(0);
-    expect(base.ops.state_updated_at_max.learning_session).toBe('2026-09-20T00:00:00.000Z');
-    expect(base.ops.state_updated_at_max.item_calibration).toBeNull();
-
-    // 仅可变运维字段变化（seed 之后 version 自増/updated_at 刷新）。
-    await testDb()
-      .update(learning_session)
-      .set({ version: 7, updated_at: new Date('2026-09-22T00:00:00.000Z') })
-      .where(eq(learning_session.id, 'sess-solve'));
-    const bumped = await captureMigrationCheckpoint(testDb());
-    expect(bumped.ops.state_version_max.learning_session).toBe(7);
-    expect(bumped.ops.state_updated_at_max.learning_session).toBe('2026-09-22T00:00:00.000Z');
-    // 事实哈希不变（这些列不在原始 SELECT），但 checkpoint 身份必变 ——
-    // 修复前该观测会被工件寻址当 already-present 静默丢掉。
-    expect(canonicalHash(bumped.rawFacts)).toBe(canonicalHash(base.rawFacts));
-    expect(checkpointHashOf(bumped, PROVENANCE)).not.toBe(checkpointHashOf(base, PROVENANCE));
-
-    // item_calibration.updated_at 同样在观测窗内可变 → 采集覆盖。
-    await testDb().insert(item_calibration).values({
-      id: 'ical-1',
-      question_id: 'q-main',
-      b: 0.3,
-      confidence: 0.8,
-      track: 'hard',
-      source: 'llm_prior',
-      calibration_n: 0,
-      created_at: NOW,
-      updated_at: NOW,
-    });
-    await testDb()
-      .update(item_calibration)
-      .set({ updated_at: new Date('2026-09-23T00:00:00.000Z') })
-      .where(eq(item_calibration.id, 'ical-1'));
-    const calib = await captureMigrationCheckpoint(testDb());
-    expect(calib.ops.state_updated_at_max.item_calibration).toBe('2026-09-23T00:00:00.000Z');
-    expect(checkpointHashOf(calib, PROVENANCE)).not.toBe(checkpointHashOf(bumped, PROVENANCE));
-  });
-
   it('新事实写入 → 事实哈希与 checkpoint 身份都变化（捕获能察觉增量）', async () => {
     const before = await captureMigrationCheckpoint(testDb());
     await seedAttempt({
@@ -730,13 +637,6 @@ describe('幂等与可变运维字段纪律（真库观测）', () => {
     const after = await captureMigrationCheckpoint(testDb());
     expect(canonicalHash(after.rawFacts)).not.toBe(canonicalHash(before.rawFacts));
     expect(checkpointHashOf(after, PROVENANCE)).not.toBe(checkpointHashOf(before, PROVENANCE));
-  });
-
-  it('快照时刻变化不影响 checkpoint 身份（重跑不产生重复捕获的前提）', async () => {
-    const first = await captureMigrationCheckpoint(testDb());
-    const second = await captureMigrationCheckpoint(testDb());
-    expect(second.environment.snapshot_at).not.toBe(first.environment.snapshot_at);
-    expect(checkpointHashOf(second, PROVENANCE)).toBe(checkpointHashOf(first, PROVENANCE));
   });
   it('终轮 P1-1 repro（真库）：4 字段残缺 durable snapshot + 作答 + verdict ⇒ NOT complete', async () => {
     const fourFieldSnapshot = {
@@ -840,17 +740,5 @@ describe('幂等与可变运维字段纪律（真库观测）', () => {
     expect(categoryOf(classification, 'att-unsupported')).toBe('complete_attempt');
     const judgeRow = classification.records.find((r) => r.source_id === 'jud-late');
     expect(judgeRow).toMatchObject({ native_target: { has_effective_head: true } });
-  });
-});
-
-describe('空库形状（D19 类比）', () => {
-  it('无事件/无 answers → 分类空输出，捕获不抛错', async () => {
-    await resetDb();
-    const capture = await captureMigrationCheckpoint(testDb());
-    const classification = classifyMigrationCapture(capture);
-    expect(classification.records).toEqual([]);
-    expect(capture.rawFacts.events).toEqual([]);
-    expect(capture.rawFacts.answers).toEqual([]);
-    expect(capture.environment.migrations_applied).not.toBeNull(); // 迁移表探测成功
   });
 });

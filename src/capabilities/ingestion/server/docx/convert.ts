@@ -274,20 +274,6 @@ class DefaultDocxConverter implements DocxConverter {
   }
 }
 
-let override: DocxConverter | null = null;
-
-/**
- * Test seam: inject a mock converter (returns pre-converted fixtures). Pass null
- * to restore the default binary→docker resolver. NEVER called in production.
- */
-export function setDocxConverterForTests(converter: DocxConverter | null): void {
-  override = converter;
-}
-
 export function getDocxConverter(): DocxConverter {
-  return override ?? new DefaultDocxConverter();
+  return new DefaultDocxConverter();
 }
-
-// Exported for unit tests (timeout bound assertion). The converter itself is
-// exercised via injected mocks — no real spawn in the test partition.
-export { CONVERT_TIMEOUT_MS };

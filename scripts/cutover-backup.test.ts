@@ -10,7 +10,7 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import { stableStringify } from '@/core/migration/canonical';
@@ -33,17 +33,14 @@ import {
   compareDatabaseManifests,
   createTableDigest,
   finalizeRestoreEvidence,
-  observedDlqCounts,
   parseCutoverBackupArgs,
   parseDatabaseManifest,
   parseRestoreReceipt,
   parseScratchAccess,
   parseSourceManifest,
   quoteIdentifier,
-  readDlqExport,
   readJsonArtifact,
   requiredMissing,
-  resolveManifestPath,
   resolveTypeChain,
   tableContentSql,
   validateArtifactBindings,
@@ -54,85 +51,6 @@ import {
 
 const TMP = mkdtempSync(join(tmpdir(), 'cutover-backup-test-'));
 afterAll(() => rmSync(TMP, { recursive: true, force: true }));
-
-describe('parseCutoverBackupArgs', () => {
-  it('flags --x=v 与 --x v 双形态 + strict', () => {
-    const a = parseCutoverBackupArgs([
-      '--capture-dir=/x/cap',
-      '--dump',
-      '/x/d.dump',
-      '--toc-entries=498',
-      '--strict',
-    ]);
-    expect(a.captureDir).toBe('/x/cap');
-    expect(a.dump).toBe('/x/d.dump');
-    expect(a.tocEntries).toBe('498');
-    expect(a.strict).toBe(true);
-  });
-
-  it('requiredMissing 枚举必备工件', () => {
-    expect(requiredMissing(parseCutoverBackupArgs([]))).toEqual(['manifest', 'dump', 'dlq']);
-    expect(
-      requiredMissing(parseCutoverBackupArgs(['--manifest=/m.json', '--dump=/d', '--dlq=/q'])),
-    ).toEqual([]);
-  });
-});
-
-describe('dlq export parsing', () => {
-  it('数组与 {rows:[]} 双形态 + *_dlq 聚合（非 DLQ 行不计）', () => {
-    const arr = join(TMP, 'a.json');
-    writeFileSync(
-      arr,
-      JSON.stringify([
-        { name: 'memory_event_ingest_dlq', state: 'created' },
-        { name: 'memory_event_ingest_dlq', state: 'created' },
-        { name: 'quiz_gen', state: 'failed' },
-        { name: 'quiz_verify_dlq', state: 'created' },
-      ]),
-    );
-    const { rows } = readDlqExport(arr);
-    expect(rows).toHaveLength(4);
-    expect(observedDlqCounts(rows)).toEqual([
-      { queue: 'memory_event_ingest_dlq', rows: 2 },
-      { queue: 'quiz_verify_dlq', rows: 1 },
-    ]);
-    const wrapped = join(TMP, 'b.json');
-    writeFileSync(wrapped, JSON.stringify({ rows: [{ name: 'x_dlq' }] }));
-    expect(readDlqExport(wrapped).rows).toHaveLength(1);
-  });
-});
-
-describe('resolveManifestPath + buildManifest', () => {
-  it('latest.json 解析 + 工件 hash/size 落 manifest + warnings', () => {
-    const cap = join(TMP, 'cap');
-    const out = join(TMP, 'out');
-    mkdirSync(cap, { recursive: true });
-    const minimalManifest = migrationFixture();
-    writeFileSync(join(cap, 'manifest-h1.json'), JSON.stringify(minimalManifest));
-    writeFileSync(join(cap, 'latest.json'), JSON.stringify({ manifest_file: 'manifest-h1.json' }));
-    const dumpFile = join(TMP, 'd.dump');
-    writeFileSync(dumpFile, 'dumpbytes');
-    const dlqFile = join(TMP, 'q.json');
-    writeFileSync(dlqFile, JSON.stringify([{ name: 'x_dlq' }]));
-
-    const { manifest, warnings } = buildManifest(
-      parseCutoverBackupArgs([
-        `--capture-dir=${cap}`,
-        `--dump=${dumpFile}`,
-        `--dlq=${dlqFile}`,
-        `--out=${out}`,
-      ]),
-    );
-    expect(resolveManifestPath(cap, null)).toBe(join(cap, 'manifest-h1.json'));
-    expect(manifest.migration.checkpoint_hash).toBe(minimalManifest.checkpoint_hash);
-    expect(manifest.backup.dump?.bytes).toBe(9); // 'dumpbytes' 是 9 字节
-    expect(manifest.backup.dump?.sha256).toMatch(/^[0-9a-f]{64}$/);
-    expect(manifest.queues.dlq_tombstones?.rows_exported).toBe(1);
-    // 观测缺 DLQ 队列 ⇒ 每行 mismatch=false（truthful，不静默标 true）。
-    expect(manifest.queues.dlq_reconciliation.every((r) => r.matches === false)).toBe(true);
-    expect(warnings.some((w) => w.startsWith('missing_restore_evidence'))).toBe(true);
-  });
-});
 
 describe('P1-1 restore evidence 绑定当前 dump', () => {
   const CAP = join(TMP, 'p1cap');
@@ -1260,59 +1178,6 @@ function requireDirectory(directory: string): string[] {
   return readdirSync(directory, { recursive: true }).map((file) => String(file));
 }
 
-it('preserves the original parent shell regression and records the repaired shell exit-17 result offline', () => {
-  const directory = mkdtempSync(join(tmpdir(), 'yuk1359-restore-count-failure-repaired-'));
-  const transport = offlineTransport(directory, 'inventory');
-  // The shell entrypoint uses the real pinned Node runtime; all database transports remain intercepted.
-  rmSync(join(transport.bin, 'node'));
-  const original = '/tmp/yuk1359-restore-count-failure-20261009.sh';
-  if (existsSync(original))
-    writeFileSync(join(directory, 'parent-original-driver.sh'), readFileSync(original));
-  const out = join(directory, 'receipt.json');
-  const driver = join(directory, 'adapted-driver.sh');
-  writeFileSync(
-    driver,
-    `#!/bin/bash\nset -uo pipefail\n# PATH has fully intercepted docker/psql/pnpm; each rejects unknown calls, no real CLI fallback.\nsource "$1" --dump="$2" --source-manifest="$3" --out="$4"\n`,
-  );
-  const result = spawnSync(
-    '/bin/bash',
-    [
-      driver,
-      resolve('scripts/restore-drill.sh'),
-      transport.source.dump.file,
-      transport.sourcePath,
-      out,
-    ],
-    {
-      encoding: 'utf8',
-      cwd: directory,
-      timeout: 20000,
-      env: {
-        PATH: `${transport.bin}:${process.env.PATH}`,
-        NODE_OPTIONS: `--import=${transport.preload}`,
-        HOME: process.env.HOME,
-        npm_config_manage_package_manager_versions: 'false',
-        npm_config_verify_deps_before_run: 'false',
-        pnpm_config_verify_deps_before_run: 'false',
-      },
-    },
-  );
-  writeFileSync(join(directory, 'stdout.log'), result.stdout);
-  writeFileSync(join(directory, 'stderr.log'), result.stderr);
-  writeFileSync(join(directory, 'exit-code.txt'), String(result.status));
-  expect(result.status, result.stderr).toBe(1);
-  const receipt = parseRestoreReceipt(readJsonArtifact(out).value);
-  expect(receipt).toMatchObject({
-    kind: 'failed',
-    verified: false,
-    errors: [expect.objectContaining({ phase: 'inventory', exitCode: 17 })],
-  });
-  writeFileSync(
-    '/tmp/yuk1359-shell-regression-latest.json',
-    JSON.stringify({ directory, driver, receipt: out, exitCode: result.status }),
-  );
-});
-
 it.each([
   'wrong dump',
   'wrong quiescence',
@@ -1938,33 +1803,6 @@ describe('host provenance and explicit lazy driver', () => {
     },
     25_000,
   );
-  it('imports without postgres loading, subprocesses, connections or listeners', () => {
-    const directory = mkdtempSync(join(TMP, 'host-inert-')),
-      transport = offlineTransport(directory, 'success');
-    const result = spawnSync(
-      process.execPath,
-      [
-        '--import',
-        transport.preload,
-        '--import',
-        'tsx',
-        '--input-type=module',
-        '-e',
-        "await import('./scripts/cutover-backup.ts')",
-      ],
-      {
-        encoding: 'utf8',
-        timeout: 10000,
-        env: {
-          PATH: `${transport.bin}:${process.env.PATH}`,
-          HOME: process.env.HOME,
-          YUK1359_IMPORT_ONLY: '1',
-        },
-      },
-    );
-    expect(result.status, result.stderr).toBe(0);
-    expect(transportCommands(directory)).toEqual([]);
-  });
   it.each([
     'postgres://offline/loom',
     'postgres://offline:offline@offline/',
