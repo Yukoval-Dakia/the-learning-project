@@ -328,8 +328,8 @@
   border-radius: var(--r-3);
   display: grid;
   place-items: center;
-  background: var(--coral);
-  color: #fff;
+  background: var(--coral-fill);
+  color: var(--on-coral-fill);
   flex: none;
 }
 .frontier-title {
