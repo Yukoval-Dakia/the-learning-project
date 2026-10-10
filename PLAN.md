@@ -1,6 +1,6 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-10：PR1625 仅同步 main87f66b3e2（#1630/#1631）与不变量测试分区；原 YUK-1356 产品代码不变，限定本机验证通过，进程恢复14项收尾重验通过；随后普通 push 等 exact-head CI，不合并 PR。
+> Linear 是权威 tracker。2026-10-10：PR1625 已正常 merge main87f66b3e2（#1630/#1631）；5856878 CI 两项失败均为旧 fixture 缺少永久派发身份/claim fence，保留不变量断言并修复测试接线，4DB与partition/typecheck/lint/build通过。普通 push 后等新 exact-head CI，不合并 PR。
 
 ## NOW
 
@@ -17,7 +17,7 @@
 - **YUK-1358 / Start观察读取已合入**：PR1622已合main6212a4560，exact0fbeb1f3f CI37831807097全绿、R1 NONE；26真实RPC/10窗口、T3浏览器和88表/序列无写证据见[父验收](docs/planning/2026-10-09-yuk1358-start-agent-notes-parent.md)。28路由中13显式Start（含root redirect）/15 fallback，仅静态覆盖计数；完整迁移与canonical boot未完成。5796接续events/$id，未合候选不提前计入。
 - **YUK-1358 / Start配置与科目消费者已合入**：PR1620于18:16:17Z合main10df1a471，tree与exact755bdeebb一致，CI37821989407全绿/R1 NONE/threads0。18操作122RPC/35窗口与三页浏览器证据见[父验收](docs/planning/2026-10-09-yuk1358-start-admin-controls-parent.md)。未部署；1358保持In Progress。5796独占接续1392 board、剩余Start路由和实际提交，本线程不写其活跃树。
 - **YUK-1359 / 整体退出证据**：7631对用户负责迁移协调和最终交付，维护W1–W5消费者清单。当前已交前门、错题、Today/Inbox主读取和五管理只读页；嵌套HTTP消费者、其余路由、任务族、旧SPA/pg-boss退出尚未齐备。按[退出清单](docs/planning/2026-10-07-yuk1359-exit-inventory.md)逐项验收，不能把公共出口或源码slice当整页完成。
-- **YUK-1356 / PR1625 待 CI**：本分支正常 merge main87f66b3e2，依 owner 五类不变量裁剪测试并显式分区；仅同步与测试维护，无功能改动。既有模型429/迁移退出义务保持，未合并或部署。原判分隔离证据及后续缺口见[27项矩阵](docs/planning/2026-10-09-yuk1356-current-acceptance-matrix.md)。
+- **YUK-1356 / PR1625 待 CI**：本分支正常 merge main87f66b3e2，依 owner 五类不变量裁剪测试并显式分区。5856878 DB4失败的submit资源/review操作仍属于原答案保留与幂等结算不变量；fixture改用真实queue payload、delivery ID与unit claim fence，经worker验证重投跳过，4DB本地通过。仅同步与测试维护，无功能改动；新exactCI待完成。既有模型429/迁移退出义务保持，未合并或部署。原判分隔离证据及后续缺口见[27项矩阵](docs/planning/2026-10-09-yuk1356-current-acceptance-matrix.md)。
 - **本轮已交付 YUK-1392**：PR1619于17:11:43Z合main6aaf8ca89，tree5e8ab973与exact3883903相同；CI37812973662全绿、R1 NONE、threads0。父13unit/22DB、static/build/audits通过，已unwatch/Linear Done。无部署。
 
 ## NEXT
