@@ -1,0 +1,61 @@
+{
+  "sourceRevision": "f325d413957437c8fecfdfa6cd48840dd9b89dd2",
+  "portableTestRevision": "a4c8e5977688331a28fafb8596a4804c03aa908b",
+  "testSha256": "0179de399517cb3e2abcdb2911b189e9a3d19d801e66aa526b5254726349829e",
+  "parentUnit": {
+    "files": 4,
+    "passed": 194,
+    "exit": 0
+  },
+  "parentLint": {
+    "exit": 0,
+    "stage": "before test-only scalar domain fixture correction"
+  },
+  "firstDb": {
+    "passed": 13,
+    "failed": 1,
+    "exit": 1,
+    "cause": "PG16 rejects domain alteration while an array column depends on that domain; real dump/restore parity and value mutation assertions had passed"
+  },
+  "fixtureCorrection": "Add independent scalar domain/table for supported NOT NULL metadata mutation; retain array/domain/enum and value/type negative cases unchanged",
+  "finalDb": {
+    "files": 1,
+    "passed": 14,
+    "exit": 0
+  },
+  "scopedTypecheckExit": 0,
+  "biomeExit": 0,
+  "cleanup": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1359",
+      "phase": "isolated-array-parity-scoped-db",
+      "token": "482444b3-b6c4-4eef-9b3d-0e188aa46e96",
+      "candidate": "a4c8e5977688331a28fafb8596a4804c03aa908b",
+      "dirtyDiffSha256": "3690108e90fc64e0d6672a22627e1e2195196a29ce574ba9d2f5f24eecce2ff6",
+      "createdAt": "2026-10-09T16:33:21.421255+00:00"
+    },
+    "releasedAt": "2026-10-09T16:34:06.063132+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "cleanupFirstAttempt": "Refused release until transient Testcontainers/Ryuk running set matched baseline; lock retained on assertion failure",
+  "artifacts": {
+    "/tmp/yuk1359-parent-array-unit.log": "28ce86ca8ac4b273d10ed10463b3f8e4e859d0f1c318537011297ce84cd61033",
+    "/tmp/yuk1359-parent-array-lint.log": "5460a7aa974d09079b188d01766a68beaaf4ff396b5506b4224853bb97e0b4e6",
+    "/tmp/yuk1359-parent-array-db/tests.log": "adb3062cd18bd92d9a2c74c000f771802a18f59cbebcc253a592144712208c17",
+    "/tmp/yuk1359-parent-array-db/lock-release.json": "06af0e37ba5279b8876b7f3a311a5e04433a2c0a50d918f990b2d59c98148ab2",
+    "/tmp/yuk1359-parent-array-db-recheck/tests.log": "b675fd469f83bdb29a291d103f77960fc5b8642d3ad3c1a307195863cc6d12db",
+    "/tmp/yuk1359-parent-array-db-recheck/lock-release.json": "9eb02884f995fcb0eeb6491ce5bcebf82aa6211489e44401a54949c99b64a182",
+    "/tmp/yuk1359-parent-array-db-recheck/typecheck.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "/tmp/yuk1359-parent-array-db-recheck/biome.log": "f4338cb142bb845b7d339bf4fa44d457c09c46a3fdc29f33f2a90ca5228571d7"
+  },
+  "limits": [
+    "No new fixed helper bundle yet",
+    "No new full capture/restore acceptance",
+    "No restored DBOS worker or same-target reopen",
+    "Original R2 covered 887012 only, not new array fix; no R3",
+    "No provider, deployment, main runtime or retained failed source changes"
+  ]
+}

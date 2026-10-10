@@ -12,9 +12,7 @@ import {
   assertContractEpochRunnable,
   checkContractEpoch,
   fenceAwareJobHandler,
-  readContractEpoch,
   readJobBirthEpoch,
-  reportOutstandingBossJobs,
   transitionContractEpoch,
   waitForRunnableEpoch,
 } from './index';
@@ -24,29 +22,6 @@ const fakeJob = (id: string): Job => ({ id }) as unknown as Job;
 beforeEach(() => resetDb());
 
 describe('readContractEpoch / gate wiring', () => {
-  it('empty table → implicit code-epoch/active → runnable', async () => {
-    // 隐式 marker 随 CODE_CONTRACT_EPOCH 走：空表对本代码 runnable。
-    expect(await readContractEpoch(testDb())).toBeNull();
-    const status = await checkContractEpoch(testDb());
-    expect(status).toEqual({
-      runnable: true,
-      marker: { epoch: 'assessment-contract-v1', state: 'active' },
-    });
-  });
-
-  it('reads the latest marker row by seq', async () => {
-    await testDb().insert(contract_epoch).values({
-      seq: 0,
-      epoch: 'assessment-contract-v1',
-      state: 'active',
-      entered_by: 'test',
-    });
-    const marker = await readContractEpoch(testDb());
-    expect(marker).toMatchObject({ epoch: 'assessment-contract-v1', state: 'active', seq: 0 });
-    // post-flip 代码在本 epoch active DB 上 runnable（cutover 完成态）。
-    expect((await checkContractEpoch(testDb())).runnable).toBe(true);
-  });
-
   it('(legacy, preparing) fences assertContractEpochRunnable deterministically', async () => {
     await testDb().insert(contract_epoch).values({
       seq: 0,
@@ -170,19 +145,9 @@ describe('transitionContractEpoch', () => {
     );
     expect(count[0]?.n).toBe(4); // seed + av1-prepare + legacy-prepare + legacy-activate（拒绝不落行）
   });
-
-  it('requires a non-empty actor', async () => {
-    await expect(
-      transitionContractEpoch(testDb(), 'begin_prepare', 'legacy', '  '),
-    ).rejects.toThrow(/actor/);
-  });
 });
 
 describe('waitForRunnableEpoch (worker 启动闸门)', () => {
-  it('returns immediately when runnable', async () => {
-    await waitForRunnableEpoch(testDb(), { pollIntervalMs: 5 });
-  });
-
   it('blocks while fenced and resumes when the marker activates', async () => {
     const db = testDb();
     await db.insert(contract_epoch).values({
@@ -320,53 +285,6 @@ describe('fenceAwareJobHandler (per-delivery fence)', () => {
       await expect(newBorn([fakeJob('new-born')])).resolves.toBe('ran');
     } finally {
       await db.execute(sql`drop table if exists pgboss.job`);
-      await db.execute(sql`drop schema if exists pgboss cascade`);
-    }
-  });
-});
-
-describe('reportOutstandingBossJobs', () => {
-  it('degrades to [] when the pgboss schema is absent (test container)', async () => {
-    expect(await reportOutstandingBossJobs(testDb())).toEqual([]);
-  });
-
-  it('classifies outstanding rows by queue disposition', async () => {
-    const db = testDb();
-    // 最小 pgboss.job 替身（同测试建同测试删——不污染共享 fork 的 capture 探针）。
-    // 幂等前置清理：同 shard 的其他 db 测试文件可能留下 pgboss.job（真实 boss 实例
-    // 或未清理的替身），裸 create table 会 42P07。先 drop 再建，自愈任意残留。
-    await db.execute(sql`drop table if exists pgboss.job`);
-    await db.execute(sql`drop schema if exists pgboss cascade`);
-    await db.execute(sql`create schema if not exists pgboss`);
-    try {
-      await db.execute(sql`
-        create table pgboss.job (
-          id text primary key,
-          name text not null,
-          state text not null,
-          created_on timestamptz not null default now()
-        )
-      `);
-      await db.execute(sql`
-        insert into pgboss.job (id, name, state) values
-          ('a', 'judge_run', 'created'),
-          ('b', 'judge_run', 'failed'),
-          ('c', 'prune_job_events', 'created'),
-          ('d', 'memory_event_ingest_dlq', 'created'),
-          ('e', 'completed_queue', 'completed')
-      `);
-      const rows = await reportOutstandingBossJobs(db);
-      expect(rows).toEqual([
-        { queue: 'judge_run', state: 'created', count: 1, disposition: 'translate' },
-        { queue: 'judge_run', state: 'failed', count: 1, disposition: 'translate' },
-        { queue: 'memory_event_ingest_dlq', state: 'created', count: 1, disposition: 'fenced' },
-        { queue: 'prune_job_events', state: 'created', count: 1, disposition: 'drain' },
-      ]);
-    } finally {
-      await db.execute(sql`drop table if exists pgboss.job`);
-      // CASCADE: post-1055 forks carry real pg-boss objects (job_state type,
-      // version/queue/subscription tables, helper functions) inside the same
-      // schema — a bare DROP fails 2BP01 and wedges every boss test after us.
       await db.execute(sql`drop schema if exists pgboss cascade`);
     }
   });

@@ -10,3 +10,7 @@ export const loadNoteReaderPage = () =>
   import('./ui/NoteReaderPage').then((module) => module.default);
 
 export const loadNotesPage = () => import('./ui/NotesPage').then((module) => module.default);
+
+export { NoteListResponseSchema } from './api/contracts';
+export type { NoteListResponse, NoteListRow } from './ui/notes-api';
+export type NoteListClient = typeof import('./ui/notes-api').listNotes;

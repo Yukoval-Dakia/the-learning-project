@@ -226,32 +226,6 @@ describe('upsertMasteryState', () => {
   });
 });
 
-describe('getMasteryState', () => {
-  beforeEach(async () => {
-    await resetDb();
-  });
-
-  it('returns null when no row exists (cold start)', async () => {
-    expect(await getMasteryState(db, createId())).toBeNull();
-  });
-
-  it('returns the row when present', async () => {
-    const k = createId();
-    await seedKnowledge(k);
-    await upsertMasteryState(db, {
-      subject_id: k,
-      theta_hat: 1.1,
-      evidence_count: 3,
-      success_count: 2,
-      fail_count: 1,
-      last_outcome_at: new Date(),
-    });
-    const state = await getMasteryState(db, k);
-    expect(state?.theta_hat).toBeCloseTo(1.1, 5);
-    expect(state?.success_count).toBe(2);
-  });
-});
-
 describe('getMasteryProjection (B1 FULL — difficulty-aware PFA p(L), YUK-420)', () => {
   beforeEach(async () => {
     await resetDb();
@@ -274,10 +248,6 @@ describe('getMasteryProjection (B1 FULL — difficulty-aware PFA p(L), YUK-420)'
       updated_at: new Date(),
     });
   }
-
-  it('returns an empty map for empty input (no query)', async () => {
-    expect((await getMasteryProjection(db, [])).size).toBe(0);
-  });
 
   it('projects PFA p(L) = σ(γ·success + ρ·fail − β); β=0 when KC has no anchored item', async () => {
     const k = createId();

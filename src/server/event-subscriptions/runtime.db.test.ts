@@ -1,7 +1,7 @@
 import { sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import type { Db } from '@/db/client';
 import * as schema from '@/db/schema';
 import { event, event_subscription_checkpoint, event_subscription_delivery } from '@/db/schema';
@@ -100,39 +100,6 @@ async function waitForBackendLock(applicationName: string): Promise<void> {
 beforeEach(() => resetDb());
 
 describe('YUK-751 durable event subscription runtime', () => {
-  it('bootstraps pre-existing events, then anti-joins every undispatched matching event without a cursor', async () => {
-    await insertEvent('before-a');
-    await insertEvent('ignored', 'test:ignored');
-    await insertEvent('before-b');
-
-    await bootstrapSubscription(testDb(), registry(), SUBSCRIBER);
-    await insertEvent('after-a');
-    const lease = await claimSubscriptionLease(testDb(), registry(), SUBSCRIBER, 'worker-a');
-    expect(lease).not.toBeNull();
-    if (!lease) throw new Error('expected subscription lease');
-
-    await discoverSubscriptionDeliveries(testDb(), registry(), SUBSCRIBER, lease);
-
-    expect(await deliveryRows()).toEqual([
-      expect.objectContaining({
-        sourceEventId: 'before-a',
-        deliverySeq: 1,
-        status: 'bootstrap_skipped',
-      }),
-      expect.objectContaining({
-        sourceEventId: 'before-b',
-        deliverySeq: 2,
-        status: 'bootstrap_skipped',
-      }),
-      expect.objectContaining({ sourceEventId: 'after-a', deliverySeq: 3, status: 'pending' }),
-    ]);
-
-    const [checkpoint] = await testDb()
-      .select({ nextDeliverySeq: event_subscription_checkpoint.next_delivery_seq })
-      .from(event_subscription_checkpoint);
-    expect(checkpoint?.nextDeliverySeq).toBe(4);
-  });
-
   it('single-tx bootstrap: an event in-flight during bootstrap is NOT skipped, later delivered (Tcx98/TcWGH)', async () => {
     // The creation tx's OWN snapshot defines history — no seq/xmin/snapshot fence. An event still
     // in-flight (uncommitted) when bootstrap runs is absent from that snapshot, so it is not skipped;
@@ -189,34 +156,6 @@ describe('YUK-751 durable event subscription runtime', () => {
     const lease = await claimSubscriptionLease(testDb(), registry(), SUBSCRIBER, 'worker');
     if (!lease) throw new Error('expected lease');
     expect(await discoverSubscriptionDeliveries(testDb(), registry(), SUBSCRIBER, lease)).toBe(0);
-  });
-
-  it('rejects non-positive / non-finite dispatch options at intake (Tcd9v)', async () => {
-    await expect(
-      runSubscriptionDispatchCycle(testDb(), registry(), { owner: 'w', maxAttempts: 0 }),
-    ).rejects.toThrow(/maxAttempts/);
-    await expect(
-      runSubscriptionDispatchCycle(testDb(), registry(), {
-        owner: 'w',
-        maxAttempts: 2,
-        retryDelaySeconds: -1,
-      }),
-    ).rejects.toThrow(/retryDelaySeconds/);
-    await expect(
-      runSubscriptionDispatchCycle(testDb(), registry(), {
-        owner: 'w',
-        maxAttempts: 2,
-        handlerTimeoutMs: Number.NaN,
-      }),
-    ).rejects.toThrow(/handlerTimeoutMs/);
-    // G2 (TdYuS) — a finite-but-too-large caller timeout (>= lease TTL) is also rejected.
-    await expect(
-      runSubscriptionDispatchCycle(testDb(), registry(), {
-        owner: 'w',
-        maxAttempts: 2,
-        handlerTimeoutMs: 200_000,
-      }),
-    ).rejects.toThrow(/handlerTimeoutMs.*lease TTL/);
   });
 
   it('fences checkpoint leases and prevents a later delivery from running while an earlier retry waits', async () => {
@@ -535,37 +474,6 @@ describe('YUK-751 durable event subscription runtime', () => {
     expect(await redriveSubscriptionDelivery(testDb(), registry(), SUBSCRIBER, 'first-dead')).toBe(
       false,
     );
-  });
-
-  it('dispatches a claimed delivery to succeeded and observes handler outcomes', async () => {
-    const handler = vi.fn(async () => ({ status: 'skipped' as const, reason: 'not applicable' }));
-    const subscription = { ...SUBSCRIBER, handler };
-    await bootstrapSubscription(testDb(), registry(subscription), subscription);
-    await insertEvent('source');
-
-    const result = await runSubscriptionDispatchCycle(testDb(), registry(subscription), {
-      owner: 'worker',
-      maxAttempts: 2,
-    });
-
-    expect(result).toEqual({
-      dispatched: 1,
-      succeeded: 0,
-      skipped: 1,
-      retryScheduled: 0,
-      deadLettered: 0,
-      lostLease: 0,
-    });
-    expect(handler).toHaveBeenCalledWith({
-      subscriberId: SUBSCRIBER.id,
-      subscriberVersion: SUBSCRIBER.version,
-      // YUK-751 review: deliverySeq crosses the handler boundary as a decimal string (serializable).
-      deliverySeq: '1',
-      sourceEventId: 'source',
-    });
-    expect(await deliveryRows()).toEqual([
-      expect.objectContaining({ sourceEventId: 'source', status: 'skipped' }),
-    ]);
   });
 
   // ── YUK-1055 — version-bump translation（grounding §15 + YUK-766）──

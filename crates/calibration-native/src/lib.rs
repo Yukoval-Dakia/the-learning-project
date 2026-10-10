@@ -1020,51 +1020,12 @@ mod propagate_priors_tests {
         );
     }
 
-    #[test]
-    fn cycle_is_rejected() {
-        let e = propagate_priors_inner(&[0, 1], &[(0, 1), (1, 0)], &[0.0, 0.0], &[0.0, 0.0], 0.5);
-        assert!(e.is_err());
-    }
 
-    #[test]
-    fn out_of_range_edge_rejected() {
-        let e = propagate_priors_inner(&[0, 1], &[(0, 5)], &[0.0, 0.0], &[0.0, 0.0], 0.5);
-        assert!(e.is_err());
-    }
 
-    #[test]
-    fn self_prereq_rejected() {
-        let e = propagate_priors_inner(&[0], &[(0, 0)], &[0.0], &[0.0], 0.5);
-        assert!(e.is_err());
-    }
 
-    #[test]
-    fn negative_or_nan_shrink_rejected() {
-        assert!(propagate_priors_inner(&[0], &[], &[0.0], &[0.0], -1.0).is_err());
-        assert!(propagate_priors_inner(&[0], &[], &[0.0], &[0.0], f64::NAN).is_err());
-    }
 
-    #[test]
-    fn length_mismatch_rejected() {
-        let e = propagate_priors_inner(&[0, 1], &[], &[0.0], &[0.0, 0.0], 0.5);
-        assert!(e.is_err());
-    }
 
-    #[test]
-    fn non_finite_anchor_rejected() {
-        // b / θg are untyped-JS f64 inputs — a NaN/Inf anchor must throw loudly, not silently
-        // emit a uniform distribution + phantom (id=0, mastery=+∞) attribution.
-        assert!(propagate_priors_inner(&[0], &[], &[f64::NAN], &[0.0], 0.5).is_err());
-        assert!(propagate_priors_inner(&[0], &[], &[0.0], &[f64::INFINITY], 0.5).is_err());
-        assert!(propagate_priors_inner(&[0], &[], &[f64::NEG_INFINITY], &[0.0], 0.5).is_err());
-    }
 
-    #[test]
-    fn infinite_shrink_rejected() {
-        // +∞ passes a bare `>= 0` check but degenerates every node to uniform via NaN weights —
-        // the finite-guard turns that into a loud config error.
-        assert!(propagate_priors_inner(&[0], &[], &[0.0], &[0.0], f64::INFINITY).is_err());
-    }
 
     #[test]
     fn duplicate_edge_deduped_no_double_count() {

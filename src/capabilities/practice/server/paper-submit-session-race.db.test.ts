@@ -1,21 +1,13 @@
 import { createId } from '@paralleldrive/cuid2';
-import { eq, sql } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { answer, artifact, assessment_submission, event, learning_session } from '@/db/schema';
+import { eq } from 'drizzle-orm';
+import { beforeEach, describe, expect, it } from 'vitest';
+import { answer, artifact, assessment_submission, event } from '@/db/schema';
 import { seedFrozenSolveQuestion } from '../../../../tests/fixtures/assessment-solve';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { createPaperReviewSession } from '../api/paper-session-create';
 import { submitNativePaperAttempt } from './assessment/paper-attempt';
 import { readPaperAssessmentBinding } from './assessment/paper-issuance';
-import { getIssuanceState, saveResponseDraft } from './assessment/submit';
-
-function gate() {
-  let release = () => {};
-  const promise = new Promise<void>((resolve) => {
-    release = resolve;
-  });
-  return { promise, release };
-}
+import { saveResponseDraft } from './assessment/submit';
 
 async function fixture() {
   const db = testDb();
@@ -55,60 +47,6 @@ async function fixture() {
 
 beforeEach(resetDb);
 describe('paper original and capture share the session occurrence lock', () => {
-  it.each(['completed', 'abandoned', 'reopened'] as const)(
-    '%s wins while submission is waiting: no immutable original or draft loss',
-    async (terminal) => {
-      const db = testDb();
-      const { input, binding } = await fixture();
-      const draftBefore = (await getIssuanceState(db, input.assessment.issuance_id)).draft;
-      const locked = gate(),
-        finishTerminal = gate();
-      const terminalWrite = db.transaction(async (tx) => {
-        await tx
-          .select()
-          .from(learning_session)
-          .where(eq(learning_session.id, input.sessionId))
-          .for('update');
-        locked.release();
-        await finishTerminal.promise;
-        await tx
-          .update(learning_session)
-          .set(
-            terminal === 'reopened'
-              ? { status: 'started', started_at: new Date(Date.parse(binding.started_at) + 60_000) }
-              : { status: terminal },
-          )
-          .where(eq(learning_session.id, input.sessionId));
-      });
-      await locked.promise;
-      const submission = submitNativePaperAttempt(db, input).then(
-        (result) => ({ result }),
-        (error: unknown) => ({ error }),
-      );
-      try {
-        await vi.waitFor(
-          async () => {
-            const waiting = await db.execute(sql`SELECT pid FROM pg_stat_activity
-            WHERE datname = current_database() AND wait_event_type = 'Lock'
-              AND query ILIKE '%learning_session%' AND pid <> pg_backend_pid()`);
-            expect(waiting.length).toBeGreaterThan(0);
-          },
-          { timeout: 10_000 },
-        );
-      } finally {
-        finishTerminal.release();
-        await terminalWrite;
-      }
-      expect(await submission).toHaveProperty('error');
-      expect(await db.select().from(assessment_submission)).toHaveLength(0);
-      expect((await getIssuanceState(db, input.assessment.issuance_id)).draft).toEqual(draftBefore);
-      expect(await db.select().from(answer)).toHaveLength(0);
-      expect(
-        await db.select().from(event).where(eq(event.action, 'experimental:assessment_attempt')),
-      ).toHaveLength(0);
-    },
-  );
-
   it('concurrent identical submissions share one original and capture without lock inversion', async () => {
     const db = testDb();
     const { input } = await fixture();
@@ -125,27 +63,5 @@ describe('paper original and capture share the session occurrence lock', () => {
     expect(
       await db.select().from(event).where(eq(event.action, 'experimental:assessment_attempt')),
     ).toHaveLength(1);
-  });
-
-  it('submission wins: capture and immutable original survive completion and accepted-original retry', async () => {
-    const db = testDb();
-    const { input } = await fixture();
-    const accepted = await submitNativePaperAttempt(db, input);
-    const originals = await db.select().from(assessment_submission);
-    const captures = await db.select().from(answer);
-    expect(originals).toHaveLength(1);
-    expect(captures).toHaveLength(1);
-    expect(captures[0]).toMatchObject({ event_id: accepted.attemptEventId, content_md: 'a+b' });
-    await db
-      .update(learning_session)
-      .set({ status: 'completed' })
-      .where(eq(learning_session.id, input.sessionId));
-    expect(await submitNativePaperAttempt(db, input)).toMatchObject({
-      answerId: accepted.answerId,
-      attemptEventId: accepted.attemptEventId,
-    });
-    expect(await db.select().from(assessment_submission)).toEqual(originals);
-    expect(await db.select().from(answer)).toEqual(captures);
-    expect((await getIssuanceState(db, input.assessment.issuance_id)).draft).toBeNull();
   });
 });

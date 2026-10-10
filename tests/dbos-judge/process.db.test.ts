@@ -319,7 +319,6 @@ afterAll(async () => {
   const paths = [
     'tests/dbos-judge/worker.ts',
     'tests/dbos-judge/process.db.test.ts',
-    'tests/dbos-judge/transport-fixture.unit.test.ts',
     '.cache/yuk1356-judge-worker.cjs',
     'src/server/durable/judge-worker.ts',
     'src/capabilities/practice/server/judge/evaluate-submission.ts',

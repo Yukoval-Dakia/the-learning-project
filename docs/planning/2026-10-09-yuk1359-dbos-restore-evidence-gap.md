@@ -55,3 +55,13 @@ After judge delivery and complete writer release, this thread may start one writ
 ## Sequencing update at04:34Z
 
 Start/release owner5796 rechecked ownership and committed `0015de13dc062e6badaa9cbf74e5dcc81ec9bae4`, explicitly removing the dependency on judge merge or provider-quota restoration. Parent read that completed thread result and the commit. Once the current judge transport test writer has fully released and parent has committed its acceptance evidence, this thread may switch its existing bound worktree to a fresh-main branch and implement the already confirmed restore scope with one writer. PR1625 stays draft/watched with its actual-model gate intact. Do not carry judge WIP onto main, start parallel writers, or change runtime during this source step. All original exact-file, fail-closed, dump binding, full inventory/content/sequence, history and actual restore/reopen requirements remain unchanged.
+
+## Fresh-main offline reproduction
+
+At 05:09:46Z, the parent repeated the existing intercepted-Docker driver at `a2218777876c83e0bab64de8860ae3ce527d004c`, based on main `7472f4395`. The inspection query again returned 17, while the actual helper exited 0 and emitted `verified: true` with empty counts. The [fresh receipt](evidence/2026-10-09-yuk1359-restore-count-failure-main7472.json) records the source, driver and output hashes. No database, Docker daemon, network or runtime resource was used. The earlier reproduction remains unchanged. The sole architecture child is still active; no implementation writer has started.
+
+## Existing documentation and test consumers
+
+The current README linked a nonexistent `docs/runbooks/cutover-final-backup-and-restore.md`. Its link now points to the existing full Postgres section in `docs/sub5-restore-cli.md`; the later implementation will update that existing section and its scoped drift test. This link correction does not change restore instructions or prove their runtime safety.
+
+`scripts/cutover-backup.test.ts` currently accepts a matching dump hash plus a legacy `verified: true` receipt with table counts. New parity tests must preserve the historical receipt classification while requiring complete proof for the new gate. The existing `--strict` argument test requires only manifest, dump and DLQ artifacts; it must not silently become a restore or deployment gate.

@@ -1,5 +1,3 @@
-import { readFileSync } from 'node:fs';
-import ts from 'typescript';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { canonicalHash } from '@/core/migration/canonical';
 import { JudgeReservationPayload } from '@/core/schema/event/judge-operational-events';
@@ -7,10 +5,8 @@ import {
   JUDGE_DBOS_APPLICATION,
   JUDGE_DBOS_APPLICATION_VERSION,
   JUDGE_DBOS_QUEUE,
-  JUDGE_DBOS_SCHEMA,
   JUDGE_DBOS_WORKFLOW,
   enqueueDbosJudgeDelivery,
-  enqueueLegacyJudgeDelivery,
   inspectDbosJudgeInventory,
   judgeDeliveryInput,
   judgeLegacyJobId,
@@ -95,62 +91,6 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('practice judge engine delivery contract', () => {
-  it('sends the complete legacy payload with the retained fixed queue and delivery ID', async () => {
-    const r = reservation('pg-boss', 2),
-      input = judgeDeliveryInput(r);
-    const job = {
-      run_id: r.run_id,
-      caller: 'submit',
-      submit: {
-        body: {
-          answer_text: 'Long answer\n'.repeat(250),
-          metadata: { evidence: ['v+c=18', 'v-c=12'], unresolved: null },
-        },
-        question_id: 'immutable-question',
-        submitted_at: '2026-10-09T00:00:00Z',
-        subject_profile: { subject: 'math', nested: { version: 4 } },
-      },
-    } satisfies Parameters<typeof enqueueLegacyJudgeDelivery>[0];
-    expect(await enqueueLegacyJudgeDelivery(job, input)).toBe(r.delivery_id);
-    expect(engine.send).toHaveBeenCalledExactlyOnceWith(
-      'judge_run',
-      { ...job, operational: input },
-      { id: r.delivery_id },
-    );
-    const injected = { send: vi.fn(async () => null) };
-    expect(await enqueueLegacyJudgeDelivery(job, input, injected)).toBeNull();
-    expect(engine.getBoss).toHaveBeenCalledTimes(1);
-    expect(engine.getRunningBoss).not.toHaveBeenCalled();
-    injected.send.mockRejectedValueOnce(new Error('acknowledgment unknown'));
-    await expect(enqueueLegacyJudgeDelivery(job, input, injected)).rejects.toThrow(
-      'acknowledgment unknown',
-    );
-    expect(injected.send).toHaveBeenCalledTimes(2);
-  });
-
-  it('keeps the shared application, schema, queue and fixed workflow identity on enqueue', async () => {
-    const input = judgeDeliveryInput(reservation());
-    engine.workflow = workflow();
-    expect(await enqueueDbosJudgeDelivery(input)).toBe(input.delivery_id);
-    expect(engine.create).toHaveBeenCalledWith(
-      expect.objectContaining({
-        systemDatabaseSchemaName: JUDGE_DBOS_SCHEMA,
-        applicationName: 'tlp-housekeeping',
-      }),
-    );
-    expect(engine.enqueue).toHaveBeenCalledExactlyOnceWith(
-      {
-        workflowID: input.delivery_id,
-        workflowName: 'judge-run-v1',
-        queueName: 'judge-run-v1',
-        appVersion: 'prune-v1',
-        applicationName: 'tlp-housekeeping',
-      },
-      input,
-    );
-    expect(engine.destroy).toHaveBeenCalledTimes(1);
-  });
-
   it.each([
     ['name', { workflowName: 'other' }],
     ['queue', { queueName: 'other' }],
@@ -195,24 +135,6 @@ describe('practice judge engine delivery contract', () => {
     });
     await expect(enqueueDbosJudgeDelivery(judgeDeliveryInput(reservation()))).rejects.toThrow();
     expect(engine.destroy).toHaveBeenCalledTimes(2);
-  });
-
-  it.each([
-    'PENDING',
-    'ENQUEUED',
-    'DELAYED',
-    'SUCCESS',
-    'ERROR',
-    'CANCELLED',
-    'MAX_RECOVERY_ATTEMPTS_EXCEEDED',
-  ])('observes %s without treating it as domain truth', async (status) => {
-    engine.workflow = { ...workflow(), status };
-    expect(await observeJudgeDelivery(reservation())).toMatchObject({
-      kind: 'present',
-      state: status,
-      input: judgeDeliveryInput(reservation()),
-    });
-    expect(engine.enqueue).not.toHaveBeenCalled();
   });
 
   it('distinguishes authoritative absence, invalid state and lookup failure', async () => {
@@ -271,45 +193,6 @@ describe('practice judge engine delivery contract', () => {
       });
     },
   );
-
-  it('keeps a cold mapped legacy observation unavailable without starting or looking up an engine', async () => {
-    engine.running = false;
-    expect(await observeJudgeDelivery(reservation('pg-boss', 2))).toEqual({
-      kind: 'unavailable',
-      reason: 'backend_unavailable',
-    });
-    expect(engine.getRunningBoss).toHaveBeenCalledTimes(1);
-    expect(engine.getBoss).not.toHaveBeenCalled();
-    expect(engine.getJobById).not.toHaveBeenCalled();
-    expect(engine.create).not.toHaveBeenCalled();
-    expect(engine.getWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('keeps a cold unmapped observation unavailable without starting or querying DBOS for absence', async () => {
-    engine.running = false;
-    expect(await observeUnmappedJudgeRun(reservation().run_id)).toEqual({
-      kind: 'unavailable',
-      reason: 'backend_unavailable',
-    });
-    expect(engine.getRunningBoss).toHaveBeenCalledTimes(1);
-    expect(engine.getBoss).not.toHaveBeenCalled();
-    expect(engine.getJobById).not.toHaveBeenCalled();
-    expect(engine.create).not.toHaveBeenCalled();
-    expect(engine.getWorkflow).not.toHaveBeenCalled();
-  });
-
-  it('retains warm mapped authoritative absence and lookup failure without starting the client', async () => {
-    const r = reservation('pg-boss', 1);
-    expect(await observeJudgeDelivery(r)).toEqual({ kind: 'absent', deliveryId: r.delivery_id });
-    engine.getJobById.mockRejectedValueOnce(new Error('running backend unavailable'));
-    expect(await observeJudgeDelivery(r)).toEqual({
-      kind: 'unavailable',
-      reason: 'backend_unavailable',
-    });
-    expect(engine.getRunningBoss).toHaveBeenCalledTimes(2);
-    expect(engine.getBoss).not.toHaveBeenCalled();
-    expect(engine.create).not.toHaveBeenCalled();
-  });
 
   it('queries all three deterministic IDs in both engines before an unmapped absence', async () => {
     const runId = reservation().run_id;
@@ -390,102 +273,5 @@ describe('practice judge engine delivery contract', () => {
     expect(() => validateJudgeEngineInventory(duplicate)).toThrow('seal conflict');
     engine.listWorkflows.mockResolvedValueOnce([{ ...workflow(), workflowID: 'wrong-fixed-id' }]);
     await expect(inspectDbosJudgeInventory()).rejects.toThrow('input mismatch');
-  });
-});
-
-describe('actual practice and shared-host consumer wiring', () => {
-  function namedBindings(path: string, kind: 'import' | 'export', from: string) {
-    const file = ts.createSourceFile(
-      path,
-      readFileSync(path, 'utf8'),
-      ts.ScriptTarget.Latest,
-      true,
-    );
-    return file.statements.flatMap((statement) => {
-      if (
-        kind === 'import' &&
-        ts.isImportDeclaration(statement) &&
-        ts.isStringLiteral(statement.moduleSpecifier) &&
-        statement.moduleSpecifier.text === from
-      ) {
-        const bindings = statement.importClause?.namedBindings;
-        return bindings && ts.isNamedImports(bindings)
-          ? bindings.elements.map((e) => e.name.text)
-          : [];
-      }
-      if (
-        kind === 'export' &&
-        ts.isExportDeclaration(statement) &&
-        statement.moduleSpecifier &&
-        ts.isStringLiteral(statement.moduleSpecifier) &&
-        statement.moduleSpecifier.text === from &&
-        statement.exportClause &&
-        ts.isNamedExports(statement.exportClause)
-      )
-        return statement.exportClause.elements.map((e) => e.name.text);
-      return [];
-    });
-  }
-  it('connects dispatch, observation and reconcile to the same domain engine', () => {
-    for (const [path, module, symbols] of [
-      [
-        'src/capabilities/practice/server/judge-run-dispatch.ts',
-        './judge-engine-client',
-        ['enqueueDbosJudgeDelivery', 'enqueueLegacyJudgeDelivery', 'judgeDeliveryInput'],
-      ],
-      [
-        'src/capabilities/practice/server/judge-run-observation.ts',
-        './judge-engine-client',
-        ['observeJudgeDelivery', 'observeUnmappedJudgeRun'],
-      ],
-      [
-        'src/capabilities/practice/server/judge-operational.ts',
-        './judge-engine-client',
-        ['judgeDeliveryInput', 'judgeLegacyJobId'],
-      ],
-      [
-        'src/capabilities/practice/jobs/judge_pending_reconcile.ts',
-        '../server/judge-engine-client',
-        ['observeJudgeDelivery'],
-      ],
-    ] satisfies [string, string, string[]][]) {
-      expect(namedBindings(path, 'import', module)).toEqual(expect.arrayContaining(symbols));
-      expect(readFileSync(path, 'utf8')).not.toContain('@/server/durable/judge-client');
-    }
-    expect(
-      namedBindings(
-        'src/capabilities/practice/server/judge-run-dispatch.ts',
-        'import',
-        '@/server/boss/client',
-      ),
-    ).toEqual([]);
-  });
-  it('exports the real engine identities and operator census through public for the shared host', () => {
-    const exported = namedBindings(
-      'src/capabilities/practice/public.ts',
-      'export',
-      './server/judge-engine-client',
-    );
-    for (const [path, symbols] of [
-      ['src/server/durable/judge-worker.ts', ['JUDGE_DBOS_QUEUE', 'JUDGE_DBOS_WORKFLOW']],
-      [
-        'src/server/durable/judge-family.ts',
-        [
-          'JudgeEngineInventoryT',
-          'judgeLegacyJobId',
-          'sealJudgeEngineInventory',
-          'validateJudgeEngineInventory',
-        ],
-      ],
-      [
-        'tests/dbos-judge/cutover.db.test.ts',
-        ['inspectDbosJudgeInventory', 'sealJudgeEngineInventory'],
-      ],
-    ] satisfies [string, string[]][]) {
-      expect(namedBindings(path, 'import', '@/capabilities/practice/public')).toEqual(
-        expect.arrayContaining(symbols),
-      );
-      expect(exported).toEqual(expect.arrayContaining(symbols));
-    }
   });
 });

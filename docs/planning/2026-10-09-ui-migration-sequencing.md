@@ -1,0 +1,13 @@
+# UI waves and migration ownership
+
+Owner schedule communicated by YUK-1353 on 2026-10-09: existing pages are not redesigned during migration. UI rewrites follow functional waves, with backend delivery before the Opus 5.5 UI change. This records the migration coordinator response sent to the visual thread and Start owner; it does not replace PR1612 or claim three-party agreement is complete.
+
+Start adapters retain authentication, epoch fencing and existing public typed domain contracts. Old and new renderers consume the same contracts. “Fetch the page data together” does not require a single aggregate or request: independent loading, errors, pagination and refresh remain intact. Existing aggregates are reused; no unused view-model layer is introduced. Existing pages receive only necessary behavior fixes and transport changes during migration.
+
+A later UI wave may switch renderers within one Start route. This is not legacy SPA fallback, a second application, or a reason to retain old runtime paths. The Start owner implements the route switch when that wave has a real consumer. Switching rendering must not replay commands or roll back data. The owner's one-week P0/P1-free observation period applies to removal of the old renderer; meaningful traffic and acceptance evidence remain necessary.
+
+YUK-1354 may prepare an isolated design-system foundation, proposed under src/ui-next/, with scoped tokens, primitives, shell and showcase components. This directory is a proposal, not a current worktree conflict check. No global reset, :root/body styling, application font change, second auth/query state or real business writes. A hidden showcase route is still owned by the Start integrator (5796); the UI author supplies the component and props without editing Start routes, generated route tree, router, frontdoor or boot. Dependency/build changes require separate ownership coordination. YUK-1395 remains confined to prototypes and dedicated static assets.
+
+Existing follow-ups are handed to the visual planning lane without duplicate tickets: Inbox dismiss leaves the sidebar count stale until reload (shared invalidation contract); Google Fonts is blocked by CSP (solve font delivery without loosening CSP); YUK-1382 distinguishes unknown costs from actual zero. The first is a behavior correction, not merely visual styling.
+
+No reliable SPA-retirement date is established. Remaining task families and recovery ownership, judge gates, remaining Start consumers and canonical boot, plus dev/build/image/restore and legacy exit evidence remain open. The first rewritten existing page follows migration exit and uses Start directly. Foundation/prototype work may proceed independently. Restore acceptance remains the active implementation lane.

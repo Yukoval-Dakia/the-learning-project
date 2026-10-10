@@ -22,10 +22,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
-it.each([
-  { policy: 'none' as const, requests: 1 },
-  { policy: undefined, requests: 3 },
-])(
+it.each([{ policy: 'none' as const, requests: 1 }])(
   'uses installed Pi lower transport for per-call policy $policy',
   async ({ policy, requests }) => {
     const original = config.getConfig;

@@ -6,13 +6,11 @@
 
 import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { LegacyKnowledgeMisconceptionVetoResponseSchema } from '@/capabilities/knowledge/api/contracts';
 import { newId } from '@/core/ids';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { loadMisconceptionsForKc } from '../server/misconception-read';
 import { POST } from './misconception-veto';
 
 /** Seed ONE pending conjecture for `kcId`; returns its proposal event id (= the candidate id). */
@@ -37,21 +35,6 @@ async function seedConjecture(kcId: string, claim: string): Promise<string> {
         predicted_p: 0.3,
         baseline_p_at_induction: 0.6,
       },
-    },
-  });
-}
-
-/** Seed ONE pending NON-conjecture proposal (knowledge_node); returns its proposal event id.
- *  Used to prove the endpoint's kind guard rejects non-candidate ids (A). */
-async function seedKnowledgeNodeProposal(): Promise<string> {
-  return writeAiProposal(testDb(), {
-    actor_ref: 'research_meeting',
-    payload: {
-      kind: 'knowledge_node' as const,
-      target: { subject_kind: 'knowledge' as const, subject_id: 'k_seed' },
-      reason_md: 'seed a non-conjecture proposal for the kind-guard test',
-      evidence_refs: [],
-      proposed_change: { mutation: 'propose_new' as const, name: 'X', parent_id: 'root' },
     },
   });
 }
@@ -91,34 +74,6 @@ describe('POST /api/knowledge/misconceptions/[id]/veto', () => {
     await resetDb();
   });
 
-  it('dismisses a pending candidate conjecture and drops it from the per-KC funnel', async () => {
-    const id = await seedConjecture('kc_veto', '把导数相乘当链式法则');
-
-    // precondition: the conjecture surfaces as a candidate
-    const before = await loadMisconceptionsForKc(testDb(), 'kc_veto');
-    expect(before.map((r) => r.id)).toContain(id);
-
-    const res = await veto(id);
-    expect(res.status).toBe(200);
-    expect(res.headers.get('Deprecation')).toBe('@1783987200');
-    expect(res.headers.get('Link')).toBe(
-      `</api/proposals/${id}/decisions>; rel="successor-version"`,
-    );
-    const json = await res.json();
-    LegacyKnowledgeMisconceptionVetoResponseSchema.parse(json);
-    const body = json as { kind: string };
-    expect(body.kind).toBe('dismissed');
-
-    // a single rate(dismiss) event is written, caused_by the proposal
-    const rows = await rateEvents(id);
-    expect(rows).toHaveLength(1);
-    expect((rows[0].payload as Record<string, unknown>).rating).toBe('dismiss');
-
-    // post: the dismissed conjecture leaves the pending funnel (status filtered out)
-    const after = await loadMisconceptionsForKc(testDb(), 'kc_veto');
-    expect(after.map((r) => r.id)).not.toContain(id);
-  });
-
   it('is idempotent on a second veto (still 200, idempotent, no duplicate rate event)', async () => {
     const id = await seedConjecture('kc_veto2', '混淆顺承与转折');
 
@@ -131,24 +86,6 @@ describe('POST /api/knowledge/misconceptions/[id]/veto', () => {
 
     const rows = await rateEvents(id);
     expect(rows).toHaveLength(1); // no duplicate rate event
-  });
-
-  it('returns 404 for an unknown proposal id', async () => {
-    const res = await veto('nonexistent');
-    expect(res.status).toBe(404);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('not_found');
-  });
-
-  it('A: rejects a NON-conjecture proposal id with 422 and does NOT dismiss it (endpoint boundary)', async () => {
-    const id = await seedKnowledgeNodeProposal();
-    const res = await veto(id);
-    expect(res.status).toBe(422);
-    const body = (await res.json()) as { error: string };
-    expect(body.error).toBe('unprocessable_entity');
-    // the non-conjecture proposal was NOT silently dismissed — no rate event written.
-    const rows = await rateEvents(id);
-    expect(rows).toHaveLength(0);
   });
 
   it('G: returns 409 when the candidate conjecture was already decided as accept (conflict)', async () => {

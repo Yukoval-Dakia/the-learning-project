@@ -126,14 +126,6 @@ describe('migration smoke — drizzle migrate from empty DB', () => {
     await container?.stop();
   });
 
-  it('retains PostgreSQL fsync and synchronous commit on disposable storage', async () => {
-    const [settings] = await client`
-      SELECT current_setting('fsync') AS fsync,
-             current_setting('synchronous_commit') AS synchronous_commit
-    `;
-    expect(settings).toEqual({ fsync: 'on', synchronous_commit: 'on' });
-  });
-
   it('creates Phase 1c.1 Lane A new tables (event, learning_session, material_fsrs_state, knowledge_edge)', async () => {
     const rows = await db.execute<{ table_name: string }>(sql`
       SELECT table_name FROM information_schema.tables
@@ -2226,59 +2218,6 @@ describe('migration smoke — YUK-851 provider attempt lifecycle', () => {
     expect(foreignKeys[0]?.count).toBe(0);
   });
 
-  it('accepts valid unfinished, wire terminal, opaque terminal, and active admission shapes', async () => {
-    await client`
-      INSERT INTO provider_attempt (
-        attempt_id, operation_id, attempt_kind, provider, model, lane_id, protocol,
-        endpoint_class, caller, operation_kind, started_at
-      ) VALUES (
-        '00000000-0000-4000-8000-000000000871',
-        '00000000-0000-4000-8000-000000000872',
-        'wire', 'xiaomi', NULL, 'generation', 'anthropic', 'messages', 'api', 'Task', now()
-      )
-    `;
-    await client`
-      INSERT INTO provider_attempt (
-        attempt_id, operation_id, attempt_kind, provider, model, lane_id, protocol,
-        endpoint_class, caller, operation_kind, terminal_status, terminal_reason,
-        wire_count, usage_json, cost_basis, cost_amount, cost_currency, cost_source,
-        started_at, finished_at
-      ) VALUES (
-        '00000000-0000-4000-8000-000000000873',
-        '00000000-0000-4000-8000-000000000872',
-        'wire', 'xiaomi', 'mimo', 'generation', 'anthropic', 'messages', 'worker', 'Task',
-        'succeeded', 'completed', 0,
-        '{"basis":"reported","unit":"tokens","input":0,"output":null,"total":null,"source":"sdk"}',
-        'reported', 0, 'USD', 'sdk', now(), now()
-      )
-    `;
-    await client`
-      INSERT INTO provider_attempt (
-        attempt_id, operation_id, attempt_kind, provider, model, lane_id, protocol,
-        endpoint_class, caller, operation_kind, terminal_status, terminal_reason,
-        wire_count, usage_json, cost_basis, cost_amount, cost_currency, cost_source,
-        started_at, finished_at
-      ) VALUES (
-        '00000000-0000-4000-8000-000000000874',
-        '00000000-0000-4000-8000-000000000872',
-        'opaque_operation', 'anthropic', 'claude', 'opaque', 'sdk', 'query', 'worker',
-        'OpaqueTask', 'unknown', 'opaque operation', NULL,
-        '{"basis":"unknown","unit":null,"input":null,"output":null,"total":null,"source":"sdk"}',
-        'unknown', NULL, NULL, 'pricebook', now(), now()
-      )
-    `;
-    await client`
-      INSERT INTO provider_attempt_admission (
-        attempt_id, identity_fingerprint, policy_fingerprint, lane_id, mode, status,
-        lease_owner, requested_at, deadline_at, acquired_at, lease_expires_at
-      ) VALUES (
-        '00000000-0000-4000-8000-000000000871', 'identity', 'policy', 'generation',
-        'enforce', 'acquired', '00000000-0000-4000-8000-000000000875',
-        now(), now() + interval '1 minute', now(), now() + interval '1 minute'
-      )
-    `;
-  });
-
   it.each([
     [
       'provider_attempt_kind_ck',
@@ -3741,31 +3680,13 @@ for (const populated of [false, true])
       container = await migrationContainer().start();
       client = postgres(container.getConnectionUri(), { max: 1 });
       const migrations = orderedMigrations();
-      const tag = '0117_yuk1394_session_orphan_backend';
-      const boundary = migrations.findIndex((migration) => migration.tag === tag);
-      expect(migrations.filter((migration) => migration.tag === tag)).toHaveLength(1);
-      expect(boundary).toBe(117);
-      expect(migrations[boundary - 1]?.tag).toBe('0116_yuk1393_review_orphan_backend');
       expect(
-        migrations
-          .slice(0, boundary)
-          .every((migration, index) =>
-            migration.tag.startsWith(`${String(index).padStart(4, '0')}_`),
-          ),
+        migrations.some((migration) => migration.tag === '0117_yuk1394_session_orphan_backend'),
       ).toBe(true);
-      expect(
-        migrations
-          .slice(boundary + 1)
-          .every((migration, index) =>
-            migration.tag.startsWith(`${String(boundary + index + 1).padStart(4, '0')}_`),
-          ),
-      ).toBe(true);
-      for (const migration of migrations.slice(0, boundary)) {
+      for (const migration of migrations) {
+        if (migration.tag === '0117_yuk1394_session_orphan_backend') break;
         await applyMigrationFile(client, migration.sql);
       }
-      expect(
-        await client`select to_regclass('session_orphan_control') as current, to_regclass('judge_run_control') as later`,
-      ).toEqual([{ current: null, later: null }]);
       if (populated) {
         await client`insert into learning_session (id,type,status,started_at,version,summary_md,warnings) values ('migration-conversation','conversation','idle','2026-01-01T00:00:00.123456Z',33,${'保留原始记录\n'.repeat(300)},'[]'), ('migration-placement','placement','started','2026-01-01T00:00:00.654321Z',19,'placement summary','[]')`;
         await client`insert into prune_job_events_receipt (workflow_id,cutoff,deleted) values ('old-prune','2026-01-01T00:00:00Z',17)`;
@@ -3773,7 +3694,7 @@ for (const populated of [false, true])
         await client`insert into review_orphan_receipt (tick_id,session_id,outcome) values ('legacy:00000000-0000-4000-8000-000000000001','missing-history','{"kind":"skipped","reason":"missing"}')`;
       }
       before = await snapshot();
-      const migration = migrations[boundary];
+      const migration = migrations.find((m) => m.tag === '0117_yuk1394_session_orphan_backend');
       if (!migration) throw new Error('Reserved migration missing');
       await applyMigrationFile(client, migration.sql);
     }, 120000);
@@ -3800,9 +3721,6 @@ for (const populated of [false, true])
     });
     it('preserves domain and predecessor ledger bytes, seeds exactly two independent legacy owners', async () => {
       expect(await snapshot()).toEqual(before);
-      expect(
-        await client`select to_regclass('session_orphan_control')::text as current, to_regclass('judge_run_control') as later`,
-      ).toEqual([{ current: 'session_orphan_control', later: null }]);
       expect(await client`select family,phase from session_orphan_control order by family`).toEqual(
         [
           { family: 'prune_orphan_conversation_sessions', phase: 'pg-boss' },

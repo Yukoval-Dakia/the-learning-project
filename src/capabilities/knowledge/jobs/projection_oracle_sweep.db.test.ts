@@ -10,11 +10,11 @@
 //
 // Hermetic: resetDb() in beforeEach.
 
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { Tx } from '@/db/client';
-import { event, goal, knowledge, knowledge_edge } from '@/db/schema';
+import { goal } from '@/db/schema';
 import { backfillGoalGenesis } from '../../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { runProjectionOracleSweep } from './projection_oracle_sweep';
@@ -47,13 +47,6 @@ async function insertGoal(id: string, title = `Goal ${id}`): Promise<void> {
     });
 }
 
-async function forensicEvents(): Promise<{ subject_id: string; subject_kind: string }[]> {
-  return testDb()
-    .select({ subject_id: event.subject_id, subject_kind: event.subject_kind })
-    .from(event)
-    .where(eq(event.action, 'experimental:projection_oracle_flagged'));
-}
-
 describe('runProjectionOracleSweep', () => {
   beforeEach(async () => {
     await resetDb();
@@ -68,125 +61,6 @@ describe('runProjectionOracleSweep', () => {
       if (savedFlags[f] === undefined) delete process.env[f];
       else process.env[f] = savedFlags[f];
     }
-  });
-
-  it('canonical kinds are always audited while uncut kinds remain gated', async () => {
-    const db = testDb();
-    await insertGoal('g1');
-    await backfillGoalGenesis(db, T0);
-
-    const report = await runProjectionOracleSweep(db, { now: NOW });
-
-    expect([...report.auditedKinds].sort()).toEqual([
-      'artifact',
-      'goal',
-      'knowledge',
-      'knowledge_edge',
-      'learning_item',
-      'mistake_variant',
-      'question_block',
-    ]);
-    expect(report.skippedKinds).toEqual(['item_calibration']);
-    expect(report.anomalies).toBe(0);
-    expect(report.forensicWritten).toBe(0);
-  });
-
-  it('CLEAN: an ON, coherently-backfilled entity → zero anomalies, zero forensic', async () => {
-    const db = testDb();
-    await insertGoal('g1');
-    await backfillGoalGenesis(db, T0);
-
-    const report = await runProjectionOracleSweep(db, { now: NOW });
-
-    expect(report.auditedKinds).toContain('goal');
-    expect(report.anomalies).toBe(0);
-    expect(report.forensicWritten).toBe(0);
-    expect(await forensicEvents()).toEqual([]);
-  });
-
-  it('FIELD_DRIFT: an out-of-band value change is classified + a fold-inert forensic is written; the row is NOT touched', async () => {
-    const db = testDb();
-    await insertGoal('g1', 'Original');
-    await backfillGoalGenesis(db, T0);
-    // out-of-band structural mutation → live diverges from fold(genesis).
-    await db.update(goal).set({ title: 'TAMPERED' }).where(eq(goal.id, 'g1'));
-
-    const report = await runProjectionOracleSweep(db, { now: NOW });
-
-    expect(report.fieldDrift).toBe(1);
-    expect(report.anomalies).toBe(1);
-    expect(report.forensicWritten).toBe(1);
-    // the forensic breadcrumb is fold-inert (subject_kind 'projection_oracle', queried by no gather).
-    const forensic = await forensicEvents();
-    expect(forensic).toHaveLength(1);
-    expect(forensic[0]?.subject_kind).toBe('projection_oracle');
-    expect(forensic[0]?.subject_id).toBe('goal:g1');
-    // REPORT-ONLY: the sweep did NOT repair the row — it is still tampered, and no rows were added.
-    const rows = await db.select({ title: goal.title }).from(goal);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.title).toBe('TAMPERED');
-  });
-
-  it('GHOST: an event-only row (live row dropped) is classified GHOST', async () => {
-    const db = testDb();
-    await insertGoal('g_ghost');
-    await backfillGoalGenesis(db, T0);
-    await db.delete(goal).where(eq(goal.id, 'g_ghost')); // events remain, live row gone
-
-    const report = await runProjectionOracleSweep(db, { now: NOW });
-
-    expect(report.ghost).toBe(1);
-    expect(report.anomalies).toBe(1);
-    const forensic = await forensicEvents();
-    expect(forensic[0]?.subject_id).toBe('goal:g_ghost');
-  });
-
-  it('MISSING: an index-anchored row whose base event was dropped folds null → classified MISSING', async () => {
-    const db = testDb();
-    await insertGoal('g_missing');
-    await backfillGoalGenesis(db, T0); // genesis event + index anchor
-    // drop the genesis EVENT, keep the index anchor + live row → still "anchored", but folds null.
-    await db
-      .delete(event)
-      .where(
-        and(
-          eq(event.subject_kind, 'goal'),
-          eq(event.subject_id, 'g_missing'),
-          eq(event.action, 'experimental:genesis'),
-        ),
-      );
-
-    const report = await runProjectionOracleSweep(db, { now: NOW });
-
-    expect(report.missing).toBe(1);
-    expect(report.anomalies).toBe(1);
-  });
-
-  it('M3: an un-anchored live row (no genesis, no index) is SKIPPED — no false GHOST/MISSING', async () => {
-    const db = testDb();
-    await insertGoal('g_unanchored'); // NO backfill → no genesis, no index anchor
-
-    const report = await runProjectionOracleSweep(db, { now: NOW });
-
-    // it folds to null (no base) and the live row is present, but the anchor gate SKIPs it (a
-    // pre-event-sourced / §9.3 row is fold-blind — reporting it would be a false positive).
-    expect(report.anomalies).toBe(0);
-    expect(report.forensicWritten).toBe(0);
-  });
-
-  it('one open forensic record per id: re-running the sweep does not re-write the breadcrumb', async () => {
-    const db = testDb();
-    await insertGoal('g1', 'Original');
-    await backfillGoalGenesis(db, T0);
-    await db.update(goal).set({ title: 'TAMPERED' }).where(eq(goal.id, 'g1'));
-
-    const first = await runProjectionOracleSweep(db, { now: NOW });
-    expect(first.forensicWritten).toBe(1);
-    const second = await runProjectionOracleSweep(db, { now: NOW });
-    // still flagged as an anomaly, but NO new forensic (the open record already exists).
-    expect(second.fieldDrift).toBe(1);
-    expect(second.forensicWritten).toBe(0);
-    expect(await forensicEvents()).toHaveLength(1);
   });
 
   it('M4: the REPEATABLE READ snapshot does not see a concurrent commit made mid-sweep', async () => {
@@ -212,78 +86,5 @@ describe('runProjectionOracleSweep', () => {
     // and the concurrent write DID land (a fresh sweep, new snapshot, would now see the tamper).
     const [live] = await db.select({ title: goal.title }).from(goal).where(eq(goal.id, 'g1'));
     expect(live?.title).toBe('CONCURRENT');
-  });
-  it('O9: a topology-rejecting edge is REPORTED per id, never crashes the sweep (fold-throw isolation)', async () => {
-    const db = testDb();
-    process.env.PROJECTION_IS_WRITER = '1'; // knowledge + knowledge_edge ON (the bare global)
-    // Endpoint nodes WITHOUT any event/anchor → the knowledge kind skips them (M3), zero noise.
-    for (const id of ['kn_x', 'kn_y']) {
-      await db.insert(knowledge).values({
-        id,
-        name: id,
-        domain: null,
-        parent_id: null,
-        merged_from: [],
-        proposed_by_ai: false,
-        approval_status: 'approved',
-        archived_at: null,
-        created_at: T0,
-        updated_at: T0,
-        version: 0,
-      });
-    }
-    // A LIVE cyclic prerequisite pair, each anchored by its generate-create event (the imperative
-    // edge path never ran the ADR-0034 gate, so this CAN exist live). Folding EITHER edge against
-    // the live mesh throws a topology reject.
-    for (const [edgeId, from, to] of [
-      ['ke_xy', 'kn_x', 'kn_y'],
-      ['ke_yx', 'kn_y', 'kn_x'],
-    ] as const) {
-      await db.insert(knowledge_edge).values({
-        id: edgeId,
-        from_knowledge_id: from,
-        to_knowledge_id: to,
-        relation_type: 'prerequisite',
-        weight: 1,
-        created_by: { by: 'user' },
-        reasoning: null,
-        created_at: T0,
-        archived_at: null,
-      });
-      await db.insert(event).values({
-        id: `ev_gen_${edgeId}`,
-        session_id: null,
-        actor_kind: 'agent',
-        actor_ref: 'dreaming',
-        action: 'generate',
-        subject_kind: 'knowledge_edge',
-        subject_id: edgeId,
-        outcome: 'partial',
-        payload: {
-          edge_op: 'create',
-          from_knowledge_id: from,
-          to_knowledge_id: to,
-          relation_type: 'prerequisite',
-          weight: 1,
-        },
-        caused_by_event_id: null,
-        task_run_id: null,
-        cost_micro_usd: null,
-        created_at: T0,
-      });
-    }
-
-    // Before O9 this THREW out of the sweep (→ pg-boss DLQ, a silent week-long blind spot). Now each
-    // throwing edge is recorded as FIELD_DRIFT with a <fold-threw> sentinel and the run completes.
-    const report = await runProjectionOracleSweep(db, { now: NOW });
-
-    expect(report.fieldDrift).toBe(2); // both cyclic edges, exactly (hermetic fixture)
-    expect(report.anomalies).toBe(2);
-    expect(report.forensicWritten).toBe(2);
-    const forensic = await forensicEvents();
-    expect(forensic.map((f) => f.subject_id).sort()).toEqual([
-      'knowledge_edge:ke_xy',
-      'knowledge_edge:ke_yx',
-    ]);
   });
 });

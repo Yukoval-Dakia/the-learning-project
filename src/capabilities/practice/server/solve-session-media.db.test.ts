@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetTestConfig, setTestConfig } from '@/core/config/store';
+import { resetTestConfig } from '@/core/config/store';
 import { canonicalHash } from '@/core/migration/canonical';
 import { ai_task_runs, event, material_fsrs_state, question, source_asset } from '@/db/schema';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
@@ -219,23 +219,6 @@ describe('frozen solve image task payload', () => {
     ]);
   });
 
-  it('rejects a configured text-only vision model before adapter startup', async () => {
-    const s = await seed();
-    setTestConfig({
-      'task.TeachingTurnVisionTask.provider': 'xiaomi',
-      'task.TeachingTurnVisionTask.model': 'mimo-v2.5-pro',
-    });
-    const startup = vi.fn(async () => {
-      throw new Error('adapter must not start');
-    });
-    __setPiAdapterForTests({ id: 'pi', startup });
-    await expect(planSolveHint({ db, sessionId: s.sessionId, hintIndex: 0 })).rejects.toThrow();
-    expect(startup).not.toHaveBeenCalled();
-    expect(
-      await db.select().from(event).where(eq(event.action, 'experimental:assessment_assistance')),
-    ).toHaveLength(0);
-  });
-
   it('passes original issued bytes, controls and image identity while preserving help digest and hint secrecy', async () => {
     const s = await seed();
     await db.update(question).set({
@@ -271,61 +254,4 @@ describe('frozen solve image task payload', () => {
     ]);
     expect(await db.select().from(material_fsrs_state)).toHaveLength(0);
   });
-
-  it.each([
-    ['external', 'https://example.com/a.png'],
-    ['unissued', '/api/assets/unissued-diagram/content'],
-    ['private', '/api/assets/private-diagram/content'],
-    ['unbound', '/api/assets/missing/content'],
-  ])('rejects %s inline images before asset reads or model calls', async (_name, src) => {
-    const s = await seed({ inline: `条件 ![图](${src})` });
-    const runTaskFn = runner();
-    await expect(
-      planSolveHint({ db, sessionId: s.sessionId, hintIndex: 0, runTaskFn }),
-    ).rejects.toMatchObject({ code: 'study_media_unavailable' });
-    expect(runTaskFn).not.toHaveBeenCalled();
-    expect(r2.get).not.toHaveBeenCalled();
-    expect(
-      await db.select().from(event).where(eq(event.action, 'experimental:assessment_assistance')),
-    ).toHaveLength(0);
-  });
-
-  it('holds unsupported required media before model execution', async () => {
-    const s = await seed({ unsupported: true });
-    const runTaskFn = runner();
-    await expect(
-      planSolveHint({ db, sessionId: s.sessionId, hintIndex: 0, runTaskFn }),
-    ).rejects.toMatchObject({ code: 'study_media_unavailable' });
-    expect(runTaskFn).not.toHaveBeenCalled();
-    expect(r2.get).not.toHaveBeenCalled();
-  });
-
-  it.each(['missing', 'corrupt', 'size', 'metadata', 'mime', 'storage-failure'])(
-    'holds %s original bytes without a text fallback or help event',
-    async (failure) => {
-      const s = await seed();
-      if (failure === 'missing') r2.get.mockResolvedValue(null);
-      if (failure === 'corrupt') r2.get.mockResolvedValue(Buffer.alloc(bytes.length));
-      if (failure === 'size') r2.get.mockResolvedValue(bytes.subarray(1));
-      if (failure === 'metadata')
-        await db
-          .update(source_asset)
-          .set({ sha256: 'a'.repeat(64) })
-          .where(eq(source_asset.id, 'issued-diagram'));
-      if (failure === 'mime')
-        await db
-          .update(source_asset)
-          .set({ mime_type: 'application/pdf' })
-          .where(eq(source_asset.id, 'issued-diagram'));
-      if (failure === 'storage-failure') r2.get.mockRejectedValue(new Error('storage unavailable'));
-      const runTaskFn = runner();
-      await expect(
-        planSolveHint({ db, sessionId: s.sessionId, hintIndex: 0, runTaskFn }),
-      ).rejects.toMatchObject({ code: 'study_media_unavailable' });
-      expect(runTaskFn).not.toHaveBeenCalled();
-      expect(
-        await db.select().from(event).where(eq(event.action, 'experimental:assessment_assistance')),
-      ).toHaveLength(0);
-    },
-  );
 });

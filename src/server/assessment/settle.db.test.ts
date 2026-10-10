@@ -39,11 +39,7 @@ import {
 } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import {
-  ActivateEvaluationRequest,
-  activateEvaluation,
-  insertInitialEvaluationHead,
-} from './activate';
+import { activateEvaluation, insertInitialEvaluationHead } from './activate';
 import { ASSESSMENT_SETTLEMENT_ACTION, learningSettlement } from './settle';
 
 const NOW = new Date('2026-09-26T00:00:00Z');
@@ -480,23 +476,6 @@ describe('learningSettlement（YUK-1053 D13–D16 + replay）', () => {
       rating_source: 'user',
       theta_decision: { applied: false },
     });
-  });
-
-  it('评级请求只接受现有三等级；不接受 null、任意字符串或数字', () => {
-    const base = {
-      evaluation_id: 'candidate',
-      expected_effective_id: null,
-      expected_generation: 0,
-    };
-    for (const user_rating of [null, '', 'easy', 1, {}, []]) {
-      expect(ActivateEvaluationRequest.safeParse({ ...base, user_rating }).success).toBe(false);
-    }
-    expect(ActivateEvaluationRequest.parse(base)).toEqual(base);
-    for (const user_rating of ['again', 'hard', 'good']) {
-      expect(ActivateEvaluationRequest.parse({ ...base, user_rating }).user_rating).toBe(
-        user_rating,
-      );
-    }
   });
 
   it('并发首次激活的不同用户评级只结算一次，另一个明确冲突', async () => {

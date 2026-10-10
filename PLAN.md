@@ -1,33 +1,37 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09 JST：judge 新增2传输失败及整份14进程回归已实际通过，首轮fixture错误保留；04:57:28Z锁释放，原4/release不变。封存后接fresh main恢复helper，不等judge配额。
+> Linear 是权威 tracker。2026-10-10：PR1625 仅同步 main87f66b3e2（#1630/#1631）与不变量测试分区；原 YUK-1356 产品代码不变，限定本机验证通过，进程恢复14项收尾重验通过；随后普通 push 等 exact-head CI，不合并 PR。
 
 ## NOW
 
-- **YUK-1358 / Start事件已合入**：PR1623于22:52:00Z合main7472f4395，exact91f4687ed CI37854525406全绿、R2 NONE/threads0；5796已unwatch。15DB/71RPC/T3浏览器及193unit/11协议/static/build/audits按revision保留，见[父验收](docs/planning/2026-10-09-yuk1358-start-event-detail-parent.md)。本树正常整合该main；未部署。
+- **YUK-1358 / Start notes列表**：独占范围和验收见[notes计划](docs/planning/2026-10-09-yuk1358-start-notes-list.md)。保留查询校验、科目知识点解析、空集合语义及现有搜索/导航/视觉；不改note详情/presence/AI写，不把本切片当Notes整族完成。父50unit/18DB、R1 NONE和49RPC/原页面浏览器通过；98表/5序列窗口不变，PR1626已合main04232aaf10（exact9889 CI全绿）；父已fetch核main；[父证据](docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md)。useSubjects仍HTTP，完整迁移未完成。
 
-- **YUK-1394已交付**：PR1624合main96077db1905ebab6a522b0ae36f9f22e26be5895，tree与exact a880均a8bcf299050ed76c6cbd91ac4e98d266c395bf46，CI37852269707全绿/threads0。共享锁29DB/34进程与隔离RED、排期修复32unit/static/build、旧cron/migration证据按revision保留，无R3。Linear Done；未部署，旧binary quiescence仍是运行切换要求。见[父验收](docs/planning/2026-10-09-yuk1394-parent-acceptance.md)。
+- **YUK-1359 / 恢复后重开验收**：run11固定helper b52e/worker7472真实capture→完整restore parity→同一target身份→prelaunch→DBOS reopen通过，见[父报告](docs/planning/2026-10-10-yuk1359-restore-parent-acceptance.md)。pending1→3恰好2新效果/receipt，completed/unknown与source rawseal不变；4schema/123表/5序列完整对等。父1045分层offline、3029source/3076evidence绑定通过；不外推judge/provider/全家族。源/恢复端停止保留，19:04:18Z核owner/原4/running/release后释放锁。run01–10失败保留不得重启；无运行锁/worker或代码writer，最终194unit/static/build/10audits通过，PR1628已开/link，等待exactCI。
+
+- **YUK-1359 / 完整恢复证明**：四现有helper/receipt类型+scopedtests/runbook范围已实施。独立R1 scratch TCP认证P1由887012/R2 NONE解决；后续array v2差异由父194unit/14真实DB与run11全量恢复证据覆盖，不冒称R2覆盖后续delta、不启R3。完整helper源码和runbook留本分支，父194unit/typecheck/lint/build及10postbuild audits全过，已开PR1628并link，exactCI待完成，不将helper交付等同YUK1359整票完成。
+
+- **YUK-1358 / Start事件详情与纠错**：PR1623已完成15DB、R2 NONE及4f36真实71RPC/T3浏览器验收，证据封存；正常整合96077db19仅PLAN/now冲突，20个本lane产品/测试文件与已验head一致。整合193unit/11协议及全部静态构建审计通过，已于22:52Z合main7472f4395（exact91f468 CI全绿），详见[父验收](docs/planning/2026-10-09-yuk1358-start-event-detail-parent.md)。旧4f36首因不倒推，未部署。
+
+- **YUK-1394已合入**：PR1624于22:32:03Z合main96077db19，与exacta880树一致，CI37852269707全绿；共享锁父29DB/确定性RED/34进程及排期32unit/static/build证据按revision保留。原R2两finding解决，后续修复不冒称R2覆盖，无R3；默认pg-boss、无部署。详见[父验收](docs/planning/2026-10-09-yuk1394-parent-acceptance.md)。
 - **YUK-1393已合入**：PR1621 exact3be966000 CI37829575046全绿，R1 NONE/threads0；main e1f2ef6bb与CI树均cad230a5，已unwatch/Linear Done。父原33DB/10进程恢复/2cron/4旧prune/26migration、49unit及fixture修复29DB/static/build证据保留。默认仍pg-boss，无部署；实际旧consumer退出仍是整迁移验收义务。
-- **YUK-1358 / Start观察读取已合入**：PR1622已合main6212a4560，exact0fbeb1f3f CI37831807097全绿、R1 NONE；26真实RPC/10窗口、T3浏览器和88表/序列无写证据见[父验收](docs/planning/2026-10-09-yuk1358-start-agent-notes-parent.md)。PR1623后main7472已由父AST重计28路由：14显式Start（含root redirect）/14 fallback，见[新入口清单](docs/planning/evidence/2026-10-09-yuk1359-start-route-census.json)。仅静态覆盖；共享子树、canonical boot与旧路径退出仍未完。
+- **YUK-1358 / Start观察读取已合入**：PR1622已合main6212a4560，exact0fbeb1f3f CI37831807097全绿、R1 NONE；26真实RPC/10窗口、T3浏览器和88表/序列无写证据见[父验收](docs/planning/2026-10-09-yuk1358-start-agent-notes-parent.md)。28路由中13显式Start（含root redirect）/15 fallback，仅静态覆盖计数；完整迁移与canonical boot未完成。5796接续events/$id，未合候选不提前计入。
 - **YUK-1358 / Start配置与科目消费者已合入**：PR1620于18:16:17Z合main10df1a471，tree与exact755bdeebb一致，CI37821989407全绿/R1 NONE/threads0。18操作122RPC/35窗口与三页浏览器证据见[父验收](docs/planning/2026-10-09-yuk1358-start-admin-controls-parent.md)。未部署；1358保持In Progress。5796独占接续1392 board、剩余Start路由和实际提交，本线程不写其活跃树。
 - **YUK-1359 / 整体退出证据**：7631对用户负责迁移协调和最终交付，维护W1–W5消费者清单。当前已交前门、错题、Today/Inbox主读取和五管理只读页；嵌套HTTP消费者、其余路由、任务族、旧SPA/pg-boss退出尚未齐备。按[退出清单](docs/planning/2026-10-07-yuk1359-exit-inventory.md)逐项验收，不能把公共出口或源码slice当整页完成。
-- **YUK-1356 / 复习竖切未完**：PR1605共享review操作/可信Pi原件入口及单次MiMo效果证据有效，但Start提交与判分DBOS族仍缺。17:02Z后直接读回Linear已恢复In Progress；未启动重复writer，不宣称judge_run已迁移。
+- **YUK-1356 / PR1625 待 CI**：本分支正常 merge main87f66b3e2，依 owner 五类不变量裁剪测试并显式分区；仅同步与测试维护，无功能改动。既有模型429/迁移退出义务保持，未合并或部署。原判分隔离证据及后续缺口见[27项矩阵](docs/planning/2026-10-09-yuk1356-current-acceptance-matrix.md)。
 - **本轮已交付 YUK-1392**：PR1619于17:11:43Z合main6aaf8ca89，tree5e8ab973与exact3883903相同；CI37812973662全绿、R1 NONE、threads0。父13unit/22DB、static/build/audits通过，已unwatch/Linear Done。无部署。
 
 ## NEXT
 
-- YUK1356产品2db修复，父128 scoped DB、12实际SIGKILL/reopen与8旧producer/cutover通过。诊断writer已释放，父fixture修正不改产品；86migration与62既有consumer、最终static/build/audits/产物闭包通过，R2已NONE；真实provider首请求429、wire1且无重试。父已完成受控Hono/SSE及真实epoch验收；新test writer已释放，父实际partial SSE/完整坏payload后reopen及整份14进程回归通过，新两文件冷读修复不冒称旧R2覆盖，按[27项验收矩阵](docs/planning/2026-10-09-yuk1356-current-acceptance-matrix.md)保持全部退出义务。
+- Start/judge共享文件边界见[交接](docs/planning/2026-10-09-judge-start-ownership.md)，Start/boot/shutdown由5796独占；judge A/B/C/D由7631接续，迁移号后核。
 
-- 1355已交四个housekeeping族源码及隔离证据。下一idle族只读设计已交回，父核45源码+3报告；保留原userclock，5796已以13d317da8明确交接精确Copilot/session/practice写路径。未起idle writer或分配编号，judge交回后再核最终锁序。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。
+- PR1625 本轮仅使同步后的 exact-head CI Gate 变绿；普通 push，不合并 PR。Start/boot/shutdown 与真实模型、整体迁移退出验收均保留原 owner 和边界。
+
+- 1355已交prune_job_events与review orphan源码及隔离证据；1394接续两个session族。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。
 - 1358继续剩余路由/共享子树及三入口共用业务操作，保留现有确定性行为。1392公共board读取、1380事件读/纠错等已合接口由Start集成方接消费者，不复制领域规则。
 - 1359最终收口核对dev/build/Compose/镜像、全部旧消费者、任务/worker/依赖、配置与文档；Hono去留按ADR裁决，旧SPA回落不得永久保留。完成整迁移后再按实际缺口与查重结果交付Linear残留功能。
-- UI视觉重写暂缓；必要路由/数据接线仍是本轮迁移。UI恢复时沿owner模型限制；非UI按AGENTS选模，产品MiMo路由不因开发代理改变。
+- UI按owner新排期并入迁移后的功能波次：后端先交付、Opus5.5再改渲染；迁移期间保留旧视觉。1354仅隔离基座/展示组件可先行，展示路由仍5796挂载；同Start路由组件回退不保留旧SPA。完整协商及已有UI观察交接见[排期边界](docs/planning/2026-10-09-ui-migration-sequencing.md)。
 
 ## PARKED
-
-- **YUK-1356 cold status read副作用已修**：06ecea821两个observer只peek已运行client；无client返回unavailable，enqueue仍可启动。父32unit/9pure和真实default冷态queued200/unknown503及98表/5序列无写通过，见[parent Hono evidence](docs/planning/evidence/2026-10-09-yuk1356-parent-hono.json)。旧R2不覆盖新diff，不开R3；下一门禁是新exact CI和仍未通过的真实模型输出。
-
-- **YUK-1356 judge默认logger打包已验**：两项精确external修复后，父已核最终ESM/CJS默认logger闭包及86项migration真实CJS启动；证据见[final gates](docs/planning/evidence/2026-10-09-yuk1356-final-gates.json)。OTLP启用分支未被此默认路径证明覆盖，完整Start/worker入口仍分开验收。
 
 - **YUK-1358/1359已有UI观察**：真实Inbox dismiss后本页499但侧栏500，document reload恢复一致；原onResolve仅本地resolved更新。Google Fonts原import受CSP拦截；fallback可用。记录在现有迁移验收/后续UI边界，不放宽CSP、不冒称本PR修复。
 - **YUK-1382 / Admin runs未知费用显示**：源码基线fadcb0c87中，observability/ui/admin-runs.tsx:207将nullable cost_usd累加；observability-shared.tsx:11以(value ?? 0).toFixed(4)将未知显示为$0.0000，列表/详情/合计均受影响。已查重并登记Backlog，待验证真实零、全未知、已知+未知；不在1381改UI。此条是源码发现，尚无浏览器验收。
@@ -50,6 +54,6 @@
 
 ## BLOCKED-ON
 
-- 1393/1394均已合入。judge传输fixture已完成实际验收；PR1625 CI由异步事件接续。原429没有可用reset时间，成功模型输出仍缺证据；可继续传输失败与恢复验收，不把整迁移挂blocked。
+- 当前没有需要owner追加许可才能推进的已知阻塞。1393已合入，1394进入父级验收；子任务/CI仍运行属于等待，不把整迁移挂blocked。
 - runtime测试/发布在执行前必须实际核锁并原子获取，核owner/token清理释放；其他线程持锁时只推不冲突的源码工作。历史锁记录不能代表当前ownership。
 - 部署用途保持Agent开发测试，禁止再次清库、恢复私人数据或盲重放队列；日用部署须owner明确要求“为我日常使用的部署”。旧运行验收限制和未完成产品能力保存在归档及各原票，未被本次整理核销。

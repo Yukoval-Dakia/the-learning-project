@@ -69,15 +69,15 @@ pnpm dev:local       # compose Postgres :5433 + api + web + worker (推荐入口
 pnpm typecheck       # tsc --noEmit
 pnpm lint            # biome check .
 pnpm format          # biome format --write .
-pnpm test:unit:watch # 快速无-DB watch
-pnpm test:db:watch   # DB/API watch (Docker/OrbStack)
-pnpm test            # full pre-PR gate: audit:profile + unit + db + migration-smoke
 pnpm build           # rw:web:build + 三 esbuild 产物
 ```
 
 Pre-PR: `pnpm typecheck`, `pnpm lint`, `pnpm audit:schema`,
 `pnpm audit:partition`, `pnpm audit:profile`, `pnpm audit:draft-status`,
-`pnpm test`, `pnpm build`.
+`pnpm build`. 完整 `pnpm test` 只由 push 后 exact-head CI Gate 执行，本机不跑。
+
+Tests: 默认不写（YUK-1401）。只有触及数据不可逆、判分/结算确定性、并发与锁、
+安全边界、危机转介五类不变量时才写，细则见 `AGENTS.md`。
 
 ## Conventions
 

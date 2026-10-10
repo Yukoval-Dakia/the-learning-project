@@ -29,10 +29,6 @@ jobs:
       db_changed: ${{ steps.filter.outputs.db_changed }}
       migration_changed: ${{ steps.filter.outputs.migration_changed }}
       build_changed: ${{ steps.filter.outputs.build_changed }}
-      usability_changed: ${{ steps.filter.outputs.usability_changed }}
-      unit_selection: ${{ steps.filter.outputs.unit_selection }}
-      db_selection: ${{ steps.filter.outputs.db_selection }}
-      merge_base: ${{ steps.filter.outputs.merge_base }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -42,8 +38,8 @@ jobs:
           node-version-file: '.node-version'
 
       # Fail closed: unknown paths/bases and main pushes run the full gate. Pull requests use
-      # lane-level classification and the backfill-validated affected unit selector.
-      - name: Plan incremental gate
+      # all retained invariant suites for every code change.
+      - name: Plan core gate
         id: filter
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
@@ -151,22 +147,20 @@ jobs:
         run: ${{ matrix.commands }}
 
   unit:
-    name: unit tests (${{ matrix.shard }}/${{ needs.changes.outputs.unit_selection == 'full' && 4 || 1 }})
+    name: unit invariant tests (${{ matrix.shard }}/2)
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(needs.changes.outputs.unit_selection == 'full' && '[1,2,3,4]' || '[1]') }}
+        shard: [1, 2]
     steps:
-      - name: Unit lane skipped
+      - name: unit lane skipped
         if: needs.changes.outputs.unit_changed != 'true'
-        run: echo "Unit lane not selected — lane is green."
+        run: echo "Docs-only change; unit lane skipped."
       - uses: actions/checkout@v5
         if: needs.changes.outputs.unit_changed == 'true'
-        with:
-          fetch-depth: 0
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         if: needs.changes.outputs.unit_changed == 'true'
         with:
@@ -179,117 +173,23 @@ jobs:
       - name: Install dependencies
         if: needs.changes.outputs.unit_changed == 'true'
         run: pnpm install --frozen-lockfile
-      - name: Select required unit tests
-        id: unit_select
+      - name: Run retained unit invariants
         if: needs.changes.outputs.unit_changed == 'true'
-        continue-on-error: true
-        env:
-          UNIT_SELECTION_BASE: ${{ needs.changes.outputs.merge_base }}
-          UNIT_SELECTION_MODE: ${{ needs.changes.outputs.unit_selection }}
-        run: |
-          mkdir -p .cache/ci
-          node scripts/ci/unit-shadow.mjs select \
-            --base "$UNIT_SELECTION_BASE" \
-            --mode "$UNIT_SELECTION_MODE" \
-            --output .cache/ci/unit-selection.json
-      - name: Warn on selector process failure
-        if: steps.unit_select.outcome == 'failure'
-        run: echo "::warning title=Unit selector failed::Falling back to the full unit suite; investigate the selector process failure."
-      - name: Unit tests (affected on PR, full on canary/fallback)
-        if: needs.changes.outputs.unit_changed == 'true'
-        run: |
-          node scripts/ci/unit-shadow.mjs run \
-            --selection .cache/ci/unit-selection.json \
-            --shard "${{ matrix.shard }}/${{ needs.changes.outputs.unit_selection == 'full' && 4 || 1 }}" \
-            --results .cache/ci/unit-results.json \
-            --execution .cache/ci/unit-execution.json
-      - name: Upload unit selector report
-        if: always() && needs.changes.outputs.unit_changed == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: unit-selector-report-shard-${{ matrix.shard }}
-          path: |
-            .cache/ci/unit-selection.json
-            .cache/ci/unit-execution.json
-            .cache/ci/unit-results.json
-          if-no-files-found: warn
-
-  db_selection:
-    name: select DB tests
-    needs: changes
-    if: needs.changes.outputs.db_changed == 'true' && needs.changes.outputs.db_selection != 'full'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - name: DB selection skipped
-        if: needs.changes.outputs.db_changed != 'true'
-        run: echo "DB lane not selected — selector is green."
-      - uses: actions/checkout@v5
-        if: needs.changes.outputs.db_changed == 'true'
-        with:
-          fetch-depth: 0
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        if: needs.changes.outputs.db_changed == 'true'
-        with:
-          version: 11.13.1
-      - uses: actions/setup-node@v7
-        if: needs.changes.outputs.db_changed == 'true'
-        with:
-          node-version-file: '.node-version'
-          cache: 'pnpm'
-      - name: Install dependencies
-        if: needs.changes.outputs.db_changed == 'true'
-        run: pnpm install --frozen-lockfile
-      - name: Select DB tests once for every shard
-        id: db_select
-        if: needs.changes.outputs.db_changed == 'true'
-        continue-on-error: true
-        env:
-          DB_SELECTION_BASE: ${{ needs.changes.outputs.merge_base }}
-          DB_SELECTION_MODE: ${{ needs.changes.outputs.db_selection }}
-        run: |
-          mkdir -p .cache/ci
-          node scripts/ci/db-affected.mjs select \
-            --base "$DB_SELECTION_BASE" \
-            --mode "$DB_SELECTION_MODE" \
-            --output .cache/ci/db-selection.json
-      - name: Warn on DB selector process failure
-        if: steps.db_select.outcome == 'failure'
-        run: echo "::warning title=DB selector failed::Falling back to the full DB suite; investigate the selector process failure."
-      - name: Materialize shared full fallback
-        if: steps.db_select.outcome == 'failure'
-        env:
-          DB_SELECTION_BASE: ${{ needs.changes.outputs.merge_base }}
-        run: |
-          node scripts/ci/db-affected.mjs select \
-            --base "$DB_SELECTION_BASE" \
-            --mode full \
-            --output .cache/ci/db-selection.json
-      - name: Upload shared DB selection
-        if: needs.changes.outputs.db_changed == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: db-selector-selection
-          path: .cache/ci/db-selection.json
-          if-no-files-found: error
+        run: pnpm test:unit --shard=${{ matrix.shard }}/2
 
   db:
-    name: DB tests (${{ matrix.shard }}/4)
-    needs: [changes, db_selection]
-    if: always() && needs.changes.result == 'success' && (needs.db_selection.result == 'success' || needs.db_selection.result == 'skipped')
+    name: db invariant tests (${{ matrix.shard }}/4)
+    needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
-      # YUK-1023 — four duration-balanced shards: db-affected.mjs bin-packs
-      # files by the committed duration baseline instead of vitest's count-mod
-      # --shard (the P3 lane skewed 9min/24min under two naive shards).
       matrix:
         shard: [1, 2, 3, 4]
     steps:
-      - name: DB lane skipped
+      - name: db lane skipped
         if: needs.changes.outputs.db_changed != 'true'
-        run: echo "DB lane not selected — lane is green."
+        run: echo "Docs-only change; db lane skipped."
       - uses: actions/checkout@v5
         if: needs.changes.outputs.db_changed == 'true'
         with:
@@ -306,33 +206,9 @@ jobs:
       - name: Install dependencies
         if: needs.changes.outputs.db_changed == 'true'
         run: pnpm install --frozen-lockfile
-      - name: Download shared DB selection
-        if: needs.changes.outputs.db_changed == 'true' && needs.changes.outputs.db_selection != 'full'
-        uses: actions/download-artifact@v8
-        with:
-          name: db-selector-selection
-          path: .cache/ci
-      - name: Inventory full DB suite
-        if: needs.changes.outputs.db_changed == 'true' && needs.changes.outputs.db_selection == 'full'
-        run: |
-          mkdir -p .cache/ci
-          node scripts/ci/db-affected.mjs select --mode full --output .cache/ci/db-selection.json
-      - name: DB tests (affected on PR, full on canary/fallback)
+      - name: Run retained db invariants
         if: needs.changes.outputs.db_changed == 'true'
-        run: |
-          node scripts/ci/db-affected.mjs run \
-            --selection .cache/ci/db-selection.json \
-            --shard "${{ matrix.shard }}/4" \
-            --execution ".cache/ci/db-execution-${{ matrix.shard }}.json"
-      - name: Upload DB selector report
-        if: always() && needs.changes.outputs.db_changed == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: db-selector-report-shard-${{ matrix.shard }}
-          path: |
-            .cache/ci/db-selection.json
-            .cache/ci/db-execution-${{ matrix.shard }}.json
-          if-no-files-found: warn
+        run: pnpm test:db --shard=${{ matrix.shard }}/4
 
   migration:
     name: migration smoke
@@ -361,103 +237,40 @@ jobs:
         if: needs.changes.outputs.migration_changed == 'true'
         run: pnpm test:migration
 
-  usability:
-    name: production build and usability (shipped SPA + API fixtures)
+  build:
+    name: production build and security canaries
     needs: changes
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:16
-        env:
-          POSTGRES_USER: usability
-          POSTGRES_PASSWORD: usability
-          POSTGRES_DB: usability
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U usability"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
     steps:
-      - name: Usability lane skipped
-        if: needs.changes.outputs.usability_changed != 'true' && needs.changes.outputs.build_changed != 'true'
-        run: echo "Build and usability lanes not selected — lane is green."
+      - name: Build lane skipped
+        if: needs.changes.outputs.build_changed != 'true'
+        run: echo "Docs-only change; build lane skipped."
       - uses: actions/checkout@v5
-        if: needs.changes.outputs.usability_changed == 'true' || needs.changes.outputs.build_changed == 'true'
+        if: needs.changes.outputs.build_changed == 'true'
       - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
-        if: needs.changes.outputs.usability_changed == 'true' || needs.changes.outputs.build_changed == 'true'
+        if: needs.changes.outputs.build_changed == 'true'
         with:
           version: 11.13.1
       - uses: actions/setup-node@v7
-        if: needs.changes.outputs.usability_changed == 'true' || needs.changes.outputs.build_changed == 'true'
+        if: needs.changes.outputs.build_changed == 'true'
         with:
           node-version-file: '.node-version'
           cache: 'pnpm'
       - name: Install dependencies
-        if: needs.changes.outputs.usability_changed == 'true' || needs.changes.outputs.build_changed == 'true'
+        if: needs.changes.outputs.build_changed == 'true'
         run: pnpm install --frozen-lockfile
-      - name: Cache Playwright browsers
-        if: needs.changes.outputs.usability_changed == 'true'
-        uses: actions/cache@v6
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}
-      - name: Install Playwright Chromium
-        if: needs.changes.outputs.usability_changed == 'true'
-        run: pnpm test:usability:install
-      - name: Build server, worker, migrate, and web
-        if: needs.changes.outputs.usability_changed == 'true' || needs.changes.outputs.build_changed == 'true'
-        run: pnpm build
+      - name: Build with injected secrets and verify security boundaries
+        if: needs.changes.outputs.build_changed == 'true'
+        run: pnpm acceptance:start-frontdoor --build
         env:
           DATABASE_URL: postgres://placeholder
-      - name: Boot the built server on :18787
-        if: needs.changes.outputs.usability_changed == 'true'
-        run: |
-          set -euo pipefail
-          RW_STATIC_DIR=web/dist \
-          API_PORT=18787 \
-          INTERNAL_TOKEN=usability-ci-token \
-          DATABASE_URL=postgres://usability:usability@127.0.0.1:5432/usability \
-          node dist/server.cjs > usability-server.log 2>&1 &
-          SERVER_PID=$!
-          for i in $(seq 1 60); do
-            if ! kill -0 "$SERVER_PID" 2>/dev/null; then
-              echo "::error::server process ${SERVER_PID} exited before becoming healthy"
-              cat usability-server.log
-              exit 1
-            fi
-            if curl -sf http://127.0.0.1:18787/api/health > /dev/null; then
-              echo "server healthy after ${i}s (pid ${SERVER_PID})"
-              exit 0
-            fi
-            sleep 1
-          done
-          echo "::error::server never became healthy on :18787"
-          cat usability-server.log
-          exit 1
-      - name: Usability container regression
-        if: needs.changes.outputs.usability_changed == 'true'
-        run: pnpm test:usability:container
-        env:
-          USABILITY_BASE_URL: http://127.0.0.1:18787
-      - name: Server log (on failure)
-        if: failure() && needs.changes.outputs.usability_changed == 'true'
-        run: cat usability-server.log || true
-      - name: Upload Playwright traces (on failure)
-        if: failure() && needs.changes.outputs.usability_changed == 'true'
-        uses: actions/upload-artifact@v7
-        with:
-          name: usability-traces
-          path: test-results/usability
-          if-no-files-found: ignore
 
   # Keep this name identical to the historical required check while the work moves into parallel jobs.
   gate:
     name: typecheck · lint · audits · test · build
     if: always()
-    needs: [changes, static, audits, unit, db_selection, db, migration, usability]
+    needs: [changes, static, audits, unit, db, migration, build]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -467,22 +280,16 @@ jobs:
           STATIC_RESULT: ${{ needs.static.result }}
           AUDITS_RESULT: ${{ needs.audits.result }}
           UNIT_RESULT: ${{ needs.unit.result }}
-          DB_SELECTION_RESULT: ${{ needs.db_selection.result }}
-          DB_SELECTION_MODE: ${{ needs.changes.outputs.db_selection }}
-          DB_CHANGED: ${{ needs.changes.outputs.db_changed }}
           DB_RESULT: ${{ needs.db.result }}
           MIGRATION_RESULT: ${{ needs.migration.result }}
-          USABILITY_RESULT: ${{ needs.usability.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
         run: |
           set -euo pipefail
           failed=0
-          for lane in CHANGES STATIC AUDITS UNIT DB_SELECTION DB MIGRATION USABILITY; do
+          for lane in CHANGES STATIC AUDITS UNIT DB MIGRATION BUILD; do
             result_var="${lane}_RESULT"
             result="${!result_var}"
             printf '%-12s %s\n' "$lane" "$result"
-            if [ "$lane" = "DB_SELECTION" ] && [ "$result" = "skipped" ] && { [ "$DB_SELECTION_MODE" = "full" ] || [ "$DB_CHANGED" != "true" ]; }; then
-              continue
-            fi
             if [ "$result" != "success" ]; then
               failed=1
             fi

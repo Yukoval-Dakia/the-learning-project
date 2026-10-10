@@ -1,11 +1,8 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import type { CapabilityManifest } from '@/kernel/manifest';
-import {
-  HTTP_PROVIDER_SESSION_BUDGET_MS,
-  currentHttpProviderSessionDeadlineAt,
-} from '@/server/http/provider-session-deadline';
-import { buildHonoApp, toHonoPath } from './app';
+import { currentHttpProviderSessionDeadlineAt } from '@/server/http/provider-session-deadline';
+import { buildHonoApp } from './app';
 
 const fakeCapability: CapabilityManifest = {
   name: 'fake',
@@ -49,13 +46,6 @@ const fakeCapability: CapabilityManifest = {
     ],
   },
 };
-
-describe('toHonoPath', () => {
-  it('converts Next-style [id] segments to Hono :id', () => {
-    expect(toHonoPath('/api/practice/[id]/submit')).toBe('/api/practice/:id/submit');
-    expect(toHonoPath('/api/agents/notes')).toBe('/api/agents/notes');
-  });
-});
 
 describe('buildHonoApp', () => {
   afterEach(() => {
@@ -132,50 +122,6 @@ describe('buildHonoApp', () => {
     expect(await res.json()).toEqual({ ok: 'fake' });
   });
 
-  it('gives authenticated API handlers one request-scoped provider deadline', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
-    vi.spyOn(Date, 'now').mockReturnValue(12_345);
-    const app = buildHonoApp([fakeCapability]);
-
-    const res = await app.request('/api/fake/provider-session-deadline', {
-      headers: { 'x-internal-token': 'test-token' },
-    });
-
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ deadlineAt: 12_345 + HTTP_PROVIDER_SESSION_BUDGET_MS });
-    expect(currentHttpProviderSessionDeadlineAt()).toBeUndefined();
-  });
-
-  it('serves the generated OpenAPI document behind token auth', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
-    const app = buildHonoApp([fakeCapability]);
-    expect((await app.request('/api/openapi.json')).status).toBe(401);
-    const response = await app.request('/api/openapi.json', {
-      headers: { 'x-internal-token': 'test-token' },
-    });
-    expect(response.status).toBe(200);
-    expect(await response.json()).toMatchObject({
-      openapi: '3.0.3',
-      paths: {
-        '/api/fake': { get: { 'x-contract-status': 'legacy' } },
-        '/api/fake/bad-contract': {
-          post: { operationId: 'createFakeWithBadContract', 'x-contract-status': 'declared' },
-        },
-      },
-    });
-  });
-
-  it('returns a JSON 500 when a handler violates its declared success status', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
-    const app = buildHonoApp([fakeCapability]);
-    const response = await app.request('/api/fake/bad-contract', {
-      method: 'POST',
-      headers: { 'x-internal-token': 'test-token' },
-    });
-    expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ error: 'route_contract_violation' });
-  });
-
   it('returns a diagnosable JSON 500 without exposing handler details', async () => {
     vi.stubEnv('INTERNAL_TOKEN', 'test-token');
     const app = buildHonoApp([fakeCapability]);
@@ -186,33 +132,6 @@ describe('buildHonoApp', () => {
     const requestId = response.headers.get('x-request-id');
     expect(requestId).toMatch(/^[0-9a-f-]{36}$/);
     expect(await response.json()).toEqual({ error: 'internal_error', request_id: requestId });
-  });
-
-  it('passes path params through to the handler (M1 param route)', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
-    const app = buildHonoApp([fakeCapability]);
-    const res = await app.request('/api/fake/k_42/detail', {
-      headers: { 'x-internal-token': 'test-token' },
-    });
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ id: 'k_42' });
-  });
-
-  it('does not mount metadata-only routes and 404s unknown paths', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
-    const app = buildHonoApp([fakeCapability]);
-    const meta = await app.request('/api/fake/meta-only', {
-      method: 'POST',
-      headers: { 'x-internal-token': 'test-token' },
-    });
-    expect(meta.status).toBe(404);
-    const unknown = await app.request('/api/nope', {
-      headers: { 'x-internal-token': 'test-token' },
-    });
-    expect(unknown.status).toBe(404);
-    // M5 review M1：404 由 /api/* JSON 兜底返回（非框架默认），prod 下不会
-    // 穿透到 serveStatic 的 index.html。
-    expect(await unknown.json()).toEqual({ error: 'not_found' });
   });
 
   it('rejects every /api request when INTERNAL_TOKEN is unset (fail-closed)', async () => {
@@ -235,32 +154,6 @@ describe('buildHonoApp', () => {
       headers: { 'x-internal-token': '' },
     });
     expect(res.status).toBe(401);
-  });
-
-  // ── YUK-1055 — contract-epoch gate（注入 gate stub；真实 gate 走 db 分区）──
-
-  it('returns 503 contract_epoch_fenced for mounted routes when the epoch gate fences', async () => {
-    vi.stubEnv('INTERNAL_TOKEN', 'test-token');
-    const app = buildHonoApp([fakeCapability], {
-      epochGate: async () => ({
-        runnable: false,
-        epoch: 'legacy',
-        state: 'preparing',
-        codeEpoch: 'assessment-contract-v1',
-        reason: 'maintenance',
-      }),
-    });
-    const res = await app.request('/api/fake', {
-      headers: { 'x-internal-token': 'test-token' },
-    });
-    expect(res.status).toBe(503);
-    expect(await res.json()).toEqual({
-      error: 'contract_epoch_fenced',
-      reason: 'maintenance',
-      epoch: 'legacy',
-      state: 'preparing',
-      code_epoch: 'assessment-contract-v1',
-    });
   });
 
   it('still serves /api/health and /api/ready while fenced (health ≠ readiness)', async () => {

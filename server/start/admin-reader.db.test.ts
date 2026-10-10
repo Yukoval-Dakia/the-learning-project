@@ -1,10 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { GET as costHttp } from '@/capabilities/observability/api/admin-cost';
-import { GET as failuresHttp } from '@/capabilities/observability/api/admin-failures';
-import { GET as detailHttp } from '@/capabilities/observability/api/admin-run-detail';
-import { GET as runsHttp } from '@/capabilities/observability/api/admin-runs';
-import { GET as conjecturesHttp } from '@/capabilities/observability/api/conjecture-scores';
-import { GET as coverageHttp } from '@/capabilities/observability/api/coverage-lattice';
 import { diagnosticsPublicSnapshot } from '@/capabilities/observability/server/diagnostics-read-test-helpers';
 import type { Db, Tx } from '@/db/client';
 import {
@@ -201,53 +195,6 @@ afterEach(() => {
 });
 
 describe('authenticated Start admin with real injected database', () => {
-  it('preserves full nonempty HTTP wire parity and every public table during all six reads', async () => {
-    const database = testDb();
-    await seed(database);
-    const before = await diagnosticsPublicSnapshot(database);
-    const read = <T>(operation: (reader: Reader) => Promise<T>) =>
-      runAuthenticatedStartAdmin(context(), request('isolated-admin-token'), operation, {
-        database,
-        now,
-      });
-    const runs = await read((r) => r.getRuns({ limit: '100' }));
-    const detail = await read((r) => r.getRunDetail({ id: runId }));
-    const cost = await read((r) => r.getCost({ days: '30' }));
-    const failures = await read((r) => r.getFailures({ limit: '200' }));
-    const coverage = await read((r) => r.getCoverage());
-    const conjectures = await read((r) => r.getConjectureScores());
-    const pairs = [
-      [runs, await runsHttp(new Request('http://isolated.test/api/admin/runs?limit=100'))],
-      [detail, await detailHttp(request(), { id: runId })],
-      [cost, await costHttp(new Request('http://isolated.test/api/admin/cost?days=30'))],
-      [
-        failures,
-        await failuresHttp(new Request('http://isolated.test/api/admin/failures?limit=200')),
-      ],
-      [coverage, await coverageHttp()],
-      [conjectures, await conjecturesHttp()],
-    ] satisfies Array<[unknown, Response]>;
-    for (const [dto, http] of pairs) {
-      expect(http.status).toBe(200);
-      expect(dto).toEqual(await http.json());
-    }
-    expect(runs.rows).toHaveLength(2);
-    expect(detail.run.cost_usd).toBeNull();
-    expect(detail.ledger[0].occurred_at).toBe(now.toISOString());
-    expect(detail.tool_calls[0].occurred_at).toBe('2026-10-08T02:00:00.956Z');
-    expect(detail.run.usage_json).toMatchObject({
-      d18_score: { points_awarded: 1, max_points: 3 },
-    });
-    expect(cost.days.map((row) => row.currency).sort()).toEqual(['CNY', 'USD']);
-    expect(cost.days.find((row) => row.currency === 'USD')?.unknown_attempts).toBe(1);
-    expect(failures.clusters[0].samples[0].started_at).toBe('2026-10-08T02:00:00.123Z');
-    expect(coverage.totals.activeKcs).toBe(1);
-    expect(coverage.subjects[0].kcs[0].hasHighTier).toBeNull();
-    expect(conjectures.prediction_scores).toHaveLength(1);
-    expect(conjectures.typed_states[0].last_evidence_at).toBeNull();
-    expect(conjectures.diagnostics.prediction_scores.dropped_count).toBe(1);
-    expect(await diagnosticsPublicSnapshot(database)).toEqual(before);
-  });
   it('reads the supplied uncommitted transaction, denies before operations, and leaves no persisted fixture after rollback', async () => {
     const rollback = new Error('intentional isolated rollback');
     await expect(

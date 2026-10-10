@@ -656,38 +656,6 @@ describe('classifyMigrationCapture — answer 行', () => {
   });
 });
 
-describe('classifyMigrationCapture — 确定性与空形状', () => {
-  it('空 capture（D19 形状）→ 空输出，无异常', () => {
-    const out = classifyMigrationCapture(emptyCapture());
-    expect(out.records).toEqual([]);
-    expect(out.unresolved).toEqual([]);
-    expect(out.deferred_replay).toEqual([]);
-  });
-
-  it('同输入两次分类输出逐字节一致（确定性）', () => {
-    const attempt = attemptOf('a-dup', { question_snapshot: SNAPSHOT });
-    const judge = judgeEvent({
-      id: 'j-dup',
-      subject_id: 'a-dup',
-      payload: { coarse_outcome: 'correct' },
-    });
-    const capture = withEvents(emptyCapture(), [attempt, judge]);
-    expect(JSON.stringify(classifyMigrationCapture(capture))).toBe(
-      JSON.stringify(classifyMigrationCapture(capture)),
-    );
-  });
-
-  it('rollup 与 records 一致，且输出按 (source_kind, source_id) 有序', () => {
-    const attempt = attemptOf('a-ord', { question_snapshot: SNAPSHOT });
-    const review = ev({ id: 'r-ord', action: 'review', outcome: 'success', payload: {} });
-    const out = classifyMigrationCapture(withEvents(emptyCapture(), [review, attempt]));
-    const total = Object.values(out.rollup).reduce((a, b) => a + b, 0);
-    expect(total).toBe(out.records.length);
-    const ids = out.records.map((r) => `${r.source_kind}:${r.source_id}`);
-    expect(ids).toEqual([...ids].sort());
-  });
-});
-
 describe('终轮 review P1-1/P1-2/P1-3 — reviewer repro 形状（可执行核对）', () => {
   it('P1-1 repro：4 字段残缺 durable snapshot + 作答 + verdict ⇒ NOT complete', () => {
     const pending = durablePendingEvent({

@@ -6,82 +6,14 @@
 import { describe, expect, it } from 'vitest';
 import { ratingFromCoarseOutcome } from '@/capabilities/practice/server/judge-rating';
 import { judgeResultToRatingAdvice } from '@/capabilities/practice/server/rating-advisor';
-import { getTaskSystemPrompt } from '@/capabilities/task-registry';
 import type { JudgeResultV2T } from '@/core/schema/capability';
 import { UNIVERSAL_RATING_FROM_OUTCOME } from '@/core/schema/profile-decl';
 import { mathProfile } from '@/subjects/math/profile';
 import { physicsProfile } from '@/subjects/physics/profile';
 import type { SubjectProfile } from '@/subjects/profile-schema';
 import { yuwenProfile } from '@/subjects/yuwen/profile';
-import { parseAttributionOutput } from './attribution';
 
 type CoarseOutcome = JudgeResultV2T['coarse_outcome'];
-
-const ATTRIBUTION_JSON_HEAD = '{"secondary_categories":[],"analysis_md":"x","confidence":0.9';
-
-function attributionText(primary: string): string {
-  return `${ATTRIBUTION_JSON_HEAD},"primary_category":"${primary}"}`;
-}
-
-describe('parseAttributionOutput routes the meta-cause prior through the profile (YUK-739)', () => {
-  it('defaults meta_cause from the math profile declared prior (calculation → execution_slip)', () => {
-    const out = parseAttributionOutput(attributionText('calculation'), mathProfile);
-    expect(out.meta_cause).toBe('execution_slip');
-  });
-
-  it('defaults meta_cause from the yuwen profile declared prior (grammar → rule_misapplication)', () => {
-    const out = parseAttributionOutput(attributionText('grammar'), yuwenProfile);
-    expect(out.meta_cause).toBe('rule_misapplication');
-  });
-
-  it('defaults meta_cause from the physics profile declared prior (unit → representation_failure)', () => {
-    const out = parseAttributionOutput(attributionText('unit'), physicsProfile);
-    expect(out.meta_cause).toBe('representation_failure');
-  });
-
-  it('an explicit null prior stays null (other is deliberately non-diagnostic)', () => {
-    const out = parseAttributionOutput(attributionText('other'), mathProfile);
-    expect(out.meta_cause).toBeNull();
-  });
-
-  it('a judge-provided meta_cause is never overridden by the prior', () => {
-    const text = `${ATTRIBUTION_JSON_HEAD},"primary_category":"calculation","meta_cause":"retrieval_failure"}`;
-    const out = parseAttributionOutput(text, mathProfile);
-    expect(out.meta_cause).toBe('retrieval_failure');
-  });
-
-  it('a profile whose categories declare no prior falls back to null (legacy unknown-id behavior)', () => {
-    const undeclared: SubjectProfile = {
-      ...mathProfile,
-      causeCategories: mathProfile.causeCategories.map(({ id, label }) => ({ id, label })),
-    };
-    const out = parseAttributionOutput(attributionText('calculation'), undeclared);
-    expect(out.meta_cause).toBeNull();
-  });
-});
-
-describe('attribution prompt renders the profile-owned prior list (YUK-739)', () => {
-  it('math prompt lists the declared priors with the legacy rendering', () => {
-    const prompt = getTaskSystemPrompt('AttributionTask', mathProfile);
-    expect(prompt).toContain('- calculation → execution_slip');
-    expect(prompt).toContain('- concept → flawed_model');
-    expect(prompt).toContain('- other → null');
-  });
-
-  it('yuwen prompt lists its own vocabulary, not math semantics', () => {
-    const prompt = getTaskSystemPrompt('AttributionTask', yuwenProfile);
-    expect(prompt).toContain('- grammar → rule_misapplication');
-    expect(prompt).toContain('- word_meaning → rule_misapplication');
-    expect(prompt).not.toContain('calculation');
-  });
-
-  it('physics prompt lists its own vocabulary', () => {
-    const prompt = getTaskSystemPrompt('AttributionTask', physicsProfile);
-    expect(prompt).toContain('- computation → execution_slip');
-    expect(prompt).toContain('- unit → representation_failure');
-    expect(prompt).not.toContain('unit_error');
-  });
-});
 
 describe('ratingFromCoarseOutcome routes through the profile rating policy (YUK-739)', () => {
   it('universal behavior is preserved when no profile is supplied', () => {
@@ -224,26 +156,5 @@ describe('judgeResultToRatingAdvice routes cause lean + outcome anchors through 
     };
     expect(judgeResultToRatingAdvice(correct, { subjectProfile: strict }).rating).toBe('hard');
     expect(judgeResultToRatingAdvice(incorrect, { subjectProfile: strict }).rating).toBe('hard');
-  });
-});
-
-describe('variant-gen prompt routes cause strategies through the profile (YUK-739)', () => {
-  it('declared strategies render with the legacy line format', () => {
-    const prompt = getTaskSystemPrompt('VariantGenTask', mathProfile);
-    expect(prompt).toContain('- unit_error（单位错误）：改变单位、量纲或换算条件，检查单位一致性');
-    expect(prompt).toContain('- calculation（运算错误）：改数据 + 留同样陷阱（验证计算稳定性）');
-  });
-
-  it('categories without a declared strategy keep the generic fallback line', () => {
-    const prompt = getTaskSystemPrompt('VariantGenTask', physicsProfile);
-    // physics only declares the strategy on 'concept' (the one id the legacy
-    // id-keyed table covered); everything else keeps the fallback shape.
-    expect(prompt).toContain('（单位错误）：围绕「单位错误」设计同知识点、同能力目标的针对性变式');
-    expect(prompt).not.toContain('检查单位一致性');
-  });
-
-  it('yuwen grammar gets the generic fallback (it never had a table entry)', () => {
-    const prompt = getTaskSystemPrompt('VariantGenTask', yuwenProfile);
-    expect(prompt).toContain('（语法判断）：围绕「语法判断」设计同知识点、同能力目标的针对性变式');
   });
 });

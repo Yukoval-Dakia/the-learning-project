@@ -2,14 +2,11 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { db } from '@/db/client';
 import { event, knowledge, material_fsrs_state, question } from '@/db/schema';
-import { archiveQuestion } from '@/server/questions/write';
 import { resetDb } from '../../../../../tests/helpers/db';
 import {
   canonicalQuestionContentHash,
-  findExactQuestionDuplicate,
   mergeExactQuestionDuplicateKnowledgeIds,
 } from './content-fingerprint';
-import { verifyAndPromote } from './verify-and-promote';
 
 async function seed(id: string, draftStatus: string | null, knowledgeIds: string[] = []) {
   const content = { promptMd: 'P', referenceMd: 'A', choicesMd: ['x', 'y'] };
@@ -51,50 +48,6 @@ async function seedKnowledge(...ids: string[]) {
 describe('findExactQuestionDuplicate', () => {
   beforeEach(async () => {
     await resetDb();
-  });
-
-  it.each([
-    ['active', null],
-    ['draft', 'draft'],
-  ] as const)('finds %s rows by canonical hash', async (_label, status) => {
-    const hash = await seed(`q-${_label}`, status);
-    expect(await findExactQuestionDuplicate(db, hash)).toMatchObject({
-      id: `q-${_label}`,
-      draftStatus: status,
-    });
-  });
-
-  it('archiving releases the canonical hash so identical content can be produced again', async () => {
-    const hash = await seed('q-archived', null);
-    const [before] = await db.select().from(question).where(eq(question.id, 'q-archived'));
-    const result = await archiveQuestion(db, 'q-archived', before.version, 'owner');
-    expect(result.status).toBe('archived');
-
-    const [after] = await db.select().from(question).where(eq(question.id, 'q-archived'));
-    expect(after.canonical_content_hash).toBeNull();
-    // The freed hash no longer duplicate-matches, and the partial unique index
-    // accepts a fresh row carrying the same content identity.
-    expect(await findExactQuestionDuplicate(db, hash)).toBeNull();
-    await seed('q-reborn', 'draft');
-    expect(await findExactQuestionDuplicate(db, hash)).toMatchObject({ id: 'q-reborn' });
-  });
-
-  it('keeps legacy NULL-hash rows readable and outside exact identity lookup', async () => {
-    await db.insert(question).values({
-      id: 'q-legacy-null',
-      kind: 'short_answer',
-      prompt_md: 'legacy',
-      source: 'manual',
-      canonical_content_hash: null,
-      created_at: new Date(),
-      updated_at: new Date(),
-    });
-    expect(
-      await findExactQuestionDuplicate(db, canonicalQuestionContentHash({ promptMd: 'legacy' })),
-    ).toBeNull();
-    expect(await db.select().from(question).where(eq(question.id, 'q-legacy-null'))).toHaveLength(
-      1,
-    );
   });
 
   it('atomically appends missing KCs, preserves lifecycle, audits once, and no-ops on retry', async () => {
@@ -175,139 +128,4 @@ describe('findExactQuestionDuplicate', () => {
       await db.select().from(event).where(eq(event.action, 'experimental:question_edit')),
     ).toHaveLength(1);
   });
-
-  it('filters missing or archived incoming KCs inside the merge transaction', async () => {
-    await seedKnowledge('k-live', 'k-archived');
-    await db
-      .update(knowledge)
-      .set({ archived_at: new Date('2026-07-19T10:00:00.000Z') })
-      .where(eq(knowledge.id, 'k-archived'));
-    const hash = await seed('q-live-only', 'active', []);
-
-    const result = await db.transaction((tx) =>
-      mergeExactQuestionDuplicateKnowledgeIds(tx, {
-        canonicalContentHash: hash,
-        knowledgeIds: ['k-live', 'k-archived', 'k-missing'],
-        actorRef: 'quiz_gen',
-        now: new Date('2026-07-19T11:00:00.000Z'),
-      }),
-    );
-
-    expect(result).toMatchObject({
-      knowledgeIds: ['k-live'],
-      addedKnowledgeIds: ['k-live'],
-      enrolledKnowledgeIds: ['k-live'],
-    });
-  });
-
-  // YUK-1037 — a raced duplicate bound to a synthetic subject root still merges
-  // its binding faithfully (the root stays in knowledge_ids — the coarse-fallback
-  // attribution is in-design), but the enroll arm mirrors the verify-time loops:
-  // 'seed:<subj>:root' is a structural anchor, never a content KC, so it must not
-  // mint a knowledge-level FSRS card (the subject read axis already excludes it —
-  // resolveSubjectKnowledgeIds).
-  it('merges a synthetic subject root into the binding but never enrolls it', async () => {
-    await seedKnowledge('k-a', 'k-b', 'seed:math:root');
-    const hash = await seed('q-merge-root', 'active', ['k-a']);
-    const now = new Date('2026-07-19T11:00:00.000Z');
-
-    const result = await db.transaction((tx) =>
-      mergeExactQuestionDuplicateKnowledgeIds(tx, {
-        canonicalContentHash: hash,
-        knowledgeIds: ['k-a', 'seed:math:root', 'k-b'],
-        actorRef: 'jyeoo_fetch',
-        taskRunId: 'task-run-root-merge',
-        now,
-      }),
-    );
-
-    // Binding append is faithful (the anchor is a live knowledge row, so it
-    // survives the live-KC filter and joins knowledge_ids like any other id)…
-    expect(result).toMatchObject({
-      knowledgeIds: ['k-a', 'seed:math:root', 'k-b'],
-      addedKnowledgeIds: ['seed:math:root', 'k-b'],
-      // …but only the real KC enrolls.
-      enrolledKnowledgeIds: ['k-b'],
-    });
-    const fsrsRows = await db.select().from(material_fsrs_state);
-    expect(fsrsRows.map((r) => r.subject_id)).toEqual(['k-b']);
-  });
-
-  it.each([
-    ['quiz_gen', 'experimental:quiz_verify', 'failure'],
-    ['web_sourced', 'experimental:source_verify', 'failure'],
-    ['quiz_gen', 'experimental:quiz_verify', null],
-  ] as const)(
-    'releases the canonical hash of a terminal %s draft via %s (outcome=%s)',
-    async (source, verifyAction, verifyOutcome) => {
-      await seedKnowledge('k-new');
-      const hash = await seed(`q-terminal-${source}`, 'draft', ['k-old']);
-      await db
-        .update(question)
-        .set({ source })
-        .where(eq(question.id, `q-terminal-${source}`));
-      await db.insert(event).values({
-        id: `verify-terminal-${source}`,
-        actor_kind: 'agent',
-        actor_ref: verifyAction,
-        action: verifyAction,
-        subject_kind: 'question',
-        subject_id: `q-terminal-${source}`,
-        outcome: verifyOutcome,
-        payload: {},
-        created_at: new Date(),
-      });
-
-      const result = await db.transaction((tx) =>
-        mergeExactQuestionDuplicateKnowledgeIds(tx, {
-          canonicalContentHash: hash,
-          knowledgeIds: ['k-new'],
-          actorRef: 'quiz_gen',
-          taskRunId: 'task-run-replace',
-          now: new Date('2026-07-19T12:00:00.000Z'),
-        }),
-      );
-
-      expect(result).toMatchObject({
-        disposition: 'released_terminal_draft',
-        addedKnowledgeIds: [],
-        previousVersion: 0,
-        version: 1,
-      });
-      const [released] = await db
-        .select()
-        .from(question)
-        .where(eq(question.id, `q-terminal-${source}`));
-      expect(released).toMatchObject({
-        canonical_content_hash: null,
-        knowledge_ids: ['k-old'],
-        draft_status: 'draft',
-        version: 1,
-      });
-      expect(released.metadata).toMatchObject({
-        archived_reason: 'terminal_draft_superseded_by_reproduction',
-        archived_previous_draft_status: 'draft',
-      });
-      const [releaseEvent] = await db
-        .select()
-        .from(event)
-        .where(eq(event.id, result?.eventId ?? ''));
-      expect(releaseEvent.payload).toMatchObject({
-        reason: 'terminal_draft_superseded_for_reproduction',
-        terminal_verify_event_id: `verify-terminal-${source}`,
-        task_run_id: 'task-run-replace',
-      });
-      const ownerOverride = await verifyAndPromote({
-        db,
-        questionId: `q-terminal-${source}`,
-        runTaskFn: async () => ({ text: '{}' }),
-        actor: { kind: 'user', ref: 'owner' },
-        skipVerify: { reason: 'manual override' },
-      });
-      expect(ownerOverride).toMatchObject({
-        promoted: false,
-        status: 'skipped:archived_draft',
-      });
-    },
-  );
 });

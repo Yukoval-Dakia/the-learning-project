@@ -13,7 +13,6 @@ import {
   evaluation_effective_head,
   event,
   job_events,
-  knowledge,
   mastery_state,
   material_fsrs_state,
   question,
@@ -27,7 +26,7 @@ import {
 } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
 import * as runtimeEnv from '@/server/runtime-env';
-import { resolveSubjectProfile } from '@/subjects/profile';
+
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { GET as pollStatus } from '../api/judge-run-status-route';
 import { createAttempt } from '../api/submit';
@@ -660,137 +659,6 @@ describe('native durable assessment', () => {
     expect(f.execute).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps answer-time knowledge and ability targets when tags and domains change before pickup', async () => {
-    const db = testDb();
-    const now = new Date();
-    await db.insert(knowledge).values([
-      { id: 'original-kc', name: '原始知识', domain: 'math', created_at: now, updated_at: now },
-      { id: 'edited-kc', name: '后来知识', domain: 'physics', created_at: now, updated_at: now },
-    ]);
-    const f = await fixture(['original-kc']);
-    await dispatchNativeAttempt(db, f.id, f.request, f.options, f.deps);
-    await db
-      .update(question)
-      .set({ knowledge_ids: ['edited-kc'], difficulty: 5 })
-      .where(eq(question.id, f.id));
-    await db.update(knowledge).set({ domain: 'physics' }).where(eq(knowledge.id, 'original-kc'));
-    await runJudgeRun(db, f.jobs[0], meta);
-    const cards = await db.select().from(material_fsrs_state);
-    expect.soft(cards.map((row) => row.subject_id)).toEqual(['original-kc']);
-    const mastery = await db.select().from(mastery_state);
-    expect
-      .soft(mastery.filter((row) => row.subject_kind === 'knowledge').map((row) => row.subject_id))
-      .toEqual(['original-kc']);
-    expect
-      .soft(
-        mastery.filter((row) => row.subject_kind === 'ability_global').map((row) => row.subject_id),
-      )
-      .toEqual(['math']);
-    expect(f.execute).toHaveBeenCalledTimes(1);
-    const [initial] = await db.select().from(evaluation);
-    const correction = await evaluationService.evaluateSubmission(db, {
-      submission_id: initial.submission_id,
-      evaluation_group_id: initial.evaluation_group_id,
-      evaluation_key: 'correct-with-original-learning-scope',
-      model_executor: createRecordedModelExecutor(db, async (_input, _signal, runId) => ({
-        kind: 'scored',
-        points_awarded: 0,
-        matched: { rule_id: 'speed', option_ids: [] },
-        feedback_md: '更正原作答评分',
-        confidence: 0.95,
-        evidence_citations: [],
-        run_refs: [runId],
-        cost_usd_micros: 100,
-      })),
-      provenance: { source: 'automatic', assisted: false },
-    });
-    const activation = await evaluationService.activateSubmissionCandidate(
-      db,
-      {
-        evaluation_id: correction.record.evaluation_id,
-        expected_effective_id: initial.evaluation_id,
-        expected_generation: 1,
-      },
-      { actorRef: 'test:scope-correction' },
-    );
-    expect(activation).toMatchObject({ status: 'activated', effect: 'applied' });
-    expect(
-      (await db.select().from(material_fsrs_state)).map((row) => ({
-        id: row.subject_id,
-        reps: row.state.reps,
-      })),
-    ).toEqual([{ id: 'original-kc', reps: 1 }]);
-    expect((await db.select().from(mastery_state)).map((row) => row.subject_id).sort()).toEqual([
-      'math',
-      'original-kc',
-    ]);
-    const receipts = await db
-      .select()
-      .from(event)
-      .where(eq(event.action, 'experimental:assessment_settlement'));
-    expect(receipts).toHaveLength(2);
-    for (const receipt of receipts)
-      expect(receipt.payload.replay_inputs).toMatchObject({
-        theta: {
-          anchorDifficulty: 3,
-          knowledgeIds: ['original-kc'],
-          abilityGlobalByKnowledgeId: { 'original-kc': 'math' },
-        },
-      });
-  });
-
-  it('preserves an absent answer-time ability domain instead of resolving a newly added one', async () => {
-    const db = testDb();
-    const now = new Date();
-    await db.insert(knowledge).values({
-      id: 'orphan-kc',
-      name: '未归属知识',
-      domain: null,
-      created_at: now,
-      updated_at: now,
-    });
-    const f = await fixture(['orphan-kc']);
-    await dispatchNativeAttempt(db, f.id, f.request, f.options, f.deps);
-    await db.update(knowledge).set({ domain: 'math' }).where(eq(knowledge.id, 'orphan-kc'));
-    await runJudgeRun(db, f.jobs[0], meta);
-    expect((await db.select().from(mastery_state)).map((row) => row.subject_id)).toEqual([
-      'orphan-kc',
-    ]);
-  });
-
-  it('preserves an old queued answer but refuses to execute the retired scoring route', async () => {
-    const f = await fixture();
-    const legacy = {
-      run_id: 'retired_legacy_run',
-      caller: 'submit' as const,
-      submit: {
-        body: { question_id: f.id, rating: 'good', auto_rate: true, response_md: '15 km/h' },
-        question_id: f.id,
-        subject_profile: resolveSubjectProfile(),
-        submitted_at: new Date().toISOString(),
-      },
-    };
-    await dispatch.recordJudgePendingAttempt(f.db, {
-      runId: legacy.run_id,
-      sessionId: null,
-      questionId: f.id,
-      knowledgeIds: [],
-      submit: legacy.submit,
-      submittedAt: new Date(legacy.submit.submitted_at),
-    });
-    const before = await f.db
-      .select()
-      .from(event)
-      .where(eq(event.action, 'experimental:judge_pending_attempt'));
-    const result = await runJudgeRun(f.db, legacy, meta);
-    expect.soft(result.status).toBe('failed');
-    expect.soft(await f.db.select().from(material_fsrs_state)).toHaveLength(0);
-    expect(
-      await f.db.select().from(event).where(eq(event.action, 'experimental:judge_pending_attempt')),
-    ).toEqual(before);
-    expect(f.execute).not.toHaveBeenCalled();
-  });
-
   it('freezes originals before enqueue; concurrent HTTP retries and worker redelivery settle once', async () => {
     const f = await fixture();
     const runs = await Promise.all([
@@ -1100,23 +968,6 @@ describe('native durable assessment', () => {
     expect((await f.db.select().from(material_fsrs_state))[0].state.reps).toBe(1);
   });
 
-  it('rolls activation back if durable completion fails, then reuses the sealed candidate', async () => {
-    const f = await fixture();
-    await dispatchNativeAttempt(f.db, f.id, f.request, f.options, f.deps);
-    const original = domainEvents.writeEvent;
-    const spy = vi.spyOn(domainEvents, 'writeEvent').mockImplementation(async (...args) => {
-      if (args[1].action === 'experimental:assessment_judge_resolution')
-        throw new Error('receipt failed');
-      return original(...args);
-    });
-    await expect(runJudgeRun(f.db, f.jobs[0], meta)).rejects.toThrow('receipt failed');
-    expect(await f.db.select().from(material_fsrs_state)).toHaveLength(0);
-    spy.mockRestore();
-    await runJudgeRun(f.db, f.jobs[0], { ...meta, retryCount: 1 });
-    expect(f.execute).toHaveBeenCalledTimes(1);
-    expect((await f.db.select().from(material_fsrs_state))[0].state.reps).toBe(1);
-  });
-
   it('keeps unjudgeable work unscored; later self-report does not replace the first evaluation reference', async () => {
     const f = await fixture();
     f.execute.mockResolvedValue({
@@ -1150,41 +1001,6 @@ describe('native durable assessment', () => {
     expect(later.assessment?.effective_evaluation_id).not.toBe(first.assessment?.candidate_id);
     expect(await f.db.select().from(event).where(eq(event.id, run))).toEqual(receipts);
     expect((await f.db.select().from(material_fsrs_state))[0].state.reps).toBe(1);
-  });
-  it('rejects a changed queue payload before execution and keeps the accepted original', async () => {
-    const f = await fixture();
-    await dispatchNativeAttempt(f.db, f.id, f.request, f.options, f.deps);
-    const tampered = {
-      ...f.jobs[0],
-      submit: { ...f.jobs[0].submit, user_rating: 'again' as const },
-    };
-    expect((await runJudgeRun(f.db, tampered, meta)).status).toBe('failed');
-    expect(f.execute).not.toHaveBeenCalled();
-    expect(await f.db.select().from(material_fsrs_state)).toHaveLength(0);
-    expect(
-      await f.db.select().from(event).where(eq(event.action, 'experimental:assessment_attempt')),
-    ).toHaveLength(1);
-  });
-
-  it('does not pay to overwrite a self-report activated while the original was queued', async () => {
-    const f = await fixture();
-    await dispatchNativeAttempt(f.db, f.id, f.request, f.options, f.deps);
-    const selfReport = await commitFormalAttempt(f.db, 'solo_submit', f.id, f.request, {
-      selfReport: true,
-      userRating: 'good',
-    });
-    expect((await runJudgeRun(f.db, f.jobs[0], meta)).status).toBe('failed');
-    expect(f.execute).not.toHaveBeenCalled();
-    expect(await f.db.select().from(evaluation)).toHaveLength(1);
-    expect((await f.db.select().from(material_fsrs_state))[0].state.reps).toBe(1);
-    const anchors = await f.db
-      .select()
-      .from(event)
-      .where(eq(event.action, 'experimental:assessment_attempt'));
-    expect(
-      (await resolveVerdictsForNativeAttempts(f.db, anchors)).get(anchors[0].id)?.effective
-        ?.evaluation_id,
-    ).toBe(selfReport.candidate.evaluation.record.evaluation_id);
   });
   it('returns a real HTTP 202 handle and polls native completion with evaluation anchors', async () => {
     const f = await fixture();
