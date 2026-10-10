@@ -237,3 +237,25 @@ correction or generation path is claimed here. Existing UI controls do not consu
 this continuation yet. Multipart support, correction writers, historical reference
 provenance, actual R03/R01 gold-media and provider reconciliation, full operational
 restore, independent review and exact-head CI remain outside this lane's evidence.
+
+## Retention fixture repair after CI
+
+At `241fdf550`, PR 1637 CI run `38033357665` DB shard 3 failed the retention
+fixture's whole-table count: expected 14, received 17; the preceding four-row
+deletion assertion passed. The supplied log does not identify the three extra
+rows. Source inspection confirms `resetDb()` omits `job_events`, which has no FK
+for its `TRUNCATE ... CASCADE` to reach, while a worker's database persists across
+sequential test files. The fixture's assumption of an empty ledger was invalid.
+
+The test now uses the existing transaction-isolation hooks, clears `job_events`
+inside that transaction, and rolls back afterward to restore unrelated rows. It
+captures inserted row identities and compares all 13 protected receipt rows plus
+the recent row, checks all four deletion controls by ID, and checks the recent
+row separately. It does not change the expected deletion count or production
+retention behavior; the shared reset helper is unchanged.
+
+With the same offline wrapper, scoped `pnpm exec biome check
+src/server/boss/handlers/prune-assessment-review.db.test.ts`, `pnpm typecheck`
+and `pnpm audit:partition` each exited 0. Logs are
+`/tmp/yuk1404-retention-fixture-{biome,typecheck,partition}.log`. No DB test ran
+locally; the repaired fixture still requires CI or authorized database execution.
