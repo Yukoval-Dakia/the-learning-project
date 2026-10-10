@@ -2,7 +2,20 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
 
-const LANE_NAMES = ['static', 'unit', 'db', 'migration', 'build'];
+const LANE_NAMES = ['static', 'unit', 'db', 'migration', 'build', 'parity'];
+
+// TS↔Rust grading parity needs the Rust toolchain, so it only runs when the numeric
+// core, the crate, its TS twins, dependencies or this gate change (and on full runs).
+const PARITY_PATHS = [
+  /^crates\/calibration-native\//,
+  /^src\/core\/(?:poly-exp|coldstart-solver|theta-grid)[^/]*\.ts$/,
+  /^src\/server\/calibration\//,
+  /^package\.json$/,
+  /^pnpm-lock\.yaml$/,
+  /^vitest\.(?:shared|unit\.config)\.ts$/,
+  /^\.github\/workflows\/ci-gate\.yml$/,
+  /^scripts\/ci\/gate-plan\.mjs$/,
+];
 
 const emptyLanes = () => Object.fromEntries(LANE_NAMES.map((lane) => [lane, false]));
 const fullLanes = () => Object.fromEntries(LANE_NAMES.map((lane) => [lane, true]));
@@ -22,11 +35,14 @@ function isDocsOnly(file) {
 export function classifyChangedFiles(inputFiles, { forceFullReason } = {}) {
   const files = [...new Set(inputFiles.map(normalizePath))].sort();
   const codeChanged = Boolean(forceFullReason) || files.some((file) => !isDocsOnly(file));
+  const lanes = codeChanged ? fullLanes() : emptyLanes();
+  lanes.parity =
+    Boolean(forceFullReason) || files.some((file) => PARITY_PATHS.some((re) => re.test(file)));
   return {
     schema_version: 1,
     code_changed: codeChanged,
     changed_files: files,
-    lanes: codeChanged ? fullLanes() : emptyLanes(),
+    lanes,
     reasons: forceFullReason ? [forceFullReason] : codeChanged ? ['core-code-change'] : [],
   };
 }

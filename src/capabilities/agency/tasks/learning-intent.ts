@@ -1,8 +1,7 @@
 // YUK-879 — LearningIntentOutlineTask contract, owned by the agency capability.
 // The output schema, strict parser, domain error, and profile prompt live here;
 // the orchestrator (../server/learning-intent) consumes them and keeps the
-// proposal/accept flow. Prompt text is byte-identical to the former central
-// quarry entry (prompt-hash oracle pins it).
+// proposal/accept flow.
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 
 // Legacy quarry alias preserved verbatim inside the moved definitions.

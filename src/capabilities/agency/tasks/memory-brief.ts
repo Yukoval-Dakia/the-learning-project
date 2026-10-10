@@ -3,8 +3,7 @@
 // schema + strict parser moved here from src/server/memory/brief-writer.ts (the
 // invocation site keeps its per-scope sweep and imports these via the agency
 // public surface). 1B/I-4 naming note survives: this is the WRITER-side output
-// shape, not the reader-facing memory brief. Prompt text is byte-identical to
-// the former central quarry entry (prompt-hash oracle pins it).
+// shape, not the reader-facing memory brief.
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 
 // Legacy quarry alias preserved verbatim inside the moved definitions.

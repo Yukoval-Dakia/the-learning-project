@@ -184,9 +184,7 @@ export interface JudgeAnswerParams {
    * (steps / multimodal_direct). Structurally identical to the runners' own
    * injectables (StepsImageFetchFn / MultimodalDirectImageFetchFn); declared
    * inline to avoid a value edge back into the runner modules. Omitted →
-   * runners fall back to `defaultImageFetch` (R2 + db), main-path behaviour
-   * byte-identical. The golden replay harness (scripts/judge-golden-reaudit.ts)
-   * injects a stub so image-bearing fixtures replay with zero DB/R2 access.
+   * runners fall back to `defaultImageFetch` (R2 + db).
    */
   imageFetchFn?: (
     assetIds: string[],

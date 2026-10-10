@@ -85,11 +85,9 @@ function fakePiAdapter() {
 }
 
 import { z } from 'zod';
-import { capabilities } from '@/capabilities';
 import { ai_task_runs, event, knowledge, question } from '@/db/schema';
 import { listProposalInboxRows } from '@/kernel/proposals/inbox';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
-import { buildHonoApp } from '../../../../server/app';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { RESEARCH_MEETING_SAMPLES, runResearchMeetingNightly } from './research_meeting_nightly';
 
@@ -345,7 +343,6 @@ async function taskKindCounts(): Promise<Record<string, number>> {
 // exists to prevent — and it would also be a cross-capability deep import, which
 // src/capabilities/AGENTS.md forbids (capabilities talk through manifests only).
 const INTERNAL_TOKEN = 'closed-loop-test-token';
-const app = buildHonoApp(capabilities);
 
 describe('closed loop: nightly → proposal → accept → probe → real judge → reconcile (YUK-789)', () => {
   beforeEach(async () => {

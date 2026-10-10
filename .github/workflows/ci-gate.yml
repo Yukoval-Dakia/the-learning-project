@@ -29,6 +29,7 @@ jobs:
       db_changed: ${{ steps.filter.outputs.db_changed }}
       migration_changed: ${{ steps.filter.outputs.migration_changed }}
       build_changed: ${{ steps.filter.outputs.build_changed }}
+      parity_changed: ${{ steps.filter.outputs.parity_changed }}
     steps:
       - uses: actions/checkout@v5
         with:
@@ -266,11 +267,69 @@ jobs:
         env:
           DATABASE_URL: postgres://placeholder
 
+  # TS↔Rust grading parity (YUK-1403). Path-selected by gate-plan; when selected, missing
+  # native/WASM artifacts fail the suites instead of skipping them.
+  parity:
+    name: Rust numerics · native/WASM/JS parity
+    needs: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Parity lane skipped
+        if: needs.changes.outputs.parity_changed != 'true'
+        run: echo "No parity-relevant change — lane is green."
+      - uses: actions/checkout@v5
+        if: needs.changes.outputs.parity_changed == 'true'
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        if: needs.changes.outputs.parity_changed == 'true'
+        with:
+          version: 11.13.1
+      - uses: actions/setup-node@v7
+        if: needs.changes.outputs.parity_changed == 'true'
+        with:
+          node-version-file: '.node-version'
+          cache: 'pnpm'
+      # stable @ 2026-07-20; pin third-party actions to immutable commits.
+      - uses: dtolnay/rust-toolchain@4cda84d5c5c54efe2404f9d843567869ab1699d4 # stable
+        if: needs.changes.outputs.parity_changed == 'true'
+        with:
+          targets: wasm32-wasip1-threads
+      # v2 @ 2026-07-20. Cache Cargo registry/git data and this standalone crate's target.
+      - uses: Swatinem/rust-cache@f0d9c3887740aee45f6153b24b3a6b815192ec16 # v2
+        if: needs.changes.outputs.parity_changed == 'true'
+        with:
+          workspaces: crates/calibration-native -> target
+      - name: Install dependencies
+        if: needs.changes.outputs.parity_changed == 'true'
+        run: pnpm install --frozen-lockfile
+      - name: Rust numerical invariants
+        if: needs.changes.outputs.parity_changed == 'true'
+        run: cargo test --manifest-path crates/calibration-native/Cargo.toml
+      - name: Build native addon
+        if: needs.changes.outputs.parity_changed == 'true'
+        run: pnpm build:native
+      - name: Build release WASM addon
+        if: needs.changes.outputs.parity_changed == 'true'
+        run: pnpm build:native:wasm
+      - name: Require artifacts and run parity suites
+        if: needs.changes.outputs.parity_changed == 'true'
+        env:
+          REQUIRE_RUST_PARITY: '1'
+        run: |
+          test -f crates/calibration-native/calibration-native.node
+          test -f crates/calibration-native/calibration-native.wasm32-wasi.wasm
+          test -f crates/calibration-native/calibration-native.wasi.cjs
+          pnpm exec vitest run --config vitest.unit.config.ts \
+            src/server/calibration/native-parity.unit.test.ts \
+            src/server/calibration/wasm-parity.unit.test.ts \
+            src/core/poly-exp-parity.unit.test.ts \
+            src/core/coldstart-solver-parity.unit.test.ts
+
   # Keep this name identical to the historical required check while the work moves into parallel jobs.
   gate:
     name: typecheck · lint · audits · test · build
     if: always()
-    needs: [changes, static, audits, unit, db, migration, build]
+    needs: [changes, static, audits, unit, db, migration, build, parity]
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -283,10 +342,11 @@ jobs:
           DB_RESULT: ${{ needs.db.result }}
           MIGRATION_RESULT: ${{ needs.migration.result }}
           BUILD_RESULT: ${{ needs.build.result }}
+          PARITY_RESULT: ${{ needs.parity.result }}
         run: |
           set -euo pipefail
           failed=0
-          for lane in CHANGES STATIC AUDITS UNIT DB MIGRATION BUILD; do
+          for lane in CHANGES STATIC AUDITS UNIT DB MIGRATION BUILD PARITY; do
             result_var="${lane}_RESULT"
             result="${!result_var}"
             printf '%-12s %s\n' "$lane" "$result"

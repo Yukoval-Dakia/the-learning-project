@@ -16,8 +16,6 @@ import { recordBriefSeen, recordPrimaryActionStarted } from '../server/teaching-
 
 // 2026-07-10 09:00 BJT — well inside a single Shanghai day.
 const DAY1 = new Date('2026-07-10T01:00:00.000Z');
-// 2026-07-11 04:00 BJT — a DIFFERENT Shanghai day than DAY1 (20:00Z + 8h rolls the date).
-const DAY2 = new Date('2026-07-10T20:00:00.000Z');
 
 async function rows(action: string, briefId: string) {
   return testDb()
