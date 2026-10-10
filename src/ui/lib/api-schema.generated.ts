@@ -21221,6 +21221,107 @@ export interface operations {
                         } | null;
                         sessionId: string;
                         sourcingNeeded: boolean;
+                        starterSupply?: ({
+                            /** @enum {string|null} */
+                            claim_id: null;
+                            /** @enum {string|null} */
+                            failure_reason: null;
+                            goal_id: string | null;
+                            /** @enum {string} */
+                            next_action: "provide_goal" | "source_questions";
+                            semantic_goal_revision_id: string | null;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "absent";
+                            subject_id: string | null;
+                        } | {
+                            claim_id: string;
+                            failure_reason: ({
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            }) | null;
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "wait_for_supply";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "pending";
+                            subject_id: string;
+                        } | {
+                            claim_id: string;
+                            /** @enum {string|null} */
+                            failure_reason: null;
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "continue_placement";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "satisfied";
+                            subject_id: string;
+                        } | {
+                            claim_id: string;
+                            failure_reason: {
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            };
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "review_supply_failure";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "exhausted";
+                            subject_id: string;
+                        } | {
+                            claim_id: string | null;
+                            failure_reason: {
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            };
+                            goal_id: string | null;
+                            /** @enum {string} */
+                            next_action: "resolve_unknown_outcome";
+                            semantic_goal_revision_id: string | null;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "unknown";
+                            subject_id: string | null;
+                        })[];
                     };
                 };
             };
@@ -21349,6 +21450,107 @@ export interface operations {
                         scope_knowledge_ids: string[] | null;
                         /** Format: date-time */
                         started_at: string;
+                        starterSupply?: ({
+                            /** @enum {string|null} */
+                            claim_id: null;
+                            /** @enum {string|null} */
+                            failure_reason: null;
+                            goal_id: string | null;
+                            /** @enum {string} */
+                            next_action: "provide_goal" | "source_questions";
+                            semantic_goal_revision_id: string | null;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "absent";
+                            subject_id: string | null;
+                        } | {
+                            claim_id: string;
+                            failure_reason: ({
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            }) | null;
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "wait_for_supply";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "pending";
+                            subject_id: string;
+                        } | {
+                            claim_id: string;
+                            /** @enum {string|null} */
+                            failure_reason: null;
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "continue_placement";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "satisfied";
+                            subject_id: string;
+                        } | {
+                            claim_id: string;
+                            failure_reason: {
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            };
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "review_supply_failure";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "exhausted";
+                            subject_id: string;
+                        } | {
+                            claim_id: string | null;
+                            failure_reason: {
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            };
+                            goal_id: string | null;
+                            /** @enum {string} */
+                            next_action: "resolve_unknown_outcome";
+                            semantic_goal_revision_id: string | null;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "unknown";
+                            subject_id: string | null;
+                        })[];
                         /** @enum {string} */
                         status: "started" | "completed" | "abandoned";
                         /** @enum {string} */
@@ -21626,6 +21828,107 @@ export interface operations {
                         done: true;
                         /** @enum {string} */
                         reason: "cap" | "se_converged";
+                        starterSupply?: ({
+                            /** @enum {string|null} */
+                            claim_id: null;
+                            /** @enum {string|null} */
+                            failure_reason: null;
+                            goal_id: string | null;
+                            /** @enum {string} */
+                            next_action: "provide_goal" | "source_questions";
+                            semantic_goal_revision_id: string | null;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "absent";
+                            subject_id: string | null;
+                        } | {
+                            claim_id: string;
+                            failure_reason: ({
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            }) | null;
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "wait_for_supply";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "pending";
+                            subject_id: string;
+                        } | {
+                            claim_id: string;
+                            /** @enum {string|null} */
+                            failure_reason: null;
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "continue_placement";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "satisfied";
+                            subject_id: string;
+                        } | {
+                            claim_id: string;
+                            failure_reason: {
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            };
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "review_supply_failure";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "exhausted";
+                            subject_id: string;
+                        } | {
+                            claim_id: string | null;
+                            failure_reason: {
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            };
+                            goal_id: string | null;
+                            /** @enum {string} */
+                            next_action: "resolve_unknown_outcome";
+                            semantic_goal_revision_id: string | null;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "unknown";
+                            subject_id: string | null;
+                        })[];
                     } | {
                         answeredCount: number;
                         /** @enum {boolean} */
@@ -22043,6 +22346,107 @@ export interface operations {
                             scoreKind: "mfi" | "klp" | "klp_grid";
                         } | null;
                         sourcingNeeded: boolean;
+                        starterSupply?: ({
+                            /** @enum {string|null} */
+                            claim_id: null;
+                            /** @enum {string|null} */
+                            failure_reason: null;
+                            goal_id: string | null;
+                            /** @enum {string} */
+                            next_action: "provide_goal" | "source_questions";
+                            semantic_goal_revision_id: string | null;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "absent";
+                            subject_id: string | null;
+                        } | {
+                            claim_id: string;
+                            failure_reason: ({
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            }) | null;
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "wait_for_supply";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "pending";
+                            subject_id: string;
+                        } | {
+                            claim_id: string;
+                            /** @enum {string|null} */
+                            failure_reason: null;
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "continue_placement";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "satisfied";
+                            subject_id: string;
+                        } | {
+                            claim_id: string;
+                            failure_reason: {
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            };
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "review_supply_failure";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "exhausted";
+                            subject_id: string;
+                        } | {
+                            claim_id: string | null;
+                            failure_reason: {
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            };
+                            goal_id: string | null;
+                            /** @enum {string} */
+                            next_action: "resolve_unknown_outcome";
+                            semantic_goal_revision_id: string | null;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "unknown";
+                            subject_id: string | null;
+                        })[];
                     };
                 };
             };
@@ -22312,6 +22716,107 @@ export interface operations {
                         done: true;
                         /** @enum {string} */
                         reason: "cap" | "se_converged";
+                        starterSupply?: ({
+                            /** @enum {string|null} */
+                            claim_id: null;
+                            /** @enum {string|null} */
+                            failure_reason: null;
+                            goal_id: string | null;
+                            /** @enum {string} */
+                            next_action: "provide_goal" | "source_questions";
+                            semantic_goal_revision_id: string | null;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "absent";
+                            subject_id: string | null;
+                        } | {
+                            claim_id: string;
+                            failure_reason: ({
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            }) | null;
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "wait_for_supply";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "pending";
+                            subject_id: string;
+                        } | {
+                            claim_id: string;
+                            /** @enum {string|null} */
+                            failure_reason: null;
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "continue_placement";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "satisfied";
+                            subject_id: string;
+                        } | {
+                            claim_id: string;
+                            failure_reason: {
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            };
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "review_supply_failure";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "exhausted";
+                            subject_id: string;
+                        } | {
+                            claim_id: string | null;
+                            failure_reason: {
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            };
+                            goal_id: string | null;
+                            /** @enum {string} */
+                            next_action: "resolve_unknown_outcome";
+                            semantic_goal_revision_id: string | null;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "unknown";
+                            subject_id: string | null;
+                        })[];
                     } | {
                         answeredCount: number;
                         /** @enum {boolean} */
@@ -22729,6 +23234,107 @@ export interface operations {
                             scoreKind: "mfi" | "klp" | "klp_grid";
                         } | null;
                         sourcingNeeded: boolean;
+                        starterSupply?: ({
+                            /** @enum {string|null} */
+                            claim_id: null;
+                            /** @enum {string|null} */
+                            failure_reason: null;
+                            goal_id: string | null;
+                            /** @enum {string} */
+                            next_action: "provide_goal" | "source_questions";
+                            semantic_goal_revision_id: string | null;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "absent";
+                            subject_id: string | null;
+                        } | {
+                            claim_id: string;
+                            failure_reason: ({
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            }) | null;
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "wait_for_supply";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "pending";
+                            subject_id: string;
+                        } | {
+                            claim_id: string;
+                            /** @enum {string|null} */
+                            failure_reason: null;
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "continue_placement";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "satisfied";
+                            subject_id: string;
+                        } | {
+                            claim_id: string;
+                            failure_reason: {
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            };
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "review_supply_failure";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "exhausted";
+                            subject_id: string;
+                        } | {
+                            claim_id: string | null;
+                            failure_reason: {
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            };
+                            goal_id: string | null;
+                            /** @enum {string} */
+                            next_action: "resolve_unknown_outcome";
+                            semantic_goal_revision_id: string | null;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "unknown";
+                            subject_id: string | null;
+                        })[];
                     };
                 };
             };
@@ -23480,6 +24086,107 @@ export interface operations {
                         } | null;
                         sessionId: string;
                         sourcingNeeded: boolean;
+                        starterSupply?: ({
+                            /** @enum {string|null} */
+                            claim_id: null;
+                            /** @enum {string|null} */
+                            failure_reason: null;
+                            goal_id: string | null;
+                            /** @enum {string} */
+                            next_action: "provide_goal" | "source_questions";
+                            semantic_goal_revision_id: string | null;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "absent";
+                            subject_id: string | null;
+                        } | {
+                            claim_id: string;
+                            failure_reason: ({
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            }) | null;
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "wait_for_supply";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "pending";
+                            subject_id: string;
+                        } | {
+                            claim_id: string;
+                            /** @enum {string|null} */
+                            failure_reason: null;
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "continue_placement";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "satisfied";
+                            subject_id: string;
+                        } | {
+                            claim_id: string;
+                            failure_reason: {
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            };
+                            goal_id: string;
+                            /** @enum {string} */
+                            next_action: "review_supply_failure";
+                            semantic_goal_revision_id: string;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "exhausted";
+                            subject_id: string;
+                        } | {
+                            claim_id: string | null;
+                            failure_reason: {
+                                /** @enum {string} */
+                                code: "schema_invalid";
+                                issue_count: number;
+                                issues: {
+                                    /** @enum {string} */
+                                    code: "invalid_type" | "too_big" | "too_small" | "invalid_format" | "not_multiple_of" | "unrecognized_keys" | "invalid_union" | "invalid_key" | "invalid_element" | "invalid_value" | "custom";
+                                    path: (("questions" | "source_pack" | "generation_method" | "self_copy_safety" | "material" | "kind" | "prompt_md" | "reference_md" | "choices_md" | "judge_kind_override" | "rubric_json" | "difficulty" | "difficulty_evidence" | "knowledge_ids" | "source_refs" | "structured" | "criteria" | "keywords" | "acceptable_answers" | "required_points" | "reference_solution" | "name" | "weight" | "descriptor" | "expected_signals" | "final_answer" | "answer_equivalents" | "version" | "value" | "scale" | "basis" | "confidence" | "observed_at" | "source_route" | "url" | "title" | "snippet" | "used_for" | "extracted" | "query_plan" | "searched_at" | "tool" | "verdict" | "max_overlap" | "checked_by" | "body_md" | "fetched_at" | "id" | "role" | "question_no" | "prompt_text" | "options" | "answers" | "analysis" | "bbox" | "page_index" | "sub_questions" | "extraction_evidence" | "source" | "last_modified_by" | "student_answer_present" | "label" | "text" | "x" | "y" | "width" | "height" | "handwriting" | "tencent_grading" | "IsCorrect" | "RightAnswer" | "AnswerAnalysis" | "KnowledgePoints" | "[redacted]") | number)[];
+                                    path_truncated: boolean;
+                                }[];
+                                issues_truncated: boolean;
+                            } | {
+                                /** @enum {string} */
+                                code: "json_invalid" | "json_object_missing" | "underfilled" | "verification_timeout" | "interrupted" | "cost_unknown" | "budget_exhausted" | "delivery_lost" | "authority_unknown" | "unknown";
+                            };
+                            goal_id: string | null;
+                            /** @enum {string} */
+                            next_action: "resolve_unknown_outcome";
+                            semantic_goal_revision_id: string | null;
+                            session_id: string;
+                            /** @enum {string} */
+                            state: "unknown";
+                            subject_id: string | null;
+                        })[];
                     };
                 };
             };

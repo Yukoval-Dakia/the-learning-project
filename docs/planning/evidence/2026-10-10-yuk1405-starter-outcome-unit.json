@@ -1,0 +1,477 @@
+{
+  "issue": "YUK-1405",
+  "scope": "bounded backend starter outcome unit; runtime acceptance incomplete",
+  "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+  "branch": "fix/yuk-1405-starter-outcome",
+  "base": "081b64779a253efa076b964fa4b712cfc4704ac8",
+  "runtime": {
+    "node": "24.19.0",
+    "pnpm": "11.13.1",
+    "environment_wrapper": "/tmp/yuk1359-offline-env.sh"
+  },
+  "frozen_inputs_sha256": {
+    "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/docs/planning/evidence/2026-10-10-yuk1405-starter-terminal-gap.json": "f26ecc302f44016173a69498c5a4502ff819b4a57fd653aae515fc881651f4ce",
+    "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/docs/planning/evidence/2026-10-10-yuk1405-frozen-manual-routing.json": "aadb564a6fb84b5c03c9e8b37408cf0e0fe8d8b0023370110cb0f1bf9fc882a6"
+  },
+  "source_files_sha256": {
+    "postman/api-endpoints.json": "1d3bab283cbc388e2f512c477fc5e6c6f770c0291080e4edd7201c631d1b19c7",
+    "postman/learning-api.postman_collection.json": "f7c57b6ecfa2dec96294d5152ac214c9eed8c107587b52b79060a30d3d3dd0ef",
+    "src/capabilities/practice/api/placement-contracts.ts": "d35492016146a9f33af367628e7ac27a08c4a3ae6b05acf0fc94c4313f92bdb9",
+    "src/capabilities/practice/api/placement-native.db.test.ts": "a4864ce1060e83f8ed70a1c097aeafaf99e9e4175248fda5029631dc852ac6b1",
+    "src/capabilities/practice/api/placement-next.ts": "08caf2b54464b2974441a42428beb92610c7050e1bbf01bc82ce3c484ed00ee2",
+    "src/capabilities/practice/api/placement-session-detail.ts": "80d9dd80172c4f92acc9d3105c910598fda4b35166ec19979edbf03ef682cc3a",
+    "src/capabilities/practice/api/placement-start.ts": "f93c4384cca238ea1fbe734e0e0838269ed8d4172486c30cd77f67ef40978760",
+    "src/capabilities/practice/jobs/quiz_gen.test.ts": "e427967b29469099cbce9c5760c540edce88a6e293b6cdbed1f5aeb7c53b719b",
+    "src/capabilities/practice/jobs/quiz_gen.ts": "ddcabbaaeeccddfd50e4b9feaeb36e1d90e6b4c8e71756c1ff250f212ee1a4ea",
+    "src/capabilities/practice/server/question-supply/placement-starter-attempts.db.test.ts": "17627f3f4aa261e97376fa6ac6177e774ffd922e4d275768e841ee8873b0f3b3",
+    "src/capabilities/practice/server/question-supply/placement-starter-attempts.ts": "d367d8160473c615897065024ed6d0acd755f86453d31207e9aca8cc3a4ac82c",
+    "src/capabilities/practice/server/question-supply/placement-starter-outcome-reader.ts": "648fe44222388ea844a5374d15c6213f424521dc50078ff2d4c5a75668e83d39",
+    "src/capabilities/practice/server/question-supply/placement-starter-outcome.ts": "560f55b4ff303fea6363945e1cacf547752d38380527ccb8129b0e6560448441",
+    "src/capabilities/practice/server/question-supply/placement-starter-outcome.unit.test.ts": "0bd3e1213f9dcf29f5e1cca9aff0bb72e296cfced640794c8b137f3b3c129d62",
+    "src/ui/lib/api-schema.generated.ts": "7ca3db11d387488cf8fb505033ef48bfeb9220e15114fdf7cedbfa2120b038e6",
+    "vitest.shared.ts": "f69703815ae418734a5e6b891085a562980b242bf2f99ee64f1f5f61908f976a"
+  },
+  "commands": [
+    {
+      "name": "unit-final",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": [
+        "bash",
+        "/tmp/yuk1359-offline-env.sh",
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "src/capabilities/practice/server/question-supply/placement-starter-outcome.unit.test.ts"
+      ],
+      "exit_code": 0,
+      "seconds": 1.147,
+      "log": "/tmp/yuk1405-unit-final.log",
+      "sha256": "33a78ba4640f240801e152139a8dcccf506bb332ae0b01e8faa801d825129684"
+    },
+    {
+      "name": "typecheck-final",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "typecheck"],
+      "exit_code": 0,
+      "seconds": 7.74,
+      "log": "/tmp/yuk1405-typecheck-final.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "name": "lint-final",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "lint"],
+      "exit_code": 0,
+      "seconds": 1.412,
+      "log": "/tmp/yuk1405-lint-final.log",
+      "sha256": "11e747b4fd618460296220d6f00c6c4c2b84b545025d554a466ab0e15efc4030"
+    },
+    {
+      "name": "build-final",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "build"],
+      "exit_code": 0,
+      "seconds": 9.977,
+      "log": "/tmp/yuk1405-build-final.log",
+      "sha256": "5499a1005e0ceaa95d838659a80f03b9d2100706175fa58e057dde66979091dc"
+    },
+    {
+      "name": "audit:schema",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "audit:schema"],
+      "exit_code": 0,
+      "seconds": 2.835,
+      "log": "/tmp/yuk1405-audit-schema.log",
+      "sha256": "3bb66f7d6e82ad3446a7b422a8855e482f81115267ebbf0804405b5275bb90f6"
+    },
+    {
+      "name": "audit:partition",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "audit:partition"],
+      "exit_code": 0,
+      "seconds": 0.809,
+      "log": "/tmp/yuk1405-audit-partition.log",
+      "sha256": "a5d1cecc9cbbafc8de3785b18c58344e969b989e075bf9bf1f6d1f3f15869744"
+    },
+    {
+      "name": "audit:api-contracts",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "audit:api-contracts"],
+      "exit_code": 0,
+      "seconds": 0.749,
+      "log": "/tmp/yuk1405-audit-api-contracts.log",
+      "sha256": "2fcb1d9cd8395bc3661f8e35135444ec73a34d0ca7a0320f1507c9429782ce2b"
+    },
+    {
+      "name": "audit:api-client",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "audit:api-client"],
+      "exit_code": 0,
+      "seconds": 1.9,
+      "log": "/tmp/yuk1405-audit-api-client.log",
+      "sha256": "f26bc904f865f0cc5a1a1613ea5d4017d46fdab55aceaf8eb0a831aedd0cea7c"
+    },
+    {
+      "name": "audit:api-client-usage",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "audit:api-client-usage"],
+      "exit_code": 0,
+      "seconds": 0.365,
+      "log": "/tmp/yuk1405-audit-api-client-usage.log",
+      "sha256": "71c2c93dd9e51bd4fc368e7845a5a34d42b2b56cf97e4dcf94a8556a99f45b46"
+    },
+    {
+      "name": "audit:capability-boundaries",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "audit:capability-boundaries"],
+      "exit_code": 0,
+      "seconds": 1.543,
+      "log": "/tmp/yuk1405-audit-capability-boundaries.log",
+      "sha256": "60a4f0d720703896faeedf665c52a55e659061e5451174f20854fc6f3fc2aef5"
+    },
+    {
+      "name": "audit:architecture-deepening",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "audit:architecture-deepening"],
+      "exit_code": 0,
+      "seconds": 10.485,
+      "log": "/tmp/yuk1405-audit-architecture-deepening.log",
+      "sha256": "47972588f180d82a311393dbc5d02156376189821ea1a840d678b6dc526a75ea"
+    },
+    {
+      "name": "audit:provider-lanes",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "audit:provider-lanes"],
+      "exit_code": 0,
+      "seconds": 5.195,
+      "log": "/tmp/yuk1405-audit-provider-lanes.log",
+      "sha256": "4e94a5c1aa34213ec2cbb56a60b90e883fdcf6a7fd9c10daff833b754ea85b5c"
+    },
+    {
+      "name": "audit:provider-attempt-truth",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "audit:provider-attempt-truth"],
+      "exit_code": 0,
+      "seconds": 4.64,
+      "log": "/tmp/yuk1405-audit-provider-attempt-truth.log",
+      "sha256": "29bdbca513c3121fd6156e6dbabd3a720733d5e993340f0c32558835ec5cc81e"
+    },
+    {
+      "name": "audit:profile",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "audit:profile"],
+      "exit_code": 0,
+      "seconds": 0.464,
+      "log": "/tmp/yuk1405-audit-profile.log",
+      "sha256": "f2f14ec06808ef23b857f78b1f54fd2fb25ba55e75776644d2a00aef10981db4"
+    },
+    {
+      "name": "audit:task-census",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "audit:task-census"],
+      "exit_code": 0,
+      "seconds": 2.142,
+      "log": "/tmp/yuk1405-audit-task-census.log",
+      "sha256": "fc186997a2b32b228993175d39dea7cb1aa137a4562a1d81339474c0623d8ad4"
+    },
+    {
+      "name": "audit:draft-status",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "audit:draft-status"],
+      "exit_code": 0,
+      "seconds": 0.473,
+      "log": "/tmp/yuk1405-audit-draft-status.log",
+      "sha256": "de3569839d7a890654a591c9c6b77334b1031fa56e3ecedef457f132dd24eb8d"
+    },
+    {
+      "name": "audit:draft-status-reads",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "audit:draft-status-reads"],
+      "exit_code": 0,
+      "seconds": 0.511,
+      "log": "/tmp/yuk1405-audit-draft-status-reads.log",
+      "sha256": "688c122890885988f0b41876fe00470b47025067f9d70df849afeb0c09b16577"
+    },
+    {
+      "name": "audit:question-writers",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "audit:question-writers"],
+      "exit_code": 0,
+      "seconds": 0.872,
+      "log": "/tmp/yuk1405-audit-question-writers.log",
+      "sha256": "2b69f3f1c8991b2a5d4d1ebadce6123132d15d935c9556fd6573abd8f6e2831d"
+    },
+    {
+      "name": "unit-sealed",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": [
+        "bash",
+        "/tmp/yuk1359-offline-env.sh",
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "src/capabilities/practice/server/question-supply/placement-starter-outcome.unit.test.ts"
+      ],
+      "exit_code": 0,
+      "seconds": 1.309,
+      "log": "/tmp/yuk1405-unit-sealed.log",
+      "sha256": "5c35db4175447e107a1bdeb8166583ab9dc7ba6ffcbb7ffc0f273c2b49e91efb"
+    },
+    {
+      "name": "typecheck-sealed",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "typecheck"],
+      "exit_code": 0,
+      "seconds": 9.07,
+      "log": "/tmp/yuk1405-typecheck-sealed.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "name": "lint-sealed",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "lint"],
+      "exit_code": 0,
+      "seconds": 1.463,
+      "log": "/tmp/yuk1405-lint-sealed.log",
+      "sha256": "56ef00487bb508b318551c9d65097d9c92bbdd21c7a144a059eb335cf9a61e76"
+    },
+    {
+      "name": "build-sealed",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "build"],
+      "exit_code": 0,
+      "seconds": 8.97,
+      "log": "/tmp/yuk1405-build-sealed.log",
+      "sha256": "8412e8ebc6d75f12c9ecacd3acf9e6e039c394059e92e90656fabf8b0d8d4205"
+    },
+    {
+      "name": "draft-status-reads-strict",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": [
+        "bash",
+        "/tmp/yuk1359-offline-env.sh",
+        "pnpm",
+        "audit:draft-status-reads",
+        "--strict"
+      ],
+      "exit_code": 0,
+      "seconds": 0.562,
+      "log": "/tmp/yuk1405-draft-status-reads-strict.log",
+      "sha256": "541b2dcfbbdd43dede18cba44d539b06ede2dba8f8425e36249f596e56064a7a"
+    },
+    {
+      "name": "lint-ratchet",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "lint:ratchet"],
+      "exit_code": 0,
+      "seconds": 1.314,
+      "log": "/tmp/yuk1405-lint-ratchet.log",
+      "sha256": "7b2b8108cc62c8e747d395803652326058a45e5e50d7d98fc0a74ddd4a8425be"
+    },
+    {
+      "name": "yuk1405-scoped-db-first",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": [
+        "bash",
+        "/tmp/yuk1359-offline-env.sh",
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.db.config.ts",
+        "src/capabilities/practice/api/placement-native.db.test.ts",
+        "src/capabilities/practice/server/question-supply/placement-starter-attempts.db.test.ts",
+        "src/capabilities/practice/server/question-supply/placement-starter-store.db.test.ts",
+        "src/capabilities/practice/server/placement-starter-recovery.db.test.ts",
+        "src/capabilities/practice/jobs/quiz_gen.test.ts"
+      ],
+      "exit_code": 1,
+      "result": "33 passed, 2 failed; cold legacy-goal fixture and existing exact response assertion",
+      "log": "/tmp/yuk1405-scoped-db-first.log",
+      "sha256": "168a98d764af7b103d58a84c0064e78493fff4894aa33e3654e7297e3fe7ddf2"
+    },
+    {
+      "name": "yuk1405-scoped-db-placement-rerun",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": [
+        "bash",
+        "/tmp/yuk1359-offline-env.sh",
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.db.config.ts",
+        "src/capabilities/practice/api/placement-native.db.test.ts"
+      ],
+      "exit_code": 1,
+      "result": "3 passed, 1 failed; attempted fixture constructor was not exported by agency public",
+      "log": "/tmp/yuk1405-scoped-db-placement-rerun.log",
+      "sha256": "0ceb52f8816fb5d16af35bbacc57ba2355ff634763ec5f2f7594adb0f060fb89"
+    },
+    {
+      "name": "yuk1405-scoped-db-placement-final",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": [
+        "bash",
+        "/tmp/yuk1359-offline-env.sh",
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.db.config.ts",
+        "src/capabilities/practice/api/placement-native.db.test.ts"
+      ],
+      "exit_code": 0,
+      "result": "4 passed; anchored goal fixture and additive response expectation repaired",
+      "log": "/tmp/yuk1405-scoped-db-placement-final.log",
+      "sha256": "c70edbe845601dbf677f1373075c5495d6695ab99168e9bd8dfc1fb85b6a85a2"
+    },
+    {
+      "name": "install",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": [
+        "bash",
+        "/tmp/yuk1359-offline-env.sh",
+        "pnpm",
+        "install",
+        "--frozen-lockfile",
+        "--offline"
+      ],
+      "exit_code": 0,
+      "log": "/tmp/yuk1405-install.log",
+      "sha256": "78bfd9debb55408c227f3ab775c169cef6c5874e93bd3732ebfa205c79fe0d19"
+    },
+    {
+      "name": "typecheck-initial",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "typecheck"],
+      "exit_code": 0,
+      "log": "/tmp/yuk1405-typecheck-initial.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "name": "typecheck-second",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "typecheck"],
+      "exit_code": 1,
+      "log": "/tmp/yuk1405-typecheck-second.log",
+      "sha256": "20b7c8c9179c38ba2d575a220a76709c104049e2e721e0603caf4d282996f00a"
+    },
+    {
+      "name": "typecheck-third",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "typecheck"],
+      "exit_code": 0,
+      "log": "/tmp/yuk1405-typecheck-third.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "name": "gen-postman-final",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "gen:postman"],
+      "exit_code": 0,
+      "log": "/tmp/yuk1405-gen-postman-final.log",
+      "sha256": "3aaa19807ed6f0270b0c336b21a857618af66e696d351ca7ae870f0bd2f66a25"
+    },
+    {
+      "name": "gen-api-client-final",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": ["bash", "/tmp/yuk1359-offline-env.sh", "pnpm", "gen:api-client"],
+      "exit_code": 0,
+      "log": "/tmp/yuk1405-gen-api-client-final.log",
+      "sha256": "c3aca9ce455d9eb6c384ab7d2088775dd06ac7d7580dc9f9b68b06a577287912"
+    },
+    {
+      "name": "scoped-unit-first",
+      "cwd": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome",
+      "command": [
+        "bash",
+        "/tmp/yuk1359-offline-env.sh",
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "src/capabilities/practice/server/question-supply/placement-starter-outcome.unit.test.ts"
+      ],
+      "exit_code": 0,
+      "log": "/tmp/yuk1405-scoped-unit-first.log",
+      "sha256": "d68f0bfddf23662398485f2963237ae8572c2ed462af2684c481fbed8122ba2e"
+    }
+  ],
+  "retained_log_inventory_sha256": {
+    "/tmp/yuk1405-audit-api-client-usage.log": "71c2c93dd9e51bd4fc368e7845a5a34d42b2b56cf97e4dcf94a8556a99f45b46",
+    "/tmp/yuk1405-audit-api-client.log": "f26bc904f865f0cc5a1a1613ea5d4017d46fdab55aceaf8eb0a831aedd0cea7c",
+    "/tmp/yuk1405-audit-api-contracts.log": "2fcb1d9cd8395bc3661f8e35135444ec73a34d0ca7a0320f1507c9429782ce2b",
+    "/tmp/yuk1405-audit-architecture-deepening.log": "47972588f180d82a311393dbc5d02156376189821ea1a840d678b6dc526a75ea",
+    "/tmp/yuk1405-audit-capability-boundaries.log": "60a4f0d720703896faeedf665c52a55e659061e5451174f20854fc6f3fc2aef5",
+    "/tmp/yuk1405-audit-draft-status-reads.log": "688c122890885988f0b41876fe00470b47025067f9d70df849afeb0c09b16577",
+    "/tmp/yuk1405-audit-draft-status.log": "de3569839d7a890654a591c9c6b77334b1031fa56e3ecedef457f132dd24eb8d",
+    "/tmp/yuk1405-audit-partition.log": "a5d1cecc9cbbafc8de3785b18c58344e969b989e075bf9bf1f6d1f3f15869744",
+    "/tmp/yuk1405-audit-profile.log": "f2f14ec06808ef23b857f78b1f54fd2fb25ba55e75776644d2a00aef10981db4",
+    "/tmp/yuk1405-audit-provider-attempt-truth.log": "29bdbca513c3121fd6156e6dbabd3a720733d5e993340f0c32558835ec5cc81e",
+    "/tmp/yuk1405-audit-provider-lanes.log": "4e94a5c1aa34213ec2cbb56a60b90e883fdcf6a7fd9c10daff833b754ea85b5c",
+    "/tmp/yuk1405-audit-question-writers.log": "2b69f3f1c8991b2a5d4d1ebadce6123132d15d935c9556fd6573abd8f6e2831d",
+    "/tmp/yuk1405-audit-schema.log": "3bb66f7d6e82ad3446a7b422a8855e482f81115267ebbf0804405b5275bb90f6",
+    "/tmp/yuk1405-audit-task-census.log": "fc186997a2b32b228993175d39dea7cb1aa137a4562a1d81339474c0623d8ad4",
+    "/tmp/yuk1405-build-final.log": "5499a1005e0ceaa95d838659a80f03b9d2100706175fa58e057dde66979091dc",
+    "/tmp/yuk1405-build-sealed.log": "8412e8ebc6d75f12c9ecacd3acf9e6e039c394059e92e90656fabf8b0d8d4205",
+    "/tmp/yuk1405-draft-status-reads-strict.log": "541b2dcfbbdd43dede18cba44d539b06ede2dba8f8425e36249f596e56064a7a",
+    "/tmp/yuk1405-format-fifth.log": "53f1c5ced35cacf90d2617c79dbdb60e6e39ada0d00e3d7914fcdc56e50629a5",
+    "/tmp/yuk1405-format-final.log": "9f8feb9624630073f2d3fca2c1bc5a8ced2e3beaddc64e4e03fa94a7ffb7b418",
+    "/tmp/yuk1405-format-fourth.log": "2bc1c6d81a069764def39e128410618ef8284365093504cea007f7a878d85bc0",
+    "/tmp/yuk1405-format-initial.log": "36cffeb0238f662038d45aa513f59885034e3429cfdd53f265c9a0906774e3b0",
+    "/tmp/yuk1405-format-second.log": "c6c33db522511bfc994aeb1c92143805bcf37aa2e9fb59926de513605440b825",
+    "/tmp/yuk1405-format-third.log": "16eaf72457ed8d5546c5cbb406025e308d8f5363e030dc3b87c902f733f6d5bf",
+    "/tmp/yuk1405-gen-api-client-final.log": "c3aca9ce455d9eb6c384ab7d2088775dd06ac7d7580dc9f9b68b06a577287912",
+    "/tmp/yuk1405-gen-api-client.log": "c3aca9ce455d9eb6c384ab7d2088775dd06ac7d7580dc9f9b68b06a577287912",
+    "/tmp/yuk1405-gen-postman-final.log": "3aaa19807ed6f0270b0c336b21a857618af66e696d351ca7ae870f0bd2f66a25",
+    "/tmp/yuk1405-gen-postman.log": "3aaa19807ed6f0270b0c336b21a857618af66e696d351ca7ae870f0bd2f66a25",
+    "/tmp/yuk1405-install.log": "78bfd9debb55408c227f3ab775c169cef6c5874e93bd3732ebfa205c79fe0d19",
+    "/tmp/yuk1405-lint-final.log": "11e747b4fd618460296220d6f00c6c4c2b84b545025d554a466ab0e15efc4030",
+    "/tmp/yuk1405-lint-ratchet.log": "7b2b8108cc62c8e747d395803652326058a45e5e50d7d98fc0a74ddd4a8425be",
+    "/tmp/yuk1405-lint-sealed.log": "56ef00487bb508b318551c9d65097d9c92bbdd21c7a144a059eb335cf9a61e76",
+    "/tmp/yuk1405-postman-format.log": "4ab4f9617f93bb7c00ca5273a5bf1cbbdfb09dd08425ad8bbc323decc55d6ccc",
+    "/tmp/yuk1405-schema-input-probe.log": "7b0ed7ab0e90e9307c8b9723a2f69b6e313b48da0fea0c79102449b94f6c5483",
+    "/tmp/yuk1405-scoped-db-first.log": "168a98d764af7b103d58a84c0064e78493fff4894aa33e3654e7297e3fe7ddf2",
+    "/tmp/yuk1405-scoped-db-placement-final.log": "c70edbe845601dbf677f1373075c5495d6695ab99168e9bd8dfc1fb85b6a85a2",
+    "/tmp/yuk1405-scoped-db-placement-rerun.log": "0ceb52f8816fb5d16af35bbacc57ba2355ff634763ec5f2f7594adb0f060fb89",
+    "/tmp/yuk1405-scoped-unit-first.log": "d68f0bfddf23662398485f2963237ae8572c2ed462af2684c481fbed8122ba2e",
+    "/tmp/yuk1405-typecheck-final.log": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+    "/tmp/yuk1405-typecheck-initial.log": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+    "/tmp/yuk1405-typecheck-sealed.log": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+    "/tmp/yuk1405-typecheck-second.log": "20b7c8c9179c38ba2d575a220a76709c104049e2e721e0603caf4d282996f00a",
+    "/tmp/yuk1405-typecheck-third.log": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+    "/tmp/yuk1405-unit-final.log": "33a78ba4640f240801e152139a8dcccf506bb332ae0b01e8faa801d825129684",
+    "/tmp/yuk1405-unit-sealed.log": "5c35db4175447e107a1bdeb8166583ab9dc7ba6ffcbb7ffc0f273c2b49e91efb"
+  },
+  "other_observed_failures": [
+    {
+      "command": "pnpm exec tsx -e z.toJSONSchema(QuizGenOutput)",
+      "exit_code": 1,
+      "reason": "Transforms cannot be represented in JSON Schema; input-schema io=input probe succeeded; raw tool output only, no separate log retained"
+    },
+    {
+      "log": "/tmp/yuk1405-format-initial.log",
+      "exit_code": null,
+      "reason": "One noImplicitAnyLet error; subcommand exit was not separately captured. Fixed explicit authority type. Final lint passes."
+    }
+  ],
+  "db_evidence_limits": [
+    "Only repository vitest.db.config.ts disposable Testcontainers databases were used.",
+    "Initial combined run failed; the later successful focused run does not constitute a clean combined invocation.",
+    "Final bound-schema typing and retry_scheduled missing-reason handling were followed by unit/static/build checks, not another DB invocation.",
+    "No shared TEST/production access, provider calls, deployment or host-reboot durability proof."
+  ],
+  "remaining_acceptance": [
+    "Parent independent review and artifact verification",
+    "Opus UI consumption of starterSupply and actual terminal recovery interaction",
+    "Real provider actual-output gate",
+    "YUK-1445 automatic-executor serving admission and starter eligible-count parity",
+    "Parent owns Linear capture, PR/CI, integration and runtime acceptance"
+  ]
+}

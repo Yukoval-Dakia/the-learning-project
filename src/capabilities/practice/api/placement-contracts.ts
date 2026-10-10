@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { PlacementStarterOutcomeSchema } from '../server/question-supply/placement-starter-outcome';
 import { IssuanceStateSchema } from './assessment-contracts';
 
 export const PlacementSessionParamsSchema = z.object({ id: z.string().min(1) });
@@ -31,6 +32,9 @@ export const PlacementSessionCreatedSchema = z.object({
   answeredCount: z.number().int().nonnegative(),
   question: PlacementQuestionSchema.nullable(),
   sourcingNeeded: z.boolean(),
+  // Optional while existing clients construct local resume results. The backend
+  // emits this on every successful start/next/detail response.
+  starterSupply: z.array(PlacementStarterOutcomeSchema).optional(),
 });
 
 export const CreatePlacementQuestionSelectionBodySchema = z.object({
@@ -44,12 +48,14 @@ export const PlacementQuestionSelectionResponseSchema = z.discriminatedUnion('do
     done: z.literal(true),
     reason: z.enum(['cap', 'se_converged']),
     answeredCount: z.number().int().nonnegative(),
+    starterSupply: z.array(PlacementStarterOutcomeSchema).optional(),
   }),
   z.object({
     done: z.literal(false),
     question: PlacementQuestionSchema.nullable(),
     answeredCount: z.number().int().nonnegative(),
     sourcingNeeded: z.boolean(),
+    starterSupply: z.array(PlacementStarterOutcomeSchema).optional(),
   }),
 ]);
 
@@ -79,6 +85,7 @@ export const PlacementSessionResponseSchema = z.object({
   started_at: z.string().datetime(),
   ended_at: z.string().datetime().nullable(),
   updated_at: z.string().datetime(),
+  starterSupply: z.array(PlacementStarterOutcomeSchema).optional(),
 });
 
 export const PlacementSessionTransitionResponseSchema = z.object({
