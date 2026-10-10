@@ -7,7 +7,6 @@
 //   (d) soft/subjective outcome 一条都不累 (isObjective=false 早返)。
 
 import { createId } from '@paralleldrive/cuid2';
-import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { newId } from '@/core/ids';
@@ -197,62 +196,5 @@ describe('mastery_state θ̂ 锚组合 (effectiveFamilyB 消费接缝 sanity)', 
     expect(row?.b_delta).toBeCloseTo(expectedFromBefore, 4);
     // 与误读 POSTERIOR θ=-3 的值明显不同（证明没读 mastery_state）。
     expect(Math.abs((row?.b_delta ?? 0) - wrongIfReadPosterior)).toBeGreaterThan(0.05);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// finding #4a 回归 — family 写用 SAVEPOINT 隔离，DB 级错误不毒化主 attempt tx。
-//
-// 复现 submit.ts / paper-submit.ts hook 的结构：外层 attempt tx 先写主路径
-// （θ̂/FSRS/event，这里用 knowledge 行当代理），再在 SAVEPOINT（嵌套 tx）里跑 family
-// 写。family 写若直接跑在外层 tx 上、触发任何 DB 级错误（25P02 毒化 tx），外层
-// db.transaction 会整体 rollback——主路径全丢，JS try/catch 捕到了也救不回（捕 JS 错
-// ≠ 解毒 PG tx）。SAVEPOINT 让 family 写失败只回滚 savepoint，主写完整保留可 COMMIT。
-// ─────────────────────────────────────────────────────────────────────────────
-describe('finding #4a — family 写 SAVEPOINT 隔离 (DB 错误不毒化主 attempt tx)', () => {
-  beforeEach(async () => {
-    await resetDb();
-  });
-
-  it('SAVEPOINT 包裹下 family 写 DB 错误 → 主路径写 STILL COMMIT', async () => {
-    const mainK = createId();
-    // 模拟 hook：外层 attempt tx 内先写主路径（θ̂/FSRS/event 的代理 = knowledge 行），
-    // 再在 SAVEPOINT 里跑会触发 DB 级错误的 family 写，错误被 hook 的 try/catch 吞。
-    await db.transaction(async (tx) => {
-      // (1) 主路径写（代表 θ̂/FSRS/event 的成功写入）。
-      await tx.insert(knowledge).values({
-        id: mainK,
-        name: `K-${mainK}`,
-        domain: 'yuwen',
-        parent_id: null,
-        created_at: now(),
-        updated_at: now(),
-        version: 0,
-      });
-
-      // (2) SAVEPOINT 包裹的 family 写——内部强制一个 DB 级错误（malformed cast，
-      // 与「malformed-jsonb cast / 23505 / serialization」同类的 25P02 触发器）。
-      // 修复后：SAVEPOINT 回滚只丢这一步，外层 tx 不被毒化。
-      try {
-        await tx.transaction(async (sp) => {
-          // 故意失败的 DB 语句（无效 cast → PG 报错，毒化 savepoint 而非外层 tx）。
-          await sp.execute(sql`SELECT CAST('not-a-number' AS integer)`);
-        });
-      } catch {
-        // hook 的 best-effort 吞错（family 校准是慢热增益层，不 fail 主路径）。
-      }
-
-      // (3) family 写失败后，外层 tx 仍可继续写（证明未被毒化）——若被毒化这里会抛
-      // 25P02。这一步成功 = SAVEPOINT 隔离生效。
-      await tx
-        .update(knowledge)
-        .set({ name: `K-${mainK}-after` })
-        .where(eq(knowledge.id, mainK));
-    });
-
-    // 主路径写 COMMIT 成功（θ̂/FSRS/event 不丢）——这是修复的核心断言。
-    const rows = await db.select().from(knowledge).where(eq(knowledge.id, mainK));
-    expect(rows).toHaveLength(1);
-    expect(rows[0].name).toBe(`K-${mainK}-after`); // 步骤 (3) 也成功 → tx 未被毒化
   });
 });

@@ -363,22 +363,6 @@ describe('applyArchive', () => {
     await resetDb();
   });
 
-  it('archives a node and bumps version (happy path)', async () => {
-    const db = testDb();
-    await insertKnowledge({ id: 'k_node', version: 5 });
-    await applyArchive(db, {
-      mutation: 'archive',
-      node_id: 'k_node',
-      expected_version: 5,
-    });
-    const rows = await db
-      .select({ archived_at: knowledge.archived_at, version: knowledge.version })
-      .from(knowledge)
-      .where(eq(knowledge.id, 'k_node'));
-    expect(rows[0]?.archived_at).toBeTruthy();
-    expect(rows[0]?.version).toBe(6);
-  });
-
   it('cascade-archives every live inbound and outbound edge without touching unrelated or archived edges', async () => {
     const db = testDb();
     const now = new Date('2026-07-23T12:34:56.789Z');

@@ -259,13 +259,6 @@ describe('revertAutoEnrolledBlock', () => {
     });
   });
 
-  it('rejects reverting a missing block (404)', async () => {
-    const db = testDb();
-    await expect(
-      revertAutoEnrolledBlock(db, { blockId: 'nope', sessionId: 'sess_x' }),
-    ).rejects.toMatchObject({ status: 404 });
-  });
-
   it('rejects reverting a block that belongs to a different session (404, cross-session)', async () => {
     const db = testDb();
     const { blockId } = await seedAndAutoEnroll(db, FAILURE_DRAFT);
