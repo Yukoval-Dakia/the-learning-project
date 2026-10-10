@@ -1,0 +1,29 @@
+{
+  "deployment": {
+    "environment": "TEST",
+    "dedicated_synthetic": true,
+    "production": false,
+    "base_url": "http://127.0.0.1:18787",
+    "database": "acceptance_REPLACE_WITH_LOWERCASE_UNIQUE_RUN",
+    "revision": "REPLACE_WITH_40_HEX_DEPLOYED_REVISION",
+    "image_id": "REPLACE_WITH_RUNNING_IMAGE_DIGEST",
+    "operator": "REPLACE_WITH_WITNESS_NAME",
+    "observed_at": "REPLACE_WITH_RECENT_ISO_TIME",
+    "binding_evidence": "REPLACE_WITH_APP_WORKER_DB_BLOB_TARGET_RECEIPT"
+  },
+  "approval": {
+    "paid_calls": false,
+    "cap_usd": 6,
+    "max_requests": 1200,
+    "note": "Request ceiling is not a model-call or dollar cap; operator watches real fanout and unknown receipts"
+  },
+  "journey": {
+    "topic": "系统性学习高二数学：函数单调性与数列",
+    "subject": "math",
+    "variant": "normal"
+  },
+  "cleanup": {
+    "writers_stopped": false,
+    "receipt_path": null
+  }
+}

@@ -1,0 +1,341 @@
+{
+  "version": "r03-gold-v1",
+  "synthetic": true,
+  "pii": false,
+  "pages": [
+    {
+      "page": "M01",
+      "subject": "math",
+      "features": ["single_choice_formulas"],
+      "layout": "single",
+      "questions": [
+        {
+          "qid": "M01-1",
+          "type": "single_choice",
+          "stem": "已知集合 $A=\\{x\\mid x^2-3x+2<0\\}$，$B=\\{x\\mid 1<x<3\\}$，则 $A\\cap B=$（　　）",
+          "choices": { "A": "$(1,2)$", "B": "$(1,3)$", "C": "$(2,3)$", "D": "$\\varnothing$" },
+          "answer": "A",
+          "key_latex": ["x^2-3x+2<0", "A\\cap B"],
+          "kcs": ["集合的运算", "一元二次不等式"]
+        },
+        {
+          "qid": "M01-2",
+          "type": "single_choice",
+          "stem": "函数 $f(x)=\\dfrac{\\sqrt{x-1}}{\\ln(2-x)}$ 的定义域为（　　）",
+          "choices": { "A": "$[1,2)$", "B": "$(1,2)$", "C": "$(1,2]$", "D": "$[1,2]$" },
+          "answer": "B",
+          "key_latex": ["f(x)=\\dfrac{\\sqrt{x-1}}{\\ln(2-x)}"],
+          "kcs": ["函数的定义域", "对数函数"]
+        }
+      ]
+    },
+    {
+      "page": "M02",
+      "subject": "math",
+      "features": ["multi_blank_fill"],
+      "layout": "single",
+      "questions": [
+        {
+          "qid": "M02-1",
+          "type": "fill_blank",
+          "stem": "已知等差数列 $\\{a_n\\}$ 中，$a_3=5$，$a_7=13$，则公差 $d=$\\_\\_\\_\\_，$a_1=$\\_\\_\\_\\_，前 10 项和 $S_{10}=$\\_\\_\\_\\_。",
+          "choices": null,
+          "answer": "2；1；100",
+          "key_latex": ["a_3=5", "a_7=13", "S_{10}"],
+          "kcs": ["等差数列的通项公式", "等差数列的前n项和"]
+        }
+      ]
+    },
+    {
+      "page": "M03",
+      "subject": "math",
+      "features": ["long_worked_solution", "student_handwriting"],
+      "layout": "single",
+      "questions": [
+        {
+          "qid": "M03-1",
+          "type": "worked_solution",
+          "stem": "已知函数 $f(x)=x^3-3ax^2+3x+1$。（1）当 $a=2$ 时，求 $f(x)$ 的单调区间；（2）若 $f(x)$ 在区间 $(2,3)$ 内至少有一个极值点，求 $a$ 的取值范围。",
+          "choices": null,
+          "answer": "（1）增区间 $(-\\infty,2-\\sqrt3)$，$(2+\\sqrt3,+\\infty)$；减区间 $(2-\\sqrt3,2+\\sqrt3)$。（2）$\\tfrac54<a<\\tfrac53$",
+          "student_answer": "（1）同标准答案（正确）；（2）写成 $\\tfrac54\\le a\\le\\tfrac53$（端点错误）",
+          "key_latex": [
+            "f(x)=x^3-3ax^2+3x+1",
+            "f'(x)=3x^2-12x+3",
+            "x=2\\pm\\sqrt3",
+            "a=\\frac{x^2+1}{2x}"
+          ],
+          "kcs": ["利用导数研究函数的单调性", "函数的极值"]
+        }
+      ]
+    },
+    {
+      "page": "M04",
+      "subject": "math",
+      "features": ["figure_dependent"],
+      "layout": "single",
+      "questions": [
+        {
+          "qid": "M04-1",
+          "type": "single_choice",
+          "stem": "函数 $y=f(x)$ 的图象如图所示（由线段组成），则 $f(f(3))=$（　　）",
+          "choices": { "A": "$0$", "B": "$1$", "C": "$2$", "D": "$3$" },
+          "answer": "B",
+          "figure": "折线 (0,2)-(2,0)-(3,1)-(4,3)，f(3)=1，f(1)=1",
+          "figure_required": true,
+          "key_latex": ["f(f(3))"],
+          "kcs": ["函数的图象", "复合函数求值"]
+        }
+      ]
+    },
+    {
+      "page": "M05",
+      "subject": "math",
+      "features": ["two_column", "multi_question"],
+      "layout": "two_column",
+      "questions": [
+        {
+          "qid": "M05-1",
+          "type": "single_choice",
+          "stem": "复数 $z=\\dfrac{2i}{1+i}$，则 $|z|=$（　　）",
+          "choices": { "A": "$1$", "B": "$\\sqrt2$", "C": "$2$", "D": "$2\\sqrt2$" },
+          "answer": "B",
+          "key_latex": ["z=\\dfrac{2i}{1+i}"],
+          "kcs": ["复数的运算", "复数的模"]
+        },
+        {
+          "qid": "M05-2",
+          "type": "single_choice",
+          "stem": "已知 $\\sin\\alpha=\\dfrac35$，$\\alpha\\in\\left(\\dfrac{\\pi}{2},\\pi\\right)$，则 $\\tan2\\alpha=$（　　）",
+          "choices": {
+            "A": "$\\dfrac{24}{7}$",
+            "B": "$-\\dfrac{24}{7}$",
+            "C": "$\\dfrac{7}{24}$",
+            "D": "$-\\dfrac{7}{24}$"
+          },
+          "answer": "B",
+          "key_latex": ["\\sin\\alpha=\\dfrac35", "\\tan2\\alpha"],
+          "kcs": ["同角三角函数关系", "二倍角公式"]
+        },
+        {
+          "qid": "M05-3",
+          "type": "fill_blank",
+          "stem": "$\\left(x-\\dfrac{2}{x}\\right)^6$ 的展开式中常数项为\\_\\_\\_\\_。",
+          "choices": null,
+          "answer": "$-160$",
+          "key_latex": ["\\left(x-\\dfrac{2}{x}\\right)^6"],
+          "kcs": ["二项式定理"]
+        },
+        {
+          "qid": "M05-4",
+          "type": "fill_blank",
+          "stem": "双曲线 $\\dfrac{x^2}{4}-\\dfrac{y^2}{5}=1$ 的离心率为\\_\\_\\_\\_。",
+          "choices": null,
+          "answer": "$\\dfrac32$",
+          "key_latex": ["\\dfrac{x^2}{4}-\\dfrac{y^2}{5}=1"],
+          "kcs": ["双曲线的几何性质"]
+        }
+      ]
+    },
+    {
+      "page": "M06",
+      "subject": "math",
+      "features": ["rotated", "low_contrast", "scan_noise"],
+      "layout": "single",
+      "questions": [
+        {
+          "qid": "M06-1",
+          "type": "single_choice",
+          "stem": "已知向量 $\\vec a=(1,2)$，$\\vec b=(m,-1)$，若 $\\vec a\\perp\\vec b$，则 $m=$（　　）",
+          "choices": { "A": "$-2$", "B": "$2$", "C": "$-\\dfrac12$", "D": "$\\dfrac12$" },
+          "answer": "B",
+          "key_latex": ["\\vec a=(1,2)", "\\vec a\\perp\\vec b"],
+          "kcs": ["平面向量的数量积", "向量垂直"]
+        },
+        {
+          "qid": "M06-2",
+          "type": "fill_blank",
+          "stem": "在 $\\triangle ABC$ 中，$a=3$，$b=5$，$C=120^\\circ$，则 $c=$\\_\\_\\_\\_。",
+          "choices": null,
+          "answer": "$7$",
+          "key_latex": ["C=120^\\circ"],
+          "kcs": ["余弦定理"]
+        }
+      ]
+    },
+    {
+      "page": "M07",
+      "subject": "math",
+      "features": ["dense_latex", "piecewise", "set_notation", "vectors", "roots"],
+      "layout": "single",
+      "questions": [
+        {
+          "qid": "M07-1",
+          "type": "worked_solution",
+          "stem": "已知函数 $f(x)=\\begin{cases}2^{x}-1, & x\\le 0,\\\\ \\log_2(x+1), & x>0,\\end{cases}$ 集合 $M=\\left\\{x\\in\\mathbb{R}\\ \\middle|\\ f(x)\\ge\\dfrac12\\right\\}$。（1）求集合 $M$；（2）设向量 $\\vec m=(\\sqrt3,1)$，$\\vec n=(\\cos\\theta,\\sin\\theta)$，$\\theta\\in[0,\\pi]$，若 $\\vec m\\cdot\\vec n=\\sqrt2$，求 $\\theta$。",
+          "choices": null,
+          "answer": "（1）$M=[\\sqrt2-1,+\\infty)$；（2）$\\theta=\\dfrac{5\\pi}{12}$",
+          "key_latex": [
+            "\\begin{cases}2^{x}-1, & x\\le 0\\\\ \\log_2(x+1), & x>0\\end{cases}",
+            "M=\\{x\\in\\mathbb{R}\\mid f(x)\\ge\\frac12\\}",
+            "\\vec m\\cdot\\vec n=\\sqrt2"
+          ],
+          "kcs": ["分段函数", "指数与对数不等式", "平面向量的数量积", "三角恒等变换"]
+        }
+      ]
+    },
+    {
+      "page": "M08",
+      "subject": "math",
+      "features": ["single_choice_formulas", "multi_question"],
+      "layout": "single",
+      "questions": [
+        {
+          "qid": "M08-1",
+          "type": "single_choice",
+          "stem": "函数 $f(x)=\\sin\\left(2x+\\dfrac{\\pi}{3}\\right)$ 的最小正周期为（　　）",
+          "choices": { "A": "$\\dfrac{\\pi}{2}$", "B": "$\\pi$", "C": "$2\\pi$", "D": "$4\\pi$" },
+          "answer": "B",
+          "key_latex": ["\\sin\\left(2x+\\dfrac{\\pi}{3}\\right)"],
+          "kcs": ["三角函数的周期"]
+        },
+        {
+          "qid": "M08-2",
+          "type": "single_choice",
+          "stem": "抛物线 $y^2=8x$ 的焦点到准线的距离为（　　）",
+          "choices": { "A": "$4$", "B": "$2$", "C": "$8$", "D": "$16$" },
+          "answer": "A",
+          "key_latex": ["y^2=8x"],
+          "kcs": ["抛物线的几何性质"]
+        }
+      ]
+    },
+    {
+      "page": "M09",
+      "subject": "math",
+      "features": ["multi_blank_fill"],
+      "layout": "single",
+      "questions": [
+        {
+          "qid": "M09-1",
+          "type": "fill_blank",
+          "stem": "从 $1,2,3,4,5$ 中任取两个不同的数，则两数之和为偶数的概率为\\_\\_\\_\\_；两数之积大于 $6$ 的概率为\\_\\_\\_\\_。",
+          "choices": null,
+          "answer": "$\\dfrac25$；$\\dfrac12$",
+          "key_latex": [],
+          "kcs": ["古典概型"]
+        }
+      ]
+    },
+    {
+      "page": "M10",
+      "subject": "math",
+      "features": ["long_worked_solution", "student_handwriting", "student_error"],
+      "layout": "single",
+      "questions": [
+        {
+          "qid": "M10-1",
+          "type": "worked_solution",
+          "stem": "已知数列 $\\{a_n\\}$ 满足 $a_1=1$，$a_{n+1}=2a_n+1$。（1）证明：数列 $\\{a_n+1\\}$ 是等比数列；（2）求数列 $\\{a_n\\}$ 的前 $n$ 项和 $S_n$。",
+          "choices": null,
+          "answer": "（1）$a_{n+1}+1=2(a_n+1)$，首项 2，公比 2；（2）$a_n=2^n-1$，$S_n=2^{n+1}-n-2$",
+          "student_answer": "（1）正确；（2）$S_n=2^{n+1}-n-1$（求和时漏减 1，错误）",
+          "key_latex": ["a_{n+1}=2a_n+1", "a_n=2^n-1", "S_n=2^{n+1}-n-2"],
+          "kcs": ["数列的递推关系", "等比数列的前n项和", "分组求和"]
+        }
+      ]
+    },
+    {
+      "page": "M11",
+      "subject": "math",
+      "features": ["figure_dependent", "3d_figure"],
+      "layout": "single",
+      "questions": [
+        {
+          "qid": "M11-1",
+          "type": "single_choice",
+          "stem": "如图，在长方体 $ABCD-A_1B_1C_1D_1$ 中，$AD=2$，$DC=3$，$DD_1=4$，以 $D$ 为原点建立如图所示的空间直角坐标系，则点 $B_1$ 的坐标为（　　）",
+          "choices": { "A": "$(2,3,4)$", "B": "$(3,2,4)$", "C": "$(2,4,3)$", "D": "$(4,3,2)$" },
+          "answer": "A",
+          "figure": "x 轴沿 DA，y 轴沿 DC，z 轴沿 DD1",
+          "figure_required": true,
+          "key_latex": ["ABCD-A_1B_1C_1D_1"],
+          "kcs": ["空间直角坐标系", "空间向量与立体几何"]
+        }
+      ]
+    },
+    {
+      "page": "M12",
+      "subject": "math",
+      "features": ["dense_latex", "long_worked_solution"],
+      "layout": "single",
+      "questions": [
+        {
+          "qid": "M12-1",
+          "type": "worked_solution",
+          "stem": "已知椭圆 $C:\\dfrac{x^2}{a^2}+\\dfrac{y^2}{b^2}=1\\ (a>b>0)$ 的离心率为 $\\dfrac{\\sqrt3}{2}$，且过点 $(2,1)$。（1）求 $C$ 的方程；（2）直线 $l:y=\\dfrac12x+m$ 与 $C$ 交于 $A,B$ 两点，求 $|AB|$ 的最大值。",
+          "choices": null,
+          "answer": "（1）$\\dfrac{x^2}{8}+\\dfrac{y^2}{2}=1$；（2）$|AB|_{\\max}=2\\sqrt5$（$m=0$）",
+          "key_latex": [
+            "\\dfrac{x^2}{a^2}+\\dfrac{y^2}{b^2}=1",
+            "e=\\dfrac{\\sqrt3}{2}",
+            "y=\\dfrac12x+m"
+          ],
+          "kcs": ["椭圆的标准方程", "直线与椭圆的位置关系", "弦长公式"]
+        }
+      ]
+    },
+    {
+      "page": "P01",
+      "subject": "physics",
+      "features": ["figure_dependent", "multi_blank_fill"],
+      "layout": "single",
+      "questions": [
+        {
+          "qid": "P01-1",
+          "type": "single_choice",
+          "stem": "如图，质量为 $m$ 的物块静止在倾角为 $\\theta$ 的斜面上，则斜面对物块的摩擦力大小为（　　）",
+          "choices": {
+            "A": "$mg\\sin\\theta$",
+            "B": "$mg\\cos\\theta$",
+            "C": "$mg\\tan\\theta$",
+            "D": "$mg$"
+          },
+          "answer": "A",
+          "figure": "斜面倾角 θ 与静止物块",
+          "figure_required": false,
+          "key_latex": ["mg\\sin\\theta"],
+          "kcs": ["共点力平衡", "摩擦力"]
+        },
+        {
+          "qid": "P01-2",
+          "type": "fill_blank",
+          "stem": "一物体做匀加速直线运动，初速度 $v_0=2\\,\\mathrm{m/s}$，加速度 $a=3\\,\\mathrm{m/s^2}$，则 $4\\,\\mathrm{s}$ 末速度为\\_\\_\\_\\_$\\mathrm{m/s}$，$4\\,\\mathrm{s}$ 内位移为\\_\\_\\_\\_$\\mathrm{m}$。",
+          "choices": null,
+          "answer": "14；32",
+          "key_latex": ["v_0=2\\,\\mathrm{m/s}", "a=3\\,\\mathrm{m/s^2}"],
+          "kcs": ["匀变速直线运动规律"]
+        }
+      ]
+    },
+    {
+      "page": "P02",
+      "subject": "physics",
+      "features": ["figure_dependent", "circuit"],
+      "layout": "single",
+      "questions": [
+        {
+          "qid": "P02-1",
+          "type": "fill_blank",
+          "stem": "如图所示电路，电源电动势 $E=6\\,\\mathrm{V}$，内阻 $r=1\\,\\Omega$，$R_1=2\\,\\Omega$，$R_2=3\\,\\Omega$。闭合开关 S 后，电流表示数为\\_\\_\\_\\_A，$R_2$ 两端电压为\\_\\_\\_\\_V。",
+          "choices": null,
+          "answer": "1；3",
+          "figure": "R1 与 R2 串联，电流表串联在干路",
+          "figure_required": true,
+          "key_latex": ["E=6\\,\\mathrm{V}", "r=1\\,\\Omega"],
+          "kcs": ["闭合电路欧姆定律", "串联电路"]
+        }
+      ]
+    }
+  ]
+}
