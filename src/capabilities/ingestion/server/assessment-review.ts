@@ -40,6 +40,7 @@ import {
   projectAssessmentReviewMedia,
   projectAssessmentReviewQuestion,
   readAssessmentReviewStage,
+  readFrozenAssessmentReviewContract,
 } from './assessment-review-evidence';
 import { ingestionCaptureIdentity } from './capture-identity';
 import {
@@ -129,7 +130,14 @@ async function readTarget(
     admission_generation: lifecycle.scoring_admission_generation,
     policy_id: ASSESSMENT_REVIEW_POLICY,
   };
-  return { block, session, row, lifecycle, revision, binding };
+  return {
+    block,
+    session,
+    row,
+    lifecycle,
+    revision: { ...revision, ...readFrozenAssessmentReviewContract(revision) },
+    binding,
+  };
 }
 
 /** Server-owned identity, before reservation; the worker repeats the frozen comparisons. */

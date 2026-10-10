@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { canonicalHash } from '@/core/migration/canonical';
 import { StructuredQuestion } from '@/core/schema/structured_question';
-import { normalizeQuestionRowToContract } from '@/kernel/records/assessment-normalization';
+import {
+  contractIntegrityDigest,
+  normalizeQuestionRowToContract,
+} from '@/kernel/records/assessment-normalization';
 import {
   ASSESSMENT_REVIEW_POLICY,
   type AssessmentReviewBindingT,
@@ -10,6 +13,7 @@ import {
   projectAssessmentReviewMedia,
   projectAssessmentReviewQuestion,
   readAssessmentReviewStage,
+  readFrozenAssessmentReviewContract,
 } from './assessment-review-evidence';
 
 const binding: AssessmentReviewBindingT = {
@@ -32,7 +36,85 @@ const evidence = {
   task_runs: [],
 };
 
+function jsonbOrder(value: unknown): unknown {
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) return value.map(jsonbOrder);
+  if (value !== null && typeof value === 'object')
+    return Object.fromEntries(
+      Object.entries(value)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(
+          ([a], [b]) =>
+            Buffer.byteLength(a) - Buffer.byteLength(b) ||
+            Buffer.compare(Buffer.from(a), Buffer.from(b)),
+        )
+        .map(([key, entry]) => [key, jsonbOrder(entry)]),
+    );
+  return value;
+}
+
 describe('assessment review paid-work fence', () => {
+  it('preserves the original frozen scoring and private materials across JSONB key order and revision metadata roundtrip', () => {
+    for (const structured of [
+      null,
+      StructuredQuestion.parse({
+        id: 'review-part',
+        role: 'standalone',
+        source: 'vlm_structure',
+        prompt_text: 'What is 6 times 7? Explain why addition alone is insufficient.',
+        answers: ['42'],
+        options: [
+          { label: 'A', text: '41' },
+          { label: 'B', text: '42' },
+        ],
+      }),
+    ]) {
+      const contract = normalizeQuestionRowToContract({
+        id: 'review-question',
+        kind: structured ? 'choice' : 'calculation',
+        prompt_md: 'What is 6 times 7? Explain why addition alone is insufficient.',
+        reference_md: structured ? 'B' : '42',
+        judge_kind_override: 'exact',
+        choices_md: null,
+        rubric_json: { private_marking_notes: 'PRIVATE: six groups of seven, not 6 + 7.' },
+        structured,
+        source: 'vision_paper',
+      });
+      const persisted = {
+        ...contract,
+        structure: jsonbOrder(contract.structure),
+        response_spec: jsonbOrder(contract.response_spec),
+        scoring_basis: jsonbOrder(contract.scoring_basis),
+        execution_plan: jsonbOrder(contract.execution_plan),
+        revision_id: 'immutable-revision',
+        published_at: new Date('2026-10-10T00:00:00Z'),
+        supersedes_revision_id: null,
+        published_by: undefined,
+      };
+      expect(contractIntegrityDigest(persisted)).not.toBe(contract.integrity_digest);
+      const frozen = readFrozenAssessmentReviewContract(persisted);
+      expect(contractIntegrityDigest(frozen)).toBe(contract.integrity_digest);
+      expect(frozen.integrity_digest).toBe(persisted.integrity_digest);
+      for (const key of ['structure', 'response_spec', 'scoring_basis', 'execution_plan'] as const)
+        expect(frozen[key]).toEqual(contract[key]);
+      expect(projectAssessmentReviewQuestion(frozen)?.prompt_md).not.toContain('PRIVATE');
+      expect(persisted.published_at).toEqual(new Date('2026-10-10T00:00:00Z'));
+
+      const changed = structuredClone(contract);
+      changed.structure.parts[0].prompt_md += ' changed';
+      expect(() => readFrozenAssessmentReviewContract(changed)).toThrow('integrity mismatch');
+      const changedScore = structuredClone(contract);
+      changedScore.scoring_basis.units[0].points = 99;
+      expect(() => readFrozenAssessmentReviewContract(changedScore)).toThrow('integrity mismatch');
+      const stripped = structuredClone(contract);
+      Reflect.set(stripped.scoring_basis.units[0], 'unknown_frozen_rule', 'PRIVATE KEY');
+      expect(() => readFrozenAssessmentReviewContract(stripped)).toThrow('integrity mismatch');
+      const defaulted = structuredClone(contract);
+      Reflect.deleteProperty(defaulted.scoring_basis.units[0], 'requires_group_evidence');
+      expect(() => readFrozenAssessmentReviewContract(defaulted)).toThrow('integrity mismatch');
+    }
+  });
+
   it('compares the printed structured key that will be admitted even when the row has another reference', () => {
     for (const reference of [null, '41']) {
       const contract = normalizeQuestionRowToContract({

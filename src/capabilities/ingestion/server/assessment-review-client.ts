@@ -30,6 +30,7 @@ export async function withinAssessmentReviewExecutionClient<T>(
     typeof shared.typeArrayMap === 'object'
       ? { ...shared.typeArrayMap }
       : {};
+  let connectionLost = false;
   // The driver recognizes its resolved options by shared. Preserve the injected
   // target, socket, TLS and callbacks without consulting process-wide PG env,
   // while giving this client independent mutable type/parameter/retry state.
@@ -45,6 +46,10 @@ export async function withinAssessmentReviewExecutionClient<T>(
     parameters: {},
     pass,
     max: 1,
+    onclose: (connectionId: number) => {
+      connectionLost = true;
+      options.onclose?.(connectionId);
+    },
   };
   // postgres 3.4.9 accepts these resolved options through its shared fast path;
   // its public constructor types only describe unresolved scalar host/port.
@@ -52,6 +57,41 @@ export async function withinAssessmentReviewExecutionClient<T>(
     Record<string, postgres.PostgresType>
   >;
   const client = postgres(transportOptions);
+  const reserve = client.reserve.bind(client);
+  client.reserve = async () => {
+    if (connectionLost) throw new Error('Assessment review execution connection was lost');
+    const reserved = await reserve();
+    // A stale ReservedSql writes directly to its closed connection slot in
+    // postgres 3.4.9. It neither reconnects nor rejects that pending write.
+    const assertConnected = () => {
+      if (connectionLost) throw new Error('Assessment review execution connection was lost');
+    };
+    return new Proxy(reserved, {
+      apply(target, receiver, args) {
+        assertConnected();
+        return Reflect.apply(target, receiver, args);
+      },
+      get(target, key, receiver) {
+        const value = Reflect.get(target, key, receiver);
+        // The shared lock helper installs immutable begin/savepoint closures.
+        // Proxy invariants require returning those exact functions; their SQL
+        // calls still pass through this guarded reserved handle.
+        const descriptor = Reflect.getOwnPropertyDescriptor(target, key);
+        if (descriptor && !descriptor.configurable && 'value' in descriptor && !descriptor.writable)
+          return value;
+        if (typeof value !== 'function') return value;
+        return new Proxy(value, {
+          apply(method, methodReceiver, args) {
+            // Closing the whole client owns disposal after loss. Releasing the
+            // stale wrapper would return a dead or replacement slot to a queue.
+            if (key === 'release' && connectionLost) return;
+            assertConnected();
+            return Reflect.apply(method, methodReceiver, args);
+          },
+        });
+      },
+    });
+  };
   type Outcome = { ok: true; value: T } | { ok: false; error: unknown };
   const outcome = await Promise.resolve()
     .then(() => work(client))

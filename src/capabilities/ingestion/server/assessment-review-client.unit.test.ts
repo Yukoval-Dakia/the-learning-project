@@ -1,4 +1,4 @@
-import { EventEmitter } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import net from 'node:net';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { withinAssessmentReviewExecutionClient } from './assessment-review-client';
@@ -184,9 +184,10 @@ describe('assessment review dedicated execution client (offline installed driver
           }
         });
         await successorEntered;
-        // This reproduces the shared helper's stale finally cleanup against the
-        // real driver's reconnected slot. It is confined to this old client.
-        await old.unsafe('SELECT pg_advisory_unlock(1, 2)');
+        // The old wrapper remains invalid even after its client slot reconnects.
+        await expect(async () => old.unsafe('SELECT pg_advisory_unlock(1, 2)')).rejects.toThrow(
+          'Assessment review execution connection was lost',
+        );
         old.release();
         await oldClient.unsafe('SELECT old_released_slot');
       });
@@ -207,6 +208,51 @@ describe('assessment review dedicated execution client (offline installed driver
     } finally {
       release();
       await successor;
+      await f.source.end({ timeout: 0 });
+    }
+  });
+
+  it('rejects stale witness and cleanup queries after close without reconnecting or writing to a null socket', async () => {
+    const f = offlineTransport();
+    try {
+      await f.source.unsafe('SELECT original_pool');
+      await withinAssessmentReviewExecutionClient(f.source, async (client) => {
+        await client.unsafe('SELECT execution_owner');
+        const reserved = await client.reserve();
+        await reserved.unsafe('SELECT pg_try_advisory_lock(1, 2)');
+        Object.defineProperty(reserved, 'begin', {
+          value: async () => reserved.unsafe('BEGIN'),
+        });
+        await reserved.begin(async () => {});
+        await reserved.unsafe('ROLLBACK');
+        const backend = f.sockets.at(-1);
+        if (!backend) throw new Error('Missing execution backend');
+        const closed = once(backend, 'close');
+        backend.destroy();
+        await closed;
+        const socketsBefore = f.sockets.length;
+        const queriesBefore = f.events.length;
+        for (const query of ['SELECT pg_backend_pid()', 'SELECT pg_advisory_unlock(1, 2)'])
+          await expect(async () => reserved.unsafe(query)).rejects.toThrow(
+            'Assessment review execution connection was lost',
+          );
+        await expect(async () => reserved`SELECT pg_backend_pid()`).rejects.toThrow(
+          'Assessment review execution connection was lost',
+        );
+        await expect(async () => reserved.begin(async () => {})).rejects.toThrow(
+          'Assessment review execution connection was lost',
+        );
+        reserved.release();
+        await expect(client.reserve()).rejects.toThrow(
+          'Assessment review execution connection was lost',
+        );
+        expect(f.sockets).toHaveLength(socketsBefore);
+        expect(f.events).toHaveLength(queriesBefore);
+      });
+      await f.source.unsafe('SELECT original_pool_after_loss');
+      expect(f.events.at(-1)?.pid).toBe(f.sockets[0].pid);
+      expect(f.sockets.slice(1).every((socket) => socket.closed)).toBe(true);
+    } finally {
       await f.source.end({ timeout: 0 });
     }
   });

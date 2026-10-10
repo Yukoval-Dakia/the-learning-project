@@ -5,7 +5,43 @@ import type {
   ResponseSpecT,
   ScoringBasisT,
 } from '@/core/schema/assessment';
-import { isPublicSharedMaterial } from '@/core/schema/assessment';
+import {
+  ExecutionPlan,
+  QuestionGroupStructure,
+  ResponseSpec,
+  ScoringBasis,
+  isPublicSharedMaterial,
+} from '@/core/schema/assessment';
+import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
+
+/** Restore the normalizer's schema order after JSONB without changing frozen content. */
+export function readFrozenAssessmentReviewContract(revision: {
+  structure: unknown;
+  response_spec: unknown;
+  scoring_basis: unknown;
+  execution_plan: unknown;
+  integrity_digest: string;
+}) {
+  const frozen = {
+    structure: revision.structure,
+    response_spec: revision.response_spec,
+    scoring_basis: revision.scoring_basis,
+    execution_plan: revision.execution_plan,
+  };
+  const parsed = {
+    structure: QuestionGroupStructure.parse(frozen.structure),
+    response_spec: ResponseSpec.parse(frozen.response_spec),
+    scoring_basis: ScoringBasis.parse(frozen.scoring_basis),
+    execution_plan: ExecutionPlan.parse(frozen.execution_plan),
+  };
+  // Schema defaults and stripping unknown fields must not repair a changed revision.
+  if (
+    canonicalHash(frozen) !== canonicalHash(parsed) ||
+    contractIntegrityDigest(parsed) !== revision.integrity_digest
+  )
+    throw new Error('Frozen assessment review contract integrity mismatch');
+  return { ...parsed, integrity_digest: revision.integrity_digest };
+}
 
 export function projectAssessmentReviewMedia(structure: QuestionGroupStructureT) {
   const [part] = structure.parts;
