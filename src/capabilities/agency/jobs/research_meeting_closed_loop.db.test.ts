@@ -1,39 +1,7 @@
-// YUK-789 — 闭环回归保护：nightly → brief(proposal) → accept → probe → 真 judge → reconcile
-// 的**全链** DB 测试。
-//
-// WHY THIS FILE EXISTS (the regression it locks):
-// The chain was previously covered by three OVERLAPPING partial tests, none of which held
-// both ends real at once:
-//   - research_meeting_nightly.unit.test.ts stubs all 8 deps (`{} as never` for Db);
-//   - teaching-brief.db.test.ts seeds via writeAiProposal directly (no nightly, no reconcile);
-//   - reconcile.db.test.ts bypasses nightly AND the HTTP route;
-//   - probe-answer.db.test.ts `vi.mock`s `createDefaultJudgeInvoker` — i.e. it mocks the exact
-//     chokepoint where review PR #705 found a CRITICAL: production was a stub that always
-//     returned coarse_outcome='unsupported' while the test double returned a structurally
-//     complete result. Everything was green and production was completely dead.
-// The failure MODE is "the test double is more complete than the production implementation".
-// The only way to see it is to keep every production seam real and replace exactly ONE port.
-//
-// THE ONE PORT: the Agent SDK startup/query process boundary to the model.
-// Everything downstream of it is production code: runTask (provider resolution, ai_task_runs +
-// cost_ledger writes, structured-output dispatch), induceConjecture's self-consistency,
-// writeAiProposal, acceptConjectureProposal, serveProbeOnce, the probe-answer HTTP route,
-// createDefaultJudgeInvoker → resolveQuestionJudgeRoute → runMultimodalDirectJudge,
-// answerProbe, and reconcileConjecturePredictions.
-//
-// THREE SEAM ASSERTIONS (the joints that partial tests could never see):
-//   S1 the nightly proposal payload SHAPE is the one `acceptConjectureProposal` reads
-//      (probe_md / probe_reference_md / knowledge_id land on the served question row);
-//   S2 the question row's `reference_md` is what the REAL judge consumes (it appears in the
-//      payload handed to the model port), and `judge_kind_override` resolves to a real route
-//      (`MultimodalDirectJudgeTask` shows up in ai_task_runs);
-//   S3 the `experimental:probe_result` written by the route is what reconcile consumes
-//      (`experimental:prediction_score` lands + the typed ledger advances).
-//
-// RED/GREEN CONTRACT (YUK-789 acceptance #1): breaking any one seam in production code MUST
-// turn this file red. Verified by cutting `serveProbeOnce`'s referenceMd (S1/S2 fail) and by
-// making `mapOutcome` return null (S3 fails). A closed-loop E2E that cannot go red is just
-// another silently-passing test — exactly what this ticket exists to eliminate.
+// YUK-789 — research-meeting closed-loop fixture. After YUK-1401 only the concurrency
+// invariant remains: concurrent deliveries serialize before the completion guard and the
+// model call. The model port (Agent SDK / pi adapter) is the only fake; the rest is
+// production code.
 
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -336,14 +304,6 @@ async function taskKindCounts(): Promise<Record<string, number>> {
   return counts;
 }
 
-// Both HTTP hops go through the COMPOSITION ROOT, not through a directly-imported
-// handler (codex review P1). Importing `POST` from the capability module would keep this
-// test green even if the manifest stopped declaring the route or `toHonoPath` mangled the
-// `[id]` → `:id` conversion — the same "the seam is not covered" defect this whole file
-// exists to prevent — and it would also be a cross-capability deep import, which
-// src/capabilities/AGENTS.md forbids (capabilities talk through manifests only).
-const INTERNAL_TOKEN = 'closed-loop-test-token';
-
 describe('closed loop: nightly → proposal → accept → probe → real judge → reconcile (YUK-789)', () => {
   beforeEach(async () => {
     await resetDb();
@@ -358,8 +318,6 @@ describe('closed loop: nightly → proposal → accept → probe → real judge 
     vi.stubEnv('AI_PROVIDER_OVERRIDE', '');
     vi.stubEnv('AI_PROVIDER_MODEL', '');
     vi.stubEnv('VISION_JUDGE_PROVIDER', '');
-    // The composition root's /api/* middleware compares against this.
-    vi.stubEnv('INTERNAL_TOKEN', INTERNAL_TOKEN);
     __setPiAdapterForTests(fakePiAdapter());
   });
 

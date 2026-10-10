@@ -8,10 +8,11 @@ const LANE_NAMES = ['static', 'unit', 'db', 'migration', 'build', 'parity'];
 // core, the crate, its TS twins, dependencies or this gate change (and on full runs).
 const PARITY_PATHS = [
   /^crates\/calibration-native\//,
-  /^src\/core\/(?:poly-exp|coldstart-solver|theta-grid)[^/]*\.ts$/,
+  /^src\/core\/(?:poly-exp|coldstart-solver|theta-grid|theta)[^/]*\.ts$/,
   /^src\/server\/calibration\//,
   /^package\.json$/,
   /^pnpm-lock\.yaml$/,
+  /^\.node-version$/,
   /^vitest\.(?:shared|unit\.config)\.ts$/,
   /^\.github\/workflows\/ci-gate\.yml$/,
   /^scripts\/ci\/gate-plan\.mjs$/,

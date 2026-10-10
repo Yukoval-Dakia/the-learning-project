@@ -152,8 +152,8 @@ pnpm build
 ```
 
 After push, the exact-head GitHub `CI Gate` runs separate static, audit, unit, DB,
-migration, build and parity lanes. Every code change runs all retained invariant files;
-only docs-only changes skip those lanes. The exact include lists live in
+migration, build and parity lanes. Every code change runs all retained invariant files in
+the unit/DB lanes; only docs-only changes skip them. The parity lane is path-selected (below). The exact include lists live in
 `vitest.shared.ts`, and `audit:partition` rejects missing, duplicate or unassigned
 files and direct unmocked DB imports in unit files. The audit lanes run exactly the
 commands listed in `.github/workflows/ci-gate.yml`: schema, dependencies, partition,
@@ -166,7 +166,8 @@ both SPA and Start browser artifacts, and verifies frontdoor token/exemptions vi
 an isolated listener. The parity lane runs `cargo test` plus the native/WASM/JS
 parity suites with `REQUIRE_RUST_PARITY=1` whenever the crate, its TS twins
 (`src/core/poly-exp*`, `coldstart-solver*`, `theta-grid*`, `src/server/calibration/`),
-dependencies, vitest config or the gate itself change, and on every main push; the
+dependencies, `.node-version`, vitest config or the gate itself change, and on every main
+push or unknown/invalid base; the
 plan lives in `scripts/ci/gate-plan.mjs`. The explicit local audit commands
 remain useful for clear attribution, but they do not replace the GitHub gate.
 

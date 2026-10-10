@@ -1,4 +1,4 @@
-export type GateLane = 'static' | 'unit' | 'db' | 'migration' | 'build';
+export type GateLane = 'static' | 'unit' | 'db' | 'migration' | 'build' | 'parity';
 
 export interface GatePlan {
   schema_version: 1;
