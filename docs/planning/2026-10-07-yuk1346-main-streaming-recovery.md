@@ -221,3 +221,10 @@ Normal merge of main `7bc216509` into `532f818a0`. Conflicts only PLAN/handoff. 
 - typecheck: exit 0; `.cache/yuk1346-main1599/typecheck.log`; SHA256 `8366207267355d3e3d5bf3bf6e8c94c5f93f6078c34f08973fa2b38cdda6cc92`.
 - lint: exit 0; `.cache/yuk1346-main1599/lint.log`; SHA256 `e71926fed8b65405ddc8521683e9c66391999206908f30a55d04a2b5d3f811f8`.
 - build: exit 0; `.cache/yuk1346-main1599/build.log`; SHA256 `258ca803b8f965b97bf4cb5e0ccd253d6f4b50caae6c8ab5a1c92f74760f810e`.
+
+
+## 2026-10-10 main integration for current runtime acceptance
+
+Normal merge b39ad01daba36327b6c6883655d578f394ce56b7 integrates main081b64779 into PR1588/8071b277d with no overlapping changed files or conflicts. The derivation policy, live-turn context, memory client/triggers and reconcile fence remain byte-identical to8071. Landed Token Plan tool capability, UI and invariant-test pruning changes come from main; no UI was authored here.
+
+Frozen install, retained scoped tests (2 files,3 tests), typecheck, lint, build and four affected audits pass. [Exact evidence](evidence/2026-10-10-yuk1346-main081-integration.json) binds commands and log hashes. No shared runtime, DB, provider, deployment or third review ran. Fresh exact-head CI and runtime privacy/memory/brief acceptance remain open. The old fea545a driver requires the retired chat-review gate and must be adapted before a fresh isolated run; old unknown paid identities remain preserved.
