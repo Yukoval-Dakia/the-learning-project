@@ -1019,6 +1019,11 @@ async function runProcess(options: {
   phase: string;
   input?: string;
   inputFile?: string;
+  // 'prefix' models commands documented to consume only a prefix of stdin
+  // (pg_restore -l reads the archive header, then exits): an early stdin
+  // close is tolerated while exit-code, signal, timeout and output gates
+  // apply unchanged. 'full' (default) still requires complete delivery.
+  inputConsumption?: 'full' | 'prefix';
   output?: ProcessOutput;
   env?: Record<string, string>;
   timeoutMs?: number;
@@ -1075,10 +1080,22 @@ async function runProcess(options: {
     if (output.kind === 'text') text += decoder.end();
   };
   const writeInput = async () => {
-    if (options.inputFile) await pipeline(createReadStream(options.inputFile), child.stdin);
+    const earlyInputClose = (error: unknown) =>
+      options.inputConsumption === 'prefix' &&
+      error instanceof Error &&
+      'code' in error &&
+      ((error as NodeJS.ErrnoException).code === 'EPIPE' ||
+        (error as NodeJS.ErrnoException).code === 'ERR_STREAM_PREMATURE_CLOSE');
+    if (options.inputFile)
+      await pipeline(createReadStream(options.inputFile), child.stdin).catch((error) => {
+        if (!earlyInputClose(error)) throw error;
+      });
     else
       await new Promise<void>((resolveInput, reject) => {
-        child.stdin.once('error', reject);
+        child.stdin.once('error', (error) =>
+          earlyInputClose(error) ? resolveInput() : reject(error),
+        );
+        if (options.inputConsumption === 'prefix') child.stdin.once('close', resolveInput);
         child.stdin.end(options.input ?? '', resolveInput);
       });
   };
@@ -1792,6 +1809,7 @@ export async function captureParitySource(options: {
         command: 'docker',
         args: ['exec', '-i', options.connection.container, 'pg_restore', '-l'],
         inputFile: dumpPath,
+        inputConsumption: 'prefix',
         phase: 'toc',
       }),
     );
@@ -2240,6 +2258,7 @@ export async function runRestoreDrill(options: {
         args: ['run', '--pull=never', '--rm', '--network=none', '-i', image, 'pg_restore', '-l'],
         phase: 'toc',
         inputFile: stagedDump,
+        inputConsumption: 'prefix',
       });
       tocCount(text);
       process.stdout.write(text);
@@ -2330,6 +2349,7 @@ export async function runRestoreDrill(options: {
         args: ['exec', '-i', connection.container, 'pg_restore', '-l'],
         phase: 'toc',
         inputFile: stagedDump,
+        inputConsumption: 'prefix',
       });
       const count = tocCount(toc);
       if (receipt.source && count !== receipt.source.toc_entries)
