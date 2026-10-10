@@ -15,7 +15,10 @@ import {
   cleanupOwnedChildren,
   errorDiagnostic,
   fixtureMessageSchema,
+  metafileExternals,
   nonterminalDurableWork,
+  oldArtifactDependencyDrift,
+  requireSpecifiers,
   sanitizeDiagnostic,
   waitForFixtureMessage,
 } from './fixture-process';
@@ -343,11 +346,20 @@ async function oldArtifact() {
       });
       expect(sha(source.stdout)).toBe(manifest.files[file]);
     }
-    expect(sha(await readFile('pnpm-lock.yaml'))).toBe(manifest.files['pnpm-lock.yaml']);
+    // The artifact digest pins everything bundled; only its runtime requires reach node_modules.
+    const { drift, runtimePackages } = oldArtifactDependencyDrift({
+      baseLock: (
+        await exec('git', ['show', `${OLD_BASE}:pnpm-lock.yaml`], { maxBuffer: 20 * 1024 * 1024 })
+      ).stdout,
+      currentLock: await readFile('pnpm-lock.yaml', 'utf8'),
+      runtimeSpecifiers: requireSpecifiers(await readFile(artifact, 'utf8')),
+    });
+    expect(drift).toEqual([]);
     evidence.push({
       oldBase: OLD_BASE,
       oldArtifact: artifact,
       oldSha256: manifest.artifact.sha256,
+      runtimePackages,
       manifest,
     });
     return artifact;
@@ -371,20 +383,46 @@ async function oldArtifact() {
   await writeFile(`${directory}/source.tar`, archive.stdout);
   await exec('tar', ['-xf', `${directory}/source.tar`, '-C', directory]);
   await symlink(resolve('node_modules'), `${directory}/node_modules`, 'dir');
-  expect(sha(await readFile(`${directory}/pnpm-lock.yaml`))).toBe(
-    sha(await readFile('pnpm-lock.yaml')),
-  );
   const path = `${directory}/worker.cjs`;
   const built = await exec(
     resolve('node_modules/.bin/esbuild'),
-    ['tests/dbos-prune/worker.ts', ...buildArgs, `--outfile=${path}`],
+    [
+      'tests/dbos-prune/worker.ts',
+      ...buildArgs,
+      `--outfile=${path}`,
+      `--metafile=${directory}/metafile.json`,
+    ],
     { cwd: directory },
   );
+  const inputs = z
+    .object({
+      inputs: z.record(
+        z.string(),
+        z
+          .object({
+            imports: z.array(
+              z.object({ path: z.string(), external: z.boolean().optional() }).passthrough(),
+            ),
+          })
+          .passthrough(),
+      ),
+    })
+    .passthrough()
+    .parse(JSON.parse(await readFile(`${directory}/metafile.json`, 'utf8'))).inputs;
+  const { drift, bundledPackages, runtimePackages } = oldArtifactDependencyDrift({
+    baseLock: await readFile(`${directory}/pnpm-lock.yaml`, 'utf8'),
+    currentLock: await readFile('pnpm-lock.yaml', 'utf8'),
+    bundledFiles: Object.keys(inputs),
+    runtimeSpecifiers: metafileExternals(inputs),
+  });
+  expect(drift).toEqual([]);
   evidence.push({
     oldBase: OLD_BASE,
     archiveSha256: sha(archive.stdout),
     oldArtifact: path,
     oldSha256: sha(await readFile(path)),
+    bundledPackages,
+    runtimePackages,
     build: built,
   });
   return path;

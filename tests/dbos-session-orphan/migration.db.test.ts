@@ -2,7 +2,6 @@ import { type ChildProcess, execFile, spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises';
-import { builtinModules } from 'node:module';
 import { type Socket, createConnection, createServer } from 'node:net';
 import { resolve } from 'node:path';
 import { promisify } from 'node:util';
@@ -20,7 +19,10 @@ import {
   errorDiagnostic,
   fixtureErrorMessage,
   fixtureMessageSchema,
+  metafileExternals,
   nonterminalDurableWork,
+  oldArtifactDependencyDrift,
+  requireSpecifiers,
   sanitizeDiagnostic,
   waitForFixtureMessage,
 } from '../dbos-review-orphan/fixture-process';
@@ -67,39 +69,6 @@ function safeUrl() {
   return url;
 }
 const sha = (data: string | Buffer) => createHash('sha256').update(data).digest('hex');
-
-// Old consumers run against the current node_modules. Instead of freezing the whole lockfile
-// (which fails on any unrelated dependency change), pin exactly what the old artifact uses:
-// bundled packages at the version the base resolved, runtime packages at identical pins.
-const pinnedVersions = (lock: string, name: string) =>
-  [
-    ...new Set(
-      [
-        ...lock.matchAll(
-          new RegExp(`^  '?${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}@([^':(]+)`, 'gm'),
-        ),
-      ].map((m) => m[1]),
-    ),
-  ].sort();
-const packageName = (specifier: string) =>
-  specifier
-    .split('/')
-    .slice(0, specifier.startsWith('@') ? 2 : 1)
-    .join('/');
-function expectRuntimePackagesPinned(specifiers: string[], baseLock: string, currentLock: string) {
-  const runtime = new Set(
-    specifiers
-      .filter((s) => !s.startsWith('.') && !s.startsWith('node:'))
-      .map(packageName)
-      .filter((name) => !builtinModules.includes(name)),
-  );
-  for (const name of runtime) {
-    expect(pinnedVersions(currentLock, name), `${name} runtime pin`).toEqual(
-      pinnedVersions(baseLock, name),
-    );
-  }
-  return [...runtime].sort();
-}
 function worker(
   options: {
     id?: string;
@@ -866,12 +835,14 @@ async function verifiedArtifact(kind: 'prune' | 'review' | 'conversation' | 'pla
       expect(sha(original.stdout), path).toBe(digest);
     }
     // The artifact digest pins everything bundled; only its runtime requires reach node_modules.
-    const runtimePackages = expectRuntimePackagesPinned(
-      [...(await readFile(artifact, 'utf8')).matchAll(/require\("([^"]+)"\)/g)].map((m) => m[1]),
-      (await exec('git', ['show', `${base}:pnpm-lock.yaml`], { maxBuffer: 24 * 1024 * 1024 }))
-        .stdout,
-      await readFile('pnpm-lock.yaml', 'utf8'),
-    );
+    const { drift, runtimePackages } = oldArtifactDependencyDrift({
+      baseLock: (
+        await exec('git', ['show', `${base}:pnpm-lock.yaml`], { maxBuffer: 24 * 1024 * 1024 })
+      ).stdout,
+      currentLock: await readFile('pnpm-lock.yaml', 'utf8'),
+      runtimeSpecifiers: requireSpecifiers(await readFile(artifact, 'utf8')),
+    });
+    expect(drift).toEqual([]);
     evidence.push({ kind, base, artifact, expected, manifest, runtimePackages });
     return artifact;
   }
@@ -922,27 +893,13 @@ async function verifiedArtifact(kind: 'prune' | 'review' | 'conversation' | 'pla
     })
     .passthrough()
     .parse(JSON.parse(await readFile(`${archived}/metafile.json`, 'utf8')));
-  const baseLock = await readFile(`${archived}/pnpm-lock.yaml`, 'utf8');
-  const currentLock = await readFile('pnpm-lock.yaml', 'utf8');
-  const bundledPackages = new Set<string>();
-  for (const file of Object.keys(inputs.inputs).filter((p) => p.includes('node_modules'))) {
-    const store = /node_modules\/\.pnpm\/([^/]+)\//.exec(file)?.[1];
-    expect(store, `${file} resolves through the pnpm store`).toBeDefined();
-    bundledPackages.add((store ?? '').split('_')[0].replace('+', '/'));
-  }
-  for (const pkg of bundledPackages) {
-    const at = pkg.lastIndexOf('@');
-    const [name, version] = [pkg.slice(0, at), pkg.slice(at + 1)];
-    expect(pinnedVersions(baseLock, name), `${name} pinned at base`).toContain(version);
-    expect(pinnedVersions(currentLock, name), `${name} installed now`).toContain(version);
-  }
-  const runtimePackages = expectRuntimePackagesPinned(
-    Object.values(inputs.inputs).flatMap((input) =>
-      input.imports.filter((i) => i.external).map((i) => i.path),
-    ),
-    baseLock,
-    currentLock,
-  );
+  const { drift, bundledPackages, runtimePackages } = oldArtifactDependencyDrift({
+    baseLock: await readFile(`${archived}/pnpm-lock.yaml`, 'utf8'),
+    currentLock: await readFile('pnpm-lock.yaml', 'utf8'),
+    bundledFiles: Object.keys(inputs.inputs),
+    runtimeSpecifiers: metafileExternals(inputs.inputs),
+  });
+  expect(drift).toEqual([]);
   const sources: Record<string, string> = {};
   for (const file of Object.keys(inputs.inputs).filter((p) => !p.includes('node_modules'))) {
     sources[file] = sha(await readFile(`${archived}/${file}`));
@@ -956,7 +913,7 @@ async function verifiedArtifact(kind: 'prune' | 'review' | 'conversation' | 'pla
     artifact: path,
     artifactSha256: sha(await readFile(path)),
     archiveSha256: sha(archive.stdout),
-    bundledPackages: [...bundledPackages].sort(),
+    bundledPackages,
     runtimePackages,
     sources,
   });
