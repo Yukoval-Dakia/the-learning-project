@@ -103,6 +103,19 @@ function normalizeMathDelimiters(source: string): string {
   );
 }
 
+export function assetIdFromContentUrl(src: string | undefined): string | null {
+  if (!src) return null;
+  const match = /^\/api\/assets\/([^/]+)\/content(?:[?#].*)?$/.exec(src);
+  if (!match?.[1]) return null;
+  try {
+    return decodeURIComponent(match[1]);
+  } catch {
+    return null;
+  }
+}
+
+type MarkdownImageProps = ComponentProps<'img'> & { node?: unknown };
+
 /** Resolve protected source_asset URLs through apiFetch before handing bytes to <img>. */
 function MarkdownImage({ node: _node, src, alt, ...props }: MarkdownImageProps): ReactElement {
   const assetId = assetIdFromContentUrl(src);
