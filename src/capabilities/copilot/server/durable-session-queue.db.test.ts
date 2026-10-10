@@ -1,21 +1,26 @@
 import { randomUUID } from 'node:crypto';
-
 import { and, asc, eq } from 'drizzle-orm';
 import type { PgBoss } from 'pg-boss';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-
 import { copilotCapability } from '@/capabilities/copilot/manifest';
-import { job_events } from '@/db/schema';
+import { assessment_submission, event, job_events } from '@/db/schema';
 import * as agentRunner from '@/server/ai/runner';
 import { _resetBossForTests, fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
 import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
 import { writeJobEvent } from '@/server/events/writer';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
+import * as runtimeEnv from '@/server/runtime-env';
+import { nativeSoloHttpFixture } from '../../../../tests/fixtures/native-solo-http';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
+import { POST as sendMessage } from '../api/chat';
+import { CopilotDurableRunResponseSchema, CopilotTurnsResponseSchema } from '../api/contracts';
+import { GET as readConversation } from '../api/turns';
+import { writeCopilotInputEvent } from './conversation-writes';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import {
   type CopilotAcceptedJobData,
   type CopilotDurableAcceptance,
+  type CopilotRunJobData,
   dispatchSessionHead,
   hashCopilotDurableInput,
   reserveCopilotDurableAcceptance,
@@ -46,8 +51,9 @@ async function accept(
   label: string,
   sessionId = SESSION_ID,
   assertActive?: () => void,
+  policy?: 'allow' | 'answer_only',
 ): Promise<CopilotDurableAcceptance> {
-  const jobData = richJobData(label);
+  const jobData = { ...richJobData(label), ...(policy ? { derivation_policy: policy } : {}) };
   const result = await reserveCopilotDurableAcceptance(
     testDb(),
     {
@@ -87,6 +93,85 @@ async function settleWithoutWorker(boss: PgBoss, acceptance: CopilotDurableAccep
 }
 
 describe('durable Copilot session FIFO — real pg-boss contract', () => {
+  it('rejects answer-only review attachments before formal submission or assistance capture while preserving allow intake', async () => {
+    vi.spyOn(runtimeEnv, 'shouldEnqueueBackgroundJobs').mockReturnValue(true);
+    const fixture = await nativeSoloHttpFixture(testDb());
+    const reviewAnswer = {
+      authorize_submission: true as const,
+      question_id: fixture.id,
+      assessment: fixture.assessment,
+      reasoning_trace: '仅探索控制变量、证据不足和例外分支，不能推断独立掌握。'.repeat(30),
+    };
+    const beforeEvents = await testDb().select().from(event);
+    const beforeSubmissions = await testDb().select().from(assessment_submission);
+    const request = (policy: 'allow' | 'answer_only') =>
+      new Request('http://test/api/copilot/chat', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': randomUUID() },
+        body: JSON.stringify({
+          triggered_by: 'chat',
+          user_message: '原件仅用于本次探索，不保存学习证据。',
+          derivation_policy: policy,
+          review_answer: reviewAnswer,
+        }),
+      });
+    expect((await sendMessage(request('answer_only'), {})).status).toBe(400);
+    await expect(
+      writeCopilotInputEvent(testDb(), {
+        sessionId: SESSION_ID,
+        userMessage: '独立 writer 也不能绕过用途边界。',
+        derivationPolicy: 'answer_only',
+        reviewAnswer,
+        now: new Date(),
+      }),
+    ).rejects.toThrow('answer_only');
+    expect(await testDb().select().from(assessment_submission)).toEqual(beforeSubmissions);
+    expect(await testDb().select().from(event)).toEqual(beforeEvents);
+    expect(await testDb().select().from(job_events)).toEqual([]);
+    expect(await boss.findJobs('copilot_run')).toEqual([]);
+    expect((await sendMessage(request('allow'), {})).status).toBe(202);
+    expect(await testDb().select().from(assessment_submission)).toHaveLength(
+      beforeSubmissions.length + 1,
+    );
+  });
+
+  it('returns frozen policy through real 202, pending snapshot, same-key retry and changed-policy conflict', async () => {
+    vi.spyOn(runtimeEnv, 'shouldEnqueueBackgroundJobs').mockReturnValue(true);
+    const key = randomUUID();
+    const body = {
+      user_message: '假设椭圆参数退化，先核对边界与反例；本条只作临时讨论。',
+      triggered_by: 'chat',
+      derivation_policy: 'answer_only',
+    };
+    const request = (value: unknown) =>
+      new Request('http://test/api/copilot/chat', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': key },
+        body: JSON.stringify(value),
+      });
+    const first = await sendMessage(request(body), {});
+    expect(first.status).toBe(202);
+    const accepted = CopilotDurableRunResponseSchema.parse(await first.json());
+    expect(accepted.derivation_policy).toBe('answer_only');
+    const snapshot = CopilotTurnsResponseSchema.parse(
+      await (
+        await readConversation(
+          new Request(`http://test/api/copilot/turns?session_id=${accepted.session_id}`),
+        )
+      ).json(),
+    );
+    expect(snapshot.turns[0]?.derivation_policy).toBe('answer_only');
+    expect(snapshot.active_runs[0]?.derivation_policy).toBe('answer_only');
+    const retry = await sendMessage(request(body), {});
+    expect(retry.status).toBe(202);
+    expect(CopilotDurableRunResponseSchema.parse(await retry.json())).toEqual(accepted);
+    const changed = await sendMessage(request({ ...body, derivation_policy: 'allow' }), {});
+    expect(changed.status).toBe(409);
+    expect(
+      await boss.findJobs('copilot_run', { data: { session_id: accepted.session_id } }),
+    ).toHaveLength(1);
+  });
+
   let boss: PgBoss;
 
   beforeAll(async () => {
@@ -117,6 +202,59 @@ describe('durable Copilot session FIFO — real pg-boss contract', () => {
     await boss.deleteAllJobs('copilot_run').catch(() => undefined);
     await boss.stop({ graceful: false, timeout: 1_000 });
     _resetBossForTests();
+  });
+
+  it('accepts three turns but dispatches only the head, then advances with the complete job body', async () => {
+    const first = await accept(boss, 'one');
+    const second = await accept(boss, 'two', SESSION_ID, undefined, 'answer_only');
+    const third = await accept(boss, 'three');
+
+    expect(await boss.getJobById('copilot_run', first.bossJobId)).toMatchObject({
+      id: first.bossJobId,
+      state: 'created',
+    });
+    expect(await boss.getJobById('copilot_run', second.bossJobId)).toBeNull();
+    expect(await boss.getJobById('copilot_run', third.bossJobId)).toBeNull();
+    expect((await runEvents(first.runId)).map((row) => row.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.QUEUED,
+      COPILOT_RUN_EVENTS.DISPATCHED,
+    ]);
+    expect((await runEvents(second.runId)).map((row) => row.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.QUEUED,
+    ]);
+
+    await settleWithoutWorker(boss, first);
+    await expect(
+      dispatchSessionHead(testDb(), SESSION_ID, { boss, transactionDb: fromPgBossDrizzleTx }),
+    ).resolves.toBe(second.runId);
+
+    const physicalSecond = await boss.getJobById('copilot_run', second.bossJobId);
+    expect(physicalSecond?.data).toEqual({
+      ...richJobData('two'),
+      derivation_policy: 'answer_only',
+      run_id: second.runId,
+      session_id: SESSION_ID,
+    } satisfies CopilotRunJobData);
+    expect(await boss.getJobById('copilot_run', third.bossJobId)).toBeNull();
+
+    const roots = await testDb()
+      .select({
+        id: event.id,
+        action: event.action,
+        actor_kind: event.actor_kind,
+        actor_ref: event.actor_ref,
+        payload: event.payload,
+      })
+      .from(event)
+      .where(eq(event.session_id, SESSION_ID))
+      .orderBy(asc(event.dispatch_seq));
+    expect(roots.map((row) => row.id)).toEqual([first.runId, second.runId, third.runId]);
+    expect(roots[0]).toMatchObject({
+      action: 'experimental:copilot_chip_trigger',
+      actor_kind: 'system',
+      actor_ref: 'ui:copilot_chip',
+      payload: { chip_kind: 'continue_one' },
+    });
   });
 
   it('automatically polls a terminal replay and its cancelled successor through the manifest without a model call', async () => {

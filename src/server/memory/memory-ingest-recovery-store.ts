@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { allowsDerivation } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
 import { event, provider_attempt, provider_attempt_admission } from '@/db/schema';
 import { providerOperationIdForInvocation } from '@/server/ai/provider-attempt-runtime';
@@ -68,11 +69,11 @@ async function grantsForSource(db: Db | Tx, sourceId: string): Promise<MemoryIng
 
 async function assertUserSource(db: Db | Tx, sourceId: string): Promise<void> {
   const rows = await db
-    .select({ actor: event.actor_kind })
+    .select({ actor: event.actor_kind, payload: event.payload })
     .from(event)
     .where(eq(event.id, sourceId))
     .limit(1);
-  if (rows[0]?.actor !== 'user')
+  if (rows[0]?.actor !== 'user' || !allowsDerivation(rows[0]?.payload))
     throw new MemoryReconcileHandoffError(
       `operator replay requires an existing user event ${sourceId}`,
     );

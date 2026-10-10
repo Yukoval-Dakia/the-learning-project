@@ -1,0 +1,81 @@
+{
+  "head": "b39ad01daba36327b6c6883655d578f394ce56b7",
+  "parents": [
+    "8071b277d38878b4cba4d2dea57f0d88c9ed8336",
+    "081b64779a253efa076b964fa4b712cfc4704ac8"
+  ],
+  "overlap": [],
+  "critical_unchanged_from_pr_head": {
+    "src/capabilities/copilot/server/derivation-policy.ts": true,
+    "src/capabilities/copilot/server/live-turn-context.ts": true,
+    "src/server/memory/reconcile-llm.ts": true,
+    "src/server/memory/client.ts": true,
+    "src/server/memory/triggers.ts": true
+  },
+  "gates": [
+    {
+      "check": "unit",
+      "exit_code": 0,
+      "seconds": 1.57,
+      "log": "/tmp/yuk1588-main081-unit.log",
+      "sha256": "3903308b03e0c5e30c6f904be3d8b2d0fbf7cdfded14253febe784663ef58acc"
+    },
+    {
+      "check": "typecheck",
+      "exit_code": 0,
+      "seconds": 13.32,
+      "log": "/tmp/yuk1588-main081-typecheck.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "check": "lint",
+      "exit_code": 0,
+      "seconds": 2.09,
+      "log": "/tmp/yuk1588-main081-lint.log",
+      "sha256": "7903df39a3946753dd4efb9e51e3e960fbde5075e18f997c16861888ed14006f"
+    },
+    {
+      "check": "build",
+      "exit_code": 0,
+      "seconds": 9.25,
+      "log": "/tmp/yuk1588-main081-build.log",
+      "sha256": "f98d9c08c37e70e3e7954b33e2415ecf9a0ae2400471f8365040f4c7082c3751"
+    },
+    {
+      "check": "audit:partition",
+      "exit_code": 0,
+      "log": "/tmp/yuk1588-main081-audit-partition.log",
+      "sha256": "b359ea945660149fff0f9a50d492cdc5fd75621eb08b9bb53620f3843ba41540"
+    },
+    {
+      "check": "audit:capability-boundaries",
+      "exit_code": 0,
+      "log": "/tmp/yuk1588-main081-audit-capability-boundaries.log",
+      "sha256": "60a4f0d720703896faeedf665c52a55e659061e5451174f20854fc6f3fc2aef5"
+    },
+    {
+      "check": "audit:provider-lanes",
+      "exit_code": 0,
+      "log": "/tmp/yuk1588-main081-audit-provider-lanes.log",
+      "sha256": "4e94a5c1aa34213ec2cbb56a60b90e883fdcf6a7fd9c10daff833b754ea85b5c"
+    },
+    {
+      "check": "audit:provider-attempt-truth",
+      "exit_code": 0,
+      "log": "/tmp/yuk1588-main081-audit-provider-attempt-truth.log",
+      "sha256": "29bdbca513c3121fd6156e6dbabd3a720733d5e993340f0c32558835ec5cc81e"
+    }
+  ],
+  "scoped_unit": {
+    "files": 2,
+    "tests": 3,
+    "provider": "mocked/offline"
+  },
+  "limits": [
+    "No DB tests in this integration; isolated DB window belongs to YUK-1405.",
+    "No provider/runtime/browser acceptance, no deployment.",
+    "Existing R1/R2 review budget unchanged; no third review.",
+    "Old fea545a acceptance driver requires retired chat-review gate and cannot validate this candidate unchanged.",
+    "Historical unknown reconcile attempt and old paid identities remain untouched."
+  ]
+}

@@ -31,6 +31,7 @@ export const fastTestInclude = [
   'server/app.unit.test.ts',
   'server/start/auth.unit.test.ts',
   'src/capabilities/agency/server/meeting/director-tools.unit.test.ts',
+  'src/capabilities/copilot/server/live-turn-context.unit.test.ts',
   'src/capabilities/copilot/server/subagents.unit.test.ts',
   'src/capabilities/copilot/server/tool-activity.unit.test.ts',
   'src/capabilities/copilot/server/tool-result-snapshot.unit.test.ts',
@@ -70,6 +71,7 @@ export const fastTestInclude = [
   'src/server/ai/pi-agent-adapter.tracing.test.ts',
   'src/server/ai/runner.stream-collect.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
+  'src/server/ai/tools/pi-tools.test.ts',
   'src/server/assessment/jev-model-executor.test.ts',
   'src/server/calibration/native-parity.unit.test.ts',
   'src/server/calibration/replay.unit.test.ts',
@@ -77,6 +79,7 @@ export const fastTestInclude = [
   'src/server/http/errors.test.ts',
   'src/server/memory/client.test.ts',
   'src/server/memory/provider-operation.test.ts',
+  'src/server/memory/reconcile-llm.test.ts',
   'src/server/projections/parity.unit.test.ts',
 ];
 
@@ -102,6 +105,7 @@ export const dbTestInclude = [
   'src/capabilities/copilot/jobs/copilot_run.teaching.db.test.ts',
   'src/capabilities/copilot/jobs/copilot_run.test.ts',
   'src/capabilities/copilot/jobs/copilot_run_reconcile.db.test.ts',
+  'src/capabilities/copilot/server/derivation-policy.db.test.ts',
   'src/capabilities/copilot/server/durable-dispatch.db.test.ts',
   'src/capabilities/copilot/server/durable-session-queue.db.test.ts',
   'src/capabilities/copilot/server/skills/teaching-skill.db.test.ts',

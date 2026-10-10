@@ -1,0 +1,237 @@
+# YUK-1346 单轮内容用途控制
+
+状态：2026-10-07，YUK-1346 / PR1588 仍 In Progress。初审+唯一修复后验证审查预算已用完，不启动第三轮。本轮仅修复 clean f5709896dd 中受限 prompt 丢失最小校验协议的确认源码缺口。首个真实 R 执行成功、公开 learning_content blocked，精确原因未知；保护摘要未变，真实 restricted-ingest 已通过，A 未发送，新 exact-head CI/剩余验收和发布待父线程。
+
+## 用户行为与边界
+
+学习者有时只想讨论一个假设、试问一道题或了解一种思路，不希望这些内容改变系统对自己的长期判断。聊天输入框提供“本轮用途”，选项为“日常学习”和“仅用于本次回答”。默认日常学习，沿用现有行为。
+
+选择“仅用于本次回答”时，发送前显示：
+
+> 聊天和必要运行记录仍会保存。本轮不进入长期记忆、学情判断或后续安排，也不会自动带入下一轮。可读取已有学习资料并回答，不创建练习、笔记或计划。
+
+本次回答结束指该轮进入持久终态。刷新、断线重连、排队、取消或失败不会改变已经受理的用途。聊天历史仍可回看，每条受限问答显示用途标记。回看不会把内容重新交给模型。
+
+输入框保持用户选择，直至其主动修改，关闭抽屉、刷新或切换会话不静默恢复为日常学习。该偏好只是下一条新请求的默认值，每次受理独立冻结策略；重试使用原请求，而非当前选择。已有待恢复请求的策略由服务端和原始重试 body 决定。
+
+受限内容不自动用于后续任何一轮，包括另一条受限请求。用户要让系统继续使用某段内容，须主动重新输入或粘贴所需内容，并选择该新轮用途。后续 correction 引用受限回复时拒绝自动读取，说明需要重新提交；不能借回复 ID 绕过限制。
+
+本轮保留六个已有资料读取工具：`query_knowledge`、`get_subject_graph_overview`、`get_question_context`、`query_questions`、`query_memory_brief`、`search_memory_facts`。实施前核对其真实调用链；必须同时满足固定名单和 `effect=read`，不自动放行未来新增的 read 工具。允许读取既有长期记忆，不允许写入本轮内容。必要的搜索 embedding、运行审计仍按现有配置记录。
+
+受限轮禁用提案、领域写入、控制工具、出题/组卷、教学物化、agent note、artifact、子研究与远程 Exa 工具。仍可用普通文字或 Markdown 解题；原始回答属于聊天历史。前端给出原因，后端和工具执行边界同时约束，不能只靠提示词。普通学习模式保持全部原授权能力和确定性功能。
+
+自然语言“别记住”不是本票的可靠检测协议。明确选择是可信输入，不宣传自动识别所有口头限制。已有两条假设验收记忆保持原状。本票不宣称历史删除、受限多轮会话、到期清理、外部服务零保留或完整 §11 临时使用已经实现。
+
+## UI pre-flight
+
+组件形态：现有 Copilot drawer，修改输入区和问答回放，不新增 route、modal 或 page。沿用现有 tokens、primitives 和 design-system。
+
+设计依据是 `docs/design/2026-10-06-continuous-learning-system-behavior.md` §11.1，第 356 行：
+
+> 记录约定须让用户理解哪些内容会保存、哪些只用于本次帮助、哪些会进入长期学习判断。下面是待批准的完整产品行为，不代表当前实现已支持。
+
+同节第 360 行：
+
+> 临时使用：本次内容不进入长期学情与备课。若技术或外部服务有无法消除的保留，使用前明确说明，不能宣传成绝对不留痕。
+
+同节第 362 行：
+
+> 用户无需理解后台存储结构。产品在选择发生的位置说明实际影响，不用一个模糊的“隐私模式”承诺做不到的事。
+
+§11.2 第 370 行：
+
+> 停止用于判断时，原件可以保留用于用户自己查看，但须重建受影响的当前判断、推荐和后台工作。系统不能通过摘要、旧标签或既有判断间接继续使用被停用证据；历史展示标明它已停止参与判断。用户重新启用时按当前条件重新计算，不直接恢复旧安排。
+
+这里采用事前冻结用途来避免新增受限派生，不声称提供历史证据撤销及重建。该产品取舍由 agent 在授权内作出，不标为 owner 逐项批准。
+
+计划创建：
+
+- 本实施文档；`src/core/schema/derivation-policy.ts` 及必要的同目录 scoped tests，作为事件、请求和工具共用的最小策略类型。
+- `src/capabilities/copilot/server/derivation-policy.ts`，仅在需要集中既有工具名单与运行约束时创建；有实际消费者，不建通用框架。
+- 对应用途控制 unit/DB tests，可优先扩展既有测试文件。
+
+计划修改：
+
+- `src/capabilities/copilot/ui/CopilotDock.tsx`、`durable-reconnect-storage.ts` 及其相关 scoped tests。
+- `src/capabilities/copilot/ui/message-projection.ts`、`replay.ts`：将已受理用途传至 pending/live/replay 问答，不以当前 selector 覆盖历史。
+- `src/capabilities/copilot/server/chat-contracts.ts`、`durable-dispatch.ts`、`conversation-writes.ts`、`turns.ts`、`copilot-run-input.ts`、`copilot-execution.ts`、`copilot-worker-session.ts` 和对应测试；`live-turn-context.ts` / `correction-contract.ts` 仅负责模型序列化与确定性引用防线。
+- `src/capabilities/copilot/api/chat.ts`、`api/turns.ts`、`api/sessions.ts`、既有 `api/contracts.ts` response contracts、`jobs/copilot_run.ts` 以及必要的取消/终态恢复调用方。PR1588 P1 修复沿用 sessions GET 明示支持的用途；UI 每次受限发送及原 key 重试前重新读取，不使用旧缓存授权。受限 202 必须显式确认匹配用途，缺失/非法/不匹配时保留原 key/body 并说明不确定；未确认时不能显示已受理用途 badge。
+- `src/core/schema/event/known.ts` 中 Copilot 和 tool_use payload 契约；`src/kernel/tools/types.ts`、`src/server/ai/tools/mcp-bridge.ts` 中冻结策略传递与镜像。
+- `src/server/memory/triggers.ts`、`client.ts` 及必要的恢复入口、brief 读取防线；`src/capabilities/copilot/server/tools/query-events.ts`、`src/capabilities/practice/server/tools/get-attempt-context.ts` 等已证实会再次提供这些事件的证据读取者。
+- `src/server/session/conversation.ts` 仅在现有 cursor 更新需要安全的条件写入时修改。
+- `postman/api-endpoints.json` 与 `pnpm gen:postman` 生成物、`PLAN.md`、`.remember/now.md`。
+
+实施若发现必须新增 UI 文件，先在本段补齐该文件和用途再编辑。后端可调整上述最小 helper 的位置以遵守 kernel/capability 依赖方向；不得因此扩大到 schema 迁移、全局事件血缘或所有评估引擎改造。
+
+## 接纳与恢复协议
+
+新增严格枚举 `derivation_policy: 'allow' | 'answer_only'`。旧数据和缺省请求解释为 allow，非法值拒绝。不得用 schema default 悄悄改变旧幂等 hash。hash 规范化时缺省和显式 allow 保持旧请求形状，answer_only 参与 hash。同 key 切换用途返回 409。
+
+在既有接纳事务中冻结原始 ask、QUEUED/job_data 的最终策略。worker 以被接纳的源事件为真相，与 job_data 不一致时拒绝执行。沿用 advisory lock、first-write-wins 与 FIFO，不新建可变策略表。
+
+202、公开 turns、重连存储与 pending UI 显示同一策略。不要让刷新恢复的手工 body 投影丢字段，也不要用用户当前开关重建旧请求。成功、失败、取消、reconcile 修复的回复都继承原 ask 策略。
+
+PR1588 P1 修复补充：既有 `GET /api/copilot/sessions` 显式返回 `supported_derivation_policies: ['allow', 'answer_only']` 并禁用缓存。契约允许旧服务器缺省字段，仅供检测旧版本，不能默认支持。UI 在每次受限发送和原 key 重试前直接重新 GET，缺省、非法或失败时不 POST，保留原输入/重试 tuple。selector 显示检查中或当前不可用，保持已保存选择。受限请求的 202 只有显式匹配 `answer_only` ACK 才完成客户端接纳；缺失、非法、`allow` 或无法读取 JSON 时仍保留原 key/body，显示用途不确定，不显示受限已受理 badge。普通 allow 保持旧 202/Location 恢复协议，公开 turns 和 active_runs 的服务端策略仍是已接纳真相。
+
+## 派生与跨轮约束
+
+受限 ask、全部回复、工具镜像在插入时具有显式策略、非空 `ingest_at` 和空 `affected_scopes`。这是 outbox opt-out，不代表已抽取。不能从最终 ingest_at 反推策略。工具镜像 session_id 可能为空，必须通过冻结上下文与因果根传递策略。
+
+memory ingest 在 provider lookup、provider-start、add、reconcile 和 brief fan-out 之前检查策略。直接重投 job、operator recovery 或客户端直调也不能变相新增受限记忆；不创建新恢复 grant。brief 的内容和 evidence IDs 都排除受限事件。
+
+用户 turns 回放保留原文，模型历史排除受限 ask 及其所有回复。覆盖 cold prompt、owned Pi replay、异进程恢复、validator context、correction fallback、compaction context。通用 AI 事件查询与因果邻接投影同样排除，不能下一轮经工具读回。
+
+受限轮强制 cold，不提交可续用 SDK cursor。旧 cursor/worker ownership 的清理须在本轮仍持有执行权的事务/终态边界完成；晚到清理不能覆盖后继 cursor。过滤 durable history 是必要条件，仅清 cursor 不足。
+
+## 验收与成本纪律
+
+先运行相符 scoped unit/DB tests、typecheck、lint、完整 build 和 API/Postman 生成核对。禁止本机完整 pnpm test。新增测试覆盖真实接口行为，不只重复 helper 实现。
+
+核心行为包括旧缺省兼容、同 key 同策略恢复及换策略冲突、丢失 202 后刷新、FIFO/redelivery、失败/取消/reconcile、镜像 outbox 排除、直接 ingest 重投、普通→受限→普通的上下文隔离、受限写工具与教学阻断、普通模式保留。
+
+实际验收在隔离恢复副本上使用准确候选镜像、真实 API/DB 与真实 worker handlers，不挂生产 Mem0 卷。不启动会重放旧队列/outbox 的全量恢复任务。保留旧队列和源数据证据，仅处理本轮新 run/event IDs；受控 handler 验收不冒称完整 worker 启动验收。
+
+父线程执行最多两条新 Copilot 消息，先受限 R，后普通 A，并执行必要的新事件 memory/reconcile/brief。普通 A 的实际模型输入须排除 R 与其回复；再以真实装配器离线核对 A 可用于后续而 R 不可用。两条消息不能证明第三轮实际模型调用。
+
+要求 R 无长期记忆/调和/brief 证据及业务内容改写；A 的普通记忆链可回读。幂等重送不新增应用级 provider-start，不重付未知结果。封存 revision/image、request/input/output digests、task/event IDs、provider/model、usage/cost basis；未知费用保持未知。模型输出说“不知道”不能替代最终输入审计。
+
+本轮暂按 $2 保守预算占用，仍受自主交付章程每次 $5 / 每日 $20 上限。未知 SDK 内部费用和 wire 数量不伪装精确，已有 YUK-1342 观测缺口不因本功能验收改称解决。
+
+生产在独立审查、exact-head CI Gate、等待窗和真实验收后，按既有停写备份/恢复/兼容流程发布。此文不是验收记录。
+
+独立初审确认的发布约束继续有效：客户端 preflight 无法使跨版本 rolling deploy 原子化，检查之后服务器仍可能换成旧版本。生产发布必须停止所有写入者，完成停写备份/恢复要求，并让新 worker 在新 app 恢复写入之前就绪；不得混用旧 worker。受限数据写入后禁止直接回退到旧 `f3bfff2cf` app/worker，因为旧版本会消费受限历史与派生。此约束不是源码修复的替代，也不是本子线程已执行的部署。
+
+
+## 本地实施证据与父线程交接
+
+实施只发生在 `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1346-turn-retention`，基于 clean `0814062b3d529eb7a7841da035feb58e4087e020`。无新增表、迁移、cron、依赖或全局配置。`src/core/schema/derivation-policy.ts` 提供严格共享枚举；`src/kernel/events/derivation-policy.ts` 只处理既有 ask/直接因果回复与镜像；`src/kernel/tools/derivation-policy.ts` 同时用于挂载名单和执行时守卫。缺省与显式 allow 的 hash 保持旧形状，新 ask/QUEUED/job_data 显式冻结最终策略，worker 对源消息、session、trigger、策略及已冻结完整 job body 逐项核对。
+
+六工具实际调用链已核对，未发现业务物化或学习状态更新：
+
+| 工具 | 已核对实现链 | 允许的效果 |
+| --- | --- | --- |
+| query_knowledge / get_subject_graph_overview | knowledge/server/tools/knowledge-readers.ts → loadKnowledgeRows/loadEdges/loadMasteryMap/loadRecentFailureCounts | 本地 PG 读取 |
+| get_question_context | practice/server/tools/question-context.ts → question/timeline/review/FSRS/variant/knowledge/asset/structure readers | 本地已有题目与证据读取 |
+| query_questions | practice/server/tools/query-questions.ts → resolveSubjectKnowledgeIds/listQuestions | 本地题目列表读取 |
+| query_memory_brief | copilot/server/tools/memory-brief.ts → memory_brief_note SELECT | 本地已有摘要读取 |
+| search_memory_facts | copilot/server/tools/search-memory-facts.ts → readMemoryFacts/searchMemories/client.search | 已有记忆检索及既有 embedding/provider 审计；不写学习内容 |
+
+受限模式同时要求固定工具名及 effect=read，generation 类型 read 工具仍拒绝。teaching worker 分支与独立物化提交各有服务器守卫；远程 Exa、原生子研究、技能包不挂载，受限父运行也不执行原生子研究恢复。根终稿 Markdown 仍按既有安全终稿协议保存。
+
+受限 cursor 清理与 EXECUTION_STARTED fence 在同一事务；普通有效 cursor 与领域结果 marker 同事务提交，早于终态发布。失败清理在持有 settlement 的终态事务内完成，没有晚到 finally 写入或清理。未执行的受限排队轮被取消时不拥有旧 cursor，因而保留前一轮的合法 cursor。成功、失败、执行前/中取消、reconcile/ambiguous、直接重投及后继 cursor 已有 scoped DB 覆盖。
+
+模型读取在 SQL LIMIT 前过滤受限 ask/回复；legacy missing-anchor fallback 也过滤。correction 只读取 policy/ID 位置元数据，确定性拒绝受限目标并要求重新输入；这些内部限制元数据不序列化到 cold/resume/compaction prompt。公开聊天回放保留原文和用途 badge。memory ingest 在构造客户端、lookup/provider-start/add、调和和 brief fan-out 前拒绝受限来源；客户端直接受限输入及 operator recovery 亦拒绝。brief 文本输入、scope 判定与 evidence IDs 都过滤。
+
+本地最终 scoped 验证：16 文件 **255 unit passed**；17 文件 **235 DB passed**，使用隔离 Testcontainers，含真实 Hono route owners、pg-boss FIFO 和 Postgres 事务。主要新增生命周期用例在 `src/capabilities/copilot/server/derivation-policy.db.test.ts`；真实 202/pending/同 key 重试/换用途 409 在 `durable-session-queue.db.test.ts`；selector 持续性、丢失 ACK 后原 body 重试及非法 202 策略恢复在 CopilotDock scoped UI tests。
+
+`pnpm typecheck`、`CODEX_FULL_GATE=1 pnpm lint`、`CODEX_FULL_GATE=1 pnpm build` 均 exit 0；lint 0 errors / 297 warnings，未放宽 baseline。API client 和 Postman 已生成。13 项相关审计通过：schema、partition、api-contracts、api-client、api-client-usage、capability-boundaries、architecture-deepening、provider-lanes、provider-attempt-truth、learner-copy、profile、task-census、draft-status-reads --strict。
+
+最终日志位于 `/tmp/yuk1346-unit-final.log`、`/tmp/yuk1346-db-final.log`、`/tmp/yuk1346-typecheck.log`、`/tmp/yuk1346-lint.log`、`/tmp/yuk1346-build.log`、`/tmp/yuk1346-api-generation.log`、`/tmp/yuk1346-postman.log` 和 `/tmp/yuk1346-audit-*.log`。咨询指针仍为 `/tmp/yuk1346-retention-consult.md`、`/tmp/yuk1346-acceptance-recipe.md`，不是运行验收证据。
+
+未执行 paid model、生产库/凭据访问、真实最终浏览器/模型输入验收、外部 tracker 更新、PR/push/watch/merge/deploy。上述 unit 使用 provider/SDK substitutes，DB 使用实际持久 owners；不以它们冒称真实模型输出或发布验收。父线程继续按前述隔离副本和两条新消息预算验证准确镜像、实际模型输入排除、普通记忆链与无受限业务派生，然后完成独立 review、exact-head CI、等待窗和发布。无新发现的独立 material follow-up；本票剩余发布门槛属于既定验收，Linear capture/status 由父线程负责。
+
+## PR1588 P1 与 CI fixture 修复的本地证据
+
+本轮仅在同一隔离树从 clean `c9ab7e2993f4d9f63926622d1f1ea88192bc99f5` 修复 discussion `4202949273` 与 exact-c9 CI Gate `37569454148` 的 unit shard 3 失败。RED 重现 `pi-tools.test.ts` 原三例 `db.select is not a function`、10 项组件失败，以及 sessions 实际 GET 缺省能力字段的 DB 契约失败。离线 Pi fixture 只替换 `readEventDerivationPolicy` DB seam；生产 reader/守卫未修改。新增用例确认 caller 声明 allow 也不能绕过受限因果源。现有真实 Postgres 测试仍证明六工具名单/effect 双重限制和镜像 outbox 排除。
+
+修复后 scoped GREEN 为 **7 文件 142 unit passed / 3 文件 29 DB passed**。组件覆盖初始旧服务器、先前缓存支持后 fresh 缺省/非法/失败、加载提示、选择持久性、原 key/body 重试、missing/mismatching/invalid/null/unreadable 202 ACK 无错误 badge，以及 legacy allow ACK。DB 覆盖严格 enum、旧缺省不默认支持、真实 sessions 响应与 no-store、既有持久队列/派生 guard。`pnpm typecheck`、`CODEX_FULL_GATE=1 pnpm lint` 和 `CODEX_FULL_GATE=1 pnpm build` 全部 exit 0；lint 297 warnings / 0 errors，baseline 未放宽。API client 与 Postman 已重新生成。14 项相关审计全通过：schema、partition、api-contracts、api-client（重新生成与 staged 生成物一致）、api-client-usage、capability-boundaries、architecture-deepening、provider-lanes、provider-attempt-truth、learner-copy、profile、task-census、draft-status、draft-status-reads --strict。
+
+日志 `/tmp/yuk1346-p1-{pi-red,ui-red,contract-red,unit-final,db-final,typecheck,lint,build,api-generation,postman}.log`；相关审计日志 `/tmp/yuk1346-p1-audit-*.log`。这些是本地源码/组件/API/DB 证据，不是新的 exact-head CI、独立验证审查、真实浏览器/模型验收或发布证据。父线程独占 push、discussion 回复/resolve、唯一 P1 修复后 verification review、真实隔离验收、Linear capture/status 与发布。没有新增独立 actionable follow-up，两条修复均属既有 YUK-1346/PR1588。未触及 `/tmp/yuk1346-acceptance-driver`。源码 commit 完成后本子线程无继续写入授权。
+
+## f570 真实隔离观察与最小协议修复
+
+以下运行证据由父线程提供，本源码子线程未重跑 driver、访问生产或发起新 paid/model 调用。首个真实受限 R 执行成功，费用 $0.0019227，但公开 reply 的 learning_content 仍为 blocked。原始最终候选不可取得、仅有 hash，精确拦截原因未知；不能据此声称 detector heuristic 是根因，也不能把本次源码修复称为该候选已通过验证。
+
+父线程只读确认 `/tmp/yuk1346-acceptance-driver/run-f570-03/observed-R-after-stop.json`：所有受保护业务表、旧事件、vector、reconcile 与保留队列内容摘要未变。确定性 learner header 是既有状态的系统投影，无 R marker/causation，ingest opt-out。原 f570 driver restricted-ingest 阶段已使用真实 handler 对 R ask+reply 通过，provider_delta=0、queue_delta=0、memory_count=0，保护快照仍未变。A 尚未发送；R 不重发、不增加付费，发布仍待完成。
+
+已确认的独立源码缺口是 `copilot-execution.ts` 在 answer_only 下完全省略 piSkillDocs，连带删除共享 `src/subjects/_shared/skills/copilot/SKILL.md` 的“新学习题的独立校验标记”协议。现有产品允许 Markdown 解答已有题目，服务端仍要求对应 manifest。本轮在 `src/subjects/copilot-skills.ts` 从既有共享 SKILL.md 中只提取该节，并经受限 piSkillDocs 注入实际 system prompt，压缩时随 system 消息保留；不另抄一份协议。缺失文件/协议时失败，不回退至完整 skill 或绕过验证。普通模式解析链、六工具 allowlist、完整 skill/写入/提案/agent note/子研究/Exa 禁用边界不变，detector 与服务端内容验证未修改。
+
+focused seam tests 从实际 answer_only system prompt 注入正文提取 marker 并经真实 schema/parser 核对 subject_id、questions、id/kind/prompt_md/reference_md/choices_md/rubric_json。测试核对用户题干与最终答案规则、唯一尾标、5题/12000字符限制及纯概念讲解例外；无标记 prose 直接收口且不调用验证。已存在题目解答缺标记仍拦截；带标记时真实服务端校验链接收完整题干和答案，离线 validator 不可用时仍拦截。六读名单、读效果限制、提案/agent note 写入拒绝、无 full skill/Exa/子研究/cursor 继续覆盖，普通 mode skill 注入也保持。
+
+本轮最终 gates 使用 PATH 中 Node 24.19.0：5 文件 **120 unit passed**（copilot-skills、skill-namespace、copilot-execution、content-validation、pi-agent-adapter）；`pnpm typecheck`、`CODEX_FULL_GATE=1 pnpm lint`、`CODEX_FULL_GATE=1 pnpm build` 均 exit 0。lint 297 warnings / 0 errors，baseline 未放宽；完整 build 覆盖 web/server/worker/migrate，bundle size 警告保留。四项相关静态审计 partition、capability-boundaries、provider-lanes、provider-attempt-truth 均 exit 0。日志 `/tmp/yuk1346-validation-protocol-{unit,typecheck,lint,build}.log` 和 `/tmp/yuk1346-validation-protocol-audit-*.log`。无 API/schema/migration/依赖变化，不运行完整本机 pnpm test，不运行 DB/容器/真实 provider 验收。父线程负责实际整合、PR/Linear 状态、新 exact-head CI 和剩余验收/发布；review 预算已用完，不开第三轮。无新增独立 actionable follow-up，本次确认缺口归现有 YUK-1346。源码 commit 后本子线程无继续写授权，terminal 通知不构成授权。
+
+
+## 2026-10-07 05:18Z 最终候选真实R2未通过
+
+准确候选236a5a47b21e0b40f9be7fbac8eb69dda147fc39的ARM64镜像OCI ID为sha256:82b08c218746b58ef423f7232c9e74dfbf107b5efc28b2a515e5640d40057b73。父核对运行app/driver、真实产品pin、115迁移/active及新隔离Mem0路径；浏览器预检和exact CI37574277449通过。scratch final bundle SHA347751cccd5b2e9fc12831d4adfaaae36fe280cdb51433c1c7aa17bb9172d67f。T3preview明确无host后使用真实Chromium，不替换响应。
+
+本轮只执行R2一次：202受理冻结answer_only，run `copilot_user_ask_249b13e025d22a330beefcb3b7300d363f154b5468c081241bfcd598b417f9cf`，session `i5ll75jd4s0apo2nem5gj1g8`，MiMo2.6Pro success/end_turn，estimatedUSD0.001444664。实际候选终文SHA `fa99d3707c983101245d0aac8b75bec5d05c5cc112945af963354c173ce8f56a` 私有保存在run-236a5a4-01/terminal-R.private.md；父人工核对25-9=16、c=4与焦点±4正确。但finalization learning_content=blocked、publicly_withheld=true，不能将模型执行成功等同产品通过。A未发送，后续记忆链/幂等/重投阶段均未运行。
+
+父只读observer确认新R2前后受保护业务表、旧events、57旧vectors、旧reconcile、112675保留jobs和原R完整job摘要不变。R2 ask/reply都ingested/scopes[]/answer_only。未生成completed-R假通过回执。该新physical job f31c6f0e-b1d3-5f33-9729-84561d544cb0在验收器停止后因heartbeat timeout成为retry、retry_count0；durable DONE与模型已成功必须保留，不能重新消费或重付。观察脚本初次假设job仍active被只读检查否证，改为精确核对已观察retry状态后通过；没有DB写入或重执行。
+
+运行证据在私有candidate answer-only-preflight-20261007-236a5a47b/evidence与/tmp/yuk1346-acceptance-driver/run-236a5a4-01。旧R、失败回执与旧bundle均封存；两次Copilot已知费用合计estimatedUSD0.003367364，整体Mem0内部wire/cost观测缺口仍未解决，本pair未启动Mem0。父保持原$2保守预留，不声明供应商硬cap。
+
+只读离线诊断任务yuk1346-real-candidate-contract-diagnosis-20261007-v1核对本次实际终文、prompt和拒绝分支；无模型/DB/网络或新review，不把f570未知候选的原因追认为相同。需依据免费复现再修复，不删校验、不修改公开结果或盲目重试。当前PR不合并，生产仍f3，无生产写入或发布。该失败归现有YUK1346，无新独立产品问题，Linear保持InProgress。
+
+## 2026-10-07 05:36Z 完整可见答案绑定修复与本地证据
+
+本轮唯一实施子线程从 clean `580773c09085a8415a1d0c37e5297023142c316b` 开始；该HEAD只比产品 `236a5a47b21e0b40f9be7fbac8eb69dda147fc39` 多文档。父已独立重放原extractor/reviewer/finalizer，8个控制及12个历史receipt字段相符。精确R2 marker有效，题干在当前用户上下文，隐藏reference的prose不包含于实际LaTeX正文，因此旧 `contentMatchesReply` 在0次独立validator之前拒绝。重复题干又会提前返回true，复制正确摘要仍可能掩盖错误解释。要求模型逐字复制不能充当正确性边界。
+
+### 服务端绑定与最小Practice改动
+
+`content-validation.ts` 保留原题目数量、subject解析、完整prompt/choices对应与容量约束，并拒绝重复题id。单道既有题的完整prompt和每项choice必须绑定eligible用户上下文；即使回复重述该题，服务端仍将marker-stripped完整可见正文设为 `reference_md`，移除整个不可信 `rubric_json`。有已呈现HTML时也包含其现有可见文本提取结果。空正文或超过既有12000字符答案容量直接拒绝，绝不截断成可通过摘要。隐藏reference与正文的表示可不同；它不再成为单题既有题的验证答案。
+
+仅把完整正文转送原seam仍不足。Practice原exact路径可选reference首行/首句，且rubric.reference_solution答案优先；原semantic方向把独立solver当submission，会丢弃实际解释。最小修复在既有 `LearningContentValidationDeps` / `SolveCheckOptions` 增加仅服务端选择的 `answerScope: 'full_response'`，不新增task或路由。该模式保持reference-free `release_strict`独立求解，然后始终使用既有SemanticJudge，不走首行normalize捷径。独立最终答案及完整解作为reference，实际完整正文作为submission；服务端rubric由独立expected_signals与全文正确/一致要求构成，包含Rubric契约必需的criteria，marker的final_answer/answer_equivalents/acceptable_answers/required_points均不能替换正文。无法确认、partial、低置信、unsupported、error、cancel、deadline都不能释放内容。题面QuizVerify和教学质量检查也收到实际全文，准入仍要求三轴明确通过。
+
+没有完整答案与各题的可信分段协议，多道既有题或既有题/新题混合时一律fail closed，不把整条回复重复作各题reference。全部新题仍走原各题prompt/choices绑定和标准答案路径。detector、普通question供应/教学路径、独立任务model pin、六只读工具与answer_only禁止写入/物化/提案/研究/Exa的边界保持；共享SKILL只说明服务端真实规则，不把逐字copy作为协议。现有5000字符技能容量gate保留。普通exact question供应仍可用原normalize路径；既有单题全文模式可能多一次既有semantic比较调用，本轮没有执行真实模型调用。
+
+### 免费精确重放与验证范围
+
+所有新scratch在 `/tmp/yuk1346-visible-answer-repair`，没有覆盖旧diagnosis、acceptance driver、candidate或receipt。candidate SHA `fa99d3707c983101245d0aac8b75bec5d05c5cc112945af963354c173ce8f56a`；marker-stripped实际答案SHA `8b6ba9ab93a56b4f028e53fff863e5588facc1b640cf3bf5aad925ceba3a2529`。原题prompt SHA `0f2202d89608ea74daa1ef150a9e8ff287166933845bfaf34d9c4cf081c9f020`。private正文未提交，也未写到新结果文件；结果仅含摘要、任务名称与明确fixture provenance。
+
+- `results.json` / `replay-final.log`：真实extractor/reviewer/finalizer，Practice seam为mock。10个控制通过，精确R2以原题和实际全文digest到达validator；重述题干、追加正确copy与rubric override仍传全文。fail/needs_repair/unsupported/error/cancel/deadline拒绝。5个finalizer控制中fail/error/cancel/deadline的12个旧blocked receipt字段逐一不变，candidate/reply hash和absent primary view相符。mock pass仅证明对应关系，不证明数学正确。
+- `exact-practice-results.json` / `exact-practice-replay.log`：精确私有R2通过实际Practice pipeline，7项离线测试通过。QuizVerify、TeachingQuality与SemanticJudge输入绑定实际全文digest；独立SolutionGenerate输入只含原题，没有reference/rubric答案hint。task输出为手工synthetic的完整fixture，不是新provider结果。pass fixture可收口；semantic fail/unsupported/error/cancel/deadline必须关闭。所有fetch与DB访问均由guard禁止。
+- `unit-passed.log`：5文件256 scoped unit通过，覆盖真实Practice生产接线的prose/LaTeX、错误最终答案、矛盾解释、正确copy旁错误解释、重述题干、rubric替换、选项未绑定、无效/缺失/重复manifest、重复id、遗漏可见问题、多题/混合歧义、oversized答案、已呈现HTML、各外部validator失败，以及finalizer hash/无primary view。answer_only执行seam确认完整协议、隐藏summary不替代实际全文、六读限制及禁止写入；多道新题保持各自reference。
+- `typecheck-final.log`、`lint.log`、`build-final.log`：Node24.19.0下 `pnpm typecheck`、`CODEX_FULL_GATE=1 pnpm lint`、`CODEX_FULL_GATE=1 pnpm build` exit0，lint297 warnings/0 errors，不放宽baseline，bundle size警告保留。
+- `audit-*.log`：partition、capability-boundaries、architecture-deepening、provider-lanes、provider-attempt-truth、structured-judge、skill-mirrors、task-census、agent-control-plane九项全部exit0。
+
+没有运行完整本机pnpm test、DB测试、container、browser、生产操作、网络/paidmodel/外部tracker或第三review。没有table/schema/migration/API变更，无需新DB写入recipe。保留策略源码未改；这些unit不能代替真实R/A上下文/记忆链验收，也不能证明真实SemanticJudge会正确识别每种错误解释。本轮未对实际R2执行真实独立validator，不宣称数学准入、runtime acceptance或deployment。原R/R2不再执行或重付，A仍未发送。
+
+### 父线程capture与剩余边界
+
+当前修复属于已验证YUK1346阻断，不另开票，Linear状态/capture由父负责。另一个独立检测缺口仍有证据：只去掉精确R2 marker的可见正文SHA `8b6ba9ab93a56b4f028e53fff863e5588facc1b640cf3bf5aad925ceba3a2529` 被旧detector判无需验证，review直接通过且0次validator。`results.json.marker_free_gap`为观察控制，本次不把它当修复、不扩regex。已写PLAN PARKED供父去重，需另行界定权威现有题上下文/缺标记的拒绝契约；未推断所有marker-free内容或所有新题都存在同样缺口。
+
+父线程独占整合、push、PR1588/Linear、新exact-head CI、真实validator判决、R/A剩余预算及发布。旧exact236a CI不覆盖此修复，初审+唯一验证审预算仍耗尽，不启动第三审。PR未合并，生产版本与费用保护证据保持历史原义。源码+文档commit后本子线程终止写入，terminal/PR通知不续权。
+
+
+## 父线程整合与下一次有界验收
+
+父已接收d717777d27f3b9935654903d08e6b14750c852e5，子任务completed/noPending并终止写权。真实diff、source/docs及14项gate日志SHA与封存一致；父另复跑content-validation及verify-framework scoped unit。marker-free既有问题已去重登记YUK1347 Backlog，当前不扩regex；初审+唯一验证审预算已用完，不开第三审。
+
+父在自主授权内决定：新源码已修复免费重放确定的验证对象绑定错误，下一次只在最终准确隔离镜像上做一组新场景（R3现有椭圆题临时解答、A普通偏好记忆），最多2条新accepted Copilot，总计4条；原R/R2不重执行、不修写历史blocked结果，也不消费其队列。沿用$2保守预留及$5/wake/$20/day，现已知两条Copilot合计estimatedUSD0.003367364；未知内部wire/cost仍未知。每阶段单次，根生成及必要验证任务受限；失败即封存并停止，不为凑绿重复采样。
+
+新baseline须保留两个历史验收run/task/job和全部历史数据：原Rcompleted，R2durableDONE/tasksuccess但physicalretry0，后者不得因retry状态重投。完整job摘要纳入保护。新会话、新Mem0辅助路径；仍无fullworker，父只受控投递新场景和其因果memory链。修复后的独立验证须真正调用并作出判决，单测/actual输入合成输出不能替代。具体运行目标、镜像与新source固定后再绑定driver。未完成实际验收/新exactCI/等待窗前不合并或发布，生产继续f3。
+
+
+## 2026-10-07 06:05Z：完整可见答案修复后的真实R3结果
+
+exact `8e199b68e` 的 CI Gate37577667244已通过，准确ARM64候选1dfbc392d9e7与控制driver35ec4c4c8899通过一次真实浏览器接纳新R3。根Copilot及四个独立任务均真实执行、success/end_turn；实际最终请求中，QuizVerify/TeachingQuality/SemanticJudge收到完整可见正文，SolutionGenerate未见正文或隐藏reference。父核对该题全部数学步骤一致，正文SHA `a992596bad8b3a9652d6ec586c5e1558e9f79ccc93548c319bc9cc0f52a94b9c`。
+
+公开结果仍 `learning_content=blocked`，普通记忆对照A未发送。五任务成功仅代表执行结束，不等于判决通过；观测仅保留返回hash，没有具体validator轴/解析结果，不能断言实际拒绝轴。后续先免费核查既有题解答是否错误使用新题原创性门禁，并补足后续一次正常验收所需的结构化拒绝证据；不为缺日志重执行R3。
+
+R3 run `copilot_user_ask_4aff84fdf95f9bebe06af724047832b1cb57c5e99f7e6e87931197fda3c3f36f`，job `712142b0-241c-5b73-9137-4bf47597b833`，durableDONE、physical heartbeat timeout retry0。原失败回执完整保留，不重投，不补造通过记录。父只读观测确认受保护业务、旧events/vectors/reconcile、112675保留队列及两旧job与task/job-event摘要均不变。R3本次估算$0.006731654，三次相关已知估算累计$0.010099018；未知SDK费用仍未知，不能宣称供应商硬cap。没有生产发布。
+
+## 2026-10-07 既有题答案准入与持久决策收据
+
+父线程在自主委托下已裁定：服务端绑定的一道既有题需要事实正确、完整推导一致且清晰的答案，不需要证明已给题目是新原创题或命中新生成知识目标。当前可信分类是单题 binding 的 `answerScope=full_response`，据此选择 `existing_answer`，不接收 marker 中的 purpose、rubric 或生成来源自报。多道既有题及混合映射继续拒绝。
+
+同一 QuizVerifyTask 增加既有答案 purpose 的提示语。grounding 必须解析成功、明确 pass 且 basis 有实际输入支持；独立 solver 继续只看题面、无答案/reference/rubric hint。SemanticJudge 以独立完整解为 reference、实际全部可见正文为 submission，必须 correct 且 confidence≥0.8。教学 clarity、unique_answer 和既有适用安全检查保留。取消、deadline、异常、无法解析、partial、低置信和不可支持依据继续拒绝。
+
+既有答案的 copy_safety、knowledge_hit、material_grounding、kind_conformance 及作者 overall 保留真实诊断，但不直接或间接否决答案。素材/题型轴针对新题创作的适用性由可信服务端上下文定义；本路径未提供原文生成来源或加载出题规范，既有答案不参加这些创作轴。真实素材依据仍须 grounding 核对。普通新题的原创性、知识目标、素材命中、题型与入池政策不改，不把 unknown 伪造成 original/pass，不发明 closed_book 来源。YUK1347 marker-free 检测不在此次范围。
+
+在既有 Copilot reply_finalization payload 内增加可选严格白名单 validation_decision，旧收据继续解析。收据只保存服务端 purpose、根/问题/已执行四任务身份、实际可用的正文/输入/输出 digest、解析状态和有界 reason 枚举、事实依据/判决、创作轴适用性、语义结果/置信/阈值/比较方向、教学轴及总裁决。无结果、未执行和 unknown 分开；不保存正文、prompt、反馈、notes、expected_signals、思考或 provider error body。拒绝正文被替换文本复检时，保留原候选裁决。收据跟随现有 finalization 与回复事务，不新增日志框架、schema/table/task/tool；观测失败不得放行无效答案。产品没有可信 source revision 时由父运行证据绑定，不补造版本。
+
+本次子线程只写授权源码、相关 scoped tests、本方案/PLAN/now。禁止 paid/network/DB/container/browser/service/PR/Linear 操作与第三审，所有新日志放 `/tmp/yuk1346-existing-answer-policy-repair`。旧 R/R2/R3 封存且不重投，实际 R3 拒绝轴仍未知，不能追认通过。源码和合成输出验证不等于真实模型质量或运行验收；父线程负责后续有界真实验证及整合。
+
+
+### 本次源码验证与移交
+
+实现复用现有 TaskTextRunFn，逐题在同一次调用捕获输入和实际消费输出的 digest、成功/异常任务身份，并在真实 parser/admission 后填写白名单判决；没有附加模型调用。TeachingQuality 的 existing-answer 分支使用可信 structured_output 优先和现有严格 JSON parser，普通生成流程保持原解析适配器。共享 kernel 文件只定义 Practice/Copilot 共同消费的 receipt 边界。新 source revision 没有可信产品来源，故未填入收据。
+
+新证据目录 `/tmp/yuk1346-existing-answer-policy-repair` 的 `gate-results.json`、`audit-results.json` 及 `evidence-manifest.json` 记录命令、exit status 与 source/log SHA。Node24.19.0 下五 scoped 文件共346 unit通过：真实 binding、Practice、Quiz/Solution/Semantic/Teaching parsers、finalizer 和 mock event writer，所有模型输出明确 synthetic。unknown/needs_review、无知识目标以及仅创作轴 fail 可接受既有题答案；相同生成控制仍拒绝。正确最终答案旁错误推导、partial/低置信、grounding fail/unclear/缺失或 unsupported basis、教学 fail、malformed/exception/cancel/deadline 都拒绝。完整正文与盲 solver、untrusted purpose/rubric、size/count/重复身份、缺身份/未执行/解析拒绝、观测失败、内容泄漏、旧 receipt 兼容及 fallback primary reject/hash 保留控制通过。mock pass 只证明 contract，不证明实际数学质量。
+
+`pnpm typecheck`、`CODEX_FULL_GATE=1 pnpm lint` 和 `CODEX_FULL_GATE=1 pnpm build` exit0。lint297 warnings/0 errors，无 suppression/baseline bump，既有 Vite 和 bundle size 警告保留。schema、partition、capability-boundaries、architecture-deepening、provider-lanes、provider-attempt-truth、profile、structured-judge、task-census、draft-status、draft-status-reads、agent-control-plane、skill-mirrors 共13 audits exit0。没有完整 pnpm test、DB、真实模型、browser、container/service、网络/外部 tracker、push/watch 或第三审；旧诊断只读，旧 acceptance artifacts 未打开或修改。
+
+本次改动属于已登记 YUK1346 的已验证阻断，capture/状态由父处理；没有新增独立 actionable follow-up。已登记 YUK1347 保持独立 Backlog。源码验证不替代 exact-head CI 或实际 R/A/记忆链验收；本次没有实际 validator 质量或产品 acceptance 证据，不追认 R3。父接收本次 task-owned commit 与 terminal 后恢复唯一写权，本子线程结束写入；父负责整合、预算、实际验证与所有交付动作。
+
+普通 Practice consumer 的 result 不带 Copilot decision，`captureDecision` 仅由 Copilot 收口明确开启，既有答案 full_response 也保留其决策证据。已核对 notes author_artifact 会 spread result，因此非 Copilot 结果形状保持原样，不新增其物化 metadata 或观测失败行为。既有答案同时附带独立生成 preview 时在任何 task 前拒绝混合映射；普通多道新题仍独立校验。

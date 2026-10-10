@@ -30,6 +30,10 @@ vi.mock('@/kernel/events', () => ({
   }),
 }));
 
+vi.mock('@/kernel/events/derivation-policy', () => ({
+  readEventDerivationPolicy: vi.fn(async () => 'allow'),
+}));
+
 import { buildPiDomainAgentTools } from './pi-tools';
 
 function makeReadTool<I, O>(

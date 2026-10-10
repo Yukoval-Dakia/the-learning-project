@@ -1,3 +1,4 @@
+import { DerivationPolicy, type DerivationPolicyT } from '@/core/schema/derivation-policy';
 import { parseCopilotPrimaryView } from '../primary-view-contract';
 import type { ReplayChatMessage, ReplaySkillContext, ReplayTurn } from './replay';
 import { parseSkillContext, parseSkillTurn } from './skill-lifecycle';
@@ -47,6 +48,8 @@ export function projectCopilotReply(
   return {
     ...previous,
     text: reply.reply,
+    derivation_policy:
+      DerivationPolicy.safeParse(reply.derivation_policy).data ?? previous.derivation_policy,
     streaming: false,
     checkpoint_event_id: text(reply.checkpoint_event_id),
     session_id: text(reply.session_id) ?? previous.session_id,
@@ -101,6 +104,7 @@ export interface PendingCopilotMessagePair {
   aiMessageId: string;
   userMessage: string;
   dispatching?: boolean;
+  derivationPolicy?: DerivationPolicyT;
 }
 
 /** Add or restore one exact pre-202 logical turn without duplicating its rows. */
@@ -114,6 +118,7 @@ export function projectPendingCopilotMessagePair(
     text: pending.userMessage,
     session_id: pending.sessionId,
     idempotency_key: pending.idempotencyKey,
+    derivation_policy: pending.derivationPolicy ?? 'allow',
   };
   const ai: ChatMessage = {
     id: pending.aiMessageId,
@@ -122,6 +127,7 @@ export function projectPendingCopilotMessagePair(
     streaming: pending.dispatching !== false,
     session_id: pending.sessionId,
     idempotency_key: pending.idempotencyKey,
+    derivation_policy: pending.derivationPolicy ?? 'allow',
   };
   return upsertCopilotMessage(upsertCopilotMessage(messages, user), ai);
 }
@@ -129,7 +135,12 @@ export function projectPendingCopilotMessagePair(
 /** Replace one optimistic pair with the stable run/user identities from 202. */
 export function acceptPendingCopilotRun(
   messages: ChatMessage[],
-  accepted: { idempotencyKey: string; sessionId: string; runId: string },
+  accepted: {
+    idempotencyKey: string;
+    sessionId: string;
+    runId: string;
+    derivationPolicy?: DerivationPolicyT;
+  },
 ): ChatMessage[] {
   const replyId = copilotRunReplyMessageId(accepted.runId);
   const hasPersistedReply = messages.some(
@@ -149,6 +160,7 @@ export function acceptPendingCopilotRun(
             session_id: accepted.sessionId,
             run_id: accepted.runId,
             idempotency_key: undefined,
+            derivation_policy: accepted.derivationPolicy ?? message.derivation_policy,
           }
         : {
             ...message,
@@ -156,6 +168,7 @@ export function acceptPendingCopilotRun(
             session_id: accepted.sessionId,
             run_id: accepted.runId,
             idempotency_key: undefined,
+            derivation_policy: accepted.derivationPolicy ?? message.derivation_policy,
           },
     ];
   });
@@ -176,6 +189,7 @@ export function projectCopilotRunUpdate(
     view: CopilotRunView;
     fallbackText: string;
     userMessage?: string;
+    derivationPolicy?: DerivationPolicyT;
   },
 ): ChatMessage[] {
   let next = messages;
@@ -188,6 +202,7 @@ export function projectCopilotRunUpdate(
         text: run.userMessage ?? '（已恢复的请求）',
         session_id: run.sessionId,
         run_id: run.runId,
+        derivation_policy: run.derivationPolicy ?? 'allow',
       },
     ];
   }
@@ -201,6 +216,7 @@ export function projectCopilotRunUpdate(
     text: '',
     session_id: run.sessionId,
     run_id: run.runId,
+    derivation_policy: run.derivationPolicy ?? 'allow',
   };
   // A replayed non-synthetic reply is already authoritative. A same-key 202
   // recovered after refresh may initially report QUEUED before its event replay;
@@ -286,6 +302,7 @@ export function projectReplayMessage(turn: ReplayTurn): ReplayChatMessage | null
     tool_operations: turn.tool_operations,
     subagent_runs: turn.subagent_runs,
     run_id: turn.run_id,
+    derivation_policy: turn.derivation_policy,
   };
   if (turn.role === 'tombstone')
     return {

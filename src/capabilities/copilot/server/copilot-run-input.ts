@@ -4,7 +4,9 @@
 // Optional state/history read failures degrade to empty/header-only context;
 // legacy missing anchors retain their explicitly locked compatibility fallback.
 
+import { type DerivationPolicyT, allowsDerivation } from '@/core/schema/derivation-policy';
 import type { Db } from '@/db/client';
+import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import type { DomainToolSurface } from '@/kernel/tools/allowlists';
 import { COPILOT_HISTORY_BUDGET, type CopilotHistoryBudget } from '@/kernel/tools/budgets';
 
@@ -17,6 +19,7 @@ import {
 import {
   CopilotHistoryAnchorError,
   type CopilotTurn,
+  getCopilotReplyPoliciesBeforeAnchor,
   getCopilotTurnsBeforeAnchor,
   getRecentCopilotTurns,
 } from './turns';
@@ -54,6 +57,7 @@ export interface CopilotAmbientContext {
 
 // The free-form CopilotTask input before native cold/resume encoding.
 export interface CopilotRunInput {
+  derivation_policy?: DerivationPolicyT;
   surface: DomainToolSurface;
   triggered_by: CopilotTriggeredBy;
   user_message: string;
@@ -97,7 +101,7 @@ export function assembleConversationHistory(
   const recent = turns
     .filter(
       (turn): turn is CopilotTurn & { role: 'user' | 'ai' } =>
-        turn.role === 'user' || turn.role === 'ai',
+        (turn.role === 'user' || turn.role === 'ai') && allowsDerivation(turn),
     )
     .slice(-budget.maxTurns);
   // 防循环 ① — project role + text and AI event_id only, then per-turn truncate (防循环 ④).
@@ -138,11 +142,13 @@ export interface AssembleCopilotRunInputDeps {
   loadHistoryFn?: typeof getRecentCopilotTurns;
   /** Fixed-session causal reader for persistent pickup assembly. */
   loadAnchoredHistoryFn?: typeof getCopilotTurnsBeforeAnchor;
+  loadCorrectionPoliciesFn?: typeof getCopilotReplyPoliciesBeforeAnchor;
 }
 
 export interface AssembleCopilotRunInputParams {
   sessionId: string;
   userMessage: string;
+  derivationPolicy?: DerivationPolicyT;
   triggeredBy: CopilotTriggeredBy;
   chipKind?: string;
   ambient?: CopilotAmbientContext;
@@ -186,12 +192,14 @@ export async function assembleCopilotRunInput(
   // degrades to the pinned header alone (pin-in-budget), never crashes the run.
   let rawTurns: CopilotTurn[] = [];
   let historyReadFailed = false;
+  let historyAnchorMissing = false;
   try {
     try {
       rawTurns = await loadAnchoredHistory(db, {
         limit: COPILOT_HISTORY_BUDGET.maxTurns,
         sessionId,
         anchorEventId: historyAnchorEventId,
+        forModel: true,
       });
     } catch (err) {
       // YUK-596 locked legacy contract: a genuinely missing anchor predates
@@ -210,10 +218,12 @@ export async function assembleCopilotRunInput(
           err,
         },
       );
+      historyAnchorMissing = true;
       rawTurns = await loadHistory(db, {
         limit: COPILOT_HISTORY_BUDGET.maxTurns,
         now,
         sessionId,
+        forModel: true,
       });
     }
   } catch (err) {
@@ -236,7 +246,25 @@ export async function assembleCopilotRunInput(
     learnerState.header_md,
   );
 
+  let correctionPolicies = rawTurns.filter((turn) => turn.role === 'ai');
+  let correctionPositionsUnavailable = false;
+  if (!deps.loadAnchoredHistoryFn || deps.loadCorrectionPoliciesFn) {
+    try {
+      const policies = await (deps.loadCorrectionPoliciesFn ?? getCopilotReplyPoliciesBeforeAnchor)(
+        db,
+        { sessionId, anchorEventId: historyAnchorMissing ? undefined : historyAnchorEventId, now },
+      );
+      // Only policy/id metadata crosses this boundary. Never retrieve excluded text.
+      correctionPolicies = policies.map((policy) => ({ ...policy, role: 'ai', text: '', at: '' }));
+    } catch {
+      correctionPositionsUnavailable = true;
+    }
+  }
+  const restrictedCorrectionTarget = params.correctionTargetTurnId
+    ? (await readEventDerivationPolicy(db, params.correctionTargetTurnId)) === 'answer_only'
+    : false;
   return {
+    derivation_policy: params.derivationPolicy ?? 'allow',
     surface: selectSurface(triggeredBy),
     triggered_by: triggeredBy,
     user_message: userMessage,
@@ -245,6 +273,12 @@ export async function assembleCopilotRunInput(
     conversation_history: conversationHistory,
     learner_state_header: learnerState.header_md,
     correction_contract: {
+      ...(restrictedCorrectionTarget ? { restricted_target: true } : {}),
+      ...(correctionPositionsUnavailable ? { positions_unavailable: true } : {}),
+      prior_turn_order: correctionPolicies.map((turn) => turn.event_id),
+      restricted_prior_turn_ids: correctionPolicies
+        .filter((turn) => !allowsDerivation(turn))
+        .map((turn) => turn.event_id),
       ...(params.correctionTargetTurnId
         ? { target_prior_turn_id: params.correctionTargetTurnId }
         : {}),
