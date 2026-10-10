@@ -13,6 +13,28 @@ nested `AGENTS.md` / `.claude/rules`，机械约束放在 hooks。
 - pre-AI 确定性功能是承重的一等能力；除非 owner 明确要求，不删除或降级。
 - 设计/架构方向反转前先复核 owner 已表达的需求和已锁决策。
 
+## Delivery stages and anti-slop rules (YUK-1388)
+
+- 对 owner 的交付文本用成果名，不用 W0/W1、I05、M073 等内部代码；票号可随后作参考。
+  阶段与内部波次对应如下：
+  - 第一天能用（W0）
+  - 帮助靠谱（W1）
+  - 按真实时间安排（W2）
+  - 说清不知道并检验（W3）
+  - 证明有效（W4）
+- 交付顺序与验收以 Linear 票及仓库外绝对路径 artifact 为准：
+  `/Volumes/YukovalSBak/yukoval-projects/tlp-audit-artifacts/yuk1388/stage4/I02/waves-v1.md`。
+- 新 abstraction、layer、registry 或 subsystem 必须在同一 PR 有 live consumer。
+- 每个 PR 写明服务的审计根项或契约及交付阶段；不属于任何阶段的工作，只限新 P0
+  或 owner 明确要求。
+- S13 DELETE/SIMPLIFY 对象随 consumer 迁入新路径的 PR 删除，不做独立大扫除；
+  新代码不得继续扩展这些对象。
+- 删除、替换或降级 rewrite-prep §9 的 8 项 pre-AI 承重能力，须 owner 明确批准；
+  未获批准时保持原样并上报（与上文 pre-AI 承重规则一致）。
+- 开放想法与 PARKED 契约，只有真实使用达到预注册样本量后才开工。
+- 新旧路径共用的 domain/kernel 逻辑直接修；路由/页面入口的修复落在新架构路径
+  （TanStack Start / DBOS / 同一路由的 ui-next），不在旧路径重复修复，除非该页面迁移前发现新 P0。
+
 ## Session and collaboration discipline
 
 - 涉及至少 3 个独立步骤或多轮工具调用时维护 task plan。
