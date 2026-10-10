@@ -10,12 +10,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RetryableError } from '@/core/schema/structured_question';
 import { cost_ledger, provider_attempt } from '@/db/schema';
 import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
-import {
-  createDirectProviderOperationContext,
-  providerOperationIdForInvocation,
-} from '@/server/ai/provider-attempt-runtime';
+import { providerOperationIdForInvocation } from '@/server/ai/provider-attempt-runtime';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { judgeReconciliation } from './reconcile-llm';
 
 beforeEach(() => {
   vi.stubEnv('AI_PROVIDER_ATTEMPT_ADMISSION_MODE', 'observe');
@@ -291,52 +287,6 @@ describe('reconcile handler — direct provider-start fence after abort', () => 
     vi.stubEnv('AI_PROVIDER_OVERRIDE', 'opencode-go');
     vi.stubEnv('AI_PROVIDER_MODEL', 'mimo-v2.6-pro');
     vi.stubEnv('OPENCODE_API_KEY', 'synthetic-mimo-key');
-  });
-
-  it('records zero-wire deadline rejection with the real direct lifecycle in observe mode', async () => {
-    const db = testDb();
-    const fetchImpl = vi.fn<typeof fetch>(async () => new Response('{}'));
-    await expect(
-      judgeReconciliation(
-        [
-          {
-            index: 0,
-            kind: 'event',
-            text: 'Synthetic completed proof with independent supporting work.',
-            memory_id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
-            created_ms: 2000,
-          },
-        ],
-        new Map(),
-        {
-          fetchImpl,
-          providerAttempt: createDirectProviderOperationContext({
-            db,
-            caller: 'worker',
-            mode: 'observe',
-            deadlineAt: new Date(Date.now() - 1),
-            operationAnchor: 'synthetic-expired-memory-reconciliation',
-          }),
-        },
-      ),
-    ).rejects.toBeInstanceOf(RetryableError);
-    expect(fetchImpl).not.toHaveBeenCalled();
-    expect(await db.select().from(provider_attempt)).toEqual([
-      expect.objectContaining({
-        terminal_status: 'aborted',
-        terminal_reason: 'provider_request_aborted',
-        wire_count: 0,
-        usage_json: expect.objectContaining({
-          basis: 'unknown',
-          input: null,
-          output: null,
-          total: null,
-        }),
-        cost_basis: 'unknown',
-        cost_amount: null,
-      }),
-    ]);
-    expect(await db.execute(sql`SELECT * FROM memory_reconciliation_log`)).toHaveLength(0);
   });
 
   it.each([

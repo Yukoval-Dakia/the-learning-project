@@ -3,7 +3,7 @@ import { and, asc, eq } from 'drizzle-orm';
 import type { PgBoss } from 'pg-boss';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { copilotCapability } from '@/capabilities/copilot/manifest';
-import { job_events } from '@/db/schema';
+import { event, job_events } from '@/db/schema';
 import * as agentRunner from '@/server/ai/runner';
 import { _resetBossForTests, fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
 import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
@@ -18,6 +18,7 @@ import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import {
   type CopilotAcceptedJobData,
   type CopilotDurableAcceptance,
+  type CopilotRunJobData,
   dispatchSessionHead,
   hashCopilotDurableInput,
   reserveCopilotDurableAcceptance,
@@ -48,8 +49,9 @@ async function accept(
   label: string,
   sessionId = SESSION_ID,
   assertActive?: () => void,
+  policy?: 'allow' | 'answer_only',
 ): Promise<CopilotDurableAcceptance> {
-  const jobData = richJobData(label);
+  const jobData = { ...richJobData(label), ...(policy ? { derivation_policy: policy } : {}) };
   const result = await reserveCopilotDurableAcceptance(
     testDb(),
     {
@@ -156,6 +158,59 @@ describe('durable Copilot session FIFO — real pg-boss contract', () => {
     await boss.deleteAllJobs('copilot_run').catch(() => undefined);
     await boss.stop({ graceful: false, timeout: 1_000 });
     _resetBossForTests();
+  });
+
+  it('accepts three turns but dispatches only the head, then advances with the complete job body', async () => {
+    const first = await accept(boss, 'one');
+    const second = await accept(boss, 'two', SESSION_ID, undefined, 'answer_only');
+    const third = await accept(boss, 'three');
+
+    expect(await boss.getJobById('copilot_run', first.bossJobId)).toMatchObject({
+      id: first.bossJobId,
+      state: 'created',
+    });
+    expect(await boss.getJobById('copilot_run', second.bossJobId)).toBeNull();
+    expect(await boss.getJobById('copilot_run', third.bossJobId)).toBeNull();
+    expect((await runEvents(first.runId)).map((row) => row.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.QUEUED,
+      COPILOT_RUN_EVENTS.DISPATCHED,
+    ]);
+    expect((await runEvents(second.runId)).map((row) => row.event_type)).toEqual([
+      COPILOT_RUN_EVENTS.QUEUED,
+    ]);
+
+    await settleWithoutWorker(boss, first);
+    await expect(
+      dispatchSessionHead(testDb(), SESSION_ID, { boss, transactionDb: fromPgBossDrizzleTx }),
+    ).resolves.toBe(second.runId);
+
+    const physicalSecond = await boss.getJobById('copilot_run', second.bossJobId);
+    expect(physicalSecond?.data).toEqual({
+      ...richJobData('two'),
+      derivation_policy: 'answer_only',
+      run_id: second.runId,
+      session_id: SESSION_ID,
+    } satisfies CopilotRunJobData);
+    expect(await boss.getJobById('copilot_run', third.bossJobId)).toBeNull();
+
+    const roots = await testDb()
+      .select({
+        id: event.id,
+        action: event.action,
+        actor_kind: event.actor_kind,
+        actor_ref: event.actor_ref,
+        payload: event.payload,
+      })
+      .from(event)
+      .where(eq(event.session_id, SESSION_ID))
+      .orderBy(asc(event.dispatch_seq));
+    expect(roots.map((row) => row.id)).toEqual([first.runId, second.runId, third.runId]);
+    expect(roots[0]).toMatchObject({
+      action: 'experimental:copilot_chip_trigger',
+      actor_kind: 'system',
+      actor_ref: 'ui:copilot_chip',
+      payload: { chip_kind: 'continue_one' },
+    });
   });
 
   it('automatically polls a terminal replay and its cancelled successor through the manifest without a model call', async () => {
