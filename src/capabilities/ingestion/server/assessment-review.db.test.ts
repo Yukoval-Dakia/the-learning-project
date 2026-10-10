@@ -1,8 +1,9 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import type { Job } from 'pg-boss';
 import postgres from 'postgres';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { newId } from '@/core/ids';
 import { canonicalHash } from '@/core/migration/canonical';
 import * as schema from '@/db/schema';
 import {
@@ -37,6 +38,21 @@ import {
 
 beforeEach(resetDb);
 const now = new Date('2026-10-10T00:00:00Z');
+const ownedOperationIds = new Set<string>();
+
+afterEach(async () => {
+  const ids = [...ownedOperationIds];
+  ownedOperationIds.clear();
+  if (!ids.length) return;
+  await testDb()
+    .delete(job_events)
+    .where(
+      and(
+        inArray(job_events.business_table, ['ingestion_operation', 'yuk1404-successor']),
+        inArray(job_events.business_id, ids),
+      ),
+    );
+});
 
 async function fixture(
   reference: string | null = '42',
@@ -44,6 +60,9 @@ async function fixture(
   originalPage = false,
 ) {
   const db = testDb();
+  // resetDb leaves job_events intact. A caller key from another fixture must
+  // not replay its old operation instead of reserving this new revision.
+  const sessionId = `review-session-${newId()}`;
   await db.insert(knowledge).values({
     id: 'review-kc',
     name: 'integer arithmetic',
@@ -53,7 +72,7 @@ async function fixture(
     version: 0,
   });
   await db.insert(learning_session).values({
-    id: 'review-session',
+    id: sessionId,
     type: 'ingestion',
     status: 'imported',
     entrypoint: 'vision_paper',
@@ -64,7 +83,7 @@ async function fixture(
   });
   await db.insert(question_block).values({
     id: 'review-block',
-    ingestion_session_id: 'review-session',
+    ingestion_session_id: sessionId,
     status: 'imported',
     imported_question_id: 'review-question',
     extracted_prompt_md: 'What is 6 times 7?',
@@ -96,7 +115,7 @@ async function fixture(
           },
         }
       : {}),
-    metadata: { ingestion_session_id: 'review-session', question_block_id: 'review-block' },
+    metadata: { ingestion_session_id: sessionId, question_block_id: 'review-block' },
     created_at: now,
     updated_at: now,
     version: 0,
@@ -107,22 +126,80 @@ async function fixture(
     now,
   });
   const prepared = await prepareIngestionAssessmentReview(db, {
-    sessionId: 'review-session',
+    sessionId,
     blockId: 'review-block',
   });
-  await reserveIngestionOperation(db, {
+  ownedOperationIds.add(prepared.operationId);
+  const reserved = await reserveIngestionOperation(db, {
     operationId: prepared.operationId,
-    sessionId: 'review-session',
+    sessionId,
     operationKind: 'assessment_review',
     inputHash: 'request',
     reviewBinding: prepared.binding,
     idempotencyKey: 'first',
   });
+  expect(reserved).toEqual({ outcome: 'created', operationId: prepared.operationId });
+  await withinAssessmentReviewExecutionClient(db.$client, async (client) => {
+    const observer = drizzle(client, { schema });
+    const [target] = await observer.execute<{ database: string }>(
+      sql`SELECT current_database() AS database`,
+    );
+    expect(target.database).toBe(db.$client.options.database);
+    expect(await readIngestionOperation(observer, prepared.operationId)).toMatchObject({
+      id: prepared.operationId,
+      session_id: sessionId,
+      operation_kind: 'assessment_review',
+      status: 'queued',
+    });
+    const accepted = await observer
+      .select()
+      .from(job_events)
+      .where(
+        and(
+          eq(job_events.business_table, 'ingestion_operation'),
+          eq(job_events.business_id, prepared.operationId),
+        ),
+      );
+    expect(accepted).toHaveLength(1);
+    expect(accepted[0]).toMatchObject({
+      event_type: 'operation.accepted',
+      payload: { review_binding: prepared.binding, session_id: sessionId },
+    });
+  });
   return {
     db,
     ...prepared,
-    input: { operationId: prepared.operationId, sessionId: 'review-session' },
+    input: { operationId: prepared.operationId, sessionId },
   };
+}
+
+async function awaitModelEntry(
+  f: Awaited<ReturnType<typeof fixture>>,
+  entered: Promise<void>,
+  execution: Promise<unknown>,
+) {
+  let didEnter = false;
+  await Promise.race([
+    entered.then(() => {
+      didEnter = true;
+    }),
+    execution.then(async () => {
+      if (didEnter) return;
+      const operation = await readIngestionOperation(f.db, f.operationId);
+      const events = await f.db
+        .select()
+        .from(job_events)
+        .where(
+          and(
+            eq(job_events.business_table, 'ingestion_operation'),
+            eq(job_events.business_id, f.operationId),
+          ),
+        );
+      throw new Error(
+        `Review settled before model entry: ${JSON.stringify({ operation, events })}`,
+      );
+    }),
+  ]);
 }
 
 function solver(db: ReturnType<typeof testDb>, beforeReturn?: () => Promise<void>) {
@@ -165,7 +242,7 @@ describe('ingestion assessment review settlement invariants (offline model bound
       ['second', 'third'].map((key) =>
         reserveIngestionOperation(f.db, {
           operationId: f.operationId,
-          sessionId: 'review-session',
+          sessionId: f.input.sessionId,
           operationKind: 'assessment_review',
           inputHash: 'request',
           reviewBinding: f.binding,
@@ -182,7 +259,7 @@ describe('ingestion assessment review settlement invariants (offline model bound
       (
         await reserveIngestionOperation(f.db, {
           operationId: assessmentReviewOperationId(next),
-          sessionId: 'review-session',
+          sessionId: f.input.sessionId,
           operationKind: 'assessment_review',
           inputHash: 'changed',
           reviewBinding: next,
@@ -195,6 +272,7 @@ describe('ingestion assessment review settlement invariants (offline model bound
       .from(job_events)
       .where(
         and(
+          eq(job_events.business_table, 'ingestion_operation'),
           eq(job_events.business_id, f.operationId),
           eq(job_events.event_type, 'operation.accepted'),
         ),
@@ -338,10 +416,15 @@ describe('ingestion assessment review settlement invariants (offline model bound
       await pending;
     });
     const first = completeIngestionAssessmentReview(f.db, f.input, model);
-    await entered;
-    const duplicate = completeIngestionAssessmentReview(f.db, f.input, model);
-    release();
-    await Promise.all([first, duplicate]);
+    try {
+      await awaitModelEntry(f, entered, first);
+      const duplicate = completeIngestionAssessmentReview(f.db, f.input, model);
+      release();
+      await Promise.all([first, duplicate]);
+    } finally {
+      release();
+      await first;
+    }
     expect(model.calls()).toBe(1);
     expect((await readIngestionOperation(f.db, f.operationId))?.result).toMatchObject({
       status: 'admitted',
@@ -367,8 +450,8 @@ describe('ingestion assessment review settlement invariants (offline model bound
       await pending;
     });
     const first = completeIngestionAssessmentReview(f.db, f.input, model);
-    await entered;
     try {
+      await awaitModelEntry(f, entered, first);
       await expect(
         completeIngestionAssessmentReview(f.db, f.input, { ...model, lockWaitMs: 25 }),
       ).rejects.toMatchObject({ code: 'assessment_review_busy' });
@@ -376,8 +459,8 @@ describe('ingestion assessment review settlement invariants (offline model bound
       expect(model.calls()).toBe(1);
     } finally {
       release();
+      await first;
     }
-    await first;
     expect((await readIngestionOperation(f.db, f.operationId))?.result).toMatchObject({
       status: 'admitted',
     });
@@ -458,15 +541,15 @@ describe('ingestion assessment review settlement invariants (offline model bound
         () => ({ error: null }),
         (error: unknown) => ({ error }),
       );
-      await entered;
-      const [oldOwner] = await f.db.execute<{ pid: number }>(sql`
+      try {
+        await awaitModelEntry(f, entered, first);
+        const [oldOwner] = await f.db.execute<{ pid: number }>(sql`
       SELECT pid FROM pg_locks WHERE locktype = 'advisory' AND granted AND objsubid = 2
         AND classid = (hashtext('ingestion-assessment-execution')::bigint & 4294967295)::oid
         AND objid = (hashtext(${f.operationId})::bigint & 4294967295)::oid
     `);
-      expect(oldOwner.pid).not.toBe(originalPool.pid);
-      await f.db.execute(sql`SELECT pg_terminate_backend(${oldOwner.pid})`);
-      try {
+        expect(oldOwner.pid).not.toBe(originalPool.pid);
+        await f.db.execute(sql`SELECT pg_terminate_backend(${oldOwner.pid})`);
         await withinAssessmentReviewExecutionClient(client, (successorClient) =>
           withinSessionAdvisoryLock(
             drizzle(successorClient, { schema }),
@@ -515,7 +598,12 @@ describe('ingestion assessment review settlement invariants (offline model bound
                   await tx
                     .select()
                     .from(job_events)
-                    .where(eq(job_events.business_table, 'yuk1404-successor')),
+                    .where(
+                      and(
+                        eq(job_events.business_table, 'yuk1404-successor'),
+                        eq(job_events.business_id, f.operationId),
+                      ),
+                    ),
                 ).toHaveLength(1);
                 throw new Error('rollback successor control');
               });
@@ -529,14 +617,25 @@ describe('ingestion assessment review settlement invariants (offline model bound
           await f.db
             .select()
             .from(job_events)
-            .where(eq(job_events.business_table, 'yuk1404-successor')),
+            .where(
+              and(
+                eq(job_events.business_table, 'yuk1404-successor'),
+                eq(job_events.business_id, f.operationId),
+              ),
+            ),
         ).toHaveLength(0);
         expect(providerCalls).toBe(1);
         expect(
           await f.db
             .select()
             .from(job_events)
-            .where(eq(job_events.event_type, 'operation.review_result')),
+            .where(
+              and(
+                eq(job_events.business_table, 'ingestion_operation'),
+                eq(job_events.business_id, f.operationId),
+                eq(job_events.event_type, 'operation.review_result'),
+              ),
+            ),
         ).toHaveLength(0);
         expect(await f.db.select().from(question_admission_verification)).toHaveLength(0);
         await completeIngestionAssessmentReview(f.db, f.input, {
@@ -599,7 +698,13 @@ describe('ingestion assessment review settlement invariants (offline model bound
       await f.db
         .select()
         .from(job_events)
-        .where(eq(job_events.event_type, 'operation.review_result')),
+        .where(
+          and(
+            eq(job_events.business_table, 'ingestion_operation'),
+            eq(job_events.business_id, f.operationId),
+            eq(job_events.event_type, 'operation.review_result'),
+          ),
+        ),
     ).toHaveLength(1);
     await completeIngestionAssessmentReview(f.db, f.input, model);
     expect(model.calls()).toBe(1);
