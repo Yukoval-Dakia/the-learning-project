@@ -225,9 +225,9 @@
   border-color: var(--coral-line);
 }
 .qf2-pip.on {
-  background: var(--coral);
-  border-color: var(--coral);
-  color: #fff;
+  background: var(--coral-fill);
+  border-color: var(--coral-fill);
+  color: var(--on-coral-fill);
 }
 .qf2-reset {
   display: inline-flex;
@@ -1048,9 +1048,9 @@
   border-color: var(--coral-line);
 }
 .qd-diffset button.on {
-  background: var(--coral);
-  border-color: var(--coral);
-  color: #fff;
+  background: var(--coral-fill);
+  border-color: var(--coral-fill);
+  color: var(--on-coral-fill);
 }
 .qd-chipset {
   display: flex;

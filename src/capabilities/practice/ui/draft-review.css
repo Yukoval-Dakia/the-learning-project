@@ -212,9 +212,9 @@
   padding: 5px 11px;
 }
 .dr-reset:hover {
-  background: var(--coral);
-  color: #fff;
-  border-color: var(--coral);
+  background: var(--coral-fill);
+  color: var(--on-coral-fill);
+  border-color: var(--coral-fill);
 }
 
 /* ── batch bar ────────────────────────────────────────────── */
@@ -559,9 +559,9 @@
   color: var(--coral-ink);
 }
 .dr-pg.on {
-  background: var(--coral);
-  border-color: var(--coral);
-  color: #fff;
+  background: var(--coral-fill);
+  border-color: var(--coral-fill);
+  color: var(--on-coral-fill);
 }
 .dr-pg:disabled {
   opacity: 0.4;
