@@ -26,8 +26,8 @@ import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { SkLines } from '@/ui/primitives/SkLines';
 import { ObSteps } from './ObSteps';
-import { type PlacementProfile, type ProfileKc, getPlacementProfile } from './profile-api';
-import { getCalibrationMaturity } from './recompute/calibration-maturity-api';
+import { usePlacementProfileClient } from './placement-client';
+import type { PlacementProfile, ProfileKc } from './profile-api';
 import {
   RcDetailPanel,
   RcKcChip,
@@ -99,6 +99,7 @@ export function deriveProfilePresentation(data: PlacementProfile): ProfilePresen
 }
 
 export default function ScreenProfile({ navigate }: ScreenProfileProps) {
+  const { getPlacementProfile } = usePlacementProfileClient();
   const goalId = new URLSearchParams(window.location.search).get('goal');
 
   const profileQ = useQuery({
@@ -214,6 +215,7 @@ function ProfileBody({
   // query stays disabled until the layer is visually verified. The query + memo are declared
   // unconditionally here (after ScreenProfile's data-dependent early returns) to keep hook order
   // stable; RcMaturityBadge owns its own useRecompute internally.
+  const { getCalibrationMaturity } = usePlacementProfileClient();
   const maturityQ = useQuery({
     queryKey: ['calibration-maturity'],
     queryFn: getCalibrationMaturity,

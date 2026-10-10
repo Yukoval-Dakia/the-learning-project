@@ -34,7 +34,7 @@ export interface JudgeRunTerminalResult {
   [key: string]: unknown;
 }
 
-interface JudgeRunStatusWire {
+export interface JudgeRunStatusWire {
   run_id: string;
   status: JudgeRunPollStatus;
   result: JudgeRunTerminalResult | null;
@@ -56,6 +56,8 @@ export interface UseJudgeRunPollingOptions {
   runId: string | null;
   /** 202 回执 backfill.poll_url；缺席时按 run_id 推导默认路径。 */
   pollUrl?: string | null;
+  /** 注入的状态读取（如 Start RPC）；提供时不再按 pollUrl 发 HTTP。 */
+  readStatus?: (runId: string) => Promise<JudgeRunStatusWire>;
   /** 起步间隔 ms（默认 1200）。 */
   intervalMs?: number;
   /** 退避上限 ms（默认 6000）。 */
@@ -68,6 +70,7 @@ export interface UseJudgeRunPollingOptions {
 export function useJudgeRunPolling({
   runId,
   pollUrl,
+  readStatus,
   intervalMs = 1200,
   maxIntervalMs = 6000,
   maxConsecutiveErrors = 5,
@@ -83,6 +86,9 @@ export function useJudgeRunPolling({
 
   // runId 变化（换了一次 submission）→ 归零重查；旧 run 的迟到响应绝不可写新 run 的态。
   const generationRef = useRef(0);
+  // 读取函数可能每次渲染换引用；放进 ref，避免它重启轮询或丢掉退避进度。
+  const readStatusRef = useRef(readStatus);
+  readStatusRef.current = readStatus;
   // biome-ignore lint/correctness/useExhaustiveDependencies: runId change must re-run the reset effect even though it's only read via closure
   useEffect(() => {
     generationRef.current += 1;
@@ -99,7 +105,8 @@ export function useJudgeRunPolling({
     const tick = async (delay: number) => {
       let nextDelay = delay;
       try {
-        const wire = await apiJson<JudgeRunStatusWire>(url);
+        const read = readStatusRef.current;
+        const wire = read ? await read(runId) : await apiJson<JudgeRunStatusWire>(url);
         if (cancelled || generationRef.current !== generation) return;
         consecutiveErrors = 0;
         const terminal = wire.status === 'done' || wire.status === 'failed';
