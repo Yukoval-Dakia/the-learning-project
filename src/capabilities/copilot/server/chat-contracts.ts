@@ -100,7 +100,8 @@ export const CopilotChatRequest = z
   .superRefine((request, ctx) => {
     if (
       request.review_answer &&
-      (request.triggered_by !== 'chat' ||
+      (request.derivation_policy === 'answer_only' ||
+        request.triggered_by !== 'chat' ||
         request.skill_context ||
         request.correction_target_turn_id)
     ) {

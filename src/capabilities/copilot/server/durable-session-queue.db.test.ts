@@ -3,17 +3,19 @@ import { and, asc, eq } from 'drizzle-orm';
 import type { PgBoss } from 'pg-boss';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { copilotCapability } from '@/capabilities/copilot/manifest';
-import { event, job_events } from '@/db/schema';
+import { assessment_submission, event, job_events } from '@/db/schema';
 import * as agentRunner from '@/server/ai/runner';
 import { _resetBossForTests, fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
 import { registerCapabilityJobs } from '@/server/boss/register-capability-jobs';
 import { writeJobEvent } from '@/server/events/writer';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import * as runtimeEnv from '@/server/runtime-env';
+import { nativeSoloHttpFixture } from '../../../../tests/fixtures/native-solo-http';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST as sendMessage } from '../api/chat';
 import { CopilotDurableRunResponseSchema, CopilotTurnsResponseSchema } from '../api/contracts';
 import { GET as readConversation } from '../api/turns';
+import { writeCopilotInputEvent } from './conversation-writes';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import {
   type CopilotAcceptedJobData,
@@ -91,6 +93,48 @@ async function settleWithoutWorker(boss: PgBoss, acceptance: CopilotDurableAccep
 }
 
 describe('durable Copilot session FIFO — real pg-boss contract', () => {
+  it('rejects answer-only review attachments before formal submission or assistance capture while preserving allow intake', async () => {
+    vi.spyOn(runtimeEnv, 'shouldEnqueueBackgroundJobs').mockReturnValue(true);
+    const fixture = await nativeSoloHttpFixture(testDb());
+    const reviewAnswer = {
+      authorize_submission: true as const,
+      question_id: fixture.id,
+      assessment: fixture.assessment,
+      reasoning_trace: '仅探索控制变量、证据不足和例外分支，不能推断独立掌握。'.repeat(30),
+    };
+    const beforeEvents = await testDb().select().from(event);
+    const beforeSubmissions = await testDb().select().from(assessment_submission);
+    const request = (policy: 'allow' | 'answer_only') =>
+      new Request('http://test/api/copilot/chat', {
+        method: 'POST',
+        headers: { 'Idempotency-Key': randomUUID() },
+        body: JSON.stringify({
+          triggered_by: 'chat',
+          user_message: '原件仅用于本次探索，不保存学习证据。',
+          derivation_policy: policy,
+          review_answer: reviewAnswer,
+        }),
+      });
+    expect((await sendMessage(request('answer_only'), {})).status).toBe(400);
+    await expect(
+      writeCopilotInputEvent(testDb(), {
+        sessionId: SESSION_ID,
+        userMessage: '独立 writer 也不能绕过用途边界。',
+        derivationPolicy: 'answer_only',
+        reviewAnswer,
+        now: new Date(),
+      }),
+    ).rejects.toThrow('answer_only');
+    expect(await testDb().select().from(assessment_submission)).toEqual(beforeSubmissions);
+    expect(await testDb().select().from(event)).toEqual(beforeEvents);
+    expect(await testDb().select().from(job_events)).toEqual([]);
+    expect(await boss.findJobs('copilot_run')).toEqual([]);
+    expect((await sendMessage(request('allow'), {})).status).toBe(202);
+    expect(await testDb().select().from(assessment_submission)).toHaveLength(
+      beforeSubmissions.length + 1,
+    );
+  });
+
   it('returns frozen policy through real 202, pending snapshot, same-key retry and changed-policy conflict', async () => {
     vi.spyOn(runtimeEnv, 'shouldEnqueueBackgroundJobs').mockReturnValue(true);
     const key = randomUUID();

@@ -7,6 +7,7 @@ import { type DerivationPolicyT, readDerivationPolicy } from '@/core/schema/deri
 import type { Db, Tx } from '@/db/client';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
+import { ApiError } from '@/kernel/http';
 import type { CopilotModeState, CopilotSkillContextT, CopilotSkillTurn } from './chat-contracts';
 import { type ReviewAnswerAttachment, captureReviewAnswerBinding } from './practice-port';
 import {
@@ -47,6 +48,13 @@ export async function writeCopilotInputEvent(
     writeFn?: (db: Db | Tx, event: WriteEventInput) => Promise<unknown>;
   },
 ): Promise<string> {
+  if (params.reviewAnswer && params.derivationPolicy === 'answer_only') {
+    throw new ApiError(
+      'validation_error',
+      'review_answer is not supported for answer_only turns',
+      400,
+    );
+  }
   if (params.reviewAnswer) return db.transaction((tx) => persistCopilotInputEvent(tx, params));
   return persistCopilotInputEvent(db, params);
 }
