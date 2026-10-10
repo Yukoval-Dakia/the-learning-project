@@ -14,3 +14,7 @@ Baseline: 8b5d0cab53e8a34bd24c6bc78da0d9e9f894060f. Parent investigation; no pro
 Trace the canonical structured material schema and both manual/native enrollment consumers, then implement a shared material projection with explicit unknown/reference provenance, kind/options and owned figure refs. Verify identity/source-block revision concurrency. Source corrections must remain separate from admission approval and public outcome receipts. UI transport/read-model handoff retains current visuals and Start ownership.
 
 Real acceptance remains the original 14-page/21-question corpus plus R01 blank review/outcome observations: field comparison, zero student-work-to-key promotion, exact owned figures, explicit review/admission next action, actual practice entry. No model, DB, runtime, paid call, test or deployment was performed for this trace.
+
+## First implementation delta
+
+Extraction block construction now filters figures through the existing assignment identity and full question subtree. It no longer copies every sibling figure into every block. Node24 executed the actual function with root/child/sibling/unknown ownership and verified no mutation of the input (source-level smoke only, not DB/model/TEST acceptance). image_refs, structured projection, answer provenance and admission/outcome remain pending; no claim of complete1404 repair.

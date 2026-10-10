@@ -6,7 +6,11 @@ import {
   type IngestionExtractionProgressPayloadT,
   writeExtractionProgress,
 } from '@/capabilities/ingestion/server/events/extraction-progress';
-import { assignFigures, assignFiguresFromVlm } from '@/capabilities/ingestion/server/figure_attach';
+import {
+  assignFigures,
+  assignFiguresFromVlm,
+  figuresForQuestion,
+} from '@/capabilities/ingestion/server/figure_attach';
 // T-OC slice 2 (YUK-145, OC-1/OC-2): VLM StructureTask owns the structure tree;
 // Tencent structure is demoted to a text hint. See
 // docs/superpowers/plans/2026-05-30-yuk145-toc-slice2-lane.md.
@@ -606,7 +610,7 @@ async function processOneOcrJob(
       }
       return {
         structured: q,
-        figures: figureRefs,
+        figures: figuresForQuestion(q, figureRefs),
         page_spans: [
           {
             page_index: rawPageIndex,
