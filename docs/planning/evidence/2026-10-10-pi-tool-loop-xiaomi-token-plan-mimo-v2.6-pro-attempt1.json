@@ -1,0 +1,555 @@
+{
+  "captured_at": "2026-10-10T02:01:55.898Z",
+  "code_revision": "3c851c23b7351297bc6177c947b2333ee416e8e5",
+  "working_tree": "dirty",
+  "patch_digest": "sha256:9b7142b1b434b4965a46fbc0549c5d197f6b2935cc72a434cfac51ae886cc7f4",
+  "patch_paths": ["src/server/ai/pi-tool-loop-actual.db.test.ts", "src/server/ai/providers.ts"],
+  "ticket": "YUK-1402",
+  "lane": {
+    "adapter": "pi",
+    "provider": "xiaomi-token-plan",
+    "model": "mimo-v2.6-pro",
+    "task_kind": "SourcingTask",
+    "needsToolCall": true,
+    "session_header": null,
+    "tool_ctx_run_id": "p2_evidence_tool_v9v1mtzprqlu4ryx5l2japbq",
+    "pin": "explicit ctx.modelBinding (post-P4: the env rollout pin is gone)"
+  },
+  "task_run_id": "rq74is39756aa9ty2rq9cwjd",
+  "status": "success",
+  "finish_reason": "end_turn",
+  "usage": {
+    "inputTokens": 343674,
+    "outputTokens": 1832
+  },
+  "cost": {
+    "basis": "estimated",
+    "amount_usd": 0.03027242,
+    "ref": "pi-catalog:xiaomi-token-plan/mimo-v2.6-pro",
+    "label": "pi-catalog estimate, not Token Plan billing"
+  },
+  "provider_requests": [
+    {
+      "ordinal": 1,
+      "model": "mimo-v2.6-pro",
+      "prior_tool_calls": [],
+      "prior_tool_results": []
+    },
+    {
+      "ordinal": 2,
+      "model": "mimo-v2.6-pro",
+      "prior_tool_calls": [
+        {
+          "id": "call_fa86e59e71164391a03bec61",
+          "name": "mcp__loom__query_knowledge",
+          "arguments_digest": "sha256:f968148655114caf9082a801047d23b1088ce88878e033ea909becbedff9d945"
+        },
+        {
+          "id": "call_0cef6d52d1794b6eb5c9fd4c",
+          "name": "mcp__exa__web_search_exa",
+          "arguments_digest": "sha256:2eb7485857da0f39f0002382d238b5ffffa62bcc2cb4f1a02d2f24f082b421b8"
+        }
+      ],
+      "prior_tool_results": [
+        {
+          "id": "call_fa86e59e71164391a03bec61",
+          "output_digest": "sha256:613f707e0aa4e1c5684062d714f69997ed6ee50c599f639962f2abc87f095e09"
+        },
+        {
+          "id": "call_0cef6d52d1794b6eb5c9fd4c",
+          "output_digest": "sha256:706e38f1f9766bc6edc251d802443b93fac3c18a2adeb3fb09b93d6f8aed2869"
+        }
+      ]
+    },
+    {
+      "ordinal": 3,
+      "model": "mimo-v2.6-pro",
+      "prior_tool_calls": [
+        {
+          "id": "call_fa86e59e71164391a03bec61",
+          "name": "mcp__loom__query_knowledge",
+          "arguments_digest": "sha256:f968148655114caf9082a801047d23b1088ce88878e033ea909becbedff9d945"
+        },
+        {
+          "id": "call_0cef6d52d1794b6eb5c9fd4c",
+          "name": "mcp__exa__web_search_exa",
+          "arguments_digest": "sha256:2eb7485857da0f39f0002382d238b5ffffa62bcc2cb4f1a02d2f24f082b421b8"
+        },
+        {
+          "id": "call_e8ba4a51b34c43e5a7ce16ed",
+          "name": "mcp__exa__web_search_exa",
+          "arguments_digest": "sha256:8302bc8f8be415c8c35194d2d8a0885e29c576dc4aa1ff9e9b09fbbdc8e379d6"
+        },
+        {
+          "id": "call_9383ba48acbc4da69727d927",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:2e1d566a6a7366594850abae08920495984ebbe3e4b583e422854dd6f7de85e6"
+        }
+      ],
+      "prior_tool_results": [
+        {
+          "id": "call_fa86e59e71164391a03bec61",
+          "output_digest": "sha256:613f707e0aa4e1c5684062d714f69997ed6ee50c599f639962f2abc87f095e09"
+        },
+        {
+          "id": "call_0cef6d52d1794b6eb5c9fd4c",
+          "output_digest": "sha256:706e38f1f9766bc6edc251d802443b93fac3c18a2adeb3fb09b93d6f8aed2869"
+        },
+        {
+          "id": "call_e8ba4a51b34c43e5a7ce16ed",
+          "output_digest": "sha256:f8b147a7664a8135dc4d4df5246c3a352b9433e0fb9f455491e7f40e05d51922"
+        },
+        {
+          "id": "call_9383ba48acbc4da69727d927",
+          "output_digest": "sha256:32a0b2fa29af8027e061d4deaa0f7e3434b42ebbb8529783065b0ac692ad75b4"
+        }
+      ]
+    },
+    {
+      "ordinal": 4,
+      "model": "mimo-v2.6-pro",
+      "prior_tool_calls": [
+        {
+          "id": "call_fa86e59e71164391a03bec61",
+          "name": "mcp__loom__query_knowledge",
+          "arguments_digest": "sha256:f968148655114caf9082a801047d23b1088ce88878e033ea909becbedff9d945"
+        },
+        {
+          "id": "call_0cef6d52d1794b6eb5c9fd4c",
+          "name": "mcp__exa__web_search_exa",
+          "arguments_digest": "sha256:2eb7485857da0f39f0002382d238b5ffffa62bcc2cb4f1a02d2f24f082b421b8"
+        },
+        {
+          "id": "call_e8ba4a51b34c43e5a7ce16ed",
+          "name": "mcp__exa__web_search_exa",
+          "arguments_digest": "sha256:8302bc8f8be415c8c35194d2d8a0885e29c576dc4aa1ff9e9b09fbbdc8e379d6"
+        },
+        {
+          "id": "call_9383ba48acbc4da69727d927",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:2e1d566a6a7366594850abae08920495984ebbe3e4b583e422854dd6f7de85e6"
+        },
+        {
+          "id": "call_3c5abde5b33f4dd4a3e0caf5",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:a49009b4e68d196c9380dd31923697ba66229f90eb8a4a1c81517d0a824739e2"
+        }
+      ],
+      "prior_tool_results": [
+        {
+          "id": "call_fa86e59e71164391a03bec61",
+          "output_digest": "sha256:613f707e0aa4e1c5684062d714f69997ed6ee50c599f639962f2abc87f095e09"
+        },
+        {
+          "id": "call_0cef6d52d1794b6eb5c9fd4c",
+          "output_digest": "sha256:706e38f1f9766bc6edc251d802443b93fac3c18a2adeb3fb09b93d6f8aed2869"
+        },
+        {
+          "id": "call_e8ba4a51b34c43e5a7ce16ed",
+          "output_digest": "sha256:f8b147a7664a8135dc4d4df5246c3a352b9433e0fb9f455491e7f40e05d51922"
+        },
+        {
+          "id": "call_9383ba48acbc4da69727d927",
+          "output_digest": "sha256:32a0b2fa29af8027e061d4deaa0f7e3434b42ebbb8529783065b0ac692ad75b4"
+        },
+        {
+          "id": "call_3c5abde5b33f4dd4a3e0caf5",
+          "output_digest": "sha256:cfcabbc515e1578bb8f13c438b00e59b6a04212532fd07b7ab8aac0b19907b88"
+        }
+      ]
+    },
+    {
+      "ordinal": 5,
+      "model": "mimo-v2.6-pro",
+      "prior_tool_calls": [
+        {
+          "id": "call_fa86e59e71164391a03bec61",
+          "name": "mcp__loom__query_knowledge",
+          "arguments_digest": "sha256:f968148655114caf9082a801047d23b1088ce88878e033ea909becbedff9d945"
+        },
+        {
+          "id": "call_0cef6d52d1794b6eb5c9fd4c",
+          "name": "mcp__exa__web_search_exa",
+          "arguments_digest": "sha256:2eb7485857da0f39f0002382d238b5ffffa62bcc2cb4f1a02d2f24f082b421b8"
+        },
+        {
+          "id": "call_e8ba4a51b34c43e5a7ce16ed",
+          "name": "mcp__exa__web_search_exa",
+          "arguments_digest": "sha256:8302bc8f8be415c8c35194d2d8a0885e29c576dc4aa1ff9e9b09fbbdc8e379d6"
+        },
+        {
+          "id": "call_9383ba48acbc4da69727d927",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:2e1d566a6a7366594850abae08920495984ebbe3e4b583e422854dd6f7de85e6"
+        },
+        {
+          "id": "call_3c5abde5b33f4dd4a3e0caf5",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:a49009b4e68d196c9380dd31923697ba66229f90eb8a4a1c81517d0a824739e2"
+        },
+        {
+          "id": "call_8985739d60c348448e6b8c3d",
+          "name": "mcp__exa__web_search_exa",
+          "arguments_digest": "sha256:961449eaf126ce9622c367f0dbb4fe20bb71c7bc46423874185adfbfdcb1ea97"
+        },
+        {
+          "id": "call_4e9f3ae16df1443ebdd35c2f",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:1248d27844755e6c79893dc2aa1b1ca8d48be4344795029b749e0d54d83de22f"
+        }
+      ],
+      "prior_tool_results": [
+        {
+          "id": "call_fa86e59e71164391a03bec61",
+          "output_digest": "sha256:613f707e0aa4e1c5684062d714f69997ed6ee50c599f639962f2abc87f095e09"
+        },
+        {
+          "id": "call_0cef6d52d1794b6eb5c9fd4c",
+          "output_digest": "sha256:706e38f1f9766bc6edc251d802443b93fac3c18a2adeb3fb09b93d6f8aed2869"
+        },
+        {
+          "id": "call_e8ba4a51b34c43e5a7ce16ed",
+          "output_digest": "sha256:f8b147a7664a8135dc4d4df5246c3a352b9433e0fb9f455491e7f40e05d51922"
+        },
+        {
+          "id": "call_9383ba48acbc4da69727d927",
+          "output_digest": "sha256:32a0b2fa29af8027e061d4deaa0f7e3434b42ebbb8529783065b0ac692ad75b4"
+        },
+        {
+          "id": "call_3c5abde5b33f4dd4a3e0caf5",
+          "output_digest": "sha256:cfcabbc515e1578bb8f13c438b00e59b6a04212532fd07b7ab8aac0b19907b88"
+        },
+        {
+          "id": "call_8985739d60c348448e6b8c3d",
+          "output_digest": "sha256:d744954ea18e25d22a753f35fd51d4fbd55efc98f3ca556d9710f082723c89fe"
+        },
+        {
+          "id": "call_4e9f3ae16df1443ebdd35c2f",
+          "output_digest": "sha256:11663d83b8d8ab6a0bfd6f1b9b14bd93e5bb41767964457f6eead7ad0fdc530d"
+        }
+      ]
+    },
+    {
+      "ordinal": 6,
+      "model": "mimo-v2.6-pro",
+      "prior_tool_calls": [
+        {
+          "id": "call_fa86e59e71164391a03bec61",
+          "name": "mcp__loom__query_knowledge",
+          "arguments_digest": "sha256:f968148655114caf9082a801047d23b1088ce88878e033ea909becbedff9d945"
+        },
+        {
+          "id": "call_0cef6d52d1794b6eb5c9fd4c",
+          "name": "mcp__exa__web_search_exa",
+          "arguments_digest": "sha256:2eb7485857da0f39f0002382d238b5ffffa62bcc2cb4f1a02d2f24f082b421b8"
+        },
+        {
+          "id": "call_e8ba4a51b34c43e5a7ce16ed",
+          "name": "mcp__exa__web_search_exa",
+          "arguments_digest": "sha256:8302bc8f8be415c8c35194d2d8a0885e29c576dc4aa1ff9e9b09fbbdc8e379d6"
+        },
+        {
+          "id": "call_9383ba48acbc4da69727d927",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:2e1d566a6a7366594850abae08920495984ebbe3e4b583e422854dd6f7de85e6"
+        },
+        {
+          "id": "call_3c5abde5b33f4dd4a3e0caf5",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:a49009b4e68d196c9380dd31923697ba66229f90eb8a4a1c81517d0a824739e2"
+        },
+        {
+          "id": "call_8985739d60c348448e6b8c3d",
+          "name": "mcp__exa__web_search_exa",
+          "arguments_digest": "sha256:961449eaf126ce9622c367f0dbb4fe20bb71c7bc46423874185adfbfdcb1ea97"
+        },
+        {
+          "id": "call_4e9f3ae16df1443ebdd35c2f",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:1248d27844755e6c79893dc2aa1b1ca8d48be4344795029b749e0d54d83de22f"
+        },
+        {
+          "id": "call_cd29de334e31415aae81138c",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:d8f43adf96464c281fcb448a0412d7fa5c2041567fa187e99087fd251fdfa3c0"
+        }
+      ],
+      "prior_tool_results": [
+        {
+          "id": "call_fa86e59e71164391a03bec61",
+          "output_digest": "sha256:613f707e0aa4e1c5684062d714f69997ed6ee50c599f639962f2abc87f095e09"
+        },
+        {
+          "id": "call_0cef6d52d1794b6eb5c9fd4c",
+          "output_digest": "sha256:706e38f1f9766bc6edc251d802443b93fac3c18a2adeb3fb09b93d6f8aed2869"
+        },
+        {
+          "id": "call_e8ba4a51b34c43e5a7ce16ed",
+          "output_digest": "sha256:f8b147a7664a8135dc4d4df5246c3a352b9433e0fb9f455491e7f40e05d51922"
+        },
+        {
+          "id": "call_9383ba48acbc4da69727d927",
+          "output_digest": "sha256:32a0b2fa29af8027e061d4deaa0f7e3434b42ebbb8529783065b0ac692ad75b4"
+        },
+        {
+          "id": "call_3c5abde5b33f4dd4a3e0caf5",
+          "output_digest": "sha256:cfcabbc515e1578bb8f13c438b00e59b6a04212532fd07b7ab8aac0b19907b88"
+        },
+        {
+          "id": "call_8985739d60c348448e6b8c3d",
+          "output_digest": "sha256:d744954ea18e25d22a753f35fd51d4fbd55efc98f3ca556d9710f082723c89fe"
+        },
+        {
+          "id": "call_4e9f3ae16df1443ebdd35c2f",
+          "output_digest": "sha256:11663d83b8d8ab6a0bfd6f1b9b14bd93e5bb41767964457f6eead7ad0fdc530d"
+        },
+        {
+          "id": "call_cd29de334e31415aae81138c",
+          "output_digest": "sha256:71049755bb1289cf24891328d37b76d28e4f35252c9b7c097f859de73ad374aa"
+        }
+      ]
+    },
+    {
+      "ordinal": 7,
+      "model": "mimo-v2.6-pro",
+      "prior_tool_calls": [
+        {
+          "id": "call_fa86e59e71164391a03bec61",
+          "name": "mcp__loom__query_knowledge",
+          "arguments_digest": "sha256:f968148655114caf9082a801047d23b1088ce88878e033ea909becbedff9d945"
+        },
+        {
+          "id": "call_0cef6d52d1794b6eb5c9fd4c",
+          "name": "mcp__exa__web_search_exa",
+          "arguments_digest": "sha256:2eb7485857da0f39f0002382d238b5ffffa62bcc2cb4f1a02d2f24f082b421b8"
+        },
+        {
+          "id": "call_e8ba4a51b34c43e5a7ce16ed",
+          "name": "mcp__exa__web_search_exa",
+          "arguments_digest": "sha256:8302bc8f8be415c8c35194d2d8a0885e29c576dc4aa1ff9e9b09fbbdc8e379d6"
+        },
+        {
+          "id": "call_9383ba48acbc4da69727d927",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:2e1d566a6a7366594850abae08920495984ebbe3e4b583e422854dd6f7de85e6"
+        },
+        {
+          "id": "call_3c5abde5b33f4dd4a3e0caf5",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:a49009b4e68d196c9380dd31923697ba66229f90eb8a4a1c81517d0a824739e2"
+        },
+        {
+          "id": "call_8985739d60c348448e6b8c3d",
+          "name": "mcp__exa__web_search_exa",
+          "arguments_digest": "sha256:961449eaf126ce9622c367f0dbb4fe20bb71c7bc46423874185adfbfdcb1ea97"
+        },
+        {
+          "id": "call_4e9f3ae16df1443ebdd35c2f",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:1248d27844755e6c79893dc2aa1b1ca8d48be4344795029b749e0d54d83de22f"
+        },
+        {
+          "id": "call_cd29de334e31415aae81138c",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:d8f43adf96464c281fcb448a0412d7fa5c2041567fa187e99087fd251fdfa3c0"
+        },
+        {
+          "id": "call_1eef3a7ebf4f4479a5db9c0d",
+          "name": "mcp__exa__web_search_exa",
+          "arguments_digest": "sha256:e6c3e2b613a4a8db838e72ee30f64e66369203a8253b0af638c09002173e51cb"
+        },
+        {
+          "id": "call_ad2d501ebc7246eb807314cf",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:c0593edd856c69bf094d33d526ff4d4dfe2eeb9901908c53949846d05139537c"
+        }
+      ],
+      "prior_tool_results": [
+        {
+          "id": "call_fa86e59e71164391a03bec61",
+          "output_digest": "sha256:613f707e0aa4e1c5684062d714f69997ed6ee50c599f639962f2abc87f095e09"
+        },
+        {
+          "id": "call_0cef6d52d1794b6eb5c9fd4c",
+          "output_digest": "sha256:706e38f1f9766bc6edc251d802443b93fac3c18a2adeb3fb09b93d6f8aed2869"
+        },
+        {
+          "id": "call_e8ba4a51b34c43e5a7ce16ed",
+          "output_digest": "sha256:f8b147a7664a8135dc4d4df5246c3a352b9433e0fb9f455491e7f40e05d51922"
+        },
+        {
+          "id": "call_9383ba48acbc4da69727d927",
+          "output_digest": "sha256:32a0b2fa29af8027e061d4deaa0f7e3434b42ebbb8529783065b0ac692ad75b4"
+        },
+        {
+          "id": "call_3c5abde5b33f4dd4a3e0caf5",
+          "output_digest": "sha256:cfcabbc515e1578bb8f13c438b00e59b6a04212532fd07b7ab8aac0b19907b88"
+        },
+        {
+          "id": "call_8985739d60c348448e6b8c3d",
+          "output_digest": "sha256:d744954ea18e25d22a753f35fd51d4fbd55efc98f3ca556d9710f082723c89fe"
+        },
+        {
+          "id": "call_4e9f3ae16df1443ebdd35c2f",
+          "output_digest": "sha256:11663d83b8d8ab6a0bfd6f1b9b14bd93e5bb41767964457f6eead7ad0fdc530d"
+        },
+        {
+          "id": "call_cd29de334e31415aae81138c",
+          "output_digest": "sha256:71049755bb1289cf24891328d37b76d28e4f35252c9b7c097f859de73ad374aa"
+        },
+        {
+          "id": "call_1eef3a7ebf4f4479a5db9c0d",
+          "output_digest": "sha256:07353ab04f3337e5456324d1542fa61dc4e69eb335fcb20e9e284306cbe637a8"
+        },
+        {
+          "id": "call_ad2d501ebc7246eb807314cf",
+          "output_digest": "sha256:cb2a3ace961e9f616c27843528f8ec0e9e8d1469d04dcdf9d15dd18d7357bbb9"
+        }
+      ]
+    },
+    {
+      "ordinal": 8,
+      "model": "mimo-v2.6-pro",
+      "prior_tool_calls": [
+        {
+          "id": "call_fa86e59e71164391a03bec61",
+          "name": "mcp__loom__query_knowledge",
+          "arguments_digest": "sha256:f968148655114caf9082a801047d23b1088ce88878e033ea909becbedff9d945"
+        },
+        {
+          "id": "call_0cef6d52d1794b6eb5c9fd4c",
+          "name": "mcp__exa__web_search_exa",
+          "arguments_digest": "sha256:2eb7485857da0f39f0002382d238b5ffffa62bcc2cb4f1a02d2f24f082b421b8"
+        },
+        {
+          "id": "call_e8ba4a51b34c43e5a7ce16ed",
+          "name": "mcp__exa__web_search_exa",
+          "arguments_digest": "sha256:8302bc8f8be415c8c35194d2d8a0885e29c576dc4aa1ff9e9b09fbbdc8e379d6"
+        },
+        {
+          "id": "call_9383ba48acbc4da69727d927",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:2e1d566a6a7366594850abae08920495984ebbe3e4b583e422854dd6f7de85e6"
+        },
+        {
+          "id": "call_3c5abde5b33f4dd4a3e0caf5",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:a49009b4e68d196c9380dd31923697ba66229f90eb8a4a1c81517d0a824739e2"
+        },
+        {
+          "id": "call_8985739d60c348448e6b8c3d",
+          "name": "mcp__exa__web_search_exa",
+          "arguments_digest": "sha256:961449eaf126ce9622c367f0dbb4fe20bb71c7bc46423874185adfbfdcb1ea97"
+        },
+        {
+          "id": "call_4e9f3ae16df1443ebdd35c2f",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:1248d27844755e6c79893dc2aa1b1ca8d48be4344795029b749e0d54d83de22f"
+        },
+        {
+          "id": "call_cd29de334e31415aae81138c",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:d8f43adf96464c281fcb448a0412d7fa5c2041567fa187e99087fd251fdfa3c0"
+        },
+        {
+          "id": "call_1eef3a7ebf4f4479a5db9c0d",
+          "name": "mcp__exa__web_search_exa",
+          "arguments_digest": "sha256:e6c3e2b613a4a8db838e72ee30f64e66369203a8253b0af638c09002173e51cb"
+        },
+        {
+          "id": "call_ad2d501ebc7246eb807314cf",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:c0593edd856c69bf094d33d526ff4d4dfe2eeb9901908c53949846d05139537c"
+        },
+        {
+          "id": "call_947f92241c44486fa08e7973",
+          "name": "mcp__exa__web_fetch_exa",
+          "arguments_digest": "sha256:0237c2bd1cd58d81af113499ae73fb99ddea683c903d25f9e7defdea043638bf"
+        }
+      ],
+      "prior_tool_results": [
+        {
+          "id": "call_fa86e59e71164391a03bec61",
+          "output_digest": "sha256:613f707e0aa4e1c5684062d714f69997ed6ee50c599f639962f2abc87f095e09"
+        },
+        {
+          "id": "call_0cef6d52d1794b6eb5c9fd4c",
+          "output_digest": "sha256:706e38f1f9766bc6edc251d802443b93fac3c18a2adeb3fb09b93d6f8aed2869"
+        },
+        {
+          "id": "call_e8ba4a51b34c43e5a7ce16ed",
+          "output_digest": "sha256:f8b147a7664a8135dc4d4df5246c3a352b9433e0fb9f455491e7f40e05d51922"
+        },
+        {
+          "id": "call_9383ba48acbc4da69727d927",
+          "output_digest": "sha256:32a0b2fa29af8027e061d4deaa0f7e3434b42ebbb8529783065b0ac692ad75b4"
+        },
+        {
+          "id": "call_3c5abde5b33f4dd4a3e0caf5",
+          "output_digest": "sha256:cfcabbc515e1578bb8f13c438b00e59b6a04212532fd07b7ab8aac0b19907b88"
+        },
+        {
+          "id": "call_8985739d60c348448e6b8c3d",
+          "output_digest": "sha256:d744954ea18e25d22a753f35fd51d4fbd55efc98f3ca556d9710f082723c89fe"
+        },
+        {
+          "id": "call_4e9f3ae16df1443ebdd35c2f",
+          "output_digest": "sha256:11663d83b8d8ab6a0bfd6f1b9b14bd93e5bb41767964457f6eead7ad0fdc530d"
+        },
+        {
+          "id": "call_cd29de334e31415aae81138c",
+          "output_digest": "sha256:71049755bb1289cf24891328d37b76d28e4f35252c9b7c097f859de73ad374aa"
+        },
+        {
+          "id": "call_1eef3a7ebf4f4479a5db9c0d",
+          "output_digest": "sha256:07353ab04f3337e5456324d1542fa61dc4e69eb335fcb20e9e284306cbe637a8"
+        },
+        {
+          "id": "call_ad2d501ebc7246eb807314cf",
+          "output_digest": "sha256:cb2a3ace961e9f616c27843528f8ec0e9e8d1469d04dcdf9d15dd18d7357bbb9"
+        },
+        {
+          "id": "call_947f92241c44486fa08e7973",
+          "output_digest": "sha256:90190ca31378ea6c947cd4791ac992031ecf1a1969fd71a3b68dfa15736b8394"
+        }
+      ]
+    }
+  ],
+  "parse_validation": false,
+  "tool_call_log": [
+    {
+      "tool_name": "query_knowledge",
+      "error_reason": null,
+      "output_digest": "sha256:5a8875fd563176f04f3aa9a3c0d8d952fa773a5ad6602991ce999ce7099cbeb3",
+      "task_kind": "SourcingTask",
+      "effect": "read",
+      "latency_ms": 37,
+      "input_digest": "sha256:b98c416afff8aa956463954b442b5c88ae0d837c7422cf46716ef8fd398c5916",
+      "mirrored_event_id": null
+    }
+  ],
+  "mirrored_tool_use_events": [],
+  "input_digest": "sha256:bc734ad2d3f1799e3e4b697706fe9d8d50f04573f69d1e619cc119ff3f0d5b0a",
+  "output_digest": "sha256:2278c2e2a59462ef03185897737b92f40de6b78c8b8f62649e80445872a143ba",
+  "output_excerpt": "{\"questions\":[{\"kind\":\"choice\",\"prompt_md\":\"一个三角形的两边长为3和8，第三边的长是方程 x(x-9)-13(x-9)=0 的根，则这个三角形的周长是（ ）\",\"reference_md\":\"B．20或24\\n\\n解析：由 x(x-9)-13(x-9)=0，提取公因式 (x-9) 得 (x-9)(x-13)=0，故 x=9 或 x=13，即第三边可能为 9 或 13。当第三边为 9 时，三边为 3、8、9，满足 3+8>9，能构成三角形，周长为 3+8+9=20；当第三边为 13 时，三边为 3、8、13，满足 3+8>13，能构成三角形，周长为 3+8+13=24。因此周长为 20 或 24，选 B。\",\"choices_md\":[\"A . 20\",\"B . 20或24\",\"C . 9和13\",\"D . 24\"],\"judge_kind_override\":\"exact\",\"rubric_json\":null,\"difficulty\":3,\"knowledge_ids\":[\"k_p2_a\"],\"source_url\":\"https://www.tihai5.com/xz/302708pewl/\",\"source_title\":\"2022-2023学年苏科版数学九年级上学期1.2.5 一元二次方程的解法——因式分解法 同步训练\",\"ext",
+  "provenance": "PiRunnerMessage frames carry source=pi; AgentTool names keep the mcp__<server>__<tool> wire so allowedTools/tool_call_log/tool_use semantics are byte-identical to the SDK lane. DomainTools execute via the shared executeDomainToolCall pipeline; the Exa remote tool is bridged over the official MCP SDK StreamableHTTP client. Cost stays catalog-estimated.",
+  "validation_correction": {
+    "verdict": "invalid_harness_assertion",
+    "reason": "SourcingTaskOutput.safeParse received LooseJsonResult wrapper rather than its json field. parse_validation=false is a harness defect, not evidence of a provider parse failure.",
+    "raw_terminal_retained": false
+  },
+  "admission": {
+    "verdict": "not_admitted",
+    "reason": "Harness passed the parser wrapper to the output schema; original terminal success retained, raw output not retained for offline correction. Unchanged input rerun with corrected validator."
+  },
+  "ignored_harness_material": {
+    "request-observer.ts": {
+      "path": ".cache/yuk1402-flip/request-observer.ts",
+      "digest": "sha256:768809cf02e2deb894e1d5c32065f3a11d7dff75dbde454d5dc9801252fb9946"
+    },
+    "launch.py": {
+      "path": ".cache/yuk1402-flip/launch.py",
+      "digest": "sha256:288e76f9d4775dbd6e1bbac9e71aa02ac5ef6aedca45c81e2f897393da011912"
+    }
+  }
+}
