@@ -67,34 +67,41 @@ const NO_MATH_PLUGINS: MathPlugins = { remarkPlugins: [], rehypePlugins: [] };
 // Ingested and model-written content also uses the LaTeX delimiters \( \) and \[ \]. remark-math
 // only knows dollar signs, and CommonMark treats `\(` as an escaped bracket, so those formulas
 // would show as source text. Code spans and fences are left untouched; a delimiter preceded by
-// another backslash is a LaTeX line break, not an opener.
+// another backslash is a LaTeX line break, not an opener; a formula never crosses a blank line or
+// a backtick, so an unclosed `\(` cannot swallow the following paragraphs.
 const LATEX_DELIMITED =
-  /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)|(?<!\\)\\\[([\s\S]+?)\\\]|(?<!\\)\\\(([\s\S]+?)\\\)/g;
+  /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)|(?<!\\)\\\[((?:(?!\n\s*\n)[^`])+?)\\\]|(?<!\\)\\\(((?:(?!\n\s*\n)[^`])+?)\\\)/g;
 
 function normalizeMathDelimiters(source: string): string {
   if (!source.includes('\\(') && !source.includes('\\[')) return source;
   return source.replace(
     LATEX_DELIMITED,
-    (match, code: string | undefined, display: string | undefined, inline: string | undefined) => {
+    (
+      match: string,
+      code: string | undefined,
+      display: string | undefined,
+      inline: string | undefined,
+      offset: number,
+    ) => {
       if (code !== undefined) return match;
-      if (display !== undefined) return `$$${display}$$`;
-      return `$${(inline ?? '').trim()}$`;
+      // Keep neighbouring math apart: `$a$$b$` would parse as one broken formula.
+      const prev = source.slice(Math.max(0, offset - 2), offset);
+      const before = prev.endsWith('$') || prev === '\\)' || prev === '\\]' ? ' ' : '';
+      const after = source[offset + match.length] === '$' ? ' ' : '';
+      if (display !== undefined) {
+        // A display formula that starts its own line becomes a math block, so it is centred;
+        // mid-sentence it stays in the line.
+        const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
+        const indent = source.slice(lineStart, offset);
+        if (/^[ \t]*$/.test(indent)) {
+          return `$$\n${indent}${display.trim()}\n${indent}$$\n${indent}`;
+        }
+        return `${before}$$${display}$$${after}`;
+      }
+      return `${before}$${(inline ?? '').trim()}$${after}`;
     },
   );
 }
-
-export function assetIdFromContentUrl(src: string | undefined): string | null {
-  if (!src) return null;
-  const match = /^\/api\/assets\/([^/]+)\/content(?:[?#].*)?$/.exec(src);
-  if (!match?.[1]) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    return null;
-  }
-}
-
-type MarkdownImageProps = ComponentProps<'img'> & { node?: unknown };
 
 /** Resolve protected source_asset URLs through apiFetch before handing bytes to <img>. */
 function MarkdownImage({ node: _node, src, alt, ...props }: MarkdownImageProps): ReactElement {
