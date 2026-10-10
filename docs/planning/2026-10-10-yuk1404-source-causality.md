@@ -46,3 +46,13 @@ Parent executed the actual selector under Node24: distinct sibling exclusion, cr
 Remaining boundary: incomplete node page metadata retains the existing all-originals fallback, rather than silently discarding possible learner evidence. This is not final proof that every source-page association is correct. VisionTab also uses image_refs-or-source_asset_ids and combines asset previews with page_spans; root-only page_spans and explicit unknown handling need further contract work before final gold acceptance. No UI file was modified.
 
 Next admission investigation found an existing practice verify-and-promote operation and enable endpoint; continue by checking its authorization, allowed source kinds, revision CAS and receipt before adding any ingestion continuation. Do not create a second publisher or invent a successful next action without a callable consumer.
+
+## Assessment receipt and admission boundary
+
+The existing verifyAndPromote/POST review drafts enable operation explicitly supports only web_sourced and quiz_gen. It is not a valid ingestion continuation as-is. Its source guard was not widened and no owner override was added.
+
+GET ingestion blocks now calls readIngestionAssessmentReceipts with the actual block/version references. The reader supports Db|Tx and uses the existing captured-question identity shared with captureIngestionOriginal, or the explicit imported question link. It joins the canonical question group lifecycle and current revision; no latest-object guesses, dispatch, publication, claim or GET writes. The DTO distinguishes not_created, saved and unknown publication/link integrity. Saved returns revision, availability, admission reason/generation, suspension and withdrawal; it does not claim general practice eligibility or successful verification. A new block version cannot accidentally resolve the prior version's hidden capture.
+
+The public ingestion export supports the future Start consumer while the HTTP blocks route is the live consumer now. OpenAPI/client generation updated only the derived response types; Postman generation was unchanged. Source typecheck/build and API-contract/capability audits passed. The existing capture DB suite now includes a revision-identity and injected-transaction/observer/rollback invariant, but it has NOT been run. DB/HTTP read-effect verification remains required before delivery. No independent review/TEST/provider/deployment occurred.
+
+Still required: an actual ingestion-compatible admission continuation through canonical verification and publication, explicit material-only capture intent, incomplete source-page mapping, rescue/edit reference provenance, and real R03/R01 acceptance. The read receipt is not a replacement for those behaviors.

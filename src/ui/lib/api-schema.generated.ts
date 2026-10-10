@@ -14273,6 +14273,33 @@ export interface operations {
                 content: {
                     "application/json": {
                         rows: ({
+                            assessment: {
+                                /** @enum {string} */
+                                status: "not_created";
+                            } | {
+                                question_id: string;
+                                /** @enum {string} */
+                                reason: "linked_question_missing" | "publication_missing";
+                                /** @enum {string} */
+                                status: "unknown";
+                            } | {
+                                admission: {
+                                    generation: number;
+                                    /** @enum {string|null} */
+                                    reason: "unverified_rules" | "verification_failed" | "no_admitted_executor" | "owner_hold" | null;
+                                    /** @enum {string} */
+                                    state: "admitted" | "withheld";
+                                };
+                                /** @enum {string} */
+                                availability: "general_pool" | "container_only";
+                                group_id: string;
+                                question_id: string;
+                                revision_id: string;
+                                /** @enum {string} */
+                                status: "saved";
+                                suspended: boolean;
+                                withdrawn: boolean;
+                            };
                             auto_enroll_observation: {
                                 confidence: number | null;
                                 event_id: string;
@@ -14356,6 +14383,11 @@ export interface operations {
                                         };
                                         text: string;
                                     }[];
+                                    reference_extraction?: {
+                                        /** @enum {string} */
+                                        origin: "printed" | "student_work" | "unknown";
+                                        page_index?: number;
+                                    };
                                     tencent_grading?: {
                                         AnswerAnalysis?: string;
                                         IsCorrect: boolean;
@@ -14984,6 +15016,11 @@ export interface operations {
                                     };
                                     text: string;
                                 }[];
+                                reference_extraction?: {
+                                    /** @enum {string} */
+                                    origin: "printed" | "student_work" | "unknown";
+                                    page_index?: number;
+                                };
                                 tencent_grading?: {
                                     AnswerAnalysis?: string;
                                     IsCorrect: boolean;

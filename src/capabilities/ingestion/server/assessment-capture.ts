@@ -19,6 +19,7 @@ import { issueCapturedAssessment } from '@/kernel/records/assessment-issuance';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { writeQuestionBlockLifecycleEvent } from '@/kernel/records/question-block-lifecycle-event';
 import type { AutoEnrolledBlock } from './auto-enroll';
+import { ingestionCaptureIdentity } from './capture-identity';
 import { capturedQuestionShape } from './captured-question-shape';
 import { enrollCapturedBlock } from './enroll';
 
@@ -36,12 +37,7 @@ interface CaptureInput {
 /** A receipt for existing work; failed/unadmitted scoring cannot roll it back. */
 export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
   const { block, now } = input;
-  const captureId = canonicalHash({
-    session: block.ingestion_session_id,
-    block: block.id,
-    version: block.version,
-  }).slice(0, 40);
-  const questionId = `q_capture_${captureId}`;
+  const { captureId, questionId } = ingestionCaptureIdentity(block);
   const sourceDigest = canonicalHash({
     structured: block.structured,
     prompt: block.extracted_prompt_md,

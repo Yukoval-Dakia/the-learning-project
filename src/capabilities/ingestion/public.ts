@@ -1,6 +1,11 @@
 // Stable server contract for consumers outside the ingestion capability.
 
-export type { MistakeListResponse, MistakeProjection } from './api/contracts';
+export type {
+  IngestionAssessmentReceipt,
+  MistakeListResponse,
+  MistakeProjection,
+} from './api/contracts';
+export { readIngestionAssessmentReceipts } from './server/assessment-receipt';
 export type { ColdStartBridgeRunTaskFn } from './server/cold-start-bridge';
 export {
   ColdStartBridgeError,
@@ -31,12 +36,10 @@ export {
   excerpt,
   knowledgeContext,
 } from './server/tools/record-tool-support';
-
 // YUK-885 — public port repointed from a central deep import.
 export {
   AUTO_ENROLL_SINGLETON_SECONDS,
   autoEnrollJobEnabled,
 } from './server/workflow-judge-config';
-
 // YUK-1062 — task composition uses the narrow task-public entry directly.
 export { ingestionTaskSpecs } from './task-public';

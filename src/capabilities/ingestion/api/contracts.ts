@@ -215,6 +215,32 @@ const AutoEnrollObservationSchema = z.object({
   observed_at: z.string().datetime(),
 });
 
+export const IngestionAssessmentReceiptSchema = z.discriminatedUnion('status', [
+  z.object({ status: z.literal('not_created') }),
+  z.object({
+    status: z.literal('unknown'),
+    question_id: z.string(),
+    reason: z.enum(['linked_question_missing', 'publication_missing']),
+  }),
+  z.object({
+    status: z.literal('saved'),
+    question_id: z.string(),
+    group_id: z.string(),
+    revision_id: z.string(),
+    availability: z.enum(['general_pool', 'container_only']),
+    admission: z.object({
+      state: z.enum(['admitted', 'withheld']),
+      reason: z
+        .enum(['unverified_rules', 'verification_failed', 'no_admitted_executor', 'owner_hold'])
+        .nullable(),
+      generation: z.number().int().nonnegative(),
+    }),
+    suspended: z.boolean(),
+    withdrawn: z.boolean(),
+  }),
+]);
+export type IngestionAssessmentReceipt = z.infer<typeof IngestionAssessmentReceiptSchema>;
+
 export const IngestionBlockSchema = z
   .object({
     id: z.string(),
@@ -234,6 +260,7 @@ export const IngestionBlockSchema = z
     imported_question_id: z.string().nullable(),
     imported_attempt_event_id: z.string().nullable(),
     auto_enroll_observation: AutoEnrollObservationSchema.nullable(),
+    assessment: IngestionAssessmentReceiptSchema,
     created_at: z.number().int().nonnegative(),
   })
   .passthrough();

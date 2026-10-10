@@ -36,13 +36,13 @@
 //   }
 
 import { and, asc, eq, inArray } from 'drizzle-orm';
-
 import { MistakeEnrollOutcome } from '@/core/schema/mistake_enroll';
 import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
 import { event, question_block } from '@/db/schema';
 import { errorResponse } from '@/kernel/http';
 import { learnerVisibleKnowledgeIds } from '@/kernel/read-models/learner-knowledge-visibility';
+import { readIngestionAssessmentReceipts } from '../server/assessment-receipt';
 
 export async function GET(_req: Request, params: Record<string, string>): Promise<Response> {
   try {
@@ -50,6 +50,7 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     const rows = await db
       .select({
         id: question_block.id,
+        version: question_block.version,
         ingestion_session_id: question_block.ingestion_session_id,
         source_asset_ids: question_block.source_asset_ids,
         page_spans: question_block.page_spans,
@@ -97,11 +98,16 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
     const observationByBlockId = new Map<string, (typeof observations)[number]>();
     for (const obs of observations) observationByBlockId.set(obs.subject_id, obs);
 
+    const assessments = await readIngestionAssessmentReceipts(db, rows);
+
     return Response.json({
       rows: rows.map((r) => {
         const observation = observationByBlockId.get(r.id);
+        const assessment = assessments.get(r.id);
+        if (!assessment) throw new Error(`assessment receipt missing for block ${r.id}`);
         return {
           ...r,
+          assessment,
           extracted_prompt_md: r.structured
             ? structuredToPromptMarkdown(r.structured)
             : r.extracted_prompt_md,

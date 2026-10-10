@@ -12,11 +12,13 @@ import {
   mastery_state,
   material_fsrs_state,
   question_block,
+  question_group_lifecycle,
   source_asset,
 } from '@/db/schema';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { captureIngestionOriginal, enrollNativeCapture } from './assessment-capture';
+import { readIngestionAssessmentReceipts } from './assessment-receipt';
 import { revertAutoEnrolledBlock } from './revert-auto-enroll';
 
 const now = new Date('2026-10-05T01:00:00Z');
@@ -105,6 +107,47 @@ async function admit(questionId: string) {
 }
 
 describe('native ingestion originals and reversible enrollment', () => {
+  it('binds receipts to the captured block version and observes only the injected transaction', async () => {
+    const input = await fixture();
+    const db = testDb();
+    expect((await readIngestionAssessmentReceipts(db, [input.block])).get(input.block.id)).toEqual({
+      status: 'not_created',
+    });
+    const captured = await captureIngestionOriginal(db, input);
+    if (!captured) throw new Error('missing capture');
+    const saved = (await readIngestionAssessmentReceipts(db, [input.block])).get(input.block.id);
+    expect(saved).toMatchObject({
+      status: 'saved',
+      question_id: captured.questionId,
+      admission: { state: 'withheld', reason: 'unverified_rules' },
+      suspended: false,
+    });
+    expect(
+      (await readIngestionAssessmentReceipts(db, [{ ...input.block, version: 1 }])).get(
+        input.block.id,
+      ),
+    ).toEqual({ status: 'not_created' });
+    await expect(
+      db.transaction(async (tx) => {
+        await tx
+          .update(question_group_lifecycle)
+          .set({ suspended: true, suspension_reason: 'verify_hold' })
+          .where(eq(question_group_lifecycle.group_id, captured.questionId));
+        expect(
+          (await readIngestionAssessmentReceipts(tx, [input.block])).get(input.block.id),
+        ).toMatchObject({ status: 'saved', suspended: true });
+        expect(
+          (await readIngestionAssessmentReceipts(db, [input.block])).get(input.block.id),
+        ).toEqual(saved);
+        throw new Error('rollback-receipt-fixture');
+      }),
+    ).rejects.toThrow('rollback-receipt-fixture');
+    expect((await readIngestionAssessmentReceipts(db, [input.block])).get(input.block.id)).toEqual(
+      saved,
+    );
+    expect(await db.select().from(evaluation)).toHaveLength(0);
+  });
+
   it('admitted deterministic capture updates theta without FSRS, then retracts atomically and refuses late activation', async () => {
     const input = await fixture();
     const capture = await captureIngestionOriginal(testDb(), input);
