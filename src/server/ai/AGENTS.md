@@ -8,12 +8,12 @@
 | `runner.ts` | 统一把所有 task 送进 ExecutionAdapter（唯一实现是 `PiAgentAdapter`）；调用方用 `piToolMounts` / `piHooks` / `piAgents` / `piSkillDocs` / `piSessionReplay` / `nativeCompaction` / `piQueues` + `allowedTools` / `maxTurns`（`runTask`/`runAgentTask`/`streamTask`）|
 | `execution-adapter.ts` | YUK-921 ExecutionAdapter seam：`PreparedExecutionQuery`/`ExecutionAdapter` 接口 + `ModelBinding` per-run 绑定 + `resolveExecutionAdapter` 决议 + 测试 seam `__setPiAdapterForTests`（P4 起 `ExecutionAdapterId` 只有 `'pi'`）|
 | `pi-agent-adapter.ts` | YUK-921/YUK-1025 唯一执行引擎：`@earendil-works/pi-agent-core` `agentLoop` 同进程执行 + 事件→SDK-frame 归一（`PiRunnerMessage`，`source:'pi'`）+ `x-opencode-session` header 注入 + `pi:` 会话 id、durable 回放种子、`transformContext` 压缩、嵌套 agentLoop、`piHooks`/`piQueues` 转发 |
-| `pi-models.ts` | loom provider → pi catalog 接线：直接使用 `builtinModels()`；`pi-provider-catalog.ts` 提供同步校验/读面元数据，订阅认证 lane 映射原生 anthropic |
+| `pi-models.ts` | loom provider → pi catalog 接线：直接使用 `builtinModels()`；`pi-provider-catalog.ts` 提供同步校验/读面元数据，订阅认证 lane 映射原生 anthropic，Token Plan 复用 Xiaomi 原生 Completions 预设且保留独立 endpoint/auth |
 | `pi-hooks.ts` | YUK-1022 hook 面（P4 起唯一的 tool-call 拦截面）：引擎中立 `PiHookBridge`（有序 `beforeToolCall` 闸 + 失败日志吞掉的 `afterToolCall` 观测器，isError 覆盖 failure 语义）|
 | `tools/pi-subagent.ts` | YUK-1022 嵌套子代理：`PiSpawnContract`（`createSpawnDecider` 包成 beforeToolCall 闸）+ `PiSubagentHost`（子 loop 宿主、abort 血统、task_* 帧、usage 归并）+ `Task`/`Agent` AgentTool 构造 |
 | `sdk-types.ts` | YUK-1025 vendored 帧类型：SDKMessage 线形（assistant/result/user/task_*）是 pi 事件的归一化目标形状——纯类型，零运行时依赖 |
 | `sdk-terminal.ts` | 把归一化 assistant/result 帧适配为 lifecycle usage、thinking 元数据与终态证据；不持久化原始 CoT |
-| `providers.ts` | provider 注册表（xiaomi / anthropic / zai-coding-cn / opencode-go）+ YUK-924 provider model binding（`models` / `modelDefaults`，config-over-catalog 的 config 层）|
+| `providers.ts` | provider 注册表（xiaomi / xiaomi-token-plan / anthropic / zai-coding-cn / opencode-go）+ YUK-924 provider model binding（`models` / `modelDefaults`，config-over-catalog 的 config 层）|
 | `model-profiles.ts` + `model-catalog.snapshot.json` | YUK-924 ModelProfile 注册表：models.dev 裁剪快照（`pnpm gen:model-catalog` 重生成，运行时零网络）+ binding→catalog→保守默认三层合并 + needsToolCall/isMultimodal fail-closed 能力门 |
 | `log.ts` | run / event 留痕 |
 | `provenance.ts` | source / `last_modified_by` 标记 |
@@ -49,6 +49,36 @@
 ## Switchable AI provider lane (YUK-365, post-P4)
 
 当前产品配置目标为 `AI_PROVIDER_OVERRIDE=opencode-go` + `AI_PROVIDER_MODEL=mimo-v2.6-pro`，认证变量 `OPENCODE_API_KEY`。此 env pin 压过所有显式聊天 override/modelBinding 和 DB task/lane 配置；Jev typed 协议保留其专用绑定。未设 pin 时才回到 registry 的旧 Xiaomi 默认。Mem0 抽取与两类直接调和经 `../memory/llm-config.ts` 读取同一全局 pair，embedding 保留 DashScope。设 `AI_PROVIDER_OVERRIDE=anthropic-sub` 全局切到 **Opus 4.8 via owner's Claude Max 订阅（OAuth）** —— token 是 `claude setup-token` 生成的长效 `CLAUDE_CODE_OAUTH_TOKEN`，**绝不入库不打印**。**Token + `AI_PROVIDER_OVERRIDE` 必须对所有 AI 进程可见**（API + worker 各自在启动期跑 `loadEnv()`；`dev:local` 透传给 child；生产经 docker-compose `.env` 注入）。订阅 token 与 mimo 互斥。可选 `AI_PROVIDER_MODEL` 覆盖模型 id（lane 默认 `claude-opus-4-8`）；切到非 mimo 的其它 provider 若不设 `AI_PROVIDER_MODEL` 会 throw 明确 config 错（YUK-365 Finding 4）。Wiring 在 `providers.ts`（`authMode: 'key' | 'oauth'` + override 开关）+ `pi-models.ts`（oauth variant 把 `sk-ant-oat*` token 交给 pi anthropic-messages 驱动，自动走 Bearer 头）。
+
+## Xiaomi official Token Plan (YUK-1402)
+
+独立 provider `xiaomi-token-plan`，`authMode:key`，仅服务端读取
+`XIAOMI_TOKEN_PLAN_API_KEY`。`AI_PROVIDER_OVERRIDE=xiaomi-token-plan` 与
+`AI_PROVIDER_MODEL=mimo-v2.6-pro` 必须同时对 app / worker 可见。
+`XIAOMI_TOKEN_PLAN_REGION` 支持 `cn|sgp|ams`，默认 `cn`；
+`XIAOMI_TOKEN_PLAN_BASE_URL` 可显式覆盖 OpenAI-compatible `/v1` URL。
+默认端点为 `https://token-plan-<region>.xiaomimimo.com/v1`。
+Token Plan `tp-` key 与按量 `XIAOMI_API_KEY` 不互通，旧 `xiaomi` lane 不变。
+
+`pi-models.ts` 从 Xiaomi 原生模型复制协议、thinking/tool-stream compat 与
+text+image 元数据，注册独立 pi provider；模型可用性仍待 TEST 实测，不能把
+按量或 OpenCode Go 同名模型证据当成 Token Plan 证据。
+`providers.ts` 的 `models['mimo-v2.6-pro'].capabilities.toolCalling=false`
+是单点翻转位置。TEST tool-loop actual-output 封存后才能在后续 commit 翻转，
+并在 PR 说明链接新证据。此前 needsToolCall kind 在 `run-lifecycle.ts` 的
+`assertModelProfileCapabilityFit` 拒绝，生产 Copilot / Sourcing 不能运行。
+其他模型继承 lane-wide `toolCalling:false`，不能一并开放。
+
+生产视觉 rescue 与 vision judge 走同一 Token Plan `/v1` pi text+image 模型；
+`MIMO_VISION_*` 只供 `pnpm preflight:vision`，不改变生产 runner。
+该独立 probe 在 Token Plan env pin 下读取 Token Plan key，默认从 `/v1`
+派生 `/anthropic`，可用 `MIMO_VISION_BASE_URL` 明确指定 Anthropic-compatible
+端点；`MIMO_VISION_MODEL` 优先于 product model。旧按量 `api.xiaomimimo.com` probe/base URL 在此 lane 明确报配置错，不能混用 key。
+全局 env pin 下 vision judge 不重试 registry `xiaomi` fallback。
+字符级 GLM/Tencent OCR 保留专用 credentials，不属于此 AI lane。
+Mem0 抽取与直接调和通过 `memory/llm-config.ts` 走同一 Token Plan `/v1`
+模型/credential/region/base URL，缺配置明确失败，无按量 fallback；embedding 保留
+DashScope。pi cost 只按 catalog 估值记录，不声称是 Token Plan 发票或 quota 账单。
 
 ## Pi execution engine (YUK-921 → YUK-1025 P4 唯一引擎)
 
