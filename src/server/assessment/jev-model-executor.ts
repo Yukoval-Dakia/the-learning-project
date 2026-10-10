@@ -78,6 +78,7 @@ export function hasInlineQuestionImage(request: ModelExecutorRequest): boolean {
 }
 
 export interface JevModelExecutorOptions {
+  readonly judgeRetryPolicy?: 'none';
   readonly db: Db;
   /**
    * Absolute wall-clock bound (ms epoch) for ONE port invocation: Jev
@@ -437,6 +438,7 @@ export function createJevModelExecutor(options: JevModelExecutorOptions): ModelU
         },
         {
           db: options.db,
+          retry: options.judgeRetryPolicy,
           taskRunId: options.taskRunId,
           deadlineAt: options.deadlineAt,
           signal: options.signal,

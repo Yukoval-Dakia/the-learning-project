@@ -1,0 +1,1303 @@
+{
+  "schema_version": 1,
+  "issue": "YUK-1356",
+  "round": "R2",
+  "last_permitted_round": true,
+  "workspace": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage",
+  "branch": "feat/yuk-1356-durable-judge",
+  "base": "7472f4395f4a12a5167e33034d5d8af8bf695049",
+  "head": "3fb999c86d57f6a826d26ed3a857a13ef42c0064",
+  "tree": "8369a3a660157202a96287c1e4852abb512f0a00",
+  "diff_sha256": "4415313811f0e46256ff1859ea239b0592d714e29df0907b12daa8d6c39ac221",
+  "diff_bytes": 1621232,
+  "file_count": 114,
+  "provided_patch_matches_recomputed_git_diff": true,
+  "manifest_matches": true,
+  "last_product_commit": "2dbb9eb3e70c82f70432498c2f0b7a6b60d10cc3",
+  "production_changes_after_last_product_commit": [],
+  "verdict": "NONE",
+  "new_findings": [],
+  "new_p0_count": 0,
+  "new_p1_count": 0,
+  "r1_dispositions": [
+    {
+      "id": "R1-P1-01",
+      "severity": "P1",
+      "disposition": "RESOLVED",
+      "title": "Same-transaction permanent resolution and final_rating",
+      "current_source": [
+        {
+          "path": "src/capabilities/practice/server/assessment/durable-attempt.ts",
+          "line": 278,
+          "detail": "Constructs the accepted-CAS resolution, including final_rating; explicit existing receipt identity is validated before native fallback."
+        },
+        {
+          "path": "src/capabilities/practice/server/assessment/durable-attempt.ts",
+          "line": 336,
+          "detail": "The actual resolution event is distinguished from native completion fallback; exact native completion permits writing the missing event rather than short-circuiting."
+        },
+        {
+          "path": "src/capabilities/practice/server/assessment/durable-attempt.ts",
+          "line": 359,
+          "detail": "Writes and reads back the exact receipt inside the supplied transaction."
+        },
+        {
+          "path": "src/capabilities/practice/server/assessment/attempt.ts",
+          "line": 337,
+          "detail": "The activation callback owns the resolution write in the activation transaction."
+        },
+        {
+          "path": "src/capabilities/practice/server/judge/evaluate-submission.ts",
+          "line": 735,
+          "detail": "Native settlement/head/activation receipt and activated callback share one transaction."
+        }
+      ],
+      "regression_evidence": [
+        {
+          "path": "src/capabilities/practice/server/native-durable-attempt.db.test.ts",
+          "line": 274,
+          "detail": "Separate observer cannot see activation/settlement before the resolution; one exact receipt with chosen final_rating and replay-invariant effects."
+        },
+        {
+          "path": "src/capabilities/practice/server/native-durable-attempt.db.test.ts",
+          "line": 334,
+          "detail": "Real COMMIT acknowledgement loss uses exact receipt truth."
+        },
+        {
+          "path": "src/capabilities/practice/server/native-durable-attempt.db.test.ts",
+          "line": 378,
+          "detail": "Missing receipt recovery uses accepted CAS, not advanced head."
+        },
+        {
+          "path": "src/capabilities/practice/server/native-durable-attempt.db.test.ts",
+          "line": 1103,
+          "detail": "Receipt failure still rolls back activation and reuses the sealed candidate."
+        }
+      ],
+      "consumer": {
+        "path": "src/capabilities/practice/ui/PfSolo.tsx",
+        "line": 575,
+        "detail": "Permanent status now receives final_rating from the normal explicit receipt; existing UI fallback does not mask normal receipt loss."
+      },
+      "evidence_level": "SOURCE_VERIFIED_AND_PARENT_EXECUTION_EVIDENCE_INSPECTED_NOT_RERUN"
+    },
+    {
+      "id": "R1-P1-02",
+      "severity": "P1",
+      "disposition": "RESOLVED",
+      "title": "Sole reconciler repairs disposed originals with missing FAILED notification",
+      "current_source": [
+        {
+          "path": "src/capabilities/practice/jobs/judge_pending_reconcile.ts",
+          "line": 104,
+          "detail": "Excludes disposed legacy tasks but retains native disposed originals whose latest notification is missing or non-FAILED before LIMIT."
+        },
+        {
+          "path": "src/capabilities/practice/jobs/judge_pending_reconcile.ts",
+          "line": 115,
+          "detail": "Ordered keyset selection and persisted cursor retain progress beyond a full page."
+        },
+        {
+          "path": "src/capabilities/practice/jobs/judge_pending_reconcile.ts",
+          "line": 228,
+          "detail": "Permanent resolved/manual notification repair occurs before engine observation, execution eligibility and fresh admission."
+        },
+        {
+          "path": "src/capabilities/practice/server/judge-run-notification.ts",
+          "line": 36,
+          "detail": "Same terminal notification is idempotent; permanent truth dominates late progress markers."
+        }
+      ],
+      "regression_evidence": [
+        {
+          "path": "tests/dbos-judge/operational.db.test.ts",
+          "line": 203,
+          "detail": "Direct sole sweep creates FAILED before any later direct projection; repeated retention loss is repaired without rate admission, send or engine observation."
+        },
+        {
+          "path": "tests/dbos-judge/operational.db.test.ts",
+          "line": 247,
+          "detail": "Three failed terminal writes leave durable manual truth; restored writer plus sole sweep repairs it."
+        },
+        {
+          "path": "src/capabilities/practice/jobs/judge_pending_reconcile.db.test.ts",
+          "line": 135,
+          "detail": "Keyset advances beyond 200 malformed/live originals."
+        }
+      ],
+      "evidence_level": "SOURCE_VERIFIED_AND_PARENT_EXECUTION_EVIDENCE_INSPECTED_NOT_RERUN"
+    },
+    {
+      "id": "R1-P1-03",
+      "severity": "P1",
+      "disposition": "RESOLVED",
+      "title": "Fresh per-send clock under run lock enforces strict seven-day authorization",
+      "current_source": [
+        {
+          "path": "src/server/durable/judge-worker.ts",
+          "line": 67,
+          "detail": "ScheduledAt is selection/tick identity; authorization clock capability is passed without pre-sampling."
+        },
+        {
+          "path": "src/capabilities/practice/jobs/judge_pending_reconcile.ts",
+          "line": 307,
+          "detail": "Rechecks family phase/incarnation/epoch and current delivery under family SHARE and run lock."
+        },
+        {
+          "path": "src/capabilities/practice/jobs/judge_pending_reconcile.ts",
+          "line": 319,
+          "detail": "Samples a finite current authorization clock after the locked permanent reread, separately for each send."
+        },
+        {
+          "path": "src/capabilities/practice/jobs/judge_pending_reconcile.ts",
+          "line": 335,
+          "detail": "Same-ID sends and newly reserved recovery sends reject age >= seven days; persisted send authorization uses the fresh timestamp."
+        }
+      ],
+      "regression_evidence": [
+        {
+          "path": "src/capabilities/practice/jobs/judge_pending_reconcile.db.test.ts",
+          "line": 201,
+          "detail": "Unknown/unsent/accepted-success cases at less than, exactly and over seven days."
+        },
+        {
+          "path": "src/capabilities/practice/jobs/judge_pending_reconcile.db.test.ts",
+          "line": 283,
+          "detail": "Mid-sweep boundary crossing re-samples authorization time."
+        },
+        {
+          "path": "src/capabilities/practice/jobs/judge_pending_reconcile.db.test.ts",
+          "line": 328,
+          "detail": "Old args.now cannot backdate a same-ID fresh authorization."
+        },
+        {
+          "path": "tests/dbos-judge/process.db.test.ts",
+          "line": 431,
+          "detail": "Actual registered DBOS tick delayed first execution and SIGKILL/reopen before authorization reject new sends at the boundary."
+        }
+      ],
+      "evidence_level": "SOURCE_VERIFIED_AND_PARENT_CONTROLLED_PROCESS_EVIDENCE_INSPECTED_NOT_RERUN"
+    }
+  ],
+  "r1_unresolved_count": 0,
+  "additional_repairs": [
+    {
+      "id": "G3",
+      "status": "RESOLVED_SOURCE_AND_EVIDENCE_GAP",
+      "source": "src/server/durable/judge-family.ts:509 and :623; tests/dbos-judge/support.ts:133",
+      "detail": "Select model results by exact claim causation/result identity/action/group/input digest, not nonexistent result payload run/submission fields. Real three-saved-outcome import and five mismatches covered; inspected snapshots contain linked saved results."
+    },
+    {
+      "id": "dispatch_identity",
+      "status": "VERIFIED",
+      "source": "src/capabilities/practice/server/assessment/durable-attempt.ts:70-104,121,168",
+      "detail": "One immutable identity comparison for normal accepted original and lost-COMMIT-ack recovery; changed rating/policy cannot become catch-path success; retry capture remains first-write-wins."
+    },
+    {
+      "id": "operational_envelope",
+      "status": "VERIFIED",
+      "source": "src/core/schema/event/judge-operational-events.ts and its unit fixtures",
+      "detail": "Null/undefined parse normalization at canonical writer boundary preserves required native causes and strict task/cost/outcome/payload constraints."
+    },
+    {
+      "id": "parent_placement_fixture",
+      "status": "VERIFIED_CONSUMER",
+      "source": "src/capabilities/practice/api/placement-native.db.test.ts:448-480 and :661-671",
+      "detail": "Actual mapped input and delivery ID, recorded executor with real claim fence, completed direct executor rejection and actual job-wrapper replay; one evaluation/settlement and stable mastery/FSRS."
+    }
+  ],
+  "focus_areas": [
+    {
+      "id": 1,
+      "scope": "Stable binding, immutable receipts, atomic completion",
+      "conclusion": "R1-P1-01 resolved. Binding/attempt/intent/admission snapshot reused; divergent immutable receipts fail closed; native completion evidence remains authoritative.",
+      "paths": [
+        "src/capabilities/practice/server/assessment/durable-attempt.ts",
+        "src/capabilities/practice/server/judge-operational.ts",
+        "src/capabilities/practice/server/judge/evaluate-submission.ts",
+        "src/server/assessment/activate.ts"
+      ]
+    },
+    {
+      "id": 2,
+      "scope": "Paid effects, installed retry policy, unknown claims and exact COMMIT truth",
+      "conclusion": "Claim commits before wire; exact saved result reused; unknown prior claim blocks fresh later units. Durable none propagates to lifecycle, installed Pi lower transport and Jev; DBOS runStep has retriesAllowed:false. No actual external provider acceptance inferred.",
+      "paths": [
+        "src/capabilities/practice/server/judge/recorded-model-executor.ts",
+        "src/capabilities/practice/server/judge/evaluation-authority.ts",
+        "src/server/assessment/pi-model-executor.ts",
+        "src/server/assessment/jev-model-executor.ts",
+        "src/server/ai/runner.ts",
+        "src/server/ai/pi-agent-adapter.ts",
+        "src/server/durable/judge-worker.ts"
+      ]
+    },
+    {
+      "id": 3,
+      "scope": "Installer/group/learning/run/claim lock order and manual races",
+      "conclusion": "Installer common lock precedes family/relation locks; existing G/L precede R; operational fences do not acquire G/L after R; R precedes C and guarded seal/capture/settlement. Manual disposition is R-only. Source tracing plus inspected controlled race evidence is not a general deadlock proof.",
+      "paths": [
+        "src/server/durable/judge-family.ts",
+        "src/capabilities/practice/server/judge-operational.ts",
+        "src/capabilities/practice/server/judge/evaluate-submission.ts",
+        "src/capabilities/practice/server/judge/recorded-model-executor.ts",
+        "src/server/durable/producer-fence-lock.db.test.ts"
+      ]
+    },
+    {
+      "id": 4,
+      "scope": "Permanent Db|Tx reader and real HTTP/public/UI/placement/intervention consumers",
+      "conclusion": "Readonly consistent snapshot, external observation outside transaction, one bounded reread. Verified absence alone produces 404; unavailable produces 503; known pending remains honest. No GET dispatch/claim/backfill. Placement and intervention consume native truth and keep originals closed. Generic SSE pruning is not repaired by GET.",
+      "paths": [
+        "src/capabilities/practice/server/judge-run-observation.ts",
+        "src/capabilities/practice/api/judge-run-status-route.ts",
+        "src/capabilities/practice/public.ts",
+        "src/capabilities/practice/server/placement-assessment.ts",
+        "src/capabilities/practice/server/intervention-diagnostics.ts",
+        "src/capabilities/practice/server/review-operation.ts",
+        "src/capabilities/practice/ui/PfSolo.tsx"
+      ]
+    },
+    {
+      "id": 5,
+      "scope": "Two recovery slots, strict age, keyset, one host/recovery owner",
+      "conclusion": "R1-P1-02/03 resolved. Unknown reservations conservatively consume capacity; accepted history is permanent; keyset page progress retained; one shared SDK registration/launch/timer lifecycle preserves old prune/review/session identities.",
+      "paths": [
+        "src/capabilities/practice/jobs/judge_pending_reconcile.ts",
+        "src/capabilities/practice/server/judge-operational-state.ts",
+        "src/server/durable/judge-worker.ts",
+        "src/server/durable/prune-worker.ts",
+        "src/server/boss/register-capability-jobs.ts"
+      ]
+    },
+    {
+      "id": 6,
+      "scope": "Phase/epoch/incarnation, census, producer fencing, cutover and compatible rollback",
+      "conclusion": "Fixed-ID authority and engine identity checked; census covers jobs/ticks/DLQ/forwarders/schedules/pending/claims; source inventories sealed and fresh. Native saved-result import is claim-linked and mismatch rejects. Default pg-boss and retained compatibility are an explicit intermediate. Full live cohort exit/restore/deployment remain open.",
+      "paths": [
+        "src/server/durable/judge-family.ts",
+        "src/capabilities/practice/server/judge-engine-client.ts",
+        "src/capabilities/practice/server/judge-run-dispatch.ts",
+        "drizzle/0118_yuk1356_judge_durable.sql",
+        "tests/dbos-judge/cutover.db.test.ts",
+        "tests/dbos-judge/legacy-producer.ts"
+      ]
+    },
+    {
+      "id": 7,
+      "scope": "0118 initialization audit, 0117 boundary, immutable operational schema and export incarnation",
+      "conclusion": "Exact singleton fresh UUID/default pg-boss seed, indexes and immutable operational trigger retained. Exact initialization audit/journal/schema restrictions have no expanded allowance. 0117 boundary stays isolated from 0118. Ordinary archive lacks matching runtime control incarnation and cannot grant execution.",
+      "paths": [
+        "drizzle/0118_yuk1356_judge_durable.sql",
+        "drizzle/meta/_journal.json",
+        "src/db/schema.ts",
+        "scripts/audit-schema-writes.ts",
+        "scripts/audit-schema-writes.test.ts",
+        "scripts/schema-migration-initialization.unit.test.ts",
+        "tests/integration/migration-smoke.test.ts",
+        "src/server/export/constants.ts"
+      ]
+    },
+    {
+      "id": 8,
+      "scope": "Domain ownership, shared-host wiring, baseline and approved externals",
+      "conclusion": "Actual dispatch/observation/census stay in practice and host uses public facade. Baseline events 4 to 1 and total 433 to 430 reflect removed direct reads; practice-to-durable remains zero. Only two approved optional logger externals added to relevant bundles; no dependency/lock change or generic SSE/UI boot change.",
+      "paths": [
+        "src/capabilities/practice/public.ts",
+        "src/capabilities/practice/manifest.ts",
+        "scripts/capability-boundary-baseline.json",
+        "server/start/vite.config.ts",
+        "package.json",
+        "postman/api-endpoints.json",
+        "postman/learning-api.postman_collection.json"
+      ]
+    },
+    {
+      "id": 9,
+      "scope": "Meaningful retained/replaced fixtures, controlled processes and real old producer",
+      "conclusion": "Strict resolution/rollback tests retained. R1 notification test now asserts sweep effect before helper. Placement retains mapped operational input/exact delivery/claim fence and replays actual runJudgeRun; one model/domain effect. G3 snapshots include real claim-linked outcomes. Actual fixed old source archive/bundle inspected; fixtures do not prove live cohort quiescence.",
+      "paths": [
+        "src/capabilities/practice/server/native-durable-attempt.db.test.ts",
+        "src/capabilities/practice/api/placement-native.db.test.ts",
+        "src/capabilities/agency/server/intervention/intervention-preparation.db.test.ts",
+        "tests/dbos-judge/operational.db.test.ts",
+        "tests/dbos-judge/process.db.test.ts",
+        "tests/dbos-judge/support.ts",
+        "tests/dbos-judge/worker.ts",
+        "tests/dbos-judge/cutover.db.test.ts"
+      ]
+    }
+  ],
+  "scenario_coverage": [
+    {
+      "id": 1,
+      "scenario": "Duplicate/same-key/lost 202",
+      "coverage": "Frozen same-key dispatch and shared identity checked in both normal and lost-ack paths; actual Start submit/same-key/lost-response OPEN.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 2,
+      "scenario": "429/pending transaction abort",
+      "coverage": "Original capture/pending/reservation/send authorization share atomic admission; rollback/refund and unknown acknowledgement distinguished.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 3,
+      "scenario": "Crash after pending/reservation",
+      "coverage": "Permanent reservation retained; controlled process and real old producer pre-insert interruption evidence inspected.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 4,
+      "scenario": "Lost enqueue COMMIT acknowledgement",
+      "coverage": "Exact engine lookup and same reservation; no new delivery identity or speculative refund.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 5,
+      "scenario": "Acceptance before notifications/late markers",
+      "coverage": "Permanent truth dominates progress; disposed native notification repair now goes through sole sweep (P1-02).",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 6,
+      "scenario": "Concurrent sweeps/workers/submit and >200 prefix",
+      "coverage": "Keyset progression, run locks and immutable page selection checked; scoped parent DB evidence inspected.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 7,
+      "scenario": "Native-load stale head/admission",
+      "coverage": "Pinned head/admission/input/binding guards checked; actual controlled native-load boundary inspected.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 8,
+      "scenario": "Claim commit before wire SIGKILL",
+      "coverage": "Controlled installed-Pi/DBOS kill/reopen: one unknown claim, no wire and no fresh later unit.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 9,
+      "scenario": "Provider accepted/timeout/partial/death",
+      "coverage": "Controlled held second wire evidence inspected; actual selected external provider failures/quality/cost OPEN.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 10,
+      "scenario": "Global retry=2 and durable none",
+      "coverage": "Typed per-call policy and actual installed Pi 1.0.2 retry helper/OpenAI SDK maxRetries=0 inspected; ordinary defaults retained.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 11,
+      "scenario": "First saved/second unknown/no third",
+      "coverage": "Snapshots now contain exact claim-linked first result, two claims/two wires, no third; G3 corrected.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 12,
+      "scenario": "Response returned but parse/result uncommitted",
+      "coverage": "Recorded executor holds unknown/invalid results and never repurchases; not every external outage path independently reproduced.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 13,
+      "scenario": "Result COMMIT acknowledgement lost",
+      "coverage": "Exact saved result identity/digest/outcome read after lost COMMIT acknowledgement, no executor replay.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 14,
+      "scenario": "Saved outcomes and alternate candidate before seal",
+      "coverage": "Stable binding/collision holds with no attempt bump or paid reexecution; saved import causation negatives inspected.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 15,
+      "scenario": "Seal/settlement/commit crash",
+      "coverage": "Same-transaction settlement/head/activation/resolution and preserved candidate rollback; controlled SIGSTOP/KILL evidence inspected.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 16,
+      "scenario": "Activation before checkpoint/DONE",
+      "coverage": "Controlled domain-committed kill/reopen keeps one settlement and three prior wires, no additional paid work.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 17,
+      "scenario": "Held/already-effective before resolution",
+      "coverage": "Explicit receipt differs from native fallback; accepted CAS and rating retained; identity collision/held manual fence checked.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 18,
+      "scenario": "Manual before FAILED",
+      "coverage": "Manual truth persists even when all terminal notification writes fail; sole sweep heals missing FAILED (P1-02).",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 19,
+      "scenario": "Self-report/correction/withdrawal races",
+      "coverage": "Native CAS/admission/manual fences and controlled manual races checked; full live correction/withdrawal flow not executed by reviewer.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 20,
+      "scenario": "Two recovery admissions/seven days/live final",
+      "coverage": "Fresh per-authorization locked clock handles exact boundary and mid-sweep crossing (P1-03); pre-boundary final delivery remains allowed to finish.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 21,
+      "scenario": "FAILED/cancelled/DLQ/legacy submit",
+      "coverage": "Malformed/legacy callers cannot invoke retired grading; inventory and concrete disposition/DLQ identities retained.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 22,
+      "scenario": "SSE reconnect/order/cursor/pruning",
+      "coverage": "Unchanged generic SSE and readonly permanent status traced; actual authenticated TCP/SSE reconnect/order/pruning OPEN.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 23,
+      "scenario": "Unavailable/mismatched engine metadata",
+      "coverage": "found/not_found/unavailable distinguished; identity mismatch remains unknown; no GET execution side effects.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 24,
+      "scenario": "Placement/intervention retention",
+      "coverage": "Actual shared consumers and corrected mapped authority/claim-fenced placement replay checked; parent 13+49 cases inspected.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 25,
+      "scenario": "Cutover versus producers/cron/provider/restart",
+      "coverage": "Actual old producer INSERT/schedule fence and control/census guards inspected; full live cron/provider/old-runtime cohort exit OPEN.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 26,
+      "scenario": "Fixed old binary/compatible rollback",
+      "coverage": "Fixed old revision archive + compiled producer and isolated compatible rollback evidence inspected; coherent DBOS/domain/control restore OPEN.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    },
+    {
+      "id": 27,
+      "scenario": "Bounded actual external judge output",
+      "coverage": "Actual opencode-go/mimo-v2.6-pro judge output with independent wire/cost_basis OPEN; controlled fixture caps are not actual cost.",
+      "reviewer_runtime_status": "NOT_EXECUTED"
+    }
+  ],
+  "parent_evidence": {
+    "independently_executed_by_reviewer": false,
+    "inspected_executed_layers": [
+      {
+        "layer": "scoped DB",
+        "cases": 128,
+        "files": 8,
+        "basis": "53 complete native +21 reconcile/operational +54 remaining; selected original case is not counted twice."
+      },
+      {
+        "layer": "controlled installed-Pi/DBOS process",
+        "cases": 12,
+        "basis": "Real SIGKILL/reopen native/claim/seal/domain and old registered tick; guarded local observer, not actual external provider."
+      },
+      {
+        "layer": "fixed old producer and isolated cutover",
+        "cases": 8,
+        "basis": "Fixed 96077db1905ebab6a522b0ae36f9f22e26be5895 archive, actual INSERT/schedule fencing, saved-result import/mismatch and compatible rollback."
+      },
+      {
+        "layer": "migration smoke",
+        "cases": 86,
+        "basis": "Includes actual emitted CJS migrate entrypoint startup."
+      },
+      {
+        "layer": "existing consumers",
+        "cases": 62,
+        "basis": "13 placement +49 intervention complete; earlier failures preserved."
+      },
+      {
+        "layer": "configured static/build/audits",
+        "basis": "Configured typecheck/lint/full build and ten audits pass on fd5d79ee2 fixture revision; first formatting-only lint failure preserved."
+      },
+      {
+        "layer": "emitted default logger closure",
+        "basis": "Default ESM/CJS native-loader closure proof only; optional OTLP negative and full entrypoints not accepted."
+      }
+    ],
+    "archives": [
+      {
+        "path": "docs/planning/evidence/2026-10-09-yuk1356-process-cutover.json.gz",
+        "sha256": "b4853c69258ea4d7a34550229052b1f61d968a73fbd3c95c5b1248d70bec979f",
+        "inner_file_count": 28,
+        "inspection": "Archive digest and inner preserved file hashes inspected; logs and relevant event/source bindings examined."
+      },
+      {
+        "path": "docs/planning/evidence/2026-10-09-yuk1356-consumer-repair.json.gz",
+        "sha256": "bb47ef3af50169dba682a57fecd772b5216f75b43b05d9e969aee12754205fa8",
+        "inner_file_count": 12,
+        "inspection": "Archive digest and inner preserved file hashes inspected; logs and relevant event/source bindings examined."
+      },
+      {
+        "path": "docs/planning/evidence/2026-10-09-yuk1356-final-gates.json.gz",
+        "sha256": "9663c1e7f319a00a59605f7c19792bdb1ae43e7ee16c9b0428d0a981527b7f97",
+        "inner_file_count": 33,
+        "inspection": "Archive digest and inner preserved file hashes inspected; logs and relevant event/source bindings examined."
+      },
+      {
+        "path": "docs/planning/evidence/2026-10-09-yuk1356-consumer-first-failures.json.gz",
+        "sha256": "ca7a1ccc8bc0de42cccb9145dbb849077ab2809f92aac857e826498ec5492537",
+        "inner_file_count": 6,
+        "inspection": "Archive digest and inner preserved file hashes inspected; logs and relevant event/source bindings examined."
+      }
+    ],
+    "retained_db_logs": [
+      {
+        "path": "/tmp/yuk1356-parent-dispatch-ack-db/original-case.log",
+        "sha256": "4d0e420b0169ced1c428250f40c2aa73067a7cf6040733d811144731a746fdf6",
+        "hash_matches": true
+      },
+      {
+        "path": "/tmp/yuk1356-parent-dispatch-ack-db/three-suites.log",
+        "sha256": "2c2c94818acd637c3a0f29634e72d2c11f7eee476ebcb43a77467cd943d1eb05",
+        "hash_matches": true
+      },
+      {
+        "path": "/tmp/yuk1356-parent-native-recovery-db/native-recheck.log",
+        "sha256": "444f30988782de86100d54a1a777ef1177556fb1745c257697c62687ca924f96",
+        "hash_matches": true
+      },
+      {
+        "path": "/tmp/yuk1356-parent-native-recovery-db/remaining-recheck.log",
+        "sha256": "cecc4d7c0181b9515dad70b2eeea023453d42b3113d27cff508772fad267899c",
+        "hash_matches": true
+      },
+      {
+        "path": "/tmp/yuk1356-parent-native-recovery-db/remaining-suites.log",
+        "sha256": "07766fc56ec15edef141e5c92a6cee87c434748f7b4a2baa92fa131fe5f5d949",
+        "hash_matches": true
+      },
+      {
+        "path": "/tmp/yuk1356-parent-native-recovery-db/tests.log",
+        "sha256": "2c769fe89929152b6f914bbe10e1608f7afe674440326fb4f071dcbc29bba060",
+        "hash_matches": true
+      }
+    ],
+    "fidelity_checks": [
+      "No product source changes from 2dbb9eb3e to reviewed head.",
+      "Controlled process source hashes match pinned head for worker/process/transport/native production sources and lockfile.",
+      "Actual saved results match claim cause/group/digest in inspected controlled process snapshots.",
+      "Old archive pax revision and extracted native dispatch source match fixed old Git object; retained old bundle/archive/source hashes match evidence.",
+      "Original failures remain in process/cutover, consumer and final-gates archives.",
+      "Review does not convert source-only author evidence or fixture reservations into runtime/paid acceptance."
+    ]
+  },
+  "limits": {
+    "reviewer_actions": "Read-only Git/filesystem/source/archive inspection; no children, repository edits, tests/builds/DB/network/services/providers/credentials/tracker operations. Only two authorized /tmp reports written.",
+    "independent_runtime_execution": false,
+    "whole_migration_passed": false,
+    "default_backend": "pg-boss compatibility intermediate",
+    "parent_acceptance_open": [
+      "Actual external opencode-go/mimo-v2.6-pro judge output with independent wire and cost_basis.",
+      "Actual authenticated Hono TCP/SSE acceptance, including reconnect/order/cursor/pruning.",
+      "Native Start submit, same-key and lost-response acceptance; formal-main follow-up owned by 5796.",
+      "Live old-runtime cohort exit, coherent DBOS/domain/control restore and deployment.",
+      "Whole Start/worker entrypoint acceptance and OTLP logger mode; only default emitted logger closure is proven."
+    ],
+    "historical_evidence": "All 114 changed path identities registered. Historical adjacent planning/source indices reviewed semantically; not every historical external source artifact rehashed. Main current execution archives/retained DB logs and relevant snapshot bindings independently inspected. No general whole-repository security audit or exhaustive runtime deadlock proof.",
+    "exact_head_ci_or_deployment": "Not executed or observed in this read-only round."
+  },
+  "review_status": "completed",
+  "noPending": true,
+  "files_covered": [
+    {
+      "path": ".remember/now.md",
+      "blob": "f8cd2bf96eb2d3420535e833f52c2cb2eb050a3c",
+      "sha256": "a643110340a43e233163383bba49e48ec46b466b6bb9bb69ef6b70537863697b",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "PLAN.md",
+      "blob": "4f13fa9168c3347bd41420f84a01d13048a88187",
+      "sha256": "788d533748f9d84a5c3ff0fe216a00b3905c6270da409acc5b066d44b0e491f6",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/2026-10-07-yuk1359-exit-inventory.md",
+      "blob": "620d309bc358b7ba93bba2a0a2ddfc7c6dbdaf45",
+      "sha256": "a31a62522ab8ab3dfab5517a31248ef6d6af3d8e91c8891bd57ff6050c857eac",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1355-idle-clock-boundary.md",
+      "blob": "a5c75bf8eecb99feab052ba56790457829d42371",
+      "sha256": "fb136ba6ccffd91955e69576f636017a74cce61c29c5f685999d62abe25a7728",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-current-acceptance-matrix.md",
+      "blob": "afa848c41e9dcaee9022206e3d31b9af9634ffbb",
+      "sha256": "64598fca1bbe199348553a56735731abd54e6637e66a578858e2cf574a1940de",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-dispatch-ack-identity-repair.md",
+      "blob": "71443c8d564fe863319f6173c1f68c87c4155849",
+      "sha256": "8f8d24978a9512b9ee0ba28aa8886075996feb88be96e8c81ee170d760145e2b",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-durable-judge-implementation.md",
+      "blob": "5f754a289ecee48a8ee55b08ee50774942dced0c",
+      "sha256": "e26796584d24097f62196f9c9d25466242688d85953088486744fffa1f1b5841",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-existing-consumer-fixtures.md",
+      "blob": "f554d6ff93f8a123a07ec6dd1b60f17ba3916fcb",
+      "sha256": "8c48b870638e590fcc634ce0bfee36e4bdf904bba04a0e8a560b335ad8cabbc5",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-judge-audit-repair.md",
+      "blob": "89af41df822630e6f7e3af3f8ac20b685e77e5f6",
+      "sha256": "f797dcf2b97b46458616235d146c3295b5f16de20892c57acf212be6022fd973",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-judge-implementation-entry.md",
+      "blob": "4ae5018a44be2dff5cd204045b9242bf9e6ffc7d",
+      "sha256": "4aaed3d5cf38aa7ea26cf27cc87915f76b868b62402b3255bb008d1a64c0cf41",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-judge-operational-contract.md",
+      "blob": "e5c032ba750d43db3d457c5163ec09383c27b2a1",
+      "sha256": "0169a76864e1d9d1a14e9248ff8aedc7c5ff0595bf907b9b5f836b7d40d807f6",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-judge-parent-acceptance.md",
+      "blob": "8a745fac77f963e11c58c09d78736353cdd270ce",
+      "sha256": "caec6002d175e2bb11752a0dd36ef93c0c2d95a3566d3f54492e98190f3430cf",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-live-acceptance-preparation.md",
+      "blob": "b9c5a450c7b2f13963285f67541997249240dbaa",
+      "sha256": "202c21f11fd53ffcf46006014ccab700592890f1104fc16f55694f27c2374b99",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-operational-envelope-repair.md",
+      "blob": "d51d3ca80f4de23eb6ed7cf620cd8bcc6d91d65c",
+      "sha256": "5ef34f585ebf74c10dd3e9b82fe6e781fb10c420e9cf4d05f9452594a2fbebce",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-process-wire-diagnostics.md",
+      "blob": "ae9da96168d4797f36e2a0fe02ccb9ef310c45b5",
+      "sha256": "b1edf84cd32afdec943e3709ae9ed46ca288df042c7a86452bfeecb9c708a88a",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-r1-repair.md",
+      "blob": "18a4239f37101480e1898a59d95cc44d548304e0",
+      "sha256": "13fdc024e7375fa8a83dd5498a07f7e58da6734add6c94933701245629cd443f",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-resolution-receipt-repair.md",
+      "blob": "ecfdf16041c28643289eb62dcd7dee2d473226cd",
+      "sha256": "36da1f7c28e0c66e0339de8a14d5cea39fa321aa0cfaf1b8f5efa4e865f466e7",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1356-review-r1.md",
+      "blob": "63ddd153c1f0216785996c344312dc603be6ffdf",
+      "sha256": "73c7e4018bc5dc20431c08516fba44819b6b3f55c428caf7a840ee86ce7c3d88",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1359-dbos-restore-evidence-gap.md",
+      "blob": "2db177c13490ca31b7c459f5413880a7d7103159",
+      "sha256": "f7e486626c103e9ea0a11e2740b41d672b0a235cd11afbf42796a53cc88fe16b",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/2026-10-09-yuk1394-parent-acceptance.md",
+      "blob": "097f42f27b56f2b74a3a92f5cf3287f1b7115278",
+      "sha256": "e85393cf0b7c7060242e7e1ad5b59f7310e04a713e444e532c33fae168fcb10e",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1355-idle-clock-boundary-sources.json",
+      "blob": "cc9b4eb4d215a80fa3074fa24e71d820504330f8",
+      "sha256": "7e48fd7c646e76a3b907f6b9b052e8dc998c9b09c2ad31eaf18f7879c3e339dc",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1356-consumer-first-failures.json",
+      "blob": "6a05607685a2aeb671b0c8085880d5bbc319e060",
+      "sha256": "630888bd5fa5eb1af89e42767a27a7b6e3093d040669c31acbc2cbe8f288b319",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1356-consumer-first-failures.json.gz",
+      "blob": "c293c1ef85433e0ed6802248fb031c728f84c64f",
+      "sha256": "ca7a1ccc8bc0de42cccb9145dbb849077ab2809f92aac857e826498ec5492537",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1356-consumer-repair.json.gz",
+      "blob": "ac3d64f085d0fd3211fe6e5c3617f9f223bc9e06",
+      "sha256": "bb47ef3af50169dba682a57fecd772b5216f75b43b05d9e969aee12754205fa8",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1356-final-gates.json",
+      "blob": "044217f9594080e38a0792f150deeb87366b2529",
+      "sha256": "cbb4ad95f90aea2381eee6dbae766feb4a634e1e7888b76c2b192a4463db4b4e",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1356-final-gates.json.gz",
+      "blob": "ea3fe862e98cf1abf53199b3d1355373909f124c",
+      "sha256": "9663c1e7f319a00a59605f7c19792bdb1ae43e7ee16c9b0428d0a981527b7f97",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1356-judge-operational-contract-sources.json",
+      "blob": "3dad1353fec0e1cda3d2bd06e6c4239554c84e9b",
+      "sha256": "27153ba493d650c940dd490ea559ab9303ff3b85414e5013ae0b5fbdf83abb78",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1356-live-acceptance-preparation.json",
+      "blob": "ffbcb25d75d7636d6efc53a41fab1ee1313f712e",
+      "sha256": "7f17b2cf02a10a54465467ccd649af2b4187d1390c842440e0337a4d248b09c3",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1356-parent-consumer-repair.json",
+      "blob": "31f340eca67d6786e29b618649d5963ff5590bf0",
+      "sha256": "f1e6d353b57b5979997d6b7079505277f991c5644a66571d5dba6e6c4cc39ec2",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1356-parent-dispatch-ack-db.json",
+      "blob": "bdac6be0b16e54f7ca07adcd7599d50bae00daef",
+      "sha256": "5ec09a5320979e079cf4c8caea31353e37155157b1b7799da2d8ed579e659150",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1356-parent-emitted-logger.json",
+      "blob": "933d016a366fa66125351ba1d3765bc4afdecbb3",
+      "sha256": "2f3376548f7a46ace10997a30a4037ee129cf2828f4ca304e42c94c5b1b5a4ad",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1356-parent-envelope-db.json",
+      "blob": "8639ef66e27ccad0f0d089b60d31524100a1d0e0",
+      "sha256": "49d3d83a2287e5f94b53966df1d26ba5ae008ff6beeb65de563cfec9c99ffbc5",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1356-parent-first-db.json",
+      "blob": "d7dd60bf9a2c2980061bfc1efea2c0909733c26d",
+      "sha256": "2f5ac933b34808e44e9384988d9959c1e47def3dd4546160c10779d0d69269cf",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1356-parent-process-cutover.json",
+      "blob": "f1ccd513f79f584be6cfeb415921494e394188c9",
+      "sha256": "a7da7f46607e3552fead9659b30205955e6d896abdcce7603b1a790bd2d6d65d",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1356-parent-process-first.json",
+      "blob": "c1591f88823c0a1875f6b226770ffeb46f2c9ab3",
+      "sha256": "1ccafc16aaacafb0a8a5aeb93d5c8a331546f55487e21e34cb6f3adbe29542e2",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1356-parent-repaired-db.json",
+      "blob": "23d2f8cc30a9c0ad60330944bee1b79ebb9551e2",
+      "sha256": "461a22903ded8de1ff284bd41c9c346aff875756f483be41e64c180418a77b49",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1356-process-cutover.json.gz",
+      "blob": "b8323d4db93ddf076c518f15888bee8497250c9b",
+      "sha256": "b4853c69258ea4d7a34550229052b1f61d968a73fbd3c95c5b1248d70bec979f",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1356-review-r1.json",
+      "blob": "30b17efd376c8bc0821d989bb6a06f93f06a496c",
+      "sha256": "f682b39022ffb94480449e8a60897321bb1565c9026d010e42f67aa04cbd9193",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1359-job-declarations-main96077.json",
+      "blob": "19506e6378ca2c2325d1c1a02313ab7a2366c48d",
+      "sha256": "3f3a49e67f31a192376b0fc3c937b005397d5669b086f4092fb4bc02733f7543",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "docs/planning/evidence/2026-10-09-yuk1359-restore-count-failure.json",
+      "blob": "c009bf9ae3d81d24cec5fe270c527ef9ca299c75",
+      "sha256": "b4f21e9c558d6556d4a50be51e97e7c2b250570fda1f313d1bd5f4a908208927",
+      "coverage": "documentation_and_evidence_semantic_review"
+    },
+    {
+      "path": "drizzle/0118_yuk1356_judge_durable.sql",
+      "blob": "ee4ad07809f11dc36d4ecda1a8d5ff930140927c",
+      "sha256": "6774258193b4b0a66ee2a58a341cea1ab55c78bbc0b925b12532a94e06546539",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "drizzle/meta/_journal.json",
+      "blob": "fa9d3802aabe9555ebc349550651ce60592025bb",
+      "sha256": "e1ebdb19e7a8c9da2b74734877aa90ddb3ae67a0964e350c6bde2821b0366296",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "package.json",
+      "blob": "9e443a4db423068ddd005bc238f626721696dea2",
+      "sha256": "e975a2ef1070c9a91feee4c748bdc05e8d56f91d9b9a52556487d9553a7dcd34",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "postman/api-endpoints.json",
+      "blob": "b1a67fe75b1d31ef387edfd001537e2d9ec37f05",
+      "sha256": "e7f0cf469d22ee2f555ede4bd1b209914b0076982fd01a8881ac69829fe02088",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "postman/learning-api.postman_collection.json",
+      "blob": "bb8ea1be3feeee419f35b9caf29c954d769a2892",
+      "sha256": "df3c2ee577ad880163a50de66c455b8be7216d18f41af3af6181dded81fe0cf6",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "scripts/audit-schema-writes.test.ts",
+      "blob": "44fc8d92c137661a0241806a4e2fb84ff5d5d5b7",
+      "sha256": "c1b609b8c0c5497e3ec798b554c0808a47fccc3c3a315dcfe057f03ecb628eaf",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "scripts/audit-schema-writes.ts",
+      "blob": "082fcdd1a17bde5d2e5480bf8de0c6c64fa2f31b",
+      "sha256": "d842b3b7782ab01b3d11191398bf8fb84f07a53f95b58ed2c16d7f742c8247ae",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "scripts/capability-boundary-baseline.json",
+      "blob": "ab7906c342f29c2993e704f568bcf18bf5a692e4",
+      "sha256": "dfe1916ce66fc23ca1afbe01adc32ceab2a788af6cfc09c081be05c9f57d6a70",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "scripts/schema-migration-initialization.unit.test.ts",
+      "blob": "b1d599cb50113e188d25b909c1af6d37ae2a3e8e",
+      "sha256": "c2d0e10d4bd90e0ff86eb12b8ea57625839829f29dd5c73b1addedfb278466b1",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "server/start/vite.config.ts",
+      "blob": "b07e87c357bc229800eac320278b2821ea797fd8",
+      "sha256": "2d7f9c21f9586e6de825644fea4b4f6ca78321ad825b486bec40ec8974e5a175",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/agency/server/intervention/intervention-preparation.db.test.ts",
+      "blob": "bcb02f7de65f72d2908310e8536bcc4cc5988619",
+      "sha256": "7a405449888c8e3fd60fc6ea9ceed22bd45a023d02769fa46aba2f1b2164fbf3",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/capabilities/practice/api/judge-run-status-route.db.test.ts",
+      "blob": "0aa28a7d3ec259a26f4c7ef198e59b86dfe4670f",
+      "sha256": "1b525332bb6ecf198dfd7936c45f8f9e3ea6fffab2fc64900ae2e84e0cb27518",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/capabilities/practice/api/judge-run-status-route.ts",
+      "blob": "3a8bfdd1a686e7dcefc96e402cd527dc6c54ca6a",
+      "sha256": "a9d91d7e7548db3597956123bf2a1bccd80aa27e61bf2a1c600a854f0e008667",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/practice/api/placement-native.db.test.ts",
+      "blob": "1a7b1dc5e5f3c8e9a93481bfe5031a83ece93683",
+      "sha256": "791989515985304d54b58733f0cba7d3a42dfda5fc0aa5fef6a9708e55876d12",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/capabilities/practice/jobs/judge_pending_reconcile.db.test.ts",
+      "blob": "184724711e14274edf78deb7fc8380366b4d596e",
+      "sha256": "a8bcb38b02723e298803b3a102bcbb3d4970c2a402c7ed99f8fb3dd72c03b1a7",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/capabilities/practice/jobs/judge_pending_reconcile.ts",
+      "blob": "276a82076e420216cc58327afc4595766d46e189",
+      "sha256": "819c63042d7b07e75589209b7084f772d443c04aabd8c898ea015a9d35d30c0b",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/practice/jobs/judge_pending_reconcile.unit.test.ts",
+      "blob": "2e61b2577f346f30668de86cb5f4b2b83fda7f4a",
+      "sha256": "2737d0e8f3409bd81f47084636eb39757e3ef4acb03ebc22e38583b91f1ecb3e",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/capabilities/practice/jobs/judge_run.db.test.ts",
+      "blob": "8c4acb490eacdb12594f5e9e6b6217d7a8cfb2f9",
+      "sha256": "af548c013ffcc835bfb3841f1a2711052da50d297a7e8278caa3aa91b987f534",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/capabilities/practice/jobs/judge_run.ts",
+      "blob": "2bfeed4b35fb56735b2806ce578854cbbc116a05",
+      "sha256": "7e25aa85368ea01b4aa342feb9a4995daf9943158861060d8389767bd1ed5adc",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/practice/manifest.ts",
+      "blob": "66a1cde8d3dfffd69000eb7fada69d79e71836e6",
+      "sha256": "961f4c43bb84fe51392d41c4c5bd030e71fb29e02ae77b4297a45d568d445580",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/practice/manifest.unit.test.ts",
+      "blob": "ed87bbe81803edd8ca6041104fd615b764d77b23",
+      "sha256": "c172435b06f5097c696bf42681f1c58ab1d588e4b5ec742419ef5bf98ad22be5",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/capabilities/practice/public.ts",
+      "blob": "c87e9020dfdbc4091bfa76816a11b5ff64bba9d1",
+      "sha256": "80b03306a69f66ad60842dc36553ed65c00feeba77e85913d4e133238c27aec5",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/attempt.ts",
+      "blob": "a483c9ff853c6be8f1977eff31789772e6f95e65",
+      "sha256": "6e49be637afe5b6d93001fab2278fcd928f1685722c9ec7b1f09070709598e23",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/durable-attempt-dispatch.unit.test.ts",
+      "blob": "544770b0c409b6b38fdb92381649f2b0d0f17988",
+      "sha256": "b40a3e771baeabb21786be361d853eacb29038d10a65b90e96e37579dac15053",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/capabilities/practice/server/assessment/durable-attempt.ts",
+      "blob": "460109b6014eeb5ec4bc6a7598b0456601413b30",
+      "sha256": "8adef567bf182e7410aa7e4672b107b29f309dc4a800b486441cbd5aaafdcac0",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/practice/server/intervention-diagnostics.ts",
+      "blob": "0c8c1ee4c4a340b882cc6c7051d899bc9e972ec9",
+      "sha256": "c61774f4633e9abd3a73a7d24ac4ac252fd35d4396239951b02f5f7e6e964cc5",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-engine-client.ts",
+      "blob": "82334fa7333d60ae7a94d1cfcb7133f423367dde",
+      "sha256": "985365359c8cf84e51d7d4d977277c134f02de857563c2463db2c428d0490e84",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-engine-client.unit.test.ts",
+      "blob": "9c94de1684ce09afb091ac027c9f6b8d21e2a61c",
+      "sha256": "39df3a973483e8f921b3ecb1f2b24bbc894349f5ed29d8b4d6de0db320c146b5",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-operational-state.ts",
+      "blob": "d7478441046a764a8bc397eb9f3bf76cdc4bd0e7",
+      "sha256": "7941915a94d6f7a049adbd742760496da4781974cf9620244ee5f84bfe24db89",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-operational-state.unit.test.ts",
+      "blob": "b5534028c7af48b6abe5e395ddff34bf8f6ead2d",
+      "sha256": "524822ad75ac4e09ef16713a69defe33c1c73b8ff80d1dc0fd56eb601ab4ccd8",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-operational.ts",
+      "blob": "19cebadb877c2dbcb5534e432e398b244386c183",
+      "sha256": "119ea7ea85475633bf03c2a819cbf05da39a304a57b7efd9b8461b9d6e11e832",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-process-observer.ts",
+      "blob": "7d19504602d8e9ead633ed46c0aeb25ce08345c5",
+      "sha256": "bb9c2fe03d6aa94ba6898cd42648dd6582fce36a13dabb9ec4185c0d5e18a31e",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-run-dispatch.ts",
+      "blob": "02812f846329ae9b0d5093720b2cfc18a1b64096",
+      "sha256": "ab0ed6028f91a4e02fc3796ca9898111fdab201fa4eb34ebc01cc001eff6f366",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-run-notification.ts",
+      "blob": "2a1f7d6f05694aaa5cf296d037196ea5f868132f",
+      "sha256": "a11bfaab476a9f39fd4b8ff3e101eee70715afcb289d715f424b4840dc815c45",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-run-observation.ts",
+      "blob": "ea8683b1b2a56dd3ffc25711fe4d30da154ac16c",
+      "sha256": "749912102a32a8fe9e47ca4bb0c5205d63f6f7c787e1f60f616787d5f680ee7c",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge-run-payload.ts",
+      "blob": "6f8462efab20d90bf3c60e8d1c2422ade607eb57",
+      "sha256": "c00117018ec983257be6d56340bb17afae2e11770478397c748458acf3c17da6",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge/evaluate-submission.ts",
+      "blob": "6c2723719668df2e5abc9fc921d41a847658753e",
+      "sha256": "31ff3ff5414a064dcb191675bd565ee4a38c03b33fa6c7bb081814b37b3ab2e4",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge/evaluation-authority.ts",
+      "blob": "86d08ab63580db4574bddec2c7cabee39ea385fa",
+      "sha256": "049ca93acdaeaf2b0ffe2b05c2a7d618bdc0ed4cfd5e69a13f13600d339b39f8",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge/judge-paid-retry.unit.test.ts",
+      "blob": "813ecf7e6505c3ca48595f816f0e03d1a40834aa",
+      "sha256": "ae0547a2c569e32b5a451fd9abc8f21eeef51eee187cab200743be381ff4e63a",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge/pi-model-executor.unit.test.ts",
+      "blob": "1273b2c014dbbb24ebb35f03b5438f6fc95e9115",
+      "sha256": "6127ae40071d6cbd9e14e44c2a650d95e5de174cf66d1f84a4cceaaa36c3f9f7",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/capabilities/practice/server/judge/recorded-model-executor.ts",
+      "blob": "3551bc8cea6e92e192dc6374d433e42544c0d029",
+      "sha256": "4bc96ab2dccd57b8573d0ef065293d2c415f1f3f8f2a4d754aec5207892815ad",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/capabilities/practice/server/native-durable-attempt.db.test.ts",
+      "blob": "40692a11a0c6badaec333ae29110f5deb0d8bb0f",
+      "sha256": "381c458efd5579b55e0c524e37a64518398eb0c6ca1fc0af42413efaa591a597",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/capabilities/practice/server/placement-assessment.ts",
+      "blob": "1298014abffa936fec6ea42fe8e1a3ecf37a9359",
+      "sha256": "8e38f8441a3a97e14fd2fdde14efc7c99bb11c55c5355d9e75384f527eddb715",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/core/schema/event/experimental.ts",
+      "blob": "7d51e36b32459604a4b1c6e221cddd249a84aa8a",
+      "sha256": "3f25b7e012287f2b3408d53686451203db760fb49d8830b6bd04b88191b7332b",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/core/schema/event/index.ts",
+      "blob": "a67d9b16efbd0b2b475e6ac558f9d7807f8fb876",
+      "sha256": "17e383b8720ae0337a03e4ea6685fa288b1564c5526a84d7564ea3457bd0a6f0",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/core/schema/event/judge-operational-events.ts",
+      "blob": "a8746afedeed627313e8948180e8c8ef43e4fb12",
+      "sha256": "3cfd2b37856568ae2774f7da74d148f52c728f8319c0f4b8085132d3c132d4af",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/core/schema/event/judge-operational-events.unit.test.ts",
+      "blob": "44544b616a2b02a671c7c23d8899b8ad149cbf3b",
+      "sha256": "dbd3672999c5a85c7f9ee3b213e5267b8800f2a00e093f20695b5b03e688da89",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/db/schema.ts",
+      "blob": "e2fb87181aa28c0acfe0db0895e0fa96c0e9be17",
+      "sha256": "9bfbc1d0bf766f29c3d04bc23754759d8a0ec9aca3af55996764edab15a59f57",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/server/ai/pi-agent-adapter.ts",
+      "blob": "d9892b44bc4468095b8bf6d98f453feb703aec00",
+      "sha256": "b726609e7951ef3765b958a6097b094cec9cd55499d82d445d9a4562f152ec68",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/server/ai/runner.fallback.test.ts",
+      "blob": "ca30e41a91fa013fa3712465d38b2bb91c1c9ccf",
+      "sha256": "a3192624850692b1213106e9c8dd403d1714f947106cc6d6e2e0d8fdc0393271",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/server/ai/runner.seam.test.ts",
+      "blob": "0038626ae4a04bf4ba9eb5c7482c6d532cd043f6",
+      "sha256": "35745289f2a51c2da9872dd3a38b10416540ca128d5c1dcebcd139f3e7345c2c",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/server/ai/runner.ts",
+      "blob": "dae8c188b8157c78a1860d0f4885233c6d27d8d5",
+      "sha256": "ade839b551910ff25233e5a34b3f47fa2aadfcfe50c21aa3c734d4a57409225a",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/server/ai/sdk-types.ts",
+      "blob": "b0c333f7c38758b90d75e3f32d8fec32afc09f21",
+      "sha256": "2788facb2d99db442f8cbfaec880f5b523dcc619fd4394bbb5ed391e33e77b5b",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/server/assessment/jev-model-executor.test.ts",
+      "blob": "e15c1b9ae77bd8d6a60ecd8dac073312ccc7c841",
+      "sha256": "6a891bf1ccf30d16efae2bc6bcc692499cfb61c80acb62adbd30b5cd590fc992",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/server/assessment/jev-model-executor.ts",
+      "blob": "cfd510bac7787bf4604027a3b8fe83a5ae2abfca",
+      "sha256": "1716d462468f2313e77c1c1c3776c4328952a7411cb0c6ef95129e7887684d9a",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/server/assessment/pi-model-executor.ts",
+      "blob": "bd93148030df746aafc96303de55ab8fd4dfdc78",
+      "sha256": "896bfa0654674b758ef6d3c704072b1529a6377163953ad4e2068fbfb956c9e0",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/server/boss/handlers.test.ts",
+      "blob": "251540af2ed32399712d4480c2be3156998c8633",
+      "sha256": "3fbb417218c385efd802356580812e3bcf89eb00fdd2cc78c3562cf0dbe1efe6",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/server/boss/register-capability-jobs.ts",
+      "blob": "67566f46fa6e254538aa1edd1f006580566c7107",
+      "sha256": "cdedea341453f3c0c8d5b3cc8e82939cb119a1ceb8d9d82a839556334258cbfe",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/server/durable/judge-family.ts",
+      "blob": "d18109e562347a97d9f759ea89c65f85a3fa2194",
+      "sha256": "0dfc90a9fe51ff3494be589a3ec35ef097b8b49ba2a9c47dc70885b7ccaa80b7",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/server/durable/judge-worker.ts",
+      "blob": "cc2753dfb5215494d0ddfbc8f2fc43c1599b38eb",
+      "sha256": "4c6cb97c62eb7fb3a9c68d0d28c773f80a25625102cf46b821081f763c1047a0",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/server/durable/producer-fence-lock.db.test.ts",
+      "blob": "e686350e62f8b77e0be27cbfb824084d5a809d50",
+      "sha256": "cc1f5e74442c62952a25150eb03414ca50b48125596dacea6c7658be2d1bb431",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/server/durable/prune-worker.ts",
+      "blob": "b0c89e25fd71381fd13f99fefdc4308dce9f4365",
+      "sha256": "a762d1e48a9bda26aac2929aebb50cd35d5a380d0fc2c77d2ee828a0ba390742",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "src/server/durable/prune-worker.unit.test.ts",
+      "blob": "a03d8d82c1d706e6529a807011f203f4edc6a38c",
+      "sha256": "5208cd7fda1100e351387e8fae5f2038ee77ad689552c189aa803f87c2a5c685",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "src/server/export/constants.ts",
+      "blob": "08a054a2a2d1cf56d5f09c92e345ad356a156e5c",
+      "sha256": "ae89d240778a7900989d20c46932e3c4cf4fa530b14775faea5c485a8ae20aba",
+      "coverage": "source_or_generated_diff"
+    },
+    {
+      "path": "tests/dbos-judge/cutover.db.test.ts",
+      "blob": "78d9e5a3f3133d2c6f27fe0b033b4cbf148a1d14",
+      "sha256": "b86dda89cf6ba9cff98cde910de6d17e3193735251e55e7fdededaadbc9457c2",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "tests/dbos-judge/legacy-producer.ts",
+      "blob": "740e18e3cdcf5b8b84be6473d2775e21f4be88a1",
+      "sha256": "050a3406562b98278f3e13b913d097742868042a391ed72361dbfcbbf78fe3af",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "tests/dbos-judge/migration.db.test.ts",
+      "blob": "4134527c512f6bfb06c2a3a87069dc601b52a077",
+      "sha256": "671ec89cefdc9cd1be95eaf427976493c333c6ffe590229350125a8b46b51232",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "tests/dbos-judge/operational.db.test.ts",
+      "blob": "5a3798503bebfd04147e4cb0bef4dff13a825101",
+      "sha256": "e0929be1369ea8eeeb25b1cefc14db72ff5777814d3212e467b6761edf6fb9d8",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "tests/dbos-judge/process.db.test.ts",
+      "blob": "0fc2062a252eacce16ae29e1663624eadf711f74",
+      "sha256": "9909e34db114451eb2333085b3f646b04853c85490871115fa0dc3a00ce3ca56",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "tests/dbos-judge/support.ts",
+      "blob": "d3332d0043e18080d12ac829fcc6f9690e08b36c",
+      "sha256": "b4c91a0cf68ffa28648bae081266d6136d6fbe25fa1ea8f3af40431f398bd357",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "tests/dbos-judge/transport-fixture.unit.test.ts",
+      "blob": "4462470a0eb39d74f8cf5c0ca27a5041f85cf0ac",
+      "sha256": "0a73bc9b1945c5f5df7e5c01618d0455c0cfa135800e13de895373b6a276e29f",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "tests/dbos-judge/worker.ts",
+      "blob": "159f438f4f886996c2d06f6b1bfd4da0752313e8",
+      "sha256": "c4bd1514377bea301ec3b6e72cedb72ebd18e7abdff5b4b4501c8d74a2c8b54d",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "tests/fixtures/native-judge-run.ts",
+      "blob": "45d518aa10a363728c9f22ae4ed4f0d481984e16",
+      "sha256": "4ff90fdcb654f01fe1eeda81772b57a15a37cea25b9db12e3f2a1d6cd3cd6f4a",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    },
+    {
+      "path": "tests/integration/migration-smoke.test.ts",
+      "blob": "a317b6fff7bad85cdad4706e5401e48a05ee87fe",
+      "sha256": "86f740e8517d10ca50c521976d81707f79cc1677627876321680573f41fd6c68",
+      "coverage": "fixture_or_test_diff_and_relevant_consumer_trace"
+    }
+  ]
+}

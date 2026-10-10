@@ -6,9 +6,10 @@ import {
   ModelUnitOutcome,
   type ModelUnitOutcomeT,
 } from '@/core/schema/assessment';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { event } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { observeJudgeProcess } from '../judge-process-observer';
 
 type Executor = (
   request: ModelExecutorRequest,
@@ -22,7 +23,10 @@ type Executor = (
 export function createRecordedModelExecutor(
   database: Db,
   execute: Executor,
-  options: { beforeClaim?: () => void } = {},
+  options: {
+    beforeClaim?: () => void;
+    fence?: (tx: Tx, request: ModelExecutorRequest) => Promise<string | null>;
+  } = {},
 ): ModelUnitExecutorPort {
   return async (request, signal) => {
     const cap = request.executor.max_cost_usd_micros;
@@ -45,6 +49,8 @@ export function createRecordedModelExecutor(
       ...(reservation === undefined ? {} : { cost_usd_micros: reservation }),
     });
     const prior = await database.transaction(async (tx) => {
+      // R precedes C. The callback validates the retained run/binding with read-only native queries.
+      const blocked = await options.fence?.(tx, request);
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${claimId}))`);
       const [claim] = await tx.select().from(event).where(eq(event.id, claimId)).limit(1);
       if (claim) {
@@ -61,10 +67,13 @@ export function createRecordedModelExecutor(
             originalCap,
           );
         const parsed = ModelUnitOutcome.safeParse(result.payload.outcome);
-        return parsed.success
+        return parsed.success &&
+          result.caused_by_event_id === claimId &&
+          result.payload.input_digest === digest
           ? parsed.data
           : held('sealed execution result is invalid; explicit recovery required', originalCap);
       }
+      if (blocked) return held(blocked);
       if (cap === undefined || !Number.isSafeInteger(cap) || cap <= 0) {
         return {
           kind: 'pending' as const,
@@ -103,27 +112,66 @@ export function createRecordedModelExecutor(
       return null;
     });
     if (prior !== null) return prior;
+    if (options.fence)
+      await observeJudgeProcess({
+        kind: 'claim-committed',
+        submissionId: request.submission_id,
+        unitId: request.scoring_unit_id,
+      });
     let outcome: ModelUnitOutcomeT;
     try {
       outcome = ModelUnitOutcome.parse(await execute(request, signal, taskRunId));
     } catch {
       outcome = held('claimed execution did not return a valid result; explicit recovery required');
     }
-    // Deliberately outside the execute catch: a receipt failure never retries the model.
+    // Receipt persistence is a separate effect. A lost COMMIT acknowledgment is resolved by this exact ID,
+    // never by starting the executor again or interpreting task-run success as a grade.
+    const sameResult = async () => {
+      const [saved] = await database.select().from(event).where(eq(event.id, resultId));
+      if (!saved) return null;
+      const parsed = ModelUnitOutcome.safeParse(saved.payload.outcome);
+      if (
+        saved.action !== 'experimental:assessment_model_result' ||
+        saved.caused_by_event_id !== claimId ||
+        saved.subject_kind !== 'evaluation_group' ||
+        saved.subject_id !== request.evaluation_group_id ||
+        saved.payload.input_digest !== digest ||
+        !parsed.success ||
+        canonicalHash(parsed.data) !== canonicalHash(outcome)
+      )
+        throw new Error('Immutable model result receipt conflict');
+      return parsed.data;
+    };
     const now = new Date();
-    await writeEvent(database, {
-      id: resultId,
-      actor_kind: 'system',
-      actor_ref: 'assessment:model-execution',
-      action: 'experimental:assessment_model_result',
-      subject_kind: 'evaluation_group',
-      subject_id: request.evaluation_group_id,
-      outcome: null,
-      caused_by_event_id: claimId,
-      payload: { version: 1, input_digest: digest, outcome },
-      created_at: now,
-      ingest_at: now,
-    });
-    return outcome;
+    try {
+      await database.transaction((tx) =>
+        writeEvent(tx, {
+          id: resultId,
+          actor_kind: 'system',
+          actor_ref: 'assessment:model-execution',
+          action: 'experimental:assessment_model_result',
+          subject_kind: 'evaluation_group',
+          subject_id: request.evaluation_group_id,
+          outcome: null,
+          caused_by_event_id: claimId,
+          payload: { version: 1, input_digest: digest, outcome },
+          created_at: now,
+          ingest_at: now,
+        }),
+      );
+    } catch (error) {
+      const saved = await sameResult();
+      if (saved) return saved;
+      throw error;
+    }
+    const saved = await sameResult();
+    if (!saved) throw new Error('Model result receipt is missing after persistence');
+    if (options.fence)
+      await observeJudgeProcess({
+        kind: 'result-committed',
+        submissionId: request.submission_id,
+        unitId: request.scoring_unit_id,
+      });
+    return saved;
   };
 }

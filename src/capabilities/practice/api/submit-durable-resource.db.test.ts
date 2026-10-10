@@ -7,9 +7,14 @@
 
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { newId } from '@/core/ids';
 import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
-import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
+import { JudgeWorkflowInput } from '@/core/schema/event/judge-operational-events';
+import {
+  JudgePendingAttemptPayload,
+  NativeJudgePendingSubmitInput,
+} from '@/core/schema/event/judge-pending-events';
 import {
   INTERVENTION_CONTRACT_VERSION,
   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
@@ -31,13 +36,24 @@ import { runJudgeRun } from '../jobs/judge_run';
 import { issueAssessment } from '../server/assessment/issue';
 import * as evaluationService from '../server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '../server/judge/recorded-model-executor';
+import { fenceJudgeUnitClaim } from '../server/judge-operational';
 
 vi.mock('@/server/runtime-env', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/server/runtime-env')>();
   return { ...actual, shouldEnqueueBackgroundJobs: () => true };
 });
 
-const bossSend = vi.fn().mockResolvedValue('job-1');
+const jobSchema = z.object({
+  run_id: z.string(),
+  caller: z.literal('native_assessment'),
+  submit: NativeJudgePendingSubmitInput,
+  operational: JudgeWorkflowInput,
+});
+const queuedJobs: z.infer<typeof jobSchema>[] = [];
+const bossSend = vi.fn(async (_queue: string, data: unknown, options?: { id?: string }) => {
+  queuedJobs.push(jobSchema.parse(data));
+  return options?.id ?? null;
+});
 vi.mock('@/server/boss/client', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/server/boss/client')>();
   return { ...actual, getStartedBoss: async () => ({ send: bossSend }) };
@@ -69,6 +85,7 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
     await resetDb();
     __resetRateLimitForTests();
     bossSend.mockClear();
+    queuedJobs.length = 0;
     vi.stubEnv('JUDGE_DURABLE_ENABLED', '1');
   });
   afterEach(() => {
@@ -195,8 +212,13 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
         cost_usd_micros: 100,
       }),
     );
-    vi.spyOn(evaluationService, 'createFormalModelExecutor').mockImplementation(() =>
-      createRecordedModelExecutor(testDb(), execute),
+    vi.spyOn(evaluationService, 'createFormalModelExecutor').mockImplementation(
+      (database, _signal, _admission, execution) =>
+        createRecordedModelExecutor(
+          database,
+          execute,
+          execution ? { fence: (tx, request) => fenceJudgeUnitClaim(tx, execution, request) } : {},
+        ),
     );
     const rejected = await submit();
 
@@ -251,9 +273,14 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
     const payload = JudgePendingAttemptPayload.parse(pending.payload);
     if (payload.caller !== 'native_assessment') throw new Error('expected native pending receipt');
     expect(payload.submit.submission_id).toBe(saved[0].submission_id);
-    const job = { run_id: payload.run_id, caller: payload.caller, submit: payload.submit };
-    await runJudgeRun(testDb(), job, { retryCount: 0, retryLimit: 2 });
-    await runJudgeRun(testDb(), job, { retryCount: 1, retryLimit: 2 });
+    const job = queuedJobs.find((queued) => queued.run_id === payload.run_id);
+    if (!job) throw new Error('expected mapped diagnostic delivery');
+    const meta = { retryCount: 0, retryLimit: 2, deliveryId: job.operational.delivery_id };
+    expect(await runJudgeRun(testDb(), job, meta)).toMatchObject({ status: 'done' });
+    expect(await runJudgeRun(testDb(), job, { ...meta, retryCount: 1 })).toMatchObject({
+      status: 'skipped',
+      reason: 'already_persisted',
+    });
     expect(execute).toHaveBeenCalledTimes(1);
     expect(await originals()).toEqual(saved);
     expect(await testDb().select().from(assessment_issuance)).toEqual(issuances);

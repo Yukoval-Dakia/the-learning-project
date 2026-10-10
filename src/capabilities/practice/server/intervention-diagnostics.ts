@@ -3,7 +3,6 @@ import {
   desc,
   eq,
   exists,
-  gt,
   inArray,
   isNotNull,
   isNull,
@@ -12,7 +11,6 @@ import {
   or,
   sql,
 } from 'drizzle-orm';
-import { alias } from 'drizzle-orm/pg-core';
 import { z } from 'zod';
 import { newId } from '@/core/ids';
 import { JudgeOnEvent, ReviewOnQuestion } from '@/core/schema/event/known';
@@ -33,7 +31,6 @@ import {
   assessment_submission,
   evaluation_effective_head,
   event,
-  job_events,
   practice_stream_item,
   question,
   question_group_lifecycle,
@@ -45,7 +42,7 @@ import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publica
 import { enrollFsrsStateIfAbsent, retireQuestionFsrsState } from '@/server/fsrs/state';
 import { initialFsrsState } from './fsrs';
 import { JUDGE_PENDING_ATTEMPT_ACTION } from './judge-run-dispatch';
-import { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './judge-run-status';
+import { readJudgeQuestionActivity } from './judge-run-observation';
 import { streamLocalDate } from './stream-date';
 
 export const INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS = 10 * 60 * 1000;
@@ -164,7 +161,7 @@ export async function loadLatestTrustedInterventionDiagnosticVerdict(
 
   for (const candidate of candidates) {
     const enveloped = await getEventById(db, candidate.id);
-    if (!enveloped || enveloped.correction_status.state !== 'active') continue;
+    if (enveloped?.correction_status.state !== 'active') continue;
     const parsed = JudgeOnEvent.safeParse(enveloped);
     if (!parsed.success || parsed.data.payload.judge_route !== 'multimodal_direct') continue;
     const verdict = parsed.data.payload.coarse_outcome;
@@ -357,7 +354,7 @@ export async function loadCommittedInterventionDiagnosticAttempt(
 
   for (const candidate of candidates) {
     const review = await getEventById(db, candidate.id);
-    if (!review || review.correction_status.state !== 'active') continue;
+    if (review?.correction_status.state !== 'active') continue;
     const parsedReview = ReviewOnQuestion.safeParse(review);
     if (!parsedReview.success) continue;
     const effective = await loadLatestTrustedInterventionDiagnosticVerdict(db, review.id);
@@ -587,76 +584,35 @@ export async function materializeInterventionDiagnostics(
   }
 
   const ids = kinds.map((kind) => settlement.diagnostics[kind].question_id);
-  // A synchronous process can die after the active→draft one-shot claim but
-  // before its review transaction commits. Recovery revisits active eligible
-  // interventions every two minutes, so reclaim an expired draft that has no
-  // immutable review and no live durable pending-attempt evidence. A terminal
-  // FAILED attempt is permanent audit evidence, not an eternal claim fence; a
-  // later REQUEUED marker reopens that same run and protects it again.
+  // An accepted original or any permanent durable run keeps the one-shot claim closed.
   const staleClaimBefore = new Date(input.now.getTime() - INTERVENTION_DIAGNOSTIC_CLAIM_LEASE_MS);
-  const terminalRun = alias(job_events, 'terminal_intervention_diagnostic_run');
-  const reopenedRun = alias(job_events, 'reopened_intervention_diagnostic_run');
-  await tx
-    .update(question)
-    .set({ draft_status: 'active', updated_at: input.now })
-    .where(
-      and(
-        inArray(question.id, readyScheduledIds),
-        eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
-        eq(question.draft_status, 'draft'),
-        lte(question.updated_at, staleClaimBefore),
-        sql`NOT ${acceptedDiagnosticOriginal(tx)}`,
-        notExists(
-          tx
-            .select({ id: event.id })
-            .from(event)
-            .where(
-              and(
-                eq(event.subject_kind, 'question'),
-                eq(event.subject_id, question.id),
-                committedDiagnosticAttempt(tx),
-              ),
-            ),
-        ),
-        notExists(
-          tx
-            .select({ id: event.id })
-            .from(event)
-            .where(
-              and(
-                eq(event.subject_kind, 'question'),
-                eq(event.subject_id, question.id),
-                eq(event.action, JUDGE_PENDING_ATTEMPT_ACTION),
-                notExists(
-                  tx
-                    .select({ id: terminalRun.id })
-                    .from(terminalRun)
-                    .where(
-                      and(
-                        eq(terminalRun.business_table, JUDGE_RUN_TABLE),
-                        eq(terminalRun.business_id, sql`${event.payload}->>'run_id'`),
-                        eq(terminalRun.event_type, JUDGE_RUN_EVENTS.FAILED),
-                        notExists(
-                          tx
-                            .select({ id: reopenedRun.id })
-                            .from(reopenedRun)
-                            .where(
-                              and(
-                                eq(reopenedRun.business_table, JUDGE_RUN_TABLE),
-                                eq(reopenedRun.business_id, terminalRun.business_id),
-                                eq(reopenedRun.event_type, JUDGE_RUN_EVENTS.REQUEUED),
-                                gt(reopenedRun.id, terminalRun.id),
-                              ),
-                            ),
-                        ),
-                      ),
-                    ),
+  const activity = await readJudgeQuestionActivity(tx, readyScheduledIds);
+  const reopenableIds = readyScheduledIds.filter((id) => !activity.get(id)?.length);
+  if (reopenableIds.length)
+    await tx
+      .update(question)
+      .set({ draft_status: 'active', updated_at: input.now })
+      .where(
+        and(
+          inArray(question.id, reopenableIds),
+          eq(question.source, INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE),
+          eq(question.draft_status, 'draft'),
+          lte(question.updated_at, staleClaimBefore),
+          sql`NOT ${acceptedDiagnosticOriginal(tx)}`,
+          notExists(
+            tx
+              .select({ id: event.id })
+              .from(event)
+              .where(
+                and(
+                  eq(event.subject_kind, 'question'),
+                  eq(event.subject_id, question.id),
+                  committedDiagnosticAttempt(tx),
                 ),
               ),
-            ),
+          ),
         ),
-      ),
-    );
+      );
 
   // A deterministic id collision must never silently bind an intervention to
   // unrelated content. Re-read and prove exact lineage before enrolling cards.

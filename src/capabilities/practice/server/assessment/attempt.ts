@@ -20,6 +20,7 @@ import {
   createFormalModelExecutor,
 } from '../judge/evaluate-submission';
 import { type GradingEntryPoint, evaluateAttempt } from '../judge/evaluation-authority';
+import { type JudgeExecution, requireJudgeRunOpen } from '../judge-operational';
 import { emitMasteryProgressSignal } from '../mastery-progress-signal';
 import { submissionWasAssisted } from './assistance';
 import { type SaveSubmissionRequest, saveSubmission } from './submit';
@@ -91,6 +92,7 @@ export async function previewFormalAttempt(
     candidateId?: string;
     expectedSubmissionIds?: string[];
     modelAdmission?: 'durable';
+    judgeExecution?: JudgeExecution;
   } = {},
 ) {
   const { issuance, revision, scopedBasis, scopedUnitIds, submission, assisted } =
@@ -99,6 +101,7 @@ export async function previewFormalAttempt(
     db: database,
     entry,
     contract: {
+      judge_execution: options.judgeExecution,
       submission_id: submission.submission_id,
       evaluation_group_id: submission.evaluation_group_id,
       evaluation_key: `${options.selfReport ? 'self-report' : 'submission'}:${submission.submission_id}`,
@@ -119,7 +122,12 @@ export async function previewFormalAttempt(
           }
         : {
             provenance: { source: 'automatic' as const, assisted },
-            model_executor: createFormalModelExecutor(database, signal, options.modelAdmission),
+            model_executor: createFormalModelExecutor(
+              database,
+              signal,
+              options.modelAdmission,
+              options.judgeExecution,
+            ),
           }),
     },
   }).catch((error: unknown) => {
@@ -229,6 +237,7 @@ export async function commitFormalAttempt(
     expectedHead?: Pick<ActivateEvaluationIntentT, 'expected_effective_id' | 'expected_generation'>;
     selfReport?: boolean;
     modelAdmission?: 'durable';
+    judgeExecution?: JudgeExecution;
     userRating?: 'again' | 'hard' | 'good';
     capture?: FormalAttemptCapture;
     signal?: AbortSignal;
@@ -253,6 +262,7 @@ export async function commitFormalAttempt(
     {
       selfReport: options.selfReport,
       modelAdmission: options.modelAdmission,
+      judgeExecution: options.judgeExecution,
       candidateId: options.activationIntent?.evaluation_id,
     },
   );
@@ -272,8 +282,9 @@ export async function commitFormalAttempt(
   }
   const attemptId = `evt_assessment_${submission.submission_id}`;
   const capture = options.capture ?? {};
-  const record = (tx: Tx) =>
-    recordFormalAttemptCapture(
+  const record = async (tx: Tx) => {
+    if (options.judgeExecution) await requireJudgeRunOpen(tx, options.judgeExecution);
+    return recordFormalAttemptCapture(
       tx,
       entry,
       questionId,
@@ -281,6 +292,7 @@ export async function commitFormalAttempt(
       candidate.evaluation.record.evaluation_id,
       capture,
     );
+  };
   if (
     candidate.evaluation.record.status !== 'completed' ||
     (!options.selfReport && candidate.result.coarse_outcome === 'unsupported')
@@ -301,6 +313,7 @@ export async function commitFormalAttempt(
     },
     {
       actorRef: `assessment:${entry}`,
+      judgeExecution: options.judgeExecution,
       beforeActivate: options.beforeActivate,
       allowCapturedOriginal: entry === 'ingestion_grading' && options.onActivated !== undefined,
       onThetaApplied: async (tx, observation) => {

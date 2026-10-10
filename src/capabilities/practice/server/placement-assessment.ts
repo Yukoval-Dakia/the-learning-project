@@ -1,14 +1,12 @@
-import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray } from 'drizzle-orm';
 import { z } from 'zod';
 import { canonicalHash } from '@/core/migration/canonical';
-import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
 import type { Tx } from '@/db/client';
 import {
   assessment_issuance,
   evaluation,
   evaluation_effective_head,
   event,
-  job_events,
   question,
   question_group_lifecycle,
   question_revision,
@@ -18,7 +16,7 @@ import { ApiError } from '@/kernel/http';
 import { PlacementQuestionSchema } from '../api/placement-contracts';
 import { issueAssessment } from './assessment/issue';
 import { getIssuanceState } from './assessment/submit';
-import { JUDGE_RUN_TABLE, deriveJudgeRunStatus } from './judge-run-status';
+import { readJudgeRunPermanent } from './judge-run-observation';
 import { type SelectPlacementItemInput, selectNextPlacementItem } from './placement-select';
 
 const ACTION = 'experimental:assessment_placement_issued';
@@ -101,46 +99,14 @@ export async function placementAssessmentProgress(tx: Tx, sessionId: string) {
         .select({ id: evaluation.evaluation_id })
         .from(evaluation)
         .where(eq(evaluation.submission_id, accepted.submission_id));
-      const pending = await tx
-        .select({ payload: event.payload })
-        .from(event)
-        .where(
-          and(
-            eq(event.action, 'experimental:judge_pending_attempt'),
-            eq(event.session_id, sessionId),
-            sql`${event.payload}->'submit'->>'submission_id' = ${accepted.submission_id}`,
-          ),
-        );
-      const payload = pending[0] ? JudgePendingAttemptPayload.parse(pending[0].payload) : null;
-      const [resolution] =
-        payload?.caller === 'native_assessment'
-          ? await tx
-              .select({ id: event.id })
-              .from(event)
-              .where(
-                and(
-                  eq(event.id, payload.run_id),
-                  eq(event.action, 'experimental:assessment_judge_resolution'),
-                ),
-              )
-          : [];
-      if (payload?.caller === 'native_assessment') {
-        const jobs = await tx
-          .select({ event_type: job_events.event_type, payload: job_events.payload })
-          .from(job_events)
-          .where(
-            and(
-              eq(job_events.business_table, JUDGE_RUN_TABLE),
-              eq(job_events.business_id, payload.run_id),
-            ),
-          )
-          .orderBy(asc(job_events.id));
-        const status = deriveJudgeRunStatus(jobs);
-        phase = resolution || status === 'done' || status === 'failed' ? 'held' : 'pending';
+      const runId = `judge_native_${accepted.submission_id}`;
+      const judge = await readJudgeRunPermanent(tx, runId);
+      if (judge.kind !== 'absent') {
+        phase = judge.kind === 'pending' ? 'pending' : 'held';
         if (phase === 'pending')
           pendingRun = {
-            run_id: payload.run_id,
-            poll_url: `/api/jobs/judge_run/${encodeURIComponent(payload.run_id)}/status`,
+            run_id: runId,
+            poll_url: `/api/jobs/judge_run/${encodeURIComponent(runId)}/status`,
           };
       } else phase = candidates.length || head?.effective_evaluation_id ? 'held' : 'retry';
     }

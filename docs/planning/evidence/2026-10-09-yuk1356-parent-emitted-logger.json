@@ -1,0 +1,205 @@
+{
+  "source": "caa125504c04d6efcbd27e864a958bafeb303ddb",
+  "scope": "Bounded emitted default logger dependency closure only; full application entrypoints and final repaired artifact UNRUN",
+  "sealedProofFilesVerified": 727,
+  "snapshotFilesVerified": 703,
+  "closureStatements": {
+    "esm": 50,
+    "cjs": 20
+  },
+  "parentResults": [
+    {
+      "kind": "esm",
+      "status": "PASS_BOUNDED_EMITTED_LOGGER_CLOSURE",
+      "node": "v24.19.0",
+      "source": {
+        "path": "/tmp/yuk1356-parent-emitted-proof/snapshot/dist/start/server/assets/commands-JEji8urA.js",
+        "original": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/dist/start/server/assets/commands-JEji8urA.js",
+        "sha256": "3065a08813ad5a859d7730c6bddc3bddaf3106b7aa5d7b8c19313d81281d4fea"
+      },
+      "outputSha256": "24122ee72369fff44857bff81c12390324ca854653eaf140983c362d8bce8bc9",
+      "missingOptionalPackages": [
+        {
+          "base": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/dist/start/server/assets/commands-JEji8urA.js",
+          "name": "winston",
+          "code": "MODULE_NOT_FOUND"
+        },
+        {
+          "base": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/dist/start/server/assets/commands-JEji8urA.js",
+          "name": "winston-transport",
+          "code": "MODULE_NOT_FOUND"
+        },
+        {
+          "base": "/tmp/yuk1356-parent-emitted-proof/snapshot/dist/start/server/assets/commands-JEji8urA.js",
+          "name": "winston",
+          "code": "MODULE_NOT_FOUND"
+        },
+        {
+          "base": "/tmp/yuk1356-parent-emitted-proof/snapshot/dist/start/server/assets/commands-JEji8urA.js",
+          "name": "winston-transport",
+          "code": "MODULE_NOT_FOUND"
+        },
+        {
+          "base": "/tmp/yuk1356-parent-emitted-proof/parent-recheck/logger-closure.mjs",
+          "name": "winston",
+          "code": "MODULE_NOT_FOUND"
+        },
+        {
+          "base": "/tmp/yuk1356-parent-emitted-proof/parent-recheck/logger-closure.mjs",
+          "name": "winston-transport",
+          "code": "MODULE_NOT_FOUND"
+        }
+      ],
+      "defaultNativeLoads": [
+        {
+          "request": "node:fs",
+          "parent": "/private/tmp/yuk1356-parent-emitted-proof/snapshot/dist/start/server/assets/rolldown-runtime-BMI-E3GI.js"
+        },
+        {
+          "request": "node:path",
+          "parent": "/private/tmp/yuk1356-parent-emitted-proof/snapshot/dist/start/server/assets/rolldown-runtime-BMI-E3GI.js"
+        },
+        {
+          "request": "node:util",
+          "parent": "/private/tmp/yuk1356-parent-emitted-proof/snapshot/dist/start/server/assets/rolldown-runtime-BMI-E3GI.js"
+        }
+      ],
+      "negative": {
+        "status": "EXPECTED_NATIVE_MODULE_NOT_FOUND",
+        "code": "MODULE_NOT_FOUND",
+        "message": "Cannot find module 'winston-transport'\nRequire stack:\n- /private/tmp/yuk1356-parent-emitted-proof/snapshot/dist/start/server/assets/rolldown-runtime-BMI-E3GI.js",
+        "loads": [
+          {
+            "request": "winston-transport",
+            "parent": "/private/tmp/yuk1356-parent-emitted-proof/snapshot/dist/start/server/assets/rolldown-runtime-BMI-E3GI.js"
+          }
+        ]
+      },
+      "serializerRoundTrip": true,
+      "defaultLoggerClass": "DBOSConsoleLogger",
+      "beforeResources": [],
+      "afterResources": [],
+      "stdoutUnchanged": true,
+      "stderrUnchanged": true,
+      "fullEntrypoint": "NOT_EXECUTED_NOT_ACCEPTED",
+      "dbosVersion": "unknown",
+      "excludedOptionalOnlyBindings": ["esm_exports$1", "init_esm$1"]
+    },
+    {
+      "kind": "cjs",
+      "status": "PASS_BOUNDED_EMITTED_LOGGER_CLOSURE",
+      "node": "v24.19.0",
+      "source": {
+        "path": "/tmp/yuk1356-parent-emitted-proof/snapshot/dist/migrate.cjs",
+        "original": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/dist/migrate.cjs",
+        "sha256": "39d1df5f264e65a16718b523f16176db57b83523550265021e3f68b94c674c3f"
+      },
+      "outputSha256": "4cf0fe8f3f21bc74a9c96faa5bc5f5440c11ed0d7c01acead2d3aeb5b2655b14",
+      "missingOptionalPackages": [
+        {
+          "base": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/dist/migrate.cjs",
+          "name": "winston",
+          "code": "MODULE_NOT_FOUND"
+        },
+        {
+          "base": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/dist/migrate.cjs",
+          "name": "winston-transport",
+          "code": "MODULE_NOT_FOUND"
+        },
+        {
+          "base": "/tmp/yuk1356-parent-emitted-proof/snapshot/dist/migrate.cjs",
+          "name": "winston",
+          "code": "MODULE_NOT_FOUND"
+        },
+        {
+          "base": "/tmp/yuk1356-parent-emitted-proof/snapshot/dist/migrate.cjs",
+          "name": "winston-transport",
+          "code": "MODULE_NOT_FOUND"
+        },
+        {
+          "base": "/tmp/yuk1356-parent-emitted-proof/parent-recheck/logger-closure.cjs",
+          "name": "winston",
+          "code": "MODULE_NOT_FOUND"
+        },
+        {
+          "base": "/tmp/yuk1356-parent-emitted-proof/parent-recheck/logger-closure.cjs",
+          "name": "winston-transport",
+          "code": "MODULE_NOT_FOUND"
+        }
+      ],
+      "defaultNativeLoads": [
+        {
+          "request": "/tmp/yuk1356-parent-emitted-proof/parent-recheck/logger-closure.cjs",
+          "parent": "/private/tmp/yuk1356-parent-emitted-proof/probe.mjs"
+        },
+        {
+          "request": "node:fs",
+          "parent": "/private/tmp/yuk1356-parent-emitted-proof/parent-recheck/logger-closure.cjs"
+        },
+        {
+          "request": "node:path",
+          "parent": "/private/tmp/yuk1356-parent-emitted-proof/parent-recheck/logger-closure.cjs"
+        },
+        {
+          "request": "package.json",
+          "parent": "/private/tmp/yuk1356-parent-emitted-proof/parent-recheck/logger-closure.cjs"
+        },
+        {
+          "request": "node:util",
+          "parent": "/private/tmp/yuk1356-parent-emitted-proof/parent-recheck/logger-closure.cjs"
+        }
+      ],
+      "negative": {
+        "status": "EXPECTED_NATIVE_MODULE_NOT_FOUND",
+        "code": "MODULE_NOT_FOUND",
+        "message": "Cannot find module 'winston-transport'\nRequire stack:\n- /private/tmp/yuk1356-parent-emitted-proof/parent-recheck/logger-closure.cjs\n- /private/tmp/yuk1356-parent-emitted-proof/probe.mjs",
+        "loads": [
+          {
+            "request": "winston-transport",
+            "parent": "/private/tmp/yuk1356-parent-emitted-proof/parent-recheck/logger-closure.cjs"
+          }
+        ]
+      },
+      "serializerRoundTrip": true,
+      "defaultLoggerClass": "DBOSConsoleLogger",
+      "beforeResources": [],
+      "afterResources": [],
+      "stdoutUnchanged": true,
+      "stderrUnchanged": true,
+      "fullEntrypoint": "NOT_EXECUTED_NOT_ACCEPTED",
+      "dbosVersion": "unknown",
+      "excludedOptionalOnlyBindings": ["require_src6"]
+    }
+  ],
+  "proofFiles": [
+    {
+      "path": "/tmp/yuk1356-parent-emitted-proof/SHA256SUMS",
+      "sha256": "0482df808830efe29b5d0cbd084fe45806689979c66330b9d0f5532e441716ea"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-emitted-proof/extract.cjs",
+      "sha256": "98bf117fba15725352baa444bf55ed070ef5ac33d4df1728d757d28a1b1131c0"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-emitted-proof/probe.mjs",
+      "sha256": "53406c463fe1059b3c1d438a8effa5b8702e0651985f5a92f49cbff95a3c9bb1"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-emitted-proof/run.sh",
+      "sha256": "592ee7ccff70b8fa3be9b36138813604adbedc5e73f3de88c2de4b803a710edb"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-emitted-proof/report.md",
+      "sha256": "e2d3cb14260de90d22f48f07f4411dfe4d7347d6102dcf3abbcd98bb53509630"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-emitted-proof/snapshot.json",
+      "sha256": "0b5369ebc7102149e541330306de8bebe0e12168ab9bff9f433aad11ec2b5c05"
+    }
+  ],
+  "parentCommandExits": {
+    "extract": 0,
+    "esm": 0,
+    "cjs": 0
+  }
+}
