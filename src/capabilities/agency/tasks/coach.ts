@@ -2,8 +2,7 @@
 // lineage). The TodayPlan schema lives in core/schema/coach; the coach_daily /
 // coach_weekly handlers keep their best-effort parseCoachOutputSafely
 // degradation path for live-model prose wrapping — this strict parseText is the
-// owned contract, not the handler's runtime seam. Prompt text is byte-identical
-// to the former central quarry entry (prompt-hash oracle pins it).
+// owned contract, not the handler's runtime seam.
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 
 // Legacy quarry alias preserved verbatim inside the moved definitions.

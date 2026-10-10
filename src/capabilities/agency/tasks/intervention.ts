@@ -2,9 +2,7 @@
 // agency capability (YUK-791 / YUK-829 lineage). structuredOutputSchema stays on
 // the definitions (same core/schema/intervention objects the central quarry
 // referenced); ../server/intervention/recommend and the practice-side shared
-// validator keep consuming them through the catalog projection. Prompt text is
-// byte-identical to the former central quarry entries (prompt-hash oracle pins
-// them).
+// validator keep consuming them through the catalog projection.
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 
 // Legacy quarry alias preserved verbatim inside the moved definitions.

@@ -1292,7 +1292,6 @@ export function collectDrizzleWrites(source: string, file: string): DrizzleAudit
       }
       if (target.type === 'MemberExpression') {
         invalidateCallable(target, ctx.scope);
-        const objectName = identifierName(target.object);
         const propertyName = target.computed
           ? staticComputedPropertyName(target.property)
           : identifierName(target.property);

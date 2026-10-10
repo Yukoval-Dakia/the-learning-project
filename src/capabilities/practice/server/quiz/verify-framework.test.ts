@@ -5,45 +5,11 @@ import interventionRegressionFixture from '@/server/grounding-gate/fixtures/inte
   type: 'json',
 };
 import { resolveSubjectProfile } from '@/subjects/profile';
-import {
-  type SolveCheckQuestion,
-  type TeachingQualityQuestion,
-  runIndependentSolution,
-} from './verify-framework';
+import { runIndependentSolution } from './verify-framework';
 
 // ---------- solve-check helpers ----------
 // solverOutput / semanticOutput now come from tests/helpers/solve-check-fixtures (YUK-554
 // review R1/R2 — shared with quiz_verify.test.ts).
-
-const fakeProfile = {
-  id: 'yuwen',
-  // runSemanticJudge's builder reads displayName / languageStyle off subjectProfile.
-  full: { ...resolveSubjectProfile('yuwen'), languageStyle: 'classical' },
-};
-
-const exactQuestion: SolveCheckQuestion = {
-  id: 'q1',
-  kind: 'choice',
-  prompt_md: '汉朝建立于哪一年？',
-  reference_md: '公元前 202 年',
-  choices_md: ['公元前 202 年', '公元前 221 年'],
-  judge_kind_override: 'exact',
-  rubric_json: null,
-  knowledge_ids: ['k_han'],
-  metadata: null,
-};
-
-const openQuestion: SolveCheckQuestion = {
-  id: 'q2',
-  kind: 'translation',
-  prompt_md: '翻译：学而时习之',
-  reference_md: '学习并按时温习它',
-  choices_md: null,
-  judge_kind_override: 'semantic',
-  rubric_json: null,
-  knowledge_ids: ['k_lunyu'],
-  metadata: null,
-};
 
 describe('runIndependentSolution — reusable blind validator seam', () => {
   it('solves every production-shaped intervention diagnostic without leaking its package answer or frozen claim', async () => {
@@ -153,21 +119,3 @@ describe('runIndependentSolution — reusable blind validator seam', () => {
 // this output contract (tests/helpers/teaching-quality-fixtures.ts) MUST be re-validated
 // against this set before shipping. mocked-LLM output drives parser + verdict + veto.
 // ─────────────────────────────────────────────────────────────────────────────
-
-const choiceQuestionTQ: TeachingQualityQuestion = {
-  id: 'tq_choice',
-  kind: 'choice',
-  prompt_md: '「学而时习之」中「之」的词性是？',
-  reference_md: '代词',
-  choices_md: ['代词', '助词', '动词', '连词'],
-  rubric_json: null,
-};
-
-const openQuestionTQ: TeachingQualityQuestion = {
-  id: 'tq_open',
-  kind: 'short_answer',
-  prompt_md: '用你自己的话解释「之」作主谓间助词的作用。',
-  reference_md: '「之」用在主谓之间，取消句子独立性。',
-  choices_md: null,
-  rubric_json: { required_points: ['取消句子独立性'] },
-};

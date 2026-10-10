@@ -521,10 +521,6 @@ describe('YUK-781 A — boot catch-up for a missed anchor', () => {
   // 全部以真实 Asia/Shanghai 时区算 —— 窗口判据用的就是这套 Intl 换算，不另设 DI seam。
   const AT_ANCHOR = new Date('2026-07-25T02:30:00+08:00'); // 距锚点 0min
   const HALF_HOUR_PAST = new Date('2026-07-25T03:00:00+08:00'); // 30min
-  const LAST_MINUTE_IN = new Date('2026-07-25T07:29:00+08:00'); // 299min（窗内最后一分钟）
-  const FIRST_MINUTE_OUT = new Date('2026-07-25T07:30:00+08:00'); // 300min（窗外第一分钟）
-  const NOON = new Date('2026-07-25T12:00:00+08:00'); // 570min —— 中午重启
-  const BEFORE_ANCHOR = new Date('2026-07-25T02:00:00+08:00'); // −30min
 
   const catchUp = (boss: FakeBoss, dag: ReturnType<typeof dagOf>, now: Date) =>
     runOrchestratorCatchUp({ db, boss, dag, now, localDate: () => RUN_DATE });

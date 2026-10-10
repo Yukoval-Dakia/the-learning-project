@@ -91,7 +91,6 @@ The complete mechanics and allowlist formats live in the `audits-reference`
 skill. Common entry points:
 
 ```bash
-pnpm audit:agent-control-plane
 pnpm audit:schema
 pnpm audit:dependencies
 pnpm audit:api-contracts
@@ -153,17 +152,23 @@ pnpm build
 ```
 
 After push, the exact-head GitHub `CI Gate` runs separate static, audit, unit, DB,
-migration and build lanes. Every code change runs all retained invariant files;
-only docs-only changes skip those lanes. The exact include lists live in
+migration, build and parity lanes. Every code change runs all retained invariant files in
+the unit/DB lanes; only docs-only changes skip them. The parity lane is path-selected (below). The exact include lists live in
 `vitest.shared.ts`, and `audit:partition` rejects missing, duplicate or unassigned
-files and direct unmocked DB imports in unit files. The audit lanes include the
-agent-control-plane, API-contract, API-client, API-client-usage,
-capability-boundary, provider-lane, profile, learner-copy, no-learning-styles,
-structured-judge, task-census, draft-status, strict draft-status-read, and hub-sync-writer
-audits. The build lane injects secret canaries into the build environment, scans
+files and direct unmocked DB imports in unit files. The audit lanes run exactly the
+commands listed in `.github/workflows/ci-gate.yml`: schema, dependencies, partition,
+question-writers, API-contract, API-client, API-client-usage, capability-boundary,
+architecture-deepening, profile, learner-copy, no-learning-styles, structured-judge,
+task-census, draft-status, strict draft-status-read, strict flags, hub-sync-writer and
+provider-attempt-truth. `audit:provider-lanes` is a local-only census and is not in CI.
+The build lane injects secret canaries into the build environment, scans
 both SPA and Start browser artifacts, and verifies frontdoor token/exemptions via
-an isolated listener. Rust numeric and native/WASM parity run separately in
-`rust-parity.yml`. The explicit local audit commands
+an isolated listener. The parity lane runs `cargo test` plus the native/WASM/JS
+parity suites with `REQUIRE_RUST_PARITY=1` whenever the crate, its TS twins
+(`src/core/poly-exp*`, `coldstart-solver*`, `theta-grid*`, `src/server/calibration/`),
+dependencies, `.node-version`, vitest config or the gate itself change, and on every main
+push or unknown/invalid base; the
+plan lives in `scripts/ci/gate-plan.mjs`. The explicit local audit commands
 remain useful for clear attribution, but they do not replace the GitHub gate.
 
 ## Postman

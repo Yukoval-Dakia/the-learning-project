@@ -10,8 +10,6 @@ import { acceptAiProposal } from '@/server/proposals/actions';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { getCauseCategoryOverlaysByIds } from './cause-overlay';
 
-const NOW = new Date('2026-09-18T00:00:00Z');
-
 async function writeCauseCategoryProposal(opts: {
   categoryId: string;
   label?: string;

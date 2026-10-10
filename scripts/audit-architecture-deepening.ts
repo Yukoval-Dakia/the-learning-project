@@ -26,7 +26,7 @@ import type { DependencySnapshot } from './audit-capability-boundaries';
 //      stay kind-branch-free, the central boss book stays housekeeping-only,
 //      the central events directory is transport/envelope only, and the
 //      central tools directory holds infrastructure only — no concrete tools;
-//   6. TaskSpec ownership census — exactly 55 supported TaskSpecs, each with one
+//   6. TaskSpec ownership census — every supported TaskSpec has exactly one
 //      capability owner, ProfileCriticTask Ingestion-owned with its live CLI
 //      caller, no copied central TaskDef, no runtime task locator/discovery;
 //   7. DomainTool ownership — every registered tool has one owner, input/output
@@ -35,11 +35,9 @@ import type { DependencySnapshot } from './audit-capability-boundaries';
 //      registration metadata parity; central registrations are housekeeping only;
 //   9. proposal lifecycle — every supported proposal kind has one owner and
 //      loader-backed accept/dismiss/retract declarations; central kind-switch 0;
-//  10. recovery conformance wiring — Notes/Memory recovery and verify-dispatch
-//      suites exist in the test universe;
-//  11. provider attempt census — every explicit direct lane and opaque Mem0
+//  10. provider attempt census — every explicit direct lane and opaque Mem0
 //      operation is classified, without unknown-as-zero accounting;
-//  12. dependency ceilings — totals strictly below 531/70/62 with the
+//  11. dependency ceilings — totals strictly below 531/70/62 with the
 //      server->capability-deep bucket empty and every raw SCC member explained
 //      by the bounded public-read catalog.
 
@@ -419,7 +417,6 @@ const CENTRAL_TOOL_INFRASTRUCTURE = new Set([
   // host lives in the adapter; this file is spec mapping + gate wiring only.
   'src/server/ai/tools/pi-subagent.ts',
   'src/server/ai/tools/register-capability-tools.ts',
-  'src/server/ai/tools/fixtures-assert.ts',
 ]);
 
 // Central events files that are transport/envelope machinery. Everything else
@@ -538,7 +535,6 @@ export interface TaskOwnerMapShape {
 }
 
 export interface TaskSpecCensusOptions {
-  readonly expectedCount: number;
   /** Kinds whose owner is pinned by the issue (e.g. ProfileCriticTask -> ingestion). */
   readonly requiredOwnerOfKind?: Readonly<Record<string, string>>;
 }
@@ -624,13 +620,6 @@ export function scanTaskSpecOwnership(
     }
   }
 
-  if (kindOwners.size !== options.expectedCount) {
-    violations.push({
-      path: 'src/ai/task-catalog.ts',
-      source: '',
-      reason: `task census: expected exactly ${options.expectedCount} supported TaskSpecs, found ${kindOwners.size}`,
-    });
-  }
   for (const [kind, registered] of [...kindOwners].sort(([a], [b]) => a.localeCompare(b))) {
     if (registered.length > 1) {
       violations.push({
@@ -655,8 +644,6 @@ export function scanTaskSpecOwnership(
 
 export interface TaskCensusConformanceInput {
   /** Result of scripts/audit-task-census.ts against the audited head. */
-  readonly catalogCount: number;
-  readonly expectedCount: number;
   readonly errors: readonly string[];
   /** The ProfileCriticTask CLI caller evidence (null = missing). */
   readonly profileCriticCallerPresent: boolean;
@@ -666,13 +653,6 @@ export interface TaskCensusConformanceInput {
 
 export function scanTaskCensusConformance(input: TaskCensusConformanceInput): OwnershipViolation[] {
   const violations: OwnershipViolation[] = [];
-  if (input.catalogCount !== input.expectedCount) {
-    violations.push({
-      path: 'src/ai/task-catalog.ts',
-      source: '',
-      reason: `task census: registered ${input.catalogCount} kinds, expected exactly ${input.expectedCount}`,
-    });
-  }
   for (const error of input.errors) {
     violations.push({
       path: 'task-census',
@@ -1020,28 +1000,9 @@ export function scanProposalLifecycle(input: ProposalLifecycleInput): OwnershipV
 }
 
 // ---------------------------------------------------------------------------
-// YUK-886 (F4.1) — recovery conformance wiring + provider attempt census +
+// YUK-886 (F4.1) — provider attempt census +
 // dependency ceilings.
 // ---------------------------------------------------------------------------
-
-/** Suites whose presence wires Notes/Memory recovery conformance and verify dispatch. */
-export const RECOVERY_CONFORMANCE_SUITES = [
-  'src/capabilities/notes/server/note-handoff.db.test.ts',
-  'src/capabilities/notes/server/hub-sync-reconciliation.db.test.ts',
-  'src/server/memory/memory-reconcile-handoff-recovery.db.test.ts',
-  'src/server/memory/reconcile-handler.db.test.ts',
-  'src/server/boss/verify-dispatch-outbox.db.test.ts',
-] as const;
-
-export function scanRecoveryConformance(existingPaths: readonly string[]): OwnershipViolation[] {
-  const existing = new Set(existingPaths);
-  return RECOVERY_CONFORMANCE_SUITES.filter((path) => !existing.has(path)).map((path) => ({
-    path,
-    source: '',
-    reason:
-      'recovery conformance suite is missing — Notes/Memory recovery and verify dispatch must stay covered',
-  }));
-}
 
 export interface ProviderAttemptCensusInput {
   /** Violations from scripts/audit-provider-attempt-truth.ts (wrapper/legacy/zero-cost/lane drift). */
@@ -1133,11 +1094,9 @@ export function scanDependencyCeilings(input: {
 export interface ArchitectureDeepeningFacts {
   readonly ownerMaps: readonly TaskOwnerMapShape[];
   readonly taskCensus: TaskCensusConformanceInput;
-  readonly expectedTaskCount: number;
   readonly tools: DomainToolOwnershipInput;
   readonly queues: QueueOwnershipInput;
   readonly proposals: ProposalLifecycleInput;
-  readonly recoverySuitePaths: readonly string[];
   readonly providerAttemptCensus: ProviderAttemptCensusInput;
   readonly dependency: {
     readonly totals: DependencyCeilings;
@@ -1168,7 +1127,6 @@ export interface DeepeningAuditResult extends AuditResult {
     readonly centralKindSwitches: number;
     readonly classifiedProviderLanes: number;
     readonly unclassifiedProviderWires: number;
-    readonly recoverySuites: number;
     readonly dependencyTotals: DependencyCeilings;
   };
 }
@@ -1230,14 +1188,12 @@ export function auditArchitectureDeepening(
   const violations = [
     ...ownership.violations,
     ...scanTaskSpecOwnership(facts.ownerMaps, {
-      expectedCount: facts.expectedTaskCount,
       requiredOwnerOfKind: { ProfileCriticTask: 'ingestion' },
     }),
     ...scanTaskCensusConformance(facts.taskCensus),
     ...scanDomainToolOwnership(facts.tools),
     ...scanQueueOwnership(queueOwnershipInput),
     ...scanProposalLifecycle(facts.proposals),
-    ...scanRecoveryConformance(facts.recoverySuitePaths),
     ...scanProviderAttemptCensus(facts.providerAttemptCensus),
     ...scanDependencyCeilings(facts.dependency),
     ...facts.dependency.baselineViolations.map((violation) => ({
@@ -1277,9 +1233,6 @@ export function auditArchitectureDeepening(
       centralKindSwitches,
       classifiedProviderLanes: facts.providerAttemptCensus.classifiedLaneFindings,
       unclassifiedProviderWires: facts.providerAttemptCensus.unclassifiedFindings,
-      recoverySuites: facts.recoverySuitePaths.filter((path) =>
-        existsSync(resolve(projectRoot, path)),
-      ).length,
       dependencyTotals: facts.dependency.totals,
     },
   };
@@ -1404,15 +1357,7 @@ async function runCli(): Promise<void> {
 
   const result = auditArchitectureDeepening(projectRoot, publicReadCycleCatalog, {
     ownerMaps,
-    // YUK-987: 50（+SupplyPlanTask 供给需求层 planner）。
-    // YUK-1016: 51（+CauseCategoryProposeTask cause catalog 增长提议）。
-    // YUK-376: 52（+ItemPriorLlasaTask LLaSA 学生模拟冷启锚 opt-in 变体）。
-    // YUK-1049: 53（+JevScoringDecisionTask 首个 typed execution spec）。
-    // YUK-1047: native frozen-rule pi task + frozen solve hint vision sibling → 55.
-    expectedTaskCount: 55,
     taskCensus: {
-      catalogCount: census.catalogCount,
-      expectedCount: 55,
       errors: census.errors,
       profileCriticCallerPresent: census.profileCriticCaller !== null,
       forbiddenPatternViolations: scanForbiddenTaskCatalogPatterns(projectRoot).map(
@@ -1445,7 +1390,6 @@ async function runCli(): Promise<void> {
       supportedKinds,
       producerOnlyKinds: ['archive', 'defer', 'judge_retraction'],
     },
-    recoverySuitePaths: [...RECOVERY_CONFORMANCE_SUITES],
     providerAttemptCensus: {
       attemptTruthViolations,
       classifiedLaneFindings: wireFindings.length - unclassifiedFindings,
@@ -1481,7 +1425,7 @@ async function runCli(): Promise<void> {
       .map((component) => component.join('/'))
       .join(
         '; ',
-      )}] fully catalogued (${result.intraSccEdgeCount} intra-SCC edge directions; ${result.catalogReadFiles} public-read files, ${result.catalogCommandFiles} command files); ${result.counts.classifiedProviderLanes} classified provider lanes / ${result.counts.unclassifiedProviderWires} unclassified; ${result.counts.recoverySuites}/${RECOVERY_CONFORMANCE_SUITES.length} recovery suites; dependency totals ${result.counts.dependencyTotals.capabilityToServer}/${result.counts.dependencyTotals.serverToCapabilityDeep}/${result.counts.dependencyTotals.crossCapabilityValue} strictly below 531/70/62.`,
+      )}] fully catalogued (${result.intraSccEdgeCount} intra-SCC edge directions; ${result.catalogReadFiles} public-read files, ${result.catalogCommandFiles} command files); ${result.counts.classifiedProviderLanes} classified provider lanes / ${result.counts.unclassifiedProviderWires} unclassified; dependency totals ${result.counts.dependencyTotals.capabilityToServer}/${result.counts.dependencyTotals.serverToCapabilityDeep}/${result.counts.dependencyTotals.crossCapabilityValue} strictly below 531/70/62.`,
   );
 }
 

@@ -18,7 +18,6 @@ const db = testDb();
 
 const NOW = new Date('2026-07-07T12:00:00Z');
 const STUCK_STARTED_AT = new Date(NOW.getTime() - STUCK_RUN_THRESHOLD_MS - 60_000); // 1h+1min ago
-const FRESH_STARTED_AT = new Date(NOW.getTime() - 5 * 60_000); // 5min ago (< threshold)
 
 let seq = 0;
 
