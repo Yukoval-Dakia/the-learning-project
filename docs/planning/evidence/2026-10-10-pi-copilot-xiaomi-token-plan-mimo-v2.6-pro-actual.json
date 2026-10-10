@@ -1,0 +1,283 @@
+{
+  "task_run_id": "copilot_run_tool_run_p3_t1_gzijdtufv9eswaqrx47rt2gw",
+  "status": "success",
+  "finish_reason": "end_turn",
+  "usage": {
+    "inputTokens": 57170,
+    "outputTokens": 501
+  },
+  "cost": {
+    "basis": "estimated",
+    "amount_usd": 0.009236033,
+    "ref": "pi-catalog:xiaomi-token-plan/mimo-v2.6-pro",
+    "label": "pi-catalog estimate, not Token Plan billing"
+  },
+  "input_digest": "sha256:b1743085fa50597a78a03523a8379fcd4a0e52b721d7413ef2c4c3bad1c45da7",
+  "output_digest": "sha256:a520277aa63c1c22b3944cf25e4bb6573105aeb8ca9d4cd5746dff3658333b0c",
+  "output_excerpt": "已查询数学知识图谱并整理出当前节点结构。\n\n## 数学知识图谱现状\n\n图谱当前有 1 个根节点、2 个知识节点，层级结构如下：\n\n```\n一元二次方程  (k_1402_root，根节点)\n└── 因式分解法  (k_1402_child，子节点)\n```\n\n具体关系：\n\n| 节点 | ID | 上级 | 下级 |\n|---|---|---|---|\n| 一元二次方程 | k_1402_root | 无（根） | 因式分解法 |\n| 因式分解法 | k_1402_child | 一元二次方程 | 无 |\n\n补充说明两点：\n\n- **树状层级**：以上下级关系（parent_id）为骨架，「因式分解法」是「一元二次方程」下唯一的子节点。\n- **网格关系边**：两个节点之间的边数为 0，即目前没有登记「前置 / 相关 / 对比 / 应用 / 推导」这类横向关系边。\n\n边界说明：以上为本次实际查询返回的活跃节点，不排除存在未被本次查询覆盖的其它节点。\n\n要不要我为这两个节点补充一条关系边（例如 prerequisite 或 related_to），或者新增下一层的知识点？",
+  "provider_requests": [
+    {
+      "ordinal": 12,
+      "model": "mimo-v2.6-pro",
+      "prior_tool_calls": [],
+      "prior_tool_results": []
+    },
+    {
+      "ordinal": 13,
+      "model": "mimo-v2.6-pro",
+      "prior_tool_calls": [
+        {
+          "id": "call_ece92ac37d7a46e397d08a25",
+          "name": "mcp__loom__query_knowledge",
+          "arguments_digest": "sha256:8b440a350407dac7679271eff8154cce1e16e313e490b325d6b236802ddf0697"
+        },
+        {
+          "id": "call_144c270477b54ee0aee6c20c",
+          "name": "mcp__loom__get_subject_graph_overview",
+          "arguments_digest": "sha256:ab437be299e6b5f463ef020b00729acb1d0b9030328fdebbe64b536cfe97ff53"
+        }
+      ],
+      "prior_tool_results": [
+        {
+          "id": "call_ece92ac37d7a46e397d08a25",
+          "output_digest": "sha256:bbc82aed4a947132ec41c6bba27b3fd6d115bbff9401311f908429431ed45012"
+        },
+        {
+          "id": "call_144c270477b54ee0aee6c20c",
+          "output_digest": "sha256:ed2a0d0675a84437bb9d9d45085a636fb60a929c36f4d0d6b551670acda648dc"
+        }
+      ]
+    },
+    {
+      "ordinal": 14,
+      "model": "mimo-v2.6-pro",
+      "prior_tool_calls": [
+        {
+          "id": "call_ece92ac37d7a46e397d08a25",
+          "name": "mcp__loom__query_knowledge",
+          "arguments_digest": "sha256:8b440a350407dac7679271eff8154cce1e16e313e490b325d6b236802ddf0697"
+        },
+        {
+          "id": "call_144c270477b54ee0aee6c20c",
+          "name": "mcp__loom__get_subject_graph_overview",
+          "arguments_digest": "sha256:ab437be299e6b5f463ef020b00729acb1d0b9030328fdebbe64b536cfe97ff53"
+        },
+        {
+          "id": "call_b957e720e6254d6e858df6f2",
+          "name": "mcp__loom__expand_knowledge_subgraph",
+          "arguments_digest": "sha256:a8bca4629de903e508f4a4457946c449bceb4e0873f8577f8dd59998d29afa75"
+        },
+        {
+          "id": "call_87665438d22a484c9655c100",
+          "name": "mcp__loom__query_knowledge",
+          "arguments_digest": "sha256:337193c493f413b6d8b1b4eaf70a8c0c00ee091eae62e6a11010019e4dad7824"
+        }
+      ],
+      "prior_tool_results": [
+        {
+          "id": "call_ece92ac37d7a46e397d08a25",
+          "output_digest": "sha256:bbc82aed4a947132ec41c6bba27b3fd6d115bbff9401311f908429431ed45012"
+        },
+        {
+          "id": "call_144c270477b54ee0aee6c20c",
+          "output_digest": "sha256:ed2a0d0675a84437bb9d9d45085a636fb60a929c36f4d0d6b551670acda648dc"
+        },
+        {
+          "id": "call_b957e720e6254d6e858df6f2",
+          "output_digest": "sha256:5c9379292c77366ae30d6f533b850633f2c0ee5df551a6a490a2dd6fd40683ec"
+        },
+        {
+          "id": "call_87665438d22a484c9655c100",
+          "output_digest": "sha256:ef5ee77611ee461f317818a057c438e6ffd0f42a797194b42c11da18122905da"
+        }
+      ]
+    }
+  ],
+  "tool_call_log": [
+    {
+      "tool_name": "mcp__loom__query_knowledge",
+      "task_kind": "CopilotTask",
+      "effect": null,
+      "latency_ms": 4876,
+      "error_reason": null,
+      "input_digest": "sha256:8a5a08668041699560be3464ee51b0c0146a172464582e1e7cccbfad81e5fb89",
+      "output_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "mirrored_event_id": null
+    },
+    {
+      "tool_name": "mcp__loom__get_subject_graph_overview",
+      "task_kind": "CopilotTask",
+      "effect": null,
+      "latency_ms": 4876,
+      "error_reason": null,
+      "input_digest": "sha256:96d678c5a09d092de8361b3383376575666122f6dde9a0e90a15825417a987d4",
+      "output_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "mirrored_event_id": null
+    },
+    {
+      "tool_name": "query_knowledge",
+      "task_kind": "CopilotTask",
+      "effect": "read",
+      "latency_ms": 12,
+      "error_reason": null,
+      "input_digest": "sha256:8a5a08668041699560be3464ee51b0c0146a172464582e1e7cccbfad81e5fb89",
+      "output_digest": "sha256:2476f45639bc422800c5f69ae4d9f2b078ae305c8b330005f43cffe313100dc9",
+      "mirrored_event_id": "tool_use_px215ru633wop2vmn3u748sy"
+    },
+    {
+      "tool_name": "get_subject_graph_overview",
+      "task_kind": "CopilotTask",
+      "effect": "read",
+      "latency_ms": 6,
+      "error_reason": null,
+      "input_digest": "sha256:96d678c5a09d092de8361b3383376575666122f6dde9a0e90a15825417a987d4",
+      "output_digest": "sha256:73daae014253e81492765db56f6f869a0d58280103e7650573e583c504f33e9c",
+      "mirrored_event_id": "tool_use_h8du7k8g3tgc1vfaagmmt2v2"
+    },
+    {
+      "tool_name": "mcp__loom__expand_knowledge_subgraph",
+      "task_kind": "CopilotTask",
+      "effect": null,
+      "latency_ms": 6521,
+      "error_reason": null,
+      "input_digest": "sha256:482af3959bc835ff7d7007191cba4dcce1a2eb7d94aee14b92801d79ed6d4003",
+      "output_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "mirrored_event_id": null
+    },
+    {
+      "tool_name": "mcp__loom__query_knowledge",
+      "task_kind": "CopilotTask",
+      "effect": null,
+      "latency_ms": 6521,
+      "error_reason": null,
+      "input_digest": "sha256:9e9fd9cdec37170631d07b4cc443d0f1fa5877afc5fba85c6d81f79033e45157",
+      "output_digest": "sha256:44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
+      "mirrored_event_id": null
+    },
+    {
+      "tool_name": "expand_knowledge_subgraph",
+      "task_kind": "CopilotTask",
+      "effect": "read",
+      "latency_ms": 9,
+      "error_reason": null,
+      "input_digest": "sha256:482af3959bc835ff7d7007191cba4dcce1a2eb7d94aee14b92801d79ed6d4003",
+      "output_digest": "sha256:2ec7f455ed6b62bbd25853c6dda4754e348dc2fe2e13d5a14a33125f251abad2",
+      "mirrored_event_id": "tool_use_fzdxtu2auto55f066uv8c1kv"
+    },
+    {
+      "tool_name": "query_knowledge",
+      "task_kind": "CopilotTask",
+      "effect": "read",
+      "latency_ms": 6,
+      "error_reason": null,
+      "input_digest": "sha256:9e9fd9cdec37170631d07b4cc443d0f1fa5877afc5fba85c6d81f79033e45157",
+      "output_digest": "sha256:7cb624f9d79081b2cda42dca5f8ca14abd73e022a5a1e1a8fc225de4ced8574d",
+      "mirrored_event_id": "tool_use_c27ckd8keanjv1nvp72thhf4"
+    }
+  ],
+  "mirrored_tool_use_events": [
+    {
+      "id": "tool_use_px215ru633wop2vmn3u748sy",
+      "action": "tool_use",
+      "subject_kind": "query",
+      "outcome": "success",
+      "task_run_id": "copilot_run_tool_run_p3_t1_gzijdtufv9eswaqrx47rt2gw"
+    },
+    {
+      "id": "tool_use_h8du7k8g3tgc1vfaagmmt2v2",
+      "action": "tool_use",
+      "subject_kind": "query",
+      "outcome": "success",
+      "task_run_id": "copilot_run_tool_run_p3_t1_gzijdtufv9eswaqrx47rt2gw"
+    },
+    {
+      "id": "tool_use_fzdxtu2auto55f066uv8c1kv",
+      "action": "tool_use",
+      "subject_kind": "query",
+      "outcome": "success",
+      "task_run_id": "copilot_run_tool_run_p3_t1_gzijdtufv9eswaqrx47rt2gw"
+    },
+    {
+      "id": "tool_use_c27ckd8keanjv1nvp72thhf4",
+      "action": "tool_use",
+      "subject_kind": "query",
+      "outcome": "success",
+      "task_run_id": "copilot_run_tool_run_p3_t1_gzijdtufv9eswaqrx47rt2gw"
+    }
+  ],
+  "captured_at": "2026-10-10T02:04:28.581Z",
+  "code_revision": "3c851c23b7351297bc6177c947b2333ee416e8e5",
+  "working_tree": "dirty",
+  "patch_digest": "sha256:442d4b65bf1d27f12570b58c7ea5272f17d9b2f1bce3dd79b2b14c510e3ac182",
+  "patch_paths": [
+    "docs/planning/evidence/2026-10-10-pi-tool-loop-xiaomi-token-plan-mimo-v2.6-pro-actual.json",
+    "src/capabilities/copilot/jobs/copilot-pi-actual.db.test.ts",
+    "src/server/ai/pi-tool-loop-actual.db.test.ts",
+    "src/server/ai/providers.ts"
+  ],
+  "ticket": "YUK-1402",
+  "lane": {
+    "adapter": "pi",
+    "provider": "xiaomi-token-plan",
+    "model": "mimo-v2.6-pro",
+    "task_kind": "CopilotTask",
+    "pin": "explicit modelBinding (post-P4: the env rollout pin is gone)",
+    "worker_path": "runCopilotRun → executeCopilotTurn (no seam mocks)"
+  },
+  "session": {
+    "session_id": "sess_p3_actual_tx40683ssuzbe1403hpyjw5s",
+    "cursor_after_turn1": "pi:ef5eafdc-e3f0-44ba-802e-14834637327e",
+    "cursor_replay_tested": false
+  },
+  "turns": [
+    {
+      "run_id": "run_p3_t1_gzijdtufv9eswaqrx47rt2gw",
+      "status": "done",
+      "conversation_history_turns": 1,
+      "input_digest": "sha256:b1743085fa50597a78a03523a8379fcd4a0e52b721d7413ef2c4c3bad1c45da7"
+    }
+  ],
+  "reply_digests": [
+    {
+      "event_id": "copilot_reply_nhpyqyjc4miq7q0f72it1x6d",
+      "task_run_id": "copilot_run_tool_run_p3_t1_gzijdtufv9eswaqrx47rt2gw",
+      "output_digest": "sha256:a520277aa63c1c22b3944cf25e4bb6573105aeb8ca9d4cd5746dff3658333b0c",
+      "output_excerpt": "已查询数学知识图谱并整理出当前节点结构。\n\n## 数学知识图谱现状\n\n图谱当前有 1 个根节点、2 个知识节点，层级结构如下：\n\n```\n一元二次方程  (k_1402_root，根节点)\n└── 因式分解法  (k_1402_child，子节点)\n```\n\n具体关系：\n\n| 节点 | ID | 上级 | 下级 |\n|---|---|---|---|\n| 一元二次方程 | k_1402_root | 无（根） | 因式分解法 |\n| 因式分解法 | k_1402_child | 一元二次方程 | 无 |\n\n补充说明两点：\n\n- **树状层级**：以上下级关系（parent_id）为骨架，「因式分解法」是「一元二次方程」下唯一的子节点。\n- **网格关系边**：两个节点之间的边数为 0，即目前没有登记「前置 / 相关 / 对比 / 应用 / 推导」这类横向关系边。\n\n边界说明：以上为本次实际"
+    }
+  ],
+  "ai_task_runs": [
+    {
+      "id": "copilot_run_tool_run_p3_t1_gzijdtufv9eswaqrx47rt2gw",
+      "provider": "xiaomi-token-plan",
+      "model": "mimo-v2.6-pro",
+      "status": "success",
+      "finish_reason": "end_turn",
+      "error_message": null,
+      "cost_basis": "estimated",
+      "cost_usd": 0.009236033,
+      "cost_ref": "pi-catalog:xiaomi-token-plan/mimo-v2.6-pro",
+      "usage_digest": "sha256:ae005a43c99f95a8e9d07061dce969cf342c8010c09de0f94a85e458ed235202"
+    }
+  ],
+  "probe_scope": "One durable Copilot read-tool turn. No replay or second-turn acceptance claimed.",
+  "provenance": "Production runCopilotRun -> executeCopilotTurn -> PiAgentAdapter with real registry DomainTools, committed input event and learning_session in migrated disposable Postgres. Four domain rows reconcile one-to-one with successful tool_use mirrors; four additional effect=null rows are runner observations. One durable reply and pi cursor were persisted; second-turn replay was not exercised.",
+  "admission": {
+    "verdict": "pass",
+    "scope": "one durable Copilot tool-loop turn",
+    "domain_executions": 4,
+    "successful_mirrors": 4,
+    "runner_observation_rows": 4,
+    "validation": "Offline reconciliation of sealed rows passed; original Vitest command exited 1 because blanket mirror assertion included runner observation rows (effect=null). No provider failure or model retry."
+  },
+  "model_call_count": 3,
+  "ignored_harness_material": {
+    "request-observer.ts": {
+      "path": ".cache/yuk1402-flip/request-observer.ts",
+      "digest": "sha256:768809cf02e2deb894e1d5c32065f3a11d7dff75dbde454d5dc9801252fb9946"
+    },
+    "launch.py": {
+      "path": ".cache/yuk1402-flip/launch.py",
+      "digest": "sha256:288e76f9d4775dbd6e1bbac9e71aa02ac5ef6aedca45c81e2f897393da011912"
+    }
+  }
+}
