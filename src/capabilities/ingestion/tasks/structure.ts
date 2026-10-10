@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
+import { QuestionKind } from '@/core/schema/business';
 import type { SubjectProfile } from '@/subjects/profile';
 import { parseTaskJsonObject } from './parse-json';
 
@@ -9,6 +10,7 @@ const QuestionOptionOut = z.object({
 });
 
 export type StructureNodeT = {
+  kind?: string | null;
   role: 'stem' | 'sub' | 'standalone';
   question_no?: string | null;
   prompt_text: string;
@@ -23,6 +25,7 @@ export type StructureNodeT = {
 
 const StructureNode: z.ZodType<StructureNodeT> = z.lazy(() =>
   z.object({
+    kind: QuestionKind.nullable().optional(),
     role: z.enum(['stem', 'sub', 'standalone']),
     question_no: z.string().nullable().optional(),
     prompt_text: z.string(),
@@ -80,9 +83,10 @@ function buildStructurePrompt(profile: SubjectProfile): string {
 {"layout_quality":"structured"|"partial"|"text_only","extraction_confidence":0.0-1.0,"warnings":["..."],"questions":[StructureNode, ...]}
 
 StructureNode（递归，**不要**输出 id，运行时会补）：
-{"role":"stem"|"sub"|"standalone","question_no":"1"|null,"prompt_text":"...","options":[{"label":"A","text":"..."}]|null,"answers":["..."]|null,"analysis":"..."|null,"page_index":0,"sub_questions":[StructureNode, ...]|null,"figure_ids":[0,1]|null,"student_answer_present":true|false|null}
+{"kind":"choice|true_false|fill_blank|short_answer|essay|computation|reading|translation|derivation 或原题题型","role":"stem"|"sub"|"standalone","question_no":"1"|null,"prompt_text":"...","options":[{"label":"A","text":"..."}]|null,"answers":["..."]|null,"analysis":"..."|null,"page_index":0,"sub_questions":[StructureNode, ...]|null,"figure_ids":[0,1]|null,"student_answer_present":true|false|null}
 
 约束：
+- kind 是原题的题型标签，依据题面填写；选择题的选项必须进入 options，不能只拼进 prompt_text。题型标签不是评分准入，不据此生成参考答案。
 - role 三选一：stem（容器，含 passage + sub_questions）/ sub（大题下的小问）/ standalone（独立单题）。只有 stem 能有 sub_questions；sub / standalone 的 sub_questions 必须为 null 或省略。
 - page_index 是 0-based 整数，指该节点主要出现在第几张图（跨页 stem 用它起始页）。
 - figure_ids 是裁剪图序号数组（0-based，与输入 figures[].index 对应）；无配图时给 null 或省略。**仅当输入含 figures 字段时才填写 figure_ids**，否则省略。
