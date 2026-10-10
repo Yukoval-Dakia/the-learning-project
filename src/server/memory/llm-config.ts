@@ -29,7 +29,7 @@ export function resolveMemoryLlmConfig(
     };
   }
   const credentialEnv = providerCredentialEnvName(pin.provider);
-  const native = pin.model ? nativePiModel(pin.provider, pin.model) : undefined;
+  const native = pin.model ? nativePiModel(pin.provider, pin.model, env) : undefined;
   if (isOauthProvider(pin.provider) || native?.api !== 'openai-completions' || !pin.model) {
     throw new Error(
       `Memory LLM requires a key-auth OpenAI completions model for the global pin (${pin.provider}/${pin.model ?? 'unset'}); no legacy LLM fallback`,

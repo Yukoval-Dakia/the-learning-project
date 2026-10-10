@@ -7,11 +7,11 @@
  *   pnpm preflight:vision -- mimo-v2.5-pro    # override model
  *
  * Env required:
- *   XIAOMI_API_KEY  (from .env)
+ *   XIAOMI_API_KEY, or XIAOMI_TOKEN_PLAN_API_KEY with the Token Plan process pin
  *
  * Optional overrides:
  *   MIMO_VISION_MODEL  (default: mimo-v2.5)
- *   MIMO_VISION_BASE_URL (default: https://api.xiaomimimo.com/anthropic)
+ *   MIMO_VISION_BASE_URL (default: selected Xiaomi lane /anthropic endpoint)
  *
  * Exit codes:
  *   0 — vision PASS; safe to proceed with M2 vision judge
@@ -25,6 +25,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { config } from 'dotenv';
+import { xiaomiTokenPlanVisionBaseUrl } from '../src/server/ai/xiaomi-token-plan';
 import { preflightVisionOneShot } from './preflight-vision-one-shot';
 
 config({ path: '.env' });
@@ -33,13 +34,22 @@ const OUT_DIR = resolve(process.cwd(), 'docs/preflight');
 const today = new Date().toISOString().slice(0, 10);
 const OUT_FILE = resolve(OUT_DIR, `${today}-vision-preflight.json`);
 
-const apiKey = process.env.XIAOMI_API_KEY;
-const baseURL = process.env.MIMO_VISION_BASE_URL ?? 'https://api.xiaomimimo.com/anthropic';
+const tokenPlan = process.env.AI_PROVIDER_OVERRIDE === 'xiaomi-token-plan';
+const credentialEnv = tokenPlan ? 'XIAOMI_TOKEN_PLAN_API_KEY' : 'XIAOMI_API_KEY';
+const apiKey = process.env[credentialEnv];
+const baseURL = tokenPlan
+  ? xiaomiTokenPlanVisionBaseUrl()
+  : (process.env.MIMO_VISION_BASE_URL ?? 'https://api.xiaomimimo.com/anthropic');
 const cliArgModel = process.argv[2];
-const model = cliArgModel ?? process.env.MIMO_VISION_MODEL ?? 'mimo-v2.5';
+const model = tokenPlan
+  ? cliArgModel ||
+    process.env.MIMO_VISION_MODEL?.trim() ||
+    process.env.AI_PROVIDER_MODEL?.trim() ||
+    'mimo-v2.6-pro'
+  : (cliArgModel ?? process.env.MIMO_VISION_MODEL ?? 'mimo-v2.5');
 
 if (!apiKey || apiKey.trim().length === 0) {
-  console.error('FAIL: XIAOMI_API_KEY not set in environment');
+  console.error(`FAIL: ${credentialEnv} not set in environment`);
   console.error('Hint: check .env file');
   process.exit(2);
 }

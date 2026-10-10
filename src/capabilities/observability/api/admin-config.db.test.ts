@@ -77,6 +77,7 @@ describe('GET /api/admin/config — injected runtime facts over HTTP (real build
 
   it('serves providers[] with presence booleans only (no credential values) and reserved lanes marked unimplemented', async () => {
     vi.stubEnv('XIAOMI_API_KEY', 'sk-http-facts-canary-xiaomi-9f1a');
+    vi.stubEnv('XIAOMI_TOKEN_PLAN_API_KEY', 'tp-http-facts-canary-token-plan-7c2e');
     const body = AdminConfigResponseSchema.parse(await (await get()).json());
     expect(body.facts_injected).toBe(true);
     expect(body.tasks.find((task) => task.kind === 'QuizGenTask')?.effective_binding).toEqual({
@@ -85,11 +86,17 @@ describe('GET /api/admin/config — injected runtime facts over HTTP (real build
       error: null,
     });
 
-    expect(body.providers.length).toBe(8);
+    expect(body.providers.length).toBe(9);
     const byName = new Map(body.providers.map((row) => [row.name, row]));
     expect(byName.get('xiaomi')).toMatchObject({
       auth_mode: 'key',
       credential_env: 'XIAOMI_API_KEY',
+      key_present: true,
+      implemented: true,
+    });
+    expect(byName.get('xiaomi-token-plan')).toMatchObject({
+      auth_mode: 'key',
+      credential_env: 'XIAOMI_TOKEN_PLAN_API_KEY',
       key_present: true,
       implemented: true,
     });
@@ -120,6 +127,7 @@ describe('GET /api/admin/config — injected runtime facts over HTTP (real build
     // 布尔与 env 名之外不得有任何 credential 派生事实；值绝不进响应体。
     const text = JSON.stringify(body);
     expect(text.includes('sk-http-facts-canary-xiaomi-9f1a')).toBe(false);
+    expect(text.includes('tp-http-facts-canary-token-plan-7c2e')).toBe(false);
     for (const row of body.providers) {
       expect(Object.keys(row).sort()).toEqual([
         'auth_mode',

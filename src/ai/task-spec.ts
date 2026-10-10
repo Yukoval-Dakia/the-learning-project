@@ -4,6 +4,7 @@ import type { SubjectProfile } from '@/subjects/profile';
 export type Provider =
   | 'anthropic'
   | 'xiaomi'
+  | 'xiaomi-token-plan'
   | 'zai-coding-cn'
   | 'openrouter'
   | 'gateway'
