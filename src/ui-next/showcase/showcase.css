@@ -1,0 +1,93 @@
+/* Showcase-only layout (YUK-1354). Not part of the component API. */
+[data-ui-next] {
+  &.un-showcase-root {
+    height: 100%;
+  }
+
+  & .un-showcase {
+    display: grid;
+    gap: var(--un-sp-6);
+    max-width: 880px;
+    margin: 0 auto;
+    padding: var(--un-sp-6);
+  }
+
+  & .un-showcase-section {
+    display: grid;
+    gap: var(--un-sp-3);
+  }
+
+  & .un-showcase-h {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .un-showcase-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2);
+  }
+
+  & .un-showcase-count {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--un-sp-1);
+    color: var(--un-text-2);
+  }
+
+  & .un-showcase-why {
+    display: grid;
+    gap: var(--un-sp-2);
+    padding: var(--un-sp-3) 0;
+    color: var(--un-text-2);
+  }
+
+  & .un-showcase-prose {
+    display: grid;
+    gap: var(--un-sp-4);
+    max-width: var(--un-w-prose);
+    font-family: var(--un-font-serif);
+    font-size: var(--un-fs-3);
+    line-height: var(--un-lh-prose);
+  }
+
+  & .un-showcase-side {
+    display: grid;
+    gap: var(--un-sp-1);
+    padding: var(--un-sp-3) var(--un-sp-2);
+  }
+
+  & .un-showcase-side-item {
+    justify-content: flex-start;
+    width: 100%;
+  }
+
+  & .un-showcase-side-label {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  & .un-app[data-sidebar="collapsed"] .un-showcase-side-label {
+    opacity: 0;
+  }
+
+  & .un-showcase-crumb {
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+  }
+
+  & .un-showcase-spacer {
+    flex: 1;
+  }
+
+  & .un-showcase-muted {
+    color: var(--un-text-3);
+  }
+
+  & .un-showcase-stack {
+    display: grid;
+    gap: var(--un-sp-3);
+  }
+}

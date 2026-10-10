@@ -498,7 +498,11 @@ export function compareDependencySnapshot(
 function collectSeamViolations(projectRoot: string): Violation[] {
   const capabilityRoot = resolve(projectRoot, 'src/capabilities');
   const aiRoot = resolve(projectRoot, 'src/ai');
-  const browserRoots = [resolve(projectRoot, 'web/src'), resolve(projectRoot, 'src/ui')];
+  const browserRoots = [
+    resolve(projectRoot, 'web/src'),
+    resolve(projectRoot, 'src/ui'),
+    resolve(projectRoot, 'src/ui-next'),
+  ];
   const violations: Violation[] = [];
 
   if (existsSync(capabilityRoot)) {
