@@ -1995,10 +1995,10 @@
                 }
               ]
             },
-            "description": "canonical proposal decision；conjecture 可用严格 corrected_payload 改写 claim（YUK-567）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** corrected_payload 仅允许 decision=accept，且严格只含 trim 后 1..280 字符的 claim_md；knowledge_id、cause_category 和未知键拒绝。conjecture rate event 与 probe serve 同事务；不写 FSRS。需 x-internal-token",
+            "description": "canonical proposal decision；conjecture 可用严格 corrected_payload 改写 claim（YUK-567）；block_merge accept 需 confirm_lossy（YUK-1404）\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** corrected_payload 仅允许 decision=accept，且严格只含 trim 后 1..280 字符的 claim_md；knowledge_id、cause_category 和未知键拒绝。confirm_lossy 仅允许 decision=accept 且仅 block_merge 支持：合并不可逆，缺失时 409 confirm_required（合并后无法撤销 + details.affected_block_count）；misplaced 400。conjecture rate event 与 probe serve 同事务；不写 FSRS。需 x-internal-token",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"decision\": \"accept\",\n  \"corrected_payload\": {\n    \"claim_md\": \"更准确的待验证判断\"\n  }\n}",
+              "raw": "{\n  \"decision\": \"accept\",\n  \"confirm_lossy\": true,\n  \"corrected_payload\": {\n    \"claim_md\": \"更准确的待验证判断\"\n  }\n}",
               "options": {
                 "raw": {
                   "language": "json"

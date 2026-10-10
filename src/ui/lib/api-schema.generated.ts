@@ -28789,6 +28789,8 @@ export interface operations {
                         /** @enum {string} */
                         kind: "question" | "question_part" | "record" | "recall_prompt" | "practice_log" | "project_milestone" | "open_inquiry";
                     }[];
+                    /** @enum {boolean} */
+                    confirm_lossy?: true;
                     corrected_payload?: {
                         claim_md: string;
                     };
