@@ -35,6 +35,12 @@ export const IngestionOperationRequest = z.discriminatedUnion('kind', [
     })
     .strict(),
   z.object({ kind: z.literal('rescue'), input: RescueBody }).strict(),
+  z
+    .object({
+      kind: z.literal('assessment_review'),
+      input: z.object({ block_id: z.string().min(1) }).strict(),
+    })
+    .strict(),
 ]);
 
 export type IngestionOperationRequestParsed = z.infer<typeof IngestionOperationRequest>;

@@ -1,10 +1,14 @@
-import { and, asc, desc, eq, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 
 import type { IngestionOperationKind } from '@/capabilities/ingestion/api/operation-schema';
 import type { Db, Tx } from '@/db/client';
 import { job_events, learning_session } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';
+import {
+  type AssessmentReviewBindingT,
+  assessmentReviewOperationId,
+} from './assessment-review-evidence';
 
 export const INGESTION_OPERATION_TABLE = 'ingestion_operation';
 
@@ -40,6 +44,7 @@ interface ReserveInput {
   operationKind: IngestionOperationKind;
   inputHash: string;
   idempotencyKey?: string;
+  reviewBinding?: AssessmentReviewBindingT;
 }
 
 export type ReserveResult =
@@ -59,7 +64,7 @@ function payloadString(payload: Record<string, unknown>, key: string): string | 
 }
 
 export async function findIdempotentIngestionOperation(
-  db: Db,
+  db: Db | Tx,
   input: { sessionId: string; idempotencyKey: string },
 ): Promise<IdempotentOperationMatch | null> {
   const rows = await db
@@ -68,7 +73,7 @@ export async function findIdempotentIngestionOperation(
     .where(
       and(
         eq(job_events.business_table, INGESTION_OPERATION_TABLE),
-        eq(job_events.event_type, 'operation.accepted'),
+        inArray(job_events.event_type, ['operation.accepted', 'operation.idempotency_bound']),
         sql`${job_events.payload}->>'session_id' = ${input.sessionId}`,
         sql`${job_events.payload}->>'idempotency_key' = ${input.idempotencyKey}`,
       ),
@@ -98,28 +103,46 @@ export async function reserveIngestionOperation(
       const scope = `ingestion-operation:${input.sessionId}:${input.idempotencyKey}`;
       await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${scope}))`);
 
-      const existingRows = await tx
-        .select({ businessId: job_events.business_id, payload: job_events.payload })
-        .from(job_events)
-        .where(
-          and(
-            eq(job_events.business_table, INGESTION_OPERATION_TABLE),
-            eq(job_events.event_type, 'operation.accepted'),
-            sql`${job_events.payload}->>'session_id' = ${input.sessionId}`,
-            sql`${job_events.payload}->>'idempotency_key' = ${input.idempotencyKey}`,
-          ),
-        )
-        .orderBy(desc(job_events.id))
-        .limit(1);
-      const existing = existingRows[0];
+      const existing = await findIdempotentIngestionOperation(tx, {
+        sessionId: input.sessionId,
+        idempotencyKey: input.idempotencyKey,
+      });
       if (existing) {
         const sameInput =
-          payloadString(existing.payload, 'operation_kind') === input.operationKind &&
-          payloadString(existing.payload, 'input_hash') === input.inputHash;
+          existing.operationKind === input.operationKind && existing.inputHash === input.inputHash;
         return {
           outcome: sameInput ? 'reused' : 'conflict',
-          operationId: existing.businessId,
+          operationId: existing.operationId,
         };
+      }
+    }
+
+    if (input.operationKind === 'assessment_review') {
+      if (
+        !input.reviewBinding ||
+        assessmentReviewOperationId(input.reviewBinding) !== input.operationId
+      )
+        throw new Error('Assessment review requires its server-derived binding');
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtext('ingestion-assessment-reservation'), hashtext(${input.operationId}))`,
+      );
+      const existing = await readIngestionOperation(tx, input.operationId);
+      if (existing) {
+        // Bind aliases too: a changed revision must not repurpose a caller's key.
+        if (input.idempotencyKey) {
+          await writeJobEvent(tx, {
+            business_table: INGESTION_OPERATION_TABLE,
+            business_id: input.operationId,
+            event_type: 'operation.idempotency_bound',
+            payload: {
+              session_id: input.sessionId,
+              operation_kind: input.operationKind,
+              input_hash: input.inputHash,
+              idempotency_key: input.idempotencyKey,
+            },
+          });
+        }
+        return { outcome: 'reused', operationId: input.operationId };
       }
     }
 
@@ -132,6 +155,7 @@ export async function reserveIngestionOperation(
         operation_kind: input.operationKind,
         input_hash: input.inputHash,
         ...(input.idempotencyKey ? { idempotency_key: input.idempotencyKey } : {}),
+        ...(input.reviewBinding ? { review_binding: input.reviewBinding } : {}),
       },
     });
     return { outcome: 'created', operationId: input.operationId };
@@ -146,7 +170,10 @@ export async function writeIngestionOperationEvent(
       | 'operation.queued'
       | 'operation.running'
       | 'operation.completed'
-      | 'operation.failed';
+      | 'operation.failed'
+      | 'operation.review_started'
+      | 'operation.review_invocation'
+      | 'operation.review_result';
     payload?: Record<string, unknown>;
   },
 ): Promise<void> {

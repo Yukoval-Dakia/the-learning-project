@@ -8,6 +8,7 @@ import { learning_session } from '@/db/schema';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { getStartedBoss } from '@/server/boss/client';
 import { Ingestion } from '@/server/session';
+import { prepareIngestionAssessmentReview } from '../server/assessment-review';
 import {
   findIdempotentIngestionOperation,
   hasQueuedIngestionOperationEvent,
@@ -73,6 +74,7 @@ async function validateSessionState(
     import: [...Ingestion.IMPORTABLE_SESSION_STATUSES],
     make_paper: ['imported'],
     rescue: ['partial', 'extracted'],
+    assessment_review: ['extracted', 'partial', 'reviewed', 'imported'],
   };
   const allowed = allowedStatuses[request.kind];
   if (!allowed.includes(session.status)) {
@@ -205,13 +207,18 @@ export async function POST(req: Request, params: Record<string, string>): Promis
 
     await validateSessionState(sessionId, request);
 
-    const operationId = `ingop_${newId()}`;
+    const review =
+      request.kind === 'assessment_review'
+        ? await prepareIngestionAssessmentReview(db, { sessionId, blockId: request.input.block_id })
+        : undefined;
+    const operationId = review?.operationId ?? `ingop_${newId()}`;
     const reservation = await reserveIngestionOperation(db, {
       operationId,
       sessionId,
       operationKind: request.kind,
       inputHash: hash,
       idempotencyKey,
+      reviewBinding: review?.binding,
     });
     if (reservation.outcome === 'conflict') {
       throw new ApiError(
@@ -233,7 +240,7 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     // boss 已接收 job 后，即使后续 queued-event/readback 短暂失败也不能把真实运行中的
     // operation 标成 failed；同 Idempotency-Key 重试会读回 accepted handle，worker/抽取
     // session 的后续事件继续推进资源快照。
-    if (createdOperationId && !dispatched) {
+    if (createdOperationId && !dispatched && !createdOperationId.startsWith('ingreview_v1_')) {
       try {
         await writeIngestionOperationEvent(db, {
           operationId: createdOperationId,

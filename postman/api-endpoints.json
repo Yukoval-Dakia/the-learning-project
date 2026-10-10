@@ -1696,5 +1696,41 @@
         "notes": "先恢复未完成的 issuance。pending/held 不推进、不重交；retry 仅重发已接收的相同原始 response_set、group_evidence、submission_id 和 idempotency_key。answeredCount 按不同 question ID 统计原生和历史参与。有效 head 且结算成功后才选择或结束。"
       }
     ]
+  },
+  {
+    "path": "/api/ingestion-sessions/:id/operations",
+    "methods": [
+      {
+        "method": "POST",
+        "summary": "Create or reuse an ingestion operation",
+        "contentType": "application/json",
+        "headers": [
+          {
+            "name": "Idempotency-Key",
+            "value": "REPLACE_REVIEW_KEY",
+            "description": "Optional request key. Assessment review also deduplicates by server-owned revision identity."
+          }
+        ],
+        "bodyExample": {
+          "kind": "assessment_review",
+          "input": {
+            "block_id": "REPLACE_BLOCK_ID"
+          }
+        },
+        "notes": "Kinds: extract, import, make_paper, rescue, assessment_review. Assessment review requires an existing saved question/publication and independently verifies the frozen reference in release_strict mode. Results may remain withheld or superseded. A started stage without a saved result is unknown_result and is never paid again. Material/import success remains committed."
+      }
+    ]
+  },
+  {
+    "path": "/api/ingestion-operations/:id",
+    "methods": [
+      {
+        "method": "GET",
+        "summary": "Read an ingestion operation receipt",
+        "contentType": null,
+        "bodyExample": null,
+        "notes": "Read-only operation snapshot. Assessment review reports actual canonical admission and availability; admitted container-only material does not imply general practice-pool or FSRS enrollment."
+      }
+    ]
   }
 ]

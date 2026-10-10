@@ -137,6 +137,7 @@ export {
   runMultimodalDirectJudge,
 } from './server/judge';
 export { withdrawCapturedOccurrence } from './server/judge/evaluate-submission';
+export { defaultRunTaskFn as createAssessmentVerificationTaskRunner } from './server/judge/question-contract';
 export { JUDGE_RUN_EVENTS, JUDGE_RUN_TABLE } from './server/judge-run-status';
 export {
   rewriteLearningItemKnowledgeIds,

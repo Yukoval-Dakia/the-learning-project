@@ -1337,6 +1337,75 @@
       ]
     },
     {
+      "name": "ingestion-operations",
+      "item": [
+        {
+          "name": "GET /api/ingestion-operations/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion-operations/:id",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion-operations", ":id"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "Read an ingestion operation receipt\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** Read-only operation snapshot. Assessment review reports actual canonical admission and availability; admitted container-only material does not imply general practice-pool or FSRS enrollment."
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "ingestion-sessions",
+      "item": [
+        {
+          "name": "POST /api/ingestion-sessions/:id/operations",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "Idempotency-Key",
+                "value": "REPLACE_REVIEW_KEY",
+                "description": "Optional request key. Assessment review also deduplicates by server-owned revision identity."
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/api/ingestion-sessions/:id/operations",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "ingestion-sessions", ":id", "operations"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "Create or reuse an ingestion operation\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** Kinds: extract, import, make_paper, rescue, assessment_review. Assessment review requires an existing saved question/publication and independently verifies the frozen reference in release_strict mode. Results may remain withheld or superseded. A started stage without a saved result is unknown_result and is never paid again. Material/import success remains committed.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"assessment_review\",\n  \"input\": {\n    \"block_id\": \"REPLACE_BLOCK_ID\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "issuances",
       "item": [
         {

@@ -30,6 +30,7 @@ export {
   type MultimodalDirectImageFetchFn,
   type MultimodalDirectRunTaskFn,
   commitFormalAttempt,
+  createAssessmentVerificationTaskRunner,
   createDefaultJudgeInvoker,
   defaultImageFetch,
   evaluateAttempt,
@@ -42,6 +43,7 @@ export {
   recordFormalAttemptCapture,
   resolveQuestionJudgeRoute,
   runMultimodalDirectJudge,
+  runSolveCheck,
   saveSubmission,
   withdrawCapturedOccurrence,
 } from '@/capabilities/practice/public';

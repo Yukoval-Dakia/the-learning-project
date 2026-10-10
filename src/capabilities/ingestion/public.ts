@@ -2,10 +2,12 @@
 
 export type {
   IngestionAssessmentReceipt,
+  IngestionAssessmentReviewResult,
   MistakeListResponse,
   MistakeProjection,
 } from './api/contracts';
 export { readIngestionAssessmentReceipts } from './server/assessment-receipt';
+export { prepareIngestionAssessmentReview } from './server/assessment-review';
 export type { ColdStartBridgeRunTaskFn } from './server/cold-start-bridge';
 export {
   ColdStartBridgeError,

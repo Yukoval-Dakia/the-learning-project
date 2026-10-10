@@ -14120,6 +14120,12 @@ export interface operations {
                     };
                     /** @enum {string} */
                     kind: "rescue";
+                } | {
+                    input: {
+                        block_id: string;
+                    };
+                    /** @enum {string} */
+                    kind: "assessment_review";
                 };
             };
         };

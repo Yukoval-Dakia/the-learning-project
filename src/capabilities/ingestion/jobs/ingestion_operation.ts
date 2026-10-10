@@ -4,6 +4,7 @@ import {
   IngestionOperationRequest,
   type IngestionOperationRequestParsed,
 } from '@/capabilities/ingestion/api/operation-schema';
+import { completeIngestionAssessmentReview } from '@/capabilities/ingestion/server/assessment-review';
 import { completeIngestionImportOperation } from '@/capabilities/ingestion/server/import-completion';
 import {
   isTerminalIngestionOperation,
@@ -28,7 +29,10 @@ function jsonRequest(path: string, body: unknown): Request {
 
 async function executeLegacyOperation(
   sessionId: string,
-  request: Exclude<IngestionOperationRequestParsed, { kind: 'extract' | 'import' }>,
+  request: Exclude<
+    IngestionOperationRequestParsed,
+    { kind: 'extract' | 'import' | 'assessment_review' }
+  >,
 ): Promise<Response> {
   switch (request.kind) {
     case 'make_paper': {
@@ -92,6 +96,11 @@ export function buildIngestionOperationHandler(
           sessionId,
           body: parsed.data.input,
         });
+        continue;
+      }
+
+      if (parsed.data.kind === 'assessment_review') {
+        await completeIngestionAssessmentReview(db, { operationId, sessionId });
         continue;
       }
 

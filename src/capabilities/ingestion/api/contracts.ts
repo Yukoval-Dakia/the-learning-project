@@ -241,6 +241,34 @@ export const IngestionAssessmentReceiptSchema = z.discriminatedUnion('status', [
 ]);
 export type IngestionAssessmentReceipt = z.infer<typeof IngestionAssessmentReceiptSchema>;
 
+export const IngestionAssessmentReviewResultSchema = z.object({
+  status: z.enum(['admitted', 'withheld', 'superseded']),
+  reason: z.string(),
+  assessment: IngestionAssessmentReceiptSchema.nullable(),
+  verification: z
+    .object({
+      policy_id: z.string(),
+      subject_id: z.string(),
+      result_digest: z.string(),
+      task_runs: z.array(
+        z.object({
+          id: z.string(),
+          task_kind: z.string(),
+          provider: z.string(),
+          model: z.string(),
+          status: z.string(),
+          input_hash: z.string(),
+          result_digest: z.string().nullable(),
+          cost_usd: z.number().nullable(),
+          cost_basis: z.string().nullable(),
+          cost_ref: z.string().nullable(),
+        }),
+      ),
+    })
+    .optional(),
+});
+export type IngestionAssessmentReviewResult = z.infer<typeof IngestionAssessmentReviewResultSchema>;
+
 export const IngestionBlockSchema = z
   .object({
     id: z.string(),
