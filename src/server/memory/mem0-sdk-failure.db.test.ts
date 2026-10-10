@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
 import { type Server, createServer } from 'node:http';
-import { createRequire } from 'node:module';
 import { eq } from 'drizzle-orm';
 import { Memory } from 'mem0ai/oss';
 import type { Job } from 'pg-boss';
@@ -13,7 +12,6 @@ import { readIngestCompleted } from './memory-reconcile-handoff-store';
 import { buildMemoryEventIngestHandler } from './triggers';
 
 vi.hoisted(() => vi.stubEnv('MEM0_TELEMETRY', 'false'));
-const cjs: typeof import('mem0ai/oss') = createRequire(import.meta.url)('mem0ai/oss');
 let server: Server;
 let endpoint: string;
 let failExtraction = true;

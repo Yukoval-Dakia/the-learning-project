@@ -1,8 +1,7 @@
 // YUK-870 (F3.5b) — SessionSummaryTask is Practice-owned.
 //
 // Moved verbatim from the since-deleted src/ai/legacy-task-definitions.ts quarry (prompt builder +
-// definition; the prompt text is byte-identical so the task-prompt-hash oracle
-// pins the move). The output is a plain-text ≤120-char summary — NOT JSON — so
+// definition). The output is a plain-text ≤120-char summary — NOT JSON — so
 // the owned output contract mirrors the summary runner's consumer
 // (src/server/session/summary.ts): trim, clamp to 240 chars, require non-empty.
 // This was the LAST transitional quarry entry; with it owned, the central

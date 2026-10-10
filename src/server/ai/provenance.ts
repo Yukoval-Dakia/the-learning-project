@@ -6,8 +6,6 @@ export { costUsdToMicroUsd, sumAllKnownCostUsd } from '@/kernel/cost';
 import type { RunTaskCallCtx } from '@/server/ai/runner-fn';
 import type { SubjectProfile } from '@/subjects/profile';
 
-const POSTGRES_INTEGER_MAX = 2_147_483_647;
-
 export interface TaskTextResult {
   text: string;
   task_run_id?: string;

@@ -82,9 +82,6 @@ describe('publishQuestionGroup（YUK-1043 统一发布 seam）', () => {
   beforeEach(resetDb);
   afterEach(resetDb);
 
-  for (const existing of [false, true]) {
-  }
-
   it('atomically writes revision + lifecycle + publish event; CAS digest noop on republish', async () => {
     const db = testDb();
     const qid = 'pub_q1';

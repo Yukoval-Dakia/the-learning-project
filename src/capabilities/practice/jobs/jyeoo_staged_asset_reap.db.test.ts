@@ -14,7 +14,6 @@ beforeEach(() => resetDb());
 
 const NOW = new Date('2026-09-11T12:00:00Z');
 const OLD = new Date('2026-09-09T12:00:00Z'); // >24h before NOW
-const YOUNG = new Date('2026-09-11T06:00:00Z'); // <24h before NOW
 
 async function seedAsset(
   id: string,

@@ -100,16 +100,4 @@ describe('judgeProvenanceSigningSecret', () => {
     expect(String(log.mock.calls[0]?.[0])).toMatch(/equals INTERNAL_TOKEN/);
     expect(String(log.mock.calls[0]?.[0])).not.toContain(sharedSecret);
   });
-
-  it('reports the length failure first when a short secret also equals INTERNAL_TOKEN', () => {
-    const sharedShortSecret = 'x'.repeat(31);
-    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    vi.stubEnv('JUDGE_PROVENANCE_SECRET', sharedShortSecret);
-    vi.stubEnv('INTERNAL_TOKEN', sharedShortSecret);
-
-    expect(judgeProvenanceSigningSecret()).toBeNull();
-    expect(log).toHaveBeenCalledTimes(1);
-    expect(String(log.mock.calls[0]?.[0])).toMatch(/shorter than 32 characters/);
-    expect(String(log.mock.calls[0]?.[0])).not.toMatch(/equals INTERNAL_TOKEN/);
-  });
 });

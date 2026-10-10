@@ -1020,13 +1020,6 @@ mod propagate_priors_tests {
         );
     }
 
-
-
-
-
-
-
-
     #[test]
     fn duplicate_edge_deduped_no_double_count() {
         // A duplicate (0,1) edge must NOT double-count in ∏ (would give E² not E) → byte-identical

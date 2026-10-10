@@ -19,7 +19,6 @@ import {
   serveProbeOnce,
 } from '@/capabilities/agency/server/conjecture/probe-lifecycle';
 import { newId } from '@/core/ids';
-import type { ConjectureProbeResponseJudgementT } from '@/core/schema/conjecture-probe-response';
 import { event, knowledge } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
 import { writeAiProposal } from '@/kernel/proposals/writer';
@@ -94,37 +93,6 @@ async function serve(proposalId: string) {
     referenceMd: '2x·cos(x^2)',
   });
 }
-
-const GOLD_RESPONSE_JUDGEMENT = {
-  rule_version: 'conjecture_probe_response_signature_v1',
-  answer_result: 'correct',
-  target_error_match: 'not_matched',
-  gradable: true,
-  reason_code: 'gold_signature_matched',
-  signature_match_explanation_md: 'matches the gold response signature',
-  evidence_refs: [
-    'learner_response',
-    'gold_response_signature',
-    'target_error_response_signature',
-    'correctness_judge',
-  ],
-} satisfies ConjectureProbeResponseJudgementT;
-
-const TARGET_ERROR_RESPONSE_JUDGEMENT = {
-  ...GOLD_RESPONSE_JUDGEMENT,
-  answer_result: 'incorrect',
-  target_error_match: 'matched',
-  reason_code: 'target_error_signature_matched',
-  signature_match_explanation_md: 'matches the target-error response signature',
-} satisfies ConjectureProbeResponseJudgementT;
-
-const ORDINARY_WRONG_RESPONSE_JUDGEMENT = {
-  ...GOLD_RESPONSE_JUDGEMENT,
-  answer_result: 'incorrect',
-  target_error_match: 'not_matched',
-  reason_code: 'response_matches_neither_signature',
-  signature_match_explanation_md: 'matches neither authored response signature',
-} satisfies ConjectureProbeResponseJudgementT;
 
 async function probeResultEvents(probeQuestionId: string) {
   const db = testDb();

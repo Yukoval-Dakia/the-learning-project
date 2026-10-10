@@ -1,19 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
-import { __setTraceExporterForTests, type tracePiStream } from './laminar-tracing';
+import { __setTraceExporterForTests } from './laminar-tracing';
 import { sanitizeTracePayload } from './laminar-transcript';
 
-const model = {
-  id: 'offline-model',
-  name: 'Offline',
-  provider: 'offline',
-  api: 'openai-completions',
-  reasoning: false,
-  baseUrl: 'https://offline.invalid',
-  input: ['text'],
-  contextWindow: 10000,
-  maxTokens: 100,
-  cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-} satisfies Parameters<typeof tracePiStream>[1];
 afterEach(() => {
   __setTraceExporterForTests();
   vi.unstubAllEnvs();

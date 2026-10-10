@@ -215,7 +215,7 @@ target 上预演一遍 B1–B4，证据归档进 `<cutover-dir>/rollback-b/`。
 ## 8. 不收尾事项（owner 另行授权）
 
 - 生产部署/维护窗口执行：待 owner final implementation-ready confirmation。
-- D18 actual-output 评测（`pnpm eval:d18 --lane=jev-openrouter …`）：
-  owner-triggered，预算闸已就位，不在本窗口跑。
+- D18 actual-output 评测：原 `pnpm eval:d18` runner 已在 YUK-1401（#1631）删除，
+  需要时从 `87f66b3e2^` 取回再由 owner 触发，不在本窗口跑。
 - 旧 columns/images 保留期与清理：保留作恢复安全，非 phased rollout；
   清理另立票。

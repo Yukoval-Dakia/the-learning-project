@@ -1,9 +1,7 @@
 // YUK-879 — MindModelInductionTask + ConjectureGroupingTask contracts, owned by
 // the agency capability (YUK-406 / YUK-440 / YUK-786 / YUK-821 lineage). The
 // envelope schemas are the single source the induce orchestrator
-// (../server/conjecture/induce) parses samples against. Prompt text is
-// byte-identical to the former central quarry
-// entries (prompt-hash oracle pins them).
+// (../server/conjecture/induce) parses samples against.
 import { DEFAULT_TASK_BUDGET, type TaskSpec } from '@/ai/task-spec';
 
 // Legacy quarry alias preserved verbatim inside the moved definitions.

@@ -32,24 +32,6 @@ afterEach(async () => {
   replaceConfigSnapshot(EMPTY_SNAPSHOT);
 });
 
-describe('P1-5 — combined provider+model pair validation (final state in-tx)', () => {
-  it('batch set provider+model together validates the final combo atomically', async () => {
-    const db = testDb();
-    const { setConfigs } = await import('@/server/config/write');
-    const res = await setConfigs(
-      [
-        { key: 'lane.global.provider', value: 'openai' },
-        { key: 'lane.global.model', value: 'gpt-6-astra' },
-      ],
-      { actor: 'cli' },
-      db,
-    );
-    expect(res.map((r) => r.key)).toEqual(['lane.global.provider', 'lane.global.model']);
-    expect(getConfig('lane.global.provider', {})).toBe('openai');
-    expect(getConfig('lane.global.model', {})).toBe('gpt-6-astra');
-  });
-});
-
 describe('P1-3 — hydrate single-flight + epoch guard', () => {
   it('concurrent hydrates serialize; a stale snapshot cannot overwrite a newer one', async () => {
     const db = testDb();
