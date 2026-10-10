@@ -1,4 +1,7 @@
 import { inArray } from 'drizzle-orm';
+import remarkMath from 'remark-math';
+import remarkParse from 'remark-parse';
+import { unified } from 'unified';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
@@ -92,124 +95,193 @@ function textOf(value: unknown): string | null {
 // YUK-1404 P1 — a raw slice could cut inside a math span and leak a dangling
 // `$` / `$$` / `\(` opener or raw TeX into the learner preview. Truncation
 // backs off to just before the span the cap would split (never synthesizing a
-// closing delimiter), using the grammar the renderer and the producer
-// canonicalizer already settled (LATEX_DELIMITED in src/ui/lib/math-markdown.tsx,
-// EXPLICIT_MATH_DELIMITED in capabilities/ingestion/server/structure.ts): code
-// spans/fences win first; a delimiter preceded by a backslash is escaped; a
-// formula never crosses a blank line or a backtick. Dollar pairs additionally
-// follow the pandoc inline-math rules (opener not followed by whitespace,
-// closer not preceded by whitespace and not followed by a digit) so prose /
-// currency dollars like "$3 … $5" never pair up and swallow later text. Bare
-// backslashes are never guessed to be math. Preview read-side only: the
-// stored source is never rewritten.
+// closing delimiter). Math spans are NOT hand-scanned: they are the position
+// spans of the `inlineMath` / `math` nodes produced by the renderer's own
+// pipeline (unified + remark-parse + remark-math — what react-markdown runs
+// with, micromark 3.1), so the grammar is the actual one: whitespace-padded
+// and digit-adjacent dollars are math, `$$$…$$$` is one span, a `$` after an
+// even run of backslashes opens, unclosed flow `$$` may span blank lines and
+// runs to EOF, code spans/fences win, and only a CommonMark line-anchored
+// ``` / ~~~ run is a fence (inline backticks are not). The explicit legacy
+// `\(...\)` / `\[...\]` forms never reach that parser as math, so they are
+// protected with their ORIGINAL offsets via the renderer normalizer's own
+// grammar (LATEX_DELIMITED in src/ui/lib/math-markdown.tsx, mirrored below):
+// the renderer rewrites exactly those spans into dollar math before parsing.
+// Guard spaces and the display-block reflow exist only in normalized
+// coordinates, so AST spans found there are mapped back piecewise (rewrite
+// interiors are covered by their whole source span) — offsets are never
+// shifted blindly. Preview read-side only: the stored source is never
+// rewritten, and text whose cap touches no active span stays byte-identical
+// to the plain slice.
 
-function isEscapedAt(value: string, index: number): boolean {
-  return index > 0 && value[index - 1] === '\\';
+/** Minimal structural mdast view — only type/children/position are read. */
+interface MathAstNode {
+  type: string;
+  children?: MathAstNode[] | undefined;
+  position?:
+    | { start: { offset?: number | undefined }; end: { offset?: number | undefined } }
+    | undefined;
 }
 
-/** A formula span never crosses a blank line (`\n\s*\n`), mirroring LATEX_DELIMITED. */
-function crossesBlankLine(value: string, from: number, end: number): boolean {
-  for (let i = from; i < end; i++) {
-    if (value[i] !== '\n') continue;
-    let j = i + 1;
-    while (j < end && (value[j] === ' ' || value[j] === '\t' || value[j] === '\r')) j++;
-    if (value[j] === '\n') return true;
-  }
-  return false;
+let mathSpanParser: { parse(text: string): unknown } | null = null;
+
+/** The renderer's markdown→math pipeline (remark-math defaults: single `$` on). */
+function rendererMathParser(): { parse(text: string): unknown } {
+  mathSpanParser ??= unified().use(remarkParse).use(remarkMath) as unknown as {
+    parse(text: string): unknown;
+  };
+  return mathSpanParser;
 }
 
-/**
- * End index (exclusive) of the math span whose dollar opener starts at
- * `openAt`, or -1 when the dollars do not open a bounded formula (currency,
- * escaped, unclosed, or crossing a backtick / blank line).
- */
-function dollarMathEnd(value: string, openAt: number, display: boolean): number {
-  const from = openAt + (display ? 2 : 1);
-  if (!display && (from >= value.length || /\s/.test(value[from]))) return -1;
-  for (let j = from; j < value.length; j++) {
-    const ch = value[j];
-    if (ch === '`') return -1;
-    if (ch === '\n' && isBlankThenNewline(value, j)) return -1;
-    if (ch !== '$' || isEscapedAt(value, j)) continue;
-    if (display) {
-      if (value[j + 1] === '$') return j + 2;
-      continue;
+function collectMathSpans(node: MathAstNode, spans: Array<[number, number]>): void {
+  if (node.type === 'inlineMath' || node.type === 'math') {
+    const start = node.position?.start.offset;
+    const end = node.position?.end.offset;
+    if (typeof start === 'number' && typeof end === 'number' && start < end) {
+      spans.push([start, end]);
     }
-    if (/\s/.test(value[j - 1])) continue;
-    if (/[0-9]/.test(value[j + 1] ?? '')) continue;
-    return j + 1;
   }
-  return -1;
+  for (const child of node.children ?? []) collectMathSpans(child, spans);
 }
 
-function isBlankThenNewline(value: string, newlineAt: number): boolean {
-  let j = newlineAt + 1;
-  while (j < value.length && (value[j] === ' ' || value[j] === '\t' || value[j] === '\r')) j++;
-  return value[j] === '\n';
+/** Mirror of LATEX_DELIMITED (src/ui/lib/math-markdown.tsx) — keep in lockstep. */
+const LEGACY_MATH_DELIMITED =
+  /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)|(?<!\\)\\\[((?:(?!\n\s*\n)[^`])+?)\\\]|(?<!\\)\\\(((?:(?!\n\s*\n)[^`])+?)\\\)/g;
+
+interface LegacyRewrite {
+  /** Span in the stored source that the renderer would rewrite to dollars. */
+  sourceStart: number;
+  sourceEnd: number;
+  /** Same span in the normalized coordinates the renderer parses. */
+  normalizedStart: number;
+  normalizedEnd: number;
+}
+
+/** Verbatim mirror of the normalizeMathDelimiters replacement callback. */
+function legacyMathReplacement(
+  source: string,
+  match: string,
+  display: string | undefined,
+  inline: string | undefined,
+  offset: number,
+): string {
+  const prev = source.slice(Math.max(0, offset - 2), offset);
+  const before = prev.endsWith('$') || prev === '\\)' || prev === '\\]' ? ' ' : '';
+  const after = source[offset + match.length] === '$' ? ' ' : '';
+  if (display !== undefined) {
+    const lineStart = source.lastIndexOf('\n', offset - 1) + 1;
+    const indent = source.slice(lineStart, offset);
+    if (/^[ \t]*$/.test(indent)) return `$$\n${indent}${display.trim()}\n${indent}$$\n${indent}`;
+    return `${before}$$${display}$$${after}`;
+  }
+  return `${before}$${(inline ?? '').trim()}$${after}`;
+}
+
+/** The text the renderer actually parses, plus where each legacy rewrite landed. */
+function effectiveSourceOf(source: string): { effective: string; rewrites: LegacyRewrite[] } {
+  const rewrites: LegacyRewrite[] = [];
+  if (!source.includes('\\(') && !source.includes('\\[')) {
+    return { effective: source, rewrites };
+  }
+  const parts: string[] = [];
+  let normalizedLength = 0;
+  let sourceCursor = 0;
+  for (const match of source.matchAll(LEGACY_MATH_DELIMITED)) {
+    const [text, code, display, inline] = match;
+    const start = match.index ?? 0;
+    parts.push(source.slice(sourceCursor, start));
+    normalizedLength += start - sourceCursor;
+    if (code === undefined) {
+      const replacement = legacyMathReplacement(source, text, display, inline, start);
+      rewrites.push({
+        sourceStart: start,
+        sourceEnd: start + text.length,
+        normalizedStart: normalizedLength,
+        normalizedEnd: normalizedLength + replacement.length,
+      });
+      parts.push(replacement);
+      normalizedLength += replacement.length;
+    } else {
+      parts.push(text);
+      normalizedLength += text.length;
+    }
+    sourceCursor = start + text.length;
+  }
+  parts.push(source.slice(sourceCursor));
+  return { effective: parts.join(''), rewrites };
 }
 
 /**
- * End index (exclusive) of an explicit legacy `\(...\)` / `\[...\]` span, or
- * -1. Mirrors EXPLICIT_MATH_DELIMITED: unescaped opener, non-empty content,
- * no backtick, no blank line; no whitespace-adjacency rules (these forms are
- * never currency).
+ * Map a math span found in normalized coordinates back to source coordinates.
+ * Pieces inside a rewrite are dropped — that rewrite's whole source span is
+ * already protected; pieces outside are shifted only by the length deltas of
+ * fully-preceding rewrites, so offsets never drift.
  */
-function latexMathEnd(value: string, openAt: number): number {
-  const closeToken = value[openAt + 1] === '(' ? '\\)' : '\\]';
-  const closeAt = value.indexOf(closeToken, openAt + 2);
-  if (closeAt <= openAt + 2) return -1;
-  if (value.slice(openAt + 2, closeAt).includes('`')) return -1;
-  if (crossesBlankLine(value, openAt + 2, closeAt)) return -1;
-  return closeAt + 2;
+function mathSpanInSource(
+  span: readonly [number, number],
+  rewrites: readonly LegacyRewrite[],
+): Array<[number, number]> {
+  const pieces: Array<[number, number]> = [];
+  let start = span[0];
+  const end = span[1];
+  for (const rewrite of rewrites) {
+    if (rewrite.normalizedEnd <= start || rewrite.normalizedStart >= end) continue;
+    if (start < rewrite.normalizedStart) pieces.push([start, rewrite.normalizedStart]);
+    start = Math.max(start, rewrite.normalizedEnd);
+    if (start >= end) break;
+  }
+  if (start < end) pieces.push([start, end]);
+  return pieces.map(([from, to]) => {
+    let shift = 0;
+    for (const rewrite of rewrites) {
+      if (rewrite.normalizedEnd <= from) {
+        shift +=
+          rewrite.sourceEnd -
+          rewrite.sourceStart -
+          (rewrite.normalizedEnd - rewrite.normalizedStart);
+      }
+    }
+    return [from + shift, to + shift] as [number, number];
+  });
+}
+
+/** Merged, disjoint active-math spans in SOURCE coordinates. */
+function activeMathSpans(value: string): Array<[number, number]> {
+  if (!value.includes('$') && !value.includes('\\(') && !value.includes('\\[')) return [];
+  const { effective, rewrites } = effectiveSourceOf(value);
+  const spans: Array<[number, number]> = rewrites.map(
+    (rewrite) => [rewrite.sourceStart, rewrite.sourceEnd] as [number, number],
+  );
+  // The parse is the only non-trivial cost, and dollars are its only trigger.
+  // A parse failure must never 500 the read path — fall back to the legacy
+  // spans (the renderer would fail on the same content anyway).
+  if (effective.includes('$')) {
+    try {
+      const astSpans: Array<[number, number]> = [];
+      collectMathSpans(rendererMathParser().parse(effective) as MathAstNode, astSpans);
+      for (const span of astSpans) spans.push(...mathSpanInSource(span, rewrites));
+    } catch {
+      // legacy spans above still protect explicit \(...\) / \[...\]
+    }
+  }
+  spans.sort((a, b) => a[0] - b[0] || a[1] - b[1]);
+  const merged: Array<[number, number]> = [];
+  for (const span of spans) {
+    const last = merged[merged.length - 1];
+    if (last && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
+    else merged.push([span[0], span[1]]);
+  }
+  return merged;
 }
 
 /**
- * Largest cut index ≤ limit that does not split a math span. When the raw
- * limit lands strictly inside a span, back off to the span's start; text with
- * no intersecting span cuts exactly where the old raw slice did.
+ * Largest cut index ≤ limit that does not split an active math span. When the
+ * raw limit lands strictly inside a span, back off to the span's start; text
+ * with no intersecting span cuts exactly where the old raw slice did.
  */
 function mathSafeCut(value: string, limit: number): number {
-  let i = 0;
-  while (i < value.length) {
-    const ch = value[i];
-    if ((ch === '`' || ch === '~') && value[i + 1] === ch && value[i + 2] === ch) {
-      const close = value.indexOf(ch === '`' ? '```' : '~~~', i + 3);
-      i = close === -1 ? value.length : close + 3; // unclosed fence: rest is code
-      continue;
-    }
-    if (ch === '`') {
-      let close = -1;
-      for (let j = i + 1; j < value.length && value[j] !== '\n'; j++) {
-        if (value[j] === '`') {
-          close = j;
-          break;
-        }
-      }
-      i = close === -1 ? i + 1 : close + 1;
-      continue;
-    }
-    if (ch === '$' && !isEscapedAt(value, i)) {
-      const display = value[i + 1] === '$';
-      const end = dollarMathEnd(value, i, display);
-      if (end === -1) {
-        i += display ? 2 : 1;
-        continue;
-      }
-      if (i < limit && limit < end) return i;
-      i = end;
-      continue;
-    }
-    if (ch === '\\' && (value[i + 1] === '(' || value[i + 1] === '[') && !isEscapedAt(value, i)) {
-      const end = latexMathEnd(value, i);
-      if (end === -1) {
-        i += 2;
-        continue;
-      }
-      if (i < limit && limit < end) return i;
-      i = end;
-      continue;
-    }
-    i += 1;
+  for (const [start, end] of activeMathSpans(value)) {
+    if (start < limit && limit < end) return start;
   }
   return limit;
 }
