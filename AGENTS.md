@@ -84,7 +84,8 @@ nested `AGENTS.md` / `.claude/rules`，机械约束放在 hooks。
 - `server/app.ts` 对 `/api/*` 校验 `x-internal-token`，仅
   `/api/health` 与 `/api/ready` 豁免。
 - 浏览器不持 provider key；AI 调用只经 Hono route 或 worker。
-- `core/` 只放跨科目逻辑；科目专属逻辑留在 `subjects/<name>/`。
+- `core/` 只放跨科目逻辑；科目专属逻辑留在 `subjects/<name>/`；
+  科目专属知识是学科语境数据，不是新增代码（ADR-0068）。
 - AI 动作须可追踪、可逆，并保留现有 run logging。
 - `src/server/` 子模块精确清单以 `ls src/server/*/` 的当前输出为准，不硬编码数量。
 - Next.js、Vercel、Redis/ioredis、`:3000`、`middleware.ts` 描述均为历史，
