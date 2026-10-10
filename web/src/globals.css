@@ -657,10 +657,13 @@ hr {
   color: var(--coral-ink);
 }
 
-/* YUK-1429: a solid outline, not a box-shadow, so a component's own shadow cannot cover it. */
+/* YUK-1429: two solid indicators that land on the same ring. The outline survives a component's
+   own box-shadow (.btn-primary); the box-shadow survives components that set outline: none and
+   relied on this rule's ring before. Where both apply they coincide (2px offset, 2px wide). */
 :focus-visible {
   outline: 2px solid var(--focus-ring);
   outline-offset: 2px;
+  box-shadow: var(--shadow-focus);
 }
 
 /* YUK-1429: form-control resets live in the base layer. Unlayered, they beat every Tailwind
@@ -10134,8 +10137,8 @@ button.seg-sm {
 .tool-use-card.is-rich .r-variant .vnew {
   font-family: var(--font-mono);
   font-size: var(--fs-caption);
-  color: var(--paper);
-  background: var(--coral);
+  color: var(--on-coral-fill);
+  background: var(--coral-fill);
   padding: 1px 6px;
   border-radius: var(--r-pill);
   margin-left: auto;

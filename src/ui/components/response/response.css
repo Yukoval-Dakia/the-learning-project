@@ -79,9 +79,9 @@
   color: var(--coral-ink);
 }
 .rs-opt.is-sel .rs-opt-box {
-  border-color: var(--coral);
-  background: var(--coral);
-  color: var(--paper-raised);
+  border-color: var(--coral-fill);
+  background: var(--coral-fill);
+  color: var(--on-coral-fill);
 }
 /* graded —— color IS judgment，只在 release 后出现（§6.4）。 */
 .rs-opt.is-right {
