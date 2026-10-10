@@ -56,7 +56,7 @@ AI 永不直接写学科语境。学科语境类提议是 ADR-0067 白板 findin
 | L0 派生事实 | 能力矩阵、覆盖率、带内/带外 | 无提议，投影重算，页面直显 |
 | L1 低风险可撤回 | 术语条目、错法观察笔记、大纲摘要文字、题源覆盖显示 | 自动生效 + 学科页留痕 + 一键撤回 |
 | L2 owner 确认 | 判分路由偏好、量尺指引、题型增删、题源白名单、考试风格、教学风格 | proposal + 确认 + 可撤销 |
-| L3 owner 明确批准 | 任何触碰规划文档 §9 八项承重能力语义的改动 | 未批准只降级不生效（V01-F07） |
+| L3 owner 明确批准 | 任何触碰规划文档 §9 八项承重能力语义的改动 | 未批准则保持原样、不生效并上报（与 AGENTS.md pre-AI 承重规则一致） |
 
 防自喂纪律沿用白板稿：提议的 evidence_refs 只能指向学习事实事件，不得指向另一条提议的文字；语境类提议不推给学习者，只在学科页待确认区出现（S13-A63 保留项）。语境变更生效后**回读验证**：例如 C3 改了判分偏好，回读 route-resolve 对新题型的实际解析结果确认生效——没有变化即失败，不报成功。
 
@@ -84,7 +84,7 @@ SKILL.md 正文真的进模型（S13-R01「从未通电」已 REFUTED：resolver
 
 1. **8 项 pre-AI 承重能力不削弱**（`docs/planning/2026-10-07-ts-migration-and-ui-rewrite-prep.md` §9）：FSRS 调度与选题 seam、掌握度 base 层与 calibration、统一题库与不可变 Judgment、OCR 确定性抽取、提议 + 确认 + 撤销、pedagogy 确定性 shortlist 与 today 兜底、运行日志与费用账本、housekeeping cron 语义。任何删除、替换或降级需要 owner 明确批准。
 2. **确定性判分器保持通用代码**：五个比较器（exact_option_set / exact_text / numeric_tolerance / numeric_unit_conversion / exact_matching_pairs）、answer-class 轴、判分路由解析器、出题合同闸、D17 准入合同与发题闸全部学科中立——不进语境、不 per-subject 化、不需要逐科准入（确定性比较器全科通用）。
-3. **作文与主观题判分标 uncertain**：在教师量尺校准证据（QWK 达预注册阈值）之前一律 `uncalibrated`，不冒充已校准（I01-M064）；「AI 从未在高中题目失手」是针对特定模型在高中的经验，不外推到任意学科与当前生产模型。
+3. **作文与主观题判分标 uncalibrated**：在教师量尺校准证据（QWK 达预注册阈值）之前一律 `uncalibrated`，不冒充已校准（I01-M064）；「AI 从未在高中题目失手」是针对特定模型在高中的经验，不外推到任意学科与当前生产模型。
 4. **能力矩阵是唯一声称面**；不出现第二套学科配置写者、第二条 prompt 注入通道（验收项）；语境改动影响判分必须有 journal 记录且可撤回。
 5. **迁移丢 prompt 内容是硬红线**：SKILL.md 内容在迁入叙述层并双跑验证注入等价之前不删（S13-A08 保留项）。
 6. **与 AGENTS.md 边界的关系**：现行规则「`core/` 只放跨科目逻辑；科目专属逻辑留在 `subjects/<name>/`」的本意（科目专属逻辑不进 `core/`）保留并强化；变化是**科目专属知识**（题型表、判分偏好、出题规范正文等）从 `subjects/<name>/` 代码移入学科语境数据，`subjects/<name>/` 代码收缩到映射表保留项（默认模板、zod 形状、fixtures、`_shared` 结构描述符框架）。AGENTS.md 该行随本 ADR 做最小措辞更新，见同一 PR。
