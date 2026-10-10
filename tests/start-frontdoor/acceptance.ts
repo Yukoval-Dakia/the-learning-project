@@ -11,6 +11,7 @@ const secretNames = [
   'OPENAI_API_KEY',
   'ANTHROPIC_API_KEY',
   'XIAOMI_API_KEY',
+  'XIAOMI_TOKEN_PLAN_API_KEY',
   'ZAI_CODING_CN_API_KEY',
   'OPENCODE_API_KEY',
   'OPENROUTER_API_KEY',
@@ -21,6 +22,9 @@ const secretNames = [
   'R2_ACCESS_KEY_ID',
   'R2_SECRET_ACCESS_KEY',
   'INTERNAL_TOKEN',
+  'JUDGE_PROVENANCE_SECRET',
+  'TENCENT_SECRET_ID',
+  'TENCENT_SECRET_KEY',
 ];
 // One process owns injection, build and scanning, so a scan cannot pass on arbitrary sentinels.
 assert.ok(
@@ -81,6 +85,23 @@ try {
     (await fetch(`${base}/api/auth/check`, { headers: { 'x-internal-token': token } })).status,
     200,
   );
+  // Start server functions live outside /api/*; the frontdoor must still
+  // reject tokenless calls and fence them while the epoch is not runnable.
+  for (const method of ['GET', 'POST']) {
+    assert.equal((await fetch(`${base}/_serverFn/not-shipped`, { method })).status, 401);
+  }
+  const fenced = buildHonoApp([], {
+    epochGate: async () => ({ runnable: false, reason: 'unavailable' }),
+  });
+  const fencedFrontdoor = await createFrontdoor(fenced, 'web/dist');
+  assert.equal(
+    (
+      await fencedFrontdoor(
+        new Request(`${base}/_serverFn/not-shipped`, { headers: { 'x-internal-token': token } }),
+      )
+    ).status,
+    503,
+  );
   console.log(
     JSON.stringify({
       status: 'PASS',
@@ -88,6 +109,8 @@ try {
       startFiles,
       injectedCanaries: canaries.length,
       tokenAndExemptions: 'PASS',
+      serverFunctionAuth: 401,
+      serverFunctionFenced: 503,
     }),
   );
 } finally {
