@@ -164,7 +164,7 @@
     "@tanstack/react-start": "1.168.60"
   },
   "devDependencies": {
-    "@babel/parser": "^7.29.7",
+    "@babel/parser": "^8.0.7",
     "@biomejs/biome": "^2.5.8",
     "@dbos-inc/dbos-sdk": "5.2.11",
     "@playwright/test": "1.62.1",

@@ -133,7 +133,7 @@ export function importedReferences(code: string, file: string): ImportReference[
   const ast = parse(code, {
     sourceType: 'module',
     sourceFilename: file,
-    plugins: ['typescript', 'jsx', 'dynamicImport', 'importAttributes'],
+    plugins: file.endsWith('.tsx') ? ['typescript', 'jsx'] : ['typescript'],
   });
   const references = new Map<string, DependencyKind>();
 
