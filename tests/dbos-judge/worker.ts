@@ -11,6 +11,8 @@ import { z } from 'zod';
 import { setJudgeProcessObserverForTests } from '@/capabilities/practice/server/judge-process-observer';
 import { enqueueJudgeRun } from '@/capabilities/practice/server/judge-run-dispatch';
 import { readJudgeRunPermanent } from '@/capabilities/practice/server/judge-run-observation';
+import { canonicalHash } from '@/core/migration/canonical';
+import { ModelUnitOutcome } from '@/core/schema/assessment';
 import { JudgeWorkflowInput } from '@/core/schema/event/judge-operational-events';
 import { JudgePendingAttemptPayload } from '@/core/schema/event/judge-pending-events';
 import * as schema from '@/db/schema';
@@ -78,7 +80,13 @@ async function main() {
     if (target.origin !== wire.origin) throw new Error('Fixture blocked non-observer egress');
     const response = await fetch(resource, init);
     const mode = response.headers.get('x-controlled-mode');
-    if (process.env.TLP_JUDGE_OBSERVE_TRANSPORT === '1' && mode && mode !== 'valid') {
+    if (
+      mode &&
+      ((process.env.TLP_JUDGE_OBSERVE_TRANSPORT === '1' && mode !== 'valid') ||
+        (process.env.TLP_JUDGE_OBSERVE_VALID_RESPONSE === '1' &&
+          mode === 'valid' &&
+          response.headers.get('x-controlled-unit') === process.env.TLP_JUDGE_PAUSE_UNIT))
+    ) {
       // Observe a clone; the installed Pi driver consumes the original response unchanged.
       const observation = (async () => {
         let body = '';
@@ -143,6 +151,46 @@ async function main() {
     max: 6,
     debug: (_connection, query, parameters) => {
       const labels = actions.getStore();
+      if (
+        !paused &&
+        process.env.TLP_JUDGE_PAUSE_AT === 'valid-response-before-result-save' &&
+        query.startsWith('insert into "event"') &&
+        parameters.includes('experimental:assessment_model_result')
+      ) {
+        const payload = parameters.flatMap((parameter) => {
+          if (typeof parameter !== 'string' || !parameter.startsWith('{')) return [];
+          const parsed = z
+            .object({ version: z.literal(1), input_digest: z.string(), outcome: ModelUnitOutcome })
+            .safeParse(JSON.parse(parameter));
+          return parsed.success ? [parsed.data] : [];
+        })[0];
+        if (
+          payload?.outcome.kind === 'scored' &&
+          payload.outcome.matched?.rule_id === process.env.TLP_JUDGE_PAUSE_UNIT
+        ) {
+          paused = true;
+          // postgres build() calls debug before execute() writes the SQL protocol buffer.
+          // This is the real executor's already-validated outcome, before any result INSERT.
+          report({
+            kind: 'boundary',
+            boundary: 'valid-response-before-result-save',
+            pid: process.pid,
+            workflowId: DBOS.workflowID,
+            resultId: parameters.find(
+              (parameter) =>
+                typeof parameter === 'string' && parameter.startsWith('evt_model_result_'),
+            ),
+            claimId: parameters.find(
+              (parameter) =>
+                typeof parameter === 'string' && parameter.startsWith('evt_model_claim_'),
+            ),
+            payload,
+            outcomeDigest: canonicalHash(payload.outcome),
+            at: new Date().toISOString(),
+          });
+          process.kill(process.pid, 'SIGSTOP');
+        }
+      }
       if (query.startsWith('insert into "event"'))
         for (const parameter of parameters) {
           if (parameter === 'experimental:assessment_activation')

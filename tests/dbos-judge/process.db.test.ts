@@ -13,14 +13,17 @@ import { disposeJudgeRun } from '@/capabilities/practice/server/judge-operationa
 import { readJudgeRunPermanent } from '@/capabilities/practice/server/judge-run-observation';
 import { canonicalHash } from '@/core/migration/canonical';
 import { ModelUnitOutcome } from '@/core/schema/assessment';
+import { AssessmentRuleDecision } from '@/core/schema/assessment/model-decision';
 import type { JudgeWorkflowInputT } from '@/core/schema/event/judge-operational-events';
 import {
   ai_task_runs,
+  assessment_submission,
   evaluation,
   evaluation_effective_head,
   event,
   job_events,
   material_fsrs_state,
+  question_revision,
 } from '@/db/schema';
 import { sanitizeDiagnostic } from '../dbos-review-orphan/fixture-process';
 import { resetDb, testDb } from '../helpers/db';
@@ -131,7 +134,11 @@ const server = createServer(async (req, res) => {
     if (holdUnit === unit) await new Promise<void>((resolve) => releases.add(resolve));
     const mode = unit === 'elimination' ? (failureMode ?? 'valid') : 'valid';
     const completion = controlledCompletion(unit, slot, mode);
-    res.writeHead(200, { 'content-type': 'text/event-stream', 'x-controlled-mode': mode });
+    res.writeHead(200, {
+      'content-type': 'text/event-stream',
+      'x-controlled-mode': mode,
+      'x-controlled-unit': unit,
+    });
     if (mode === 'partial-break') {
       // The test waits for the child to read this frame before breaking this owned socket.
       const breakTransport = () => res.destroy();
@@ -152,6 +159,7 @@ function worker(
     unit?: string;
     recover?: boolean;
     observeTransport?: boolean;
+    observeValidResponse?: boolean;
     reconcile?: { scheduledAt: Date; authorizationAt: Date };
   } = {},
 ) {
@@ -168,6 +176,7 @@ function worker(
       TLP_JUDGE_PAUSE_UNIT: options.unit,
       TLP_JUDGE_RECOVER: options.recover ? '1' : '0',
       TLP_JUDGE_OBSERVE_TRANSPORT: options.observeTransport ? '1' : '0',
+      TLP_JUDGE_OBSERVE_VALID_RESPONSE: options.observeValidResponse ? '1' : '0',
       TLP_JUDGE_RECONCILE: options.reconcile ? JSON.stringify(options.reconcile) : undefined,
       AI_PROVIDER_OVERRIDE: 'openai',
       AI_PROVIDER_MODEL: 'gpt-4.1-mini',
@@ -319,13 +328,17 @@ afterAll(async () => {
   const paths = [
     'tests/dbos-judge/worker.ts',
     'tests/dbos-judge/process.db.test.ts',
+    'tests/dbos-judge/support.ts',
     '.cache/yuk1356-judge-worker.cjs',
     'src/server/durable/judge-worker.ts',
     'src/capabilities/practice/server/judge/evaluate-submission.ts',
     'src/capabilities/practice/server/judge/recorded-model-executor.ts',
+    'src/server/assessment/pi-model-executor.ts',
+    'src/kernel/events/events.ts',
     'pnpm-lock.yaml',
     'node_modules/@dbos-inc/dbos-sdk/package.json',
     'node_modules/@earendil-works/pi-ai/package.json',
+    'node_modules/postgres/src/connection.js',
   ];
   await writeFile(
     '.cache/yuk1356-judge-process-evidence.json',
@@ -416,6 +429,264 @@ it('saved first, second wire unknown, third unclaimed survives SIGKILL and actua
     (r) => r.action === 'experimental:assessment_model_result',
   );
   expect(savedAfterReopen).toEqual(expect.arrayContaining(savedBeforeKill));
+}, 90000);
+it('complete valid response validated before result save survives SIGKILL and same-workflow reopen without repurchase', async () => {
+  const f = await accepted();
+  const originals = await judgeEvidence(testDb(), f.runId);
+  const submissions = await testDb().select().from(assessment_submission);
+  const revisions = await testDb().select().from(question_revision);
+  const first = worker(f.input, {
+    pause: 'valid-response-before-result-save',
+    unit: 'elimination',
+    observeValidResponse: true,
+  });
+  let second: ReturnType<typeof worker> | undefined;
+  try {
+    expect(await first.wait('ready')).toMatchObject({
+      workflowId: f.input.delivery_id,
+      node: process.version,
+    });
+    const boundary = z
+      .object({
+        kind: z.literal('boundary'),
+        boundary: z.literal('valid-response-before-result-save'),
+        pid: z.number(),
+        workflowId: z.string(),
+        resultId: z.string(),
+        claimId: z.string(),
+        payload: z.object({
+          version: z.literal(1),
+          input_digest: z.string(),
+          outcome: ModelUnitOutcome,
+        }),
+        outcomeDigest: z.string(),
+      })
+      .parse(await first.wait('boundary'));
+    expect(boundary.pid).toBe(first.child.pid);
+    expect(boundary.workflowId).toBe(f.input.delivery_id);
+    let stoppedState = '';
+    await expect
+      .poll(
+        async () => {
+          stoppedState = (
+            await execFileAsync('ps', ['-o', 'stat=', '-p', String(boundary.pid)])
+          ).stdout.trim();
+          return stoppedState.startsWith('T');
+        },
+        { timeout: 5000, interval: 25 },
+      )
+      .toBe(true);
+    const slot = f.request.response_set.entries[0]?.slot_id;
+    if (!slot) throw new Error('Controlled original slot missing');
+    const completion = controlledCompletion('elimination', slot, 'valid');
+    const response = await first.wait('transport-complete');
+    expect(response).toMatchObject({
+      mode: 'valid',
+      status: 200,
+      body: completion.frames.join(''),
+    });
+    const decision = AssessmentRuleDecision.parse(JSON.parse(completion.content));
+    if (decision.kind !== 'rule') throw new Error('Controlled response must be a validated rule');
+    expect(decision).toMatchObject({ kind: 'rule', rule_id: 'elimination', points_awarded: 2 });
+    const before = await judgeEvidence(testDb(), f.runId);
+    const claims = before.filter((r) => r.action === 'experimental:assessment_model_claim');
+    const results = before.filter((r) => r.action === 'experimental:assessment_model_result');
+    expect(claims).toHaveLength(2);
+    expect(results).toHaveLength(1);
+    const taskIds: string[] = [];
+    for (const [index, unit] of ['equations', 'elimination'].entries()) {
+      const scoringUnit = f.contract.scoring_basis.units[index];
+      const claim = claims.find((r) => r.payload.scoring_unit_id === scoringUnit?.scoring_unit_id);
+      if (!claim || !scoringUnit) throw new Error(`Missing permanent claim for ${unit}`);
+      const payload = z
+        .object({
+          planned_task_run_id: z.string(),
+          submission_id: z.string(),
+          attempt: z.number(),
+          input_digest: z.string().regex(/^[a-f0-9]{64}$/),
+        })
+        .parse(claim.payload);
+      const operation = canonicalHash({
+        group: f.request.evaluation_group_id,
+        submission: payload.submission_id,
+        attempt: payload.attempt,
+        unit: scoringUnit.scoring_unit_id,
+      });
+      expect(claim.id).toBe(`evt_model_claim_${operation}`);
+      expect(payload.planned_task_run_id).toBe(`assessment_${operation}`);
+      expect(claim.payload.reserved_cost_usd_micros).toBe(1000);
+      taskIds.push(payload.planned_task_run_id);
+      const request = z
+        .object({
+          model: z.literal('gpt-4.1-mini'),
+          stream: z.literal(true),
+          messages: z.array(z.object({ role: z.string(), content: z.unknown() })),
+        })
+        .parse(wire[index]?.body);
+      const user = request.messages.findLast((message) => message.role === 'user');
+      const content = z
+        .union([z.string(), z.array(z.object({ type: z.literal('text'), text: z.string() }))])
+        .parse(user?.content);
+      const text =
+        typeof content === 'string' ? content : content.map((block) => block.text).join('\n');
+      expect(JSON.parse(text)).toMatchObject({
+        submission_id: payload.submission_id,
+        evaluation_group_id: f.request.evaluation_group_id,
+        scoring_unit: scoringUnit,
+        question_parts: f.contract.structure.parts,
+        response_slots: f.contract.response_spec.slots,
+        slot_responses: f.request.response_set.entries,
+        group_evidence: [],
+        materials: f.contract.structure.materials,
+      });
+      expect(wire[index]?.bodyDigest).toBe(canonicalHash(wire[index]?.body));
+      expect(transport[index]?.bodyDigest).toBe(wire[index]?.bodyDigest);
+      if (index === 0) {
+        expect(results[0]).toMatchObject({
+          id: `evt_model_result_${operation}`,
+          caused_by_event_id: claim.id,
+          payload: {
+            input_digest: payload.input_digest,
+            outcome: { kind: 'scored', points_awarded: 1, run_refs: [payload.planned_task_run_id] },
+          },
+        });
+      } else {
+        expect(boundary).toMatchObject({
+          resultId: `evt_model_result_${operation}`,
+          claimId: claim.id,
+          payload: {
+            input_digest: payload.input_digest,
+            outcome: {
+              kind: 'scored',
+              points_awarded: 2,
+              matched: { rule_id: 'elimination', option_ids: [] },
+              confidence: decision.confidence,
+              feedback_md: decision.feedback_md,
+              evidence_citations: decision.evidence_citations,
+              run_refs: [payload.planned_task_run_id],
+            },
+          },
+        });
+        expect(boundary.outcomeDigest).toBe(canonicalHash(boundary.payload.outcome));
+      }
+    }
+    const tasksBefore = await testDb().select().from(ai_task_runs).orderBy(ai_task_runs.id);
+    expect(tasksBefore).toHaveLength(2);
+    for (const taskId of taskIds)
+      expect(tasksBefore.find((task) => task.id === taskId)).toMatchObject({
+        provider: 'openai',
+        model: 'gpt-4.1-mini',
+        status: 'success',
+        finish_reason: 'end_turn',
+        error_message: null,
+      });
+    expect(wire.map((w) => w.unit)).toEqual(['equations', 'elimination']);
+    expect(transport.map((t) => [t.method, t.route, t.error])).toEqual([
+      ['POST', 'chat-completions', undefined],
+      ['POST', 'chat-completions', undefined],
+    ]);
+    expect(await testDb().select().from(event).where(eq(event.id, boundary.resultId))).toHaveLength(
+      0,
+    );
+    expect(await testDb().select().from(evaluation)).toHaveLength(0);
+    const headsBefore = await testDb().select().from(evaluation_effective_head);
+    expect(headsBefore).toMatchObject([{ effective_evaluation_id: null, generation: 0 }]);
+    expect((await readJudgeRunPermanent(testDb(), f.runId)).kind).toBe('pending');
+    await capture(f.runId, 'valid-response:validated-before-result-save');
+    evidence.push({
+      label: 'valid-response:exact-validation-and-frozen-input',
+      runId: f.runId,
+      input: f.input,
+      boundary,
+      stoppedState,
+      response,
+      responseSha256: createHash('sha256').update(completion.frames.join('')).digest('hex'),
+      tasksBefore,
+      submissions,
+      revisions,
+    });
+    await first.kill();
+    // Recheck after real process death, before starting any recovery owner.
+    expect(await testDb().select().from(event).where(eq(event.id, boundary.resultId))).toHaveLength(
+      0,
+    );
+    expect(await judgeEvidence(testDb(), f.runId)).toEqual(before);
+    await capture(f.runId, 'valid-response:after-sigkill-before-reopen');
+    second = worker(f.input, { recover: true });
+    expect(await second.wait('ready')).toMatchObject({ workflowId: f.input.delivery_id });
+    const done = await second.wait('done');
+    expect(done.status).toMatchObject({ workflowID: f.input.delivery_id, status: 'SUCCESS' });
+    await second.stop();
+    const after = await judgeEvidence(testDb(), f.runId);
+    expect(after).toEqual(expect.arrayContaining(originals));
+    expect(after.filter((r) => r.action === 'experimental:assessment_model_claim')).toEqual(claims);
+    expect(after.filter((r) => r.action === 'experimental:assessment_model_result')).toEqual(
+      results,
+    );
+    expect(await testDb().select().from(ai_task_runs).orderBy(ai_task_runs.id)).toEqual(
+      tasksBefore,
+    );
+    expect(await testDb().select().from(assessment_submission)).toEqual(submissions);
+    expect(await testDb().select().from(question_revision)).toEqual(revisions);
+    expect(wire.map((w) => w.unit)).toEqual(['equations', 'elimination']);
+    expect(transport).toHaveLength(2);
+    const candidates = await testDb().select().from(evaluation);
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.unit_results.map((r) => r.scoring_unit_id)).toEqual(
+      f.contract.scoring_basis.units.map((unit) => unit.scoring_unit_id),
+    );
+    expect(candidates[0]?.unit_results).toMatchObject([
+      { status: 'scored', points_awarded: 1 },
+      {
+        status: 'pending',
+        pending: {
+          reason: 'infra_failure',
+          retryable: false,
+          detail:
+            'execution was claimed but its result is unavailable; automatic redispatch is forbidden',
+        },
+      },
+      {
+        status: 'pending',
+        pending: {
+          reason: 'infra_failure',
+          retryable: false,
+          detail: 'a prior unit has an unknown or held result; further fresh claims are forbidden',
+        },
+      },
+    ]);
+    for (const held of candidates[0]?.unit_results.slice(1) ?? []) {
+      expect(held).not.toHaveProperty('points_awarded');
+      expect(held).not.toHaveProperty('matched');
+    }
+    expect(await testDb().select().from(evaluation_effective_head)).toEqual(headsBefore);
+    expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
+    expect(await readJudgeRunPermanent(testDb(), f.runId)).toMatchObject({
+      kind: 'resolved',
+      result: {
+        status: 'review_required',
+        assessment: { candidate_id: candidates[0]?.evaluation_id },
+      },
+    });
+    await capture(f.runId, 'valid-response:after-same-workflow-reopen');
+  } finally {
+    for (const running of [first, second]) {
+      if (!running) continue;
+      if (running.child.exitCode === null && running.child.signalCode === null)
+        await running.kill();
+      else await running.closed();
+    }
+    const state = await readJudgeRunPermanent(testDb(), f.runId);
+    if (state.kind === 'pending' || (state.kind === 'unmapped' && state.pending)) {
+      await capture(f.runId, 'valid-response:failure-before-disposal');
+      await disposeJudgeRun(testDb(), f.runId, {
+        reason: 'explicit_disposal',
+        actorRef: 'test:valid-response-crash-cleanup',
+        evidenceRefs: [f.input.pending_id],
+        evidenceDigest: canonicalHash({ cleanup: true }),
+      });
+    }
+  }
 }, 90000);
 it.each(failureModes)(
   'controlled transport failure %s preserves first score and held second across SIGKILL/reopen without retry',
