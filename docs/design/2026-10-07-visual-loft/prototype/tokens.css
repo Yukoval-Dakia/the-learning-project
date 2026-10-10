@@ -1,0 +1,211 @@
+/* ============================================================
+   Loom 2 · candidate tokens (YUK-1353 loft)
+   ------------------------------------------------------------
+   Prototype-only. Derived from docs/design/loom-refresh/project/tokens.css
+   and reshaped to the prep-plan §6.6 baseline: 6 type sizes, 4/8 spacing,
+   11 warm neutrals + one coral accent, 3 radii, motion in tokens.
+   Components must reference these names only — no raw values.
+   ============================================================ */
+
+@font-face {
+  font-family: "Source Serif 4";
+  src: url("../../loom-refresh/project/fonts/SourceSerif4-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-display: swap;
+}
+
+:root,
+[data-theme="light"] {
+  color-scheme: light;
+
+  /* Neutral ramp · 11 warm steps (50 = page paper, 900 = ink) */
+  --gray-50: #faf9f5;
+  --gray-100: #f4f2ec;
+  --gray-150: #ece9e1;
+  --gray-200: #e3dfd5;
+  --gray-300: #cdc8bc;
+  --gray-400: #a6a194;
+  --gray-500: #6b675f;
+  --gray-600: #5e5b54;
+  --gray-700: #45433e;
+  --gray-800: #2e2d2a;
+  --gray-900: #1f1e1d;
+
+  /* Coral · the single accent */
+  --coral-100: #faede5;
+  --coral-500: #d97757;
+  --coral-600: #b04c2c;
+  --coral-800: #7a3218;
+
+  /* Status · meaning only, never decoration */
+  --green-500: #3f7a52;
+  --green-100: #e5eee5;
+  --amber-500: #8f6210;
+  --amber-100: #f6eedb;
+  --red-500: #b5341b;
+  --red-100: #f7e3dc;
+
+  /* Semantic surfaces */
+  --bg: var(--gray-50);
+  --bg-raised: #ffffff;
+  --bg-sunk: var(--gray-100);
+  --bg-hover: var(--gray-150);
+  --bg-inverse: var(--gray-900);
+  --line: var(--gray-200);
+  --line-strong: var(--gray-300);
+
+  /* Semantic text (all ≥ 4.5:1 on --bg except --text-disabled) */
+  --text: var(--gray-900);
+  --text-2: var(--gray-700);
+  --text-3: var(--gray-600);
+  --text-4: var(--gray-500);
+  --text-disabled: var(--gray-400);
+  --text-inverse: var(--gray-50);
+  --text-on-accent: #ffffff;
+
+  --accent: var(--coral-500);
+  --accent-strong: var(--coral-600);
+  --accent-soft: var(--coral-100);
+  --accent-ink: var(--coral-800);
+
+  --positive: var(--green-500);
+  --positive-soft: var(--green-100);
+  --caution: var(--amber-500);
+  --caution-soft: var(--amber-100);
+  --critical: var(--red-500);
+  --critical-soft: var(--red-100);
+
+  /* Elevation · only floating layers get a shadow */
+  --shadow-float: 0 1px 2px rgb(40 32 24 / 0.06), 0 16px 40px -12px rgb(40 32 24 / 0.22);
+  --ring-raised: 0 0 0 1px rgb(40 32 24 / 0.06), 0 1px 2px rgb(40 32 24 / 0.04);
+  --scrim: rgb(31 30 29 / 0.28);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
+
+  --gray-50: #171614;
+  --gray-100: #1f1e1b;
+  --gray-150: #282724;
+  --gray-200: #312f2c;
+  --gray-300: #403e3a;
+  --gray-400: #5c5953;
+  --gray-500: #959188;
+  --gray-600: #aba79e;
+  --gray-700: #c8c4bb;
+  --gray-800: #dedad2;
+  --gray-900: #f2efe8;
+
+  --coral-100: #3a2419;
+  --coral-500: #e8916e;
+  --coral-600: #f0a283;
+  --coral-800: #f5c8b0;
+
+  --green-500: #80b590;
+  --green-100: #1f2c23;
+  --amber-500: #d9aa52;
+  --amber-100: #33291a;
+  --red-500: #ec876f;
+  --red-100: #3a201a;
+
+  --bg: var(--gray-50);
+  --bg-raised: var(--gray-100);
+  --bg-sunk: #121110;
+  --bg-hover: var(--gray-150);
+  --bg-inverse: var(--gray-900);
+  --text-on-accent: var(--gray-50);
+
+  --shadow-float: 0 1px 2px rgb(0 0 0 / 0.4), 0 20px 48px -12px rgb(0 0 0 / 0.6);
+  --ring-raised: 0 0 0 1px rgb(255 250 240 / 0.06);
+  --scrim: rgb(0 0 0 / 0.5);
+}
+
+:root {
+  /* Type · 6 sizes (nothing below 13px ships — YUK-340) */
+  --fs-1: 13px; /* meta, chips, kbd */
+  --fs-2: 15px; /* UI body */
+  --fs-3: 17px; /* reading body, stems */
+  --fs-4: 20px; /* section / card titles */
+  --fs-5: 26px; /* page titles, narrative lead */
+  --fs-6: 34px; /* display, once per screen at most */
+
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+
+  --lh-tight: 1.3;
+  --lh-ui: 1.5;
+  --lh-prose: 1.75;
+
+  --ls-tight: -0.012em;
+  --ls-wide: 0.04em;
+
+  --font-sans: "PingFang SC", "MiSans", "Noto Sans SC", "Hiragino Sans GB", -apple-system,
+    BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+  --font-serif: "Source Serif 4", "Songti SC", "Noto Serif SC", "STSong", ui-serif, serif;
+  --font-mono: "JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace;
+  --font-hand: "Kaiti SC", "STKaiti", "KaiTi", var(--font-serif);
+
+  /* Space · 4/8 grid */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 24px;
+  --sp-6: 32px;
+  --sp-7: 48px;
+  --sp-8: 64px;
+
+  /* Radius · 3 tiers */
+  --r-1: 8px; /* controls: buttons, inputs, chips */
+  --r-2: 14px; /* surfaces: cards, panes, sheets, palette */
+  --r-3: 999px; /* pills */
+
+  /* Control sizes */
+  --h-control: 36px;
+  --h-control-touch: 44px;
+  --icon: 18px;
+  --hairline: 1px;
+
+  /* Motion · feedback < 100ms, movement 150–250ms, transform/opacity only */
+  --dur-feedback: 90ms;
+  --dur-1: 160ms;
+  --dur-2: 220ms;
+  --ease-out: cubic-bezier(0.2, 0.8, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --ease-move: cubic-bezier(0.3, 0, 0.1, 1);
+  --rise: 6px; /* enter offset */
+
+  /* Layout */
+  --w-prose: 680px;
+  --w-page: 1120px;
+  --w-wide: 1360px;
+  --w-rail: 232px;
+  --w-margin: 300px;
+  --w-stem: 360px;
+  --w-pane-side: 360px;
+  --h-stream: 340px; /* reserved height for a streaming explanation */
+  --h-topbar: 56px;
+  --h-tabbar: 64px;
+
+  /* Stacking · named layers instead of ad-hoc numbers */
+  --z-sticky: 10;
+  --z-tabs: 15;
+  --z-header: 20;
+  --z-sheet: 25;
+  --z-dock: 30;
+  --z-overlay: 50;
+  --z-toast: 60;
+
+  /* Breakpoints (documented constants; CSS media queries cannot read custom properties,
+     so production exposes them as shared TS constants / custom media):
+     phone ≤ 720 · tablet 721–1023 · laptop 1024–1359 · wide ≥ 1360 */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-1: 1ms;
+    --dur-2: 1ms;
+    --rise: 0px;
+  }
+}
