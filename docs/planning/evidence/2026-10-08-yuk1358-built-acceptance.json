@@ -1,0 +1,146 @@
+{
+  "candidate": "1af5a8fc8d2d6ca1976d1981d429152608ae2836",
+  "integrated_main": "a6faded0729fd77789a05d4a07a706d5ff6b612a",
+  "node": "v24.19.0",
+  "source_sha256": "874e6cbc47c0af448c300141c182ce35a63e1901355ad69727139690e39a4d77",
+  "build_sha256": "e456a0dfa4f99bdcfac0cc37f6a53b5d5a94838c8e3b105ec2b2075a98278fb8",
+  "build_file_count": 797,
+  "review": "R2 NONE at053e9b511; no later slice production change; six usability fixture files reviewed by parent; no R3",
+  "checks": [
+    {
+      "name": "fixture-unit",
+      "exit": 0,
+      "path": "/tmp/yuk1358-ci-repair-parent/fixture-unit.log",
+      "sha256": "e7219fe8e4d7d87123e6aca925f0bb7c87d50149cf599fa2a15922295dd80123"
+    },
+    {
+      "name": "unit",
+      "exit": 0,
+      "path": "/tmp/yuk1358-ci-repair-parent/unit.log",
+      "sha256": "7522e15edf9103dce833f18d3c3414dcfc9464068f39a9c45a4d22ccb9d9de3c"
+    },
+    {
+      "name": "typecheck",
+      "exit": 0,
+      "path": "/tmp/yuk1358-ci-repair-parent/typecheck.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "name": "lint",
+      "exit": 0,
+      "path": "/tmp/yuk1358-ci-repair-parent/lint.log",
+      "sha256": "e0e49226c193cf50a8c23543f558b728b5a6f27283ef1d944f8c950c86c9b5de"
+    },
+    {
+      "name": "build",
+      "exit": 0,
+      "path": "/tmp/yuk1358-ci-repair-parent/build.log",
+      "sha256": "a1ce40b4a94136fb17ae3726b53166b641c2a3771b41743d75174309af94bce3"
+    }
+  ],
+  "scoped_unit": {
+    "files": 40,
+    "tests": 329
+  },
+  "fixture_protocol_tests": 7,
+  "usability": {
+    "tests": 36,
+    "exit": 0,
+    "duration": "3.7m",
+    "command": "USABILITY_BASE_URL=http://127.0.0.1:18952 pnpm exec playwright test --config playwright.usability.config.ts",
+    "kind": "built assets plus synthetic API/RPC fixtures; distinct from real DB/browser evidence",
+    "log_sha256": "26e716d4d66e2a1e55242f1d18621a12afe30de2b903d84c26437aca76e646df"
+  },
+  "built_rpc": {
+    "status": "built-rpc-accepted",
+    "head": "1af5a8fc8d2d6ca1976d1981d429152608ae2836",
+    "source_sha256": "874e6cbc47c0af448c300141c182ce35a63e1901355ad69727139690e39a4d77",
+    "build_sha256": "e456a0dfa4f99bdcfac0cc37f6a53b5d5a94838c8e3b105ec2b2075a98278fb8",
+    "read_only_all_public_tables": true,
+    "decision_delta": {
+      "public.event": 1
+    },
+    "undo_delta": {
+      "public.artifact": 0,
+      "public.event": 1
+    },
+    "immutable_decision_event": "tcjqf04jyybxcqgskgom4l58",
+    "framework_transport": "installed serverFnFetcher; built resolver IDs; framework Seroval encoding/decoding",
+    "queue_wake": "real post-commit path attempted; app role denies schema creation; pgboss remains absent; no scheduler started",
+    "browser": "pending parent T3 acceptance",
+    "notes_version_conflict": "not exercised; requires a concurrent CAS race"
+  },
+  "browser": {
+    "tool": "T3 collaborative preview",
+    "root_redirect": "/ -> /today (307)",
+    "token_gate": "actual synthetic token via normal form; localStorage token removed after acceptance",
+    "routes": ["/today", "/inbox"],
+    "provenance": "/_build hashed assets and actual /_serverFn requests observed",
+    "reads_unchanged_tables": 88,
+    "actions": ["dismiss y1358-decision-0500 via Inbox", "undo y1358-note-browser-apply via Today"],
+    "effects": {
+      "new_events": 2,
+      "changed_note": "y1358-note-membership",
+      "artifact_count_delta": 0,
+      "version": "1 -> 2",
+      "other_relations_unchanged": 86
+    },
+    "reload": "499 pending and two undone markers; all88 relations unchanged after actions",
+    "labels": "visible knowledge names and short-ID fallback present; hidden synthetic name absent",
+    "cost": "USD0.875 plus unknown and CNY0.25 separately displayed; no merged currency total",
+    "unresolved_observations": [
+      "After dismiss, Inbox count499 but shared sidebar retained500 until document reload; source existing onResolve only updates local resolved state. Existing UI continuation, not claimed fixed.",
+      "Google Fonts import blocked by retained Hono CSP; fallback rendering works. Existing stylesheet import; no CSP relaxation."
+    ]
+  },
+  "runtime": {
+    "at": "2026-10-08T12:41:52.939399+00:00",
+    "owner": {
+      "owner": "57961995-70c3-4121-a9dd-97d90471be1a",
+      "issue": "YUK-1358",
+      "phase": "isolated-built-start-acceptance",
+      "token": "27377b37-5bc0-4e7d-b69f-ddfddb43de5b",
+      "candidate": "1af5a8fc8d2d6ca1976d1981d429152608ae2836",
+      "createdAt": "2026-10-08T12:35:14.121456+00:00"
+    },
+    "original_containers_unchanged": true,
+    "release_sha256": "d2b8a2392c082072d084b2fcf8006939e6d8b5a5fc1ff8f49c53cd8505377d34",
+    "cleanup": {
+      "stopped_only_owned_resources": true,
+      "container_absent": "ef54041a3e3c82c63bdb9ce79bb7e7405824302056290b7a094541b9a465f437",
+      "loopback_18952_free": true
+    },
+    "post_action_reload_all_tables_unchanged": true,
+    "lock_released": true
+  },
+  "paid_calls": 0,
+  "workers_started": 0,
+  "replayed_jobs": 0,
+  "deployment": false,
+  "remaining": [
+    "whole W1 and remaining descendant HTTP consumers",
+    "conjecture actual command variants and note concurrent CAS race beyond existing scoped DB/unit evidence",
+    "canonical production boot/release/SSE and full SPA retirement",
+    "successful queue wake/worker delivery/recovery; acceptance app role intentionally cannot start boss"
+  ],
+  "evidence_root": "/Volumes/YukovalSBak/yukoval-projects/tlp-local-prod-20260907.sjUaCU/yuk1358-start-1af5a8fc8/evidence",
+  "evidence_manifest_sha256": "cb3267a6ca0197a6e08e4c97c5132c2341da715b89f59f62b1bcfc4dc639d56d",
+  "source_files": {
+    "server/start/workbench-client.ts": "d18416a7b408c1e1bcf0111eb595489665a5580bc5b1699371bbc40b9576388e",
+    "server/start/workbench-client.unit.test.ts": "6a4a0a898a2db487699f9a29abbadb1098c95550c91821c4273fd5195020cb5b",
+    "server/start/workbench-function.ts": "bf85b772cf2e3e63128eb87acec4f06265ed4ed7bc719e02f372ae6244c3ff9d",
+    "server/start/workbench-read.ts": "62788f75789bc5bf8e9a7db2ce06bf98b79dd50eade7c019fb230ba1a0207b06",
+    "server/start/workbench-read.unit.test.ts": "6b2fefb1813d9d73a9c5844dab880b01ef462850e292a5cbde7a313cc2432a2a",
+    "server/start/workbench-reader.db.test.ts": "a1ab499b897f18a1d864a5fe7e4accc35771140badf6e084bbfc3b5c62e8a854",
+    "server/start/workbench-reader.ts": "18b429d5a3ffc322e834700b3a59a0e4366786f42207f23a65b32576a7183e75",
+    "server/start/workbench-shell.tsx": "9d3f443e70f4ed5c76f61e9abfb9fcad25c6026f12ebe3e953b5eb0a2da02e2a"
+  },
+  "fixture_files": {
+    "tests/usability/api-fixtures.ts": "b65f452d133eca1724dd00b932617b6930fa94d1fcddd13aad04e00f05ea79b9",
+    "tests/usability/built-assets.ts": "8d8650705d11f4f1921598d12055c8fa03114aa21f314b331852fcf3a68bd6f5",
+    "tests/usability/shipped-container.spec.ts": "8514a7870523b7851cbacba5f566bd45276fca62287ef22dc5187323546fb1a1",
+    "tests/usability/container-preflight.ts": "bd95967835669e4e485aaeb139bff6bd5f6a68ed36d60f5d123bd9b66ee0a5cf",
+    "tests/usability/start-rpc-fixtures.ts": "ad4d065a6fc8fb80f22ee8575324bed6af70bda6f39a4ea3d57d5463dc9f0f65",
+    "tests/usability/start-rpc-fixtures.unit.spec.ts": "ef1f3c0ca657e3c17658023c3cc12dded551d00fed7fed202451ddcc850f1c26"
+  }
+}

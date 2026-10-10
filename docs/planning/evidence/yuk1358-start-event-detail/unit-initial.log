@@ -1,0 +1,42 @@
+(!) Your Vite config uses features that are unsupported by `configLoader: 'native'`, which is planned to become the default in a future major version of Vite:
+  - import "./vitest.shared" without a file extension (vitest.unit.config.ts:2:74). Add the file extension
+Set `VITE_CONFIG_NATIVE_IGNORE_WARNING=true` to suppress this warning.
+
+ RUN  v4.1.10 /Volumes/YukovalSBak/yukoval-projects/tlp-yuk1352-start-frontdoor
+
+ ❯ web/src/routes/EventDetailPage.start.unit.test.tsx (13 tests | 3 failed) 577ms
+     × keeps the existing retract control, trims reasons, guards busy state and invalidates only its event 93ms
+     × keeps the existing mark_wrong control, trims reasons, guards busy state and invalidates only its event 78ms
+     × keeps the existing restore control, trims reasons, guards busy state and invalidates only its event 69ms
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 3 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  web/src/routes/EventDetailPage.start.unit.test.tsx > original event page through the injected Start transport > keeps the existing retract control, trims reasons, guards busy state and invalidates only its event
+ FAIL  web/src/routes/EventDetailPage.start.unit.test.tsx > original event page through the injected Start transport > keeps the existing mark_wrong control, trims reasons, guards busy state and invalidates only its event
+ FAIL  web/src/routes/EventDetailPage.start.unit.test.tsx > original event page through the injected Start transport > keeps the existing restore control, trims reasons, guards busy state and invalidates only its event
+AssertionError: expected undefined to deeply equal { untouched: true }
+
+- Expected:
+{
+  "untouched": true,
+}
+
++ Received:
+undefined
+
+ ❯ web/src/routes/EventDetailPage.start.unit.test.tsx:148:67
+    146|       await screen.findByText('纠正已记录。');
+    147|       await waitFor(() => expect(rpc.getStartEventDetail).toHaveBeenCa…
+    148|       expect(view.qc.getQueryData(['event-detail', 'unrelated'])).toEq…
+       |                                                                   ^
+    149|       expect(screen.getByRole('textbox', { name: '说明原因' })).toHaveProp…
+    150|       expect(rpc.postStartEventCorrection).toHaveBeenCalledOnce();
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/3]⎯
+
+
+ Test Files  1 failed | 8 passed (9)
+      Tests  3 failed | 107 passed (110)
+   Start at  04:47:18
+   Duration  2.34s (transform 3.02s, setup 0ms, import 6.39s, tests 2.86s, environment 3.53s)
+

@@ -1,10 +1,56 @@
 # YUK-1359 旧路径退出与文档一致性调查
 
-状态：首轮调查及父级源码抽查完成；这是退出工作的输入，不是完整逐族迁移台账，未删除代码、未完成迁移。源码基线为 main `26f1015810cc3d902f6229b615d9630f05982eef`；通过 `git show` 读取，未切换或修改其他实施工作树。主线线程 57961995 负责整体集成；本线程负责只读消费者调查与此文档，1352/1355/1356 的实现归原 writer。
+状态：首轮调查及父级源码抽查完成；这是退出工作的输入，不是完整逐族迁移台账，未删除代码、未完成迁移。源码基线为 main `26f1015810cc3d902f6229b615d9630f05982eef`；通过 `git show` 读取，未切换或修改其他实施工作树。该历史阶段由57961995承担集成，本线程维护消费者调查。当前本线程7631承担用户整个迁移的协调交付责任；57961995承担Start集成/发布，具体writer与文件ownership按各lane交接执行。
 
 Owner 的后续指令是先完成整个非 UI 迁移，UI 暂缓，再完成 Linear 残留功能；见[当前优先级](2026-10-07-non-ui-migration-priority.md)。保留现有 UI 行为不等于永久保留旧 SPA 运行路径。最终删除必须以实际消费者切换和行为证据为条件。
 
-## 准备计划中的冲突及精确修订建议
+## 当前退出状态，2026-10-09 JST
+
+本节基线为已合入的 main `6212a4560c68c294245dc3f3e10e4f774c6ff6f8`。父重新核对固定 Git 对象：14份任务提取输入与原53f05收据逐字节一致，18份路由输入与main6212收据一致。下文历史行号和验收仍只适用于各自版本。1355、1356、1358、1359均未完成；源码合并不代表部署或旧消费者退出。
+
+| 范围 | 已有证据 | 尚需完成 |
+| --- | --- | --- |
+| Start 前门与 `/mistakes` | PR1592已合入；RPC、图片、鉴权、筛选及重试见[验收索引](evidence/2026-10-08-yuk1352-start-runtime.json)。 | canonical boot、完整消费者与旧入口退出。完整导航曾由practice初始化增加一行，不能将后续错题读取的86表无变扩大为整个导航无写。 |
+| `/today`、`/inbox` 与根跳转 | PR1609已合入；主读取、费用、decision/undo及真实验收见[工作台交接](2026-10-08-yuk1358-start-workbench-handoff.md)。 | PR1622已合入main6212，Today20与board50实际Start读取、26RPC和浏览器验收见[父验收](2026-10-09-yuk1358-start-agent-notes-parent.md)。嵌套消费者仍有退出义务。TeachingBrief等按[W1清单](2026-10-08-yuk1359-w1-consumers.md)继续退出。 |
+| 五个管理只读页 | PR1615已合入；fc021的96RPC、五页浏览器、88表无写及后续整合证据见[管理页交接](2026-10-08-yuk1358-start-admin-handoff.md)。 | 完整boot与部署；各revision证据不能拼成一次运行验收。 |
+| 配置与科目三个页面 | PR1620已合main10df，复用1389/1390/1391公共操作。18操作、122RPC、35窗口和三页浏览器证据见[父验收](2026-10-09-yuk1358-start-admin-controls-parent.md)。 | canonical自动启动与全SPA退出仍未完成。配置提交成功但刷新失败不得重写；catalog/journal只读首屏与RPC完整分页的证据分开保留。 |
+| W2/W3/W4与practice | 1380事件详情/纠错、1392 board公共读取已合入；1356共享review操作及真实Pi原件效果已有证据。 | 15个页面仍无显式Start入口；领域出口不等于消费者完成。practice实际提交、判分DBOS及共享子树继续验收。 |
+| 构建与镜像入口 | `server/start/routes/$.ts`调用legacySpa；frontdoor、package build及Dockerfile仍服务旧web产物。 | 全部实际消费者迁移后统一dev/build/镜像入口，再删旧挂载。保留UI使用的组件、样式不能按目录名删除。 |
+| 持久任务恢复 | main的prune_job_events与review orphan均已声明DBOS backend；PR1621已合入e1f2。故障/真实cron与独立R1证据见[1393父验收](2026-10-09-yuk1393-parent-acceptance.md)。 | 最终逐族运行切换、旧义务分类排空、回退和唯一恢复owner。默认phase仍pg-boss，声明DBOS不代表运行切换。 |
+
+[路由收据](evidence/2026-10-09-yuk1359-route-coverage-main6212.json)逐项对应UI_SURFACES的28项：12页面加根跳转，共13项有显式Start路由；15页面仍走旧SPA回落。这是入口覆盖，不是完成率，不证明页面的嵌套消费者全部迁移。旧f80d基线的9/19收据继续保留为历史。
+
+15页面为 `/welcome`、`/onboarding/upload`、`/placement`、`/profile`、`/events/$id`、`/record`、`/practice`、`/drafts`、`/questions`、`/questions/$id`、`/knowledge`、`/knowledge/$id`、`/notes`、`/notes/$id`、`/coach`。PR1623事件页尚未合入，不提前计入；handoff页数不包含根跳转，不能直接和这里的13项比较。
+
+[任务声明收据](evidence/2026-10-09-yuk1359-job-declarations-main6212.json)只解析 `jobs.handlers`，排除event handlers。main有55个manifest声明，其中53个pg-boss load入口和2个DBOS声明；manifest schedule20、infra schedule4、memory schedule3。两个注册器有11处direct work。提取输入与已验证的53f05候选收据逐字节一致，因此复用其静态解析结果并记录新main及每份输入hash。这不是运行队列或未完成义务数，也不包含实际producer/SEND_IT/retry/DLQ盘点，不能简单相加为完成比例。
+
+YUK1394的两个六小时清理族已实现，PR1624最终候选为 `b9b019a3a`，尚未合入。原cron测试的两项P1已修复并通过R2；后续CI另暴露共享producer fence安装死锁，修复源码为 `1aeec5e36`。父级29项DB测试、34项进程恢复测试及隔离删锁反例见[共享锁验收收据](evidence/2026-10-09-yuk1394-shared-fence-verification.json)。原DB、migration、cron和审查证据按各自revision保留在[父验收](2026-10-09-yuk1394-parent-acceptance.md)，不将原R2扩大为对新增锁修复的审查。最终exact-head CI仍须通过，旧binary仍须停写退出；候选不计入main的两族声明，也未切换运行后端。
+
+下一判分族沿既有YUK1356继续，包含 `judge_run` 与 `judge_pending_reconcile`；设计和ownership已交接，须在1394合入后的fresh main实施。Start消费者与boot仍归5796。`promote_conversation_idle`的五分钟用户事件时钟及选择后插入竞态仍归1355，尚未真实DB重现，不冒称已验证P1。其余任务族仍需独立核消费者、唯一恢复owner及退出条件。
+
+Linear捕获：路由清点 `01c035d9-4603-484f-b542-ad37a495c50e`，任务清单 `a85667b1-7fc7-4f44-95bf-f43d3f95893a`，后续housekeeping `cb362f85-e98f-4936-b809-de70ed8983fe`。共享audit修复PR1618及各lane证据仍有效，但不关闭整迁移。本次仅更新文档，无runtime、provider、队列或数据操作。
+
+## 历史调查记录
+
+下列章节均保留标题或正文指定的旧基线；其中“当前”“待接入”等措辞不是最新交付状态，以本节和相应lane交接为准。
+
+## W3/W4 消费者核查补充，2026-10-08
+
+[W3清单](2026-10-08-yuk1359-w3-consumers.md)覆盖题库、笔记、知识图谱和agent-notes七条路由；[W4清单](2026-10-08-yuk1359-w4-consumers.md)覆盖coach/profile及跨页CopilotDock。源码基线、父级抽查和后续main31b68eaa的变化边界分别写在清单内，所有运行矩阵仍待执行。
+
+W3不能遗漏HTTP里的learner可见性、edge端点锁/事务/wake、question删除确认顺序、note编辑presence和最后会话flush；W4不能把未知202恢复、已接受turns快照、断流、Stop与revert刷新混成一个重试。KnowledgeDetail主查询现有错误分态限制已记录为迁移验收项。W5八个管理页含设置/admin/config仍须逐消费者核查，未在本轮标为完成。
+
+YUK1380事件领域PR1607已合入main4a3d797dd，本docs分支正常整合并保留该代码。公共读取/纠错和原HTTP消费者已交付；Start挂载与整页运行验收仍待，见[事件领域证据](2026-10-08-yuk1380-event-domain.md)。1358/1359仍In Progress。本次只增退出证据，没有删除旧入口、修改产品或执行runtime。
+
+## W5清单与路由覆盖复核，2026-10-08
+
+[W5消费者清单](2026-10-08-yuk1359-w5-consumers.md)已列八个管理页的实际读取/写入与验收边界，独立文档审查中。1381领域实现66aa43a18已交回，尚待父DB与独立代码审查/CI；Start没有因公共出口存在而完成挂载。
+
+父在66aa43a185fa45c5a201c77e32197f215be82237静态提取UI_SURFACES的id/route与SPA router的surfacePath调用，均为28项，集合相等；分配为W1 4、W2 6、W3 7、W4 2、W5 8、1356 practice 1，无遗漏、额外或重复分配。提取收据在/tmp/yuk1359-w5-route-coverage.json。这只证明路由清单范围，不证明全部页面消费者、运行矩阵或退出完成；CopilotDock等共享子树仍按专属矩阵验收。
+
+YUK1382捕获runs费用未知值显示零的既有UI缺陷，未混入1381领域读取；设置入口仍有route/search/AdminLinks但无sidebar nav。coverage调用链内部Db与时钟、配置注入、subject/trait post-commit水合均有剩余接线义务，不据本清单删除旧运行路径。
+
+## 历史基线26f101581：准备计划冲突及精确修订建议
 
 下表行号均指上述 main 基线的 `docs/planning/2026-10-07-ts-migration-and-ui-rewrite-prep.md`，不是动态 main。此处给出建议，不修改正在由其他线程使用的原计划。
 
@@ -44,7 +90,7 @@ ADR-0066 的业务边界仍适用：页面命令、Pi工具和后台任务共用
 
 README中的注册任务数量只是基线文档陈述，本调查未执行全量注册器 census，不能据此证明全部任务族已覆盖。完整生产者/cron/DLQ/恢复台账继续由1355维护，本表突出不能在清理中丢失的职责。
 
-### 未合入基线的候选路径
+### 历史基线26f101581中尚未合入的候选路径
 
 Linear1359已登记1352候选 `server/start/routes/$.ts`、`server/frontdoor.ts` 的 `buildLegacySpa`、`FrontdoorContext.legacySpa` 和双router清理归属。父核对 `git ls-tree -r 26f101581 server/`：该精确基线尚无这些文件。它们是候选实施的退出目标，不能据此把当前main描述成已运行Start；本轮未读取其活跃工作树。
 
@@ -126,17 +172,29 @@ Linear1359已登记1352候选 `server/start/routes/$.ts`、`server/frontdoor.ts`
 现有UI的“已纠正”分支与API的retracted排除是不同证据层，验收不能只凭页面标签推断领域语义。typed领域层交回后，本线程核源码与隔离DB，主线负责组合根挂载；最终浏览器和旧路径退出仍归1358/1359共同交付。设置面板 `/admin/config` 保持在W5范围，本lane不修改或删除。
 
 
-### PR1598已验证范围与剩余退出条件
+### PR1598/1599已验证范围与剩余退出条件
 
-2026-10-07 19:02:53Z，PR1598合入 `c7c2482ca`。CI head `291f1c5b3` 与合并tree一致，CI Gate `37669157822`成功，独立初审无P0/P1。父在固定代码 `d23140344` 独立跑过59项DB测试，日志 `/tmp/yuk1376-parent-db.log`；后续只改文档。以下范围由实际测试及diff核对，不扩大到尚未运行的验收。
+2026-10-07 19:02:53Z，PR1598合入 `c7c2482ca`。CI head `291f1c5b3` 与合并tree一致，CI Gate `37669157822`成功，独立初审无P0/P1。父在固定代码 `d23140344` 独立跑过59项DB测试，日志 `/tmp/yuk1376-parent-db.log`；后续只改文档。下表已纳入PR1599及20:26Z隔离验收结果；完整证据见文末补充，不扩大到未运行的场景。
 
 | 层与行为 | 当前证据 | 尚未完成 |
 | --- | --- | --- |
 | 领域/API读取 | GET和公开 `readMistakes` 共用校验与投影；科目、参数、cursor、撤回、替代judge与归因优先级有scoped DB覆盖 | Start实际挂载尚未交回 |
 | Legacy历史题面和作答图片 | 冻结父子题、正常编辑、缺席/损坏快照、图片ID保留及旧cursor页回归通过 | 图片实际字节及浏览器展示尚未验收 |
-| Native错题 | 现有测试证明保留失败记录且不使用mutable题面伪造历史 | 冻结revision/issuance/submission读取适配正在1376实施，不能算完整支持 |
-| 浏览器客户端契约 | generated operation、wire schema、异常传播与SSR附件按钮通过scoped unit | loading/retry、组合筛选、计时更新、深链、鉴权续接、Lightbox真实交互仍待浏览器 |
-| 附件读取 | 源码链为AttachmentStrip/Lightbox → AssetEvidencePreview → apiFetch →鉴权content端点→Blob URL | 要以真实文件验证字节/MIME、缺失404、无token拒绝及关闭重开；mock R2或仅有asset ID不足以核销 |
+| Native错题 | PR1599冻结revision/issuance/submission读取已合入；102 DB及隔离HTTP四行证明编辑后保持冻结题面、本submission附件与联合范围 | 整组图片真实模型评分、完整媒体与可信参考答案揭示仍开放 |
+| 浏览器客户端契约 | scoped unit通过；原SPA真实登录、刷新四行、语文空筛选、八缩略图及Lightbox打开和Escape关闭已验收 | 新Start入口尚未可验收；loading/retry、组合筛选、计时、深链与关闭后重开未全部验证 |
+| 附件读取 | 隔离S3实际上传/读取/删除、原字节/SHA/MIME/ETag/304、404与401通过；浏览器Blob图片实际解码 | 独立图片角色矩阵与新Start入口仍需验收；本轮三个图片复用不能证明完整媒体支持 |
 | 旧SPA退出 | 无退出完成证据 | 页面仍由旧SPA承载；主线需提供Start挂载及旧消费者/构建/镜像入口替换证据 |
 
 这些剩余项保留在1376及1358/1359，未因PR合并关闭完整路由迁移。设置面板仍属于W5，未被删除或从清单中移除。本记录不增加新功能票，也不代表已部署。
+
+
+## 1376运行证据补充，2026-10-07 20:26Z
+
+PR1599已合入7bc216509，tree与CI head6ab98ed8c一致；CI Gate37677610975成功、独立验证审P0/P1 NONE。隔离真实HTTP四行冻结错题、附件字节及负例通过；原页面刷新四行、语文筛选空列表、八张缩略图与Lightbox解码通过。20:26:50Z停止自有隔离容器并核owner释放锁，保留独立卷；主四服务healthy，release未变。整组图片真实模型评分、完整媒体/参考答案策略、Start挂载及旧入口退出仍未核销。 这是旧SPA上的保留行为证据，不是Start承载或旧SPA退出证据。领域接口与主线鉴权后挂载责任不变，详见[1376验收](2026-10-08-yuk1376-mistakes-domain.md)。
+
+
+## W1消费者补全与PR1600合入
+
+PR1600已于2026-10-07 21:18:58Z合入 `7100dfae4`，合并tree `743ee4d80617dc9b34c7533d724e052af5fd50c4` 与准确head `c40a18621` 一致；CI Gate `37686417034` 成功，独立初审P0/P1 NONE，无未裁决review threads，完整17分钟窗满足。未部署。Start挂载任务归主线，实际新入口行为及旧SPA退出尚未完成。
+
+[W1详细消费者清单](2026-10-08-yuk1359-w1-consumers.md)固定基线7bc216509，覆盖Today子组件与Inbox共享命令。新增确认ProfileBand的目标画像读取和LearningIntentComposer的待审提议提交；不新增恢复owner。后续新入口按[Start验收矩阵](2026-10-08-yuk1376-start-acceptance.md)取得实际证据，不能借用旧SPA的通过结论。既有1358/1359/1376覆盖剩余工作，本轮无新独立缺陷，不重复建票。

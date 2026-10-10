@@ -4,17 +4,19 @@ import { and, eq, sql } from 'drizzle-orm';
 import type { ConnectionOptions, JobWithMetadata, SendOptions } from 'pg-boss';
 
 import { PICKUP_TIMEOUT_MS } from '@/capabilities/copilot/durable-pickup';
+import { canonicalHash } from '@/core/migration/canonical';
 import {
   DerivationPolicy,
   type DerivationPolicyT,
   readDerivationPolicy,
 } from '@/core/schema/derivation-policy';
 import type { Db, Tx } from '@/db/client';
-import { job_events } from '@/db/schema';
+import { event, job_events } from '@/db/schema';
 import { writeJobEvent } from '@/server/events/writer';
 import { writeCopilotInputEvent } from './conversation-writes';
 import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
 import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
+import type { ReviewAnswerAttachment } from './practice-port';
 
 export const COPILOT_IDEMPOTENCY_KEY_MAX_LENGTH = 200;
 export const COPILOT_SESSION_QUEUE_PROTOCOL_VERSION = 2;
@@ -229,6 +231,7 @@ export async function reserveCopilotDurableAcceptance(
   input: {
     sessionId: string;
     userMessage: string;
+    reviewAnswer?: ReviewAnswerAttachment;
     inputHash: string;
     idempotencyKey?: string;
     queuedPayload: Record<string, unknown>;
@@ -273,11 +276,15 @@ export async function reserveCopilotDurableAcceptance(
       triggeredBy: input.jobData?.triggered_by,
       chipKind: input.jobData?.chip_kind,
       derivationPolicy: readDerivationPolicy(input.jobData ?? input.queuedPayload),
+      reviewAnswer: input.reviewAnswer,
       now: new Date(),
       ...(deterministicRunId ? { eventId: deterministicRunId } : {}),
     });
     input.assertActive?.();
     const bossJobId = copilotBossJobId(runId);
+    const [acceptedAsk] = input.reviewAnswer
+      ? await tx.select({ payload: event.payload }).from(event).where(eq(event.id, runId))
+      : [];
     const persistedJobData: CopilotRunJobData | undefined = input.jobData
       ? {
           ...input.jobData,
@@ -293,6 +300,9 @@ export async function reserveCopilotDurableAcceptance(
       payload: {
         ...input.queuedPayload,
         derivation_policy: readDerivationPolicy(input.jobData ?? input.queuedPayload),
+        ...(acceptedAsk
+          ? { review_answer_binding_sha256: canonicalHash(acceptedAsk.payload.review_answer) }
+          : {}),
         run_id: runId,
         input_hash: input.inputHash,
         boss_job_id: bossJobId,

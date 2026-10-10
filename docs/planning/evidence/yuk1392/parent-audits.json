@@ -1,0 +1,20 @@
+[
+  {
+    "command": "pnpm audit:provider-lanes",
+    "exit": 0,
+    "log": "/tmp/yuk1392-parent-provider-lanes.log",
+    "sha256": "4e94a5c1aa34213ec2cbb56a60b90e883fdcf6a7fd9c10daff833b754ea85b5c"
+  },
+  {
+    "command": "pnpm audit:profile",
+    "exit": 0,
+    "log": "/tmp/yuk1392-parent-profile.log",
+    "sha256": "f2f14ec06808ef23b857f78b1f54fd2fb25ba55e75776644d2a00aef10981db4"
+  },
+  {
+    "command": "pnpm audit:task-census",
+    "exit": 0,
+    "log": "/tmp/yuk1392-parent-task-census.log",
+    "sha256": "ddf8d63319f242b650617ac0e743a24966ea2eb10c9c446a74b9d24f8c58df6a"
+  }
+]

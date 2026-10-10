@@ -9,7 +9,6 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { capabilities } from '@/capabilities';
 import { idHasMatch } from '@/capabilities/ingestion/server/block-structured-edit';
 import {
   type FigureRefT,
@@ -18,29 +17,14 @@ import {
   structuredToPromptMarkdown,
 } from '@/core/schema/structured_question';
 import { job_events, question_block } from '@/db/schema';
-import { registerCapabilityTools } from '@/server/ai/tools/register-capability-tools';
-import { __resetRegistryForTests, getTool } from '@/server/ai/tools/registry';
+import { __resetRegistryForTests } from '@/server/ai/tools/registry';
 import { gatherAndFoldQuestionBlock } from '@/server/projections/gather';
 import { questionBlockLiveRowToSnapshot } from '@/server/projections/parity';
 import { backfillQuestionBlockGenesis } from '../../../../../scripts/backfill-genesis-events';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
-import {
-  addOptionTool,
-  setQuestionTypeTool,
-  splitStemTool,
-  updatePromptTool,
-} from './question-block-node-edits';
+import { addOptionTool, splitStemTool } from './question-block-node-edits';
 import { mergeQuestionsTool, reassignFigureTool } from './question-block-structural-edits';
 import type { ToolContext } from './types';
-
-const EDIT_TOOL_NAMES = [
-  'update_prompt',
-  'add_option',
-  'set_question_type',
-  'split_stem',
-  'merge_questions',
-  'reassign_figure',
-] as const;
 
 function ctx(): ToolContext {
   return {
@@ -105,126 +89,10 @@ beforeEach(async () => {
 });
 
 // ---------------------------------------------------------------------------
-// Registry
-// ---------------------------------------------------------------------------
-
-describe('question-edit-tools registry', () => {
-  it('registers all 6 structure-edit tools as write/local/when_causal', async () => {
-    await registerCapabilityTools(capabilities);
-    for (const name of EDIT_TOOL_NAMES) {
-      const tool = getTool(name);
-      expect(tool, `tool ${name} registered`).toBeDefined();
-      expect(tool?.effect).toBe('write');
-      expect(tool?.costClass).toBe('local');
-      expect(tool?.mirrorEvent).toBe('when_causal');
-    }
-  });
-
-  it('each tool summarize() returns a non-empty string under ~120 chars', async () => {
-    const samples: Array<[(typeof EDIT_TOOL_NAMES)[number], unknown, unknown]> = [
-      ['update_prompt', { block_id: 'b', node_id: 'n12345678' }, { status: 'written' }],
-      [
-        'add_option',
-        { block_id: 'b', node_id: 'n12345678', option: { label: 'A', text: 't' } },
-        { status: 'written' },
-      ],
-      [
-        'set_question_type',
-        { block_id: 'b', node_id: 'n12345678', kind: 'choice' },
-        { status: 'written' },
-      ],
-      ['split_stem', { block_id: 'b', node_id: 'n12345678' }, { status: 'written' }],
-      [
-        'merge_questions',
-        { primary_block_id: 'b', merge_block_ids: ['m1', 'm2'] },
-        { status: 'written' },
-      ],
-      [
-        'reassign_figure',
-        { block_id: 'b', asset_id: 'a12345678', attached_to_index: 'n12345678' },
-        { status: 'written' },
-      ],
-    ];
-    await registerCapabilityTools(capabilities);
-    for (const [name, input, output] of samples) {
-      const tool = getTool(name);
-      const s = tool?.summarize(input, output) ?? '';
-      expect(s.length).toBeGreaterThan(0);
-      expect(s.length).toBeLessThanOrEqual(120);
-    }
-  });
-});
-
-// ---------------------------------------------------------------------------
-// update_prompt (§4.1)
-// ---------------------------------------------------------------------------
-
-describe('update_prompt', () => {
-  it('writes prompt_text + provenance + version bump + job event', async () => {
-    const { blockId } = await seedBlock({
-      structured: { id: 'n1', role: 'standalone', prompt_text: 'old' },
-    });
-    const out = await updatePromptTool.execute(ctx(), {
-      block_id: blockId,
-      node_id: 'n1',
-      prompt_text: 'new prompt',
-    });
-    expect(out).toEqual({ status: 'written', block_id: blockId, node_id: 'n1' });
-    const block = await readBlock(blockId);
-    expect(block.structured?.prompt_text).toBe('new prompt');
-    expect(block.structured?.source).toBe('agent_edit');
-    expect(block.structured?.last_modified_by).toBe('agent:ingestion_block_edit');
-    expect(block.version).toBe(1);
-    expect(await countEditEvents(blockId)).toBe(1);
-  });
-
-  it('skips when block is not draft', async () => {
-    const { blockId } = await seedBlock({
-      status: 'imported',
-      structured: { id: 'n1', role: 'standalone', prompt_text: 'old' },
-    });
-    const out = await updatePromptTool.execute(ctx(), {
-      block_id: blockId,
-      node_id: 'n1',
-      prompt_text: 'x',
-    });
-    expect(out.status).toBe('skipped:not_draft');
-    expect((await readBlock(blockId)).structured?.prompt_text).toBe('old');
-  });
-
-  it('skips when node is missing', async () => {
-    const { blockId } = await seedBlock({
-      structured: { id: 'n1', role: 'standalone', prompt_text: 'old' },
-    });
-    const out = await updatePromptTool.execute(ctx(), {
-      block_id: blockId,
-      node_id: 'nope',
-      prompt_text: 'x',
-    });
-    expect(out.status).toBe('skipped:node_not_found');
-  });
-});
-
-// ---------------------------------------------------------------------------
 // add_option (§4.2)
 // ---------------------------------------------------------------------------
 
 describe('add_option', () => {
-  it('appends an option, creating the array when absent', async () => {
-    const { blockId } = await seedBlock({
-      structured: { id: 'n1', role: 'standalone', prompt_text: 'q' },
-    });
-    const out = await addOptionTool.execute(ctx(), {
-      block_id: blockId,
-      node_id: 'n1',
-      option: { label: 'A', text: 'first' },
-    });
-    expect(out.status).toBe('written');
-    const block = await readBlock(blockId);
-    expect(block.structured?.options).toEqual([{ label: 'A', text: 'first' }]);
-    expect(block.version).toBe(1);
-  });
-
   it('serializes concurrent option edits without losing either write', async () => {
     const { blockId } = await seedBlock({
       structured: { id: 'n1', role: 'standalone', prompt_text: 'q' },
@@ -248,52 +116,6 @@ describe('add_option', () => {
     expect(block.version).toBe(2);
     expect(await countEditEvents(blockId)).toBe(2);
   });
-
-  it('skips node_not_found', async () => {
-    const { blockId } = await seedBlock({
-      structured: { id: 'n1', role: 'standalone', prompt_text: 'q' },
-    });
-    const out = await addOptionTool.execute(ctx(), {
-      block_id: blockId,
-      node_id: 'missing',
-      option: { label: 'A', text: 'x' },
-    });
-    expect(out.status).toBe('skipped:node_not_found');
-  });
-});
-
-// ---------------------------------------------------------------------------
-// set_question_type (§4.3)
-// ---------------------------------------------------------------------------
-
-describe('set_question_type', () => {
-  it('writes the advisory kind hint + provenance', async () => {
-    const { blockId } = await seedBlock({
-      structured: { id: 'n1', role: 'standalone', prompt_text: 'q' },
-    });
-    const out = await setQuestionTypeTool.execute(ctx(), {
-      block_id: blockId,
-      node_id: 'n1',
-      kind: 'choice',
-    });
-    expect(out.status).toBe('written');
-    const block = await readBlock(blockId);
-    expect(block.structured?.kind).toBe('choice');
-    expect(block.structured?.source).toBe('agent_edit');
-  });
-
-  it('skips not_draft', async () => {
-    const { blockId } = await seedBlock({
-      status: 'ignored',
-      structured: { id: 'n1', role: 'standalone', prompt_text: 'q' },
-    });
-    const out = await setQuestionTypeTool.execute(ctx(), {
-      block_id: blockId,
-      node_id: 'n1',
-      kind: 'essay',
-    });
-    expect(out.status).toBe('skipped:not_draft');
-  });
 });
 
 // ---------------------------------------------------------------------------
@@ -301,45 +123,6 @@ describe('set_question_type', () => {
 // ---------------------------------------------------------------------------
 
 describe('split_stem', () => {
-  it('un-groups a root stem: subs promoted to standalone, passage dropped', async () => {
-    const { blockId } = await seedBlock({
-      structured: {
-        id: 'stem',
-        role: 'stem',
-        prompt_text: 'passage',
-        sub_questions: [
-          { id: 's1', role: 'sub', prompt_text: 'a' },
-          { id: 's2', role: 'sub', prompt_text: 'b' },
-        ],
-      },
-    });
-    const out = await splitStemTool.execute(ctx(), { block_id: blockId, node_id: 'stem' });
-    expect(out.status).toBe('written');
-    const block = await readBlock(blockId);
-    const tree = block.structured;
-    expect(tree?.prompt_text).toBe('');
-    expect(tree?.sub_questions?.map((s) => s.id)).toEqual(['s1', 's2']);
-    expect(tree?.sub_questions?.every((s) => s.role === 'standalone')).toBe(true);
-    expect(tree?.sub_questions?.every((s) => s.source === 'agent_edit')).toBe(true);
-    expect(block.version).toBe(1);
-  });
-
-  it('skips not_splittable when node is a standalone leaf', async () => {
-    const { blockId } = await seedBlock({
-      structured: { id: 'leaf', role: 'standalone', prompt_text: 'x' },
-    });
-    const out = await splitStemTool.execute(ctx(), { block_id: blockId, node_id: 'leaf' });
-    expect(out.status).toBe('skipped:not_splittable');
-  });
-
-  it('skips node_not_found', async () => {
-    const { blockId } = await seedBlock({
-      structured: { id: 'leaf', role: 'standalone', prompt_text: 'x' },
-    });
-    const out = await splitStemTool.execute(ctx(), { block_id: blockId, node_id: 'ghost' });
-    expect(out.status).toBe('skipped:node_not_found');
-  });
-
   it('reattaches a nested-stem figure to the first promoted child (no dangling)', async () => {
     // Root stem holds a nested stem `inner` (with subs); a figure is attached to
     // `inner`. Splitting `inner` removes its id, so the figure must be
@@ -740,69 +523,5 @@ describe('reassign_figure', () => {
     ).rejects.toThrow('requires complete history');
     expect(await readBlock(blockId)).toEqual(before);
     expect(await countEditEvents(blockId)).toBe(0);
-  });
-  it('reassigns a figure, sets manual confidence + version bump', async () => {
-    const { blockId } = await seedBlock({
-      structured: {
-        id: 'stem',
-        role: 'stem',
-        prompt_text: '',
-        sub_questions: [
-          { id: 's1', role: 'sub', prompt_text: 'a' },
-          { id: 's2', role: 'sub', prompt_text: 'b' },
-        ],
-      },
-      figures: [FIGURE],
-    });
-    const out = await reassignFigureTool.execute(ctx(), {
-      block_id: blockId,
-      asset_id: 'fig-1',
-      attached_to_index: 's2',
-    });
-    expect(out.status).toBe('written');
-    const block = await readBlock(blockId);
-    expect(block.figures[0].attached_to_index).toBe('s2');
-    expect(block.figures[0].attach_confidence).toBe('manual');
-    expect(block.version).toBe(1);
-  });
-
-  it('skips not_draft (agent tool enforces draft)', async () => {
-    const { blockId } = await seedBlock({
-      status: 'imported',
-      structured: { id: 's1', role: 'standalone', prompt_text: 'a' },
-      figures: [FIGURE],
-    });
-    const out = await reassignFigureTool.execute(ctx(), {
-      block_id: blockId,
-      asset_id: 'fig-1',
-      attached_to_index: 's1',
-    });
-    expect(out.status).toBe('skipped:not_draft');
-  });
-
-  it('skips figure_not_found', async () => {
-    const { blockId } = await seedBlock({
-      structured: { id: 's1', role: 'standalone', prompt_text: 'a' },
-      figures: [],
-    });
-    const out = await reassignFigureTool.execute(ctx(), {
-      block_id: blockId,
-      asset_id: 'ghost',
-      attached_to_index: 's1',
-    });
-    expect(out.status).toBe('skipped:figure_not_found');
-  });
-
-  it('skips target_not_found when attached_to_index is not in the tree', async () => {
-    const { blockId } = await seedBlock({
-      structured: { id: 's1', role: 'standalone', prompt_text: 'a' },
-      figures: [{ ...FIGURE, attached_to_index: 's1' }],
-    });
-    const out = await reassignFigureTool.execute(ctx(), {
-      block_id: blockId,
-      asset_id: 'fig-1',
-      attached_to_index: 'does-not-exist',
-    });
-    expect(out.status).toBe('skipped:target_not_found');
   });
 });

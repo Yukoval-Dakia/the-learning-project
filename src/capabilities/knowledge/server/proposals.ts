@@ -41,6 +41,7 @@ import {
   requireKnowledgeHistory,
 } from '@/server/projections/knowledge';
 import { upsertMaterializedIdIndex } from '@/server/projections/materialized-id-index';
+import { normalizeSubjectKey, sanitizeProposedNodeDomain } from '@/subjects/profile';
 import {
   archiveKnowledgeEdgeFromEvents,
   createKnowledgeEdge,
@@ -106,6 +107,10 @@ export type ProposeNewPayload = {
   mutation: 'propose_new';
   name: string;
   parent_id: string | null;
+  /** Root creation (parent_id=null): domain the new root anchors (e.g.
+   *  'english'). Omitted for child proposals — they inherit the parent's
+   *  effective domain. */
+  domain?: string;
 };
 
 export type ReparentPayload = {
@@ -163,6 +168,29 @@ export interface WriteProposalEntry {
 // the proposal id post-Step-9).
 // =============================================================================
 
+/**
+ * Pending-dedup cooldown key for a propose_new node — the single source shared
+ * by the propose tool (skip check) and this writer (stored marker). Root
+ * proposals key on their domain (no parent id exists yet); child proposals key
+ * on the parent id as before.
+ */
+export function knowledgeNodeCooldownKey(payload: {
+  name: string;
+  parent_id: string | null;
+  domain?: string;
+}): string {
+  // Each component is URI-encoded so ':' inside a domain or name can't collide
+  // across key positions. The domain is canonicalized through the same
+  // sanitizeProposedNodeDomain seam the writer persists ('Mathematics' →
+  // 'math'), so alias spellings dedupe to one pending proposal; 'general'/
+  // blank fall back to the normalized raw form for a stable skip-check key.
+  const rootDomain =
+    sanitizeProposedNodeDomain(payload.domain) ?? normalizeSubjectKey(payload.domain ?? '');
+  return payload.parent_id === null
+    ? `knowledge_node:root:${encodeURIComponent(rootDomain)}:${encodeURIComponent(payload.name)}`
+    : `knowledge_node:${payload.parent_id}:${payload.name}`;
+}
+
 export async function writeKnowledgeProposeEvent(
   db: DbLike,
   entry: WriteProposalEntry,
@@ -173,13 +201,23 @@ export async function writeKnowledgeProposeEvent(
   const actorRef = entry.actor_ref ?? 'dreaming';
   const causedByEventId = entry.caused_by_event_id ?? null;
   if (entry.payload.mutation === 'propose_new') {
-    // Lane B ProposeKnowledge — payload locked to { name, parent_id, reasoning }.
-    // parent_id is required (Lane B forbids null); PR A scope already enforced
-    // parent_id non-null at the apply step; here we surface as a TypeError.
+    // Lane B ProposeKnowledge — payload { name, parent_id, domain?, reasoning }.
+    // parent_id=null proposes a new domain ROOT; the row's domain is anchored by
+    // payload.domain at accept time (projected, not written imperatively).
+    // Fail fast here too: a domain-less root proposal could never be accepted,
+    // so it must not sit pending in the inbox. The domain is sanitized through
+    // the same seam as node creation (selectable → canonical id; 'general'/
+    // blank → null; unrecognised → verbatim custom domain), so the event stores
+    // the canonical form.
+    let rootDomain: string | undefined;
     if (entry.payload.parent_id === null) {
-      throw new Error(
-        'writeKnowledgeProposeEvent: propose_new with parent_id=null not supported (PR A scope)',
-      );
+      const sanitized = sanitizeProposedNodeDomain(entry.payload.domain);
+      if (!sanitized) {
+        throw new Error(
+          "propose_new root creation requires a selectable domain — 'general'/blank is a fallback identity, not a node domain",
+        );
+      }
+      rootDomain = sanitized;
     }
     await writeAiProposal(db, {
       id,
@@ -194,8 +232,9 @@ export async function writeKnowledgeProposeEvent(
           mutation: 'propose_new',
           name: entry.payload.name,
           parent_id: entry.payload.parent_id,
+          ...(rootDomain !== undefined ? { domain: rootDomain } : {}),
         },
-        cooldown_key: `knowledge_node:${entry.payload.parent_id}:${entry.payload.name}`,
+        cooldown_key: knowledgeNodeCooldownKey(entry.payload),
         // P5.6 / YUK-178 — model-labeled discriminator (default proactive at the
         // tool call site); only set when present so the field stays absent for
         // non-tool callers (KnowledgeReviewTask etc.), keeping absence === proactive.
@@ -307,10 +346,17 @@ export async function prepareProposedKnowledgeId(
   db: DbLike,
   payload: ProposeNewPayload,
 ): Promise<string> {
+  // Root creation: no parent to assert — the new node's domain comes from
+  // payload.domain (the fold stamps it onto the projected row). Defensive
+  // re-check mirrors the node-creation seam: 'general'/blank can never persist
+  // as a node domain even if a malformed proposal reached accept.
   if (payload.parent_id === null) {
-    throw new Error(
-      'PR A: propose_new with parent_id=null (root creation) not supported; Phase 2 multi-domain will allow it',
-    );
+    if (!sanitizeProposedNodeDomain(payload.domain)) {
+      throw new Error(
+        "propose_new root creation requires a selectable payload.domain — 'general'/blank is a fallback identity, not a node domain",
+      );
+    }
+    return newId();
   }
   await assertParentExists(db, payload.parent_id);
   return newId();

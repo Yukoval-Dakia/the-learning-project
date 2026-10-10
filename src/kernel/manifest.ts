@@ -114,6 +114,8 @@ export type JobScheduleDecl = {
 );
 
 export interface JobDecl {
+  /** Transitional backend admission. Only migrated families may declare dbos. */
+  backend?: 'pg-boss' | 'dbos';
   name: string; // boss 队列名，形如 'dreaming_nightly'
   includeMetadata?: boolean;
   /**

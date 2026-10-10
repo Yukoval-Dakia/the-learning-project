@@ -1,0 +1,19 @@
+{
+  "source": "c236a7160343f7f9a6277ec8c59b70e104ebf267",
+  "parentUnit": 50,
+  "parentDb": 18,
+  "verifiedHashes": {
+    "source": 21,
+    "logs": 29,
+    "artifacts": 893
+  },
+  "files": {
+    "source-sha256.txt": "4888c273e1a145d1427886f7100370e27aba4860e89426fb4577fe8b499a245e",
+    "artifacts-sha256.txt": "a1270539ff7d12a28a60c37630f4e513fc4a9331419cf87615c51206a9aee896",
+    "commands.json": "af3678ebff5a3fe80a718816bca4975091f6b0f62362f80837107cb96da674ff",
+    "logs-sha256.txt": "f6491e264a7d9012cd65f8f177873e54da871e1b8adb26b02399cd96f6c1bf18",
+    "lock-release.json": "c1105a07c8cda8013fa14f16febcabc18febe4c7064dfd2011f9c4e74b658a6c",
+    "parent-db.log.gz": "ad8a1104884db3f03cfedd0079a659092a8c8b3622b724f10801df6bb7fe18ca",
+    "parent-unit.log.gz": "1828734289012e47addd81ec24af819b8045dff4a4cc9c7d631450c45338b579"
+  }
+}

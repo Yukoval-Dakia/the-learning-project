@@ -1,0 +1,519 @@
+{
+  "capturedAt": "2026-10-07T14:02:31.389Z",
+  "dbos": "5.2.11",
+  "pgBoss": "12.36.0",
+  "runner": {
+    "node": "v24.19.0",
+    "execPath": "/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin/node",
+    "pgBoss": "12.36.0",
+    "dbos": "5.2.11"
+  },
+  "providerCalls": 0,
+  "evidence": [
+    {
+      "scenario": "cutover-drain-rollback-two-workers",
+      "legacyRetryCompleted": "e2816ff5-1b82-4b91-9a8c-14a18e805e6b",
+      "retiredFailure": "62d7296d-97a9-411b-9dcb-8b68db257122",
+      "unknownUntouched": "a2c87d89-8093-447f-94c8-cb823ce5f20d",
+      "scheduleRegistrationProjectionChecked": true,
+      "cronTickExecutionObserved": false
+    },
+    {
+      "scenario": "business-committed",
+      "workflowId": "bcab9aef-bbe4-4f02-8c9b-e6a56b9f768c",
+      "killedPid": 54676,
+      "recoveredPid": 54677,
+      "signal": "SIGKILL",
+      "status": {
+        "status": "SUCCESS",
+        "recoveryAttempts": 2,
+        "workflowID": "bcab9aef-bbe4-4f02-8c9b-e6a56b9f768c",
+        "workflowName": "prune_job_events",
+        "workflowClassName": "",
+        "workflowConfigName": "",
+        "queueName": "_dbos_internal_queue",
+        "authenticatedUser": "",
+        "assumedRole": "",
+        "authenticatedRoles": [],
+        "input": ["2026-10-07T00:00:00.000Z", {}],
+        "executorId": "local",
+        "applicationVersion": "prune-v1",
+        "createdAt": 1791381745912,
+        "updatedAt": 1791381747200,
+        "priority": 0,
+        "dequeuedAt": 1791381747184,
+        "wasForkedFrom": false,
+        "completedAt": 1791381747200,
+        "applicationName": "tlp-housekeeping"
+      },
+      "lateOldPreserved": true,
+      "checkpoints": [
+        {
+          "name": "prune-business-commit",
+          "functionID": 0,
+          "error": null,
+          "childWorkflowID": null,
+          "startedAtEpochMs": 1791381747190,
+          "completedAtEpochMs": 1791381747197
+        }
+      ]
+    },
+    {
+      "scenario": "checkpoint-saved",
+      "workflowId": "7a0524e6-82dc-4f5d-86a0-9d775a73b6eb",
+      "killedPid": 54741,
+      "recoveredPid": 54799,
+      "signal": "SIGKILL",
+      "status": {
+        "status": "SUCCESS",
+        "recoveryAttempts": 2,
+        "workflowID": "7a0524e6-82dc-4f5d-86a0-9d775a73b6eb",
+        "workflowName": "prune_job_events",
+        "workflowClassName": "",
+        "workflowConfigName": "",
+        "queueName": "_dbos_internal_queue",
+        "authenticatedUser": "",
+        "assumedRole": "",
+        "authenticatedRoles": [],
+        "input": ["2026-10-07T00:00:00.000Z", {}],
+        "executorId": "local",
+        "applicationVersion": "prune-v1",
+        "createdAt": 1791381748780,
+        "updatedAt": 1791381750252,
+        "priority": 0,
+        "dequeuedAt": 1791381750234,
+        "wasForkedFrom": false,
+        "completedAt": 1791381750252,
+        "applicationName": "tlp-housekeeping"
+      },
+      "lateOldPreserved": true,
+      "checkpoints": [
+        {
+          "name": "prune-business-commit",
+          "functionID": 0,
+          "error": null,
+          "childWorkflowID": null,
+          "startedAtEpochMs": 1791381748782,
+          "completedAtEpochMs": 1791381748795
+        }
+      ]
+    }
+  ],
+  "processLogs": [
+    {
+      "pid": 54669,
+      "messages": [
+        {
+          "kind": "ready",
+          "pid": 54669,
+          "runtime": {
+            "node": "v24.19.0",
+            "execPath": "/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin/node",
+            "pgBoss": "12.36.0",
+            "dbos": "5.2.11"
+          }
+        },
+        {
+          "kind": "ack"
+        },
+        {
+          "kind": "rejected",
+          "error": "Prune drain blocked: [{\"task_id\":\"62d7296d-97a9-411b-9dcb-8b68db257122\",\"state\":\"failed\",\"name\":\"prune_job_events\"},{\"task_id\":\"e2816ff5-1b82-4b91-9a8c-14a18e805e6b\",\"state\":\"retry\",\"name\":\"prune_job_events\"}]"
+        },
+        {
+          "kind": "ack"
+        },
+        {
+          "kind": "rejected",
+          "error": "Prune drain blocked: [{\"task_id\":\"33d07881-6bef-458e-afcf-567bd651db49\",\"state\":\"created\",\"name\":\"prune_job_events_dlq\"}]"
+        },
+        {
+          "kind": "rejected",
+          "error": "Only observed terminal prune failures may be retired"
+        },
+        {
+          "kind": "rejected",
+          "error": "Only observed terminal prune failures may be retired"
+        },
+        {
+          "kind": "ack"
+        },
+        {
+          "kind": "ack"
+        },
+        {
+          "kind": "ack"
+        }
+      ],
+      "stdout": "{\n  severity_local: 'NOTICE',\n  severity: 'NOTICE',\n  code: '00000',\n  message: 'trigger \"yuk1355_prune_producer\" for relation \"pgboss.job\" does not exist, skipping',\n  file: 'dropcmds.c',\n  line: '528',\n  routine: 'does_not_exist_skipping'\n}\n{\n  severity_local: 'NOTICE',\n  severity: 'NOTICE',\n  code: '00000',\n  message: 'trigger \"yuk1355_prune_producer\" for relation \"pgboss.schedule\" does not exist, skipping',\n  file: 'dropcmds.c',\n  line: '528',\n  routine: 'does_not_exist_skipping'\n}\nRunning DBOS system database migrations...\nInitializing DBOS (v0.0.0)\nSystem Database URL: postgres://test:***@localhost:32937/test_fork_2\nExecutor ID: local\nApplication version: prune-v1\nNo workflows to recover from application version prune-v1\nDBOS launched!\nListening to 0 queues:\n",
+      "stderr": "(node:54669) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n",
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "pid": 54672,
+      "messages": [
+        {
+          "kind": "ready",
+          "pid": 54672,
+          "runtime": {
+            "node": "v24.19.0",
+            "execPath": "/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin/node",
+            "pgBoss": "12.36.0",
+            "dbos": "5.2.11"
+          }
+        }
+      ],
+      "stdout": "Initializing DBOS (v0.0.0)\nSystem Database URL: postgres://test:***@localhost:32937/test_fork_2\nExecutor ID: local\nApplication version: prune-v1\nNo workflows to recover from application version prune-v1\nDBOS launched!\nListening to 0 queues:\n",
+      "stderr": "(node:54672) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n",
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "pid": 54676,
+      "messages": [
+        {
+          "kind": "ready",
+          "pid": 54676,
+          "runtime": {
+            "node": "v24.19.0",
+            "execPath": "/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin/node",
+            "pgBoss": "12.36.0",
+            "dbos": "5.2.11"
+          }
+        },
+        {
+          "kind": "boundary",
+          "boundary": "business-committed",
+          "pid": 54676
+        },
+        {
+          "kind": "ack"
+        },
+        {
+          "kind": "rejected",
+          "error": "Prune drain blocked: [{\"task_id\":\"bcab9aef-bbe4-4f02-8c9b-e6a56b9f768c\",\"state\":\"PENDING\"}]"
+        }
+      ],
+      "stdout": "Initializing DBOS (v0.0.0)\nSystem Database URL: postgres://test:***@localhost:32937/test_fork_2\nExecutor ID: local\nApplication version: prune-v1\nNo workflows to recover from application version prune-v1\nDBOS launched!\nListening to 0 queues:\n",
+      "stderr": "(node:54676) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n",
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      }
+    },
+    {
+      "pid": 54677,
+      "messages": [
+        {
+          "kind": "ready",
+          "pid": 54677,
+          "runtime": {
+            "node": "v24.19.0",
+            "execPath": "/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin/node",
+            "pgBoss": "12.36.0",
+            "dbos": "5.2.11"
+          }
+        },
+        {
+          "kind": "done",
+          "pid": 54677,
+          "status": {
+            "workflowID": "bcab9aef-bbe4-4f02-8c9b-e6a56b9f768c",
+            "status": "SUCCESS",
+            "workflowName": "prune_job_events",
+            "workflowClassName": "",
+            "workflowConfigName": "",
+            "queueName": "_dbos_internal_queue",
+            "authenticatedUser": "",
+            "assumedRole": "",
+            "authenticatedRoles": [],
+            "input": ["2026-10-07T00:00:00.000Z", {}],
+            "executorId": "local",
+            "applicationVersion": "prune-v1",
+            "recoveryAttempts": 2,
+            "createdAt": 1791381745912,
+            "updatedAt": 1791381747200,
+            "priority": 0,
+            "dequeuedAt": 1791381747184,
+            "wasForkedFrom": false,
+            "completedAt": 1791381747200,
+            "applicationName": "tlp-housekeeping"
+          },
+          "steps": [
+            {
+              "functionID": 0,
+              "name": "prune-business-commit",
+              "error": null,
+              "childWorkflowID": null,
+              "startedAtEpochMs": 1791381747190,
+              "completedAtEpochMs": 1791381747197
+            }
+          ]
+        },
+        {
+          "kind": "ack"
+        }
+      ],
+      "stdout": "Initializing DBOS (v0.0.0)\nSystem Database URL: postgres://test:***@localhost:32937/test_fork_2\nExecutor ID: local\nApplication version: prune-v1\nRecovering 1 workflows from application version prune-v1\nDBOS launched!\nListening to 0 queues:\n",
+      "stderr": "(node:54677) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n",
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "pid": 54678,
+      "messages": [
+        {
+          "kind": "ready",
+          "pid": 54678,
+          "runtime": {
+            "node": "v24.19.0",
+            "execPath": "/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin/node",
+            "pgBoss": "12.36.0",
+            "dbos": "5.2.11"
+          }
+        },
+        {
+          "kind": "done",
+          "pid": 54678,
+          "status": {
+            "workflowID": "bcab9aef-bbe4-4f02-8c9b-e6a56b9f768c",
+            "status": "SUCCESS",
+            "workflowName": "prune_job_events",
+            "workflowClassName": "",
+            "workflowConfigName": "",
+            "queueName": "_dbos_internal_queue",
+            "authenticatedUser": "",
+            "assumedRole": "",
+            "authenticatedRoles": [],
+            "input": ["2026-10-07T00:00:00.000Z", {}],
+            "executorId": "local",
+            "applicationVersion": "prune-v1",
+            "recoveryAttempts": 2,
+            "createdAt": 1791381745912,
+            "updatedAt": 1791381747200,
+            "priority": 0,
+            "dequeuedAt": 1791381747184,
+            "wasForkedFrom": false,
+            "completedAt": 1791381747200,
+            "applicationName": "tlp-housekeeping"
+          },
+          "steps": [
+            {
+              "functionID": 0,
+              "name": "prune-business-commit",
+              "error": null,
+              "childWorkflowID": null,
+              "startedAtEpochMs": 1791381747190,
+              "completedAtEpochMs": 1791381747197
+            }
+          ]
+        }
+      ],
+      "stdout": "Initializing DBOS (v0.0.0)\nSystem Database URL: postgres://test:***@localhost:32937/test_fork_2\nExecutor ID: local\nApplication version: prune-v1\nNo workflows to recover from application version prune-v1\nDBOS launched!\nListening to 0 queues:\n",
+      "stderr": "(node:54678) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n",
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "pid": 54741,
+      "messages": [
+        {
+          "kind": "ready",
+          "pid": 54741,
+          "runtime": {
+            "node": "v24.19.0",
+            "execPath": "/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin/node",
+            "pgBoss": "12.36.0",
+            "dbos": "5.2.11"
+          }
+        },
+        {
+          "kind": "boundary",
+          "boundary": "checkpoint-saved",
+          "pid": 54741
+        },
+        {
+          "kind": "ack"
+        },
+        {
+          "kind": "rejected",
+          "error": "Prune drain blocked: [{\"task_id\":\"7a0524e6-82dc-4f5d-86a0-9d775a73b6eb\",\"state\":\"PENDING\"}]"
+        }
+      ],
+      "stdout": "Initializing DBOS (v0.0.0)\nSystem Database URL: postgres://test:***@localhost:32937/test_fork_2\nExecutor ID: local\nApplication version: prune-v1\nNo workflows to recover from application version prune-v1\nDBOS launched!\nListening to 0 queues:\n",
+      "stderr": "(node:54741) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n",
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      }
+    },
+    {
+      "pid": 54799,
+      "messages": [
+        {
+          "kind": "ready",
+          "pid": 54799,
+          "runtime": {
+            "node": "v24.19.0",
+            "execPath": "/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin/node",
+            "pgBoss": "12.36.0",
+            "dbos": "5.2.11"
+          }
+        },
+        {
+          "kind": "done",
+          "pid": 54799,
+          "status": {
+            "workflowID": "7a0524e6-82dc-4f5d-86a0-9d775a73b6eb",
+            "status": "SUCCESS",
+            "workflowName": "prune_job_events",
+            "workflowClassName": "",
+            "workflowConfigName": "",
+            "queueName": "_dbos_internal_queue",
+            "authenticatedUser": "",
+            "assumedRole": "",
+            "authenticatedRoles": [],
+            "input": ["2026-10-07T00:00:00.000Z", {}],
+            "executorId": "local",
+            "applicationVersion": "prune-v1",
+            "recoveryAttempts": 2,
+            "createdAt": 1791381748780,
+            "updatedAt": 1791381750252,
+            "priority": 0,
+            "dequeuedAt": 1791381750234,
+            "wasForkedFrom": false,
+            "completedAt": 1791381750252,
+            "applicationName": "tlp-housekeeping"
+          },
+          "steps": [
+            {
+              "functionID": 0,
+              "name": "prune-business-commit",
+              "error": null,
+              "childWorkflowID": null,
+              "startedAtEpochMs": 1791381748782,
+              "completedAtEpochMs": 1791381748795
+            }
+          ]
+        },
+        {
+          "kind": "ack"
+        }
+      ],
+      "stdout": "Initializing DBOS (v0.0.0)\nSystem Database URL: postgres://test:***@localhost:32937/test_fork_2\nExecutor ID: local\nApplication version: prune-v1\nRecovering 1 workflows from application version prune-v1\nDBOS launched!\nListening to 0 queues:\n",
+      "stderr": "(node:54799) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n",
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "pid": 54800,
+      "messages": [
+        {
+          "kind": "ready",
+          "pid": 54800,
+          "runtime": {
+            "node": "v24.19.0",
+            "execPath": "/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin/node",
+            "pgBoss": "12.36.0",
+            "dbos": "5.2.11"
+          }
+        },
+        {
+          "kind": "done",
+          "pid": 54800,
+          "status": {
+            "workflowID": "7a0524e6-82dc-4f5d-86a0-9d775a73b6eb",
+            "status": "SUCCESS",
+            "workflowName": "prune_job_events",
+            "workflowClassName": "",
+            "workflowConfigName": "",
+            "queueName": "_dbos_internal_queue",
+            "authenticatedUser": "",
+            "assumedRole": "",
+            "authenticatedRoles": [],
+            "input": ["2026-10-07T00:00:00.000Z", {}],
+            "executorId": "local",
+            "applicationVersion": "prune-v1",
+            "recoveryAttempts": 2,
+            "createdAt": 1791381748780,
+            "updatedAt": 1791381750252,
+            "priority": 0,
+            "dequeuedAt": 1791381750234,
+            "wasForkedFrom": false,
+            "completedAt": 1791381750252,
+            "applicationName": "tlp-housekeeping"
+          },
+          "steps": [
+            {
+              "functionID": 0,
+              "name": "prune-business-commit",
+              "error": null,
+              "childWorkflowID": null,
+              "startedAtEpochMs": 1791381748782,
+              "completedAtEpochMs": 1791381748795
+            }
+          ]
+        }
+      ],
+      "stdout": "Initializing DBOS (v0.0.0)\nSystem Database URL: postgres://test:***@localhost:32937/test_fork_2\nExecutor ID: local\nApplication version: prune-v1\nNo workflows to recover from application version prune-v1\nDBOS launched!\nListening to 0 queues:\n",
+      "stderr": "(node:54800) DeprecationWarning: Calling client.query() when the client is already executing a query is deprecated and will be removed in pg@9.0. Use async/await or an external async flow control mechanism instead.\n(Use `node --trace-deprecation ...` to show where the warning was created)\n",
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    }
+  ],
+  "sourceHashes": [
+    {
+      "path": "src/server/durable/prune-family.ts",
+      "sha256": "549f33bf2c0b7e71f1f21436430dc6c97152a4120785b8cb9a7230f1c5c096ac"
+    },
+    {
+      "path": "src/server/durable/prune-worker.ts",
+      "sha256": "7b12c39a86d4dac907f833443e891107bd754ccd4909e2418fbd0d78a343d2de"
+    },
+    {
+      "path": "tests/dbos-prune/worker.ts",
+      "sha256": "8c3a654081a42e277407383a39ba61fafde35b441854f043432414da1584ea77"
+    },
+    {
+      "path": "tests/dbos-prune/migration.db.test.ts",
+      "sha256": "e95889476d0b61bfad354c07697ad143c9e861c96114eb0d7d3719b73d0936be"
+    },
+    {
+      "path": "drizzle/0115_yuk1355_prune_backend.sql",
+      "sha256": "2db23a045773f6c176f545f2af7576d5122a7a3b60a85b642af21164b3de7d76"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "sha256": "7b1a3254d428b208c15ae5b86f831c76ae3d327018f47584cc84a7a6c27f9cf5"
+    },
+    {
+      "path": "node_modules/pg-boss/package.json",
+      "sha256": "d6935b5887a7b5ce970ceb79af714bedc5eff32167c4dca53953baccffa3021a"
+    },
+    {
+      "path": "node_modules/@dbos-inc/dbos-sdk/package.json",
+      "sha256": "ab2adaae81cd0e777af3877db6608cf909bdd351e25675fbcd2be4ac3361c823"
+    },
+    {
+      "path": "package.json",
+      "sha256": "6b956881bd26afbff490886d874668563657e6c1423d7028fdd543d4d78eccdb"
+    },
+    {
+      "path": ".cache/yuk1355-worker.cjs",
+      "sha256": "4cb31a7d60a3659313cb0b035bcd1316d7b6be4e89b21b834270b4d986430313"
+    }
+  ]
+}

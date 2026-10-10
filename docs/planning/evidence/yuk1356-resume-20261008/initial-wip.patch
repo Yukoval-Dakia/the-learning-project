@@ -1,0 +1,726 @@
+diff --git a/postman/api-endpoints.json b/postman/api-endpoints.json
+index 2bf0c97ce..368a53335 100644
+--- a/postman/api-endpoints.json
++++ b/postman/api-endpoints.json
+@@ -422,7 +422,7 @@
+             }
+           }
+         },
+-        "notes": "session_id 指定当前 Copilot conversation；省略时保留 find-or-create 行为。chat、chip 和教学均持久接纳，成功统一返回 202 JSON { run_id, session_id, checkpoint_event_id? } 与 Location。durable 字段仅兼容旧请求，不改变生命周期；chip 不声明手输消息撤回锚点。同会话按接纳顺序执行，进度经 job-events SSE replay，GET /api/copilot/turns 返回当前 session 与 active_runs。必须发送稳定 Idempotency-Key（1–200 字符）；同 key + 同规范化输入重放原受理结果，不同输入返回 409 idempotency_conflict。接纳提交前发现断线则 499 并回滚；提交后断线不取消执行。接纳状态不明时 503 copilot_enqueue_ambiguous，须用原 key 重试。队列禁用返回 503，不回退到 HTTP 内执行。correction_target_turn_id 仍只能明确指向历史 AI reply，不自动绑定上一轮。需 x-internal-token。"
++        "notes": "session_id 指定当前 Copilot conversation；省略时保留 find-or-create 行为。chat、chip 和教学均持久接纳，成功统一返回 202 JSON { run_id, session_id, checkpoint_event_id? } 与 Location。durable 字段仅兼容旧请求，不改变生命周期；chip 不声明手输消息撤回锚点。同会话按接纳顺序执行，进度经 job-events SSE replay，GET /api/copilot/turns 返回当前 session 与 active_runs。必须发送稳定 Idempotency-Key（1–200 字符）；同 key + 同规范化输入重放原受理结果，不同输入返回 409 idempotency_conflict。接纳提交前发现断线则 499 并回滚；提交后断线不取消执行。接纳状态不明时 503 copilot_enqueue_ambiguous，须用原 key 重试。队列禁用返回 503，不回退到 HTTP 内执行。correction_target_turn_id 仍只能明确指向历史 AI reply，不自动绑定上一轮。需 x-internal-token。 YUK-1356：普通 chat 可携带 review_answer={authorize_submission:true,question_id,assessment:{issuance_id,evaluation_group_id,idempotency_key,response_set,group_evidence,submission_id?},review_session_id?,reasoning_trace?}。仅结构化字段授权；prose 不授权。原件经既有 saveSubmission 在接纳事务中不可变保存，ask 只持坐标、授权和 digest。Pi submit_review_answer 仅接受本 turn 的 original_ref=run_id；不接受 response/actor/independent/self_report。chat 原件的帮助来源为 unknown 或既有原件快照，不能凭 chat 声称独立掌握。review_session_id 若提供须为 active started review；容器型 issuance 保留其专用入口。Stop/retract 在工具接纳前撤销授权但保留已接收原件，不产生评分/学习效应；已接纳的 in-flight 业务遵循既有取消与 durable judge 语义。UI 附件入口本轮延期。"
+       }
+     ]
+   },
+diff --git a/postman/learning-api.postman_collection.json b/postman/learning-api.postman_collection.json
+index 7b8139892..f127c3d76 100644
+--- a/postman/learning-api.postman_collection.json
++++ b/postman/learning-api.postman_collection.json
+@@ -1014,7 +1014,7 @@
+               "host": ["{{baseUrl}}"],
+               "path": ["api", "copilot", "chat"]
+             },
+-            "description": "向 Copilot 发送消息；统一持久接纳 202，断线不取消，同会话顺序执行\n\n**Notes:** session_id 指定当前 Copilot conversation；省略时保留 find-or-create 行为。chat、chip 和教学均持久接纳，成功统一返回 202 JSON { run_id, session_id, checkpoint_event_id? } 与 Location。durable 字段仅兼容旧请求，不改变生命周期；chip 不声明手输消息撤回锚点。同会话按接纳顺序执行，进度经 job-events SSE replay，GET /api/copilot/turns 返回当前 session 与 active_runs。必须发送稳定 Idempotency-Key（1–200 字符）；同 key + 同规范化输入重放原受理结果，不同输入返回 409 idempotency_conflict。接纳提交前发现断线则 499 并回滚；提交后断线不取消执行。接纳状态不明时 503 copilot_enqueue_ambiguous，须用原 key 重试。队列禁用返回 503，不回退到 HTTP 内执行。correction_target_turn_id 仍只能明确指向历史 AI reply，不自动绑定上一轮。需 x-internal-token。",
++            "description": "向 Copilot 发送消息；统一持久接纳 202，断线不取消，同会话顺序执行\n\n**Notes:** session_id 指定当前 Copilot conversation；省略时保留 find-or-create 行为。chat、chip 和教学均持久接纳，成功统一返回 202 JSON { run_id, session_id, checkpoint_event_id? } 与 Location。durable 字段仅兼容旧请求，不改变生命周期；chip 不声明手输消息撤回锚点。同会话按接纳顺序执行，进度经 job-events SSE replay，GET /api/copilot/turns 返回当前 session 与 active_runs。必须发送稳定 Idempotency-Key（1–200 字符）；同 key + 同规范化输入重放原受理结果，不同输入返回 409 idempotency_conflict。接纳提交前发现断线则 499 并回滚；提交后断线不取消执行。接纳状态不明时 503 copilot_enqueue_ambiguous，须用原 key 重试。队列禁用返回 503，不回退到 HTTP 内执行。correction_target_turn_id 仍只能明确指向历史 AI reply，不自动绑定上一轮。需 x-internal-token。 YUK-1356：普通 chat 可携带 review_answer={authorize_submission:true,question_id,assessment:{issuance_id,evaluation_group_id,idempotency_key,response_set,group_evidence,submission_id?},review_session_id?,reasoning_trace?}。仅结构化字段授权；prose 不授权。原件经既有 saveSubmission 在接纳事务中不可变保存，ask 只持坐标、授权和 digest。Pi submit_review_answer 仅接受本 turn 的 original_ref=run_id；不接受 response/actor/independent/self_report。chat 原件的帮助来源为 unknown 或既有原件快照，不能凭 chat 声称独立掌握。review_session_id 若提供须为 active started review；容器型 issuance 保留其专用入口。Stop/retract 在工具接纳前撤销授权但保留已接收原件，不产生评分/学习效应；已接纳的 in-flight 业务遵循既有取消与 durable judge 语义。UI 附件入口本轮延期。",
+             "body": {
+               "mode": "raw",
+               "raw": "{\n  \"session_id\": \"REPLACE_COPILOT_SESSION_ID\",\n  \"user_message\": \"帮我讲解之字主谓间用法\",\n  \"triggered_by\": \"chat\",\n  \"ambient_context\": {\n    \"route\": \"/today\",\n    \"focused_entity\": {\n      \"kind\": \"knowledge_node\",\n      \"id\": \"k_abc123\"\n    }\n  }\n}",
+diff --git a/src/capabilities/copilot/api/chat.ts b/src/capabilities/copilot/api/chat.ts
+index d132f677d..def714643 100644
+--- a/src/capabilities/copilot/api/chat.ts
++++ b/src/capabilities/copilot/api/chat.ts
+@@ -25,6 +25,7 @@ import {
+   reserveCopilotDurableAcceptance,
+   withCopilotDurableDispatchLock,
+ } from '@/capabilities/copilot/server/durable-dispatch';
++import { canonicalHash } from '@/core/migration/canonical';
+ import { db } from '@/db/client';
+ import { ApiError, errorResponse } from '@/kernel/http';
+ import { fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
+@@ -305,10 +306,14 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
+         {
+           sessionId: conv.sessionId,
+           userMessage: parsed.user_message,
++          reviewAnswer: parsed.review_answer,
+           inputHash: durableInputHash,
+           ...(idempotencyKey ? { idempotencyKey } : {}),
+           queuedPayload: {
+             session_id: conv.sessionId,
++            ...(parsed.review_answer
++              ? { review_answer_sha256: canonicalHash(parsed.review_answer) }
++              : {}),
+             triggered_by: parsed.triggered_by,
+             dispatch: { source: 'unified_conversation' },
+           },
+diff --git a/src/capabilities/copilot/server/chat-contracts.ts b/src/capabilities/copilot/server/chat-contracts.ts
+index d379b5938..18ee37fe8 100644
+--- a/src/capabilities/copilot/server/chat-contracts.ts
++++ b/src/capabilities/copilot/server/chat-contracts.ts
+@@ -1,4 +1,5 @@
+ import { z } from 'zod';
++import { ReviewAnswerAttachmentSchema } from '@/kernel/tools/review-answer';
+ 
+ export const COPILOT_CHAT_TRIGGER_KINDS = ['chat', 'chip'] as const;
+ export type CopilotChatTriggerKind = (typeof COPILOT_CHAT_TRIGGER_KINDS)[number];
+@@ -91,9 +92,22 @@ export const CopilotChatRequest = z
+       })
+       .optional(),
+     durable: z.boolean().optional(),
++    review_answer: ReviewAnswerAttachmentSchema.optional(),
+     correction_target_turn_id: z.string().min(1).max(160).optional(),
+   })
+   .superRefine((request, ctx) => {
++    if (
++      request.review_answer &&
++      (request.triggered_by !== 'chat' ||
++        request.skill_context ||
++        request.correction_target_turn_id)
++    ) {
++      ctx.addIssue({
++        code: 'custom',
++        path: ['review_answer'],
++        message: 'review_answer requires an ordinary chat turn',
++      });
++    }
+     if (
+       request.correction_target_turn_id !== undefined &&
+       request.skill_context?.skill === 'teaching'
+diff --git a/src/capabilities/copilot/server/conversation-writes.ts b/src/capabilities/copilot/server/conversation-writes.ts
+index beb5a0182..f4643f153 100644
+--- a/src/capabilities/copilot/server/conversation-writes.ts
++++ b/src/capabilities/copilot/server/conversation-writes.ts
+@@ -6,6 +6,7 @@ import { createId } from '@paralleldrive/cuid2';
+ import type { Db, Tx } from '@/db/client';
+ import { type WriteEventInput, writeEvent } from '@/kernel/events';
+ import type { CopilotModeState, CopilotSkillContextT, CopilotSkillTurn } from './chat-contracts';
++import { type ReviewAnswerAttachment, captureReviewAnswerBinding } from './practice-port';
+ import {
+   type CopilotReplyFinalizationReceipt,
+   type PreparedCopilotReply,
+@@ -34,6 +35,7 @@ export async function writeCopilotInputEvent(
+   params: {
+     sessionId: string;
+     userMessage: string;
++    reviewAnswer?: ReviewAnswerAttachment;
+     triggeredBy?: 'chat' | 'chip';
+     chipKind?: string;
+     now: Date;
+@@ -41,11 +43,29 @@ export async function writeCopilotInputEvent(
+     eventId?: string;
+     writeFn?: (db: Db | Tx, event: WriteEventInput) => Promise<unknown>;
+   },
++): Promise<string> {
++  if (params.reviewAnswer) return db.transaction((tx) => persistCopilotInputEvent(tx, params));
++  return persistCopilotInputEvent(db, params);
++}
++
++async function persistCopilotInputEvent(
++  db: Db | Tx,
++  params: Parameters<typeof writeCopilotInputEvent>[1],
+ ): Promise<string> {
+   const write = params.writeFn ?? writeEvent;
+   const isChip = params.triggeredBy === 'chip';
+   const userAskEventId =
+     params.eventId ?? `${isChip ? 'copilot_chip' : 'copilot_user_ask'}_${createId()}`;
++  const requestedReviewAnswer = params.reviewAnswer;
++  const reviewAnswer = requestedReviewAnswer
++    ? await db.transaction((tx) =>
++        captureReviewAnswerBinding(tx, {
++          sessionId: params.sessionId,
++          originalRef: userAskEventId,
++          original: requestedReviewAnswer,
++        }),
++      )
++    : undefined;
+   await write(db, {
+     id: userAskEventId,
+     session_id: params.sessionId,
+@@ -58,6 +78,7 @@ export async function writeCopilotInputEvent(
+     payload: {
+       surface: 'copilot',
+       user_message: params.userMessage,
++      ...(reviewAnswer ? { review_answer: reviewAnswer } : {}),
+       ...(isChip ? { chip_kind: params.chipKind ?? null } : {}),
+       // AF S3a — redundant portable copy of the conversation envelope id.
+       session_id: params.sessionId,
+diff --git a/src/capabilities/copilot/server/copilot-execution.ts b/src/capabilities/copilot/server/copilot-execution.ts
+index 7881b91b8..400625683 100644
+--- a/src/capabilities/copilot/server/copilot-execution.ts
++++ b/src/capabilities/copilot/server/copilot-execution.ts
+@@ -57,6 +57,7 @@ import {
+   primaryViewLearningContent,
+   primaryViewLearningQuestions,
+ } from './reply-finalization';
++import { resolveCopilotReviewAnswer } from './review-answer-consumer';
+ import { bindSubagentParentCancellation, handleNativeSubagentTaskEvent } from './subagent-mailbox';
+ import {
+   type CopilotSubtaskEvent,
+@@ -140,6 +141,7 @@ type StreamResult = Pick<
+ 
+ /** Process-level adapters. Product callers use ExecuteCopilotTurn, never this seam. */
+ export interface CopilotExecutionAdapters {
++  resolveReviewAnswerFn: typeof resolveCopilotReviewAnswer;
+   runAgentTaskFn: (
+     kind: string,
+     input: unknown,
+@@ -157,6 +159,7 @@ export interface CopilotExecutionAdapters {
+ }
+ 
+ const defaultAdapters: CopilotExecutionAdapters = {
++  resolveReviewAnswerFn: resolveCopilotReviewAnswer,
+   runAgentTaskFn: runAgentTask,
+   streamTaskCollectingFn: streamTaskCollecting,
+   buildExaMcpServerFn: buildExaMcpServer,
+@@ -200,10 +203,21 @@ export function createCopilotExecutionOwner(
+       turn.input.user_message,
+       turn.input.correction_contract,
+     );
++    const reviewAnswer = turn.sourceEventId
++      ? await adapters.resolveReviewAnswerFn(db, {
++          sessionId: turn.sessionId,
++          sourceEventId: turn.sourceEventId,
++          signal: validationSignal,
++        })
++      : undefined;
++    const boundInput: CopilotRunInput = {
++      ...turn.input,
++      review_answer: reviewAnswer ? { original_ref: reviewAnswer.originalRef } : undefined,
++    };
+     const input: CopilotRunInput =
+       correctionResolution.kind === 'clarify'
+-        ? turn.input
+-        : { ...turn.input, correction_contract: correctionResolution.contract };
++        ? boundInput
++        : { ...boundInput, correction_contract: correctionResolution.contract };
+     const authoritativeReply =
+       correctionResolution.kind === 'clarify'
+         ? { reply: correctionResolution.reply, correction: 'clarify' as const }
+@@ -287,6 +301,7 @@ export function createCopilotExecutionOwner(
+     const domainMountOptions = {
+       ctx: {
+         db,
++        ...(reviewAnswer ? { reviewAnswer } : {}),
+         sessionId: turn.sessionId,
+         taskRunId: turn.taskRunId,
+         providerAttemptCaller: 'worker',
+diff --git a/src/capabilities/copilot/server/copilot-execution.unit.test.ts b/src/capabilities/copilot/server/copilot-execution.unit.test.ts
+index 04b7ce99d..09ee3bdd3 100644
+--- a/src/capabilities/copilot/server/copilot-execution.unit.test.ts
++++ b/src/capabilities/copilot/server/copilot-execution.unit.test.ts
+@@ -55,6 +55,7 @@ function ownerWith(
+     if (mount?.type === 'domain') captureMcp(mount.options as BuildMcpServerOptions);
+   };
+   return createCopilotExecutionOwner({
++    resolveReviewAnswerFn: async () => undefined,
+     runAgentTaskFn: async (kind, value, ctx) => {
+       captureCtx(ctx);
+       return run(kind, value, ctx);
+@@ -356,6 +357,7 @@ describe('Copilot execution owner', () => {
+   it('owns optional web grounding and skill resolution', async () => {
+     let runnerContext: Parameters<CopilotExecutionAdapters['runAgentTaskFn']>[2] | undefined;
+     const execute = createCopilotExecutionOwner({
++      resolveReviewAnswerFn: async () => undefined,
+       streamTaskCollectingFn: async (_kind, _input, ctx) => {
+         runnerContext = ctx;
+         return {
+diff --git a/src/capabilities/copilot/server/copilot-run-input.ts b/src/capabilities/copilot/server/copilot-run-input.ts
+index eb072953d..78bd4e707 100644
+--- a/src/capabilities/copilot/server/copilot-run-input.ts
++++ b/src/capabilities/copilot/server/copilot-run-input.ts
+@@ -57,6 +57,8 @@ export interface CopilotRunInput {
+   surface: DomainToolSurface;
+   triggered_by: CopilotTriggeredBy;
+   user_message: string;
++  /** Server-resolved current-turn attachment reference only. */
++  review_answer?: { original_ref: string };
+   chip_kind?: string;
+   proposal_feedback: ScopedProposalFeedbackCell[];
+   conversation_history: CopilotHistoryTurn[];
+diff --git a/src/capabilities/copilot/server/copilot-tools.unit.test.ts b/src/capabilities/copilot/server/copilot-tools.unit.test.ts
+index c0fef21c8..9b102caa0 100644
+--- a/src/capabilities/copilot/server/copilot-tools.unit.test.ts
++++ b/src/capabilities/copilot/server/copilot-tools.unit.test.ts
+@@ -62,7 +62,7 @@ describe('copilotTools 贡献制 ↔ COPILOT_TOOLS allowlist 对账', () => {
+     const fullInventory = [...READ_TOOLS, ...PROPOSE_WRITE_TOOLS, ...CONTROL_TOOLS];
+     expect(new Set(declared)).toEqual(new Set(fullInventory));
+     expect(declared).toHaveLength(fullInventory.length);
+-    expect(fullInventory).toHaveLength(45);
++    expect(fullInventory).toHaveLength(46);
+     for (const name of LEGACY_MODEL_CONTROL_NAMES) {
+       expect(declared, name).not.toContain(name);
+       expect(fullInventory, name).not.toContain(name);
+@@ -75,7 +75,7 @@ describe('copilotTools 贡献制 ↔ COPILOT_TOOLS allowlist 对账', () => {
+     );
+     expect(COPILOT_TOOLS.every((name) => declared.has(name))).toBe(true);
+     expect(new Set(COPILOT_TOOLS).size).toBe(COPILOT_TOOLS.length);
+-    expect(COPILOT_TOOLS).toHaveLength(31);
++    expect(COPILOT_TOOLS).toHaveLength(32);
+     expect(COPILOT_TOOLS).toContain('author_question');
+     expect(COPILOT_TOOLS).toEqual(
+       expect.arrayContaining(['generate_goal_outline', 'generate_question_candidate']),
+diff --git a/src/capabilities/copilot/server/durable-dispatch.ts b/src/capabilities/copilot/server/durable-dispatch.ts
+index 3b6b414f0..480daddd4 100644
+--- a/src/capabilities/copilot/server/durable-dispatch.ts
++++ b/src/capabilities/copilot/server/durable-dispatch.ts
+@@ -10,6 +10,7 @@ import { writeJobEvent } from '@/server/events/writer';
+ import { writeCopilotInputEvent } from './conversation-writes';
+ import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from './copilot-run-status';
+ import { copilotRunTerminalSql } from './copilot-run-terminal-sql';
++import type { ReviewAnswerAttachment } from './practice-port';
+ 
+ export const COPILOT_IDEMPOTENCY_KEY_MAX_LENGTH = 200;
+ export const COPILOT_SESSION_QUEUE_PROTOCOL_VERSION = 2;
+@@ -210,6 +211,7 @@ export async function reserveCopilotDurableAcceptance(
+   input: {
+     sessionId: string;
+     userMessage: string;
++    reviewAnswer?: ReviewAnswerAttachment;
+     inputHash: string;
+     idempotencyKey?: string;
+     queuedPayload: Record<string, unknown>;
+@@ -253,6 +255,7 @@ export async function reserveCopilotDurableAcceptance(
+       userMessage: input.userMessage,
+       triggeredBy: input.jobData?.triggered_by,
+       chipKind: input.jobData?.chip_kind,
++      reviewAnswer: input.reviewAnswer,
+       now: new Date(),
+       ...(deterministicRunId ? { eventId: deterministicRunId } : {}),
+     });
+diff --git a/src/capabilities/copilot/server/live-turn-context.ts b/src/capabilities/copilot/server/live-turn-context.ts
+index fe438e741..b7bc62b73 100644
+--- a/src/capabilities/copilot/server/live-turn-context.ts
++++ b/src/capabilities/copilot/server/live-turn-context.ts
+@@ -8,6 +8,7 @@ type TurnContext = {
+   readonly v: 1;
+   readonly learner_state?: string;
+   readonly proposal_feedback?: CopilotRunInput['proposal_feedback'];
++  readonly review_answer?: CopilotRunInput['review_answer'];
+   readonly ambient?: CopilotRunInput['ambient_context'];
+   readonly chip?: {
+     readonly surface: CopilotRunInput['surface'];
+@@ -37,6 +38,7 @@ export function compileCopilotModelInput(
+ function compileTurnContext(input: CopilotRunInput, includeProposalFeedback: boolean): string {
+   const context: TurnContext = {
+     v: 1,
++    ...(input.review_answer ? { review_answer: input.review_answer } : {}),
+     ...(input.learner_state_header ? { learner_state: input.learner_state_header } : {}),
+     ...(includeProposalFeedback && input.proposal_feedback.length > 0
+       ? { proposal_feedback: input.proposal_feedback }
+diff --git a/src/capabilities/copilot/server/materializing-tools.ts b/src/capabilities/copilot/server/materializing-tools.ts
+index 137a36098..2834c083e 100644
+--- a/src/capabilities/copilot/server/materializing-tools.ts
++++ b/src/capabilities/copilot/server/materializing-tools.ts
+@@ -15,6 +15,7 @@ import { event } from '@/db/schema';
+ // event the cascade handles. The teaching ask_check materializer is handled separately via
+ // skill_turn.structured_question (chat.ts / turns.ts).
+ export const MATERIALIZING_TOOL_NAMES: ReadonlySet<string> = new Set<string>([
++  'submit_review_answer',
+   'author_question',
+   'author_artifact',
+   'update_artifact',
+@@ -45,5 +46,19 @@ export async function selectAsksWithMaterializingToolCall(
+         sql`${event.payload}->>'tool_name' in (${toolNameList})`,
+       ),
+     );
+-  return new Set(rows.map((row) => row.askId).filter((id): id is string => id !== null));
++  // Authenticated answer attachments already materialize an immutable original at acceptance.
++  const attachments = await db
++    .select({ id: event.id })
++    .from(event)
++    .where(
++      and(
++        inArray(event.id, [...askEventIds]),
++        eq(event.action, 'experimental:copilot_user_ask'),
++        sql`${event.payload} ? 'review_answer'`,
++      ),
++    );
++  return new Set([
++    ...rows.map((row) => row.askId).filter((id): id is string => id !== null),
++    ...attachments.map((row) => row.id),
++  ]);
+ }
+diff --git a/src/capabilities/copilot/server/practice-port.ts b/src/capabilities/copilot/server/practice-port.ts
+index 09ceaf870..9bfdd02c3 100644
+--- a/src/capabilities/copilot/server/practice-port.ts
++++ b/src/capabilities/copilot/server/practice-port.ts
+@@ -1,8 +1,14 @@
+ export {
++  type BoundReviewAnswer,
++  BoundReviewAnswerSchema,
+   LEARNING_CONTENT_MAX_QUESTIONS,
+   type LearningContentValidationDeps,
++  type ReviewAnswerAttachment,
++  ReviewAnswerAttachmentSchema,
+   SolveError,
+   buildSolveHintInput,
++  captureReviewAnswerBinding,
++  consumeReviewAnswerBinding,
+   isLiveQuestionReference,
+   parseHintTurn,
+   validateLearningContent,
+diff --git a/src/capabilities/copilot/server/tool-result-snapshot.ts b/src/capabilities/copilot/server/tool-result-snapshot.ts
+index 6dec3b2ff..eb306c85e 100644
+--- a/src/capabilities/copilot/server/tool-result-snapshot.ts
++++ b/src/capabilities/copilot/server/tool-result-snapshot.ts
+@@ -29,6 +29,7 @@ type ResultPolicy =
+   | 'generated'
+   | readonly string[];
+ const POLICIES: Record<string, ResultPolicy> = {
++  submit_review_answer: ['kind', 'status', 'submission_id', 'attempt_id', 'candidate_id', 'run_id'],
+   query_memory_brief: 'reader',
+   get_subject_graph_overview: 'reader',
+   query_knowledge: 'reader',
+diff --git a/src/capabilities/practice/manifest.ts b/src/capabilities/practice/manifest.ts
+index daf1693a3..ee9749ae8 100644
+--- a/src/capabilities/practice/manifest.ts
++++ b/src/capabilities/practice/manifest.ts
+@@ -1296,6 +1296,11 @@ export const practiceCapability = defineCapability({
+   // ADR-0032 D6-B 的 propose_question_edit 则属于 Copilot base surface。
+   copilotTools: {
+     tools: [
++      {
++        name: 'submit_review_answer',
++        load: () =>
++          import('./server/tools/submit-review-answer').then((m) => m.submitReviewAnswerTool),
++      },
+       {
+         name: 'get_question_context',
+         load: () => import('./server/tools/question-context').then((m) => m.getQuestionContextTool),
+diff --git a/src/capabilities/practice/public.ts b/src/capabilities/practice/public.ts
+index 5c554b10f..4ddef51b5 100644
+--- a/src/capabilities/practice/public.ts
++++ b/src/capabilities/practice/public.ts
+@@ -7,6 +7,12 @@ export {
+   activeEffectiveTruth,
+   getEffectiveTruths,
+ } from '@/kernel/events';
++export {
++  type BoundReviewAnswer,
++  BoundReviewAnswerSchema,
++  type ReviewAnswerAttachment,
++  ReviewAnswerAttachmentSchema,
++} from '@/kernel/tools/review-answer';
+ export type { QuizGenJobData } from './jobs/quiz_gen';
+ export { runSourceVerify } from './jobs/source_verify';
+ // YUK-1057 — 隔离演练的 post-cutover writer seam：发题/草稿/提交统一经
+@@ -42,6 +48,7 @@ export {
+   runSolveCheck,
+   runTeachingQualityCheck,
+ } from './server/quiz/verify-framework';
++export { captureReviewAnswerBinding, consumeReviewAnswerBinding } from './server/review-operation';
+ export {
+   SolveError,
+   buildSolveHintInput,
+diff --git a/src/capabilities/practice/server/assessment/assistance.ts b/src/capabilities/practice/server/assessment/assistance.ts
+index 0d5cd94c9..feb46de47 100644
+--- a/src/capabilities/practice/server/assessment/assistance.ts
++++ b/src/capabilities/practice/server/assessment/assistance.ts
+@@ -10,11 +10,11 @@ export type AssistanceImpact = 'answer_help' | 'harmless_clarification' | 'unkno
+ 
+ /** Server classification only. A stage number is not evidence of harmlessness. */
+ export async function recordAssistanceExposure(
+-  database: Db,
++  database: Db | Tx,
+   input: {
+     issuanceId: string;
+     questionId: string;
+-    kind: 'hint' | 'solution';
++    kind: 'hint' | 'solution' | 'chat_context';
+     impact: AssistanceImpact;
+     contentDigest: string;
+   },
+diff --git a/src/capabilities/practice/server/review-operation.ts b/src/capabilities/practice/server/review-operation.ts
+index 4150d5a17..cb97555fd 100644
+--- a/src/capabilities/practice/server/review-operation.ts
++++ b/src/capabilities/practice/server/review-operation.ts
+@@ -1,26 +1,36 @@
+-import { and, eq, exists, notExists } from 'drizzle-orm';
++import { and, eq, exists, notExists, sql } from 'drizzle-orm';
++import { canonicalHash } from '@/core/migration/canonical';
+ import { isBlankSlotResponse } from '@/core/schema/assessment/response';
+ import {
+   INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE,
+   InterventionDiagnosticQuestionMetadata,
+ } from '@/core/schema/intervention';
+-import type { Db } from '@/db/client';
++import type { Db, Tx } from '@/db/client';
+ import {
+   assessment_issuance,
+   assessment_submission,
++  event,
+   learning_session,
+   question,
+   question_group_lifecycle,
+   question_revision,
+ } from '@/db/schema';
+ import { ApiError } from '@/kernel/http';
++import {
++  type BoundReviewAnswer,
++  BoundReviewAnswerSchema,
++  type ReviewAnswerAttachment,
++  ReviewAnswerAttachmentSchema,
++} from '@/kernel/tools/review-answer';
+ import { shouldEnqueueBackgroundJobs } from '@/server/runtime-env';
+-import type { CreateAttemptBody } from '../api/contracts';
++import { type CreateAttemptBody, CreateAttemptBodySchema } from '../api/contracts';
+ import { normalizeReviewSubmitActivityRef } from './activity-ref';
+-import { commitFormalAttempt } from './assessment/attempt';
++import { recordAssistanceExposure } from './assessment/assistance';
++import { commitFormalAttempt, prepareFormalAttemptSubmission } from './assessment/attempt';
+ import type { NativeAttemptDispatchPort } from './assessment/native-attempt-dispatch-port';
+ import { judgeDurableEnabled } from './judge-durable-config';
+ import { validatePlacementSubmission } from './placement-assessment';
++import type { ReviewAnswerReceipt } from './tools/submit-review-answer';
+ 
+ type QuestionRow = typeof question.$inferSelect;
+ 
+@@ -316,3 +326,184 @@ export async function submitReviewAnswer(
+     throw err;
+   }
+ }
++
++async function reviewBindingCoordinates(
++  database: Db | Tx,
++  original: Pick<ReviewAnswerAttachment, 'question_id' | 'review_session_id'> & {
++    assessment: { issuance_id: string };
++  },
++) {
++  const [issued] = await database
++    .select()
++    .from(assessment_issuance)
++    .where(eq(assessment_issuance.issuance_id, original.assessment.issuance_id));
++  const [revision] = issued
++    ? await database
++        .select({ groupId: question_revision.group_id })
++        .from(question_revision)
++        .where(eq(question_revision.revision_id, issued.revision_id))
++    : [];
++  if (!issued || !revision) throw new ApiError('not_found', 'issued original not found', 404);
++  if (
++    issued.container_occurrence_ref !== null ||
++    (revision.groupId !== original.question_id && !issued.part_ids.includes(original.question_id))
++  ) {
++    throw new ApiError(
++      'coordinate_mismatch',
++      'original is outside the standalone review issuance',
++      409,
++    );
++  }
++  if (original.review_session_id) {
++    const [session] = await database
++      .select()
++      .from(learning_session)
++      .where(eq(learning_session.id, original.review_session_id));
++    if (session?.type !== 'review' || session.status !== 'started') {
++      throw new ApiError('coordinate_mismatch', 'review session is not active', 409);
++    }
++  }
++  return issued;
++}
++
++/** Runs in the authenticated chat acceptance transaction, before any model execution. */
++export async function captureReviewAnswerBinding(
++  database: Tx,
++  input: {
++    sessionId: string;
++    originalRef: string;
++    original: ReviewAnswerAttachment;
++  },
++): Promise<BoundReviewAnswer> {
++  const original = ReviewAnswerAttachmentSchema.parse(input.original);
++  const issued = await reviewBindingCoordinates(database, original);
++  // The same assessment retry identity cannot acquire a second chat/session authority.
++  await database.execute(
++    sql`SELECT pg_advisory_xact_lock(hashtextextended(${`review-answer:${original.assessment.evaluation_group_id}:${original.assessment.idempotency_key}`}, 0))`,
++  );
++  const [prior] = await database
++    .select({ id: event.id })
++    .from(event)
++    .where(
++      and(
++        eq(event.action, 'experimental:copilot_user_ask'),
++        sql`${event.payload}->'review_answer'->'original'->'assessment'->>'evaluation_group_id' = ${original.assessment.evaluation_group_id}`,
++        sql`${event.payload}->'review_answer'->'original'->'assessment'->>'idempotency_key' = ${original.assessment.idempotency_key}`,
++      ),
++    )
++    .limit(1);
++  if (prior && prior.id !== input.originalRef) {
++    throw new ApiError(
++      'review_original_conflict',
++      'original is already bound to another chat turn',
++      409,
++    );
++  }
++  // Match saveSubmission's group → issuance order before the assistance snapshot.
++  await database.execute(
++    sql`SELECT pg_advisory_xact_lock(hashtext('assessment-evaluation-group'), hashtext(${original.assessment.evaluation_group_id}))`,
++  );
++  const [accepted] = await database
++    .select({ id: assessment_submission.submission_id })
++    .from(assessment_submission)
++    .where(
++      and(
++        eq(assessment_submission.evaluation_group_id, original.assessment.evaluation_group_id),
++        eq(assessment_submission.idempotency_key, original.assessment.idempotency_key),
++      ),
++    );
++  if (!accepted)
++    await recordAssistanceExposure(database, {
++      issuanceId: original.assessment.issuance_id,
++      questionId: original.question_id,
++      kind: 'chat_context',
++      impact: 'unknown',
++      contentDigest: canonicalHash(original),
++    });
++  const saved = await prepareFormalAttemptSubmission(
++    database,
++    'solo_submit',
++    original.question_id,
++    original.assessment,
++  );
++  const {
++    response_set: _responses,
++    group_evidence: _evidence,
++    ...coordinates
++  } = original.assessment;
++  return {
++    version: 1,
++    submission_id: saved.submission.submission_id,
++    original_ref: input.originalRef,
++    session_id: input.sessionId,
++    revision_id: issued.revision_id,
++    original_sha256: canonicalHash(original),
++    original: { ...original, assessment: coordinates },
++  };
++}
++
++/** The authenticated consumer owns authorization; the operation owns original/final truth. */
++export async function consumeReviewAnswerBinding(
++  database: Db,
++  raw: BoundReviewAnswer,
++  context: ReviewAnswerContext & {
++    authorize: (tx: Tx) => Promise<void>;
++  },
++): Promise<ReviewAnswerReceipt> {
++  const binding = BoundReviewAnswerSchema.parse(raw);
++  // Permission checks serialize with Stop/retraction; no lock spans the judge/provider call.
++  const original = await database.transaction(async (tx) => {
++    await context.authorize(tx);
++    context.signal?.throwIfAborted();
++    const issued = await reviewBindingCoordinates(tx, binding.original);
++    const [accepted] = await tx
++      .select()
++      .from(assessment_submission)
++      .where(eq(assessment_submission.submission_id, binding.submission_id));
++    const ref = binding.original.assessment;
++    if (
++      !accepted ||
++      accepted.issuance_id !== ref.issuance_id ||
++      accepted.revision_id !== binding.revision_id ||
++      issued.revision_id !== binding.revision_id ||
++      accepted.evaluation_group_id !== ref.evaluation_group_id ||
++      accepted.idempotency_key !== ref.idempotency_key ||
++      (ref.submission_id !== undefined && ref.submission_id !== accepted.submission_id)
++    ) {
++      throw new ApiError(
++        'review_original_modified',
++        'immutable original coordinates do not match',
++        409,
++      );
++    }
++    const reconstructed = ReviewAnswerAttachmentSchema.parse({
++      ...binding.original,
++      assessment: {
++        ...ref,
++        response_set: accepted.response_set,
++        group_evidence: accepted.group_evidence,
++      },
++    });
++    if (canonicalHash(reconstructed) !== binding.original_sha256) {
++      throw new ApiError('review_original_modified', 'bound original digest does not match', 409);
++    }
++    return reconstructed;
++  });
++  const body = CreateAttemptBodySchema.parse({
++    question_id: original.question_id,
++    assessment: original.assessment,
++    session_id: original.review_session_id ?? null,
++    reasoning_trace: original.reasoning_trace,
++    rating: 'good',
++    auto_rate: true,
++  });
++  const result = await submitReviewAnswer(database, body, context);
++  if (result.kind === 'pending') return result;
++  return {
++    kind: 'committed',
++    status: result.committed.status,
++    submission_id: result.committed.submission.submission_id,
++    attempt_id: result.committed.attempt_id,
++    candidate_id: result.committed.candidate.evaluation.record.evaluation_id,
++  };
++}
+diff --git a/src/kernel/tools/allowlists.ts b/src/kernel/tools/allowlists.ts
+index 8202c9a35..10d6a8633 100644
+--- a/src/kernel/tools/allowlists.ts
++++ b/src/kernel/tools/allowlists.ts
+@@ -53,6 +53,7 @@ export const READ_TOOLS = [
+ ] as const;
+ 
+ export const PROPOSE_WRITE_TOOLS = [
++  'submit_review_answer',
+   'propose_knowledge_edge',
+   'propose_knowledge_mutation',
+   'attribute_mistake',
+@@ -144,6 +145,7 @@ const KNOWLEDGE_REVIEW_TOOLS = [
+ // @/capabilities 拉进 web bundle（plan 裁决 h）。完整 inventory 与 Copilot 子集的
+ // 集合对账均由 src/capabilities/copilot/server/copilot-tools.unit.test.ts 强制。
+ export const COPILOT_TOOLS = [
++  'submit_review_answer',
+   'present_primary_view',
+   'query_memory_brief',
+   'generate_goal_outline',
+diff --git a/src/kernel/tools/allowlists.unit.test.ts b/src/kernel/tools/allowlists.unit.test.ts
+index 1cec7cfcf..84ee4dd9f 100644
+--- a/src/kernel/tools/allowlists.unit.test.ts
++++ b/src/kernel/tools/allowlists.unit.test.ts
+@@ -17,6 +17,7 @@ describe('DomainTool allowlist policy', () => {
+ 
+   it('keeps Wave 3 propose/write inventory explicit', () => {
+     expect(PROPOSE_WRITE_TOOLS).toEqual([
++      'submit_review_answer',
+       'propose_knowledge_edge',
+       'propose_knowledge_mutation',
+       'attribute_mistake',
+@@ -120,6 +121,7 @@ describe('DomainTool allowlist policy', () => {
+     // This assertion now locks the post-YUK-949 exact set; the presentation
+     // control is unrelated to the teaching/solve skill merge.
+     expect(DOMAIN_TOOL_ALLOWLISTS.copilot).toEqual([
++      'submit_review_answer',
+       'present_primary_view',
+       'query_memory_brief',
+       // YUK-939 — capability-owned generation-only tools; unrelated to U6.
+diff --git a/src/kernel/tools/types.ts b/src/kernel/tools/types.ts
+index 8506f4928..de22af959 100644
+--- a/src/kernel/tools/types.ts
++++ b/src/kernel/tools/types.ts
+@@ -85,6 +85,21 @@ export type ValidateLearningContentFn = (
+ 
+ export interface ToolContext {
+   db: Db;
++  /** Server-bound current-turn original; never populated from model arguments. */
++  reviewAnswer?: {
++    readonly originalRef: string;
++    readonly sessionId: string;
++    submit(): Promise<
++      | { kind: 'pending'; run_id: string }
++      | {
++          kind: 'committed';
++          status: 'effective' | 'review_required';
++          submission_id: string;
++          attempt_id: string;
++          candidate_id: string;
++        }
++    >;
++  };
+   sessionId?: string;
+   validateLearningContent?: ValidateLearningContentFn;
+   /** Caller-owned cancellation propagated into any nested AI work. */

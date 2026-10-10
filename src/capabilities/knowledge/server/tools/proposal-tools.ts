@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { getKnowledgeEdgeById } from '@/capabilities/knowledge/server/edges';
 import {
   type KnowledgeMutationPayload,
+  knowledgeNodeCooldownKey,
   writeKnowledgeProposeEvent,
 } from '@/capabilities/knowledge/server/proposals';
 import {
@@ -38,6 +39,7 @@ import { getEffectiveDomain } from '@/kernel/read-models/knowledge-tree';
 // P5.4-L2 / YUK-174 — the adaptive gate-bump budget + bias config single source.
 import { PROPOSAL_FEEDBACK_BUDGET, PROPOSAL_GATE_BIAS_CONFIG } from '@/kernel/tools/budgets';
 import { writeToolCallLog } from '@/server/ai/log';
+import { sanitizeProposedNodeDomain } from '@/subjects/profile';
 import type { DomainTool, ToolContext } from './types';
 
 function evidenceRefsFromEventIds(ids: string[]): ProposalEvidenceRefT[] {
@@ -562,7 +564,14 @@ const KnowledgeMutationInputSchema = z.object({
 const KnowledgeMutationParsedSchema = z.discriminatedUnion('mutation', [
   z.object({
     mutation: z.literal('propose_new'),
-    payload: z.object({ name: z.string().min(1).max(120), parent_id: z.string().min(1) }),
+    payload: z.object({
+      name: z.string().min(1).max(120),
+      // null = propose a NEW domain ROOT; then payload.domain is required
+      // (validated in execute — flat z.object, no .refine, per the MCP-bridge
+      // ZodObject constraint). A string parent_id proposes a child node.
+      parent_id: z.string().min(1).nullable(),
+      domain: z.string().min(1).optional(),
+    }),
     reasoning: z.string().min(1).max(2000),
     evidence_event_ids: z.array(z.string().min(1)).default([]),
     suggestion_kind: SuggestionKind.optional(),
@@ -647,7 +656,7 @@ function parseKnowledgeMutationInput(input: KnowledgeMutationInput): KnowledgeMu
 function knowledgeIdsForMutation(input: KnowledgeMutationParsedInput): string[] {
   switch (input.mutation) {
     case 'propose_new':
-      return [input.payload.parent_id];
+      return input.payload.parent_id === null ? [] : [input.payload.parent_id];
     case 'reparent':
       return [input.payload.node_id, input.payload.new_parent_id];
     case 'merge':
@@ -687,6 +696,27 @@ async function proposeKnowledgeMutationExecute(
     }
   }
 
+  // Root-creation guard (propose_new with parent_id=null): the payload must
+  // declare a real domain for the root to anchor; a child proposal must NOT
+  // carry one — children inherit the parent's effective domain and an explicit
+  // value would silently diverge from it. 'general'/blank is the fallback
+  // subject identity and can never be a node domain (node-creation contract).
+  if (input.mutation === 'propose_new') {
+    if (input.payload.parent_id === null && !sanitizeProposedNodeDomain(input.payload.domain)) {
+      return {
+        status: 'skipped:invalid_payload',
+        reason:
+          "root proposal (parent_id=null) requires a selectable payload.domain — 'general'/blank is a fallback identity, not a node domain",
+      };
+    }
+    if (input.payload.parent_id !== null && input.payload.domain !== undefined) {
+      return {
+        status: 'skipped:invalid_payload',
+        reason: 'child nodes inherit the parent domain — omit payload.domain when parent_id is set',
+      };
+    }
+  }
+
   const ids = knowledgeIdsForMutation(input);
   const activeIds = await activeKnowledgeIds(ctx.db, ids);
   const missing = [...new Set(ids)].filter((id) => !activeIds.has(id));
@@ -694,14 +724,16 @@ async function proposeKnowledgeMutationExecute(
     return { status: 'skipped:unknown_node', reason: missing.join(',') };
   }
 
-  const sharedDomain = await getSharedKnowledgeDomain(ctx.db, ids);
+  // Root proposals reference no existing nodes — nothing to domain-check
+  // against; the declared domain is reviewed at accept time like any proposal.
+  const sharedDomain = ids.length === 0 ? 'root' : await getSharedKnowledgeDomain(ctx.db, ids);
   if (sharedDomain === null) {
     return { status: 'skipped:cross_subject', reason: 'mutation spans multiple domains' };
   }
 
   const duplicateCooldown =
     input.mutation === 'propose_new'
-      ? `knowledge_node:${input.payload.parent_id}:${input.payload.name}`
+      ? knowledgeNodeCooldownKey(input.payload)
       : input.mutation === 'archive'
         ? `archive:knowledge:${input.payload.node_id}`
         : null;
@@ -739,7 +771,7 @@ export const proposeKnowledgeMutationTool: DomainTool<
 > = {
   name: 'propose_knowledge_mutation',
   description:
-    'Propose a knowledge tree mutation: propose_new, reparent, merge, split, or archive. Writes proposal-only events; accept handlers own the real mutation.',
+    'Propose a knowledge tree mutation: propose_new, reparent, merge, split, or archive. Writes proposal-only events; accept handlers own the real mutation. propose_new payload: {name, parent_id} — set parent_id=null plus payload.domain to propose a NEW subject/domain root (e.g. first node of a subject with zero roots); a child proposal uses an existing node id as parent_id and omits domain.',
   effect: 'propose',
   inputSchema: KnowledgeMutationInputSchema,
   outputSchema: KnowledgeMutationOutputSchema,

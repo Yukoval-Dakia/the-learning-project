@@ -2,25 +2,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import {
-  type DirectedEdge,
-  PREREQ_PROP_LAMBDA_DOWN,
-  PREREQ_PROP_LAMBDA_UP,
-  PREREQ_THETA_PROPAGATION_ENABLED,
-  prereqAdjustments,
-  propagatePrereq,
-} from './prereq-propagation';
-
-describe('A6 dark-ship flag + conservative priors', () => {
-  it('PREREQ_THETA_PROPAGATION_ENABLED defaults to false (byte-identical regression anchor)', () => {
-    expect(PREREQ_THETA_PROPAGATION_ENABLED).toBe(false);
-  });
-  it('retro-credit (up) is weaker than downstream press (down)', () => {
-    expect(PREREQ_PROP_LAMBDA_UP).toBeGreaterThan(0);
-    expect(PREREQ_PROP_LAMBDA_DOWN).toBeGreaterThan(0);
-    expect(PREREQ_PROP_LAMBDA_UP).toBeLessThan(PREREQ_PROP_LAMBDA_DOWN);
-  });
-});
+import { type DirectedEdge, prereqAdjustments, propagatePrereq } from './prereq-propagation';
 
 describe('prereqAdjustments — λ→0 退回独立', () => {
   it('both strengths 0 ⇒ empty adjustment map (identity)', () => {

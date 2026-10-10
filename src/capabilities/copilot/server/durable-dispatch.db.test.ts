@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
 import { and, eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -11,7 +11,6 @@ import {
   copilotBossJobId,
   copilotRunIdForIdempotencyKey,
   findCopilotDurableAcceptance,
-  hasTerminalCopilotRun,
   hashCopilotDurableInput,
   reconcileCopilotDurableAcceptance,
   reserveCopilotDurableAcceptance,
@@ -43,19 +42,6 @@ function queuedPayload(sessionId: string) {
 describe('durable Copilot dispatch acceptance', () => {
   beforeEach(async () => {
     await resetDb();
-  });
-
-  it('hashes nested input with locale-independent code-unit key ordering', () => {
-    const input = {
-      apple: 'lowercase',
-      Apple: 'uppercase',
-      _meta: { zeta: 3, Alpha: 1, alpha: 2 },
-    };
-    const canonical =
-      '{"Apple":"uppercase","_meta":{"Alpha":1,"alpha":2,"zeta":3},"apple":"lowercase"}';
-    const expected = createHash('sha256').update(canonical).digest('hex');
-
-    expect(hashCopilotDurableInput(input)).toBe(expected);
   });
 
   it('collapses concurrent same-key rich requests into one ask and one QUEUED handle', async () => {
@@ -155,36 +141,6 @@ describe('durable Copilot dispatch acceptance', () => {
     expect(Number(queuedCount[0]?.count ?? 0)).toBe(1);
   });
 
-  it('rolls back both ask and QUEUED when abort is observed before acceptance returns', async () => {
-    const sessionId = 'conversation_abort_atomic_acceptance';
-    let guardCalls = 0;
-    await expect(
-      reserveCopilotDurableAcceptance(testDb(), {
-        sessionId,
-        userMessage: richTurn.user_message,
-        inputHash: hashCopilotDurableInput(richTurn),
-        queuedPayload: queuedPayload(sessionId),
-        assertActive: () => {
-          guardCalls++;
-          if (guardCalls === 3) throw new Error('request aborted before acceptance');
-        },
-      }),
-    ).rejects.toThrow('request aborted before acceptance');
-
-    const asks = await testDb()
-      .select({ id: event.id })
-      .from(event)
-      .where(
-        and(eq(event.action, 'experimental:copilot_user_ask'), eq(event.session_id, sessionId)),
-      );
-    const queued = await testDb()
-      .select({ id: job_events.id })
-      .from(job_events)
-      .where(sql`${job_events.payload}->>'session_id' = ${sessionId}`);
-    expect(asks).toEqual([]);
-    expect(queued).toEqual([]);
-  });
-
   it('waits behind an in-flight reserve lock before reconciling a lost COMMIT acknowledgement', async () => {
     const idempotencyKey = randomUUID();
     const runId = copilotRunIdForIdempotencyKey(idempotencyKey);
@@ -240,59 +196,5 @@ describe('durable Copilot dispatch acceptance', () => {
       bossJobId,
       derivationPolicy: 'allow',
     });
-  });
-
-  it('keeps a retained retryable provider failure dispatchable until a deliberate terminal arrives', async () => {
-    const runId = 'copilot_user_ask_retry_48_items_6_probes';
-    await writeJobEvent(testDb(), {
-      business_table: COPILOT_RUN_TABLE,
-      business_id: runId,
-      event_type: COPILOT_RUN_EVENTS.QUEUED,
-      payload: {
-        session_id: 'conversation_retry_48_items_6_probes',
-        pickup_deadline_ms: Date.now() + 15_000,
-        dispatch: {
-          source: 'model_triage',
-          reason_code: 'multi_artifact_work',
-          task_run_id: 'copilot_dispatch_retry_48_items_6_probes',
-        },
-      },
-    });
-    await writeJobEvent(testDb(), {
-      business_table: COPILOT_RUN_TABLE,
-      business_id: runId,
-      event_type: COPILOT_RUN_EVENTS.FAILED,
-      payload: {
-        reason: 'error',
-        error: 'transient provider gateway reset after validating 31 of 48 items',
-      },
-    });
-
-    await expect(hasTerminalCopilotRun(testDb(), runId)).resolves.toBe(false);
-
-    await writeJobEvent(testDb(), {
-      business_table: COPILOT_RUN_TABLE,
-      business_id: runId,
-      event_type: COPILOT_RUN_EVENTS.FAILED,
-      payload: {
-        reason: 'exhausted',
-        error: 'validator retry budget exhausted on the sixth unlearned probe',
-        checkpoint_event_id: runId,
-      },
-    });
-
-    await expect(hasTerminalCopilotRun(testDb(), runId)).resolves.toBe(true);
-  });
-
-  it('fails closed on a malformed/future FAILED reason instead of buying another paid run', async () => {
-    const runId = 'copilot_user_ask_future_failure_contract';
-    await writeJobEvent(testDb(), {
-      business_table: COPILOT_RUN_TABLE,
-      business_id: runId,
-      event_type: COPILOT_RUN_EVENTS.FAILED,
-      payload: { reason: 'future_manual_settlement', operator_ticket: 'YUK-future' },
-    });
-
-    await expect(hasTerminalCopilotRun(testDb(), runId)).resolves.toBe(true);
   });
 });

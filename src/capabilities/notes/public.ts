@@ -1,5 +1,6 @@
 // Stable server contract for consumers outside the notes capability.
 
+export { NoteListQuerySchema, NoteListResponseSchema } from './api/contracts';
 export type {
   ArtifactCorrectionState,
   ArtifactCorrectionStatus,
@@ -34,6 +35,8 @@ export {
   dispatchNoteGeneration,
   writeNoteGenerationIntent,
 } from './server/note-handoff';
+export type { NoteListQuery, NoteListResponse } from './server/note-list-read';
+export { loadNoteList } from './server/note-list-read';
 export {
   type PersistNoteRefineApplyResult,
   listNoteRefineChanges,
@@ -53,6 +56,5 @@ export {
 } from './server/notes-read';
 export type { NoteUpdateAcceptResult } from './server/proposal-accept-applier';
 export { archiveProposalArtifacts } from './server/proposal-artifacts';
-
 // YUK-1062 — task composition uses the narrow task-public entry directly.
 export { notesTaskSpecs } from './task-public';

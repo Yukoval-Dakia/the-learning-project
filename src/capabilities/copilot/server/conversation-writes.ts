@@ -8,6 +8,7 @@ import type { Db, Tx } from '@/db/client';
 import { type WriteEventInput, writeEvent } from '@/kernel/events';
 import { readEventDerivationPolicy } from '@/kernel/events/derivation-policy';
 import type { CopilotModeState, CopilotSkillContextT, CopilotSkillTurn } from './chat-contracts';
+import { type ReviewAnswerAttachment, captureReviewAnswerBinding } from './practice-port';
 import {
   type CopilotReplyFinalizationReceipt,
   type PreparedCopilotReply,
@@ -37,6 +38,7 @@ export async function writeCopilotInputEvent(
     sessionId: string;
     userMessage: string;
     derivationPolicy?: DerivationPolicyT;
+    reviewAnswer?: ReviewAnswerAttachment;
     triggeredBy?: 'chat' | 'chip';
     chipKind?: string;
     now: Date;
@@ -45,10 +47,28 @@ export async function writeCopilotInputEvent(
     writeFn?: (db: Db | Tx, event: WriteEventInput) => Promise<unknown>;
   },
 ): Promise<string> {
+  if (params.reviewAnswer) return db.transaction((tx) => persistCopilotInputEvent(tx, params));
+  return persistCopilotInputEvent(db, params);
+}
+
+async function persistCopilotInputEvent(
+  db: Db | Tx,
+  params: Parameters<typeof writeCopilotInputEvent>[1],
+): Promise<string> {
   const write = params.writeFn ?? writeEvent;
   const isChip = params.triggeredBy === 'chip';
   const userAskEventId =
     params.eventId ?? `${isChip ? 'copilot_chip' : 'copilot_user_ask'}_${createId()}`;
+  const requestedReviewAnswer = params.reviewAnswer;
+  const reviewAnswer = requestedReviewAnswer
+    ? await db.transaction((tx) =>
+        captureReviewAnswerBinding(tx, {
+          sessionId: params.sessionId,
+          originalRef: userAskEventId,
+          original: requestedReviewAnswer,
+        }),
+      )
+    : undefined;
   await write(db, {
     id: userAskEventId,
     session_id: params.sessionId,
@@ -62,6 +82,7 @@ export async function writeCopilotInputEvent(
       surface: 'copilot',
       user_message: params.userMessage,
       derivation_policy: readDerivationPolicy({ derivation_policy: params.derivationPolicy }),
+      ...(reviewAnswer ? { review_answer: reviewAnswer } : {}),
       ...(isChip ? { chip_kind: params.chipKind ?? null } : {}),
       // AF S3a — redundant portable copy of the conversation envelope id.
       session_id: params.sessionId,

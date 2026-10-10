@@ -1,0 +1,29 @@
+{
+  "status": "OFFLINE PREP EVIDENCE MATCHED; RESTORE/REOPEN UNVERIFIED",
+  "sourceSealSha256": "d918113361ca61ddff094bfe4921d8e09762b929ec0a23ee6715ca457e68576a",
+  "evidenceSealSha256": "bd31604659017800b068cb3b4061d23071bea6221ea834bb55efd19684f68078",
+  "immutableSourceFiles": 5635,
+  "evidenceFiles": 8548,
+  "preservedEntriesMatched": 8616,
+  "readOnlyOriginalPrepFilesMatched": 2947,
+  "dependencyFiles": 121549,
+  "parentAttemptFiles": {
+    "/tmp/yuk1359-restore-reopen-parent": 9,
+    "/tmp/yuk1359-restore-reopen-parent02": 11,
+    "/tmp/yuk1359-restore-reopen-parent03": 10,
+    "/tmp/yuk1359-restore-reopen-parent04": 17
+  },
+  "historicalAuthorReportAvailable": false,
+  "retainedHistoricalReportKind": "parent rerun, explicitly distinguished from original",
+  "offlineChecks": 385,
+  "priorChecks": 330,
+  "newChecks": 55,
+  "attempts": {
+    "connections": 0,
+    "listeners": 0,
+    "children": 0
+  },
+  "taskState": "completed",
+  "noPending": true,
+  "writerReleased": true
+}

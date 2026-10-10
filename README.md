@@ -160,7 +160,7 @@ pnpm test             # CI 全量门禁（含 audit:task-census + unit/db/migrat
 pnpm audit:schema     # schema write-path 审计（新表/字段必须有 write path）
 pnpm audit:partition  # 测试分区审计（依赖 DB 的测试不得进 unit config）
 pnpm audit:task-census # 52 registered / 51 static / 1 compatibility + wiring/run-log contract
-pnpm build            # rw:web:build + 三 esbuild 产物（dist/server.cjs / dist/worker.cjs / dist/migrate.cjs）
+pnpm build            # SPA + TanStack Start + 三 esbuild 产物（dist/server.cjs / dist/worker.cjs / dist/migrate.cjs）
 ```
 
 快速迭代用 watch 模式：`pnpm test:unit:watch`（无 DB，覆盖 UI / core / schema / parser）、
@@ -286,9 +286,14 @@ The compose stack starts `migrate` (one-shot init that applies migrations), `pos
 `node dist/worker.cjs`），and `cloudflared`. The app is reachable through the Cloudflare
 Tunnel; port 8787 is bound only inside the compose network，不暴露到 host。
 
-Dockerfile（node:24-slim 多阶段）build 出 4 件产物：`web/dist`（Vite build）+ `dist/server.cjs`
-+ `dist/worker.cjs` + `dist/migrate.cjs`。app 容器 `CMD ["node", "dist/server.cjs"]` 并经
-`RW_STATIC_DIR=/app/web/dist` 用 `@hono/node-server/serve-static` 托管 SPA；worker 容器同镜像，
+Dockerfile（node:24-slim 多阶段）build 产物为 `web/dist`（原 SPA）、
+`dist/start`（固定 TanStack Start 1.168.60 / Router 1.170.41）和 `dist/server.cjs`、
+`dist/worker.cjs`、`dist/migrate.cjs`。app 容器 `CMD ["node", "dist/server.cjs"]`，
+`RW_STATIC_DIR=/app/web/dist` 启用 Start 前门：`/api/*` 直接交给原 Hono app，
+`/_build/*` 提供 Start 客户端资产，其余页面回落到原 SPA。API hydration、tool recovery、
+shutdown 和独立 worker 的 owner 保持不变。源码已接线，不代表已部署到当前日用镜像。
+切换/回退及 P7 清理条件见[前门 runbook](docs/planning/2026-10-07-yuk1352-start-frontdoor.md)。
+worker 容器同镜像，
 compose 层 `command: ["node", "dist/worker.cjs"]` 覆盖。**无 Redis 服务**——editing presence 走
 PG 表 `editing_presence`（PgPresenceStore，YUK-321 M5 gate 选项 b）。
 
@@ -342,11 +347,12 @@ launchctl print gui/$(id -u)/studio.yukoval.loom-daily-dump | grep -E 'last exit
 ~/Library/Application\ Support/loom-daily-dump/mac-daily-dump.sh --check  # fresh/stale 巡检
 ```
 
-**恢复演练（restore 证明，YUK-1056）**：`scripts/restore-drill.sh` 在隔离
-scratch 容器内 `pg_restore` + 行数核验，产出 `verified` JSON 证据；
-**统一切换最终备份**：`scripts/cutover-final-backup.sh` 停 writer 后
-DLQ tombstone 导出 + pg_dump + TOC + migration:capture + cutover manifest。
-详见 `docs/runbooks/cutover-final-backup-and-restore.md`。
+**完整 Postgres 恢复演练（YUK-1359/YUK-1329）**：外部 maintenance owner 先建立并持续持有全部 writer/客户端/序列写入的隔离边界，再运行
+`scripts/cutover-final-backup.sh --target=<pg-url> --quiescence-evidence=<file> --out=<dir> --strict`。
+它使用存活的 exported snapshot 捕获 dump 和完整非 system schema/table 内容及 sequence 状态。
+`scripts/restore-drill.sh --dump=<file> --source-manifest=<file> --out=<receipt>` 在隔离 scratch 容器比较同一份 staged dump；
+最终 manifest 必须另加 `--require-restore-parity`。`--strict` 仅检查 capture 工件；旧 `verified:true` 只保留为历史报告。
+详见[完整 Postgres 恢复流程](docs/sub5-restore-cli.md#full-postgres-disaster-recovery)。
 
 **手动 dump/restore**：`db:dump` streams a `pg_dump` from the running `postgres` container to a timestamped SQL file on the host:
 

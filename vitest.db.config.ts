@@ -1,13 +1,6 @@
 import { defineConfig } from 'vitest/config';
 import { DB_FORK_COUNT } from './tests/db-fork-constants';
-import {
-  allTestInclude,
-  fastTestInclude,
-  migrationSmokeInclude,
-  resolveConfig,
-  sharedExclude,
-  sharedOxc,
-} from './vitest.shared';
+import { dbTestInclude, resolveConfig, sharedExclude, sharedOxc } from './vitest.shared';
 
 const isListCommand = process.argv[2] === 'list';
 if (isListCommand) {
@@ -17,16 +10,10 @@ if (isListCommand) {
 }
 
 export default defineConfig({
-  // YUK-279 — JSX transform parity with vitest.unit.config.ts via the shared
-  // sharedOxc const (vite 8/Oxc, YUK-315). Once allTestInclude collects `.test.tsx`, any component
-  // test NOT on the unit allowlist falls through to this db partition. tsconfig has
-  // `jsx: "preserve"` (Next transforms JSX at build), so without esbuild's automatic
-  // runtime here a db-partition `.test.tsx` crashes with `React is not defined`.
-  // Importing the same const both configs use means the transform can never drift.
   oxc: sharedOxc,
   test: {
-    include: allTestInclude,
-    exclude: [...sharedExclude, ...fastTestInclude, ...migrationSmokeInclude],
+    include: dbTestInclude,
+    exclude: sharedExclude,
     environment: 'node',
     globals: false,
     globalSetup: isListCommand ? [] : ['./tests/global-setup.ts'],

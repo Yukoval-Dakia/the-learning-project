@@ -1,0 +1,283 @@
+$ biome check .
+scripts/audit-draft-status-reads.test.ts:71:64 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    69 │   it('flags the interpolated IS NULL OR <> draft form (R1)', () => {
+    70 │     const src =
+  > 71 │       "const q = db.execute(sql`SELECT id FROM question WHERE (${question.draft_status} IS NULL OR ${question.draft_status} <> 'draft')`);";
+       │                                                                ^^^^^^^^^^^^^^^^^^^^^^^^
+    72 │     const { hits } = scanReads(F, src);
+    73 │     expect(hits).toHaveLength(1);
+  
+  i Turn the string into a template string.
+  
+
+scripts/audit-draft-status-reads.test.ts:87:63 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    85 │   it('flags IS DISTINCT FROM draft (R2)', () => {
+    86 │     const src =
+  > 87 │       "const q = db.execute(sql`SELECT id FROM question WHERE ${question.draft_status} IS DISTINCT FROM 'draft'`);";
+       │                                                               ^^^^^^^^^^^^^^^^^^^^^^^^
+    88 │     const { hits } = scanReads(F, src);
+    89 │     expect(hits).toHaveLength(1);
+  
+  i Turn the string into a template string.
+  
+
+scripts/audit-draft-status-reads.test.ts:103:63 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    101 │   it('ignores a helper-routed sql`` template', () => {
+    102 │     const src =
+  > 103 │       'const q = db.execute(sql`SELECT id FROM question WHERE ${notDraftPredicate(question.draft_status)}`);';
+        │                                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    104 │     const { hits, unknown } = scanReads(F, src);
+    105 │     expect(hits).toHaveLength(0);
+  
+  i Turn the string into a template string.
+  
+
+scripts/audit-draft-status-reads.test.ts:111:63 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    109 │   it('STILL flags a hand-rolled predicate coexisting with a helper call in the SAME template (mixed, CodeRabbit YUK-569)', () => {
+    110 │     const src =
+  > 111 │       "const q = db.execute(sql`SELECT id FROM question WHERE ${notDraftPredicate(question.draft_status)} AND (draft_status IS NULL OR draft_status <> 'draft')`);";
+        │                                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    112 │     const { hits, unknown } = scanReads(F, src);
+    113 │     expect(hits).toHaveLength(1);
+  
+  i Turn the string into a template string.
+  
+
+scripts/audit-draft-status-reads.test.ts:120:63 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    118 │   it('STILL flags an UNKNOWN shape coexisting with a helper call in the SAME template (mixed)', () => {
+    119 │     const src =
+  > 120 │       "const q = db.execute(sql`SELECT id FROM question WHERE ${notDraftPredicate(question.draft_status)} AND draft_status NOT IN ('draft')`);";
+        │                                                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    121 │     const { hits, unknown } = scanReads(F, src);
+    122 │     expect(hits).toHaveLength(0);
+  
+  i Turn the string into a template string.
+  
+
+scripts/audit-draft-status-reads.test.ts:187:63 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    185 │   it('reports NOT IN (draft) as UNKNOWN-SHAPE', () => {
+    186 │     const src =
+  > 187 │       "const q = db.execute(sql`SELECT id FROM question WHERE ${question.draft_status} NOT IN ('draft')`);";
+        │                                                               ^^^^^^^^^^^^^^^^^^^^^^^^
+    188 │     const r = scanReads(F, src);
+    189 │     expect(r.hits).toHaveLength(0);
+  
+  i Turn the string into a template string.
+  
+
+scripts/audit-draft-status-reads.test.ts:195:72 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    193 │   it('reports coalesce(...) <> draft as UNKNOWN-SHAPE', () => {
+    194 │     const src =
+  > 195 │       "const q = db.execute(sql`SELECT id FROM question WHERE coalesce(${question.draft_status}, 'active') <> 'draft'`);";
+        │                                                                        ^^^^^^^^^^^^^^^^^^^^^^^^
+    196 │     const r = scanReads(F, src);
+    197 │     expect(r.unknown).toHaveLength(1);
+  
+  i Turn the string into a template string.
+  
+
+scripts/audit-draft-status-reads.test.ts:202:63 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    200 │   it('reports IS DISTINCT FROM active (not draft) as UNKNOWN-SHAPE', () => {
+    201 │     const src =
+  > 202 │       "const q = db.execute(sql`SELECT id FROM question WHERE ${question.draft_status} IS DISTINCT FROM 'active'`);";
+        │                                                               ^^^^^^^^^^^^^^^^^^^^^^^^
+    203 │     const r = scanReads(F, src);
+    204 │     expect(r.hits).toHaveLength(0);
+  
+  i Turn the string into a template string.
+  
+
+scripts/audit-draft-status.test.ts:62:45 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    61 │   it('counts braces inside template-literal interpolation but not literal text', () => {
+  > 62 │     const src = 'values({ msg: `text } with ${cond ? "x" : "y"} more`, k: 1 })';
+       │                                             ^^^^^^^^^^^^^^^^^^^
+    63 │     expect(blockFrom(src)).toBe('{ msg: `text } with ${cond ? "x" : "y"} more`, k: 1 }');
+    64 │   });
+  
+  i Turn the string into a template string.
+  
+
+scripts/audit-draft-status.test.ts:63:54 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    61 │   it('counts braces inside template-literal interpolation but not literal text', () => {
+    62 │     const src = 'values({ msg: `text } with ${cond ? "x" : "y"} more`, k: 1 })';
+  > 63 │     expect(blockFrom(src)).toBe('{ msg: `text } with ${cond ? "x" : "y"} more`, k: 1 }');
+       │                                                      ^^^^^^^^^^^^^^^^^^^
+    64 │   });
+    65 │ 
+  
+  i Turn the string into a template string.
+  
+
+scripts/audit-draft-status.test.ts:68:29 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    66 │   it('handles nested template literals inside an interpolation without counting text braces', () => {
+    67 │     const src =
+  > 68 │       'values({ msg: `outer ${cond ? `inner } ${value}` : `other {` } tail`, draft_status: "draft" })';
+       │                             ^^^^^^^^^^^^^^^^^
+    69 │     expect(blockFrom(src)).toBe(
+    70 │       '{ msg: `outer ${cond ? `inner } ${value}` : `other {` } tail`, draft_status: "draft" }',
+  
+  i Turn the string into a template string.
+  
+
+scripts/audit-draft-status.test.ts:70:22 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    68 │       'values({ msg: `outer ${cond ? `inner } ${value}` : `other {` } tail`, draft_status: "draft" })';
+    69 │     expect(blockFrom(src)).toBe(
+  > 70 │       '{ msg: `outer ${cond ? `inner } ${value}` : `other {` } tail`, draft_status: "draft" }',
+       │                      ^^^^^^^^^^^^^^^^^
+    71 │     );
+    72 │   });
+  
+  i Turn the string into a template string.
+  
+
+scripts/audit-draft-status.test.ts:76:49 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    74 │   it('keeps scanning an INSERT after a nested template that contains a closing brace', () => {
+    75 │     const src =
+  > 76 │       'tx.insert(question).values({ prompt_md: `${ok ? `answer }` : `hint`}`, draft_status: "draft" });';
+       │                                                 ^^^^^^^^^^^^^^^^
+    77 │     const sites = scanQuestionInserts('nested.ts', src);
+    78 │     expect(sites).toHaveLength(1);
+  
+  i Turn the string into a template string.
+  
+
+scripts/audit-draft-status.test.ts:143:25 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    141 │       'await tx.insert(question).values({',
+    142 │       '  id,',
+  > 143 │       '  prompt_md: `解释 ${term} 的用法`,',
+        │                           ^^^^^^^
+    144 │       '  metadata: { learning_item_id: liId, session_id: sId },',
+    145 │       '  draft_status: "draft",',
+  
+  i Turn the string into a template string.
+  
+
+scripts/audit-hub-sync-writers.test.ts:112:60 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    110 │       "import type { Tx } from '@/db/client'; function write(tx: Tx) { tx.update(knowledge).set({}); }",
+    111 │     ],
+  > 112 │     ['nested template expression', 'const value = `ignored ${`also ${db.delete(knowledge)}`}`'],
+        │                                                            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    113 │   ])('YUK-746 review: catches %s Drizzle syntax', async (_name, source) => {
+    114 │     const root = fixtureRepo({ 'src/writer.ts': withDb(source) });
+  
+  i Turn the string into a template string.
+  
+
+scripts/audit-hub-sync-writers.test.ts:453:84 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    451 │   it('YUK-746 exact-head SQL gating retains trusted tagged execution', async () => {
+    452 │     const root = fixtureRepo({
+  > 453 │       'src/tagged-positive.ts': withDb('db.execute(sql`update knowledge set name = ${value}`);'),
+        │                                                                                    ^^^^^^^^
+    454 │     });
+    455 │     expect(await auditHubSyncWriters({ root, allowlist: emptyAllowlist })).toContainEqual(
+  
+  i Turn the string into a template string.
+  
+
+scripts/audit-hub-sync-writers.test.ts:741:22 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    739 │     [
+    740 │       'fake interpolation import',
+  > 741 │       'const text = `${"import { db } from \'@/db/client\'"}`; db.insert(knowledge).values({});',
+        │                      ^^^^^^^^^^^^^^^^
+    742 │     ],
+    743 │     [
+  
+  i Turn the string into a template string.
+  
+
+scripts/audit-hub-sync-writers.test.ts:1012:68 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    1011 │   it.each([
+  > 1012 │     ['ordinary template text', 'const text = `db.insert(knowledge) ${"still text"}`;'],
+         │                                                                    ^^^^^^^^^^^^^^^
+    1013 │     ['string in interpolation', 'const text = `${"db.insert(knowledge)"}`;'],
+    1014 │     ['comment in interpolation', 'const text = `${/* db.insert(knowledge) */ value}`;'],
+  
+  i Turn the string into a template string.
+  
+
+scripts/audit-learner-copy.unit.test.ts:15:61 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    13 │       [
+    14 │         '<p>M5 暂未接线</p>',
+  > 15 │         'const placeholder = (text: string) => setToast(`成功：${text}`);',
+       │                                                                ^^^^^^^
+    16 │       ].join('\n'),
+    17 │     );
+  
+  i Turn the string into a template string.
+  
+
+scripts/audit-no-learning-styles.unit.test.ts:69:25 lint/suspicious/noTemplateCurlyInString ━━━━━━━━━━
+
+  ! Unexpected template string placeholder.
+  
+    67 │       scanNoLearningStyles(
+    68 │         'fixture.ts',
+  > 69 │         'const value = `${1 /* visual learner and VARK */} safe`;',
+       │                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    70 │       ),
+    71 │     ).toEqual([]);
+  
+  i Turn the string into a template string.
+  
+
+The number of diagnostics exceeds the limit allowed. Use --max-diagnostics to increase it.
+Diagnostics not shown: 270.
+Checked 3110 files in 1899ms. No fixes applied.
+Found 290 warnings.

@@ -1,0 +1,413 @@
+{
+  "scope": "Run09 real source-state acceptance; failed before capture/restore/reopen",
+  "status": "FAILED",
+  "source": {
+    "cluster": "7694728498313437226",
+    "database_oid": "16384",
+    "database": "test_fork_20261009175628",
+    "server_version": "16.15 (Debian 16.15-1.pgdg12+2)",
+    "server_started_at": "2026-10-09T17:56:30.216176Z",
+    "in_recovery": false,
+    "server_address": "192.168.215.2/32",
+    "server_port": 5432
+  },
+  "sourceContainerId": "cfe49d747894ebc17474721f42678f5744f47b4b5db9903bb7046568b66fc35c",
+  "sourcePort": 32789,
+  "fixedWorkerRevision": "7472f4395f4a12a5167e33034d5d8af8bf695049",
+  "fixedHelperRevision": "b52e255f746ebbf6a4f2f44ae06e7d1b672a4fff",
+  "offlineParent": {
+    "scope": "Parent v4 offline verification before run09",
+    "at": "2026-10-09T17:56:55.851263+00:00",
+    "results": {
+      "verify": {
+        "sha256": "c652a0fc10d3509bdf68ff01899cefc3e992f5e0549552ea09436fdf984452ff",
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v4/static-tmp/parent-acceptance/verify.json",
+        "status": "V4 SOURCE/EVIDENCE/DEPENDENCY/PRESERVATION VERIFIED; RUNTIME UNRUN",
+        "totalChecks": null,
+        "attempts": {
+          "connections": 0,
+          "listeners": 0,
+          "children": 0
+        }
+      },
+      "protocol": {
+        "sha256": "493213b78398e0b70734296f598b8ecfddf84b4fc368b611b7597c1ae1416886",
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v4/static-tmp/parent-acceptance/protocol.json",
+        "status": "OFFLINE PROTOCOL REPAIR CHECKS PASSED; RUNTIME UNRUN",
+        "totalChecks": null,
+        "attempts": {
+          "connections": 0,
+          "listeners": 0,
+          "children": 0
+        }
+      },
+      "source": {
+        "sha256": "1dcacd6a867f3720c38693c249bab729084b170f53ac0a72d08e695c7064eab3",
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v4/static-tmp/parent-acceptance/source.json",
+        "status": "Offline lifecycle typecheck and fixed worker schema SQL verified",
+        "totalChecks": null,
+        "attempts": {
+          "connections": 0,
+          "listeners": 0,
+          "children": 0
+        }
+      },
+      "diff": {
+        "sha256": "fcf4c566bac55baaf3634f12c90b30a8c37a0c55419ba18d416b9901a689c54c",
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v4/static-tmp/parent-acceptance/diff.json",
+        "status": "Unified patch exactly reconstructs every changed text file",
+        "totalChecks": null,
+        "attempts": null
+      },
+      "original-causality": {
+        "sha256": "a1ee70def8789961ca0d4972eb75cf70862b31569938cd3396fc4f402a45e1fa",
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v4/static-tmp/parent-acceptance/original-causality.json",
+        "status": null,
+        "totalChecks": null,
+        "attempts": {
+          "connections": 0,
+          "listeners": 0,
+          "children": 0
+        }
+      },
+      "full558": {
+        "sha256": "0e71503ec3d0e4666e5378424e2f562f095642c7ee1ff428e338fd7d654057f2",
+        "path": "/tmp/yuk1359-dbos-restore-offline-prep-v4/static-tmp/parent-acceptance/full558.json",
+        "status": "PURE OFFLINE CHECKS ONLY; runs01–08 FAILED; fresh capture/restore/DBOS reopen UNRUN",
+        "totalChecks": 558,
+        "attempts": {
+          "connections": 0,
+          "listeners": 0,
+          "children": 0
+        }
+      }
+    },
+    "sourceSealSha256": "a0fa9c5e3fd7089c1ce6450f190482534748f505f877fba70a2e0d4f7901dc60",
+    "evidenceSealSha256": "07f307942cf293b062654446006789535c13581c5f93885495519b8aa1f087f4",
+    "postSuiteSourceFilesMatched": 3011,
+    "postSuiteEvidenceFilesMatched": 3053,
+    "freshActualNamespacesWereEmpty": true,
+    "runtimeAcceptanceClaim": false
+  },
+  "causalWitness": {
+    "causalWitness": {
+      "kind": "identity-bound-application-outage-v4",
+      "target": {
+        "workflowId": "restore-unknown-yuk1359-restore-run09",
+        "tickId": "restore-unknown-yuk1359-restore-run09",
+        "sessionId": "restore-unknown-yuk1359-restore-run09-a"
+      },
+      "pairId": 2,
+      "backendPid": 136,
+      "transactionId": 2,
+      "receiptExecutedSuccessfully": true,
+      "targetCommitSentUpstream": true,
+      "serverCommand": "COMMIT",
+      "suppressedDownstream": {
+        "commandComplete": true,
+        "followingReadyForQuery": true
+      },
+      "activePairCensus": [
+        {
+          "pairId": 1,
+          "backendPid": 129
+        },
+        {
+          "pairId": 2,
+          "backendPid": 136
+        }
+      ],
+      "destroyedPairs": [1, 2]
+    },
+    "acceptedPairs": [
+      {
+        "pairId": 1,
+        "backendPid": 129
+      },
+      {
+        "pairId": 2,
+        "backendPid": 136
+      }
+    ],
+    "laterRejectedPairs": [3, 4, 5, 6, 7, 8],
+    "protocolFailure": null,
+    "outage": true,
+    "activePairCount": 0
+  },
+  "ownedWorkers": [
+    {
+      "pid": 70995,
+      "requestId": "restore-complete-yuk1359-restore-run09",
+      "messageKinds": ["ready", "done"],
+      "exit": {
+        "code": 0,
+        "signal": null
+      }
+    },
+    {
+      "pid": 70997,
+      "requestId": "restore-unknown-yuk1359-restore-run09",
+      "messageKinds": ["ready", "failure"],
+      "exit": {
+        "code": null,
+        "signal": "SIGTERM"
+      }
+    },
+    {
+      "pid": 70999,
+      "requestId": "restore-pending-yuk1359-restore-run09",
+      "messageKinds": ["ready", "boundary", "ack"],
+      "exit": {
+        "code": null,
+        "signal": "SIGKILL"
+      }
+    }
+  ],
+  "failures": [
+    {
+      "failure": "AssertionError [ERR_ASSERTION]: Disposable endpoint has other clients; do not launch or back up\n+ actual - expected\n\n+ [\n+   {\n+     application_name: 'postgres.js',\n+     backend_type: 'client backend',\n+     pid: 139,\n+     state: 'idle'\n+   }\n+ ]\n- []\n",
+      "failureStack": "AssertionError [ERR_ASSERTION]: Disposable endpoint has other clients; do not launch or back up\n+ actual - expected\n\n+ [\n+   {\n+     application_name: 'postgres.js',\n+     backend_type: 'client backend',\n+     pid: 139,\n+     state: 'idle'\n+   }\n+ ]\n- []\n\n    at noOtherConnections ([redacted-url]    at process.processTicksAndRejections (node:internal/process/task_queues:104:5)\n    at async phaseMain ([redacted-url]    at async main ([redacted-url]"
+    }
+  ],
+  "sourceRestartForbidden": {
+    "runId": "yuk1359-restore-run09",
+    "sourceBindingSha256": "f084e1f3b4badef121d91c2101d02942c50f5fc1182d04a0d072d13a9e726bcf",
+    "pendingId": "restore-pending-yuk1359-restore-run09",
+    "pid": 70999,
+    "reason": "Final pending SIGKILL intent; source must never restart",
+    "at": "2026-10-09T17:58:42.577Z"
+  },
+  "laterIndependentReadOnlyDatabaseObservation": {
+    "at": "2026-10-09T17:59:03.041861+00:00",
+    "clients": [],
+    "workflows": [
+      {
+        "id": "restore-complete-yuk1359-restore-run09",
+        "status": "SUCCESS"
+      },
+      {
+        "id": "restore-unknown-yuk1359-restore-run09",
+        "status": "ERROR"
+      },
+      {
+        "id": "restore-pending-yuk1359-restore-run09",
+        "status": "PENDING"
+      }
+    ],
+    "receipts": [
+      {
+        "tick": "restore-complete-yuk1359-restore-run09",
+        "session": "restore-complete-yuk1359-restore-run09-a",
+        "outcome": {
+          "kind": "abandoned",
+          "toVersion": 1,
+          "fromVersion": 0
+        }
+      },
+      {
+        "tick": "restore-complete-yuk1359-restore-run09",
+        "session": "restore-complete-yuk1359-restore-run09-b",
+        "outcome": {
+          "kind": "abandoned",
+          "toVersion": 1,
+          "fromVersion": 0
+        }
+      },
+      {
+        "tick": "restore-complete-yuk1359-restore-run09",
+        "session": "restore-complete-yuk1359-restore-run09-c",
+        "outcome": {
+          "kind": "abandoned",
+          "toVersion": 1,
+          "fromVersion": 0
+        }
+      },
+      {
+        "tick": "restore-unknown-yuk1359-restore-run09",
+        "session": "restore-unknown-yuk1359-restore-run09-a",
+        "outcome": {
+          "kind": "abandoned",
+          "toVersion": 1,
+          "fromVersion": 0
+        }
+      },
+      {
+        "tick": "restore-pending-yuk1359-restore-run09",
+        "session": "restore-pending-yuk1359-restore-run09-a",
+        "outcome": {
+          "kind": "abandoned",
+          "toVersion": 1,
+          "fromVersion": 0
+        }
+      }
+    ]
+  },
+  "laterObservationDoesNotPassFailedAttempt": true,
+  "captureExecuted": false,
+  "restoreExecuted": false,
+  "reopenExecuted": false,
+  "cleanup": {
+    "stoppedRetained": ["cfe49d747894ebc17474721f42678f5744f47b4b5db9903bb7046568b66fc35c"],
+    "at": "2026-10-09T17:59:03.470232+00:00",
+    "neverRestart": true
+  },
+  "lockRelease": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1359",
+      "phase": "isolated-same-target-restore-reopen",
+      "token": "e9d70004-7e57-4757-9c45-f1df2918d5b3",
+      "candidate": "c9ad8c38604506d8a133e8fad7fe3346f21f56bd",
+      "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "createdAt": "2026-10-09T17:56:12.651559+00:00"
+    },
+    "releasedAt": "2026-10-09T17:59:06.566400+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "evidenceFiles": {
+    "/tmp/yuk1359-dbos-restore-offline-prep-v4/runtime/yuk1359-restore-run09/complete-checkpoint.json": {
+      "sha256": "18773fed1a60640c94f7894df0709a3789a9123e698b0a47d450c83e5093d91b",
+      "bytes": 416444
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v4/runtime/yuk1359-restore-run09/failure-source.json": {
+      "sha256": "ecfa01abe6c23c7659283cd4cd902a3beefd8eec7796625e1fad6653597d7311",
+      "bytes": 438905
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v4/runtime/yuk1359-restore-run09/lifecycle-source-setup.json": {
+      "sha256": "33fb7b5ab3622b094e1d5bbfb9f0a2aa51c46cf0c8b44009c40cc4020456c0bd",
+      "bytes": 3122
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v4/runtime/yuk1359-restore-run09/lifecycle-source-states.json": {
+      "sha256": "c36cce5dee6c894ad3c2014dfbc66dcaee56b08b8824296443cf7e77d1b1af51",
+      "bytes": 24757
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v4/runtime/yuk1359-restore-run09/pending-first-row-held.json": {
+      "sha256": "b6409317d2134a59fa47d9297b44c6c54a2423e5053d2289c409710a624ca2f5",
+      "bytes": 438910
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v4/runtime/yuk1359-restore-run09/phase-source-setup-receipt.json": {
+      "sha256": "b5d3c79d1e9f0e89c9bbc48ab9b186068ef1dbfa822ccf6997e8ec3d2281fa0b",
+      "bytes": 319
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v4/runtime/yuk1359-restore-run09/source-host-initialized.json": {
+      "sha256": "bb207142d5f64a156d30a08f2ceab82ee726e4f5fb429e587103c1974a404e96",
+      "bytes": 403941
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v4/runtime/yuk1359-restore-run09/source-ready.json": {
+      "sha256": "46b65e7baa94884d13803ab9d79e0f0daae52b96da573e6c36e4edc30c2d7aa2",
+      "bytes": 404120
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v4/runtime/yuk1359-restore-run09/source-restart-forbidden.json": {
+      "sha256": "ae1733de2ab2b6ce33cea99bfd8c537a994f10703077ed286976de4ea6f8eb2b",
+      "bytes": 311
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v4/runtime/yuk1359-restore-run09/state.json": {
+      "sha256": "0edc2e8265412ed5163fb7711cf6415d747aa278da1b19f06e9d9d0810cf3525",
+      "bytes": 214
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v4/runtime/yuk1359-restore-run09/unknown-before-settlement.json": {
+      "sha256": "fb71eda79ef7c1e1dd335598f301819f8d9dfef53c1603ae02109c1956683b4e",
+      "bytes": 430075
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v4/runtime/yuk1359-restore-run09/unknown-commit-causal-witness.json": {
+      "sha256": "5dcfac32a8c8b7482a145185e92b4c12ea5a94a5fa3d849f50c1e26ccc879f89",
+      "bytes": 1047
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v4/runtime/yuk1359-restore-run09/unknown-held.json": {
+      "sha256": "a9307bab983577d567f83c565ebdc16016f2b96b3300479d655958f681eb27da",
+      "bytes": 430062
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v4/runtime/yuk1359-restore-run09/unknown-settlement-clock-before.json": {
+      "sha256": "148a9b2e36a982fc2b1d574f182cde34f882c09926878bb2ac7b3c059eded126",
+      "bytes": 393
+    },
+    "/tmp/yuk1359-dbos-restore-offline-prep-v4/runtime/yuk1359-restore-run09/unknown-settlement-clock-window.json": {
+      "sha256": "7ecf63cf1a2630f736fa24a41d6f6f7315ac73fc3453a288ce13409974d29bdd",
+      "bytes": 437
+    },
+    "/tmp/yuk1359-restore-reopen-parent09/provision.log": {
+      "sha256": "c19eceb62d03afb9c5597258cafbc64599a83cd5f90d5bbcdaefddead8af7d56",
+      "bytes": 190
+    },
+    "/tmp/yuk1359-restore-reopen-parent09/source-setup.log": {
+      "sha256": "9ca59ef9ad0fcfc9c4cf26f96013b4e0674a8ec4043d43ebcc78d86e28e09c2c",
+      "bytes": 81
+    },
+    "/tmp/yuk1359-restore-reopen-parent09/source-states.log": {
+      "sha256": "5e998bd4036da70d3e5a60d0e8ff95423b32219fe63a99d6220aa47f29fb6e0f",
+      "bytes": 104
+    },
+    "/tmp/yuk1359-restore-reopen-parent09/failure-db-observation.stdout": {
+      "sha256": "d99e813f2772046b72bb1fa30e372af14274ff9ed66bf9b108ec7609e1e79713",
+      "bytes": 1192
+    },
+    "/tmp/yuk1359-restore-reopen-parent09/failure-db-observation-exit.json": {
+      "sha256": "aec9abcc4a9c853f7dab23024d57b9fea1d33bcfe7ccc652e5419b2a4d440a0c",
+      "bytes": 58
+    },
+    "/tmp/yuk1359-restore-reopen-parent09/offline-acceptance.json": {
+      "sha256": "7d9423d8533d68121d756b32f82131848f62cd7ee87f68aa7872d4e4a6d12744",
+      "bytes": 2865
+    }
+  },
+  "unknown-held": {
+    "workflowStatuses": [
+      {
+        "id": "restore-unknown-yuk1359-restore-run09",
+        "status": "ERROR"
+      },
+      {
+        "id": "restore-complete-yuk1359-restore-run09",
+        "status": "SUCCESS"
+      }
+    ],
+    "receiptsByTick": {
+      "restore-complete-yuk1359-restore-run09": 3,
+      "restore-unknown-yuk1359-restore-run09": 1
+    }
+  },
+  "pending-first-row-held": {
+    "workflowStatuses": [
+      {
+        "id": "restore-unknown-yuk1359-restore-run09",
+        "status": "ERROR"
+      },
+      {
+        "id": "restore-pending-yuk1359-restore-run09",
+        "status": "PENDING"
+      },
+      {
+        "id": "restore-complete-yuk1359-restore-run09",
+        "status": "SUCCESS"
+      }
+    ],
+    "receiptsByTick": {
+      "restore-complete-yuk1359-restore-run09": 3,
+      "restore-pending-yuk1359-restore-run09": 1,
+      "restore-unknown-yuk1359-restore-run09": 1
+    }
+  },
+  "failure-source": {
+    "workflowStatuses": [
+      {
+        "id": "restore-unknown-yuk1359-restore-run09",
+        "status": "ERROR"
+      },
+      {
+        "id": "restore-pending-yuk1359-restore-run09",
+        "status": "PENDING"
+      },
+      {
+        "id": "restore-complete-yuk1359-restore-run09",
+        "status": "SUCCESS"
+      }
+    ],
+    "receiptsByTick": {
+      "restore-complete-yuk1359-restore-run09": 3,
+      "restore-pending-yuk1359-restore-run09": 1,
+      "restore-unknown-yuk1359-restore-run09": 1
+    }
+  }
+}

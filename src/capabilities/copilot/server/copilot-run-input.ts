@@ -61,6 +61,8 @@ export interface CopilotRunInput {
   surface: DomainToolSurface;
   triggered_by: CopilotTriggeredBy;
   user_message: string;
+  /** Server-resolved current-turn attachment reference only. */
+  review_answer?: { original_ref: string };
   chip_kind?: string;
   proposal_feedback: ScopedProposalFeedbackCell[];
   conversation_history: CopilotHistoryTurn[];

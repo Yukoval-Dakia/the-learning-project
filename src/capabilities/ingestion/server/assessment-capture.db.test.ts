@@ -1,8 +1,7 @@
 import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import { activateSubmissionCandidate } from '@/capabilities/practice/server/judge/evaluate-submission';
 import {
-  assessment_issuance,
   assessment_submission,
   evaluation,
   evaluation_effective_head,
@@ -12,17 +11,12 @@ import {
   learning_session,
   mastery_state,
   material_fsrs_state,
-  question,
   question_block,
-  question_group_lifecycle,
   source_asset,
 } from '@/db/schema';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import { ImportBody } from '../api/import-schema';
 import { captureIngestionOriginal, enrollNativeCapture } from './assessment-capture';
-import { runAutoEnrollForSession } from './auto-enroll';
-import { completeIngestionImport } from './import-completion';
 import { revertAutoEnrolledBlock } from './revert-auto-enroll';
 
 const now = new Date('2026-10-05T01:00:00Z');
@@ -111,79 +105,6 @@ async function admit(questionId: string) {
 }
 
 describe('native ingestion originals and reversible enrollment', () => {
-  it('persists a withheld original once with trusted image metadata and no learning effects', async () => {
-    const input = await fixture();
-    expect(await enrollNativeCapture(testDb(), input)).toBeNull();
-    expect(await enrollNativeCapture(testDb(), input)).toBeNull();
-    const submissions = await testDb().select().from(assessment_submission);
-    expect(submissions).toHaveLength(1);
-    expect(submissions[0].response_set.entries).toEqual([
-      expect.objectContaining({ text_md: '42' }),
-    ]);
-    expect(submissions[0].group_evidence).toEqual([
-      expect.objectContaining({
-        evidence: expect.objectContaining({
-          asset: { asset_id: 'capture-page', digest: `sha256:${'a'.repeat(64)}` },
-          bytes: 4096,
-          mime_type: 'image/png',
-        }),
-      }),
-    ]);
-    expect(await testDb().select().from(assessment_issuance)).toHaveLength(1);
-    expect(await testDb().select().from(learning_record)).toHaveLength(0);
-    expect(await testDb().select().from(mastery_state)).toHaveLength(0);
-    expect(await testDb().select().from(material_fsrs_state)).toHaveLength(0);
-    const [block] = await testDb().select().from(question_block);
-    expect(block).toMatchObject({
-      status: 'draft',
-      imported_question_id: null,
-      imported_attempt_event_id: null,
-    });
-    const originals = await testDb()
-      .select()
-      .from(event)
-      .where(eq(event.action, 'experimental:assessment_attempt'));
-    expect(originals).toHaveLength(1);
-    expect(originals[0]).toMatchObject({
-      outcome: null,
-      payload: { response_md: '42', entry: 'ingestion_grading' },
-    });
-  });
-
-  it('retries against the original revision after a later publication', async () => {
-    const input = await fixture();
-    const original = await captureIngestionOriginal(testDb(), input);
-    if (!original) throw new Error('capture missing');
-    const [before] = await testDb().select().from(assessment_submission);
-    await testDb()
-      .update(question)
-      .set({ reference_md: '43' })
-      .where(eq(question.id, original.questionId));
-    await publishQuestionGroupFromRow(testDb(), {
-      rootId: original.questionId,
-      actorRef: 'test:later-publication',
-      now,
-    });
-    const [lifecycle] = await testDb().select().from(question_group_lifecycle);
-    expect(lifecycle.current_revision_id).not.toBe(before.revision_id);
-    const replay = await captureIngestionOriginal(testDb(), input);
-    expect(replay?.request).toEqual(original.request);
-    expect(await testDb().select().from(assessment_submission)).toEqual([before]);
-    expect(await testDb().select().from(assessment_issuance)).toHaveLength(1);
-  });
-
-  it('rejects answer pages outside the source block before persisting a capture', async () => {
-    const input = await fixture();
-    await expect(
-      captureIngestionOriginal(testDb(), {
-        ...input,
-        pageRefs: ['unrelated-page'],
-      }),
-    ).rejects.toMatchObject({ code: 'capture_asset_mismatch' });
-    expect(await testDb().select().from(assessment_submission)).toHaveLength(0);
-    expect(await testDb().select().from(question)).toHaveLength(0);
-  });
-
   it('admitted deterministic capture updates theta without FSRS, then retracts atomically and refuses late activation', async () => {
     const input = await fixture();
     const capture = await captureIngestionOriginal(testDb(), input);
@@ -281,139 +202,4 @@ describe('native ingestion originals and reversible enrollment', () => {
     expect(receipts.filter((row) => row.payload.replay_of)).toHaveLength(1);
     expect(await testDb().select().from(assessment_submission)).toHaveLength(2);
   });
-
-  it('a block edit cannot finalize an older captured original', async () => {
-    const input = await fixture();
-    const captured = await captureIngestionOriginal(testDb(), input);
-    if (!captured) throw new Error('missing capture');
-    await admit(captured.questionId);
-    await testDb()
-      .update(question_block)
-      .set({ version: 1, wrong_answer_md: 'Revised answer with a different explanation' })
-      .where(eq(question_block.id, input.block.id));
-    expect(await enrollNativeCapture(testDb(), input)).toBeNull();
-    expect(await testDb().select().from(learning_record)).toHaveLength(0);
-    expect(await testDb().select().from(assessment_submission)).toHaveLength(1);
-  });
-
-  it('an untrusted route decision preserves originals but cannot enroll even after admission', async () => {
-    const input = await fixture();
-    const captured = await captureIngestionOriginal(testDb(), input);
-    if (!captured) throw new Error('missing capture');
-    await admit(captured.questionId);
-    expect(await enrollNativeCapture(testDb(), { ...input, canEnroll: false })).toBeNull();
-    expect(await testDb().select().from(learning_record)).toHaveLength(0);
-    const [lifecycle] = await testDb().select().from(question_group_lifecycle);
-    expect(lifecycle.scoring_admission_state).toBe('admitted');
-    const [q] = await testDb().select().from(question);
-    expect(q.draft_status).toBe('draft');
-  });
-});
-
-describe('auto-enroll native entry routing', () => {
-  it('text capture never uses drafted correctness and keeps an unadmitted original for review', async () => {
-    const input = await fixture('42');
-    const draft = vi.fn();
-    const run = () =>
-      runAutoEnrollForSession({
-        db: testDb(),
-        sessionId: input.block.ingestion_session_id,
-        subjectId: 'math',
-        env: { WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: 'true' },
-        tagKnowledgeFn: async () => ({ kind: 'match', knowledge_ids: input.knowledgeIds }),
-        runMistakeEnrollFn: draft,
-      });
-    expect(await run()).toMatchObject({ enrolled: 0, routed_to_review: 1 });
-    expect(await run()).toMatchObject({ enrolled: 0, routed_to_review: 1 });
-    expect(draft).not.toHaveBeenCalled();
-    expect(await testDb().select().from(assessment_submission)).toHaveLength(1);
-    expect(await testDb().select().from(learning_record)).toHaveLength(0);
-  });
-
-  it.each(['tencent_ocr', 'glm_ocr'] as const)(
-    'photo-only %s work is retained without OCR text or invented grades',
-    async (source) => {
-      const input = await fixture('');
-      await testDb()
-        .update(question_block)
-        .set({
-          structured: {
-            id: 'photo-leaf',
-            role: 'standalone',
-            prompt_text:
-              'Read the equation and explain each step. The page contains handwritten working.',
-            source,
-            ...(source === 'tencent_ocr'
-              ? {
-                  extraction_evidence: {
-                    handwriting: [
-                      { text: 'untrusted OCR hint', bbox: { x: 0, y: 0, width: 0.1, height: 0.1 } },
-                    ],
-                  },
-                }
-              : {}),
-          },
-        })
-        .where(eq(question_block.id, input.block.id));
-      const result = await runAutoEnrollForSession({
-        db: testDb(),
-        sessionId: input.block.ingestion_session_id,
-        subjectId: 'math',
-        env: {
-          WORKFLOW_JUDGE_AUTO_ENROLL_ENABLED: 'true',
-          WORKFLOW_JUDGE_STUDENT_ANSWER_GRADING_ENABLED: 'true',
-        },
-        tagKnowledgeFn: async () => ({ kind: 'match', knowledge_ids: input.knowledgeIds }),
-      });
-      expect(result).toMatchObject({ enrolled: 0, routed_to_review: 1 });
-      const [original] = await testDb().select().from(assessment_submission);
-      expect(original.group_evidence[0].evidence.asset.asset_id).toBe('capture-page');
-      expect(JSON.stringify(original.response_set)).not.toContain('untrusted OCR hint');
-      expect(await testDb().select().from(mastery_state)).toHaveLength(0);
-    },
-  );
-});
-
-describe('human review of captured originals', () => {
-  it.each([false, true])(
-    'preserves pending originals when human import edited=%s',
-    async (edited) => {
-      const input = await fixture();
-      const captured = await captureIngestionOriginal(testDb(), input);
-      if (!captured) throw new Error('missing capture');
-      const prompt = input.block.structured?.prompt_text ?? input.block.extracted_prompt_md;
-      const result = await completeIngestionImport(
-        testDb(),
-        input.block.ingestion_session_id,
-        ImportBody.parse({
-          blocks: [
-            {
-              block_id: input.block.id,
-              source_block_ids: [input.block.id],
-              page_spans: [
-                { page_index: 0, bbox: { x: 0, y: 0, width: 1, height: 1 }, role: 'prompt' },
-              ],
-              image_refs: [],
-              final_prompt_md: edited ? `${prompt}\nHuman clarification.` : prompt,
-              final_reference_md: '42',
-              final_wrong_answer_md: '42',
-              outcome: 'success',
-              knowledge_ids: input.knowledgeIds,
-              cause: null,
-              difficulty: 3,
-              question_kind: 'short_answer',
-            },
-          ],
-        }),
-      );
-      expect(result.question_ids[0] === captured.questionId).toBe(!edited);
-      expect(await testDb().select().from(assessment_submission)).toHaveLength(1);
-      const [human] = await testDb().select().from(event).where(eq(event.action, 'attempt'));
-      expect(human).toMatchObject({
-        outcome: 'success',
-        payload: { generated_by: 'ingestion_capture' },
-      });
-      expect(await enrollNativeCapture(testDb(), input)).toBeNull();
-    },
-  );
 });

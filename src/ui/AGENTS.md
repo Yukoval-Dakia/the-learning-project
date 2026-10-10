@@ -17,7 +17,7 @@
 - 组件落地必须用既有 design-system tokens / primitives；pre-flight 与 tokens 规则叠加生效。
 - SPA QueryClient 归 `web/src/main.tsx`；领域级缓存策略贴近 query owner，不在设计系统另建全局 client。
 - 编辑器栈 = TipTap 3（`@tiptap/*`）；图谱 = cytoscape；数学 = KaTeX（`rehype-katex`/`remark-math`）。
-- 纯 UI/组件测试进 unit config（无 DB）：`pnpm test:unit:watch`。
+- UI 默认不写测试（YUK-1401）；只有承载五类不变量的 UI 行为才写，放 unit config（无 DB）。
 
 ## ANTI-PATTERNS
 - 浏览器代码**不持** provider key——所有 LLM 调用走 `/api/*` route。

@@ -10,7 +10,6 @@
 
 import { type InfiniteData, useInfiniteQuery, useQuery } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
-import { getTree } from '@/capabilities/knowledge/ui-public';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { LoomCard } from '@/ui/primitives/LoomCard';
@@ -27,11 +26,7 @@ import {
   decisionPaginationDiagnostics,
   getNextDecisionPageParam,
   kindMeta,
-  listAutoApplied,
-  listDecisionProposalPage,
-  listObservationProposalPreview,
   mergeProposalPages,
-  retractProposal,
 } from './inbox-api';
 import {
   TIER_C_COPY,
@@ -41,6 +36,7 @@ import {
   undoRemainingMs,
 } from './inbox-tier';
 import { ProposalCard } from './ProposalCard';
+import { useWorkbenchClient } from './workbench-client';
 import './shell.css';
 
 function tierIcon(name: string): LoomIconName {
@@ -266,6 +262,13 @@ export function resolveInboxStatus(input: {
 }
 
 export default function InboxPage({ navigate }: InboxPageProps) {
+  const {
+    listDecisionProposalPage,
+    listObservationProposalPreview,
+    listAutoApplied,
+    getTree,
+    retractProposal,
+  } = useWorkbenchClient();
   const [resolved, setResolved] = useState<Record<string, string>>({});
   const [reverting, setReverting] = useState<Record<string, true>>({});
   const [toast, setToast] = useState<string | null>(null);

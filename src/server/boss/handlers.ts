@@ -7,10 +7,6 @@ import { buildBriefGenerator } from '@/server/memory/brief-writer';
 import { registerMemoryHandlers } from '@/server/memory/triggers';
 import { buildEchoHandler } from './handlers/echo';
 import { buildPromoteConversationIdleHandler } from './handlers/promote_conversation_idle';
-import { buildPruneJobEventsHandler } from './handlers/prune_job_events';
-import { buildPruneOrphanConversationSessionsHandler } from './handlers/prune_orphan_conversation_sessions';
-import { buildPruneOrphanPlacementSessionsHandler } from './handlers/prune_orphan_placement_sessions';
-import { buildPruneOrphanReviewSessionsHandler } from './handlers/prune_orphan_review_sessions';
 import {
   VERIFY_DISPATCH_RECOVERY_QUEUE,
   buildVerifyDispatchRecoveryHandler,
@@ -25,7 +21,7 @@ import {
 //
 // 留簿注册 = 纯基础设施：
 //   - echo（golden E2E，0.5s polling）
-//   - prune_job_events / prune_orphan_* / promote_conversation_idle（FAST housekeeping cron）
+//   - promote_conversation_idle（FAST housekeeping cron；四个 durable family 由 observability manifest 声明）
 //   - registerMemoryHandlers（memory_* 队列归 memory 模块）
 //   - verify_dispatch_recover（VERIFY_DISPATCH_RECOVERY_QUEUE，question-supply 安全网，只补发 verify）
 
@@ -45,39 +41,11 @@ export interface InfraScheduleDeclaration {
 
 export const INFRA_HOUSEKEEPING_SCHEDULES: readonly InfraScheduleDeclaration[] = [
   {
-    name: 'prune_job_events',
-    cron: '0 4 * * *',
-    tz: 'Asia/Shanghai',
-    queue: 'fast',
-    note: 'nightly housekeeping cron（bulk DELETE，掉一拍下个 cron 重跑）',
-  },
-  {
-    name: 'prune_orphan_review_sessions',
-    cron: '15 4 * * *',
-    tz: 'Asia/Shanghai',
-    queue: 'fast',
-    note: 'ADR-0013: abandon review sessions stuck in started >6h（BJT 04:15 after prune_job_events）',
-  },
-  {
-    name: 'prune_orphan_placement_sessions',
-    cron: '35 4 * * *',
-    tz: 'Asia/Shanghai',
-    queue: 'fast',
-    note: 'YUK-470: abandon placement probes stuck in started >6h（BJT 04:35 stagger）',
-  },
-  {
     name: 'promote_conversation_idle',
     cron: '* * * * *',
     tz: 'Asia/Shanghai',
     queue: 'fast',
     note: "YUK-14: promote active conversation sessions to 'idle' after 5min idle",
-  },
-  {
-    name: 'prune_orphan_conversation_sessions',
-    cron: '25 4 * * *',
-    tz: 'Asia/Shanghai',
-    queue: 'fast',
-    note: 'YUK-14: abandon conversation sessions stuck in active/idle >6h（BJT 04:25，与 review prune 错峰 10min）',
   },
   {
     // 队列名必须用 verify-dispatch-outbox 导出的常量（值为
@@ -112,12 +80,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
 
   // Step 5: nightly housekeeping cron（同区段的 knowledge_propose_nightly 已迁
   // knowledge manifest jobs 声明，由注册器挂载）
-  await createOrUpdateQueue(boss, 'prune_job_events', FAST_QUEUE_OPTS); // FAST — bulk DELETE housekeeping, re-runs next cron
-  await boss.work(
-    'prune_job_events',
-    fenceAwareJobHandler(db, 'prune_job_events', buildPruneJobEventsHandler(db)),
-  );
-
   // T-37 / YUK-185: Mem0 fact ingest + per-scope brief regen queues. Station 2A
   // injects the real brief writer (buildBriefGenerator) so the regen pipeline
   // produces memory_brief_note rows instead of falling back to the throwing
@@ -126,33 +88,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   // registerMemoryHandlers 内部挂（triggers.ts，与本簿同约定）。
   await registerMemoryHandlers(boss, db, { generateBrief: buildBriefGenerator({ db }) });
 
-  // ADR-0013: abandon review sessions stuck in 'started' >6h (sendBeacon
-  // fallback when normal close didn't fire). BJT 04:15 after prune_job_events.
-  await createOrUpdateQueue(boss, 'prune_orphan_review_sessions', FAST_QUEUE_OPTS); // FAST — cheap SELECT + per-row transition
-  await boss.work(
-    'prune_orphan_review_sessions',
-    fenceAwareJobHandler(
-      db,
-      'prune_orphan_review_sessions',
-      buildPruneOrphanReviewSessionsHandler(db),
-    ),
-  );
-
-  // YUK-470 (orphan-sweep leg): abandon placement probes stuck in 'started' >6h
-  // (sibling of the review sweep; placement has no 'paused'). BJT 04:35 — the three
-  // learning_session sweeps are staggered 04:15 (review) / 04:25 (conversation) /
-  // 04:35 (placement) so they never hit the table on the same minute. Dark-ship
-  // today (no probe created while PLACEMENT_PROBE_ENABLED=false) — lands ahead of go-live.
-  await createOrUpdateQueue(boss, 'prune_orphan_placement_sessions', FAST_QUEUE_OPTS); // FAST — cheap SELECT + per-row transition
-  await boss.work(
-    'prune_orphan_placement_sessions',
-    fenceAwareJobHandler(
-      db,
-      'prune_orphan_placement_sessions',
-      buildPruneOrphanPlacementSessionsHandler(db),
-    ),
-  );
-
   // YUK-14 (docs/design/2026-05-24-teaching-idle-state-machine.md): promote
   // active conversation sessions to 'idle' after 5min of no user input.
   // Runs every minute; cheap SELECT + per-row single-owner transition.
@@ -160,19 +95,6 @@ export async function registerHandlers(boss: PgBoss, db: Db): Promise<void> {
   await boss.work(
     'promote_conversation_idle',
     fenceAwareJobHandler(db, 'promote_conversation_idle', buildPromoteConversationIdleHandler(db)),
-  );
-
-  // YUK-14: abandon conversation sessions stuck in 'active'|'idle' >6h
-  // (sendBeacon fallback). BJT 04:25, offset 10min from review prune to
-  // avoid lock contention on learning_session.
-  await createOrUpdateQueue(boss, 'prune_orphan_conversation_sessions', FAST_QUEUE_OPTS); // FAST — cheap SELECT + per-row transition
-  await boss.work(
-    'prune_orphan_conversation_sessions',
-    fenceAwareJobHandler(
-      db,
-      'prune_orphan_conversation_sessions',
-      buildPruneOrphanConversationSessionsHandler(db),
-    ),
   );
 
   // YUK-700 — startup + nightly safety net for drafts whose verify enqueue was

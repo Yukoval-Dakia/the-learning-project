@@ -1,0 +1,37 @@
+{
+  "head": "2f45f62cb5941b284046f4207fcab15212c35bf1",
+  "branch": "feat/yuk-1356-review-operation",
+  "files": {
+    "docs/planning/2026-10-07-yuk1356-review-operation.api-client.patch": "3215210a2099f8c58a956565be56961619fd27cccefe0813ea521829490ef9f5",
+    "postman/api-endpoints.json": "020f670f9fbbab7ed153ca8976917cbb29b70e0f8d6b40bab4cec02760ab59c6",
+    "postman/learning-api.postman_collection.json": "faabe8c9a3cd85bba25b25be28ef39446aba1414d3170cea234c7ddf4c939cf3",
+    "src/capabilities/copilot/api/chat.ts": "bc289a77b4ebbc57555130b604c97b2041af13d0ac73e281f2133a34b23d86d5",
+    "src/capabilities/copilot/api/review-answer.db.test.ts": "456d553e4ff9520e3bf1834ff842958d375ea325d4a6c4e71958e99571f22f17",
+    "src/capabilities/copilot/server/chat-contracts.ts": "395ad5eb1b9f80b7ee0dc1af5fad040625e154e694e632a685fc824956c76920",
+    "src/capabilities/copilot/server/conversation-writes.ts": "d8bb0bc686ad30f719573492630b762eb92eba8c64a921da851ab0d3cb7c0538",
+    "src/capabilities/copilot/server/copilot-execution.ts": "cfe6b5e7dbc09f5bea2f4faac5eba83cbebd842ebb03f3860c336adb9527bb8b",
+    "src/capabilities/copilot/server/copilot-execution.unit.test.ts": "d389516980f5146cad30a0e654affffc53bbab8425d805c76a753d933da00951",
+    "src/capabilities/copilot/server/copilot-run-input.ts": "e491631b1fbf1fbd65bdb65960e808c24189dc4dc2ac9fda4611bb410d3a5a4b",
+    "src/capabilities/copilot/server/copilot-tools.unit.test.ts": "6ec401fad9ae58b5ecd8bfca3bdc0833e723c98069899d09b126d5b07e1da840",
+    "src/capabilities/copilot/server/durable-dispatch.ts": "e2192386fe66293562822d79522d9b9c1ed67957f921cf15c74e5c27029edbde",
+    "src/capabilities/copilot/server/live-turn-context.ts": "4ca1feff0ead2fdd12d12babbd7e83d69d5afc9bc98ab96f3b69c26b75ba584e",
+    "src/capabilities/copilot/server/materializing-tools.ts": "d1bf8f2aaaebf5047647988c8eac39a18ace39e08fdaaa042884157ad8cc33d9",
+    "src/capabilities/copilot/server/practice-port.ts": "46f7a863a0313ecc81f880a84b5feceb487aee67770a2dfa3bf81ffc29b5663e",
+    "src/capabilities/copilot/server/review-answer-consumer.ts": "44f0ed5e23d334694c832434d2809233987c327122e91a9f8b205a26e6fd40b0",
+    "src/capabilities/copilot/server/tool-result-snapshot.ts": "ab95e0f65892a30abc24016fd38d2cb9bff739615725d818846518589f98b82a",
+    "src/capabilities/practice/manifest.ts": "d30414b9b2ab6f05a0c4fff2e5e6cb970253a06e796e16af15221c531318e640",
+    "src/capabilities/practice/public.ts": "c3d327e16db1770390fc10fc0d1b5dd52985fd50f466ccfeae02db0a1905f25e",
+    "src/capabilities/practice/server/assessment/assistance.ts": "80cc049e97bdad7ff9634e9b194d6004e7d15965624e7b7d7ae5889ee79ea84b",
+    "src/capabilities/practice/server/review-operation.ts": "5db6cde5dc81b9662ddf5402ec4c6fde8e68411fc79225e7939080c3ff049594",
+    "src/capabilities/practice/server/tools/submit-review-answer.ts": "a7bdea3c58f2f600c13a7c1826b0dc9c0623c5963b8d513bdab23903776b2c08",
+    "src/kernel/tools/allowlists.ts": "717fc18c42b92ca6e085f2c1a833cb1423f145c1652ab189e4af4f5d040e1c09",
+    "src/kernel/tools/allowlists.unit.test.ts": "f8ce810cafc224afebee9d1186457bc67fb65bb0d2be30b4ce29d0584b2f52fc",
+    "src/kernel/tools/review-answer.ts": "59ba807f34fd986f7f28a5df02a9d16745861e393c5b6a0aa56b71af63f24895",
+    "src/kernel/tools/types.ts": "4f54d3d473d346ad904238b14d83727096e9763538ac65a771186c765645bfd4"
+  },
+  "archives": {
+    "initial-files.tar.gz": "6996d319a1dd7c3bd18fb1d763796b363177848c059cd531dac4e606c28f2488",
+    "initial-wip.patch": "04bf9753fc62e9080c27949bc5e03612f5560e95a291bd27ea82782ebf87c2f3",
+    "initial-status.txt": "e0754f27554db7bf01e76dcd74444d23054cbb22f666ce0a1375c128f96dad14"
+  }
+}

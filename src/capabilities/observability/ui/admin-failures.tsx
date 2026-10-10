@@ -1,10 +1,10 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { CSSProperties } from 'react';
-import { apiJson } from '@/ui/lib/api';
 import { Badge } from '@/ui/primitives/Badge';
 import { Button } from '@/ui/primitives/Button';
 import { Card } from '@/ui/primitives/Card';
 import { PageHeader } from '@/ui/primitives/PageHeader';
+import { type AdminReadClient, httpAdminClient } from './admin-client';
 import {
   AdminLinks,
   type AdminSurfaceProps,
@@ -18,27 +18,14 @@ import {
   shortId,
 } from './observability-shared';
 
-interface FailureCluster {
-  key: string;
-  finish_reason: string;
-  error_prefix: string;
-  count: number;
-  latest_at: string;
-  samples: Array<{
-    id: string;
-    task_kind: string;
-    model: string;
-    started_at: string;
-    error_message: string | null;
-  }>;
-}
-
-export function AdminFailuresSurface({ navigate }: AdminSurfaceProps) {
+export function AdminFailuresSurface({
+  navigate,
+  client = httpAdminClient,
+}: AdminSurfaceProps & { client?: AdminReadClient }) {
   const queryClient = useQueryClient();
   const failuresQ = useQuery({
     queryKey: ['admin-failures'],
-    queryFn: () =>
-      apiJson<{ clusters: FailureCluster[]; limit: number }>('/api/admin/failures?limit=200'),
+    queryFn: () => client.getFailures({ limit: '200' }),
     refetchInterval: 60_000,
   });
   const clusters = failuresQ.data?.clusters ?? [];

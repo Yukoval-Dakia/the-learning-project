@@ -55,10 +55,3 @@ export function broadcast(payload: SSEPayload): void {
     }
   }
 }
-
-/**
- * Test-only. Clears all subscribers; do not call in production code.
- */
-export function _clearSubscribersForTests(): void {
-  subscribers.clear();
-}

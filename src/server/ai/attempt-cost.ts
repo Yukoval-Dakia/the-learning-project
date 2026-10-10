@@ -45,14 +45,18 @@ export function resolveAttemptCostTruth(input: {
     };
   }
 
-  // YUK-921 P1 + YUK-1027 — pi-catalog lanes (opencode-go, openai):
+  // YUK-921 P1 + YUK-1027 + YUK-1402 — pi-catalog lanes:
   // `usage.cost` is the pi catalog's rate-card estimate surfaced through the
   // same reported channel. It is NOT a contractual invoice (subscription lane;
   // OpenAI's real price/tier math is P2 scope) — classify 'estimated' and
   // point the ref at the catalog/model pair the number came from. Without a
   // pi usage record the lane has no honest price → unknown rather than a
   // fabricated zero.
-  if (input.provider === 'opencode-go' || input.provider === 'openai') {
+  if (
+    input.provider === 'opencode-go' ||
+    input.provider === 'openai' ||
+    input.provider === 'xiaomi-token-plan'
+  ) {
     const reported = input.reportedCostUsd;
     if (reported !== undefined && Number.isFinite(reported) && reported >= 0) {
       return {

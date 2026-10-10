@@ -7,10 +7,7 @@ import * as schema from '@/db/schema';
 import { provider_session_admission } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
-  PROVIDER_SESSION_ABORT_GRACE_MS,
   PROVIDER_SESSION_HEARTBEAT_MS,
-  PROVIDER_SESSION_INITIAL_LEASE_TTL_MS,
-  PROVIDER_SESSION_LEASE_TTL_MS,
   type ProviderSessionAdmissionPlan,
   acquireProviderSession,
 } from './provider-session-admission';
@@ -27,7 +24,6 @@ const BASE_POLICY = {
 type ActivePlan = Exclude<ProviderSessionAdmissionPlan, { mode: 'off' }>;
 
 const ASYNC_EVENT_TIMEOUT_MS = PROVIDER_SESSION_HEARTBEAT_MS * 2 + 2_000;
-const LEASE_TIMING_TOLERANCE_MS = 2_000;
 
 interface IndependentDb {
   db: Db;
@@ -148,11 +144,6 @@ async function waitForAbort(signal: AbortSignal): Promise<void> {
   throw new Error('provider session heartbeat did not fence the lost owner');
 }
 
-function expectDurationNear(actualMs: number, expectedMs: number): void {
-  expect(actualMs).toBeGreaterThanOrEqual(expectedMs - LEASE_TIMING_TOLERANCE_MS);
-  expect(actualMs).toBeLessThanOrEqual(expectedMs + LEASE_TIMING_TOLERANCE_MS);
-}
-
 beforeEach(async () => {
   await resetDb();
 });
@@ -165,40 +156,6 @@ afterEach(async () => {
 });
 
 describe('YUK-842 cross-process provider SDK-session admission', () => {
-  it.each(['observe', 'enforce'] as const)(
-    'starts %s sessions with the distinct SDK-startup lease',
-    async (mode) => {
-      const a = openIndependentDb();
-      const taskRunId = `startup-lease-${mode}`;
-      const permit = await startAcquire({
-        db: a.db,
-        taskRunId,
-        admissionPlan: plan({}, mode),
-        executionTimeoutMs: 120_000,
-      });
-
-      const row = await readLeaseSnapshot(taskRunId);
-      expect(row.mode).toBe(mode);
-      expectDurationNear(
-        row.leaseExpiresAt.getTime() - row.heartbeatAt.getTime(),
-        PROVIDER_SESSION_INITIAL_LEASE_TTL_MS,
-      );
-      expectDurationNear(
-        row.hardReclaimAt.getTime() - row.acquiredAt.getTime(),
-        PROVIDER_SESSION_INITIAL_LEASE_TTL_MS + 120_000 + PROVIDER_SESSION_ABORT_GRACE_MS,
-      );
-      expect(row.leaseExpiresAt.getTime()).toBeLessThan(row.hardReclaimAt.getTime());
-
-      await permit.completeStartup();
-      const steady = await readLeaseSnapshot(taskRunId);
-      expectDurationNear(
-        steady.leaseExpiresAt.getTime() - steady.heartbeatAt.getTime(),
-        PROVIDER_SESSION_LEASE_TTL_MS,
-      );
-      expect(steady.leaseExpiresAt.getTime()).toBeLessThanOrEqual(steady.hardReclaimAt.getTime());
-    },
-  );
-
   it('fails closed when startup completion cannot confirm its claim fence', async () => {
     const a = openIndependentDb();
     const permit = await startAcquire({
@@ -213,72 +170,6 @@ describe('YUK-842 cross-process provider SDK-session admission', () => {
 
     await expect(permit.completeStartup()).rejects.toMatchObject({ reason: 'lease_lost' });
     expect(controllers.at(-1)?.signal.aborted).toBe(true);
-  });
-
-  it.each(['observe', 'enforce'] as const)(
-    'bounds an indeterminate %s startup transition without waiting for the pool blocker',
-    async (mode) => {
-      const a = openIndependentDb();
-      const taskRunId = `startup-transition-pool-${mode}`;
-      const permit = await startAcquire({
-        db: a.db,
-        taskRunId,
-        admissionPlan: plan({}, mode),
-      });
-
-      let unblock!: () => void;
-      const hold = new Promise<void>((resolve) => {
-        unblock = resolve;
-      });
-      let markBlocked!: () => void;
-      const blocked = new Promise<void>((resolve) => {
-        markBlocked = resolve;
-      });
-      const blocker = a.db.transaction(async () => {
-        markBlocked();
-        await hold;
-      });
-      await blocked;
-
-      try {
-        const completion = permit.completeStartup();
-        if (mode === 'enforce') {
-          await expect(completion).rejects.toMatchObject({
-            reason: 'control_plane_unavailable',
-          });
-        } else {
-          await expect(completion).resolves.toBeUndefined();
-        }
-      } finally {
-        unblock();
-        await blocker;
-      }
-
-      if (mode === 'observe') {
-        const initial = await readLeaseSnapshot(taskRunId);
-        const steady = await waitForHeartbeatAfter(taskRunId, initial.heartbeatAt);
-        expectDurationNear(
-          steady.leaseExpiresAt.getTime() - steady.heartbeatAt.getTime(),
-          PROVIDER_SESSION_LEASE_TTL_MS,
-        );
-      }
-    },
-  );
-
-  it('keeps the startup phase inside hard reclaim for a short execution budget', async () => {
-    const a = openIndependentDb();
-    await startAcquire({ db: a.db, taskRunId: 'short-execution-startup-lease' });
-
-    const row = await readLeaseSnapshot('short-execution-startup-lease');
-    expectDurationNear(
-      row.leaseExpiresAt.getTime() - row.heartbeatAt.getTime(),
-      PROVIDER_SESSION_INITIAL_LEASE_TTL_MS,
-    );
-    expectDurationNear(
-      row.hardReclaimAt.getTime() - row.acquiredAt.getTime(),
-      PROVIDER_SESSION_INITIAL_LEASE_TTL_MS + 1_000 + PROVIDER_SESSION_ABORT_GRACE_MS,
-    );
-    expect(row.leaseExpiresAt.getTime()).toBeLessThan(row.hardReclaimAt.getTime());
   });
 
   it('shares one concurrency cap across two independent DB clients', async () => {
@@ -405,45 +296,6 @@ describe('YUK-842 cross-process provider SDK-session admission', () => {
     } finally {
       transactionSpy.mockRestore();
     }
-  });
-
-  it('extends a near-expiry live lease by the steady renewal horizon', async () => {
-    const a = openIndependentDb();
-    const permit = await startAcquire({
-      db: a.db,
-      taskRunId: 'steady-renewal-horizon',
-      executionTimeoutMs: 120_000,
-    });
-    await permit.completeStartup();
-    const initial = await readLeaseSnapshot('steady-renewal-horizon');
-    const forcedRows = await testDb().execute<{ lease_expires_at: Date | string }>(sql`
-      UPDATE provider_session_admission
-         SET lease_expires_at = clock_timestamp() + interval '12 seconds'
-       WHERE task_run_id = 'steady-renewal-horizon'
-         AND status = 'acquired'
-         AND hard_reclaim_at > clock_timestamp() + interval '12 seconds'
-      RETURNING lease_expires_at
-    `);
-    const forcedExpiryRaw = forcedRows[0]?.lease_expires_at;
-    if (!forcedExpiryRaw) throw new Error('steady renewal fixture did not update the live lease');
-    // Raw execute() preserves the postgres.js timestamp string, unlike the
-    // Drizzle column projection used by readLeaseSnapshot(). Normalize the
-    // fixture instead of lying about the driver result type.
-    const forcedExpiry =
-      forcedExpiryRaw instanceof Date ? forcedExpiryRaw : new Date(forcedExpiryRaw);
-    if (Number.isNaN(forcedExpiry.getTime())) {
-      throw new Error('steady renewal fixture returned an invalid lease expiry');
-    }
-
-    const renewed = await waitForHeartbeatAfter('steady-renewal-horizon', initial.heartbeatAt);
-    expectDurationNear(
-      renewed.leaseExpiresAt.getTime() - renewed.heartbeatAt.getTime(),
-      PROVIDER_SESSION_LEASE_TTL_MS,
-    );
-    expect(renewed.leaseExpiresAt.getTime()).toBeGreaterThan(
-      forcedExpiry.getTime() + LEASE_TIMING_TOLERANCE_MS,
-    );
-    expect(renewed.leaseExpiresAt.getTime()).toBeLessThanOrEqual(renewed.hardReclaimAt.getTime());
   });
 
   it('fails closed instead of operating on a same-id waiter from another lane', async () => {

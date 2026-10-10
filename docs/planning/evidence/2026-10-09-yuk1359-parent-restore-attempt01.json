@@ -1,0 +1,44 @@
+{
+  "candidate": "887012c2f10f2812b88a600340ec6ae869983b23",
+  "parentReview": "R2 NONE; source review only",
+  "offlineParent": {
+    "checks": 220,
+    "sealedFiles": 8396,
+    "connectionAttempts": 0,
+    "listenerAttempts": 0,
+    "childAttempts": 0,
+    "exitCode": 0,
+    "logSha256": "c415d33d81d5e8b2220a29b7c357f1726fa983d333defc2ea77827240bbdd92b"
+  },
+  "runtimeFailure": {
+    "phase": "provision-input-guard",
+    "exitCode": 64,
+    "cause": "json(readBound(...)) rejects canonical /private/tmp returned by ownedPath",
+    "sourceUserRelations": 0,
+    "migrationStarted": false,
+    "workerStarted": false,
+    "permanentDirectoryExists": false
+  },
+  "cleanup": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1359",
+      "phase": "isolated-same-target-restore-reopen",
+      "token": "0312ed60-db94-4423-acdf-ee6ef58e0b9c",
+      "candidate": "4bdfbe0e0aa2b5c05dab6e536851dd21f87d87f0",
+      "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "createdAt": "2026-10-09T12:17:53.087666+00:00"
+    },
+    "releasedAt": "2026-10-09T12:20:30.167624+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "source": {
+    "containerId": "f8b38b11b1259b21fb65841a7a6315993ee509812c945980d4600ed098efc8db",
+    "status": "stopped and retained with original disposable storage; never restart this acceptance source",
+    "userRelations": 0
+  },
+  "result": "NOT ACCEPTED: no actual capture/restore/DBOS reopen; prepared parent input guard rejected canonical /private/tmp before migration",
+  "next": "Fix only existing /tmp prep path confinement and composed-input tests, retain failure, re-seal; then new source/run under a new verified lock"
+}

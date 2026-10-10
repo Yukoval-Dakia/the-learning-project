@@ -266,9 +266,10 @@ export function MistakeCard({
 
 export interface MistakesPageProps {
   navigate: (to: string) => void;
+  list?: typeof listMistakes;
 }
 
-export default function MistakesPage({ navigate }: MistakesPageProps) {
+export default function MistakesPage({ navigate, list = listMistakes }: MistakesPageProps) {
   // YUK-598 — 科目 chip 行驱动（模块级冻结修复；provider selectable 视图）。
   const { subjects: subjectRowsForOpts } = useSubjects();
   const [subject, setSubject] = useState('all');
@@ -278,7 +279,7 @@ export default function MistakesPage({ navigate }: MistakesPageProps) {
   const q = useQuery({
     queryKey: ['mistakes', subject === 'all' ? undefined : subject],
     queryFn: () =>
-      listMistakes({ limit: MISTAKES_LIMIT, subject: subject === 'all' ? undefined : subject }),
+      list({ limit: MISTAKES_LIMIT, subject: subject === 'all' ? undefined : subject }),
   });
   const treeQ = useQuery({ queryKey: ['knowledge-tree'], queryFn: getTree });
 

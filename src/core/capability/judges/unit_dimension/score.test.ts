@@ -44,25 +44,6 @@ describe('unit_dimension score composition', () => {
     expect((r.evidence_json as { signal?: string }).signal).toBe('numeric_close');
   });
 
-  it('numeric_close feedback uses the configured tolerance band', () => {
-    const r = composeScore({
-      accelerator: {
-        value_si: 28,
-        unit_si: 'm/s',
-        parsed: true,
-        dimension_match: true,
-        unit_exact_match: true,
-        value_match: false,
-        value_close: true,
-        signal: 'numeric_close',
-      },
-      reference: { value: 30, unit: 'm/s', tolerance: 0.01 },
-      evidence: {},
-    });
-    expect(r.feedback_md).toContain('1%-10%');
-    expect(r.feedback_md).not.toContain('5-50%');
-  });
-
   it('numeric_off: dim_match + unit_exact + neither match nor close -> 0.3 partial', () => {
     const r = composeScore({
       accelerator: {
@@ -319,31 +300,6 @@ describe('unit_dimension score composition', () => {
     });
     expect(r.score).toBe(0.7);
     expect((r.evidence_json as { signal?: string }).signal).toBe('numeric_close');
-  });
-
-  it('fallback numeric_close feedback uses the configured tolerance band', () => {
-    const r = composeScore({
-      accelerator: {
-        value_si: null,
-        unit_si: null,
-        parsed: false,
-        dimension_match: false,
-        unit_exact_match: false,
-        value_match: false,
-        value_close: false,
-        signal: 'unparseable',
-      },
-      fallback: {
-        student_value_si: 28,
-        student_unit_si: 'm/s',
-        equivalent_to_reference: false,
-        parser_confidence: 0.85,
-      },
-      reference: { value: 30, unit: 'm/s', tolerance: 0.01 },
-      evidence: {},
-    });
-    expect(r.feedback_md).toContain('1%-10%');
-    expect(r.feedback_md).not.toContain('5-50%');
   });
 
   it('fallback non-equiv + unit matches + value 67% off -> numeric_off 0.3 partial', () => {

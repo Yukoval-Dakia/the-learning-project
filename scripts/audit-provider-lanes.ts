@@ -334,9 +334,22 @@ function resolveImportTarget(root: string, importer: string, source: string): st
         ];
   for (const candidate of candidates) {
     if (!existsSync(candidate)) continue;
-    if (lstatSync(candidate).isSymbolicLink()) {
-      throw new Error(`${candidate}: symbolic link found while resolving source import`);
+    // Check every component before applying the build boundary. A directory
+    // alias must not disguise either generated output or a production wire.
+    let component = candidate;
+    while (component !== dirname(component)) {
+      if (lstatSync(component).isSymbolicLink()) {
+        throw new Error(`${component}: symbolic link found while resolving source import`);
+      }
+      if (component === resolve(root)) break;
+      component = dirname(component);
     }
+    // server/frontdoor.ts imports the built Start server. Keep that edge in
+    // the census, but stop before its bundled duplicate provider/import graph.
+    // Only this repository's top-level output is excluded, not source .js or
+    // source directories named dist.
+    const pathFromProject = projectPath(root, candidate);
+    if (pathFromProject === 'dist' || pathFromProject.startsWith('dist/')) return undefined;
     if (statSync(candidate).isFile()) return candidate;
   }
   return undefined;

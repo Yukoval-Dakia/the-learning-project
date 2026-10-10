@@ -39,6 +39,7 @@ function nameOf(node: ts.PropertyName): string | undefined {
 /** Only provided production sources can supply declarations or caller evidence. */
 export function extractDrizzleWriteIndex(
   sources: ReadonlyMap<string, string>,
+  explicitPayloadTables: ReadonlySet<string> = new Set(),
 ): Map<string, WriteStatement[]> {
   const files = new Map(
     [...sources].map(([path, source]) => [
@@ -342,6 +343,32 @@ export function extractDrizzleWriteIndex(
     return undefined;
   }
   const sourcePaths = new Map([...sources.keys()].map((path) => [posix.resolve('/', path), path]));
+  function literalStrings(expression: ts.Expression): string[] | undefined {
+    const type = checker.getTypeAtLocation(expression);
+    const values: string[] = [];
+    for (const member of type.isUnion() ? type.types : [type]) {
+      if (!member.isStringLiteral()) return undefined;
+      values.push(member.value);
+    }
+    return values;
+  }
+  function dateConstruction(input: ts.Expression, seen = new Set<ts.Node>()): boolean {
+    const expression = unwrap(input);
+    if (seen.has(expression)) return false;
+    seen.add(expression);
+    if (ts.isNewExpression(expression))
+      return ts.isIdentifier(expression.expression) && expression.expression.text === 'Date';
+    if (!ts.isIdentifier(expression)) return false;
+    const decl = declaration(expression);
+    return Boolean(
+      decl &&
+        ts.isVariableDeclaration(decl) &&
+        decl.initializer &&
+        !reassigned.has(decl) &&
+        !mutated.has(decl) &&
+        dateConstruction(decl.initializer, seen),
+    );
+  }
   const index = new Map<string, WriteStatement[]>([...sources.keys()].map((path) => [path, []]));
   for (const call of calls) {
     if (!ts.isPropertyAccessExpression(call.expression) || !call.arguments[0]) continue;
@@ -357,13 +384,43 @@ export function extractDrizzleWriteIndex(
     const arg = unwrap(call.arguments[0]);
     // Preserve inspectable literal evidence for callers; field matching still
     // reads only its top-level AST keys, never nested values/comments/strings.
-    if (
+    const explicitPayload =
       method !== 'onConflictDoUpdate' &&
       ts.isObjectLiteralExpression(arg) &&
-      !arg.properties.some(ts.isSpreadAssignment)
-    )
-      payload = arg.getText();
-    index.get(sourcePaths.get(call.getSourceFile().fileName) ?? '')?.push({ kind, table, payload });
+      !arg.properties.some(ts.isSpreadAssignment);
+    if (explicitPayload) payload = arg.getText();
+    const status =
+      explicitPayloadTables.has(table) && explicitPayload && ts.isObjectLiteralExpression(arg)
+        ? arg.properties.find(
+            (property) =>
+              (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
+              nameOf(property.name) === 'status',
+          )
+        : undefined;
+    const statusValues =
+      status && (ts.isPropertyAssignment(status) || ts.isShorthandPropertyAssignment(status))
+        ? literalStrings(ts.isPropertyAssignment(status) ? status.initializer : status.name)
+        : undefined;
+    const started =
+      explicitPayloadTables.has(table) && explicitPayload && ts.isObjectLiteralExpression(arg)
+        ? arg.properties.find(
+            (property) =>
+              (ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property)) &&
+              nameOf(property.name) === 'started_at',
+          )
+        : undefined;
+    const nativeStartedAt =
+      started && (ts.isPropertyAssignment(started) || ts.isShorthandPropertyAssignment(started))
+        ? dateConstruction(ts.isPropertyAssignment(started) ? started.initializer : started.name)
+        : false;
+    index.get(sourcePaths.get(call.getSourceFile().fileName) ?? '')?.push({
+      kind,
+      table,
+      payload,
+      ...(explicitPayloadTables.has(table)
+        ? { explicitPayload, nativeStartedAt, ...(statusValues ? { statusValues } : {}) }
+        : {}),
+    });
   }
   return index;
 }

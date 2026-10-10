@@ -1,0 +1,14 @@
+{
+  "owner": {
+    "threadId": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+    "issue": "YUK-1391",
+    "token": "36e8839c-d276-4a22-9123-b62c825b1d83",
+    "phase": "isolated-trait-control-db",
+    "candidate": "7199aa3fc4c0f7f04e356defcb1d4a37af1ca324",
+    "acquiredAt": "2026-10-08T15:22:15.919873+00:00"
+  },
+  "releasedAt": "2026-10-08T15:25:38.377105+00:00",
+  "containersUnchanged": true,
+  "releaseUnchanged": true,
+  "tests": "4 files / 55 passed"
+}

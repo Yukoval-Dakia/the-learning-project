@@ -1,0 +1,64 @@
+{
+  "sourceRef": "a2218777876c83e0bab64de8860ae3ce527d004c",
+  "execution": "offline Bash function intercepts every Docker call; no real Docker, DB, network or provider",
+  "script": {
+    "path": "scripts/restore-drill.sh",
+    "sha256": "5d4d35d9f6304bde19f769902234b2fcf271d24db0805ac277b1f3f4f4ae5798"
+  },
+  "driver": {
+    "path": "/tmp/yuk1359-restore-count-failure-20261009.sh",
+    "sha256": "3b08c6985bf7c755c0e84ae1d8d042be718f999fa0accb7f4c605af61ba2330b"
+  },
+  "runDirectory": "/tmp/yuk1359-restore-count-failure.58xosr",
+  "exitCode": 0,
+  "observedEvidence": {
+    "drill": "loom-restore-drill",
+    "at": "2026-10-09T05:09:46Z",
+    "dump": {
+      "file": "/tmp/yuk1359-restore-count-failure.58xosr/fixture.dump",
+      "sha256": "071b6e33b945891260eced0f1dd2c94bd1b4afc910e878b34b0a18e2c49f3358",
+      "bytes": 39,
+      "toc_entries": 4
+    },
+    "image": "offline-fixture:no-network",
+    "container": "loom-restore-drill-20261009-140946-87693",
+    "duration_seconds": 0,
+    "migrations_applied": 117,
+    "event_rows": 2,
+    "table_counts": {},
+    "verified": true,
+    "errors": "OFFLINE_INJECTED_COUNT_QUERY_FAILURE|",
+    "note": "scratch-only; production untouched; dump read via stdin (terminal context required)"
+  },
+  "artifacts": {
+    "commands.log": {
+      "sha256": "85251310c91234326a55aea5a3a4a347556b43d9a046bbda952a12c49715c6e9",
+      "bytes": 1237
+    },
+    "evidence.json": {
+      "sha256": "ac1e8eaf4787f7d41ebaabb5c5cbabb2a258702abf2c19c6789cdc2c54cdce2b",
+      "bytes": 620
+    },
+    "exit-code.txt": {
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+      "bytes": 2
+    },
+    "fixture.dump": {
+      "sha256": "071b6e33b945891260eced0f1dd2c94bd1b4afc910e878b34b0a18e2c49f3358",
+      "bytes": 39
+    },
+    "stderr.log": {
+      "sha256": "405355f30476d4e1e46ffebf4533ad207b078173a31b6743506e24c2a24309ca",
+      "bytes": 462
+    },
+    "stdout.log": {
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "bytes": 0
+    }
+  },
+  "expectedAfterRepair": {
+    "exitCode": "nonzero",
+    "verified": false
+  },
+  "limits": "Synthetic input is not a PostgreSQL dump; this proves error handling only, not actual restoration."
+}

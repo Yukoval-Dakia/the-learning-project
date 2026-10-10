@@ -1,0 +1,25 @@
+{
+  "revision": "1c99901bbffd30da6ab5efc5a292fa8be443823d",
+  "result": "1 passed, 20 unselected; intermittent CI40P01 not reproduced or exonerated",
+  "children": 4,
+  "expectedSigkill": 1,
+  "allChildrenExited": true,
+  "files": [
+    {
+      "path": "/tmp/yuk1394-parent-startup-diagnosis/focused.log",
+      "sha256": "e44bbbbc1d1f4206c7c1ada675a23f593e4b474a47a13c597ac72e24f57e9c68"
+    },
+    {
+      "path": "/tmp/yuk1394-parent-startup-diagnosis/session-evidence.json",
+      "sha256": "fde21ec64e945beac2feedecebcd8cd97ddde52ff2745fef0d025ba2fbfb6559"
+    },
+    {
+      "path": "/tmp/yuk1394-parent-startup-diagnosis/before.json",
+      "sha256": "7d10ab02a8ad51b84495d708814ef757c16340a226cbcaae992e24c50ebd06d9"
+    },
+    {
+      "path": "/tmp/yuk1394-parent-startup-diagnosis/lock-release.json",
+      "sha256": "1b366c92f5aa2e301fc919125453902c30b016e98cd9f5cb2d84606cace3f47d"
+    }
+  ]
+}

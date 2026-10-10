@@ -1,0 +1,39 @@
+{
+  "head": "053e9b5110bee6df3f4abbef3783126d7d420633",
+  "command": [
+    "pnpm",
+    "vitest",
+    "run",
+    "--config",
+    "vitest.db.config.ts",
+    "server/start/workbench-reader.db.test.ts",
+    "src/capabilities/shell/api/workbench-summary.db.test.ts",
+    "src/capabilities/shell/server/overnight-digest.db.test.ts",
+    "src/capabilities/shell/api/proposals.db.test.ts",
+    "src/capabilities/shell/api/proposal-decisions.db.test.ts",
+    "src/capabilities/notes/api/ai-changes.db.test.ts",
+    "src/capabilities/observability/server/today-cost.db.test.ts"
+  ],
+  "exitCode": 0,
+  "tests_passed": 53,
+  "files_passed": 7,
+  "db_log": "/tmp/yuk1358-parent-db/db.log",
+  "db_log_sha256": "7e450b2ed60dc8cbc988bdd04a5a6c953f070c9cc20db8e6b671ce930b4fba41",
+  "cleanup": {
+    "released_at": "2026-10-08T11:50:32.647882+00:00",
+    "owner": {
+      "threadId": "57961995-70c3-4121-a9dd-97d90471be1a",
+      "issue": "YUK-1358",
+      "phase": "start-workbench-scoped-db",
+      "token": "d80f5d7e-e3c6-4a59-a8d7-0ecdb1a55034",
+      "at": "2026-10-08T11:49:21.235998+00:00",
+      "expectedMinutes": 5
+    },
+    "original_containers_unchanged": true,
+    "release_unchanged": true
+  },
+  "limits": [
+    "real driver and authenticated in-process adapter, not built RPC/browser",
+    "no deployment or provider call"
+  ]
+}

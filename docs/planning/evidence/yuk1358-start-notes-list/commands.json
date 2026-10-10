@@ -1,0 +1,149 @@
+[
+  {
+    "command": "pnpm vitest run --config vitest.unit.config.ts server/start/notes-list-read.unit.test.ts server/start/notes-list-client.unit.test.ts web/src/routes/NotesPage.start.unit.test.tsx web/src/routes/EventDetailPage.start.unit.test.tsx",
+    "exit": 0,
+    "selected_tests": 44,
+    "log": "unit-final.log",
+    "log_sha256": "80f9b0f1f1e55e1a537f3abfd4fa92ffe46f08721fdf1bce9946ece1ae297ae5"
+  },
+  {
+    "command": "pnpm vitest run --config vitest.unit.config.ts src/capabilities/notes/ui/NotesPage.unit.test.tsx",
+    "exit": 0,
+    "selected_tests": 6,
+    "log": "legacy-page-unit.log",
+    "log_sha256": "8ea0d6f5e43e7143fef14a40b59846bb1e66dc00193330b9c19253f37469236d"
+  },
+  {
+    "command": "pnpm exec tsx --test tests/usability/start-rpc-fixtures.unit.spec.ts",
+    "exit": 0,
+    "selected_tests": 12,
+    "log": "protocol-final.log",
+    "log_sha256": "5115742d913c1f4cae41eedebea01e7d790e9415a99092ce94724842c3519f78"
+  },
+  {
+    "command": "pnpm typecheck",
+    "exit": 0,
+    "selected_tests": null,
+    "log": "typecheck-final.log",
+    "log_sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+  },
+  {
+    "command": "pnpm lint",
+    "exit": 0,
+    "selected_tests": null,
+    "log": "lint.log",
+    "log_sha256": "07e45da801224cf7d802ca4e6727ffcba6c6a1a1fdeee11182a30b7f288eb574"
+  },
+  {
+    "command": "pnpm lint:ratchet",
+    "exit": 0,
+    "selected_tests": null,
+    "log": "lint-ratchet-final.log",
+    "log_sha256": "25125aa13a09f122bc37107cf7e8d47bd88f70ca899b2697a5404bd6e14ea6c4"
+  },
+  {
+    "command": "pnpm build",
+    "exit": 0,
+    "selected_tests": null,
+    "log": "build-final.log",
+    "log_sha256": "80b03cfbd48e75bff16b2e039a6626f8d753ddda56d95b7d6b8e0845df90d199"
+  },
+  {
+    "command": "pnpm audit:schema",
+    "exit": 0,
+    "selected_tests": null,
+    "log": "audit-schema.log",
+    "log_sha256": "0882e724983a0072fef2a1f516355f56291111fadd4b951b85bcfab4bfc730ed"
+  },
+  {
+    "command": "pnpm audit:partition",
+    "exit": 0,
+    "selected_tests": null,
+    "log": "audit-partition.log",
+    "log_sha256": "9c474abecbd4896d3e49f228d4b2c3df6dd08cf399d4a53af836cd5916f646a7"
+  },
+  {
+    "command": "pnpm audit:api-client",
+    "exit": 0,
+    "selected_tests": null,
+    "log": "audit-api-client.log",
+    "log_sha256": "f26bc904f865f0cc5a1a1613ea5d4017d46fdab55aceaf8eb0a831aedd0cea7c"
+  },
+  {
+    "command": "pnpm audit:api-client-usage",
+    "exit": 0,
+    "selected_tests": null,
+    "log": "audit-api-client-usage.log",
+    "log_sha256": "71c2c93dd9e51bd4fc368e7845a5a34d42b2b56cf97e4dcf94a8556a99f45b46"
+  },
+  {
+    "command": "pnpm audit:capability-boundaries",
+    "exit": 0,
+    "selected_tests": null,
+    "log": "audit-capability-boundaries.log",
+    "log_sha256": "484405f1ec91a3f4ecfc833a00e772ba72da3c35e9ebef7b3ebcff730f89f21f"
+  },
+  {
+    "command": "pnpm audit:provider-lanes",
+    "exit": 0,
+    "selected_tests": null,
+    "log": "audit-provider-lanes.log",
+    "log_sha256": "4e94a5c1aa34213ec2cbb56a60b90e883fdcf6a7fd9c10daff833b754ea85b5c"
+  },
+  {
+    "command": "pnpm audit:profile",
+    "exit": 0,
+    "selected_tests": null,
+    "log": "audit-profile.log",
+    "log_sha256": "f2f14ec06808ef23b857f78b1f54fd2fb25ba55e75776644d2a00aef10981db4"
+  },
+  {
+    "command": "pnpm audit:task-census",
+    "exit": 0,
+    "selected_tests": null,
+    "log": "audit-task-census.log",
+    "log_sha256": "ddf8d63319f242b650617ac0e743a24966ea2eb10c9c446a74b9d24f8c58df6a"
+  },
+  {
+    "command": "pnpm audit:draft-status",
+    "exit": 0,
+    "selected_tests": null,
+    "log": "audit-draft-status.log",
+    "log_sha256": "de3569839d7a890654a591c9c6b77334b1031fa56e3ecedef457f132dd24eb8d"
+  },
+  {
+    "command": "pnpm audit:draft-status-reads",
+    "exit": 0,
+    "selected_tests": null,
+    "log": "audit-draft-status-reads.log",
+    "log_sha256": "cae5c43128871fa85e5b4aead6ab26573d991185778e3d3a0470e95019b17666"
+  },
+  {
+    "command": "pnpm audit:api-contracts",
+    "exit": 0,
+    "selected_tests": null,
+    "log": "audit-api-contracts.log",
+    "log_sha256": "2fcb1d9cd8395bc3661f8e35135444ec73a34d0ca7a0320f1507c9429782ce2b"
+  },
+  {
+    "command": "pnpm gen:postman",
+    "exit": 0,
+    "selected_tests": null,
+    "log": "gen-postman.log",
+    "log_sha256": "3aaa19807ed6f0270b0c336b21a857618af66e696d351ca7ae870f0bd2f66a25"
+  },
+  {
+    "command": "pnpm audit:architecture-deepening",
+    "exit": 0,
+    "selected_tests": null,
+    "log": "audit-architecture-deepening-final.log",
+    "log_sha256": "ea93a17dd471767c18587edf1e7f613eafad3b6d42bd7e3f9483ebabbf408ea8"
+  },
+  {
+    "command": "pnpm audit:agent-control-plane",
+    "exit": 0,
+    "selected_tests": null,
+    "log": "audit-agent-control-plane-final.log",
+    "log_sha256": "1f81346486a3c2faf1abb93d683d02efd8e196f1af34605bc3756da0cdbe4b61"
+  }
+]

@@ -10384,6 +10384,111 @@ export interface operations {
                     /** @enum {string} */
                     derivation_policy?: "allow" | "answer_only";
                     durable?: boolean;
+                    review_answer?: {
+                        assessment: {
+                            evaluation_group_id: string;
+                            /** @default [] */
+                            group_evidence?: {
+                                evidence: {
+                                    asset: {
+                                        asset_id: string;
+                                        digest: string;
+                                    };
+                                    bytes: number;
+                                    evidence_id: string;
+                                    /** @enum {string} */
+                                    kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                    mime_type: string;
+                                    /** Format: date-time */
+                                    uploaded_at: string;
+                                };
+                                target: {
+                                    /** @enum {string} */
+                                    scope: "all_units";
+                                } | {
+                                    /** @enum {string} */
+                                    scope: "units";
+                                    scoring_unit_ids: string[];
+                                };
+                            }[];
+                            idempotency_key: string;
+                            issuance_id: string;
+                            response_set: {
+                                /** @default [] */
+                                entries?: ({
+                                    /** @enum {string} */
+                                    kind: "choice";
+                                    /** @default [] */
+                                    option_ids?: string[];
+                                    self_confidence?: number;
+                                    slot_id: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "text";
+                                    self_confidence?: number;
+                                    slot_id: string;
+                                    text_md: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "numeric";
+                                    raw_input?: string;
+                                    self_confidence?: number;
+                                    slot_id: string;
+                                    value: number | null;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "formula";
+                                    latex: string;
+                                    self_confidence?: number;
+                                    slot_id: string;
+                                } | {
+                                    /** @enum {string} */
+                                    kind: "matching";
+                                    /** @default [] */
+                                    pairs?: {
+                                        item_id: string;
+                                        option_id: string;
+                                    }[];
+                                    self_confidence?: number;
+                                    slot_id: string;
+                                } | {
+                                    /** @default [] */
+                                    item_order?: string[];
+                                    /** @enum {string} */
+                                    kind: "ordering";
+                                    self_confidence?: number;
+                                    slot_id: string;
+                                } | {
+                                    /** @default [] */
+                                    evidence?: {
+                                        asset: {
+                                            asset_id: string;
+                                            digest: string;
+                                        };
+                                        bytes: number;
+                                        evidence_id: string;
+                                        /** @enum {string} */
+                                        kind: "image" | "audio" | "video" | "pdf" | "plaintext";
+                                        mime_type: string;
+                                        /** Format: date-time */
+                                        uploaded_at: string;
+                                    }[];
+                                    /** @enum {string} */
+                                    kind: "open";
+                                    self_confidence?: number;
+                                    slot_id: string;
+                                    /** @default  */
+                                    text_md?: string;
+                                })[];
+                            };
+                            submission_id?: string;
+                        };
+                        /** @enum {boolean} */
+                        authorize_submission: true;
+                        question_id: string;
+                        reasoning_trace?: string;
+                        review_session_id?: string;
+                    };
                     session_id?: string;
                     skill_context?: {
                         ref: {
@@ -18976,6 +19081,36 @@ export interface operations {
                             created_at: number;
                             id: string;
                             knowledge_ids: string[];
+                            /** @default [] */
+                            prompt_materials: ({
+                                alt_text?: string;
+                                /** @enum {string} */
+                                availability: "inline";
+                                caption?: string;
+                                content_md: string;
+                                /** @enum {string} */
+                                kind: "passage" | "table" | "plaintext";
+                                material_id: string;
+                            } | {
+                                alt_text?: string;
+                                asset_id: string;
+                                /** @enum {string} */
+                                availability: "available";
+                                caption?: string;
+                                content_md?: string;
+                                /** @enum {string} */
+                                kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
+                                material_id: string;
+                            } | {
+                                alt_text?: string;
+                                /** @enum {string} */
+                                availability: "missing" | "unavailable";
+                                caption?: string;
+                                content_md?: string;
+                                /** @enum {string} */
+                                kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
+                                material_id: string;
+                            })[];
                             prompt_md: string;
                             question_id: string;
                             record_id: string;
@@ -19022,6 +19157,36 @@ export interface operations {
                             created_at: number;
                             id: string;
                             knowledge_ids: string[];
+                            /** @default [] */
+                            prompt_materials: ({
+                                alt_text?: string;
+                                /** @enum {string} */
+                                availability: "inline";
+                                caption?: string;
+                                content_md: string;
+                                /** @enum {string} */
+                                kind: "passage" | "table" | "plaintext";
+                                material_id: string;
+                            } | {
+                                alt_text?: string;
+                                asset_id: string;
+                                /** @enum {string} */
+                                availability: "available";
+                                caption?: string;
+                                content_md?: string;
+                                /** @enum {string} */
+                                kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
+                                material_id: string;
+                            } | {
+                                alt_text?: string;
+                                /** @enum {string} */
+                                availability: "missing" | "unavailable";
+                                caption?: string;
+                                content_md?: string;
+                                /** @enum {string} */
+                                kind: "figure" | "passage" | "table" | "audio" | "video" | "pdf" | "plaintext";
+                                material_id: string;
+                            })[];
                             prompt_md: string;
                             question_id: string;
                             record_id: string;
@@ -26253,10 +26418,11 @@ export interface operations {
                                 /** @enum {string} */
                                 kind: "knowledge_node";
                                 proposed_change: {
+                                    domain?: string;
                                     /** @enum {string} */
                                     mutation: "propose_new";
                                     name: string;
-                                    parent_id: string;
+                                    parent_id: string | null;
                                 };
                                 reason_md: string;
                                 rollback_plan?: unknown;
@@ -27328,10 +27494,11 @@ export interface operations {
                                 /** @enum {string} */
                                 kind: "knowledge_node";
                                 proposed_change: {
+                                    domain?: string;
                                     /** @enum {string} */
                                     mutation: "propose_new";
                                     name: string;
-                                    parent_id: string;
+                                    parent_id: string | null;
                                 };
                                 reason_md: string;
                                 rollback_plan?: unknown;

@@ -1,0 +1,1054 @@
+{
+  "issue": "YUK-1355",
+  "capturedAt": "2026-10-08T09:55:17.537945+00:00",
+  "startingHead": "09f07d7430acee44b384b5a0ba7b79daecefaf55",
+  "mergedMain": "5b11f3edbd8c8a418cea8815976786d177e332bc",
+  "scope": "normal local merge only; no DB/container/runtime/provider/replay/deployment/push/PR replies/watch/Linear/review/delegation",
+  "runtime": {
+    "node": "v24.19.0",
+    "execPath": "/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin/node",
+    "pnpm": "11.13.1",
+    "pgBoss": "12.36.0",
+    "dbos": "5.2.11"
+  },
+  "checks": {
+    "runtime-final": {
+      "command": [
+        "node",
+        "-e",
+        "const fs=require(\"node:fs\"); console.log(JSON.stringify({node:process.version,execPath:process.execPath,pgBoss:JSON.parse(fs.readFileSync(\"node_modules/pg-boss/package.json\",\"utf8\")).version,dbos:JSON.parse(fs.readFileSync(\"node_modules/@dbos-inc/dbos-sdk/package.json\",\"utf8\")).version}));"
+      ],
+      "logPath": "/tmp/yuk1355-main-20261008/runtime-final.log",
+      "logSha256": "1d212cb40bfc30043124f51cf349adbe3c1ecada5cfae31ec1188026d84d9642",
+      "exit": 0,
+      "startedAt": "2026-10-08T09:51:16.277881+00:00",
+      "finishedAt": "2026-10-08T09:51:16.424177+00:00"
+    },
+    "ratchet": {
+      "command": ["pnpm", "lint:ratchet"],
+      "logPath": "/tmp/yuk1355-main-20261008/ratchet.log",
+      "logSha256": "3083e4cd0479350d752dc7f32b394a4b20f2c8093d6e4ef906763b8e4472e5d4",
+      "exit": 0,
+      "startedAt": "2026-10-08T09:52:00.571763+00:00",
+      "finishedAt": "2026-10-08T09:52:03.596327+00:00"
+    },
+    "runtime": {
+      "command": [
+        "node",
+        "-e",
+        "console.log(JSON.stringify({node:process.version,execPath:process.execPath,pgBoss:require(\"pg-boss/package.json\").version,dbos:require(\"@dbos-inc/dbos-sdk/package.json\").version}))"
+      ],
+      "logPath": "/tmp/yuk1355-main-20261008/runtime.log",
+      "logSha256": "ed0ec299b1b9fd0013b310d5f373c717125925078ca484c1c558961ccb3b8ca3",
+      "exit": 1,
+      "startedAt": "2026-10-08T09:50:52.350444+00:00",
+      "finishedAt": "2026-10-08T09:50:52.517769+00:00"
+    },
+    "fixture-build": {
+      "command": [
+        "pnpm",
+        "exec",
+        "esbuild",
+        "tests/dbos-prune/worker.ts",
+        "--bundle",
+        "--platform=node",
+        "--target=node24",
+        "--format=cjs",
+        "--outfile=.cache/yuk1355-main-20261008-worker.cjs",
+        "--external:pg-native",
+        "--external:sharp",
+        "--external:better-sqlite3",
+        "--external:bufferutil",
+        "--external:utf-8-validate",
+        "--external:winston",
+        "--external:winston-transport"
+      ],
+      "logPath": "/tmp/yuk1355-main-20261008/fixture-build.log",
+      "logSha256": "c51b918a62a5cf4af38ec2377211d6d39512a765eae4b23b7a035e99aed0d498",
+      "exit": 0,
+      "startedAt": "2026-10-08T09:53:12.353698+00:00",
+      "finishedAt": "2026-10-08T09:53:15.008329+00:00"
+    },
+    "provider-truth": {
+      "command": ["pnpm", "audit:provider-attempt-truth"],
+      "logPath": "/tmp/yuk1355-main-20261008/provider-truth.log",
+      "logSha256": "214d47e76c025cd45205d513def25f82c6dd8c3981e9c9662ee1e590d0859a22",
+      "exit": 0,
+      "startedAt": "2026-10-08T09:52:30.748944+00:00",
+      "finishedAt": "2026-10-08T09:52:35.848969+00:00"
+    },
+    "partition": {
+      "command": ["pnpm", "audit:partition"],
+      "logPath": "/tmp/yuk1355-main-20261008/partition.log",
+      "logSha256": "6cccd96f8ff9ceee39c702823a7f86f8450e9c1dc32b85ddfd2a814cf359266c",
+      "exit": 0,
+      "startedAt": "2026-10-08T09:52:17.543539+00:00",
+      "finishedAt": "2026-10-08T09:52:19.379982+00:00"
+    },
+    "api-contracts": {
+      "command": ["pnpm", "audit:api-contracts"],
+      "logPath": "/tmp/yuk1355-main-20261008/api-contracts.log",
+      "logSha256": "3be836a0d21e69bb6a1f269bc852aeab6267c37b8b5f1d603ea2475d12292ad5",
+      "exit": 0,
+      "startedAt": "2026-10-08T09:52:22.023173+00:00",
+      "finishedAt": "2026-10-08T09:52:23.896854+00:00"
+    },
+    "provider-lanes": {
+      "command": ["pnpm", "audit:provider-lanes"],
+      "logPath": "/tmp/yuk1355-main-20261008/provider-lanes.log",
+      "logSha256": "d5232ff681e25d264f4d113e2aa3763fe2420192c874b7fe636eba17b41a4b7b",
+      "exit": 0,
+      "startedAt": "2026-10-08T09:52:25.557406+00:00",
+      "finishedAt": "2026-10-08T09:52:30.718883+00:00"
+    },
+    "capability": {
+      "command": ["pnpm", "audit:capability-boundaries"],
+      "logPath": "/tmp/yuk1355-main-20261008/capability.log",
+      "logSha256": "3a178a2905c2f94f9bcccb2c81240ae5a0492db2042c7c093266f8a5486ef36f",
+      "exit": 0,
+      "startedAt": "2026-10-08T09:52:19.406446+00:00",
+      "finishedAt": "2026-10-08T09:52:21.993240+00:00"
+    },
+    "census": {
+      "command": ["pnpm", "audit:task-census"],
+      "logPath": "/tmp/yuk1355-main-20261008/census.log",
+      "logSha256": "a0771cd252e47ab9effae5dbea3df31e16135dc113da402998fbf2d392ab944e",
+      "exit": 0,
+      "startedAt": "2026-10-08T09:52:35.875345+00:00",
+      "finishedAt": "2026-10-08T09:52:39.238553+00:00"
+    },
+    "api-client-usage": {
+      "command": ["pnpm", "audit:api-client-usage"],
+      "logPath": "/tmp/yuk1355-main-20261008/api-client-usage.log",
+      "logSha256": "54b11ec44f9e8129c09e21f05f2d119a4206f9932309aa08fc56b6f5d3676f1b",
+      "exit": 0,
+      "startedAt": "2026-10-08T09:52:23.923855+00:00",
+      "finishedAt": "2026-10-08T09:52:25.524336+00:00"
+    },
+    "lint": {
+      "command": ["pnpm", "lint"],
+      "logPath": "/tmp/yuk1355-main-20261008/lint.log",
+      "logSha256": "daaf7f42c16b2eb879fa7ab6e65903573fb6c7f01ce9272f3e26664d62c51c0a",
+      "exit": 0,
+      "startedAt": "2026-10-08T09:51:57.470237+00:00",
+      "finishedAt": "2026-10-08T09:52:00.545267+00:00"
+    },
+    "schema": {
+      "command": ["pnpm", "audit:schema"],
+      "logPath": "/tmp/yuk1355-main-20261008/schema.log",
+      "logSha256": "78581cbbdf2442050e75c6efef9864f07c644ecbbf3378f58645957913d8f2c5",
+      "exit": 0,
+      "startedAt": "2026-10-08T09:52:12.493088+00:00",
+      "finishedAt": "2026-10-08T09:52:17.516132+00:00"
+    },
+    "typecheck": {
+      "command": ["pnpm", "typecheck"],
+      "logPath": "/tmp/yuk1355-main-20261008/typecheck.log",
+      "logSha256": "376d30148981d6ebf59ece2d112d08ee835ce5fe3501db43c28182bdb22030ad",
+      "exit": 0,
+      "startedAt": "2026-10-08T09:51:50.177580+00:00",
+      "finishedAt": "2026-10-08T09:51:57.438150+00:00"
+    },
+    "unit": {
+      "command": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "src/server/boss/start-worker.test.ts",
+        "src/server/boss/queue-config.test.ts",
+        "src/server/boss/job-yield.unit.test.ts",
+        "src/kernel/manifest.unit.test.ts",
+        "src/capabilities/observability/manifest.unit.test.ts",
+        "server/index.unit.test.ts",
+        "scripts/audit-schema-writes.test.ts",
+        "src/capabilities/ingestion/api/contracts.unit.test.ts",
+        "src/capabilities/ingestion/ui/mistakes-api.unit.test.ts",
+        "src/server/questions/contract-normalizer.test.ts",
+        "web/src/routes/MistakesPage.unit.test.tsx"
+      ],
+      "logPath": "/tmp/yuk1355-main-20261008/unit.log",
+      "logSha256": "3ed1e82a43a049dd7f1c01e138571841b30112a81746f858414b7a5b365d7b4c",
+      "exit": 0,
+      "startedAt": "2026-10-08T09:51:16.449864+00:00",
+      "finishedAt": "2026-10-08T09:51:20.443859+00:00"
+    },
+    "build": {
+      "command": ["pnpm", "build"],
+      "logPath": "/tmp/yuk1355-main-20261008/build.log",
+      "logSha256": "6ad69ce849c0cfdec34fdcfd7925543cd3e2b07e944cd47a4a84f2640e7ada5c",
+      "exit": 0,
+      "startedAt": "2026-10-08T09:52:03.624754+00:00",
+      "finishedAt": "2026-10-08T09:52:15.013330+00:00"
+    },
+    "lint-final": {
+      "command": ["pnpm", "lint"],
+      "logPath": "/tmp/yuk1355-main-20261008/lint-final.log",
+      "logSha256": "d4b941d3aab01ceadd37af31fe838d826c014ee4b996e46122ceb77550946c64",
+      "exit": 0,
+      "startedAt": "2026-10-08T09:55:42.290314+00:00",
+      "finishedAt": "2026-10-08T09:55:46.925504+00:00"
+    },
+    "ratchet-final": {
+      "command": ["pnpm", "lint:ratchet"],
+      "logPath": "/tmp/yuk1355-main-20261008/ratchet-final.log",
+      "logSha256": "2062b968286417bd8a73f28316882f4a212508ab9fd2b2b151b37b7dec32e0ac",
+      "exit": 0,
+      "startedAt": "2026-10-08T09:55:46.974207+00:00",
+      "finishedAt": "2026-10-08T09:55:51.674287+00:00"
+    },
+    "format-evidence": {
+      "command": [
+        "pnpm",
+        "exec",
+        "biome",
+        "format",
+        "--write",
+        "docs/planning/2026-10-08-yuk1355-main-integration-checks.json"
+      ],
+      "logPath": "/tmp/yuk1355-main-20261008/format-evidence.log",
+      "logSha256": "301cd5ef0aa33e2d84406f941d399a040bf7da989eaf76a583592fa7e6011de1",
+      "exit": 0,
+      "startedAt": "2026-10-08T09:55:17.577210+00:00",
+      "finishedAt": "2026-10-08T09:55:19.363084+00:00"
+    }
+  },
+  "historicalSourceComparison": [
+    {
+      "path": ".cache/yuk1355-cron-worker.cjs",
+      "sha256": "4cb31a7d60a3659313cb0b035bcd1316d7b6be4e89b21b834270b4d986430313",
+      "currentSha256": "4cb31a7d60a3659313cb0b035bcd1316d7b6be4e89b21b834270b4d986430313",
+      "matches": true
+    },
+    {
+      "path": ".cache/yuk1355-worker.cjs",
+      "sha256": "4cb31a7d60a3659313cb0b035bcd1316d7b6be4e89b21b834270b4d986430313",
+      "currentSha256": "4cb31a7d60a3659313cb0b035bcd1316d7b6be4e89b21b834270b4d986430313",
+      "matches": true
+    },
+    {
+      "path": "drizzle/0115_yuk1355_prune_backend.sql",
+      "sha256": "2db23a045773f6c176f545f2af7576d5122a7a3b60a85b642af21164b3de7d76",
+      "currentSha256": "2db23a045773f6c176f545f2af7576d5122a7a3b60a85b642af21164b3de7d76",
+      "matches": true
+    },
+    {
+      "path": "drizzle/meta/_journal.json",
+      "sha256": "f4aa0345f6a01e76813ae4e8b4b6d7902616bb08e8849996a581dc8cdfcfcd14",
+      "currentSha256": "f4aa0345f6a01e76813ae4e8b4b6d7902616bb08e8849996a581dc8cdfcfcd14",
+      "matches": true
+    },
+    {
+      "path": "node_modules/@dbos-inc/dbos-sdk/dist/src/scheduler/scheduler.js",
+      "sha256": "25237d521a48295b5c97282c14a0dc0e41144a2d3c393d1096ae749cb3a2dbb5",
+      "currentSha256": "25237d521a48295b5c97282c14a0dc0e41144a2d3c393d1096ae749cb3a2dbb5",
+      "matches": true
+    },
+    {
+      "path": "node_modules/@dbos-inc/dbos-sdk/package.json",
+      "sha256": "ab2adaae81cd0e777af3877db6608cf909bdd351e25675fbcd2be4ac3361c823",
+      "currentSha256": "ab2adaae81cd0e777af3877db6608cf909bdd351e25675fbcd2be4ac3361c823",
+      "matches": true
+    },
+    {
+      "path": "node_modules/pg-boss/dist/timekeeper.js",
+      "sha256": "98ad534acee8fa355b6eab67981f8521f32c963556e954cc7ccb98aff537d235",
+      "currentSha256": "98ad534acee8fa355b6eab67981f8521f32c963556e954cc7ccb98aff537d235",
+      "matches": true
+    },
+    {
+      "path": "node_modules/pg-boss/package.json",
+      "sha256": "d6935b5887a7b5ce970ceb79af714bedc5eff32167c4dca53953baccffa3021a",
+      "currentSha256": "d6935b5887a7b5ce970ceb79af714bedc5eff32167c4dca53953baccffa3021a",
+      "matches": true
+    },
+    {
+      "path": "package.json",
+      "sha256": "6b956881bd26afbff490886d874668563657e6c1423d7028fdd543d4d78eccdb",
+      "currentSha256": "6b956881bd26afbff490886d874668563657e6c1423d7028fdd543d4d78eccdb",
+      "matches": true
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "sha256": "7b1a3254d428b208c15ae5b86f831c76ae3d327018f47584cc84a7a6c27f9cf5",
+      "currentSha256": "7b1a3254d428b208c15ae5b86f831c76ae3d327018f47584cc84a7a6c27f9cf5",
+      "matches": true
+    },
+    {
+      "path": "scripts/lint-baseline.json",
+      "sha256": "6e35cc0c7122e094bb29a5d9dfed4227ead9d68a8e14d274b01279dcc09ff7e1",
+      "currentSha256": "6e35cc0c7122e094bb29a5d9dfed4227ead9d68a8e14d274b01279dcc09ff7e1",
+      "matches": true
+    },
+    {
+      "path": "src/capabilities/observability/manifest.ts",
+      "sha256": "837dda796f1b31bc42cd27dad82f39e1eb236599e516700861581a7a2bcbd45f",
+      "currentSha256": "837dda796f1b31bc42cd27dad82f39e1eb236599e516700861581a7a2bcbd45f",
+      "matches": true
+    },
+    {
+      "path": "src/kernel/manifest.ts",
+      "sha256": "0a136c05d43fc585cb84674233af6f934f7fcfc8bec5f0cd981e8de6f4ffb444",
+      "currentSha256": "0a136c05d43fc585cb84674233af6f934f7fcfc8bec5f0cd981e8de6f4ffb444",
+      "matches": true
+    },
+    {
+      "path": "src/server/boss/handlers.ts",
+      "sha256": "5369935608f4481ea69a9671bd057fb86efc8f9beb1f791b3071b3dfb17f7f92",
+      "currentSha256": "5369935608f4481ea69a9671bd057fb86efc8f9beb1f791b3071b3dfb17f7f92",
+      "matches": true
+    },
+    {
+      "path": "src/server/boss/queue-config.ts",
+      "sha256": "fa9b604531fa0766deed6cba801352bdf84972f4b2817a02b97e4b659da5e403",
+      "currentSha256": "fa9b604531fa0766deed6cba801352bdf84972f4b2817a02b97e4b659da5e403",
+      "matches": true
+    },
+    {
+      "path": "src/server/boss/register-capability-jobs.ts",
+      "sha256": "b9c6e037f2676cfb330cb204c1817392c1e5b1b8405bd22a9db2cbd8a6b21b5d",
+      "currentSha256": "b9c6e037f2676cfb330cb204c1817392c1e5b1b8405bd22a9db2cbd8a6b21b5d",
+      "matches": true
+    },
+    {
+      "path": "src/server/boss/start-worker.ts",
+      "sha256": "9493a1396e1915a33a091f46a6fe2c89c5cdfc8e84e05043f4e4d0ee0150d63e",
+      "currentSha256": "9493a1396e1915a33a091f46a6fe2c89c5cdfc8e84e05043f4e4d0ee0150d63e",
+      "matches": true
+    },
+    {
+      "path": "src/server/durable/prune-family.ts",
+      "sha256": "549f33bf2c0b7e71f1f21436430dc6c97152a4120785b8cb9a7230f1c5c096ac",
+      "currentSha256": "549f33bf2c0b7e71f1f21436430dc6c97152a4120785b8cb9a7230f1c5c096ac",
+      "matches": true
+    },
+    {
+      "path": "src/server/durable/prune-worker.ts",
+      "sha256": "7b12c39a86d4dac907f833443e891107bd754ccd4909e2418fbd0d78a343d2de",
+      "currentSha256": "7b12c39a86d4dac907f833443e891107bd754ccd4909e2418fbd0d78a343d2de",
+      "matches": true
+    },
+    {
+      "path": "tests/dbos-prune/cron.db.test.ts",
+      "sha256": "e344ef9d4241d3c7fb4cb98775480400f16ab7ab135c564b59a10441522987db",
+      "currentSha256": "e344ef9d4241d3c7fb4cb98775480400f16ab7ab135c564b59a10441522987db",
+      "matches": true
+    },
+    {
+      "path": "tests/dbos-prune/migration.db.test.ts",
+      "sha256": "e95889476d0b61bfad354c07697ad143c9e861c96114eb0d7d3719b73d0936be",
+      "currentSha256": "e95889476d0b61bfad354c07697ad143c9e861c96114eb0d7d3719b73d0936be",
+      "matches": true
+    },
+    {
+      "path": "tests/dbos-prune/worker.ts",
+      "sha256": "8c3a654081a42e277407383a39ba61fafde35b441854f043432414da1584ea77",
+      "currentSha256": "8c3a654081a42e277407383a39ba61fafde35b441854f043432414da1584ea77",
+      "matches": true
+    }
+  ],
+  "sourceIntegration": {
+    "startingHead": "09f07d7430acee44b384b5a0ba7b79daecefaf55",
+    "mergedMain": "5b11f3edbd8c8a418cea8815976786d177e332bc",
+    "importedFiles": [
+      {
+        "path": ".github/workflows/ci-gate.yml",
+        "sha256": "a7a50de27ab82d8097ad553c12041c2f68e7b069dcb6230fafad3878751e55a7",
+        "matchesMain": true
+      },
+      {
+        "path": "README.md",
+        "sha256": "03a2840d5b03593b65ea0e11d1941a39587dcf40dd37aeee2dc8a5ba3be7280d",
+        "matchesMain": true
+      },
+      {
+        "path": "docs/agents/usability-container-smoke.md",
+        "sha256": "7bc7a3bd490473d7c54095ba892e82ddc9153cfdc1b0cdaaeaffc1f1aeb52374",
+        "matchesMain": true
+      },
+      {
+        "path": "docs/planning/2026-10-07-agent-test-environment-reset.md",
+        "sha256": "131af0233a78e9de9552e5e9f7b1efd9016c9684972b60edbec810b6231856a0",
+        "matchesMain": true
+      },
+      {
+        "path": "docs/planning/2026-10-07-agent-test-storage.md",
+        "sha256": "fdda2b7050c5e2764e07f474e65a62aaabebffad2c7b2a2a3c0a4bce6fae6f89",
+        "matchesMain": true
+      },
+      {
+        "path": "docs/planning/2026-10-07-autonomous-delivery-charter.md",
+        "sha256": "f2682d8e55bac27a07319bf6b366d20d4bb1b380f026bbfaa2c2adafbea1521a",
+        "matchesMain": true
+      },
+      {
+        "path": "docs/planning/2026-10-07-linear-remaining-inventory.md",
+        "sha256": "c33e424265e98eec9ef479b9e9576004dd2af223b2e926a2082ec7931ee696a3",
+        "matchesMain": true
+      },
+      {
+        "path": "docs/planning/2026-10-07-non-ui-migration-priority.md",
+        "sha256": "431b2238474a5240071bce6454b41dab25f4224d30d5cbebd3424e85c63683b9",
+        "matchesMain": true
+      },
+      {
+        "path": "docs/planning/2026-10-07-yuk1356-operation-seams.md",
+        "sha256": "602170ae24731a779b74dec2fb21c9a2cf3d75fe4b31b5b949e8bca559cd57f3",
+        "matchesMain": true
+      },
+      {
+        "path": "docs/planning/2026-10-07-yuk1359-exit-inventory.md",
+        "sha256": "c7ebf06398088fabde8421d02de7a7c789d9c81e91ad05b73893748f814bcc36",
+        "matchesMain": true
+      },
+      {
+        "path": "docs/planning/2026-10-07-yuk1364-probe-issuance.md",
+        "sha256": "330ff6a0b782f672ed5425d22dfa21ca6dda15f9bd55078262044dc2727624c5",
+        "matchesMain": true
+      },
+      {
+        "path": "docs/planning/2026-10-07-yuk1365-sse-listener-followup.md",
+        "sha256": "99cf06aefca818ea8917788729f59ea5a140b7d1a807ee7b922d05a3503275f8",
+        "matchesMain": true
+      },
+      {
+        "path": "docs/planning/2026-10-08-yuk1356-typed-due-read-evidence.md",
+        "sha256": "3a4391967e59577ddff1e64451eaccefab3b822d442c8c61810af86112ec1f62",
+        "matchesMain": true
+      },
+      {
+        "path": "docs/planning/2026-10-08-yuk1359-w1-consumers.md",
+        "sha256": "d495e838e46ef32c33ab70a5b14d4b227f4f071b4ee4b3cecb19660c26d44e25",
+        "matchesMain": true
+      },
+      {
+        "path": "docs/planning/2026-10-08-yuk1375-schema-audit-paths.md",
+        "sha256": "ea782b04b4603053399660e682a968e86128bc4836a9c1e07e93cef29f52d2aa",
+        "matchesMain": true
+      },
+      {
+        "path": "docs/planning/2026-10-08-yuk1376-mistakes-domain.md",
+        "sha256": "a3076675355e1c30f995bd4f0afaad60375eb17e69d1c970e88d0e0dfba9fd69",
+        "matchesMain": true
+      },
+      {
+        "path": "docs/planning/2026-10-08-yuk1376-start-acceptance.md",
+        "sha256": "b6bef2eda5ac0663de0ee0e015892c40eaba50ae0dd5ab9ed428e76e8a787259",
+        "matchesMain": true
+      },
+      {
+        "path": "postman/api-endpoints.json",
+        "sha256": "2d39d50026e87b377f1e10d0578017bf65a32e8fe4d5abf64ffe592dd4d9f07d",
+        "matchesMain": true
+      },
+      {
+        "path": "postman/learning-api.postman_collection.json",
+        "sha256": "42ed4d6aeb64a9c3516e347218f5f435a15e27daf8d9e310ac82f587f07d59fb",
+        "matchesMain": true
+      },
+      {
+        "path": "scripts/audit-schema-writes.test.ts",
+        "sha256": "9a619fccd83f7f5294edd11315eeac33534ff10d35f837092df7dd797fc06fc0",
+        "matchesMain": true
+      },
+      {
+        "path": "scripts/audit-schema-writes.ts",
+        "sha256": "eddd9baa4e7cc5831a173dafbad180384c1c377509830f5e075d34086fba7988",
+        "matchesMain": true
+      },
+      {
+        "path": "server/index.ts",
+        "sha256": "da8c399287df870f858f63a72be553e6d157db86e8dca707d7e763bb7c4558f6",
+        "matchesMain": true
+      },
+      {
+        "path": "server/index.unit.test.ts",
+        "sha256": "5e248ee4ec98cec8b9819ae1141907d5d54f8be482f7feace957c28ba24f1ac1",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/agency/api/probe-answer.db.test.ts",
+        "sha256": "eee65f53b0fc05196bcbc95f4cfc62cd36a53fe81d6285f6c1b85c88b0fe8ddd",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/agency/api/probe-answer.ts",
+        "sha256": "fa36c94e7b9912b9e5afd16a05254dccb036179789990fe5467806c3e5b1f74f",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/agency/public.ts",
+        "sha256": "00f031b6ea047f3f90f10a82b82f40bff1eb4429e465281dd45778cea5b211cf",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/agency/server/conjecture/completed-probe-provenance.ts",
+        "sha256": "4614bc8bdc82f779a43ca99bc4db34417c3df2eaf962c3c681d6d436d111f43d",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/agency/server/conjecture/probe-evidence.ts",
+        "sha256": "4098c4b896a1e8be2ad085f46a8b93ba657aa17d2dcabc470d76aff448689d95",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/ingestion/api/contracts.ts",
+        "sha256": "5265f279626b357750335d9d8ce3609127bcca51a4281c2c918185f05d26ec96",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/ingestion/api/contracts.unit.test.ts",
+        "sha256": "5383d4e71502439884eff5eb1be8db2ddee0d22a1d8d38b58b45c51ad41aaf6e",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/ingestion/api/mistakes.db.test.ts",
+        "sha256": "46a9ab7e7a76e0929a6d20577c19922872703bff53315036a2926487f50b8c42",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/ingestion/api/mistakes.ts",
+        "sha256": "b13da60bd4d4604ee873b38494f16149c676b10ea00b23677cb66e536538909f",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/ingestion/public.ts",
+        "sha256": "b638174780b6f86cd390c234f30181f3e72d35baa71bae028570dae112622611",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/ingestion/server/mistakes-read.ts",
+        "sha256": "eb435b257b94630ffe56a3f0e78be15af8501ca2ede31f40c6b8b5a9c0fb07b1",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/ingestion/ui-public.ts",
+        "sha256": "2d238562888d43499d254505898d9dc22aa7704d9c3b966e8b0c1d72c372d279",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/ingestion/ui/mistakes-api.ts",
+        "sha256": "44fd886e429a414d055ee84a07e0ae7be6c279c86dadb5802b473c1ab1f50472",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/ingestion/ui/mistakes-api.unit.test.ts",
+        "sha256": "4e303c700563298a1aed550784071e8385c8cf78b9da9299f9d644bfdcd6dd49",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/practice/public.ts",
+        "sha256": "300cafaca5d085b70bc27b62e729c53a3bdc96d0035bab6b66d3c621b806a026",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/practice/server/due-list-query.db.test.ts",
+        "sha256": "d961640961f142584b4c3ca24a746dfbc76c0bff0dae16926db5df43ffce72a3",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/practice/server/due-list.ts",
+        "sha256": "4b4f81c96754e4063de5db48e784c141d09492930034668463ea845876803c69",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/shell/server/prep-desk-probes.ts",
+        "sha256": "803cdcf1a4b8c61967e9a9574718cefe9612830e48acdfec339da241f306608c",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/shell/server/teaching-brief-complete-spec.db.test.ts",
+        "sha256": "e2a041d006b65033e9bc0b809c52a1f04b474613eb56e547542c028bed12e043",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/shell/server/teaching-brief-edited-claim.db.test.ts",
+        "sha256": "ce7e60c1b746f6cd138203ecdbf34ff8a8089498dde027dfe7b50aa1cb452503",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/shell/server/teaching-brief-issuance.db.test.ts",
+        "sha256": "4c2df5edf4b4beb6e8420af2180657e01d2c4e0c285bf018cf272a3f67114733",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/shell/server/teaching-brief-v1-compat.db.test.ts",
+        "sha256": "ea6381691f36549dd034c564112c2aa1ec5912e6bbeffa540b80585541dec4cb",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/shell/server/teaching-brief.db.test.ts",
+        "sha256": "7916d0c5061a6c9336c53671387470895f385aa700156dfa3bfb723524d6de7f",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/shell/server/teaching-brief.ts",
+        "sha256": "8fd6a58b08d3edd83a35c2807d0bef509229e98a21fd39135a09a0428bdfc642",
+        "matchesMain": true
+      },
+      {
+        "path": "src/kernel/records/assessment-normalization.ts",
+        "sha256": "ecae3e03f5e3699c1f37a225b43bdaddb9b08e948fc5bed78337515ac81b8d95",
+        "matchesMain": true
+      },
+      {
+        "path": "src/kernel/records/assessment-probe-criterion.ts",
+        "sha256": "76c0c844bc0615b356dcbec312b5f44a5d358f9d9f867694f97cde5b1d5d0335",
+        "matchesMain": true
+      },
+      {
+        "path": "src/server/questions/contract-normalizer.test.ts",
+        "sha256": "8696391be6bd23f3b8dddea8e92671a058853942e2c4715dfc3d7c46f8dfafd5",
+        "matchesMain": true
+      },
+      {
+        "path": "src/server/records/mistakes.ts",
+        "sha256": "5a000e876c8c1ace836e85f9ec3bf3ca6609178236e542987877d45b86e737c4",
+        "matchesMain": true
+      },
+      {
+        "path": "src/server/records/native-mistake-evidence.db.test.ts",
+        "sha256": "0ae4ba7658d0681584cf72330560cc4225c946a965ac350857d65782bcfebcc2",
+        "matchesMain": true
+      },
+      {
+        "path": "src/server/records/native-mistake-evidence.ts",
+        "sha256": "e8ad6729c45f10c872a2d0b7307846eec1190986976fb82141f7956c812b76e1",
+        "matchesMain": true
+      },
+      {
+        "path": "src/ui/lib/api-schema.generated.ts",
+        "sha256": "61e153731c2e47882d6cbd6cb3d021b8f21640f475d9aa3920660f99bc1b95ea",
+        "matchesMain": true
+      },
+      {
+        "path": "tests/fixtures/conjecture-probe-spec.ts",
+        "sha256": "784004f11e9a366a6cde37fb527631c3caa84c708c2df3061d429f2e4586401b",
+        "matchesMain": true
+      },
+      {
+        "path": "web/src/routes/MistakesPage.tsx",
+        "sha256": "471945e3195861376320697c84407a48fdbca1f7baf6ec3b328bd74336e7c793",
+        "matchesMain": true
+      },
+      {
+        "path": "web/src/routes/MistakesPage.unit.test.tsx",
+        "sha256": "7d450881fa943269f45bb4cd614cd66c4ad4011c077ba459f2df0182f7627ec1",
+        "matchesMain": true
+      }
+    ],
+    "allImportedFilesMatchMain": true,
+    "changedRuntimeSources": [
+      {
+        "path": "scripts/audit-schema-writes.ts",
+        "sha256": "eddd9baa4e7cc5831a173dafbad180384c1c377509830f5e075d34086fba7988",
+        "matchesMain": true
+      },
+      {
+        "path": "server/index.ts",
+        "sha256": "da8c399287df870f858f63a72be553e6d157db86e8dca707d7e763bb7c4558f6",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/agency/api/probe-answer.ts",
+        "sha256": "fa36c94e7b9912b9e5afd16a05254dccb036179789990fe5467806c3e5b1f74f",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/agency/public.ts",
+        "sha256": "00f031b6ea047f3f90f10a82b82f40bff1eb4429e465281dd45778cea5b211cf",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/agency/server/conjecture/completed-probe-provenance.ts",
+        "sha256": "4614bc8bdc82f779a43ca99bc4db34417c3df2eaf962c3c681d6d436d111f43d",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/agency/server/conjecture/probe-evidence.ts",
+        "sha256": "4098c4b896a1e8be2ad085f46a8b93ba657aa17d2dcabc470d76aff448689d95",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/ingestion/api/contracts.ts",
+        "sha256": "5265f279626b357750335d9d8ce3609127bcca51a4281c2c918185f05d26ec96",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/ingestion/api/mistakes.ts",
+        "sha256": "b13da60bd4d4604ee873b38494f16149c676b10ea00b23677cb66e536538909f",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/ingestion/public.ts",
+        "sha256": "b638174780b6f86cd390c234f30181f3e72d35baa71bae028570dae112622611",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/ingestion/server/mistakes-read.ts",
+        "sha256": "eb435b257b94630ffe56a3f0e78be15af8501ca2ede31f40c6b8b5a9c0fb07b1",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/ingestion/ui-public.ts",
+        "sha256": "2d238562888d43499d254505898d9dc22aa7704d9c3b966e8b0c1d72c372d279",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/ingestion/ui/mistakes-api.ts",
+        "sha256": "44fd886e429a414d055ee84a07e0ae7be6c279c86dadb5802b473c1ab1f50472",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/practice/public.ts",
+        "sha256": "300cafaca5d085b70bc27b62e729c53a3bdc96d0035bab6b66d3c621b806a026",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/practice/server/due-list.ts",
+        "sha256": "4b4f81c96754e4063de5db48e784c141d09492930034668463ea845876803c69",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/shell/server/prep-desk-probes.ts",
+        "sha256": "803cdcf1a4b8c61967e9a9574718cefe9612830e48acdfec339da241f306608c",
+        "matchesMain": true
+      },
+      {
+        "path": "src/capabilities/shell/server/teaching-brief.ts",
+        "sha256": "8fd6a58b08d3edd83a35c2807d0bef509229e98a21fd39135a09a0428bdfc642",
+        "matchesMain": true
+      },
+      {
+        "path": "src/kernel/records/assessment-normalization.ts",
+        "sha256": "ecae3e03f5e3699c1f37a225b43bdaddb9b08e948fc5bed78337515ac81b8d95",
+        "matchesMain": true
+      },
+      {
+        "path": "src/kernel/records/assessment-probe-criterion.ts",
+        "sha256": "76c0c844bc0615b356dcbec312b5f44a5d358f9d9f867694f97cde5b1d5d0335",
+        "matchesMain": true
+      },
+      {
+        "path": "src/server/records/mistakes.ts",
+        "sha256": "5a000e876c8c1ace836e85f9ec3bf3ca6609178236e542987877d45b86e737c4",
+        "matchesMain": true
+      },
+      {
+        "path": "src/server/records/native-mistake-evidence.ts",
+        "sha256": "e8ad6729c45f10c872a2d0b7307846eec1190986976fb82141f7956c812b76e1",
+        "matchesMain": true
+      },
+      {
+        "path": "src/ui/lib/api-schema.generated.ts",
+        "sha256": "61e153731c2e47882d6cbd6cb3d021b8f21640f475d9aa3920660f99bc1b95ea",
+        "matchesMain": true
+      },
+      {
+        "path": "web/src/routes/MistakesPage.tsx",
+        "sha256": "471945e3195861376320697c84407a48fdbca1f7baf6ec3b328bd74336e7c793",
+        "matchesMain": true
+      }
+    ],
+    "unchangedPrunePaths": []
+  },
+  "bundles": [
+    {
+      "path": "dist/server.cjs",
+      "sha256": "ec73dcfabeb3eb2e9f24fdf48233f0f11df8caa915e5b2c1fa86646016d11fd8",
+      "historicalSha256": "22f2146bdb2fe7f69948a548b70b7c1c7f989f8702ccee335ddc7282928752c8",
+      "matchesHistorical": false
+    },
+    {
+      "path": "dist/worker.cjs",
+      "sha256": "e97a122b405f2ca396774d9f1af784bef09a9d0626dd75a45d91397c5b7f3c52",
+      "historicalSha256": "826f4b79339c4a711c59124f229c2409f50b18121f9611c168294059db24f727",
+      "matchesHistorical": false
+    },
+    {
+      "path": "dist/migrate.cjs",
+      "sha256": "99bf9120fef419106736ce0d4eafb7451e00652eac9088fe158a867a606695b8",
+      "historicalSha256": "0c064a5dd29aef687fb38553b821ef9b5196f3036055ff9d41b36f7001c664d3",
+      "matchesHistorical": false
+    },
+    {
+      "path": ".cache/yuk1355-main-20261008-worker.cjs",
+      "sha256": "4cb31a7d60a3659313cb0b035bcd1316d7b6be4e89b21b834270b4d986430313",
+      "historicalSha256": "4cb31a7d60a3659313cb0b035bcd1316d7b6be4e89b21b834270b4d986430313",
+      "matchesHistorical": true
+    }
+  ],
+  "parentRemainingDbCommands": {
+    "changed-api-listener": [
+      "pnpm",
+      "vitest",
+      "run",
+      "--config",
+      "vitest.db.config.ts",
+      "src/server/events/listen_loop.test.ts",
+      "src/server/events/writer.test.ts",
+      "src/capabilities/observability/api/job-events.test.ts"
+    ],
+    "changed-due-read": [
+      "pnpm",
+      "vitest",
+      "run",
+      "--config",
+      "vitest.db.config.ts",
+      "src/capabilities/practice/server/due-list-query.db.test.ts",
+      "src/capabilities/practice/api/due.db.test.ts",
+      "src/capabilities/practice/api/due-part-regression.db.test.ts",
+      "src/capabilities/practice/api/due-soft-bias.db.test.ts",
+      "src/capabilities/practice/api/due-cross-subject.db.test.ts",
+      "src/capabilities/practice/api/due-source-tier-projection.db.test.ts",
+      "src/capabilities/practice/server/variant-rotation.db.test.ts"
+    ],
+    "changed-native-mistakes": [
+      "pnpm",
+      "vitest",
+      "run",
+      "--config",
+      "vitest.db.config.ts",
+      "src/capabilities/ingestion/api/mistakes.db.test.ts",
+      "src/server/records/native-mistake-evidence.db.test.ts"
+    ],
+    "changed-probe-provenance": [
+      "pnpm",
+      "vitest",
+      "run",
+      "--config",
+      "vitest.db.config.ts",
+      "src/capabilities/agency/api/probe-answer.db.test.ts",
+      "src/capabilities/agency/server/conjecture/probe-lifecycle.db.test.ts",
+      "src/capabilities/shell/server/prep-desk-probes.db.test.ts",
+      "src/capabilities/shell/server/teaching-brief.db.test.ts",
+      "src/capabilities/shell/server/teaching-brief-issuance.db.test.ts",
+      "src/capabilities/shell/server/teaching-brief-complete-spec.db.test.ts",
+      "src/capabilities/shell/server/teaching-brief-edited-claim.db.test.ts",
+      "src/capabilities/shell/server/teaching-brief-v1-compat.db.test.ts",
+      "src/capabilities/shell/server/teaching-brief-report.db.test.ts",
+      "src/capabilities/agency/server/scout/evidence-mcp.db.test.ts",
+      "src/server/conjectures/accountability.db.test.ts"
+    ],
+    "changed-worker-bundle": [
+      "pnpm",
+      "vitest",
+      "run",
+      "--config",
+      "vitest.db.config.ts",
+      "src/server/boss/handlers.test.ts",
+      "src/server/boss/worker-boot.db.test.ts",
+      "src/server/boss/verify-dispatch-startup-recovery.db.test.ts",
+      "src/server/boss/job-observation-boss-contract.db.test.ts",
+      "src/server/boss/handlers/prune_job_events.test.ts",
+      "src/server/boss/client.test.ts"
+    ]
+  },
+  "parentSelectedMigrationCommand": [
+    "pnpm",
+    "vitest",
+    "run",
+    "--config",
+    "vitest.migration.config.ts",
+    "tests/integration/migration-smoke.test.ts",
+    "-t",
+    "migration bundle|migration smoke \u2014 drizzle migrate from empty DB"
+  ],
+  "review": "R1/R2 NONE only at 48ead4da8; budget spent, no new review",
+  "prLink": "registered with T3 as required; no watch or PR mutation",
+  "limits": [
+    "No fresh DB, cron, recovery, migration or live-runtime acceptance.",
+    "Standalone prune fixture is rebuilt byte-identical; four historical cron/recovery tests need no source-driven rerun for this merge.",
+    "Application server/worker/migrate bundles differ; parent coordinates remaining tests or exact-head CI.",
+    "Upstream blank EOF in docs/planning/2026-10-07-linear-remaining-inventory.md retained; imported main diff --check exits 2."
+  ],
+  "parentStartIntegration": {
+    "main": "eae963377d6b77988c815b10684afeb49f794cc1",
+    "commit": "0283e6bdc",
+    "conflicts": ["PLAN.md", ".remember/now.md", "package.json"],
+    "packageResolution": "Preserve Start build and artifact external plus DBOS Winston externals. Lockfile equals main.",
+    "mainSourceFilesCompared": 33,
+    "mainSourceMismatches": [],
+    "historicalHashMatches": [
+      ".cache/yuk1355-cron-worker.cjs",
+      ".cache/yuk1355-worker.cjs",
+      "drizzle/0115_yuk1355_prune_backend.sql",
+      "drizzle/meta/_journal.json",
+      "node_modules/@dbos-inc/dbos-sdk/dist/src/scheduler/scheduler.js",
+      "node_modules/@dbos-inc/dbos-sdk/package.json",
+      "node_modules/pg-boss/dist/timekeeper.js",
+      "node_modules/pg-boss/package.json",
+      "scripts/lint-baseline.json",
+      "src/capabilities/observability/manifest.ts",
+      "src/kernel/manifest.ts",
+      "src/server/boss/handlers.ts",
+      "src/server/boss/queue-config.ts",
+      "src/server/boss/register-capability-jobs.ts",
+      "src/server/boss/start-worker.ts",
+      "src/server/durable/prune-family.ts",
+      "src/server/durable/prune-worker.ts",
+      "tests/dbos-prune/cron.db.test.ts",
+      "tests/dbos-prune/migration.db.test.ts",
+      "tests/dbos-prune/worker.ts"
+    ],
+    "historicalHashChanges": ["package.json", "pnpm-lock.yaml"],
+    "scopedUnitTests": 240,
+    "scopedUnitFiles": 17,
+    "checks": {
+      "parent-install": {
+        "command": ["pnpm", "install", "--frozen-lockfile"],
+        "logPath": "/tmp/yuk1355-main-20261008/parent-install.log",
+        "logSha256": "0b160d9065677bac3d773e4d2141df52dd0fa35fd36456129a3ecf4d9b07fe26",
+        "exit": 0,
+        "startedAt": "2026-10-08T09:58:19.746308+00:00",
+        "finishedAt": "2026-10-08T09:58:23.893919+00:00"
+      },
+      "parent-unit": {
+        "command": [
+          "pnpm",
+          "vitest",
+          "run",
+          "--config",
+          "vitest.unit.config.ts",
+          "src/server/boss/start-worker.test.ts",
+          "src/server/boss/queue-config.test.ts",
+          "src/server/boss/job-yield.unit.test.ts",
+          "src/kernel/manifest.unit.test.ts",
+          "src/capabilities/observability/manifest.unit.test.ts",
+          "server/index.unit.test.ts",
+          "scripts/audit-schema-writes.test.ts",
+          "src/capabilities/ingestion/api/contracts.unit.test.ts",
+          "src/capabilities/ingestion/ui/mistakes-api.unit.test.ts",
+          "src/server/questions/contract-normalizer.test.ts",
+          "web/src/routes/MistakesPage.unit.test.tsx",
+          "server/frontdoor.unit.test.ts",
+          "server/start/auth.unit.test.ts",
+          "server/start/mistakes-read.unit.test.ts",
+          "server/start/mistakes-client.unit.test.ts",
+          "web/src/routes/MistakesPage.start.unit.test.tsx",
+          "src/ui/shell/AppTopbar.a11y.unit.test.tsx"
+        ],
+        "logPath": "/tmp/yuk1355-main-20261008/parent-unit.log",
+        "logSha256": "59483d470f6f7f32a22cdd8a880d7cefa997cfd4c645d3815191968735e1e868",
+        "exit": 0,
+        "startedAt": "2026-10-08T09:58:40.808964+00:00",
+        "finishedAt": "2026-10-08T09:58:45.052660+00:00"
+      },
+      "parent-typecheck": {
+        "command": ["pnpm", "typecheck"],
+        "logPath": "/tmp/yuk1355-main-20261008/parent-typecheck.log",
+        "logSha256": "963f9e074eb750f21f9ebbfddd5b3e8e3da9fa722254a26c25085218f13d23d0",
+        "exit": 0,
+        "startedAt": "2026-10-08T09:58:45.080306+00:00",
+        "finishedAt": "2026-10-08T09:59:02.233949+00:00"
+      },
+      "parent-lint": {
+        "command": ["pnpm", "lint"],
+        "logPath": "/tmp/yuk1355-main-20261008/parent-lint.log",
+        "logSha256": "9394965c4845d63405928642c95258df0959571c5bcd1283e00b144761b927de",
+        "exit": 0,
+        "startedAt": "2026-10-08T09:59:02.296322+00:00",
+        "finishedAt": "2026-10-08T09:59:06.679266+00:00"
+      },
+      "parent-build": {
+        "command": ["pnpm", "build"],
+        "logPath": "/tmp/yuk1355-main-20261008/parent-build.log",
+        "logSha256": "01d0d9f6835e7a7be203bbdbaaf1d6121efbc78868a0eabca30f22911231b2e5",
+        "exit": 0,
+        "startedAt": "2026-10-08T09:59:06.715255+00:00",
+        "finishedAt": "2026-10-08T09:59:23.786578+00:00"
+      }
+    },
+    "dbCoverage": "Final exact-head CI required; no local DB/runtime operations."
+  },
+  "parentFinalSummaryIntegration": {
+    "main": "90f499126e81249f2f193ec69f1c6966a11ca127",
+    "summarySourceMatchesMain": true,
+    "tests": 88,
+    "files": 5,
+    "checks": {
+      "export-red": {
+        "command": [
+          "pnpm",
+          "vitest",
+          "run",
+          "--config",
+          "vitest.unit.config.ts",
+          "src/server/export/constants.test.ts"
+        ],
+        "logPath": "/tmp/yuk1355-main-20261008/export-red.log",
+        "logSha256": "ac3bab29c60c2a5c674f579144708840d8a8629d7a73da49d86543b745ddccb0",
+        "exit": 1,
+        "startedAt": "2026-10-08T10:04:55.899938+00:00",
+        "finishedAt": "2026-10-08T10:04:58.016581+00:00"
+      },
+      "export-green": {
+        "command": [
+          "pnpm",
+          "vitest",
+          "run",
+          "--config",
+          "vitest.unit.config.ts",
+          "src/server/export/constants.test.ts"
+        ],
+        "logPath": "/tmp/yuk1355-main-20261008/export-green.log",
+        "logSha256": "0f523817400a2480d66bc9acdff42958d6d94cf1d904cdfae861ad9641b21d4e",
+        "exit": 0,
+        "startedAt": "2026-10-08T10:05:06.538354+00:00",
+        "finishedAt": "2026-10-08T10:05:08.323220+00:00"
+      },
+      "export-biome": {
+        "command": ["pnpm", "exec", "biome", "check", "src/server/export/constants.test.ts"],
+        "logPath": "/tmp/yuk1355-main-20261008/export-biome.log",
+        "logSha256": "f5a1d92a8e3c58215fe7abb61f964c639b1870515a3ccf291d053bc8032ce06f",
+        "exit": 0,
+        "startedAt": "2026-10-08T10:05:16.558019+00:00",
+        "finishedAt": "2026-10-08T10:05:18.239633+00:00"
+      },
+      "summary-integration-unit": {
+        "command": [
+          "pnpm",
+          "vitest",
+          "run",
+          "--config",
+          "vitest.unit.config.ts",
+          "src/server/export/constants.test.ts",
+          "src/capabilities/shell/api/workbench-summary.unit.test.ts",
+          "src/server/boss/start-worker.test.ts",
+          "src/kernel/manifest.unit.test.ts",
+          "src/capabilities/observability/manifest.unit.test.ts"
+        ],
+        "logPath": "/tmp/yuk1355-main-20261008/summary-integration-unit.log",
+        "logSha256": "880f99ff9b63df34cf6767ad9059994add79f26b9f69a7c6c62678df20e8ae4e",
+        "exit": 0,
+        "startedAt": "2026-10-08T10:06:03.986704+00:00",
+        "finishedAt": "2026-10-08T10:06:07.287615+00:00"
+      },
+      "summary-integration-typecheck": {
+        "command": ["pnpm", "typecheck"],
+        "logPath": "/tmp/yuk1355-main-20261008/summary-integration-typecheck.log",
+        "logSha256": "2a8d6b78156915f67659b8b6a677490565f507f9a07d133820dc7bac12813ab7",
+        "exit": 0,
+        "startedAt": "2026-10-08T10:06:13.379552+00:00",
+        "finishedAt": "2026-10-08T10:06:19.351860+00:00"
+      },
+      "summary-integration-lint": {
+        "command": ["pnpm", "lint"],
+        "logPath": "/tmp/yuk1355-main-20261008/summary-integration-lint.log",
+        "logSha256": "3095c770baa7965cef6f8121195f4e4805175f9d452a19020a305b4b47f769d9",
+        "exit": 0,
+        "startedAt": "2026-10-08T10:06:19.385157+00:00",
+        "finishedAt": "2026-10-08T10:06:22.625728+00:00"
+      },
+      "summary-integration-build": {
+        "command": ["pnpm", "build"],
+        "logPath": "/tmp/yuk1355-main-20261008/summary-integration-build.log",
+        "logSha256": "20d74e9406487c2e84c920c5edc9b86f417f8ea3a735ca0baa39627ec9fe96e9",
+        "exit": 0,
+        "startedAt": "2026-10-08T10:06:22.654126+00:00",
+        "finishedAt": "2026-10-08T10:06:37.917239+00:00"
+      }
+    }
+  }
+}

@@ -674,6 +674,10 @@ export class AiRunLifecycle<TResult extends LifecycleResult = LifecycleResult> {
       this.abortController.abort();
       return;
     }
+    // Non-finite bound = uncapped execution window: skip arming entirely.
+    // setTimeout(Infinity) degenerates to ~1ms (TimeoutInfinityWarning), which
+    // would abort the run instantly instead of leaving it unbounded.
+    if (!Number.isFinite(timeoutMs)) return;
     this.timer = setTimeout(() => this.abortController.abort(), timeoutMs);
   }
 

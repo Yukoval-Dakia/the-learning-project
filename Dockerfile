@@ -16,7 +16,7 @@ RUN pnpm install --frozen-lockfile
 FROM base AS builder
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN pnpm rw:web:build && pnpm build:server && pnpm build:worker && pnpm build:migrate
+RUN pnpm build
 
 # Stage 2.5: install sharp into a clean flat node_modules so it can be
 # composed into the runner image without colliding with the curated

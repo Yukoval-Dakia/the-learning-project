@@ -25,6 +25,7 @@ import {
   reserveCopilotDurableAcceptance,
   withCopilotDurableDispatchLock,
 } from '@/capabilities/copilot/server/durable-dispatch';
+import { canonicalHash } from '@/core/migration/canonical';
 import { db } from '@/db/client';
 import { ApiError, errorResponse } from '@/kernel/http';
 import { fromPgBossDrizzleTx, getStartedBoss } from '@/server/boss/client';
@@ -307,10 +308,14 @@ export async function POST(req: Request, _params: Record<string, string>): Promi
         {
           sessionId: conv.sessionId,
           userMessage: parsed.user_message,
+          reviewAnswer: parsed.review_answer,
           inputHash: durableInputHash,
           ...(idempotencyKey ? { idempotencyKey } : {}),
           queuedPayload: {
             session_id: conv.sessionId,
+            ...(parsed.review_answer
+              ? { review_answer_sha256: canonicalHash(parsed.review_answer) }
+              : {}),
             triggered_by: parsed.triggered_by,
             dispatch: { source: 'unified_conversation' },
           },

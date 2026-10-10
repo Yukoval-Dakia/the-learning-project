@@ -38,13 +38,13 @@ const SESSION_TABLE = 'learning_session' as const;
 async function loadConversationSessionForUpdate(
   tx: Db | Tx,
   sessionId: string,
-): Promise<{ status: string; goal_id: string | null } | null> {
-  const rows = await tx.execute<{ status: string; goal_id: string | null }>(
-    sql`SELECT status, goal_id FROM learning_session WHERE id = ${sessionId} AND type = 'conversation' FOR UPDATE`,
+): Promise<{ status: string; goal_id: string | null; version: number } | null> {
+  const rows = await tx.execute<{ status: string; goal_id: string | null; version: number }>(
+    sql`SELECT status, goal_id, version FROM learning_session WHERE id = ${sessionId} AND type = 'conversation' FOR UPDATE`,
   );
   const row = rows[0];
   if (!row) return null;
-  return { status: row.status, goal_id: row.goal_id };
+  return { status: row.status, goal_id: row.goal_id, version: row.version };
 }
 
 // ---------- startConversation ----------
@@ -516,40 +516,73 @@ export async function abandonConversation(
   reason: AbandonReason = 'orphan_cron',
 ): Promise<void> {
   await db.transaction(async (tx) => {
-    await lockCopilotSessionSelection(tx);
-    const current = await loadConversationSessionForUpdate(tx, sessionId);
-    if (!current) {
-      throw new ApiError(
-        'not_found',
-        `learning_session ${sessionId} (type=conversation) not found`,
-        404,
-      );
-    }
-    assertFromState(
-      current.status,
-      ['active', 'idle'] as const,
-      sessionId,
-      'Conversation.abandonConversation',
-    );
-
-    const now = new Date();
-    await tx
-      .update(learning_session)
-      .set({
-        status: 'abandoned',
-        ended_at: now,
-        updated_at: now,
-        version: sql`${learning_session.version} + 1`,
-      })
-      .where(eq(learning_session.id, sessionId));
-
-    await writeJobEvent(tx, {
-      business_table: SESSION_TABLE,
-      business_id: sessionId,
-      event_type: 'conversation.abandoned',
-      payload: { from_status: current.status, reason },
-    });
+    await abandonConversationTx(tx, { sessionId, reason });
   });
+}
+
+async function abandonConversationTx(
+  tx: Tx,
+  { sessionId, reason }: { sessionId: string; reason: AbandonReason },
+): Promise<{ fromVersion: number; toVersion: number }> {
+  await lockCopilotSessionSelection(tx);
+  const current = await loadConversationSessionForUpdate(tx, sessionId);
+  if (!current) {
+    throw new ApiError(
+      'not_found',
+      `learning_session ${sessionId} (type=conversation) not found`,
+      404,
+    );
+  }
+  assertFromState(
+    current.status,
+    ['active', 'idle'] as const,
+    sessionId,
+    'Conversation.abandonConversation',
+  );
+
+  const now = new Date();
+  await tx
+    .update(learning_session)
+    .set({
+      status: 'abandoned',
+      ended_at: now,
+      updated_at: now,
+      version: sql`${learning_session.version} + 1`,
+    })
+    .where(eq(learning_session.id, sessionId));
+
+  await writeJobEvent(tx, {
+    business_table: SESSION_TABLE,
+    business_id: sessionId,
+    event_type: 'conversation.abandoned',
+    payload: { from_status: current.status, reason },
+  });
+  return { fromVersion: current.version, toVersion: current.version + 1 };
+}
+
+export class ConversationOrphanStateError extends Error {}
+export type OrphanConversationResult =
+  | { kind: 'abandoned'; fromVersion: number; toVersion: number }
+  | { kind: 'skipped'; reason: 'missing' | 'terminal' | 'not-old' };
+
+export async function abandonOrphanConversationTx(
+  tx: Tx,
+  input: { sessionId: string; cutoff: string },
+): Promise<OrphanConversationResult> {
+  await lockCopilotSessionSelection(tx);
+  const current = await loadConversationSessionForUpdate(tx, input.sessionId);
+  if (!current) return { kind: 'skipped', reason: 'missing' };
+  if (current.status === 'ended' || current.status === 'abandoned')
+    return { kind: 'skipped', reason: 'terminal' };
+  if (current.status !== 'active' && current.status !== 'idle')
+    throw new ConversationOrphanStateError(`Corrupt conversation status: ${current.status}`);
+  const [age] = await tx.execute(sql`select started_at < ${input.cutoff}::timestamptz as old
+    from learning_session where id = ${input.sessionId} and type = 'conversation'`);
+  if (age?.old !== true) return { kind: 'skipped', reason: 'not-old' };
+  return {
+    kind: 'abandoned',
+    ...(await abandonConversationTx(tx, { sessionId: input.sessionId, reason: 'orphan_cron' })),
+  };
 }
 
 // ---------- assertAcceptingTurns (T2 + T2b inline resume) ----------

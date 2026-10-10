@@ -1,0 +1,61 @@
+{
+  "previous_ci_head": "8a1dbf94bce1434e7c144a76a05bbf483c43fedd",
+  "incoming_main": "ec9a9ed5e859598f8ca1462f733eba1a458633c6",
+  "preserved_docs_commit": "a64cdac2b",
+  "unit_files": 11,
+  "unit_tests": 450,
+  "checks": [
+    {
+      "check": "unit",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-ec9-unit.log",
+      "sha256": "838a7515128e6a831edc848d19d34fbece459a2d33c96cb336731374bf7ce866"
+    },
+    {
+      "check": "typecheck",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-ec9-typecheck.log",
+      "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6"
+    },
+    {
+      "check": "lint",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-ec9-lint.log",
+      "sha256": "77b8349ca77c93226ad0ed9f2598281edaf897365c95a904c76d629aabb94fa5"
+    },
+    {
+      "check": "build",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-ec9-build.log",
+      "sha256": "3f2dfa9e1a3e7185c29bb50bed7e9a64b0ed302b50943f743c7eb56974c777f3"
+    },
+    {
+      "check": "audit-schema",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-ec9-audit-schema.log",
+      "sha256": "1da95684f16a66c4937d90ab408b2124b58bf3853a4a89bd1b7bf388b57a9715"
+    },
+    {
+      "check": "audit-architecture-deepening",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-ec9-audit-architecture-deepening.log",
+      "sha256": "d1a6f60f0f92a978a8563df20e2f32445018649c7253dcc8e78f3b1b6b7b161e"
+    },
+    {
+      "check": "audit-provider-lanes",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-ec9-audit-provider-lanes.log",
+      "sha256": "4e94a5c1aa34213ec2cbb56a60b90e883fdcf6a7fd9c10daff833b754ea85b5c"
+    },
+    {
+      "check": "audit-provider-attempt-truth",
+      "exit_code": 0,
+      "log": "/tmp/yuk1391-ec9-audit-provider-attempt-truth.log",
+      "sha256": "29bdbca513c3121fd6156e6dbabd3a720733d5e993340f0c32558835ec5cc81e"
+    }
+  ],
+  "product_equality": "git diff --cached --exit-code 8a1dbf94b -- src server web package.json pnpm-lock.yaml returned0",
+  "incoming_audit_equality": "Seven incoming audit script/test files match ec9a9ed5e exactly",
+  "runtime_operations": false,
+  "limits": "No new DB/browser/provider/deployment run; original55DB and R1 refer to unchanged7199 product source. New exact-head CI is required."
+}

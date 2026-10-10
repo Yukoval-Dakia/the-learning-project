@@ -335,6 +335,22 @@ export const BACKUP_EXCLUDED_TABLES: ReadonlySet<string> = new Set<string>([
   // SSE-replay telemetry of pg-boss job lifecycle; operational, re-derived as jobs
   // run (ADR-0005/0008). Not authored data — restoring stale replay rows is wrong.
   'job_events',
+  // YUK-1355: runtime ownership/receipts must travel with pg-boss and tlp_dbos
+  // in a full PostgreSQL backup. A learner archive cannot restore task execution.
+  'prune_job_events_control',
+  'prune_job_events_receipt',
+  'prune_job_events_disposition',
+  // YUK-1393: immutable admission/receipts and phase/dispositions travel with
+  // both execution engines in a full PostgreSQL backup, never a learner archive.
+  'review_orphan_control',
+  'review_orphan_tick',
+  'review_orphan_receipt',
+  'review_orphan_disposition',
+  // Restore these with domain state, pg-boss and tlp_dbos in a consistent full-DB backup.
+  'session_orphan_control',
+  'session_orphan_tick',
+  'session_orphan_receipt',
+  'session_orphan_disposition',
   // Sub-0c golden E2E health-check fixture (HTTP enqueue → worker → SSE). Transient
   // echo-job state, not business data.
   'echo_jobs',

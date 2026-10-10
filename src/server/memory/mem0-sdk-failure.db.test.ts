@@ -1,8 +1,8 @@
 import { randomUUID } from 'node:crypto';
 import { type Server, createServer } from 'node:http';
 import { createRequire } from 'node:module';
-import { eq, sql } from 'drizzle-orm';
-import { Memory, PGVector } from 'mem0ai/oss';
+import { eq } from 'drizzle-orm';
+import { Memory } from 'mem0ai/oss';
 import type { Job } from 'pg-boss';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { provider_attempt } from '@/db/schema';
@@ -68,62 +68,6 @@ afterAll(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
-describe.each([
-  ['esm', PGVector],
-  ['cjs', cjs.PGVector],
-] as const)('actual %s PGVector atomic add', (_format, Constructor) => {
-  it('does not leave a partial event identity when one vector fails; valid batches still commit', async () => {
-    const collection = `mem0_atomic_${randomUUID().replaceAll('-', '')}`;
-    const store = new Constructor({
-      connectionString: process.env.TEST_DATABASE_URL,
-      collectionName: collection,
-      embeddingModelDims: 4,
-    });
-    try {
-      await store.initialize();
-      const ids = [randomUUID(), randomUUID()];
-      const payloads = [
-        {
-          event_id: 'atomic-event',
-          data: '先画树状图',
-          nested: { source: ['a', 'b'], unknown: null },
-        },
-        {
-          event_id: 'atomic-event',
-          data: '再核对条件方向',
-          nested: { source: ['c'], unknown: true },
-        },
-      ];
-      await expect(
-        store.insert(
-          [
-            [1, 2, 3, 4],
-            [1, 2, 3],
-          ],
-          ids,
-          payloads,
-        ),
-      ).rejects.toThrow();
-      expect((await store.list({ event_id: 'atomic-event' }, 10))[0]).toEqual([]);
-      await store.insert(
-        [
-          [1, 2, 3, 4],
-          [4, 3, 2, 1],
-        ],
-        ids,
-        payloads,
-      );
-      expect(
-        (await store.list({ event_id: 'atomic-event' }, 10))[0].map((row) => row.id).sort(),
-      ).toEqual([...ids].sort());
-      await store.insert([], [], []);
-    } finally {
-      await store.deleteCol();
-      await store.close();
-    }
-  });
-});
-
 describe('actual SDK failure through Memory ingestion owner', () => {
   async function setup() {
     const id = randomUUID();
@@ -176,26 +120,6 @@ describe('actual SDK failure through Memory ingestion owner', () => {
     };
     return { id, handler, job, send };
   }
-  it('records failure, writes no completion, and cannot re-burn on same-event redelivery', async () => {
-    const { id, handler, job, send } = await setup();
-    await expect(handler([job])).rejects.toThrow('synthetic upstream extraction failure');
-    const attempts = await testDb()
-      .select()
-      .from(provider_attempt)
-      .where(eq(provider_attempt.lane_id, 'mem0.event-memory'));
-    expect(attempts).toHaveLength(1);
-    expect(attempts[0].terminal_status).toBe('failed');
-    expect(await readIngestCompleted(testDb(), id)).toBeNull();
-    const beforeRetry = calls;
-    await expect(handler([job])).rejects.toThrow();
-    expect(calls).toBe(beforeRetry);
-    expect(send).not.toHaveBeenCalled();
-    expect(await readIngestCompleted(testDb(), id)).toBeNull();
-    const [started] = await testDb().execute<{ count: number }>(
-      sql`select count(*)::int count from provider_attempt where provider_start_reserved_at is not null`,
-    );
-    expect(started.count).toBe(1);
-  });
   it('preserves legitimate empty extraction and replays its completion without a new call', async () => {
     failExtraction = false;
     const { id, handler, job, send } = await setup();

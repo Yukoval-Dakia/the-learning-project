@@ -33,9 +33,9 @@
 | `nightly_orchestrator` | `30 2` | orchestration/register.ts | **DAG 单锚点**（见上节）——建当夜 run + enqueue 根节点，随后 60s 自调度 tick。整夜单点，故按 `createJobQueue` 配方建队（retryDelay 30s + backoff + `nightly_orchestrator_dlq`），不再继承 pg-boss 的 retry_delay 0 / 无 DLQ 默认（YUK-778）|
 | `hub_auto_sync_nightly` | `45 2` | notes/manifest | hub auto-zone 重算。**与 `knowledge_edge_propose_nightly` 无运行期依赖**——旧表曾写「真 barrier：edge_propose 夜批 SUPERSEDE 自主写 live 边，此处是唯一消费路径」，该说法**已被代码证伪**（YUK-758 review ToTt717）：`runEdgeProposeAndWrite` 的 SUPERSEDE 分支只 `writeAiProposal` 落**待接受提议**，`propose_edge.ts:614-616` 自述「leaves both live accumulators unchanged **until the user accepts it**」，夜批从不自主改 live 边；本 job 侧也只是推进自己的 reconciliation cursor。故二者是各自独立的 sweep，02:45 与锚点 02:30 的先后是**时钟巧合**，不需要编边 |
 | `memory_brief_sweep` | `0 3` | memory/triggers.ts | stale brief 扫描 → enqueueBriefRegen（6min singleton；subject 腿事件化 = YUK-581）|
-| `prune_job_events` | `0 4` | ../handlers.ts | 30d bulk DELETE（其它 prune 错开避锁）|
+| `prune_job_events` | `0 4` | observability/manifest.ts → shared durable host | 默认 pg-boss；独立 phase、原 prune-v1 recovery 合同保持 |
 | `verify_dispatch_recover` | `10 4` | ../handlers.ts | durable intent 恢复；只补发 source/quiz verify（另在 worker startup 单次触发）|
-| `prune_orphan_review_sessions` | `15 4` | ../handlers.ts | 弃置 >6h stuck review session（sendBeacon-miss 安全网）|
+| `prune_orphan_review_sessions` | `15 4` | observability/manifest.ts → shared durable host | 默认 pg-boss；固定 cutoff、冻结 candidates、锁内 Review writer + 同事务 receipt；started/paused 严格 started_at < tick cutoff 安全网 |
 | `prune_orphan_conversation_sessions` | `25 4` | ../handlers.ts | 弃置 stuck conversation（错峰避 learning_session 锁）|
 | `prune_orphan_placement_sessions` | `35 4` | ../handlers.ts | 弃置 stuck placement；dark-ship（placement flag off）|
 | `kt_estimate_nightly` | `10 5` | practice/manifest | BKT kt_json（零下游消费者；owner 拍 2026-07-06 保持每日）|
@@ -58,7 +58,7 @@
 | `promote_conversation_idle` | `* * * * *` | ../handlers.ts | 每分钟 active→idle（5min 无输入；idle=事件缺席，只能 poll）|
 | `memory_ingest_outbox_poll` | `* * * * *`（**UTC**）| memory/triggers.ts | ADR-0021 transactional outbox dispatch 心跳（**不可降频**——写点直投=复刻已回滚 PR #163）|
 | `memory_ingest_outbox_recover` | `0 * * * *`（**UTC**）| memory/triggers.ts | outbox 排空 recovery drain（cap 1000 cycles）|
-| `copilot_run_reconcile` | `0-58/2 * * * *` | copilot/manifest | YUK-596/YUK-832 — durable Copilot 收敛底线：偶数分钟执行（最多等两分钟），每轮只扫 20 个 outstanding run、reconcile 自身零 LLM/tool；先修持久化 outcome marker，再以 pg-boss 权威状态区分 live / dead / lookup unknown。只对 QUEUED-only、无任何 worker-touch 的 queue-proven dead run 写 `pre_execution_lost`；explicit fence 或 legacy STARTED/DELTA/STEP/REPLY/FAILED(error) 都视为可能执行过，须等主任务 12min + 最终证据审阅最坏 20min（2×6min blind reference + 4×2min comparison）+ 30s settlement grace 后才写无 checkpoint 的 `ambiguous_execution`。created/retry/active 与 lookup error 均不终态化。|
+| `copilot_run_reconcile` | `0-58/2 * * * *` | copilot/manifest | YUK-596/YUK-832 — durable Copilot 收敛底线：偶数分钟执行（最多等两分钟），每轮只扫 20 个 outstanding run、reconcile 自身零 LLM/tool；先修持久化 outcome marker，再以 pg-boss 权威状态区分 live / dead / lookup unknown。只对 QUEUED-only、无任何 worker-touch 的 queue-proven dead run 写 `pre_execution_lost`；explicit fence 或 legacy STARTED/DELTA/STEP/REPLY/FAILED(error) 都视为可能执行过，须等主任务 45min + 30s settlement grace 后才写无 checkpoint 的 `ambiguous_execution`。created/retry/active 与 lookup error 均不终态化。|
 | `judge_pending_reconcile` | `50 * * * *` | practice/manifest | YUK-777 A3 — durable judge 的 domain-state-scan sweeper：扫「作答已录、判词未落」的 `experimental:judge_pending_attempt`（无 `event.id = run_id` 的 review），经**同一 rate-limited 入队面**重投 `judge_run`。**每小时而非夜批**：这是学习者面前悬着的判词，等一夜等于丢一天；stall 门槛 15min + pg-boss liveness 权威判定，故不会抢在飞的 run。自身零 LLM（付费发生在 `judge_run`）→ fast 层。恢复次数封顶（`judge_run.requeued` 计数）+ 7d 年龄封顶后转人工（D6 manual-only，YUK-800 A4）|
 
 ## 事件触发链（enqueue-by-event，非 cron）
@@ -69,8 +69,16 @@
 - `session_summary` —— review session end 后 enqueue
 - `note_refine` —— 5 trigger 之一触发；NotePatch `≤3 ops AND ≤2 new blocks → mutator`，否则 propose
 
+## YUK-1393 review orphan recovery
+
+- One process owns one DBOS SDK host. Production collects both admitted declarations before launch. The prune-only fixture entry remains compatible; it cannot be expanded after launch.
+- Review has independent control, immutable tick/row receipt and append-only disposition tables. Native timestamp provenance is scheduled; legacy provenance is first admission of the actual job ID.
+- Draining finishes admitted lists and fences unadmitted ticks from either backend, including already queued legacy deliveries. An uncertain COMMIT requires the writable primary's tick lock and receipt, never current-state convergence or a blind retry.
+- Phase finish requires task/receipt/SEND_IT obligations to settle and recorded old-consumer/producer quiescence. The 60-second rollback horizon is an additional minimum, not proof that suspended senders disappeared. Old selected-row handlers have no business fence; stop them before cutover.
+- DB/process/cron acceptance for this implementation is pending. Unit/static/build evidence does not establish runtime migration or full-DB restore safety. Full recovery includes both family ledgers, pg-boss and tlp_dbos together.
+
 ## CONVENTIONS
-- handler 是工厂 `build*(db, opts?)`，返回 pg-boss work fn；测试旁置 `*.test.ts`。
+- handler 是工厂 `build*(db, opts?)`，返回 pg-boss work fn；若需不变量测试（YUK-1401），旁置 `*.test.ts`。
 - 默认 `localConcurrency 1, batchSize 1`，无 `singleton`——单 worker 串行，跨进程靠 DB version lock。
 - generic boss job 才加进 `../handlers.ts`；capability job 只经对应 manifest 声明。
 

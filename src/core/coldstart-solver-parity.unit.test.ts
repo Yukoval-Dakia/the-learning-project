@@ -28,6 +28,9 @@ function loadAddon(): SolverAddon | null {
   }
 }
 const addon = loadAddon();
+if (process.env.REQUIRE_RUST_PARITY === '1' && !addon) {
+  throw new Error('REQUIRE_RUST_PARITY=1 requires a loadable coldstart-solver native addon');
+}
 const d = present && addon ? describe : describe.skip;
 
 d('coldstart-solver ↔ Rust bit-parity (YUK-495 #125 rider)', () => {

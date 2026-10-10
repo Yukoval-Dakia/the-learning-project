@@ -6,7 +6,7 @@
 // /api/* token 校验由组合根中间件统一施加；沿 calibration-maturity.ts 读模型 → 路由形态。
 import { db } from '@/db/client';
 import { errorResponse } from '@/kernel/http';
-import { loadConjectureScores } from '../server/conjecture-scores';
+import { loadConjectureScores } from '../public';
 
 export async function GET(): Promise<Response> {
   try {

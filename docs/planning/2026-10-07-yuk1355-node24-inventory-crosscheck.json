@@ -1,0 +1,741 @@
+{
+  "baseline": "3e04890bb72da34ebbe5df746eab64066b119782",
+  "priorBaseline": "26f1015810cc3d902f6229b615d9630f05982eef",
+  "rows": [
+    {
+      "name": "supply_execute",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 881,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "quiz_gen",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 886,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "quiz_verify",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 897,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "source_verify",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 902,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "variant_verify",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 907,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "attribution_followup",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 915,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "variant_gen",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 923,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "rejudge",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 932,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "judge_run",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 942,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "session_summary",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 954,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "judge_pending_reconcile",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 964,
+      "load": true,
+      "schedule": "{\n          cron: '50 * * * *',\n          tz: 'Asia/Shanghai',\n          singletonKey: 'judge_pending_reconcile-sweep',\n          singletonSeconds: 60 * 60,\n        }"
+    },
+    {
+      "name": "jyeoo_staged_asset_reap",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 979,
+      "load": true,
+      "schedule": "{\n          cron: '40 3 * * *',\n          tz: 'Asia/Shanghai',\n          singletonKey: 'jyeoo_staged_asset_reap-sweep',\n          singletonSeconds: 60 * 60,\n        }"
+    },
+    {
+      "name": "item_prior_backfill",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 994,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "practice_stream_compose_nightly",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 1010,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "question_supply_nightly",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 1031,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "supply_planner",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 1061,
+      "load": true,
+      "schedule": "{ cron: '50 5 * * *', tz: 'Asia/Shanghai' }"
+    },
+    {
+      "name": "confusable_contrast_nightly",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 1074,
+      "load": true,
+      "schedule": "{ cron: '20 6 * * *', tz: 'Asia/Shanghai' }"
+    },
+    {
+      "name": "recalibration_nightly",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 1090,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "embed_backfill",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 1104,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "reference_answer_backfill",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 1126,
+      "load": true,
+      "schedule": "{ cron: '20 5 * * *', tz: 'Asia/Shanghai' }"
+    },
+    {
+      "name": "answer_class_backfill",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 1141,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "kt_estimate_nightly",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 1166,
+      "load": true,
+      "schedule": "{ cron: '10 5 * * *', tz: 'Asia/Shanghai' }"
+    },
+    {
+      "name": "axis_state_nightly",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 1182,
+      "load": true,
+      "schedule": "{ cron: '40 5 * * *', tz: 'Asia/Shanghai' }"
+    },
+    {
+      "name": "judge_calibration_sample",
+      "file": "src/capabilities/practice/manifest.ts",
+      "line": 1197,
+      "load": true,
+      "schedule": "{ cron: '10 6 * * *', tz: 'Asia/Shanghai' }"
+    },
+    {
+      "name": "ingestion_operation",
+      "file": "src/capabilities/ingestion/manifest.ts",
+      "line": 289,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "tencent_ocr_extract",
+      "file": "src/capabilities/ingestion/manifest.ts",
+      "line": 300,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "auto_enroll",
+      "file": "src/capabilities/ingestion/manifest.ts",
+      "line": 323,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "copilot_run",
+      "file": "src/capabilities/copilot/manifest.ts",
+      "line": 191,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "copilot_nudge_evaluate",
+      "file": "src/capabilities/copilot/manifest.ts",
+      "line": 220,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "copilot_run_reconcile",
+      "file": "src/capabilities/copilot/manifest.ts",
+      "line": 226,
+      "load": true,
+      "schedule": "{\n          cron: '0-58/2 * * * *',\n          tz: 'Asia/Shanghai',\n          singletonKey: 'copilot_run_reconcile-sweep',\n          singletonSeconds: 120,\n        }"
+    },
+    {
+      "name": "knowledge_edge_propose_nightly",
+      "file": "src/capabilities/knowledge/manifest.ts",
+      "line": 204,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "frontier_fill_nightly",
+      "file": "src/capabilities/knowledge/manifest.ts",
+      "line": 217,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "knowledge_maintenance_nightly",
+      "file": "src/capabilities/knowledge/manifest.ts",
+      "line": 231,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "kc_dedup_nightly",
+      "file": "src/capabilities/knowledge/manifest.ts",
+      "line": 245,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "merge_attribution_sweep",
+      "file": "src/capabilities/knowledge/manifest.ts",
+      "line": 272,
+      "load": true,
+      "schedule": "{ cron: '0 4 * * 1', tz: 'Asia/Shanghai' }"
+    },
+    {
+      "name": "projection_oracle_sweep",
+      "file": "src/capabilities/knowledge/manifest.ts",
+      "line": 291,
+      "load": true,
+      "schedule": "{ cron: '30 4 * * 1', tz: 'Asia/Shanghai' }"
+    },
+    {
+      "name": "kg_borrow_shadow_sweep",
+      "file": "src/capabilities/knowledge/manifest.ts",
+      "line": 305,
+      "load": true,
+      "schedule": "{ cron: '0 5 * * 1', tz: 'Asia/Shanghai' }"
+    },
+    {
+      "name": "dreaming_nightly",
+      "file": "src/capabilities/agency/manifest.ts",
+      "line": 138,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "coach_daily",
+      "file": "src/capabilities/agency/manifest.ts",
+      "line": 153,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "coach_weekly",
+      "file": "src/capabilities/agency/manifest.ts",
+      "line": 161,
+      "load": true,
+      "schedule": "{ cron: '30 4 * * 0', tz: 'Asia/Shanghai' }"
+    },
+    {
+      "name": "prepare_intervention",
+      "file": "src/capabilities/agency/manifest.ts",
+      "line": 167,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "intervention_prepare_recovery",
+      "file": "src/capabilities/agency/manifest.ts",
+      "line": 177,
+      "load": true,
+      "schedule": "{ cron: '1-59/2 * * * *', tz: 'Asia/Shanghai' }"
+    },
+    {
+      "name": "goal_scope_propose_nightly",
+      "file": "src/capabilities/agency/manifest.ts",
+      "line": 189,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "research_meeting_nightly",
+      "file": "src/capabilities/agency/manifest.ts",
+      "line": 206,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "research_meeting_agent_nightly",
+      "file": "src/capabilities/agency/manifest.ts",
+      "line": 241,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "prune_job_events",
+      "file": "src/capabilities/observability/manifest.ts",
+      "line": 517,
+      "load": false,
+      "schedule": "{ cron: '0 4 * * *', tz: 'Asia/Shanghai' }"
+    },
+    {
+      "name": "subject_profile_audit_nightly",
+      "file": "src/capabilities/observability/manifest.ts",
+      "line": 525,
+      "load": true,
+      "schedule": "{ cron: '25 4 * * *', tz: 'Asia/Shanghai' }"
+    },
+    {
+      "name": "ai_task_run_reconcile_nightly",
+      "file": "src/capabilities/observability/manifest.ts",
+      "line": 540,
+      "load": true,
+      "schedule": "{ cron: '40 6 * * *', tz: 'Asia/Shanghai' }"
+    },
+    {
+      "name": "hub_auto_sync_nightly",
+      "file": "src/capabilities/notes/manifest.ts",
+      "line": 209,
+      "load": true,
+      "schedule": "{ cron: '45 2 * * *', tz: 'Asia/Shanghai' }"
+    },
+    {
+      "name": "hub_sync_recovery",
+      "file": "src/capabilities/notes/manifest.ts",
+      "line": 218,
+      "load": true,
+      "schedule": "{ cron: '* * * * *', tz: 'Asia/Shanghai' }"
+    },
+    {
+      "name": "hub_sync_mutation_wake",
+      "file": "src/capabilities/notes/manifest.ts",
+      "line": 225,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "note_refine",
+      "file": "src/capabilities/notes/manifest.ts",
+      "line": 236,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "note_generate",
+      "file": "src/capabilities/notes/manifest.ts",
+      "line": 242,
+      "load": true,
+      "schedule": null
+    },
+    {
+      "name": "note_verify",
+      "file": "src/capabilities/notes/manifest.ts",
+      "line": 247,
+      "load": true,
+      "schedule": null
+    }
+  ],
+  "manifestDeclarationCount": 54,
+  "manifestLoadHandlerCount": 53,
+  "manifestScheduleCount": 19,
+  "withoutLoad": [
+    {
+      "name": "prune_job_events",
+      "file": "src/capabilities/observability/manifest.ts",
+      "line": 517,
+      "load": false,
+      "schedule": "{ cron: '0 4 * * *', tz: 'Asia/Shanghai' }"
+    }
+  ],
+  "missingFromLedger": [],
+  "ledgerManifestAbsentFromSource": [],
+  "addedSince1359": [
+    {
+      "name": "prune_job_events",
+      "file": "src/capabilities/observability/manifest.ts",
+      "line": 517,
+      "load": false,
+      "schedule": "{ cron: '0 4 * * *', tz: 'Asia/Shanghai' }"
+    }
+  ],
+  "prior1359Absent": [],
+  "nonManifestLedger": [
+    {
+      "name": "echo",
+      "owner": "src/server/boss/handlers.ts",
+      "queue": "fast",
+      "backend": "pg-boss",
+      "cron": null,
+      "tz": null,
+      "dependencies": null,
+      "handlerImports": [],
+      "producerSources": [],
+      "recoveryOwner": "pg-boss with existing domain receipt/claim/outbox owner; unchanged",
+      "dlq": null,
+      "retry": "pg-boss default 2, immediate; no DLQ",
+      "idempotencyAndUnknownOutcome": "See per-domain recovery ownership in YUK-1355 runbook; no bulk replay or admission by this inventory"
+    },
+    {
+      "name": "event_subscription_dispatch",
+      "owner": "src/server/event-subscriptions/dispatch-mount.ts",
+      "queue": "fast",
+      "backend": "pg-boss",
+      "cron": "* * * * *",
+      "tz": "Asia/Shanghai",
+      "dependencies": null,
+      "handlerImports": [],
+      "producerSources": ["src/server/event-subscriptions/dispatch-mount.ts:99"],
+      "recoveryOwner": "pg-boss with existing domain receipt/claim/outbox owner; unchanged",
+      "dlq": null,
+      "retry": "2 redeliveries, 30s exponential backoff; no DLQ",
+      "idempotencyAndUnknownOutcome": "See per-domain recovery ownership in YUK-1355 runbook; no bulk replay or admission by this inventory"
+    },
+    {
+      "name": "memory_brief_regen",
+      "owner": "src/server/memory/triggers.ts",
+      "queue": "llm",
+      "backend": "pg-boss",
+      "cron": null,
+      "tz": null,
+      "dependencies": null,
+      "handlerImports": [],
+      "producerSources": ["src/server/memory/triggers.ts:299"],
+      "recoveryOwner": "pg-boss with existing domain receipt/claim/outbox owner; unchanged",
+      "dlq": "memory_brief_regen_dlq",
+      "retry": "createJobQueue: 2 redeliveries, 30s exponential backoff; event attempt bookkeeping is domain-owned",
+      "idempotencyAndUnknownOutcome": "See per-domain recovery ownership in YUK-1355 runbook; no bulk replay or admission by this inventory"
+    },
+    {
+      "name": "memory_brief_sweep",
+      "owner": "src/server/memory/triggers.ts",
+      "queue": "fast",
+      "backend": "pg-boss",
+      "cron": "0 3 * * *",
+      "tz": "Asia/Shanghai",
+      "dependencies": null,
+      "handlerImports": [],
+      "producerSources": [],
+      "recoveryOwner": "pg-boss with existing domain receipt/claim/outbox owner; unchanged",
+      "dlq": null,
+      "retry": "pg-boss default 2, immediate; no DLQ",
+      "idempotencyAndUnknownOutcome": "See per-domain recovery ownership in YUK-1355 runbook; no bulk replay or admission by this inventory"
+    },
+    {
+      "name": "memory_event_ingest",
+      "owner": "src/server/memory/triggers.ts",
+      "queue": "llm",
+      "backend": "pg-boss",
+      "cron": null,
+      "tz": null,
+      "dependencies": null,
+      "handlerImports": [],
+      "producerSources": ["src/server/memory/triggers.ts:285"],
+      "recoveryOwner": "pg-boss with existing domain receipt/claim/outbox owner; unchanged",
+      "dlq": "memory_event_ingest_dlq",
+      "retry": "createJobQueue: 2 redeliveries, 30s exponential backoff; event attempt bookkeeping is domain-owned",
+      "idempotencyAndUnknownOutcome": "See per-domain recovery ownership in YUK-1355 runbook; no bulk replay or admission by this inventory"
+    },
+    {
+      "name": "memory_ingest_outbox_poll",
+      "owner": "src/server/memory/triggers.ts",
+      "queue": "fast",
+      "backend": "pg-boss",
+      "cron": "* * * * *",
+      "tz": "UTC",
+      "dependencies": null,
+      "handlerImports": [],
+      "producerSources": [],
+      "recoveryOwner": "pg-boss with existing domain receipt/claim/outbox owner; unchanged",
+      "dlq": null,
+      "retry": "pg-boss default 2, immediate; no DLQ",
+      "idempotencyAndUnknownOutcome": "See per-domain recovery ownership in YUK-1355 runbook; no bulk replay or admission by this inventory"
+    },
+    {
+      "name": "memory_ingest_outbox_recover",
+      "owner": "src/server/memory/triggers.ts",
+      "queue": "fast",
+      "backend": "pg-boss",
+      "cron": "0 * * * *",
+      "tz": "UTC",
+      "dependencies": null,
+      "handlerImports": [],
+      "producerSources": [],
+      "recoveryOwner": "pg-boss with existing domain receipt/claim/outbox owner; unchanged",
+      "dlq": null,
+      "retry": "pg-boss default 2, immediate; no DLQ",
+      "idempotencyAndUnknownOutcome": "See per-domain recovery ownership in YUK-1355 runbook; no bulk replay or admission by this inventory"
+    },
+    {
+      "name": "memory_reconcile",
+      "owner": "src/server/memory/triggers.ts",
+      "queue": "llm",
+      "backend": "pg-boss",
+      "cron": null,
+      "tz": null,
+      "dependencies": null,
+      "handlerImports": [],
+      "producerSources": ["src/server/memory/memory-reconcile-handoff.ts:110"],
+      "recoveryOwner": "pg-boss with existing domain receipt/claim/outbox owner; unchanged",
+      "dlq": "memory_reconcile_dlq",
+      "retry": "createJobQueue: 2 redeliveries, 30s exponential backoff; event attempt bookkeeping is domain-owned",
+      "idempotencyAndUnknownOutcome": "See per-domain recovery ownership in YUK-1355 runbook; no bulk replay or admission by this inventory"
+    },
+    {
+      "name": "nightly_orchestrator",
+      "owner": "src/server/orchestration/register.ts",
+      "queue": "llm",
+      "backend": "pg-boss",
+      "cron": "30 2 * * *",
+      "tz": "Asia/Shanghai",
+      "dependencies": null,
+      "handlerImports": [],
+      "producerSources": [
+        "src/server/orchestration/orchestrator.ts:939",
+        "src/server/orchestration/register.ts:245"
+      ],
+      "recoveryOwner": "pg-boss with existing domain receipt/claim/outbox owner; unchanged",
+      "dlq": "nightly_orchestrator_dlq",
+      "retry": "queue-config: 2 redeliveries, 30s exponential backoff",
+      "idempotencyAndUnknownOutcome": "See per-domain recovery ownership in YUK-1355 runbook; no bulk replay or admission by this inventory"
+    },
+    {
+      "name": "promote_conversation_idle",
+      "owner": "src/server/boss/handlers.ts",
+      "queue": "fast",
+      "backend": "pg-boss",
+      "cron": "* * * * *",
+      "tz": "Asia/Shanghai",
+      "dependencies": null,
+      "handlerImports": [],
+      "producerSources": [],
+      "recoveryOwner": "pg-boss with existing domain receipt/claim/outbox owner; unchanged",
+      "dlq": null,
+      "retry": "pg-boss default 2, immediate; no DLQ",
+      "idempotencyAndUnknownOutcome": "See per-domain recovery ownership in YUK-1355 runbook; no bulk replay or admission by this inventory"
+    },
+    {
+      "name": "prune_orphan_conversation_sessions",
+      "owner": "src/server/boss/handlers.ts",
+      "queue": "fast",
+      "backend": "pg-boss",
+      "cron": "25 4 * * *",
+      "tz": "Asia/Shanghai",
+      "dependencies": null,
+      "handlerImports": [],
+      "producerSources": [],
+      "recoveryOwner": "pg-boss with existing domain receipt/claim/outbox owner; unchanged",
+      "dlq": null,
+      "retry": "pg-boss default 2, immediate; no DLQ",
+      "idempotencyAndUnknownOutcome": "See per-domain recovery ownership in YUK-1355 runbook; no bulk replay or admission by this inventory"
+    },
+    {
+      "name": "prune_orphan_placement_sessions",
+      "owner": "src/server/boss/handlers.ts",
+      "queue": "fast",
+      "backend": "pg-boss",
+      "cron": "35 4 * * *",
+      "tz": "Asia/Shanghai",
+      "dependencies": null,
+      "handlerImports": [],
+      "producerSources": [],
+      "recoveryOwner": "pg-boss with existing domain receipt/claim/outbox owner; unchanged",
+      "dlq": null,
+      "retry": "pg-boss default 2, immediate; no DLQ",
+      "idempotencyAndUnknownOutcome": "See per-domain recovery ownership in YUK-1355 runbook; no bulk replay or admission by this inventory"
+    },
+    {
+      "name": "prune_orphan_review_sessions",
+      "owner": "src/server/boss/handlers.ts",
+      "queue": "fast",
+      "backend": "pg-boss",
+      "cron": "15 4 * * *",
+      "tz": "Asia/Shanghai",
+      "dependencies": null,
+      "handlerImports": [],
+      "producerSources": [],
+      "recoveryOwner": "pg-boss with existing domain receipt/claim/outbox owner; unchanged",
+      "dlq": null,
+      "retry": "pg-boss default 2, immediate; no DLQ",
+      "idempotencyAndUnknownOutcome": "See per-domain recovery ownership in YUK-1355 runbook; no bulk replay or admission by this inventory"
+    },
+    {
+      "name": "verify_dispatch_recover",
+      "owner": "src/server/boss/handlers.ts",
+      "queue": "fast",
+      "backend": "pg-boss",
+      "cron": "10 4 * * *",
+      "tz": "Asia/Shanghai",
+      "dependencies": null,
+      "handlerImports": [],
+      "producerSources": ["src/server/boss/verify-dispatch-outbox.ts:587"],
+      "recoveryOwner": "pg-boss with existing domain receipt/claim/outbox owner; unchanged",
+      "dlq": null,
+      "retry": "pg-boss default 2, immediate; no DLQ",
+      "idempotencyAndUnknownOutcome": "See per-domain recovery ownership in YUK-1355 runbook; no bulk replay or admission by this inventory"
+    }
+  ],
+  "evidence": "Static job declarations and named registration sites; no runtime/private database census. The ledger excludes DLQ and internal physical queues from its 68 task-family names.",
+  "prior1359ArtifactSha256": "0810e687374be23db65a0f42cc4161da12a59c519a036be7eba696aa0e1de4d0",
+  "prior1359Document": {
+    "path": "/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1363-test-storage/docs/planning/2026-10-07-yuk1359-exit-inventory.md",
+    "sha256": "3d169298c9a361754c3bfdb5114096be2566b93b53534d9904475ae9108ca2f5"
+  },
+  "registrationSites": [
+    {
+      "path": "src/server/boss/handlers.ts",
+      "lines": [98, 117, 132, 145, 154, 192],
+      "count": 6
+    },
+    {
+      "path": "src/server/memory/triggers.ts",
+      "lines": [1095, 1107, 1118, 1123, 1132, 1152],
+      "count": 6
+    },
+    {
+      "path": "src/server/orchestration/register.ts",
+      "lines": [156, 250],
+      "count": 1
+    },
+    {
+      "path": "src/server/event-subscriptions/dispatch-mount.ts",
+      "lines": [71, 72],
+      "count": 1
+    }
+  ],
+  "sourceHashes": [
+    {
+      "path": "README.md",
+      "sha256": "d05b78ab64a0fdd9bbcb9039b8dc333664e04365a019b18ee5695070f4af1d76"
+    },
+    {
+      "path": "docs/planning/2026-10-07-yuk1355-task-inventory.json",
+      "sha256": "3ea20861dbf94aa41677775fc858d6a13d3aa99a794cc806f877edecfedf3af8"
+    },
+    {
+      "path": "scripts/audit-task-census.ts",
+      "sha256": "683cc69bcd65a126db758e05d36e7cf52da004c233781cd906ca8ac56571c2f9"
+    },
+    {
+      "path": "src/capabilities/agency/manifest.ts",
+      "sha256": "95c117dc99871c6d2bfdb903ecec84593a650f59c99c611b92724fdb6b8d9030"
+    },
+    {
+      "path": "src/capabilities/copilot/manifest.ts",
+      "sha256": "45283bc83047489289c0ed63ba269c20806c7e1eadd00be82d7e8b5b1bb6cd25"
+    },
+    {
+      "path": "src/capabilities/ingestion/manifest.ts",
+      "sha256": "bf36ffdbb7616066e5836ddd65e4bf54df6bc97d23a0117c6d75c94e0073569b"
+    },
+    {
+      "path": "src/capabilities/knowledge/manifest.ts",
+      "sha256": "ad6451ac567cd6bebc022b7ee9e3a84822b0213040d9af4903ef5732de54bf24"
+    },
+    {
+      "path": "src/capabilities/notes/manifest.ts",
+      "sha256": "958572f83241cccaf3ad553e7c27ed2cb2352cab1bf946088781abfe822274a5"
+    },
+    {
+      "path": "src/capabilities/observability/manifest.ts",
+      "sha256": "837dda796f1b31bc42cd27dad82f39e1eb236599e516700861581a7a2bcbd45f"
+    },
+    {
+      "path": "src/capabilities/practice/manifest.ts",
+      "sha256": "57ab11071cf110ac948ed217234098888bafa35158ec15db89af2932cc3e41d7"
+    },
+    {
+      "path": "src/server/boss/handlers.ts",
+      "sha256": "5369935608f4481ea69a9671bd057fb86efc8f9beb1f791b3071b3dfb17f7f92"
+    },
+    {
+      "path": "src/server/boss/register-capability-jobs.ts",
+      "sha256": "b9c6e037f2676cfb330cb204c1817392c1e5b1b8405bd22a9db2cbd8a6b21b5d"
+    },
+    {
+      "path": "src/server/boss/start-worker.ts",
+      "sha256": "9493a1396e1915a33a091f46a6fe2c89c5cdfc8e84e05043f4e4d0ee0150d63e"
+    },
+    {
+      "path": "src/server/durable/prune-worker.ts",
+      "sha256": "7b12c39a86d4dac907f833443e891107bd754ccd4909e2418fbd0d78a343d2de"
+    },
+    {
+      "path": "src/server/event-subscriptions/dispatch-mount.ts",
+      "sha256": "a8b602a62935086e073b6b0ef61ea9df73ad8118b23bd7bc0ef8bde23474a1b5"
+    },
+    {
+      "path": "src/server/memory/triggers.ts",
+      "sha256": "c29149bd1bedd7cf1114b0a5e6fcb64f4a5216b8682ec5a11cb969ba8d391c0e"
+    },
+    {
+      "path": "src/server/orchestration/register.ts",
+      "sha256": "a3798f48204f9b14e78d35e5b4aea57b53d3d958026af79c7f37e70d55e2ad73"
+    }
+  ],
+  "counts": {
+    "distinctFamilyNames": 68,
+    "manifestDeclarations": 54,
+    "manifestLoadHandlers": 53,
+    "manifestSchedules": 19,
+    "handlerRegistrations": 6,
+    "infraSchedules": 5,
+    "memoryRegistrations": 6,
+    "memorySchedules": 3,
+    "orchestrator": 1,
+    "subscriptionDispatcher": 1,
+    "prior1359ManifestLoadHandlers": 53,
+    "prior1359ManifestSchedules": 18,
+    "priorInfraSchedules": 6,
+    "readmeAiTaskRegistry": 52,
+    "integratedAiTaskRegisteredKinds": 55,
+    "integratedAiTaskStaticallyInvokedKinds": 53,
+    "integratedAiTaskCompatibilityKinds": 2
+  },
+  "method": "TypeScript AST reads of jobs.handlers; manifest names compared individually with the ledger and YUK-1359; fourteen non-manifest registrations checked at named createQueue/work sites. No lazy handler execution."
+}

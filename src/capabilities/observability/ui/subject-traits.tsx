@@ -16,56 +16,17 @@
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { type CSSProperties, useState } from 'react';
-import { ApiError, apiFetch, apiJson } from '@/ui/lib/api';
+import { ApiError } from '@/ui/lib/api';
 import { Badge } from '@/ui/primitives/Badge';
 import { Card } from '@/ui/primitives/Card';
 import { PageHeader } from '@/ui/primitives/PageHeader';
 import { Stateful } from '@/ui/primitives/Stateful';
-import type { AdminSubjectRow } from './subjects';
 
-// ---------- wire 类型（对齐 admin-read.ts 投影） ----------
-
-type TraitKind =
-  | 'charter'
-  | 'judge_policy'
-  | 'cause_taxonomy'
-  | 'source_policy'
-  | 'render_theme'
-  | 'scheduling';
-
-interface TraitBindingRow {
-  kind: TraitKind;
-  traitId: string;
-  origin: 'builtin' | 'custom';
-  ownerSubjectId: string | null;
-  seedVersion: string | null;
-  revision: number;
-  effectiveRevision: number | string;
-  degraded: 'journal_fallback' | 'code_seed' | null;
-  payload: Record<string, unknown>;
-  sharedBy: string[];
-}
-
-interface SubjectTraitsResponse {
-  subjectRevision: number;
-  bindings: TraitBindingRow[];
-}
-
-interface JournalRow {
-  revision: number;
-  action: string;
-  actor: string;
-  createdAt: string;
-}
-
-interface CatalogRow {
-  traitId: string;
-  origin: 'builtin' | 'custom';
-  ownerSubjectId: string | null;
-  seedVersion: string | null;
-  revision: number;
-  boundBy: string[];
-}
+import {
+  type AdminControlClient,
+  type TraitBindingRow,
+  httpAdminControlClient,
+} from './admin-control-client';
 
 // ---------- CAS 分流 helper（§2.3） ----------
 
@@ -86,29 +47,27 @@ function errText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-async function writeJson(path: string, method: string, body: unknown): Promise<void> {
-  await apiFetch(path, { method, body: JSON.stringify(body) });
-}
-
 // ---------- 主组件 ----------
 
 export function AdminSubjectTraitsSurface({
   subjectId,
   navigate,
+  client = httpAdminControlClient,
 }: {
   subjectId: string;
   navigate: (to: string) => void;
+  client?: AdminControlClient;
 }) {
   const queryClient = useQueryClient();
   const [casNotice, setCasNotice] = useState(false);
 
   const subjectsQ = useQuery({
     queryKey: ['admin-subjects'],
-    queryFn: () => apiJson<{ subjects: AdminSubjectRow[] }>('/api/admin/subjects'),
+    queryFn: () => client.getSubjects(),
   });
   const traitsQ = useQuery({
     queryKey: ['admin-subject-traits', subjectId],
-    queryFn: () => apiJson<SubjectTraitsResponse>(`/api/admin/subjects/${subjectId}/traits`),
+    queryFn: () => client.getSubjectTraits({ subjectId }),
   });
 
   const header = subjectsQ.data?.subjects.find((s) => s.id === subjectId);
@@ -189,6 +148,7 @@ export function AdminSubjectTraitsSurface({
         // 控制行 gate 在 traitsQ 成功后（review-766 P3：加载期 subjectRevision
         // 回落 0 会让 rev-0 科目的写 pre-load 静默成功）。
         <ControlRow
+          client={client}
           subjectId={subjectId}
           subjectRevision={subjectRevision}
           isGeneral={isGeneral}
@@ -212,6 +172,7 @@ export function AdminSubjectTraitsSurface({
         <Card pad="lg">
           {(traitsQ.data?.bindings ?? []).map((b) => (
             <TraitRow
+              client={client}
               key={b.kind}
               subjectId={subjectId}
               subjectRevision={subjectRevision}
@@ -231,6 +192,7 @@ export function AdminSubjectTraitsSurface({
 // ---------- 控制行动作区（§2.3 矩阵 rename / retire·restore / reset） ----------
 
 function ControlRow({
+  client,
   subjectId,
   subjectRevision,
   isGeneral,
@@ -239,6 +201,7 @@ function ControlRow({
   onWriteError,
   onDone,
 }: {
+  client: AdminControlClient;
   subjectId: string;
   subjectRevision: number;
   isGeneral: boolean;
@@ -256,14 +219,13 @@ function ControlRow({
     mutationFn: async (action: 'rename' | 'retire' | 'restore' | 'reset') => {
       setError(null);
       if (action === 'rename') {
-        await writeJson(`/api/admin/subjects/${subjectId}`, 'PATCH', {
+        await client.renameSubject({
+          subjectId,
           expectedRevision: subjectRevision,
           displayName: newName,
         });
       } else {
-        await writeJson(`/api/admin/subjects/${subjectId}/${action}`, 'POST', {
-          expectedRevision: subjectRevision,
-        });
+        await client[`${action}Subject`]({ subjectId, expectedRevision: subjectRevision });
       }
     },
     onSuccess: () => {
@@ -359,6 +321,7 @@ function ControlRow({
 // ---------- 六绑定行 + per-kind 就地展开编辑（§2.2 open-question 3 = A） ----------
 
 function TraitRow({
+  client,
   subjectId,
   subjectRevision,
   isGeneral,
@@ -367,6 +330,7 @@ function TraitRow({
   onWriteError,
   onDone,
 }: {
+  client: AdminControlClient;
   subjectId: string;
   subjectRevision: number;
   isGeneral: boolean;
@@ -441,6 +405,7 @@ function TraitRow({
       </div>
       {panel === 'edit' && (
         <TraitEditPanel
+          client={client}
           subjectId={subjectId}
           subjectRevision={subjectRevision}
           isGeneral={isGeneral}
@@ -457,6 +422,7 @@ function TraitRow({
       )}
       {panel === 'fork' && (
         <ForkPanel
+          client={client}
           subjectId={subjectId}
           subjectRevision={subjectRevision}
           binding={binding}
@@ -470,6 +436,7 @@ function TraitRow({
       )}
       {panel === 'rebind' && (
         <RebindPanel
+          client={client}
           subjectId={subjectId}
           subjectRevision={subjectRevision}
           binding={binding}
@@ -483,6 +450,7 @@ function TraitRow({
       )}
       {panel === 'journal' && (
         <JournalPanel
+          client={client}
           binding={binding}
           onWriteError={onWriteError}
           onDone={() => {
@@ -500,6 +468,7 @@ function TraitRow({
 // ---------- 编辑面板：逐字段表单 + 三分保存语义（§2.2 owner review P1） ----------
 
 function TraitEditPanel({
+  client,
   subjectId,
   subjectRevision,
   isGeneral,
@@ -510,6 +479,7 @@ function TraitEditPanel({
   onWriteError,
   onDone,
 }: {
+  client: AdminControlClient;
   subjectId: string;
   subjectRevision: number;
   isGeneral: boolean;
@@ -558,13 +528,16 @@ function TraitEditPanel({
       const payload = buildPayload();
       if (!payload) throw new Error('draft_invalid');
       if (mode === 'subject') {
-        await writeJson(`/api/admin/subjects/${subjectId}/traits/${binding.kind}`, 'PUT', {
+        await client.editSubjectTrait({
+          subjectId,
+          kind: binding.kind,
           expectedSubjectRevision: subjectRevision,
           expectedTraitRevision: binding.revision,
           payload,
         });
       } else {
-        await writeJson(`/api/admin/traits/${binding.traitId}`, 'PUT', {
+        await client.editSharedTrait({
+          traitId: binding.traitId,
           expectedRevision: binding.revision,
           payload,
         });
@@ -584,11 +557,10 @@ function TraitEditPanel({
       setValidateResult(null);
       const payload = buildPayload();
       if (!payload) throw new Error('draft_invalid');
-      const res = await apiFetch(`/api/admin/subjects/${subjectId}/validate`, {
-        method: 'POST',
-        body: JSON.stringify({ traitPayloadOverrides: { [binding.kind]: payload } }),
+      const body = await client.validateSubject({
+        subjectId,
+        traitPayloadOverrides: { [binding.kind]: payload },
       });
-      const body = (await res.json()) as { valid: boolean; errors: string[]; warnings: string[] };
       setValidateResult(
         body.valid ? '预检通过' : `预检失败：${body.errors.slice(0, 5).join('; ')}`,
       );
@@ -656,6 +628,7 @@ function TraitEditPanel({
         </button>
         {binding.seedVersion !== null && (
           <ResetToSeedButton
+            client={client}
             binding={binding}
             onWriteError={onWriteError}
             onDone={onDone}
@@ -686,11 +659,13 @@ function TraitEditPanel({
 }
 
 function ResetToSeedButton({
+  client,
   binding,
   onWriteError,
   onDone,
   onError,
 }: {
+  client: AdminControlClient;
   binding: TraitBindingRow;
   onWriteError: (err: unknown) => boolean;
   onDone: () => void;
@@ -699,9 +674,7 @@ function ResetToSeedButton({
   const [confirming, setConfirming] = useState(false);
   const run = useMutation({
     mutationFn: () =>
-      writeJson(`/api/admin/traits/${binding.traitId}/reset-to-seed`, 'POST', {
-        expectedRevision: binding.revision,
-      }),
+      client.resetTraitToSeed({ traitId: binding.traitId, expectedRevision: binding.revision }),
     onSuccess: onDone,
     onError: (err) => {
       if (!onWriteError(err)) onError(errText(err));
@@ -736,6 +709,7 @@ function ResetToSeedButton({
 // ---------- fork：显式剥离，不带编辑（§2.3 矩阵 fork 行，review-766 P1） ----------
 
 function ForkPanel({
+  client,
   subjectId,
   subjectRevision,
   binding,
@@ -743,6 +717,7 @@ function ForkPanel({
   onDone,
   onCancel,
 }: {
+  client: AdminControlClient;
   subjectId: string;
   subjectRevision: number;
   binding: TraitBindingRow;
@@ -753,7 +728,9 @@ function ForkPanel({
   const [error, setError] = useState<string | null>(null);
   const run = useMutation({
     mutationFn: () =>
-      writeJson(`/api/admin/subjects/${subjectId}/traits/${binding.kind}/fork`, 'POST', {
+      client.forkSubjectTrait({
+        subjectId,
+        kind: binding.kind,
         expectedSubjectRevision: subjectRevision,
       }),
     onSuccess: onDone,
@@ -785,6 +762,7 @@ function ForkPanel({
 // ---------- 换绑选择器（§2.3；loading/empty/error 三态，review findings 折入） ----------
 
 function RebindPanel({
+  client,
   subjectId,
   subjectRevision,
   binding,
@@ -792,6 +770,7 @@ function RebindPanel({
   onWriteError,
   onDone,
 }: {
+  client: AdminControlClient;
   subjectId: string;
   subjectRevision: number;
   binding: TraitBindingRow;
@@ -803,13 +782,15 @@ function RebindPanel({
   const [error, setError] = useState<string | null>(null);
   const q = useQuery({
     queryKey: ['admin-traits', binding.kind],
-    queryFn: () => apiJson<{ traits: CatalogRow[] }>(`/api/admin/traits?kind=${binding.kind}`),
+    queryFn: () => client.getTraits({ kind: binding.kind }),
   });
   const candidates = (q.data?.traits ?? []).filter((t) => t.traitId !== binding.traitId);
 
   const run = useMutation({
     mutationFn: (targetTraitId: string) =>
-      writeJson(`/api/admin/subjects/${subjectId}/traits/${binding.kind}/binding`, 'PUT', {
+      client.rebindSubjectTrait({
+        subjectId,
+        kind: binding.kind,
         targetTraitId,
         expectedSubjectRevision: subjectRevision,
       }),
@@ -875,10 +856,12 @@ function RebindPanel({
 // ---------- journal / rollback（§2.2 point 4：纯 revision 列表，含 reconcile） ----------
 
 function JournalPanel({
+  client,
   binding,
   onWriteError,
   onDone,
 }: {
+  client: AdminControlClient;
   binding: TraitBindingRow;
   onWriteError: (err: unknown) => boolean;
   onDone: () => void;
@@ -887,13 +870,13 @@ function JournalPanel({
   const [error, setError] = useState<string | null>(null);
   const q = useQuery({
     queryKey: ['admin-trait-journal', binding.traitId],
-    queryFn: () =>
-      apiJson<{ journal: JournalRow[] }>(`/api/admin/traits/${binding.traitId}/journal`),
+    queryFn: () => client.getTraitJournal({ traitId: binding.traitId }),
   });
 
   const run = useMutation({
     mutationFn: (targetRevision: number) =>
-      writeJson(`/api/admin/traits/${binding.traitId}/rollback`, 'POST', {
+      client.rollbackTrait({
+        traitId: binding.traitId,
         expectedRevision: binding.revision,
         targetRevision,
       }),

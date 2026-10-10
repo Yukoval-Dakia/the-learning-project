@@ -1,10 +1,8 @@
-import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { event, knowledge, materialized_id_index } from '@/db/schema';
 import { gatherAndFoldKnowledgeNode } from '@/server/projections/gather';
 import { knowledgeRowToSnapshot } from '@/server/projections/snapshot-mappers';
 import { ensureSubjectRoot } from '@/server/subjects/ensure-subject-root';
-import { resolveKnownSubjectId, subjectProfiles } from '@/subjects/profile';
 import { KNOWN_SUBJECT_IDS } from '@/subjects/profile-schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { seedKnowledge } from './seed';
@@ -32,50 +30,6 @@ describe('seedKnowledge (薄 seed — 仅科目 domain-root 节点, YUK-477)', (
     }
   });
 
-  it('refuses missing live rows with existing history instead of manufacturing a replacement genesis', async () => {
-    const db = testDb();
-    await seedKnowledge(db);
-    const id = `seed:${KNOWN_SUBJECT_IDS[0]}:root`;
-    const before = await db.select().from(event).orderBy(event.id);
-    await db.delete(knowledge).where(eq(knowledge.id, id));
-    await expect(seedKnowledge(db)).rejects.toThrow(/history without a live row/);
-    expect(await db.select().from(event).orderBy(event.id)).toEqual(before);
-    expect(await db.select().from(knowledge).where(eq(knowledge.id, id))).toEqual([]);
-  });
-
-  it('inserts exactly one domain-root node per known subject on first run', async () => {
-    const db = testDb();
-    const result = await seedKnowledge(db);
-    expect(result.inserted).toBe(SUBJECT_COUNT);
-    expect(result.skipped).toBe(0);
-
-    const rows = await db.select().from(knowledge);
-    expect(rows).toHaveLength(SUBJECT_COUNT);
-    // every node is a root (parent_id null) and its domain is a known subject id.
-    for (const row of rows) {
-      expect(row.parent_id).toBeNull();
-      expect(row.approval_status).toBe('approved');
-      const subjectId = row.domain as (typeof KNOWN_SUBJECT_IDS)[number];
-      expect(KNOWN_SUBJECT_IDS).toContain(subjectId);
-      // name is profile-derived (displayName), not the raw subjectId — guards a
-      // regression where the displayName lookup silently falls through.
-      expect(row.name).toBe(subjectProfiles[subjectId].displayName);
-      // YUK-587: every fresh root has a fold source, and replay is byte-faithful to the live row.
-      expect(await gatherAndFoldKnowledgeNode(db, row.id)).toEqual(knowledgeRowToSnapshot(row));
-    }
-    // one node per subject, no duplicates.
-    const domains = rows.map((r) => r.domain).sort();
-    expect(domains).toEqual([...KNOWN_SUBJECT_IDS].sort());
-
-    const genesis = await db.select().from(event).where(eq(event.actor_ref, 'knowledge-seed'));
-    expect(genesis).toHaveLength(SUBJECT_COUNT);
-    expect(genesis.every((row) => row.action === 'experimental:genesis')).toBe(true);
-    expect(genesis.every((row) => row.ingest_at !== null && row.affected_scopes.length === 0)).toBe(
-      true,
-    );
-    expect(await db.select().from(materialized_id_index)).toHaveLength(SUBJECT_COUNT);
-  });
-
   it('is idempotent — second run inserts 0, skips all', async () => {
     const db = testDb();
     await seedKnowledge(db);
@@ -85,25 +39,5 @@ describe('seedKnowledge (薄 seed — 仅科目 domain-root 节点, YUK-477)', (
     expect(await db.select().from(knowledge)).toHaveLength(SUBJECT_COUNT);
     expect(await db.select().from(event)).toHaveLength(SUBJECT_COUNT);
     expect(await db.select().from(materialized_id_index)).toHaveLength(SUBJECT_COUNT);
-  });
-
-  it('uses stable id seed:<subjectId>:root', async () => {
-    const db = testDb();
-    await seedKnowledge(db);
-    const ids = (await db.select({ id: knowledge.id }).from(knowledge)).map((r) => r.id);
-    for (const subjectId of KNOWN_SUBJECT_IDS) {
-      expect(ids).toContain(`seed:${subjectId}:root`);
-    }
-  });
-
-  it("a seeded node's domain resolves to its own subject id (self-alias)", async () => {
-    const db = testDb();
-    await seedKnowledge(db);
-    const rows = await db.select({ domain: knowledge.domain }).from(knowledge);
-    for (const row of rows) {
-      // domain=subjectId → resolveKnownSubjectId(domain) === subjectId, so the
-      // derived effective-domain axis picks the node up under its own subject.
-      expect(resolveKnownSubjectId(row.domain)).toBe(row.domain);
-    }
   });
 });

@@ -8,6 +8,7 @@ type TurnContext = {
   readonly v: 1;
   readonly learner_state?: string;
   readonly proposal_feedback?: CopilotRunInput['proposal_feedback'];
+  readonly review_answer?: CopilotRunInput['review_answer'];
   readonly ambient?: CopilotRunInput['ambient_context'];
   readonly chip?: {
     readonly surface: CopilotRunInput['surface'];
@@ -59,6 +60,7 @@ function compileTurnContext(input: CopilotRunInput, includeProposalFeedback: boo
   const correction = modelCorrectionContract(input);
   const context: TurnContext = {
     v: 1,
+    ...(input.review_answer ? { review_answer: input.review_answer } : {}),
     ...(input.learner_state_header ? { learner_state: input.learner_state_header } : {}),
     ...(includeProposalFeedback && input.proposal_feedback.length > 0
       ? { proposal_feedback: input.proposal_feedback }

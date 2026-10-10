@@ -1,0 +1,8 @@
+$ tsx scripts/audit-draft-status.ts
+draft-status gate audit
+
+  question-insert sites scanned:  15
+  with draft_status:              14
+  allowlisted (NULL≡active):       1
+
+MISSING draft_status (not allowlisted):  (none)

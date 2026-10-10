@@ -5,7 +5,7 @@
 import { z } from 'zod';
 import { db } from '@/db/client';
 import { collectionPayload, errorResponse } from '@/kernel/http';
-import { getTraitJournalPage } from '@/server/subjects/admin-read';
+import { getTraitJournalPage } from '../public';
 
 const ParamsSchema = z.object({ id: z.string().trim().min(1) });
 

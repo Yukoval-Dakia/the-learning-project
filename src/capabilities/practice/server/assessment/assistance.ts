@@ -10,11 +10,11 @@ export type AssistanceImpact = 'answer_help' | 'harmless_clarification' | 'unkno
 
 /** Server classification only. A stage number is not evidence of harmlessness. */
 export async function recordAssistanceExposure(
-  database: Db,
+  database: Db | Tx,
   input: {
     issuanceId: string;
     questionId: string;
-    kind: 'hint' | 'solution';
+    kind: 'hint' | 'solution' | 'chat_context';
     impact: AssistanceImpact;
     contentDigest: string;
   },

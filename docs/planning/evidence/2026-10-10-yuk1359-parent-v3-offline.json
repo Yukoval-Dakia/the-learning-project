@@ -1,0 +1,44 @@
+{
+  "helperRevision": "b52e255f746ebbf6a4f2f44ae06e7d1b672a4fff",
+  "parentVerification": {
+    "status": "SOURCE/EVIDENCE VERIFIED; RUNTIME UNRUN",
+    "preparationFileBindingsVerified": true,
+    "admissionVerified": true,
+    "admissionError": null,
+    "sourceSealSha256": "ae9d706fea8599efbbe37c4d28059d27008975ca31cb17187021353358ae12cb",
+    "evidenceSealSha256": "57e24c9773ad71e714a37be0cb77a3ce9f04777d2013fbfb51bb1b50cc1e06f0",
+    "immutableSourceFiles": 3005,
+    "evidenceFiles": 3044,
+    "oldSourceFiles": 5636,
+    "oldEvidenceFiles": 8588,
+    "preservedTrees": {
+      "/tmp/yuk1359-dbos-restore-offline-prep-v2": 9376,
+      "/tmp/yuk1359-dbos-restore-offline-prep": 3147,
+      "/tmp/yuk1359-restore-reopen-parent": 9,
+      "/tmp/yuk1359-restore-reopen-parent02": 11,
+      "/tmp/yuk1359-restore-reopen-parent03": 10,
+      "/tmp/yuk1359-restore-reopen-parent04": 17,
+      "/tmp/yuk1359-restore-reopen-parent05": 14,
+      "/tmp/yuk1359-restore-reopen-parent06": 13,
+      "/tmp/yuk1359-restore-reopen-parent07": 22
+    },
+    "dependencyFiles": 121549,
+    "dependencySymlinks": 3756,
+    "dependencyDrift": {},
+    "passingIndependentOfflineChecks": 261,
+    "fullInheritedOfflineChecks": 558,
+    "fullInheritedOfflineSuitePassed": true,
+    "actualRuntimeExecuted": false,
+    "attempts": {
+      "connections": 0,
+      "listeners": 0,
+      "children": 0
+    }
+  },
+  "reports": {
+    "/tmp/yuk1359-v3-parent-full-final.json": "44da50017722dc961ec5066a3893c5b14b8099183c6df17809826d40fda27a28",
+    "/tmp/yuk1359-v3-parent-full-final.err": "3e50e1ad27be7251da958bb27f1f5db18551a05d9c755b6dc95711570e5d7fd5",
+    "/tmp/yuk1359-v3-parent-final-verification.json": "e981ce8595045a0e57c8f913b7c069776d87a05987091775dad4056c197a1444"
+  },
+  "actualRuntimeExecuted": false
+}

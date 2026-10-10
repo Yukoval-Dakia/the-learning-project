@@ -856,28 +856,34 @@ export const PROVIDER_LANES = [
     callers: [{ path: 'scripts/preflight-vision.ts', calls: ['preflightVisionOneShot'] }],
     directImporters: [],
     roles: ['operator'],
-    provider: 'Xiaomi MiMo through the Anthropic-compatible Messages SDK',
-    model: 'CLI or MIMO_VISION_MODEL override; defaults to mimo-v2.5',
+    provider: 'Xiaomi pay-as-you-go or official Token Plan through the Messages SDK',
+    model: 'CLI or MIMO_VISION_MODEL override; Token Plan uses the product model',
     endpointClass: 'manual Anthropic-compatible vision preflight',
     configuration: {
       endpoint: {
-        summary: 'MIMO_VISION_BASE_URL override with Xiaomi Anthropic-compatible default',
+        summary: 'MIMO_VISION_BASE_URL override; Token Plan derives /anthropic from its lane URL',
         source: {
           path: 'scripts/preflight-vision.ts',
-          envReads: ['MIMO_VISION_BASE_URL'],
+          envReads: ['MIMO_VISION_BASE_URL', 'AI_PROVIDER_OVERRIDE'],
+          calls: ['xiaomiTokenPlanVisionBaseUrl'],
           literals: ['https://api.xiaomimimo.com/anthropic'],
         },
       },
       credential: {
-        summary: 'operator credential from XIAOMI_API_KEY',
-        source: { path: 'scripts/preflight-vision.ts', envReads: ['XIAOMI_API_KEY'] },
-      },
-      model: {
-        summary: 'CLI or MIMO_VISION_MODEL override with mimo-v2.5 default',
+        summary: 'operator pin selects XIAOMI_TOKEN_PLAN_API_KEY or legacy XIAOMI_API_KEY',
         source: {
           path: 'scripts/preflight-vision.ts',
-          envReads: ['MIMO_VISION_MODEL'],
-          literals: ['mimo-v2.5'],
+          literals: ['XIAOMI_TOKEN_PLAN_API_KEY', 'XIAOMI_API_KEY'],
+          contains: ['process.env[credentialEnv]'],
+        },
+      },
+      model: {
+        summary:
+          'CLI or MIMO_VISION_MODEL override; product model for Token Plan, legacy mimo-v2.5',
+        source: {
+          path: 'scripts/preflight-vision.ts',
+          envReads: ['MIMO_VISION_MODEL', 'AI_PROVIDER_MODEL'],
+          literals: ['mimo-v2.5', 'mimo-v2.6-pro'],
         },
       },
     },

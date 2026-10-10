@@ -1,0 +1,44 @@
+{
+  "candidate": "e9bb23816be7dc5d3946ea057fe4e37e4660e984",
+  "parentUnit": {
+    "files": 3,
+    "passed": 145,
+    "exitCode": 0,
+    "log": "/tmp/yuk1359-parent-e9bb-unit.log",
+    "sha256": "eaa3b552dccb3af0ca49de0f242799496ac637f242771a033a3cfe573f05aa15"
+  },
+  "parentHashes": {
+    "manifest": "/tmp/yuk1359-retained-scratch-offline-20261009-cHQed9/sha-manifest.json",
+    "manifestSha": "df1f0e1f15b110eff14943ae679eb01516619090b3215f1aa268c4a67be1f998",
+    "verified": {
+      "source": 10,
+      "source_inputs": 16,
+      "original_parent_prep_inputs": 11,
+      "tool_inputs": 10,
+      "packaging_artifacts": 893,
+      "external_shell_regression": 19,
+      "logs": 26
+    },
+    "total": 985
+  },
+  "authorReportedStatic": {
+    "typecheck": 0,
+    "lint": 0,
+    "lintWarnings": 290,
+    "build": 0,
+    "shellSyntax": 0,
+    "scope": "logs and artifacts hash-verified by parent; not rerun by parent"
+  },
+  "review": {
+    "round": "R1",
+    "task": "yuk1359-restore-parity-review-r1-20261009",
+    "status": "running"
+  },
+  "offlinePreparation": {
+    "task": "yuk1359-restore-reopen-latebind-offline-prep-20261009-v2",
+    "status": "running",
+    "ownedPath": "/tmp/yuk1359-dbos-restore-offline-prep-v2"
+  },
+  "runtimeAcceptance": false,
+  "sourceWriterReleased": true
+}

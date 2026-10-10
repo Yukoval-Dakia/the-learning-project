@@ -1,0 +1,186 @@
+{
+  "source": "8a1dbf94bce1434e7c144a76a05bbf483c43fedd",
+  "main": "fe48497123f92429eac6383cf7ccc839ade4142f",
+  "surface_count": 28,
+  "explicit_start_surface_count": 9,
+  "explicit_start_surfaces": [
+    {
+      "id": "root",
+      "route": "/"
+    },
+    {
+      "id": "today",
+      "route": "/today"
+    },
+    {
+      "id": "inbox",
+      "route": "/inbox"
+    },
+    {
+      "id": "mistakes",
+      "route": "/mistakes"
+    },
+    {
+      "id": "admin-runs",
+      "route": "/admin/runs"
+    },
+    {
+      "id": "admin-cost",
+      "route": "/admin/cost"
+    },
+    {
+      "id": "admin-failures",
+      "route": "/admin/failures"
+    },
+    {
+      "id": "admin-coverage-lattice",
+      "route": "/admin/coverage-lattice"
+    },
+    {
+      "id": "admin-conjecture-scores",
+      "route": "/admin/conjecture-scores"
+    }
+  ],
+  "legacy_fallback_surface_count": 19,
+  "legacy_fallback_surfaces": [
+    {
+      "id": "welcome",
+      "route": "/welcome"
+    },
+    {
+      "id": "onboarding-upload",
+      "route": "/onboarding/upload"
+    },
+    {
+      "id": "placement",
+      "route": "/placement"
+    },
+    {
+      "id": "profile",
+      "route": "/profile"
+    },
+    {
+      "id": "agent-notes",
+      "route": "/agent-notes"
+    },
+    {
+      "id": "event-detail",
+      "route": "/events/$id"
+    },
+    {
+      "id": "record",
+      "route": "/record"
+    },
+    {
+      "id": "practice",
+      "route": "/practice"
+    },
+    {
+      "id": "drafts",
+      "route": "/drafts"
+    },
+    {
+      "id": "questions",
+      "route": "/questions"
+    },
+    {
+      "id": "question-detail",
+      "route": "/questions/$id"
+    },
+    {
+      "id": "knowledge",
+      "route": "/knowledge"
+    },
+    {
+      "id": "knowledge-detail",
+      "route": "/knowledge/$id"
+    },
+    {
+      "id": "notes",
+      "route": "/notes"
+    },
+    {
+      "id": "note-detail",
+      "route": "/notes/$id"
+    },
+    {
+      "id": "coach",
+      "route": "/coach"
+    },
+    {
+      "id": "admin-config",
+      "route": "/admin/config"
+    },
+    {
+      "id": "admin-subjects",
+      "route": "/admin/subjects"
+    },
+    {
+      "id": "admin-subject-detail",
+      "route": "/admin/subjects/$id"
+    }
+  ],
+  "routes": [
+    {
+      "route": "/",
+      "file": "server/start/routes/index.tsx",
+      "sha256": "b1f15eb367fa611c429ed9844ccd3ec8db9f092d542d012ca4c2f8c9073d1913"
+    },
+    {
+      "route": "/admin/coverage-lattice",
+      "file": "server/start/routes/admin.coverage-lattice.tsx",
+      "sha256": "3c97cb710cc509084007f503dfc0e1a447ce5773caa3d83b1915136ca5f7311b"
+    },
+    {
+      "route": "/today",
+      "file": "server/start/routes/today.tsx",
+      "sha256": "b7bb06e99f0bdac0d91a9177da347deb8c674ad5371099996ce8fc9f2a58593e"
+    },
+    {
+      "route": "/api/$",
+      "file": "server/start/routes/api.$.ts",
+      "sha256": "c3f56e921d7a447cf07598ed39bf73c6a5de1a0c006995b09b5bd020a735a010"
+    },
+    {
+      "route": "/inbox",
+      "file": "server/start/routes/inbox.tsx",
+      "sha256": "d33bc02db5c385c43c84bc8ccef2639741554e377850e56f6b6c6d213d3b40df"
+    },
+    {
+      "route": "/admin/cost",
+      "file": "server/start/routes/admin.cost.tsx",
+      "sha256": "cbb1cba85bbd1090c46204240d79ddd7193de8001bf1cf56967fd9299ef23703"
+    },
+    {
+      "route": "/admin/runs",
+      "file": "server/start/routes/admin.runs.tsx",
+      "sha256": "ec73d8899b29fe0f2831457a8e28f01d1fe46823723021b47dc58bf6d3c9b612"
+    },
+    {
+      "route": "/admin/failures",
+      "file": "server/start/routes/admin.failures.tsx",
+      "sha256": "6453926d7d8b53cc3260e6bacec29fe58c7c7447659bfa005b794984d93fbfe9"
+    },
+    {
+      "route": "/admin/conjecture-scores",
+      "file": "server/start/routes/admin.conjecture-scores.tsx",
+      "sha256": "3dd7be584b05aad228ea29ecb8e74d30b60a0ebbad392cdf6dbee84dbd39dd45"
+    },
+    {
+      "route": "/_build/$",
+      "file": "server/start/routes/[_]build.$.ts",
+      "sha256": "c87bc39614f7680b0dead6965a7925c3c30aa14c33c69e1d7932d239f44422db"
+    },
+    {
+      "route": "/$",
+      "file": "server/start/routes/$.ts",
+      "sha256": "3b61fc6006eff69437f3822cb8d22357376292c9b73b7091dacc8126d69b2076"
+    },
+    {
+      "route": "/mistakes",
+      "file": "server/start/routes/mistakes.tsx",
+      "sha256": "d9657cbc3316663915a4d49240e94b6580a437851d421083d4200f379d964c02"
+    }
+  ],
+  "limitation": "Static route coverage only. Explicit route does not prove all nested HTTP consumers migrated or runtime/deployment accepted."
+}

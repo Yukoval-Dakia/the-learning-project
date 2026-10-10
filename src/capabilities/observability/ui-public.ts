@@ -1,4 +1,7 @@
 // Client-only public contribution surface.
+
+export type { AdminControlClient } from './ui/admin-control-client';
+export { SubjectTraitsWireSchema } from './ui/admin-control-client';
 export const loadEventDetailPage = () =>
   import('./ui/EventDetailPage').then((module) => module.default);
 export const loadAdminRunsSurface = () =>
@@ -18,3 +21,6 @@ export const loadAdminConjectureScoresSurface = () =>
 
 export const loadAdminConfigSurface = () =>
   import('./ui/config').then((module) => module.AdminConfigSurface);
+
+export { EventCorrectionResponseSchema, EventDetailResponseSchema } from './api/event-contracts';
+export type { EventCorrectionReceipt, EventDetailClient } from './ui/event-detail-client';

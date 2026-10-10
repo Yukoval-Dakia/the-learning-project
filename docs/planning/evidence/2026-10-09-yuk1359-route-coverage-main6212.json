@@ -1,0 +1,189 @@
+{
+  "revision": "6212a4560c68c294245dc3f3e10e4f774c6ff6f8",
+  "surfaceCount": 28,
+  "explicitCount": 13,
+  "explicit": [
+    {
+      "id": "root",
+      "route": "/",
+      "kind": "redirect"
+    },
+    {
+      "id": "today",
+      "route": "/today",
+      "kind": "page"
+    },
+    {
+      "id": "inbox",
+      "route": "/inbox",
+      "kind": "page"
+    },
+    {
+      "id": "mistakes",
+      "route": "/mistakes",
+      "kind": "page"
+    },
+    {
+      "id": "admin-config",
+      "route": "/admin/config",
+      "kind": "page"
+    },
+    {
+      "id": "admin-runs",
+      "route": "/admin/runs",
+      "kind": "page"
+    },
+    {
+      "id": "admin-cost",
+      "route": "/admin/cost",
+      "kind": "page"
+    },
+    {
+      "id": "admin-failures",
+      "route": "/admin/failures",
+      "kind": "page"
+    },
+    {
+      "id": "admin-subjects",
+      "route": "/admin/subjects",
+      "kind": "page"
+    },
+    {
+      "id": "admin-subject-detail",
+      "route": "/admin/subjects/$id",
+      "kind": "page"
+    },
+    {
+      "id": "admin-coverage-lattice",
+      "route": "/admin/coverage-lattice",
+      "kind": "page"
+    },
+    {
+      "id": "admin-conjecture-scores",
+      "route": "/admin/conjecture-scores",
+      "kind": "page"
+    },
+    {
+      "id": "agent-notes",
+      "route": "/agent-notes",
+      "kind": "page"
+    }
+  ],
+  "remainingCount": 15,
+  "remaining": [
+    {
+      "id": "welcome",
+      "route": "/welcome",
+      "kind": "page"
+    },
+    {
+      "id": "onboarding-upload",
+      "route": "/onboarding/upload",
+      "kind": "page"
+    },
+    {
+      "id": "placement",
+      "route": "/placement",
+      "kind": "page"
+    },
+    {
+      "id": "profile",
+      "route": "/profile",
+      "kind": "page"
+    },
+    {
+      "id": "event-detail",
+      "route": "/events/$id",
+      "kind": "page"
+    },
+    {
+      "id": "record",
+      "route": "/record",
+      "kind": "page"
+    },
+    {
+      "id": "practice",
+      "route": "/practice",
+      "kind": "page"
+    },
+    {
+      "id": "drafts",
+      "route": "/drafts",
+      "kind": "page"
+    },
+    {
+      "id": "questions",
+      "route": "/questions",
+      "kind": "page"
+    },
+    {
+      "id": "question-detail",
+      "route": "/questions/$id",
+      "kind": "page"
+    },
+    {
+      "id": "knowledge",
+      "route": "/knowledge",
+      "kind": "page"
+    },
+    {
+      "id": "knowledge-detail",
+      "route": "/knowledge/$id",
+      "kind": "page"
+    },
+    {
+      "id": "notes",
+      "route": "/notes",
+      "kind": "page"
+    },
+    {
+      "id": "note-detail",
+      "route": "/notes/$id",
+      "kind": "page"
+    },
+    {
+      "id": "coach",
+      "route": "/coach",
+      "kind": "page"
+    }
+  ],
+  "routeFiles": {
+    "/$": "server/start/routes/$.ts",
+    "/_build/$": "server/start/routes/[_]build.$.ts",
+    "/admin/config": "server/start/routes/admin.config.tsx",
+    "/admin/conjecture-scores": "server/start/routes/admin.conjecture-scores.tsx",
+    "/admin/cost": "server/start/routes/admin.cost.tsx",
+    "/admin/coverage-lattice": "server/start/routes/admin.coverage-lattice.tsx",
+    "/admin/failures": "server/start/routes/admin.failures.tsx",
+    "/admin/runs": "server/start/routes/admin.runs.tsx",
+    "/admin/subjects/$id": "server/start/routes/admin.subjects.$id.tsx",
+    "/admin/subjects": "server/start/routes/admin.subjects.tsx",
+    "/agent-notes": "server/start/routes/agent-notes.tsx",
+    "/api/$": "server/start/routes/api.$.ts",
+    "/inbox": "server/start/routes/inbox.tsx",
+    "/": "server/start/routes/index.tsx",
+    "/mistakes": "server/start/routes/mistakes.tsx",
+    "/today": "server/start/routes/today.tsx"
+  },
+  "hashes": {
+    "src/kernel/ui-surfaces.ts": "7a93492dee96f215ef6361fb80b1b463e7451d3844ed076ea695db0154527c0b",
+    "server/start/routes/$.ts": "3b61fc6006eff69437f3822cb8d22357376292c9b73b7091dacc8126d69b2076",
+    "server/start/routes/[_]build.$.ts": "c87bc39614f7680b0dead6965a7925c3c30aa14c33c69e1d7932d239f44422db",
+    "server/start/routes/__root.tsx": "263aca7076b81d02b4d310aae4e4ce2ec8b51a06f3721c6f6e700670ca083d08",
+    "server/start/routes/admin.config.tsx": "2b5a2d3cf84d172e7b210bdcc0b4bc759a0231e0f5ab9f4aabfbd85b17a9050b",
+    "server/start/routes/admin.conjecture-scores.tsx": "3dd7be584b05aad228ea29ecb8e74d30b60a0ebbad392cdf6dbee84dbd39dd45",
+    "server/start/routes/admin.cost.tsx": "cbb1cba85bbd1090c46204240d79ddd7193de8001bf1cf56967fd9299ef23703",
+    "server/start/routes/admin.coverage-lattice.tsx": "3c97cb710cc509084007f503dfc0e1a447ce5773caa3d83b1915136ca5f7311b",
+    "server/start/routes/admin.failures.tsx": "6453926d7d8b53cc3260e6bacec29fe58c7c7447659bfa005b794984d93fbfe9",
+    "server/start/routes/admin.runs.tsx": "ec73d8899b29fe0f2831457a8e28f01d1fe46823723021b47dc58bf6d3c9b612",
+    "server/start/routes/admin.subjects.$id.tsx": "3123e7848717453007fb8ffc30b5c5941d2a75b60fbc7e2d85bf344d9be4df4a",
+    "server/start/routes/admin.subjects.tsx": "5fad59f9eed1db3bd574e909b8606b9743b3ea5eb6b5648149f7cc8c3e96a293",
+    "server/start/routes/agent-notes.tsx": "4c366aa6b4146a7cf1c862b6873df7b1135a55f19b022391fe6f1733596f8685",
+    "server/start/routes/api.$.ts": "c3f56e921d7a447cf07598ed39bf73c6a5de1a0c006995b09b5bd020a735a010",
+    "server/start/routes/inbox.tsx": "d33bc02db5c385c43c84bc8ccef2639741554e377850e56f6b6c6d213d3b40df",
+    "server/start/routes/index.tsx": "b1f15eb367fa611c429ed9844ccd3ec8db9f092d542d012ca4c2f8c9073d1913",
+    "server/start/routes/mistakes.tsx": "d9657cbc3316663915a4d49240e94b6580a437851d421083d4200f379d964c02",
+    "server/start/routes/today.tsx": "b7bb06e99f0bdac0d91a9177da347deb8c674ad5371099996ce8fc9f2a58593e"
+  },
+  "scope": "Static explicit route coverage; 13 includes root redirect and 12 pages. Not canonical boot/full migration or deployed coverage. Existing runtime acceptance remains revision-specific in PR1622 evidence."
+}

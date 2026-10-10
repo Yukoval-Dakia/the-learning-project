@@ -1,14 +1,11 @@
-import { eq, sql } from 'drizzle-orm';
+import { createHash } from 'node:crypto';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MistakeListResponseSchema } from '@/capabilities/ingestion/api/contracts';
 import { GET } from '@/capabilities/ingestion/api/mistakes';
+import { ingestionCapability } from '@/capabilities/ingestion/manifest';
 import { readMistakes } from '@/capabilities/ingestion/public';
-import {
-  commitFormalAttempt,
-  recordFormalAttemptCapture,
-} from '@/capabilities/practice/server/assessment/attempt';
+import { commitFormalAttempt } from '@/capabilities/practice/server/assessment/attempt';
 import { issueAssessment } from '@/capabilities/practice/server/assessment/issue';
-import { saveSubmission } from '@/capabilities/practice/server/assessment/submit';
 import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
 import type {
@@ -22,28 +19,22 @@ import type {
 } from '@/core/schema/assessment';
 import type { Db } from '@/db/client';
 import {
-  assessment_issuance,
   assessment_submission,
-  evaluation_effective_head,
-  evaluation_group,
   event,
   knowledge,
   learning_record,
   question,
-  question_revision,
   source_asset,
 } from '@/db/schema';
-import { writeEvent } from '@/kernel/events';
 import { getFailureAttemptById } from '@/kernel/read-models/failure-attempts';
 import {
   contractIntegrityDigest,
   normalizeQuestionGroupToContract,
 } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
-import { correctPaperFixture } from '../../../tests/fixtures/assessment-paper';
+import { buildHonoApp } from '../../../server/app';
 import { handwritingFixture } from '../../../tests/fixtures/native-solo-http';
 import { resetDb, testDb } from '../../../tests/helpers/db';
-import { readNativeMistakeEvidence } from './native-mistake-evidence';
 
 const OPEN: ResponseSlotT = {
   slot_id: 's1',
@@ -95,6 +86,7 @@ async function publication(
   slots: ResponseSlotT[] = [OPEN, TEXT],
   materials: SharedMaterialT[] = [],
   scoringBasis?: (basis: ScoringBasisT) => ScoringBasisT,
+  materialParts?: Readonly<Record<string, readonly string[]>>,
 ) {
   const now = new Date();
   await db
@@ -131,9 +123,14 @@ async function publication(
     rows.filter((row) => row.parent_question_id === 'root'),
   );
   contract.structure.materials.push(...materials);
-  contract.structure.parts
-    .find((part) => part.part_id === 'p1')
-    ?.material_ids.push(...materials.map((material) => material.material_id));
+  for (const part of contract.structure.parts) {
+    part.material_ids.push(
+      ...(materialParts?.[part.part_id] ??
+        (materialParts === undefined && part.part_id === 'p1'
+          ? materials.map((material) => material.material_id)
+          : [])),
+    );
+  }
   contract.structure.materials.push({
     material_id: 'private',
     kind: 'plaintext',
@@ -282,309 +279,138 @@ async function row(db: Db) {
   return (await readMistakes(db)).rows[0];
 }
 
-async function jointAttempt(db: Db, images: GroupEvidenceT[][]) {
-  const submissions = [];
-  for (const [index, partId] of ['p1', 'p2'].entries()) {
-    const issued = await issueAssessment(db, { group_id: 'root', part_ids: [partId] });
-    if (issued.status !== 'issued') throw new Error(issued.status);
-    const saved = await saveSubmission(db, {
-      issuance_id: issued.issuance.issuance_id,
-      evaluation_group_id: 'joint',
-      idempotency_key: `joint_${index}`,
-      response_set: { entries: [index === 0 ? OPEN_ENTRY : TEXT_ENTRY] },
-      group_evidence: images[index],
-    });
-    if (!('submission' in saved)) throw new Error(saved.status);
-    await db.transaction((tx) =>
-      recordFormalAttemptCapture(tx, 'solo_submit', partId, saved.submission, null),
-    );
-    await record(db, `evt_assessment_${saved.submission.submission_id}`, partId);
-    submissions.push(saved.submission);
-  }
-  const candidate = await evaluationService.evaluateSubmission(db, {
-    submission_id: submissions[0].submission_id,
-    evaluation_group_id: 'joint',
-    evaluation_key: 'joint-evaluate',
-    expected_submission_ids: submissions.map((sub) => sub.submission_id),
-    model_executor: evaluationService.createFormalModelExecutor(db),
-    provenance: { source: 'automatic', assisted: false },
+async function publicMaterialRead(db: Db) {
+  vi.stubEnv('INTERNAL_TOKEN', 'synthetic-material-test-token');
+  const app = buildHonoApp([ingestionCapability], { epochGate: async () => ({ runnable: true }) });
+  const response = await app.request('/api/mistakes', {
+    headers: { 'x-internal-token': 'synthetic-material-test-token' },
   });
-  await evaluationService.activateSubmissionCandidate(
-    db,
-    {
-      evaluation_id: candidate.record.evaluation_id,
-      expected_effective_id: null,
-      expected_generation: 0,
-    },
-    { actorRef: 'test:joint' },
-  );
-  return { candidate, submissions };
+  expect(response.status).toBe(200);
+  const wire = MistakeListResponseSchema.parse(await response.json());
+  expect(await readMistakes(db)).toEqual(wire);
+  return wire.rows;
 }
 
-async function cloneEvidence(
-  db: Db,
-  original: Awaited<ReturnType<typeof attempt>>,
-  patches: {
-    submission?: Partial<typeof assessment_submission.$inferInsert>;
-    issuance?: Partial<typeof assessment_issuance.$inferInsert>;
-    revision?: Partial<typeof question_revision.$inferInsert>;
-    rawResponses?: unknown;
-    rawGroupEvidence?: unknown;
-  },
-) {
-  const ref = original.failure.assessment;
-  if (!ref) throw new Error('assessment required');
-  const [sub] = await db
-    .select()
-    .from(assessment_submission)
-    .where(eq(assessment_submission.submission_id, ref.submission_id));
-  const [served] = await db
-    .select()
-    .from(assessment_issuance)
-    .where(eq(assessment_issuance.issuance_id, sub.issuance_id));
-  const [revision] = await db
-    .select()
-    .from(question_revision)
-    .where(eq(question_revision.revision_id, sub.revision_id));
-  await db
-    .insert(question_revision)
-    .values({ ...revision, revision_id: 'damaged_rev', revision_ordinal: 2, ...patches.revision });
-  await db.insert(assessment_issuance).values({
-    ...served,
-    issuance_id: 'damaged_issue',
-    revision_id: 'damaged_rev',
-    ...patches.issuance,
+const materialKinds = [
+  { kind: 'figure', assetKind: 'image', mime: 'image/png' },
+  { kind: 'passage', assetKind: 'plaintext', mime: 'text/markdown' },
+  { kind: 'table', assetKind: 'plaintext', mime: 'text/markdown' },
+  { kind: 'audio', assetKind: 'audio', mime: 'audio/mpeg' },
+  { kind: 'video', assetKind: 'video', mime: 'video/mp4' },
+  { kind: 'pdf', assetKind: 'pdf', mime: 'application/pdf' },
+  { kind: 'plaintext', assetKind: 'plaintext', mime: 'text/plain' },
+] satisfies { kind: SharedMaterialT['kind']; assetKind: string; mime: string }[];
+
+async function binaryMaterial(db: Db, fixture: (typeof materialKinds)[number]) {
+  const bytes = Buffer.from(`synthetic frozen ${fixture.kind} bytes\n`);
+  const sha256 = createHash('sha256').update(bytes).digest('hex');
+  const asset_id = `source_${fixture.kind}`;
+  await db.insert(source_asset).values({
+    id: asset_id,
+    kind: fixture.assetKind,
+    storage_key: `PRIVATE_STORAGE/${asset_id}`,
+    mime_type: fixture.mime,
+    byte_size: bytes.length,
+    sha256,
+    provenance: { source: 'PRIVATE_PROVENANCE' },
+    created_at: new Date(),
   });
-  await db.insert(evaluation_group).values({
-    evaluation_group_id: 'damaged_group',
-    submission_ids: ['damaged_sub'],
-    created_at: sub.submitted_at,
-  });
-  await db.insert(assessment_submission).values({
-    ...sub,
-    evaluation_group_id: 'damaged_group',
-    submission_id: 'damaged_sub',
-    issuance_id: 'damaged_issue',
-    revision_id: 'damaged_rev',
-    idempotency_key: 'damaged_key',
-    ...patches.submission,
-    ...(patches.rawResponses === undefined
-      ? {}
-      : { response_set: sql`${JSON.stringify(patches.rawResponses)}::jsonb` }),
-    ...(patches.rawGroupEvidence === undefined
-      ? {}
-      : { group_evidence: sql`${JSON.stringify(patches.rawGroupEvidence)}::jsonb` }),
-  });
-  const failure = {
-    ...original.failure,
-    assessment: {
-      ...ref,
-      submission_id: 'damaged_sub',
-      revision_id: 'damaged_rev',
-      evaluation_group_id: 'damaged_group',
-    },
-  };
-  return (await readNativeMistakeEvidence(db, [failure])).get(failure.attempt_event_id);
+  return {
+    material_id: `material_${fixture.kind}`,
+    kind: fixture.kind,
+    asset: { asset_id, digest: `sha256:${sha256}` },
+    caption: `冻结${fixture.kind}标题`,
+    alt_text: '保持原有换行\n与公开替代说明 $v+c=18$。',
+  } satisfies SharedMaterialT;
 }
 
 describe('native mistake immutable evidence DB projection', () => {
   beforeEach(resetDb);
-  afterEach(() => vi.restoreAllMocks());
-
-  it('P1 preserves all_units images when the frozen basis has only a group-evidence unit through GET and readMistakes', async () => {
-    const db = testDb();
-    const fixture = await publication(db, [OPEN, TEXT], [], () => ({
-      units: [GROUP_UNIT],
-      aggregation: { kind: 'sum' },
-      blank_scores_zero: true,
-    }));
-    const image = await handwritingFixture(db);
-    await attempt(db, { anchor: 'p1', images: [image] });
-    const events = await db.select().from(event);
-    const submissions = await db.select().from(assessment_submission);
-    const calls = fixture.execute.mock.calls.length;
-    const response = await GET(new Request('http://localhost/api/mistakes'));
-    expect(response.status).toBe(200);
-    const wire = MistakeListResponseSchema.parse(await response.json());
-    expect(wire.rows).toHaveLength(1);
-    expect(wire.rows[0]).toMatchObject({
-      question_id: 'p1',
-      reference_md: null,
-      wrong_answer_image_refs: [image.evidence.asset.asset_id],
-      wrong_answer_md: expect.stringContaining('原答一'),
-    });
-    expect((await readMistakes(db)).rows).toEqual(wire.rows);
-    expect(await db.select().from(event)).toEqual(events);
-    expect(await db.select().from(assessment_submission)).toEqual(submissions);
-    expect(fixture.execute).toHaveBeenCalledTimes(calls);
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.unstubAllEnvs();
   });
 
-  it.each(['only', 'mixed'])(
-    'P1 preserves unit-targeted group-only images in a %s basis through GET and readMistakes',
-    async (basisKind) => {
-      const db = testDb();
-      await publication(db, [OPEN, TEXT], [], (basis) => ({
-        ...basis,
-        units: basisKind === 'only' ? [GROUP_UNIT] : [...basis.units, GROUP_UNIT],
-      }));
-      const targeted = await handwritingFixture(db);
-      const all = await handwritingFixture(db);
-      const unrelated = await handwritingFixture(db);
-      const unissued = await handwritingFixture(db);
-      await attempt(db, {
-        anchor: 'p1',
-        images: [
-          { ...targeted, target: { scope: 'units', scoring_unit_ids: ['u_group'] } },
-          all,
-          ...(basisKind === 'mixed'
-            ? [
-                {
-                  ...unrelated,
-                  target: { scope: 'units', scoring_unit_ids: ['u_s2'] },
-                } satisfies GroupEvidenceT,
-                {
-                  ...unissued,
-                  target: { scope: 'units', scoring_unit_ids: ['u_s3'] },
-                } satisfies GroupEvidenceT,
-              ]
-            : []),
-        ],
-      });
-      const response = await GET(new Request('http://localhost/api/mistakes'));
-      expect(response.status).toBe(200);
-      const wire = MistakeListResponseSchema.parse(await response.json());
-      expect(wire.rows).toHaveLength(1);
-      expect(wire.rows[0].wrong_answer_image_refs).toEqual([
-        targeted.evidence.asset.asset_id,
-        all.evidence.asset.asset_id,
-      ]);
-      expect((await readMistakes(db)).rows).toEqual(wire.rows);
-    },
-  );
-
-  it('P1 excludes a cross-part unit when only one member part was actually issued', async () => {
+  it('isolates selected failed faces, unissued parts and all existing private material namespaces', async () => {
     const db = testDb();
-    await publication(db, [OPEN, TEXT], [], (basis) => ({
-      ...basis,
-      units: [
-        ...basis.units,
-        { ...basis.units[0], scoring_unit_id: 'u_cross', slot_refs: ['s1', 's2'] },
-      ],
-    }));
-    const own = await handwritingFixture(db);
-    const cross = await handwritingFixture(db);
-    await attempt(db, {
-      anchor: 'p1',
-      partIds: ['p1'],
-      entries: [OPEN_ENTRY],
-      images: [own, { ...cross, target: { scope: 'units', scoring_unit_ids: ['u_cross'] } }],
+    const materials: SharedMaterialT[] = [
+      {
+        material_id: 'p1_only',
+        kind: 'plaintext',
+        asset: { asset_id: 'txt_p1', digest: 'one' },
+        content_md: 'P1_PUBLIC',
+      },
+      {
+        material_id: 'p2_only',
+        kind: 'table',
+        asset: { asset_id: 'txt_p2', digest: 'two' },
+        content_md: 'P2_PUBLIC',
+      },
+      {
+        material_id: 'p3_only',
+        kind: 'passage',
+        asset: { asset_id: 'txt_p3', digest: 'three' },
+        content_md: 'UNISSUED',
+      },
+      {
+        material_id: 'explicit_private',
+        kind: 'audio',
+        asset: { asset_id: 'custom_private', digest: 'private' },
+        visibility: 'private',
+        caption: 'PRIVATE_CAPTION',
+        alt_text: 'PRIVATE_ALT',
+        content_md: 'PRIVATE_BYTES',
+      },
+      {
+        material_id: 'solution',
+        kind: 'plaintext',
+        asset: { asset_id: 'sol_0123456789ab', digest: 'solution' },
+        visibility: 'public',
+        content_md: 'SECRET_SOLUTION',
+      },
+    ];
+    await publication(db, [OPEN, TEXT], materials, undefined, {
+      p1: ['p1_only', 'explicit_private', 'solution'],
+      p2: ['p2_only'],
+      p3: ['p3_only'],
     });
-    const response = await GET(new Request('http://localhost/api/mistakes'));
-    expect(response.status).toBe(200);
-    const wire = MistakeListResponseSchema.parse(await response.json());
-    expect(wire.rows).toHaveLength(1);
-    expect(wire.rows[0].wrong_answer_image_refs).toEqual([own.evidence.asset.asset_id]);
-    expect((await readMistakes(db)).rows).toEqual(wire.rows);
+    await attempt(db, { anchor: 'p1', key: 'first' });
+    await attempt(db, { anchor: 'root', key: 'group' });
+    await attempt(db, { anchor: 'p2', partIds: ['p2'], entries: [TEXT_ENTRY], key: 'second' });
+    const cards = await publicMaterialRead(db);
+    const ids = (questionId: string) =>
+      cards
+        .find((card) => card.question_id === questionId)
+        ?.prompt_materials.map((material) => material.material_id);
+    // Normalized public parent material is shared by all issued parts.
+    expect(ids('p1')).toContain('p1_only');
+    expect(ids('p1')).not.toContain('p2_only');
+    expect(ids('p2')).toContain('p2_only');
+    expect(ids('p2')).not.toContain('p1_only');
+    expect(ids('root')).toEqual(expect.arrayContaining(['p1_only', 'p2_only']));
+    expect(JSON.stringify(cards)).not.toMatch(
+      /UNISSUED|PRIVATE|SECRET|explicit_private|custom_private|sol_0123456789ab|rub_123456789abc/,
+    );
   });
 
-  const jointAggregations: ScoringBasisT['aggregation'][] = [
-    { kind: 'sum' },
-    { kind: 'capped_sum', cap: 2 },
-    {
-      kind: 'threshold_levels',
-      thresholds: [
-        { level_id: 'fail', min_points: 0 },
-        { level_id: 'pass', min_points: 2 },
-      ],
-    },
-  ];
-  it.each(jointAggregations)(
-    'P1 retains cross-part and own-unit images for valid joint $kind scoring through GET and readMistakes',
-    async (aggregation) => {
-      const db = testDb();
-      const fixture = await publication(db, [OPEN, TEXT], [], (basis) => ({
-        ...basis,
-        aggregation,
-        units: [
-          ...basis.units.filter(
-            (unit) => aggregation.kind === 'sum' || unit.scoring_unit_id !== 'u_s3',
-          ),
-          {
-            ...basis.units[0],
-            scoring_unit_id: 'u_cross',
-            slot_refs: ['s1', 's2'],
-            evidence_slot_refs: ['s1'],
-            requires_group_evidence: true,
-          },
-        ],
-      }));
-      const images = [];
-      for (const partId of ['p1', 'p2']) {
-        const own = await handwritingFixture(db);
-        const cross = await handwritingFixture(db);
-        const all = await handwritingFixture(db);
-        const unrelated = await handwritingFixture(db);
-        const unissued = aggregation.kind === 'sum' ? await handwritingFixture(db) : null;
-        images.push({ partId, own, cross, all, unrelated, unissued });
-      }
-      const joint = await jointAttempt(
-        db,
-        images.map(({ partId, own, cross, all, unrelated, unissued }) => [
-          {
-            ...own,
-            target: { scope: 'units', scoring_unit_ids: [partId === 'p1' ? 'u_s1' : 'u_s2'] },
-          },
-          { ...cross, target: { scope: 'units', scoring_unit_ids: ['u_cross'] } },
-          all,
-          {
-            ...unrelated,
-            target: { scope: 'units', scoring_unit_ids: [partId === 'p1' ? 'u_s2' : 'u_s1'] },
-          },
-          ...(unissued
-            ? [
-                {
-                  ...unissued,
-                  target: { scope: 'units', scoring_unit_ids: ['u_s3'] },
-                } satisfies GroupEvidenceT,
-              ]
-            : []),
-        ]),
-      );
-      expect(joint.candidate.record.provenance?.input_snapshot).toMatchObject({
-        member_submission_ids: expect.arrayContaining(
-          joint.submissions.map((sub) => sub.submission_id),
-        ),
-        issued_part_ids: ['p1', 'p2'],
-      });
-      expect(
-        joint.candidate.record.unit_results.find((unit) => unit.scoring_unit_id === 'u_cross'),
-      ).toMatchObject({ status: 'scored', points_awarded: 0 });
-      const events = await db.select().from(event);
-      const originals = await db.select().from(assessment_submission);
-      const calls = fixture.execute.mock.calls.length;
-      const response = await GET(new Request('http://localhost/api/mistakes'));
-      expect(response.status).toBe(200);
-      const wire = MistakeListResponseSchema.parse(await response.json());
-      expect(wire.rows).toHaveLength(2);
-      for (const { partId, own, cross, all } of images) {
-        const card = wire.rows.find((card) => card.question_id === partId);
-        expect(card?.wrong_answer_image_refs).toEqual([
-          own.evidence.asset.asset_id,
-          cross.evidence.asset.asset_id,
-          all.evidence.asset.asset_id,
-        ]);
-        expect(card?.reference_md).toBeNull();
-        expect(card?.wrong_answer_md).toContain(partId === 'p1' ? '原答一' : '原答二');
-        expect(card?.wrong_answer_md).not.toContain(partId === 'p1' ? '原答二' : '原答一');
-        const filtered = await readMistakes(db, { question_id: partId });
-        expect(filtered.rows).toEqual([card]);
-      }
-      expect((await readMistakes(db)).rows).toEqual(wire.rows);
-      expect(await db.select().from(event)).toEqual(events);
-      expect(await db.select().from(assessment_submission)).toEqual(originals);
-      expect(fixture.execute).toHaveBeenCalledTimes(calls);
-    },
-  );
+  it('rejects unauthenticated material reads before exposing frozen content', async () => {
+    const db = testDb();
+    const material = await binaryMaterial(db, materialKinds[0]);
+    await publication(db, [OPEN, TEXT], [material]);
+    await attempt(db, { anchor: 'p1' });
+    vi.stubEnv('INTERNAL_TOKEN', 'synthetic-material-test-token');
+    const app = buildHonoApp([ingestionCapability], {
+      epochGate: async () => ({ runnable: true }),
+    });
+    for (const headers of [new Headers(), new Headers({ 'x-internal-token': 'wrong-token' })]) {
+      const response = await app.request('/api/mistakes', { headers });
+      expect(response.status).toBe(401);
+      expect(await response.json()).toEqual({ error: 'unauthorized' });
+    }
+    expect((await publicMaterialRead(db))[0].prompt_materials).toContainEqual(
+      expect.objectContaining({ availability: 'available' }),
+    );
+  });
 
   it('reads multipart parent materials and issued boundaries, remains stable after mutable edits, and hides private reference content', async () => {
     const db = testDb();
@@ -641,24 +467,6 @@ describe('native mistake immutable evidence DB projection', () => {
     expect(projected.prompt_md).toContain('冻结子题p1');
     expect(projected.prompt_md).not.toContain('冻结子题p2');
     expect(projected.wrong_answer_md).not.toContain('另一部分');
-  });
-
-  it('keeps different submissions in the same joint evaluation group separate', async () => {
-    const db = testDb();
-    await publication(db);
-    const images = [await handwritingFixture(db), await handwritingFixture(db)];
-    await jointAttempt(
-      db,
-      images.map((image) => [image]),
-    );
-    const projected = (await readMistakes(db)).rows;
-    expect(projected).toHaveLength(2);
-    for (const [index, partId] of ['p1', 'p2'].entries()) {
-      const card = projected.find((card) => card.question_id === partId);
-      expect(card?.wrong_answer_image_refs).toEqual([images[index].evidence.asset.asset_id]);
-      expect(card?.wrong_answer_md).toContain(index === 0 ? '原答一' : '原答二');
-      expect(card?.wrong_answer_md).not.toContain(index === 0 ? '原答二' : '原答一');
-    }
   });
 
   const cases: { name: string; slot: ResponseSlotT; entry: SlotResponseT; expected: string }[] = [
@@ -758,348 +566,4 @@ describe('native mistake immutable evidence DB projection', () => {
     },
     { name: 'open', slot: OPEN, entry: OPEN_ENTRY, expected: '原答一：列式与单位' },
   ];
-  it.each(cases)('renders $name from real frozen responses', async ({ slot, entry, expected }) => {
-    const db = testDb();
-    await publication(db, [slot, TEXT]);
-    await attempt(db, {
-      anchor: 'p1',
-      entries: [entry, TEXT_ENTRY],
-      order:
-        slot.kind === 'single_choice' || slot.kind === 'multi_choice'
-          ? { s1: ['ob', 'oa'] }
-          : undefined,
-    });
-    const card = await row(db);
-    expect(card.wrong_answer_md).toContain(expected);
-    if (slot.kind === 'single_choice' || slot.kind === 'multi_choice')
-      expect(card.prompt_md.indexOf('[ob]')).toBeLessThan(card.prompt_md.indexOf('[oa]'));
-  });
-
-  it('preserves table cell coordinates, multiple slots and the 200 character summary limit', async () => {
-    const db = testDb();
-    const slots: ResponseSlotT[] = [
-      {
-        slot_id: 'table',
-        part_id: 'p1',
-        kind: 'table',
-        column_headers: ['船速', '水速'],
-        row_labels: ['方程'],
-        cells: [
-          { row: 0, col: 0, slot_id: 's1' },
-          { row: 0, col: 1, slot_id: 'cell2' },
-        ],
-      },
-      { slot_id: 's1', part_id: 'p1', kind: 'numeric' },
-      { slot_id: 'cell2', part_id: 'p1', kind: 'text', math_preview: false },
-      TEXT,
-    ];
-    await publication(db, slots);
-    await attempt(db, {
-      anchor: 'p1',
-      entries: [
-        { slot_id: 's1', kind: 'numeric', value: 15 },
-        { slot_id: 'cell2', kind: 'text', text_md: '边界与长文本'.repeat(60) },
-        TEXT_ENTRY,
-      ],
-    });
-    const card = await row(db);
-    expect(card.prompt_md).toContain('方程 / 船速 [s1]');
-    expect(card.wrong_answer_md).toContain('[p1/s1] 15');
-    expect(card.wrong_answer_md).toContain('[p1/cell2]');
-    expect(card.wrong_answer_md).toHaveLength(200);
-  });
-
-  it.each(['digest', 'mime', 'kind', 'size', 'time', 'missing'])(
-    'fails closed for %s image assets without losing text or other valid evidence',
-    async (kind) => {
-      const db = testDb();
-      await publication(db);
-      const good = await handwritingFixture(db);
-      const bad = await handwritingFixture(db);
-      await attempt(db, { images: [good, bad] });
-      if (kind === 'missing')
-        await db.delete(source_asset).where(eq(source_asset.id, bad.evidence.asset.asset_id));
-      else
-        await db
-          .update(source_asset)
-          .set(
-            kind === 'digest'
-              ? { sha256: 'f'.repeat(64) }
-              : kind === 'mime'
-                ? { mime_type: 'image/jpeg' }
-                : kind === 'kind'
-                  ? { kind: 'pdf' }
-                  : kind === 'size'
-                    ? { byte_size: 121 }
-                    : { created_at: new Date(0) },
-          )
-          .where(eq(source_asset.id, bad.evidence.asset.asset_id));
-      const card = await row(db);
-      expect(card.wrong_answer_image_refs).toEqual([good.evidence.asset.asset_id]);
-      expect(card.wrong_answer_md).toContain('原答一');
-    },
-  );
-
-  it('distinguishes explicit blank from missing response evidence', async () => {
-    const db = testDb();
-    await publication(db);
-    const original = await attempt(db);
-    const blank = await cloneEvidence(db, original, {
-      submission: {
-        response_set: { entries: [{ slot_id: 's1', kind: 'open', text_md: '', evidence: [] }] },
-      },
-    });
-    expect(blank?.wrong_answer_md).toBe('[p1/s1] （空白作答）\n[p2/s2] （未记录作答）');
-  });
-
-  it('preserves unparsed numeric original evidence without replacing it with a number or blank', async () => {
-    const db = testDb();
-    await publication(db, [{ slot_id: 's1', part_id: 'p1', kind: 'numeric' }, TEXT]);
-    const original = await attempt(db, {
-      entries: [{ slot_id: 's1', kind: 'numeric', value: 15 }, TEXT_ENTRY],
-    });
-    const card = await cloneEvidence(db, original, {
-      submission: {
-        response_set: {
-          entries: [
-            { slot_id: 's1', kind: 'numeric', value: null, raw_input: '15 ? km/h' },
-            TEXT_ENTRY,
-          ],
-        },
-      },
-    });
-    expect(card?.wrong_answer_md).toContain('[p1/s1] 15 ? km/h');
-    expect(card?.wrong_answer_md).not.toContain('空白');
-  });
-
-  it('retains valid slots when another response has unknown identities', async () => {
-    const db = testDb();
-    await publication(db);
-    const original = await attempt(db);
-    const card = await cloneEvidence(db, original, {
-      submission: {
-        response_set: {
-          entries: [OPEN_ENTRY, { slot_id: 's2', kind: 'choice', option_ids: ['unknown'] }],
-        },
-      },
-    });
-    expect(card?.wrong_answer_md).toBe('[p1/s1] 原答一：列式与单位\n[p2/s2] （作答证据损坏）');
-  });
-
-  it.each(['unknown_part', 'wrong_revision', 'material_digest', 'corrupt_structure'])(
-    'keeps the record but exposes no fabricated evidence for %s',
-    async (kind) => {
-      const db = testDb();
-      await publication(db);
-      const original = await attempt(db);
-      const card = await cloneEvidence(
-        db,
-        original,
-        kind === 'unknown_part'
-          ? { issuance: { part_ids: ['unknown'] } }
-          : kind === 'wrong_revision'
-            ? {
-                issuance: { revision_id: original.issued.issuance.binding.revision_id },
-                submission: { revision_id: original.issued.issuance.binding.revision_id },
-              }
-            : kind === 'material_digest'
-              ? {
-                  issuance: {
-                    material_bindings: original.issued.issuance.binding.material_bindings.map(
-                      (binding) => ({ ...binding, asset_digest: 'wrong' }),
-                    ),
-                  },
-                }
-              : { revision: { structure: { group_id: 'root', materials: [], parts: [] } } },
-      );
-      expect(card).toEqual({
-        prompt_md: '',
-        reference_md: null,
-        wrong_answer_md: '',
-        wrong_answer_image_refs: [],
-      });
-    },
-  );
-
-  it('preserves independent group images when response JSON is damaged', async () => {
-    const db = testDb();
-    await publication(db);
-    const image = await handwritingFixture(db);
-    const original = await attempt(db, { images: [image] });
-    const card = await cloneEvidence(db, original, {
-      rawResponses: { entries: [{ slot_id: 's1', kind: 'open', text_md: 42, evidence: [] }] },
-    });
-    expect(card?.prompt_md).toContain(stem);
-    expect(card?.wrong_answer_md).toBe('（作答证据损坏）');
-    expect(card?.wrong_answer_image_refs).toEqual([image.evidence.asset.asset_id]);
-  });
-
-  it('rejects damaged or unknown group targets while preserving valid independent evidence', async () => {
-    const db = testDb();
-    await publication(db);
-    const good = await handwritingFixture(db);
-    const bad = await handwritingFixture(db);
-    const original = await attempt(db);
-    const card = await cloneEvidence(db, original, {
-      rawGroupEvidence: [
-        null,
-        { ...bad, target: { scope: 'units', scoring_unit_ids: ['u_s1', 'unknown'] } },
-        good,
-      ],
-    });
-    expect(card?.wrong_answer_image_refs).toEqual([good.evidence.asset.asset_id]);
-    expect(card?.wrong_answer_md).toContain('原答一');
-  });
-
-  it('projects the page through a real read-only database transaction', async () => {
-    const db = testDb();
-    await publication(db);
-    const image = await handwritingFixture(db);
-    const original = await attempt(db, { images: [image] });
-    const projected = await db.transaction(async (tx) => {
-      await tx.execute(sql`SET TRANSACTION READ ONLY`);
-      return readNativeMistakeEvidence(tx, [original.failure]);
-    });
-    expect(projected.get(original.failure.attempt_event_id)?.wrong_answer_image_refs).toEqual([
-      image.evidence.asset.asset_id,
-    ]);
-  });
-
-  it('handles absent submissions and bad anchors without falling back to mutable questions', async () => {
-    const db = testDb();
-    await publication(db);
-    const original = await attempt(db);
-    const ref = original.failure.assessment;
-    if (!ref) throw new Error('assessment required');
-    for (const failure of [
-      { ...original.failure, question_id: 'p3' },
-      { ...original.failure, assessment: { ...ref, submission_id: 'absent' } },
-      { ...original.failure, assessment: { ...ref, evaluation_group_id: 'other' } },
-    ]) {
-      expect(
-        (await readNativeMistakeEvidence(db, [failure])).get(failure.attempt_event_id),
-      ).toEqual({
-        prompt_md: '',
-        reference_md: null,
-        wrong_answer_md: '',
-        wrong_answer_image_refs: [],
-      });
-    }
-  });
-
-  it('preserves public frozen figure descriptions without placing question images in answer image refs', async () => {
-    const db = testDb();
-    const picture = await handwritingFixture(db);
-    await publication(
-      db,
-      [OPEN, TEXT],
-      [
-        {
-          material_id: 'fig',
-          kind: 'figure',
-          visibility: 'public',
-          asset: picture.evidence.asset,
-          caption: '冻结图表',
-          alt_text: '横轴时间，纵轴速度',
-        },
-      ],
-    );
-    await attempt(db, { anchor: 'p1' });
-    const card = await row(db);
-    expect(card.prompt_md).toContain('冻结图表');
-    expect(card.prompt_md).toContain('横轴时间，纵轴速度');
-    expect(card.wrong_answer_image_refs).toEqual([]);
-  });
-
-  it('keeps non-image open attachments as labelled response evidence and excludes them from image refs', async () => {
-    const db = testDb();
-    await publication(db);
-    const original = await handwritingFixture(db);
-    const audio = { ...original.evidence, kind: 'audio' as const, mime_type: 'audio/wav' };
-    await db
-      .update(source_asset)
-      .set({ kind: 'audio', mime_type: 'audio/wav' })
-      .where(eq(source_asset.id, audio.asset.asset_id));
-    await attempt(db, {
-      anchor: 'p1',
-      entries: [{ slot_id: 's1', kind: 'open', text_md: '', evidence: [audio] }, TEXT_ENTRY],
-    });
-    const card = await row(db);
-    expect(card.wrong_answer_md).toContain(`（附件 audio [${audio.evidence_id}]）`);
-    expect(card.wrong_answer_image_refs).toEqual([]);
-  });
-
-  it('does not expose a pending effective evaluation as a wrong answer', async () => {
-    const db = testDb();
-    await publication(db);
-    const original = await attempt(db);
-    const ref = original.failure.assessment;
-    if (!ref) throw new Error('assessment required');
-    const [head] = await db
-      .select()
-      .from(evaluation_effective_head)
-      .where(eq(evaluation_effective_head.evaluation_group_id, ref.evaluation_group_id));
-    const candidate = await evaluationService.evaluateSubmission(db, {
-      submission_id: ref.submission_id,
-      evaluation_group_id: ref.evaluation_group_id,
-      evaluation_key: 'pending-rejudge',
-      mode: 'manual_assert',
-      provenance: { source: 'manual', assisted: false },
-      asserted_unit_results: ['u_s1', 'u_s2'].map((scoring_unit_id) => ({
-        status: 'pending',
-        scoring_unit_id,
-        pending: { reason: 'unjudgeable', detail: '保留未决' },
-      })),
-    });
-    await evaluationService.activateSubmissionCandidate(
-      db,
-      {
-        evaluation_id: candidate.record.evaluation_id,
-        expected_effective_id: head.effective_evaluation_id,
-        expected_generation: head.generation,
-      },
-      { actorRef: 'test:pending' },
-    );
-    expect((await readMistakes(db)).rows).toHaveLength(0);
-  });
-
-  it('keeps native rejudge and retraction filtering in the existing reader', async () => {
-    const db = testDb();
-    await publication(db);
-    const original = await attempt(db);
-    expect((await readMistakes(db)).rows).toHaveLength(1);
-    await correctPaperFixture(db, original.failure.attempt_event_id, 1);
-    expect((await readMistakes(db)).rows).toHaveLength(0);
-    await correctPaperFixture(db, original.failure.attempt_event_id, 0);
-    expect((await readMistakes(db)).rows).toHaveLength(1);
-    await writeEvent(db, {
-      id: 'native-retraction',
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'correct',
-      subject_kind: 'event',
-      subject_id: original.failure.attempt_event_id,
-      outcome: 'success',
-      payload: {
-        correction_kind: 'retract',
-        reason_md: '撤回原件',
-        affected_refs: [{ kind: 'question', id: 'root' }],
-      },
-      created_at: new Date(),
-    });
-    expect((await readMistakes(db)).rows).toHaveLength(0);
-  });
-
-  it('propagates database errors instead of turning infrastructure failure into absent evidence', async () => {
-    const db = testDb();
-    await publication(db);
-    const original = await attempt(db);
-    await expect(
-      db.transaction(async (tx) => {
-        await tx.execute(sql`SET LOCAL statement_timeout = '1ms'`);
-        await expect(tx.execute(sql`SELECT pg_sleep(0.05)`)).rejects.toThrow();
-        await expect(readNativeMistakeEvidence(tx, [original.failure])).rejects.toThrow();
-      }),
-    ).rejects.toThrow();
-  });
 });
