@@ -661,7 +661,7 @@ async function settleStoppedWaiter(
                    reason === 'cancelled'
                      ? 'caller_aborted_while_waiting'
                      : 'caller_wait_deadline_elapsed'
-}
+                 }
            WHERE task_run_id = ${input.taskRunId}
              AND lane_id = ${input.plan.laneId}
              AND policy_fingerprint = ${input.plan.policy.fingerprint}
