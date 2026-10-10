@@ -1,0 +1,33 @@
+{
+  "sourceBase": "7472f4395",
+  "matchedInputs": 14,
+  "reportSha256": "ed1a3fb86604670530e47149a6d19ccbac003ca70f95d5a2d7343ba450be5524",
+  "status": "Parent source adjudication only; no DBOS restoration or runtime PASS",
+  "corrections": [
+    {
+      "finding": "Disjoint session IDs do not isolate sweeps; admitTick selects every started/paused review with started_at < scheduledAt - 6h. Unknown remaining sessions would be selected by a later sweep.",
+      "source": "src/server/durable/review-orphan-family.ts:130",
+      "resolution": "Run complete group first (started Oct06T12:00:00.123456Z, scheduled Oct07T00Z), unknown second (started Oct08T12:00:00.123456Z, scheduled Oct09T00Z), pending last (started Oct07T12:00:00.123456Z, scheduled Oct08T00Z). Record exact candidates; pending cutoff Oct07T18Z excludes unknown group. Each actual workflow receives its explicit TLP_REVIEW_SCHEDULED_AT."
+    },
+    {
+      "finding": "checkpoint-saved occurs after the complete runStep sweep; it only proves terminalization without reapplying saved work, not completion of outstanding effects.",
+      "source": "src/server/durable/review-orphan-worker.ts:23",
+      "resolution": "Minimum three-workflow drill pauses pending at first row-committed, then real phase transition to draining-dbos, waits ACK, SIGKILL. Before backup require one receipt/event and three frozen candidates for pending. After restored host reopen require three unique receipts/events, with the first byte-identical and exactly two new effects. Completed workflow supplies real saved DBOS step evidence. Unknown ERROR and two missing receipts remain unchanged. A separate checkpoint-saved variant is optional extra coverage, not a substitute."
+    }
+  ],
+  "unchangedRequirements": [
+    "No fabricated DBOS statuses or receipts",
+    "No source restart after final pending kill",
+    "Pause schedule through real draining-dbos transition before final stop",
+    "Source and restored full inventory/content/sequence parity before any host launch",
+    "Restore helper fixed artifact and compatible worker hashes pinned",
+    "Worker reconnect only to restored loopback test_fork database; exact source-after unchanged",
+    "No manual ERROR retry/resume/disposition",
+    "Actual provider and unmerged judge remain separate gates"
+  ],
+  "researchArchive": {
+    "path": "2026-10-09-yuk1359-restore-acceptance-research.json.gz",
+    "sha256": "96d1071f9686a4353046d2829046b8d313019d3824eec89fb795305baf42346c",
+    "bytes": 7251
+  }
+}

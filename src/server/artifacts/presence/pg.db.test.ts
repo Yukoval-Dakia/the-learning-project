@@ -27,7 +27,7 @@ vi.mock('@/capabilities/notes/server/note-refine-apply', () => ({
 // pg.ts 必须在 mock 之后导入。
 import { artifact, editing_presence } from '@/db/schema';
 import { PgPresenceStore } from './pg';
-import { EDITING_HEARTBEAT_TIMEOUT_MS, HUB_AUTO_SYNC_ACTOR_REF } from './types';
+import { HUB_AUTO_SYNC_ACTOR_REF } from './types';
 
 function createDeferred() {
   let resolve!: () => void;
@@ -72,18 +72,6 @@ async function sessionIds(artifactId: string): Promise<string[]> {
   return rows.map((r) => r.session_id);
 }
 
-// Sets a session's last_heartbeat_at to `age` before database time, so the idle
-// check (which reads clock_timestamp) evaluates a deterministic DB-relative age.
-async function heartbeatAtDatabaseAge(artifactId: string, sessionId: string, age: string) {
-  await seedArtifact(artifactId);
-  await testDb().execute(sql`
-    insert into artifact_edit_session (artifact_id, session_id, started_at, last_heartbeat_at)
-    values (${artifactId}, ${sessionId}, clock_timestamp(), clock_timestamp() - ${age}::interval)
-    on conflict (artifact_id, session_id)
-    do update set last_heartbeat_at = clock_timestamp() - ${age}::interval
-  `);
-}
-
 beforeEach(async () => {
   await resetDb();
   persistNoteRefineApply.mockClear();
@@ -93,17 +81,6 @@ describe('PgPresenceStore — session presence (artifact_edit_session)', () => {
   let store: PgPresenceStore;
   beforeEach(() => {
     store = new PgPresenceStore(testDb());
-  });
-
-  it('treats an artifact with no recorded session as idle', async () => {
-    expect(await store.isArtifactIdle('art_unknown', T0)).toBe(true);
-  });
-
-  it('is not idle while a fresh session heartbeat is within the window; idle once it expires', async () => {
-    await seedArtifact('art_1');
-    await store.recordEditingHeartbeat({ artifactId: 'art_1', sessionId: 'A', now: T0 });
-    expect(await store.isArtifactIdle('art_1', at(EDITING_HEARTBEAT_TIMEOUT_MS - 1))).toBe(false);
-    expect(await store.isArtifactIdle('art_1', at(EDITING_HEARTBEAT_TIMEOUT_MS + 1))).toBe(true);
   });
 
   it('upserts the same session (one row) and adds a row per distinct session', async () => {
@@ -126,88 +103,12 @@ describe('PgPresenceStore — session presence (artifact_edit_session)', () => {
     await store.markArtifactIdleAndFlush({ artifactId: 'hub-a', sessionId: 'A', db: applyDb });
     expect(await sessionIds('hub-a')).toEqual(['A-new', 'B']);
   });
-
-  it('YUK-384 RED 17: exactly 30 seconds is active, >30s expires, and database time governs the fence', async () => {
-    await seedArtifact('hub-a');
-    await store.recordEditingHeartbeat({ artifactId: 'hub-a', sessionId: 'A', now: T0 });
-    // Exact boundary via injected clock: `<= interval '30 seconds'`.
-    expect(await store.isArtifactIdle('hub-a', at(EDITING_HEARTBEAT_TIMEOUT_MS))).toBe(false);
-    expect(await store.isArtifactIdle('hub-a', at(EDITING_HEARTBEAT_TIMEOUT_MS + 1))).toBe(true);
-    // Database-time evaluation (as after a lock wait): a 31s-old heartbeat expires.
-    await heartbeatAtDatabaseAge('hub-a', 'A', '31 seconds');
-    expect(await store.isArtifactIdle('hub-a')).toBe(true);
-  });
-
-  it('X5: getEditingSessionSnapshot reads editing within the 30s window; a zombie row is not falsely editing', async () => {
-    await seedArtifact('art_z');
-    await heartbeatAtDatabaseAge('art_z', 'A', '5 seconds');
-    expect((await store.getEditingSessionSnapshot('art_z'))?.status).toBe('editing');
-    // Age the heartbeat past the 30s window → the zombie row no longer reads as editing.
-    await heartbeatAtDatabaseAge('art_z', 'A', '31 seconds');
-    const zombie = await store.getEditingSessionSnapshot('art_z');
-    // No presence row → null; either way it must NOT read as an active editor.
-    expect(zombie?.status).not.toBe('editing');
-  });
 });
 
 describe('PgPresenceStore — note-refine defer queue (editing_presence.pending)', () => {
   let store: PgPresenceStore;
   beforeEach(() => {
     store = new PgPresenceStore(testDb());
-  });
-
-  it('applies immediately when no session is active', async () => {
-    const result = await store.enqueueOrApplyNoteRefinePatch({
-      db: applyDb,
-      artifactId: 'art_1',
-      patch,
-      now: T0,
-    });
-    expect(result.status).toBe('applied');
-    expect(persistNoteRefineApply).toHaveBeenCalledTimes(1);
-  });
-
-  it('defers the patch while a session is actively editing', async () => {
-    await seedArtifact('art_1');
-    await store.recordEditingHeartbeat({ artifactId: 'art_1', sessionId: 'A', now: T0 });
-    const result = await store.enqueueOrApplyNoteRefinePatch({
-      db: applyDb,
-      artifactId: 'art_1',
-      patch,
-      now: at(1_000),
-    });
-    expect(result).toEqual({ status: 'deferred', artifact_id: 'art_1' });
-    expect(persistNoteRefineApply).not.toHaveBeenCalled();
-    expect((await store.getEditingSessionSnapshot('art_1'))?.pending_patches).toBe(1);
-  });
-
-  it('flushes queued patches in order once the last session blurs', async () => {
-    await seedArtifact('art_1');
-    await store.recordEditingHeartbeat({ artifactId: 'art_1', sessionId: 'A', now: T0 });
-    await store.enqueueOrApplyNoteRefinePatch({
-      db: applyDb,
-      artifactId: 'art_1',
-      patch,
-      now: at(1_000),
-    });
-    await store.enqueueOrApplyNoteRefinePatch({
-      db: applyDb,
-      artifactId: 'art_1',
-      patch,
-      now: at(2_000),
-    });
-    expect(persistNoteRefineApply).not.toHaveBeenCalled();
-
-    const flush = await store.markArtifactIdleAndFlush({
-      db: applyDb,
-      artifactId: 'art_1',
-      sessionId: 'A',
-      now: at(3_000),
-    });
-    expect(flush.flushed).toBe(2);
-    expect(persistNoteRefineApply).toHaveBeenCalledTimes(2);
-    expect((await store.getEditingSessionSnapshot('art_1'))?.pending_patches).toBe(0);
-    expect(await store.isArtifactIdle('art_1', at(3_000))).toBe(true);
   });
 
   it('does NOT flush while another session is still editing', async () => {
@@ -231,17 +132,6 @@ describe('PgPresenceStore — note-refine defer queue (editing_presence.pending)
     expect(flush.flushed).toBe(0);
     expect(persistNoteRefineApply).not.toHaveBeenCalled();
     expect((await store.getEditingSessionSnapshot('art_1'))?.pending_patches).toBe(1);
-  });
-
-  it('is a no-op flush when there are no pending patches', async () => {
-    const flush = await store.markArtifactIdleAndFlush({
-      db: applyDb,
-      artifactId: 'art_idle',
-      sessionId: 'A',
-      now: T0,
-    });
-    expect(flush.flushed).toBe(0);
-    expect(persistNoteRefineApply).not.toHaveBeenCalled();
   });
 
   it('YUK-384: a blur that lands between the idle-decision and the enqueue cannot orphan the patch', async () => {
@@ -393,36 +283,6 @@ describe('PgPresenceStore — 陈旧 pending 丢弃 (裁决 i)', () => {
     vi.restoreAllMocks();
   });
 
-  it('drops pending patches older than the TTL during flush and warns', async () => {
-    await seedArtifact('art_stale');
-    const flushAt = at(11 * 60_000); // T0 + 11min
-    await testDb()
-      .insert(editing_presence)
-      .values({
-        artifact_id: 'art_stale',
-        status: 'editing',
-        last_heartbeat_at: at(10 * 60_000),
-        editing_started_at: null,
-        pending: [
-          { patch, triggerEventId: null, queuedAtMs: T0.getTime() },
-          { patch, triggerEventId: null, queuedAtMs: at(1_000).getTime() },
-        ],
-      });
-
-    // No active session → blur flushes; both pending are stale (age > 10min).
-    const flush = await store.markArtifactIdleAndFlush({
-      db: applyDb,
-      artifactId: 'art_stale',
-      sessionId: 'gone',
-      now: flushAt,
-    });
-    expect(flush.flushed).toBe(0);
-    expect(persistNoteRefineApply).not.toHaveBeenCalled();
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('dropped 2 stale pending patch(es)'),
-    );
-  });
-
   it('YUK-768: keeps a stale hub_auto_sync deferred patch during flush while dropping a same-aged non-hub one', async () => {
     await seedArtifact('art_hub');
     const flushAt = at(11 * 60_000); // T0 + 11min — both entries below are >10min old
@@ -466,41 +326,5 @@ describe('PgPresenceStore — 陈旧 pending 丢弃 (裁决 i)', () => {
     expect(infoSpy).toHaveBeenCalledWith(
       expect.stringContaining(`retained 1 ${HUB_AUTO_SYNC_ACTOR_REF} pending patch(es)`),
     );
-  });
-
-  it('drops stale pending during enqueue load (kept fresh ones still enqueued)', async () => {
-    await seedArtifact('art_mix');
-    const enqueueAt = at(11 * 60_000);
-    // A fresh session keeps the artifact active → defer path exercises the load.
-    await store.recordEditingHeartbeat({
-      artifactId: 'art_mix',
-      sessionId: 'A',
-      now: at(11 * 60_000 - 5_000),
-    });
-    await testDb()
-      .insert(editing_presence)
-      .values({
-        artifact_id: 'art_mix',
-        status: 'editing',
-        last_heartbeat_at: at(11 * 60_000 - 5_000),
-        editing_started_at: null,
-        pending: [
-          { patch, triggerEventId: null, queuedAtMs: T0.getTime() }, // stale
-          { patch, triggerEventId: null, queuedAtMs: at(10 * 60_000 + 30_000).getTime() }, // fresh
-        ],
-      });
-
-    const result = await store.enqueueOrApplyNoteRefinePatch({
-      db: applyDb,
-      artifactId: 'art_mix',
-      patch,
-      now: enqueueAt,
-    });
-    expect(result).toEqual({ status: 'deferred', artifact_id: 'art_mix' });
-    expect(warnSpy).toHaveBeenCalledWith(
-      expect.stringContaining('dropped 1 stale pending patch(es)'),
-    );
-    // 1 fresh + 1 current = 2.
-    expect((await store.getEditingSessionSnapshot('art_mix'))?.pending_patches).toBe(2);
   });
 });

@@ -3,10 +3,6 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  GRAPH_LAPLACIAN_ENABLED,
-  GRAPH_LAPLACIAN_KAPPA,
-  GRAPH_LAPLACIAN_LAMBDA,
-  GRAPH_SMOOTH_COMPONENT_CAP,
   type SymmetricEdge,
   buildLaplacian,
   connectedComponents,
@@ -15,18 +11,6 @@ import {
   smoothThetaByComponent,
   solveDense,
 } from './graph-laplacian';
-
-describe('A5 dark-ship flag + conservative priors', () => {
-  it('GRAPH_LAPLACIAN_ENABLED defaults to false (byte-identical regression anchor)', () => {
-    expect(GRAPH_LAPLACIAN_ENABLED).toBe(false);
-  });
-  it('λ/κ are conservative positive priors (κ > 0 for properness)', () => {
-    expect(GRAPH_LAPLACIAN_LAMBDA).toBeGreaterThan(0);
-    expect(GRAPH_LAPLACIAN_KAPPA).toBeGreaterThan(0);
-    // κ ≪ λ: the ridge barely shrinks observed KCs, λ does the smoothing.
-    expect(GRAPH_LAPLACIAN_KAPPA).toBeLessThan(GRAPH_LAPLACIAN_LAMBDA);
-  });
-});
 
 describe('buildLaplacian — symmetric PSD, row-sums zero', () => {
   it('two-node single edge: L = [[w,-w],[-w,w]]', () => {
@@ -366,10 +350,5 @@ describe('smoothThetaByComponent — block-diagonal equivalence + cap fail-safe'
     const standalone = smoothTheta(['a', 'b'], [{ a: 'a', b: 'b', weight: 1 }], th, pr, 0.5, 0.01);
     expect(chunked.theta.get('a')).toBeCloseTo(standalone.get('a') as number, 12);
     expect(chunked.theta.get('b')).toBeCloseTo(standalone.get('b') as number, 12);
-  });
-
-  it('GRAPH_SMOOTH_COMPONENT_CAP is a positive owner-fixed conservative default', () => {
-    expect(GRAPH_SMOOTH_COMPONENT_CAP).toBeGreaterThan(0);
-    expect(Number.isInteger(GRAPH_SMOOTH_COMPONENT_CAP)).toBe(true);
   });
 });

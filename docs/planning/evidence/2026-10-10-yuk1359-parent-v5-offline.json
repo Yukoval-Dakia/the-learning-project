@@ -1,0 +1,90 @@
+{
+  "scope": "Parent v5 offline acceptance before run10",
+  "at": "2026-10-09T18:22:54.290112+00:00",
+  "reports": {
+    "verify": {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/static-tmp/parent-acceptance/verify.json",
+      "sha256": "3231cb3b6aabe6a849c4a738b5d02dc680dce2beb63d5bb484311aa9fb6d678e",
+      "status": "V5 SOURCE/EVIDENCE/DEPENDENCY/PRESERVATION VERIFIED; RUNTIME UNRUN",
+      "attempts": {
+        "connections": 0,
+        "listeners": 0,
+        "children": 0
+      }
+    },
+    "postkill": {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/static-tmp/parent-acceptance/postkill.json",
+      "sha256": "e6865388c71782f1a7f653f24d701daf2c51f4a11932f9790958683096f4a156",
+      "status": "Offline post-exit settlement checks passed",
+      "attempts": {
+        "connections": 0,
+        "listeners": 0,
+        "children": 0
+      }
+    },
+    "protocol": {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/static-tmp/parent-acceptance/protocol.json",
+      "sha256": "98f026a3a73023c25489fd5b3fe3f6464de6966d8f261ee483acc62a9bd80a08",
+      "status": "OFFLINE PROTOCOL REPAIR CHECKS PASSED; RUNTIME UNRUN",
+      "attempts": {
+        "connections": 0,
+        "listeners": 0,
+        "children": 0
+      }
+    },
+    "source": {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/static-tmp/parent-acceptance/source.json",
+      "sha256": "1dcacd6a867f3720c38693c249bab729084b170f53ac0a72d08e695c7064eab3",
+      "status": "Offline lifecycle typecheck and fixed worker schema SQL verified",
+      "attempts": {
+        "connections": 0,
+        "listeners": 0,
+        "children": 0
+      }
+    },
+    "full558": {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/static-tmp/parent-acceptance/full558.json",
+      "sha256": "a6bdff187bc6b4ceb7ab85726ff9decb99b5b59b8fa207d8c38ae1a5d5ee1b3b",
+      "status": "PURE OFFLINE CHECKS ONLY; runs01\u201308 FAILED; fresh capture/restore/DBOS reopen UNRUN",
+      "attempts": {
+        "connections": 0,
+        "listeners": 0,
+        "children": 0
+      }
+    },
+    "diff": {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/static-tmp/parent-acceptance/diff.json",
+      "sha256": "2bd100eaa72848e3cfa135b37b897ac1678e0174673a368695450461501714fb",
+      "status": "Unified patch exactly reconstructs every changed text file",
+      "attempts": null
+    },
+    "original-causality": {
+      "path": "/tmp/yuk1359-dbos-restore-offline-prep-v5/static-tmp/parent-acceptance/original-causality.json",
+      "sha256": "a1ee70def8789961ca0d4972eb75cf70862b31569938cd3396fc4f402a45e1fa",
+      "status": "Offline diagnostic counterexample; no repair or runtime acceptance",
+      "attempts": {
+        "connections": 0,
+        "listeners": 0,
+        "children": 0
+      }
+    }
+  },
+  "inheritedChecks": 902,
+  "newGroups": 29,
+  "sourceFiles": 3015,
+  "evidenceFiles": 3053,
+  "sourceSeal": "d139fb16c1bc958dc4da5d8b2b9f6057178fbf03818fe4f3c485c49be15b7e68",
+  "evidenceSeal": "ff574b3448857e5042b95045b863dd9aa4dd7a5246b6c244df89fced43c3c5f5",
+  "runtimeClaim": false,
+  "dependencyFilesVerified": 121549,
+  "dependencySymlinksVerified": 3756,
+  "fixedWorkerRevision": "7472f4395f4a12a5167e33034d5d8af8bf695049",
+  "fixedHelperRevision": "b52e255f746ebbf6a4f2f44ae06e7d1b672a4fff",
+  "unchangedFromV4": {
+    "tools/lifecycle.ts": "45326619d002de645a663652274a9ee32dad76542c5fff895aa9313f149b11cf",
+    "artifacts/lifecycle.cjs": "32d1686bd77fe5a8a1708f55e3cea15156324caeb367bdd460e8c286ae8999d4",
+    "artifacts/worker.cjs": "4e2ec8ace103cf535c3472f2f2c4611438d8cfe5a6f14a1c65abe272674824a9",
+    "artifacts/helper-cli.mjs": "f257a7c86e88dc78e9fa54afedf3e669ba38f55ed4bf953ea54c8ce826d66606",
+    "artifacts/helper-pure.mjs": "92924b1ffa5d53d904f5b9053cfd3cd8a2698a96cdc526c81bb7eec9ff3d13d0"
+  }
+}

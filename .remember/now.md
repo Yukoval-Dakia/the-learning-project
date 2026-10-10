@@ -1,3 +1,88 @@
+# Run11 actual full restore and SAME retained target DBOS reopen PASSED
+
+Parent fixed worker7472/helperb52e; v6 logical column comparison correction independently accepted.1045 layered offlinechecks,3029source/3076evidence/121549deps/3756links matched. Real118migration freshsource3126274e:complete39902SUCCESS3/unknown39904ERROR1+2missing/pending39906SIGKILL+exactPGsettlement passed. Actualdumpa0930209 restored to b95be584/57325/test_fork_20261009190006 with4schemas123tables5sequences fullparityverified. Same-target inside/host/Docker witness, prelaunch seal, freshobserver then actualDBOSreopen passed:pending1→3exact2new effects/receipts,complete/unknownunchanged,unknownERROR+2gapsretained,source rawsealunchanged.
+
+Both ownedPG stoppedretained. Tokenb3cfc9b3 released2026-10-09T19:04:18.417981Z after original4ID/image/start/health/running/release matched;5796 notified. No ownruntime/lock/provider/paid/deploy. Never restart failedrun01–10. Parentdir/tmp/yuk1359-restore-reopen-parent11; fixedprep/tmp/yuk1359-dbos-restore-offline-prep-v6. Report docs/planning/2026-10-10-yuk1359-restore-parent-acceptance.md, evidence manifest attempt11.json and79file487866byte archive sha a99118ab180eaa4f450797845b5f55654dbc25afea26cc18b79a3bbd679cbe69. Source reviewR2at887012NONE doesnotcoverlaterarrayfix; parent194unit14DB+actualrestore do;noR3. Wholemigration/judge-specific/provideracceptance remainincomplete.
+
+No child writer. CI721 unit1 failed only env inventory (HOME/PATH/TMPDIR/LOOM_PG_IMAGE). Fix6fcaf139a adds optional declarations plus explicit/absent/empty tests. Parent inspected diff, matched8source/5logs and independently passed14tests across3files. Author typecheck/lint/build passed. Helper and audit bytes unchanged; no runtime rerun/R3. New candidate push/CI follows. Freshfetch main04232 unchanged/revcount0. Restore PR1628 https://github.com/Yukoval-Dakia/the-learning-project/pull/1628 opened Ready and T3linked; exactCIpending. Parent final194unit/typecheck/build/full lint(290existingwarnings)/10postbuildaudits all exit0 at /tmp/yuk1359-final-local-gates. Gate bindings versioned. Final docs-only PRnumber receipt push then T3watch exactCI. Source/runtimeproof remainsb52e/fc2956; noR3 orrepeatDB. Judge1625 branch/draft/gates remain separate; do notcrossbranchwrite. YUK1359 staysInProgress.
+
+# Run10 full restore parity passed; PREP prelaunch physical-column comparison failed
+
+Parent931 layered offline checks and complete seals passed before runtime. Fixed worker7472/helperb52e unchanged. Versioned report docs/planning/2026-10-10-yuk1359-v5-parent-acceptance.md and evidence/2026-10-10-yuk1359-parent-restore-attempt10.json.
+
+Source7361d71f on32790/test_fork_20261009182310:118 migrations, complete547 SUCCESS3 exit0, unknown672 genuine COMMIT outage ERROR1+2missing SIGTERM, pending884 SIGKILL+8known PG identities disappeared all passed. Actual capture exited0; dump54cc18f6. Actual restore0127ceec on49988/test_fork_20261009182841 exited0, verified content parity4schemas123tables5sequences. Actual target witness passed. PREP restored-inspect failed before workerlaunch:31 ordinal_position differences among1469columns (artifact19/knowledge11/completion_evidence1); same visible order/otherattributes and allothersealfields equal. Source beforetargetseal unchanged. Not a restored-reopenPASS.
+
+Both owned PGs stopped retained; original4ID/image/start/health/running/release unchanged. Token d916ad37 released2026-10-09T18:31:15.707871Z;5796 notified. No owned runtime/lock. Never restart run01–10. Parent /tmp/yuk1359-restore-reopen-parent10; fixed prep /tmp/yuk1359-dbos-restore-offline-prep-v5.
+
+Only active writer: node:delegated-task:command%3Amcp%3A6636c2a8-faa6-445b-bad3-e84032e9ac15%3Adelegate-task%3Ayuk1359-logical-column-parity-prep-repair-20261010-v1 (Codex gpt-6.1-sol xhigh). Owns new /tmp/yuk1359-dbos-restore-offline-prep-v6 and report only. Fix crossdatabase logical visible-column comparison in all consumers inclreopen; keep sameendpoint rawschema immutability, strict order/type/default/nullability/membership, wholecanonical helper gate and rawsnapshots. Offline realfailure regression+negative cases, frozenworker/helper/deps/history. No product/runtime/R3. Parent owns docs/tracker and later independentverification/newsource/lock. Judge1625 unchanged separate branch/draft/model/CI gates. Wholemigration incomplete.
+
+# Restore run09 failed after pending SIGKILL; owned source stopped and lock released
+
+Parent v4 proof: 558 inherited checks +43 protocol groups +299 split cases +2 source checks all passed; 3011 source/3053 evidence and all121549 dependency files/3756 links matched. Fixed worker7472/helperb52e unchanged. Full source/evidence seals and detailed report in docs/planning/2026-10-10-yuk1359-v4-parent-acceptance.md.
+
+Run09 /tmp/yuk1359-restore-reopen-parent09; prep /tmp/yuk1359-dbos-restore-offline-prep-v4. Source cfe49d747894ebc17474721f42678f5744f47b4b5db9903bb7046568b66fc35c, port32789/test_fork_20261009175628. 118 migrations/setup passed; complete70995 SUCCESS3 exit0; unknown70997 real identity-bound fault pair2/backend136/tx2 closed pairs1+2, rejected3–8 and passed ERROR1+2missing before/afterSIGTERM. Pending70999 row-committed/drainingACK thenSIGKILL. Immediate noOtherConnections saw postgres.js backend139 idle and failed. Later parent readonly17:59:03 clients0 and SUCCESS/ERROR/PENDING with3/1/1 receipts is additional observation, not acceptance or exact backend ownership proof. No capture/restore/reopen.
+
+All childPIDs absent/proxy58594 no listener, source stopped retained. Owner/token e9d70004-7e57-4757-9c45-f1df2918d5b3 released2026-10-09T17:59:06.566400Z after original4/running/release exactchecks;5796 notified. Versioned evidence docs/planning/evidence/2026-10-10-yuk1359-parent-restore-attempt09.json. No runtime resources/lock remain; never restart run01–09.
+
+Only writer: node:delegated-task:command%3Amcp%3A6636c2a8-faa6-445b-bad3-e84032e9ac15%3Adelegate-task%3Ayuk1359-postkill-db-settlement-prep-repair-20261010-v1, Codex gpt-6.1-sol xhigh. Scope new /tmp/yuk1359-dbos-restore-offline-prep-v5 existing driver settlement/offline/packaging only. Establish exact prekill PG identity census within sole-worker/empty-baseline/mutex interval, require actual OSexit, bounded read-only disappearance; reject unknown/new/reused identities, errors/deadline. No broad retry or relaxed finalzero, no PGbackend kill, no product/helper/worker/dependency/v4proxy changes, noR3. Parent docs only. On completion inspect actualdiff/artifacts, rerun offline then newsource under freshmutex. Judge1625 branch/draft gates remain separate; wholemigration incomplete. Prior run08 causal handoff remains versioned in commit c9ad8c386.
+
+# Restore run04 source setup passed; unknown-worker settlement failed
+
+Parent330offline/5634source/dependency and8509sealed evidence passed; one offline generatedreport overwritten by test command was explicitly rebound to parent output, originalseal failure preserved. Fullbinding docs/planning/evidence/2026-10-09-yuk1359-parent-prep-transaction-verification.json.
+
+Run04 sourcef448f524864a94dc9d16c85c8f2b3fa20ba43374cde69b9cc01beaf34d512cb8 port32784/test_fork_20261009142224:118migrations,source-setup snapshot/DBOS phaseACK passed. Completeworker70599 doneSUCCESS3receipts exit0. Unknownworker70603 realCOMMITfault/failureIPC,ERROR1receipt+2missing; prep awaited naturalexit1 for15s andfailed. ActualSIGTERM reaped,proxyclosed0sockets;source stoppedretained. Originalfixture migration.db.test.ts562-618 only requires healthy retryworkerexit1, notinitialfaultworker; no retry/resume allowed inrestoreprep. No pending/capture/restore/reopen PASS.
+
+Token c6eb3565 released14:25:21.819369Z, original4ID/image/start/health/running/release unchanged. No ownedrunningresources/lock. Parentdir/tmp/yuk1359-restore-reopen-parent04; allfailedruns01-04 mustneverrestart/retry.
+
+Unique T3task node:delegated-task:command%3Amcp%3A6636c2a8-faa6-445b-bad3-e84032e9ac15%3Adelegate-task%3Ayuk1359-prep-fault-worker-settlement-repair-20261009-v1 running Codexgpt6.1Solxhigh/test. Only/tmp existingprep writer; fix ownedfaultworker settlement preservingexactsignals/unknownstate and fullchain, repeatableoffline report output withoutselfinvalidatingseal; no product/helper/worker/dependency/runtime edits. Parentdocs only. Onterminalindependentlyverify thenfreshsource+lock. Judge1625draftwatch unchanged, noR3.
+
+# Restore run04 active under c6eb3565
+
+Sole prep writer completed/noPending. Parent actual330offline exit0. Parent source/artifacts5634/dependencies121549/oldfailures unchanged;8509sealed evidence match. Existing offline-check overwrote one generated report; original seal check failed as expected, parent preserved report and narrow exact generated-output binding separately, no source/worker/helper exemption. docs/planning/evidence/2026-10-09-yuk1359-parent-prep-transaction-verification.json.
+
+14:22:00.722127Z actualmutex acquired owner7631/YUK1359 tokenc6eb3565-d6b9-4413-b0f1-3a86711943cd; Start5796 notified. Parent /tmp/yuk1359-restore-reopen-parent04, inputs prep/parent-inputs/run04; newsource provisioning underway. Fixedworker7472/helper887012, productR2NONE. Firstfailure cleanup preserve then release; neverretryrun01/02/03. No main/provider/paid/deploy.
+
+# Restore run03 failed in snapshot adapter; ownership released
+
+HEAD ef79d109b parent docs. Actual newsource393c5829e77e6662c916d5abda8ebc61813014eed83c38c4753bce354c7b1c25 port32783/test_fork_20261009133813 completed118Drizzle and fixedworker PID67152 ready, DBOS5.2.11 launch. Snapshot failed TypeError parsers; parent inspected snapshot drizzle(tx) while installed Drizzle construct needs client.options absent on postgres transaction client. No capture/restore/reopen. Worker SIGTERM exit recorded and PID absent; source stopped retained. Never restart any failedrun01/02/03.
+
+Lock467367d6-f304-4c01-9def-7f97c1004eeb released13:41:43.042266Z after original4/running/release exact checks. No ownrunningservice/lock. Evidence docs/planning/evidence/2026-10-09-yuk1359-parent-restore-attempt03.json plus /tmp/yuk1359-restore-reopen-parent03.
+
+Unique T3 task node:delegated-task:command%3Amcp%3A6636c2a8-faa6-445b-bad3-e84032e9ac15%3Adelegate-task%3Ayuk1359-prep-transaction-snapshot-repair-20261009-v1 running, Codexgpt6.1Solxhigh/test. Only /tmp/yuk1359-dbos-restore-offline-prep-v2 writer, parent docs only. Must preserve all actualpermanent/runtime/inputs, source/worker/helper/dependency bytes, fix supported same read-only repeatableread transaction integration, realinstalledlibrary offline regression and full reader trace; no runtime or new harness. On terminal, independently verify then NEWsource/run, actual lock. Product R2 budget exhausted; no R3.
+
+UI schedule agreed in coordinator reply; isolatedfoundation and laterfunctionalwaves. Start5796 ownsroute mounts. Versioned2026-10-09-ui-migration-sequencing.md. No UI source change. Judge1625 remainsretaineddraft/watch, do not crossbranchwrite. Wholemigration active/incomplete.
+
+# Restore prep order verified; fresh run03 next
+
+Parent independently ran311 offline checks and matched5634 immutable source/8465 evidence files,11441 preserved entries and21 earlier failed inputs. Both offline processes exited0 with zero connection/listener/child attempts. Helper887012/worker7472 remain fixed. Bootstrap repair completed/noPending; no code writer active. New parent03/run03 directories prepared, no runtime lock yet. Run01/run02 stay stopped and must never restart. Full restore/reopen remains unverified.
+
+UI schedule reply sent to visual thread mcp:a434b919-3159-4e36-8ad9-beacd5f430b6 and Start5796. Decision record docs/planning/2026-10-09-ui-migration-sequencing.md; existing page rewrites follow functional waves, foundation isolated, route mount belongs to5796. Exact24b7 thread not located; visual thread asked to relay. No UI or Start source changed.
+
+# Restore run02 migrated; source setup exposed prep ordering defect
+
+Product887012 R2 NONE unchanged. Parent path-repaired prep254offline exit0,8437evidence/5634source seal and21oldfailedinputs matched. Lockfb4855ac acquired12:49:58.466Z; newsource72632c5fdd27cf677439bce7d7bc78c6ef3e07cafefb717fa5d473f5b7b44642,32782/test_fork_20261009125000. Actual118Drizzle migrations passed, canonicalepochassessment-contract-v1 active, identity before/after identical.
+
+source-setup exited64 before any child: requireDomain asks forpgboss.schedule before fixedworker boss.start. Parent actualquery confirms pgBoss schedule/DBOSworkflowStatus absent,118ledgers,0clients. Source fixedworker already owns PgBoss.start then startDurableWorker then ready; no extra schema writer needed. Premise census /tmp/yuk1359-restore-reopen-parent02/premise-census.json. Actual lifecycle/failure/permanentanchor/state preserved under prep/runtime/yuk1359-restore-run02 and prep/permanent. Oldrun01 retained too. Source72632 stopped retained; never retry/restart either failedsource. Tokenfb4855ac released12:52:29.045598Z, original4/running/release unchanged. No runningresource/lock, capture/restore/reopen still unrun.
+
+Unique T3mcp6636c2a8 yuk1359-prep-bootstrap-order-repair-20261009-v1 (Codexgpt6.1Solxhigh) owns only existing/tmp prep. Fix staged domain-before/runtime-after-ready validation, trace full existing startup sequence and meaningful offline order tests. Preserve realrun permanent records: offline tests previously assumed permanent directory absent; synthetic isolation must never reset actualfailure. No product/helper/worker/dependency rebuild, R3, DB/runtime. Parent docs/tracker only. Next newsource/run and actualmutex after independentverification.
+
+Versioned run02 evidence docs/planning/evidence/2026-10-09-yuk1359-parent-restore-attempt02.json. JudgePR1625 remains29a802draft/watch with knownCI/conflict/429 gate; restorefirst no crossbranch writes. Wholemigration incomplete.
+
+# Restore parent acceptance active
+
+Parent real canonical DB13/13 GREEN after preserving two failures: unquoted fixture binary column (13skipped), then product CATALOG_SQL missing outer json_build_object parenthesis (12pass/1fail). Parent corrected one quote/one parenthesis, scopedBiome2passed. Evidence docs/planning/evidence/2026-10-09-yuk1359-parent-canonical-db.json+gz. Mutex e089 safely released06:33:24.251Z, original4/running/release identical; first release attempt retained lock during transient testcontainer cleanup. No runtime remains. Full dump/restore/reopen still UNRUN.
+
+
+Author task completed/noPending and released fixed source75d4a4c8710e147c71590136d94856e2a1297802, handoff136ce2a06. Parent matched12source/doc+33log+888build hashes and independently ran3files76unit exit0. Author typecheck/scopedBiome/build/shell syntax pass; full lint failed only parent evidenceJSON formatting, now parent formatted that one file (full lint not yet rerun). No DB/fullrestore/DBOS-reopen PASS.
+
+Offline prep task completed/noPending. Parent verified artifacts and33 offline guards with zero connection/listener/child attempts. /tmp/yuk1359-restore-prep-parent-verification.json seals parent result. Actual helper creates retained random networknone loom scratch; prep assumed two preprovisioned loopback test_fork endpoints. This mismatch is captured in PLAN under existing1359/1329. Readonly Astrahigh task yuk1359-restore-reopen-target-integration-design-20261009-v1 owns only/tmp report and is running; no sourcewriter. Resolve same-restored-data parity and reopen target before runtime. No fake adapter/no second restore borrowing another target PASS.
+
+5796 reports PR1626 merged main04232aaf10efe050458b8b96dbe1f678c17253d8, exactCI9889/tree71a4590 allgreen; notes list49RPC/18DB evidence, remaining detail/presence/writes/useSubjectsHTTP unchanged. Parent fetched04232 and is normally integrating; only PLAN/now conflict. Current runtime lock absent only by collaborator report; recheck actual before acquisition. No own services. Judge PR1625 remains separate draft29a802f1a, realprovider429 and crash/provider/Start obligations remain open; no replay or paid retry. Whole1355/1356/1358/1359 migration incomplete.
+
+# Incoming main04232 notes and ownership records
+
+PR1626 is merged; candidate-stage pending wording below is historical. Parent fetched04232 and normal merge preserved both handoffs; only PLAN/now conflicted.
+
 # Active Start notes list — 2026-10-09
 
 Source c236 remains unchanged. PR1626 exact aa8dd CI37886224656 passed; R1 NONE and patch SHA verified. Parent50unit/18DB plus real49RPC/eightreadwindows and original NotesPage T3browser acceptance pass;98nonsystemtables/fivesequences unchanged in aggregate list and distinct navigation windows. Runtime lock released05:30:23.105409Z, ownPG/Start removed, original4/release unchanged. First rawDate seed failure retained and only ignored fixture corrected; report and184-file archive manifest at docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md. Final evidence-only push/CI/merge pending. Subjects HTTP and detail/presence remain migration scope; no deployment. Judge/restore remain7631-owned.

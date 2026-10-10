@@ -1,0 +1,46 @@
+{
+  "kind": "offline command-substitution regression",
+  "sourceRef": "a8800730b3c67667574bc44ec02edb7ed7800f78",
+  "fault": "Table inventory query returns17 after simulated successful pg_restore",
+  "actual": {
+    "exitCode": 0,
+    "verified": true,
+    "table_counts": {},
+    "errors": "OFFLINE_INJECTED_COUNT_QUERY_FAILURE|"
+  },
+  "required": {
+    "nonzeroExit": true,
+    "verified": false
+  },
+  "limits": [
+    "All docker invocations intercepted by a Bash function with no real CLI fallback.",
+    "No Docker daemon, database, network or service operation. The input is not a real PostgreSQL dump.",
+    "This proves shell error handling only; it is not a database restoration test."
+  ],
+  "files": [
+    {
+      "path": "scripts/restore-drill.sh",
+      "sha256": "5d4d35d9f6304bde19f769902234b2fcf271d24db0805ac277b1f3f4f4ae5798"
+    },
+    {
+      "path": "/tmp/yuk1359-restore-count-failure-20261009.sh",
+      "sha256": "3b08c6985bf7c755c0e84ae1d8d042be718f999fa0accb7f4c605af61ba2330b"
+    },
+    {
+      "path": "/tmp/yuk1359-restore-count-failure.thPFED/exit-code.txt",
+      "sha256": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa"
+    },
+    {
+      "path": "/tmp/yuk1359-restore-count-failure.thPFED/evidence.json",
+      "sha256": "555c48dea0133cefe7b0de06e154038db36db2cc87c2e55f7cc17aa6e8e41eec"
+    },
+    {
+      "path": "/tmp/yuk1359-restore-count-failure.thPFED/commands.log",
+      "sha256": "348c3d7f6512e71ccf89ff1b7bf0342a80bc1995bc1f9d4749945e56042b460a"
+    },
+    {
+      "path": "/tmp/yuk1359-restore-count-failure.thPFED/stderr.log",
+      "sha256": "a49367a264be82ce5b03679956fdad6a1fd8a3b771c54c334e4ec1558386780e"
+    }
+  ]
+}

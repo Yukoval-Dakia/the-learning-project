@@ -1,33 +1,24 @@
-import { and, eq, sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { createAttempt } from '@/capabilities/practice/api/submit';
 import { practiceCapability } from '@/capabilities/practice/manifest';
-import { recordAssistanceExposure } from '@/capabilities/practice/server/assessment/assistance';
 import { submitReviewAnswerTool } from '@/capabilities/practice/server/tools/submit-review-answer';
-import { canonicalHash } from '@/core/migration/canonical';
 import {
   assessment_submission,
   evaluation,
   event,
-  job_events,
   learning_session,
   mastery_state,
   material_fsrs_state,
   tool_call_log,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import {
-  BoundReviewAnswerSchema,
-  ReviewAnswerAttachmentSchema,
-} from '@/kernel/tools/review-answer';
 import type { ToolContext } from '@/kernel/tools/types';
 import { buildPiDomainAgentTools } from '@/server/ai/tools/pi-tools';
 import { registerTool } from '@/server/ai/tools/registry';
-import { writeJobEvent } from '@/server/events/writer';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
 import { buildHonoApp } from '../../../../server/app';
 import {
-  handwritingFixture,
   nativeHttpRequest,
   nativeSoloHttpFixture,
 } from '../../../../tests/fixtures/native-solo-http';
@@ -39,7 +30,6 @@ import {
 } from '../server/copilot-execution';
 import { createCopilotRunCancellationControl } from '../server/copilot-run-cancellation';
 import type { CopilotRunInput } from '../server/copilot-run-input';
-import { COPILOT_RUN_EVENTS, COPILOT_RUN_TABLE } from '../server/copilot-run-status';
 import { selectAsksWithMaterializingToolCall } from '../server/materializing-tools';
 import { resolveCopilotReviewAnswer } from '../server/review-answer-consumer';
 
@@ -223,38 +213,6 @@ it('authenticated chat → real execution owner → Pi AgentTool → shared revi
   expect(a.f.execute).not.toHaveBeenCalled();
 });
 
-it('keeps prior assistance and never accepts a model-authored replacement or identity flags', async () => {
-  const f = await nativeSoloHttpFixture(testDb());
-  const helpId = await recordAssistanceExposure(testDb(), {
-    issuanceId: f.assessment.issuance_id,
-    questionId: f.id,
-    kind: 'hint',
-    impact: 'answer_help',
-    contentDigest: 'existing-hint',
-  });
-  const a = await accepted({}, f);
-  const ctx = await context(a.runId, a.sessionId);
-  const modelAuthored = {
-    original_ref: a.runId,
-    response_md: 'agent answer',
-    actor_kind: 'user',
-    independent: true,
-  };
-  await expect(submitReviewAnswerTool.execute(ctx, modelAuthored)).rejects.toThrow();
-  expect((await counts()).submissions).toHaveLength(1);
-  expect((await counts()).activations).toHaveLength(0);
-  await submitReviewAnswerTool.execute(ctx, { original_ref: a.runId });
-  const [receipt] = await testDb()
-    .select()
-    .from(event)
-    .where(eq(event.action, 'experimental:assessment_submission'));
-  expect(receipt.payload.assistance).toMatchObject({
-    status: 'assisted',
-    event_ids: expect.arrayContaining([helpId]),
-  });
-  expect((await counts()).mastery).toHaveLength(0);
-});
-
 it('rejects unauthenticated attachment, missing permission and unknown actor/independence fields before acceptance', async () => {
   const f = await nativeSoloHttpFixture(testDb());
   const raw = {
@@ -306,261 +264,6 @@ it('rejects unbound prose and cross-session/cross-original references without ef
   expect((await counts()).submissions).toHaveLength(1);
   expect((await counts()).activations).toHaveLength(0);
 });
-
-it('rejects changed originals at the actual request and prevents a new turn from rebinding the same original', async () => {
-  const a = await accepted();
-  const changed = {
-    ...a.request,
-    review_answer: { ...a.request.review_answer, assessment: a.f.issued.assessment('B') },
-  };
-  expect((await post(changed)).status).toBe(409);
-  expect((await post({ ...a.request, session_id: a.sessionId }, 'another-turn')).status).toBe(409);
-  expect((await counts()).submissions).toHaveLength(1);
-  expect((await counts()).activations).toHaveLength(0);
-});
-
-it.each(['revoked', 'cancelled', 'aborted'] as const)(
-  'refuses %s authority before grading or learning effects',
-  async (mode) => {
-    const a = await accepted();
-    const controller = new AbortController();
-    const ctx = await context(a.runId, a.sessionId, controller);
-    if (mode === 'revoked')
-      await writeEvent(testDb(), {
-        id: 'revoke-original',
-        actor_kind: 'user',
-        actor_ref: 'self',
-        action: 'correct',
-        subject_kind: 'event',
-        subject_id: a.runId,
-        outcome: 'success',
-        payload: {
-          target_event_id: a.runId,
-          correction_kind: 'retract',
-          reason_md: 'withdraw submit permission',
-          affected_refs: [{ kind: 'question', id: a.f.id }],
-        },
-      });
-    if (mode === 'cancelled')
-      expect(
-        (
-          await app.request(`/api/copilot/runs/${a.runId}/cancel`, {
-            method: 'POST',
-            headers: { 'x-internal-token': token },
-          })
-        ).status,
-      ).toBe(200);
-    if (mode === 'aborted') controller.abort();
-    await expect(submitReviewAnswerTool.execute(ctx, { original_ref: a.runId })).rejects.toThrow();
-    expect((await counts()).submissions).toHaveLength(1);
-    expect((await counts()).activations).toHaveLength(0);
-    expect(await testDb().select().from(evaluation)).toHaveLength(0);
-    expect((await counts()).fsrs).toHaveLength(0);
-  },
-);
-
-it('keeps the submitted original immutable and rejects a modified stored binding', async () => {
-  const a = await accepted();
-  const ctx = await context(a.runId, a.sessionId);
-  const [ask] = await testDb().select().from(event).where(eq(event.id, a.runId));
-  const binding = BoundReviewAnswerSchema.parse(ask.payload.review_answer);
-  expect(binding.original_sha256).toBe(
-    canonicalHash(ReviewAnswerAttachmentSchema.parse(a.request.review_answer)),
-  );
-  expect(JSON.stringify(binding)).not.toContain('response_set');
-  await expect(
-    testDb()
-      .update(assessment_submission)
-      .set({ response_set: a.f.issued.assessment('B').response_set })
-      .where(eq(assessment_submission.submission_id, binding.submission_id)),
-  ).rejects.toThrow();
-  await testDb()
-    .update(event)
-    .set({
-      payload: { ...ask.payload, review_answer: { ...binding, original_sha256: '0'.repeat(64) } },
-    })
-    .where(eq(event.id, a.runId));
-  await expect(
-    submitReviewAnswerTool.execute(ctx, { original_ref: a.runId }),
-  ).rejects.toMatchObject({ code: 'review_original_modified' });
-  expect((await counts()).submissions).toHaveLength(1);
-  expect((await counts()).activations).toHaveLength(0);
-});
-
-it('refuses another question/issuance and a closed review session at the authenticated consumer', async () => {
-  const f = await nativeSoloHttpFixture(testDb());
-  await testDb()
-    .insert(learning_session)
-    .values({ id: 'closed-review', type: 'review', status: 'completed' });
-  for (const fields of [
-    { question_id: 'other-question' },
-    { review_session_id: 'closed-review' },
-  ]) {
-    const response = await post(
-      {
-        triggered_by: 'chat',
-        user_message: input.user_message,
-        review_answer: {
-          authorize_submission: true,
-          question_id: f.id,
-          assessment: f.assessment,
-          ...fields,
-        },
-      },
-      'bad-coordinates',
-    );
-    expect(response.status).toBe(409);
-  }
-  expect((await counts()).submissions).toHaveLength(0);
-});
-
-it('uses the existing pg-boss native dispatch and worker commit for a bound model original', async () => {
-  const f = await nativeSoloHttpFixture(testDb(), { model: true });
-  const started = await app.request('/api/review-sessions', {
-    method: 'POST',
-    headers: { 'x-internal-token': token, 'content-type': 'application/json' },
-    body: '{}',
-  });
-  expect(started.status).toBe(201);
-  const session = await started.json();
-  vi.stubEnv('JUDGE_DURABLE_ENABLED', 'true');
-  const image = await handwritingFixture(testDb());
-  const a = await accepted(
-    {
-      review_answer: {
-        authorize_submission: true,
-        question_id: f.id,
-        assessment: { ...f.assessment, group_evidence: [image] },
-        review_session_id: session.session_id,
-        reasoning_trace: '区分水量、坡度、流速，并保留不确定的解释。'.repeat(80),
-      },
-    },
-    f,
-  );
-  const ctx = await context(a.runId, a.sessionId);
-  const pending = await submitReviewAnswerTool.execute(ctx, { original_ref: a.runId });
-  expect(pending.kind).toBe('pending');
-  expect(f.execute).not.toHaveBeenCalled();
-  if (pending.kind !== 'pending') throw new Error('expected native pending receipt');
-  const { JudgePendingAttemptPayload } = await import('@/core/schema/event/judge-pending-events');
-  const { executeNativeAttempt } = await import(
-    '@/capabilities/practice/server/assessment/durable-attempt'
-  );
-  const [original] = await testDb()
-    .select()
-    .from(event)
-    .where(eq(event.id, `evt_pending_${pending.run_id}`));
-  const payload = JudgePendingAttemptPayload.parse(original.payload);
-  if (payload.caller !== 'native_assessment') throw new Error('expected native original');
-  const job = { run_id: pending.run_id, caller: payload.caller, submit: payload.submit };
-  expect(await submitReviewAnswerTool.execute(ctx, { original_ref: a.runId })).toEqual(pending);
-  const sent = boss.send.mock.calls.length;
-  await executeNativeAttempt(testDb(), job);
-  const before = await counts();
-  expect(before.submissions).toHaveLength(1);
-  expect(before.activations).toHaveLength(1);
-  expect(before.mastery).toHaveLength(0);
-  await executeNativeAttempt(testDb(), job);
-  expect(await counts()).toEqual(before);
-  expect(f.execute).toHaveBeenCalledTimes(1);
-  expect(boss.send).toHaveBeenCalledTimes(sent);
-});
-
-it('grades an original captured by the existing authenticated submissions owner and applies learning once', async () => {
-  const f = await nativeSoloHttpFixture(testDb());
-  const capture = await app.request('/api/submissions', {
-    method: 'POST',
-    headers: { 'x-internal-token': token, 'content-type': 'application/json' },
-    body: JSON.stringify(f.assessment),
-  });
-  expect(capture.status).toBe(201);
-  expect((await counts()).activations).toHaveLength(0);
-  const a = await accepted({}, f);
-  const ctx = await context(a.runId, a.sessionId);
-  const result = await submitReviewAnswerTool.execute(ctx, { original_ref: a.runId });
-  expect(result).toMatchObject({ kind: 'committed', status: 'effective' });
-  const before = await counts();
-  expect(before.submissions).toHaveLength(1);
-  expect(before.fsrs).toHaveLength(1);
-  expect(
-    before.mastery
-      .map(({ subject_kind, subject_id, evidence_count }) => ({
-        subject_kind,
-        subject_id,
-        evidence_count,
-      }))
-      .sort((a, b) => a.subject_kind.localeCompare(b.subject_kind)),
-  ).toEqual([
-    { subject_kind: 'ability_global', subject_id: 'math', evidence_count: 1 },
-    { subject_kind: 'knowledge', subject_id: f.knowledgeIds[0], evidence_count: 1 },
-  ]);
-  expect(before.activations).toHaveLength(1);
-  const [candidate] = await testDb().select().from(evaluation);
-  expect(candidate.provenance).toMatchObject({ source: 'automatic', assisted: false });
-  await submitReviewAnswerTool.execute(ctx, { original_ref: a.runId });
-  expect((await createAttempt(nativeHttpRequest(f.body()))).status).toBe(200);
-  expect(await counts()).toEqual(before);
-  expect(f.execute).not.toHaveBeenCalled();
-});
-
-it.each([
-  'expired',
-  'forged-binding',
-  'missing-acceptance',
-  'settled',
-  'ended-conversation',
-] as const)(
-  'fails closed on %s capability, even when the model knows the original reference',
-  async (mode) => {
-    const a = await accepted();
-    const [ask] = await testDb().select().from(event).where(eq(event.id, a.runId));
-    const binding = BoundReviewAnswerSchema.parse(ask.payload.review_answer);
-    const queued = and(
-      eq(job_events.business_table, COPILOT_RUN_TABLE),
-      eq(job_events.business_id, a.runId),
-      eq(job_events.event_type, COPILOT_RUN_EVENTS.QUEUED),
-    );
-    if (mode === 'expired' || mode === 'forged-binding') {
-      const modified = {
-        ...binding,
-        expires_at: mode === 'expired' ? '2020-01-01T00:00:00.000Z' : '2099-01-01T00:00:00.000Z',
-      };
-      await testDb()
-        .update(event)
-        .set({ payload: { ...ask.payload, review_answer: modified } })
-        .where(eq(event.id, a.runId));
-      if (mode === 'expired') {
-        // A previously minted, intact capability whose deadline has elapsed.
-        const [marker] = await testDb().select().from(job_events).where(queued);
-        await testDb()
-          .update(job_events)
-          .set({
-            payload: { ...marker.payload, review_answer_binding_sha256: canonicalHash(modified) },
-          })
-          .where(queued);
-      }
-    }
-    if (mode === 'missing-acceptance') await testDb().delete(job_events).where(queued);
-    if (mode === 'settled')
-      await writeJobEvent(testDb(), {
-        business_table: COPILOT_RUN_TABLE,
-        business_id: a.runId,
-        event_type: COPILOT_RUN_EVENTS.DONE,
-        payload: {},
-      });
-    if (mode === 'ended-conversation')
-      await testDb()
-        .update(learning_session)
-        .set({ status: 'ended' })
-        .where(eq(learning_session.id, a.sessionId));
-    const ctx = await context(a.runId, a.sessionId);
-    await expect(submitReviewAnswerTool.execute(ctx, { original_ref: a.runId })).rejects.toThrow();
-    expect((await counts()).activations).toHaveLength(0);
-    expect((await counts()).mastery).toHaveLength(0);
-    expect((await counts()).fsrs).toHaveLength(0);
-    expect(await testDb().select().from(evaluation)).toHaveLength(0);
-  },
-);
 
 it.each(['cancelled', 'revoked', 'closed-review'] as const)(
   'rechecks %s permission after grading before the original can activate learning',

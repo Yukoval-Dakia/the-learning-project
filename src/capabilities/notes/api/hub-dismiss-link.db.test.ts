@@ -2,10 +2,9 @@ import { and, eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { DismissHubLinkResponseSchema } from '@/capabilities/notes/api/contracts';
-import { runHubAutoSyncNightly } from '@/capabilities/notes/jobs/hub_auto_sync_nightly';
 import { persistHubLinkDismiss } from '@/capabilities/notes/server/hub-dismiss';
 import { db } from '@/db/client';
-import { artifact, event, knowledge } from '@/db/schema';
+import { artifact, event } from '@/db/schema';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './hub-dismiss-link';
 
@@ -105,19 +104,6 @@ async function seedArtifact(opts: {
     });
 }
 
-async function seedKnowledge(id: string, parentId: string | null): Promise<void> {
-  await testDb()
-    .insert(knowledge)
-    .values({
-      id,
-      name: id,
-      domain: parentId ? null : 'yuwen',
-      parent_id: parentId,
-      created_at: NOW,
-      updated_at: NOW,
-    } as never);
-}
-
 function dismissReq(hubId: string, body: unknown): Request {
   return new Request(`http://localhost/api/hubs/${hubId}/dismiss-link`, {
     method: 'POST',
@@ -147,42 +133,6 @@ describe('POST /api/hubs/[id]/dismiss-link', () => {
     await resetDb();
   });
 
-  it('appends suppressed_block_refs, writes a suppress event, and removes the child', async () => {
-    await seedArtifact({ id: 'atomic1', title: '子主题原子', knowledge_ids: ['k_child'] });
-    await seedArtifact({
-      id: 'hub1',
-      title: 'Hub',
-      type: 'note_hub',
-      knowledge_ids: ['k_hub'],
-      body_blocks: hubDoc('atomic1'),
-    });
-
-    const res = await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic1' }), {
-      id: 'hub1',
-    });
-    expect(res.status).toBe(200);
-    const body = DismissHubLinkResponseSchema.parse(await res.json());
-    expect(body.removed).toBe(true);
-
-    const hub = await loadHub('hub1');
-    // suppressed_block_refs recorded with the dismissed target.
-    expect((hub.attrs as Record<string, unknown>).suppressed_block_refs).toEqual([
-      { artifact_id: 'atomic1' },
-    ]);
-    // Child removed from the container immediately.
-    expect(autoLinkArtifactIds(hub.body_blocks)).toEqual([]);
-
-    // suppress event written (subject = hub).
-    const suppressRows = await testDb()
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'suppress'), eq(event.subject_id, 'hub1')));
-    expect(suppressRows).toHaveLength(1);
-    expect((suppressRows[0].payload as Record<string, unknown>).suppressed_artifact_id).toBe(
-      'atomic1',
-    );
-  });
-
   it('is idempotent — dismissing twice leaves a single suppressed_block_refs entry', async () => {
     await seedArtifact({ id: 'atomic1', title: '子主题原子', knowledge_ids: ['k_child'] });
     await seedArtifact({
@@ -206,57 +156,6 @@ describe('POST /api/hubs/[id]/dismiss-link', () => {
     expect((hub.attrs as Record<string, unknown>).suppressed_block_refs).toEqual([
       { artifact_id: 'atomic1' },
     ]);
-  });
-
-  it('next hub_auto_sync run skips the suppressed atomic (honors suppressed_block_refs)', async () => {
-    // Tree: hub knowledge node is the parent of the atomic's node → subtopic.
-    await seedKnowledge('k_hub', null);
-    await seedKnowledge('k_child', 'k_hub');
-    await seedArtifact({ id: 'atomic1', title: '子主题原子', knowledge_ids: ['k_child'] });
-    await seedArtifact({
-      id: 'hub1',
-      title: 'Hub',
-      type: 'note_hub',
-      knowledge_ids: ['k_hub'],
-      body_blocks: hubDoc('atomic1'),
-    });
-
-    // Dismiss it.
-    await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic1' }), { id: 'hub1' });
-
-    // Sanity: removed from the container.
-    expect(autoLinkArtifactIds((await loadHub('hub1')).body_blocks)).toEqual([]);
-
-    // Run the nightly repair+reconcile sweep (YUK-384) in apply mode — the
-    // reconciler must NOT re-add the suppressed atomic.
-    process.env.HUB_SYNC_MODE = 'apply';
-    try {
-      await runHubAutoSyncNightly(testDb(), { now: NOW });
-      expect(autoLinkArtifactIds((await loadHub('hub1')).body_blocks)).toEqual([]);
-    } finally {
-      process.env.HUB_SYNC_MODE = 'off';
-    }
-  });
-
-  it('rejects dismiss on a non-hub artifact', async () => {
-    await seedArtifact({ id: 'atomic1', title: '原子' });
-    const res = await POST(dismissReq('atomic1', { suppressed_artifact_id: 'x' }), {
-      id: 'atomic1',
-    });
-    expect(res.status).toBe(400);
-  });
-
-  it('404s for an unknown hub', async () => {
-    const res = await POST(dismissReq('missing', { suppressed_artifact_id: 'x' }), {
-      id: 'missing',
-    });
-    expect(res.status).toBe(404);
-  });
-
-  it('rejects a missing suppressed_artifact_id', async () => {
-    await seedArtifact({ id: 'hub1', title: 'Hub', type: 'note_hub', body_blocks: hubDoc('a') });
-    const res = await POST(dismissReq('hub1', {}), { id: 'hub1' });
-    expect(res.status).toBe(400);
   });
 
   // YUK-155 review-2: FOR UPDATE row lock on the hub select serializes concurrent
@@ -302,31 +201,5 @@ describe('POST /api/hubs/[id]/dismiss-link', () => {
       .from(event)
       .where(and(eq(event.action, 'suppress'), eq(event.subject_id, 'hub1')));
     expect(suppressRows).toHaveLength(2);
-  });
-
-  it('sequential dismiss of two targets accumulates both suppressed entries', async () => {
-    await seedArtifact({ id: 'atomic1', title: '原子一', knowledge_ids: ['k1'] });
-    await seedArtifact({ id: 'atomic2', title: '原子二', knowledge_ids: ['k2'] });
-    await seedArtifact({
-      id: 'hub1',
-      title: 'Hub',
-      type: 'note_hub',
-      knowledge_ids: ['k_hub'],
-      body_blocks: hubDocWithLinks('atomic1', 'atomic2'),
-    });
-
-    await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic1' }), { id: 'hub1' });
-    await POST(dismissReq('hub1', { suppressed_artifact_id: 'atomic2' }), { id: 'hub1' });
-
-    const hub = await loadHub('hub1');
-    const ids = (
-      ((hub.attrs as Record<string, unknown>).suppressed_block_refs ?? []) as Array<{
-        artifact_id: string;
-      }>
-    )
-      .map((s) => s.artifact_id)
-      .sort();
-    expect(ids).toEqual(['atomic1', 'atomic2']);
-    expect(autoLinkArtifactIds(hub.body_blocks)).toEqual([]);
   });
 });

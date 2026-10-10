@@ -1,12 +1,16 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-09：5796接独立/notes列表Start迁移，freshmain7472，源码c236交回，父50unit/18DB、R1 NONE及49真实RPC/浏览器验收通过；05:30锁已释放，judge/restore仍7631独占。
+> Linear 是权威 tracker。2026-10-10：run11真实完整恢复parity及同一目标DBOS重开通过（4schema/123表/5序列；pending仅新增2效果，completed/unknown及源不变）。19:04:18Z核原4/release后释放锁；恢复工具PR1628已开并link，最终静态通过，原721 CI环境清单失败已由6fcaf139a补4项可选声明；父14unit通过，静态/build日志核验通过，待新exactCI，整迁移仍In Progress。
 
 ## NOW
 
-- **YUK-1358 / Start notes列表**：独占范围和验收见[notes计划](docs/planning/2026-10-09-yuk1358-start-notes-list.md)。保留查询校验、科目知识点解析、空集合语义及现有搜索/导航/视觉；不改note详情/presence/AI写，不把本切片当Notes整族完成。父50unit/18DB、R1 NONE和49RPC/原页面浏览器通过；98表/5序列窗口不变，exact证据head CI待收口；[父证据](docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md)。useSubjects仍HTTP，完整迁移未完成。
+- **YUK-1358 / Start notes列表**：独占范围和验收见[notes计划](docs/planning/2026-10-09-yuk1358-start-notes-list.md)。保留查询校验、科目知识点解析、空集合语义及现有搜索/导航/视觉；不改note详情/presence/AI写，不把本切片当Notes整族完成。父50unit/18DB、R1 NONE和49RPC/原页面浏览器通过；98表/5序列窗口不变，PR1626已合main04232aaf10（exact9889 CI全绿）；父已fetch核main；[父证据](docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md)。useSubjects仍HTTP，完整迁移未完成。
 
-- **YUK-1358 / Start事件详情与纠错已交付**：PR1623合main7472f4395，exact91f4687ed CI37854525406全绿含四DB/aggregate，R2 NONE/threads0；merge tree与CI tree相同。15DB、4f36真实71RPC/T3浏览器和整合193unit/11协议/静态构建/11audits证据按revision保留，详见[父验收](docs/planning/2026-10-09-yuk1358-start-event-detail-parent.md)。旧4f36首因不倒推，未部署；1358/1359保持In Progress。
+- **YUK-1359 / 恢复后重开验收**：run11固定helper b52e/worker7472真实capture→完整restore parity→同一target身份→prelaunch→DBOS reopen通过，见[父报告](docs/planning/2026-10-10-yuk1359-restore-parent-acceptance.md)。pending1→3恰好2新效果/receipt，completed/unknown与source rawseal不变；4schema/123表/5序列完整对等。父1045分层offline、3029source/3076evidence绑定通过；不外推judge/provider/全家族。源/恢复端停止保留，19:04:18Z核owner/原4/running/release后释放锁。run01–10失败保留不得重启；无运行锁/worker或代码writer，最终194unit/static/build/10audits通过，PR1628已开/link，等待exactCI。
+
+- **YUK-1359 / 完整恢复证明**：四现有helper/receipt类型+scopedtests/runbook范围已实施。独立R1 scratch TCP认证P1由887012/R2 NONE解决；后续array v2差异由父194unit/14真实DB与run11全量恢复证据覆盖，不冒称R2覆盖后续delta、不启R3。完整helper源码和runbook留本分支，父194unit/typecheck/lint/build及10postbuild audits全过，已开PR1628并link，exactCI待完成，不将helper交付等同YUK1359整票完成。
+
+- **YUK-1358 / Start事件详情与纠错**：PR1623已完成15DB、R2 NONE及4f36真实71RPC/T3浏览器验收，证据封存；正常整合96077db19仅PLAN/now冲突，20个本lane产品/测试文件与已验head一致。整合193unit/11协议及全部静态构建审计通过，已于22:52Z合main7472f4395（exact91f468 CI全绿），详见[父验收](docs/planning/2026-10-09-yuk1358-start-event-detail-parent.md)。旧4f36首因不倒推，未部署。
 
 - **YUK-1394已合入**：PR1624于22:32:03Z合main96077db19，与exacta880树一致，CI37852269707全绿；共享锁父29DB/确定性RED/34进程及排期32unit/static/build证据按revision保留。原R2两finding解决，后续修复不冒称R2覆盖，无R3；默认pg-boss、无部署。详见[父验收](docs/planning/2026-10-09-yuk1394-parent-acceptance.md)。
 - **YUK-1393已合入**：PR1621 exact3be966000 CI37829575046全绿，R1 NONE/threads0；main e1f2ef6bb与CI树均cad230a5，已unwatch/Linear Done。父原33DB/10进程恢复/2cron/4旧prune/26migration、49unit及fixture修复29DB/static/build证据保留。默认仍pg-boss，无部署；实际旧consumer退出仍是整迁移验收义务。
@@ -18,10 +22,6 @@
 
 ## NEXT
 
-- Restore helper源码不再等待judge实际模型配额或合并：当前judge test writer完全释放、父scoped验收/证据提交后，7631可保留draft1625/watch并从freshmain单writer接已定4文件scope；不带judge WIP。真实judge恢复证明仍单列未完成，详见[顺序更新](docs/planning/2026-10-09-restore-start-ownership.md)。
-
-- idle future ownership is confirmed in [idle/Start handoff](docs/planning/2026-10-09-idle-start-ownership.md). Three Copilot writes and Conversation coordination belong to7631 only after judge releases and delivers;0118 stays judge. This thread has no competing writer there. Original user-event clock and strict chip/replay behavior remain; runtime proof is outstanding.
-
 - Start/judge共享文件边界见[交接](docs/planning/2026-10-09-judge-start-ownership.md)，Start/boot/shutdown由5796独占；judge A/B/C/D由7631接续，迁移号后核。
 
 - 1394已正式交付，7631从fresh main沿既有YUK1356接judge_run与judge_pending_reconcile同族。5796已确认A/B/C/D精确scope无其writer冲突，Start/boot/shutdown仍归5796；迁移号届时核实。设计与ownership不是实施验收。
@@ -29,8 +29,8 @@
 - 1355已交prune_job_events与review orphan源码及隔离证据；1394接续两个session族。其他业务任务不能据此视为已分派或已迁移；每族须保留唯一恢复owner、旧义务排空与回退证据。
 - 1358继续剩余路由/共享子树及三入口共用业务操作，保留现有确定性行为。1392公共board读取、1380事件读/纠错等已合接口由Start集成方接消费者，不复制领域规则。
 - 1359最终收口核对dev/build/Compose/镜像、全部旧消费者、任务/worker/依赖、配置与文档；Hono去留按ADR裁决，旧SPA回落不得永久保留。完成整迁移后再按实际缺口与查重结果交付Linear残留功能。
-- UI视觉重写暂缓；必要路由/数据接线仍是本轮迁移。UI恢复时沿owner模型限制；非UI按AGENTS选模，产品MiMo路由不因开发代理改变。
-- YUK-1353 视觉方向：owner 2026-10-09 认可第二轮方案，[决策](docs/design/2026-10-07-ui-visual-direction.md)分稳定层/待定层（§0）；PR #1612待owner合并。排期（owner 10-09）：迁移期间不换现页，只做`src/ui-next/`基座（YUK-1354前半）与吉祥物YUK-1395；UI重写并入YUK-1388给出的功能改造波次，后端先合、Opus UI后合，同路由切组件版本（I1–I5，与7631商定）。
+- UI按owner新排期并入迁移后的功能波次：后端先交付、Opus5.5再改渲染；迁移期间保留旧视觉。1354仅隔离基座/展示组件可先行，展示路由仍5796挂载；同Start路由组件回退不保留旧SPA。完整协商及已有UI观察交接见[排期边界](docs/planning/2026-10-09-ui-migration-sequencing.md)。
+- YUK-1353 视觉方向：[决策](docs/design/2026-10-07-ui-visual-direction.md)分稳定层/待定层（§0，迁移约束 I1–I5）；PR #1612 与基座 PR #1627（YUK-1354）待owner合并。
 
 ## PARKED
 

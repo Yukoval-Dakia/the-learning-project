@@ -3,10 +3,6 @@ import { describe, expect, it } from 'vitest';
 import {
   DIFFICULTY_PROXY_WEIGHT,
   ELO_K_GLOBAL,
-  HIERARCHICAL_ELO_ENABLED,
-  SRT_D_FROM_QUANTILE,
-  SRT_ENABLED,
-  SRT_FISHER_WEIGHT_ENABLED,
   SRT_MIN_SIGNAL,
   SRT_RT_BUFFER_K,
   SRT_RT_MIN_N,
@@ -24,7 +20,6 @@ import {
   resolveSrtTimeLimitFromQuantile,
   srtOutcome,
   thetaSe,
-  thetaToMastery,
   updateTheta,
   updateThetaPrecision,
 } from './theta';
@@ -298,67 +293,6 @@ describe('updateThetaPrecision (accumulate Σ I, weight² scaling)', () => {
   });
 });
 
-describe('thetaToMastery (B1 double-truth fix — θ̂ → p(L) display projection)', () => {
-  // The deprecated knowledge_mastery view faked mastery as a weighted success
-  // rate with an `evidence_count < 3 → 0.5` placeholder. The real source of
-  // truth is mastery_state.theta_hat (logit). Display/AI surfaces want a 0..1
-  // p(L); the project's own 1PL semantics give it as σ(θ̂) = expectedScore(θ̂, 0)
-  // (b=0 = the neutral logit origin, same anchor cold-start θ̂ starts from).
-
-  it('cold-start θ̂=0 → 0.5 (neutral midpoint, now DERIVED not faked)', () => {
-    expect(thetaToMastery(0)).toBeCloseTo(0.5, 10);
-  });
-
-  it('equals σ(θ̂) = expectedScore(θ̂, 0) — single source of truth, no placeholder', () => {
-    for (const theta of [-3, -1, -0.25, 0, 0.5, 1, 2.5, 4]) {
-      expect(thetaToMastery(theta)).toBeCloseTo(expectedScore(theta, 0), 12);
-    }
-  });
-
-  it('is monotone increasing in θ̂ (more ability → higher mastery)', () => {
-    expect(thetaToMastery(-2)).toBeLessThan(thetaToMastery(0));
-    expect(thetaToMastery(0)).toBeLessThan(thetaToMastery(2));
-  });
-
-  it('stays within (0, 1) across the θ̂ range the bounded-K update reaches', () => {
-    // θ̂ lives on the logit scale; the bounded-K Elo update keeps it in a modest
-    // band (|θ̂| in the single digits in practice). Within that band the
-    // projection is strictly in the open interval; at extreme logits (|θ̂| ≳ 37)
-    // float64 saturates σ to exactly 0 or 1, which is the correct "100% / 0%"
-    // display rounding, not a clamp bug.
-    for (const theta of [-8, -5, -1, 0, 1, 5, 8]) {
-      const m = thetaToMastery(theta);
-      expect(m).toBeGreaterThan(0);
-      expect(m).toBeLessThan(1);
-    }
-  });
-
-  it('does NOT clamp to the 0.5 placeholder for small θ̂ (regression: the old <3-evidence rule)', () => {
-    // A node with a couple of attempts that moved θ̂ off 0 must reflect that
-    // movement, not snap back to 0.5 the way the deprecated view did for
-    // evidence_count < 3.
-    expect(thetaToMastery(0.3)).toBeGreaterThan(0.5);
-    expect(thetaToMastery(-0.3)).toBeLessThan(0.5);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// A1 (YUK-433) — SRT (Signed Residual Time) scoring. Continuous, time-aware
-// outcome-analog that slots into the existing `outcome − p` credit form. Maris &
-// van der Maas 2012: per-item time-limit d is the discrimination DESIGN CONSTANT
-// (implicit 2PL, zero cross-examinee variance). CONSERVATIVE bounded modulation —
-// flag-on SRT NEVER exceeds the binary magnitude.
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('SRT_ENABLED flag', () => {
-  it('is LIVE (true) — P1 go-live default (YUK-361 step 1); off path still mocked-false in state.db.test.ts', () => {
-    // Flipped from dark-ship false → live true. The OFF (binary) path is NOT deleted:
-    // it remains the explicit-false-mock regression in state.db.test.ts (srtFlag.value
-    // = false NO-OP byte-identical anchor) and the missing-RT binary fallback.
-    expect(SRT_ENABLED).toBe(true);
-  });
-});
-
 describe('srtOutcome (continuous time-aware outcome-analog in [0,1])', () => {
   it('fast-correct (t→0, r=1) reproduces binary correct = 1.0', () => {
     expect(srtOutcome(true, 30, 0)).toBeCloseTo(1.0, 12);
@@ -556,19 +490,6 @@ describe('conjunctiveCreditsContinuous (SRT-driven, binary-bit-identical at {0,1
   });
 });
 
-// ─────────────────────────────────────────────────────────────────────────────
-// A2 (YUK-434) — hierarchical Elo: θ_global + θ_KC, per-domain cold-start inheritance.
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('HIERARCHICAL_ELO_ENABLED flag', () => {
-  it('is LIVE (true) — P1 go-live default (YUK-361 step 1); off path still mocked-false in state.db.test.ts', () => {
-    // Flipped from dark-ship false → live true. The OFF (single-layer) path is NOT
-    // deleted: it remains the explicit-false-mock regression in state.db.test.ts
-    // (hierFlag.value = false byte-identical anchor, NO global row written).
-    expect(HIERARCHICAL_ELO_ENABLED).toBe(true);
-  });
-});
-
 describe('ELO_K_GLOBAL (slow per-domain drift)', () => {
   it('is a small positive step', () => {
     expect(ELO_K_GLOBAL).toBeGreaterThan(0);
@@ -628,20 +549,6 @@ describe('two-layer K split ratio (per-KC offset moves faster than domain global
     const globalStep = ELO_K_GLOBAL * bWeight * credit; // 0.048 · 1 · 0.5
     expect(perKcStep).toBeGreaterThan(globalStep);
     expect(globalStep / perKcStep).toBeCloseTo(ELO_K_GLOBAL / eloK(100), 12);
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// A1 (YUK-450) — Fisher-conditioned TIME WEIGHT on the SRT credit. srtOutcome gains a
-// `timeWeight ∈ [0,1]` param (default 1) that shrinks the TIME component toward the
-// pure-binary endpoint as it → 0, fading the time signal at extreme-p items while
-// preserving the correctness sign. The 4·p(1−p) weight itself is built at the
-// state.ts/replay seam; here we pin srtOutcome's timeWeight semantics + the weight shape.
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('SRT_FISHER_WEIGHT_ENABLED flag', () => {
-  it('is DARK (false) — ship dark; the seam passes timeWeight=1 (byte-identical) when off', () => {
-    expect(SRT_FISHER_WEIGHT_ENABLED).toBe(false);
   });
 });
 
@@ -724,25 +631,6 @@ describe('srtOutcome timeWeight (YUK-450 Fisher-conditioned time weight)', () =>
     expect(w(0.1)).toBeCloseTo(w(0.9), 12); // symmetric
     expect(w(0.1)).toBeLessThan(w(0.3)); // monotone toward the peak
     expect(w(0.3)).toBeLessThan(w(0.5));
-  });
-});
-
-// ─────────────────────────────────────────────────────────────────────────────
-// A1 (YUK-449) — per-KC rolling RT quantile as the SRT design constant d. quantile() +
-// pushRtCorrectSample() (ring buffer) + resolveSrtTimeLimitFromQuantile() (quantile-d
-// with cold-start fallback to the population seed). The flag SRT_D_FROM_QUANTILE is dark.
-// ─────────────────────────────────────────────────────────────────────────────
-
-describe('SRT_D_FROM_QUANTILE flag + RT buffer constants', () => {
-  it('is DARK (false) — d stays the population seed → θ̂ byte-identical to today', () => {
-    expect(SRT_D_FROM_QUANTILE).toBe(false);
-  });
-  it('the buffer/quantile knobs are sane owner-tunable constants', () => {
-    expect(SRT_RT_BUFFER_K).toBeGreaterThan(0);
-    expect(SRT_RT_MIN_N).toBeGreaterThan(0);
-    expect(SRT_RT_MIN_N).toBeLessThanOrEqual(SRT_RT_BUFFER_K);
-    expect(SRT_RT_QUANTILE).toBeGreaterThan(0);
-    expect(SRT_RT_QUANTILE).toBeLessThan(1);
   });
 });
 

@@ -1,0 +1,20 @@
+{
+  "status": "READ-ONLY OFFLINE EVIDENCE MATCHED; RUNTIME ACCEPTANCE UNVERIFIED",
+  "sourceSealSha256": "57729d70668fe6d306090e57017e1d643cda40597872249521d22e8d1e6fa983",
+  "evidenceSealSha256": "109cbc011e91dd97d2f5b687d24c3659168e74681e49a928374598b1b48c98cc",
+  "immutableSourceFiles": 5634,
+  "evidenceFiles": 8465,
+  "preservedBeforeFilesMatched": 11441,
+  "priorFailedInputFiles": 21,
+  "fixedPrepArtifactSourceFiles": 5588,
+  "offlineChecks": 311,
+  "phaseOrderChecks": 57,
+  "attempts": {
+    "connections": 0,
+    "listeners": 0,
+    "children": 0
+  },
+  "taskState": "completed",
+  "noPending": true,
+  "writerReleased": true
+}

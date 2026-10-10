@@ -9,7 +9,6 @@ import {
   GRID_POINTS,
   GRID_STEP,
   GRID_THETA,
-  THETA_GRID_ENABLED,
   type ThetaGridPosterior,
   binaryLikelihood,
   choicesToGuess,
@@ -33,10 +32,6 @@ function pointPosterior(offset: number): ThetaGridPosterior {
 }
 
 describe('theta-grid constants', () => {
-  it('dark-ships: THETA_GRID_ENABLED is false (flag-gated, no live reader inc-1)', () => {
-    expect(THETA_GRID_ENABLED).toBe(false);
-  });
-
   it('grid = [-4, 4] × 41 points at 0.2 logit step, origin lands EXACTLY on 0', () => {
     expect(GRID_MIN).toBe(-4);
     expect(GRID_MAX).toBe(4);

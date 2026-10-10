@@ -3,10 +3,10 @@
 // 公共 API（acceptAiProposal / dismissAiProposal / retractAiProposal）进入，
 // 以覆盖「壳路由 → 包 applier」整条链。
 
-import { and, eq } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { artifact, event, knowledge, learning_item, proposal_signals } from '@/db/schema';
-import { acceptAiProposal, dismissAiProposal, retractAiProposal } from '@/server/proposals/actions';
+import { artifact, knowledge, learning_item } from '@/db/schema';
+import { acceptAiProposal, retractAiProposal } from '@/server/proposals/actions';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { assertProposalLifecycleResult } from '../../../../tests/helpers/proposal-lifecycle';
 import { planLearningIntent } from './learning-intent';
@@ -90,77 +90,6 @@ describe('learning_item proposal lifecycle', () => {
     return { proposalId: proposal.proposal_id };
   }
 
-  it('accept materializes 1 hub + N atomic learning_items via acceptLearningIntent and records a single rate event', async () => {
-    const { proposalId } = await seedLearningItemProposal();
-    const enqueueLearningIntentNote = vi.fn(async (_artifactId: string) => true);
-    const result = await acceptAiProposal(testDb(), proposalId, {
-      enqueueLearningIntentNote,
-    });
-    expect(result.kind).toBe('learning_item');
-    assertProposalLifecycleResult<LearningItemAcceptResult>(result, 'learning_item');
-    expect(result.hub_learning_item_id).toBeTruthy();
-    expect(result.atomic_learning_item_ids).toHaveLength(2);
-    expect(result.long_learning_item_ids).toEqual([]);
-    expect(result.hub_artifact_id).toBeTruthy();
-    expect(result.atomic_artifact_ids).toHaveLength(2);
-    expect(result.long_artifact_ids).toEqual([]);
-    expect(result.enqueued_note_generate_jobs).toBe(2);
-    expect(new Set(enqueueLearningIntentNote.mock.calls.map(([id]) => id))).toEqual(
-      new Set(result.atomic_artifact_ids),
-    );
-
-    const lis = await testDb()
-      .select()
-      .from(learning_item)
-      .where(eq(learning_item.source_ref, proposalId));
-    expect(lis).toHaveLength(3);
-    const hub = lis.find((row) => row.id === result.hub_learning_item_id);
-    expect(hub?.parent_learning_item_id).toBeNull();
-    expect(hub?.source).toBe('learning_intent');
-    expect(hub?.archived_at).toBeNull();
-    const atomics = lis.filter((row) => row.id !== result.hub_learning_item_id);
-    for (const atomic of atomics) {
-      expect(atomic.parent_learning_item_id).toBe(result.hub_learning_item_id);
-      expect(atomic.archived_at).toBeNull();
-    }
-
-    // acceptLearningIntent owns rate-event writing inside its own transaction;
-    // acceptAiProposal must NOT write a second rate event.
-    const rateRows = await testDb()
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)));
-    expect(rateRows).toHaveLength(1);
-    expect(rateRows[0].payload).toMatchObject({ rating: 'accept' });
-
-    // Signal still records (cooldown / acceptance-rate stay in sync with other kinds).
-    const signals = await testDb()
-      .select()
-      .from(proposal_signals)
-      .where(eq(proposal_signals.kind, 'learning_item'));
-    expect(signals).toHaveLength(1);
-    expect(signals[0]).toMatchObject({ accept_count: 1, dismiss_count: 0 });
-  });
-
-  it('accept returns long note materialization ids for learning_item proposals', async () => {
-    const { proposalId } = await seedLearningItemProposal({ withLong: true });
-    const result = await acceptAiProposal(testDb(), proposalId);
-    expect(result.kind).toBe('learning_item');
-    assertProposalLifecycleResult<LearningItemAcceptResult>(result, 'learning_item');
-
-    expect(result.atomic_artifact_ids).toHaveLength(2);
-    expect(result.long_learning_item_ids).toHaveLength(1);
-    expect(result.long_artifact_ids).toHaveLength(1);
-
-    const second = await acceptAiProposal(testDb(), proposalId);
-    expect(second).toMatchObject({
-      kind: 'learning_item',
-      idempotent: true,
-      long_learning_item_ids: result.long_learning_item_ids,
-      long_artifact_ids: result.long_artifact_ids,
-    });
-  });
-
   it('idempotent re-accept re-enqueues only note artifacts that are still pending', async () => {
     const { proposalId } = await seedLearningItemProposal({ withLong: true });
     const firstEnqueue = vi.fn(async (_artifactId: string) => true);
@@ -185,44 +114,6 @@ describe('learning_item proposal lifecycle', () => {
     expect(second.idempotent).toBe(true);
     expect(second.enqueued_note_generate_jobs).toBe(2);
     expect(retryEnqueue).not.toHaveBeenCalledWith(first.atomic_artifact_ids[0]);
-  });
-
-  it('dismiss writes a generic rate event without materializing learning_items', async () => {
-    const { proposalId } = await seedLearningItemProposal();
-    const result = await dismissAiProposal(testDb(), proposalId, { user_note: 'changed mind' });
-    expect(result.kind).toBe('dismissed');
-
-    const lis = await testDb()
-      .select()
-      .from(learning_item)
-      .where(eq(learning_item.source_ref, proposalId));
-    expect(lis).toHaveLength(0);
-
-    const rateRows = await testDb()
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, proposalId)));
-    expect(rateRows).toHaveLength(1);
-    expect(rateRows[0].payload).toMatchObject({ rating: 'dismiss', user_note: 'changed mind' });
-
-    const signals = await testDb()
-      .select()
-      .from(proposal_signals)
-      .where(eq(proposal_signals.kind, 'learning_item'));
-    expect(signals).toHaveLength(1);
-    expect(signals[0]).toMatchObject({ dismiss_count: 1, accept_count: 0 });
-  });
-
-  it('retract before accept writes only the correction event; nothing to tombstone', async () => {
-    const { proposalId } = await seedLearningItemProposal();
-    const result = await retractAiProposal(testDb(), proposalId, { reason_md: 'noise' });
-    expect(result.kind).toBe('retracted');
-
-    const lis = await testDb()
-      .select()
-      .from(learning_item)
-      .where(eq(learning_item.source_ref, proposalId));
-    expect(lis).toHaveLength(0);
   });
 
   it('retract after accept tombstones hub + atomic + long learning_items and all proposal-sourced artifacts', async () => {

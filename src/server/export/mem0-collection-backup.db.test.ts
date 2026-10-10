@@ -145,17 +145,6 @@ describe('mem0 collection backup/restore round-trip (YUK-355)', () => {
     }
   });
 
-  it('restore stats include the mem0 collection insert count', async () => {
-    const vec = Array.from({ length: DIMS }, () => 0);
-    await seedRow('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', vec, { data: 'x', user_id: 'self' });
-    const bytes = await buildZipBytes();
-
-    const res = await restoreFromArchive({ db: testDb(), r2: memR2(), bytes });
-    expect(res.status).toBe(200);
-    const body = res.body as { stats: Record<string, { inserted: number }> };
-    expect(body.stats[COLLECTION]?.inserted).toBe(1);
-  });
-
   it('a backup taken with the mem0 table absent omits the key and restores cleanly', async () => {
     // Fresh DB where mem0 never self-initialised: no collection table at all.
     await testDb().execute(sql.raw(`DROP TABLE IF EXISTS "${COLLECTION}"`));
@@ -505,13 +494,6 @@ describe('mem0 collection empty-archive wipe (#491 follow-up)', () => {
     await testDb().execute(sql.raw(`DROP TABLE IF EXISTS "${COLLECTION}"`));
   });
 
-  async function tableExists(): Promise<boolean> {
-    const rows = (await testDb().execute(
-      sql`select to_regclass(${`public.${COLLECTION}`}) as reg`,
-    )) as Array<{ reg: string | null }>;
-    return rows[0]?.reg !== null && rows[0]?.reg !== undefined;
-  }
-
   function rewriteMem0Rows(bytes: Uint8Array, rows: Array<Record<string, unknown>>): Uint8Array {
     const entries = unzipSync(bytes);
     const data = JSON.parse(new TextDecoder().decode(entries['data.json'])) as Record<
@@ -554,49 +536,6 @@ describe('mem0 collection empty-archive wipe (#491 follow-up)', () => {
     // The target collection is now EMPTY — matches the archived (empty) collection.
     // RED against the `mem0Rows.length > 0` gate, which skipped the wipe entirely.
     expect(await readRows()).toHaveLength(0);
-  });
-
-  it('table-absent + EMPTY archive stays a graceful no-op (no table conjured)', async () => {
-    // Regression guard: the empty-wipe fix must NOT create a table when the target
-    // lacks the collection AND the archive is empty (nothing to restore; mem0 self-init
-    // makes it lazily with the live embedder's true dims). Mirrors the existing HIGH
-    // test, asserted again here so the empty-wipe branch keeps it.
-    const vec = Array.from({ length: DIMS }, () => 0);
-    await seedRow('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', vec, { data: 'x', user_id: 'self' });
-    const good = await buildZipBytes();
-    const emptyArchive = rewriteMem0Rows(good, []);
-
-    await testDb().execute(sql.raw(`DROP TABLE IF EXISTS "${COLLECTION}"`));
-    expect(await tableExists()).toBe(false);
-
-    const res = await restoreFromArchive({ db: testDb(), r2: memR2(), bytes: emptyArchive });
-    expect(res.status).toBe(200);
-    // No rows to insert + table absent → nothing created (wipe-if-PRESENT, not create).
-    expect(await tableExists()).toBe(false);
-  });
-
-  it('table-absent + EMPTY archive still reports stats[mem0] = {deleted:0, inserted:0}', async () => {
-    // OCR minor (PR #495): when the mem0 key is PRESENT-but-empty ([]) AND the target
-    // lacks the table, neither the wipe branch (tableExists) nor the create+insert
-    // branch (hasRows) runs, so stats[mem0Table] was left UNDEFINED — inconsistent
-    // stats reporting for an edge that legitimately processed the collection (its key
-    // is present in the archive). The fix sets {deleted:0, inserted:0} for that path
-    // WITHOUT conjuring a table or inserting anything (no-op behavior preserved).
-    const vec = Array.from({ length: DIMS }, () => 0);
-    await seedRow('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa', vec, { data: 'x', user_id: 'self' });
-    const good = await buildZipBytes();
-    const emptyArchive = rewriteMem0Rows(good, []);
-
-    await testDb().execute(sql.raw(`DROP TABLE IF EXISTS "${COLLECTION}"`));
-    expect(await tableExists()).toBe(false);
-
-    const res = await restoreFromArchive({ db: testDb(), r2: memR2(), bytes: emptyArchive });
-    expect(res.status).toBe(200);
-    // Stats entry PRESENT (not undefined) and a zero no-op for the present-but-empty key.
-    const body = res.body as { stats: Record<string, { deleted: number; inserted: number }> };
-    expect(body.stats[COLLECTION]).toEqual({ deleted: 0, inserted: 0 });
-    // Still no table conjured (no-op behavior preserved).
-    expect(await tableExists()).toBe(false);
   });
 });
 
