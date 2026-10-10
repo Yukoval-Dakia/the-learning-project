@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
 import { and, asc, eq, inArray, sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/postgres-js';
 import { MAX_IMAGE_UPLOAD_BYTES } from '@/core/limits';
 import { canonicalHash } from '@/core/migration/canonical';
 import { validateExecutionPlan } from '@/core/schema/assessment';
 import type { Db, Tx } from '@/db/client';
+import * as schema from '@/db/schema';
 import {
   ai_task_runs,
   job_events,
@@ -26,6 +28,7 @@ import { normalizeQuestionRowToContract } from '@/kernel/records/assessment-norm
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
 import type { IngestionAssessmentReviewResult } from '../api/contracts';
 import { readIngestionAssessmentReceipts } from './assessment-receipt';
+import { withinAssessmentReviewExecutionClient } from './assessment-review-client';
 import {
   ASSESSMENT_REVIEW_POLICY,
   AssessmentReviewBinding,
@@ -299,22 +302,29 @@ export async function completeIngestionAssessmentReview(
   input: { operationId: string; sessionId: string },
   deps: ReviewDeps = {},
 ): Promise<void> {
-  return withinSessionAdvisoryLock(
-    poolDb,
-    {
-      namespace: EXECUTION_LOCK_NAMESPACE,
-      key: input.operationId,
-      busy: () =>
-        new ApiError('assessment_review_busy', 'Assessment review is running; retry delivery', 503),
-    },
-    new Date(Date.now() + (deps.lockWaitMs ?? EXECUTION_LOCK_WAIT_MS)),
-    async (lockedDb) => {
-      const [owner] = await lockedDb.execute<{ pid: number }>(sql`SELECT pg_backend_pid() AS pid`);
-      let ownershipLost = false;
-      const assertOwned = async (db: Db | Tx) => {
-        if (ownershipLost) throw new Error('Assessment review execution ownership was lost');
-        try {
-          const [witness] = await db.execute<{ pid: number; owned: boolean }>(sql`
+  return withinAssessmentReviewExecutionClient(poolDb.$client, (client) =>
+    withinSessionAdvisoryLock(
+      drizzle(client, { schema }),
+      {
+        namespace: EXECUTION_LOCK_NAMESPACE,
+        key: input.operationId,
+        busy: () =>
+          new ApiError(
+            'assessment_review_busy',
+            'Assessment review is running; retry delivery',
+            503,
+          ),
+      },
+      new Date(Date.now() + (deps.lockWaitMs ?? EXECUTION_LOCK_WAIT_MS)),
+      async (lockedDb) => {
+        const [owner] = await lockedDb.execute<{ pid: number }>(
+          sql`SELECT pg_backend_pid() AS pid`,
+        );
+        let ownershipLost = false;
+        const assertOwned = async (db: Db | Tx) => {
+          if (ownershipLost) throw new Error('Assessment review execution ownership was lost');
+          try {
+            const [witness] = await db.execute<{ pid: number; owned: boolean }>(sql`
             SELECT pg_backend_pid() AS pid, EXISTS (
               SELECT 1 FROM pg_locks
               WHERE locktype = 'advisory' AND pid = pg_backend_pid()
@@ -323,16 +333,17 @@ export async function completeIngestionAssessmentReview(
                 AND objid = (hashtext(${input.operationId})::bigint & 4294967295)::oid
             ) AS owned
           `);
-          if (!owner || witness?.pid !== owner.pid || !witness.owned)
-            throw new Error('Assessment review execution ownership was lost');
-        } catch (error) {
-          ownershipLost = true;
-          throw error;
-        }
-      };
-      await assertOwned(lockedDb);
-      await completeOwnedAssessmentReview(lockedDb, poolDb, input, deps, assertOwned);
-    },
+            if (!owner || witness?.pid !== owner.pid || !witness.owned)
+              throw new Error('Assessment review execution ownership was lost');
+          } catch (error) {
+            ownershipLost = true;
+            throw error;
+          }
+        };
+        await assertOwned(lockedDb);
+        await completeOwnedAssessmentReview(lockedDb, poolDb, input, deps, assertOwned);
+      },
+    ),
   );
 }
 

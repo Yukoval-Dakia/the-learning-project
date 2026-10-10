@@ -86,7 +86,8 @@ is no reset, automatic paid recovery, additional table or recovery loop.
 ## Execution owner and publication
 
 The existing session advisory-lock helper owns an operation-wide execution lock
-under `ingestion-assessment-execution`, with a bounded acquisition deadline. Busy
+under `ingestion-assessment-execution` on a dedicated PostgreSQL client for each
+execution, with a bounded acquisition deadline. Busy
 delivery throws to the existing queue retry without writing an unknown or terminal
 outcome. A normal duplicate waits for the first owner, then reads its terminal or
 saved result; it cannot poison a live first invocation.
@@ -103,9 +104,26 @@ provider legs or result/publication writes. A disconnect after a witness still c
 mean a prompt was sent; it never authorizes replay as a guaranteed-unsent call.
 
 Only after acquiring exclusive execution ownership can a remaining start without
-result be treated as abandoned. The existing shared helper is unchanged. Prepared
-backend-kill/reuse tests must prove its old cleanup cannot disturb a successor's
-lock or transaction before this path is accepted in runtime.
+result be treated as abandoned. The existing shared helper is unchanged. The
+local client constructor copies the injected database's resolved target, Unix
+socket/custom socket, authentication callback, TLS and timeout options; it does
+not construct a URL or consult a global database target. Each client has `max: 1`,
+separate queues and separate mutable parameter, parser, serializer and retry state.
+The local wrapper closes that entire client after success or failure and preserves
+both work and client-close errors if both fail. The runner retains the original
+pooled database handle.
+
+R1 identified a concrete installed-driver failure in the original pooled lock
+path. With postgres 3.4.9, a reserved wrapper retained its connection slot across
+disconnect/reconnect; its old `finally` unlock/release could target a successor
+reservation and admit unrelated pooled work into the successor transaction. A PID
+witness prevented publication but could not prevent that cleanup. Per-execution
+clients confine the stale wrapper and its replacement backend to the old owner.
+The constructor's narrow type assertion documents the driver's resolved-options
+fast path, which accepts array hosts/ports despite its scalar public constructor
+types. The offline actual-driver invariant proves isolation for this reproduced
+slot-reuse behavior. Real PostgreSQL backend-kill, lock and transaction behavior
+remain prepared gates.
 
 The worker uses the canonical publisher with the frozen revision and admission
 generation CAS tokens. Publication, verification and operation completion share
@@ -135,7 +153,8 @@ state. Operational restoration requires a full PostgreSQL backup that includes
 ## Validation and remaining acceptance
 
 All commands below used `bash /tmp/yuk1359-offline-env.sh pnpm ...` with installed
-Node 24.19.0 and pnpm 11.13.1. Tests and builds ran serially. Final results:
+Node 24.19.0 and pnpm 11.13.1. Tests and builds ran serially. Initial implementation
+results at `19420aa15`:
 
 | pnpm command | Outcome | Log under `/tmp/` |
 | --- | --- | --- |
@@ -158,6 +177,33 @@ generated artifact. The task census initially rejected an unresolved wrapper
 argument; the wrapper now permits only the verifier's two solver task kinds and
 semantic comparator, and its final census passes without an allowlist change.
 
+R1's bounded client-lifecycle repair starts from `19420aa15`. The same offline
+wrapper and serial execution produced these results:
+
+| pnpm command | Outcome | Log under `/tmp/` |
+| --- | --- | --- |
+| `vitest run --config vitest.unit.config.ts src/capabilities/ingestion/server/assessment-review-evidence.unit.test.ts src/capabilities/ingestion/server/reference-origin.unit.test.ts src/capabilities/ingestion/server/assessment-review-client.unit.test.ts` | exit 0; 19 existing plus four client-lifecycle invariants | `yuk1404-r1-unit.log` |
+| `typecheck` | exit 0; main and Start checks | `yuk1404-r1-typecheck.log` |
+| `lint` | exit 0; unchanged 210 warnings | `yuk1404-r1-lint.log` |
+| `build` | exit 0; all five build targets | `yuk1404-r1-build.log` |
+
+Each of `audit:schema`, `audit:partition`, `audit:api-client-usage`,
+`audit:capability-boundaries`, `audit:provider-lanes`,
+`audit:provider-attempt-truth`, `audit:profile`, `audit:task-census`,
+`audit:draft-status` and `audit:draft-status-reads` exited 0. Their logs are
+`yuk1404-r1-audit-<name>.log`. Partition counts are now 58 unit, 202 DB and one
+migration file; dependency ratchets remain 431/0/48. No API contract or generated
+artifact changed in this repair.
+
+The four new invariants exercise the production local client helper with the
+actual installed driver: injected target/auth/socket/options with independent
+mutable state; old reserved unlock/release after a lost owner's slot reconnect,
+while a separate successor retains its lock and transaction; disposal after a
+work failure while the original pool remains usable; and preservation of both
+work and client-close failures. The initial socket fixture lacked `readyState`,
+which made three disposal assertions fail; after correcting that fixture all 23
+scoped tests passed. No real database behavior is inferred from these sockets.
+
 The following 15 assessment-review cases and one retention case are prepared and
 registered in the DB partition, **not executed**:
 
@@ -168,17 +214,21 @@ registered in the DB partition, **not executed**:
 - Original-page exclusion and legacy-media withholding.
 - Abandoned starts, uncertain provider outcomes, valid duplicate success and busy
   delivery without terminal poisoning.
-- Distinct pooled runner and pinned domain backends; backend termination and forced
-  connection reuse, with exact/mismatch outputs, no old admission, and an intact
-  successor lock plus transaction rollback.
+- Distinct pooled runner and pinned domain backends; termination of the isolated
+  execution backend, with exact/mismatch outputs, no old admission, an intact
+  successor client's lock and transaction rollback, and continued original-pool
+  usability.
 - Stale bindings after edits and local receipt failure rollback followed by saved
   result reuse without another model invocation.
 - Complete old event-chain retention, every terminal/unknown outcome, missing
   payload markers, and unrelated/ordinary/lookalike pruning.
 
 The fake model seam in those prepared DB tests checks settlement and privacy; it
-does not establish model correctness. The backend-kill test is an unrun gate, not
-proof the driver cleanup is safe. No Docker, DB connection, Testcontainers, service,
+does not establish model correctness. The backend-kill test remains an unrun gate.
+The separate offline actual-driver tests use only EventEmitter sockets and prove
+the reproduced client-slot cleanup isolation without TCP, TLS, a listener or a
+database. They do not establish real PostgreSQL or provider acceptance. No Docker,
+DB connection, Testcontainers, service,
 browser, provider, full local test suite, external publication or deployment ran.
 
 Canonical conversion reports missing references as `missing_reference`; unsupported

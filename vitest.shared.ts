@@ -36,6 +36,7 @@ export const fastTestInclude = [
   'src/capabilities/copilot/server/tool-activity.unit.test.ts',
   'src/capabilities/copilot/server/tool-result-snapshot.unit.test.ts',
   'src/capabilities/ingestion/server/assessment-review-evidence.unit.test.ts',
+  'src/capabilities/ingestion/server/assessment-review-client.unit.test.ts',
   'src/capabilities/observability/api/backup-import.unit.test.ts',
   'src/capabilities/practice/server/fsrs.unit.test.ts',
   'src/capabilities/practice/server/judge/evaluation-authority.unit.test.ts',

@@ -28,6 +28,7 @@ import {
   completeIngestionAssessmentReview,
   prepareIngestionAssessmentReview,
 } from './assessment-review';
+import { withinAssessmentReviewExecutionClient } from './assessment-review-client';
 import {
   readIngestionOperation,
   reserveIngestionOperation,
@@ -411,13 +412,16 @@ describe('ingestion assessment review settlement invariants (offline model bound
   });
 
   it.each(['42', '41'])(
-    'refuses old output %s after backend loss without disturbing a reused successor lock or transaction',
+    'refuses old output %s after isolated backend loss without disturbing a successor client lock or transaction',
     async (answer) => {
       const f = await fixture();
       const url = process.env.TEST_DATABASE_URL;
       if (!url) throw new Error('Missing test database URL');
       const client = postgres(url, { max: 1 });
       const ownerDb = drizzle(client, { schema });
+      const [originalPool] = await ownerDb.execute<{ pid: number }>(
+        sql`SELECT pg_backend_pid() AS pid`,
+      );
       let enter: () => void = () => {};
       let release: () => void = () => {};
       const entered = new Promise<void>((resolve) => {
@@ -460,55 +464,63 @@ describe('ingestion assessment review settlement invariants (offline model bound
         AND classid = (hashtext('ingestion-assessment-execution')::bigint & 4294967295)::oid
         AND objid = (hashtext(${f.operationId})::bigint & 4294967295)::oid
     `);
+      expect(oldOwner.pid).not.toBe(originalPool.pid);
       await f.db.execute(sql`SELECT pg_terminate_backend(${oldOwner.pid})`);
       try {
-        await withinSessionAdvisoryLock(
-          ownerDb,
-          {
-            namespace: 'ingestion-assessment-execution',
-            key: f.operationId,
-            busy: () => new Error('successor lock unavailable'),
-          },
-          new Date(Date.now() + 2000),
-          async (successorDb) => {
-            await successorDb.transaction(async (tx) => {
-              const [successor] = await tx.execute<{ pid: number }>(
-                sql`SELECT pg_backend_pid() AS pid`,
-              );
-              expect(successor.pid).not.toBe(oldOwner.pid);
-              await tx.insert(job_events).values({
-                business_table: 'yuk1404-successor',
-                business_id: f.operationId,
-                event_type: 'fixture.control',
-                payload: {},
-              });
-              release();
-              const old = await Promise.race([
-                first,
-                new Promise<never>((_resolve, reject) =>
-                  setTimeout(
-                    () => reject(new Error('old cleanup disturbed successor progress')),
-                    1000,
+        await withinAssessmentReviewExecutionClient(client, (successorClient) =>
+          withinSessionAdvisoryLock(
+            drizzle(successorClient, { schema }),
+            {
+              namespace: 'ingestion-assessment-execution',
+              key: f.operationId,
+              busy: () => new Error('successor lock unavailable'),
+            },
+            new Date(Date.now() + 2000),
+            async (successorDb) => {
+              await successorDb.transaction(async (tx) => {
+                const [successor] = await tx.execute<{ pid: number }>(
+                  sql`SELECT pg_backend_pid() AS pid`,
+                );
+                expect(successor.pid).not.toBe(oldOwner.pid);
+                await tx.insert(job_events).values({
+                  business_table: 'yuk1404-successor',
+                  business_id: f.operationId,
+                  event_type: 'fixture.control',
+                  payload: {},
+                });
+                release();
+                const old = await Promise.race([
+                  first,
+                  new Promise<never>((_resolve, reject) =>
+                    setTimeout(
+                      () => reject(new Error('old cleanup disturbed successor progress')),
+                      1000,
+                    ),
                   ),
-                ),
-              ]);
-              expect(old.error).not.toBeNull();
-              const [held] = await tx.execute<{ owned: boolean }>(sql`
+                ]);
+                expect(old.error).not.toBeNull();
+                const [pooled] = await ownerDb.execute<{ pid: number }>(
+                  sql`SELECT pg_backend_pid() AS pid`,
+                );
+                expect(pooled.pid).toBe(originalPool.pid);
+                expect(pooled.pid).not.toBe(successor.pid);
+                const [held] = await tx.execute<{ owned: boolean }>(sql`
             SELECT EXISTS (SELECT 1 FROM pg_locks WHERE locktype = 'advisory'
               AND pid = pg_backend_pid() AND granted AND objsubid = 2
               AND classid = (hashtext('ingestion-assessment-execution')::bigint & 4294967295)::oid
               AND objid = (hashtext(${f.operationId})::bigint & 4294967295)::oid) AS owned
           `);
-              expect(held.owned).toBe(true);
-              expect(
-                await tx
-                  .select()
-                  .from(job_events)
-                  .where(eq(job_events.business_table, 'yuk1404-successor')),
-              ).toHaveLength(1);
-              throw new Error('rollback successor control');
-            });
-          },
+                expect(held.owned).toBe(true);
+                expect(
+                  await tx
+                    .select()
+                    .from(job_events)
+                    .where(eq(job_events.business_table, 'yuk1404-successor')),
+                ).toHaveLength(1);
+                throw new Error('rollback successor control');
+              });
+            },
+          ),
         ).catch((error: unknown) => {
           if (!(error instanceof Error) || error.message !== 'rollback successor control')
             throw error;
