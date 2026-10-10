@@ -81,6 +81,7 @@ export const fastTestInclude = [
 ];
 
 export const dbTestInclude = [
+  'src/server/boss/isolated-runtime.db.test.ts',
   'server/start/admin-control-reader.db.test.ts',
   'server/start/admin-reader.db.test.ts',
   'src/capabilities/agency/api/probe-answer.db.test.ts',
@@ -211,6 +212,7 @@ export const dbTestInclude = [
   'src/server/assessment/admission.db.test.ts',
   'src/server/assessment/joint-input.db.test.ts',
   'src/server/assessment/settle.db.test.ts',
+  'src/server/boss/client.db.test.ts',
   'src/server/boss/handlers/ai_task_run_reconcile.db.test.ts',
   'src/server/boss/verify-dispatch-outbox.db.test.ts',
   'src/server/calibration/replay.fixture.db.test.ts',
