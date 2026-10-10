@@ -71,6 +71,7 @@ export const fastTestInclude = [
   'src/server/ai/runner.stream-collect.test.ts',
   'src/server/ai/tools/mcp-bridge.test.ts',
   'src/server/assessment/jev-model-executor.test.ts',
+  'src/server/boss/client.unit.test.ts',
   'src/server/calibration/native-parity.unit.test.ts',
   'src/server/calibration/replay.unit.test.ts',
   'src/server/calibration/wasm-parity.unit.test.ts',
