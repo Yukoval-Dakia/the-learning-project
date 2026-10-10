@@ -16,6 +16,12 @@ overrides:
   'form-data@<3.0.5': '>=3.0.5 <4'
   'form-data@>=4.0.0 <4.0.6': '>=4.0.6 <5'
   'protobufjs@<=7.6.2': '>=7.6.3 <8'
+  # dbos orphan old-artifact drift check requires every bundled package to keep its
+  # OLD_BASE/REVIEW_BASE lockfile pin (protobufjs 7.6.5, @protobufjs/utf8 1.1.1). A
+  # fresh `pnpm install` dedupes both to 7.6.6/1.1.2 and trips the check. Hold the
+  # base pins until the harness can build replicas with base-lock deps (YUK-1471).
+  'protobufjs@>=7': '7.6.5'
+  '@protobufjs/utf8@>=1.1.2': '1.1.1'
   '@grpc/grpc-js@>=1.14.0 <1.14.5': '1.14.5'
   'postcss@<8.5.10': '>=8.5.10 <9'
   'uuid@<11.1.1': '>=11.1.1 <12'
