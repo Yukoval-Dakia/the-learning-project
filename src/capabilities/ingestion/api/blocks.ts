@@ -38,6 +38,7 @@
 import { and, asc, eq, inArray } from 'drizzle-orm';
 
 import { MistakeEnrollOutcome } from '@/core/schema/mistake_enroll';
+import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
 import { db } from '@/db/client';
 import { event, question_block } from '@/db/schema';
 import { errorResponse } from '@/kernel/http';
@@ -101,6 +102,9 @@ export async function GET(_req: Request, params: Record<string, string>): Promis
         const observation = observationByBlockId.get(r.id);
         return {
           ...r,
+          extracted_prompt_md: r.structured
+            ? structuredToPromptMarkdown(r.structured)
+            : r.extracted_prompt_md,
           created_at: Math.floor(r.created_at.getTime() / 1000),
           auto_enroll_observation: observation ? toAutoEnrollObservation(observation) : null,
         };

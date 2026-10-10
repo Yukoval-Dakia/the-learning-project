@@ -1,6 +1,6 @@
 # YUK-1404 source trace
 
-Baseline: 8b5d0cab53e8a34bd24c6bc78da0d9e9f894060f. Parent investigation; no product repair or runtime acceptance yet. Read Linear comments 8610c550, 74f55854 including R01 additions before this trace.
+Baseline: 8b5d0cab53e8a34bd24c6bc78da0d9e9f894060f. Parent investigation followed by the scoped product changes below; no runtime acceptance yet. Read Linear comments 8610c550, 74f55854 including R01 additions before this trace.
 
 ## Confirmed source paths
 
@@ -18,3 +18,13 @@ Real acceptance remains the original 14-page/21-question corpus plus R01 blank r
 ## First implementation delta
 
 Extraction block construction now filters figures through the existing assignment identity and full question subtree. It no longer copies every sibling figure into every block. Node24 executed the actual function with root/child/sibling/unknown ownership and verified no mutation of the input (source-level smoke only, not DB/model/TEST acceptance). image_refs, structured projection, answer provenance and admission/outcome remain pending; no claim of complete1404 repair.
+
+## Question shape and review projection
+
+The extraction task now accepts and retains the source question kind. A shared ingestion projection supplies kind and ordered choice text to auto-enrollment and native capture, and choice text to manual import while preserving its explicit kind selection. Existing structured option labels remain in the structured source; no scoring authority is inferred from kind.
+
+GET blocks now derives extracted_prompt_md from the canonical structured tree using structuredToPromptMarkdown. VisionTab initializes its review text from this field, so the fix reaches the existing consumer without UI changes or duplicate persisted markdown. Legacy rows without a structured tree keep their prior field.
+
+Parent checks: Node 24 source smoke for the shape helper; typecheck, changed-file Biome, full build and Postman generation passed. The generated Postman artifact was unchanged. No new test files, DB/container/model calls, deployment, independent review or TEST acceptance in this step. T3 delegation still rejects with parent_not_active; no child was created.
+
+Remaining correctness boundary: assessment-normalization reads structured leaf answers directly (including before any row reference fallback). Therefore withholding reference_md alone does not protect against student-work contamination. The next change must carry and enforce source provenance through that path, retain unknown answers, and preserve admission withholding. Capture intent, outcome receipts, review continuation and page-owned original assets also remain open under this same ticket.
