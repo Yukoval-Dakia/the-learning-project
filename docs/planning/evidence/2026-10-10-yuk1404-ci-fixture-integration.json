@@ -82,9 +82,7 @@
     "head": "4faf64e399a118b20163c2e2b697a0309ff339cf",
     "clean": true,
     "retention_commit_preserved": true,
-    "changed_files": [
-      "src/capabilities/ingestion/server/assessment-review.db.test.ts"
-    ],
+    "changed_files": ["src/capabilities/ingestion/server/assessment-review.db.test.ts"],
     "patch": "/tmp/yuk1404-review-fixture.patch",
     "patch_sha256": "45dad269ecef8244e7c844e2162e868fd59a175d0a22e01cbcbfac4073d56647",
     "checks": [
