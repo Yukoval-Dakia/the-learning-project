@@ -14,7 +14,7 @@ import { BrandMark } from '@/ui/primitives/BrandMark';
 import { LoomCard } from '@/ui/primitives/LoomCard';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 import { ObSteps } from './ObSteps';
-import { createGoal } from './onboarding-api';
+import { useGoalClient } from './placement-client';
 import './onboarding.css';
 
 // YUK-249 → YUK-598：subject chips 曾是模块级 const（import 期快照，provider 水合
@@ -44,6 +44,7 @@ export interface WelcomePageProps {
 }
 
 export default function WelcomePage({ navigate }: WelcomePageProps) {
+  const { createGoal } = useGoalClient();
   // YUK-598 — 组件体内取行（模块级冻结修复）；SUBJECTS/LEANINGS 同源。
   const { subjects: subjectRows } = useSubjects();
   const SUBJECTS = listSubjectChoices(subjectRows);
