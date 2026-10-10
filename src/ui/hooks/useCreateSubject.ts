@@ -5,7 +5,8 @@
 // onSuccess invalidate SUBJECTS_QUERY_KEY → chips 经 YUK-598 provider 通路即时出现。
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
+import { ApiAuthError, ApiError } from '@/ui/lib/api';
+import { useSubjectClient } from './subject-client';
 import { SUBJECTS_QUERY_KEY } from './useSubjects';
 
 // thin-create 201/200 payload（v2 §7 合同 + v3 §3.6：isGeneralFallback 派生恒 true）。
@@ -17,13 +18,6 @@ export interface CreatedSubject {
   isGeneralFallback: boolean | null;
   revision: number;
   seedRootId: string;
-}
-
-export function createSubject(displayName: string): Promise<CreatedSubject> {
-  return apiJson<CreatedSubject>('/api/admin/subjects', {
-    method: 'POST',
-    body: JSON.stringify({ displayName }),
-  });
 }
 
 // 错误 → 用户可读文案（doc §1.4 错误合同）：
@@ -43,8 +37,10 @@ export function createSubjectErrorText(err: unknown): string {
 
 export function useCreateSubject() {
   const queryClient = useQueryClient();
+  const client = useSubjectClient();
   return useMutation({
-    mutationFn: createSubject,
+    // Call through the client: React Query passes (variables, context) to mutationFn.
+    mutationFn: (displayName: string) => client.createSubject(displayName),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: SUBJECTS_QUERY_KEY });
     },
