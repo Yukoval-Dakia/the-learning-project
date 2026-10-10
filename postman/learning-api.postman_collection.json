@@ -1713,7 +1713,7 @@
                 }
               ]
             },
-            "description": "placement probe 取下一题 + 终止判定\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 答题经 /api/attempts（session_id=本 probe，auto_rate=true，携带首题返回的 assessment 身份与原始 response_set/group_evidence）后调。未完成的 issuance 优先恢复；pending/held 在 cap 前阻止推进。cap 仅接受 1..8，服务端有效上限恒为 8。返回 {done, reason?, question?, answeredCount, sourcingNeeded?}。未知 session→404，已关闭→409",
+            "description": "placement probe 取下一题 + 终止判定\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 答题经 /api/attempts（session_id=本 probe，auto_rate=true，携带首题返回的 assessment 身份与原始 response_set/group_evidence）后调。未完成的 issuance 优先恢复；pending/held 在 cap 前阻止推进。cap 仅接受 1..8，服务端有效上限恒为 8。返回 {done, reason?, question?, answeredCount, sourcingNeeded?}。未知 session→404，已关闭→409 starterSupply 按当前会话 goal 的语义 revision + subject 绑定读取已有 claim：absent/pending/satisfied/exhausted/unknown，含 next_action 和经过限长脱敏的 failure_reason。历史缺失原因保留 unknown；exhausted/unknown 不等于等待。读取不创建 claim、不入队、不重试。此状态不替代未完成的 assessment issuance，也不触发完成/放弃。",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"knowledgeIds\": [\n    \"kc-1\"\n  ],\n  \"cap\": 8,\n  \"seThreshold\": null\n}",
@@ -1741,7 +1741,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "placement", "start"]
             },
-            "description": "启动 placement probe 会话（冷启 inc-B），返回首题\n\n**Notes:** dark-ship：gated on PLACEMENT_PROBE_ENABLED（默认 false → 404）。goalId 省略时用 knowledgeIds；二者皆缺/不可解析 → 400。返回 {sessionId, knowledgeIds, question, answeredCount, sourcingNeeded}；question.assessment 包含固定 issuance/提交身份、公开 practice_dto 与恢复状态",
+            "description": "启动 placement probe 会话（冷启 inc-B），返回首题\n\n**Notes:** dark-ship：gated on PLACEMENT_PROBE_ENABLED（默认 false → 404）。goalId 省略时用 knowledgeIds；二者皆缺/不可解析 → 400。返回 {sessionId, knowledgeIds, question, answeredCount, sourcingNeeded}；question.assessment 包含固定 issuance/提交身份、公开 practice_dto 与恢复状态 starterSupply 按当前会话 goal 的语义 revision + subject 绑定读取已有 claim：absent/pending/satisfied/exhausted/unknown，含 next_action 和经过限长脱敏的 failure_reason。历史缺失原因保留 unknown；exhausted/unknown 不等于等待。读取不创建 claim、不入队、不重试。此状态不替代未完成的 assessment issuance，也不触发完成/放弃。",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"goalId\": null,\n  \"knowledgeIds\": [\n    \"kc-1\"\n  ]\n}",
@@ -1775,7 +1775,7 @@
                 }
               ]
             },
-            "description": "恢复 placement 会话生命周期\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 读取 status、goal_id 和 scope_knowledge_ids。终态不自动重新开始。"
+            "description": "恢复 placement 会话生命周期\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 读取 status、goal_id 和 scope_knowledge_ids。终态不自动重新开始。 starterSupply 按当前会话 goal 的语义 revision + subject 绑定读取已有 claim：absent/pending/satisfied/exhausted/unknown，含 next_action 和经过限长脱敏的 failure_reason。历史缺失原因保留 unknown；exhausted/unknown 不等于等待。读取不创建 claim、不入队、不重试。此状态不替代未完成的 assessment issuance，也不触发完成/放弃。"
           },
           "response": []
         },
@@ -1828,7 +1828,7 @@
               "host": ["{{baseUrl}}"],
               "path": ["api", "placement-sessions"]
             },
-            "description": "创建 placement 会话并固定首题原始发题\n\n**Notes:** 201 + Location。返回 sessionId/answeredCount/question.assessment；question.assessment.state.practice_dto 为冻结公开题面，phase 为 answering/retry/pending/held。",
+            "description": "创建 placement 会话并固定首题原始发题\n\n**Notes:** 201 + Location。返回 sessionId/answeredCount/question.assessment；question.assessment.state.practice_dto 为冻结公开题面，phase 为 answering/retry/pending/held。 starterSupply 按当前会话 goal 的语义 revision + subject 绑定读取已有 claim：absent/pending/satisfied/exhausted/unknown，含 next_action 和经过限长脱敏的 failure_reason。历史缺失原因保留 unknown；exhausted/unknown 不等于等待。读取不创建 claim、不入队、不重试。此状态不替代未完成的 assessment issuance，也不触发完成/放弃。",
             "body": {
               "mode": "raw",
               "raw": "{\n  \"goalId\": \"REPLACE_goal\",\n  \"pace\": \"light\"\n}",
@@ -1862,7 +1862,7 @@
                 }
               ]
             },
-            "description": "恢复固定 issuance 或选择下一道自适应题\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 先恢复未完成的 issuance。pending/held 不推进、不重交；retry 仅重发已接收的相同原始 response_set、group_evidence、submission_id 和 idempotency_key。answeredCount 按不同 question ID 统计原生和历史参与。有效 head 且结算成功后才选择或结束。",
+            "description": "恢复固定 issuance 或选择下一道自适应题\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** 先恢复未完成的 issuance。pending/held 不推进、不重交；retry 仅重发已接收的相同原始 response_set、group_evidence、submission_id 和 idempotency_key。answeredCount 按不同 question ID 统计原生和历史参与。有效 head 且结算成功后才选择或结束。 starterSupply 按当前会话 goal 的语义 revision + subject 绑定读取已有 claim：absent/pending/satisfied/exhausted/unknown，含 next_action 和经过限长脱敏的 failure_reason。历史缺失原因保留 unknown；exhausted/unknown 不等于等待。读取不创建 claim、不入队、不重试。此状态不替代未完成的 assessment issuance，也不触发完成/放弃。",
             "body": {
               "mode": "raw",
               "raw": "{}",

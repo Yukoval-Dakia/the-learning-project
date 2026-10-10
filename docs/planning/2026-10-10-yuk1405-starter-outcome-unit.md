@@ -1,0 +1,28 @@
+# YUK-1405 starter outcome backend unit
+
+The existing fenced terminal writer now atomically retains a typed, bounded failure reason in the attempt and claim error columns. Future QuizGen output schema failures retain issue codes and paths. The reason contains at most 16 issues and 12 path segments per issue, with explicit truncation flags. Field names come from the input schema; arbitrary record keys are redacted. Validation messages, received values, provider text, prompts and secrets are excluded. JSON parse failures use fixed typed codes. Existing paid receipts, task identity and output digests remain unchanged.
+
+`finishPlacementAttempt` still requires a live lease and fencing token. It also checks the claim, job and delivery identity, and rejects an already terminal or unknown-cost claim. A failed claim-authority check rolls back attempt status, question-authority changes and reason writes together. Successful supply clears the current claim error. Other interrupted failures use a fixed unknown reason unless the producer supplied a typed output-validation reason.
+
+Start, next and placement-session detail now emit `starterSupply`, an array with one outcome per authoritative current goal subject. Each entry carries `session_id`, `goal_id`, `semantic_goal_revision_id`, `subject_id`, `claim_id`, `state`, `next_action` and `failure_reason`. Reads resolve the session's own goal through the existing semantic-revision resolver and deterministic claim identity in a read-only repeatable-read transaction. They never materialize, enqueue, retry or reconcile. No-goal requests return absent with `provide_goal`; unresolved authority returns unknown. Existing `sourcingNeeded` remains compatible. The field is optional in the generated contract because the existing UI constructs local resume results, while every successful backend response emits it.
+
+| Claim observation | State | Supply next action |
+| --- | --- | --- |
+| No claim for the current binding | absent | source_questions |
+| pending_dispatch, queued, running, verifying, retry_scheduled | pending | wait_for_supply |
+| satisfied with known cost | satisfied | continue_placement |
+| exhausted with known cost | exhausted | review_supply_failure |
+| Unknown cost, cancelled or unresolved authority | unknown | resolve_unknown_outcome |
+
+These actions describe starter supply. The returned question and its frozen assessment phase still own answering/retry/pending/held behavior, and `done` plus the existing explicit EndPlacement transition still own completion. A supply failure never settles a prior human_review issuance. The known R01 exhausted claim remains exhausted with an unknown historical reason. No original field paths are guessed or backfilled, and no historical claim/task/attempt identity is replayed.
+
+Validation ran in `/Volumes/YukovalSBak/yukoval-projects/tlp-yuk-1405-starter-outcome` on the requested base `081b64779a253efa076b964fa4b712cfc4704ac8`, with frozen offline dependencies under Node 24.19.0 and pnpm 11.13.1. The [evidence record](evidence/2026-10-10-yuk1405-starter-outcome-unit.json) lists every primary command, exit code, absolute log path, SHA-256 and source-file hash, plus retained failure logs.
+
+- Privacy units passed 2/2. They verify bounded paths and removal of provider values, messages, dynamic keys and forged stored reasons.
+- The initial five scoped DB suites finished with exit 1, 33 passes and two failures. The fenced persistence/rollback/identity, QuizGen handler, store and recovery suites passed. A new cold fixture lacked the goal genesis anchor, and one retained deterministic-settlement assertion expected the old exact response.
+- A first focused placement rerun finished with exit 1, 3 passes and a fixture import failure. The final focused rerun passed 4/4 after correcting the anchor and exact response expectation. This is eventual coverage of 35 distinct scoped DB tests, not a clean combined run. The last bound-schema typing and historical retry-reason adjustment received unit/static/build verification without another DB invocation.
+- Final typecheck, lint, build, lint warning limit and strict draft-status-read audit passed. All 14 selected schema/partition/API/client/boundary/architecture/provider/profile/task/draft/question-writer audits passed. Postman and API client generation passed. The generated API type file is the only UI-path artifact changed; authored UI is untouched.
+
+DB use was limited to fresh disposable Testcontainers via the repository config. All DB invocations exited and returned the window to the parent. No shared TEST query/write, runtime service, provider call, Docker Compose operation, push, PR or Linear message occurred. No full local test suite ran. Parent independently verifies this artifact; this unit does not complete YUK-1405 runtime acceptance.
+
+The remaining serving-admission gap belongs to the parent's YUK-1445 unit. `countEligiblePlacementQuestions` checks authorized, active, unsuspended questions and KC membership but does not check the frozen automatic executor. `placement-select` checks lifecycle admission, and the shared issuance operation also checks that lifecycle state, but these predicates alone do not establish automatic-executor coverage. The frozen manual-routing evidence confirms the older human_review route. Existing frozen issuance, canonical resolution and normalization/reference preparation are untouched. Parent owns the already identified follow-up, tracker reconciliation, Opus UI work and actual-output/runtime acceptance; no duplicate tracker entry was created in this restricted lane.

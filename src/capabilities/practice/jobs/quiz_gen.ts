@@ -130,6 +130,10 @@ import {
   startPlacementAttemptHeartbeat,
   terminalizePlacementUnknownCost,
 } from '../server/question-supply/placement-starter-attempts';
+import {
+  type PlacementStarterFailure,
+  placementSchemaFailure,
+} from '../server/question-supply/placement-starter-outcome';
 import { markPlacementStarterClaimTerminal } from '../server/question-supply/placement-starter-store';
 import type { DifficultyBand } from '../server/question-supply/target-discovery';
 import {
@@ -298,31 +302,35 @@ async function defaultEnqueueQuizVerify(
 // §2 / §5 — output JSON parse + judge-contract assertion. The gate itself is
 // the SHARED assertGeneratedQuestionHasJudgeContract (question-contract.ts) —
 // extracted for YUK-308 so the question_draft author flow enforces the same
-// contract; error strings keep their 'quiz_gen' origin label byte-identical.
+// contract; output validation failures retain sanitized schema paths and codes.
 // YUK-996 — `subjectProfile` is the run's resolved profile (same value threaded
 // to the QuizGenTask call ctx): the judge contract resolves the route the
 // runtime invoker will dispatch for the PERSISTED row.
+class QuizGenOutputFailure extends Error {
+  constructor(readonly reason: PlacementStarterFailure) {
+    super(`parseOutput: ${reason.code}: ${JSON.stringify(reason)}`);
+  }
+}
+
 function parseOutput(
   text: string,
   subjectProfile: SubjectProfile,
 ): { parsed: QuizGenOutputT; parseRepaired: boolean } {
   // YUK-607 — 宽松提取（jsonrepair 修复带）：mimo 对长中文字符串题型（阅读理解材料）常产出
-  // 字符串值内未转义引号的 JSON，旧硬解析在此整批阵亡。错误串格式与旧实现逐字节一致。
+  // 字符串值内未转义引号的 JSON，旧硬解析在此整批阵亡。
   let extracted: ReturnType<typeof parseJsonObjectLoose>;
   try {
     extracted = parseJsonObjectLoose(text, 'quiz_gen parseOutput');
-  } catch (e) {
-    throw new Error(`parseOutput: JSON.parse failed: ${(e as Error).message}`);
+  } catch {
+    throw new QuizGenOutputFailure({ code: 'json_invalid' });
   }
   if (extracted === null) {
-    throw new Error('parseOutput: no JSON object found in text');
+    throw new QuizGenOutputFailure({ code: 'json_object_missing' });
   }
   const json: unknown = extracted.json;
   const parsed = QuizGenOutput.safeParse(json);
   if (!parsed.success) {
-    throw new Error(
-      `parseOutput: schema invalid: ${parsed.error.issues.map((i) => i.message).join('; ')}`,
-    );
+    throw new QuizGenOutputFailure(placementSchemaFailure(parsed.error.issues));
   }
   for (const q of parsed.data.questions) {
     // The INSERT below persists judge_kind_override = defaultJudgeKindForQuestion(q)
@@ -2021,7 +2029,13 @@ export function buildQuizGenHandler(
         // the ORIGINAL error still propagates (YUK-452 review).
         if (placementAttempt && !(err instanceof PlacementStarterStaleAuthorityError)) {
           try {
-            await finishPlacementAttempt(db, placementAttempt, 'interrupted');
+            await finishPlacementAttempt(
+              db,
+              placementAttempt,
+              'interrupted',
+              (deps.now ?? (() => new Date()))(),
+              err instanceof QuizGenOutputFailure ? err.reason : { code: 'unknown' },
+            );
           } catch (finalizeErr) {
             if (!(finalizeErr instanceof PlacementStarterStaleAuthorityError)) {
               console.error(

@@ -14,10 +14,13 @@ import {
   PlacementStarterStaleAuthorityError,
   PlacementStarterUnknownCostError,
   acquirePlacementAttempt,
+  finishPlacementAttempt,
+  recordPlacementAttemptOutput,
   reserveAuthorizedPaidCall,
   settleAuthorizedPaidCall,
   terminalizePlacementUnknownCost,
 } from './placement-starter-attempts';
+import { placementSchemaFailure } from './placement-starter-outcome';
 
 const CLAIM_ID = 'placement-starter-claim-test';
 const JOB_ID = 'job-test';
@@ -100,6 +103,129 @@ async function seedAuthorizedQuestion(
 
 describe('placement attempt authority', () => {
   beforeEach(async () => resetDb());
+
+  it('atomically seals schema failure with terminal claim status and retains the immutable paid receipt', async () => {
+    const now = new Date('2026-10-10T00:00:00.000Z');
+    await seedClaim(now);
+    const attempt = await acquirePlacementAttempt(testDb(), {
+      claimId: CLAIM_ID,
+      pgBossJobId: JOB_ID,
+      deliveryNo: 3,
+      startedOn: now,
+      now,
+    });
+    await recordPlacementAttemptOutput(testDb(), attempt, {
+      taskRunId: 'successful-model-schema-rejected',
+      outputText: 'immutable provider receipt',
+      costMicroUsd: 18885,
+      now,
+    });
+    const reason = placementSchemaFailure([
+      {
+        code: 'invalid_type',
+        expected: 'object',
+        path: ['questions', 0, 'rubric_json', 'reference_solution'],
+        message: 'private provider value',
+      },
+    ]);
+    await finishPlacementAttempt(testDb(), attempt, 'interrupted', now, reason);
+    const [claim] = await testDb().select().from(placement_starter_claim);
+    const [finished] = await testDb().select().from(placement_starter_attempt);
+    const receipts = await testDb().select().from(placement_starter_cost_component);
+    expect(claim).toMatchObject({
+      status: 'exhausted',
+      known_cost_micro_usd: 18885,
+      last_error_code: 'schema_invalid',
+      last_error: JSON.stringify(reason),
+    });
+    expect(finished).toMatchObject({
+      status: 'interrupted',
+      lease_expires_at: null,
+      error_code: 'schema_invalid',
+      error_message: JSON.stringify(reason),
+      provider_task_run_id: 'successful-model-schema-rejected',
+    });
+    expect(finished?.provider_output_hash).toMatch(/^[a-f0-9]{64}$/);
+    await expect(finishPlacementAttempt(testDb(), attempt, 'succeeded', now)).rejects.toThrow(
+      PlacementStarterStaleAuthorityError,
+    );
+    expect(await testDb().select().from(placement_starter_claim)).toEqual([claim]);
+    expect(await testDb().select().from(placement_starter_attempt)).toEqual([finished]);
+    expect(await testDb().select().from(placement_starter_cost_component)).toEqual(receipts);
+  });
+
+  it('rolls back reason and attempt finalization when claim authority is already fail-closed', async () => {
+    const now = new Date('2026-10-10T00:00:00.000Z');
+    await seedClaim(now);
+    const attempt = await acquirePlacementAttempt(testDb(), {
+      claimId: CLAIM_ID,
+      pgBossJobId: JOB_ID,
+      deliveryNo: 3,
+      startedOn: now,
+      now,
+    });
+    await seedAuthorizedQuestion(now, {
+      attemptId: attempt.attemptId,
+      questionId: 'late-authority',
+      epoch: '11111111-1111-4111-8111-111111111111',
+    });
+    await testDb()
+      .update(placement_starter_claim)
+      .set({
+        status: 'exhausted',
+        exhausted_at: now,
+        known_cost_micro_usd: null,
+        last_error_code: 'cost_unknown',
+      })
+      .where(eq(placement_starter_claim.id, CLAIM_ID));
+    const before = {
+      claim: await testDb().select().from(placement_starter_claim),
+      attempts: await testDb().select().from(placement_starter_attempt),
+      links: await testDb().select().from(placement_starter_attempt_question),
+    };
+    await expect(
+      finishPlacementAttempt(testDb(), attempt, 'interrupted', now, { code: 'json_invalid' }),
+    ).rejects.toThrow(PlacementStarterStaleAuthorityError);
+    expect(await testDb().select().from(placement_starter_claim)).toEqual(before.claim);
+    expect(await testDb().select().from(placement_starter_attempt)).toEqual(before.attempts);
+    expect(await testDb().select().from(placement_starter_attempt_question)).toEqual(before.links);
+  });
+
+  it.each(['fence', 'expired', 'job', 'claim', 'delivery'] as const)(
+    'rejects a %s mismatch without writing any failure reason',
+    async (mismatch) => {
+      const now = new Date('2026-10-10T00:00:00.000Z');
+      await seedClaim(now);
+      const attempt = await acquirePlacementAttempt(testDb(), {
+        claimId: CLAIM_ID,
+        pgBossJobId: JOB_ID,
+        deliveryNo: 1,
+        startedOn: now,
+        now,
+      });
+      const altered = {
+        ...attempt,
+        fencingToken:
+          mismatch === 'fence' ? '11111111-1111-4111-8111-111111111111' : attempt.fencingToken,
+        pgBossJobId: mismatch === 'job' ? 'other-job' : attempt.pgBossJobId,
+        claimId: mismatch === 'claim' ? 'other-claim' : attempt.claimId,
+        deliveryNo: mismatch === 'delivery' ? 3 : attempt.deliveryNo,
+      };
+      const claims = await testDb().select().from(placement_starter_claim);
+      const attempts = await testDb().select().from(placement_starter_attempt);
+      await expect(
+        finishPlacementAttempt(
+          testDb(),
+          altered,
+          'interrupted',
+          mismatch === 'expired' ? attempt.leaseExpiresAt : now,
+          { code: 'json_invalid' },
+        ),
+      ).rejects.toThrow(PlacementStarterStaleAuthorityError);
+      expect(await testDb().select().from(placement_starter_claim)).toEqual(claims);
+      expect(await testDb().select().from(placement_starter_attempt)).toEqual(attempts);
+    },
+  );
 
   it('creates one deterministic attempt per delivery and rejects an active duplicate', async () => {
     const now = new Date('2026-07-23T00:00:00.000Z');

@@ -42,6 +42,7 @@ export const fastTestInclude = [
   'src/capabilities/practice/server/judge/preview-provenance-token.test.ts',
   'src/capabilities/practice/server/judge/steps-judge.test.ts',
   'src/capabilities/practice/server/question-supply/jyeoo-spawn.test.ts',
+  'src/capabilities/practice/server/question-supply/placement-starter-outcome.unit.test.ts',
   'src/capabilities/practice/server/quiz/verify-framework.test.ts',
   'src/capabilities/practice/server/rating-advisor.unit.test.ts',
   'src/capabilities/practice/tasks/evaluation-policy-routing.unit.test.ts',
