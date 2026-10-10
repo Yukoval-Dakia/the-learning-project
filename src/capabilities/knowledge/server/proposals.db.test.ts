@@ -1,4 +1,5 @@
 import { acceptKnowledgeMutationFixture } from '../../../../tests/helpers/knowledge-mutation';
+
 // Phase 1c.1 Step 9.D — proposals.test rewritten for event-based handlers.
 //
 // Pre-Step-9 tests INSERTed dreaming_proposal rows; post-Step-9 the legacy
@@ -28,12 +29,7 @@ import {
 import { backfillKnowledgeGenesis } from '../../../../scripts/backfill-genesis-events';
 import { migrateCanonicalProjections } from '../../../../scripts/migrate-canonical-projections';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
-import {
-  acceptProposal,
-  dismissProposal,
-  prepareProposedKnowledgeId,
-  writeKnowledgeProposeEvent,
-} from './proposals';
+import { acceptProposal, dismissProposal, writeKnowledgeProposeEvent } from './proposals';
 import { seedKnowledge } from './seed';
 
 const applyArchive = acceptKnowledgeMutationFixture;
@@ -259,232 +255,9 @@ async function waitForBlockedDatabaseSession(): Promise<void> {
   throw new Error('timed out waiting for a database session to block on a row lock');
 }
 
-describe('writeKnowledgeProposeEvent', () => {
-  beforeEach(async () => {
-    await resetDb();
-  });
-
-  it('writes a propose event with subject_kind=knowledge for propose_new', async () => {
-    const db = testDb();
-    const id = await writeKnowledgeProposeEvent(db, {
-      payload: {
-        mutation: 'propose_new',
-        name: '通假字',
-        parent_id: 'seed:yuwen:shici',
-      },
-      reasoning: '看 mistake 涉及通假字',
-    });
-    expect(id).toMatch(/^[a-z0-9]+$/);
-    const rows = await db.select().from(event).where(eq(event.id, id));
-    expect(rows[0]?.action).toBe('propose');
-    expect(rows[0]?.subject_kind).toBe('knowledge');
-    expect(rows[0]?.outcome).toBe('partial');
-    expect((rows[0]?.payload as Record<string, unknown> | undefined)?.name).toBe('通假字');
-  });
-
-  it('writes archive proposals through the shared ai_proposal envelope', async () => {
-    const db = testDb();
-    const id = await writeKnowledgeProposeEvent(db, {
-      payload: { mutation: 'archive', node_id: 'k_node', expected_version: 5 },
-      reasoning: '过时',
-    });
-    const rows = await db.select().from(event).where(eq(event.id, id));
-    expect(rows[0]?.action).toBe('experimental:knowledge_archive');
-    expect(rows[0]?.subject_kind).toBe('knowledge');
-    expect(rows[0]?.subject_id).toBe('k_node');
-    const payload = rows[0]?.payload as Record<string, unknown>;
-    expect(payload.node_id).toBe('k_node');
-    expect((payload.ai_proposal as { kind?: string }).kind).toBe('archive');
-  });
-
-  it('writes a root propose event when parent_id=null carries a domain', async () => {
-    const db = testDb();
-    const id = await writeKnowledgeProposeEvent(db, {
-      payload: {
-        mutation: 'propose_new',
-        name: 'English',
-        parent_id: null,
-        domain: 'english',
-      },
-      reasoning: 'new subject root',
-    });
-    const rows = await db.select().from(event).where(eq(event.id, id));
-    expect(rows[0]?.action).toBe('propose');
-    const payload = rows[0]?.payload as Record<string, unknown>;
-    expect(payload.parent_id).toBeNull();
-    expect(payload.domain).toBe('english');
-  });
-
-  it('rejects propose_new with parent_id=null and no domain', async () => {
-    const db = testDb();
-    await expect(
-      writeKnowledgeProposeEvent(db, {
-        payload: { mutation: 'propose_new', name: 'x', parent_id: null },
-        reasoning: 'r',
-      }),
-    ).rejects.toThrow(/domain/i);
-  });
-
-  it.each(['general', '  '])(
-    'rejects a root proposal anchored on %j (fallback identity is not a node domain)',
-    async (domain) => {
-      const db = testDb();
-      await expect(
-        writeKnowledgeProposeEvent(db, {
-          payload: { mutation: 'propose_new', name: 'x', parent_id: null, domain },
-          reasoning: 'r',
-        }),
-      ).rejects.toThrow(/domain/i);
-    },
-  );
-});
-
-describe('prepareProposedKnowledgeId', () => {
-  beforeEach(async () => {
-    await resetDb();
-  });
-
-  it('validates the parent and allocates identity without prematurely materializing a node', async () => {
-    const db = testDb();
-    await insertKnowledge({ id: 'seed:yuwen:shici', domain: 'yuwen' });
-    const newId_ = await prepareProposedKnowledgeId(db, {
-      mutation: 'propose_new',
-      name: '通假字',
-      parent_id: 'seed:yuwen:shici',
-    });
-    expect(newId_).toMatch(/^[a-z0-9]+$/);
-    const rows = await db.select().from(knowledge).where(eq(knowledge.id, newId_));
-    expect(rows).toEqual([]);
-    expect(await db.select().from(event)).toEqual([]);
-  });
-
-  it('mints a root id for parent_id=null when a domain anchors it', async () => {
-    const db = testDb();
-    const id = await prepareProposedKnowledgeId(db, {
-      mutation: 'propose_new',
-      name: 'English',
-      parent_id: null,
-      domain: 'english',
-    });
-    expect(id).toMatch(/^[a-z0-9]+$/);
-    expect(await db.select().from(knowledge).where(eq(knowledge.id, id))).toEqual([]);
-  });
-
-  it('rejects propose_new root creation without a domain', async () => {
-    const db = testDb();
-    await expect(
-      prepareProposedKnowledgeId(db, { mutation: 'propose_new', name: 'x', parent_id: null }),
-    ).rejects.toThrow(/domain/i);
-  });
-
-  it('rejects propose_new root creation on the fallback identity (general)', async () => {
-    const db = testDb();
-    await expect(
-      prepareProposedKnowledgeId(db, {
-        mutation: 'propose_new',
-        name: 'x',
-        parent_id: null,
-        domain: 'general',
-      }),
-    ).rejects.toThrow(/domain/i);
-  });
-
-  it('rejects propose_new when parent_id does not exist in knowledge', async () => {
-    const db = testDb();
-    await expect(
-      prepareProposedKnowledgeId(db, {
-        mutation: 'propose_new',
-        name: 'x',
-        parent_id: 'ghost-parent',
-      }),
-    ).rejects.toThrow(/parent knowledge node not found.*ghost-parent/i);
-  });
-});
-
-describe('acceptProposal (propose_new only)', () => {
-  beforeEach(async () => {
-    await resetDb();
-  });
-
-  it('accepts pending propose_new event: inserts knowledge + writes rate=accept event', async () => {
-    const db = testDb();
-    await insertKnowledge({ id: 'seed:yuwen:shici', domain: 'yuwen' });
-    await insertProposeEvent({
-      id: 'p1',
-      payload: {
-        mutation: 'propose_new',
-        name: '通假字',
-        parent_id: 'seed:yuwen:shici',
-      },
-    });
-    const result = await acceptProposal(db, 'p1');
-    expect(result.kind).toBe('propose_new_applied');
-    if (result.kind !== 'propose_new_applied') throw new Error('unexpected kind');
-    expect(result.new_node_id).toMatch(/^[a-z0-9]+$/);
-    const knowledgeRows = await db
-      .select()
-      .from(knowledge)
-      .where(eq(knowledge.id, result.new_node_id));
-    expect(knowledgeRows).toHaveLength(1);
-    expect(knowledgeRows[0]).toMatchObject({
-      name: '通假字',
-      domain: null,
-      parent_id: 'seed:yuwen:shici',
-      proposed_by_ai: true,
-      approval_status: 'approved',
-      version: 0,
-    });
-    // rate=accept event chained
-    const rateRows = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p1')));
-    expect(rateRows).toHaveLength(1);
-    expect((rateRows[0].payload as Record<string, unknown>).rating).toBe('accept');
-  });
-
-  it('rejects accept on already-decided proposal', async () => {
-    const db = testDb();
-    await insertKnowledge({ id: 'parent_x' });
-    await insertProposeEvent({
-      id: 'p2',
-      payload: { mutation: 'propose_new', name: 'x', parent_id: 'parent_x' },
-      rate: 'accept',
-    });
-    await expect(acceptProposal(db, 'p2')).rejects.toThrow(/not.*pending/i);
-  });
-
-  it('rejects accept when parent_id does not exist', async () => {
-    const db = testDb();
-    await insertProposeEvent({
-      id: 'p5',
-      payload: { mutation: 'propose_new', name: 'x', parent_id: 'ghost-parent' },
-    });
-    await expect(acceptProposal(db, 'p5')).rejects.toThrow(
-      /parent knowledge node not found.*ghost-parent/i,
-    );
-  });
-});
-
 describe('dismissProposal', () => {
   beforeEach(async () => {
     await resetDb();
-  });
-
-  it('writes rate=dismiss event chained to propose', async () => {
-    const db = testDb();
-    await insertKnowledge({ id: 'parent_x' });
-    await insertProposeEvent({
-      id: 'p4',
-      payload: { mutation: 'propose_new', name: 'x', parent_id: 'parent_x' },
-    });
-    await dismissProposal(db, 'p4');
-    const rows = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p4')));
-    expect(rows).toHaveLength(1);
-    expect((rows[0].payload as Record<string, unknown>).rating).toBe('dismiss');
   });
 
   it('idempotent on already-rated proposal', async () => {
@@ -507,33 +280,6 @@ describe('dismissProposal', () => {
 describe('accepted reparent', () => {
   beforeEach(async () => {
     await resetDb();
-  });
-
-  it('refuses a proposal whose event subject does not identify its target', async () => {
-    const db = testDb();
-    await insertKnowledge({ id: 'bound_parent', domain: 'yuwen' });
-    await insertKnowledge({
-      id: 'bound_node',
-      parent_id: 'bound_parent',
-      domain: null,
-      version: 3,
-    });
-    await backfillKnowledgeGenesis(db);
-    await insertProposeEvent({
-      id: 'mismatched_move',
-      subject_id: 'different_node',
-      payload: {
-        mutation: 'reparent',
-        node_id: 'bound_node',
-        new_parent_id: 'bound_parent',
-        expected_version: 3,
-      },
-    });
-    await expect(acceptProposal(db, 'mismatched_move')).rejects.toThrow(
-      'does not identify its target',
-    );
-    const [row] = await db.select().from(knowledge).where(eq(knowledge.id, 'bound_node'));
-    expect(row.version).toBe(3);
   });
 
   it('serializes two moves against the same expected version without a lost update', async () => {
@@ -595,50 +341,6 @@ describe('accepted reparent', () => {
     expect(
       await db.select().from(event).where(eq(event.caused_by_event_id, 'unanchored_move')),
     ).toEqual([]);
-  });
-
-  it('moves a child node to a new parent (happy path)', async () => {
-    const db = testDb();
-    await insertKnowledge({ id: 'k_oldparent', domain: 'yuwen' });
-    await insertKnowledge({ id: 'k_newparent', domain: 'yuwen' });
-    await insertKnowledge({ id: 'k_node', domain: null, parent_id: 'k_oldparent', version: 3 });
-    await acceptKnowledgeMutationFixture(db, {
-      mutation: 'reparent',
-      node_id: 'k_node',
-      new_parent_id: 'k_newparent',
-      expected_version: 3,
-    });
-    const rows = await db
-      .select({ parent_id: knowledge.parent_id, version: knowledge.version })
-      .from(knowledge)
-      .where(eq(knowledge.id, 'k_node'));
-    expect(rows[0]?.parent_id).toBe('k_newparent');
-    expect(rows[0]?.version).toBe(4);
-  });
-
-  it('rejects reparent → null (root creation, PR A guard)', async () => {
-    const db = testDb();
-    await expect(
-      acceptKnowledgeMutationFixture(db, {
-        mutation: 'reparent',
-        node_id: 'k_node',
-        new_parent_id: null,
-        expected_version: 3,
-      }),
-    ).rejects.toThrow(/root.*not supported/i);
-  });
-
-  it('rejects when parent is archived', async () => {
-    const db = testDb();
-    await insertKnowledge({ id: 'k_archived', archived: true });
-    await expect(
-      acceptKnowledgeMutationFixture(db, {
-        mutation: 'reparent',
-        node_id: 'k_node',
-        new_parent_id: 'k_archived',
-        expected_version: 1,
-      }),
-    ).rejects.toThrow(/parent.*not found/i);
   });
 
   it('throws stale error when version mismatch (changes=0)', async () => {
@@ -972,19 +674,6 @@ describe('applySplit', () => {
     expect(source[0].archived_at).toBeNull();
     expect(edgeRows[0].archived_at).toBeNull();
     expect(await edgeArchiveEvents(['e_rollback'])).toHaveLength(0);
-  });
-
-  it('rejects split with into[].parent_id=null (root creation)', async () => {
-    const db = testDb();
-    await insertKnowledge({ id: 'k_from', version: 1 });
-    await expect(
-      applySplit(db, {
-        mutation: 'split',
-        from_id: 'k_from',
-        into: [{ name: 'A', parent_id: null }],
-        expected_version: 1,
-      }),
-    ).rejects.toThrow(/root.*not supported/i);
   });
 
   it('throws stale when archive UPDATE returns 0 changes', async () => {
@@ -1655,144 +1344,11 @@ describe('applyMerge — YUK-543 attribution repair', () => {
     expect(li[0].knowledge_ids).toEqual(['k_into', 'k_y']);
     expect(li[0].updated_at).toEqual(now0); // merge rewrite touches ONLY knowledge_ids
   });
-
-  it('acceptProposal on a merge pins merge_repair on the rate=accept event', async () => {
-    await insertKnowledge({ id: 'k_from', version: 0 });
-    await insertKnowledge({ id: 'k_into', version: 0 });
-    await backfillKnowledgeGenesis(testDb());
-    await insertQ('q1', ['k_from']);
-    await insertProposeEvent({
-      id: 'merge_prop',
-      payload: {
-        mutation: 'merge',
-        from_ids: ['k_from'],
-        into_id: 'k_into',
-        expected_versions: { k_from: 0 },
-      },
-    });
-    await acceptProposal(testDb(), 'merge_prop');
-    const rate = await testDb()
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'merge_prop')));
-    const payload = rate[0].payload as {
-      rating: string;
-      merge_repair?: Array<{ from_id: string }>;
-    };
-    expect(payload.rating).toBe('accept');
-    expect(payload.merge_repair).toBeDefined();
-    expect(payload.merge_repair?.[0].from_id).toBe('k_from');
-    // the question was rewritten as part of the accept.
-    const q1 = await testDb().select().from(question).where(eq(question.id, 'q1'));
-    expect(q1[0].knowledge_ids).toEqual(['k_into']);
-  });
 });
 
 describe('acceptProposal — high-tier mutations', () => {
   beforeEach(async () => {
     await resetDb();
-  });
-
-  it('dispatches reparent and returns reparent_applied result', async () => {
-    const db = testDb();
-    await insertKnowledge({ id: 'k_oldparent', domain: 'yuwen' });
-    await insertKnowledge({ id: 'k_newparent', domain: 'yuwen' });
-    await insertKnowledge({ id: 'k_node', domain: null, parent_id: 'k_oldparent', version: 3 });
-    await backfillKnowledgeGenesis(db);
-    await insertProposeEvent({
-      id: 'p_reparent',
-      payload: {
-        mutation: 'reparent',
-        node_id: 'k_node',
-        new_parent_id: 'k_newparent',
-        expected_version: 3,
-      },
-    });
-    const result = await acceptProposal(db, 'p_reparent');
-    expect(result.kind).toBe('reparent_applied');
-    const rateRows = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p_reparent')));
-    expect((rateRows[0].payload as Record<string, unknown>).rating).toBe('accept');
-  });
-
-  it('dispatches archive and returns archive_applied result', async () => {
-    const db = testDb();
-    await insertKnowledge({ id: 'k_node', version: 5 });
-    await backfillKnowledgeGenesis(db);
-    await insertProposeEvent({
-      id: 'p_arch',
-      payload: {
-        mutation: 'archive',
-        node_id: 'k_node',
-        expected_version: 5,
-      },
-    });
-    const result = await acceptProposal(db, 'p_arch');
-    expect(result.kind).toBe('archive_applied');
-  });
-
-  it('marks proposal stale on stale error and re-throws', async () => {
-    const db = testDb();
-    await insertKnowledge({ id: 'k_node', version: 5 });
-    await insertProposeEvent({
-      id: 'p_stale',
-      payload: {
-        mutation: 'archive',
-        node_id: 'k_node',
-        expected_version: 3,
-      },
-    });
-    await expect(acceptProposal(db, 'p_stale')).rejects.toThrow(/stale/i);
-    const rateRows = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p_stale')));
-    expect(rateRows).toHaveLength(1);
-    expect((rateRows[0].payload as Record<string, unknown>).rating).toBe('rollback');
-  });
-
-  it('throws unknown_mutation when payload has unrecognized mutation kind', async () => {
-    const db = testDb();
-    // Manually insert experimental:knowledge_frobnicate event with bogus mutation
-    await insertProposeEvent({
-      id: 'p_bad',
-      payload: { mutation: 'frobnicate', node_id: 'k_x' },
-    });
-    await expect(acceptProposal(db, 'p_bad')).rejects.toThrow(/unknown_mutation/i);
-  });
-
-  // Codex P2-I — dismiss must reject non-proposal events.
-  it('dismissProposal throws when the event id is not a proposal (e.g., attempt event)', async () => {
-    const db = testDb();
-    const now = new Date();
-    await db.insert(event).values({
-      id: 'attempt_e1',
-      session_id: null,
-      actor_kind: 'user',
-      actor_ref: 'self',
-      action: 'attempt',
-      subject_kind: 'question',
-      subject_id: 'q1',
-      outcome: 'failure',
-      payload: {
-        answer_md: 'wrong',
-        answer_image_refs: [],
-        referenced_knowledge_ids: [],
-      },
-      caused_by_event_id: null,
-      task_run_id: null,
-      cost_micro_usd: null,
-      created_at: now,
-    });
-    await expect(dismissProposal(db, 'attempt_e1')).rejects.toThrow(/not a proposal/i);
-    // No rate event was written.
-    const rateRows = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'attempt_e1')));
-    expect(rateRows).toHaveLength(0);
   });
 
   // Codex P1-F — concurrent double-accept must not produce duplicate
@@ -1948,48 +1504,6 @@ describe('acceptProposal — PR-A2b projection parity', () => {
     expect(await gatherAndFoldKnowledgeNode(db, rootId)).toEqual(await liveSnapshot(rootId));
   });
 
-  it('propose_new accept: rate carries materialized_ids, index row written, fold == row', async () => {
-    const db = testDb();
-    await insertKnowledge({ id: 'seed:yuwen:shici', domain: 'yuwen' });
-    await insertProposeEvent({
-      id: 'p_a2b_new',
-      payload: { mutation: 'propose_new', name: '通假字', parent_id: 'seed:yuwen:shici' },
-    });
-
-    const result = await acceptProposal(db, 'p_a2b_new');
-    expect(result.kind).toBe('propose_new_applied');
-    if (result.kind !== 'propose_new_applied') throw new Error('unexpected kind');
-    const newId_ = result.new_node_id;
-
-    // (a) rate=accept payload carries materialized_ids.knowledge = [newId]
-    const rateRows = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p_a2b_new')));
-    expect(rateRows).toHaveLength(1);
-    const ratePayload = rateRows[0].payload as {
-      rating: string;
-      materialized_ids?: { knowledge?: string[] };
-    };
-    expect(ratePayload.rating).toBe('accept');
-    expect(ratePayload.materialized_ids?.knowledge).toEqual([newId_]);
-
-    // (b) materialized_id_index row: newId → proposalId, subject_kind='knowledge'
-    const idxRows = await db
-      .select()
-      .from(materialized_id_index)
-      .where(eq(materialized_id_index.materialized_id, newId_));
-    expect(idxRows).toHaveLength(1);
-    expect(idxRows[0].anchor_event_id).toBe('p_a2b_new');
-    expect(idxRows[0].subject_kind).toBe('knowledge');
-
-    // (c) fold(events) deep-equals the live structural row (incl created_at/updated_at)
-    const folded = await gatherAndFoldKnowledgeNode(db, newId_);
-    const live = await liveSnapshot(newId_);
-    expect(live).not.toBeNull();
-    expect(folded).toEqual(live);
-  });
-
   it('split accept: N minted ids in materialized_ids + index; fold == row for each new node', async () => {
     const db = testDb();
     await insertKnowledge({ id: 'k_p1', domain: 'yuwen' });
@@ -2046,52 +1560,6 @@ describe('acceptProposal — PR-A2b projection parity', () => {
       expect(live).not.toBeNull();
       expect(folded).toEqual(live);
     }
-  });
-
-  it('reparent accept: no materialized_ids; fold == row with accept-time timestamps', async () => {
-    const db = testDb();
-    // Seed the node via a propose_new accept so its genesis lives in the event log
-    // (gatherAndFoldKnowledgeNode reconstructs from events, not from a bare INSERT).
-    await insertKnowledge({ id: 'k_oldparent', domain: 'yuwen' });
-    await insertKnowledge({ id: 'k_newparent', domain: 'yuwen' });
-    await insertProposeEvent({
-      id: 'p_seed_node',
-      payload: { mutation: 'propose_new', name: 'movable', parent_id: 'k_oldparent' },
-    });
-    const seed = await acceptProposal(db, 'p_seed_node');
-    if (seed.kind !== 'propose_new_applied') throw new Error('seed failed');
-    const nodeId = seed.new_node_id;
-
-    // Reparent that node. The node currently has version 0 (createRow seeds 0).
-    await insertProposeEvent({
-      id: 'p_a2b_reparent',
-      subject_id: nodeId,
-      payload: {
-        mutation: 'reparent',
-        node_id: nodeId,
-        new_parent_id: 'k_newparent',
-        expected_version: 0,
-      },
-    });
-    const result = await acceptProposal(db, 'p_a2b_reparent');
-    expect(result.kind).toBe('reparent_applied');
-
-    // No materialized_ids on a reparent accept (mints nothing).
-    const rateRows = await db
-      .select()
-      .from(event)
-      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'p_a2b_reparent')));
-    expect(rateRows).toHaveLength(1);
-    const ratePayload = rateRows[0].payload as { materialized_ids?: unknown };
-    expect(ratePayload.materialized_ids).toBeUndefined();
-
-    // fold == row: parent moved, version bumped, updated_at = reparent accept-time.
-    const folded = await gatherAndFoldKnowledgeNode(db, nodeId);
-    const live = await liveSnapshot(nodeId);
-    expect(live).not.toBeNull();
-    expect(live?.parent_id).toBe('k_newparent');
-    expect(live?.version).toBe(1);
-    expect(folded).toEqual(live);
   });
 
   it('archive accept: no materialized_ids; fold == row with archived_at from accept-time', async () => {

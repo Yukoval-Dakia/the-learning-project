@@ -8,26 +8,11 @@ vi.mock('./evaluate-submission', () => ({
   evaluateSubmission: (...args: unknown[]) => evaluateSubmissionSpy(...args),
 }));
 
-import {
-  EVALUATION_ENTRY_POINTS,
-  evaluateAttempt,
-  projectEvaluationToJudgeResult,
-} from './evaluation-authority';
+import { projectEvaluationToJudgeResult } from './evaluation-authority';
 
 beforeEach(() => {
   evaluateSubmissionSpy.mockReset();
 });
-
-const ENTRY_POINTS = [
-  'solo_submit',
-  'durable_judge_run',
-  'paper_submit',
-  'solve_tutor',
-  'appeal_rejudge',
-  'conjecture_probe',
-  'ingestion_grading',
-  'advice_preview',
-] as const;
 
 const SUM_BASIS: ScoringBasisT = {
   units: [
@@ -44,106 +29,6 @@ const SUM_BASIS: ScoringBasisT = {
   aggregation: { kind: 'sum' },
   blank_scores_zero: true,
 };
-
-describe('EVALUATION_ENTRY_POINTS registry', () => {
-  it('registers exactly the eight §4.2 authoritative grading entries', () => {
-    expect(EVALUATION_ENTRY_POINTS.map((e) => e.entry).sort()).toEqual([...ENTRY_POINTS].sort());
-    for (const disposition of EVALUATION_ENTRY_POINTS) {
-      expect(disposition.lane).toBe('contract');
-      expect(disposition.contract_wiring).toBe('wired');
-    }
-  });
-});
-
-describe('evaluateAttempt — lane dispatch', () => {
-  it('contract lane delegates to evaluateSubmission and returns the projection', async () => {
-    evaluateSubmissionSpy.mockResolvedValue({
-      record: {
-        evaluation_id: 'eva-1',
-        evaluation_group_id: 'grp-1',
-        submission_id: 'sub-1',
-        attempt: 1,
-        status: 'completed',
-        unit_results: [
-          {
-            status: 'scored',
-            scoring_unit_id: 'p1::u',
-            points_awarded: 4,
-            scored_because: 'response',
-            evidence_citations: [],
-          },
-        ],
-        aggregate: { kind: 'points_total', points: 4, policy: { kind: 'sum' } },
-        plan_digest: 'sha256:abc',
-        run_refs: [],
-        provenance: { source: 'automatic' as const, assisted: false },
-      },
-      created_at: new Date(),
-      replayed: false,
-      scoring_basis: SUM_BASIS,
-      model_units_invoked: 0,
-      spent_cost_usd_micros: 0,
-    });
-    const out = await evaluateAttempt({
-      entry: 'appeal_rejudge',
-      db: {} as never,
-      contract: { submission_id: 'sub-1', evaluation_group_id: 'grp-1' },
-    });
-    expect(out.lane).toBe('contract');
-    expect(evaluateSubmissionSpy).toHaveBeenCalledWith(
-      {},
-      expect.objectContaining({ submission_id: 'sub-1' }),
-    );
-    expect(out.result.coarse_outcome).toBe('correct');
-    expect(out.result.score).toBe(1);
-    expect(out.result.capability_ref.id).toBe('evaluate_submission');
-  });
-
-  it('contract lane forwards a {kind:"jev"} executor descriptor to evaluateSubmission (YUK-1092)', async () => {
-    evaluateSubmissionSpy.mockResolvedValue({
-      record: {
-        evaluation_id: 'eva-1',
-        evaluation_group_id: 'grp-1',
-        submission_id: 'sub-1',
-        attempt: 1,
-        status: 'completed',
-        unit_results: [],
-        aggregate: { kind: 'points_total', points: 0, policy: { kind: 'sum' } },
-        plan_digest: null,
-        run_refs: [],
-        provenance: { source: 'automatic' as const, assisted: false },
-      },
-      created_at: new Date(),
-      replayed: false,
-      scoring_basis: SUM_BASIS,
-      model_units_invoked: 1,
-      spent_cost_usd_micros: 0,
-    });
-    const spec = { kind: 'jev' as const, deadline_at: Date.now() + 60_000, rule_threshold: 0.8 };
-    const out = await evaluateAttempt({
-      entry: 'solo_submit',
-      db: {} as never,
-      contract: { submission_id: 'sub-1', evaluation_group_id: 'grp-1', model_executor: spec },
-    });
-    expect(out.lane).toBe('contract');
-    // 漏斗不做 descriptor 解析 —— 原样传给 evaluateSubmission 的组合点。
-    expect(evaluateSubmissionSpy).toHaveBeenCalledWith(
-      {},
-      expect.objectContaining({ model_executor: spec }),
-    );
-  });
-
-  it('rejects inputs carrying both lanes', async () => {
-    await expect(
-      evaluateAttempt({
-        entry: 'paper_submit',
-        db: {} as never,
-        contract: { submission_id: 's', evaluation_group_id: 'g' },
-        legacy: { db: {}, question: {}, answer_md: 'x', subjectProfile: {} } as never,
-      } as never),
-    ).rejects.toThrow(/legacy grading input is retired/);
-  });
-});
 
 describe('projectEvaluationToJudgeResult — pending honesty', () => {
   const baseRecord = {

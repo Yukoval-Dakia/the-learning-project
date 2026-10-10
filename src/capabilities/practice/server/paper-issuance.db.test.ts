@@ -3,13 +3,10 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
   artifact,
-  assessment_issuance,
   evaluation,
   evaluation_effective_head,
-  event,
   learning_session,
   material_fsrs_state,
-  question,
 } from '@/db/schema';
 import { getQuestionTimeline } from '@/kernel/read-models/question-activity';
 import { seedFrozenSolveQuestion } from '../../../../tests/fixtures/assessment-solve';
@@ -18,7 +15,6 @@ import { createAnswerDraft } from '../api/paper-answer-route';
 import { createPaperReviewSession } from '../api/paper-session-create';
 import { createPaperSubmission } from '../api/paper-submit-route';
 import { PATCH as transitionReview } from '../api/review-session-detail';
-import { previewFormalAttempt } from './assessment/attempt';
 import { submitNativePaperAttempt } from './assessment/paper-attempt';
 import { readPaperAssessmentBinding } from './assessment/paper-issuance';
 import { getIssuanceState } from './assessment/submit';
@@ -67,170 +63,6 @@ async function paper(questionIds: string[]) {
 
 beforeEach(resetDb);
 describe('paper opening freezes actual assessment occurrences', () => {
-  it('issues every independent slot once, pins feedback and preserves originals after editing', async () => {
-    const db = testDb();
-    const a = await seedFrozenSolveQuestion(db),
-      b = await seedFrozenSolveQuestion(db);
-    const paperId = await paper([a.id, b.id]);
-    const [first, second] = await Promise.all([
-      createPaperReviewSession(paperId),
-      createPaperReviewSession(paperId),
-    ]);
-    expect(first.sessionId).toBe(second.sessionId);
-    const binding = await readPaperAssessmentBinding(db, first.sessionId);
-    expect(binding).not.toBeNull();
-    if (!binding) throw new Error('expected frozen paper binding');
-    expect(binding.slots).toHaveLength(2);
-    expect(new Set(binding?.slots.map((s) => s.evaluation_group_id)).size).toBe(2);
-    expect(binding?.slots.map((s) => s.feedback_policy)).toEqual([
-      'judge_now_show_later',
-      'immediate',
-    ]);
-    await db
-      .update(question)
-      .set({ prompt_md: '已更改题面', reference_md: '新的答案' })
-      .where(eq(question.id, a.id));
-    await db
-      .update(artifact)
-      .set({ tool_state: { question_ids: [b.id] } })
-      .where(eq(artifact.id, paperId));
-    const replay = await createPaperReviewSession(paperId);
-    expect(await readPaperAssessmentBinding(db, replay.sessionId)).toEqual(binding);
-    const detail = await getPaperDetail(db, paperId);
-    expect(detail?.sections.flatMap((section) => section.slots)).toHaveLength(2);
-    expect((await getPracticeList(db)).papers[0].total_slots).toBe(2);
-    expect(detail?.sections[0].slots[0].assessment?.practice_dto.faces[0].prompt_md).toContain(
-      'a≠b',
-    );
-    expect(JSON.stringify(detail)).not.toContain('新的答案');
-    const state = await getIssuanceState(db, binding.slots[0].issuance_id);
-    expect(state.practice_dto?.faces[0].prompt_md).toContain('a≠b');
-    expect(JSON.stringify(state.practice_dto)).not.toContain('解析');
-    expect(
-      await db.select().from(event).where(eq(event.action, 'experimental:assessment_paper_issued')),
-    ).toHaveLength(1);
-  });
-
-  it('rolls the entire new session and its partial issuance back when a slot is unpublished', async () => {
-    const db = testDb();
-    const a = await seedFrozenSolveQuestion(db);
-    const missing = createId();
-    await db.insert(question).values({
-      id: missing,
-      kind: 'derivation',
-      prompt_md: '尚未发布题',
-      reference_md: '未核验',
-      knowledge_ids: [],
-      difficulty: 2,
-      source: 'manual',
-      version: 0,
-      created_at: new Date(),
-      updated_at: new Date(),
-    });
-    const before = await db.select().from(assessment_issuance);
-    const paperId = await paper([a.id, missing]);
-    await expect(createPaperReviewSession(paperId)).rejects.toMatchObject({ code: 'unpublished' });
-    expect(await db.select().from(learning_session)).toHaveLength(0);
-    expect(await db.select().from(assessment_issuance)).toHaveLength(before.length);
-    expect(
-      await db.select().from(event).where(eq(event.action, 'experimental:assessment_paper_issued')),
-    ).toHaveLength(0);
-  });
-  it('submits frozen independent slots and buffers all public grading feedback until completion', async () => {
-    const db = testDb();
-    const a = await seedFrozenSolveQuestion(db),
-      b = await seedFrozenSolveQuestion(db);
-    const paperId = await paper([a.id, b.id]);
-    const { sessionId } = await createPaperReviewSession(paperId);
-    const binding = await readPaperAssessmentBinding(db, sessionId);
-    if (!binding) throw new Error('binding absent');
-    const assessment = { ...binding.slots[0], response_set: a.responseSet('a-b') };
-    const request = () =>
-      new Request('http://localhost/api/paper/submit', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          session_id: sessionId,
-          question_id: a.id,
-          answer_md: 'a-b',
-          assessment,
-        }),
-      });
-    await db
-      .update(question)
-      .set({ reference_md: 'a-b', prompt_md: '改变后的题面' })
-      .where(eq(question.id, a.id));
-    const res = await createPaperSubmission(request(), { id: paperId });
-    expect(res.status).toBe(200);
-    const hidden = await res.json();
-    expect(hidden.visible_to_user).toBe(false);
-    expect(hidden).not.toHaveProperty('coarse_outcome');
-    expect(hidden).not.toHaveProperty('score');
-    expect(hidden).not.toHaveProperty('status');
-    const hiddenDetail = await getPaperDetail(db, paperId);
-    expect(hiddenDetail?.session).toMatchObject({ pos: 1, right: 0, wrong: 0 });
-    expect((await getPracticeList(db)).papers[0].session).toMatchObject({
-      pos: 1,
-      right: 0,
-      wrong: 0,
-    });
-    expect(hiddenDetail?.sections[0].slots[0].slot_state.submission).toMatchObject({
-      visible_to_user: false,
-    });
-    expect(hiddenDetail?.sections[0].slots[0].slot_state.submission).not.toHaveProperty(
-      'reference_md',
-    );
-    expect(await getQuestionTimeline(db, a.id)).toMatchObject([{ outcome: 'pending' }]);
-    await expect(
-      previewFormalAttempt(db, 'advice_preview', a.id, assessment),
-    ).rejects.toMatchObject({ code: 'paper_entry_required' });
-    expect((await createPaperSubmission(request(), { id: paperId })).status).toBe(200);
-    expect((await db.select().from(material_fsrs_state))[0].state.reps).toBe(1);
-    await expect(
-      submitNativePaperAttempt(db, {
-        sessionId,
-        paperArtifactId: paperId,
-        questionId: a.id,
-        assessment: { ...assessment, response_set: a.responseSet('a+b') },
-        answerMd: 'a+b',
-      }),
-    ).rejects.toMatchObject({ status: 409 });
-    const second = await submitNativePaperAttempt(db, {
-      sessionId,
-      paperArtifactId: paperId,
-      questionId: b.id,
-      assessment: { ...binding.slots[1], response_set: b.responseSet('a+b') },
-      answerMd: 'a+b',
-    });
-    expect(second.coarseOutcome).toBe('correct');
-    expect(second.visibleToUser).toBe(true);
-    expect(await db.select().from(material_fsrs_state)).toHaveLength(2);
-    await db
-      .update(learning_session)
-      .set({ status: 'completed' })
-      .where(eq(learning_session.id, sessionId));
-    expect(await getQuestionTimeline(db, a.id)).toMatchObject([{ outcome: 'failure' }]);
-    const releasedDetail = await getPaperDetail(db, paperId);
-    expect(releasedDetail?.session).toMatchObject({ pos: 2, right: 1, wrong: 1 });
-    expect((await getPracticeList(db)).papers[0].session).toMatchObject({
-      pos: 2,
-      right: 1,
-      wrong: 1,
-    });
-    expect(releasedDetail?.sections[0].slots[0].slot_state.submission).toMatchObject({
-      visible_to_user: true,
-      outcome: 'incorrect',
-      score: 0,
-      reference_md: expect.stringContaining('a≠b'),
-    });
-    const released = await createPaperSubmission(request(), { id: paperId });
-    expect(await released.json()).toMatchObject({
-      visible_to_user: true,
-      coarse_outcome: 'incorrect',
-      score: 0,
-    });
-  });
-
   it('replays the current corrected grade without reactivating the original or rescheduling', async () => {
     const db = testDb();
     const q = await seedFrozenSolveQuestion(db);

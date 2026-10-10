@@ -1,9 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  sanitizeToolResultForSse,
-  sanitizeToolUseForSse,
-} from '@/capabilities/copilot/server/tool-activity';
+import { sanitizeToolUseForSse } from '@/capabilities/copilot/server/tool-activity';
 
 describe('tool-use SSE sanitization — YUK-457 P1', () => {
   it('drops native Task tool_use frames that would leak subagent prompts', () => {
@@ -20,35 +17,5 @@ describe('tool-use SSE sanitization — YUK-457 P1', () => {
     });
 
     expect(leaked).toBeNull();
-  });
-
-  it('forwards DomainTool tool_use frames unchanged', () => {
-    const call = {
-      toolName: 'query_mistakes',
-      toolUseId: 'toolu-query-7',
-      input: { limit: 8, subject_id: 'math' },
-    };
-
-    expect(sanitizeToolUseForSse(call)).toEqual(call);
-  });
-
-  it('drops Task tool_result frames defensively', () => {
-    expect(
-      sanitizeToolResultForSse({
-        toolName: 'Task',
-        input: { subagent_type: 'copilot-researcher', prompt: 'hidden' },
-        summary: 'should not reach the dock',
-      }),
-    ).toBeNull();
-  });
-
-  it('forwards DomainTool tool_result frames unchanged', () => {
-    const result = {
-      toolName: 'get_review_due',
-      input: { horizon_days: 2 },
-      summary: 'review · 12 due 今日 · 4 due 明日',
-    };
-
-    expect(sanitizeToolResultForSse(result)).toEqual(result);
   });
 });

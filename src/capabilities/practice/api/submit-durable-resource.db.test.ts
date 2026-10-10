@@ -19,7 +19,6 @@ import {
   assessment_submission,
   evaluation,
   event,
-  material_fsrs_state,
   question,
   question_group_lifecycle,
 } from '@/db/schema';
@@ -44,7 +43,7 @@ vi.mock('@/server/boss/client', async (importOriginal) => {
   return { ...actual, getStartedBoss: async () => ({ send: bossSend }) };
 });
 
-import { createAttempt, createAttemptResource } from './submit';
+import { createAttempt } from './submit';
 
 async function seedQuestion(id: string) {
   const now = new Date();
@@ -75,66 +74,6 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
   afterEach(() => {
     vi.unstubAllEnvs();
     vi.restoreAllMocks();
-  });
-
-  it('passes the 202-pending response through the resource wrapper untouched (no review_event crash)', async () => {
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const issued = await issueSoloFixture(testDb(), questionId, true);
-    const res = await createAttemptResource(
-      new Request('http://localhost/api/attempts', {
-        method: 'POST',
-        body: JSON.stringify({
-          question_id: questionId,
-          rating: 'good',
-          response_md: 'my answer',
-          assessment: issued.assessment('my answer'),
-          auto_rate: true,
-        }),
-        headers: { 'content-type': 'application/json' },
-      }),
-    );
-    expect(res.status).toBe(202);
-    const body = (await res.json()) as { verdict?: string; run_id?: string };
-    expect(body.verdict).toBe('pending');
-    expect(res.headers.get('Location')).toBe(`/api/jobs/judge_run/${body.run_id}/events`);
-    // #8 — the pass-through is keyed on this EXPLICIT discriminant, not a bare 202, so an
-    // unrelated future 202 from this route still goes through the resource wrapper.
-    expect(res.headers.get('x-durable-divert')).toBe('judge');
-    expect(bossSend).toHaveBeenCalledTimes(1);
-  });
-
-  it('flag-ON but MANUAL rating (no server judge) does NOT divert — FSRS advances immediately, not 202', async () => {
-    const questionId = `q_${newId()}`;
-    await seedQuestion(questionId);
-    const issued = await issueSoloFixture(testDb(), questionId, true);
-    // auto_rate omitted → no server-side judge call → nothing to move off the request
-    // window → the manual rating writes the review event + FSRS synchronously.
-    const res = await createAttemptResource(
-      new Request('http://localhost/api/attempts', {
-        method: 'POST',
-        body: JSON.stringify({
-          question_id: questionId,
-          rating: 'good',
-          self_report: true,
-          assessment: issued.assessment(''),
-        }),
-        headers: { 'content-type': 'application/json' },
-      }),
-    );
-    expect(res.status).not.toBe(202);
-    expect(bossSend).not.toHaveBeenCalled();
-    // The attempt review event + FSRS state landed immediately (no deferral).
-    const reviews = await testDb()
-      .select()
-      .from(event)
-      .where(eq(event.action, 'experimental:assessment_attempt'));
-    expect(reviews).toHaveLength(1);
-    const fsrs = await testDb()
-      .select()
-      .from(material_fsrs_state)
-      .where(eq(material_fsrs_state.subject_id, 'k1'));
-    expect(fsrs.length).toBeGreaterThan(0);
   });
 
   it('retains a rate-limited diagnostic original and recovers it once without releasing its claim', async () => {

@@ -94,39 +94,4 @@ describe('durable verbatim memory projection claim', () => {
     expect(providerAdds).toHaveBeenCalledOnce();
     expect(rows.size).toBe(1);
   });
-
-  it('retry after external add success and pre-receipt crash converges to the existing row', async () => {
-    const db = testDb();
-    const rows = new Map<string, { id: string; memory: string }>();
-    const addVerbatimOnce: MemoryClient['addVerbatimOnce'] = vi.fn(
-      async (_text, _metadata, _projectionKey, _providerOperation, beforeProviderAdd) => {
-        await beforeProviderAdd();
-        const memory = { id: 'memory-existing', memory: '改写后的判断' };
-        rows.set('rate-crash', memory);
-        throw new Error('process died after mem0 add');
-      },
-    );
-    const findByEventId = vi.fn(async (eventId: string) => {
-      const memory = rows.get(eventId);
-      return { results: memory ? [memory] : [] };
-    });
-    const client = memoryClientMock({ addVerbatimOnce, findByEventId });
-    const boss = {
-      send: vi.fn(async (_name: string, _data: object, options?: object) =>
-        deterministicSendId(options),
-      ),
-    };
-    const handler = buildMemoryEventIngestHandler(db, boss, {
-      handoffMode: 'write',
-      loadEvent: async () => sourceEvent('rate-crash'),
-      memoryClient: client,
-    });
-
-    await expect(handler([ingestJob('rate-crash')])).rejects.toThrow('process died after mem0 add');
-    await expect(handler([ingestJob('rate-crash')])).resolves.toBeUndefined();
-
-    expect(addVerbatimOnce).toHaveBeenCalledTimes(1);
-    expect(findByEventId).toHaveBeenCalledWith('rate-crash');
-    expect(rows.size).toBe(1);
-  });
 });

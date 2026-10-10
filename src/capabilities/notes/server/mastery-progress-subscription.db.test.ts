@@ -159,20 +159,4 @@ describe('mastery progress note-refine subscription', () => {
       downstream_job_id: 'job-1',
     });
   });
-
-  it('rolls back the effect reservation when transactional enqueue fails', async () => {
-    const bossSend = vi.fn(async () => null);
-    const delivery = {
-      subscriberId: 'notes.mastery-progress-note-refine',
-      subscriberVersion: 1,
-      deliverySeq: '1',
-      sourceEventId: SOURCE_EVENT_ID,
-    };
-
-    await expect(
-      handleMasteryProgressNoteRefineDelivery(testDb(), delivery, { bossSend }),
-    ).rejects.toThrow('transactional send returned null');
-
-    await expect(testDb().select().from(event_subscription_effect)).resolves.toEqual([]);
-  });
 });

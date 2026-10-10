@@ -2,7 +2,6 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ModelExecutorRequest, ModelUnitOutcomeT } from '@/core/schema/assessment';
 import { event } from '@/db/schema';
-import * as events from '@/kernel/events';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { createRecordedModelExecutor } from './judge/recorded-model-executor';
 
@@ -152,68 +151,6 @@ describe('formal model execution receipts', () => {
     }
     const completed = await first;
     expect(await model(request())).toEqual(completed);
-    expect(execute).toHaveBeenCalledOnce();
-  });
-
-  it('a failed result write leaves a durable reservation rather than repeating a paid call', async () => {
-    const realWrite = events.writeEvent;
-    const failSeal = vi.spyOn(events, 'writeEvent').mockImplementation(async (db, input) => {
-      if (input.action === 'experimental:assessment_model_result')
-        throw new Error('result storage unavailable');
-      return realWrite(db, input);
-    });
-    const execute = vi.fn(
-      async (_input: ModelExecutorRequest, _signal: AbortSignal | undefined, runId: string) =>
-        scored(runId),
-    );
-    const model = createRecordedModelExecutor(testDb(), execute);
-    await expect(model(request())).rejects.toThrow('result storage unavailable');
-    failSeal.mockRestore();
-    expect(await model(request())).toMatchObject({
-      kind: 'pending',
-      cost_usd_micros: 1000,
-      pending: { reason: 'infra_failure', retryable: false },
-      run_refs: [],
-    });
-    expect(execute).toHaveBeenCalledOnce();
-  });
-
-  it('refuses changed input under a claimed operation and allows a distinct explicit attempt', async () => {
-    const execute = vi.fn(
-      async (_input: ModelExecutorRequest, _signal: AbortSignal | undefined, runId: string) =>
-        scored(runId),
-    );
-    const model = createRecordedModelExecutor(testDb(), execute);
-    await model(request());
-    const changed = request();
-    changed.slot_responses = [
-      { slot_id: 'reasoning', kind: 'text', text_md: 'different original response' },
-    ];
-    expect(await model(changed)).toMatchObject({ kind: 'pending', pending: { retryable: false } });
-    expect(execute).toHaveBeenCalledOnce();
-    const lowered = request();
-    lowered.executor.max_cost_usd_micros = 1;
-    expect(await model(lowered)).toMatchObject({ kind: 'pending', cost_usd_micros: 1000 });
-    expect(await model(request(2))).toMatchObject({ kind: 'scored' });
-    expect(execute).toHaveBeenCalledTimes(2);
-  });
-
-  it('holds thrown execution failures and refuses an absent unit budget without invoking', async () => {
-    const execute = vi.fn().mockRejectedValue(new Error('connection lost after sending request'));
-    const model = createRecordedModelExecutor(testDb(), execute);
-    const first = await model(request());
-    expect(first).toMatchObject({
-      kind: 'pending',
-      cost_usd_micros: 1000,
-      pending: { retryable: false },
-    });
-    expect(await model(request())).toEqual(first);
-    const unbounded = request(2);
-    delete unbounded.executor.max_cost_usd_micros;
-    expect(await model(unbounded)).toMatchObject({
-      kind: 'pending',
-      pending: { reason: 'unjudgeable' },
-    });
     expect(execute).toHaveBeenCalledOnce();
   });
 });

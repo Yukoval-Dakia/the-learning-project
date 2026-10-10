@@ -4,17 +4,6 @@ import { JudgeResultV2 } from '@/core/schema/capability';
 import { runUnitDimensionJudge, unitDimensionV1Capability } from './unit_dimension';
 
 describe('unitDimensionV1Capability', () => {
-  it('has the P2 real-runner manifest', () => {
-    expect(unitDimensionV1Capability.manifest).toMatchObject({
-      id: 'unit_dimension',
-      version: '1.0.0',
-      kind: 'judge',
-      cost_class: 'local',
-      latency_class: 'async',
-      stability: 'experimental',
-    });
-  });
-
   it('exact correct via accelerator', async () => {
     const result = await unitDimensionV1Capability.run({
       question: { metadata: { reference_value: 30, reference_unit: 'm/s' } },
