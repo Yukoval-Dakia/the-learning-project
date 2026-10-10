@@ -52,9 +52,13 @@ invariant breaks:
    browser, authorization, no third-party personal data leakage.
 5. Crisis referral (YUK-1398).
 
-Do not write tests for UI/component rendering, DTO/schema shape,
-prompt/copy/snapshots/byte hashes, source-path or doc-structure assertions,
-mocks that only assert "was called"/"exists", helpers, or coverage. Agent/model
+The five invariants take precedence over the exclusions below: a helper, DTO,
+or UI behavior that carries one of them (deterministic scoring, idempotency,
+privacy isolation, …) still gets an invariant test. Otherwise do not write tests
+that only check UI/component rendering, DTO/schema shape,
+prompt/copy/snapshots/byte hashes, source-path or doc structure, or
+implementation details, or that only assert "was called"/"exists", and do not
+add tests for coverage. Agent/model
 output quality and learning effect are verified with real provider
 actual-output or learner-outcome reconciliation, sealed with exact revision,
 input/output digests, task-run ID, and provider/model/cost.

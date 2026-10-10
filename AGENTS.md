@@ -97,8 +97,10 @@ pnpm build
   3. 并发与锁：advisory lock、CAS/版本冲突、事务回滚与幂等重试；
   4. 安全边界：`/api/*` 鉴权与豁免、浏览器不持 provider key、授权与第三方信息不外泄；
   5. 危机转介（YUK-1398）。
-- 不写：UI/组件渲染、DTO/schema 形状、prompt/文案/快照/字节 hash、源码路径与文档
-  结构断言、只断言“被调用/存在”的 mock 测试、helper 自身的测试、为覆盖率补的测试。
+- 五类不变量优先于下面的排除项：helper、DTO、UI 行为若承载上述不变量（如确定性
+  判分、幂等、隐私隔离），仍按不变量写测试。除此之外不写：只验证 UI/组件渲染、
+  DTO/schema 形状、prompt/文案/快照/字节 hash、源码路径与文档结构、实现细节，或只断言
+  “被调用/存在”的测试，以及为覆盖率补的测试。
   修 bug 时若不触及上面五类，用 typecheck/build 和真实运行验证，不补回归测试。
 - 涉及 agent/model 实际输出或学习效果的验收，用真实 provider actual-output 或学习者
   结果对账，并封存 exact revision、输入/输出 digest、task-run ID、provider/model/cost；
