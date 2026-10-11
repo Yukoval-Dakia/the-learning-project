@@ -266,6 +266,8 @@ describe('placement frozen native workflow', () => {
     expect(await db.select().from(learning_session)).toEqual(sessions);
     expect(await db.select().from(assessment_issuance)).toHaveLength(0);
   });
+  // @invariant data: reads preserve paid obligations and bind outcomes to the current revision and subject
+  // @fails-if select the old claim or mutate its ledger on read; the explicit claim and ledger assertions fail
   it('reads exhausted and unknown supply repeatedly without replay or mutation, bound to current session revision and subject', async () => {
     await seed();
     const now = new Date();
@@ -383,7 +385,14 @@ describe('placement frozen native workflow', () => {
         failure_reason: { code: 'cost_unknown' },
       },
     ]);
-    expect(await read()).toEqual(await read());
+    expect(await read()).toMatchObject([
+      {
+        claim_id: current.claimId,
+        semantic_goal_revision_id: 'revision-two',
+        subject_id: 'math',
+        state: 'unknown',
+      },
+    ]);
     expect(await snapshot()).toEqual(beforeUnknown);
     expect(JSON.stringify(await read())).not.toContain('private provider text');
   });

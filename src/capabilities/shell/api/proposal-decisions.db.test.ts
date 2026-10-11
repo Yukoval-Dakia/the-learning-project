@@ -302,6 +302,8 @@ describe('POST /api/proposals/[id]/decisions', () => {
     expect(primaryRow.version).toBe(0);
   });
 
+  // @invariant concurrency: replay returns the one committed merge decision without another merge
+  // @fails-if return an invented decision id or repeat the merge; event identity and version assertions fail
   it('keeps the committed block_merge accept contract: 201 + Location, replay 200 reuses the same immutable event', async () => {
     const sessionId = createId();
     await seedSourceDocument();
@@ -330,7 +332,6 @@ describe('POST /api/proposals/[id]/decisions', () => {
     });
     expect(accept.status).toBe(201);
     const acceptBody = (await accept.json()) as DecisionBody;
-    expect(typeof acceptBody.decision_event_id).toBe('string');
     expect(accept.headers.get('location')).toBe(
       `/api/events/${encodeURIComponent(acceptBody.decision_event_id as string)}`,
     );
@@ -362,6 +363,7 @@ describe('POST /api/proposals/[id]/decisions', () => {
         and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'block_merge_http_commit')),
       );
     expect(rateRows).toHaveLength(1);
+    expect(acceptBody.decision_event_id).toBe(rateRows[0].id);
     const primaryRow = (
       await testDb().select().from(question_block).where(eq(question_block.id, primary)).limit(1)
     )[0];
