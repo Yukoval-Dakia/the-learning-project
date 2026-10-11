@@ -210,6 +210,8 @@ function namespaceAwareRels(bytes: Uint8Array): {
 // ---------- prepareDocxForConversion: the YUK-1476 omission semantics ----------
 
 describe('prepareDocxForConversion — external refs NEVER reach converters', () => {
+  // @invariant security: converter copy carries zero external non-hyperlink rel targets while every internal rel and media part stays byte-identical
+  // @fails-if the sanitizer re-emits the stripped external relationship or corrupts the internal footer image rel and media bytes
   it('omits the footer external image, keeps the internal fallback image, preserves every non-rels part byte-identical', () => {
     const original = schoolShapeDocx();
     const prep: DocxConversionPrep = prepareDocxForConversion(original);
@@ -284,6 +286,8 @@ describe('prepareDocxForConversion — external refs NEVER reach converters', ()
     expect(Buffer.from(copyEntries['word/footer1.xml']).equals(Buffer.from(FOOTER_XML))).toBe(true);
   });
 
+  // @invariant data: embedded body-image rels and media bytes survive body external-ref omission unchanged
+  // @fails-if body sanitization drops or mutates the internal embedded image rel or media so question stem images vanish
   it('applies the SAME omission rule to body external images while keeping the real embedded body image (31/32 stem shape)', () => {
     const original = buildDocx({
       'word/_rels/document.xml.rels': relsXml([
@@ -319,6 +323,8 @@ describe('prepareDocxForConversion — external refs NEVER reach converters', ()
     ).toBe(true);
   });
 
+  // @invariant security: external template and OLE-object relationships never reach the converter copy, with honest type categories in the audit facts
+  // @fails-if non-image external resource relationships pass through the copy or are miscategorized in the omission audit
   it('omits external template/object relationships too, categorized honestly', () => {
     const original = buildDocx({
       'word/_rels/footer1.xml.rels': relsXml([
@@ -347,6 +353,8 @@ describe('prepareDocxForConversion — external refs NEVER reach converters', ()
     expect(readRels(prep.converterBytes, 'word/_rels/footer1.xml.rels').size).toBe(0);
   });
 
+  // @invariant data: MathType papers keep visual-line routing while decorative external refs are omitted
+  // @fails-if omission touches document.xml or breaks ProgID counting, misrouting to the text line where pandoc silently drops every OLE formula
   it('keeps MathType visual routing while omitting the decorative external ref', () => {
     const original = zipSync({
       '[Content_Types].xml': CONTENT_TYPES,
@@ -368,6 +376,8 @@ describe('prepareDocxForConversion — external refs NEVER reach converters', ()
     expect(readRels(prep.converterBytes, 'word/_rels/footer1.xml.rels').size).toBe(0);
   });
 
+  // @invariant data: a clean upload is forwarded to converters as the exact original bytes with no rebuild
+  // @fails-if the prep path rebuilds or mutates bytes when nothing was omitted, drifting converter input away from the uploaded original
   it('forwards the ORIGINAL bytes untouched when nothing needs omission (identity fast path)', () => {
     const clean = buildDocx({
       'word/_rels/document.xml.rels': relsXml([
@@ -383,6 +393,8 @@ describe('prepareDocxForConversion — external refs NEVER reach converters', ()
     expect(prep.line).toBe('text');
   });
 
+  // @invariant security: prefixed-root OPC parts re-emit canonically so namespace-aware converters can still address every surviving relationship
+  // @fails-if the serializer loses the OPC namespace declaration (the P1-1 defect) and namespace-aware readers resolve zero relationships
   it('sanitizes a PREFIXED-root OPC relationship part to the canonical default-ns form', () => {
     const original = buildDocx({
       'word/_rels/footer1.xml.rels': strToU8(
@@ -411,14 +423,8 @@ describe('prepareDocxForConversion — external refs NEVER reach converters', ()
     ).toBe(true);
   });
 
-  it('rebuilds deterministically: same input → same converter bytes + digest', () => {
-    const original = schoolShapeDocx();
-    const a = prepareDocxForConversion(original);
-    const b = prepareDocxForConversion(original);
-    expect(Buffer.from(a.converterBytes).equals(Buffer.from(b.converterBytes))).toBe(true);
-    expect(a.converterInputSha256).toBe(b.converterInputSha256);
-  });
-
+  // @invariant security: UTF-16 relationship parts are decoded, stripped of external refs, and re-emitted as self-consistent readable UTF-8
+  // @fails-if UTF-16 decode or re-encode mishandles the part, leaving external targets alive or internal rels unparseable for converters
   it('strips external refs from a UTF-16 encoded relationship part and re-emits self-consistent UTF-8', () => {
     const xml = `<?xml version="1.0" encoding="UTF-16" standalone="yes"?>\r\n<Relationships xmlns="${RELS_NS}"><Relationship Id="rId1" Type="${IMAGE_TYPE}" Target="media/image2.png"/><Relationship Id="rId2" Type="${IMAGE_TYPE}" Target="https://cdn.example.com/logo.png" TargetMode="External"/></Relationships>`;
     // UTF-16LE with BOM
@@ -451,6 +457,8 @@ describe('prepareDocxForConversion — external refs NEVER reach converters', ()
 // ---------- fail-closed guards on the sanitize path ----------
 
 describe('prepareDocxForConversion — fail-closed guards preserved', () => {
+  // @invariant security: DOCTYPE-bearing relationship parts stay hard 400 rejections, never omission bypasses
+  // @fails-if entity-declaration tricks ride the sanitize path and reach a converter's XML parser
   it('still rejects DOCTYPE relationship parts (no omission bypass for entity tricks)', () => {
     const docx = buildDocx({
       'word/_rels/footer1.xml.rels': strToU8(
@@ -460,6 +468,8 @@ describe('prepareDocxForConversion — fail-closed guards preserved', () => {
     expectApiError(() => prepareDocxForConversion(docx), '外部资源关系');
   });
 
+  // @invariant security: corrupt zip, invalid numeric entities, invalid rels XML, duplicate rels parts, and missing document.xml all still reject 400
+  // @fails-if any of these malformed inputs stops throwing and flows toward converter spawn or session creation
   it('still rejects invalid numeric entities / invalid rels XML / duplicates / missing document.xml / non-zip', () => {
     expectApiError(
       () =>
@@ -506,6 +516,8 @@ describe('prepareDocxForConversion — fail-closed guards preserved', () => {
     );
   });
 
+  // @invariant security: serializer-unrepresentable relationship parts reject instead of being rewritten unfaithfully
+  // @fails-if a part with non-whitespace text is silently rewritten, dropping or altering relationships a converter would read
   it('rejects instead of sanitizing when the relationship part has a shape the serializer cannot faithfully rewrite', () => {
     // Non-whitespace text content inside <Relationships> — well-formed XML, but
     // not representable in the flat OPC relationship schema.
@@ -517,6 +529,8 @@ describe('prepareDocxForConversion — fail-closed guards preserved', () => {
     expectApiError(() => prepareDocxForConversion(docx), '外部资源关系');
   });
 
+  // @invariant security: foreign-namespace roots, prefixed attributes, mixed child prefixes, and missing declarations reject rather than sanitize
+  // @fails-if an unfaithful rewrite injects OPC visibility into a part converters would have ignored, or reorders relationship semantics
   it('rejects foreign-namespace roots, prefixed attributes, and mixed child prefixes (R1 P1-1)', () => {
     // Root bound to a FOREIGN namespace: converters ignore such a part entirely;
     // re-emitting it in canonical OPC form would INJECT visibility — reject.
@@ -555,6 +569,8 @@ describe('prepareDocxForConversion — fail-closed guards preserved', () => {
     expectApiError(() => prepareDocxForConversion(noNs), '外部资源关系');
   });
 
+  // @invariant security: high-ratio archives are rejected at the cumulative pre-inflation ceiling instead of ballooning request memory
+  // @fails-if the rebuild inflates the bomb payload past the bound, or the bound starts rejecting clean archives that omit nothing
   it('bounds the rebuild: a high-ratio archive is rejected pre-inflation, not ballooned', () => {
     // 210MB of zeros deflates to ~200KB. The sanitize path (triggered by the
     // footer external ref) must reject it at the cumulative decompressed ceiling

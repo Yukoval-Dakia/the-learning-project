@@ -75,13 +75,16 @@ duplicate/bounds/missing-document 仍 reject，外部非 hyperlink 从 reject �
 
 ## 测试（`route-classify.test.ts`，unit，已登记 fastTestInclude）
 
-安全/数据保全不变量 **13 例全绿**（R1 修复后）：footer/body 同规则省略、
-31/32 形状内嵌图字节级保留、hyperlink 保留、MathType 路由并存、干净文件恒等快路径、
-确定性重建、UTF-16 part、前缀根→规范化、**独立命名空间感知 readback**（非 FXP 的
-最小 tokenizer + 命名空间解析器，验证副本中根与每个存活关系均解析到 OPC 命名空间
-——P1-1 回归）、DOCTYPE/entity/duplicate/missing/non-zip fail-closed、异命名空间根/
-前缀属性/混合子前缀/无命名空间声明拒绝、序列化不可能形状拒绝、
-210MB→200KB 高比率档案在解压上限前拒绝（无外部关系时不误伤）。
+安全/数据保全不变量 **12 例全绿**，逐例携带 `@invariant`/`@fails-if` 标注并通过
+`pnpm audit:test-policy`（base bfe3ff984，checked 12 / errors []）：footer/body 同规则
+省略、31/32 形状内嵌图字节级保留、hyperlink 保留、MathType 路由并存（误路由=公式
+静默丢失）、干净文件恒等快路径、前缀根→规范化、**独立命名空间感知 readback**
+（非 FXP 的最小 tokenizer + 命名空间解析器，验证副本中根与每个存活关系均解析到
+OPC 命名空间——P1-1 回归）、UTF-16 part、DOCTYPE/entity/duplicate/missing/non-zip
+fail-closed、异命名空间根/前缀属性/混合子前缀/无命名空间声明拒绝、序列化不可能
+形状拒绝、210MB→200KB 高比率档案在解压上限前拒绝（无外部关系时不误伤）。
+原 digest-determinism 用例按 owner 测试政策删除（纯确定性断言，无安全/数据失败
+主张；确定性由固定 mtime 设计保证并经 12 例的 digest 断言间接覆盖）。
 
 ## 限制与诚实边界
 
