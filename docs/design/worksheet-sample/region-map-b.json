@@ -1,19 +1,20 @@
 {
-  "schemaVersion": 1,
-  "shortCode": "TLP-7K2Q",
-  "note": "sample: unit ids, option ids and the short code are placeholders; the export binds real scoring-unit and option ids",
-  "webOnlyUnits": [],
+  "schema_version": 1,
+  "short_code": "TLP-7K2Q",
+  "issuance_id": "iss_sample_placeholder",
+  "note": "sample: issuance, slot, unit and option ids, the export token and short code are placeholders; the export binds real ids, frozen option_order and records PDF + map digests",
+  "web_only_units": [],
   "pages": [
     {
       "page": 1,
       "of": 4,
       "orientation": "portrait",
-      "sizeMm": {
+      "size_mm": {
         "w": 210,
         "h": 297
       },
       "qr": {
-        "payload": "tlp://ws/TLP-7K2Q/1/4",
+        "payload": "tlp://ws/v1/<export_token>/1/4",
         "mm": {
           "x": 173,
           "y": 16.999,
@@ -27,34 +28,37 @@
           "cy": 8.498,
           "size": 4.998,
           "fill": "solid",
-          "strokeMm": null
+          "stroke_mm": null
         },
         "tr": {
           "cx": 201.499,
           "cy": 8.498,
           "size": 4.998,
           "fill": "solid",
-          "strokeMm": null
+          "stroke_mm": null
         },
         "bl": {
           "cx": 8.498,
           "cy": 288.501,
           "size": 4.998,
           "fill": "solid",
-          "strokeMm": null
+          "stroke_mm": null
         },
         "br": {
           "cx": 201.499,
           "cy": 288.501,
           "size": 4.998,
           "fill": "hollow",
-          "strokeMm": 1.2
+          "stroke_mm": 1.2
         }
       },
       "regions": [
         {
+          "region_id": "p1-r1",
           "kind": "choice",
-          "unit": "q1.u1",
+          "issuance_id": "iss_sample_placeholder",
+          "slot_id": "slot-q1.u1",
+          "unit_id": "q1.u1",
           "mark": null,
           "mm": {
             "x": 23.999,
@@ -62,10 +66,11 @@
             "w": 161.999,
             "h": 15.796
           },
-          "seq": 1,
+          "segment_index": 1,
           "options": [
             {
-              "optionId": "opt-q1-a",
+              "option_id": "opt-q1-a",
+              "order": 0,
               "label": "A",
               "mm": {
                 "x": 23.999,
@@ -75,7 +80,8 @@
               }
             },
             {
-              "optionId": "opt-q1-b",
+              "option_id": "opt-q1-b",
+              "order": 1,
               "label": "B",
               "mm": {
                 "x": 109.996,
@@ -85,7 +91,8 @@
               }
             },
             {
-              "optionId": "opt-q1-c",
+              "option_id": "opt-q1-c",
+              "order": 2,
               "label": "C",
               "mm": {
                 "x": 23.999,
@@ -95,7 +102,8 @@
               }
             },
             {
-              "optionId": "opt-q1-d",
+              "option_id": "opt-q1-d",
+              "order": 3,
               "label": "D",
               "mm": {
                 "x": 109.996,
@@ -107,8 +115,11 @@
           ]
         },
         {
+          "region_id": "p1-r2",
           "kind": "draft",
-          "unit": null,
+          "issuance_id": null,
+          "slot_id": null,
+          "unit_id": null,
           "mark": "dots",
           "mm": {
             "x": 23.999,
@@ -123,12 +134,12 @@
       "page": 2,
       "of": 4,
       "orientation": "portrait",
-      "sizeMm": {
+      "size_mm": {
         "w": 210,
         "h": 297
       },
       "qr": {
-        "payload": "tlp://ws/TLP-7K2Q/2/4",
+        "payload": "tlp://ws/v1/<export_token>/2/4",
         "mm": {
           "x": 173,
           "y": 16.999,
@@ -142,34 +153,37 @@
           "cy": 8.498,
           "size": 4.998,
           "fill": "solid",
-          "strokeMm": null
+          "stroke_mm": null
         },
         "tr": {
           "cx": 201.499,
           "cy": 8.498,
           "size": 4.998,
           "fill": "solid",
-          "strokeMm": null
+          "stroke_mm": null
         },
         "bl": {
           "cx": 8.498,
           "cy": 288.501,
           "size": 4.998,
           "fill": "solid",
-          "strokeMm": null
+          "stroke_mm": null
         },
         "br": {
           "cx": 201.499,
           "cy": 288.501,
           "size": 4.998,
           "fill": "hollow",
-          "strokeMm": 1.2
+          "stroke_mm": 1.2
         }
       },
       "regions": [
         {
+          "region_id": "p2-r1",
           "kind": "writing",
-          "unit": "q2.u1",
+          "issuance_id": "iss_sample_placeholder",
+          "slot_id": "slot-q2.u1",
+          "unit_id": "q2.u1",
           "mark": "dots",
           "mm": {
             "x": 23.999,
@@ -177,11 +191,14 @@
             "w": 161.999,
             "h": 65.997
           },
-          "seq": 1
+          "segment_index": 1
         },
         {
+          "region_id": "p2-r2",
           "kind": "writing",
-          "unit": "q2.u2",
+          "issuance_id": "iss_sample_placeholder",
+          "slot_id": "slot-q2.u2",
+          "unit_id": "q2.u2",
           "mark": "squares",
           "mm": {
             "x": 23.999,
@@ -189,7 +206,7 @@
             "w": 161.999,
             "h": 103.998
           },
-          "seq": 1
+          "segment_index": 1
         }
       ]
     },
@@ -197,12 +214,12 @@
       "page": 3,
       "of": 4,
       "orientation": "portrait",
-      "sizeMm": {
+      "size_mm": {
         "w": 210,
         "h": 297
       },
       "qr": {
-        "payload": "tlp://ws/TLP-7K2Q/3/4",
+        "payload": "tlp://ws/v1/<export_token>/3/4",
         "mm": {
           "x": 173,
           "y": 16.999,
@@ -216,34 +233,37 @@
           "cy": 8.498,
           "size": 4.998,
           "fill": "solid",
-          "strokeMm": null
+          "stroke_mm": null
         },
         "tr": {
           "cx": 201.499,
           "cy": 8.498,
           "size": 4.998,
           "fill": "solid",
-          "strokeMm": null
+          "stroke_mm": null
         },
         "bl": {
           "cx": 8.498,
           "cy": 288.501,
           "size": 4.998,
           "fill": "solid",
-          "strokeMm": null
+          "stroke_mm": null
         },
         "br": {
           "cx": 201.499,
           "cy": 288.501,
           "size": 4.998,
           "fill": "hollow",
-          "strokeMm": 1.2
+          "stroke_mm": 1.2
         }
       },
       "regions": [
         {
+          "region_id": "p3-r1",
           "kind": "writing",
-          "unit": "q2.u3",
+          "issuance_id": "iss_sample_placeholder",
+          "slot_id": "slot-q2.u3",
+          "unit_id": "q2.u3",
           "mark": "squares",
           "mm": {
             "x": 23.999,
@@ -251,7 +271,7 @@
             "w": 161.999,
             "h": 185.998
           },
-          "seq": 1
+          "segment_index": 1
         }
       ]
     },
@@ -259,12 +279,12 @@
       "page": 4,
       "of": 4,
       "orientation": "landscape",
-      "sizeMm": {
+      "size_mm": {
         "w": 297,
         "h": 210
       },
       "qr": {
-        "payload": "tlp://ws/TLP-7K2Q/4/4",
+        "payload": "tlp://ws/v1/<export_token>/4/4",
         "mm": {
           "x": 262.004,
           "y": 13.998,
@@ -278,34 +298,37 @@
           "cy": 8.498,
           "size": 4.998,
           "fill": "solid",
-          "strokeMm": null
+          "stroke_mm": null
         },
         "tr": {
           "cx": 288.501,
           "cy": 8.498,
           "size": 4.998,
           "fill": "solid",
-          "strokeMm": null
+          "stroke_mm": null
         },
         "bl": {
           "cx": 8.498,
           "cy": 201.499,
           "size": 4.998,
           "fill": "solid",
-          "strokeMm": null
+          "stroke_mm": null
         },
         "br": {
           "cx": 288.501,
           "cy": 201.499,
           "size": 4.998,
           "fill": "hollow",
-          "strokeMm": 1.2
+          "stroke_mm": 1.2
         }
       },
       "regions": [
         {
+          "region_id": "p4-r1",
           "kind": "choice",
-          "unit": "q3.blank1",
+          "issuance_id": "iss_sample_placeholder",
+          "slot_id": "slot-q3.blank1",
+          "unit_id": "q3.blank1",
           "mark": null,
           "mm": {
             "x": 169.313,
@@ -313,10 +336,11 @@
             "w": 105.689,
             "h": 14.399
           },
-          "seq": 1,
+          "segment_index": 1,
           "options": [
             {
-              "optionId": "opt-q3b1-a",
+              "option_id": "opt-q3b1-a",
+              "order": 0,
               "label": "A",
               "mm": {
                 "x": 169.313,
@@ -326,7 +350,8 @@
               }
             },
             {
-              "optionId": "opt-q3b1-b",
+              "option_id": "opt-q3b1-b",
+              "order": 1,
               "label": "B",
               "mm": {
                 "x": 225.156,
@@ -336,7 +361,8 @@
               }
             },
             {
-              "optionId": "opt-q3b1-c",
+              "option_id": "opt-q3b1-c",
+              "order": 2,
               "label": "C",
               "mm": {
                 "x": 169.313,
@@ -346,7 +372,8 @@
               }
             },
             {
-              "optionId": "opt-q3b1-d",
+              "option_id": "opt-q3b1-d",
+              "order": 3,
               "label": "D",
               "mm": {
                 "x": 225.156,
@@ -358,8 +385,11 @@
           ]
         },
         {
+          "region_id": "p4-r2",
           "kind": "choice",
-          "unit": "q3.blank2",
+          "issuance_id": "iss_sample_placeholder",
+          "slot_id": "slot-q3.blank2",
+          "unit_id": "q3.blank2",
           "mark": null,
           "mm": {
             "x": 169.313,
@@ -367,10 +397,11 @@
             "w": 105.689,
             "h": 14.399
           },
-          "seq": 1,
+          "segment_index": 1,
           "options": [
             {
-              "optionId": "opt-q3b2-a",
+              "option_id": "opt-q3b2-a",
+              "order": 0,
               "label": "A",
               "mm": {
                 "x": 169.313,
@@ -380,7 +411,8 @@
               }
             },
             {
-              "optionId": "opt-q3b2-b",
+              "option_id": "opt-q3b2-b",
+              "order": 1,
               "label": "B",
               "mm": {
                 "x": 225.156,
@@ -390,7 +422,8 @@
               }
             },
             {
-              "optionId": "opt-q3b2-c",
+              "option_id": "opt-q3b2-c",
+              "order": 2,
               "label": "C",
               "mm": {
                 "x": 169.313,
@@ -400,7 +433,8 @@
               }
             },
             {
-              "optionId": "opt-q3b2-d",
+              "option_id": "opt-q3b2-d",
+              "order": 3,
               "label": "D",
               "mm": {
                 "x": 225.156,
@@ -412,8 +446,11 @@
           ]
         },
         {
+          "region_id": "p4-r3",
           "kind": "choice",
-          "unit": "q3.blank3",
+          "issuance_id": "iss_sample_placeholder",
+          "slot_id": "slot-q3.blank3",
+          "unit_id": "q3.blank3",
           "mark": null,
           "mm": {
             "x": 169.313,
@@ -421,10 +458,11 @@
             "w": 105.689,
             "h": 14.399
           },
-          "seq": 1,
+          "segment_index": 1,
           "options": [
             {
-              "optionId": "opt-q3b3-a",
+              "option_id": "opt-q3b3-a",
+              "order": 0,
               "label": "A",
               "mm": {
                 "x": 169.313,
@@ -434,7 +472,8 @@
               }
             },
             {
-              "optionId": "opt-q3b3-b",
+              "option_id": "opt-q3b3-b",
+              "order": 1,
               "label": "B",
               "mm": {
                 "x": 225.156,
@@ -444,7 +483,8 @@
               }
             },
             {
-              "optionId": "opt-q3b3-c",
+              "option_id": "opt-q3b3-c",
+              "order": 2,
               "label": "C",
               "mm": {
                 "x": 169.313,
@@ -454,7 +494,8 @@
               }
             },
             {
-              "optionId": "opt-q3b3-d",
+              "option_id": "opt-q3b3-d",
+              "order": 3,
               "label": "D",
               "mm": {
                 "x": 225.156,
@@ -466,8 +507,11 @@
           ]
         },
         {
+          "region_id": "p4-r4",
           "kind": "choice",
-          "unit": "q3.blank4",
+          "issuance_id": "iss_sample_placeholder",
+          "slot_id": "slot-q3.blank4",
+          "unit_id": "q3.blank4",
           "mark": null,
           "mm": {
             "x": 169.313,
@@ -475,10 +519,11 @@
             "w": 105.689,
             "h": 14.399
           },
-          "seq": 1,
+          "segment_index": 1,
           "options": [
             {
-              "optionId": "opt-q3b4-a",
+              "option_id": "opt-q3b4-a",
+              "order": 0,
               "label": "A",
               "mm": {
                 "x": 169.313,
@@ -488,7 +533,8 @@
               }
             },
             {
-              "optionId": "opt-q3b4-b",
+              "option_id": "opt-q3b4-b",
+              "order": 1,
               "label": "B",
               "mm": {
                 "x": 225.156,
@@ -498,7 +544,8 @@
               }
             },
             {
-              "optionId": "opt-q3b4-c",
+              "option_id": "opt-q3b4-c",
+              "order": 2,
               "label": "C",
               "mm": {
                 "x": 169.313,
@@ -508,7 +555,8 @@
               }
             },
             {
-              "optionId": "opt-q3b4-d",
+              "option_id": "opt-q3b4-d",
+              "order": 3,
               "label": "D",
               "mm": {
                 "x": 225.156,
@@ -520,8 +568,11 @@
           ]
         },
         {
+          "region_id": "p4-r5",
           "kind": "choice",
-          "unit": "q3.blank5",
+          "issuance_id": "iss_sample_placeholder",
+          "slot_id": "slot-q3.blank5",
+          "unit_id": "q3.blank5",
           "mark": null,
           "mm": {
             "x": 169.313,
@@ -529,10 +580,11 @@
             "w": 105.689,
             "h": 14.399
           },
-          "seq": 1,
+          "segment_index": 1,
           "options": [
             {
-              "optionId": "opt-q3b5-a",
+              "option_id": "opt-q3b5-a",
+              "order": 0,
               "label": "A",
               "mm": {
                 "x": 169.313,
@@ -542,7 +594,8 @@
               }
             },
             {
-              "optionId": "opt-q3b5-b",
+              "option_id": "opt-q3b5-b",
+              "order": 1,
               "label": "B",
               "mm": {
                 "x": 225.156,
@@ -552,7 +605,8 @@
               }
             },
             {
-              "optionId": "opt-q3b5-c",
+              "option_id": "opt-q3b5-c",
+              "order": 2,
               "label": "C",
               "mm": {
                 "x": 169.313,
@@ -562,7 +616,8 @@
               }
             },
             {
-              "optionId": "opt-q3b5-d",
+              "option_id": "opt-q3b5-d",
+              "order": 3,
               "label": "D",
               "mm": {
                 "x": 225.156,
@@ -574,8 +629,11 @@
           ]
         },
         {
+          "region_id": "p4-r6",
           "kind": "draft",
-          "unit": null,
+          "issuance_id": null,
+          "slot_id": null,
+          "unit_id": null,
           "mark": "ruled",
           "mm": {
             "x": 161.317,
