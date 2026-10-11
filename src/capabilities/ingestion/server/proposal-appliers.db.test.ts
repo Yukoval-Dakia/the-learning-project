@@ -16,7 +16,11 @@ import {
   question_block,
   source_document,
 } from '@/db/schema';
-import { type ProposalInboxRow, getProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
+import {
+  type ProposalInboxRow,
+  getProposalInboxRow,
+  listProposalInboxRows,
+} from '@/kernel/proposals/inbox';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
 import { acceptAiProposal, dismissAiProposal } from '@/server/proposals/actions';
@@ -562,9 +566,7 @@ describe('block_merge proposal lifecycle', () => {
     const rateRows = await db
       .select()
       .from(event)
-      .where(
-        and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'block_merge_nondraft')),
-      );
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'block_merge_nondraft')));
     expect(rateRows).toHaveLength(0);
     const signals = await db
       .select()
@@ -625,9 +627,7 @@ describe('block_merge proposal lifecycle', () => {
     const rateRows = await db
       .select()
       .from(event)
-      .where(
-        and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'block_merge_race')),
-      );
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'block_merge_race')));
     expect(rateRows).toHaveLength(0);
   });
 

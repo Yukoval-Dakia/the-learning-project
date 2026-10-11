@@ -137,10 +137,7 @@ export async function acceptBlockMergeProposal(
     mergeBlockIds,
     ingestionSessionId: change.ingestion_session_id,
   };
-  const admissionCtx = await loadBlockMergeAdmissionContext(db, [
-    primaryBlockId,
-    ...mergeBlockIds,
-  ]);
+  const admissionCtx = await loadBlockMergeAdmissionContext(db, [primaryBlockId, ...mergeBlockIds]);
   const verdict = evaluateBlockMergeAdmission(admissionInput, admissionCtx);
   if (verdict.reason === 'not_draft') {
     return {

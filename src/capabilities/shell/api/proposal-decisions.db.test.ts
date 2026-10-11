@@ -293,9 +293,7 @@ describe('POST /api/proposals/[id]/decisions', () => {
     const rateRows = await testDb()
       .select()
       .from(event)
-      .where(
-        and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'block_merge_http_stale')),
-      );
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'block_merge_http_stale')));
     expect(rateRows).toHaveLength(0);
     const primaryRow = (
       await testDb().select().from(question_block).where(eq(question_block.id, primary)).limit(1)

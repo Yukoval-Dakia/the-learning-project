@@ -52,9 +52,7 @@ function isStaleBlockMergeAccept(
   decision: ProposalDecisionInputT['decision'],
   result: ProposalLifecycleResult,
 ): result is ProposalLifecycleResult & { kind: 'block_merge'; stale: true } {
-  return (
-    decision === 'accept' && result.kind === 'block_merge' && result.stale === true
-  );
+  return decision === 'accept' && result.kind === 'block_merge' && result.stale === true;
 }
 
 /**
