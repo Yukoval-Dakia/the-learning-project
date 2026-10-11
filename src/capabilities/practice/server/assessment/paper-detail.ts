@@ -197,6 +197,17 @@ export async function getFrozenPaperDetail(
     }
     section.slots.push(detail);
   }
+  // Slots the gate refused at open time carry no issuance at all — surface them
+  // with a null issuance id next to pinned-but-unservable slots so the read
+  // shape is identical and never invents an issuance that does not exist.
+  for (const slot of binding.withheld_slots ?? []) {
+    withheld.push({
+      issuance_id: null,
+      question_id: slot.question_id,
+      part_ref: slot.part_ref,
+      reason: slot.reason,
+    });
+  }
   return {
     artifact_id: paper.id,
     title: paper.title,

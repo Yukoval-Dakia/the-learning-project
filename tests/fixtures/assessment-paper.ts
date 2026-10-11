@@ -1,17 +1,24 @@
 import { createHash } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, desc, eq, inArray } from 'drizzle-orm';
 import { createPaperReviewSession } from '@/capabilities/practice/api/paper-session-create';
-import { readPaperAssessmentBinding } from '@/capabilities/practice/server/assessment/paper-issuance';
+import {
+  PaperAssessmentBinding,
+  type PaperAssessmentBindingT,
+  paperBindingId,
+  readPaperAssessmentBinding,
+} from '@/capabilities/practice/server/assessment/paper-issuance';
 import { withFrozenPaperReopen } from '@/capabilities/practice/server/assessment/paper-session-transition';
 import { getIssuanceState } from '@/capabilities/practice/server/assessment/submit';
 import {
   activateSubmissionCandidate,
   evaluateSubmission,
 } from '@/capabilities/practice/server/judge/evaluate-submission';
+import { readPaperSections } from '@/capabilities/practice/server/paper-sections';
 import {
   type PaperSubmitSlotInput,
   submitPaperSlot,
 } from '@/capabilities/practice/server/paper-submit';
+import { canonicalHash } from '@/core/migration/canonical';
 import { Artifact } from '@/core/schema';
 import type { SlotResponseT } from '@/core/schema/assessment';
 import type { Db } from '@/db/client';
@@ -20,10 +27,12 @@ import {
   evaluation,
   evaluation_effective_head,
   event,
+  learning_session,
   question,
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
 import {
   contractIntegrityDigest,
   normalizeQuestionGroupToContract,
@@ -31,9 +40,164 @@ import {
 } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
 import { Review } from '@/server/session';
+import { seedHistoricalAssessmentIssuance } from './historical-assessment-issuance';
 
 /** Real publication/opening for migrated fixtures; never freezes lazily at submit time. */
 export async function startFrozenPaperFixture(db: Db, paperId: string) {
+  await publishPaperFixtureGroups(db, paperId);
+  return createPaperReviewSession(paperId);
+}
+
+/**
+ * Already-issued paper session for fixtures whose slots are no longer servable
+ * (e.g. model-executor contracts). Mirrors createPaperReviewSession +
+ * issuePaperAssessment, but writes the per-slot issuances and the frozen
+ * binding event as historical rows — never new serving authority.
+ */
+export async function startHistoricalPaperFixture(db: Db, paperId: string) {
+  await publishPaperFixtureGroups(db, paperId);
+  return db.transaction(async (tx) => {
+    const existing = await tx
+      .select({ id: learning_session.id })
+      .from(learning_session)
+      .where(
+        and(
+          eq(learning_session.type, 'review'),
+          eq(learning_session.artifact_id, paperId),
+          inArray(learning_session.status, ['started', 'paused']),
+        ),
+      )
+      .orderBy(desc(learning_session.created_at))
+      .limit(1);
+    if (existing[0]) return { sessionId: existing[0].id, created: false };
+
+    const { sessionId } = await Review.startReviewSession(tx, { artifactId: paperId });
+    const [session] = await tx
+      .select()
+      .from(learning_session)
+      .where(eq(learning_session.id, sessionId));
+    if (!session) throw new Error('historical paper session missing');
+    const [paper] = await tx.select().from(artifact).where(eq(artifact.id, paperId));
+    if (!paper) throw new Error('paper fixture missing');
+    const state = Artifact.parse(paper).tool_state;
+    const sections = readPaperSections(state);
+    const slots = sections.length
+      ? sections.flatMap((section, sectionIndex) =>
+          section.assignments.map((a) => ({
+            question_id: a.question_id,
+            part_ref: a.part_ref ?? null,
+            section_index: sectionIndex,
+            knowledge_focus: section.knowledge_focus,
+            feedback_policy: section.feedback_policy,
+          })),
+        )
+      : (state?.question_ids ?? []).map((question_id) => ({
+          question_id,
+          part_ref: null,
+          section_index: 0,
+          knowledge_focus: [] as string[],
+          feedback_policy: 'immediate',
+        }));
+    const seen = new Set<string>();
+    const pending = [];
+    for (const slot of slots) {
+      const key = `${slot.question_id}::${slot.part_ref ?? ''}`;
+      if (seen.has(key)) throw new Error('duplicate paper slot');
+      seen.add(key);
+      const [q] = await tx
+        .select({
+          id: question.id,
+          parent_id: question.parent_question_id,
+          kind: question.kind,
+          difficulty: question.difficulty,
+          knowledge_ids: question.knowledge_ids,
+          part_index: question.part_index,
+        })
+        .from(question)
+        .where(eq(question.id, slot.question_id));
+      if (!q) throw new Error('paper question not found');
+      pending.push({
+        slot: {
+          ...slot,
+          question_meta: {
+            kind: q.kind,
+            difficulty: q.difficulty,
+            knowledge_ids: q.knowledge_ids,
+            parent_question_id: q.parent_id,
+            part_index: q.part_index,
+          },
+        },
+        groupId: q.parent_id ?? q.id,
+      });
+    }
+    const issuedSlots = new Map<string, PaperAssessmentBindingT['slots'][number]>();
+    for (const { slot, groupId } of [...pending].sort((a, b) =>
+      a.groupId.localeCompare(b.groupId),
+    )) {
+      const [lifecycle] = await tx
+        .select()
+        .from(question_group_lifecycle)
+        .where(eq(question_group_lifecycle.group_id, groupId));
+      if (!lifecycle?.current_revision_id)
+        throw new Error('paper question has no frozen published revision');
+      const [revision] = await tx
+        .select()
+        .from(question_revision)
+        .where(eq(question_revision.revision_id, lifecycle.current_revision_id));
+      if (!revision) throw new Error('paper revision is unavailable');
+      const partId = slot.part_ref ?? slot.question_id;
+      const partIds = revision.structure.parts.some((part) => part.part_id === partId)
+        ? [partId]
+        : slot.part_ref === null && groupId === slot.question_id
+          ? revision.structure.parts.map((part) => part.part_id)
+          : [];
+      if (!partIds.length) throw new Error('paper slot is outside published parts');
+      const identity = canonicalHash({
+        session_id: sessionId,
+        started_at: session.started_at.toISOString(),
+        question_id: slot.question_id,
+        part_ref: slot.part_ref,
+      });
+      const issued = await seedHistoricalAssessmentIssuance(tx, {
+        group_id: groupId,
+        revision_id: revision.revision_id,
+        part_ids: partIds,
+        issuance_id: `iss_paper_${identity}`,
+        container_occurrence_ref: `paper_${identity}`,
+        now: session.started_at,
+      });
+      issuedSlots.set(`${slot.question_id}::${slot.part_ref ?? ''}`, {
+        ...slot,
+        issuance_id: issued.issuance.issuance_id,
+        evaluation_group_id: `eg_paper_${identity}`,
+        idempotency_key: `paper_${identity}`,
+      });
+    }
+    const binding = PaperAssessmentBinding.parse({
+      version: 1,
+      paper_id: paperId,
+      session_id: sessionId,
+      started_at: session.started_at.toISOString(),
+      slots: slots.map((slot) => issuedSlots.get(`${slot.question_id}::${slot.part_ref ?? ''}`)),
+    });
+    await writeEvent(tx, {
+      id: paperBindingId(sessionId, session.started_at),
+      session_id: sessionId,
+      actor_kind: 'user',
+      actor_ref: 'self',
+      action: 'experimental:assessment_paper_issued',
+      subject_kind: 'artifact',
+      subject_id: paperId,
+      outcome: null,
+      payload: binding,
+      created_at: session.started_at,
+      ingest_at: session.started_at,
+    });
+    return { sessionId, created: true };
+  });
+}
+
+async function publishPaperFixtureGroups(db: Db, paperId: string) {
   const [paper] = await db.select().from(artifact).where(eq(artifact.id, paperId));
   if (!paper) throw new Error('paper fixture missing');
   const state = Artifact.parse(paper).tool_state;
@@ -83,7 +247,6 @@ export async function startFrozenPaperFixture(db: Db, paperId: string) {
     if (result.status !== 'published')
       throw new Error(`fixture publication failed: ${result.status}`);
   }
-  return createPaperReviewSession(paperId);
 }
 
 /** Translate historical test input into the actual issued response shape, not a scoring mock. */

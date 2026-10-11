@@ -6,6 +6,8 @@ import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { knowledge, learning_session, question } from '@/db/schema';
 import { __resetRateLimitForTests } from '@/server/http/rate-limit';
+import { normalizeQuestionRowToContract } from '@/server/questions/contract-normalizer';
+import { publishQuestionGroup } from '@/server/questions/publisher';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 
 // G1 (review)：route 永不传 composeDeps，production lazy-compose 走 defaultRunTaskFn →
@@ -52,6 +54,7 @@ async function seedScopedQuestion(input: {
       kind: 'choice',
       prompt_md: '专项题',
       reference_md: 'B',
+      choices_md: ['坡度不变，只记录流速', '固定水量，只改变坡度'],
       knowledge_ids: [input.knowledgeId],
       difficulty: 3,
       source: 'manual',
@@ -65,6 +68,27 @@ async function seedScopedQuestion(input: {
       updated_at: now,
       version: 0,
     });
+  // Scoped stream items require a published, admitted, automatically-servable
+  // contract — the canonical publisher freezes the deterministic option-set key.
+  const [row] = await testDb().select().from(question).where(eq(question.id, qid));
+  const published = await publishQuestionGroup(testDb(), {
+    group_id: qid,
+    contract: normalizeQuestionRowToContract(row),
+    expectedCurrentRevision: null,
+    expectedAdmissionGeneration: null,
+    availability: 'general_pool',
+    actorRef: 'test:scoped-stream-publication',
+    now,
+    admission: {
+      state: 'admitted',
+      evidence: {
+        marking_provenance: 'official',
+        verification: { structural_check_passed: true, independent_verification: null },
+        model_slice: null,
+      },
+    },
+  });
+  if (published.status !== 'published') throw new Error(published.status);
   return qid;
 }
 

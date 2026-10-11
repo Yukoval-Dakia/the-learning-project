@@ -1,4 +1,5 @@
 import { createId } from '@paralleldrive/cuid2';
+import { eq } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -16,6 +17,8 @@ import {
   createMem0OpaqueOperationContext,
   executeMem0OpaqueOperation,
 } from '@/server/ai/provider-attempt-runtime';
+import { normalizeQuestionRowToContract } from '@/server/questions/contract-normalizer';
+import { publishQuestionGroup } from '@/server/questions/publisher';
 import { resetDb } from '../../../../tests/helpers/db';
 import { composeNightly, recomposeStream } from './stream-store';
 
@@ -73,13 +76,38 @@ async function seedSamplableQuestion(db: Db): Promise<string> {
     id: questionId,
     kind: 'choice',
     prompt_md: '哪一个事务边界不会让连接池自我饥饿？',
-    reference_md: 'provider lifecycle 在 compose lock transaction 之外',
+    reference_md: 'B',
+    choices_md: [
+      'provider lifecycle 嵌套在 compose lock transaction 内',
+      'provider lifecycle 在 compose lock transaction 之外',
+    ],
     knowledge_ids: [knowledgeId],
     source: 'manual',
     draft_status: 'active',
     created_at: now,
     updated_at: now,
   });
+  // Compose candidates must be published + admitted + automatically servable —
+  // pin a real deterministic option-set contract instead of an unpublished row.
+  const [row] = await db.select().from(question).where(eq(question.id, questionId));
+  const published = await publishQuestionGroup(db, {
+    group_id: questionId,
+    contract: normalizeQuestionRowToContract(row),
+    expectedCurrentRevision: null,
+    expectedAdmissionGeneration: null,
+    availability: 'general_pool',
+    actorRef: 'test:stream-provider-lock',
+    now,
+    admission: {
+      state: 'admitted',
+      evidence: {
+        marking_provenance: 'official',
+        verification: { structural_check_passed: true, independent_verification: null },
+        model_slice: null,
+      },
+    },
+  });
+  if (published.status !== 'published') throw new Error(published.status);
   return questionId;
 }
 

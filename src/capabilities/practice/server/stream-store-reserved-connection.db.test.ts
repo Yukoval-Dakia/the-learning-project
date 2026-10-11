@@ -1,9 +1,11 @@
 import { createId } from '@paralleldrive/cuid2';
-import { sql } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import postgres from 'postgres';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Db } from '@/db/client';
 import { knowledge, learning_item, practice_stream_item, question } from '@/db/schema';
+import { normalizeQuestionRowToContract } from '@/server/questions/contract-normalizer';
+import { publishQuestionGroup } from '@/server/questions/publisher';
 import { resetDb } from '../../../../tests/helpers/db';
 import { handleReviewDue } from './due-list';
 
@@ -72,13 +74,35 @@ async function seedSamplableQuestion(db: Db): Promise<string> {
     id: questionId,
     kind: 'choice',
     prompt_md: 'Which session must own work guarded by a session advisory lock?',
-    reference_md: 'The reserved lock-holding session.',
+    reference_md: 'B',
+    choices_md: ['A borrowed short-lived session.', 'The reserved lock-holding session.'],
     knowledge_ids: [knowledgeId],
     source: 'manual',
     draft_status: 'active',
     created_at: now,
     updated_at: now,
   });
+  // Compose candidates must be published + admitted + automatically servable —
+  // pin a real deterministic option-set contract instead of an unpublished row.
+  const [row] = await db.select().from(question).where(eq(question.id, questionId));
+  const published = await publishQuestionGroup(db, {
+    group_id: questionId,
+    contract: normalizeQuestionRowToContract(row),
+    expectedCurrentRevision: null,
+    expectedAdmissionGeneration: null,
+    availability: 'general_pool',
+    actorRef: 'test:stream-reserved-connection',
+    now,
+    admission: {
+      state: 'admitted',
+      evidence: {
+        marking_provenance: 'official',
+        verification: { structural_check_passed: true, independent_verification: null },
+        model_slice: null,
+      },
+    },
+  });
+  if (published.status !== 'published') throw new Error(published.status);
   return questionId;
 }
 

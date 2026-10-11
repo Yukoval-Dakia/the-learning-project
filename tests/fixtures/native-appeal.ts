@@ -9,10 +9,10 @@ import type { Db } from '@/db/client';
 import { artifact, evaluation, knowledge, question } from '@/db/schema';
 import {
   publishPaperModelFixture,
-  startFrozenPaperFixture,
+  startHistoricalPaperFixture,
   submitPaperFixture,
 } from './assessment-paper';
-import { issueSoloFixture } from './assessment-solo';
+import { issueHistoricalSoloFixture, issueSoloFixture } from './assessment-solo';
 
 /** Actual publication, original submission, recorded execution, and learning settlement. */
 export async function nativeAppealFixture(
@@ -116,7 +116,7 @@ export async function nativeAppealFixture(
       created_at: now,
       updated_at: now,
     });
-    const session = await startFrozenPaperFixture(db, paperId);
+    const session = await startHistoricalPaperFixture(db, paperId);
     const committed = await submitPaperFixture(
       {
         paperArtifactId: paperId,
@@ -131,7 +131,10 @@ export async function nativeAppealFixture(
     if (!committed.evaluationId) throw new Error('paper fixture was not evaluated');
     evaluationId = committed.evaluationId;
   } else {
-    const issued = await issueSoloFixture(db, questionId, options.model !== false);
+    const issued =
+      options.model !== false
+        ? await issueHistoricalSoloFixture(db, questionId, true)
+        : await issueSoloFixture(db, questionId);
     const committed = await commitFormalAttempt(
       db,
       'solo_submit',
