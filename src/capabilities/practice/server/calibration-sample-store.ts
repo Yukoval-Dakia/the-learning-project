@@ -17,6 +17,7 @@ import {
   lockPaidEffectControlFamily,
 } from '@/db/paid-effect-control';
 import {
+  type PaidEffectSnapshot,
   admitPaidEffectIntent,
   claimPaidEffectSend,
   listPaidEffectObligations,
@@ -63,6 +64,27 @@ export const calibrationStoreApplicationSchema = z.discriminatedUnion('write', [
 ]);
 type CalibrationStoreApplication = z.infer<typeof calibrationStoreApplicationSchema>;
 
+export type CalibrationReuseVerifier = (
+  source: { readonly snapshot: PaidEffectSnapshot; readonly frozenInput: unknown },
+  requested: PaidEffectInput,
+) => { kind: 'reusable'; application: CalibrationStoreApplication } | { kind: 'not_reusable' };
+
+type CalibrationReuseDecision =
+  | { kind: 'none' }
+  | {
+      kind: 'reused';
+      source: PaidEffectSnapshot;
+      frozenInput: unknown;
+      application: CalibrationStoreApplication;
+    }
+  | { kind: 'reuse_mismatch'; sourceIdentity: PaidEffectIdentity | null; reason: string };
+
+type CalibrationStoreReservation =
+  | (PaidEffectReservation & { readonly identity: PaidEffectIdentity })
+  | (Exclude<CalibrationReuseDecision, { kind: 'none' }> & {
+      readonly identity: PaidEffectIdentity;
+    });
+
 export interface CalibrationSendLease {
   readonly identity: PaidEffectIdentity;
   readonly delivery: CalibrationSampleDispatch['delivery'];
@@ -102,6 +124,70 @@ export async function admitCalibrationStoreDispatch(db: Db, dispatch: Calibratio
   });
 }
 
+/** Applied rows are durable reuse authority even when the obligation reader
+ * no longer returns them. Every validation/read here runs under the existing
+ * family lock; this creates no new ownership or paid-effect identity. */
+async function readCalibrationReuseDecision(
+  tx: Tx,
+  requested: PaidEffectInput,
+  verifyReuse: CalibrationReuseVerifier,
+): Promise<CalibrationReuseDecision> {
+  const identity = computePaidEffectIdentity(requested);
+  requireCalibrationIdentity(identity);
+  const candidates = await tx
+    .select({
+      entityRevision: paid_effect.entity_revision,
+      unit: paid_effect.unit,
+      inputDigest: paid_effect.input_digest,
+    })
+    .from(paid_effect)
+    .where(
+      and(
+        eq(paid_effect.family, FAMILY),
+        eq(paid_effect.entity_id, identity.entityId),
+        eq(paid_effect.state, 'applied'),
+      ),
+    );
+  let reused: CalibrationReuseDecision = { kind: 'none' };
+  for (const candidate of candidates) {
+    const sourceIdentity = { family: FAMILY, entityId: identity.entityId, ...candidate };
+    try {
+      const snapshot = await readPaidEffect(tx, sourceIdentity);
+      if (snapshot?.state !== 'applied')
+        throw new PaidEffectProtocolError('calibration reuse source is missing');
+      const frozenInput = await readCalibrationStoredInput(tx, sourceIdentity);
+      const proof = verifyReuse({ snapshot, frozenInput }, requested);
+      if (proof.kind === 'not_reusable') continue;
+      if (reused.kind === 'reused')
+        throw new PaidEffectProtocolError(
+          'multiple calibration application receipts require adjudication',
+        );
+      reused = { kind: 'reused', source: snapshot, frozenInput, application: proof.application };
+    } catch (error) {
+      return {
+        kind: 'reuse_mismatch',
+        sourceIdentity,
+        reason: error instanceof Error ? error.message : String(error),
+      };
+    }
+  }
+  return reused;
+}
+
+async function hasCalibrationWorkSet(tx: Tx, workSetId: string): Promise<boolean> {
+  const [row] = await tx
+    .select({ input: paid_effect.input_json })
+    .from(paid_effect)
+    .where(
+      and(
+        eq(paid_effect.family, FAMILY),
+        sql`${paid_effect.input_json}->>'workSetId' = ${workSetId}`,
+      ),
+    )
+    .limit(1);
+  return row !== undefined;
+}
+
 /** Freeze all member intents together before the first claim. The family lock
  * serializes competing freezes of the same scheduled/config workset. */
 export async function prepareCalibrationStoreWorkSet(
@@ -111,6 +197,7 @@ export async function prepareCalibrationStoreWorkSet(
     freezeDigest: string;
     effects: readonly PaidEffectInput[];
     dispatch: CalibrationSampleDispatch;
+    verifyReuse: CalibrationReuseVerifier;
   },
 ) {
   return db.transaction(async (tx) => {
@@ -143,6 +230,13 @@ export async function prepareCalibrationStoreWorkSet(
       ) {
         throw new PaidEffectProtocolError('calibration intent does not match its workset');
       }
+      const reuse = await readCalibrationReuseDecision(tx, effect, input.verifyReuse);
+      if (reuse.kind !== 'none') continue;
+      // prepare seals all admitted member intents atomically. An omitted member
+      // of a persisted freeze therefore needs its original application proof;
+      // loss/corruption of that proof must never turn replay into a new intent.
+      if (rows.length > 0 && !(await readPaidEffect(tx, computePaidEffectIdentity(effect))))
+        continue;
       await admitPaidEffectIntent(tx, effect);
     }
     // An empty freeze has no paid_effect row. Parent must supply a durable tick
@@ -159,7 +253,8 @@ export async function reserveCalibrationStoreEffect(
   input: PaidEffectInput,
   dispatch: CalibrationSampleDispatch,
   leaseExpiresAt: Date,
-): Promise<PaidEffectReservation & { readonly identity: PaidEffectIdentity }> {
+  verifyReuse: CalibrationReuseVerifier,
+): Promise<CalibrationStoreReservation> {
   const identity = computePaidEffectIdentity(input);
   if (
     identity.family !== FAMILY ||
@@ -173,6 +268,21 @@ export async function reserveCalibrationStoreEffect(
     const admission = await admitPaidEffectDeliveryControl(tx, FAMILY, dispatch.delivery);
     if (admission.kind === 'fenced') {
       throw new PaidEffectControlFencedError(FAMILY, admission.reason, admission.owner);
+    }
+    const reuse = await readCalibrationReuseDecision(tx, input, verifyReuse);
+    if (reuse.kind !== 'none') return { ...reuse, identity };
+    const existing = await readPaidEffect(tx, identity);
+    if (
+      !existing &&
+      (await hasCalibrationWorkSet(tx, intentMetadata.parse(input.input).workSetId))
+    ) {
+      return {
+        kind: 'reuse_mismatch',
+        identity,
+        sourceIdentity: null,
+        reason:
+          'sealed calibration workset member has neither an intent nor a valid application receipt',
+      };
     }
     await admitPaidEffectIntent(tx, input);
     const row = await readPaidEffect(tx, identity);
@@ -225,10 +335,30 @@ export async function reserveCalibrationStoreEffect(
   });
 }
 
+/** Core freeze rows can contain DB Dates. Preserve their exact ISO JSON face
+ * while keeping undefined/non-finite/other invalid values for B's strict
+ * canonicalizer to reject. This does not change either effect identity. */
+export function serializeCalibrationStoreResult(value: unknown): unknown {
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value))
+    return value.map((item: unknown) => serializeCalibrationStoreResult(item));
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    Object.prototype.toString.call(value) !== '[object Object]'
+  )
+    return value;
+  const record = z.record(z.string(), z.unknown()).parse(value);
+  return Object.fromEntries(
+    Object.entries(record).map(([key, item]) => [key, serializeCalibrationStoreResult(item)]),
+  );
+}
+
 export function recordCalibrationStoreResult(db: Db, lease: CalibrationSendLease, result: unknown) {
   requireCalibrationIdentity(lease.identity);
+  const savedResult = serializeCalibrationStoreResult(result);
   return db.transaction((tx) =>
-    recordPaidEffectResult(tx, lease.identity, lease.delivery.deliveryId, result, {
+    recordPaidEffectResult(tx, lease.identity, lease.delivery.deliveryId, savedResult, {
       fence: lease.fence,
     }),
   );

@@ -4,9 +4,11 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import {
   type CalibrationSampleDispatch,
   type CalibrationSendLease,
+  readCalibrationStoreObligations,
   recordCalibrationStoreResult,
 } from '@/capabilities/practice/server/calibration-sample-store';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
@@ -16,6 +18,7 @@ import {
   PaidEffectDeliveryConflictError,
   PaidEffectReceiptConflictError,
   computePaidEffectIdentity,
+  computePaidEffectInputDigest,
 } from '@/core/migration/paid-effect-protocol';
 import { readPaidEffect, recordPaidEffectApplication } from '@/db/paid-effect-store';
 import { event, knowledge, paid_effect, paid_effect_control, question } from '@/db/schema';
@@ -840,4 +843,205 @@ describe('concrete calibration shared-store consumer', () => {
     expect(output).toHaveBeenCalledOnce();
     expect((await storeRows()).find((row) => row.state === 'receipt_ready')).toEqual(original);
   });
+  // @invariant concurrency: a sealed nonempty workset reuses a prior applied receipt across every replay
+  // @fails-if filter recovered members only in the invocation map; repeated T2 buys A and creates a third paid row/MF8 conflict
+  it('replays T2 [A,B] after real T1 A recovery without another paid call, row or receipt write', async () => {
+    const fixture = await prepareRecoveredPair();
+    const beforeStore = await storeRows();
+    const beforeEvents = await allEvents();
+    expect(beforeStore).toHaveLength(2);
+    expect(beforeStore.filter((row) => row.entity_id === fixture.a.judgeEventId)).toMatchObject([
+      { entity_revision: fixture.sourceIdentity.entityRevision, state: 'applied' },
+    ]);
+    expect(await readCalibrationStoreObligations(testDb())).toEqual([]);
+    for (const deliveryId of ['T2-replay-1', 'T2-replay-2']) {
+      const replay = await runStore(fixture.pair, {
+        anchor: fixture.anchor,
+        cfg: fixture.cfg,
+        deliveryId,
+        sampleDeps: { runTaskInner: fixture.output, now: () => fixture.time },
+      });
+      expect(replay).toMatchObject({
+        kind: 'staged',
+        report: {
+          counts: {
+            appliedFresh: 0,
+            appliedFromReceipt: 1,
+            appliedReplay: 1,
+            completedApplyPending: 0,
+          },
+          openObligations: [],
+          pendingApplications: [],
+        },
+      });
+      expect(fixture.output).toHaveBeenCalledTimes(2);
+      expect(await storeRows()).toEqual(beforeStore);
+      expect(await allEvents()).toEqual(beforeEvents);
+    }
+    const samples = await eventsByAction(JUDGE_CALIBRATION_SAMPLE_ACTION);
+    expect(samples).toHaveLength(2);
+    expect(samples.find((row) => row.caused_by_event_id === fixture.a.judgeEventId)).toMatchObject({
+      created_at: fixture.originalTime,
+      payload: { sampled_at: fixture.originalTime.toISOString(), rejudge_model: CFG.rejudgeModel },
+    });
+    expect(samples.find((row) => row.caused_by_event_id === fixture.b.judgeEventId)).toMatchObject({
+      created_at: fixture.time,
+      payload: { sampled_at: fixture.time.toISOString(), rejudge_model: fixture.cfg.rejudgeModel },
+    });
+  });
+
+  // @invariant concurrency: corrupted or absent durable reuse proof cannot turn a sealed member into a new purchase
+  // @fails-if trust a domain row, skip any provenance comparison or admit an omitted sealed member; replay changes paid/event rows or sends A
+  it.each([
+    'input',
+    'result',
+    'application_digest',
+    'application_identity',
+    'domain_ref',
+    'missing_application',
+    'missing_source',
+  ] as const)(
+    'holds T2 replay after %s corruption of the actual T1 reuse proof',
+    async (corruption) => {
+      const fixture = await prepareRecoveredPair();
+      const [source] = (await storeRows()).filter(
+        (row) => row.entity_id === fixture.a.judgeEventId,
+      );
+      if (!source) throw new Error('real applied T1 source is missing');
+      const where = eq(paid_effect.entity_id, fixture.a.judgeEventId);
+      if (corruption === 'missing_source') await testDb().delete(paid_effect).where(where);
+      else if (corruption === 'input') {
+        const raw = recordJson(source.input_json);
+        raw.prepared_input = {
+          ...recordJson(raw.prepared_input),
+          answer_md: 'corrupted original face',
+        };
+        await testDb().update(paid_effect).set({ input_json: raw }).where(where);
+      } else if (corruption === 'result') {
+        const raw = recordJson(source.result_json);
+        const execution = recordJson(raw.execution);
+        const receipt = recordJson(execution.receipt);
+        const outcome = recordJson(receipt.outcome);
+        outcome.rejudged = {
+          ...recordJson(outcome.rejudged),
+          questionId: 'wrong-rejudge-question',
+        };
+        receipt.outcome = outcome;
+        execution.receipt = receipt;
+        raw.execution = execution;
+        // Keep the wrapper digest consistent so this tests result-to-input
+        // provenance, not only an easily noticed digest mismatch.
+        const application = recordJson(source.application_json);
+        application.resultDigest = computePaidEffectInputDigest(raw);
+        await testDb()
+          .update(paid_effect)
+          .set({ result_json: raw, application_json: application })
+          .where(where);
+      } else {
+        const application = recordJson(source.application_json);
+        if (corruption === 'application_digest')
+          application.resultDigest = `sha256:${'0'.repeat(64)}`;
+        else if (corruption === 'application_identity')
+          application.effect = {
+            ...recordJson(application.effect),
+            entityRevision: 'wrong-original-effect',
+          };
+        else if (corruption === 'domain_ref')
+          application.application = {
+            write: 'written',
+            domainRef: 'experimental:judge_calibration_sample:wrong-entity',
+          };
+        else application.application = {};
+        await testDb().update(paid_effect).set({ application_json: application }).where(where);
+      }
+      const beforeStore = await storeRows();
+      const beforeEvents = await allEvents();
+      expect(await eventsByAction(JUDGE_CALIBRATION_SAMPLE_ACTION)).toHaveLength(2);
+      const replay = await runStore(fixture.pair, {
+        anchor: fixture.anchor,
+        cfg: fixture.cfg,
+        deliveryId: 'corrupt-replay',
+        sampleDeps: { runTaskInner: fixture.output, now: () => fixture.time },
+      });
+      expect(replay).toMatchObject({
+        kind: 'staged',
+        report: {
+          counts: {
+            heldReceiptMismatch: 1,
+            appliedReplay: 1,
+            appliedFresh: 0,
+          },
+        },
+      });
+      if (replay.kind !== 'staged') throw new Error('expected held proof report');
+      expect(
+        replay.report.dispositions.find((item) => item.judgeEventId === fixture.a.judgeEventId),
+      ).toMatchObject({
+        kind: 'held_receipt_mismatch',
+        reuseFailure: {
+          sourceIdentity: corruption === 'missing_source' ? null : fixture.sourceIdentity,
+        },
+      });
+      expect(fixture.output).toHaveBeenCalledTimes(2);
+      expect(await storeRows()).toEqual(beforeStore);
+      expect(await allEvents()).toEqual(beforeEvents);
+    },
+  );
 });
+
+function recordJson(value: unknown) {
+  return z.record(z.string(), z.unknown()).parse(structuredClone(value));
+}
+
+async function prepareRecoveredPair() {
+  const { item: a } = await freezeOne();
+  const output = localOutput();
+  const originalTime = new Date('2026-10-11T22:13:00.000Z');
+  const seams = await buildCalibrationStagedCoreSeams(testDb(), CFG, {
+    runTaskInner: output,
+    now: () => originalTime,
+  });
+  expect(
+    await runStore([a], {
+      seams: {
+        ...seams,
+        applyReceipt: async (...args) => {
+          expect((await seams.applyReceipt(...args)).write).toBe('written');
+          throw new Error('T1 rollback after real domain write');
+        },
+      },
+    }),
+  ).toMatchObject({ kind: 'staged', report: { counts: { completedApplyPending: 1 } } });
+  const sourceIdentity = computePaidEffectIdentity(
+    buildCalibrationStoreInput({ item: a, items: [a], anchor: scheduledAt, cfg: CFG }),
+  );
+  expect(await readPaidEffect(testDb(), sourceIdentity)).toMatchObject({
+    state: 'receipt_ready',
+    application: null,
+  });
+  expect(await eventsByAction(JUDGE_CALIBRATION_SAMPLE_ACTION)).toEqual([]);
+  const bId = await seedJudgedAttempt();
+  const candidates = await selectJudgeCalibrationCandidates(testDb(), CFG, scheduledAt);
+  const frozen = await freezeCalibrationWorkSetFromCandidates(testDb(), candidates);
+  expect(frozen.unprepared).toEqual([]);
+  const b = frozen.items.find((item) => item.judgeEventId === bId);
+  if (!b) throw new Error('real B was not frozen');
+  const pair = [a, b];
+  const anchor = new Date('2026-10-12T22:10:00.000Z');
+  const time = new Date('2026-10-12T22:13:00.000Z');
+  const cfg = { ...CFG, rejudgeModel: 'T2-model' };
+  expect(
+    await runStore(pair, {
+      anchor,
+      cfg,
+      deliveryId: 'T2-original',
+      sampleDeps: { runTaskInner: output, now: () => time },
+    }),
+  ).toMatchObject({
+    kind: 'staged',
+    report: { counts: { appliedFromReceipt: 1, appliedFresh: 1 } },
+  });
+  expect(output).toHaveBeenCalledTimes(2);
+  expect(await readPaidEffect(testDb(), sourceIdentity)).toMatchObject({ state: 'applied' });
+  return { a, b, pair, output, anchor, time, originalTime, cfg, sourceIdentity };
+}

@@ -1,0 +1,892 @@
+{
+  "base": "99f5e069d0476a0afe50d246eecfe38cae18854a",
+  "declarations": [
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "FAMILY",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "70a69455206096c8cc861a76f9fb523a1e485d400d1463157fdbe7851d30d418"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "intentMetadata",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "1253d062aed771b8b1337d338882bd32912cf60b32cf180bdf57023d2634a161"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "calibrationSampleDispatchSchema",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "ae1727750e70d3defe65d4635e6dc5b1f5bd2aba52dcaf73cf1ea2091ef686ca"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "CalibrationSampleDispatch",
+      "kind": "TSTypeAliasDeclaration",
+      "declarationAstSha256": "2c9da3a5c90006204d14de60d8926ab444dca927502152d95462d2bf6c7afc76"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "calibrationStoreApplicationSchema",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "837c7943f94fcf31a0637c6438bc5764f2e99d24147d892986f522e6f4e53ed3"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "CalibrationStoreApplication",
+      "kind": "TSTypeAliasDeclaration",
+      "declarationAstSha256": "dbe711a9655d716194aba51faeb311500d3a4f9cdd1378aa5c2bd09b0a120ece"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "CalibrationReuseVerifier",
+      "kind": "TSTypeAliasDeclaration",
+      "declarationAstSha256": "e9647440fe44eb819aa4b435c3a5ad0c7b55185ae8d93545223bcedc1c7c44bb"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "CalibrationReuseDecision",
+      "kind": "TSTypeAliasDeclaration",
+      "declarationAstSha256": "15d570047d9aedde023448a1c02f87c2e7d960ae54b5e597a8f282986fca5397"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "CalibrationStoreReservation",
+      "kind": "TSTypeAliasDeclaration",
+      "declarationAstSha256": "9cb24f179ddded5f63fa90f4a9a46d22d12fd02b74cb77d17a36d9ef21439160"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "CalibrationSendLease",
+      "kind": "TSInterfaceDeclaration",
+      "declarationAstSha256": "3268e7b0c621ccc72d4dc9c23cc96f3f67f31711e12bef6c29d91cfdd2b26722"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "requireCalibrationIdentity",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "aaef96d110911f6e2840dc3f2af516a692ed99f64fcc653c493c123d46b459b1",
+      "functionBodyAstSha256": "d6d6ed252f1e314113063a57af349e4b8d206db72c0048034fbcf9d7526b531e"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "readCalibrationStoredInput",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "6702e1b97a2e8cdc3e8b7926ed8942df839bcd75155ae9887d9422a684549c89",
+      "functionBodyAstSha256": "95df35ad83c15bfe20e94ae236799f80be52e2942d78467ed5652a10de09a223"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "admitCalibrationStoreDispatch",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "eca1d21f26d7844ed100aad9c8b0c3e4bfb25711d186bf009bc2658a9a54bb51",
+      "functionBodyAstSha256": "4c3d2da540f7b7305c943aa71dcc4c082c3dee9a7babee1485036bd696b0b5a1"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "readCalibrationReuseDecision",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "d259ee1066dfef1f8106868a3bc9d58b4ef318fd32cbed6f67889e6591bb1673",
+      "functionBodyAstSha256": "063c24645e096b5d80a7dd9e581fee811e598b31136bd4654dbefdb184b07fb0"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "hasCalibrationWorkSet",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "fffe1aa68de947890b29cf8bb002401a26a8def6414148f4a09b1f4fc7d412c2",
+      "functionBodyAstSha256": "791ef6fe7d2371c334e9202a538d96214a07e79f584b0bf31c35aebf81e0abea"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "prepareCalibrationStoreWorkSet",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "db17b9b7dc3c8c6c82e61dfc5db5306772b084d8e8271b0f066480eba7f93280",
+      "functionBodyAstSha256": "377937b348deb62722a4f998225ce59845a67f2bbe1568af835445f919f32a08"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "reserveCalibrationStoreEffect",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "c18f2e9bd026e80479bf6c9878fae9b7ba6a2587e4e3c4e5970d2ce16f7fa702",
+      "functionBodyAstSha256": "c064a5fe0d8214abbd4b5fa0ea1dd3f35b4bd58adf1d26cbde615ba2b86366b7"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "serializeCalibrationStoreResult",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "b3c8f069a9f83816bd86a1e34f6efdf4f29e54ddfc56a084efc63469acba6e57",
+      "functionBodyAstSha256": "b46b3a917d92084b82f9b8d414da06a41be28113e65b8a071cf969f6c5d545e4"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "recordCalibrationStoreResult",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "86e51b6187eae7a27a0208d0ceef405b101fe983f75398875135bcf9292255bb",
+      "functionBodyAstSha256": "287060d733d8554ea33065f7a2eeeb59b3852bd4234bc948aa7ed5257802e94e"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "markCalibrationStoreUnknown",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "95bc159e7a3b5ffe71b2bab07982b1bf851e3e9fae7bfe16acd0ec844508b58f",
+      "functionBodyAstSha256": "0e4db45a0fcdaad056dee9d2f7825e64bbbbc981e602bfd3f8196314d963c03a"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "readCalibrationStoreObligations",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "8e5a2d6705e814c218a6d9c6c092f1282a55696b984bd15c73e88f91be9cb3bf",
+      "functionBodyAstSha256": "f94795cc16666f397f4ca639624f22e110798730a4834a35d2a63c35f03d5851"
+    },
+    {
+      "beforePath": "src/server/durable/calibration-sample-store.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-store.ts",
+      "name": "applyCalibrationStoreReceipt",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "bd551bf51d79afd11ae13a4ef9d478db624eeecc92b9cb15c1cdad0df4ce3009",
+      "functionBodyAstSha256": "52ca5c8c08d8e7f1d3e69157c239d29896217cbb2817a595ce46dbe2eee55e96"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationSampleTickSource",
+      "kind": "TSTypeAliasDeclaration",
+      "declarationAstSha256": "159108d33a9b9d94a9d0bdec3fbd1f877d9af695995b9e1055e0399ed9403cbe"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationSampleOperationDeps",
+      "kind": "TSInterfaceDeclaration",
+      "declarationAstSha256": "df5755817625a0e85306f9f1bca9a45e59d4ad0e6098acf437ebc32e934348ee"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationSampleOperationHooks",
+      "kind": "TSInterfaceDeclaration",
+      "declarationAstSha256": "649875c79d422f7e039d43710449a522c8cce24eeac71a9a8d86871c1cfa12c7"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationSampleGate",
+      "kind": "TSTypeAliasDeclaration",
+      "declarationAstSha256": "ce722c03f543af4fe3c360d161839ce6294866631da98dc0459d23b4fdfe4788"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationSampleOperationOutcome",
+      "kind": "TSTypeAliasDeclaration",
+      "declarationAstSha256": "6f8f34e7206b818aa17b365eb2901570704bf53c8412dbdc9dc11199c9518ab4"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "readCalibrationSampleGate",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "e286b055057c02313775ee3d8843a792de03bb800e987c31ade36493b634ea1a",
+      "functionBodyAstSha256": "7561db3fcc7d392c0c1c45f440a75b26f0ef7d4388283fb4a93486487023fbea"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "runCalibrationSamplePaidBatch",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "b64ef0b2a7535c33e9a3963126ef77ce99671486ad0bd6a4fe1e3369dae9f09a",
+      "functionBodyAstSha256": "ecc5145ad115ee923ed3e77cc56c0aa4b2f0fae4dafebd8a839db16a4fea56b0"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "paidBatchDeps",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "f8e4d6821dbbb7f71441490a8568ebbe89cdbeceda1143ca694effced31584d8",
+      "functionBodyAstSha256": "def9bcac80499cb70a962d0b09f2e401bef937f3cbbdcec4d87d3cba27929f73"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "buildCalibrationSampleOperationPort",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "cff33559750932cb50da40d122610e67b87b106b558b4624f318972c45fb8956",
+      "functionBodyAstSha256": "b5f204c16538f8af7c6188a88704345376bf465d307599542fbfc6d7518cbd50"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "runCalibrationSampleOperation",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "089c2b73af8a32c1a84dac1bb69b4b85d068ec95826fc49f57916ea70a8400fa",
+      "functionBodyAstSha256": "c0a5471c11ec4fde2a40316c649347900beafd06553f30b837f488111ddb6b74"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CALIBRATION_SAMPLE_EFFECT_FAMILY",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "bca17aa07b3021e4444559ac3048003bf3f3b796bc31004cc5043718ae98851e"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationWorkSetDescriptor",
+      "kind": "TSInterfaceDeclaration",
+      "declarationAstSha256": "2d5c1051dd02a805e1ddb79d1b36f48e381ae91e9f6d1f2a287642ede0cdd18a"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "computeCalibrationWorkSetId",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "ce15fa1bdbe3450d4861d420e978883dc8556c84e3445ada4e2660bc8a490813",
+      "functionBodyAstSha256": "a3a59026dcafe611d28c8d74a8e9e24dcdf0107014e36f3d16f7dc1462e43746"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationWorkSetItem",
+      "kind": "TSInterfaceDeclaration",
+      "declarationAstSha256": "345bccfd5ee49566d5ef6e9b9862befbf79b8ccb0894f6d7430772c95e4da09b"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "computeCalibrationInputDigest",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "c9e448fc0bd2c685d550c5b73bdd461abadab537b060b6c7904ac62dd2eab5df",
+      "functionBodyAstSha256": "12223b48ad0571d011ac3b1a64b6ddc28d23d242ea6730b03cf6735908c2ce47"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "calibrationInputFace",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "b71b1c409942ddc81b3b3aee95f12b82d5bb0df1d0e8c267493dbe73bc43223f",
+      "functionBodyAstSha256": "567a7334e014106a279a6dc6c018789111ed7be7a0585f5770f1d1728c3e96dc"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "computeCalibrationFreezeDigest",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "6e231233502d8721f04ee433d50e0121ba1ce5dbfc29a33589aaef2e610daab3",
+      "functionBodyAstSha256": "97f9beb0e53c89bbfeab9fc8389f705000a35e501ecb7b2a197dd0ef15d76bd4"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationEffectIdentity",
+      "kind": "TSInterfaceDeclaration",
+      "declarationAstSha256": "2df3ed474c54e107f6d663164ae272577f2ddcc06aa0a6ae5adc779dc497b786"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "computeCalibrationEffectIdentity",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "0d8d5349a706d7c1bd273117423bd726fc6d2ed1d2f8b8f822f2859cf9d56329",
+      "functionBodyAstSha256": "473a8b9fc1722cb6d63a4c3b428effb4cce8fed2edc47f6f7c0f7c5ccadbaa84"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "computeCalibrationEffectId",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "36c8433824bbdf98b8a8af50e0946238601853b188cbe0f67541162fe90e5375",
+      "functionBodyAstSha256": "c451f492c38302d6447583644cc885dc748586b08a77bed34fabbd961c2a827a"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "computeCalibrationEntityKey",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "9f49d32eaac8691db2dd2162771b330c6b5357b171068962bdbfb28b5d5eabb9",
+      "functionBodyAstSha256": "2993662d6a92bab531ede65ea8c1e55c1c2b73b181f18c169cc8e21c63cb1c94"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationItemReceipt",
+      "kind": "TSInterfaceDeclaration",
+      "declarationAstSha256": "dadc10039c3b3ee2240d16f41f462c189ce985e5b0a928d2ae8227cf0c160480"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationApplicationReceipt",
+      "kind": "TSInterfaceDeclaration",
+      "declarationAstSha256": "387b058fe83743a8c658d9d191e58be9ac127b116f420072d135b4bb3f45c73d"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationItemSkipClassification",
+      "kind": "TSTypeAliasDeclaration",
+      "declarationAstSha256": "637ce45395b0ac32dc7aaa3c9e091ad7bce86212fce7840bd7aa033faf75093b"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationStagedSeamContext",
+      "kind": "TSInterfaceDeclaration",
+      "declarationAstSha256": "e0c2f01f47b6f2211460b5435c5e070fa2835913ec9d4340becbb4bfa195d269"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "ExecuteCalibrationItemFn",
+      "kind": "TSTypeAliasDeclaration",
+      "declarationAstSha256": "85de81be0e3db486ca9a2b447cc29477caae754c0c407d25c737bb98a0699f76"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationItemExecution",
+      "kind": "TSTypeAliasDeclaration",
+      "declarationAstSha256": "aa005e190f0efcedca5081a183260629a1573e41a07267e87199498be10b6b95"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "ApplyCalibrationReceiptFn",
+      "kind": "TSTypeAliasDeclaration",
+      "declarationAstSha256": "2af3a7d664df2d0e9c6400d1cbfa6237ede176f9a8d58ffe8608a4915a0f8f0d"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationItemDispositionKind",
+      "kind": "TSTypeAliasDeclaration",
+      "declarationAstSha256": "8a07080db4746c74b1e6368b34b0351d2f52a7ade52858027950466584cf08d6"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationStagedItemDisposition",
+      "kind": "TSInterfaceDeclaration",
+      "declarationAstSha256": "17300b8a8527efa27f44226af676f18d8e6eca3b293c3e5d74cd1eddf56be24f"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationOpenObligation",
+      "kind": "TSInterfaceDeclaration",
+      "declarationAstSha256": "3c082f9c46226d77814b565a934ba128f56d63611da3dcf3fb20937baa4766ca"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationPendingApplication",
+      "kind": "TSInterfaceDeclaration",
+      "declarationAstSha256": "966c91a0adb679f20020b5a72d0963f467bb8170c62427efe5fb5f412a67715f"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationStagedExecutionCounts",
+      "kind": "TSInterfaceDeclaration",
+      "declarationAstSha256": "1c6c570d3aae4a71056573d2e3f17545b5685a389ceaab809479d267de744c55"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationWorkSetFreezeMismatch",
+      "kind": "TSInterfaceDeclaration",
+      "declarationAstSha256": "c94457fd47329093d63c5d8d9b773c6a775135a5c58278a18896da3ab1a1923d"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationStagedExecutionReport",
+      "kind": "TSInterfaceDeclaration",
+      "declarationAstSha256": "322b879d6c2df10d55502971c18a7585efc7f99abda4f0912d9d93dec462bec0"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "DISPOSITION_COUNT_FIELD",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "c4dd6966dcdc8f974d7c744ed269ff29ca38f8a3a270a6777ab859c618e2e85a"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "receiptEchoMatches",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "96577246485cc23d059e75d2026c57adf5948883c4f1beae0662617243017052",
+      "functionBodyAstSha256": "dbaec4146ef7ebc53da5ec1dcaec75160f308718a80dae58480600f0373f5d85"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationStagedWorkSetInput",
+      "kind": "TSInterfaceDeclaration",
+      "declarationAstSha256": "c936fabbb1f827de928dcddc31d6923949ac96f546e180982ec02d5dc6398d97"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationStagedExecutionInput",
+      "kind": "TSInterfaceDeclaration",
+      "declarationAstSha256": "02f9e14a26d689ec5b05f2976dcf42e845f6179ea9c8468d4a2974f5a7adb64b"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationStagedOperationOutcome",
+      "kind": "TSTypeAliasDeclaration",
+      "declarationAstSha256": "febf40c854f842951d04245ff9ac757e0011e88e7c74111442d5d341f340281e"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationEffectSchema",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "74f7b789950575fe741db448fdb59d95c0e16a40c0d7895763eebb79451ce5e1"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationConfigSchema",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "10399ee40a08eaee404b1fa80ca5d1214102b3b8b10121415162cb600b0556c7"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationPreparedInputSchema",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "953368e2c301429b3df2616aadb8e81a3aa2999f133358ab2ab7938dce2c5525"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationFrozenIntentSchema",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "275edb1479d6842a2b8cb26552c4a160944e5d6dbeab0c3b54c61b842cd15b03"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationStoredResultSchema",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "e699098f9ad4ba3108a68467321ec5999e3d89ee83e29fcb2d1bcf63f1cea7a8"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "calibrationStoreCoordinates",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "6ea616ed6fb31f5f3f6902770f2d89859e7acd033804cf34ca8c9855e7c4bbf6",
+      "functionBodyAstSha256": "b874db509f1e4b9acda1a5c0c3b0840e3958d5dca77f2a480639eae522e2ce32"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "buildCalibrationStoreInput",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "4a360662ed512d48ec4bea5775b29a46a146921eafffd030075607426df2be5d",
+      "functionBodyAstSha256": "c087c06a07148db0c1e4f1c32cd1d2b185aa8c58179c859f5584c1fb923fc077"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "readFrozenCalibrationIntent",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "16c3ea89b65133a5fb6efe9ee10261fd75043a265f1c2c03248690969381df86",
+      "functionBodyAstSha256": "44f9d8a344524c46443320ad26657c25e614be8e99b3ce7c7fd90d1d3075b501"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "readStoredCalibrationResult",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "df92d19649004f1fffb9dcf9a6f4919b1131f063bf144c36c77bb26aa1c1fa67",
+      "functionBodyAstSha256": "183c4ef522c063e63b7d2723ea80a1ba613e6f86238ab3e884acae6282837a8c"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationSavedApplicationSchema",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "a8b629edd1875464f5a2413ee1d54ad58cefddd0787cfc37150dc4d566ed2335"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "validateCalibrationReuseProof",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "ce7b97b237e065b3a2e1961a72b59ec822d444b113cd8c679a8412c1f3250c59"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "runCalibrationStagedOperation",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "7682515115881af5474948cfed771e9e5d8970f217dfaa07477c36d5b952be3e",
+      "functionBodyAstSha256": "99624df16b3f19e726a2a383b67bdd949778004a6c1946022c2d0a52b82f9b8d"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationStagedCoreSeams",
+      "kind": "TSInterfaceDeclaration",
+      "declarationAstSha256": "54d1e4303916b7a8be9d2f042dbbb428b0855e50642751ff9de7727476a01726"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "CalibrationRecordedOutcome",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "4d9a898ba7f6f95d5159cc825f2a256795b8830308308ded871f4e8e349e497a"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "trackCalibrationRunnerFailure",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "00611d4bf28d920ff007a863a1fa59e184a7f32a1921beb5c987ffba8c279ff1",
+      "functionBodyAstSha256": "6797dd6e91f172aa5cf1030c9ab9f6c93a9b7d554c84629c0adaa8ca6fd6e42c"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.ts",
+      "name": "buildCalibrationStagedCoreSeams",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "0b02452c9ef524ac95d69871107d8e2efac62d2845e1e72e288975ac41f13e7d",
+      "functionBodyAstSha256": "d683912ab0c87a65792607ad38e27bc2aa3996e1d1f0ee821507e16afe41fee6"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "CFG",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "22e3dc2834f1a8feb8b6d9c1f4d4f1e25e44a1c35882600beedb9492a60430ff"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "scheduledAt",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "856331827e6ca48679678e9cc7f3cb3a0d48287ae2f364d1a9dfdee3b25d80a6"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "request",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "10ffce1be9118ce91fa6b1480470c721db2d0966a4ecfbfb822f75758160f637"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "semanticOutput",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "3c7ea7e975a1418039da83ef1fda02b1fe191ec427efbf9386f9011532c39d91",
+      "functionBodyAstSha256": "d036fd98e495dd24e706ffc98b03a11de2257061fbb12e775af7b2f09142ef17"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "seedJudgedAttempt",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "8456f4aa6a7459a6f8f5a0b87987177433a1b8e4389d1e28316d230d46a179d7",
+      "functionBodyAstSha256": "1fb9dd0d7ecda26d8bf6610f6b0bc233afab9c06d47cf98e66f40d84bcc37d36"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "eventsByAction",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "dd230ef2945b2c51b4fb7277878b60bee9d11a1ae5f45f47e0b07af340f6c886",
+      "functionBodyAstSha256": "c35655e7a18e0af75d02722ea17c1f10fcccfbef5e0d5ef7eed33523ea8d474f"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "allEvents",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "98de03eb4e0c27b3fcceec0624c21ed74608213c0212e93cf31d723a68426784",
+      "functionBodyAstSha256": "5b769f9144080c02f38bd862ac2f31e53f067b16d4073a62e5e415cceb9b9e77"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "sampleDeps",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "035ad185e73041797be0574da139900462fc40b93b75c17d883d6c5c19b10bbb",
+      "functionBodyAstSha256": "a2fe9c336f01a7f286c956126a09c26c8579663ea29a79988205a6b3f3868253"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "statement-0",
+      "kind": "ExpressionStatement",
+      "declarationAstSha256": "486fd9f2cb80b413286ed2aae4f8de5cc30d8eb72f10bd7a38689679822995ac"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "statement-1",
+      "kind": "ExpressionStatement",
+      "declarationAstSha256": "4611cc4dccc545c4088dd5cce1c096cf0fb327197b69166a893920ad6941025b"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "statement-2",
+      "kind": "ExpressionStatement",
+      "declarationAstSha256": "adc0058d2877ce04e3d45b5dca7ed63ff4356e55439705b7ede55e585fd274c6"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "statement-3",
+      "kind": "ExpressionStatement",
+      "declarationAstSha256": "707e91a1a942e3a780501dfa26260b17111b5a99c77a1b0284ebb2e73e90d4b2"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "freezeOne",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "25ea059ad88c6ad4dced84cefa5ed382d29ef880e5686ad4b7ea189ea08f4c38",
+      "functionBodyAstSha256": "6ad6eaedacec446b21490d24ca68d713f65854ef9e413a5ac606e277e00fe949"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "identityFor",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "959b6fcbd9b93bf0420501b8b0e22346d7c242ce400eefc65e4c5a23e46afe65",
+      "functionBodyAstSha256": "e51cd6cd9f6d4d3e5f9adfb4221548a96ddfdaab4d6e14e2bc852194255722e8"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "statement-4",
+      "kind": "ExpressionStatement",
+      "declarationAstSha256": "5b566f0018f8648a19ddf7a8815578e9fe233eb07f6463582fc4298403a69595"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "dispatch",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "3d1bdf0797fba6b2926665a4070da535c5cf1e835b745cf9a108cf88af2f3883",
+      "functionBodyAstSha256": "080934a09ad0fe90e889f45859ef8083fa6f8200259d6dc7f5b267d822cfb6cf"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "storeRows",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "57912bfa4a57fc0e70f3ece46ccaeb1ed931da50cdac5ee9a7f9464e14a73f21",
+      "functionBodyAstSha256": "5095fa06ece7d26170f9aa2130ff6567463882a7b96a77bfc233ee8a143e2f4d"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "runStore",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "7ad1b256cc269cc769b644c98d3b1a7fd05ea51f5b080f5d9d9ca45828455043",
+      "functionBodyAstSha256": "1567c841b671494b36791d93aa8f293d811dfab09c5005f190389e536e2bd417"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "localOutput",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "aa3557dc463430b4ae07f9d2317a80e0f018bc8f8c7a51d6cfd7a1217ae02785",
+      "functionBodyAstSha256": "cb422dcdbf7b1ff4ce3dc7f8cc095c51b366a2955b08883e161acaab2bc68abe"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "statement-5",
+      "kind": "ExpressionStatement",
+      "declarationAstSha256": "74f3e7be784a2a64684cc1a1d53292e619390cc1a6d6ec94b487973498b349be"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "recordJson",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "36d98091c882bf5effad15bcc6df88c649e61b32d6bcad7e28e5854e3a62dc38",
+      "functionBodyAstSha256": "a7f541db4ac3261f4916aa9cc48445edef65c9af96b7b79b2b723830932b2ff0"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.db.test.ts",
+      "name": "prepareRecoveredPair",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "62ad80edc16cb441096d3ec657914ab69fd8ae07a070e31e7ebc9323643ac2ee",
+      "functionBodyAstSha256": "5cc0a986b3df2f6f4a4f48a3eb657d605d923c1d921573dda8d0c3892e76907f"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "CFG",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "22e3dc2834f1a8feb8b6d9c1f4d4f1e25e44a1c35882600beedb9492a60430ff"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "RESULT",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "6f1d5629fcb0f4b5033b0fa7e5216296cf204742a1774dc6c638917dd9fc9e5d"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "preparationRows",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "447833944101d5fa58fa9cd8bee597fcb979638c2e12f1bcfcfff5ebf0e99cd0"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "statement-0",
+      "kind": "ExpressionStatement",
+      "declarationAstSha256": "5a21030ed307bbb58746646cfdf55b6f22d8c89433da6bfea327d1e665664c0e"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "statement-1",
+      "kind": "ExpressionStatement",
+      "declarationAstSha256": "b876567a7bae053dcb5055c6a1f0bb46eecd222bbc5edbd20ffd9611c68b2e66"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "statement-2",
+      "kind": "ExpressionStatement",
+      "declarationAstSha256": "df0e362e1aaf634e9ca82f21a50862294608a93cdd2504199018ad9766b6785b"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "statement-3",
+      "kind": "ExpressionStatement",
+      "declarationAstSha256": "1e7c42e22e2a821916761a17f635cb688ff2731cf605eb0ed056b67e6b4806e1"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "statement-4",
+      "kind": "ExpressionStatement",
+      "declarationAstSha256": "7e9f270c60ca8221754b7a264614b3b7146c382a2f7125a090cc14753377b364"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "statement-5",
+      "kind": "ExpressionStatement",
+      "declarationAstSha256": "157ba7c3ee4e4423556c0590f8c07e8a9660929ae501e6f4c1fac93fefc5fc10"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "ANCHOR",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "bdcd5fd7cff0f243b7eb6d0c388582e3fe66ffbfac5777e0c4aadb99bb9c2695"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "NEXT_NIGHT",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "5350214a1ee81152d8cace045e92dee53b71642fd547a127fc86d10488fdd8d3"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "FROZEN_QUESTION",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "0730e4708484e2e75590255355cb2bbd752584e200da1cec5615cd42fcc0084a"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "FROZEN_PROFILE",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "e59aee16b1fc32da057d9c40134b7af86809865ec97155f4686f262c2b024843"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "ITEM",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "4c07c7a489822f9ecb43965d94c2672bc0cb337e70376740f4eb00c8ea7968bd"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "receiptFor",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "28577de9c1076af601f824feaab5bf040c935e43fc39d8729e24877036a7638c",
+      "functionBodyAstSha256": "2fcd7183540c0ecc7026273151db95b3c6fb7d2174c5121ba8fb3150febc34d8"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "stagedIds",
+      "kind": "FunctionDeclaration",
+      "declarationAstSha256": "fd60ffcfb38426438958e553164c2c8efd6e4cf3334bf72e20775921c1b69f1c",
+      "functionBodyAstSha256": "1238867363b1da5e059a1b0da8f08dba6298cc19017a26c53905c520de52a047"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "ITEM_B",
+      "kind": "VariableDeclaration",
+      "declarationAstSha256": "d917c74bac7599a2f6330da6631e4e953d107446ee54f23bf39adafba140d53c"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "statement-6",
+      "kind": "ExpressionStatement",
+      "declarationAstSha256": "0bb5595775bd701c306cba353a26594aa414e0a38b20aed48a3e4aa8401bb661"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "statement-7",
+      "kind": "ExpressionStatement",
+      "declarationAstSha256": "404d94beca875ca47b9a3ec4809af81a4b87b8597d5f189b6f3f6ac5147d17cb"
+    },
+    {
+      "beforePath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "afterPath": "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+      "name": "statement-8",
+      "kind": "ExpressionStatement",
+      "declarationAstSha256": "7a3a86428d97193d5f18070344e3dc2a777e397ae990fc44e6b8e74c33b13563"
+    }
+  ]
+}

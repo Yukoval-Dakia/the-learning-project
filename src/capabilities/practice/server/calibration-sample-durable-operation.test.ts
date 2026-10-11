@@ -7,6 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
+import { computePaidEffectInputDigest } from '@/core/migration/paid-effect-protocol';
 import { type Db, db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { mathProfile } from '@/subjects/math/profile';
@@ -27,6 +28,7 @@ import {
   runCalibrationSampleOperation,
   runCalibrationStagedOperation,
 } from './calibration-sample-durable-operation';
+import { serializeCalibrationStoreResult } from './calibration-sample-store';
 import { judgeAnswer, unsupportedResult } from './judge/question-contract';
 import type {
   JudgeCalibrationConfig,
@@ -649,6 +651,41 @@ describe('released core seams (real exports, no DB)', () => {
     if (execution.kind !== 'sent') throw new Error('expected a real semantic receipt');
     return { item, identity, receipt: execution.receipt, runTaskInner };
   }
+
+  // @invariant data: a paid receipt containing real DB timestamp faces remains persistable without losing provenance
+  // @fails-if pass raw Dates or stringify lossy values to B; canonical receipt persistence rejects Dates or silently loses invalid fields
+  it('serializes DB Dates in the real prepared receipt and preserves strict rejection of lossy values', async () => {
+    const dbTime = new Date('2026-10-10T08:00:00.123Z');
+    const question = { ...ITEM.question, created_at: dbTime, updated_at: dbTime };
+    const item = { ...ITEM, judgeRoute: 'semantic', question };
+    const identity = stagedIds(ANCHOR, [item]).identity;
+    const seams = await buildCalibrationStagedCoreSeams(db, CFG, {
+      runTaskInner: async () => ({ text: semanticText }),
+    });
+    const execution = await seams.executeItem(item, identity, { anchor: ANCHOR });
+    if (execution.kind !== 'sent') throw new Error('expected a real receipt');
+    expect(() => computePaidEffectInputDigest(execution.receipt)).toThrow(
+      'cannot be canonicalized',
+    );
+    const saved = serializeCalibrationStoreResult(execution.receipt);
+    expect(saved).toMatchObject({
+      effect: identity,
+      outcome: {
+        prepared_input: {
+          question: { created_at: dbTime.toISOString(), updated_at: dbTime.toISOString() },
+          answer_md: item.answerMd,
+          subject_profile: item.subjectProfile,
+        },
+      },
+    });
+    expect(() => computePaidEffectInputDigest(saved)).not.toThrow();
+    expect(() =>
+      computePaidEffectInputDigest(serializeCalibrationStoreResult({ missing: undefined })),
+    ).toThrow('undefined');
+    expect(() =>
+      computePaidEffectInputDigest(serializeCalibrationStoreResult({ cost: Number.NaN })),
+    ).toThrow('non-finite');
+  });
 
   // @invariant data: a later config/model/clock applies the saved receipt without another send
   // @fails-if rebuild provenance from the new tick or re-buy the entity while recovering it
