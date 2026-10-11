@@ -19,7 +19,7 @@
 // position rolls, the title crossfades and the page glides back to the top (M3: one swap at a
 // time; reduced motion: an instant swap).
 
-import { ArrowLeft, Eye, MessageSquareQuote } from 'lucide-react';
+import { ArrowLeft, Camera, Eye, MessageSquareQuote, PenLine } from 'lucide-react';
 import {
   type CSSProperties,
   useCallback,
@@ -82,8 +82,21 @@ import {
 import { FigureLightbox } from './FigureLightbox';
 import { QuoteBubble, type QuotedPassage, clipQuote, useQuotableSelection } from './QuoteSelection';
 import './practice-next.css';
+import './practice-next-answer.css';
+import './practice-next-paper.css';
+import './practice-next-focused.css';
 
 export type PracticeCompanionMode = 'embedded' | 'none';
+
+/**
+ * How the question and the answer are laid out (owner review 2026-10-11 22:11: two redesigns to
+ * pick from). `classic` is the current layout and stays the default until the owner picks.
+ * - `paper`: question and answer read as one sheet; each answer sits under its own question as a
+ *   writing line; a floating glass action bar holds 提交 / 拍照·附件 / 写思路 while answering.
+ * - `focused`: the question on a raised card; one answer panel below it with a numbered segment
+ *   per part, the actions and then the result at its foot; a wider column beside the companion.
+ */
+export type PracticeLayout = 'classic' | 'paper' | 'focused';
 
 export interface PracticeNextSoloProps {
   item: StreamItem;
@@ -106,6 +119,7 @@ export interface PracticeNextSoloProps {
    * one may be mounted (CopilotDock `variant`). `none` keeps the honest placeholder.
    */
   companion: PracticeCompanionMode;
+  layout?: PracticeLayout;
 }
 
 type MaterialView = PracticeIssuanceDtoT['materials'][number];
@@ -329,6 +343,7 @@ function PracticeNextSoloPage({
   onResultShown,
   navigate,
   companion,
+  layout = 'classic',
 }: PracticeNextSoloProps) {
   const toaster = useToaster();
   const push = toaster.push;
@@ -579,6 +594,8 @@ function PracticeNextSoloPage({
     <QuestionColumn
       key={slot.item.id}
       item={slot.item}
+      pos={slot.pos}
+      layout={layout}
       role={role}
       sessionId={sessionId}
       embedded={embedded}
@@ -599,10 +616,11 @@ function PracticeNextSoloPage({
 
   const insets = {
     '--un-pn-top': `${shell.top}px`,
+    '--un-pn-bottom': `${shell.bottom}px`,
   } as CSSProperties;
 
   return (
-    <div className="un-pn" style={insets}>
+    <div className="un-pn" data-layout={layout} style={insets}>
       <div className="un-pn-main un-page-enter" ref={mainRef}>
         <div className={head?.hasPassage ? 'un-pn-column un-pn-column-wide' : 'un-pn-column'}>
           {phoneBar}
@@ -657,6 +675,9 @@ type QuestionRole = 'shown' | 'next' | 'leaving';
 
 interface QuestionColumnProps {
   item: StreamItem;
+  /** Place in the stream: the main question number in the new layouts. */
+  pos: number;
+  layout: PracticeLayout;
   role: QuestionRole;
   sessionId?: string | null;
   embedded: boolean;
@@ -679,6 +700,8 @@ interface QuestionColumnProps {
 /** One question's content below the banner: 题目 → 我的作答 → 结果 → 作答记录. */
 function QuestionColumn({
   item,
+  pos,
+  layout,
   role,
   sessionId,
   embedded,
@@ -706,6 +729,16 @@ function QuestionColumn({
     shown: role !== 'next',
   });
   const { q, frozen, phase, displayedPreview } = s;
+  // The new layouts draw their own 拍照/附件 control, which says when an upload is under way.
+  const [uploading, setUploading] = useState(false);
+  const { setUploading: reportUploading } = s;
+  const trackUploading = useCallback(
+    (busy: boolean) => {
+      setUploading(busy);
+      reportUploading(busy);
+    },
+    [reportUploading],
+  );
   // Several questions can be in the page at once during a swap, so ids are per question.
   const uid = useId();
   const id = (name: string) => `${uid}-${name}`;
@@ -926,6 +959,25 @@ function QuestionColumn({
       ) : null;
     const stemText = faces.map((f) => f.prompt_md).join('\n');
 
+    const stemBlock = (
+      <div className="un-pn-stem" data-lone={lone || undefined}>
+        {lone && figuresEl}
+        {!multiPart && (
+          <div className="un-pn-faces" data-quotable="" data-quote-text="">
+            {faces.map((face) => (
+              <div key={face.part_id} className="un-pn-face">
+                {face.question_no && <span className="un-pn-face-no">{face.question_no}</span>}
+                <MathMarkdown notation={notation} className="un-pn-prose">
+                  {face.prompt_md}
+                </MathMarkdown>
+              </div>
+            ))}
+          </div>
+        )}
+        {!lone && figuresEl}
+      </div>
+    );
+
     const questionSection = (
       <section className="un-pn-section" aria-labelledby={id('question')} data-quote-block="">
         <div className="un-pn-section-head">
@@ -934,37 +986,47 @@ function QuestionColumn({
           </h2>
           {!multiPart && stemText.trim() && quoteButton(stemText, '题目')}
         </div>
-        <div className="un-pn-stem" data-lone={lone || undefined}>
-          {lone && figuresEl}
-          {!multiPart && (
-            <div className="un-pn-faces" data-quotable="" data-quote-text="">
-              {faces.map((face) => (
-                <div key={face.part_id} className="un-pn-face">
-                  {face.question_no && <span className="un-pn-face-no">{face.question_no}</span>}
-                  <MathMarkdown notation={notation} className="un-pn-prose">
-                    {face.prompt_md}
-                  </MathMarkdown>
-                </div>
-              ))}
-            </div>
-          )}
-          {!lone && figuresEl}
-        </div>
+        {stemBlock}
       </section>
+    );
+
+    const variant = layout !== 'classic';
+    const answering = phase === 'answering' && !s.pendingRun;
+    const offerTrace = answering && shouldOfferProcessBox(s.isChoice);
+    // Attachments and the trace field have nothing to show once the answer is locked and empty
+    // (this used to leave an empty box under a submitted multi-part question).
+    const extrasVisible = !answerLocked || s.evidence.length > 0 || (offerTrace && s.showTrace);
+    const evidence = (
+      <EvidenceComposer
+        text=""
+        onTextChange={() => {}}
+        showText={false}
+        attachments={s.evidence}
+        onAttachmentsChange={s.setEvidence}
+        disabled={answerLocked}
+        onUploadingChange={trackUploading}
+        inputId={variant ? id('attach') : undefined}
+        showAddButton={!variant}
+      />
+    );
+    const traceField = (
+      <Expand open={s.showTrace} id={id('trace')}>
+        <textarea
+          className="un-pn-textarea"
+          rows={3}
+          value={s.reasoningTrace}
+          maxLength={REASONING_TRACE_MAX_LEN}
+          placeholder="随手记下你是怎么想的，也可以留空。"
+          onChange={(e) => s.setReasoningTrace(e.target.value)}
+          aria-label="解题思路（可选）"
+        />
+      </Expand>
     );
 
     const extras = (
       <>
-        <EvidenceComposer
-          text=""
-          onTextChange={() => {}}
-          showText={false}
-          attachments={s.evidence}
-          onAttachmentsChange={s.setEvidence}
-          disabled={answerLocked}
-          onUploadingChange={s.setUploading}
-        />
-        {phase === 'answering' && !s.pendingRun && shouldOfferProcessBox(s.isChoice) && (
+        {evidence}
+        {offerTrace && (
           <div className="un-pn-trace">
             <button
               type="button"
@@ -975,17 +1037,7 @@ function QuestionColumn({
             >
               {s.showTrace ? '收起思路' : '＋ 记下你的思路（可选，不计分）'}
             </button>
-            <Expand open={s.showTrace} id={id('trace')}>
-              <textarea
-                className="un-pn-textarea"
-                rows={3}
-                value={s.reasoningTrace}
-                maxLength={REASONING_TRACE_MAX_LEN}
-                placeholder="随手记下你是怎么想的，也可以留空。"
-                onChange={(e) => s.setReasoningTrace(e.target.value)}
-                aria-label="解题思路（可选）"
-              />
-            </Expand>
+            {traceField}
           </div>
         )}
       </>
@@ -1051,10 +1103,12 @@ function QuestionColumn({
             );
           })}
         </ol>
-        <div className="un-pn-answer">
-          {looseSlots.map(renderSlot)}
-          {extras}
-        </div>
+        {(looseSlots.length > 0 || extrasVisible) && (
+          <div className="un-pn-answer">
+            {looseSlots.map(renderSlot)}
+            {extras}
+          </div>
+        )}
         {submitRow}
       </section>
     ) : (
@@ -1080,203 +1134,197 @@ function QuestionColumn({
     if (phase === 'feedback' && displayedPreview) judgmentPhase = 'settled';
     else if (phase === 'answering' && s.judging && !s.pendingRun) judgmentPhase = 'checking';
 
-    const resultSection =
-      s.pendingRun || phase !== 'answering' || judgmentPhase ? (
-        <section className="un-pn-section" aria-labelledby={id('result')} aria-live="polite">
-          <h2 id={id('result')} className="un-pn-h2">
-            结果
-          </h2>
-          {s.pendingRun ? (
-            <div className="un-pn-result">
-              {/* Not the running judgment line: this can take minutes, and nothing changes
+    const resultBody = s.pendingRun ? (
+      <div className="un-pn-result">
+        {/* Not the running judgment line: this can take minutes, and nothing changes
                   here until the result arrives (M1). */}
-              <Chip>判分在后台</Chip>
-              <p className="un-pn-result-text">
-                {s.pendingPoll.status === 'failed' || s.pendingPoll.error
-                  ? '判分暂时没跑成。你的作答已经存住，系统会自动补判，不需要重交。'
-                  : '这份作答在排队判分，不需要重交。可以先做下一题，结果稍后到。'}
-              </p>
-              <div className="un-pn-actions">
-                {waitingNext ? (
-                  preparing
-                ) : (
-                  <Button variant="secondary" onClick={() => onDone(item)}>
-                    先做下一题
-                  </Button>
-                )}
-              </div>
-            </div>
-          ) : phase === 'confidence' ? (
-            <div className="un-pn-result">
-              <p className="un-pn-result-text">看结果之前，你有几分把握？</p>
-              {/* biome-ignore lint/a11y/useSemanticElements: a row of pill buttons, not a form field set (same pattern as PfSolo's confidence row). */}
-              <div className="un-pn-scale" role="group" aria-label="把握程度，1 到 5">
-                {[1, 2, 3, 4, 5].map((n) => (
-                  <Button
-                    key={n}
-                    variant="secondary"
-                    size="sm"
-                    aria-label={`把握 ${n} 分（共 5 分）`}
-                    onClick={() => s.revealVerdict(n)}
-                  >
-                    {n}
-                  </Button>
-                ))}
-                <Button variant="quiet" size="sm" onClick={() => s.revealVerdict(null)}>
-                  跳过
-                </Button>
-              </div>
-              <p className="un-pn-hint">1 = 全靠猜 · 5 = 十拿九稳 · 不计分</p>
-            </div>
-          ) : judgmentPhase ? (
-            <div className="un-pn-result" data-tone={verdict?.tone}>
-              <Judgment
-                phase={judgmentPhase}
-                tone={verdict?.tone ?? 'neutral'}
-                label={verdict?.label ?? ''}
-                checkingLabel="正在判"
-              >
-                {displayedPreview && verdict ? (
-                  <div className="un-pn-judgment-body">
-                    {verdict.note && <p className="un-pn-hint">{verdict.note}</p>}
-                    {displayedPreview.coarse_outcome === 'unsupported' ? (
-                      <p className="un-pn-result-text">
-                        {s.autoCommitted || s.committedPreview
-                          ? '这题暂时没法自动判，这次作答已经存下了。可以继续下一题，或者返回练习跳过它。'
-                          : '这题暂时没法自动判。可以先自己评一下，或者返回练习跳过这题。'}
-                      </p>
-                    ) : displayedPreview.feedback_md ? (
-                      <MathMarkdown notation={notation} className="un-pn-prose un-pn-result-text">
-                        {displayedPreview.feedback_md}
-                      </MathMarkdown>
-                    ) : null}
-                    {q?.reference_md && (
-                      <div className="un-pn-reference">
-                        <span className="un-pn-hint">参考答案</span>
-                        <MathMarkdown notation={notation} className="un-pn-prose">
-                          {q.reference_md}
-                        </MathMarkdown>
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div />
-                )}
-              </Judgment>
-
-              {displayedPreview && (
-                <>
-                  {!s.autoCommitted && (
-                    <div className="un-pn-rate">
-                      <span className="un-pn-actions-label">按这次的情况安排复习：</span>
-                      {RATINGS.map((g) => (
-                        <ChipToggle
-                          key={g}
-                          pressed={s.rating === g}
-                          disabled={waitingNext}
-                          onPressedChange={() => s.setRating(g)}
-                        >
-                          {RATING_LABEL[g]}
-                        </ChipToggle>
-                      ))}
-                      <span className="un-pn-hint">
-                        {displayedPreview.suggested_rating
-                          ? `建议：${RATING_LABEL[displayedPreview.suggested_rating]}`
-                          : '这次没有建议，自己选一个'}
-                      </span>
-                    </div>
-                  )}
-
-                  <div className="un-pn-actions">
-                    {displayedPreview.coarse_outcome === 'unsupported' &&
-                      !s.autoCommitted &&
-                      !s.committedPreview &&
-                      !waitingNext && (
-                        <Button variant="secondary" onClick={s.startSelfRate}>
-                          自己评一下
-                        </Button>
-                      )}
-                    {waitingNext ? (
-                      preparing
-                    ) : s.autoCommitted ? (
-                      <Button
-                        variant="primary"
-                        disabled={s.committing}
-                        onClick={() => onDone(item)}
-                      >
-                        下一题
-                      </Button>
-                    ) : (
-                      <Button
-                        variant="primary"
-                        disabled={s.committing || !s.rating}
-                        onClick={() =>
-                          s.rating && void s.commit({ withAppeal: false, rating: s.rating })
-                        }
-                      >
-                        {s.committing ? '正在记下…' : '确认，下一题'}
-                      </Button>
-                    )}
-                    {!waitingNext &&
-                      appealEntryAvailable({
-                        phase,
-                        appealOpen: s.appealOpen,
-                        autoCommitted: s.autoCommitted,
-                        autoCommitJudgeEventId: s.autoCommitJudgeEventId,
-                      }) && (
-                        <button
-                          type="button"
-                          className="un-pn-link un-hit"
-                          aria-expanded={false}
-                          aria-controls={id('appeal')}
-                          onClick={() => s.setAppealOpen(true)}
-                        >
-                          觉得判得不对？说明理由重判
-                        </button>
-                      )}
-                  </div>
-
-                  <Expand open={s.appealOpen} id={id('appeal')}>
-                    <div className="un-pn-appeal">
-                      <textarea
-                        className="un-pn-textarea"
-                        rows={2}
-                        value={s.appealText}
-                        placeholder="说说为什么，比如「我的写法和参考答案是等价的」"
-                        onChange={(e) => s.setAppealText(e.target.value)}
-                        aria-label="重判理由"
-                      />
-                      <div className="un-pn-actions">
-                        <Button
-                          variant="secondary"
-                          size="sm"
-                          disabled={
-                            !s.appealText.trim() ||
-                            s.committing ||
-                            waitingNext ||
-                            (s.autoCommitted ? !s.autoCommitJudgeEventId : !s.rating)
-                          }
-                          onClick={() => {
-                            if (s.autoCommitted) void s.submitAutoCommitAppeal();
-                            else if (s.rating)
-                              void s.commit({ withAppeal: true, rating: s.rating });
-                          }}
-                        >
-                          提交重判，先继续
-                        </Button>
-                        <Button variant="quiet" size="sm" onClick={() => s.setAppealOpen(false)}>
-                          算了
-                        </Button>
-                        <span className="un-pn-hint">重判在后台进行，不耽误做下一题</span>
-                      </div>
-                    </div>
-                  </Expand>
-                </>
+        <Chip>判分在后台</Chip>
+        <p className="un-pn-result-text">
+          {s.pendingPoll.status === 'failed' || s.pendingPoll.error
+            ? '判分暂时没跑成。你的作答已经存住，系统会自动补判，不需要重交。'
+            : '这份作答在排队判分，不需要重交。可以先做下一题，结果稍后到。'}
+        </p>
+        <div className="un-pn-actions">
+          {waitingNext ? (
+            preparing
+          ) : (
+            <Button variant="secondary" onClick={() => onDone(item)}>
+              先做下一题
+            </Button>
+          )}
+        </div>
+      </div>
+    ) : phase === 'confidence' ? (
+      <div className="un-pn-result">
+        <p className="un-pn-result-text">看结果之前，你有几分把握？</p>
+        {/* biome-ignore lint/a11y/useSemanticElements: a row of pill buttons, not a form field set (same pattern as PfSolo's confidence row). */}
+        <div className="un-pn-scale" role="group" aria-label="把握程度，1 到 5">
+          {[1, 2, 3, 4, 5].map((n) => (
+            <Button
+              key={n}
+              variant="secondary"
+              size="sm"
+              aria-label={`把握 ${n} 分（共 5 分）`}
+              onClick={() => s.revealVerdict(n)}
+            >
+              {n}
+            </Button>
+          ))}
+          <Button variant="quiet" size="sm" onClick={() => s.revealVerdict(null)}>
+            跳过
+          </Button>
+        </div>
+        <p className="un-pn-hint">1 = 全靠猜 · 5 = 十拿九稳 · 不计分</p>
+      </div>
+    ) : judgmentPhase ? (
+      <div className="un-pn-result" data-tone={verdict?.tone}>
+        <Judgment
+          phase={judgmentPhase}
+          tone={verdict?.tone ?? 'neutral'}
+          label={verdict?.label ?? ''}
+          checkingLabel="正在判"
+        >
+          {displayedPreview && verdict ? (
+            <div className="un-pn-judgment-body">
+              {verdict.note && <p className="un-pn-hint">{verdict.note}</p>}
+              {displayedPreview.coarse_outcome === 'unsupported' ? (
+                <p className="un-pn-result-text">
+                  {s.autoCommitted || s.committedPreview
+                    ? '这题暂时没法自动判，这次作答已经存下了。可以继续下一题，或者返回练习跳过它。'
+                    : '这题暂时没法自动判。可以先自己评一下，或者返回练习跳过这题。'}
+                </p>
+              ) : displayedPreview.feedback_md ? (
+                <MathMarkdown notation={notation} className="un-pn-prose un-pn-result-text">
+                  {displayedPreview.feedback_md}
+                </MathMarkdown>
+              ) : null}
+              {q?.reference_md && (
+                <div className="un-pn-reference">
+                  <span className="un-pn-hint">参考答案</span>
+                  <MathMarkdown notation={notation} className="un-pn-prose">
+                    {q.reference_md}
+                  </MathMarkdown>
+                </div>
               )}
             </div>
-          ) : null}
-        </section>
-      ) : null;
+          ) : (
+            <div />
+          )}
+        </Judgment>
+
+        {displayedPreview && (
+          <>
+            {!s.autoCommitted && (
+              <div className="un-pn-rate">
+                <span className="un-pn-actions-label">按这次的情况安排复习：</span>
+                {RATINGS.map((g) => (
+                  <ChipToggle
+                    key={g}
+                    pressed={s.rating === g}
+                    disabled={waitingNext}
+                    onPressedChange={() => s.setRating(g)}
+                  >
+                    {RATING_LABEL[g]}
+                  </ChipToggle>
+                ))}
+                <span className="un-pn-hint">
+                  {displayedPreview.suggested_rating
+                    ? `建议：${RATING_LABEL[displayedPreview.suggested_rating]}`
+                    : '这次没有建议，自己选一个'}
+                </span>
+              </div>
+            )}
+
+            <div className="un-pn-actions">
+              {displayedPreview.coarse_outcome === 'unsupported' &&
+                !s.autoCommitted &&
+                !s.committedPreview &&
+                !waitingNext && (
+                  <Button variant="secondary" onClick={s.startSelfRate}>
+                    自己评一下
+                  </Button>
+                )}
+              {waitingNext ? (
+                preparing
+              ) : s.autoCommitted ? (
+                <Button variant="primary" disabled={s.committing} onClick={() => onDone(item)}>
+                  下一题
+                </Button>
+              ) : (
+                <Button
+                  variant="primary"
+                  disabled={s.committing || !s.rating}
+                  onClick={() => s.rating && void s.commit({ withAppeal: false, rating: s.rating })}
+                >
+                  {s.committing ? '正在记下…' : '确认，下一题'}
+                </Button>
+              )}
+              {!waitingNext &&
+                appealEntryAvailable({
+                  phase,
+                  appealOpen: s.appealOpen,
+                  autoCommitted: s.autoCommitted,
+                  autoCommitJudgeEventId: s.autoCommitJudgeEventId,
+                }) && (
+                  <button
+                    type="button"
+                    className="un-pn-link un-hit"
+                    aria-expanded={false}
+                    aria-controls={id('appeal')}
+                    onClick={() => s.setAppealOpen(true)}
+                  >
+                    觉得判得不对？说明理由重判
+                  </button>
+                )}
+            </div>
+
+            <Expand open={s.appealOpen} id={id('appeal')}>
+              <div className="un-pn-appeal">
+                <textarea
+                  className="un-pn-textarea"
+                  rows={2}
+                  value={s.appealText}
+                  placeholder="说说为什么，比如「我的写法和参考答案是等价的」"
+                  onChange={(e) => s.setAppealText(e.target.value)}
+                  aria-label="重判理由"
+                />
+                <div className="un-pn-actions">
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={
+                      !s.appealText.trim() ||
+                      s.committing ||
+                      waitingNext ||
+                      (s.autoCommitted ? !s.autoCommitJudgeEventId : !s.rating)
+                    }
+                    onClick={() => {
+                      if (s.autoCommitted) void s.submitAutoCommitAppeal();
+                      else if (s.rating) void s.commit({ withAppeal: true, rating: s.rating });
+                    }}
+                  >
+                    提交重判，先继续
+                  </Button>
+                  <Button variant="quiet" size="sm" onClick={() => s.setAppealOpen(false)}>
+                    算了
+                  </Button>
+                  <span className="un-pn-hint">重判在后台进行，不耽误做下一题</span>
+                </div>
+              </div>
+            </Expand>
+          </>
+        )}
+      </div>
+    ) : null;
+
+    const resultSection = resultBody ? (
+      <section className="un-pn-section" aria-labelledby={id('result')} aria-live="polite">
+        <h2 id={id('result')} className="un-pn-h2">
+          结果
+        </h2>
+        {resultBody}
+      </section>
+    ) : null;
 
     const historySection =
       timeline.length > 0 ? (
@@ -1308,14 +1356,207 @@ function QuestionColumn({
         </section>
       ) : null;
 
-    const questionColumn = (
+    const hasStem = !hasPassage || figures.length > 0 || !multiPart;
+    const classicColumn = (
       <>
-        {(!hasPassage || figures.length > 0 || !multiPart) && questionSection}
+        {hasStem && questionSection}
         {answerSection}
         {resultSection}
         {historySection}
       </>
     );
+
+    // ── The two new layouts share these pieces; CSS under [data-layout] gives each its shape.
+    const handedIn = !answering;
+    const saveNote = answering ? (
+      <SaveStateChip state={s.autosave.state} onRetry={s.autosave.retry} />
+    ) : null;
+    // Worksheet numbering (owner 2026-10-11 16:44): a filled coral square for the question, a
+    // thin coral ring for each part, with the same numbers as the question text.
+    const mainNo = (
+      <span className="un-pn-mainno un-num" role="img" aria-label={`第 ${pos} 题`}>
+        {pos}
+      </span>
+    );
+    const partList = (
+      <ol className="un-pn-vparts">
+        {faces.map((face, index) => {
+          const no = face.question_no ?? `(${index + 1})`;
+          const slots = slotsOf(face.part_id);
+          return (
+            <li key={face.part_id} className="un-pn-vpart" data-quote-block="">
+              <span className="un-pn-ring un-num" role="img" aria-label={`第 ${no} 问`}>
+                {no.replace(/[()（）\s]/g, '')}
+              </span>
+              <div className="un-pn-vpart-body">
+                <div className="un-pn-vpart-prompt" data-quotable="" data-quote-text="">
+                  <MathMarkdown notation={notation} className="un-pn-prose">
+                    {face.prompt_md}
+                  </MathMarkdown>
+                </div>
+                {slots.length > 0 && <div className="un-pn-write">{slots.map(renderSlot)}</div>}
+              </div>
+              <div className="un-pn-vpart-side">
+                {layout === 'focused' && handedIn && (
+                  <span className="un-pn-vpart-state">已交</span>
+                )}
+                {quoteButton(`${no} ${face.prompt_md}`, `第 ${no} 问`)}
+              </div>
+            </li>
+          );
+        })}
+      </ol>
+    );
+    const answerFields = multiPart ? (
+      <>
+        {partList}
+        {looseSlots.length > 0 && <div className="un-pn-write">{looseSlots.map(renderSlot)}</div>}
+      </>
+    ) : (
+      <div className="un-pn-write">{frozen.response_spec.slots.map(renderSlot)}</div>
+    );
+    const variantExtras = extrasVisible ? (
+      <div className="un-pn-extras">
+        {evidence}
+        {offerTrace && traceField}
+      </div>
+    ) : null;
+
+    // While answering: 提交 (or the self-rating), then 拍照/附件 and 写思路. ⌘Enter still submits;
+    // it is in the button's title instead of a hint line.
+    const actionBar = answering ? (
+      // biome-ignore lint/a11y/useSemanticElements: a toolbar of buttons, not a form field set.
+      <div
+        className={layout === 'paper' ? 'un-pn-bar un-glass' : 'un-pn-bar'}
+        role="group"
+        aria-label="作答操作"
+      >
+        <div className="un-pn-bar-main">
+          {s.issuanceMode === 'manual' ? (
+            <>
+              <span className="un-pn-actions-label">做完了？自己评一下：</span>
+              {RATINGS.map((grade) => (
+                <Button
+                  key={grade}
+                  variant="secondary"
+                  size="sm"
+                  disabled={!s.canSubmit || s.committing || waitingNext}
+                  onClick={() => void s.commit({ withAppeal: false, rating: grade })}
+                >
+                  {RATING_LABEL[grade]}
+                </Button>
+              ))}
+            </>
+          ) : (
+            <Button
+              variant="primary"
+              className="un-pn-submit"
+              disabled={!s.canSubmit}
+              title="⌘Enter 也能提交"
+              aria-keyshortcuts="Meta+Enter Control+Enter"
+              onClick={() => void s.runJudge()}
+            >
+              {s.judging ? '正在判…' : '提交'}
+            </Button>
+          )}
+        </div>
+        <div className="un-pn-bar-tools">
+          <Button
+            variant="quiet"
+            size="sm"
+            disabled={answerLocked || uploading}
+            onClick={() => document.getElementById(id('attach'))?.click()}
+          >
+            <Camera size={15} aria-hidden="true" />
+            {uploading ? '上传中…' : '拍照/附件'}
+          </Button>
+          {offerTrace && (
+            <Button
+              variant="quiet"
+              size="sm"
+              aria-expanded={s.showTrace}
+              aria-controls={id('trace')}
+              data-on={s.showTrace || undefined}
+              onClick={() => s.setShowTrace(!s.showTrace)}
+            >
+              <PenLine size={15} aria-hidden="true" />
+              {s.showTrace ? '收起思路' : '写思路'}
+            </Button>
+          )}
+        </div>
+        {layout === 'paper' && <span className="un-pn-bar-save">{saveNote}</span>}
+        {waitingNext && <span className="un-pn-hint">下一题准备中…</span>}
+      </div>
+    ) : null;
+
+    const resultBlock = (className: string) =>
+      resultBody ? (
+        <section className={className} aria-label="结果" aria-live="polite">
+          {resultBody}
+        </section>
+      ) : null;
+
+    // A「纸面」: one sheet, question → answers under their own question → bar → result → history.
+    const paperColumn = (
+      <article className="un-pn-sheet" aria-label="题目与作答">
+        {hasStem && (
+          <div className="un-pn-sheet-q" data-quote-block="">
+            {mainNo}
+            {stemBlock}
+            {!multiPart && stemText.trim() && quoteButton(stemText, '题目')}
+          </div>
+        )}
+        {answerFields}
+        {variantExtras}
+        {actionBar}
+        {resultBlock('un-pn-sheet-result')}
+        {historySection}
+      </article>
+    );
+
+    // B「分栏卡」: the question card, then one answer panel with the actions / result at its foot.
+    const focusedColumn = (
+      <>
+        {hasStem && (
+          <section className="un-pn-qcard" aria-label="题目" data-quote-block="">
+            <div className="un-pn-qcard-head">
+              {mainNo}
+              <span className="un-pn-qcard-meta">
+                {multiPart ? `共 ${faces.length} 问，在下面逐问作答` : '题目'}
+              </span>
+              {!multiPart && stemText.trim() && quoteButton(stemText, '题目')}
+            </div>
+            {stemBlock}
+          </section>
+        )}
+        <section
+          className="un-pn-panel"
+          aria-labelledby={id('answer')}
+          data-state={handedIn ? 'done' : 'answering'}
+          data-tone={handedIn ? (verdict?.tone ?? 'neutral') : undefined}
+        >
+          <header className="un-pn-panel-head">
+            <h2 id={id('answer')} className="un-pn-panel-title">
+              我的作答
+            </h2>
+            {saveNote}
+          </header>
+          {answerFields}
+          {variantExtras}
+          {(actionBar || resultBody) && (
+            <footer className="un-pn-panel-foot">
+              {actionBar}
+              {resultBlock('un-pn-panel-result')}
+            </footer>
+          )}
+        </section>
+        {historySection}
+      </>
+    );
+
+    let questionColumn: React.ReactNode = classicColumn;
+    if (layout === 'paper') questionColumn = paperColumn;
+    else if (layout === 'focused') questionColumn = focusedColumn;
 
     body = hasPassage ? (
       // R9: the passage stays pinned on the left and scrolls on its own; questions on the right.
