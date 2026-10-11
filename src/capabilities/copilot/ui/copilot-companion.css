@@ -1,7 +1,10 @@
 /* YUK-1473 — the embedded Copilot companion (CopilotDock variant="embedded"). It only renders
    inside a ui-next page, so every rule is scoped under [data-ui-next] and reads --un- tokens.
-   The companion side panel is not glass (T3). Motion only on change (M1): the ink settles with a
-   colour transition, and the recording line moves only while a reply is being recorded (C3). */
+   The look follows the loft companion: my words in a soft accent bubble on the right, the
+   companion's words on the page ink, a small bordered state badge that walks 在想… → 生成中 →
+   正在记录 → ✓ 已记录 in place (C3), and a two-line composer with an accent focus ring (C6).
+   Motion only on change (M1): ink settles with a colour transition; the recording line moves
+   only while a reply is being recorded. The host decides the surface (glass or not). */
 
 [data-ui-next] .un-cc {
   display: grid;
@@ -17,7 +20,7 @@
   display: flex;
   flex-direction: column;
   gap: var(--un-sp-4);
-  padding-top: var(--un-sp-2);
+  padding: var(--un-sp-2) 0 var(--un-sp-3);
   overscroll-behavior: contain;
 }
 
@@ -40,11 +43,11 @@
   justify-items: end;
 }
 [data-ui-next] .un-cc-user-text {
-  max-width: 88%;
+  max-width: 86%;
   padding: var(--un-sp-2) var(--un-sp-3);
-  border-radius: var(--un-r-2);
-  background: var(--un-bg-sunk);
-  color: var(--un-text-1);
+  border-radius: var(--un-r-2) var(--un-r-2) var(--un-sp-1) var(--un-r-2);
+  background: var(--un-accent-soft);
+  color: var(--un-accent-ink);
   font-size: var(--un-fs-2);
   line-height: var(--un-lh-ui);
   white-space: pre-wrap;
@@ -99,12 +102,23 @@
   margin-left: 1px;
 }
 
+/* The state badge sits above the reply text (order), like the loft's 「生成完毕 · 正在记录」. */
 [data-ui-next] .un-cc-state {
+  order: -1;
+  justify-self: start;
+  padding: 0 var(--un-sp-2);
+  border-radius: var(--un-r-1);
+  box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line-strong);
   font-size: var(--un-fs-1);
+  line-height: 1.7;
   color: var(--un-text-3);
+  transition:
+    color var(--un-t-ui) var(--un-ease-glide),
+    box-shadow var(--un-t-ui) var(--un-ease-glide);
 }
 [data-ui-next] .un-cc-ai[data-settled] .un-cc-state {
   color: var(--un-positive);
+  box-shadow: inset 0 0 0 var(--un-hairline) color-mix(in srgb, var(--un-positive) 45%, transparent);
 }
 
 /* The recording line: a hairline under the text; it travels only under no-preference. */
@@ -113,14 +127,14 @@
   display: block;
   height: var(--un-hairline);
   overflow: hidden;
-  background: var(--un-line);
+  background: transparent;
 }
 [data-ui-next] .un-cc-recording::after {
   content: "";
   position: absolute;
   inset: 0 auto 0 0;
   width: 40%;
-  background: linear-gradient(90deg, transparent, var(--un-text-3), transparent);
+  background: linear-gradient(90deg, transparent, var(--un-accent), transparent);
   transform: translateX(-100%);
 }
 
@@ -180,13 +194,16 @@
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
   gap: var(--un-sp-2);
-  padding: var(--un-sp-2);
-  border: var(--un-hairline) solid var(--un-line-strong);
+  padding: var(--un-sp-2) var(--un-sp-2) var(--un-sp-2) var(--un-sp-3);
   border-radius: var(--un-r-2);
-  background: var(--un-bg-raised);
+  background: var(--un-bg);
+  box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
+  transition: box-shadow var(--un-t-ui) var(--un-ease-glide);
 }
 [data-ui-next] .un-cc-composer:focus-within {
-  border-color: var(--un-focus);
+  box-shadow:
+    0 0 0 var(--un-hairline) var(--un-accent),
+    0 0 0 4px color-mix(in srgb, var(--un-accent) 14%, transparent);
 }
 [data-ui-next] .un-cc-composer textarea {
   width: 100%;
