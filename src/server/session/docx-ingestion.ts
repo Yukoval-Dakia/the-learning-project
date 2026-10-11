@@ -5,6 +5,7 @@ import {
   AUTO_ENROLL_SINGLETON_SECONDS,
   autoEnrollJobEnabled,
 } from '@/capabilities/ingestion/public';
+import type { DocxOmittedExternalRef } from '@/capabilities/ingestion/server/docx/route-classify';
 import {
   type StructuredQuestionT,
   structuredToPromptMarkdown,
@@ -49,7 +50,29 @@ export interface InitiateDocxTextUploadParams {
    *  source_document + every block so the review UI can render整页. */
   evidenceAssetIds: string[];
   blocks: DocxTextBlockInput[];
+  /**
+   * YUK-1476 — pass ONLY when the converter input was sanitized (external
+   * non-hyperlink relationships omitted from the copy pandoc/LibreOffice saw).
+   * Lands in source_document.provenance + session warnings as the honest
+   * omission audit; no new schema/table, and never the external Target URL.
+   */
+  externalRefOmission?: DocxExternalRefOmissionFacts;
 }
+
+/** YUK-1476 — audit facts for external resources omitted from the converter input copy. */
+export interface DocxExternalRefOmissionFacts {
+  /** SHA-256 (hex) of the ORIGINAL uploaded docx bytes. */
+  inputSha256: string;
+  /** SHA-256 (hex) of the sanitized converter-input copy. */
+  converterInputSha256: string;
+  /** What was omitted (part + rId + public type category — never the external Target URL). */
+  omissions: DocxOmittedExternalRef[];
+}
+
+// Owner-fixed learner wording (2026-10-11): states the omission plainly, leaks
+// no remote URL / PII, and rides the EXISTING learning_session.warnings field
+// (already part of the session-detail DTO) — no new copy surface.
+const EXTERNAL_REF_OMISSION_NOTICE = '已忽略外部链接';
 
 export interface InitiateDocxTextUploadResult {
   sessionId: string;
@@ -78,6 +101,8 @@ export async function initiateDocxTextUpload(
     const now = new Date();
     const sourceDocumentId = createId();
     const sessionId = createId();
+    const omission = params.externalRefOmission;
+    const warnings = omission ? [EXTERNAL_REF_OMISSION_NOTICE] : [];
 
     // Codex-1 — the import route validates every block.image_ref against the
     // session's source_asset_ids (import/route.ts §3). Embedded-image asset ids
@@ -90,12 +115,27 @@ export async function initiateDocxTextUpload(
     const sessionAssetIds = Array.from(new Set([...params.evidenceAssetIds, ...embeddedRefs]));
 
     // 1. source_document — evidence page images + embedded refs as source_asset_ids.
+    //    YUK-1476 — provenance carries the honest omission audit: both digests +
+    //    the omitted facts (part/rId/type — never the external Target URL).
     await tx.insert(source_document).values({
       id: sourceDocumentId,
       title: null,
       source_asset_ids: sessionAssetIds,
       body_md: null,
-      provenance: { entrypoint: 'docx', line: 'text' } as Record<string, unknown>,
+      provenance: {
+        entrypoint: 'docx',
+        line: 'text',
+        ...(omission
+          ? {
+              docx_external_ref_omission: {
+                input_sha256: omission.inputSha256,
+                converter_input_sha256: omission.converterInputSha256,
+                omitted: omission.omissions,
+                learner_notice: EXTERNAL_REF_OMISSION_NOTICE,
+              },
+            }
+          : {}),
+      } as Record<string, unknown>,
       created_at: now,
       updated_at: now,
       version: 0,
@@ -110,7 +150,7 @@ export async function initiateDocxTextUpload(
       status: 'uploaded',
       entrypoint: 'docx',
       error_message: null,
-      warnings: [],
+      warnings,
       started_at: now,
       created_at: now,
       updated_at: now,
@@ -202,7 +242,7 @@ export async function initiateDocxTextUpload(
       payload: {
         block_count: params.blocks.length,
         layout_quality: 'structured',
-        warnings: [],
+        warnings,
       },
     });
 
@@ -219,7 +259,7 @@ export async function initiateDocxTextUpload(
       payload: {
         structured_block_ids: insertedBlockIds,
         layout_quality: 'structured',
-        warnings: [],
+        warnings,
       },
       created_at: now,
     });
