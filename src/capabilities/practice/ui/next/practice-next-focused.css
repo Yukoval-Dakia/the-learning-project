@@ -1,0 +1,229 @@
+/* YUK-1473 — layout B「分栏卡」(focused). Tighter and denser: the question on a raised card, then
+   one answer panel with a numbered segment per part (the worksheet rings), the actions at the
+   panel's foot and, after judging, the result in the same foot. The reading column is wider and
+   sits right up to the companion, so the page has no empty band between them. */
+
+[data-ui-next] .un-pn[data-layout="focused"] {
+  gap: var(--un-sp-3);
+
+  & .un-pn-main {
+    padding: var(--un-sp-6) var(--un-sp-3) var(--un-sp-8) var(--un-sp-6);
+  }
+  & .un-pn-column {
+    max-width: 1040px;
+    gap: var(--un-sp-4);
+  }
+  & .un-pn-banner {
+    gap: var(--un-sp-4);
+  }
+  & .un-pn-q {
+    gap: var(--un-sp-4);
+  }
+
+  /* ── The question card ── */
+  & .un-pn-qcard {
+    display: grid;
+    gap: var(--un-sp-3);
+    padding: var(--un-sp-4) var(--un-sp-6) var(--un-sp-5) var(--un-sp-5);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-raised);
+    box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
+  }
+  & .un-pn-qcard-head {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-3);
+    min-height: var(--un-h-control-sm);
+  }
+  & .un-pn-qcard-meta {
+    flex: 1;
+    min-width: 0;
+    font-size: var(--un-fs-1);
+    color: var(--un-text-3);
+  }
+  /* The stem lines up with the words after the square. */
+  & .un-pn-qcard > .un-pn-stem {
+    padding-left: var(--un-pn-gutter);
+  }
+
+  /* ── The answer panel: one frame; segments are divided by hairlines, fields are tints ── */
+  & .un-pn-panel {
+    display: grid;
+    overflow: hidden;
+    border-radius: var(--un-r-2);
+    background: var(--un-bg-raised);
+    box-shadow: 0 0 0 var(--un-hairline) var(--un-line-strong);
+    transition: box-shadow var(--un-t-ui) var(--un-ease-glide);
+  }
+  & .un-pn-panel[data-state="answering"]:focus-within {
+    box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--un-accent) 55%, var(--un-line));
+  }
+  & .un-pn-panel[data-tone="positive"] {
+    box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--un-positive) 45%, var(--un-line));
+  }
+  & .un-pn-panel[data-tone="caution"] {
+    box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--un-caution) 45%, var(--un-line));
+  }
+  & .un-pn-panel-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--un-sp-3);
+    padding: var(--un-sp-3) var(--un-sp-5);
+    border-bottom: var(--un-hairline) solid var(--un-line);
+  }
+  & .un-pn-panel-title {
+    margin: 0;
+    font-size: var(--un-fs-2);
+    font-weight: var(--un-fw-semibold);
+    color: var(--un-text-1);
+  }
+  & .un-pn-vpart {
+    padding: var(--un-sp-4) var(--un-sp-5);
+  }
+  & .un-pn-vpart + .un-pn-vpart {
+    border-top: var(--un-hairline) solid var(--un-line);
+  }
+  & .un-pn-vpart-prompt .un-pn-prose {
+    font-size: var(--un-fs-2);
+    color: var(--un-text-2);
+  }
+  & .un-pn-vpart-state {
+    padding: 2px var(--un-sp-2);
+    border-radius: var(--un-r-3);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    white-space: nowrap;
+  }
+  & .un-pn-panel > .un-pn-write,
+  & .un-pn-panel > .un-pn-extras {
+    padding: var(--un-sp-4) var(--un-sp-5);
+  }
+  & .un-pn-panel > .un-pn-extras {
+    padding-top: 0;
+  }
+  & .un-pn-vparts + .un-pn-write {
+    border-top: var(--un-hairline) solid var(--un-line);
+  }
+
+  /* Fields: a tinted area that grows with what is written; focus lifts it to white. */
+  & .rs-textarea,
+  & .un-pn-textarea {
+    padding: var(--un-sp-1) var(--un-sp-3);
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+    line-height: 30px;
+  }
+  & .rs-textarea {
+    min-height: calc(2 * 30px + 2 * var(--un-sp-1));
+  }
+  & .rs-textarea[inputmode="decimal"] {
+    min-height: calc(30px + 2 * var(--un-sp-1));
+  }
+  & .un-pn-textarea {
+    min-height: calc(2 * 30px + 2 * var(--un-sp-1));
+    font-size: var(--un-fs-2);
+  }
+  & .rs-textarea:hover:not(:disabled),
+  & .un-pn-textarea:hover {
+    background: var(--un-bg-hover);
+  }
+  & .rs-textarea:focus-visible,
+  & .un-pn-textarea:focus-visible {
+    background: var(--un-bg-raised);
+    box-shadow: inset 0 0 0 1.5px var(--un-accent-strong);
+  }
+  & .rs-textarea:disabled {
+    background: transparent;
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+  }
+
+  /* Choices: compact tiles, two or more to a row when they fit. */
+  & .rs-opts {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: var(--un-sp-2);
+  }
+  & .rs-opt {
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line);
+  }
+  & .rs-opt:hover:not(:disabled) {
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line-strong);
+  }
+  & .rs-opt.is-sel {
+    box-shadow: inset 0 0 0 1.5px var(--un-accent-strong);
+  }
+
+  /* 断句 sits on a tint inside the panel. */
+  & .un-sb-text {
+    background: var(--un-bg-sunk);
+  }
+
+  /* ── The panel foot: actions while answering, then the result in the same place ── */
+  & .un-pn-panel-foot {
+    display: grid;
+    gap: var(--un-sp-4);
+    padding: var(--un-sp-3) var(--un-sp-5);
+    border-top: var(--un-hairline) solid var(--un-line);
+    background: color-mix(in srgb, var(--un-bg-sunk) 55%, var(--un-bg-raised));
+  }
+  & .un-pn-panel-foot:has(.un-pn-panel-result) {
+    padding: var(--un-sp-5);
+    background: var(--un-bg-raised);
+  }
+  & .un-pn-panel-result {
+    display: grid;
+    gap: var(--un-sp-4);
+  }
+
+  /* 作答记录 below the panel, compact. */
+  & .un-pn-q > .un-pn-section:has(> .un-pn-history) {
+    padding: 0 var(--un-sp-2);
+  }
+}
+
+/* Medium widths: the column takes all the room it has. */
+@media (min-width: 721px) and (max-width: 1100px) {
+  [data-ui-next] .un-pn[data-layout="focused"] .un-pn-main {
+    padding: var(--un-sp-5) var(--un-sp-2) var(--un-sp-8) var(--un-sp-4);
+  }
+}
+
+@media (max-width: 720px) {
+  [data-ui-next] .un-pn[data-layout="focused"] {
+    gap: 0;
+
+    & .un-pn-main {
+      padding: 0 var(--un-sp-3) calc(var(--un-sp-8) * 2);
+    }
+    & .un-pn-phonebar {
+      margin: 0 calc(-1 * var(--un-sp-3));
+      padding: 0 var(--un-sp-3) 0 var(--un-sp-1);
+    }
+    & .un-pn-column,
+    & .un-pn-q {
+      gap: var(--un-sp-3);
+    }
+    & .un-pn-qcard {
+      padding: var(--un-sp-3) var(--un-sp-4) var(--un-sp-4);
+    }
+    & .un-pn-qcard > .un-pn-stem {
+      padding-left: 0;
+    }
+    & .un-pn-panel-head,
+    & .un-pn-vpart,
+    & .un-pn-panel > .un-pn-write,
+    & .un-pn-panel > .un-pn-extras,
+    & .un-pn-panel-foot {
+      padding-left: var(--un-sp-4);
+      padding-right: var(--un-sp-4);
+    }
+    & .un-pn-panel-foot:has(.un-pn-panel-result) {
+      padding: var(--un-sp-4);
+    }
+    & .rs-opts {
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+    }
+  }
+}
