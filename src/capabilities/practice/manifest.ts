@@ -1362,6 +1362,12 @@ export const practiceCapability = defineCapability({
         name: 'query_questions',
         load: () => import('./server/tools/query-questions').then((m) => m.queryQuestionsTool),
       },
+      // ADR-0072 LIGHT — 题库三工具（search/read/check）。search_bank 取代
+      // query_questions 的查重职责（备题员面落地时按 ADR-0069 第一刀再授予）。
+      {
+        name: 'search_bank',
+        load: () => import('./server/tools/search-bank').then((m) => m.searchBankTool),
+      },
       {
         name: 'write_quiz',
         load: () => import('./server/tools/write-quiz').then((m) => m.writeQuizTool),

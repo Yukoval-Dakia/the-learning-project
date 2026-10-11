@@ -41,6 +41,7 @@ const POLICIES: Record<string, ResultPolicy> = {
   get_attempt_context: 'reader',
   get_learning_item_context: 'reader',
   query_questions: 'reader',
+  search_bank: 'reader',
   get_record_context: 'record',
   get_review_due: 'review',
   query_events: 'events',

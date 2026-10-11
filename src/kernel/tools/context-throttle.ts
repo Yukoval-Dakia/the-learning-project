@@ -117,6 +117,15 @@ const LIMITED_TOOLS: Record<string, LimitedToolSpec> = {
     courtesyDefault: 20,
     dimension: 'eventRows',
   },
+  // ADR-0072 LIGHT — search_bank（query_questions 的接替者）：返回候选卡片行，
+  // 同样入 eventRows 预算（非事件行接 query_records 先例）；courtesy default 20
+  // 与工具自身 limit default 一致。read/check 的输入是 ref 数组（非 limit 参数），
+  // 不入行预算，只受 tool-call 上限约束。
+  search_bank: {
+    limitPath: ['limit'],
+    courtesyDefault: 20,
+    dimension: 'eventRows',
+  },
 };
 
 function readLimit(args: unknown, path: readonly string[]): number | undefined {

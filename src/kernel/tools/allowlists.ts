@@ -29,6 +29,10 @@ export const READ_TOOLS = [
   // copilot surfaces ONLY for now — widening maintenance is A2 territory, so the
   // MAINTENANCE_READ_TOOLS chokepoint below filters it back out.
   'query_questions',
+  // ADR-0072 LIGHT — 题库 agent 三工具（search/read/check）随各自竖切接入。
+  // 授予 copilot surfaces；备题员面（ADR-0069 第一刀）落地时再扩。Maintenance
+  // chokepoint 下方过滤回（同 query_questions containment —— 扩面归 coordinator）。
+  'search_bank',
   // ADR-0032 D6-draftread (YUK-203 lane L5) — ingestion draft-layer structure
   // reader (read≡write coordinate fix). Granted ONLY on `ingestion_block_edit`
   // below; it reads the DRAFT pool (question_block.structured) so it MUST NOT
@@ -202,6 +206,10 @@ export const COPILOT_TOOLS = [
   // merge; this is the deliberate ADR-0031 surface change, not a violation.
   'query_questions',
   'write_quiz',
+  // ADR-0072 LIGHT — 题库三工具接替 query_questions 的取题路径（D1：LIGHT
+  // 只切 copilot/备题员两个面；coach/dreaming/maintenance/ingestion_block_edit
+  // 继续经现有 get_question_context 读取不变）。
+  'search_bank',
   // ADR-0033 D6 (YUK-306, lane D) — interactive 学习 artifact authoring pair.
   // effect='write' (单用户、路由守 scope、非破坏性创建 — D6 explicit); the chip
   // surface inherits via the [...COPILOT_TOOLS, …] spread below. No other
@@ -277,6 +285,9 @@ const COACH_TOOLS = [
 // ADR-0032 D9 grants it to the copilot surfaces only; widening maintenance is
 // A2 territory, not this lane's call.
 //
+// ADR-0072 LIGHT — the bank tools (search/read/check_bank) follow the same
+// containment: copilot-surface grants only; widening is the coordinator's call.
+//
 // ADR-0032 D6-draftread (YUK-203 lane L5) — `get_question_block_structure` is
 // filtered out for the same reason: it reads the ingestion DRAFT layer and is an
 // `ingestion_block_edit`-only grant. Keeping the chokepoint here stops it leaking
@@ -288,6 +299,7 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     ReadDomainToolName,
     | 'search_memory_facts'
     | 'query_questions'
+    | 'search_bank'
     | 'get_question_block_structure'
     | 'generate_goal_outline'
     | 'generate_question_candidate'
@@ -297,6 +309,7 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
   > =>
     name !== 'search_memory_facts' &&
     name !== 'query_questions' &&
+    name !== 'search_bank' &&
     name !== 'get_question_block_structure' &&
     name !== 'generate_goal_outline' &&
     name !== 'generate_question_candidate' &&

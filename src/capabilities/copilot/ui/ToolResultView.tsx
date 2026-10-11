@@ -18,6 +18,7 @@ const TOOL_LABELS: Record<string, string> = {
   expand_knowledge_subgraph: '关联知识',
   find_knowledge_paths: '知识路径',
   query_questions: '题目',
+  search_bank: '题库检索',
   search_memory_facts: '记忆检索',
   propose_knowledge_edge: '知识关联提议',
   propose_knowledge_mutation: '知识调整提议',
