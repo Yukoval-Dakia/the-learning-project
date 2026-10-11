@@ -377,13 +377,16 @@ const CompanionMessageRow = memo(function CompanionMessageRow({
 }: CompanionMessageRowProps) {
   const [justSettled, setJustSettled] = useState(false);
   const previousState = useRef(state);
+  // Refs, so a callback or id change never restarts the settle timer below.
   const onRecordedRef = useRef(onRecorded);
   onRecordedRef.current = onRecorded;
+  const messageIdRef = useRef(m.id);
+  messageIdRef.current = m.id;
   useEffect(() => {
     const before = previousState.current;
     previousState.current = state;
     if (state !== 'settled' || before === 'settled' || before === 'stopped') return;
-    onRecordedRef.current?.(m.id);
+    onRecordedRef.current?.(messageIdRef.current);
     setJustSettled(true);
     const timer = window.setTimeout(() => setJustSettled(false), COMPANION_SETTLED_MS);
     return () => window.clearTimeout(timer);
