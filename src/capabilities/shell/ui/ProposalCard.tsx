@@ -444,8 +444,13 @@ export function ProposalCard({
               className="ev-rawid"
               title={`复制引用 ${seg.text}`}
               onClick={() => {
+                // navigator.clipboard is missing over the plain-HTTP LAN address.
+                if (!navigator.clipboard) {
+                  onError('这个地址下不能复制，可以手动选中文字复制。');
+                  return;
+                }
                 void navigator.clipboard
-                  ?.writeText(seg.text)
+                  .writeText(seg.text)
                   .catch(() => onError('复制技术引用失败。'));
               }}
             >
