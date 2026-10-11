@@ -120,7 +120,8 @@ export function sealCandidateFact(raw: CandidateFact): SealedCandidateInput {
   return SealedCandidateInputSchema.parse({
     ...input,
     versions: VERSIONS,
-    adaptedEvidence: candidateObservations(input),
+    // Historical receipts attest the original mapping, separately from current admission.
+    adaptedEvidence: mappedCandidateObservations(input),
   });
 }
 function seed(skillId: string, context?: string) {
@@ -136,7 +137,7 @@ function seed(skillId: string, context?: string) {
     ),
   };
 }
-export function candidateObservations(
+function mappedCandidateObservations(
   input: Pick<SealedCandidateInput, 'fact' | 'evidenceDigest' | 'orderKey' | 'recordedSequence'>,
 ) {
   const fact = CandidateFactSchema.parse(input.fact);
@@ -190,6 +191,37 @@ export function candidateObservations(
       : observation,
   );
 }
+const ATTRIBUTION_REBUILD_REASON = 'unattributed_multi_skill_requires_rebuild';
+/** Old seals have shares but no scoring-unit/part proof; do not infer a partial split. */
+export function candidatePointsForAdmission(fact: CandidateFact) {
+  return fact.points.map((point) =>
+    fact.source === 'judged' &&
+    point.earned > 0 &&
+    point.earned < point.maximum &&
+    new Set(point.shares.filter((share) => share.share > 0).map((share) => share.skillId)).size > 1
+      ? { ...point, shares: [] }
+      : point,
+  );
+}
+export function candidateObservations(
+  input: Pick<SealedCandidateInput, 'fact' | 'evidenceDigest' | 'orderKey' | 'recordedSequence'>,
+) {
+  return mappedCandidateObservations({
+    ...input,
+    fact: { ...input.fact, points: candidatePointsForAdmission(input.fact) },
+  }).map((observation) =>
+    observation.kind === 'excluded' && observation.reason === 'unattributed_multi_skill'
+      ? { ...observation, reason: ATTRIBUTION_REBUILD_REASON }
+      : observation,
+  );
+}
+export function validateCandidateInput(raw: SealedCandidateInput): SealedCandidateInput {
+  const input = SealedCandidateInputSchema.parse(raw);
+  if (stableStringify(input) !== stableStringify(sealCandidateFact(input.fact)))
+    throw new Error('candidate input receipt mismatch');
+  return input;
+}
+
 export function candidateView(state: CandidateState) {
   return {
     global: state.global,
@@ -266,10 +298,7 @@ export function rebuildCandidate(
 ) {
   const unique = new Map<string, SealedCandidateInput>();
   for (const raw of facts) {
-    const fact = SealedCandidateInputSchema.parse(raw);
-    const resealed = sealCandidateFact(fact.fact);
-    if (stableStringify(fact) !== stableStringify(resealed))
-      throw new Error('candidate input receipt mismatch');
+    const fact = validateCandidateInput(raw);
     const old = unique.get(fact.fact.submissionId);
     if (old && stableStringify(old) !== stableStringify(fact))
       throw new Error('candidate attempt conflict');
@@ -340,7 +369,20 @@ export function rebuildCandidate(
       ? new Date(observations[observations.length - 1].observation.occurredAt)
       : null,
   };
-  return CandidateStateSchema.parse({ ...state, ...projectCandidateDue(state, asOf) });
+  const schedule = projectCandidateDue(state, asOf);
+  const needsAttribution =
+    observations.length === 0 &&
+    selected.some((input) =>
+      candidateObservations(input).some(
+        (observation) =>
+          observation.kind === 'excluded' && observation.reason === ATTRIBUTION_REBUILD_REASON,
+      ),
+    );
+  return CandidateStateSchema.parse({
+    ...state,
+    ...schedule,
+    fallbackReason: needsAttribution ? ATTRIBUTION_REBUILD_REASON : schedule.fallbackReason,
+  });
 }
 export function candidateRetention(state: CandidateState, now: Date) {
   return retention({

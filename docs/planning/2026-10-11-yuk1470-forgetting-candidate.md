@@ -225,3 +225,16 @@ pnpm audit:partition
 证据目录 `/workspace/pr1700-r1-fix-evidence/`；同一最终提交的 scoped DB/core-unit、typecheck/lint/build 与相关 audits 结果由父交付回执绑定精确 SHA。R1 三项 P1 已进入此修复；限定 R2、远端 exact-head CI、原 PR 唯一评论及发布仍由父负责，不把中间本地 PASS 当最终交付。Linear capture 沿用 YUK-1470；本次没有三项之外的新 actionable follow-up，不新建重复票。
 
 额外 `audit:fold-writes --strict` 的 precommit 检查报告 rehearsal/corpus.ts 六处写者未登记；脚本、allowlist 与 corpus 在上述统一 base、修前 head 和当前工作树的 Git blob 均相同。这是既有非默认 strict advisory，不改 allowlist、不开三项以外的整治；其失败保留在证据中，不称全部 audit 绿色。
+
+
+## PR1700 R2 旧 sealed partial 准入补漏（2026-10-11）
+
+限定 R2 指出：历史封存的 judged 多 KC partial 可能已经含平均 shares，非空 shares 不能证明局部归属。旧 `CandidateFact` 没有 scoring-unit/part 归属证明；本次只保守排除 `0 < earned < maximum` 且有多个正权重技能的 judged 点，不根据现有题目标签猜测。旧 receipt 仍按原映射完整校验；当前准入另行计算，并在 identity remap 前执行，避免多个历史技能合并后掩盖歧义。合法同卷单 KC partial 保留，self-report 和满分/零分事实不因这条规则排除。
+
+读取转换在无可纳入记忆时保留 `unattributed_multi_skill_requires_rebuild` 原因；实际重放的新回执保留排除原因和 evidenceRefs。旧 event 原样保留，不改历史 hash，不作全库迁移，也不扩大至现有 warm materialization 的其它读取路径。默认 FSRS、核心动力学、参数、开关和 UI 均未改变。
+
+仅增强既有 continuous DB case，case 数仍为 8；相对 `8d263ba6` 的测试 diff 为 153 added / 1 deleted。新增主体用于构造相互一致的三条旧候选状态、sealed core replay packets 和恢复快照，再从真实读取与晚到事件的 revert/reapply 检验同一个归属不变量：歧义 B/C 不纳入、合法 D 保留、旧 event 不变。不是新增 helper 套件或参数矩阵。相同夹具在 `8d263ba6` 产品源下有四个失败断言（读取 warm、缺原因、实际重放复活 B/C、新回执无排除记录），恢复修复后 1 pass / 7 skipped；临时切换仅两产品文件，恢复 patch 与切换前保存内容的 SHA256 一致。早期不完整夹具记录保留，但不作为真实旧恢复链证据。
+
+完整分支仍以 `c2ace38ddba976175afde2bed342d8fba5767d79` 为 base，added 重计 **test 2607 / product 2284**，包含 594 行独立高精度 oracle。沿用上节逐不变量说明；本次额外测试行只保护旧封存证据的读取/恢复确定性。文档、生成 client、Postman 和 Vitest 配置不计产品；逐文件分类及排除清单在 `/workspace/pr1700-r2-fix-evidence/`，没有删除有效测试以缩小差额。
+
+本轮沿用显式环境 allowlist、loopback sentinel 与未改的标准 Testcontainers globalSetup，每次新合成 PG。最终同 SHA 的四文件 62 DB、既有 21 unit、typecheck/lint/build 与 test-policy/partition/architecture 验证由外置回执记录；不重跑全量本地测试或前轮 15-audit bundle。R2 已完成，本补漏不启动第三轮审查；push、远端 exact-head CI、原 PR 回执和既有 YUK-1470 状态由父协调线处理，无新 tracker 工作。

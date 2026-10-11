@@ -8,6 +8,7 @@ import {
 } from '@/capabilities/practice/server/variant-rotation';
 import { replay } from '@/core/forgetting';
 import { initialFsrsState } from '@/core/fsrs';
+import { canonicalHash } from '@/core/migration/canonical';
 import { AggregateOutcome, ScoringUnitResult } from '@/core/schema/assessment/judgment';
 import { StateSnapshotExperimental } from '@/core/schema/event/state-snapshot';
 import { CandidateStateSchema, SchedulingStateSchema } from '@/core/schema/scheduling-state';
@@ -28,12 +29,15 @@ import { writeEvent } from '@/kernel/events';
 import {
   CandidateReplayInputSchema,
   SealedCandidateInputSchema,
+  initialCandidateState,
+  projectCandidateDue,
   sealCandidateFact,
 } from '@/server/fsrs/candidate';
 import {
   enrollFsrsStateIfAbsent,
   getFsrsRetrievabilityByIds,
   initialSchedulingState,
+  upsertFsrsState,
 } from '@/server/fsrs/state';
 import {
   normalizeQuestionGroupToContract,
@@ -336,7 +340,7 @@ describe('candidate product settlement, replay and selected readers', () => {
   });
 
   // @invariant grading: sealed scored facts drive one versioned candidate row and immutable brackets at submission time
-  // @fails-if ambiguous multi-KC partial creates memory or drops a valid neighboring unit, settlement uses activation time, or duplicates count twice
+  // @fails-if old sealed multi-KC partial enters read/replay or loses its valid single-KC neighbor, receipts mutate, or duplicates count twice
   it('seals continuous evidence and ignores duplicate activation and reverse activation clocks', async () => {
     await seedKnowledge('kc_b');
     await seedScored('unattributed', NOW, 0.5, ['kc_a', 'kc_b']);
@@ -467,6 +471,154 @@ describe('candidate product settlement, replay and selected readers', () => {
         ],
       },
     });
+    if (!mixedReceipt) throw new Error('mixed receipt missing');
+    const mixedPlan = mixedReceipt.payload.replay_inputs as Record<string, unknown>;
+    const oldFact = SealedCandidateInputSchema.parse(mixedPlan.forgettingInput).fact;
+    // Pre-fix seals guessed equal shares for this partial total. The single-KC point is valid.
+    const oldInput = sealCandidateFact({
+      ...oldFact,
+      points: oldFact.points.map((point, index) =>
+        index === 0
+          ? {
+              ...point,
+              shares: [
+                { skillId: 'kc_b', share: 0.5 },
+                { skillId: 'kc_c', share: 0.5 },
+              ],
+            }
+          : point,
+      ),
+    });
+    // Recreate the old stored rows and matching restore bracket from their sealed observations.
+    // Current candidate admission is deliberately not used to manufacture this historical fixture.
+    const oldPackets: Array<
+      ReturnType<typeof CandidateReplayInputSchema.parse> & {
+        subject_kind: 'knowledge';
+        subject_id: string;
+      }
+    > = [];
+    const oldSnapshots = [];
+    for (const adapted of oldInput.adaptedEvidence) {
+      if (adapted.kind !== 'included') continue;
+      const observation = adapted.observation;
+      const skillId = observation.skillId;
+      const context = oldFact.context;
+      const projections = [null, ...(context ? [context] : [])].map((scope) => {
+        const initial = initialCandidateState(skillId, NOW).global;
+        const digest = canonicalHash({ skillId, context: scope, versions: oldInput.versions });
+        const packet = CandidateReplayInputSchema.parse({
+          ...global,
+          seed: {
+            ...initial,
+            scope: scope ? { kind: 'context', key: scope } : { kind: 'global' },
+            inputDigest: digest,
+          },
+          effective: [
+            {
+              observation,
+              recordedSequence: oldInput.recordedSequence,
+              receipt: {
+                previousInputDigest: digest,
+                nextInputDigest: canonicalHash({ previous: digest, fact: oldInput.evidenceDigest }),
+                nextThrough: oldInput.orderKey,
+              },
+            },
+          ],
+        });
+        oldPackets.push({ ...packet, subject_kind: 'knowledge', subject_id: skillId });
+        const result = replay(packet);
+        if (result.kind !== 'updated') throw new Error('old sealed fixture did not replay');
+        return result.state;
+      });
+      const state = {
+        ...initialCandidateState(skillId, NOW),
+        conversion: 'native' as const,
+        last_review: NOW,
+        global: projections[0],
+        contexts: context ? { [context]: projections[1] } : {},
+      };
+      const schedule = projectCandidateDue(state, NOW);
+      if (schedule.modelDue.kind !== 'due_now' && schedule.modelDue.kind !== 'scheduled')
+        throw new Error('old sealed fixture has no finite model due');
+      const after = {
+        ...state,
+        due: new Date(schedule.modelDue.at),
+        dueKind: schedule.dueKind,
+        fallbackReason: schedule.fallbackReason,
+      };
+      oldSnapshots.push({
+        subject_kind: 'knowledge' as const,
+        subject_id: skillId,
+        before: null,
+        after,
+      });
+      await upsertFsrsState(testDb(), {
+        subject_kind: 'knowledge',
+        subject_id: skillId,
+        state: after,
+        due_at: after.due,
+        last_review_event_id: mixedReceipt.id,
+      });
+    }
+    const [mixedSnapshot] = await testDb()
+      .select()
+      .from(event)
+      .where(eq(event.id, `${mixedReceipt.id}:snapshot:fsrs`));
+    await testDb()
+      .update(event)
+      .set({ payload: { ...mixedSnapshot.payload, fsrs_snapshots: oldSnapshots } })
+      .where(eq(event.id, mixedSnapshot.id));
+    const [oldReceipt] = await testDb()
+      .update(event)
+      .set({
+        payload: {
+          ...mixedReceipt.payload,
+          effects: {
+            ...(mixedReceipt.payload.effects as Record<string, unknown>),
+            subjects: ['knowledge:kc_b', 'knowledge:kc_c', 'knowledge:kc_d'],
+            fsrs_applied: ['knowledge:kc_b', 'knowledge:kc_c', 'knowledge:kc_d'],
+          },
+          replay_inputs: {
+            ...mixedPlan,
+            forgettingInput: oldInput,
+            forgettingReplayInputs: oldPackets,
+          },
+        },
+      })
+      .where(eq(event.id, mixedReceipt.id))
+      .returning();
+    const oldRead = await testDb().transaction((tx) =>
+      candidateStateForRead(tx, { kind: 'knowledge', id: 'kc_b' }, NOW),
+    );
+    expect.soft(oldRead.global.projection.kind).toBe('cold');
+    expect.soft(oldRead.fallbackReason).toBe('unattributed_multi_skill_requires_rebuild');
+    expect(
+      (
+        await testDb().transaction((tx) =>
+          candidateStateForRead(tx, { kind: 'knowledge', id: 'kc_d' }, NOW),
+        )
+      ).global.lastApplied,
+    ).toMatchObject({ kind: 'known', value: { quality: 0.5 } });
+    await seedScored('before_old_seal', new Date(NOW.getTime() - DAY), 1, ['kc_d']);
+    expect(
+      await activate('before_old_seal_eval', { effectiveId: null, generation: 0 }),
+    ).toMatchObject({ effect: 'applied' });
+    expect
+      .soft((await testDb().select().from(material_fsrs_state)).map((r) => r.subject_id).sort())
+      .toEqual(['kc_a', 'kc_d']);
+    expect((await candidateRow('kc_d')).state.global.projection).toMatchObject({ eventCount: 2 });
+    const reapplied = (await appliedEvents()).find((e) => e.payload.replay_of === oldReceipt.id);
+    expect.soft(reapplied?.payload.replay_inputs).toMatchObject({
+      forgettingExcludedEvidence: [
+        {
+          kind: 'excluded',
+          reason: 'unattributed_multi_skill_requires_rebuild',
+          evidenceRefs: expect.arrayContaining([mixed.submissionId]),
+        },
+      ],
+    });
+    const [unchanged] = await testDb().select().from(event).where(eq(event.id, oldReceipt.id));
+    expect(unchanged).toEqual(oldReceipt);
   });
 
   // @invariant concurrency: late and equal-time facts converge to the same ordered candidate state without future leakage

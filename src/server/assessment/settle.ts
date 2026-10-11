@@ -111,12 +111,13 @@ import {
   CandidateFactSchema,
   type CandidateReplayInput,
   type SealedCandidateInput,
-  SealedCandidateInputSchema,
   candidateObservations,
+  candidatePointsForAdmission,
   candidateRetention,
   initialCandidateState,
   rebuildCandidate,
   sealCandidateFact,
+  validateCandidateInput,
 } from '@/server/fsrs/candidate';
 import { selectedForgettingEngine } from '@/server/fsrs/engine-selection';
 import { getFsrsState, upsertFsrsState } from '@/server/fsrs/state';
@@ -197,6 +198,9 @@ interface SettlementPlan {
   forgettingInput?: SealedCandidateInput;
   forgettingEngine?: 'fsrs' | 'forgetting_candidate';
   forgettingSuppressed?: boolean;
+  forgettingExcludedEvidence?: Array<
+    Extract<ReturnType<typeof candidateObservations>[number], { kind: 'excluded' }>
+  >;
   forgettingReplayInputs?: Array<
     CandidateReplayInput & { subject_kind: FsrsSubject['kind']; subject_id: string }
   >;
@@ -895,7 +899,7 @@ async function candidateHistory(
   for (const plan of plans) {
     if (candidateSchedulingSuppressed(plan)) continue;
     if (plan.forgettingInput) {
-      facts.push(SealedCandidateInputSchema.parse(plan.forgettingInput));
+      facts.push(validateCandidateInput(plan.forgettingInput));
       continue;
     }
     const [sub] = await tx
@@ -975,7 +979,7 @@ async function candidateHistory(
     return sealCandidateFact({
       ...input.fact,
       identityRemap: { fromIds: historySubjectIds, toId: subject.id },
-      points: input.fact.points.map((p) => ({
+      points: candidatePointsForAdmission(input.fact).map((p) => ({
         ...p,
         shares: p.shares.map((s) => ({
           ...s,
@@ -1018,6 +1022,11 @@ async function executePlan(
     if (!plan.forgettingInput && !candidateSchedulingSuppressed(plan) && plan.fsrsSubjects[0]) {
       await candidateHistory(tx, plan.fsrsSubjects[0], plan, occurrenceAt, []);
     }
+    plan.forgettingExcludedEvidence = plan.forgettingInput
+      ? candidateObservations(plan.forgettingInput).filter(
+          (observation) => observation.kind === 'excluded',
+        )
+      : [];
   }
   const outcome: ApplyOutcome = {
     fsrsApplied: [],
