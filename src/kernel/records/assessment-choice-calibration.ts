@@ -1,14 +1,53 @@
 import {
   ChoiceMethodCalibration,
   type ChoiceMethodCalibrationT,
+  ChoiceSourceCrosscheck,
 } from '@/core/schema/assessment/choice-entry';
 import { projectPracticeIssuance } from '@/core/schema/assessment/dto';
 import { evaluateSubmissionCore } from '@/core/schema/assessment/evaluation';
 import { isPublicSharedMaterial } from '@/core/schema/assessment/materials';
 import type { PublishedQuestionRevisionT } from '@/core/schema/assessment/revision';
+import { WebSourcedProvenance } from '@/core/schema/provenance';
 import { sha256CanonicalJson } from '@/kernel/canonical-json';
+import type { NormalizableQuestionRow } from './assessment-normalization';
 
 export const assessmentDigest = (value: unknown): string => `sha256:${sha256CanonicalJson(value)}`;
+
+/** Bind duplicated working-row inputs even when a structured value masks a raw edit. */
+export function choiceEntryRowInputDigest(
+  row: NormalizableQuestionRow & { source_ref?: string | null },
+): string {
+  return assessmentDigest({
+    kind: row.kind,
+    prompt_md: row.prompt_md,
+    choices_md: row.choices_md,
+    reference_md: row.reference_md,
+    structured: row.structured,
+    rubric_json: row.rubric_json,
+    judge_kind_override: row.judge_kind_override,
+    source: row.source ?? null,
+    source_ref: row.source_ref ?? null,
+  });
+}
+
+export function validateChoiceEntryRowBinding(
+  row: NormalizableQuestionRow & { source_ref?: string | null },
+  evidence: ChoiceMethodCalibrationT,
+): void {
+  if (evidence.row_input_digest !== choiceEntryRowInputDigest(row))
+    throw new Error('choice entry calibration does not cover the current working-row inputs');
+  const check = ChoiceSourceCrosscheck.parse(evidence.source_crosscheck);
+  const source = check.kind === 'checked' ? check.input.source : check.source;
+  const provenance = WebSourcedProvenance.safeParse(row.metadata?.web_sourced);
+  if (
+    !provenance.success ||
+    provenance.data.url !== source.source_url ||
+    provenance.data.title !== source.source_title ||
+    provenance.data.extract !== source.extract ||
+    (provenance.data.extraction_hash ?? null) !== source.extraction_hash
+  )
+    throw new Error('choice entry calibration does not cover the current captured source');
+}
 
 function choiceMethod(revision: PublishedQuestionRevisionT) {
   const [slot] = revision.response_spec.slots;
@@ -94,6 +133,7 @@ export async function calibrateChoiceMethod(
   revision: PublishedQuestionRevisionT,
   solves: ChoiceMethodCalibrationT['solves'],
   now: Date,
+  binding?: Pick<ChoiceMethodCalibrationT, 'source_crosscheck' | 'row_input_digest'>,
 ): Promise<ChoiceMethodCalibrationT> {
   if (solves[0].task_run_id === solves[1].task_run_id)
     throw new Error('choice solves must be independent task runs');
@@ -159,6 +199,7 @@ export async function calibrateChoiceMethod(
     revision_digest: revision.integrity_digest,
     ...choiceCalibrationFingerprints(revision),
     solves,
+    ...binding,
     scoring_unit_id: unit.scoring_unit_id,
     method_version: 'exact-option-set@1',
     method_digest: choiceCalibrationFingerprints(revision).method_digest,
@@ -173,7 +214,38 @@ export function validateChoiceCalibration(
   evidence: ChoiceMethodCalibrationT,
 ): void {
   const parsed = ChoiceMethodCalibration.parse(evidence);
-  const { unit } = choiceMethod(revision);
+  const { slot, unit, points } = choiceMethod(revision);
+  const sourceCheck = parsed.source_crosscheck;
+  if (sourceCheck == null || parsed.row_input_digest == null)
+    throw new Error('choice calibration lacks the captured source cross-check and row binding');
+  if (sourceCheck.kind === 'absent') {
+    if (sourceCheck.source.reference_md.trim().length > 0)
+      throw new Error('choice calibration cannot skip a nonblank captured source answer');
+  } else {
+    const { input, output, receipt } = sourceCheck;
+    const [part] = revision.structure.parts;
+    const sourceSolution = revision.structure.materials.find(
+      (material) => material.visibility === 'private' && material.caption === 'reference solution',
+    );
+    if (
+      output.status !== 'consistent' ||
+      input.source.reference_md.trim().length === 0 ||
+      parsed.solves.some((solve) => solve.task_run_id === receipt.task_run_id) ||
+      receipt.input_digest !== assessmentDigest(input) ||
+      receipt.output_digest !== assessmentDigest(output) ||
+      input.question.part_id !== part?.part_id ||
+      input.question.prompt_md !== part?.prompt_md ||
+      input.question.slot_id !== slot.slot_id ||
+      input.question.scoring_unit_id !== unit.scoring_unit_id ||
+      input.question.printed_points !== points ||
+      assessmentDigest(input.question.options) !== assessmentDigest(slot.options) ||
+      assessmentDigest(input.proposed_answer.criterion) !== assessmentDigest(unit.criterion) ||
+      input.proposed_answer.worked_solution_md !== sourceSolution?.content_md
+    )
+      throw new Error(
+        'choice source cross-check is not consistent with this frozen question and key',
+      );
+  }
   const fingerprints = choiceCalibrationFingerprints(revision);
   const definitions = parsed.probes.map(
     ({ actual_points: _actual, passed: _passed, ...probe }) => probe,

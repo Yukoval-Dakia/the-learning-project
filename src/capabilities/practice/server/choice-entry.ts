@@ -5,6 +5,10 @@ import {
   type ChoiceEntrySolveInputT,
   ChoiceEntrySolveOutput,
   type ChoiceEntrySolveOutputT,
+  ChoiceEntrySourceCrosscheckInput,
+  ChoiceEntrySourceCrosscheckOutput,
+  ChoiceEntrySourceReference,
+  type ChoiceSourceCrosscheckT,
   SingleChoiceEntrySpec,
 } from '@/core/schema/assessment/choice-entry';
 import { validateQuestionPresentation } from '@/core/schema/assessment/presentation';
@@ -18,13 +22,18 @@ import {
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
+import { ApiError } from '@/kernel/http';
 import {
   assessmentDigest,
   calibrateChoiceMethod,
+  choiceEntryRowInputDigest,
   validateChoiceCalibration,
+  validateChoiceEntryRowBinding,
 } from '@/kernel/records/assessment-choice-calibration';
 import { revisionRowToContract } from '@/kernel/records/assessment-issuance';
 import { normalizeQuestionRowToContract } from '@/kernel/records/assessment-normalization';
+import type { TaskTextResult } from '@/server/ai/provenance';
+import { taskInputHash } from '@/server/ai/task-input-hash';
 import { sanitizeSourcedMarkup } from '@/server/questions/sourced-markup';
 import { resolveSubjectProfile } from '@/subjects/profile';
 import { parseTaskOutput } from '../tasks/parse-output';
@@ -41,7 +50,7 @@ export async function prepareSingleChoiceEntry(
   },
   runTask: PracticeTaskRunFn = makePracticeTaskTextRunFn(db),
 ) {
-  const prompt_md = sanitizeSourcedMarkup(input.question.prompt_md);
+  const prompt_md = sanitizeSourcedMarkup(input.question.prompt_md).trim();
   const choices = input.question.choices_md ?? [];
   if (
     input.question.kind !== 'choice' ||
@@ -67,6 +76,29 @@ export async function prepareSingleChoiceEntry(
     })),
   });
   const profile = resolveSubjectProfile(input.subject_id);
+  async function sealTask(payload: unknown, result: TaskTextResult, output: unknown) {
+    if (result.task_run_id == null) throw new Error('choice entry has no durable task run receipt');
+    const [receipt] = await db
+      .select()
+      .from(ai_task_runs)
+      .where(eq(ai_task_runs.id, result.task_run_id))
+      .limit(1);
+    if (
+      receipt?.status !== 'success' ||
+      receipt.task_kind !== 'ChoiceEntrySolveTask' ||
+      receipt.input_hash !== taskInputHash(payload)
+    )
+      throw new Error(
+        'choice entry requires a successful real central task receipt bound to its input',
+      );
+    return {
+      task_run_id: receipt.id,
+      provider: receipt.provider,
+      model: receipt.model,
+      input_digest: assessmentDigest(payload),
+      output_digest: assessmentDigest(output),
+    };
+  }
   async function solve(payload: ChoiceEntrySolveInputT) {
     // Each central runner invocation creates a new task/session. No sdkSession/replay is supplied.
     const result = await runTask('ChoiceEntrySolveTask', payload, { subjectProfile: profile });
@@ -88,24 +120,9 @@ export async function prepareSingleChoiceEntry(
         'independent choice solve did not identify the key and every distractor by stable ID',
       );
     }
-    if (result.task_run_id == null) throw new Error('choice solve has no durable task run receipt');
-    const [receipt] = await db
-      .select()
-      .from(ai_task_runs)
-      .where(eq(ai_task_runs.id, result.task_run_id))
-      .limit(1);
-    if (receipt?.status !== 'success' || receipt.task_kind !== 'ChoiceEntrySolveTask') {
-      throw new Error('choice solve requires a successful real central task receipt');
-    }
     return {
       output,
-      seal: {
-        task_run_id: receipt.id,
-        provider: receipt.provider,
-        model: receipt.model,
-        input_digest: assessmentDigest(payload),
-        output_digest: assessmentDigest(output),
-      },
+      seal: await sealTask(payload, result, output),
     };
   }
   const first = await solve(request);
@@ -116,6 +133,41 @@ export async function prepareSingleChoiceEntry(
     first.output.criterion.accepted_option_ids[0] !== second.output.criterion.accepted_option_ids[0]
   ) {
     throw new Error('independent choice solves disagree; candidate remains unpublished');
+  }
+  const worked_solution_md = sanitizeSourcedMarkup(first.output.worked_solution_md);
+  const source = ChoiceEntrySourceReference.parse({
+    reference_md: input.question.reference_md,
+    source_url: input.question.source_url,
+    source_title: input.question.source_title,
+    extract: input.question.extract,
+    extraction_hash: input.question.extraction_hash ?? null,
+  });
+  let source_crosscheck: ChoiceSourceCrosscheckT = { kind: 'absent', source };
+  if (source.reference_md.trim().length > 0) {
+    const payload = ChoiceEntrySourceCrosscheckInput.parse({
+      mode: 'source_crosscheck',
+      question: request,
+      source,
+      proposed_answer: { criterion: first.output.criterion, worked_solution_md },
+    });
+    // Fresh central runner context after both blind solves. Neither solve sees this evidence.
+    const result = await runTask('ChoiceEntrySolveTask', payload, { subjectProfile: profile });
+    const output =
+      result.structured_output === undefined
+        ? parseTaskOutput(result.text, 'ChoiceEntrySolveTask', ChoiceEntrySourceCrosscheckOutput)
+        : ChoiceEntrySourceCrosscheckOutput.parse(result.structured_output);
+    const receipt = await sealTask(payload, result, output);
+    if ([first.seal, second.seal].some((solve) => solve.task_run_id === receipt.task_run_id))
+      throw new Error('source cross-check requires a fresh independent task run');
+    if (output.status !== 'consistent')
+      throw new ApiError(
+        `choice_entry_source_${output.status}`,
+        `Captured source answer cross-check is ${output.status}; candidate remains unpublished.`,
+        422,
+        undefined,
+        { task_run_id: receipt.task_run_id },
+      );
+    source_crosscheck = { kind: 'checked', input: payload, output, receipt };
   }
   const assessment = SingleChoiceEntrySpec.parse({
     kind: 'single_choice',
@@ -136,9 +188,9 @@ export async function prepareSingleChoiceEntry(
     ...input.question,
     prompt_md,
     choices_md: request.options.map((option) => option.text),
-    reference_md: first.output.worked_solution_md,
+    reference_md: worked_solution_md,
     rubric_json: null,
-    judge_kind_override: null,
+    judge_kind_override: 'exact' as const,
   };
   const contract = normalizeQuestionRowToContract({
     id: input.question_id,
@@ -170,6 +222,17 @@ export async function prepareSingleChoiceEntry(
     },
     [first.seal, second.seal],
     now,
+    {
+      source_crosscheck,
+      row_input_digest: choiceEntryRowInputDigest({
+        id: input.question_id,
+        ...question,
+        structured,
+        rubric_json: null,
+        source: 'web_sourced',
+        source_ref: input.question.source_url,
+      }),
+    },
   );
   if (calibration.probes.some((probe) => !probe.passed))
     throw new Error('choice method failed its frozen calibration probes');
@@ -183,7 +246,7 @@ export async function prepareSingleChoiceEntry(
         verifier: 'independent_model',
         verified_at: now.toISOString(),
       },
-      note: 'Two blind central solves agree on the stable option ID; all frozen exact-option-set probes passed.',
+      note: 'Two blind central solves agree on the stable option ID; the captured source answer was cross-checked separately when present; all frozen exact-option-set probes passed.',
     },
     calibration,
   };
@@ -233,13 +296,20 @@ export async function readVerifiedChoiceEntry(
     .from(question_revision)
     .where(eq(question_revision.revision_id, lifecycle.current_revision_id))
     .limit(1);
-  if (
-    frozen == null ||
-    normalizeQuestionRowToContract(row).integrity_digest !== frozen.integrity_digest
-  )
+  if (frozen == null) return { kind: 'unavailable' };
+  try {
+    if (normalizeQuestionRowToContract(row).integrity_digest !== frozen.integrity_digest)
+      return { kind: 'unavailable' };
+    validateChoiceEntryRowBinding(row, evidence.calibration);
+    validateChoiceCalibration(revisionRowToContract(frozen), evidence.calibration);
+  } catch {
     return { kind: 'unavailable' };
-  validateChoiceCalibration(revisionRowToContract(frozen), evidence.calibration);
-  const refs = evidence.calibration.solves;
+  }
+  const check = evidence.calibration.source_crosscheck;
+  const refs = [
+    ...evidence.calibration.solves,
+    ...(check?.kind === 'checked' ? [check.receipt] : []),
+  ];
   const receipts = await db
     .select()
     .from(ai_task_runs)
@@ -257,6 +327,7 @@ export async function readVerifiedChoiceEntry(
             receipt.id === ref.task_run_id &&
             receipt.status === 'success' &&
             receipt.task_kind === 'ChoiceEntrySolveTask' &&
+            receipt.input_hash === ref.input_digest.slice('sha256:'.length) &&
             receipt.provider === ref.provider &&
             receipt.model === ref.model,
         ),

@@ -101,6 +101,32 @@ export interface NormalizableQuestionRow {
   figureDigests?: Record<string, string> | null;
 }
 
+export class ChoiceEntryRowMismatchError extends Error {
+  readonly code = 'choice_entry_row_mismatch';
+  constructor() {
+    super(
+      'Typed choice row and structured prompt/options disagree; re-enter and recalibrate the question before publication.',
+    );
+    this.name = 'ChoiceEntryRowMismatchError';
+  }
+}
+
+/** Duplicated editable columns must describe the same captured typed question. */
+export function assertChoiceEntryRowConsistency(row: NormalizableQuestionRow): void {
+  const node = row.structured;
+  if (node?.assessment == null) return;
+  if (
+    row.kind !== 'choice' ||
+    node.role !== 'standalone' ||
+    (node.sub_questions ?? []).length !== 0 ||
+    row.prompt_md !== node.prompt_text ||
+    row.choices_md == null ||
+    row.choices_md.length !== (node.options ?? []).length ||
+    row.choices_md.some((text, i) => text !== node.options?.[i]?.text)
+  )
+    throw new ChoiceEntryRowMismatchError();
+}
+
 export interface NormalizedContract {
   structure: QuestionGroupStructureT;
   response_spec: ResponseSpecT;
@@ -639,6 +665,7 @@ function assemble(
  * 归一 legacy 行 → 评估契约四层 + integrity digest。纯函数（无 IO）。
  */
 function normalizeQuestionRowBase(row: NormalizableQuestionRow): NormalizedContract {
+  assertChoiceEntryRowConsistency(row);
   const group_id = row.parent_question_id ?? row.id;
   // P1-2c —— provenance 看【答案证据】来源：ai_generated backfill 留痕优先。
   const provenance = ruleProvenanceFor(row.source, row.rubric_json);

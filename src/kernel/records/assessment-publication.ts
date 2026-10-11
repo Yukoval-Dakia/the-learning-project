@@ -69,7 +69,10 @@ import {
   source_asset,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
-import { validateChoiceCalibration } from './assessment-choice-calibration';
+import {
+  validateChoiceCalibration,
+  validateChoiceEntryRowBinding,
+} from './assessment-choice-calibration';
 import {
   contractIntegrityDigest,
   normalizeQuestionGroupToContract,
@@ -1030,6 +1033,12 @@ export async function publishQuestionGroupFromRow(
         state: 'withheld',
         reason: SCORING_ADMISSION_WITHHELD_REASON.UNVERIFIED_RULES,
       };
+    }
+
+    if (root.structured?.assessment != null && admission.state === 'admitted') {
+      const calibration = admission.evidence?.calibration;
+      if (calibration == null) throw new Error('choice entry publication lacks calibration');
+      validateChoiceEntryRowBinding(root, calibration);
     }
 
     const result = await publishQuestionGroup(tx, {

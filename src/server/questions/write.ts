@@ -54,6 +54,7 @@ import {
   question_group_lifecycle,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { ApiError } from '@/kernel/http';
 import { embedHash, questionEmbedText } from '@/server/ai/embed-source';
 import { deriveAnswerClassForValues } from '@/server/questions/answer-class-write';
 import {
@@ -331,6 +332,17 @@ export async function editQuestion(
     track('draft_status', 'draft_status', row.draft_status);
     // YUK-1099 — structured 编辑同属判分输入变更（见 QuestionEditPatch 注）。
     track('structured', 'structured', row.structured);
+
+    if (
+      row.structured?.assessment != null &&
+      Object.keys(after).some((field) => PUBLISH_TRIGGERING_FIELDS.has(field))
+    ) {
+      throw new ApiError(
+        'choice_entry_recalibration_required',
+        'This typed choice question requires re-entry and fresh calibration to change its prompt, options, answer, type or structure. No edits were saved.',
+        409,
+      );
+    }
 
     // YUK-395 — answer_class freshness on EDIT. answer_class is structurally
     // derived from kind/choices_md/rubric_json; if this edit changes either of the
