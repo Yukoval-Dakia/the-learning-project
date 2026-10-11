@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-11：owner要求继续全量CI≤120秒；YUK-1107 In Progress，fast-crons树六文件未提交，prune实跑失败；父已修两处类型/旧迁移fixture契约问题，typecheck通过，R1 P1已源修，DB及验证审未跑。功能线持runtime窗口，当前不启本机DB/容器批次；旧session交付与390秒全量证据保留。
+> Linear 是权威 tracker。2026-10-11：YUK-1107 全量≤120秒继续；r4父验24DB/162unit全过，typecheck/lint/build通过，尚未有当前完整CI计时。共享锁实际09:47:59Z释放，清理超出8分钟已报总协调/迁移；下一窗口优先迁移。
 
 ## NOW
 
-- **YUK-1107 / 全量≤120秒继续**：父线程d0c4657a独占`.worktrees/yuk-1107-fast-crons`，base148cf4bd；review/prune cron控制时间改写未验收。中断run23曾广匹配kill Vitest，违反进程归属；当前只做静态修复，不复用该清理方法。prune约25秒失败不计加速：PG逻辑时间+120秒、native DBOS tick仍实时导致冷却判断错位，断言保留待修。恢复review worker非cron的enqueue/retrieve/done/destroy及失败退出契约、修obligations参数后typecheck通过；独立R1发现共享fork中删admission却留workflow的P1；父改为独立clone、不truncate账本，parent连接也注入clock；最终typecheck通过，DB及R2未跑。报告/浏览器线持共享deployment锁，DB验证及exact-head全量计时待协调窗口。
+- **YUK-1107 / 全量≤120秒继续**：父d0c4657a独占fast-crons树；prune/review控制时间、session21例恢复、isolated runtime及backup162例父r4全过。R1/R2发现P1已修并由父最终实跑覆盖，未启R3；历史失败保留。当前10源文件hash与r4一致，typecheck/lint172warnings/build通过；完整exact-head CI待push，backup仍约116秒本机长尾，不能核销120秒目标。原锁token/parity清理后09:47:59Z释放，超出8分钟已报告；当前不启本机runtime，迁移优先。[证据与剩余目标](docs/planning/2026-10-11-yuk1107-full-ci-continuation.md)。
 
 - **YUK-1107 / session cron已交付**：#1681合main56df7c09；控制时间验证边界，生产60秒保护/cron及严格ledger不变；R2无P0/P1，父修Drizzle初始化后exact cd0c45d CI38120469007全绿。两例PASS、文件34.564秒；实测跨分钟边界，YUK-1397修复交付。整套390秒，不核销120秒目标。[证据与限度](docs/planning/2026-10-11-yuk1107-cron-speed.md)。
 
