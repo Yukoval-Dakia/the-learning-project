@@ -50,7 +50,11 @@ branch `fix/yuk-1404-merge-preview-notation`，base `dbbb1f8c`（main12c740/UI16
 
 本切片未新增持久化回归测试，默认测试限制仍按五类不变量执行。非法科目/资产的原子拒绝由父会话使用真实创建 handler 和隔离数据库验证。子任务被禁止执行 DB/container/runtime，不等于禁止编写父会话会执行的不变量测试；此前“未执行测试违反合同”的解释不成立，已更正。
 
-父验收固定 `8b02a2a0da0468c1f04cd643c80ea57422d6cced`、Node 24.19.0，仓库外封存 `/tmp/yuk1404-upload-8b02-parent-01/seal.json`。九次合成请求验证 unknown/empty/general subject 和 missing asset 返回400，来源/会话/业务回执完整 before/after 相等；math、wenyan alias、省略和null返回201及正确Location；canonical provenance和刷新读取一致；实际math草稿尚无已收录题时notation=katex；历史不可解析非空信号返回null；legacy200复用同一创建逻辑。读取前后来源/会话/回执未变，provider_attempt和ai_task_runs均0。单个实际验收矩阵通过，不写成九条持久化测试。
+首次父验收固定 `8b02a2a0da0468c1f04cd643c80ea57422d6cced`、Node 24.19.0，仓库外封存 `/tmp/yuk1404-upload-8b02-parent-01/seal.json`。矩阵断言通过，但 console 明细未被 Vitest 日志捕获，解析出的 `actual-outcomes.json` 是空数组；这份原件保留，只证明测试结果，不能作为响应载荷证据。九次合成请求验证 unknown/empty/general subject 和 missing asset 返回400，来源/会话/业务回执完整 before/after 相等；math、wenyan alias、省略和null返回201及正确Location；canonical provenance和刷新读取一致；实际math草稿尚无已收录题时notation=katex；历史不可解析非空信号返回null；legacy200复用同一创建逻辑。读取前后来源/会话/回执未变，provider_attempt和ai_task_runs均0。单个实际验收矩阵通过，不写成九条持久化测试。
+
+补捕获固定正常合入 main07c 的 `3040e336d88c11e901bff92384bb7a6e64448881`，五个产品源文件与被审8b02完全相同。重新使用真实 handler 和新 disposable PG，把 Response、实际存储行及 presentation 直接写入仓库外文件，不依赖 console。单矩阵通过，`/tmp/yuk1404-upload-3040-parent-02/actual-outcomes.json` 含32条记录：9个实际响应（400×4/201×4/legacy200）、4组存储行、10次预览读回及9项断言后结果。capture seal 为 `a0523703b2bc3b654ae81ec9c5fe4fe44db639c0fbe511c4dedabcc9ca45e5ba`，原首次结果未改写。新窗原四TEST/release parity、owner token与锁释放再次核验通过。
+
+自身 INITIAL review：opencode / GLM5.3 max，fixed8b02 vs main12c真实8文件diff，NONE P0/P1。任务 `yuk1404-upload-subject-own-initial-review-glmmax-20261011-v1` completed/noPending。检查optional/null、selectable验证在写之前、canonical/legacy共享事务、显式优先/保守回退、清理消费者和生成合同。source-only，无审查者运行/UI证据；custom/retired/mixed场景未运行。正常main07c合并后5个owned产品源文件字节相同，generated client随上游stale合同机械组合并另过生成审计。
 
 父 Node24 typecheck/lint/build/API-client/API-contract审计通过。隔离PG teardown后原四TEST id/image/start/health和releasehash逐项未变，owner token核验后共享锁释放。无TEST学习者数据写、provider调用或新增支出。这是实际handler和DB证据，不是网络RPC、blob/OCR、浏览器公式或真实照片质量证明。
 
