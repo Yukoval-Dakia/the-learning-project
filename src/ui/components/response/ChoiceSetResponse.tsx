@@ -159,7 +159,7 @@ export function ChoiceSetResponse({
                 )}
                 <span className="rs-opt-k">{opt.label}</span>
                 <span className="rs-opt-t">
-                  <MathMarkdown notation={notation}>{opt.text_md}</MathMarkdown>
+                  <MathMarkdown notation={notation}>{withoutLabelPrefix(opt.text_md, opt.label)}</MathMarkdown>
                 </span>
               </button>
             </>
@@ -175,4 +175,11 @@ export function ChoiceSetResponse({
       )}
     </>
   );
+}
+
+// Imported option text often repeats its own label ("A. 90°"), which the card already shows in its
+// own column. Drop that one leading copy for display; the stored text is unchanged.
+function withoutLabelPrefix(text: string, label: string): string {
+  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return text.replace(new RegExp(`^\\s*[（(]?${escaped}[)）]?\\s*[.．、:：)）]\\s*`), '');
 }
