@@ -17,9 +17,9 @@ owner 在 2026-10-10 愿景评审定方向：只看质量；agent 是题目唯�
 
 ## 决定
 
-### D1 备题员 = 教研团成员，题目的唯一入口；工具箱是现有五个 DomainTool，零新入口
+### D1 备题员 = 教研团成员，题目的唯一入口；工具箱七个 DomainTool（2026-10-11 经 ADR-0072 修订），零新入口
 
-供题教研员（「备题员」）是教研团（ADR-0067 白板 + 例会体系）的一名成员，纯后台。它接收 typed 缺口单（GapTicket：考什么知识 / 错法定向、难度带、用途、数量与时限），自己决定去哪找题；现有五个 DomainTool 就是它的全部工具箱——`query_questions`（查自家题库）、`web_fetch_candidates`（Exa 检索→抽取→结构化）、`jyeoo_fetch_candidates`（高中 10–12 数学，预算租约内）、`generate_question_candidate`（自己出；参考改编 = 检索 2–3 道金标范例作 seed 后同样经它产出候选，provenance=`adapted_from:<id>`）、`store_sourced_question`（唯一入库闸）。`author_question` 的 draft+proposal 面保留给交互式 Copilot 拟题，不在备题员入库路径上。学习者永远只见到练习流，五个工具之外不新增任何入口、面或第二 commit seam。交付：候选 + 每题 provenance（来源、为什么选它、花了多少钱）+ 写回白板的供题完成 finding；失败也写回（差什么、为什么不硬凑）。空转由「无进展终止」兜住：同一缺口连续 N 轮零候选过门即停止并白板记失败面，绝不用降低门的代价换交付（N 初值见未决问题）。
+供题教研员（「备题员」）是教研团（ADR-0067 白板 + 例会体系）的一名成员，纯后台。它接收 typed 缺口单（GapTicket：考什么知识 / 错法定向、难度带、用途、数量与时限），自己决定去哪找题；工具箱就是这七个 DomainTool——`search_bank` / `read_bank` / `check_bank`（查自家题库：ADR-0072 定义的题库三工具，随其 LIGHT 落地，取代本条原先所列的 `query_questions`；`check_bank` v1 仅含 ADR-0072 D5 的确定性检查）、`web_fetch_candidates`（Exa 检索→抽取→结构化）、`jyeoo_fetch_candidates`（高中 10–12 数学，预算租约内）、`generate_question_candidate`（自己出；参考改编 = 检索 2–3 道金标范例作 seed 后同样经它产出候选，provenance=`adapted_from:<id>`）、`store_sourced_question`（唯一入库闸）。`author_question` 的 draft+proposal 面保留给交互式 Copilot 拟题，不在备题员入库路径上。学习者永远只见到练习流，这七个工具之外不新增任何入口、面或第二 commit seam。（2026-10-11 修订：查库工具 `query_questions` 由 ADR-0072 的 `search_bank`/`read_bank` 取代，工具箱五增为七，其余四个工具与边界不变。）交付：候选 + 每题 provenance（来源、为什么选它、花了多少钱）+ 写回白板的供题完成 finding；失败也写回（差什么、为什么不硬凑）。空转由「无进展终止」兜住：同一缺口连续 N 轮零候选过门即停止并白板记失败面，绝不用降低门的代价换交付（N 初值见未决问题）。
 
 ### D2 缺口单来源：白板与例会为主，夜间扫描保留为安全网（S1）
 
@@ -53,7 +53,7 @@ ADR-0067 D5 中「供题/校准/结构维护/运维 cron 保留为批处理」�
 
 ## 硬边界（后果）
 
-1. **零新入口**：五个 DomainTool 之外不新增 agent tool 面、不新增学习者可见面、不新建第二 commit seam 或第二事件总线（ADR-0067 D1 红线的供题版，验收项）。
+1. **零新入口**：七个 DomainTool 之外不新增 agent tool 面、不新增学习者可见面、不新建第二 commit seam 或第二事件总线（ADR-0067 D1 红线的供题版，验收项；工具清单 2026-10-11 经 ADR-0072 修订——`query_questions` 由 `search_bank`/`read_bank`/`check_bank` 取代）。
 2. **`store_sourced_question` 是备题员与录题 agent 供给入库的唯一闸**（按 D8 泛化来源；交互式 Copilot 拟题的 `author_question` 提议面与现役流水线入库不在此列），六项门不因来源不同而放宽或收紧；入库题 100% 过自动判分准入（YUK-1445 口径）。
 3. **agent 永不自盖金标**；金标是 owner 的品味资产，admitted ≠ gold。
 4. **失败必须写回白板**（差什么、为什么不硬凑），缺口保持可见；不用降低门的代价换交付。
