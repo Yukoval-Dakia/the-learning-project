@@ -271,11 +271,7 @@ export function PracticeNextSolo({ item, pos, total, onBack }: PracticeNextSoloP
                     <h2 id="un-pn-answer" className="un-pn-h2">
                       我的作答
                     </h2>
-                    <SaveStateChip
-                      state={autosave.state}
-                      generation={autosave.generation}
-                      onRetry={autosave.retry}
-                    />
+                    <SaveStateChip state={autosave.state} onRetry={autosave.retry} />
                   </div>
                   <div className="un-pn-answer">
                     {frozen.response_spec.slots.map((slot) => {
