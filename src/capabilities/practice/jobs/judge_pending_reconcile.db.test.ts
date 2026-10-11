@@ -40,6 +40,8 @@ function deps(): JudgePendingReconcileDeps {
   };
 }
 const stalled = () => new Date(Date.now() - RECONCILE_STALL_MS - 60_000);
+// @invariant concurrency: a lost send ack is repaired by exact delivery-id lookup — no refund, no new delivery identity, no dependence on pruned notifications
+// @fails-if refund the admission, allocate a second delivery identity, or re-enqueue while the engine still holds the live delivery; the skippedLive report, send-count-1 and accepted-delivery assertions fail
 it('repairs lost initial ack by exact lookup without refund, new identity or notification authority', async () => {
   const d = deps();
   d.boss?.send && vi.mocked(d.boss.send).mockRejectedValueOnce(new Error('ack lost after enqueue'));
@@ -59,6 +61,8 @@ it('repairs lost initial ack by exact lookup without refund, new identity or not
   expect(state.kind).toBe('pending');
   if (state.kind === 'pending') expect(state.delivery?.kind).toBe('accepted');
 });
+// @invariant concurrency: concurrent sweepers share the one reserved recovery identity for an uncertain slot — two sweeps can never mint competing delivery ids
+// @fails-if let each sweeper write its own judge_delivery_reserved row or change the delivery id under the race; the single-row and delivery_id equality assertions fail
 it('two sweepers resend the same uncertain slot and cannot allocate competing recovery identities', async () => {
   const d = deps();
   d.boss?.send && vi.mocked(d.boss.send).mockRejectedValueOnce(new Error('send outcome unknown'));
@@ -80,6 +84,8 @@ it('two sweepers resend the same uncertain slot and cannot allocate competing re
   expect(rows).toHaveLength(1);
   expect(rows[0]?.payload.delivery_id).toBe(f.input.delivery_id);
 });
+// @invariant data: recovery slots are counted from permanent accepted-delivery receipts that survive job_events pruning; after two accepted recoveries a finished observation cannot buy a third send
+// @fails-if recount the budget from prunable notifications or authorize a fresh send after two accepted slots; the skippedLive/skippedExhausted reports and manual-kind assertion fail
 it('counts permanent accepted slots through notification pruning; two recoveries exhaust, a live final delivery may finish', async () => {
   const d = deps(),
     f = await dispatchFrozenJudge(testDb(), d, stalled());
@@ -119,6 +125,8 @@ it('counts permanent accepted slots through notification pruning; two recoveries
   ).toMatchObject({ reenqueued: 0, skippedExhausted: 1 });
   expect((await readJudgeRunPermanent(testDb(), f.runId)).kind).toBe('manual');
 });
+// @invariant concurrency: at the seven-day recovery horizon a stalled run terminates as manual instead of authorizing another paid send
+// @fails-if permit one more send at or past the boundary (or mistake missing accepted-engine evidence for absence); the skippedTerminal report, manual kind and send-count-1 assertions fail
 it('forbids fresh authorization at the seventh day and distinguishes missing accepted engine evidence from absence', async () => {
   const d = deps(),
     at = new Date(Date.now() - RECOVERY_MAX_AGE_MS),
@@ -132,6 +140,8 @@ it('forbids fresh authorization at the seventh day and distinguishes missing acc
   expect((await readJudgeRunPermanent(testDb(), f.runId)).kind).toBe('manual');
   expect(d.boss?.send).toHaveBeenCalledTimes(1);
 });
+// @invariant data: the reconcile keyset cursor is durable across sweeps — malformed legacy rows cannot stall it, and a permanently disposed original records one terminal notification without new sends
+// @fails-if freeze or re-derive the cursor on malformed rows so the second page is never scanned or gets rescanned; the scanned counts, single judge_run.failed marker and zero send/observe assertions fail
 it('advances a permanent keyset cursor beyond 200 malformed or live originals', async () => {
   const d = deps();
   for (let i = 0; i < 205; i++)
@@ -169,6 +179,8 @@ it('advances a permanent keyset cursor beyond 200 malformed or live originals', 
     }),
   ).toMatchObject({ scanned: 0 });
 });
+// @invariant data: an unfinished legacy pending original is disposed permanently without invoking the scorer, and the historical_unknown disposition survives notification pruning and later sweeps
+// @fails-if try to execute or score the legacy submit, or let pruning drop the disposition so a later sweep reprocesses it; the skippedTerminal, no-send, manual-reason and scanned-0 assertions fail
 it('disposes unfinished legacy submit without invoking scorer and retains disposition after pruning', async () => {
   const id = 'legacy-long-answer',
     at = stalled();
@@ -198,6 +210,8 @@ it('disposes unfinished legacy submit without invoking scorer and retains dispos
   expect(await reconcileStalledJudgeAttempts(testDb(), { deps: d })).toMatchObject({ scanned: 0 });
 });
 
+// @invariant concurrency: each send authorization is evaluated once against a locked fresh clock at the decision point, so the stale sweep time cannot move the seven-day boundary
+// @fails-if evaluate the boundary with the sweep's now or sample the clock more than once per authorization; the reenqueue/exhausted split, gate_checked_at and send-count assertions fail at each offset
 it.each(['send_unknown', 'reserved_unsent', 'accepted_success'] as const)(
   'uses the locked fresh clock for %s at <7d, exact7d and >7d, independently of old selection time',
   async (kind) => {
@@ -280,6 +294,8 @@ it.each(['send_unknown', 'reserved_unsent', 'accepted_success'] as const)(
   },
 );
 
+// @invariant concurrency: the authorization clock is re-sampled per run, so a mid-sweep boundary crossing authorizes the earlier decision and exhausts the later one
+// @fails-if freeze one clock reading for the whole sweep; both runs would share one outcome and the reenqueued-1/skippedExhausted-1, clock-count-2 and manual/pending split assertions fail
 it('samples every authorization after a mid-sweep boundary crossing instead of freezing the sweep clock', async () => {
   const submittedAt = new Date(Date.now() - RECOVERY_MAX_AGE_MS),
     boundary = submittedAt.getTime() + RECOVERY_MAX_AGE_MS,
@@ -325,6 +341,8 @@ it('samples every authorization after a mid-sweep boundary crossing instead of f
   ).toEqual(['manual', 'pending']);
 });
 
+// @invariant concurrency: the boundary check samples the real authorization clock, so a stale caller-supplied now cannot backdate a fresh authorization for the same run id
+// @fails-if use args.now for the age gate; the run would look pre-boundary and get another send, breaking the skippedExhausted report, manual kind and send-count-1 assertions
 it('old args.now alone cannot backdate a same-ID fresh authorization past the real boundary', async () => {
   const d = deps(),
     submittedAt = new Date(Date.now() - RECOVERY_MAX_AGE_MS - 60_000);

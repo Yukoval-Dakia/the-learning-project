@@ -270,6 +270,8 @@ beforeEach(async () => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('native durable assessment', () => {
+  // @invariant data: the native resolution receipt is committed atomically with activation and settlement in one transaction, retains the user rating, and stays byte-identical across redelivery
+  // @fails-if write the receipt outside the activation transaction or let a redelivery rewrite it; the other-connection zero-visibility, resolutionWrites-1 and toEqual(receipts)/nativeEffects assertions fail
   it('writes the immutable resolution in the activation transaction and retains the user rating', async () => {
     const f = await fixture();
     const run = await dispatchNativeAttempt(
@@ -330,6 +332,8 @@ describe('native durable assessment', () => {
     expect(resolutionWrites).toBe(1);
   });
 
+  // @invariant concurrency: a lost resolution COMMIT acknowledgement is recovered by reading the committed receipt — no second model call and no rewritten receipt or learning effects
+  // @fails-if treat the lost ack as a failure and re-execute or rewrite; the skipped retry status, resolutionWrites/execute-count-1 and toEqual(receipts)/nativeEffects assertions fail
   it('recovers a lost resolution COMMIT acknowledgement without rewriting the receipt or learning effects', async () => {
     const f = await fixture();
     const run = await dispatchNativeAttempt(f.db, f.id, f.request, f.options, f.deps);
@@ -374,6 +378,8 @@ describe('native durable assessment', () => {
     }
   });
 
+  // @invariant data: a native completion missing its receipt is backfilled under the CAS head that was actually accepted, keeping original and effective evaluation anchored to one candidate
+  // @fails-if backfill from the advanced or stale intent instead of the accepted head; the expected_generation-0 intent assertions and original/effective evaluation-id equality fail
   it('fills a missing receipt after exact native completion, using the accepted CAS instead of the advanced head', async () => {
     const f = await fixture();
     const run = await dispatchNativeAttempt(
@@ -437,6 +443,8 @@ describe('native durable assessment', () => {
     expect(f.execute).toHaveBeenCalledTimes(1);
   });
 
+  // @invariant data: a committed resolution receipt under the same id is immutable — any conflicting rating, verdict, status, candidate or envelope coordinate fails closed and leaves the stored row untouched
+  // @fails-if let the second writer overwrite or partially update the committed receipt; the coordinate_mismatch rejection, toEqual([stored]) and unchanged nativeEffects assertions fail
   it.each([
     {
       name: 'user rating',
@@ -548,6 +556,8 @@ describe('native durable assessment', () => {
     },
   );
 
+  // @invariant concurrency: a first-write-wins receipt collision is detected by reading back the stored row before native activation commits, so the losing writer aborts with no partial learning effects
+  // @fails-if trust the writeEvent return id without reading the stored row; the coordinate_mismatch rejection and zero activation/settlement/FSRS-row assertions fail
   it('detects writeEvent first-write-wins collisions before committing native activation', async () => {
     const f = await fixture();
     const run = await dispatchNativeAttempt(f.db, f.id, f.request, f.options, f.deps);
@@ -584,6 +594,8 @@ describe('native durable assessment', () => {
     expect(f.execute).toHaveBeenCalledTimes(1);
   });
 
+  // @invariant concurrency: when a manual self-report becomes effective after the native candidate was accepted, no native receipt is backfilled — the run fails closed instead of certifying a superseded outcome
+  // @fails-if backfill the receipt from the advanced head despite the newer manual candidate; the coordinate_mismatch rejection and zero-receipt/unchanged-effects assertions fail
   it('does not backfill a native receipt from a newer manual effective candidate', async () => {
     const f = await fixture();
     const run = await dispatchNativeAttempt(f.db, f.id, f.request, f.options, f.deps);
@@ -627,6 +639,8 @@ describe('native durable assessment', () => {
     expect(f.execute).toHaveBeenCalledTimes(1);
   });
 
+  // @invariant concurrency: an explicit manual disposal during an in-flight pending resolution wins — the held worker receipt is fenced out without learning effects
+  // @fails-if let the held resolution commit its receipt after the run was disposed; the kind 'disposed' rejection and zero-receipt/zero-FSRS assertions fail
   it('retains the open-run fence when manual disposition wins before a held resolution', async () => {
     const f = await fixture();
     f.execute.mockResolvedValue({
@@ -659,6 +673,8 @@ describe('native durable assessment', () => {
     expect(f.execute).toHaveBeenCalledTimes(1);
   });
 
+  // @invariant concurrency: the submission original is frozen before enqueue — concurrent HTTP retries, worker redeliveries and notification pruning all settle the one frozen run exactly once
+  // @fails-if read the question at execution time, mint a second run for a retry, or re-execute on redelivery; the same-runId, frozen-prompt, execute/evaluation-count-1 and skipped-after-pruning assertions fail
   it('freezes originals before enqueue; concurrent HTTP retries and worker redelivery settle once', async () => {
     const f = await fixture();
     const runs = await Promise.all([
@@ -732,6 +748,8 @@ describe('native durable assessment', () => {
     expect((await f.db.select().from(material_fsrs_state))[0].state.reps).toBe(1);
   });
 
+  // @invariant data: a committed pending original is the sole authority for its run parameters — conflicting rating or unassisted-policy retries are rejected without a second admission or refund
+  // @fails-if admit a conflicting retry as a new run or rewrite the pending original's options; the coordinate_mismatch rejections, checkRateLimit-1 and unchanged nativeEffects assertions fail
   it.each([
     { name: 'changed rating', accepted: { userRating: 'hard' }, retry: { userRating: 'again' } },
     { name: 'removed rating', accepted: { userRating: 'hard' }, retry: { userRating: undefined } },
@@ -779,6 +797,8 @@ describe('native durable assessment', () => {
     },
   );
 
+  // @invariant data: a persisted pending original is honored only when every coordinate matches the live submit — any mutated run, question, head or envelope field fails closed before admission
+  // @fails-if tolerate a conflicting coordinate or let the live event parser mask persisted corruption; the rejects-toThrow, zero-admission and unchanged-effects assertions fail
   it.each([
     { name: 'run', mutate: (r) => ({ ...r, payload: { ...r.payload, run_id: 'other-run' } }) },
     {
@@ -896,6 +916,8 @@ describe('native durable assessment', () => {
     },
   );
 
+  // @invariant concurrency: a failed queue send still leaves a durable pending receipt for reconciliation, while an unauthorized worker delivery cannot execute without a fresh admission
+  // @fails-if swallow the send failure without the pending receipt, refund the admission, or let the unauthorized job execute; the judge_authorization_required rejection, reenqueued-1 and pending-row toEqual assertions fail
   it('persists queue failure for reconciliation and refuses admission without a pending receipt', async () => {
     const f = await fixture();
     f.deps.checkRateLimit.mockImplementationOnce(() => {
@@ -968,6 +990,8 @@ describe('native durable assessment', () => {
     expect((await f.db.select().from(material_fsrs_state))[0].state.reps).toBe(1);
   });
 
+  // @invariant grading: unjudgeable work is held unscored with no learning effects, and a later self-report never replaces its first evaluation reference
+  // @fails-if score the unjudgeable attempt or let the self-report rewrite the original reference; the review_required/unsupported, original-id equality and receipt toEqual assertions fail
   it('keeps unjudgeable work unscored; later self-report does not replace the first evaluation reference', async () => {
     const f = await fixture();
     f.execute.mockResolvedValue({
@@ -1002,6 +1026,8 @@ describe('native durable assessment', () => {
     expect(await f.db.select().from(event).where(eq(event.id, run))).toEqual(receipts);
     expect((await f.db.select().from(material_fsrs_state))[0].state.reps).toBe(1);
   });
+  // @invariant data: an admitted native attempt enqueues with durable authorization, returns a 202 handle, and its poll reconstructs the effective terminal result with original anchored to its candidate
+  // @fails-if execute synchronously in the request, enqueue without authorization, or return a handle that cannot reconstruct the result; the 202/poll-200, effective-result and original==candidate assertions fail
   it('returns a real HTTP 202 handle and polls native completion with evaluation anchors', async () => {
     const f = await fixture();
     vi.spyOn(runtimeEnv, 'shouldEnqueueBackgroundJobs').mockReturnValue(true);

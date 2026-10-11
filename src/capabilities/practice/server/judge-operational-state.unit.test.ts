@@ -148,6 +148,8 @@ const reduce = (receipts: SavedJudgeReceipt[], nextControl = control) =>
     receipts,
   });
 describe('permanent judge delivery authority', () => {
+  // @invariant data: the permanent reducer classifies each delivery as reserved_unsent/send_unknown/accepted/started from receipt evidence alone, independent of prunable job notifications
+  // @fails-if derive delivery state from prunable notifications or misorder the send/accept/start precedence; the per-input mapped kind assertions fail
   it('distinguishes reserved, uncertain, accepted and started without notification evidence', () => {
     for (const [input, kind] of [
       ['unsent', 'reserved_unsent'],
@@ -160,6 +162,8 @@ describe('permanent judge delivery authority', () => {
       if (state.kind === 'mapped') expect(state.deliveries[0]?.kind).toBe(kind);
     }
   });
+  // @invariant concurrency: a rejected later send cannot retroactively clear an earlier slot's send_unknown evidence — the older uncertainty survives the fenced producer's rejection
+  // @fails-if let the send-2 rejection mark or clear slot 1's unknown state; the send_unknown delivery kind and recovery-capacity 'unknown' assertions fail
   it('does not clear an older unknown when a later authorized send is rejected', () => {
     const rows = delivery(1, 'unknown'),
       id = judgeReservationId(coordinate.run_id, 1),
@@ -190,6 +194,8 @@ describe('permanent judge delivery authority', () => {
     expect(state.deliveries[0]?.kind).toBe('send_unknown');
     expect(judgeRecoveryCapacity({ state, submittedAt: at, now: at })).toEqual({ kind: 'unknown' });
   });
+  // @invariant data: two accepted recovery deliveries are retained as permanent receipts after notification pruning, so a third authorization is refused while the live started delivery survives
+  // @fails-if lose accepted receipts to marker pruning or miscount recovery slots so a third send is authorized; the recovery_exhausted capacity and last-delivery 'started' assertions fail
   it('retains two accepted recovery deliveries and rejects a third after marker pruning', () => {
     const state = reduce([ownership(), ...delivery(0), ...delivery(1), ...delivery(2, 'started')]);
     if (state.kind !== 'mapped') throw new Error(state.kind);
@@ -199,6 +205,8 @@ describe('permanent judge delivery authority', () => {
     });
     expect(state.deliveries.at(-1)?.kind).toBe('started');
   });
+  // @invariant concurrency: the seven-day recovery boundary is exact — admission is available at T-1ms and exhausted at T, and a pre-boundary accepted delivery is never revoked by it
+  // @fails-if make the boundary off-by-one (exclusive on the wrong side) or let it invalidate the live delivery; the available/exhausted split and last-delivery 'accepted' assertions fail
   it('stops new admission at exactly seven days without revoking a pre-boundary final delivery', () => {
     const state = reduce([ownership(), ...delivery(0), ...delivery(1)]);
     if (state.kind !== 'mapped') throw new Error(state.kind);
@@ -218,6 +226,8 @@ describe('permanent judge delivery authority', () => {
     ).toEqual({ kind: 'manual', reason: 'recovery_exhausted' });
     expect(state.deliveries.at(-1)?.kind).toBe('accepted');
   });
+  // @invariant security: an archived or foreign-incarnation control row can never be read as clean recovery history or executable ownership — unknown provenance blocks new sends
+  // @fails-if treat unknown ownership as zero history (permitting sends) or map a mismatched incarnation as executable ownership; the recovery_history_unknown and ownership_unknown assertions fail
   it('never infers zero recovery history or execution permission from an archive', () => {
     const state = reduce([ownership('unknown'), ...delivery(0)]);
     if (state.kind !== 'mapped') throw new Error(state.kind);
@@ -232,6 +242,8 @@ describe('permanent judge delivery authority', () => {
       }),
     ).toEqual({ kind: 'unmapped', reason: 'ownership_unknown' });
   });
+  // @invariant data: a manual disposition reduces to a visible disposed state with or without ownership, while a receipt whose subject coordinates diverge reduces to corrupt instead of merging
+  // @fails-if hide the disposition when ownership is absent, or merge a wrong-subject receipt into the run's state; the 'disposed' and 'corrupt' kind assertions fail
   it('manual disposition is visible even without executable ownership, and malformed coordinates fail closed', () => {
     const row = saved(judgeDispositionId(coordinate.run_id), {
       ...envelope,
@@ -252,6 +264,8 @@ describe('permanent judge delivery authority', () => {
     const wrong = saved(row.id, { ...row.value, subject_id: 'unrelated-original' });
     expect(reduce([wrong]).kind).toBe('corrupt');
   });
+  // @invariant security: a second reservation for the same slot under a different receipt id, or an acceptance with no reservation behind it, is rejected as corrupt rather than granted authority
+  // @fails-if accept the duplicate reservation or the orphan acceptance into mapped state; both 'corrupt' assertions fail and competing delivery identities could coexist
   it('rejects duplicate alternative reservations and orphan acceptance', () => {
     const rows = delivery(0);
     if (!rows[0]) throw new Error('fixture');

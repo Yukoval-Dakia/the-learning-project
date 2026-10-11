@@ -135,6 +135,8 @@ describe('request independent review operation on business tables', () => {
     expect(await effects()).toEqual(before);
   });
 
+  // @invariant concurrency: direct submit, HTTP entry and worker replay all resolve to the same pending original — background settlement commits once and redelivery skips as already_persisted
+  // @fails-if mint a second submission for the replay or let redelivery re-execute the model; the result-equality, skipped/already_persisted, execute-count-1 and single-submission assertions fail
   it('keeps pending originals and background replays on the same final commit chain', async () => {
     const f = await pendingModel();
     expect(f.execute).not.toHaveBeenCalled();

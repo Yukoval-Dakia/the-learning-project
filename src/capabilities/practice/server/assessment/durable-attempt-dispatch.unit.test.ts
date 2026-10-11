@@ -188,6 +188,8 @@ function expectNoEffects() {
   }
 }
 
+// @invariant data: a retry reuses the frozen pending original byte-identical and performs no side effects — no recapture, admission, reservation, send or notification — even after a lost commit ack
+// @fails-if recapture or rewrite the pending row, refund the admission, or re-reserve/enqueue on replay; the toEqual(before) row, transaction count and expectNoEffects assertions fail
 it.each(['none', 'before-read', 'commit-ack'] as const)(
   'reuses the exact frozen original with disabled flag and changed capture after %s',
   async (failure) => {
@@ -203,6 +205,8 @@ it.each(['none', 'before-read', 'commit-ack'] as const)(
   },
 );
 
+// @invariant data: a retry whose rating or unassisted-evidence policy differs from the stored original fails closed as coordinate_mismatch and is never reported as a successful recovery
+// @fails-if accept the changed option and resolve to the run id, or mutate the stored row to match; the coordinate_mismatch rejection, unchanged-pending and no-effects assertions fail
 it.each(['rating', 'unassisted-policy'])(
   'cannot recover a rejected %s change as success',
   async (change) => {
@@ -287,6 +291,8 @@ const corruptions = [
     change: (f) => ({ ...f.row, created_at: new Date('2026-10-09T01:00:00.000Z') }),
   },
 ] satisfies { name: string; change: (f: ReturnType<typeof fixture>) => PendingRow }[];
+// @invariant data: any persisted field of the stored pending original that conflicts with the dispatch identity fails closed on both the direct and post-failure read paths
+// @fails-if tolerate a conflicting field (e.g. another submission_id or created_at) and proceed; the ApiError rejection, unchanged-row and expectNoEffects assertions fail for that field
 it.each(corruptions)('fails closed on a conflicting $name in both reads', async ({ change }) => {
   for (const failure of ['none', 'before-read'] as const) {
     const f = fixture();
@@ -304,6 +310,8 @@ it.each(corruptions)('fails closed on a conflicting $name in both reads', async 
   }
 });
 
+// @invariant data: a schema-invalid pending payload fails closed instead of being coerced into a runnable dispatch
+// @fails-if repair or reinterpret the corrupt submit:{} payload and proceed to admit or send; the throw, transaction count and expectNoEffects assertions fail
 it('fails closed on a structurally corrupt pending payload', async () => {
   const f = fixture();
   state.pending = { ...f.row, payload: { run_id: runId, caller: 'native_assessment', submit: {} } };

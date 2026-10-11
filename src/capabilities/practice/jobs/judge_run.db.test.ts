@@ -39,6 +39,8 @@ describe('native judge worker', () => {
     expect(await db.select().from(material_fsrs_state)).toMatchObject([{ state: { reps: 1 } }]);
   });
 
+  // @invariant concurrency: a retryable infrastructure failure rethrows and leaves only a nonterminal attempt_failed trace, so engine retry can re-drive the same run
+  // @fails-if write a terminal judge_run.failed marker or swallow the throw; the rethrow plus the started-status, attempt_failed-present and failed-absent assertions fail
   it.each([
     new Error('database temporarily unavailable'),
     new EvaluateSubmissionError('evaluation_busy', 'evaluation group is temporarily busy'),
@@ -62,6 +64,8 @@ describe('native judge worker', () => {
     },
   );
 
+  // @invariant data: a malformed original timestamp terminalizes the delivery permanently and is never retried or passed to the model
+  // @fails-if classify the invalid timestamp as retryable or forward it to the executor; the failed status, terminal_delivery code and execute-not-called assertions fail
   it('an invalid original timestamp is permanent and cannot reach the model', async () => {
     const db = testDb();
     const f = await nativeJudgeRunFixture(db);
@@ -73,6 +77,8 @@ describe('native judge worker', () => {
     expect(f.execute).not.toHaveBeenCalled();
   });
 
+  // @invariant security: persisted client-visible trace events classify the failure by code only and never embed internal error text
+  // @fails-if copy the raw error message into trace events; the 'private-internal-path' absence assertion fails, or mislabel the retry boundary and break the judge_failed/terminal_delivery split
   it.each([first, final])(
     'client traces classify errors without exposing internal text (retry=$retryCount)',
     async (meta) => {
@@ -93,6 +99,8 @@ describe('native judge worker', () => {
     },
   );
 
+  // @invariant data: stored-state corruption is terminal on first sight — the run fails as a manual disposition without a single retry of the execution
+  // @fails-if treat corrupt_state as retryable and rethrow for another attempt; the failed status, terminal_delivery/manual trace and execute-count-1 assertions fail
   it('stored state corruption terminalizes immediately without retrying the execution', async () => {
     const db = testDb();
     const f = await nativeJudgeRunFixture(db);

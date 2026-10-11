@@ -12,6 +12,8 @@ beforeEach(async () => {
   await resetDb();
   await resetJudgeControl(testDb());
 });
+// @invariant data: the migration guarantees one judge control row, unique receipt indexes and trigger-level immutability — updates and deletes on operational receipts are rejected by the database itself
+// @fails-if drop the immutability trigger, a unique index, or allow a second control row; the duplicate-insert rejection, index list and 'judge operational receipts are immutable' rejections fail
 it('0118 retains one control row, exact unique receipt indexes and immutable operational rows', async () => {
   const control = await readJudgeFamilyControl(testDb());
   expect(control.phase).toBe('pg-boss');
@@ -55,6 +57,8 @@ it('0118 retains one control row, exact unique receipt indexes and immutable ope
     before,
   );
 });
+// @invariant data: a duplicate-ID receipt write replays only a byte-identical payload and its recorded timestamp; any payload difference is an immutable-receipt conflict
+// @fails-if let the duplicate writer overwrite the payload or mint a new timestamp; the createdAt-replay equality and 'Immutable judge receipt conflict' rejection fail
 it('duplicate-ID writer reads, parses and compares immutable payload and replays its recorded timestamp', async () => {
   const f = await dispatchFrozenJudge(testDb(), {
       checkRateLimit: () => 1,
@@ -79,6 +83,8 @@ it('duplicate-ID writer reads, parses and compares immutable payload and replays
     ),
   ).rejects.toThrow('Immutable judge receipt conflict');
 });
+// @invariant security: archive receipts carry authority only under their own control incarnation — after rotation the same rows read as unmapped and cannot revive execution
+// @fails-if resolve the run from event rows without matching the live incarnation; the 'unmapped' assertion fails and a dead incarnation could resurrect runs
 it('ordinary archive receipts lack the matching control incarnation and cannot revive execution', async () => {
   const f = await dispatchFrozenJudge(testDb(), {
     checkRateLimit: () => 1,

@@ -77,6 +77,8 @@ function scorer(callback?: (request: ModelExecutorRequest) => Promise<void>) {
   );
   return execute;
 }
+// @invariant concurrency: recovery after a mid-run model failure reuses the saved claims — the second delivery never purchases another paid claim and the run resolves to review_required
+// @fails-if re-purchase claims or re-execute saved units on redelivery; the execute-stays-2, 2-claims/2-results and resolved/review_required assertions fail
 it('saved first unit, second unknown, third unclaimed: no additional paid claim on native recovery', async () => {
   const f = await dispatchFrozenJudge(testDb(), enqueue);
   const execute = scorer();
@@ -109,6 +111,8 @@ it('saved first unit, second unknown, third unclaimed: no additional paid claim 
   expect(state.kind).toBe('resolved');
   if (state.kind === 'resolved') expect(state.result.status).toBe('review_required');
 });
+// @invariant concurrency: a manual disposition committed during model execution is final — no seal, capture, activation or settlement lands, the late unit evidence is retained, and pruning cannot flip the run from manual
+// @fails-if let the in-flight worker seal or activate after the manual disposition, or lose the late evidence; the zero evaluation/FSRS/mastery rows, one-result and manual-after-pruning assertions fail
 it('manual disposition during first inference retains late unit evidence and blocks seal, capture, activation and settlement', async () => {
   const f = await dispatchFrozenJudge(testDb(), enqueue);
   const execute = scorer(async () => {
@@ -132,6 +136,8 @@ it('manual disposition during first inference retains late unit evidence and blo
   await testDb().delete(job_events);
   expect((await readJudgeRunPermanent(testDb(), f.runId)).kind).toBe('manual');
 });
+// @invariant concurrency: a lost result COMMIT acknowledgement is resolved by reading the saved outcome — the redelivered workflow completes the run without repurchasing any unit
+// @fails-if treat the lost ack as a failure and re-execute; execute would exceed 3 calls or the run would leave the resolved state, failing both assertions
 it('result COMMIT with lost acknowledgment reads the exact saved outcome and does not repurchase', async () => {
   const f = await dispatchFrozenJudge(testDb(), enqueue),
     execute = scorer(),
@@ -166,6 +172,8 @@ it('result COMMIT with lost acknowledgment reads the exact saved outcome and doe
     database.transaction = transaction;
   }
 });
+// @invariant data: a committed native completion is the terminal authority — engine unavailability and notification pruning cannot demote it, later disposal returns already_completed, and redelivery rewrites nothing
+// @fails-if consult the pruned notifications or the failing engine over the completion, or accept the late disposal; the found/done status, already_completed result and toEqual(evaluation) assertions fail
 it('native completion beats engine errors and pruning, retaining original and effective candidate identities', async () => {
   const f = await dispatchFrozenJudge(testDb(), enqueue),
     execute = scorer();
@@ -200,6 +208,8 @@ it('native completion beats engine errors and pruning, retaining original and ef
   expect(execute).toHaveBeenCalledTimes(3);
 });
 
+// @invariant concurrency: a manual disposition that outlived its FAILED projection is repaired by the sole reconciler — a causally late requeued notification or delayed send cannot rewind it to pending
+// @fails-if let the late requeued notification or the sweep re-authorize the run; the single judge_run.failed marker, zero send/gate/observe counts and manual-kind assertions fail
 it('permanent manual before FAILED projection is repaired by the sole reconciler; delayed send cannot rewind it', async () => {
   const f = await dispatchFrozenJudge(testDb(), enqueue, new Date(Date.now() - 20 * 60_000));
   await disposeJudgeRun(testDb(), f.runId, {
@@ -244,6 +254,8 @@ it('permanent manual before FAILED projection is repaired by the sole reconciler
   expect(gate).not.toHaveBeenCalled();
 });
 
+// @invariant concurrency: a manual disposition survives repeated terminal-notification write failures — the next sole sweep repairs the marker exactly once and never re-executes or re-sends
+// @fails-if let a failed terminal write resurrect execution, or the sweep write a second marker or call the model; the failedWrites-3, single repaired judge_run.failed, execute-1 and zero-send assertions fail
 it('worker manual disposition survives all three failed terminal writes; a new sole sweep repairs it without execution', async () => {
   const f = await dispatchFrozenJudge(testDb(), enqueue, new Date(Date.now() - 20 * 60_000));
   const execute = scorer(async () => {
@@ -296,6 +308,8 @@ it('worker manual disposition survives all three failed terminal writes; a new s
   expect(gate).not.toHaveBeenCalled();
 });
 
+// @invariant concurrency: a pre-boundary authorized, live final delivery keeps its original reservation — the seven-day sweep neither resends nor re-authorizes it, and completion reuses the same receipts
+// @fails-if re-authorize or resend the live slot at the boundary, or mint new reservation/send receipts; the skippedLive/no-clock/no-send report, toEqual(reservations+send) and single done-marker assertions fail
 it('a pre-boundary authorized and live final slot still completes after seven days with one original receipt', async () => {
   const submittedAt = new Date(Date.now() - 7 * 86400_000 - 60_000),
     admittedAt = new Date(submittedAt.getTime() + 7 * 86400_000 - 1),
@@ -358,6 +372,8 @@ it('a pre-boundary authorized and live final slot still completes after seven da
   ).toHaveLength(1);
 });
 
+// @invariant data: a failed admission leaves no executable pending artifact — no pending, reservation or claim rows survive, and only an acquired live token is refunded
+// @fails-if leave a pending original behind on admission failure or refund a token never acquired; the zero-artifact select and the refund 1-vs-0 split assertions fail
 it.each(['rate-limit', 'pending-abort'])(
   'admission failure %s leaves no executable pending and refunds only an acquired live token',
   async (failure) => {
@@ -401,6 +417,8 @@ it.each(['rate-limit', 'pending-abort'])(
     ).toHaveLength(0);
   },
 );
+// @invariant concurrency: a lost pending COMMIT acknowledgement preserves the exactly-once accepted original — retries return or conflict against it and the sweep resends only its fixed delivery identity without refund
+// @fails-if mint a second original or admission after the lost ack; the toEqual(committedRows), checkRateLimit-1, coordinate_mismatch rejections and fixed-delivery-id resend assertions fail
 it('pending COMMIT acknowledgment loss preserves the same accepted original, token and reservation; the sweep resends only that fixed identity', async () => {
   const database = testDb(),
     f = await frozenJudge(database, new Date(Date.now() - 20 * 60_000)),

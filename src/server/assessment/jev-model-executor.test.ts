@@ -227,6 +227,8 @@ describe('createJevModelExecutor — Jev lane', () => {
     ).toBeUndefined();
   });
 
+  // @invariant grading: the durable judge transport issues exactly one real typed request — a controlled 503 returns a pending outcome with no lifecycle retry
+  // @fails-if retry the transport on the 503; the fetchImpl called-once and unretried-log assertions fail
   it('durable judge policy reaches the real typed transport with one transient request', async () => {
     const fetchImpl = vi.fn<typeof fetch>(
       async () =>

@@ -111,6 +111,8 @@ describe('runTask — YUK-576 transient retry loop', () => {
     vi.useRealTimers();
   });
 
+  // @invariant grading: a durable judge task never lifecycle-retries — even an opted-in transient task fails after its single model attempt under judgeRetryPolicy none
+  // @fails-if let the transient retry loop fire for a judge kind; queryCalls becomes 2 and retried is logged, both asserted against
   it('durable judge policy forbids lifecycle retry even with an opted-in transient task', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     mockPi.messageQueues = [[API_ERROR_CONN_RESULT], [successResult('must not execute')]];

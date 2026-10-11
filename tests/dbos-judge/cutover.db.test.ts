@@ -222,6 +222,8 @@ async function transition(
     engineInventory: inventory,
   });
 }
+// @invariant concurrency: a fixed old producer is fenced at cutover — its late dispatch never enters engine authority, the unmapped original blocks the exit seal until explicitly disposed, and a compatible rollback preserves the mapped slot
+// @fails-if let the late original slip past the exit seal or drop the pending slot on rollback; the inventory-absence, 'Unmapped pending judge original' rejection, backend/slot and manual-kind assertions fail
 it('actual fixed old producer is fenced; its late original prevents exit until explicitly disposed; compatible rollback preserves slots', async () => {
   const beforeSend = oldProducer(true);
   await beforeSend.wait('ready');
@@ -315,6 +317,8 @@ it('actual fixed old producer is fenced; its late original prevents exit until e
   expect((await readJudgeRunPermanent(testDb(), lateRun)).kind).toBe('manual');
   evidence.push({ runId, lateRun, dbos, mapped, rolledBack, oldRevision });
 }, 90000);
+// @invariant security: ownership import and phase exit require proven recovery history and an exact inventory seal — unknown history or a changed digest grants no execution authority
+// @fails-if accept an unknown recovery history or a mismatched inventory digest; the 'Unknown or exhausted' and 'seal conflict' rejections fail
 it('unknown history and changed inventory seals cannot grant imported execution authority', async () => {
   const original = await frozenJudge(testDb());
   const runId = await dispatchNativeAttempt(
@@ -413,6 +417,8 @@ async function savedImportGap() {
   return { f, saved, input };
 }
 
+// @invariant data: saved model outcomes from an interrupted seal are retained verbatim in evidence and imported by exact claim linkage without another model call
+// @fails-if re-execute the models during import or rewrite the saved evidence rows; the toEqual(saved), exact evidence_refs and 3-claim assertions fail
 it('exact claim-linked saved outcomes appear in evidence and survive an eligible native import without another model call', async () => {
   const { f, saved } = await savedImportGap();
   const engine = sealJudgeEngineInventory('pg-boss', [
@@ -459,6 +465,8 @@ it('exact claim-linked saved outcomes appear in evidence and survive an eligible
   evidence.push({ label: 'saved-outcome-import', source, saved, owner });
 });
 
+// @invariant security: a saved outcome binds only through exact claim linkage — an action, group, digest, cause or foreign-id mismatch cannot count as the claim's result or grant import, even with injected run and submission ids
+// @fails-if bind the tampered row by its run_id/submission_id instead of the claim chain; the 2-valid-rows count, 'Unbound or unknown model claims' rejection and zero-ownership assertions fail
 it.each(['action', 'group', 'digest', 'cause', 'foreign-id'] as const)(
   "a %s mismatch cannot count as the claim's saved outcome or grant native import",
   async (mismatch) => {

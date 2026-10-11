@@ -374,6 +374,8 @@ const accepted = () =>
       throw new Error('controlled pre-enqueue gap');
     },
   });
+// @invariant concurrency: a real SIGKILL at any committed boundary is recovered by reopening the same production workflow — units already past their boundary are never re-executed and the run settles to exactly one evaluation
+// @fails-if restart the workflow from scratch or replay committed units after reopen; the wire-count equality, single-evaluation and resolved-state assertions fail
 it.each(['native-load-committed', 'claim-committed', 'candidate-sealed', 'domain-committed'])(
   'SIGKILL/reopen through production worker at %s',
   async (boundary) => {
@@ -398,6 +400,8 @@ it.each(['native-load-committed', 'claim-committed', 'candidate-sealed', 'domain
   },
   90000,
 );
+// @invariant concurrency: real DBOS recovery replays only the unknown unit — the saved scored result and its claim survive the crash byte-identically and no unit is re-purchased
+// @fails-if replay the saved unit or lose its evidence on recovery; the wire unit order, 2-claim count and arrayContaining(savedBeforeKill) assertions fail
 it('saved first, second wire unknown, third unclaimed survives SIGKILL and actual DBOS recovery', async () => {
   const f = await accepted();
   holdUnit = 'elimination';
@@ -430,6 +434,8 @@ it('saved first, second wire unknown, third unclaimed survives SIGKILL and actua
   );
   expect(savedAfterReopen).toEqual(expect.arrayContaining(savedBeforeKill));
 }, 90000);
+// @invariant concurrency: a fully validated response lost before its result save is never re-purchased or double-saved — reopen keeps the frozen inputs, claim-linked receipts and task runs identical and holds the unsaved units as non-retryable
+// @fails-if re-issue the wire request or re-save results on reopen; the wire/transport length-2, toEqual(tasksBefore)/claims/results and held-unit infra_failure assertions fail
 it('complete valid response validated before result save survives SIGKILL and same-workflow reopen without repurchase', async () => {
   const f = await accepted();
   const originals = await judgeEvidence(testDb(), f.runId);
@@ -688,6 +694,8 @@ it('complete valid response validated before result save survives SIGKILL and sa
     }
   }
 }, 90000);
+// @invariant concurrency: a controlled transport failure on one unit preserves the first unit's saved score and holds the failed unit non-retryable across a real SIGKILL and reopen — no transport retry is issued
+// @fails-if retry the failed transport or drop the saved first score during recovery; the wire/transport length-2, toEqual(claims/results/tasks) and held infra_failure assertions fail
 it.each(failureModes)(
   'controlled transport failure %s preserves first score and held second across SIGKILL/reopen without retry',
   async (mode) => {
@@ -910,6 +918,8 @@ it.each(failureModes)(
   },
   90000,
 );
+// @invariant concurrency: a crashed binding plus an intervening unactivated candidate never allocates an extra slot or repurchases — recovery ends in a manual disposition with zero model calls
+// @fails-if allocate slot max+1 for the recovery or repurchase after the intervening candidate; the wire-length-0, single-evaluation and manual-kind assertions fail
 it('binding crash plus an intervening unactivated candidate never reallocates max+1 or repurchases', async () => {
   const f = await accepted(),
     first = worker(f.input, { pause: 'native-load-committed' });
@@ -944,6 +954,8 @@ it('binding crash plus an intervening unactivated candidate never reallocates ma
   expect(await testDb().select().from(evaluation)).toHaveLength(1);
   expect((await readJudgeRunPermanent(testDb(), f.runId)).kind).toBe('manual');
 }, 90000);
+// @invariant concurrency: a manual disposition after all outcomes are saved still defeats the late seal and capture — no evaluation activates, while the saved result receipts remain as evidence
+// @fails-if let the late seal activate the candidate or drop the saved receipts; the manual-kind, zero-evaluation, wire-3 and 3-result-receipt assertions fail
 it('manual after saved final outcome defeats a late seal and held capture; result receipts remain', async () => {
   const f = await accepted(),
     first = worker(f.input, { pause: 'result-committed', unit: 'units' });
@@ -970,6 +982,8 @@ it('manual after saved final outcome defeats a late seal and held capture; resul
   ).toHaveLength(3);
 }, 90000);
 
+// @invariant concurrency: a registered old reconcile tick cannot authorize a send at or past the seven-day boundary — neither a delayed first run nor an uncheckpointed SIGKILL/reopen mints sends, reservations or claims
+// @fails-if authorize from the stale tick time instead of a fresh clock; the toEqual(sendsBefore/reservationsBefore), zero-claims, zero-wire and recovery_exhausted assertions fail
 it.each([false, true])(
   'registered old reconcile tick forbids >=7d authorization on delayed first run or uncheckpointed SIGKILL/reopen (reopen=%s)',
   async (reopen) => {
@@ -1040,6 +1054,8 @@ it.each([false, true])(
   },
   90000,
 );
+// @invariant concurrency: a crash before the settlement COMMIT rolls back activation and learning entirely — reopen recompletes from the durable chain without re-purchasing any unit and resolves the run
+// @fails-if leave partial activation or re-execute units after reopen; the zero-receipt-before-reopen, wire-length-3 and resolved-kind assertions fail
 it('SIGKILL before settlement COMMIT rolls back native activation and learning; reopen reuses candidate', async () => {
   const f = await accepted(),
     first = worker(f.input, { pause: 'settlement-uncommitted' });
@@ -1057,6 +1073,8 @@ it('SIGKILL before settlement COMMIT rolls back native activation and learning; 
   expect((await readJudgeRunPermanent(testDb(), f.runId)).kind).toBe('resolved');
 }, 90000);
 
+// @invariant concurrency: a manual disposition after a sealed candidate defeats activation and held capture — DBOS replay issues no new transport calls, the candidate stays as evidence, and no settlement receipt or learning lands
+// @fails-if let activation or the held capture commit after the manual disposition, or re-issue transport on replay; the manual-kind, single-evaluation, zero-receipt, zero-FSRS and wire 0-vs-3 assertions fail
 it.each([false, true])(
   'manual after sealed candidate defeats activation/held capture (held=%s)',
   async (held) => {

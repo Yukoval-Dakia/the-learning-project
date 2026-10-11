@@ -457,6 +457,8 @@ describe('placement frozen native workflow', () => {
     });
   });
 
+  // @invariant concurrency: an accepted or send-lost delivery is recovered under the same permanent delivery identity and settles the paid judge exactly once; replay re-executes nothing
+  // @fails-if drop the pending authority when send fails, redispatch under a new delivery id, or let a replayed job write a second evaluation/settlement; the reenqueue/send-count, unchanged pending row and count-1 assertions fail
   it.each(['accepted', 'queue unavailable'] as const)(
     'recovers an %s delivery from permanent authority, waits before cap, and settles once',
     async (delivery) => {
@@ -616,6 +618,8 @@ describe('placement frozen native workflow', () => {
     },
   );
 
+  // @invariant concurrency: a persisted worker resolution is terminal authority; a lost job notification or redelivery skips with already_persisted and never redispatches the model
+  // @fails-if re-execute the model or overwrite the held resolution on replay; the judge_already_completed rejection, already_persisted skip, stable selection and execute-count-1 assertions fail
   it('holds a stored worker resolution even if its job notification was lost, without model redispatch', async () => {
     await seed();
     await publishPaperModelFixture(db, 'q1');

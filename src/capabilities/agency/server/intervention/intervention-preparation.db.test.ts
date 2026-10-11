@@ -673,6 +673,8 @@ describe('YUK-791 intervention preparation closed loop', () => {
     vi.restoreAllMocks();
   });
 
+  // @invariant data: a held permanent pending diagnostic keeps its question draft-held and preserves the raw pending event and the settlement byte-identical through late FAILED/REQUEUED notifications and recovery sweeps
+  // @fails-if let a late notification or the recovery sweep rewrite/delete the pending row, reactivate the held question, or emit an evaluation; the unmapped/held activity, toEqual(pending) row, settlement equality and empty-evaluation assertions fail
   it.each(['malformed', 'historical'] as const)(
     'holds a %s permanent pending diagnostic despite FAILED and REQUEUED notifications',
     async (kind) => {
@@ -756,6 +758,8 @@ describe('YUK-791 intervention preparation closed loop', () => {
     },
   );
 
+  // @invariant concurrency: an expired diagnostic claim with no real pending attempt is reclaimed to active, because bare FAILED/REQUEUED notifications are not evidence of an answer
+  // @fails-if treat job-event markers alone as proof of a pending answer and leave the question draft-held forever; the undefined activity and draft_status 'active' assertions fail
   it('reopens an unanswered stale diagnostic when only legacy notifications exist', async () => {
     const f = await prepareAdmittedDiagnosticFixture('notification_only');
     const runId = newId();
@@ -784,6 +788,8 @@ describe('YUK-791 intervention preparation closed loop', () => {
     }
   });
 
+  // @invariant data: a manual or resolved permanent diagnostic disposition and its recorded settlement are final; late FAILED/REQUEUED notifications cannot reopen, re-execute or rewrite them
+  // @fails-if let a late notification resurrect the run, invoke the scorer again, or mutate the stored settlement/pending row; the held|terminal activity, settlement equality, execute-count and idempotent-replay assertions fail
   it.each(['manual', 'resolved'] as const)(
     'retains a valid %s permanent diagnostic disposition and its real settlement despite late notifications',
     async (disposition) => {
@@ -965,6 +971,8 @@ describe('YUK-791 intervention preparation closed loop', () => {
     },
   );
 
+  // @invariant grading: each diagnostic consumes exactly one trusted review verdict per its window, retires its one-shot FSRS card, and the intervention settles exactly once to a deterministic outcome
+  // @fails-if accept a pre-exposure or unverified verdict, consume a second review, leave the FSRS card behind, or write a second intervention_settled event; the skipped-reason, card-removal, settled outcome and count-1 assertions fail
   it('consumes one real review per window, retires one-shot cards, and settles deterministically', async () => {
     const db = testDb();
     const seeded = await seedEvidenceFor('settlement');

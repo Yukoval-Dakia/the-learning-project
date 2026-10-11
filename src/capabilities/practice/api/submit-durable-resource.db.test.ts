@@ -93,6 +93,8 @@ describe('createAttemptResource — durable divert 202 pass-through (W2)', () =>
     vi.restoreAllMocks();
   });
 
+  // @invariant data: a rate-limited one-time diagnostic original is retained with its claim held, and later recovery settles exactly that stored submission once — never a substitute answer
+  // @fails-if drop the original on 429, release the one-time claim, or let recovery dispatch a different submission id; the retained-original equality, claim_unavailable/409, pending-payload and single-settlement assertions fail
   it('retains a rate-limited diagnostic original and recovers it once without releasing its claim', async () => {
     vi.stubEnv('AI_RATE_LIMIT_MAX', '1');
     const firstQuestionId = `q_${newId()}`;

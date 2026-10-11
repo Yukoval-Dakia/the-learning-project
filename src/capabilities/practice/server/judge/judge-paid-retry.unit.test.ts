@@ -22,6 +22,8 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
+// @invariant grading: judgeRetryPolicy 'none' reaches the real Pi transport and holds a transient 503 to exactly one paid wire request — the configured max-retries never re-buys a judge call
+// @fails-if drop the per-call policy or let the provider retry helper honor CLAUDE_CODE_MAX_RETRIES; wire call count exceeds 1 and a second paid evaluation is purchased
 it.each([{ policy: 'none' as const, requests: 1 }])(
   'uses installed Pi lower transport for per-call policy $policy',
   async ({ policy, requests }) => {

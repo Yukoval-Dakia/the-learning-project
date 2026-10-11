@@ -28,6 +28,8 @@ beforeEach(async () => {
 });
 afterEach(() => vi.restoreAllMocks());
 const request = new Request('http://localhost/api/jobs/judge_run/run/status');
+// @invariant data: the status route reports 404 only when absence is verified; an unavailable observation backend yields 503 and never a false absence for a possibly-live paid run
+// @fails-if map a backend_unavailable observation to 404/absent; the 503-then-404 sequence fails and a caller could treat a live run as nonexistent
 it('route distinguishes verified absence from unavailable metadata; no false 404', async () => {
   const observe = vi.fn(async () => ({
     kind: 'unavailable' as const,
@@ -44,6 +46,8 @@ it('route distinguishes verified absence from unavailable metadata; no false 404
   vi.mocked(practice.readJudgeRunStatus).mockImplementation(absent);
   expect((await GET(request, { id: 'unknown' })).status).toBe(404);
 });
+// @invariant data: a committed pending run stays reported as queued from the durable record when the engine observation is unavailable or identity-unverified
+// @fails-if trust the failed or unverified engine lookup over the stored pending row and report absent/failed; the found/queued equality and the unmapped-throw guard fail
 it('known pending remains queued when observation is unavailable or identity mismatched', async () => {
   const f = await dispatchFrozenJudge(testDb(), {
     checkRateLimit: () => 1,
@@ -60,6 +64,8 @@ it('known pending remains queued when observation is unavailable or identity mis
     value: { run_id: f.runId, status: 'queued', result: null },
   });
 });
+// @invariant data: a terminal manual disposition permanently outranks a later engine SUCCESS and survives job_events pruning, and question activity reports the same manual truth
+// @fails-if consult the engine observation over the stored disposition, or lose the disposition when notifications are pruned; the 'failed' status, observe-not-called and 'manual' activity assertions fail
 it('terminal permanent manual survives retention, beats engine success and agrees with question activity', async () => {
   const f = await dispatchFrozenJudge(testDb(), {
     checkRateLimit: () => 1,
@@ -86,6 +92,8 @@ it('terminal permanent manual survives retention, beats engine success and agree
   expect(observe).not.toHaveBeenCalled();
   expect((await readJudgeQuestionActivity(testDb(), [f.id])).get(f.id)?.[0]?.kind).toBe('manual');
 });
+// @invariant concurrency: an uncommitted manual receipt is visible only inside its own transaction, and rollback restores the accepted pending row byte-identical
+// @fails-if leak the uncommitted disposition to a separate connection, or let the rollback drop or mutate the pending row; the 'pending' reads and toEqual(before) assertions fail
 it('caller Tx sees uncommitted manual; a separate observer sees pending; rollback preserves the accepted original', async () => {
   const f = await dispatchFrozenJudge(testDb(), {
     checkRateLimit: () => 1,
@@ -123,6 +131,8 @@ it('caller Tx sees uncommitted manual; a separate observer sees pending; rollbac
     before,
   );
 });
+// @invariant concurrency: the reader performs one bounded re-read of durable state after an engine observation, so a manual disposition committed mid-flight still wins
+// @fails-if return the pre-commit engine SUCCESS without the durable re-read; the found/'failed' assertion fails and observe stays at exactly one call
 it('one bounded re-read lets manual truth win an in-flight engine observation', async () => {
   const f = await dispatchFrozenJudge(testDb(), {
     checkRateLimit: () => 1,

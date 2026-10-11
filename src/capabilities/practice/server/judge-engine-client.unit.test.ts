@@ -91,6 +91,8 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs());
 
 describe('practice judge engine delivery contract', () => {
+  // @invariant concurrency: a delivery whose workflow identity, pending digest or ownership incarnation/epoch mismatches the reservation stays identity_unverified and can never be acknowledged on enqueue
+  // @fails-if accept the observed workflow on partial identity (e.g. id and state only) or acknowledge the enqueue; the unavailable result, enqueue rejection and destroy-count assertions fail
   it.each([
     ['name', { workflowName: 'other' }],
     ['queue', { queueName: 'other' }],
@@ -137,6 +139,8 @@ describe('practice judge engine delivery contract', () => {
     expect(engine.destroy).toHaveBeenCalledTimes(2);
   });
 
+  // @invariant data: absence is reported only when the engine lookup authoritatively verifies it; unsupported states and lookup failures stay unavailable, never absent
+  // @fails-if map an unsupported status or a thrown lookup to absent; the identity_unverified/backend_unavailable assertions fail and reconcile would authorize a duplicate send
   it('distinguishes authoritative absence, invalid state and lookup failure', async () => {
     expect(await observeJudgeDelivery(reservation())).toEqual({
       kind: 'absent',
@@ -155,6 +159,8 @@ describe('practice judge engine delivery contract', () => {
     expect(engine.destroy).toHaveBeenCalledTimes(3);
   });
 
+  // @invariant concurrency: a legacy pg-boss delivery is only 'present' when the full operational input — including the pending digest — matches the reservation, with the legacy state mapping preserved
+  // @fails-if compare job id and state without the full operational input so a foreign job or wrong digest reads as present; the identity_unverified and per-state mapping assertions fail
   it.each([
     ['active', 'PENDING'],
     ['completed', 'SUCCESS'],
@@ -194,6 +200,8 @@ describe('practice judge engine delivery contract', () => {
     },
   );
 
+  // @invariant data: an unmapped-run observation reports absent only after querying all three deterministic ids in both engines — a run may still live in a slot not yet checked
+  // @fails-if short-circuit after the first slot or query only one engine; the exact 3-job/3-workflow call-shape assertions fail and a live run could read as absent
   it('queries all three deterministic IDs in both engines before an unmapped absence', async () => {
     const runId = reservation().run_id;
     expect(await observeUnmappedJudgeRun(runId)).toEqual({
@@ -221,6 +229,8 @@ describe('practice judge engine delivery contract', () => {
     });
   });
 
+  // @invariant data: the engine inventory census enumerates every delivery page plus the reconcile tick and schedule, and its digest seal rejects any tampered or duplicated inventory
+  // @fails-if skip a page or the tick/schedule, or accept an inventory with a wrong digest/duplicate item/foreign fixed id; the 202-item, offset-shape, kind and seal-conflict/input-mismatch assertions fail
   it('censuses every page, reconcile tick and schedule, then validates its seal', async () => {
     const rows = Array.from({ length: 200 }, (_, i) => {
       const r = reservation();
