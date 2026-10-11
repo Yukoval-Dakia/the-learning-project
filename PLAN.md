@@ -1,11 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-10 17:10 JST：YUK-1388 第四批审查完成，最终报告见 `tlp-audit-artifacts/yuk1388/stage4/final-report.md`；功能波次 W0–W4 已登记 YUK-1404–1445（W0 优先 1404/1405/1445/981）。YUK-1402/1401 Done；YUK-1403 剩 32 个 migration-smoke 用例等 #1625。迁移线 run11 恢复重开状态见 NOW 的 YUK-1359。
+> Linear 是权威 tracker。2026-10-11：owner授权YUK-1403再清slop并加强case准入，YUK-1107恢复处理DBOS cron长尾；隔离两writer，保留调度/重启/回滚不变量，未宣称全量CI两分钟达标。
 
 ## NOW
 
 - **YUK-1388 / 第四批审查完成（2026-10-10）**：O1–O7 裁决、7 个 P0 根（含新增 M100 出题前自动可判 → YUK-1445）、100 根 / 828 子主张、W0–W4 五波，见最终报告 `tlp-audit-artifacts/yuk1388/stage4/final-report.md`（仓库外 artifact 目录）。V01/V02 独立审查 15 条发现全部接受并由 I03 修正。票保持 In Progress，等 owner 读报告并裁决是否清理 R03 写入 TEST Mem0 的 5 条合成危机记忆。
-- **YUK-1403 / 测试第二轮清理**：#1635（Rust parity 进 CI Gate、残留引用、unused 36→0）与 #1636（26 例）已合 main；剩 `tests/integration/migration-smoke.test.ts` 32 例/1093 行等 #1625 合并后删，依据 `tlp-audit-artifacts/yuk1388/yuk1403/case-inventory.jsonl`。
+- **YUK-1403 / 防回潮**：删10个普通配置/自证case、强化3处回执/版本断言；新增AST case准入并接CI。29unit/26DB、typecheck/lint/build与临时CLI负例通过，独立审查中。原migration-smoke32例仍等#1625，不能以本轮替代该收尾。
+- **YUK-1107 / cron长尾**：隔离lane `perf/yuk-1107-session-cron` 调查真实调度短周期；main基线两case683s，保持真实双scheduler/restart/rollback与未落定ledger保护。
 
 - **YUK-1358 / Start notes列表**：独占范围和验收见[notes计划](docs/planning/2026-10-09-yuk1358-start-notes-list.md)。保留查询校验、科目知识点解析、空集合语义及现有搜索/导航/视觉；不改note详情/presence/AI写，不把本切片当Notes整族完成。父50unit/18DB、R1 NONE和49RPC/原页面浏览器通过；98表/5序列窗口不变，PR1626已合main04232aaf10（exact9889 CI全绿）；父已fetch核main；[父证据](docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md)。useSubjects仍HTTP，完整迁移未完成。
 
