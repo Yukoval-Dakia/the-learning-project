@@ -556,8 +556,9 @@ it('observes real Timekeeper forwarding, native two-scheduler ticks/restart and 
   });
 
   const horizon = await reviewOrphanRollbackHorizon(phaseQueries);
+  // Untyped substring arguments select the regex overload instead of a position.
   const [expectedHorizon] = await db`select (greatest(c.phase_changed_at,
-    coalesce((select max(substring(workflow_uuid from ${'sched-prune_orphan_review_sessions-'.length + 1})::timestamptz)
+    coalesce((select max(substring(workflow_uuid from ${'sched-prune_orphan_review_sessions-'.length + 1}::integer)::timestamptz)
       from tlp_dbos.workflow_status where name = 'prune_orphan_review_sessions'), 'epoch'::timestamptz),
     coalesce((select max(tick_at) from review_orphan_tick where backend = 'dbos'), c.phase_changed_at))
     + interval '60 seconds') = ${horizon}::timestamptz as matches
