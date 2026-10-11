@@ -1,7 +1,11 @@
-import { eq } from 'drizzle-orm';
+import { createHash } from 'node:crypto';
+import { eq, inArray } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { activateSubmissionCandidate } from '@/capabilities/practice/server/judge/evaluate-submission';
+import { projectPracticeIssuance } from '@/core/schema/assessment';
+import type { FigureRefT } from '@/core/schema/structured_question';
 import {
+  assessment_issuance,
   assessment_submission,
   evaluation,
   evaluation_effective_head,
@@ -11,9 +15,12 @@ import {
   learning_session,
   mastery_state,
   material_fsrs_state,
+  question,
   question_block,
+  question_revision,
   source_asset,
 } from '@/db/schema';
+import { issuanceRowToContract, revisionRowToContract } from '@/kernel/records/assessment-issuance';
 import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publication';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { captureIngestionOriginal, enrollNativeCapture } from './assessment-capture';
@@ -105,6 +112,121 @@ async function admit(questionId: string) {
 }
 
 describe('native ingestion originals and reversible enrollment', () => {
+  // @invariant security: captured public figures exclude student work, unknown visibility, foreign crops and crops without verified asset metadata, while retaining a verified clean crop
+  // @fails-if capture publishes unfiltered block figures or loses the clean crop; persisted question/revision and public issuance assets differ from the owned clean fixture
+  it('publishes only verified clean owned crops while retaining the ingestion originals', async () => {
+    const db = testDb();
+    const input = await fixture();
+    const cropBytes = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADklEQVQImWP4DwYMEAoAU7oL9W/sIDEAAAAASUVORK5CYII=',
+      'base64',
+    );
+    const cropDigest = createHash('sha256').update(cropBytes).digest('hex');
+    await db.insert(source_asset).values(
+      ['capture-page-fig-0', 'foreign-page-fig-0'].map((id) => ({
+        id,
+        kind: 'image' as const,
+        storage_key: `figures/${id}.png`,
+        mime_type: 'image/png',
+        byte_size: cropBytes.length,
+        sha256: cropDigest,
+        created_at: now,
+      })),
+    );
+    const figure: FigureRefT = {
+      asset_id: 'capture-page-fig-0',
+      role: 'diagram',
+      source_page_index: 0,
+      source_bbox: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
+      attached_to_index: 'capture-part',
+      attach_confidence: 'manual',
+    };
+    const structured = input.block.structured;
+    if (!structured) throw new Error('missing fixture structure');
+    const blocks = await db
+      .insert(question_block)
+      .values([
+        {
+          ...input.block,
+          id: 'clean-block',
+          structured: { ...structured, student_answer_present: false },
+          figures: [
+            figure,
+            { ...figure, asset_id: 'foreign-page-fig-0' },
+            { ...figure, asset_id: 'capture-page-fig-1' },
+          ],
+        },
+        {
+          ...input.block,
+          id: 'student-block',
+          structured: {
+            ...structured,
+            student_answer_present: true,
+            extraction_evidence: {
+              handwriting: [{ text: 'private student answer', bbox: figure.source_bbox }],
+            },
+          },
+          figures: [figure],
+        },
+        { ...input.block, id: 'unknown-block', figures: [figure] },
+      ])
+      .returning();
+    const publicFigures = [];
+    for (const block of blocks) {
+      const capture = await captureIngestionOriginal(db, { ...input, block });
+      if (!capture) throw new Error(`missing capture for ${block.id}`);
+      const [capturedQuestion] = await db
+        .select()
+        .from(question)
+        .where(eq(question.id, capture.questionId));
+      const [frozen] = await db
+        .select({ issuance: assessment_issuance, revision: question_revision })
+        .from(assessment_issuance)
+        .innerJoin(
+          question_revision,
+          eq(question_revision.revision_id, assessment_issuance.revision_id),
+        )
+        .where(eq(assessment_issuance.issuance_id, capture.request.issuance_id));
+      if (!capturedQuestion || !frozen) throw new Error('missing persisted capture');
+      const dto = projectPracticeIssuance(
+        revisionRowToContract(frozen.revision),
+        issuanceRowToContract(frozen.issuance),
+      );
+      publicFigures.push({
+        block: block.id,
+        questionAssets: capturedQuestion.figures.map((item) => item.asset_id),
+        frozenAssets: frozen.revision.structure.materials
+          .filter((item) => item.kind === 'figure')
+          .map((item) => item.asset),
+        publicAssets: dto.materials
+          .filter((item) => item.kind === 'figure')
+          .map((item) => item.asset_id),
+      });
+    }
+    expect(publicFigures).toEqual([
+      {
+        block: 'clean-block',
+        questionAssets: ['capture-page-fig-0'],
+        frozenAssets: [{ asset_id: 'capture-page-fig-0', digest: cropDigest }],
+        publicAssets: ['capture-page-fig-0'],
+      },
+      { block: 'student-block', questionAssets: [], frozenAssets: [], publicAssets: [] },
+      { block: 'unknown-block', questionAssets: [], frozenAssets: [], publicAssets: [] },
+    ]);
+    expect(
+      await db
+        .select()
+        .from(question_block)
+        .where(
+          inArray(
+            question_block.id,
+            blocks.map((block) => block.id),
+          ),
+        )
+        .orderBy(question_block.id),
+    ).toEqual(blocks);
+  });
+
   it('admitted deterministic capture updates theta without FSRS, then retracts atomically and refuses late activation', async () => {
     const input = await fixture();
     const capture = await captureIngestionOriginal(testDb(), input);
