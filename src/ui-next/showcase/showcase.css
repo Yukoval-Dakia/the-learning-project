@@ -90,4 +90,166 @@
     display: grid;
     gap: var(--un-sp-3);
   }
+
+  /* Loft demos (YUK-1473): a small question stage with a banner that holds the mascot slot. */
+  & .un-showcase-stage {
+    display: grid;
+    min-height: 420px;
+    padding-bottom: var(--un-sp-5);
+    border-bottom: var(--un-hairline) solid var(--un-line);
+  }
+
+  & .un-showcase-banner {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--un-sp-6);
+    margin-bottom: var(--un-sp-5);
+  }
+
+  & .un-showcase-banner-text {
+    display: grid;
+    gap: var(--un-sp-2);
+  }
+
+  & .un-showcase-eyebrow {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-1);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .un-showcase-title {
+    font-family: var(--un-font-serif);
+    font-size: var(--un-fs-5);
+    font-weight: var(--un-fw-regular);
+    line-height: var(--un-lh-tight);
+    letter-spacing: var(--un-ls-tight);
+  }
+
+  & .un-showcase-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: var(--un-sp-3);
+  }
+
+  & .un-showcase-card {
+    display: grid;
+    justify-items: start;
+    gap: var(--un-sp-1);
+    width: 100%;
+    padding: var(--un-sp-4);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg);
+    box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
+    text-align: left;
+    transition: background-color var(--un-t-feedback) var(--un-ease-glide);
+  }
+
+  & .un-showcase-card:hover {
+    background: var(--un-bg-hover);
+  }
+
+  & .un-showcase-card-title {
+    font-family: var(--un-font-serif);
+    font-size: var(--un-fs-4);
+    line-height: var(--un-lh-tight);
+  }
+
+  & .un-showcase-steps {
+    display: grid;
+    gap: 2px;
+  }
+
+  & .un-showcase-step {
+    display: grid;
+    grid-template-columns: 22px minmax(0, 1fr) auto;
+    align-items: start;
+    gap: var(--un-sp-3);
+    margin-inline: calc(-1 * var(--un-sp-3));
+    padding: var(--un-sp-2) var(--un-sp-3);
+    border-radius: var(--un-r-2);
+    line-height: var(--un-lh-prose);
+    scroll-margin-block: var(--un-sp-8);
+  }
+
+  & .un-showcase-step-n {
+    padding-top: 3px;
+    color: var(--un-text-4);
+    font-size: var(--un-fs-1);
+    text-align: right;
+  }
+
+  & .un-showcase-thread {
+    display: flex;
+    flex-direction: column;
+    gap: var(--un-sp-4);
+  }
+
+  & .un-showcase-thread-item {
+    display: grid;
+  }
+
+  & .un-showcase-capture {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    max-width: 520px;
+    padding: 0 var(--un-sp-1) 0 var(--un-sp-3);
+    border-radius: var(--un-r-2);
+    background: var(--un-bg);
+    box-shadow: 0 0 0 var(--un-hairline) var(--un-line);
+  }
+
+  & .un-showcase-input {
+    flex: 1;
+    min-width: 0;
+    height: 44px;
+    border: 0;
+    background: transparent;
+    outline: none;
+  }
+
+  & .un-showcase-side-pocket {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    height: var(--un-h-control);
+    padding: 0 var(--un-sp-3);
+    color: var(--un-text-2);
+  }
+
+  & .un-showcase-side-icon {
+    display: inline-grid;
+    place-items: center;
+  }
+
+  & .un-showcase-side-count {
+    margin-left: auto;
+    color: var(--un-accent-strong);
+    font-size: var(--un-fs-1);
+  }
+
+  & .un-app[data-sidebar="collapsed"] .un-showcase-side-count {
+    opacity: 0;
+  }
+}
+
+@media (max-width: 720px) {
+  [data-ui-next] .un-showcase-banner {
+    position: relative;
+    display: block;
+  }
+
+  [data-ui-next] .un-showcase-banner .un-mascot-slot {
+    position: absolute;
+    top: calc(-1 * var(--un-sp-2));
+    right: calc(-1 * var(--un-sp-2));
+  }
+
+  [data-ui-next] .un-showcase-banner-text {
+    /* Room for the largest phone slot used here (84px), minus the slot's overhang. */
+    padding-right: calc(84px - var(--un-sp-2));
+  }
 }

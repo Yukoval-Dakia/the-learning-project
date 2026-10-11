@@ -1,9 +1,11 @@
-// Showcase for the ui-next base (YUK-1354). Local sample data only: no data fetching, no real
-// writes (I4). Mounting it on a route is the Start owner's call; this file only exports the view.
+// Showcase for the ui-next base (YUK-1354, loft language YUK-1473). Local sample data only: no
+// data fetching, no real writes (I4). Mounting it on a route is the Start owner's call; this file
+// only exports the view.
 import {
   BookOpen,
   Command,
   Home,
+  Inbox,
   Layers,
   MessageSquare,
   PanelLeft,
@@ -11,7 +13,9 @@ import {
   Plus,
   Search,
 } from 'lucide-react';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { CompanionStatus } from '../companion';
+import { MascotDock, type MascotMode } from '../mascot';
 import {
   Button,
   Chip,
@@ -33,7 +37,16 @@ import {
   type SheetSnap,
   TabBar,
   UiNextRoot,
+  useScrollCondense,
 } from '../shell';
+import {
+  CaptureDemo,
+  DemoThread,
+  MascotControls,
+  PracticeStage,
+  revealAnchor,
+  useDemoConversation,
+} from './LoftDemo';
 import './showcase.css';
 
 const SAMPLE_PARAGRAPHS = [
@@ -49,6 +62,21 @@ export interface ShowcaseProps {
 }
 
 export function Showcase({ theme }: ShowcaseProps) {
+  const [mascot, setMascot] = useState<MascotMode>('auto');
+  return (
+    <UiNextRoot theme={theme} mascot={mascot} className="un-showcase-root">
+      <ShowcaseBody mascot={mascot} onMascot={setMascot} />
+    </UiNextRoot>
+  );
+}
+
+function ShowcaseBody({
+  mascot,
+  onMascot,
+}: {
+  mascot: MascotMode;
+  onMascot: (mode: MascotMode) => void;
+}) {
   const [collapsed, setCollapsed] = useState(false);
   const [companionOpen, setCompanionOpen] = useState(true);
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -58,6 +86,15 @@ export function Showcase({ theme }: ShowcaseProps) {
   const [whyOpen, setWhyOpen] = useState(false);
   const [snap, setSnap] = useState<SheetSnap>('peek');
   const { toasts, push, dismiss } = useToaster();
+  const scrollRef = useRef<HTMLElement | null>(null);
+  const compact = useScrollCondense(scrollRef);
+  const conversation = useDemoConversation();
+
+  const openCompanion = () => {
+    setCompanionOpen(true);
+    setSnap((s) => (s === 'full' ? s : 'half'));
+  };
+  const onReveal = (anchor: string) => revealAnchor(anchor, () => setSnap('peek'));
 
   const commands: PaletteCommand[] = [
     {
@@ -93,6 +130,13 @@ export function Showcase({ theme }: ShowcaseProps) {
         <Search size={15} aria-hidden="true" />
         <span className="un-showcase-side-label">搜索或跳转</span>
       </Button>
+      <div className="un-showcase-side-item un-showcase-side-pocket">
+        <span className="un-showcase-side-icon" data-showcase-pocket>
+          <Inbox size={15} aria-hidden="true" />
+        </span>
+        <span className="un-showcase-side-label">收进来的</span>
+        <RollNumber value={count} className="un-showcase-side-count" />
+      </div>
     </nav>
   );
 
@@ -111,40 +155,46 @@ export function Showcase({ theme }: ShowcaseProps) {
       >
         <PanelRight size={14} aria-hidden="true" /> 学习伙伴
       </Button>
+      <MascotDock />
+    </>
+  );
+
+  const companionHeader = (close: () => void) => (
+    <>
+      <strong>学习伙伴</strong>
+      <CompanionStatus thinking={conversation.thinking} />
+      <span className="un-showcase-spacer" />
+      <IconButton label="收起学习伙伴" icon={<PanelRight size={16} />} onClick={close} />
     </>
   );
 
   const companionBody = (
     <div className="un-showcase-stack">
-      <p className="un-showcase-muted">
-        侧栏里的消息与输入框属于学习伙伴那一波，这里只放占位说明。
-      </p>
-      <Chip tone="accent">正在看：示例笔记</Chip>
+      <Chip tone="accent">正在看：椭圆综合题 · 第 (2) 问</Chip>
+      <DemoThread conversation={conversation} onReveal={onReveal} />
+      <Button
+        size="sm"
+        onClick={() => conversation.ask('那我应该怎么写单调性？')}
+        disabled={conversation.thinking}
+      >
+        再问一句（看回答从生成到记录）
+      </Button>
     </div>
   );
 
   return (
-    <UiNextRoot theme={theme} className="un-showcase-root">
+    <>
       <AppFrame
         sidebar={sidebar}
         sidebarCollapsed={collapsed}
         topbar={topbar}
+        scrollRef={scrollRef}
         companionOpen={companionOpen}
         companion={
           <CompanionPanel
             open={companionOpen}
             label="学习伙伴"
-            header={
-              <>
-                <strong>学习伙伴</strong>
-                <span className="un-showcase-spacer" />
-                <IconButton
-                  label="收起学习伙伴"
-                  icon={<PanelRight size={16} />}
-                  onClick={() => setCompanionOpen(false)}
-                />
-              </>
-            }
+            header={companionHeader(() => setCompanionOpen(false))}
           >
             {companionBody}
           </CompanionPanel>
@@ -156,12 +206,13 @@ export function Showcase({ theme }: ShowcaseProps) {
               snap={snap}
               onSnapChange={setSnap}
               bottomInset={86}
-              header={<strong>学习伙伴</strong>}
+              header={companionHeader(() => setSnap('peek'))}
             >
               {companionBody}
             </BottomSheet>
             <TabBar
               label="示例导航"
+              compact={compact}
               hidden={snap === 'half' || snap === 'full'}
               items={[
                 {
@@ -193,6 +244,22 @@ export function Showcase({ theme }: ShowcaseProps) {
         }
       >
         <div className="un-showcase">
+          <PracticeStage conversation={conversation} openCompanion={openCompanion} />
+
+          <section className="un-showcase-section" aria-labelledby="un-sc-mascot">
+            <h2 id="un-sc-mascot" className="un-showcase-h">
+              吉祥物
+            </h2>
+            <MascotControls mode={mascot} onMode={onMascot} />
+          </section>
+
+          <section className="un-showcase-section" aria-labelledby="un-sc-capture">
+            <h2 id="un-sc-capture" className="un-showcase-h">
+              记一下（飞进“收进来的”，手机上飞进“记一下”）
+            </h2>
+            <CaptureDemo onLanded={() => setCount((n) => n + 1)} />
+          </section>
+
           <section className="un-showcase-section" aria-labelledby="un-sc-buttons">
             <h2 id="un-sc-buttons" className="un-showcase-h">
               按钮
@@ -309,6 +376,6 @@ export function Showcase({ theme }: ShowcaseProps) {
         commands={commands}
       />
       <Toaster toasts={toasts} dismiss={dismiss} />
-    </UiNextRoot>
+    </>
   );
 }
