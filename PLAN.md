@@ -1,12 +1,12 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-11：YUK-1107 优先修 main CI P1：cron substring 起始位置误选正则重载，migration unavailable-primary 代理重连卡 PENDING。隔离小 PR 保留产品和原断言，审查/运行待验；完整≤120秒目标仍进行中，1691远端fc失败195秒，局部b652提速checkpoint暂停。
+> Linear 是权威 tracker。2026-10-11：YUK-1107再优先解阻main：review cron位置36误选regexsubstring，新最小显式integer修复与DBOS同类扫描，review/本地/CI待验。1696已合a213且23PASS/完整CI绿，生产风险YUK-1481；提速隔离96d22a57d暂停，成熟head须连续3次完整CI绿，不占产品窗口。
 
 ## NOW
 
 - **YUK-1404 / native03 题图修复候选**：PR1657 figure-only源码与前瞻公开输入过滤完成；55个原始题块离线重放无跨题绑定，四项隐私不变量与Node24静态构建通过。历史block/source/revision不改，1658 kind未复制。crop未登记SHA与旧visibility未知，公开图继续withheld，不称完整交付。[证据与交接](docs/planning/2026-10-11-yuk1404-native03-figure-repair.md)。
 
-- **YUK-1107 / main CI回归优先**：父d0c4657a独占 tlp-yuk1107-main-ci-regressions-20261011 / fix/yuk-1107-session-ci-regressions，base135bb18e6d；cron horizon 查询显式 integer 位置，migration 故障代理关闭监听并等待真实 failure，全部原业务断言保留。初版R1 NONE/cron2PASS，migration首outage客户端未捕获socket.write(null)，23例9PASS14FAIL；原窗口79.60秒token/parity释锁。R2指出多queuedSync/describeFirst P1，e84本机提前中止128.38秒token/parity释锁，无最终case计数；已按逐Q/Sync周期修并在既有outagecase加同连接2queuedSync断言，禁止第三审，新固定head23PASS/exactCI/回复resolve原R2线程待验；1691远端fc2626d Gate38134462539失败195秒，局部b652未push，120秒目标未达标；无runtime/锁。[回归证据](docs/planning/2026-10-11-yuk1107-main-ci-regressions.md)。
+- **YUK-1107 / review cron main解阻优先**：owner要求同位置36的22008故障先解阻；父隔离tree fix/yuk-1107-review-cron-position-cast，baseff2c9e229。git blame确认SQLoracle源自#1690 e178；全扫tests/dbos-*只2处SQLsubstring后cast，session已integer，唯一review缺口现加integer，原horizon max+60/H边界/ledger断言全保留。新独立review、DNS后批准的review1+session2共3cases、exactCI/matchhead待验；无runtime/锁。旧1696已合a213、fixed7c23PASS/完整CI234秒，R2已resolve、UI/功能已通知；生产RST风险单独YUK-1481。速度树96d22a57d仅本地checkpoint暂停、1691draft远端fc，backup另批；同head3连续全绿前不入main，120目标未达标。
 
 - **YUK-1107 / session cron已交付**：#1681合main56df7c09；控制时间验证边界，生产60秒保护/cron及严格ledger不变；R2无P0/P1，父修Drizzle初始化后exact cd0c45d CI38120469007全绿。两例PASS、文件34.564秒；实测跨分钟边界，YUK-1397修复交付。整套390秒，不核销120秒目标。[证据与限度](docs/planning/2026-10-11-yuk1107-cron-speed.md)。
 
