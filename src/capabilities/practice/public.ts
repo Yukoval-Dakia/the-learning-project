@@ -337,3 +337,24 @@ export { storeSourcedQuestionTool } from './server/tools/store-sourced-question'
 export { practiceTaskSpecs } from './task-public';
 export const submitReviewAnswer: typeof import('./server/review-operation').submitReviewAnswer =
   async (...args) => (await import('./server/review-operation')).submitReviewAnswer(...args);
+
+// YUK-1358 — stream typed operations：HTTP adapter（api/stream.ts）与 TanStack Start
+// live consumer 共用的 HTTP 无关 seam。lazy 透出同上方 submitReviewAnswer——stream-store
+// compose 链可达 AI runner SDK，不能静态进本 barrel 的 migrate-bundle 消费面。
+export type {
+  PracticeStreamRecomposeResult,
+  PracticeStreamUpdatedItem,
+  PracticeStreamViewItem,
+} from './server/stream-operations';
+
+type GetPracticeStream = typeof import('./server/stream-operations').getPracticeStream;
+type RecomposePracticeStream = typeof import('./server/stream-operations').recomposePracticeStream;
+type UpdatePracticeStreamItem =
+  typeof import('./server/stream-operations').updatePracticeStreamItem;
+
+export const getPracticeStream: GetPracticeStream = async (...args) =>
+  (await import('./server/stream-operations')).getPracticeStream(...args);
+export const recomposePracticeStream: RecomposePracticeStream = async (...args) =>
+  (await import('./server/stream-operations')).recomposePracticeStream(...args);
+export const updatePracticeStreamItem: UpdatePracticeStreamItem = async (...args) =>
+  (await import('./server/stream-operations')).updatePracticeStreamItem(...args);
