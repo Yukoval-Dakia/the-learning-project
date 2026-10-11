@@ -23,7 +23,7 @@ import {
 type SrcMeta = { label: string; tone: string; icon: string };
 
 const SRC_META: Record<StreamSource, SrcMeta> = {
-  decay: { label: '衰减复习', tone: 'info', icon: 'history' },
+  decay: { label: '到期复习', tone: 'info', icon: 'history' },
   variant: { label: '错题变式', tone: 'again', icon: 'mistakes' },
   new_check: { label: '新学自测', tone: 'good', icon: 'spark2' },
   paper: { label: '打包卷', tone: 'coral', icon: 'layers' },

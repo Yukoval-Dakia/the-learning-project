@@ -271,7 +271,7 @@ export const COARSE_OUTCOME_META: Record<
   correct: { label: '对', tone: 'good' },
   partial: { label: '部分对', tone: 'hard' },
   incorrect: { label: '错', tone: 'again' },
-  unsupported: { label: '无法判定', tone: 'hard' },
+  unsupported: { label: '暂时没法自动判', tone: 'hard' },
 };
 
 /** Render a frozen response without replacing native IDs or normalizing text. */
