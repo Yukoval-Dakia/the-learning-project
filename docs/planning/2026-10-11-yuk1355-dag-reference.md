@@ -491,7 +491,7 @@ round-trip" is corrected above and in the seam's doc comment.
 
 A real-PG scoped assertion is prepared in
 `tests/integration/item-prior-durable-member.db.test.ts` (applies, checks
-`row.b === Math.fround(evenMedian)` and `!== evenMedian`, re-verifies
+`Math.fround(row.b) === Math.fround(evenMedian)` and `!== evenMedian`, re-verifies
 idempotently, then supersedes a differing anchor) — prepared only, NOT run
 by this lane; the parent executes the DB partition.
 
@@ -526,3 +526,7 @@ candidate still always rejects; nothing registered; B's rejected
 `d78e3c43f` was never read or imported. This diff (`927a927ef` → next
 commit) awaits the parent-arranged single R2; this lane's R1 budget is spent
 and no third review is requested.
+
+## Per-rep stage final R2
+
+R2 on `3acf6be20eb162f8ec8b557317525ca7883e9de6` versus `927a927effc4364009823350c4e100b3c10a94ba` confirms the float4 P1 is resolved, with no new P0/P1 within scope. Parent independently ran 32 unit cases successfully. The actual Postgres test is still prepared, not run. This completes the per-rep stage R1/R2 budget; shared protocol integration is a separate substantive change and remains pending. No paid-effect or runtime acceptance is inferred.
