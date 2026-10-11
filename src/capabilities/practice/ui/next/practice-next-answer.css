@@ -1,0 +1,363 @@
+/* YUK-1473 — what the two new question-page layouts (「纸面」 paper, 「分栏卡」 focused) share:
+   worksheet numbering, the answer fields in loft type, the action bar's parts and the quiet save
+   note. Each layout's own shape lives in practice-next-paper.css / practice-next-focused.css.
+   The answer fields are the production response components (rs-*); inside these layouts they lose
+   their old page look (double frames, mono labels, old tokens). Semantic --un- tokens only (T1). */
+
+[data-ui-next] .un-pn:is([data-layout="paper"], [data-layout="focused"]) {
+  /* Width of the number column: question square and part rings line up in it. */
+  --un-pn-no: 26px;
+  --un-pn-gutter: calc(var(--un-pn-no) + var(--un-sp-3));
+  /* One written line in an answer field (two of the reading line height at --un-fs-3). */
+  --un-pn-line: 34px;
+
+  /* ── Worksheet numbering (owner 2026-10-11 16:44): a filled coral square for the question,
+     a thin coral ring for each part; the same numbers as the question text. ── */
+  & .un-pn-mainno {
+    display: inline-grid;
+    place-items: center;
+    min-width: var(--un-pn-no);
+    height: var(--un-pn-no);
+    padding: 0 6px;
+    box-sizing: border-box;
+    border-radius: 7px;
+    background: var(--un-accent-strong);
+    color: var(--un-text-on-accent);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-semibold);
+    line-height: 1;
+  }
+  & .un-pn-ring {
+    display: inline-grid;
+    place-items: center;
+    width: 22px;
+    height: 22px;
+    margin: 0 2px;
+    box-sizing: border-box;
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 1.5px var(--un-accent);
+    color: var(--un-accent-ink);
+    font-size: 12px;
+    font-weight: var(--un-fw-semibold);
+    line-height: 1;
+  }
+
+  /* ── Parts: number, then the sub-question, then its own answer right under it ── */
+  & .un-pn-vparts {
+    display: grid;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  & .un-pn-vpart {
+    display: grid;
+    grid-template-columns: var(--un-pn-no) minmax(0, 1fr) auto;
+    column-gap: var(--un-sp-3);
+    align-items: start;
+  }
+  & .un-pn-vpart > .un-pn-ring {
+    margin-top: 3px;
+  }
+  & .un-pn-vpart-body {
+    display: grid;
+    gap: var(--un-sp-2);
+    min-width: 0;
+  }
+  & .un-pn-vpart-side {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    min-height: 28px;
+  }
+  & .un-pn-vpart-side:empty {
+    display: none;
+  }
+
+  /* A shared stem given as a material starts the stem, so it needs no gap above it. */
+  & .un-pn-stem:not([data-lone]) > .un-pn-figures:first-child {
+    margin-top: 0;
+  }
+
+  & .un-pn-write {
+    display: grid;
+    gap: var(--un-sp-3);
+    min-width: 0;
+  }
+  & .un-pn-extras {
+    display: grid;
+    gap: var(--un-sp-3);
+  }
+  & .un-pn-extras > div:empty {
+    display: none;
+  }
+
+  /* ── The answer fields, in loft type. Spacing is owned by the layout, not the field. ── */
+  & .rs-slotfield,
+  & .rs-textwrap,
+  & .rs-opts {
+    margin-top: 0;
+  }
+  & .rs-slotfield-label {
+    margin-bottom: var(--un-sp-1);
+    font-family: var(--un-font-sans);
+    font-size: var(--un-fs-1);
+    letter-spacing: 0;
+    color: var(--un-text-3);
+  }
+  & .rs-textarea,
+  & .un-pn-textarea {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    resize: none;
+    field-sizing: content;
+    border: 0;
+    border-radius: 0;
+    color: var(--un-text-1);
+    font-family: var(--un-font-sans);
+    font-size: var(--un-fs-3);
+    line-height: var(--un-pn-line);
+    transition:
+      background-color var(--un-t-small) var(--un-ease-glide),
+      box-shadow var(--un-t-small) var(--un-ease-glide);
+  }
+  & .rs-textarea {
+    min-height: calc(2 * var(--un-pn-line));
+  }
+  /* A number blank is one short line. */
+  & .rs-textarea[inputmode="decimal"] {
+    min-height: var(--un-pn-line);
+    max-width: 14em;
+  }
+  & .rs-textarea::placeholder,
+  & .un-pn-textarea::placeholder {
+    color: var(--un-text-4);
+  }
+  & .rs-textarea:focus-visible,
+  & .un-pn-textarea:focus-visible {
+    outline: none;
+  }
+  & .rs-textarea:disabled {
+    color: var(--un-text-2);
+    -webkit-text-fill-color: var(--un-text-2);
+  }
+  & .rs-preview {
+    border: 0;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+  }
+
+  /* Choices: the letter sits in a small ring; picking fills it. */
+  & .rs-opts {
+    gap: var(--un-sp-1);
+  }
+  & .rs-opt {
+    align-items: center;
+    gap: var(--un-sp-3);
+    border: 0;
+    border-radius: var(--un-r-1);
+    padding: var(--un-sp-2) var(--un-sp-3);
+    background: transparent;
+    color: var(--un-text-1);
+    transition:
+      background-color var(--un-t-small) var(--un-ease-glide),
+      box-shadow var(--un-t-small) var(--un-ease-glide);
+  }
+  & .rs-opt:hover:not(:disabled) {
+    background: var(--un-bg-hover);
+  }
+  & .rs-opt.is-sel:hover:not(:disabled) {
+    background: var(--un-accent-soft);
+  }
+  & .rs-opt:focus-visible {
+    border: 0;
+    box-shadow: inset 0 0 0 1.5px var(--un-focus);
+  }
+  & .rs-opt-k {
+    display: inline-grid;
+    place-items: center;
+    flex: none;
+    width: 24px;
+    min-width: 24px;
+    height: 24px;
+    border-radius: 50%;
+    box-shadow: inset 0 0 0 1.5px var(--un-line-strong);
+    font-family: var(--un-font-sans);
+    font-size: 12px;
+    font-weight: var(--un-fw-semibold);
+    color: var(--un-text-2);
+    transition:
+      background-color var(--un-t-small) var(--un-ease-glide),
+      box-shadow var(--un-t-small) var(--un-ease-glide),
+      color var(--un-t-small) var(--un-ease-glide);
+  }
+  & .rs-opt-t {
+    font-size: var(--un-fs-3);
+    line-height: var(--un-lh-prose);
+    color: var(--un-text-1);
+  }
+  & .rs-opt-t p {
+    margin: 0;
+  }
+  & .rs-opt-box {
+    border-color: var(--un-line-strong);
+  }
+  & .rs-opt.is-sel {
+    border: 0;
+    background: var(--un-accent-soft);
+    box-shadow: none;
+  }
+  & .rs-opt.is-sel .rs-opt-k {
+    background: var(--un-accent-strong);
+    box-shadow: none;
+    color: var(--un-text-on-accent);
+  }
+  & .rs-opt.is-sel .rs-opt-box {
+    border-color: var(--un-accent-strong);
+    background: var(--un-accent-strong);
+    color: var(--un-text-on-accent);
+  }
+  /* After judging, the picked option takes the result's colour (only then, §6.4). */
+  & .rs-opt.is-right {
+    border: 0;
+    background: var(--un-positive-soft);
+    box-shadow: none;
+  }
+  & .rs-opt.is-right .rs-opt-k {
+    background: var(--un-positive);
+    box-shadow: none;
+    color: var(--un-text-on-accent);
+  }
+  & .rs-opt.is-wrong {
+    border: 0;
+    background: var(--un-caution-soft);
+    box-shadow: none;
+  }
+  & .rs-opt.is-wrong .rs-opt-k {
+    box-shadow: inset 0 0 0 1.5px var(--un-caution);
+    color: var(--un-caution);
+  }
+  & .rs-clear {
+    font-family: var(--un-font-sans);
+    font-size: var(--un-fs-1);
+    color: var(--un-text-3);
+  }
+
+  /* Attachments: small thumbnails on a tint, no frame inside a frame. */
+  & .rs-attach {
+    margin-top: 0;
+  }
+  & .rs-attach-item {
+    border: 0;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+  }
+  & .rs-attach-thumb {
+    border: 0;
+  }
+  & .rs-attach-file,
+  & .rs-attach-bind {
+    font-family: var(--un-font-sans);
+    font-size: var(--un-fs-1);
+    color: var(--un-text-2);
+  }
+  & .rs-attach-x {
+    border: 0;
+    background: var(--un-bg-raised);
+    box-shadow: 0 0 0 var(--un-hairline) var(--un-line-strong);
+    color: var(--un-text-3);
+  }
+  & .rs-ev-pending {
+    font-size: var(--un-fs-1);
+  }
+
+  /* The save state is a quiet note, not a chip. */
+  & .rs-save {
+    gap: var(--un-sp-1);
+    font-family: var(--un-font-sans);
+    font-size: var(--un-fs-1);
+    color: var(--un-text-4);
+    white-space: nowrap;
+  }
+  & .rs-save.is-error,
+  & .rs-save.is-conflict {
+    color: var(--un-caution);
+  }
+  & button.rs-save {
+    padding: 0;
+    border: 0;
+    background: none;
+    cursor: pointer;
+  }
+
+  /* ── Action bar parts: 提交 first, then the two tools ── */
+  & .un-pn-bar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-2) var(--un-sp-3);
+  }
+  & .un-pn-bar-main,
+  & .un-pn-bar-tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--un-sp-1) var(--un-sp-2);
+  }
+  & .un-pn-bar-tools .un-btn {
+    gap: 6px;
+    color: var(--un-text-2);
+  }
+  & .un-pn-bar-tools .un-btn[data-on] {
+    color: var(--un-accent-ink);
+    background: var(--un-accent-soft);
+  }
+  & .un-pn-submit {
+    min-width: 88px;
+  }
+
+  /* ── Result inside a layout: no box of its own; the layout places it ── */
+  & .un-pn-result {
+    padding: 0;
+    border-radius: 0;
+    box-shadow: none;
+  }
+  & .un-pn-result[data-tone="positive"] {
+    box-shadow: none;
+  }
+
+  /* ── 作答记录: a quiet timeline at the end ── */
+  & .un-pn-section:has(> .un-pn-history) {
+    gap: var(--un-sp-2);
+  }
+  & .un-pn-section:has(> .un-pn-history) > .un-pn-h2 {
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+    color: var(--un-text-3);
+  }
+  & .un-pn-history {
+    gap: var(--un-sp-2);
+  }
+  & .un-pn-history li {
+    font-size: var(--un-fs-1);
+  }
+
+  /* The tap blocks keep their own tiles but drop their outer frame (no frame in a frame). */
+  & .un-sb-text {
+    box-shadow: none;
+  }
+}
+
+@media (max-width: 720px) {
+  [data-ui-next] .un-pn:is([data-layout="paper"], [data-layout="focused"]) {
+    --un-pn-no: 24px;
+    --un-pn-gutter: calc(var(--un-pn-no) + var(--un-sp-2));
+
+    & .un-pn-vpart {
+      column-gap: var(--un-sp-2);
+    }
+    & .un-pn-result {
+      padding: 0;
+    }
+  }
+}
