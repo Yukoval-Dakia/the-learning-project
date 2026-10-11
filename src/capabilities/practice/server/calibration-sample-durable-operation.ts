@@ -188,51 +188,57 @@ export async function runCalibrationSampleOperation(
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Part 2 — frozen scheduled workset, per-item effect identity, staged
-// resume/apply seams (2026-10-11 continuation).
+// resume/apply seams (2026-10-11 fix round; supersedes f007ed528).
+//
+// f007ed528 was rejected by the parent as a safe stage implementation. Three
+// defects are fixed here; the earlier commit must NOT be cited as having had a
+// real domain apply or a no-double-send guarantee:
+//   1. its intent append returned void, so two processes reading the same
+//      empty history could both send — reservation is now an explicit
+//      compare-and-set verdict on the port (`reserveIntent`), and a lost
+//      reserve NEVER sends;
+//   2. its completed→applied transition was a bare marker append — echo
+//      equality proves receipt integrity, NOT that the domain effect landed.
+//      Application is now a REQUIRED `applyReceipt` seam returning trusted
+//      application evidence; only its success marks `applied`, and a failure
+//      keeps the record `completed` (recoverable, provider never re-invoked);
+//   3. its workset id bound anchor+cfg but not the frozen items — the effect
+//      revision now carries a freeze digest over the full ordered workset
+//      (each item bound by its input digest), and a replay presenting a
+//      different freeze under the same workset id is REJECTED whole.
 //
 // DELIVERY ≠ EFFECT. `CalibrationSampleTickSource` (Part 1) is scheduler
 // DELIVERY identity: which pg-boss job / DBOS workflow delivered the tick.
 // Nothing below takes it as input. Effect identity is the durable paid
 // effect's own coordinates — entity (which judge event), workset revision
-// (which frozen scheduled workset), model (which second lane), input digest
-// (which immutable re-judge input face) — so the same effect redelivered under
-// any tick keeps one identity, and any changed coordinate is a NEW effect that
-// must not silently inherit the old one's receipts.
+// (scheduled id + freeze digest), model (which second lane), input digest
+// (which immutable re-judge input face).
 //
-// LANE B DEPENDENCY (explicit, unresolved): `CalibrationStagedExecutionPort`
-// is the consumer-side seam for the shared durable paid-effect store owned by
-// lane B (`tlp-migration-receipt-reference`, task
-// migration-shared-durable-effects-implementation-20261011). It is PROVISIONAL
-// until the parent relays lane B's fixed typed protocol, at which point this
-// interface is replaced/aliased to it. There is NO implementation of the port
-// in this lane, no claim/fence/store code, and no production caller of the
-// staged executor: the retained pg-boss handler keeps Part 1 behavior
-// verbatim, and the DBOS candidate stays gate-only held. This seam is not live
-// admission and must not be presented as one.
-//
-// CORE RELEASE REQUEST (parent action, not done here — the core is readonly
-// for this lane): `judge-calibration-sample-core.ts` should export its
-// selection block (currently runJudgeCalibrationSample lines ~275–341:
-// window query → effective-verdict walk → action-filtered dedup → shuffle →
-// batchMax slice) as e.g. `selectJudgeCalibrationCandidates(db, cfg, now)`,
-// and expose the per-candidate re-judge loop body as a per-item function over
-// one frozen candidate. Reason: freezing the workset and executing per-item
-// MUST reuse the core's exact selection/domain math (no duplicated
-// selection/median/domain policy in this lane), and the staged `executeItem`
-// seam needs the core's real per-item re-judge + observation write as its only
-// real implementation. Until that release, `executeItem` has NO default — a
-// missing executor is a compile-time absence, never a manufactured
-// always-success adapter.
+// LANE B DEPENDENCY (explicit, unresolved): this port is the consumer-side
+// seam for the shared durable paid-effect store owned by lane B
+// (`tlp-migration-receipt-reference`, task
+// migration-shared-durable-effects-implementation-20261011), which is the
+// SOLE implementer of the shared atomic reserve/claim/fence protocol. The
+// atomicity REQUIRED of `reserveIntent` (exactly one concurrent winner per
+// effectId) is a store guarantee this lane does not and must not implement.
+// The interface is PROVISIONAL until the parent relays lane B's fixed typed
+// protocol, at which point it is replaced/aliased to it. Until that handoff
+// the staged executor has NO production caller: the retained pg-boss handler
+// keeps Part 1 behavior verbatim and the DBOS candidate stays gate-only held.
+// This seam is not live admission and must not be presented as one.
 //
 // Resume semantics implemented here (shared invariants, parent plan):
-//   • intent is persisted BEFORE the physical send; the exact immutable
-//     receipt follows; application follows the receipt.
+//   • the atomic reserve happens BEFORE the physical send; the exact
+//     immutable receipt follows; application follows the receipt through the
+//     required apply seam only.
 //   • unknown send/result outcomes are durable unresolved obligations — never
 //     resent automatically, including under a later tick/workset that
 //     re-selects the same entity (entity-key blocking), and never inferred
 //     complete from a step checkpoint or a domain row.
 //   • replay of a completed receipt compares its immutable identity echo
 //     before reuse; a mismatched receipt is held, not reused, not resent.
+//     Echo equality authorizes the APPLY attempt — it is never itself the
+//     domain application.
 //   • records are append-only; a changed revision never erases historical
 //     obligations — they keep appearing in every report until discharged.
 //   • no clock freshening: every record carries the frozen workset anchor, and
@@ -243,16 +249,14 @@ export async function runCalibrationSampleOperation(
  * (the capability must not import the server adapter; both literals must stay equal). */
 const CALIBRATION_SAMPLE_EFFECT_FAMILY = 'judge_calibration_sample';
 
-/** A frozen scheduled workset: the tick anchor clock plus the exact config the
- * gate approved when the workset was frozen. The anchor is the ONLY clock in
- * Part 2 — resumes never refresh it. */
+/** Scheduling identity of a workset: which tick (anchor) under which config.
+ * This alone is NOT the effect revision — it binds no items; the revision is
+ * scheduling id + freeze digest (see `CalibrationEffectIdentity`). */
 export interface CalibrationWorkSetDescriptor {
   readonly anchor: Date;
   readonly cfg: JudgeCalibrationConfig;
 }
 
-/** Workset revision identity: anchor + config digest. Two different scheduled
- * deliveries of the same anchor+config freeze the SAME workset. */
 export function computeCalibrationWorkSetId(desc: CalibrationWorkSetDescriptor): string {
   return `${CALIBRATION_SAMPLE_EFFECT_FAMILY}:workset:v1:${desc.anchor.toISOString()}:${canonicalHash(
     {
@@ -265,8 +269,9 @@ export function computeCalibrationWorkSetId(desc: CalibrationWorkSetDescriptor):
 }
 
 /** One frozen workset member: the immutable input face captured at freeze
- * time. Produced by the (parent-released) core selection seam; the payloads
- * are kept so the future per-item executor feeds the SAME face on resume. */
+ * time. Produced by the core selection seam (`selectJudgeCalibrationCandidates`,
+ * released to this lane by the feature owner); the payloads are kept so the
+ * per-item executor feeds the SAME face on resume. */
 export interface CalibrationWorkSetItem {
   readonly judgeEventId: string;
   readonly answerEventId: string;
@@ -291,15 +296,26 @@ export function computeCalibrationInputDigest(item: CalibrationWorkSetItem): str
   });
 }
 
+/** Freeze digest over the FULL ordered frozen workset — array order is part of
+ * the freeze (selection order is a fact of the freeze). Binds the whole
+ * workset and, through each item's input digest, every input in it. */
+export function computeCalibrationFreezeDigest(items: readonly CalibrationWorkSetItem[]): string {
+  return canonicalHash(items.map((item) => computeCalibrationInputDigest(item)));
+}
+
 /** Effect-side identity of ONE durable calibration re-judge. Deliberately
  * excludes scheduler delivery identity (jobId / workflowId / scheduledAt as
- * delivery): those fields appear nowhere in this type or its digest. */
+ * delivery): those fields appear nowhere in this type or its digest. The
+ * revision coordinate is `workSetId` + `freezeDigest` together — neither alone
+ * pins which frozen inputs the effect was planned against. */
 export interface CalibrationEffectIdentity {
   readonly family: typeof CALIBRATION_SAMPLE_EFFECT_FAMILY;
   /** business entity: the effective judge event being re-judged. */
   readonly judgeEventId: string;
-  /** workset revision: which frozen scheduled workset this effect belongs to. */
+  /** scheduling identity of the owning workset. */
   readonly workSetId: string;
+  /** freeze digest of the owning workset (binds the full frozen item set). */
+  readonly freezeDigest: string;
   /** the pinned second lane that will execute the re-judge. */
   readonly provider: string;
   readonly model: string;
@@ -309,6 +325,7 @@ export interface CalibrationEffectIdentity {
 
 export function computeCalibrationEffectIdentity(input: {
   workSetId: string;
+  freezeDigest: string;
   item: CalibrationWorkSetItem;
   cfg: JudgeCalibrationConfig;
 }): CalibrationEffectIdentity {
@@ -316,6 +333,7 @@ export function computeCalibrationEffectIdentity(input: {
     family: CALIBRATION_SAMPLE_EFFECT_FAMILY,
     judgeEventId: input.item.judgeEventId,
     workSetId: input.workSetId,
+    freezeDigest: input.freezeDigest,
     provider: input.cfg.rejudgeProvider,
     model: input.cfg.rejudgeModel,
     inputDigest: computeCalibrationInputDigest(input.item),
@@ -344,52 +362,118 @@ export interface CalibrationItemReceipt {
   readonly outcome: Record<string, unknown>;
 }
 
-export type CalibrationStagedEffectStage = 'intent' | 'sent_unknown' | 'completed' | 'applied';
+/** Trusted evidence that the domain application of a receipt landed (e.g. the
+ * written observation anchor). Produced ONLY by the apply seam; never
+ * manufactured by this module. */
+export interface CalibrationApplicationReceipt {
+  /** stable reference to the applied domain effect (future default: the
+   * observation action + anchored judge event). */
+  readonly domainRef: string;
+  /** true when the apply seam found the effect already applied (idempotent
+   * replay through the domain layer's own dedup). */
+  readonly idempotentReplay: boolean;
+  readonly detail?: Record<string, unknown>;
+}
+
+/** Why an executed item produced no observation row. Mirrors the core's
+ * per-item skip faces verbatim; `unsupported` is a PAID outcome that writes no
+ * row by policy (MF3②), the rest are pre-send face reconstructions. */
+export type CalibrationItemSkipClassification =
+  | 'missing_answer_event'
+  | 'missing_input'
+  | 'missing_image_refs'
+  | 'missing_question'
+  | 'unsupported';
+
+export type CalibrationStagedEffectStage =
+  | 'intent'
+  | 'sent_unknown'
+  | 'skipped'
+  | 'completed'
+  | 'applied';
 
 /** One append-only durable row. `receipt` is present exactly when the stage is
- * `completed` or `applied` and is immutable once written. `recordedAt` is
- * always the freezing workset's anchor — never a fresh clock. */
+ * `completed` or `applied`; `application` exactly when `applied`;
+ * `classification` exactly when `skipped`. All are immutable once written.
+ * `recordedAt` is always the freezing workset's anchor — never a fresh clock. */
 export interface CalibrationStagedEffectRecord {
   readonly effectId: string;
   readonly entityKey: string;
   readonly identity: CalibrationEffectIdentity;
   readonly stage: CalibrationStagedEffectStage;
   readonly receipt: CalibrationItemReceipt | null;
+  readonly application: CalibrationApplicationReceipt | null;
+  readonly classification: CalibrationItemSkipClassification | null;
   readonly recordedAt: string;
 }
 
+/** Verdict of the atomic intent reservation. `lost` means another process won
+ * the compare-and-set for this exact effectId and owns the send. */
+export type CalibrationReserveOutcome =
+  | { status: 'reserved' }
+  | { status: 'lost'; winner: CalibrationStagedEffectRecord };
+
 /** PROVISIONAL lane-B dependency (see the Part 2 header). The real durable
- * paid-effect store owned by lane B implements load/append; this lane only
- * consumes. Rows are immutable and append-only — this module never mutates,
- * rewrites or deletes a row, and never infers completion from row existence. */
+ * paid-effect store owned by lane B implements this; this lane only consumes.
+ * Rows are immutable and append-only — this module never mutates, rewrites or
+ * deletes a row, and never infers completion from row existence. */
 export interface CalibrationStagedExecutionPort {
   /** The family's FULL durable record stream in append (chronological) order,
    * across ALL workset revisions — resume must see old obligations. */
   loadFamilyRecords(): Promise<readonly CalibrationStagedEffectRecord[]>;
-  /** Append one immutable row. Store errors propagate (loud), never swallowed. */
+  /** Atomically reserve the intent to send one effect. MUST be a
+   * compare-and-set in the real store: exactly ONE concurrent caller wins per
+   * effectId; every other caller receives `lost` with the winning row. A
+   * void-returning append is FORBIDDEN here — it would let two processes read
+   * the same empty history and both send. Store errors propagate (loud). */
+  reserveIntent(record: CalibrationStagedEffectRecord): Promise<CalibrationReserveOutcome>;
+  /** Append one immutable OBSERVATION row (skip / receipt / application).
+   * These rows make no claim of exclusivity — exclusivity lives only in
+   * `reserveIntent`. */
   appendRecord(record: CalibrationStagedEffectRecord): Promise<void>;
 }
 
-/** The per-item physical send. The ONLY real future implementation is the
- * parent-released core per-item seam; there is deliberately NO default. */
+/** The per-item execution seam: EITHER a clean skip classification (no
+ * observation row, terminal for this effect) OR the sent effect's exact
+ * immutable receipt. Throws on failure (the orchestrator records the unknown
+ * obligation). The real implementation is the released core single-item seam. */
 export type ExecuteCalibrationItemFn = (
   item: CalibrationWorkSetItem,
   identity: CalibrationEffectIdentity,
-) => Promise<CalibrationItemReceipt>;
+) => Promise<CalibrationItemExecution>;
+
+export type CalibrationItemExecution =
+  | { kind: 'skipped'; classification: CalibrationItemSkipClassification }
+  | { kind: 'sent'; receipt: CalibrationItemReceipt };
+
+/** The REQUIRED domain-apply seam: apply an immutable receipt to the domain
+ * and return trusted application evidence. ONLY its success marks `applied`;
+ * a failure or throw leaves the record `completed` — recoverable on a later
+ * tick with the provider NEVER re-invoked. Echo equality authorizes this
+ * call; it is never itself the application. */
+export type ApplyCalibrationReceiptFn = (
+  receipt: CalibrationItemReceipt,
+  identity: CalibrationEffectIdentity,
+) => Promise<CalibrationApplicationReceipt>;
 
 export type CalibrationItemDispositionKind =
   | 'applied_fresh'
   | 'applied_from_receipt'
   | 'applied_replay'
+  | 'completed_apply_pending'
+  | 'skipped'
   | 'held_unknown_send'
   | 'held_receipt_mismatch'
   | 'held_blocked_by_open_obligation'
-  | 'held_duplicate_in_workset';
+  | 'held_duplicate_in_workset'
+  | 'held_workset_freeze_mismatch'
+  | 'reserved_by_other_process';
 
 export interface CalibrationStagedItemDisposition {
   readonly judgeEventId: string;
   readonly effectId: string;
   readonly kind: CalibrationItemDispositionKind;
+  readonly classification?: CalibrationItemSkipClassification;
 }
 
 /** An unresolved obligation visible in the report — persists and appears on
@@ -403,32 +487,61 @@ export interface CalibrationOpenObligation {
   readonly workSetId: string;
 }
 
+/** A `completed` record whose application has not succeeded yet — unfinished
+ * business visible on every tick; recovery re-applies from the receipt
+ * without touching the provider. */
+export interface CalibrationPendingApplication {
+  readonly effectId: string;
+  readonly judgeEventId: string;
+  readonly workSetId: string;
+}
+
 export interface CalibrationStagedExecutionCounts {
   appliedFresh: number;
   appliedFromReceipt: number;
   appliedReplay: number;
+  completedApplyPending: number;
+  skipped: number;
   heldUnknownSend: number;
   heldReceiptMismatch: number;
   heldBlockedByOpenObligation: number;
   heldDuplicateInWorkset: number;
+  heldWorksetFreezeMismatch: number;
+  reservedByOtherProcess: number;
+}
+
+export interface CalibrationWorkSetFreezeMismatch {
+  readonly workSetId: string;
+  readonly presentedFreezeDigest: string;
+  readonly recordedFreezeDigests: readonly string[];
 }
 
 export interface CalibrationStagedExecutionReport {
   readonly workSetId: string;
+  readonly freezeDigest: string;
   readonly anchor: string;
   readonly dispositions: readonly CalibrationStagedItemDisposition[];
   readonly counts: CalibrationStagedExecutionCounts;
   readonly openObligations: readonly CalibrationOpenObligation[];
+  readonly pendingApplications: readonly CalibrationPendingApplication[];
+  /** Present exactly when this workset id was replayed with a freeze digest
+   * that diverges from its recorded history — the whole workset was rejected:
+   * no reserve, no send, no append. */
+  readonly freezeMismatch: CalibrationWorkSetFreezeMismatch | null;
 }
 
 const DISPOSITION_COUNT_FIELD = {
   applied_fresh: 'appliedFresh',
   applied_from_receipt: 'appliedFromReceipt',
   applied_replay: 'appliedReplay',
+  completed_apply_pending: 'completedApplyPending',
+  skipped: 'skipped',
   held_unknown_send: 'heldUnknownSend',
   held_receipt_mismatch: 'heldReceiptMismatch',
   held_blocked_by_open_obligation: 'heldBlockedByOpenObligation',
   held_duplicate_in_workset: 'heldDuplicateInWorkset',
+  held_workset_freeze_mismatch: 'heldWorksetFreezeMismatch',
+  reserved_by_other_process: 'reservedByOtherProcess',
 } as const satisfies Record<CalibrationItemDispositionKind, keyof CalibrationStagedExecutionCounts>;
 
 function receiptEchoMatches(
@@ -451,6 +564,7 @@ export interface CalibrationStagedExecutionInput {
   readonly workSet: CalibrationStagedWorkSetInput;
   readonly port: CalibrationStagedExecutionPort;
   readonly executeItem: ExecuteCalibrationItemFn;
+  readonly applyReceipt: ApplyCalibrationReceiptFn;
 }
 
 export type CalibrationStagedOperationOutcome =
@@ -460,7 +574,7 @@ export type CalibrationStagedOperationOutcome =
 /** Gated staged resume/apply execution. Same kill switch and bare second-lane
  * pre-flight as the retained path (default OFF ⇒ zero port calls, zero sends).
  * Not wired to any backend: the DBOS candidate stays held until the parent
- * relays lane B's fixed protocol and releases the core seams. */
+ * relays lane B's fixed protocol. */
 export async function runCalibrationStagedOperation(
   deps: CalibrationSampleOperationDeps,
   input: CalibrationStagedExecutionInput,
@@ -471,6 +585,7 @@ export async function runCalibrationStagedOperation(
   }
   const cfg = gate.cfg;
   const workSetId = computeCalibrationWorkSetId({ anchor: input.workSet.anchor, cfg });
+  const freezeDigest = computeCalibrationFreezeDigest(input.workSet.items);
   const recordedAt = input.workSet.anchor.toISOString();
 
   // Latest row per effectId wins (append order = chronology); all rows stay in
@@ -488,26 +603,40 @@ export async function runCalibrationStagedOperation(
     appliedFresh: 0,
     appliedFromReceipt: 0,
     appliedReplay: 0,
+    completedApplyPending: 0,
+    skipped: 0,
     heldUnknownSend: 0,
     heldReceiptMismatch: 0,
     heldBlockedByOpenObligation: 0,
     heldDuplicateInWorkset: 0,
+    heldWorksetFreezeMismatch: 0,
+    reservedByOtherProcess: 0,
   };
   const dispositions: CalibrationStagedItemDisposition[] = [];
 
   // Phase R1 — finish pending applications for ANY revision: a `completed`
-  // row is a paid effect whose receipt exists; applying it never touches the
-  // provider. A receipt whose identity echo does not match its stored identity
-  // is held, never reused.
+  // row is a paid effect whose receipt exists; applying it goes ONLY through
+  // the required apply seam and never touches the provider. A receipt whose
+  // identity echo does not match its stored identity is held, never reused.
+  // An apply failure keeps the record completed (recoverable, no resend).
   const appliedFromReceipt = new Set<string>();
   const receiptMismatch = new Set<string>();
   for (const record of [...latest.values()]) {
     if (record.stage !== 'completed') continue;
-    if (receiptEchoMatches(record.receipt, record.identity)) {
-      await append({ ...record, stage: 'applied', recordedAt });
-      appliedFromReceipt.add(record.effectId);
-    } else {
+    if (!receiptEchoMatches(record.receipt, record.identity)) {
       receiptMismatch.add(record.effectId);
+      continue;
+    }
+    // echo equality authorizes the apply attempt — it is NOT the application
+    try {
+      const application = await input.applyReceipt(
+        record.receipt as CalibrationItemReceipt,
+        record.identity,
+      );
+      await append({ ...record, stage: 'applied', application, recordedAt });
+      appliedFromReceipt.add(record.effectId);
+    } catch {
+      // stays completed — a later tick retries the APPLICATION only
     }
   }
 
@@ -523,15 +652,139 @@ export async function runCalibrationStagedOperation(
     }
   }
 
+  // Freeze-mismatch rejection: the recorded freeze digests under this
+  // workset id are the accepted freezes. A later replay presenting a digest
+  // outside that set is corrupt — the WHOLE workset is rejected before any
+  // reserve or send.
+  const recordedFreezeDigests = [
+    ...new Set(
+      records
+        .filter((record) => record.identity.workSetId === workSetId)
+        .map((record) => record.identity.freezeDigest),
+    ),
+  ].sort();
+  const freezeMismatch: CalibrationWorkSetFreezeMismatch | null =
+    recordedFreezeDigests.length > 0 && !recordedFreezeDigests.includes(freezeDigest)
+      ? { workSetId, presentedFreezeDigest: freezeDigest, recordedFreezeDigests }
+      : null;
+
+  /** Fresh-effect pipeline: atomic reserve → execute → receipt → apply. A
+   * lost reserve sends and appends nothing (the winner's rows are the durable
+   * truth); an unknowable send becomes a durable unknown obligation; a clean
+   * skip is terminal; application happens ONLY through the required apply
+   * seam, and its failure keeps the record completed (recoverable, provider
+   * never re-invoked). */
+  const runFreshCalibrationEffect = async (
+    item: CalibrationWorkSetItem,
+    coords: { effectId: string; entityKey: string; identity: CalibrationEffectIdentity },
+  ): Promise<{
+    kind: CalibrationItemDispositionKind;
+    classification?: CalibrationItemSkipClassification;
+  }> => {
+    const reservation = await input.port.reserveIntent({
+      effectId: coords.effectId,
+      entityKey: coords.entityKey,
+      identity: coords.identity,
+      stage: 'intent',
+      receipt: null,
+      application: null,
+      classification: null,
+      recordedAt,
+    });
+    if (reservation.status === 'lost') return { kind: 'reserved_by_other_process' };
+    let execution: CalibrationItemExecution;
+    try {
+      execution = await input.executeItem(item, coords.identity);
+    } catch {
+      // After a won reserve, a failed or unknowable send can never be proven
+      // un-sent — record the unresolved obligation (per-item isolation kept:
+      // the caller continues with the next item).
+      await append({
+        effectId: coords.effectId,
+        entityKey: coords.entityKey,
+        identity: coords.identity,
+        stage: 'sent_unknown',
+        receipt: null,
+        application: null,
+        classification: null,
+        recordedAt,
+      });
+      return { kind: 'held_unknown_send' };
+    }
+    if (execution.kind === 'skipped') {
+      // Terminal for this effect: no observation row, no apply (the
+      // classification preserves WHY, including the paid-no-row `unsupported`
+      // face).
+      await append({
+        effectId: coords.effectId,
+        entityKey: coords.entityKey,
+        identity: coords.identity,
+        stage: 'skipped',
+        receipt: null,
+        application: null,
+        classification: execution.classification,
+        recordedAt,
+      });
+      return { kind: 'skipped', classification: execution.classification };
+    }
+    const receipt = execution.receipt;
+    if (!receiptEchoMatches(receipt, coords.identity)) {
+      // The send happened but the receipt does not prove THIS effect's
+      // outcome — durable unresolved obligation, never an auto-resend.
+      await append({
+        effectId: coords.effectId,
+        entityKey: coords.entityKey,
+        identity: coords.identity,
+        stage: 'sent_unknown',
+        receipt: null,
+        application: null,
+        classification: null,
+        recordedAt,
+      });
+      return { kind: 'held_unknown_send' };
+    }
+    await append({
+      effectId: coords.effectId,
+      entityKey: coords.entityKey,
+      identity: coords.identity,
+      stage: 'completed',
+      receipt,
+      application: null,
+      classification: null,
+      recordedAt,
+    });
+    try {
+      const application = await input.applyReceipt(receipt, coords.identity);
+      await append({
+        effectId: coords.effectId,
+        entityKey: coords.entityKey,
+        identity: coords.identity,
+        stage: 'applied',
+        receipt,
+        application,
+        classification: null,
+        recordedAt,
+      });
+      return { kind: 'applied_fresh' };
+    } catch {
+      // stays completed — application is recoverable, the provider is never
+      // re-invoked for it
+      return { kind: 'completed_apply_pending' };
+    }
+  };
+
   // Phase R2 — plan the frozen items.
   const seenEntityKeys = new Set<string>();
   for (const item of input.workSet.items) {
-    const identity = computeCalibrationEffectIdentity({ workSetId, item, cfg });
+    const identity = computeCalibrationEffectIdentity({ workSetId, freezeDigest, item, cfg });
     const effectId = computeCalibrationEffectId(identity);
     const entityKey = computeCalibrationEntityKey(item.judgeEventId);
 
     let kind: CalibrationItemDispositionKind;
-    if (seenEntityKeys.has(entityKey)) {
+    let classification: CalibrationItemSkipClassification | undefined;
+    if (freezeMismatch !== null) {
+      kind = 'held_workset_freeze_mismatch';
+    } else if (seenEntityKeys.has(entityKey)) {
       kind = 'held_duplicate_in_workset';
     } else {
       seenEntityKeys.add(entityKey);
@@ -543,64 +796,32 @@ export async function runCalibrationStagedOperation(
           kind = 'held_receipt_mismatch';
         } else if (record.stage === 'applied') {
           kind = 'applied_replay';
+        } else if (record.stage === 'completed') {
+          // apply already attempted (and failed) in R1 — recoverable, no resend
+          kind = 'completed_apply_pending';
+        } else if (record.stage === 'skipped') {
+          kind = 'skipped';
+          classification = record.classification ?? undefined;
         } else {
           kind = 'held_unknown_send';
         }
       } else if (blockedEntityKeys.has(entityKey)) {
         kind = 'held_blocked_by_open_obligation';
       } else {
-        // Persist intent BEFORE the physical send — the obligation exists
-        // before anything can fail invisibly.
-        await append({ effectId, entityKey, identity, stage: 'intent', receipt: null, recordedAt });
-        try {
-          const receipt = await input.executeItem(item, identity);
-          if (!receiptEchoMatches(receipt, identity)) {
-            // The send happened but the receipt does not prove THIS effect's
-            // outcome — durable unresolved obligation, never an auto-resend.
-            await append({
-              effectId,
-              entityKey,
-              identity,
-              stage: 'sent_unknown',
-              receipt: null,
-              recordedAt,
-            });
-            kind = 'held_unknown_send';
-          } else {
-            await append({
-              effectId,
-              entityKey,
-              identity,
-              stage: 'completed',
-              receipt,
-              recordedAt,
-            });
-            await append({ effectId, entityKey, identity, stage: 'applied', receipt, recordedAt });
-            kind = 'applied_fresh';
-          }
-        } catch {
-          // After a persisted intent, a failed or unknowable send can never be
-          // proven un-sent — record the unresolved obligation and keep going
-          // (per-item isolation preserved).
-          await append({
-            effectId,
-            entityKey,
-            identity,
-            stage: 'sent_unknown',
-            receipt: null,
-            recordedAt,
-          });
-          kind = 'held_unknown_send';
-        }
+        const fresh = await runFreshCalibrationEffect(item, { effectId, entityKey, identity });
+        kind = fresh.kind;
+        classification = fresh.classification;
       }
     }
-    dispositions.push({ judgeEventId: item.judgeEventId, effectId, kind });
+    dispositions.push({ judgeEventId: item.judgeEventId, effectId, kind, classification });
     counts[DISPOSITION_COUNT_FIELD[kind]] += 1;
   }
 
-  // Phase R3 — unresolved obligations, including those frozen under OTHER
-  // workset revisions: a changed revision must never erase them.
+  // Phase R3 — unresolved obligations and pending applications, including
+  // those frozen under OTHER workset revisions: a changed revision must never
+  // erase them.
   const openObligations: CalibrationOpenObligation[] = [];
+  const pendingApplications: CalibrationPendingApplication[] = [];
   for (const record of latest.values()) {
     if (record.stage === 'intent' || record.stage === 'sent_unknown') {
       openObligations.push({
@@ -618,11 +839,26 @@ export async function runCalibrationStagedOperation(
         stage: 'receipt_mismatch',
         workSetId: record.identity.workSetId,
       });
+    } else if (record.stage === 'completed') {
+      pendingApplications.push({
+        effectId: record.effectId,
+        judgeEventId: record.identity.judgeEventId,
+        workSetId: record.identity.workSetId,
+      });
     }
   }
 
   return {
     kind: 'staged',
-    report: { workSetId, anchor: recordedAt, dispositions, counts, openObligations },
+    report: {
+      workSetId,
+      freezeDigest,
+      anchor: recordedAt,
+      dispositions,
+      counts,
+      openObligations,
+      pendingApplications,
+      freezeMismatch,
+    },
   };
 }
