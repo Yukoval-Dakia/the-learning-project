@@ -305,11 +305,12 @@ function text(b: number, confidence: number): string {
 /** Overriding applyItemPrior to write into the in-memory hard-row store. */
 function wireCalibrationWriter() {
   applyItemPriorMock.mockImplementation(async (_db, input) => {
+    // Model PG float4 storage: real columns keep the float32 rounding.
     calibrationRows.push({
       question_id: input.questionId,
-      b: input.draft.b_logit,
-      bAnchor: input.draft.b_logit,
-      confidence: input.draft.confidence,
+      b: Math.fround(input.draft.b_logit),
+      bAnchor: Math.fround(input.draft.b_logit),
+      confidence: Math.fround(input.draft.confidence),
       source: input.source ?? 'llm_prior',
     });
   });

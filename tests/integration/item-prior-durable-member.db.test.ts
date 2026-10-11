@@ -4,6 +4,10 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import {
+  type ItemPriorStagedItem,
+  commitItemPriorStagedCalibration,
+} from '@/capabilities/practice/server/item-prior-durable-operation';
+import {
   dag_orchestration_node,
   dag_orchestration_run,
   item_calibration,
@@ -148,5 +152,51 @@ describe('item prior blocked candidate (DB)', () => {
     expect(await db.select().from(item_calibration)).toEqual([]);
     const [node] = await db.select().from(dag_orchestration_node);
     expect(node?.status).toBe('pending');
+  });
+});
+
+// Prepared real-PG float4 check for the application seam (R1 P1); NOT run by
+// this offline lane — the parent executes the DB partition. Real `real`
+// columns, real applyItemPrior write, no provider, no DBOS runtime.
+describe('item prior application float4 verification (DB, prepared)', () => {
+  function stagedFor(questionId: string, bLogit: number, confidence: number): ItemPriorStagedItem {
+    const draft = { b_logit: bLogit, confidence, reasoning: '真实 float4 存储往返断言' };
+    return {
+      questionId,
+      questionRevision: `rev_${questionId}`,
+      inputDigest: `digest_${questionId}`,
+      method: 'feature',
+      repOutcomes: [{ state: 'draft', draft }],
+      status: 'ready',
+      draft,
+      source: 'llm_prior',
+      heldReps: [],
+      pendingReps: [],
+    };
+  }
+
+  // @invariant grading: PG real (float4) legally shortens even-count medians — a fresh anchor must verify applied
+  // @fails-if the comparison uses strict double equality or a broad epsilon
+  it('applies, re-verifies and supersedes across real float4 columns', async () => {
+    await seedQuestion('q_f4_pg');
+    const evenMedian = (0.1 + 0.2) / 2; // double 0.15000000000000002
+    const staged = stagedFor('q_f4_pg', evenMedian, 1 / 3);
+
+    expect(await commitItemPriorStagedCalibration(db, staged)).toEqual({ status: 'applied' });
+    // Stored at float4 precision, not the double:
+    const [row] = await db
+      .select({ b: item_calibration.b, b_anchor: item_calibration.b_anchor })
+      .from(item_calibration)
+      .where(eq(item_calibration.question_id, 'q_f4_pg'));
+    expect(row?.b).toBe(Math.fround(evenMedian));
+    expect(row?.b).not.toBe(evenMedian);
+
+    // Idempotent replay from the persisted float4 row, no second write:
+    expect(await commitItemPriorStagedCalibration(db, staged)).toEqual({ status: 'applied' });
+
+    // A genuinely different anchor stays superseded at float4 precision:
+    const differing = stagedFor('q_f4_pg', 1.234568, 1 / 3);
+    const verification = await commitItemPriorStagedCalibration(db, differing);
+    expect(verification).toMatchObject({ status: 'superseded' });
   });
 });

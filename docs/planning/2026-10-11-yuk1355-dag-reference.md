@@ -394,8 +394,11 @@ nothing has been sent under any digest yet. The happy-path unit test asserts
 
 `applyItemPrior` is conflict-ignoring and returns void, so the old
 `return true` proved nothing. `commitItemPriorStagedCalibration` now reads
-the hard row back and compares b / b_anchor / confidence / source against
-the staged draft (exact double round-trip):
+the hard row back and compares it against the staged draft — numeric columns
+at their float4 stored representation (`Math.fround` on both sides; PG
+`real` legally shortens medians), `source` exactly (wording corrected in
+round 2; the round-1 text below claimed an exact double round-trip, which
+R1 disproved — see the round-2 section):
 
 - existing row matching the staged draft → `applied` (idempotent replay,
   no second write);
@@ -453,3 +456,73 @@ build.log     49494ab3eb68057fda31eeb11b29779566cb4e19414d26e639d206178a0f1195
 always-reject is untouched and nothing new is registered or booted. The
 provisional `ItemPriorRepEffectPort` remains the sole B integration point;
 B's rejected `d78e3c43f` was never read or imported.
+
+## 2026-10-11 round 2: float4 application comparison (R1 P1 fix)
+
+Independent R1 on `927a927ef` confirmed one P1, now fixed on this tree (the
+other three parent-review items were already cleared in round 1). B's next
+shared protocol is still unfixed; `d78e3c43f` remains not integrated and the
+blocked candidate still always rejects.
+
+### Root cause and fix
+
+`item_calibration.b / b_anchor / confidence` are PG `real` (float4, ~7
+significant digits). `stagedRowMatches` compared with strict double equality,
+so a legal even-count median like `(0.1 + 0.2) / 2` (double
+0.15000000000000002) or a high-precision LLM value such as 1.35792468 would
+read back shortened and misreport a freshly applied anchor as `superseded`.
+The comparison now happens at the stored representation: `float4Equals`
+applies `Math.fround` (float32) to both sides, null/NaN never match a finite
+intended value, and `source` stays an exact string compare. No epsilon — a
+genuinely different anchor (distinct at float4, e.g. 1.234567 vs 1.234568)
+still reports `superseded`. Schema, domain write values and production model
+calls are untouched. The round-1 document text claiming an "exact double
+round-trip" is corrected above and in the seam's doc comment.
+
+### Test additions (unit, offline)
+
+- even-count median + 1/3 confidence and an 8-digit high-precision value
+  verify `applied` across float4 storage (test writer mocks now store
+  `Math.fround(...)` to model PG `real`);
+- re-committing the same staged draft is idempotent at float4 precision with
+  exactly one write;
+- distinct-at-float4 values and null columns stay `superseded` (no epsilon
+  masking).
+
+A real-PG scoped assertion is prepared in
+`tests/integration/item-prior-durable-member.db.test.ts` (applies, checks
+`row.b === Math.fround(evenMedian)` and `!== evenMedian`, re-verifies
+idempotently, then supersedes a differing anchor) — prepared only, NOT run
+by this lane; the parent executes the DB partition.
+
+### Validation record (fresh, round 2)
+
+Same Node `24.19.0` / pnpm `11.13.1`; gates rerun after the float4 fix with
+sealed logs. 32 unit tests total (19 operation incl. 2 retained, 6 family
+incl. 3 blocked-candidate proofs, plus the float4 comparison cases within
+these files' counts).
+
+```text
+unit exit=0        2 files, 32 tests passed
+typecheck exit=0   both TypeScript projects (covers the prepared DB test file)
+lint exit=0        174 warnings (baseline level; owned files scoped-clean)
+build exit=0       Vite SPA, Start client/server, Hono server, worker, migrate
+```
+
+Logs under `/private/var/folders/bt/rcf5s7tx3s93g3dz0046y96w0000gn/T/opencode/tlp-yuk1355-reps-gates-r2/`.
+SHA-256:
+
+```text
+unit.log      e5ffbc6c8f759b0b1fb506f1ee4df6ca16fbe684787606489bde1a6869051872
+typecheck.log 36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6
+lint.log      78b5620468461422a722963c0bc49d43bc3fb5afdaf3f8d20bea63dc6afeedaf
+build.log     fb61cc6cce537fdae953328e7607b6115180fef8c141cada76efaaf043e604f6
+```
+
+`git diff --check` passed. Owned surface unchanged (five files plus the
+prepared DB test assertions inside the already-owned
+`tests/integration/item-prior-durable-member.db.test.ts`). The blocked
+candidate still always rejects; nothing registered; B's rejected
+`d78e3c43f` was never read or imported. This diff (`927a927ef` → next
+commit) awaits the parent-arranged single R2; this lane's R1 budget is spent
+and no third review is requested.

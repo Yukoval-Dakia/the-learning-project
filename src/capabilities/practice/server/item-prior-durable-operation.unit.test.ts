@@ -21,6 +21,7 @@ import {
   type ItemPriorRepIdentity,
   type ItemPriorRepReceipt,
   type ItemPriorRepRecord,
+  type ItemPriorStagedItem,
   commitItemPriorStagedCalibration,
   itemPriorRepIdentity,
   prepareItemPriorWork,
@@ -78,24 +79,26 @@ function text(b: number, confidence: number) {
   return JSON.stringify({ b_logit: b, confidence, reasoning: '嵌套分类讨论与边界检查' });
 }
 
-/** In-memory hard-row store the mocked applyItemPrior writes into. */
+/** In-memory hard-row store the mocked applyItemPrior writes into. Nullable
+ * columns model foreign/partial rows for superseded assertions. */
 let calibrationRows: Array<{
   question_id: string;
-  b: number;
-  bAnchor: number;
-  confidence: number;
-  source: string;
+  b: number | null;
+  bAnchor: number | null;
+  confidence: number | null;
+  source: string | null;
 }>;
 
 beforeEach(() => {
   vi.clearAllMocks();
   calibrationRows = [];
   vi.mocked(applyItemPrior).mockImplementation(async (_db, input) => {
+    // Model PG float4 storage: real columns keep the float32 rounding.
     calibrationRows.push({
       question_id: input.questionId,
-      b: input.draft.b_logit,
-      bAnchor: input.draft.b_logit,
-      confidence: input.draft.confidence,
+      b: Math.fround(input.draft.b_logit),
+      bAnchor: Math.fround(input.draft.b_logit),
+      confidence: Math.fround(input.draft.confidence),
       source: input.source ?? 'llm_prior',
     });
   });
@@ -640,5 +643,84 @@ describe('application verification seam', () => {
     );
     expect(error).toBeInstanceOf(ItemPriorApplicationError);
     expect(error).toMatchObject({ code: 'ITEM_PRIOR_APPLICATION', questionId: 'q_stage' });
+  });
+});
+
+describe('float4 application comparison', () => {
+  // The database() double's item_calibration branch does not filter by
+  // question_id, so each staged fixture keeps its own question id and each
+  // case keeps at most one row in the store.
+  function readyStaged(
+    questionId: string,
+    bLogit: number,
+    confidence: number,
+  ): ItemPriorStagedItem {
+    const draft = { b_logit: bLogit, confidence, reasoning: 'float4 精度断言' };
+    return {
+      questionId,
+      questionRevision: `rev_${questionId}`,
+      inputDigest: `digest_${questionId}`,
+      method: 'feature',
+      repOutcomes: [{ state: 'draft', draft }],
+      status: 'ready',
+      draft,
+      source: 'llm_prior',
+      heldReps: [],
+      pendingReps: [],
+    };
+  }
+
+  // @invariant grading: float4 columns legally shorten even-count medians and high-precision values
+  // @fails-if comparison uses strict double equality (fresh anchors misreport superseded) or a broad epsilon
+  it('applies an even-count median and high-precision values across float4 storage', async () => {
+    const evenMedian = (0.1 + 0.2) / 2; // double 0.15000000000000002
+    const staged = readyStaged('q_f4_even', evenMedian, 1 / 3); // 0.3333333333333333
+    expect(await commitItemPriorStagedCalibration(database([]), staged)).toEqual({
+      status: 'applied',
+    });
+    expect(calibrationRows[0]).toMatchObject({ b: Math.fround(evenMedian) });
+
+    calibrationRows.length = 0; // the double does not filter rows by question id
+    const highPrecision = readyStaged('q_f4_high', 1.35792468, 0.1234567);
+    expect(await commitItemPriorStagedCalibration(database([]), highPrecision)).toEqual({
+      status: 'applied',
+    });
+  });
+
+  // @invariant grading: re-committing the same staged draft is idempotent at float4 precision
+  // @fails-if replay after application reports superseded or writes a second row
+  it('re-verifies an already-persisted float4 row without writing again', async () => {
+    const staged = readyStaged('q_f4_replay', (0.1 + 0.2) / 2, 1 / 3);
+    expect(await commitItemPriorStagedCalibration(database([]), staged)).toEqual({
+      status: 'applied',
+    });
+    expect(await commitItemPriorStagedCalibration(database([]), staged)).toEqual({
+      status: 'applied',
+    });
+    expect(vi.mocked(applyItemPrior)).toHaveBeenCalledTimes(1);
+  });
+
+  // @invariant grading: values that differ beyond float4 representation are still superseded
+  // @fails-if the comparison is widened into an epsilon that masks a different anchor
+  it('keeps distinct anchors superseded without an epsilon', async () => {
+    const stored = readyStaged('q_f4_distinct', 1.234567, 0.4);
+    await commitItemPriorStagedCalibration(database([]), stored); // writes fround(1.234567)
+    const adjacent = readyStaged('q_f4_distinct', 1.234568, 0.4); // distinct at float4 (step ≈1.2e-7 at 1.23)
+    const verification = await commitItemPriorStagedCalibration(database([]), adjacent);
+    expect(verification).toMatchObject({ status: 'superseded' });
+
+    calibrationRows.length = 0;
+    calibrationRows.push({
+      question_id: 'q_f4_null',
+      b: null,
+      bAnchor: null,
+      confidence: null,
+      source: null,
+    });
+    const nullRow = await commitItemPriorStagedCalibration(
+      database([]),
+      readyStaged('q_f4_null', 0, 0.4),
+    );
+    expect(nullRow).toMatchObject({ status: 'superseded' }); // null never matches a finite draft
   });
 });

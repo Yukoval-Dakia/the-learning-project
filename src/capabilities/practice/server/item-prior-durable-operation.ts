@@ -610,6 +610,22 @@ export type ItemPriorApplicationVerification =
   /** Staged item is not ready — nothing to apply. */
   | { readonly status: 'not-applicable' };
 
+/**
+ * float4-storage equality (R1 P1 fix). `item_calibration.b/b_anchor/
+ * confidence` are PG `real` (float4, ~7 significant digits): a legal
+ * even-count median like (0.1+0.2)/2 or a high-precision LLM value
+ * round-trips shortened, so strict double equality would misreport a freshly
+ * applied anchor as superseded. Compare at the stored representation —
+ * Math.fround (float32) on both sides — never a broad epsilon, which would
+ * mask a genuinely different anchor. null / NaN never match a finite value.
+ */
+function float4Equals(stored: number | null, intended: number): boolean {
+  if (stored === null || !Number.isFinite(stored) || !Number.isFinite(intended)) {
+    return false;
+  }
+  return Math.fround(stored) === Math.fround(intended);
+}
+
 function stagedRowMatches(
   row: ItemPriorApplicationRowSnapshot,
   staged: ItemPriorStagedItem,
@@ -617,9 +633,9 @@ function stagedRowMatches(
   const draft = staged.draft;
   return (
     draft !== undefined &&
-    row.b === draft.b_logit &&
-    row.bAnchor === draft.b_logit &&
-    row.confidence === draft.confidence &&
+    float4Equals(row.b, draft.b_logit) &&
+    float4Equals(row.bAnchor, draft.b_logit) &&
+    float4Equals(row.confidence, draft.confidence) &&
     row.source === staged.source
   );
 }
@@ -644,7 +660,9 @@ async function readItemPriorHardRow(
  * Application seam with real verification (parent review 2026-10-11):
  * `applyItemPrior` is conflict-ignoring and returns void, so a bare `true`
  * proved nothing. This seam reads the hard row back and compares it against
- * the staged draft (b, b_anchor, confidence, source — exact double round-trip):
+ * the staged draft — numeric columns at their float4 stored representation
+ * (`Math.fround` on both sides; PG `real` legally shortens medians), `source`
+ * exactly:
  *
  * - existing row already matching → `applied` (idempotent replay of the same
  *   staged result);
