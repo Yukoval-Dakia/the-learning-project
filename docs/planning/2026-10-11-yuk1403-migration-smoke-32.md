@@ -10,4 +10,4 @@ Audit root: YUK-1403 的测试准入审计；源码依赖 #1625 已合入 `148cf
 
 GLM 与 SWE-2 的委派分别因额度失败，未写入源码；父级完成本次 AST 清理。依赖通过离线 frozen-lockfile、ignore-scripts 安装，未改变 lockfile。初次空套件脚本因 /tmp 相对 require 失败，没有修改文件；修正模块路径后成功。
 
-验证状态：单文件 Biome、typecheck、lint、build 均通过，日志在 `/tmp/yuk1403-smoke-{biome,typecheck,lint,build}.log`。DB/container/runtime/provider 未运行，独立审查和 exact-head CI 未完成。此测试清理不是 provider 验收；历史 429 与未知 pre-budget 费用不变。
+验证状态：单文件 Biome、typecheck、lint、build 均通过，日志在 `/tmp/yuk1403-smoke-{biome,typecheck,lint,build}.log`。DB/container/runtime/provider 未运行，独立 R1 在固定 `96dabd2546d875e8a182dd19dd58eba95cf1785a` 上为 NONE，逐项 AST 复核确认 32 项批准删除、33 项保留且其余结构相同。exact-head CI 尚未完成。此测试清理不是 provider 验收；历史 429 与未知 pre-budget 费用不变。
