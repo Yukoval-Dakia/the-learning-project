@@ -18,8 +18,8 @@
  * `figure_ids` on StructureNode. `preFigures` (sequence index + page_index) are
  * fed into the prompt so the VLM can self-report which figures belong to which
  * question. The result is surfaced as `figureAssignments` on StructureResult and
- * consumed by `assignFiguresFromVlm` in figure_attach.ts. The old Tencent-bbox
- * `assignFigures` heuristic is kept as a fallback (see figure_attach.ts).
+ * consumed by `assignFiguresFromVlm` in figure_attach.ts. OCR fallback uses only
+ * unambiguous same-page containment; uncertain crops stay unbound.
  */
 
 import { createId } from '@paralleldrive/cuid2';
@@ -47,7 +47,7 @@ export { StructureOutput, type StructureOutputT, StructureTaskError };
  * YUK-227 S3 Slice A — one VLM figure assignment: a pre-figure at `figure_index`
  * belongs to the question with `attached_to_question_id`.
  * `confidence` comes from the VLM's self-report context: 'high' when the VLM
- * explicitly assigned this figure via figure_ids, 'low' as fallback sentinel
+ * explicitly assigned this figure via figure_ids; 'low' denotes an uncertain claim
  * (not currently emitted here — the VLM always emits 'high' when it assigns).
  */
 export type FigureAssignment = {
@@ -183,45 +183,19 @@ function nodeToStructured(
   // Tencent fallback (all page 0 via ??0 placeholder).
   if (node.page_index != null) out.page_index = node.page_index;
 
-  // YUK-482 cut ④: carry the VLM student-work presence flag onto the structured
-  // node so detectStudentWork (auto-enroll.ts) can read it. Only set when truthy
-  // — absence keeps the structured tree byte-identical for nodes without student
-  // work (the field stays undefined, same as the pre-cut-④ shape).
-  if (node.student_answer_present) out.student_answer_present = true;
+  // Preserve explicit clean-pixel evidence for prospective public figures.
+  // Omitted/null remains unknown; true remains private student-work evidence.
+  if (node.student_answer_present != null) out.student_answer_present = node.student_answer_present;
 
-  // YUK-227 S3 Slice A: record figure_ids → question_id assignments while
-  // traversing the tree so the caller can build figureAssignments.
-  //
-  // R2-2: duplicate figure_index detection. When the VLM assigns the same
-  // figure_index to more than one node (e.g. both stem and sub claim the same
-  // figure), the conflict is ambiguous — picking either assignment would be
-  // wrong. We mark conflicting indices so assignFiguresFromVlm can discard
-  // them and let the geometric heuristic decide instead (consistent with the
-  // F1 conservative philosophy: uncertainty → geometric fallback).
-  //
-  // Implementation: push a sentinel assignment with attached_to_question_id=''
-  // for any figure_index that already appears in assignmentsOut. The consumer
-  // (assignFiguresFromVlm) discards any assignment whose figure_index appears
-  // more than once regardless of content (it scans all assignments and collects
-  // conflicts). The sentinel makes the duplicate visible without requiring a
-  // two-pass approach here.
+  // Keep every figure_ids claim with its generated structured id. The attachment
+  // consumer withholds conflicting claims instead of inventing another owner.
   if (assignmentsOut && node.figure_ids && node.figure_ids.length > 0) {
-    const existingIndices = new Set(assignmentsOut.map((a) => a.figure_index));
     for (const figIdx of node.figure_ids) {
-      if (existingIndices.has(figIdx)) {
-        // Conflict: this figure_index was already claimed by another node.
-        // Push a second entry so assignFiguresFromVlm sees the duplicate and
-        // routes both to geometric fallback (R2-2).
-        console.warn(
-          `[nodeToStructured] figure_index=${figIdx} claimed by multiple VLM nodes; marking as conflict — geometric fallback will apply (R2-2)`,
-        );
-      }
       assignmentsOut.push({
         figure_index: figIdx,
         attached_to_question_id: id,
         confidence: 'high',
       });
-      existingIndices.add(figIdx);
     }
   }
 
@@ -246,12 +220,17 @@ export type RunStructureTaskParams = {
   /**
    * YUK-227 S3 Slice A — minimal per-figure info fed to the VLM so it can
    * self-report figure↔question assignments via figure_ids on StructureNode.
-   * index + page_index + position are passed (no bytes — the images are already
-   * present in the page images array). position is a 3×3 grid label derived from
-   * the figure's normalized bbox centre (F2: spatial anchor for same-page disambiguation).
+   * Index, page_index, position and bbox identify the crop (image bytes are already
+   * present in the page images array). The bbox distinguishes crops within the
+   * same 3×3 position label.
    * Absent = no figures to assign.
    */
-  preFigures?: Array<{ index: number; page_index: number; position: string }>;
+  preFigures?: Array<{
+    index: number;
+    page_index: number;
+    position: string;
+    bbox?: StructuredQuestionT['bbox'];
+  }>;
   /** Database bound by the production runner; tests may inject runTaskFn instead. */
   db?: Db;
   /** Inject in tests; defaults to the production runner. */
@@ -275,8 +254,8 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
     tencent_hint_md: params.tencentHintMd,
     page_count: params.pageCount,
     // YUK-227 S3 Slice A: pass minimal figure metadata so the VLM can self-report
-    // figure↔question assignments via figure_ids on StructureNode. Only index +
-    // page_index are passed; the actual image bytes are already in pageImages.
+    // figure↔question assignments via figure_ids on StructureNode. Coordinates
+    // identify the exact crop; the image bytes are already in pageImages.
     ...(params.preFigures && params.preFigures.length > 0 ? { figures: params.preFigures } : {}),
   });
 

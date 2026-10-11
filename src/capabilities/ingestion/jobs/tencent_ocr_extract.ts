@@ -469,8 +469,8 @@ async function processOneOcrJob(
     //     figure↔question assignments (figure_ids on StructureNode → figureAssignments
     //     on StructureResult). The VLM receives only sequence index + page_index;
     //     image bytes are already in pageImages. On VLM failure the fallback path
-    //     carries no figureAssignments and assignFiguresFromVlm degrades to the
-    //     geometric heuristic (zero regression on the OCR fallback path).
+    //     carries no figureAssignments; only unambiguous OCR containment can bind
+    //     a crop on the fallback path.
     //
     //     YUK-253: hint + fallback questions are computed per engine, then the VLM
     //     call below is engine-agnostic (runStructure only sees a string hint).
@@ -500,14 +500,13 @@ async function processOneOcrJob(
     // Build the minimal preFigures descriptor for the VLM prompt.
     //
     // YUK-227 S3 Slice A (F2): include a 3×3 position label derived from the
-    // figure's normalised bbox centre so the VLM can distinguish multiple figures
-    // on the same page (e.g. "bot-left" vs "top-right"). No image bytes are sent —
-    // only the text anchor. The position label matches the figures[] description in
-    // the StructureTask system prompt.
+    // figure's normalised bbox centre, plus the exact bbox to distinguish crops
+    // within the same grid cell. Image bytes are already in pageImages.
     const preFiguresMeta = allPreFigures.map((f, i) => ({
       index: i,
       page_index: f.source_page_index,
       position: bboxCenterPosition(f.source_bbox),
+      bbox: f.source_bbox,
     }));
 
     let structure: StructureResult;
@@ -547,13 +546,8 @@ async function processOneOcrJob(
     }
     warnings.push(...structure.warnings);
 
-    // 11. Assign figures to questions.
-    //
-    //     YUK-227 S3 Slice A:
-    //     - VLM path: assignFiguresFromVlm — VLM assignments take priority;
-    //       any figure the VLM did not cover falls back to the geometric heuristic
-    //       (no figure is ever dropped — regression safety).
-    //     - Tencent fallback path: assignFigures geometric heuristic (unchanged).
+    // 11. Bind only evidenced ownership. Omitted/conflicting VLM claims and
+    //     ambiguous OCR containment remain source crops, outside question figures.
     let figureRefs: FigureRefT[];
     if (allPreFigures.length === 0) {
       figureRefs = [];
@@ -565,6 +559,12 @@ async function processOneOcrJob(
       );
     } else {
       figureRefs = assignFigures(allPreFigures, structure.questions);
+    }
+    const boundFigureIds = new Set(figureRefs.map((figure) => figure.asset_id));
+    for (const figure of allPreFigures) {
+      if (!boundFigureIds.has(figure.asset_id)) {
+        warnings.push(`Figure ${figure.asset_id} retained in source; assignment withheld`);
+      }
     }
 
     // 12. applyExtractionResult —— one question_block per top-level structured

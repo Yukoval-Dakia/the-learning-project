@@ -1,5 +1,7 @@
 # Per-question figure ownership salvage
 
+Current candidate: [native03 prospective repair](2026-10-11-yuk1404-native03-figure-repair.md). The current figure diff changes assignment and publication input filtering; it is no longer byte-identical to the original reviewed subset. The earlier delivery and review claims below describe the preserved historical candidate only. Parent owns review and runtime acceptance of this repair.
+
 Owner: feature backend thread mcp:9428d3bf-c4a0-4c7b-b39c-b295f1d734f8. Replaces the figure-binding portion of closed PR1637, immutable source b0257fe516f2e39c6e838aed8cf00464528b61b0. Fresh base is main78b1446ba.
 
 Extraction currently stores the entire document figure list on every question block. The existing assignment already identifies a structured question or one of its sub-questions. This patch preserves that assignment and stores only figures whose attached_to_index belongs to the current structured subtree. Figure bytes, provenance, assignment heuristics and document pages are unchanged. The helper has one live consumer in the existing extraction job.

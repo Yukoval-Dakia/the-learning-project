@@ -1,0 +1,817 @@
+diff --git a/src/capabilities/ingestion/jobs/tencent_ocr_extract.ts b/src/capabilities/ingestion/jobs/tencent_ocr_extract.ts
+index b8c85b4b4..836862212 100644
+--- a/src/capabilities/ingestion/jobs/tencent_ocr_extract.ts
++++ b/src/capabilities/ingestion/jobs/tencent_ocr_extract.ts
+@@ -6,7 +6,11 @@ import {
+   type IngestionExtractionProgressPayloadT,
+   writeExtractionProgress,
+ } from '@/capabilities/ingestion/server/events/extraction-progress';
+-import { assignFigures, assignFiguresFromVlm } from '@/capabilities/ingestion/server/figure_attach';
++import {
++  assignFigures,
++  assignFiguresFromVlm,
++  figuresForQuestion,
++} from '@/capabilities/ingestion/server/figure_attach';
+ // T-OC slice 2 (YUK-145, OC-1/OC-2): VLM StructureTask owns the structure tree;
+ // Tencent structure is demoted to a text hint. See
+ // docs/superpowers/plans/2026-05-30-yuk145-toc-slice2-lane.md.
+@@ -465,8 +469,8 @@ async function processOneOcrJob(
+     //     figure↔question assignments (figure_ids on StructureNode → figureAssignments
+     //     on StructureResult). The VLM receives only sequence index + page_index;
+     //     image bytes are already in pageImages. On VLM failure the fallback path
+-    //     carries no figureAssignments and assignFiguresFromVlm degrades to the
+-    //     geometric heuristic (zero regression on the OCR fallback path).
++    //     carries no figureAssignments; only unambiguous OCR containment can bind
++    //     a crop on the fallback path.
+     //
+     //     YUK-253: hint + fallback questions are computed per engine, then the VLM
+     //     call below is engine-agnostic (runStructure only sees a string hint).
+@@ -496,14 +500,13 @@ async function processOneOcrJob(
+     // Build the minimal preFigures descriptor for the VLM prompt.
+     //
+     // YUK-227 S3 Slice A (F2): include a 3×3 position label derived from the
+-    // figure's normalised bbox centre so the VLM can distinguish multiple figures
+-    // on the same page (e.g. "bot-left" vs "top-right"). No image bytes are sent —
+-    // only the text anchor. The position label matches the figures[] description in
+-    // the StructureTask system prompt.
++    // figure's normalised bbox centre, plus the exact bbox to distinguish crops
++    // within the same grid cell. Image bytes are already in pageImages.
+     const preFiguresMeta = allPreFigures.map((f, i) => ({
+       index: i,
+       page_index: f.source_page_index,
+       position: bboxCenterPosition(f.source_bbox),
++      bbox: f.source_bbox,
+     }));
+ 
+     let structure: StructureResult;
+@@ -543,13 +546,8 @@ async function processOneOcrJob(
+     }
+     warnings.push(...structure.warnings);
+ 
+-    // 11. Assign figures to questions.
+-    //
+-    //     YUK-227 S3 Slice A:
+-    //     - VLM path: assignFiguresFromVlm — VLM assignments take priority;
+-    //       any figure the VLM did not cover falls back to the geometric heuristic
+-    //       (no figure is ever dropped — regression safety).
+-    //     - Tencent fallback path: assignFigures geometric heuristic (unchanged).
++    // 11. Bind only evidenced ownership. Omitted/conflicting VLM claims and
++    //     ambiguous OCR containment remain source crops, outside question figures.
+     let figureRefs: FigureRefT[];
+     if (allPreFigures.length === 0) {
+       figureRefs = [];
+@@ -562,6 +560,12 @@ async function processOneOcrJob(
+     } else {
+       figureRefs = assignFigures(allPreFigures, structure.questions);
+     }
++    const boundFigureIds = new Set(figureRefs.map((figure) => figure.asset_id));
++    for (const figure of allPreFigures) {
++      if (!boundFigureIds.has(figure.asset_id)) {
++        warnings.push(`Figure ${figure.asset_id} retained in source; assignment withheld`);
++      }
++    }
+ 
+     // 12. applyExtractionResult —— one question_block per top-level structured
+     //     question. A cross-page stem is ONE block spanning its pages.
+@@ -606,7 +610,7 @@ async function processOneOcrJob(
+       }
+       return {
+         structured: q,
+-        figures: figureRefs,
++        figures: figuresForQuestion(q, figureRefs),
+         page_spans: [
+           {
+             page_index: rawPageIndex,
+diff --git a/src/capabilities/ingestion/server/assessment-capture.ts b/src/capabilities/ingestion/server/assessment-capture.ts
+index 3fcd52e85..3f30e9e3c 100644
+--- a/src/capabilities/ingestion/server/assessment-capture.ts
++++ b/src/capabilities/ingestion/server/assessment-capture.ts
+@@ -1,4 +1,4 @@
+-import { and, eq, sql } from 'drizzle-orm';
++import { and, eq, inArray, sql } from 'drizzle-orm';
+ import { canonicalHash } from '@/core/migration/canonical';
+ import type { ResponseSetT } from '@/core/schema/assessment';
+ import { structuredToPromptMarkdown } from '@/core/schema/structured_question';
+@@ -10,6 +10,7 @@ import {
+   question_block,
+   question_group_lifecycle,
+   question_revision,
++  source_asset,
+ } from '@/db/schema';
+ import { ApiError } from '@/kernel/http';
+ import { commitFormalAttempt, recordFormalAttemptCapture, saveSubmission } from '@/kernel/judge';
+@@ -20,6 +21,7 @@ import { publishQuestionGroupFromRow } from '@/kernel/records/assessment-publica
+ import { writeQuestionBlockLifecycleEvent } from '@/kernel/records/question-block-lifecycle-event';
+ import type { AutoEnrolledBlock } from './auto-enroll';
+ import { enrollCapturedBlock } from './enroll';
++import { figuresForQuestion } from './figure_attach';
+ 
+ type Block = typeof question_block.$inferSelect;
+ interface CaptureInput {
+@@ -83,6 +85,21 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
+         409,
+       );
+     if (!existing) {
++      const figureAssets = block.figures.length
++        ? await tx
++            .select({
++              id: source_asset.id,
++              storage_key: source_asset.storage_key,
++              sha256: source_asset.sha256,
++            })
++            .from(source_asset)
++            .where(
++              inArray(
++                source_asset.id,
++                block.figures.map((figure) => figure.asset_id),
++              ),
++            )
++        : [];
+       await tx.insert(question).values(
+         withAnswerClass({
+           id: questionId,
+@@ -92,7 +109,10 @@ export async function captureIngestionOriginal(db: Db, input: CaptureInput) {
+             : (block.extracted_prompt_md ?? ''),
+           reference_md: block.reference_md,
+           structured: block.structured,
+-          figures: block.figures,
++          figures: figuresForQuestion(block.structured, block.figures, {
++            sourceAssetIds: block.source_asset_ids,
++            assets: figureAssets,
++          }),
+           image_refs: block.image_refs,
+           knowledge_ids: input.knowledgeIds,
+           difficulty: input.difficulty,
+diff --git a/src/capabilities/ingestion/server/auto-enroll.ts b/src/capabilities/ingestion/server/auto-enroll.ts
+index 1ae0d2f6c..a8187fa58 100644
+--- a/src/capabilities/ingestion/server/auto-enroll.ts
++++ b/src/capabilities/ingestion/server/auto-enroll.ts
+@@ -10,6 +10,7 @@ import {
+   runColdStartBridge,
+ } from '@/capabilities/ingestion/server/cold-start-bridge';
+ import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
++import { figuresForQuestion } from '@/capabilities/ingestion/server/figure_attach';
+ import { createKnowledgeNamer } from '@/capabilities/ingestion/server/knowledge-namer';
+ import {
+   MistakeEnrollTaskError,
+@@ -42,7 +43,7 @@ import {
+ } from '@/core/schema/structured_question';
+ import type { TaggingOutputT } from '@/core/schema/tagging';
+ import type { Db } from '@/db/client';
+-import { knowledge, learning_session, question, question_block } from '@/db/schema';
++import { knowledge, learning_session, question, question_block, source_asset } from '@/db/schema';
+ import type { WriteEventInput } from '@/kernel/events';
+ /**
+  * WorkflowJudge auto-enroll path — T-OC slice 3 (YUK-145, OC-4 / OC-5).
+@@ -601,6 +602,21 @@ export async function runAutoEnrollForSession(
+       }
+ 
+       const questionId = createId();
++      const figureAssets = block.figures.length
++        ? await tx
++            .select({
++              id: source_asset.id,
++              storage_key: source_asset.storage_key,
++              sha256: source_asset.sha256,
++            })
++            .from(source_asset)
++            .where(
++              inArray(
++                source_asset.id,
++                block.figures.map((figure) => figure.asset_id),
++              ),
++            )
++        : [];
+       await tx.insert(question).values(
+         withAnswerClass({
+           id: questionId,
+@@ -615,7 +631,10 @@ export async function runAutoEnrollForSession(
+           difficulty: verdict.prefilled.difficulty,
+           source: sessionEntrypoint,
+           variant_depth: 0,
+-          figures: block.figures,
++          figures: figuresForQuestion(block.structured, block.figures, {
++            sourceAssetIds: block.source_asset_ids,
++            assets: figureAssets,
++          }),
+           image_refs: block.image_refs,
+           // Carry the structured tree only if prompt_md is regenerable from it
+           // (ADR-0002 revision invariant). questionMd is derived from structured,
+diff --git a/src/capabilities/ingestion/server/figure_attach.ts b/src/capabilities/ingestion/server/figure_attach.ts
+index 1c65493e3..341326eee 100644
+--- a/src/capabilities/ingestion/server/figure_attach.ts
++++ b/src/capabilities/ingestion/server/figure_attach.ts
+@@ -1,222 +1,124 @@
+ import type { BBoxT, FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
++import type { source_asset } from '@/db/schema';
+ import type { PreAttachFigure } from './crop';
+ import type { FigureAssignment } from './structure';
+ 
+-/**
+- * Figure 归属启发式（spec § 1.7.1 (a)）:
+- *
+- *   1. 空间包含：图的 bbox 完全在某题 bbox 内 → 该题为候选
+- *   2. 多候选取最小覆盖（最贴近父）→ attach_confidence='high'
+- *   3. 零候选取最近邻（中心距离最小）→ attach_confidence='low'
+- *   4. 兜底：归到 root（第一个 stem 或 standalone）+ 'low'
+- */
++type PublicFigureEvidence = {
++  sourceAssetIds: readonly string[];
++  assets: readonly Pick<typeof source_asset.$inferSelect, 'id' | 'storage_key' | 'sha256'>[];
++};
++
++/** Source ownership is retained on blocks; publication also needs verified crop metadata. */
++export function figuresForQuestion(
++  question: StructuredQuestionT | null,
++  figures: readonly FigureRefT[],
++  publicEvidence?: PublicFigureEvidence,
++): FigureRefT[] {
++  if (!question) return [];
++  const nodes = flattenQuestions([question]);
++  if (nodes.some(hasStudentWork)) return [];
++  if (
++    publicEvidence &&
++    nodes.some(
++      (node) =>
++        node.student_answer_present !== false &&
++        !(node.source === 'tencent_ocr' && node.extraction_evidence?.handwriting?.length === 0),
++    )
++  )
++    return [];
++  const questionIds = new Set(nodes.map((node) => node.id));
++  const assets = new Map(publicEvidence?.assets.map((asset) => [asset.id, asset]));
++  return figures.filter((figure) => {
++    if (figure.attach_confidence === 'low' || !questionIds.has(figure.attached_to_index))
++      return false;
++    if (!publicEvidence) return true;
++    // A clean question does not establish visibility of an entire source page.
++    if (bboxArea(figure.source_bbox) >= 1) return false;
++    const pageAssetId = publicEvidence.sourceAssetIds[figure.source_page_index];
++    const cropPrefix = `${pageAssetId}-fig-`;
++    const asset = assets.get(figure.asset_id);
++    return (
++      pageAssetId !== undefined &&
++      figure.asset_id.startsWith(cropPrefix) &&
++      /^\d+$/.test(figure.asset_id.slice(cropPrefix.length)) &&
++      asset?.storage_key === `figures/${figure.asset_id}.png` &&
++      /^[a-f0-9]{64}$/i.test(asset.sha256)
++    );
++  });
++}
++
++/** OCR fallback: only unique, innermost containment on the actual source page. */
+ export function assignFigures(
+   figures: PreAttachFigure[],
+   questions: StructuredQuestionT[],
+ ): FigureRefT[] {
+-  if (figures.length === 0) return [];
+-
+-  const allQs = flattenQuestions(questions);
+-  const root = questions[0];
+-  if (!root) {
+-    throw new Error('assignFigures: questions must contain at least one question');
+-  }
+-
+-  return figures.map((fig) => {
+-    // Page-gate (YUK-163): restrict candidates to questions on the figure's source
+-    // page. The Tencent multi-page path stamps page_index on every question (parser),
+-    // so a page-1 figure only competes for page-1 questions and can't win a page-0
+-    // question on normalized (0–1) bbox overlap. VLM / single-page trees carry no
+-    // page_index → samePageQs is empty → we use the full set, i.e. exactly the prior
+-    // behavior (no regression on the VLM happy path, where questions have no bbox and
+-    // every figure lands on root anyway).
+-    const samePageQs = allQs.filter((q) => q.page_index === fig.source_page_index);
+-    const scope = samePageQs.length > 0 ? samePageQs : allQs;
+-    const scopeRoot = samePageQs[0] ?? root;
+-
+-    const containing = scope.filter((q) => q.bbox && bboxContains(q.bbox, fig.source_bbox));
+-
+-    if (containing.length > 0) {
+-      const smallest = containing.reduce((min, q) =>
+-        // biome-ignore lint/style/noNonNullAssertion: bbox 在 containing 内必非空
+-        bboxArea(q.bbox!) < bboxArea(min.bbox!) ? q : min,
+-      );
+-      return {
+-        ...fig,
+-        attached_to_index: smallest.id,
+-        attach_confidence: 'high' as const,
+-      };
+-    }
+-
+-    // 找最近邻；若（同页/全局）没有任何带 bbox 的题，归 scope root
+-    const candidatesWithBbox = scope.filter((q) => q.bbox);
+-    if (candidatesWithBbox.length === 0) {
+-      return {
+-        ...fig,
+-        attached_to_index: scopeRoot.id,
+-        attach_confidence: 'low' as const,
+-      };
+-    }
+-
+-    const nearest = candidatesWithBbox.reduce((min, q) =>
+-      // biome-ignore lint/style/noNonNullAssertion: filter 已保证 bbox 非空
+-      bboxCenterDistance(q.bbox!, fig.source_bbox) < bboxCenterDistance(min.bbox!, fig.source_bbox)
+-        ? q
+-        : min,
++  const nodes = flattenQuestions(questions);
++  return figures.flatMap((figure): FigureRefT[] => {
++    if (hasPrivateSource(figure, nodes)) return [];
++    const containing = nodes.flatMap((node) =>
++      node.page_index === figure.source_page_index &&
++      node.source !== 'glm_ocr' &&
++      node.bbox &&
++      bboxArea(node.bbox) < 1 &&
++      bboxContains(node.bbox, figure.source_bbox)
++        ? [{ node, bbox: node.bbox }]
++        : [],
+     );
+-    return {
+-      ...fig,
+-      attached_to_index: nearest.id,
+-      attach_confidence: 'low' as const,
+-    };
++    const innermost = containing.filter((candidate) =>
++      containing.every((other) => bboxContains(other.bbox, candidate.bbox)),
++    );
++    const target = innermost.length === 1 ? innermost[0].node : undefined;
++    if (!target || nodes.filter((node) => node.id === target.id).length !== 1) return [];
++    return [{ ...figure, attached_to_index: target.id, attach_confidence: 'high' }];
+   });
+ }
+ 
+-// ---------- YUK-227 S3 Slice A — VLM-first figure assignment ----------
+-
+-/**
+- * Assign figures to questions using VLM-reported assignments as the primary
+- * signal, falling back to the geometric `assignFigures` heuristic for any
+- * figures the VLM did not cover or reported with low confidence.
+- *
+- * Safety contract (regression invariant):
+- *  - VLM covers a figure with confidence='high' AND target id exists in the
+- *    question tree AND no other node claimed the same figure_index → use VLM
+- *    assignment (attach_confidence='high').
+- *  - VLM reported confidence='low' → treat as "uncertain" and fall back to
+- *    geometric heuristic. The prompt (F1) instructs the VLM to only report
+- *    figure_ids when certain; low-confidence assignments are a signal that the
+- *    VLM guessed rather than determined. Geometric fallback is safer than
+- *    a low-confidence VLM guess that overrides it.
+- *  - VLM assigned the same figure_index to multiple nodes (conflict) → discard
+- *    the whole group and fall back to geometric (R2-2). Conflicting assignments
+- *    are ambiguous and overriding either choice would be wrong; geometric is
+- *    more conservative. console.warn logs the conflict for visibility.
+- *  - VLM did not cover a figure → geometric fallback, no figure dropped.
+- *  - VLM assignments is empty/undefined → identical to calling `assignFigures`
+- *    directly (zero regression on the Tencent fallback path).
+- *
+- * Output order contract (R2-1): the returned array is in the SAME ORDER as the
+- * input `preFigures` array. Callers must not assume position === figure_index
+- * but any code relying on the original preFigures order (e.g. block.figures[i]
+- * corresponds to preFigures[i]) is protected. Throws if the internal
+- * reconstruction leaves a gap (programming error, never normal operation).
+- *
+- * F1 semantic decision: only high-confidence VLM assignments are consumed;
+- * low-confidence ones go to geometric fallback. This aligns with the prompt
+- * change that asks the VLM to only report figure_ids when certain.
+- *
+- * F3 note: if VLM figure attribution is found to pollute structure quality in
+- * practice, this function remains safe — the VLM simply omits figure_ids and
+- * everything falls back to the geometric heuristic. Escalate to plan §6 F3 if
+- * attribution needs to be a separate task.
+- */
++/** VLM claims must name one existing node; omitted or conflicting claims stay unbound. */
+ export function assignFiguresFromVlm(
+   preFigures: PreAttachFigure[],
+   figureAssignments: FigureAssignment[] | undefined,
+   questions: StructuredQuestionT[],
+ ): FigureRefT[] {
+-  if (preFigures.length === 0) return [];
+-
+-  // Build a set of valid question ids (P3: validate assignment targets exist).
+-  const validQuestionIds = new Set(flattenQuestions(questions).map((q) => q.id));
+-
+-  // Build a lookup: figure_index → assignment, applying three filters:
+-  //  1. HIGH confidence only (F1): low-confidence → geometric fallback.
+-  //  2. Valid target question id (P3): hallucinated id → geometric fallback.
+-  //  3. No conflict (R2-2, refined in bot round-3): a repeated figure_index is
+-  //     only a conflict when it maps to a DIFFERENT question id — the VLM
+-  //     redundantly repeating the same (figure, question) pair is harmless and
+-  //     keeps the assignment. Diverging claims discard the whole group →
+-  //     geometric fallback. Conflicts are logged via console.warn.
+-  const conflictIndices = new Set<number>();
+-  const assignmentByIndex = new Map<number, FigureAssignment>();
+-
+-  for (const a of figureAssignments ?? []) {
+-    if (a.confidence !== 'high' || !validQuestionIds.has(a.attached_to_question_id)) {
+-      // Low confidence or invalid target — skip silently (will fall to geometric).
+-      continue;
+-    }
+-    const existing = assignmentByIndex.get(a.figure_index);
+-    if (existing) {
+-      if (existing.attached_to_question_id !== a.attached_to_question_id) {
+-        // Same figure claimed for different questions → real conflict.
+-        conflictIndices.add(a.figure_index);
+-      }
+-      // Same target → harmless duplicate; keep the existing mapping.
+-    } else if (!conflictIndices.has(a.figure_index)) {
+-      assignmentByIndex.set(a.figure_index, a);
+-    }
+-  }
+-
+-  // Remove conflicting indices from the lookup so they fall to geometric fallback.
+-  for (const ci of conflictIndices) {
+-    assignmentByIndex.delete(ci);
+-    console.warn(
+-      `[assignFiguresFromVlm] figure_index=${ci} was claimed by multiple VLM nodes; discarding all claims — falling back to geometric heuristic (R2-2)`,
+-    );
+-  }
+-
+-  // R2-1: reconstruct output in original preFigures order.
+-  // Figures going to geometric fallback are collected, run through assignFigures,
+-  // then re-inserted at their original positions so the output array is always
+-  // index-stable with respect to the input preFigures array.
+-  const geometricFigures: PreAttachFigure[] = [];
+-  const geometricOriginalPositions: number[] = [];
+-
+-  for (let i = 0; i < preFigures.length; i++) {
+-    if (!assignmentByIndex.has(i)) {
+-      geometricFigures.push(preFigures[i]);
+-      geometricOriginalPositions.push(i);
+-    }
+-  }
+-
+-  const geometricRefs: FigureRefT[] =
+-    geometricFigures.length > 0 ? assignFigures(geometricFigures, questions) : [];
+-
+-  // Build the output array in original preFigures order.
+-  const result: (FigureRefT | undefined)[] = new Array(preFigures.length);
+-
+-  // Place VLM-assigned figures at their original positions.
+-  for (let i = 0; i < preFigures.length; i++) {
+-    const assignment = assignmentByIndex.get(i);
+-    if (assignment) {
+-      result[i] = {
+-        ...preFigures[i],
+-        attached_to_index: assignment.attached_to_question_id,
+-        attach_confidence: assignment.confidence,
+-      };
+-    }
+-  }
+-
+-  // Place geometric-fallback figures at their original positions.
+-  for (let g = 0; g < geometricOriginalPositions.length; g++) {
+-    const pos = geometricOriginalPositions[g];
+-    result[pos] = geometricRefs[g];
+-  }
+-
+-  // Sanity check: no gaps (programming error if this fires).
+-  for (let i = 0; i < result.length; i++) {
+-    if (result[i] === undefined) {
+-      throw new Error(
+-        `assignFiguresFromVlm: internal error — result[${i}] is undefined (gap in reconstruction). ` +
+-          `preFigures.length=${preFigures.length}`,
+-      );
+-    }
+-  }
++  const nodes = flattenQuestions(questions);
++  return preFigures.flatMap((figure, index): FigureRefT[] => {
++    if (hasPrivateSource(figure, nodes)) return [];
++    const claims = (figureAssignments ?? []).filter((claim) => claim.figure_index === index);
++    const targets = new Set(claims.map((claim) => claim.attached_to_question_id));
++    const claim = claims[0];
++    if (!claim || targets.size !== 1 || claims.some((item) => item.confidence !== 'high'))
++      return [];
++    const matchingNodes = nodes.filter((node) => node.id === claim.attached_to_question_id);
++    if (matchingNodes.length !== 1 || hasStudentWork(matchingNodes[0])) return [];
++    return [
++      {
++        ...figure,
++        attached_to_index: claim.attached_to_question_id,
++        attach_confidence: 'high',
++      },
++    ];
++  });
++}
+ 
+-  return result as FigureRefT[];
++function flattenQuestions(questions: StructuredQuestionT[]): StructuredQuestionT[] {
++  return questions.flatMap((question) => [
++    question,
++    ...flattenQuestions(question.sub_questions ?? []),
++  ]);
+ }
+ 
+-// ---------- 几何 helpers ----------
++function hasStudentWork(question: StructuredQuestionT): boolean {
++  return (
++    question.student_answer_present === true ||
++    (question.extraction_evidence?.handwriting?.length ?? 0) > 0
++  );
++}
+ 
+-function flattenQuestions(qs: StructuredQuestionT[]): StructuredQuestionT[] {
+-  const out: StructuredQuestionT[] = [];
+-  for (const q of qs) {
+-    out.push(q);
+-    if (q.sub_questions) out.push(...flattenQuestions(q.sub_questions));
+-  }
+-  return out;
++function hasPrivateSource(figure: PreAttachFigure, nodes: StructuredQuestionT[]): boolean {
++  return nodes.some(
++    (node) =>
++      hasStudentWork(node) &&
++      (node.page_index === undefined || node.page_index === figure.source_page_index),
++  );
+ }
+ 
+ function bboxContains(outer: BBoxT, inner: BBoxT): boolean {
+@@ -228,16 +130,6 @@ function bboxContains(outer: BBoxT, inner: BBoxT): boolean {
+   );
+ }
+ 
+-function bboxArea(b: BBoxT): number {
+-  return b.width * b.height;
+-}
+-
+-function bboxCenter(b: BBoxT): { cx: number; cy: number } {
+-  return { cx: b.x + b.width / 2, cy: b.y + b.height / 2 };
+-}
+-
+-function bboxCenterDistance(a: BBoxT, b: BBoxT): number {
+-  const ca = bboxCenter(a);
+-  const cb = bboxCenter(b);
+-  return Math.hypot(ca.cx - cb.cx, ca.cy - cb.cy);
++function bboxArea(bbox: BBoxT): number {
++  return bbox.width * bbox.height;
+ }
+diff --git a/src/capabilities/ingestion/server/figure_attach.unit.test.ts b/src/capabilities/ingestion/server/figure_attach.unit.test.ts
+new file mode 100644
+index 000000000..4640a7d96
+--- /dev/null
++++ b/src/capabilities/ingestion/server/figure_attach.unit.test.ts
+@@ -0,0 +1,124 @@
++import { createHash } from 'node:crypto';
++import { describe, expect, it } from 'vitest';
++import type { FigureRefT, StructuredQuestionT } from '@/core/schema/structured_question';
++import { normalizeQuestionRowToContract } from '@/kernel/records/assessment-normalization';
++import { assignFiguresFromVlm, figuresForQuestion } from './figure_attach';
++
++const question: StructuredQuestionT = {
++  id: 'question',
++  role: 'standalone',
++  prompt_text: 'Read the printed diagram.',
++  page_index: 0,
++  source: 'vlm_structure',
++  student_answer_present: false,
++};
++const figure: FigureRefT = {
++  asset_id: 'page-fig-0',
++  role: 'diagram',
++  source_page_index: 0,
++  source_bbox: { x: 0.1, y: 0.1, width: 0.2, height: 0.2 },
++  attached_to_index: 'question',
++  attach_confidence: 'manual',
++};
++const digest = createHash('sha256').update('retained printed crop bytes').digest('hex');
++const asset = { id: figure.asset_id, storage_key: 'figures/page-fig-0.png', sha256: digest };
++
++function publicFigureAssets(node: StructuredQuestionT, assets: (typeof asset)[]) {
++  const contract = normalizeQuestionRowToContract({
++    id: 'group',
++    kind: 'short_answer',
++    prompt_md: node.prompt_text,
++    reference_md: null,
++    choices_md: null,
++    rubric_json: null,
++    judge_kind_override: null,
++    structured: node,
++    figures: figuresForQuestion(node, [figure], { sourceAssetIds: ['page'], assets }),
++    figureDigests: Object.fromEntries(assets.map((item) => [item.id, item.sha256])),
++  });
++  return contract.structure.materials
++    .filter((material) => material.kind === 'figure')
++    .map((material) => material.asset.asset_id);
++}
++
++describe('prospective ingestion figure privacy', () => {
++  // @invariant security: flagged student pixels never enter public figure materials, even after manual attachment; retained originals are unchanged
++  // @fails-if remove the student-work exclusion in figuresForQuestion; the normalizer emits page-fig-0 as a public figure
++  it('withholds VLM and OCR student-work evidence from prospective public materials', () => {
++    const originals = structuredClone(figure);
++    for (const node of [
++      { ...question, student_answer_present: true },
++      {
++        ...question,
++        role: 'stem' as const,
++        sub_questions: [
++          {
++            ...question,
++            id: 'child',
++            role: 'sub' as const,
++            extraction_evidence: { handwriting: [{ text: 'private', bbox: figure.source_bbox }] },
++          },
++        ],
++      },
++    ]) {
++      expect(publicFigureAssets(node, [asset])).toEqual([]);
++    }
++    expect(figure).toEqual(originals);
++  });
++
++  // @invariant security: unverified or foreign source bytes cannot be emitted as public figure assets; only the owned crop with verified metadata passes
++  // @fails-if bypass the crop ownership or digest metadata checks in figuresForQuestion; an unverified/foreign crop appears in public materials
++  it('requires verified crop metadata and the actual source-page asset', () => {
++    expect(publicFigureAssets(question, [])).toEqual([]);
++    expect(publicFigureAssets(question, [{ ...asset, sha256: 'unverified:page-fig-0' }])).toEqual(
++      [],
++    );
++    expect(
++      publicFigureAssets(question, [{ ...asset, storage_key: 'private/student-work.png' }]),
++    ).toEqual([]);
++    expect(publicFigureAssets(question, [asset])).toEqual(['page-fig-0']);
++    expect(
++      figuresForQuestion(question, [figure], { sourceAssetIds: ['another-page'], assets: [asset] }),
++    ).toEqual([]);
++    expect(
++      figuresForQuestion(
++        question,
++        [{ ...figure, source_bbox: { x: 0, y: 0, width: 1, height: 1 } }],
++        { sourceAssetIds: ['page'], assets: [asset] },
++      ),
++    ).toEqual([]);
++  });
++
++  // @invariant security: missing visibility evidence remains private; one clean node cannot certify unknown nodes in its captured question tree
++  // @fails-if remove the explicit clean-visibility check in figuresForQuestion; a verified crop on an unknown node enters public figure materials
++  it('withholds unknown visibility while permitting a verified clean crop', () => {
++    expect(publicFigureAssets({ ...question, student_answer_present: undefined }, [asset])).toEqual(
++      [],
++    );
++    expect(
++      publicFigureAssets(
++        {
++          ...question,
++          role: 'stem',
++          sub_questions: [
++            { ...question, id: 'child', role: 'sub', student_answer_present: undefined },
++          ],
++        },
++        [asset],
++      ),
++    ).toEqual([]);
++    expect(publicFigureAssets(question, [asset])).toEqual(['page-fig-0']);
++  });
++
++  // @invariant security: a VLM diagram claim on a page with student work cannot promote private pixels into another question's public figure input
++  // @fails-if remove hasPrivateSource from assignFiguresFromVlm; the private page crop binds to the clean-looking neighboring question
++  it('withholds a page crop when a neighboring node flags private student work', () => {
++    expect(
++      assignFiguresFromVlm(
++        [figure],
++        [{ figure_index: 0, attached_to_question_id: question.id, confidence: 'high' }],
++        [question, { ...question, id: 'neighbor', student_answer_present: true }],
++      ),
++    ).toEqual([]);
++  });
++});
+diff --git a/src/capabilities/ingestion/server/structure.ts b/src/capabilities/ingestion/server/structure.ts
+index 0560d98b0..f2336d454 100644
+--- a/src/capabilities/ingestion/server/structure.ts
++++ b/src/capabilities/ingestion/server/structure.ts
+@@ -18,8 +18,8 @@
+  * `figure_ids` on StructureNode. `preFigures` (sequence index + page_index) are
+  * fed into the prompt so the VLM can self-report which figures belong to which
+  * question. The result is surfaced as `figureAssignments` on StructureResult and
+- * consumed by `assignFiguresFromVlm` in figure_attach.ts. The old Tencent-bbox
+- * `assignFigures` heuristic is kept as a fallback (see figure_attach.ts).
++ * consumed by `assignFiguresFromVlm` in figure_attach.ts. OCR fallback uses only
++ * unambiguous same-page containment; uncertain crops stay unbound.
+  */
+ 
+ import { createId } from '@paralleldrive/cuid2';
+@@ -47,7 +47,7 @@ export { StructureOutput, type StructureOutputT, StructureTaskError };
+  * YUK-227 S3 Slice A — one VLM figure assignment: a pre-figure at `figure_index`
+  * belongs to the question with `attached_to_question_id`.
+  * `confidence` comes from the VLM's self-report context: 'high' when the VLM
+- * explicitly assigned this figure via figure_ids, 'low' as fallback sentinel
++ * explicitly assigned this figure via figure_ids; 'low' denotes an uncertain claim
+  * (not currently emitted here — the VLM always emits 'high' when it assigns).
+  */
+ export type FigureAssignment = {
+@@ -183,45 +183,19 @@ function nodeToStructured(
+   // Tencent fallback (all page 0 via ??0 placeholder).
+   if (node.page_index != null) out.page_index = node.page_index;
+ 
+-  // YUK-482 cut ④: carry the VLM student-work presence flag onto the structured
+-  // node so detectStudentWork (auto-enroll.ts) can read it. Only set when truthy
+-  // — absence keeps the structured tree byte-identical for nodes without student
+-  // work (the field stays undefined, same as the pre-cut-④ shape).
+-  if (node.student_answer_present) out.student_answer_present = true;
++  // Preserve explicit clean-pixel evidence for prospective public figures.
++  // Omitted/null remains unknown; true remains private student-work evidence.
++  if (node.student_answer_present != null) out.student_answer_present = node.student_answer_present;
+ 
+-  // YUK-227 S3 Slice A: record figure_ids → question_id assignments while
+-  // traversing the tree so the caller can build figureAssignments.
+-  //
+-  // R2-2: duplicate figure_index detection. When the VLM assigns the same
+-  // figure_index to more than one node (e.g. both stem and sub claim the same
+-  // figure), the conflict is ambiguous — picking either assignment would be
+-  // wrong. We mark conflicting indices so assignFiguresFromVlm can discard
+-  // them and let the geometric heuristic decide instead (consistent with the
+-  // F1 conservative philosophy: uncertainty → geometric fallback).
+-  //
+-  // Implementation: push a sentinel assignment with attached_to_question_id=''
+-  // for any figure_index that already appears in assignmentsOut. The consumer
+-  // (assignFiguresFromVlm) discards any assignment whose figure_index appears
+-  // more than once regardless of content (it scans all assignments and collects
+-  // conflicts). The sentinel makes the duplicate visible without requiring a
+-  // two-pass approach here.
++  // Keep every figure_ids claim with its generated structured id. The attachment
++  // consumer withholds conflicting claims instead of inventing another owner.
+   if (assignmentsOut && node.figure_ids && node.figure_ids.length > 0) {
+-    const existingIndices = new Set(assignmentsOut.map((a) => a.figure_index));
+     for (const figIdx of node.figure_ids) {
+-      if (existingIndices.has(figIdx)) {
+-        // Conflict: this figure_index was already claimed by another node.
+-        // Push a second entry so assignFiguresFromVlm sees the duplicate and
+-        // routes both to geometric fallback (R2-2).
+-        console.warn(
+-          `[nodeToStructured] figure_index=${figIdx} claimed by multiple VLM nodes; marking as conflict — geometric fallback will apply (R2-2)`,
+-        );
+-      }
+       assignmentsOut.push({
+         figure_index: figIdx,
+         attached_to_question_id: id,
+         confidence: 'high',
+       });
+-      existingIndices.add(figIdx);
+     }
+   }
+ 
+@@ -246,12 +220,17 @@ export type RunStructureTaskParams = {
+   /**
+    * YUK-227 S3 Slice A — minimal per-figure info fed to the VLM so it can
+    * self-report figure↔question assignments via figure_ids on StructureNode.
+-   * index + page_index + position are passed (no bytes — the images are already
+-   * present in the page images array). position is a 3×3 grid label derived from
+-   * the figure's normalized bbox centre (F2: spatial anchor for same-page disambiguation).
++   * Index, page_index, position and bbox identify the crop (image bytes are already
++   * present in the page images array). The bbox distinguishes crops within the
++   * same 3×3 position label.
+    * Absent = no figures to assign.
+    */
+-  preFigures?: Array<{ index: number; page_index: number; position: string }>;
++  preFigures?: Array<{
++    index: number;
++    page_index: number;
++    position: string;
++    bbox?: StructuredQuestionT['bbox'];
++  }>;
+   /** Database bound by the production runner; tests may inject runTaskFn instead. */
+   db?: Db;
+   /** Inject in tests; defaults to the production runner. */
+@@ -275,8 +254,8 @@ export async function runStructureTask(params: RunStructureTaskParams): Promise<
+     tencent_hint_md: params.tencentHintMd,
+     page_count: params.pageCount,
+     // YUK-227 S3 Slice A: pass minimal figure metadata so the VLM can self-report
+-    // figure↔question assignments via figure_ids on StructureNode. Only index +
+-    // page_index are passed; the actual image bytes are already in pageImages.
++    // figure↔question assignments via figure_ids on StructureNode. Coordinates
++    // identify the exact crop; the image bytes are already in pageImages.
+     ...(params.preFigures && params.preFigures.length > 0 ? { figures: params.preFigures } : {}),
+   });
+ 
+diff --git a/src/capabilities/ingestion/tasks/structure.ts b/src/capabilities/ingestion/tasks/structure.ts
+index b34ca9051..a9bd95fed 100644
+--- a/src/capabilities/ingestion/tasks/structure.ts
++++ b/src/capabilities/ingestion/tasks/structure.ts
+@@ -66,7 +66,7 @@ export function parseStructureOutput(text: string): StructureOutputT {
+ function buildStructurePrompt(profile: SubjectProfile): string {
+   return `你是${profile.displayName}试卷结构化助手（多模态）。输入：
+ - user message 里按页顺序附了 N 张试卷/作业页面图片（第 1 张 = page_index 0，依次类推）
+-- 一段文字 { tencent_hint_md, page_count[, figures] } —— tencent_hint_md 是腾讯字符级 OCR 的**文字提示**（已按页用 "=== page K ===" 分隔），仅作参考，**不是**结构真相；figures（若存在）是裁剪图列表 [{index, page_index, position}]，表示已从页面裁剪出的图片素材：index 是序号，page_index 是所在页，position 是归一化位置摘要（"top-left" / "top-center" / "top-right" / "mid-left" / "mid-center" / "mid-right" / "bot-left" / "bot-center" / "bot-right"，按图片中心点在页面 3×3 区域落点）
++- 一段文字 { tencent_hint_md, page_count[, figures] } —— tencent_hint_md 是腾讯字符级 OCR 的**文字提示**（已按页用 "=== page K ===" 分隔），仅作参考，**不是**结构真相；figures（若存在）是裁剪图列表 [{index, page_index, position, bbox}]：index 是整批裁剪图序号（不是题号），page_index 是所在页，bbox 是归一化裁剪范围 {x,y,width,height}，position 是页面 3×3 区域位置摘要。同页多张图须按 bbox 区分，不能只靠 position。题号 question_no 与 figure index 是不同身份。
+ 科目上下文：${profile.displayName}。${profile.languageStyle}
+ 
+ 任务：以**图片为准**、腾讯文字为辅，输出一棵**规范化的题目结构树**。你对结构有完全裁量权，可以覆盖腾讯文字 hint 暗示的任何切分。
+@@ -74,7 +74,7 @@ function buildStructurePrompt(profile: SubjectProfile): string {
+ 1. **跨页大题组装**：一道大题（passage / 阅读理解 / 完形 / 大题带多个小问）如果横跨多页，必须组装成**一个** stem 节点，它的 sub_questions 收齐所有页的小问。不要因为换页就把同一大题拆成两个顶层节点。
+ 2. **布局规范**：把题面、选项、答案规整到结构字段里；passage 进 stem 的 prompt_text，小问进 sub。
+ 3. 不抽取手写涂改 / 批改痕迹作为结构（那是作答证据，下游处理）。但要**判断每个节点上是否存在学生的手写作答 / 批改痕迹**：在该 StructureNode 上填 student_answer_present（true / false）。**绝不转写手写内容**——只报「有没有」这个布尔，像素留给下游判分（手写永远是像素，不做 OCR 转写）。整页都没有学生作答 → 全部省略或填 false。
+-4. **图片归属（仅当输入含 figures 字段时）**：根据页面图片判断每张裁剪图属于哪道题，在对应 StructureNode 上填写 figure_ids（裁剪图序号数组）。跨页大题的配图（包括图示、电路图、坐标图等）归到 stem 节点。同一页且视觉上**明确**属于某小问的图归到该 sub 节点。**只在判断确定时填 figure_ids**——拿不准的图省略（不要猜，留给几何兜底）。漏报比错报代价小：几何兜底一定能处理漏报，但 VLM 错误归属会覆盖兜底，下游无法纠正。position 字段（图的位置摘要）可辅助判断同页归属关系，但仍以图片视觉为准。
++4. **图片归属（仅当输入含 figures 字段时）**：按 page_index 和 bbox 对照页面图片，把确定属于题面的裁剪图 index 填在对应 StructureNode.figure_ids。跨页大题共享图归 stem；明确只属于某小问的图归该 sub。同一 index 只能由一个节点声明；不要把整页或整批图复制给每道题。学生手写作答、解题过程、批改痕迹不是公开题图，不填入 figure_ids。拿不准归属、裁剪内容或是否含学生作答时省略；运行时保留源图并 withheld，不猜首题/最近题。
+ 5. **数学公式定界**：prompt_text、options[].text 以及 sub_questions 题面里出现的数学公式，必须带明确的 LaTeX 定界符：行内公式用「$...$」，独立成行的展示公式用「$$...$$」。已带定界符的公式（$...$、$$...$$、\\(...\\)、\\[...\\]）原样保留，不要改写公式内容。代码片段（含 Python、缩进、反斜杠转义）与普通文字**不要**包进 $；拿不准是不是公式的文字保持原样，宁可不包也不要猜。answers / analysis 字段不适用本条。
+ 
+ 输出严格 JSON（不带 markdown 代码块包裹），shape 名 StructureOutput：
+diff --git a/vitest.shared.ts b/vitest.shared.ts
+index a9e4ae25f..4e93b52bb 100644
+--- a/vitest.shared.ts
++++ b/vitest.shared.ts
+@@ -35,6 +35,7 @@ export const fastTestInclude = [
+   'src/capabilities/copilot/server/tool-activity.unit.test.ts',
+   'src/capabilities/copilot/server/tool-result-snapshot.unit.test.ts',
+   'src/capabilities/ingestion/server/docx/route-classify.test.ts',
++  'src/capabilities/ingestion/server/figure_attach.unit.test.ts',
+   'src/capabilities/observability/api/backup-import.unit.test.ts',
+   'src/capabilities/practice/server/assessment/durable-attempt-dispatch.unit.test.ts',
+   'src/capabilities/practice/server/fsrs.unit.test.ts',
