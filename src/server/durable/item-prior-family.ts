@@ -23,8 +23,13 @@ import type { Db, Tx } from '@/db/client';
 import { waitForRunnableEpoch } from '@/server/contract-epoch';
 import {
   type ItemPriorDispatch,
+  type ItemPriorDispatchedRequest,
+  ItemPriorMemberIdentityError,
+  type ItemPriorMemberRequest,
   ItemPriorPaidEffectAdapter,
-  itemPriorDispatchSchema,
+  itemPriorDispatchedRequestSchema,
+  itemPriorMemberRequestSchema,
+  readItemPriorPgBossDelivery,
 } from './item-prior-paid-effect-adapter';
 import { readPaidEffectControl } from './paid-effect-control';
 import {
@@ -37,15 +42,15 @@ export const ITEM_PRIOR_MEMBER = 'item_prior_backfill';
 // The retained manifest declares dependsOn: []; this candidate is only that root.
 export const ITEM_PRIOR_UPSTREAMS: readonly string[] = [];
 
-export const itemPriorMemberRequestSchema = z.strictObject({
-  member: z.literal(ITEM_PRIOR_MEMBER),
-  dagRunId: z.string().min(1),
-  runDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'runDate must be YYYY-MM-DD'),
-  nodeId: z.string().min(1),
-  method: z.enum(['feature', 'llasa']).optional(),
-  reps: z.number().int().positive().max(9).optional(),
-});
-export type ItemPriorMemberRequest = z.infer<typeof itemPriorMemberRequestSchema>;
+export type {
+  ItemPriorDispatchedRequest,
+  ItemPriorMemberRequest,
+} from './item-prior-paid-effect-adapter';
+export {
+  ItemPriorMemberIdentityError,
+  itemPriorDispatchedRequestSchema,
+  itemPriorMemberRequestSchema,
+} from './item-prior-paid-effect-adapter';
 
 export interface ItemPriorAdmission {
   identity: Pick<ItemPriorMemberRequest, 'member' | 'dagRunId' | 'runDate' | 'nodeId'>;
@@ -61,8 +66,6 @@ export interface ItemPriorAdmission {
    */
   prepared: ItemPriorPreparedWork[];
 }
-
-export class ItemPriorMemberIdentityError extends Error {}
 
 export class ItemPriorDurabilityPrerequisiteError extends Error {
   readonly code = 'ITEM_PRIOR_DURABLE_PREREQUISITE';
@@ -86,12 +89,6 @@ const nodeRowSchema = z.object({
   boss_job_id: z.string().nullable(),
 });
 const bossJobSchema = z.object({ state: z.string() });
-const dispatchedBossJobSchema = bossJobSchema.extend({
-  id: z.string(),
-  name: z.string(),
-  data: z.unknown(),
-});
-
 async function verifyItemPriorMemberIdentity(
   tx: Tx,
   request: ItemPriorMemberRequest,
@@ -126,26 +123,8 @@ async function verifyItemPriorMemberIdentity(
           'Dispatched pg-boss job is not the node-bound original delivery',
         );
       }
-      const [rawJob] = await tx.execute(
-        sql`select id::text as id, name, state::text as state, data from pgboss.job
-          where id = ${dispatch.deliveryId}::uuid`,
-      );
-      if (!rawJob) {
-        throw new ItemPriorMemberIdentityError('The original node-bound pg-boss job is missing');
-      }
-      const job = dispatchedBossJobSchema.parse(rawJob);
-      const original = itemPriorDispatchedRequestSchema.safeParse(job.data);
-      if (
-        job.id !== dispatch.deliveryId ||
-        job.name !== ITEM_PRIOR_MEMBER ||
-        !original.success ||
-        !paidEffectJsonEquals(original.data, { ...request, dispatch })
-      ) {
-        throw new ItemPriorMemberIdentityError(
-          'Persisted pg-boss job differs from the original versioned DAG dispatch',
-        );
-      }
-      // The exact original owning job may be created/retry/active. Backend alone is never ownership.
+      await readItemPriorPgBossDelivery(tx, { ...request, dispatch }, 'read');
+      // Terminal jobs may recover receipts; reservation rechecks state under a job row lock.
     } else if (node.boss_job_id) {
       const [rawJob] = await tx.execute(
         sql`select state::text as state from pgboss.job where id = ${node.boss_job_id}::uuid`,
@@ -156,8 +135,8 @@ async function verifyItemPriorMemberIdentity(
         );
       }
     }
-    // Read-only snapshot check preserves the supplied generation. reservePaidEffect also
-    // enforces the shared control atomically before a send, including a concurrent switch.
+    // Read-only snapshot check preserves the supplied generation. The adapter's shared claim
+    // enforces control atomically before a send, including a concurrent switch.
     const control = await readPaidEffectControl(tx, ITEM_PRIOR_MEMBER);
     const admission = decidePaidEffectControlAdmission(control, dispatch);
     if (admission.kind === 'fenced') {
@@ -263,14 +242,6 @@ export function registerItemPriorFamilyWorkflow(db: Db) {
 }
 
 // Explicit versioned dispatch only. The old candidate and registration remain blocked.
-export const itemPriorDispatchedRequestSchema = itemPriorMemberRequestSchema
-  .extend({ dispatch: itemPriorDispatchSchema })
-  .refine((request) => request.dispatch.tickId === request.dagRunId, {
-    message: 'dispatch tickId must be the original DAG run ID',
-    path: ['dispatch', 'tickId'],
-  });
-export type ItemPriorDispatchedRequest = z.infer<typeof itemPriorDispatchedRequestSchema>;
-
 export interface ItemPriorDispatchedAdmission extends ItemPriorAdmission {
   readonly dispatch: ItemPriorDispatchedRequest['dispatch'];
 }
@@ -336,7 +307,7 @@ export async function runItemPriorDurableMemberExecution(
       'Recorded item-prior dispatch differs from original request',
     );
   }
-  const effects = new ItemPriorPaidEffectAdapter(deps.db, admission.dispatch);
+  const effects = new ItemPriorPaidEffectAdapter(deps.db, request);
   const items: ItemPriorStagedItem[] = [];
   const counts = { matched: 0, superseded: 0, held: 0, noAnchor: 0, incomplete: 0 };
   for (const work of admission.prepared) {

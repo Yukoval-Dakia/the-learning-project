@@ -1,4 +1,5 @@
 // Explicit family consumer of the fixed shared store. No registration or default cutover.
+import { sql } from 'drizzle-orm';
 import { z } from 'zod';
 import {
   ItemPriorApplicationError,
@@ -14,7 +15,8 @@ import {
   settleItemPriorStagedItem,
 } from '@/capabilities/practice/server/item-prior-durable-operation';
 import { ItemPriorDraft } from '@/core/schema/item_prior';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
+import { lockPaidEffectControlFamily } from './paid-effect-control';
 import {
   PaidEffectApplicationConflictError,
   PaidEffectProtocolError,
@@ -27,6 +29,8 @@ import {
 } from './paid-effect-protocol';
 import {
   type PaidEffectSnapshot,
+  admitPaidEffectIntent,
+  claimPaidEffectSend,
   markPaidEffectUnknown,
   readPaidEffect,
   recordPaidEffectApplication,
@@ -39,6 +43,58 @@ export const itemPriorDispatchSchema = paidEffectDispatchRefSchema.extend({
   tickId: z.string().min(1),
 });
 export type ItemPriorDispatch = z.infer<typeof itemPriorDispatchSchema>;
+
+export const itemPriorMemberRequestSchema = z.strictObject({
+  member: z.literal('item_prior_backfill'),
+  dagRunId: z.string().min(1),
+  runDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'runDate must be YYYY-MM-DD'),
+  nodeId: z.string().min(1),
+  method: z.enum(['feature', 'llasa']).optional(),
+  reps: z.number().int().positive().max(MAX_REPS).optional(),
+});
+export type ItemPriorMemberRequest = z.infer<typeof itemPriorMemberRequestSchema>;
+export const itemPriorDispatchedRequestSchema = itemPriorMemberRequestSchema
+  .extend({ dispatch: itemPriorDispatchSchema })
+  .refine((request) => request.dispatch.tickId === request.dagRunId, {
+    message: 'dispatch tickId must be the original DAG run ID',
+    path: ['dispatch', 'tickId'],
+  });
+export type ItemPriorDispatchedRequest = z.infer<typeof itemPriorDispatchedRequestSchema>;
+export class ItemPriorMemberIdentityError extends Error {}
+
+const dispatchedBossJobSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  state: z.string(),
+  data: z.unknown(),
+});
+
+/** Same identity check at admission and reservation; the latter serializes against job cancellation. */
+export async function readItemPriorPgBossDelivery(
+  tx: Tx,
+  request: ItemPriorDispatchedRequest,
+  lock: 'read' | 'update',
+) {
+  const [rawJob] = await tx.execute(sql`
+    select id::text as id, name, state::text as state, data from pgboss.job
+    where id = ${request.dispatch.deliveryId}::uuid ${lock === 'update' ? sql`for update` : sql``}
+  `);
+  if (!rawJob)
+    throw new ItemPriorMemberIdentityError('The original node-bound pg-boss job is missing');
+  const job = dispatchedBossJobSchema.parse(rawJob);
+  const original = itemPriorDispatchedRequestSchema.safeParse(job.data);
+  if (
+    job.id !== request.dispatch.deliveryId ||
+    job.name !== request.member ||
+    !original.success ||
+    !paidEffectJsonEquals(original.data, request)
+  ) {
+    throw new ItemPriorMemberIdentityError(
+      'Persisted pg-boss job differs from the original versioned DAG dispatch',
+    );
+  }
+  return job;
+}
 
 const applicationDispositionSchema = z.discriminatedUnion('status', [
   z.strictObject({ status: z.literal('matched') }),
@@ -160,21 +216,90 @@ export type ItemPriorPaidEffectWinner = Extract<PaidEffectReservation, { kind: '
   readonly identity: ReturnType<typeof computePaidEffectIdentity>;
 };
 
+export type ItemPriorPaidEffectReservation =
+  | (PaidEffectReservation & { readonly identity: ReturnType<typeof computePaidEffectIdentity> })
+  | {
+      readonly kind: 'recovery-only';
+      readonly identity: ReturnType<typeof computePaidEffectIdentity>;
+      readonly jobState: string;
+      /** null means absent, not a fabricated pending intent. */
+      readonly effectState: 'pending' | null;
+    };
+
+function completedReservation(snapshot: PaidEffectSnapshot): ItemPriorPaidEffectReservation {
+  if (snapshot.state !== 'receipt_ready' && snapshot.state !== 'applied') {
+    throw new PaidEffectProtocolError('item-prior recovery requires a known result receipt');
+  }
+  return {
+    kind: 'completed',
+    identity: snapshot.identity,
+    state: snapshot.state,
+    result: snapshot.result,
+    application: snapshot.application,
+    applied: snapshot.state === 'applied',
+  };
+}
+
 export class ItemPriorPaidEffectAdapter {
   readonly dispatch: Readonly<ItemPriorDispatch>;
+  private readonly request: Readonly<ItemPriorDispatchedRequest>;
 
   constructor(
     private readonly db: Db,
-    dispatch: ItemPriorDispatch,
+    request: ItemPriorDispatchedRequest,
   ) {
     // Producer persists this before dispatch. Never read current control to upgrade an old job.
-    this.dispatch = Object.freeze(itemPriorDispatchSchema.parse(dispatch));
+    const original = itemPriorDispatchedRequestSchema.parse(request);
+    this.dispatch = Object.freeze(original.dispatch);
+    this.request = Object.freeze({ ...original, dispatch: this.dispatch });
   }
 
-  reserveRep(work: ItemPriorPreparedWork, repIndex: number) {
-    return reservePaidEffect(this.db, itemPriorPaidEffectInput(work, repIndex), {
+  async reserveRep(
+    work: ItemPriorPreparedWork,
+    repIndex: number,
+  ): Promise<ItemPriorPaidEffectReservation> {
+    const input = itemPriorPaidEffectInput(work, repIndex);
+    const identity = computePaidEffectIdentity(input);
+    const delivery = {
       ...this.dispatch,
       leaseExpiresAt: new Date(Date.now() + 60_000),
+    };
+    if (this.dispatch.backend !== 'pg-boss') {
+      return reservePaidEffect(this.db, input, delivery);
+    }
+    return this.db.transaction(async (tx) => {
+      // Family FIRST, then owning job, then B's row/entity/control locks in their existing order.
+      // The job lock remains held through the claim commit; cached admission cannot bypass it.
+      await lockPaidEffectControlFamily(tx, input.family);
+      const job = await readItemPriorPgBossDelivery(tx, this.request, 'update');
+      if (!['created', 'retry', 'active'].includes(job.state)) {
+        // Readonly recovery: no intent insert, claim, lease/fence mutation or invented receipt.
+        const snapshot = await readPaidEffect(tx, identity);
+        if (snapshot?.state === 'receipt_ready' || snapshot?.state === 'applied') {
+          return completedReservation(snapshot);
+        }
+        if (snapshot?.state === 'sending' || snapshot?.state === 'unknown') {
+          return { kind: 'held', identity, state: snapshot.state, blockedBy: null };
+        }
+        return {
+          kind: 'recovery-only',
+          identity,
+          jobState: job.state,
+          effectState: snapshot?.state ?? null,
+        };
+      }
+      await admitPaidEffectIntent(tx, input);
+      const claim = await claimPaidEffectSend(tx, identity, delivery);
+      if (claim.kind === 'claimed') return { kind: 'winner', identity, fence: claim.fence };
+      if (claim.kind === 'missing') {
+        throw new PaidEffectProtocolError('item-prior admitted intent is missing at send claim');
+      }
+      if (claim.receiptKnown) {
+        const snapshot = await readPaidEffect(tx, identity);
+        if (!snapshot) throw new PaidEffectProtocolError('item-prior result receipt is missing');
+        return completedReservation(snapshot);
+      }
+      return { kind: 'held', identity, state: claim.state, blockedBy: claim.blockedBy ?? null };
     });
   }
 

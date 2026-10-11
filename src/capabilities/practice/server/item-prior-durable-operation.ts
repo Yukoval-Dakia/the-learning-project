@@ -383,7 +383,7 @@ export type ItemPriorRepOutcome =
   | { readonly state: 'dropped' }
   /** Unknown paid outcome — durable held obligation; never an auto-retry. */
   | { readonly state: 'held' }
-  /** No send happened this run (admission refused); safe to retry later. */
+  /** No send admission in this run; may be readonly terminal-job recovery of an absent effect. */
   | { readonly state: 'pending' };
 
 export type ItemPriorStagedStatus = 'ready' | 'held' | 'incomplete' | 'no-anchor';
@@ -446,6 +446,7 @@ export async function executeItemPriorRep(
     );
   }
   if (reservation.kind === 'held') return { state: 'held' };
+  if (reservation.kind === 'recovery-only') return { state: 'pending' };
 
   let outputText: string;
   try {

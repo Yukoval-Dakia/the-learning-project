@@ -834,3 +834,137 @@ No DB/Docker/runtime/provider/credential/lock/PR/Linear/child operations ran.
 PLAN/.remember/Linear reconciliation remains parent-owned within the explicit
 scope boundary; these are accepted findings on the existing task, not new
 untracked follow-ups. No shared-store repair or additional cutover is requested.
+
+## 2026-10-11 adapter R2 terminal-job repair (source only)
+
+Base: `a30079646adaa38b996862b2a91711965d8d17f2`, ORIGINAL A tree and
+existing `feat/yuk-1355-dag-reference` branch, sole writer. Adapter R2 accepted
+one remaining P1: the exact owning pg-boss job's state was read but ignored.
+A cancelled/failed/completed owning job could therefore win a pending/absent
+paid effect while its DAG node remained enqueued until the orchestrator poll.
+The R1 repairs and the earlier 15 PREPARED UNRUN cases above remain historical
+evidence; shared B DB05 does not validate this adapter. R1/R2 budget is spent.
+This repair has no third review and awaits the parent's targeted evidence.
+
+### Reservation and recovery behavior
+
+`ItemPriorPaidEffectAdapter` now freezes the full original versioned request,
+including job ID, queue/member, DAG identity, optional parameters and original
+backend generation. The schemas and identity error moved into the owned
+adapter to share one exact persisted-job check with admission; existing family
+exports remain available. No public barrel, producer, registration or shared B
+file changed.
+
+Every pg-boss rep reservation opens a new caller transaction, takes B's family
+control lock FIRST, then locks the original job row with `FOR UPDATE` and
+revalidates its complete persisted versioned payload. This happens even when
+the recorded admission step is cached. For created/retry/active jobs only, it
+calls B's existing `admitPaidEffectIntent` and `claimPaidEffectSend` in that same
+transaction. B retains the row/entity/control locking, generation admission,
+entity unknown gate, claim CAS and winner fence. The job lock remains held
+through claim commit. No shared atomic callback or other B change is needed.
+The relative shared order remains family → paid row → entity → control, with
+the owned job lock between family and paid row.
+
+All other job states enter readonly effect recovery. `receipt_ready`/`applied`
+return real immutable completed receipts; sending/unknown remain held.
+Pending/absent return the typed `recovery-only` result, with `effectState: null`
+for absence. This branch performs no intent admission, claim, paid row insert,
+lease/fence mutation or fake pending receipt write. The operation maps withheld
+work to an incomplete staged item; it cannot return successful DAG completion.
+A complete compatible applied set still reuses the historical application
+without domain writes, including the R1 supported anchor-change recovery.
+A complete known result set can finish its transactional application. Partial,
+mixed or incompatible sets retain the existing incomplete/conflict handling.
+
+The claim transaction serializes against actual pg-boss cancellation/failure/
+completion of the same row. If the terminal transition commits first, there is
+no new send admission. If admission commits first, a later cancellation leaves
+an existing sending obligation; terminal recovery cannot claim it again. The
+transaction ends before the runner is called. This is claim-time ordering, and
+physical-send/process recovery remains a parent runtime gate.
+
+Unknown/cross-night/cross-revision effects remain held. Original generation is
+never replaced by current control, and backend declaration alone cannot stand
+in for the original persisted job identity. The old candidate stays held and
+unregistered; the normal pg-boss/default path has no cutover. This is source
+integration, with no admitted-runtime claim.
+
+### Exact new prepared DB cases
+
+`tests/integration/item-prior-durable-member.db.test.ts` now has 28 expanded
+cases, all PREPARED UNRUN in this lane. The original 15 titles above are
+preserved. Existing direct-adapter fixtures now also enqueue/fetch actual
+versioned pg-boss jobs, matching the adapter's required original-job boundary.
+Fixture sends use `retryLimit: 0` so actual failure settles to failed.
+
+The 13 added expanded titles are:
+
+1. `withholds cancelled owning job with absent effect and nonterminal node`
+2. `withholds cancelled owning job with pending effect and nonterminal node`
+3. `withholds failed owning job with absent effect and nonterminal node`
+4. `withholds failed owning job with pending effect and nonterminal node`
+5. `withholds completed owning job with absent effect and nonterminal node`
+6. `withholds completed owning job with pending effect and nonterminal node`
+7. `rechecks cancelled state after active admission and on cached replay`
+8. `rechecks failed state after active admission and on cached replay`
+9. `rechecks completed state after active admission and on cached replay`
+10. `recovers receipt_ready receipts from a completed job without sending`
+11. `recovers applied receipts from a completed job without sending`
+12. `serializes cancellation before reservation on the actual PostgreSQL job row`
+13. `serializes reservation before cancellation and preserves the existing sending obligation`
+
+The first six assert zero runner calls, exact paid/control/node preservation,
+absence remaining absent and no anchor writes with an enqueued node. The next
+three capture admission while active, terminalize before reservation, then
+replay the cached step after changing the current question; no new claim or
+frozen-work substitution is allowed. Receipt cases seed outputs through the
+actual winning adapter and B receipt API, then complete the job and recover
+without another runner call; applied recovery preserves a later fixed anchor.
+The two race cases observe actual `pg_blocking_pids` job-row waits. The second
+case pauses a real caller transaction after B has written sending/fence 1;
+it does not substitute a successful claim result. These are prepared checks,
+not executed lock/DB evidence.
+
+Parent targeted command (NOT RUN here):
+
+```bash
+pnpm vitest run --config vitest.db.config.ts tests/integration/item-prior-durable-member.db.test.ts -t 'adapter terminal-job reservation regressions'
+```
+
+Parent complete owned DB command (28 expanded cases, NOT RUN here):
+
+```bash
+pnpm vitest run --config vitest.db.config.ts tests/integration/item-prior-durable-member.db.test.ts
+```
+
+### Permitted verification and handoff
+
+Node `24.19.0`, pnpm `11.13.1`, with the Node24 mise bin prepended to PATH.
+Executed scoped command:
+
+```bash
+pnpm vitest run --config vitest.unit.config.ts src/capabilities/practice/server/item-prior-durable-operation.unit.test.ts src/server/durable/item-prior-family.unit.test.ts
+```
+
+Passed: two files / 26 units (20 operation, six family), `pnpm typecheck`
+(both TypeScript projects), `pnpm lint` (172 existing warnings), owned six-file
+Biome check, and `pnpm build`. The new unit covers incomplete readonly recovery
+of both absent and pending effects with zero runner/completion calls; it proves
+the consumer discrimination, not PostgreSQL admission safety. Offline
+TypeScript AST extraction pins all 26 unit and 28 expanded DB titles without
+loading or running the DB partition.
+
+Receipts and exact commands/test lists/source hashes are sealed in
+`/tmp/yuk1355-item-prior-terminal-repair-20261011/receipt.json` with adjacent
+logs, `test-list.json` and the offline extraction script. The initial typecheck
+failure (missing moved-schema import and widened fixture request) is retained
+as `typecheck-01.log`; the repaired check is a separate receipt. Earlier R1
+receipts and the 15-case UNRUN history are untouched.
+
+No DB, Docker, runtime, provider, credential, live lock, push, PR, Linear or
+child action ran. Parent owns the target DB run, exact integrated renamed-source
+validation, producer/consumer/drain/process recovery and runtime acceptance.
+PLAN/.remember/Linear updates remain parent-owned under the seven-file scope.
+Shared production files and their fixed hashes are unchanged. No shared repair
+request or accepted cutover is claimed.

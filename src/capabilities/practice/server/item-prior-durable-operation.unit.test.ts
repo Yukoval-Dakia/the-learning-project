@@ -284,6 +284,35 @@ describe('item prior reservation consumer', () => {
     expect(completeRep.mock.calls).toEqual([[winner, { version: 1, kind: 'output', outputText }]]);
   });
 
+  // @invariant durability: readonly recovery is incomplete, never a new paid send or completion
+  // @fails-if an absent/pending terminal-job effect becomes a winner or discharges the work
+  it('keeps terminal-job absent and pending recovery incomplete without running or completing', async () => {
+    const work = await preparedWork({ reps: 1 });
+    for (const effectState of [null, 'pending'] as const) {
+      const runTaskFn = vi.fn(hostileProvider);
+      const completeRep = vi.fn<ItemPriorRepExecutionDeps['effects']['completeRep']>();
+      const staged = await runItemPriorItemRepStages(work, {
+        effects: {
+          reserveRep: async () => ({
+            kind: 'recovery-only',
+            identity: computePaidEffectIdentity(itemPriorPaidEffectInput(work, 0)),
+            jobState: 'cancelled',
+            effectState,
+          }),
+          completeRep,
+        },
+        runTaskFn,
+      });
+      expect(staged).toMatchObject({
+        status: 'incomplete',
+        pendingReps: [0],
+        repOutcomes: [{ state: 'pending' }],
+      });
+      expect(runTaskFn).not.toHaveBeenCalled();
+      expect(completeRep).not.toHaveBeenCalled();
+    }
+  });
+
   // @invariant durability: durable-store and receipt failures cannot settle a rep
   // @fails-if store/receipt errors become drops, held in memory, or a successful draft
   it('propagates reservation and output/unknown persistence errors', async () => {
