@@ -2,6 +2,7 @@
 // The chosen id rides the ingestion-session create request as `subject_id` (YUK-1404),
 // so draft questions can render their subject's notation (e.g. math formulas) before
 // anything is enrolled. Skippable: no choice sends nothing and the upload is unchanged.
+import { useEffect } from 'react';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { listSubjectChoices } from '@/ui/lib/subject';
 
@@ -23,6 +24,12 @@ export function UploadSubjectPicker({
   const choices = listSubjectChoices(subjects).filter(
     (s) => s.configurationStatus !== 'unconfigured',
   );
+  // A choice made on the first-frame builtin list may vanish when the real list arrives
+  // (e.g. a retired subject); drop it rather than send an id the server will reject.
+  const offered = choices.some((s) => s.id === value);
+  useEffect(() => {
+    if (value !== null && !offered) onChange(null);
+  }, [value, offered, onChange]);
   return (
     <fieldset className="upload-subject">
       <legend className="field-label">这份材料是哪一科？（可不选）</legend>
