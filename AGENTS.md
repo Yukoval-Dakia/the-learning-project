@@ -125,6 +125,9 @@ pnpm build
   DTO/schema 形状、prompt/文案/快照/字节 hash、源码路径与文档结构、实现细节，或只断言
   “被调用/存在”的测试，以及为覆盖率补的测试。
   修 bug 时若不触及上面五类，用 typecheck/build 和真实运行验证，不补回归测试。
+- 新增或修改 case 的准入由 `pnpm audit:test-policy` 在 CI 强制执行；须在该 case
+  前声明 `@invariant` 类别/保护结果及 `@fails-if` 具体缺陷。格式和审查要求见
+  `docs/agents/development-workflow.md` 的 Test admission。标签本身不构成正确性证明。
 - 涉及 agent/model 实际输出或学习效果的验收，用真实 provider actual-output 或学习者
   结果对账，并封存 exact revision、输入/输出 digest、task-run ID、provider/model/cost；
   不用 mock 单元测试冒充。
