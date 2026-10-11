@@ -114,6 +114,7 @@ for (const family of caseFamilies)
       try {
         await first.wait('ready');
         // This fixture expects the failure message itself, after the workflow becomes ERROR.
+        await first.wait('failure');
         await expect
           .poll(
             async () =>

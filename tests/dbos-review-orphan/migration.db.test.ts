@@ -91,6 +91,10 @@ function worker(
   });
   children.set(child, exited);
   const messages: z.infer<typeof messageSchema>[] = [];
+  const timing: { spawnedAt: string; messagesAt: string[]; exitedAt?: string } = {
+    spawnedAt: new Date().toISOString(),
+    messagesAt: [],
+  };
   const record = {
     pid: child.pid,
     requestId: options.id ?? options.pruneId,
@@ -98,6 +102,7 @@ function worker(
     stderr: '',
     messages: [] as unknown[],
     exit: null as unknown,
+    timing,
   };
   logs.push(record);
   child.stdout?.on('data', (c) => {
@@ -107,6 +112,7 @@ function worker(
     record.stderr += String(c);
   });
   child.on('message', (m) => {
+    timing.messagesAt.push(new Date().toISOString());
     record.messages.push(m);
     const parsed = messageSchema.safeParse(m);
     messages.push(
@@ -119,6 +125,7 @@ function worker(
     messages.push({ kind: 'failure', error: JSON.stringify(errorDiagnostic(error)) });
   });
   child.on('exit', (code, signal) => {
+    timing.exitedAt = new Date().toISOString();
     children.delete(child);
     record.exit = { code, signal };
   });
