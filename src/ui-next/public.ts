@@ -4,6 +4,7 @@
 import './tokens.css';
 import './components.css';
 
+export * from './companion';
 export * from './mascot';
 export type { CaptureFlight, FlyOptions, MorphSnapshot, QuoteFlight } from './motion/flights';
 export {

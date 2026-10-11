@@ -613,6 +613,213 @@
   }
 }
 
+/* ── Companion messages (C1, C3, C4) and judgment (R3) ───
+   One element per reply from first token to record; colour and badge change in place. */
+[data-ui-next] {
+  & .un-companion-state {
+    color: var(--un-text-4);
+    font-size: var(--un-fs-1);
+    transition: color var(--un-t-ui) var(--un-ease-glide);
+  }
+
+  & .un-companion-state[data-thinking="true"] {
+    color: var(--un-accent-strong);
+  }
+
+  & .un-msg {
+    position: relative;
+    display: grid;
+    gap: var(--un-sp-1);
+    max-width: 100%;
+    font-size: var(--un-fs-2);
+    line-height: var(--un-lh-prose);
+    border-radius: var(--un-r-2);
+    scroll-margin-block: var(--un-sp-4);
+  }
+
+  & .un-msg[data-role="me"] {
+    justify-self: end;
+    align-self: flex-end;
+    max-width: 86%;
+    padding: var(--un-sp-2) var(--un-sp-3);
+    border-radius: var(--un-r-2) var(--un-r-2) var(--un-sp-1) var(--un-r-2);
+    background: var(--un-accent-soft);
+    color: var(--un-accent-ink);
+  }
+
+  & .un-msg-quote {
+    margin: 0;
+    padding: 0 0 0 var(--un-sp-2);
+    border: 0;
+    background: none;
+    box-shadow: inset 2px 0 0 color-mix(in srgb, currentColor 40%, transparent);
+    color: inherit;
+    font-size: var(--un-fs-1);
+    text-align: left;
+    opacity: 0.85;
+    transition: opacity var(--un-t-ui) var(--un-ease-glide);
+  }
+
+  & button.un-msg-quote:hover {
+    opacity: 1;
+  }
+
+  & .un-msg-ref {
+    justify-self: start;
+    align-self: flex-start;
+    padding: 0 var(--un-sp-2);
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    transition:
+      background-color var(--un-t-ui) var(--un-ease-glide),
+      color var(--un-t-ui) var(--un-ease-glide);
+  }
+
+  & .un-msg-ref:hover {
+    background: var(--un-accent-soft);
+    color: var(--un-accent-ink);
+  }
+
+  & .un-msg-badge {
+    justify-self: start;
+    align-self: flex-start;
+    display: inline-flex;
+    align-items: center;
+    gap: var(--un-sp-1);
+    max-height: 2em;
+    padding: 0 var(--un-sp-2);
+    overflow: hidden;
+    border-radius: var(--un-r-1);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line-strong);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    transition:
+      color var(--un-t-ui) var(--un-ease-glide),
+      box-shadow var(--un-t-ui) var(--un-ease-glide),
+      max-height var(--un-t-panel) var(--un-ease-glide),
+      margin var(--un-t-panel) var(--un-ease-glide),
+      opacity var(--un-t-ui) var(--un-ease-glide);
+  }
+
+  & .un-msg[data-phase="settled"] .un-msg-badge {
+    color: var(--un-positive);
+    box-shadow: inset 0 0 0 var(--un-hairline)
+      color-mix(in srgb, var(--un-positive) 45%, transparent);
+  }
+
+  & .un-msg-badge[data-folded="true"] {
+    max-height: 0;
+    margin-bottom: calc(-1 * var(--un-sp-1));
+    opacity: 0;
+  }
+
+  & .un-msg-text {
+    transition: color var(--un-t-ink) var(--un-ease-glide);
+  }
+
+  & .un-msg[data-phase="streaming"] .un-msg-text,
+  & .un-msg[data-phase="recording"] .un-msg-text {
+    color: var(--un-text-3);
+  }
+
+  & .un-msg-caret {
+    display: inline-block;
+    width: 2px;
+    height: 1em;
+    margin-left: 2px;
+    vertical-align: -0.15em;
+    border-radius: 1px;
+    background: var(--un-accent);
+  }
+
+  /* While recording, a thin line beneath the reply (it runs under no-preference). */
+  & .un-msg[data-phase="recording"]::after,
+  & .un-judgment[data-phase="checking"] .un-judgment-line::after {
+    content: "";
+    height: var(--un-hairline);
+    background:
+      linear-gradient(90deg, transparent, var(--un-accent), transparent) 30% 0 / 40% 100% no-repeat;
+  }
+
+  & .un-msg-check path,
+  & .un-judgment-mark path {
+    stroke-dasharray: 12;
+    stroke-dashoffset: 0;
+  }
+
+  & .un-judgment {
+    display: grid;
+    grid-template-rows: 1fr;
+  }
+
+  & .un-judgment-inner {
+    display: grid;
+    gap: var(--un-sp-2);
+    min-height: 0;
+    overflow: clip;
+    overflow-clip-margin: 4px;
+  }
+
+  & .un-judgment-line {
+    display: grid;
+    justify-items: start;
+    gap: var(--un-sp-1);
+  }
+
+  & .un-judgment[data-phase="checking"] .un-judgment-line::after {
+    width: min(240px, 100%);
+  }
+
+  & .un-judgment-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    min-height: var(--un-h-chip);
+    padding: 0 var(--un-sp-2);
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    transition:
+      background-color var(--un-t-ui) var(--un-ease-glide),
+      color var(--un-t-ui) var(--un-ease-glide);
+  }
+
+  & .un-judgment[data-tone="accent"] .un-judgment-chip {
+    background: var(--un-accent-soft);
+    color: var(--un-accent-ink);
+  }
+
+  & .un-judgment[data-tone="positive"] .un-judgment-chip {
+    background: var(--un-positive-soft);
+    color: var(--un-positive);
+  }
+
+  & .un-judgment[data-tone="caution"] .un-judgment-chip {
+    background: var(--un-caution-soft);
+    color: var(--un-caution);
+  }
+
+  & .un-judgment[data-tone="critical"] .un-judgment-chip {
+    background: var(--un-critical-soft);
+    color: var(--un-critical);
+  }
+
+  & .un-judgment-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: currentColor;
+  }
+
+  & .un-judgment-body {
+    padding-top: var(--un-sp-1);
+    color: var(--un-text-2);
+  }
+}
+
 /* ── Flying copies (M4–M6) ───────────────────────────────
    Positioned by script on --un-z-flight. Solid, not glass: they are objects in motion. */
 [data-ui-next] {
@@ -838,6 +1045,25 @@
       animation-name: un-page-fade;
     }
 
+    /* A message arrives by fading in; a judgment opens its own space before it shows (M9). */
+    & .un-msg {
+      animation: un-page-in var(--un-t-ui) var(--un-ease-glide) both;
+    }
+
+    & .un-judgment {
+      animation: un-row-open var(--un-t-panel) var(--un-ease-glide) both;
+    }
+
+    & .un-msg[data-phase="recording"]::after,
+    & .un-judgment[data-phase="checking"] .un-judgment-line::after {
+      animation: un-sweep 900ms var(--un-ease-glide) infinite;
+    }
+
+    & .un-msg-check path,
+    & .un-judgment-mark path {
+      animation: un-draw var(--un-t-panel) var(--un-ease-glide) 120ms both;
+    }
+
     /* The still flower spins while the companion thinks (B2); one turn ≈ 4.2 s, as in 3D. */
     & .un-mascot[data-thinking="true"] .un-mascot-still {
       animation: un-mascot-spin 4.2s linear infinite;
@@ -906,6 +1132,28 @@
 @keyframes un-page-fade {
   from {
     opacity: 0;
+  }
+}
+
+@keyframes un-row-open {
+  from {
+    grid-template-rows: 0fr;
+    opacity: 0;
+  }
+}
+
+@keyframes un-sweep {
+  from {
+    background-position: -40% 0;
+  }
+  to {
+    background-position: 140% 0;
+  }
+}
+
+@keyframes un-draw {
+  from {
+    stroke-dashoffset: 12;
   }
 }
 
