@@ -1,10 +1,10 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-11：两次main P1已交付1696/a213与1697/189bc5eab，原断言保留，功能/UI已通知；YUK-1107回独立提速树。同head连续3次完整CI绿色后才入main，不占产品DB窗，120秒目标未达标。
+> Linear 是权威 tracker。2026-10-11：YUK-1107隔离head f0f2d63bf完整CI三绿166/207/144秒、中位166；唯一验证R2 NONE及逐不变量说明已过。正常纳入main c2新测试规则后，作者代码不变，等待新exact-head CI再合1691。judge阶段诊断仅独立实验，backup等audit/owner，120未达。
 
 ## NOW
 
-- **YUK-1107 / 完整CI≤120秒继续**：#1697 exact0b895完整CI38140482253绿、R1 NONE、review1 R5PASS21.70秒与session2 R4PASS；R5实际22:02:49JST释锁，总95.388秒，协调者确认FSRS自移除，其余7 exact parity真，失败R4与旧退出容器差异保留。父独占fast-crons / perf/yuk-1107-ci-critical-path，正常纳入main189bc5eab，#1691保持draft，原21session分拆/断言AST证明与其他保留不变量提速，不混backup。成熟门槛同exacthead连续3次完整CI绿无flake；main回归先revert PR。原432秒为1次run创建→Gate绿，近期246/234中位240秒n2；两PR140–160秒仅预测，120仍进行中。生产RST风险已另票YUK-1481。
+- **YUK-1107 / 完整CI≤120秒继续**：#1696/#1697主线解阻已交；critical f0f2d63bf三次完整CI38141930431/38141956448/38142360324全绿166/207/144秒，中位166秒，实际8DB/2unit/native-WASM-JS；R2 NONE且核逐不变量测试行说明，21session用例及全部断言保留。正常纳入main c2仅AGENTS/流程规则docs，作者runtime/fixture/CI代码字节不变；协调者要求新exactCI过后才match-head合1691，不启第三审。原432秒仅1次观察，计时是workflow创建到Gate绿；120目标仍未达。另独立perf/yuk-1107-judge-stage-profile head6bae53c2f只现有process例计时+上传既有诊断，CI38143778742待阶段分布；worker/support/模型/生产/断言不改，无本机DB/锁。backup去重/删除暂停待slop audit与owner，任一main提速回归先revert。生产RST风险另票YUK-1481。
 
 - **YUK-1107 / session cron已交付**：#1681合main56df7c09；控制时间验证边界，生产60秒保护/cron及严格ledger不变；R2无P0/P1，父修Drizzle初始化后exact cd0c45d CI38120469007全绿。两例PASS、文件34.564秒；实测跨分钟边界，YUK-1397修复交付。整套390秒，不核销120秒目标。[证据与限度](docs/planning/2026-10-11-yuk1107-cron-speed.md)。
 
