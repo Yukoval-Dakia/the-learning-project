@@ -5,6 +5,19 @@
 # (or :5544 — see the postgres ports note below).
 services:
   app:
+    # YUK-1404 — pin the container resolver to public recursive DNS. The Mac host runs a
+    # fake-IP resolver (Surge/Clash-style): every A query is answered from 198.18.0.0/15,
+    # and Docker's embedded DNS forwarder hands that down to the containers (TEST
+    # evidence 2026-10-11: `getent www.jyeoo.com` → 198.18.12.228 in app+worker). The
+    # image-candidate SSRF guard blocks that range BY DESIGN
+    # (src/core/net/private-host.ts BLOCKED_IPV4_CIDRS), so every outbound source fetch
+    # failed DNS-answer validation. Verified fix on the current app image in isolation:
+    # `--dns 223.5.5.5 --dns 119.29.29.29` → node:dns.lookup returns public A answers for
+    # www.jyeoo.com (receipt /tmp/yuk1404-public-dns-probe-01/). Never "fix" this by
+    # allowing 198.18.0.0/15 anywhere — fix resolution instead.
+    dns:
+      - 223.5.5.5 # AliDNS
+      - 119.29.29.29 # DNSPod
     ports:
       - "127.0.0.1:8787:8787"
     # All seven structural entities use canonical projection writers.
@@ -27,6 +40,11 @@ services:
       # Goal/learning_item/mistake_variant are canonical writers without mode switches.
       # item_calibration stays Scheme A / OFF.
   worker:
+    # YUK-1404 — same public-DNS pin as app (see above). The worker owns the jyeoo
+    # fetch subprocess and supply-plan execution, so its resolver must be real too.
+    dns:
+      - 223.5.5.5 # AliDNS
+      - 119.29.29.29 # DNSPod
     environment:
       # Mirror app exactly; ingestion enrollment runs in the worker, while the
       # placement entrypoint runs in app. Repeating both makes process parity explicit.

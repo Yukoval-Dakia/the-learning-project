@@ -175,6 +175,10 @@ Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[�
 
 当前独立附件存储及真实 CRUD 验收见[测试存储记录](docs/planning/2026-10-07-agent-test-storage.md)。当前用途与重置证据见[Agent 测试环境记录](docs/planning/2026-10-07-agent-test-environment-reset.md)，后续工作见 [PLAN](PLAN.md)。此前发布验收不代表新空库已完成业务或模型验收。远程入口为 <https://loom-mac-mini.tail2ee344.ts.net/>：访问设备须登录同一 Tailscale 网络，Loom 仍使用原访问令牌。Mac 需开机且用户会话内的 Tailscale daemon 在运行；没有开启公网 Funnel。不要从脏开发目录或过期 `/tmp` 覆盖文件直接重建生产。实际部署必须固定镜像提交、保存当前配置和数据、通过隔离恢复与完整迁移预演，再停止 writer、取最终备份、执行迁移，并按 worker / app 顺序恢复。
 
+### 容器 DNS（YUK-1404）
+
+本机宿主运行 fake-IP 代理 DNS（198.18.0.0/15 应答），Docker 内嵌转发器会把它传给容器；image-candidate 的 SSRF 守卫按设计拦截该网段（`src/core/net/private-host.ts` 的 `BLOCKED_IPV4_CIDRS`），因此一切出网题源抓取（含 jyeoo 子进程）在 DNS 应答校验处失败。修复：`docker-compose.mac.yml` 已给 `app` 和 `worker` 固定 `dns: 223.5.5.5 / 119.29.29.29`（2026-10-11 在当前 app 镜像内隔离验证 `node:dns.lookup www.jyeoo.com` 返回公网 A 记录；探针回执在部署机 `/tmp/yuk1404-public-dns-probe-01/`）。任何驱动真实部署的运行时/私有 compose 覆盖也必须在 `app`+`worker` 镜像同款 `dns` 块，否则症状会复发。严禁以放行 198.18.0.0/15 的方式“修复”——只修解析，不降守卫。
+
 下面的 NAS / Cloudflare Tunnel 指南保留为可选方式，不是当前 Mac 的默认操作入口。
 
 ## Self-host on NAS
