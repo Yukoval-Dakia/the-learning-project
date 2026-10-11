@@ -21,6 +21,7 @@ import {
 import { canonicalHash } from '@/core/migration/canonical';
 import { Artifact } from '@/core/schema';
 import type { SlotResponseT } from '@/core/schema/assessment';
+import { projectPracticeIssuance } from '@/core/schema/assessment';
 import type { Db } from '@/db/client';
 import {
   artifact,
@@ -33,6 +34,7 @@ import {
   question_revision,
 } from '@/db/schema';
 import { writeEvent } from '@/kernel/events';
+import { revisionRowToContract } from '@/kernel/records/assessment-issuance';
 import {
   contractIntegrityDigest,
   normalizeQuestionGroupToContract,
@@ -264,8 +266,27 @@ export async function paperFixtureAssessment(
   );
   if (!bound) throw new Error('test must open a frozen paper before submitting');
   const state = await getIssuanceState(db, bound.issuance_id);
-  const slots =
-    state.practice_dto?.response_spec.slots.filter((slot) => slot.kind !== 'table') ?? [];
+  // YUK-1445 —— the serving gate correctly withholds practice_dto for NEW
+  // serving on unservable (e.g. model-executor) contracts. For paper work that
+  // was ALREADY issued (historical rows), the submitted response must still
+  // bind to the REAL immutable frozen revision + issuance coordinates: rebuild
+  // the public projection with the same production projector used inside
+  // getIssuanceState (validateIssuanceBinding runs there and throws on any
+  // revision/scope mismatch — an incomplete or wrong binding fails loudly).
+  // No guessed answer key, no fabricated practice DTO or model admission; the
+  // guard on new serving is untouched.
+  let practice = state.practice_dto;
+  if (practice == null) {
+    if (state.issuance == null) throw new Error('fixture issuance state is missing');
+    const [revRow] = await db
+      .select()
+      .from(question_revision)
+      .where(eq(question_revision.revision_id, state.issuance.binding.revision_id))
+      .limit(1);
+    if (revRow == null) throw new Error('fixture pinned revision is unavailable');
+    practice = projectPracticeIssuance(revisionRowToContract(revRow), state.issuance);
+  }
+  const slots = practice.response_spec.slots.filter((slot) => slot.kind !== 'table');
   if (slots.length !== 1)
     throw new Error('fixture text input must identify exactly one response slot');
   const slot = slots[0];
