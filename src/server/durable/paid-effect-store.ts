@@ -405,6 +405,7 @@ export async function recordPaidEffectResult(
   const row = await lockRow(tx, identity);
   if (!row) throw new PaidEffectProtocolError('paid-effect row missing');
   if (row.state === 'receipt_ready' || row.state === 'applied') {
+    requireOwnerDelivery(row, identity, deliveryId, opts.fence);
     if (paidEffectJsonEquals(row.result_json, receipt)) return 'idempotent';
     throw new PaidEffectReceiptConflictError(
       `paid-effect receipt for ${identity.family}/${identity.entityId}/r${identity.entityRevision}/${identity.unit} already exists and differs from the new payload`,

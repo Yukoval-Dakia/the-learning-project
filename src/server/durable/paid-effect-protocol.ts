@@ -41,7 +41,6 @@ export const DEFAULT_PAID_EFFECT_BACKEND: PaidEffectBackend = 'pg-boss';
 export const DEFAULT_PAID_EFFECT_GENERATION = 0;
 
 export const PAID_EFFECT_DIGEST_PREFIX = 'sha256:';
-const SHA256_HEX = /^[0-9a-f]{64}$/;
 
 /** States that make a paid effect an unresolved obligation for readers. */
 export const PAID_EFFECT_OBLIGATION_STATES = [
@@ -128,7 +127,7 @@ export const paidEffectIdentitySchema = z.strictObject({
   /** Free-form revision coordinate (artifact version, frozen workSetId, …). */
   entityRevision: z.string().min(1),
   unit: z.string().min(1),
-  inputDigest: z.string().regex(new RegExp(`^${PAID_EFFECT_DIGEST_PREFIX}${SHA256_HEX.source}$`)),
+  inputDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
 });
 export interface PaidEffectIdentity {
   readonly family: string;
@@ -249,9 +248,7 @@ export const PAID_EFFECT_SWITCH_UNSUPPORTED_FAMILIES: readonly string[] = [];
 
 export class PaidEffectSwitchUnsupportedError extends PaidEffectProtocolError {
   override name = 'PaidEffectSwitchUnsupportedError';
-  constructor(
-    readonly family: string,
-  ) {
+  constructor(readonly family: string) {
     super(
       `paid-effect backend switch unsupported for ${family}: ` +
         'claim-side atomic control admission is not wired yet; refusing to move ownership',

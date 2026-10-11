@@ -117,7 +117,7 @@ describe('paid-effect store transitions', () => {
     const identity = await admitIntent(testDb(), INPUT);
     await expect(
       testDb().transaction(async (tx: Tx) => {
-        await admitPaidEffectIntent(tx, {
+        return admitPaidEffectIntent(tx, {
           family: identity.family,
           entityId: identity.entityId,
           entityRevision: identity.entityRevision,

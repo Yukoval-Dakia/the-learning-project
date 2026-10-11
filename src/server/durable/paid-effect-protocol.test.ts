@@ -20,6 +20,7 @@ import {
   paidEffectControlLockKey,
   paidEffectGateBlocks,
   paidEffectGateLockKey,
+  paidEffectIdentitySchema,
   paidEffectJsonEquals,
   summarizePaidEffectSwitchBlocking,
 } from './paid-effect-protocol';
@@ -54,6 +55,11 @@ describe('paid-effect canonical JSON + digest', () => {
       unit: 'verify',
       input: INPUT,
     });
+    expect(paidEffectIdentitySchema.parse(base)).toEqual(base);
+    expect(paidEffectIdentitySchema.safeParse({ ...base, inputDigest: 'sha256:bad' }).success).toBe(
+      false,
+    );
+
     const changedInput = computePaidEffectIdentity({
       family: 'f',
       entityId: 'e',
