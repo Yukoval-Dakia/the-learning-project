@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { eq, inArray } from 'drizzle-orm';
+import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 import { activateSubmissionCandidate } from '@/capabilities/practice/server/judge/evaluate-submission';
 import { projectPracticeIssuance } from '@/core/schema/assessment';
@@ -112,9 +112,9 @@ async function admit(questionId: string) {
 }
 
 describe('native ingestion originals and reversible enrollment', () => {
-  // @invariant security: captured public figures exclude student work, unknown visibility, foreign crops and crops without verified asset metadata, while retaining a verified clean crop
-  // @fails-if capture publishes unfiltered block figures or loses the clean crop; persisted question/revision and public issuance assets differ from the owned clean fixture
-  it('publishes only verified clean owned crops while retaining the ingestion originals', async () => {
+  // @invariant security: a mixed student-work capture retains its private original evidence without publishing its student, foreign or unverified figure references
+  // @fails-if capture publishes the mixed block's original figures or rewrites/discards its private originals; public figure exclusion or original source/evidence retention fails
+  it('keeps one mixed student-work capture private without changing its originals', async () => {
     const db = testDb();
     const input = await fixture();
     const cropBytes = Buffer.from(
@@ -143,88 +143,67 @@ describe('native ingestion originals and reversible enrollment', () => {
     };
     const structured = input.block.structured;
     if (!structured) throw new Error('missing fixture structure');
-    const blocks = await db
+    const [block] = await db
       .insert(question_block)
-      .values([
-        {
-          ...input.block,
-          id: 'clean-block',
-          structured: { ...structured, student_answer_present: false },
-          figures: [
-            figure,
-            { ...figure, asset_id: 'foreign-page-fig-0' },
-            { ...figure, asset_id: 'capture-page-fig-1' },
-          ],
-        },
-        {
-          ...input.block,
-          id: 'student-block',
-          structured: {
-            ...structured,
-            student_answer_present: true,
-            extraction_evidence: {
-              handwriting: [{ text: 'private student answer', bbox: figure.source_bbox }],
-            },
+      .values({
+        ...input.block,
+        id: 'mixed-block',
+        structured: {
+          ...structured,
+          student_answer_present: true,
+          extraction_evidence: {
+            handwriting: [{ text: 'private student answer', bbox: figure.source_bbox }],
           },
-          figures: [figure],
         },
-        { ...input.block, id: 'unknown-block', figures: [figure] },
-      ])
+        figures: [
+          figure,
+          { ...figure, asset_id: 'foreign-page-fig-0' },
+          { ...figure, asset_id: 'capture-page-fig-1' },
+        ],
+      })
       .returning();
-    const publicFigures = [];
-    for (const block of blocks) {
-      const capture = await captureIngestionOriginal(db, { ...input, block });
-      if (!capture) throw new Error(`missing capture for ${block.id}`);
-      const [capturedQuestion] = await db
-        .select()
-        .from(question)
-        .where(eq(question.id, capture.questionId));
-      const [frozen] = await db
-        .select({ issuance: assessment_issuance, revision: question_revision })
-        .from(assessment_issuance)
-        .innerJoin(
-          question_revision,
-          eq(question_revision.revision_id, assessment_issuance.revision_id),
-        )
-        .where(eq(assessment_issuance.issuance_id, capture.request.issuance_id));
-      if (!capturedQuestion || !frozen) throw new Error('missing persisted capture');
-      const dto = projectPracticeIssuance(
-        revisionRowToContract(frozen.revision),
-        issuanceRowToContract(frozen.issuance),
-      );
-      publicFigures.push({
-        block: block.id,
-        questionAssets: capturedQuestion.figures.map((item) => item.asset_id),
-        frozenAssets: frozen.revision.structure.materials
-          .filter((item) => item.kind === 'figure')
-          .map((item) => item.asset),
-        publicAssets: dto.materials
-          .filter((item) => item.kind === 'figure')
-          .map((item) => item.asset_id),
-      });
-    }
-    expect(publicFigures).toEqual([
-      {
-        block: 'clean-block',
-        questionAssets: ['capture-page-fig-0'],
-        frozenAssets: [{ asset_id: 'capture-page-fig-0', digest: cropDigest }],
-        publicAssets: ['capture-page-fig-0'],
-      },
-      { block: 'student-block', questionAssets: [], frozenAssets: [], publicAssets: [] },
-      { block: 'unknown-block', questionAssets: [], frozenAssets: [], publicAssets: [] },
+    const originalAssets = await db.select().from(source_asset).orderBy(source_asset.id);
+    const capture = await captureIngestionOriginal(db, { ...input, block });
+    if (!capture) throw new Error('missing mixed capture');
+    const [capturedQuestion] = await db
+      .select()
+      .from(question)
+      .where(eq(question.id, capture.questionId));
+    const [frozen] = await db
+      .select({ issuance: assessment_issuance, revision: question_revision })
+      .from(assessment_issuance)
+      .innerJoin(
+        question_revision,
+        eq(question_revision.revision_id, assessment_issuance.revision_id),
+      )
+      .where(eq(assessment_issuance.issuance_id, capture.request.issuance_id));
+    const [submission] = await db
+      .select()
+      .from(assessment_submission)
+      .where(eq(assessment_submission.submission_id, capture.request.submission_id));
+    if (!capturedQuestion || !frozen || !submission)
+      throw new Error('missing persisted mixed capture');
+    const dto = projectPracticeIssuance(
+      revisionRowToContract(frozen.revision),
+      issuanceRowToContract(frozen.issuance),
+    );
+    expect({
+      questionFigures: capturedQuestion.figures,
+      frozenFigures: frozen.revision.structure.materials.filter((item) => item.kind === 'figure'),
+      publicOriginalAssets: dto.materials.filter(
+        (item) => item.kind === 'figure' || item.asset_id === 'capture-page',
+      ),
+      privatePageAssets: submission.group_evidence.map((item) => item.evidence.asset.asset_id),
+    }).toEqual({
+      questionFigures: [],
+      frozenFigures: [],
+      publicOriginalAssets: [],
+      privatePageAssets: ['capture-page'],
+    });
+    expect(await db.select().from(question_block).where(eq(question_block.id, block.id))).toEqual([
+      block,
     ]);
-    expect(
-      await db
-        .select()
-        .from(question_block)
-        .where(
-          inArray(
-            question_block.id,
-            blocks.map((block) => block.id),
-          ),
-        )
-        .orderBy(question_block.id),
-    ).toEqual(blocks);
+    expect(await db.select().from(source_asset).orderBy(source_asset.id)).toEqual(originalAssets);
   });
 
   it('admitted deterministic capture updates theta without FSRS, then retracts atomically and refuses late activation', async () => {
