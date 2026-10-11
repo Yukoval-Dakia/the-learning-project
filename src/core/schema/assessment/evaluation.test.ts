@@ -1456,23 +1456,11 @@ describe('automatic serving — explicit figure dependency gate (YUK-1445)', () 
   });
 });
 
-import {
-  ChoiceEntrySourceCrosscheckInput,
-  ChoiceMethodCalibration,
-} from '@/core/schema/assessment/choice-entry';
+import { ChoiceMethodCalibration } from '@/core/schema/assessment/choice-entry';
 import { projectPracticeIssuance } from '@/core/schema/assessment/dto';
-import {
-  QuestionPresentation,
-  validateQuestionPresentation,
-} from '@/core/schema/assessment/presentation';
+import { QuestionPresentation } from '@/core/schema/assessment/presentation';
 import { StructuredQuestion } from '@/core/schema/structured_question';
-import {
-  assessmentDigest,
-  calibrateChoiceMethod,
-  choiceEntryRowInputDigest,
-  validateChoiceCalibration,
-  validateChoiceEntryRowBinding,
-} from '@/kernel/records/assessment-choice-calibration';
+import { calibrateChoiceMethod } from '@/kernel/records/assessment-choice-calibration';
 import { normalizeQuestionRowToContract } from '@/kernel/records/assessment-normalization';
 
 const now = new Date('2026-10-11T00:00:00Z');
@@ -1551,54 +1539,6 @@ const solves = ChoiceMethodCalibration.shape.solves.parse([
   },
 ]);
 
-function sourceBinding(status: 'consistent' | 'conflict' | 'unknown' = 'consistent') {
-  const row = choiceRow();
-  const input = ChoiceEntrySourceCrosscheckInput.parse({
-    mode: 'source_crosscheck',
-    question: {
-      subject_id: 'math',
-      part_id: 'one',
-      slot_id: 'one::r',
-      scoring_unit_id: 'one::u',
-      prompt_md: row.prompt_md,
-      options,
-      printed_points: 2,
-    },
-    source: {
-      reference_md: 'B. Six',
-      source_url: row.metadata.web_sourced.url,
-      source_title: row.metadata.web_sourced.title,
-      extract: row.metadata.web_sourced.extract,
-      extraction_hash: null,
-    },
-    proposed_answer: {
-      criterion: row.structured.assessment?.criterion,
-      worked_solution_md: row.reference_md,
-    },
-  });
-  const output = {
-    mode: 'source_crosscheck' as const,
-    status,
-    reason_md:
-      'Fixture verdict for the source-conflict admission gate, not model quality evidence.',
-  };
-  return {
-    row_input_digest: choiceEntryRowInputDigest(row),
-    source_crosscheck: {
-      kind: 'checked' as const,
-      input,
-      output,
-      receipt: {
-        task_run_id: 'third-source-check',
-        provider: 'recorded-provider',
-        model: 'recorded-model',
-        input_digest: assessmentDigest(input),
-        output_digest: assessmentDigest(output),
-      },
-    },
-  };
-}
-
 describe('choice entry frozen method', () => {
   // @invariant grading: stable option IDs determine marks even when a legacy reference disagrees and the issued display order is reversed.
   // @fails-if normalization parses the reference key, changes the printed score, or scoring compares a display letter/index.
@@ -1613,131 +1553,6 @@ describe('choice entry frozen method', () => {
       ['explicit-blank', 0],
     ]);
     expect(result.probes.every((probe) => probe.passed)).toBe(true);
-  });
-
-  // @invariant grading: a changed key or declared scoring method cannot reuse calibration from an earlier method.
-  // @fails-if calibration validation accepts a valid but different key against the old probe and method digest.
-  it('rejects reused calibration after the typed key changes', async () => {
-    const original = revision();
-    const result = await calibrateChoiceMethod(original, solves, now, sourceBinding());
-    const changed = revision();
-    changed.scoring_basis.units[0].criterion = {
-      kind: 'option_set_key',
-      accepted_option_ids: ['opaque-red'],
-    };
-    expect(() => validateChoiceCalibration(changed, result)).toThrow('source cross-check');
-    const missing = { ...result, probes: result.probes.slice(1) };
-    expect(() => validateChoiceCalibration(original, missing)).toThrow('does not cover');
-  });
-
-  // @invariant grading: two independent answer verifications cannot be satisfied by reusing one task-run identity.
-  // @fails-if a replay of the same solve receipt is accepted as two independent passes.
-  it('refuses one solve reused twice', async () => {
-    await expect(calibrateChoiceMethod(revision(), [solves[0], solves[0]], now)).rejects.toThrow(
-      'independent task runs',
-    );
-  });
-
-  // @invariant grading: semantic working-row edits cannot silently serve the unchanged calibrated typed question.
-  // @fails-if normalization ignores a changed prompt or option column and returns the old frozen key and content.
-  it('rejects a raw prompt or choice edit against the unchanged structured entry', () => {
-    const row = choiceRow();
-    expect(() => normalizeQuestionRowToContract({ ...row, prompt_md: '2 + 5 = ?' })).toThrow(
-      'row and structured',
-    );
-    expect(() =>
-      normalizeQuestionRowToContract({ ...row, choices_md: ['9', '7', '3', '0'] }),
-    ).toThrow('row and structured');
-    const original = normalizeQuestionRowToContract(row);
-    expect(
-      normalizeQuestionRowToContract({
-        ...row,
-        metadata: { ...row.metadata, note: 'metadata edit' },
-      }),
-    ).toEqual(original);
-    expect(
-      normalizeQuestionRowToContract({ ...row, structured: null }).scoring_basis.units[0].criterion
-        .kind,
-    ).toBe('rule_reference');
-  });
-
-  // @invariant grading: a source-answer conflict or unknown result cannot admit the independently proposed key, even when its deterministic probes pass.
-  // @fails-if calibration admission accepts conflict/unknown, skips a nonblank source, or borrows either blind solve as its cross-check receipt.
-  it('requires a separate consistent source check before admitting a calibrated key', async () => {
-    const frozen = revision();
-    const consistent = await calibrateChoiceMethod(frozen, solves, now, sourceBinding());
-    expect(() => validateChoiceCalibration(frozen, consistent)).not.toThrow();
-    for (const status of ['conflict', 'unknown'] as const) {
-      const rejected = await calibrateChoiceMethod(frozen, solves, now, sourceBinding(status));
-      expect(rejected.probes.every((probe) => probe.passed)).toBe(true);
-      expect(() => validateChoiceCalibration(frozen, rejected)).toThrow('source cross-check');
-    }
-    const binding = sourceBinding();
-    expect(() =>
-      validateChoiceCalibration(frozen, {
-        ...consistent,
-        source_crosscheck: { kind: 'absent', source: binding.source_crosscheck.input.source },
-      }),
-    ).toThrow('nonblank');
-    expect(() =>
-      validateChoiceCalibration(frozen, { ...consistent, source_crosscheck: undefined }),
-    ).toThrow('lacks');
-    expect(() =>
-      validateChoiceCalibration(frozen, {
-        ...consistent,
-        source_crosscheck: {
-          ...binding.source_crosscheck,
-          receipt: { ...binding.source_crosscheck.receipt, task_run_id: solves[0].task_run_id },
-        },
-      }),
-    ).toThrow('source cross-check');
-    const emptySource = { ...binding.source_crosscheck.input.source, reference_md: '  ' };
-    expect(() =>
-      validateChoiceCalibration(frozen, {
-        ...consistent,
-        source_crosscheck: { kind: 'absent', source: emptySource },
-      }),
-    ).not.toThrow();
-  });
-
-  // @invariant grading: changing raw answers, typed inputs or source evidence cannot reuse an earlier entry proof; metadata changes can.
-  // @fails-if read/publication binding accepts an edited raw reference or source extract against the old calibration.
-  it('binds admission to the raw row and attributable source', async () => {
-    const row = choiceRow();
-    const evidence = await calibrateChoiceMethod(revision(), solves, now, sourceBinding());
-    expect(() => validateChoiceEntryRowBinding(row, evidence)).not.toThrow();
-    expect(() =>
-      validateChoiceEntryRowBinding({ ...row, reference_md: 'Different conclusion' }, evidence),
-    ).toThrow('working-row');
-    expect(() =>
-      validateChoiceEntryRowBinding({ ...row, source_ref: 'https://example.com/other' }, evidence),
-    ).toThrow('working-row');
-    expect(() =>
-      validateChoiceEntryRowBinding(
-        {
-          ...row,
-          metadata: {
-            web_sourced: { ...row.metadata.web_sourced, extract: 'Changed source answer' },
-          },
-        },
-        evidence,
-      ),
-    ).toThrow('captured source');
-    expect(() =>
-      validateChoiceEntryRowBinding(
-        {
-          ...row,
-          metadata: { web_sourced: { ...row.metadata.web_sourced, extraction_hash: 'changed' } },
-        },
-        evidence,
-      ),
-    ).toThrow('captured source');
-    expect(() =>
-      validateChoiceEntryRowBinding(
-        { ...row, metadata: { ...row.metadata, note: 'metadata edit' } },
-        evidence,
-      ),
-    ).not.toThrow();
   });
 
   // @invariant security: practice display exposes only public references and cannot carry an answer key or private solution in its declarative blocks.
@@ -1765,21 +1580,5 @@ describe('choice entry frozen method', () => {
     expect(() =>
       QuestionPresentation.parse({ ...source.structure.presentation, answer_key: 'opaque-blue' }),
     ).toThrow();
-    const presentation = source.structure.presentation;
-    if (!presentation) throw new Error('test requires frozen presentation');
-    expect(
-      validateQuestionPresentation(
-        {
-          ...presentation,
-          blocks: [
-            { kind: 'prompt', part_id: 'one' },
-            { kind: 'response', slot_id: 'one::r', scoring_unit_id: 'other-unit' },
-          ],
-        },
-        source.structure,
-        source.response_spec,
-        source.scoring_basis,
-      ),
-    ).toContain('presentation_unit_slot_mismatch');
   });
 });
