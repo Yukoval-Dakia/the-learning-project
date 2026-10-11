@@ -1054,9 +1054,13 @@ export async function loadProposalPresentations(
           : null;
       const preview = blockBelongsToProposal ? blockPreview(blockBelongsToProposal) : null;
       const label = preview
-        ? `${preview.label} · ${preview.excerpt}`
+        ? proposal.payload.kind === 'block_merge'
+          ? preview.label
+          : `${preview.label} · ${preview.excerpt}`
         : questionRow
-          ? `题目 · ${truncate(questionRow.prompt_md, TITLE_DETAIL_CAP)}`
+          ? proposal.payload.kind === 'block_merge'
+            ? '题目'
+            : `题目 · ${truncate(questionRow.prompt_md, TITLE_DETAIL_CAP)}`
           : null;
       if (label) presentation.evidence_labels[`question:${evidence.id}`] = label;
     }
