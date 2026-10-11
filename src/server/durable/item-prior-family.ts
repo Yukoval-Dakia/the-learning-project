@@ -9,11 +9,17 @@ import {
   DEFAULT_MAX_PER_RUN,
   type ItemPriorCandidateFrozen,
   type ItemPriorExecutionParams,
+  type ItemPriorRepEffectPort,
+  type ItemPriorStagedItem,
+  commitItemPriorStagedCalibration,
   normalizeMethod,
   normalizeReps,
+  prepareItemPriorWork,
   resolveItemPriorKnowledgeNames,
+  runItemPriorItemRepStages,
   selectItemPriorCandidates,
 } from '@/capabilities/practice/server/item-prior-durable-operation';
+import type { PracticeTaskRunFn } from '@/capabilities/practice/server/task-runtime';
 import type { Db, Tx } from '@/db/client';
 import { waitForRunnableEpoch } from '@/server/contract-epoch';
 
@@ -112,32 +118,45 @@ export interface ItemPriorMemberDeps {
   gateEpoch?: (db: Db) => Promise<void>;
 }
 
+/**
+ * Shared admission body (one recorded step, `item-prior-admission-v1`): epoch
+ * gate, then a read-only repeatable-read freeze of delivery identity,
+ * normalized params, candidates and knowledge names. Used unchanged by the
+ * blocked candidate and by the port-driven execution path below.
+ */
+async function admitItemPriorMember(
+  deps: ItemPriorMemberDeps,
+  request: ItemPriorMemberRequest,
+): Promise<ItemPriorAdmission> {
+  // All I/O stays inside the step. A missing checkpoint may repeat these reads;
+  // retriesAllowed:false does not prevent crash recovery from running a step.
+  await (deps.gateEpoch ?? waitForRunnableEpoch)(deps.db);
+  return deps.db.transaction(
+    async (tx) => {
+      await verifyItemPriorMemberIdentity(tx, request);
+      const candidates = await selectItemPriorCandidates(tx, DEFAULT_MAX_PER_RUN);
+      const names = await resolveItemPriorKnowledgeNames(tx, candidates);
+      return {
+        identity: {
+          member: request.member,
+          dagRunId: request.dagRunId,
+          runDate: request.runDate,
+          nodeId: request.nodeId,
+        },
+        params: { method: normalizeMethod(request.method), reps: normalizeReps(request.reps) },
+        candidates,
+        knowledgeNames: [...names.entries()],
+      } satisfies ItemPriorAdmission;
+    },
+    { isolationLevel: 'repeatable read', accessMode: 'read only' },
+  );
+}
+
 export async function runItemPriorDurableMember(deps: ItemPriorMemberDeps): Promise<never> {
   const request = itemPriorMemberRequestSchema.parse(deps.request);
-  const admission = await deps.steps.runStep('item-prior-admission-v1', async () => {
-    // All I/O stays inside the step. A missing checkpoint may repeat these reads;
-    // retriesAllowed:false does not prevent crash recovery from running a step.
-    await (deps.gateEpoch ?? waitForRunnableEpoch)(deps.db);
-    return deps.db.transaction(
-      async (tx) => {
-        await verifyItemPriorMemberIdentity(tx, request);
-        const candidates = await selectItemPriorCandidates(tx, DEFAULT_MAX_PER_RUN);
-        const names = await resolveItemPriorKnowledgeNames(tx, candidates);
-        return {
-          identity: {
-            member: request.member,
-            dagRunId: request.dagRunId,
-            runDate: request.runDate,
-            nodeId: request.nodeId,
-          },
-          params: { method: normalizeMethod(request.method), reps: normalizeReps(request.reps) },
-          candidates,
-          knowledgeNames: [...names.entries()],
-        } satisfies ItemPriorAdmission;
-      },
-      { isolationLevel: 'repeatable read', accessMode: 'read only' },
-    );
-  });
+  const admission = await deps.steps.runStep('item-prior-admission-v1', () =>
+    admitItemPriorMember(deps, request),
+  );
 
   // No token comparison, task invocation or domain write. A failed prerequisite
   // is not an unknown paid outcome and is not a terminal business disposition.
@@ -157,4 +176,80 @@ export function registerItemPriorFamilyWorkflow(db: Db) {
       }),
     { name: ITEM_PRIOR_MEMBER },
   );
+}
+
+// ─── YUK-1355 — real per-rep execution behind the shared port (unregistered) ──
+//
+// This path exists so the seams above compose into an executable member the
+// moment the parent relays lane B's fixed typed protocol. It stays
+// unregistered and unbooted, requires an explicit port AND runTaskFn (no
+// manufactured defaults), and never turns the blocked candidate's rejection
+// off. Held items are counted and returned — never thrown, never retried
+// in-run, never auto-resent on a later delivery.
+
+export interface ItemPriorMemberExecutionDeps extends ItemPriorMemberDeps {
+  /** Lane B's durable paid-effect protocol, relayed by the parent. Required. */
+  readonly port: ItemPriorRepEffectPort;
+  /** Explicit provider runner; no default is manufactured here. Required. */
+  readonly runTaskFn: PracticeTaskRunFn;
+}
+
+export interface ItemPriorDurableMemberResult {
+  /** Scheduler delivery identity — distinct from every item's rep identity. */
+  readonly identity: ItemPriorAdmission['identity'];
+  readonly params: ItemPriorExecutionParams;
+  readonly considered: number;
+  readonly applied: number;
+  readonly held: number;
+  readonly noAnchor: number;
+  readonly incomplete: number;
+  readonly skippedError: number;
+  readonly items: readonly ItemPriorStagedItem[];
+}
+
+export async function runItemPriorDurableMemberExecution(
+  deps: ItemPriorMemberExecutionDeps,
+): Promise<ItemPriorDurableMemberResult> {
+  const request = itemPriorMemberRequestSchema.parse(deps.request);
+  const admission = await deps.steps.runStep('item-prior-admission-v1', () =>
+    admitItemPriorMember(deps, request),
+  );
+  const items: ItemPriorStagedItem[] = [];
+  const counts = { applied: 0, held: 0, noAnchor: 0, incomplete: 0, skippedError: 0 };
+  const nameById = new Map(admission.knowledgeNames);
+  for (const candidate of admission.candidates) {
+    try {
+      const work = await prepareItemPriorWork(deps.db, candidate, nameById, admission.params);
+      const staged = await runItemPriorItemRepStages(work, {
+        port: deps.port,
+        runTaskFn: deps.runTaskFn,
+      });
+      if (await commitItemPriorStagedCalibration(deps.db, staged)) {
+        counts.applied++;
+      } else if (staged.status === 'held') {
+        counts.held++;
+      } else if (staged.status === 'no-anchor') {
+        counts.noAnchor++;
+      } else {
+        counts.incomplete++;
+      }
+      items.push(staged);
+    } catch (err) {
+      // Retained error isolation: one item's preparation/staging failure must
+      // not block the rest. Unknown paid outcomes never reach this catch —
+      // they are recorded in the port and surface as status 'held'.
+      console.error('[item_prior_durable_member] question staging failed', {
+        questionId: candidate.id,
+        err,
+      });
+      counts.skippedError++;
+    }
+  }
+  return {
+    identity: admission.identity,
+    params: admission.params,
+    considered: admission.candidates.length,
+    ...counts,
+    items,
+  } satisfies ItemPriorDurableMemberResult;
 }

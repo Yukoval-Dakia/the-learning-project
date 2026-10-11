@@ -208,3 +208,139 @@ Independent R1 on `f53e1470c775ac25615a452fd037bc6fc88fcfb5` versus `6f1f3e07e41
 Parent separately reran the two scoped unit files: five cases passed (`/tmp/yuk1355-dag-parent-unit.log`). R1 was source-only and did not repeat those checks. DB tests and DBOS runtime recovery remain unrun.
 
 Review confirmed the retained query, three-rep/median/LLaSA behavior and failure isolation. The candidate has no reachable provider call, domain write or business-completion path and rejects even an empty batch. This does not close the missing per-rep claims/immutable receipts, cross-run unknown reconciliation, durable obligations or symmetric backend fencing. Complete those prerequisites before treating this as a reusable migrated DAG template.
+
+## 2026-10-11 continuation: per-rep durable seams behind the provisional port
+
+Owner renewed instruction (parent plan
+`docs/planning/2026-10-11-migration-next-durable-implementation.md`, lane A,
+this tree). This continuation implements the actual per-rep
+preparation / execute / result-parse / aggregate / application seams on top of
+the blocked candidate, preserving the default three reps, median aggregation,
+the single LLaSA call, per-item error isolation and the unordered capped
+candidate query. The retained pg-boss consumer keeps its behavior; the blocked
+candidate keeps rejecting; the new execution path exists only behind the
+provisional shared port and stays unregistered.
+
+### Seams (src/capabilities/practice/server/item-prior-durable-operation.ts)
+
+- `prepareItemPriorWork(db, candidate, nameById, params)` — deterministic
+  preparation with the retained step order (knowledge context → subject
+  profile → method-specific input). Freezes `questionRevision` (digest of the
+  candidate row), `inputDigest` (digest of task name + exact input + subject
+  profile, via the existing `canonicalHash`) and `repCount`
+  (feature → reps, llasa → 1). No provider calls, no writes.
+- `itemPriorRepIdentity(work, repIndex)` — the per-rep work identity
+  `{questionId, questionRevision, method, inputDigest, repIndex}`. It excludes
+  scheduler delivery identity (dagRunId / runDate / nodeId) by construction, so
+  the same question on a later nightly delivery yields the same rep identities.
+- `ItemPriorRepEffectPort` — provisional consumption surface for lane B's
+  durable paid-effect machinery (see "Explicit B dependency").
+- `executeItemPriorRep(work, repIndex, {port, runTaskFn})` — resume first: an
+  existing record is replayed (parse of the immutable output text) and the
+  provider is never called. Otherwise the rep must be admitted; a provider
+  error records an `unknown` receipt (an exception does not prove that no paid
+  effect occurred) and returns `held`; a completed response records an
+  immutable `output` receipt and parses deterministically.
+- `parseStagedItemPriorOutput` — result-parse seam over a receipt's text
+  (`draft` or `dropped`; a completed-but-unparseable output is a known
+  outcome, not an unknown one).
+- `settleItemPriorStagedItem` / `runItemPriorItemRepStages` — aggregate seam in
+  ascending rep order: `held` outranks `pending`; with every rep resolved,
+  surviving feature drafts take the retained median (attempted = intended rep
+  count; single-rep and LLaSA stay byte-identical to the retained draft), an
+  empty survivor set settles `no-anchor` without a write.
+- `commitItemPriorStagedCalibration(db, staged)` — application seam; writes the
+  retained `applyItemPrior` anchor iff status is `ready`. Replay of a ready
+  item after a crash between application and acknowledgement is a no-op
+  (onConflictDoNothing); receipt-bound dispositive comparison stays with
+  lane B / the parent.
+
+### Unknown outcomes stay held
+
+An unknown rep is a durable record, never an exception: it is returned as
+status `held` with `heldReps`, is not retried in-run, is not counted as a
+retryable failure, and a later nightly delivery replays it from the port
+without re-admission or provider re-send. A changed question or changed input
+produces new identities; the old records — including the unknown — are never
+deleted or rewritten (the seam exposes no delete; receipts are single-shot).
+Admission refusal (no paid effect) settles `incomplete` with `pendingReps` and
+is safely retryable later.
+
+### Explicit B dependency (provisional port)
+
+`ItemPriorRepEffectPort` is only lane A's consumption surface. ONE owner: lane
+B, task `migration-shared-durable-effects-implementation-20261011` (worktree
+`tlp-migration-receipt-reference`, not read by this lane). The parent relays
+B's fixed typed protocol before this repository imports a real implementation.
+Until then there is NO production implementation of the port, nothing
+registered/booted/manifested consumes it, it must not be presented as live
+admission, and no manufactured always-success adapter may be bound to it —
+the unit-test `PortDouble` exists only inside test files. When the fixed
+protocol arrives, `executeItemPriorRep`'s resume/admit/complete calls are the
+integration points and the parent reconciles the shapes.
+
+### Family composition (src/server/durable/item-prior-family.ts)
+
+`runItemPriorDurableMemberExecution(deps)` composes the seams behind the port:
+one recorded `item-prior-admission-v1` step (same admission body as the
+blocked candidate), then per candidate in frozen query order: preparation,
+staged rep execution, application of settled items, per-item error isolation
+for preparation/staging infrastructure failures (`skippedError`), and a
+counted result (`applied` / `held` / `noAnchor` / `incomplete` /
+`skippedError`) carrying both the delivery identity and the per-item staged
+outcomes. It requires an explicit `port` AND `runTaskFn` — no defaults are
+manufactured — and nothing registers or boots it. `runItemPriorDurableMember`
+still always throws `ItemPriorDurabilityPrerequisiteError`; the reject is not
+turned off without the shared fixed protocol.
+
+### Retained behavior preservation
+
+`calibrateItemPriorQuestion` now routes through `prepareItemPriorWork` and a
+retained rep runner with the original semantics: LLaSA stays one call with
+propagating parse errors; feature keeps the single-call fast path for
+reps ≤ 1 and the per-rep catch/warn/median loop otherwise. The two retained
+unit tests (default three-rep median numerics, surviving-drafts settlement
+with an all-failed item left uncalibrated) are unchanged and green. The
+retained handler, its job-data normalization, yield reporting and per-question
+catch/skip loop are untouched.
+
+### Validation record (fresh, this continuation)
+
+Node `24.19.0` (`/Users/yuqi/.local/share/mise/installs/node/24.19.0/bin`),
+pnpm `11.13.1`. Logs and SHA-256 below; `unit.log` covers both owned unit
+files (18 tests: 12 operation incl. the 2 retained, 6 family incl. the 3
+blocked-candidate proofs).
+
+### Remaining gates (not claimed here)
+
+- Import of lane B's fixed typed protocol (parent relay) and reconciliation of
+  `ItemPriorRepEffectPort` against it; only then can the execution path be
+  wired to a real store.
+- Real-DB/process gates stay parent-owned: DBOS crash/reopen recovery with
+  stable step order, retained-consumer DB checks, durable-store persistence of
+  held obligations across restarts and cutover, symmetric backend fencing,
+  exact-head CI, independent review of this new diff.
+- No DB tests were run or added in this lane; `tests/integration/
+  item-prior-durable-member.db.test.ts` is unchanged. No full local suite.
+```text
+unit exit=0        2 files, 18 tests passed (12 operation incl. 2 retained, 6 family incl. 3 blocked-candidate)
+typecheck exit=0   both TypeScript projects
+lint exit=0        174 warnings (baseline-level; scoped Biome on the four owned
+                   files is clean)
+build exit=0       Vite SPA, Start client/server, Hono server, worker, migrate
+```
+
+Logs under `/private/var/folders/bt/rcf5s7tx3s93g3dz0046y96w0000gn/T/opencode/tlp-yuk1355-reps-gates/`.
+SHA-256:
+
+```text
+unit.log      b645c5f18c6d9f6c2e2a01a577a18d445d204b5031478beefceae8899206ccd3
+typecheck.log 36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6
+lint.log      53911e601d2485fb592633ff552368ea753d2b511388c4b518f80d814c33bba0
+build.log     6fe975d09b9c1cf584c5449518bb0c6863e4517e45a6513baaab23bf081e13a5
+```
+
+`git diff --check` passed. Owned-file surface only: the operation, its unit
+tests, the family, its unit tests and this document; `vitest.shared.ts`,
+schema, migrations, registration, manifests, boot, barrels and Start files are
+untouched. The five files form this continuation's diff.

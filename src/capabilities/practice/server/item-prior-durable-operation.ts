@@ -2,15 +2,23 @@
 // pg-boss handler. The unregistered DBOS candidate only consumes the read functions.
 // Provider errors do not prove that no paid effect occurred. Retained catch/skip
 // behavior stays here; durable dispatch needs a separate safe claim/receipt owner.
+//
+// YUK-1355 (2026-10-11 continuation): per-rep preparation/execute/parse/aggregate/
+// application seams. Rep work identity = question revision + input digest + rep
+// index, deliberately distinct from nightly DAG delivery identity. Staged reps
+// resume without provider calls; an unknown paid outcome stays held across new
+// deliveries and is never caught as an ordinary retryable failure.
 
 import { inArray, sql } from 'drizzle-orm';
 import { aggregateItemPriorRepDrafts } from '@/core/item-prior-reps';
+import { canonicalHash } from '@/core/migration/canonical';
 import type { ItemPriorDraftT } from '@/core/schema/item_prior';
 
 import type { Db, Tx } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
 import { parseItemPriorLlasaOutput, parseItemPriorOutput } from '@/server/ai/item-prior';
 import { applyItemPrior } from '@/server/mastery/item-calibration';
+import type { SubjectProfile } from '@/subjects/profile';
 import { resolveSubjectProfileForKnowledgeIds } from './knowledge-runtime';
 import {
   type PracticeTaskCallCtx,
@@ -107,48 +115,53 @@ export async function resolveItemPriorKnowledgeNames(
   return nameById;
 }
 
+// ─── YUK-1355 — per-rep preparation seam ────────────────────────────────────
+
+export type ItemPriorTaskName = 'ItemPriorTask' | 'ItemPriorLlasaTask';
+
 /**
- * YUK-1034 — feature→b 采样器：reps=1 退化为单次调用（与原路径逐字节等价，
- * 输入形状/hash 不变）；reps>1 连跑 N 次，逐 rep catch 丢弃失败（LLM/parse
- * 错只记 warn 不炸题），成功 drafts 走 median 聚合。全部失败 →
- * aggregateItemPriorRepDrafts throw → 调用方按单题失败处理。
+ * Frozen per-rep unit of paid work. Deliberately excludes scheduler delivery
+ * identity (dagRunId / runDate / nodeId): the same question prepared on a later
+ * nightly delivery yields the same rep identities, so staged reps resume
+ * instead of re-sending, while a changed question or changed input yields new
+ * identities and every old record — including an unknown paid outcome — stays
+ * untouched.
  */
-async function sampleFeaturePriorDraft(
-  runTaskFn: PracticeTaskRunFn,
-  input: unknown,
-  ctx: PracticeTaskCallCtx,
-  reps: number,
-): Promise<ItemPriorDraftT> {
-  if (reps <= 1) {
-    const runResult = await runTaskFn('ItemPriorTask', input, ctx);
-    return parseItemPriorOutput(runResult.text);
-  }
-  const drafts: ItemPriorDraftT[] = [];
-  for (let r = 0; r < reps; r++) {
-    try {
-      const runResult = await runTaskFn('ItemPriorTask', input, ctx);
-      drafts.push(parseItemPriorOutput(runResult.text));
-    } catch (repErr) {
-      console.warn('[item_prior_backfill] rep dropped from median', { rep: r, err: repErr });
-    }
-  }
-  return aggregateItemPriorRepDrafts(drafts, reps).draft;
+export interface ItemPriorRepIdentity {
+  readonly questionId: string;
+  /** Digest of the frozen candidate row; changes when the question is edited. */
+  readonly questionRevision: string;
+  readonly method: ItemPriorMethod;
+  /** Digest of the exact rendered task input (shape, knowledge context, profile). */
+  readonly inputDigest: string;
+  readonly repIndex: number;
+}
+
+/** Deterministic preparation result; the input of every later seam. */
+export interface ItemPriorPreparedWork {
+  readonly candidate: ItemPriorCandidateFrozen;
+  readonly method: ItemPriorMethod;
+  readonly taskName: ItemPriorTaskName;
+  readonly input: unknown;
+  readonly subjectProfile: SubjectProfile;
+  readonly questionRevision: string;
+  readonly inputDigest: string;
+  /** Intended rep units: feature → params.reps (default 3), llasa → 1. */
+  readonly repCount: number;
 }
 
 /**
- * 单题付费执行（本 family 的唯一付费入口）。语义与原文件循环体逐条对应：
- * knowledge context 组装、subject profile 解析、YUK-376 双方法输入形状
- * （llasa 带 reference_md/choices_md；feature 三字段不变）、YUK-1034 reps 采样。
- * 返回待写 draft 与 source。throw 不区分 provider 未调用、已付费或结果未知；
- * retained caller 继续 catch+skip，durable candidate 不调用本函数。
+ * Preparation seam — no provider calls, no writes. Same step order as the
+ * retained path: knowledge context → subject profile → method-specific input
+ * shape (feature keeps its three fields, so its digest matches the bytes the
+ * retained path has always sent).
  */
-export async function calibrateItemPriorQuestion(
+export async function prepareItemPriorWork(
   db: Db | Tx,
-  runTaskFn: PracticeTaskRunFn,
   candidate: ItemPriorCandidateFrozen,
   nameById: ReadonlyMap<string, string>,
   params: ItemPriorExecutionParams,
-): Promise<{ draft: ItemPriorDraftT; source: string }> {
+): Promise<ItemPriorPreparedWork> {
   const knowledgeContext = (candidate.knowledge_ids ?? [])
     .map((id) => ({ name: nameById.get(id) }))
     .filter((kc): kc is { name: string } => typeof kc.name === 'string');
@@ -174,15 +187,94 @@ export async function calibrateItemPriorQuestion(
           kind: candidate.kind,
           knowledge_context: knowledgeContext,
         };
-  // YUK-1034 — feature 路径经 sampleFeaturePriorDraft：reps=1 单次调用
-  // （原语义），reps>1 N 次采样 median 聚合；llasa 保持单次调用不动。
+  const taskName: ItemPriorTaskName =
+    params.method === 'llasa' ? 'ItemPriorLlasaTask' : 'ItemPriorTask';
+  return {
+    candidate,
+    method: params.method,
+    taskName,
+    input,
+    subjectProfile,
+    questionRevision: canonicalHash({ tag: 'item-prior-question-revision-v1', candidate }),
+    inputDigest: canonicalHash({ tag: 'item-prior-input-v1', taskName, input, subjectProfile }),
+    repCount: params.method === 'llasa' ? 1 : params.reps,
+  };
+}
+
+/** Stable identity of one intended rep within the prepared work. */
+export function itemPriorRepIdentity(
+  work: ItemPriorPreparedWork,
+  repIndex: number,
+): ItemPriorRepIdentity {
+  if (!Number.isInteger(repIndex) || repIndex < 0 || repIndex >= work.repCount) {
+    throw new RangeError(
+      `itemPriorRepIdentity: repIndex ${repIndex} outside 0..${work.repCount - 1}`,
+    );
+  }
+  return {
+    questionId: work.candidate.id,
+    questionRevision: work.questionRevision,
+    method: work.method,
+    inputDigest: work.inputDigest,
+    repIndex,
+  };
+}
+
+/**
+ * YUK-1034 retained feature sampler over the prepared work: reps=1 退化为单次
+ * 调用（与原路径逐字节等价，输入形状/hash 不变）；reps>1 连跑 N 次，逐 rep
+ * catch 丢弃失败（LLM/parse 错只记 warn 不炸题），成功 drafts 走 median 聚合。
+ * 全部失败 → aggregateItemPriorRepDrafts throw → 调用方按单题失败处理。
+ */
+async function runRetainedFeatureReps(
+  runTaskFn: PracticeTaskRunFn,
+  work: ItemPriorPreparedWork,
+): Promise<ItemPriorDraftT> {
+  const ctx: PracticeTaskCallCtx = { subjectProfile: work.subjectProfile };
+  if (work.repCount <= 1) {
+    const runResult = await runTaskFn('ItemPriorTask', work.input, ctx);
+    return parseItemPriorOutput(runResult.text);
+  }
+  const drafts: ItemPriorDraftT[] = [];
+  for (let r = 0; r < work.repCount; r++) {
+    try {
+      const runResult = await runTaskFn('ItemPriorTask', work.input, ctx);
+      drafts.push(parseItemPriorOutput(runResult.text));
+    } catch (repErr) {
+      console.warn('[item_prior_backfill] rep dropped from median', { rep: r, err: repErr });
+    }
+  }
+  return aggregateItemPriorRepDrafts(drafts, work.repCount).draft;
+}
+
+/**
+ * 单题付费执行（retained 路径）。语义与原循环体逐条对应：knowledge context
+ * 组装、subject profile 解析、YUK-376 双方法输入形状（llasa 带
+ * reference_md/choices_md；feature 三字段不变）、YUK-1034 reps 采样。返回待写
+ * draft 与 source。throw 不区分 provider 未调用、已付费或结果未知；retained
+ * caller 继续 catch+skip，staged 执行不经过本函数。
+ */
+export async function calibrateItemPriorQuestion(
+  db: Db | Tx,
+  runTaskFn: PracticeTaskRunFn,
+  candidate: ItemPriorCandidateFrozen,
+  nameById: ReadonlyMap<string, string>,
+  params: ItemPriorExecutionParams,
+): Promise<{ draft: ItemPriorDraftT; source: string }> {
+  const work = await prepareItemPriorWork(db, candidate, nameById, params);
+  // YUK-1034 — feature 路径：reps=1 单次调用（原语义），reps>1 N 次采样
+  // median 聚合；llasa 保持单次调用不动，parse 错误照常向上传播。
   const draft =
-    params.method === 'llasa'
+    work.method === 'llasa'
       ? parseItemPriorLlasaOutput(
-          (await runTaskFn('ItemPriorLlasaTask', input, { subjectProfile })).text,
+          (
+            await runTaskFn('ItemPriorLlasaTask', work.input, {
+              subjectProfile: work.subjectProfile,
+            })
+          ).text,
         ).prior
-      : await sampleFeaturePriorDraft(runTaskFn, input, { subjectProfile }, params.reps);
-  return { draft, source: params.method === 'llasa' ? 'llm_prior_llasa' : 'llm_prior' };
+      : await runRetainedFeatureReps(runTaskFn, work);
+  return { draft, source: work.method === 'llasa' ? 'llm_prior_llasa' : 'llm_prior' };
 }
 
 /**
@@ -196,6 +288,235 @@ export async function commitItemPriorCalibration(
   source: string,
 ): Promise<void> {
   await applyItemPrior(db, { questionId: candidate.id, draft, source });
+}
+
+// ─── YUK-1355 — provisional shared paid-effect port (EXPLICIT B DEPENDENCY) ──
+//
+// ONE owner: lane B, task migration-shared-durable-effects-implementation-
+// 20261011 (worktree tlp-migration-receipt-reference). Lane B owns the real
+// durable claim / fence / immutable-receipt store and its schema. The shapes
+// below are only lane A's consumption surface for per-rep paid effects; the
+// parent relays B's fixed typed protocol before this repository imports any
+// real implementation. Until then:
+//   - NO production implementation of this port exists in this repository;
+//   - nothing registered, booted or manifested consumes it;
+//   - it must not be presented as live admission, and no manufactured
+//     always-success adapter may be bound to it (test doubles stay in tests).
+//
+// Contract this seam relies on:
+//   - lookupRep is a pure read keyed by the work identity (revision + input
+//     digest + rep index), never by scheduler delivery identity.
+//   - admitRep claims one physical send for the identity ('admitted'), reports
+//     an existing unresolved claim ('held'), or a backend refusal with no paid
+//     effect ('refused').
+//   - completeRep appends the exact immutable receipt once per admission; a
+//     divergent second receipt for the same identity is a protocol violation
+//     B's implementation rejects.
+//   - Records survive workflow restarts, later nightly deliveries and
+//     cross-backend cutover; nothing in this seam deletes or rewrites them.
+
+/** Durable record of one rep's paid effect. */
+export type ItemPriorRepRecord =
+  | { readonly state: 'unknown' }
+  | { readonly state: 'output'; readonly outputText: string };
+
+export type ItemPriorRepAdmission =
+  | { readonly decision: 'admitted' }
+  | { readonly decision: 'held' }
+  | { readonly decision: 'refused'; readonly reason: string };
+
+export type ItemPriorRepReceipt =
+  | { readonly kind: 'output'; readonly outputText: string }
+  | { readonly kind: 'unknown'; readonly reason: string };
+
+export interface ItemPriorRepEffectPort {
+  lookupRep(identity: ItemPriorRepIdentity): Promise<ItemPriorRepRecord | undefined>;
+  admitRep(
+    identity: ItemPriorRepIdentity,
+    intent: {
+      taskName: ItemPriorTaskName;
+      inputDigest: string;
+    },
+  ): Promise<ItemPriorRepAdmission>;
+  completeRep(identity: ItemPriorRepIdentity, receipt: ItemPriorRepReceipt): Promise<void>;
+}
+
+// ─── YUK-1355 — staged per-rep execution / parse / aggregate / application ───
+
+/** Outcome of one rep after this seam is done with it. */
+export type ItemPriorRepOutcome =
+  /** Completed response parsed into a draft (receipt recorded). */
+  | { readonly state: 'draft'; readonly draft: ItemPriorDraftT }
+  /** Completed response that failed the parse barrier — known outcome, no draft. */
+  | { readonly state: 'dropped' }
+  /** Unknown paid outcome — durable held obligation; never an auto-retry. */
+  | { readonly state: 'held' }
+  /** No send happened this run (admission refused); safe to retry later. */
+  | { readonly state: 'pending' };
+
+export type ItemPriorStagedStatus = 'ready' | 'held' | 'incomplete' | 'no-anchor';
+
+export interface ItemPriorStagedItem {
+  readonly questionId: string;
+  readonly questionRevision: string;
+  readonly inputDigest: string;
+  readonly method: ItemPriorMethod;
+  /** Index-aligned with the intended rep units (ascending rep order). */
+  readonly repOutcomes: readonly ItemPriorRepOutcome[];
+  readonly status: ItemPriorStagedStatus;
+  readonly draft?: ItemPriorDraftT;
+  readonly source: string;
+  readonly heldReps: readonly number[];
+  readonly pendingReps: readonly number[];
+}
+
+export interface ItemPriorRepExecutionDeps {
+  readonly port: ItemPriorRepEffectPort;
+  readonly runTaskFn: PracticeTaskRunFn;
+}
+
+/** Deterministic parse seam over a completed receipt's immutable text. */
+export function parseStagedItemPriorOutput(
+  method: ItemPriorMethod,
+  outputText: string,
+): ItemPriorRepOutcome {
+  try {
+    const draft =
+      method === 'llasa'
+        ? parseItemPriorLlasaOutput(outputText).prior
+        : parseItemPriorOutput(outputText);
+    return { state: 'draft', draft };
+  } catch {
+    // Completed output failing the parse barrier is a known outcome with no
+    // draft — the retained path drops such reps from the median the same way.
+    return { state: 'dropped' };
+  }
+}
+
+function outcomeFromRecord(
+  method: ItemPriorMethod,
+  record: ItemPriorRepRecord,
+): ItemPriorRepOutcome {
+  if (record.state === 'unknown') return { state: 'held' };
+  return parseStagedItemPriorOutput(method, record.outputText);
+}
+
+/**
+ * Execute one rep through the shared port. Resume first: an existing record is
+ * reused as-is and the provider is never called. Otherwise the rep must be
+ * admitted; a provider error records an `unknown` receipt (an exception does
+ * not prove that no paid effect occurred) and stays held — it is never
+ * re-sent here and never surfaces as an ordinary retryable failure.
+ */
+export async function executeItemPriorRep(
+  work: ItemPriorPreparedWork,
+  repIndex: number,
+  deps: ItemPriorRepExecutionDeps,
+): Promise<ItemPriorRepOutcome> {
+  const identity = itemPriorRepIdentity(work, repIndex);
+  const record = await deps.port.lookupRep(identity);
+  if (record) return outcomeFromRecord(work.method, record);
+
+  const admission = await deps.port.admitRep(identity, {
+    taskName: work.taskName,
+    inputDigest: work.inputDigest,
+  });
+  if (admission.decision === 'refused') return { state: 'pending' };
+  if (admission.decision === 'held') return { state: 'held' };
+
+  let outputText: string;
+  try {
+    const runResult = await deps.runTaskFn(work.taskName, work.input, {
+      subjectProfile: work.subjectProfile,
+    });
+    outputText = runResult.text;
+  } catch (err) {
+    // Persist the unfinished obligation before returning: the send may have
+    // happened, so the durable record — not this process — owns the outcome.
+    await deps.port.completeRep(identity, {
+      kind: 'unknown',
+      reason: err instanceof Error ? err.message : String(err),
+    });
+    return { state: 'held' };
+  }
+  await deps.port.completeRep(identity, { kind: 'output', outputText });
+  return parseStagedItemPriorOutput(work.method, outputText);
+}
+
+/**
+ * Aggregate seam: settle staged outcomes into the item status. held blocks
+ * application and outranks pending; with every rep resolved, surviving drafts
+ * take the retained median (feature) or the single LLaSA draft, and an empty
+ * survivor set settles `no-anchor` without a write.
+ */
+export function settleItemPriorStagedItem(
+  work: ItemPriorPreparedWork,
+  outcomes: readonly ItemPriorRepOutcome[],
+): ItemPriorStagedItem {
+  if (outcomes.length !== work.repCount) {
+    throw new Error(
+      `settleItemPriorStagedItem: expected ${work.repCount} outcomes, got ${outcomes.length}`,
+    );
+  }
+  const heldReps = outcomes.flatMap((o, i) => (o.state === 'held' ? [i] : []));
+  const pendingReps = outcomes.flatMap((o, i) => (o.state === 'pending' ? [i] : []));
+  const base = {
+    questionId: work.candidate.id,
+    questionRevision: work.questionRevision,
+    inputDigest: work.inputDigest,
+    method: work.method,
+    repOutcomes: outcomes,
+    source: work.method === 'llasa' ? 'llm_prior_llasa' : 'llm_prior',
+    heldReps,
+    pendingReps,
+  };
+  if (heldReps.length > 0) return { ...base, status: 'held' };
+  if (pendingReps.length > 0) return { ...base, status: 'incomplete' };
+  const drafts = outcomes.flatMap((o) => (o.state === 'draft' ? [o.draft] : []));
+  if (drafts.length === 0) return { ...base, status: 'no-anchor' };
+  // Feature: same median aggregation as the retained path (attempted = the
+  // intended rep count); a single surviving rep or LLaSA stays byte-identical
+  // to the retained draft (no provenance suffix).
+  const draft =
+    work.method === 'llasa' || work.repCount <= 1
+      ? drafts[0]
+      : aggregateItemPriorRepDrafts(drafts, work.repCount).draft;
+  return { ...base, status: 'ready', draft };
+}
+
+/**
+ * Staged execution of one item's intended reps, ascending rep order. Resolved
+ * reps are replayed from the port without provider calls; application is the
+ * caller's decision and only valid once every rep resolved.
+ */
+export async function runItemPriorItemRepStages(
+  work: ItemPriorPreparedWork,
+  deps: ItemPriorRepExecutionDeps,
+): Promise<ItemPriorStagedItem> {
+  const outcomes: ItemPriorRepOutcome[] = [];
+  for (let repIndex = 0; repIndex < work.repCount; repIndex++) {
+    outcomes.push(await executeItemPriorRep(work, repIndex, deps));
+  }
+  return settleItemPriorStagedItem(work, outcomes);
+}
+
+/**
+ * Application seam: write the hard-track anchor iff every rep resolved and a
+ * draft survived. Uses the retained writer (onConflictDoNothing), so replaying
+ * a ready item after a crash between application and acknowledgement is a
+ * no-op; receipt-bound dispositive comparison stays with lane B / the parent.
+ */
+export async function commitItemPriorStagedCalibration(
+  db: Db | Tx,
+  staged: ItemPriorStagedItem,
+): Promise<boolean> {
+  if (staged.status !== 'ready' || !staged.draft) return false;
+  await applyItemPrior(db, {
+    questionId: staged.questionId,
+    draft: staged.draft,
+    source: staged.source,
+  });
+  return true;
 }
 
 /**
