@@ -144,7 +144,8 @@
 /* The reused response components carry the old page rhythm; inside this box the box padding
    and the grid gap own the spacing (checkpoint 1; full ui-next restyle is a checkpoint 2 item). */
 [data-ui-next] .un-pn-answer .rs-slotfield,
-[data-ui-next] .un-pn-answer .rs-textwrap {
+[data-ui-next] .un-pn-answer .rs-textwrap,
+[data-ui-next] .un-pn-answer .rs-opts {
   margin-top: 0;
 }
 [data-ui-next] .un-pn-note {
