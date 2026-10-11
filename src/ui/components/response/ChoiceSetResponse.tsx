@@ -17,7 +17,7 @@ import { useEffect, useRef } from 'react';
 import { MathMarkdown } from '@/ui/lib/math-markdown';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
 
-import type { ChoiceOption } from './response-types';
+import { type ChoiceOption, withoutLabelPrefix } from './response-types';
 
 export interface ChoiceSetResponseProps {
   options: ChoiceOption[];
@@ -177,11 +177,4 @@ export function ChoiceSetResponse({
       )}
     </>
   );
-}
-
-// Imported option text often repeats its own label ("A. 90°"), which the card already shows in its
-// own column. Drop that one leading copy for display; the stored text is unchanged.
-function withoutLabelPrefix(text: string, label: string): string {
-  const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return text.replace(new RegExp(`^\\s*[（(]?${escaped}[)）]?\\s*[.．、:：)）]\\s*`), '');
 }
