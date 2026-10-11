@@ -14,7 +14,7 @@
   },
   "debts": {
     "capabilityToServer": {
-      "total": 431,
+      "total": 428,
       "byOwnerPair": {
         "agency -> ai": 28,
         "agency -> boss": 10,
@@ -78,7 +78,7 @@
         "practice -> boss": 15,
         "practice -> calibration": 3,
         "practice -> coldstart": 1,
-        "practice -> events": 4,
+        "practice -> events": 1,
         "practice -> fsrs": 6,
         "practice -> http": 3,
         "practice -> mastery": 18,

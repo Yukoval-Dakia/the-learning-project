@@ -1,4 +1,5 @@
 import { ApiError, apiFetch, apiJson } from './api';
+import { randomId } from './random-id';
 
 export type IngestionOperationRequest =
   | { kind: 'extract' }
@@ -29,9 +30,7 @@ export interface IngestionOperationResource<Result = unknown> {
 }
 
 function newIdempotencyKey(): string {
-  return (
-    globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`
-  );
+  return randomId();
 }
 
 export async function startIngestionOperation<Result = unknown>(
