@@ -6,6 +6,7 @@ import {
   mkdtempSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -51,7 +52,7 @@ import {
 
 // YUK-1056 — cutover-backup CLI 单测（纯 fs/对象；不触 DB/docker）。
 
-const TMP = mkdtempSync(join(tmpdir(), 'cutover-backup-test-'));
+const TMP = realpathSync(mkdtempSync(join(tmpdir(), 'cutover-backup-test-')));
 const CLI = join(TMP, 'cutover-backup.mjs');
 beforeAll(() => {
   // Keep package resolution (including lazy postgres and import.meta.resolve('tsx')) native.
