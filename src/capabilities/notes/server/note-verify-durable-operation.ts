@@ -57,6 +57,12 @@ export interface RunNoteVerifyParams {
   db: Db;
   artifactId: string;
   runTaskFn: RunTaskFn;
+  /**
+   * Optional in-transaction backend-control admission, threaded into
+   * reserveNoteVerification's reservation transaction (YUK-1355). Production
+   * send entries (pg-boss handler, DBOS adapter) wire it by default.
+   */
+  controlAdmission?: (tx: Tx) => Promise<void>;
 }
 
 export interface RunNoteVerifyResult {
@@ -286,7 +292,9 @@ export async function finalizeStagedNoteVerification(
 
 export async function runNoteVerify(params: RunNoteVerifyParams): Promise<RunNoteVerifyResult> {
   const { db, artifactId, runTaskFn } = params;
-  const reservation = await reserveNoteVerification(db, artifactId);
+  const reservation = await reserveNoteVerification(db, artifactId, {
+    controlAdmission: params.controlAdmission,
+  });
   if (reservation.kind === 'not_found') return { status: 'skipped:not_found' };
   if (reservation.kind === 'not_ready') {
     return { status: 'skipped:not_ready', artifact_type: reservation.artifactType };

@@ -16,6 +16,7 @@ import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { admitNoteVerifyDelivery } from '@/capabilities/notes/jobs/note_verify';
+import { reserveNoteVerification } from '@/capabilities/notes/server/note-verification-claim-reservation';
 import type { Db, Tx } from '@/db/client';
 import { artifact, note_verification_claim, paid_effect, paid_effect_control } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
@@ -24,6 +25,7 @@ import {
   readPaidEffectControl,
   switchPaidEffectBackend,
 } from './paid-effect-control';
+import { buildNoteVerificationControlAdmission } from './paid-effect-note-admission';
 import {
   PaidEffectApplicationConflictError,
   PaidEffectControlFencedError,
@@ -701,5 +703,101 @@ describe('paid-effect backend control (DB)', () => {
       reason: 'backend_mismatch',
       owner: 'dbos',
     });
+  });
+
+  // @invariant concurrency: with NO control row yet (the missing-row race), a concurrent claim and a concurrent switch can never BOTH win — the family advisory serializes them before any row exists to lock
+  // @fails-if the claim is admitted (or already committed) while the switch also succeeds, leaving a pg-boss send in flight under DBOS ownership
+  it('serializes the missing-row concurrent claim vs switch', async () => {
+    const identity = await admitIntent(testDb(), INPUT);
+    const [claimResult, switchResult] = await Promise.allSettled([
+      claim(testDb(), identity, 'delivery-1'),
+      switchPaidEffectBackend(testDb(), 'test_family', 'dbos'),
+    ]);
+    const claimWon = claimResult.status === 'fulfilled' && claimResult.value.kind === 'claimed';
+    const switchWon = switchResult.status === 'fulfilled';
+    expect(claimWon && switchWon).toBe(false);
+    if (claimWon) {
+      // The switch must have seen the committed claim and refused.
+      expect(switchResult.status).toBe('rejected');
+      expect(await readPaidEffect(testDb(), identity)).toMatchObject({ state: 'sending' });
+    } else if (switchWon) {
+      // The claim must have been fenced under the new owner and left nothing behind.
+      expect(claimResult.status).toBe('rejected');
+      expect(await readPaidEffect(testDb(), identity)).toMatchObject({ state: 'pending' });
+    }
+  });
+
+  // @invariant concurrency: a fenced in-transaction note admission rolls the whole reservation back — no claim row, artifact untouched
+  // @fails-if the claim row (or any state change) survives a fenced reservation, or the fence is checked outside the reservation transaction
+  it('rolls back the note reservation when the in-transaction admission is fenced', async () => {
+    const now = new Date();
+    await testDb().insert(artifact).values({
+      id: 'note-fenced-1',
+      type: 'note_atomic',
+      title: 'fenced',
+      knowledge_ids: [],
+      intent_source: 'learning_intent',
+      source: 'ai_generated',
+      attrs: {},
+      generation_status: 'ready',
+      verification_status: 'queued',
+      history: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await switchPaidEffectBackend(testDb(), 'note_verify', 'dbos');
+    await expect(
+      reserveNoteVerification(testDb(), 'note-fenced-1', {
+        controlAdmission: buildNoteVerificationControlAdmission({
+          backend: 'pg-boss',
+          deliveryId: 'job-fenced',
+        }),
+      }),
+    ).rejects.toThrow('fenced');
+    const claims = await testDb()
+      .select({ artifactId: note_verification_claim.artifact_id })
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'note-fenced-1'));
+    expect(claims).toHaveLength(0);
+  });
+
+  // @invariant concurrency: the note reservation (with its in-transaction admission) and a concurrent note_verify switch serialize on the family lock — the reservation can never claim while the switch succeeds, closing the tx1/tx2 window
+  // @fails-if a pg-boss reservation creates a claim AND the switch to DBOS also succeeds in the same interleave
+  it('serializes the note reservation vs switch interleave', async () => {
+    const now = new Date();
+    await testDb().insert(artifact).values({
+      id: 'note-race-1',
+      type: 'note_atomic',
+      title: 'race',
+      knowledge_ids: [],
+      intent_source: 'learning_intent',
+      source: 'ai_generated',
+      attrs: {},
+      generation_status: 'ready',
+      verification_status: 'queued',
+      history: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    const [reserveResult, switchResult] = await Promise.allSettled([
+      reserveNoteVerification(testDb(), 'note-race-1', {
+        controlAdmission: buildNoteVerificationControlAdmission({
+          backend: 'pg-boss',
+          deliveryId: 'job-race',
+        }),
+      }),
+      switchPaidEffectBackend(testDb(), 'note_verify', 'dbos'),
+    ]);
+    const reserveWon =
+      reserveResult.status === 'fulfilled' && reserveResult.value.kind === 'claimed';
+    const switchWon = switchResult.status === 'fulfilled';
+    expect(reserveWon && switchWon).toBe(false);
+    if (reserveWon) {
+      expect(switchResult.status).toBe('rejected');
+    } else if (switchWon) {
+      expect(reserveResult.status).toBe('rejected');
+    }
   });
 });

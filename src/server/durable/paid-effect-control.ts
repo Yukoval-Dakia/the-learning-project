@@ -16,7 +16,7 @@
 // - Before the parent's migration lands, paid_effect_control may not exist;
 //   isPaidEffectControlUndefinedTable() lets consumers treat that explicitly
 //   (pg-boss default stands; DBOS stays fenced) instead of guessing.
-import { and, count, eq, inArray } from 'drizzle-orm';
+import { and, count, eq, inArray, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { paid_effect, paid_effect_control } from '@/db/schema';
@@ -29,24 +29,42 @@ import {
   DEFAULT_PAID_EFFECT_GENERATION,
   PAID_EFFECT_BACKEND_SCHEMA,
   PAID_EFFECT_SWITCH_BLOCKING_STATES,
+  PAID_EFFECT_SWITCH_UNSUPPORTED_FAMILIES,
   type PaidEffectBackend,
   type PaidEffectControlAdmission,
   type PaidEffectControlSnapshot,
   type PaidEffectDeliveryRef,
   type PaidEffectState,
   PaidEffectSwitchBlockedError,
+  PaidEffectSwitchUnsupportedError,
   decidePaidEffectControlAdmission,
+  paidEffectControlLockKey,
   summarizePaidEffectSwitchBlocking,
 } from './paid-effect-protocol';
 
 /**
+ * THE family-level serialization lock (P1-R2-1): every control admission and
+ * every switch takes it FIRST, in the SAME transaction, BEFORE reading or
+ * materializing the control row — a row lock serializes nothing while the
+ * row does not exist, which is exactly the missing-row race. Postgres
+ * advisory xact locks are reentrant per transaction, so nesting
+ * admit-inside-claim is a no-op re-acquire.
+ */
+export async function lockPaidEffectControlFamily(tx: Tx, family: string): Promise<void> {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${paidEffectControlLockKey(family)}, 0))`,
+  );
+}
+
+/**
  * Pinned family obligation probes: families whose paid authority is NOT a
- * paid_effect row project their live unfinished obligations here. Adding a
- * family means adding a probe in this map — never a caller-side gate.
+ * paid_effect row project their live unfinished obligations here. The probe
+ * ALWAYS runs on the caller's transaction (never a separate connection /
+ * snapshot) so it observes exactly the state the switch serialized against.
  */
 const FAMILY_OBLIGATION_PROBES: ReadonlyMap<
   string,
-  (db: Db) => Promise<{
+  (tx: Tx) => Promise<{
     pending: number;
     sending: number;
     unknown: number;
@@ -99,6 +117,11 @@ export async function admitPaidEffectDeliveryControl(
   family: string,
   ref: PaidEffectDeliveryRef,
 ): Promise<PaidEffectControlAdmission> {
+  // FIRST: the family serialization lock, BEFORE reading the control row —
+  // with no row present a FOR SHARE would lock nothing and a concurrent
+  // switch (insert + scan + flip) could commit unseen between this read and
+  // the caller's claim.
+  await lockPaidEffectControlFamily(tx, family);
   const rows = await tx
     .select()
     .from(paid_effect_control)
@@ -124,6 +147,13 @@ export async function switchPaidEffectBackend(
   to: PaidEffectBackend,
 ): Promise<PaidEffectControlSnapshot> {
   return db.transaction(async (tx) => {
+    // FIRST: the family serialization lock — closes the missing-row race
+    // where an admission reading "no row = default pg-boss" overlapped a
+    // concurrent insert+scan+flip switch that never saw the uncommitted claim.
+    await lockPaidEffectControlFamily(tx, family);
+    if (PAID_EFFECT_SWITCH_UNSUPPORTED_FAMILIES.includes(family)) {
+      throw new PaidEffectSwitchUnsupportedError(family);
+    }
     const existing = await tx
       .select()
       .from(paid_effect_control)
@@ -168,7 +198,9 @@ export async function switchPaidEffectBackend(
     for (const group of grouped) countsByState[group.state] = Number(group.n);
     const probe = FAMILY_OBLIGATION_PROBES.get(family);
     if (probe) {
-      const projected = await probe(db);
+      // Same transaction, same lock window — never a second connection's
+      // snapshot (P1-R2).
+      const projected = await probe(tx);
       countsByState.pending = (countsByState.pending ?? 0) + projected.pending;
       countsByState.sending = (countsByState.sending ?? 0) + projected.sending;
       countsByState.unknown = (countsByState.unknown ?? 0) + projected.unknown;

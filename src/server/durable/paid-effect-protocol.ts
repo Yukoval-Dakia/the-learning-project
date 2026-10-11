@@ -106,6 +106,22 @@ export function paidEffectGateLockKey(identity: PaidEffectIdentity): string {
   return `paid-effect:gate:v1:${identity.family}:${identity.entityId}`;
 }
 
+/**
+ * THE family-level serialization lock (P1-R2-1): every control admission and
+ * every switch takes it FIRST, in the SAME transaction, BEFORE reading or
+ * materializing the control row. A FOR SHARE/UPDATE row lock cannot serialize
+ * anything when the row does not exist yet — without this advisory, a
+ * bootstrap admission reading "no row = default pg-boss" can race a
+ * concurrent switch that inserts + scans + flips ownership and never sees the
+ * uncommitted claim. Pinned lock order (acyclic):
+ *   control-family advisory → identity row → entity advisory → control row.
+ * Re-acquiring the same advisory inside one transaction is a no-op, so
+ * admission helpers may take it defensively.
+ */
+export function paidEffectControlLockKey(family: string): string {
+  return `paid-effect:control:v1:${family}`;
+}
+
 export const paidEffectIdentitySchema = z.strictObject({
   family: z.string().min(1),
   entityId: z.string().min(1),
@@ -217,6 +233,28 @@ export class PaidEffectSwitchBlockedError extends PaidEffectProtocolError {
       `paid-effect backend switch blocked for ${family}: ` +
         `${blocking.pending} pending, ${blocking.sending} sending, ` +
         `${blocking.unknown} unknown, ${blocking.receipt_ready} receipt_ready obligations`,
+    );
+  }
+}
+
+/**
+ * TEMPORARY safety guard (P1-R2-2): switching a family whose paid authority
+ * lives outside paid_effect is refused UNTIL its claim-side admission checks
+ * owner/generation inside the claim-creating transaction. note_verify is now
+ * wired atomically (reserveNoteVerification controlAdmission), so it is NOT
+ * listed here; any future probe family without in-transaction admission must
+ * be, until its wiring lands.
+ */
+export const PAID_EFFECT_SWITCH_UNSUPPORTED_FAMILIES: readonly string[] = [];
+
+export class PaidEffectSwitchUnsupportedError extends PaidEffectProtocolError {
+  override name = 'PaidEffectSwitchUnsupportedError';
+  constructor(
+    readonly family: string,
+  ) {
+    super(
+      `paid-effect backend switch unsupported for ${family}: ` +
+        'claim-side atomic control admission is not wired yet; refusing to move ownership',
     );
   }
 }

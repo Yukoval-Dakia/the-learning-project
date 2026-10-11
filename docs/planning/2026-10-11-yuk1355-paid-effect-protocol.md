@@ -107,37 +107,58 @@ listPaidEffectObligations(db, {family?, states?, limit?}): PaidEffectObligationV
 
 ## 4. 后端控制（src/server/durable/paid-effect-control.ts）
 
+**P1-R2 修正后的串行化模型**：所有 admission 与 switch 共享**同一条 family 级
+advisory 事务锁** `paid-effect:control:v1:<family>`（`lockPaidEffectControlFamily`，
+在各自事务内**最先**获取；Postgres 同事务内重入为 no-op）。行锁（FOR SHARE/
+FOR UPDATE）在缺行时锁不到任何东西 —— 缺行 admission 读“默认 pgboss”与并发
+switch 的 insert+scan+flip 互不可见的 race 由这条锁封死。probe 一律跑在
+switch 的**同一事务**（同锁窗口、同快照），绝不另开连接。
+
+固定锁序（无环）：**family-control advisory → identity 行（如适用）→
+entity advisory（如适用）→ control 行**；note 侧：**family-control advisory →
+artifact 行 → claim 行**（与既有 reservation/supersede/provider-start 的
+artifact→claim 序一致，admission hook 永远最先）。
+
 ```ts
 readPaidEffectControl(db|tx, family): {family, backend, generation, explicit}
   // 无行 = 引导默认：pg-boss, generation 0, explicit:false。绝不默认 dbos。
 admitPaidEffectDeliveryControl(tx, family, {backend, deliveryId, generation?}):
   {kind:'admitted'} | {kind:'fenced'; reason:'backend_mismatch'|'stale_generation'|'missing_generation'; owner; generation}
-  // explicit control 下 dbos delivery 必须携带 generation（防 A→B→A 往返重入）；
-  // pgboss legacy 无 generation，仅 backend 匹配（pgboss 是默认 owner，效果行 CAS 仍去重）。
+  // 先锁 family advisory 再读 control 行；explicit control 下 dbos delivery
+  // 必须携带 generation（防 A→B→A 往返重入）；pgboss legacy 无 generation，仅
+  // backend 匹配（pgboss 是默认 owner，效果行 CAS 仍去重）。
 switchPaidEffectBackend(db, family, to): {family, backend, generation}
-  // FOR UPDATE；被 family 的**一切未完义务**阻塞（P1-5：pending/sending/unknown/receipt_ready）：
-  // paid_effect 扫描 + 固定 family probe（note_verify → note_verification_claim 投影，P1-3）。
-  // 并发 switch 的缺行插入竞态由 ON CONFLICT DO NOTHING + 重锁封闭（恰一 materialize）。
-  // 成功 backend=to、generation+1；同 backend 幂等不 bump。
+  // 先锁 family advisory；被 family 的一切未完义务阻塞（P1-5：
+  // pending/sending/unknown/receipt_ready）：paid_effect 扫描 + 固定 family
+  // probe（note_verify → note_verification_claim 同 tx 投影）。并发 switch 的
+  // 缺行插入竞态由同锁封闭。PAID_EFFECT_SWITCH_UNSUPPORTED_FAMILIES 中的族
+  // （当前为空）被显式拒绝切换 —— 无原子 claim 侧接线的 probe 族必须列入，
+  // 直至接线落地。成功 backend=to、generation+1；同 backend 幂等不 bump。
 isPaidEffectControlUndefinedTable(error): boolean   // 42P01 检测，供引导路径
+lockPaidEffectControlFamily(tx, family): void        // 共享 family 串行锁
 ```
 
 - pg-boss/DBOS **对称** admission；dispatch 侧 cutover 归父级。
-- v1 无 draining 相态（switch 被阻塞语义取代）；备选方案（session-orphan 式
-  pg-boss/draining-pg-boss/dbos/draining-dbos 四相）已评估，若父级 cutover 证明需要再引入
-  —— 此为 pinned decision，父级可推翻。
 - 陈旧 generation 检测覆盖 A→B→A 往返切换。
 
-## 5. note_verify 消费面（仅 control，不建平行 claim）
+## 5. note_verify 消费面（control + 原子 claim 侧 admission）
 
 - `note_verification_claim` 仍是 note 族付费权威；本层**不**为 note 写 paid_effect 行。
-- pg-boss handler（`jobs/note_verify.ts`）：每个 job 先 `admitNoteVerifyDelivery`；
-  fenced → **抛 PaidEffectControlFencedError**（P1-3：accepted job 不得被 skip 消解 ——
-  pg-boss 重投直至 DLQ 可见，另一后端拥有工作，claim/效果 CAS 仍保护付费边界）；
-  `paid_effect_control` 表不存在（42P01，迁移未落地）→ 引导默认 pgboss admitted，
-  行为与现状完全一致（不消解任何 job）。
-- note 义务 probe（`paid-effect-note-obligations.ts`）：switch 门投影既有
-  note_verification_claim 状态（reserved/provider_started→sending，ambiguous→unknown，
+- **原子 admission hook（P1-R2-2，功能 owner 已释放单文件接线）**：
+  `reserveNoteVerification(db, artifactId, opts?)` 新增可选 `controlAdmission:
+  (tx: Tx) => Promise<void>`，在 reservation 事务内**最先**执行（锁序
+  family-control advisory → artifact → claim）；拒绝 = 抛
+  `PaidEffectControlFencedError` → 整个事务回滚（无 claim 行、无状态变化）。
+  缺省不传 = 旧调用行为逐字节不变。默认 hook 由
+  `buildNoteVerificationControlAdmission(ref)` 构造（shared family 锁 +
+  owner/generation 同事务校验；缺表 42P01 → 引导默认 pgboss 放行 / dbos 拒绝）。
+- 生产发送入口全部默认接线：pg-boss handler（`jobs/note_verify.ts`，per-job
+  ref = {backend:'pg-boss', deliveryId: jobId}）；DBOS 适配器
+  （`note-verify-family.ts`，ref = {backend:'dbos', deliveryId: workflowId}，
+  explicit control 下无 generation → 硬拒绝）。handler 的 tx1 预检仅作 fail-fast；
+  权威校验在 tx2 hook。fenced → 抛错（重投→DLQ，accepted job 不被 skip 消解）。
+- note 义务 probe（`paid-effect-note-obligations.ts`）：switch 门同 tx 投影既有
+  claim 状态（reserved/provider_started→sending，ambiguous→unknown，
   retry_wait→pending，result_ready→receipt_ready；completed/attempts_exhausted 不阻断），
   只读、不复制 claim 状态机。
 - DBOS 适配器（`durable/note-verify-family.ts`）：workflow body 在 step 前 admission
@@ -246,9 +267,11 @@ partial-index 先例同流程）；schema 声明与 SQL 的语义一致由本 la
 - DB（本 lane 只准备不运行，父级 scoped DB loop 执行）：`paid-effect-store.db.test.ts`
   ——CAS 竞态恰一赢家、不等收据拒绝、旧 unknown 新 delivery 拒绝、错误后端/陈旧
   generation fence、应用失败不重发、input/revision 变化不抹历史义务、intent 幂等 +
-  摘要碰撞守卫、switch 阻塞与 generation 递增、reserve winner/held/completed 判别、
-  entity / entity-revision 两种 gate scope、跨身份并发 reserve 串行化、winner+fence
-  完成校验。
+  摘要碰撞守卫、switch 全态阻塞与 generation 递增、reserve winner/held/completed 判别、
+  固定 entity 门 predicate（rep 并行 / 同 unit 换 input 阻断 / 跨 revision 阻断）、
+  跨身份并发 reserve 串行化、winner+fence 完成校验、claim 事务内 control 围栏、
+  **缺行并发 claim vs switch 强制交错**（不得双赢）、**note reservation vs switch
+  强制交错**（封 tx1/tx2 窗口）、**fenced note reservation 整体回滚**（无 claim 行）。
 - 共享面最小改动：`vitest.shared.ts` 三行、`tests/helpers/db.ts` ALL_TABLES 两行
   （paid_effect / paid_effect_control，DB 测试隔离必需）。
 - 本地 gate：scoped unit、`pnpm typecheck`、`pnpm lint`、`pnpm build`、

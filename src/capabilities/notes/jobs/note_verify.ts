@@ -14,12 +14,13 @@ import {
   noteVerificationRetryRequired,
   runNoteVerify,
 } from '@/capabilities/notes/server/note-verify-durable-operation';
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import {
   admitPaidEffectDeliveryControl,
   isPaidEffectControlUndefinedTable,
 } from '@/server/durable/paid-effect-control';
+import { buildNoteVerificationControlAdmission } from '@/server/durable/paid-effect-note-admission';
 import {
   type PaidEffectControlAdmission,
   PaidEffectControlFencedError,
@@ -91,6 +92,12 @@ type DepsOverride = {
   onPassed?: (artifactId: string) => Promise<void>;
   /** Test seam for the backend-control admission; production supplies none. */
   admitDelivery?: (deliveryId: string) => Promise<PaidEffectControlAdmission>;
+  /**
+   * Test seam for the in-transaction admission hook wired into the claim
+   * reservation; production supplies none (default: shared control lock +
+   * owner/generation check inside the reservation transaction).
+   */
+  buildControlAdmission?: (deliveryId: string) => (tx: Tx) => Promise<void>;
 };
 
 export async function recoverResultReadyNoteVerifications(
@@ -128,6 +135,10 @@ export function buildNoteVerifyHandler(
   const runTaskFn = deps.runTaskFn ?? makeRunTaskFn(db);
   const admitDelivery =
     deps.admitDelivery ?? ((deliveryId: string) => admitNoteVerifyDelivery(db, deliveryId));
+  const buildControlAdmission =
+    deps.buildControlAdmission ??
+    ((deliveryId: string) =>
+      buildNoteVerificationControlAdmission({ backend: 'pg-boss', deliveryId }));
   return async (jobs) => {
     for (const job of jobs) {
       const artifactId = job.data?.artifact_id;
@@ -148,7 +159,12 @@ export function buildNoteVerifyHandler(
           admission.owner,
         );
       }
-      const result = await runNoteVerify({ db, artifactId, runTaskFn });
+      const result = await runNoteVerify({
+        db,
+        artifactId,
+        runTaskFn,
+        controlAdmission: buildControlAdmission(job.id),
+      });
       if (result.status === 'skipped:in_progress' || result.status === 'skipped:ambiguous') {
         throw noteVerificationRetryRequired(artifactId, result.status);
       }

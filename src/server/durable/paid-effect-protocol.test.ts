@@ -17,6 +17,7 @@ import {
   computePaidEffectIdentity,
   computePaidEffectInputDigest,
   decidePaidEffectControlAdmission,
+  paidEffectControlLockKey,
   paidEffectGateBlocks,
   paidEffectGateLockKey,
   paidEffectJsonEquals,
@@ -237,6 +238,13 @@ describe('paid-effect fixed entity-gate predicate', () => {
       'paid-effect:gate:v1:f:e1',
     );
     expect(paidEffectGateLockKey({ ...base, entityId: 'e2' })).toBe('paid-effect:gate:v1:f:e2');
+  });
+
+  // @invariant concurrency: the family control lock serializes every admission and switch BEFORE any control row exists — it must key on family alone, never on row state that may be missing
+  // @fails-if the serialization key depends on control-row state or per-entity data, reopening the missing-row race for some admissions
+  it('locks the family control key on family alone', () => {
+    expect(paidEffectControlLockKey('note_verify')).toBe('paid-effect:control:v1:note_verify');
+    expect(paidEffectControlLockKey('test_family')).toBe('paid-effect:control:v1:test_family');
   });
 });
 

@@ -21,7 +21,7 @@
 // claim state machine — it only projects it for the switch decision.
 import { count, eq, inArray } from 'drizzle-orm';
 
-import type { Db } from '@/db/client';
+import type { Db, Tx } from '@/db/client';
 import { note_verification_claim } from '@/db/schema';
 
 /** Mirrors NOTE_VERIFY_PAID_EFFECT_FAMILY (jobs) / NOTE_VERIFY_FAMILY (DBOS
@@ -35,7 +35,9 @@ export interface NoteVerifyObligationCounts {
   readonly receipt_ready: number;
 }
 
-export async function countNoteVerifyClaimObligations(db: Db): Promise<NoteVerifyObligationCounts> {
+export async function countNoteVerifyClaimObligations(
+  db: Db | Tx,
+): Promise<NoteVerifyObligationCounts> {
   const rows = await db
     .select({ state: note_verification_claim.state, n: count() })
     .from(note_verification_claim)

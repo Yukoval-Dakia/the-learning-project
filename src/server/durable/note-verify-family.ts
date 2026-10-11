@@ -35,6 +35,7 @@ import {
   admitPaidEffectDeliveryControl,
   isPaidEffectControlUndefinedTable,
 } from './paid-effect-control';
+import { buildNoteVerificationControlAdmission } from './paid-effect-note-admission';
 import type { PaidEffectControlAdmission, PaidEffectDeliveryRef } from './paid-effect-protocol';
 import { PaidEffectControlFencedError } from './paid-effect-protocol';
 
@@ -60,6 +61,13 @@ export type NoteVerifyDurableDeps = {
   runTaskFn: RunTaskFn;
   /** Backend-control admission; defaults to the shared paid-effect control gate. */
   admitDeliveryControl?: NoteVerifyAdmitDeliveryControlFn;
+  /**
+   * In-transaction admission hook threaded into the claim reservation.
+   * Default: the shared builder with backend 'dbos' and this workflow's id —
+   * under an explicit control row a DBOS delivery additionally requires the
+   * dispatch generation, so generation-less hosts stay hard-refused.
+   */
+  buildControlAdmission?: (workflowId: string) => (tx: import('@/db/client').Tx) => Promise<void>;
 };
 
 /** DBOS admission under the shared backend control; never default-admits. */
@@ -105,9 +113,19 @@ export async function runNoteVerifyWorkflowBody(
   if (admission.kind === 'fenced') {
     throw new PaidEffectControlFencedError(NOTE_VERIFY_FAMILY, admission.reason, admission.owner);
   }
+  const controlAdmission = (
+    deps.buildControlAdmission ??
+    ((workflowId: string) =>
+      buildNoteVerificationControlAdmission({ backend: 'dbos', deliveryId: workflowId }))
+  )(workflowId);
   return runStep(
     () =>
-      runNoteVerify({ db: deps.db, artifactId: payload.artifact_id, runTaskFn: deps.runTaskFn }),
+      runNoteVerify({
+        db: deps.db,
+        artifactId: payload.artifact_id,
+        runTaskFn: deps.runTaskFn,
+        controlAdmission,
+      }),
     { name: NOTE_VERIFY_STEP_NAME, retriesAllowed: false },
   );
 }
