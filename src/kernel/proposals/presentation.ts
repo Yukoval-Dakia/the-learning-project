@@ -10,6 +10,7 @@ import {
   batchResolveSubjectDisplayIds,
   resolveSubjectRenderNotation,
 } from '@/kernel/read-models/subject-resolution';
+import { resolveKnownSubjectId } from '@/subjects/profile';
 
 type DbLike = Db | Tx;
 type QuestionEditChange = Extract<AiProposalPayloadT, { kind: 'question_edit' }>['proposed_change'];
@@ -72,11 +73,11 @@ export interface ProposalPresentation {
     merged: ProposalBlockPreview[];
     continuity_label: string | null;
     /**
-     * YUK-1404 — the session's subject render notation (renderConfig.notation),
-     * resolved server-side from the canonical subject registry so the UI gates
-     * the KaTeX chain exactly like every other subject-aware face. null when the
-     * exact ingestion session, its subject, or the subject's profile cannot be
-     * resolved — never a math/default guess.
+     * YUK-1404 — the session's subject render notation (renderConfig.notation)
+     * from the canonical subject registry, so the UI gates the KaTeX chain like
+     * every other subject-aware face. null unless every question linked to the
+     * exact ingestion session resolves to the same registered canonical subject
+     * — never a math/default guess.
      */
     notation: string | null;
   } | null;
@@ -724,7 +725,7 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
   block_merge: {
     title: (payload) => {
       const mergedCount = payload.proposed_change.merge_block_ids.length;
-      return `合并 ${mergedCount + 1} 个被切断的题块`;
+      return mergedCount > 0 ? `合并 ${mergedCount + 1} 段题目内容` : '合并题目';
     },
     summary: (payload) => {
       const change = recordOf(payload.proposed_change);
@@ -732,7 +733,7 @@ const proposalPresenters: { [K in AiProposalPayloadT['kind']]: ProposalPresenter
         summaryItem(
           '动作',
           Array.isArray(change?.merge_block_ids)
-            ? `保留 1 块，并入 ${change.merge_block_ids.length} 块`
+            ? `保留这部分，合并其余 ${change.merge_block_ids.length} 部分`
             : null,
         ),
       ]);
@@ -829,7 +830,7 @@ const IN_QUERY_CHUNK_SIZE = 500;
 function blockPreview(block: QuestionBlockPreviewRow): ProposalBlockPreview {
   const questionNo = textOf(block.structured?.question_no);
   const pageIndex = block.page_spans[0]?.page_index;
-  const position = [`第 ${block.ordinal + 1} 块`];
+  const position = [`第 ${block.ordinal + 1} 部分`];
   if (questionNo) position.push(`题号 ${questionNo}`);
   if (pageIndex !== undefined) position.push(`第 ${pageIndex + 1} 页`);
   const prompt = textOf(block.structured?.prompt_text) ?? textOf(block.extracted_prompt_md);
@@ -904,22 +905,16 @@ type IngestionSessionQuestionRow = {
 };
 
 /**
- * YUK-1404 — resolve each block-merge proposal's notation from its EXACT
- * ingestion session, batched across the whole page (deduplicated session ids,
- * chunked IN queries — no per-card N+1).
- *
- * The session subject is a DERIVED view, never a learning_session column
- * (schema.ts keeps no subject on the polymorphic envelope; see the same note in
- * import-completion.ts / auto-enroll.ts). The canonical derivation is the one
- * every other subject-aware read uses: the session's questions (stamped
- * `metadata.ingestion_session_id` at enroll/import) carry knowledge_ids →
- * effective domain → subject id, via the shared bridge
- * (batchResolveSubjectDisplayIds) and the shared notation helper
- * (resolveSubjectRenderNotation). Unknown/missing session, session without a
- * resolvable subject, and unregistered subjects all yield null — the registry's
- * general fallback carries notation null, so no math profile is ever inferred.
- * Known aliases (wenyan → yuwen), hydrated custom subjects, and
- * retired-but-resolvable subjects keep their canonical profile notation.
+ * YUK-1404 — each block-merge proposal's notation, from its exact ingestion
+ * session, batched (deduplicated session ids, chunked IN queries — no per-card
+ * N+1). The session subject stays a derived view (no learning_session column):
+ * the session's linked questions (stamped `metadata.ingestion_session_id` at
+ * enroll/import) carry knowledge_ids → effective domain → canonical subject via
+ * the shared bridge. A session resolves only when EVERY linked question maps to
+ * the SAME registered canonical subject (aliases included); mixed subjects, any
+ * unresolved question (no knowledge ids / no domain), any unregistered subject,
+ * an unknown session, and a session with no linked questions (observe mode) all
+ * yield null — plain text, never an inferred or fallback math profile.
  */
 async function loadIngestionSessionNotations(
   db: DbLike,
@@ -928,9 +923,9 @@ async function loadIngestionSessionNotations(
   const notationBySession = new Map<string, string | null>(sessionIds.map((id) => [id, null]));
   if (sessionIds.length === 0) return notationBySession;
 
-  // 1) The exact ingestion session rows — a session id that resolves to no
-  // learning_session(type='ingestion') stays null even if stale question
-  // metadata still references it (the session is the authority).
+  // The exact ingestion session rows — a session id with no
+  // learning_session(type='ingestion') row stays null even if stale question
+  // metadata still references it.
   const knownSessionIds: string[] = [];
   for (const chunk of chunksOf(sessionIds)) {
     const rows = await db
@@ -941,7 +936,7 @@ async function loadIngestionSessionNotations(
   }
   if (knownSessionIds.length === 0) return notationBySession;
 
-  // 2) The sessions' questions in stable (created_at, id) order — the same
+  // The sessions' linked questions in stable (created_at, id) order — the same
   // metadata linkage import-completion's pendingCaptures query relies on.
   const sessionQuestions: IngestionSessionQuestionRow[] = [];
   for (const chunk of chunksOf(knownSessionIds)) {
@@ -963,24 +958,34 @@ async function loadIngestionSessionNotations(
     );
   }
 
-  // 3) Canonical bridge: question → subject display id (batch-deduplicated tree
-  // walk inside the helper), then registry → renderConfig.notation. Per session
-  // the FIRST question (stable order) whose subject resolves wins; sessions
-  // whose every question resolves to nothing stay null.
+  // Canonical bridge per question, then per-session consensus: every linked
+  // question must map to the same REGISTERED canonical subject id. The bridge
+  // yields a canonical id, an unregistered raw domain, or null; only a genuine
+  // registry hit (resolveKnownSubjectId) counts as resolved, so unresolved,
+  // unregistered, and disagreeing sessions all stay null. The notation helper
+  // is therefore only ever called with a registered canonical id.
   const subjectByQuestion = await batchResolveSubjectDisplayIds(
     db,
     sessionQuestions.map((row) => ({ id: row.id, knowledge_ids: row.knowledge_ids ?? [] })),
   );
-  const subjectBySession = new Map<string, string>();
+  const canonicalBySession = new Map<string, string | null>();
   for (const row of sessionQuestions) {
-    if (subjectBySession.has(row.ingestion_session_id)) continue;
-    const subjectId = subjectByQuestion.get(row.id);
-    if (subjectId) subjectBySession.set(row.ingestion_session_id, subjectId);
+    if (canonicalBySession.get(row.ingestion_session_id) === null) continue;
+    const subjectId = subjectByQuestion.get(row.id) ?? null;
+    const canonical = subjectId === null ? null : resolveKnownSubjectId(subjectId);
+    if (canonical === null) {
+      canonicalBySession.set(row.ingestion_session_id, null);
+      continue;
+    }
+    const current = canonicalBySession.get(row.ingestion_session_id);
+    if (current === undefined) canonicalBySession.set(row.ingestion_session_id, canonical);
+    else if (current !== canonical) canonicalBySession.set(row.ingestion_session_id, null);
   }
   for (const sessionId of knownSessionIds) {
+    const canonical = canonicalBySession.get(sessionId) ?? null;
     notationBySession.set(
       sessionId,
-      resolveSubjectRenderNotation(subjectBySession.get(sessionId) ?? null),
+      canonical === null ? null : resolveSubjectRenderNotation(canonical),
     );
   }
   return notationBySession;
@@ -1060,16 +1065,16 @@ export async function loadProposalPresentations(
       ...presentation,
       title: primary
         ? merged.length > 0
-          ? `合并 ${merged.length + 1} 个被切断的题块`
-          : '检查被切断的题块'
-        : '检查题块合并提议',
+          ? `合并 ${merged.length + 1} 段题目内容`
+          : '合并题目'
+        : '检查题目合并提议',
       change_summary: [
         {
           label: '动作',
           value:
             primary && merged.length > 0
-              ? `保留 1 块，并入 ${merged.length} 块`
-              : '候选题块已变化，请重新检查',
+              ? `保留这部分，合并其余 ${merged.length} 部分`
+              : '候选内容已变化，请重新检查',
         },
       ],
       block_merge: {
