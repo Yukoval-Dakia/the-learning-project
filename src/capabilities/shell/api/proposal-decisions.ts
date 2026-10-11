@@ -21,10 +21,20 @@ export async function POST(req: Request, params: Record<string, string>): Promis
     }
 
     const resource = await createProposalDecision(db, id, parsed.data);
-    // YUK-384 — best-effort hub-sync wake AFTER the decision commits (an accepted
-    // KC/edge proposal is a topology mutation; the trigger already dirtied every
-    // live hub durably). Fire-and-forget (`void`, W1) — never binds this response to
-    // pg-boss availability/latency; the seam double-swallows its own errors.
+    // YUK-1404 — a committed decision points at a real immutable event: honest
+    // Location + best-effort hub-sync wake AFTER the decision commits (an
+    // accepted KC/edge proposal is a topology mutation; the trigger already
+    // dirtied every live hub durably). Fire-and-forget (`void`, W1) — never
+    // binds this response to pg-boss availability/latency; the seam
+    // double-swallows its own errors.
+    //
+    // The soft-stale block_merge accept committed NOTHING (no rate event, no
+    // signal, no status change): serve it 200 non-created with NO Location
+    // header (never /api/events/null) and skip the wake — there is no effect
+    // to sync.
+    if (resource.decision_event_id === null) {
+      return Response.json(resource, { status: 200 });
+    }
     void wakeHubSyncAfterCommit();
     const headers = new Headers({
       Location: `/api/events/${encodeURIComponent(resource.decision_event_id)}`,

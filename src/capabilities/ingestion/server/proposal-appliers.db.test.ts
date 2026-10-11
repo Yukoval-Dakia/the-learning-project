@@ -16,7 +16,11 @@ import {
   question_block,
   source_document,
 } from '@/db/schema';
-import { type ProposalInboxRow, listProposalInboxRows } from '@/kernel/proposals/inbox';
+import {
+  type ProposalInboxRow,
+  getProposalInboxRow,
+  listProposalInboxRows,
+} from '@/kernel/proposals/inbox';
 import { writeAiProposal } from '@/kernel/proposals/writer';
 import { ProviderAttemptLifecycleError } from '@/server/ai/provider-attempt-lifecycle';
 import { acceptAiProposal, dismissAiProposal } from '@/server/proposals/actions';
@@ -329,8 +333,9 @@ describe('block_merge proposal lifecycle', () => {
       promptText: 'primary',
       pageIndex: 1,
     });
-    // Pre-merge the merge block out of draft (e.g. already imported) so
-    // mergeQuestions soft-rejects with skipped:not_draft.
+    // Pre-merge the merge block out of draft (e.g. already imported): the
+    // preflight admission's not_draft arm (and, in a race, mergeQuestions'
+    // own skipped:not_draft guard) both answer the same soft-stale shape.
     const m1 = await seedDraftBlock({
       sessionId,
       nodeId: 'm1',
@@ -498,6 +503,131 @@ describe('block_merge proposal lifecycle', () => {
       .select()
       .from(event)
       .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'block_merge_conflict')));
+    expect(rateRows).toHaveLength(0);
+  });
+
+  // ── YUK-1404 draft-status admission (irreversible-loss class: a non-draft
+  // chain can never be re-merged — it must be invisible to the learner and can
+  // never produce an acceptance event) ──
+
+  it('hides a non-draft chain from the learner inbox yet answers its accept with soft stale', async () => {
+    const db = testDb();
+    const sessionId = createId();
+    await seedSourceDocument();
+    const primary = await seedDraftBlock({
+      sessionId,
+      nodeId: 'p',
+      promptText: 'primary',
+      pageIndex: 1,
+    });
+    const m1 = await seedDraftBlock({
+      sessionId,
+      nodeId: 'm1',
+      promptText: 'merge1',
+      status: 'imported',
+      pageIndex: 2,
+    });
+    await seedBlockMergeProposal({
+      proposalId: 'block_merge_nondraft',
+      sessionId,
+      primaryBlockId: primary,
+      mergeBlockIds: [m1],
+    });
+
+    // Hidden from the learner list (the shared read rule now consults status)
+    // …yet the stored event still occupies the internal pending set.
+    const visible = await listProposalInboxRows(db, { status: 'pending' });
+    expect(visible.some((row) => row.id === 'block_merge_nondraft')).toBe(false);
+    const raw = await listProposalInboxRows(db, {
+      status: 'pending',
+      includeInadmissibleBlockMerges: true,
+    });
+    expect(raw.some((row) => row.id === 'block_merge_nondraft')).toBe(true);
+
+    // The single-row decision lane still resolves the row — the soft-stale
+    // answer rides on it — and the public accept returns stale, never
+    // 409/500: no rate event, no signal, proposal stays pending.
+    expect(await getProposalInboxRow(db, 'block_merge_nondraft')).not.toBeNull();
+    const result = await acceptAiProposal(db, 'block_merge_nondraft', { confirm_lossy: true });
+    expect(result).toMatchObject({
+      kind: 'block_merge',
+      primary_block_id: primary,
+      stale: true,
+      skip_reason: 'skipped:not_draft',
+    });
+    assertProposalLifecycleResult<BlockMergeAcceptResult>(result, 'block_merge');
+    expect(result.rate_event_id).toBeUndefined();
+
+    // Zero side effects: no block mutation, no acceptance event, no signal,
+    // and no false resolve — the proposal is still pending afterwards.
+    expect((await readBlock(primary)).merged_from_block_ids).toEqual([]);
+    expect((await readBlock(primary)).version).toBe(0);
+    expect((await readBlock(m1)).status).toBe('imported');
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'block_merge_nondraft')));
+    expect(rateRows).toHaveLength(0);
+    const signals = await db
+      .select()
+      .from(proposal_signals)
+      .where(eq(proposal_signals.kind, 'block_merge'));
+    expect(signals).toHaveLength(0);
+    expect((await getProposalInboxRow(db, 'block_merge_nondraft'))?.status).toBe('pending');
+  });
+
+  it('delivers soft stale when blocks leave draft between the inbox read and the accept (race window)', async () => {
+    // The row was loaded while the chain was still eligible, then a
+    // referenced block left draft before the accept's preflight re-read. The
+    // preflight's not_draft arm must answer the SAME soft-stale shape the
+    // locked in-tx re-check produces for the preflight→lock race — never a
+    // 500, and never a lossy-confirmation demand for a no-op (the stale
+    // answer needs no confirm_lossy).
+    const db = testDb();
+    const sessionId = createId();
+    await seedSourceDocument();
+    const primary = await seedDraftBlock({
+      sessionId,
+      nodeId: 'p',
+      promptText: 'primary',
+      pageIndex: 1,
+    });
+    const m1 = await seedDraftBlock({
+      sessionId,
+      nodeId: 'm1',
+      promptText: 'merge1',
+      pageIndex: 2,
+    });
+    await seedBlockMergeProposal({
+      proposalId: 'block_merge_race',
+      sessionId,
+      primaryBlockId: primary,
+      mergeBlockIds: [m1],
+    });
+
+    // Load the row while the chain is still eligible (the read passes)…
+    const row = await getProposalInboxRow(db, 'block_merge_race');
+    if (!row) throw new Error('block_merge_race row must resolve while eligible');
+    // …then the world changes under it.
+    await db.update(question_block).set({ status: 'merged' }).where(eq(question_block.id, m1));
+
+    const result = await acceptBlockMergeProposal(db, 'block_merge_race', row, {
+      decision: 'accept',
+    });
+    expect(result).toMatchObject({
+      kind: 'block_merge',
+      primary_block_id: primary,
+      stale: true,
+      skip_reason: 'skipped:not_draft',
+    });
+    expect(result.rate_event_id).toBeUndefined();
+
+    expect((await readBlock(primary)).merged_from_block_ids).toEqual([]);
+    expect((await readBlock(primary)).version).toBe(0);
+    const rateRows = await db
+      .select()
+      .from(event)
+      .where(and(eq(event.action, 'rate'), eq(event.caused_by_event_id, 'block_merge_race')));
     expect(rateRows).toHaveLength(0);
   });
 

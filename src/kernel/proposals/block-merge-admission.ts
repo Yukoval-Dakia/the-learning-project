@@ -6,7 +6,12 @@
 //      proposal's declared session),
 //   2. every block shares ONE canonical source_document_id that resolves to a
 //      real source_document row,
-//   3. page facts are unambiguous: every block carries page_spans forming a
+//   3. every referenced block is still stored status='draft' — a block that
+//      already left draft (manually merged / imported) can never be re-merged,
+//      so such a proposal is STALE (world state changed), not merely unproven;
+//      the accept applier answers this arm with the soft-stale result instead
+//      of the typed 409 (see acceptBlockMergeProposal),
+//   4. page facts are unambiguous: every block carries page_spans forming a
 //      strictly +1 integer sequence in stored order (non-integer, duplicated,
 //      out-of-order or internally gapped spans cannot prove which pages the
 //      block covers), and the chain is not all-placeholder (the docx/Tencent
@@ -26,6 +31,10 @@
 //      sequence, on the next block). An own number the parser cannot read
 //      (e.g. 百/两百, '5-6') is NOT "no number": it can neither conflict nor
 //      continue provably, so the pair fails closed as missing_continuity.
+//
+// The draft arm (3) is checked BEFORE the proof arms, mirroring
+// mergeQuestions' own guard order (draft → structured → session), so whenever
+// a chain is both non-draft and proof-deficient the stale answer dominates.
 //
 // Fail-closed on every unknown: missing rows, missing/mismatched source
 // documents, placeholder or missing page facts, ambiguous ordering, and any
@@ -63,6 +72,8 @@ export interface BlockMergeAdmissionFacts {
   id: string;
   ingestion_session_id: string;
   source_document_id: string | null;
+  /** Stored lifecycle status — only 'draft' blocks are still mergeable. */
+  status: string;
   page_spans: Array<{
     page_index: number;
     bbox: { x: number; y: number; width: number; height: number };
@@ -87,6 +98,9 @@ export interface BlockMergeAdmissionInput {
 export type BlockMergeIneligibilityReason =
   /** effective merge set empty, or a referenced block row does not exist */
   | 'blocks_missing'
+  /** a referenced block already left status='draft' (merged/imported) — the
+   *  proposal is stale; the accept lane answers it softly, never as 409 */
+  | 'not_draft'
   /** chain blocks share no single session, or differ from the declared one */
   | 'session_mismatch'
   /** null/empty/mismatched source_document_id, or the document row is gone */
@@ -308,6 +322,15 @@ export function evaluateBlockMergeAdmission(
   if (chain.some((facts) => facts === undefined)) return fail('blocks_missing');
   const blocks = chain as BlockMergeAdmissionFacts[];
 
+  // Stale arm — every referenced block must still be draft. A block that
+  // already left draft (manually merged / imported after the proposal was
+  // written) can never be re-merged: the proposal is stale, and the accept
+  // applier answers this arm with the soft-stale result instead of the typed
+  // 409. Checked before every proof arm (and before null-structured) so the
+  // stale answer dominates mixed failure states — mirroring mergeQuestions,
+  // which guards draft before structured/session.
+  if (blocks.some((b) => b.status !== 'draft')) return fail('not_draft');
+
   // Null structured content means there is NOTHING deterministic to evaluate
   // (no question numbers, no continuity evidence) — fail closed. The same
   // blocks would also soft-skip inside mergeQuestions (null_structured).
@@ -386,6 +409,7 @@ export async function loadBlockMergeAdmissionContext(
             id: question_block.id,
             ingestion_session_id: question_block.ingestion_session_id,
             source_document_id: question_block.source_document_id,
+            status: question_block.status,
             page_spans: question_block.page_spans,
             structured: question_block.structured,
           })
@@ -413,11 +437,26 @@ export async function loadBlockMergeAdmissionContext(
   };
 }
 
+/** The typed 409 for an ineligible verdict — shared by assert-block-merge-
+ *  admission callers so the learner-facing failure shape cannot drift. */
+export function blockMergeAdmissionError(verdict: BlockMergeAdmissionVerdict): ApiError {
+  return new ApiError(
+    'merge_inadmissible',
+    '无法确认这些题块属于同一道题，已保留原样',
+    409,
+    undefined,
+    { reason: verdict.reason, affected_block_count: verdict.affectedBlockCount },
+  );
+}
+
 /**
  * The shared admission gate: load stored facts and evaluate. Throws the typed
  * 409 `merge_inadmissible` when the merge is not provably safe, so every caller
  * (accept applier's preflight AND the locked in-transaction re-check) shares
- * one learner-facing failure shape.
+ * one learner-facing failure shape. The not_draft arm throws here too — it is
+ * the CALLER's contract to decide whether its lane answers that arm softly
+ * (the accept applier does; the locked re-check cannot be reached non-draft
+ * because mergeQuestions' own draft guard soft-rejects first).
  */
 export async function assertBlockMergeAdmission(
   db: DbLike,
@@ -429,13 +468,7 @@ export async function assertBlockMergeAdmission(
   ]);
   const verdict = evaluateBlockMergeAdmission(input, ctx);
   if (!verdict.eligible) {
-    throw new ApiError(
-      'merge_inadmissible',
-      '无法确认这些题块属于同一道题，已保留原样',
-      409,
-      undefined,
-      { reason: verdict.reason, affected_block_count: verdict.affectedBlockCount },
-    );
+    throw blockMergeAdmissionError(verdict);
   }
   return verdict;
 }
