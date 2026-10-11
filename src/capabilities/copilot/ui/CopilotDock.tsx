@@ -28,7 +28,7 @@
 'use client';
 
 import { useQuery } from '@tanstack/react-query';
-import { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
+import { type ReactNode, memo, useCallback, useEffect, useId, useRef, useState } from 'react';
 import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import {
   DeferredMarkdownRenderer,
@@ -46,6 +46,9 @@ import { IconBtn } from '@/ui/primitives/IconBtn';
 import { LoomBadge } from '@/ui/primitives/LoomBadge';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 import { ToolUseCard } from '@/ui/primitives/ToolUseCard';
+// Deep import on purpose: the ui-next public entry also pulls its stylesheets into every page that
+// loads the Dock; the embedded variant only renders inside a page that already has them.
+import { Button as UnButton } from '@/ui-next/primitives/Button';
 import { isWithinCopilotReuseWindow } from '../session-reuse';
 import { CopilotHeroCard } from './CopilotHeroCard';
 import { type CopilotSessionListItem, CopilotSessionPanel } from './CopilotSessionPanel';
@@ -88,6 +91,7 @@ import {
   createCopilotRunView,
 } from './subtask-events';
 import { useCopilotNudges } from './useCopilotNudges';
+import './copilot-companion.css';
 
 export type { ChatMessage, ToolCallRecord } from './message-projection';
 
@@ -317,7 +321,131 @@ export interface CopilotDockProps {
   navigate: (to: string) => void;
   /** Keep the visible shell launcher in sync with pending proactive nudges. */
   onNudgeCountChange?: (count: number) => void;
+  /**
+   * YUK-1473 — `drawer` (default) is the global launcher + drawer. `embedded` renders only the
+   * conversation and composer, filling its container, always open, for a page's companion panel
+   * (design doc C1/C3/C6). The Dock owns the Copilot protocol and the open-with-context signal,
+   * so exactly one Dock may be mounted at a time: a page mounts the embedded one only when the
+   * shell's global Dock is off.
+   */
+  variant?: 'drawer' | 'embedded';
+  /** Embedded only: an open-with-context request arrived; the host should reveal the companion. */
+  onRevealRequest?: () => void;
+  /** Embedded only: whether a reply is being prepared, for the host's "在想…" header state. */
+  onBusyChange?: (busy: boolean) => void;
+  /** Embedded only: what the empty conversation says (the host knows what the companion sees). */
+  emptyHint?: ReactNode;
 }
+
+type CompanionReplyState = 'thinking' | 'streaming' | 'recording' | 'settled' | 'stopped';
+
+// C3 — one reply is one element from first token to recorded; only its marker and ink change.
+const COMPANION_STATE_LABEL: Partial<Record<CompanionReplyState, string>> = {
+  thinking: '在想…',
+  streaming: '生成中 · 还未生效',
+  recording: '生成完毕 · 正在记录',
+};
+const COMPANION_SETTLED_MS = 2000;
+const COMPANION_FAILURE_TEXT = '刚才没有成功，稍后再试一次。';
+
+interface CompanionMessageRowProps {
+  message: ChatMessage;
+  state: CompanionReplyState;
+  navigate: (to: string) => void;
+  onRevert: (checkpointEventId: string) => void;
+  revertPending: boolean;
+}
+
+// YUK-1473 — the embedded companion's row (design doc C3). A reply keeps its element while the
+// live placeholder is replaced by the persisted turn (the list keys AI rows by run id), so the
+// 「✓ 已记录」 marker appears exactly when the re-read committed state lands, then folds away.
+const CompanionMessageRow = memo(function CompanionMessageRow({
+  message: m,
+  state,
+  navigate,
+  onRevert,
+  revertPending,
+}: CompanionMessageRowProps) {
+  const [justSettled, setJustSettled] = useState(false);
+  const previousState = useRef(state);
+  useEffect(() => {
+    const before = previousState.current;
+    previousState.current = state;
+    if (state !== 'settled' || before === 'settled' || before === 'stopped') return;
+    setJustSettled(true);
+    const timer = window.setTimeout(() => setJustSettled(false), COMPANION_SETTLED_MS);
+    return () => window.clearTimeout(timer);
+  }, [state]);
+
+  if (m.role === 'tombstone') return <p className="un-cc-tombstone">{m.text}</p>;
+  if (m.role === 'user') {
+    return (
+      <div className="un-cc-msg un-cc-user" data-testid="copilot-msg-user">
+        <p className="un-cc-user-text">{m.text}</p>
+      </div>
+    );
+  }
+  const label = justSettled ? '✓ 已记录' : COMPANION_STATE_LABEL[state];
+  return (
+    <div
+      className="un-cc-msg un-cc-ai"
+      data-state={state}
+      data-settled={justSettled || undefined}
+      data-testid="copilot-msg-ai"
+    >
+      {m.tool_calls && m.tool_calls.length > 0 ? <CopilotToolUseList calls={m.tool_calls} /> : null}
+      {state === 'thinking' ? null : (
+        <div className="un-cc-text-wrap">
+          <DeferredMarkdownRenderer className="un-cc-text">{m.text}</DeferredMarkdownRenderer>
+          {state === 'streaming' ? (
+            <span className="un-cc-caret" aria-hidden="true">
+              ▍
+            </span>
+          ) : null}
+        </div>
+      )}
+      {state === 'recording' ? <span className="un-cc-recording" aria-hidden="true" /> : null}
+      {label ? <output className="un-cc-state">{label}</output> : null}
+      {m.skill_turn?.kind === 'ask_check' && m.skill_turn.structured_question ? (
+        <div className="un-cc-check">
+          <DeferredMarkdownRenderer>
+            {m.skill_turn.structured_question.prompt_md}
+          </DeferredMarkdownRenderer>
+          {m.skill_turn.structured_question.choices_md?.length ? (
+            <ol className="un-cc-check-choices">
+              {m.skill_turn.structured_question.choices_md.map((choice) => (
+                <li key={choice}>
+                  <DeferredMarkdownRenderer>{choice}</DeferredMarkdownRenderer>
+                </li>
+              ))}
+            </ol>
+          ) : null}
+        </div>
+      ) : null}
+      {m.skill_turn?.kind === 'end' ? (
+        <p className="un-cc-note">本轮教学已结束，继续提问将回到自由对话。</p>
+      ) : null}
+      {m.primary_view && state === 'settled' ? (
+        <CopilotHeroCard primaryView={m.primary_view} navigate={navigate} />
+      ) : null}
+      {m.checkpoint_event_id && state === 'settled' ? (
+        <div className="un-cc-row-actions">
+          <UnButton
+            variant="quiet"
+            size="sm"
+            data-testid="copilot-revert-button"
+            disabled={revertPending}
+            onClick={() => {
+              if (m.checkpoint_event_id) onRevert(m.checkpoint_event_id);
+            }}
+          >
+            {revertPending ? '撤回中…' : '撤回这次的更改'}
+          </UnButton>
+        </div>
+      ) : null}
+    </div>
+  );
+});
 
 interface MessageRowProps {
   message: ChatMessage;
@@ -515,7 +643,18 @@ export const MessageRow = memo(function MessageRow({
   );
 });
 
-export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotDockProps) {
+export function CopilotDock({
+  pathname,
+  navigate,
+  onNudgeCountChange,
+  variant = 'drawer',
+  onRevealRequest,
+  onBusyChange,
+  emptyHint,
+}: CopilotDockProps) {
+  const embedded = variant === 'embedded';
+  const onRevealRequestRef = useRef(onRevealRequest);
+  onRevealRequestRef.current = onRevealRequest;
   // Transport seam (YUK-1473); read through a ref so the memoized callbacks below keep their deps.
   const copilotClient = useCopilotClient();
   const clientRef = useRef(copilotClient);
@@ -531,16 +670,22 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   useEffect(() => {
     onNudgeCountChange?.(nudges.length);
   }, [nudges.length, onNudgeCountChange]);
-  const { open, openDrawer, closeDrawer: closeDrawerDwell } = useCopilotDwell();
+  const { open: drawerOpen, openDrawer, closeDrawer: closeDrawerDwell } = useCopilotDwell();
+  // The embedded companion is always open: it lives in the page, there is no drawer to open.
+  const open = embedded || drawerOpen;
   const prepareAndOpenDrawer = useCallback(() => {
     preloadMarkdownRenderer();
-    openDrawer();
-  }, [openDrawer]);
+    if (embedded) onRevealRequestRef.current?.();
+    else openDrawer();
+  }, [embedded, openDrawer]);
+  useEffect(() => {
+    if (embedded) preloadMarkdownRenderer();
+  }, [embedded]);
   const summaryQ = useQuery({
     queryKey: ['copilot-summary'],
     queryFn: () => apiJson<CopilotSummary>('/api/today/copilot-summary'),
-    enabled: open,
-    refetchInterval: open ? 60_000 : false,
+    enabled: open && !embedded,
+    refetchInterval: open && !embedded ? 60_000 : false,
   });
   // Each opening owns a query, so cached or late responses from another visit
   // can populate history but cannot authorize automatic reuse.
@@ -1316,6 +1461,12 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
           (!(err instanceof ApiError) && !(err instanceof ApiAuthError)) ||
           (err instanceof ApiError && err.code === 'copilot_enqueue_ambiguous');
         if (!acceptanceUnknown) {
+          // The embedded companion is learner-facing in the new design: no status codes (YUK-1438).
+          const failureText = embedded
+            ? COMPANION_FAILURE_TEXT
+            : err instanceof ApiError
+              ? `请求失败（${err.status}）`
+              : '访问令牌已失效，请重新输入。';
           clearPersistedPendingCopilotTurn(idempotencyKey);
           setPendingTurns((previous) =>
             previous.filter((turn) => turn.idempotencyKey !== idempotencyKey),
@@ -1325,10 +1476,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
               message.idempotency_key === idempotencyKey && message.role === 'ai'
                 ? {
                     ...message,
-                    text:
-                      err instanceof ApiError
-                        ? `请求失败（${err.status}）`
-                        : '访问令牌已失效，请重新输入。',
+                    text: failureText,
                     streaming: false,
                     idempotency_key: undefined,
                   }
@@ -1337,9 +1485,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
                   : message,
             ),
           );
-          reportSendError(
-            err instanceof ApiError ? `请求失败（${err.status}）` : '访问令牌已失效，请重新输入。',
-          );
+          reportSendError(failureText);
           return;
         }
         const message = err instanceof Error ? err.message : '请求受理状态暂时无法确认。';
@@ -1359,7 +1505,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         );
       }
     },
-    [applyRunViewToMessage, bumpRunRevision, reportSendError, subscribeRun],
+    [applyRunViewToMessage, bumpRunRevision, embedded, reportSendError, subscribeRun],
   );
 
   const retryPendingTurn = useCallback(
@@ -1614,6 +1760,10 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   const sending =
     currentPendingTurns.some((turn) => turn.dispatching) ||
     currentRuns.some((run) => run.controller !== undefined);
+  const busy = currentRuns.length > 0 || currentPendingTurns.some((turn) => turn.dispatching);
+  useEffect(() => {
+    if (embedded) onBusyChange?.(busy);
+  }, [busy, embedded, onBusyChange]);
 
   const selectCorrectionTarget = useCallback((turnId: string, turnNumber: number) => {
     const target = { turnId, turnNumber };
@@ -1777,6 +1927,182 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       </div>
     </div>
   );
+
+  if (embedded) {
+    // C3 states, derived from the same run handles the drawer uses. "Recording" is a finished
+    // live reply whose persisted turn has not been re-read yet; the 5s turns poll above replaces
+    // it with the committed turn, which is when the row reads as settled.
+    const replyStateOf = (m: ChatMessage): CompanionReplyState => {
+      if (m.role !== 'ai') return 'settled';
+      if (m.idempotency_key) return m.streaming ? 'thinking' : 'stopped';
+      const run = m.run_id ? activeRunsRef.current.get(m.run_id) : undefined;
+      if (m.streaming) return run?.view.replyText ? 'streaming' : 'thinking';
+      if (m.run_id && m.id === copilotRunReplyMessageId(m.run_id)) {
+        return run?.view.phase === 'completed' && !run.connectionError ? 'recording' : 'stopped';
+      }
+      return 'settled';
+    };
+    const seenKeys = new Set<string>();
+    const rowKey = (m: ChatMessage) => {
+      const key = m.role === 'ai' && m.run_id ? `ai:${m.run_id}` : `${m.role}:${m.id}`;
+      if (seenKeys.has(key)) return `${key}:${m.id}`;
+      seenKeys.add(key);
+      return key;
+    };
+    const failedPending = currentPendingTurns.filter((turn) => turn.error);
+    return (
+      <div className="un-cc" data-testid="copilot-chat">
+        <div className="un-cc-stream" ref={streamRef}>
+          {messages.length === 0 && !sending ? (
+            <div className="un-cc-empty">{emptyHint ?? <p>问点什么。</p>}</div>
+          ) : null}
+          {messages.map((m) => (
+            <CompanionMessageRow
+              key={rowKey(m)}
+              message={m}
+              state={replyStateOf(m)}
+              navigate={navigate}
+              onRevert={revertCheckpoint}
+              revertPending={
+                m.checkpoint_event_id != null && revertPendingId === m.checkpoint_event_id
+              }
+            />
+          ))}
+          {error || refreshFailed ? (
+            <div className="un-cc-alert" role="alert" data-testid="copilot-error">
+              <span>
+                {refreshFailed ? '更改已撤回，但对话没有刷新成功。' : COMPANION_FAILURE_TEXT}
+              </span>
+              {refreshFailed ? (
+                <UnButton variant="ghost" size="sm" onClick={() => void retryRefresh()}>
+                  刷新
+                </UnButton>
+              ) : null}
+            </div>
+          ) : null}
+          {failedPending.map((turn) => (
+            <div
+              key={turn.idempotencyKey}
+              className="un-cc-alert"
+              role="alert"
+              data-testid="copilot-pending-recovery"
+            >
+              <span>这条可能没有发出去。可以重新发送（不会重复），或者放弃。</span>
+              <UnButton
+                variant="ghost"
+                size="sm"
+                disabled={turn.dispatching}
+                onClick={() => retryPendingTurn(turn.idempotencyKey)}
+              >
+                {turn.dispatching ? '发送中…' : '重新发送'}
+              </UnButton>
+              <UnButton
+                variant="quiet"
+                size="sm"
+                disabled={turn.dispatching}
+                onClick={() => discardPendingRecovery(turn.idempotencyKey)}
+              >
+                放弃
+              </UnButton>
+            </div>
+          ))}
+          {currentRuns
+            .filter((run) => run.connectionError)
+            .map((run) => (
+              <div
+                key={run.runId}
+                className="un-cc-alert"
+                role="alert"
+                data-testid="copilot-run-reconnect"
+              >
+                <span>{run.connectionError}</span>
+                <UnButton variant="ghost" size="sm" onClick={() => reconnectRun(run.runId)}>
+                  重新连接
+                </UnButton>
+              </div>
+            ))}
+        </div>
+        <div className="un-cc-foot">
+          {currentRuns.map((run) => (
+            <div key={run.runId} className="un-cc-run" data-run-status={run.view.phase}>
+              <span>
+                {run.cancelRequested
+                  ? '停止中…'
+                  : COPILOT_PROGRESS_LABELS[copilotProgressStage(run.view)]}
+              </span>
+              <UnButton
+                variant="quiet"
+                size="sm"
+                data-testid="copilot-stop-run"
+                disabled={run.stopPending || run.cancelRequested}
+                onClick={() => void stopDurableRun(run.runId)}
+              >
+                {run.stopPending || run.cancelRequested ? '停止中…' : '停止'}
+              </UnButton>
+            </div>
+          ))}
+          {!conversationReady ? (
+            <div className="un-cc-run" data-testid="copilot-readonly-notice">
+              <span>
+                {creatingSession
+                  ? '正在准备对话…'
+                  : !selectionValidated
+                    ? sessionsQ.isError
+                      ? '对话记录没有取到。'
+                      : '正在取对话记录…'
+                    : selectedSession
+                      ? '这段对话已结束，只能回看。'
+                      : '还没有可以继续的对话。'}
+              </span>
+              {!selectionValidated && sessionsQ.isError ? (
+                <UnButton variant="ghost" size="sm" onClick={() => void sessionsQ.refetch()}>
+                  重试
+                </UnButton>
+              ) : null}
+              {selectionValidated || sessionsQ.isError ? (
+                <UnButton
+                  variant="secondary"
+                  size="sm"
+                  data-testid="copilot-start-new"
+                  disabled={creatingSession}
+                  onClick={() => void createConversation()}
+                >
+                  {creatingSession ? '创建中…' : '开始新对话'}
+                </UnButton>
+              ) : null}
+            </div>
+          ) : null}
+          <div className="un-cc-composer">
+            <textarea
+              rows={2}
+              value={input}
+              placeholder="问点什么（回车发送，Shift+回车换行）"
+              aria-label="问学习伙伴"
+              data-testid="copilot-composer-input"
+              disabled={!conversationReady}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                // isComposing guard: Enter during IME composition must not submit.
+                if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                  e.preventDefault();
+                  void send(input);
+                }
+              }}
+            />
+            <UnButton
+              variant="primary"
+              size="sm"
+              data-testid="copilot-composer-send"
+              disabled={!conversationReady || input.trim().length === 0}
+              onClick={() => void send(input)}
+            >
+              发送
+            </UnButton>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
