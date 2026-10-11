@@ -56,3 +56,9 @@ jyeoo `/shiti` 页面 URL → 真实题图 resolver 接线是已批准的下一�
 push 后 exact-head `CI Gate`；merge head 相对已审 da095 仅含上游并入 + 上述
 additive delta，是否触发独立复审由 parent 裁决；merge 后按 README DNS 节执行
 生产重建核对（`getent hosts www.jyeoo.com`）。
+
+## Parent policy gate repair
+
+Exact 314e43a69 run38136365309 policy failed on eight new security cases lacking per-case invariant annotations. Original public CI log is retained at `/tmp/yuk1404-pr1669-314e-policy-job.log`; parent reproduced the eight errors against fixed comparison SHA135bb18e6. Each assertion already rejects leaked source URLs, hosts or resolved addresses. Parent added `@invariant security` / precise `@fails-if` comments only. TypeScript's comment-free printer produces byte-identical executable test AST before and after; production DNS/download code stays identical to independently reviewed da095.
+
+Parent audit now reports checked8/errors[] (`/tmp/yuk1404-pr1669-policy-annotations.log`), safety units8/8 (`/tmp/yuk1404-pr1669-policy-annotations-unit.log`), and typecheck/lint/build all exit0 (`/tmp/yuk1404-pr1669-policy-parent-gates.json`). No DB/runtime/provider or production changes. Original failure is not rerun away. New exact-head CI remains required before match-head merge.

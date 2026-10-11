@@ -63,6 +63,8 @@ beforeEach(() => {
 });
 
 describe('YUK-1404 learner-safe source-fetch failures', () => {
+  // @invariant security: private-host address failures never disclose source or network details in client responses.
+  // @fails-if the client response echoes the rejected literal private address.
   it('blocked literal private host → 400 validation_error, reason source_host_nonpublic, no host leak', async () => {
     const err = await capture(() => assertPublicHttpUrl('http://192.168.1.10/a.png'));
     const { body, wire } = await serialize(err);
@@ -72,6 +74,8 @@ describe('YUK-1404 learner-safe source-fetch failures', () => {
     expect(wire).not.toContain('192.168.1.10');
   });
 
+  // @invariant security: fake-IP DNS resolution failures never disclose source or network details in client responses.
+  // @fails-if the client response echoes the resolved fake IP or source host.
   it('fake-IP DNS answer (198.18.0.0/15, the incident shape) → 400, reason source_host_nonpublic, no host/IP leak', async () => {
     const lookup = dnsLookup(async () => [{ address: '198.18.12.228', family: 4 }]);
     const err = await capture(() =>
@@ -84,6 +88,8 @@ describe('YUK-1404 learner-safe source-fetch failures', () => {
     expect(wire).not.toContain('www.jyeoo.com');
   });
 
+  // @invariant security: DNS exception failures never disclose source or network details in client responses.
+  // @fails-if the client response exposes a hostname embedded in the DNS exception.
   it('DNS lookup failure (node:dns error embeds the host) → 422 extraction_failed, reason source_dns_lookup_failed, no host leak', async () => {
     const lookup = dnsLookup(async (host) => {
       throw Object.assign(new Error(`getaddrinfo ENOTFOUND ${host}`), { code: 'ENOTFOUND' });
@@ -98,6 +104,8 @@ describe('YUK-1404 learner-safe source-fetch failures', () => {
     expect(wire).not.toContain('secret-host.internal.example');
   });
 
+  // @invariant security: empty DNS resolution failures never disclose source or network details in client responses.
+  // @fails-if the client response exposes the source hostname when no DNS addresses exist.
   it('empty DNS answer set → 422 extraction_failed, reason source_dns_no_addresses, no host leak', async () => {
     const lookup = dnsLookup(async () => []);
     const err = await capture(() =>
@@ -110,6 +118,8 @@ describe('YUK-1404 learner-safe source-fetch failures', () => {
     expect(wire).not.toContain('www.jyeoo.com');
   });
 
+  // @invariant security: non-image source response failures never disclose source or network details in client responses.
+  // @fails-if the client response exposes the rejected page URL or source hostname.
   it('non-image Content-Type (the /shiti/{id} page-URL shape) → 422 unsupported_media_type, reason source_not_an_image, no URL leak', async () => {
     fetchMock.mockResolvedValue(
       new Response('<html></html>', {
@@ -131,6 +141,8 @@ describe('YUK-1404 learner-safe source-fetch failures', () => {
     expect(wire).not.toContain('/shiti/');
   });
 
+  // @invariant security: transport exception failures never disclose source or network details in client responses.
+  // @fails-if the client response forwards the transport exception containing the source URL.
   it('transport-level fetch rejection → 422 extraction_failed, reason source_fetch_failed (was a raw 500), no URL leak', async () => {
     fetchMock.mockRejectedValue(new TypeError('fetch failed'));
     const err = await capture(() =>
@@ -147,6 +159,8 @@ describe('YUK-1404 learner-safe source-fetch failures', () => {
     expect(wire).not.toContain('/shiti/');
   });
 
+  // @invariant security: upstream HTTP failure failures never disclose source or network details in client responses.
+  // @fails-if the client response exposes the failing upstream URL or source hostname.
   it('HTTP error status → 422 extraction_failed, reason source_fetch_failed, no URL leak', async () => {
     fetchMock.mockResolvedValue(
       new Response('nope', {
@@ -166,6 +180,8 @@ describe('YUK-1404 learner-safe source-fetch failures', () => {
     expect(wire).not.toContain('www.jyeoo.com');
   });
 
+  // @invariant security: invalid source URL failures never disclose source or network details in client responses.
+  // @fails-if the client response echoes raw malformed source input.
   it('unparseable source_url → 400 validation_error with a fixed message (no raw URL echo)', async () => {
     const err = await capture(() => assertPublicHttpUrl('http://x:not-a-url{oops}'));
     const { body, wire } = await serialize(err);
