@@ -1,12 +1,13 @@
 # PLAN — 活看板
 
-> Linear 是权威 tracker。2026-10-11：owner授权YUK-1403再清slop并加强case准入，YUK-1107恢复处理DBOS cron长尾；隔离两writer，保留调度/重启/回滚不变量，未宣称全量CI两分钟达标。
+> Linear 是权威 tracker。2026-10-11：YUK-1403防回潮#1679及session cron修复#1681已合main；cd0c45d exact CI全绿，cron两例34.56秒，整套6:30。YUK-1397交付，YUK-1107整体两分钟目标仍未达到，剩余长尾归原票。
 
 ## NOW
 
+- **YUK-1107 / session cron已交付**：#1681合main56df7c09；控制时间验证边界，生产60秒保护/cron及严格ledger不变；R2无P0/P1，父修Drizzle初始化后exact cd0c45d CI38120469007全绿。两例PASS、文件34.564秒；实测跨分钟边界，YUK-1397修复交付。整套390秒，不核销120秒目标。[证据与限度](docs/planning/2026-10-11-yuk1107-cron-speed.md)。
+
 - **YUK-1388 / 第四批审查完成（2026-10-10）**：O1–O7 裁决、7 个 P0 根（含新增 M100 出题前自动可判 → YUK-1445）、100 根 / 828 子主张、W0–W4 五波，见最终报告 `tlp-audit-artifacts/yuk1388/stage4/final-report.md`（仓库外 artifact 目录）。V01/V02 独立审查 15 条发现全部接受并由 I03 修正。票保持 In Progress，等 owner 读报告并裁决是否清理 R03 写入 TEST Mem0 的 5 条合成危机记忆。
-- **YUK-1403 / 防回潮**：删10个普通配置/自证case、强化3处回执/版本断言；新增AST case准入并接CI。29unit/26DB、typecheck/lint/build与临时CLI负例通过，独立审查中。原migration-smoke32例仍等#1625，不能以本轮替代该收尾。
-- **YUK-1107 / cron长尾**：隔离lane `perf/yuk-1107-session-cron` 调查真实调度短周期；main基线两case683s，保持真实双scheduler/restart/rollback与未落定ledger保护。
+- **YUK-1403 / 防回潮**：删10个普通配置/自证case、强化3处回执/版本断言；新增AST case准入并接CI。29unit/26DB、typecheck/lint/build与临时CLI负例通过；R1 P1 已修、R2 无新 P0/P1，exact d7f21c7 CI Gate 38117714463 全绿，#1679 已合 main bfe3ff98。括号/静态属性注册漏检 P2 已留 Linear。原migration-smoke32例仍等#1625，不能以本轮替代该收尾。
 
 - **YUK-1358 / Start notes列表**：独占范围和验收见[notes计划](docs/planning/2026-10-09-yuk1358-start-notes-list.md)。保留查询校验、科目知识点解析、空集合语义及现有搜索/导航/视觉；不改note详情/presence/AI写，不把本切片当Notes整族完成。父50unit/18DB、R1 NONE和49RPC/原页面浏览器通过；98表/5序列窗口不变，PR1626已合main04232aaf10（exact9889 CI全绿）；父已fetch核main；[父证据](docs/planning/2026-10-09-yuk1358-start-notes-list-parent.md)。useSubjects仍HTTP，完整迁移未完成。
 
@@ -38,6 +39,8 @@
 - UI 线：视觉方向已定（#1612、#1627）。#1633 KaTeX、#1634 F06 对比度与 #1642 ≠ 修复（YUK-1446）已于 2026-10-10 20:01 JST 部署到 TEST（main `515669863`），并完成真实页面截图验收。遗留 YUK-1447（等 rehype-katex 升级）。下一步 YUK-1438：等功能线各后端片落地后接入；placement/profile 的 UI 等迁移线给出 Start client 契约。
 
 ## PARKED
+
+- **YUK-1107 / 整体≤120秒未达**：当前Gate390秒，DB2/3步骤289/302秒；review-orphan cron252.318秒、session migration286.936秒、prune cron201.624秒。按真实时间边界/恢复语义继续定位，不能移nightly/跳suite伪造全量两分钟；当前无该范围writer，跟进归原票。
 
 - **YUK-1358/1359已有UI观察**：真实Inbox dismiss后本页499但侧栏500，document reload恢复一致；原onResolve仅本地resolved更新。Google Fonts原import受CSP拦截；fallback可用。记录在现有迁移验收/后续UI边界，不放宽CSP、不冒称本PR修复。
 - **YUK-1382 / Admin runs未知费用显示**：源码基线fadcb0c87中，observability/ui/admin-runs.tsx:207将nullable cost_usd累加；observability-shared.tsx:11以(value ?? 0).toFixed(4)将未知显示为$0.0000，列表/详情/合计均受影响。已查重并登记Backlog，待验证真实零、全未知、已知+未知；不在1381改UI。此条是源码发现，尚无浏览器验收。
