@@ -58,41 +58,44 @@ pending ──claimSend(CAS)──▶ sending ──recordResult──▶ receip
 **reserve 是唯一的 send admission**（append 无返回不能作为 admission）：
 
 ```ts
-reservePaidEffect(db, input, {backend, deliveryId, tickId?, leaseExpiresAt}, {gateScope?}):
+reservePaidEffect(db, input, {backend, deliveryId, tickId?, leaseExpiresAt, generation?}):
   {kind:'winner'; fence}                                  // 本 delivery 拥有物理发送（admit+claim 原子完成）
   | {kind:'held'; state; blockedBy: PaidEffectIdentity|null} // 不得发送：自身 sending/unknown，或 entity 门拦截（blockedBy 点名）
   | {kind:'completed'; state:'receipt_ready'|'applied'; result; application; applied} // 付费已发生，从不可变收据重放应用
+// control 围栏（backend/generation）内嵌在 claim 事务里：fenced → 抛 PaidEffectControlFencedError，
+// 绝不返回 winner。锁顺序固定：identity 行锁 → family+entity advisory 锁 → control FOR SHARE，
+// 与 switch 的 control FOR UPDATE 互斥（P1-2）。
 ```
 
-**entity 门（scope 为协议级固定选项，family 传常量，不建独立状态机）**：
+**entity 门（P1-1：单一固定 predicate，无可选 scope，caller 无法绕过）**：
 
-- `'entity'`（默认）：同 (family, entityId) 存在 sending/unknown 效果时拒绝新身份的
-  send —— 跨夜/跨 workSet/换 revision 的“新 key 不得再买”。timed/calibration 语义。
-- `'entity-revision'`：仅在 (family, entityId, entityRevision) 内拦截 —— 同 revision 的
-  rep:1/2/3 是蓄意并行付费不互堵；换 revision 仍被旧 revision 的 unknown 阻断。rep 语义。
-- `pending` 永不跨身份拦截（未跨付费边界，行本身可 claim）；`receipt_ready` 不拦截
-  （应用可从收据任端重放）。
+同一 (family, entityId) 下另一效果 B 处于 sending/unknown 时，X 的 claim 被阻断，
+**除非 B 与 X 同 revision 且不同 unit**（rep 并行设计）。
+
+- 同 revision 不同 unit（rep:1 vs rep:2）：允许；
+- 同 revision **同 unit** 不同 input digest：阻断（对账后再买）；
+- 不同 revision（新 workSetId / 新 questionRevision）下旧 sending/unknown：entity 级阻断。
+
+序列化锁 key 固定为 `paid-effect:gate:v1:<family>:<entityId>`（不含 revision）。
 
 其余转换：
 
 ```ts
 admitPaidEffectIntent(tx, input): {kind:'admitted'} | {kind:'existing'; state}
   // ON CONFLICT DO NOTHING 后回读；已存在且 canonical input 不一致 → IdentityConflict（摘要碰撞守卫）
-claimPaidEffectSend(tx, identity, {backend, deliveryId, tickId?, leaseExpiresAt}, {gateScope?}):
+claimPaidEffectSend(tx, identity, {backend, deliveryId, tickId?, leaseExpiresAt, generation?}):
   {kind:'claimed'; fence} | {kind:'missing'} | {kind:'refused'; state; receiptKnown; blockedBy?}
-  // 仅 pending 可 claim；其余一律 refused
-recordPaidEffectResult(tx, identity, deliveryId, receipt, {fence?}): 'recorded' | 'idempotent'
-  // 仅属主 delivery（且 fence 给出时必须等于 winner fence）可写；receipt_ready/applied
-  // 语义相等 → idempotent；不等 → ReceiptConflict；sending/unknown → receipt_ready
-  // （unknown 迟到收据 = 单调信息增益，仍限属主）；pending → ProtocolError
-markPaidEffectUnknown(tx, identity, deliveryId, reason, {fence?}): void
+  // 仅 pending 可 claim；control 围栏内嵌（fenced → 抛错）
+recordPaidEffectResult(tx, identity, deliveryId, receipt, {fence}): 'recorded' | 'idempotent'
+  // P1-4：fence 必填；仅属主 delivery 且 winner fence 匹配可写；语义相等 → idempotent；
+  // 不等 → ReceiptConflict；sending/unknown → receipt_ready（unknown 迟到收据 = 单调信息增益，仍限属主）；
+  // pending → ProtocolError
+markPaidEffectUnknown(tx, identity, deliveryId, reason, {fence}): void
 settleExpiredPaidEffectSends(db, {family?, now?}): number   // sending+租约过期 → unknown（分类，非重试）
 notePaidEffectApplicationFailure(tx, identity, error): void // attempts+1 / last_application_error，状态保持 receipt_ready
 recordPaidEffectApplication(tx, identity, application): 'applied' | 'idempotent'
-  // 仅 receipt_ready 可应用；applied 且应用收据语义相等 → idempotent；不等 → ApplicationConflict
 readPaidEffect(db|tx, identity): PaidEffectSnapshot | null
 listPaidEffectObligations(db, {family?, states?, limit?}): PaidEffectObligationView[]
-  // 默认 states = pending|sending|unknown|receipt_ready —— 与任何 workflow 状态无关的可读义务面
 ```
 
 应用失败**不重发**：apply 抛错只是不调用 recordApplication（可 note 失败），行停留在
@@ -108,11 +111,14 @@ listPaidEffectObligations(db, {family?, states?, limit?}): PaidEffectObligationV
 readPaidEffectControl(db|tx, family): {family, backend, generation, explicit}
   // 无行 = 引导默认：pg-boss, generation 0, explicit:false。绝不默认 dbos。
 admitPaidEffectDeliveryControl(tx, family, {backend, deliveryId, generation?}):
-  {kind:'admitted'} | {kind:'fenced'; reason:'backend_mismatch'|'stale_generation'; owner; generation}
+  {kind:'admitted'} | {kind:'fenced'; reason:'backend_mismatch'|'stale_generation'|'missing_generation'; owner; generation}
+  // explicit control 下 dbos delivery 必须携带 generation（防 A→B→A 往返重入）；
+  // pgboss legacy 无 generation，仅 backend 匹配（pgboss 是默认 owner，效果行 CAS 仍去重）。
 switchPaidEffectBackend(db, family, to): {family, backend, generation}
-  // FOR UPDATE；family 存在 sending/unknown 行时抛 SwitchBlockedError(按态计数)；
-  // 成功 backend=to、generation+1。pending 不阻塞（未跨付费边界，行 CAS 本身跨后端去重）；
-  // receipt_ready 不阻塞（应用可从收据在任一端重放）。
+  // FOR UPDATE；被 family 的**一切未完义务**阻塞（P1-5：pending/sending/unknown/receipt_ready）：
+  // paid_effect 扫描 + 固定 family probe（note_verify → note_verification_claim 投影，P1-3）。
+  // 并发 switch 的缺行插入竞态由 ON CONFLICT DO NOTHING + 重锁封闭（恰一 materialize）。
+  // 成功 backend=to、generation+1；同 backend 幂等不 bump。
 isPaidEffectControlUndefinedTable(error): boolean   // 42P01 检测，供引导路径
 ```
 
@@ -126,8 +132,14 @@ isPaidEffectControlUndefinedTable(error): boolean   // 42P01 检测，供引导�
 
 - `note_verification_claim` 仍是 note 族付费权威；本层**不**为 note 写 paid_effect 行。
 - pg-boss handler（`jobs/note_verify.ts`）：每个 job 先 `admitNoteVerifyDelivery`；
-  fenced → 结构化日志 + skip（消费）；`paid_effect_control` 表不存在（42P01，迁移未落地）
-  → 引导默认 pgboss admitted，行为与现状完全一致。
+  fenced → **抛 PaidEffectControlFencedError**（P1-3：accepted job 不得被 skip 消解 ——
+  pg-boss 重投直至 DLQ 可见，另一后端拥有工作，claim/效果 CAS 仍保护付费边界）；
+  `paid_effect_control` 表不存在（42P01，迁移未落地）→ 引导默认 pgboss admitted，
+  行为与现状完全一致（不消解任何 job）。
+- note 义务 probe（`paid-effect-note-obligations.ts`）：switch 门投影既有
+  note_verification_claim 状态（reserved/provider_started→sending，ambiguous→unknown，
+  retry_wait→pending，result_ready→receipt_ready；completed/attempts_exhausted 不阻断），
+  只读、不复制 claim 状态机。
 - DBOS 适配器（`durable/note-verify-family.ts`）：workflow body 在 step 前 admission
   （backend 'dbos', deliveryId=workflowId）；fenced → 抛 `PaidEffectControlFencedError`
   （workflow ERROR，无付费调用）；42P01 → fenced（dbos 永不默认准入）。
@@ -148,14 +160,14 @@ isPaidEffectControlUndefinedTable(error): boolean   // 42P01 检测，供引导�
   port 把旧 'intent' 也算 openObligation 拦截；本协议 pending 不跨身份拦截（未跨付费边界，
   可 claim 续走）——pinned decision，父级可推翻。anchor-only 时钟不冲突：store 时间戳是
   运维元数据，冻结 anchor 存在于身份/workset 数据内。
-- **A（3cf13cf64，item-prior per-rep）**：`identity(questionId, questionRevision, method,
+- **A（3cf13cf64 + 927a927e，item-prior per-rep）**：`identity(questionId, questionRevision, method,
   inputDigest, repIndex)` 映射为 `entityId=questionId`、`entityRevision=questionRevision`、
-  `unit='<method>/rep:<repIndex>'`；gateScope 必须传 `'entity-revision'`（同 revision 的三个
-  rep 是蓄意并行付费；换 revision 被旧 unknown 阻断 = “改 revision 时旧 unknown 仍必须
-  entity 级阻断/显式对账”）。`admitRep` 原子 winner lease/token = `reservePaidEffect`
-  （deliveryId+leaseExpiresAt 即 lease，fence 即 token）；`completeRep` 凭 winner 校验 =
-  `recordPaidEffectResult(deliveryId, {fence})`，不可仅 identity 写。A 报告的 complete 外层
-  skippedError 吞未知义务问题是消费侧装配缺陷，协议侧 record/markUnknown 从不吞错。
+  `unit='<method>/rep:<repIndex>'`；固定 predicate 恰好覆盖 rep 语义：同 revision 的不同 rep
+  并行不互堵，同 unit 换 input 被阻断（对账），换 revision 被旧 unknown entity 级阻断。
+  `admitRep` 原子 winner lease/token = `reservePaidEffect`（deliveryId+leaseExpiresAt 即 lease，
+  fence 即 token）；`completeRep` 凭 winner 校验 = `recordPaidEffectResult(deliveryId, {fence})`，
+  fence 必填，不可仅 identity 写。A 的 927a927e receipt/application 错误传播与本协议一致；
+  domain readback matched/superseded 明确非 causal receipt —— 本协议同样不把域行存在当完成。
 
 ## 6. Schema 声明（src/db/schema.ts，本 lane 唯一 schema 提议权）与 SQL 草案（父级编号）
 

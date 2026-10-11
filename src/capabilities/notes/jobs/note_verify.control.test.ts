@@ -28,9 +28,9 @@ describe('note_verify pg-boss handler backend-control admission', () => {
     runNoteVerify.mockClear();
   });
 
-  // @invariant concurrency: a delivery fenced by backend control is consumed without executing the paid verification — the other backend owns the family
-  // @fails-if a fenced delivery still invokes runNoteVerify (paid work under the wrong owner) or makes the whole batch fail instead of skipping
-  it('skips fenced deliveries without touching the operation', async () => {
+  // @invariant concurrency: a fenced delivery is NOT silently consumed — the handler throws so pg-boss redelivers and ultimately DLQs the job, keeping the accepted job and its unverified artifact visible under the wrong owner
+  // @fails-if a fenced delivery still invokes runNoteVerify (paid work under the wrong owner) or is consumed with a skip instead of failing
+  it('fails fenced deliveries without touching the operation', async () => {
     const handler = buildNoteVerifyHandler({} as never, {
       admitDelivery: async () => ({
         kind: 'fenced',
@@ -39,9 +39,9 @@ describe('note_verify pg-boss handler backend-control admission', () => {
         generation: 1,
       }),
     });
-    await expect(
-      handler([{ id: 'job-1', data: { artifact_id: 'a1' } } as never]),
-    ).resolves.toBeUndefined();
+    await expect(handler([{ id: 'job-1', data: { artifact_id: 'a1' } } as never])).rejects.toThrow(
+      'fenced',
+    );
     expect(runNoteVerify).not.toHaveBeenCalled();
   });
 

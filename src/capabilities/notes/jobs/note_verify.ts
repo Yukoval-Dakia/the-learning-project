@@ -20,9 +20,10 @@ import {
   admitPaidEffectDeliveryControl,
   isPaidEffectControlUndefinedTable,
 } from '@/server/durable/paid-effect-control';
-import type {
-  PaidEffectControlAdmission,
-  PaidEffectControlSnapshot,
+import {
+  type PaidEffectControlAdmission,
+  PaidEffectControlFencedError,
+  type PaidEffectControlSnapshot,
 } from '@/server/durable/paid-effect-protocol';
 
 // The verification execution itself is backend-agnostic and lives in
@@ -136,17 +137,16 @@ export function buildNoteVerifyHandler(
       }
       const admission = await admitDelivery(job.id);
       if (admission.kind === 'fenced') {
-        // The family is owned by the other backend; this legacy in-flight
-        // delivery is consumed without executing. Paid effects remain
-        // protected by the row-level CAS regardless of backend.
-        console.warn(
-          '[note_verify] delivery fenced by backend control — skipped',
-          artifactId,
-          job.id,
+        // P1-3: a fenced delivery must NOT be silently consumed — the accepted
+        // job and its unverified artifact stay visible. Throw so pg-boss
+        // redelivers and ultimately routes the job to the DLQ where an
+        // operator sees the family ownership conflict; the other backend owns
+        // the work, and the claim/effect CAS still protects the paid boundary.
+        throw new PaidEffectControlFencedError(
+          NOTE_VERIFY_PAID_EFFECT_FAMILY,
           admission.reason,
-          `owner=${admission.owner}`,
+          admission.owner,
         );
-        continue;
       }
       const result = await runNoteVerify({ db, artifactId, runTaskFn });
       if (result.status === 'skipped:in_progress' || result.status === 'skipped:ambiguous') {

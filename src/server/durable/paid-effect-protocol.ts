@@ -52,26 +52,23 @@ export const PAID_EFFECT_OBLIGATION_STATES = [
 ] as const satisfies readonly PaidEffectState[];
 
 /**
- * States that block a backend switch. `pending` has not crossed the paid
- * boundary (either backend may claim it via the row CAS), `receipt_ready` can
- * finish its application from the immutable receipt on either backend;
- * `sending`/`unknown` mean a physical send is in flight or its outcome is
- * unresolved, so ownership must not move underneath them.
+ * States that block a backend switch (P1-5: block on EVERY unfinished
+ * obligation — pending intents and unapplied receipts included). Until the
+ * parent defines per-state takeover evidence, ownership moves only over a
+ * fully drained family; unfinished work must never silently vanish under a
+ * switch.
  */
 export const PAID_EFFECT_SWITCH_BLOCKING_STATES = [
+  'pending',
   'sending',
   'unknown',
+  'receipt_ready',
 ] as const satisfies readonly PaidEffectState[];
 
 /**
- * Entity gate: a send claim for one identity is refused while ANOTHER effect
- * of the same (family, entityId) is 'sending'/'unknown'. This is what makes a
- * cross-night / cross-workset re-selection of the same business entity block
- * on its open paid obligation even though the new workset mints a NEW identity
- * (e.g. a later frozen workSetId): the provider may already have been engaged
- * for that entity, so no new physical send may start until the obligation is
- * resolved. 'pending' does NOT gate cross-identity — no paid boundary has
- * been crossed and the pending row itself stays claimable.
+ * Entity-gate states: another effect in one of these states blocks a NEW send
+ * claim for the same (family, entityId), subject to the sibling-unit exemption
+ * below.
  */
 export const PAID_EFFECT_ENTITY_GATE_STATES = [
   'sending',
@@ -79,21 +76,35 @@ export const PAID_EFFECT_ENTITY_GATE_STATES = [
 ] as const satisfies readonly PaidEffectState[];
 
 /**
- * Entity-gate scope — a PINNED per-family protocol option (consumers pass a
- * constant, they never build their own gate):
- * - 'entity' (default): a send is refused while ANY effect of the same
- *   (family, entityId) is sending/unknown. Timed/calibration semantics — a
- *   later workset (new workSetId) or revision must not buy while the entity
- *   has an open paid obligation.
- * - 'entity-revision': a send is refused only within
- *   (family, entityId, entityRevision). Per-rep semantics — sibling units of
- *   ONE revision are deliberately parallel paid sends and must not block each
- *   other; a NEW revision is still blocked by the old revision's unknown,
- *   forcing explicit reconciliation before re-deriving.
+ * THE fixed entity-gate predicate (P1-1: one policy, no caller-selectable
+ * scope). A claim for identity X is blocked by an open effect B (same family,
+ * same entityId, B ≠ X, B in sending/unknown) UNLESS B is a sibling unit of
+ * the SAME revision (B.entityRevision === X.entityRevision AND B.unit !==
+ * X.unit) — the per-rep parallel-send design. Consequences, exactly as
+ * required:
+ * - same revision, different unit (rep:1 vs rep:2): allowed;
+ * - same revision, SAME unit, different input digest: BLOCKED (reconciliation
+ *   required — the digest change must not silently re-buy the same unit);
+ * - different revision (new workSetId / bumped questionRevision) with an old
+ *   sending/unknown: BLOCKED at entity level.
  */
-export const PAID_EFFECT_GATE_SCOPES = ['entity', 'entity-revision'] as const;
-export type PaidEffectGateScope = (typeof PAID_EFFECT_GATE_SCOPES)[number];
-export const DEFAULT_PAID_EFFECT_GATE_SCOPE: PaidEffectGateScope = 'entity';
+export function paidEffectGateBlocks(
+  blocker: { readonly entityRevision: string; readonly unit: string },
+  claim: { readonly entityRevision: string; readonly unit: string },
+): boolean {
+  const siblingUnitOfSameRevision =
+    blocker.entityRevision === claim.entityRevision && blocker.unit !== claim.unit;
+  return !siblingUnitOfSameRevision;
+}
+
+/**
+ * Serialized per (family, entityId) — NEVER per revision (P1-1): claims for
+ * different revisions of one entity must serialize on the same lock so the
+ * cross-revision block cannot be raced past.
+ */
+export function paidEffectGateLockKey(identity: PaidEffectIdentity): string {
+  return `paid-effect:gate:v1:${identity.family}:${identity.entityId}`;
+}
 
 export const paidEffectIdentitySchema = z.strictObject({
   family: z.string().min(1),
@@ -154,7 +165,7 @@ export type PaidEffectControlAdmission =
   | { readonly kind: 'admitted'; readonly control: PaidEffectControlSnapshot }
   | {
       readonly kind: 'fenced';
-      readonly reason: 'backend_mismatch' | 'stale_generation';
+      readonly reason: 'backend_mismatch' | 'stale_generation' | 'missing_generation';
       readonly owner: PaidEffectBackend;
       readonly generation: number;
     };
@@ -184,7 +195,7 @@ export class PaidEffectControlFencedError extends PaidEffectProtocolError {
   override name = 'PaidEffectControlFencedError';
   constructor(
     readonly family: string,
-    readonly reason: 'backend_mismatch' | 'stale_generation',
+    readonly reason: 'backend_mismatch' | 'stale_generation' | 'missing_generation',
     readonly owner: PaidEffectBackend,
   ) {
     super(`paid-effect delivery fenced for ${family}: ${reason} (owner: ${owner})`);
@@ -195,11 +206,17 @@ export class PaidEffectSwitchBlockedError extends PaidEffectProtocolError {
   override name = 'PaidEffectSwitchBlockedError';
   constructor(
     readonly family: string,
-    readonly blocking: { readonly sending: number; readonly unknown: number },
+    readonly blocking: {
+      readonly pending: number;
+      readonly sending: number;
+      readonly unknown: number;
+      readonly receipt_ready: number;
+    },
   ) {
     super(
       `paid-effect backend switch blocked for ${family}: ` +
-        `${blocking.sending} sending, ${blocking.unknown} unknown obligations`,
+        `${blocking.pending} pending, ${blocking.sending} sending, ` +
+        `${blocking.unknown} unknown, ${blocking.receipt_ready} receipt_ready obligations`,
     );
   }
 }
@@ -297,13 +314,20 @@ export function computePaidEffectIdentity(input: PaidEffectInput): PaidEffectIde
 /**
  * Pure admission decision over a control snapshot. The store/DB layer only
  * supplies the locked snapshot; every rule lives here so it is testable
- * offline and identical for both backends.
+ * offline and identical for both backends. Generation rules (P1-2): a DBOS
+ * delivery MUST carry the dispatch-time control generation when the control
+ * row is explicit — a backend that went away and came back (A→B→A) must not
+ * re-admit pre-switch dispatches; pg-boss legacy deliveries carry none and are
+ * governed by the backend match alone (pg-boss is the default owner and the
+ * effect-row CAS still dedupes sends).
  */
 export function decidePaidEffectControlAdmission(
   control: PaidEffectControlSnapshot,
   ref: PaidEffectDeliveryRef,
 ): PaidEffectControlAdmission {
-  const fenced = (reason: 'backend_mismatch' | 'stale_generation'): PaidEffectControlAdmission => ({
+  const fenced = (
+    reason: 'backend_mismatch' | 'stale_generation' | 'missing_generation',
+  ): PaidEffectControlAdmission => ({
     kind: 'fenced',
     reason,
     owner: control.backend,
@@ -316,6 +340,9 @@ export function decidePaidEffectControlAdmission(
       : fenced('backend_mismatch');
   }
   if (ref.backend !== control.backend) return fenced('backend_mismatch');
+  if (ref.backend === 'dbos' && ref.generation == null) {
+    return fenced('missing_generation');
+  }
   if (ref.generation != null && ref.generation !== control.generation) {
     return fenced('stale_generation');
   }
@@ -327,10 +354,23 @@ export function summarizePaidEffectSwitchBlocking(
   countsByState: {
     readonly [state in PaidEffectState]?: number;
   },
-): { blocked: boolean; blocking: { sending: number; unknown: number } } {
+): {
+  blocked: boolean;
+  blocking: {
+    pending: number;
+    sending: number;
+    unknown: number;
+    receipt_ready: number;
+  };
+} {
+  const pending = countsByState.pending ?? 0;
   const sending = countsByState.sending ?? 0;
   const unknown = countsByState.unknown ?? 0;
-  return { blocked: sending + unknown > 0, blocking: { sending, unknown } };
+  const receiptReady = countsByState.receipt_ready ?? 0;
+  return {
+    blocked: pending + sending + unknown + receiptReady > 0,
+    blocking: { pending, sending, unknown, receipt_ready: receiptReady },
+  };
 }
 
 /**

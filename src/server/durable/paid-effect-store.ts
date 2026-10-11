@@ -22,13 +22,14 @@ import { type SQL, and, eq, inArray, lt, ne, or, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { paid_effect } from '@/db/schema';
+import { admitPaidEffectDeliveryControl } from './paid-effect-control';
 import {
-  DEFAULT_PAID_EFFECT_GATE_SCOPE,
   PAID_EFFECT_BACKEND_SCHEMA,
   PAID_EFFECT_ENTITY_GATE_STATES,
   PAID_EFFECT_STATE_SCHEMA,
   PaidEffectApplicationConflictError,
   type PaidEffectBackend,
+  PaidEffectControlFencedError,
   PaidEffectDeliveryConflictError,
   type PaidEffectIdentity,
   PaidEffectIdentityConflictError,
@@ -39,6 +40,7 @@ import {
   type PaidEffectState,
   canonicalizePaidEffectJson,
   computePaidEffectIdentity,
+  paidEffectGateLockKey,
   paidEffectIdentitySchema,
   paidEffectJsonEquals,
 } from './paid-effect-protocol';
@@ -78,6 +80,8 @@ export interface PaidEffectSendClaimDelivery {
   readonly deliveryId: string;
   readonly tickId?: string | null;
   readonly leaseExpiresAt: Date;
+  /** Dispatch-time control generation; REQUIRED for DBOS deliveries. */
+  readonly generation?: number | null;
 }
 
 export type PaidEffectSendClaim =
@@ -91,20 +95,6 @@ export type PaidEffectSendClaim =
       /** names the open effect whose entity gate blocked this claim, when applicable */
       readonly blockedBy?: PaidEffectIdentity | null;
     };
-
-export interface PaidEffectClaimOptions {
-  /**
-   * Entity-gate scope for this family (pinned per family, not per call site):
-   * 'entity' (default) blocks on any sending/unknown effect of the same
-   * (family, entityId) — calibration/timed semantics, where a later workset or
-   * revision must not buy while the entity has an open paid obligation;
-   * 'entity-revision' blocks only within (family, entityId, entityRevision) —
-   * rep semantics, where sibling units of ONE revision are deliberately
-   * parallel paid sends and only a NEW revision is blocked by the old
-   * revision's unknown.
-   */
-  readonly gateScope?: 'entity' | 'entity-revision';
-}
 
 function identityWhere(identity: PaidEffectIdentity): SQL | undefined {
   return and(
@@ -161,35 +151,24 @@ async function lockRow(tx: Tx, identity: PaidEffectIdentity): Promise<PaidEffect
  * the repo's established hashtextextended advisory-lock pattern
  * (producer-fence-lock.ts, session-orphan-family.ts).
  */
-async function lockGateScope(
-  tx: Tx,
-  identity: PaidEffectIdentity,
-  scope: 'entity' | 'entity-revision',
-): Promise<void> {
-  const key =
-    scope === 'entity'
-      ? `paid-effect:gate:v1:${identity.family}:${identity.entityId}`
-      : `paid-effect:gate:v1:${identity.family}:${identity.entityId}:${identity.entityRevision}`;
-  await tx.execute(sql`select pg_advisory_xact_lock(hashtextextended(${key}, 0))`);
+async function lockEntityGate(tx: Tx, identity: PaidEffectIdentity): Promise<void> {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtextextended(${paidEffectGateLockKey(identity)}, 0))`,
+  );
 }
 
 /**
- * Gate scan: an open sending/unknown effect covered by the scope blocks this
- * claim. Runs inside the caller's transaction AFTER lockGateScope; returns the
- * blocker's identity, or null.
+ * Gate scan under the FIXED predicate (paidEffectGateBlocks): an open
+ * sending/unknown effect of the same (family, entityId) blocks this claim
+ * UNLESS it is a sibling unit of the SAME revision. Same revision + same unit
+ * + different digest BLOCKS (reconciliation); a different revision BLOCKS
+ * (entity-level cross-revision/cross-night). Runs inside the caller's
+ * transaction AFTER lockEntityGate; returns the blocker's identity, or null.
  */
 async function findGateBlocker(
   tx: Tx,
   identity: PaidEffectIdentity,
-  scope: 'entity' | 'entity-revision',
 ): Promise<PaidEffectIdentity | null> {
-  const scopeConditions: SQL[] = [
-    eq(paid_effect.family, identity.family),
-    eq(paid_effect.entity_id, identity.entityId),
-  ];
-  if (scope === 'entity-revision') {
-    scopeConditions.push(eq(paid_effect.entity_revision, identity.entityRevision));
-  }
   const blockers = await tx
     .select({
       family: paid_effect.family,
@@ -201,13 +180,20 @@ async function findGateBlocker(
     .from(paid_effect)
     .where(
       and(
-        ...scopeConditions,
+        eq(paid_effect.family, identity.family),
+        eq(paid_effect.entity_id, identity.entityId),
         inArray(paid_effect.state, [...PAID_EFFECT_ENTITY_GATE_STATES]),
         or(
           ne(paid_effect.entity_revision, identity.entityRevision),
           ne(paid_effect.unit, identity.unit),
           ne(paid_effect.input_digest, identity.inputDigest),
         ),
+        // FIXED gate predicate — mirrors paidEffectGateBlocks exactly:
+        // blocked unless (same revision AND different unit).
+        sql`not (
+          ${paid_effect.entity_revision} = ${identity.entityRevision}
+          and ${paid_effect.unit} <> ${identity.unit}
+        )`,
       ),
     )
     .limit(1);
@@ -270,10 +256,22 @@ async function claimLockedRow(
   row: PaidEffectRow,
   identity: PaidEffectIdentity,
   delivery: PaidEffectSendClaimDelivery,
-  gateScope: 'entity' | 'entity-revision',
 ): Promise<{ fence: number } | { blockedBy: PaidEffectIdentity }> {
-  await lockGateScope(tx, identity, gateScope);
-  const blockedBy = await findGateBlocker(tx, identity, gateScope);
+  await lockEntityGate(tx, identity);
+  // P1-2: control owner/generation verified in the SAME transaction and the
+  // SAME lock order as the claim (row → entity advisory → control FOR SHARE),
+  // so a concurrent switch (control FOR UPDATE) serializes against every
+  // admission and a fenced backend can never win a claim.
+  const admission = await admitPaidEffectDeliveryControl(tx, identity.family, {
+    backend: delivery.backend,
+    deliveryId: delivery.deliveryId,
+    tickId: delivery.tickId ?? null,
+    generation: delivery.generation ?? null,
+  });
+  if (admission.kind === 'fenced') {
+    throw new PaidEffectControlFencedError(identity.family, admission.reason, admission.owner);
+  }
+  const blockedBy = await findGateBlocker(tx, identity);
   if (blockedBy) return { blockedBy };
   const fence = row.fence + 1;
   await tx
@@ -297,13 +295,13 @@ async function claimLockedRow(
  * admission themselves; prefer reservePaidEffect). Only a 'pending' row can be
  * claimed, exactly one delivery wins, and the winner records its
  * fence/delivery/lease. Every other state refuses — an expired lease is an
- * unknown outcome, never a new ticket back to a paid call.
+ * unknown outcome, never a new ticket back to a paid call. Control admission
+ * is embedded: a fenced backend/stale generation THROWS instead of winning.
  */
 export async function claimPaidEffectSend(
   tx: Tx,
   identity: PaidEffectIdentity,
   delivery: PaidEffectSendClaimDelivery,
-  opts: PaidEffectClaimOptions = {},
 ): Promise<PaidEffectSendClaim> {
   const row = await lockRow(tx, identity);
   if (!row) return { kind: 'missing' };
@@ -315,13 +313,7 @@ export async function claimPaidEffectSend(
       blockedBy: null,
     };
   }
-  const outcome = await claimLockedRow(
-    tx,
-    row,
-    identity,
-    delivery,
-    opts.gateScope ?? DEFAULT_PAID_EFFECT_GATE_SCOPE,
-  );
+  const outcome = await claimLockedRow(tx, row, identity, delivery);
   if ('blockedBy' in outcome) {
     return { kind: 'refused', state: 'pending', receiptKnown: false, blockedBy: outcome.blockedBy };
   }
@@ -334,16 +326,15 @@ export async function claimPaidEffectSend(
  * with the pinned reserve discrimination. Two consumers that both read
  * "empty" and try to start the same effect serialize here: exactly one leaves
  * as the winner, the other as held — an append with no return can never serve
- * as send admission.
+ * as send admission. Control admission, the entity gate, and the claim commit
+ * atomically; a fenced delivery surfaces as PaidEffectControlFencedError.
  */
 export async function reservePaidEffect(
   db: Db,
   input: PaidEffectInput,
   delivery: PaidEffectSendClaimDelivery,
-  opts: PaidEffectClaimOptions = {},
 ): Promise<PaidEffectReservation & { readonly identity: PaidEffectIdentity }> {
   const identity = computePaidEffectIdentity(input);
-  const gateScope = opts.gateScope ?? DEFAULT_PAID_EFFECT_GATE_SCOPE;
   return db.transaction(async (tx) => {
     await admitPaidEffectIntent(tx, input);
     const row = await lockRow(tx, identity);
@@ -362,7 +353,7 @@ export async function reservePaidEffect(
     if (state === 'sending' || state === 'unknown') {
       return { identity, kind: 'held', state, blockedBy: null } as const;
     }
-    const outcome = await claimLockedRow(tx, row, identity, delivery, gateScope);
+    const outcome = await claimLockedRow(tx, row, identity, delivery);
     if ('blockedBy' in outcome) {
       return { identity, kind: 'held', state: 'pending', blockedBy: outcome.blockedBy } as const;
     }
@@ -374,14 +365,14 @@ function requireOwnerDelivery(
   row: PaidEffectRow,
   identity: PaidEffectIdentity,
   deliveryId: string,
-  expectedFence?: number,
+  expectedFence: number,
 ): void {
   if (row.delivery_id !== deliveryId) {
     throw new PaidEffectDeliveryConflictError(
       `delivery ${deliveryId} does not own the admitted send for ${identity.family}/${identity.entityId}`,
     );
   }
-  if (expectedFence !== undefined && row.fence !== expectedFence) {
+  if (row.fence !== expectedFence) {
     throw new PaidEffectDeliveryConflictError(
       `delivery ${deliveryId} fence ${expectedFence} is stale for ${identity.family}/${identity.entityId} (row fence ${row.fence})`,
     );
@@ -400,7 +391,7 @@ export async function recordPaidEffectResult(
   identity: PaidEffectIdentity,
   deliveryId: string,
   receipt: unknown,
-  opts: { fence?: number } = {},
+  opts: { fence: number },
 ): Promise<'recorded' | 'idempotent'> {
   // Reject non-canonicalizable payloads before touching the row.
   canonicalizePaidEffectJson(receipt);
@@ -439,7 +430,7 @@ export async function markPaidEffectUnknown(
   identity: PaidEffectIdentity,
   deliveryId: string,
   reason: string,
-  opts: { fence?: number } = {},
+  opts: { fence: number },
 ): Promise<void> {
   const row = await lockRow(tx, identity);
   if (!row) throw new PaidEffectProtocolError('paid-effect row missing');

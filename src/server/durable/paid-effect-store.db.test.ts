@@ -4,17 +4,20 @@
 // integrating the protocol (they need the parent-owned migration SQL from
 // docs/planning/2026-10-11-yuk1355-paid-effect-protocol.md §6 applied first).
 //
-// Required proofs (parent plan "First acceptable delivery"):
-// one physical-send admission under a CAS race, unequal receipt rejection,
-// unresolved claim visible across different deliveries/ticks, opposite backend
-// fenced, failed application never resends, plus the supporting contracts
-// (intent idempotence, history preservation, switch blocking/generation).
+// Required proofs (parent plan + P1 R1): one physical-send admission under a
+// CAS race, unequal receipt rejection, unresolved claim visible across
+// different deliveries/ticks, opposite backend fenced INSIDE the claim,
+// failed application never resends, fixed entity-gate predicate (sibling rep
+// units parallel; same-unit input change and cross-revision unknown blocked),
+// mandatory winner-fence completion, switch blocked on every unfinished
+// obligation (including the note_verify claim probe), and the supporting
+// contracts (intent idempotence, history preservation, generation fencing).
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import { admitNoteVerifyDelivery } from '@/capabilities/notes/jobs/note_verify';
 import type { Db, Tx } from '@/db/client';
-import { paid_effect, paid_effect_control } from '@/db/schema';
+import { artifact, note_verification_claim, paid_effect, paid_effect_control } from '@/db/schema';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import {
   admitPaidEffectDeliveryControl,
@@ -23,6 +26,7 @@ import {
 } from './paid-effect-control';
 import {
   PaidEffectApplicationConflictError,
+  PaidEffectControlFencedError,
   PaidEffectDeliveryConflictError,
   type PaidEffectIdentity,
   PaidEffectIdentityConflictError,
@@ -89,6 +93,17 @@ async function claim(db: Db, identity: PaidEffectIdentity, deliveryId: string, l
   );
 }
 
+async function claimFence(
+  db: Db,
+  identity: PaidEffectIdentity,
+  deliveryId: string,
+  leaseMs = 60_000,
+): Promise<number> {
+  const result = await claim(db, identity, deliveryId, leaseMs);
+  if (result.kind !== 'claimed') throw new Error(`expected claimed, got ${result.kind}`);
+  return result.fence;
+}
+
 describe('paid-effect store transitions', () => {
   beforeEach(async () => {
     await resetDb();
@@ -145,27 +160,39 @@ describe('paid-effect store transitions', () => {
     expect([first, second].filter((r) => r.kind === 'refused')).toHaveLength(1);
   });
 
-  // @invariant concurrency: the result receipt is immutable — a semantically equal re-record is idempotent, an unequal rewrite is rejected without mutating the row, and a non-owner delivery cannot record
+  // @invariant concurrency: the result receipt is immutable — a semantically equal re-record is idempotent, an unequal rewrite is rejected without mutating the row, and a non-owner delivery or stale fence cannot record
   // @fails-if an unequal payload overwrites the first receipt, or a delivery that lost the claim records a result for a send it never made
   it('rejects unequal receipts and non-owner recordings, accepts equal ones idempotently', async () => {
     const identity = await admitIntent(testDb(), INPUT);
-    await claim(testDb(), identity, 'delivery-1');
+    const fence = await claimFence(testDb(), identity, 'delivery-1');
     const receipt = { verdict: 'pass', issues: [] };
     await expect(
-      testDb().transaction((tx: Tx) => recordPaidEffectResult(tx, identity, 'delivery-1', receipt)),
+      testDb().transaction((tx: Tx) =>
+        recordPaidEffectResult(tx, identity, 'delivery-1', receipt, { fence }),
+      ),
     ).resolves.toBe('recorded');
     await expect(
       testDb().transaction((tx: Tx) =>
-        recordPaidEffectResult(tx, identity, 'delivery-1', { issues: [], verdict: 'pass' }),
+        recordPaidEffectResult(
+          tx,
+          identity,
+          'delivery-1',
+          { issues: [], verdict: 'pass' },
+          {
+            fence,
+          },
+        ),
       ),
     ).resolves.toBe('idempotent');
     await expect(
       testDb().transaction((tx: Tx) =>
-        recordPaidEffectResult(tx, identity, 'delivery-1', { verdict: 'fail' }),
+        recordPaidEffectResult(tx, identity, 'delivery-1', { verdict: 'fail' }, { fence }),
       ),
     ).rejects.toBeInstanceOf(PaidEffectReceiptConflictError);
     await expect(
-      testDb().transaction((tx: Tx) => recordPaidEffectResult(tx, identity, 'delivery-2', receipt)),
+      testDb().transaction((tx: Tx) =>
+        recordPaidEffectResult(tx, identity, 'delivery-2', receipt, { fence }),
+      ),
     ).rejects.toBeInstanceOf(PaidEffectDeliveryConflictError);
     expect(await readPaidEffect(testDb(), identity)).toMatchObject({
       state: 'receipt_ready',
@@ -177,7 +204,7 @@ describe('paid-effect store transitions', () => {
   // @fails-if a new-tick delivery can claim the send again (paid double-send from an unknown), or the unknown row is hidden from the obligation surface
   it('keeps an unknown send unclaimable across a new delivery/tick, resolvable only by its owner', async () => {
     const identity = await admitIntent(testDb(), INPUT);
-    await claim(testDb(), identity, 'delivery-1', -1_000); // lease already expired
+    const fence = await claimFence(testDb(), identity, 'delivery-1', -1_000); // lease already expired
     expect(await settleExpiredPaidEffectSends(testDb(), { family: 'test_family' })).toBe(1);
     expect(await readPaidEffect(testDb(), identity)).toMatchObject({
       state: 'unknown',
@@ -187,13 +214,13 @@ describe('paid-effect store transitions', () => {
     expect(replay).toMatchObject({ kind: 'refused', state: 'unknown', receiptKnown: false });
     await expect(
       testDb().transaction((tx: Tx) =>
-        markPaidEffectUnknown(tx, identity, 'delivery-new-tick', 'x'),
+        markPaidEffectUnknown(tx, identity, 'delivery-new-tick', 'x', { fence }),
       ),
     ).rejects.toBeInstanceOf(PaidEffectDeliveryConflictError);
     // Late resolution by the owning delivery is monotone information gain.
     await expect(
       testDb().transaction((tx: Tx) =>
-        recordPaidEffectResult(tx, identity, 'delivery-1', { verdict: 'pass' }),
+        recordPaidEffectResult(tx, identity, 'delivery-1', { verdict: 'pass' }, { fence }),
       ),
     ).resolves.toBe('recorded');
     expect(await readPaidEffect(testDb(), identity)).toMatchObject({ state: 'receipt_ready' });
@@ -205,10 +232,10 @@ describe('paid-effect store transitions', () => {
   // @fails-if a new delivery can claim a send after a failed application, or the obligation disappears while unapplied
   it('does not resend after a failed application and finishes from the receipt', async () => {
     const identity = await admitIntent(testDb(), INPUT);
-    await claim(testDb(), identity, 'delivery-1');
+    const fence = await claimFence(testDb(), identity, 'delivery-1');
     const receipt = { verdict: 'pass', issues: [] };
     await testDb().transaction(async (tx: Tx) => {
-      await recordPaidEffectResult(tx, identity, 'delivery-1', receipt);
+      await recordPaidEffectResult(tx, identity, 'delivery-1', receipt, { fence });
     });
     // The domain application crashed: the failure is noted, state unchanged.
     await testDb().transaction(async (tx: Tx) => {
@@ -247,7 +274,7 @@ describe('paid-effect store transitions', () => {
   // @fails-if re-derivation with new input/revision deletes or overwrites the old row, destroying the audit trail of a paid obligation
   it('preserves historical obligations when input or revision changes', async () => {
     const first = await admitIntent(testDb(), INPUT);
-    await claim(testDb(), first, 'delivery-1', -1_000);
+    await claimFence(testDb(), first, 'delivery-1', -1_000);
     await settleExpiredPaidEffectSends(testDb());
     const second = await admitIntent(testDb(), OTHER_INPUT);
     const third = await admitIntent(testDb(), INPUT, { entityRevision: 'rev-7' });
@@ -266,7 +293,7 @@ describe('paid-effect store transitions', () => {
     const identity = await admitIntent(testDb(), INPUT);
     await expect(
       testDb().transaction((tx: Tx) =>
-        recordPaidEffectResult(tx, identity, 'delivery-1', { verdict: 'pass' }),
+        recordPaidEffectResult(tx, identity, 'delivery-1', { verdict: 'pass' }, { fence: 1 }),
       ),
     ).rejects.toBeInstanceOf(PaidEffectProtocolError);
     await expect(
@@ -346,20 +373,22 @@ describe('paid-effect reserve admission (winner/held/completed)', () => {
     expect(applied).toMatchObject({ kind: 'completed', state: 'applied', applied: true });
   });
 
-  // @invariant concurrency: under the default 'entity' scope an open sending/unknown effect of the same entity blocks a NEW identity (later workset or new revision) from buying — the cross-night case
+  // @invariant concurrency: an open sending/unknown effect of the same entity blocks a NEW identity (later workset or new revision) from buying — the cross-night case under the FIXED predicate
   // @fails-if a new workSetId or a bumped revision admits a fresh paid send while the entity's earlier send is unresolved
-  it('blocks cross-revision/cross-workset buys on the same entity while unknown (scope entity)', async () => {
+  it('blocks cross-revision/cross-workset buys on the same entity while unknown', async () => {
     const first = await reservePaidEffect(
       testDb(),
       reserveInput('w1', INPUT).input,
       reserveInput('w1', INPUT).delivery,
     );
+    if (first.kind !== 'winner') throw new Error(`expected winner, got ${first.kind}`);
     await testDb().transaction(async (tx: Tx) => {
       await markPaidEffectUnknown(
         tx,
         first.identity,
         'delivery-w1-verify',
         'workflow ended without receipt',
+        { fence: 1 },
       );
     });
     const laterWorkset = await reservePaidEffect(
@@ -377,37 +406,42 @@ describe('paid-effect reserve admission (winner/held/completed)', () => {
     expect(newRevision).toMatchObject({ kind: 'held' });
   });
 
-  // @invariant concurrency: under the 'entity-revision' scope sibling units of ONE revision are deliberately parallel paid sends and do not block each other, while a NEW revision is still blocked by the old revision's unknown
-  // @fails-if rep:2 is blocked by rep:1's unknown within one revision, or a revision change escapes the old revision's unknown
-  it('keeps sibling rep units parallel within a revision and blocks new revisions (scope entity-revision)', async () => {
+  // @invariant concurrency: under the FIXED predicate sibling units of ONE revision are deliberately parallel paid sends and do not block each other, while the SAME unit with a different input and ANY new revision are blocked by the old unknown
+  // @fails-if rep:2 is blocked by rep:1's unknown within one revision, or a same-unit digest change / revision change escapes the old unknown
+  it('keeps sibling rep units parallel, blocks same-unit input drift and new revisions', async () => {
     const rep1 = await reservePaidEffect(
       testDb(),
       reserveInput('rev-1', INPUT, 'method-a/rep:1').input,
       reserveInput('rev-1', INPUT, 'method-a/rep:1').delivery,
-      { gateScope: 'entity-revision' },
     );
     expect(rep1).toMatchObject({ kind: 'winner' });
     await testDb().transaction(async (tx: Tx) => {
-      await markPaidEffectUnknown(tx, rep1.identity, 'delivery-rev-1-method-a/rep:1', 'crash');
+      await markPaidEffectUnknown(tx, rep1.identity, 'delivery-rev-1-method-a/rep:1', 'crash', {
+        fence: 1,
+      });
     });
     const rep2 = await reservePaidEffect(
       testDb(),
       reserveInput('rev-1', INPUT, 'method-a/rep:2').input,
       reserveInput('rev-1', INPUT, 'method-a/rep:2').delivery,
-      { gateScope: 'entity-revision' },
     );
     expect(rep2).toMatchObject({ kind: 'winner' });
+    const sameUnitDifferentInput = await reservePaidEffect(
+      testDb(),
+      reserveInput('rev-1', OTHER_INPUT, 'method-a/rep:1').input,
+      reserveInput('rev-1', OTHER_INPUT, 'method-a/rep:1').delivery,
+    );
+    expect(sameUnitDifferentInput).toMatchObject({ kind: 'held' });
     const nextRevision = await reservePaidEffect(
       testDb(),
       reserveInput('rev-2', INPUT, 'method-a/rep:1').input,
       reserveInput('rev-2', INPUT, 'method-a/rep:1').delivery,
-      { gateScope: 'entity-revision' },
     );
     expect(nextRevision).toMatchObject({ kind: 'held' });
     expect(nextRevision.kind === 'held' && nextRevision.blockedBy?.entityRevision).toBe('rev-1');
   });
 
-  // @invariant concurrency: two consumers racing to start DIFFERENT effects of one entity serialize on the gate — exactly one winner, the other held naming the blocker
+  // @invariant concurrency: two consumers racing to start DIFFERENT effects of one entity serialize on the family+entity gate lock — exactly one winner, the other held naming the blocker
   // @fails-if both concurrent cross-identity reserves win, double-engaging the provider for one entity
   it('serializes concurrent cross-identity reserves for one entity', async () => {
     const [a, b] = await Promise.all([
@@ -431,8 +465,8 @@ describe('paid-effect reserve admission (winner/held/completed)', () => {
     );
   });
 
-  // @invariant concurrency: completion is valid only for the winning delivery AND fence — a stale fence or a non-owner delivery cannot write the receipt
-  // @fails-if a fence-less or stale-fence delivery records a result for a send it no longer owns
+  // @invariant concurrency: completion is valid only for the winning delivery AND its exact fence — a stale fence or a non-owner delivery cannot write the receipt
+  // @fails-if a wrong-fence delivery records a result for a send it no longer owns
   it('validates winner delivery and fence on completion', async () => {
     const won = await reservePaidEffect(
       testDb(),
@@ -453,7 +487,15 @@ describe('paid-effect reserve admission (winner/held/completed)', () => {
     ).rejects.toBeInstanceOf(PaidEffectDeliveryConflictError);
     await expect(
       testDb().transaction((tx: Tx) =>
-        recordPaidEffectResult(tx, won.identity, 'delivery-other', { verdict: 'pass' }),
+        recordPaidEffectResult(
+          tx,
+          won.identity,
+          'delivery-other',
+          { verdict: 'pass' },
+          {
+            fence: 1,
+          },
+        ),
       ),
     ).rejects.toBeInstanceOf(PaidEffectDeliveryConflictError);
     await expect(
@@ -490,6 +532,14 @@ describe('paid-effect backend control (DB)', () => {
       testDb().transaction((tx: Tx) =>
         admitPaidEffectDeliveryControl(tx, 'ctl_family', {
           backend: 'dbos',
+          deliveryId: 'w0',
+        }),
+      ),
+    ).resolves.toMatchObject({ kind: 'fenced', reason: 'missing_generation' });
+    await expect(
+      testDb().transaction((tx: Tx) =>
+        admitPaidEffectDeliveryControl(tx, 'ctl_family', {
+          backend: 'dbos',
           deliveryId: 'w1',
           generation: 2,
         }),
@@ -506,11 +556,52 @@ describe('paid-effect backend control (DB)', () => {
     ).resolves.toMatchObject({ kind: 'admitted' });
   });
 
-  // @invariant concurrency: a backend switch is blocked while sends are in flight or unresolved and proceeds (bumping the generation) once they are settled
-  // @fails-if the switch moves ownership under a sending/unknown effect, or the generation does not advance so stale deliveries stay admissible
-  it('blocks the switch on unresolved sends, then fences the old side after switching', async () => {
+  // @invariant concurrency: control admission is INSIDE the claim transaction — a wrong-backend or stale-generation delivery can never win a claim, and the row stays pending
+  // @fails-if a fenced delivery still wins the CAS (wrong backend becomes the send owner) or the claim bypasses control entirely
+  it('fences claims under the wrong owner inside the claim transaction', async () => {
+    await testDb()
+      .insert(paid_effect_control)
+      .values({ family: 'test_family', backend: 'dbos', generation: 1 });
     const identity = await admitIntent(testDb(), INPUT);
-    await claim(testDb(), identity, 'delivery-1', -1_000);
+    await expect(claim(testDb(), identity, 'delivery-1')).rejects.toBeInstanceOf(
+      PaidEffectControlFencedError,
+    );
+    await expect(
+      testDb().transaction((tx: Tx) =>
+        claimPaidEffectSend(tx, identity, {
+          backend: 'dbos',
+          deliveryId: 'w-no-gen',
+          leaseExpiresAt: new Date(Date.now() + 60_000),
+        }),
+      ),
+    ).rejects.toBeInstanceOf(PaidEffectControlFencedError);
+    await expect(
+      testDb().transaction((tx: Tx) =>
+        claimPaidEffectSend(tx, identity, {
+          backend: 'dbos',
+          deliveryId: 'w-stale',
+          generation: 0,
+          leaseExpiresAt: new Date(Date.now() + 60_000),
+        }),
+      ),
+    ).rejects.toBeInstanceOf(PaidEffectControlFencedError);
+    expect(await readPaidEffect(testDb(), identity)).toMatchObject({ state: 'pending' });
+    const winner = await testDb().transaction((tx: Tx) =>
+      claimPaidEffectSend(tx, identity, {
+        backend: 'dbos',
+        deliveryId: 'w-current',
+        generation: 1,
+        leaseExpiresAt: new Date(Date.now() + 60_000),
+      }),
+    );
+    expect(winner).toMatchObject({ kind: 'claimed', fence: 1 });
+  });
+
+  // @invariant concurrency: a backend switch is blocked by EVERY unfinished obligation — sending, unknown, and (P1-5) pending intents and unapplied receipts — and proceeds (bumping the generation) only after the effect is fully applied
+  // @fails-if the switch moves ownership over any unfinished state, or the generation does not advance so stale deliveries stay admissible
+  it('blocks the switch on every unfinished state, then fences the old side', async () => {
+    const identity = await admitIntent(testDb(), INPUT);
+    const fence = await claimFence(testDb(), identity, 'delivery-1', -1_000);
     await expect(switchPaidEffectBackend(testDb(), 'test_family', 'dbos')).rejects.toBeInstanceOf(
       PaidEffectSwitchBlockedError,
     );
@@ -519,7 +610,14 @@ describe('paid-effect backend control (DB)', () => {
       PaidEffectSwitchBlockedError,
     );
     await testDb().transaction(async (tx: Tx) => {
-      await recordPaidEffectResult(tx, identity, 'delivery-1', { verdict: 'pass' });
+      await recordPaidEffectResult(tx, identity, 'delivery-1', { verdict: 'pass' }, { fence });
+    });
+    // P1-5: a known-but-unapplied receipt still blocks the switch.
+    await expect(switchPaidEffectBackend(testDb(), 'test_family', 'dbos')).rejects.toBeInstanceOf(
+      PaidEffectSwitchBlockedError,
+    );
+    await testDb().transaction(async (tx: Tx) => {
+      await recordPaidEffectApplication(tx, identity, { applied_event: 'e1' });
     });
     const after = await switchPaidEffectBackend(testDb(), 'test_family', 'dbos');
     expect(after).toEqual({
@@ -537,6 +635,52 @@ describe('paid-effect backend control (DB)', () => {
         }),
       ),
     ).resolves.toMatchObject({ kind: 'fenced', reason: 'stale_generation' });
+  });
+
+  // @invariant concurrency: the note_verify switch gate sees the family's EXISTING claim obligations (provider_started maps to sending) even though notes never write paid_effect rows
+  // @fails-if the switch moves note_verify ownership while a live note verification claim is in flight, or the probe ignores the claim table entirely
+  it('blocks the note_verify switch on live note claim obligations', async () => {
+    const now = new Date();
+    await testDb().insert(artifact).values({
+      id: 'note-artifact-1',
+      type: 'note_atomic',
+      title: 'probe',
+      knowledge_ids: [],
+      intent_source: 'learning_intent',
+      source: 'ai_generated',
+      attrs: {},
+      generation_status: 'ready',
+      verification_status: 'queued',
+      history: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+    await testDb()
+      .insert(note_verification_claim)
+      .values({
+        artifact_id: 'note-artifact-1',
+        artifact_version: 0,
+        state: 'provider_started',
+        fence: 1,
+        claim_token: '0b1f2b3c-4d5e-6f70-8a9b-0c1d2e3f4a5b',
+        task_run_id: 'probe-run-1',
+        provider_attempts: 1,
+        available_at: now,
+        lease_expires_at: new Date(now.getTime() + 60_000),
+        claimed_at: now,
+        provider_started_at: now,
+        created_at: now,
+        updated_at: now,
+      });
+    await expect(switchPaidEffectBackend(testDb(), 'note_verify', 'dbos')).rejects.toThrow(
+      'switch blocked',
+    );
+    await testDb().delete(note_verification_claim);
+    await expect(switchPaidEffectBackend(testDb(), 'note_verify', 'dbos')).resolves.toMatchObject({
+      backend: 'dbos',
+      generation: 1,
+    });
   });
 
   // @invariant concurrency: note_verify pg-boss deliveries are admitted under the bootstrap default when no control row exists and fenced once DBOS owns the family

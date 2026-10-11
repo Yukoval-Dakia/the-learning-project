@@ -7,9 +7,8 @@ import { describe, expect, it } from 'vitest';
 import { NOTE_VERIFY_PAID_EFFECT_FAMILY } from '@/capabilities/notes/jobs/note_verify';
 
 import { NOTE_VERIFY_FAMILY } from './note-verify-family';
+import { NOTE_VERIFY_OBLIGATION_FAMILY } from './paid-effect-note-obligations';
 import {
-  DEFAULT_PAID_EFFECT_GATE_SCOPE,
-  PAID_EFFECT_GATE_SCOPES,
   PAID_EFFECT_SWITCH_BLOCKING_STATES,
   type PaidEffectControlSnapshot,
   PaidEffectProtocolError,
@@ -18,6 +17,8 @@ import {
   computePaidEffectIdentity,
   computePaidEffectInputDigest,
   decidePaidEffectControlAdmission,
+  paidEffectGateBlocks,
+  paidEffectGateLockKey,
   paidEffectJsonEquals,
   summarizePaidEffectSwitchBlocking,
 } from './paid-effect-protocol';
@@ -142,7 +143,9 @@ describe('paid-effect backend control admission (pure decision)', () => {
 
   // @invariant concurrency: a stale ownership generation is fenced even when the backend name matches again after an A→B→A round trip
   // @fails-if generation is ignored on admission, letting a pre-switch delivery execute under post-switch ownership
-  it('fences stale generations and admits current ones', () => {
+  // @invariant concurrency: a stale ownership generation is fenced even when the backend name matches again after an A→B→A round trip, and a DBOS delivery without a dispatch generation is never admitted against an explicit control row
+  // @fails-if generation is ignored on admission or accepted as null for DBOS, letting a pre-switch delivery execute under post-switch ownership
+  it('fences stale and missing generations, admits current ones', () => {
     expect(
       decidePaidEffectControlAdmission(explicitDbos, {
         backend: 'dbos',
@@ -151,9 +154,12 @@ describe('paid-effect backend control admission (pure decision)', () => {
       }),
     ).toMatchObject({ kind: 'fenced', reason: 'stale_generation' });
     expect(
+      decidePaidEffectControlAdmission(explicitDbos, { backend: 'dbos', deliveryId: 'w1' }),
+    ).toMatchObject({ kind: 'fenced', reason: 'missing_generation' });
+    expect(
       decidePaidEffectControlAdmission(explicitDbos, {
         backend: 'dbos',
-        deliveryId: 'w1',
+        deliveryId: 'w2',
         generation: 5,
       }),
     ).toMatchObject({ kind: 'admitted' });
@@ -164,47 +170,82 @@ describe('paid-effect backend control admission (pure decision)', () => {
 });
 
 describe('paid-effect switch blocking predicate', () => {
-  // @invariant concurrency: a backend switch is blocked exactly while the family has sending or unknown effects; pending/receipt_ready/applied do not block
-  // @fails-if any in-flight or unresolved send fails to block the switch (ownership moves under a paid call), or a settled state wrongly blocks it
-  it('blocks on sending/unknown only', () => {
+  // @invariant concurrency: a backend switch is blocked by ANY unfinished obligation (pending intent, in-flight or unknown send, or unapplied receipt); only fully applied effects do not block
+  // @fails-if any unfinished state fails to block the switch (ownership moves under a paid call or an unapplied receipt), or an applied effect wrongly blocks it
+  it('blocks on every unfinished state', () => {
     const counts = (states: PaidEffectState[]) => {
       const byState: Partial<Record<PaidEffectState, number>> = {};
       for (const state of states) byState[state] = (byState[state] ?? 0) + 1;
       return byState;
     };
-    expect(summarizePaidEffectSwitchBlocking(counts(['sending']))).toEqual({
+    expect(summarizePaidEffectSwitchBlocking(counts(['pending']))).toEqual({
       blocked: true,
-      blocking: { sending: 1, unknown: 0 },
+      blocking: { pending: 1, sending: 0, unknown: 0, receipt_ready: 0 },
     });
-    expect(summarizePaidEffectSwitchBlocking(counts(['unknown', 'unknown']))).toEqual({
+    expect(summarizePaidEffectSwitchBlocking(counts(['receipt_ready', 'unknown']))).toEqual({
       blocked: true,
-      blocking: { sending: 0, unknown: 2 },
+      blocking: { pending: 0, sending: 0, unknown: 1, receipt_ready: 1 },
     });
-    expect(
-      summarizePaidEffectSwitchBlocking(counts(['pending', 'receipt_ready', 'applied'])),
-    ).toEqual({ blocked: false, blocking: { sending: 0, unknown: 0 } });
+    expect(summarizePaidEffectSwitchBlocking(counts(['applied']))).toEqual({
+      blocked: false,
+      blocking: { pending: 0, sending: 0, unknown: 0, receipt_ready: 0 },
+    });
     expect(summarizePaidEffectSwitchBlocking({})).toEqual({
       blocked: false,
-      blocking: { sending: 0, unknown: 0 },
+      blocking: { pending: 0, sending: 0, unknown: 0, receipt_ready: 0 },
     });
-    expect([...PAID_EFFECT_SWITCH_BLOCKING_STATES]).toEqual(['sending', 'unknown']);
+    expect([...PAID_EFFECT_SWITCH_BLOCKING_STATES]).toEqual([
+      'pending',
+      'sending',
+      'unknown',
+      'receipt_ready',
+    ]);
   });
 });
 
-describe('paid-effect gate scope pinning', () => {
-  // @invariant concurrency: the entity-gate scope vocabulary and its default are fixed by the shared protocol, so families pick a pinned constant instead of building their own blocking state machine
-  // @fails-if a new scope value or a changed default silently alters cross-revision blocking for an already-integrated family
-  it('pins the two scopes and the stricter default', () => {
-    expect([...PAID_EFFECT_GATE_SCOPES]).toEqual(['entity', 'entity-revision']);
-    expect(DEFAULT_PAID_EFFECT_GATE_SCOPE).toBe('entity');
+describe('paid-effect fixed entity-gate predicate', () => {
+  // @invariant concurrency: the ONE fixed gate policy — sibling units of the same revision are exempt (parallel rep sends), while a same-revision same-unit input change and ANY cross-revision open send are blocked
+  // @fails-if rep siblings block each other, or a changed digest under the same unit / an old unknown under a new revision buys a new send
+  it('exempts only same-revision sibling units', () => {
+    const claim = { entityRevision: 'rev-1', unit: 'method-a/rep:2' };
+    expect(paidEffectGateBlocks({ entityRevision: 'rev-1', unit: 'method-a/rep:1' }, claim)).toBe(
+      false,
+    );
+    expect(paidEffectGateBlocks({ entityRevision: 'rev-1', unit: 'method-a/rep:2' }, claim)).toBe(
+      true,
+    );
+    expect(paidEffectGateBlocks({ entityRevision: 'rev-2', unit: 'method-a/rep:1' }, claim)).toBe(
+      true,
+    );
+    expect(paidEffectGateBlocks({ entityRevision: 'rev-2', unit: 'method-a/rep:2' }, claim)).toBe(
+      true,
+    );
+  });
+
+  // @invariant concurrency: gate serialization is keyed on family+entity only — claims for DIFFERENT revisions of one entity must contend on the same advisory lock or the cross-revision block can be raced past
+  // @fails-if the lock key includes the revision (or unit/digest), letting two revisions of one entity serialize independently
+  it('locks on family+entity without revision', () => {
+    const base = {
+      family: 'f',
+      entityId: 'e1',
+      entityRevision: 'rev-1',
+      unit: 'u',
+      inputDigest: 'sha256:' + 'a'.repeat(64),
+    };
+    expect(paidEffectGateLockKey(base)).toBe('paid-effect:gate:v1:f:e1');
+    expect(paidEffectGateLockKey({ ...base, entityRevision: 'rev-2' })).toBe(
+      'paid-effect:gate:v1:f:e1',
+    );
+    expect(paidEffectGateLockKey({ ...base, entityId: 'e2' })).toBe('paid-effect:gate:v1:f:e2');
   });
 });
 
 describe('note_verify family literal lockstep', () => {
-  // @invariant concurrency: the pg-boss consumer and the DBOS adapter name the same control family so backend fencing covers both halves of note_verify
-  // @fails-if one literal drifts ('note_verify' vs anything else) and one backend's deliveries escape the control gate the other half enforces
-  it('keeps both family literals equal', () => {
+  // @invariant concurrency: the pg-boss consumer, the DBOS adapter, and the switch-gate obligation probe name the same control family so backend fencing covers every half of note_verify
+  // @fails-if any literal drifts and one half of note_verify escapes the control gate or the switch probe the others enforce
+  it('keeps all three family literals equal', () => {
     expect(NOTE_VERIFY_PAID_EFFECT_FAMILY).toBe('note_verify');
     expect(NOTE_VERIFY_FAMILY).toBe('note_verify');
+    expect(NOTE_VERIFY_OBLIGATION_FAMILY).toBe('note_verify');
   });
 });

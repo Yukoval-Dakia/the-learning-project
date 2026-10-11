@@ -6,10 +6,13 @@
 //   explicit control row created by the parent-controlled switch.
 // - Admission takes the control row FOR SHARE inside the caller's transaction,
 //   so it serializes against a concurrent switch (which takes FOR UPDATE).
-// - switchPaidEffectBackend refuses while the family has effects in
-//   'sending'/'unknown' (in-flight or unresolved paid sends); v1 has no
-//   draining phases — the blocked switch subsumes them. Producer-side dispatch
-//   cutover stays parent-owned.
+// - switchPaidEffectBackend refuses while the family has ANY unfinished
+//   obligation (P1-5: pending/sending/unknown/receipt_ready — intents and
+//   unapplied receipts included); for families whose paid authority lives
+//   outside paid_effect (note_verify), a pinned adapter projects their live
+//   claim states into the same blocking vocabulary (P1-3). Until the parent
+//   defines per-state takeover evidence, ownership moves only over a fully
+//   drained family. Producer-side dispatch cutover stays parent-owned.
 // - Before the parent's migration lands, paid_effect_control may not exist;
 //   isPaidEffectControlUndefinedTable() lets consumers treat that explicitly
 //   (pg-boss default stands; DBOS stays fenced) instead of guessing.
@@ -17,6 +20,10 @@ import { and, count, eq, inArray } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { paid_effect, paid_effect_control } from '@/db/schema';
+import {
+  NOTE_VERIFY_OBLIGATION_FAMILY,
+  countNoteVerifyClaimObligations,
+} from './paid-effect-note-obligations';
 import {
   DEFAULT_PAID_EFFECT_BACKEND,
   DEFAULT_PAID_EFFECT_GENERATION,
@@ -31,6 +38,21 @@ import {
   decidePaidEffectControlAdmission,
   summarizePaidEffectSwitchBlocking,
 } from './paid-effect-protocol';
+
+/**
+ * Pinned family obligation probes: families whose paid authority is NOT a
+ * paid_effect row project their live unfinished obligations here. Adding a
+ * family means adding a probe in this map — never a caller-side gate.
+ */
+const FAMILY_OBLIGATION_PROBES: ReadonlyMap<
+  string,
+  (db: Db) => Promise<{
+    pending: number;
+    sending: number;
+    unknown: number;
+    receipt_ready: number;
+  }>
+> = new Map([[NOTE_VERIFY_OBLIGATION_FAMILY, countNoteVerifyClaimObligations]]);
 
 function defaultControl(family: string): PaidEffectControlSnapshot {
   return {
@@ -88,9 +110,11 @@ export async function admitPaidEffectDeliveryControl(
 }
 
 /**
- * Switch the family's owning backend. Blocked while any effect of the family
- * is 'sending' or 'unknown' (in-flight / unresolved paid sends). On success the
- * generation increments, which fences stale deliveries dispatched by the
+ * Switch the family's owning backend. Blocked while ANY unfinished obligation
+ * exists for the family (P1-5): paid_effect rows in pending/sending/unknown/
+ * receipt_ready PLUS the pinned family probe's projection for families whose
+ * paid authority lives elsewhere (note_verify claim states, P1-3). On success
+ * the generation increments, which fences stale deliveries dispatched by the
  * previous owner — including an A→B→A round trip. Switching to the current
  * owner is an idempotent no-op that does not bump the generation.
  */
@@ -108,6 +132,8 @@ export async function switchPaidEffectBackend(
     let row = existing[0];
     if (!row) {
       // Materialize the default owner first so the switch bumps a real row.
+      // ON CONFLICT DO NOTHING + re-lock closes the concurrent-switch insert
+      // race (P1-2): exactly one switch materializes, the other re-locks it.
       const inserted = await tx
         .insert(paid_effect_control)
         .values({
@@ -126,7 +152,7 @@ export async function switchPaidEffectBackend(
             .where(eq(paid_effect_control.family, family))
             .for('update')
         )[0];
-      if (!row) throw new PaidEffectSwitchBlockedError(family, { sending: 0, unknown: 0 });
+      if (!row) throw new PaidEffectSwitchBlockedError(family, blockedShape());
     }
     const grouped = await tx
       .select({ state: paid_effect.state, n: count() })
@@ -140,6 +166,14 @@ export async function switchPaidEffectBackend(
       .groupBy(paid_effect.state);
     const countsByState: Partial<Record<PaidEffectState, number>> = {};
     for (const group of grouped) countsByState[group.state] = Number(group.n);
+    const probe = FAMILY_OBLIGATION_PROBES.get(family);
+    if (probe) {
+      const projected = await probe(db);
+      countsByState.pending = (countsByState.pending ?? 0) + projected.pending;
+      countsByState.sending = (countsByState.sending ?? 0) + projected.sending;
+      countsByState.unknown = (countsByState.unknown ?? 0) + projected.unknown;
+      countsByState.receipt_ready = (countsByState.receipt_ready ?? 0) + projected.receipt_ready;
+    }
     const gate = summarizePaidEffectSwitchBlocking(countsByState);
     if (gate.blocked) throw new PaidEffectSwitchBlockedError(family, gate.blocking);
     const current = rowToControl(family, row);
@@ -151,6 +185,15 @@ export async function switchPaidEffectBackend(
       .where(eq(paid_effect_control.family, family));
     return { family, backend: to, generation, explicit: true } as const;
   });
+}
+
+function blockedShape(): {
+  pending: number;
+  sending: number;
+  unknown: number;
+  receipt_ready: number;
+} {
+  return { pending: 0, sending: 0, unknown: 0, receipt_ready: 0 };
 }
 
 /**
