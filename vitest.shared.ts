@@ -66,6 +66,7 @@ export const fastTestInclude = [
   'src/core/schema/assessment/settlement.test.ts',
   'src/core/theta-grid.test.ts',
   'src/core/theta.test.ts',
+  'src/kernel/proposals/block-merge-admission.unit.test.ts',
   'src/server/ai/laminar-tracing.test.ts',
   'src/server/ai/laminar-transcript.test.ts',
   'src/server/ai/pi-agent-adapter.tracing.test.ts',

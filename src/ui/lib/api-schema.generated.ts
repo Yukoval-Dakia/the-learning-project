@@ -28136,11 +28136,31 @@ export interface operations {
                                         excerpt: string;
                                         id: string;
                                         label: string;
+                                        option_count: number | null;
+                                        options: {
+                                            label: string;
+                                            text: string;
+                                        }[];
+                                        sub_question_count: number | null;
+                                        sub_questions: {
+                                            excerpt: string;
+                                            label: string;
+                                        }[];
                                     }[];
                                     primary: {
                                         excerpt: string;
                                         id: string;
                                         label: string;
+                                        option_count: number | null;
+                                        options: {
+                                            label: string;
+                                            text: string;
+                                        }[];
+                                        sub_question_count: number | null;
+                                        sub_questions: {
+                                            excerpt: string;
+                                            label: string;
+                                        }[];
                                     } | null;
                                 } | null;
                                 change_summary: {
@@ -29212,11 +29232,31 @@ export interface operations {
                                         excerpt: string;
                                         id: string;
                                         label: string;
+                                        option_count: number | null;
+                                        options: {
+                                            label: string;
+                                            text: string;
+                                        }[];
+                                        sub_question_count: number | null;
+                                        sub_questions: {
+                                            excerpt: string;
+                                            label: string;
+                                        }[];
                                     }[];
                                     primary: {
                                         excerpt: string;
                                         id: string;
                                         label: string;
+                                        option_count: number | null;
+                                        options: {
+                                            label: string;
+                                            text: string;
+                                        }[];
+                                        sub_question_count: number | null;
+                                        sub_questions: {
+                                            excerpt: string;
+                                            label: string;
+                                        }[];
                                     } | null;
                                 } | null;
                                 change_summary: {
@@ -29496,6 +29536,8 @@ export interface operations {
                         /** @enum {string} */
                         kind: "question" | "question_part" | "record" | "recall_prompt" | "practice_log" | "project_milestone" | "open_inquiry";
                     }[];
+                    /** @enum {boolean} */
+                    confirm_lossy?: true;
                     corrected_payload?: {
                         claim_md: string;
                     };

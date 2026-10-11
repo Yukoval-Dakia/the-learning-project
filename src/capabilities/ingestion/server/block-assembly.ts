@@ -190,6 +190,24 @@ const PROMPT_HEAD_CHARS = 400;
 
 const OPAQUE_BLOCK_REF_RE = /block-[a-z0-9]{12,}|[a-z]+:[a-z0-9:_-]{8,}|\b[a-z0-9]{20,}\b/g;
 
+// YUK-1404 — defensive page-claim cleanup (deterministic post-processing; no
+// model calls). The prompt now teaches 1-based「第 N 页」citations, but leaked
+// field-anchored page_index values and unsupported page claims must never
+// reach learner prose:
+//   * A field-anchored `page_index ... <n>` span converts to「第 n+1 页」ONLY
+//     when the session carries real spatial data AND n is one of the session's
+//     actual first-span page indices — an out-of-range index would be a
+//     hallucinated mapping and degrades to「某页」.
+//   * All-placeholder sessions (Tencent path: page_index was never in the
+//     model input) suppress EVERY specific page claim — prose「第 N 页」 and
+//     enumerated forms degrade to the generic「页面」, field-anchored spans to
+//     「某页」— the model cannot know page numbers it was never shown.
+//   * Any remaining bare `page_index` token loses its internal field name.
+const PAGE_INDEX_FIELD_VALUE_RE = /page_index\s*(?:均为|都是|等于|是|为|[:：=])\s*(\d{1,4})/g;
+const ENUMERATED_PAGE_CLAIM_RE = /第\s*\d{1,4}(?:\s*[、,，到]\s*\d{1,4})+\s*页/g;
+const SINGLE_PAGE_CLAIM_RE = /第\s*\d{1,4}\s*页/g;
+const PAGE_INDEX_TOKEN_RE = /page_index/g;
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -204,6 +222,11 @@ function readableBlockLabel(block: BlockAssemblySourceBlock, index: number): str
  * Replace model-copied block ids with stable session positions (plus question_no
  * when available), then mask any hallucinated opaque id that was not in the
  * session. Typed ids remain available in proposed_change/evidence_refs.
+ *
+ * YUK-1404 — additionally degrade page claims the model could not ground (see
+ * the regex block above): exact field-anchored page_index values convert to
+ * 1-based learner wording only when the session's real page indices validate
+ * them; all-placeholder sessions never assert a specific page.
  */
 export function humanizeBlockMergeReason(
   reason: string,
@@ -214,7 +237,30 @@ export function humanizeBlockMergeReason(
     const token = new RegExp(`(?<![A-Za-z0-9_-])${escapeRegExp(block.id)}(?![A-Za-z0-9_-])`, 'g');
     readable = readable.replace(token, () => readableBlockLabel(block, index));
   }
-  return readable.replace(OPAQUE_BLOCK_REF_RE, '某题块');
+  readable = readable.replace(OPAQUE_BLOCK_REF_RE, '某题块');
+
+  const knownPageIndices = new Set<number>();
+  if (!isAllPlaceholderPageIndex(blocks)) {
+    for (const block of blocks) {
+      const firstSpan = block.page_spans?.[0];
+      if (firstSpan) knownPageIndices.add(firstSpan.page_index);
+    }
+  }
+  readable = readable.replace(PAGE_INDEX_FIELD_VALUE_RE, (_match, raw: string) => {
+    const value = Number(raw);
+    if (knownPageIndices.size > 0 && knownPageIndices.has(value)) {
+      return `第 ${value + 1} 页`;
+    }
+    return '某页';
+  });
+  if (knownPageIndices.size === 0) {
+    // Placeholder session: page numbers were never in the model input — every
+    // specific page claim is unsupported. Degrade to the generic「页面」wording
+    // (enumerated form first, else SINGLE would leave a dangling「1、」).
+    readable = readable.replace(ENUMERATED_PAGE_CLAIM_RE, '页面');
+    readable = readable.replace(SINGLE_PAGE_CLAIM_RE, '页面');
+  }
+  return readable.replace(PAGE_INDEX_TOKEN_RE, '页码');
 }
 
 /**
