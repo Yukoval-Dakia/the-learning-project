@@ -149,13 +149,15 @@ export function deriveCoarseVerdict(
   }
   const aggregate = record.aggregate;
   if (aggregate.kind === 'partial_unknown_points') {
-    // ADR-0074 D3a / 复核 P1-1 收口：已知部分对、分数未知 —— 组级判定是
-    // partial（学习者可见的 coarse 判定），不是 unsupported；分数/分母/
-    // 归一化一律 null：未知权重不造总分、不造比例（known_points 留在聚合
-    // 行供审计）。legacy：holistic 未映射/pending/其它 unresolved 仍走原
-    // 分支不变，绝不重释为 partial。
+    // ADR-0074 D3a / 复核 P1-1 收口（coordinator 最终裁决 2026-10-11）：
+    // 调度面与公开面分离 —— 本函数驱动 server settle 的 rating/FSRS/θ，
+    // 必须返回【既有非调度 verdict】（unsupported ⇒ ratingForVerdict=null ⇒
+    // 无 FSRS/无 θ），绝不返回 partial；typed reason `partial_unknown_points`
+    // 保留给公开投影（evaluation-authority）识别并展示为 partial。
+    // 分数/分母/归一化一律 null：未知权重不造总分、不造比例。legacy：
+    // holistic 未映射/pending/其它 unresolved 仍走原分支不变，不重释。
     return {
-      verdict: 'partial',
+      verdict: 'unsupported',
       reason: 'partial_unknown_points',
       points: null,
       maxPoints: null,

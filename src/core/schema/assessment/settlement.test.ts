@@ -12,7 +12,9 @@
 //     update；mixed ⇒ abstain；manual/self_report/assisted ⇒ 排除 θ̂。
 
 import { describe, expect, it } from 'vitest';
+import { evaluateSubmissionCore } from './evaluation';
 import { type ScoringUnitResultT, aggregateUnitResults } from './judgment';
+import { PublishedQuestionRevision } from './revision';
 import type { ScoringBasisT, ScoringUnitT } from './scoring';
 import {
   aggregateMaxPoints,
@@ -391,8 +393,16 @@ describe('aggregateMaxPoints', () => {
 // 未变的 legacy 语义（holistic 未映射/pending/普通 unresolved/full/zero/
 // blank/pending 分类）已由本文件既有用例钉住，不重复覆盖。
 // ====================================================================
+// ADR-0074 D3a — partial_unknown_points（无印规则部分对）结算链不变量。
+// coordinator 最终裁决（2026-10-11）：调度面与公开面分离 —— deriveCoarse
+// verdict 对 partial_unknown_points 返回既有非调度 verdict（unsupported ⇒
+// ratingForVerdict=null ⇒ 无 FSRS/无 θ），typed reason 保留给公开投影
+// （evaluation-authority，DB 边界用例覆盖）。KC 证据 owner override：未知分
+// 零票（含 0/N，绝不经 points_awarded ?? 0 落成 zero）。本组在 8af031a80
+// 缺陷源上必红。legacy 不重释与「不吞他人票」是两个不同 failure 原因。
+// ====================================================================
 
-describe('ADR-0074 D3a — partial_unknown_points 组级判定与 KC 证据', () => {
+describe('ADR-0074 D3a — partial_unknown_points 结算链（真实 evaluate→aggregate→verdict→KC/θ）', () => {
   const partial = (id: string, correct: number, total: number): ScoringUnitResultT =>
     scored(id, null, {
       partial_unknown_points: { correct_count: correct, total_count: total },
@@ -403,24 +413,146 @@ describe('ADR-0074 D3a — partial_unknown_points 组级判定与 KC 证据', ()
     groupKcIds: kcs,
   });
 
-  it('verdict：无印规则 2/3 对 ⇒ 组级 partial（不是 unsupported），分数/分母/归一化全 null', () => {
-    const b = basis([additiveUnit('u_match', 6)]);
-    // 真实判分链产出的聚合形状（不是手写 literal）。
-    const aggregate = aggregateUnitResults(b, [partial('u_match', 2, 3)]);
-    expect(aggregate).toEqual({
+  it('无印规则 2/3 对 + 多空白：链路产出 typed partial 聚合，调度 verdict=unsupported(reason=partial_unknown_points)⇒ rating=null，KC 全弃权、θ̂ 不更新', async () => {
+    // 真实判分链：多单元卷（配对无印规则 + 两个空白文本单元）。
+    const revision = PublishedQuestionRevision.parse({
+      revision_id: 'rev_d3a_chain',
+      group_id: 'grp_d3a',
+      revision_ordinal: 1,
+      integrity_digest: 'sha256:chain',
+      structure: {
+        group_id: 'grp_d3a',
+        materials: [],
+        parts: [{ part_id: 'p1', prompt_md: '配对并作答。', material_ids: [] }],
+      },
+      response_spec: {
+        slots: [
+          {
+            slot_id: 'm1',
+            part_id: 'p1',
+            kind: 'matching',
+            left_items: [
+              { item_id: 'i1', label: 'A', text: '甲' },
+              { item_id: 'i2', label: 'B', text: '乙' },
+              { item_id: 'i3', label: 'C', text: '丙' },
+            ],
+            right_options: [
+              { option_id: 'r1', label: '1', text: '一' },
+              { option_id: 'r2', label: '2', text: '二' },
+              { option_id: 'r3', label: '3', text: '三' },
+            ],
+          },
+          { slot_id: 't1', part_id: 'p1', kind: 'text' },
+          { slot_id: 't2', part_id: 'p1', kind: 'text' },
+        ],
+      },
+      scoring_basis: {
+        units: [
+          {
+            scoring_unit_id: 'u_match',
+            slot_refs: ['m1'],
+            criterion: {
+              kind: 'matching_pairs_key',
+              accepted_pairs: [
+                { item_id: 'i1', option_id: 'r2' },
+                { item_id: 'i2', option_id: 'r1' },
+                { item_id: 'i3', option_id: 'r3' },
+              ],
+            },
+            points: 6,
+          },
+          {
+            scoring_unit_id: 'u_t1',
+            slot_refs: ['t1'],
+            criterion: { kind: 'text_key', accepted_texts: ['答'], normalization: 'trim' },
+            points: 2,
+          },
+          {
+            scoring_unit_id: 'u_t2',
+            slot_refs: ['t2'],
+            criterion: { kind: 'text_key', accepted_texts: ['答'], normalization: 'trim' },
+            points: 2,
+          },
+        ],
+        aggregation: { kind: 'sum' },
+        blank_scores_zero: true,
+      },
+      execution_plan: {
+        plan_version: 1,
+        assignments: [
+          {
+            scoring_unit_ids: ['u_match'],
+            executor: { kind: 'deterministic', comparator: 'exact_matching_pairs' },
+          },
+          {
+            scoring_unit_ids: ['u_t1', 'u_t2'],
+            executor: { kind: 'deterministic', comparator: 'exact_text' },
+          },
+        ],
+        escalation: { on_unadmitted_model: 'withhold', on_low_confidence: 'human_review' },
+      },
+      published_at: '2026-10-11T12:00:00.000Z',
+      supersedes_revision_id: null,
+    });
+    const output = await evaluateSubmissionCore({
+      evaluation_id: 'ev_chain',
+      submission: {
+        submission_id: 'sub_chain',
+        issuance_id: 'iss_chain',
+        revision_id: 'rev_d3a_chain',
+        evaluation_group_id: 'eg_chain',
+        response_set: {
+          entries: [
+            {
+              slot_id: 'm1',
+              kind: 'matching',
+              pairs: [
+                { item_id: 'i1', option_id: 'r2' },
+                { item_id: 'i2', option_id: 'r1' },
+                { item_id: 'i3', option_id: 'r1' },
+              ],
+            },
+            { slot_id: 't1', kind: 'text', text_md: '' },
+            { slot_id: 't2', kind: 'text', text_md: '' },
+          ],
+        },
+        group_evidence: [],
+        idempotency_key: 'idem-chain',
+        submitted_at: '2026-10-11T12:05:00.000Z',
+      },
+      revision,
+      attempt: 1,
+    });
+    // 判分链：2/3 对（i3→r1 是错配）+ 两个主动空白计零。
+    expect(output.record.aggregate).toMatchObject({
       kind: 'partial_unknown_points',
       known_points: 0,
       partial_units: [{ scoring_unit_id: 'u_match', correct_count: 2, total_count: 3 }],
     });
-    const v = deriveCoarseVerdict({ status: 'completed', aggregate }, b);
-    expect(v.verdict).toBe('partial');
-    expect(v.reason).toBe('partial_unknown_points');
-    expect(v.points).toBeNull(); // 未知权重不造总分
-    expect(v.maxPoints).toBeNull();
-    expect(v.normalized).toBeNull(); // 不造比例
+    // 调度面（coordinator 裁决）：unsupported + typed reason ⇒ rating=null（无 FSRS/θ）。
+    const verdict = deriveCoarseVerdict(
+      { status: 'completed', aggregate: output.record.aggregate },
+      output.scoring_basis,
+    );
+    expect(verdict.verdict).toBe('unsupported');
+    expect(verdict.reason).toBe('partial_unknown_points');
+    expect(ratingForVerdict(verdict.verdict)).toBeNull();
+    // KC 证据（owner override）：多空白 + partial 全部零票 ⇒ 弃权 ⇒ θ̂ 不更新。
+    const obs = localizeKcObservations(output.scoring_basis, output.record.unit_results, {
+      unitPartIds: new Map<string, Set<string>>(
+        ['u_match', 'u_t1', 'u_t2'].map((id) => [id, new Set(['p1'])]),
+      ),
+      partKcIds: new Map([['p1', ['kc1']]]),
+      groupKcIds: ['kc1'],
+    });
+    expect(obs).toEqual([{ kc_id: 'kc1', bit: 'abstain', basis: 'no_supported_evidence' }]);
+    expect(resolveThetaDecision(obs, { source: 'automatic', assisted: false })).toEqual({
+      kind: 'abstain',
+      reason: 'no_kc_evidence',
+    });
   });
 
-  it('verdict：混合卷里 holistic 未映射优先 ⇒ 聚合 unresolved、组级仍 unsupported —— 已知部分对不得吞掉未映射语义', () => {
+  it('混合卷里 holistic 未映射优先 ⇒ 聚合 unresolved、调度仍 unsupported —— 已知部分对不得吞掉未映射语义', () => {
     const mixed = basis([additiveUnit('u_m', 6), holisticUnit('u_h')]);
     const aggregate = aggregateUnitResults(mixed, [
       partial('u_m', 2, 3),
@@ -432,36 +564,7 @@ describe('ADR-0074 D3a — partial_unknown_points 组级判定与 KC 证据', ()
     );
   });
 
-  it('KC 证据：partial-unknown（含 0/3 与多空白混合）零票 —— 全 KC abstain、θ̂ 不更新；旧缺陷正是 ?? 0 ⇒ zero 票', () => {
-    const b = basis([additiveUnit('u_match', 6), additiveUnit('u_blank', 2)]);
-    const loc = locFor(['u_match', 'u_blank']);
-    // 2/3 正确 + 多个主动空白：没有任何掌握证据。
-    const twoThirds = localizeKcObservations(
-      b,
-      [
-        partial('u_match', 2, 3),
-        {
-          status: 'scored',
-          scoring_unit_id: 'u_blank',
-          points_awarded: 0,
-          scored_because: 'blank_marked_zero',
-          evidence_citations: [],
-        },
-      ],
-      loc,
-    );
-    expect(twoThirds).toEqual([{ kc_id: 'kc1', bit: 'abstain', basis: 'no_supported_evidence' }]);
-    // 0/3 也绝不产生 zero 票（owner override：分数未知不构成 failure 证据）。
-    const zeroThirds = localizeKcObservations(b, [partial('u_match', 0, 3)], loc);
-    expect(zeroThirds).toEqual([{ kc_id: 'kc1', bit: 'abstain', basis: 'no_supported_evidence' }]);
-    // θ̂ 链（settle.ts 同链）：全 abstain ⇒ 不更新。
-    expect(resolveThetaDecision(twoThirds, { source: 'automatic', assisted: false })).toEqual({
-      kind: 'abstain',
-      reason: 'no_kc_evidence',
-    });
-  });
-
-  it('KC 证据：同卷已确定分值单元照常投票 —— partial 单元不给票也不吞别人的票', () => {
+  it('同卷已确定分值单元照常投票 —— partial 单元不给票也不吞别人的票', () => {
     const b = basis([additiveUnit('u_choice', 4), additiveUnit('u_match', 6)]);
     const obs = localizeKcObservations(
       b,

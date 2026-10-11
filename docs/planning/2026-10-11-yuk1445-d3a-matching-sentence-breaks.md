@@ -254,3 +254,72 @@ exit 0；assessment 单测 **108/108**（scoring 26 / settlement 27 / evaluation
 `ab4684987ce65f1a`、settlement `02ce00192783e8e2`、dto `6a0c961d148a45c8`、
 scoring.test `f0cf2c1c33409ae0`、settlement.test `5a76a52326e808a8`、
 red log `ac46df96073104bc`。
+
+---
+
+## 9. Coordinator 最终裁决落地 + 公开面阻塞（4d04277e1 之后第四刀）
+
+输入：coordinator 最终裁决（调度面 partial_unknown 必须返回既有非调度 verdict
+—— settle 已映射 rating=null —— 不得返回 partial；typed reason 保留；公开面
+只在 evaluation-authority/公开读映射为 partial；learner 永不 unsupported；
+feature 双文件允许、foreign settle 不动；测试按 22:15 规则只留不同边界不变量；
+准备一条真实结算链 DB 边界测试但不运行）。
+
+### 已落地（本刀源码改动）
+
+- `settlement.ts`：`partial_unknown_points` 聚合 ⇒ `verdict='unsupported'` +
+  typed `reason='partial_unknown_points'`（points/max/normalized 全 null）——
+  调度面经既有 `ratingForVerdict('unsupported')=null` ⇒ settle 不写 FSRS/θ
+  （coordinator 锁定达成，无 foreign 改动）。§8 的 verdict='partial' 表述被
+  本节取代。
+- KC 证据 owner override 与聚合形状不变（§8）。
+
+### 公开面阻塞（停在准备，不代写）
+
+`JudgeResultV2`（`src/core/schema/capability.ts:77-99`）是 coarse_outcome 判别
+联合：`'partial'` 变体强制 `score∈(0,0.85)`，`score:null` 只存在于
+`'unsupported'` 变体。**分数未知的 partial 在该 schema 下没有合法承载**——
+任何数值 score 都是发明比例。`capability.ts` 不在本刀释放面；本 lane 已把
+evaluation-authority 的消费分支写好后按边界撤回（`git checkout` 还原）。
+父/coordinator 二选一（候选最小 diff，未写入）：
+
+- **候选 A（推荐）**：JudgeResultV2 新增判别值（如 `coarse_outcome:'partial'`
+  + `score:z.null()` 需拆为新判别值 `partial_unknown`，因 zod 判别联合不容
+  重复判别值）：`JudgeResultV2Base.extend({ coarse_outcome: z.literal('partial_unknown'), score: z.null(), feedback_md: z.string().min(1) })`；
+  evaluation-authority 加对应分支（本 lane 已起草，恢复即用）。涟漪：
+  coarse_outcome 全部消费面（UI CoarseOutcome/judge-result-format、
+  ratingFromCoarseOutcome、api-schema 再生）。
+- **候选 B**：`'partial'` 变体放宽 `score: z.number().gt(0).lt(0.85).nullable()`；
+  涟漪：所有读 partial.score 的消费面须处理 null（面更小但弱化数值不变量）。
+
+### 测试清单（22:15 规则最终形态，before → after）
+
+- scoring.test.ts D3a：12 → **8** it（砍 no-attempt/blank——核心旧语义已由
+  evaluation.test.ts 钉住；砍聚合直调 cases——形状经真实链断言；misplaced
+  并入印规则用例；decimal 并入 P1-2 反面；structural 去参数循环，只留
+  每验证面代表形态）。
+- settlement.test.ts D3a：4 → **3** it（一条真实链贯通用例：evaluate →
+  aggregate → verdict(unsupported+typed reason) → ratingForVerdict=null →
+  KC 弃权 → θ abstain；另两条为不同 failure 原因：混合卷不吞 holistic
+  未映射、partial 不吞同卷他人票）。
+- **DB 边界（prepared，未运行）**：新 task-owned
+  `src/server/assessment/yuk1445-partial-settlement-boundary.db.test.ts`
+  （非 foreign settle*.db.test.ts）。真实链：publishQuestionGroup（手建 D3a
+  契约 + contractIntegrityDigest）→ 真实 evaluateSubmissionCore →
+  activateEvaluation(learningSettlement) → 公开读 projectEvaluationToJudge
+  Result。边界 1（现在即可执行）：rating=null、无 material_fsrs_state 行、
+  无 mastery_state 行、θ abstain、KC 全弃权。边界 2（pin 待上述候选补丁）：
+  coarse_outcome='partial' + score=null + typed 2/3 计数 —— 补丁落地前运行
+  将在此如实失败（文件头已注明）。
+- 单测 103/103（scoring 22 / settlement 26 / evaluation 55——后者为 Choice
+  P1 文件原样通过）。
+
+### 门禁与签名（实际运行）
+
+typecheck（双 tsconfig）exit 0；lint exit 0（172 warnings=存量）；build
+exit 0；`audit:api-client` 提交后复跑绿。**真 8af RED**（源文件 checkout 到
+8af031a80 跑最终用例）：3 failed（`/tmp/yuk1445-d3a-red-8af-true.log`，
+sha256 前 16 `370fded45018d24c`；此前 §8 的 red log 记录保留）。签名：
+judgment `ab4684987ce65f1a`、settlement `710fa2f8700b8a11`、scoring.test
+`b4ce87a2e289fff8`、settlement.test `f7708acefd0c440f`、DB 边界测试
+`eef566643bbcf5d0`。DB 未运行（无窗口）；FSRS #1700 排序归 coordinator。
