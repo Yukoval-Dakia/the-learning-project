@@ -1,11 +1,15 @@
-import { inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import remarkMath from 'remark-math';
 import remarkParse from 'remark-parse';
 import { unified } from 'unified';
 import type { AiProposalPayloadT } from '@/core/schema/proposal';
 import type { StructuredQuestionT } from '@/core/schema/structured_question';
 import type { Db, Tx } from '@/db/client';
-import { question, question_block } from '@/db/schema';
+import { learning_session, question, question_block } from '@/db/schema';
+import {
+  batchResolveSubjectDisplayIds,
+  resolveSubjectRenderNotation,
+} from '@/kernel/read-models/subject-resolution';
 
 type DbLike = Db | Tx;
 type QuestionEditChange = Extract<AiProposalPayloadT, { kind: 'question_edit' }>['proposed_change'];
@@ -67,6 +71,14 @@ export interface ProposalPresentation {
     primary: ProposalBlockPreview | null;
     merged: ProposalBlockPreview[];
     continuity_label: string | null;
+    /**
+     * YUK-1404 — the session's subject render notation (renderConfig.notation),
+     * resolved server-side from the canonical subject registry so the UI gates
+     * the KaTeX chain exactly like every other subject-aware face. null when the
+     * exact ingestion session, its subject, or the subject's profile cannot be
+     * resolved — never a math/default guess.
+     */
+    notation: string | null;
   } | null;
 }
 
@@ -885,6 +897,95 @@ async function loadQuestionPrompts(
   return rows;
 }
 
+type IngestionSessionQuestionRow = {
+  id: string;
+  ingestion_session_id: string;
+  knowledge_ids: string[] | null;
+};
+
+/**
+ * YUK-1404 — resolve each block-merge proposal's notation from its EXACT
+ * ingestion session, batched across the whole page (deduplicated session ids,
+ * chunked IN queries — no per-card N+1).
+ *
+ * The session subject is a DERIVED view, never a learning_session column
+ * (schema.ts keeps no subject on the polymorphic envelope; see the same note in
+ * import-completion.ts / auto-enroll.ts). The canonical derivation is the one
+ * every other subject-aware read uses: the session's questions (stamped
+ * `metadata.ingestion_session_id` at enroll/import) carry knowledge_ids →
+ * effective domain → subject id, via the shared bridge
+ * (batchResolveSubjectDisplayIds) and the shared notation helper
+ * (resolveSubjectRenderNotation). Unknown/missing session, session without a
+ * resolvable subject, and unregistered subjects all yield null — the registry's
+ * general fallback carries notation null, so no math profile is ever inferred.
+ * Known aliases (wenyan → yuwen), hydrated custom subjects, and
+ * retired-but-resolvable subjects keep their canonical profile notation.
+ */
+async function loadIngestionSessionNotations(
+  db: DbLike,
+  sessionIds: readonly string[],
+): Promise<Map<string, string | null>> {
+  const notationBySession = new Map<string, string | null>(sessionIds.map((id) => [id, null]));
+  if (sessionIds.length === 0) return notationBySession;
+
+  // 1) The exact ingestion session rows — a session id that resolves to no
+  // learning_session(type='ingestion') stays null even if stale question
+  // metadata still references it (the session is the authority).
+  const knownSessionIds: string[] = [];
+  for (const chunk of chunksOf(sessionIds)) {
+    const rows = await db
+      .select({ id: learning_session.id })
+      .from(learning_session)
+      .where(and(eq(learning_session.type, 'ingestion'), inArray(learning_session.id, chunk)));
+    for (const row of rows) knownSessionIds.push(row.id);
+  }
+  if (knownSessionIds.length === 0) return notationBySession;
+
+  // 2) The sessions' questions in stable (created_at, id) order — the same
+  // metadata linkage import-completion's pendingCaptures query relies on.
+  const sessionQuestions: IngestionSessionQuestionRow[] = [];
+  for (const chunk of chunksOf(knownSessionIds)) {
+    sessionQuestions.push(
+      ...(await db
+        .select({
+          id: question.id,
+          ingestion_session_id: sql<string>`${question.metadata}->>'ingestion_session_id'`,
+          knowledge_ids: question.knowledge_ids,
+        })
+        .from(question)
+        .where(
+          sql`${question.metadata}->>'ingestion_session_id' IN (${sql.join(
+            chunk.map((id) => sql`${id}`),
+            sql`, `,
+          )})`,
+        )
+        .orderBy(question.created_at, question.id)),
+    );
+  }
+
+  // 3) Canonical bridge: question → subject display id (batch-deduplicated tree
+  // walk inside the helper), then registry → renderConfig.notation. Per session
+  // the FIRST question (stable order) whose subject resolves wins; sessions
+  // whose every question resolves to nothing stay null.
+  const subjectByQuestion = await batchResolveSubjectDisplayIds(
+    db,
+    sessionQuestions.map((row) => ({ id: row.id, knowledge_ids: row.knowledge_ids ?? [] })),
+  );
+  const subjectBySession = new Map<string, string>();
+  for (const row of sessionQuestions) {
+    if (subjectBySession.has(row.ingestion_session_id)) continue;
+    const subjectId = subjectByQuestion.get(row.id);
+    if (subjectId) subjectBySession.set(row.ingestion_session_id, subjectId);
+  }
+  for (const sessionId of knownSessionIds) {
+    notationBySession.set(
+      sessionId,
+      resolveSubjectRenderNotation(subjectBySession.get(sessionId) ?? null),
+    );
+  }
+  return notationBySession;
+}
+
 /** Batch-enrich proposal cards without an N+1 query per block-merge card. */
 export async function loadProposalPresentations(
   db: DbLike,
@@ -893,6 +994,7 @@ export async function loadProposalPresentations(
   const presentations = new Map<string, ProposalPresentation>();
   const blockIds = new Set<string>();
   const questionIds = new Set<string>();
+  const blockMergeSessionIds = new Set<string>();
   for (const proposal of proposals) {
     presentations.set(proposal.id, {
       title: proposalDisplayTitle(proposal.payload),
@@ -907,15 +1009,17 @@ export async function loadProposalPresentations(
       blockIds.add(evidence.id);
     }
     if (proposal.payload.kind !== 'block_merge') continue;
+    blockMergeSessionIds.add(proposal.payload.proposed_change.ingestion_session_id);
     blockIds.add(proposal.payload.proposed_change.primary_block_id);
     for (const id of proposal.payload.proposed_change.merge_block_ids) blockIds.add(id);
   }
 
   if (blockIds.size === 0 && questionIds.size === 0) return presentations;
 
-  const [blocks, questions] = await Promise.all([
+  const [blocks, questions, sessionNotations] = await Promise.all([
     loadQuestionBlockPreviews(db, [...blockIds]),
     loadQuestionPrompts(db, [...questionIds]),
+    loadIngestionSessionNotations(db, [...blockMergeSessionIds]),
   ]);
   const blockById = new Map(blocks.map((block) => [block.id, block]));
   const questionById = new Map(questions.map((row) => [row.id, row]));
@@ -974,6 +1078,7 @@ export async function loadProposalPresentations(
         continuity_label: change.continuity_signal
           ? (CONTINUITY_LABEL[change.continuity_signal] ?? null)
           : null,
+        notation: sessionNotations.get(change.ingestion_session_id) ?? null,
       },
     });
   }

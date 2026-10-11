@@ -28147,6 +28147,7 @@ export interface operations {
                                             label: string;
                                         }[];
                                     }[];
+                                    notation: string | null;
                                     primary: {
                                         excerpt: string;
                                         id: string;
@@ -29243,6 +29244,7 @@ export interface operations {
                                             label: string;
                                         }[];
                                     }[];
+                                    notation: string | null;
                                     primary: {
                                         excerpt: string;
                                         id: string;
