@@ -6,4 +6,4 @@ export {
   scheduleReview,
 } from '@/core/fsrs';
 
-export { retrievabilityForKc } from '@/server/fsrs/retention';
+export { retrievabilityForKc } from '@/kernel/scheduling';

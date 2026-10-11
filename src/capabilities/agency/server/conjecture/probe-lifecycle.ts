@@ -1,5 +1,4 @@
-import { selectedForgettingEngine } from '@/server/fsrs/engine-selection';
-import { getFsrsRetrievabilityByIds } from '@/server/fsrs/state';
+import { getFsrsRetrievabilityByIds, selectedForgettingEngine } from '@/kernel/scheduling';
 // Probe drafts remain outside practice pools. Publication freezes their question
 // and response signatures; actual queue delivery creates the native issuance.
 // The per-probe paid claim serializes evaluation. Only answerProbe writes the

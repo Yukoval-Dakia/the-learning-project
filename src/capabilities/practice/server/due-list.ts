@@ -1,6 +1,5 @@
 import { getCurrentFailureAttempts } from '@/kernel/read-models/failure-attempts';
-import { selectedForgettingEngine } from '@/server/fsrs/engine-selection';
-import { resolveSchedulingProjection } from '@/server/fsrs/state';
+import { resolveSchedulingProjection, selectedForgettingEngine } from '@/kernel/scheduling';
 // Phase 1c.1 Step 9.B — `/api/review/due` handler over `material_fsrs_state`.
 //
 // queryReviewDue is the typed actionable queue. get_review_due separately

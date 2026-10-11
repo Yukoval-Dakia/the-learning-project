@@ -1,6 +1,5 @@
 import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
-import { selectedForgettingEngine } from '@/server/fsrs/engine-selection';
-import { resolveSchedulingProjection } from '@/server/fsrs/state';
+import { resolveSchedulingProjection, selectedForgettingEngine } from '@/kernel/scheduling';
 import { SYNTHETIC_SUBJECT_ROOT_RE } from '../placement-scope';
 // YUK-102 / Foundation D M2 — moved to Practice by YUK-892 (F4.0).
 //

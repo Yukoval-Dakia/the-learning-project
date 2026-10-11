@@ -13,6 +13,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import { initialFsrsState } from '@/core/fsrs';
 import { newId } from '@/core/ids';
 import {
+  CandidateStateSchema,
   type SchedulingState,
   SchedulingStateSchema,
   isCandidateState,
@@ -254,13 +255,23 @@ export async function retireFsrsStateOnMerge(
   if (!present.has(intoId)) {
     const source = rows.find((row) => row.subject_id === fromId);
     if (!source) throw new Error('merge source disappeared under lock');
-    const state = SchedulingStateSchema.parse(source.state);
-    const renamedState = isCandidateState(state)
-      ? { ...state, historySubjectIds: [...new Set([...state.historySubjectIds, fromId])] }
-      : state;
+    const state = source.state;
+    let renamedState: SchedulingState | undefined;
+    if (state && typeof state === 'object' && isCandidateState(state)) {
+      const candidate = CandidateStateSchema.parse(state);
+      // Validate the candidate without normalizing stored dates or dropping unknown JSON keys.
+      renamedState = {
+        ...state,
+        historySubjectIds: [...new Set([...candidate.historySubjectIds, fromId])],
+      };
+    }
     await tx
       .update(material_fsrs_state)
-      .set({ subject_id: intoId, state: renamedState, updated_at: new Date() })
+      .set({
+        subject_id: intoId,
+        ...(renamedState ? { state: renamedState } : {}),
+        updated_at: new Date(),
+      })
       .where(
         and(
           eq(material_fsrs_state.subject_kind, 'knowledge'),
