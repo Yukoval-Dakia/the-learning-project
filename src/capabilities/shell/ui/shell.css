@@ -14,6 +14,9 @@
 /* ---- proposals (screens.css L99-112) ---- */
 .inbox-loom .proposal {
   display: block;
+  /* AI evidence text can carry long unbroken tokens; let it wrap instead of widening the page
+     at phone width (YUK-1478). */
+  min-width: 0;
 }
 @media screen and (prefers-reduced-motion: no-preference) {
   .inbox-loom .proposal {
@@ -32,6 +35,7 @@
   font-size: var(--fs-body-lg);
   flex: 1;
   min-width: 0;
+  overflow-wrap: anywhere;
 }
 .inbox-loom .ai-tag {
   display: inline-flex;
@@ -46,6 +50,7 @@
   padding: 3px 9px;
 }
 .inbox-loom .proposal-body {
+  overflow-wrap: anywhere;
   font-size: var(--fs-body);
   color: var(--ink-2);
   line-height: var(--lh-prose);
@@ -643,6 +648,12 @@
 
 /* ---- responsive (screens.css L352-363 相关行) ---- */
 @media (max-width: 720px) {
+  .inbox-loom .proposal-title {
+    flex-basis: 100%;
+  }
+  .inbox-loom .proposal-change-summary dd {
+    overflow-wrap: anywhere;
+  }
   .inbox-loom .proposal-foot .meta-row {
     margin-left: 0;
     width: 100%;
