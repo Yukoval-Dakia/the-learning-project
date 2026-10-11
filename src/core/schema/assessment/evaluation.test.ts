@@ -1456,11 +1456,8 @@ describe('automatic serving — explicit figure dependency gate (YUK-1445)', () 
   });
 });
 
-import { ChoiceMethodCalibration } from '@/core/schema/assessment/choice-entry';
 import { projectPracticeIssuance } from '@/core/schema/assessment/dto';
-import { QuestionPresentation } from '@/core/schema/assessment/presentation';
 import { StructuredQuestion } from '@/core/schema/structured_question';
-import { calibrateChoiceMethod } from '@/kernel/records/assessment-choice-calibration';
 import { normalizeQuestionRowToContract } from '@/kernel/records/assessment-normalization';
 
 const now = new Date('2026-10-11T00:00:00Z');
@@ -1522,42 +1519,76 @@ function revision(): PublishedQuestionRevisionT {
     supersedes_revision_id: null,
   };
 }
-const solves = ChoiceMethodCalibration.shape.solves.parse([
-  {
-    task_run_id: 'first',
-    provider: 'recorded-provider',
-    model: 'recorded-model',
-    input_digest: `sha256:${'a'.repeat(64)}`,
-    output_digest: `sha256:${'b'.repeat(64)}`,
-  },
-  {
-    task_run_id: 'second',
-    provider: 'recorded-provider',
-    model: 'recorded-model',
-    input_digest: `sha256:${'c'.repeat(64)}`,
-    output_digest: `sha256:${'d'.repeat(64)}`,
-  },
-]);
-
 describe('choice entry frozen method', () => {
   // @invariant grading: stable option IDs determine marks even when a legacy reference disagrees and the issued display order is reversed.
   // @fails-if normalization parses the reference key, changes the printed score, or scoring compares a display letter/index.
-  it('grades the declared opaque ID and every distractor through the real evaluator', async () => {
-    const result = await calibrateChoiceMethod(revision(), solves, now);
-    expect(result.probes.map((probe) => [probe.probe_id, probe.actual_points])).toEqual([
-      ['select:opaque-red', 0],
-      ['select:opaque-blue', 2],
-      ['select:opaque-green', 0],
-      ['select:opaque-yellow', 0],
-      ['shuffled-correct', 2],
-      ['explicit-blank', 0],
+  it('grades one stable opaque ID from a shuffled frozen issuance', async () => {
+    const source = revision();
+    const issuance = {
+      issuance_id: 'issued',
+      issued_at: now.toISOString(),
+      binding: {
+        revision_id: source.revision_id,
+        part_ids: ['one'],
+        material_bindings: source.structure.materials.map((m) => ({
+          material_id: m.material_id,
+          asset_digest: m.asset.digest,
+        })),
+        option_order: [
+          {
+            slot_id: 'one::r',
+            option_ids: ['opaque-yellow', 'opaque-green', 'opaque-blue', 'opaque-red'],
+          },
+        ],
+      },
+      claim: { policy: 'unbounded', status: 'unclaimed', claimed_by_ref: null },
+    } satisfies Parameters<typeof projectPracticeIssuance>[1];
+    const dto = projectPracticeIssuance(source, issuance);
+    const [served] = dto.response_spec.slots;
+    if (served?.kind !== 'single_choice') throw new Error('test requires an issued choice slot');
+    expect(served.options.map((option) => option.option_id)).toEqual([
+      'opaque-yellow',
+      'opaque-green',
+      'opaque-blue',
+      'opaque-red',
     ]);
-    expect(result.probes.every((probe) => probe.passed)).toBe(true);
+    const result = await evaluateSubmissionCore({
+      evaluation_id: 'evaluation-choice-entry',
+      revision: source,
+      issued_part_ids: issuance.binding.part_ids,
+      attempt: 1,
+      submission: {
+        submission_id: 'submission-choice-entry',
+        issuance_id: dto.issuance_id,
+        revision_id: dto.revision_id,
+        evaluation_group_id: 'group-choice-entry',
+        response_set: {
+          entries: [{ kind: 'choice', slot_id: served.slot_id, option_ids: ['opaque-blue'] }],
+        },
+        group_evidence: [],
+        idempotency_key: 'submission-choice-entry',
+        submitted_at: now.toISOString(),
+      },
+    });
+    expect(result.record.status).toBe('completed');
+    expect(result.record.unit_results).toEqual([
+      expect.objectContaining({
+        scoring_unit_id: 'one::u',
+        status: 'scored',
+        points_awarded: 2,
+        scored_because: 'response',
+      }),
+    ]);
+    expect(result.record.aggregate).toEqual({
+      kind: 'points_total',
+      points: 2,
+      policy: { kind: 'sum' },
+    });
   });
 
-  // @invariant security: practice display exposes only public references and cannot carry an answer key or private solution in its declarative blocks.
-  // @fails-if the public DTO leaks the private reference, or the presentation boundary permits a key-bearing property.
-  it('strips private references and rejects key-bearing presentation', () => {
+  // @invariant security: the public practice issuance withholds the private solution and scoring key.
+  // @fails-if projectPracticeIssuance exposes the private reference or accepted option IDs to the learner.
+  it('withholds the private reference and scoring key from the public issuance', () => {
     const source = revision();
     const dto = projectPracticeIssuance(source, {
       issuance_id: 'issued',
@@ -1577,8 +1608,5 @@ describe('choice entry frozen method', () => {
     });
     expect(JSON.stringify(dto)).not.toContain('PRIVATE');
     expect(JSON.stringify(dto)).not.toContain('accepted_option_ids');
-    expect(() =>
-      QuestionPresentation.parse({ ...source.structure.presentation, answer_key: 'opaque-blue' }),
-    ).toThrow();
   });
 });

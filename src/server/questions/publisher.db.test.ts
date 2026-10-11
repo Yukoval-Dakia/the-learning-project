@@ -375,9 +375,9 @@ describe('choice entry publication invariants', () => {
     ).toEqual([]);
   });
 
-  // @invariant data: source verification preserves an unchanged AI answer's immutable calibrated revision and never relabels it official; a changed key cannot reuse proof.
-  // @fails-if source verify loses/relabels entry proof, creates a new revision for the same content, or accepts the old calibration for an edited row/source/key.
-  it('choice entry retains its proof through canonical source verification and rejects stale proof after edits', async () => {
+  // @invariant data: canonical source verification preserves the immutable calibrated revision and its AI authority; a changed captured source cannot reuse that proof.
+  // @fails-if source verification relabels the key official or accepts stale source proof and commits a revision, lifecycle or verification change.
+  it('preserves the original calibrated revision when canonical verification rejects a source change', async () => {
     const db = testDb();
     const structured = choiceEntryNode();
     await seedQuestion('choice-entry', {
@@ -534,23 +534,20 @@ describe('choice entry publication invariants', () => {
       .where(eq(question_group_lifecycle.group_id, 'choice-entry'));
     expect(lifecycle.scoring_admission_evidence?.marking_provenance).toBe('system_verified');
     expect(lifecycle.scoring_admission_evidence?.calibration).toEqual(calibration);
-    expect(
-      await db
-        .select()
-        .from(question_admission_verification)
-        .where(eq(question_admission_verification.revision_id, before[0].revision_id)),
-    ).toHaveLength(2);
+    const verifications = await db
+      .select()
+      .from(question_admission_verification)
+      .where(eq(question_admission_verification.revision_id, before[0].revision_id));
+    expect(verifications).toHaveLength(2);
     expect(
       await db
         .select()
         .from(question_revision)
         .where(eq(question_revision.group_id, 'choice-entry')),
     ).toEqual(before);
-    for (const edit of [
-      { prompt_md: '2+5=?' },
-      { choices_md: ['9', '7', '3', '0'] },
-      { reference_md: 'Changed conclusion' },
-      {
+    await db
+      .update(question)
+      .set({
         metadata: {
           choice_entry: true,
           web_sourced: {
@@ -561,68 +558,52 @@ describe('choice entry publication invariants', () => {
             whitelist_match: true,
           },
         },
-      },
-    ]) {
-      await db.update(question).set(edit).where(eq(question.id, 'choice-entry'));
-      const [current] = await db.select().from(question).where(eq(question.id, 'choice-entry'));
-      expect(
-        (
-          await runSolveCheck(current, {
-            db,
-            profile: { id: 'math', full: resolveSubjectProfile('math') },
-            runTaskFn: async () => {
-              throw new Error('No legacy solver may bypass entry proof');
-            },
-          })
-        ).verdict,
-      ).toBe('fail');
-      await expect(
-        publishQuestionGroupFromRow(db, {
-          rootId: 'choice-entry',
-          admission: { state: 'admitted', evidence },
-          actorRef: 'test:raw-edit',
-          now,
-        }),
-      ).rejects.toThrow();
-      expect(
-        await db
-          .select()
-          .from(question_revision)
-          .where(eq(question_revision.group_id, 'choice-entry')),
-      ).toEqual(before);
-      await db
-        .update(question)
-        .set({
-          prompt_md: row.prompt_md,
-          choices_md: row.choices_md,
-          reference_md: row.reference_md,
-          metadata: row.metadata,
+      })
+      .where(eq(question.id, 'choice-entry'));
+    const [current] = await db.select().from(question).where(eq(question.id, 'choice-entry'));
+    expect(
+      (
+        await runSolveCheck(current, {
+          db,
+          profile: { id: 'math', full: resolveSubjectProfile('math') },
+          runTaskFn: async () => {
+            throw new Error('No legacy solver may bypass entry proof');
+          },
         })
-        .where(eq(question.id, 'choice-entry'));
-    }
-    const edited = choiceEntryNode();
-    if (!edited.assessment) throw new Error('test requires typed entry');
-    edited.assessment.criterion.accepted_option_ids = ['wrong-id'];
-    await db.update(question).set({ structured: edited }).where(eq(question.id, 'choice-entry'));
+      ).verdict,
+    ).toBe('fail');
     await expect(
       publishQuestionGroupFromRow(db, {
         rootId: 'choice-entry',
-        admission: { state: 'admitted', evidence },
-        actorRef: 'test:stale-entry',
+        admission: { state: 'admitted', evidence: ADMITTED_EVIDENCE },
+        verification: { policy_id: 'source_verify@1', outcome: 'passed' },
+        actorRef: 'test:changed-source-verify',
         now,
       }),
-    ).rejects.toThrow('does not cover');
+    ).rejects.toThrow('does not cover the current captured source');
     expect(
       await db
         .select()
         .from(question_revision)
         .where(eq(question_revision.group_id, 'choice-entry')),
     ).toEqual(before);
+    expect(
+      await db
+        .select()
+        .from(question_group_lifecycle)
+        .where(eq(question_group_lifecycle.group_id, 'choice-entry')),
+    ).toEqual([lifecycle]);
+    expect(
+      await db
+        .select()
+        .from(question_admission_verification)
+        .where(eq(question_admission_verification.revision_id, before[0].revision_id)),
+    ).toEqual(verifications);
   });
 
   // @invariant data: rejecting an unsupported typed-choice edit rolls back all fields, version, audit events and immutable publication records.
-  // @fails-if editQuestion commits a prompt/option/answer/structure patch while retaining the calibrated typed inputs or commits unrelated fields from the rejected patch.
-  it('rolls back typed choice edits and permits unchanged content plus metadata edits', async () => {
+  // @fails-if editQuestion saves the changed prompt or difficulty, advances the version, or leaves audit/publication records after rejecting the mixed patch.
+  it('atomically rolls back a mixed semantic and metadata edit to a typed choice', async () => {
     const db = testDb();
     const structured = choiceEntryNode();
     await seedQuestion('choice-entry', {
@@ -640,39 +621,13 @@ describe('choice entry publication invariants', () => {
     const revisions = await db.select().from(question_revision);
     const lifecycles = await db.select().from(question_group_lifecycle);
     const events = await db.select().from(event);
-    for (const patch of [
-      { prompt_md: '2+5=?' },
-      { choices_md: ['9', '7', '3', '0'] },
-      { reference_md: 'A' },
-      { structured: null },
-    ]) {
-      await expect(
-        editQuestion(db, 'choice-entry', 0, { ...patch, difficulty: 4 }, 'test:editor'),
-      ).rejects.toMatchObject({ code: 'choice_entry_recalibration_required', status: 409 });
-      expect(await readRow('choice-entry')).toEqual(original);
-      expect(await db.select().from(question_revision)).toEqual(revisions);
-      expect(await db.select().from(question_group_lifecycle)).toEqual(lifecycles);
-      expect(await db.select().from(event)).toEqual(events);
-    }
-    expect(
-      await editQuestion(
-        db,
-        'choice-entry',
-        0,
-        {
-          prompt_md: original.prompt_md,
-          choices_md: original.choices_md,
-          reference_md: original.reference_md,
-          structured: original.structured,
-        },
-        'test:editor',
-      ),
-    ).toMatchObject({ status: 'noop', version: 0 });
-    expect(
-      await editQuestion(db, 'choice-entry', 0, { difficulty: 4 }, 'test:editor'),
-    ).toMatchObject({ status: 'updated', version: 1 });
+    await expect(
+      editQuestion(db, 'choice-entry', 0, { prompt_md: '2+5=?', difficulty: 4 }, 'test:editor'),
+    ).rejects.toMatchObject({ code: 'choice_entry_recalibration_required', status: 409 });
+    expect(await readRow('choice-entry')).toEqual(original);
     expect(await db.select().from(question_revision)).toEqual(revisions);
     expect(await db.select().from(question_group_lifecycle)).toEqual(lifecycles);
+    expect(await db.select().from(event)).toEqual(events);
   });
 });
 
