@@ -29,6 +29,8 @@ export function useSharedMorph(
   const snapshot = useRef<Map<string, MorphSnapshot> | null>(null);
   const first = useRef(true);
 
+  // viewKey is the trigger; the effect reads only refs.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: re-run on every view change
   useLayoutEffect(() => {
     const root = rootRef.current;
     const taken = snapshot.current;
@@ -44,7 +46,7 @@ export function useSharedMorph(
       else delete root.dataset[ROOT_FLAG];
     }
     return playMorphsAfterPaint(root, taken);
-  }, [viewKey, rootRef]);
+  }, [viewKey]);
 
   const capture = useCallback(() => {
     snapshot.current = snapshotMorphs(rootRef.current);
