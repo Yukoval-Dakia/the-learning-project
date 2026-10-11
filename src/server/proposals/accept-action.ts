@@ -47,6 +47,21 @@ async function dispatchAccept(
       400,
     );
   }
+  // YUK-1404 — confirm_lossy is accept-only AND kind-scoped: only kinds whose
+  // accept is lossy (block_merge today) may receive it. Enforced HERE at the
+  // shared dispatch boundary so a misplaced flag is rejected for every caller
+  // (canonical decisions route, legacy /decide, direct server calls) — not just
+  // at the HTTP schema.
+  if ((opts.decision ?? 'accept') !== 'accept' && opts.confirm_lossy !== undefined) {
+    throw new ApiError('validation_error', 'confirm_lossy is only valid for accept', 400);
+  }
+  if (opts.confirm_lossy !== undefined && declaration.confirmLossy !== true) {
+    throw new ApiError(
+      'validation_error',
+      `confirm_lossy is not supported by the owner of proposal kind ${proposal.payload.kind}`,
+      400,
+    );
+  }
 
   const applier = await declaration.load();
   let result: ProposalAcceptResult;
@@ -82,6 +97,7 @@ async function dispatchAccept(
         decision: 'accept',
         user_note: opts.user_note,
         corrected_payload: opts.corrected_payload,
+        confirm_lossy: opts.confirm_lossy,
       },
       runtime,
     );

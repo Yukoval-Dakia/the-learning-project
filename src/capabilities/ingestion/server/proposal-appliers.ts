@@ -7,6 +7,7 @@ import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
 import { writeEvent } from '@/kernel/events';
 import { ApiError } from '@/kernel/http';
+import { assertBlockMergeAdmission } from '@/kernel/proposals/block-merge-admission';
 import type { ProposalInboxRow } from '@/kernel/proposals/inbox';
 import {
   ensureProposalDecisionSignal,
@@ -22,6 +23,12 @@ import { mergeQuestions } from './block-structured-edit';
 export interface IngestionApplierOpts {
   decision?: string;
   user_note?: string;
+  /**
+   * YUK-1404 — explicit learner confirmation for the irreversible merge.
+   * Canonical ProposalAcceptInput field forwarded through the runtime seam
+   * (input-owned, not runtime-overridable); required by acceptBlockMergeProposal.
+   */
+  confirm_lossy?: boolean;
 }
 
 // YUK-202 / BlockAssembly path-B (design 2026-06-02 §4) — accept reuses the
@@ -102,6 +109,26 @@ export async function acceptBlockMergeProposal(
     };
   }
 
+  // YUK-1404 — learner-admission proof on the STORED question_block rows (same
+  // canonical document + ordered adjacent pages + deterministic continuity, no
+  // conflicting question number; model confidence never counts). A new accept
+  // must carry the explicit confirm_lossy input — the merge is irreversible.
+  // The proof is re-evaluated inside mergeQuestions' own tx on the locked rows
+  // (admission hook below), so a race between this read and the mutation cannot
+  // widen the gate: the locked check is authoritative.
+  const admissionInput = {
+    primaryBlockId,
+    mergeBlockIds,
+    ingestionSessionId: change.ingestion_session_id,
+  };
+  const verdict = await assertBlockMergeAdmission(db, admissionInput);
+
+  if (opts.confirm_lossy !== true) {
+    throw new ApiError('confirm_required', '合并后无法撤销', 409, undefined, {
+      affected_block_count: verdict.affectedBlockCount,
+    });
+  }
+
   // Step 1 — run the merge in its own self-tx (cannot nest in the rate-event tx).
   const merge = await mergeQuestions(db, {
     actorRef: 'proposal:accept',
@@ -110,6 +137,12 @@ export async function acceptBlockMergeProposal(
     actorKind: 'user',
     primaryBlockId,
     mergeBlockIds,
+    // The locked re-check: runs AFTER the FOR UPDATE row locks and the
+    // primitive's own guards, BEFORE any write. A throw rolls the tx back with
+    // zero mutation — the admission proof binds the exact rows being merged.
+    admission: async ({ tx }) => {
+      await assertBlockMergeAdmission(tx, admissionInput);
+    },
   });
 
   // A soft-reject (block no longer draft / cross-session / null structured /

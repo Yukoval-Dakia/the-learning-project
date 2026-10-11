@@ -122,7 +122,7 @@ type SingleBlockEditOp = 'update_prompt' | 'add_option' | 'set_question_type' | 
 // Internal: load a draft block FOR UPDATE inside a tx
 // ---------------------------------------------------------------------------
 
-type BlockRow = typeof question_block.$inferSelect;
+export type BlockRow = typeof question_block.$inferSelect;
 
 async function loadBlockForUpdate(tx: Tx, blockId: string): Promise<BlockRow | undefined> {
   const rows = await tx
@@ -486,6 +486,16 @@ export async function splitStem(db: Db, params: SplitStemParams): Promise<EditRe
 export interface MergeQuestionsParams extends BaseEditParams {
   primaryBlockId: string;
   mergeBlockIds: string[];
+  /**
+   * YUK-1404 — optional admission gate evaluated inside THIS transaction,
+   * AFTER the FOR UPDATE row locks + the primitive's own guards and BEFORE
+   * any write. The proposal-accept path uses it to re-bind its learner
+   * admission proof to the exact rows being merged (closing the check-then-act
+   * gap between the inbox read and this self-tx). Throwing rolls back with
+   * zero mutation. Callers that omit it keep the pre-existing behavior (the
+   * merge_questions DomainTool — a separate, non-proposal path — passes none).
+   */
+  admission?: (ctx: { tx: Tx; primary: BlockRow; mergeBlocks: BlockRow[] }) => Promise<void> | void;
 }
 
 /** Top-level structured nodes of a block, normalised to an array. */
@@ -529,6 +539,11 @@ export async function mergeQuestions(db: Db, params: MergeQuestionsParams): Prom
     if (mergeBlocks.some((b) => b.structured === null)) {
       return { status: 'skipped:null_structured' };
     }
+
+    // YUK-1404 — caller-supplied admission gate: sees the FOR-UPDATE-locked
+    // rows inside this tx, before the merge tree is built and before any
+    // write. A throw rolls everything back (no mutation, no events).
+    await params.admission?.({ tx, primary, mergeBlocks });
 
     // Absorb each merge block's top-level structured nodes into the primary as
     // appended sub_questions. The primary becomes a stem container holding all
