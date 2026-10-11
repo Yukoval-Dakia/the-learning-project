@@ -181,17 +181,17 @@ const SOURCE_FAILURE_CONTRACT = {
 
 const SOURCE_FAILURE_MESSAGES = {
   source_host_nonpublic:
-    'The image source address is not a public internet address, so the download was refused. Replace it with a direct link to a public image and accept again.',
+    '这张图暂时取不到。请换用公开的图片链接，或直接上传图片；现有题目不受影响。',
   source_dns_lookup_failed:
-    'The image source address could not be resolved just now. Retry the accept in a moment, or replace the source link.',
+    '这张图暂时取不到（来源网站连不上）。请稍后重试，或直接上传图片；现有题目不受影响。',
   source_dns_no_addresses:
-    'The image source address has no usable DNS records. Replace it with a direct link to a public image and accept again.',
+    '这张图暂时取不到（来源网站连不上）。请换用图片链接，或直接上传图片；现有题目不受影响。',
   source_fetch_failed:
-    'The image could not be downloaded from its source. Retry the accept in a moment, or replace the source link.',
+    '这张图暂时取不到（来源网站连不上）。请稍后重试，或直接上传图片；现有题目不受影响。',
   // Real-world shape (YUK-1404 TEST evidence): scanner proposals point at /shiti/{id}
   // PAGES, not image files — this is the failure those accepts produce.
   source_not_an_image:
-    'The source did not return a supported image (PNG, JPEG or WebP). A link to a web page instead of the image file itself is a common cause; replace it with a direct image link and accept again.',
+    '这个链接没有返回可读取的图片，可能指向了网页。请换用图片链接，或直接上传图片；现有题目不受影响。',
 } as const satisfies Record<ImageCandidateSourceFailureReason, string>;
 
 const SOURCE_FAILURE_NEXT_STEP = {
@@ -235,21 +235,21 @@ export function assertPublicHttpUrl(url: string): URL {
       'validation_error',
       // YUK-1404 — no raw URL interpolation: the AI-written source_url can embed
       // internal topology. The raw input is visible to the operator in the proposal row.
-      'image_candidate source_url is not a valid URL; refusing to fetch',
+      '这个图片链接无法识别。请换用图片链接，或直接上传图片。',
       400,
     );
   }
   if (parsed.username || parsed.password) {
     throw new ApiError(
       'validation_error',
-      'image_candidate source_url must not contain credentials',
+      '这个图片链接含有登录信息，无法使用。请换用公开的图片链接，或直接上传图片。',
       400,
     );
   }
   if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
     throw new ApiError(
       'validation_error',
-      `image_candidate source_url must be http(s), got ${parsed.protocol}`,
+      '这个图片链接不支持下载。请换用网页上的图片链接，或直接上传图片。',
       400,
     );
   }
@@ -354,7 +354,7 @@ async function readBoundedResponseBody(res: PinnedFetchResponse): Promise<Uint8A
       throw new ApiError(
         'payload_too_large',
         // YUK-1404 — sizes are safe to show; the source URL is not.
-        `image_candidate source_url body exceeds ${MAX_IMAGE_BYTES} bytes`,
+        '这张图超过了 10 MB，暂时无法获取。请压缩后上传，或换一张图片。',
         413,
       );
     }
@@ -439,7 +439,7 @@ export async function defaultFetchImageBytes(
         await res.body?.cancel();
         throw new ApiError(
           'payload_too_large',
-          `image_candidate source_url Content-Length ${declaredLength} exceeds ${MAX_IMAGE_BYTES} bytes`,
+          '这张图超过了 10 MB，暂时无法获取。请压缩后上传，或换一张图片。',
           413,
         );
       }

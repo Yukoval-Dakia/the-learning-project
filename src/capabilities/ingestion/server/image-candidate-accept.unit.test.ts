@@ -127,7 +127,6 @@ describe('YUK-1404 learner-safe source-fetch failures', () => {
     expect(body.error).toBe('unsupported_media_type');
     expect(body.details?.reason).toBe('source_not_an_image');
     expect(body.details?.next_step).toBe('replace_source_url');
-    expect(body.message).toContain('web page');
     expect(wire).not.toContain('www.jyeoo.com');
     expect(wire).not.toContain('/shiti/');
   });

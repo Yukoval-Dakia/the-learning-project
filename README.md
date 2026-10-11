@@ -177,7 +177,9 @@ Owner 于 2026-10-07 将产品交付与本机运维持续委托给 agent，见[�
 
 ### 容器 DNS（YUK-1404）
 
-本机宿主运行 fake-IP 代理 DNS（198.18.0.0/15 应答），Docker 内嵌转发器会把它传给容器；image-candidate 的 SSRF 守卫按设计拦截该网段（`src/core/net/private-host.ts` 的 `BLOCKED_IPV4_CIDRS`），因此一切出网题源抓取（含 jyeoo 子进程）在 DNS 应答校验处失败。修复：`docker-compose.mac.yml` 已给 `app` 和 `worker` 固定 `dns: 223.5.5.5 / 119.29.29.29`（2026-10-11 在当前 app 镜像内隔离验证 `node:dns.lookup www.jyeoo.com` 返回公网 A 记录；探针回执在部署机 `/tmp/yuk1404-public-dns-probe-01/`）。任何驱动真实部署的运行时/私有 compose 覆盖也必须在 `app`+`worker` 镜像同款 `dns` 块，否则症状会复发。严禁以放行 198.18.0.0/15 的方式“修复”——只修解析，不降守卫。
+本机宿主的 fake-IP DNS 返回 198.18.0.0/15 地址，容器曾继承该解析结果，导致图题候选被 SSRF 守卫拒绝。`docker-compose.mac.yml` 的 app 和 worker 使用 `dns: [223.5.5.5, 119.29.29.29]`；2026-10-11 的同镜像隔离探针确认它们能返回 jyeoo 的公网地址。私有部署 compose 也必须保留这两个服务的 `dns` 设置，并在重建后核对 `getent hosts www.jyeoo.com`。不修改宿主代理，不放行 198.18.0.0/15。
+
+共享 IP 守卫用于图题候选下载；jyeoo Rust 子进程和 Exa 远程抓取是另外的路径，不能用 DNS 探针声称它们均已验收。候选若保存的是 `/shiti/` 网页地址，还需解析真实题图并对网页、图片及重定向逐次校验。
 
 下面的 NAS / Cloudflare Tunnel 指南保留为可选方式，不是当前 Mac 的默认操作入口。
 
