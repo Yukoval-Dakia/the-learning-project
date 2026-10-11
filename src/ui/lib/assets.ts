@@ -10,7 +10,7 @@
 // resulting object URL.
 
 import { useEffect, useState } from 'react';
-import { apiFetch } from './api';
+import { ApiError, apiFetch } from './api';
 
 export interface UploadedAsset {
   id: string;
@@ -63,11 +63,23 @@ export interface DocxIngested {
   page_count: number;
 }
 
+// A rejected .docx comes back as a 4xx whose message names internal package parts
+// (e.g. word/_rels/footer1.xml.rels). Learners get plain words instead; a typed
+// reason from the server can refine this later (YUK-1476).
+const DOCX_REJECTED_MESSAGE = '这份 Word 文件暂时导不进来。可以把它另存为 PDF 再上传。';
+
 export async function expandDocx(file: File): Promise<DocxIngested> {
   const form = new FormData();
   form.append('file', file);
-  const res = await apiFetch('/api/ingestion/docx', { method: 'POST', body: form });
-  return (await res.json()) as DocxIngested;
+  try {
+    const res = await apiFetch('/api/ingestion/docx', { method: 'POST', body: form });
+    return (await res.json()) as DocxIngested;
+  } catch (err) {
+    if (err instanceof ApiError && [400, 413, 415, 422].includes(err.status)) {
+      throw new Error(DOCX_REJECTED_MESSAGE, { cause: err });
+    }
+    throw err;
+  }
 }
 
 // In-memory cache so the same asset id rendered in multiple BlockEditors

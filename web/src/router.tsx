@@ -244,38 +244,40 @@ const recordRoute = createRoute({
 
 // M2-T6 (YUK-316) — 练习面。query 协议同 RecordRoute：?view=shelf 切卷架，
 // setQuery 是 replace 语义（视图切换不进 history 栈）。
-const PracticeRoute = lazyRouteComponent(async () => {
-  const PracticeFacePage = await loadPracticeFacePage();
+const PracticeRoute = import.meta.env.PROD
+  ? StartPageEntry
+  : lazyRouteComponent(async () => {
+      const PracticeFacePage = await loadPracticeFacePage();
 
-  function PracticeRouteComponent() {
-    const router = useRouter();
-    const searchStr = useRouterState({ select: (state) => state.location.searchStr });
-    const getQuery = useCallback(
-      (key: string) => new URLSearchParams(searchStr).get(key),
-      [searchStr],
-    );
-    const setQuery = useCallback(
-      (key: string, value: string | null) => {
-        const sp = new URLSearchParams(window.location.search);
-        if (value === null) sp.delete(key);
-        else sp.set(key, value);
-        router.history.replace(
-          `${window.location.pathname}${sp.toString() ? `?${sp.toString()}` : ''}`,
+      function PracticeRouteComponent() {
+        const router = useRouter();
+        const searchStr = useRouterState({ select: (state) => state.location.searchStr });
+        const getQuery = useCallback(
+          (key: string) => new URLSearchParams(searchStr).get(key),
+          [searchStr],
         );
-      },
-      [router],
-    );
-    return (
-      <PracticeFacePage
-        navigate={(to) => router.history.push(to)}
-        getQuery={getQuery}
-        setQuery={setQuery}
-      />
-    );
-  }
+        const setQuery = useCallback(
+          (key: string, value: string | null) => {
+            const sp = new URLSearchParams(window.location.search);
+            if (value === null) sp.delete(key);
+            else sp.set(key, value);
+            router.history.replace(
+              `${window.location.pathname}${sp.toString() ? `?${sp.toString()}` : ''}`,
+            );
+          },
+          [router],
+        );
+        return (
+          <PracticeFacePage
+            navigate={(to) => router.history.push(to)}
+            getQuery={getQuery}
+            setQuery={setQuery}
+          />
+        );
+      }
 
-  return { default: PracticeRouteComponent };
-});
+      return { default: PracticeRouteComponent };
+    });
 
 const practiceRoute = createRoute({
   getParentRoute: () => rootRoute,

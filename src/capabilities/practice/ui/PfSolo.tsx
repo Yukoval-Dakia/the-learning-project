@@ -115,7 +115,7 @@ const VERDICT_OF: Record<JudgePreview['coarse_outcome'], { label: string; tone: 
   correct: { label: '对', tone: 'good' },
   partial: { label: '部分对', tone: 'hard' },
   incorrect: { label: '错', tone: 'again' },
-  unsupported: { label: '无法判定', tone: 'hard' },
+  unsupported: { label: '暂时没法自动判', tone: 'hard' },
 };
 
 const RATING_LABEL: Record<Rating, string> = { again: '再练', hard: '模糊', good: '掌握' };
@@ -564,7 +564,7 @@ export function PfSolo({
       setAutoCommitted(false);
       setAutoCommitJudgeEventId(null);
       setPendingRun(null);
-      addToast('作答已保存，判定尚未完成；可选择自行评级安排复习。', 'info', 'clock');
+      addToast('作答已保存，暂时没法自动判；可以自己评一下来安排复习。', 'info', 'clock');
       return;
     }
     const outcome =
@@ -650,7 +650,7 @@ export function PfSolo({
         return;
       }
       if ('status' in res && res.status === 'review_required') {
-        addToast('作答已保存，判定尚未完成；可选择自行评级安排复习。', 'info', 'clock');
+        addToast('作答已保存，暂时没法自动判；可以自己评一下来安排复习。', 'info', 'clock');
         return;
       }
       if (opts.withAppeal) {
@@ -661,9 +661,9 @@ export function PfSolo({
           : null;
         if (anchor) {
           await fileAppeal(anchor, appealText.trim(), 'assessment' in res ? 'evaluation' : 'judge');
-          addToast('已提交重判——异步跑，结果回来我会提醒你。', 'info', 'clock');
+          addToast('已提交重判，在后台进行，结果回来会提醒你。', 'info', 'clock');
         } else {
-          addToast('这次判定没有可申诉的锚点（无服务端判分）。', 'info', 'alert');
+          addToast('这次判定没有可以申诉的记录。', 'info', 'alert');
         }
       }
       // 客观题自动 commit 成功 → 标记 autoCommitted（反馈卡隐藏手动评级、「下一项」只推进）+ 暂存
@@ -703,10 +703,10 @@ export function PfSolo({
     setCommitting(true);
     try {
       await fileAppeal(autoCommitJudgeEventId, appealText.trim(), committedAppealKind.current);
-      addToast('已提交重判——异步跑，结果回来我会提醒你。', 'info', 'clock');
+      addToast('已提交重判，在后台进行，结果回来会提醒你。', 'info', 'clock');
       setAppealOpen(false);
-    } catch (e) {
-      addToast(`提交重判失败：${(e as Error).message}`, 'info', 'alert');
+    } catch {
+      addToast('提交重判没有成功，稍后再试一次。', 'info', 'alert');
     } finally {
       setCommitting(false);
     }
@@ -883,7 +883,6 @@ export function PfSolo({
               {l.name}
             </span>
           ))}
-          <span className="meta mono">{q.id.slice(0, 12)}</span>
         </div>
 
         {/* YUK-1005 — stem/options render through the shared markdown+KaTeX
@@ -906,11 +905,7 @@ export function PfSolo({
             {face.prompt_md}
           </MathMarkdown>
         ))}
-        <SaveStateChip
-          state={autosave.state}
-          generation={autosave.generation}
-          onRetry={autosave.retry}
-        />
+        <SaveStateChip state={autosave.state} onRetry={autosave.retry} />
 
         {/* YUK-1051 — 作答面 = 通用 response 组件族。选择题：stable option IDs +
             radiogroup 语义不变；对错色仍只在 feedback 相位（§6.4 即时着色即判定），
@@ -919,7 +914,7 @@ export function PfSolo({
           // 202-pending（durable lane）：作答已持久化，判分在后台。同一 run 轮询中；
           // 可先行推进（solo 202 可继续），结果回来由 pendingPoll effect 揭晓反馈卡。
           <div className="rs-pending" aria-live="polite">
-            <SlotResultBadge lifecycle="submitted_pending" anchorTitle={pendingRun.runId} />
+            <SlotResultBadge lifecycle="submitted_pending" />
             {pendingPoll.status === 'failed' || pendingPoll.error ? (
               <p className="rs-pending-text">
                 判分暂时没跑成——你的作答已经存住，系统会自动补判，不需要重交。
@@ -1081,13 +1076,20 @@ export function PfSolo({
                 <LoomIcon name="sparkle" size={12} />
                 AI 判定
               </span>
-              <span className="pfs-fb-meta">
-                judge · {displayedPreview.route} · {Math.round(displayedPreview.confidence * 100)}%
-              </span>
             </div>
-            <MathMarkdown notation={q.notation} className="pfs-fb-text">
-              {displayedPreview.feedback_md ?? ''}
-            </MathMarkdown>
+            {/* When the system could not grade, feedback_md is a diagnostic for operators, not
+                feedback; say so in plain words with a next step instead (YUK-1438). */}
+            {displayedPreview.coarse_outcome === 'unsupported' ? (
+              <p className="pfs-fb-text">
+                {autoCommitted || committedPreview
+                  ? '这题暂时没法自动判，这次作答已经存下了。可以继续下一题，或者返回流跳过它。'
+                  : '这题暂时没法自动判。可以先自己评一下，或者返回流跳过这题。'}
+              </p>
+            ) : (
+              <MathMarkdown notation={q.notation} className="pfs-fb-text">
+                {displayedPreview.feedback_md ?? ''}
+              </MathMarkdown>
+            )}
             {q.reference_md && (
               <div className="pfs-fb-ref">
                 <span className="cmp-label">参考</span>
@@ -1126,19 +1128,23 @@ export function PfSolo({
             )}
 
             <div className="pfs-fb-foot">
-              {displayedPreview.coarse_outcome === 'unsupported' && (
-                <Btn
-                  variant="secondary"
-                  onClick={() => {
-                    setIssuanceMode('manual');
-                    setPreview(null);
-                    setPendingPreview(null);
-                    activationIntent.current = undefined;
-                  }}
-                >
-                  仅自行评级
-                </Btn>
-              )}
+              {/* Self-rating only works before a result is recorded; after that this button would
+                  do nothing (YUK-1438 review). */}
+              {displayedPreview.coarse_outcome === 'unsupported' &&
+                !autoCommitted &&
+                !committedPreview && (
+                  <Btn
+                    variant="secondary"
+                    onClick={() => {
+                      setIssuanceMode('manual');
+                      setPreview(null);
+                      setPendingPreview(null);
+                      activationIntent.current = undefined;
+                    }}
+                  >
+                    自己评一下
+                  </Btn>
+                )}
               {autoCommitted ? (
                 // 客观题：已自动判分+评级，「下一项」只推进（不再二次 commit）。
                 <Btn variant="primary" icon="arrow" disabled={committing} onClick={() => onDone()}>
@@ -1214,7 +1220,7 @@ export function PfSolo({
                     算了
                   </Btn>
                   <span className="key-hints mono" style={{ marginLeft: 'auto' }}>
-                    re-judge · 异步 · 不阻塞流
+                    重判在后台进行，不耽误继续做题
                   </span>
                 </div>
               </div>

@@ -1,6 +1,8 @@
 import { eq, sql } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
-import { artifact, learning_session } from '@/db/schema';
+import { artifact, learning_session, question } from '@/db/schema';
+import { contractIntegrityDigest } from '@/server/questions/contract-normalizer';
+import { publishQuestionGroup } from '@/server/questions/publisher';
 import { Review } from '@/server/session';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { POST } from './review-sessions';
@@ -15,6 +17,91 @@ function createRequest(body?: unknown): Request {
 
 async function seedPaper(id: string): Promise<void> {
   const now = new Date();
+  // YUK-1445 — a fresh paper opening really issues every slot through the serving
+  // gate, so the fixture paper must carry a real published, admitted, servable
+  // question (explicit deterministic option-set contract; no reference_md key
+  // extraction). An empty question_ids paper now correctly 409s
+  // ('no automatically servable slots').
+  const questionId = `${id}_q1`;
+  await testDb()
+    .insert(question)
+    .values({
+      id: questionId,
+      kind: 'choice',
+      prompt_md: `并发开卷fixture题干 ${id}`,
+      reference_md: null,
+      knowledge_ids: [],
+      difficulty: 3,
+      source: 'manual',
+      draft_status: 'active',
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+  const options = [
+    { option_id: `opt_${questionId}_a`, label: 'A', text: '选项甲' },
+    { option_id: `opt_${questionId}_b`, label: 'B', text: '选项乙' },
+  ];
+  const contract = {
+    structure: {
+      group_id: questionId,
+      materials: [],
+      parts: [{ part_id: 'p1', prompt_md: `并发开卷fixture题干 ${id}`, material_ids: [] }],
+    },
+    response_spec: {
+      slots: [{ slot_id: 'p1::r', part_id: 'p1', kind: 'single_choice' as const, options }],
+    },
+    scoring_basis: {
+      units: [
+        {
+          scoring_unit_id: 'p1::u',
+          slot_refs: ['p1::r'],
+          material_refs: [],
+          evidence_slot_refs: [],
+          requires_group_evidence: false,
+          criterion: {
+            kind: 'option_set_key' as const,
+            accepted_option_ids: [`opt_${questionId}_b`],
+          },
+          points: 1,
+        },
+      ],
+      aggregation: { kind: 'sum' as const },
+      blank_scores_zero: true,
+    },
+    execution_plan: {
+      plan_version: 1,
+      assignments: [
+        {
+          scoring_unit_ids: ['p1::u'],
+          executor: { kind: 'deterministic' as const, comparator: 'exact_option_set' as const },
+        },
+      ],
+      escalation: {
+        on_unadmitted_model: 'withhold' as const,
+        on_low_confidence: 'human_review' as const,
+      },
+    },
+  };
+  const published = await publishQuestionGroup(testDb(), {
+    group_id: questionId,
+    contract: { ...contract, integrity_digest: contractIntegrityDigest(contract) },
+    expectedCurrentRevision: null,
+    expectedAdmissionGeneration: null,
+    availability: 'general_pool',
+    actorRef: 'test:review-sessions-publication',
+    now,
+    admission: {
+      state: 'admitted',
+      evidence: {
+        marking_provenance: 'official',
+        verification: { structural_check_passed: true, independent_verification: null },
+        model_slice: null,
+      },
+    },
+  });
+  if (published.status !== 'published')
+    throw new Error(`review-sessions fixture publication: ${published.status}`);
   await testDb()
     .insert(artifact)
     .values({
@@ -25,7 +112,7 @@ async function seedPaper(id: string): Promise<void> {
       intent_source: 'quiz_gen',
       source: 'ai_generated',
       tool_kind: 'quiz_gen',
-      tool_state: { question_ids: [], sections: [] },
+      tool_state: { question_ids: [questionId], sections: [] },
       generation_status: 'ready',
       verification_status: 'not_required',
       history: [],

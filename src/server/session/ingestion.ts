@@ -10,6 +10,7 @@ import { acquireLearningStateWriteLock } from '@/server/advisory-locks';
 import { writeJobEvent } from '@/server/events/writer';
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
 
+import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './docx-omission';
 import { assertFromState } from './guards';
 
 // LearningSession.Ingestion.* — Phase 1c.1 Step 5 evolution of the ADR-0005
@@ -639,6 +640,22 @@ export type InitiateUploadParams = {
   // YUK-258: 'docx' — the visual line feeds docx page images through this same
   // upload+extract path (text line uses the dedicated docx-ingestion owner).
   entrypoint: 'vision_single' | 'vision_paper' | 'docx';
+  // YUK-1404 — canonical learner-selected upload subject, already resolved and
+  // validated against the selectable registry by the caller (API route).
+  // null / omitted = no explicit signal: provenance keeps only `entrypoint`, so
+  // those sessions read exactly like legacy ones (derived notation fallback
+  // stays available). Persisted INSIDE this transaction on the session-bound
+  // source_document.provenance.learner_selected_subject_id — never a
+  // learning_session column, never scope_knowledge_ids.
+  learnerSelectedSubjectId?: string | null;
+  /**
+   * YUK-1476 (R1 P1-2) — docx visual line: honest external-ref omission audit.
+   * Same facts object / provenance key / warnings wording as the text-line
+   * owner (docx-ingestion.ts) so BOTH lines emit the identical receipt; absent
+   * for every other entrypoint. No new store/schema — provenance + the existing
+   * learning_session.warnings field.
+   */
+  externalRefOmission?: DocxExternalRefOmissionFacts;
 };
 
 /**
@@ -657,12 +674,38 @@ export async function initiateUpload(
     const now = new Date();
     // dynamic import to avoid circular dep at module load time
     const { source_document } = await import('@/db/schema');
+    const omission = params.externalRefOmission;
+    const omissionWarnings = omission ? [EXTERNAL_REF_OMISSION_NOTICE] : [];
     await tx.insert(source_document).values({
       id: sourceDocumentId,
       title: null,
       source_asset_ids: params.assetIds,
       body_md: null,
-      provenance: { entrypoint: params.entrypoint } as Record<string, unknown>,
+      // YUK-1404 — the explicit upload subject rides the open provenance record
+      // (no new column). Key presence = explicit learner choice (canonical id);
+      // key absence = unknown (omitted/null request OR legacy session). Only a
+      // non-null resolved id writes the key, so absent and explicit-unknown stay
+      // indistinguishable-by-design from legacy rows on purpose: the derived
+      // fallback remains available for both, while a stored id that later stops
+      // resolving pins notation to null (never a guessed subject).
+      provenance: {
+        entrypoint: params.entrypoint,
+        ...(params.learnerSelectedSubjectId
+          ? { learner_selected_subject_id: params.learnerSelectedSubjectId }
+          : {}),
+        // YUK-1476 — identical provenance shape to the text-line owner
+        // (docx-ingestion.ts) so audits read uniformly across both docx lines.
+        ...(omission
+          ? {
+              docx_external_ref_omission: {
+                input_sha256: omission.inputSha256,
+                converter_input_sha256: omission.converterInputSha256,
+                omitted: omission.omissions,
+                learner_notice: EXTERNAL_REF_OMISSION_NOTICE,
+              },
+            }
+          : {}),
+      } as Record<string, unknown>,
       created_at: now,
       updated_at: now,
       version: 0,
@@ -675,7 +718,7 @@ export async function initiateUpload(
       status: 'uploaded',
       entrypoint: params.entrypoint,
       error_message: null,
-      warnings: [],
+      warnings: omissionWarnings,
       started_at: now,
       created_at: now,
       updated_at: now,

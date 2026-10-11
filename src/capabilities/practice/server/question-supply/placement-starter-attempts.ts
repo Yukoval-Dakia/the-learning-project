@@ -10,6 +10,7 @@ import {
   placement_starter_cost_component,
   question,
 } from '@/db/schema';
+import { readAutomaticallyServableQuestionIds } from '@/kernel/records/assessment-issuance';
 import { placementStarterAttemptId } from './placement-starter-identity';
 import {
   type PlacementStarterFailure,
@@ -1055,7 +1056,12 @@ export async function countEligiblePlacementQuestions(
         sql`${question.knowledge_ids} @> jsonb_build_array(${placement_starter_claim.knowledge_id})`,
       ),
     );
-  return new Set(verified.map((row) => row.questionId)).size;
+  return (
+    await readAutomaticallyServableQuestionIds(
+      db,
+      verified.map((row) => row.questionId),
+    )
+  ).size;
 }
 
 export async function placementAttemptVerificationSettled(

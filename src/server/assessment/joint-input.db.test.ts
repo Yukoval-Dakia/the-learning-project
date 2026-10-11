@@ -37,6 +37,7 @@ import {
   normalizeQuestionGroupToContract,
 } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
+import { seedHistoricalAssessmentIssuance } from '../../../tests/fixtures/historical-assessment-issuance';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { activateEvaluation } from './activate';
 import { learningSettlement } from './settle';
@@ -112,10 +113,11 @@ async function seed(opts: { model?: boolean; withheld?: boolean; saveCount?: num
   const members: SubmissionRecordT[] = [];
   const requests: SaveSubmissionRequest[] = [];
   for (const [i, part] of contract.structure.parts.entries()) {
-    const issued = await issueAssessment(db, {
+    const issue = opts.withheld || opts.model ? seedHistoricalAssessmentIssuance : issueAssessment;
+    const issued = await issue(db, {
       group_id: root.id,
       part_ids: [part.part_id],
-      mode: opts.withheld ? 'manual' : 'auto_score',
+      mode: 'auto_score',
       now: NOW,
     });
     if (issued.status !== 'issued') throw new Error(issued.status);

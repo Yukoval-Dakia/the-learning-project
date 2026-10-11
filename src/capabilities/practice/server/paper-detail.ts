@@ -158,6 +158,18 @@ export interface PaperDetailResult {
   /** Ordered sections with their slots + question faces + slot state */
   sections: PaperDetailSection[];
   /**
+   * YUK-1445 —— frozen-paper slots 被 serving gate 收回时的 typed 读面：
+   * {issuance_id, question_id, part_ref, reason}（公共安全枚举；诊断 detail
+   * 不透出）。open 时被拒、从未发行的 slot issuance_id 为 null；pinned 历史
+   * issuance 保留原 id。仅 frozen 路径填充；legacy/flat fallback 缺省。
+   */
+  withheld_assessments?: Array<{
+    issuance_id: string | null;
+    question_id: string;
+    part_ref: string | null;
+    reason: import('@/core/schema/assessment/serving-admission').ServingUnavailableReason;
+  }>;
+  /**
    * Flat fallback for U4 quizzes with no structured plan (sections will be a
    * single synthetic section with all question_ids; UI may render flat).
    */

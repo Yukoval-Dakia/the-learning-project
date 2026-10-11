@@ -14,6 +14,7 @@ import { learning_session, question_block, source_document } from '@/db/schema';
 import { COPILOT_NUDGE_EVALUATE_QUEUE } from '@/server/boss/queue-names';
 import { writeJobEvent } from '@/server/events/writer';
 import { writeQuestionBlockCreateEvent } from '@/server/projections/question_block-create-event';
+import { type DocxExternalRefOmissionFacts, EXTERNAL_REF_OMISSION_NOTICE } from './docx-omission';
 
 import { writeSessionEvent } from './events';
 
@@ -49,7 +50,18 @@ export interface InitiateDocxTextUploadParams {
    *  source_document + every block so the review UI can render整页. */
   evidenceAssetIds: string[];
   blocks: DocxTextBlockInput[];
+  /**
+   * YUK-1476 — pass ONLY when the converter input was sanitized (external
+   * non-hyperlink relationships omitted from the copy pandoc/LibreOffice saw).
+   * Lands in source_document.provenance + session warnings as the honest
+   * omission audit; no new schema/table, and never the external Target URL.
+   */
+  externalRefOmission?: DocxExternalRefOmissionFacts;
 }
+
+// Shared with the visual line (Ingestion.initiateUpload) via the zero-dependency
+// leaf './docx-omission' — re-exported here so existing type consumers are stable.
+export type { DocxExternalRefOmissionFacts } from './docx-omission';
 
 export interface InitiateDocxTextUploadResult {
   sessionId: string;
@@ -78,6 +90,8 @@ export async function initiateDocxTextUpload(
     const now = new Date();
     const sourceDocumentId = createId();
     const sessionId = createId();
+    const omission = params.externalRefOmission;
+    const warnings = omission ? [EXTERNAL_REF_OMISSION_NOTICE] : [];
 
     // Codex-1 — the import route validates every block.image_ref against the
     // session's source_asset_ids (import/route.ts §3). Embedded-image asset ids
@@ -90,12 +104,27 @@ export async function initiateDocxTextUpload(
     const sessionAssetIds = Array.from(new Set([...params.evidenceAssetIds, ...embeddedRefs]));
 
     // 1. source_document — evidence page images + embedded refs as source_asset_ids.
+    //    YUK-1476 — provenance carries the honest omission audit: both digests +
+    //    the omitted facts (part/rId/type — never the external Target URL).
     await tx.insert(source_document).values({
       id: sourceDocumentId,
       title: null,
       source_asset_ids: sessionAssetIds,
       body_md: null,
-      provenance: { entrypoint: 'docx', line: 'text' } as Record<string, unknown>,
+      provenance: {
+        entrypoint: 'docx',
+        line: 'text',
+        ...(omission
+          ? {
+              docx_external_ref_omission: {
+                input_sha256: omission.inputSha256,
+                converter_input_sha256: omission.converterInputSha256,
+                omitted: omission.omissions,
+                learner_notice: EXTERNAL_REF_OMISSION_NOTICE,
+              },
+            }
+          : {}),
+      } as Record<string, unknown>,
       created_at: now,
       updated_at: now,
       version: 0,
@@ -110,7 +139,7 @@ export async function initiateDocxTextUpload(
       status: 'uploaded',
       entrypoint: 'docx',
       error_message: null,
-      warnings: [],
+      warnings,
       started_at: now,
       created_at: now,
       updated_at: now,
@@ -202,7 +231,7 @@ export async function initiateDocxTextUpload(
       payload: {
         block_count: params.blocks.length,
         layout_quality: 'structured',
-        warnings: [],
+        warnings,
       },
     });
 
@@ -219,7 +248,7 @@ export async function initiateDocxTextUpload(
       payload: {
         structured_block_ids: insertedBlockIds,
         layout_quality: 'structured',
-        warnings: [],
+        warnings,
       },
       created_at: now,
     });

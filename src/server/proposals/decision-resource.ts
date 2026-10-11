@@ -41,6 +41,21 @@ function resultIsIdempotent(result: ProposalLifecycleResult): boolean {
 }
 
 /**
+ * YUK-1404 — the narrow soft-stale block_merge accept: the applier skipped the
+ * merge (referenced blocks left draft), so NO rate event and NO decision
+ * signal were written — there is no immutable event to point at. Guard shape
+ * is structural AND state-checked (pending + block_merge + accept) so a
+ * malformed result can never masquerade as stale and fall out of the event
+ * requirement below.
+ */
+function isStaleBlockMergeAccept(
+  decision: ProposalDecisionInputT['decision'],
+  result: ProposalLifecycleResult,
+): result is ProposalLifecycleResult & { kind: 'block_merge'; stale: true } {
+  return decision === 'accept' && result.kind === 'block_merge' && result.stale === true;
+}
+
+/**
  * Create the canonical immutable decision representation for a proposal.
  *
  * Matrix:
@@ -131,6 +146,7 @@ export async function createProposalDecision(
         decision: 'accept',
         user_note: input.user_note,
         corrected_payload: input.corrected_payload,
+        confirm_lossy: input.confirm_lossy,
       });
     } else if (input.decision === 'reverse') {
       result = await acceptAiProposal(db, proposalId, {
@@ -147,6 +163,29 @@ export async function createProposalDecision(
   const refreshed = await getProposalInboxRow(db, proposalId);
   if (!refreshed) {
     throw new ApiError('not_found', `proposal ${proposalId} not found after decision`, 404);
+  }
+
+  // YUK-1404 — the soft-stale block_merge accept committed NOTHING (no rate
+  // event, no signal, no status change). Serving the honest stale
+  // representation — 200 non-created, decision_event_id:null, proposal still
+  // pending (no false resolve) — instead of the former decision_event_missing
+  // 500. Every other completed decision still falls through to the hard event
+  // requirement below.
+  if (
+    isStaleBlockMergeAccept(input.decision, result) &&
+    proposal.kind === 'block_merge' &&
+    refreshed.status === 'pending'
+  ) {
+    return {
+      proposal_id: proposalId,
+      proposal_kind: proposal.kind,
+      decision: 'accept',
+      decision_event_id: null,
+      proposal_status: refreshed.status,
+      created: false,
+      idempotent: false,
+      result,
+    };
   }
 
   const decisionEventId =

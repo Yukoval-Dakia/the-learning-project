@@ -105,6 +105,47 @@ export function renderTencentHint(pages: TencentPageHint[]): string {
 
 // ---------- Mapping VLM nodes → StructuredQuestionT ----------
 
+// ---------- YUK-1404: explicit math delimiter canonicalization ----------
+//
+// Settled producer decision (YUK-1404): extracted stems STORE explicit
+// `$inline$` / `$$display$$` math. The StructureTask prompt now instructs the
+// VLM to emit dollar delimiters, but the Tencent text hint (and model habit)
+// can carry the equally-explicit LaTeX forms \(...\) / \[...\]. Those — and
+// ONLY those already-explicitly-delimited spans — are canonicalized to the
+// dollar form here, at the canonical mapping. No undelimited text is ever
+// wrapped (no guessing around bare backslashes or prose).
+//
+// Mirrors the proven renderer gate (src/ui/lib/math-markdown.tsx
+// LATEX_DELIMITED): code spans/fences are matched first and returned
+// untouched; a delimiter preceded by another backslash is a LaTeX line break,
+// not an opener; a formula never crosses a blank line or a backtick. The
+// spacing guards keep neighbouring `$...$` / `$$...$$` runs apart after
+// conversion (`$a$$b$` would parse as one broken formula downstream).
+const EXPLICIT_MATH_DELIMITED =
+  /(```[\s\S]*?```|~~~[\s\S]*?~~~|`[^`\n]*`)|(?<!\\)\\\[((?:(?!\n\s*\n)[^`])+?)\\\]|(?<!\\)\\\(((?:(?!\n\s*\n)[^`])+?)\\\)/g;
+
+/** Canonicalize already-explicit \(...\) / \[...\] math to $...$ / $$...$$. */
+function canonicalizeExplicitMathDelimiters(text: string): string {
+  if (!text.includes('\\(') && !text.includes('\\[')) return text;
+  return text.replace(
+    EXPLICIT_MATH_DELIMITED,
+    (
+      match: string,
+      code: string | undefined,
+      display: string | undefined,
+      inline: string | undefined,
+      offset: number,
+    ) => {
+      if (code !== undefined) return match;
+      const prev = text.slice(Math.max(0, offset - 2), offset);
+      const before = prev.endsWith('$') || prev === '\\)' || prev === '\\]' ? ' ' : '';
+      const after = text[offset + match.length] === '$' ? ' ' : '';
+      if (display !== undefined) return `${before}$$${display}$$${after}`;
+      return `${before}$${(inline ?? '').trim()}$${after}`;
+    },
+  );
+}
+
 /**
  * YUK-227 S3 Slice A — walk the VLM node tree, assign cuid ids, and collect
  * figure_ids → question_id assignments into `assignmentsOut`. The collector is
@@ -124,11 +165,15 @@ function nodeToStructured(
   const out: StructuredQuestionT = {
     id,
     role: node.role,
-    prompt_text: node.prompt_text,
+    prompt_text: canonicalizeExplicitMathDelimiters(node.prompt_text),
     source: 'vlm_structure',
   };
   if (node.question_no) out.question_no = node.question_no;
-  if (node.options && node.options.length > 0) out.options = node.options;
+  if (node.options && node.options.length > 0)
+    out.options = node.options.map((option) => ({
+      label: option.label,
+      text: canonicalizeExplicitMathDelimiters(option.text),
+    }));
   if (node.answers && node.answers.length > 0) out.answers = node.answers;
   if (node.analysis) out.analysis = node.analysis;
   if (subs && subs.length > 0) out.sub_questions = subs;

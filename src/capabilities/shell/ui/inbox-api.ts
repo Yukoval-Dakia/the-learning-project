@@ -31,7 +31,7 @@ export const KIND_META: Record<string, KindMeta> = {
   completion: { label: '完成判定', icon: 'checkCircle', tone: 'good' },
   relearn: { label: '重学建议', icon: 'review', tone: 'hard' },
   goal_scope: { label: '目标范围', icon: 'target', tone: 'hard' },
-  block_merge: { label: '块合并', icon: 'merge', tone: 'hard' },
+  block_merge: { label: '合并题目', icon: 'merge', tone: 'hard' },
   defer: { label: '延后安排', icon: 'clock', tone: 'hard' },
   archive: { label: '归档建议', icon: 'archive', tone: 'neutral' },
   judge_retraction: { label: '判定撤回', icon: 'undo', tone: 'coral' },
@@ -203,10 +203,17 @@ export type ProposalDecision = 'accept' | 'reverse' | 'change_type' | 'dismiss';
 
 export function proposalDecisionBody(
   decision: ProposalDecision,
-  opts: { newRelationType?: string; userNote?: string; correctedClaimMd?: string } = {},
+  opts: {
+    newRelationType?: string;
+    userNote?: string;
+    correctedClaimMd?: string;
+    /** Accept-only: the learner confirmed an irreversible block merge (YUK-1404). */
+    confirmLossy?: true;
+  } = {},
 ): ApiOperationRequestBody<'createProposalDecision'> {
   return {
     decision,
+    ...(decision === 'accept' && opts.confirmLossy ? { confirm_lossy: true as const } : {}),
     ...(opts.newRelationType ? { new_relation_type: opts.newRelationType } : {}),
     ...(opts.userNote ? { user_note: opts.userNote } : {}),
     // Empty edits reach validation instead of degrading to an uncorrected accept.

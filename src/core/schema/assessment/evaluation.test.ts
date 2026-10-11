@@ -24,6 +24,7 @@ import type {
   ScoringBasisT,
   SubmissionRecordT,
 } from './index';
+import { decideAutomaticServing } from './serving-admission';
 import { deriveCoarseVerdict } from './settlement';
 
 // ---------- fixtures ----------
@@ -1073,5 +1074,384 @@ describe('whole-page evidence is not a blank response', () => {
         points_awarded: 2,
       },
     ]);
+  });
+});
+
+describe('automatic serving preserves frozen scoring semantics', () => {
+  // @invariant grading: open answers declaring evidence requirements are withheld from deterministic serving while pure text scores the same fixed points deterministically
+  // @fails-if drop the evidence_required/accepted_evidence predicate in decideAutomaticServing; both withheld variants would return admitted and be auto-graded
+  it('withholds attachment answers the text comparator cannot consume, while pure text remains deterministic', async () => {
+    const revision = revisionFor({
+      slots: [
+        {
+          slot_id: 'p1::r',
+          part_id: 'p1',
+          kind: 'open_response',
+          accepted_evidence: [],
+          evidence_required: false,
+        },
+      ],
+    });
+    expect(decideAutomaticServing(revision, ['p1'])).toEqual({ kind: 'admitted' });
+    const output = await evaluateSubmissionCore(
+      inputFor(
+        submissionFor([{ slot_id: 'p1::r', kind: 'open', text_md: '2', evidence: [] }]),
+        revision,
+      ),
+    );
+    expect(output.record.aggregate).toMatchObject({ kind: 'points_total', points: 2 });
+    for (const slot of [
+      {
+        slot_id: 'p1::r',
+        part_id: 'p1',
+        kind: 'open_response',
+        accepted_evidence: [],
+        evidence_required: true,
+      },
+      {
+        slot_id: 'p1::r',
+        part_id: 'p1',
+        kind: 'open_response',
+        evidence_required: false,
+        accepted_evidence: [
+          {
+            kind: 'audio',
+            allowed_mime_patterns: ['audio/*'],
+            max_bytes: 1000,
+            requires_security_scan: true,
+          },
+        ],
+      },
+    ] satisfies PublishedQuestionRevisionT['response_spec']['slots']) {
+      revision.response_spec.slots = [slot];
+      expect(decideAutomaticServing(revision, ['p1'])).toMatchObject({
+        kind: 'unavailable',
+        reason: 'unsupported_deterministic_input',
+      });
+    }
+  });
+
+  function mixedRevision(): PublishedQuestionRevisionT {
+    return revisionFor({
+      parts: [
+        {
+          part_id: 'p1',
+          prompt_md:
+            'A boat travels 18 km/h downstream and 12 km/h upstream. Select the current speed.\n'.repeat(
+              8,
+            ),
+          material_ids: [],
+        },
+        {
+          part_id: 'p2',
+          prompt_md: 'Explain the steady-current assumptions and justify the units.',
+          material_ids: [],
+        },
+      ],
+      slots: [
+        {
+          slot_id: 'p1::r',
+          part_id: 'p1',
+          kind: 'single_choice',
+          options: [
+            { option_id: 'speed-3', label: 'A', text: '3 km/h' },
+            { option_id: 'speed-15', label: 'B', text: '15 km/h' },
+            { option_id: 'speed-6', label: 'C', text: '6 km/h' },
+          ],
+        },
+        { slot_id: 'p2::r', part_id: 'p2', kind: 'text', math_preview: true },
+      ],
+      units: [
+        {
+          scoring_unit_id: 'p1::u',
+          slot_refs: ['p1::r'],
+          material_refs: [],
+          evidence_slot_refs: [],
+          requires_group_evidence: false,
+          criterion: { kind: 'option_set_key', accepted_option_ids: ['speed-3'] },
+          points: 3,
+        },
+        {
+          scoring_unit_id: 'p2::u',
+          slot_refs: ['p2::r'],
+          material_refs: [],
+          evidence_slot_refs: [],
+          requires_group_evidence: false,
+          criterion: {
+            kind: 'text_key',
+            accepted_texts: ['same steady current'],
+            normalization: 'trim',
+          },
+          points: 4,
+        },
+      ],
+      assignments: [
+        {
+          scoring_unit_ids: ['p1::u'],
+          executor: { kind: 'deterministic', comparator: 'exact_option_set' },
+        },
+        { scoring_unit_ids: ['p2::u'], executor: { kind: 'human_review' } },
+      ],
+    });
+  }
+
+  // @invariant grading: an issued subset of a mixed group scores correct/wrong answers to the same points with zero model invocations and leaves the frozen revision untouched
+  // @fails-if route the deterministic unit through the model or project the unissued human-review unit into the scored basis; points/scoping/model_units_invoked assertions fail
+  it('serves an automatic subset of a mixed group and scores correct/wrong responses deterministically without a model', async () => {
+    const revision = mixedRevision();
+    const model = vi.fn(() => {
+      throw new Error('eligibility or deterministic scoring must not invoke a model');
+    });
+    expect(decideAutomaticServing(revision, ['p1'])).toEqual({ kind: 'admitted' });
+    expect(decideAutomaticServing(revision, ['p1', 'p2'])).toMatchObject({
+      kind: 'unavailable',
+      reason: 'human_review',
+    });
+    for (const [optionId, points] of [
+      ['speed-3', 3],
+      ['speed-15', 0],
+      ['speed-3', 3],
+    ] as const) {
+      const output = await evaluateSubmissionCore(
+        inputFor(
+          submissionFor([{ slot_id: 'p1::r', kind: 'choice', option_ids: [optionId] }]),
+          revision,
+          { issued_part_ids: ['p1'], model_executor: model },
+        ),
+      );
+      expect(output.record.status).toBe('completed');
+      expect(output.record.aggregate).toMatchObject({ kind: 'points_total', points });
+      expect(output.scoring_basis.units.map((unit) => unit.scoring_unit_id)).toEqual(['p1::u']);
+      expect(output.model_units_invoked).toBe(0);
+    }
+    expect(model).not.toHaveBeenCalled();
+    expect(revision).toEqual(mixedRevision());
+  });
+
+  // @invariant grading: a frozen plan that misses, duplicates, misroutes or comparator-mismatches a unit is rejected before serving, and a criterion the slot cannot parse withholds the contract
+  // @fails-if remove the unit_not_covered/unit_covered_twice/unknown_unit_assignment/comparator_criterion_mismatch checks in validateExecutionPlan; any invalidPlan variant would be admitted
+  it('rejects missing, duplicate, unknown, comparator-mismatched executors and unsupported slot input', () => {
+    const revision = mixedRevision();
+    const invalidPlans: ExecutionPlanT['assignments'][] = [
+      revision.execution_plan.assignments.slice(1),
+      [...revision.execution_plan.assignments, revision.execution_plan.assignments[0]],
+      [
+        ...revision.execution_plan.assignments,
+        { scoring_unit_ids: ['unknown-unit'], executor: { kind: 'human_review' } },
+      ],
+      [
+        {
+          scoring_unit_ids: ['p1::u'],
+          executor: { kind: 'deterministic', comparator: 'exact_text' },
+        },
+        revision.execution_plan.assignments[1],
+      ],
+    ];
+    for (const assignments of invalidPlans) {
+      expect(
+        decideAutomaticServing(
+          { ...revision, execution_plan: { ...revision.execution_plan, assignments } },
+          ['p1'],
+        ),
+      ).toMatchObject({ kind: 'unavailable', reason: 'invalid_execution_plan' });
+    }
+    revision.response_spec.slots[0] = {
+      slot_id: 'p1::r',
+      part_id: 'p1',
+      kind: 'text',
+      math_preview: false,
+    };
+    expect(decideAutomaticServing(revision, ['p1'])).toMatchObject({
+      kind: 'unavailable',
+      reason: 'invalid_scoring_contract',
+    });
+  });
+
+  // @invariant grading: weighted subsets project their exact weights and capped/threshold scopes that cannot project to the issued subset are withheld rather than guessed
+  // @fails-if make projectIssuedScoringBasis silently project capped_sum/threshold_levels or drop the projected weights; the points/policy or unprojectable_aggregation assertions fail
+  it('projects sum and weighted subsets but withholds unprojectable capped/threshold scopes', async () => {
+    const revision = mixedRevision();
+    revision.scoring_basis.aggregation = {
+      kind: 'weighted_sum',
+      weights: { 'p1::u': 2, 'p2::u': 0.5 },
+    };
+    expect(decideAutomaticServing(revision, ['p1'])).toEqual({ kind: 'admitted' });
+    const output = await evaluateSubmissionCore(
+      inputFor(
+        submissionFor([{ slot_id: 'p1::r', kind: 'choice', option_ids: ['speed-3'] }]),
+        revision,
+        { issued_part_ids: ['p1'] },
+      ),
+    );
+    expect(output.record.aggregate).toMatchObject({
+      kind: 'points_total',
+      points: 6,
+      policy: { kind: 'weighted_sum', weights: { 'p1::u': 2 } },
+    });
+    revision.scoring_basis.aggregation = { kind: 'capped_sum', cap: 4 };
+    expect(decideAutomaticServing(revision, ['p1'])).toMatchObject({
+      kind: 'unavailable',
+      reason: 'unprojectable_aggregation',
+    });
+    revision.scoring_basis.aggregation = {
+      kind: 'threshold_levels',
+      thresholds: [{ level_id: 'pass', min_points: 3 }],
+    };
+    expect(decideAutomaticServing(revision, ['p1'])).toMatchObject({
+      kind: 'unavailable',
+      reason: 'unprojectable_aggregation',
+    });
+    for (const partIds of [[], ['unknown'], ['p1', 'p1']]) {
+      expect(decideAutomaticServing(revision, partIds)).toMatchObject({
+        kind: 'unavailable',
+        reason: 'invalid_issuance_scope',
+      });
+    }
+  });
+
+  // @invariant grading: a model executor without authoritative slice admission can never auto-serve learner answers, regardless of typed task kind or declared budget
+  // @fails-if treat a known task_kind or a nonnull admitted_slice_id string as execution authority; model_admission_unavailable disappears and the model would grade
+  it('withholds invented model admission even for a known typed task and declared budget', () => {
+    const revision = mixedRevision();
+    for (const task_kind of [
+      'AssessmentRuleJudgeTask',
+      'JevScoringDecisionTask',
+      'invented-task',
+    ]) {
+      for (const admitted_slice_id of [null, 'invented-slice']) {
+        revision.execution_plan.assignments[0].executor = {
+          kind: 'model_executor',
+          task_kind,
+          admitted_slice_id,
+          max_cost_usd_micros: 1000,
+        };
+        revision.execution_plan.max_total_cost_usd_micros = 2000;
+        expect(decideAutomaticServing(revision, ['p1'])).toMatchObject({
+          kind: 'unavailable',
+          reason: 'model_admission_unavailable',
+        });
+      }
+    }
+  });
+
+  // @invariant grading: an already-issued human-review unit settles as pending needs_review and new service on that part stays withheld
+  // @fails-if invent a score for human_review units or drop the needs_review pending status; the unit_results assertion fails
+  it('keeps existing human-review evaluation historical truth while withholding new service', async () => {
+    const revision = mixedRevision();
+    expect(decideAutomaticServing(revision, ['p2'])).toMatchObject({
+      kind: 'unavailable',
+      reason: 'human_review',
+    });
+    const output = await evaluateSubmissionCore(
+      inputFor(
+        submissionFor([{ slot_id: 'p2::r', kind: 'text', text_md: 'same steady current' }]),
+        revision,
+        { issued_part_ids: ['p2'] },
+      ),
+    );
+    expect(output.record.unit_results).toEqual([
+      expect.objectContaining({
+        scoring_unit_id: 'p2::u',
+        status: 'pending',
+        pending: expect.objectContaining({ reason: 'needs_review' }),
+      }),
+    ]);
+  });
+});
+
+describe('automatic serving — explicit figure dependency gate (YUK-1445)', () => {
+  const figureMaterial = (digest: string) => ({
+    material_id: 'mat-fig-1',
+    kind: 'figure' as const,
+    asset: { asset_id: 'fig-1', digest },
+  });
+
+  // @invariant grading: a stem whose learner-facing text references a figure with no bound verified figure is never auto-served; an unsolvable stem must not reach deterministic zero-scoring
+  // @fails-if remove the FIGURE_REFERENCE_RE withholding branch in decideAutomaticServing; the revision returns admitted
+  it('withholds a stem that references a figure with no verified figure bound', () => {
+    const revision = revisionFor({
+      parts: [{ part_id: 'p1', prompt_md: '如图，在正方体中求所成角（ ）', material_ids: [] }],
+    });
+    expect(decideAutomaticServing(revision, ['p1'])).toMatchObject({
+      kind: 'unavailable',
+      reason: 'missing_referenced_figure',
+    });
+  });
+
+  // @invariant grading: a verified bound figure keeps the figure-referencing stem servable; the gate must not over-withhold deterministically gradeable work
+  // @fails-if reject verified figure bindings (invert the digest/visibility check); admitted flips to missing_referenced_figure
+  it('admits when a verified figure material is bound to the part', () => {
+    const revision = revisionFor({
+      parts: [
+        { part_id: 'p1', prompt_md: '如图，在正方体中求所成角（ ）', material_ids: ['mat-fig-1'] },
+      ],
+      materials: [figureMaterial('sha256:abc')],
+    });
+    expect(decideAutomaticServing(revision, ['p1'])).toEqual({ kind: 'admitted' });
+  });
+
+  // @invariant grading: a figure bound with an unverified digest counts as missing; asset content unknown to the gate can never serve as the learner-visible figure
+  // @fails-if accept any bound figure regardless of the unverified: digest prefix; the revision returns admitted
+  it('treats an unverified-digest figure binding as still missing', () => {
+    const revision = revisionFor({
+      parts: [{ part_id: 'p1', prompt_md: '如下图所示，求角度', material_ids: ['mat-fig-1'] }],
+      materials: [figureMaterial('unverified:fig-1')],
+    });
+    expect(decideAutomaticServing(revision, ['p1'])).toMatchObject({
+      kind: 'unavailable',
+      reason: 'missing_referenced_figure',
+    });
+  });
+
+  // @invariant security: private or rubric-namespaced figures are never learner-visible rescue; scoring inputs cannot be served onto the learner surface
+  // @fails-if drop the isPublicSharedMaterial filter from the verified-figure set; the private solution figure counts as the bound figure and the stem is served
+  it('does not count a bound private or rubric-namespaced figure as learner-visible rescue', () => {
+    for (const figure of [
+      { ...figureMaterial('sha256:abc'), visibility: 'private' as const },
+      {
+        ...figureMaterial('sha256:abc'),
+        asset: { asset_id: 'sol_000000000000', digest: 'sha256:abc' },
+      },
+    ]) {
+      const revision = revisionFor({
+        parts: [{ part_id: 'p1', prompt_md: '如图，求角度（ ）', material_ids: ['mat-fig-1'] }],
+        materials: [figure],
+      });
+      expect(decideAutomaticServing(revision, ['p1'])).toMatchObject({
+        kind: 'unavailable',
+        reason: 'missing_referenced_figure',
+      });
+    }
+  });
+
+  // @invariant security: the figure scan reads only public shared materials; private scoring input never gates (or leaks into) the learner-facing surface
+  // @fails-if include private materials in the scanned surfaces; the private-only variant flips from admitted to missing_referenced_figure
+  it('scans public shared materials, not private scoring inputs', () => {
+    const revision = revisionFor({
+      parts: [{ part_id: 'p1', prompt_md: '求值（ ）', material_ids: ['mat-stem', 'mat-sol'] }],
+      materials: [
+        {
+          material_id: 'mat-stem',
+          kind: 'plaintext' as const,
+          asset: { asset_id: 'txt_stem1', digest: 'sha256:s' },
+          content_md: '如下图网格中，每个小正方形边长为 1',
+        },
+        {
+          material_id: 'mat-sol',
+          kind: 'plaintext' as const,
+          asset: { asset_id: 'sol_000000000000', digest: 'sha256:p' },
+          visibility: 'private' as const,
+          content_md: '解析：如图所示……',
+        },
+      ],
+    });
+    // public stem 引用图但无 figure 绑定 ⇒ 收回；private solution 中的 "如图" 不算
+    expect(decideAutomaticServing(revision, ['p1'])).toMatchObject({
+      kind: 'unavailable',
+      reason: 'missing_referenced_figure',
+    });
+    revision.structure.materials = [revision.structure.materials[1]];
+    revision.structure.parts[0].material_ids = ['mat-sol'];
+    expect(decideAutomaticServing(revision, ['p1'])).toEqual({ kind: 'admitted' });
   });
 });

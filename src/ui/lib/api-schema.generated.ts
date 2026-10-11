@@ -13400,6 +13400,7 @@ export interface operations {
                     asset_ids: string[];
                     /** @enum {string} */
                     entrypoint: "vision_single" | "vision_paper" | "docx";
+                    subject_id?: string | null;
                 };
             };
         };
@@ -13799,6 +13800,7 @@ export interface operations {
                     asset_ids: string[];
                     /** @enum {string} */
                     entrypoint: "vision_single" | "vision_paper" | "docx";
+                    subject_id?: string | null;
                 };
             };
         };
@@ -16487,6 +16489,8 @@ export interface operations {
                             submission_id: string;
                             submitted_at: string;
                         }[];
+                        /** @enum {string|null} */
+                        unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | null;
                     };
                 };
             };
@@ -20676,6 +20680,13 @@ export interface operations {
                             wrong: number;
                         } | null;
                         title: string;
+                        withheld_assessments?: {
+                            issuance_id: string | null;
+                            part_ref: string | null;
+                            question_id: string;
+                            /** @enum {string} */
+                            reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure";
+                        }[];
                     };
                 };
             };
@@ -21211,6 +21222,8 @@ export interface operations {
                                         submission_id: string;
                                         submitted_at: string;
                                     }[];
+                                    /** @enum {string|null} */
+                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | null;
                                 };
                                 submission_id: string;
                             };
@@ -22337,6 +22350,8 @@ export interface operations {
                                         submission_id: string;
                                         submitted_at: string;
                                     }[];
+                                    /** @enum {string|null} */
+                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | null;
                                 };
                                 submission_id: string;
                             };
@@ -23225,6 +23240,8 @@ export interface operations {
                                         submission_id: string;
                                         submitted_at: string;
                                     }[];
+                                    /** @enum {string|null} */
+                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | null;
                                 };
                                 submission_id: string;
                             };
@@ -24076,6 +24093,8 @@ export interface operations {
                                         submission_id: string;
                                         submitted_at: string;
                                     }[];
+                                    /** @enum {string|null} */
+                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | null;
                                 };
                                 submission_id: string;
                             };
@@ -24939,6 +24958,13 @@ export interface operations {
                             wrong: number;
                         } | null;
                         title: string;
+                        withheld_assessments?: {
+                            issuance_id: string | null;
+                            part_ref: string | null;
+                            question_id: string;
+                            /** @enum {string} */
+                            reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure";
+                        }[];
                     };
                 };
             };
@@ -28136,11 +28162,32 @@ export interface operations {
                                         excerpt: string;
                                         id: string;
                                         label: string;
+                                        option_count: number | null;
+                                        options: {
+                                            label: string;
+                                            text: string;
+                                        }[];
+                                        sub_question_count: number | null;
+                                        sub_questions: {
+                                            excerpt: string;
+                                            label: string;
+                                        }[];
                                     }[];
+                                    notation: string | null;
                                     primary: {
                                         excerpt: string;
                                         id: string;
                                         label: string;
+                                        option_count: number | null;
+                                        options: {
+                                            label: string;
+                                            text: string;
+                                        }[];
+                                        sub_question_count: number | null;
+                                        sub_questions: {
+                                            excerpt: string;
+                                            label: string;
+                                        }[];
                                     } | null;
                                 } | null;
                                 change_summary: {
@@ -28150,7 +28197,6 @@ export interface operations {
                                 evidence_labels: {
                                     [key: string]: string;
                                 };
-                                technical_details: string | null;
                                 title: string;
                             } | null;
                             proposed_at: string;
@@ -29212,11 +29258,32 @@ export interface operations {
                                         excerpt: string;
                                         id: string;
                                         label: string;
+                                        option_count: number | null;
+                                        options: {
+                                            label: string;
+                                            text: string;
+                                        }[];
+                                        sub_question_count: number | null;
+                                        sub_questions: {
+                                            excerpt: string;
+                                            label: string;
+                                        }[];
                                     }[];
+                                    notation: string | null;
                                     primary: {
                                         excerpt: string;
                                         id: string;
                                         label: string;
+                                        option_count: number | null;
+                                        options: {
+                                            label: string;
+                                            text: string;
+                                        }[];
+                                        sub_question_count: number | null;
+                                        sub_questions: {
+                                            excerpt: string;
+                                            label: string;
+                                        }[];
                                     } | null;
                                 } | null;
                                 change_summary: {
@@ -29226,7 +29293,6 @@ export interface operations {
                                 evidence_labels: {
                                     [key: string]: string;
                                 };
-                                technical_details: string | null;
                                 title: string;
                             } | null;
                             proposed_at: string;
@@ -29496,6 +29562,8 @@ export interface operations {
                         /** @enum {string} */
                         kind: "question" | "question_part" | "record" | "recall_prompt" | "practice_log" | "project_milestone" | "open_inquiry";
                     }[];
+                    /** @enum {boolean} */
+                    confirm_lossy?: true;
                     corrected_payload?: {
                         claim_md: string;
                     };
@@ -29526,6 +29594,21 @@ export interface operations {
                         /** @enum {string} */
                         proposal_status: "pending" | "accepted" | "dismissed" | "stale" | "rubric_rejected";
                         result?: unknown;
+                    } | {
+                        /** @enum {boolean} */
+                        created: false;
+                        /** @enum {string} */
+                        decision: "accept";
+                        /** @enum {string|null} */
+                        decision_event_id: null;
+                        /** @enum {boolean} */
+                        idempotent: false;
+                        proposal_id: string;
+                        /** @enum {string} */
+                        proposal_kind: "block_merge";
+                        /** @enum {string} */
+                        proposal_status: "pending";
+                        result?: unknown;
                     };
                 };
             };
@@ -29546,6 +29629,21 @@ export interface operations {
                         proposal_kind: "knowledge_node" | "knowledge_edge" | "knowledge_mutation" | "learning_item" | "note_update" | "variant_question" | "completion" | "relearn" | "defer" | "record_links" | "record_promotion" | "archive" | "judge_retraction" | "goal_scope" | "block_merge" | "image_candidate" | "question_draft" | "question_edit" | "conjecture" | "cause_category";
                         /** @enum {string} */
                         proposal_status: "pending" | "accepted" | "dismissed" | "stale" | "rubric_rejected";
+                        result?: unknown;
+                    } | {
+                        /** @enum {boolean} */
+                        created: false;
+                        /** @enum {string} */
+                        decision: "accept";
+                        /** @enum {string|null} */
+                        decision_event_id: null;
+                        /** @enum {boolean} */
+                        idempotent: false;
+                        proposal_id: string;
+                        /** @enum {string} */
+                        proposal_kind: "block_merge";
+                        /** @enum {string} */
+                        proposal_status: "pending";
                         result?: unknown;
                     };
                 };

@@ -5,7 +5,6 @@ import { GET } from '@/capabilities/ingestion/api/mistakes';
 import { ingestionCapability } from '@/capabilities/ingestion/manifest';
 import { readMistakes } from '@/capabilities/ingestion/public';
 import { commitFormalAttempt } from '@/capabilities/practice/server/assessment/attempt';
-import { issueAssessment } from '@/capabilities/practice/server/assessment/issue';
 import * as evaluationService from '@/capabilities/practice/server/judge/evaluate-submission';
 import { createRecordedModelExecutor } from '@/capabilities/practice/server/judge/recorded-model-executor';
 import type {
@@ -33,6 +32,7 @@ import {
 } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
 import { buildHonoApp } from '../../../server/app';
+import { seedHistoricalAssessmentIssuance } from '../../../tests/fixtures/historical-assessment-issuance';
 import { handwritingFixture } from '../../../tests/fixtures/native-solo-http';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 
@@ -239,7 +239,7 @@ async function attempt(
   } = {},
 ) {
   const anchor = options.anchor ?? 'root';
-  const issued = await issueAssessment(db, {
+  const issued = await seedHistoricalAssessmentIssuance(db, {
     group_id: 'root',
     part_ids: options.partIds ?? ['p1', 'p2'],
     option_order_overrides: options.order,
