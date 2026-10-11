@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import { DBOS } from '@dbos-inc/dbos-sdk';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { PgBoss } from 'pg-boss';
@@ -12,6 +13,7 @@ import type { SessionOrphanWorkflows } from '@/server/durable/session-orphan-wor
 import dbosPackage from '../../node_modules/@dbos-inc/dbos-sdk/package.json';
 import pgBossPackage from '../../node_modules/pg-boss/package.json';
 import { fixtureErrorMessage, sanitizeDiagnostic } from '../dbos-review-orphan/fixture-process';
+import { accelerateSessionCron, schedulerPollMs, sessionDeclarations } from './fixture';
 
 let stage = 'validate-database';
 let database: string | undefined;
@@ -205,32 +207,8 @@ async function main() {
       }
     };
   }
-  const declarations = {
-    pruneEvents: {
-      name: 'prune_job_events',
-      backend: 'dbos',
-      queue: 'fast',
-      schedule: { cron: '0 4 * * *', tz: 'Asia/Shanghai' },
-    },
-    conversationOrphans: {
-      name: 'prune_orphan_conversation_sessions',
-      backend: 'dbos',
-      queue: 'fast',
-      schedule: { cron: cron ? '* * * * *' : '25 4 * * *', tz: 'Asia/Shanghai' },
-    },
-    placementOrphans: {
-      name: 'prune_orphan_placement_sessions',
-      backend: 'dbos',
-      queue: 'fast',
-      schedule: { cron: cron ? '* * * * *' : '35 4 * * *', tz: 'Asia/Shanghai' },
-    },
-    reviewOrphans: {
-      name: 'prune_orphan_review_sessions',
-      backend: 'dbos',
-      queue: 'fast',
-      schedule: { cron: '15 4 * * *', tz: 'Asia/Shanghai' },
-    },
-  } satisfies Parameters<typeof host.startDurableWorker>[0]['declarations'];
+  const pauseNative = cron ? accelerateSessionCron(boss) : undefined;
+  const declarations = sessionDeclarations;
   try {
     stage = 'pg-boss-start';
     await boss.start();
@@ -273,6 +251,7 @@ async function main() {
             z.object({ kind: z.literal('release-forward') }),
             z.object({ kind: z.literal('arm-forward') }),
             z.object({ kind: z.literal('release-rows') }),
+            z.object({ kind: z.literal('pause-native') }),
             z.object({ kind: z.literal('stop') }),
           ])
           .parse(raw);
@@ -291,6 +270,11 @@ async function main() {
           holdForward = false;
           releaseForward?.();
           releaseForward = undefined;
+        } else if (command.kind === 'pause-native') {
+          if (!pauseNative) throw new Error('Only the cron fixture may pause native scheduling');
+          await pauseNative();
+          // Let the SDK observe PAUSED and abort its real per-schedule loops.
+          await delay(schedulerPollMs * 3);
         } else if (command.kind === 'arm-forward') holdForward = true;
         else if (command.kind === 'release-rows') {
           for (const release of heldRows) release();
