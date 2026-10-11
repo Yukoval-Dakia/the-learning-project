@@ -335,6 +335,13 @@ export interface CopilotDockProps {
   onBusyChange?: (busy: boolean) => void;
   /** Embedded only: what the empty conversation says (the host knows what the companion sees). */
   emptyHint?: ReactNode;
+  /**
+   * Embedded only: put text into the composer (e.g. a passage the learner quoted from the page,
+   * M6). Each new `key` appends `text` once and focuses the box; nothing is sent.
+   */
+  insertDraft?: { key: number; text: string } | null;
+  /** Embedded only: a reply's committed turn was re-read (C3 「✓ 已记录」), e.g. for the mascot. */
+  onReplyRecorded?: (replyId: string) => void;
 }
 
 type CompanionReplyState = 'thinking' | 'streaming' | 'recording' | 'settled' | 'stopped';
@@ -354,6 +361,7 @@ interface CompanionMessageRowProps {
   navigate: (to: string) => void;
   onRevert: (checkpointEventId: string) => void;
   revertPending: boolean;
+  onRecorded?: (replyId: string) => void;
 }
 
 // YUK-1473 — the embedded companion's row (design doc C3). A reply keeps its element while the
@@ -365,13 +373,17 @@ const CompanionMessageRow = memo(function CompanionMessageRow({
   navigate,
   onRevert,
   revertPending,
+  onRecorded,
 }: CompanionMessageRowProps) {
   const [justSettled, setJustSettled] = useState(false);
   const previousState = useRef(state);
+  const onRecordedRef = useRef(onRecorded);
+  onRecordedRef.current = onRecorded;
   useEffect(() => {
     const before = previousState.current;
     previousState.current = state;
     if (state !== 'settled' || before === 'settled' || before === 'stopped') return;
+    onRecordedRef.current?.(m.id);
     setJustSettled(true);
     const timer = window.setTimeout(() => setJustSettled(false), COMPANION_SETTLED_MS);
     return () => window.clearTimeout(timer);
@@ -651,6 +663,8 @@ export function CopilotDock({
   onRevealRequest,
   onBusyChange,
   emptyHint,
+  insertDraft,
+  onReplyRecorded,
 }: CopilotDockProps) {
   const embedded = variant === 'embedded';
   const onRevealRequestRef = useRef(onRevealRequest);
@@ -857,6 +871,7 @@ export function CopilotDock({
     closeDrawerDwell();
   }, [closeDrawerDwell, detachSubscriptions]);
   const streamRef = useRef<HTMLDivElement | null>(null);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const sessionBootstrapRef = useRef<number | null>(null);
 
   const pendingMessagesForSession = useCallback((sessionId: string): ChatMessage[] => {
@@ -1764,6 +1779,20 @@ export function CopilotDock({
   useEffect(() => {
     if (embedded) onBusyChange?.(busy);
   }, [busy, embedded, onBusyChange]);
+  // Embedded only: a quoted passage lands in the composer; the learner adds the question and sends.
+  const insertKey = embedded ? insertDraft?.key : undefined;
+  const insertTextRef = useRef(insertDraft?.text);
+  insertTextRef.current = insertDraft?.text;
+  useEffect(() => {
+    const text = insertTextRef.current;
+    if (insertKey === undefined || !text) return;
+    setInput((prev) => (prev.trim() ? `${prev.replace(/\s+$/, '')}\n${text}` : text));
+    const box = composerRef.current;
+    if (box && !box.disabled) {
+      box.focus({ preventScroll: true });
+      requestAnimationFrame(() => box.setSelectionRange(box.value.length, box.value.length));
+    }
+  }, [insertKey]);
 
   const selectCorrectionTarget = useCallback((turnId: string, turnNumber: number) => {
     const target = { turnId, turnNumber };
@@ -1966,6 +1995,7 @@ export function CopilotDock({
               revertPending={
                 m.checkpoint_event_id != null && revertPendingId === m.checkpoint_event_id
               }
+              onRecorded={onReplyRecorded}
             />
           ))}
           {error || refreshFailed ? (
@@ -2074,6 +2104,8 @@ export function CopilotDock({
           ) : null}
           <div className="un-cc-composer">
             <textarea
+              ref={composerRef}
+              data-companion-composer=""
               rows={2}
               value={input}
               placeholder="问点什么（回车发送，Shift+回车换行）"
