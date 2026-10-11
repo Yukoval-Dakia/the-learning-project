@@ -5,7 +5,7 @@ import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
-import { event, question } from '@/db/schema';
+import { event, knowledge, question } from '@/db/schema';
 import {
   calibrationSampleScheduledId,
   runCalibrationSampleTick,
@@ -14,13 +14,26 @@ import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { buildJudgeCalibrationSampleHandler } from '../jobs/judge_calibration_sample';
 import { JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV } from '../jobs/judge-calibration-config';
 import {
+  type CalibrationStagedEffectRecord,
+  type CalibrationStagedExecutionPort,
+  type CalibrationWorkSetItem,
   buildCalibrationSampleOperationPort,
+  buildCalibrationStagedCoreSeams,
+  computeCalibrationEffectIdentity,
+  computeCalibrationFreezeDigest,
+  computeCalibrationInputDigest,
+  computeCalibrationWorkSetId,
   runCalibrationSampleOperation,
+  runCalibrationStagedOperation,
 } from './calibration-sample-durable-operation';
 import {
   JUDGE_CALIBRATION_RUN_SUMMARY_ACTION,
   JUDGE_CALIBRATION_SAMPLE_ACTION,
   type JudgeCalibrationConfig,
+  type JudgeCalibrationSampleDeps,
+  freezeCalibrationWorkSetFromCandidates,
+  prepareCalibrationRejudgeFace,
+  selectJudgeCalibrationCandidates,
 } from './judge-calibration-sample-core';
 
 const CFG: JudgeCalibrationConfig = {
@@ -273,5 +286,213 @@ describe('gate-only DBOS candidate integration', () => {
     }
     expect(runTaskInner).not.toHaveBeenCalled();
     expect(await allEvents()).toEqual(before);
+  });
+});
+
+// The record port below is an isolated test double. It does not test or
+// implement lane B's durable store, fencing, or concurrency guarantee.
+function stagedTestPort(rows: CalibrationStagedEffectRecord[]): CalibrationStagedExecutionPort {
+  return {
+    loadFamilyRecords: async () => [...rows],
+    reserveIntent: async (record) => {
+      const winner = rows.find((row) => row.effectId === record.effectId);
+      if (winner) return { status: 'lost', winner };
+      rows.push(record);
+      return { status: 'reserved' };
+    },
+    appendRecord: async (record) => {
+      rows.push(record);
+    },
+  };
+}
+
+async function freezeOne() {
+  const judgeEventId = await seedJudgedAttempt();
+  const candidates = await selectJudgeCalibrationCandidates(testDb(), CFG, scheduledAt);
+  const frozen = await freezeCalibrationWorkSetFromCandidates(testDb(), candidates);
+  expect(frozen.unprepared).toEqual([]);
+  expect(frozen.items).toHaveLength(1);
+  const item = frozen.items[0];
+  const candidate = candidates[0];
+  if (!item || !candidate) throw new Error('seeded candidate was not frozen');
+  expect(item.judgeEventId).toBe(judgeEventId);
+  return { item, candidate };
+}
+
+function identityFor(item: CalibrationWorkSetItem) {
+  return computeCalibrationEffectIdentity({
+    workSetId: computeCalibrationWorkSetId({ anchor: scheduledAt, cfg: CFG }),
+    freezeDigest: computeCalibrationFreezeDigest([item]),
+    item,
+    cfg: CFG,
+  });
+}
+
+describe('prepared staged core integration', () => {
+  // @invariant data: mutable question/answer/profile edits cannot alter a frozen paid request
+  // @fails-if execution re-reads rows or hashes only the answer; the runner sees edited material
+  it('freezes real rows then executes the original input after question/answer/profile/model/clock changes', async () => {
+    const { item, candidate } = await freezeOne();
+    const digest = computeCalibrationInputDigest(item);
+    const saved: CalibrationWorkSetItem = JSON.parse(JSON.stringify(item));
+    expect(computeCalibrationInputDigest(saved)).toBe(digest);
+    const knowledgeId = createId();
+    await testDb().insert(knowledge).values({
+      id: knowledgeId,
+      name: '校准冻结后的数学知识点',
+      domain: 'math',
+      created_at: scheduledAt,
+      updated_at: scheduledAt,
+    });
+    await testDb()
+      .update(question)
+      .set({
+        prompt_md: '后来编辑的题干，条件已改变。'.repeat(30),
+        reference_md: '后来编辑的参考答案。',
+        knowledge_ids: [knowledgeId],
+        rubric_json: { criteria: [{ name: 'changed', weight: 1, descriptor: '新评分点' }] },
+        metadata: { changed_after_freeze: true },
+        version: 1,
+      })
+      .where(eq(question.id, item.questionId));
+    await testDb()
+      .update(event)
+      .set({ payload: { answer_md: '后来改变的作答', answer_image_refs: [] } })
+      .where(eq(event.id, item.answerEventId));
+    const changed = await prepareCalibrationRejudgeFace(testDb(), candidate);
+    expect(changed.kind).toBe('prepared');
+    if (changed.kind !== 'prepared')
+      throw new Error('edited candidate should remain reconstructable');
+    expect(changed.face.subjectProfile.id).toBe('math');
+    expect(changed.face.subjectProfile.id).not.toBe(item.subjectProfile.id);
+
+    setTestConfig({ VISION_JUDGE_PROVIDER: 'xiaomi', 'lane.global.provider': 'xiaomi' });
+    let clock = new Date('2026-10-11T22:14:00.000Z');
+    const cfg = { ...CFG };
+    const runTaskInner = vi.fn<NonNullable<JudgeCalibrationSampleDeps['runTaskInner']>>(
+      async () => {
+        setTestConfig({
+          VISION_JUDGE_PROVIDER: 'anthropic-sub',
+          'lane.global.provider': 'anthropic-sub',
+        });
+        clock = new Date('2026-10-12T22:14:00.000Z');
+        return { text: semanticOutput('partial') };
+      },
+    );
+    const seams = await buildCalibrationStagedCoreSeams(testDb(), cfg, {
+      runTaskInner,
+      now: () => clock,
+    });
+    cfg.rejudgeModel = 'later-model';
+    const identity = identityFor(saved);
+    const execution = await seams.executeItem(saved, identity, { anchor: scheduledAt });
+    expect(execution.kind).toBe('sent');
+    if (execution.kind !== 'sent') throw new Error('expected semantic receipt');
+    expect(execution.receipt.outcome).toMatchObject({
+      prepared_input: {
+        question: saved.question,
+        subject_profile: saved.subjectProfile,
+        answer_md: saved.answerMd,
+      },
+      config: CFG,
+      executed_at: '2026-10-11T22:14:00.000Z',
+      lane: { visionJudgeProviderAtSample: 'xiaomi', aiProviderOverrideAtSample: 'xiaomi' },
+    });
+    expect(runTaskInner).toHaveBeenCalledOnce();
+    expect(runTaskInner.mock.calls[0]).toEqual([
+      'SemanticJudgeTask',
+      expect.objectContaining({
+        answer: { content: saved.answerMd },
+        question: expect.objectContaining({ prompt_md: saved.question.prompt_md }),
+      }),
+      expect.objectContaining({
+        override: { provider: CFG.rejudgeProvider, model: CFG.rejudgeModel },
+      }),
+    ]);
+    const later = await buildCalibrationStagedCoreSeams(testDb(), {
+      ...CFG,
+      rejudgeModel: 'later-model',
+    });
+    expect(await later.applyReceipt(execution.receipt, identity, { anchor: clock })).toMatchObject({
+      write: 'written',
+    });
+    const rows = await eventsByAction(JUDGE_CALIBRATION_SAMPLE_ACTION);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      created_at: new Date('2026-10-11T22:14:00.000Z'),
+      payload: {
+        sampled_at: '2026-10-11T22:14:00.000Z',
+        rejudge_model: CFG.rejudgeModel,
+        ai_provider_override_at_sample: 'xiaomi',
+        vision_judge_provider_at_sample: 'xiaomi',
+      },
+    });
+  });
+
+  // @invariant data: failed apply recovers from its saved receipt on a later tick without a second provider request
+  // @fails-if use the new tick config/clock or plan the entity again after recovery; stored provenance or call count changes
+  it('retains an apply failure then writes the original receipt on a later model/tick without resend', async () => {
+    const { item } = await freezeOne();
+    const executedAt = new Date('2026-10-11T22:13:00.000Z');
+    const runTaskInner = vi.fn<NonNullable<JudgeCalibrationSampleDeps['runTaskInner']>>(
+      async () => ({ text: semanticOutput('partial') }),
+    );
+    const seams = await buildCalibrationStagedCoreSeams(testDb(), CFG, {
+      runTaskInner,
+      now: () => executedAt,
+    });
+    const records: CalibrationStagedEffectRecord[] = [];
+    const port = stagedTestPort(records);
+    const first = await runCalibrationStagedOperation(
+      { config: CFG, resolveProviderFn: () => {} },
+      {
+        port,
+        workSet: { anchor: scheduledAt, items: [item] },
+        executeItem: seams.executeItem,
+        applyReceipt: async () => {
+          throw new Error('injected domain apply failure');
+        },
+      },
+    );
+    expect(first).toMatchObject({
+      kind: 'staged',
+      report: { counts: { completedApplyPending: 1 } },
+    });
+    expect(await eventsByAction(JUDGE_CALIBRATION_SAMPLE_ACTION)).toEqual([]);
+    expect(records.map((row) => row.stage)).toEqual(['intent', 'completed']);
+    const originalReceipt = JSON.stringify(records[1]?.receipt);
+    const laterAnchor = new Date('2026-10-12T22:10:00.000Z');
+    const laterCfg = { ...CFG, rejudgeModel: 'new-model', batchMax: 2, windowDays: 30 };
+    setTestConfig({
+      VISION_JUDGE_PROVIDER: 'anthropic-sub',
+      'lane.global.provider': 'anthropic-sub',
+    });
+    const laterSeams = await buildCalibrationStagedCoreSeams(testDb(), laterCfg, {
+      runTaskInner,
+      now: () => laterAnchor,
+    });
+    const later = await runCalibrationStagedOperation(
+      { config: laterCfg, resolveProviderFn: () => {} },
+      {
+        port,
+        workSet: { anchor: laterAnchor, items: [item] },
+        executeItem: laterSeams.executeItem,
+        applyReceipt: laterSeams.applyReceipt,
+      },
+    );
+    expect(later).toMatchObject({
+      kind: 'staged',
+      report: { pendingApplications: [], counts: { appliedFromReceipt: 1 } },
+    });
+    expect(runTaskInner).toHaveBeenCalledOnce();
+    expect(records.map((row) => row.stage)).toEqual(['intent', 'completed', 'applied']);
+    expect(JSON.stringify(records[2]?.receipt)).toBe(originalReceipt);
+    expect(records[2]?.recordedAt).toBe(scheduledAt.toISOString());
+    const rows = await eventsByAction(JUDGE_CALIBRATION_SAMPLE_ACTION);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      created_at: executedAt,
+      payload: { rejudge_model: CFG.rejudgeModel, sampled_at: executedAt.toISOString() },
+    });
   });
 });

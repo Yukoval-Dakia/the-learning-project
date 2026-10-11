@@ -35,7 +35,10 @@ import {
   IMAGE_CONSUMING_JUDGE_ROUTES,
   MODEL_BACKED_JUDGE_ROUTES,
 } from '@/capabilities/practice/server/judge';
-import { judgeAnswer } from '@/capabilities/practice/server/judge/question-contract';
+import {
+  type JudgeQuestionRow,
+  judgeAnswer,
+} from '@/capabilities/practice/server/judge/question-contract';
 import { getConfig } from '@/core/config/store';
 import { newId } from '@/core/ids';
 import type { Db } from '@/db/client';
@@ -45,7 +48,10 @@ import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verd
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import type { ResolvedProvider } from '@/server/ai/providers';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import type { CalibrationWorkSetItem } from './calibration-sample-durable-operation';
+import type {
+  CalibrationItemSkipClassification,
+  CalibrationWorkSetItem,
+} from './calibration-sample-durable-operation';
 
 export const JUDGE_CALIBRATION_SAMPLE_ACTION = 'experimental:judge_calibration_sample';
 export const JUDGE_CALIBRATION_RUN_SUMMARY_ACTION = 'experimental:judge_calibration_run_summary';
@@ -374,19 +380,35 @@ export function readCalibrationLaneSnapshots(): JudgeCalibrationLaneSnapshots {
   return { visionJudgeProviderAtSample, aiProviderOverrideAtSample };
 }
 
-/** Single-item EXECUTION seam (provider call only; no observation write).
- * Behavior-equivalent move of the per-candidate loop body's fetch/judge
- * portion: same face checks in the same order, same override spread order
- * (S5), same slot capture (MF1). Throws propagate to the caller's catch. */
-export async function rejudgeSingleCalibrationCandidate(
+/** Prepared runner inputs. The staged executor uses this saved face without
+ * reading answer/question/profile rows again. */
+export interface JudgeCalibrationRejudgeFace {
+  judgeEventId: string;
+  questionId: string;
+  answerEventId: string;
+  priorOutcome: SampledOutcome;
+  judgeRoute: string;
+  answerMd: string;
+  studentImageRefs: string[];
+  question: JudgeQuestionRow;
+  subjectProfile: Awaited<ReturnType<typeof resolveSubjectProfileForKnowledgeIds>>;
+}
+
+export type PreparedCalibrationRejudgeFace =
+  | { kind: 'missing_answer_event' }
+  | { kind: 'missing_input' }
+  | { kind: 'missing_image_refs' }
+  | { kind: 'missing_question' }
+  | { kind: 'prepared'; face: JudgeCalibrationRejudgeFace };
+
+/** PREPARE (live reads — the only place business rows are read for one
+ * item): answer event face checks in the retained order, question row,
+ * subject profile. Behavior-equivalent move of the fetch portion of the
+ * per-candidate loop body. */
+export async function prepareCalibrationRejudgeFace(
   db: Db,
-  cfg: JudgeCalibrationConfig,
   candidate: JudgeCandidate,
-  opts: {
-    judgeFn: typeof judgeAnswer;
-    runTaskInner: RunTaskInner | ReturnType<typeof makeRunTaskFn>;
-  },
-): Promise<JudgeCalibrationSingleRejudge> {
+): Promise<PreparedCalibrationRejudgeFace> {
   const judgeRoute = String(candidate.payload.judge_route ?? '');
   const priorOutcome = candidate.payload.coarse_outcome as SampledOutcome;
   const isVision = VISION_ROUTES.has(judgeRoute);
@@ -427,6 +449,38 @@ export async function rejudgeSingleCalibrationCandidate(
   }
   const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
 
+  return {
+    kind: 'prepared',
+    face: {
+      judgeEventId: candidate.id,
+      questionId: q.id,
+      answerEventId: answerEvent.id,
+      priorOutcome,
+      judgeRoute,
+      answerMd,
+      studentImageRefs,
+      question: q,
+      subjectProfile,
+    },
+  };
+}
+
+/** JUDGE the prepared face (provider EXECUTION only — no reads of mutable
+ * business rows; db is forwarded for pipeline plumbing exactly as the
+ * retained path forwards it). Slot capture (MF1), override spread order (S5)
+ * and the unsupported classification (MF3②) are behavior-equivalent moves of
+ * the judge portion of the loop body. */
+export async function judgeCalibrationPreparedFace(
+  cfg: JudgeCalibrationConfig,
+  face: JudgeCalibrationRejudgeFace,
+  opts: {
+    db: Db;
+    judgeFn: typeof judgeAnswer;
+    runTaskInner: RunTaskInner | ReturnType<typeof makeRunTaskFn>;
+  },
+): Promise<Extract<JudgeCalibrationSingleRejudge, { kind: 'rejudged' | 'unsupported' }>> {
+  const isVision = VISION_ROUTES.has(face.judgeRoute);
+
   // S1/MF1 capture slot: the wrapper records the inner run's id + raw text.
   const slot: { taskRunId: string | null; rawText: string | null } = {
     taskRunId: null,
@@ -448,11 +502,11 @@ export async function rejudgeSingleCalibrationCandidate(
   };
 
   const invoked = await opts.judgeFn({
-    db,
-    question: { ...q, judge_kind_override: judgeRoute },
-    answer_md: answerMd,
-    student_image_refs: studentImageRefs,
-    subjectProfile,
+    db: opts.db,
+    question: { ...face.question, judge_kind_override: face.judgeRoute },
+    answer_md: face.answerMd,
+    student_image_refs: face.studentImageRefs,
+    subjectProfile: face.subjectProfile,
     runTaskFn: rejudgeRunTaskFn,
   });
   const rejudgeOutcome = invoked.result.coarse_outcome;
@@ -464,11 +518,11 @@ export async function rejudgeSingleCalibrationCandidate(
   }
   return {
     kind: 'rejudged',
-    judgeEventId: candidate.id,
-    questionId: q.id,
-    answerEventId: answerEvent.id,
-    priorOutcome,
-    judgeRoute,
+    judgeEventId: face.judgeEventId,
+    questionId: face.questionId,
+    answerEventId: face.answerEventId,
+    priorOutcome: face.priorOutcome,
+    judgeRoute: face.judgeRoute,
     isVision,
     route: invoked.route,
     coarseOutcome: rejudgeOutcome,
@@ -476,6 +530,25 @@ export async function rejudgeSingleCalibrationCandidate(
     taskRunId: slot.taskRunId,
     rawText: slot.rawText,
   };
+}
+
+/** Single-item EXECUTION (retained composition): prepare the face (live
+ * reads), then judge it. Behavior-equivalent with the pre-extraction loop
+ * body. */
+export async function rejudgeSingleCalibrationCandidate(
+  db: Db,
+  cfg: JudgeCalibrationConfig,
+  candidate: JudgeCandidate,
+  opts: {
+    judgeFn: typeof judgeAnswer;
+    runTaskInner: RunTaskInner | ReturnType<typeof makeRunTaskFn>;
+  },
+): Promise<JudgeCalibrationSingleRejudge> {
+  const prepared = await prepareCalibrationRejudgeFace(db, candidate);
+  if (prepared.kind !== 'prepared') {
+    return prepared;
+  }
+  return judgeCalibrationPreparedFace(cfg, prepared.face, { db, ...opts });
 }
 
 /** Single-item APPLY seam (domain write only; no provider call). Composes the
@@ -513,30 +586,44 @@ export async function applyJudgeCalibrationRejudgeSample(
   });
 }
 
-/** Freeze the selected candidates into staged-workset items by capturing each
- * answer payload at freeze time. Unfetchable answer events are DROPPED —
- * without the face the item cannot be re-judged at all (the retained loop
- * counts that face as a per-item error instead). */
+/** Freeze the selected candidates into staged-workset items by capturing the
+ * FULL prepared input face (question row, subject profile, answer face) at
+ * freeze time — YUK-1355 R1 P1b: the freeze digest binds the exact runner
+ * inputs, and execution never re-reads the (mutable) business rows.
+ * Un-preparable candidates are reported, never silently dropped. */
 export async function freezeCalibrationWorkSetFromCandidates(
   db: Db,
   candidates: readonly JudgeCandidate[],
-): Promise<CalibrationWorkSetItem[]> {
+): Promise<{
+  items: CalibrationWorkSetItem[];
+  unprepared: Array<{ judgeEventId: string; classification: CalibrationItemSkipClassification }>;
+}> {
   const items: CalibrationWorkSetItem[] = [];
+  const unprepared: Array<{
+    judgeEventId: string;
+    classification: CalibrationItemSkipClassification;
+  }> = [];
   for (const candidate of candidates) {
-    const [answerEvent] = await db.select().from(event).where(eq(event.id, candidate.subject_id));
-    if (!answerEvent) continue;
+    const prepared = await prepareCalibrationRejudgeFace(db, candidate);
+    if (prepared.kind !== 'prepared') {
+      unprepared.push({ judgeEventId: candidate.id, classification: prepared.kind });
+      continue;
+    }
+    const { face } = prepared;
     items.push({
-      judgeEventId: candidate.id,
-      answerEventId: answerEvent.id,
-      questionId: answerEvent.subject_id,
-      judgeRoute: String(candidate.payload.judge_route ?? ''),
-      priorOutcome: String(candidate.payload.coarse_outcome ?? ''),
-      judgePayload: candidate.payload,
-      answerPayload: answerEvent.payload as Record<string, unknown>,
+      judgeEventId: face.judgeEventId,
+      answerEventId: face.answerEventId,
+      questionId: face.questionId,
+      judgeRoute: face.judgeRoute,
+      priorOutcome: face.priorOutcome,
+      answerMd: face.answerMd,
+      studentImageRefs: [...face.studentImageRefs],
+      question: structuredClone(face.question),
+      subjectProfile: structuredClone(face.subjectProfile),
       judgeCreatedAt: candidate.created_at.toISOString(),
     });
   }
-  return items;
+  return { items, unprepared };
 }
 
 /** Runner factory for external single-item callers (YUK-1355): the same

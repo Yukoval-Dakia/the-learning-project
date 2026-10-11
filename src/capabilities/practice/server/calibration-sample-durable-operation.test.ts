@@ -8,6 +8,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import { type Db, db } from '@/db/client';
+import { writeEvent } from '@/kernel/events';
+import { mathProfile } from '@/subjects/math/profile';
+import { resolveSubjectProfile } from '@/subjects/profile';
 import { JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV } from '../jobs/judge-calibration-config';
 import {
   type ApplyCalibrationReceiptFn,
@@ -19,6 +22,7 @@ import {
   type CalibrationStagedOperationOutcome,
   type CalibrationWorkSetItem,
   type ExecuteCalibrationItemFn,
+  buildCalibrationStagedCoreSeams,
   computeCalibrationEffectId,
   computeCalibrationEffectIdentity,
   computeCalibrationEntityKey,
@@ -29,8 +33,10 @@ import {
   runCalibrationSampleOperation,
   runCalibrationStagedOperation,
 } from './calibration-sample-durable-operation';
+import { judgeAnswer, unsupportedResult } from './judge/question-contract';
 import type {
   JudgeCalibrationConfig,
+  JudgeCalibrationRejudgeFace,
   JudgeCalibrationSampleDeps,
   JudgeCalibrationSampleResult,
 } from './judge-calibration-sample-core';
@@ -52,10 +58,26 @@ const RESULT: JudgeCalibrationSampleResult = {
   errors: 0,
 };
 
-vi.mock('@/db/client', () => ({ db: {} }));
+const preparationRows = vi.hoisted((): { rows: unknown[][] } => ({ rows: [] }));
+vi.mock('@/db/client', () => ({
+  db: {
+    select: () => ({
+      from: () => ({
+        where: async () => {
+          const row = preparationRows.rows.shift();
+          if (!row) throw new Error('unexpected live business-row query');
+          return row;
+        },
+      }),
+    }),
+  },
+}));
+vi.mock('@/kernel/events', () => ({ writeEvent: vi.fn() }));
 
 beforeEach(() => {
   vi.unstubAllEnvs();
+  vi.mocked(writeEvent).mockReset();
+  preparationRows.rows = [];
 });
 afterEach(() => {
   resetTestConfig();
@@ -264,10 +286,21 @@ describe('runCalibrationSampleOperation', () => {
 const ANCHOR = new Date('2026-10-11T22:10:00.000Z');
 const NEXT_NIGHT = new Date('2026-10-12T22:10:00.000Z');
 
-const ANSWER_PAYLOAD = {
-  answer_md: '一段足够长的历史作答文本，含嵌套结构与边界情况',
-  answer_image_refs: [] as string[],
+const FROZEN_QUESTION: JudgeCalibrationRejudgeFace['question'] = {
+  id: 'q_1',
+  kind: 'short_answer',
+  prompt_md: '两件同价商品总计84元，求单件价格并解释方程与单位。'.repeat(30),
+  reference_md: '设单件价格为x元，则2x=84，因此x=42元。'.repeat(30),
+  rubric_json: {
+    criteria: [{ name: 'equation', weight: 1, descriptor: '两件总价与单件价格对应' }],
+    required_points: ['2x=84', '42元'],
+  },
+  choices_md: null,
+  judge_kind_override: null,
+  knowledge_ids: ['k_math_1', 'k_math_2'],
+  metadata: { source_context: { ambiguity: ['总价不是单价'], paragraphs: ['条件', '推导'] } },
 };
+const FROZEN_PROFILE = structuredClone(mathProfile);
 
 const ITEM: CalibrationWorkSetItem = {
   judgeEventId: 'evt_judge_1',
@@ -275,8 +308,10 @@ const ITEM: CalibrationWorkSetItem = {
   questionId: 'q_1',
   judgeRoute: 'judge.v2.open',
   priorOutcome: 'correct',
-  judgePayload: { coarse_outcome: 'correct', judge_route: 'judge.v2.open' },
-  answerPayload: ANSWER_PAYLOAD,
+  answerMd: '一段足够长的历史作答文本，含嵌套结构与边界情况',
+  studentImageRefs: [],
+  question: FROZEN_QUESTION,
+  subjectProfile: FROZEN_PROFILE,
   judgeCreatedAt: '2026-10-10T08:00:00.000Z',
 };
 
@@ -286,8 +321,10 @@ const ITEM_B: CalibrationWorkSetItem = {
   questionId: 'q_2',
   judgeRoute: 'judge.v2.open',
   priorOutcome: 'incorrect',
-  judgePayload: { coarse_outcome: 'incorrect', judge_route: 'judge.v2.open' },
-  answerPayload: { answer_md: '另一份作答', answer_image_refs: [] as string[] },
+  answerMd: '另一份作答',
+  studentImageRefs: [],
+  question: { ...FROZEN_QUESTION, id: 'q_2', prompt_md: '另一道商品问题' },
+  subjectProfile: FROZEN_PROFILE,
   judgeCreatedAt: '2026-10-10T09:30:00.000Z',
 };
 
@@ -326,7 +363,7 @@ function receiptFor(identity: CalibrationEffectIdentity): CalibrationItemReceipt
 
 const APPLY_OK: ApplyCalibrationReceiptFn = async (_receipt, identity) => ({
   domainRef: `experimental:judge_calibration_sample:${identity.judgeEventId}`,
-  idempotentReplay: false,
+  write: 'written',
 });
 function stagedIds(
   anchor: Date,
@@ -414,24 +451,42 @@ describe('frozen workset identity', () => {
     // @invariant data: a different item set is a different freeze
     expect(computeCalibrationFreezeDigest([ITEM])).not.toBe(base);
     expect(computeCalibrationFreezeDigest([ITEM_B])).not.toBe(base);
+    expect(
+      computeCalibrationFreezeDigest([{ ...ITEM, judgeEventId: 'replacement_judge' }]),
+    ).not.toBe(computeCalibrationFreezeDigest([ITEM]));
   });
 
   // @invariant data: the input digest pins the frozen re-judge input face
   // @fails-if hash a mutable or delivery-dependent field; replay changes the digest
-  it('input digest is payload-sensitive and key-order insensitive', () => {
+  it('input digest binds the FULL frozen face — question/profile edits are input changes', () => {
     const base = computeCalibrationInputDigest(ITEM);
     // @invariant data: canonical serialization — key order is not an input change
     expect(
       computeCalibrationInputDigest({
         ...ITEM,
-        answerPayload: { answer_image_refs: [], answer_md: ANSWER_PAYLOAD.answer_md },
+        question: { metadata: FROZEN_QUESTION.metadata, ...FROZEN_QUESTION },
       }),
     ).toBe(base);
     // @invariant data: a changed judge route is a changed input face
     expect(computeCalibrationInputDigest({ ...ITEM, judgeRoute: 'judge.v3.math' })).not.toBe(base);
-    // @invariant data: a changed answer payload is a changed input face
+    // @invariant data: a changed answer text is a changed input face
+    expect(computeCalibrationInputDigest({ ...ITEM, answerMd: '改写后的作答' })).not.toBe(base);
+    // @invariant data: R1 P1b — a post-freeze question edit is a different input
     expect(
-      computeCalibrationInputDigest({ ...ITEM, answerPayload: { answer_md: '改写后的作答' } }),
+      computeCalibrationInputDigest({
+        ...ITEM,
+        question: { ...FROZEN_QUESTION, prompt_md: '编辑后的新题干' },
+      }),
+    ).not.toBe(base);
+    // @invariant data: R1 P1b — a post-freeze subject-profile edit is a different input
+    expect(
+      computeCalibrationInputDigest({
+        ...ITEM,
+        subjectProfile: {
+          ...FROZEN_PROFILE,
+          promptFragments: { ...FROZEN_PROFILE.promptFragments, teachingStyle: '编辑后的学科指导' },
+        },
+      }),
     ).not.toBe(base);
   });
 
@@ -525,7 +580,7 @@ describe('runCalibrationStagedOperation', () => {
     // @invariant data: applied is marked ONLY with the apply seam's trusted evidence
     expect(port.rows[2]?.application).toEqual({
       domainRef: `experimental:judge_calibration_sample:${ITEM.judgeEventId}`,
-      idempotentReplay: false,
+      write: 'written' as const,
     });
   });
 
@@ -690,7 +745,7 @@ describe('runCalibrationStagedOperation', () => {
       stage: 'applied',
       application: {
         domainRef: `experimental:judge_calibration_sample:${ITEM.judgeEventId}`,
-        idempotentReplay: false,
+        write: 'written' as const,
       },
     });
     const executeItem = vi.fn(async () => {
@@ -827,7 +882,7 @@ describe('runCalibrationStagedOperation', () => {
       stage: 'applied',
       application: {
         domainRef: `experimental:judge_calibration_sample:${ITEM.judgeEventId}`,
-        idempotentReplay: false,
+        write: 'written' as const,
       },
     });
     const before = JSON.parse(JSON.stringify(port.rows)) as CalibrationStagedEffectRecord[];
@@ -857,7 +912,7 @@ describe('runCalibrationStagedOperation', () => {
     const report = expectStagedReport(
       await runStaged(port, executeItem, {
         anchor: ANCHOR,
-        items: [ITEM, { ...ITEM, answerPayload: { answer_md: '重复条目的不同载荷' } }],
+        items: [ITEM, { ...ITEM, answerMd: '重复条目的不同作答' }],
       }),
     );
     expect(report.dispositions.map((d) => d.kind)).toEqual([
@@ -899,5 +954,333 @@ describe('runCalibrationStagedOperation', () => {
     );
     expect(replay.dispositions[0]?.kind).toBe('applied_replay');
     expect(replay.freezeMismatch).toBeNull();
+  });
+
+  // @invariant data: a completed-pending-apply receipt must not be re-bought under a new revision
+  // @fails-if only intent/sent_unknown block; a new tick re-sends while the receipt sits unapplied
+  it('completed pending apply — a new revision is blocked until the receipt is applied', async () => {
+    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
+    const port = new MemoryStagedPort();
+    const executeItem = vi.fn(async (...args: Parameters<ExecuteCalibrationItemFn>) =>
+      SENT_OK(...args),
+    );
+    const failingApply: ApplyCalibrationReceiptFn = async () => {
+      throw new Error('observation write still failing');
+    };
+    const first = expectStagedReport(
+      await runStaged(port, executeItem, { anchor: ANCHOR, items: [ITEM] }, failingApply),
+    );
+    expect(first.dispositions[0]?.kind).toBe('completed_apply_pending');
+    // a LATER tick, with the receipt STILL unapplied, must not re-buy the entity
+    const later = expectStagedReport(
+      await runStaged(port, executeItem, { anchor: NEXT_NIGHT, items: [ITEM] }, failingApply),
+    );
+    expect(later.dispositions[0]?.kind).toBe('held_blocked_by_open_obligation');
+    expect(later.counts.heldBlockedByOpenObligation).toBe(1);
+    expect(executeItem).toHaveBeenCalledTimes(1);
+    // @invariant data: the pending application stays visible on every tick
+    expect(later.pendingApplications).toEqual([
+      { effectId: expect.any(String), judgeEventId: ITEM.judgeEventId, workSetId: first.workSetId },
+    ]);
+  });
+
+  // @invariant data: a fresh receipt that fails the echo check is preserved as evidence
+  // @fails-if discard the mismatching receipt; adjudication loses the original payload
+  it('fresh echo mismatch — the original receipt is preserved on the sent_unknown row', async () => {
+    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
+    const port = new MemoryStagedPort();
+    const mismatchingReceipt: CalibrationItemReceipt = {
+      effect: { ...stagedIds(ANCHOR, [ITEM]).identity, inputDigest: 'f'.repeat(64) },
+      outcome: { coarse_outcome: 'partial', confidence: 0.5 },
+    };
+    const executeItem = vi.fn(async () => ({ kind: 'sent' as const, receipt: mismatchingReceipt }));
+    const applyReceipt = vi.fn();
+    const report = expectStagedReport(
+      await runStaged(port, executeItem, { anchor: ANCHOR, items: [ITEM] }, applyReceipt),
+    );
+    expect(report.dispositions[0]?.kind).toBe('held_unknown_send');
+    expect(port.rows.map((r) => r.stage)).toEqual(['intent', 'sent_unknown']);
+    // @invariant data: the mismatching receipt itself is kept for adjudication
+    expect(port.rows[1]?.receipt).toEqual(mismatchingReceipt);
+    expect(applyReceipt).not.toHaveBeenCalled();
+  });
+});
+
+describe('released core seams (real exports, no DB)', () => {
+  async function loadCore() {
+    return import('./judge-calibration-sample-core');
+  }
+
+  const executedAt = new Date('2026-10-11T22:14:23.000Z');
+  const semanticText = JSON.stringify({
+    score: 0.5,
+    coarse_outcome: 'partial',
+    confidence: 0.8,
+    feedback_md: '方程正确，但需要说明单件单位。'.repeat(30),
+    evidence_json: { matched_points: ['2x=84'], missing_points: ['单位'] },
+  });
+
+  // @invariant data: the real pipeline receives the prepared face and overrides its second lane
+  // @fails-if reconstruct live rows or lose the pinned override; the captured judge/runner input changes
+  it('executes the frozen question/profile/answer and captures the exact runner output', async () => {
+    const core = await loadCore();
+    const judgeFn = vi.fn(judgeAnswer);
+    const runTaskInner = vi.fn<NonNullable<JudgeCalibrationSampleDeps['runTaskInner']>>(
+      async () => ({ text: semanticText }),
+    );
+    const face = { ...ITEM, judgeRoute: 'semantic', studentImageRefs: [...ITEM.studentImageRefs] };
+    const outcome = await core.judgeCalibrationPreparedFace(CFG, face, {
+      db,
+      judgeFn,
+      runTaskInner,
+    });
+    expect(outcome).toMatchObject({
+      kind: 'rejudged',
+      coarseOutcome: 'partial',
+      rawText: semanticText,
+    });
+    expect(judgeFn.mock.calls[0]?.[0]).toMatchObject({
+      question: { ...ITEM.question, judge_kind_override: 'semantic' },
+      answer_md: ITEM.answerMd,
+      subjectProfile: ITEM.subjectProfile,
+      student_image_refs: [],
+    });
+    expect(runTaskInner).toHaveBeenCalledOnce();
+    expect(runTaskInner.mock.calls[0]).toEqual([
+      'SemanticJudgeTask',
+      expect.anything(),
+      expect.objectContaining({
+        override: { provider: CFG.rejudgeProvider, model: CFG.rejudgeModel },
+      }),
+    ]);
+  });
+
+  // @invariant data: preparation detaches question/answer/profile objects before later mutations
+  // @fails-if freeze retains a live profile or execution re-reads a business row; the saved face changes or the send fails
+  it('freezes through the real core then ignores mutable source edits and records the changed execution clock', async () => {
+    const core = await loadCore();
+    const questionRow = { ...structuredClone(FROZEN_QUESTION), knowledge_ids: [] };
+    const answerPayload = { answer_md: ITEM.answerMd, answer_image_refs: ['asset_original'] };
+    const sourceProfile = resolveSubjectProfile(null);
+    const originalTeachingStyle = sourceProfile.promptFragments.teachingStyle;
+    preparationRows.rows = [
+      [{ id: ITEM.answerEventId, subject_id: ITEM.questionId, payload: answerPayload }],
+      [questionRow],
+    ];
+    const frozen = await core.freezeCalibrationWorkSetFromCandidates(db, [
+      {
+        id: ITEM.judgeEventId,
+        subject_id: ITEM.answerEventId,
+        created_at: ANCHOR,
+        payload: { judge_route: 'semantic', coarse_outcome: 'correct' },
+      },
+    ]);
+    const item = frozen.items[0];
+    if (!item) throw new Error('expected a prepared item');
+    const initialDigest = computeCalibrationInputDigest(item);
+    let clock = ANCHOR;
+    const cfg = { ...CFG };
+    const runTaskInner = vi.fn<NonNullable<JudgeCalibrationSampleDeps['runTaskInner']>>(
+      async () => ({ text: semanticText }),
+    );
+    const seams = await buildCalibrationStagedCoreSeams(db, cfg, {
+      runTaskInner,
+      now: () => clock,
+    });
+    try {
+      questionRow.prompt_md = 'later edited question';
+      answerPayload.answer_md = 'later edited answer';
+      answerPayload.answer_image_refs.push('later_asset');
+      sourceProfile.promptFragments.teachingStyle = 'later edited subject profile';
+      cfg.rejudgeModel = 'later-model';
+      clock = executedAt;
+      const identity = stagedIds(ANCHOR, [item]).identity;
+      const sent = await seams.executeItem(item, identity, { anchor: ANCHOR });
+      if (sent.kind !== 'sent') throw new Error('expected a receipt');
+      expect(computeCalibrationInputDigest(item)).toBe(initialDigest);
+      expect(sent.receipt.outcome).toMatchObject({
+        config: CFG,
+        executed_at: executedAt.toISOString(),
+        prepared_input: {
+          question: { prompt_md: FROZEN_QUESTION.prompt_md },
+          answer_md: ITEM.answerMd,
+          student_image_refs: ['asset_original'],
+          subject_profile: { promptFragments: { teachingStyle: originalTeachingStyle } },
+        },
+      });
+      expect(runTaskInner.mock.calls[0]?.[1]).toMatchObject({
+        answer: { content: ITEM.answerMd },
+        question: { prompt_md: FROZEN_QUESTION.prompt_md },
+      });
+      expect(preparationRows.rows).toEqual([]);
+    } finally {
+      sourceProfile.promptFragments.teachingStyle = originalTeachingStyle;
+    }
+  });
+
+  // @invariant data: unsupported remains a classification with no observation
+  // @fails-if classify unsupported as a disagreement; a rejudged outcome or write appears
+  it('classifies unsupported without manufacturing a judged receipt', async () => {
+    const core = await loadCore();
+    const judgeFn: typeof judgeAnswer = async () => ({
+      route: 'semantic',
+      modelAttempted: false,
+      result: unsupportedResult('semantic', '无法评分', { reason: 'invalid_rubric' }),
+    });
+    expect(
+      await core.judgeCalibrationPreparedFace(
+        CFG,
+        { ...ITEM, studentImageRefs: [...ITEM.studentImageRefs] },
+        { db, judgeFn, runTaskInner: async () => ({ text: semanticText }) },
+      ),
+    ).toEqual({ kind: 'unsupported' });
+    expect(writeEvent).not.toHaveBeenCalled();
+  });
+
+  async function sendReceipt() {
+    setTestConfig({ VISION_JUDGE_PROVIDER: 'xiaomi', 'lane.global.provider': 'xiaomi' });
+    const item = { ...ITEM, judgeRoute: 'semantic' };
+    const cfg = { ...CFG };
+    const runTaskInner = vi.fn<NonNullable<JudgeCalibrationSampleDeps['runTaskInner']>>(
+      async () => {
+        // Changes while the request is pending must not change its provenance.
+        cfg.rejudgeModel = 'changed-during-call';
+        setTestConfig({
+          VISION_JUDGE_PROVIDER: 'anthropic-sub',
+          'lane.global.provider': 'anthropic-sub',
+        });
+        return { text: semanticText };
+      },
+    );
+    const seams = await buildCalibrationStagedCoreSeams(db, cfg, {
+      runTaskInner,
+      now: () => executedAt,
+    });
+    const identity = stagedIds(ANCHOR, [item]).identity;
+    const execution = await seams.executeItem(item, identity, { anchor: ANCHOR });
+    if (execution.kind !== 'sent') throw new Error('expected a real semantic receipt');
+    return { item, identity, receipt: execution.receipt, runTaskInner };
+  }
+
+  // @invariant data: a later config/model/clock applies the saved receipt without another send
+  // @fails-if rebuild provenance from the new tick or re-buy the entity while recovering it
+  it('apply failure recovers on a later tick using the original input, lane, model and execution time', async () => {
+    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
+    const { item, identity, receipt, runTaskInner } = await sendReceipt();
+    const originalPayload = structuredClone(receipt);
+    const port = new MemoryStagedPort();
+    const firstSeams = await buildCalibrationStagedCoreSeams(db, CFG);
+    vi.mocked(writeEvent).mockRejectedValueOnce(new Error('observation write failed'));
+    const executeItem = vi.fn(async () => ({ kind: 'sent' as const, receipt }));
+    const first = expectStagedReport(
+      await runStaged(
+        port,
+        executeItem,
+        { anchor: ANCHOR, items: [item] },
+        firstSeams.applyReceipt,
+      ),
+    );
+    expect(first.pendingApplications).toHaveLength(1);
+    expect(port.rows.map((r) => r.stage)).toEqual(['intent', 'completed']);
+
+    const laterCfg = { ...CFG, rejudgeModel: 'later-model', windowDays: 30 };
+    const laterSeams = await buildCalibrationStagedCoreSeams(db, laterCfg, {
+      now: () => NEXT_NIGHT,
+    });
+    const laterSend = vi.fn(laterSeams.executeItem);
+    const later = expectStagedReport(
+      await runCalibrationStagedOperation(
+        { config: laterCfg, resolveProviderFn: () => {} },
+        {
+          port,
+          workSet: { anchor: NEXT_NIGHT, items: [item] },
+          executeItem: laterSend,
+          applyReceipt: laterSeams.applyReceipt,
+        },
+      ),
+    );
+    expect(later.dispositions).toEqual([
+      {
+        judgeEventId: item.judgeEventId,
+        effectId: computeCalibrationEffectId(identity),
+        kind: 'applied_from_receipt',
+        classification: undefined,
+      },
+    ]);
+    expect(later.pendingApplications).toEqual([]);
+    expect(laterSend).not.toHaveBeenCalled();
+    expect(runTaskInner).toHaveBeenCalledOnce();
+    expect(port.rows.map((r) => r.stage)).toEqual(['intent', 'completed', 'applied']);
+    expect(port.rows[2]?.recordedAt).toBe(ANCHOR.toISOString());
+    expect(port.rows[2]?.receipt).toEqual(originalPayload);
+    expect(vi.mocked(writeEvent).mock.calls[1]?.[1]).toMatchObject({
+      action: 'experimental:judge_calibration_sample',
+      created_at: executedAt,
+      ingest_at: executedAt,
+      payload: {
+        sampled_at: executedAt.toISOString(),
+        rejudge_provider: CFG.rejudgeProvider,
+        rejudge_model: CFG.rejudgeModel,
+        vision_judge_provider_at_sample: 'xiaomi',
+        ai_provider_override_at_sample: 'xiaomi',
+        same_lane_suspected: false,
+      },
+    });
+    expect(receipt.outcome).toMatchObject({
+      config: CFG,
+      executed_at: executedAt.toISOString(),
+      prepared_input: {
+        question: item.question,
+        subject_profile: item.subjectProfile,
+        answer_md: item.answerMd,
+      },
+    });
+  });
+
+  // @invariant data: receipt mutation cannot be applied and the original payload remains available
+  // @fails-if trust only the identity echo; altered question/config provenance reaches the writer
+  it('rejects mutated input/config and missing provenance before any observation write', async () => {
+    const { identity, receipt } = await sendReceipt();
+    const seams = await buildCalibrationStagedCoreSeams(db, { ...CFG, rejudgeModel: 'later' });
+    const changedInput = structuredClone(receipt);
+    const input = changedInput.outcome.prepared_input;
+    if (!input || typeof input !== 'object') throw new Error('missing prepared input');
+    Reflect.set(input, 'answer_md', 'changed answer');
+    const changedCfg = {
+      ...receipt,
+      outcome: { ...receipt.outcome, config: { ...CFG, rejudgeModel: 'wrong' } },
+    };
+    await expect(
+      seams.applyReceipt(changedInput, identity, { anchor: NEXT_NIGHT }),
+    ).rejects.toThrow('does not match effect');
+    await expect(seams.applyReceipt(changedCfg, identity, { anchor: NEXT_NIGHT })).rejects.toThrow(
+      'does not match effect',
+    );
+    await expect(
+      seams.applyReceipt(receiptFor(identity), identity, { anchor: NEXT_NIGHT }),
+    ).rejects.toThrow('send-time facts');
+    expect(writeEvent).not.toHaveBeenCalled();
+    expect(receipt.outcome).toMatchObject({ prepared_input: { answer_md: ITEM.answerMd } });
+  });
+
+  // @invariant data: a unique-index collision alone does not discharge an immutable receipt
+  // @fails-if label duplicate as a matching application; the record incorrectly becomes applied
+  it('keeps a unique-conflict receipt pending without claiming immutable equality', async () => {
+    setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
+    const { item, receipt, identity } = await sendReceipt();
+    const seams = await buildCalibrationStagedCoreSeams(db, CFG);
+    vi.mocked(writeEvent).mockRejectedValue({ code: '23505' });
+    const port = new MemoryStagedPort();
+    port.rows.push(completedRow(ANCHOR, [item], receipt));
+    const executeItem = vi.fn(seams.executeItem);
+    const report = expectStagedReport(
+      await runStaged(port, executeItem, { anchor: ANCHOR, items: [item] }, seams.applyReceipt),
+    );
+    expect(report.pendingApplications).toHaveLength(1);
+    expect(port.rows.map((r) => r.stage)).toEqual(['completed']);
+    expect(executeItem).not.toHaveBeenCalled();
+    await expect(
+      seams.applyReceipt(receipt, identity, { anchor: NEXT_NIGHT }),
+    ).resolves.toMatchObject({ write: 'unique_duplicate' });
   });
 });

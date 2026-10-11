@@ -16,7 +16,7 @@
 //      second lane must fail the WHOLE run loud, never silently re-route or
 //      write observations). A throw here is a desired failure mode and is NOT
 //      routed through the paid-batch error hook.
-//   3. The paid batch stays the readonly core's job (lazy import preserved):
+//   3. The paid batch stays the retained core's job (lazy import preserved):
 //      per-item isolation, MF8 unique-index duplicate mapping, run-summary
 //      event. This module adds NO provider retries, fallbacks or new writes.
 //
@@ -31,6 +31,7 @@
 // port. The port is the explicit lane-B dependency — it has NO implementation
 // here and NO production caller; see the Part 2 section comment.
 
+import { z } from 'zod';
 import type { Provider } from '@/ai/registry';
 import { getConfigFlag } from '@/core/config/store';
 import { canonicalHash, stableStringify } from '@/core/migration/canonical';
@@ -42,10 +43,9 @@ import {
 } from '../jobs/judge-calibration-config';
 import type {
   JudgeCalibrationConfig,
+  JudgeCalibrationRejudgeFace,
   JudgeCalibrationSampleDeps,
   JudgeCalibrationSampleResult,
-  JudgeCandidate,
-  SampledOutcome,
 } from './judge-calibration-sample-core';
 
 /** Producer identity of one calibration tick. */
@@ -238,10 +238,10 @@ export async function runCalibrationSampleOperation(
 //     — provider EXECUTION only (no observation write); skip faces are
 //     classified outcomes, failures throw to the caller's isolation catch.
 //   • `applyJudgeCalibrationRejudgeSample(db, cfg, rejudged, laneSnapshots, now): Promise<'written'|'duplicate'>`
-//     — domain APPLY only (no provider call); MF8-idempotent observation write.
+//     — domain APPLY only (no provider call); reports the MF8 unique conflict honestly.
 //   • `readCalibrationLaneSnapshots(): JudgeCalibrationLaneSnapshots`
-//   • `freezeCalibrationWorkSetFromCandidates(db, candidates): Promise<CalibrationWorkSetItem[]>`
-//     — captures each frozen item's answer payload at freeze time.
+//   • `freezeCalibrationWorkSetFromCandidates(db, candidates)`
+//     — captures exact question/profile/answer inputs and reports unprepared candidates.
 // `buildCalibrationStagedCoreSeams` below wires these as the REAL staged
 // seams (composed rejudge is never used as receipt recovery: execution and
 // apply remain separate calls).
@@ -260,8 +260,8 @@ export async function runCalibrationSampleOperation(
 //     domain application.
 //   • records are append-only; a changed revision never erases historical
 //     obligations — they keep appearing in every report until discharged.
-//   • no clock freshening: every record carries the frozen workset anchor, and
-//     this code never reads a wall clock.
+//   • record timestamps retain the workset anchor. Receipts separately save
+//     the execution clock and lane snapshots before invoking the judge.
 // ═══════════════════════════════════════════════════════════════════════════
 
 /** Family discriminator mirrored from src/server/durable/calibration-sample-family.ts
@@ -287,43 +287,60 @@ export function computeCalibrationWorkSetId(desc: CalibrationWorkSetDescriptor):
   )}`;
 }
 
-/** One frozen workset member: the immutable input face captured at freeze
- * time. Produced by the core selection seam (`selectJudgeCalibrationCandidates`,
- * released to this lane by the feature owner); the payloads are kept so the
- * per-item executor feeds the SAME face on resume. */
+/** One frozen workset member: the FULL prepared input face captured at freeze
+ * time (R1 P1b) — the exact runner inputs (question row, subject profile,
+ * answer text/images), produced by the core freeze seam
+ * (`freezeCalibrationWorkSetFromCandidates`). Execution consumes ONLY this
+ * face and never re-reads the mutable business rows. */
 export interface CalibrationWorkSetItem {
   readonly judgeEventId: string;
   readonly answerEventId: string;
   readonly questionId: string;
   readonly judgeRoute: string;
-  readonly priorOutcome: string;
-  readonly judgePayload: Record<string, unknown> | null;
-  readonly answerPayload: Record<string, unknown> | null;
+  readonly priorOutcome: JudgeCalibrationRejudgeFace['priorOutcome'];
+  readonly answerMd: string;
+  readonly studentImageRefs: readonly string[];
+  /** the frozen question row (JSON shape of the DB row) — exact runner input. */
+  readonly question: JudgeCalibrationRejudgeFace['question'];
+  /** the frozen subject profile — exact runner input. */
+  readonly subjectProfile: JudgeCalibrationRejudgeFace['subjectProfile'];
   /** judge-event created_at (ISO) — freeze metadata for candidate
    * reconstruction, deliberately NOT part of the input digest (the re-judge
    * input face does not depend on it, and it is immutable per event). */
   readonly judgeCreatedAt: string;
 }
 
-/** Digest over the frozen re-judge input face. Key-order insensitive
- * (canonical serialization); any payload/route/outcome change is a different
- * input, hence a different effect. */
+/** Digest over the FULL frozen re-judge input face (R1 P1b): question
+ * content, subject profile, answer face, route and prior outcome. Key-order
+ * insensitive (canonical serialization); any edit to the question/profile or
+ * any face-field change is a different input, hence a different effect. */
 export function computeCalibrationInputDigest(item: CalibrationWorkSetItem): string {
-  return canonicalHash({
+  return canonicalHash(calibrationInputFace(item));
+}
+
+function calibrationInputFace(item: CalibrationWorkSetItem) {
+  return {
     answer_event_id: item.answerEventId,
     question_id: item.questionId,
     judge_route: item.judgeRoute,
     prior_outcome: item.priorOutcome,
-    judge_payload: item.judgePayload ?? null,
-    answer_payload: item.answerPayload ?? null,
-  });
+    answer_md: item.answerMd,
+    student_image_refs: item.studentImageRefs,
+    question: item.question,
+    subject_profile: item.subjectProfile,
+  };
 }
 
 /** Freeze digest over the FULL ordered frozen workset — array order is part of
  * the freeze (selection order is a fact of the freeze). Binds the whole
  * workset and, through each item's input digest, every input in it. */
 export function computeCalibrationFreezeDigest(items: readonly CalibrationWorkSetItem[]): string {
-  return canonicalHash(items.map((item) => computeCalibrationInputDigest(item)));
+  return canonicalHash(
+    items.map((item) => ({
+      judgeEventId: item.judgeEventId,
+      inputDigest: computeCalibrationInputDigest(item),
+    })),
+  );
 }
 
 /** Effect-side identity of ONE durable calibration re-judge. Deliberately
@@ -385,16 +402,17 @@ export interface CalibrationItemReceipt {
   readonly outcome: Record<string, unknown>;
 }
 
-/** Trusted evidence that the domain application of a receipt landed (e.g. the
- * written observation anchor). Produced ONLY by the apply seam; never
- * manufactured by this module. */
+/** Trusted evidence that the domain application of a receipt landed.
+ * Produced ONLY by the apply seam. Only `written` discharges the obligation;
+ * a unique conflict stays pending for immutable comparison/adjudication.
+ * `write` is honest about what the domain layer proved: 'unique_duplicate'
+ * means the MF8 partial-unique index rejected a second row — it does NOT
+ * claim the pre-existing domain row matches this receipt. */
 export interface CalibrationApplicationReceipt {
-  /** stable reference to the applied domain effect (future default: the
-   * observation action + anchored judge event). */
+  /** stable reference to the applied domain effect (the observation action +
+   * anchored judge event). */
   readonly domainRef: string;
-  /** true when the apply seam found the effect already applied (idempotent
-   * replay through the domain layer's own dedup). */
-  readonly idempotentReplay: boolean;
+  readonly write: 'written' | 'unique_duplicate';
   readonly detail?: Record<string, unknown>;
 }
 
@@ -415,10 +433,12 @@ export type CalibrationStagedEffectStage =
   | 'completed'
   | 'applied';
 
-/** One append-only durable row. `receipt` is present exactly when the stage is
- * `completed` or `applied`; `application` exactly when `applied`;
- * `classification` exactly when `skipped`. All are immutable once written.
- * `recordedAt` is always the freezing workset's anchor — never a fresh clock. */
+/** One append-only durable row. `receipt` is present exactly when the stage
+ * is `completed` or `applied`, EXCEPT that a `sent_unknown` row MAY carry the
+ * original mismatching receipt as adjudication evidence (preserved, never
+ * reused). `application` is present exactly when `applied`; `classification`
+ * exactly when `skipped`. All are immutable once written. `recordedAt` is
+ * always the freezing workset's anchor — never a fresh clock. */
 export interface CalibrationStagedEffectRecord {
   readonly effectId: string;
   readonly entityKey: string;
@@ -456,8 +476,8 @@ export interface CalibrationStagedExecutionPort {
   appendRecord(record: CalibrationStagedEffectRecord): Promise<void>;
 }
 
-/** Execution/apply context handed to the seams: the frozen workset anchor —
- * the ONLY clock the seams may use (no wall clock, no freshening). */
+/** Workset preparation time. Execution records its own send-start timestamp;
+ * recovery receives the original anchor and reads sample time from the receipt. */
 export interface CalibrationStagedSeamContext {
   readonly anchor: Date;
 }
@@ -615,7 +635,7 @@ export async function runCalibrationStagedOperation(
   if (gate.kind === 'disabled') {
     return { kind: 'disabled', flagEnv: gate.flagEnv };
   }
-  const cfg = gate.cfg;
+  const cfg = { ...gate.cfg };
   const workSetId = computeCalibrationWorkSetId({ anchor: input.workSet.anchor, cfg });
   const seamCtx: CalibrationStagedSeamContext = { anchor: input.workSet.anchor };
   const freezeDigest = computeCalibrationFreezeDigest(input.workSet.items);
@@ -653,6 +673,7 @@ export async function runCalibrationStagedOperation(
   // identity echo does not match its stored identity is held, never reused.
   // An apply failure keeps the record completed (recoverable, no resend).
   const appliedFromReceipt = new Set<string>();
+  const recoveredEntities = new Map<string, string>();
   const receiptMismatch = new Set<string>();
   for (const record of [...latest.values()]) {
     if (record.stage !== 'completed') continue;
@@ -665,23 +686,31 @@ export async function runCalibrationStagedOperation(
       const application = await input.applyReceipt(
         record.receipt as CalibrationItemReceipt,
         record.identity,
-        seamCtx,
+        { anchor: new Date(record.recordedAt) },
       );
-      await append({ ...record, stage: 'applied', application, recordedAt });
+      if (application.write !== 'written') continue;
+      await append({ ...record, stage: 'applied', application });
       appliedFromReceipt.add(record.effectId);
+      recoveredEntities.set(record.entityKey, record.effectId);
     } catch {
       // stays completed — a later tick retries the APPLICATION only
     }
   }
 
-  // Entity-level blockers: any open (intent / sent-unknown) effect, or a
-  // mismatched receipt awaiting adjudication, blocks NEW effects for the same
-  // business entity — across revisions, across ticks.
+  // Entity-level blockers: any open (intent / sent-unknown) effect, a
+  // mismatched receipt awaiting adjudication, OR a completed-pending-apply
+  // effect (its paid outcome is not applied yet — a new revision must not
+  // RE-BUY the same entity before the standing receipt is applied) blocks NEW
+  // effects for the same business entity — across revisions, across ticks.
+  // Only APPLIED history does not block.
   const blockedEntityKeys = new Set<string>();
   for (const record of latest.values()) {
-    if (record.stage === 'intent' || record.stage === 'sent_unknown') {
-      blockedEntityKeys.add(record.entityKey);
-    } else if (receiptMismatch.has(record.effectId)) {
+    if (
+      record.stage === 'intent' ||
+      record.stage === 'sent_unknown' ||
+      record.stage === 'completed' ||
+      receiptMismatch.has(record.effectId)
+    ) {
       blockedEntityKeys.add(record.entityKey);
     }
   }
@@ -764,13 +793,15 @@ export async function runCalibrationStagedOperation(
     const receipt = execution.receipt;
     if (!receiptEchoMatches(receipt, coords.identity)) {
       // The send happened but the receipt does not prove THIS effect's
-      // outcome — durable unresolved obligation, never an auto-resend.
+      // outcome — durable unresolved obligation, never an auto-resend. The
+      // ORIGINAL mismatching receipt is PRESERVED on the sent_unknown row as
+      // adjudication evidence (it must not be silently discarded).
       await append({
         effectId: coords.effectId,
         entityKey: coords.entityKey,
         identity: coords.identity,
         stage: 'sent_unknown',
-        receipt: null,
+        receipt,
         application: null,
         classification: null,
         recordedAt,
@@ -789,6 +820,7 @@ export async function runCalibrationStagedOperation(
     });
     try {
       const application = await input.applyReceipt(receipt, coords.identity, seamCtx);
+      if (application.write !== 'written') return { kind: 'completed_apply_pending' };
       await append({
         effectId: coords.effectId,
         entityKey: coords.entityKey,
@@ -811,7 +843,7 @@ export async function runCalibrationStagedOperation(
   const seenEntityKeys = new Set<string>();
   for (const item of input.workSet.items) {
     const identity = computeCalibrationEffectIdentity({ workSetId, freezeDigest, item, cfg });
-    const effectId = computeCalibrationEffectId(identity);
+    let effectId = computeCalibrationEffectId(identity);
     const entityKey = computeCalibrationEntityKey(item.judgeEventId);
 
     let kind: CalibrationItemDispositionKind;
@@ -823,7 +855,11 @@ export async function runCalibrationStagedOperation(
     } else {
       seenEntityKeys.add(entityKey);
       const record = latest.get(effectId);
-      if (record !== undefined) {
+      const recoveredEffectId = recoveredEntities.get(entityKey);
+      if (recoveredEffectId !== undefined) {
+        effectId = recoveredEffectId;
+        kind = 'applied_from_receipt';
+      } else if (record !== undefined) {
         if (appliedFromReceipt.has(effectId)) {
           kind = 'applied_from_receipt';
         } else if (receiptMismatch.has(effectId)) {
@@ -908,78 +944,136 @@ export interface CalibrationStagedCoreSeams {
   readonly applyReceipt: ApplyCalibrationReceiptFn;
 }
 
+const CalibrationRecordedOutcome = z.object({
+  version: z.literal(1),
+  prepared_input: z.object({
+    answer_event_id: z.string().min(1),
+    question_id: z.string().min(1),
+    judge_route: z.string().min(1),
+    prior_outcome: z.enum(['correct', 'partial', 'incorrect']),
+    answer_md: z.string(),
+    student_image_refs: z.array(z.string()),
+    question: z.record(z.string(), z.unknown()),
+    subject_profile: z.record(z.string(), z.unknown()),
+  }),
+  config: z.object({
+    rejudgeProvider: z.string().min(1),
+    rejudgeModel: z.string().min(1),
+    batchMax: z.number().int().positive(),
+    windowDays: z.number().int().positive(),
+  }),
+  executed_at: z.iso.datetime(),
+  workset_anchor: z.iso.datetime(),
+  lane: z.object({
+    visionJudgeProviderAtSample: z.string().nullable(),
+    aiProviderOverrideAtSample: z.string().nullable(),
+  }),
+  rejudged: z.object({
+    kind: z.literal('rejudged'),
+    judgeEventId: z.string().min(1),
+    questionId: z.string().min(1),
+    answerEventId: z.string().min(1),
+    priorOutcome: z.enum(['correct', 'partial', 'incorrect']),
+    judgeRoute: z.string().min(1),
+    isVision: z.boolean(),
+    route: z.string().min(1),
+    coarseOutcome: z.enum(['correct', 'partial', 'incorrect']),
+    confidence: z.number().min(0).max(1),
+    taskRunId: z.string().nullable(),
+    rawText: z.string().nullable(),
+  }),
+});
+
 export async function buildCalibrationStagedCoreSeams(
   db: Db,
   cfg: JudgeCalibrationConfig,
   sampleDeps: JudgeCalibrationSampleDeps = {},
 ): Promise<CalibrationStagedCoreSeams> {
+  const executionConfig = { ...cfg };
   const core = await import('./judge-calibration-sample-core');
   const judgeFn = sampleDeps.judgeFn ?? (await import('./judge/question-contract')).judgeAnswer;
   const runTaskInner = sampleDeps.runTaskInner ?? core.makeJudgeCalibrationRunner(db);
+  const executionClock = sampleDeps.now ?? (() => new Date());
 
   return {
     executeItem: async (item, identity, ctx) => {
-      const candidate: JudgeCandidate = {
-        id: item.judgeEventId,
-        subject_id: item.answerEventId,
-        created_at: new Date(item.judgeCreatedAt),
-        payload: item.judgePayload ?? {},
-      };
-      const outcome = await core.rejudgeSingleCalibrationCandidate(db, cfg, candidate, {
-        judgeFn,
-        runTaskInner,
-      });
+      const frozen = structuredClone(item);
+      if (
+        identity.judgeEventId !== frozen.judgeEventId ||
+        identity.inputDigest !== computeCalibrationInputDigest(frozen) ||
+        identity.provider !== executionConfig.rejudgeProvider ||
+        identity.model !== executionConfig.rejudgeModel ||
+        identity.workSetId !==
+          computeCalibrationWorkSetId({ anchor: ctx.anchor, cfg: executionConfig })
+      ) {
+        throw new Error('staged execution refused: frozen input/config does not match effect');
+      }
+      // Capture before the judge can await or mutate a config/profile registry.
+      const preparedInput = structuredClone(calibrationInputFace(frozen));
+      const effect = { ...identity };
+      const worksetAnchor = ctx.anchor.toISOString();
+      const lane = core.readCalibrationLaneSnapshots();
+      const executedAt = executionClock().toISOString();
+      const outcome = await core.judgeCalibrationPreparedFace(
+        executionConfig,
+        { ...frozen, studentImageRefs: [...frozen.studentImageRefs] },
+        { db, judgeFn, runTaskInner },
+      );
       if (outcome.kind !== 'rejudged') {
-        // skip faces map 1:1 onto the staged classification names
         return { kind: 'skipped', classification: outcome.kind };
       }
       return {
         kind: 'sent',
         receipt: {
-          effect: identity,
+          effect,
           outcome: {
-            judge_event_id: outcome.judgeEventId,
-            question_id: outcome.questionId,
-            answer_event_id: outcome.answerEventId,
-            prior_outcome: outcome.priorOutcome,
-            judge_route: outcome.judgeRoute,
-            is_vision: outcome.isVision,
-            route: outcome.route,
-            coarse_outcome: outcome.coarseOutcome,
-            confidence: outcome.confidence,
-            task_run_id: outcome.taskRunId,
-            raw_output: outcome.rawText,
-            // the frozen anchor the execution ran under (ctx, not a wall clock)
-            executed_at: ctx.anchor.toISOString(),
+            version: 1,
+            prepared_input: preparedInput,
+            config: { ...executionConfig },
+            executed_at: executedAt,
+            workset_anchor: worksetAnchor,
+            lane,
+            rejudged: outcome,
           },
         },
       };
     },
-    applyReceipt: async (receipt, identity, ctx) => {
-      const o = receipt.outcome as Record<string, unknown>;
+    applyReceipt: async (receipt, identity) => {
+      if (!receiptEchoMatches(receipt, identity)) {
+        throw new Error('apply refused: receipt identity mismatch');
+      }
+      const parsed = CalibrationRecordedOutcome.safeParse(receipt.outcome);
+      if (!parsed.success) {
+        throw new Error('apply refused: receipt is missing valid send-time facts');
+      }
+      const saved = parsed.data;
+      const rejudged = saved.rejudged;
+      if (
+        saved.config.rejudgeProvider !== identity.provider ||
+        saved.config.rejudgeModel !== identity.model ||
+        computeCalibrationWorkSetId({
+          anchor: new Date(saved.workset_anchor),
+          cfg: saved.config,
+        }) !== identity.workSetId ||
+        canonicalHash(saved.prepared_input) !== identity.inputDigest ||
+        rejudged.judgeEventId !== identity.judgeEventId ||
+        rejudged.questionId !== saved.prepared_input.question_id ||
+        rejudged.answerEventId !== saved.prepared_input.answer_event_id ||
+        rejudged.judgeRoute !== saved.prepared_input.judge_route ||
+        rejudged.priorOutcome !== saved.prepared_input.prior_outcome
+      ) {
+        throw new Error('apply refused: receipt input/config does not match effect');
+      }
       const written = await core.applyJudgeCalibrationRejudgeSample(
         db,
-        cfg,
-        {
-          kind: 'rejudged',
-          judgeEventId: identity.judgeEventId,
-          questionId: String(o.question_id ?? ''),
-          answerEventId: String(o.answer_event_id ?? ''),
-          priorOutcome: String(o.prior_outcome ?? '') as SampledOutcome,
-          judgeRoute: String(o.judge_route ?? ''),
-          isVision: o.is_vision === true,
-          route: String(o.route ?? ''),
-          coarseOutcome: String(o.coarse_outcome ?? ''),
-          confidence: Number(o.confidence ?? 0),
-          taskRunId: typeof o.task_run_id === 'string' ? o.task_run_id : null,
-          rawText: typeof o.raw_output === 'string' ? o.raw_output : null,
-        },
-        core.readCalibrationLaneSnapshots(),
-        ctx.anchor,
+        saved.config,
+        rejudged,
+        saved.lane,
+        new Date(saved.executed_at),
       );
       return {
         domainRef: `${core.JUDGE_CALIBRATION_SAMPLE_ACTION}:${identity.judgeEventId}`,
-        idempotentReplay: written === 'duplicate',
+        write: written === 'duplicate' ? 'unique_duplicate' : 'written',
       };
     },
   };

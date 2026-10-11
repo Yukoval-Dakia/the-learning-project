@@ -329,3 +329,87 @@ order, isolation catch, batch-level `now` and lane-snapshot read point unchanged
 of the untouched core db test's imports — its RUNTIME verification (scoped DB loop on
 `judge-calibration-sample.db.test.ts` and the five prepared staged DB cases) remains a parent
 gate, as does real-DB verification of `buildCalibrationStagedCoreSeams`.
+
+## R1 repair after 51613a4d2, 2026-10-11
+
+The new-stage R1 at `51613a4d2b7c1d964cde1eb483ded90c96e86f61`
+found two P1 defects. Apply reconstructed provenance from a later tick's config,
+lane snapshots and anchor; execution reconstructed mutable question/answer/profile
+rows even though the freeze digest did not bind the question inputs. The earlier
+checkpoint is held and must not be cited as admission or as a successful review
+of these repaired seams.
+
+Codex resumed the original sole-writer tree and preserved its three dirty files.
+Their original bytes and patch are under
+`/tmp/yuk1355-timed-reference-r1-repair-20261011/initial-wip.tar.gz` and
+`initial-wip.patch`. No branch switch, history rewrite or replacement checkout
+occurred. This repair owns operation, its unit and prepared DB tests, the released
+core file and this document. The handler, family candidate, config, registration,
+schema, store and shared test partition file are unchanged.
+
+Preparation now captures the full question input, answer text/image references
+and resolved subject profile. The input digest includes these saved values; the ordered freeze also binds
+the selected judge-event identities. The core's live reconstruction and judging portions are separate functions;
+retained `rejudgeSingleCalibrationCandidate` composes them in the original order.
+The freeze detaches mutable question/profile objects. Unprepared candidates are
+returned with their original skip classification rather than silently dropped.
+Staged execution clones the prepared item and validates its input/config against
+the effect identity before invoking the judge. It performs no answer, question
+or subject-profile lookup to reconstruct the provider input.
+
+Each successful staged receipt saves the complete prepared input, original config,
+provider/model identity, original workset anchor, execution-start timestamp,
+send-time lane snapshots and exact rejudge result/raw output. Config is copied
+when the execution seams are built. Lane snapshots and the execution clock are
+captured before invoking the judge; they cannot change while the request awaits.
+The execution time is separate from the scheduler anchor.
+
+Apply validates the receipt's schema, identity, saved input digest and saved config,
+then uses only its saved values. A later tick's model, config, lane snapshots or
+clock cannot restamp the observation. Recovery retains the original record anchor
+and receipt. If the recovered entity also appears in that later tick's prepared
+items, the report references the recovered effect and does not send it again.
+Failed applications remain completed and block a new revision while pending.
+Mismatching receipt payloads remain available for adjudication.
+
+Application evidence now reports `written` or `unique_duplicate`. A unique-index
+conflict proves only rejection of a second row, not equality with this immutable
+receipt. It does not mark the staged obligation applied; the completed receipt
+stays pending for parent-owned comparison/adjudication. The retained core's
+existing duplicate counter behavior is unchanged.
+
+Fresh checks used Node `24.19.0` and pnpm `11.13.1`. Logs are under
+`/tmp/yuk1355-timed-reference-r1-repair-20261011/`:
+
+- `unit-final.log`: 48 passed across operation, retained handler and family unit files.
+  The operation includes direct real-core/semantic-pipeline tests for detached
+  freezing, mutable source edits, model/clock changes, original receipt recovery
+  after an injected observation-write failure, invalid provenance and a pending
+  unique conflict. DB reads and event writes are test doubles in these unit cases.
+- `typecheck-final.log`: both TypeScript project configurations passed. The two added
+  DB cases are typechecked, not executed.
+- `lint-final.log`: exit 0 with 174 warnings. No lint baseline change.
+- `build-final.log`: exit 0 for web/Start/server/worker/migrate bundles.
+- `retained-source.log`: static AST comparison against `51613a4d2` confirms the
+  selection, batch counters/catches, lane/math, raw-output handling, shuffle and
+  observation writer function bodies are unchanged. This is source evidence.
+
+The prepared DB file now has seven cases. The two new cases use real seeded
+question/answer/profile inputs, edit the question and answer plus profile selection
+after freeze, and inspect the real observation written from the saved receipt.
+They also prepare apply-failure recovery on a later model/tick without resend.
+That failure is injected at the apply seam. Their record port is an isolated
+in-memory test double, not verification of lane B's store or concurrent CAS.
+Neither this file nor the retained core DB suite was executed in this repair.
+
+Lane B's `9de` fix is parent-reported, under review and not admitted. This lane did
+not read its moving tree or implement/integrate its store. The provisional
+`reserveIntent` CAS verdict and required `applyReceipt` interface remain until
+parent supplies a fixed handoff. The old DBOS candidate stays unregistered,
+gate-only and held on every enabled tick. Default OFF, bare second-lane preflight,
+no fallback and retained selection/math/counters/catches remain intact.
+
+Parent owns R2 on the fixed repair commit, the fixed lane-B handoff, DB/process/
+provider/runtime acceptance, tracker capture and later delivery. No R3 on old
+code or child review was started. No DB, container, runtime service, provider,
+credential, lock, push, PR or Linear operation occurred here.
