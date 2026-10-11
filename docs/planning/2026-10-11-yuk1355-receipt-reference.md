@@ -99,3 +99,11 @@ DBOS step 结果丢失后重放时，重入的仍是 `runNoteVerify` 的 reserve
 ## 7. 验证与交付
 
 离线检查：scoped unit test、`pnpm typecheck`、`pnpm lint`、`pnpm build`、`pnpm audit:test-policy`（本 lane base）。本地 commit 仅含 owned 文件 + vitest.shared.ts 两行追加。运行时缺口（DB 测试未跑、DBOS 未注册、CI 未跑）如实报告，独立 review 与 exact-head CI 由父级按 PR 负责。
+
+## 8. Independent review result
+
+R1 on `a62d0fde1` found no code P0/P1 and one consequential documentation error: the adapter returns SUCCESS with `skipped:in_progress`, rather than ERROR. Parent corrected the result disposition and claim-based recovery guarantee in docs-only `ca41cb633`.
+
+The first GLM R2 request failed on quota and returned no review findings. The same bounded R2 resumed with Codex Sol 6.1 and verified `ca41cb633` against `a62d0fde1`: prior P1 resolved, remaining P0/P1 NONE within that scope. This completes the two-round review budget; no third review is authorized.
+
+Parent independently ran the four scoped adapter unit cases successfully before the documentation correction (`/tmp/yuk1355-receipt-parent-unit.log`). DB tests, DBOS registration, business-obligation disposition, runtime recovery and exact-head CI remain pending. This checkpoint is not a completed task-family migration.
