@@ -8,6 +8,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from 'vitest';
 import { z } from 'zod';
+import type { Db } from '@/db/client';
 import {
   sessionOrphanObligations,
   sessionOrphanRollbackHorizon,
@@ -30,6 +31,7 @@ const families = ['prune_orphan_conversation_sessions', 'prune_orphan_placement_
 let family: (typeof families)[number] = families[0];
 const logs: unknown[] = [];
 let db: ReturnType<typeof postgres>;
+let phaseQueries: Pick<Db, 'execute'>;
 let url: string;
 let producerSearchPath: string | undefined;
 let clockInstalled = false;
@@ -152,6 +154,8 @@ beforeAll(async () => {
     throw new Error('Cron fixture refuses default/non-disposable database');
   url = target.toString();
   db = postgres(url, { max: 3 });
+  // Drizzle installs timestamp parsers on this client; initialize before taking any snapshots.
+  phaseQueries = drizzle(db);
   await exec(resolve('node_modules/.bin/esbuild'), [
     'tests/dbos-session-orphan/worker.ts',
     '--bundle',
@@ -516,7 +520,7 @@ for (const selected of families) {
       await db`select * from session_orphan_control where family = ${family}`;
     await observeLegacySettled(family);
     await expect
-      .poll(() => sessionOrphanObligations(drizzle(db), { family, backend: 'dbos' }), {
+      .poll(() => sessionOrphanObligations(phaseQueries, { family, backend: 'dbos' }), {
         timeout: 10000,
         interval: 100,
       })
@@ -526,7 +530,7 @@ for (const selected of families) {
       reason:
         'Two compatible workers only; first stopped; all native/legacy forwarding observed settled',
     });
-    const horizon = await sessionOrphanRollbackHorizon(drizzle(db), family);
+    const horizon = await sessionOrphanRollbackHorizon(phaseQueries, family);
     const [expectedHorizon] = await db`select (greatest(c.phase_changed_at,
       coalesce((select max(substring(workflow_uuid from ${`sched-${family}-`.length + 1})::timestamptz)
         from tlp_dbos.workflow_status where name = ${family}), 'epoch'::timestamptz),

@@ -1,3 +1,7 @@
+# YUK-1107 parser initialization repair (2026-10-11)
+
+Independent R2 bfe3ff98..244c5ddf P0/P1 NONE. Current CI38119955807 DB4 failed at other-family receipt equality, solely Date vs full-precision string: constructing Drizzle mid-test mutates postgres-js client timestamp parsers. Driver source and offline zero-SQL probe reproduce it. Initialize Drizzle once before any ledger/control snapshot; keep full equality/strict guard. Conversation reached H-1us rejection and H acceptance; placement blocked after failure, no full PASS/timing claim. No third review; new exact CI pending.
+
 # YUK-1107 controlled-time revision (2026-10-11)
 
 Owner directs removing real 61s/60s waits. Only three cron fixture files changed: isolated application PG clock + producer-trigger search path, strict pre-horizon rejection/exact-horizon acceptance, real legacy enqueue receipt, both native schedules paused/settled before boundary checks. Logs /tmp/yuk1358-1680-db4-ci.log and /tmp/yuk1356-b250-db4-ci.log confirm two ENQUEUED slot-boundary failures; strict ledger remains intact. New runtime/review acceptance pending; old060a evidence is historical. No new local DB/container/Vitest batch until functional lane releases its shared window.
