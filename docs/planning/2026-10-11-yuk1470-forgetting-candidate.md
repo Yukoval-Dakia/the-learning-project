@@ -1,6 +1,6 @@
 # YUK-1470：统一遗忘候选与主线接入准备
 
-状态：实施启动，候选算法尚未定稿。基线为已合 main `79825bb6da73f9894c65a5d6735e3725f098e8e1`。
+状态：纯候选核心已实施，未接入应用；固定 `history-kernel-logistic-v1` 工程参数规格。基线为已合 main `79825bb6da73f9894c65a5d6735e3725f098e8e1`。
 
 ## 已批准行为
 
@@ -34,4 +34,13 @@
 
 ## 当前缺项
 
-具体算法函数与先验还未选定；候选代码、数据库接入、切换、真实学习效果均未完成。本计划不改变当前TEST部署。
+纯核心位于 `src/core/forgetting/`，包含版本化状态、证据映射、演化/读取/求根、有效历史重放与无模型兜底。独立 25 次 / 180 天 oracle 与反例测试覆盖数值性质；实现及 spec 解释见该目录 README。参数全部 engineering/uncalibrated，不冒称群体拟合先验。数据库接入、消费者切换、TEST 调度验收、真实预测准确率与学习效果仍未完成；本切片不改 FSRS 或当前 TEST 部署。父协调线负责接入、独立审查和 PR。
+
+## 纯核心切片验证（2026-10-11）
+
+- `pnpm vitest run --config vitest.unit.config.ts src/core/forgetting/forgetting.unit.test.ts`：11 个 grading/scheduling invariant case 通过。
+- `pnpm typecheck`、`pnpm lint`、`pnpm build` 通过；lint 172 个现有 warning，新模块无 warning。
+- `pnpm audit:partition` 与 `pnpm audit:test-policy` 通过，11 个新增 case 全部有 invariant/fails-if 声明。
+- oracle 副本与研究产物 SHA-256 相同：`13ef197e3452051bf9eb31e97ac58775daf3d0b319c4d8b0cbdf1463f88e6efe`。
+- Linear capture：查重已确认 YUK-1470；未发现新增 actionable follow-up，接入、TEST、独立 review 与 PR 已由父协调线承担，不新建重复票、不把整票标 Done。
+- 无 DB、provider、TEST、deployment、PR 或消费者接入；本分支 commit/push 后交回父协调线。
