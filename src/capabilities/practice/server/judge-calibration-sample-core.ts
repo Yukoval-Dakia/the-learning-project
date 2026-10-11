@@ -45,6 +45,7 @@ import { resolveVerdictsForAttempts } from '@/kernel/read-models/assessment-verd
 import { resolveSubjectProfileForKnowledgeIds } from '@/kernel/read-models/subject-profile';
 import type { ResolvedProvider } from '@/server/ai/providers';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
+import type { CalibrationWorkSetItem } from './calibration-sample-durable-operation';
 
 export const JUDGE_CALIBRATION_SAMPLE_ACTION = 'experimental:judge_calibration_sample';
 export const JUDGE_CALIBRATION_RUN_SUMMARY_ACTION = 'experimental:judge_calibration_run_summary';
@@ -62,7 +63,7 @@ export const JUDGE_CALIBRATION_ACTOR = 'judge_calibration';
 // fix above. Consume the shared predicate instead of a local copy.
 const VISION_ROUTES: Set<string> = IMAGE_CONSUMING_JUDGE_ROUTES;
 const SAMPLED_OUTCOMES = ['correct', 'partial', 'incorrect'] as const;
-type SampledOutcome = (typeof SAMPLED_OUTCOMES)[number];
+export type SampledOutcome = (typeof SAMPLED_OUTCOMES)[number];
 
 /** Raw re-judge output stored for the leg A capture chain (MF1); hard cap. */
 const RAW_OUTPUT_MAX_CHARS = 20_000;
@@ -241,38 +242,55 @@ function shuffleInPlace<T>(items: T[]): T[] {
   return items;
 }
 
-interface JudgeCandidate {
+export interface JudgeCandidate {
   id: string;
   subject_id: string;
   created_at: Date;
   payload: Record<string, unknown>;
 }
 
-/**
- * Run one sampling batch. Report-only; see module header for the red line.
- * Always ends by writing ONE run-summary event (even for zero-candidate runs —
- * healthy-but-sparse vs systematically-skipping must be distinguishable).
- */
-export async function runJudgeCalibrationSample(
+/** Execution outcome of ONE frozen candidate through the second lane.
+ * YUK-1355 extraction (feature-owner released): provider EXECUTION and domain
+ * APPLY are separate seams — `missing_*` and `unsupported` produce no
+ * observation row (terminal for that effect); `rejudged` carries exactly what
+ * the apply step needs. Throws on fetch/judge failures — callers keep their
+ * own isolation catch. */
+export type JudgeCalibrationSingleRejudge =
+  | { kind: 'missing_answer_event' }
+  | { kind: 'missing_input' }
+  | { kind: 'missing_image_refs' }
+  | { kind: 'missing_question' }
+  | { kind: 'unsupported' }
+  | {
+      kind: 'rejudged';
+      judgeEventId: string;
+      questionId: string;
+      answerEventId: string;
+      priorOutcome: SampledOutcome;
+      judgeRoute: string;
+      isVision: boolean;
+      route: string;
+      coarseOutcome: string;
+      confidence: number;
+      taskRunId: string | null;
+      rawText: string | null;
+    };
+
+/** Sample-time lane snapshots (YUK-1007: effective values, env+DB merged). */
+export interface JudgeCalibrationLaneSnapshots {
+  visionJudgeProviderAtSample: string | null;
+  aiProviderOverrideAtSample: string | null;
+}
+
+/** MF4 selection — window query → effective-verdict walk (YUK-1054 §9) →
+ * action-filtered dedup (§3.2) → RANDOM order (Q4) → batchMax cap. Extracted
+ * verbatim from runJudgeCalibrationSample (YUK-1355): freezing a workset
+ * reuses THIS selection — no duplicated selection/domain math. */
+export async function selectJudgeCalibrationCandidates(
   db: Db,
   cfg: JudgeCalibrationConfig,
-  deps: JudgeCalibrationSampleDeps = {},
-): Promise<JudgeCalibrationSampleResult> {
-  const now = deps.now?.() ?? new Date();
-  const judgeFn = deps.judgeFn ?? judgeAnswer;
-  const runTaskInner = deps.runTaskInner ?? makeRunTaskFn(db);
-
-  const result: JudgeCalibrationSampleResult = {
-    sampled: 0,
-    agreed: 0,
-    disagreed: 0,
-    skipped: 0,
-    skipped_missing_input: 0,
-    skipped_unsupported: 0,
-    errors: 0,
-  };
-
-  // ── Selection (MF4) ──────────────────────────────────────────────────────
+  now: Date,
+): Promise<JudgeCandidate[]> {
   const windowStart = new Date(now.getTime() - cfg.windowDays * 24 * 3600 * 1000);
   const routeList = sql.join(
     [...MODEL_BACKED_JUDGE_ROUTES].map((r) => sql`${r}`),
@@ -338,133 +356,265 @@ export async function runJudgeCalibrationSample(
   }
 
   // Random order (MF4③), hard per-run cap (cost gate).
-  const batch = shuffleInPlace(candidates).slice(0, cfg.batchMax);
+  return shuffleInPlace(candidates).slice(0, cfg.batchMax);
+}
 
-  // ── Lane snapshots (MF5) — sample-time env; original lane unrecoverable. ──
-  // YUK-1007：lane 快照记「生效值」（env+DB 合并后），不是裸 env——DB 写的
-  // lane pin 也要被审计到。
-  const visionProviderAtSample = (() => {
+/** Lane snapshots — YUK-1007：lane 快照记「生效值」（env+DB 合并后），不是裸
+ * env——DB 写的 lane pin 也要被审计到。 lane.global.provider 才是 env pin >
+ * DB > default 的生效值（裸 AI_PROVIDER_OVERRIDE 已从 keyspace 摘除）。 */
+export function readCalibrationLaneSnapshots(): JudgeCalibrationLaneSnapshots {
+  const visionJudgeProviderAtSample = (() => {
     const v = getConfig('VISION_JUDGE_PROVIDER');
     return typeof v === 'string' ? v : null;
   })();
-  const globalOverrideAtSample = (() => {
-    // YUK-1007 review：裸 AI_PROVIDER_OVERRIDE 已从 keyspace 摘除（resolver 只消费
-    // lane.global.*）——读 lane.global.provider 才是 env pin > DB > default 的生效值。
+  const aiProviderOverrideAtSample = (() => {
     const v = getConfig('lane.global.provider');
     return typeof v === 'string' ? v : null;
   })();
+  return { visionJudgeProviderAtSample, aiProviderOverrideAtSample };
+}
+
+/** Single-item EXECUTION seam (provider call only; no observation write).
+ * Behavior-equivalent move of the per-candidate loop body's fetch/judge
+ * portion: same face checks in the same order, same override spread order
+ * (S5), same slot capture (MF1). Throws propagate to the caller's catch. */
+export async function rejudgeSingleCalibrationCandidate(
+  db: Db,
+  cfg: JudgeCalibrationConfig,
+  candidate: JudgeCandidate,
+  opts: {
+    judgeFn: typeof judgeAnswer;
+    runTaskInner: RunTaskInner | ReturnType<typeof makeRunTaskFn>;
+  },
+): Promise<JudgeCalibrationSingleRejudge> {
+  const judgeRoute = String(candidate.payload.judge_route ?? '');
+  const priorOutcome = candidate.payload.coarse_outcome as SampledOutcome;
+  const isVision = VISION_ROUTES.has(judgeRoute);
+
+  const [answerEvent] = await db.select().from(event).where(eq(event.id, candidate.subject_id));
+  if (!answerEvent) {
+    return { kind: 'missing_answer_event' };
+  }
+  const answerPayload = answerEvent.payload as Record<string, unknown>;
+  // OCR major 2 (same information-face principle as MF2, text axis): when
+  // NEITHER text key was persisted, the original judge saw submitted text
+  // this payload never recorded — re-judging with '' would manufacture
+  // false disagreements. KEY PRESENCE is the discriminator: a persisted ''
+  // means the original judge also judged the empty submission (faces
+  // match, legitimate pair); an absent key is a pre-persistence row (skip).
+  const hasTextFace =
+    typeof answerPayload.answer_md === 'string' ||
+    typeof answerPayload.user_response_md === 'string';
+  if (!hasTextFace) {
+    return { kind: 'missing_input' };
+  }
+  const answerMd =
+    (typeof answerPayload.answer_md === 'string' && answerPayload.answer_md) ||
+    (typeof answerPayload.user_response_md === 'string' && answerPayload.user_response_md) ||
+    '';
+  // MF2: a vision-route answer whose payload predates answer_image_refs
+  // persistence cannot be reconstructed with the original information face.
+  if (isVision && !('answer_image_refs' in answerPayload)) {
+    return { kind: 'missing_image_refs' };
+  }
+  const studentImageRefs = Array.isArray(answerPayload.answer_image_refs)
+    ? (answerPayload.answer_image_refs as string[])
+    : [];
+
+  const [q] = await db.select().from(question).where(eq(question.id, answerEvent.subject_id));
+  if (!q) {
+    return { kind: 'missing_question' };
+  }
+  const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
+
+  // S1/MF1 capture slot: the wrapper records the inner run's id + raw text.
+  const slot: { taskRunId: string | null; rawText: string | null } = {
+    taskRunId: null,
+    rawText: null,
+  };
+  const rejudgeRunTaskFn = async (kind: string, input: unknown, ctx: unknown) => {
+    const inner = await opts.runTaskInner(kind, input, {
+      ...(ctx as Record<string, unknown>),
+      // AFTER ...ctx on purpose (S5): the vision routes inject their own
+      // override into ctx at the call site — the second lane must win.
+      override: {
+        provider: cfg.rejudgeProvider as ResolvedProvider['provider'],
+        model: cfg.rejudgeModel,
+      },
+    });
+    slot.taskRunId = inner.task_run_id ?? null;
+    slot.rawText = rawTaskOutput(inner);
+    return inner;
+  };
+
+  const invoked = await opts.judgeFn({
+    db,
+    question: { ...q, judge_kind_override: judgeRoute },
+    answer_md: answerMd,
+    student_image_refs: studentImageRefs,
+    subjectProfile,
+    runTaskFn: rejudgeRunTaskFn,
+  });
+  const rejudgeOutcome = invoked.result.coarse_outcome;
+
+  // MF3②: unsupported = "review unavailable", NEVER a disagreement
+  // (rejudge.ts unsupported-as-upheld semantics). No observation row.
+  if (rejudgeOutcome === 'unsupported') {
+    return { kind: 'unsupported' };
+  }
+  return {
+    kind: 'rejudged',
+    judgeEventId: candidate.id,
+    questionId: q.id,
+    answerEventId: answerEvent.id,
+    priorOutcome,
+    judgeRoute,
+    isVision,
+    route: invoked.route,
+    coarseOutcome: rejudgeOutcome,
+    confidence: invoked.result.confidence,
+    taskRunId: slot.taskRunId,
+    rawText: slot.rawText,
+  };
+}
+
+/** Single-item APPLY seam (domain write only; no provider call). Composes the
+ * MF5 lane snapshots + the observation write — behavior-equivalent move of
+ * the loop's write portion. Returns the observation-write verdict. */
+export async function applyJudgeCalibrationRejudgeSample(
+  db: Db,
+  cfg: JudgeCalibrationConfig,
+  rejudged: Extract<JudgeCalibrationSingleRejudge, { kind: 'rejudged' }>,
+  laneSnapshots: JudgeCalibrationLaneSnapshots,
+  now: Date,
+): Promise<'written' | 'duplicate'> {
+  const inferredOriginalProvider = rejudged.isVision
+    ? (laneSnapshots.visionJudgeProviderAtSample ??
+      laneSnapshots.aiProviderOverrideAtSample ??
+      'xiaomi')
+    : (laneSnapshots.aiProviderOverrideAtSample ?? 'xiaomi');
+
+  return writeJudgeCalibrationSampleEvent(db, {
+    originalJudgeEventId: rejudged.judgeEventId,
+    questionId: rejudged.questionId,
+    answerEventId: rejudged.answerEventId,
+    priorOutcome: rejudged.priorOutcome,
+    rejudgeOutcome: rejudged.coarseOutcome as SampledOutcome,
+    rejudgeRoute: rejudged.route,
+    rejudgeConfidence: rejudged.confidence,
+    rejudgeProvider: cfg.rejudgeProvider,
+    rejudgeModel: cfg.rejudgeModel,
+    rejudgeTaskRunId: rejudged.taskRunId,
+    rejudgeRawOutput: rejudged.rawText,
+    visionJudgeProviderAtSample: laneSnapshots.visionJudgeProviderAtSample,
+    aiProviderOverrideAtSample: laneSnapshots.aiProviderOverrideAtSample,
+    sameLaneSuspected: inferredOriginalProvider === cfg.rejudgeProvider,
+    now,
+  });
+}
+
+/** Freeze the selected candidates into staged-workset items by capturing each
+ * answer payload at freeze time. Unfetchable answer events are DROPPED —
+ * without the face the item cannot be re-judged at all (the retained loop
+ * counts that face as a per-item error instead). */
+export async function freezeCalibrationWorkSetFromCandidates(
+  db: Db,
+  candidates: readonly JudgeCandidate[],
+): Promise<CalibrationWorkSetItem[]> {
+  const items: CalibrationWorkSetItem[] = [];
+  for (const candidate of candidates) {
+    const [answerEvent] = await db.select().from(event).where(eq(event.id, candidate.subject_id));
+    if (!answerEvent) continue;
+    items.push({
+      judgeEventId: candidate.id,
+      answerEventId: answerEvent.id,
+      questionId: answerEvent.subject_id,
+      judgeRoute: String(candidate.payload.judge_route ?? ''),
+      priorOutcome: String(candidate.payload.coarse_outcome ?? ''),
+      judgePayload: candidate.payload,
+      answerPayload: answerEvent.payload as Record<string, unknown>,
+      judgeCreatedAt: candidate.created_at.toISOString(),
+    });
+  }
+  return items;
+}
+
+/** Runner factory for external single-item callers (YUK-1355): the same
+ * inner runner the retained batch resolves — exported so staged seams build
+ * without adding a new capability→server import edge. */
+export function makeJudgeCalibrationRunner(db: Db): ReturnType<typeof makeRunTaskFn> {
+  return makeRunTaskFn(db);
+}
+
+/**
+ * Run one sampling batch. Report-only; see module header for the red line.
+ * Always ends by writing ONE run-summary event (even for zero-candidate runs —
+ * healthy-but-sparse vs systematically-skipping must be distinguishable).
+ */
+export async function runJudgeCalibrationSample(
+  db: Db,
+  cfg: JudgeCalibrationConfig,
+  deps: JudgeCalibrationSampleDeps = {},
+): Promise<JudgeCalibrationSampleResult> {
+  const now = deps.now?.() ?? new Date();
+  const judgeFn = deps.judgeFn ?? judgeAnswer;
+  const runTaskInner = deps.runTaskInner ?? makeRunTaskFn(db);
+
+  const result: JudgeCalibrationSampleResult = {
+    sampled: 0,
+    agreed: 0,
+    disagreed: 0,
+    skipped: 0,
+    skipped_missing_input: 0,
+    skipped_unsupported: 0,
+    errors: 0,
+  };
+
+  // ── Selection + freeze of this batch (MF4; extracted — same math) ────────
+  const batch = await selectJudgeCalibrationCandidates(db, cfg, now);
+
+  // ── Lane snapshots (MF5) — sample-time env; original lane unrecoverable ──
+  const laneSnapshots = readCalibrationLaneSnapshots();
 
   // ── Per-candidate re-judge (per-item isolation; one failure never kills the batch) ──
+  // YUK-1355: EXECUTION (rejudgeSingleCalibrationCandidate — provider only) and
+  // APPLY (applyJudgeCalibrationRejudgeSample — domain write only) are separate
+  // seams composed here; counter semantics and isolation are unchanged.
   for (const candidate of batch) {
     try {
-      const judgeRoute = String(candidate.payload.judge_route ?? '');
-      const priorOutcome = candidate.payload.coarse_outcome as SampledOutcome;
-      const isVision = VISION_ROUTES.has(judgeRoute);
-
-      const [answerEvent] = await db.select().from(event).where(eq(event.id, candidate.subject_id));
-      if (!answerEvent) {
+      const execution = await rejudgeSingleCalibrationCandidate(db, cfg, candidate, {
+        judgeFn,
+        runTaskInner,
+      });
+      if (execution.kind === 'missing_answer_event' || execution.kind === 'missing_question') {
         result.errors += 1;
         continue;
       }
-      const answerPayload = answerEvent.payload as Record<string, unknown>;
-      // OCR major 2 (same information-face principle as MF2, text axis): when
-      // NEITHER text key was persisted, the original judge saw submitted text
-      // this payload never recorded — re-judging with '' would manufacture
-      // false disagreements. KEY PRESENCE is the discriminator: a persisted ''
-      // means the original judge also judged the empty submission (faces
-      // match, legitimate pair); an absent key is a pre-persistence row (skip).
-      const hasTextFace =
-        typeof answerPayload.answer_md === 'string' ||
-        typeof answerPayload.user_response_md === 'string';
-      if (!hasTextFace) {
+      if (execution.kind === 'missing_input') {
         result.skipped_missing_input += 1;
         continue;
       }
-      const answerMd =
-        (typeof answerPayload.answer_md === 'string' && answerPayload.answer_md) ||
-        (typeof answerPayload.user_response_md === 'string' && answerPayload.user_response_md) ||
-        '';
-      // MF2: a vision-route answer whose payload predates answer_image_refs
-      // persistence cannot be reconstructed with the original information face.
-      if (isVision && !('answer_image_refs' in answerPayload)) {
+      if (execution.kind === 'missing_image_refs') {
         result.skipped += 1;
         continue;
       }
-      const studentImageRefs = Array.isArray(answerPayload.answer_image_refs)
-        ? (answerPayload.answer_image_refs as string[])
-        : [];
-
-      const [q] = await db.select().from(question).where(eq(question.id, answerEvent.subject_id));
-      if (!q) {
-        result.errors += 1;
-        continue;
-      }
-      const subjectProfile = await resolveSubjectProfileForKnowledgeIds(db, q.knowledge_ids);
-
-      // S1/MF1 capture slot: the wrapper records the inner run's id + raw text.
-      const slot: { taskRunId: string | null; rawText: string | null } = {
-        taskRunId: null,
-        rawText: null,
-      };
-      const rejudgeRunTaskFn = async (kind: string, input: unknown, ctx: unknown) => {
-        const inner = await runTaskInner(kind, input, {
-          ...(ctx as Record<string, unknown>),
-          // AFTER ...ctx on purpose (S5): the vision routes inject their own
-          // override into ctx at the call site — the second lane must win.
-          override: {
-            provider: cfg.rejudgeProvider as ResolvedProvider['provider'],
-            model: cfg.rejudgeModel,
-          },
-        });
-        slot.taskRunId = inner.task_run_id ?? null;
-        slot.rawText = rawTaskOutput(inner);
-        return inner;
-      };
-
-      const invoked = await judgeFn({
-        db,
-        question: { ...q, judge_kind_override: judgeRoute },
-        answer_md: answerMd,
-        student_image_refs: studentImageRefs,
-        subjectProfile,
-        runTaskFn: rejudgeRunTaskFn,
-      });
-      const rejudgeOutcome = invoked.result.coarse_outcome;
-
-      // MF3②: unsupported = "review unavailable", NEVER a disagreement
-      // (rejudge.ts unsupported-as-upheld semantics). No observation row.
-      if (rejudgeOutcome === 'unsupported') {
+      if (execution.kind === 'unsupported') {
         result.skipped_unsupported += 1;
         continue;
       }
-
-      const inferredOriginalProvider = isVision
-        ? (visionProviderAtSample ?? globalOverrideAtSample ?? 'xiaomi')
-        : (globalOverrideAtSample ?? 'xiaomi');
-
-      const written = await writeJudgeCalibrationSampleEvent(db, {
-        originalJudgeEventId: candidate.id,
-        questionId: q.id,
-        answerEventId: answerEvent.id,
-        priorOutcome,
-        rejudgeOutcome,
-        rejudgeRoute: invoked.route,
-        rejudgeConfidence: invoked.result.confidence,
-        rejudgeProvider: cfg.rejudgeProvider,
-        rejudgeModel: cfg.rejudgeModel,
-        rejudgeTaskRunId: slot.taskRunId,
-        rejudgeRawOutput: slot.rawText,
-        visionJudgeProviderAtSample: visionProviderAtSample,
-        aiProviderOverrideAtSample: globalOverrideAtSample,
-        sameLaneSuspected: inferredOriginalProvider === cfg.rejudgeProvider,
+      const written = await applyJudgeCalibrationRejudgeSample(
+        db,
+        cfg,
+        execution,
+        laneSnapshots,
         now,
-      });
+      );
       if (written === 'duplicate') {
         result.skipped += 1;
         continue;
       }
       result.sampled += 1;
-      if (rejudgeOutcome === priorOutcome) {
+      if (execution.coarseOutcome === execution.priorOutcome) {
         result.agreed += 1;
       } else {
         result.disagreed += 1;
@@ -501,8 +651,8 @@ export async function runJudgeCalibrationSample(
         window_days: cfg.windowDays,
         rejudge_provider: cfg.rejudgeProvider,
         rejudge_model: cfg.rejudgeModel,
-        vision_judge_provider_at_sample: visionProviderAtSample,
-        ai_provider_override_at_sample: globalOverrideAtSample,
+        vision_judge_provider_at_sample: laneSnapshots.visionJudgeProviderAtSample,
+        ai_provider_override_at_sample: laneSnapshots.aiProviderOverrideAtSample,
       },
       caused_by_event_id: null,
       task_run_id: null,

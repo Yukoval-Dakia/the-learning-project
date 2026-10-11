@@ -277,6 +277,7 @@ const ITEM: CalibrationWorkSetItem = {
   priorOutcome: 'correct',
   judgePayload: { coarse_outcome: 'correct', judge_route: 'judge.v2.open' },
   answerPayload: ANSWER_PAYLOAD,
+  judgeCreatedAt: '2026-10-10T08:00:00.000Z',
 };
 
 const ITEM_B: CalibrationWorkSetItem = {
@@ -287,6 +288,7 @@ const ITEM_B: CalibrationWorkSetItem = {
   priorOutcome: 'incorrect',
   judgePayload: { coarse_outcome: 'incorrect', judge_route: 'judge.v2.open' },
   answerPayload: { answer_md: '另一份作答', answer_image_refs: [] as string[] },
+  judgeCreatedAt: '2026-10-10T09:30:00.000Z',
 };
 
 /** In-memory append-only double for the PROVISIONAL lane-B port. `loseReserve`
@@ -326,7 +328,6 @@ const APPLY_OK: ApplyCalibrationReceiptFn = async (_receipt, identity) => ({
   domainRef: `experimental:judge_calibration_sample:${identity.judgeEventId}`,
   idempotentReplay: false,
 });
-
 function stagedIds(
   anchor: Date,
   items: readonly CalibrationWorkSetItem[],
@@ -367,7 +368,6 @@ const SENT_OK: ExecuteCalibrationItemFn = async (_item, identity) => ({
   kind: 'sent',
   receipt: receiptFor(identity),
 });
-
 async function runStaged(
   port: CalibrationStagedExecutionPort,
   executeItem: ExecuteCalibrationItemFn,
@@ -780,11 +780,11 @@ describe('runCalibrationStagedOperation', () => {
   it('append-only history — earlier rows survive byte-for-byte across later runs', async () => {
     setTestConfig({ [JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV]: true });
     const port = new MemoryStagedPort();
-    const executeItem = vi.fn(async (_item, identity) => {
-      if (identity.judgeEventId === ITEM_B.judgeEventId) {
+    const executeItem = vi.fn(async (...args: Parameters<ExecuteCalibrationItemFn>) => {
+      if (args[1].judgeEventId === ITEM_B.judgeEventId) {
         throw new Error('item B lane crash');
       }
-      return SENT_OK(_item, identity);
+      return SENT_OK(...args);
     });
     const first = expectStagedReport(
       await runStaged(port, executeItem, { anchor: ANCHOR, items: [ITEM, ITEM_B] }),

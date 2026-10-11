@@ -269,3 +269,63 @@ Logs under `/tmp/yuk1355-timed-reference-codex-20261011/` (suffix `-staged`).
    `selectCalibrationWorkSetFn`-equivalent and `executeItem` behind parent-owned admission.
 3. Real DB/process recovery, runtime obligation reconciliation and cutover remain parent-owned;
    the prepared DB integration cases from the previous checkpoint are still unexecuted.
+
+## 2026-10-11 fix round + core wiring (supersedes f007ed528's stage claims)
+
+Parent review rejected `f007ed528` as a safe stage implementation. Two commits landed on the same
+tree:
+
+- `369178df0` — operation-layer fixes:
+  1. `reserveIntent` returns an explicit CAS verdict (`{reserved}` | `{lost, winner}`); a lost
+     reserve never sends and never appends, even on a stale-empty loaded snapshot (regression
+     test pins the exact two-process face). The atomic store remains lane B's sole
+     implementation; the port is still the provisional consumer seam.
+  2. completed→applied goes through a REQUIRED `applyReceipt` seam returning trusted application
+     evidence; only its success marks applied; failure keeps the record `completed`
+     (recoverable, provider never re-invoked; `pendingApplications` reported every tick). Echo
+     equality authorizes the apply attempt and is never itself the application. Clean skips are
+     terminal classification records, not obligations.
+  3. The effect revision carries a freeze digest over the full ordered workset; replaying a
+     workset id with a divergent freeze is rejected whole (no reserve/send/append) and reported
+     via `freezeMismatch`.
+- core wiring (this commit) — the feature owner released
+  `judge-calibration-sample-core.ts` for a single-file minimal behavior-equivalent extraction;
+  the retained `runJudgeCalibrationSample` now composes:
+  - `selectJudgeCalibrationCandidates(db, cfg, now): Promise<JudgeCandidate[]>` — MF4 selection
+    moved verbatim;
+  - `rejudgeSingleCalibrationCandidate(db, cfg, candidate, opts): Promise<JudgeCalibrationSingleRejudge>`
+    — provider EXECUTION only (skip faces classified; failures throw to the caller's catch);
+  - `applyJudgeCalibrationRejudgeSample(db, cfg, rejudged, laneSnapshots, now): Promise<'written'|'duplicate'>`
+    — domain APPLY only (MF8-idempotent observation write);
+  - `readCalibrationLaneSnapshots(): JudgeCalibrationLaneSnapshots`;
+  - `freezeCalibrationWorkSetFromCandidates(db, candidates): Promise<CalibrationWorkSetItem[]>`;
+  - `makeJudgeCalibrationRunner(db)` — same inner runner as the retained batch, exported so the
+    staged seams add no new capability→server import edge.
+  `buildCalibrationStagedCoreSeams(db, cfg, sampleDeps?)` wires these as the REAL staged seams
+  (lazy core import; execution and apply remain separate calls — a combined rejudge is never
+  used as receipt recovery). Seams receive `{ anchor }` as their only clock.
+
+Lane B delivered `d78e3c43f` but the parent REJECTED enabling it (cross-revision unknown
+predicate defect; reserve lacks built-in backend/generation validation; B is fixing on its own
+tree). Per parent instruction this lane did NOT read the moving B tree and did NOT integrate
+`d78e3c43f` as a safe protocol; the port stays provisional pending the parent-relayed fixed
+protocol. The DBOS candidate's paid-refusal protection is unchanged: gate-only, held on every
+enabled tick, no paid execution path.
+
+### Fresh offline evidence (fix round + core wiring; Node 24.19.0, logs `*-fixround.log` / `*-corewiring.log`)
+
+| Check | Fresh result | Log |
+| --- | --- | --- |
+| Scoped unit, three owned unit files | 40 passed in 3 files (28 operation: 9 retained + 19 fix-round) | `unit-corewiring.log` |
+| `pnpm typecheck` | exit 0 | inline |
+| `pnpm lint` | exit 0, 174 pre-existing warnings | `lint-corewiring.log` |
+| `pnpm build` | exit 0 | `build-corewiring.log` |
+| `pnpm audit:partition` | exit 0 | `partition-corewiring.log` |
+| `pnpm audit:test-policy --base 6f1f3e07e41a4db7b302f5404daf7e3067999423` | exit 0, 45 cases / 4 files | `test-policy-corewiring.log` |
+| `pnpm audit:capability-boundaries` | exit 0 after routing the runner through the core export (initial direct dynamic import raised 431→432) | `capability-boundaries-corewiring.log` |
+
+Behavior equivalence of the retained path is by construction (move-only extraction; counter
+order, isolation catch, batch-level `now` and lane-snapshot read point unchanged) plus typecheck
+of the untouched core db test's imports — its RUNTIME verification (scoped DB loop on
+`judge-calibration-sample.db.test.ts` and the five prepared staged DB cases) remains a parent
+gate, as does real-DB verification of `buildCalibrationStagedCoreSeams`.

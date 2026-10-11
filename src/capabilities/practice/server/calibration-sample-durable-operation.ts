@@ -44,6 +44,8 @@ import type {
   JudgeCalibrationConfig,
   JudgeCalibrationSampleDeps,
   JudgeCalibrationSampleResult,
+  JudgeCandidate,
+  SampledOutcome,
 } from './judge-calibration-sample-core';
 
 /** Producer identity of one calibration tick. */
@@ -224,8 +226,25 @@ export async function runCalibrationSampleOperation(
 // The interface is PROVISIONAL until the parent relays lane B's fixed typed
 // protocol, at which point it is replaced/aliased to it. Until that handoff
 // the staged executor has NO production caller: the retained pg-boss handler
-// keeps Part 1 behavior verbatim and the DBOS candidate stays gate-only held.
+// keeps Part 1 behavior verbatim and the DBOS candidate stays gate-only held
+// (paid-refusal protection preserved).
 // This seam is not live admission and must not be presented as one.
+//
+// CORE RELEASE (received 2026-10-11 from the feature owner; single file
+// `judge-calibration-sample-core.ts`, minimal behavior-equivalent extraction):
+//   • `selectJudgeCalibrationCandidates(db, cfg, now): Promise<JudgeCandidate[]>`
+//     — the MF4 selection block, moved verbatim; freezing reuses THIS math.
+//   • `rejudgeSingleCalibrationCandidate(db, cfg, candidate, opts): Promise<JudgeCalibrationSingleRejudge>`
+//     — provider EXECUTION only (no observation write); skip faces are
+//     classified outcomes, failures throw to the caller's isolation catch.
+//   • `applyJudgeCalibrationRejudgeSample(db, cfg, rejudged, laneSnapshots, now): Promise<'written'|'duplicate'>`
+//     — domain APPLY only (no provider call); MF8-idempotent observation write.
+//   • `readCalibrationLaneSnapshots(): JudgeCalibrationLaneSnapshots`
+//   • `freezeCalibrationWorkSetFromCandidates(db, candidates): Promise<CalibrationWorkSetItem[]>`
+//     — captures each frozen item's answer payload at freeze time.
+// `buildCalibrationStagedCoreSeams` below wires these as the REAL staged
+// seams (composed rejudge is never used as receipt recovery: execution and
+// apply remain separate calls).
 //
 // Resume semantics implemented here (shared invariants, parent plan):
 //   • the atomic reserve happens BEFORE the physical send; the exact
@@ -280,6 +299,10 @@ export interface CalibrationWorkSetItem {
   readonly priorOutcome: string;
   readonly judgePayload: Record<string, unknown> | null;
   readonly answerPayload: Record<string, unknown> | null;
+  /** judge-event created_at (ISO) — freeze metadata for candidate
+   * reconstruction, deliberately NOT part of the input digest (the re-judge
+   * input face does not depend on it, and it is immutable per event). */
+  readonly judgeCreatedAt: string;
 }
 
 /** Digest over the frozen re-judge input face. Key-order insensitive
@@ -433,13 +456,21 @@ export interface CalibrationStagedExecutionPort {
   appendRecord(record: CalibrationStagedEffectRecord): Promise<void>;
 }
 
+/** Execution/apply context handed to the seams: the frozen workset anchor —
+ * the ONLY clock the seams may use (no wall clock, no freshening). */
+export interface CalibrationStagedSeamContext {
+  readonly anchor: Date;
+}
+
 /** The per-item execution seam: EITHER a clean skip classification (no
  * observation row, terminal for this effect) OR the sent effect's exact
  * immutable receipt. Throws on failure (the orchestrator records the unknown
- * obligation). The real implementation is the released core single-item seam. */
+ * obligation). The real implementation is the released core single-item seam
+ * — see buildCalibrationStagedCoreSeams. */
 export type ExecuteCalibrationItemFn = (
   item: CalibrationWorkSetItem,
   identity: CalibrationEffectIdentity,
+  ctx: CalibrationStagedSeamContext,
 ) => Promise<CalibrationItemExecution>;
 
 export type CalibrationItemExecution =
@@ -454,6 +485,7 @@ export type CalibrationItemExecution =
 export type ApplyCalibrationReceiptFn = (
   receipt: CalibrationItemReceipt,
   identity: CalibrationEffectIdentity,
+  ctx: CalibrationStagedSeamContext,
 ) => Promise<CalibrationApplicationReceipt>;
 
 export type CalibrationItemDispositionKind =
@@ -585,6 +617,7 @@ export async function runCalibrationStagedOperation(
   }
   const cfg = gate.cfg;
   const workSetId = computeCalibrationWorkSetId({ anchor: input.workSet.anchor, cfg });
+  const seamCtx: CalibrationStagedSeamContext = { anchor: input.workSet.anchor };
   const freezeDigest = computeCalibrationFreezeDigest(input.workSet.items);
   const recordedAt = input.workSet.anchor.toISOString();
 
@@ -632,6 +665,7 @@ export async function runCalibrationStagedOperation(
       const application = await input.applyReceipt(
         record.receipt as CalibrationItemReceipt,
         record.identity,
+        seamCtx,
       );
       await append({ ...record, stage: 'applied', application, recordedAt });
       appliedFromReceipt.add(record.effectId);
@@ -694,7 +728,7 @@ export async function runCalibrationStagedOperation(
     if (reservation.status === 'lost') return { kind: 'reserved_by_other_process' };
     let execution: CalibrationItemExecution;
     try {
-      execution = await input.executeItem(item, coords.identity);
+      execution = await input.executeItem(item, coords.identity, seamCtx);
     } catch {
       // After a won reserve, a failed or unknowable send can never be proven
       // un-sent — record the unresolved obligation (per-item isolation kept:
@@ -754,7 +788,7 @@ export async function runCalibrationStagedOperation(
       recordedAt,
     });
     try {
-      const application = await input.applyReceipt(receipt, coords.identity);
+      const application = await input.applyReceipt(receipt, coords.identity, seamCtx);
       await append({
         effectId: coords.effectId,
         entityKey: coords.entityKey,
@@ -859,6 +893,94 @@ export async function runCalibrationStagedOperation(
       openObligations,
       pendingApplications,
       freezeMismatch,
+    },
+  };
+}
+
+/** The REAL staged seams over the released core extraction. Execution and
+ * apply stay separate calls — a combined rejudge is never used as receipt
+ * recovery. Lazy core import keeps unit tests (which inject their own seams)
+ * from loading the reconstruction chain. NOT a production caller: admission
+ * stays parent-owned behind the lane-B handoff; the DBOS candidate's
+ * paid-refusal protection is unchanged. */
+export interface CalibrationStagedCoreSeams {
+  readonly executeItem: ExecuteCalibrationItemFn;
+  readonly applyReceipt: ApplyCalibrationReceiptFn;
+}
+
+export async function buildCalibrationStagedCoreSeams(
+  db: Db,
+  cfg: JudgeCalibrationConfig,
+  sampleDeps: JudgeCalibrationSampleDeps = {},
+): Promise<CalibrationStagedCoreSeams> {
+  const core = await import('./judge-calibration-sample-core');
+  const judgeFn = sampleDeps.judgeFn ?? (await import('./judge/question-contract')).judgeAnswer;
+  const runTaskInner = sampleDeps.runTaskInner ?? core.makeJudgeCalibrationRunner(db);
+
+  return {
+    executeItem: async (item, identity, ctx) => {
+      const candidate: JudgeCandidate = {
+        id: item.judgeEventId,
+        subject_id: item.answerEventId,
+        created_at: new Date(item.judgeCreatedAt),
+        payload: item.judgePayload ?? {},
+      };
+      const outcome = await core.rejudgeSingleCalibrationCandidate(db, cfg, candidate, {
+        judgeFn,
+        runTaskInner,
+      });
+      if (outcome.kind !== 'rejudged') {
+        // skip faces map 1:1 onto the staged classification names
+        return { kind: 'skipped', classification: outcome.kind };
+      }
+      return {
+        kind: 'sent',
+        receipt: {
+          effect: identity,
+          outcome: {
+            judge_event_id: outcome.judgeEventId,
+            question_id: outcome.questionId,
+            answer_event_id: outcome.answerEventId,
+            prior_outcome: outcome.priorOutcome,
+            judge_route: outcome.judgeRoute,
+            is_vision: outcome.isVision,
+            route: outcome.route,
+            coarse_outcome: outcome.coarseOutcome,
+            confidence: outcome.confidence,
+            task_run_id: outcome.taskRunId,
+            raw_output: outcome.rawText,
+            // the frozen anchor the execution ran under (ctx, not a wall clock)
+            executed_at: ctx.anchor.toISOString(),
+          },
+        },
+      };
+    },
+    applyReceipt: async (receipt, identity, ctx) => {
+      const o = receipt.outcome as Record<string, unknown>;
+      const written = await core.applyJudgeCalibrationRejudgeSample(
+        db,
+        cfg,
+        {
+          kind: 'rejudged',
+          judgeEventId: identity.judgeEventId,
+          questionId: String(o.question_id ?? ''),
+          answerEventId: String(o.answer_event_id ?? ''),
+          priorOutcome: String(o.prior_outcome ?? '') as SampledOutcome,
+          judgeRoute: String(o.judge_route ?? ''),
+          isVision: o.is_vision === true,
+          route: String(o.route ?? ''),
+          coarseOutcome: String(o.coarse_outcome ?? ''),
+          confidence: Number(o.confidence ?? 0),
+          taskRunId: typeof o.task_run_id === 'string' ? o.task_run_id : null,
+          rawText: typeof o.raw_output === 'string' ? o.raw_output : null,
+        },
+        core.readCalibrationLaneSnapshots(),
+        ctx.anchor,
+      );
+      return {
+        domainRef: `${core.JUDGE_CALIBRATION_SAMPLE_ACTION}:${identity.judgeEventId}`,
+        idempotentReplay: written === 'duplicate',
+      };
     },
   };
 }
