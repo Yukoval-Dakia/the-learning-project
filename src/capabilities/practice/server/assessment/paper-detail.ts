@@ -152,6 +152,9 @@ export async function getFrozenPaperDetail(
             visible_to_user: true,
             outcome: grade?.coarse_outcome ?? 'unsupported',
             score: grade?.score ?? null,
+            ...(grade?.coarse_outcome === 'partial_unknown'
+              ? { partial_units: grade.partial_units }
+              : {}),
             feedback_md: grade?.feedback_md ?? null,
             reference_md: context.reference_md,
           }

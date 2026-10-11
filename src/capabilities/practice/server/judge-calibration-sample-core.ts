@@ -433,7 +433,7 @@ export async function runJudgeCalibrationSample(
 
       // MF3②: unsupported = "review unavailable", NEVER a disagreement
       // (rejudge.ts unsupported-as-upheld semantics). No observation row.
-      if (rejudgeOutcome === 'unsupported') {
+      if (rejudgeOutcome === 'unsupported' || rejudgeOutcome === 'partial_unknown') {
         result.skipped_unsupported += 1;
         continue;
       }

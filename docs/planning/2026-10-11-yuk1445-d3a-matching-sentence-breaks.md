@@ -323,3 +323,86 @@ sha256 前 16 `370fded45018d24c`；此前 §8 的 red log 记录保留）。签�
 judgment `ab4684987ce65f1a`、settlement `710fa2f8700b8a11`、scoring.test
 `b4ce87a2e289fff8`、settlement.test `f7708acefd0c440f`、DB 边界测试
 `eef566643bbcf5d0`。DB 未运行（无窗口）；FSRS #1700 排序归 coordinator。
+
+## 10. 公开 unknown-score 契约补齐，DB 用例仍未运行
+
+本刀从干净 `175f55a20ce083b5250ad23bf4621ff905ec0e28` 继续，不重做
+`a371dd845 → 8af031a80 → 4d04277e1 → 175f55a20`。Coordinator/migration
+已释放 capability schema、公开投影和必要后端消费者。原始 2 P1 的独立初审
+仍为 `/tmp/yuk1445-matching-sentence-breaks-initial-review-sol.md`；本刀不启动
+子任务或新 review，唯一剩余整链 Astra review 由 parent 执行。
+
+### 行为与兼容性
+
+- 无印规则、确定性判得 2/3 对：公开 `coarse_outcome='partial_unknown'`、
+  `score=null`、必填非空 `partial_units:[{scoring_unit_id,correct_count,total_count}]`，
+  文案为 `部分正确（2/3），分数未知`。投影直接消费聚合计数，不从 detail 文本
+  解析，不把正确率当分数，不发明点数。多单元计数逐单元列出，不合成权重。
+- `CoarseOutcome` 和 `JudgeResultV2` 仅在原成员之后追加新成员。旧 numeric
+  `partial` 分支逐字不变，仍要求 `score∈(0,0.85)`；旧 pending、缺失 aggregate、
+  普通 unresolved、holistic 未映射和历史读取分支不重释。
+- 调度仍用既有 `deriveCoarseVerdict` 的 `unsupported + partial_unknown_points`
+  和 `ratingForVerdict=null`；已有 partial-unit KC 弃权逻辑不动。必要的公共评级
+  消费者对新成员返回 null，probe 返回无结论，calibration 不写观测；FSRS
+  算法和 SubjectProfile 旧政策不改。旧 V1 数值结果无法承载 null-score partial，
+  明确拒绝降级，不经 `??0` 制造零分。
+- attempt/advice 响应及契约携带必填 typed counts；paper submit/detail 也透传
+  counts，历史 paper 字段保持兼容。完成 API client 再生成，并同步相关 Postman
+  response notes 和 collection。生成行数不计作产品实现量或测试保留理由。
+
+### 一条真实 DB 边界用例，PREPARED — NOT RUN
+
+`yuk1445-partial-settlement-boundary.db.test.ts` 只保留单个无印规则配对单元。
+原 fixture 两个空白文本单元会走真实 `blank_marked_zero`，现有分类器本来就
+弃权；它们并非本次未知分不变量所必需，已删除，没有放宽断言或改生产逻辑。
+
+链路改为 `publishQuestionGroup → evaluateSubmission → activateEvaluation`
+（真实 `learningSettlement`）`→ resolveVerdictForGroup → public projection`。
+后端 evaluator 自己封存 admission/input snapshot 和 evaluation，测试不手造
+评分记录、快照、执行器或内部 mock。发布 evidence 只是确定性 fixture，不是
+实际 provider/model 的准入或输出证据。结算 receipt 使用实际的 `rating`、
+`theta_decision`、`kc_observations`、`effects`，移除原来不存在的 `inputs` 读取。
+断言 rating=null、theta/KC 弃权、全表 FSRS/mastery 无新增及公开 typed 2/3。
+只登记 `vitest.shared.ts` 的精确 DB 路径，没有运行 DB/container/runtime。
+
+1470 的 `settle.ts`、`activate.ts` 和 `settle.db.test.ts` 与 175f 字节一致；
+SHA-256 记录在 `/tmp/yuk1445-public-partial-foreign-readonly.json`。
+
+### 实际测试清单
+
+新增 D3a 从 8 scoring + 3 settlement + 1 DB 缩至 **6 scoring + 0 settlement + 1 DB**。
+删重复集合顺序、匹配 unknown-score 的第二份核心直测、手造 partial counts 的
+KC/holistic 直测和重复空白 fixture。保留的 6 个核心入口用例分别保护：印规则
+给分/超额断点归零、断句无规则 typed unknown、非法响应拒绝、矛盾规则最大分拒绝
+及合法十进制、Unicode 冻结字缝、公开 DTO 答案键隔离。第 7 个为上述真实 DB 边界。
+没有新增 helper-only、排列、mock counts、shape-only 或内部 mock 用例。
+
+Vitest 实际展开清单为 `/tmp/yuk1445-public-partial-unit-inventory.json`，
+逐用例状态为 `/tmp/yuk1445-public-partial-test-inventory.tsv`：scoring **20**、
+settlement **23**、evaluation **55**、既有 authority **7**，共 **105 passed**。
+其中 authority 的既有内部 mock 未修改；这些旧用例不证明新 DB/public 链已运行。
+DB 仅 **1 prepared not run**。Policy 相对整链基线 e6b8880b5 检查 7 个新增用例。
+
+### Node 24.19.0 门禁与 parent 交接
+
+- Scoped unit **105/105**，`unit-head.log`；lint exit 0、172 存量 warnings，
+  `lint-final.log`；完整 build exit 0，`build-final.log`。
+- test-policy exit 0，`policy.log`；partition 修复后 exit 0、DB 208 文件，
+  `partition-fixed.log`。原 unassigned 失败保留于 `partition.log`。
+- capability-boundaries exit 0，`boundaries.log`；API contracts exit 0、173/173，
+  `api-contracts.log`；gen:api-client 与 gen:postman exit 0，`genapi-final.log`、
+  `postman.log`。提交后再执行 audit:api-client，结果记录在外部 handoff。
+- **typecheck 未通过，仅剩 Opus-owned UI**。完整日志 `typecheck-head.log`：
+  `PfSolo.tsx(114,7)` TS2741 缺 `partial_unknown` 映射；`(156,4)` TS2366
+  `toSubmittedJudgeResult` 未处理该成员，须原样保留 null score 和 typed counts；
+  `JudgeResultPanel.tsx(24,7)`、`(31,7)` TS2741 缺 tone/label 映射。
+  独立 Start tsconfig 也因 PfSolo 两条诊断失败，`start-typecheck.log`。
+  本刀不改 UI 逻辑，不加 cast 或默认值遮盖诊断，不能称整条交付 PASS。
+
+以上日志均为 `/tmp/yuk1445-public-partial-` 前缀，初次失败没有被重试覆盖。
+Exact head、binary diff digest、生成物 digest 和提交后 gate 见
+`/tmp/yuk1445-public-partial-handoff.md`。Parent 应在 carrier 合入完整五刀链与
+Opus UI 适配后再生成契约、复查 typecheck，安排 DB window、唯一 Astra R2、
+exact-head CI、merge。未 push/PR/merge、部署、网络、安装、provider、浏览器或
+子任务。未发现已分配交接之外的新 actionable follow-up；本 lane 无网络/Linear
+写权限，既有 YUK-1445 状态与 UI/DB/R2 handoff 由 parent 对齐。

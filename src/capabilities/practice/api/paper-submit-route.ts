@@ -52,6 +52,7 @@ export async function createPaperSubmission(
             visible_to_user: true,
             coarse_outcome: result.coarseOutcome,
             score: result.score,
+            ...(result.partialUnits ? { partial_units: result.partialUnits } : {}),
           }
         : { ...identity, visible_to_user: false, feedback_buffered: true },
     );

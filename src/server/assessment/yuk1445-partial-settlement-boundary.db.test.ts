@@ -1,44 +1,23 @@
-// YUK-1445 / ADR-0074 D3a — partial_unknown_points 结算边界 DB 测试。
-//
-// 【PREPARED — NOT RUN】本 lane 无 DB 窗口：父线程安排 DB window 与 exact-head
-// CI 后执行（owner 规则：不 DB/runtime/provider 自跑）。本文件为 task-owned
-// 新文件，不改不碰 1470 线拥有的 settle.ts / activate.ts / settle*.db.test.ts，
-// 只消费其公开入口 —— 真实链路：publishQuestionGroup → 真实
-// evaluateSubmissionCore → activateEvaluation(learningSettlement) → 公开读
-// projectEvaluationToJudgeResult。无内部 mock/假 admission 替代真实判分
-// （admission evidence 仅按既有 db 测试惯例作 fixture 播种）；时钟用冻结常量
-// NOW（与 settle.db.test.ts 同款外部时钟约定）。
-//
-// 边界不变量（coordinator 最终裁决）：
-//   1. 【现在即可执行】多空白 + 无印规则 2/3 对 ⇒ 调度面 rating=null（无
-//      FSRS 写、无 θ̂ 写、KC 全弃权）—— 调度面 verdict=unsupported(reason=
-//      partial_unknown_points) 已落 core；
-//   2. 【pin 待补丁】公开读面 learner 看到 partial「部分对、分数未知」
-//      （score=null + typed 2/3 计数）。当前 JudgeResultV2 的 'partial'
-//      变体强制 score∈(0,0.85)（src/core/schema/capability.ts:83-87），
-//      score-null partial 无合法承载 —— 本断言组钉住目标契约，待父/
-//      coordinator 裁决 capability schema 最小补丁（新判别值或 score
-//      可空，见 docs/planning/…-d3a-matching-sentence-breaks.md §9 的
-//      两个候选 diff）后转绿；在此之前运行本用例将在此处如实失败，
-//      不是误报。
+// PREPARED — NOT RUN. Parent owns the DB window and runtime acceptance.
+// Real deterministic grading seals admission/input snapshots before activation.
+// Publication evidence is a fixture, not actual-provider or model admission evidence.
 
 import { eq } from 'drizzle-orm';
 import { beforeEach, describe, expect, it } from 'vitest';
+import { evaluateSubmission } from '@/capabilities/practice/server/judge/evaluate-submission';
 import { projectEvaluationToJudgeResult } from '@/capabilities/practice/server/judge/evaluation-authority';
 import {
   EvaluationRecord,
-  type EvaluationRecordT,
-  PublishedQuestionRevision,
-  type PublishedQuestionRevisionT,
+  ExecutionPlan,
   type QuestionGroupStructureT,
   type ResponseSetT,
+  ResponseSpec,
   ScoringBasis,
-  evaluateSubmissionCore,
 } from '@/core/schema/assessment';
+import { JudgeResultV2 } from '@/core/schema/capability';
 import {
   assessment_issuance,
   assessment_submission,
-  evaluation,
   evaluation_group,
   event,
   knowledge,
@@ -46,9 +25,9 @@ import {
   material_fsrs_state,
   question,
 } from '@/db/schema';
+import { resolveVerdictForGroup } from '@/kernel/read-models/assessment-verdict';
 import { contractIntegrityDigest } from '@/kernel/records/assessment-normalization';
 import { publishQuestionGroup } from '@/kernel/records/assessment-publication';
-import type { NormalizableQuestionRow } from '@/server/questions/contract-normalizer';
 import { normalizeQuestionRowToContract } from '@/server/questions/contract-normalizer';
 import { resetDb, testDb } from '../../../tests/helpers/db';
 import { activateEvaluation, insertInitialEvaluationHead } from './activate';
@@ -62,14 +41,14 @@ const ADMITTED_EVIDENCE = {
   model_slice: null,
 };
 
-/** D3a 卷面契约：配对（无印规则）+ 两个可空白文本单元；blank_scores_zero=true。 */
-function d3aContract(groupId: string) {
+/** A single matching unit with no printed scoring rule. */
+function d3aContract(groupId: string): Parameters<typeof publishQuestionGroup>[1]['contract'] {
   const structure: QuestionGroupStructureT = {
     group_id: groupId,
     materials: [],
-    parts: [{ part_id: 'p1', prompt_md: '把作家与作品配对，并完成填空。', material_ids: [] }],
+    parts: [{ part_id: 'p1', prompt_md: '把作家与作品配对。', material_ids: [] }],
   };
-  const response_spec = {
+  const response_spec = ResponseSpec.parse({
     slots: [
       {
         slot_id: 'm1',
@@ -86,11 +65,9 @@ function d3aContract(groupId: string) {
           { option_id: 'r3', label: '3', text: '《茶馆》' },
         ],
       },
-      { slot_id: 't1', part_id: 'p1', kind: 'text' },
-      { slot_id: 't2', part_id: 'p1', kind: 'text' },
     ],
-  };
-  const scoring_basis = {
+  });
+  const scoring_basis = ScoringBasis.parse({
     units: [
       {
         scoring_unit_id: 'u_match',
@@ -108,47 +85,25 @@ function d3aContract(groupId: string) {
         },
         points: 6,
       },
-      {
-        scoring_unit_id: 'u_t1',
-        slot_refs: ['t1'],
-        material_refs: [],
-        evidence_slot_refs: [],
-        requires_group_evidence: false,
-        criterion: { kind: 'text_key', accepted_texts: ['答'], normalization: 'trim' },
-        points: 2,
-      },
-      {
-        scoring_unit_id: 'u_t2',
-        slot_refs: ['t2'],
-        material_refs: [],
-        evidence_slot_refs: [],
-        requires_group_evidence: false,
-        criterion: { kind: 'text_key', accepted_texts: ['答'], normalization: 'trim' },
-        points: 2,
-      },
     ],
     aggregation: { kind: 'sum' },
-    blank_scores_zero: true,
-  };
-  const execution_plan = {
+    blank_scores_zero: false,
+  });
+  const execution_plan = ExecutionPlan.parse({
     plan_version: 1,
     assignments: [
       {
         scoring_unit_ids: ['u_match'],
         executor: { kind: 'deterministic', comparator: 'exact_matching_pairs' },
       },
-      {
-        scoring_unit_ids: ['u_t1', 'u_t2'],
-        executor: { kind: 'deterministic', comparator: 'exact_text' },
-      },
     ],
     escalation: { on_unadmitted_model: 'withhold', on_low_confidence: 'human_review' },
-  };
+  });
   const contract = { structure, response_spec, scoring_basis, execution_plan };
   return { ...contract, integrity_digest: contractIntegrityDigest(contract) };
 }
 
-/** 作答：配对 2/3 正确（i3 错配）+ 两个主动空白。 */
+/** Two correct pairs and one incorrect pair. */
 const D3A_RESPONSE: ResponseSetT = {
   entries: [
     {
@@ -160,15 +115,15 @@ const D3A_RESPONSE: ResponseSetT = {
         { item_id: 'i3', option_id: 'r1' },
       ],
     },
-    { slot_id: 't1', kind: 'text', text_md: '' },
-    { slot_id: 't2', kind: 'text', text_md: '' },
   ],
 };
 
 describe('YUK-1445 D3a — partial_unknown_points 结算边界（DB，prepared not run）', () => {
   beforeEach(resetDb);
 
-  it('多空白 + 无印规则 2/3 对：rating=null 无 FSRS/θ̂/KC 写；公开读显示 partial 2/3、score=null', async () => {
+  // @invariant grading: no-rule 2/3 correctness remains public with null score and no learning mutation.
+  // @fails-if grading loses typed counts, activation rates unknown points, KC evidence changes mastery, or public read fabricates a score.
+  it('无印规则 2/3 对：真实判分和结算不写 FSRS/掌握；公开 partial_unknown 携带 2/3、score=null', async () => {
     const db = testDb();
     await db.insert(knowledge).values({
       id: KC,
@@ -196,11 +151,11 @@ describe('YUK-1445 D3a — partial_unknown_points 结算边界（DB，prepared n
       version: 0,
     });
     const [row] = await db.select().from(question).where(eq(question.id, 'yuk1445_q')).limit(1);
-    const n = normalizeQuestionRowToContract(row as NormalizableQuestionRow);
+    const n = normalizeQuestionRowToContract(row);
     const contract = d3aContract(n.group_id);
     const published = await publishQuestionGroup(db, {
       group_id: n.group_id,
-      contract: contract as Parameters<typeof publishQuestionGroup>[1]['contract'],
+      contract,
       expectedCurrentRevision: null,
       expectedAdmissionGeneration: null,
       availability: 'general_pool',
@@ -209,19 +164,6 @@ describe('YUK-1445 D3a — partial_unknown_points 结算边界（DB，prepared n
       now: NOW,
     });
     if (published.status !== 'published') throw new Error(`publish: ${published.status}`);
-
-    const revision: PublishedQuestionRevisionT = PublishedQuestionRevision.parse({
-      revision_id: published.revision_id,
-      group_id: n.group_id,
-      revision_ordinal: 1,
-      integrity_digest: contract.integrity_digest,
-      structure: contract.structure,
-      response_spec: contract.response_spec,
-      scoring_basis: contract.scoring_basis,
-      execution_plan: contract.execution_plan,
-      published_at: NOW.toISOString(),
-      supersedes_revision_id: null,
-    });
 
     const submissionId = 'yuk1445_sub';
     const groupId = 'yuk1445_grp';
@@ -259,21 +201,10 @@ describe('YUK-1445 D3a — partial_unknown_points 结算边界（DB，prepared n
       });
     });
 
-    // 真实判分（无内部 mock）：partial 聚合由 evaluateSubmissionCore 产出。
-    const graded = await evaluateSubmissionCore({
-      evaluation_id: 'yuk1445_ev1',
-      submission: {
-        submission_id: submissionId,
-        issuance_id: 'yuk1445_iss',
-        revision_id: published.revision_id,
-        evaluation_group_id: groupId,
-        response_set: D3A_RESPONSE,
-        group_evidence: [],
-        idempotency_key: 'yuk1445_idem',
-        submitted_at: NOW.toISOString(),
-      },
-      revision,
-      attempt: 1,
+    const graded = await evaluateSubmission(db, {
+      submission_id: submissionId,
+      evaluation_group_id: groupId,
+      evaluation_key: 'yuk1445_no_rule_partial',
     });
     expect(graded.record.aggregate).toMatchObject({
       kind: 'partial_unknown_points',
@@ -281,24 +212,11 @@ describe('YUK-1445 D3a — partial_unknown_points 结算边界（DB，prepared n
       partial_units: [{ scoring_unit_id: 'u_match', correct_count: 2, total_count: 3 }],
     });
 
-    await db.insert(evaluation).values({
-      evaluation_id: 'yuk1445_ev1',
-      evaluation_group_id: groupId,
-      submission_id: submissionId,
-      attempt: 1,
-      status: graded.record.status,
-      unit_results: graded.record.unit_results as never,
-      aggregate: graded.record.aggregate as never,
-      plan_digest: null,
-      run_refs: [],
-      provenance: { source: 'automatic', assisted: false },
-    } as never);
-
     const activation = await db.transaction((tx) =>
       activateEvaluation(
         tx,
         {
-          evaluation_id: 'yuk1445_ev1',
+          evaluation_id: graded.record.evaluation_id,
           expected_effective_id: null,
           expected_generation: 0,
         },
@@ -307,58 +225,40 @@ describe('YUK-1445 D3a — partial_unknown_points 结算边界（DB，prepared n
     );
     expect(activation.status).toBe('activated');
 
-    // 边界 1：调度面零写 —— rating=null、θ̂ abstain、KC 全弃权。
-    const [receipt] = await db
+    const receipts = await db
       .select()
       .from(event)
       .where(eq(event.action, ASSESSMENT_SETTLEMENT_ACTION));
-    expect(receipt).toBeDefined();
-    const inputs = (
-      receipt.payload as { inputs: { rating: unknown; theta: unknown; kcObservations: unknown } }
-    ).inputs;
-    expect(inputs.rating).toBeNull();
-    expect(inputs.theta).toMatchObject({ applied: false, abstainReason: 'no_kc_evidence' });
-    expect(inputs.kcObservations).toEqual([
-      { kc_id: KC, bit: 'abstain', basis: 'no_supported_evidence' },
-    ]);
-    const [fsrs] = await db
-      .select()
-      .from(material_fsrs_state)
-      .where(eq(material_fsrs_state.subject_id, `knowledge:${KC}`));
-    expect(fsrs).toBeUndefined();
-    const [mastery] = await db
-      .select()
-      .from(mastery_state)
-      .where(eq(mastery_state.subject_id, `knowledge:${KC}`));
-    expect(mastery).toBeUndefined();
-
-    // 边界 2：公开读面 —— learner 看到 partial「部分对、分数未知」，非 unsupported。
-    const [evaluationRow] = await db
-      .select()
-      .from(evaluation)
-      .where(eq(evaluation.evaluation_id, 'yuk1445_ev1'));
-    const record: EvaluationRecordT = EvaluationRecord.parse({
-      evaluation_id: evaluationRow.evaluation_id,
-      evaluation_group_id: evaluationRow.evaluation_group_id,
-      submission_id: evaluationRow.submission_id,
-      attempt: evaluationRow.attempt,
-      status: evaluationRow.status,
-      unit_results: evaluationRow.unit_results,
-      aggregate: evaluationRow.aggregate,
-      plan_digest: evaluationRow.plan_digest,
-      run_refs: evaluationRow.run_refs ?? [],
-      provenance: evaluationRow.provenance ?? undefined,
+    expect(receipts).toHaveLength(1);
+    expect(receipts[0].payload).toMatchObject({
+      rating: null,
+      verdict: {
+        verdict: 'unsupported',
+        reason: 'partial_unknown_points',
+        points: null,
+        normalized: null,
+      },
+      theta_decision: { applied: false, abstainReason: 'no_kc_evidence' },
+      kc_observations: [{ kc_id: KC, bit: 'abstain', basis: 'no_supported_evidence' }],
+      effects: { fsrs_applied: [], theta_applied: [], family_observation_recorded: false },
     });
-    const judged = projectEvaluationToJudgeResult(
-      record,
-      ScoringBasis.parse(contract.scoring_basis),
+    expect(await db.select().from(material_fsrs_state)).toEqual([]);
+    expect(await db.select().from(mastery_state)).toEqual([]);
+
+    const effective = (await resolveVerdictForGroup(db, groupId)).effective;
+    expect(effective?.evaluation_id).toBe(graded.record.evaluation_id);
+    if (!effective?.scoring_basis) throw new Error('active evaluation has no frozen scoring basis');
+    const judged = JudgeResultV2.parse(
+      projectEvaluationToJudgeResult(
+        EvaluationRecord.parse(effective.row),
+        effective.scoring_basis,
+      ),
     );
-    expect(judged.coarse_outcome).toBe('partial');
-    expect(judged.score).toBeNull();
-    expect(judged.feedback_md).toContain('partly correct');
-    expect(judged.evidence_json).toMatchObject({
-      known_points: 0,
+    expect(judged).toMatchObject({
+      coarse_outcome: 'partial_unknown',
+      score: null,
       partial_units: [{ scoring_unit_id: 'u_match', correct_count: 2, total_count: 3 }],
+      feedback_md: '部分正确（2/3），分数未知',
     });
   });
 });

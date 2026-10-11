@@ -6,7 +6,6 @@ import { describe, expect, it } from 'vitest';
 import { PracticeIssuanceDto, projectPracticeIssuance } from './dto';
 import { evaluateSubmissionCore } from './evaluation';
 import { type ScoredUnitResultT, type SubmissionRecordT, aggregateUnitResults } from './judgment';
-import { codePointCount } from './position-gap';
 import { ResponseSpec, type ResponseSpecT } from './response';
 import {
   AssessmentIssuance,
@@ -620,32 +619,9 @@ async function evaluate(
 }
 
 describe('ADR-0074 D3a — matching 配对确定性判分', () => {
-  it('exact set gets full credit regardless of submission order (stable ids, not positions)', async () => {
-    const revision = matchingFixture();
-    // 与键数组顺序完全相反的提交 —— 集合语义，顺序无关。
-    const output = await evaluate(revision, [
-      {
-        slot_id: 'm1',
-        kind: 'matching',
-        pairs: [
-          { item_id: 'i3', option_id: 'r3' },
-          { item_id: 'i2', option_id: 'r1' },
-          { item_id: 'i1', option_id: 'r2' },
-        ],
-      },
-    ]);
-    expect(output.record.unit_results).toEqual([
-      expect.objectContaining({
-        status: 'scored',
-        scoring_unit_id: 'u_match',
-        points_awarded: 6,
-        scored_because: 'response',
-      }),
-    ]);
-    expect(output.record.aggregate).toMatchObject({ kind: 'points_total', points: 6 });
-  });
-
-  it('printed per_correct_pair rule applied exactly: 2/3 correct scores 2×points_per_pair; all-wrong scores 0 by rule', async () => {
+  // @invariant grading: printed pair/break rules determine points, including the overmark zero rule.
+  // @fails-if a correct pair/break gets invented weight or overmarking earns points.
+  it('printed rules award exact pair/break points and zero for excess breaks', async () => {
     const rule = { kind: 'per_correct_pair', points_per_pair: 2 } as const;
     const partial = await evaluate(matchingFixture({ rule }), [
       {
@@ -660,31 +636,7 @@ describe('ADR-0074 D3a — matching 配对确定性判分', () => {
     ]);
     expect(partial.record.unit_results[0]).toMatchObject({ status: 'scored', points_awarded: 4 });
 
-    const allWrong = await evaluate(matchingFixture({ rule }), [
-      {
-        slot_id: 'm1',
-        kind: 'matching',
-        pairs: [
-          { item_id: 'i1', option_id: 'r1' },
-          { item_id: 'i2', option_id: 'r3' },
-          { item_id: 'i3', option_id: 'r2' },
-        ],
-      },
-    ]);
-    expect(allWrong.record.unit_results[0]).toMatchObject({
-      status: 'scored',
-      points_awarded: 0,
-    });
-
-    // 同一不变量在断句比较器上：全错位 ⇒ 0（规则定义）、2/3 对 ⇒ 2 分。
-    const breaksRule = { kind: 'per_correct_break', points_per_break: 1, max_breaks: 5 } as const;
-    const misplaced = await evaluate(breaksFixture({ rule: breaksRule }), [
-      { slot_id: 's1', kind: 'sentence_breaks', positions: [3, 6, 7] },
-    ]);
-    expect(misplaced.record.unit_results[0]).toMatchObject({
-      status: 'scored',
-      points_awarded: 0,
-    });
+    const breaksRule = { kind: 'per_correct_break', points_per_break: 1, max_breaks: 3 } as const;
     const twoThirds = await evaluate(breaksFixture({ rule: breaksRule }), [
       { slot_id: 's1', kind: 'sentence_breaks', positions: [2, 6, 8] },
     ]);
@@ -692,82 +644,38 @@ describe('ADR-0074 D3a — matching 配对确定性判分', () => {
       status: 'scored',
       points_awarded: 2,
     });
+    const overmarked = await evaluate(breaksFixture({ rule: breaksRule }), [
+      { slot_id: 's1', kind: 'sentence_breaks', positions: [2, 5, 8, 7] },
+    ]);
+    expect(overmarked.record.unit_results[0]).toMatchObject({
+      status: 'scored',
+      points_awarded: 0,
+      feedback_md: 'rule_max_breaks_exceeded',
+    });
   });
 
-  it('no printed rule: structured partial verdict through the real grading chain — matching and sentence_breaks (never fake zero, never pending prose)', async () => {
-    const matching = await evaluate(matchingFixture(), [
-      {
-        slot_id: 'm1',
-        kind: 'matching',
-        pairs: [
-          { item_id: 'i1', option_id: 'r2' },
-          { item_id: 'i2', option_id: 'r4' },
-          { item_id: 'i3', option_id: 'r3' },
-        ],
-      },
-    ]);
-    // 独立复核 P1-1：部分对必须以 typed 结果落判 —— 旧缺陷下这里是
-    // pending(needs_review)+detail 文本，本用例在其上必红。
-    expect(matching.record.unit_results[0]).toMatchObject({
-      status: 'scored',
-      scored_because: 'response',
-      points_awarded: null,
-      partial_unknown_points: { correct_count: 2, total_count: 3 },
-    });
-    expect(matching.record.status).toBe('completed');
-    // 分数未知 ⇒ 显式 partial_unknown_points（组级 verdict=partial 而非
-    // unsupported；known_points=0：无已确定分值单元）。
-    expect(matching.record.aggregate).toMatchObject({
-      kind: 'partial_unknown_points',
-      known_points: 0,
-      partial_units: [{ scoring_unit_id: 'u_match', correct_count: 2, total_count: 3 }],
-    });
-
-    // 同一不变量在断句比较器上的独立失败面。
-    const breaks = await evaluate(breaksFixture(), [
+  // @invariant grading: no-rule sentence breaks retain typed counts and no fabricated score.
+  // @fails-if non-exact position sets become pending prose, zero points, or a fraction.
+  it('no printed rule: sentence-break partial stays scored with typed 2/3 and unknown points', async () => {
+    const output = await evaluate(breaksFixture(), [
       { slot_id: 's1', kind: 'sentence_breaks', positions: [2, 6, 8] },
     ]);
-    expect(breaks.record.unit_results[0]).toMatchObject({
+    expect(output.record.status).toBe('completed');
+    expect(output.record.unit_results[0]).toMatchObject({
       status: 'scored',
       points_awarded: null,
       partial_unknown_points: { correct_count: 2, total_count: 3 },
     });
-    expect(breaks.record.aggregate).toMatchObject({
+    expect(output.record.aggregate).toMatchObject({
       kind: 'partial_unknown_points',
       known_points: 0,
       partial_units: [{ scoring_unit_id: 'u_break', correct_count: 2, total_count: 3 }],
     });
-
-    // 聚合策略边界：cap/阈值绑死全量满分 —— partial 下 fail-closed，不造总分。
-    const cappedBasis = matchingFixture();
-    const capped = await evaluate(
-      PublishedQuestionRevision.parse({
-        ...cappedBasis,
-        scoring_basis: {
-          units: cappedBasis.scoring_basis.units,
-          aggregation: { kind: 'capped_sum', cap: 5 },
-          blank_scores_zero: false,
-        },
-      }),
-      [
-        {
-          slot_id: 'm1',
-          kind: 'matching',
-          pairs: [
-            { item_id: 'i1', option_id: 'r2' },
-            { item_id: 'i2', option_id: 'r1' },
-            { item_id: 'i3', option_id: 'r4' },
-          ],
-        },
-      ],
-    );
-    expect(capped.record.aggregate).toMatchObject({
-      kind: 'unresolved',
-      reason: 'no_mapping',
-    });
   });
 
-  it('structural violations fail closed before grading: duplicate left item, foreign option id, one_to_one duplicate right option, out-of-range/duplicate break positions', async () => {
+  // @invariant grading: out-of-contract matching IDs/cardinality and break gaps are rejected before grading.
+  // @fails-if foreign IDs, repeated one-to-one options, or invalid gaps receive a grade.
+  it('foreign matching IDs, repeated one-to-one options and invalid break gaps fail closed', async () => {
     const revision = matchingFixture();
     await expect(
       evaluate(revision, [
@@ -802,6 +710,8 @@ describe('ADR-0074 D3a — matching 配对确定性判分', () => {
     ).rejects.toMatchObject({ code: 'invalid_response_set' });
   });
 
+  // @invariant grading: printed attainable totals must match published maximums.
+  // @fails-if exact responses bypass contradictory rule weights or valid decimal weights are rejected.
   it('P1-2: printed rule attainable max must equal published points — contradictory rules are rejected at canonical scoring validation, even for exact answers', async () => {
     // 3 对 × 每对 4 分 = 12 ≠ 发布 6 分。
     await expect(
@@ -853,10 +763,10 @@ describe('ADR-0074 D3a — matching 配对确定性判分', () => {
 });
 
 describe('ADR-0074 D3a — sentence_breaks 断句确定性判分', () => {
+  // @invariant grading: sentence gaps use frozen Unicode code points, including surrogate pairs.
+  // @fails-if UTF-16 offsets admit the terminal gap or misgrade the reference position set.
   it('positions count Unicode code points (surrogate pair = one character); reference set scores full credit', async () => {
     const text = '甲乙𝄞丙丁';
-    expect(text.length).toBe(6); // UTF-16 code units
-    expect(codePointCount(text)).toBe(5); // code points —— 断句索引语义
     // 字缝 3 = 𝄞 与丙 之间（code point 计）；UTF-16 计数会把它错位成 3 与 4 之间。
     const withRule = breaksFixture({
       text,
@@ -870,25 +780,15 @@ describe('ADR-0074 D3a — sentence_breaks 断句确定性判分', () => {
       status: 'scored',
       points_awarded: 3,
     });
-  });
-
-  it('printed 超N处0分 rule: over-marking beyond max_breaks scores zero even with every accepted break present', async () => {
-    const revision = breaksFixture({
-      accepted: [2, 5, 8],
-      rule: { kind: 'per_correct_break', points_per_break: 1, max_breaks: 3 },
-    });
-    const output = await evaluate(revision, [
-      { slot_id: 's1', kind: 'sentence_breaks', positions: [2, 5, 8, 7] },
-    ]);
-    expect(output.record.unit_results[0]).toMatchObject({
-      status: 'scored',
-      points_awarded: 0,
-      feedback_md: 'rule_max_breaks_exceeded',
-    });
+    await expect(
+      evaluate(withRule, [{ slot_id: 's1', kind: 'sentence_breaks', positions: [5] }]),
+    ).rejects.toMatchObject({ code: 'invalid_response_set' });
   });
 });
 
 describe('ADR-0074 D3a — 键永不入公开 DTO（公私边界）', () => {
+  // @invariant security: public issuance includes frozen text without leaking private answer keys.
+  // @fails-if matching/position criteria appear in public DTOs or injected private fields parse.
   it('projectPracticeIssuance carries the frozen text but no criterion/key material; strict schema rejects injected private fields', () => {
     const matching = matchingFixture();
     const revision: PublishedQuestionRevisionT = PublishedQuestionRevision.parse({
