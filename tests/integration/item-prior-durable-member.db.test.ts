@@ -188,7 +188,10 @@ describe('item prior application float4 verification (DB, prepared)', () => {
       .select({ b: item_calibration.b, b_anchor: item_calibration.b_anchor })
       .from(item_calibration)
       .where(eq(item_calibration.question_id, 'q_f4_pg'));
-    expect(row?.b).toBe(Math.fround(evenMedian));
+    if (!row) throw new Error('Applied calibration row was not persisted');
+    // The text driver may return the shortest decimal (0.15), not the exact
+    // float32 value widened to double. Compare the stored float32 bits.
+    expect(Math.fround(row.b)).toBe(Math.fround(evenMedian));
     expect(row?.b).not.toBe(evenMedian);
 
     // Idempotent replay from the persisted float4 row, no second write:
