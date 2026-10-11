@@ -2,7 +2,6 @@
 // The chosen id rides the ingestion-session create request as `subject_id` (YUK-1404),
 // so draft questions can render their subject's notation (e.g. math formulas) before
 // anything is enrolled. Skippable: no choice sends nothing and the upload is unchanged.
-import { useId } from 'react';
 import { useSubjects } from '@/ui/hooks/useSubjects';
 import { listSubjectChoices } from '@/ui/lib/subject';
 
@@ -24,13 +23,10 @@ export function UploadSubjectPicker({
   const choices = listSubjectChoices(subjects).filter(
     (s) => s.configurationStatus !== 'unconfigured',
   );
-  const labelId = useId();
   return (
-    <div className="upload-subject">
-      <span className="field-label" id={labelId}>
-        这份材料是哪一科？（可不选）
-      </span>
-      <div className="chip-set" role="group" aria-labelledby={labelId}>
+    <fieldset className="upload-subject">
+      <legend className="field-label">这份材料是哪一科？（可不选）</legend>
+      <div className="chip-set">
         {choices.map((s) => (
           <button
             key={s.id}
@@ -49,7 +45,7 @@ export function UploadSubjectPicker({
           Word 文档暂时记不下科目，公式会先按普通文字显示。
         </span>
       )}
-    </div>
+    </fieldset>
   );
 }
 
