@@ -181,6 +181,21 @@ export const AggregateOutcome = z.discriminatedUnion('kind', [
     points: z.number().min(0).nullable(),
   }),
   z.object({
+    kind: z.literal('partial_unknown_points'),
+    /** 已确定分值单元的合计（partial 单元分数未知，不计入、不折算）。 */
+    known_points: z.number().min(0),
+    /** 分数未知的部分对单元（typed 正确数/总数；无分数、无比例 —— ADR-0074 D3a / 复核 P1-1 收口）。 */
+    partial_units: z
+      .array(
+        z.object({
+          scoring_unit_id: z.string().min(1),
+          correct_count: z.number().int().min(0),
+          total_count: z.number().int().min(1),
+        }),
+      )
+      .min(1),
+  }),
+  z.object({
     kind: z.literal('unresolved'),
     reason: z.enum(['pending_units', 'no_mapping', 'result_set_mismatch', 'invalid_result']),
     detail: z.string().default(''),
@@ -302,6 +317,21 @@ export const EvaluationRecord = z
     if (
       record.status === 'completed' &&
       pendingUnits.length === 0 &&
+      record.aggregate?.kind === 'partial_unknown_points' &&
+      !record.unit_results.some(
+        (unit) => unit.status === 'scored' && unit.partial_unknown_points != null,
+      )
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['aggregate'],
+        message:
+          'evaluation_status_contradiction: aggregate claims partial_unknown_points but no scored unit carries partial_unknown_points',
+      });
+    }
+    if (
+      record.status === 'completed' &&
+      pendingUnits.length === 0 &&
       record.aggregate?.kind === 'unresolved' &&
       record.aggregate.reason === 'pending_units'
     ) {
@@ -395,6 +425,7 @@ export function aggregateUnitResults(
 
   type Contribution =
     | { kind: 'points'; points: number }
+    | { kind: 'partial'; unitId: string; correctCount: number; totalCount: number }
     | { kind: 'no_mapping'; detail: string }
     | { kind: 'invalid'; detail: string };
 
@@ -466,10 +497,13 @@ export function aggregateUnitResults(
     if (result.points_awarded === null) {
       if (result.partial_unknown_points != null) {
         // ADR-0074 D3a：无印规则的部分对 —— 判得正确数/总数，分数未知。
-        // 与 holistic 未映射档位同语义：no_mapping，不凭空制造总分，也不伪零。
+        // 不凭空制造总分也不伪零：聚合落显式 partial_unknown_points
+        //（组级 verdict=partial 而非 unsupported；消费见 settlement/DTO）。
         return {
-          kind: 'no_mapping',
-          detail: `unit '${unitId}' is partial ${result.partial_unknown_points.correct_count}/${result.partial_unknown_points.total_count} without a printed rule — points unknown`,
+          kind: 'partial',
+          unitId,
+          correctCount: result.partial_unknown_points.correct_count,
+          totalCount: result.partial_unknown_points.total_count,
         };
       }
       return {
@@ -494,14 +528,27 @@ export function aggregateUnitResults(
   };
 
   const resolved: Array<{ unitId: string; points: number }> = [];
+  const partialUnits: Array<{
+    scoring_unit_id: string;
+    correct_count: number;
+    total_count: number;
+  }> = [];
   for (const unitId of unitIds) {
     const contribution = contributionOf(unitId);
-    if (contribution.kind !== 'points') {
+    if (contribution.kind === 'no_mapping' || contribution.kind === 'invalid') {
       return {
         kind: 'unresolved',
         reason: contribution.kind === 'no_mapping' ? 'no_mapping' : 'invalid_result',
         detail: contribution.detail,
       };
+    }
+    if (contribution.kind === 'partial') {
+      partialUnits.push({
+        scoring_unit_id: contribution.unitId,
+        correct_count: contribution.correctCount,
+        total_count: contribution.totalCount,
+      });
+      continue;
     }
     resolved.push({ unitId, points: contribution.points });
   }
@@ -526,6 +573,22 @@ export function aggregateUnitResults(
   };
 
   let total = resolved.reduce((sum, entry) => sum + entry.points * weightOf(entry.unitId), 0);
+  // 部分对（分数未知）优先于 cap/档位映射：cap/阈值绑死全量满分，部分未知
+  // 单元下任何 cap/档位解释都是在造总分 —— fail-closed 为 unresolved。
+  if (partialUnits.length > 0) {
+    if (basis.aggregation.kind === 'capped_sum' || basis.aggregation.kind === 'threshold_levels') {
+      return {
+        kind: 'unresolved',
+        reason: 'no_mapping',
+        detail: `aggregation '${basis.aggregation.kind}' cannot express partial-unknown units without inventing a total (cap/threshold semantics bind to the full point set)`,
+      };
+    }
+    return {
+      kind: 'partial_unknown_points',
+      known_points: total,
+      partial_units: partialUnits,
+    };
+  }
   if (basis.aggregation.kind === 'capped_sum') {
     total = Math.min(total, basis.aggregation.cap);
   }

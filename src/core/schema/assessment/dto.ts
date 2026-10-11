@@ -307,6 +307,21 @@ export const AssessmentFeedbackDto = z.strictObject({
         level_id: z.string().min(1),
         points: z.number().nullable(),
       }),
+      // ADR-0074 D3a：已知部分对、总分未知 —— 如实携带 known_points 与
+      // typed 计数，不伪 unresolved 也不造总分。
+      z.object({
+        kind: z.literal('partial_unknown_points'),
+        known_points: z.number().min(0),
+        partial_units: z
+          .array(
+            z.object({
+              scoring_unit_id: z.string().min(1),
+              correct_count: z.number().int().min(0),
+              total_count: z.number().int().min(1),
+            }),
+          )
+          .min(1),
+      }),
       z.object({ kind: z.literal('unresolved'), reason: z.string() }),
     ])
     .nullable(),
@@ -476,7 +491,13 @@ export function projectFeedback(
               level_id: evaluation.aggregate.level_id,
               points: evaluation.aggregate.points,
             }
-          : { kind: 'unresolved' as const, reason: evaluation.aggregate.reason }
+          : evaluation.aggregate.kind === 'partial_unknown_points'
+            ? {
+                kind: 'partial_unknown_points' as const,
+                known_points: evaluation.aggregate.known_points,
+                partial_units: evaluation.aggregate.partial_units,
+              }
+            : { kind: 'unresolved' as const, reason: evaluation.aggregate.reason }
       : null;
 
   const unitResults: FeedbackUnitResultViewT[] =

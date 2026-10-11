@@ -165,3 +165,92 @@ judgment `e01c259fa060d54a`、scoring `8a0882b5087e3e99`、evaluation
 - 免责：base/head 均未实现 per-item calibration registration；本切片的标定探针
   用例**不是** admission，D3 亦未全部完成（R10 UI 点选块、录入侧 spec 产出、
   作答卷往返等仍归各自 lane）。
+
+---
+
+## 8. P1-1 收口：typed partial 贯通到组级 verdict 与 KC 证据（8af031a80 之后第三刀）
+
+输入：owner 22:15 测试规则 + coordinator 对 `settlement.ts` 的专项释放
+（1470 线拥有 server/assessment/{settle,activate,settle*.db.test}，本刀未触碰）。
+§1–§7 记录不可变。本刀改动：`judgment.ts`（聚合显式 partial）、
+`settlement.ts`（verdict/classify）、`dto.ts`（反馈投影 compile-forced 最小 case）、
+两个测试文件（按 22:15 规则合并）。
+
+### 语义 delta
+
+- **AggregateOutcome 新成员** `partial_unknown_points {known_points, partial_units[
+  {scoring_unit_id, correct_count, total_count}]}`：聚合单源产出 —— 存在
+  partial-unknown 单元且无 invalid/no_mapping/pending 时返回；`capped_sum`/
+  `threshold_levels` 因 cap/阈值绑死全量满分而 fail-closed 为
+  unresolved(no_mapping)。superRefine 新增守卫：声称 partial 而无任何
+  partial 单元结果 ⇒ 矛盾拒绝。
+- **deriveCoarseVerdict**：partial_unknown_points ⇒ `verdict='partial'`、
+  reason=`partial_unknown_points`、points/maxPoints/normalized 全 null ——
+  已知部分对触达学习者，不再是 unsupported；分数未知不造总分/比例。
+  legacy（holistic 未映射/pending/普通 unresolved）原分支不动、不重释
+  （混合卷 holistic 未映射 ⇒ 聚合 unresolved ⇒ 组级仍 unsupported，有钉住用例）。
+- **classifyScoredUnit（owner override）**：`partial_unknown_points` ⇒
+  `uninformative` —— 未知分【零 KC 证据】：不按正确计数映射 partial/zero
+  （0/3 也不是已判零），修复 `points_awarded ?? 0 ⇒ zero` 主动污染 θ̂ 的缺陷。
+- **dto 反馈投影**：新聚合成员如实在 AssessmentFeedbackDto 呈现
+  （known_points + typed 计数；不伪 unresolved）。
+
+### 消费链实测（read-only 外部文件，未编辑）
+
+- `server/assessment/settle.ts`（1470 所有）：:394 deriveCoarseVerdict →
+  :409-414 ratingForVerdict → :703 `plan.rating !== null` 才写 FSRS；
+  θ̂ 经 :402/:407 localize/resolveTheta。**无需修改**：unsupported ⇒ rating
+  null ⇒ 不写（现行为）；修复后 partial ⇒ 'hard'（D14 既有映射）——
+  未知分 partial 将调度 FSRS hard，属设计内结果，已向 owner 报告待确认。
+- **剩余消费缺口（父线程释放后处理，本刀未动）**：
+  `src/capabilities/practice/server/judge/evaluation-authority.ts` 的
+  `projectEvaluationToJudgeResult(record, basis)` 需在 `aggregate.kind ===
+  'unresolved'` 块之后、`verdict.points == null` 检查之前插入 partial 分支
+  （score=null、coarse_outcome='partial'、evidence 带 known/partial_units），
+  否则学习者侧 JudgeResultV2 对 partial 聚合仍回落 unsupported 文案。
+- 纯决策层测试不证明 DB 层 no-write；settle.db 级探针属 1470 的
+  settle*.db.test（可按需准备，未运行）。
+
+### 测试清单（owner 22:15 规则；before → after；入口与理由）
+
+合并后 D3a 新增用例：scoring.test.ts 13→**12** it、settlement.test.ts 6→**4**
+it（砍掉与既有用例重复的 legacy 钉住与 rating 映射 pin；helper 直测改为经
+真实链入口）。入口全部为公共确定性核心：`evaluateSubmissionCore`（判分链）、
+`aggregateUnitResults`（judgment 单源聚合）、`deriveCoarseVerdict`（1047 投影
+与结算单源）、`localizeKcObservations`/`resolveThetaDecision`（settle.ts
+:394-414 同链消费）、`projectPracticeIssuance`（DTO 边界）。逐用例不变量：
+
+| 用例（12+4） | 不变量类别 | 理由 |
+|---|---|---|
+| 乱序稳定 id 全对 | 判分确定性 | 同作答不同顺序同分 |
+| 印规则恰好执行（配对） | 判分确定性 | 印刷规则不发明权重 |
+| 无规则结构化 partial（配对+断句） | 判分确定性 | 复核 P1：typed partial、永不伪零/造分 |
+| 结构违背 fail-closed（双槽 7 形态） | 判分确定性/安全 | 违背拒绝评估，不猜 |
+| P1-2 矛盾规则拒绝 | 判分确定性 | 矛盾 basis 不服务；精确作答不绕过 |
+| P1-2 十进制不误拒 | 独立失败模式 | 防假拒绝回归 |
+| 聚合 partial 形状/known_points/capped fail-closed/矛盾守卫 | 判分确定性 | 单源聚合语义 |
+| missing vs 主动空白（双槽） | 判分确定性 | 六类未决纪律不混淆 |
+| 代理对 code point 索引 | 判分确定性 | 索引语义确定性 |
+| 超 N 处 0 分 | 判分确定性 | 印刷规则优先序 |
+| 错位按规则计分 | 判分确定性 | 每对一处语义 |
+| 公开 DTO 零键泄漏+注入拒绝 | 安全边界 | 键不入公开面 |
+| verdict=partial 触达（settlement） | 判分确定性 | P1-1 收口主断言 |
+| 混合 holistic 不重释 | 判分确定性 | legacy 语义保留 |
+| KC 零票+θ abstain（0/3 也非 zero） | 判分确定性 | 未知分不产生掌握证据（??0 缺陷） |
+| partial 不吞同卷他人票 | 判分确定性 | 证据归因不污染 |
+
+测试行数 > 产品行数（本刀 test ~251 行 vs product ~119 行）：上表 16 用例
+各自钉一个不可削减的不变量（判分确定性 14 + 安全边界 1 + 独立失败模式 1），
+无 helper-only/参数排列/mock 交互/分支覆盖用例；fixtures 为真实 revision/
+submission 构造，mock 为零。
+
+### 本刀门禁（实际运行）
+
+typecheck（双 tsconfig）exit 0；lint exit 0（172 warnings=存量）；build
+exit 0；assessment 单测 **108/108**（scoring 26 / settlement 27 / evaluation
+55 —— evaluation 为 Choice P1 文件原样通过）。**RED 证明（合并后用例在
+8af031a80 缺陷源）**：5 failed（settlement 3 + scoring 2，
+`/tmp/yuk1445-d3a-red-8af-final.log`）。签名（sha256 前 16）：judgment
+`ab4684987ce65f1a`、settlement `02ce00192783e8e2`、dto `6a0c961d148a45c8`、
+scoring.test `f0cf2c1c33409ae0`、settlement.test `5a76a52326e808a8`、
+red log `ac46df96073104bc`。

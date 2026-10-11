@@ -677,8 +677,8 @@ describe('ADR-0074 D3a — matching 配对确定性判分', () => {
     });
   });
 
-  it('no printed rule: structured partial verdict — correct/total counts recorded, points null, aggregate no_mapping (never fake zero, never pending prose)', async () => {
-    const output = await evaluate(matchingFixture(), [
+  it('no printed rule: structured partial verdict through the real grading chain — matching and sentence_breaks (never fake zero, never pending prose)', async () => {
+    const matching = await evaluate(matchingFixture(), [
       {
         slot_id: 'm1',
         kind: 'matching',
@@ -691,18 +691,38 @@ describe('ADR-0074 D3a — matching 配对确定性判分', () => {
     ]);
     // 独立复核 P1-1：部分对必须以 typed 结果落判 —— 旧缺陷下这里是
     // pending(needs_review)+detail 文本，本用例在其上必红。
-    expect(output.record.unit_results[0]).toMatchObject({
+    expect(matching.record.unit_results[0]).toMatchObject({
       status: 'scored',
       scored_because: 'response',
       points_awarded: null,
       partial_unknown_points: { correct_count: 2, total_count: 3 },
     });
-    expect(output.record.status).toBe('completed');
-    // 分数未知 ⇒ no_mapping（与 holistic 未映射档位同语义），不造总分也不伪零。
-    expect(output.record.aggregate).toMatchObject({ kind: 'unresolved', reason: 'no_mapping' });
+    expect(matching.record.status).toBe('completed');
+    // 分数未知 ⇒ 显式 partial_unknown_points（组级 verdict=partial 而非
+    // unsupported；known_points=0：无已确定分值单元）。
+    expect(matching.record.aggregate).toMatchObject({
+      kind: 'partial_unknown_points',
+      known_points: 0,
+      partial_units: [{ scoring_unit_id: 'u_match', correct_count: 2, total_count: 3 }],
+    });
+
+    // 同一不变量在断句比较器上的独立失败面。
+    const breaks = await evaluate(breaksFixture(), [
+      { slot_id: 's1', kind: 'sentence_breaks', positions: [2, 6, 8] },
+    ]);
+    expect(breaks.record.unit_results[0]).toMatchObject({
+      status: 'scored',
+      points_awarded: null,
+      partial_unknown_points: { correct_count: 2, total_count: 3 },
+    });
+    expect(breaks.record.aggregate).toMatchObject({
+      kind: 'partial_unknown_points',
+      known_points: 0,
+      partial_units: [{ scoring_unit_id: 'u_break', correct_count: 2, total_count: 3 }],
+    });
   });
 
-  it('structural violations fail closed: duplicate left item, foreign option id, one_to_one duplicate right option', async () => {
+  it('structural violations fail closed before grading: duplicate left item, foreign option id, one_to_one duplicate right option, out-of-range/duplicate break positions', async () => {
     const revision = matchingFixture();
     await expect(
       evaluate(revision, [
@@ -739,6 +759,14 @@ describe('ADR-0074 D3a — matching 配对确定性判分', () => {
         },
       ]),
     ).rejects.toMatchObject({ code: 'invalid_response_set' });
+
+    // 断句位置：文首/文末/越界/重复 —— 同一 fail-closed 不变量的独立验证面。
+    const breaks = breaksFixture(); // 9 字明文，有效内部字缝 1..8
+    for (const positions of [[0], [9], [99], [2, 2]]) {
+      await expect(
+        evaluate(breaks, [{ slot_id: 's1', kind: 'sentence_breaks', positions }]),
+      ).rejects.toMatchObject({ code: 'invalid_response_set' });
+    }
   });
 
   it('P1-2: printed rule attainable max must equal published points — contradictory rules are rejected at canonical scoring validation, even for exact answers', async () => {
@@ -793,7 +821,7 @@ describe('ADR-0074 D3a — matching 配对确定性判分', () => {
     expect(output.record.aggregate).toMatchObject({ kind: 'points_total', points: 3 });
   });
 
-  it('P1-1 aggregate guards: partial-unknown resolves no_mapping; numeric points + partial or contradictory counts are invalid_result', () => {
+  it('P1-1 aggregate: partial resolves explicit partial_unknown_points; numeric units contribute known_points; capped/threshold fail closed; contradictions stay invalid', () => {
     const basis = matchingFixture().scoring_basis;
     const partial = aggregateUnitResults(basis, [
       scored('u_match', 0, {
@@ -801,10 +829,51 @@ describe('ADR-0074 D3a — matching 配对确定性判分', () => {
         partial_unknown_points: { correct_count: 2, total_count: 3 },
       }),
     ]);
-    expect(partial).toMatchObject({ kind: 'unresolved', reason: 'no_mapping' });
-    if (partial.kind === 'unresolved') {
-      expect(partial.detail).toContain('2/3');
-    }
+    expect(partial).toMatchObject({
+      kind: 'partial_unknown_points',
+      known_points: 0,
+      partial_units: [{ scoring_unit_id: 'u_match', correct_count: 2, total_count: 3 }],
+    });
+
+    // 已确定分值单元照常计入 known_points（不折算 partial、不造总分）。
+    const mixed: ScoringBasisT = ScoringBasis.parse({
+      ...basis,
+      units: [
+        basis.units[0],
+        {
+          ...basis.units[0],
+          scoring_unit_id: 'u_extra',
+          slot_refs: ['m1'],
+          points: 2,
+        },
+      ],
+    });
+    const mixedOutcome = aggregateUnitResults(mixed, [
+      scored('u_match', 0, {
+        points_awarded: null,
+        partial_unknown_points: { correct_count: 1, total_count: 3 },
+      }),
+      scored('u_extra', 2),
+    ]);
+    expect(mixedOutcome).toMatchObject({
+      kind: 'partial_unknown_points',
+      known_points: 2,
+      partial_units: [{ scoring_unit_id: 'u_match', correct_count: 1, total_count: 3 }],
+    });
+
+    // capped_sum：cap 绑死全量满分，部分未知下不造总分 —— fail-closed。
+    const capped: ScoringBasisT = ScoringBasis.parse({
+      ...basis,
+      aggregation: { kind: 'capped_sum', cap: 5 },
+    });
+    expect(
+      aggregateUnitResults(capped, [
+        scored('u_match', 0, {
+          points_awarded: null,
+          partial_unknown_points: { correct_count: 2, total_count: 3 },
+        }),
+      ]),
+    ).toMatchObject({ kind: 'unresolved', reason: 'no_mapping' });
 
     const withNumeric = aggregateUnitResults(basis, [
       scored('u_match', 4, { partial_unknown_points: { correct_count: 2, total_count: 3 } }),
@@ -820,7 +889,7 @@ describe('ADR-0074 D3a — matching 配对确定性判分', () => {
     expect(contradictory).toMatchObject({ kind: 'unresolved', reason: 'invalid_result' });
   });
 
-  it('no attempt stays missing_response; active blank with blank_scores_zero=false stays needs_review (no fake zero)', async () => {
+  it('no attempt stays missing_response; active blank with blank_scores_zero=false stays needs_review (no fake zero) — both slot kinds', async () => {
     const revision = matchingFixture(); // blank_scores_zero: false
     const missing = await evaluate(revision, []);
     expect(missing.record.unit_results[0]).toMatchObject({
@@ -830,6 +899,20 @@ describe('ADR-0074 D3a — matching 配对确定性判分', () => {
 
     const blank = await evaluate(revision, [{ slot_id: 'm1', kind: 'matching', pairs: [] }]);
     expect(blank.record.unit_results[0]).toMatchObject({
+      status: 'pending',
+      pending: { reason: 'needs_review' },
+    });
+
+    // 同一不变量在断句槽上的独立验证面。
+    const breaksMissing = await evaluate(breaksFixture(), []);
+    expect(breaksMissing.record.unit_results[0]).toMatchObject({
+      status: 'pending',
+      pending: { reason: 'missing_response' },
+    });
+    const breaksBlank = await evaluate(breaksFixture(), [
+      { slot_id: 's1', kind: 'sentence_breaks', positions: [] },
+    ]);
+    expect(breaksBlank.record.unit_results[0]).toMatchObject({
       status: 'pending',
       pending: { reason: 'needs_review' },
     });
@@ -871,7 +954,7 @@ describe('ADR-0074 D3a — sentence_breaks 断句确定性判分', () => {
     });
   });
 
-  it('misplaced breaks: rule scores per correct break only; without a rule partial stays needs_review with unknown points', async () => {
+  it('misplaced breaks: the printed rule scores per correct break only (all-misplaced ⇒ 0 by rule, 2/3 correct ⇒ 2×points_per_break)', async () => {
     const rule = { kind: 'per_correct_break', points_per_break: 1, max_breaks: 5 } as const;
     // 同样断 3 处、全部错位 —— 规则判定 0 对 ⇒ 0 分（规则定义，非伪零）。
     const misplaced = await evaluate(breaksFixture({ rule }), [
@@ -888,41 +971,6 @@ describe('ADR-0074 D3a — sentence_breaks 断句确定性判分', () => {
     expect(partial.record.unit_results[0]).toMatchObject({
       status: 'scored',
       points_awarded: 2,
-    });
-    // 无规则：typed 部分对 —— 2/3、分数未知、no_mapping（旧缺陷下是
-    // pending/needs_review，本断言在其上必红）。
-    const unknown = await evaluate(breaksFixture(), [
-      { slot_id: 's1', kind: 'sentence_breaks', positions: [2, 6, 8] },
-    ]);
-    expect(unknown.record.unit_results[0]).toMatchObject({
-      status: 'scored',
-      points_awarded: null,
-      partial_unknown_points: { correct_count: 2, total_count: 3 },
-    });
-    expect(unknown.record.aggregate).toMatchObject({
-      kind: 'unresolved',
-      reason: 'no_mapping',
-    });
-  });
-
-  it('out-of-range (text start/end, beyond), duplicate positions, and blanks are explicit — never silently clamped', async () => {
-    const revision = breaksFixture(); // text 10 chars, valid interior gaps 1..9
-    for (const positions of [[0], [10], [99], [2, 2]]) {
-      await expect(
-        evaluate(revision, [{ slot_id: 's1', kind: 'sentence_breaks', positions }]),
-      ).rejects.toMatchObject({ code: 'invalid_response_set' });
-    }
-    const missing = await evaluate(revision, []);
-    expect(missing.record.unit_results[0]).toMatchObject({
-      status: 'pending',
-      pending: { reason: 'missing_response' },
-    });
-    const blank = await evaluate(revision, [
-      { slot_id: 's1', kind: 'sentence_breaks', positions: [] },
-    ]);
-    expect(blank.record.unit_results[0]).toMatchObject({
-      status: 'pending',
-      pending: { reason: 'needs_review' },
     });
   });
 });
