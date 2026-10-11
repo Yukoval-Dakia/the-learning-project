@@ -556,6 +556,10 @@ describe('paid-effect reserve admission (winner/held/completed)', () => {
       state: 'pending',
       blockedBy: rep1.identity,
     });
+    const blockersBefore = await Promise.all([
+      readPaidEffect(testDb(), rep1.identity),
+      readPaidEffect(testDb(), rep2.identity),
+    ]);
     for (const unit of [
       'llasa/rep:0',
       'unknown/rep:0',
@@ -568,6 +572,12 @@ describe('paid-effect reserve admission (winner/held/completed)', () => {
       expect(blocked).toMatchObject({ kind: 'held', state: 'pending' });
       if (blocked.kind !== 'held') throw new Error('Expected unresolved rep to block admission');
       expect([rep1.identity, rep2.identity]).toContainEqual(blocked.blockedBy);
+      expect(
+        await Promise.all([
+          readPaidEffect(testDb(), rep1.identity),
+          readPaidEffect(testDb(), rep2.identity),
+        ]),
+      ).toEqual(blockersBefore);
     }
     const nextRevision = await reservePaidEffect(
       testDb(),
