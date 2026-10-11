@@ -38,6 +38,14 @@ Cleanup verified all 59 owned child PIDs absent, the owned Testcontainers sessio
 
 Latest full green baseline 38122365986 at 148cf4bd took 432 seconds from run creation to final required Gate completion. The prior session-cron delivery run took 390 seconds on another revision. Neither is a controlled speedup comparison. Current fixture acceptance does not close the full target. Next measure the complete exact-head CI and remove its remaining execution and dispatch costs while preserving all test, audit, build, migration and parity obligations. This is already owned by YUK-1107; no duplicate follow-up issue is created.
 
+## First exact-head CI failure and repair
+
+Run 38130110481 on a72e9c2cb failed in DB shard 3. The placement unavailable-primary case observed native SUCCESS instead of ERROR, then the strict fixture guard blocked five later cases. This failed run took 247 seconds from creation to final Gate; it is not successful full-CI acceptance.
+
+The injected unavailable-primary proxy previously closed only the socket pair carrying the lost COMMIT response and refused new connections. Its application pool permits two connections. A sibling opened before the fault could still perform the authoritative reread, making the fixture's claimed unavailability false. The fixture now destroys every socket owned by that proxy when the observed server COMMIT triggers unavailable-primary mode. Other fault modes retain their previous single-pair behavior. The terminal ERROR, unknown-outcome and no-replay assertions remain unchanged. Local r4 evidence above covers the preceding source only; the repair awaits exact-head CI and is not represented as locally rerun.
+
+The same run passed all other lanes. Backup executed all 162 cases in 27.598 seconds on the GitHub runner, so the local 116-second file timing does not identify the current CI critical path. Passing DB shard files remained long: judge process 100.797 seconds, review recovery 85.249 seconds, session cron 75.105 seconds. The failed session recovery file took 165.225 seconds including a 60-second failure timeout. These file durations overlap; the next CI execution changes must use the hosted evidence rather than extrapolating local timings.
+
 ## Frozen source digests
 
 ```json

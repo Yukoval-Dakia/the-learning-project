@@ -438,7 +438,13 @@ async function commitFault(
         if (!fired && receiptTx && command === 'COMMIT' && mode !== 'before-server-commit') {
           fired = true;
           evidence.push({ fault: mode, at: new Date().toISOString(), serverCommand: command });
-          close();
+          if (mode === 'after-server-commit-and-unavailable') {
+            // Existing pool connections must become unavailable too. Refusing only
+            // new connections lets the authoritative reread use a healthy sibling.
+            evidence.push({ unavailableSocketCount: sockets.size });
+            for (const socket of sockets) socket.destroy();
+            sockets.clear();
+          } else close();
           return;
         }
         if (command === 'COMMIT' || command === 'ROLLBACK') receiptTx = false;
