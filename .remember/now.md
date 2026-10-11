@@ -1,3 +1,9 @@
+# Review cron positional SQL main unblock (2026-10-11)
+
+NewP1 baseff2c9e229961db695ebacbab1f984d67de6e2792 / fix/yuk-1107-review-cron-position-cast in this isolatedtree. #1658 head5d9ccebec CI38139669828 DB2 284PASS/1FAIL, oracle position36 typedtext25 selectsregexsubstring andcasts36totime. Blamee178690eb(#1690). Scanalltests/dbos-* foundonly2 SQLsubstring casts: sessionalreadyintegerfrom1696, reviewnowexplicitinteger. Preserveallbusinessassertions/product. NewindependentR1/static/build, DNSthenfreshwindow(review1+session2=3), exactCI/matchhead pending. No currentlock/runtime,oldwindowsnotreused.
+
+1696 delivereda213267109d,exact7c23localPASS/fullCI38138443111 green234s,R2threadresolved,UI/feature notified;RSTprocessriskdedupedYUK-1481. Speedtree localcheckpoint96d22a57d paused/unpushed,1691draftremotefc; latestmainport+AST proof completed butrepo lint failed(see/tmp/yuk1107-speed-rebase-lint.log),notclaimedallstaticpass. Backupb652 immutable separatefuturePR. Owner speedrules isolated/no default productDBwindow/3sameheadconsecutivefullgreens+assertions/revertanymain-breakingchange beforefixinginisolation.
+
 # R2 P1 correction pending new fixed-head runtime (2026-10-11)
 
 PR1696 draft/link/watch. R2 on e84 found queuedSync/describeFirst P1, posted discussion_r4241515109. Local e84 batch aborted, nofinalcasecounts;128.382s actualtokenrelease12:07:49.493Z,8baseline+alloldexited/release/sourceparitytrue,28PIDs/ownsession19c1e608b0db gone. Noappendbatch. Sourcefix counts eachforwardQ/Sync and rejects each separately, waitsSyncforunsynceddescribeFirst; existingoutagecaseaddsactualtwoqueuedSyncassertions,businessassertionspreserved,23total. CoordinatorforbidsR3 and replacesmergeconditions with fixedP1+regression,newlocal23PASS,exactCIgreen,reply/resolveR2PRthread,matchhead. Newhead/windowpending,neverreuseoldslot. ProductRSTcrashfollowupafterP1 remains separate.
