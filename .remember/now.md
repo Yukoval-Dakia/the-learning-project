@@ -1,3 +1,17 @@
+# R2 P1 correction pending new fixed-head runtime (2026-10-11)
+
+PR1696 draft/link/watch. R2 on e84 found queuedSync/describeFirst P1, posted discussion_r4241515109. Local e84 batch aborted, nofinalcasecounts;128.382s actualtokenrelease12:07:49.493Z,8baseline+alloldexited/release/sourceparitytrue,28PIDs/ownsession19c1e608b0db gone. Noappendbatch. Sourcefix counts eachforwardQ/Sync and rejects each separately, waitsSyncforunsynceddescribeFirst; existingoutagecaseaddsactualtwoqueuedSyncassertions,businessassertionspreserved,23total. CoordinatorforbidsR3 and replacesmergeconditions with fixedP1+regression,newlocal23PASS,exactCIgreen,reply/resolveR2PRthread,matchhead. Newhead/windowpending,neverreuseoldslot. ProductRSTcrashfollowupafterP1 remains separate.
+
+# Main P1 runtime failure retained (2026-10-11)
+
+916711cfc R1NONE/static/build passed;23case window9PASS14FAIL,cron2PASS. Migrationfirstconversationoutage failed: actualCOMMIT observed,worker2421 uncaughtpostgres-jsnextWrite50924 socket.write(null),exit1/no failuremessage,PENDING plus13guardblocked. All7approvedrunningcontainers andallpre-existingresource/release/sourceparity passed;19PIDs/session8066a27e72f4 gone,tokenrelease11:57:18.717Z,total79.60s. No appendedbatch. Source-onlyproxy correction rejectsPGSQL08006 while keepingclienttransportuntilfailurecleanup; noSQLreachesprimaryafterlostCOMMIT,alloriginalassertionsretained. NeedsR2/newcoordinatedwindow/exactCI. ProductRSTworkercrash risk must remain separatefollowupafterP1 delivery;searchLinearbeforecreatingandnotifycoordinator. MigrationDB07 thenA-lane ownnextwindows.
+
+# Main CI regressions first (2026-10-11)
+
+Sole writer d0c4657a owns tlp-yuk1107-main-ci-regressions-20261011 / fix/yuk-1107-session-ci-regressions, base135bb18e6d. Main run38135449130 independently shows cron substring position42 inferred as textOID25 and migration placement PENDING instead of ERROR. Minimal fixture-only fixes preserve product and every original business assertion. Independent review, new scoped runtime window and exact-head CI remain pending. No runtime/lock held.
+
+Large PR1691 remains remote fc2626d and unwatched; local b65257e03 checkpoint in fast-crons is parked and unpushed. Exact fc Gate38134462539 failed after195s; DB6 unavailable-primary first failure61.585s, remaining7DB/unit/build/parity passed. Full120s not achieved. Future independently reviewed small fixture-speed PR may own proposals.db.test.ts and provider-session-admission.db.test.ts only, never provider-session-admission.ts.
+
 # Full CI continuation after r4 (2026-10-11)
 
 Owner requires complete CI <=120 seconds, YUK-1107 In Progress. Sole writer d0c4657a owns .worktrees/yuk-1107-fast-crons / perf/yuk-1107-fast-crons, base148cf4bd, backup child commit integrated asb7828661a. Final r4 frozen10files passed24DB and162unit, nofailedcases. Local Vitest DB116.69s serial4files, unit116.18s; source hashes/ledgers/cleanup retained in .cache/cron-speed-evidence/window-20261011-r4. R1fresh-clone P1 andR2genuine-Timekeeper/native-point P1 fixed, finaldelta personallyruntimeverified, notclaimedearlierstaticreviewcoverage. No thirdreview. Typecheck/lint172warnings/build passed; policy/partition and complete exact-head CI still pending. Backupfile115.84s remains longtail, full120s notachieved; next executionarchitecture read-only investigation delegatedCodex gpt-6.1-sol high.
