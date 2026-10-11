@@ -336,6 +336,10 @@ export const ingestionCapability = defineCapability({
       {
         kind: 'block_merge',
         accept: {
+          // YUK-1404 — merging is irreversible: the accept requires the
+          // explicit confirm_lossy input (enforced in the applier; this flag
+          // scopes where the shared dispatch boundary admits the field).
+          confirmLossy: true,
           load: () =>
             import('./server/proposal-accept-applier').then(
               (module) => module.blockMergeProposalAcceptApplier,

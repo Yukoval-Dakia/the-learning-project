@@ -123,6 +123,11 @@ export const ProposalDecisionInput = z
       .object({ claim_md: z.string().trim().min(1).max(CONJECTURE_CLAIM_MAX_CHARS) })
       .strict()
       .optional(),
+    // YUK-1404 — block_merge is lossy (absorbed blocks fold into the primary
+    // and cannot be un-merged). Accepting one requires an explicit
+    // confirm_lossy: true; the flag is accept-only and enforced at the shared
+    // accept boundary, so legacy/direct callers cannot bypass it.
+    confirm_lossy: z.literal(true).optional(),
   })
   .strict()
   .superRefine((data, ctx) => {
@@ -145,6 +150,13 @@ export const ProposalDecisionInput = z
         code: z.ZodIssueCode.custom,
         message: 'corrected_payload is only valid for accept',
         path: ['corrected_payload'],
+      });
+    }
+    if (data.decision !== 'accept' && data.confirm_lossy !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'confirm_lossy is only valid for accept',
+        path: ['confirm_lossy'],
       });
     }
     if (data.decision !== 'retract' && (data.reason_md || data.affected_refs)) {
