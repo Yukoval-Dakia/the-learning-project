@@ -30,6 +30,24 @@ export {
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';
 export type { ReviewDueQuery, ReviewDueRow } from './server/due-list';
 export { retrievabilityForKc, scheduleReview } from './server/fsrs';
+export {
+  DEFAULT_MAX_PER_RUN,
+  type ItemPriorCandidateFrozen,
+  type ItemPriorExecutionParams,
+  type ItemPriorPreparedWork,
+  type ItemPriorStagedItem,
+  normalizeMethod,
+  normalizeReps,
+  prepareItemPriorWork,
+  resolveItemPriorKnowledgeNames,
+  runItemPriorItemRepStages,
+  selectItemPriorCandidates,
+} from './server/item-prior-durable-operation';
+export {
+  type ItemPriorDispatch,
+  ItemPriorPaidEffectAdapter,
+  itemPriorDispatchSchema,
+} from './server/item-prior-paid-effect-adapter';
 export type { FrontierResolution } from './server/learnable-frontier';
 export {
   isMasteredForFrontier,
@@ -59,6 +77,7 @@ export {
   buildSolveHintInput,
   parseHintTurn,
 } from './server/solve-session';
+export type { PracticeTaskRunFn } from './server/task-runtime';
 export const queryReviewDue: typeof import('./server/due-list').queryReviewDue = async (...args) =>
   (await import('./server/due-list')).queryReviewDue(...args);
 

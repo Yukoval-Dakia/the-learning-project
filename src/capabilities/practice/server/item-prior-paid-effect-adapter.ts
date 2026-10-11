@@ -1,6 +1,26 @@
 // Explicit family consumer of the fixed shared store. No registration or default cutover.
 import { z } from 'zod';
 import {
+  PaidEffectApplicationConflictError,
+  PaidEffectProtocolError,
+  type PaidEffectReservation,
+  computePaidEffectIdentity,
+  computePaidEffectInputDigest,
+  paidEffectDispatchRefSchema,
+  paidEffectIdentitySchema,
+  paidEffectJsonEquals,
+} from '@/core/migration/paid-effect-protocol';
+import { ItemPriorDraft } from '@/core/schema/item_prior';
+import type { Db } from '@/db/client';
+import {
+  type PaidEffectSnapshot,
+  markPaidEffectUnknown,
+  readPaidEffect,
+  recordPaidEffectApplication,
+  recordPaidEffectResult,
+  reservePaidEffect,
+} from '@/db/paid-effect-store';
+import {
   ItemPriorApplicationError,
   type ItemPriorPreparedWork,
   type ItemPriorRepReceipt,
@@ -12,27 +32,7 @@ import {
   itemPriorRepIdentity,
   parseStagedItemPriorOutput,
   settleItemPriorStagedItem,
-} from '@/capabilities/practice/server/item-prior-durable-operation';
-import { ItemPriorDraft } from '@/core/schema/item_prior';
-import type { Db } from '@/db/client';
-import {
-  PaidEffectApplicationConflictError,
-  PaidEffectProtocolError,
-  type PaidEffectReservation,
-  computePaidEffectIdentity,
-  computePaidEffectInputDigest,
-  paidEffectDispatchRefSchema,
-  paidEffectIdentitySchema,
-  paidEffectJsonEquals,
-} from './paid-effect-protocol';
-import {
-  type PaidEffectSnapshot,
-  markPaidEffectUnknown,
-  readPaidEffect,
-  recordPaidEffectApplication,
-  recordPaidEffectResult,
-  reservePaidEffect,
-} from './paid-effect-store';
+} from './item-prior-durable-operation';
 
 export const itemPriorDispatchSchema = paidEffectDispatchRefSchema.extend({
   version: z.literal(1),

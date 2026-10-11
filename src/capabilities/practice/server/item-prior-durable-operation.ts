@@ -13,15 +13,14 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { aggregateItemPriorRepDrafts } from '@/core/item-prior-reps';
 import { canonicalHash } from '@/core/migration/canonical';
+import { computePaidEffectInputDigest } from '@/core/migration/paid-effect-protocol';
 import type { ItemPriorDraftT } from '@/core/schema/item_prior';
-
 import type { Db, Tx } from '@/db/client';
 import { item_calibration, knowledge, question } from '@/db/schema';
 import { parseItemPriorLlasaOutput, parseItemPriorOutput } from '@/server/ai/item-prior';
-import type { ItemPriorPaidEffectAdapter } from '@/server/durable/item-prior-paid-effect-adapter';
-import { computePaidEffectInputDigest } from '@/server/durable/paid-effect-protocol';
 import { applyItemPrior } from '@/server/mastery/item-calibration';
 import type { SubjectProfile } from '@/subjects/profile';
+import type { ItemPriorPaidEffectAdapter } from './item-prior-paid-effect-adapter';
 import { resolveSubjectProfileForKnowledgeIds } from './knowledge-runtime';
 import {
   type PracticeTaskCallCtx,

@@ -1,0 +1,129 @@
+{
+  "base": "60c4f980fce83d73b78fb912a4b097c34b8f250a",
+  "checks": [
+    {
+      "name": "ast",
+      "argv": [
+        "node",
+        "/Volumes/YukovalSBak/yukoval-projects/tlp-migration-receipt-reference/docs/planning/evidence/yuk1355-a-boundary-integration/compare-ast.cjs"
+      ],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 0.757,
+      "log": "ast.log.gz"
+    },
+    {
+      "name": "boundaries",
+      "argv": ["pnpm", "exec", "tsx", "scripts/audit-capability-boundaries.ts", "--json"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 4.021,
+      "log": "boundaries.log.gz"
+    },
+    {
+      "name": "architecture",
+      "argv": ["pnpm", "audit:architecture-deepening"],
+      "node": "v24.19.0",
+      "exitCode": 1,
+      "elapsedSeconds": 12.341,
+      "log": "architecture.log.gz"
+    },
+    {
+      "name": "partition",
+      "argv": ["pnpm", "audit:partition"],
+      "node": "v24.19.0",
+      "exitCode": 1,
+      "elapsedSeconds": 3.653,
+      "log": "partition.log.gz"
+    },
+    {
+      "name": "unit-a",
+      "argv": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "src/capabilities/practice/server/item-prior-durable-operation.unit.test.ts",
+        "src/server/durable/item-prior-family.unit.test.ts"
+      ],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 4.445,
+      "log": "unit-a.log.gz"
+    },
+    {
+      "name": "unit-shared-notes-c",
+      "argv": [
+        "pnpm",
+        "vitest",
+        "run",
+        "--config",
+        "vitest.unit.config.ts",
+        "src/server/durable/paid-effect-protocol.test.ts",
+        "src/server/durable/note-verify-family.test.ts",
+        "src/capabilities/notes/jobs/note_verify.control.test.ts",
+        "src/server/durable/calibration-sample-family.test.ts",
+        "src/capabilities/practice/server/calibration-sample-durable-operation.test.ts",
+        "src/capabilities/practice/jobs/judge_calibration_sample.test.ts"
+      ],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 3.696,
+      "log": "unit-shared-notes-c.log.gz"
+    },
+    {
+      "name": "typecheck",
+      "argv": ["pnpm", "typecheck"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 9.528,
+      "log": "typecheck.log.gz"
+    },
+    {
+      "name": "lint",
+      "argv": ["pnpm", "lint"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 3.186,
+      "log": "lint.log.gz"
+    },
+    {
+      "name": "build",
+      "argv": ["pnpm", "build"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 33.138,
+      "log": "build.log.gz"
+    },
+    {
+      "name": "diff",
+      "argv": ["git", "diff", "--check"],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 0.052,
+      "log": "diff.log.gz"
+    },
+    {
+      "name": "protected-paths",
+      "argv": [
+        "git",
+        "diff",
+        "--exit-code",
+        "60c4f980fce83d73b78fb912a4b097c34b8f250a",
+        "--",
+        "scripts/capability-boundary-baseline.json",
+        "scripts/audit-capability-boundaries.ts",
+        "scripts/audit-architecture-deepening.ts",
+        "vitest.shared.ts",
+        "src/db/schema.ts",
+        "drizzle",
+        "docs/planning/evidence/yuk1355-boundary-split"
+      ],
+      "node": "v24.19.0",
+      "exitCode": 0,
+      "elapsedSeconds": 0.018,
+      "log": "protected-paths.log.gz"
+    }
+  ]
+}

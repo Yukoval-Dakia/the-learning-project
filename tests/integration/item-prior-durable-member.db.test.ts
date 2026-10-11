@@ -15,6 +15,16 @@ import {
   runItemPriorItemRepStages,
 } from '@/capabilities/practice/server/item-prior-durable-operation';
 import {
+  ItemPriorPaidEffectAdapter,
+  itemPriorPaidEffectInput,
+  itemPriorPaidEffectRevision,
+} from '@/capabilities/practice/server/item-prior-paid-effect-adapter';
+import {
+  computePaidEffectIdentity,
+  computePaidEffectInputDigest,
+} from '@/core/migration/paid-effect-protocol';
+import { readPaidEffect, recordPaidEffectApplication } from '@/db/paid-effect-store';
+import {
   dag_orchestration_node,
   dag_orchestration_run,
   item_calibration,
@@ -35,16 +45,6 @@ import {
   runItemPriorDurableMember,
   runItemPriorDurableMemberExecution,
 } from '@/server/durable/item-prior-family';
-import {
-  ItemPriorPaidEffectAdapter,
-  itemPriorPaidEffectInput,
-  itemPriorPaidEffectRevision,
-} from '@/server/durable/item-prior-paid-effect-adapter';
-import {
-  computePaidEffectIdentity,
-  computePaidEffectInputDigest,
-} from '@/server/durable/paid-effect-protocol';
-import { readPaidEffect, recordPaidEffectApplication } from '@/server/durable/paid-effect-store';
 import { setFixedAnchor } from '@/server/mastery/fixed-anchor';
 import { resetDb, testDb } from '../helpers/db';
 

@@ -4,19 +4,14 @@
 // is exercised by the prepared real-DB cases, never manufactured by these fixtures.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { runItemPriorBackfill } from '@/capabilities/practice/jobs/item_prior_backfill';
+import {
+  computePaidEffectIdentity,
+  computePaidEffectInputDigest,
+} from '@/core/migration/paid-effect-protocol';
 import type { ItemPriorDraftT } from '@/core/schema/item_prior';
 import type { Db } from '@/db/client';
 import { item_calibration, knowledge, question } from '@/db/schema';
 import { parseItemPriorOutput } from '@/server/ai/item-prior';
-import {
-  itemPriorPaidEffectInput,
-  itemPriorPaidEffectRevision,
-  validateItemPriorAppliedApplication,
-} from '@/server/durable/item-prior-paid-effect-adapter';
-import {
-  computePaidEffectIdentity,
-  computePaidEffectInputDigest,
-} from '@/server/durable/paid-effect-protocol';
 import { applyItemPrior } from '@/server/mastery/item-calibration';
 import { defaultSubjectProfile } from '@/subjects/profile';
 import {
@@ -33,6 +28,11 @@ import {
   runItemPriorItemRepStages,
   settleItemPriorStagedItem,
 } from './item-prior-durable-operation';
+import {
+  itemPriorPaidEffectInput,
+  itemPriorPaidEffectRevision,
+  validateItemPriorAppliedApplication,
+} from './item-prior-paid-effect-adapter';
 import type { PracticeTaskRunFn } from './task-runtime';
 
 vi.mock('@/server/mastery/item-calibration', () => ({ applyItemPrior: vi.fn() }));

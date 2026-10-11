@@ -5,33 +5,31 @@
 import { DBOS } from '@dbos-inc/dbos-sdk';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
+import type { PracticeTaskRunFn } from '@/capabilities/practice/public';
 import {
   DEFAULT_MAX_PER_RUN,
   type ItemPriorCandidateFrozen,
+  type ItemPriorDispatch,
   type ItemPriorExecutionParams,
+  ItemPriorPaidEffectAdapter,
   type ItemPriorPreparedWork,
   type ItemPriorStagedItem,
+  itemPriorDispatchSchema,
   normalizeMethod,
   normalizeReps,
   prepareItemPriorWork,
   resolveItemPriorKnowledgeNames,
   runItemPriorItemRepStages,
   selectItemPriorCandidates,
-} from '@/capabilities/practice/server/item-prior-durable-operation';
-import type { PracticeTaskRunFn } from '@/capabilities/practice/server/task-runtime';
-import type { Db, Tx } from '@/db/client';
-import { waitForRunnableEpoch } from '@/server/contract-epoch';
-import {
-  type ItemPriorDispatch,
-  ItemPriorPaidEffectAdapter,
-  itemPriorDispatchSchema,
-} from './item-prior-paid-effect-adapter';
-import { readPaidEffectControl } from './paid-effect-control';
+} from '@/capabilities/practice/public';
 import {
   PaidEffectControlFencedError,
   decidePaidEffectControlAdmission,
   paidEffectJsonEquals,
-} from './paid-effect-protocol';
+} from '@/core/migration/paid-effect-protocol';
+import type { Db, Tx } from '@/db/client';
+import { readPaidEffectControl } from '@/db/paid-effect-control';
+import { waitForRunnableEpoch } from '@/server/contract-epoch';
 
 export const ITEM_PRIOR_MEMBER = 'item_prior_backfill';
 // The retained manifest declares dependsOn: []; this candidate is only that root.
