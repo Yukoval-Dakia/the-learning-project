@@ -11,6 +11,10 @@ import {
   question,
 } from '@/db/schema';
 import { placementStarterAttemptId } from './placement-starter-identity';
+import {
+  type PlacementStarterFailure,
+  PlacementStarterFailureSchema,
+} from './placement-starter-outcome';
 import { markPlacementStarterClaimTerminal } from './placement-starter-store';
 
 export const PLACEMENT_VERIFY_POLL_MS = 2_000;
@@ -1118,14 +1122,42 @@ export async function finishPlacementAttempt(
   attempt: PlacementAttemptAuthority,
   status: 'succeeded' | 'underfilled' | 'timed_out' | 'interrupted',
   now = new Date(),
+  failure?: PlacementStarterFailure,
 ): Promise<void> {
+  const reason =
+    status === 'succeeded'
+      ? null
+      : PlacementStarterFailureSchema.parse(
+          failure ?? {
+            code:
+              status === 'underfilled'
+                ? 'underfilled'
+                : status === 'timed_out'
+                  ? 'verification_timeout'
+                  : 'interrupted',
+          },
+        );
+  const errorClass = reason ? 'placement_starter_failure_v1' : null;
+  const errorCode = reason?.code ?? null;
+  const errorMessage = reason ? JSON.stringify(reason) : null;
   await db.transaction(async (tx) => {
     const rows = await tx
       .update(placement_starter_attempt)
-      .set({ status, lease_expires_at: null, finished_at: now, updated_at: now })
+      .set({
+        status,
+        lease_expires_at: null,
+        finished_at: now,
+        updated_at: now,
+        error_class: errorClass,
+        error_code: errorCode,
+        error_message: errorMessage,
+      })
       .where(
         and(
           eq(placement_starter_attempt.id, attempt.attemptId),
+          eq(placement_starter_attempt.claim_id, attempt.claimId),
+          eq(placement_starter_attempt.pg_boss_job_id, attempt.pgBossJobId),
+          eq(placement_starter_attempt.delivery_no, attempt.deliveryNo),
           eq(placement_starter_attempt.fencing_token, attempt.fencingToken),
           inArray(placement_starter_attempt.status, ['running', 'verifying']),
           gt(placement_starter_attempt.lease_expires_at, now),
@@ -1149,11 +1181,23 @@ export async function finishPlacementAttempt(
     // quiz_gen job would double-pay), it only REAPS a claim whose redelivery never arrived — so
     // the eager terminalization above is still required, not superseded by the sweeper.
     const [claimRow] = await tx
-      .select({ maxPaidAttempts: placement_starter_claim.max_paid_attempts })
+      .select({
+        maxPaidAttempts: placement_starter_claim.max_paid_attempts,
+        status: placement_starter_claim.status,
+        jobId: placement_starter_claim.pg_boss_job_id,
+        knownCost: placement_starter_claim.known_cost_micro_usd,
+      })
       .from(placement_starter_claim)
       .where(eq(placement_starter_claim.id, attempt.claimId))
       .for('update');
-    if (!claimRow) throw new PlacementStarterStaleAuthorityError('placement claim missing');
+    if (
+      !claimRow ||
+      !['running', 'verifying'].includes(claimRow.status) ||
+      claimRow.jobId !== attempt.pgBossJobId ||
+      claimRow.knownCost === null
+    ) {
+      throw new PlacementStarterStaleAuthorityError('placement claim authority lost');
+    }
     const exhausted = status !== 'succeeded' && attempt.deliveryNo >= claimRow.maxPaidAttempts;
     let claimUpdate: Partial<typeof placement_starter_claim.$inferInsert>;
     if (status === 'succeeded') {
@@ -1165,7 +1209,12 @@ export async function finishPlacementAttempt(
     }
     await tx
       .update(placement_starter_claim)
-      .set(claimUpdate)
+      .set({
+        ...claimUpdate,
+        last_error_class: errorClass,
+        last_error_code: errorCode,
+        last_error: errorMessage,
+      })
       .where(eq(placement_starter_claim.id, attempt.claimId));
   });
 }

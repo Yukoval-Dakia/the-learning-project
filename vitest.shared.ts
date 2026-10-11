@@ -42,6 +42,7 @@ export const fastTestInclude = [
   'src/capabilities/practice/server/judge/preview-provenance-token.test.ts',
   'src/capabilities/practice/server/judge/steps-judge.test.ts',
   'src/capabilities/practice/server/question-supply/jyeoo-spawn.test.ts',
+  'src/capabilities/practice/server/question-supply/placement-starter-outcome.unit.test.ts',
   'src/capabilities/practice/server/quiz/verify-framework.test.ts',
   'src/capabilities/practice/server/rating-advisor.unit.test.ts',
   'src/capabilities/practice/tasks/evaluation-policy-routing.unit.test.ts',
@@ -82,6 +83,7 @@ export const fastTestInclude = [
 ];
 
 export const dbTestInclude = [
+  'src/server/boss/isolated-runtime.db.test.ts',
   'server/start/admin-control-reader.db.test.ts',
   'server/start/admin-reader.db.test.ts',
   'src/capabilities/agency/api/probe-answer.db.test.ts',
@@ -212,6 +214,7 @@ export const dbTestInclude = [
   'src/server/assessment/admission.db.test.ts',
   'src/server/assessment/joint-input.db.test.ts',
   'src/server/assessment/settle.db.test.ts',
+  'src/server/boss/client.db.test.ts',
   'src/server/boss/handlers/ai_task_run_reconcile.db.test.ts',
   'src/server/boss/verify-dispatch-outbox.db.test.ts',
   'src/server/calibration/replay.fixture.db.test.ts',

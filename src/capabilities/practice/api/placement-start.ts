@@ -33,6 +33,7 @@ import {
 } from '../server/placement-assessment';
 import { resolveGoalPlacementScope } from '../server/placement-scope';
 import { resolveLeaningPreferenceKcs, selectNextPlacementItem } from '../server/placement-select';
+import { readPlacementStarterOutcomes } from '../server/question-supply/placement-starter-outcome-reader';
 import { CreatePlacementSessionBodySchema } from './placement-contracts';
 
 export async function createPlacementSession(req: Request): Promise<Response> {
@@ -193,16 +194,22 @@ export async function createPlacementSession(req: Request): Promise<Response> {
         progress,
       );
     });
-    // first === null → cold subgraph (no eligible question). The probe stays 'started'; the
-    // client should source questions for the goal (§6 Q3 —按目标生成 placement 起始题, via
-    // quiz_gen) and then poll /api/placement/[id]/next. We surface the need rather than
-    // silently returning an empty probe.
+    const starterSupply = await db.transaction(
+      (tx) => readPlacementStarterOutcomes(tx, sessionId),
+      {
+        isolationLevel: 'repeatable read',
+        accessMode: 'read only',
+      },
+    );
+    // Keep sourcingNeeded for compatibility. starterSupply distinguishes pending
+    // supply from terminal failure; neither outcome completes the placement session.
     return Response.json({
       sessionId,
       knowledgeIds,
       question,
       answeredCount: 0,
       sourcingNeeded: question === null,
+      starterSupply,
     });
   } catch (err) {
     return errorResponse(err);

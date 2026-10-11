@@ -205,7 +205,7 @@ function inventoryFixture(): DatabaseManifest {
     ],
   };
 }
-function sourceFixture(directory: string): SourceManifest {
+function sourceFixture(directory: string, dumpBytes?: number): SourceManifest {
   const database = {
     cluster: '9007199254741001',
     database_oid: '16384',
@@ -236,7 +236,7 @@ function sourceFixture(directory: string): SourceManifest {
   const quiescencePath = join(directory, 'quiescence.json'),
     dumpPath = join(directory, 'fixture.dump');
   writeFileSync(quiescencePath, JSON.stringify(evidence));
-  writeFileSync(dumpPath, 'offline dump bytes');
+  writeFileSync(dumpPath, dumpBytes ? Buffer.alloc(dumpBytes, 'x') : 'offline dump bytes');
   return parseSourceManifest({
     format: 'loom-db-source',
     version: 2,
@@ -899,8 +899,8 @@ describe('artifact and receipt consumer', () => {
 
 // All transport executables below are intercepted, with exit 97 for unknown calls.
 // There is deliberately no delegation to Docker, psql, pnpm or any network client.
-function offlineTransport(directory: string, mode: string) {
-  const source = sourceFixture(directory),
+function offlineTransport(directory: string, mode: string, dumpBytes?: number) {
+  const source = sourceFixture(directory, dumpBytes),
     sourcePath = join(directory, 'source.json');
   writeFileSync(sourcePath, JSON.stringify(source));
   const bin = join(directory, 'bin');
@@ -954,8 +954,12 @@ if(!password||env.PGPASSWORD!==password||(c.mode==='scratch-auth-restore'&&clien
 }
 }
 if(args.includes('--version')) {out('psql (PostgreSQL) 16.14\\n');process.exit(0);}
-if(args.includes('pg_dump')) {if(c.mode==='dump')bad();out('offline dump bytes');process.exit(0);}
-if(args.includes('pg_restore')) {input(b=>{fs.appendFileSync(${JSON.stringify(join(directory, 'bytes.jsonl'))},JSON.stringify({sha:crypto.createHash('sha256').update(b).digest('hex')})+'\\n');if(args.includes('-l')){if(c.mode==='toc')bad();out('1; 1 1 TABLE fixture offline\\n');}else if(c.mode==='restore')bad();});}
+if(args.includes('pg_dump')) {if(c.mode==='dump')bad();process.stdout.write(c.mode.startsWith('toc-early')?'x'.repeat(1048576):'offline dump bytes',()=>process.exit(0));}
+else if(args.includes('pg_restore')) {
+const list=args.includes('-l'),early=list?c.mode.startsWith('toc-early'):c.mode==='restore-early-close';
+if(early){let replied=false;const reply=()=>{if(replied)return;replied=true;process.stdin.pause();if(!list)process.exit(0);if(c.mode==='toc-early-nonzero'){process.stderr.write('injected early toc failure\\n');process.exit(17);}process.stdout.write(c.mode==='toc-early-malformed'?'not a toc\\n':'1; 1 1 TABLE fixture offline\\n',()=>process.exit(0));};process.stdin.once('data',reply);process.stdin.once('end',reply);}
+else input(b=>{fs.appendFileSync(${JSON.stringify(join(directory, 'bytes.jsonl'))},JSON.stringify({sha:crypto.createHash('sha256').update(b).digest('hex')})+'\\n');if(list){if(c.mode==='toc')bad();out('1; 1 1 TABLE fixture offline\\n');}else if(c.mode==='restore')bad();});
+}
 else if(args.includes('psql')) {
 const sql=args.includes('-c')?args[args.indexOf('-c')+1]:undefined;
 if(!sql){let text='';process.stdin.on('data',b=>{text+=b;if(text.includes('pg_export_snapshot')){text='';if(c.mode==='keeper-export')bad();out({snapshot:c.source.snapshot,pid:123});if(c.mode==='keeper-closed')process.exit(0);}else if(text.includes('ROLLBACK')){const marker=text.match(/SELECT '(loom_keeper_closed_[a-f0-9-]+)'/);if(marker&&c.mode!=='keeper-no-ack')out(marker[1]+'\\n');process.exit(0);}});}
@@ -1172,6 +1176,97 @@ describe('real CLI through fully intercepted transport', () => {
     ]);
     expect(result.status).toBe(1);
     expect(parseRestoreReceipt(readJsonArtifact(out).value).verified).toBe(false);
+  });
+  it('pg_restore -l reads only the dump prefix: all three TOC sites survive early exit 0', () => {
+    const dumpBytes = 4 * 1024 * 1024;
+    const captureDir = mkdtempSync(join(TMP, 'toc-early-capture-')),
+      captureTransport = offlineTransport(captureDir, 'toc-early-exit'),
+      captureOut = join(captureDir, 'capture');
+    const captured = offlineCli(captureDir, captureTransport, [
+      '--operation=capture-parity',
+      `--out=${captureOut}`,
+      '--target=postgres://offline:offline@offline/loom',
+      `--quiescence-evidence=${captureTransport.source.quiescence.artifact.file}`,
+      '--container=offline-source',
+      '--strict',
+    ]);
+    expect(captured.status, captured.stderr).toBe(0);
+    const capturedJson = z
+      .object({ source_manifest: z.string() })
+      .parse(JSON.parse(captured.stdout));
+    expect(
+      parseSourceManifest(readJsonArtifact(capturedJson.source_manifest).value).toc_entries,
+    ).toBe(1);
+
+    const listDir = mkdtempSync(join(TMP, 'toc-early-list-')),
+      listTransport = offlineTransport(listDir, 'toc-early-exit', dumpBytes),
+      listOut = join(listDir, 'receipt.json');
+    const listing = offlineCli(listDir, listTransport, [
+      '--operation=restore-drill',
+      `--dump=${listTransport.source.dump.file}`,
+      `--out=${listOut}`,
+      `--image=${IMAGE}`,
+      '--list-only',
+    ]);
+    expect(listing.status, listing.stderr).toBe(0);
+    expect(listing.stdout).toContain('1; 1 1 TABLE fixture offline');
+    expect(existsSync(listOut)).toBe(false);
+
+    const fullDir = mkdtempSync(join(TMP, 'toc-early-full-')),
+      fullTransport = offlineTransport(fullDir, 'toc-early-exit', dumpBytes),
+      fullOut = join(fullDir, 'receipt.json');
+    const restored = offlineCli(fullDir, fullTransport, [
+      '--operation=restore-drill',
+      `--dump=${fullTransport.source.dump.file}`,
+      `--source-manifest=${fullTransport.sourcePath}`,
+      `--out=${fullOut}`,
+    ]);
+    expect(restored.status, restored.stderr).toBe(0);
+    expect(parseRestoreReceipt(readJsonArtifact(fullOut).value)).toMatchObject({
+      kind: 'verified',
+      verified: true,
+    });
+    // The actual restore must still receive every dump byte.
+    const shas = readFileSync(join(fullDir, 'bytes.jsonl'), 'utf8')
+      .trim()
+      .split('\n')
+      .map((line) => z.object({ sha: z.string() }).parse(JSON.parse(line)).sha);
+    expect(shas).toContain(fullTransport.source.dump.sha256);
+  });
+  it.each([
+    { mode: 'toc-early-nonzero', error: { phase: 'toc', exitCode: 17 } },
+    { mode: 'toc-early-malformed', error: { phase: 'toc', code: 'invalid_toc' } },
+  ])('early TOC closure keeps exit and output gates: $mode', ({ mode, error }) => {
+    const directory = mkdtempSync(join(TMP, `${mode}-`)),
+      transport = offlineTransport(directory, mode, 4 * 1024 * 1024),
+      out = join(directory, 'receipt.json');
+    const result = offlineCli(directory, transport, [
+      '--operation=restore-drill',
+      `--dump=${transport.source.dump.file}`,
+      `--source-manifest=${transport.sourcePath}`,
+      `--out=${out}`,
+    ]);
+    expect(result.status, result.stderr).toBe(1);
+    const receipt = parseRestoreReceipt(readJsonArtifact(out).value);
+    expect(receipt).toMatchObject({ kind: 'failed', verified: false });
+    if (receipt.kind === 'legacy-limited') throw new Error('unexpected legacy');
+    expect(receipt.errors).toContainEqual(expect.objectContaining(error));
+  });
+  it('actual restore still requires complete input delivery: early stdin closure is refused', () => {
+    const directory = mkdtempSync(join(TMP, 'restore-early-')),
+      transport = offlineTransport(directory, 'restore-early-close', 4 * 1024 * 1024),
+      out = join(directory, 'receipt.json');
+    const result = offlineCli(directory, transport, [
+      '--operation=restore-drill',
+      `--dump=${transport.source.dump.file}`,
+      `--source-manifest=${transport.sourcePath}`,
+      `--out=${out}`,
+    ]);
+    expect(result.status, result.stderr).toBe(1);
+    const receipt = parseRestoreReceipt(readJsonArtifact(out).value);
+    expect(receipt).toMatchObject({ kind: 'failed', verified: false });
+    if (receipt.kind === 'legacy-limited') throw new Error('unexpected legacy');
+    expect(receipt.errors.some((e) => e.phase === 'restore')).toBe(true);
   });
 });
 function requireDirectory(directory: string): string[] {
