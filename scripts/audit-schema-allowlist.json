@@ -97,11 +97,11 @@
     }
   },
   "answer.vision_extracted": {
-    "reason": "U5 (YUK-203) revives `answer` as the paper draft layer with text+choice input; vision_extracted holds OCR text for the scratch-image answer path whose CAPTURE UI is explicitly DEFER in U5 (plan §1 non-goals — data model must not block image upload, but MVP ships text+choice only). Write path lands with the scratch-image answer-capture UI. Rechecked 2026-10-03: still deferred, not implemented; bounded follow-up YUK-1113.",
+    "reason": "Rechecked 2026-10-11 at main 755297781: answer-draft.ts autosave/freeze writes content_md and image_refs, not vision_extracted; migration capture/redaction only preserves existing values. The image-attempt text producer remains pending in YUK-1404. Keep student work as attempt evidence, never as the answer key. 2026-10-18 is a review date, not a promised delivery date.",
     "resolves_when": {
       "kind": "manual",
-      "ref": "YUK-1113: implement the documented producer and consumer together, or retire with a compatible migration; review by 2026-10-10",
-      "expected_by": "2026-10-10"
+      "ref": "YUK-1404 (YUK-1113 census): implement and verify the image-attempt extraction writer to answer.vision_extracted and its actual attempt consumer together, or preserve historical values in an approved compatible retirement migration; review by 2026-10-18",
+      "expected_by": "2026-10-18"
     }
   },
   "artifact.id": {
@@ -291,19 +291,19 @@
   },
   "_comment_b1_w1_soft_track": "B1-W1 (ADR-0035) soft-track columns. n=1 (single learner) makes the cohort-structured IRT/CDM/KT parameters STRUCTURALLY non-estimable — this is a ceiling of the single-learner regime (Stocking 1990 / B1 foundation §6.3), NOT a 'write path not built yet' gap. They NEVER feed p(L)/scheduling (ADR-0035 决定 #4). kind:'manual' because the Wave 2 phase is not yet named in docs/superpowers/status.md (a kind:'phase' entry would fail the phase-match check). NOTE (YUK-348): item_calibration.kt_json is NO LONGER allowlisted — it now has an UPDATE write path via src/server/mastery/kt-calibration.ts applyKtEstimate (BKT forward sink, prior-echo at n=1), so audit:schema sees it as update-only (non-stub). It remains a PURE PERSISTENCE SINK with ZERO downstream consumer — having a write path does NOT soften 决定 #4. The other 5 columns (irt_a/irt_c/cdm_json + the 2 mastery_state columns) stay NULL + allowlisted.",
   "mastery_state.calibration_residual": {
-    "reason": "fixed-anchor 慢热残差：Wave2 复盘/锚校准路径才写。残差精度继承锚质量，n=1 受结构性约束（B1 foundation） Rechecked 2026-10-03: still deferred, not implemented; bounded follow-up YUK-1113.",
+    "reason": "Rechecked 2026-10-11 at main 755297781: no production producer exists; migration/capture.ts is a read and rehearsal/corpus.ts writes only fixture null. YUK-1470 / ADR-0070 D3-D6 owns sealed-prediction/outcome reconciliation and calibration. The ADR does not require reusing this legacy column. Preserve current mastery/calibration semantics; no borrowed signal or placeholder writer. 2026-10-18 is a review date, not a promised delivery date.",
     "resolves_when": {
       "kind": "manual",
-      "ref": "YUK-1113: implement the documented producer and consumer together, or retire with a compatible migration; review by 2026-10-10",
-      "expected_by": "2026-10-10"
+      "ref": "YUK-1470 / ADR-0070 D3-D6 (YUK-1113 census): implement and verify the intended residual producer from sealed prediction/outcome reconciliation with its deterministic calibration consumer, or preserve historical values through an approved compatible retirement; review by 2026-10-18",
+      "expected_by": "2026-10-18"
     }
   },
   "mastery_state.fluency_illusion_flag": {
-    "reason": "流畅度幻觉旗：A2 复盘判定才置位（Wave2）。本 wave 无复盘触发路径 Rechecked 2026-10-03: still deferred, not implemented; bounded follow-up YUK-1113.",
+    "reason": "Rechecked 2026-10-11 at main 755297781: no production producer exists; migration/capture.ts only reads and rehearsal/corpus.ts writes fixture null. YUK-1470 / ADR-0070 D2,D8 owns evidence-quality and error-pattern interpretation, with result/process axes separate. The ADR does not require reusing this legacy flag. No substitute signal, new mastery computation or unverified process claim is introduced. 2026-10-18 is a review date, not a promised delivery date.",
     "resolves_when": {
       "kind": "manual",
-      "ref": "YUK-1113: implement the documented producer and consumer together, or retire with a compatible migration; review by 2026-10-10",
-      "expected_by": "2026-10-10"
+      "ref": "YUK-1470 / ADR-0070 D2,D8 (YUK-1113 census): implement and verify an evidence-supported fluency-illusion producer and its intended learner-state consumer under the verified-process evidence gate, or preserve historical values through an approved compatible retirement; review by 2026-10-18",
+      "expected_by": "2026-10-18"
     }
   },
   "mastery_state.theta_grid_json": {
@@ -563,11 +563,11 @@
     }
   },
   "event_subscription_checkpoint.paused_at": {
-    "reason": "Reserved dispatcher pause/resume state: runtime.ts currently has no production write to paused_at. This is NOT a raw-SQL scanner false negative. YUK-1113 tracks a real pause/resume owner service or compatible retirement.",
+    "reason": "Rechecked 2026-10-11 at main 755297781: runtime.ts still has no production paused_at write; runtime.db.test.ts writes it only as a fixture. This is not a raw-SQL scanner false negative and not satisfied by DBOS/judge migration or green CI. YUK-1113 owns dispatcher pause/resume producer and consumer, or compatible retirement. 2026-10-18 is the YUK-1113 review date, not a migration delivery commitment.",
     "resolves_when": {
       "kind": "manual",
-      "ref": "YUK-1113: implement the documented producer and consumer together, or retire with a compatible migration; review by 2026-10-10",
-      "expected_by": "2026-10-10"
+      "ref": "YUK-1113: implement and verify dispatcher pause/resume production writes to paused_at and the corresponding consumer behavior together, or preserve historical state in a compatible retirement migration; review by 2026-10-18",
+      "expected_by": "2026-10-18"
     }
   },
   "_comment_yuk850_historical_misconception_reconciliation": "YUK-850 deletes the unreachable misconception reconciliation runtime and its writer while deliberately retaining the table declaration and migrations so existing databases and any historical rows remain readable. F4.1 must make the final retain-or-drop decision; no new runtime writer may be added in the meantime.",

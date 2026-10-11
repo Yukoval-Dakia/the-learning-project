@@ -18,6 +18,7 @@
 // VLM ordering decision, neither true on this path today.
 
 import { useEffect, useRef, useState } from 'react';
+import { UploadSubjectPicker, uploadSubjectField } from '@/ui/components/UploadSubjectPicker';
 import { ApiAuthError, apiJson } from '@/ui/lib/api';
 import { expandDocx, expandPdf, uploadAsset } from '@/ui/lib/assets';
 import { startIngestionOperation } from '@/ui/lib/ingestion-operations';
@@ -123,6 +124,7 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
   const inFlightRef = useRef(false);
   const mountedRef = useRef(true);
   const [files, setFiles] = useState<File[]>([]);
+  const [uploadSubject, setUploadSubject] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>('idle');
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [blockCount, setBlockCount] = useState<number | null>(null);
@@ -247,7 +249,11 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
       setPhase('creating');
       const session = await apiJson<{ session: { id: string } }>('/api/ingestion', {
         method: 'POST',
-        body: JSON.stringify({ entrypoint: 'vision_paper', asset_ids: assetIds }),
+        body: JSON.stringify({
+          entrypoint: 'vision_paper',
+          asset_ids: assetIds,
+          ...uploadSubjectField(uploadSubject),
+        }),
       });
       await startIngestionOperation(session.session.id, { kind: 'extract' });
       if (!mountedRef.current) return;
@@ -266,6 +272,7 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
 
   const reset = () => {
     setFiles([]);
+    setUploadSubject(null);
     setPhase('idle');
     setSessionId(null);
     setBlockCount(null);
@@ -333,6 +340,11 @@ export default function OnboardRecord({ navigate }: OnboardRecordProps) {
               ))}
             </ul>
           )}
+          <UploadSubjectPicker
+            value={uploadSubject}
+            onChange={setUploadSubject}
+            docxSelected={files.length === 1 && isDocx(files[0])}
+          />
           {errorMsg && (
             <div className="ob-inline-err">
               <LoomIcon name="alert" size={14} />

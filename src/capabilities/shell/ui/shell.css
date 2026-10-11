@@ -464,42 +464,6 @@
   flex-wrap: wrap;
   gap: var(--s-2);
 }
-.inbox-loom .proposal-technical-details {
-  margin-top: var(--s-3);
-  border-top: 1px dashed var(--line-soft);
-  padding-top: var(--s-2);
-  color: var(--ink-4);
-  font-size: var(--fs-meta);
-}
-.inbox-loom .proposal-technical-details summary {
-  cursor: pointer;
-  width: fit-content;
-}
-.inbox-loom .proposal-technical-head {
-  display: flex;
-  justify-content: space-between;
-  gap: var(--s-3);
-  margin-top: var(--s-2);
-}
-.inbox-loom .proposal-technical-head button {
-  color: var(--info-ink);
-  text-decoration: underline;
-  text-underline-offset: 2px;
-}
-.inbox-loom .proposal-technical-details pre {
-  overflow: auto;
-  max-height: 240px;
-  margin: var(--s-2) 0 0;
-  padding: var(--s-3);
-  border: 1px solid var(--line-soft);
-  border-radius: var(--r-2);
-  background: var(--paper-sunk);
-  color: var(--ink-3);
-  font: var(--fs-meta) / var(--lh-snug) var(--font-mono);
-  white-space: pre-wrap;
-  word-break: break-word;
-}
-
 /* ---- segmented control（globals .knowledge-loom .seg L7677 同款） ----
    loom 版 seg 容器只 scoped 在 .knowledge-loom / .coach-loom；裸 .seg
    (globals L647) 是 legacy 单按钮样式，吃不到。「改关系」展开条需要，
@@ -1190,4 +1154,45 @@
   justify-content: space-between;
   gap: var(--s-3);
   margin-top: var(--s-4);
+}
+
+/* YUK-1438 — merge card: sub-questions/options and the irreversible-merge confirmation. */
+.inbox-loom .merge-structure {
+  margin: var(--s-1) 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 2px;
+  font-size: var(--fs-meta);
+  color: var(--ink-3);
+}
+.inbox-loom .merge-structure b {
+  color: var(--ink-4);
+  font-weight: 500;
+}
+.inbox-loom .merge-structure-note {
+  margin-top: var(--s-1);
+  font-size: var(--fs-meta);
+  color: var(--ink-4);
+}
+.inbox-loom .merge-confirm {
+  margin-top: var(--s-3);
+  border: 1px solid var(--line);
+  border-radius: var(--r-2);
+  padding: var(--s-3);
+  display: grid;
+  gap: var(--s-1);
+  font-size: var(--fs-caption);
+  color: var(--ink-2);
+}
+.inbox-loom .merge-confirm-actions {
+  display: flex;
+  gap: var(--s-2);
+  margin-top: var(--s-1);
+}
+/* Inline math in merge-card text: keep markdown paragraphs inline with their label. */
+.inbox-loom .merge-math,
+.inbox-loom .merge-math p {
+  display: inline;
+  margin: 0;
 }

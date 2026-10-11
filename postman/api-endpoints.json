@@ -554,16 +554,17 @@
     "methods": [
       {
         "method": "POST",
-        "summary": "canonical proposal decision；conjecture 可用严格 corrected_payload 改写 claim（YUK-567）",
+        "summary": "canonical proposal decision；conjecture 可用严格 corrected_payload 改写 claim（YUK-567）；block_merge accept 需 confirm_lossy（YUK-1404）",
         "query": [],
         "contentType": "application/json",
         "bodyExample": {
           "decision": "accept",
+          "confirm_lossy": true,
           "corrected_payload": {
             "claim_md": "更准确的待验证判断"
           }
         },
-        "notes": "corrected_payload 仅允许 decision=accept，且严格只含 trim 后 1..280 字符的 claim_md；knowledge_id、cause_category 和未知键拒绝。conjecture rate event 与 probe serve 同事务；不写 FSRS。需 x-internal-token"
+        "notes": "corrected_payload 仅允许 decision=accept，且严格只含 trim 后 1..280 字符的 claim_md；knowledge_id、cause_category 和未知键拒绝。confirm_lossy 仅允许 decision=accept 且仅 block_merge 支持：合并不可逆，缺失时 409 confirm_required（合并后无法撤销 + details.affected_block_count）；misplaced 400。conjecture rate event 与 probe serve 同事务；不写 FSRS。需 x-internal-token"
       }
     ]
   },
@@ -1174,7 +1175,7 @@
           "goalId": null,
           "knowledgeIds": ["kc-1"]
         },
-        "notes": "dark-ship：gated on PLACEMENT_PROBE_ENABLED（默认 false → 404）。goalId 省略时用 knowledgeIds；二者皆缺/不可解析 → 400。返回 {sessionId, knowledgeIds, question, answeredCount, sourcingNeeded}；question.assessment 包含固定 issuance/提交身份、公开 practice_dto 与恢复状态"
+        "notes": "dark-ship：gated on PLACEMENT_PROBE_ENABLED（默认 false → 404）。goalId 省略时用 knowledgeIds；二者皆缺/不可解析 → 400。返回 {sessionId, knowledgeIds, question, answeredCount, sourcingNeeded}；question.assessment 包含固定 issuance/提交身份、公开 practice_dto 与恢复状态 starterSupply 按当前会话 goal 的语义 revision + subject 绑定读取已有 claim：absent/pending/satisfied/exhausted/unknown，含 next_action 和经过限长脱敏的 failure_reason。历史缺失原因保留 unknown；exhausted/unknown 不等于等待。读取不创建 claim、不入队、不重试。此状态不替代未完成的 assessment issuance，也不触发完成/放弃。"
       }
     ]
   },
@@ -1191,7 +1192,7 @@
           "cap": 8,
           "seThreshold": null
         },
-        "notes": "答题经 /api/attempts（session_id=本 probe，auto_rate=true，携带首题返回的 assessment 身份与原始 response_set/group_evidence）后调。未完成的 issuance 优先恢复；pending/held 在 cap 前阻止推进。cap 仅接受 1..8，服务端有效上限恒为 8。返回 {done, reason?, question?, answeredCount, sourcingNeeded?}。未知 session→404，已关闭→409"
+        "notes": "答题经 /api/attempts（session_id=本 probe，auto_rate=true，携带首题返回的 assessment 身份与原始 response_set/group_evidence）后调。未完成的 issuance 优先恢复；pending/held 在 cap 前阻止推进。cap 仅接受 1..8，服务端有效上限恒为 8。返回 {done, reason?, question?, answeredCount, sourcingNeeded?}。未知 session→404，已关闭→409 starterSupply 按当前会话 goal 的语义 revision + subject 绑定读取已有 claim：absent/pending/satisfied/exhausted/unknown，含 next_action 和经过限长脱敏的 failure_reason。历史缺失原因保留 unknown；exhausted/unknown 不等于等待。读取不创建 claim、不入队、不重试。此状态不替代未完成的 assessment issuance，也不触发完成/放弃。"
       }
     ]
   },
@@ -1657,7 +1658,7 @@
           "goalId": "REPLACE_goal",
           "pace": "light"
         },
-        "notes": "201 + Location。返回 sessionId/answeredCount/question.assessment；question.assessment.state.practice_dto 为冻结公开题面，phase 为 answering/retry/pending/held。"
+        "notes": "201 + Location。返回 sessionId/answeredCount/question.assessment；question.assessment.state.practice_dto 为冻结公开题面，phase 为 answering/retry/pending/held。 starterSupply 按当前会话 goal 的语义 revision + subject 绑定读取已有 claim：absent/pending/satisfied/exhausted/unknown，含 next_action 和经过限长脱敏的 failure_reason。历史缺失原因保留 unknown；exhausted/unknown 不等于等待。读取不创建 claim、不入队、不重试。此状态不替代未完成的 assessment issuance，也不触发完成/放弃。"
       }
     ]
   },
@@ -1670,7 +1671,7 @@
         "query": [],
         "contentType": null,
         "bodyExample": null,
-        "notes": "读取 status、goal_id 和 scope_knowledge_ids。终态不自动重新开始。"
+        "notes": "读取 status、goal_id 和 scope_knowledge_ids。终态不自动重新开始。 starterSupply 按当前会话 goal 的语义 revision + subject 绑定读取已有 claim：absent/pending/satisfied/exhausted/unknown，含 next_action 和经过限长脱敏的 failure_reason。历史缺失原因保留 unknown；exhausted/unknown 不等于等待。读取不创建 claim、不入队、不重试。此状态不替代未完成的 assessment issuance，也不触发完成/放弃。"
       },
       {
         "method": "PATCH",
@@ -1693,7 +1694,7 @@
         "query": [],
         "contentType": "application/json",
         "bodyExample": {},
-        "notes": "先恢复未完成的 issuance。pending/held 不推进、不重交；retry 仅重发已接收的相同原始 response_set、group_evidence、submission_id 和 idempotency_key。answeredCount 按不同 question ID 统计原生和历史参与。有效 head 且结算成功后才选择或结束。"
+        "notes": "先恢复未完成的 issuance。pending/held 不推进、不重交；retry 仅重发已接收的相同原始 response_set、group_evidence、submission_id 和 idempotency_key。answeredCount 按不同 question ID 统计原生和历史参与。有效 head 且结算成功后才选择或结束。 starterSupply 按当前会话 goal 的语义 revision + subject 绑定读取已有 claim：absent/pending/satisfied/exhausted/unknown，含 next_action 和经过限长脱敏的 failure_reason。历史缺失原因保留 unknown；exhausted/unknown 不等于等待。读取不创建 claim、不入队、不重试。此状态不替代未完成的 assessment issuance，也不触发完成/放弃。"
       }
     ]
   },

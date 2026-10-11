@@ -19,14 +19,16 @@ import {
   event,
   knowledge,
   material_fsrs_state,
+  placement_starter_attempt,
   placement_starter_attempt_question,
   placement_starter_claim,
+  placement_starter_cost_component,
   question,
 } from '@/db/schema';
 import type { PiToolMount } from '@/server/ai/tools/pi-tools';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { canonicalQuestionContentHash } from '../server/quiz/content-fingerprint';
-import { runQuizGen } from './quiz_gen';
+import { buildQuizGenHandler, runQuizGen } from './quiz_gen';
 
 const FAKE_TAVILY_CONFIG = {
   type: 'http' as const,
@@ -254,6 +256,115 @@ async function seedKnowledge(opts: { id: string; domain?: string | null }) {
 describe('runQuizGen', () => {
   beforeEach(async () => {
     await resetDb();
+  });
+
+  it('seals a successful model receipt and bounded schema paths through the fenced failure handler without inserting questions', async () => {
+    await seedKnowledge({ id: 'k1' });
+    const now = new Date();
+    const claimId = 'synthetic-schema-failure-claim';
+    await testDb().insert(placement_starter_claim).values({
+      id: claimId,
+      fingerprint: 'synthetic-schema-failure',
+      goal_id: 'synthetic-goal',
+      semantic_goal_revision_id: 'synthetic-revision',
+      subject_id: 'yuwen',
+      knowledge_id: 'k1',
+      demand_id: 'synthetic-demand',
+      target_id: 'synthetic-target',
+      status: 'queued',
+      pg_boss_job_id: 'synthetic-job',
+      created_at: now,
+      updated_at: now,
+    });
+    const output = JSON.stringify({
+      questions: Array.from({ length: 8 }, (_, i) => ({
+        kind: 'short_answer',
+        prompt_md: `复杂长题面与嵌套解析 ${i} ${'private prompt '.repeat(100)}`,
+        reference_md: '解释条件、推导与边界情形',
+        difficulty: 3,
+        knowledge_ids: ['k1'],
+        judge_kind_override: 'semantic',
+        source_refs: [],
+        rubric_json: {
+          criteria: [{ name: 'correctness', weight: 1, descriptor: '论证完整' }],
+          required_points: ['给出条件'],
+          reference_solution: null,
+        },
+      })),
+      source_pack: { query_plan: [], searched_at: now.toISOString(), tool: 'none' },
+      generation_method: 'closed_book',
+      self_copy_safety: { verdict: 'unknown', checked_by: 'agent_self' },
+    });
+    const handler = buildQuizGenHandler(testDb(), {
+      runAgentTaskFn: agentMock(output, 'synthetic-model-success', 0.018885),
+      buildExaMcpServerFn: () => null,
+      retrieveFewShotFn: async () => [],
+    });
+    await expect(
+      handler([
+        {
+          id: 'synthetic-job',
+          name: 'quiz_gen',
+          data: {
+            trigger: 'knowledge',
+            ref_id: 'k1',
+            count: 8,
+            exact_count: 8,
+            generation_method: 'closed_book',
+            placement_starter_claim_id: claimId,
+          },
+          expireInSeconds: 7200,
+          heartbeatSeconds: null,
+          retryCount: 2,
+          retryLimit: 2,
+          signal: new AbortController().signal,
+          priority: 0,
+          state: 'active',
+          retryDelay: 60,
+          retryBackoff: true,
+          startAfter: now,
+          startedOn: now,
+          singletonKey: null,
+          singletonOn: null,
+          deleteAfterSeconds: 86400,
+          createdOn: now,
+          completedOn: null,
+          keepUntil: now,
+          policy: 'standard',
+          heartbeatOn: null,
+          blocked: false,
+          blocking: false,
+          pendingDependencies: 0,
+          deadLetter: '',
+          output: {},
+          sourceName: null,
+          sourceId: null,
+          sourceCreatedOn: null,
+          sourceRetryCount: null,
+          sourceOutput: null,
+          sourceRootId: null,
+        },
+      ]),
+    ).rejects.toThrow('schema_invalid');
+    const [claim] = await testDb().select().from(placement_starter_claim);
+    const [attempt] = await testDb().select().from(placement_starter_attempt);
+    expect(claim).toMatchObject({
+      status: 'exhausted',
+      known_cost_micro_usd: 18885,
+      last_error_code: 'schema_invalid',
+    });
+    expect(attempt).toMatchObject({
+      status: 'interrupted',
+      error_message: claim?.last_error,
+      provider_task_run_id: 'synthetic-model-success',
+    });
+    expect(claim?.last_error).toContain('reference_solution');
+    expect(claim?.last_error).not.toContain('private prompt');
+    expect(await testDb().select().from(question)).toHaveLength(0);
+    expect(await testDb().select().from(placement_starter_attempt_question)).toHaveLength(0);
+    expect(await testDb().select().from(placement_starter_cost_component)).toMatchObject([
+      { provider_task_run_id: 'synthetic-model-success', cost_micro_usd: 18885 },
+    ]);
   });
 
   it('merges the target KC into an exact duplicate, inserts the remaining question, and audits both', async () => {

@@ -24,12 +24,20 @@ export type AcceptAiProposalOpts = {
       decision?: 'accept';
       new_relation_type?: never;
       corrected_payload?: ProposalCorrectedPayload;
+      /** YUK-1404 — explicit confirmation for lossy accepts (block_merge). */
+      confirm_lossy?: boolean;
     }
-  | { decision: 'reverse'; new_relation_type?: never; corrected_payload?: never }
+  | {
+      decision: 'reverse';
+      new_relation_type?: never;
+      corrected_payload?: never;
+      confirm_lossy?: never;
+    }
   | {
       decision: 'change_type';
       new_relation_type: RelationTypeSchemaT;
       corrected_payload?: never;
+      confirm_lossy?: never;
     }
 );
 

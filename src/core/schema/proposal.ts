@@ -123,6 +123,11 @@ export const ProposalDecisionInput = z
       .object({ claim_md: z.string().trim().min(1).max(CONJECTURE_CLAIM_MAX_CHARS) })
       .strict()
       .optional(),
+    // YUK-1404 — block_merge is lossy (absorbed blocks fold into the primary
+    // and cannot be un-merged). Accepting one requires an explicit
+    // confirm_lossy: true; the flag is accept-only and enforced at the shared
+    // accept boundary, so legacy/direct callers cannot bypass it.
+    confirm_lossy: z.literal(true).optional(),
   })
   .strict()
   .superRefine((data, ctx) => {
@@ -147,6 +152,13 @@ export const ProposalDecisionInput = z
         path: ['corrected_payload'],
       });
     }
+    if (data.decision !== 'accept' && data.confirm_lossy !== undefined) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'confirm_lossy is only valid for accept',
+        path: ['confirm_lossy'],
+      });
+    }
     if (data.decision !== 'retract' && (data.reason_md || data.affected_refs)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
@@ -164,7 +176,16 @@ export const ProposalDecisionInput = z
   });
 export type ProposalDecisionInputT = z.infer<typeof ProposalDecisionInput>;
 
-export const ProposalDecisionResource = z.object({
+// YUK-1404 — the decision resource is an explicit union, not a broadly
+// nullable success contract: every COMMITTED decision still requires its
+// immutable event id (readable through GET /api/events/:id, so the HTTP
+// handler can return an honest Location). Exactly ONE narrow member carries
+// decision_event_id:null — the block_merge soft-stale accept, where nothing
+// was decided (the merge was skipped: no rate event, no decision signal, no
+// status change), so there is no event to point at. The union keeps that null
+// hole typed to this single member, and the route serves it 200 non-created
+// with no Location header.
+const ProposalDecisionResourceCommitted = z.object({
   proposal_id: z.string().min(1),
   proposal_kind: AiProposalKind,
   decision: ProposalDecision,
@@ -174,6 +195,23 @@ export const ProposalDecisionResource = z.object({
   idempotent: z.boolean(),
   result: z.unknown().nullable().optional(),
 });
+
+// The soft-stale member: an accept of a block_merge proposal whose referenced
+// blocks left draft before the merge ran (applier returned {stale:true}). The
+// proposal stays pending — no false resolve — and the UI reads result.stale
+// (isBlockMergeStale) to show the stale notice instead of treating the card as
+// accepted.
+export const ProposalDecisionResource = z.union([
+  ProposalDecisionResourceCommitted,
+  ProposalDecisionResourceCommitted.extend({
+    decision: z.literal('accept'),
+    proposal_kind: z.literal('block_merge'),
+    decision_event_id: z.null(),
+    proposal_status: z.literal('pending'),
+    created: z.literal(false),
+    idempotent: z.literal(false),
+  }),
+]);
 export type ProposalDecisionResourceT = z.infer<typeof ProposalDecisionResource>;
 
 // M4 review fix (YUK-319, codex P2) — dispatchAccept（src/server/proposals/
