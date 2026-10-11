@@ -74,20 +74,21 @@ DBOS step 结果丢失后重放时，重入的仍是 `runNoteVerify` 的 reserve
 
 | 恢复时的 claim 状态 | reserve 结果 | 行为 |
 | --- | --- | --- |
-| `provider_started`，lease 未过期 | `busy` → `skipped:in_progress` | 不再调用 runTaskFn；workflow 以 ERROR 留待 host 处置（无自动重试） |
+| `provider_started`，lease 未过期 | `busy` → `skipped:in_progress` | 不再调用 runTaskFn；workflow 以 SUCCESS 返回 `skipped:in_progress`。host 必须按业务结果保留待完成义务，不能仅按 workflow 状态判断完成 |
 | `provider_started`，lease 已过期 | 转 `ambiguous` → `skipped:ambiguous` | 终态化，不补一次付费调用 |
 | `result_ready` | `result_ready` | 走 `finalizeStagedNoteVerification` 收口，不调 runTaskFn |
 | `retry_wait`（显式 release 后） | 重新 reserve | 合法新 attempt，`provider_attempts` 在共享 claim 行上继续计数至 per-epoch 上限 3 |
 
-配合 `retriesAllowed: false` + 固定 step 名，DBOS 在任何恢复路径上都不能自由重放付费边界。未知付费效果（provider 返回后崩溃）落在 provider_started/result_ready 两个非重购状态之一，由人工/父级恢复策略处置。
+`retriesAllowed: false` 禁止自动 step 重试，但不阻止崩溃恢复重新执行 step 函数。防止重复付费依赖 `runNoteVerify` 的 reserve 前置与持久化 claim 状态；固定 step 名不是付费去重证明。provider_started/result_ready 的恢复重入不会发起新调用，未知结果仍交由人工/父级恢复策略处置。
 
 ## 5. 缺失共享原语检查（blocker 评估）
 
-**无阻塞缺口**：`note_verification_claim`（fence/token/epoch/attempt 预算）+ `note-handoff` deterministic dispatch 已提供迁移所需全部收据语义；适配器只消费 operation 即可安全存在。父级遗留（非本 lane 缺口，记录为集成处方）：
+现有 `note_verification_claim` 提供 fence/token/epoch/attempt 预算，足以支持本次执行边界提取。候选适配器尚不能作为已完成的任务族迁移：以下父级集成与验收门槛仍未完成。
 
 1. 生产侧派发的 DBOS 变体（`note-handoff.ts` 目前 `boss.send('note_verify', …)`）——cutover 时需父级加 DBOS enqueue 或保留 pg-boss 派发 + 双端消费裁决；
 2. 串行注册与共享 lifecycle（`register-capability-jobs.ts` 只准入既有族）；
-3. phase/fence/退出排空机制（参照 review_orphan_control 模式）。
+3. phase/fence/退出排空机制（参照 review_orphan_control 模式）；
+4. 对 `skipped:in_progress`、`skipped:ambiguous` 及其他业务结果逐项定义待完成义务查询与处置。SUCCESS workflow 不等于业务完成；未完成/未知效果必须保持可见且不得自动重购。
 
 ## 6. 测试
 
