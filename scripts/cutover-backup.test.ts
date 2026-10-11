@@ -1485,8 +1485,6 @@ function transportCommands(directory: string) {
 }
 
 describe('scratch client authentication through intercepted Docker exec', () => {
-  // @invariant security: scratch clients use explicit credentials and restore receipts preserve verified ownership and cleanup boundaries
-  // @fails-if inherited credentials pass, an unverified container is removed, or a forged retained reopen receipt is accepted
   it.each(['default', 'retained-loopback', 'sql-only'])(
     '%s supplies the isolated password to every connecting scratch client',
     (mode) => {
@@ -1532,106 +1530,44 @@ describe('scratch client authentication through intercepted Docker exec', () => 
       }
       const commands = transportCommands(directory);
       expect(commands.some((c) => c.args[0] === 'rm')).toBe(mode !== 'retained-loopback');
-      if (mode === 'default') {
-        expect(commands.find((c) => c.args[0] === 'run')?.args).toContain('--network=none');
-        expect(commands.at(-1)?.args).toEqual(['rm', '-f', '-v', 'c'.repeat(64)]);
-        expect(commands.at(-2)?.args).toEqual(['inspect', 'c'.repeat(64)]);
-      }
-      if (mode === 'retained-loopback') {
+      if (mode === 'retained-loopback')
         expect(clients.at(-1)?.args.some((arg) => arg.includes('pg_control_system'))).toBe(true);
-        const receipt = parseRestoreReceipt(readJsonArtifact(out).value);
-        expect(receipt).toMatchObject({
-          kind: 'verified',
-          scratch: {
-            retained: true,
-            ownership: {
-              container_id: 'c'.repeat(64),
-              volumes: [
-                { name: 'offline-anonymous-volume', destination: '/var/lib/postgresql/data' },
-              ],
-            },
-            reopen: {
-              container_id: 'c'.repeat(64),
-              host: '127.0.0.1',
-              port: 15555,
-              identity: {
-                database: 'test_fork_20261009',
-                database_oid: '16385',
-                cluster: '8007199254741001',
-                in_recovery: false,
-              },
-            },
-          },
-        });
-        const commands = transportCommands(directory);
-        const run = commands.find((c) => c.args[0] === 'run');
-        expect(run?.args).toEqual(
-          expect.arrayContaining([
-            '--pull=never',
-            '--network=bridge',
-            '127.0.0.1:15555:5432',
-            'POSTGRES_DB=test_fork_20261009',
-          ]),
-        );
-        for (let i = 0; i < commands.length; i++)
-          if (commands[i].args[0] === 'exec') {
-            expect(commands[i].args).toContain('c'.repeat(64));
-            expect(commands[i - 1].args).toEqual(['inspect', 'c'.repeat(64)]);
-          }
-        expect(commands.some((c) => c.args[0] === 'rm')).toBe(false);
-        {
-          const receipt = z
-            .object({ scratch: z.object({ reopen: z.unknown() }).passthrough() })
-            .passthrough()
-            .parse(readJsonArtifact(out).value);
-          for (const delta of [
-            { kind: 'failed', level: 'failed', verified: false },
-            { scratch: { ...receipt.scratch, retained: false } },
-            { scratch: { ...receipt.scratch, ownership: undefined } },
-            {
-              scratch: {
-                ...receipt.scratch,
-                reopen: {
-                  ...z
-                    .object({ identity: z.object({}).passthrough() })
-                    .passthrough()
-                    .parse(receipt.scratch.reopen),
-                  container_id: 'd'.repeat(64),
-                },
-              },
-            },
-          ])
-            expect(() => parseRestoreReceipt({ ...receipt, ...delta })).toThrow();
-        }
-        for (const client of ['psql', 'pg_restore']) {
-          const clientArgs =
-            client === 'psql'
-              ? ['-U', 'loom', '-d', 'test_fork_20261009', '-h', '127.0.0.1', '-c', 'select 1']
-              : ['-U', 'loom', '-d', 'test_fork_20261009'];
-          for (const environment of [
-            [],
-            ['-e', 'PGPASSWORD=wrong'],
-            ['-e', 'POSTGRES_PASSWORD=loom'],
-          ]) {
-            const result = spawnSync(
-              join(transport.bin, 'docker'),
-              ['exec', '-i', ...environment, 'c'.repeat(64), client, ...clientArgs],
-              { encoding: 'utf8', timeout: 1000, input: '', env: { PGPASSWORD: 'loom' } },
-            );
-            expect(result.status, result.stderr).toBe(18);
-            expect(result.stderr).toContain('password authentication failed');
-          }
-          const source = spawnSync(
-            join(transport.bin, 'docker'),
-            ['exec', '-i', '-e', 'PGPASSWORD=loom', 'offline-source', client, ...clientArgs],
-            { encoding: 'utf8', timeout: 1000, input: '' },
-          );
-          expect(source.status, source.stderr).toBe(97);
-        }
-      }
     },
   );
-
+  it.each(['psql', 'pg_restore'])(
+    'the fake rejects missing or wrong %s exec passwords despite inherited credentials',
+    (client) => {
+      const directory = mkdtempSync(join(TMP, 'scratch-auth-reject-')),
+        transport = offlineTransport(directory, 'success'),
+        out = join(directory, 'receipt.json');
+      expect(
+        offlineCli(directory, transport, [...restoreArgs(transport, out), ...loopbackArgs]).status,
+      ).toBe(0);
+      const clientArgs =
+        client === 'psql'
+          ? ['-U', 'loom', '-d', 'test_fork_20261009', '-h', '127.0.0.1', '-c', 'select 1']
+          : ['-U', 'loom', '-d', 'test_fork_20261009'];
+      for (const environment of [
+        [],
+        ['-e', 'PGPASSWORD=wrong'],
+        ['-e', 'POSTGRES_PASSWORD=loom'],
+      ]) {
+        const result = spawnSync(
+          join(transport.bin, 'docker'),
+          ['exec', '-i', ...environment, 'c'.repeat(64), client, ...clientArgs],
+          { encoding: 'utf8', timeout: 1000, input: '', env: { PGPASSWORD: 'loom' } },
+        );
+        expect(result.status, result.stderr).toBe(18);
+        expect(result.stderr).toContain('password authentication failed');
+      }
+      const source = spawnSync(
+        join(transport.bin, 'docker'),
+        ['exec', '-i', '-e', 'PGPASSWORD=loom', 'offline-source', client, ...clientArgs],
+        { encoding: 'utf8', timeout: 1000, input: '' },
+      );
+      expect(source.status, source.stderr).toBe(97);
+    },
+  );
   it.each([false, true])(
     'restore authentication failure remains fail-closed with keep=%s',
     (keep) => {
@@ -1707,7 +1643,54 @@ describe('retained scratch public options and ownership', () => {
     ).toBe(1);
     expect(transportCommands(directory)).toEqual([]);
   });
-
+  it('retains the exact new loopback identity, observed volume and attempt and uses IDs for every exec', () => {
+    const directory = mkdtempSync(join(TMP, 'scratch-loopback-')),
+      transport = offlineTransport(directory, 'success'),
+      out = join(directory, 'receipt.json');
+    const result = offlineCli(directory, transport, [
+      ...restoreArgs(transport, out),
+      ...loopbackArgs,
+    ]);
+    expect(result.status, result.stderr).toBe(0);
+    const receipt = parseRestoreReceipt(readJsonArtifact(out).value);
+    expect(receipt).toMatchObject({
+      kind: 'verified',
+      scratch: {
+        retained: true,
+        ownership: {
+          container_id: 'c'.repeat(64),
+          volumes: [{ name: 'offline-anonymous-volume', destination: '/var/lib/postgresql/data' }],
+        },
+        reopen: {
+          container_id: 'c'.repeat(64),
+          host: '127.0.0.1',
+          port: 15555,
+          identity: {
+            database: 'test_fork_20261009',
+            database_oid: '16385',
+            cluster: '8007199254741001',
+            in_recovery: false,
+          },
+        },
+      },
+    });
+    const commands = transportCommands(directory);
+    const run = commands.find((c) => c.args[0] === 'run');
+    expect(run?.args).toEqual(
+      expect.arrayContaining([
+        '--pull=never',
+        '--network=bridge',
+        '127.0.0.1:15555:5432',
+        'POSTGRES_DB=test_fork_20261009',
+      ]),
+    );
+    for (let i = 0; i < commands.length; i++)
+      if (commands[i].args[0] === 'exec') {
+        expect(commands[i].args).toContain('c'.repeat(64));
+        expect(commands[i - 1].args).toEqual(['inspect', 'c'.repeat(64)]);
+      }
+    expect(commands.some((c) => c.args[0] === 'rm')).toBe(false);
+  });
   it.each([
     'ambiguous-create',
     'ambiguous-signal',
@@ -1745,7 +1728,16 @@ describe('retained scratch public options and ownership', () => {
     );
     expect(transportCommands(directory).some((c) => c.args[0] === 'rm')).toBe(false);
   });
-
+  it('default stays network-none and removes only verified IDs and anonymous volumes', () => {
+    const directory = mkdtempSync(join(TMP, 'scratch-default-')),
+      transport = offlineTransport(directory, 'success'),
+      out = join(directory, 'receipt.json');
+    expect(offlineCli(directory, transport, restoreArgs(transport, out)).status).toBe(0);
+    const commands = transportCommands(directory);
+    expect(commands.find((c) => c.args[0] === 'run')?.args).toContain('--network=none');
+    expect(commands.at(-1)?.args).toEqual(['rm', '-f', '-v', 'c'.repeat(64)]);
+    expect(commands.at(-2)?.args).toEqual(['inspect', 'c'.repeat(64)]);
+  });
   it('does not remove an ambiguous created container even without keep', () => {
     const directory = mkdtempSync(join(TMP, 'scratch-unknown-')),
       transport = offlineTransport(directory, 'ambiguous-create'),
@@ -1764,6 +1756,36 @@ describe('retained scratch public options and ownership', () => {
       errors: [expect.objectContaining({ phase: 'cleanup' })],
     });
     expect(transportCommands(directory).some((c) => c.args[0] === 'rm')).toBe(false);
+  });
+  it('rejects forged failed, unretained, wrong-container and recovery reopen receipts', () => {
+    const directory = mkdtempSync(join(TMP, 'scratch-forged-')),
+      transport = offlineTransport(directory, 'success'),
+      out = join(directory, 'receipt.json');
+    expect(
+      offlineCli(directory, transport, [...restoreArgs(transport, out), ...loopbackArgs]).status,
+    ).toBe(0);
+    const receipt = z
+      .object({ scratch: z.object({ reopen: z.unknown() }).passthrough() })
+      .passthrough()
+      .parse(readJsonArtifact(out).value);
+    for (const delta of [
+      { kind: 'failed', level: 'failed', verified: false },
+      { scratch: { ...receipt.scratch, retained: false } },
+      { scratch: { ...receipt.scratch, ownership: undefined } },
+      {
+        scratch: {
+          ...receipt.scratch,
+          reopen: {
+            ...z
+              .object({ identity: z.object({}).passthrough() })
+              .passthrough()
+              .parse(receipt.scratch.reopen),
+            container_id: 'd'.repeat(64),
+          },
+        },
+      },
+    ])
+      expect(() => parseRestoreReceipt({ ...receipt, ...delta })).toThrow();
   });
 });
 

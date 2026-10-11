@@ -143,7 +143,6 @@ export function createMigrationFixture(label: 'conversation' | 'placement' | 'le
       stderr: string;
       messages: unknown[];
       exit: { code: ChildExit[0]; signal: ChildExit[1] } | null;
-      timing: { spawnedAt: string; messagesAt: string[]; exitedAt?: string };
     } = {
       pid: child.pid,
       database: url.pathname.slice(1),
@@ -156,7 +155,6 @@ export function createMigrationFixture(label: 'conversation' | 'placement' | 'le
       stderr: '',
       messages: [],
       exit: null,
-      timing: { spawnedAt: new Date().toISOString(), messagesAt: [] },
     };
     logs.push(record);
     child.stdout?.on('data', (c) => {
@@ -166,7 +164,6 @@ export function createMigrationFixture(label: 'conversation' | 'placement' | 'le
       record.stderr += String(c);
     });
     child.on('message', (m) => {
-      record.timing.messagesAt.push(new Date().toISOString());
       record.messages.push(m);
       const parsed = messageSchema.safeParse(m);
       messages.push(
@@ -197,7 +194,6 @@ export function createMigrationFixture(label: 'conversation' | 'placement' | 'le
       messages.push(failure);
     });
     child.on('exit', (code, signal) => {
-      record.timing.exitedAt = new Date().toISOString();
       children.delete(child);
       record.exit = { code, signal };
     });
@@ -372,9 +368,6 @@ export function createMigrationFixture(label: 'conversation' | 'placement' | 'le
     const target = safeUrl();
     const sockets = new Set<Socket>();
     let fired = false;
-    let listenerClosed: Promise<void> | undefined;
-    const closeListener = () =>
-      (listenerClosed ??= new Promise<void>((done) => server.close(() => done())));
     const server = createServer((downstream) => {
       downstream.setNoDelay(true);
       if (fired && mode === 'after-server-commit-and-unavailable') {
@@ -460,7 +453,6 @@ export function createMigrationFixture(label: 'conversation' | 'placement' | 'le
             fired = true;
             evidence.push({ fault: mode, at: new Date().toISOString(), serverCommand: command });
             if (mode === 'after-server-commit-and-unavailable') {
-              void closeListener();
               // Existing pool connections must become unavailable too. Refusing only
               // new connections lets the authoritative reread use a healthy sibling.
               evidence.push({ unavailableSocketCount: sockets.size });
@@ -487,7 +479,7 @@ export function createMigrationFixture(label: 'conversation' | 'placement' | 'le
       fired: () => fired,
       async stop() {
         for (const socket of sockets) socket.destroy();
-        await closeListener();
+        await new Promise<void>((done) => server.close(() => done()));
       },
     };
   }
