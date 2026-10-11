@@ -14,19 +14,19 @@ import {
   noteVerificationRetryRequired,
   runNoteVerify,
 } from '@/capabilities/notes/server/note-verify-durable-operation';
-import type { Db, Tx } from '@/db/client';
-import { makeRunTaskFn } from '@/server/ai/runner-fn';
-import {
-  admitPaidEffectDeliveryControl,
-  lockPaidEffectControlFamily,
-  paidEffectControlTableExists,
-} from '@/server/durable/paid-effect-control';
-import { buildNoteVerificationControlAdmission } from '@/server/durable/paid-effect-note-admission';
+import { buildNoteVerificationControlAdmission } from '@/capabilities/notes/server/paid-effect-note-admission';
 import {
   type PaidEffectControlAdmission,
   PaidEffectControlFencedError,
   type PaidEffectControlSnapshot,
-} from '@/server/durable/paid-effect-protocol';
+} from '@/core/migration/paid-effect-protocol';
+import type { Db, Tx } from '@/db/client';
+import {
+  admitPaidEffectDeliveryControl,
+  lockPaidEffectControlFamily,
+  paidEffectControlTableExists,
+} from '@/db/paid-effect-control';
+import { makeRunTaskFn } from '@/server/ai/runner-fn';
 
 // The verification execution itself is backend-agnostic and lives in
 // note-verify-durable-operation.ts (YUK-1355 receipt reference). This file

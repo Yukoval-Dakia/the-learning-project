@@ -1,5 +1,5 @@
-// YUK-1355 Lane B — paid-effect backend control: symmetric pg-boss/DBOS
-// ownership admission with generation fencing, plus the switch gate.
+// YUK-1355 Lane B — backend-switch composition. Generic ownership admission
+// and generation fencing live in src/db/paid-effect-control.ts.
 //
 // - Absence of a control row is the bootstrap DEFAULT OWNER (pg-boss,
 //   generation 0, explicit:false). DBOS never default-admits; it requires an
@@ -18,45 +18,27 @@
 //   caught 42P01 would abort a live transaction — every later statement
 //   fails with 25P02 — so in-transaction code must never catch-and-continue
 //   it).
-import { and, count, eq, inArray, sql } from 'drizzle-orm';
+import { and, count, eq, inArray } from 'drizzle-orm';
 
-import type { Db, Tx } from '@/db/client';
-import { paid_effect, paid_effect_control } from '@/db/schema';
 import {
   NOTE_VERIFY_OBLIGATION_FAMILY,
   countNoteVerifyClaimObligations,
-} from './paid-effect-note-obligations';
+} from '@/capabilities/notes/public';
 import {
   DEFAULT_PAID_EFFECT_BACKEND,
   DEFAULT_PAID_EFFECT_GENERATION,
-  PAID_EFFECT_BACKEND_SCHEMA,
   PAID_EFFECT_SWITCH_BLOCKING_STATES,
   PAID_EFFECT_SWITCH_UNSUPPORTED_FAMILIES,
   type PaidEffectBackend,
-  type PaidEffectControlAdmission,
   type PaidEffectControlSnapshot,
-  type PaidEffectDeliveryRef,
   type PaidEffectState,
   PaidEffectSwitchBlockedError,
   PaidEffectSwitchUnsupportedError,
-  decidePaidEffectControlAdmission,
-  paidEffectControlLockKey,
   summarizePaidEffectSwitchBlocking,
-} from './paid-effect-protocol';
-
-/**
- * THE family-level serialization lock (P1-R2-1): every control admission and
- * every switch takes it FIRST, in the SAME transaction, BEFORE reading or
- * materializing the control row — a row lock serializes nothing while the
- * row does not exist, which is exactly the missing-row race. Postgres
- * advisory xact locks are reentrant per transaction, so nesting
- * admit-inside-claim is a no-op re-acquire.
- */
-export async function lockPaidEffectControlFamily(tx: Tx, family: string): Promise<void> {
-  await tx.execute(
-    sql`select pg_advisory_xact_lock(hashtextextended(${paidEffectControlLockKey(family)}, 0))`,
-  );
-}
+} from '@/core/migration/paid-effect-protocol';
+import type { Db, Tx } from '@/db/client';
+import { lockPaidEffectControlFamily, rowToControl } from '@/db/paid-effect-control';
+import { paid_effect, paid_effect_control } from '@/db/schema';
 
 /**
  * Pinned family obligation probes: families whose paid authority is NOT a
@@ -73,66 +55,6 @@ const FAMILY_OBLIGATION_PROBES: ReadonlyMap<
     receipt_ready: number;
   }>
 > = new Map([[NOTE_VERIFY_OBLIGATION_FAMILY, countNoteVerifyClaimObligations]]);
-
-function defaultControl(family: string): PaidEffectControlSnapshot {
-  return {
-    family,
-    backend: DEFAULT_PAID_EFFECT_BACKEND,
-    generation: DEFAULT_PAID_EFFECT_GENERATION,
-    explicit: false,
-  };
-}
-
-function rowToControl(
-  family: string,
-  row: typeof paid_effect_control.$inferSelect,
-): PaidEffectControlSnapshot {
-  return {
-    family,
-    backend: PAID_EFFECT_BACKEND_SCHEMA.parse(row.backend),
-    generation: row.generation,
-    explicit: true,
-  };
-}
-
-/** Control snapshot for a family; an absent row is the bootstrap default owner. */
-export async function readPaidEffectControl(
-  db: Db | Tx,
-  family: string,
-): Promise<PaidEffectControlSnapshot> {
-  const rows = await db
-    .select()
-    .from(paid_effect_control)
-    .where(eq(paid_effect_control.family, family))
-    .limit(1);
-  const row = rows[0];
-  return row ? rowToControl(family, row) : defaultControl(family);
-}
-
-/**
- * Admit one delivery under backend control. Runs in the caller's transaction
- * with a FOR SHARE lock on the control row; the decision itself is the pure
- * protocol function, so pg-boss and DBOS get byte-identical rules.
- */
-export async function admitPaidEffectDeliveryControl(
-  tx: Tx,
-  family: string,
-  ref: PaidEffectDeliveryRef,
-): Promise<PaidEffectControlAdmission> {
-  // FIRST: the family serialization lock, BEFORE reading the control row —
-  // with no row present a FOR SHARE would lock nothing and a concurrent
-  // switch (insert + scan + flip) could commit unseen between this read and
-  // the caller's claim.
-  await lockPaidEffectControlFamily(tx, family);
-  const rows = await tx
-    .select()
-    .from(paid_effect_control)
-    .where(eq(paid_effect_control.family, family))
-    .for('share');
-  const row = rows[0];
-  const control = row ? rowToControl(family, row) : defaultControl(family);
-  return decidePaidEffectControlAdmission(control, ref);
-}
 
 /**
  * Switch the family's owning backend. Blocked while ANY unfinished obligation
@@ -228,17 +150,4 @@ function blockedShape(): {
   receipt_ready: number;
 } {
   return { pending: 0, sending: 0, unknown: 0, receipt_ready: 0 };
-}
-
-/**
- * Non-aborting existence probe for paid_effect_control, safe to run INSIDE a
- * live transaction (to_regclass returns NULL instead of raising 42P01).
- * In-transaction bootstrap paths must use this, never try/catch around SQL
- * that aborts the transaction.
- */
-export async function paidEffectControlTableExists(tx: Tx): Promise<boolean> {
-  const rows = await tx.execute<{ reg: string | null }>(
-    sql`select to_regclass('paid_effect_control') as reg`,
-  );
-  return rows.length > 0 && rows[0].reg != null;
 }

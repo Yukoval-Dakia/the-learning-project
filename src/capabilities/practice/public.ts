@@ -21,6 +21,10 @@ export { issueAssessment } from './server/assessment/issue';
 export { saveResponseDraft, saveSubmission } from './server/assessment/submit';
 export type { AttemptSnapshotBracketsInput } from './server/attempt-snapshot';
 export { writeAttemptSnapshotBrackets } from './server/attempt-snapshot';
+export {
+  type CalibrationSampleDispatch,
+  calibrationSampleDispatchSchema,
+} from './server/calibration-sample-store';
 // YUK-1007 — practice 拥有配置键的 consumer-effective 事实（真实 reader 调用）：
 // 组合根 facts seam 聚合进 GET /api/admin/config keys[].effective。
 export { practiceConfigEffectiveFacts } from './server/config-effective-facts';

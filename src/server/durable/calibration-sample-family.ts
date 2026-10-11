@@ -14,7 +14,7 @@ export const CALIBRATION_SAMPLE_ADMISSION_PREREQUISITE =
 export {
   type CalibrationSampleDispatch,
   calibrationSampleDispatchSchema,
-} from './calibration-sample-store';
+} from '@/capabilities/practice/public';
 
 export function calibrationSampleScheduledId(scheduledAt: Date): string {
   return `sched-${CALIBRATION_SAMPLE_FAMILY}-${scheduledAt.toISOString()}`;

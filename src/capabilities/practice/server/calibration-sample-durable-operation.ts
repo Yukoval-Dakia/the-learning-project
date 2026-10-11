@@ -33,8 +33,22 @@ import { z } from 'zod';
 import type { Provider } from '@/ai/registry';
 import { getConfigFlag } from '@/core/config/store';
 import { canonicalHash, stableStringify } from '@/core/migration/canonical';
+import {
+  type PaidEffectIdentity,
+  type PaidEffectInput,
+  PaidEffectProtocolError,
+  computePaidEffectIdentity,
+  computePaidEffectInputDigest,
+  paidEffectIdentitySchema,
+  paidEffectJsonEquals,
+} from '@/core/migration/paid-effect-protocol';
 import type { Db, Tx } from '@/db/client';
+import type { PaidEffectSnapshot } from '@/db/paid-effect-store';
 import { resolveTaskProvider } from '@/server/ai/providers';
+import {
+  JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV,
+  readJudgeCalibrationConfig,
+} from '../jobs/judge-calibration-config';
 import {
   type CalibrationSampleDispatch,
   type CalibrationSendLease,
@@ -48,21 +62,7 @@ import {
   readCalibrationStoredInput,
   recordCalibrationStoreResult,
   reserveCalibrationStoreEffect,
-} from '@/server/durable/calibration-sample-store';
-import {
-  type PaidEffectIdentity,
-  type PaidEffectInput,
-  PaidEffectProtocolError,
-  computePaidEffectIdentity,
-  computePaidEffectInputDigest,
-  paidEffectIdentitySchema,
-  paidEffectJsonEquals,
-} from '@/server/durable/paid-effect-protocol';
-import type { PaidEffectSnapshot } from '@/server/durable/paid-effect-store';
-import {
-  JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV,
-  readJudgeCalibrationConfig,
-} from '../jobs/judge-calibration-config';
+} from './calibration-sample-store';
 import type {
   JudgeCalibrationConfig,
   JudgeCalibrationRejudgeFace,

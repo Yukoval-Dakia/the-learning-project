@@ -3,7 +3,7 @@
 // operation itself is mocked: these cases pin the handler's control flow only.
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { PaidEffectControlAdmission } from '@/server/durable/paid-effect-protocol';
+import type { PaidEffectControlAdmission } from '@/core/migration/paid-effect-protocol';
 
 import { buildNoteVerifyHandler } from './note_verify';
 

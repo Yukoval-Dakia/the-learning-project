@@ -4,25 +4,25 @@
 import { createId } from '@paralleldrive/cuid2';
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetTestConfig, setTestConfig } from '@/core/config/store';
-import { event, knowledge, paid_effect, paid_effect_control, question } from '@/db/schema';
-import {
-  calibrationSampleScheduledId,
-  runCalibrationSampleTick,
-} from '@/server/durable/calibration-sample-family';
 import {
   type CalibrationSampleDispatch,
   type CalibrationSendLease,
   recordCalibrationStoreResult,
-} from '@/server/durable/calibration-sample-store';
+} from '@/capabilities/practice/server/calibration-sample-store';
+import { resetTestConfig, setTestConfig } from '@/core/config/store';
 import {
   PaidEffectApplicationConflictError,
   PaidEffectControlFencedError,
   PaidEffectDeliveryConflictError,
   PaidEffectReceiptConflictError,
   computePaidEffectIdentity,
-} from '@/server/durable/paid-effect-protocol';
-import { readPaidEffect, recordPaidEffectApplication } from '@/server/durable/paid-effect-store';
+} from '@/core/migration/paid-effect-protocol';
+import { readPaidEffect, recordPaidEffectApplication } from '@/db/paid-effect-store';
+import { event, knowledge, paid_effect, paid_effect_control, question } from '@/db/schema';
+import {
+  calibrationSampleScheduledId,
+  runCalibrationSampleTick,
+} from '@/server/durable/calibration-sample-family';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { buildJudgeCalibrationSampleHandler } from '../jobs/judge_calibration_sample';
 import { JUDGE_CALIBRATION_SAMPLING_ENABLED_ENV } from '../jobs/judge-calibration-config';

@@ -18,10 +18,6 @@
 //   obligation) and the only way forward is replaying the application from the
 //   receipt — there is no path back to a physical send.
 import { type SQL, and, eq, inArray, lt, ne, or, sql } from 'drizzle-orm';
-
-import type { Db, Tx } from '@/db/client';
-import { paid_effect } from '@/db/schema';
-import { admitPaidEffectDeliveryControl, lockPaidEffectControlFamily } from './paid-effect-control';
 import {
   PAID_EFFECT_BACKEND_SCHEMA,
   PAID_EFFECT_ENTITY_GATE_STATES,
@@ -43,7 +39,13 @@ import {
   paidEffectGateLockKey,
   paidEffectIdentitySchema,
   paidEffectJsonEquals,
-} from './paid-effect-protocol';
+} from '@/core/migration/paid-effect-protocol';
+import type { Db, Tx } from '@/db/client';
+import {
+  admitPaidEffectDeliveryControl,
+  lockPaidEffectControlFamily,
+} from '@/db/paid-effect-control';
+import { paid_effect } from '@/db/schema';
 
 type PaidEffectRow = typeof paid_effect.$inferSelect;
 

@@ -4447,7 +4447,7 @@ export const session_orphan_disposition = pgTable(
 export const paid_effect_control = pgTable('paid_effect_control', {
   family: text('family').primaryKey(),
   backend: text('backend')
-    .$type<import('../server/durable/paid-effect-protocol').PaidEffectBackend>()
+    .$type<import('../core/migration/paid-effect-protocol').PaidEffectBackend>()
     .notNull(),
   generation: integer('generation').notNull().default(0),
   created_at: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
@@ -4472,13 +4472,13 @@ export const paid_effect = pgTable(
     input_digest: text('input_digest').notNull(),
     input_json: jsonb('input_json').notNull(),
     state: text('state')
-      .$type<import('../server/durable/paid-effect-protocol').PaidEffectState>()
+      .$type<import('../core/migration/paid-effect-protocol').PaidEffectState>()
       .notNull(),
     fence: integer('fence').notNull().default(0),
     delivery_id: text('delivery_id'),
     delivery_backend:
       text('delivery_backend').$type<
-        import('../server/durable/paid-effect-protocol').PaidEffectBackend
+        import('../core/migration/paid-effect-protocol').PaidEffectBackend
       >(),
     delivery_tick: text('delivery_tick'),
     send_lease_expires_at: timestamp('send_lease_expires_at', { withTimezone: true }),

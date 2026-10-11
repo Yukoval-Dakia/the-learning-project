@@ -3,8 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { NoteVerifyJobData } from '@/capabilities/notes/jobs/note_verify';
 import type { RunNoteVerifyResult } from '@/capabilities/notes/server/note-verify-durable-operation';
+import type { PaidEffectControlAdmission } from '@/core/migration/paid-effect-protocol';
 import type { Db } from '@/db/client';
-
 import {
   NOTE_VERIFY_FAMILY,
   NOTE_VERIFY_STEP_NAME,
@@ -12,7 +12,6 @@ import {
   noteVerifyWorkflowInputSchema,
   runNoteVerifyWorkflowBody,
 } from './note-verify-family';
-import type { PaidEffectControlAdmission } from './paid-effect-protocol';
 
 const admittedControl: PaidEffectControlAdmission = {
   kind: 'admitted',

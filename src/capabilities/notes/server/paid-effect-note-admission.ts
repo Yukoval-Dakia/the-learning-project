@@ -1,8 +1,7 @@
 // YUK-1355 Lane B — note_verify atomic backend-control admission builder
-// (P1-R2-2). Kept in its own module (not inside paid-effect-control.ts, whose
-// probe registry imports the obligation projection) so the import graph stays
-// acyclic: this file imports control + protocol; nothing imports it back
-// except the note consumers.
+// (P1-R2-2). Notes owns the claim admission hook. Shared PG admission imports
+// no feature projections; the server switch composes Notes' obligation reader
+// through notes/public, keeping the admission dependency direction acyclic.
 //
 // The hook this builds is passed as reserveNoteVerification's optional
 // controlAdmission: it runs INSIDE the reservation transaction, takes the
@@ -20,18 +19,19 @@
 // fail with 25P02. Missing table ⇒ pg-boss stands as the bootstrap default
 // owner and is admitted; DBOS is hard-fenced. Never catch-and-continue a
 // 42P01 inside a live transaction.
+
+import {
+  PaidEffectControlFencedError,
+  type PaidEffectDeliveryRef,
+  decidePaidEffectControlAdmission,
+} from '@/core/migration/paid-effect-protocol';
 import type { Tx } from '@/db/client';
 import {
   admitPaidEffectDeliveryControl,
   lockPaidEffectControlFamily,
   paidEffectControlTableExists,
-} from './paid-effect-control';
+} from '@/db/paid-effect-control';
 import { NOTE_VERIFY_OBLIGATION_FAMILY } from './paid-effect-note-obligations';
-import {
-  PaidEffectControlFencedError,
-  type PaidEffectDeliveryRef,
-  decidePaidEffectControlAdmission,
-} from './paid-effect-protocol';
 
 export type { PaidEffectDeliveryRef };
 

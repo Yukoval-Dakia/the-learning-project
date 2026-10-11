@@ -28,17 +28,20 @@ import { z } from 'zod';
 import {
   type RunNoteVerifyResult,
   type RunTaskFn,
+  buildNoteVerificationControlAdmission,
   runNoteVerify,
-} from '@/capabilities/notes/server/note-verify-durable-operation';
+} from '@/capabilities/notes/public';
+import type {
+  PaidEffectControlAdmission,
+  PaidEffectDeliveryRef,
+} from '@/core/migration/paid-effect-protocol';
+import { PaidEffectControlFencedError } from '@/core/migration/paid-effect-protocol';
 import type { Db } from '@/db/client';
 import {
   admitPaidEffectDeliveryControl,
   lockPaidEffectControlFamily,
   paidEffectControlTableExists,
-} from './paid-effect-control';
-import { buildNoteVerificationControlAdmission } from './paid-effect-note-admission';
-import type { PaidEffectControlAdmission, PaidEffectDeliveryRef } from './paid-effect-protocol';
-import { PaidEffectControlFencedError } from './paid-effect-protocol';
+} from '@/db/paid-effect-control';
 
 export const NOTE_VERIFY_FAMILY = 'note_verify';
 export const NOTE_VERIFY_STEP_NAME = 'note-verify-v1';

@@ -20,16 +20,7 @@ import { z } from 'zod';
 
 import { admitNoteVerifyDelivery } from '@/capabilities/notes/jobs/note_verify';
 import { reserveNoteVerification } from '@/capabilities/notes/server/note-verification-claim-reservation';
-import type { Db, Tx } from '@/db/client';
-import * as schema from '@/db/schema';
-import { artifact, note_verification_claim, paid_effect, paid_effect_control } from '@/db/schema';
-import { resetDb, testDb } from '../../../tests/helpers/db';
-import {
-  admitPaidEffectDeliveryControl,
-  readPaidEffectControl,
-  switchPaidEffectBackend,
-} from './paid-effect-control';
-import { buildNoteVerificationControlAdmission } from './paid-effect-note-admission';
+import { buildNoteVerificationControlAdmission } from '@/capabilities/notes/server/paid-effect-note-admission';
 import {
   PaidEffectApplicationConflictError,
   PaidEffectControlFencedError,
@@ -43,7 +34,9 @@ import {
   computePaidEffectIdentity,
   paidEffectControlLockKey,
   paidEffectDispatchRefSchema,
-} from './paid-effect-protocol';
+} from '@/core/migration/paid-effect-protocol';
+import type { Db, Tx } from '@/db/client';
+import { admitPaidEffectDeliveryControl, readPaidEffectControl } from '@/db/paid-effect-control';
 import {
   admitPaidEffectIntent,
   claimPaidEffectSend,
@@ -55,7 +48,11 @@ import {
   recordPaidEffectResult,
   reservePaidEffect,
   settleExpiredPaidEffectSends,
-} from './paid-effect-store';
+} from '@/db/paid-effect-store';
+import * as schema from '@/db/schema';
+import { artifact, note_verification_claim, paid_effect, paid_effect_control } from '@/db/schema';
+import { resetDb, testDb } from '../../../tests/helpers/db';
+import { switchPaidEffectBackend } from './paid-effect-control';
 
 const INPUT = { artifact_id: 'a1', sections: [{ kind: 'definition', md: 'x' }] };
 const OTHER_INPUT = { artifact_id: 'a1', sections: [{ kind: 'mechanism', md: 'y' }] };

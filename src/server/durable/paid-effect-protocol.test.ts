@@ -5,9 +5,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { NOTE_VERIFY_PAID_EFFECT_FAMILY } from '@/capabilities/notes/jobs/note_verify';
-
-import { NOTE_VERIFY_FAMILY } from './note-verify-family';
-import { NOTE_VERIFY_OBLIGATION_FAMILY } from './paid-effect-note-obligations';
+import { NOTE_VERIFY_OBLIGATION_FAMILY } from '@/capabilities/notes/server/paid-effect-note-obligations';
 import {
   PAID_EFFECT_SWITCH_BLOCKING_STATES,
   type PaidEffectControlSnapshot,
@@ -23,7 +21,8 @@ import {
   paidEffectIdentitySchema,
   paidEffectJsonEquals,
   summarizePaidEffectSwitchBlocking,
-} from './paid-effect-protocol';
+} from '@/core/migration/paid-effect-protocol';
+import { NOTE_VERIFY_FAMILY } from './note-verify-family';
 
 const INPUT = {
   artifact_id: 'a1',

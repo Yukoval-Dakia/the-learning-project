@@ -1,8 +1,5 @@
 import { and, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import type { Db, Tx } from '@/db/client';
-import { paid_effect } from '@/db/schema';
-import { admitPaidEffectDeliveryControl, lockPaidEffectControlFamily } from './paid-effect-control';
 import {
   PaidEffectControlFencedError,
   type PaidEffectIdentity,
@@ -13,7 +10,12 @@ import {
   computePaidEffectInputDigest,
   paidEffectDispatchRefSchema,
   paidEffectJsonEquals,
-} from './paid-effect-protocol';
+} from '@/core/migration/paid-effect-protocol';
+import type { Db, Tx } from '@/db/client';
+import {
+  admitPaidEffectDeliveryControl,
+  lockPaidEffectControlFamily,
+} from '@/db/paid-effect-control';
 import {
   admitPaidEffectIntent,
   claimPaidEffectSend,
@@ -23,7 +25,8 @@ import {
   readPaidEffect,
   recordPaidEffectApplication,
   recordPaidEffectResult,
-} from './paid-effect-store';
+} from '@/db/paid-effect-store';
+import { paid_effect } from '@/db/schema';
 
 const FAMILY = 'judge_calibration_sample';
 const intentMetadata = z.object({
