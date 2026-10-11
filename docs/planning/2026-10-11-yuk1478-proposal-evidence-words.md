@@ -233,3 +233,9 @@ notice when their content cannot be decoded safely. Decision, history and
 evidence-link contracts remain in their existing paths.
 
 Closes YUK-1478
+
+## Owner 22:15 test-boundary correction
+
+The six new helper/projection tests (291 lines) are removed. They called internal read mappers and executed AST-selected expressions, so they do not satisfy the new boundary rule. Their historical results remain evidence of that earlier head only.
+
+One security invariant now enters the actual modern proposal, legacy knowledge-proposal and TeachingBrief HTTP handlers against the same real database records. It requires nonempty public results, rejects leaked private reason copies in payload/presentation/brief, and confirms that reading leaves the original event rows untouched. It does not mock internal readers or test formatting permutations. The new DB case is prepared, not locally executed yet; exact-head CI must run it before merge. Product source is unchanged from the independently reviewed e14 repair and bacf composition.

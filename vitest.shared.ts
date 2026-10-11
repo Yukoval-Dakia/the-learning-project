@@ -73,7 +73,6 @@ export const fastTestInclude = [
   'src/core/theta-grid.test.ts',
   'src/core/theta.test.ts',
   'src/kernel/proposals/block-merge-admission.unit.test.ts',
-  'src/kernel/proposals/learner-read.unit.test.ts',
   'src/server/ai/laminar-tracing.test.ts',
   'src/server/ai/laminar-transcript.test.ts',
   'src/server/ai/pi-agent-adapter.tracing.test.ts',
@@ -91,6 +90,7 @@ export const fastTestInclude = [
 ];
 
 export const dbTestInclude = [
+  'src/capabilities/shell/api/proposal-reason-privacy.db.test.ts',
   'src/server/boss/isolated-runtime.db.test.ts',
   'server/start/admin-control-reader.db.test.ts',
   'server/start/admin-reader.db.test.ts',
