@@ -20,6 +20,8 @@ export interface SpringHandle {
   /** Place the value immediately, without motion. */
   jump(value: number): void;
   get(): number;
+  /** Whether it is still travelling toward its target. */
+  moving(): boolean;
   stop(): void;
 }
 
@@ -73,6 +75,7 @@ export function createSpring({ value, config, onUpdate, onRest }: SpringOptions)
       settle();
     },
     get: () => current,
+    moving: () => frame !== 0,
     stop,
   };
 }
