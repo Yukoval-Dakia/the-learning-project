@@ -121,10 +121,21 @@ pnpm build
   4. 安全边界：`/api/*` 鉴权与豁免、浏览器不持 provider key、授权与第三方信息不外泄；
   5. 危机转介（YUK-1398）。
 - 五类不变量优先于下面的排除项：helper、DTO、UI 行为若承载上述不变量（如确定性
-  判分、幂等、隐私隔离），仍按不变量写测试。除此之外不写：只验证 UI/组件渲染、
+  判分、幂等、隐私隔离），仍按不变量写测试（从哪进入见下条）。除此之外不写：只验证 UI/组件渲染、
   DTO/schema 形状、prompt/文案/快照/字节 hash、源码路径与文档结构、实现细节，或只断言
   “被调用/存在”的测试，以及为覆盖率补的测试。
   修 bug 时若不触及上面五类，用 typecheck/build 和真实运行验证，不补回归测试。
+- **禁止细小测试（owner 2026-10-11）。** 五类不变量决定*要不要*写，本条决定*从哪
+  进入*：承载不变量的 helper 也经最近的真实边界或其模块公开入口测，不单测 helper。
+  真实边界指 route、job、DB 事务（含在真实 Postgres 上跑的锁/CAS/幂等原语）、
+  结算/判分链、agent 工具契约，或确定性核心模块的公开入口（模块 index 导出的函数；
+  TS↔Rust parity 套件算公开入口）。一个不变量一条 case；表驱动算一条；分支或边界值
+  只有删掉它会放过一个别的 case 抓不到的具体缺陷时才另写（`@fails-if` 须写明该缺陷）。
+  禁止：内部 helper 单测、同一路径参数排列、断言 mock 交互或调用次数。mock 只替
+  外部依赖（provider、网络、时钟、blob 存储）；依赖 DB 的不变量放 DB 测试分区用真实 PG。
+- **测试多于代码须说明。** 一个 PR 新增测试行（含 fixture）超过新增产品代码行
+  （`src/**`、`server/**`、`web/**`、`scripts/**` 非测试文件与 migration SQL）时，PR 描述须
+  逐个不变量说明；这是说明触发线不是硬上限，说明不了的删掉。独立审查必须核对。
 - 新增或修改 case 的准入由 `pnpm audit:test-policy` 在 CI 强制执行；须在该 case
   前声明 `@invariant` 类别/保护结果及 `@fails-if` 具体缺陷。格式和审查要求见
   `docs/agents/development-workflow.md` 的 Test admission。标签本身不构成正确性证明。
