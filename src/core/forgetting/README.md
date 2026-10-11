@@ -7,7 +7,7 @@ The copied `numeric-oracle.fixture.json` is the research lane's independent
 
 The entrypoint is `index.ts`. All functions use supplied time and facts. There is
 no I/O, clock, randomness, model call, persistence, settlement or app consumer.
-FSRS is unchanged. All six dynamics constants, seven mapping constants and four
+The pure core does not select the product engine. All six dynamics constants, eight mapping constants and four
 schedule values are explicitly registered as engineering assumptions. Outputs
 are uncalibrated scores with no estimated interval, never correctness probabilities.
 
@@ -18,7 +18,7 @@ are uncalibrated scores with no estimated interval, never correctness probabilit
   versions, receipt identity and projection consistency.
 - `adaptEvidence` merges score leaves into one observation per skill. It preserves
   missing guess/confidence modifiers as mapping notes, records judge revision,
-  excludes unsupported judgments and retains unattributed scoring. Original
+  excludes unsupported judgments and retains unattributed scoring. The v2 mapping also admits `self_report` at engineering weight 0.1 with `independent=false`; unknown help remains excluded. Original
   evidence, help/confidence/guess/duration snapshots and process refs remain
   caller-owned immutable facts; the adapter never rewrites them.
 - `evolve` appends one already resolved effective observation to a global or

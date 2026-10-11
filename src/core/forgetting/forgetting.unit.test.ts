@@ -155,6 +155,29 @@ function evidence(overrides: Partial<EvidenceInput> = {}): EvidenceInput {
 }
 
 describe('deterministic forgetting and scheduling invariants', () => {
+  // @invariant grading: user self-ratings remain weak non-independent memory evidence
+  // @fails-if self-report is dropped, receives judged weight, or contributes independent evidence
+  it('admits self-report separately from judged and excludes unknown help', () => {
+    expect(adaptEvidence(evidence({ source: 'self_report' }))).toMatchObject([
+      {
+        kind: 'included',
+        observation: {
+          quality: 1,
+          weight: 0.1,
+          independent: false,
+          mappingNotes: expect.arrayContaining(['source:self_report']),
+        },
+      },
+    ]);
+    expect(adaptEvidence(evidence({ source: 'self_report', help: 'unknown' }))).toMatchObject([
+      { kind: 'excluded', reason: 'help_unknown' },
+    ]);
+    for (const source of ['reading', 'conversation', 'agent_explanation'] as const)
+      expect(adaptEvidence(evidence({ source }))).toMatchObject([
+        { kind: 'excluded', reason: 'separate_evidence' },
+      ]);
+  });
+
   // @invariant grading: effective facts always produce the same score and preserve sealed historical inputs
   // @fails-if replay injects twice, uses arrival order, mutates input, or uses current wall-clock time
   it('recomputes the 25-review history deterministically from shuffled immutable facts', () => {
@@ -376,7 +399,7 @@ describe('deterministic forgetting and scheduling invariants', () => {
     expect(adaptEvidence(evidence({ help: 'unknown' }))).toMatchObject([
       { kind: 'excluded', reason: 'help_unknown' },
     ]);
-    expect(adaptEvidence(evidence({ source: 'self_report' }))).toMatchObject([
+    expect(adaptEvidence(evidence({ source: 'reading' }))).toMatchObject([
       { kind: 'excluded', reason: 'separate_evidence' },
     ]);
     const brush = updated(append(first, observation(2, 0)).result);

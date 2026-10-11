@@ -38,7 +38,8 @@ export function adaptEvidence(input: EvidenceInput): readonly AdaptedObservation
   const excluded = (reason: string): readonly AdaptedObservation[] => [
     { kind: 'excluded', evidenceRefs: refs, reason },
   ];
-  if (input.source !== 'judged') return excluded('separate_evidence');
+  if (input.source !== 'judged' && input.source !== 'self_report')
+    return excluded('separate_evidence');
   if (input.judgment !== 'deterministic' && input.judgment !== 'admitted')
     return excluded('judgment_not_admitted');
   if (input.judgment === 'admitted' && input.judgeRevision.kind === 'unknown')
@@ -114,10 +115,16 @@ export function adaptEvidence(input: EvidenceInput): readonly AdaptedObservation
       skillId,
       occurredAt: input.occurredAt.value,
       quality: p.earned / p.maximum,
-      weight: (p.maximum / total) * help * guess * confidence,
-      independent: input.help === 'none' && input.guess === 'no',
+      weight:
+        (p.maximum / total) *
+        help *
+        guess *
+        confidence *
+        (input.source === 'self_report' ? ENGINEERING_MAPPING.selfReport : 1),
+      independent: input.source === 'judged' && input.help === 'none' && input.guess === 'no',
       mappingNotes: [
         ...input.identity.mappingNotes,
+        `source:${input.source}`,
         ...(input.guess === 'unknown' ? ['guess_missing'] : []),
         ...(input.confidence === 'unknown' ? ['confidence_unknown_modifier_disabled'] : []),
         `help:${input.help}`,

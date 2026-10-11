@@ -125,6 +125,13 @@ export interface ActivationSettleInput {
   userRating?: z.infer<typeof FsrsRating>;
   /** Server-observed receipt: reactivating an old candidate is not new practice. */
   reusesActivation?: boolean;
+  /** Immutable attempt capture, read by settlement rather than inferred from activation time. */
+  forgettingCapture?: {
+    hints_used: number | null;
+    final_hint_level: number | null;
+    self_confidence: number | null;
+    latency_ms: number | null;
+  };
   now: Date;
 }
 

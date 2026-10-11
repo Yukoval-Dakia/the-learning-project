@@ -4,7 +4,7 @@ export const DAY_MS = 86_400_000;
 export const VERSIONS: Versions = Object.freeze({
   model: VersionSchema.parse('history-kernel-logistic-v1'),
   parameters: VersionSchema.parse('engineering-20261011-v1'),
-  mapping: VersionSchema.parse('evidence-quality-20261011-v1'),
+  mapping: VersionSchema.parse('evidence-quality-20261011-v2'),
   order: VersionSchema.parse('effective-order-lexicographic-v1'),
 });
 // All thirteen numeric constants are engineering assumptions, not fitted population priors.
@@ -29,6 +29,7 @@ export const ENGINEERING_MAPPING = Object.freeze({
   guessUnknown: 0.5,
   lowConfidence: 0.5,
   contextPseudoCount: 4,
+  selfReport: 0.1,
 });
 // Scheduling values are separate engineering assumptions, not retention probability targets.
 export const ENGINEERING_SCHEDULE = Object.freeze({
