@@ -4,6 +4,7 @@
 // 只在 feedback release 后由 outcome 出现。paper 作答全程只渲 lifecycle，不传
 // releasedOutcome —— 「缓冲反馈」由类型层守住。
 
+import type { JudgeResultV2T } from '@/core/schema/capability';
 import { LoomIcon, type LoomIconName } from '@/ui/primitives/LoomIcon';
 
 import {
@@ -26,11 +27,17 @@ export interface SlotResultBadgeProps {
   lifecycle: SubmissionLifecycle;
   /** 仅在 lifecycle='effective' 且判定已对用户 release 时传；paper 作答中绝不传。 */
   releasedOutcome?: CoarseOutcome | null;
+  partialUnits?: Extract<JudgeResultV2T, { coarse_outcome: 'partial_unknown' }>['partial_units'];
   /** 锚点摘要（submission/run id 头几位）；悬停可见，证明状态有锚。 */
   anchorTitle?: string;
 }
 
-export function SlotResultBadge({ lifecycle, releasedOutcome, anchorTitle }: SlotResultBadgeProps) {
+export function SlotResultBadge({
+  lifecycle,
+  releasedOutcome,
+  partialUnits,
+  anchorTitle,
+}: SlotResultBadgeProps) {
   const meta = SUBMISSION_LIFECYCLE_META[lifecycle];
   // 生效且判定已 release → 展示对错（颜色 = 判定，§6.4 的 release 时刻）。
   if (lifecycle === 'effective' && releasedOutcome) {
@@ -41,7 +48,11 @@ export function SlotResultBadge({ lifecycle, releasedOutcome, anchorTitle }: Slo
           name={om.tone === 'good' ? 'check' : om.tone === 'again' ? 'close' : 'minus'}
           size={12}
         />
-        {om.label}
+        {releasedOutcome === 'partial_unknown' && partialUnits?.length
+          ? `部分正确（${partialUnits
+              .map((unit) => `${unit.correct_count}/${unit.total_count}`)
+              .join('、')}），分数未知`
+          : om.label}
       </span>
     );
   }
