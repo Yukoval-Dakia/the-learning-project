@@ -26,16 +26,14 @@ const STATE_COPY: Record<SaveState, string> = {
   conflict: '版本有更新 · 先刷新再改',
 };
 
-export function SaveStateChip({ state, generation = null, onRetry, retrying }: SaveStateChipProps) {
-  const gen = generation !== null && generation > 0 ? generation : null;
-  const genTag = gen !== null && <span className="rs-save-gen">· v{gen}</span>;
-
+// The draft generation stays in the props for callers, but is no longer shown: the owner read
+// 「已保存 · v5」 as noise (2026-10-11, YUK-1438), superseding the earlier D11 visibility rule.
+export function SaveStateChip({ state, onRetry, retrying }: SaveStateChipProps) {
   if (state === 'error' && onRetry) {
     return (
       <button type="button" className="rs-save is-error" onClick={onRetry} disabled={retrying}>
         <LoomIcon name="alert" size={12} />
         {retrying ? '重试中…' : STATE_COPY.error}
-        {genTag}
       </button>
     );
   }
@@ -50,7 +48,6 @@ export function SaveStateChip({ state, generation = null, onRetry, retrying }: S
         size={12}
       />
       {STATE_COPY[state]}
-      {genTag}
     </span>
   );
 }

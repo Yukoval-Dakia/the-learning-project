@@ -115,7 +115,7 @@ const VERDICT_OF: Record<JudgePreview['coarse_outcome'], { label: string; tone: 
   correct: { label: '对', tone: 'good' },
   partial: { label: '部分对', tone: 'hard' },
   incorrect: { label: '错', tone: 'again' },
-  unsupported: { label: '无法判定', tone: 'hard' },
+  unsupported: { label: '暂时没法自动判', tone: 'hard' },
 };
 
 const RATING_LABEL: Record<Rating, string> = { again: '再练', hard: '模糊', good: '掌握' };
@@ -883,7 +883,6 @@ export function PfSolo({
               {l.name}
             </span>
           ))}
-          <span className="meta mono">{q.id.slice(0, 12)}</span>
         </div>
 
         {/* YUK-1005 — stem/options render through the shared markdown+KaTeX
@@ -1081,13 +1080,16 @@ export function PfSolo({
                 <LoomIcon name="sparkle" size={12} />
                 AI 判定
               </span>
-              <span className="pfs-fb-meta">
-                judge · {displayedPreview.route} · {Math.round(displayedPreview.confidence * 100)}%
-              </span>
             </div>
-            <MathMarkdown notation={q.notation} className="pfs-fb-text">
-              {displayedPreview.feedback_md ?? ''}
-            </MathMarkdown>
+            {/* When the system could not grade, feedback_md is a diagnostic for operators, not
+                feedback; say so in plain words with a next step instead (YUK-1438). */}
+            {displayedPreview.coarse_outcome === 'unsupported' ? (
+              <p className="pfs-fb-text">这题暂时没法自动判。可以先自己评一下，或者跳过这题。</p>
+            ) : (
+              <MathMarkdown notation={q.notation} className="pfs-fb-text">
+                {displayedPreview.feedback_md ?? ''}
+              </MathMarkdown>
+            )}
             {q.reference_md && (
               <div className="pfs-fb-ref">
                 <span className="cmp-label">参考</span>
@@ -1136,7 +1138,7 @@ export function PfSolo({
                     activationIntent.current = undefined;
                   }}
                 >
-                  仅自行评级
+                  自己评一下
                 </Btn>
               )}
               {autoCommitted ? (
@@ -1214,7 +1216,7 @@ export function PfSolo({
                     算了
                   </Btn>
                   <span className="key-hints mono" style={{ marginLeft: 'auto' }}>
-                    re-judge · 异步 · 不阻塞流
+                    重判在后台进行，不耽误继续做题
                   </span>
                 </div>
               </div>
