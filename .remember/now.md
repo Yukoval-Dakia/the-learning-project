@@ -1,3 +1,35 @@
+# Session cron delivery complete (2026-10-11)
+
+PR1681 merged56df7c09e87244c1e993d58243eafbd398752569 at07:23:01Z; exact cd0c45db7739a0f5dcc02ca29f046a2fbd18f9d9 Gate38120469007 all jobs green. DB4 50files/259casesPASS, cron2/2PASS16.798s/14.137s,file34.564s; conversation crossed07:12UTC real minute with both schedulespaused. R2 NONE at244c, parser-initialization delta parent-verified+CI-covered. OriginalYUK1397 fixture slice delivered; no historical-source claims. WholeGate390s; DB2/3 slow steps289/302s, top files reviewcron252.318s/sessionmigration286.936s/prunecron201.624s; YUK1107 broadgoal notDone, no active next-scopewriter. Local runtime window still functional lane; no local DB/container/Vitest since release.
+
+# YUK-1107 parser initialization repair (2026-10-11)
+
+Independent R2 bfe3ff98..244c5ddf P0/P1 NONE. Current CI38119955807 DB4 failed at other-family receipt equality, solely Date vs full-precision string: constructing Drizzle mid-test mutates postgres-js client timestamp parsers. Driver source and offline zero-SQL probe reproduce it. Initialize Drizzle once before any ledger/control snapshot; keep full equality/strict guard. Conversation reached H-1us rejection and H acceptance; placement blocked after failure, no full PASS/timing claim. No third review; new exact CI pending.
+
+# YUK-1107 controlled-time revision (2026-10-11)
+
+Owner directs removing real 61s/60s waits. Only three cron fixture files changed: isolated application PG clock + producer-trigger search path, strict pre-horizon rejection/exact-horizon acceptance, real legacy enqueue receipt, both native schedules paused/settled before boundary checks. Logs /tmp/yuk1358-1680-db4-ci.log and /tmp/yuk1356-b250-db4-ci.log confirm two ENQUEUED slot-boundary failures; strict ledger remains intact. New runtime/review acceptance pending; old060a evidence is historical. No new local DB/container/Vitest batch until functional lane releases its shared window.
+
+# YUK-1403 prevention slice delivered (2026-10-11)
+
+PR #1679 merged bfe3ff98470cc69764a0f33589d6354890d9327d; exact d7f21c70d CI Gate 38117714463 SUCCESS, R2 P0/P1 NONE, inline threads zero. 10 weak cases removed / 3 assertions strengthened / AST admission required. Existing YUK-1403 remains In Progress for pending migration-smoke and the captured syntax P2. No deployment. Cron draft #1681 is still pending runtime acceptance; functional lane owns next shared window.
+
+# YUK-1107 cron acceleration handoff (2026-10-11)
+
+Owned tree: tlp-cron-speed-20261011, perf/yuk-1107-session-cron. Runtime-tested source 060a8b7afcaab98090870f97ec7431d15db541aa; 2/2 PASS, Vitest 277.61 s, R1 P0/P1 NONE. Source annotation/braces preserve test callback AST. See docs/planning/2026-10-11-yuk1107-cron-speed.md.
+
+Shared after-2 lock released after exact token, absent child PIDs and empty own Testcontainers session checks. Functional DOCX/PDF lane has priority. No new local DB/container/Vitest/mutation batch before their explicit window release; do not infer availability from an absent lock. Remaining: fault detection, final SHA repeat, exact CI.
+
+# PR1625 main conflict resolution — 2026-10-10
+
+Normal merge of current origin/main into fixed judge head4a08126. Only PLAN.md and this handoff conflict; source auto-merges. Preserve main board and historical judge synchronization below. Prior exact-head green does not validate this composition. Real provider acceptance remains incomplete; no unknown-effect replay, no PR merge/deploy. Local gates and new exact-head CI required.
+
+# PR1625 main synchronization, invariant tests only — 2026-10-10
+
+Sole writer in tlp-yuk-1356-durable-judge / feat/yuk-1356-durable-judge. Original head29a802f1a; git merge origin/main87f66b3e2 includes #1630/#1631, no rebase or feature edits. Owner authorizes normal commit/push and exact-head CI repair only; never merge PR. Modify/delete defaults deleted except five status-route cases and one durable runner fallback case. New/modified tests retained only for irreversible data, deterministic scoring/settlement, concurrency/rollback/idempotency, or security. No crisis changes. All retained files explicitly assigned in vitest.shared.ts. Read-only Luna classification child, parent only writer, no new PR review round.
+
+Merge5856878204466fd93c7dfa5717a43b1bdcdcaa8c pushed normally. Partition60unit/205DB/1migration, retained scoped unit/DB/migration and typecheck/lint/build passed; process stale deleted evidence path repaired and exact14process rerun passed. Exact-head CI38016152473 failed only DB4: submit-durable-resource and review-operation fixtures returned fake queue delivery IDs, discarded operational input and omitted unit claim fencing. Both are genuine data-retention/idempotent-settlement invariants, retained. Test-only repair captures actual queued payload/ID, uses recorded model executor fence and checks worker duplicate skips already_persisted with original business effects unchanged. Reproduced RED2failed/2passed then GREEN4passed; partition/typecheck/lint/build pass, lint208 existing warnings. Evidence /tmp/yuk1356-ci-fixtures-{red,green}.log and /tmp/yuk1356-ci-repair-*.log. Next normal commit/push and T3 exact-head CI watch; never merge PR. Historical actual-provider429 remains separate. No new actionable follow-up: existing YUK1356/YUK1401 synchronization/test maintenance only, no issue status promotion, deployment or runtime service changes.
+
 # YUK-1388 stage 4 complete; coordinator still owns audit close-out (2026-10-10 17:10 JST)
 
 Final report tlp-audit-artifacts/yuk1388/stage4/final-report.md (O1–O7 plain page first). V01 Opus + V02 Sol reviews: 15 findings all ACCEPTED (stage4/V-adjudication.md); I03 corrections done (Sol, after Claude auth 403 killed Opus runs): P0 7 incl. new M100 -> YUK-1445 Urgent (7/8 admitted items human_review only), P1 50->34, hint denominator 21 (first-attempt fail 14.29%), W0 exit = empty-DB day-one journey + >=80% auto-gradable + KC guard + 5 friction metrics, C21/C24full/C26/C28-30 PARKED, T052 -> YUK-1355. Linear comment 1df07109 on YUK-1388 (stays In Progress: owner must read report + decide on deleting R03's 5 synthetic crisis memories in TEST Mem0).

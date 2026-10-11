@@ -4,6 +4,8 @@ import { tanstackStart } from '@tanstack/react-start/plugin/vite';
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vite';
 
+const optionalDbosLoggers = ['winston', 'winston-transport'];
+
 export default defineConfig({
   root: resolve(import.meta.dirname, '../..'),
   base: '/_build/',
@@ -18,6 +20,9 @@ export default defineConfig({
   ],
   resolve: { alias: { '@': resolve(import.meta.dirname, '../../src') } },
   // Keep the fetch-style server self-contained for the existing Node/Compose image.
-  ssr: { noExternal: true },
+  ssr: { noExternal: true, external: optionalDbosLoggers },
+  environments: {
+    ssr: { build: { rolldownOptions: { external: optionalDbosLoggers } } },
+  },
   build: { outDir: 'dist/start' },
 });

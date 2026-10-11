@@ -1,0 +1,101 @@
+{
+  "productCandidate": "2dbb9eb3e70c82f70432498c2f0b7a6b60d10cc3",
+  "sourceVerification": {
+    "owned-files.json": 5,
+    "source-inputs.json": 4895,
+    "build-artifacts.json": 884,
+    "log-manifest.json": 13,
+    "candidate": "2dbb9eb3e70c82f70432498c2f0b7a6b60d10cc3"
+  },
+  "passedDistinctDbCases": 128,
+  "files": 8,
+  "results": [
+    {
+      "scope": "original changed-option dispatch case",
+      "passed": 1
+    },
+    {
+      "scope": "native full after recovery fixture correction",
+      "passed": 53
+    },
+    {
+      "scope": "reconcile and operational full",
+      "passed": 21
+    },
+    {
+      "scope": "migration, judge worker, terminal, status and fence",
+      "passed": 54
+    }
+  ],
+  "preservedFailures": [
+    "manual queue-failure fixture lacked operational authority",
+    "parent resend fixture expected two admission checks, but each send authorization has its own rate gate; actual three include initial rejected gate",
+    "migration fixture asserted wrapped outer message instead of exact PostgreSQL cause"
+  ],
+  "runtimeRelease": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1356",
+      "phase": "isolated-judge-scoped-db",
+      "token": "86d1d172-4b81-428c-8299-80d9ac4fc4d3",
+      "candidate": "2dbb9eb3e70c82f70432498c2f0b7a6b60d10cc3",
+      "dirtyDiffSha256": "66b6a28fa5ab7f14d483d95f43e4efe9cc8bb2d3948713eb3c1e2001c6de8ce5",
+      "createdAt": "2026-10-09T01:40:42.958475+00:00"
+    },
+    "releasedAt": "2026-10-09T01:43:14.916362+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "evidence": [
+    {
+      "path": "/tmp/yuk1356-parent-dispatch-ack-db/before.json",
+      "sha256": "81a84addb7cbfaa9c69b1abac5ab9f2fc9b10159a325bde2d95530479e3dab96"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-dispatch-ack-db/lock-release.json",
+      "sha256": "772c8163761f876df5e38ecc7b60bff061b3418dd2c1b43eef6ef74c8977b106"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-dispatch-ack-db/original-case.log",
+      "sha256": "4d0e420b0169ced1c428250f40c2aa73067a7cf6040733d811144731a746fdf6"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-dispatch-ack-db/three-suites.log",
+      "sha256": "2c2c94818acd637c3a0f29634e72d2c11f7eee476ebcb43a77467cd943d1eb05"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-native-recovery-db/before.json",
+      "sha256": "6c2623c1a229acdd6d5339188cf5ea98aad56df0044aad451df736fea6f6a3c3"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-native-recovery-db/lock-release.json",
+      "sha256": "4d543223a4739280dcbe5e6cd6ec09c094f0d5fc4e45fe4abd93f8638a045787"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-native-recovery-db/native-recheck.log",
+      "sha256": "444f30988782de86100d54a1a777ef1177556fb1745c257697c62687ca924f96"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-native-recovery-db/remaining-recheck.log",
+      "sha256": "cecc4d7c0181b9515dad70b2eeea023453d42b3113d27cff508772fad267899c"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-native-recovery-db/remaining-suites.log",
+      "sha256": "07766fc56ec15edef141e5c92a6cee87c434748f7b4a2baa92fa131fe5f5d949"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-native-recovery-db/tests.log",
+      "sha256": "2c769fe89929152b6f914bbe10e1608f7afe674440326fb4f071dcbc29bba060"
+    }
+  ],
+  "notCovered": [
+    "process crash/reopen",
+    "cutover",
+    "migration smoke entrypoint",
+    "real provider",
+    "R2",
+    "CI",
+    "deployment"
+  ]
+}

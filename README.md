@@ -401,3 +401,12 @@ docs/             # architecture, modules, ADRs, planning
 
 `core/` 是跨学科共享层；`subjects/<name>/` 是单学科特化层。`src/capabilities/<name>/manifest.ts`
 是后端真相源——新增路由/jobs/tools 都通过 manifest 贡献制登记进组合根 `server/app.ts`。当前已从语文（首个科目，当前内容为文言文）扩展到 math / physics pressure subjects，新增科目应优先新增 profile 与能力声明，不 fork framework 路径。
+
+
+### TEST home LAN access (owner decision 2026-10-11)
+
+The current Mac TEST app keeps both `127.0.0.1:8787:8787` and `192.168.50.76:8787:8787` in its private Compose `services.app.ports`. On the home LAN, open <http://192.168.50.76:8787>. Bind this specific LAN address, never `0.0.0.0`; retain both entries when generating the next release Compose file. Tailscale Serve continues forwarding to the loopback address.
+
+Keep the existing application sign-in and `x-internal-token` checks. Only `/api/health` and `/api/ready` are exempt. Do not inject a token in the proxy or URL. PostgreSQL remains loopback-only, and storage/worker have no public host bindings. Preserve all existing environment values when regenerating private Compose, including unused provider keys.
+
+Change app bindings under the shared deployment mkdir lock; recreate only the app with the pinned current image, then verify both addresses, API 401, health/ready 200, unchanged worker/PG/storage identities, and release the owner-matched lock. A same-Mac probe is not proof of access from the iPad. Plain LAN HTTP is currently approved; features requiring a secure context need a separate HTTPS decision.

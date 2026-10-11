@@ -1,0 +1,176 @@
+{
+  "base": "148cf4bd66cc0bf451fb2b4a1532e7187a3283c9",
+  "file": "tests/integration/migration-smoke.test.ts",
+  "before": 65,
+  "removed": [
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > creates Phase 1c.1 Lane A new tables (event, learning_session, material_fsrs_state, knowledge_edge)",
+      "reason": "only asserts tables exist (schema shape)"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > DROPped legacy judgment + user_appeal tables (data-assumptions §O2)",
+      "reason": "only asserts legacy tables are absent (schema shape)"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > DROPped 3 mastery stub columns from knowledge (ADR-0012)",
+      "reason": "only asserts dropped columns are absent (schema shape)"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > preserves artifact table (activated per ADR-0006 v2, C-tier AI output landing)",
+      "reason": "only asserts artifact table exists (schema shape)"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > migrates artifact to ADR-0020 body_blocks shape and creates block-ref indexes",
+      "reason": "column/index names and definitions only (schema shape)"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > creates knowledge_mastery view and view is queryable",
+      "reason": "view exists and is queryable — schema shape"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > creates GIN index on event.payload with jsonb_path_ops opclass",
+      "reason": "GIN index definition only (schema shape)"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > installs pgvector extension for Mem0 pgvector backend",
+      "reason": "extension installed check only"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > event table has all expected columns including affected_scopes",
+      "reason": "event column list only (schema shape)"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > creates GIN index on event.affected_scopes",
+      "reason": "index definition only (schema shape)"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > adds question_block.ordinal (NOT NULL default 0) + session index (0068, YUK-221)",
+      "reason": "column type/nullability and index only (schema shape)"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > adds P5.3 long_term_freshness_score real column on memory_brief_note (YUK-183)",
+      "reason": "column existence/type only (schema shape)"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > U5 (0028) — answer revived with paper link columns + submitted_at nullable",
+      "reason": "column existence/nullability only (schema shape)"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > U5 (0028) — learning_session.artifact_id column added",
+      "reason": "column existence only (schema shape)"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > U5 (0028) — answer_draft_slot_uk is a partial unique index with COALESCE expression",
+      "reason": "index definition text only (schema shape); behavior covered by next case"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > creates memory_reconciliation_log table (YUK-342 P2)",
+      "reason": "table/columns/indexes existence only (schema shape)"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > creates B1-W1 diagnostic tables (mastery_state, item_calibration) with expected columns (ADR-0035)",
+      "reason": "table/columns existence only (schema shape)"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > creates YUK-361 Phase 1 selection_observation table + practice_stream_item.signals (0035)",
+      "reason": "table/columns/indexes existence only (schema shape)"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > knowledge_edge has FK to knowledge on both from and to",
+      "reason": "FK existence on knowledge_edge only (schema shape)"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > YUK-531 PR-3 (0057) — misconception_reconciliation_log table with expected columns + indexes",
+      "reason": "table/columns/indexes existence only (schema shape)"
+    },
+    {
+      "name": "migration smoke — drizzle migrate from empty DB > YUK-531 PR-3 (0057) — misconception_edge weight CHECK rejects out-of-range, accepts 0-1",
+      "reason": "weight range CHECK constraint — value validation, not one of the five invariants"
+    },
+    {
+      "name": "migration smoke — YUK-842 provider query-session admission foundation > creates the loose-ref operational table and lane/rate/pruning indexes",
+      "reason": "columns/indexes/no-FK existence only (schema shape)"
+    },
+    {
+      "name": "migration smoke — YUK-842 provider query-session admission foundation > accepts waiting, acquired, borrowed, released, and hard-reclaim quarantine shapes",
+      "reason": "accepts valid row shapes — schema shape"
+    },
+    {
+      "name": "migration smoke — YUK-842 provider query-session admission foundation > rejects impossible acquisition, terminal, timeline, and borrowing shapes",
+      "reason": "CHECK constraints reject impossible admission row shapes — schema/state-shape validation, no lock behavior exercised"
+    },
+    {
+      "name": "migration smoke — YUK-851 provider attempt lifecycle > creates exact columns, indexes, checks, and no foreign keys",
+      "reason": "exact columns/indexes/checks existence (schema shape)"
+    },
+    {
+      "name": "migration smoke — YUK-851 provider attempt lifecycle > rejects invalid rows through named check %s",
+      "reason": "named CHECK constraints reject invalid row shapes (schema shape)"
+    },
+    {
+      "name": "migration smoke — YUK-844 placement unknown cost > rejects nullable reservations and negative settled or claim costs",
+      "reason": "non-negative / over_cap CHECK constraints — value validation (schema shape)"
+    },
+    {
+      "name": "migration smoke — YUK-855 provider attempt off mode > rejects off %s through the state constraint",
+      "reason": "state CHECK rejects off-mode shapes (schema shape)"
+    },
+    {
+      "name": "migration smoke — YUK-855 provider attempt start rate index > adds the partial lane and provider-start index",
+      "reason": "index existence/definition only (schema shape)"
+    },
+    {
+      "name": "migration smoke — YUK-857 note verification claim > creates the fenced claim and handoff recovery indexes",
+      "reason": "index definitions only (schema shape)"
+    },
+    {
+      "name": "migration smoke — YUK-857 note verification claim > enforces claim state shape and artifact ownership",
+      "reason": "claim shape CHECK / FK only (schema shape)"
+    },
+    {
+      "name": "migration smoke — YUK-1044 assessment contract truth source > creates the 9 contract truth-source tables coexisting with legacy question flat columns",
+      "reason": "table and legacy column existence only (schema shape)"
+    }
+  ],
+  "retained": [
+    "migration bundle — public ports and repeated startup > starts against an empty DB and preserves subject roots on a second run",
+    "migration smoke — drizzle migrate from empty DB > YUK-609 data migration normalizes only index-matching quiz_gen labels and is idempotent",
+    "migration smoke — drizzle migrate from empty DB > U5 (0028) — partial index constrains only live drafts; frozen rows are append-only",
+    "migration smoke — drizzle migrate from empty DB > YUK-495 S4 (0051) — mastery_state.theta_hat/theta_precision widened to double precision",
+    "migration smoke — YUK-384 durable hub sync backfill > YUK-384 RED 01: installs exact durable hub-sync schema, triggers, indexes, and backfills live hubs",
+    "migration smoke — YUK-751 populated event backfill > deterministically backfills every event and advances new inserts above the max",
+    "migration smoke — YUK-821 legacy conjecture retirement > retracts only incomplete pending rows without minting an owner dismissal",
+    "migration smoke — YUK-821 probe-quality audit binding > retires the complete pre-binding pending set and is idempotent",
+    "migration smoke — YUK-827 response-signature cutover > retires all pre-cutover pending conjectures without creating an owner dismissal",
+    "migration smoke — YUK-791 intervention preparation > creates the versioned aggregate and enforces fail-closed terminal shapes",
+    "migration smoke — YUK-792 intervention settlement backfill > rebases eligible delivery clocks while preserving shadow audit clocks in UTC",
+    "migration smoke — YUK-841 attempt cost truth > keeps old rows legacy and enforces nullable unknown + one ledger per attempt",
+    "migration smoke — YUK-851 provider attempt lifecycle > leaves every pre-0089 table column signature unchanged",
+    "migration smoke — YUK-844 placement unknown cost > preserves numeric history and accepts canonical settlement dispositions",
+    "migration smoke — YUK-855 provider attempt off mode > preserves existing admission rows and accepts off acquired through release",
+    "migration smoke — YUK-857 note verification claim > rejects duplicate non-null verification task run ids",
+    "migration smoke — YUK-1044 assessment contract truth source > question_revision identity is (group_id, revision_ordinal), never a global content hash key",
+    "migration smoke — YUK-1044 assessment contract truth source > P1-1: immutable fact tables reject UPDATE and DELETE via triggers",
+    "migration smoke — YUK-1044 assessment contract truth source > P1-1: issuance binding fields are frozen; only claim columns may change",
+    "migration smoke — YUK-1044 assessment contract truth source > P1-2: submissions require existing issuance/group and a revision that agrees with the issuance",
+    "migration smoke — YUK-1044 assessment contract truth source > P1-2: evaluations must belong to their submission; heads must point at evaluations of their own group",
+    "migration smoke — YUK-1044 assessment contract truth source > P1-2: lifecycle current pointer must reference a revision of the same group",
+    "migration smoke — YUK-1044 assessment contract truth source > effective head columns default to effective=NULL / generation=0; stale CAS predicate updates 0 rows",
+    "migration smoke — YUK-1044 assessment contract truth source > final P1: head submission coordinates are validated in all three reviewer repro shapes; NULL head + CAS stay legal",
+    "migration smoke — YUK-1044 assessment contract truth source > evaluation attempts are unique per (submission, attempt); idempotency key scoped per group",
+    "migration smoke — YUK-1044 assessment contract truth source > P1-3/P2-B: mapping status is adjudication-only; current selection is is_current; corrections preserve history",
+    "migration smoke — YUK-1044 assessment contract truth source > admission verification records (revision_id, digest, policy, generation); lifecycle carries the split dimensions",
+    "migration smoke — YUK-1097 assessment truth guards > submission INSERT appends to the group array; declare-first is allowed, divergence is impossible on UPDATE",
+    "migration smoke — YUK-1097 assessment truth guards > group UPDATE is append-only real members: removal, reorder, phantom, dup tail all rejected",
+    "migration smoke — YUK-1097 assessment truth guards > identity mapping: adjudication fields frozen; only is_current/supersedes mutable + pending annotation refresh",
+    "migration smoke — YUK-1097 assessment truth guards > evaluation: payload writable only via pending→completed; terminal row is frozen; DELETE rejected",
+    "`migration smoke — YUK-1394 ${populated ? 'populated post-1393' : 'empty post-1393'} ledger` > preserves domain and predecessor ledger bytes, seeds exactly two independent legacy owners",
+    "`migration smoke — YUK-1394 ${populated ? 'populated post-1393' : 'empty post-1393'} ledger` > enforces exact-family composite identity, concrete dispositions and immutable evidence"
+  ],
+  "retainedCaseTextUnchanged": true,
+  "dbRun": false,
+  "removedEmptySuites": [
+    "'migration smoke — YUK-855 provider attempt start rate index'",
+    "'migration smoke — YUK-842 provider query-session admission foundation'"
+  ]
+}

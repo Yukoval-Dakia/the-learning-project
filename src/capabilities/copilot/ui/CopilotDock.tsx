@@ -34,6 +34,7 @@ import {
   DeferredMarkdownRenderer,
   preloadMarkdownRenderer,
 } from '@/ui/lib/deferred-markdown-renderer';
+import { randomId } from '@/ui/lib/random-id';
 import {
   openCopilotForNudge,
   useCopilotDwell,
@@ -1201,7 +1202,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         setError('对话仍在加载，请稍后再试。');
         return;
       }
-      const idempotencyKey = recovery?.idempotencyKey ?? crypto.randomUUID();
+      const idempotencyKey = recovery?.idempotencyKey ?? randomId();
       const userMessageId = recovery?.userMessageId ?? nextId();
       const aiMessageId = recovery?.aiMessageId ?? nextId();
       // A retry must replay the exact normalized body as well as the key. The

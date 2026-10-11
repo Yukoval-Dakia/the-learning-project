@@ -1,0 +1,97 @@
+{
+  "candidate": "c0966f9101174b815780c9d73bdc623606dd0277",
+  "product": "2dbb9eb3e70c82f70432498c2f0b7a6b60d10cc3",
+  "status": "FAILED_PROVIDER_HTTP_429_NO_RETRY",
+  "provider": "opencode-go",
+  "model": "mimo-v2.6-pro",
+  "wire": [
+    {
+      "task_run_id": "assessment_12671988ee2b7ef42d55e3a8be12a58e3319f92544e3da33fb050c1a34e25e97",
+      "ordinal": 1,
+      "request_sha256": "99f13a359d23ded85a4a9e71ec78c153dfb0bb54012ae0446288a599c1bbdfcd",
+      "request_bytes": 20879,
+      "requested_output_tokens": 131072,
+      "status": 429,
+      "response_sha256": "9c7a2557fd8ea73ff548b60bc28c9cae5a958c8eac3f47c91a8dde374a40b60f",
+      "response_bytes": 168,
+      "complete": true,
+      "failure": "http_failure"
+    }
+  ],
+  "task_runs": [
+    {
+      "id": "assessment_12671988ee2b7ef42d55e3a8be12a58e3319f92544e3da33fb050c1a34e25e97",
+      "task_kind": "AssessmentRuleJudgeTask",
+      "provider": "opencode-go",
+      "model": "mimo-v2.6-pro",
+      "input_hash": "a713327ce5f81bf6653e25c4123d61381fd6cd2e0de55ae43add92cc5558922d",
+      "prompt_fingerprint": null,
+      "result_digest": null,
+      "status": "failure",
+      "usage_json": {
+        "inputTokens": 0,
+        "outputTokens": 0
+      },
+      "cost_usd": null,
+      "cost_basis": "unknown",
+      "cost_ref": "unpriced:opencode-go/mimo-v2.6-pro"
+    }
+  ],
+  "epoch_checks": [
+    {
+      "label": "real checkContractEpoch before fixture work",
+      "runnable": true,
+      "code_epoch": "assessment-contract-v1",
+      "marker_epoch": "assessment-contract-v1",
+      "marker_state": "active",
+      "reason": null
+    },
+    {
+      "label": "real checkContractEpoch immediately before provider dispatch",
+      "runnable": true,
+      "code_epoch": "assessment-contract-v1",
+      "marker_epoch": "assessment-contract-v1",
+      "marker_state": "active",
+      "reason": null
+    },
+    {
+      "label": "real checkContractEpoch immediately before provider send",
+      "runnable": true,
+      "code_epoch": "assessment-contract-v1",
+      "marker_epoch": "assessment-contract-v1",
+      "marker_state": "active",
+      "reason": null
+    }
+  ],
+  "actual_output_pass": false,
+  "hono_executed": false,
+  "native_start_executed": false,
+  "estimated_or_reported_cost": null,
+  "cost_basis": "unknown",
+  "cleanup": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1356",
+      "phase": "isolated-judge-provider-hono",
+      "token": "744d7185-5394-4db5-b30c-bc22b4a5e34c",
+      "candidate": "c0966f9101174b815780c9d73bdc623606dd0277",
+      "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "createdAt": "2026-10-09T03:43:57.486320+00:00"
+    },
+    "releasedAt": "2026-10-09T03:46:31.181210+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "archive_sha256": "4e3abe31d391c1b78a026fa7acc772ff26fc420611b618a7f10ba9a65670000b",
+  "archive_files": 21,
+  "local_synthetic_dump": "/tmp/yuk1356-parent-live-acceptance/isolated-synthetic-failure.dump",
+  "local_synthetic_dump_sha256": "ca6d871b7a2a950009e649c008606def42c7e6683ccd8084f4e77c3f66b4eb18",
+  "limits": [
+    "One workflow invocation, one forwarded request; remaining two units not sent.",
+    "HTTP429 usage limit, no automatic retry or provider fallback.",
+    "Preparation and source review are not runtime acceptance.",
+    "Hono phase requires successful provider receipt and was not invoked.",
+    "Dump is isolated synthetic data, preserved locally only; not full runtime restore proof."
+  ]
+}
