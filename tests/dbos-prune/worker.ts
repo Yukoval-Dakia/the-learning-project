@@ -1,11 +1,14 @@
 import { DBOS } from '@dbos-inc/dbos-sdk';
-import { PgBoss } from 'pg-boss';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import { type Clock, PgBoss, systemClock } from 'pg-boss';
+import postgres from 'postgres';
 import { z } from 'zod';
-import { db } from '@/db/client';
+import * as schema from '@/db/schema';
 import { changePrunePhase, retireFailedPrune } from '@/server/durable/prune-family';
 import { startPruneWorker, stopDurableWorker } from '@/server/durable/prune-worker';
 import dbosPackage from '../../node_modules/@dbos-inc/dbos-sdk/package.json';
 import pgBossPackage from '../../node_modules/pg-boss/package.json';
+import { acceleratePruneCron, clockSearchPath, pruneDeclarations } from './fixture';
 
 async function main() {
   const url = new URL(z.url().parse(process.env.DATABASE_URL));
@@ -19,6 +22,11 @@ async function main() {
   let holdForward = cronTest;
   let releaseForward: (() => void) | undefined;
   const releaseBusiness = new Set<() => void>();
+  let clockOffsetMs = 0;
+  const clock: Clock = {
+    ...systemClock,
+    now: () => Date.now() + clockOffsetMs,
+  };
   const boss = new PgBoss({
     connectionString: url.toString(),
     max: 2,
@@ -26,6 +34,7 @@ async function main() {
     schedule: cronTest,
     cronMonitorIntervalSeconds: 1,
     cronWorkerIntervalSeconds: 1,
+    ...(cronTest ? { clock } : {}),
   });
   boss.on('error', (error) =>
     process.send?.({
@@ -34,9 +43,11 @@ async function main() {
       at: new Date().toISOString(),
     }),
   );
+  let native: ReturnType<typeof acceleratePruneCron> | undefined;
   if (cronTest) {
+    native = acceleratePruneCron(boss);
     // Observe and delay the real Timekeeper.onSendIt -> Manager.createJob SQL.
-    // No fabricated tick, direct send, scheduler replacement or clock change.
+    // Keep the real forwarding SQL; the fixture controls its clock and barriers.
     const adapter = boss.getDb();
     const execute = adapter.executeSql.bind(adapter);
     adapter.executeSql = async (text, values) => {
@@ -66,17 +77,32 @@ async function main() {
       }
     };
   }
+  const client = postgres(url.toString(), {
+    max: 2,
+    ssl: false,
+    connect_timeout: 2,
+    ...(cronTest ? { connection: { search_path: clockSearchPath } } : {}),
+  });
+  const db = drizzle(client, { schema });
+  async function syncClock() {
+    const [state] =
+      await client`select offset_ms::float8 as offset_ms from prune_cron_clock.state where singleton`;
+    clockOffsetMs = z.number().parse(state.offset_ms);
+  }
+  if (cronTest) await syncClock();
   await boss.start();
   try {
     const options = {
       boss,
       db,
-      decl: {
-        name: 'prune_job_events',
-        backend: 'dbos',
-        queue: 'fast',
-        schedule: { cron: cronTest ? '* * * * *' : '0 4 * * *', tz: 'Asia/Shanghai' },
-      },
+      decl: cronTest
+        ? pruneDeclarations.pruneEvents
+        : {
+            name: 'prune_job_events',
+            backend: 'dbos',
+            queue: 'fast',
+            schedule: { cron: '0 4 * * *', tz: 'Asia/Shanghai' },
+          },
       reconcileIntervalMs: 50,
       boundary: async (boundary) => {
         if (cronTest && boundary === 'business-committed') {
@@ -125,6 +151,9 @@ async function main() {
             z.object({ kind: z.literal('arm-forward') }),
             z.object({ kind: z.literal('release-forward') }),
             z.object({ kind: z.literal('release-business') }),
+            z.object({ kind: z.literal('sync-clock') }),
+            z.object({ kind: z.literal('pause-native') }),
+            z.object({ kind: z.literal('arm-native'), at: z.iso.datetime() }),
           ])
           .parse(message);
         if (command.kind === 'transition') await changePrunePhase(db, boss, command.phase);
@@ -140,9 +169,18 @@ async function main() {
         } else if (command.kind === 'release-business') {
           for (const release of releaseBusiness) release();
           releaseBusiness.clear();
+        } else if (command.kind === 'sync-clock') {
+          if (!cronTest) throw new Error('Clock control requires the cron fixture');
+          await syncClock();
+        } else if (command.kind === 'pause-native') {
+          if (native) await native.pause();
+        } else if (command.kind === 'arm-native') {
+          if (!native) throw new Error('Native point requires the cron fixture');
+          native.arm(new Date(command.at));
         } else {
           await stopDurableWorker();
           await boss.stop();
+          await client.end();
           process.exit(0);
         }
         process.send?.({ kind: 'ack' });
@@ -177,10 +215,12 @@ async function main() {
     });
     await stopDurableWorker();
     await boss.stop();
+    await client.end();
     process.exit(1);
   }
 }
-main().catch((error: unknown) => {
-  process.send?.({ kind: 'failure', error: error instanceof Error ? error.stack : String(error) });
+
+main().catch((error) => {
+  console.error(error);
   process.exit(1);
 });

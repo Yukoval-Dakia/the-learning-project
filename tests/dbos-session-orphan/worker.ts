@@ -295,9 +295,15 @@ async function main() {
           for (const release of heldRows) release();
           heldRows.clear();
         } else {
+          stage = 'stop-durable-host';
+          process.send?.({ kind: 'stop-stage', stage, pid: process.pid });
           await host.stopDurableWorker();
+          stage = 'stop-pg-boss';
+          process.send?.({ kind: 'stop-stage', stage, pid: process.pid });
           await boss.stop();
-          await appClient.end();
+          stage = 'stop-application-client';
+          process.send?.({ kind: 'stop-stage', stage, pid: process.pid });
+          await appClient.end({ timeout: 2 });
           process.exit(0);
         }
         process.send?.({ kind: 'ack', ...(legacyJobId ? { legacyJobId } : {}) });
@@ -335,7 +341,7 @@ async function main() {
                 {},
               );
         stage = 'workflow-result';
-        await handle.getResult();
+        await handle.getResult({ pollingIntervalMs: 50 });
         stage = 'workflow-evidence';
         process.send?.({
           kind: 'done',

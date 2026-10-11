@@ -1,0 +1,46 @@
+{
+  "candidate": "1535cf60c621e53e76384bc4956165b673e8ad83",
+  "product": "2dbb9eb3e70c82f70432498c2f0b7a6b60d10cc3",
+  "command": "pnpm vitest run --config vitest.db.config.ts tests/dbos-judge/process.db.test.ts --bail 1",
+  "exit": 1,
+  "failedCase": "SIGKILL/reopen through production worker at native-load-committed",
+  "expectedWireCalls": 3,
+  "actualWireCalls": 0,
+  "observed": "First worker reached native-load-committed and was SIGKILLed; second recovered same workflow, which returned SUCCESS with domain review_required/infra_failure. This is NOT process acceptance PASS. Exact pre-wire cause not yet established.",
+  "logs": [
+    {
+      "path": "/tmp/yuk1356-parent-process-db/before.json",
+      "sha256": "d0c6cec489b9ceb59c515771591083083dc2acf0778f2c6e90ae2ec6bb3446fa"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-process-db/lock-release.json",
+      "sha256": "b48990c210cf123019237f1186d0bf0c5ae30efc7c335f89255751b71366f007"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-process-db/process-evidence.json",
+      "sha256": "8d1950831091ca6577a43bec38a9ebf7bc3c9bd9e06ac47ad234622225db6545"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-process-db/process.log",
+      "sha256": "7a52202f173882a7d99864792a75c269865783570850746d251d933d34200c46"
+    }
+  ],
+  "cleanup": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1356",
+      "phase": "isolated-judge-scoped-db",
+      "token": "f5832d9c-a993-4ace-9a80-598247d8c48d",
+      "candidate": "1535cf60c621e53e76384bc4956165b673e8ad83",
+      "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "createdAt": "2026-10-09T01:44:02.481341+00:00"
+    },
+    "releasedAt": "2026-10-09T01:44:37.483661+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "nextTask": "yuk1356-process-wire-diagnostics-20261009-v1",
+  "scope": "sole source-only test fixture diagnostics writer; production read-only; no runtime",
+  "notRun": ["remaining11processcases", "cutover", "migrationSmoke", "realProvider", "R2", "CI"]
+}

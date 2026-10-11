@@ -90,6 +90,7 @@ export const EVALUATION_ENTRY_POINTS: readonly EntryPointDisposition[] = [
 
 /** contract lane：作答已落契约表，直接给 §4.3 坐标。 */
 export interface ContractGradingRef {
+  judge_execution?: EvaluateSubmissionRequest['judge_execution'];
   submission_id: string;
   evaluation_group_id: string;
   evaluation_key?: string;
@@ -259,6 +260,7 @@ export async function evaluateAttempt(
     throw new Error(`evaluateAttempt[${input.entry}]: legacy grading input is retired`);
   }
   const evaluation = await evaluateSubmission(input.db, {
+    judge_execution: input.contract.judge_execution,
     submission_id: input.contract.submission_id,
     evaluation_group_id: input.contract.evaluation_group_id,
     evaluation_key: input.contract.evaluation_key,

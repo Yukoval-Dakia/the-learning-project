@@ -17,6 +17,8 @@ import {
   question,
   selection_observation,
 } from '@/db/schema';
+import { contractIntegrityDigest } from '@/server/questions/contract-normalizer';
+import { publishQuestionGroup } from '@/server/questions/publisher';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { composeNightly, getStream, reRankAfterAnswer, streamLocalDate } from './stream-store';
 
@@ -24,6 +26,78 @@ const TODAY = streamLocalDate();
 
 // rng：< 1 全选（Poisson Bernoulli 必入，配合 π_i>0）；== 1 全不选。
 const RNG_ALWAYS_SELECT = () => 0;
+
+// YUK-1445 — compose/reRank candidates must be published + admitted + automatically
+// servable (readAutomaticallyServableQuestionIds). Pin an explicit deterministic
+// option-set contract per seed (owner: no reference_md key-extraction / normalizer
+// guess-key path in fixtures); publication still goes through the canonical
+// publishQuestionGroup writer with admitted evidence.
+async function publishServableChoiceContract(questionId: string, now: Date): Promise<void> {
+  const options = [
+    { option_id: `opt_${questionId}_a`, label: 'A', text: '选项甲' },
+    { option_id: `opt_${questionId}_b`, label: 'B', text: '选项乙' },
+  ];
+  const contract = {
+    structure: {
+      group_id: questionId,
+      materials: [],
+      parts: [{ part_id: 'p1', prompt_md: '题干', material_ids: [] }],
+    },
+    response_spec: {
+      slots: [{ slot_id: 'p1::r', part_id: 'p1', kind: 'single_choice' as const, options }],
+    },
+    scoring_basis: {
+      units: [
+        {
+          scoring_unit_id: 'p1::u',
+          slot_refs: ['p1::r'],
+          material_refs: [],
+          evidence_slot_refs: [],
+          requires_group_evidence: false,
+          criterion: {
+            kind: 'option_set_key' as const,
+            accepted_option_ids: [`opt_${questionId}_b`],
+          },
+          points: 1,
+        },
+      ],
+      aggregation: { kind: 'sum' as const },
+      blank_scores_zero: true,
+    },
+    execution_plan: {
+      plan_version: 1,
+      assignments: [
+        {
+          scoring_unit_ids: ['p1::u'],
+          executor: { kind: 'deterministic' as const, comparator: 'exact_option_set' as const },
+        },
+      ],
+      escalation: {
+        on_unadmitted_model: 'withhold' as const,
+        on_low_confidence: 'human_review' as const,
+      },
+    },
+  };
+  const published = await publishQuestionGroup(testDb(), {
+    group_id: questionId,
+    contract: { ...contract, integrity_digest: contractIntegrityDigest(contract) },
+    expectedCurrentRevision: null,
+    expectedAdmissionGeneration: null,
+    availability: 'general_pool',
+    actorRef: 'test:stream-store-publication',
+    now,
+    admission: {
+      state: 'admitted',
+      evidence: {
+        marking_provenance: 'official',
+        verification: { structural_check_passed: true, independent_verification: null },
+        model_slice: null,
+      },
+    },
+  });
+  if (published.status !== 'published')
+    throw new Error(`stream-store fixture publication: ${published.status}`);
+}
 
 async function insertQuestion(opts: {
   id?: string;
@@ -56,6 +130,7 @@ async function insertQuestion(opts: {
       updated_at: now,
       version: 0,
     });
+  if ((opts.draftStatus ?? null) === null) await publishServableChoiceContract(qid, now);
   return qid;
 }
 
