@@ -99,6 +99,7 @@ pnpm audit:api-client-usage
 pnpm audit:capability-boundaries
 pnpm audit:provider-lanes
 pnpm audit:partition
+pnpm audit:test-policy
 pnpm audit:profile
 pnpm audit:learner-copy
 pnpm audit:no-learning-styles
@@ -156,7 +157,7 @@ migration, build and parity lanes. Every code change runs all retained invariant
 the unit/DB lanes; only docs-only changes skip them. The parity lane is path-selected (below). The exact include lists live in
 `vitest.shared.ts`, and `audit:partition` rejects missing, duplicate or unassigned
 files and direct unmocked DB imports in unit files. The audit lanes run exactly the
-commands listed in `.github/workflows/ci-gate.yml`: schema, dependencies, partition,
+commands listed in `.github/workflows/ci-gate.yml`: schema, dependencies, partition, test-policy,
 question-writers, API-contract, API-client, API-client-usage, capability-boundary,
 architecture-deepening, profile, learner-copy, no-learning-styles, structured-judge,
 task-census, draft-status, strict draft-status-read, strict flags, hub-sync-writer and
@@ -170,6 +171,32 @@ dependencies, `.node-version`, vitest config or the gate itself change, and on e
 push or unknown/invalid base; the
 plan lives in `scripts/ci/gate-plan.mjs`. The explicit local audit commands
 remain useful for clear attribution, but they do not replace the GitHub gate.
+
+### Test admission
+
+`audit:test-policy` compares AST case registrations with the PR base or main push parent.
+New, changed and duplicated cases require two comments immediately before each registration:
+
+```ts
+// @invariant concurrency: a stale version cannot overwrite a committed answer
+// @fails-if remove the version predicate from the answer UPDATE; the stale write must be rejected
+it('rejects a stale answer write', async () => { /* real write and rejection assertion */ });
+```
+
+Categories are `data`, `grading`, `concurrency`, `security`, and `crisis`, matching
+the five classes in AGENTS.md. Formatting-only changes and deletions do not require new
+declarations. Existing cases are inherited, not retroactively certified.
+
+The check enforces explicit admission and reports the exact registration. It cannot decide
+whether the claim is true. Independent review must trace the named defect to the assertion;
+use a scoped mutation or known failure when that relationship is uncertain. Delete a case
+whose only outcome is a UI shape, config/DTO shape, helper call, or implementation mirror.
+Do not label one of those cases as an invariant to satisfy the check.
+
+Locally the base is `git merge-base HEAD origin/main`; use
+`pnpm audit:test-policy --base <commit>` to reproduce a CI comparison. CI fetches history
+and supplies `TEST_POLICY_BASE`. Manual dispatch requires the `test_policy_base` commit SHA.
+A missing CI base or invalid base fails the check.
 
 ## Postman
 

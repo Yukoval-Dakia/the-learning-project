@@ -54,6 +54,7 @@
     "audit:provider-attempt-truth": "tsx scripts/audit-provider-attempt-truth.ts --root .",
     "audit:capability-boundaries:snapshot": "tsx scripts/audit-capability-boundaries.ts --print-dependency-baseline",
     "audit:partition": "tsx scripts/audit-test-partition.ts",
+    "audit:test-policy": "tsx scripts/audit-test-policy.ts",
     "audit:profile": "tsx scripts/audit-profile.ts",
     "audit:learner-copy": "tsx scripts/audit-learner-copy.ts",
     "audit:no-learning-styles": "tsx scripts/audit-no-learning-styles.ts",
