@@ -10,7 +10,11 @@
 import { z } from 'zod';
 
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-import { runSearchBank } from './bank-search';
+import {
+  BankGapRequestSchema,
+  BankUnsatisfiedConstraintsSchema,
+  runSearchBank,
+} from './bank-search';
 
 const SearchBankNewFormSchema = z
   .object({
@@ -21,6 +25,7 @@ const SearchBankNewFormSchema = z
     /** 规范题型 label（choice / reading / computation …）。 */
     kind: z.string().min(1).optional(),
     source: z.string().min(1).optional(),
+    within_refs: z.array(z.string().min(1)).max(200).optional(),
     /** 'all'（默认，含未发布 draft——查重需要）| 'active' | 'draft'。 */
     draft_state: z.enum(['all', 'active', 'draft']).default('all'),
     /** 'any'（默认）| 'admitted'（自动可判且可服务）| 'withheld'。 */
@@ -38,6 +43,7 @@ export const SearchBankOutputSchema = z.object({
     subject: z.object({ profile: z.string(), knowledge_id_count: z.number().int() }).optional(),
     kind: z.object({ canonical: z.string(), persisted_forms: z.array(z.string()) }).optional(),
     source: z.string().optional(),
+    within_refs: z.array(z.string()).optional(),
     draft_state: z.enum(['all', 'active', 'draft']),
     admission_state: z.enum(['any', 'admitted', 'withheld']),
   }),
@@ -72,6 +78,9 @@ export const SearchBankOutputSchema = z.object({
     }),
   ),
   coverage: z.object({
+    verdict: z.enum(['enough', 'sparse', 'none']),
+    unsatisfied_constraints: z.array(BankUnsatisfiedConstraintsSchema),
+    gap_request: BankGapRequestSchema.nullable(),
     candidate_pool_size: z.number().int(),
     retrieval_truncated: z.boolean(),
     page_has_more: z.boolean(),
@@ -100,6 +109,7 @@ async function executeSearchBank(
             subject: input.subject,
             kind: input.kind,
             source: input.source,
+            within_refs: input.within_refs,
             draft_state: input.draft_state,
             admission_state: input.admission_state,
           },
@@ -111,7 +121,7 @@ async function executeSearchBank(
 export const searchBankTool: DomainTool<SearchBankInput, SearchBankOutput> = {
   name: 'search_bank',
   description:
-    'Search the question bank for CANDIDATES by natural-language query (Chinese works directly) with deterministic hard filters: subject / kind / source / draft_state (default all — drafts are visible for duplicate-avoidance before authoring) / admission_state (admitted = auto-gradable & servable). Full-text + vector recall are fused; results are candidates, NOT a guarantee every semantic condition holds (see requirements.not_verified), and no hits ≠ bank is empty. Each hit carries a versioned ref (read_bank input), a mutable question_id pointer (write_quiz input), and honest missing flags (e.g. no_published_revision on unpublished drafts). Paginate ONLY with the returned cursor — it continues this exact search; a new query or changed filters must start a new search. coverage.complete tells whether this page exhausts the candidate pool with no channel truncation/unavailability.',
+    'Search the question bank for CANDIDATES by natural-language query (Chinese works directly) with deterministic hard filters: subject / kind / source / draft_state (default all — drafts are visible for duplicate-avoidance before authoring) / admission_state (admitted = auto-gradable & servable). Full-text + vector recall are fused; results are candidates, NOT a guarantee every semantic condition holds (see requirements.not_verified), and no hits ≠ bank is empty. Each hit carries a versioned ref (read_bank input), a mutable question_id pointer (write_quiz input), and honest missing flags (e.g. no_published_revision on unpublished drafts). within_refs restricts to exact current versions; an empty list is an empty scope, and superseded/unresolvable refs error explicitly. Pagination reruns retrieval against the live bank and is not a frozen result set. Paginate ONLY with the returned cursor — it continues this exact search; a new query or changed filters must start a new search. coverage.verdict (enough/sparse/none) is retrieved candidate quantity, not semantic certification. Sparse/none echoes the whole unsatisfied query+scope combination and a content_coverage EvidenceDemand seed; filing still needs agent context and a gap-filing tool. Results are never padded or hard filters relaxed. coverage.complete tells whether this page exhausts the candidate pool with no channel truncation/unavailability.',
   effect: 'read',
   inputSchema: SearchBankInputSchema,
   outputSchema: SearchBankOutputSchema,

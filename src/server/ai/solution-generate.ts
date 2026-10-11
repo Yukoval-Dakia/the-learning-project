@@ -79,7 +79,6 @@ export async function generateReferenceSolution(
       knowledge_ids: question.knowledge_ids,
       metadata: question.metadata,
       parent_question_id: question.parent_question_id,
-      embed_content_hash: question.embed_content_hash,
     })
     .from(question)
     .where(eq(question.id, questionId))
@@ -150,13 +149,6 @@ export async function generateReferenceSolution(
   // 同一 UPDATE 内置空 embedding 并盖新 hash，夜间 embed_backfill（谓词
   // embedding IS NULL OR embed_version 落后）据此重嵌入。否则旧向量滞留，
   // 向量检索永远命中补写参考答案之前的语义。
-  const nextEmbedHash = embedHash(
-    questionEmbedText({
-      prompt_md: row.prompt_md,
-      reference_md: parsed.worked_solution_md,
-      choices_md: row.choices_md,
-    }),
-  );
   const written = await db.transaction(async (tx) => {
     // P1-1（第二轮复审）—— 锁序 root→child：目标是子 part 时先锁组根再改子行
     //（backfill 更新的可能是组内子行；FromRow 的根解析不做子行锁定，所以这
@@ -169,13 +161,32 @@ export async function generateReferenceSolution(
         .for('update')
         .limit(1);
     }
+    const [locked] = await tx
+      .select({
+        prompt_md: question.prompt_md,
+        choices_md: question.choices_md,
+        embed_content_hash: question.embed_content_hash,
+      })
+      .from(question)
+      .where(updateWhere)
+      .for('update')
+      .limit(1);
+    if (!locked) return [];
+    // Hash the content being written, after concurrent edits have settled under the row lock.
+    const nextEmbedHash = embedHash(
+      questionEmbedText({
+        prompt_md: locked.prompt_md,
+        reference_md: parsed.worked_solution_md,
+        choices_md: locked.choices_md,
+      }),
+    );
     const updated = await tx
       .update(question)
       .set({
         rubric_json: mergedRubric as RubricT,
         reference_md: parsed.worked_solution_md,
         updated_at: new Date(),
-        ...(nextEmbedHash !== row.embed_content_hash
+        ...(nextEmbedHash !== locked.embed_content_hash
           ? { embedding: null, embed_content_hash: nextEmbedHash }
           : {}),
       })

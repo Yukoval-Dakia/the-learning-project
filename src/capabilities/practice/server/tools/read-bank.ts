@@ -18,7 +18,12 @@ import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
 import { question, question_revision, source_asset } from '@/db/schema';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-import { bankRefObjectKind, encodeBankRef, resolveBankRefs } from './bank-ref';
+import {
+  bankAssetDigestMatches,
+  bankRefObjectKind,
+  encodeBankRef,
+  resolveBankRefs,
+} from './bank-ref';
 
 export const READ_BANK_INCLUDE_VALUES = [
   'content',
@@ -332,7 +337,7 @@ export async function runReadBank(db: Db, rawInput: ReadBankInputParam): Promise
           const digestVerified = hasInlineContent
             ? null
             : assetRow != null
-              ? assetRow.sha256 === m.asset.digest
+              ? bankAssetDigestMatches(assetRow.sha256, m.asset.digest)
               : null;
           if (!present) {
             unavailable.push(

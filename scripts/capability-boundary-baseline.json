@@ -10,11 +10,12 @@
     "YUK-1043-p2": "复审第二轮裁决 —— 可行写口即刻收敛：ingestion -> questions 6 -> 10 (+4: auto-enroll / mistakes / import-completion / image-candidate-accept INSERT 后同事务铸首版 revision), practice -> questions 13 -> 14 (+1: quiz_gen 新题铸首版)。total 443 -> 448。均为 publishQuestionGroupFromRow owner-service 边（§2 矩阵收敛方向），非架构回归。",
     "YUK-1045": "activation 接线：practice -> questions 14 -> 15 (+1: api/question-restore.ts → restoreQuestion owner-service 调用，archive 的对偶 REST 端点)。total 448 -> 449。同属 owner-service 边，非架构回归。",
     "YUK-1092": "practice -> assessment +1 (evaluate-submission.ts → server/assessment/jev-model-executor.ts): Jev ModelUnitExecutorPort 在 §4.3 组合点按 descriptor 装配 —— executor 实现归 server/assessment lane，capability 侧只传 spec。total 449 -> 450。",
-    "YUK-1373": "copilot -> ai 18 -> 19 (+1, total 437 -> 438): copilot-execution.ts imports PiAfterToolCall (src/server/ai/pi-hooks) for the remote-MCP tool_finished bridge — remote calls bypass the domain bridge's onToolComplete, so the pi afterToolCall observer is their only completion evidence. Type-only edge, same lane as the existing pi-hooks edges."
+    "YUK-1373": "copilot -> ai 18 -> 19 (+1, total 437 -> 438): copilot-execution.ts imports PiAfterToolCall (src/server/ai/pi-hooks) for the remote-MCP tool_finished bridge — remote calls bypass the domain bridge's onToolComplete, so the pi afterToolCall observer is their only completion evidence. Type-only edge, same lane as the existing pi-hooks edges.",
+    "YUK-1448": "ADR-0072 LIGHT: practice -> ai 64 -> 65 (+1, total 428 -> 429): bank-search.ts imports @/server/ai/embed — the search_bank vector channel MUST embed the query through the same seam as the pool vectors (matcher §190 铁律; directImporter registered in the provider-lane census, scripts/provider-lane-inventory.ts). Same owner-service lane as matcher/embed_backfill; not an architecture regression."
   },
   "debts": {
     "capabilityToServer": {
-      "total": 428,
+      "total": 429,
       "byOwnerPair": {
         "agency -> ai": 28,
         "agency -> boss": 10,
@@ -73,7 +74,7 @@
         "observability -> r2": 2,
         "observability -> subjects": 9,
         "practice -> advisory-locks": 5,
-        "practice -> ai": 64,
+        "practice -> ai": 65,
         "practice -> assessment": 1,
         "practice -> boss": 15,
         "practice -> calibration": 3,

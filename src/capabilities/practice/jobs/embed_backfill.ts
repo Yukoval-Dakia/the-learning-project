@@ -21,7 +21,7 @@
 // Each KC's embed text now folds its EFFECTIVE domain (getEffectiveDomain walk),
 // disambiguating same-named cross-subject KCs.
 
-import { and, eq, isNull, lt, or } from 'drizzle-orm';
+import { and, eq, isNull, lt, or, sql } from 'drizzle-orm';
 import type { Job } from 'pg-boss';
 import type { Db } from '@/db/client';
 import { knowledge, question } from '@/db/schema';
@@ -71,7 +71,17 @@ export async function runEmbedBackfill(
     const texts = qs.map((q) => questionEmbedText(q));
     const vecs = await embedMany(texts, providerAttempt);
     for (let i = 0; i < qs.length; i++) {
-      await db
+      // A content edit during the provider call invalidates this result even when
+      // the row still needs an embedding. Match the selected source null-safely.
+      const sourceStillCurrent = and(
+        eq(question.id, qs[i].id),
+        qStale,
+        sql`${question.prompt_md} IS NOT DISTINCT FROM ${qs[i].prompt_md}`,
+        sql`${question.reference_md} IS NOT DISTINCT FROM ${qs[i].reference_md}`,
+        sql`${question.choices_md} IS NOT DISTINCT FROM ${qs[i].choices_md === null ? null : JSON.stringify(qs[i].choices_md)}::jsonb`,
+        sql`${question.embed_content_hash} IS NOT DISTINCT FROM ${qs[i].embed_content_hash}`,
+      );
+      const written = await db
         .update(question)
         .set({
           embedding: vecs[i],
@@ -79,12 +89,10 @@ export async function runEmbedBackfill(
           embed_version: EMBED_VERSION,
           embed_content_hash: embedHash(texts[i]),
         })
-        // write guard: only fill rows still matching the stale predicate, so a
-        // concurrent worker / pg-boss retry that already re-embedded this row
-        // between our SELECT and UPDATE can't be clobbered by a stale vector.
-        .where(and(eq(question.id, qs[i].id), qStale));
+        .where(sourceStillCurrent)
+        .returning({ id: question.id });
+      total += written.length;
     }
-    total += qs.length;
   }
 
   const kStale = or(

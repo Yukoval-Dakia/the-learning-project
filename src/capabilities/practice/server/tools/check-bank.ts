@@ -18,7 +18,7 @@ import {
 import type { Db } from '@/db/client';
 import { source_asset } from '@/db/schema';
 import type { DomainTool, ToolContext } from '@/kernel/tools/types';
-import { resolveBankRefs } from './bank-ref';
+import { bankAssetDigestMatches, resolveBankRefs } from './bank-ref';
 
 export const CHECK_BANK_KINDS = [
   'same_material_refs',
@@ -203,6 +203,37 @@ export async function runCheckBank(db: Db, rawInput: CheckBankInput): Promise<Ch
 
   const results: CheckResult[] = [];
   for (const check of input.checks) {
+    if (check.claim !== undefined) {
+      results.push(
+        unknownResult(
+          check.id,
+          check.claim,
+          check.claim,
+          check.refs,
+          'LIGHT cannot faithfully interpret free-text claims; omit claim to ask only the documented kind/params predicate',
+          'record_lookup',
+        ),
+      );
+      continue;
+    }
+    if (
+      check.kind === 'ref_state' &&
+      check.params?.assert !== undefined &&
+      check.params.assert !== 'is_servable' &&
+      check.params.assert !== 'is_current'
+    ) {
+      results.push(
+        unknownResult(
+          check.id,
+          undefined,
+          'unsupported ref_state assertion',
+          check.refs,
+          'Supported assertions: is_current, is_servable',
+          'record_lookup',
+        ),
+      );
+      continue;
+    }
     const badInCheck = check.refs.filter((ref) => ctx.badRefs.has(ref));
     const resolved = check.refs
       .map((ref) => ({ ref, info: ctx.revisionsByRef.get(ref) ?? null }))
@@ -419,7 +450,7 @@ export async function runCheckBank(db: Db, rawInput: CheckBankInput): Promise<Ch
           };
         const sha = assetShaById.get(m.asset_id);
         const present = sha != null;
-        const verified = sha != null ? sha === m.digest : null;
+        const verified = sha != null ? bankAssetDigestMatches(sha, m.digest) : null;
         if (!present || verified === false) allPresent = false;
         return {
           material_id: m.material_id,

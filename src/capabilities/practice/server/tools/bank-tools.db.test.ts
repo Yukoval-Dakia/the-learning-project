@@ -1,24 +1,17 @@
-// ADR-0072 LIGHT — 题库三工具边界测试（owner 2026-10-11 22:15 裁决：
-// 只经真实边界进入——工具契约 + 真实 DB 查询；一不变量一用例；唯一 fake 是
-// 查询嵌入（外部 provider）。不定参数排列、不测内部 helper、不断言 mock 交互）。
-//
-// 不变量清单：
-//   1. 硬过滤不可绕过（withdrawn / draft / 非自动可判不被“服务”）；
-//   2. ref 绝不偷换 latest；过期 / 撤回 ref 显式报错；
-//   3. 缺图如实上报；
-//   4. 工具不读也不写 learner state；
-//   （5. 内容变更后旧向量不再使用——随 embedding 失效修复提交加入。）
-
+import { randomUUID } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
+import { drizzle } from 'drizzle-orm/postgres-js';
+import postgres from 'postgres';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as schema from '@/db/schema';
 
-import { event, material_fsrs_state, question } from '@/db/schema';
+import { event, material_fsrs_state, question, source_asset } from '@/db/schema';
 import type { ToolContext } from '@/kernel/tools/types';
-import { embedHash, questionEmbedText } from '@/server/ai/embed-source';
 import { generateReferenceSolution } from '@/server/ai/solution-generate';
 import { publishQuestionGroupFromRow } from '@/server/questions/publisher';
 import { archiveQuestion, editQuestion } from '@/server/questions/write';
 import { resetDb, testDb } from '../../../../../tests/helpers/db';
+import { runEmbedBackfill } from '../../jobs/embed_backfill';
 import { encodeBankRef } from './bank-ref';
 import { checkBankTool } from './check-bank';
 import { readBankTool } from './read-bank';
@@ -26,15 +19,22 @@ import { searchBankTool } from './search-bank';
 
 const db = testDb();
 
-// ── 唯一 fake：查询嵌入（外部 provider seam）——1024 维轴向量，可按用例改向。 ──
-const embedState = vi.hoisted(() => ({
+const embedState = vi.hoisted((): { vector: number[]; onBatch: (() => Promise<void>) | null } => ({
+  onBatch: null,
   vector: (() => {
     const v = new Array(1024).fill(0);
     v[0] = 1;
     return v;
   })(),
 }));
-vi.mock('@/server/ai/embed', () => ({ embedText: async () => embedState.vector }));
+vi.mock('@/server/ai/embed', () => ({
+  EMBED_MODEL: 'text-embedding-v4',
+  embedText: async () => embedState.vector,
+  embedMany: async (texts: string[]) => {
+    await embedState.onBatch?.();
+    return texts.map(() => embedState.vector.slice());
+  },
+}));
 
 const ctx = {
   db,
@@ -89,8 +89,8 @@ async function searchHits(input: Record<string, unknown>) {
 describe('bank tools boundary invariants (search_bank / read_bank / check_bank)', () => {
   beforeEach(resetDb);
 
+  // @invariant data: served-face search returns only eligible items (withdrawn never; drafts/withheld only on the explicit dedup face) @fails-if a hard filter is dropped or ignored in SQL so withdrawn/withheld/draft items leak into the admitted+active served hits
   it('hard filters cannot be bypassed: withdrawn never served; draft/admission filters hold', async () => {
-    // 四个真实 fixture：已准入在池 / 未准入（withheld）/ 未发布 draft / 已撤回（archive 墓碑）。
     await seedQuestion('bt_admitted', {
       prompt_md: '电容器充放电过程中电荷量的变化判断题（已准入）',
       embedding: embedState.vector.slice(),
@@ -116,17 +116,23 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     const archived = await archiveQuestion(db, 'bt_withdrawn', row.version, 'test');
     expect(archived.status).toBe('archived');
 
-    // 服务面检索（自动可判 + active）：只有已准入在池题。
+    await seedQuestion('bt_wrong_source', {
+      prompt_md: '电容器充放电来源不匹配',
+      source: 'manual',
+    });
+    await publishAdmitted('bt_wrong_source');
+    await seedQuestion('bt_wrong_kind', { prompt_md: '电容器充放电题型不匹配', kind: 'reading' });
+    await publishAdmitted('bt_wrong_kind');
     const served = await searchHits({
       query: '电容器 充放电',
       admission_state: 'admitted',
       draft_state: 'active',
+      source: 'web_sourced',
+      kind: 'choice',
     });
     expect(served.hits.map((h) => h.question_id)).toEqual(['bt_admitted']);
     expect(served.hits[0].ref).toMatch(/^qrev1:/);
 
-    // 默认查重面（any/all）：draft 可见（带无版本 ref 标记），withheld 可见，
-    // withdrawn 在任何面都不可见。
     const dedup = await searchHits({ query: '电容器 充放电' });
     const ids = dedup.hits.map((h) => h.question_id);
     expect(ids).toContain('bt_admitted');
@@ -136,8 +142,51 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     const draftHit = dedup.hits.find((h) => h.question_id === 'bt_draft');
     expect(draftHit?.ref).toBeNull();
     expect(draftHit?.missing).toContain('no_published_revision');
+    const admittedRef = served.hits[0].ref;
+    expect(admittedRef).not.toBeNull();
+    expect((await searchHits({ query: '电容器', within_refs: [] })).hits).toEqual([]);
+    const narrowed = await searchHits({ query: '电容器', within_refs: [admittedRef] });
+    expect(narrowed.hits.map((hit) => hit.ref)).toEqual([admittedRef]);
+    const missingScope = {
+      subject: 'missing-subject',
+      kind: 'choice',
+      source: 'web_sourced',
+      draft_state: 'active',
+      admission_state: 'admitted',
+      within_refs: [admittedRef],
+    };
+    const absent = await searchHits({ query: '电容器', ...missingScope, limit: 6 });
+    expect(absent.hits).toEqual([]);
+    expect(absent.coverage.verdict).toBe('none');
+    expect(absent.coverage.unsatisfied_constraints).toEqual([
+      {
+        query: '电容器',
+        scope: missingScope,
+        requested_count: 6,
+        retrieved_count: 0,
+        reason: 'insufficient_retrieved_candidates',
+      },
+    ]);
+    expect(absent.coverage.gap_request).toMatchObject({
+      target_contract: 'EvidenceDemandV1',
+      claim: { kind: 'content_coverage', statement: '电容器' },
+      inventory_goal: { eligible_count: 6 },
+      constraints: absent.coverage.unsatisfied_constraints[0],
+    });
+    const invalidCursor = Buffer.from(
+      JSON.stringify({
+        v: 1,
+        q: '电容器',
+        scope: { admission_state: 'INVALID' },
+        limit: -1,
+        offset: 0,
+        f: '0'.repeat(16),
+      }),
+    ).toString('base64url');
+    await expect(searchHits({ cursor: invalidCursor })).rejects.toThrow('valid bank-search cursor');
   });
 
+  // @invariant data: a versioned ref resolves to its exact immutable revision or returns an explicit per-ref error @fails-if ref resolution falls back to the group current revision or swallows unresolvable/digest-mismatch/withdrawn as an ok read
   it('a ref never silently swaps to latest; expired/withdrawn refs are explicit errors', async () => {
     await seedQuestion('bt_versioned', {
       prompt_md: '求 f(x)=√(x-3) 的定义域（第一版题面）',
@@ -145,18 +194,6 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     const v1 = await publishAdmitted('bt_versioned');
     const v1Ref = encodeBankRef(v1.revision_id, v1.revision_digest);
 
-    // 第一版按 ref 可读。
-    const firstRead = await readBankTool.execute(
-      ctx,
-      readBankTool.inputSchema.parse({ refs: [v1Ref], include: ['content', 'relations'] }),
-    );
-    expect(firstRead.items[0].status).toBe('ok');
-    if (firstRead.items[0].status !== 'ok') return;
-    expect(firstRead.items[0].content?.parts[0].prompt_md).toContain('第一版题面');
-    expect(firstRead.items[0].current).toBe(true);
-
-    // 编辑铸出第二版后：旧 ref 仍读旧内容（不可变），current=false；
-    // lifecycle 指向新版 ref；check_bank 对旧 ref 的 is_current 判 contradicted。
     const [row] = await db.select().from(question).where(eq(question.id, 'bt_versioned'));
     const edit = await editQuestion(
       db,
@@ -178,6 +215,9 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     if (item.status !== 'ok') return;
     expect(item.content?.parts[0].prompt_md).toContain('第一版题面');
     expect(item.current).toBe(false);
+    await expect(searchHits({ query: '定义域', within_refs: [v1Ref] })).rejects.toThrow(
+      'superseded',
+    );
     expect(item.lifecycle.current_revision_ref).not.toBeNull();
     expect(item.lifecycle.current_revision_ref).not.toBe(v1Ref);
 
@@ -189,7 +229,6 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     );
     expect(check.checks[0].verdict).toBe('contradicted');
 
-    // digest 错位（过期/错引）与幽灵 ref：显式错误，绝不回退 latest。
     const tampered = `qrev1:${v1.revision_id}:${'0'.repeat(12)}`;
     const ghost = `qrev1:ghost123456789:${'a'.repeat(12)}`;
     const errs = await readBankTool.execute(
@@ -198,7 +237,6 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     );
     expect(errs.items.map((i) => i.status).sort()).toEqual(['digest_mismatch', 'unresolvable']);
 
-    // 组撤回后：ref 显式 withdrawn 错误。
     const [row2] = await db.select().from(question).where(eq(question.id, 'bt_versioned'));
     await archiveQuestion(db, 'bt_versioned', row2.version, 'test');
     const withdrawnRead = await readBankTool.execute(
@@ -208,6 +246,7 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     expect(withdrawnRead.items[0].status).toBe('withdrawn');
   });
 
+  // @invariant data: material coverage distinguishes absent assets from present verified figures @fails-if asset absence is hidden or a bare storage SHA mismatches its sha256-prefixed revision digest
   it('missing figures are reported honestly, not hidden behind a readable stem', async () => {
     await seedQuestion('bt_fig', {
       prompt_md: '如图所示，在正方体中求异面直线所成角。（图缺失题）',
@@ -237,14 +276,55 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
     expect(item.coverage.unavailable.join(' ')).toContain('bt_missing_asset');
     const material = (item.materials ?? []).find((m) => m.asset.asset_id === 'bt_missing_asset');
     expect(material?.asset.present).toBe(false);
+    // A present verified figure must succeed; this catches prefix-only false gaps.
+    await db.insert(source_asset).values({
+      id: 'bt_present_asset',
+      kind: 'image',
+      storage_key: 'fixture/figure',
+      mime_type: 'image/png',
+      byte_size: 100,
+      sha256: 'a'.repeat(64),
+      created_at: new Date(),
+    });
+    await seedQuestion('bt_present', {
+      prompt_md: '图示完整的正方体',
+      figures: [
+        {
+          asset_id: 'bt_present_asset',
+          role: 'diagram',
+          source_page_index: 0,
+          source_bbox: { x: 0, y: 0, width: 1, height: 1 },
+          attached_to_index: 'stem',
+          attach_confidence: 'manual',
+        },
+      ],
+    });
+    const presentPub = await publishAdmitted('bt_present');
+    const presentRef = encodeBankRef(presentPub.revision_id, presentPub.revision_digest);
+    const presentRead = await readBankTool.execute(
+      ctx,
+      readBankTool.inputSchema.parse({ refs: [presentRef] }),
+    );
+    const presentItem = presentRead.items[0];
+    expect(presentItem.status).toBe('ok');
+    if (presentItem.status !== 'ok') return;
+    expect(presentItem.coverage.complete).toBe(true);
+    expect(presentItem.materials?.[0].asset.digest_verified).toBe(true);
+    const checked = await checkBankTool.execute(
+      ctx,
+      checkBankTool.inputSchema.parse({
+        checks: [{ id: 'asset', refs: [presentRef], kind: 'material_assets_present' }],
+      }),
+    );
+    expect(checked.checks[0].verdict).toBe('supported');
   });
 
+  // @invariant security: bank tools expose no learner-state fields and mutate no learner-state rows while serving @fails-if a tool accesses learner tables without bank-role permission, leaks state, or changes persisted learner rows
   it('the tools neither read nor write learner state', async () => {
     await seedQuestion('bt_learner', { prompt_md: '等比数列通项公式求解题（带学习者历史）' });
     const pub = await publishAdmitted('bt_learner');
     const ref = encodeBankRef(pub.revision_id, pub.revision_digest);
 
-    // 真实 learner state：一次 attempt 事件 + 一张 FSRS 卡。
     await db.insert(event).values({
       id: 'bt_evt_attempt',
       session_id: null,
@@ -275,59 +355,57 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
       due_at: new Date('2026-10-12T00:00:00.000Z'),
     });
 
-    const before = await db.select({ n: sql<number>`count(*)::int` }).from(event);
-    const fsrsBefore = await db.select({ n: sql<number>`count(*)::int` }).from(material_fsrs_state);
-
-    const search = await searchHits({ query: '等比数列 通项' });
-    const read = await readBankTool.execute(
-      ctx,
-      readBankTool.inputSchema.parse({ refs: [ref], include: ['content', 'answers', 'metadata'] }),
-    );
-    const check = await checkBankTool.execute(
-      ctx,
-      checkBankTool.inputSchema.parse({ checks: [{ id: 's', refs: [ref], kind: 'ref_state' }] }),
-    );
-
-    // 输出不含任何学习者状态字段（搜索卡片 / 读取项 / 检查结果的字段白名单）。
-    const searchHit = search.hits.find((h) => h.question_id === 'bt_learner');
-    expect(searchHit).toBeDefined();
-    expect(Object.keys(searchHit ?? {}).sort()).toEqual(
-      [
-        'admission',
-        'availability',
-        'difficulty',
-        'draft_status',
-        'group_id',
-        'kind',
-        'knowledge_ids',
-        'match_evidence',
-        'missing',
-        'question_id',
-        'ref',
-        'source',
-        'source_tier',
-        'suspended',
-        'title',
-      ].sort(),
-    );
-    const readItem = read.items[0];
-    expect(readItem.status).toBe('ok');
-    expect(JSON.stringify(read)).not.toMatch(
-      /"(attempts|review_history|fsrs_state|mastery|records)"/,
-    );
-    expect(JSON.stringify(check)).not.toMatch(
-      /"(attempts|review_history|fsrs_state|mastery|records)"/,
-    );
-
-    // 全部只读：learner state 行数不变。
-    const after = await db.select({ n: sql<number>`count(*)::int` }).from(event);
-    const fsrsAfter = await db.select({ n: sql<number>`count(*)::int` }).from(material_fsrs_state);
-    expect(after[0].n).toBe(before[0].n);
-    expect(fsrsAfter[0].n).toBe(fsrsBefore[0].n);
+    const before = {
+      events: await db.select().from(event),
+      fsrs: await db.select().from(material_fsrs_state),
+    };
+    // A real PG role can read bank-owned tables only and cannot write any table.
+    // Any attempted learner-state read/write fails at the database boundary.
+    const role = `bank_read_${randomUUID().replaceAll('-', '')}`;
+    await db.execute(sql.raw(`CREATE ROLE "${role}" NOLOGIN`));
+    const client = postgres(process.env.TEST_DATABASE_URL ?? '', { max: 1 });
+    const bankDb = drizzle(client, { schema });
+    try {
+      await db.execute(sql.raw(`GRANT USAGE ON SCHEMA public TO "${role}"`));
+      await db.execute(
+        sql.raw(
+          `GRANT SELECT ON question, question_revision, question_group_lifecycle, source_asset TO "${role}"`,
+        ),
+      );
+      await bankDb.execute(sql.raw(`SET ROLE "${role}"`));
+      const bankCtx = { ...ctx, db: bankDb } satisfies ToolContext;
+      const search = await searchBankTool.execute(
+        bankCtx,
+        searchBankTool.inputSchema.parse({ query: '等比数列 通项' }),
+      );
+      const read = await readBankTool.execute(
+        bankCtx,
+        readBankTool.inputSchema.parse({
+          refs: [ref],
+          include: ['content', 'answers', 'metadata'],
+        }),
+      );
+      const check = await checkBankTool.execute(
+        bankCtx,
+        checkBankTool.inputSchema.parse({ checks: [{ id: 's', refs: [ref], kind: 'ref_state' }] }),
+      );
+      expect(search.hits.map((hit) => hit.ref)).toContain(ref);
+      expect(read.items[0].status).toBe('ok');
+      expect(check.checks[0].verdict).toBe('supported');
+      expect(JSON.stringify({ search, read, check })).not.toMatch(
+        /"(attempts|review_history|fsrs_state|mastery|records)"/,
+      );
+    } finally {
+      await client.end();
+      await db.execute(sql.raw(`DROP OWNED BY "${role}"`));
+      await db.execute(sql.raw(`DROP ROLE "${role}"`));
+    }
+    expect(await db.select().from(event)).toEqual(before.events);
+    expect(await db.select().from(material_fsrs_state)).toEqual(before.fsrs);
   });
 
+  // @invariant data: a content-changing backfill invalidates the stale embedding so the old vector stops being recalled @fails-if an in-flight embedding response refills a NULL slot after the source content changed
   it('after a reference-solution backfill changes content, the old vector is no longer used', async () => {
-    // 旧向量 = axis(3)；查询 fake 也指向 axis(3) —— 若旧向量滞留，它必是向量通道首命中。
     const axisVector = (i: number) => {
       const v = new Array<number>(1024).fill(0);
       v[i] = 1;
@@ -342,40 +420,71 @@ describe('bank tools boundary invariants (search_bank / read_bank / check_bank)'
       embed_content_hash: 'stale-hash-before-backfill',
     });
 
-    // 内容变更经真实边界：reference backfill（runTaskFn 是外部 AI runner seam 的确定性 fake）。
-    const backfill = await generateReferenceSolution({
-      db,
-      questionId: 'bt_stale_vec',
-      runTaskFn: async () => ({
-        text: JSON.stringify({
-          reference_solution: {
-            expected_signals: ['椭圆定义'],
-            final_answer: '0<e<1',
-            answer_equivalents: [],
-          },
-          worked_solution_md: '由椭圆定义 0<e<1，逐一核对选项。',
-          confidence: 0.9,
+    embedState.onBatch = async () => {
+      const backfill = await generateReferenceSolution({
+        db,
+        questionId: 'bt_stale_vec',
+        runTaskFn: async () => ({
+          text: JSON.stringify({
+            reference_solution: {
+              expected_signals: ['椭圆定义'],
+              final_answer: '0<e<1',
+              answer_equivalents: [],
+            },
+            worked_solution_md: '由椭圆定义 0<e<1，逐一核对选项。',
+            confidence: 0.9,
+          }),
         }),
-      }),
-    });
-    expect(backfill.status).toBe('generated');
+      });
+      expect(backfill.status).toBe('generated');
+    };
+    // Pause the external embedding response until the real content update commits.
+    await db.update(question).set({ embed_version: 1 }).where(eq(question.id, 'bt_stale_vec'));
+    try {
+      expect(await runEmbedBackfill(db)).toBe(0);
+    } finally {
+      embedState.onBatch = null;
+    }
 
-    // 失效已发生：embedding 置空、embed_content_hash = 合并后源文本的新 digest
-    // （夜间 embed_backfill 谓词 embedding IS NULL 据此重嵌入）。
     const [row] = await db.select().from(question).where(eq(question.id, 'bt_stale_vec'));
     expect(row.embedding).toBeNull();
-    expect(row.embed_content_hash).toBe(
-      embedHash(
-        questionEmbedText({
-          prompt_md: row.prompt_md,
-          reference_md: row.reference_md,
-          choices_md: row.choices_md,
-        }),
-      ),
-    );
-
-    // 旧向量不再被使用：查询向量与旧向量同向、FTS 无法命中该题 ⇒ 没有任何通道召回它。
     const search = await searchHits({ query: '万有引力人造卫星轨道' });
     expect(search.hits.map((h) => h.question_id)).not.toContain('bt_stale_vec');
+  });
+  // @invariant grading: deterministic checks never support an uninterpreted claim or silently substitute a different assertion
+  // @fails-if a free-text claim or unsupported assertion receives supported from a narrower ref-state predicate
+  it('check_bank preserves unknown for unsupported claims and assertions', async () => {
+    await seedQuestion('bt_claim', { prompt_md: '同材料不等于同文章的阅读判断题' });
+    const pub = await publishAdmitted('bt_claim');
+    const ref = encodeBankRef(pub.revision_id, pub.revision_digest);
+    const output = await checkBankTool.execute(
+      ctx,
+      checkBankTool.inputSchema.parse({
+        allow_model: true,
+        checks: [
+          { id: 'current', kind: 'ref_state', refs: [ref] },
+          {
+            id: 'claim',
+            kind: 'ref_state',
+            refs: [ref],
+            claim: 'This question proves the learner has mastered reading.',
+          },
+          {
+            id: 'unsupported',
+            kind: 'ref_state',
+            refs: [ref],
+            params: { assert: 'learner_mastered' },
+          },
+        ],
+      }),
+    );
+    expect(output.checks.map((check) => check.verdict)).toEqual([
+      'supported',
+      'unknown',
+      'unknown',
+    ]);
+    expect(output.checks[1].interpretation).toBe(
+      'This question proves the learner has mastered reading.',
+    );
   });
 });

@@ -7,7 +7,7 @@
 //
 // - revision_id：question_revision 主键（发布 seam 铸造，不可变，cuid）。
 // - digest 前缀：同行 integrity_digest（`sha256:<64hex>`）的 hex 前 12 位。
-//   无需查库即可发现 ref 抄写/换 target 错位；查库后再核对一次。
+//   读取不可变行后核对 digest 前缀，发现 ref 抄写/换 target 错位。
 // - `qrev1` 版本号留给 migration 线重键（ADR-0072 未决问题 1）；携带 digest
 //   使任何未来映射仍可验证内容身份。
 //
@@ -147,4 +147,14 @@ export async function resolveBankRef(db: Db, raw: string): Promise<BankRefResolu
 export function bankRefObjectKind(revision: BankRefRevisionRow): 'question' | 'group' {
   const parts = revision.structure?.parts ?? [];
   return parts.length > 1 ? 'group' : 'question';
+}
+
+/** Revision digests are sha256-prefixed; storage hashes may be bare hex. */
+export function bankAssetDigestMatches(stored: string, revision: string): boolean {
+  const bare = (value: string) => value.replace(/^sha256:/, '');
+  return (
+    /^[a-f0-9]{64}$/.test(bare(stored)) &&
+    /^[a-f0-9]{64}$/.test(bare(revision)) &&
+    bare(stored) === bare(revision)
+  );
 }

@@ -14,6 +14,7 @@
 
 import { createHash } from 'node:crypto';
 import { type SQL, and, desc, eq, inArray, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import { INTERVENTION_DIAGNOSTIC_QUESTION_SOURCE } from '@/core/schema/intervention';
 import { deriveSourceTier } from '@/core/schema/provenance';
 import type { Db } from '@/db/client';
@@ -23,7 +24,9 @@ import { toSqlVector } from '@/db/vector';
 import { resolveSubjectKnowledgeIds } from '@/kernel/read-models/knowledge-tree';
 import { embedText } from '@/server/ai/embed';
 import { canonicalKindToPersistedForms } from '@/subjects/question-kind';
-import { encodeBankRef } from './bank-ref';
+import { EvidenceDemandV1 } from '../question-supply/evidence-demand';
+import { MATCHER_COSINE_MAX_DISTANCE } from '../quiz/matcher';
+import { encodeBankRef, resolveBankRefs } from './bank-ref';
 
 /** 每个召回通道的截断上限（OOM 保护；命中即 retrieval_truncated=true）。 */
 export const BANK_SEARCH_CHANNEL_CAP = 200;
@@ -31,17 +34,37 @@ export const BANK_SEARCH_CHANNEL_CAP = 200;
 /** RRF 常数（标准 k=60；rank 从 1 计）。 */
 export const BANK_SEARCH_RRF_K = 60;
 
-export interface BankSearchScope {
-  /** Subject profile id（如 'yuwen'）—— 服务端解析为 knowledge-id 集（模型无感）。 */
-  subject?: string;
-  /** 规范题型 label（choice/reading/…），展开到全部持久化同义形式。 */
-  kind?: string;
-  source?: string;
-  /** 'all' | 'active' | 'draft'（默认 all：查重场景需要看见自己上一轮的 draft）。 */
-  draft_state: 'all' | 'active' | 'draft';
-  /** 'any' | 'admitted' | 'withheld'（默认 any）。admitted=自动可判且可服务。 */
-  admission_state: 'any' | 'admitted' | 'withheld';
-}
+export const BankSearchScopeSchema = z
+  .object({
+    subject: z.string().min(1).optional(),
+    kind: z.string().min(1).optional(),
+    source: z.string().min(1).optional(),
+    within_refs: z.array(z.string().min(1)).max(200).optional(),
+    draft_state: z.enum(['all', 'active', 'draft']),
+    admission_state: z.enum(['any', 'admitted', 'withheld']),
+  })
+  .strict();
+export type BankSearchScope = z.infer<typeof BankSearchScopeSchema>;
+
+// A gap describes the unsatisfied combination, not a claim that each filter is absent.
+export const BankUnsatisfiedConstraintsSchema = z.object({
+  query: z.string(),
+  scope: BankSearchScopeSchema,
+  requested_count: z.number().int().positive(),
+  retrieved_count: z.number().int().nonnegative(),
+  reason: z.literal('insufficient_retrieved_candidates'),
+});
+export const BankGapRequestSchema = z.object({
+  target_contract: z.literal('EvidenceDemandV1'),
+  status: z.literal('needs_agent_context_and_filing_tool'),
+  claim: EvidenceDemandV1.shape.claim.pick({ kind: true, statement: true }).extend({
+    kind: z.literal('content_coverage'),
+  }),
+  inventory_goal: EvidenceDemandV1.shape.inventory_goal.pick({ eligible_count: true }),
+  causes: EvidenceDemandV1.shape.causes,
+  constraints: BankUnsatisfiedConstraintsSchema,
+  required_context: z.array(z.string()),
+});
 
 /** 两种调用形态互斥（提案 §6）：新检索（query + scope）或续页（cursor 只续同一次检索）。 */
 export type BankSearchRequest =
@@ -80,6 +103,10 @@ export interface BankSearchHit {
 }
 
 export interface BankSearchCoverage {
+  /** Retrieval quantity only; semantic requirements remain unverified. */
+  verdict: 'enough' | 'sparse' | 'none';
+  unsatisfied_constraints: Array<z.infer<typeof BankUnsatisfiedConstraintsSchema>>;
+  gap_request: z.infer<typeof BankGapRequestSchema> | null;
   /** 融合候选池的实际数量（有限池，不是语义匹配总数）。 */
   candidate_pool_size: number;
   /** 任一通道命中截断上限（翻完本池 ≠ 搜索全库穷尽）。 */
@@ -96,6 +123,7 @@ export interface BankSearchOutput {
     subject?: { profile: string; knowledge_id_count: number };
     kind?: { canonical: string; persisted_forms: string[] };
     source?: string;
+    within_refs?: string[];
     draft_state: BankSearchScope['draft_state'];
     admission_state: BankSearchScope['admission_state'];
   };
@@ -109,14 +137,17 @@ export interface BankSearchOutput {
 
 // ── cursor（只续同一次检索；新条件必须新查询）──────────────────────────────
 
-interface BankSearchCursor {
-  v: 1;
-  q: string;
-  scope: BankSearchScope;
-  limit: number;
-  offset: number;
-  f: string;
-}
+const BankSearchCursorSchema = z
+  .object({
+    v: z.literal(1),
+    q: z.string().trim().min(1).max(400),
+    scope: BankSearchScopeSchema,
+    limit: z.number().int().min(1).max(50),
+    offset: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    f: z.string().regex(/^[a-f0-9]{16}$/),
+  })
+  .strict();
+type BankSearchCursor = z.infer<typeof BankSearchCursorSchema>;
 
 export function bankSearchFingerprint(
   query: string,
@@ -139,29 +170,18 @@ export function decodeBankSearchCursor(raw: string): BankSearchCursor {
   } catch {
     throw new Error('cursor is not a valid bank-search cursor');
   }
-  const c = parsed as Partial<BankSearchCursor>;
-  if (
-    c.v !== 1 ||
-    typeof c.q !== 'string' ||
-    c.q.length === 0 ||
-    typeof c.scope !== 'object' ||
-    c.scope === null ||
-    typeof c.limit !== 'number' ||
-    typeof c.offset !== 'number' ||
-    c.offset < 0 ||
-    typeof c.f !== 'string'
-  ) {
-    throw new Error('cursor is not a valid bank-search cursor');
-  }
+  const result = BankSearchCursorSchema.safeParse(parsed);
+  if (!result.success) throw new Error('cursor is not a valid bank-search cursor');
+  const c = result.data;
   if (c.f !== bankSearchFingerprint(c.q, c.scope, c.limit)) {
     throw new Error(
       'cursor fingerprint mismatch — start a new search instead of mixing a cursor with changed conditions',
     );
   }
-  return c as BankSearchCursor;
+  return c;
 }
 
-// ── RRF 融合（纯函数，单测直接覆盖）───────────────────────────────────────
+// ── RRF 融合（内部排序）───────────────────────────────────────
 
 export interface RrfChannelHit {
   id: string;
@@ -222,6 +242,7 @@ interface ResolvedScope {
   scope: BankSearchScope;
   subjectKnowledgeIds?: string[];
   kindForms?: string[];
+  withinRevisionIds?: string[];
 }
 
 async function resolveScope(db: Db, scope: BankSearchScope): Promise<ResolvedScope> {
@@ -231,6 +252,18 @@ async function resolveScope(db: Db, scope: BankSearchScope): Promise<ResolvedSco
   }
   if (scope.kind !== undefined) {
     resolved.kindForms = canonicalKindToPersistedForms(scope.kind);
+  }
+  if (scope.within_refs !== undefined) {
+    const refs = await resolveBankRefs(db, scope.within_refs);
+    resolved.withinRevisionIds = refs.map((ref) => {
+      if (ref.status !== 'ok') throw new Error(`within_refs: ${ref.raw}: ${ref.status}`);
+      if (ref.lifecycle?.current_revision_id !== ref.revision.revision_id) {
+        throw new Error(
+          `within_refs: ${ref.raw}: superseded; search indexes only current revisions, read_bank can read this exact version`,
+        );
+      }
+      return ref.revision.revision_id;
+    });
   }
   return resolved;
 }
@@ -285,6 +318,13 @@ function buildFilters(resolved: ResolvedScope): SQL[] {
         )}))`,
       );
     }
+  }
+  if (resolved.withinRevisionIds !== undefined) {
+    filters.push(
+      resolved.withinRevisionIds.length === 0
+        ? sql`false`
+        : inArray(lc.current_revision_id, resolved.withinRevisionIds),
+    );
   }
   if (scope.source !== undefined) {
     filters.push(sql`(${question.source} = ${scope.source})`);
@@ -379,7 +419,13 @@ export async function runSearchBank(
       .select({ id: question.id, created_at: question.created_at })
       .from(question)
       .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
-      .where(and(where, sql`${question.embedding} IS NOT NULL`))
+      .where(
+        and(
+          where,
+          sql`${question.embedding} IS NOT NULL`,
+          sql`${distanceExpr} <= ${MATCHER_COSINE_MAX_DISTANCE}`,
+        ),
+      )
       .orderBy(sql`${distanceExpr} ASC`)
       .limit(BANK_SEARCH_CHANNEL_CAP + 1);
     vectorTruncated = vecAll.length > BANK_SEARCH_CHANNEL_CAP;
@@ -402,9 +448,6 @@ export async function runSearchBank(
 
   // ── 卡片数据（page 量；批量无 N+1）──
   const pageIds = page.map((p) => p.id);
-  const createdBy = new Map<string, Date>();
-  for (const r of ftsRows) createdBy.set(r.id, r.created_at);
-  for (const r of vectorRows) if (!createdBy.has(r.id)) createdBy.set(r.id, r.created_at);
 
   const hits: BankSearchHit[] = [];
   if (pageIds.length > 0) {
@@ -429,7 +472,7 @@ export async function runSearchBank(
       })
       .from(question)
       .leftJoin(question_group_lifecycle, eq(question_group_lifecycle.group_id, question.id))
-      .where(inArray(question.id, pageIds));
+      .where(and(where, inArray(question.id, pageIds)));
     const cardById = new Map(cardRows.map((r) => [r.id, r]));
 
     // 当前 revision digest → 版本化 ref。
@@ -517,9 +560,44 @@ export async function runSearchBank(
     enforced.push(`kind=${scope.kind} (persisted forms: ${resolved.kindForms.join(', ')})`);
   }
   if (scope.source !== undefined) enforced.push(`source=${scope.source}`);
+  if (scope.within_refs !== undefined)
+    enforced.push('within_refs (exact current revisions only; empty means empty scope)');
   enforced.push(`draft_state=${scope.draft_state}`);
   enforced.push(`admission_state=${scope.admission_state}`);
   enforced.push('top-level questions only (composite parts read via their group)');
+
+  const confirmedPoolSize = poolSize - (page.length - hits.length);
+  const verdict =
+    confirmedPoolSize === 0 ? 'none' : confirmedPoolSize < limit ? 'sparse' : 'enough';
+  const unsatisfied = {
+    query: effectiveQuery,
+    scope,
+    requested_count: limit,
+    retrieved_count: confirmedPoolSize,
+    reason: 'insufficient_retrieved_candidates' as const,
+  };
+  const gapRequest =
+    verdict === 'enough'
+      ? null
+      : BankGapRequestSchema.parse({
+          target_contract: 'EvidenceDemandV1',
+          status: 'needs_agent_context_and_filing_tool',
+          claim: { kind: 'content_coverage', statement: effectiveQuery },
+          inventory_goal: { eligible_count: limit },
+          causes: [{ kind: 'coverage_gap' }],
+          constraints: unsatisfied,
+          required_context: [
+            'demand_id',
+            'policy_version',
+            'subject_id',
+            'claim.knowledge_ids',
+            'evidence',
+            'task',
+            'difficulty',
+            'inventory_goal.horizon_days',
+            'control',
+          ],
+        });
 
   return {
     scope_applied: {
@@ -535,6 +613,7 @@ export async function runSearchBank(
           ? { canonical: scope.kind as string, persisted_forms: resolved.kindForms }
           : undefined,
       source: scope.source,
+      within_refs: scope.within_refs,
       draft_state: scope.draft_state,
       admission_state: scope.admission_state,
     },
@@ -547,12 +626,16 @@ export async function runSearchBank(
     },
     hits,
     coverage: {
-      candidate_pool_size: poolSize,
+      verdict,
+      unsatisfied_constraints: verdict === 'enough' ? [] : [unsatisfied],
+      gap_request: gapRequest,
+      candidate_pool_size: confirmedPoolSize,
       retrieval_truncated: retrievalTruncated,
       page_has_more: hasMore,
       next_cursor: nextCursor,
       unavailable_channels: unavailable,
-      complete: !hasMore && !retrievalTruncated && unavailable.length === 0,
+      complete:
+        !hasMore && !retrievalTruncated && unavailable.length === 0 && hits.length === page.length,
     },
   };
 }
