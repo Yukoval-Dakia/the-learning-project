@@ -253,3 +253,58 @@
     padding-right: calc(84px - var(--un-sp-2));
   }
 }
+
+/* Tap-answer samples (YUK-1479). */
+[data-ui-next] {
+  & .un-ab-demo {
+    display: grid;
+    gap: var(--un-sp-7);
+  }
+
+  & .un-ab-note {
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+  }
+
+  & .un-ab-sample {
+    display: grid;
+    gap: var(--un-sp-3);
+  }
+
+  & .un-ab-sample-h {
+    display: flex;
+    align-items: center;
+    gap: var(--un-sp-2);
+    color: var(--un-text-2);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-medium);
+  }
+
+  & .un-ab-tag {
+    padding: 1px 7px;
+    border-radius: var(--un-r-3);
+    box-shadow: inset 0 0 0 var(--un-hairline) var(--un-line-strong);
+    color: var(--un-text-3);
+    font-size: var(--un-fs-1);
+    font-weight: var(--un-fw-regular);
+  }
+
+  & .un-ab-sample-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--un-sp-2);
+  }
+
+  & .un-ab-json {
+    margin: 0;
+    padding: var(--un-sp-3);
+    overflow-x: auto;
+    border-radius: var(--un-r-1);
+    background: var(--un-bg-sunk);
+    color: var(--un-text-2);
+    font-family: var(--un-font-mono);
+    font-size: var(--un-fs-1);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
+}
