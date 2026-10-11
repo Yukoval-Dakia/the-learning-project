@@ -9,6 +9,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { InteractiveArtifactRenderer } from '@/ui/components/InteractiveArtifactRenderer';
 import { ApiError } from '@/ui/lib/api';
+import { randomId } from '@/ui/lib/random-id';
 import { Btn } from '@/ui/primitives/Btn';
 import { EmptyState } from '@/ui/primitives/EmptyState';
 import { ErrorState } from '@/ui/primitives/ErrorState';
@@ -138,7 +139,7 @@ export default function NoteReaderPage({
   useEffect(() => {
     if (mode !== 'edit') return;
     if (editorSessionIdRef.current === null) {
-      editorSessionIdRef.current = crypto.randomUUID();
+      editorSessionIdRef.current = randomId();
     }
     const sessionId = editorSessionIdRef.current;
     const sendHeartbeat = () => {
