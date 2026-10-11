@@ -1,0 +1,38 @@
+{
+  "candidate": "71bd476225b0f4b704132bf74278c0de84be6d1b",
+  "first_case": {
+    "exit_code": 0,
+    "passed": 1,
+    "skipped": 24,
+    "log_sha256": "029a7d28f88d2fe52609bb4113758a254a776ae189380f7d187561317cda3758"
+  },
+  "regression_batch": {
+    "exit_code": 1,
+    "bail": 1,
+    "files_requested": [
+      "src/capabilities/practice/server/native-durable-attempt.db.test.ts",
+      "src/capabilities/practice/jobs/judge_pending_reconcile.db.test.ts",
+      "tests/dbos-judge/operational.db.test.ts"
+    ],
+    "failure": "judge_pending_reconcile first case: reserved experimental schema rejects reconcile observation",
+    "log_sha256": "a95c7a229ceb0ffc3d626d116702ad8084d527e40803fd1f09db4fa7ae76c7ad",
+    "remaining_acceptance": "UNPROVEN"
+  },
+  "cleanup": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1356",
+      "phase": "isolated-judge-scoped-db",
+      "token": "61a3cbae-2182-47d2-b891-d54094dd8f5d",
+      "candidate": "71bd476225b0f4b704132bf74278c0de84be6d1b",
+      "dirtyDiffSha256": "efa601cdcb2fc06a2fb138c986e8c9483da21fd008178ab2e01efd58f81bdd44",
+      "createdAt": "2026-10-09T01:03:44.998834+00:00"
+    },
+    "releasedAt": "2026-10-09T01:05:25.149145+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "source_root_cause": "prepareEventInsert normalizes null cause to undefined; judge family envelope required null",
+  "no_provider_or_deployment": true
+}

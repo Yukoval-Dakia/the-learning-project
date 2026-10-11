@@ -1,0 +1,172 @@
+{
+  "product": "2dbb9eb3e70c82f70432498c2f0b7a6b60d10cc3",
+  "fixtureBase": "ed010ee906ba7aa0c4b2ca710f9c952cf6dafb31",
+  "testFixPaths": [
+    "tests/dbos-judge/process.db.test.ts",
+    "tests/dbos-judge/legacy-producer.ts",
+    "tests/dbos-judge/cutover.db.test.ts"
+  ],
+  "processCasesPassed": 12,
+  "cutoverCasesPassed": 8,
+  "priorScopedDbPassed": 128,
+  "separateOriginalProcessCasePassed": 1,
+  "scope": "Controlled loopback installed Pi transport, real DBOS and SIGKILL/SIGSTOP/reopen; fixed old source96077 with matching pg-boss12.36; not actual external provider or whole deployment/restore",
+  "failuresPreserved": [
+    "old model lookup did not register completions transport",
+    "text content arrays were JSON-encoded instead of read as text",
+    "pg-boss insert passed JSON jobs not a standalone queue parameter",
+    "DBOS inventory target schema was not initialized",
+    "pool transaction override missed session-reserved seal connection"
+  ],
+  "archive": {
+    "path": "docs/planning/evidence/2026-10-09-yuk1356-process-cutover.json.gz",
+    "sha256": "b4853c69258ea4d7a34550229052b1f61d968a73fbd3c95c5b1248d70bec979f",
+    "files": 28,
+    "secretPatternScan": "no API-key or Bearer credential pattern found; fixtures synthetic; current process diagnostics sanitize URLs/errors"
+  },
+  "files": [
+    {
+      "path": "/tmp/yuk1356-parent-process-db/before.json",
+      "sha256": "d0c6cec489b9ceb59c515771591083083dc2acf0778f2c6e90ae2ec6bb3446fa"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-process-db/lock-release.json",
+      "sha256": "b48990c210cf123019237f1186d0bf0c5ae30efc7c335f89255751b71366f007"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-process-db/process-evidence.json",
+      "sha256": "8d1950831091ca6577a43bec38a9ebf7bc3c9bd9e06ac47ad234622225db6545"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-process-db/process.log",
+      "sha256": "7a52202f173882a7d99864792a75c269865783570850746d251d933d34200c46"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-process-transport-db/before.json",
+      "sha256": "3f48b4b0b563fadbc09cec876e097e5e9f200cc5d929ac3df52dffd8b0c82ee2"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-process-transport-db/lock-release.json",
+      "sha256": "b818290aab9a8ede0f14ee19aea28ae42297d84cfe2c3a17e12e4a023d44290c"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-process-transport-db/original-case.log",
+      "sha256": "c9b0e859f811b495c5d12b569d602897e03b830daaec5a9bd0e492541ee22d0c"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-process-transport-db/process-evidence.json",
+      "sha256": "a0239a7d39be50897ad85278ac20d6f52c6e9b5bf364e24af56cbbc04750e57b"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-process-content-db/before.json",
+      "sha256": "df52f00cf03c5c47794ae664347f5d4eee3a7076c48a723ea6f0d3f8fcc43214"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-process-content-db/cutover-evidence.json",
+      "sha256": "8c88b3b4e4a23972530076474796a7fedbfee2453e873505ec275eddcabe9c6b"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-process-content-db/cutover.log",
+      "sha256": "9e6fb34d1394e33c881214216215b3738fcd0bc8d389c90d7bd5f4dbb93808ab"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-process-content-db/lock-release.json",
+      "sha256": "1e14563fd6477ae831d95b0a3fc5898c842f705b832910f113fd50658f38d9a3"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-process-content-db/original-case-evidence.json",
+      "sha256": "f774e9c4350adac9986b7d74ce1148f08717e1548e241dc8d283ca049a7c9912"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-process-content-db/original-case.log",
+      "sha256": "85c33ef0e345b21069ba5b004188bc93e22b64664121bf96a7f89122686b3c5f"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-process-content-db/process-all-evidence.json",
+      "sha256": "c61dadddd89b5c25bb169afb40eb28f68d4f801819f9a1df57903f83d379b667"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-process-content-db/process-all.log",
+      "sha256": "95efca8f407bf4bec3cdc54a5f9ca7c188c4a25090e647b38ea4cc0e31dfe3ab"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-cutover-json-db/before.json",
+      "sha256": "7ab0c6fc886fa2ecdd49cff1918e31532233d078b77576fdbf9744daef589f3b"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-cutover-json-db/cutover-evidence.json",
+      "sha256": "35f8024836657788c27d642f1f0a0a167a5538f6f32a506cae2f7507c709eeb3"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-cutover-json-db/cutover.log",
+      "sha256": "79c81265faaa4e6da4874e414b1380a2dd5cb99e349d9da4ee52ccab7cc7f591"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-cutover-json-db/lock-release.json",
+      "sha256": "d7812e85dd0d2059999b88bcffda7a5f210a73cbab80dd81759e854a106e9ebb"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-cutover-init-db/before.json",
+      "sha256": "4192e458d8466ab9a36805d8a4062057e0ce05265777cf42ebef46c037794cfc"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-cutover-init-db/cutover-evidence.json",
+      "sha256": "9f3236d0d166fa45557c7f2f955a46aef7417bc37f2f4647d0be07c13495d34c"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-cutover-init-db/cutover.log",
+      "sha256": "e29cc3f4ef752f09d7c0360baecfadba4040a88d5c810b634a145e46bae09d97"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-cutover-init-db/lock-release.json",
+      "sha256": "3a5c2eced8cffeeaf7d32101b7d361b4eaa8914ca4c1c8d751645dbeeffacbd1"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-cutover-seal-db/before.json",
+      "sha256": "c5850fdaaad3888693d2fc8796ba1da6194554a79664f5f32b8cc72c8cd096e3"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-cutover-seal-db/cutover-evidence.json",
+      "sha256": "c711d2b20f81d623d52f2499561f62fad751de137700b58a31ad3023dd64bebd"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-cutover-seal-db/cutover.log",
+      "sha256": "29f19904331af5caac3203f5979ac7e3703cf38b3e6132ead7bf53e6e47b4687"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-cutover-seal-db/lock-release.json",
+      "sha256": "5718a6bdb89f73683fcca350ebee74d29384ad7fddecd9be502c6d6402882d88"
+    }
+  ],
+  "lastRelease": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1356",
+      "phase": "isolated-judge-scoped-db",
+      "token": "a0edc09f-9454-4542-9454-09a2300fa89f",
+      "candidate": "ed010ee906ba7aa0c4b2ca710f9c952cf6dafb31",
+      "dirtyDiffSha256": "ed1fc5e5ab631c8d075070913da9fee97b7182e3aed8e59f96992a3fa42e0bae",
+      "createdAt": "2026-10-09T02:08:30.952711+00:00"
+    },
+    "releasedAt": "2026-10-09T02:09:13.043988+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "formalTypecheck": {
+    "command": "pnpm typecheck",
+    "exit": 0,
+    "log": "/tmp/yuk1356-process-wire-diagnostics/parent-project-typecheck.log",
+    "sha256": "36ea241c6942f1a41abb39db13194e6117c19022d769f9059b8a87960ef20ad6",
+    "extraCompilerCheck": "child direct JS compiler91errors is retained separately, not the repository configured native compiler gate"
+  },
+  "pending": [
+    "migration smoke",
+    "existing consumer DB",
+    "final emitted logger proof",
+    "live SSE/Start/provider",
+    "R2",
+    "exactCI",
+    "coherent restore and deployed old consumer retirement"
+  ]
+}

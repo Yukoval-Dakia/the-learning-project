@@ -1,0 +1,84 @@
+{
+  "candidate": "5f09c7bdc9837988a67a5b37209835bf6e1fe50d",
+  "unit": {
+    "candidate": "5f09c7bdc9837988a67a5b37209835bf6e1fe50d",
+    "argv": [
+      "pnpm",
+      "vitest",
+      "run",
+      "--config",
+      "vitest.unit.config.ts",
+      "scripts/audit-schema-writes.test.ts",
+      "scripts/schema-migration-initialization.unit.test.ts",
+      "scripts/schema-production-writes.unit.test.ts",
+      "scripts/schema-evidence-soundness.unit.test.ts",
+      "scripts/schema-write-producers.unit.test.ts",
+      "src/capabilities/practice/server/judge-engine-client.unit.test.ts",
+      "src/capabilities/practice/server/judge-operational-state.unit.test.ts",
+      "src/capabilities/practice/server/judge-run-status.unit.test.ts",
+      "src/capabilities/practice/server/judge/judge-paid-retry.unit.test.ts",
+      "src/capabilities/practice/server/judge/evaluate-submission.unit.test.ts",
+      "src/capabilities/practice/server/judge/evaluation-authority.unit.test.ts",
+      "src/server/durable/prune-worker.unit.test.ts"
+    ],
+    "startedAt": "2026-10-09T00:21:44.963959+00:00",
+    "finishedAt": "2026-10-09T00:22:08.478523+00:00",
+    "exitCode": 0
+  },
+  "unitPassed": 337,
+  "db": {
+    "candidate": "5f09c7bdc9837988a67a5b37209835bf6e1fe50d",
+    "argv": [
+      "pnpm",
+      "vitest",
+      "run",
+      "--config",
+      "vitest.db.config.ts",
+      "--bail",
+      "1",
+      "tests/dbos-judge/migration.db.test.ts",
+      "tests/dbos-judge/operational.db.test.ts",
+      "src/capabilities/practice/server/native-durable-attempt.db.test.ts",
+      "src/capabilities/practice/jobs/judge_run.db.test.ts",
+      "src/capabilities/practice/jobs/judge_run-terminal.db.test.ts",
+      "src/capabilities/practice/jobs/judge_pending_reconcile.db.test.ts",
+      "src/capabilities/practice/api/judge-run-status-route.db.test.ts",
+      "src/server/durable/producer-fence-lock.db.test.ts"
+    ],
+    "startedAt": "2026-10-09T00:22:32.147844+00:00",
+    "exitCode": 1,
+    "finishedAt": "2026-10-09T00:22:41.637164+00:00"
+  },
+  "firstFailure": {
+    "file": "src/capabilities/practice/jobs/judge_run.db.test.ts",
+    "line": 62,
+    "assertion": "event.id=runId expected length 1; actual 0",
+    "precedingAssertions": "runJudgeRun done/correct and evaluation length1 passed",
+    "status": "UNRESOLVED_PRODUCT_RECEIPT_GUARD"
+  },
+  "lockRelease": {
+    "owner": {
+      "owner": "7631c12b-ff58-44b3-aee5-303edfdfd42c",
+      "issue": "YUK-1356",
+      "phase": "isolated-judge-scoped-db",
+      "token": "0dba45a4-73b5-4dbb-af05-66a4f31b1b8f",
+      "candidate": "5f09c7bdc9837988a67a5b37209835bf6e1fe50d",
+      "dirtyDiffSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "createdAt": "2026-10-09T00:22:03.446320+00:00"
+    },
+    "releasedAt": "2026-10-09T00:22:54.189285+00:00",
+    "containersUnchanged": true,
+    "releaseUnchanged": true,
+    "runningUnchanged": true
+  },
+  "logs": [
+    {
+      "path": "/tmp/yuk1356-parent-db/db.log",
+      "sha256": "16bce913bda5f40b4c4d3db25d7dda3e5dde7987c4478b4d375d071bc47c611e"
+    },
+    {
+      "path": "/tmp/yuk1356-parent-acceptance/unit.log",
+      "sha256": "f84832194917579bbfed53b01952b34f7912ba6aa963acd83795d7c608c6cb22"
+    }
+  ]
+}

@@ -1444,6 +1444,31 @@
       ]
     },
     {
+      "name": "jobs",
+      "item": [
+        {
+          "name": "GET /api/jobs/judge_run/:id/status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/jobs/judge_run/:id/status",
+              "host": ["{{baseUrl}}"],
+              "path": ["api", "jobs", "judge_run", ":id", "status"],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "REPLACE_id"
+                }
+              ]
+            },
+            "description": "读取 durable native judge 的四态状态\n\n**Path vars:** `:id` — set under the request's Path Variables (placeholder `REPLACE_*`).\n\n**Notes:** run_id 保持原始提交身份。永久 native 完成或人工处置优先于引擎与可清理通知；unknown 引擎证据不返回 404。已验证不存在返回 404，状态读取不可用返回 503。此读取不会写入、排队或判分。"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
       "name": "knowledge",
       "item": [
         {
