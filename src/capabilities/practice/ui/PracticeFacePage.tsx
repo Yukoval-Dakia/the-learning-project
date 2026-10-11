@@ -4,11 +4,12 @@
 // 理由与判定）。路由耦合走 props 注入（壳层规则，web/src/router.tsx）。
 
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useLayoutEffect, useMemo, useState } from 'react';
+import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Btn } from '@/ui/primitives/Btn';
 import { ErrorState } from '@/ui/primitives/ErrorState';
 import { LoomIcon } from '@/ui/primitives/LoomIcon';
+import { useSharedMorph } from '@/ui-next/public';
 import './practice-face.css';
 
 import { PracticeNextEmpty } from './next/PracticeNextEmpty';
@@ -127,6 +128,22 @@ function PracticeFace({
     [setQuery],
   );
   const [mode, setMode] = useState<Mode>({ kind: 'list' });
+  // YUK-1473 — shared-title morph (M4) between a stream row and the new question page. Only the
+  // new solo view takes part; the retained one never captures, so nothing flies there.
+  const hostRef = useRef<HTMLDivElement>(null);
+  const morph = useSharedMorph(
+    hostRef,
+    mode.kind === 'solo' ? `solo:${mode.item.id}` : mode.kind === 'list' ? 'list' : mode.kind,
+  );
+  const listScroll = useRef(0);
+  const captureMorph = useCallback(
+    (leaving: 'list' | 'solo') => {
+      if (soloView !== 'next') return;
+      if (leaving === 'list') listScroll.current = window.scrollY;
+      morph.capture();
+    },
+    [morph, soloView],
+  );
   const [toasts, setToasts] = useState<PfToast[]>([]);
   const [actionFailure, setActionFailure] = useState<StreamActionFailure | null>(null);
 
@@ -234,6 +251,7 @@ function PracticeFace({
         if (confirmed.item_kind === 'paper') {
           setMode({ kind: 'paper', artifactId: confirmed.ref_id });
         } else {
+          captureMorph('list');
           setMode({ kind: 'solo', item: confirmed });
         }
       };
@@ -245,7 +263,7 @@ function PracticeFace({
       }
       void commitStreamItem(item, 'in_progress', '开始练习', enter);
     },
-    [commitStreamItem],
+    [captureMorph, commitStreamItem],
   );
 
   const continueAfterSolo = useCallback(
@@ -294,12 +312,23 @@ function PracticeFace({
   const markSoloDoneAndExit = useCallback(
     (item: StreamItem) => {
       void commitStreamItem(item, 'done', '完成并返回练习流', async () => {
+        captureMorph('solo');
         setMode({ kind: 'list' });
         await refreshStream();
       });
     },
-    [commitStreamItem, refreshStream],
+    [captureMorph, commitStreamItem, refreshStream],
   );
+
+  // Back on the list from the new question page: return to where the reader was, so the title
+  // can fold back into its row (M4). Runs before paint; the morph measures after the first frame.
+  const backToList = mode.kind === 'list' && soloView === 'next';
+  useLayoutEffect(() => {
+    if (backToList && listScroll.current > 0) {
+      window.scrollTo(0, listScroll.current);
+      listScroll.current = 0;
+    }
+  }, [backToList]);
 
   const items = useMemo(() => visibleStream?.items ?? [], [visibleStream]);
 
@@ -316,6 +345,7 @@ function PracticeFace({
           total={items.length}
           onDone={() => void completeSolo(mode.item)}
           onBack={() => {
+            captureMorph('solo');
             setMode({ kind: 'list' });
             void refreshStream();
           }}
@@ -446,8 +476,15 @@ function PracticeFace({
   }
 
   return (
-    <main className="page wide pface-loom">
-      <div className="pface-root">
+    // The new question page lays out its own width (reading column + floating companion).
+    <main
+      className={
+        soloView === 'next' && mode.kind === 'solo'
+          ? 'pface-loom pface-next'
+          : 'page wide pface-loom'
+      }
+    >
+      <div className="pface-root" ref={hostRef}>
         <div aria-live="assertive">
           {actionFailure && (
             <ErrorState text={actionFailure.message} onRetry={actionFailure.retry} compact />
