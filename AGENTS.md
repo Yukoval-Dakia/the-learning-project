@@ -125,6 +125,13 @@ pnpm build
   DTO/schema 形状、prompt/文案/快照/字节 hash、源码路径与文档结构、实现细节，或只断言
   “被调用/存在”的测试，以及为覆盖率补的测试。
   修 bug 时若不触及上面五类，用 typecheck/build 和真实运行验证，不补回归测试。
+- **禁止细小测试（owner 2026-10-11）。** 允许写的测试必须从真实边界进入：route、
+  job、DB 事务、结算/判分链、agent 工具契约，或确定性核心模块的公开入口；一个
+  不变量一条 case，只有失败方式确实不同才另写。禁止：给内部函数/helper 单独写
+  测试、同一路径按参数排列组合反复写、断言 mock 交互或调用次数、为单个分支或
+  边界值各写一条。mock 只允许替代外部依赖（provider、网络、时钟）。
+- **测试不得多于代码。** 一个 PR 新增测试行数超过新增产品代码行数时，PR 描述须逐个
+  不变量说明为什么需要；说明不了的删到不超过。独立审查必须核对这一条。
 - 新增或修改 case 的准入由 `pnpm audit:test-policy` 在 CI 强制执行；须在该 case
   前声明 `@invariant` 类别/保护结果及 `@fails-if` 具体缺陷。格式和审查要求见
   `docs/agents/development-workflow.md` 的 Test admission。标签本身不构成正确性证明。
