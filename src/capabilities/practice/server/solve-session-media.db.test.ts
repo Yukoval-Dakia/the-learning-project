@@ -112,7 +112,14 @@ async function seed(options: { inline?: string; unsupported?: boolean; reference
     expectedCurrentRevision: null,
     expectedAdmissionGeneration: null,
     availability: 'general_pool',
-    admission: { state: 'withheld', reason: 'owner_hold' },
+    admission: {
+      state: 'admitted',
+      evidence: {
+        marking_provenance: 'official',
+        verification: { structural_check_passed: true, independent_verification: null },
+        model_slice: null,
+      },
+    },
     actorRef: 'test:frozen-media',
     now,
   });

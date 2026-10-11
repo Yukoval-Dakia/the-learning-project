@@ -718,11 +718,7 @@ function PlacementQuestionCard({
         <ErrorState text="这道题需要当前页面尚不支持的作答控件。可以退出并保留这次定位练习的记录。" />
       ) : (
         <>
-          <SaveStateChip
-            state={conflict ? 'conflict' : autosave.state}
-            generation={autosave.generation}
-            onRetry={autosave.retry}
-          />
+          <SaveStateChip state={conflict ? 'conflict' : autosave.state} onRetry={autosave.retry} />
           {conflict && (
             <Btn variant="secondary" onClick={() => void recover()}>
               重新加载服务端草稿 · 放弃本地修改

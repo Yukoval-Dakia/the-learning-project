@@ -16489,6 +16489,8 @@ export interface operations {
                             submission_id: string;
                             submitted_at: string;
                         }[];
+                        /** @enum {string|null} */
+                        unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | null;
                     };
                 };
             };
@@ -20678,6 +20680,13 @@ export interface operations {
                             wrong: number;
                         } | null;
                         title: string;
+                        withheld_assessments?: {
+                            issuance_id: string | null;
+                            part_ref: string | null;
+                            question_id: string;
+                            /** @enum {string} */
+                            reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure";
+                        }[];
                     };
                 };
             };
@@ -21213,6 +21222,8 @@ export interface operations {
                                         submission_id: string;
                                         submitted_at: string;
                                     }[];
+                                    /** @enum {string|null} */
+                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | null;
                                 };
                                 submission_id: string;
                             };
@@ -22339,6 +22350,8 @@ export interface operations {
                                         submission_id: string;
                                         submitted_at: string;
                                     }[];
+                                    /** @enum {string|null} */
+                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | null;
                                 };
                                 submission_id: string;
                             };
@@ -23227,6 +23240,8 @@ export interface operations {
                                         submission_id: string;
                                         submitted_at: string;
                                     }[];
+                                    /** @enum {string|null} */
+                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | null;
                                 };
                                 submission_id: string;
                             };
@@ -24078,6 +24093,8 @@ export interface operations {
                                         submission_id: string;
                                         submitted_at: string;
                                     }[];
+                                    /** @enum {string|null} */
+                                    unavailable_reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure" | null;
                                 };
                                 submission_id: string;
                             };
@@ -24941,6 +24958,13 @@ export interface operations {
                             wrong: number;
                         } | null;
                         title: string;
+                        withheld_assessments?: {
+                            issuance_id: string | null;
+                            part_ref: string | null;
+                            question_id: string;
+                            /** @enum {string} */
+                            reason: "invalid_scoring_contract" | "invalid_execution_plan" | "invalid_issuance_scope" | "unprojectable_aggregation" | "no_scoring_units" | "human_review" | "model_admission_unavailable" | "unsupported_deterministic_input" | "missing_referenced_figure";
+                        }[];
                     };
                 };
             };

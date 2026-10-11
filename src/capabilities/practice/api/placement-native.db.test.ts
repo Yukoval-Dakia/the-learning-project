@@ -1,10 +1,19 @@
 import { eq } from 'drizzle-orm';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { resetTestConfig, setTestConfig } from '@/core/config/store';
-import type { ResponseSetT } from '@/core/schema/assessment';
+import { canonicalHash } from '@/core/migration/canonical';
+import type { ResponseSetT, ResponseSpecT } from '@/core/schema/assessment';
+import { JudgeWorkflowInput } from '@/core/schema/event/judge-operational-events';
+import {
+  JudgePendingAttemptPayload,
+  NativeJudgePendingSubmitInput,
+} from '@/core/schema/event/judge-pending-events';
 import {
   assessment_issuance,
   assessment_submission,
+  evaluation,
+  evaluation_effective_head,
   event,
   goal,
   knowledge,
@@ -17,10 +26,24 @@ import {
   placement_starter_cost_component,
   question,
 } from '@/db/schema';
+import { writeEvent } from '@/kernel/events';
+import { Placement } from '@/server/session';
+
+import { publishPaperModelFixture } from '../../../../tests/fixtures/assessment-paper';
 import { publishPlacementFixture } from '../../../../tests/fixtures/assessment-placement';
+import { seedHistoricalAssessmentIssuance } from '../../../../tests/fixtures/historical-assessment-issuance';
 import { resetDb, testDb } from '../../../../tests/helpers/db';
 import { insertLegacyGoal } from '../../../../tests/helpers/legacy-goal';
+import { RECONCILE_STALL_MS, reconcileStalledJudgeAttempts } from '../jobs/judge_pending_reconcile';
+import { runJudgeRun } from '../jobs/judge_run';
+import { dispatchNativeAttempt, executeNativeAttempt } from '../server/assessment/durable-attempt';
 import type { SaveSubmissionRequest } from '../server/assessment/submit';
+import { getIssuanceState, saveSubmission } from '../server/assessment/submit';
+import * as evaluationService from '../server/judge/evaluate-submission';
+import { createRecordedModelExecutor } from '../server/judge/recorded-model-executor';
+import { fenceJudgeUnitClaim } from '../server/judge-operational';
+import { readJudgeRunPermanent } from '../server/judge-run-observation';
+import type { NativeJudgeRunJobData } from '../server/judge-run-payload';
 import { placementStarterIdentity } from '../server/question-supply/placement-starter-identity';
 import { readPlacementStarterOutcomes } from '../server/question-supply/placement-starter-outcome-reader';
 import { materializePlacementStartersForGoal } from '../server/question-supply/placement-starter-store';
@@ -84,12 +107,66 @@ async function open() {
   return { ...session, question: session.question };
 }
 type Open = Awaited<ReturnType<typeof open>>;
+async function openHistorical() {
+  const { sessionId } = await Placement.startPlacementSession(db, { knowledgeIds: ['kc1'] });
+  const identity = canonicalHash({ sessionId, ordinal: 1 });
+  const issued = await seedHistoricalAssessmentIssuance(db, {
+    issuance_id: `iss_placement_${identity}`,
+    group_id: 'q1',
+    container_occurrence_ref: `placement:${sessionId}`,
+    actorRef: 'assessment:placement',
+  });
+  const receipt = {
+    ordinal: 1,
+    questionId: 'q1',
+    score: 0,
+    scoreKind: 'klp' as const,
+    issuance_id: issued.issuance.issuance_id,
+    evaluation_group_id: `eg_placement_${identity}`,
+    submission_id: `sub_placement_${identity}`,
+    idempotency_key: `placement_${identity}`,
+  };
+  await writeEvent(db, {
+    id: `evt_placement_${identity}`,
+    session_id: sessionId,
+    actor_kind: 'user',
+    actor_ref: 'self',
+    action: 'experimental:assessment_placement_issued',
+    subject_kind: 'issuance',
+    subject_id: receipt.issuance_id,
+    outcome: null,
+    payload: receipt,
+  });
+  // The original response was captured against this historical frozen DTO.
+  // Current unanswered reads remain unavailable; no model serving authority is created.
+  return {
+    sessionId,
+    knowledgeIds: ['kc1'],
+    answeredCount: 0,
+    sourcingNeeded: false,
+    starterSupply: [],
+    historicalResponseSpec: issued.practice_dto.response_spec,
+    question: {
+      questionId: 'q1',
+      score: receipt.score,
+      scoreKind: receipt.scoreKind,
+      assessment: {
+        ...receipt,
+        state: await getIssuanceState(db, receipt.issuance_id),
+        phase: 'answering' as const,
+        pending_run: null,
+      },
+    },
+  };
+}
 function original(
-  session: Open,
+  session: Open & { historicalResponseSpec?: ResponseSpecT },
   text = 'fixture answer',
 ): SaveSubmissionRequest & { submission_id: string } {
   const binding = session.question.assessment;
-  const spec = binding.state.practice_dto?.response_spec.slots.find((s) => s.kind !== 'table');
+  const spec = (
+    binding.state.practice_dto?.response_spec ?? session.historicalResponseSpec
+  )?.slots.find((s) => s.kind !== 'table');
   if (!spec) throw new Error('missing response slot');
   const responseSet: ResponseSetT = {
     entries: [{ slot_id: spec.slot_id, kind: 'text', text_md: text }],
@@ -247,6 +324,8 @@ describe('placement frozen native workflow', () => {
     expect(await db.select().from(learning_session)).toEqual(sessions);
     expect(await db.select().from(assessment_issuance)).toHaveLength(0);
   });
+  // @invariant data: reads preserve paid obligations and bind outcomes to the current revision and subject
+  // @fails-if select the old claim or mutate its ledger on read; the explicit claim and ledger assertions fail
   it('reads exhausted and unknown supply repeatedly without replay or mutation, bound to current session revision and subject', async () => {
     await seed();
     const now = new Date();
@@ -364,7 +443,14 @@ describe('placement frozen native workflow', () => {
         failure_reason: { code: 'cost_unknown' },
       },
     ]);
-    expect(await read()).toEqual(await read());
+    expect(await read()).toMatchObject([
+      {
+        claim_id: current.claimId,
+        semantic_goal_revision_id: 'revision-two',
+        subject_id: 'math',
+        state: 'unknown',
+      },
+    ]);
     expect(await snapshot()).toEqual(beforeUnknown);
     expect(JSON.stringify(await read())).not.toContain('private provider text');
   });
@@ -427,5 +513,235 @@ describe('placement frozen native workflow', () => {
       answeredCount: 1,
       starterSupply: session.starterSupply,
     });
+  });
+
+  // @invariant concurrency: an accepted or send-lost delivery is recovered under the same permanent delivery identity and settles the paid judge exactly once; replay re-executes nothing
+  // @fails-if drop the pending authority when send fails, redispatch under a new delivery id, or let a replayed job write a second evaluation/settlement; the reenqueue/send-count, unchanged pending row and count-1 assertions fail
+  it.each(['accepted', 'queue unavailable'] as const)(
+    'recovers an %s delivery from permanent authority, waits before cap, and settles once',
+    async (delivery) => {
+      await seed();
+      await publishPaperModelFixture(db, 'q1');
+      const session = await openHistorical();
+      const input = original(session, '方程和条件均已列出。');
+      await saveSubmission(db, input);
+      expect(await readJudgeRunPermanent(db, `judge_native_${input.submission_id}`)).toEqual({
+        kind: 'absent',
+      });
+      expect(await selection(session.sessionId, { cap: 1 })).toMatchObject({
+        done: false,
+        answeredCount: 1,
+        question: { assessment: { phase: 'retry', pending_run: null } },
+      });
+      const jobs: Array<
+        NativeJudgeRunJobData & { operational: z.infer<typeof JudgeWorkflowInput> }
+      > = [];
+      const send = vi.fn(async (_queue: string, data: unknown, options?: { id?: string }) => {
+        const parsed = z
+          .object({
+            run_id: z.string(),
+            caller: z.literal('native_assessment'),
+            submit: NativeJudgePendingSubmitInput,
+            operational: JudgeWorkflowInput,
+          })
+          .parse(data);
+        expect(options?.id).toBe(parsed.operational.delivery_id);
+        jobs.push(parsed);
+        return options?.id ?? null;
+      });
+      if (delivery === 'queue unavailable') send.mockRejectedValueOnce(new Error(delivery));
+      const deps = { checkRateLimit: vi.fn(() => 1), boss: { send } };
+      const runId = await dispatchNativeAttempt(
+        db,
+        'q1',
+        input,
+        { enabled: true, capture: { session_id: session.sessionId } },
+        deps,
+      );
+      if (!runId) throw new Error('missing accepted durable run');
+      expect(jobs).toHaveLength(delivery === 'accepted' ? 1 : 0);
+      const beforeRecovery = await readJudgeRunPermanent(db, runId);
+      expect(beforeRecovery).toMatchObject({
+        kind: 'pending',
+        delivery: { kind: delivery === 'accepted' ? 'accepted' : 'send_unknown' },
+      });
+      const [pending] = await db
+        .select()
+        .from(event)
+        .where(eq(event.id, `evt_pending_${runId}`));
+      const accepted = JudgePendingAttemptPayload.parse(pending.payload);
+      if (accepted.caller !== 'native_assessment') throw new Error('unexpected historical pending');
+      await expect(
+        executeNativeAttempt(db, {
+          run_id: runId,
+          caller: accepted.caller,
+          submit: accepted.submit,
+        }),
+      ).rejects.toMatchObject({ code: 'judge_authorization_required' });
+      expect(await db.select().from(evaluation)).toHaveLength(0);
+      expect(await selection(session.sessionId, { cap: 1 })).toMatchObject({
+        done: false,
+        answeredCount: 1,
+        question: { assessment: { phase: 'pending', pending_run: { run_id: runId } } },
+      });
+      expect(await db.select().from(assessment_issuance)).toHaveLength(1);
+      if (delivery === 'queue unavailable') {
+        const report = await reconcileStalledJudgeAttempts(db, {
+          now: new Date(Date.now() + RECONCILE_STALL_MS + 1_000),
+          deps: {
+            ...deps,
+            boss: { send, getJobById: vi.fn(async () => null) },
+            observe: async (reservation) => ({
+              kind: 'absent',
+              deliveryId: reservation.delivery_id,
+            }),
+          },
+        });
+        expect(report).toMatchObject({ reenqueued: 1, failed: 0 });
+        expect(send).toHaveBeenCalledTimes(2);
+        expect(deps.checkRateLimit).toHaveBeenCalledTimes(2);
+      }
+      expect(jobs).toHaveLength(1);
+      expect(await db.select().from(event).where(eq(event.id, pending.id))).toEqual([pending]);
+      expect(await readJudgeRunPermanent(db, runId)).toMatchObject({
+        kind: 'pending',
+        delivery: { kind: 'accepted' },
+      });
+      const execute = vi.fn(
+        async (
+          request: import('@/core/schema/assessment').ModelExecutorRequest,
+          _signal: AbortSignal | undefined,
+          taskRunId: string,
+        ): Promise<import('@/core/schema/assessment').ModelUnitOutcomeT> => ({
+          kind: 'scored',
+          points_awarded: request.unit.points,
+          matched: {
+            rule_id:
+              request.unit.criterion.kind === 'rule_reference'
+                ? request.unit.criterion.rule_id
+                : 'fixture',
+            option_ids: [],
+          },
+          feedback_md: 'offline recorded port',
+          confidence: 0.95,
+          evidence_citations: [],
+          run_refs: [taskRunId],
+          cost_usd_micros: 0,
+        }),
+      );
+      vi.spyOn(evaluationService, 'createFormalModelExecutor').mockImplementation(
+        (_database, _signal, _admission, execution) =>
+          createRecordedModelExecutor(
+            db,
+            execute,
+            execution
+              ? { fence: (tx, request) => fenceJudgeUnitClaim(tx, execution, request) }
+              : {},
+          ),
+      );
+      const job = jobs[0];
+      const meta = { retryCount: 0, retryLimit: 2, deliveryId: job.operational.delivery_id };
+      expect(await runJudgeRun(db, job, meta)).toMatchObject({ status: 'done', run_id: runId });
+      expect(await selection(session.sessionId, { cap: 1 })).toMatchObject({
+        done: true,
+        reason: 'cap',
+        answeredCount: 1,
+      });
+      const effects = {
+        mastery: await db.select().from(mastery_state),
+        fsrs: await db.select().from(material_fsrs_state),
+      };
+      expect(await runJudgeRun(db, job, meta)).toMatchObject({ status: 'skipped' });
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(await db.select().from(evaluation)).toHaveLength(1);
+      expect(await db.select().from(evaluation_effective_head)).toHaveLength(1);
+      expect(await db.select().from(assessment_submission)).toHaveLength(1);
+      expect(
+        await db.select().from(event).where(eq(event.action, 'experimental:assessment_attempt')),
+      ).toHaveLength(1);
+      expect(
+        await db.select().from(event).where(eq(event.action, 'experimental:assessment_settlement')),
+      ).toHaveLength(1);
+      expect(await db.select().from(mastery_state)).toEqual(effects.mastery);
+      expect(await db.select().from(material_fsrs_state)).toEqual(effects.fsrs);
+      expect(await db.select().from(assessment_issuance)).toHaveLength(1);
+      expect(await readJudgeRunPermanent(db, runId)).toMatchObject({
+        kind: 'resolved',
+        activity: 'terminal',
+      });
+      expect(
+        (await db.select().from(mastery_state).where(eq(mastery_state.subject_id, 'kc1')))[0]
+          .evidence_count,
+      ).toBe(1);
+    },
+  );
+
+  // @invariant concurrency: a persisted worker resolution is terminal authority; a lost job notification or redelivery skips with already_persisted and never redispatches the model
+  // @fails-if re-execute the model or overwrite the held resolution on replay; the judge_already_completed rejection, already_persisted skip, stable selection and execute-count-1 assertions fail
+  it('holds a stored worker resolution even if its job notification was lost, without model redispatch', async () => {
+    await seed();
+    await publishPaperModelFixture(db, 'q1');
+    const session = await openHistorical();
+    const jobs: NativeJudgeRunJobData[] = [];
+    await dispatchNativeAttempt(
+      db,
+      'q1',
+      original(session, 'original unresolved response'),
+      { enabled: true, capture: { session_id: session.sessionId } },
+      {
+        checkRateLimit: () => 1,
+        boss: {
+          send: async (_queue, data, options) => {
+            const job = z
+              .object({
+                run_id: z.string(),
+                caller: z.literal('native_assessment'),
+                submit: NativeJudgePendingSubmitInput,
+                operational: JudgeWorkflowInput,
+              })
+              .parse(data);
+            expect(options?.id).toBe(job.operational.delivery_id);
+            jobs.push(job);
+            return job.operational.delivery_id;
+          },
+        },
+      },
+    );
+    const execute = vi.fn(
+      async (): Promise<import('@/core/schema/assessment').ModelUnitOutcomeT> => ({
+        kind: 'pending',
+        pending: { reason: 'unjudgeable', detail: 'offline held original' },
+        run_refs: [],
+        cost_usd_micros: 0,
+      }),
+    );
+    vi.spyOn(evaluationService, 'createFormalModelExecutor').mockImplementation(
+      (_database, _signal, _admission, execution) =>
+        createRecordedModelExecutor(
+          db,
+          execute,
+          execution ? { fence: (tx, request) => fenceJudgeUnitClaim(tx, execution, request) } : {},
+        ),
+    );
+    await executeNativeAttempt(db, jobs[0]);
+    const recovered = await selection(session.sessionId, { cap: 1 });
+    expect(recovered).toMatchObject({
+      done: false,
+      answeredCount: 1,
+      question: { assessment: { phase: 'held', pending_run: null } },
+    });
+    await expect(executeNativeAttempt(db, jobs[0])).rejects.toMatchObject({
+      code: 'judge_already_completed',
+    });
+    expect(
+      await runJudgeRun(db, jobs[0], {
+        retryCount: 1,
+        retryLimit: 2,
+        deliveryId: jobs[0].operational?.delivery_id,
+      }),
+    ).toMatchObject({ status: 'skipped', reason: 'already_persisted' });
+    expect(execute).toHaveBeenCalledTimes(1);
+    expect(await selection(session.sessionId, { cap: 1 })).toEqual(recovered);
+    expect(await db.select().from(mastery_state)).toHaveLength(0);
   });
 });

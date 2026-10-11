@@ -29,17 +29,12 @@
 
 import { useQuery } from '@tanstack/react-query';
 import { memo, useCallback, useEffect, useId, useRef, useState } from 'react';
-import {
-  ApiAuthError,
-  ApiError,
-  type ApiOperationJsonResponse,
-  apiFetch,
-  apiJson,
-} from '@/ui/lib/api';
+import { ApiAuthError, ApiError, apiJson } from '@/ui/lib/api';
 import {
   DeferredMarkdownRenderer,
   preloadMarkdownRenderer,
 } from '@/ui/lib/deferred-markdown-renderer';
+import { randomId } from '@/ui/lib/random-id';
 import {
   openCopilotForNudge,
   useCopilotDwell,
@@ -55,6 +50,11 @@ import { ToolUseCard } from '@/ui/primitives/ToolUseCard';
 import { isWithinCopilotReuseWindow } from '../session-reuse';
 import { CopilotHeroCard } from './CopilotHeroCard';
 import { type CopilotSessionListItem, CopilotSessionPanel } from './CopilotSessionPanel';
+import {
+  type CopilotSessionsResponse,
+  type CopilotTurnsResponse,
+  useCopilotClient,
+} from './copilot-client';
 import {
   type PersistedPendingCopilotRequestBody,
   type PersistedPendingCopilotTurn,
@@ -79,7 +79,6 @@ import {
   type ReplaySkillContext as CopilotSkillContextT,
   type ReplaySubagentRun,
   type ReplayToolOperation,
-  type ReplayTurn,
   replayToMessages,
 } from './replay';
 import { restoreSkillContext } from './skill-lifecycle';
@@ -163,21 +162,7 @@ function copilotProgressStage(view: CopilotRunView): CopilotProgressStage {
   return latestSubtask ? progressStageForLabel(latestSubtask.label) : 'generation';
 }
 
-// GET /api/copilot/turns response shape — see src/capabilities/copilot/server/turns.ts.
-interface CopilotTurnsResponse {
-  session_id: string | null;
-  turns: ReplayTurn[];
-  active_runs: Array<{
-    run_id: string;
-    session_id: string;
-    status: 'queued' | 'started' | 'running' | 'cancel_requested';
-    events_url: string;
-  }>;
-}
-
-type CopilotSessionsResponse = ApiOperationJsonResponse<'listCopilotSessions'>;
 type CopilotSessionResponse = CopilotSessionsResponse['sessions'][number];
-type CopilotCreateSessionResponse = ApiOperationJsonResponse<'createCopilotSession'>;
 
 const LEARNER_TOOL_LABELS: Readonly<Record<string, string>> = {
   query_mistakes: '错题整理',
@@ -532,6 +517,10 @@ export const MessageRow = memo(function MessageRow({
 });
 
 export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotDockProps) {
+  // Transport seam (YUK-1473); read through a ref so the memoized callbacks below keep their deps.
+  const copilotClient = useCopilotClient();
+  const clientRef = useRef(copilotClient);
+  clientRef.current = copilotClient;
   // YUK-577 — proactive-nudge state. A pending nudge is rendered as a badge/bar; the drawer itself
   // opens only after the user clicks it. The legacy blind dwell/revisit auto-open path is gone.
   const {
@@ -565,7 +554,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
   drawerEpochRef.current = drawerVisit.epoch;
   const sessionsQ = useQuery({
     queryKey: ['copilot-sessions', sessionQueryInstance, drawerVisit.epoch],
-    queryFn: ({ signal }) => apiJson<CopilotSessionsResponse>('/api/copilot/sessions', { signal }),
+    queryFn: ({ signal }) => clientRef.current.listSessions(signal),
     enabled: open,
     placeholderData: (previous) => previous,
   });
@@ -754,9 +743,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       setCreatingSession(true);
       setError(null);
       try {
-        const response = await apiJson<CopilotCreateSessionResponse>('/api/copilot/sessions', {
-          method: 'POST',
-        });
+        const response = await clientRef.current.createSession();
         if (
           selectionRevisionRef.current === selectionAtRequest &&
           (origin === 'explicit' || (openRef.current && drawerEpochRef.current === openAtRequest))
@@ -946,7 +933,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       bumpRunRevision();
       void consumeDurableCopilotRun({
         location: run.location,
-        fetchResponse: apiFetch,
+        fetchResponse: (input, init) => clientRef.current.fetchRunEvents(input, init),
         initialState: run.view,
         signal: controller.signal,
         onUpdate: (view) => {
@@ -1076,9 +1063,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         .filter((run) => run.sessionId === sessionId)
         .map((run) => run.runId),
     );
-    const snapshot = await apiJson<CopilotTurnsResponse>(
-      `/api/copilot/turns?limit=${REPLAY_LIMIT}&session_id=${encodeURIComponent(sessionId)}`,
-    );
+    const snapshot = await clientRef.current.listTurns(sessionId, REPLAY_LIMIT);
     if (currentSessionIdRef.current !== sessionId) return false;
     if ((snapshotAppliedSeqRef.current.get(sessionId) ?? 0) >= requestSequence) return false;
     snapshotAppliedSeqRef.current.set(sessionId, requestSequence);
@@ -1108,10 +1093,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       setRefreshFailed(false);
       try {
         try {
-          await apiJson(
-            `/api/copilot/checkpoints/${encodeURIComponent(checkpointEventId)}/revert`,
-            { method: 'POST' },
-          );
+          await clientRef.current.revertCheckpoint(checkpointEventId);
         } catch (err) {
           // The revert POST itself failed — nothing landed. A cascade REFUSAL body ({ ok:false,
           // refusal, reason }) carries no top-level message, so ApiError.message is only the generic
@@ -1174,11 +1156,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
       run.stopPending = true;
       bumpRunRevision();
       try {
-        const result = await apiJson<{
-          ok: true;
-          run_id: string;
-          status: 'cancel_requested' | 'cancelled' | 'already_requested' | 'already_settled';
-        }>(`/api/copilot/runs/${encodeURIComponent(runId)}/cancel`, { method: 'POST' });
+        const result = await clientRef.current.cancelRun(runId);
         if (result.run_id !== runId) throw new Error('stop response run mismatch');
         if (result.status === 'already_settled') {
           await refetchTurns().catch(() => undefined);
@@ -1224,7 +1202,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         setError('对话仍在加载，请稍后再试。');
         return;
       }
-      const idempotencyKey = recovery?.idempotencyKey ?? crypto.randomUUID();
+      const idempotencyKey = recovery?.idempotencyKey ?? randomId();
       const userMessageId = recovery?.userMessageId ?? nextId();
       const aiMessageId = recovery?.aiMessageId ?? nextId();
       // A retry must replay the exact normalized body as well as the key. The
@@ -1280,11 +1258,7 @@ export function CopilotDock({ pathname, navigate, onNudgeCountChange }: CopilotD
         }),
       );
       try {
-        const res = await apiFetch('/api/copilot/chat', {
-          method: 'POST',
-          headers: { 'Idempotency-Key': idempotencyKey },
-          body: JSON.stringify(requestBody),
-        });
+        const res = await clientRef.current.sendChat(requestBody, idempotencyKey);
         if (res.status !== 202) {
           throw new Error(`Copilot acceptance protocol failed (${res.status}); retry the same key`);
         }

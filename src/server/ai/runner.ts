@@ -163,6 +163,7 @@ export interface TaskMiddleware {
 }
 
 export interface RunTaskCtx {
+  judgeRetryPolicy?: Options['judgeRetryPolicy'];
   db: Db;
   /** Per-run capability-owned sanitized content; omitted runs export metadata only. */
   laminarContent?: TraceContent<RunTaskResult>;
@@ -507,6 +508,7 @@ function buildQueryOptions(
   const def = tasks[kind];
   const declaredDef: TaskDefinition = def;
   const options: Options = {
+    judgeRetryPolicy: ctx.judgeRetryPolicy,
     model: resolved.model,
     systemPrompt: getTaskSystemPrompt(kind, ctx.subjectProfile, ctx.learnerLocale),
     abortController,
@@ -848,11 +850,14 @@ async function runTaskImpl(kind: string, input: unknown, ctx: RunTaskCtx): Promi
   const modelBinding = ctx.modelBinding;
   // Narrow pass, not {...ctx}: RunTaskCtx consumers may define lazy getters
   // (allowedTools et al.) whose evaluation must stay single-shot and ordered.
-  const maxAttempts = maxLifecycleAttempts(budget.transientRetries, {
-    enableTransientRetry: ctx.enableTransientRetry,
-    override: ctx.override,
-    modelBinding,
-  });
+  const maxAttempts =
+    ctx.judgeRetryPolicy === 'none'
+      ? 1
+      : maxLifecycleAttempts(budget.transientRetries, {
+          enableTransientRetry: ctx.enableTransientRetry,
+          override: ctx.override,
+          modelBinding,
+        });
   const firstAttemptStartedAt = Date.now();
   const retryingSyncDeadlineAt =
     maxAttempts > 1 ? firstAttemptStartedAt + RETRY_ELAPSED_CAP_MS + budget.timeout : undefined;

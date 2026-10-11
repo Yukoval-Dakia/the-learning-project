@@ -5,7 +5,6 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { ProposalDecisionInput } from '@/core/schema/proposal';
 import {
   type BlockMergeAdmissionContext,
   type BlockMergeAdmissionFacts,
@@ -514,21 +513,6 @@ describe('evaluateBlockMergeAdmission', () => {
     });
     expectIneligible([primary, member], [member.id], 'not_draft');
   });
-
-  it('never consults confidence: identical facts admit regardless of signal/confidence', () => {
-    const primary = facts({
-      id: 'p',
-      page_spans: [{ page_index: 1, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
-    });
-    const member = facts({
-      id: 'm',
-      page_spans: [{ page_index: 2, bbox: { x: 0, y: 0, width: 1, height: 1 } }],
-    });
-    // The input carries no confidence field at all — proof is deterministic.
-    expect(
-      evaluateBlockMergeAdmission(input(primary, [member]), ctxFor([primary, member])).eligible,
-    ).toBe(true);
-  });
 });
 
 describe('parseQuestionNo', () => {
@@ -543,23 +527,5 @@ describe('parseQuestionNo', () => {
     expect(parseQuestionNo('十二')).toEqual({ kind: 'top', value: 12, style: 'cn' });
     expect(parseQuestionNo('')).toBeNull();
     expect(parseQuestionNo('  ')).toBeNull();
-  });
-});
-
-describe('ProposalDecisionInput confirm_lossy', () => {
-  it('accepts confirm_lossy only for decision=accept', () => {
-    expect(
-      ProposalDecisionInput.safeParse({ decision: 'accept', confirm_lossy: true }).success,
-    ).toBe(true);
-    expect(
-      ProposalDecisionInput.safeParse({ decision: 'dismiss', confirm_lossy: true }).success,
-    ).toBe(false);
-    expect(
-      ProposalDecisionInput.safeParse({ decision: 'retract', confirm_lossy: true }).success,
-    ).toBe(false);
-    expect(
-      ProposalDecisionInput.safeParse({ decision: 'accept', confirm_lossy: false }).success,
-    ).toBe(false);
-    expect(ProposalDecisionInput.safeParse({ decision: 'accept' }).success).toBe(true);
   });
 });

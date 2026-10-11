@@ -5,6 +5,7 @@ status: accepted
 # ADR-0070 — 统一学习者大脑：一份有版本的共用判断与对账校准
 
 **Status:** Accepted（设计方向，2026-10-11）；尚未实施。
+**Amended by:** ADR-0072 D4（2026-10-11）——契约增补一项批量读面：候选 refs → 每题 P(对)、不确定度与预测版本，供备题 agent / Copilot 与题库检索结果组合；题库工具本身不读写学习者状态。
 **Decision source:** owner 2026-10-10 愿景评审「一套多元信号的算法蛮重要——我们之前选 FSRS 有点稀里糊涂的。没有一种长在产品上的大脑的感觉——虽然我知道大概不可能用一个算式表达」；2026-10-11 拍板 B1–B4（决定记录 `/Volumes/YukovalSBak/yukoval-projects/tlp-status/decisions/2026-10-11-supply-and-brain.md`），讨论票转实施。
 **Tracking:** [YUK-1470](https://linear.app/yukoval-studios/issue/YUK-1470)。
 **Related:** ADR-0066（TypeScript 全栈与实时自适应学习）、ADR-0067（教研白板与事件例会——BKT 删除、白板 finding 防自喂）、ADR-0068（通用学科）、ADR-0028（按知识点 FSRS 调度——其遗忘计算被本文 D4 批准替换）、ADR-0030（by-kind 选题 seam——不在替换范围）、[YUK-1431](https://linear.app/yukoval-studios/issue/YUK-1431)（预测封存）、[YUK-1053](https://linear.app/yukoval-studios/issue/YUK-1053)（同事务结算）、[YUK-1445](https://linear.app/yukoval-studios/issue/YUK-1445)（判分准入）；讨论稿（细节真相源，绝对路径）`/Volumes/YukovalSBak/yukoval-projects/tlp-status/discussions/learner-brain-draft.md`。

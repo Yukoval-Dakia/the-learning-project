@@ -12,6 +12,16 @@ export function buildLegacySpa(root: string): Hono {
   // Missing assets must not masquerade as an HTML document (or run stale chunks).
   spa.get('/assets/*', (c) => c.notFound());
   spa.get('/_build/*', (c) => c.notFound());
+  for (const asset of [
+    '/manifest.webmanifest',
+    '/apple-touch-icon.png',
+    '/icon-192.png',
+    '/icon-512.png',
+    '/icon-maskable-512.png',
+    '/favicon.svg',
+  ]) {
+    spa.get(asset, (c) => c.notFound());
+  }
   spa.get('*', serveStatic({ root, path: 'index.html' }));
   return spa;
 }

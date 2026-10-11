@@ -104,6 +104,8 @@ async function seedAuthorizedQuestion(
 describe('placement attempt authority', () => {
   beforeEach(async () => resetDb());
 
+  // @invariant data: terminal failures preserve the original paid provider receipt
+  // @fails-if overwrite the terminal attempt or hash a different output; the receipt comparison fails
   it('atomically seals schema failure with terminal claim status and retains the immutable paid receipt', async () => {
     const now = new Date('2026-10-10T00:00:00.000Z');
     await seedClaim(now);
@@ -145,7 +147,9 @@ describe('placement attempt authority', () => {
       error_message: JSON.stringify(reason),
       provider_task_run_id: 'successful-model-schema-rejected',
     });
-    expect(finished?.provider_output_hash).toMatch(/^[a-f0-9]{64}$/);
+    expect(finished?.provider_output_hash).toBe(
+      '2c5645bf718e756ae9edf885763733f455a585907a89c35c6dd188158fed8a58',
+    );
     await expect(finishPlacementAttempt(testDb(), attempt, 'succeeded', now)).rejects.toThrow(
       PlacementStarterStaleAuthorityError,
     );

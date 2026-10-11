@@ -1,3 +1,4 @@
+import { observeJudgeProcess } from '../judge-process-observer';
 // ====================================================================
 // YUK-1047 — evaluateSubmission 的持久化入口（grounding §4.2–§4.4）
 // ====================================================================
@@ -64,6 +65,12 @@ import {
   withdrawCapturedOccurrence,
 } from '@/server/assessment/runtime';
 import { checkRateLimit } from '@/server/http/rate-limit';
+import {
+  type JudgeExecution,
+  bindJudgeExecution,
+  fenceJudgeUnitClaim,
+  requireJudgeRunOpen,
+} from '../judge-operational';
 import { createRecordedModelExecutor } from './recorded-model-executor';
 
 // Native assessment runtime ports are assembled at this existing capability boundary.
@@ -99,6 +106,7 @@ export interface PiModelExecutorSpec {
 
 /** evaluateSubmission 请求（§4.3 Interface）。 */
 export interface EvaluateSubmissionRequest {
+  judge_execution?: JudgeExecution;
   submission_id: string;
   evaluation_group_id: string;
   /** Same operation across preview/commit/redelivery. A regrade uses a new key. */
@@ -163,6 +171,7 @@ export function createFormalModelExecutor(
   db: Db,
   signal?: AbortSignal,
   admission?: 'durable',
+  execution?: JudgeExecution,
 ): ModelUnitExecutorPort {
   const deadlineAt = Date.now() + 90_000;
   let admitted = false;
@@ -176,11 +185,19 @@ export function createFormalModelExecutor(
           signal,
           taskRunId,
           maxCostUsdMicros: request.executor.max_cost_usd_micros ?? 0,
+          judgeRetryPolicy: admission === 'durable' ? 'none' : undefined,
         })(request, callerSignal);
       }
-      return createJevModelExecutor({ db, deadlineAt, signal, taskRunId })(request, callerSignal);
+      return createJevModelExecutor({
+        db,
+        deadlineAt,
+        signal,
+        taskRunId,
+        judgeRetryPolicy: admission === 'durable' ? 'none' : undefined,
+      })(request, callerSignal);
     },
     {
+      fence: execution ? (tx, request) => fenceJudgeUnitClaim(tx, execution, request) : undefined,
       beforeClaim: () => {
         if (admitted) return;
         try {
@@ -519,7 +536,41 @@ export async function evaluateSubmission(
           .where(eq(evaluation.submission_id, submissionRow.submission_id))
           .orderBy(desc(evaluation.attempt))
           .limit(1);
-        const attempt = (latest?.attempt ?? 0) + 1;
+        const binding =
+          request.judge_execution && executionReceipt
+            ? await bindJudgeExecution(tx, request.judge_execution, {
+                evaluation_group_id: request.evaluation_group_id,
+                submission_id: submissionRow.submission_id,
+                execution_key: executionReceipt.key,
+                member_submission_ids: ids,
+                input_digest: canonicalHash(inputSnapshot),
+                intent_digest: executionReceipt.intent_digest,
+                attempt: (latest?.attempt ?? 0) + 1,
+                admission_snapshot: admissionSnapshot ?? null,
+                execution_policy: {
+                  version: 1,
+                  paid_retry: 'none',
+                  evaluation: request.policy ?? {},
+                },
+              })
+            : null;
+        const attempt = binding?.attempt ?? (latest?.attempt ?? 0) + 1;
+        if (binding) {
+          const [occupied] = await tx
+            .select({ id: evaluation.evaluation_id })
+            .from(evaluation)
+            .where(
+              and(
+                eq(evaluation.submission_id, submissionRow.submission_id),
+                eq(evaluation.attempt, attempt),
+              ),
+            );
+          if (occupied)
+            throw new EvaluateSubmissionError(
+              'attempt_conflict',
+              'durable bound attempt is occupied; no fresh model execution permitted',
+            );
+        }
 
         return async () => {
           const core = await evaluateSubmissionCore({
@@ -531,7 +582,9 @@ export async function evaluateSubmission(
             attempt,
             provenance: {
               ...(request.provenance ?? { source: 'automatic', assisted: false }),
-              admission_snapshot: admissionSnapshot ?? null,
+              admission_snapshot: binding
+                ? binding.admission_snapshot
+                : (admissionSnapshot ?? null),
               input_snapshot: inputSnapshot,
               execution_receipt: executionReceipt,
             },
@@ -546,6 +599,7 @@ export async function evaluateSubmission(
           });
 
           return database.transaction(async (tx) => {
+            if (request.judge_execution) await requireJudgeRunOpen(tx, request.judge_execution);
             const record = { ...core.record, evaluation_id: evaluationIdFor(core.record) };
             const payload: EvaluationRowPayload = {
               evaluation_id: record.evaluation_id,
@@ -632,7 +686,15 @@ export async function evaluateSubmission(
         };
       },
     );
-    return execute();
+    if (request.judge_execution)
+      await observeJudgeProcess({
+        kind: 'native-load-committed',
+        submissionId: request.submission_id,
+      });
+    const result = await execute();
+    if (request.judge_execution)
+      await observeJudgeProcess({ kind: 'candidate-sealed', submissionId: request.submission_id });
+    return result;
   };
 
   // Deterministic callers may already own a transaction; model callers must not.
@@ -667,6 +729,7 @@ export async function activateSubmissionCandidate(
     /** Lock an entry's container occurrence before activation locks its group/root. */
     beforeActivate?: (tx: Tx) => Promise<void>;
     onThetaApplied?: SettlementObservers['onThetaApplied'];
+    judgeExecution?: JudgeExecution;
   },
 ) {
   return database.transaction(async (tx) => {
@@ -676,6 +739,7 @@ export async function activateSubmissionCandidate(
     }
     const result = await activateEvaluation(tx, intent, {
       settle: async (input) => {
+        if (options.judgeExecution) await requireJudgeRunOpen(input.tx, options.judgeExecution);
         await options.recordOriginal?.(input.tx);
         return learningSettlement(input, { onThetaApplied: options.onThetaApplied });
       },

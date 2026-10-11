@@ -38,10 +38,7 @@ import {
   question_group_lifecycle,
   question_revision,
 } from '@/db/schema';
-import {
-  type NormalizableQuestionRow,
-  normalizeQuestionRowToContract,
-} from '@/server/questions/contract-normalizer';
+import { contractIntegrityDigest } from '@/server/questions/contract-normalizer';
 import { publishQuestionGroup } from '@/server/questions/publisher';
 
 export interface PostWriteHandle {
@@ -65,7 +62,11 @@ export async function simulatePostCutoverWrites(db: Db): Promise<PostWriteHandle
   );
   const watermark = Number(watermarkRows[0]?.m ?? 0);
 
-  // 1) 新题发布（生产 publish 路径：normalize → contract → publishQuestionGroup）。
+  // 1) 新题发布（生产 publish 路径：显式契约 → publishQuestionGroup）。
+  //    契约逐字声明 —— single_choice 槽位、option_set_key 判据
+  //    （accepted_option_ids 直指 11/12 选项）、deterministic exact_option_set
+  //    执行计划 —— 不经 normalizer 的 reference_md 猜 key 路径（owner：
+  //    fixture 不做任何 reference 文本 key 提取）。
   await db.insert(question).values({
     id: 'q-live',
     kind: 'choice',
@@ -85,17 +86,58 @@ export async function simulatePostCutoverWrites(db: Db): Promise<PostWriteHandle
     updated_at: PW_NOW,
     version: 0,
   });
-  const [row] = await db.select().from(question).where(eq(question.id, 'q-live')).limit(1);
-  const normalized = normalizeQuestionRowToContract(row as NormalizableQuestionRow);
-  const published = await publishQuestionGroup(db, {
-    group_id: normalized.group_id,
-    contract: {
-      structure: normalized.structure,
-      response_spec: normalized.response_spec,
-      scoring_basis: normalized.scoring_basis,
-      execution_plan: normalized.execution_plan,
-      integrity_digest: normalized.integrity_digest,
+  // 契约四层显式声明（与 seed 行的 choices_md 文案一致；答案 key 只存在于
+  // scoring_basis 判据 —— reference_md 是惰性展示元数据，不参与任何路由）。
+  const options = [
+    { option_id: 'opt_q_live_a', label: 'A', text: '11/12' },
+    { option_id: 'opt_q_live_b', label: 'B', text: '9/12' },
+    { option_id: 'opt_q_live_c', label: 'C', text: '7/6' },
+    { option_id: 'opt_q_live_d', label: 'D', text: '4/10' },
+  ];
+  const contract = {
+    structure: {
+      group_id: 'q-live',
+      materials: [],
+      parts: [{ part_id: 'p1', prompt_md: '（演练 live 题）3/4 + 1/6 = ?', material_ids: [] }],
     },
+    response_spec: {
+      slots: [{ slot_id: 'p1::r', part_id: 'p1', kind: 'single_choice' as const, options }],
+    },
+    scoring_basis: {
+      units: [
+        {
+          scoring_unit_id: 'p1::u',
+          slot_refs: ['p1::r'],
+          material_refs: [],
+          evidence_slot_refs: [],
+          requires_group_evidence: false,
+          criterion: {
+            kind: 'option_set_key' as const,
+            accepted_option_ids: ['opt_q_live_a'],
+          },
+          points: 2,
+        },
+      ],
+      aggregation: { kind: 'sum' as const },
+      blank_scores_zero: true,
+    },
+    execution_plan: {
+      plan_version: 1,
+      assignments: [
+        {
+          scoring_unit_ids: ['p1::u'],
+          executor: { kind: 'deterministic' as const, comparator: 'exact_option_set' as const },
+        },
+      ],
+      escalation: {
+        on_unadmitted_model: 'withhold' as const,
+        on_low_confidence: 'human_review' as const,
+      },
+    },
+  };
+  const published = await publishQuestionGroup(db, {
+    group_id: 'q-live',
+    contract: { ...contract, integrity_digest: contractIntegrityDigest(contract) },
     expectedCurrentRevision: null,
     expectedAdmissionGeneration: null,
     availability: 'general_pool',
@@ -123,8 +165,22 @@ export async function simulatePostCutoverWrites(db: Db): Promise<PostWriteHandle
   if (slot.kind !== 'single_choice') {
     throw new Error(`post-write: expected single_choice slot, got ${slot.kind}`);
   }
-  const correctOption = slot.options.find((o) => o.text === '11/12');
-  if (!correctOption) throw new Error('post-write: correct option missing');
+  // 答案 key 绑定到【冻结 revision 的 scoring_basis 判据】—— 不是从槽位文案
+  // 或 reference 文本反查。断言原不变量保留：判据恰好接受一个选项，且该选项
+  // 就是稳定正确项 11/12。
+  const unit = rev.scoring_basis.units[0];
+  if (
+    unit === undefined ||
+    unit.criterion.kind !== 'option_set_key' ||
+    unit.criterion.accepted_option_ids.length !== 1
+  ) {
+    throw new Error('post-write: expected single-answer option_set_key criterion');
+  }
+  const acceptedOptionId = unit.criterion.accepted_option_ids[0];
+  const correctOption = slot.options.find((o) => o.option_id === acceptedOptionId);
+  if (correctOption?.text !== '11/12') {
+    throw new Error('post-write: correct option missing');
+  }
 
   // 2) 发题 → 草稿 → 提交（真实 seam；draft 随后被 submit 清掉 —— 事件/head 落库）。
   const issued = await issueAssessment(db, {
@@ -141,7 +197,7 @@ export async function simulatePostCutoverWrites(db: Db): Promise<PostWriteHandle
       {
         slot_id: slot.slot_id,
         kind: 'choice' as const,
-        option_ids: [correctOption.option_id],
+        option_ids: [acceptedOptionId],
         self_confidence: 4,
       },
     ],
