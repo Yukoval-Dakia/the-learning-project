@@ -4,6 +4,7 @@
 import './tokens.css';
 import './components.css';
 
+export * from './mascot';
 export type { FlyOptions, MorphSnapshot } from './motion/flights';
 export { bump, flyTo, playMorphs, snapshotMorphs } from './motion/flights';
 export { holdReadingPosition } from './motion/reading';
@@ -13,4 +14,4 @@ export type { SpringConfig, SpringHandle, SpringOptions } from './motion/spring'
 export { createSpring } from './motion/spring';
 export * from './primitives';
 export * from './shell';
-export { DURATION, EASE, PHONE_MAX_WIDTH, PHONE_MEDIA, SPRING, Z } from './tokens';
+export { DURATION, EASE, MASCOT_SIZE, PHONE_MAX_WIDTH, PHONE_MEDIA, SPRING, Z } from './tokens';

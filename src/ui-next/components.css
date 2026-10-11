@@ -613,6 +613,90 @@
   }
 }
 
+/* ── Mascot (B1–B4) ──────────────────────────────────────
+   One fixed layer over the page; the box is moved and scaled by a JS spring (transform only).
+   The still flower shows until the glass one is ready, then cross-fades. */
+[data-ui-next] {
+  --un-mascot-canvas: 224px;
+
+  & .un-mascot-layer {
+    position: fixed;
+    inset: 0;
+    z-index: var(--un-z-mascot);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity var(--un-t-ui) var(--un-ease-glide);
+  }
+
+  & .un-mascot-layer[data-visible="true"] {
+    opacity: 1;
+  }
+
+  & .un-mascot {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: var(--un-mascot-canvas);
+    height: var(--un-mascot-canvas);
+    transform-origin: 0 0;
+    will-change: transform;
+  }
+
+  & .un-mascot-turn,
+  & .un-mascot-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    transition: opacity var(--un-t-ui) var(--un-ease-glide);
+  }
+
+  /* A petal forward on each settle (B2), for the still flower; the glass one turns in WebGL. */
+  & .un-mascot-turn {
+    transform: rotate(var(--un-mascot-turn, 0deg));
+    transition:
+      opacity var(--un-t-ui) var(--un-ease-glide),
+      transform var(--un-t-panel) var(--un-ease-spring);
+  }
+
+  & .un-mascot-still {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+
+  & .un-mascot-canvas {
+    display: block;
+    opacity: 0;
+  }
+
+  & .un-mascot-layer[data-render="gl"] .un-mascot-canvas {
+    opacity: 1;
+  }
+
+  & .un-mascot-layer[data-render="gl"] .un-mascot-turn {
+    opacity: 0;
+  }
+
+  /* The page's anchor for the mascot: an empty square the flower lands on. */
+  & .un-mascot-slot {
+    display: block;
+    flex: none;
+    width: var(--un-slot);
+    aspect-ratio: 1;
+    border-radius: 50%;
+    background: radial-gradient(
+      closest-side,
+      color-mix(in srgb, var(--un-accent) var(--un-slot-glow, 0%), transparent),
+      transparent
+    );
+  }
+
+  & .un-mascot-dock {
+    display: none;
+  }
+}
+
 /* Phone (T8: 720px). The sidebar and the side panel give way to the sheet and the tab bar. */
 @media (max-width: 720px) {
   [data-ui-next] {
@@ -656,6 +740,17 @@
     & .un-app-phone-chrome {
       display: block;
     }
+
+    & .un-mascot-slot {
+      width: var(--un-slot-phone, var(--un-slot));
+    }
+
+    & .un-mascot-dock {
+      display: inline-block;
+      flex: none;
+      width: var(--un-mascot-dock);
+      height: var(--un-mascot-dock);
+    }
   }
 }
 
@@ -698,6 +793,11 @@
 
     & .un-flash {
       animation: un-flash var(--un-t-glow) var(--un-ease-glide) both;
+    }
+
+    /* The still flower spins while the companion thinks (B2); one turn ≈ 4.2 s, as in 3D. */
+    & .un-mascot[data-thinking="true"] .un-mascot-still {
+      animation: un-mascot-spin 4.2s linear infinite;
     }
   }
 }
@@ -750,5 +850,11 @@
   }
   100% {
     background-color: transparent;
+  }
+}
+
+@keyframes un-mascot-spin {
+  to {
+    transform: rotate(1turn);
   }
 }
