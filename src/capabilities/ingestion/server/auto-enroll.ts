@@ -10,6 +10,7 @@ import {
   runColdStartBridge,
 } from '@/capabilities/ingestion/server/cold-start-bridge';
 import { enrollCapturedBlock } from '@/capabilities/ingestion/server/enroll';
+import { figuresForQuestion } from '@/capabilities/ingestion/server/figure_attach';
 import { createKnowledgeNamer } from '@/capabilities/ingestion/server/knowledge-namer';
 import {
   MistakeEnrollTaskError,
@@ -42,7 +43,7 @@ import {
 } from '@/core/schema/structured_question';
 import type { TaggingOutputT } from '@/core/schema/tagging';
 import type { Db } from '@/db/client';
-import { knowledge, learning_session, question, question_block } from '@/db/schema';
+import { knowledge, learning_session, question, question_block, source_asset } from '@/db/schema';
 import type { WriteEventInput } from '@/kernel/events';
 /**
  * WorkflowJudge auto-enroll path — T-OC slice 3 (YUK-145, OC-4 / OC-5).
@@ -601,6 +602,21 @@ export async function runAutoEnrollForSession(
       }
 
       const questionId = createId();
+      const figureAssets = block.figures.length
+        ? await tx
+            .select({
+              id: source_asset.id,
+              storage_key: source_asset.storage_key,
+              sha256: source_asset.sha256,
+            })
+            .from(source_asset)
+            .where(
+              inArray(
+                source_asset.id,
+                block.figures.map((figure) => figure.asset_id),
+              ),
+            )
+        : [];
       await tx.insert(question).values(
         withAnswerClass({
           id: questionId,
@@ -615,7 +631,10 @@ export async function runAutoEnrollForSession(
           difficulty: verdict.prefilled.difficulty,
           source: sessionEntrypoint,
           variant_depth: 0,
-          figures: block.figures,
+          figures: figuresForQuestion(block.structured, block.figures, {
+            sourceAssetIds: block.source_asset_ids,
+            assets: figureAssets,
+          }),
           image_refs: block.image_refs,
           // Carry the structured tree only if prompt_md is regenerable from it
           // (ADR-0002 revision invariant). questionMd is derived from structured,

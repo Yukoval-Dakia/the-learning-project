@@ -66,7 +66,7 @@ export function parseStructureOutput(text: string): StructureOutputT {
 function buildStructurePrompt(profile: SubjectProfile): string {
   return `你是${profile.displayName}试卷结构化助手（多模态）。输入：
 - user message 里按页顺序附了 N 张试卷/作业页面图片（第 1 张 = page_index 0，依次类推）
-- 一段文字 { tencent_hint_md, page_count[, figures] } —— tencent_hint_md 是腾讯字符级 OCR 的**文字提示**（已按页用 "=== page K ===" 分隔），仅作参考，**不是**结构真相；figures（若存在）是裁剪图列表 [{index, page_index, position}]，表示已从页面裁剪出的图片素材：index 是序号，page_index 是所在页，position 是归一化位置摘要（"top-left" / "top-center" / "top-right" / "mid-left" / "mid-center" / "mid-right" / "bot-left" / "bot-center" / "bot-right"，按图片中心点在页面 3×3 区域落点）
+- 一段文字 { tencent_hint_md, page_count[, figures] } —— tencent_hint_md 是腾讯字符级 OCR 的**文字提示**（已按页用 "=== page K ===" 分隔），仅作参考，**不是**结构真相；figures（若存在）是裁剪图列表 [{index, page_index, position, bbox}]：index 是整批裁剪图序号（不是题号），page_index 是所在页，bbox 是归一化裁剪范围 {x,y,width,height}，position 是页面 3×3 区域位置摘要。同页多张图须按 bbox 区分，不能只靠 position。题号 question_no 与 figure index 是不同身份。
 科目上下文：${profile.displayName}。${profile.languageStyle}
 
 任务：以**图片为准**、腾讯文字为辅，输出一棵**规范化的题目结构树**。你对结构有完全裁量权，可以覆盖腾讯文字 hint 暗示的任何切分。
@@ -74,7 +74,7 @@ function buildStructurePrompt(profile: SubjectProfile): string {
 1. **跨页大题组装**：一道大题（passage / 阅读理解 / 完形 / 大题带多个小问）如果横跨多页，必须组装成**一个** stem 节点，它的 sub_questions 收齐所有页的小问。不要因为换页就把同一大题拆成两个顶层节点。
 2. **布局规范**：把题面、选项、答案规整到结构字段里；passage 进 stem 的 prompt_text，小问进 sub。
 3. 不抽取手写涂改 / 批改痕迹作为结构（那是作答证据，下游处理）。但要**判断每个节点上是否存在学生的手写作答 / 批改痕迹**：在该 StructureNode 上填 student_answer_present（true / false）。**绝不转写手写内容**——只报「有没有」这个布尔，像素留给下游判分（手写永远是像素，不做 OCR 转写）。整页都没有学生作答 → 全部省略或填 false。
-4. **图片归属（仅当输入含 figures 字段时）**：根据页面图片判断每张裁剪图属于哪道题，在对应 StructureNode 上填写 figure_ids（裁剪图序号数组）。跨页大题的配图（包括图示、电路图、坐标图等）归到 stem 节点。同一页且视觉上**明确**属于某小问的图归到该 sub 节点。**只在判断确定时填 figure_ids**——拿不准的图省略（不要猜，留给几何兜底）。漏报比错报代价小：几何兜底一定能处理漏报，但 VLM 错误归属会覆盖兜底，下游无法纠正。position 字段（图的位置摘要）可辅助判断同页归属关系，但仍以图片视觉为准。
+4. **图片归属（仅当输入含 figures 字段时）**：按 page_index 和 bbox 对照页面图片，把确定属于题面的裁剪图 index 填在对应 StructureNode.figure_ids。跨页大题共享图归 stem；明确只属于某小问的图归该 sub。同一 index 只能由一个节点声明；不要把整页或整批图复制给每道题。学生手写作答、解题过程、批改痕迹不是公开题图，不填入 figure_ids。拿不准归属、裁剪内容或是否含学生作答时省略；运行时保留源图并 withheld，不猜首题/最近题。
 5. **数学公式定界**：prompt_text、options[].text 以及 sub_questions 题面里出现的数学公式，必须带明确的 LaTeX 定界符：行内公式用「$...$」，独立成行的展示公式用「$$...$$」。已带定界符的公式（$...$、$$...$$、\\(...\\)、\\[...\\]）原样保留，不要改写公式内容。代码片段（含 Python、缩进、反斜杠转义）与普通文字**不要**包进 $；拿不准是不是公式的文字保持原样，宁可不包也不要猜。answers / analysis 字段不适用本条。
 
 输出严格 JSON（不带 markdown 代码块包裹），shape 名 StructureOutput：

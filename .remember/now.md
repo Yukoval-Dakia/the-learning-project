@@ -1,3 +1,7 @@
+# YUK-1404 figure main composition — 2026-10-11
+
+PR1657 fixed4c52 exact CI38144495041全绿；正常纳入main eb960c079，仅PLAN/now冲突。图ownership/隐私产品代码与单capture边界测试保留，旧细粒度四tests已删。独立初审/最终R2预算已完成，不启第三审。当前crop producer仍无source_asset SHA登记，旧visibility未知，public withholding不是完整配图交付；同卷actual-output验收仍待。无DB/runtime/provider/paid。
+
 # Main P1 delivered; isolated speed work resumes (2026-10-11)
 
 #1697 merged189bc5eabd at exact0b895, R1 NONE, all CI38140482253 green. All91 review expect expressions unchanged. Session2 passed in R4; review1 passed directly in R5, Vitest21.70s. R4 wrapper failure and foreign old exited cf225 disappearance preserved. R5 total95.388s, actual release13:02:49.276Z, own4PIDs/session8d1be4cb79b6 gone. Coordinator confirmed FSRS writer independently removed its eighth container and accepted explained parity; remaining TEST4+loft3 exact7 unchanged. UI and feature notified to incorporate main then rerun. #1696 earlier delivereda213 with23PASS/fullCI234s; production RST risk separatelyYUK-1481.
