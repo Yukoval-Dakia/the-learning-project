@@ -1369,6 +1369,14 @@ export const practiceCapability = defineCapability({
         load: () => import('./server/tools/search-bank').then((m) => m.searchBankTool),
       },
       {
+        name: 'read_bank',
+        load: () => import('./server/tools/read-bank').then((m) => m.readBankTool),
+      },
+      {
+        name: 'check_bank',
+        load: () => import('./server/tools/check-bank').then((m) => m.checkBankTool),
+      },
+      {
         name: 'write_quiz',
         load: () => import('./server/tools/write-quiz').then((m) => m.writeQuizTool),
       },

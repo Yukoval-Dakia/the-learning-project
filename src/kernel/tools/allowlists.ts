@@ -33,6 +33,8 @@ export const READ_TOOLS = [
   // 授予 copilot surfaces；备题员面（ADR-0069 第一刀）落地时再扩。Maintenance
   // chokepoint 下方过滤回（同 query_questions containment —— 扩面归 coordinator）。
   'search_bank',
+  'read_bank',
+  'check_bank',
   // ADR-0032 D6-draftread (YUK-203 lane L5) — ingestion draft-layer structure
   // reader (read≡write coordinate fix). Granted ONLY on `ingestion_block_edit`
   // below; it reads the DRAFT pool (question_block.structured) so it MUST NOT
@@ -210,6 +212,8 @@ export const COPILOT_TOOLS = [
   // 只切 copilot/备题员两个面；coach/dreaming/maintenance/ingestion_block_edit
   // 继续经现有 get_question_context 读取不变）。
   'search_bank',
+  'read_bank',
+  'check_bank',
   // ADR-0033 D6 (YUK-306, lane D) — interactive 学习 artifact authoring pair.
   // effect='write' (单用户、路由守 scope、非破坏性创建 — D6 explicit); the chip
   // surface inherits via the [...COPILOT_TOOLS, …] spread below. No other
@@ -300,6 +304,8 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     | 'search_memory_facts'
     | 'query_questions'
     | 'search_bank'
+    | 'read_bank'
+    | 'check_bank'
     | 'get_question_block_structure'
     | 'generate_goal_outline'
     | 'generate_question_candidate'
@@ -310,6 +316,8 @@ const MAINTENANCE_READ_TOOLS = READ_TOOLS.filter(
     name !== 'search_memory_facts' &&
     name !== 'query_questions' &&
     name !== 'search_bank' &&
+    name !== 'read_bank' &&
+    name !== 'check_bank' &&
     name !== 'get_question_block_structure' &&
     name !== 'generate_goal_outline' &&
     name !== 'generate_question_candidate' &&

@@ -19,6 +19,8 @@ const TOOL_LABELS: Record<string, string> = {
   find_knowledge_paths: '知识路径',
   query_questions: '题目',
   search_bank: '题库检索',
+  read_bank: '题库内容',
+  check_bank: '题库检查',
   search_memory_facts: '记忆检索',
   propose_knowledge_edge: '知识关联提议',
   propose_knowledge_mutation: '知识调整提议',
