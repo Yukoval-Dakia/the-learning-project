@@ -1,4 +1,5 @@
 import type { ResponseSetT, SlotResponseT } from '@/core/schema/assessment';
+import { PartialUnknownJudgeResult } from '@/core/schema/capability';
 // M2 练习面 — 散题作答态（YUK-316）。
 // 设计基准 docs/design/loom-refresh/project/pface-solo.jsx：即时反馈（§6.4 着色
 // 即判定）· 评级建议可改 · 不服判（异步重判，不阻塞流）· 解题会话（苏格拉底
@@ -73,7 +74,15 @@ type Rating = 'again' | 'hard' | 'good';
 type JudgeFeedback = Pick<
   JudgePreview,
   'route' | 'coarse_outcome' | 'confidence' | 'feedback_md' | 'suggested_rating'
->;
+> & {
+  partial_units?: Extract<JudgePreview, { coarse_outcome: 'partial_unknown' }>['partial_units'];
+};
+
+const PartialUnknownFeedback = PartialUnknownJudgeResult.pick({
+  coarse_outcome: true,
+  score: true,
+  partial_units: true,
+});
 
 const INTERVENTION_DIAGNOSTIC_SOURCE = 'intervention_diagnostic';
 const JUDGE_FAILURE_MESSAGE = '判题失败，请稍后重试';
@@ -89,13 +98,18 @@ export function feedbackFromCommittedAttempt(result: SubmitResult): JudgeFeedbac
   return {
     route: result.judge.route,
     coarse_outcome: result.judge.coarse_outcome,
+    ...(result.judge.coarse_outcome === 'partial_unknown'
+      ? { partial_units: result.judge.partial_units }
+      : {}),
     confidence: result.judge.confidence,
     feedback_md: result.judge.feedback_md,
     // auto_rate 的正常回执恒带 suggested_rating；旧/滚动部署响应若漏掉，
     // review_event.rating 仍是服务端最终实际采用的评级，不能在 UI 侧猜。
     suggested_rating:
-      result.judge.suggested_rating ??
-      ('rating' in result.review_event ? result.review_event.rating : null),
+      result.judge.coarse_outcome === 'partial_unknown'
+        ? null
+        : (result.judge.suggested_rating ??
+          ('rating' in result.review_event ? result.review_event.rating : null)),
   };
 }
 
@@ -114,6 +128,7 @@ export function feedbackFromCommittedDiagnosticAttempt(
 const VERDICT_OF: Record<JudgePreview['coarse_outcome'], { label: string; tone: Rating }> = {
   correct: { label: '对', tone: 'good' },
   partial: { label: '部分对', tone: 'hard' },
+  partial_unknown: { label: '部分正确', tone: 'hard' },
   incorrect: { label: '错', tone: 'again' },
   unsupported: { label: '暂时没法自动判', tone: 'hard' },
 };
@@ -166,6 +181,16 @@ export function toSubmittedJudgeResult(
     case 'partial':
       if (pv.score === null) throw new Error(`${pv.coarse_outcome} judge result requires score`);
       return { ...common, coarse_outcome: pv.coarse_outcome, score: pv.score };
+    case 'partial_unknown':
+      if (pv.score !== null || pv.partial_units.length === 0) {
+        throw new Error('partial_unknown judge result requires score=null and partial units');
+      }
+      return {
+        ...common,
+        coarse_outcome: 'partial_unknown',
+        score: null,
+        partial_units: pv.partial_units,
+      };
     case 'incorrect':
       if (pv.score !== 0) throw new Error('incorrect judge result requires score=0');
       return { ...common, coarse_outcome: 'incorrect', score: 0 };
@@ -571,14 +596,35 @@ export function PfSolo({
       r && typeof r.coarse_outcome === 'string' && r.coarse_outcome in VERDICT_OF
         ? (r.coarse_outcome as keyof typeof VERDICT_OF)
         : null;
+    const partial = outcome === 'partial_unknown' ? PartialUnknownFeedback.safeParse(r) : null;
+    if (partial && !partial.success) {
+      setCommittedPreview({
+        route: 'durable',
+        coarse_outcome: 'unsupported',
+        confidence: 0,
+        feedback_md: '',
+        suggested_rating: null,
+      });
+      setRating(null);
+      setAutoCommitted(true);
+      setAutoCommitJudgeEventId(null);
+      setPendingRun(null);
+      addToast('作答已保存，但部分判定信息不完整，请稍后查看。', 'info', 'clock');
+      return;
+    }
     const fr =
-      r && typeof r.final_rating === 'string' && ['again', 'hard', 'good'].includes(r.final_rating)
-        ? (r.final_rating as Rating)
-        : 'hard';
+      outcome === 'partial_unknown' || r?.final_rating === null
+        ? null
+        : r &&
+            typeof r.final_rating === 'string' &&
+            ['again', 'hard', 'good'].includes(r.final_rating)
+          ? (r.final_rating as Rating)
+          : 'hard';
     if (outcome) {
       setCommittedPreview({
         route: typeof r?.route === 'string' && r.route ? r.route : 'durable',
         coarse_outcome: outcome,
+        ...(partial?.success ? { partial_units: partial.data.partial_units } : {}),
         confidence: typeof r?.confidence === 'number' ? r.confidence : 0,
         feedback_md: typeof r?.feedback_md === 'string' ? r.feedback_md : '',
         suggested_rating: fr,
@@ -632,7 +678,8 @@ export function PfSolo({
         ...buildCaptureFields({ reasoningTrace, selfConfidence }),
         // YUK-432 — 客观题自动判分+自动评级：server 用 judge 的 suggested rating 覆盖 body.rating，
         // 并让客观判分流过 difficulty_calibration_label hook 产标签（B1 难度 firm-up 链解冻）。
-        auto_rate: opts.autoRate,
+        // Unknown points must never become a user rating; the server settles with rating=null.
+        auto_rate: pv?.coarse_outcome === 'partial_unknown' ? true : opts.autoRate,
         // YUK-433 — solo 路径 RT capture：这次作答的墙钟用时（题面就绪 → 此刻 commit）。在单一 commit()
         // 路径里 stamp，故**两条提交分支都覆盖**：手动评级 commit（开放题）与客观题 auto_rate:true 自动
         // commit 都经此。computeLatencyMs clamp 到 [0, 3_600_000]（对齐 server zod）；shownAt 为 null →
@@ -1071,6 +1118,14 @@ export function PfSolo({
                   size={12}
                 />
                 {verdict.label}
+                {displayedPreview.coarse_outcome === 'partial_unknown' &&
+                  `${
+                    displayedPreview.partial_units?.length
+                      ? `（${displayedPreview.partial_units
+                          .map((unit) => `${unit.correct_count}/${unit.total_count}`)
+                          .join('、')}）`
+                      : ''
+                  }，分数未知`}
               </span>
               <span className="ai-tag">
                 <LoomIcon name="sparkle" size={12} />
@@ -1105,7 +1160,7 @@ export function PfSolo({
                 隐藏手动 again/hard/good 评级行；用户仍看到上面的判定反馈卡，按「下一项」推进。
                 注意：仅隐藏**手动评级行**——「不服判」入口仍保留（FINDING 2，见下方 footer）。
                 开放题：保留现有手动评级行（默认=建议，可改）。 */}
-            {!autoCommitted && (
+            {!autoCommitted && displayedPreview.coarse_outcome !== 'partial_unknown' && (
               <div className="pfs-rate">
                 <span className="pfs-rate-label">评级</span>
                 {(['again', 'hard', 'good'] as const).map((g) => (
@@ -1149,6 +1204,16 @@ export function PfSolo({
                 // 客观题：已自动判分+评级，「下一项」只推进（不再二次 commit）。
                 <Btn variant="primary" icon="arrow" disabled={committing} onClick={() => onDone()}>
                   {committing ? '判分中…' : '下一项'}
+                </Btn>
+              ) : displayedPreview.coarse_outcome === 'partial_unknown' ? (
+                <Btn
+                  variant="primary"
+                  icon="arrow"
+                  disabled={committing}
+                  // Required wire fallback only; auto_rate leaves the actual rating to the server.
+                  onClick={() => void commit({ withAppeal: false, rating: 'hard', autoRate: true })}
+                >
+                  {committing ? '提交中…' : '保存作答 · 下一项'}
                 </Btn>
               ) : (
                 // 开放题：手动确认评级后 commit（auto_rate 缺省 false → server 用 body.rating）。
@@ -1210,8 +1275,18 @@ export function PfSolo({
                       size="sm"
                       variant="secondary"
                       icon="send"
-                      disabled={!appealText.trim() || committing || !rating}
-                      onClick={() => rating && void commit({ withAppeal: true, rating })}
+                      disabled={
+                        !appealText.trim() ||
+                        committing ||
+                        (!rating && displayedPreview.coarse_outcome !== 'partial_unknown')
+                      }
+                      onClick={() => {
+                        if (displayedPreview.coarse_outcome === 'partial_unknown') {
+                          void commit({ withAppeal: true, rating: 'hard', autoRate: true });
+                        } else if (rating) {
+                          void commit({ withAppeal: true, rating });
+                        }
+                      }}
                     >
                       提交重判 · 先继续
                     </Btn>
