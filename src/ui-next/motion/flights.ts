@@ -34,7 +34,7 @@ function ghostOf(el: HTMLElement, rect: DOMRect, scale = 1): HTMLElement {
     margin: '0',
     padding: '0',
     visibility: 'visible',
-    zIndex: String(Z.toast),
+    zIndex: String(Z.flight),
     pointerEvents: 'none',
     transformOrigin: '0 0',
     transform: scale === 1 ? '' : `scale(${scale})`,
@@ -81,63 +81,150 @@ export function snapshotMorphs(root: ParentNode | null): Map<string, MorphSnapsh
   return map;
 }
 
-/** After the change, grow each matching `[data-morph]` element out of its remembered spot. */
-export function playMorphs(root: ParentNode | null, snapshot: Map<string, MorphSnapshot> | null) {
-  for (const animation of [...flights]) animation.cancel();
-  if (!root || !snapshot?.size || prefersReducedMotion()) return;
+function scopeOf(el: Element): Element {
+  // Stay inside the ui-next scope so the ghosts keep the scoped styles.
+  return el.closest('[data-ui-next]') ?? document.body;
+}
+
+function hideTarget(target: HTMLElement, key: string) {
+  target.style.visibility = 'hidden';
+  target.dataset.unMorphOwner = key;
+  // A list row's own entrance would move the landing spot mid-flight (L3).
+  const row = target.closest<HTMLElement>('li, [data-morph-row]');
+  if (row) row.style.animation = 'none';
+}
+
+function showTarget(target: HTMLElement, key: string) {
+  // Only un-hide the target if no newer flight owns it.
+  if (flying.get(key) === undefined && target.dataset.unMorphOwner === key) {
+    target.style.visibility = '';
+    delete target.dataset.unMorphOwner;
+  }
+}
+
+/** Fly one title: the new copy grows out of the old spot while the old copy fades along the path. */
+function launch(target: HTMLElement, key: string, from: MorphSnapshot) {
+  const outgoing = from.ghost;
+  const to = target.getBoundingClientRect();
+  if (!onScreen(to)) {
+    outgoing.remove();
+    showTarget(target, key);
+    return;
+  }
+  const s = from.fontSize / Number.parseFloat(getComputedStyle(target).fontSize);
+  const dx = from.rect.left - to.left;
+  const dy = from.rect.top - to.top;
+  const incoming = ghostOf(target, to);
+  scopeOf(target).append(outgoing, incoming);
+  hideTarget(target, key);
+  const timing: KeyframeAnimationOptions = {
+    duration: DURATION.flight,
+    easing: EASE.springSoft,
+    fill: 'both',
+  };
+  const grow = incoming.animate(
+    [
+      { transform: `translate(${dx}px, ${dy}px) scale(${s})`, opacity: 0 },
+      { opacity: 1, offset: 0.4 },
+      { transform: 'none', opacity: 1 },
+    ],
+    timing,
+  );
+  const fade = outgoing.animate(
+    [
+      { transform: `scale(${from.scale})`, opacity: 1 },
+      { opacity: 0, offset: 0.4 },
+      { transform: `translate(${-dx}px, ${-dy}px) scale(${from.scale / s})`, opacity: 0 },
+    ],
+    timing,
+  );
+  flights.add(grow);
+  flying.set(key, incoming);
+  const done = () => {
+    flights.delete(grow);
+    if (flying.get(key) === incoming) flying.delete(key);
+    fade.cancel();
+    incoming.remove();
+    outgoing.remove();
+    // cancel/finish fire asynchronously.
+    showTarget(target, key);
+  };
+  grow.onfinish = done;
+  grow.oncancel = done;
+}
+
+function matches(root: ParentNode, snapshot: Map<string, MorphSnapshot>) {
+  const out: { target: HTMLElement; key: string; from: MorphSnapshot }[] = [];
   for (const target of root.querySelectorAll<HTMLElement>('[data-morph]')) {
     const key = target.dataset.morph;
     const from = key ? snapshot.get(key) : undefined;
-    if (!key || !from) continue;
-    const to = target.getBoundingClientRect();
-    if (!onScreen(to)) continue;
-    const s = from.fontSize / Number.parseFloat(getComputedStyle(target).fontSize);
-    const dx = from.rect.left - to.left;
-    const dy = from.rect.top - to.top;
-    const incoming = ghostOf(target, to);
-    const outgoing = from.ghost;
-    // Stay inside the ui-next scope so the ghosts keep the scoped styles.
-    (target.closest('[data-ui-next]') ?? document.body).append(outgoing, incoming);
-    target.style.visibility = 'hidden';
-    target.dataset.unMorphOwner = key;
-    const timing: KeyframeAnimationOptions = {
-      duration: DURATION.flight,
-      easing: EASE.springSoft,
-      fill: 'both',
-    };
-    const grow = incoming.animate(
-      [
-        { transform: `translate(${dx}px, ${dy}px) scale(${s})`, opacity: 0 },
-        { opacity: 1, offset: 0.4 },
-        { transform: 'none', opacity: 1 },
-      ],
-      timing,
-    );
-    const fade = outgoing.animate(
-      [
-        { transform: `scale(${from.scale})`, opacity: 1 },
-        { opacity: 0, offset: 0.4 },
-        { transform: `translate(${-dx}px, ${-dy}px) scale(${from.scale / s})`, opacity: 0 },
-      ],
-      timing,
-    );
-    flights.add(grow);
-    flying.set(key, incoming);
-    const done = () => {
-      flights.delete(grow);
-      if (flying.get(key) === incoming) flying.delete(key);
-      fade.cancel();
-      incoming.remove();
-      outgoing.remove();
-      // cancel/finish fire asynchronously: only un-hide the target if no newer flight owns it.
-      if (flying.get(key) === undefined && target.dataset.unMorphOwner === key) {
-        target.style.visibility = '';
-        delete target.dataset.unMorphOwner;
-      }
-    };
-    grow.onfinish = done;
-    grow.oncancel = done;
+    if (key && from) out.push({ target, key, from });
   }
+  return out;
+}
+
+let pending: (() => void) | null = null;
+
+/** Stop every morph: running flights end, a deferred one that has not launched is undone. */
+export function cancelMorphs(): void {
+  pending?.();
+  pending = null;
+  for (const animation of [...flights]) animation.cancel();
+}
+
+/**
+ * After the change, grow each matching `[data-morph]` element out of its remembered spot.
+ * Measures the new page in the same frame (forces layout); prefer `playMorphsAfterPaint`.
+ */
+export function playMorphs(root: ParentNode | null, snapshot: Map<string, MorphSnapshot> | null) {
+  cancelMorphs();
+  if (!root || !snapshot?.size || prefersReducedMotion()) return;
+  for (const { target, key, from } of matches(root, snapshot)) launch(target, key, from);
+}
+
+/**
+ * The same flight, but the landing spots are measured after the new page's first frame, when its
+ * layout is already done, so the switch never pays for a forced synchronous layout (M4: the
+ * prototype's slowest step at 4× CPU). Until then the old title holds its place and the new one
+ * stays hidden, so nothing flashes. Returns a cancel function.
+ */
+export function playMorphsAfterPaint(
+  root: ParentNode | null,
+  snapshot: Map<string, MorphSnapshot> | null,
+): () => void {
+  cancelMorphs();
+  if (!root || !snapshot?.size || prefersReducedMotion()) return () => {};
+  const found = matches(root, snapshot);
+  if (!found.length) return () => {};
+  for (const { target, key, from } of found) {
+    scopeOf(target).append(from.ghost);
+    hideTarget(target, key);
+  }
+  let frame = 0;
+  const undo = () => {
+    if (!frame) return;
+    cancelAnimationFrame(frame);
+    frame = 0;
+    for (const { target, key, from } of found) {
+      from.ghost.remove();
+      showTarget(target, key);
+    }
+  };
+  frame = requestAnimationFrame(() => {
+    // The first callback runs before the new page paints; the second, after it has.
+    frame = requestAnimationFrame(() => {
+      frame = 0;
+      if (pending === undo) pending = null;
+      for (const { target, key, from } of found) {
+        if (target.isConnected) launch(target, key, from);
+        else from.ghost.remove();
+      }
+    });
+  });
+  pending = undo;
+  return () => {
+    if (pending === undo) cancelMorphs();
+  };
 }
 
 /* ── Homing flight ────────────────────────────────────── */
@@ -178,11 +265,12 @@ export function flyTo({
     left: `${from.left}px`,
     top: `${from.top}px`,
     margin: '0',
-    zIndex: String(Z.toast),
+    zIndex: String(Z.flight),
     pointerEvents: 'none',
     transformOrigin: '0 0',
   });
-  (to()?.closest('[data-ui-next]') ?? document.body).append(node);
+  const landing = to();
+  if (landing) scopeOf(landing).append(node);
   const w0 = node.offsetWidth || from.width;
   const h0 = node.offsetHeight || from.height;
   const start = performance.now();
@@ -253,4 +341,83 @@ export function bump(el: Element | null): void {
     ],
     { duration: 420, easing: EASE.spring },
   );
+}
+
+/* ── Named flights ────────────────────────────────────── */
+
+export interface QuoteFlight {
+  /** Where the quoted passage was on the page (e.g. the selection's bounding rect). */
+  from: DOMRect | null | undefined;
+  /** What flies: the quoted text, or a node (e.g. rendered math). */
+  content: string | Node;
+  /** The quote in the conversation it lands as; re-read every frame (the panel may be opening). */
+  to: () => HTMLElement | null;
+  onLand?: () => void;
+}
+
+/**
+ * A passage leaves the page and lands as the quote in a new message (M6). The landing quote stays
+ * hidden until the copy arrives, so the reader sees one object travel, not two. Returns `cancel`.
+ */
+export function flyQuote({ from, content, to, onLand }: QuoteFlight): () => void {
+  const node = document.createElement('span');
+  node.className = 'un-quote-ghost';
+  node.setAttribute('aria-hidden', 'true');
+  if (typeof content === 'string') node.textContent = content;
+  else node.append(content);
+  const target = to();
+  if (target) target.style.visibility = 'hidden';
+  let shown = false;
+  const show = () => {
+    if (shown) return;
+    shown = true;
+    const landed = to() ?? target;
+    if (landed) landed.style.visibility = '';
+  };
+  const cancel = flyTo({
+    from,
+    to,
+    node,
+    durationMs: 700,
+    onLand: () => {
+      show();
+      onLand?.();
+    },
+  });
+  return () => {
+    cancel();
+    show();
+  };
+}
+
+export interface CaptureFlight {
+  /** Where the captured thing was written (the input's rect). */
+  from: DOMRect | null | undefined;
+  text: string;
+  /** The pocket it goes into: "收进来的" on desktop, the tab bar's "记一下" on phones. */
+  to: () => Element | null;
+  /** Count it here (the pocket bumps first). Not called when the flight is cancelled. */
+  onLand?: () => void;
+}
+
+/**
+ * Something written down arcs into its pocket and shrinks (M5); on landing the pocket gives a
+ * small bump. Cancelling (e.g. undo mid-flight) fades the chip where it is and never counts it.
+ */
+export function flyCapture({ from, text, to, onLand }: CaptureFlight): () => void {
+  const node = document.createElement('span');
+  node.className = 'un-fly-chip';
+  node.setAttribute('aria-hidden', 'true');
+  node.textContent = text;
+  return flyTo({
+    from,
+    to,
+    node,
+    shrink: true,
+    durationMs: 660,
+    onLand: () => {
+      bump(to());
+      onLand?.();
+    },
+  });
 }
