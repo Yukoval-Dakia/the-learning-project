@@ -14,8 +14,10 @@
 //   defines per-state takeover evidence, ownership moves only over a fully
 //   drained family. Producer-side dispatch cutover stays parent-owned.
 // - Before the parent's migration lands, paid_effect_control may not exist;
-//   isPaidEffectControlUndefinedTable() lets consumers treat that explicitly
-//   (pg-boss default stands; DBOS stays fenced) instead of guessing.
+//   paidEffectControlTableExists() is the NON-ABORTING probe for that (a
+//   caught 42P01 would abort a live transaction — every later statement
+//   fails with 25P02 — so in-transaction code must never catch-and-continue
+//   it).
 import { and, count, eq, inArray, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
@@ -229,15 +231,14 @@ function blockedShape(): {
 }
 
 /**
- * True only when the failure is paid_effect_control not existing yet (PG
- * 42P01, or the relation named in the message). Valid ONLY around code whose
- * sole query touches paid_effect_control — both shipped call sites (note
- * verify pg-boss admission, DBOS family admission) satisfy that; nothing else
- * may be swallowed.
+ * Non-aborting existence probe for paid_effect_control, safe to run INSIDE a
+ * live transaction (to_regclass returns NULL instead of raising 42P01).
+ * In-transaction bootstrap paths must use this, never try/catch around SQL
+ * that aborts the transaction.
  */
-export function isPaidEffectControlUndefinedTable(error: unknown): boolean {
-  const code = (error as { code?: unknown } | null)?.code;
-  if (code === '42P01') return true;
-  const message = error instanceof Error ? error.message : String(error);
-  return message.includes('paid_effect_control') && message.includes('does not exist');
+export async function paidEffectControlTableExists(tx: Tx): Promise<boolean> {
+  const rows = await tx.execute<{ reg: string | null }>(
+    sql`select to_regclass('paid_effect_control') as reg`,
+  );
+  return rows.length > 0 && rows[0].reg != null;
 }

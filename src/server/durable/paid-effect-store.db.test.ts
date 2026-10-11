@@ -12,8 +12,8 @@
 // mandatory winner-fence completion, switch blocked on every unfinished
 // obligation (including the note_verify claim probe), and the supporting
 // contracts (intent idempotence, history preservation, generation fencing).
-import { eq } from 'drizzle-orm';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { eq, sql } from 'drizzle-orm';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { admitNoteVerifyDelivery } from '@/capabilities/notes/jobs/note_verify';
 import { reserveNoteVerification } from '@/capabilities/notes/server/note-verification-claim-reservation';
@@ -518,7 +518,6 @@ describe('paid-effect backend control (DB)', () => {
   beforeEach(async () => {
     await resetDb();
   });
-
   // @invariant concurrency: a delivery from the opposite backend or a stale generation is fenced inside the admission transaction
   // @fails-if the control row admits a pg-boss delivery under an explicit dbos owner, or a pre-switch generation survives a switch
   it('fences the wrong backend and stale generations', async () => {
@@ -799,5 +798,82 @@ describe('paid-effect backend control (DB)', () => {
     } else if (switchWon) {
       expect(reserveResult.status).toBe('rejected');
     }
+  });
+});
+
+describe('paid-effect missing control table bootstrap (DB)', () => {
+  beforeEach(async () => {
+    await resetDb();
+    await testDb().execute(sql.raw('drop table if exists paid_effect_control'));
+  });
+
+  afterEach(async () => {
+    // Restore the control table (doc §6 SQL) so later describes in this file
+    // keep working against a migrated schema.
+    await testDb().execute(
+      sql.raw(`create table if not exists paid_effect_control (
+  family text primary key,
+  backend text not null check (backend in ('pg-boss','dbos')),
+  generation integer not null default 0 check (generation >= 0),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+)`),
+    );
+  });
+
+  async function seedQueuedArtifact(id: string): Promise<void> {
+    const now = new Date();
+    await testDb().insert(artifact).values({
+      id,
+      type: 'note_atomic',
+      title: id,
+      knowledge_ids: [],
+      intent_source: 'learning_intent',
+      source: 'ai_generated',
+      attrs: {},
+      generation_status: 'ready',
+      verification_status: 'queued',
+      history: [],
+      created_at: now,
+      updated_at: now,
+      version: 0,
+    });
+  }
+
+  // @invariant concurrency: with the control table absent (pre-migration), a pg-boss in-transaction admission proceeds on the bootstrap default — via the non-aborting to_regclass probe, never a caught 42P01 (which would abort the reservation transaction and fail every later statement with 25P02)
+  // @fails-if the missing-table check raises 42P01 inside the live reservation transaction, or the pg-boss delivery is refused before the migration lands
+  it('admits a pg-boss note reservation with the control table missing', async () => {
+    await seedQueuedArtifact('note-bootstrap-1');
+    const reservation = await reserveNoteVerification(testDb(), 'note-bootstrap-1', {
+      controlAdmission: buildNoteVerificationControlAdmission({
+        backend: 'pg-boss',
+        deliveryId: 'job-bootstrap',
+      }),
+    });
+    expect(reservation).toMatchObject({ kind: 'claimed' });
+    const claims = await testDb()
+      .select({ state: note_verification_claim.state })
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'note-bootstrap-1'));
+    expect(claims[0]?.state).toBe('reserved');
+  });
+
+  // @invariant concurrency: with the control table absent, a DBOS in-transaction admission is hard-fenced (pg-boss is the bootstrap default owner) and the reservation rolls back without a claim row
+  // @fails-if a DBOS delivery is admitted on the missing-table bootstrap path, or the aborted reservation leaves a claim row behind
+  it('hard-fences a dbos note reservation with the control table missing', async () => {
+    await seedQueuedArtifact('note-bootstrap-2');
+    await expect(
+      reserveNoteVerification(testDb(), 'note-bootstrap-2', {
+        controlAdmission: buildNoteVerificationControlAdmission({
+          backend: 'dbos',
+          deliveryId: 'wf-bootstrap',
+        }),
+      }),
+    ).rejects.toThrow('fenced');
+    const claims = await testDb()
+      .select({ artifactId: note_verification_claim.artifact_id })
+      .from(note_verification_claim)
+      .where(eq(note_verification_claim.artifact_id, 'note-bootstrap-2'));
+    expect(claims).toHaveLength(0);
   });
 });

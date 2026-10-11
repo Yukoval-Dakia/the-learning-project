@@ -22,7 +22,7 @@ import { type SQL, and, eq, inArray, lt, ne, or, sql } from 'drizzle-orm';
 
 import type { Db, Tx } from '@/db/client';
 import { paid_effect } from '@/db/schema';
-import { admitPaidEffectDeliveryControl } from './paid-effect-control';
+import { admitPaidEffectDeliveryControl, lockPaidEffectControlFamily } from './paid-effect-control';
 import {
   PAID_EFFECT_BACKEND_SCHEMA,
   PAID_EFFECT_ENTITY_GATE_STATES,
@@ -303,6 +303,10 @@ export async function claimPaidEffectSend(
   identity: PaidEffectIdentity,
   delivery: PaidEffectSendClaimDelivery,
 ): Promise<PaidEffectSendClaim> {
+  // FIRST: the family control lock, before any other lock in this
+  // transaction — the pinned order is family-control advisory → identity row
+  // → entity advisory → control row (reentrant no-op inside admit).
+  await lockPaidEffectControlFamily(tx, identity.family);
   const row = await lockRow(tx, identity);
   if (!row) return { kind: 'missing' };
   if (row.state !== 'pending') {
@@ -336,6 +340,9 @@ export async function reservePaidEffect(
 ): Promise<PaidEffectReservation & { readonly identity: PaidEffectIdentity }> {
   const identity = computePaidEffectIdentity(input);
   return db.transaction(async (tx) => {
+    // FIRST: the family control lock, before the intent insert and the row
+    // lock — same pinned order as claimPaidEffectSend and the switch.
+    await lockPaidEffectControlFamily(tx, identity.family);
     await admitPaidEffectIntent(tx, input);
     const row = await lockRow(tx, identity);
     if (!row) throw new PaidEffectProtocolError('paid-effect reservation lost its row');

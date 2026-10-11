@@ -13,15 +13,21 @@
 // handler, DBOS family adapter) wires this by default; legacy direct callers
 // of runNoteVerify/reserveNoteVerification without the hook keep the old
 // behavior and must not be introduced for send paths.
+//
+// Missing paid_effect_control TABLE (parent migration not yet applied) is
+// handled with to_regclass — a NON-ABORTING probe, because after 42P01 the
+// reservation transaction would be aborted and every later statement would
+// fail with 25P02. Missing table ⇒ pg-boss stands as the bootstrap default
+// owner and is admitted; DBOS is hard-fenced. Never catch-and-continue a
+// 42P01 inside a live transaction.
 import type { Tx } from '@/db/client';
 import {
   admitPaidEffectDeliveryControl,
-  isPaidEffectControlUndefinedTable,
   lockPaidEffectControlFamily,
+  paidEffectControlTableExists,
 } from './paid-effect-control';
 import { NOTE_VERIFY_OBLIGATION_FAMILY } from './paid-effect-note-obligations';
-import type { PaidEffectDeliveryRef } from './paid-effect-protocol';
-import { PaidEffectControlFencedError } from './paid-effect-protocol';
+import { PaidEffectControlFencedError, type PaidEffectDeliveryRef } from './paid-effect-protocol';
 
 export type { PaidEffectDeliveryRef };
 
@@ -30,22 +36,23 @@ export type { PaidEffectDeliveryRef };
  * the dispatch identity: pg-boss jobs pass {backend:'pg-boss', deliveryId:
  * jobId}; a DBOS host passes {backend:'dbos', deliveryId: workflowId,
  * generation} — generation is REQUIRED for DBOS under an explicit control row.
- * A missing paid_effect_control TABLE (parent migration not yet applied) is
- * the documented bootstrap default: pg-boss stands, DBOS stays fenced —
- * exactly the outside-of-tx semantics, now inside the reservation window.
  */
 export function buildNoteVerificationControlAdmission(
   ref: PaidEffectDeliveryRef,
 ): (tx: Tx) => Promise<void> {
   return async (tx: Tx) => {
     await lockPaidEffectControlFamily(tx, NOTE_VERIFY_OBLIGATION_FAMILY);
-    let admission;
-    try {
-      admission = await admitPaidEffectDeliveryControl(tx, NOTE_VERIFY_OBLIGATION_FAMILY, ref);
-    } catch (error) {
-      if (isPaidEffectControlUndefinedTable(error)) return; // bootstrap default
-      throw error;
+    if (!(await paidEffectControlTableExists(tx))) {
+      if (ref.backend === 'pg-boss') return; // bootstrap default owner stands
+      throw new PaidEffectControlFencedError(
+        NOTE_VERIFY_OBLIGATION_FAMILY,
+        'backend_mismatch',
+        'pg-boss',
+      );
     }
+    // Reentrant no-op re-acquire of the family lock; the read runs in the
+    // same lock window the switch serializes on.
+    const admission = await admitPaidEffectDeliveryControl(tx, NOTE_VERIFY_OBLIGATION_FAMILY, ref);
     if (admission.kind === 'fenced') {
       throw new PaidEffectControlFencedError(
         NOTE_VERIFY_OBLIGATION_FAMILY,

@@ -127,6 +127,10 @@ admitPaidEffectDeliveryControl(tx, family, {backend, deliveryId, generation?}):
   // 先锁 family advisory 再读 control 行；explicit control 下 dbos delivery
   // 必须携带 generation（防 A→B→A 往返重入）；pgboss legacy 无 generation，仅
   // backend 匹配（pgboss 是默认 owner，效果行 CAS 仍去重）。
+  // **实现锁序（如实）**：reserve/claim/admit/switch 都在事务入口先取
+  // family advisory，随后 identity 行 → entity advisory → control 行；
+  // note 侧 family advisory → artifact 行 → claim 行（与既有
+  // reservation/supersede/provider-start 的 artifact→claim 序一致）。
 switchPaidEffectBackend(db, family, to): {family, backend, generation}
   // 先锁 family advisory；被 family 的一切未完义务阻塞（P1-5：
   // pending/sending/unknown/receipt_ready）：paid_effect 扫描 + 固定 family
@@ -134,8 +138,9 @@ switchPaidEffectBackend(db, family, to): {family, backend, generation}
   // 缺行插入竞态由同锁封闭。PAID_EFFECT_SWITCH_UNSUPPORTED_FAMILIES 中的族
   // （当前为空）被显式拒绝切换 —— 无原子 claim 侧接线的 probe 族必须列入，
   // 直至接线落地。成功 backend=to、generation+1；同 backend 幂等不 bump。
-isPaidEffectControlUndefinedTable(error): boolean   // 42P01 检测，供引导路径
-lockPaidEffectControlFamily(tx, family): void        // 共享 family 串行锁
+isPaidEffectControlUndefinedTable 已移除：42P01 会 abort 活事务，catch 后继续必 25P02。
+paidEffectControlTableExists(tx): boolean              // to_regclass 无 abort 探测，事务内安全
+lockPaidEffectControlFamily(tx, family): void        // 共享 family 串行锁（入口最先）
 ```
 
 - pg-boss/DBOS **对称** admission；dispatch 侧 cutover 归父级。
@@ -151,7 +156,8 @@ lockPaidEffectControlFamily(tx, family): void        // 共享 family 串行锁
   `PaidEffectControlFencedError` → 整个事务回滚（无 claim 行、无状态变化）。
   缺省不传 = 旧调用行为逐字节不变。默认 hook 由
   `buildNoteVerificationControlAdmission(ref)` 构造（shared family 锁 +
-  owner/generation 同事务校验；缺表 42P01 → 引导默认 pgboss 放行 / dbos 拒绝）。
+  owner/generation 同事务校验；**缺表探测用 to_regclass（无 abort），缺表仅
+  pgboss 默认放行、dbos 硬拒 —— 绝不在活事务里 catch 42P01 后继续**）。
 - 生产发送入口全部默认接线：pg-boss handler（`jobs/note_verify.ts`，per-job
   ref = {backend:'pg-boss', deliveryId: jobId}）；DBOS 适配器
   （`note-verify-family.ts`，ref = {backend:'dbos', deliveryId: workflowId}，

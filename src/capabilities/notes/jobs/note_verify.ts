@@ -18,7 +18,8 @@ import type { Db, Tx } from '@/db/client';
 import { makeRunTaskFn } from '@/server/ai/runner-fn';
 import {
   admitPaidEffectDeliveryControl,
-  isPaidEffectControlUndefinedTable,
+  lockPaidEffectControlFamily,
+  paidEffectControlTableExists,
 } from '@/server/durable/paid-effect-control';
 import { buildNoteVerificationControlAdmission } from '@/server/durable/paid-effect-note-admission';
 import {
@@ -53,26 +54,24 @@ const BOOTSTRAP_CONTROL: PaidEffectControlSnapshot = {
  * Admit one pg-boss note_verify delivery under backend control. When the
  * control table does not exist yet (parent migration not applied), the
  * bootstrap default stands: pg-boss owns generation 0, so the delivery is
- * admitted and behavior is byte-identical to pre-protocol. Any other error
- * propagates.
+ * admitted and behavior is byte-identical to pre-protocol. The missing-table
+ * check uses the non-aborting to_regclass probe INSIDE the transaction —
+ * never a caught 42P01.
  */
 export async function admitNoteVerifyDelivery(
   db: Db,
   deliveryId: string,
 ): Promise<PaidEffectControlAdmission> {
-  try {
-    return await db.transaction((tx) =>
-      admitPaidEffectDeliveryControl(tx, NOTE_VERIFY_PAID_EFFECT_FAMILY, {
-        backend: 'pg-boss',
-        deliveryId,
-      }),
-    );
-  } catch (error) {
-    if (isPaidEffectControlUndefinedTable(error)) {
+  return db.transaction(async (tx) => {
+    await lockPaidEffectControlFamily(tx, NOTE_VERIFY_PAID_EFFECT_FAMILY);
+    if (!(await paidEffectControlTableExists(tx))) {
       return { kind: 'admitted', control: BOOTSTRAP_CONTROL };
     }
-    throw error;
-  }
+    return admitPaidEffectDeliveryControl(tx, NOTE_VERIFY_PAID_EFFECT_FAMILY, {
+      backend: 'pg-boss',
+      deliveryId,
+    });
+  });
 }
 
 export {

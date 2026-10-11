@@ -33,7 +33,8 @@ import {
 import type { Db } from '@/db/client';
 import {
   admitPaidEffectDeliveryControl,
-  isPaidEffectControlUndefinedTable,
+  lockPaidEffectControlFamily,
+  paidEffectControlTableExists,
 } from './paid-effect-control';
 import { buildNoteVerificationControlAdmission } from './paid-effect-note-admission';
 import type { PaidEffectControlAdmission, PaidEffectDeliveryRef } from './paid-effect-protocol';
@@ -75,12 +76,11 @@ export async function defaultAdmitNoteVerifyDeliveryControl(
   db: Db,
   ref: PaidEffectDeliveryRef,
 ): Promise<PaidEffectControlAdmission> {
-  try {
-    return await db.transaction((tx) =>
-      admitPaidEffectDeliveryControl(tx, NOTE_VERIFY_FAMILY, ref),
-    );
-  } catch (error) {
-    if (isPaidEffectControlUndefinedTable(error)) {
+  return db.transaction(async (tx) => {
+    await lockPaidEffectControlFamily(tx, NOTE_VERIFY_FAMILY);
+    // Missing control table: pg-boss is the bootstrap default owner, so a
+    // DBOS delivery is hard-fenced. to_regclass — never a caught 42P01.
+    if (!(await paidEffectControlTableExists(tx))) {
       return {
         kind: 'fenced',
         reason: 'backend_mismatch',
@@ -88,8 +88,8 @@ export async function defaultAdmitNoteVerifyDeliveryControl(
         generation: 0,
       };
     }
-    throw error;
-  }
+    return admitPaidEffectDeliveryControl(tx, NOTE_VERIFY_FAMILY, ref);
+  });
 }
 
 /**
