@@ -314,9 +314,7 @@ export function ProposalCard({
       // event，提议仍 pending——不标已裁决，经页级 toast 说明后保持可操作。
       if (isBlockMergeStale(result)) {
         setConfirmingMerge(null);
-        onError(
-          `该题块合并提议已失效（题块状态已变更：${result.skip_reason ?? 'unknown'}），已跳过。`,
-        );
+        onError('这条合并建议已失效：相关的题已经变了，已跳过。');
         return;
       }
       setConfirmingMerge(null);
@@ -547,7 +545,7 @@ export function ProposalCard({
         >
           {/* M4 review fix (codex P2)：defer/archive/judge_retraction 的 accept
               在 dispatchAccept 是 400（unsupported_proposal_kind），不渲 CTA。 */}
-          {isAcceptSupported(p.kind) && (
+          {isAcceptSupported(p.kind) && !confirmingMerge && (
             <Btn
               size="sm"
               variant={isArchiveEdge ? 'again' : 'good'}

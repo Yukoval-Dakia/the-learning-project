@@ -31,7 +31,7 @@ export const KIND_META: Record<string, KindMeta> = {
   completion: { label: '完成判定', icon: 'checkCircle', tone: 'good' },
   relearn: { label: '重学建议', icon: 'review', tone: 'hard' },
   goal_scope: { label: '目标范围', icon: 'target', tone: 'hard' },
-  block_merge: { label: '块合并', icon: 'merge', tone: 'hard' },
+  block_merge: { label: '合并题目', icon: 'merge', tone: 'hard' },
   defer: { label: '延后安排', icon: 'clock', tone: 'hard' },
   archive: { label: '归档建议', icon: 'archive', tone: 'neutral' },
   judge_retraction: { label: '判定撤回', icon: 'undo', tone: 'coral' },
