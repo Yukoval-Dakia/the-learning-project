@@ -258,7 +258,7 @@ async function main() {
                 {},
               );
         stage = 'workflow-result';
-        await handle.getResult();
+        await handle.getResult({ pollingIntervalMs: 50 });
         stage = 'workflow-evidence';
         process.send?.({
           kind: 'done',

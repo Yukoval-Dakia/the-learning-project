@@ -154,7 +154,7 @@ pnpm build
 
 After push, the exact-head GitHub `CI Gate` runs separate static, audit, unit, DB,
 migration, build and parity lanes. Every code change runs all retained invariant files in
-the unit/DB lanes; only docs-only changes skip them. The parity lane is path-selected (below). The exact include lists live in
+the unit/DB lanes; only verified docs-only changes skip them. Each lane computes its plan after checkout, without waiting for a classifier job. DB files run in eight nonempty native Vitest shards; unit files run in two. The exact include lists live in
 `vitest.shared.ts`, and `audit:partition` rejects missing, duplicate or unassigned
 files and direct unmocked DB imports in unit files. The audit lanes run exactly the
 commands listed in `.github/workflows/ci-gate.yml`: schema, dependencies, partition, test-policy,
@@ -165,10 +165,10 @@ provider-attempt-truth. `audit:provider-lanes` is a local-only census and is not
 The build lane injects secret canaries into the build environment, scans
 both SPA and Start browser artifacts, and verifies frontdoor token/exemptions via
 an isolated listener. The parity lane runs `cargo test` plus the native/WASM/JS
-parity suites with `REQUIRE_RUST_PARITY=1` whenever the crate, its TS twins
-(`src/core/poly-exp*`, `coldstart-solver*`, `theta-grid*`, `src/server/calibration/`),
-dependencies, `.node-version`, vitest config or the gate itself change, and on every main
-push or unknown/invalid base; the
+parity suites with `REQUIRE_RUST_PARITY=1` for every code change, main push,
+manual full invocation and unknown/invalid base. Only an explicit successful docs-only
+plan may skip work. Missing planner output selects work, and planner failure fails the
+lane. The
 plan lives in `scripts/ci/gate-plan.mjs`. The explicit local audit commands
 remain useful for clear attribution, but they do not replace the GitHub gate.
 

@@ -33,6 +33,7 @@ let caseLogStart = 0;
 let suiteBlocked: string | undefined = 'Review fixture setup has not completed';
 let hadCaseFailure = false;
 let db: ReturnType<typeof postgres>;
+let fixtureUrl: string | undefined;
 const messageSchema = fixtureMessageSchema;
 const buildArgs = [
   '--bundle',
@@ -48,7 +49,7 @@ const buildArgs = [
   '--external:winston-transport',
 ];
 function safeUrl() {
-  const url = new URL(z.url().parse(process.env.TEST_DATABASE_URL));
+  const url = new URL(z.url().parse(fixtureUrl ?? process.env.TEST_DATABASE_URL));
   if (
     !/^\/test_fork_\d+$/.test(url.pathname) ||
     !['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
@@ -208,11 +209,13 @@ async function commitFault(
   const sockets = new Set<Socket>();
   let fired = false;
   const server = createServer((downstream) => {
+    downstream.setNoDelay(true);
     if (fired && mode === 'after-server-commit-and-unavailable') {
       downstream.destroy();
       return;
     }
     const upstream = createConnection({ host: target.hostname, port: Number(target.port || 5432) });
+    upstream.setNoDelay(true);
     sockets.add(downstream);
     sockets.add(upstream);
     let front = Buffer.alloc(0);
@@ -282,7 +285,11 @@ async function commitFault(
         if (!fired && receiptTx && command === 'COMMIT' && mode !== 'before-server-commit') {
           fired = true;
           evidence.push({ fault: mode, at: new Date().toISOString(), serverCommand: command });
-          close();
+          if (mode === 'after-server-commit-and-unavailable') {
+            evidence.push({ unavailableSocketCount: sockets.size });
+            for (const socket of sockets) socket.destroy();
+            sockets.clear();
+          } else close();
           return;
         }
         if (command === 'COMMIT' || command === 'ROLLBACK') receiptTx = false;
@@ -431,6 +438,20 @@ beforeAll(async () => {
   // CI must provide full checkout history or the separately verified old artifact.
   // Fail before opening any pool/worker when the required immutable source is absent.
   await exec('git', ['cat-file', '-e', `${OLD_BASE}^{commit}`]);
+  const target = safeUrl();
+  const adminTarget = new URL(target);
+  adminTarget.pathname = '/postgres';
+  const admin = postgres(adminTarget.toString(), { max: 1 });
+  try {
+    await admin`select pg_advisory_lock(1107, 1394)`;
+    const database = `test_fork_${Date.now()}${process.pid}1393`;
+    await admin.unsafe(`CREATE DATABASE "${database}" TEMPLATE "test"`);
+    target.pathname = `/${database}`;
+    fixtureUrl = target.toString();
+  } finally {
+    await admin`select pg_advisory_unlock(1107, 1394)`;
+    await admin.end();
+  }
   db = postgres(safeUrl().toString(), { max: 3, connect_timeout: 2 });
   await exec(resolve('node_modules/.bin/esbuild'), [
     'tests/dbos-review-orphan/worker.ts',
@@ -439,6 +460,9 @@ beforeAll(async () => {
   ]);
   await db`delete from contract_epoch`;
   suiteBlocked = undefined;
+  const seed = worker();
+  await seed.wait('ready');
+  await seed.stop();
 }, 60000);
 beforeEach(() => {
   caseLogStart = logs.length;
@@ -529,10 +553,9 @@ describe('actual review orphan crash and recovery', () => {
     'row-committed',
     'checkpoint-saved',
   ]) {
+    // @invariant concurrency: crash and duplicate owners recover the same frozen candidates with exactly one receipt per session
+    // @fails-if a crash reselects later sessions, repeats a committed transition, or stale replay overwrites a reopened session
     it(`SIGKILL at ${pauseAt} recovers the same inputs and frozen candidates`, async () => {
-      const seed = worker();
-      await seed.wait('ready');
-      await seed.stop();
       await reset();
       await sessions();
       const id = `review-crash-${randomUUID()}`;
@@ -570,10 +593,9 @@ describe('actual review orphan crash and recovery', () => {
     }, 120000);
   }
   for (const mode of ['after-server-commit', 'before-server-commit'] as const) {
+    // @invariant data: lost COMMIT responses are resolved through the authoritative lock with exact receipts and event counts
+    // @fails-if a committed row is replayed or an uncommitted row is mistaken for a committed effect
     it(`reconciles ${mode} through the authoritative lock`, async () => {
-      const seed = worker();
-      await seed.wait('ready');
-      await seed.stop();
       await reset();
       await sessions();
       const proxy = await commitFault(mode);
@@ -596,10 +618,9 @@ describe('actual review orphan crash and recovery', () => {
       }
     }, 120000);
   }
+  // @invariant data: an unavailable primary keeps its outcome unknown and a terminal workflow never retries the effect
+  // @fails-if a sibling connection bypasses the outage or reopening ERROR creates another receipt or event
   it('holds an unavailable primary as unknown and does not resume a terminal DBOS ERROR', async () => {
-    const seed = worker();
-    await seed.wait('ready');
-    await seed.stop();
     await reset();
     await sessions();
     const proxy = await commitFault('after-server-commit-and-unavailable');
@@ -654,10 +675,9 @@ describe('actual review orphan crash and recovery', () => {
       await proxy.stop();
     }
   }, 120000);
+  // @invariant concurrency: a selected pre-migration consumer can still mutate after cutover and must be quiesced
+  // @fails-if the fixture no longer executes the archived selected-row consumer or its post-cutover effect is hidden
   it('demonstrates why a selected-row pre-migration consumer must be quiesced before cutover', async () => {
-    const seed = worker();
-    await seed.wait('ready');
-    await seed.stop();
     await reset();
     await db`update review_orphan_control set phase = 'pg-boss'`;
     const id = `old-consumer-${randomUUID()}`;
@@ -758,10 +778,9 @@ describe('actual review orphan crash and recovery', () => {
     });
     await current.stop();
   }, 120000);
+  // @invariant data: authentic partial prune history recovers before and after review admission without duplicate deletion
+  // @fails-if the archived worker is replaced, its committed effect is replayed, or registering review loses old recovery
   it('recovers the genuine old prune-v1 bundle both before and after review admission', async () => {
-    const seed = worker();
-    await seed.wait('ready');
-    await seed.stop();
     const artifact = await oldArtifact();
     for (const admitted of [false, true]) {
       await reset();

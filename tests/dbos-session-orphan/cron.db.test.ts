@@ -35,6 +35,7 @@ let phaseQueries: Pick<Db, 'execute'>;
 let url: string;
 let producerSearchPath: string | undefined;
 let clockInstalled = false;
+let pgBossClockDefinition: string | undefined;
 let suiteBlocked: string | undefined =
   'Cron fixture setup has not established settled durable state';
 let nativeBaseline: Awaited<ReturnType<typeof nativeLedger>>;
@@ -46,6 +47,18 @@ async function advanceClock(at: string) {
     (await db`select session_cron_clock.clock_timestamp() >= ${at}::timestamptz as reached`)[0]
       .reached,
   ).toBe(true);
+}
+async function freshLegacyMinute() {
+  const [slot] = await db`select (date_trunc('minute', greatest(
+    session_cron_clock.clock_timestamp(),
+    coalesce((select max(created_on) from pgboss.job
+      where name = '__pgboss__send-it' and data->>'name' in
+        ('prune_orphan_conversation_sessions', 'prune_orphan_placement_sessions')),
+      'epoch'::timestamptz),
+    coalesce((select max(legacy_not_before) from session_orphan_control), 'epoch'::timestamptz)
+  )) + interval '1 minute 1 second')::text as at`;
+  await advanceClock(z.string().parse(slot.at));
+  observations.push({ freshLegacySlot: slot });
 }
 function start() {
   const child = spawn(process.execPath, [bundle], {
@@ -208,7 +221,6 @@ beforeEach(async () => {
   assertFixtureCanReset(children.keys(), suiteBlocked);
   nativeBaseline = await nativeLedger();
   assertSettledCronLedger(nativeBaseline);
-  await db`update session_cron_clock.state set frozen_at = null, offset_ms = 0 where singleton`;
   observations.push({ scenario: expect.getState().currentTestName, nativeBaseline });
 });
 afterEach(async (context) => {
@@ -258,6 +270,7 @@ afterAll(async () => {
         await db.unsafe(
           `alter function public.fence_session_orphan_producer() set search_path to '${producerSearchPath.replaceAll("'", "''")}'`,
         );
+      if (pgBossClockDefinition) await db.unsafe(pgBossClockDefinition);
       await db`update session_cron_clock.state set frozen_at = null, offset_ms = 0 where singleton`;
     } catch (error) {
       cleanupError = error;
@@ -313,8 +326,17 @@ for (const selected of families) {
     const first = start();
     await first.wait('ready');
     phase('legacy-ready');
+    if (!pgBossClockDefinition) {
+      const [definition] =
+        await db`select pg_get_functiondef('pgboss.job_now()'::regprocedure) as sql`;
+      pgBossClockDefinition = z.string().parse(definition.sql);
+      await db.unsafe(`create or replace function pgboss.job_now() returns timestamptz
+        language sql volatile as $$ select session_cron_clock.clock_timestamp() $$`);
+    }
     const id = `cron-${randomUUID()}`;
     await oldSession(id);
+    await freshLegacyMinute();
+    await first.command({ kind: 'sync-clock' });
     const held = await first.wait('forward-held');
     observations.push({ held });
     phase('legacy-forward-held');
@@ -332,6 +354,7 @@ for (const selected of families) {
     const [forwarder] = forwarders;
     const forwarderId = z.string().parse(forwarder?.id);
     await advanceClock(z.string().parse(forwarder.aged_at));
+    await first.command({ kind: 'sync-clock' });
     expect(
       (
         await db`select session_cron_clock.clock_timestamp() >= created_on + interval '61 seconds' as aged
@@ -571,9 +594,13 @@ for (const selected of families) {
     const rolled = `rolled-${randomUUID()}`;
     await oldSession(rolled);
     await second.command({ kind: 'release-forward' });
-    // Probe the real legacy producer/consumer immediately, without waiting for a new minute slot.
-    const rollbackJob = await second.command({ kind: 'enqueue-legacy' });
-    const rollbackJobId = z.string().parse(rollbackJob.legacyJobId);
+    await freshLegacyMinute();
+    await second.command({ kind: 'sync-clock' });
+    const rollbackForward = await second.wait('forwarded');
+    const rollbackJobs = z.array(z.object({ id: z.string() })).parse(rollbackForward.rows);
+    expect(rollbackJobs).toHaveLength(1);
+    const rollbackJobId = rollbackJobs[0].id;
+    observations.push({ rollbackTimekeeperForward: rollbackForward });
     await expect
       .poll(async () => (await receiptFor(rolled)).length, { timeout: 120000, interval: 100 })
       .toBe(1);
