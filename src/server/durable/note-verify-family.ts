@@ -15,6 +15,13 @@
 // call; backend-specific disposition of skipped:in_progress / ambiguous stays
 // with the host (pg-boss handler throws retry-required today; a DBOS host
 // decides its own policy), so this adapter only passes results through.
+//
+// YUK-1355 paid-effect control: the workflow body admits itself under backend
+// control (backend 'dbos', deliveryId = workflowId) BEFORE any step runs.
+// Fenced ⇒ PaidEffectControlFencedError (workflow ERROR, zero paid work); a
+// missing control table is fenced as well — DBOS never default-admits, the
+// bootstrap default owner is pg-boss. note_verification_claim remains the
+// paid authority; no paid_effect rows are written for notes.
 import { DBOS, type StepConfig } from '@dbos-inc/dbos-sdk';
 import { z } from 'zod';
 
@@ -24,6 +31,12 @@ import {
   runNoteVerify,
 } from '@/capabilities/notes/server/note-verify-durable-operation';
 import type { Db } from '@/db/client';
+import {
+  admitPaidEffectDeliveryControl,
+  isPaidEffectControlUndefinedTable,
+} from './paid-effect-control';
+import type { PaidEffectControlAdmission, PaidEffectDeliveryRef } from './paid-effect-protocol';
+import { PaidEffectControlFencedError } from './paid-effect-protocol';
 
 export const NOTE_VERIFY_FAMILY = 'note_verify';
 export const NOTE_VERIFY_STEP_NAME = 'note-verify-v1';
@@ -36,17 +49,46 @@ export type NoteVerifyRunStepFn = <T>(
   config?: StepConfig & { name?: string },
 ) => Promise<T>;
 
+export type NoteVerifyAdmitDeliveryControlFn = (
+  db: Db,
+  ref: PaidEffectDeliveryRef,
+) => Promise<PaidEffectControlAdmission>;
+
 export type NoteVerifyDurableDeps = {
   db: Db;
   /** Injected by the future parent-owned host; never defaulted here. */
   runTaskFn: RunTaskFn;
+  /** Backend-control admission; defaults to the shared paid-effect control gate. */
+  admitDeliveryControl?: NoteVerifyAdmitDeliveryControlFn;
 };
+
+/** DBOS admission under the shared backend control; never default-admits. */
+export async function defaultAdmitNoteVerifyDeliveryControl(
+  db: Db,
+  ref: PaidEffectDeliveryRef,
+): Promise<PaidEffectControlAdmission> {
+  try {
+    return await db.transaction((tx) =>
+      admitPaidEffectDeliveryControl(tx, NOTE_VERIFY_FAMILY, ref),
+    );
+  } catch (error) {
+    if (isPaidEffectControlUndefinedTable(error)) {
+      return {
+        kind: 'fenced',
+        reason: 'backend_mismatch',
+        owner: 'pg-boss',
+        generation: 0,
+      };
+    }
+    throw error;
+  }
+}
 
 /**
  * Pure workflow body: durable identity check, payload validation against the
- * queued contract, then the verification operation inside one pinned,
- * non-retryable step. Kept DBOS-free so the wiring contract is testable
- * offline; registerNoteVerifyWorkflow is the real consumer.
+ * queued contract, backend-control admission, then the verification operation
+ * inside one pinned, non-retryable step. Kept DBOS-free so the wiring contract
+ * is testable offline; registerNoteVerifyWorkflow is the real consumer.
  */
 export async function runNoteVerifyWorkflowBody(
   deps: NoteVerifyDurableDeps,
@@ -56,6 +98,13 @@ export async function runNoteVerifyWorkflowBody(
 ): Promise<RunNoteVerifyResult> {
   if (!workflowId) throw new Error('note_verify requires a durable workflow identity');
   const payload = noteVerifyWorkflowInputSchema.parse(rawInput);
+  const admission = await (deps.admitDeliveryControl ?? defaultAdmitNoteVerifyDeliveryControl)(
+    deps.db,
+    { backend: 'dbos', deliveryId: workflowId },
+  );
+  if (admission.kind === 'fenced') {
+    throw new PaidEffectControlFencedError(NOTE_VERIFY_FAMILY, admission.reason, admission.owner);
+  }
   return runStep(
     () =>
       runNoteVerify({ db: deps.db, artifactId: payload.artifact_id, runTaskFn: deps.runTaskFn }),

@@ -12,12 +12,19 @@ import {
   noteVerifyWorkflowInputSchema,
   runNoteVerifyWorkflowBody,
 } from './note-verify-family';
+import type { PaidEffectControlAdmission } from './paid-effect-protocol';
+
+const admittedControl: PaidEffectControlAdmission = {
+  kind: 'admitted',
+  control: { family: NOTE_VERIFY_FAMILY, backend: 'pg-boss', generation: 0, explicit: false },
+};
 
 const wiringDeps = {
   db: {} as Db,
   runTaskFn: async () => {
     throw new Error('runTaskFn must not run in wiring tests');
   },
+  admitDeliveryControl: async () => admittedControl,
 };
 
 function stubDb(reservation: unknown): Db {
@@ -66,6 +73,21 @@ describe('note-verify DBOS family adapter wiring', () => {
     expect(capturedConfig).toEqual({ name: NOTE_VERIFY_STEP_NAME, retriesAllowed: false });
     expect(NOTE_VERIFY_STEP_NAME).toBe('note-verify-v1');
     expect(result).toBe(recorded);
+  });
+
+  // @invariant concurrency: a delivery fenced by backend control never enters the paid step — the workflow errors before any provider work, and DBOS never default-admits
+  // @fails-if a fenced delivery still runs the step (paid work under the wrong owner) or the admission error is swallowed into a SUCCESS result
+  it('throws PaidEffectControlFencedError before the step when admission is fenced', async () => {
+    const runStep = vi.fn();
+    const fencedDeps = {
+      ...wiringDeps,
+      admitDeliveryControl: async () =>
+        ({ kind: 'fenced', reason: 'backend_mismatch', owner: 'pg-boss', generation: 0 }) as const,
+    };
+    await expect(
+      runNoteVerifyWorkflowBody(fencedDeps, runStep as never, 'wf-fenced', { artifact_id: 'a1' }),
+    ).rejects.toThrow('fenced');
+    expect(runStep).not.toHaveBeenCalled();
   });
 
   // @invariant data: the workflow body returns the operation's status union unchanged so the host can disposition every skip reason

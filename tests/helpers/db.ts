@@ -146,6 +146,10 @@ export async function rollbackTestTransaction(): Promise<void> {
 // user_appeal previously dropped per data-assumptions §O2.
 const ALL_TABLES = [
   'note_verification_claim',
+  // YUK-1355 Lane B — shared paid-effect protocol tables (no FK to control:
+  // an absent control row IS the bootstrap default owner).
+  'paid_effect',
+  'paid_effect_control',
   'provider_attempt_admission',
   'provider_attempt',
   // YUK-842 — operational provider query-session leases/start-window rows (loose refs).
