@@ -1,9 +1,7 @@
 {
   "previousHead": "4a711afb937990284eea612bd40538d5a21c1919",
   "main": "ff2c9e229",
-  "conflicts": [
-    "vitest.shared.ts"
-  ],
+  "conflicts": ["vitest.shared.ts"],
   "resolution": "Keep both new image-source and note control unit partition entries",
   "upstreamNonpartitionFilesByteIdentical": 5,
   "scopedUnitCases": 10,
